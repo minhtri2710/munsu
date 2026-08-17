@@ -342,77 +342,19 @@ internal/fleet/taskauthority_reads.go	canonicalCurrentStateQ.Read	1	!canonical	b
 internal/harness/dispatch.go	ResolveDispatchSelectionWithPreflight	1	result.AuthConfigured == PreflightAbsent	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/harness/dispatch.go	ResolveDispatchSelectionWithPreflight	1	result.BinaryOnPath == PreflightAbsent	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/harness/dispatch.go	SaveDispatch	1	cfg == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/canonical_lease.go	Home.AcquireLease	1	owner == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/canonical_lease.go	Lease.Release	1	rec.FenceToken != uint64(l.token)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/canonical_lease.go	Lease.Renew	1	l.released	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/canonical_lease.go	Lease.Renew	1	rec.ExpiresAtUnix <= time.Now().Unix()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/canonical_lease.go	Lease.Renew	1	rec.FenceToken != uint64(l.token)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/canonical_lease.go	Lease.Renew	1	ttl <= 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/canonical_lock_windows.go	lockScopedFile	1	ret == 0	burn-down(BEO-69): GOOS-gated, unmeasured where this baseline was generated; imported unwaived rather than left for the other platform to demand
-internal/home/canonical_lock_windows.go	unlockScopedFile	1	ret == 0	burn-down(BEO-69): GOOS-gated, unmeasured where this baseline was generated; imported unwaived rather than left for the other platform to demand
-internal/home/canonical_lock.go	Home.Lock	1	time.Now().After(deadline)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/canonical_path.go	joinContained	1	rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/canonical_path.go	privateDir	1	!info.IsDir()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/canonical_path.go	verifyNoFollow	1	parent == cur	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/canonical.go	HomeIdentity.validate	1	strings.TrimSpace(id.ID) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/canonical.go	Open	1	root == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/canonical.go	verifyLayout	1	!info.IsDir()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/captain_provenance.go	ValidateCaptainProvenance	1	actual != stored	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/captain_provenance.go	ValidateCaptainProvenance	1	id == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/captain_provenance.go	ValidateCaptainProvenance	1	len(lines) < 3	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/captain_provenance.go	ValidateCaptainProvenance	1	len(lines) > 3	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/captain_provenance.go	ValidateCaptainProvenance	1	stored == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/captain_provenance.go	ValidateCaptainProvenance	1	strings.TrimSpace(lines[0]) != CaptainProvenanceVersion	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_envelope.go	ValidateAck	1	ack.Key != env.Key	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_envelope.go	ValidateAck	1	ack.MessageID != env.MessageID	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_envelope.go	ValidateAck	1	ack.PayloadHash != env.PayloadHash	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_envelope.go	ValidateAck	1	ack.ReceiverID != env.ReceiverID	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_envelope.go	ValidateAck	1	ack.SenderIdentity != env.SenderIdentity	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_envelope.go	ValidateAck	1	ack.TaskID != env.TaskID	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_envelope.go	ValidateEnvelope	1	env.MessageID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_envelope.go	ValidateEnvelope	1	env.Payload == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_envelope.go	ValidateEnvelope	1	env.PayloadHash != PayloadHashHex(env.Payload)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_envelope.go	ValidateEnvelope	1	env.ReceiverID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_envelope.go	ValidateEnvelope	1	env.SenderIdentity == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_envelope.go	ValidatePathComponent	1	component == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_envelope.go	ValidatePathComponent	1	strings.Contains(component, ":")	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_envelope.go	ValidatePathComponent	1	strings.Contains(component, "..")	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_envelope.go	ValidatePathComponent	1	strings.Contains(component, "/")	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_envelope.go	ValidatePathComponent	1	strings.Contains(component, "\\")	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_envelope.go	ValidateProcessingAck	1	!ValidOutcome(ack.Outcome)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_envelope.go	ValidateProcessingAck	1	ack.ProcessedAt <= 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_receiver.go	NotificationRef.Validate	1	ref.MessageID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_receiver.go	NotificationRef.Validate	1	ref.SenderIdentity == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_receiver.go	ReadHomeIdentity	1	base == "" || base == "." || base == "/"	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_receiver.go	ReadHomeIdentity	1	id == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_receiver.go	ReadHomeIdentity	1	len(lines) < 2	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_receiver.go	ReadHomeIdentity	1	version != "munsu-v2"	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_receiver.go	Receiver.Ack	1	env == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_receiver.go	Receiver.Ack	1	env.PayloadHash != PayloadHashHex(env.Payload)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_receiver.go	Receiver.Ack	1	env.ReceiverID != r.identity	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_receiver.go	Receiver.Ack	1	env.SenderIdentity != ref.SenderIdentity	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_receiver.go	Receiver.Ack	1	existing != nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_receiver.go	Receiver.Ack	1	r.store.IsSuperseded(ref.SenderIdentity, ref.MessageID)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_receiver.go	Receiver.Receive	1	env == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_receiver.go	Receiver.Receive	1	env.PayloadHash != PayloadHashHex(env.Payload)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_receiver.go	Receiver.Receive	1	env.ReceiverID != r.identity	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_receiver.go	Receiver.Receive	1	env.SenderIdentity != ref.SenderIdentity	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_receiver.go	Receiver.Receive	1	r.store.IsSuperseded(ref.SenderIdentity, ref.MessageID)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_receiver.go	WriteHomeIdentity	1	!ValidRank(rank)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_receiver.go	WriteHomeIdentity	1	identity == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_store.go	RemoveSenderPending	1	ack == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_store.go	Store.RemovePendingAfterAck	1	ack == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_store.go	Store.WriteAck	1	!ValidOutcome(ack.Outcome)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/mailbox_store.go	Store.WriteAck	1	ack.ProcessedAt <= 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/taskmeta_lock_windows.go	lockExclusive	1	ret == 0	burn-down(BEO-69): GOOS-gated, unmeasured where this baseline was generated; imported unwaived rather than left for the other platform to demand
-internal/home/taskmeta_lock_windows.go	unlockFile	1	ret == 0	burn-down(BEO-69): GOOS-gated, unmeasured where this baseline was generated; imported unwaived rather than left for the other platform to demand
-internal/home/wake_lease.go	AckWakes	1	!scanner.Scan()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/wake_resolve.go	leaseContainsEvent	1	!scanner.Scan()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/watcher_lease.go	ClaimWatcherLease	1	isProcessAlive(existing.PID)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/watcher_lock_windows.go	lockWatcherFile	1	ret == 0	burn-down(BEO-69): GOOS-gated, unmeasured where this baseline was generated; imported unwaived rather than left for the other platform to demand
-internal/home/watcher_lock_windows.go	unlockWatcherFile	1	ret == 0	burn-down(BEO-69): GOOS-gated, unmeasured where this baseline was generated; imported unwaived rather than left for the other platform to demand
-internal/home/writer_identity.go	validateWriterIdentity	1	identity.Kind != kind	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/home/writer_identity.go	validateWriterIdentity	1	identity.SchemaVersion != 1	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/canonical_lock_windows.go	lockScopedFile	1	ret == 0	BEO-69: unmeasured. A GOOS=windows syscall failure path; no lane compiles this file, so it has no block in any coverage profile and is excluded from both directions of the comparison.
+internal/home/canonical_lock_windows.go	unlockScopedFile	1	ret == 0	BEO-69: unmeasured. A GOOS=windows syscall failure path; no lane compiles this file, so it has no block in any coverage profile and is excluded from both directions of the comparison.
+internal/home/canonical_lock.go	Home.Lock	1	time.Now().After(deadline)	BEO-69: on no execution path. Lock documents a bounded 5s budget and loops with backoff, but lockScopedFile calls flock(LOCK_EX) WITHOUT LOCK_NB, so the first call blocks until the holder releases instead of returning EWOULDBLOCK; the retry loop never spins and ErrLockTimeout is never returned. Reported as a production bug rather than tested: a test that asserted the timeout would hang, and one that asserted a refusal would be asserting a message this branch does not produce.
+internal/home/canonical_path.go	joinContained	1	rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))	BEO-69: unreachable post-check. The loop above rejects every "", "." and ".." component of the raw key before Clean/Join run, so no accepted key can produce a rel that escapes. Both branches return the identical ErrKeyEscapes, so a message-asserting test would go green without entering this one (the BEO-87 shape). Probed: every escaping key is refused by the component loop.
+internal/home/canonical_path.go	privateDir	1	!info.IsDir()	BEO-69: a post-check against a race, not an unreachable branch. On the single-threaded path os.MkdirAll returns ENOTDIR first for a path that exists as a file or a symlink to one, so Stat never observes a non-directory (probed with both shapes, plus 7 by review). But MkdirAll (canonical_path.go:79) and Stat are two syscalls: another writer that replaces the path between them lands here. That TOCTOU window is why there is no deterministic test, not that the branch cannot be entered.
+internal/home/canonical_path.go	verifyNoFollow	1	parent == cur	BEO-69: unreachable GIVEN that target is always absolute, which both callers (canonical.go:181, canonical_journal.go:150) satisfy: they derive it from h.RootFor over h.root = id.CanonicalRoot, which HomeIdentity.validate pins to canonicalRoot(filepath.Abs(root)). Under that premise the walk stops at the deepest existing ancestor and "/" always exists, so filepath.Dir never reaches a fixed point (probed with absolute, relative, nonexistent and empty targets). A RELATIVE target breaks the premise: the walk stops at ".", filepath.Dir(".") == ".", and the branch is entered once the cwd is removed. A future caller passing a relative path invalidates this waiver.
+internal/home/captain_provenance.go	ValidateCaptainProvenance	1	stored == ""	BEO-69: unreachable. strings.TrimSpace runs over the WHOLE marker before SplitN, so a blank third line is stripped and the record splits into 2 lines, which the len(lines) < 3 guard above refuses first. Probed with space, tab, empty and no-newline variants: all refuse as malformed.
+internal/home/mailbox_receiver.go	Receiver.Ack	1	env.PayloadHash != PayloadHashHex(env.Payload)	BEO-69: unreachable defense-in-depth, as the code comment says. ValidateEnvelope at step 3 applies the same comparison and returns first, so step 7 never sees a mismatch. Probed by replacing this branch's message with a sentinel and delivering a tampered envelope: the observed error came from ValidateEnvelope.
+internal/home/mailbox_receiver.go	Receiver.Receive	1	env.PayloadHash != PayloadHashHex(env.Payload)	BEO-69: unreachable defense-in-depth, same shape as the Receiver.Ack site above and probed with it.
+internal/home/taskmeta_lock_windows.go	lockExclusive	1	ret == 0	BEO-69: unmeasured. A GOOS=windows syscall failure path; no lane compiles this file, so it has no block in any coverage profile and is excluded from both directions of the comparison.
+internal/home/taskmeta_lock_windows.go	unlockFile	1	ret == 0	BEO-69: unmeasured. A GOOS=windows syscall failure path; no lane compiles this file, so it has no block in any coverage profile and is excluded from both directions of the comparison.
+internal/home/watcher_lock_windows.go	lockWatcherFile	1	ret == 0	BEO-69: unmeasured. A GOOS=windows syscall failure path; no lane compiles this file, so it has no block in any coverage profile and is excluded from both directions of the comparison.
+internal/home/watcher_lock_windows.go	unlockWatcherFile	1	ret == 0	BEO-69: unmeasured. A GOOS=windows syscall failure path; no lane compiles this file, so it has no block in any coverage profile and is excluded from both directions of the comparison.
 internal/orchestrator/afk_daemon.go	Daemon.Start	1	!acquired	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/afk_process_identity_darwin.go	processIdentity	1	end <= 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/afk_process_identity_darwin.go	processIdentity	1	len(raw) <= 4	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
