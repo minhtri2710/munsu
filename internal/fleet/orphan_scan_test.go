@@ -21,18 +21,15 @@ func (f fakeRunOracle) RunLiveness(_ string, process MarkedProcess) (RunLiveness
 	return f.liveness[process.PID], "fake oracle"
 }
 
-func orphanFence(t *testing.T, scan MarkerScan, liveness map[int]RunLiveness, artifacts []WriterArtifact, processes []WriterProcess) (CompositeWriterFence, *fakeExactController) {
+func orphanFence(t *testing.T, scan MarkerScan, liveness map[int]RunLiveness, artifacts []WriterArtifact, processes []WriterProcess) CompositeWriterFence {
 	t.Helper()
-	controller := &fakeExactController{}
 	return CompositeWriterFence{
-		Artifacts:  &fakeArtifactScanner{snapshots: [][]WriterArtifact{artifacts}},
-		Processes:  &fakeProcessInventory{snapshots: [][]WriterProcess{processes}},
-		Endpoints:  &fakeEndpointDrainer{},
-		Controller: controller,
-		Verifier:   &fakeProcessVerifier{dead: true},
-		Marked:     fakeMarkerInventory{scan: scan},
-		Oracle:     fakeRunOracle{liveness: liveness},
-	}, controller
+		Artifacts: &fakeArtifactScanner{snapshots: [][]WriterArtifact{artifacts}},
+		Processes: &fakeProcessInventory{snapshots: [][]WriterProcess{processes}},
+		Verifier:  &fakeProcessVerifier{dead: true},
+		Marked:    fakeMarkerInventory{scan: scan},
+		Oracle:    fakeRunOracle{liveness: liveness},
+	}
 }
 
 func TestInspectOrphansClassifiesAndNeverTerminates(t *testing.T) {
@@ -43,14 +40,13 @@ func TestInspectOrphansClassifiesAndNeverTerminates(t *testing.T) {
 		{PID: 13, PPID: 1, PGID: 13, ExecutablePath: "/bin/murky", Markers: map[string]string{MarkerMunsuTask: "task-c"}},
 	}}
 	liveness := map[int]RunLiveness{11: RunEnded, 12: RunAlive, 13: RunUnresolved}
-	fence, controller := orphanFence(t, scan, liveness, nil, nil)
+	// "never terminates" is structural since ADR-0012: the fence carries no
+	// process controller or endpoint drainer at all, only evidence sources.
+	fence := orphanFence(t, scan, liveness, nil, nil)
 
 	report, err := fence.InspectOrphans(home)
 	if err != nil {
 		t.Fatalf("InspectOrphans: %v", err)
-	}
-	if len(controller.terminated) != 0 {
-		t.Fatalf("orphan scan terminated processes %v; the scan must never signal anything", controller.terminated)
 	}
 	if report.Scanned != 300 || report.Marked != 3 {
 		t.Fatalf("expected 300 scanned and 3 marked, got %d and %d", report.Scanned, report.Marked)
@@ -76,7 +72,7 @@ func TestInspectOrphansKeepsMarkerVerdictOverWriterClaim(t *testing.T) {
 	scan := MarkerScan{Total: 10, Marked: []MarkedProcess{
 		{PID: running.PID, PPID: 1, PGID: running.PID, Markers: map[string]string{MarkerMulticaTask: "run-a"}},
 	}}
-	fence, _ := orphanFence(t, scan, map[int]RunLiveness{running.PID: RunEnded}, []WriterArtifact{claimed}, []WriterProcess{running})
+	fence := orphanFence(t, scan, map[int]RunLiveness{running.PID: RunEnded}, []WriterArtifact{claimed}, []WriterProcess{running})
 
 	report, err := fence.InspectOrphans(home)
 	if err != nil {
@@ -96,7 +92,7 @@ func TestInspectOrphansReportsUnclaimedWriterAndStaleArtifact(t *testing.T) {
 	stale.PID = 99
 	unclaimed := process(home)
 
-	fence, _ := orphanFence(t, MarkerScan{Total: 4}, nil, []WriterArtifact{stale}, []WriterProcess{unclaimed})
+	fence := orphanFence(t, MarkerScan{Total: 4}, nil, []WriterArtifact{stale}, []WriterProcess{unclaimed})
 	report, err := fence.InspectOrphans(home)
 	if err != nil {
 		t.Fatalf("InspectOrphans: %v", err)

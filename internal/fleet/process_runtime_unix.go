@@ -13,7 +13,6 @@ type inspectedProcess struct {
 	ExecutablePath string
 }
 
-func terminateProcess(pid int) error { return syscall.Kill(pid, syscall.SIGTERM) }
 func isProcessMissing(err error) bool {
 	return errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH)
 }

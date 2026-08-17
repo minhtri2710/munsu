@@ -37,25 +37,6 @@
 #            either. The reachability lane cannot see this one -- RTA marks
 #            InjectIfSafe reachable through tryInject without knowing the
 #            receiver is always nil.
-#   BEO-102  the writer/endpoint fence computes exactly the quiescence proof a
-#            destructive teardown needs -- terminate exactly, rescan, then set
-#            VerifiedQuiescent -- and nothing calls it. `captain retire
-#            --remove-home` reaches os.RemoveAll having checked provenance,
-#            meta, and an artifact scan that --force skips outright, and never
-#            verifies at the OS-process level that the directory it is about to
-#            delete has stopped being written to.
-internal/fleet/endpoint_fence.go	ServiceEndpointController.DisposeBoundEndpoint	OPEN-BUG(BEO-102): writer/endpoint fence computes the quiescence proof a destructive teardown needs, and nothing calls it; captain retire --remove-home runs os.RemoveAll without it
-internal/fleet/endpoint_fence.go	ServiceEndpointController.ProbeBoundEndpoint	OPEN-BUG(BEO-102): writer/endpoint fence computes the quiescence proof a destructive teardown needs, and nothing calls it; captain retire --remove-home runs os.RemoveAll without it
-internal/fleet/endpoint_fence.go	TaskEndpointScanner.ScanEndpoints	OPEN-BUG(BEO-102): writer/endpoint fence computes the quiescence proof a destructive teardown needs, and nothing calls it; captain retire --remove-home runs os.RemoveAll without it
-internal/fleet/endpoint_fence.go	fenceEndpoints	OPEN-BUG(BEO-102): writer/endpoint fence computes the quiescence proof a destructive teardown needs, and nothing calls it; captain retire --remove-home runs os.RemoveAll without it
-internal/fleet/endpoint_fence.go	metaUint	OPEN-BUG(BEO-102): writer/endpoint fence computes the quiescence proof a destructive teardown needs, and nothing calls it; captain retire --remove-home runs os.RemoveAll without it
-internal/fleet/endpoint_fence.go	readEndpointMeta	OPEN-BUG(BEO-102): writer/endpoint fence computes the quiescence proof a destructive teardown needs, and nothing calls it; captain retire --remove-home runs os.RemoveAll without it
-internal/fleet/endpoint_fence.go	sameBoundEndpoint	OPEN-BUG(BEO-102): writer/endpoint fence computes the quiescence proof a destructive teardown needs, and nothing calls it; captain retire --remove-home runs os.RemoveAll without it
-internal/fleet/endpoint_fence.go	validBoundEndpoint	OPEN-BUG(BEO-102): writer/endpoint fence computes the quiescence proof a destructive teardown needs, and nothing calls it; captain retire --remove-home runs os.RemoveAll without it
-internal/fleet/writer_fence.go	CompositeWriterFence.FenceOSWriters	OPEN-BUG(BEO-102): writer/endpoint fence computes the quiescence proof a destructive teardown needs, and nothing calls it; captain retire --remove-home runs os.RemoveAll without it
-internal/fleet/writer_fence.go	CompositeWriterFence.FenceWriters	OPEN-BUG(BEO-102): writer/endpoint fence computes the quiescence proof a destructive teardown needs, and nothing calls it; captain retire --remove-home runs os.RemoveAll without it
-internal/fleet/writer_fence.go	correlateWriters	OPEN-BUG(BEO-102): writer/endpoint fence computes the quiescence proof a destructive teardown needs, and nothing calls it; captain retire --remove-home runs os.RemoveAll without it
-internal/fleet/writer_runtime.go	FenceBoundEndpoints	OPEN-BUG(BEO-102): writer/endpoint fence computes the quiescence proof a destructive teardown needs, and nothing calls it; captain retire --remove-home runs os.RemoveAll without it
 internal/orchestrator/afk_daemon.go	Daemon.SetBackend	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
 internal/orchestrator/afk_daemon.go	Daemon.SetPaneCapture	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
 internal/orchestrator/afk_daemon.go	Daemon.maybeInitInjector	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
