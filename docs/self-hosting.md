@@ -26,6 +26,15 @@ munsu project add munsu <absolute-path-to-munsu-repo>
 backend (tmux or herdr). If it shows `herdr` the HERDR_ENV is active; this
 is the normal mode when running inside a Herdr-aware agent.
 
+**Set the general pane:** `config/general-pane` holds one pane handle in
+`session:pane` form (for example `munsu-general:0.1`) — the General's own pane.
+It is the target of the uplink notify path (`munsu report` from a captain) and
+of wake dispatch: those are the paths that write there, only when the composer
+is verified empty. `munsu doctor` lists it with `backend` as a required key; when
+it is unset, resolution falls back to `TMUX_PANE` / `HERDR_PANE_ID`, and with
+neither there is no target and nothing is delivered to a pane. The AFK daemon
+does **not** read it — it diagnoses only (see [ADR-0013](adr/0013-afk-is-diagnosis-and-manual-action.md)).
+
 ## 2. Arm the watcher
 
 Before spawning any soldiers, arm the event-driven watcher. The watcher
@@ -208,8 +217,8 @@ munsu afk                           # away-mode supervision daemon
 ## 7. Away-mode (AFK supervision)
 
 When the general is away, the AFK daemon supervises the fleet autonomously. It
-triages wakes, accumulates a digest, detects wedge conditions, and optionally
-injects summaries into the configured general pane.
+triages wakes, accumulates a digest, and detects wedge conditions. It never
+writes to the general pane — you read the digest on return (ADR-0013).
 
 ```sh
 munsu afk                        # start the away-mode daemon (foreground)
@@ -219,10 +228,8 @@ munsu afk                        # start the away-mode daemon (foreground)
 The daemon runs a 30s poll loop:
 1. Triage the wake queue
 2. Feed results into the digester (60s window)
-3. Check general-pane target safety
-4. Check wedge conditions (stale beat, missing beat, repeated wake)
-5. Flush the batched digest to `state/.afk-digest` when the window expires
-6. Optionally inject the digest into the general pane (if configured + safe)
+3. Check wedge conditions (stale beat, missing beat, repeated wake)
+4. Flush the batched digest to `state/.afk-digest` when the window expires
 
 On return:
 

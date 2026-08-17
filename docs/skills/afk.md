@@ -22,7 +22,7 @@ All three take `--home` / `MUNSU_HOME` to scope to a specific home.
             │
             ▼
     ┌───────────────────┐
-    │   runLoop (30s)   │──── triage → feed digester → target safety → wedge check → flush
+    │   runLoop (30s)   │──── triage → feed digester → wedge check → flush
     └───────────────────┘
             │
       SIGTERM/SIGINT
@@ -42,7 +42,7 @@ itself.
 ### Consent flag (`state/.afk`)
 
 The durable marker that the daemon is in away-mode. Written at start, removed on clean shutdown.
-All injection and digestion gates check this flag. Absence == no AFK.
+All digestion gates check this flag. Absence == no AFK.
 
 Contents: RFC3339 UTC timestamp of start.
 
@@ -59,9 +59,10 @@ locks (dead PID) are reclaimed silently.
 
 ### Sentinel marker (U+2063)
 
-Every inject payload is prefixed with `\u2063` — the Unicode INVISIBLE SEPARATOR. This zero-width
-marker distinguishes daemon-generated messages from captain-typed input. The return gate
-(`IsReturnSignal`) rejects marked lines as return candidates.
+Wake-delivery activation nudges (`wakedelivery_deliver.go`) are prefixed with `\u2063` — the
+Unicode INVISIBLE SEPARATOR. This zero-width marker distinguishes machine-delivered messages
+from captain-typed input. The return gate (`IsReturnSignal`) rejects marked lines as return
+candidates; the AFK daemon writes no marked message of its own.
 
 ### Batched digest (`state/.afk-digest`)
 
@@ -70,7 +71,6 @@ Each entry has a type (routine, decision, failure, credential, review-ready, wed
 the wake payload. The digest also records:
 
 - `wedge_alarm` — if a wedge condition was detected during the window
-- `safe_target` / `target_verdict` — safety result from the last target check
 
 ### Wedge alarm
 
@@ -80,12 +80,6 @@ Detects three conditions:
 3. **Repeated stale wake** — identical wake key arriving 3+ times in a row (within 2 poll intervals)
 
 On detection the alarm is recorded in the digest and surfaced in the return report.
-
-### Target safety (inject gate)
-
-Before any inject, the daemon captures the last 4 lines of the general pane and classifies the
-composer row. Injection proceeds only when the composer is **Empty** (no unsubmitted typed
-content, no pending agent response). Pending and Unknown states always block injection.
 
 ### Return catch-up gate
 
@@ -97,8 +91,8 @@ After reconciling any escalations, `munsu afk return check` confirms all-clear.
 
 ### Approval authority unchanged
 
-AFK does not change the merge/approval authority. The daemon only monitors, digests, and
-optionally injects summaries. It never merges, approves, or modifies delivery state.
+AFK does not change the merge/approval authority. The daemon only monitors and digests. It
+never merges, approves, or modifies delivery state.
 
 ## Files (all under `MUNSU_HOME`)
 
@@ -109,14 +103,10 @@ optionally injects summaries. It never merges, approves, or modifies delivery st
 | `state/.afk-digest` | Batched escalation digest (JSON) |
 | `state/.seen-*` | Watcher dedup markers (cleared on start) |
 | `state/.subsuper-*` | Subsupervisor artifacts (cleared on start) |
-| `config/general-pane` | Optional: hardcoded general pane handle |
 
 ## Safety invariants
 
-1. **No inject without consent flag** — every inject path checks `state/.afk`
-2. **No inject without Empty composer** — `IsSafeInjectTarget` must return Empty
-3. **No inject without configured target** — `config/general-pane` must be set
-4. **No duplicate inject flood** — same entry within 60s cooldown is skipped
-5. **No live general pane in dogfood** — phase 2.6 verified with FAKE backends only
-6. **Stale lock reclamation** — dead PID lock is reclaimed, never blocking a new start
-7. **Idempotent return** — multiple `munsu afk return` calls on clean state succeed
+1. **No repair, only diagnosis** — the daemon never writes to the general pane (ADR-0013)
+2. **No digest without consent flag** — every digestion path checks `state/.afk`
+3. **Stale lock reclamation** — dead PID lock is reclaimed, never blocking a new start
+4. **Idempotent return** — multiple `munsu afk return` calls on clean state succeed

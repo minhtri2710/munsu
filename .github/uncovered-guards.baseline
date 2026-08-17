@@ -413,7 +413,6 @@ internal/home/watcher_lock_windows.go	lockWatcherFile	1	ret == 0	burn-down(BEO-6
 internal/home/watcher_lock_windows.go	unlockWatcherFile	1	ret == 0	burn-down(BEO-69): GOOS-gated, unmeasured where this baseline was generated; imported unwaived rather than left for the other platform to demand
 internal/home/writer_identity.go	validateWriterIdentity	1	identity.Kind != kind	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/home/writer_identity.go	validateWriterIdentity	1	identity.SchemaVersion != 1	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/afk_circuit.go	CircuitStore.Save	1	c == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/afk_daemon.go	Daemon.Start	1	!acquired	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/afk_process_identity_darwin.go	processIdentity	1	end <= 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/afk_process_identity_darwin.go	processIdentity	1	len(raw) <= 4	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
