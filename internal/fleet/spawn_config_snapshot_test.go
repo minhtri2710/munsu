@@ -475,3 +475,40 @@ func writeSpawnSnapshotDocuments(t *testing.T, home string) {
 	}
 	storeTestDocuments(t, home, base, projects, captains)
 }
+
+// A general home resolves its session backend from the typed fleet base only.
+// There is no auto-detection and no fallback identity, so a base document
+// carrying no backend is a typed failure rather than a device/PATH choice.
+func TestResolveGeneralHomeBackendRefusesEmptyIdentity(t *testing.T) {
+	home := t.TempDir()
+	if _, err := homepkg.Init(home); err != nil {
+		t.Fatal(err)
+	}
+	base := fleetconfig.FleetBaseDocument{
+		SchemaVersion: fleetconfig.FleetBaseSchemaVersion,
+		Config:        fleetconfig.ProjectOverlay{SoldierHarness: "pi"},
+	}
+	if err := fleetconfig.StoreFleetBase(home, base); err != nil {
+		t.Fatal(err)
+	}
+	if fleetconfig.PublishedSnapshotAvailable(home) {
+		t.Fatal("fixture invalid: a published snapshot exists, so the base document is not what is read")
+	}
+
+	got, err := ResolveGeneralHomeBackend(home)
+	if err == nil {
+		t.Fatalf("resolution returned backend %q for a home with no backend identity", got)
+	}
+	if !strings.Contains(err.Error(), "resolved no session backend identity") {
+		t.Fatalf("error = %v, want the empty-identity refusal", err)
+	}
+
+	// Control: only the backend was missing, so setting it resolves.
+	base.Config.Backend = "tmux"
+	if err := fleetconfig.StoreFleetBase(home, base); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ResolveGeneralHomeBackend(home); err != nil || got != "tmux" {
+		t.Fatalf("ResolveGeneralHomeBackend = %q, %v; want tmux, nil", got, err)
+	}
+}
