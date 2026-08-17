@@ -204,37 +204,6 @@ func TestClearCompletedIdempotent(t *testing.T) {
 	}
 }
 
-func TestClearAll(t *testing.T) {
-	home := t.TempDir()
-	role := RoleCaptain
-
-	// Save some obligations
-	obligations := Obligations(role)
-	if err := SaveObligations(home, role, obligations); err != nil {
-		t.Fatalf("SaveObligations() error = %v", err)
-	}
-
-	// Verify file exists
-	p := filepath.Join(home, obligationsDir, string(role)+".obligations")
-	if _, err := os.Stat(p); err != nil {
-		t.Fatalf("obligations file should exist: %v", err)
-	}
-
-	// Clear all
-	if err := ClearAll(home, role); err != nil {
-		t.Fatalf("ClearAll() error = %v", err)
-	}
-
-	if _, err := os.Stat(p); !os.IsNotExist(err) {
-		t.Errorf("obligations file should be removed, but stat err = %v", err)
-	}
-
-	// ClearAll on already-cleared home is a no-op
-	if err := ClearAll(home, role); err != nil {
-		t.Errorf("ClearAll() on cleared home error = %v", err)
-	}
-}
-
 func TestMaterialStates(t *testing.T) {
 	tests := []struct {
 		state string

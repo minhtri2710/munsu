@@ -991,17 +991,6 @@ func TestEventWaiter_WaitForSignal_ReaderFailure(t *testing.T) {
 	}
 }
 
-func TestEventWaitOutcome_PollFallback(t *testing.T) {
-	if EventWaitSignal.PollFallback() {
-		t.Error("signal must not be a poll fallback")
-	}
-	for _, o := range []EventWaitOutcome{EventWaitTimeout, EventWaitUnsupported, EventWaitUnavailable, EventWaitProtocolMismatch, EventWaitReaderFailure} {
-		if !o.PollFallback() {
-			t.Errorf("%v must be a poll fallback", o)
-		}
-	}
-}
-
 func TestBetterOutcome(t *testing.T) {
 	cases := []struct {
 		a, b EventWaitOutcome

@@ -28,30 +28,6 @@ type ConditionInfo struct {
 	Message string
 }
 
-// Drain reads and clears the wake queue.
-func Drain(homeDir string) ([]WakeRecord, error) {
-	records, err := DrainWakes(homeDir)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]WakeRecord, len(records))
-	for i, r := range records {
-		out[i] = WakeRecord(r)
-	}
-	return out, nil
-}
-
-// PrintRecords prints drained records in a readable format.
-func PrintRecords(records []WakeRecord) {
-	if len(records) == 0 {
-		fmt.Println("ok: no pending wakes")
-		return
-	}
-	for _, r := range records {
-		fmt.Printf("%s\t%s\t%s\t%s\t%s\n", r.Epoch, r.Seq, r.Kind, r.Key, r.Payload)
-	}
-}
-
 // GuardResult summarizes the shared guard evaluation for both the CLI
 // middleware and the contract guard command.
 type GuardResult struct {
@@ -121,37 +97,4 @@ func HasAgedMaterialWake(homeDir string, now time.Time) bool {
 		}
 	}
 	return false
-}
-
-// GuardWarnings returns the current operational guard warnings without writing output.
-func GuardWarnings(homeDir string) []string {
-	var warnings []string
-
-	status := ReadBeatStatus(homeDir, time.Now())
-	if !status.Exists {
-		warnings = append(warnings, "WATCHER NEVER STARTED - no liveness beacon")
-	} else if status.Stale {
-		warnings = append(warnings, fmt.Sprintf(
-			"WATCHER BEACON STALE - last beat %v ago (grace %v)",
-			status.Age.Round(time.Second), StaleThreshold()))
-	}
-	if HasQueuedWakes(homeDir) {
-		warnings = append(warnings, "QUEUED WAKES PENDING - claim with munsu wake claim")
-	}
-	return warnings
-}
-
-// CheckGuard checks for operational warnings.
-func CheckGuard(homeDir string) []string {
-	warnings := GuardWarnings(homeDir)
-	for _, warning := range warnings {
-		border := strings.Repeat("\u25cf", len(warning)+4)
-		fmt.Println(border)
-		fmt.Println("\u25cf " + warning + " \u25cf")
-		fmt.Println(border)
-	}
-	if len(warnings) == 0 {
-		fmt.Println("ok: no tangles; watcher fresh")
-	}
-	return warnings
 }

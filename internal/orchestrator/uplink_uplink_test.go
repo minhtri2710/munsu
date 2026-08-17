@@ -7,6 +7,14 @@ import (
 	"time"
 )
 
+// hasEvidence reports whether a keyed uplink evidence file exists. The binary
+// only ever asks the task-wide question (HasAnyOpenReport, HasPendingReport),
+// so the per-key lookup belongs to the tests that assert the keyed lifecycle.
+func hasEvidence(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
 func TestReportPersistsBeforeNotificationAndQueuesFailure(t *testing.T) {
 	senderHome := t.TempDir()
 	receiverHome := t.TempDir()
@@ -39,7 +47,7 @@ func TestReportPersistsBeforeNotificationAndQueuesFailure(t *testing.T) {
 	if !result.Queued || result.MessageID == "" {
 		t.Fatalf("result = %+v, want durable queued report", result)
 	}
-	if !HasOpenReport(senderHome, "task:1", "default") {
+	if !hasEvidence(openEvidencePath(senderHome, "task:1", "default")) {
 		t.Fatal("report should remain open before Processing Ack")
 	}
 }
@@ -163,10 +171,10 @@ func TestRecoverUsesNotificationRefAndClosesAfterExactAck(t *testing.T) {
 	if notified != "" {
 		t.Fatalf("acked report must not notify again: %s", notified)
 	}
-	if HasOpenReport(senderHome, "captain:1", "default") {
+	if hasEvidence(openEvidencePath(senderHome, "captain:1", "default")) {
 		t.Fatal("exact ack should close local report evidence")
 	}
-	if !HasAcceptedReport(senderHome, "captain:1", "default") {
+	if !hasEvidence(acceptedEvidencePath(senderHome, "captain:1", "default")) {
 		t.Fatal("accepted evidence should be durable")
 	}
 	pending, _ := NewStore(senderHome).ReadPending("captain-1", result.MessageID)

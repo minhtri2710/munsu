@@ -7,28 +7,6 @@ import (
 	"strings"
 )
 
-// IsReturnSignal checks whether a line is an unmarked, non-/afk message
-// that triggers a captain-return event.
-//
-// Contract: A marked message (begins with FM_INJECT_MARK U+2063) is a
-// daemon escalation, NOT a captain return. An /afk command is explicitly
-// about away-mode, not a return. Only unmarked, non-/afk messages qualify
-// as return signals.
-func IsReturnSignal(line string) bool {
-	if line == "" {
-		return false
-	}
-	// Marked messages are daemon escalations, not returns.
-	if Marked(line) {
-		return false
-	}
-	// /afk command is about away-mode, not a return.
-	if strings.HasPrefix(strings.TrimSpace(line), "/afk") {
-		return false
-	}
-	return true
-}
-
 // IsClean checks whether any actionable AFK state remains in the
 // durable digest queue. Returns true when nothing needs munsu
 // attention and normal work can resume.

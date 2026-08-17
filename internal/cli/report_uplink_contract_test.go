@@ -47,7 +47,7 @@ func TestReportCmdNoRingCreatesDurableMailboxOnly(t *testing.T) {
 	if !orchestrator.HasQueuedWakes(receiverHome) {
 		t.Fatal("receiver wake missing")
 	}
-	if !orchestrator.HasOpenReport(receiverHome, "task:with/slash", "default") {
+	if !orchestrator.HasAnyOpenReport(receiverHome, "task:with/slash") {
 		t.Fatal("open evidence missing")
 	}
 	if resp.Data.Injection == nil || resp.Data.Injection.Outcome != "queued" {

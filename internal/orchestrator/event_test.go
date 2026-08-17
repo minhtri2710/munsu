@@ -2,9 +2,40 @@ package orchestrator
 
 import (
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
+
+// readEventLog parses the typed event log the way the binary's writers lay it
+// out. The binary only ever appends; nothing in it reads the log back, so the
+// reader belongs to the tests that assert on what was written.
+func readEventLog(t *testing.T, homeDir string) []Record {
+	t.Helper()
+	data, err := os.ReadFile(LogPath(homeDir))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		t.Fatalf("reading event log: %v", err)
+	}
+	var records []Record
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		parts := strings.SplitN(strings.TrimSpace(line), "\t", 6)
+		if len(parts) < 6 {
+			continue
+		}
+		id, _ := strconv.ParseUint(parts[0], 10, 64)
+		ts, _ := strconv.ParseInt(parts[1], 10, 64)
+		records = append(records, Record{
+			ID: id, Timestamp: ts, Type: parts[2],
+			Producer: parts[3], Key: parts[4], Payload: parts[5],
+		})
+	}
+	sort.Slice(records, func(i, j int) bool { return records[i].ID < records[j].ID })
+	return records
+}
 
 func TestAppendAndRead(t *testing.T) {
 	home := t.TempDir()
@@ -25,10 +56,7 @@ func TestAppendAndRead(t *testing.T) {
 		t.Errorf("captain ID = %d, want 2", id2)
 	}
 
-	records, err := ReadAll(home)
-	if err != nil {
-		t.Fatalf("ReadAll() error = %v", err)
-	}
+	records := readEventLog(t, home)
 	if len(records) != 2 {
 		t.Fatalf("got %d records, want 2", len(records))
 	}
@@ -48,42 +76,9 @@ func TestAppendWithID(t *testing.T) {
 		t.Fatalf("AppendWithID() error = %v", err)
 	}
 
-	records, err := ReadAll(home)
-	if err != nil {
-		t.Fatal(err)
-	}
+	records := readEventLog(t, home)
 	if len(records) != 1 || records[0].ID != 42 {
 		t.Errorf("got ID %d, want 42", records[0].ID)
-	}
-}
-
-func TestReadFrom(t *testing.T) {
-	home := t.TempDir()
-
-	Append(home, "a", "p", "", "first")
-	Append(home, "b", "p", "", "general")
-	Append(home, "c", "p", "", "third")
-
-	records, err := ReadFrom(home, 2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(records) != 2 {
-		t.Fatalf("got %d records, want 2", len(records))
-	}
-	if records[0].ID != 2 || records[1].ID != 3 {
-		t.Errorf("IDs = %d, %d; want 2, 3", records[0].ID, records[1].ID)
-	}
-}
-
-func TestReadAllEmpty(t *testing.T) {
-	home := t.TempDir()
-	records, err := ReadAll(home)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(records) != 0 {
-		t.Errorf("got %d records, want 0", len(records))
 	}
 }
 
@@ -145,10 +140,7 @@ func TestAppendPersistence(t *testing.T) {
 	Append(home, "event2", "producer-b", "", "payload two")
 
 	// Re-read with fresh instance
-	records, err := ReadAll(home)
-	if err != nil {
-		t.Fatal(err)
-	}
+	records := readEventLog(t, home)
 	if len(records) != 2 {
 		t.Fatalf("got %d records, want 2", len(records))
 	}
@@ -165,10 +157,7 @@ func TestAppendConcurrentSafe(t *testing.T) {
 		}
 	}
 
-	records, err := ReadAll(home)
-	if err != nil {
-		t.Fatal(err)
-	}
+	records := readEventLog(t, home)
 	if len(records) != 10 {
 		t.Errorf("got %d records, want 10", len(records))
 	}
@@ -207,17 +196,6 @@ func TestEventLogFormat(t *testing.T) {
 	}
 	if parts[4] != "my-key" {
 		t.Errorf("key = %q, want my-key", parts[4])
-	}
-}
-
-func TestReadFromNonExistent(t *testing.T) {
-	home := t.TempDir()
-	records, err := ReadFrom(home, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(records) != 0 {
-		t.Errorf("got %d records from non-existent log", len(records))
 	}
 }
 

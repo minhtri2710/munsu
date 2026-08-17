@@ -130,14 +130,3 @@ func TestValidateTargetOwnership_RejectsBareHerdrHandle(t *testing.T) {
 		t.Fatal("expected bare herdr handle rejection")
 	}
 }
-
-func TestResolveTarget_BackwardCompatible(t *testing.T) {
-	t.Setenv("TMUX_PANE", "%9")
-	handle, session, err := ResolveTarget(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if handle != "%9" || session != "" {
-		t.Fatalf("ResolveTarget = %q, %q", handle, session)
-	}
-}
