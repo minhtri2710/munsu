@@ -48,17 +48,23 @@ jobs:
         run: go test -count=1 -tags e2e -coverprofile=coverage/e2e.out $(.github/scripts/build-tags.sh packages e2e)
       - name: lifecycle_integration-tagged tests
         run: go test -count=1 -tags lifecycle_integration -coverprofile=coverage/lifecycle_integration.out $(.github/scripts/build-tags.sh packages lifecycle_integration)
-      # Uploaded even when a step above failed, so a red test lane produces one
-      # clear failure instead of two: without this the `guards` job would find
-      # the artifact missing and report a missing profile, burying the test that
-      # actually broke.
+      # Uploaded even when a step above failed, so a lane that got partway still
+      # hands over what it measured. `warn` rather than `error` on an empty
+      # upload, because `always()` also fires when `go build` broke and there is
+      # nothing to collect yet -- erroring there would put a second, misleading
+      # red next to the compile error that actually stopped the job.
+      #
+      # Nothing is lost by being quiet here: the fail-closed check lives
+      # downstream, where it can tell the difference. uncovered-guards.sh treats
+      # a missing or empty profile as fatal, so a path that stops matching turns
+      # the `guards` job red with the lane named, instead of being read as zeros.
       - name: Upload coverage for the guards lane
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-build
           path: coverage/
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 1
 
   race:
@@ -122,13 +128,14 @@ jobs:
       # default profile and count 1 here; without this artifact the guards lane
       # would call that branch untested, along with every other branch these 60
       # files are the only cover for.
+      # `warn` on an empty upload for the reason given on the build lane's copy.
       - name: Upload coverage for the guards lane
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-integration
           path: coverage/
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 1
 
   invariants:
