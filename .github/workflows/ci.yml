@@ -251,6 +251,45 @@ jobs:
             exit 1
           fi
           echo "ADR numbers: unique"
+      # The rule above cares that two files do not share a number; this one
+      # cares that a number cited as a path has a file at all. That is the
+      # adjacent hole it left open (BEO-94): ADR-0006 was deleted in #418 as
+      # migration-era doctrine the ADR-0008 reset removed, and two plan docs
+      # kept linking to its filename for ten days. Both lanes stayed green,
+      # because nothing in this repo reads a link -- the same reason the
+      # duplicate above survived.
+      #
+      # References are extracted by basename, so `docs/adr/NNNN-x.md` and the
+      # `../adr/NNNN-x.md` form the plan docs use are the same check. The limit
+      # that follows from that: this proves the target exists, not that the
+      # relative depth is right, so a link written from the wrong directory
+      # still passes here and fails in a browser. Basenames are unique under a
+      # flat docs/adr/, so the weaker check is the whole of the deleted-target
+      # class and none of the wrong-prefix one.
+      #
+      # Text only, no network, like the rules around it -- it reads tracked
+      # files and the ADR directory and nothing else. An empty extraction is a
+      # failure rather than a pass: this repo has ADR links today, so finding
+      # none means the pattern stopped matching, and a guard that silently
+      # matches nothing is the shape this job exists to refuse.
+      - name: ADR references must point at a file that exists
+        run: |
+          set -eu
+          refs="$(mktemp)"
+          git grep -hIoE 'adr/[0-9]{4}-[A-Za-z0-9._-]+\.md' -- . | sed 's|.*/||' | sort -u > "$refs"
+          if [ ! -s "$refs" ]; then
+            echo "::error::No ADR references found anywhere in the tree -- the extraction pattern no longer matches, so this check proves nothing" >&2
+            exit 1
+          fi
+          broken=0
+          while IFS= read -r ref; do
+            [ -f "docs/adr/$ref" ] && continue
+            broken=1
+            echo "::error::ADR reference has no file -- point it at a real ADR or drop the link: docs/adr/$ref" >&2
+            git grep -nI -F -- "$ref" | while IFS= read -r hit; do printf '  %s\n' "$hit" >&2; done
+          done < "$refs"
+          [ "$broken" = 0 ] || exit 1
+          echo "ADR references: $(wc -l < "$refs" | tr -d ' ') distinct, all resolve"
       # A flaky test has no owner. Every other red in this repo does -- whoever
       # wrote the change that caused it -- which is why every other lane can end
       # at "it is red, someone will fix it" and this one cannot. Four pushes to
