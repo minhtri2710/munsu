@@ -806,9 +806,6 @@ func (r *Runner) preflightHarness() error {
 	if err != nil {
 		return err
 	}
-	if result.AdapterKnown == harness.PreflightAbsent {
-		return &harness.PreflightError{Harness: r.harness, Reason: "adapter-unknown"}
-	}
 	if result.BinaryOnPath == harness.PreflightAbsent {
 		return &harness.PreflightError{Harness: r.harness, Reason: "binary-absent"}
 	}
