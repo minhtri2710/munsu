@@ -225,14 +225,14 @@ func TestAgyReadStdinToolCallArgsCommandLine(t *testing.T) {
 	w.Close()
 	os.Stdin = r
 
-	cmd, _, err := readStdinForToolPayload()
+	payload, err := readStdinForToolPayload()
 	os.Stdin = oldStdin
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cmd != "munsu watch arm" {
-		t.Errorf("expected 'munsu watch arm', got %q", cmd)
+	if payload.command != "munsu watch arm" {
+		t.Errorf("expected 'munsu watch arm', got %q", payload.command)
 	}
 }
 
@@ -245,14 +245,14 @@ func TestAgyReadStdinClaudeShapeAlsoWorks(t *testing.T) {
 	w.Close()
 	os.Stdin = r
 
-	cmd, _, err := readStdinForToolPayload()
+	payload, err := readStdinForToolPayload()
 	os.Stdin = oldStdin
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cmd != "munsu watch arm" {
-		t.Errorf("expected 'munsu watch arm', got %q", cmd)
+	if payload.command != "munsu watch arm" {
+		t.Errorf("expected 'munsu watch arm', got %q", payload.command)
 	}
 }
 

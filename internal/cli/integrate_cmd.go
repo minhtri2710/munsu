@@ -315,27 +315,49 @@ var exitWithCode = func(code int) {
 	os.Exit(code)
 }
 
+// applyPatchToolNames are the tools that ship an entire patch document under a
+// command-shaped key. Codex is the measured case: its PreToolUse payload is
+// `{"tool_name":"apply_patch","tool_input":{"command":"<raw patch text>"}}`, so
+// the tool name — not the key — is the only thing that tells a patch body apart
+// from a shell command.
+var applyPatchToolNames = map[string]bool{
+	"apply_patch": true,
+	"ApplyPatch":  true,
+}
+
+// toolPayload is the classified tool call a PreToolUse hook has to decide on.
+// Exactly one channel is populated: a shell command, a native write target, or
+// a patch document. Keeping them apart is the whole point — a patch body routed
+// into the command channel is scanned by the shell-blocking rules, which refuses
+// patches whose *content* happens to mention a blocked command while letting the
+// patch's actual write targets through unexamined.
+type toolPayload struct {
+	command   string
+	filePath  string
+	isPatch   bool
+	patchBody string
+}
+
 // readStdinForToolPayload reads the harness tool payload from stdin exactly
-// once and extracts both the shell command and the native write-tool target
-// path. Both come from the same JSON object and stdin is not rewindable, so a
-// single reader owns the extraction: a Bash call carries a command, a
-// Write/Edit call carries a path, and neither can be fetched by a second read.
+// once, classifies it by tool name, and extracts the one channel that call
+// belongs to. Everything comes from the same JSON object and stdin is not
+// rewindable, so a single reader owns the extraction.
 //
-// Field names are tried per harness shape. A payload that carries neither
-// yields two empty strings, which every caller treats as "nothing to check".
-func readStdinForToolPayload() (string, string, error) {
+// Field names are tried per harness shape. A payload that carries nothing
+// yields an empty toolPayload, which every caller treats as "nothing to check".
+func readStdinForToolPayload() (toolPayload, error) {
 	data, err := io.ReadAll(os.Stdin)
 	if err != nil {
-		return "", "", fmt.Errorf("reading stdin: %w", err)
+		return toolPayload{}, fmt.Errorf("reading stdin: %w", err)
 	}
 	trimmed := strings.TrimSpace(string(data))
 	if trimmed == "" {
-		return "", "", nil
+		return toolPayload{}, nil
 	}
 
 	var payload map[string]interface{}
 	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
-		return "", "", nil // not JSON, return empty
+		return toolPayload{}, nil // not JSON, return empty
 	}
 
 	// Containers, in the order harnesses nest their tool arguments:
@@ -344,8 +366,9 @@ func readStdinForToolPayload() (string, string, error) {
 	if ti, ok := payload["tool_input"].(map[string]interface{}); ok {
 		containers = append(containers, ti)
 	}
-	if tc, ok := payload["toolCall"].(map[string]interface{}); ok {
-		if args, ok := tc["args"].(map[string]interface{}); ok {
+	toolCall, _ := payload["toolCall"].(map[string]interface{})
+	if toolCall != nil {
+		if args, ok := toolCall["args"].(map[string]interface{}); ok {
 			containers = append(containers, args)
 		}
 	}
@@ -359,9 +382,25 @@ func readStdinForToolPayload() (string, string, error) {
 	// camelCase spellings the other harnesses use for the same argument.
 	filePathKeys := []string{"file_path", "filePath", "FilePath", "notebook_path", "notebookPath", "path", "Path"}
 
-	command := firstStringField(containers, commandKeys)
-	filePath := firstStringField(containers, filePathKeys)
-	return command, filePath, nil
+	// The tool name sits beside the arguments, not inside them, so it is read
+	// from the envelope only.
+	nameContainers := []map[string]interface{}{payload}
+	if toolCall != nil {
+		nameContainers = append(nameContainers, toolCall)
+	}
+	toolName := firstStringField(nameContainers, []string{"tool_name", "toolName", "name"})
+
+	if applyPatchToolNames[toolName] {
+		return toolPayload{
+			isPatch:   true,
+			patchBody: firstStringField(containers, commandKeys),
+		}, nil
+	}
+
+	return toolPayload{
+		command:  firstStringField(containers, commandKeys),
+		filePath: firstStringField(containers, filePathKeys),
+	}, nil
 }
 
 // firstStringField returns the first non-empty string value found by scanning
@@ -377,17 +416,98 @@ func firstStringField(containers []map[string]interface{}, keys []string) string
 	return ""
 }
 
+// patchEnvelopeBegin and patchEnvelopeEnd delimit the apply-patch document.
+const (
+	patchEnvelopeBegin = "*** Begin Patch"
+	patchEnvelopeEnd   = "*** End Patch"
+)
+
+// patchTargetHeaders are the line prefixes that name a file the patch writes to.
+var patchTargetHeaders = []string{
+	"*** Add File: ",
+	"*** Update File: ",
+	"*** Delete File: ",
+	"*** Move to: ",
+}
+
+// applyPatchTargets reads the write targets out of an apply-patch document.
+//
+// The format is line-oriented and only its envelope matters here: file headers
+// sit at column 0, while every content line inside a hunk is prefixed with
+// '+', '-' or a space. So a patch cannot forge a header from its own content,
+// and it cannot hide one either — which is what makes a header scan sufficient
+// and a full diff parser unnecessary.
+//
+// A body that does not parse is an error, never an empty target list: the
+// caller refuses on error, because a tool whose coverage munsu has declared
+// must not pass unexamined just because its payload was unreadable.
+func applyPatchTargets(body string) ([]string, error) {
+	var targets []string
+	began, ended := false, false
+	for _, raw := range strings.Split(body, "\n") {
+		line := strings.TrimRight(raw, "\r")
+		switch strings.TrimSpace(line) {
+		case patchEnvelopeBegin:
+			began = true
+			continue
+		case patchEnvelopeEnd:
+			ended = true
+			continue
+		}
+		if !began || ended {
+			continue
+		}
+		for _, header := range patchTargetHeaders {
+			if strings.HasPrefix(line, header) {
+				if target := strings.TrimSpace(strings.TrimPrefix(line, header)); target != "" {
+					targets = append(targets, target)
+				}
+			}
+		}
+	}
+	if !began || !ended {
+		return nil, fmt.Errorf("missing %q / %q envelope", patchEnvelopeBegin, patchEnvelopeEnd)
+	}
+	if len(targets) == 0 {
+		return nil, fmt.Errorf("no file header found between %q and %q", patchEnvelopeBegin, patchEnvelopeEnd)
+	}
+	return targets, nil
+}
+
+// evaluatePatchSafety decides an apply-patch call on its write targets, the
+// same rule a native Write/Edit call is decided on. Patch paths are relative to
+// the directory the tool call runs in, so they are resolved against checkPath.
+func evaluatePatchSafety(checkPath, body string) (bool, string) {
+	targets, err := applyPatchTargets(body)
+	if err != nil {
+		return true, "apply_patch payload is not a readable patch (" + err.Error() +
+			"); refusing rather than letting an unreadable write through"
+	}
+	for _, target := range targets {
+		resolved := target
+		if !filepath.IsAbs(resolved) {
+			resolved = filepath.Join(checkPath, resolved)
+		}
+		if block, reason := evaluateFileWriteSafety(resolved); block {
+			return true, reason
+		}
+	}
+	return false, ""
+}
+
 func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, checkFilePath string, harnessFlag string) error {
 	// Harnesses that deliver the tool payload on stdin: read it once and take
-	// whichever of command / file path the tool call actually carries.
+	// whichever channel the tool call actually belongs to.
 	effectiveCommand := checkCommand
 	effectiveFilePath := checkFilePath
+	payload := toolPayload{}
 	if (harnessFlag == "claude" || harnessFlag == "grok" || harnessFlag == "codex" || harnessFlag == "agy") &&
 		effectiveCommand == "" && effectiveFilePath == "" {
-		stdinCommand, stdinFilePath, err := readStdinForToolPayload()
+		stdinPayload, err := readStdinForToolPayload()
 		if err == nil {
-			effectiveCommand = stdinCommand
-			effectiveFilePath = stdinFilePath
+			payload = stdinPayload
+			effectiveCommand = payload.command
+			effectiveFilePath = payload.filePath
 		}
 	}
 
@@ -397,7 +517,11 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, c
 	// Evaluate command blocking rules.
 	block := false
 	reason := ""
-	if effectiveCommand != "" {
+	if payload.isPatch {
+		// A patch document never reaches the shell-blocking ladder below: its
+		// body is file content, not a command line.
+		block, reason = evaluatePatchSafety(checkPath, payload.patchBody)
+	} else if effectiveCommand != "" {
 		if strings.Contains(effectiveCommand, "munsu watch arm") ||
 			strings.Contains(effectiveCommand, "munsu watch ensure") ||
 			strings.Contains(effectiveCommand, "munsu watch stop") {

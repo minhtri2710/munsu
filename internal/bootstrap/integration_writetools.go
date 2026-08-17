@@ -25,14 +25,15 @@ import (
 //
 // So over-listing is safe and under-listing is not.
 //
-// One exception overrides that rule: a tool whose payload carries no file path
-// at all is NOT listed, even though listing it would be harmless at runtime.
-// The apply-patch family (codex `apply_patch`, pi/opencode `patch`, agy
-// `apply_patch`) embeds its targets inside a patch body, so the hook would fire,
-// find nothing in the path fields, and fail open every single time. Listing it
-// would make the matcher read as coverage it does not provide. Reading those
-// targets needs a parser for a third-party patch format, which belongs in its
-// own change with its own tests — see the limits section of the PR.
+// The apply-patch family is deliberately absent from these lists, and leaving a
+// name out is NOT what decides whether the guard covers it. Codex declares
+// `Write` and `Edit` as matcher aliases of `apply_patch` and matches on regex
+// alternation, so `Write|Edit|MultiEdit|NotebookEdit` already selects
+// `apply_patch` today; listing the name as well would change nothing. Coverage
+// is decided one layer down, where safety-check classifies the payload by
+// `tool_name` and routes a patch document to its own channel instead of the
+// shell-command one (`internal/cli/integrate_cmd.go`). Measured on pi 0.79.9 and
+// agy 1.1.13, neither harness has an `apply_patch` or `patch` tool at all.
 var (
 	claudeWriteToolNames   = []string{"Write", "Edit", "MultiEdit", "NotebookEdit"}
 	codexWriteToolNames    = []string{"Write", "Edit", "MultiEdit", "NotebookEdit"}
