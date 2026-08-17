@@ -1,0 +1,4 @@
+::error::coverage profile missing or empty, so this lane cannot conclude anything about refusal coverage:
+  .github/testdata/uncovered-guards/missing-lane/profiles/integration.out
+  Every lane in .github/build-tags.manifest has to upload one. See the guards job in ci.yml.
+exit 1

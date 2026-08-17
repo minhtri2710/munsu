@@ -1,0 +1,2 @@
+internal/fake/guard.go	Refuse	1	len(failures) > 0	burn-down(BEO-69): pre-existing
+internal/fake/gated_linux.go	Gated	1	end < 0	burn-down(BEO-69): GOOS-gated

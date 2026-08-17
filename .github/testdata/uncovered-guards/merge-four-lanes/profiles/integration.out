@@ -1,0 +1,5 @@
+mode: set
+github.com/minhtri2710/munsu/internal/fake/lanes.go:10.12,12.3 1 0
+github.com/minhtri2710/munsu/internal/fake/lanes.go:20.12,22.3 1 1
+github.com/minhtri2710/munsu/internal/fake/lanes.go:30.12,32.3 1 0
+github.com/minhtri2710/munsu/internal/fake/lanes.go:40.12,42.3 1 0

@@ -1,0 +1,4 @@
+a.go	Once	1	!ok	18.24
+a.go	Twice	1	!ok	8.24
+a.go	Twice	2	!ok	11.24
+exit 0

@@ -1,0 +1,2 @@
+::error::.github/testdata/uncovered-guards/not-a-profile/profiles/default.out is not a coverage profile
+exit 1

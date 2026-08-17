@@ -1,0 +1,5 @@
+a.go	Outer	1	n < 0	36.13
+a.go	Runner.Pointer	1	n < 0	20.11
+a.go	Runner.Value	1	n < 0	13.11
+a.go	Store.Generic	1	n < 0	27.11
+exit 0

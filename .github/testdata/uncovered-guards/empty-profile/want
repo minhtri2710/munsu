@@ -1,0 +1,2 @@
+::error::the merged profile holds no blocks, so no branch can be judged covered
+exit 1

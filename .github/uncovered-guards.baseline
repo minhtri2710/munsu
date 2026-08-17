@@ -1,0 +1,603 @@
+# Every refusal branch no test has ever entered, and why it is allowed to stay.
+#
+# `.github/scripts/uncovered-guards.sh check` derives the refusal set from the
+# source tree (`.github/scripts/guardsites`), merges the coverage profiles of
+# every lane in .github/build-tags.manifest, and compares the two against this
+# file in both directions: uncovered in the tree but missing here is red, and
+# listed here while a test now enters the branch -- or while the branch is gone
+# -- is red too.
+#
+# Nothing declares which branches are guards. The set comes out of the tree, and
+# this file lists only the waivers, so a new guard with no test cannot land
+# quietly: there is no register to forget to update. That inversion is the whole
+# point -- see the design record on BEO-63, "guard enforcement: derived, not
+# declared". A register OF guards fails open at exactly the moment it has to
+# fail closed.
+#
+# This is a ratchet. It is only supposed to get shorter. The reason column is
+# self-declared, so a waiver nobody would accept keeps this green -- reading the
+# diff is what catches that, not the script.
+#
+# Columns are tab-separated: file <TAB> func <TAB> nth <TAB> predicate <TAB> reason
+#
+# `nth` is the 1-based occurrence of that exact predicate in that function; it is
+# what separates the nine functions here that refuse twice on the same condition.
+# No line numbers on purpose -- they are not part of an entry's identity, and
+# including them would rewrite this file on every unrelated edit above a guard.
+# Run `.github/scripts/uncovered-guards.sh classify` for the current verdicts.
+#
+# A few entries are marked GOOS-gated. Coverage cannot be unioned across
+# platforms the way deadcode.sh unions reachability -- tests cannot run for a
+# GOOS they were not built for -- so a guard in a file the runner does not
+# compile is measured on one platform and not the other. Those lines are carried
+# for both platforms and ignored by whichever one cannot measure them.
+
+internal/backend/observation_event_herdr.go	HerdrEventSource.Wait	1	endpoint.Handle == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/backend/session_backend_cmux.go	CmuxBackend.checkWorkspaceAlive	1	workspaceID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/backend/session_backend_cmux.go	CmuxBackend.NewWindow	1	surfaceID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/backend/session_backend_cmux.go	CmuxBackend.NewWindow	1	wid == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/backend/session_backend_cmux.go	CmuxBackend.NewWindow	2	surfaceID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/backend/session_backend_herdr.go	HerdrBackend.CheckAgentAlive	1	!alive	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/backend/session_backend_herdr.go	HerdrBackend.FindOrCreateWindow	1	paneID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/backend/session_backend_herdr.go	HerdrBackend.NewWindow	1	paneID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/backend/session_backend_herdr.go	HerdrBackend.protocolVersion	1	h.protocolCache < 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/backend/session_backend_orca.go	OrcaBackend.NewWindow	1	resp.ContainerID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/backend/session_backend_orca.go	OrcaBackend.NewWindow	1	resp.TerminalID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/backend/worktree.go	GetWorktreeReserved	1	strings.TrimSpace(reservationID) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/backend/worktree.go	gitWorktreeProvider.Return	1	!strings.HasPrefix(line, "gitdir: ")	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/backend/worktree.go	selectProvider	1	homeDir == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/backend/worktree.go	treehouseProvider.GetReserved	1	recovery	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/backend/worktree.go	treehouseProvider.GetReserved	1	wtPath == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/bootstrap/integration_agy.go	agyHooksDir	1	cwd == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/bootstrap/integration_claude.go	claudeSettingsPath	1	cwd == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/bootstrap/integration_codex.go	codexHooksPath	1	cwd == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/bootstrap/integration_grok.go	grokHooksDir	1	cwd == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/bootstrap/integration_integrate.go	AssertSupportedHarness	1	len(caps) == 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/bootstrap/integration_integrate.go	ExpectedTargetPath	1	cwd == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/bootstrap/integration_integrate.go	ExpectedTargetPath	1	dir == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/bootstrap/integration_integrate.go	probePiAPIs	1	!strings.Contains(out, "API probe passed")	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/bootstrap/integration_integrate.go	probePiAPIs	1	piBin == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/bootstrap/integration_integrate.go	ValidateStrict	1	!filepath.IsAbs(tp)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/bootstrap/integration_integrate.go	ValidateStrict	1	clean != filepath.Clean(tp)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/bootstrap/integration_integrate.go	ValidateStrict	1	len(m.TargetPaths) != expectedTargets	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/bootstrap/integration_integrate.go	ValidateStrict	1	m.Harness != expectedHarness	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/bootstrap/integration_integrate.go	ValidateStrict	1	m.Scope != expectedScope	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/bootstrap/integration_integrate.go	ValidateStrict	1	m.Version != expectedVersion	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/bootstrap/integration_opencode.go	OpencodeAdapter.InstallOpencodePlugins	1	content == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/bootstrap/integration_opencode.go	opencodePluginsDir	1	cwd == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/bootstrap/integration_pi.go	PiAdapter.InstallPiExtension	1	!FileContainsOwnershipMarker(targetPath)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/bootstrap/integration_pi.go	PiAdapter.InstallPiExtension	1	extDir == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/captain_activation.go	ensureCaptainReadyWithWait	1	recoverCaptain == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/captain_cmd.go	newCaptainCmd	1	res.Outcome.IsFailure()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/captain_cmd.go	newCaptainCmd	1	target == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/captain_endpoints.go	sessionLaunchEndpoint.Cleanup	1	result.Backend == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/captain_endpoints.go	sessionLaunchEndpoint.Launch	1	req.Backend == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/config_cmd.go	newConfigCmd	1	!strings.HasPrefix(strings.TrimSpace(value), "#")	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/config_dispatch_cmd.go	newConfigDispatchAddCmd	1	hName == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/config_dispatch_cmd.go	newConfigDispatchAddCmd	1	idx >= 0 && !replace	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/config_dispatch_cmd.go	newConfigDispatchAddCmd	1	len(match) == 0 && when == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/config_dispatch_cmd.go	newConfigDispatchAddCmd	1	name == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/config_dispatch_cmd.go	newConfigDispatchRmCmd	1	!found	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/contract_commands.go	newTaskObserveCmd	1	full	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/contract.go	contractOutput	1	output != OutputTOON && output != OutputJSON	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/decisionhold_cmd.go	newDecisionHoldCompleteCmd	1	len(keys) == 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/decisionhold_cmd.go	newDecisionHoldCompleteCmd	1	len(keys) > 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/decisionhold_cmd.go	newDecisionHoldHoldCmd	1	from == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/decisionhold_cmd.go	newDecisionHoldHoldCmd	1	reason == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/decisionhold_cmd.go	newDecisionHoldResolveCmd	1	answer == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/decisionhold_cmd.go	newDecisionHoldResolveCmd	1	from == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/delivery_cmd.go	buildDeliverRequest	1	agg.Worktree == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/doctor_cmd.go	newDoctorCmd	1	exitCode != 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/doctor_cmd.go	runCheckInstructions	1	mismatches > 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/event_cmd.go	newEventAppendCmd	1	eventType == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/fleet_contract.go	runFleetSnapshotV2	1	full	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/fleet_contract.go	runFleetSnapshotV2	1	version != 2	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/mailbox_sender.go	sessionMailboxSender.backend	1	home == "" || meta["backend"] == "" || meta["window"] == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/ready_cmd.go	newReadyCmd	1	homeDir == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/ready_cmd.go	newReadyCmd	1	taskID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/report_cmd.go	enforceScoutReportBudget	1	agg.LaunchEvidence.SubmittedAt <= 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/report_cmd.go	newReportCmdWithNotifier	1	!home.IsValidStatusState(state)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/report_cmd.go	newReportCmdWithNotifier	1	homeDir == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/report_cmd.go	newReportCmdWithNotifier	1	parentHome == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/report_cmd.go	newReportCmdWithNotifier	1	taskID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/root.go	MaximumNArgs	1	len(args) > n	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/root.go	MinimumNArgs	1	len(args) < n	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/root.go	NoArgs	1	len(args) > 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/selfupdate_update.go	updateIn	1	!strings.HasPrefix(content, "gitdir: ")	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/session_cmd.go	newAfkDrainCmd	1	consumer == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/session_cmd.go	newAfkReturnCmd	1	!orchestrator.IsClean(ctx.Home)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/session_cmd.go	newBriefCmd	1	agg.Definition.Kind != "scout"	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/session_cmd.go	newWatchArmCmd	1	result.Status != "success"	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/skill_cmd.go	newSkillShowCmd	1	os.Getenv("MUNSU_ROLE") == "soldier" && fleet.SoldierSkillDenied[name]	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/skills_validate.go	resolveBundleReference	1	strings.HasPrefix(ref, "/")	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/soldier_endpoints.go	sessionSoldierEndpoints.backend	1	home == "" || meta["window"] == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/spawn_cmd.go	newPeekCmdWithCapture	1	!ok	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/spawn_cmd.go	newPeekCmdWithCapture	1	capture == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/spawn_cmd.go	newPromoteCmd	1	agg.Definition.Kind != "scout"	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/spawn_cmd.go	newSendCmd	1	captainHome == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/spawn_cmd.go	newSendCmd	1	id == "general"	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/spawn_endpoints.go	spawnSessionEndpoints.backend	1	!ok	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/task_authority_reads.go	resolveCurrentTaskID	1	len(owners) > 1	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/task_cmd.go	newTaskCleanupAbortCmd	1	agg.CleanupClaim == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/task_cmd.go	newTaskCleanupAbortCmd	1	agg.CleanupClaim.Status == taskauthority.CleanupCompleted	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/teardown_backend.go	sessionBoundTeardown.Dispose	1	!ok	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/teardown_backend.go	sessionBoundTeardown.Dispose	1	name != "herdr" || req.WorkspaceID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/teardown_backend.go	sessionBoundTeardown.Dispose	1	req.Home != home || req.Backend != meta["backend"] || req.Handle != meta["window"] || req.SessionOwner != meta["herdr_session"] || req.WorkspaceID != meta["herdr_workspace_id"] || req.TabID != meta["herdr_tab_id"]	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/teardown_backend.go	sessionBoundTeardown.resolveBound	1	home == "" || meta["backend"] == "" || meta["window"] == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/teardown_backend.go	sessionBoundTeardown.resolveBound	1	hs != "" && hs != meta["herdr_session"]	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/teardown_backend.go	sessionBoundTeardown.resolveBound	1	name != meta["backend"]	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/wake_cmd.go	newWakeCmd	1	consumer == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/wake_cmd.go	newWakeCmd	1	len(args) < 2	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/config/documents.go	finalResolvedOverlay	1	facts.Name == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/config/documents.go	finalResolvedOverlay	1	facts.Path == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/config/published_snapshot.go	PublishedSnapshotDocument.Validate	1	d.Config.Digest == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/config/published_snapshot.go	PublishedSnapshotDocument.Validate	1	d.Config.Project == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/config/published_snapshot.go	PublishedSnapshotDocument.Validate	1	d.Config.ProjectPath == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/domain/domain.go	IdentityFromMeta	1	meta[key] != ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/domain/domain.go	IdentityFromMeta	1	metaProvider != "" && metaProvider != urlProvider	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/domain/domain.go	IdentityFromMeta	1	num > 0 && num != parsedNum	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/domain/domain.go	IdentityFromMeta	1	other != "" && other != baseRef	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/domain/domain.go	IdentityFromMeta	1	other != "" && other != headSHA	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/domain/domain.go	IdentityFromMeta	1	owner != "" && owner != parsedOwner	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/domain/domain.go	IdentityFromMeta	1	repo != "" && repo != parsedRepo	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/domain/ghurl_ghurl.go	ParseGHURL	1	owner == "" || repo == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/domain/glurl_glurl.go	ParseMRURL	1	afterMRSegment != trimmedIID	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/domain/glurl_glurl.go	ParseMRURL	1	iidStr == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/domain/glurl_glurl.go	ParseMRURL	1	len(nsParts) < 1	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/domain/glurl_glurl.go	ParseMRURL	1	namespacePath == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/domain/glurl_glurl.go	ParseMRURL	1	project == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/domain/glurl_glurl.go	ParseMRURL	1	u.Opaque != ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_captain.go	buildLaunchArgs	1	!contract.CwdAtHome || (!contract.PromptArg && adapter.Name != "pi")	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_captain.go	buildLaunchArgs	1	contract.ProjectArg	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_captain.go	checkAliveWithProbe	1	probe == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_captain.go	Converge	1	len(registered) > 0 && caps.Notification == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_captain.go	ensureCaptainIntegration	1	integration == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_captain.go	Launch	1	endpoint == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_captain.go	preflightConfigPushDestinations	1	!isSafeConfigPath(parentHomeDst, parentHome, captainHome)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_captain.go	publishResolvedSnapshot	1	canonRegistered != canonCaptain	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_captain.go	publishResolvedSnapshot	1	projectID == (domain.ProjectID{})	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_captain.go	Register	1	id == "" || homePath == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_captain.go	requireHealthyPiIntegration	1	integration == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_captain.go	safeFF	1	len(remoteRefParts) < 4 || remoteRefParts[0] != "refs" || remoteRefParts[1] != "remotes" || remoteRefParts[2] != "origin"	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_captain.go	safeFF	1	mergeBase != before	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_captain.go	safeFF	1	normalizeGitRemote(parentRemote) != normalizeGitRemote(smRemote)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_captain.go	SeedCaptain	1	parentHome == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_captain.go	sendNudge	1	!result.Acknowledged	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_captain.go	sendNudge	1	endpoint == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_captain.go	sendNudge	1	marker["commit"] == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_captain.go	sendNudge	1	marker["id"] != sm.ID	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_captain.go	sendNudge	1	marker["instructions"] != expectedDigest	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_captain.go	sendNudge	1	marker["message"] != expectedMessage	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_captain.go	sendNudge	1	meta["home"] != canonSM	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_captain.go	sendNudge	1	meta["kind"] != "captain"	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_captain.go	sendNudge	1	meta["sm_id"] != sm.ID	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_captain.go	sendNudge	1	windowID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_captain.go	Unregister	1	id == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_captain.go	Validate	1	!fi.IsDir()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_captain.go	validateStructure	1	!fi.IsDir()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_configreread.go	EnsureConfigRereadRequirement	1	sender == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_mailbox.go	resendNotification	1	!result.Acknowledged	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_mailbox.go	resendNotification	1	sender == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_mailbox.go	resendNotification	1	windowID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_seed_worktree.go	isManagedWorktree	1	!fi.IsDir()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_seed_worktree.go	MigrateCaptainToWorktree	1	opts.Integration == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_seed_worktree.go	migrateToWorktree	1	integration == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_seed_worktree.go	repairWorktreeAdminPath	1	!strings.HasPrefix(line, "gitdir: ")	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_seed_worktree.go	repairWorktreeAdminPath	1	worktreeName == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_seed_worktree.go	resolveDefaultBranch	1	len(parts) < 4 || parts[0] != "refs" || parts[1] != "remotes" || parts[2] != "origin"	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_seed_worktree.go	seedFromWorktree	1	integration == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_seed_worktree.go	worktreeCommonDir	1	!filepath.IsAbs(gitDir)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_seed_worktree.go	worktreeCommonDir	1	!strings.HasPrefix(line, "gitdir: ")	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_soldier_queue.go	EmitReadyEvent	1	homeDir == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_soldier_queue.go	EmitReadyEvent	1	taskID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_soldier_queue.go	ValidateReadyEvent	1	curKey != "" && event.Key != curKey	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_soldier_queue.go	ValidateReadyEvent	1	event == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_soldier_queue.go	ValidateReadyEvent	1	event.EndpointGeneration != gen	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_soldier_queue.go	ValidateReadyEvent	1	event.EventID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_soldier_queue.go	ValidateReadyEvent	1	event.TaskID != curTaskID	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_amend.go	fetchGitHubProviderSnapshot	1	raw.HeadRefName == "" || raw.BaseRefName == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_amend.go	fetchGitHubProviderSnapshot	1	raw.HeadRefOid == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_amend.go	fetchGitHubProviderSnapshot	1	raw.State == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_amend.go	fetchGitLabProviderSnapshot	1	raw.State == "" || raw.SHA == "" || raw.SourceBranch == "" || raw.TargetBranch == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_deliver.go	commitPinnedOutcome	1	journal.OutcomeDigest != "" && journal.OutcomeDigest != digest	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_deliver.go	commitPinnedOutcome	1	journal.OutcomeStatus == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_deliver.go	issueDeliveryAuthorization	1	journal.AuthorizeDigest != "" && journal.AuthorizeDigest != digest	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_deliver.go	prevalidateDeliveryTask	1	!agg.Current	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_deliver.go	prevalidateDeliveryTask	1	agg.Phase != taskauthority.PhaseWorking	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_deliver.go	prevalidateDeliveryTask	1	agg.Worktree == nil || agg.Endpoint == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_deliver.go	prevalidateDeliveryTask	1	cur.Authorization != nil && !isRevokedCurrency(cur)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_deliver.go	prevalidateDeliveryTask	1	deliveryOutcomeTerminal(out.Status)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_deliver.go	prevalidateDeliveryTask	1	hold.Matches(taskauthority.DispatchActionDelivery, agg.TaskID, agg.Definition.Project, agg.Generation.String(), agg.Definition.ParentTaskID)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_deliver.go	prevalidateDeliveryTask	1	strings.TrimSpace(agg.Definition.Owner) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_deliver.go	releaseDeliveryAuthorization	1	pinned != "" && pinned != digest	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_deliver.go	validateDeliverRequest	1	!p.Valid()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_deliver.go	validateDeliverRequest	1	len(req.Preconditions) == 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_deliver.go	validateDeliverRequest	1	seen[p]	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_deliver.go	verifyDeliveryCurrency	1	!equalDeliveryPreconditions(cur.Authorization.Preconditions, journal.Preconditions)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_deliver.go	verifyDeliveryCurrency	1	cur.Authorization == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_deliver.go	verifyDeliveryCurrency	1	cur.Authorization.Identity.HeadSHA != journal.Identity.HeadSHA	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_deliver.go	verifyDeliveryCurrency	1	cur.Authorization.Kind != journal.Kind	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_deliver.go	verifyDeliveryCurrency	1	cur.Authorization.OperationID != journal.AuthorizeOpID	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_github.go	classifyGitHubObservation	1	obs.State == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_github.go	ghAxiClient.CaptureIdentity	1	values["headRefOid"] == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_github.go	githubDeliveryProvider.Merge	1	p.client == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_github.go	githubDeliveryProvider.Observe	1	p.client == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_gitlab.go	gitlabDeliveryProvider.Merge	1	p.client == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_gitlab.go	gitlabDeliveryProvider.Observe	1	p.client == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_gitlab.go	glabClient.CaptureIdentity	1	result.SHA == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_gitlab.go	glabClient.CaptureIdentity	1	result.SourceBranch == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_gitlab.go	glabClient.CaptureIdentity	1	result.TargetBranch == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_journal.go	completeDeliveryJournal	1	!found	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_journal.go	readDeliveryIndex	1	id == "" || seen[id]	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_journal.go	readDeliveryIndex	1	idx.Version != deliveryIndexVersion	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_journal.go	readDeliveryJournal	1	journal.Phase != deliveryPhasePrepared && journal.Phase != deliveryPhaseCompleted	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_journal.go	readDeliveryJournal	1	journal.Version != 1 || journal.ID != id	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_journal.go	recoverPendingDeliveryJournal	1	journal.ID != id || journal.Home != h.Root()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_journal.go	recoverPendingDeliveryJournal	1	journal.Phase != deliveryPhasePrepared	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_journal.go	transitionDeliveryJournal	1	!containsString(idx.Active, journal.ID)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_journal.go	transitionDeliveryJournal	1	journal.Phase != deliveryPhasePrepared	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_mergeandretire.go	mergeAndRetireDeliveryRequest	1	ident == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_mrcheck.go	MergeStatus	1	status.Closed	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_prstatus.go	parseGLMergeStatus	1	normalizedState == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_prstatus.go	parseGLMergeStatus	1	raw.SHA == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_prstatus.go	parseGLMergeStatus	1	raw.State == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_resolve.go	ResolveTaskHome	1	homeDir == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_resolve.go	ResolveTaskHome	1	id == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_reviewdiff.go	ReviewDiff	1	!ok || projectName == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/delivery_reviewdiff.go	ReviewDiff	1	!ok || worktreePath == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/fleetsync.go	syncOne	1	defaultBranch == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/fleetsync.go	syncOne	1	len(strings.TrimSpace(string(statusOut))) > 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/propagate_config.go	ensureOrHealRequirement	1	existingEnv.Key != ConfigRereadKey	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/registry_ops.go	Registry.BindCaptain	1	req.Precondition.Generation != registryGeneration	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/registry_ops.go	Registry.RegisterCaptain	1	req.Precondition.Generation != registryGeneration	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/registry_ops.go	Registry.RegisterProject	1	req.Precondition.Generation != registryGeneration	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/registry_ops.go	Registry.RetireCaptain	1	idx < 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/registry_ops.go	Registry.RetireCaptain	1	req.Precondition.Generation != registryGeneration	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/registry_ops.go	Registry.RetireProject	1	req.Precondition.Generation != registryGeneration	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/registry_ops.go	Registry.UnbindCaptain	1	!containsCaptain(cdoc, req.CaptainID.Value())	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/registry_ops.go	Registry.UnbindCaptain	1	req.Precondition.Generation != registryGeneration	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/registry_registry.go	NewRegistry	1	h == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/registry_registry.go	Registry.prepare	1	op.Digest != want	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/registry_registry.go	requireNonEmpty	1	strings.TrimSpace(value) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/registry_registry.go	validateBindingDoc	1	b.ProjectID == "" || b.CaptainID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/registry_registry.go	validateBindingDoc	1	exists	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/registry_registry.go	validateBindingDoc	2	exists	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/registry_registry.go	validateCaptainRegistry	1	c.ID == "" || c.Home == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/registry_registry.go	validateCaptainRegistry	1	c.SchemaVersion != FleetRegistrySchema	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/registry_registry.go	validateCaptainRegistry	1	exists	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/registry_registry.go	validateProjectRegistry	1	exists	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/registry_registry.go	validateProjectRegistry	1	p.ID == "" || p.Name == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/registry_registry.go	verifyPrecondition	1	!ok	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/retirement_poll.go	ListPendingRetirements	1	rec.TaskID == "" || retirementRecordPath(homeDir, rec.TaskID) != filepath.Join(dir, entry.Name())	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/retirement_poll.go	RecoverPendingRetirement	1	!hasPublication	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/retirement_poll.go	RecoverPendingRetirement	1	currentURL != "" && currentURL != rec.URL	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/retirement_poll.go	RecoverPendingRetirement	1	rec.SchemaVersion != PollRetirementSchema	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/retirement_poll.go	removePollWithValidation	1	currentDigest != expectedDigest	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/retirement_poll.go	requireCanonicalCompletedOutcome	1	auth == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/retirement_poll.go	requireCanonicalCompletedOutcome	1	out.Status != taskauthority.DeliveryOutcomeCompleted	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/retirement_poll.go	requireRetirementIdentity	1	ident == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/retirement_poll.go	RetireMergedPoll	1	currentDigest != pollDigest	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/retirement_poll.go	RetireMergedPoll	1	status.HeadSHA == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/retirement_poll.go	ValidateCheckWithLstat	1	!fi.Mode().IsRegular()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/retirement_poll.go	ValidateRetirementPath	1	!strings.HasPrefix(absPath, absDir+string(filepath.Separator)) && absPath != absDir	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/retirement_task.go	currentOwnershipConflict	1	current.AcquiredEndpoint != nil && (current.AcquiredEndpoint.LeaseID == ev.Acquired.LeaseID || current.AcquiredEndpoint.Handle == ev.Acquired.Handle)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/retirement_task.go	currentOwnershipConflict	1	current.Endpoint != nil && (current.Endpoint.LeaseID == ev.Acquired.LeaseID || current.Endpoint.Handle == ev.Acquired.Handle)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/retirement_task.go	currentOwnershipConflict	1	ev.Endpoint != nil && current.Endpoint != nil && (current.Endpoint.LeaseID == ev.Endpoint.LeaseID || current.Endpoint.Handle == ev.Endpoint.Handle)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/retirement_task.go	currentOwnershipConflict	1	ev.Worktree != nil && current.Worktree != nil && (current.Worktree.LeaseID == ev.Worktree.LeaseID || current.Worktree.Path == ev.Worktree.Path)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/retirement_task.go	resolveRetiredCleanupEvidence	1	out.evidence.Generation != retiredGen	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/retirement_task.go	resolveRetiredCleanupEvidence	1	out.evidence.OperationID != taskRetireOperationID(taskID.Value(), retiredGen)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/retirement_task.go	resolveRetiredCleanupEvidence	1	retired.Retirement == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/retirement_task.go	retireTaskAuthoritatively	1	authority == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/retirement_task.go	retireTaskAuthoritatively	1	out.Status != taskauthority.DeliveryOutcomeCompleted	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/retirement_task.go	revalidateRetirementCleanup	1	claim == nil || claim.Status != taskauthority.CleanupActive || claim.OperationID != taskRetireOperationID(taskID.Value(), claimGen) || claim.Generation != claimGen	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/retirement_task.go	revalidateRetirementCleanup	1	cur.Retirement == nil || cur.Retirement.OperationID != ev.OperationID || cur.Retirement.Generation != ev.Generation	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/retirement_task.go	revalidateRetirementCleanup	1	ev.Acquired != nil && !sameRetiredAcquired(cur.Retirement.Acquired, ev.Acquired)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/retirement_task.go	revalidateRetirementCleanup	1	ev.Endpoint != nil && !sameRetiredEndpoint(cur.Retirement.Endpoint, ev.Endpoint)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/retirement_task.go	revalidateRetirementCleanup	1	ev.Worktree != nil && !sameRetiredWorktree(cur.Retirement.Worktree, ev.Worktree)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/retirement_task.go	revalidateRetirementCleanup	1	initial != nil && cur.Generation == initial.Generation && cur.Revision != initial.Revision	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/retirement_task.go	topologyAwareMergeCheck	1	status.MergedSHA == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/scope_scope.go	ClassifyIdentity	1	!info.IsDir()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/scope_scope.go	ClassifyIdentity	1	!isRepo	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/scope_scope.go	GateRefuseFromCWD	1	present	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/scope_scope.go	GateRefuseFromCWD	1	res.GateCap == GatePresent	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/scope_scope.go	Result.GateRefusalError	1	r == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/soldier_envelope.go	WriteEnvelope	1	env == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/soldier_launch.go	buildLaunchArtifact	1	in.LaunchBin == "" || len(in.LaunchArgs) == 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/soldier_launch.go	buildLaunchArtifact	1	in.LaunchID == "" || in.Generation == "" || in.EndpointFence == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/soldier_launch.go	BuildLaunchPrompt	1	input.HomeDir == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/soldier_launch.go	BuildLaunchPrompt	1	input.TaskKind != "scout" && (strings.TrimSpace(input.ScoutScope) != "" || input.ScoutRuntimeBudgetSecs != 0)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/soldier_launch.go	BuildLaunchPrompt	1	input.TaskKind == "scout" && (strings.TrimSpace(input.ScoutScope) == "" || input.ScoutRuntimeBudgetSecs <= 0)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/soldier_launch.go	BuildLaunchPrompt	1	input.WorktreePath == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/soldier_manifest.go	CheckLegacyBriefMigration	1	!fi.Mode().IsRegular()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/soldier_manifest.go	CheckLegacyBriefMigration	1	!isWithinWorktreeRoot(worktreePath, realPath)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/soldier_manifest.go	CheckLegacyBriefMigration	1	*manifest.LegacyBriefMigration != LegacyBriefMatchCanonicalV1	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/soldier_manifest.go	CheckLegacyBriefMigration	1	briefEntry == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/soldier_manifest.go	CheckLegacyBriefMigration	1	fi.Mode()&os.ModeSymlink != 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/soldier_manifest.go	CheckLegacyBriefMigration	1	isTrackedByGit(worktreePath, ".soldier-md")	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/soldier_manifest.go	ReadManifest	1	!fi.Mode().IsRegular()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/soldier_manifest.go	ReadManifest	1	!isWithinWorktreeRoot(worktreePath, realPath)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/soldier_manifest.go	ReadManifest	1	fi.Mode()&os.ModeSymlink != 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/soldier_manifest.go	ValidateManifest	1	cleaned != entry.Path	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/soldier_manifest.go	ValidateManifest	1	manifest == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/soldier_manifest.go	ValidateManifest	1	strings.ContainsRune(entry.Path, 0)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/soldier_manifest.go	verifyManifestEntry	1	!fi.Mode().IsRegular()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/soldier_manifest.go	verifyManifestEntry	1	!isWithinWorktreeRoot(worktreeRoot, realPath)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/soldier_manifest.go	verifyManifestEntry	1	entry.Policy != DisposalPolicyCleanable	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/soldier_manifest.go	verifyManifestEntry	1	fi.Mode()&os.ModeSymlink != 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/soldier_manifest.go	verifyManifestEntry	1	isTrackedByGit(worktreeRoot, entry.Path)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/soldier_manifest.go	verifyManifestFile	1	!fi.Mode().IsRegular()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/soldier_manifest.go	verifyManifestFile	1	!isWithinWorktreeRoot(worktreeRoot, realPath)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/soldier_manifest.go	verifyManifestFile	1	fi.Mode()&os.ModeSymlink != 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/spawn_config_snapshot.go	ResolveGeneralHomeBackend	1	base.Config.Backend == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/spawn_runner.go	Runner.acquireWorktree	1	reservationID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/spawn_runner.go	Runner.attachEndpoint	1	r.args.Authority == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/spawn_runner.go	Runner.attachEndpoint	1	r.launch != nil && (a.LeaseID != r.launch.EndpointReservationID || a.FenceToken != r.launch.EndpointFenceToken)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/spawn_runner.go	Runner.beginLaunchIntent	1	!r.projectConfigLoaded || r.projectConfig.SnapshotDigest == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/spawn_runner.go	Runner.beginLaunchIntent	1	fresh.Launch == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/spawn_runner.go	Runner.beginLaunchIntent	1	r.args.Authority == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/spawn_runner.go	Runner.beginLaunchIntent	2	agg.Phase != taskauthority.PhaseQueued	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/spawn_runner.go	Runner.bindWorktree	1	r.args.Authority == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/spawn_runner.go	Runner.checkCaptainBacklogAuthority	1	pane != ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/spawn_runner.go	Runner.confirmSpawn	1	r.launch != nil && (agg.Endpoint == nil || agg.Endpoint.LeaseID != r.launch.EndpointReservationID || agg.Endpoint.FenceToken != r.launch.EndpointFenceToken)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/spawn_runner.go	Runner.createSession	1	r.endpoints == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/spawn_runner.go	Runner.createSession	1	r.launch != nil && acquired.Backend != r.launch.Backend	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/spawn_runner.go	Runner.preflightHarness	1	result.AdapterKnown == harness.PreflightAbsent	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/spawn_runner.go	Runner.preflightHarness	1	result.AuthConfigured == harness.PreflightAbsent	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/spawn_runner.go	Runner.submitLaunch	1	agg.LaunchEvidence.LaunchID != r.launchID || agg.LaunchEvidence.CommandDigest != r.launchCommandDigest	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/spawn_runner.go	Runner.submitLaunch	1	r.args.Authority == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/spawn_runner.go	Runner.taskAggregate	1	r.args.Authority == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/spawn_runner.go	Runner.waitForHarnessReady	1	dead.Absent()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/spawn_runner.go	Runner.waitForHarnessReady	1	status.Lifecycle != LifecycleAlive && status.Lifecycle != LifecycleStarting	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/spawn_runner.go	validateAttestationReference	1	att == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/spawn_runner.go	validateAttestationReference	1	strings.TrimSpace(att.Home) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/task_handoff_transaction.go	checkHandoffHolds	1	hold.Matches(taskauthority.DispatchActionHandoff, taskID, project, generation, parentID)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/task_handoff_transaction.go	completeHandoffJournal	1	!found	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/task_handoff_transaction.go	configuredParentHome	1	strings.TrimSpace(parent) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/task_handoff_transaction.go	durableTaskHandoff	1	len(itemKeys) == 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/task_handoff_transaction.go	readHandoffIndex	1	id == "" || seen[id]	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/task_handoff_transaction.go	readHandoffIndex	1	idx.Version != handoffIndexVersion	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/task_handoff_transaction.go	readHandoffJournal	1	journal.Version != 1 || journal.ID != id	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/task_handoff_transaction.go	recoverPendingJournal	1	journal.ID != id || journal.SourceHome != h.Root()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/task_handoff_transaction.go	recoverPendingJournal	1	journal.Phase != handoffPhasePrepared	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/task_handoff_transaction.go	resolveHandoffKeys	1	seen[resolved]	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/task_handoff_transaction.go	resolveHandoffTaskID	1	len(owners) > 1	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/task_handoff_transaction.go	validateHandoffTaskID	1	taskID == "" || taskID == "." || taskID == ".." || filepath.Base(taskID) != taskID || strings.ContainsAny(taskID, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/task_handoff_transaction.go	verifyTransferReceived	1	received.Transfer == nil || received.Transfer.ReservationID != task.ReservationID	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/task_handoff_transaction.go	verifyTransferReceived	1	received.Transfer.SourceHome != sourceHomeID.Value()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/task_handoff_transaction.go	verifyTransferReceived	1	uint64(received.Transfer.SourceGeneration) != task.SourceGeneration	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/taskauthority_reads.go	canonicalCurrentStateQ.Read	1	!canonical	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/harness/dispatch.go	ResolveDispatchSelectionWithPreflight	1	result.AdapterKnown == PreflightAbsent	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/harness/dispatch.go	ResolveDispatchSelectionWithPreflight	1	result.AuthConfigured == PreflightAbsent	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/harness/dispatch.go	ResolveDispatchSelectionWithPreflight	1	result.BinaryOnPath == PreflightAbsent	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/harness/dispatch.go	SaveDispatch	1	cfg == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/canonical_lease.go	Home.AcquireLease	1	owner == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/canonical_lease.go	Lease.Release	1	rec.FenceToken != uint64(l.token)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/canonical_lease.go	Lease.Renew	1	l.released	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/canonical_lease.go	Lease.Renew	1	rec.ExpiresAtUnix <= time.Now().Unix()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/canonical_lease.go	Lease.Renew	1	rec.FenceToken != uint64(l.token)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/canonical_lease.go	Lease.Renew	1	ttl <= 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/canonical_lock_windows.go	lockScopedFile	1	ret == 0	burn-down(BEO-69): GOOS-gated, unmeasured where this baseline was generated; imported unwaived rather than left for the other platform to demand
+internal/home/canonical_lock_windows.go	unlockScopedFile	1	ret == 0	burn-down(BEO-69): GOOS-gated, unmeasured where this baseline was generated; imported unwaived rather than left for the other platform to demand
+internal/home/canonical_lock.go	Home.Lock	1	time.Now().After(deadline)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/canonical_path.go	joinContained	1	rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/canonical_path.go	privateDir	1	!info.IsDir()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/canonical_path.go	verifyNoFollow	1	parent == cur	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/canonical.go	HomeIdentity.validate	1	strings.TrimSpace(id.ID) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/canonical.go	Open	1	root == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/canonical.go	verifyLayout	1	!info.IsDir()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/captain_provenance.go	ValidateCaptainProvenance	1	actual != stored	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/captain_provenance.go	ValidateCaptainProvenance	1	id == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/captain_provenance.go	ValidateCaptainProvenance	1	len(lines) < 3	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/captain_provenance.go	ValidateCaptainProvenance	1	len(lines) > 3	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/captain_provenance.go	ValidateCaptainProvenance	1	stored == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/captain_provenance.go	ValidateCaptainProvenance	1	strings.TrimSpace(lines[0]) != CaptainProvenanceVersion	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_envelope.go	ValidateAck	1	ack.Key != env.Key	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_envelope.go	ValidateAck	1	ack.MessageID != env.MessageID	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_envelope.go	ValidateAck	1	ack.PayloadHash != env.PayloadHash	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_envelope.go	ValidateAck	1	ack.ReceiverID != env.ReceiverID	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_envelope.go	ValidateAck	1	ack.SenderIdentity != env.SenderIdentity	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_envelope.go	ValidateAck	1	ack.TaskID != env.TaskID	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_envelope.go	ValidateEnvelope	1	env.MessageID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_envelope.go	ValidateEnvelope	1	env.Payload == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_envelope.go	ValidateEnvelope	1	env.PayloadHash != PayloadHashHex(env.Payload)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_envelope.go	ValidateEnvelope	1	env.ReceiverID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_envelope.go	ValidateEnvelope	1	env.SenderIdentity == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_envelope.go	ValidatePathComponent	1	component == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_envelope.go	ValidatePathComponent	1	strings.Contains(component, ":")	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_envelope.go	ValidatePathComponent	1	strings.Contains(component, "..")	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_envelope.go	ValidatePathComponent	1	strings.Contains(component, "/")	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_envelope.go	ValidatePathComponent	1	strings.Contains(component, "\\")	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_envelope.go	ValidateProcessingAck	1	!ValidOutcome(ack.Outcome)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_envelope.go	ValidateProcessingAck	1	ack.ProcessedAt <= 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_receiver.go	NotificationRef.Validate	1	ref.MessageID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_receiver.go	NotificationRef.Validate	1	ref.SenderIdentity == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_receiver.go	ReadHomeIdentity	1	base == "" || base == "." || base == "/"	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_receiver.go	ReadHomeIdentity	1	id == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_receiver.go	ReadHomeIdentity	1	len(lines) < 2	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_receiver.go	ReadHomeIdentity	1	version != "munsu-v2"	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_receiver.go	Receiver.Ack	1	env == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_receiver.go	Receiver.Ack	1	env.PayloadHash != PayloadHashHex(env.Payload)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_receiver.go	Receiver.Ack	1	env.ReceiverID != r.identity	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_receiver.go	Receiver.Ack	1	env.SenderIdentity != ref.SenderIdentity	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_receiver.go	Receiver.Ack	1	existing != nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_receiver.go	Receiver.Ack	1	r.store.IsSuperseded(ref.SenderIdentity, ref.MessageID)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_receiver.go	Receiver.Receive	1	env == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_receiver.go	Receiver.Receive	1	env.PayloadHash != PayloadHashHex(env.Payload)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_receiver.go	Receiver.Receive	1	env.ReceiverID != r.identity	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_receiver.go	Receiver.Receive	1	env.SenderIdentity != ref.SenderIdentity	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_receiver.go	Receiver.Receive	1	r.store.IsSuperseded(ref.SenderIdentity, ref.MessageID)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_receiver.go	WriteHomeIdentity	1	!ValidRank(rank)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_receiver.go	WriteHomeIdentity	1	identity == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_store.go	RemoveSenderPending	1	ack == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_store.go	Store.RemovePendingAfterAck	1	ack == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_store.go	Store.WriteAck	1	!ValidOutcome(ack.Outcome)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/mailbox_store.go	Store.WriteAck	1	ack.ProcessedAt <= 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/taskmeta_lock_windows.go	lockExclusive	1	ret == 0	burn-down(BEO-69): GOOS-gated, unmeasured where this baseline was generated; imported unwaived rather than left for the other platform to demand
+internal/home/taskmeta_lock_windows.go	unlockFile	1	ret == 0	burn-down(BEO-69): GOOS-gated, unmeasured where this baseline was generated; imported unwaived rather than left for the other platform to demand
+internal/home/wake_lease.go	AckWakes	1	!scanner.Scan()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/wake_resolve.go	leaseContainsEvent	1	!scanner.Scan()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/watcher_lease.go	ClaimWatcherLease	1	isProcessAlive(existing.PID)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/watcher_lock_windows.go	lockWatcherFile	1	ret == 0	burn-down(BEO-69): GOOS-gated, unmeasured where this baseline was generated; imported unwaived rather than left for the other platform to demand
+internal/home/watcher_lock_windows.go	unlockWatcherFile	1	ret == 0	burn-down(BEO-69): GOOS-gated, unmeasured where this baseline was generated; imported unwaived rather than left for the other platform to demand
+internal/home/writer_identity.go	validateWriterIdentity	1	identity.Kind != kind	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/home/writer_identity.go	validateWriterIdentity	1	identity.SchemaVersion != 1	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/orchestrator/afk_circuit.go	CircuitStore.Save	1	c == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/orchestrator/afk_daemon.go	Daemon.Start	1	!acquired	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/orchestrator/afk_process_identity_darwin.go	processIdentity	1	end <= 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/orchestrator/afk_process_identity_darwin.go	processIdentity	1	len(raw) <= 4	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/orchestrator/afk_process_identity_linux.go	processIdentity	1	end < 0	burn-down(BEO-69): GOOS-gated, unmeasured where this baseline was generated; imported unwaived rather than left for the other platform to demand
+internal/orchestrator/afk_process_identity_linux.go	processIdentity	1	len(fields) <= 19	burn-down(BEO-69): GOOS-gated, unmeasured where this baseline was generated; imported unwaived rather than left for the other platform to demand
+internal/orchestrator/afk_return.go	Return	1	isProcessAlive(daemonPID)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/orchestrator/afk_target.go	ValidateTargetOwnership	1	result == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/orchestrator/retirement_journal.go	VerifyRetirementContinuity	1	HasPendingReport(homeDir, taskID) || HasAnyOpenReport(homeDir, taskID)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/orchestrator/supervision_check.go	ValidateCheck	1	fi.Mode()&os.ModeSymlink != 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/orchestrator/supervision_watcher.go	run	1	!acquired	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/orchestrator/supervision_watcher.go	run	1	!claimed	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/orchestrator/supervision_watcher.go	stopRunningWatcher	1	!ValidatePIDOwnership(homeDir, pid)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/orchestrator/uplink_uplink.go	Recover	1	ack.Outcome != OutcomeAccepted	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/orchestrator/uplink_uplink.go	Report	1	!materialStates[req.State]	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/orchestrator/uplink_uplink.go	Report	1	req.SenderHome == "" || req.ReceiverHome == "" || req.SenderIdentity == "" || req.ReceiverID == "" || req.TaskID == "" || req.Message == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/orchestrator/uplink_uplink.go	resolveReceiverTarget	1	paneID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/orchestrator/wakedelivery_deliver.go	resolveCaptainActivationTarget	1	paneID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_binding.go	Canonical.BindEndpoint	1	cur.Endpoint != nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_binding.go	Canonical.BindEndpoint	1	strings.TrimSpace(cur.Definition.Owner) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_cleanup.go	Canonical.AbortCleanup	1	claim == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_cleanup.go	Canonical.AbortCleanup	1	claim.OperationID != req.ClaimOperationID || claim.Generation != req.ClaimGeneration	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_cleanup.go	Canonical.BeginCleanup	1	claim.OperationID != req.ClaimOperationID || claim.Generation != req.ClaimGeneration	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_cleanup.go	Canonical.BeginCleanup	1	cur.Retirement == nil || cur.Retirement.OperationID != req.ClaimOperationID || cur.Retirement.Generation != req.ClaimGeneration	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_cleanup.go	Canonical.CompleteCleanup	1	claim.OperationID != req.ClaimOperationID || claim.Generation != req.ClaimGeneration	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	Canonical.AuthorizeDelivery	1	!ok	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	Canonical.AuthorizeDelivery	1	strings.TrimSpace(cur.Definition.Owner) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	Canonical.CommitDeliveryOutcome	1	!ok	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	Canonical.CommitDeliveryOutcome	1	req.HeadSHA != "" && !safeSHAValue(req.HeadSHA)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	Canonical.CommitDeliveryOutcome	2	!ok	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	Canonical.DeliveryAuthorizationByOperation	1	!safeIdentityValue(operationID)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	Canonical.DeliveryCurrency	1	!ok	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	Canonical.DeliveryOutcome	1	!ok	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	Canonical.DeliveryOutcome	1	index.OutcomeOpID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	Canonical.DeliveryOutcomeByOperation	1	!ok	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	Canonical.DeliveryRevocationByOperation	1	!ok	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	Canonical.DeliveryRevocationByOperation	1	!safeIdentityValue(operationID)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	Canonical.deliveryRevoked	1	!ok	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	Canonical.mutateDelivery	1	!exists	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	Canonical.readDeliveryOutcome	1	out.TaskID != taskID	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	Canonical.readDeliveryRevocation	1	rev.TaskID != taskID	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	Canonical.RevokeDeliveryAuthorization	1	!ok	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	Canonical.RevokeDeliveryAuthorization	1	index.AuthorizationOpID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	Canonical.RevokeDeliveryAuthorization	1	strings.TrimSpace(req.Reason) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorization	1	!a.Kind.Valid()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorization	1	!a.Phase.Valid() || a.Phase != PhaseWorking	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorization	1	!domain.IsSHA256(a.BindingDigest)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorization	1	!domain.IsSHA256(a.Digest)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorization	1	!domain.IsSHA256(a.HoldsDigest)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorization	1	!p.Valid()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorization	1	!safeSHAValue(a.Identity.HeadSHA)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorization	1	a.ExpectedState != nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorization	1	a.ExpectedState == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorization	1	a.IssuedAt <= 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorization	1	a.OperationID == "" || strings.ContainsAny(a.OperationID, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorization	1	a.Revision == 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorization	1	a.SchemaVersion != TaskAuthoritySchema	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorization	1	a.TaskID == "" || strings.ContainsAny(a.TaskID, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorization	1	len(a.Preconditions) == 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorization	1	seen[p]	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorization	1	strings.TrimSpace(a.Owner) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorizationRequest	1	!p.Valid()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorizationRequest	1	!safeSHAValue(req.Identity.HeadSHA)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryExpectedState	1	es.Ref == "" || es.Ref != strings.TrimSpace(es.Ref) || strings.ContainsAny(es.Ref, `\\`) || strings.ContainsAny(es.Ref, " \t\n\r") || es.Ref == "." || es.Ref == ".."	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryIndex	1	index.AuthorizationOpID != "" && !safeIdentityValue(index.AuthorizationOpID)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryIndex	1	index.OutcomeOpID != "" && !safeIdentityValue(index.OutcomeOpID)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryIndex	1	index.OutcomeOpID != "" && index.AuthorizationOpID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryIndex	1	index.RevocationOpID != "" && !safeIdentityValue(index.RevocationOpID)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryIndex	1	index.RevocationOpID != "" && index.AuthorizationOpID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryIndex	1	index.TaskID == "" || strings.ContainsAny(index.TaskID, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryOutcome	1	!domain.IsSHA256(o.Digest)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryOutcome	1	!o.Status.Valid()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryOutcome	1	o.AuthorizationOperationID == "" || strings.ContainsAny(o.AuthorizationOperationID, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryOutcome	1	o.CommittedAt <= 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryOutcome	1	o.HeadSHA != "" && !safeSHAValue(o.HeadSHA)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryOutcome	1	o.MergedSHA != "" && !safeSHAValue(o.MergedSHA)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryOutcome	1	o.OperationID == "" || strings.ContainsAny(o.OperationID, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryOutcome	1	o.SchemaVersion != TaskAuthoritySchema	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryOutcome	1	o.TaskID == "" || strings.ContainsAny(o.TaskID, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryOutcome	1	strings.TrimSpace(o.Detail) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryRevocation	1	!domain.IsSHA256(r.Digest)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryRevocation	1	r.AuthorizationOperationID == "" || strings.ContainsAny(r.AuthorizationOperationID, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryRevocation	1	r.OperationID == "" || strings.ContainsAny(r.OperationID, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryRevocation	1	r.RevokedAt <= 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryRevocation	1	r.SchemaVersion != TaskAuthoritySchema	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryRevocation	1	r.TaskID == "" || strings.ContainsAny(r.TaskID, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_delivery.go	validateDeliveryRevocation	1	strings.TrimSpace(r.Reason) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_launch.go	Canonical.AttachEndpoint	1	cur.Phase != PhaseQueued	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_launch.go	Canonical.AttachEndpoint	1	req.Incarnation == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_launch.go	Canonical.BeginSpawn	1	strings.TrimSpace(cur.Definition.Owner) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_launch.go	Canonical.RecordLaunch	1	cur.Launch == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_launch.go	Canonical.RecordLaunch	1	cur.Phase != PhaseQueued	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_launch.go	validateAttachEndpointRequest	1	strings.TrimSpace(req.Backend) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_launch.go	validateAttachEndpointRequest	1	strings.TrimSpace(req.FenceToken) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_launch.go	validateAttachEndpointRequest	1	strings.TrimSpace(req.Handle) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_launch.go	validateAttachEndpointRequest	1	strings.TrimSpace(req.LeaseID) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_launch.go	validateRecordLaunchRequest	1	!domain.IsSHA256(req.CommandDigest)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_launch.go	validateRecordLaunchRequest	1	req.LaunchID == "" || strings.ContainsAny(req.LaunchID, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_ops.go	Canonical.AddHold	1	doc.Hold.ReleasedAt != 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_ops.go	Canonical.AddHold	1	len(req.Actions) == 0 || strings.TrimSpace(req.Reason) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_ops.go	Canonical.AddHold	1	req.HoldID == "" || strings.ContainsAny(req.HoldID, `/\\.`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_ops.go	Canonical.Block	1	cur.Phase != PhaseQueued && cur.Phase != PhaseWorking	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_ops.go	Canonical.Complete	1	cur.Phase.terminal()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_ops.go	Canonical.Complete	1	req.To != PhaseDone && req.To != PhaseResolved	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_ops.go	Canonical.Create	1	strings.TrimSpace(req.Owner) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_ops.go	Canonical.GetGeneration	1	!exists	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_ops.go	Canonical.ReleaseHold	1	req.HoldID == "" || strings.ContainsAny(req.HoldID, `/\\.`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_ops.go	Canonical.Reopen	1	!cur.Phase.terminal()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_ops.go	Canonical.Reopen	1	!exists	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_ops.go	Canonical.Start	1	cur.Phase != PhaseQueued	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_promote.go	Canonical.Promote	1	req.CurrentKind != "scout" || req.TargetKind != "ship"	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_retirement.go	Canonical.Retire	1	cur.Phase == PhaseRetired	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_transfer.go	Canonical.ActivateTransfer	1	!exists	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_transfer.go	Canonical.CommitTransfer	1	req.Evidence.ReservationID != req.ReservationID	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_transfer.go	Canonical.CommitTransfer	1	req.Evidence.SourceGeneration != cur.Generation	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_transfer.go	Canonical.CommitTransfer	1	req.Evidence.SourceHome != c.homeID.Value()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_transfer.go	Canonical.CommitTransfer	1	req.Evidence.TaskID != req.TaskID.Value()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_transfer.go	Canonical.ReceiveTransfer	1	strings.TrimSpace(req.Definition.Owner) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical_transfer.go	validateReservationID	1	id == "" || strings.ContainsAny(id, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical.go	Canonical.prepare	1	op.Digest != want	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical.go	NewCanonical	1	h == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/canonical.go	verifyPrecondition	1	!ok	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/dispatch.go	validateHold	1	h.ID == "" || strings.ContainsAny(h.ID, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/dispatch.go	validateHold	1	h.SchemaVersion != TaskAuthoritySchema	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/dispatch.go	validateHold	1	len(h.Actions) == 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/dispatch.go	validateHold	1	strings.TrimSpace(h.Reason) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/model.go	validateAcquiredEndpoint	1	strings.ContainsAny(v, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/model.go	validateAggregate	1	agg.Revision == 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/model.go	validateCleanupClaim	1	claim.ClaimedAt <= 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/model.go	validateCleanupClaim	1	claim.OperationID == "" || strings.ContainsAny(claim.OperationID, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/model.go	validateEndpointBinding	1	binding.BoundAtUnix <= 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/model.go	validateEndpointBinding	1	strings.TrimSpace(binding.Backend) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/model.go	validateEndpointBinding	1	strings.TrimSpace(binding.FenceToken) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/model.go	validateEndpointBinding	1	strings.TrimSpace(binding.Handle) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/model.go	validateEndpointBinding	1	strings.TrimSpace(binding.Incarnation) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/model.go	validateEndpointBinding	1	strings.TrimSpace(binding.LeaseID) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/model.go	validateLaunchIdentity	1	endpointFenceToken == "" || strings.ContainsAny(endpointFenceToken, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/model.go	validateLaunchIdentity	1	endpointReservationID == "" || strings.ContainsAny(endpointReservationID, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/model.go	validateLaunchIdentity	1	launchID == "" || strings.ContainsAny(launchID, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/model.go	validateLaunchIdentity	1	strings.ContainsAny(v, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/model.go	validateLaunchIdentity	1	strings.TrimSpace(endpointIncarnation) == "" || strings.ContainsAny(endpointIncarnation, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/model.go	validateLaunchIdentity	1	strings.TrimSpace(harness) == "" || strings.ContainsAny(harness, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/model.go	validateLaunchIdentity	1	worktreeReservationID == "" || strings.ContainsAny(worktreeReservationID, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/model.go	validateLaunchIntent	1	l.OperationID == "" || strings.ContainsAny(l.OperationID, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/model.go	validateLaunchIntent	1	l.PlannedAt <= 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/model.go	validateRetirementEvidence	1	ev.OperationID == "" || strings.ContainsAny(ev.OperationID, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/model.go	validateRetirementEvidence	1	ev.RetiredAt <= 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/model.go	validateScoutContract	1	strings.TrimSpace(def.ScoutScope) != "" || def.ScoutRuntimeBudgetSecs != 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/model.go	validateTransferActivation	1	!domain.IsSHA256(a.ActivationDigest)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/model.go	validateTransferActivation	1	strings.ContainsAny(v, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/model.go	validateTransferState	1	ts.DestinationHome != "" && strings.ContainsAny(ts.DestinationHome, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/model.go	validateTransferState	1	ts.ReservationID == "" || strings.ContainsAny(ts.ReservationID, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/model.go	validateTransferState	1	ts.SourceHome != "" && strings.ContainsAny(ts.SourceHome, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/model.go	validateWorktreeBinding	1	binding.BoundAtUnix <= 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/model.go	validateWorktreeBinding	1	strings.TrimSpace(binding.CommonDir) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/model.go	validateWorktreeBinding	1	strings.TrimSpace(binding.FenceToken) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/model.go	validateWorktreeBinding	1	strings.TrimSpace(binding.GitDir) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/model.go	validateWorktreeBinding	1	strings.TrimSpace(binding.Head) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/model.go	validateWorktreeBinding	1	strings.TrimSpace(binding.Path) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/taskauthority/model.go	validateWorktreeBinding	1	strings.TrimSpace(binding.RepositoryIdentity) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged

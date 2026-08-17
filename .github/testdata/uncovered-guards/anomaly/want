@@ -1,0 +1,5 @@
+::error::a refusal site sits in a file the lanes compiled, yet its block start matches no counter:
+  internal/fake/guard.go: Refuse (#1) moved != here -- expected a block at 99.7
+  go/ast and cmd/cover disagree about where an if-body opens, so every verdict below is unsafe.
+  Fix .github/scripts/guardsites/main.go before trusting this lane again.
+exit 1

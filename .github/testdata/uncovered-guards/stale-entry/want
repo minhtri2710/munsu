@@ -1,0 +1,5 @@
+::warning file=internal/fake/gated_linux.go::no lane compiles this file on this platform, so its refusal branches are outside the lane in both directions
+::error::.github/testdata/uncovered-guards/stale-entry/baseline entries that match no refusal branch in the tree:
+  internal/fake/deleted.go: Gone (#1): if x != y
+  Each was deleted or rewritten -- both are fine. Drop the line.
+exit 1
