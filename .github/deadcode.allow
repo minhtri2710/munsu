@@ -34,10 +34,6 @@
 # `announce_open_bugs` runs on every `check`, so every line below is reprinted
 # as a warning until its issue closes. An empty section is the intended resting
 # state; it is not empty right now.
-internal/orchestrator/wakedelivery_deliver.go	ReconcilePending	OPEN-BUG(BEO-112): captain-side relay of soldier terminal receipts. #417 deleted its only call site (ReconcileCaptainHook) as "legacy read compatibility", but DeliverWake still writes those receipts today (wakedelivery_deliver.go:143) and only self-acks when the parent is NOT a captain home. Nothing else writes the ack.
-internal/orchestrator/wakedelivery_deliver.go	ReconcileResult.Failed	OPEN-BUG(BEO-112): outcome tally of the unwired relay sweep; reachable only once ReconcilePending is wired back.
-internal/orchestrator/wakedelivery_deliver.go	ReconcileResult.Relayed	OPEN-BUG(BEO-112): outcome tally of the unwired relay sweep; reachable only once ReconcilePending is wired back.
-internal/orchestrator/wakedelivery_deliver.go	reconcileOne	OPEN-BUG(BEO-112): the per-receipt relay chain (General status -> .turnend event -> ack -> obligation close). Same hole as ReconcilePending; only that dead caller reaches it.
 
 # --- Not findings: GOOS-union artifacts --------------------------------------
 # The set is the union across every GOOS, so a function reachable on one

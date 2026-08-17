@@ -225,8 +225,11 @@ integration capabilities into those operations.
 
 `internal/orchestrator` owns watcher and AFK coordination plus the wake-delivery
 module. `DeliverWake` handles Soldier-side status, receipt, event and wake
-coordination; `ReconcilePending` handles Captain-side relay, acknowledgement and
-obligation closure. Durable filesystem primitives remain behind `internal/home`
+coordination, and closes its own acknowledgement and report-relay obligation
+(ADR-0015) — there is no Captain-side relay of terminal receipts; the receipt is
+a notification artifact for the captain pane nudge, not a transport. Uplink to a
+parent goes through the mailbox path (`Report` / `Recover`) alone.
+Durable filesystem primitives remain behind `internal/home`
 and adjacent orchestrator lifecycle files.
 
 ## Task lifecycle
