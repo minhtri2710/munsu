@@ -567,37 +567,3 @@ internal/taskauthority/dispatch.go	validateHold	1	h.ID == "" || strings.Contains
 internal/taskauthority/dispatch.go	validateHold	1	h.SchemaVersion != TaskAuthoritySchema	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/taskauthority/dispatch.go	validateHold	1	len(h.Actions) == 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/taskauthority/dispatch.go	validateHold	1	strings.TrimSpace(h.Reason) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/model.go	validateAcquiredEndpoint	1	strings.ContainsAny(v, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/model.go	validateAggregate	1	agg.Revision == 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/model.go	validateCleanupClaim	1	claim.ClaimedAt <= 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/model.go	validateCleanupClaim	1	claim.OperationID == "" || strings.ContainsAny(claim.OperationID, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/model.go	validateEndpointBinding	1	binding.BoundAtUnix <= 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/model.go	validateEndpointBinding	1	strings.TrimSpace(binding.Backend) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/model.go	validateEndpointBinding	1	strings.TrimSpace(binding.FenceToken) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/model.go	validateEndpointBinding	1	strings.TrimSpace(binding.Handle) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/model.go	validateEndpointBinding	1	strings.TrimSpace(binding.Incarnation) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/model.go	validateEndpointBinding	1	strings.TrimSpace(binding.LeaseID) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/model.go	validateLaunchIdentity	1	endpointFenceToken == "" || strings.ContainsAny(endpointFenceToken, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/model.go	validateLaunchIdentity	1	endpointReservationID == "" || strings.ContainsAny(endpointReservationID, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/model.go	validateLaunchIdentity	1	launchID == "" || strings.ContainsAny(launchID, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/model.go	validateLaunchIdentity	1	strings.ContainsAny(v, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/model.go	validateLaunchIdentity	1	strings.TrimSpace(endpointIncarnation) == "" || strings.ContainsAny(endpointIncarnation, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/model.go	validateLaunchIdentity	1	strings.TrimSpace(harness) == "" || strings.ContainsAny(harness, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/model.go	validateLaunchIdentity	1	worktreeReservationID == "" || strings.ContainsAny(worktreeReservationID, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/model.go	validateLaunchIntent	1	l.OperationID == "" || strings.ContainsAny(l.OperationID, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/model.go	validateLaunchIntent	1	l.PlannedAt <= 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/model.go	validateRetirementEvidence	1	ev.OperationID == "" || strings.ContainsAny(ev.OperationID, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/model.go	validateRetirementEvidence	1	ev.RetiredAt <= 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/model.go	validateScoutContract	1	strings.TrimSpace(def.ScoutScope) != "" || def.ScoutRuntimeBudgetSecs != 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/model.go	validateTransferActivation	1	!domain.IsSHA256(a.ActivationDigest)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/model.go	validateTransferActivation	1	strings.ContainsAny(v, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/model.go	validateTransferState	1	ts.DestinationHome != "" && strings.ContainsAny(ts.DestinationHome, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/model.go	validateTransferState	1	ts.ReservationID == "" || strings.ContainsAny(ts.ReservationID, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/model.go	validateTransferState	1	ts.SourceHome != "" && strings.ContainsAny(ts.SourceHome, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/model.go	validateWorktreeBinding	1	binding.BoundAtUnix <= 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/model.go	validateWorktreeBinding	1	strings.TrimSpace(binding.CommonDir) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/model.go	validateWorktreeBinding	1	strings.TrimSpace(binding.FenceToken) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/model.go	validateWorktreeBinding	1	strings.TrimSpace(binding.GitDir) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/model.go	validateWorktreeBinding	1	strings.TrimSpace(binding.Head) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/model.go	validateWorktreeBinding	1	strings.TrimSpace(binding.Path) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/model.go	validateWorktreeBinding	1	strings.TrimSpace(binding.RepositoryIdentity) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
