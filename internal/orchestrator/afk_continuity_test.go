@@ -71,12 +71,16 @@ func TestReliablePath_EventAppendRoundTrip(t *testing.T) {
 	sid := orchestrator.SyntheticEventID()
 
 	orchestrator.AppendWithID(home, sid, "task.status", "producer", "key", "done: test")
-	records, _ := orchestrator.ReadAll(home)
-	if len(records) != 1 {
-		t.Fatalf("records = %d, want 1", len(records))
+	data, err := os.ReadFile(orchestrator.LogPath(home))
+	if err != nil {
+		t.Fatalf("reading event log: %v", err)
 	}
-	if records[0].ID != sid {
-		t.Errorf("ID = %d, want %d", records[0].ID, sid)
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("records = %d, want 1", len(lines))
+	}
+	if gotID := strings.SplitN(lines[0], "\t", 2)[0]; gotID != fmt.Sprintf("%d", sid) {
+		t.Errorf("ID = %s, want %d", gotID, sid)
 	}
 }
 

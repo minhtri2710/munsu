@@ -68,13 +68,15 @@ func TestTaskStatusAppendsAuditInputWithoutPhaseChange(t *testing.T) {
 
 	// Typed event translation stays deterministic: one status line produces
 	// one task.status event with the task as producer and the key preserved.
-	events, err := orchestrator.ReadAll(homeDir)
+	data, err := os.ReadFile(orchestrator.LogPath(homeDir))
 	if err != nil {
 		t.Fatalf("reading event log: %v", err)
 	}
-	if len(events) != 1 || events[0].Type != "task.status" || events[0].Producer != "beta" ||
-		events[0].Key != "build-1" || events[0].Payload != "working: building the thing" {
-		t.Fatalf("event log = %+v", events)
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	fields := strings.SplitN(lines[0], "\t", 6)
+	if len(lines) != 1 || len(fields) != 6 || fields[2] != "task.status" || fields[3] != "beta" ||
+		fields[4] != "build-1" || fields[5] != "working: building the thing" {
+		t.Fatalf("event log = %q", string(data))
 	}
 }
 

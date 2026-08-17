@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/domain"
@@ -18,99 +17,6 @@ type fakePaneCapture struct {
 
 func (f *fakePaneCapture) Capture(_ string, _ int) (string, error) {
 	return f.content, f.err
-}
-
-// --- ResolveTarget tests ---
-
-func TestResolveTarget_NoConfig(t *testing.T) {
-	tmp := t.TempDir()
-	handle, session, err := ResolveTarget(tmp)
-	if err != nil {
-		t.Fatalf("ResolveTarget on clean home: %v", err)
-	}
-	if handle != "" {
-		t.Errorf("ResolveTarget = %q, want empty", handle)
-	}
-	if session != "" {
-		t.Errorf("session = %q, want empty", session)
-	}
-}
-
-func TestResolveTarget_FromConfig(t *testing.T) {
-	tmp := t.TempDir()
-	configDir := filepath.Join(tmp, "config")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	paneHandle := "my-session:my-pane-id"
-	if err := os.WriteFile(filepath.Join(configDir, "general-pane"), []byte(paneHandle+"\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	handle, session, err := ResolveTarget(tmp)
-	if err != nil {
-		t.Fatalf("ResolveTarget: %v", err)
-	}
-	if handle != paneHandle {
-		t.Errorf("handle = %q, want %q", handle, paneHandle)
-	}
-	if session != "my-session" {
-		t.Errorf("session = %q, want my-session", session)
-	}
-}
-
-func TestResolveTarget_ConfigMissingColon(t *testing.T) {
-	tmp := t.TempDir()
-	configDir := filepath.Join(tmp, "config")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	// No colon in the pane handle — session is empty.
-	if err := os.WriteFile(filepath.Join(configDir, "general-pane"), []byte("barePane\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	handle, session, err := ResolveTarget(tmp)
-	if err != nil {
-		t.Fatalf("ResolveTarget: %v", err)
-	}
-	if handle != "barePane" {
-		t.Errorf("handle = %q, want barePane", handle)
-	}
-	if session != "" {
-		t.Errorf("session = %q, want empty", session)
-	}
-}
-
-func TestResolveTarget_ConfigEmpty(t *testing.T) {
-	tmp := t.TempDir()
-	configDir := filepath.Join(tmp, "config")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(configDir, "general-pane"), []byte("  \n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	handle, _, err := ResolveTarget(tmp)
-	if err != nil {
-		t.Fatalf("ResolveTarget: %v", err)
-	}
-	if handle != "" {
-		t.Errorf("handle = %q, want empty for whitespace-only config", handle)
-	}
-}
-
-func TestResolveTarget_ConfigError(t *testing.T) {
-	// Non-existent config directory should return empty, not error.
-	tmp := t.TempDir()
-	handle, _, err := ResolveTarget(tmp)
-	if err != nil {
-		t.Fatalf("ResolveTarget on empty home: %v", err)
-	}
-	if handle != "" {
-		t.Errorf("handle = %q, want empty", handle)
-	}
 }
 
 func TestSplitTargetHandle(t *testing.T) {

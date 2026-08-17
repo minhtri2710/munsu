@@ -33,7 +33,7 @@ func TestReportCmdMaterialSoldierUsesMailboxOnly(t *testing.T) {
 	if env, _ := orchestrator.NewStore(captainHome).ReadEnvelope("task_one", pending[0].MessageID); env == nil {
 		t.Fatal("Captain inbox should contain the Uplink Report")
 	}
-	if !orchestrator.HasOpenReport(captainHome, "task:one", "default") {
+	if !orchestrator.HasAnyOpenReport(captainHome, "task:one") {
 		t.Fatal("open evidence missing")
 	}
 }

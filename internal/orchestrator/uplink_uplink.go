@@ -172,15 +172,6 @@ func Recover(req RecoverRequest) (*RecoverResult, error) {
 	return result, nil
 }
 
-func HasOpenReport(home, taskID, key string) bool {
-	_, err := os.Stat(openEvidencePath(home, taskID, normalizedKey(key)))
-	return err == nil
-}
-func HasAcceptedReport(home, taskID, key string) bool {
-	_, err := os.Stat(acceptedEvidencePath(home, taskID, normalizedKey(key)))
-	return err == nil
-}
-
 // HasAnyOpenReport reports whether any keyed Uplink Report for taskID still
 // awaits a Processing Ack.
 func HasAnyOpenReport(home, taskID string) bool {

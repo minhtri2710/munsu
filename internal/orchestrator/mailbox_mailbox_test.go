@@ -14,6 +14,16 @@ import (
 
 // --- Envelope creation and validation ---
 
+// deliverySender is an inert BoundSender: the recovery tests below reach it
+// only on paths that must skip before any send happens.
+type deliverySender struct {
+	alive  bool
+	result BoundSendResult
+}
+
+func (s *deliverySender) Alive(string, map[string]string) (bool, error)          { return s.alive, nil }
+func (s *deliverySender) Send(string, map[string]string, string) BoundSendResult { return s.result }
+
 func TestNewMessageID_ProducesHex(t *testing.T) {
 	id, err := NewMessageID()
 	if err != nil {
@@ -1221,25 +1231,6 @@ func TestRecoverAllInboxes_EmptyDir(t *testing.T) {
 	}
 	if len(attempts) != 0 {
 		t.Errorf("expected 0 attempts, got %d", len(attempts))
-	}
-}
-
-func TestCleanRecoveryMarkers(t *testing.T) {
-	home := t.TempDir()
-	stateDir := filepath.Join(home, "state")
-	os.MkdirAll(stateDir, 0755)
-
-	os.WriteFile(filepath.Join(stateDir, ".recovered-msg1"), []byte("ok"), 0644)
-	os.WriteFile(filepath.Join(stateDir, ".recovered-msg2"), []byte("ok"), 0644)
-
-	if err := CleanRecoveryMarkers(home, 0); err != nil {
-		t.Fatalf("CleanRecoveryMarkers: %v", err)
-	}
-	entries, _ := os.ReadDir(stateDir)
-	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), ".recovered-") {
-			t.Errorf("marker %s should have been cleaned", e.Name())
-		}
 	}
 }
 

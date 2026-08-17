@@ -39,28 +39,6 @@ const (
 	EventWaitReaderFailure
 )
 
-func (o EventWaitOutcome) String() string {
-	switch o {
-	case EventWaitSignal:
-		return "signal"
-	case EventWaitTimeout:
-		return "timeout"
-	case EventWaitUnsupported:
-		return "unsupported"
-	case EventWaitUnavailable:
-		return "unavailable"
-	case EventWaitProtocolMismatch:
-		return "protocol-mismatch"
-	case EventWaitReaderFailure:
-		return "reader-failure"
-	default:
-		return "invalid"
-	}
-}
-
-// PollFallback reports whether the outcome requires falling back to polling.
-func (o EventWaitOutcome) PollFallback() bool { return o != EventWaitSignal }
-
 // ObservationEventSource is the orchestrator's narrow view of the backend
 // native event seam: it waits for a normalized signal for one exact bound
 // endpoint and owns cursor ordering via After. Wire/protocol details live in

@@ -225,15 +225,6 @@ func ClearTaskCompleted(homeDir, taskID string) error {
 	return SaveTaskObligations(homeDir, taskID, open)
 }
 
-// ClearTaskAll removes ALL obligation state for the given task.
-func ClearTaskAll(homeDir, taskID string) error {
-	err := os.Remove(taskObligationsPath(homeDir, taskID))
-	if os.IsNotExist(err) {
-		return nil
-	}
-	return err
-}
-
 // --- Durable relay receipts ---
 // Receipt: Soldier->Captain durable proof that a material terminal report
 // was sent. Stored in captain-owned state/.terminal-receipts/<taskID>.<key>.receipt
@@ -367,12 +358,6 @@ func ListPendingReceipts(homeDir string) ([]PendingReceipt, error) {
 	return pending, nil
 }
 
-// ParseTermKey extracts the terminal [key=<slug>] from a status line.
-func ParseTermKey(line string) string {
-	_, key := parseKey(line)
-	return key
-}
-
 // --- Per-role obligation persistence (backward-compatible) ---
 
 // obligationsPath returns the per-role durable obligations file path.
@@ -442,15 +427,6 @@ func ClearCompleted(homeDir string, role Role) error {
 		}
 	}
 	return SaveObligations(homeDir, role, open)
-}
-
-// ClearAll removes ALL persisted obligation state for the given role.
-func ClearAll(homeDir string, role Role) error {
-	err := os.Remove(obligationsPath(homeDir, role))
-	if os.IsNotExist(err) {
-		return nil
-	}
-	return err
 }
 
 // MaterialStates returns true if the given state is a material state that
@@ -568,27 +544,6 @@ func writeObligationsFile(p string, obligations []Obligation) error {
 // ProvenanceMarkerName is the marker file written to a seeded captain home root.
 // Duplicated from captain package to avoid import cycle.
 const ProvenanceMarkerName = ".munsu-captain-home"
-
-// parseKey extracts [key=<slug>] from a status line.
-func parseKey(line string) (string, string) {
-	startMarker := " [key="
-	idx := strings.LastIndex(line, startMarker)
-	if idx < 0 {
-		startMarker = "[key="
-		idx = strings.LastIndex(line, startMarker)
-	}
-	if idx >= 0 {
-		end := strings.Index(line[idx+len(startMarker):], "]")
-		if end >= 0 {
-			keyVal := line[idx+len(startMarker) : idx+len(startMarker)+end]
-			if keyVal != "" {
-				msg := strings.TrimSpace(line[:idx])
-				return msg, keyVal
-			}
-		}
-	}
-	return line, ""
-}
 
 // parseInt parses an int64 from a string; returns 0 on failure.
 func parseInt(s string) int64 {

@@ -19,12 +19,6 @@ type RecoveryAttempt struct {
 	Err        error
 }
 
-// RecoveryFingerprint returns a deterministic string for a recovery attempt.
-// Used to deduplicate recovery attempts (one-shot retry).
-func RecoveryFingerprint(receiverHome, senderIdentity, messageID string) string {
-	return fmt.Sprintf("recover-%s-%s-%s", filepath.Base(receiverHome), senderIdentity, messageID)
-}
-
 // RecoveryMarkerPath returns the path for a recovery fingerprint marker file.
 func RecoveryMarkerPath(receiverHome, messageID string) string {
 	safeID := strings.NewReplacer("/", "_", ":", "_", ".", "_").Replace(messageID)
@@ -123,28 +117,4 @@ func RecoverAllInboxesWithSender(sender BoundSender, receiverHome string) ([]*Re
 		}
 	}
 	return attempts, nil
-}
-
-// CleanRecoveryMarkers removes old recovery fingerprint markers.
-func CleanRecoveryMarkers(receiverHome string, maxAge time.Duration) error {
-	stateDir := filepath.Join(receiverHome, "state")
-	entries, err := os.ReadDir(stateDir)
-	if err != nil {
-		return nil
-	}
-	now := time.Now()
-	for _, e := range entries {
-		name := e.Name()
-		if !strings.HasPrefix(name, ".recovered-") {
-			continue
-		}
-		fi, err := e.Info()
-		if err != nil {
-			continue
-		}
-		if now.Sub(fi.ModTime()) > maxAge {
-			os.Remove(filepath.Join(stateDir, name))
-		}
-	}
-	return nil
 }

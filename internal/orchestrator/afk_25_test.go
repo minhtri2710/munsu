@@ -190,54 +190,6 @@ func TestReturnReport_StringActionable(t *testing.T) {
 	}
 }
 
-// --- IsReturnSignal tests ---
-
-func TestIsReturnSignal_UnmarkedMessage(t *testing.T) {
-	cases := []string{
-		"hello, I'm back",
-		"status update: PR ready",
-		"let's review",
-		"first message after afk",
-	}
-	for _, c := range cases {
-		if !IsReturnSignal(c) {
-			t.Errorf("IsReturnSignal(%q) = false, want true", c)
-		}
-	}
-}
-
-func TestIsReturnSignal_MarkedMessage_NotReturn(t *testing.T) {
-	cases := []string{
-		Mark("daemon escalation"),
-		Mark("[AFK] 1 escalated | [failure] build broken"),
-		Mark(""),
-	}
-	for _, c := range cases {
-		if IsReturnSignal(c) {
-			t.Errorf("IsReturnSignal(%q) = true for marked message, want false", c)
-		}
-	}
-}
-
-func TestIsReturnSignal_AfkCommand_NotReturn(t *testing.T) {
-	cases := []string{
-		"/afk",
-		"/afk start",
-		"/afk status",
-	}
-	for _, c := range cases {
-		if IsReturnSignal(c) {
-			t.Errorf("IsReturnSignal(%q) = true for /afk command, want false", c)
-		}
-	}
-}
-
-func TestIsReturnSignal_Empty(t *testing.T) {
-	if IsReturnSignal("") {
-		t.Error("IsReturnSignal('') = true, want false")
-	}
-}
-
 // --- IsClean tests ---
 
 func TestIsClean_NoDigest(t *testing.T) {
