@@ -306,28 +306,45 @@ func TestTriageDrainsQueue(t *testing.T) {
 
 // --- Daemon flag lifecycle test ---
 
+// waitForDaemonReady blocks until the daemon has installed its signal handler.
+// Past this point SIGTERM starts an orderly shutdown; nothing the daemon writes
+// has become visible any earlier, so tests never have to guess a readiness
+// budget out of the filesystem.
+func waitForDaemonReady(t *testing.T, ready <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-ready:
+	case <-time.After(5 * time.Second):
+		t.Fatal("daemon did not install its signal handler within 5s")
+	}
+}
+
+// waitForFile waits for path to appear. Readiness is the ready seam's job — this
+// only asserts that a file the daemon promises to write does get written, so the
+// budget can be generous without hiding anything.
+func waitForFile(t *testing.T, path string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("%s was not created within %s", path, timeout)
+}
+
 func TestDaemonSetsAndClearsFlag(t *testing.T) {
 	tmp := t.TempDir()
 
-	d := &Daemon{}
+	d := &Daemon{ready: make(chan struct{})}
 	done := make(chan error, 1)
 	go func() {
 		done <- d.Start(tmp)
 	}()
 
-	// Wait for flag to appear. Start installs the signal handler before writing
-	// the flag, so a visible flag also means SIGTERM is already caught.
-	var flagExists bool
-	for i := 0; i < 20; i++ {
-		time.Sleep(10 * time.Millisecond)
-		if _, err := os.Stat(filepath.Join(tmp, afkFlagFile)); err == nil {
-			flagExists = true
-			break
-		}
-	}
-	if !flagExists {
-		t.Fatal("consent flag was not created within 200ms")
-	}
+	waitForDaemonReady(t, d.ready)
+	waitForFile(t, filepath.Join(tmp, afkFlagFile), 5*time.Second)
 
 	// Stop the daemon through the platform process seam.
 	if err := stopProcess(os.Getpid()); err != nil {
@@ -354,40 +371,28 @@ func TestDaemonSetsAndClearsFlag(t *testing.T) {
 	}
 }
 
-// TestDaemonCatchesSignalStalledAfterConsentFlag pins the ordering invariant of
-// Daemon.Start: once the consent flag is visible, SIGTERM must start an orderly
-// shutdown rather than terminate the process.
+// TestDaemonCatchesSignalAtEarliestReadiness pins the ordering invariant of
+// Daemon.Start: the signal handler goes in before the lock, the writer identity
+// and the consent flag, so a SIGTERM landing at the earliest moment an outside
+// observer could react to has to unwind through the full shutdown path.
 //
-// The startup path between the flag write and the old signal.Notify call was all
-// filesystem work (ClearStaleArtifacts, four config reads), so a loaded machine
-// could stall there past the 10ms the lifecycle test polls at. A SIGTERM landing
-// in that window hit the default disposition and killed the whole test binary —
-// no --- FAIL line, every later test in the package silently unreported.
-// afterFlagSet widens that window deliberately; with the handler installed first
-// the width no longer matters.
-func TestDaemonCatchesSignalStalledAfterConsentFlag(t *testing.T) {
+// The window this closes was found by experiment, not by reading: with Notify
+// below AcquireLock, probing readiness with state/.lock instead of the consent
+// flag and stalling 200ms before Notify killed the whole test binary
+// (`signal: terminated`, no --- FAIL line, every later test in the package
+// silently unreported).
+func TestDaemonCatchesSignalAtEarliestReadiness(t *testing.T) {
 	tmp := t.TempDir()
 
-	const stall = 200 * time.Millisecond
-	d := &Daemon{afterFlagSet: func() { time.Sleep(stall) }}
+	d := &Daemon{ready: make(chan struct{})}
 	done := make(chan error, 1)
 	go func() {
 		done <- d.Start(tmp)
 	}()
 
-	var flagExists bool
-	for i := 0; i < 20; i++ {
-		time.Sleep(10 * time.Millisecond)
-		if _, err := os.Stat(filepath.Join(tmp, afkFlagFile)); err == nil {
-			flagExists = true
-			break
-		}
-	}
-	if !flagExists {
-		t.Fatal("consent flag was not created within 200ms")
-	}
-
-	// Signal while Start is still inside the stalled startup window.
+	// Signal the instant the handler is installed — before the daemon has
+	// written its lock, identity or flag.
+	waitForDaemonReady(t, d.ready)
 	if err := stopProcess(os.Getpid()); err != nil {
 		t.Skipf("self-termination unavailable on this platform: %v", err)
 	}
@@ -406,6 +411,38 @@ func TestDaemonCatchesSignalStalledAfterConsentFlag(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(tmp, afkFlagFile)); !os.IsNotExist(err) {
 		t.Error("consent flag still exists after daemon stop")
 	}
+	if _, err := os.Stat(filepath.Join(tmp, afkLockFile)); !os.IsNotExist(err) {
+		t.Error("lock file still exists after daemon stop")
+	}
+}
+
+// TestDaemonSignalSafeWhenLockIsTheProbe uses the reviewer's probe: state/.lock,
+// the first file the daemon writes, as the readiness signal an outside observer
+// would key on. With Notify installed before AcquireLock the lock cannot exist
+// while SIGTERM is still lethal, so signalling on it is safe.
+func TestDaemonSignalSafeWhenLockIsTheProbe(t *testing.T) {
+	tmp := t.TempDir()
+
+	d := &Daemon{}
+	done := make(chan error, 1)
+	go func() {
+		done <- d.Start(tmp)
+	}()
+
+	waitForFile(t, filepath.Join(tmp, afkLockFile), 5*time.Second)
+	if err := stopProcess(os.Getpid()); err != nil {
+		t.Skipf("self-termination unavailable on this platform: %v", err)
+	}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Daemon.Start returned error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Daemon.Start did not return within 3s after SIGTERM")
+	}
+
 	if _, err := os.Stat(filepath.Join(tmp, afkLockFile)); !os.IsNotExist(err) {
 		t.Error("lock file still exists after daemon stop")
 	}
