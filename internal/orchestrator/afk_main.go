@@ -4,11 +4,8 @@ package orchestrator
 import (
 	"fmt"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
-	"sync"
-	"syscall"
 	"time"
 )
 
@@ -16,111 +13,6 @@ const (
 	afkFlagFile  = "state/.afk"
 	pollInterval = 30 * time.Second
 )
-
-// seenSet tracks (taskID → lastLine) for deduplication across polls.
-// Reset when a line changes; skip when it repeats.
-var (
-	seenMu    sync.Mutex
-	seenLines = make(map[string]string)
-)
-
-// Start begins the afk daemon: sets the durable afk flag, then runs a
-// supervision loop that batches routine wakes and escalates general-relevant
-// events. Blocks until SIGTERM/SIGINT, then clears the flag.
-func Start(homeDir string) error {
-	// Install the handler before writing the flag: the flag is what tells the
-	// outside world the daemon is up, and a SIGTERM arriving before Notify would
-	// kill the process outright and leave the flag behind. Same ordering rule as
-	// Daemon.Start.
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
-	defer signal.Stop(sigCh)
-
-	flagPath := filepath.Join(homeDir, afkFlagFile)
-	if err := os.WriteFile(flagPath, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0644); err != nil {
-		return fmt.Errorf("setting afk flag: %w", err)
-	}
-	fmt.Println("AFK daemon started, flag set")
-
-	stopCh := make(chan struct{})
-	go runLoop(homeDir, stopCh)
-
-	<-sigCh
-	close(stopCh)
-	os.Remove(flagPath)
-	fmt.Println("AFK daemon stopped, flag cleared")
-	return nil
-}
-
-// runLoop is the main supervision loop.
-func runLoop(homeDir string, stopCh chan struct{}) {
-	ticker := time.NewTicker(pollInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-stopCh:
-			return
-		case <-ticker.C:
-			scanStatusFiles(homeDir)
-		}
-	}
-}
-
-// scanStatusFiles checks for general-relevant events in status files.
-func scanStatusFiles(homeDir string) {
-	stateDir := filepath.Join(homeDir, "state")
-	entries, err := os.ReadDir(stateDir)
-	if err != nil {
-		return
-	}
-
-	for _, entry := range entries {
-		if !strings.HasSuffix(entry.Name(), ".status") || strings.HasPrefix(entry.Name(), ".") {
-			continue
-		}
-
-		data, err := os.ReadFile(filepath.Join(stateDir, entry.Name()))
-		if err != nil {
-			continue
-		}
-
-		lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-		if len(lines) == 0 {
-			continue
-		}
-		taskID := strings.TrimSuffix(entry.Name(), ".status")
-
-		lastLine := strings.TrimSpace(lines[len(lines)-1])
-		if lastLine == "" {
-			continue
-		}
-
-		// Escalate general-relevant states with dedup and wake-queue
-		if strings.HasPrefix(lastLine, "done:") ||
-			strings.HasPrefix(lastLine, "failed:") ||
-			strings.HasPrefix(lastLine, "needs-decision:") {
-
-			seenMu.Lock()
-			prev, seen := seenLines[taskID]
-			if seen && prev == lastLine {
-				seenMu.Unlock()
-				continue
-			}
-			seenLines[taskID] = lastLine
-			seenMu.Unlock()
-
-			fmt.Printf("[AFK] %s: %s\n", entry.Name(), lastLine)
-
-			// Append to durable wake queue
-			payload := strings.TrimPrefix(lastLine, "done:")
-			payload = strings.TrimPrefix(payload, "failed:")
-			payload = strings.TrimPrefix(payload, "needs-decision:")
-			payload = strings.TrimSpace(payload)
-			_ = EnqueueWake(homeDir, "afk", taskID, payload)
-		}
-	}
-}
 
 // IsActive checks if the afk daemon is running (flag file exists).
 func IsActive(homeDir string) bool {
