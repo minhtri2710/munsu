@@ -13,7 +13,4 @@ func listWriterProcesses(string) ([]WriterProcess, error) { return nil, ErrProce
 func inspectProcess(pid int) (inspectedProcess, error) {
 	return inspectedProcess{}, fmt.Errorf("%w: PID %d", ErrProcessInventoryUnsupported, pid)
 }
-func terminateProcess(pid int) error {
-	return fmt.Errorf("%w: PID %d", ErrProcessInventoryUnsupported, pid)
-}
 func isProcessMissing(error) bool { return false }

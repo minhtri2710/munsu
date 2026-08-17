@@ -68,6 +68,24 @@ func TestAuthorizeLiveRequiresAcquisitionEvidence(t *testing.T) {
 	if live := authorizeLive(rawAlive, withEvidence); !live.Live() {
 		t.Fatalf("alive raw with acquisition evidence must be Live: %+v", live)
 	}
+	// An incomplete or non-revalidated proof never authorizes liveness, even
+	// with an acquisition receipt: the identity fields must all be present and
+	// the aggregate precondition must be current (generation/revision non-zero).
+	for _, proof := range []exactEndpointProof{
+		{acquired: true}, // empty identity
+		{backend: "tmux", handle: "p", acquired: true},                                                      // no incarnation/lease/fence
+		{backend: "tmux", handle: "p", incarnation: "inc-1", acquired: true},                                // no lease/fence
+		{backend: "tmux", handle: "p", incarnation: "inc-1", leaseID: "l", acquired: true},                  // no fence
+		{backend: "tmux", handle: "p", incarnation: "inc-1", leaseID: "l", fenceToken: "f", acquired: true}, // no generation/revision
+	} {
+		obs := authorizeLive(rawAlive, proof)
+		if obs.Live() || obs.Absent() {
+			t.Fatalf("incomplete/stale proof must not authorize liveness: proof=%+v obs=%+v", proof, obs)
+		}
+		if obs.Freshness != FreshnessStale || obs.Lifecycle != LifecycleUnknown {
+			t.Fatalf("incomplete/stale proof must demote to unknown/stale: proof=%+v obs=%+v", proof, obs)
+		}
+	}
 	// A non-alive raw (starting/unknown/stale) with full evidence still fails
 	// closed: positive liveness requires an alive/responsive reading.
 	for _, raw := range []backend.EndpointObservation{

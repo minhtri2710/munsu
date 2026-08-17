@@ -38,51 +38,6 @@ func TestDurableArtifactScannerRejectsCorruptIdentity(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
-func TestNoEndpointDrainerFailsClosedForEndpoint(t *testing.T) {
-	if err := (NoEndpointDrainer{}).Drain(WriterProcess{Kind: "watcher", Endpoint: "pane"}); err == nil {
-		t.Fatal("expected error")
-	}
-}
-func TestRetireArtifactPreservesReplacementGeneration(t *testing.T) {
-	h := t.TempDir()
-	canonical, err := home.CanonicalPath(h)
-	if err != nil {
-		t.Fatal(err)
-	}
-	old := home.WriterIdentity{SchemaVersion: 1, Kind: "watcher", PID: 42, StartToken: "old", ExecutablePath: "/bin/munsu", CanonicalHome: canonical}
-	if err := home.PublishWriterIdentity(h, "watcher", old); err != nil {
-		t.Fatal(err)
-	}
-	newer := old
-	newer.StartToken = "new"
-	if err := home.PublishWriterIdentity(h, "watcher", newer); err != nil {
-		t.Fatal(err)
-	}
-	artifact := WriterArtifact{Path: home.WriterIdentityPath(canonical, "watcher"), Kind: "watcher", PID: old.PID, StartToken: StartToken(old.StartToken), ExecutablePath: old.ExecutablePath, CanonicalHome: canonical}
-	if err := (OSProcessController{}).RetireArtifact(artifact); err == nil {
-		t.Fatal("expected generation mismatch")
-	}
-	got, err := home.ReadWriterIdentity(h, "watcher")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.StartToken != "new" {
-		t.Fatalf("got=%+v", got)
-	}
-}
-
-func TestRetireArtifactRejectsUnexpectedPath(t *testing.T) {
-	h := t.TempDir()
-	canonical, err := home.CanonicalPath(h)
-	if err != nil {
-		t.Fatal(err)
-	}
-	artifact := WriterArtifact{Path: h + "/state/other", Kind: "watcher", PID: 42, StartToken: "old", ExecutablePath: "/bin/munsu", CanonicalHome: canonical}
-	if err := (OSProcessController{}).RetireArtifact(artifact); err == nil {
-		t.Fatal("expected path error")
-	}
-}
-
 func TestWriterKindForArgsParsesHomeFormsAndCanonicalAliases(t *testing.T) {
 	h := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(h, "data"), 0700); err != nil {
