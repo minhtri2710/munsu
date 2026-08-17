@@ -31,22 +31,6 @@ const LaunchScriptName = ".soldier-launch.sh"
 // ManifestName is the versioned launch artifact manifest file name.
 const ManifestName = ".soldier-manifest.json"
 
-// LaunchArtifactNames returns the exact set of known munsu-owned runtime launch
-// artifact filenames. These are written by spawn/launch and are lifecycle-owned:
-// they may be cleaned during normal (non-force) teardown without being considered
-// untracked dirt. Only files in this exact set are eligible for the allowlist;
-// arbitrary untracked files still require --force.
-func LaunchArtifactNames() []string {
-	return []string{
-		CharterName,      // .soldier-charter.md
-		BriefName,        // .soldier-brief.md
-		EnvelopeName,     // .soldier-envelope.json
-		PromptName,       // .soldier-prompt.md
-		LaunchScriptName, // .soldier-launch.sh
-		ManifestName,     // .soldier-manifest.json
-	}
-}
-
 // DefaultCharter returns the canonical, versioned Soldier charter.
 // Soldier authority only — no Captain or General authority.
 // The charter is embedded in the launch prompt and written to .soldier-charter.md.

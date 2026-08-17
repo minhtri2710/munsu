@@ -167,7 +167,8 @@ func TestDetectGateCapability_EnvVar(t *testing.T) {
 	repo := initRepo(t, t.TempDir())
 
 	// NO_MISTAKES_GATE not set -> absent
-	cap, source := DetectGateCapability(repo)
+	scoped := Classify(repo)
+	cap, source := scoped.GateCap, scoped.GateSource
 	if cap != GateAbsent {
 		t.Errorf("without NO_MISTAKES_GATE, cap = %v, want GateAbsent", cap)
 	}
@@ -180,7 +181,8 @@ func TestDetectGateCapability_EnvVarSet(t *testing.T) {
 	repo := initRepo(t, t.TempDir())
 
 	t.Setenv("NO_MISTAKES_GATE", "1")
-	cap, source := DetectGateCapability(repo)
+	scoped := Classify(repo)
+	cap, source := scoped.GateCap, scoped.GateSource
 	if cap != GatePresent {
 		t.Errorf("with NO_MISTAKES_GATE=1, cap = %v, want GatePresent", cap)
 	}
@@ -192,7 +194,8 @@ func TestDetectGateCapability_EnvVarSet(t *testing.T) {
 func TestDetectGateCapability_EnvVarEmptyUsesPresence(t *testing.T) {
 	repo := initRepo(t, t.TempDir())
 	t.Setenv("NO_MISTAKES_GATE", "")
-	cap, source := DetectGateCapability(repo)
+	scoped := Classify(repo)
+	cap, source := scoped.GateCap, scoped.GateSource
 	if cap != GatePresent || source != "env" {
 		t.Fatalf("cap=%v source=%q, want gate-present env", cap, source)
 	}
@@ -200,7 +203,8 @@ func TestDetectGateCapability_EnvVarEmptyUsesPresence(t *testing.T) {
 
 func TestDetectGateCapability_GitCommonDirMarker(t *testing.T) {
 	checkout, _ := initGateCheckout(t)
-	cap, source := DetectGateCapability(checkout)
+	scoped := Classify(checkout)
+	cap, source := scoped.GateCap, scoped.GateSource
 	if cap != GatePresent || source != "git-common-dir" {
 		t.Fatalf("cap=%v source=%q, want gate-present git-common-dir", cap, source)
 	}
@@ -230,7 +234,8 @@ func TestDetectGateCapability_MarkerNoMatch(t *testing.T) {
 
 	t.Setenv("NM_HOME", nmHome)
 
-	cap, source := DetectGateCapability(repo)
+	scoped := Classify(repo)
+	cap, source := scoped.GateCap, scoped.GateSource
 	if cap != GateAbsent {
 		t.Errorf("with non-matching marker, cap = %v, want GateAbsent", cap)
 	}
@@ -245,7 +250,8 @@ func TestDetectGateCapability_MarkerDirNotExist(t *testing.T) {
 	// Point NM_HOME to a non-existent directory
 	t.Setenv("NM_HOME", filepath.Join(t.TempDir(), "no-such-dir"))
 
-	cap, source := DetectGateCapability(repo)
+	scoped := Classify(repo)
+	cap, source := scoped.GateCap, scoped.GateSource
 	if cap != GateAbsent {
 		t.Errorf("without markers dir, cap = %v, want GateAbsent", cap)
 	}
@@ -269,7 +275,7 @@ func TestClassify_PrimaryNoGate(t *testing.T) {
 	if res.GateCap != GateAbsent {
 		t.Errorf("Classify(%q).GateCap = %v, want GateAbsent", repo, res.GateCap)
 	}
-	if res.IsGateRefusal() {
+	if res.GateRefusalError() != nil {
 		t.Error("Classify(Primary, no gate).IsGateRefusal() = true, want false")
 	}
 }
@@ -291,7 +297,7 @@ func TestClassify_PrimaryWithEnvGate(t *testing.T) {
 	if res.GateSource != "env" {
 		t.Errorf("Classify(%q).GateSource = %q, want 'env'", repo, res.GateSource)
 	}
-	if !res.IsGateRefusal() {
+	if res.GateRefusalError() == nil {
 		t.Error("Classify(Primary, gate).IsGateRefusal() = false, want true")
 	}
 	refusalErr := res.GateRefusalError()
@@ -316,7 +322,7 @@ func TestClassify_GitCommonDirGate(t *testing.T) {
 	if res.CommonDir != commonDir {
 		t.Fatalf("common dir = %q, want %q", res.CommonDir, commonDir)
 	}
-	if res.GateCap != GatePresent || res.GateSource != "git-common-dir" || !res.IsGateRefusal() {
+	if res.GateCap != GatePresent || res.GateSource != "git-common-dir" || res.GateRefusalError() == nil {
 		t.Fatalf("result = %+v", res)
 	}
 }
@@ -340,7 +346,7 @@ func TestClassify_WorktreeWithGate(t *testing.T) {
 	if res.GateCap != GatePresent {
 		t.Errorf("Classify(%q).GateCap = %v, want GatePresent", wtDir, res.GateCap)
 	}
-	if !res.IsGateRefusal() {
+	if res.GateRefusalError() == nil {
 		t.Error("ambient gate marker must refuse fleet entry from a worktree")
 	}
 }
@@ -355,7 +361,7 @@ func TestClassify_WorktreeWithoutGate(t *testing.T) {
 	if res.Identity != Worktree {
 		t.Errorf("Classify(%q).Identity = %v, want Worktree", wtDir, res.Identity)
 	}
-	if res.IsGateRefusal() {
+	if res.GateRefusalError() != nil {
 		t.Error("Classify(Worktree, no gate).IsGateRefusal() = true, want false")
 	}
 }
@@ -371,7 +377,7 @@ func TestClassify_UnrelatedNoGate(t *testing.T) {
 	if res.Identity != Unrelated {
 		t.Errorf("Classify(%q).Identity = %v, want Unrelated", tmp, res.Identity)
 	}
-	if res.IsGateRefusal() {
+	if res.GateRefusalError() != nil {
 		t.Error("Classify(Unrelated).IsGateRefusal() = true, want false")
 	}
 }
@@ -387,7 +393,7 @@ func TestClassify_UnrelatedWithEnvGate(t *testing.T) {
 	if res.Identity != Unrelated {
 		t.Errorf("Classify(%q).Identity = %v, want Unrelated", tmp, res.Identity)
 	}
-	if !res.IsGateRefusal() {
+	if res.GateRefusalError() == nil {
 		t.Error("ambient gate marker must refuse fleet entry from an unrelated cwd")
 	}
 }
@@ -425,14 +431,14 @@ func TestIsGateAgentActive(t *testing.T) {
 	repo := initRepo(t, t.TempDir())
 
 	// No gate
-	if IsGateAgentActive(repo) {
-		t.Error("IsGateAgentActive without gate = true, want false")
+	if Classify(repo).GateRefusalError() != nil {
+		t.Error("Classify(repo) without gate refuses, want no refusal")
 	}
 
 	// With env gate
 	t.Setenv("NO_MISTAKES_GATE", "1")
-	if !IsGateAgentActive(repo) {
-		t.Error("IsGateAgentActive with gate = false, want true")
+	if Classify(repo).GateRefusalError() == nil {
+		t.Error("Classify(repo) with gate does not refuse, want refusal")
 	}
 }
 
@@ -445,7 +451,8 @@ func TestGatePrecedence_EnvOverMarker(t *testing.T) {
 	t.Setenv("NO_MISTAKES_GATE", "1")
 	t.Setenv("NM_HOME", filepath.Join(t.TempDir(), "nonexistent"))
 
-	cap, source := DetectGateCapability(repo)
+	scoped := Classify(repo)
+	cap, source := scoped.GateCap, scoped.GateSource
 	if cap != GatePresent {
 		t.Errorf("with NO_MISTAKES_GATE=1, cap = %v, want GatePresent even without markers", cap)
 	}
@@ -489,7 +496,8 @@ func TestDetectGateCapability_MalformedMarker(t *testing.T) {
 
 	t.Setenv("NM_HOME", nmHome)
 
-	cap, source := DetectGateCapability(repo)
+	scoped := Classify(repo)
+	cap, source := scoped.GateCap, scoped.GateSource
 	if cap != GateAbsent {
 		t.Errorf("with only non-matching/malformed markers, cap = %v, want GateAbsent", cap)
 	}
@@ -516,7 +524,7 @@ func TestClassify_SymlinkedPrimaryWithGate(t *testing.T) {
 	if res.Identity != Primary {
 		t.Errorf("Classify(symlink).Identity = %v, want Primary (canonical resolution)", res.Identity)
 	}
-	if !res.IsGateRefusal() {
+	if res.GateRefusalError() == nil {
 		t.Error("Classify(symlinked primary with gate).IsGateRefusal() = false, want true")
 	}
 }

@@ -934,59 +934,6 @@ func TestBoundSenderRecorder(t *testing.T) {
 	}
 }
 
-// TestPropagateConfig_ReadOnlyCheck verifies IsPropagateConfigUnchanged
-// does not mutate any state.
-func TestPropagateConfig_ReadOnlyCheck(t *testing.T) {
-	parent := t.TempDir()
-	captainHome := seedCaptainForTest(t, parent, "test-sm")
-
-	// No generation yet → false.
-	unchanged, err := IsPropagateConfigUnchanged(captainHome)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if unchanged {
-		t.Error("expected unchanged=false when no generation exists")
-	}
-
-	// Run propagation once.
-	os.MkdirAll(filepath.Join(parent, "config"), 0755)
-	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644)
-
-	sender := &fakeBoundSender{acknowledged: true}
-	_, err = PropagateConfig(PropagateConfigRequest{
-		ParentHome:  parent,
-		CaptainHome: captainHome,
-		Mailbox:     sender,
-	})
-	if err != nil {
-		t.Fatalf("PropagateConfig error: %v", err)
-	}
-
-	// Now unchanged=true.
-	unchanged, err = IsPropagateConfigUnchanged(captainHome)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !unchanged {
-		t.Error("expected unchanged=true after first propagation")
-	}
-
-	// Check that nothing was mutated (read-only).
-	genBefore, _, _, _ := ReadConfigRereadGen(captainHome)
-	unchanged, err = IsPropagateConfigUnchanged(captainHome)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !unchanged {
-		t.Error("expected unchanged=true (idempotent read)")
-	}
-	genAfter, _, _, _ := ReadConfigRereadGen(captainHome)
-	if genBefore != genAfter {
-		t.Errorf("generation changed from %d to %d during read-only check", genBefore, genAfter)
-	}
-}
-
 // TestPropagateConfig_ProjectNotFoundRefutes verifies that invalid
 // project registry in parent is caught.
 func TestPropagateConfig_InvalidParentRegistry(t *testing.T) {

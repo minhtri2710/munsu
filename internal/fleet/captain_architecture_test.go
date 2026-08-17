@@ -164,7 +164,6 @@ func TestBlocked_NestedCaptainLaunchIsRefused(t *testing.T) {
 	t.Run("refuses from captain role", func(t *testing.T) {
 		parent := t.TempDir()
 		smHome := filepath.Join(parent, "captains", "test-sm")
-		Seed("test-sm", smHome, "# charter")
 		t.Setenv("MUNSU_ROLE", "captain")
 		err := Launch(smHome, parent, testLaunchEndpoint{})
 		if err == nil {
@@ -181,7 +180,6 @@ func TestBlocked_NestedCaptainLaunchIsRefused(t *testing.T) {
 			t.Fatal(err)
 		}
 		smHome := filepath.Join(t.TempDir(), "child-sm")
-		Seed("child-sm", smHome, "# charter")
 		t.Setenv("MUNSU_ROLE", "")
 		err := Launch(smHome, parent, testLaunchEndpoint{})
 		if err == nil {

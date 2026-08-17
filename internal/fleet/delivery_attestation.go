@@ -1,14 +1,12 @@
 package fleet
 
 import (
-	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strings"
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/backend"
-	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // Meta field keys for capability attestation.
@@ -276,35 +274,4 @@ func HandleLateCapabilityLoss(att *CapabilityAttestation) *LateCapabilityLossRes
 		CanProceed:  false,
 		BlockReason: fmt.Sprintf("late capability loss: %s; requires pre-authorization or a parent Decision to transition", detail),
 	}
-}
-
-// ReadAttestationFromMeta reads a capability attestation from task meta.
-// Returns nil if no attestation is stored.
-func ReadAttestationFromMeta(homeDir, taskID string) (*CapabilityAttestation, error) {
-	meta, err := home.ReadMeta(homeDir, taskID)
-	if err != nil {
-		return nil, fmt.Errorf("reading meta: %w", err)
-	}
-
-	raw, ok := meta[MetaCapabilityAttestation]
-	if !ok || raw == "" {
-		return nil, nil
-	}
-
-	var att CapabilityAttestation
-	if err := json.Unmarshal([]byte(raw), &att); err != nil {
-		return nil, fmt.Errorf("deserializing attestation: %w", err)
-	}
-
-	return &att, nil
-}
-
-// ModeVisibilityFields returns the requested mode, effective mode, and fallback
-// reason from task meta for lifecycle projection visibility.
-func ModeVisibilityFields(homeDir, taskID string) (requested, effective, fallbackReason string, err error) {
-	meta, err := home.ReadMeta(homeDir, taskID)
-	if err != nil {
-		return "", "", "", fmt.Errorf("reading meta: %w", err)
-	}
-	return meta[MetaRequestedMode], meta[MetaEffectiveMode], meta[MetaFallbackReason], nil
 }

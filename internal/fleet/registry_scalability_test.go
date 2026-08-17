@@ -171,15 +171,15 @@ func runRegistryWorkers(t *testing.T, workers int, fn func(*Registry, int) error
 		owned[c.ID.Value()] = p.Value()
 	}
 	for _, p := range projects {
-		capID, err := r.OwnerOf(p.ID)
+		capID, err := bindingOwnerOf(r, p.ID.Value())
 		if err != nil {
 			return err
 		}
-		if capID == (domain.CaptainID{}) {
+		if capID == "" {
 			continue
 		}
-		if _, exists := owned[capID.Value()]; !exists {
-			return fmt.Errorf("project %s owned by unregistered captain %s", p.ID.Value(), capID.Value())
+		if _, exists := owned[capID]; !exists {
+			return fmt.Errorf("project %s owned by unregistered captain %s", p.ID.Value(), capID)
 		}
 	}
 	return nil
@@ -401,12 +401,12 @@ func TestRegistryBindingScaleBound(t *testing.T) {
 
 	// Hard invariant: every binding is readable and one-to-one.
 	for i := 0; i < n; i++ {
-		owner, err := r.OwnerOf(mustProjectID(t, fmt.Sprintf("scale-proj-%d", i)))
+		owner, err := bindingOwnerOf(r, fmt.Sprintf("scale-proj-%d", i))
 		if err != nil {
 			t.Fatalf("owner of project %d: %v", i, err)
 		}
-		if owner != mustCaptainID(t, fmt.Sprintf("scale-cap-%d", i)) {
-			t.Fatalf("project %d owned by %s, want cap-%d", i, owner.Value(), i)
+		if owner != fmt.Sprintf("scale-cap-%d", i) {
+			t.Fatalf("project %d owned by %s, want cap-%d", i, owner, i)
 		}
 	}
 

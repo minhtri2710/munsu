@@ -400,20 +400,6 @@ func RecoverDeliveryJournals(homeDir string) error {
 	return recoverPendingDeliveryJournals(h, lk)
 }
 
-// SetDeliveryCrashHookForTest installs a crash-boundary hook for subprocess
-// tests. Production callers should never set this hook. Boundary names are
-// the durable stages of one delivery: journal, authorized, mutating,
-// outcome, completed.
-func SetDeliveryCrashHookForTest(hook func(string)) func() {
-	previous := deliveryCrashHook
-	if hook == nil {
-		deliveryCrashHook = func(string) {}
-	} else {
-		deliveryCrashHook = hook
-	}
-	return func() { deliveryCrashHook = previous }
-}
-
 var deliveryCrashHook = func(string) {}
 
 // containsString reports whether the value appears in the slice.
