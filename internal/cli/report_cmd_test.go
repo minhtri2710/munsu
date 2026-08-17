@@ -53,17 +53,19 @@ func TestReportDoneCompletesScoutLifecycle(t *testing.T) {
 	if agg.Phase != taskauthority.PhaseDone {
 		t.Fatalf("phase = %s, want done", agg.Phase)
 	}
+	// The scout's terminal report closes its own handoff (ADR-0015): nothing
+	// else in the binary can write the ack, so leaving it pending would wedge
+	// the turn-end guard forever.
 	if !orchestrator.IsReceiptAcked(homeDir, "scout-report", "scout-report") {
-		// The Captain has not relayed it yet; the receipt and open obligation are
-		// the deterministic handoff consumed by ReconcilePending.
-		pending, err := orchestrator.ListPendingReceipts(homeDir)
-		if err != nil || len(pending) != 1 {
-			t.Fatalf("pending receipts=%d err=%v", len(pending), err)
-		}
-		open, err := orchestrator.IsTaskReportRelayOpen(homeDir, "scout-report")
-		if err != nil || !open {
-			t.Fatalf("relay obligation open=%v err=%v", open, err)
-		}
+		t.Fatal("terminal receipt was not acknowledged by its writer")
+	}
+	pending, err := orchestrator.ListPendingReceipts(homeDir)
+	if err != nil || len(pending) != 0 {
+		t.Fatalf("pending receipts=%d err=%v, want 0", len(pending), err)
+	}
+	open, err := orchestrator.IsTaskReportRelayOpen(homeDir, "scout-report")
+	if err != nil || open {
+		t.Fatalf("relay obligation open=%v err=%v, want closed", open, err)
 	}
 }
 

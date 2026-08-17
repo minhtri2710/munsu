@@ -26,29 +26,45 @@ func deliverEnv(t *testing.T, withParent bool) (soldierHome, captainHome string)
 	return soldierHome, captainHome
 }
 
-func TestDeliverWake_LocalOnlyParentSelfAcknowledges(t *testing.T) {
-	soldierHome, parentHome := deliverEnv(t, true)
-	os.Remove(filepath.Join(parentHome, ProvenanceMarkerName))
+// TestDeliverWake_SelfAcknowledgesRegardlessOfParent pins ADR-0015: the writer
+// closes its own terminal handoff. A captain home used to be excluded here, on
+// the premise that a relay sweep would ack it later; #417 deleted that sweep and
+// left captain-backed soldiers wedged (BEO-112).
+func TestDeliverWake_SelfAcknowledgesRegardlessOfParent(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		captainParent bool
+	}{
+		{"captain parent", true},
+		{"local-only parent", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			soldierHome, parentHome := deliverEnv(t, true)
+			if !tt.captainParent {
+				os.Remove(filepath.Join(parentHome, ProvenanceMarkerName))
+			}
 
-	receipt, err := DeliverWake(DeliverRequest{
-		HomeDir: soldierHome, ParentHome: parentHome, TaskID: "local-scout",
-		State: "done", Message: "complete", Key: "terminal", Role: "soldier",
-	})
-	if err != nil {
-		t.Fatalf("DeliverWake: %v", err)
-	}
-	if !receipt.ReceiptWritten || !receipt.ObligationsInit {
-		t.Fatalf("receipt = %+v, want receipt and obligation setup", receipt)
-	}
-	if !IsReceiptAcked(parentHome, "local-scout", "terminal") {
-		t.Fatal("local-only terminal receipt was not self-acknowledged")
-	}
-	open, err := IsTaskReportRelayOpen(parentHome, "local-scout")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if open {
-		t.Fatal("local-only report relay remained open")
+			receipt, err := DeliverWake(DeliverRequest{
+				HomeDir: soldierHome, ParentHome: parentHome, TaskID: "scout",
+				State: "done", Message: "complete", Key: "terminal", Role: "soldier",
+			})
+			if err != nil {
+				t.Fatalf("DeliverWake: %v", err)
+			}
+			if !receipt.ReceiptWritten || !receipt.ObligationsInit {
+				t.Fatalf("receipt = %+v, want receipt and obligation setup", receipt)
+			}
+			if !IsReceiptAcked(parentHome, "scout", "terminal") {
+				t.Fatal("terminal receipt was not self-acknowledged")
+			}
+			open, err := IsTaskReportRelayOpen(parentHome, "scout")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if open {
+				t.Fatal("report relay remained open")
+			}
+		})
 	}
 }
 
@@ -58,7 +74,8 @@ func TestDeliverWake_LocalOnlyParentSelfAcknowledges(t *testing.T) {
 //   - local event log entry
 //   - local wake queue entry
 //   - captain receipt (if parentHome set)
-//   - captain open obligation (if parentHome set)
+//   - a closed report-relay obligation in the captain home: the writer closes
+//     its own handoff (ADR-0015)
 func TestDeliverWake_SoldierMaterialState(t *testing.T) {
 	soldierHome, captainHome := deliverEnv(t, true)
 
@@ -122,13 +139,16 @@ func TestDeliverWake_SoldierMaterialState(t *testing.T) {
 		t.Errorf("captain receipt should exist: %v", err)
 	}
 
-	// Captain obligation should exist
+	// The obligation was initialized and then closed by the writer itself.
+	if !receipt.ObligationsInit {
+		t.Error("expected obligations to be initialized")
+	}
 	open, err := IsTaskReportRelayOpen(captainHome, "test-soldier")
 	if err != nil {
 		t.Fatalf("IsTaskReportRelayOpen: %v", err)
 	}
-	if !open {
-		t.Error("expected open ReportRelay obligation")
+	if open {
+		t.Error("ReportRelay obligation remained open: nothing in the binary can close it later")
 	}
 }
 
@@ -480,327 +500,6 @@ func TestDeliverWake_EmptyParams(t *testing.T) {
 			}
 		})
 	}
-}
-
-// runReq is a helper for the relay test.
-type runReq struct {
-	name                     string
-	taskIDs, termKeys, state []string
-	failRelay, failAck       bool
-	eRelayed, eFailed        int
-}
-
-func runRelayTest(t *testing.T, req runReq) {
-	t.Helper()
-	captainHome, generalHome := relayEnv(t)
-
-	// Create receipt/obligations for each taskID
-	for i, tid := range req.taskIDs {
-		tk := req.termKeys[i]
-		st := "done"
-		if i < len(req.state) {
-			st = req.state[i]
-		}
-		if err := WriteReceipt(captainHome, tid, tk, st, ""); err != nil {
-			t.Fatalf("WriteReceipt %s: %v", tid, err)
-		}
-		if err := InitTaskObligations(captainHome, tid, tk); err != nil {
-			t.Fatalf("InitTaskObligations %s: %v", tid, err)
-		}
-	}
-
-	result, err := ReconcilePending(captainHome, generalHome)
-	if err != nil {
-		if req.eFailed > 0 {
-			return // error expected
-		}
-		t.Fatalf("ReconcilePending: %v", err)
-	}
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
-	if result.Relayed() != req.eRelayed {
-		t.Errorf("expected %d relayed, got %d", req.eRelayed, result.Relayed())
-	}
-	if result.Failed() != req.eFailed {
-		t.Errorf("expected %d failed, got %d", req.eFailed, result.Failed())
-	}
-}
-
-func TestReconcilePending_NoReceipts(t *testing.T) {
-	captainHome, _ := relayEnv(t)
-	generalHome := t.TempDir()
-	os.MkdirAll(filepath.Join(generalHome, "state"), 0755)
-
-	result, err := ReconcilePending(captainHome, generalHome)
-	if err != nil {
-		t.Fatalf("ReconcilePending: %v", err)
-	}
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
-	if result.Relayed() != 0 {
-		t.Errorf("expected 0 relayed, got %d", result.Relayed())
-	}
-	if len(result.Outcomes) != 0 {
-		t.Errorf("expected 0 outcomes, got %d", len(result.Outcomes))
-	}
-}
-
-func TestReconcilePending_Single(t *testing.T) {
-	runRelayTest(t, runReq{
-		taskIDs:  []string{"test-soldier-1"},
-		termKeys: []string{"test-key"},
-		eRelayed: 1,
-		eFailed:  0,
-	})
-}
-
-func TestReconcilePending_Multiple(t *testing.T) {
-	runRelayTest(t, runReq{
-		taskIDs:  []string{"task-a", "task-b", "task-c"},
-		termKeys: []string{"key-a", "key-b", "key-c"},
-		eRelayed: 3,
-		eFailed:  0,
-	})
-}
-
-func TestReconcilePending_AlreadyAcked(t *testing.T) {
-	captainHome, generalHome := relayEnv(t)
-	taskID, termKey := "acked-task", "acked-key"
-
-	WriteReceipt(captainHome, taskID, termKey, "done", "")
-	WriteAck(captainHome, taskID, termKey)
-
-	result, err := ReconcilePending(captainHome, generalHome)
-	if err != nil {
-		t.Fatalf("ReconcilePending: %v", err)
-	}
-	if result.Relayed() != 0 {
-		t.Errorf("expected 0 relayed for acked receipt, got %d", result.Relayed())
-	}
-}
-
-func TestReconcilePending_Idempotent(t *testing.T) {
-	captainHome, generalHome := relayEnv(t)
-	taskID, termKey := "idempotent-task", "idempotent-key"
-	WriteReceipt(captainHome, taskID, termKey, "done", "")
-	InitTaskObligations(captainHome, taskID, termKey)
-
-	// First pass
-	result1, err := ReconcilePending(captainHome, generalHome)
-	if err != nil {
-		t.Fatalf("first pass: %v", err)
-	}
-	if result1.Relayed() != 1 {
-		t.Fatalf("expected 1 relayed on first pass, got %d", result1.Relayed())
-	}
-
-	// Second pass: should relay 0
-	result2, err := ReconcilePending(captainHome, generalHome)
-	if err != nil {
-		t.Fatalf("second pass: %v", err)
-	}
-	if result2.Relayed() != 0 {
-		t.Fatalf("expected 0 relayed on second pass, got %d", result2.Relayed())
-	}
-}
-
-func TestReconcilePending_GeneralStatusWritten(t *testing.T) {
-	captainHome, generalHome := relayEnv(t)
-	taskID, termKey := "status-check", "check-key"
-	captainID := "test-captain"
-
-	WriteReceipt(captainHome, taskID, termKey, "done", "completed")
-	InitTaskObligations(captainHome, taskID, termKey)
-
-	result, err := ReconcilePending(captainHome, generalHome)
-	if err != nil {
-		t.Fatalf("ReconcilePending: %v", err)
-	}
-	if result.Relayed() != 1 {
-		t.Fatalf("expected 1 relayed, got %d", result.Relayed())
-	}
-
-	// Verify General received the relay status
-	statusPath := filepath.Join(generalHome, "state", "captain:"+captainID+".relay-"+taskID+".status")
-	data, err := os.ReadFile(statusPath)
-	if err != nil {
-		t.Fatalf("general status: %v", err)
-	}
-	if !strings.Contains(string(data), "done: soldier "+taskID) {
-		t.Errorf("unexpected status content: %s", string(data))
-	}
-
-	// Verify ack in captain home
-	if !IsReceiptAcked(captainHome, taskID, termKey) {
-		t.Error("receipt should be acked after reconciliation")
-	}
-
-	// Verify obligation closed
-	open, err := IsTaskReportRelayOpen(captainHome, taskID)
-	if err != nil {
-		t.Fatalf("IsTaskReportRelayOpen: %v", err)
-	}
-	if open {
-		t.Error("ReportRelay should be closed after reconciliation")
-	}
-}
-
-// Test that ReconcilePending preserves retry on ack failure.
-func TestReconcilePending_AckFailPreservesRetry(t *testing.T) {
-	captainHome, generalHome := relayEnv(t)
-	taskID, termKey := "ack-fail-task", "ack-fail-key"
-
-	WriteReceipt(captainHome, taskID, termKey, "done", "")
-	InitTaskObligations(captainHome, taskID, termKey)
-
-	// Make receipts dir read-only so WriteAck fails
-	receiptsDir := ReceiptDir(captainHome)
-	os.Chmod(receiptsDir, 0500)
-	t.Cleanup(func() { os.Chmod(receiptsDir, 0755) })
-
-	result, err := ReconcilePending(captainHome, generalHome)
-	if err != nil {
-		t.Fatalf("unexpected error, failure should be per-receipt: %v", err)
-	}
-	if result.Failed() != 1 {
-		t.Fatalf("expected 1 failed, got %d", result.Failed())
-	}
-	if result.Relayed() != 0 {
-		t.Fatalf("expected 0 relayed, got %d", result.Relayed())
-	}
-
-	// Receipt must NOT be acked
-	if IsReceiptAcked(captainHome, taskID, termKey) {
-		t.Fatal("receipt must not be acked after ack failure")
-	}
-
-	// General state SHOULD have relay status (relay succeeded, ack failed)
-	statusPath := filepath.Join(generalHome, "state", "captain:test-captain.relay-"+taskID+".status")
-	if _, err := os.Stat(statusPath); os.IsNotExist(err) {
-		t.Error("general status should exist even when ack fails")
-	}
-}
-
-// Test general state is not writable → relay-failed.
-func TestReconcilePending_GeneralStateUnwritable(t *testing.T) {
-	captainHome, generalHome := relayEnv(t)
-
-	generalStateDir := filepath.Join(generalHome, "state")
-	os.Chmod(generalStateDir, 0500)
-	t.Cleanup(func() { os.Chmod(generalStateDir, 0755) })
-
-	taskID, termKey := "unwritable-task", "unwritable-key"
-	WriteReceipt(captainHome, taskID, termKey, "done", "")
-	InitTaskObligations(captainHome, taskID, termKey)
-
-	result, err := ReconcilePending(captainHome, generalHome)
-	if err != nil {
-		t.Fatalf("expected per-receipt failure, not top-level: %v", err)
-	}
-	if result.Failed() != 1 {
-		t.Fatalf("expected 1 failed, got %d", result.Failed())
-	}
-	if result.Relayed() != 0 {
-		t.Fatalf("expected 0 relayed, got %d", result.Relayed())
-	}
-
-	// Receipt must NOT be acked
-	if IsReceiptAcked(captainHome, taskID, termKey) {
-		t.Fatal("receipt must not be acked after relay failure")
-	}
-}
-
-// Test non-material state receipt is still relayed.
-func TestReconcilePending_NonMaterialState(t *testing.T) {
-	runRelayTest(t, runReq{
-		taskIDs:  []string{"working-task"},
-		termKeys: []string{"working-key"},
-		state:    []string{"working"},
-		eRelayed: 1,
-		eFailed:  0,
-	})
-}
-
-// Test captain with provenance marker fallback (no marker file).
-func TestReconcilePending_NoProvenanceMarker(t *testing.T) {
-	captainHome := t.TempDir()
-	generalHome := t.TempDir()
-	os.MkdirAll(filepath.Join(captainHome, "state"), 0755)
-	os.MkdirAll(filepath.Join(generalHome, "state"), 0755)
-
-	taskID, termKey := "no-marker-task", "no-marker-key"
-	WriteReceipt(captainHome, taskID, termKey, "done", "")
-	InitTaskObligations(captainHome, taskID, termKey)
-
-	result, err := ReconcilePending(captainHome, generalHome)
-	if err != nil {
-		t.Fatalf("ReconcilePending: %v", err)
-	}
-	if result.Relayed() != 1 {
-		t.Fatalf("expected 1 relayed (dirname fallback), got %d", result.Relayed())
-	}
-}
-
-// Test PR #315 shape: task ID == term key
-func TestReconcilePending_PR315Shape(t *testing.T) {
-	captainHome, generalHome := relayEnv(t)
-	taskID := "duplicate-id-key"
-	termKey := "duplicate-id-key"
-
-	WriteReceipt(captainHome, taskID, termKey, "done", "")
-	InitTaskObligations(captainHome, taskID, termKey)
-
-	result, err := ReconcilePending(captainHome, generalHome)
-	if err != nil {
-		t.Fatalf("ReconcilePending: %v", err)
-	}
-	if result.Relayed() != 1 {
-		t.Fatalf("expected 1 relayed, got %d", result.Relayed())
-	}
-	if !IsReceiptAcked(captainHome, taskID, termKey) {
-		t.Fatal("receipt should be acked")
-	}
-}
-
-// Test that captain events are written to general.
-func TestReconcilePending_TurnendEventWritten(t *testing.T) {
-	captainHome, generalHome := relayEnv(t)
-	taskID, termKey := "event-check", "event-check-key"
-	captainID := "test-captain"
-
-	WriteReceipt(captainHome, taskID, termKey, "done", "completed")
-	InitTaskObligations(captainHome, taskID, termKey)
-
-	result, err := ReconcilePending(captainHome, generalHome)
-	if err != nil {
-		t.Fatalf("ReconcilePending: %v", err)
-	}
-	if result.Relayed() != 1 {
-		t.Fatalf("expected 1 relayed, got %d", result.Relayed())
-	}
-
-	// Verify .turnend event file written to general state
-	eventFile := filepath.Join(generalHome, "state", "captain:"+captainID+".relay-"+taskID+".turnend")
-	data, err := os.ReadFile(eventFile)
-	if err != nil {
-		t.Fatalf("turnend event file: %v", err)
-	}
-	if !strings.Contains(string(data), "terminal_uplink_task="+taskID) {
-		t.Errorf("unexpected event content: %s", string(data))
-	}
-}
-
-// Helper: relayEnv creates captain and general homes with provenance marker.
-func relayEnv(t *testing.T) (captainHome, generalHome string) {
-	t.Helper()
-	captainHome = t.TempDir()
-	generalHome = t.TempDir()
-	os.MkdirAll(filepath.Join(captainHome, "state"), 0755)
-	os.MkdirAll(filepath.Join(generalHome, "state"), 0755)
-	initProvenance(t, captainHome, "test-captain")
-	return captainHome, generalHome
 }
 
 func initProvenance(t *testing.T, home, captainID string) {

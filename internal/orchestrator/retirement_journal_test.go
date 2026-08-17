@@ -23,6 +23,37 @@ func TestVerifyRetirementContinuityBlocksOpenMaterialReport(t *testing.T) {
 	}
 }
 
+// TestVerifyRetirementContinuityAllowsCaptainBackedSoldier is the BEO-112
+// teardown half of the regression. DeliverWake opens a ReportRelay obligation
+// in the parent home for every material soldier report; when that parent is a
+// captain home nothing in the binary could close it, so teardown refused
+// forever without --force.
+func TestVerifyRetirementContinuityAllowsCaptainBackedSoldier(t *testing.T) {
+	soldierHome := t.TempDir()
+	captainHome := t.TempDir()
+	if err := os.WriteFile(filepath.Join(captainHome, ProvenanceMarkerName),
+		[]byte("captain=test-captain\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := DeliverWake(DeliverRequest{
+		HomeDir: soldierHome, ParentHome: captainHome, TaskID: "scout-task",
+		State: "done", Message: "scout complete", Key: "terminal", Role: "soldier",
+	}); err != nil {
+		t.Fatalf("DeliverWake: %v", err)
+	}
+
+	// The captain owns the task record and marks it done in its own home once
+	// the soldier reports. That material line is what the continuity check reads.
+	if err := home.AppendStatus(captainHome, "scout-task", "done: cli task done"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := VerifyRetirementContinuity(captainHome, "scout-task"); err != nil {
+		t.Fatalf("teardown refused for a captain-backed soldier: %v", err)
+	}
+}
+
 func TestPrepareForcedRetirementEvidenceCopiesStatus(t *testing.T) {
 	h := t.TempDir()
 	id := "task"

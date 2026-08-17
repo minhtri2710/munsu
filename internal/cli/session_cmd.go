@@ -748,7 +748,7 @@ func checkPendingRelayObligations(homeDir string) error {
 				return fmt.Errorf("obligation gate fail-closed: checking material report for task %s in %s: %w", r.TaskID, h, err)
 			}
 			if has {
-				return fmt.Errorf("material relay pending: task %s has un-acked terminal receipt (state=%s) in %s; run 'munsu turnend obligations' or use --force", r.TaskID, r.State, h)
+				return fmt.Errorf("material relay pending: task %s has un-acked terminal receipt (state=%s) in %s; re-run 'munsu report %s <msg>' for that task to close the handoff, or use --force", r.TaskID, r.State, h, r.State)
 			}
 		}
 	}
