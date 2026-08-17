@@ -96,10 +96,17 @@ func TestApplyPatchRelativeTargetResolvedAgainstCwd(t *testing.T) {
 	primary, worktree := boundTaskFixture(t, "ship-patch-rel")
 
 	body := patchTouching("internal/backend/worktree.go", "harmless line")
-	if block, reason := evaluatePatchSafety(primary, body); !block {
+	evaluate := func(checkPath string) (bool, string) {
+		targets, err := patchWriteTargets(checkPath, body)
+		if err != nil {
+			t.Fatalf("patch targets for %s: %v", checkPath, err)
+		}
+		return evaluateWriteTargets(targets)
+	}
+	if block, reason := evaluate(primary); !block {
 		t.Fatalf("relative target under the bound primary checkout was allowed (reason=%q)", reason)
 	}
-	if block, reason := evaluatePatchSafety(worktree, body); block {
+	if block, reason := evaluate(worktree); block {
 		t.Fatalf("relative target under the bound worktree was refused: %s", reason)
 	}
 }
