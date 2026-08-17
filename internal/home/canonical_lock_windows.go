@@ -12,14 +12,19 @@ import (
 
 var errScopedLockUnavailable = errors.New("Windows scoped file locking unavailable")
 
-// lockScopedFile takes an exclusive byte-range lock on the whole file. On
-// Windows, flock is unavailable, so LockFileEx is used, matching the repo's
-// existing watcher lock implementation.
+// lockScopedFile takes an exclusive byte-range lock on the whole file without
+// blocking. On Windows, flock is unavailable, so LockFileEx is used, matching
+// the repo's existing watcher lock implementation. LOCKFILE_FAIL_IMMEDIATELY is
+// the counterpart of LOCK_NB: without it LockFileEx parks the caller until the
+// holder releases, and the bounded retry loop in Home.Lock never runs.
 func lockScopedFile(file *os.File) error {
 	overlapped := new(windows.Overlapped)
 	ret, _, callErr := windows.NewLazySystemDLL("kernel32.dll").NewProc("LockFileEx").Call(
-		uintptr(file.Fd()), 0, 0, ^uintptr(0), ^uintptr(0), uintptr(unsafe.Pointer(overlapped)))
+		uintptr(file.Fd()), uintptr(windows.LOCKFILE_FAIL_IMMEDIATELY), 0, ^uintptr(0), ^uintptr(0), uintptr(unsafe.Pointer(overlapped)))
 	if ret == 0 {
+		if callErr == windows.ERROR_LOCK_VIOLATION {
+			return os.ErrPermission
+		}
 		return errors.Join(errScopedLockUnavailable, callErr)
 	}
 	return nil
