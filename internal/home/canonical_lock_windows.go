@@ -17,13 +17,17 @@ var errScopedLockUnavailable = errors.New("Windows scoped file locking unavailab
 // the repo's existing watcher lock implementation. LOCKFILE_FAIL_IMMEDIATELY is
 // the counterpart of LOCK_NB: without it LockFileEx parks the caller until the
 // holder releases, and the bounded retry loop in Home.Lock never runs.
+//
+// ERROR_LOCK_VIOLATION is the Windows counterpart of EWOULDBLOCK and is the
+// only status the retry loop may spin on; anything else means LockFileEx is
+// unusable here, which no amount of retrying fixes.
 func lockScopedFile(file *os.File) error {
 	overlapped := new(windows.Overlapped)
 	ret, _, callErr := windows.NewLazySystemDLL("kernel32.dll").NewProc("LockFileEx").Call(
 		uintptr(file.Fd()), uintptr(windows.LOCKFILE_FAIL_IMMEDIATELY), 0, ^uintptr(0), ^uintptr(0), uintptr(unsafe.Pointer(overlapped)))
 	if ret == 0 {
 		if callErr == windows.ERROR_LOCK_VIOLATION {
-			return os.ErrPermission
+			return errLockBusy
 		}
 		return errors.Join(errScopedLockUnavailable, callErr)
 	}

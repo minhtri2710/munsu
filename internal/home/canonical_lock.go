@@ -1,12 +1,22 @@
 package home
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 )
+
+// errLockBusy is the one condition the retry loop is allowed to retry on:
+// somebody else holds the scope right now. Every other failure from
+// lockScopedFile -- a bad descriptor, a filesystem with no lock support, a
+// Windows LockFileEx that could not be called at all -- means retrying will
+// never succeed, and reporting it as ErrLockTimeout after spinning the full
+// budget would name the wrong cause. Each GOOS file maps its own busy errno
+// (EWOULDBLOCK, ERROR_LOCK_VIOLATION) onto this.
+var errLockBusy = errors.New("home: lock is held by another owner")
 
 // Bounded lock acquisition budget. Acquisition is advisory and per-scope; there
 // is no global runtime lock that serializes independent scopes.
@@ -67,10 +77,14 @@ func (h *Home) Lock(scope string) (*Lock, error) {
 		if err != nil {
 			return nil, fmt.Errorf("home: open lock: %w", err)
 		}
-		if err := lockScopedFile(file); err == nil {
+		lockErr := lockScopedFile(file)
+		if lockErr == nil {
 			break
 		}
 		_ = file.Close()
+		if !errors.Is(lockErr, errLockBusy) {
+			return nil, fmt.Errorf("home: acquire lock: %w", lockErr)
+		}
 		if time.Now().After(deadline) {
 			return nil, ErrLockTimeout
 		}
