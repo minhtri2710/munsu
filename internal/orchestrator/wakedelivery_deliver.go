@@ -1,9 +1,9 @@
 // Package wakedelivery consolidates the report/wake/relay lifecycle behind
 // a single deep module with a small public API.
 //
-// Two operations:
-//   - DeliverWake:  soldier-side orchestration (status → receipt → event → wake)
-//   - ReconcilePending: captain-side relay (pending receipt → general status → ack → obligation close)
+// One operation:
+//   - DeliverWake: soldier-side orchestration (status → receipt → event → wake),
+//     closing its own terminal handoff (ADR-0015).
 //
 // Storage primitives (turnend, lifecycle, event) are imported, not absorbed.
 // Injection logic is moved here from report_cmd.go.
@@ -39,43 +39,6 @@ type WakeReceipt struct {
 	WakeEnqueued    bool
 	ReceiptWritten  bool
 	ObligationsInit bool
-}
-
-// ReconcileOutcome describes one receipt's relay outcome.
-type ReconcileOutcome struct {
-	TaskID  string
-	Key     string
-	State   string
-	Outcome string // "relayed", "already-acked", "relay-failed", "ack-failed", "obligation-close-failed"
-	Err     error
-}
-
-// ReconcileResult aggregates the reconciliation sweep.
-type ReconcileResult struct {
-	Outcomes []ReconcileOutcome
-}
-
-// Relayed returns the number of receipts successfully relayed.
-func (r *ReconcileResult) Relayed() int {
-	n := 0
-	for _, o := range r.Outcomes {
-		if o.Outcome == "relayed" {
-			n++
-		}
-	}
-	return n
-}
-
-// Failed returns the number of receipts that failed to relay.
-func (r *ReconcileResult) Failed() int {
-	n := 0
-	for _, o := range r.Outcomes {
-		switch o.Outcome {
-		case "relay-failed", "ack-failed", "obligation-close-failed":
-			n++
-		}
-	}
-	return n
 }
 
 // wakeMaterialStates is the set of states that warrant waking a parent supervisor.
@@ -150,16 +113,16 @@ func DeliverWake(req DeliverRequest) (*WakeReceipt, error) {
 		}
 		receipt.ObligationsInit = true
 
-		// A General-launched local-only soldier has no Captain consumer to
-		// reconcile this receipt. Close that handoff locally; Captain-backed
-		// soldiers retain the asynchronous receipt/ack/reconcile path.
-		if !isCaptainHome(req.ParentHome) {
-			if err := WriteAck(req.ParentHome, req.TaskID, req.Key); err != nil {
-				return nil, fmt.Errorf("acknowledging local terminal receipt: %w", err)
-			}
-			if _, err := CompleteTaskObligation(req.ParentHome, req.TaskID, ReportRelay); err != nil {
-				return nil, fmt.Errorf("closing local report relay: %w", err)
-			}
+		// The writer closes its own handoff (ADR-0015). The receipt file stays
+		// as the captain's notification artifact — ActivateOnReceipt reads it
+		// regardless of ack state — but nothing relays it, so nothing else can
+		// ever write the ack. A parent that is a captain home is no exception:
+		// leaving it un-acked stalls the turn-end guard forever.
+		if err := WriteAck(req.ParentHome, req.TaskID, req.Key); err != nil {
+			return nil, fmt.Errorf("acknowledging terminal receipt: %w", err)
+		}
+		if _, err := CompleteTaskObligation(req.ParentHome, req.TaskID, ReportRelay); err != nil {
+			return nil, fmt.Errorf("closing report relay: %w", err)
 		}
 	}
 
@@ -184,93 +147,6 @@ func DeliverWake(req DeliverRequest) (*WakeReceipt, error) {
 	}
 
 	return receipt, nil
-}
-
-func isCaptainHome(homeDir string) bool {
-	_, err := os.Stat(filepath.Join(homeDir, ProvenanceMarkerName))
-	return err == nil
-}
-
-// --- ReconcilePending ---
-
-// ReconcilePending scans captain-owned pending receipts and relays each one
-// to the parent (General) home. The relay chain is:
-//
-//	pending receipt → General relay status → General .turnend event →
-//	captain ack → captain obligation close
-//
-// Idempotent: safe to call repeatedly. On any partial failure, preserves
-// retryable receipt/obligation state and returns per-receipt outcomes rather
-// than an aggregate error. Callers should inspect outcomes for diagnostics.
-func ReconcilePending(captainHome, parentHome string) (*ReconcileResult, error) {
-	pending, err := ListPendingReceipts(captainHome)
-	if err != nil {
-		return nil, fmt.Errorf("listing pending receipts: %w", err)
-	}
-	if len(pending) == 0 {
-		return &ReconcileResult{}, nil
-	}
-
-	result := &ReconcileResult{}
-	for _, pr := range pending {
-		outcome := reconcileOne(captainHome, parentHome, pr)
-		result.Outcomes = append(result.Outcomes, outcome)
-	}
-	return result, nil
-}
-
-// reconcileOne processes a single pending receipt through the full relay chain.
-func reconcileOne(captainHome, parentHome string, pr PendingReceipt) ReconcileOutcome {
-	base := ReconcileOutcome{TaskID: pr.TaskID, Key: pr.TermKey, State: pr.State}
-
-	// Already acked: skip.
-	if IsReceiptAcked(captainHome, pr.TaskID, pr.TermKey) {
-		base.Outcome = "already-acked"
-		return base
-	}
-
-	// Resolve captain ID from provenance marker.
-	captainID, err := readCaptainID(captainHome)
-	if err != nil {
-		base.Outcome = "relay-failed"
-		base.Err = fmt.Errorf("reading captain id: %w", err)
-		return base
-	}
-
-	// Step 1: Relay status to General.
-	relayTaskID := fmt.Sprintf("captain:%s.relay-%s", captainID, pr.TaskID)
-	relayLine := fmt.Sprintf("%s: soldier %s [key=%s]", pr.State, pr.TaskID, pr.TermKey)
-	if err := mhome.AppendStatus(parentHome, relayTaskID, relayLine); err != nil {
-		base.Outcome = "relay-failed"
-		base.Err = fmt.Errorf("writing general relay status: %w", err)
-		return base
-	}
-
-	// Step 2: Write .turnend event to General for permanent durability.
-	now := time.Now().UnixNano()
-	eventContent := fmt.Sprintf("terminal_uplink_task=%s key=%s captain=%s relayed_at=%d\n",
-		pr.TaskID, pr.TermKey, captainID, now)
-	eventPath := filepath.Join(parentHome, "state", relayTaskID+".turnend")
-	if err := os.MkdirAll(filepath.Dir(eventPath), 0755); err == nil {
-		os.WriteFile(eventPath, []byte(eventContent), 0644)
-	}
-
-	// Step 3: Write ack in captain home (marks receipt as acknowledged).
-	if err := WriteAck(captainHome, pr.TaskID, pr.TermKey); err != nil {
-		base.Outcome = "ack-failed"
-		base.Err = fmt.Errorf("writing ack: %w", err)
-		return base
-	}
-
-	// Step 4: Complete per-task obligation in captain home.
-	if _, err := CompleteTaskObligation(captainHome, pr.TaskID, ReportRelay); err != nil {
-		base.Outcome = "obligation-close-failed"
-		base.Err = fmt.Errorf("completing obligation: %w", err)
-		return base
-	}
-
-	base.Outcome = "relayed"
-	return base
 }
 
 // --- Activation on receipt (captain agent pane nudge) ---
@@ -456,10 +332,9 @@ type ActivationTransport interface {
 // inherited HERDR_PANE_ID environment variable which may reflect the
 // watcher/launcher pane instead of the captain agent pane.
 //
-// Unlike ReconcilePending (which only processes un-acked receipts), this
-// function processes ALL receipts because the activation nudge is independent
-// of the General relay lifecycle — a receipt may be relayed (acked) but still
-// need the captain agent pane nudged.
+// This function processes ALL receipts, acked or not: DeliverWake acks its own
+// receipt at write time (ADR-0015), so gating the nudge on ack state would mean
+// never nudging at all. Idempotency comes from the activation-seen marker.
 //
 // Safe inject guards are honored: if the captain agent pane is busy or the
 // inject target is unsafe, the nudge is skipped and retried on the next cycle.
