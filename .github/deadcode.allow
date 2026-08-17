@@ -195,10 +195,7 @@ internal/orchestrator/afk_injector.go	Injector.LastEvents	burn-down(BEO-63): pre
 internal/orchestrator/afk_injector.go	NewInjector	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/afk_lock.go	Lock.PID	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/afk_lock.go	Lock.StartAt	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/afk_main.go	Start	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/afk_main.go	Status	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/afk_main.go	runLoop	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/afk_main.go	scanStatusFiles	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/afk_recovery.go	NudgeTracker.Exhausted	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/afk_recovery.go	NudgeTracker.InCooldown	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/afk_recovery.go	NudgeTracker.Record	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
@@ -226,7 +223,6 @@ internal/orchestrator/observation_event.go	EventWaitOutcome.PollFallback	burn-do
 internal/orchestrator/observation_event.go	EventWaitOutcome.String	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/orchestrator.go	DisableAFK	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/orchestrator.go	IsAFKActive	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/orchestrator.go	StartAFK	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/supervision_identity.go	BuildIdentity.String	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/supervision_identity.go	WatcherIdentity.BuildIdentity	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/supervision_identity.go	formatIdentity	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
