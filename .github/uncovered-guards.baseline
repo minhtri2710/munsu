@@ -302,12 +302,6 @@ internal/fleet/scope_scope.go	GateRefuseFromCWD	1	present	burn-down(BEO-69): pre
 internal/fleet/scope_scope.go	GateRefuseFromCWD	1	res.GateCap == GatePresent	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/scope_scope.go	Result.GateRefusalError	1	r == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/soldier_envelope.go	WriteEnvelope	1	env == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/soldier_launch.go	buildLaunchArtifact	1	in.LaunchBin == "" || len(in.LaunchArgs) == 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/soldier_launch.go	buildLaunchArtifact	1	in.LaunchID == "" || in.Generation == "" || in.EndpointFence == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/soldier_launch.go	BuildLaunchPrompt	1	input.HomeDir == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/soldier_launch.go	BuildLaunchPrompt	1	input.TaskKind != "scout" && (strings.TrimSpace(input.ScoutScope) != "" || input.ScoutRuntimeBudgetSecs != 0)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/soldier_launch.go	BuildLaunchPrompt	1	input.TaskKind == "scout" && (strings.TrimSpace(input.ScoutScope) == "" || input.ScoutRuntimeBudgetSecs <= 0)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/soldier_launch.go	BuildLaunchPrompt	1	input.WorktreePath == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/soldier_manifest.go	CheckLegacyBriefMigration	1	!fi.Mode().IsRegular()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/soldier_manifest.go	CheckLegacyBriefMigration	1	!isWithinWorktreeRoot(worktreePath, realPath)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/soldier_manifest.go	CheckLegacyBriefMigration	1	*manifest.LegacyBriefMigration != LegacyBriefMatchCanonicalV1	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
@@ -328,28 +322,8 @@ internal/fleet/soldier_manifest.go	verifyManifestEntry	1	isTrackedByGit(worktree
 internal/fleet/soldier_manifest.go	verifyManifestFile	1	!fi.Mode().IsRegular()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/soldier_manifest.go	verifyManifestFile	1	!isWithinWorktreeRoot(worktreeRoot, realPath)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/soldier_manifest.go	verifyManifestFile	1	fi.Mode()&os.ModeSymlink != 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/spawn_config_snapshot.go	ResolveGeneralHomeBackend	1	base.Config.Backend == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/spawn_runner.go	Runner.acquireWorktree	1	reservationID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/spawn_runner.go	Runner.attachEndpoint	1	r.args.Authority == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/spawn_runner.go	Runner.attachEndpoint	1	r.launch != nil && (a.LeaseID != r.launch.EndpointReservationID || a.FenceToken != r.launch.EndpointFenceToken)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/spawn_runner.go	Runner.beginLaunchIntent	1	!r.projectConfigLoaded || r.projectConfig.SnapshotDigest == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/spawn_runner.go	Runner.beginLaunchIntent	1	fresh.Launch == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/spawn_runner.go	Runner.beginLaunchIntent	1	r.args.Authority == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/spawn_runner.go	Runner.beginLaunchIntent	2	agg.Phase != taskauthority.PhaseQueued	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/spawn_runner.go	Runner.bindWorktree	1	r.args.Authority == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/spawn_runner.go	Runner.checkCaptainBacklogAuthority	1	pane != ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/spawn_runner.go	Runner.confirmSpawn	1	r.launch != nil && (agg.Endpoint == nil || agg.Endpoint.LeaseID != r.launch.EndpointReservationID || agg.Endpoint.FenceToken != r.launch.EndpointFenceToken)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/spawn_runner.go	Runner.createSession	1	r.endpoints == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/spawn_runner.go	Runner.createSession	1	r.launch != nil && acquired.Backend != r.launch.Backend	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/spawn_runner.go	Runner.preflightHarness	1	result.AdapterKnown == harness.PreflightAbsent	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/spawn_runner.go	Runner.preflightHarness	1	result.AuthConfigured == harness.PreflightAbsent	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/spawn_runner.go	Runner.submitLaunch	1	agg.LaunchEvidence.LaunchID != r.launchID || agg.LaunchEvidence.CommandDigest != r.launchCommandDigest	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/spawn_runner.go	Runner.submitLaunch	1	r.args.Authority == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/spawn_runner.go	Runner.taskAggregate	1	r.args.Authority == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/spawn_runner.go	Runner.waitForHarnessReady	1	dead.Absent()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/spawn_runner.go	Runner.waitForHarnessReady	1	status.Lifecycle != LifecycleAlive && status.Lifecycle != LifecycleStarting	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/spawn_runner.go	validateAttestationReference	1	att == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/spawn_runner.go	validateAttestationReference	1	strings.TrimSpace(att.Home) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/spawn_runner.go	Runner.beginLaunchIntent	1	fresh.Launch == nil	BEO-69: post-condition on the aggregate re-read after BeginSpawn. Reaching it needs another writer to advance the generation BETWEEN the commit and the re-read; Authority is a concrete *taskauthority.Canonical, so there is no seam to inject that interleaving and no deterministic way to build the state.
+internal/fleet/spawn_runner.go	Runner.preflightHarness	1	result.AdapterKnown == harness.PreflightAbsent	BEO-108: unreachable. Preflight sets AdapterKnown=Absent only on the path that also returns a non-nil error, which this caller returns on first. Filed as a bug rather than tested, because both branches return the identical error text and a message assertion would pass without entering it.
 internal/fleet/task_handoff_transaction.go	checkHandoffHolds	1	hold.Matches(taskauthority.DispatchActionHandoff, taskID, project, generation, parentID)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/task_handoff_transaction.go	completeHandoffJournal	1	!found	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/task_handoff_transaction.go	configuredParentHome	1	strings.TrimSpace(parent) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
@@ -366,7 +340,7 @@ internal/fleet/task_handoff_transaction.go	verifyTransferReceived	1	received.Tra
 internal/fleet/task_handoff_transaction.go	verifyTransferReceived	1	received.Transfer.SourceHome != sourceHomeID.Value()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/task_handoff_transaction.go	verifyTransferReceived	1	uint64(received.Transfer.SourceGeneration) != task.SourceGeneration	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/taskauthority_reads.go	canonicalCurrentStateQ.Read	1	!canonical	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/harness/dispatch.go	ResolveDispatchSelectionWithPreflight	1	result.AdapterKnown == PreflightAbsent	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/harness/dispatch.go	ResolveDispatchSelectionWithPreflight	1	result.AdapterKnown == PreflightAbsent	BEO-108: unreachable, same shape as the spawn_runner.go site above and filed with it.
 internal/harness/dispatch.go	ResolveDispatchSelectionWithPreflight	1	result.AuthConfigured == PreflightAbsent	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/harness/dispatch.go	ResolveDispatchSelectionWithPreflight	1	result.BinaryOnPath == PreflightAbsent	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/harness/dispatch.go	SaveDispatch	1	cfg == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
