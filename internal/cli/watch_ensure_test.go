@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	mhome "github.com/minhtri2710/munsu/internal/home"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,7 +27,7 @@ func TestWaitForWatcherBeacon_SeesBeat(t *testing.T) {
 	home := t.TempDir()
 	pid := os.Getpid()
 	os.MkdirAll(filepath.Join(home, "state"), 0755)
-	os.WriteFile(orchestrator.BeatPath(home), []byte(fmt.Sprintf("%d %d\n", time.Now().Unix(), pid)), 0644)
+	os.WriteFile(mhome.WatcherBeatPath(home), []byte(fmt.Sprintf("%d %d\n", time.Now().Unix(), pid)), 0644)
 	id := orchestrator.NewIdentity(home)
 	id.PID = pid
 	_ = orchestrator.WriteIdentity(home, id)
@@ -76,7 +77,7 @@ func plantLocalWatcherBeacon(t *testing.T, homeDir string) {
 		t.Fatal(err)
 	}
 	pid := os.Getpid()
-	if err := os.WriteFile(orchestrator.BeatPath(homeDir), []byte(fmt.Sprintf("%d %d\n", time.Now().Unix(), pid)), 0644); err != nil {
+	if err := os.WriteFile(mhome.WatcherBeatPath(homeDir), []byte(fmt.Sprintf("%d %d\n", time.Now().Unix(), pid)), 0644); err != nil {
 		t.Fatal(err)
 	}
 	id := orchestrator.NewIdentity(homeDir)
@@ -132,7 +133,7 @@ func TestEnsureWatcher_CrossHomeDoesNotAttach(t *testing.T) {
 
 	pid := os.Getpid()
 	// Captain home has a fresh beat for this PID, but identity claims general home.
-	os.WriteFile(orchestrator.BeatPath(captain), []byte(fmt.Sprintf("%d %d\n", time.Now().Unix(), pid)), 0644)
+	os.WriteFile(mhome.WatcherBeatPath(captain), []byte(fmt.Sprintf("%d %d\n", time.Now().Unix(), pid)), 0644)
 	id := orchestrator.NewIdentity(general)
 	id.PID = pid
 	if err := orchestrator.WriteIdentity(captain, id); err != nil {
@@ -158,7 +159,7 @@ func TestStopWatcher_CrossHomeIdentityMismatch(t *testing.T) {
 
 	pid := os.Getpid()
 	// Plant beat on captain pointing at this process.
-	os.WriteFile(orchestrator.BeatPath(captain), []byte(fmt.Sprintf("%d %d\n", time.Now().Unix(), pid)), 0644)
+	os.WriteFile(mhome.WatcherBeatPath(captain), []byte(fmt.Sprintf("%d %d\n", time.Now().Unix(), pid)), 0644)
 	// Identity under captain still names the general home.
 	id := orchestrator.NewIdentity(general)
 	id.PID = pid
@@ -184,7 +185,7 @@ func TestStopWatcher_CrossHomeIdentityMismatch(t *testing.T) {
 func TestStopWatcher_CaptainHomeBeatOnly(t *testing.T) {
 	captain := t.TempDir()
 	os.MkdirAll(filepath.Join(captain, "state"), 0755)
-	os.WriteFile(orchestrator.BeatPath(captain), []byte(fmt.Sprintf("%d %d\n", time.Now().Unix(), os.Getpid())), 0644)
+	os.WriteFile(mhome.WatcherBeatPath(captain), []byte(fmt.Sprintf("%d %d\n", time.Now().Unix(), os.Getpid())), 0644)
 
 	resp := stopWatcher(captain)
 	if resp.Data.State != "identity-mismatch" {

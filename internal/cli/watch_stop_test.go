@@ -1,12 +1,11 @@
 package cli
 
 import (
+	mhome "github.com/minhtri2710/munsu/internal/home"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
 // TestStopWatcherNoBeat verifies that stopping with no beat returns already-stopped.
@@ -27,7 +26,7 @@ func TestStopWatcherStaleBeat(t *testing.T) {
 	home := t.TempDir()
 
 	// Write a beat with a PID that doesn't exist (PID 1 is init, use something reliably dead)
-	beatPath := orchestrator.BeatPath(home)
+	beatPath := mhome.WatcherBeatPath(home)
 	os.MkdirAll(filepath.Dir(beatPath), 0755)
 	content := []byte("1 9999999") // PID 9999999 is unlikely to exist
 	if err := os.WriteFile(beatPath, content, 0644); err != nil {

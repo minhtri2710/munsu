@@ -41,11 +41,11 @@ func TestDurableWakeQueue(t *testing.T) {
 func TestAFKStatusAndDisable(t *testing.T) {
 	home := testutil.TempHome(t)
 
-	if orchestrator.IsAFKActive(home) {
+	if orchestrator.IsActive(home) {
 		t.Error("expected AFK to be inactive initially")
 	}
 
-	if err := orchestrator.DisableAFK(home); err != nil {
-		t.Errorf("DisableAFK on inactive should succeed, got: %v", err)
+	if err := orchestrator.Disable(home); err != nil {
+		t.Errorf("Disable on inactive should succeed, got: %v", err)
 	}
 }

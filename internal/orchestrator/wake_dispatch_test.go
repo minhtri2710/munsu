@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"fmt"
+	mhome "github.com/minhtri2710/munsu/internal/home"
 	"os"
 	"path/filepath"
 	"strings"
@@ -791,7 +792,7 @@ func TestDispatchWake_DeferredPreservesLease(t *testing.T) {
 	}
 
 	// The wake should be claimed under a lease (not acked, not lost)
-	entries, err := os.ReadDir(LeaseDir(home))
+	entries, err := os.ReadDir(mhome.LeaseDir(home))
 	if err != nil {
 		t.Fatalf("reading lease dir: %v", err)
 	}
@@ -817,11 +818,11 @@ func TestDispatchWake_DeferredDoesNotAckLease(t *testing.T) {
 	}
 
 	// Read the lease file to confirm events are still present (not acked)
-	entries, err := os.ReadDir(LeaseDir(home))
+	entries, err := os.ReadDir(mhome.LeaseDir(home))
 	if err != nil || len(entries) != 1 {
 		t.Fatalf("expected 1 lease, got %d err=%v", len(entries), err)
 	}
-	leasPath := filepath.Join(LeaseDir(home), entries[0].Name())
+	leasPath := filepath.Join(mhome.LeaseDir(home), entries[0].Name())
 	data, err := os.ReadFile(leasPath)
 	if err != nil {
 		t.Fatalf("reading lease: %v", err)
@@ -845,14 +846,14 @@ func TestDispatchWake_DeferredWakeReclaimsAfterLeaseExpiry(t *testing.T) {
 	}
 
 	// Verify lease exists
-	entries, err := os.ReadDir(LeaseDir(home))
+	entries, err := os.ReadDir(mhome.LeaseDir(home))
 	if err != nil || len(entries) != 1 {
 		t.Fatalf("expected 1 lease, got %d err=%v", len(entries), err)
 	}
 
 	// Reclaim expired leases — our lease has 60s expiry, so it's valid.
 	// To test reclaim, delete the lease file to simulate expiry.
-	leasePath := filepath.Join(LeaseDir(home), entries[0].Name())
+	leasePath := filepath.Join(mhome.LeaseDir(home), entries[0].Name())
 	if err := os.Remove(leasePath); err != nil {
 		t.Fatalf("removing lease: %v", err)
 	}
@@ -884,7 +885,7 @@ func TestDispatchWake_DeferredLeaseNotReclaimedWhileValid(t *testing.T) {
 	}
 
 	// ReclaimExpiredLeases runs — lease is still valid (60s), nothing reclaimed
-	reclaimed, err := reclaimExpiredLeases(home)
+	reclaimed, err := mhome.ReclaimExpiredLeases(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -893,7 +894,7 @@ func TestDispatchWake_DeferredLeaseNotReclaimedWhileValid(t *testing.T) {
 	}
 
 	// Lease file should still exist
-	entries, err := os.ReadDir(LeaseDir(home))
+	entries, err := os.ReadDir(mhome.LeaseDir(home))
 	if err != nil || len(entries) != 1 {
 		t.Fatalf("expected 1 lease after reclaim, got %d err=%v", len(entries), err)
 	}
@@ -905,7 +906,7 @@ func TestDispatchWake_CompletedResolutionSuppressesReclaim(t *testing.T) {
 	home := testutil.TempHome(t)
 
 	// Create an expired lease file manually with a wake record
-	leaseDir := LeaseDir(home)
+	leaseDir := mhome.LeaseDir(home)
 	if err := os.MkdirAll(leaseDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -928,7 +929,7 @@ func TestDispatchWake_CompletedResolutionSuppressesReclaim(t *testing.T) {
 	}
 
 	// Reclaim should suppress the resolved event
-	reclaimed, err := reclaimExpiredLeases(home)
+	reclaimed, err := mhome.ReclaimExpiredLeases(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -951,7 +952,7 @@ func TestDispatchWake_UnresolvedEventGetsReclaimed(t *testing.T) {
 	home := testutil.TempHome(t)
 
 	// Create an expired lease file manually with a wake record (no resolution)
-	leaseDir := LeaseDir(home)
+	leaseDir := mhome.LeaseDir(home)
 	if err := os.MkdirAll(leaseDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -963,7 +964,7 @@ func TestDispatchWake_UnresolvedEventGetsReclaimed(t *testing.T) {
 	}
 
 	// Reclaim should re-enqueue the wake
-	reclaimed, err := reclaimExpiredLeases(home)
+	reclaimed, err := mhome.ReclaimExpiredLeases(home)
 	if err != nil {
 		t.Fatal(err)
 	}

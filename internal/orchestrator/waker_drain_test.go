@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"bytes"
 	"fmt"
+	mhome "github.com/minhtri2710/munsu/internal/home"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,7 +14,7 @@ import (
 // writeBeatFile writes a watcher liveness beat file at the given timestamp.
 func writeBeatFile(t *testing.T, homeDir string, ts int64) {
 	t.Helper()
-	path := BeatPath(homeDir)
+	path := mhome.WatcherBeatPath(homeDir)
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}

@@ -4,6 +4,7 @@ package orchestrator
 
 import (
 	"fmt"
+	mhome "github.com/minhtri2710/munsu/internal/home"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,14 +20,14 @@ func freshHome(t *testing.T) string {
 // TestLockPathSingleSourceOfTruth verifies the canonical lock path is owned
 // only by lifecycle (consumers never spell state/.lock themselves).
 func TestLockPathSingleSourceOfTruth(t *testing.T) {
-	if got := LockPath(freshHome(t)); got != filepath.Join(freshHome(t), "state/.lock") {
+	if got := mhome.SessionLockPath(freshHome(t)); got != filepath.Join(freshHome(t), "state/.lock") {
 		// (freshHome differs each call; this just exercises the join form below)
 	}
 	home := freshHome(t)
-	if got := LockPath(home); got != filepath.Join(home, "state/.lock") {
+	if got := mhome.SessionLockPath(home); got != filepath.Join(home, "state/.lock") {
 		t.Fatalf("LockPath = %q", got)
 	}
-	if got := BeatPath(home); got != filepath.Join(home, "state/.last-watcher-beat") {
+	if got := mhome.WatcherBeatPath(home); got != filepath.Join(home, "state/.last-watcher-beat") {
 		t.Fatalf("BeatPath = %q", got)
 	}
 	if got := QueuePath(home); got != filepath.Join(home, "state/.wake-queue") {
@@ -46,7 +47,7 @@ func TestLockExclusivity(t *testing.T) {
 	if !acq1 {
 		t.Fatal("first AcquireSession returned false; expected to acquire")
 	}
-	if _, err := os.Stat(LockPath(home)); err != nil {
+	if _, err := os.Stat(mhome.SessionLockPath(home)); err != nil {
 		t.Fatalf("lock file not created: %v", err)
 	}
 
@@ -186,7 +187,7 @@ func TestAckWakes_NoCollision(t *testing.T) {
 	}
 
 	// Remaining lease file should contain the other 2 wakes.
-	leasePath := LeaseFilePath(home, result.LeaseID)
+	leasePath := mhome.LeaseFilePath(home, result.LeaseID)
 	data, err := os.ReadFile(leasePath)
 	if err != nil {
 		t.Fatalf("reading lease file: %v", err)
