@@ -26,6 +26,15 @@ munsu project add munsu <absolute-path-to-munsu-repo>
 backend (tmux or herdr). If it shows `herdr` the HERDR_ENV is active; this
 is the normal mode when running inside a Herdr-aware agent.
 
+**Set the general pane:** `config/general-pane` holds one pane handle in
+`session:pane` form (for example `munsu-general:0.1`) — the General's own pane.
+It is the target of the uplink notify path (`munsu report` from a captain) and
+of wake dispatch: those are the paths that write there, only when the composer
+is verified empty. `munsu doctor` lists it with `backend` as a required key; when
+it is unset, resolution falls back to `TMUX_PANE` / `HERDR_PANE_ID`, and with
+neither there is no target and nothing is delivered to a pane. The AFK daemon
+does **not** read it — it diagnoses only (see [ADR-0013](adr/0013-afk-is-diagnosis-and-manual-action.md)).
+
 ## 2. Arm the watcher
 
 Before spawning any soldiers, arm the event-driven watcher. The watcher

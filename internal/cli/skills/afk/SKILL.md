@@ -39,7 +39,7 @@ See `REFERENCE.md` for the bundled contract:
 
 - Consent flag (`state/.afk`) — durable away-mode marker
 - Identity lock (`state/.afk.lock`) — prevents duplicate daemons per home
-- Sentinel marker (U+2063) — distinguishes daemon-generated messages from captain input
+- Sentinel marker (U+2063) — distinguishes wake-delivery nudges from captain input
 - Batched digest (`state/.afk-digest`) — 60s window accumulation
 - Wedge alarm — stale/missing beat, repeated wake
 - Return catch-up gate — `return check` confirms all-clear

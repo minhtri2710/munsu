@@ -59,9 +59,10 @@ locks (dead PID) are reclaimed silently.
 
 ### Sentinel marker (U+2063)
 
-Daemon-generated messages are prefixed with `\u2063` — the Unicode INVISIBLE SEPARATOR. This
-zero-width marker distinguishes them from captain-typed input. The return gate
-(`IsReturnSignal`) rejects marked lines as return candidates.
+Wake-delivery activation nudges (`wakedelivery_deliver.go`) are prefixed with `\u2063` — the
+Unicode INVISIBLE SEPARATOR. This zero-width marker distinguishes machine-delivered messages
+from captain-typed input. The return gate (`IsReturnSignal`) rejects marked lines as return
+candidates; the AFK daemon writes no marked message of its own.
 
 ### Batched digest (`state/.afk-digest`)
 

@@ -6,7 +6,7 @@ Safety invariants:
 
 1. Every operation is scoped to one `MUNSU_HOME`.
 2. The daemon never repairs: nothing it detects is acted on without the General (ADR-0013).
-3. The sentinel marker distinguishes daemon-generated messages from user input.
+3. The sentinel marker distinguishes wake-delivery nudges from user input; AFK writes none.
 4. Repeated wakes are bounded by digesting, not by writing to a pane.
 5. Return is idempotent.
 6. AFK never merges, approves, or changes delivery authority.
