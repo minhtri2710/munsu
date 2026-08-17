@@ -1,0 +1,2 @@
+::error::no refusal site was derived from the tree -- the recognizer has stopped matching, so this lane proves nothing
+exit 1

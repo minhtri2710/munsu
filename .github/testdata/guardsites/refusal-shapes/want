@@ -1,0 +1,8 @@
+a.go	AfterLogging	1	rank != "captain"	57.23
+a.go	Constructed	1	n < 0	24.11
+a.go	Exits	1	code > 125	51.16
+a.go	Literal	1	name == ""	38.16
+a.go	Panics	1	fence == 0	45.16
+a.go	Sentinel	1	!ok	31.9
+a.go	Wrapped	1	identity != "worktree"	17.28
+exit 0

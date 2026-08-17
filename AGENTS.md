@@ -28,6 +28,16 @@ needs `golang.org/x/tools/cmd/deadcode`). A guard with no call site passes its
 own tests and protects nothing — five of those reached `main` before this lane
 existed, so wire it up, delete it, or waive it with a real reason.
 
+A separate `guards` job fails on any *refusal branch* no test has ever entered,
+compared both ways against `.github/uncovered-guards.baseline`
+(`.github/scripts/uncovered-guards.sh check`). The guard set is derived from the
+tree (`.github/scripts/guardsites`), never declared, so a new guard with no test
+fails closed — the file lists waivers only and is only allowed to shrink. It
+merges the coverage profiles of all four test lanes: on the default lane alone,
+105 branches the `integration` lane is the only cover for read as untested. When
+it goes red, write a test that builds the state the guard refuses, or add a line
+with a reason. Its rules are pinned by fixtures (`uncovered-guards.sh selftest`).
+
 That job also enforces `.github/flake-ledger.md`: a test CI caught being flaky
 on `main` has a row there with a deadline, and an `open` row past its deadline
 turns `invariants` red on every PR until someone fixes the test. Rows are

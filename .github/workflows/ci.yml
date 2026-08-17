@@ -19,9 +19,16 @@ jobs:
         with:
           go-version: "1.26"
           cache: true
+      - run: mkdir -p coverage
       - run: go build ./...
       - run: go vet ./...
-      - run: go test ./...
+      # -coverprofile on all three lanes below feeds the `guards` job. Measured
+      # locally (darwin, 8 cores, warm cache) the default lane goes 95.0s ->
+      # 96.1s with it, which is inside the noise: `set` mode counters are a
+      # single store per block. The profiles are what let that job tell "no test
+      # reaches this refusal" from "this refusal is only reached by a lane that
+      # is not this one" -- see .github/scripts/uncovered-guards.sh.
+      - run: go test -coverprofile=coverage/default.out ./...
       # GOOS-gated files never compile on a linux runner, so no test lane can
       # reach them -- three _test.go files had never been compiled by CI at
       # all. Cross-target vet is the only cover for them; `go vet` includes
@@ -38,9 +45,27 @@ jobs:
       # the tag is worth that over an enumerated -run filter that a new test
       # would silently fall outside of.
       - name: e2e-tagged tests
-        run: go test -count=1 -tags e2e $(.github/scripts/build-tags.sh packages e2e)
+        run: go test -count=1 -tags e2e -coverprofile=coverage/e2e.out $(.github/scripts/build-tags.sh packages e2e)
       - name: lifecycle_integration-tagged tests
-        run: go test -count=1 -tags lifecycle_integration $(.github/scripts/build-tags.sh packages lifecycle_integration)
+        run: go test -count=1 -tags lifecycle_integration -coverprofile=coverage/lifecycle_integration.out $(.github/scripts/build-tags.sh packages lifecycle_integration)
+      # Uploaded even when a step above failed, so a lane that got partway still
+      # hands over what it measured. `warn` rather than `error` on an empty
+      # upload, because `always()` also fires when `go build` broke and there is
+      # nothing to collect yet -- erroring there would put a second, misleading
+      # red next to the compile error that actually stopped the job.
+      #
+      # Nothing is lost by being quiet here: the fail-closed check lives
+      # downstream, where it can tell the difference. uncovered-guards.sh treats
+      # a missing or empty profile as fatal, so a path that stops matching turns
+      # the `guards` job red with the lane named, instead of being read as zeros.
+      - name: Upload coverage for the guards lane
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-build
+          path: coverage/
+          if-no-files-found: warn
+          retention-days: 1
 
   race:
     name: Race detector
@@ -96,7 +121,22 @@ jobs:
       # tmux tests provision their own disposable session, so no test depends
       # on a live server), and without per-test output a skipped test is
       # indistinguishable from a passing one in the job log.
-      - run: go test -v -count=1 -timeout 35m -tags integration $(.github/scripts/build-tags.sh packages integration)
+      - run: mkdir -p coverage
+      - run: go test -v -count=1 -timeout 35m -tags integration -coverprofile=coverage/integration.out $(.github/scripts/build-tags.sh packages integration)
+      # This is the profile the merge cannot do without. soldier_soldier_test.go
+      # is integration-tagged, so `soldier_launch.go:474.23` reads count 0 in the
+      # default profile and count 1 here; without this artifact the guards lane
+      # would call that branch untested, along with every other branch these 60
+      # files are the only cover for.
+      # `warn` on an empty upload for the reason given on the build lane's copy.
+      - name: Upload coverage for the guards lane
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-integration
+          path: coverage/
+          if-no-files-found: warn
+          retention-days: 1
 
   invariants:
     name: Repo invariants
@@ -320,6 +360,16 @@ jobs:
       # lane above was built for. It is hermetic and takes under a second.
       - name: Flake ledger rules must agree with their fixtures
         run: .github/scripts/flake-ledger.sh selftest
+      # Same argument as the step above, for the lane that arrived after it. The
+      # enforcing half of the guard-coverage lane runs on every PR, so it is the
+      # half a PR can break, and deleting one of its rules changes no happy path
+      # at all -- the exact property that lane exists to refuse in production
+      # code. One fixture per rule; the script header lists the mutation each
+      # one answers. Hermetic, no artifacts, ~1s, so it belongs here rather than
+      # in the guards job where it would wait on the integration lane before
+      # telling anyone a rule had gone.
+      - name: Guard-coverage rules must agree with their fixtures
+        run: .github/scripts/uncovered-guards.sh selftest
       - name: Flake ledger deadlines must not have passed
         run: .github/scripts/flake-ledger.sh check
       - name: Personal fleet paths must not be tracked
@@ -331,3 +381,41 @@ jobs:
             printf '%s\n' "$tracked"
             exit 1
           fi
+
+  guards:
+    name: Refusal-branch coverage
+    runs-on: ubuntu-latest
+    # The reachability lane in `invariants` sees a guard nothing calls. It cannot
+    # see a guard that IS called and whose refusal branch no test has ever taken:
+    # deleting such a branch changes no happy path, so every lane above stays
+    # green. Coverage is what sees that, which is why this job is separate --
+    # it is the only one that has to wait for other jobs' profiles.
+    #
+    # `needs` on both, because merging all four lanes is a correctness condition
+    # rather than a nicety: with the default profile alone every branch the 60
+    # integration files are the only cover for reads as untested. The script
+    # fails closed on a missing profile rather than treating it as zeros.
+    needs: [build, integration]
+    steps:
+      - uses: actions/checkout@v6
+      # Derivation is `go run ./.github/scripts/guardsites`, which type-checks
+      # nothing and loads no packages -- go/ast over 305 files, ~0.9s including
+      # the build of the tool itself. Same toolchain as every other job so the
+      # parse agrees with the compiler that produced the profiles.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+      - name: Collect the coverage profiles
+        uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-*
+          merge-multiple: true
+          path: .github/coverage
+      # The ratchet line prints a delta against main, which needs main's copy of
+      # the two files. Best-effort: with no base ref the delta is omitted rather
+      # than guessed, and nothing is judged on it.
+      - name: Fetch the base ref for the ratchet delta
+        run: git fetch --depth=1 origin main || true
+      - name: Every refusal branch must be tested or waived
+        run: .github/scripts/uncovered-guards.sh check

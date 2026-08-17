@@ -1,0 +1,3 @@
+# The repo root ignores *.out (coverage output). These four per fixture are
+# committed on purpose -- they ARE the fixture.
+!*.out

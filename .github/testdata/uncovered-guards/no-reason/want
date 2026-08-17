@@ -1,0 +1,3 @@
+::error::.github/testdata/uncovered-guards/no-reason/baseline:1: internal/fake/guard.go: Refuse: entry needs a reason in the fifth column
+::warning file=internal/fake/gated_linux.go::no lane compiles this file on this platform, so its refusal branches are outside the lane in both directions
+exit 1
