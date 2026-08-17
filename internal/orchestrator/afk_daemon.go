@@ -1,7 +1,6 @@
 package orchestrator
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
@@ -15,25 +14,16 @@ import (
 
 // Daemon is the Go-native AFK sub-supervisor daemon.
 // It manages the consent flag, identity lock, and wake triage
-// Phase 2.2+: runLoop integrates digester, wedge detection, stale clearing,
-// durable circuits, and bounded redacted diagnostics.
+// Phase 2.2+: runLoop integrates digester, wedge detection, and stale clearing.
 //
-// Circuit integration: recovery series persist target/input/signature budgets
-// across watcher, converge, and manual calls. Repeated identical deterministic
-// failure opens a circuit; changed inputs create a new series. Only
-// authoritatively dead endpoints auto-relaunch; unresponsive endpoints receive
-// bounded non-destructive nudges.
+// The daemon diagnoses and accumulates; it never repairs. Reaching the general
+// while they are away has two owners: the uplink notify path for immediate
+// notice, and `munsu afk return` for reconciliation (ADR-0013).
 type Daemon struct {
-	homeDir      string
-	lock         *Lock
-	digester     *Digester
-	wedge        *WedgeDetector
-	capture      PaneCapture
-	backend      Backend
-	injector     *Injector
-	circuits     *CircuitStore
-	recoveryDiag *RecoveryDiagnosticStore
-	nudgeTracker *NudgeTracker
+	homeDir  string
+	lock     *Lock
+	digester *Digester
+	wedge    *WedgeDetector
 
 	// ready, when non-nil, is closed by Start immediately after the signal
 	// handler is installed and before any other work. It is the daemon's
@@ -41,27 +31,6 @@ type Daemon struct {
 	// nothing the daemon writes — lock, writer identity, consent flag — can have
 	// become visible any earlier.
 	ready chan struct{}
-}
-
-// SetPaneCapture sets the pane capture interface for checking target safety.
-// Must be called before Start if target safety checking is desired.
-func (d *Daemon) SetPaneCapture(cap PaneCapture) {
-	d.capture = cap
-	d.maybeInitInjector()
-}
-
-// SetBackend sets the backend for sending keystrokes to the general pane.
-// Must be called before Start if inject is desired.
-func (d *Daemon) SetBackend(backend Backend) {
-	d.backend = backend
-	d.maybeInitInjector()
-}
-
-// maybeInitInjector creates the injector when both backend and capture are available.
-func (d *Daemon) maybeInitInjector() {
-	if d.backend != nil && d.capture != nil && d.injector == nil {
-		d.injector = NewInjector(d.backend, d.capture, d.homeDir)
-	}
 }
 
 // Start runs the AFK daemon foreground process:
@@ -127,12 +96,9 @@ func (d *Daemon) Start(homeDir string) error {
 		fmt.Fprintf(os.Stderr, "afk: stale artifact clear error (non-fatal): %v\n", err)
 	}
 
-	// Initialize digester, wedge detector, circuit store, recovery diagnostics, and nudge tracker.
+	// Initialize digester and wedge detector.
 	d.digester = NewDigester(homeDir)
 	d.wedge = NewWedgeDetector(homeDir)
-	d.circuits = NewCircuitStore(homeDir)
-	d.recoveryDiag = NewRecoveryDiagnosticStore(homeDir)
-	d.nudgeTracker = NewNudgeTracker(DefaultNudgeBudget())
 
 	// Load optional AFK config (digest window, wedge thresholds).
 	loadAfkConfig(homeDir, d.digester, d.wedge)
@@ -210,11 +176,8 @@ func (d *Daemon) runLoop(stopCh chan struct{}) {
 
 // triageCycle performs one iteration:
 //
-//	triage → feed digester → check target safety → feed wedge → check wedge (beat/repeat/max-defer) → clear stale → flush.
+//	triage → feed digester → feed wedge → check wedge (beat/repeat/max-defer) → clear stale → flush.
 func (d *Daemon) triageCycle(now time.Time) {
-	// Track whether we need to attempt injection after flush.
-	var lastSafe bool
-
 	// 1. Run triage (drain wake queue and classify).
 	digest, err := OneCycle(d.homeDir)
 	if err != nil {
@@ -224,27 +187,6 @@ func (d *Daemon) triageCycle(now time.Time) {
 
 	// 2. Feed digester with triage results.
 	d.digester.Feed(digest)
-
-	// Check general-pane target safety when there are entries AND capture is configured.
-	// Safety is checked even for routine-only cycles so self-handle can avoid
-	// writing routine entries to the digest when the composer is empty.
-	if digest != nil && (len(digest.Escalated) > 0 || len(digest.Routines) > 0) && d.capture != nil {
-		target, err := ResolveTargetWithSource(d.homeDir)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "afk: target resolution error (non-fatal): %v\n", err)
-		} else if err := ValidateTargetOwnership(&target); err != nil {
-			fmt.Fprintf(os.Stderr, "afk: target ownership error (non-fatal): %v\n", err)
-		} else {
-			safe, verdict, err := IsSafeInjectTarget(d.capture, target.Handle)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "afk: target safety capture error (non-fatal): %v\n", err)
-			} else {
-				fmt.Fprintf(os.Stderr, "afk: target safety: source=%s safe=%v verdict=%s\n", target.Source, safe, verdict)
-				lastSafe = safe
-				d.digester.SetTargetSafety(safe, verdict.String())
-			}
-		}
-	}
 
 	// 3. Feed wedge detector (for repeated wake detection).
 	if digest != nil {
@@ -292,115 +234,4 @@ func (d *Daemon) triageCycle(now time.Time) {
 			fmt.Fprintf(os.Stderr, "afk: digest flushed\n")
 		}
 	}
-
-	// 7. Recovery cycle: check circuit state before injection.
-	// If the circuit is open/blocked, skip injection and record a diagnostic.
-	// If the circuit is closed, proceed with injection.
-	if d.injector != nil && lastSafe {
-		circuitBlocked := false
-		// Check circuit for the current task key if we have escalated entries.
-		if digest != nil && len(digest.Escalated) > 0 {
-			key := d.recoveryCircuitKey(digest.Escalated[0])
-			blocked, err := IsCircuitBlocked(d.circuits, key, now)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "afk: circuit check error (non-fatal): %v\n", err)
-			} else {
-				circuitBlocked = blocked
-				if blocked {
-					fmt.Fprintf(os.Stderr, "afk: circuit blocked for key=%s, skipping inject\n", key.Signature)
-					d.recoveryDiag.Append(RecoveryDiagnostic{
-						At:      now,
-						Kind:    "circuit-blocked",
-						Target:  key.Target,
-						Action:  ActionQuarantine.String(),
-						Reason:  "circuit open: repeated identical failure, skipping injection",
-						Circuit: "open",
-					})
-				}
-			}
-		}
-
-		if !circuitBlocked {
-			if err := d.tryInject(); err != nil {
-				fmt.Fprintf(os.Stderr, "afk: inject error (non-fatal): %v\n", err)
-				// Record circuit attempt on inject error.
-				if digest != nil && len(digest.Escalated) > 0 {
-					key := d.recoveryCircuitKey(digest.Escalated[0])
-					opened, rerr := RecordCircuitAttempt(d.circuits, key, DefaultBudget(), now)
-					if rerr != nil {
-						fmt.Fprintf(os.Stderr, "afk: record circuit attempt error: %v\n", rerr)
-					} else if opened {
-						fmt.Fprintf(os.Stderr, "afk: circuit opened for key=%s (repeated identical failure)\n", key.Signature)
-						d.recoveryDiag.Append(RecoveryDiagnostic{
-							At:      now,
-							Kind:    "circuit-opened",
-							Target:  key.Target,
-							Action:  ActionQuarantine.String(),
-							Reason:  "repeated identical failure opened circuit",
-							Circuit: "open",
-						})
-					}
-				}
-			} else {
-				// Success: record circuit success.
-				if digest != nil && len(digest.Escalated) > 0 {
-					key := d.recoveryCircuitKey(digest.Escalated[0])
-					closed, rerr := RecordCircuitSuccess(d.circuits, key, now)
-					if rerr != nil {
-						fmt.Fprintf(os.Stderr, "afk: record circuit success error: %v\n", rerr)
-					} else if closed {
-						fmt.Fprintf(os.Stderr, "afk: circuit closed (stable alive) for key=%s\n", key.Signature)
-						d.recoveryDiag.Append(RecoveryDiagnostic{
-							At:      now,
-							Kind:    "circuit-closed",
-							Target:  key.Target,
-							Action:  ActionNone.String(),
-							Reason:  "stable alive: circuit closed, recovery complete",
-							Circuit: "closed",
-						})
-					}
-				}
-			}
-		}
-	}
-}
-
-// tryInject reads the latest digest file and attempts to inject
-// it into the general pane through the injector. Safe only when
-// the injector is configured and all safety gates pass.
-// recoveryCircuitKey derives a circuit key from a wake digest for circuit tracking.
-func (d *Daemon) recoveryCircuitKey(wd WakeDigest) CircuitKey {
-	return CircuitKey{
-		Target:    wd.Key,
-		Input:     wd.Payload,
-		Signature: CircuitSignature("inject-error", wd.Payload),
-	}
-}
-
-func (d *Daemon) tryInject() error {
-	path := filepath.Join(d.homeDir, digestFile)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("reading digest for inject: %w", err)
-	}
-
-	var be BatchedEscalation
-	if err := json.Unmarshal(data, &be); err != nil {
-		return fmt.Errorf("unmarshal digest for inject: %w", err)
-	}
-
-	// Nothing to inject.
-	if len(be.Entries) == 0 && be.WedgeAlarm == nil {
-		return nil
-	}
-
-	if _, err := d.injector.InjectIfSafe(&be); err != nil {
-		return err
-	}
-
-	fmt.Fprintf(os.Stderr, "afk: injected %d entries into general pane\n", len(be.Entries))
-	return nil
 }

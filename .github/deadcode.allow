@@ -22,35 +22,6 @@
 # is why the linux and darwin halves of a `_linux.go`/`_darwin.go` pair both
 # appear below, and why this file reads the same on a laptop and on the runner.
 
-# --- Known open bugs, NOT accepted debt -------------------------------------
-# A guard that exists, is complete, and cannot fire because nothing in the
-# binary calls it. These are holes, not debt: the code was written to refuse
-# something and the refusal can never happen. They are listed here only so the
-# lane can go green; `deadcode.sh check` reprints every one as a warning on
-# every single run, and each line names the issue that owns the verdict --
-# wire it up or delete it. A line leaves this section with that issue, not
-# before, and nobody may quietly demote one to accepted debt.
-#
-#   BEO-106  the AFK daemon starts (session_cmd.go calls Daemon.Start) and can
-#            never inject: d.injector is assigned only by maybeInitInjector,
-#            reachable only from SetBackend/SetPaneCapture, and nothing calls
-#            either. The reachability lane cannot see this one -- RTA marks
-#            InjectIfSafe reachable through tryInject without knowing the
-#            receiver is always nil.
-internal/orchestrator/afk_daemon.go	Daemon.SetBackend	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
-internal/orchestrator/afk_daemon.go	Daemon.SetPaneCapture	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
-internal/orchestrator/afk_daemon.go	Daemon.maybeInitInjector	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
-internal/orchestrator/afk_injector.go	DirectInject	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
-internal/orchestrator/afk_injector.go	Injector.LastEvents	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
-internal/orchestrator/afk_injector.go	NewInjector	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
-internal/orchestrator/afk_recovery.go	NudgeTracker.Exhausted	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
-internal/orchestrator/afk_recovery.go	NudgeTracker.InCooldown	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
-internal/orchestrator/afk_recovery.go	NudgeTracker.Record	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
-internal/orchestrator/afk_recovery.go	NudgeTracker.prune	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
-internal/orchestrator/afk_recovery.go	RecoveryDiagnosticStore.Clear	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
-internal/orchestrator/afk_recovery.go	RecoveryDiagnosticStore.Read	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
-internal/orchestrator/afk_recovery.go	ResolveRecovery	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
-
 # --- Not findings: GOOS-union artifacts --------------------------------------
 # The set is the union across every GOOS, so a function reachable on one
 # platform and unreachable on another lands in the union. These two are live

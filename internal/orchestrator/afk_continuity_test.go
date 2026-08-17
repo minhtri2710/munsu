@@ -10,125 +10,6 @@ import (
 	"time"
 )
 
-// fakeBackend records SendKeys calls for test inspection.
-type fakeBackend struct {
-	calls []sendKeysCall
-}
-
-type sendKeysCall struct {
-	windowID string
-	text     string
-}
-
-func (f *fakeBackend) SendKeys(windowID, text string) error {
-	f.calls = append(f.calls, sendKeysCall{windowID: windowID, text: text})
-	return nil
-}
-
-type failBackend struct{}
-
-func (f *failBackend) SendKeys(windowID, text string) error {
-	return os.ErrInvalid
-}
-
-// fakeCapture returns predetermined pane capture content.
-type fakeCapture struct {
-	content string
-	err     error
-}
-
-func (f *fakeCapture) Capture(_ string, _ int) (string, error) {
-	return f.content, f.err
-}
-
-// TestFastPath_SafeIdleCaptainInjects verifies safe injection when composer is empty.
-func TestFastPath_SafeIdleCaptainInjects(t *testing.T) {
-	bk := &fakeBackend{}
-	cap := &fakeCapture{content: "\u276F \n"}
-	parentTarget := "test-session:test-pane"
-	msg := "[report] done: PR merged (task=test-1)"
-	eventID := "12345"
-
-	result := orchestrator.DirectInject(bk, cap, parentTarget, msg, eventID)
-
-	if string(result.Outcome) != "injected" {
-		t.Fatalf("outcome = %q, want injected", string(result.Outcome))
-	}
-	if result.Verdict != "empty" {
-		t.Errorf("verdict = %q, want empty", result.Verdict)
-	}
-	if result.Target != parentTarget {
-		t.Errorf("target = %q, want %q", result.Target, parentTarget)
-	}
-	if len(bk.calls) != 1 {
-		t.Fatalf("calls = %d, want 1", len(bk.calls))
-	}
-	if !strings.Contains(bk.calls[0].text, "PR merged") {
-		t.Errorf("text missing payload: %q", bk.calls[0].text)
-	}
-}
-
-// TestFastPath_PendingComposerNoInjection verifies pending text blocks injection.
-func TestFastPath_PendingComposerNoInjection(t *testing.T) {
-	bk := &fakeBackend{}
-	cap := &fakeCapture{content: "git status\n"}
-	result := orchestrator.DirectInject(bk, cap, "s:p", "[report] done: test", "12345")
-
-	if string(result.Outcome) != "unsafe" {
-		t.Fatalf("outcome = %q, want unsafe", string(result.Outcome))
-	}
-	if len(bk.calls) != 0 {
-		t.Fatalf("calls = %d, want 0", len(bk.calls))
-	}
-}
-
-// TestFastPath_DeadShellNoInjection verifies bare shell prompt blocks injection.
-func TestFastPath_DeadShellNoInjection(t *testing.T) {
-	bk := &fakeBackend{}
-	cap := &fakeCapture{content: "$ \n"}
-	result := orchestrator.DirectInject(bk, cap, "s:p", "[report] done: test", "12345")
-
-	if string(result.Outcome) != "unsafe" {
-		t.Fatalf("outcome = %q, want unsafe", string(result.Outcome))
-	}
-	if len(bk.calls) != 0 {
-		t.Fatalf("calls = %d, want 0", len(bk.calls))
-	}
-}
-
-// TestFastPath_BackendError returns backend-failed.
-func TestFastPath_BackendErrorReturnsBackendFailed(t *testing.T) {
-	bk := &failBackend{}
-	cap := &fakeCapture{content: "\u276F \n"}
-	result := orchestrator.DirectInject(bk, cap, "s:p", "[report] done: test", "12345")
-
-	if string(result.Outcome) != "backend-failed" {
-		t.Fatalf("outcome = %q, want backend-failed", string(result.Outcome))
-	}
-	if result.Error == "" {
-		t.Error("error is empty on backend failure")
-	}
-}
-
-// TestFastPath_CaptureErrorFailsClosed proves a capture failure is NOT
-// endpoint-dead: it fails closed (capture-failed), injects nothing, and can
-// never authorize relaunch.
-func TestFastPath_CaptureErrorFailsClosed(t *testing.T) {
-	bk := &fakeBackend{}
-	cap := &fakeCapture{err: os.ErrInvalid}
-	result := orchestrator.DirectInject(bk, cap, "s:p", "[report] done: test", "12345")
-
-	if string(result.Outcome) != "capture-failed" {
-		t.Fatalf("outcome = %q, want capture-failed (never endpoint-dead)", string(result.Outcome))
-	}
-	if result.Error == "" {
-		t.Error("error is empty on capture error")
-	}
-	if len(bk.calls) != 0 {
-		t.Fatalf("calls = %d, want 0 (capture failure must not inject)", len(bk.calls))
-	}
-}
-
 // TestReliablePath_WakeSurvivesCaptainRecovery proves wake survives drain/re-read.
 func TestReliablePath_WakeSurvivesCaptainRecovery(t *testing.T) {
 	home := t.TempDir()
@@ -199,32 +80,6 @@ func TestReliablePath_EventAppendRoundTrip(t *testing.T) {
 	}
 }
 
-// TestTypedDiagnostics_InjectionOutcomes proves typed outcomes across all
-// injection failure classes.
-func TestTypedDiagnostics_InjectionOutcomes(t *testing.T) {
-	tests := []struct {
-		name    string
-		backend orchestrator.Backend
-		capture orchestrator.PaneCapture
-		want    string
-	}{
-		{"injected", &fakeBackend{}, &fakeCapture{content: "\u276F \n"}, "injected"},
-		{"unsafe-pending", &fakeBackend{}, &fakeCapture{content: "typed"}, "unsafe"},
-		{"unsafe-shell", &fakeBackend{}, &fakeCapture{content: "> \n"}, "unsafe"},
-		{"capture-failed", &fakeBackend{}, &fakeCapture{err: os.ErrInvalid}, "capture-failed"},
-		{"backend-failed", &failBackend{}, &fakeCapture{content: "\u276F \n"}, "backend-failed"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := orchestrator.DirectInject(tt.backend, tt.capture, "s:p", "test msg", "1")
-			if string(result.Outcome) != tt.want {
-				t.Errorf("outcome = %q, want %q", string(result.Outcome), tt.want)
-			}
-		})
-	}
-}
-
 // TestTypedDiagnostics_EnqueueTimestamps proves epoch timestamps in wakes.
 func TestTypedDiagnostics_EnqueueTimestamps(t *testing.T) {
 	home := t.TempDir()
@@ -255,18 +110,6 @@ func TestTypedDiagnostics_WatcherIdentityPersisted(t *testing.T) {
 	}
 	if !orchestrator.ValidatePIDOwnership(home, os.Getpid()) {
 		t.Fatal("ValidatePIDOwnership failed")
-	}
-}
-
-// TestReliablePath_WakePreservedAfterInjection proves wake survives injection.
-func TestReliablePath_WakePreservedAfterInjection(t *testing.T) {
-	home := t.TempDir()
-	orchestrator.EnqueueWake(home, "signal", "task-i", "done: persistent")
-
-	orchestrator.DirectInject(&fakeBackend{}, &fakeCapture{content: "\u276F \n"}, "s:p", "test", "1")
-
-	if !orchestrator.HasQueuedWakes(home) {
-		t.Fatal("wake lost after injection")
 	}
 }
 
