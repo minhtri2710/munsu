@@ -61,8 +61,8 @@ func TestOrphanScanReportsRealGarbageAndLeavesItRunning(t *testing.T) {
 		t.Fatalf("expected the vanished run TMPDIR as the evidence, got:\n%s", garbage)
 	}
 	var contract *contractError
-	if !errors.As(scanErr, &contract) || contract.status != orphanExitGarbage {
-		t.Fatalf("expected exit status %d when leftovers are found, got %v", orphanExitGarbage, scanErr)
+	if !errors.As(scanErr, &contract) || orphanShellExit(t, scanErr) != documentedOrphanExitGarbage {
+		t.Fatalf("expected exit status %d when leftovers are found, got %v", documentedOrphanExitGarbage, scanErr)
 	}
 	if !strings.Contains(report, "does not terminate anything") {
 		t.Fatalf("the report must state that it terminates nothing, got:\n%s", report)
