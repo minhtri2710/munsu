@@ -474,25 +474,23 @@ func applyPatchTargets(body string) ([]string, error) {
 	return targets, nil
 }
 
-// evaluatePatchSafety decides an apply-patch call on its write targets, the
-// same rule a native Write/Edit call is decided on. Patch paths are relative to
-// the directory the tool call runs in, so they are resolved against checkPath.
-func evaluatePatchSafety(checkPath, body string) (bool, string) {
+// patchWriteTargets returns the write targets of an apply-patch call, so the
+// call is decided on the same rule a native Write/Edit call is decided on.
+// Patch paths are relative to the directory the tool call runs in, so they are
+// resolved against checkPath.
+func patchWriteTargets(checkPath, body string) ([]string, error) {
 	targets, err := applyPatchTargets(body)
 	if err != nil {
-		return true, "apply_patch payload is not a readable patch (" + err.Error() +
-			"); refusing rather than letting an unreadable write through"
+		return nil, err
 	}
+	resolved := make([]string, 0, len(targets))
 	for _, target := range targets {
-		resolved := target
-		if !filepath.IsAbs(resolved) {
-			resolved = filepath.Join(checkPath, resolved)
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(checkPath, target)
 		}
-		if block, reason := evaluateFileWriteSafety(resolved); block {
-			return true, reason
-		}
+		resolved = append(resolved, target)
 	}
-	return false, ""
+	return resolved, nil
 }
 
 func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, checkFilePath string, harnessFlag string) error {
@@ -517,10 +515,22 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, c
 	// Evaluate command blocking rules.
 	block := false
 	reason := ""
+	// Every channel that names a write target contributes to one list: the
+	// refusal below and the narrowing further down must agree on what this call
+	// writes (ADR-0014).
+	var writeTargets []string
 	if payload.isPatch {
 		// A patch document never reaches the shell-blocking ladder below: its
-		// body is file content, not a command line.
-		block, reason = evaluatePatchSafety(checkPath, payload.patchBody)
+		// body is file content, not a command line. An unreadable payload is a
+		// refusal, not a pass: munsu has declared this tool covered, so it must
+		// not go unexamined.
+		targets, err := patchWriteTargets(checkPath, payload.patchBody)
+		if err != nil {
+			block = true
+			reason = "apply_patch payload is not a readable patch (" + err.Error() +
+				"); refusing rather than letting an unreadable write through"
+		}
+		writeTargets = targets
 	} else if effectiveCommand != "" {
 		if strings.Contains(effectiveCommand, "munsu watch arm") ||
 			strings.Contains(effectiveCommand, "munsu watch ensure") ||
@@ -551,6 +561,11 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, c
 			}
 		}
 
+		// A shell command is decided on the targets it names, not on where the
+		// session happens to stand: an absolute path into the shared checkout
+		// used to pass unopposed from a valid worktree (ADR-0014 §1).
+		writeTargets = shellWriteTargets(checkPath, effectiveCommand)
+
 		nmHome := os.Getenv("NM_HOME")
 		if nmHome == "" {
 			if h, err := os.UserHomeDir(); err == nil {
@@ -562,10 +577,25 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, c
 
 	// Native file-write tools carry their target in the payload rather than in
 	// a command string, so they are evaluated on the path alone.
-	if !block && effectiveFilePath != "" {
-		if writeBlock, writeReason := evaluateFileWriteSafety(effectiveFilePath); writeBlock {
-			block = true
-			reason = writeReason
+	if effectiveFilePath != "" {
+		writeTargets = append(writeTargets, effectiveFilePath)
+	}
+
+	if !block {
+		block, reason = evaluateWriteTargets(writeTargets)
+	}
+
+	// The unrelated-cwd refusal is scoped to what this guard protects: a call
+	// that names write targets, all of them outside the bound repository's
+	// primary checkout, is not shared-state access just because the session
+	// stands somewhere git does not recognize. Only that one refusal is
+	// narrowed, only when a binding exists to compare against, and only for
+	// calls that named a target at all (ADR-0014 §3).
+	if result.GateRefused && !block && len(writeTargets) > 0 &&
+		result.Identity == "unrelated" && result.Error == bootstrap.UnrelatedCheckoutRefusal {
+		if _, bound := bootstrap.BoundRepositoryCommonDir(); bound {
+			result.GateRefused = false
+			result.Error = ""
 		}
 	}
 
