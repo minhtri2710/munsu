@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	mhome "github.com/minhtri2710/munsu/internal/home"
 	"os"
 	"path/filepath"
 	"strings"
@@ -92,7 +93,7 @@ func TestAckWakes(t *testing.T) {
 	}
 
 	// Lease file should still exist with 1 unacked wake
-	leasePath := LeaseFilePath(home, result.LeaseID)
+	leasePath := mhome.LeaseFilePath(home, result.LeaseID)
 	if _, err := os.Stat(leasePath); os.IsNotExist(err) {
 		t.Error("lease file should still exist with unacked wakes")
 	}
@@ -114,7 +115,7 @@ func TestAckWakesAllRemovesLease(t *testing.T) {
 	}
 
 	// Lease file should be removed
-	leasePath := LeaseFilePath(home, result.LeaseID)
+	leasePath := mhome.LeaseFilePath(home, result.LeaseID)
 	if _, err := os.Stat(leasePath); !os.IsNotExist(err) {
 		t.Error("lease file should be removed after all wakes acked")
 	}

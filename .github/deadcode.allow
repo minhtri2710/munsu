@@ -194,12 +194,6 @@ internal/orchestrator/afk_sentinel.go	Marked	burn-down(BEO-63): pre-existing, im
 internal/orchestrator/afk_target.go	ResolveTarget	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/event.go	ReadAll	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/event.go	ReadFrom	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/lifecycle_lease.go	LeaseDir	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/lifecycle_lease.go	LeaseFilePath	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/lifecycle_lease.go	reclaimExpiredLeases	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/lifecycle_lifecycle.go	BeatPath	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/lifecycle_lifecycle.go	LockPath	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/lifecycle_lifecycle.go	WatchPath	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/mailbox_delivery.go	AwaitedSendReportWithSender	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/mailbox_delivery.go	DeliverEnvelopeWithMetaAndSender	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/mailbox_delivery.go	DeliverEnvelopeWithSender	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
@@ -208,8 +202,6 @@ internal/orchestrator/mailbox_recovery.go	CleanRecoveryMarkers	burn-down(BEO-63)
 internal/orchestrator/mailbox_recovery.go	RecoveryFingerprint	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/observation_event.go	EventWaitOutcome.PollFallback	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/observation_event.go	EventWaitOutcome.String	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/orchestrator.go	DisableAFK	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/orchestrator.go	IsAFKActive	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/turnend_obligations.go	ClearAll	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/turnend_obligations.go	ClearTaskAll	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/turnend_obligations.go	ParseTermKey	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
