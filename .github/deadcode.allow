@@ -31,25 +31,9 @@
 # wire it up or delete it. A line leaves this section with that issue, not
 # before, and nobody may quietly demote one to accepted debt.
 #
-#   BEO-106  the AFK daemon starts (session_cmd.go calls Daemon.Start) and can
-#            never inject: d.injector is assigned only by maybeInitInjector,
-#            reachable only from SetBackend/SetPaneCapture, and nothing calls
-#            either. The reachability lane cannot see this one -- RTA marks
-#            InjectIfSafe reachable through tryInject without knowing the
-#            receiver is always nil.
-internal/orchestrator/afk_daemon.go	Daemon.SetBackend	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
-internal/orchestrator/afk_daemon.go	Daemon.SetPaneCapture	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
-internal/orchestrator/afk_daemon.go	Daemon.maybeInitInjector	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
-internal/orchestrator/afk_injector.go	DirectInject	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
-internal/orchestrator/afk_injector.go	Injector.LastEvents	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
-internal/orchestrator/afk_injector.go	NewInjector	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
-internal/orchestrator/afk_recovery.go	NudgeTracker.Exhausted	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
-internal/orchestrator/afk_recovery.go	NudgeTracker.InCooldown	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
-internal/orchestrator/afk_recovery.go	NudgeTracker.Record	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
-internal/orchestrator/afk_recovery.go	NudgeTracker.prune	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
-internal/orchestrator/afk_recovery.go	RecoveryDiagnosticStore.Clear	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
-internal/orchestrator/afk_recovery.go	RecoveryDiagnosticStore.Read	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
-internal/orchestrator/afk_recovery.go	ResolveRecovery	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
+# The section is empty. That is the intended resting state, not a dead heading:
+# `announce_open_bugs` runs on every `check`, so the next OPEN-BUG line lands
+# here and starts warning the moment it is added.
 
 # --- Not findings: GOOS-union artifacts --------------------------------------
 # The set is the union across every GOOS, so a function reachable on one

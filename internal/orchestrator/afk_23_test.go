@@ -1,11 +1,9 @@
 package orchestrator
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/minhtri2710/munsu/internal/domain"
 )
@@ -300,157 +298,6 @@ func TestIsSafeInjectTarget_CaptureErrImplementation(t *testing.T) {
 	}
 	if verdict != domain.Unknown {
 		t.Errorf("verdict = %v, want unknown on capture error", verdict)
-	}
-}
-
-// --- Digester SetTargetSafety tests ---
-
-func TestDigesterSetTargetSafety(t *testing.T) {
-	tmp := t.TempDir()
-	d := NewDigester(tmp)
-
-	// Set safety before flush — should appear in output.
-	d.SetTargetSafety(true, "empty")
-
-	now := time.Now().Add(defaultWindow + time.Second)
-	if err := d.Flush(now); err != nil {
-		t.Fatalf("Flush: %v", err)
-	}
-
-	// Read and verify digest file.
-	data, err := os.ReadFile(filepath.Join(tmp, digestFile))
-	if err != nil {
-		t.Fatalf("reading digest file: %v", err)
-	}
-
-	var be BatchedEscalation
-	if err := json.Unmarshal(data, &be); err != nil {
-		t.Fatalf("unmarshaling digest: %v", err)
-	}
-
-	if be.SafeTarget == nil {
-		t.Fatal("SafeTarget is nil, want non-nil")
-	}
-	if *be.SafeTarget != true {
-		t.Errorf("SafeTarget = %v, want true", *be.SafeTarget)
-	}
-	if be.TargetVerdict != "empty" {
-		t.Errorf("TargetVerdict = %q, want empty", be.TargetVerdict)
-	}
-}
-
-func TestDigesterSetTargetSafetyUnsafe(t *testing.T) {
-	tmp := t.TempDir()
-	d := NewDigester(tmp)
-
-	// Unsafe target (dead shell).
-	d.SetTargetSafety(false, "unknown")
-
-	now := time.Now().Add(defaultWindow + time.Second)
-	if err := d.Flush(now); err != nil {
-		t.Fatalf("Flush: %v", err)
-	}
-
-	data, _ := os.ReadFile(filepath.Join(tmp, digestFile))
-	var be BatchedEscalation
-	json.Unmarshal(data, &be)
-
-	if be.SafeTarget == nil {
-		t.Fatal("SafeTarget is nil, want non-nil")
-	}
-	if *be.SafeTarget {
-		t.Errorf("SafeTarget = true, want false")
-	}
-	if be.TargetVerdict != "unknown" {
-		t.Errorf("TargetVerdict = %q, want unknown", be.TargetVerdict)
-	}
-}
-
-func TestDigesterSetTargetSafetyResetsAfterFlush(t *testing.T) {
-	tmp := t.TempDir()
-	d := NewDigester(tmp)
-
-	d.SetTargetSafety(true, "empty")
-	now := time.Now().Add(defaultWindow + time.Second)
-	d.Flush(now)
-
-	// After flush, safety data should be reset.
-	d.SetTargetSafety(false, "pending")
-
-	// A captain flush should only contain the latest safety data.
-	d.Flush(now.Add(time.Second))
-
-	data, _ := os.ReadFile(filepath.Join(tmp, digestFile))
-	var be BatchedEscalation
-	json.Unmarshal(data, &be)
-
-	if be.SafeTarget == nil {
-		t.Fatal("SafeTarget is nil in captain flush")
-	}
-	if *be.SafeTarget {
-		t.Errorf("SafeTarget = true in captain flush, want false")
-	}
-	if be.TargetVerdict != "pending" {
-		t.Errorf("TargetVerdict = %q in captain flush, want pending", be.TargetVerdict)
-	}
-}
-
-func TestDigesterNoTargetSafetyInDigestWhenNotSet(t *testing.T) {
-	tmp := t.TempDir()
-	d := NewDigester(tmp)
-
-	// Feed and flush without setting target safety.
-	d.Feed(&Digest{
-		Routines: []WakeDigest{{Kind: "check", Key: "health", Payload: "ok"}},
-	})
-
-	now := time.Now().Add(defaultWindow + time.Second)
-	if err := d.Flush(now); err != nil {
-		t.Fatalf("Flush: %v", err)
-	}
-
-	data, _ := os.ReadFile(filepath.Join(tmp, digestFile))
-	var be BatchedEscalation
-	json.Unmarshal(data, &be)
-
-	if be.SafeTarget != nil {
-		t.Errorf("SafeTarget = %v, want nil when not set", *be.SafeTarget)
-	}
-	if be.TargetVerdict != "" {
-		t.Errorf("TargetVerdict = %q, want empty when not set", be.TargetVerdict)
-	}
-}
-
-func TestDigesterSetTargetSafetyWithEscalation(t *testing.T) {
-	tmp := t.TempDir()
-	d := NewDigester(tmp)
-
-	// Feed an escalated entry and set safety.
-	d.Feed(&Digest{
-		Escalated: []WakeDigest{{Kind: "afk", Key: "task-1", Payload: "PR merged"}},
-	})
-	d.SetTargetSafety(true, "empty")
-	d.SetTargetSafety(false, "unknown")
-
-	// Last SetTargetSafety wins.
-	now := time.Now().Add(defaultWindow + time.Second)
-	d.Flush(now)
-
-	data, _ := os.ReadFile(filepath.Join(tmp, digestFile))
-	var be BatchedEscalation
-	json.Unmarshal(data, &be)
-
-	if be.EscalatedCount != 1 {
-		t.Errorf("EscalatedCount = %d, want 1", be.EscalatedCount)
-	}
-	if be.SafeTarget == nil {
-		t.Fatal("SafeTarget is nil")
-	}
-	if *be.SafeTarget {
-		t.Errorf("SafeTarget = true, want false (last set wins)")
-	}
-	if be.TargetVerdict != "unknown" {
-		t.Errorf("TargetVerdict = %q, want unknown", be.TargetVerdict)
 	}
 }
 
