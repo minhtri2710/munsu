@@ -31,6 +31,12 @@
 # wire it up or delete it. A line leaves this section with that issue, not
 # before, and nobody may quietly demote one to accepted debt.
 #
+#   BEO-106  the AFK daemon starts (session_cmd.go calls Daemon.Start) and can
+#            never inject: d.injector is assigned only by maybeInitInjector,
+#            reachable only from SetBackend/SetPaneCapture, and nothing calls
+#            either. The reachability lane cannot see this one -- RTA marks
+#            InjectIfSafe reachable through tryInject without knowing the
+#            receiver is always nil.
 #   BEO-102  the writer/endpoint fence computes exactly the quiescence proof a
 #            destructive teardown needs -- terminate exactly, rescan, then set
 #            VerifiedQuiescent -- and nothing calls it. `captain retire
@@ -50,6 +56,19 @@ internal/fleet/writer_fence.go	CompositeWriterFence.FenceOSWriters	OPEN-BUG(BEO-
 internal/fleet/writer_fence.go	CompositeWriterFence.FenceWriters	OPEN-BUG(BEO-102): writer/endpoint fence computes the quiescence proof a destructive teardown needs, and nothing calls it; captain retire --remove-home runs os.RemoveAll without it
 internal/fleet/writer_fence.go	correlateWriters	OPEN-BUG(BEO-102): writer/endpoint fence computes the quiescence proof a destructive teardown needs, and nothing calls it; captain retire --remove-home runs os.RemoveAll without it
 internal/fleet/writer_runtime.go	FenceBoundEndpoints	OPEN-BUG(BEO-102): writer/endpoint fence computes the quiescence proof a destructive teardown needs, and nothing calls it; captain retire --remove-home runs os.RemoveAll without it
+internal/orchestrator/afk_daemon.go	Daemon.SetBackend	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
+internal/orchestrator/afk_daemon.go	Daemon.SetPaneCapture	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
+internal/orchestrator/afk_daemon.go	Daemon.maybeInitInjector	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
+internal/orchestrator/afk_injector.go	DirectInject	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
+internal/orchestrator/afk_injector.go	Injector.LastEvents	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
+internal/orchestrator/afk_injector.go	NewInjector	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
+internal/orchestrator/afk_recovery.go	NudgeTracker.Exhausted	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
+internal/orchestrator/afk_recovery.go	NudgeTracker.InCooldown	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
+internal/orchestrator/afk_recovery.go	NudgeTracker.Record	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
+internal/orchestrator/afk_recovery.go	NudgeTracker.prune	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
+internal/orchestrator/afk_recovery.go	RecoveryDiagnosticStore.Clear	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
+internal/orchestrator/afk_recovery.go	RecoveryDiagnosticStore.Read	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
+internal/orchestrator/afk_recovery.go	ResolveRecovery	OPEN-BUG(BEO-106): AFK daemon runs but nothing arms its injector, so the nudge it exists to send can never fire; SetBackend/SetPaneCapture have no caller
 
 # --- Not findings: GOOS-union artifacts --------------------------------------
 # The set is the union across every GOOS, so a function reachable on one
@@ -185,24 +204,11 @@ internal/harness/preflight.go	PreflightBinaryName	burn-down(BEO-63): pre-existin
 internal/harness/quota_balanced.go	newQuotaSelectorWithProvider	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/home/atomic.go	publishExclusive	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/home/atomic_windows.go	publishExclusive	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/afk_daemon.go	Daemon.SetBackend	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/afk_daemon.go	Daemon.SetPaneCapture	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/afk_daemon.go	Daemon.maybeInitInjector	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/afk_digester.go	Digester.EntryCount	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/afk_gate.go	IsReturnSignal	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/afk_injector.go	DirectInject	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/afk_injector.go	Injector.LastEvents	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/afk_injector.go	NewInjector	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/afk_lock.go	Lock.PID	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/afk_lock.go	Lock.StartAt	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/afk_main.go	Status	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/afk_recovery.go	NudgeTracker.Exhausted	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/afk_recovery.go	NudgeTracker.InCooldown	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/afk_recovery.go	NudgeTracker.Record	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/afk_recovery.go	NudgeTracker.prune	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/afk_recovery.go	RecoveryDiagnosticStore.Clear	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/afk_recovery.go	RecoveryDiagnosticStore.Read	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/afk_recovery.go	ResolveRecovery	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/afk_sentinel.go	Marked	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/afk_target.go	ResolveTarget	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/event.go	ReadAll	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
@@ -223,18 +229,6 @@ internal/orchestrator/observation_event.go	EventWaitOutcome.PollFallback	burn-do
 internal/orchestrator/observation_event.go	EventWaitOutcome.String	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/orchestrator.go	DisableAFK	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/orchestrator.go	IsAFKActive	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/supervision_identity.go	BuildIdentity.String	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/supervision_identity.go	WatcherIdentity.BuildIdentity	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/supervision_identity.go	formatIdentity	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/supervision_identity.go	identityPath	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/supervision_identity.go	parseIdentity	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/supervision_identity.go	resolveExecPath	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/supervision_watcher.go	NoopRetirementPort.RecoverPendingRetirements	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/supervision_watcher.go	NoopRetirementPort.RetireMergedPoll	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/supervision_watcher.go	NoopTaskStatePort.ReadTaskState	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/supervision_watcher.go	NoopWatcherHooks.Activate	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/supervision_watcher.go	NoopWatcherHooks.Reconcile	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/supervision_watcher.go	RunWithProbeAndSender	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/turnend_obligations.go	ClearAll	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/turnend_obligations.go	ClearTaskAll	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/turnend_obligations.go	ParseTermKey	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged

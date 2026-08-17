@@ -44,38 +44,12 @@ type ObservedTaskState struct {
 type TaskStatePort interface {
 	ReadTaskState(homeDir, taskID string) (*ObservedTaskState, error)
 }
-type NoopTaskStatePort struct{}
-
-func (NoopTaskStatePort) ReadTaskState(string, string) (*ObservedTaskState, error) {
-	return nil, fmt.Errorf("task state capability unavailable")
-}
-
 type RetirementPort interface {
 	RecoverPendingRetirements(homeDir string) (int, []error)
 	RetireMergedPoll(homeDir, taskID, checkPath string) error
 }
 
-type NoopRetirementPort struct{}
-
-func (NoopRetirementPort) RecoverPendingRetirements(string) (int, []error) { return 0, nil }
-func (NoopRetirementPort) RetireMergedPoll(string, string, string) error {
-	return fmt.Errorf("retirement capability unavailable")
-}
-
-type NoopWatcherHooks struct{}
-
-func (NoopWatcherHooks) Reconcile(string, bool) error { return nil }
-func (NoopWatcherHooks) Activate(string)              {}
-
-// RunWithProbeAndSender starts the persistent watcher with the given probe,
-// sender, hooks, retirement port and task-state port. It keeps the original
-// pure-polling signature; RunWithProbeSenderAndEvents adds the native event
-// lane (BEO-17/P1b).
-func RunWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, states TaskStatePort) (*WakeReason, error) {
-	return run(homeDir, time.NewTicker, signalChannel(), probe, sender, hooks, retirement, states, nil)
-}
-
-// RunWithProbeSenderAndEvents is like RunWithProbeAndSender but also runs the
+// RunWithProbeSenderAndEvents starts the persistent watcher and also runs the
 // bounded native observation event lane (BEO-17/P1b): a validated event hint
 // triggers an immediate re-probe cycle; every other outcome keeps the polling
 // ticker as the cadence authority (the watcher is never silent). A nil port

@@ -159,7 +159,7 @@ func TestWriteIdentityUsesPrivatePermissions(t *testing.T) {
 	if err := WriteIdentity(home, NewIdentity(home)); err != nil {
 		t.Fatal(err)
 	}
-	info, err := os.Stat(identityPath(home))
+	info, err := os.Stat(homepkg.WriterIdentityPath(home, "watcher"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +177,7 @@ func TestClearIdentity_RemovesFile(t *testing.T) {
 
 	ClearIdentity(home)
 
-	path := identityPath(home)
+	path := homepkg.WriterIdentityPath(home, "watcher")
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Errorf("identity file %q should not exist after ClearIdentity", path)
 	}
@@ -195,64 +195,6 @@ func TestClearIdentity_Idempotent(t *testing.T) {
 }
 
 // --- formatIdentity / parseIdentity tests ---
-
-func TestFormatIdentity_RoundTrip(t *testing.T) {
-	id1 := NewIdentity(t.TempDir())
-	data := formatIdentity(id1)
-	if !strings.HasSuffix(data, "\n") {
-		t.Error("formatted identity should end with newline")
-	}
-
-	id2 := parseIdentity(data)
-	if id2 == nil {
-		t.Fatal("parseIdentity returned nil")
-	}
-	if id2.Home != id1.Home {
-		t.Errorf("Home = %q, want %q", id2.Home, id1.Home)
-	}
-	if id2.PID != id1.PID {
-		t.Errorf("PID = %d, want %d", id2.PID, id1.PID)
-	}
-	if id2.ProcessStart != id1.ProcessStart {
-		t.Errorf("ProcessStart = %q, want %q", id2.ProcessStart, id1.ProcessStart)
-	}
-	if id2.Executable != id1.Executable {
-		t.Errorf("Executable = %q, want %q", id2.Executable, id1.Executable)
-	}
-	if id2.BuildVersion != id1.BuildVersion {
-		t.Errorf("BuildVersion = %q, want %q", id2.BuildVersion, id1.BuildVersion)
-	}
-	if id2.ProtocolVersion != id1.ProtocolVersion {
-		t.Errorf("ProtocolVersion = %d, want %d", id2.ProtocolVersion, id1.ProtocolVersion)
-	}
-	if id2.StartTime != id1.StartTime {
-		t.Errorf("StartTime = %d, want %d", id2.StartTime, id1.StartTime)
-	}
-}
-
-func TestParseIdentity_TrailingWhitespace(t *testing.T) {
-	id := NewIdentity(t.TempDir())
-	data := formatIdentity(id)
-
-	id2 := parseIdentity(data + "   \t\n")
-	if id2 == nil {
-		t.Fatal("parseIdentity with trailing whitespace should succeed")
-	}
-	if id2.Home != id.Home {
-		t.Errorf("Home = %q, want %q", id2.Home, id.Home)
-	}
-}
-
-func TestParseIdentity_Nil(t *testing.T) {
-	if id := parseIdentity(""); id != nil {
-		t.Error("parseIdentity of empty string should return nil")
-	}
-	if id := parseIdentity("foo"); id != nil {
-		t.Error("parseIdentity of short string should return nil")
-	}
-}
-
-// --- ValidatePIDOwnership tests ---
 
 func TestValidatePIDOwnership_NoIdentityFile(t *testing.T) {
 	home := t.TempDir()
@@ -523,29 +465,6 @@ func TestProtocolVersionConstant(t *testing.T) {
 
 // --- resolveExecPath tests ---
 
-func TestResolveExecPath_ReturnsPath(t *testing.T) {
-	path := resolveExecPath()
-	if path == "" {
-		t.Error("resolved path should not be empty")
-	}
-	if path == "unknown" {
-		t.Error("resolved path should not be 'unknown' in test context")
-	}
-}
-
-func TestResolveExecPath_IsExecutable(t *testing.T) {
-	path := resolveExecPath()
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("stat resolved path %q: %v", path, err)
-	}
-	if info.Mode()&0100 == 0 {
-		t.Errorf("resolved path %q should be executable", path)
-	}
-}
-
-// --- Zero-value identity ---
-
 func TestZeroValueIdentity_Defaults(t *testing.T) {
 	id := WatcherIdentity{}
 	if id.Home != "" {
@@ -623,15 +542,6 @@ func TestBuildIdentity_DifferentCommits(t *testing.T) {
 	}
 }
 
-func TestBuildIdentity_String(t *testing.T) {
-	if NewBuildIdentity("").String() != "unknown" {
-		t.Error("zero BuildIdentity should display as 'unknown'")
-	}
-	if NewBuildIdentity("abc1234").String() != "abc1234" {
-		t.Error("BuildIdentity.String should return the SHA")
-	}
-}
-
 func TestBuildIdentity_IsZero(t *testing.T) {
 	if !NewBuildIdentity("").IsZero() {
 		t.Error("BuildIdentity with empty SHA should be zero")
@@ -706,22 +616,6 @@ func TestCommitSHA_BackwardCompatV1(t *testing.T) {
 	}
 	if read.BuildVersion != "v1.0.0" {
 		t.Errorf("BuildVersion = %q, want v1.0.0", read.BuildVersion)
-	}
-}
-
-func TestWatcherIdentity_BuildIdentity(t *testing.T) {
-	id := &WatcherIdentity{CommitSHA: "abc1234"}
-	bi := id.BuildIdentity()
-	if bi.String() != "abc1234" {
-		t.Errorf("BuildIdentity = %q, want abc1234", bi.String())
-	}
-}
-
-func TestWatcherIdentity_BuildIdentity_Nil(t *testing.T) {
-	var id *WatcherIdentity
-	bi := id.BuildIdentity()
-	if !bi.IsZero() {
-		t.Error("BuildIdentity for nil watcher identity should be zero")
 	}
 }
 

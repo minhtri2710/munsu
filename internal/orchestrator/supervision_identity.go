@@ -1,10 +1,8 @@
 package orchestrator
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -38,14 +36,6 @@ func NewBuildIdentity(sha string) BuildIdentity {
 // IsZero returns true when the identity is unset.
 func (b BuildIdentity) IsZero() bool { return b.sha == "" }
 
-// String returns the commit SHA for display, or "unknown" for zero values.
-func (b BuildIdentity) String() string {
-	if b.IsZero() {
-		return "unknown"
-	}
-	return b.sha
-}
-
 // Matches reports whether this build identity matches another.
 // Short and full SHAs match when one is an unambiguous prefix of the other.
 // Never matches if either identity is zero.
@@ -68,19 +58,6 @@ type WatcherIdentity struct {
 	ProtocolVersion int    `json:"protocol_version"`
 	StartTime       int64  `json:"start_time"` // unix captains, for human-readable age
 	CommitSHA       string `json:"commit_sha"` // verified commit SHA for identity comparison
-}
-
-// BuildIdentity returns a typed BuildIdentity from the watcher identity's CommitSHA.
-func (id *WatcherIdentity) BuildIdentity() BuildIdentity {
-	if id == nil {
-		return BuildIdentity{}
-	}
-	return NewBuildIdentity(id.CommitSHA)
-}
-
-// identityPath returns the path to the watcher identity file.
-func identityPath(homeDir string) string {
-	return home.WriterIdentityPath(homeDir, "watcher")
 }
 
 // BuildVersion holds the watcher build version for human-readable display.
@@ -131,20 +108,6 @@ func NewIdentity(homeDir string) WatcherIdentity {
 	}
 }
 
-// resolveExecPath returns the resolved executable path, or "unknown" on failure.
-func resolveExecPath() string {
-	exe, err := os.Executable()
-	if err != nil {
-		return "unknown"
-	}
-	// Resolve symlinks to get the real binary path.
-	resolved, err := filepath.EvalSymlinks(exe)
-	if err != nil {
-		return exe
-	}
-	return resolved
-}
-
 // WriteIdentity persists the watcher identity through the generic durable writer identity store.
 func WriteIdentity(homeDir string, id WatcherIdentity) error {
 	canonicalIdentityHome, err := home.CanonicalPath(id.Home)
@@ -178,19 +141,6 @@ func ClearIdentityIfMatches(homeDir string, expected WatcherIdentity) {
 		SchemaVersion: 1, Kind: "watcher", PID: expected.PID, StartToken: expected.ProcessStart,
 		ExecutablePath: expected.Executable, CanonicalHome: expected.Home,
 	})
-}
-
-func formatIdentity(id WatcherIdentity) string {
-	data, _ := json.Marshal(id)
-	return string(append(data, '\n'))
-}
-
-func parseIdentity(data string) *WatcherIdentity {
-	var id WatcherIdentity
-	if json.Unmarshal([]byte(strings.TrimSpace(data)), &id) != nil || id.PID <= 0 || id.Home == "" || id.ProcessStart == "" || id.Executable == "" {
-		return nil
-	}
-	return &id
 }
 
 // ValidatePIDOwnership checks whether the given PID provably belongs to the
