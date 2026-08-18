@@ -167,6 +167,13 @@ func TestRegistryBindingInvariants(t *testing.T) {
 	mustBind(t, r, "c1", "alpha")
 	mustBind(t, r, "c2", "beta")
 
+	owner, err := bindingOwnerOf(r, "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner != "c1" {
+		t.Fatalf("owner of alpha = %s, want c1", owner)
+	}
 	projOf, err := r.ProjectOf(mustCaptainID(t, "c1"))
 	if err != nil {
 		t.Fatal(err)
@@ -202,6 +209,16 @@ func TestRegistryBindingInvariants(t *testing.T) {
 	}
 	if _, err := r.BindCaptain(mustOp(t, "op-bind-rebind", rebind), rebind); err != nil {
 		t.Fatalf("rebind: %v", err)
+	}
+	// ProjectOf(c1) alone cannot prove this: it returns the FIRST binding that
+	// matches c1, so a stale (c1, alpha) row left behind after (c1, gamma)
+	// would go unnoticed. The reverse lookup is what checks alpha is unowned.
+	owner, err = bindingOwnerOf(r, "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner != "" {
+		t.Fatalf("alpha should be unowned after rebind, got %s", owner)
 	}
 	projOf, err = r.ProjectOf(mustCaptainID(t, "c1"))
 	if err != nil {
