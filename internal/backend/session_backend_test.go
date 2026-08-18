@@ -23,7 +23,7 @@ func TestBackendForTask_BoundIdentityUsed(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !hasTmux() {
-		t.Skip("tmux not on PATH (Select verifies the requested capability)")
+		t.Skip("tmux not on PATH (constructBackend verifies the requested capability)")
 	}
 
 	meta := map[string]string{"backend": "tmux", "window": "@test"}

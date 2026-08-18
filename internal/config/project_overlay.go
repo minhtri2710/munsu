@@ -64,24 +64,6 @@ func StoreProjectOverlay(home, project string, overlay ProjectOverlay) error {
 	return storeDocument(filepath.Join(home, ProjectOverlayDocumentPath), document)
 }
 
-// RemoveProjectOverlay deletes the Config-owned overlay value for one scoped
-// Project name. A missing key is a no-op.
-func RemoveProjectOverlay(home, project string) error {
-	overlays, err := LoadProjectOverlays(home)
-	if err != nil {
-		return err
-	}
-	if _, exists := overlays[project]; !exists {
-		return nil
-	}
-	delete(overlays, project)
-	document := ProjectOverlayDocument{
-		SchemaVersion: ProjectOverlaySchemaVersion,
-		Overlays:      overlays,
-	}
-	return storeDocument(filepath.Join(home, ProjectOverlayDocumentPath), document)
-}
-
 // MarshalJSON renders the overlay map with deterministic key order so digest
 // and schema validation are stable across runs.
 func (d ProjectOverlayDocument) MarshalJSON() ([]byte, error) {
@@ -99,12 +81,6 @@ func (d ProjectOverlayDocument) MarshalJSON() ([]byte, error) {
 		out.Overlays[k] = d.Overlays[k]
 	}
 	return json.Marshal(out)
-}
-
-// ProjectOverlayAvailable reports whether a project overlay document exists.
-func ProjectOverlayAvailable(home string) bool {
-	_, err := os.Stat(filepath.Join(home, ProjectOverlayDocumentPath))
-	return err == nil || !os.IsNotExist(err)
 }
 
 // LoadProjectOverlay returns the Config-owned overlay value for one Project,

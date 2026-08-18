@@ -486,22 +486,6 @@ func RetireMergedPoll(homeDir, taskID, checkPath string, auth *taskauthority.Can
 	return nil
 }
 
-// removePollWithValidation validates a poll path against an expected digest
-// and removes it. Returns os.ErrNotExist if the file is already gone.
-func removePollWithValidation(checkPath, expectedDigest string) error {
-	if err := ValidateCheckWithLstat(checkPath); err != nil {
-		return err
-	}
-	currentDigest, err := pollContentDigest(checkPath)
-	if err != nil {
-		return err
-	}
-	if currentDigest != expectedDigest {
-		return fmt.Errorf("poll digest changed: old=%q new=%q", expectedDigest, currentDigest)
-	}
-	return os.Remove(checkPath)
-}
-
 func requireRetirementIdentity(homeDir, id string) (*domain.DeliveryIdentity, error) {
 	meta, err := home.ReadMeta(homeDir, id)
 	if err != nil {

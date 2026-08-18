@@ -352,15 +352,6 @@ func TestCheckTangle(t *testing.T) {
 		t.Fatalf("expected no error on detached HEAD (no remote), got: %v", err)
 	}
 }
-func TestAbsRoot(t *testing.T) {
-	root := AbsRoot()
-	if root == "" {
-		t.Fatal("AbsRoot() returned empty string")
-	}
-	if !filepath.IsAbs(root) {
-		t.Errorf("AbsRoot() = %q, want absolute path", root)
-	}
-}
 
 func runCmd(t *testing.T, dir, name string, args ...string) {
 	t.Helper()

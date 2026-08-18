@@ -38,17 +38,6 @@ func zellijBin() (string, error) {
 	return path, nil
 }
 
-// zellijCmd builds an exec.Cmd for a zellij action targeting this backend's session.
-func (z *ZellijBackend) zellijCmd(args ...string) *exec.Cmd {
-	bin, err := zellijBin()
-	if err != nil {
-		// Return a command that will fail fast with a clear error.
-		return exec.Command("false")
-	}
-	fullArgs := append([]string{"--session", z.Session, "action"}, args...)
-	return exec.Command(bin, fullArgs...)
-}
-
 // zellijOutput runs a zellij action and returns stdout.
 func (z *ZellijBackend) zellijOutput(args ...string) (string, error) {
 	bin, err := zellijBin()

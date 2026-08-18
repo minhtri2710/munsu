@@ -82,15 +82,6 @@ func cmuxOutput(args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// workspaceExists checks whether a workspace with the given ID exists.
-func (c *CmuxBackend) workspaceExists(workspaceID string) bool {
-	alive, err := c.checkWorkspaceAlive(workspaceID)
-	if err != nil {
-		return false
-	}
-	return alive
-}
-
 // checkWorkspaceAlive returns (true, nil) when the exact workspace exists,
 // (false, ErrPaneNotFound) when the workspace is confirmed absent, and an
 // operational error for every other failure (command failure, malformed JSON).

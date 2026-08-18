@@ -273,67 +273,6 @@ func TestHandleLateCapabilityLoss_WithFallbackPolicy(t *testing.T) {
 
 // --- projectAttestationEvidence projection tests ---
 
-// TestProjectAttestationEvidence_WritesModeFields proves the runtime .meta
-// projection helper mirrors the accepted attestation without any authority
-// mutation.
-func TestProjectAttestationEvidence_WritesModeFields(t *testing.T) {
-	homeDir := t.TempDir()
-	taskID := "test-mode-fields"
-
-	att := CreateCapabilityAttestation(
-		"test-project", homeDir, "pi", "pi",
-		"no-mistakes", "direct-PR", "no-mistakes not on PATH; defaulting to direct-PR",
-		nil,
-	)
-	if projErr := projectAttestationEvidence(homeDir, taskID, att, taskauthority.Generation(1)); projErr != nil {
-		t.Fatalf("projectAttestationEvidence: %v", projErr)
-	}
-
-	meta, err := home.ReadMeta(homeDir, taskID)
-	if err != nil {
-		t.Fatalf("ReadMeta: %v", err)
-	}
-	if meta[MetaRequestedMode] != "no-mistakes" {
-		t.Errorf("MetaRequestedMode = %q, want %q", meta[MetaRequestedMode], "no-mistakes")
-	}
-	if meta[MetaEffectiveMode] != "direct-PR" {
-		t.Errorf("MetaEffectiveMode = %q, want %q", meta[MetaEffectiveMode], "direct-PR")
-	}
-	if meta[MetaFallbackReason] != "no-mistakes not on PATH; defaulting to direct-PR" {
-		t.Errorf("MetaFallbackReason = %q, want %q", meta[MetaFallbackReason], "no-mistakes not on PATH; defaulting to direct-PR")
-	}
-	if meta[MetaCapabilityAttestation] == "" {
-		t.Error("MetaCapabilityAttestation should hold the serialized attestation")
-	}
-}
-
-func TestProjectAttestationEvidence_NoFallbackReason(t *testing.T) {
-	homeDir := t.TempDir()
-	taskID := "test-no-fallback"
-
-	att := CreateCapabilityAttestation(
-		"test-project", homeDir, "pi", "pi",
-		"direct-PR", "direct-PR", "", nil,
-	)
-	if projErr := projectAttestationEvidence(homeDir, taskID, att, taskauthority.Generation(1)); projErr != nil {
-		t.Fatalf("projectAttestationEvidence: %v", projErr)
-	}
-
-	meta, err := home.ReadMeta(homeDir, taskID)
-	if err != nil {
-		t.Fatalf("ReadMeta: %v", err)
-	}
-	if meta[MetaRequestedMode] != "direct-PR" {
-		t.Errorf("MetaRequestedMode = %q, want %q", meta[MetaRequestedMode], "direct-PR")
-	}
-	if meta[MetaEffectiveMode] != "direct-PR" {
-		t.Errorf("MetaEffectiveMode = %q, want %q", meta[MetaEffectiveMode], "direct-PR")
-	}
-	if _, ok := meta[MetaFallbackReason]; ok {
-		t.Error("MetaFallbackReason should not be set when empty")
-	}
-}
-
 func TestProjectAttestationEvidence_PreservesExistingMeta(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-preserve"
@@ -346,11 +285,7 @@ func TestProjectAttestationEvidence_PreservesExistingMeta(t *testing.T) {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
-	att := CreateCapabilityAttestation(
-		"test-project", homeDir, "pi", "pi",
-		"direct-PR", "direct-PR", "", nil,
-	)
-	if projErr := projectAttestationEvidence(homeDir, taskID, att, taskauthority.Generation(1)); projErr != nil {
+	if projErr := projectAttestationEvidence(homeDir, taskID, taskauthority.Generation(1)); projErr != nil {
 		t.Fatalf("projectAttestationEvidence: %v", projErr)
 	}
 
@@ -361,8 +296,8 @@ func TestProjectAttestationEvidence_PreservesExistingMeta(t *testing.T) {
 	if meta["kind"] != "ship" {
 		t.Errorf("kind should be preserved, got %q", meta["kind"])
 	}
-	if meta[MetaRequestedMode] != "direct-PR" {
-		t.Errorf("MetaRequestedMode = %q, want %q", meta[MetaRequestedMode], "direct-PR")
+	if meta["attestation_generation"] != "1" {
+		t.Errorf("attestation_generation = %q, want %q", meta["attestation_generation"], "1")
 	}
 }
 
@@ -377,12 +312,7 @@ func TestProjectAttestationEvidence_TypedPartialError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	att := CreateCapabilityAttestation(
-		"test-project", homeDir, "pi", "pi",
-		"no-mistakes", "direct-PR", "no-mistakes not on PATH; defaulting to direct-PR",
-		nil,
-	)
-	projErr := projectAttestationEvidence(homeDir, taskID, att, taskauthority.Generation(1))
+	projErr := projectAttestationEvidence(homeDir, taskID, taskauthority.Generation(1))
 	var typed *AttestationProjectionError
 	if !errors.As(projErr, &typed) {
 		t.Fatalf("projection error = %v, want *AttestationProjectionError", projErr)

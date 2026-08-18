@@ -360,27 +360,6 @@ func TestIsNotFoundErr_Nil(t *testing.T) {
 	}
 }
 
-func TestParseHerdrProtocolMismatch_ExtractsExpected(t *testing.T) {
-	expected := parseHerdrProtocolMismatch(execError(`{"error":{"code":"protocol_mismatch","message":"expected_protocol: 16"}}`))
-	if expected != 16 {
-		t.Errorf("expected = %d, want 16", expected)
-	}
-}
-
-func TestParseHerdrProtocolMismatch_NonMismatch(t *testing.T) {
-	expected := parseHerdrProtocolMismatch(execError(`{"error":{"code":"pane_not_found","message":"not found"}}`))
-	if expected != 0 {
-		t.Errorf("expected = %d, want 0", expected)
-	}
-}
-
-func TestParseHerdrProtocolMismatch_Nil(t *testing.T) {
-	expected := parseHerdrProtocolMismatch(nil)
-	if expected != 0 {
-		t.Errorf("expected = %d, want 0", expected)
-	}
-}
-
 func TestHerdrCLIError_Error(t *testing.T) {
 	e := &HerdrCLIError{Code: "test_code", Message: "test message"}
 	s := e.Error()
