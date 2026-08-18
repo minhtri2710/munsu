@@ -134,3 +134,60 @@ func TestCheckCaptainRegistry_Malformed(t *testing.T) {
 		t.Fatalf("status = %s, want %s (entry: %+v)", entry.Status, StatusStale, entry)
 	}
 }
+
+func TestCheckConvergeReadiness(t *testing.T) {
+	convergeLock := func(homeDir string) string {
+		return filepath.Join(homeDir, "state", fleet.ConvergeLockName)
+	}
+
+	t.Run("absent lock reports ready", func(t *testing.T) {
+		entry := checkConvergeReadiness(t.TempDir())
+		if entry.Status != StatusCurrent {
+			t.Fatalf("status = %s, want %s (entry: %+v)", entry.Status, StatusCurrent, entry)
+		}
+		if !strings.Contains(entry.Detail, "no converge lock") {
+			t.Errorf("detail = %q, want mention of no converge lock", entry.Detail)
+		}
+		if entry.RepairCmd != "" {
+			t.Errorf("unexpected repair command for absent lock: %q", entry.RepairCmd)
+		}
+	})
+
+	t.Run("free lock file is stale but harmless", func(t *testing.T) {
+		homeDir := t.TempDir()
+		lockPath := convergeLock(homeDir)
+		if err := os.MkdirAll(filepath.Dir(lockPath), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(lockPath, []byte("leftover\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		entry := checkConvergeReadiness(homeDir)
+		if entry.Status != StatusCurrent {
+			t.Fatalf("status = %s, want %s for a free lock (entry: %+v)", entry.Status, StatusCurrent, entry)
+		}
+		if entry.RepairCmd != "" {
+			t.Errorf("unexpected repair command for a free lock: %q", entry.RepairCmd)
+		}
+	})
+
+	t.Run("held lock is a live converge, not a fault", func(t *testing.T) {
+		homeDir := t.TempDir()
+		lockPath := convergeLock(homeDir)
+		if err := os.MkdirAll(filepath.Dir(lockPath), 0755); err != nil {
+			t.Fatal(err)
+		}
+		release := holdConvergeLock(t, lockPath)
+		defer release()
+		entry := checkConvergeReadiness(homeDir)
+		if entry.Status != StatusCurrent {
+			t.Fatalf("status = %s, want %s for a held lock (entry: %+v)", entry.Status, StatusCurrent, entry)
+		}
+		if !strings.Contains(entry.Detail, "in progress") {
+			t.Errorf("detail = %q, want mention of converge in progress", entry.Detail)
+		}
+		if entry.RepairCmd != "" {
+			t.Errorf("a live converge must not get an rm -f repair, got %q", entry.RepairCmd)
+		}
+	})
+}

@@ -1849,7 +1849,24 @@ func acquireExclusiveLock(lockPath string) (func(), error) {
 			return // token changed — different generation
 		}
 
-		os.Remove(lockPath)
+		// This remove is unreachable on Windows, and that is a property of
+		// the checks above rather than of Remove itself. Both generation
+		// checks reach back into the locked file: os.SameFile's file-ID
+		// lookup opens the path with no sharing, and the token comparison
+		// reads it through a fresh handle into a range the exclusive
+		// whole-file LockFileEx lock covers. Windows denies both; which
+		// denial returns first is Windows-internal, and either way the
+		// closure exits here and the remove never runs. The consequence
+		// that matters is that on Windows those checks never complete, so
+		// they are inoperative there: the file is permanent, and release
+		// is fail-closed — nothing is ever removed, so a newer generation
+		// can never be removed — but the SameFile/token safety net simply
+		// does not exist. FILE_SHARE_DELETE was considered and rejected:
+		// it would let a third party unlink a live lock file, and it would
+		// not fix the token read, which the byte-range lock denies
+		// regardless of share mode. The price is one fixed-name file per
+		// home, reused on every converge, never accumulated.
+		_ = os.Remove(lockPath)
 	}, nil
 }
 
