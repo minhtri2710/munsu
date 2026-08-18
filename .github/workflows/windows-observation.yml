@@ -160,14 +160,17 @@ jobs:
         run: |
           set +e
           probe() {
-            echo "===== $1 :: $2 ====="
-            go test -count=1 -timeout 3m -v -run "^$2$" "$1" 2>&1 | tail -25
+            echo "########## $1 :: $2 ##########"
+            go test -count=1 -timeout 3m -v -run "$2" "$1" > /tmp/p.log 2>&1
             echo "exit=$?"
+            head -45 /tmp/p.log
+            echo "...(tail)..."
+            tail -5 /tmp/p.log
           }
-          probe ./internal/orchestrator TestDaemonCatchesSignalAtEarliestReadiness
-          probe ./internal/cli          TestEnsureCaptainReadyDefersLiveAgentThatIsNotReady
-          probe ./internal/fleet        TestSendMailboxToCaptain_UnmarkedCaptainHome
-          probe ./internal/home         TestTaskMetadataDoesNotIncreaseExistingDirectoryPermissions
+          probe ./internal/home         '^TestTaskMetadataDoesNotIncreaseExistingDirectoryPermissions$'
+          probe ./internal/home         '^ZZZ_NoSuchTest$'
+          probe ./internal/cli          '^TestEnsureCaptainReadyDefersLiveAgentThatIsNotReady$'
+          probe ./internal/fleet        '^TestSendMailboxToCaptain_UnmarkedCaptainHome$'
 
       - name: Summary
         if: always()
