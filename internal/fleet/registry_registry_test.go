@@ -167,12 +167,12 @@ func TestRegistryBindingInvariants(t *testing.T) {
 	mustBind(t, r, "c1", "alpha")
 	mustBind(t, r, "c2", "beta")
 
-	owner, err := r.OwnerOf(mustProjectID(t, "alpha"))
+	owner, err := bindingOwnerOf(r, "alpha")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if owner != mustCaptainID(t, "c1") {
-		t.Fatalf("OwnerOf(alpha) = %s, want c1", owner.Value())
+	if owner != "c1" {
+		t.Fatalf("owner of alpha = %s, want c1", owner)
 	}
 	projOf, err := r.ProjectOf(mustCaptainID(t, "c1"))
 	if err != nil {
@@ -210,12 +210,15 @@ func TestRegistryBindingInvariants(t *testing.T) {
 	if _, err := r.BindCaptain(mustOp(t, "op-bind-rebind", rebind), rebind); err != nil {
 		t.Fatalf("rebind: %v", err)
 	}
-	owner, err = r.OwnerOf(mustProjectID(t, "alpha"))
+	// ProjectOf(c1) alone cannot prove this: it returns the FIRST binding that
+	// matches c1, so a stale (c1, alpha) row left behind after (c1, gamma)
+	// would go unnoticed. The reverse lookup is what checks alpha is unowned.
+	owner, err = bindingOwnerOf(r, "alpha")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if owner != (domain.CaptainID{}) {
-		t.Fatalf("alpha should be unowned after rebind, got %s", owner.Value())
+	if owner != "" {
+		t.Fatalf("alpha should be unowned after rebind, got %s", owner)
 	}
 	projOf, err = r.ProjectOf(mustCaptainID(t, "c1"))
 	if err != nil {
@@ -288,12 +291,12 @@ func TestRegistryRetire(t *testing.T) {
 	if _, err := r.RetireCaptain(mustOp(t, "op-retire-cap", capRetire), capRetire); err != nil {
 		t.Fatalf("RetireCaptain: %v", err)
 	}
-	owner, err := r.OwnerOf(mustProjectID(t, "alpha"))
+	owner, err := bindingOwnerOf(r, "alpha")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if owner != (domain.CaptainID{}) {
-		t.Fatalf("alpha should be unowned after captain retire, got %s", owner.Value())
+	if owner != "" {
+		t.Fatalf("alpha should be unowned after captain retire, got %s", owner)
 	}
 
 	rev, _ = r.ProjectRevision()
@@ -493,6 +496,7 @@ func TestRegistryNaturalIdempotency(t *testing.T) {
 	if _, err := r.UnbindCaptain(mustOp(t, "op-unbind-2", unbind), unbind); err != nil {
 		t.Fatalf("UnbindCaptain already unbound: %v", err)
 	}
+
 }
 
 func TestRegistryRereadAfterHomeReopen(t *testing.T) {
@@ -518,12 +522,12 @@ func TestRegistryRereadAfterHomeReopen(t *testing.T) {
 	if proj.Name != "alpha" {
 		t.Fatalf("reread project = %+v", proj)
 	}
-	owner, err := r2.OwnerOf(mustProjectID(t, "alpha"))
+	owner, err := bindingOwnerOf(r2, "alpha")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if owner != mustCaptainID(t, "c1") {
-		t.Fatalf("reread owner = %s, want c1", owner.Value())
+	if owner != "c1" {
+		t.Fatalf("reread owner = %s, want c1", owner)
 	}
 }
 

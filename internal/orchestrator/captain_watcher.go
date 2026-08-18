@@ -49,22 +49,6 @@ func WatcherStatusSummary(captainHome string) WatcherStatus {
 	return WatcherStopped
 }
 
-// LeaseStatusSummary returns a watcher status based on the watcher lease.
-// This is used by the General to observe Captain watcher health without
-// reading Captain task state files. The lease file is the authoritative
-// source of watcher identity for a home.
-func LeaseStatusSummary(captainHome string) WatcherStatus {
-	summary := home.ObserveWatcherLease(captainHome)
-	if summary == nil || summary.Absent {
-		return WatcherAbsent
-	}
-	if summary.Healthy {
-		return WatcherRunning
-	}
-	// Lease exists but is unhealthy — beat is stale or PID is dead.
-	return WatcherStopped
-}
-
 // EnsureWatcher starts or stops the per-captain watcher based on whether child
 // work is in flight. When hasChildWork is true and the watcher is not running,
 // starts the watcher. When hasChildWork is false and the watcher is

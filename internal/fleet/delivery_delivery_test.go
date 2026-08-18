@@ -159,33 +159,6 @@ func TestGitDiffSummary_WithDiff(t *testing.T) {
 	}
 }
 
-func TestNoMistakesStatus_NoBinary(t *testing.T) {
-	// If no-mistakes isn't on PATH, this should return an error
-	_, err := NoMistakesStatus("test-branch")
-	if err != nil {
-		// Expected — no-mistakes not available in test env
-		if !strings.Contains(err.Error(), "no-mistakes") {
-			t.Errorf("expected no-mistakes error, got: %v", err)
-		}
-	}
-}
-
-func TestNoMistakesRespond_Empty(t *testing.T) {
-	err := NoMistakesRespond(nil)
-	if err == nil {
-		t.Fatal("expected error for empty findings")
-	}
-}
-
-func TestNoMistakesRespond_NoBinary(t *testing.T) {
-	err := NoMistakesRespond([]string{"finding-1"})
-	if err != nil {
-		if !strings.Contains(err.Error(), "no-mistakes") {
-			t.Errorf("expected no-mistakes error, got: %v", err)
-		}
-	}
-}
-
 // initGitRepo initializes a git repo in the given directory.
 func initGitRepo(t *testing.T, dir, remoteDir string) {
 	t.Helper()

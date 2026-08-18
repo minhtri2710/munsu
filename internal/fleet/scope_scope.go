@@ -67,10 +67,6 @@ type Result struct {
 	Err           error          `json:"error,omitempty"`
 }
 
-func (r *Result) IsGateRefusal() bool {
-	return r != nil && (r.Err != nil || r.GateCap == GatePresent)
-}
-
 func (r *Result) GateRefusalError() error {
 	if r == nil {
 		return fmt.Errorf("scope classification unavailable")
@@ -176,20 +172,6 @@ func gateCommonDir(commonDir string) bool {
 	return strings.HasSuffix(rel, ".git")
 }
 
-func DetectGateCapability(repoPath string) (GateCapability, string) {
-	if _, present := os.LookupEnv("NO_MISTAKES_GATE"); present {
-		return GatePresent, "env"
-	}
-	_, _, commonDir, err := ClassifyIdentity(repoPath)
-	if err != nil {
-		return GateUnknown, "identity-error"
-	}
-	if gateCommonDir(commonDir) {
-		return GatePresent, "git-common-dir"
-	}
-	return GateAbsent, ""
-}
-
 func Classify(path string) *Result {
 	res := &Result{}
 	canonical, err := canonicalPath(path)
@@ -263,8 +245,4 @@ func GateRefuseFromCWD() error {
 		return fmt.Errorf("gate agent refused for %s (%s)", res.CanonicalPath, res.GateSource)
 	}
 	return nil
-}
-
-func IsGateAgentActive(path string) bool {
-	return Classify(path).IsGateRefusal()
 }

@@ -2853,22 +2853,6 @@ func TestRecover_BadProvenanceFailsEntry(t *testing.T) {
 	}
 }
 
-func TestRecoverResult_String(t *testing.T) {
-	res := &RecoverResult{Entries: []RecoverEntry{
-		{ID: "a", Outcome: RecoverAlive},
-		{ID: "b", Outcome: RecoverFailed, Error: "boom"},
-	}}
-	s := res.String()
-	if !strings.Contains(s, "a: alive") || !strings.Contains(s, "b: FAILED: boom") {
-		t.Errorf("String() = %q", s)
-	}
-
-	empty := (&RecoverResult{}).String()
-	if empty != "no captains registered" {
-		t.Errorf("empty String() = %q", empty)
-	}
-}
-
 // --- ProbeLiveness tests ---
 
 func TestProbeLiveness_ReportsSeededWithoutMeta(t *testing.T) {

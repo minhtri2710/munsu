@@ -131,7 +131,7 @@ func TestReadWithProbe_NoProbeSupersededWorkingIsCoherent(t *testing.T) {
 	setupObservationHome(t, homeDir, "working")
 
 	// ReadSoldierState is the nil-probe path used by task observe / soldier-state.
-	state, err := ReadSoldierState(homeDir, "task")
+	state, err := ReadWithProbe(homeDir, "task", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
