@@ -73,7 +73,6 @@ func DrainWakes(h string) ([]WakeRecord, error) {
 	if e != nil {
 		return nil, e
 	}
-	defer f.Close()
 	var out []WakeRecord
 	s := bufio.NewScanner(f)
 	for s.Scan() {
@@ -83,8 +82,10 @@ func DrainWakes(h string) ([]WakeRecord, error) {
 		}
 	}
 	if e = s.Err(); e != nil {
+		f.Close()
 		return nil, e
 	}
+	_ = f.Close()
 	if e = os.Remove(p); e != nil && !os.IsNotExist(e) {
 		return nil, e
 	}
