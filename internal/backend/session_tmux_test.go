@@ -79,11 +79,11 @@ func TestDefault_IsDeletedFromOperationPath(t *testing.T) {
 func TestSelect_RejectsUnknownNames(t *testing.T) {
 	unknown := []string{"foobar", ""}
 	for _, name := range unknown {
-		_, err := Select(name)
+		_, err := constructBackend(name)
 		if err == nil {
-			t.Errorf("Select(%q) expected error, got nil", name)
+			t.Errorf("constructBackend(%q) expected error, got nil", name)
 		} else if !strings.Contains(err.Error(), "unknown session backend") {
-			t.Errorf("Select(%q) unexpected error: %v", name, err)
+			t.Errorf("constructBackend(%q) unexpected error: %v", name, err)
 		}
 	}
 }
@@ -95,12 +95,12 @@ func TestSelect_ReturnsKnownBackendsWhenRequestedBinaryPresent(t *testing.T) {
 	os.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
 
 	for _, name := range known {
-		bk, err := Select(name)
+		bk, err := constructBackend(name)
 		if err != nil {
-			t.Errorf("Select(%q) with %q on PATH: %v", name, name, err)
+			t.Errorf("constructBackend(%q) with %q on PATH: %v", name, name, err)
 		}
 		if bk == nil {
-			t.Errorf("Select(%q) returned nil backend", name)
+			t.Errorf("constructBackend(%q) returned nil backend", name)
 		}
 	}
 }
@@ -112,12 +112,12 @@ func TestSelect_FailsClosedWhenRequestedBinaryAbsent(t *testing.T) {
 	os.Setenv("PATH", "/dev/null")
 
 	for _, name := range known {
-		bk, err := Select(name)
+		bk, err := constructBackend(name)
 		if err == nil {
-			t.Errorf("Select(%q) succeeded (%T) with %q absent from PATH — must fail closed", name, bk, name)
+			t.Errorf("constructBackend(%q) succeeded (%T) with %q absent from PATH — must fail closed", name, bk, name)
 		}
 		if !strings.Contains(err.Error(), "not found on PATH") {
-			t.Errorf("Select(%q) unexpected error: %v", name, err)
+			t.Errorf("constructBackend(%q) unexpected error: %v", name, err)
 		}
 	}
 }
@@ -622,28 +622,28 @@ func TestFakeBackend_BackendSelectStaysSame(t *testing.T) {
 	defer os.Setenv("PATH", oldPath)
 	os.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
 
-	bk, err := Select("tmux")
+	bk, err := constructBackend("tmux")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := bk.(*TmuxBackend); !ok {
-		t.Errorf("Select('tmux') returned %T, want *TmuxBackend", bk)
+		t.Errorf("constructBackend('tmux') returned %T, want *TmuxBackend", bk)
 	}
 
-	bk, err = Select("herdr")
+	bk, err = constructBackend("herdr")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := bk.(*HerdrBackend); !ok {
-		t.Errorf("Select('herdr') returned %T, want *HerdrBackend", bk)
+		t.Errorf("constructBackend('herdr') returned %T, want *HerdrBackend", bk)
 	}
 
-	bk, err = Select("zellij")
+	bk, err = constructBackend("zellij")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := bk.(*ZellijBackend); !ok {
-		t.Errorf("Select('zellij') returned %T, want *ZellijBackend", bk)
+		t.Errorf("constructBackend('zellij') returned %T, want *ZellijBackend", bk)
 	}
 }
 

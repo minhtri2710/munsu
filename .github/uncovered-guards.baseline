@@ -254,8 +254,6 @@ internal/fleet/registry_ops.go	Registry.RegisterProject	1	req.Precondition.Gener
 internal/fleet/registry_ops.go	Registry.RetireCaptain	1	idx < 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/registry_ops.go	Registry.RetireCaptain	1	req.Precondition.Generation != registryGeneration	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/registry_ops.go	Registry.RetireProject	1	req.Precondition.Generation != registryGeneration	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/registry_ops.go	Registry.UnbindCaptain	1	!containsCaptain(cdoc, req.CaptainID.Value())	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/registry_ops.go	Registry.UnbindCaptain	1	req.Precondition.Generation != registryGeneration	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/registry_registry.go	NewRegistry	1	h == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/registry_registry.go	Registry.prepare	1	op.Digest != want	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/registry_registry.go	requireNonEmpty	1	strings.TrimSpace(value) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
@@ -272,7 +270,6 @@ internal/fleet/retirement_poll.go	ListPendingRetirements	1	rec.TaskID == "" || r
 internal/fleet/retirement_poll.go	RecoverPendingRetirement	1	!hasPublication	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/retirement_poll.go	RecoverPendingRetirement	1	currentURL != "" && currentURL != rec.URL	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/retirement_poll.go	RecoverPendingRetirement	1	rec.SchemaVersion != PollRetirementSchema	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/retirement_poll.go	removePollWithValidation	1	currentDigest != expectedDigest	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/retirement_poll.go	requireCanonicalCompletedOutcome	1	auth == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/retirement_poll.go	requireCanonicalCompletedOutcome	1	out.Status != taskauthority.DeliveryOutcomeCompleted	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/retirement_poll.go	requireRetirementIdentity	1	ident == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged

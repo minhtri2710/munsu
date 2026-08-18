@@ -77,15 +77,15 @@ func TestSpawnAttachAttestationCommitsAcceptedEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadMeta: %v", err)
 	}
-	if meta[MetaCapabilityAttestation] == "" || meta[MetaRequestedMode] != "no-mistakes" || meta[MetaEffectiveMode] != "direct-PR" {
+	if meta["attestation_generation"] == "" {
 		t.Fatalf("projection meta = %v", meta)
 	}
 }
 
 // TestSpawnWriteTaskMetaKeepsAttestationRuntimeOnly proves the pre-transition
-// side file writes runtime observations only: the attestation fields are not
-// written before the acceptance, and appear only after attachAttestation
-// projects them.
+// side file writes runtime observations only: the attestation generation stamp
+// is not written before the acceptance, and appears only after
+// attachAttestation projects it.
 func TestSpawnWriteTaskMetaKeepsAttestationRuntimeOnly(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-spawn-side-file"
@@ -98,16 +98,14 @@ func TestSpawnWriteTaskMetaKeepsAttestationRuntimeOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadMeta: %v", err)
 	}
-	for _, key := range []string{MetaCapabilityAttestation, MetaRequestedMode, MetaEffectiveMode, MetaFallbackReason} {
-		if _, ok := meta[key]; ok {
-			t.Errorf("writeTaskMeta must not write %q before the acceptance", key)
-		}
+	if _, ok := meta["attestation_generation"]; ok {
+		t.Error("writeTaskMeta must not write attestation_generation before the acceptance")
 	}
 	if meta["mode"] != "direct-PR" {
 		t.Errorf("runtime observation mode = %q, want direct-PR", meta["mode"])
 	}
 
-	// After the post-confirm acceptance, the projection carries the fields.
+	// After the post-confirm acceptance, the projection carries the stamp.
 	if err := r.attachAttestation(1); err != nil {
 		t.Fatalf("attachAttestation: %v", err)
 	}
@@ -115,7 +113,7 @@ func TestSpawnWriteTaskMetaKeepsAttestationRuntimeOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadMeta: %v", err)
 	}
-	if meta[MetaEffectiveMode] != "direct-PR" || meta[MetaRequestedMode] != "no-mistakes" {
+	if meta["attestation_generation"] != "1" {
 		t.Fatalf("projected meta = %v", meta)
 	}
 	if _, err := auth.Get(mustTaskID(t, taskID)); err != nil {

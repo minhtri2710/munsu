@@ -51,9 +51,9 @@ func TestSelect_OrcaFailsClosedWhenAbsent(t *testing.T) {
 	defer os.Setenv("PATH", oldPath)
 	os.Setenv("PATH", "/dev/null")
 
-	bk, err := Select("orca")
+	bk, err := constructBackend("orca")
 	if err == nil {
-		t.Fatalf("Select('orca') must fail CLOSED when orca is absent from PATH, got %T", bk)
+		t.Fatalf("constructBackend('orca') must fail CLOSED when orca is absent from PATH, got %T", bk)
 	}
 	if !strings.Contains(err.Error(), "not found on PATH") {
 		t.Errorf("unexpected error: %v", err)
@@ -66,12 +66,12 @@ func TestSelect_OrcaWhenRequestedBinaryPresent(t *testing.T) {
 	defer os.Setenv("PATH", oldPath)
 	os.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
 
-	bk, err := Select("orca")
+	bk, err := constructBackend("orca")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := bk.(*OrcaBackend); !ok {
-		t.Errorf("Select('orca') returned %T, want *OrcaBackend", bk)
+		t.Errorf("constructBackend('orca') returned %T, want *OrcaBackend", bk)
 	}
 }
 
@@ -170,7 +170,7 @@ func TestOrcaBackend_Capture_InvalidHandle(t *testing.T) {
 }
 
 func TestSelect_OrcaUnknownBackend(t *testing.T) {
-	_, err := Select("nonexistent")
+	_, err := constructBackend("nonexistent")
 	if err == nil {
 		t.Fatal("expected error for unknown backend")
 	}
@@ -179,7 +179,7 @@ func TestSelect_OrcaUnknownBackend(t *testing.T) {
 	}
 }
 
-// TestOrcaBackend_SelectRoundTrip verifies that Select("orca") returns a backend
+// TestOrcaBackend_SelectRoundTrip verifies that constructBackend("orca") returns a backend
 // that can be type-asserted and used without panic when the requested binary
 // is present on PATH.
 func TestOrcaBackend_SelectRoundTrip(t *testing.T) {
@@ -188,16 +188,16 @@ func TestOrcaBackend_SelectRoundTrip(t *testing.T) {
 	defer os.Setenv("PATH", oldPath)
 	os.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
 
-	bk, err := Select("orca")
+	bk, err := constructBackend("orca")
 	if err != nil {
 		t.Fatal(err)
 	}
 	orca, ok := bk.(*OrcaBackend)
 	if !ok {
-		t.Fatalf("Select('orca') returned %T, want *OrcaBackend", bk)
+		t.Fatalf("constructBackend('orca') returned %T, want *OrcaBackend", bk)
 	}
 	if orca == nil {
-		t.Fatal("Select('orca') returned nil")
+		t.Fatal("constructBackend('orca') returned nil")
 	}
 }
 
@@ -225,19 +225,19 @@ func TestOrcaBackend_SelectOnly(t *testing.T) {
 	oldPath := os.Getenv("PATH")
 	defer os.Setenv("PATH", oldPath)
 	os.Setenv("PATH", "/dev/null")
-	if _, err := Select("orca"); err == nil {
-		t.Fatal("Select('orca') must fail closed when orca is absent from PATH")
+	if _, err := constructBackend("orca"); err == nil {
+		t.Fatal("constructBackend('orca') must fail closed when orca is absent from PATH")
 	}
 
 	// Select succeeds when a fake orca binary is on PATH.
 	fakeBin := fakeExecutables(t, "orca")
 	os.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
-	bk, err := Select("orca")
+	bk, err := constructBackend("orca")
 	if err != nil {
-		t.Fatalf("Select('orca') failed: %v", err)
+		t.Fatalf("constructBackend('orca') failed: %v", err)
 	}
 	if _, ok := bk.(*OrcaBackend); !ok {
-		t.Fatalf("Select('orca') returned %T, want *OrcaBackend", bk)
+		t.Fatalf("constructBackend('orca') returned %T, want *OrcaBackend", bk)
 	}
 
 	// Empty identity never resolves — even with orca on PATH.

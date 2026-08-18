@@ -51,9 +51,9 @@ func TestSelect_CmuxFailsClosedWhenAbsent(t *testing.T) {
 	defer os.Setenv("PATH", oldPath)
 	os.Setenv("PATH", "/dev/null")
 
-	bk, err := Select("cmux")
+	bk, err := constructBackend("cmux")
 	if err == nil {
-		t.Fatalf("Select('cmux') must fail CLOSED when cmux is absent from PATH, got %T", bk)
+		t.Fatalf("constructBackend('cmux') must fail CLOSED when cmux is absent from PATH, got %T", bk)
 	}
 	if !strings.Contains(err.Error(), "not found on PATH") {
 		t.Errorf("unexpected error: %v", err)
@@ -66,18 +66,18 @@ func TestSelect_CmuxWhenRequestedBinaryPresent(t *testing.T) {
 	defer os.Setenv("PATH", oldPath)
 	os.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
 
-	bk, err := Select("cmux")
+	bk, err := constructBackend("cmux")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := bk.(*CmuxBackend); !ok {
-		t.Errorf("Select('cmux') returned %T, want *CmuxBackend", bk)
+		t.Errorf("constructBackend('cmux') returned %T, want *CmuxBackend", bk)
 	}
 
 	// Verify it's a fresh instance (not sharing state)
-	bk2, _ := Select("cmux")
+	bk2, _ := constructBackend("cmux")
 	if bk == bk2 {
-		t.Error("Select('cmux') returned the same instance")
+		t.Error("constructBackend('cmux') returned the same instance")
 	}
 }
 
@@ -183,7 +183,7 @@ func TestCmuxBackend_Capture_AlwaysErrors(t *testing.T) {
 }
 
 func TestSelect_CmuxUnknownBackend(t *testing.T) {
-	_, err := Select("nonexistent")
+	_, err := constructBackend("nonexistent")
 	if err == nil {
 		t.Fatal("expected error for unknown backend")
 	}
@@ -192,7 +192,7 @@ func TestSelect_CmuxUnknownBackend(t *testing.T) {
 	}
 }
 
-// TestCmuxBackend_SelectRoundTrip verifies that Select("cmux") returns a backend
+// TestCmuxBackend_SelectRoundTrip verifies that constructBackend("cmux") returns a backend
 // that can be type-asserted and used without panic when the requested binary
 // is present on PATH.
 func TestCmuxBackend_SelectRoundTrip(t *testing.T) {
@@ -201,15 +201,15 @@ func TestCmuxBackend_SelectRoundTrip(t *testing.T) {
 	defer os.Setenv("PATH", oldPath)
 	os.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
 
-	bk, err := Select("cmux")
+	bk, err := constructBackend("cmux")
 	if err != nil {
 		t.Fatal(err)
 	}
 	cmux, ok := bk.(*CmuxBackend)
 	if !ok {
-		t.Fatalf("Select('cmux') returned %T, want *CmuxBackend", bk)
+		t.Fatalf("constructBackend('cmux') returned %T, want *CmuxBackend", bk)
 	}
 	if cmux == nil {
-		t.Fatal("Select('cmux') returned nil")
+		t.Fatal("constructBackend('cmux') returned nil")
 	}
 }

@@ -256,22 +256,6 @@ func treehouseBin() (string, error) {
 	return path, nil
 }
 
-// ErrTreehouseNotFound is returned when treehouse is not on PATH.
-var ErrTreehouseNotFound = fmt.Errorf("treehouse: not found on PATH")
-
-// IsTreehouseNotFound reports whether the error indicates treehouse was
-// not found on PATH.
-func IsTreehouseNotFound(err error) bool {
-	if err == nil {
-		return false
-	}
-	// Check if exec.LookPath wrapped it
-	if e, ok := err.(*exec.Error); ok && e.Err == exec.ErrNotFound {
-		return true
-	}
-	return strings.Contains(err.Error(), "not found on PATH")
-}
-
 // --- git worktree fallback provider ---
 
 type gitWorktreeProvider struct {
@@ -452,15 +436,4 @@ func AssertNotTangled(projectDir, projectName string) error {
 	// Tangle detected: on a non-default branch in the primary checkout
 	return fmt.Errorf("cannot spawn: %s is on branch %s, not an isolated worktree. Use a detached HEAD or a worktree",
 		projectName, branch)
-}
-
-// AbsRoot resolves the true absolute path of the current working directory.
-// Useful for comparison against the primary checkout root.
-func AbsRoot() string {
-	pwd, _ := os.Getwd()
-	abs, err := filepath.Abs(pwd)
-	if err != nil {
-		return pwd
-	}
-	return abs
 }

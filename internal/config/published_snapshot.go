@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 )
 
 const (
@@ -58,7 +57,7 @@ func LoadPublishedSnapshot(home string) (ResolvedSnapshot, error) {
 	if err := document.Validate(); err != nil {
 		return ResolvedSnapshot{}, err
 	}
-	return ResolvedSnapshot{loadedAt: time.Now().UTC(), config: cloneResolvedProjectConfig(document.Config)}, nil
+	return ResolvedSnapshot{config: cloneResolvedProjectConfig(document.Config)}, nil
 }
 
 func PublishedSnapshotAvailable(home string) bool {
