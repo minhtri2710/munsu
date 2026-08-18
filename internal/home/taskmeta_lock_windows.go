@@ -26,8 +26,9 @@ func lockExclusive(file *os.File) error {
 }
 
 func unlockFile(file *os.File) error {
+	overlapped := new(windows.Overlapped)
 	ret, _, callErr := windows.NewLazySystemDLL("kernel32.dll").NewProc("UnlockFileEx").Call(
-		uintptr(file.Fd()), 0, ^uintptr(0), ^uintptr(0), 0)
+		uintptr(file.Fd()), 0, ^uintptr(0), ^uintptr(0), uintptr(unsafe.Pointer(overlapped)))
 	if ret == 0 {
 		return errors.Join(errLockUnavailable, callErr)
 	}

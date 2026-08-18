@@ -30,8 +30,9 @@ func lockWatcherFile(file *os.File, nonblock bool) error {
 }
 
 func unlockWatcherFile(file *os.File) error {
+	overlapped := new(windows.Overlapped)
 	ret, _, callErr := windows.NewLazySystemDLL("kernel32.dll").NewProc("UnlockFileEx").Call(
-		uintptr(file.Fd()), 0, ^uintptr(0), ^uintptr(0), 0)
+		uintptr(file.Fd()), 0, ^uintptr(0), ^uintptr(0), uintptr(unsafe.Pointer(overlapped)))
 	if ret == 0 {
 		return errors.Join(errWatcherLockUnavailable, callErr)
 	}
