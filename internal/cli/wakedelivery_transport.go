@@ -40,7 +40,7 @@ func (t sessionActivationTransport) Attempt(home string, target orchestrator.Tar
 		IsRecognizedAgent(string) (bool, string)
 	}); ok {
 		isAgent, status := recognized.IsRecognizedAgent(target.Handle)
-		if !isAgent || (status != "idle" && status != "done") {
+		if !isAgent || !backend.AgentStatusReady(status) {
 			attempt.SafetyVerdict = "pending"
 			return attempt
 		}

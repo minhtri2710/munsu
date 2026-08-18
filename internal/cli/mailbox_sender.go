@@ -56,7 +56,7 @@ func (s sessionMailboxSender) Send(home string, meta map[string]string, payload 
 		IsRecognizedAgent(string) (bool, string)
 	}); ok {
 		isAgent, status := recognized.IsRecognizedAgent(meta["window"])
-		if !isAgent || (status != "idle" && status != "done") {
+		if !isAgent || !backend.AgentStatusReady(status) {
 			return orchestrator.BoundSendResult{Status: "deferred", Detail: "agent status: " + status}
 		}
 	}

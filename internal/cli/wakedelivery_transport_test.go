@@ -91,6 +91,49 @@ func TestSessionActivationTransportDefersWorkingAgent(t *testing.T) {
 	}
 }
 
+// TestSessionActivationTransportReadyNormalization binds the BEO-117
+// readiness normalisation at the wake-delivery Attempt call site: a status
+// that is ready after ToLower+TrimSpace ("Idle", " idle ", "IDLE", "Done")
+// must not be short-circuited to verdict "pending", while genuinely
+// not-ready statuses still are. The raw pre-fix comparison
+// `status != "idle" && status != "done"` rejected "Idle" here permanently.
+func TestSessionActivationTransportReadyNormalization(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		status string
+		want   bool
+	}{
+		{name: "idle lowercase", status: "idle", want: true},
+		{name: "idle capitalized", status: "Idle", want: true},
+		{name: "idle padded", status: " idle ", want: true},
+		{name: "idle uppercase", status: "IDLE", want: true},
+		{name: "done", status: "done", want: true},
+		{name: "working", status: "working", want: false},
+		{name: "blocked", status: "blocked", want: false},
+		{name: "unknown", status: "unknown", want: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			bk := &activationPromptBackend{
+				capture: "❯\n",
+				aware:   true,
+				status:  tt.status,
+				result:  backend.PromptResult{Status: backend.PromptSubmitted},
+			}
+			transport := sessionActivationTransport{resolve: func(string, string) (backend.Backend, string, error) {
+				return bk, "herdr", nil
+			}, identity: func(string) (string, error) { return "herdr", nil }}
+			got := transport.Attempt("home", orchestrator.TargetResult{Handle: "pane"}, "payload")
+			if tt.want {
+				if got.SafetyVerdict == "pending" || bk.promptCalls != 1 {
+					t.Fatalf("status=%q pending; want submit (got=%+v calls=%d)", tt.status, got, bk.promptCalls)
+				}
+			} else if got.SafetyVerdict != "pending" || bk.promptCalls != 0 {
+				t.Fatalf("status=%q submitted; want pending (got=%+v calls=%d)", tt.status, got, bk.promptCalls)
+			}
+		})
+	}
+}
+
 func TestSessionActivationTransportUsesRecognizedAgentOverride(t *testing.T) {
 	bk := &activationPromptBackend{
 		capture: "\x1b[1m> \x1b[0m\x1b[2mType a message...\x1b[0m\n",

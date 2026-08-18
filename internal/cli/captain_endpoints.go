@@ -97,7 +97,11 @@ func probeCaptainBackend(bk backend.Backend, window string) (fleet.CaptainProbeR
 		}); ok {
 			isAgent, status := recognized.IsRecognizedAgent(window)
 			result.AgentStatus = status
-			result.ReadyForPrompt = isAgent && (status == "idle" || status == "done")
+			// Readiness goes through the backend-owned normalising predicate, never
+			// a raw-string comparison: the backend returns an unnormalized status
+			// ("Idle", " idle "), and comparing it directly to "idle"/"done" made a
+			// healthy captain read not-ready and fail activation (BEO-117).
+			result.ReadyForPrompt = isAgent && backend.AgentStatusReady(status)
 		}
 		return result, err
 	}

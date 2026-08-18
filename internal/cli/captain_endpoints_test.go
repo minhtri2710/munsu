@@ -268,3 +268,40 @@ func TestSessionProbeEndpointAgentAwareOutcomes(t *testing.T) {
 		})
 	}
 }
+
+// TestProbeCaptainBackendReadyNormalization pins the BEO-117 fix at the real
+// call site (probeCaptainBackend through the production probe endpoint): an
+// agent status that is ready after normalisation -- "Idle", " idle ", "IDLE"
+// -- must resolve ReadyForPrompt, while a genuinely not-ready status
+// ("working", "blocked", "unknown") still must not. This drives the seam, not
+// the predicate in isolation: the predicate already had tests and the bug
+// (a raw `status == "idle" || status == "done"` comparison) still shipped
+// because the call site bypassed it.
+func TestProbeCaptainBackendReadyNormalization(t *testing.T) {
+	tests := []struct {
+		name   string
+		status string
+		want   bool
+	}{
+		{name: "idle lowercase", status: "idle", want: true},
+		{name: "idle capitalized", status: "Idle", want: true},
+		{name: "idle padded", status: " idle ", want: true},
+		{name: "idle uppercase", status: "IDLE", want: true},
+		{name: "done", status: "done", want: true},
+		{name: "working", status: "working", want: false},
+		{name: "blocked", status: "blocked", want: false},
+		{name: "unknown", status: "unknown", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bk := &seamProbeBackend{paneAlive: true, agentAlive: true, status: tt.status}
+			got, err := seamProbeEndpoint(bk).Probe("home", map[string]string{"window": "owned:pane", "herdr_session": "owned"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.ReadyForPrompt != tt.want {
+				t.Fatalf("status=%q ReadyForPrompt=%t, want %t (AgentStatus=%q)", tt.status, got.ReadyForPrompt, tt.want, got.AgentStatus)
+			}
+		})
+	}
+}
