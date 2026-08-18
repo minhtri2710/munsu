@@ -201,7 +201,7 @@ func stopRunningWatcher(homeDir string) error {
 		return nil
 	}
 
-	if err := proc.Signal(syscall.SIGTERM); err != nil {
+	if err := signalWatcherProcess(proc); err != nil {
 		return fmt.Errorf("signaling watcher pid %d: %w", pid, err)
 	}
 
