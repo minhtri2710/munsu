@@ -111,7 +111,6 @@ func TestReturn_StopsAVerifiedDaemon(t *testing.T) {
 	if err := child.Start(); err != nil {
 		t.Fatalf("starting child: %v", err)
 	}
-	defer func() { _ = child.Process.Kill() }()
 	pid := child.Process.Pid
 	// Reap concurrently. Production never hits this: Return runs in its own CLI
 	// process and is not the daemon's parent. Here it is the parent, so without
@@ -123,7 +122,10 @@ func TestReturn_StopsAVerifiedDaemon(t *testing.T) {
 		_, _ = child.Process.Wait()
 		close(reaped)
 	}()
-	defer func() { <-reaped }()
+	defer func() {
+		_ = child.Process.Kill()
+		<-reaped
+	}()
 
 	executable, startToken, err := processIdentity(pid)
 	if err != nil {
