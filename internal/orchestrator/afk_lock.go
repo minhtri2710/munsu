@@ -3,7 +3,6 @@ package orchestrator
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -78,10 +77,4 @@ func parseLockContent(data []byte) (pid int, startStr string) {
 		startStr = strings.TrimSpace(parts[1])
 	}
 	return p, startStr
-}
-
-// isProcessAlive checks whether a process with the given PID is running.
-func isProcessAlive(pid int) bool {
-	cmd := exec.Command("kill", "-0", strconv.Itoa(pid))
-	return cmd.Run() == nil
 }
