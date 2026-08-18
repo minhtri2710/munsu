@@ -248,12 +248,18 @@ jobs:
           retention-days: 14
 
       # The two verdicts above are this job's verdict, and this is the only step
-      # that fails. Every other step carries `continue-on-error` to keep it that
-      # way: so a wrong fix ref does not stop the comparison from being reported,
-      # so the diff still gets written and uploaded when the comparison fails,
-      # and so no reporting step can end the job before this one is reached --
-      # not to swallow any of them. `steps.diff` is not tested here on purpose:
-      # it only runs when
+      # that fails *on a verdict*. Every step that reports one carries
+      # `continue-on-error` to keep it that way: so a wrong fix ref does not stop
+      # the comparison from being reported, so the diff still gets written and
+      # uploaded when the comparison fails, and so no reporting step can end the
+      # job before this one is reached -- not to swallow any of them.
+      #
+      # `checkout`, `selftest` and `observe` deliberately do not carry it. A
+      # failure there is not a verdict about the ledger, it is the sweep being
+      # unable to measure at all, and it must stop the job rather than be
+      # reported as if the ledger had been checked.
+      #
+      # `steps.diff` is not tested here on purpose: it only runs when
       # `compare` already failed, so this step is already red whenever it is, and
       # naming it would be a condition that can never change the outcome.
       - name: Report the verdicts
