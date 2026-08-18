@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -2001,9 +2000,7 @@ func (r *Runner) writeTaskMeta() error {
 		put(k, v)
 	}
 
-	// The capability attestation fields (capability_attestation,
-	// attestation_requested_mode, attestation_effective_mode,
-	// attestation_fallback_reason) are NOT written here: this pre-transition
+	// The attestation acceptance is NOT recorded here: this pre-transition
 	// side file is runtime observations only (Task 4.2). The accepted
 	// attestation becomes authoritative evidence through the Task Authority
 	// after ConfirmSpawn (Task 7.3); the .meta fields are a post-confirm
@@ -2038,7 +2035,7 @@ func (r *Runner) attachAttestation(generation taskauthority.Generation) error {
 	if err := validateAttestationReference(r.attestation); err != nil {
 		return fmt.Errorf("attaching attestation evidence: %w", err)
 	}
-	if err := projectAttestationEvidence(r.homeDir, r.args.ID, r.attestation, generation); err != nil {
+	if err := projectAttestationEvidence(r.homeDir, r.args.ID, generation); err != nil {
 		return err
 	}
 	return nil
@@ -2075,27 +2072,16 @@ func (e *AttestationProjectionError) Error() string {
 
 func (e *AttestationProjectionError) Unwrap() error { return e.ProjectionErr }
 
-// projectAttestationEvidence writes the .meta attestation fields as a runtime
-// projection of the accepted capability attestation bound to the exact
-// confirmed generation. The projection is one-directional: it mirrors the
-// accepted observation and never writes into the Authority. A projection
-// failure returns a typed partial error and never rolls back the
-// authoritative spawn; the projection is retryable without replaying any
-// canonical operation.
-func projectAttestationEvidence(homeDir, taskID string, att *CapabilityAttestation, generation taskauthority.Generation) error {
+// projectAttestationEvidence stamps .meta with the exact generation the
+// accepted capability attestation was confirmed on. The projection is
+// one-directional: it mirrors the accepted observation and never writes into
+// the Authority. A projection failure returns a typed partial error and never
+// rolls back the authoritative spawn; the projection is retryable without
+// replaying any canonical operation.
+func projectAttestationEvidence(homeDir, taskID string, generation taskauthority.Generation) error {
 	meta, err := home.ReadMeta(homeDir, taskID)
 	if err != nil {
 		meta = make(map[string]string)
-	}
-	data, err := json.Marshal(att)
-	if err != nil {
-		return &AttestationProjectionError{TaskID: taskID, ProjectionErr: err}
-	}
-	meta[MetaCapabilityAttestation] = string(data)
-	meta[MetaRequestedMode] = att.RequestedMode
-	meta[MetaEffectiveMode] = att.EffectiveMode
-	if att.FallbackReason != "" {
-		meta[MetaFallbackReason] = att.FallbackReason
 	}
 	meta["attestation_generation"] = generation.String()
 	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {

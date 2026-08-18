@@ -55,8 +55,8 @@ type BackendMetaExtras interface {
 
 // constructBackend is the ONE private construction path for session adapters:
 // it verifies the REQUESTED capability health (binary present on PATH) and
-// constructs the matching base adapter. Select, Resolve, and BackendForTask
-// all route through this function, so an absent or unhealthy requested
+// constructs the matching base adapter. Resolve and BackendForTask both
+// route through this function, so an absent or unhealthy requested
 // capability FAILS CLOSED at resolution with a typed failure — never deferred
 // to first exec.
 //
@@ -95,21 +95,11 @@ func constructBackend(name string) (Backend, error) {
 	}
 }
 
-// Select verifies the REQUESTED capability health and returns the named
-// backend (shared construction path: see constructBackend). Supported:
-// "tmux", "herdr", "zellij", "cmux", "orca" (experimental). The requested
-// binary must be present on PATH (verify-requested-adapter, mirroring
-// ProbeHerdrCapability); an absent or unknown adapter is a typed failure —
-// no alternate selection, no implicit switch.
-func Select(name string) (Backend, error) {
-	return constructBackend(name)
-}
-
 // Resolve consumes ONE explicitly requested backend identity. The homeDir is
 // used ONLY for workspace labeling (e.g. tmux Hometag), NEVER for selection.
 // An empty requested identity is a typed failure — no config-file read, no
 // env marker, no PATH auto-detect. Capability health is verified through the
-// same construction path as Select: an absent binary FAILS CLOSED here
+// same construction path as BackendForTask uses: an absent binary FAILS CLOSED here
 // instead of deferring to first exec.
 //
 // Returns the backend, its resolved name, and any error.
@@ -138,7 +128,7 @@ func Resolve(homeDir string, name string) (Backend, string, error) {
 // resolution FAILS CLOSED — it NEVER falls through to Resolve(config/env/PATH).
 //
 // The bound identity goes through the SAME verified construction path as
-// Select/Resolve: an absent or unhealthy capability FAILS CLOSED at
+// Resolve: an absent or unhealthy capability FAILS CLOSED at
 // resolution — session binding can never bypass capability verification.
 //
 // For the "herdr" backend, the session name is bound from task metadata

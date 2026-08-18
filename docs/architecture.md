@@ -154,13 +154,16 @@ former boolean liveness surface) is fully removed, and the typed
 `EndpointObservation.Alive()` compatibility helper is deleted as well: every
 session adapter exposes a structured probe (`CheckAlive`/`CheckAgentAlive`);
 the opaque launch incarnation is minted by Fleet and persisted in the
-`LaunchIntent`/binding before acquisition. The static capability matrix
-(`backend.Capabilities` / `CapabilityMatrix`) records for each of the five
-backends: create, reservation-aware create, submit, probe (and its exact
-resource granularity), dispose, worktree ownership (a separate provider, never
-a session backend), native busy and native event wait (Herdr
-`proposed` for P1b, not claimed current), and
-secondmate (out of scope).
+`LaunchIntent`/binding before acquisition. Adapter capability is enforced
+structurally, never from a declared table: reservation-aware find-or-create is
+an optional interface the spawn path type-asserts on
+(`internal/cli/spawn_endpoints.go`), so a backend that does not implement
+`FindOrCreateWindow` fails closed before acquisition; construction health is
+verified on the one private path (`constructBackend`); and probe granularity is
+whatever the adapter's own structured probe proves. The former static
+descriptor table (`backend.Capabilities` / `CapabilityMatrix`) was removed in
+BEO-67: nothing consulted it, so it could only ever drift away from the
+adapters it claimed to describe.
 
 ### Delivery acceptance (`internal/domain`)
 

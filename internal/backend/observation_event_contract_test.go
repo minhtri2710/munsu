@@ -58,7 +58,7 @@ func eventSourceWithFake(t *testing.T, waitJSON string, waitExit int, logPath st
 	writeFakeHerdrEventWait(t, tmp, fakeHerdrSchemaReady, waitJSON, waitExit, logPath)
 	oldPath := os.Getenv("PATH")
 	t.Setenv("PATH", tmp+":"+oldPath)
-	return NewHerdrEventSource("test-s"), tmp
+	return &HerdrEventSource{Session: "test-s"}, tmp
 }
 
 // eventSourceWithFakeBlocking creates a fake herdr binary whose agent-wait
@@ -70,7 +70,7 @@ func eventSourceWithFakeBlocking(t *testing.T, logPath string) (*HerdrEventSourc
 	writeFakeHerdrEventWaitBlocking(t, tmp, fakeHerdrSchemaReady, logPath)
 	oldPath := os.Getenv("PATH")
 	t.Setenv("PATH", tmp+":"+oldPath)
-	return NewHerdrEventSource("test-s"), tmp
+	return &HerdrEventSource{Session: "test-s"}, tmp
 }
 
 // writeFakeHerdrEventWaitBlocking is like writeFakeHerdrEventWait but the
@@ -183,7 +183,7 @@ func TestHerdrEventSource_NegotiationGates(t *testing.T) {
 	t.Run("absent binary -> ErrEventUnavailable", func(t *testing.T) {
 		oldPath := os.Getenv("PATH")
 		t.Setenv("PATH", "/nonexistent")
-		src := NewHerdrEventSource("test-s")
+		src := &HerdrEventSource{Session: "test-s"}
 		_, err := src.Wait(context.Background(), EndpointRef{Backend: "herdr", Handle: "w:p"}, "")
 		if !errors.Is(err, ErrEventUnavailable) {
 			t.Errorf("err = %v, want ErrEventUnavailable", err)
@@ -196,7 +196,7 @@ func TestHerdrEventSource_NegotiationGates(t *testing.T) {
 		writeFakeHerdrEventWait(t, tmp, `{"protocol":99,"schema_version":2,"schemas":{}}`, `{}`, 0, filepath.Join(tmp, "a.log"))
 		oldPath := os.Getenv("PATH")
 		t.Setenv("PATH", tmp+":"+oldPath)
-		src := NewHerdrEventSource("test-s")
+		src := &HerdrEventSource{Session: "test-s"}
 		_, err := src.Wait(context.Background(), EndpointRef{Backend: "herdr", Handle: "w:p"}, "")
 		if !errors.Is(err, ErrEventProtocolMismatch) {
 			t.Errorf("err = %v, want ErrEventProtocolMismatch", err)
@@ -210,7 +210,7 @@ func TestHerdrEventSource_NegotiationGates(t *testing.T) {
 		writeFakeHerdrEventWait(t, tmp, `{"protocol":16,"schema_version":1,"schemas":{}}`, `{}`, 0, filepath.Join(tmp, "a.log"))
 		oldPath := os.Getenv("PATH")
 		t.Setenv("PATH", tmp+":"+oldPath)
-		src := NewHerdrEventSource("test-s")
+		src := &HerdrEventSource{Session: "test-s"}
 		_, err := src.Wait(context.Background(), EndpointRef{Backend: "herdr", Handle: "w:p"}, "")
 		if !errors.Is(err, ErrEventUnsupported) {
 			t.Errorf("err = %v, want ErrEventUnsupported", err)
@@ -395,7 +395,7 @@ func TestObservationSourceEventEnum(t *testing.T) {
 func TestHerdrEventSource_After(t *testing.T) {
 	// Cursor ordering is adapter-owned: the orchestrator calls After and never
 	// parses or compares cursors itself.
-	src := NewHerdrEventSource("test-s")
+	src := &HerdrEventSource{Session: "test-s"}
 	cases := []struct {
 		sig, after EventCursor
 		want       bool

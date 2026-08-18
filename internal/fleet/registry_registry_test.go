@@ -480,23 +480,6 @@ func TestRegistryNaturalIdempotency(t *testing.T) {
 		t.Fatalf("re-bind same relationship: %v", err)
 	}
 
-	// Unbinding an already-unbound captain is a no-op.
-	rev, _ = r.BindingRevision()
-	unbind := UnbindCaptainRequest{
-		HomeID:       r.HomeID(),
-		CaptainID:    mustCaptainID(t, "c1"),
-		Precondition: preconditionOf(rev),
-		Reason:       "unbind",
-	}
-	if _, err := r.UnbindCaptain(mustOp(t, "op-unbind-1", unbind), unbind); err != nil {
-		t.Fatalf("UnbindCaptain: %v", err)
-	}
-	rev, _ = r.BindingRevision()
-	unbind.Precondition = preconditionOf(rev)
-	if _, err := r.UnbindCaptain(mustOp(t, "op-unbind-2", unbind), unbind); err != nil {
-		t.Fatalf("UnbindCaptain already unbound: %v", err)
-	}
-
 }
 
 func TestRegistryRereadAfterHomeReopen(t *testing.T) {

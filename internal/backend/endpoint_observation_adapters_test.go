@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -37,6 +38,74 @@ func TestRuntimeAdapterObservationContract(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestListAdapterObservationContract extends the contract above to the three
+// JSON-list adapters. tmux and herdr are covered by name in
+// TestRuntimeAdapterObservationContract; zellij, cmux and orca reach
+// ObserveEndpoint through their own probes, so they need their own fakes to
+// show the same two propositions hold end-to-end: an authoritative EMPTY result
+// is exact absence, and an operational failure is never read as absence
+// (BEO-16 mandatory contract). It also pins that a raw adapter observation
+// concludes no freshness of its own.
+func TestListAdapterObservationContract(t *testing.T) {
+	cases := []struct {
+		name   string
+		binDir string
+		mk     func() Backend
+		handle string
+		want   LifecycleState
+	}{
+		{"zellij authoritative absent", writeObservationFakeEmptyList(t, "zellij", "[]"), func() Backend { return NewZellijBackend("s") }, "s:terminal_1", LifecycleDead},
+		{"zellij operational failure", writeObservationFakeFailing(t, "zellij", "connection refused"), func() Backend { return NewZellijBackend("s") }, "s:terminal_1", LifecycleUnknown},
+		{"cmux authoritative absent", writeObservationFakeEmptyList(t, "cmux", `{"result":{"workspaces":[]}}`), func() Backend { return newCmuxBackend() }, "ws|surf", LifecycleDead},
+		{"cmux operational failure", writeObservationFakeFailing(t, "cmux", "connection refused"), func() Backend { return newCmuxBackend() }, "ws|surf", LifecycleUnknown},
+		{"orca authoritative absent", writeObservationFakeEmptyList(t, "orca", `{"terminals":[]}`), func() Backend { return NewOrcaBackend() }, "ctr:term", LifecycleDead},
+		{"orca operational failure", writeObservationFakeFailing(t, "orca", "connection refused"), func() Backend { return NewOrcaBackend() }, "ctr:term", LifecycleUnknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("PATH", tc.binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			obs := ObserveEndpoint(tc.mk(), tc.handle)
+			if obs.Lifecycle != tc.want {
+				t.Fatalf("lifecycle = %v (state=%v) want %v (detail=%q)", obs.Lifecycle, obs.State(), tc.want, obs.Detail)
+			}
+			// An adapter probe never concludes freshness: it is always
+			// FreshnessUnknown and therefore never Absent()/Live() on its own.
+			if obs.Freshness != FreshnessUnknown || obs.Incarnation != "" {
+				t.Fatalf("adapter observation must be fresh-unknown/empty-incarnation: %+v", obs)
+			}
+			if obs.Absent() || obs.Live() {
+				t.Fatalf("raw adapter observation must not be Live/Absent: %+v", obs)
+			}
+		})
+	}
+}
+
+// writeObservationFakeEmptyList writes a JSON-list backend (zellij/cmux/orca)
+// that returns an EMPTY authoritative result (exact absence) into a fresh dir,
+// and returns that dir to prepend to PATH.
+func writeObservationFakeEmptyList(t *testing.T, name, emptyJSON string) string {
+	t.Helper()
+	dir := t.TempDir()
+	script := "#!/bin/sh\n" + "echo '" + emptyJSON + "'\n" + "exit 0\n"
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// writeObservationFakeFailing writes a backend binary that fails the way an
+// unreachable server does — a message on stderr and a non-zero exit — into a
+// fresh dir, and returns that dir to prepend to PATH.
+func writeObservationFakeFailing(t *testing.T, name, stderr string) string {
+	t.Helper()
+	dir := t.TempDir()
+	script := "#!/bin/sh\n" + fmt.Sprintf("echo %q >&2\n", stderr) + "exit 1\n"
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }
 
 func writeObservationFakeTmux(t *testing.T, dir string) {
