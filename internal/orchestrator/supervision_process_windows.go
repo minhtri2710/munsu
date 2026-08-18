@@ -2,6 +2,12 @@
 
 package orchestrator
 
-import "os/exec"
+import (
+	"os/exec"
 
-func configureWatcherProcess(*exec.Cmd) {}
+	"golang.org/x/sys/windows"
+)
+
+func configureWatcherProcess(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &windows.SysProcAttr{CreationFlags: windows.CREATE_NEW_PROCESS_GROUP}
+}
