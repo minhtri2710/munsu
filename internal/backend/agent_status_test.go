@@ -16,13 +16,13 @@ func TestAgentStatusAlive(t *testing.T) {
 }
 
 func TestAgentStatusReady(t *testing.T) {
-	for _, status := range []string{"idle", "done"} {
-		if !isAgentStatusReady(status) {
+	for _, status := range []string{"idle", "done", "Idle", "IDLE", " idle ", " Done "} {
+		if !AgentStatusReady(status) {
 			t.Errorf("status %q should be ready", status)
 		}
 	}
-	for _, status := range []string{"", "working", "busy", "blocked", "unknown", "failed", "exited", "stopped"} {
-		if isAgentStatusReady(status) {
+	for _, status := range []string{"", "working", "busy", "blocked", "unknown", "failed", "exited", "stopped", "Working", " blocked "} {
+		if AgentStatusReady(status) {
 			t.Errorf("status %q should not be ready", status)
 		}
 	}

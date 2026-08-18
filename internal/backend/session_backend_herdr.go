@@ -552,7 +552,16 @@ func isAgentStatusAlive(status string) bool {
 	}
 }
 
-func isAgentStatusReady(status string) bool {
+// AgentStatusReady reports whether a herdr agent status string means the
+// agent is ready for a prompt. It is the single owner of readiness
+// normalisation: readiness for a prompt must be decided through this
+// predicate, never by comparing the raw status string a backend returns.
+// "idle" and "done" are ready, after ToLower+TrimSpace exactly like its live
+// sibling isAgentStatusAlive. The CLI probe path (probeCaptainBackend) is the
+// call site that makes this reachable from the binary (BEO-117): before that
+// fix, readiness was computed inline against the unnormalized string, so a
+// healthy captain reporting "Idle" or " idle " was rejected permanently.
+func AgentStatusReady(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "idle", "done":
 		return true

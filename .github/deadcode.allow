@@ -35,8 +35,6 @@
 # as a warning until its issue closes. An empty section is the intended resting
 # state; it is not empty right now.
 
-internal/backend/session_backend_herdr.go	isAgentStatusReady	OPEN-BUG(BEO-117): the readiness predicate for a herdr agent status, normalized (ToLower+TrimSpace) exactly like its live sibling isAgentStatusAlive. It is unreachable because internal/cli/captain_endpoints.go computes readiness inline as `status == "idle" || status == "done"` against the RAW AgentStatus string IsRecognizedAgent returns, with no normalization. Do not delete: deleting it would erase the correct predicate and leave only the unnormalized copy. The fix is BEO-117; this line goes away with it.
-
 # --- Not findings: GOOS-union artifacts --------------------------------------
 # The set is the union across every GOOS, so a function reachable on one
 # platform and unreachable on another lands in the union. These two are live
