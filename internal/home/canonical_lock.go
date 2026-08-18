@@ -3,6 +3,7 @@ package home
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -111,7 +112,12 @@ func (h *Home) lockPath(scope string) string {
 // it by one, returning the new token. The caller holds the exclusive lock, so
 // read-modify-write is safe.
 func nextFence(file *os.File) (FenceToken, error) {
-	data, err := os.ReadFile(file.Name())
+	// Read through the already-open, already-locked handle: os.ReadFile(file.Name())
+	// opens a second handle, which Windows byte-range locks deny access through.
+	if _, err := file.Seek(0, 0); err != nil {
+		return 0, fmt.Errorf("home: read lock fence: %w", err)
+	}
+	data, err := io.ReadAll(file)
 	if err != nil && !os.IsNotExist(err) {
 		return 0, fmt.Errorf("home: read lock fence: %w", err)
 	}
