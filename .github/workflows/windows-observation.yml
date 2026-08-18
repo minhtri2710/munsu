@@ -31,9 +31,6 @@ name: Windows observation (BEO-122)
 
 on:
   workflow_dispatch:
-  # TEMPORARY (BEO-122 diagnostic round, removed in the following commit).
-  push:
-    branches: [agent/devops-release-engineer/7023fbd5]
 
 permissions:
   contents: read
@@ -152,25 +149,24 @@ jobs:
           cat results/race-probe.log
           echo "exit=$(cat results/race-probe.exit)"
 
-      # BEO-122 diagnostic: four package binaries died mid-run in the first
-      # measurement, taking 1022 never-started tests with them. Running each
-      # suspect alone separates "this test kills the process" from "an earlier
-      # test in the package did".
-      - name: Abort isolation probe
+      # A package whose binary dies mid-run reports far fewer tests than it has.
+      # The first measurement lost 1022 tests that way, and a plain `-json`
+      # stream cannot tell "323 tests passed" apart from "323 tests ran before
+      # the process was killed". Counting what each package actually reported is
+      # what makes that visible, so it is recorded next to the exit codes.
+      - name: Per-package test counts
+        if: always()
         run: |
           set +e
-          probe() {
-            echo "########## $1 :: $2 ##########"
-            go test -count=1 -timeout 3m -v -run "$2" "$1" > /tmp/p.log 2>&1
-            echo "exit=$?"
-            head -45 /tmp/p.log
-            echo "...(tail)..."
-            tail -5 /tmp/p.log
-          }
-          probe ./internal/home         '^TestTaskMetadataDoesNotIncreaseExistingDirectoryPermissions$'
-          probe ./internal/home         '^ZZZ_NoSuchTest$'
-          probe ./internal/cli          '^TestEnsureCaptainReadyDefersLiveAgentThatIsNotReady$'
-          probe ./internal/fleet        '^TestSendMailboxToCaptain_UnmarkedCaptainHome$'
+          for f in default integration e2e lifecycle; do
+            [ -f "results/$f.json" ] || continue
+            echo "## $f"
+            grep -h '"Action":"\(pass\|fail\|skip\)"' "results/$f.json" \
+              | grep '"Test":' \
+              | sed 's/.*"Package":"\([^"]*\)".*/\1/' \
+              | sort | uniq -c | sort -rn
+          done > results/test-counts.txt 2>&1
+          cat results/test-counts.txt
 
       - name: Summary
         if: always()
