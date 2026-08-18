@@ -163,20 +163,10 @@ func WriteRetirementRecord(homeDir string, rec *PollRetirementRecord) error {
 	}
 	f.Close()
 
-	// Atomic rename.
-	if err := os.Rename(tmpPath, path); err != nil {
+	// Atomic rename with directory sync for crash safety.
+	if err := home.RenameDurable(tmpPath, path); err != nil {
 		os.Remove(tmpPath)
 		return fmt.Errorf("renaming retirement record: %w", err)
-	}
-
-	// Directory sync for crash safety.
-	dirF, err := os.Open(dir)
-	if err != nil {
-		return fmt.Errorf("opening retirement dir for sync: %w", err)
-	}
-	defer dirF.Close()
-	if err := dirF.Sync(); err != nil {
-		return fmt.Errorf("fsync retirement dir: %w", err)
 	}
 
 	return nil

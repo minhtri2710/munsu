@@ -38,16 +38,8 @@ func canonicalAtomicWrite(path string, data []byte) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("home: close temp: %w", err)
 	}
-	if err := os.Rename(tmpPath, path); err != nil {
+	if err := RenameDurable(tmpPath, path); err != nil {
 		return fmt.Errorf("home: rename into place: %w", err)
-	}
-	d, err := os.Open(dir)
-	if err != nil {
-		return fmt.Errorf("home: open write dir: %w", err)
-	}
-	defer d.Close()
-	if err := d.Sync(); err != nil {
-		return fmt.Errorf("home: sync write dir: %w", err)
 	}
 	return nil
 }
