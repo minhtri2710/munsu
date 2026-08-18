@@ -1,7 +1,10 @@
 package taskauthority
 
 import (
+	"encoding/json"
 	"errors"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/domain"
@@ -774,5 +777,65 @@ func TestCanonicalLaunchFlowComposesToWorking(t *testing.T) {
 	}
 	if agg.AcquiredEndpoint == nil || agg.LaunchEvidence == nil {
 		t.Fatalf("launch records lost after working: acquired %+v evidence %+v", agg.AcquiredEndpoint, agg.LaunchEvidence)
+	}
+}
+
+// TestPremiseGetRefusesLaunchEvidenceWithNoSubmissionTimestamp pins the READ
+// half of the premise waiving internal/cli/report_cmd.go's
+// `agg.LaunchEvidence.SubmittedAt <= 0` branch. The writer-side test
+// (TestCanonicalRecordLaunchRecordsEvidence) pins only that RecordLaunch
+// stamps the field; it stays green if a second writer appears or if the read
+// path stops validating. What actually keeps the CLI branch unreachable is
+// that readTaskDoc runs validateAggregate and fails closed, so a record
+// carrying SubmittedAt = 0 is never served to a caller no matter who wrote it.
+// This test plants exactly that record under the aggregate on disk and
+// asserts Get refuses it; it goes red the moment the read path stops
+// validating or validateLaunchEvidence stops checking SubmittedAt.
+func TestPremiseGetRefusesLaunchEvidenceWithNoSubmissionTimestamp(t *testing.T) {
+	c, h, _ := newTestCanonical(t)
+	mustCreate(t, c, "t1")
+	req, rev := mustBeginSpawn(t, c, "t1", preconditionOf(1, 1))
+	attach := attachRequest(c, "t1", preconditionOf(1, rev), req, "handle-1")
+	if _, err := c.AttachEndpoint(mustOperation(t, "op-attach-1", attach), attach); err != nil {
+		t.Fatalf("AttachEndpoint: %v", err)
+	}
+	record := recordLaunchRequest(c, "t1", preconditionOf(1, rev+1), req)
+	if _, err := c.RecordLaunch(mustOperation(t, "op-record-1", record), record); err != nil {
+		t.Fatalf("RecordLaunch: %v", err)
+	}
+
+	// Rewrite the committed document with the one field zeroed, bypassing the
+	// commit path entirely: this is the state a second writer -- or a
+	// caller-supplied timestamp -- would leave behind.
+	path := mustPathForTest(t, h, taskCurrentKey("t1"))
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc taskDoc
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Aggregate.LaunchEvidence == nil || doc.Aggregate.LaunchEvidence.SubmittedAt <= 0 {
+		t.Fatalf("committed document carries no stamped launch evidence: %+v", doc.Aggregate.LaunchEvidence)
+	}
+	doc.Aggregate.LaunchEvidence.SubmittedAt = 0
+	planted, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, planted, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = c.Get(mustTaskID(t, "t1"))
+	if err == nil {
+		t.Fatalf("Get on launch evidence with SubmittedAt = 0 = nil error, want fail closed")
+	}
+	// The message must be the launch-evidence validator's own: any other
+	// refusal would mean the record was rejected for an unrelated reason and
+	// this test would prove nothing about the timestamp check.
+	if !strings.Contains(err.Error(), "launch evidence missing submission timestamp") {
+		t.Fatalf("Get refused for the wrong reason: %v", err)
 	}
 }
