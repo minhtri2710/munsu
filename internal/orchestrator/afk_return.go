@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-const (
+var (
 	// afkStopWait bounds how long Return observes a stopped daemon, and
 	// afkStopPoll is how often it looks. Same shape as waitForWatcherExit
 	// (supervision_watcher.go), different verdict on expiry: see waitForDaemonExit.
@@ -17,6 +17,10 @@ const (
 	// The bound is larger than the watcher's 2s because the daemon may be inside
 	// a digest flush when it is stopped, and the poll is coarser because nothing
 	// here waits on the result -- Return is interactive, not a hot loop.
+	//
+	// Vars rather than consts only so a test can shorten the bound and poll
+	// (TestReturn_RefusesWhenDaemonSurvivesStopRequest); the defaults above are
+	// the production values, byte-identical to the constants they replaced.
 	afkStopWait = 5 * time.Second
 	afkStopPoll = 50 * time.Millisecond
 )
