@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
-	"strconv"
 	"strings"
 )
 
@@ -229,20 +228,4 @@ func isHerdrProtocolMismatch(err error) bool {
 		return herr.Code == HerdrErrProtocolMismatch
 	}
 	return strings.Contains(err.Error(), HerdrErrProtocolMismatch)
-}
-
-// parseHerdrProtocolMismatch extracts expected_protocol from a protocol_mismatch
-// error when available. Returns 0 if not parseable.
-func parseHerdrProtocolMismatch(err error) int {
-	if herr := parseHerdrError(err); herr != nil && herr.Code == HerdrErrProtocolMismatch {
-		// The message might contain "expected_protocol: 17" or similar.
-		// Extract numeric value.
-		msg := herr.Message
-		if idx := strings.LastIndex(msg, " "); idx >= 0 {
-			if n, err := strconv.Atoi(strings.TrimSpace(msg[idx+1:])); err == nil {
-				return n
-			}
-		}
-	}
-	return 0
 }

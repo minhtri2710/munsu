@@ -1,11 +1,8 @@
 package config
 
-import "time"
-
 // ResolvedSnapshot freezes one project's resolved configuration for an operation.
 type ResolvedSnapshot struct {
-	loadedAt time.Time
-	config   ResolvedProjectConfig
+	config ResolvedProjectConfig
 }
 
 // NewResolvedSnapshot resolves one Project's overlay from Fleet-owned scoped
@@ -16,10 +13,8 @@ func NewResolvedSnapshot(base FleetBaseDocument, facts ProjectFacts, overrides B
 	if err != nil {
 		return ResolvedSnapshot{}, err
 	}
-	return ResolvedSnapshot{loadedAt: time.Now().UTC(), config: cloneResolvedProjectConfig(resolved)}, nil
+	return ResolvedSnapshot{config: cloneResolvedProjectConfig(resolved)}, nil
 }
-
-func (s ResolvedSnapshot) LoadedAt() time.Time { return s.loadedAt }
 
 func (s ResolvedSnapshot) Config() ResolvedProjectConfig {
 	return cloneResolvedProjectConfig(s.config)

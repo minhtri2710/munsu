@@ -9,14 +9,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/backend"
 )
 
-// Meta field keys for capability attestation.
-const (
-	MetaCapabilityAttestation = "capability_attestation" // JSON serialized attestation
-	MetaRequestedMode         = "attestation_requested_mode"
-	MetaEffectiveMode         = "attestation_effective_mode"
-	MetaFallbackReason        = "attestation_fallback_reason"
-)
-
 // CapabilityAttestation is a signed snapshot of the capabilities available at
 // mode resolution time. It binds project, home, harness, gate agent, executable
 // identity, resolved config, capabilities, and expiry into a single record that

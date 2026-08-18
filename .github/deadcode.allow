@@ -35,6 +35,8 @@
 # as a warning until its issue closes. An empty section is the intended resting
 # state; it is not empty right now.
 
+internal/backend/session_backend_herdr.go	isAgentStatusReady	OPEN-BUG(BEO-67 triage): the readiness predicate for a herdr agent status, normalized (ToLower+TrimSpace) exactly like its live sibling isAgentStatusAlive. It is unreachable because internal/cli/captain_endpoints.go computes readiness inline as `status == "idle" || status == "done"` against the RAW AgentStatus string IsRecognizedAgent returns, with no normalization. Do not delete: deleting it would erase the correct predicate and leave only the unnormalized copy. Awaiting a split issue.
+
 # --- Not findings: GOOS-union artifacts --------------------------------------
 # The set is the union across every GOOS, so a function reachable on one
 # platform and unreachable on another lands in the union. These two are live
@@ -56,29 +58,6 @@ internal/fleet/process_args.go	writerKindForArgs	GOOS-union artifact: live on li
 # Every line below carries the same marker, and that marker means "nobody has
 # looked at this yet". It is not a justification and must not be reused on a
 # new entry -- a new entry gets a real reason or it does not go in.
-internal/backend/backend_capabilities.go	Capabilities	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/backend/backend_capabilities.go	CapabilityAvailability.String	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/backend/backend_capabilities.go	CapabilityMatrix	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/backend/backend_capabilities.go	ProbeGranularity.String	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/backend/backend_capabilities.go	VerificationTier.String	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/backend/observation_event_herdr.go	NewHerdrEventSource	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/backend/operations.go	NewService	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/backend/operations.go	Service.CreateEndpoint	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/backend/operations.go	Service.DisposeEndpoint	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/backend/operations.go	Service.ProbeEndpoint	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/backend/operations.go	Service.SubmitPrompt	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/backend/operations.go	newService	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/backend/runner_runner.go	FuncRunner.Run	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/backend/runner_runner.go	OSExecutor.Run	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/backend/runner_runner.go	RunError.Error	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/backend/runner_runner.go	RunError.Unwrap	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/backend/session_backend_cmux.go	CmuxBackend.workspaceExists	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/backend/session_backend_herdr.go	isAgentStatusReady	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/backend/session_herdr_capability.go	parseHerdrProtocolMismatch	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/backend/session_session.go	Select	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/backend/session_zellij.go	ZellijBackend.zellijCmd	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/backend/worktree.go	AbsRoot	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/backend/worktree.go	IsTreehouseNotFound	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/bootstrap/integration_agy.go	AgyHooksAllTargetPaths	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/bootstrap/integration_grok.go	GrokHooksDigest	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/bootstrap/integration_grok.go	GrokHooksTargetPath	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
@@ -114,10 +93,7 @@ internal/cli/skills_validate.go	localReferences	burn-down(BEO-63): pre-existing,
 internal/cli/skills_validate.go	resolveBundleReference	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/cli/skills_validate.go	validateSkillBundle	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/cli/stow_stow.go	Run	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/config/project_overlay.go	ProjectOverlayAvailable	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/config/project_overlay.go	RemoveProjectOverlay	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/config/project_overlay.go	StoreProjectOverlay	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/config/resolved_snapshot.go	ResolvedSnapshot.LoadedAt	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
+internal/config/project_overlay.go	StoreProjectOverlay	triaged as test-only, kept in production code on purpose. Production reads project overlays (fleet ResolveProjectSnapshot -> config.LoadProjectOverlay) but has never written one: the document is operator-authored and a missing document is a valid empty overlay by design. Its only writers are tests in internal/config AND internal/fleet, so it cannot move into a config _test.go the way SetDeliveryCrashHookForTest did.
 internal/domain/domain.go	PR.CanMerge	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/domain/domain.go	Review.IsApproving	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/domain/ghurl_ghurl.go	GHURL.FormatPRRef	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged

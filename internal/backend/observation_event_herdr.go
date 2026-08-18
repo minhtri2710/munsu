@@ -37,11 +37,6 @@ type HerdrEventSource struct {
 	info CapabilityInfo
 }
 
-// NewHerdrEventSource constructs the herdr native event source for a session.
-func NewHerdrEventSource(session string) *HerdrEventSource {
-	return &HerdrEventSource{Session: session}
-}
-
 // capability negotiates the herdr capability/version once and caches it.
 func (s *HerdrEventSource) capability() CapabilityInfo {
 	s.once.Do(func() { s.info = ProbeHerdrCapability(s.CLIPath) })
