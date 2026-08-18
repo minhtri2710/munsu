@@ -31,14 +31,6 @@ name: Windows observation (BEO-122)
 
 on:
   workflow_dispatch:
-  # TEMPORARY -- stripped again by the next commit on this branch, before the PR
-  # is opened. GitHub only registers `workflow_dispatch` for a workflow that
-  # already exists on the default branch, so a file that has never been merged
-  # cannot be dispatched at all, on any ref. The measurement run this issue asks
-  # for therefore has to be triggered by a push the first time. Scoped to this
-  # one branch so it can never fire anywhere else.
-  push:
-    branches: [agent/devops-release-engineer/7023fbd5]
 
 permissions:
   contents: read
