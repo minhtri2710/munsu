@@ -38,6 +38,10 @@ merges the coverage profiles of all four test lanes: on the default lane alone,
 it goes red, write a test that builds the state the guard refuses, or add a line
 with a reason. Its rules are pinned by fixtures (`uncovered-guards.sh selftest`).
 
+Working either register — writing a waiver, scoring a mutant, triaging an
+unreachable function — is governed by `docs/adr/0017-guard-burn-down-working-rules-and-their-enforcement-addresses.md`,
+which also states which of those rules a machine checks and which only a reader does.
+
 That job also enforces `.github/flake-ledger.md`: a test CI caught being flaky
 on `main` has a row there with a deadline, and an `open` row past its deadline
 turns `invariants` red on every PR until someone fixes the test. Rows are
