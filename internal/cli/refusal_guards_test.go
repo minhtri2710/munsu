@@ -729,6 +729,13 @@ func TestGuardPeekRefusesWhenNoCapturePortIsConfigured(t *testing.T) {
 	if strings.Contains(err.Error(), "has no window endpoint") {
 		t.Fatalf("peek = %v, which is the missing-window refusal in front of it", err)
 	}
+	// The other half, the one that keeps this a seam-only precondition: the
+	// registered command must still carry a real port. If it ever composes
+	// with nil, the branch above stops being unreachable from the CLI.
+	if _, err := runRoot(t, "peek", "t1", "--home", homeDir); err != nil &&
+		strings.Contains(err.Error(), "task-bound capture is not configured") {
+		t.Fatal("the registered peek reached the nil-capture refusal, so it is no longer composed with a real port")
+	}
 }
 
 func TestGuardPromoteRefusesATaskThatIsNotAScout(t *testing.T) {
