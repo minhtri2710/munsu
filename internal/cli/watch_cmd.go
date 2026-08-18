@@ -103,7 +103,7 @@ func ensureWatcher(homeDir string, restart bool) Response[WatchEnsure] {
 		return Response[WatchEnsure]{
 			SchemaVersion: SchemaVersion,
 			Kind:          "watch.ensure",
-			Status:        "success",
+			Status:        "error",
 			Data: WatchEnsure{
 				WatchID: "",
 				State:   "failed",

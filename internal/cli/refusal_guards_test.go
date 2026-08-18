@@ -811,6 +811,21 @@ func TestGuardAfkDrainRequiresAConsumer(t *testing.T) {
 	}
 }
 
+func TestGuardWatchArmRefusesWhenTheWatcherStartFails(t *testing.T) {
+	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
+
+	previous := startWatcherProcess
+	startWatcherProcess = func(string) (int, error) { return 0, errors.New("no watcher binary") }
+	t.Cleanup(func() { startWatcherProcess = previous })
+
+	out, err := runRoot(t, "watch-arm", "--home", homeDir)
+	wantErrContains(t, err, "watch-arm failed: failed", "watch-arm after a failed watcher start")
+	if strings.Contains(out, "Watcher armed") {
+		t.Fatalf("watch-arm output = %q, still prints the armed message for a watcher that never started", out)
+	}
+}
+
 // --- internal/cli/task_cmd.go: cleanup-abort -------------------------------
 
 func TestGuardTaskCleanupAbortRefusesATaskWithNoCleanupClaim(t *testing.T) {
@@ -916,45 +931,6 @@ func TestGuardBuildDeliverRequestRefusesATaskWithNoBoundWorktree(t *testing.T) {
 		if strings.Contains(err.Error(), earlier) {
 			t.Fatalf("buildDeliverRequest = %v, which is the %q failure in front of the refusal", err, earlier)
 		}
-	}
-}
-
-// --- premise tests for the branches that stay waived -----------------------
-//
-// A waived branch still gets a test: not of the branch, but of the premise
-// that makes it unreachable. When the premise stops holding, the test here
-// goes red and the matching .github/uncovered-guards.baseline line is stale
-// and must be deleted rather than re-justified.
-
-// TestPremiseEnsureWatcherReportsSuccessEvenWhenTheStartFails pins the premise
-// behind the `result.Status != "success"` waiver in newWatchArmCmd: every
-// ensureWatcher return carries Status "success", including the one that failed
-// to start a watcher, so the refusal in watch-arm can never fire.
-//
-// This is a fail-open finding, not a desired behavior: `munsu watch-arm` exits
-// 0 and prints "Watcher armed" for a watcher that never started. Fixing it is
-// a production change outside this test batch's scope. When it IS fixed, this
-// test goes red — that is the signal, and the waiver line goes with it.
-func TestPremiseEnsureWatcherReportsSuccessEvenWhenTheStartFails(t *testing.T) {
-	homeDir := t.TempDir()
-	initCLITestHome(t, homeDir)
-
-	previous := startWatcherProcess
-	startWatcherProcess = func(string) (int, error) { return 0, errors.New("no watcher binary") }
-	t.Cleanup(func() { startWatcherProcess = previous })
-
-	result := ensureWatcher(homeDir, false)
-	if result.Data.State != "failed" {
-		t.Fatalf("ensureWatcher state = %q, want the failed-start path", result.Data.State)
-	}
-	if result.Status != "success" {
-		t.Fatalf("ensureWatcher status = %q for a failed start: the watch-arm refusal is now reachable — cover it and delete its uncovered-guards.baseline line", result.Status)
-	}
-
-	// The same state through the command: it is accepted, so a failed watcher
-	// start is reported to the caller as an armed watcher.
-	if _, err := runRoot(t, "watch-arm", "--home", homeDir); err != nil {
-		t.Fatalf("watch-arm after a failed start = %v; if it now refuses, the guard is reachable and its waiver line is stale", err)
 	}
 }
 
