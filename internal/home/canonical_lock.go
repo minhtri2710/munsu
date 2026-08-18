@@ -117,8 +117,12 @@ func nextFence(file *os.File) (FenceToken, error) {
 	if _, err := file.Seek(0, 0); err != nil {
 		return 0, fmt.Errorf("home: read lock fence: %w", err)
 	}
+	// No os.IsNotExist tolerance: that was meaningful for os.ReadFile, which
+	// could be handed a path that had since vanished. Home.Lock opened this
+	// handle with O_CREATE and holds it, so a read through it cannot report a
+	// missing file -- tolerating one would describe a state that cannot occur.
 	data, err := io.ReadAll(file)
-	if err != nil && !os.IsNotExist(err) {
+	if err != nil {
 		return 0, fmt.Errorf("home: read lock fence: %w", err)
 	}
 	var cur uint64
