@@ -59,13 +59,25 @@ func ClaimWatcherLease(homeDir string, pid int) (bool, error) {
 	return writeLeaseFile(path, lease)
 }
 
-// ReleaseWatcherLease releases the watcher lease for the given home.
-// Idempotent: returns nil if no lease file exists.
-func ReleaseWatcherLease(homeDir string) error {
-	if err := os.Remove(WatcherLeasePath(homeDir)); err != nil && !os.IsNotExist(err) {
-		return err
+// ReleaseWatcherLeaseIfMatches releases the watcher lease for the given home,
+// but only when the lease on disk is the one pid claimed. A watcher that is
+// still exiting must not delete the lease its successor already claimed, so
+// the release is guarded the same way the watcher identity is
+// (RemoveWriterIdentityIfMatches).
+// Idempotent: reports (false, nil) when no lease file exists or the lease
+// belongs to another PID.
+func ReleaseWatcherLeaseIfMatches(homeDir string, pid int) (bool, error) {
+	lease, err := ReadWatcherLease(homeDir)
+	if err != nil {
+		return false, err
 	}
-	return nil
+	if lease == nil || lease.PID != pid {
+		return false, nil
+	}
+	if err := os.Remove(WatcherLeasePath(homeDir)); err != nil && !os.IsNotExist(err) {
+		return false, err
+	}
+	return true, nil
 }
 
 // ReadWatcherLease reads the current watcher lease for the given home.
