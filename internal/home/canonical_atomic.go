@@ -7,8 +7,10 @@ import (
 )
 
 // atomicWrite durably writes data to path via a unique temp file in the same
-// directory, an fsync, and a rename, followed by a directory fsync. On success
-// readers observe either the old or the new content, never a partial write.
+// directory, an fsync, and RenameDurable, whose durability is carried by a
+// parent-directory fsync on unix and a write-through move on windows. On
+// success readers observe either the old or the new content, never a partial
+// write.
 func canonicalAtomicWrite(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0700); err != nil {
