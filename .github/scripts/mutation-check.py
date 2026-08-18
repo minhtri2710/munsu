@@ -15,6 +15,12 @@ the test proves nothing about that guard and should be rewritten or removed.
     BUILD-FAIL the mutated tree does not compile -- NOT a kill. It is counted as
                its own class and reported separately, because a mutant that
                never ran proves nothing either way.
+    TIMEOUT    the test did not finish within --timeout -- NOT a kill either. An
+               unfinished mutant proves no more than an unbuilt one, and without
+               an explicit -timeout it would sit on go test's 10m default and
+               then fail, which a plain exit-code check would score as a kill.
+
+Only KILLED is a pass. The other three all fail the run.
 
 --- Why the operator is `(COND) && false`, not `false && (COND)` --------------
 
@@ -39,16 +45,27 @@ identical guard elsewhere in the file. That precision is the BEO-87 lesson: a
 test can assert a message that an EARLIER guard also emits, so the mutant has to
 go into the guard under test and nowhere else.
 
+--- Concurrency is per PACKAGE ------------------------------------------------
+
+A Go package is one compilation unit, so two mutants in different files of the
+same package are compiled into the same test binary and neither verdict is
+attributable to its own guard. `-j` therefore groups by package, not by file,
+and refuses outright when every selected case lives in one package. The default
+is `-j 1`, which is always safe.
+
 Usage:
 
-    .github/scripts/mutation-check.py <cases.tsv> [-k pattern] [-j N]
+    .github/scripts/mutation-check.py <cases.tsv> [-k pattern] [-j N] [--timeout D]
 
 The cases file is TSV with three columns and `#` comments:
 
     <go file>  <test name>  <anchor, \\n for newlines and \\t for tabs>
 
-It runs from the repository root and restores every mutated file, including on
-interrupt.
+It runs from the repository root and restores every mutated file in a `finally`,
+which covers a failing test, a build failure, a mutant timeout, an exception, and
+Ctrl-C. It does NOT cover a signal the process cannot run code after: SIGKILL,
+or SIGTERM without a handler, leaves the tree mutated. `git status` after an
+abnormal exit is the check; there is no daemon watching this.
 """
 
 import argparse
@@ -113,7 +130,7 @@ def package_of(gofile):
     return "./" + str(pathlib.PurePath(gofile).parent) + "/"
 
 
-def run_case(case, extra_args, gocache):
+def run_case(case, extra_args, gocache, timeout):
     path = REPO / case["file"]
     if not path.exists():
         raise CaseError(f"{case['file']}: no such file")
@@ -127,7 +144,10 @@ def run_case(case, extra_args, gocache):
     try:
         path.write_text(mutated)
         proc = subprocess.run(
-            ["go", "test", "-count=1", "-run", "^" + case["test"] + "$", package_of(case["file"])]
+            [
+                "go", "test", "-count=1", "-timeout", timeout,
+                "-run", "^" + case["test"] + "$", package_of(case["file"]),
+            ]
             + extra_args,
             cwd=REPO,
             env=env,
@@ -137,6 +157,13 @@ def run_case(case, extra_args, gocache):
     finally:
         path.write_text(original)
     out = proc.stdout + proc.stderr
+    # A mutant that hangs is not a mutant that was killed: without an explicit
+    # -timeout it would sit on go test's 10m default and then fail, and a plain
+    # returncode check would score that as a kill. A guard whose removal turns a
+    # bounded operation into an unbounded one is exactly the case where that
+    # matters, so the panic go test prints on timeout is classified on its own.
+    if "panic: test timed out after" in out:
+        return "TIMEOUT", f"the test did not finish within {timeout}"
     if proc.returncode == 0:
         if re.search(r"^ok\s|\[no tests to run\]", out, re.M) and "no tests to run" in out:
             return "SURVIVED", "the -run pattern matched no test"
@@ -157,7 +184,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("cases", help="TSV of <go file> <test> <anchor>")
     ap.add_argument("-k", dest="pattern", default="", help="only run cases whose file or test matches")
-    ap.add_argument("-j", dest="jobs", type=int, default=1, help="parallel cases (each mutates a file, so >1 is only safe across distinct files)")
+    ap.add_argument("-j", dest="jobs", type=int, default=1, help="cases to run concurrently; only cases in DISTINCT packages may overlap, and the run is refused otherwise")
+    ap.add_argument("--timeout", default="5m", help="go test -timeout for each mutant (default 5m)")
     args = ap.parse_args()
 
     cases = load_cases(args.cases)
@@ -167,23 +195,36 @@ def main():
         print("no cases selected", file=sys.stderr)
         return 2
 
+    # The unit of isolation is the PACKAGE, not the file: a Go package is one
+    # compilation unit, so two mutants in different files of the same package
+    # are compiled into the same test binary and neither verdict is attributable
+    # to its own guard. Grouping by file and running the groups concurrently --
+    # what this did before -- is exactly that mistake.
+    by_package = {}
+    for c in cases:
+        by_package.setdefault(package_of(c["file"]), []).append(c)
+    if args.jobs > 1 and len(by_package) < 2:
+        print(
+            f"-j {args.jobs} refused: all {len(cases)} cases are in {package_of(cases[0]['file'])}, "
+            "and concurrent mutants of one package share a test binary",
+            file=sys.stderr,
+        )
+        return 2
+
     results = []
     gocache = tempfile.mkdtemp(prefix="mutcheck-gocache-")
     try:
         if args.jobs > 1:
-            by_file = {}
-            for c in cases:
-                by_file.setdefault(c["file"], []).append(c)
             with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
-                futures = {pool.submit(run_file_group, group, gocache): group for group in by_file.values()}
+                futures = [pool.submit(run_package_group, g, gocache, args.timeout) for g in by_package.values()]
                 for fut in concurrent.futures.as_completed(futures):
                     results.extend(fut.result())
         else:
-            results.extend(run_file_group(cases, gocache))
+            results.extend(run_package_group(cases, gocache, args.timeout))
     finally:
         shutil.rmtree(gocache, ignore_errors=True)
 
-    order = {"SURVIVED": 0, "BUILD-FAIL": 1, "KILLED": 2}
+    order = {"SURVIVED": 0, "BUILD-FAIL": 1, "TIMEOUT": 2, "KILLED": 3}
     results.sort(key=lambda r: (order[r[0]], r[1]["file"], r[1]["test"]))
     for verdict, case, detail in results:
         note = f"  {detail}" if detail else ""
@@ -192,18 +233,20 @@ def main():
     counts = {k: sum(1 for r in results if r[0] == k) for k in order}
     print(
         f"\nkilled={counts['KILLED']} survived={counts['SURVIVED']} "
-        f"buildfail={counts['BUILD-FAIL']} total={len(results)}"
+        f"buildfail={counts['BUILD-FAIL']} timeout={counts['TIMEOUT']} total={len(results)}"
     )
     # A build failure is not a kill: it is an unrun mutant, and it fails the run
-    # exactly like a survivor does.
-    return 0 if counts["SURVIVED"] == 0 and counts["BUILD-FAIL"] == 0 else 1
+    # exactly like a survivor does. A timeout is an unfinished one, and counts
+    # the same way.
+    unproven = counts["SURVIVED"] + counts["BUILD-FAIL"] + counts["TIMEOUT"]
+    return 0 if unproven == 0 else 1
 
 
-def run_file_group(group, gocache):
+def run_package_group(group, gocache, timeout):
     out = []
     for case in group:
         try:
-            verdict, detail = run_case(case, [], gocache)
+            verdict, detail = run_case(case, [], gocache, timeout)
         except CaseError as err:
             verdict, detail = "BUILD-FAIL", str(err)
         out.append((verdict, case, detail))

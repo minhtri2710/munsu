@@ -1,7 +1,6 @@
 package taskauthority
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 )
@@ -28,22 +27,48 @@ import (
 // reaches an apply function: the read refuses first. Invalidated by making any
 // task read tolerate a blank owner, or by admitting an aggregate into the store
 // that was not validated on the way in.
+//
+// Each fixture is driven to the state its operation requires before the owner
+// is blanked, so the owner check is the NEXT guard the apply function would
+// read: BeginSpawn wants a queued task with no bindings, BindEndpoint wants a
+// bound worktree, AuthorizeDelivery wants a working task. Without that the test
+// would still go red for the right reason and still prove less than it claims —
+// the call would be stopped by a guard further up, and nothing here would show
+// it. The `wantIfReached` message is what that next guard emits; it is asserted
+// NOT to appear, which is the whole point: the read refuses before it.
 func TestPremiseNoAggregateWithABlankOwnerReachesApply(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		call func(t *testing.T, c *Canonical, rev uint64) error
+		// setup returns a canonical whose task t1 is one step short of the
+		// apply-level owner check, and that task's current revision.
+		setup         func(t *testing.T) (*Canonical, uint64)
+		call          func(t *testing.T, c *Canonical, rev uint64) error
+		wantIfReached string
 	}{
 		{
-			"BeginSpawn",
-			func(t *testing.T, c *Canonical, rev uint64) error {
+			name: "BeginSpawn",
+			setup: func(t *testing.T) (*Canonical, uint64) {
+				c, _, _ := newTestCanonical(t)
+				mustCreate(t, c, "t1")
+				return c, 1
+			},
+			call: func(t *testing.T, c *Canonical, rev uint64) error {
 				req := launchRequest(c, "t1", preconditionOf(1, rev))
-				_, err := c.BeginSpawn(mustOperation(t, fmt.Sprintf("op-premise-spawn-%d", rev), req), req)
+				_, err := c.BeginSpawn(mustOperation(t, "op-premise-spawn", req), req)
 				return err
 			},
+			wantIfReached: "is not ready to spawn",
 		},
 		{
-			"BindEndpoint",
-			func(t *testing.T, c *Canonical, rev uint64) error {
+			name: "BindEndpoint",
+			setup: func(t *testing.T) (*Canonical, uint64) {
+				c, _, _ := newTestCanonical(t)
+				// The worktree check runs before the owner check.
+				// mustBindWorktree creates the task itself.
+				_, agg := mustBindWorktree(t, c, "t1")
+				return c, uint64(agg.Revision)
+			},
+			call: func(t *testing.T, c *Canonical, rev uint64) error {
 				req := CanonicalBindEndpointRequest{
 					HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"),
 					Precondition: preconditionOf(1, rev), Binding: endpointBinding(), Reason: "bind",
@@ -51,36 +76,49 @@ func TestPremiseNoAggregateWithABlankOwnerReachesApply(t *testing.T) {
 				_, err := c.BindEndpoint(mustOperation(t, "op-premise-bindep", req), req)
 				return err
 			},
+			wantIfReached: "is not ready to spawn",
 		},
 		{
-			"AuthorizeDelivery",
-			func(t *testing.T, c *Canonical, rev uint64) error {
+			name: "AuthorizeDelivery",
+			setup: func(t *testing.T) (*Canonical, uint64) {
+				c, _, _ := newTestCanonical(t)
+				// The phase check runs before the owner check.
+				return c, mustDeliveryTask(t, c, "t1")
+			},
+			call: func(t *testing.T, c *Canonical, rev uint64) error {
 				req := authorizeRequest(c, "t1", preconditionOf(1, rev))
 				_, err := c.AuthorizeDelivery(mustOperation(t, "op-premise-auth", req), req)
 				return err
 			},
+			wantIfReached: "delivery authorization requires an owner",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			c, _, _ := newTestCanonical(t)
-			mustCreate(t, c, "t1")
-
-			// Control: with the committed owner in place the call gets past the
-			// read, so the refusal below is the blank owner and nothing else.
-			if err := tc.call(t, c, 1); err != nil && strings.Contains(err.Error(), "missing owner") {
-				t.Fatalf("the fixture task already fails the owner check: %v", err)
+			// Control: the fixture COMMITS while the owner is there, which is
+			// what makes it a state the operation would otherwise accept. It runs
+			// on its own canonical, because committing moves the task past the
+			// state the refusal below needs.
+			control, controlRev := tc.setup(t)
+			if err := tc.call(t, control, controlRev); err != nil {
+				t.Fatalf("%s did not commit against the fixture state, so the refusal below is not attributable to the owner: %v", tc.name, err)
 			}
 
+			c, rev := tc.setup(t)
+			// The rewrite does not advance the aggregate revision, so the
+			// precondition stays the one the control committed under.
 			rewriteTaskDocForTest(t, c, "t1", func(agg Aggregate) Aggregate {
 				agg.Definition.Owner = "   "
 				return agg
 			})
-			err := tc.call(t, c, 2)
+			err := tc.call(t, c, rev)
 			if err == nil {
 				t.Fatalf("%s accepted an aggregate with a blank owner", tc.name)
 			}
 			if !strings.Contains(err.Error(), "missing owner") {
 				t.Fatalf("%s = %v, want the read-time %q refusal that makes the apply-level owner check unreachable", tc.name, err, "missing owner")
+			}
+			if strings.Contains(err.Error(), tc.wantIfReached) {
+				t.Fatalf("%s = %v, which is the apply-level owner refusal: the read no longer fails closed and the waiver's premise is gone", tc.name, err)
 			}
 		})
 	}
@@ -126,10 +164,14 @@ func TestPremiseBindEndpointRefusesOnPhaseBeforeItCanSeeABoundEndpoint(t *testin
 // reconciled branch. So a foreign identity never reaches apply, and the
 // apply-level checks are second readers of a question already answered.
 //
-// This is the BEO-87 shape, and it is why these are waived rather than tested:
-// the fence and the apply checks emit near-identical prose, so a test asserting
-// "mismatch" would stay green with the apply check deleted. Invalidated by a
-// cleanup path that reaches apply without going through checkCleanupFence.
+// They are waived on unreachability alone, not on any tautology argument: the
+// two messages are in fact distinct ("cleanup claim fence mismatch" against
+// "stores a cleanup claim of a different identity ... refusing to overwrite |
+// complete | abort"), so an assertion on the apply-level wording would be
+// attributable if the state could be built. It cannot. Removing the fence lets
+// exactly those three apply-level messages through, which is what says the
+// fence is the only thing standing in front of them. Invalidated by a cleanup
+// path that reaches apply without going through checkCleanupFence.
 func TestPremiseCleanupFenceRejectsAForeignClaimBeforeApply(t *testing.T) {
 	// Each case is run on its own canonical: the control commits, so sharing
 	// one would leave the second call refused on the precondition instead.
