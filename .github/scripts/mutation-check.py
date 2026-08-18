@@ -168,7 +168,14 @@ def run_case(case, extra_args, gocache, timeout):
         if re.search(r"^ok\s|\[no tests to run\]", out, re.M) and "no tests to run" in out:
             return "SURVIVED", "the -run pattern matched no test"
         return "SURVIVED", ""
-    if "[build failed]" in out or "cannot use" in out or re.search(r"^# ", out, re.M):
+    # A compile error is judged by go test's own verdict line, never by what the
+    # test printed. `^# ` and `cannot use` were read as compiler output before,
+    # and a test whose subject prints Markdown (`# munsu-ops — command map`, from
+    # `munsu skill show`) was scored BUILD-FAIL while it had in fact killed its
+    # mutant. go test always terminates a package it could not build with
+    # `[build failed]` (or `[setup failed]`), which the tested program cannot
+    # forge from its own stdout.
+    if "[build failed]" in out or "[setup failed]" in out:
         return "BUILD-FAIL", first_error(out)
     return "KILLED", ""
 

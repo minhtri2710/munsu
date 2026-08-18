@@ -67,67 +67,8 @@ internal/bootstrap/integration_opencode.go	OpencodeAdapter.InstallOpencodePlugin
 internal/bootstrap/integration_opencode.go	opencodePluginsDir	1	cwd == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/bootstrap/integration_pi.go	PiAdapter.InstallPiExtension	1	!FileContainsOwnershipMarker(targetPath)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/bootstrap/integration_pi.go	PiAdapter.InstallPiExtension	1	extDir == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/captain_activation.go	ensureCaptainReadyWithWait	1	recoverCaptain == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/captain_cmd.go	newCaptainCmd	1	res.Outcome.IsFailure()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/captain_cmd.go	newCaptainCmd	1	target == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/captain_endpoints.go	sessionLaunchEndpoint.Cleanup	1	result.Backend == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/captain_endpoints.go	sessionLaunchEndpoint.Launch	1	req.Backend == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/config_cmd.go	newConfigCmd	1	!strings.HasPrefix(strings.TrimSpace(value), "#")	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/config_dispatch_cmd.go	newConfigDispatchAddCmd	1	hName == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/config_dispatch_cmd.go	newConfigDispatchAddCmd	1	idx >= 0 && !replace	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/config_dispatch_cmd.go	newConfigDispatchAddCmd	1	len(match) == 0 && when == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/config_dispatch_cmd.go	newConfigDispatchAddCmd	1	name == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/config_dispatch_cmd.go	newConfigDispatchRmCmd	1	!found	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/contract_commands.go	newTaskObserveCmd	1	full	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/contract.go	contractOutput	1	output != OutputTOON && output != OutputJSON	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/decisionhold_cmd.go	newDecisionHoldCompleteCmd	1	len(keys) == 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/decisionhold_cmd.go	newDecisionHoldCompleteCmd	1	len(keys) > 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/decisionhold_cmd.go	newDecisionHoldHoldCmd	1	from == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/decisionhold_cmd.go	newDecisionHoldHoldCmd	1	reason == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/decisionhold_cmd.go	newDecisionHoldResolveCmd	1	answer == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/decisionhold_cmd.go	newDecisionHoldResolveCmd	1	from == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/delivery_cmd.go	buildDeliverRequest	1	agg.Worktree == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/doctor_cmd.go	newDoctorCmd	1	exitCode != 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/doctor_cmd.go	runCheckInstructions	1	mismatches > 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/event_cmd.go	newEventAppendCmd	1	eventType == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/fleet_contract.go	runFleetSnapshotV2	1	full	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/fleet_contract.go	runFleetSnapshotV2	1	version != 2	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/mailbox_sender.go	sessionMailboxSender.backend	1	home == "" || meta["backend"] == "" || meta["window"] == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/ready_cmd.go	newReadyCmd	1	homeDir == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/ready_cmd.go	newReadyCmd	1	taskID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/report_cmd.go	enforceScoutReportBudget	1	agg.LaunchEvidence.SubmittedAt <= 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/report_cmd.go	newReportCmdWithNotifier	1	!home.IsValidStatusState(state)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/report_cmd.go	newReportCmdWithNotifier	1	homeDir == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/report_cmd.go	newReportCmdWithNotifier	1	parentHome == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/report_cmd.go	newReportCmdWithNotifier	1	taskID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/root.go	MaximumNArgs	1	len(args) > n	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/root.go	MinimumNArgs	1	len(args) < n	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/root.go	NoArgs	1	len(args) > 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/selfupdate_update.go	updateIn	1	!strings.HasPrefix(content, "gitdir: ")	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/session_cmd.go	newAfkDrainCmd	1	consumer == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/session_cmd.go	newAfkReturnCmd	1	!orchestrator.IsClean(ctx.Home)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/session_cmd.go	newBriefCmd	1	agg.Definition.Kind != "scout"	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/session_cmd.go	newWatchArmCmd	1	result.Status != "success"	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/skill_cmd.go	newSkillShowCmd	1	os.Getenv("MUNSU_ROLE") == "soldier" && fleet.SoldierSkillDenied[name]	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/skills_validate.go	resolveBundleReference	1	strings.HasPrefix(ref, "/")	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/soldier_endpoints.go	sessionSoldierEndpoints.backend	1	home == "" || meta["window"] == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/spawn_cmd.go	newPeekCmdWithCapture	1	!ok	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/spawn_cmd.go	newPeekCmdWithCapture	1	capture == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/spawn_cmd.go	newPromoteCmd	1	agg.Definition.Kind != "scout"	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/spawn_cmd.go	newSendCmd	1	captainHome == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/spawn_cmd.go	newSendCmd	1	id == "general"	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/spawn_endpoints.go	spawnSessionEndpoints.backend	1	!ok	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/task_authority_reads.go	resolveCurrentTaskID	1	len(owners) > 1	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/task_cmd.go	newTaskCleanupAbortCmd	1	agg.CleanupClaim == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/task_cmd.go	newTaskCleanupAbortCmd	1	agg.CleanupClaim.Status == taskauthority.CleanupCompleted	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/teardown_backend.go	sessionBoundTeardown.Dispose	1	!ok	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/teardown_backend.go	sessionBoundTeardown.Dispose	1	name != "herdr" || req.WorkspaceID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/teardown_backend.go	sessionBoundTeardown.Dispose	1	req.Home != home || req.Backend != meta["backend"] || req.Handle != meta["window"] || req.SessionOwner != meta["herdr_session"] || req.WorkspaceID != meta["herdr_workspace_id"] || req.TabID != meta["herdr_tab_id"]	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/teardown_backend.go	sessionBoundTeardown.resolveBound	1	home == "" || meta["backend"] == "" || meta["window"] == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/teardown_backend.go	sessionBoundTeardown.resolveBound	1	hs != "" && hs != meta["herdr_session"]	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/teardown_backend.go	sessionBoundTeardown.resolveBound	1	name != meta["backend"]	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/wake_cmd.go	newWakeCmd	1	consumer == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/cli/wake_cmd.go	newWakeCmd	1	len(args) < 2	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
+internal/cli/report_cmd.go	enforceScoutReportBudget	1	agg.LaunchEvidence.SubmittedAt <= 0	unreachable because LaunchEvidence has exactly one writer, Canonical.RecordLaunch, which stamps SubmittedAt from its own clock, and validateAggregate rejects <= 0 on both the commit and the read path, so auth.Get never serves such a record. Wrong the moment SubmittedAt becomes caller-supplied or that validation drops. Premise pinned by TestCanonicalRecordLaunchRecordsEvidence, which asserts the committed SubmittedAt is > 0
+internal/cli/session_cmd.go	newWatchArmCmd	1	result.Status != "success"	OPEN-BUG(BEO-119): unreachable because every ensureWatcher return carries Status "success", including the failed-start path, so watch-arm never refuses and exits 0 for a watcher that never started. Not accepted debt: the branch is unreachable because of a production bug, and this line goes when BEO-119 is fixed. Premise pinned by TestPremiseEnsureWatcherReportsSuccessEvenWhenTheStartFails, which goes red the moment a return stops saying success
 internal/config/documents.go	finalResolvedOverlay	1	facts.Name == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/config/documents.go	finalResolvedOverlay	1	facts.Path == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/config/published_snapshot.go	PublishedSnapshotDocument.Validate	1	d.Config.Digest == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
