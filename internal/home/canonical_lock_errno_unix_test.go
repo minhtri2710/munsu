@@ -44,12 +44,15 @@ func TestLockScopedFileClassifiesBusyApartFromBrokenLocking(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fd := closed.Fd()
+	// Lock the closed *os.File itself rather than rebuilding one around its
+	// old fd number: os.NewFile takes ownership of the number it is handed,
+	// so a second owner over an already-returned fd makes its finalizer close
+	// whatever descriptor the runtime handed out next. Fd() on a closed file
+	// is -1, which reaches flock as EBADF all the same.
 	if err := closed.Close(); err != nil {
 		t.Fatal(err)
 	}
-	broken := os.NewFile(fd, path)
-	err = lockScopedFile(broken)
+	err = lockScopedFile(closed)
 	if errors.Is(err, errLockBusy) {
 		t.Fatalf("lock on a closed descriptor reported busy, so the retry loop would spin the full budget: %v", err)
 	}
