@@ -13,10 +13,14 @@ the mechanism appoints one.
 
 ## How a row gets here
 
-`.github/scripts/flake-sweep.sh` reads what CI already ran, per **attempt**, and
-opens a PR adding what it found. It is not a sampler: it never re-runs anything
-and it computes no failure rate. Four pushes to `main` on 2026-08-14 13:40-13:41
-produced three red `integration` lanes; two of those runs read `success` today,
+The `Flake ledger` workflow runs `.github/scripts/flake-sweep.sh` over what CI
+already ran, per **attempt**, and goes red with the exact diff on its run
+summary. It prepares no branch for you: GitHub Actions is not permitted to open
+pull requests in this repository, so the lane stops at reporting and a person
+applies that diff by running `.github/scripts/flake-sweep.sh sync` locally. It
+is not a sampler either: it never re-runs anything and it computes no failure
+rate. Four pushes to `main` on 2026-08-14 13:40-13:41 produced three red
+`integration` lanes; two of those runs read `success` today,
 because a rerun overwrites a run's conclusion. `gh run list` says that cluster
 was 2 red out of 4. It was 3, and `/actions/runs/<id>/attempts/<n>/jobs` still
 says so. That erasure -- not a shortage of signal -- is what this exists for.

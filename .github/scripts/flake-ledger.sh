@@ -14,7 +14,8 @@
 # The division of labour between the two:
 #
 #   flake-sweep.sh   derives which tests are flaky from what CI already ran,
-#                    and opens a PR adding them here. Network, main only.
+#                    and reports the diff that adds them here on its run
+#                    summary; a person applies it. Network, main only.
 #   flake-ledger.sh  enforces the file. No network, every PR.
 #
 # Why a deadline at all: an entry with no expiry is `t.Skip` with better
@@ -167,8 +168,13 @@ format_errors() {
 			if (deadline !~ /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/) bad(test ": deadline must be YYYY-MM-DD, got \"" deadline "\"")
 			# The bot cannot know which issue owns a flake, so it writes TBD and
 			# this rule refuses to let TBD reach main. That is the point at
-			# which the alarm becomes work: the ledger PR cannot merge until a
-			# person files the issue that will do the fixing.
+			# which the alarm becomes work: whoever applies the diff the sweep
+			# reports cannot merge it until they file the issue that will do
+			# the fixing.
+			#
+			# No apostrophe in this comment, and that is not a style choice:
+			# it sits inside the single-quoted awk program that starts above,
+			# so one would close the quote and break this script.
 			if (owner == "" || owner == "TBD") bad(test ": entry needs an owning issue in owner_issue, not \"" owner "\"")
 			# `fixed:` is the one state no deadline is compared against, so it
 			# is the one state that has to be checkable. It used to accept any

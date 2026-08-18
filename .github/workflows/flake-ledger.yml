@@ -34,9 +34,11 @@ permissions:
   contents: read
 
 # A merge burst produces four runs in a minute (2026-08-14 13:40 did exactly
-# that), and each would sweep an almost identical window and race the others to
-# push the same branch. The last one has the most complete picture, so let it
-# cancel the others.
+# that), and each would sweep an almost identical window and report a
+# near-identical verdict. The last one has the most complete picture, so let it
+# cancel the others. Nothing in this job writes anywhere, so what this saves is
+# duplicated API calls and four copies of one report -- not two jobs racing the
+# same write, which is what it saved before the pull request step was removed.
 concurrency:
   group: flake-ledger
   cancel-in-progress: true
@@ -51,12 +53,29 @@ jobs:
       # overwrites a run's conclusion, and only the attempt-level endpoints
       # still hold what the original run said.
       actions: read
-      # Both are for the ledger PR, and for nothing else. The sweep never
-      # pushes to main -- its output is a branch and a pull request that a
-      # person has to complete, because the one field it cannot fill in is the
-      # issue that will do the fixing.
-      contents: write
-      pull-requests: write
+      # Read-only. This job used to end by
+      # opening a ledger PR and held `contents: write` and `pull-requests: write`
+      # for that one step. It could never work: Actions is not permitted to
+      # create pull requests in this repository (`default_workflow_permissions:
+      # read`, `can_approve_pull_request_reviews: false`), and that is a
+      # repo-level switch standing above the job token -- no `permissions:` block
+      # can lift it. Every sweep did the whole measurement and then died on
+      # `createPullRequest`.
+      #
+      # So the lane stops at reporting, and the cost of that is named here rather
+      # than left to be discovered: nobody's branch is prepared any more. Whoever
+      # fixes the ledger runs `.github/scripts/flake-sweep.sh sync` locally, from
+      # the diff this job writes to its run summary.
+      #
+      # `contents: read` is not only for the checkout: `observe` reads
+      # `/repos/../compare/A...B` twice, for the self-heal touch check and for
+      # `fixed:` reachability. And one call has no grant here at all --
+      # `/repos/../commits/<sha>/pulls`, documented as `pull-requests: read`.
+      # It works because this repository is public and the token keeps public
+      # read; run 32105880361 exercised it end-to-end under exactly this block.
+      # If munsu is ever made private that call breaks first, and it is the
+      # fast path -- the route most verdicts come from.
+      contents: read
     steps:
       - uses: actions/checkout@v6
 
@@ -86,8 +105,8 @@ jobs:
       # Fail-closed, in the same shape as `deadcode.sh check`: a flake CI can
       # see and the file does not name is red, and so is a row this sweep read
       # the run for and found nothing behind. The failure is recorded here, on
-      # main, and the remedy is the PR the next step opens -- so this job going
-      # red means "main's ledger is out of date", not "someone should press
+      # main, and the remedy is the diff the step below prints -- so this job
+      # going red means "main's ledger is out of date", not "someone should press
       # rerun".
       - name: Ledger must match what CI observed
         id: compare
@@ -101,10 +120,10 @@ jobs:
       # the commit exists and is reachable from main.
       #
       # Its own step rather than a fourth direction inside `check`, because the
-      # remedies differ: `check`'s is the PR below, and the step that opens it
-      # treats "the comparison failed but sync changed nothing" as a bug in the
-      # script. A wrong fix ref is repaired by a person, and sync cannot write
-      # that diff -- folded in, it would look like that bug.
+      # remedies differ: `check`'s is `sync`, and the step below treats "the
+      # comparison failed but sync changed nothing" as a bug in the script. A
+      # wrong fix ref is repaired by a person, and sync cannot write that diff --
+      # folded in, it would look like that bug.
       - name: "Every fixed: row must cite a commit on main"
         id: fixed
         continue-on-error: true
@@ -112,68 +131,137 @@ jobs:
           SWEEP_RECORDS: records.tsv
         run: .github/scripts/flake-sweep.sh verify-fixed
 
-      - name: Open a pull request for the difference
+      # What this lane produces now that it has no branch to hand anyone. The job
+      # already knows exactly what the ledger has to become; a red that does not
+      # say so makes the reader re-derive it from scratch, and a lane that costs
+      # more to read than to ignore gets ignored.
+      #
+      # `sync` writes .github/flake-ledger.md in the runner's working tree. That
+      # is a local write and needs no token at all -- `contents: write` is about
+      # the API, and nothing below calls it. No commit, no branch, no push.
+      #
+      # `continue-on-error` for the same reason as the two steps above: `Report
+      # the verdicts` is the one place this job fails, and this step exiting
+      # non-zero on its own would report one red twice.
+      - name: Write the ledger diff to the run summary
+        id: diff
         if: steps.compare.outcome == 'failure'
+        continue-on-error: true
         env:
-          GH_TOKEN: ${{ github.token }}
           SWEEP_RECORDS: records.tsv
         run: |
           set -eu
-          branch=flake-ledger/sweep
-
-          # A person fills in owner_issue on the open PR's branch between their
-          # push and their merge; a rewrite computed from main would overwrite
-          # that back to TBD. So an open ledger PR blocks this sweep entirely --
-          # no commit, no push -- and must be completed first. The compare step
-          # above has already failed, so this job is still red; exiting 0 here
-          # only keeps that verdict instead of layering another failure on it.
-          prs="$(gh pr list --head "$branch" --state open --json number --jq '.[].number')" || {
-            echo "::error::cannot list open PRs on $branch; refusing to push"
-            exit 1
-          }
-          if [ -n "$prs" ]; then
-            echo "::error::the open ledger PR on $branch has to be completed first; this sweep will not overwrite it"
-            exit 0
-          fi
-
           .github/scripts/flake-sweep.sh sync
+
+          # Kept from the step that used to open the PR, and kept separate for
+          # the reason `verify-fixed` is a separate step: two causes with
+          # different remedies get two messages, never one. "The ledger is out of
+          # date" is fixed by applying the diff. "check failed and sync produced
+          # no diff" cannot be fixed by editing the ledger at all -- the two
+          # halves of flake-sweep.sh are reading the same records and reaching
+          # opposite conclusions, and that is a bug in the script.
           if git diff --quiet -- .github/flake-ledger.md; then
-            echo "::error::the comparison failed but sync changed nothing -- the two disagree, which is a bug in flake-sweep.sh"
+            {
+              echo '## Flake sweep: the two halves of `flake-sweep.sh` disagree'
+              echo
+              echo '`check` failed, and then `sync` changed nothing. **This is not a stale ledger**'
+              echo 'and editing `.github/flake-ledger.md` will not fix it: the comparison and the'
+              echo 'rewrite are reading the same records and reaching opposite conclusions, which is'
+              echo 'a bug in `.github/scripts/flake-sweep.sh`.'
+              echo
+              echo 'The `flake-sweep` artifact on this run holds `records.tsv`, the observation'
+              echo 'stream both halves read. Start there:'
+              echo
+              echo '```sh'
+              echo 'SWEEP_RECORDS=records.tsv .github/scripts/flake-sweep.sh check'
+              echo 'SWEEP_RECORDS=records.tsv .github/scripts/flake-sweep.sh sync'
+              echo '```'
+            } >>"$GITHUB_STEP_SUMMARY"
+            echo "::error::the comparison failed but sync changed nothing -- the two disagree, which is a bug in flake-sweep.sh, not a stale ledger; the run summary and the flake-sweep artifact have the records to debug it"
             exit 1
           fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -b "$branch"
-          git add .github/flake-ledger.md
-          git commit -m "chore: file what CI observed in .github/flake-ledger.md"
-          git push --force origin "$branch"
-          cat > pr-body.md <<'BODY'
-          `.github/scripts/flake-sweep.sh` derived this from runs CI had already
-          produced, reading `/actions/runs/<id>/attempts/<n>/jobs` rather than run
-          conclusions -- a rerun overwrites a conclusion, and two of the three reds
-          in the 2026-08-14 13:40 cluster read `success` today because of exactly
-          that.
 
-          **This PR cannot merge as it stands, on purpose.** Every new row says
-          `owner_issue: TBD`, and `.github/scripts/flake-ledger.sh check` refuses
-          TBD, so `invariants` is red until someone files the issue that will fix
-          the test and writes its id here. Filing the flake and filing the work are
-          meant to be the same act.
+          git diff -- .github/flake-ledger.md >ledger.diff
+          {
+            echo '## Flake sweep: `.github/flake-ledger.md` is out of date'
+            echo
+            echo 'Nothing prepares a branch for you. Apply this yourself, on a branch of your own:'
+            echo
+            echo '```sh'
+            echo '.github/scripts/flake-sweep.sh sync'
+            echo '```'
+            echo
+            echo 'Then **fill in `owner_issue` by hand**. Every new row the sweep writes says'
+            echo '`owner_issue: TBD`, and `.github/scripts/flake-ledger.sh check` refuses TBD, so'
+            echo '`invariants` stays red until someone files the issue that will fix the test and'
+            echo 'writes its id in that column. Filing the flake and filing the work are meant to'
+            echo 'be the same act -- this is the one field the sweep deliberately cannot fill, not'
+            echo 'a gap in it.'
+            echo
+            echo 'If you think a row is wrong, argue with it in the owning issue rather than'
+            echo 'deleting it -- the sweep re-derives the same row on the next `main` run.'
+            echo
+            echo '<details><summary>The diff <code>sync</code> produced on this run</summary>'
+            echo
+            echo '```diff'
+            cat ledger.diff
+            echo '```'
+            echo
+            echo '</details>'
+          } >>"$GITHUB_STEP_SUMMARY"
+          echo "::error::.github/flake-ledger.md is out of date. Run '.github/scripts/flake-sweep.sh sync' locally, then replace every 'owner_issue: TBD' it writes with the id of the issue that will fix that test -- flake-ledger.sh check refuses TBD on purpose, so that filing the flake and filing the work stay the same act. The diff and the rest of this are in the run summary."
 
-          Pushing to this branch is also what makes CI run on it: a PR opened by
-          `GITHUB_TOKEN` gets no workflow runs of its own until a person touches it.
+      # The summary is what a person reads on the run page; this is for the diff
+      # that is too long to read there, and for `records.tsv`. The records matter
+      # most in the branch above: once the runner is gone, a "the two halves
+      # disagree" report with no records attached is a bug nobody can reproduce.
+      #
+      # 14 days is the ledger's deadline, so the evidence outlives the row it is
+      # about by exactly as long as anyone has to act on it.
+      #
+      # `continue-on-error` because this step reports and does not get a vote on
+      # the verdict. A failed step skips every later step whose `if:` carries no
+      # status function -- GitHub ANDs an implicit `success()` in -- so without
+      # it an upload failure would skip `Report the verdicts` and leave the job
+      # red at an upload, saying nothing about the ledger. That is the invariant
+      # stated six lines below, and this is the one step that could take it.
+      #
+      # `overwrite: true` was proposed here for a 409 on "Re-run failed jobs",
+      # and it is not needed: artifacts are scoped per *attempt*, not per run.
+      # Re-running the failed job of run 32105880361 under this exact step
+      # uploaded a second `flake-sweep` (id 9315866367) beside attempt 1's
+      # (9313120233), both retained, no conflict. Left out rather than kept as
+      # insurance -- the reason it was wanted does not exist, and a flag whose
+      # comment describes a conflict that cannot happen is the defect this file
+      # was just cleaned of.
+      - name: Upload the records and the synced ledger
+        if: steps.compare.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: flake-sweep
+          path: |
+            records.tsv
+            ledger.diff
+            .github/flake-ledger.md
+          if-no-files-found: warn
+          retention-days: 14
 
-          If you think a row is wrong, argue with it in the owning issue rather than
-          deleting it -- the sweep re-derives the same row on the next main run.
-          BODY
-          gh pr create --head "$branch" --base main \
-            --title "chore: flake ledger needs an update" \
-            --body-file pr-body.md
-
-      # The two verdicts above are this job's verdict. `continue-on-error` on
-      # both exists so the PR still gets opened when the comparison fails, and
-      # so a wrong fix ref does not stop the comparison from being reported --
-      # not to swallow either of them.
+      # The two verdicts above are this job's verdict, and this is the only step
+      # that fails *on a verdict*. Every step that reports one carries
+      # `continue-on-error` to keep it that way: so a wrong fix ref does not stop
+      # the comparison from being reported, so the diff still gets written and
+      # uploaded when the comparison fails, and so no reporting step can end the
+      # job before this one is reached -- not to swallow any of them.
+      #
+      # `checkout`, `selftest` and `observe` deliberately do not carry it. A
+      # failure there is not a verdict about the ledger, it is the sweep being
+      # unable to measure at all, and it must stop the job rather than be
+      # reported as if the ledger had been checked.
+      #
+      # `steps.diff` is not tested here on purpose: it only runs when
+      # `compare` already failed, so this step is already red whenever it is, and
+      # naming it would be a condition that can never change the outcome.
       - name: Report the verdicts
         if: steps.compare.outcome == 'failure' || steps.fixed.outcome == 'failure'
         run: exit 1
