@@ -3,10 +3,7 @@
 package fleet
 
 import (
-	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"github.com/minhtri2710/munsu/internal/home"
 )
@@ -309,34 +306,6 @@ func (n *noopBoundSender) Send(_ string, _ map[string]string, _ string) home.Bou
 
 var _ home.BoundSender = (*noopBoundSender)(nil)
 
-// propagateConfigLogPath returns the path to the propagation state directory.
-func propagateConfigLogPath(captainHome string) string {
-	return filepath.Join(captainHome, "state", "config-push.log")
-}
-
-// IsPropagateConfigUnchanged returns true when the inherited config at
-// captainHome has not changed since the last propagation. This is a
-// read-only check — it computes the digest and compares against the
-// stored generation without writing anything.
-func IsPropagateConfigUnchanged(captainHome string) (bool, error) {
-	newDigest, err := ComputeInheritedConfigDigest(captainHome)
-	if err != nil {
-		if errors.Is(err, ErrNoPublishedSnapshot) {
-			return false, nil
-		}
-		return false, fmt.Errorf("is-propagate-config-unchanged: computing digest: %w", err)
-	}
-
-	_, oldDigest, found, err := ReadConfigRereadGen(captainHome)
-	if err != nil {
-		return false, fmt.Errorf("is-propagate-config-unchanged: reading gen: %w", err)
-	}
-	if !found {
-		return false, nil // No generation yet → first change.
-	}
-	return oldDigest == newDigest, nil
-}
-
 // PropagateConfigCLI wraps PropagateConfig and returns a summary string
 // suitable for CLI output. It handles nil result and common errors.
 func PropagateConfigCLI(req PropagateConfigRequest) (string, error) {
@@ -379,13 +348,4 @@ var _ = PropagateConfigCLI
 // available but a simpler send interface is needed.
 type ConfigNotificationAdapter struct {
 	Sender func(parentHome, captainHome string, gen int, digest string) (bool, string)
-}
-
-// EnsureConfigNotificationAdapter is a convenience constructor.
-func ensureConfigPreconditions(captainHome string) error {
-	stateDir := filepath.Join(captainHome, "state")
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		return fmt.Errorf("ensuring state directory: %w", err)
-	}
-	return nil
 }

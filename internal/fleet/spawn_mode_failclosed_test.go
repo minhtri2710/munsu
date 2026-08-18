@@ -4,67 +4,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	fleetconfig "github.com/minhtri2710/munsu/internal/config"
 )
-
-// TestResolveDeliveryModeFromBase_MalformedBaseFailsClosed proves that a
-// malformed current-v1 base document produces a typed error and never degrades
-// to the auto-detect path, even when a no-mistakes binary is on PATH.
-func TestResolveDeliveryModeFromBase_MalformedBaseFailsClosed(t *testing.T) {
-	home := t.TempDir()
-	basePath := filepath.Join(home, fleetconfig.BaseDocumentPath)
-	if err := os.MkdirAll(filepath.Dir(basePath), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(basePath, []byte("{ not json"), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	t.Setenv("PATH", t.TempDir()) // no no-mistakes: auto would resolve direct-PR
-	_, err := ResolveDeliveryModeFromBase(home, "")
-	if err == nil {
-		t.Fatal("malformed base document must fail closed, not fall back to auto-detect")
-	}
-	if !strings.Contains(err.Error(), "base") {
-		t.Errorf("error should reference the base config, got: %v", err)
-	}
-}
-
-// TestResolveDeliveryModeFromBase_BasePathIsDirectoryFailsClosed proves that a
-// read failure on the base document path (EISDIR on a directory) is a typed
-// error, not treated as absence.
-func TestResolveDeliveryModeFromBase_BasePathIsDirectoryFailsClosed(t *testing.T) {
-	home := t.TempDir()
-	basePath := filepath.Join(home, fleetconfig.BaseDocumentPath)
-	if err := os.MkdirAll(basePath, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	_, err := ResolveDeliveryModeFromBase(home, "")
-	if err == nil {
-		t.Fatal("base path read failure must fail closed, not fall back to auto-detect")
-	}
-}
-
-// TestResolveDeliveryModeFromBase_TrueAbsenceDefaultsToAuto proves that true
-// absence of the base document (the supported fresh-home state) takes the
-// single defaulted path: no typed default, resolution degrades to the runtime
-// capability probe.
-func TestResolveDeliveryModeFromBase_TrueAbsenceDefaultsToAuto(t *testing.T) {
-	home := t.TempDir()           // no base document
-	t.Setenv("PATH", t.TempDir()) // no no-mistakes binary → auto direct-PR
-
-	mode, err := ResolveDeliveryModeFromBase(home, "")
-	if err != nil {
-		t.Fatalf("true absence must default, got error: %v", err)
-	}
-	if mode != "direct-PR" {
-		t.Errorf("mode = %q, want direct-PR (auto with no binary)", mode)
-	}
-}
 
 // TestResolveDeliveryModeFromProject_MalformedBaseFailsClosed proves that a
 // malformed base document blocks project resolution with a typed error and

@@ -181,29 +181,6 @@ func ResolveDeliveryMode(explicitMode string, resolvedDefaultMode string, resolv
 	return "direct-PR", nil
 }
 
-// ResolveDeliveryModeFromBase resolves the effective delivery mode for a home
-// without project context from the typed fleet base surface. The base
-// defaultMode and requireNoMistakes are the single authority. A missing base
-// document is the supported fresh-home state: resolution degrades solely to
-// the runtime capability probe with no typed default. Any other load error
-// (malformed, schema, permission, I/O) fails closed and propagates.
-func ResolveDeliveryModeFromBase(homeDir, explicitMode string) (string, error) {
-	base, err := config.LoadFleetBase(homeDir)
-	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			return "", fmt.Errorf("resolving fleet base config: %w", err)
-		}
-		// Fresh home with no base document: no typed default authority, so
-		// resolution falls solely to the runtime capability probe.
-		return ResolveDeliveryMode(explicitMode, "", false)
-	}
-	resolvedRequireNoMistakes := false
-	if base.Config.RequireNoMistakes != nil {
-		resolvedRequireNoMistakes = *base.Config.RequireNoMistakes
-	}
-	return ResolveDeliveryMode(explicitMode, normalizeSnapshotDeliveryMode(base.Config.DefaultMode), resolvedRequireNoMistakes)
-}
-
 // ResolveDeliveryModeFromProject resolves the effective delivery mode for a
 // declared project from exactly one immutable project snapshot. Any resolution
 // error (unknown project, malformed base/overlay, registry or I/O failure)

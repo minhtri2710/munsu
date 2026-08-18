@@ -64,11 +64,8 @@ func setupTestHomes(t *testing.T) (parentHome, captainHome, captainID string) {
 	}
 
 	// Seed captain home.
-	if err := Seed(captainID, captainHome, ""); err != nil {
-		// Seed requires parentHome for charter; seed with explicit parent.
-		if err := SeedCaptain(CaptainSeedOptions{ID: captainID, Home: captainHome, ParentHome: parentHome, Integration: fakeIntegrationPort{}}); err != nil {
-			t.Fatalf("Seed: %v", err)
-		}
+	if err := SeedCaptain(CaptainSeedOptions{ID: captainID, Home: captainHome, ParentHome: parentHome, Integration: fakeIntegrationPort{}}); err != nil {
+		t.Fatalf("SeedCaptain: %v", err)
 	}
 
 	// Register captain (idempotent; ensures registry entry exists).

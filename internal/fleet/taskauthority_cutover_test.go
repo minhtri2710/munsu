@@ -142,7 +142,7 @@ func TestReadWithProbeCanonicalPhaseOverridesStaleStatus(t *testing.T) {
 	if err := home.AppendStatus(homeDir, "t1", "working: still working"); err != nil {
 		t.Fatal(err)
 	}
-	state, err := ReadSoldierState(homeDir, "t1")
+	state, err := ReadWithProbe(homeDir, "t1", nil)
 	if err != nil {
 		t.Fatalf("ReadSoldierState: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestReadWithProbeFailsClosedOnLegacyMetaOnlyMerged(t *testing.T) {
 	if err := home.WriteMeta(homeDir, "t1", map[string]string{"delivery_state": "merged", "kind": "ship"}); err != nil {
 		t.Fatal(err)
 	}
-	_, err := ReadSoldierState(homeDir, "t1")
+	_, err := ReadWithProbe(homeDir, "t1", nil)
 	if err == nil {
 		t.Fatal("ReadSoldierState over a legacy meta-only task = nil, want fail-closed")
 	}
@@ -207,7 +207,7 @@ func TestReadWithProbeFailsClosedOnLegacyMergeAuthorization(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	_, err := ReadSoldierState(homeDir, "t1")
+	_, err := ReadWithProbe(homeDir, "t1", nil)
 	if err == nil {
 		t.Fatal("ReadSoldierState over a legacy meta-only task = nil, want fail-closed")
 	}

@@ -48,11 +48,6 @@ type StateEndpointProbe interface {
 	Probe(homeDir string, meta map[string]string) (bool, error)
 }
 
-// Read reads state without probing endpoint liveness.
-func ReadSoldierState(homeDir string, id string) (*State, error) {
-	return ReadWithProbe(homeDir, id, nil)
-}
-
 func ReadWithProbe(homeDir string, id string, probe StateEndpointProbe) (*State, error) {
 	s := &State{TaskID: id, Status: "unknown"}
 

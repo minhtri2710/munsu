@@ -504,31 +504,6 @@ func (r *Registry) ListCaptains() ([]RegisteredCaptain, error) {
 	return out, nil
 }
 
-// OwnerOf returns the Captain that owns the given Project, or the zero
-// CaptainID when the Project is unowned. A missing Project fails closed.
-func (r *Registry) OwnerOf(projectID domain.ProjectID) (domain.CaptainID, error) {
-	if err := projectID.Validate(); err != nil {
-		return domain.CaptainID{}, err
-	}
-	if _, err := r.GetProject(projectID); err != nil {
-		return domain.CaptainID{}, err
-	}
-	doc, err := r.readBindingDoc()
-	if err != nil {
-		return domain.CaptainID{}, err
-	}
-	for _, b := range doc.Bindings {
-		if b.ProjectID == projectID.Value() {
-			id, err := domain.NewCaptainID(b.CaptainID)
-			if err != nil {
-				return domain.CaptainID{}, err
-			}
-			return id, nil
-		}
-	}
-	return domain.CaptainID{}, nil
-}
-
 // ProjectOf returns the Project bound to the given Captain, or the zero
 // ProjectID when the Captain is unbound. A missing Captain fails closed.
 func (r *Registry) ProjectOf(captainID domain.CaptainID) (domain.ProjectID, error) {

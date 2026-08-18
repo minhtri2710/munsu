@@ -95,7 +95,7 @@ func TestRead_MissingCanonicalFailsClosed(t *testing.T) {
 	}
 	setHomeEnv(t, tmp)
 
-	_, err := ReadSoldierState(tmp, "does-not-exist")
+	_, err := ReadWithProbe(tmp, "does-not-exist", nil)
 	if err == nil {
 		t.Fatal("ReadSoldierState over a missing canonical record = nil, want fail-closed error")
 	}
@@ -119,7 +119,7 @@ func TestRead_MetaOnlyTaskFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := ReadSoldierState(tmp, "meta-only")
+	_, err := ReadWithProbe(tmp, "meta-only", nil)
 	if err == nil {
 		t.Fatal("meta-only task observation = nil, want fail-closed")
 	}
@@ -141,7 +141,7 @@ func TestRead_CanonicalPhaseWinsOverStaleStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, err := ReadSoldierState(tmp, "canonical-done")
+	s, err := ReadWithProbe(tmp, "canonical-done", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestRead_CanonicalWithoutMetaSucceeds(t *testing.T) {
 	setHomeEnv(t, tmp)
 	seedCanonicalPhase(t, tmp, "no-meta", taskauthority.PhaseWorking)
 
-	s, err := ReadSoldierState(tmp, "no-meta")
+	s, err := ReadWithProbe(tmp, "no-meta", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ func TestRead_CanonicalQueuedWhenUnknown(t *testing.T) {
 	setHomeEnv(t, tmp)
 	seedCanonicalPhase(t, tmp, "canonical-queued", taskauthority.PhaseQueued)
 
-	s, err := ReadSoldierState(tmp, "canonical-queued")
+	s, err := ReadWithProbe(tmp, "canonical-queued", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +231,7 @@ func TestRead_CorruptCanonicalFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := ReadSoldierState(tmp, "corrupt")
+	_, err := ReadWithProbe(tmp, "corrupt", nil)
 	if err == nil {
 		t.Fatal("ReadSoldierState over a corrupt canonical record = nil, want fail-closed error")
 	}

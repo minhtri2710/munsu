@@ -22,20 +22,6 @@ type WatcherLease struct {
 	UpdatedAt int64  `json:"updated_at"` // unix timestamp (nanoseconds) of last update
 }
 
-// WatcherLeaseSummary is a non-authoritative snapshot of a watcher lease.
-// The General uses this to observe Captain watcher health without reading
-// Captain task state files.
-type WatcherLeaseSummary struct {
-	Home      string `json:"home"`
-	PID       int    `json:"pid"`
-	StartedAt int64  `json:"started_at"`
-	UpdatedAt int64  `json:"updated_at"`
-	Healthy   bool   `json:"healthy"`
-	Stale     bool   `json:"stale"`
-	Absent    bool   `json:"absent"`
-	Age       string `json:"age,omitempty"`
-}
-
 // WatcherLeasePath returns the path to the watcher lease file for the given home.
 func WatcherLeasePath(homeDir string) string {
 	return filepath.Join(homeDir, watcherLeaseFile)
@@ -113,37 +99,6 @@ func IsWatcherLeaseHealthy(homeDir string) bool {
 	}
 	status := ReadWatcherBeatStatus(homeDir, time.Now())
 	return status.Exists && !status.Stale
-}
-
-// ObserveWatcherLease produces a non-authoritative summary of the watcher lease
-// for the given home. The General uses this to observe Captain watcher health
-// without reading Captain task state files. Never mutates any state.
-func ObserveWatcherLease(homeDir string) *WatcherLeaseSummary {
-	lease, err := ReadWatcherLease(homeDir)
-	if err != nil || lease == nil {
-		return &WatcherLeaseSummary{Absent: true, Home: homeDir}
-	}
-
-	pidAlive := isProcessAlive(lease.PID)
-	beatStatus := ReadWatcherBeatStatus(homeDir, time.Now())
-	beatFresh := beatStatus.Exists && !beatStatus.Stale
-	healthy := pidAlive && beatFresh
-
-	age := ""
-	if lease.StartedAt > 0 {
-		age = time.Since(time.Unix(lease.StartedAt, 0)).Round(time.Second).String()
-	}
-
-	return &WatcherLeaseSummary{
-		Home:      lease.Home,
-		PID:       lease.PID,
-		StartedAt: lease.StartedAt,
-		UpdatedAt: lease.UpdatedAt,
-		Healthy:   healthy,
-		Stale:     !beatFresh && beatStatus.Exists,
-		Absent:    false,
-		Age:       age,
-	}
 }
 
 // writeLeaseFile writes the lease file atomically.

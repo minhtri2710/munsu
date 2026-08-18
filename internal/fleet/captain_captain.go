@@ -472,21 +472,6 @@ func writeCaptainCharter(homePath, charter string) error {
 	return nil
 }
 
-// Seed creates a new captain home with a charter brief and a provenance home.
-// When charter is empty, DefaultCaptainCharter(id, parentHome) is used. parentHome may be
-// empty only when an explicit charter is provided.
-// The full charter is written to .captain-charter.md (runtime-owned, canonical).
-// AGENTS.md is left untouched if it exists (user/project-owned); a minimal pointer
-// is written only when AGENTS.md is absent, so Validate and legacy consumers pass.
-func Seed(id, homePath, charter string) error {
-	return fmt.Errorf("captain integration capability is required")
-}
-
-// SeedWithParent is Seed with an explicit General parent home for default charter generation.
-func SeedWithParent(id, homePath, parentHome, charter string) error {
-	return fmt.Errorf("captain integration capability is required")
-}
-
 // ensureParentTypedConfig creates a minimal fleet base document and registers
 // the default project and captain in the canonical Fleet Registry. This allows
 // SeedCaptain and configPush to work without requiring the operator to set up
@@ -1408,26 +1393,6 @@ func preflightConfigPushDestinations(parentHome, captainHome string) error {
 	return nil
 }
 
-// configPush copies inheritable config from the parent home to the captain,
-// mirrors deletions, pushes data/general-shared.md and data/projects.md,
-// and logs actions. Legacy caller; use configPushWithResult for generation
-// tracking result.
-// Deprecated: Use PropagateConfig for the full propagation transaction.
-func configPush(parentHome, captainHome string) error {
-	_, err := configPushWithResult(parentHome, captainHome)
-	return err
-}
-
-func typedConfigMode(parentHome string) (bool, error) {
-	if _, err := os.Stat(filepath.Join(parentHome, config.BaseDocumentPath)); err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	return true, nil
-}
-
 func publishResolvedSnapshot(parentHome, captainHome string) error {
 	captainID, err := ValidateProvenance(captainHome)
 	if err != nil {
@@ -1807,11 +1772,6 @@ func Update(captainHome, parentHome string) UpdateResponse {
 		Before:  before,
 		After:   after,
 	}
-}
-
-// ConvergeLockPath returns the path to the converge lock.
-func ConvergeLockPath(parentHome string) string {
-	return filepath.Join(parentHome, "state", ConvergeLockName)
 }
 
 // acquireExclusiveLock creates and acquires an exclusive file lock using flock
@@ -2255,27 +2215,6 @@ type RecoverResult struct {
 	Seeded     int
 	Failed     int
 	Steps      []StepResult
-}
-
-// String renders a human-readable summary for CLI output.
-func (r *RecoverResult) String() string {
-	if r == nil || len(r.Entries) == 0 {
-		return "no captains registered"
-	}
-	var b strings.Builder
-	for _, e := range r.Entries {
-		switch e.Outcome {
-		case RecoverAlive:
-			fmt.Fprintf(&b, "  %s: alive\n", e.ID)
-		case RecoverSeeded:
-			fmt.Fprintf(&b, "  %s: seeded (not launched)\n", e.ID)
-		case RecoverRelaunched:
-			fmt.Fprintf(&b, "  %s: relaunched\n", e.ID)
-		case RecoverFailed:
-			fmt.Fprintf(&b, "  %s: FAILED: %s\n", e.ID, e.Error)
-		}
-	}
-	return strings.TrimRight(b.String(), "\n")
 }
 
 // StepsString renders a human-readable per-step summary for the transaction CLI output.
