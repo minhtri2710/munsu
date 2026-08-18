@@ -283,19 +283,38 @@ func checkCaptainRegistry(homeDir string) StatusEntry {
 }
 
 func checkConvergeReadiness(homeDir string) StatusEntry {
-	lockPath := filepath.Join(homeDir, "state", ".captain-converge.lock")
-	if _, err := os.Stat(lockPath); err == nil {
+	lockPath := filepath.Join(homeDir, "state", fleet.ConvergeLockName)
+	// Existence is not the signal: on Windows the lock file is permanent by
+	// design (see fleet.acquireExclusiveLock), and on Unix a live converge
+	// holds the file just as a stale crash artifact does. Probe the lock
+	// instead — free means the file is stale but harmless, held means a
+	// converge is genuinely running, which is not a fault.
+	if _, err := os.Stat(lockPath); os.IsNotExist(err) {
+		return StatusEntry{
+			Subsystem: "converge_readiness",
+			Status:    StatusCurrent,
+			Detail:    "no converge lock — ready for converge",
+		}
+	}
+	held, err := fleet.LockHeld(lockPath)
+	if err != nil {
 		return StatusEntry{
 			Subsystem: "converge_readiness",
 			Status:    StatusStale,
-			Detail:    "converge lock present — possible stale lock",
-			RepairCmd: fmt.Sprintf("rm -f %s", lockPath),
+			Detail:    fmt.Sprintf("converge lock probe failed: %v", err),
+		}
+	}
+	if held {
+		return StatusEntry{
+			Subsystem: "converge_readiness",
+			Status:    StatusCurrent,
+			Detail:    "converge in progress — lock held",
 		}
 	}
 	return StatusEntry{
 		Subsystem: "converge_readiness",
 		Status:    StatusCurrent,
-		Detail:    "no converge lock — ready for converge",
+		Detail:    "lock file present but not held — stale artifact, harmless",
 	}
 }
 
