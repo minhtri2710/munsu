@@ -22,6 +22,7 @@ import (
 	"github.com/Masterminds/semver/v3"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // Scope identifies where integration artifacts are installed.
@@ -312,24 +313,10 @@ func writeAtomic(path, content string, perm os.FileMode) error {
 		return fmt.Errorf("close temp file: %w", err)
 	}
 
-	if err := os.Rename(tmpPath, path); err != nil {
+	if err := home.RenameDurable(tmpPath, path); err != nil {
 		os.Remove(tmpPath)
 		return fmt.Errorf("rename %s -> %s: %w", tmpPath, path, err)
 	}
-
-	// fsync parent directory after rename and check errors.
-	dirF, err := os.Open(dir)
-	if err != nil {
-		return fmt.Errorf("open parent dir for fsync: %w", err)
-	}
-	if err := dirF.Sync(); err != nil {
-		dirF.Close()
-		return fmt.Errorf("fsync parent dir: %w", err)
-	}
-	if err := dirF.Close(); err != nil {
-		return fmt.Errorf("close parent dir: %w", err)
-	}
-
 	return nil
 }
 
