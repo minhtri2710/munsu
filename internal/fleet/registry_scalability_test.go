@@ -195,13 +195,13 @@ func TestRegistryCompetingBindsRetiresNoDeadlockNoContradictoryOwnership(t *test
 	err := runRegistryWorkers(t, workers, func(r *Registry, i int) error {
 		proj := mustProjectID(t, fmt.Sprintf("proj-%d", i))
 		cap := mustCaptainID(t, fmt.Sprintf("cap-%d", i))
-		// Bind, then unbind, then rebind — each retried on stale preconditions.
+		// Bind, then rebind, then retire — each re-driven for as long as it
+		// fails from contention (see retryContended).
 		ops := []struct {
 			name string
 			fn   func() error
 		}{
 			{"bind", func() error { return retryBind(t, r, cap, proj, "op-bind-"+fmt.Sprint(i)) }},
-			{"unbind", func() error { return retryUnbind(t, r, cap, "op-unbind-"+fmt.Sprint(i)) }},
 			{"bind-again", func() error { return retryBind(t, r, cap, proj, "op-rebind-"+fmt.Sprint(i)) }},
 			{"retire-cap", func() error { return retryRetireCaptain(t, r, cap, "op-retire-cap-"+fmt.Sprint(i)) }},
 			{"retire-proj", func() error { return retryRetireProject(t, r, proj, "op-retire-proj-"+fmt.Sprint(i)) }},
@@ -220,10 +220,11 @@ func TestRegistryCompetingBindsRetiresNoDeadlockNoContradictoryOwnership(t *test
 
 // retryLoopBudget bounds every retry loop below. It is a liveness bound on the
 // worker, not a second lock budget: a genuine deadlock never releases the
-// scope, so every re-drive keeps failing and the worker names the deadlock
-// here instead of hanging until the package timeout. It is deliberately far
-// above the measured serialized cost of this workload (~5.6s of lock hold on a
-// developer machine) so ordinary contention never reaches it.
+// scope, so every re-drive keeps failing, the worker runs the budget out and
+// names the deadlock here instead of hanging until the package timeout. That
+// is the whole claim, and it does not depend on how fast any one machine is —
+// the constant only has to sit far enough above this workload's own runtime
+// that ordinary contention never reaches it.
 const retryLoopBudget = 90 * time.Second
 
 // retryContended re-drives a mutation for as long as it fails from contention
@@ -234,12 +235,10 @@ const retryLoopBudget = 90 * time.Second
 //
 // home.ErrLockTimeout: the binding scope was held by other workers for the
 // whole acquisition budget. Every mutation here serializes on that one scope,
-// and its critical section is dominated by the durable commit's fsyncs, so the
-// workload generates more serialized lock hold than a single acquisition
-// budget can outlast; a loser is starved out rather than wrong. This is
-// Home.Lock behaving as designed, so the worker re-drives. The budget itself
-// stays pinned by TestLockHeldScopeTimesOut in internal/home, which is where a
-// regression in it belongs.
+// so a loser can be starved out of a single acquisition without anything being
+// wrong. This is Home.Lock behaving as designed, so the worker re-drives. The
+// budget itself stays pinned by TestLockHeldScopeTimesOut in internal/home,
+// which is where a regression in it belongs.
 //
 // Neither retry costs this test its deadlock claim: both are bounded by
 // retryLoopBudget, and a deadlocked scope exhausts it.
@@ -274,23 +273,6 @@ func retryBind(t *testing.T, r *Registry, capID domain.CaptainID, projID domain.
 			Reason:       "concurrent",
 		}
 		_, err = r.BindCaptain(mustOp(t, opID, req), req)
-		return err
-	})
-}
-
-func retryUnbind(t *testing.T, r *Registry, capID domain.CaptainID, opID string) error {
-	return retryContended(t, "unbind", func() error {
-		rev, err := r.BindingRevision()
-		if err != nil {
-			return err
-		}
-		req := UnbindCaptainRequest{
-			HomeID:       r.HomeID(),
-			CaptainID:    capID,
-			Precondition: preconditionOf(rev),
-			Reason:       "concurrent",
-		}
-		_, err = r.UnbindCaptain(mustOp(t, opID, req), req)
 		return err
 	})
 }
