@@ -64,6 +64,11 @@ func EnqueueWake(h, kind, key, payload string) error {
 	_, e = fmt.Fprintf(f, "%d\t%d-%d\t%s\t%s\t%s\n", time.Now().Unix(), os.Getpid(), atomic.AddInt64(&wakeSeq, 1), kind, key, payload)
 	return e
 }
+
+// DrainWakes reads every wake record out of the queue and removes the queue
+// file. The handle must be closed before the os.Remove: Windows refuses to
+// unlink a file that is still open, so a deferred close would leave the
+// stale queue behind on every drain (the wake-queue half of #526).
 func DrainWakes(h string) ([]WakeRecord, error) {
 	p := WakeQueuePath(h)
 	f, e := os.Open(p)
