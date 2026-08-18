@@ -140,8 +140,18 @@ func TestReturn_StopsAVerifiedDaemon(t *testing.T) {
 		t.Fatalf("write flag: %v", err)
 	}
 
-	if _, err := Return(tmp); err != nil {
+	report, err := Return(tmp)
+	if err != nil {
 		t.Fatalf("Return on a verified daemon: %v", err)
+	}
+	// The report must carry the predicate's lossiness answer for this stop:
+	// false on unix (SIGTERM flushes in the daemon's deferred shutdown), true
+	// on windows (Kill skips that flush). This test skips on windows, so the
+	// wired value verified here is the unix answer; the windows value is
+	// asserted by TestStopProcessLossinessMatchesPlatform on the
+	// windows-observation lane.
+	if report.LossyStop != stopProcessIsLossy() {
+		t.Errorf("report.LossyStop = %v, want the predicate answer %v", report.LossyStop, stopProcessIsLossy())
 	}
 	if isProcessAlive(pid) {
 		t.Error("child still alive after Return")

@@ -32,14 +32,26 @@ type ReturnReport struct {
 	WedgeAlarms   []string `json:"wedge_alarms"`
 	BlockedItems  []string `json:"blocked_items"`
 	DigestedCount int      `json:"digested_count"`
+
+	// LossyStop records that the daemon was stopped by a mechanism that can
+	// skip its final digest flush (stopProcessIsLossy, afk_process_windows.go):
+	// the drained digest may be missing up to one window of entries that never
+	// reached the file. It is set only when Return actually stopped a daemon;
+	// a Return that found nothing to stop carries no loss.
+	LossyStop bool `json:"lossy_stop"`
 }
 
 // HasActionable reports whether the return report contains any item
 // needing munsu attention before resuming normal work.
 // The caller must check this before resuming normal work and re-run
 // Return until it returns clean (HasActionable == false).
+//
+// A lossy stop is actionable even when the digest drained empty: entries the
+// stop dropped are gone, and the caller must see the report that says so
+// rather than a clean bill. Re-running Return clears the flag -- there is
+// nothing left to stop or drain -- but cannot recover the lost window.
 func (r *ReturnReport) HasActionable() bool {
-	return len(r.Escalations) > 0 || len(r.WedgeAlarms) > 0 || len(r.BlockedItems) > 0
+	return len(r.Escalations) > 0 || len(r.WedgeAlarms) > 0 || len(r.BlockedItems) > 0 || r.LossyStop
 }
 
 // String returns a human-readable summary of the report.
@@ -68,6 +80,9 @@ func (r *ReturnReport) String() string {
 		for _, bItem := range r.BlockedItems {
 			b.WriteString(fmt.Sprintf("    - %s\n", bItem))
 		}
+	}
+	if r.LossyStop {
+		b.WriteString("\nLossy stop: the daemon was killed without its final digest flush, so up to one batch window of entries never reached the digest and cannot be drained. Treat the record above as a lower bound, not the full window.\n")
 	}
 	if r.HasActionable() {
 		b.WriteString("\nActionable items remain — reconcile before resuming normal work.\n")
@@ -123,6 +138,45 @@ func Return(homeDir string) (*ReturnReport, error) {
 			// lock + flag kept for a daemon whose death is unconfirmed.
 			if !waitForDaemonExit(daemonPID) {
 				return report, fmt.Errorf("AFK daemon PID %d remained alive %s after stop request", daemonPID, afkStopWait)
+			}
+			// The stop took effect. stopProcessIsLossy reports whether it could
+			// have skipped the daemon's final digest flush: false on unix where
+			// stopProcess is SIGTERM and the daemon flushes in its deferred
+			// shutdown (afk_daemon.go step 7), true on windows where it is
+			// TerminateProcess and the flush never runs. Carry it into the
+			// report so ReturnReport refuses to claim "All clear" over a digest
+			// missing up to one window of entries (#530).
+			//
+			// This is option (b) of #530, chosen over the owner-clean route
+			// (c) -- making the digester durable on arrival instead of holding
+			// `entries []BatchedEntry` in RAM for the window (afk_digester.go)
+			// -- because (c) is a durability plus concurrency change across
+			// Digester / drainDigest / BatchedEscalation, materially wider than
+			// #530 authorizes, and also closes a hole this stop does not open:
+			// a unix SIGKILL, panic, or power loss drops the same window today.
+			// (c) is the preferred successor -- not (a), the windows soft stop,
+			// which builds shutdown IPC on a platform where home.Init fails
+			// every write (#524) and nothing here can verify it. Removal
+			// condition: revisit once the windows lane is a required check AND
+			// the product actually runs on windows (#524/#525/#526 landed and
+			// observed green).
+			//
+			// Known and deliberate limit of (b): this refusal reaches the
+			// human-readable ReturnReport only. IsClean (afk_gate.go), which
+			// backs the machine-readable gate in session_cmd.go, re-reads the
+			// drained digest and cannot see a loss -- it reports clean for a
+			// missing or unparseable file, which is exactly the state a lossy
+			// stop produces when the unflushed window held the only
+			// escalations. So #530's "stop claiming All clear" is closed for
+			// the report and still open for the gate. Closing it for the gate
+			// too would mean persisting a durable loss marker at Return time:
+			// new machinery on a platform that cannot currently complete a
+			// single write (#524), which is the same objection that rules out
+			// (a), and machinery that (c) removes the need for rather than
+			// adds to. Left to the same removal condition above, not patched
+			// here.
+			if stopProcessIsLossy() {
+				report.LossyStop = true
 			}
 			// stopProcess is a lossy stop on windows (afk_process_windows.go):
 			// Kill skips the daemon's deferred clearDaemonIdentity, so the "afk"
