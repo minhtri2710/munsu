@@ -24,8 +24,5 @@ func TestConfigureWatcherProcessCreatesIndependentGroup(t *testing.T) {
 // windows with the shape stopRunningWatcher calls. No lane runs it — the stop's
 // runtime effect on a live watcher stays unproven here.
 func TestSignalWatcherProcessMatchesStopContract(t *testing.T) {
-	var stop func(*os.Process) error = signalWatcherProcess
-	if stop == nil {
-		t.Fatal("signalWatcherProcess is nil")
-	}
+	var _ func(*os.Process) error = signalWatcherProcess
 }

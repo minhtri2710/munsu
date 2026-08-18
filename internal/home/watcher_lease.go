@@ -4,9 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
 	"time"
 )
 
@@ -126,9 +124,4 @@ func parseLease(data []byte) (*WatcherLease, error) {
 		return nil, fmt.Errorf("invalid watcher lease: missing home or PID")
 	}
 	return &lease, nil
-}
-
-// isProcessAlive checks whether a process with the given PID is running.
-func isProcessAlive(pid int) bool {
-	return exec.Command("kill", "-0", strconv.Itoa(pid)).Run() == nil
 }

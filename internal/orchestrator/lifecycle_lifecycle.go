@@ -22,7 +22,7 @@ type BeatStatus = home.WatcherBeatStatus
 func StaleThreshold() time.Duration   { return home.WatcherStaleThreshold() }
 func QueuePath(homeDir string) string { return home.WakeQueuePath(homeDir) }
 func lifecycleLockPolicy() home.WatcherLockPolicy {
-	return home.WatcherLockPolicy{ProcessAlive: isLifecycleProcessAlive, IsWatcher: isWatchProcess}
+	return home.WatcherLockPolicy{ProcessAlive: isProcessAlive, IsWatcher: isWatchProcess}
 }
 func AcquireSession(homeDir string) (bool, error) {
 	return home.AcquireSessionLock(homeDir, lifecycleLockPolicy())
@@ -32,9 +32,6 @@ func AcquireWatch(homeDir string) (bool, error) {
 	return home.AcquireWatchLock(homeDir, lifecycleLockPolicy())
 }
 func ReleaseWatch(homeDir string) error { return home.ReleaseWatchLock(homeDir) }
-func isLifecycleProcessAlive(pid int) bool {
-	return exec.Command("kill", "-0", strconv.Itoa(pid)).Run() == nil
-}
 
 // isWatchProcess checks whether the given PID is a munsu watch process.
 // Reads /proc/PID/cmdline on Linux (NUL-separated args) and falls back to
