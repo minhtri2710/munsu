@@ -234,7 +234,7 @@ func stopRunningWatcher(homeDir string) error {
 func waitForWatcherExit(pid int) {
 	deadline := time.Now().Add(watcherStopWait)
 	for time.Now().Before(deadline) {
-		if !isLifecycleProcessAlive(pid) {
+		if !isProcessAlive(pid) {
 			return
 		}
 		time.Sleep(watcherStopPoll)
