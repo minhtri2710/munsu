@@ -52,6 +52,43 @@ func TestSessionMailboxSenderDefersWorkingAgent(t *testing.T) {
 	}
 }
 
+// TestSessionMailboxSenderReadyNormalization binds the BEO-117 readiness
+// normalisation at the mailbox Send call site: a status that is ready after
+// ToLower+TrimSpace ("Idle", " idle ", "IDLE", "Done") must submit, while
+// genuinely not-ready statuses still defer. The raw pre-fix comparison
+// `status != "idle" && status != "done"` rejected "Idle" here permanently.
+func TestSessionMailboxSenderReadyNormalization(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		status string
+		want   bool
+	}{
+		{name: "idle lowercase", status: "idle", want: true},
+		{name: "idle capitalized", status: "Idle", want: true},
+		{name: "idle padded", status: " idle ", want: true},
+		{name: "idle uppercase", status: "IDLE", want: true},
+		{name: "done", status: "done", want: true},
+		{name: "working", status: "working", want: false},
+		{name: "blocked", status: "blocked", want: false},
+		{name: "unknown", status: "unknown", want: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			bk := &mailboxPromptBackend{recognized: true, status: tt.status, result: backend.PromptResult{Status: backend.PromptSubmitted}}
+			sender := sessionMailboxSender{resolve: func(string, map[string]string) (backend.Backend, string, error) {
+				return bk, "herdr", nil
+			}}
+			got := sender.Send("/home", map[string]string{"backend": "herdr", "window": "pane"}, "payload")
+			if tt.want {
+				if got.Status == "deferred" || bk.promptCalls != 1 {
+					t.Fatalf("status=%q deferred; want submit (got=%+v calls=%d)", tt.status, got, bk.promptCalls)
+				}
+			} else if got.Status != "deferred" || bk.promptCalls != 0 {
+				t.Fatalf("status=%q submitted; want defer (got=%+v calls=%d)", tt.status, got, bk.promptCalls)
+			}
+		})
+	}
+}
+
 func TestSessionMailboxSenderPreservesTypedPromptResult(t *testing.T) {
 	for _, status := range []backend.PromptStatus{backend.PromptSubmitted, backend.PromptQueuedWhileBusy, backend.PromptStalled, backend.PromptUnsupported, backend.PromptEndpointDead, backend.PromptBackendFailed} {
 		bk := &mailboxPromptBackend{recognized: true, status: "idle", result: backend.PromptResult{Status: status, Detail: "detail", Err: errors.New("typed")}}
