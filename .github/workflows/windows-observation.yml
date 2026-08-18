@@ -31,6 +31,9 @@ name: Windows observation (BEO-122)
 
 on:
   workflow_dispatch:
+  # TEMPORARY (BEO-122 diagnostic round, removed in the following commit).
+  push:
+    branches: [agent/devops-release-engineer/7023fbd5]
 
 permissions:
   contents: read
@@ -148,6 +151,23 @@ jobs:
           echo "$?" > results/race-probe.exit
           cat results/race-probe.log
           echo "exit=$(cat results/race-probe.exit)"
+
+      # BEO-122 diagnostic: four package binaries died mid-run in the first
+      # measurement, taking 1022 never-started tests with them. Running each
+      # suspect alone separates "this test kills the process" from "an earlier
+      # test in the package did".
+      - name: Abort isolation probe
+        run: |
+          set +e
+          probe() {
+            echo "===== $1 :: $2 ====="
+            go test -count=1 -timeout 3m -v -run "^$2$" "$1" 2>&1 | tail -25
+            echo "exit=$?"
+          }
+          probe ./internal/orchestrator TestDaemonCatchesSignalAtEarliestReadiness
+          probe ./internal/cli          TestEnsureCaptainReadyDefersLiveAgentThatIsNotReady
+          probe ./internal/fleet        TestSendMailboxToCaptain_UnmarkedCaptainHome
+          probe ./internal/home         TestTaskMetadataDoesNotIncreaseExistingDirectoryPermissions
 
       - name: Summary
         if: always()
