@@ -218,8 +218,50 @@ func TestRegistryCompetingBindsRetiresNoDeadlockNoContradictoryOwnership(t *test
 	}
 }
 
-func retryBind(t *testing.T, r *Registry, capID domain.CaptainID, projID domain.ProjectID, opID string) error {
+// retryLoopBudget bounds every retry loop below. It is a liveness bound on the
+// worker, not a second lock budget: a genuine deadlock never releases the
+// scope, so every re-drive keeps failing and the worker names the deadlock
+// here instead of hanging until the package timeout. It is deliberately far
+// above the measured serialized cost of this workload (~5.6s of lock hold on a
+// developer machine) so ordinary contention never reaches it.
+const retryLoopBudget = 90 * time.Second
+
+// retryContended re-drives a mutation for as long as it fails from contention
+// rather than from a broken invariant.
+//
+// domain.ErrStalePrecondition: another worker committed first — the original
+// retry condition.
+//
+// home.ErrLockTimeout: the binding scope was held by other workers for the
+// whole acquisition budget. Every mutation here serializes on that one scope,
+// and its critical section is dominated by the durable commit's fsyncs, so the
+// workload generates more serialized lock hold than a single acquisition
+// budget can outlast; a loser is starved out rather than wrong. This is
+// Home.Lock behaving as designed, so the worker re-drives. The budget itself
+// stays pinned by TestLockHeldScopeTimesOut in internal/home, which is where a
+// regression in it belongs.
+//
+// Neither retry costs this test its deadlock claim: both are bounded by
+// retryLoopBudget, and a deadlocked scope exhausts it.
+func retryContended(t *testing.T, what string, attempt func() error) error {
+	t.Helper()
+	deadline := time.Now().Add(retryLoopBudget)
 	for {
+		err := attempt()
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, domain.ErrStalePrecondition) && !errors.Is(err, home.ErrLockTimeout) {
+			return err
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("%s never completed within %s, so the scope is deadlocked or livelocked: %w", what, retryLoopBudget, err)
+		}
+	}
+}
+
+func retryBind(t *testing.T, r *Registry, capID domain.CaptainID, projID domain.ProjectID, opID string) error {
+	return retryContended(t, "bind", func() error {
 		rev, err := r.BindingRevision()
 		if err != nil {
 			return err
@@ -232,14 +274,12 @@ func retryBind(t *testing.T, r *Registry, capID domain.CaptainID, projID domain.
 			Reason:       "concurrent",
 		}
 		_, err = r.BindCaptain(mustOp(t, opID, req), req)
-		if err == nil || !errors.Is(err, domain.ErrStalePrecondition) {
-			return err
-		}
-	}
+		return err
+	})
 }
 
 func retryUnbind(t *testing.T, r *Registry, capID domain.CaptainID, opID string) error {
-	for {
+	return retryContended(t, "unbind", func() error {
 		rev, err := r.BindingRevision()
 		if err != nil {
 			return err
@@ -251,14 +291,12 @@ func retryUnbind(t *testing.T, r *Registry, capID domain.CaptainID, opID string)
 			Reason:       "concurrent",
 		}
 		_, err = r.UnbindCaptain(mustOp(t, opID, req), req)
-		if err == nil || !errors.Is(err, domain.ErrStalePrecondition) {
-			return err
-		}
-	}
+		return err
+	})
 }
 
 func retryRetireCaptain(t *testing.T, r *Registry, capID domain.CaptainID, opID string) error {
-	for {
+	return retryContended(t, "retire captain", func() error {
 		rev, err := r.CaptainRevision()
 		if err != nil {
 			return err
@@ -270,14 +308,12 @@ func retryRetireCaptain(t *testing.T, r *Registry, capID domain.CaptainID, opID 
 			Reason:       "concurrent",
 		}
 		_, err = r.RetireCaptain(mustOp(t, opID, req), req)
-		if err == nil || !errors.Is(err, domain.ErrStalePrecondition) {
-			return err
-		}
-	}
+		return err
+	})
 }
 
 func retryRetireProject(t *testing.T, r *Registry, projID domain.ProjectID, opID string) error {
-	for {
+	return retryContended(t, "retire project", func() error {
 		rev, err := r.ProjectRevision()
 		if err != nil {
 			return err
@@ -289,10 +325,8 @@ func retryRetireProject(t *testing.T, r *Registry, projID domain.ProjectID, opID
 			Reason:       "concurrent",
 		}
 		_, err = r.RetireProject(mustOp(t, opID, req), req)
-		if err == nil || !errors.Is(err, domain.ErrStalePrecondition) {
-			return err
-		}
-	}
+		return err
+	})
 }
 
 // TestRegistryBindLockScopeIsSmallestTruthful proves that Bind acquires only
