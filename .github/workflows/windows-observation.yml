@@ -1,0 +1,243 @@
+# BEO-122: measure what `go test` actually does on windows. This is an
+# OBSERVATION lane, not a gate.
+#
+# The repo has never run a test on windows. The only windows coverage in ci.yml
+# is `GOOS=windows go vet ./...`, which compiles the windows halves and never
+# executes them -- five bugs reached main through exactly that gap
+# (BEO-112/114/116/120). Compiling is not running, and the difference is what
+# this file measures.
+#
+# Read this before changing anything here:
+#
+#   - It is `workflow_dispatch` only. It is not attached to `push` or
+#     `pull_request`, it is not a required check, and nothing in branch
+#     protection references it. Attaching it is a branch-protection change and
+#     belongs to a human, not to this file.
+#   - There is deliberately NO `continue-on-error:` anywhere below. A lane whose
+#     red is configured away is worse than no lane, because the tick reads as a
+#     verdict when it is only a shrug. Instead, every measurement step captures
+#     `go`'s exit code into a file and keeps going. The step is green because it
+#     *measured*, and the exit code it measured is data in the artifact -- not a
+#     hidden failure.
+#   - The verdict lives in the artifact and in the job summary, never in the
+#     job's own green tick. If this lane is ever promoted to a gate, that
+#     promotion has to invert this: drop the exit-code capture and let `go test`
+#     fail the step directly. Do not promote it by adding `continue-on-error`.
+#
+# The ubuntu job exists only as a timing reference measured the same way on the
+# same commit, so "windows is slower" is a number rather than a hunch.
+
+name: Windows observation (BEO-122)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: go test on windows-latest (observation)
+    runs-on: windows-latest
+    # Generous: nothing here has ever run on windows, so a suite that deadlocks
+    # on a lock it cannot take is a plausible outcome. Per-binary `-timeout`
+    # below is the real bound; this is the backstop for the job as a whole.
+    timeout-minutes: 90
+    # Every step runs through git-bash rather than pwsh so that exit-code
+    # capture, redirection and the summary heredocs read identically to the
+    # ubuntu job. A difference in shell would be a difference in the
+    # measurement, and the comparison is the point.
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      - run: mkdir -p results
+
+      # `-race` on windows needs cgo, and cgo needs a C toolchain. Whether one
+      # is on PATH decides if a windows race lane is even possible, so it is
+      # recorded as a fact rather than assumed either way.
+      - name: Toolchain probe
+        run: |
+          set +e
+          go version > results/toolchain.txt
+          go env GOOS GOARCH CGO_ENABLED CC >> results/toolchain.txt 2>&1
+          # Captured before any pipe: `gcc ... | head` would report head's
+          # status, which is 0 whether or not gcc exists.
+          gcc --version > results/gcc.log 2>&1
+          echo "gcc_exit=$?" >> results/toolchain.txt
+          head -1 results/gcc.log >> results/toolchain.txt
+          cat results/toolchain.txt
+
+      - name: Build
+        run: |
+          set +e
+          go build ./... 2> results/build.err
+          echo "$?" > results/build.exit
+          cat results/build.err
+          echo "exit=$(cat results/build.exit)"
+
+      - name: Vet
+        run: |
+          set +e
+          go vet ./... 2> results/vet.err
+          echo "$?" > results/vet.exit
+          cat results/vet.err
+          echo "exit=$(cat results/vet.exit)"
+
+      # -json is what makes the classification work downstream: it gives a
+      # per-test pass/fail/skip with elapsed time and the failure output
+      # attached to the test that produced it, instead of a flat log someone
+      # has to guess their way through. Build failures do not appear in the
+      # JSON stream, so stderr is captured beside it.
+      - name: go test ./... (default tags)
+        run: |
+          set +e
+          go test -count=1 -timeout 20m -json ./... > results/default.json 2> results/default.err
+          echo "$?" > results/default.exit
+          cat results/default.err
+          echo "exit=$(cat results/default.exit)"
+
+      # 58 of the repo's test files sit behind `integration`, including most of
+      # the lock and lease work the five bugs live in. Leaving them out would
+      # measure the smaller half of the suite and call it the suite.
+      - name: go test -tags integration
+        run: |
+          set +e
+          PKGS=$(.github/scripts/build-tags.sh packages integration)
+          echo "packages: $PKGS"
+          # shellcheck disable=SC2086 # word splitting is the point: one -json arg per package
+          go test -count=1 -timeout 35m -tags integration -json $PKGS > results/integration.json 2> results/integration.err
+          echo "$?" > results/integration.exit
+          cat results/integration.err
+          echo "exit=$(cat results/integration.exit)"
+
+      - name: go test -tags e2e
+        run: |
+          set +e
+          PKGS=$(.github/scripts/build-tags.sh packages e2e)
+          # shellcheck disable=SC2086 # word splitting is the point: one -json arg per package
+          go test -count=1 -timeout 20m -tags e2e -json $PKGS > results/e2e.json 2> results/e2e.err
+          echo "$?" > results/e2e.exit
+          cat results/e2e.err
+          echo "exit=$(cat results/e2e.exit)"
+
+      - name: go test -tags lifecycle_integration
+        run: |
+          set +e
+          PKGS=$(.github/scripts/build-tags.sh packages lifecycle_integration)
+          # shellcheck disable=SC2086 # word splitting is the point: one -json arg per package
+          go test -count=1 -timeout 20m -tags lifecycle_integration -json $PKGS > results/lifecycle.json 2> results/lifecycle.err
+          echo "$?" > results/lifecycle.exit
+          cat results/lifecycle.err
+          echo "exit=$(cat results/lifecycle.exit)"
+
+      # Two separate questions, so two separate answers: can a race-instrumented
+      # binary be *linked* here at all (the cgo/gcc question), and if so what
+      # does it report. A `-run` filter that matches no test answers the first
+      # without paying for the second -- the binary still has to build and link.
+      - name: -race feasibility probe
+        run: |
+          set +e
+          go test -race -count=1 -run 'ZZZ_NoSuchTest' ./internal/home > results/race-probe.log 2>&1
+          echo "$?" > results/race-probe.exit
+          cat results/race-probe.log
+          echo "exit=$(cat results/race-probe.exit)"
+
+      # A package whose binary dies mid-run reports far fewer tests than it has.
+      # The first measurement lost 1022 tests that way, and a plain `-json`
+      # stream cannot tell "323 tests passed" apart from "323 tests ran before
+      # the process was killed". Counting what each package actually reported is
+      # what makes that visible, so it is recorded next to the exit codes.
+      - name: Per-package test counts
+        if: always()
+        run: |
+          set +e
+          for f in default integration e2e lifecycle; do
+            [ -f "results/$f.json" ] || continue
+            echo "## $f"
+            grep -h '"Action":"\(pass\|fail\|skip\)"' "results/$f.json" \
+              | grep '"Test":' \
+              | sed 's/.*"Package":"\([^"]*\)".*/\1/' \
+              | sort | uniq -c | sort -rn
+          done > results/test-counts.txt 2>&1
+          cat results/test-counts.txt
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Windows observation -- exit codes"
+            echo ""
+            echo "| step | exit |"
+            echo "| --- | --- |"
+            for f in build vet default integration e2e lifecycle race-probe; do
+              if [ -f "results/$f.exit" ]; then
+                echo "| $f | $(cat results/$f.exit) |"
+              else
+                echo "| $f | (not reached) |"
+              fi
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload raw results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-observation
+          path: results/
+          if-no-files-found: warn
+          retention-days: 14
+
+  ubuntu-baseline:
+    name: go test on ubuntu-latest (timing reference)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      - run: mkdir -p results
+
+      # Same commands, same flags, same shell as the windows job. This job is
+      # not a quality signal -- ci.yml already gates ubuntu. It exists so that
+      # "the windows suite is slower" can be stated as a ratio against a run of
+      # the same tree on the same day, rather than against a local laptop
+      # number or a memory of one.
+      - name: go test ./... (default tags)
+        run: |
+          set +e
+          go test -count=1 -timeout 20m -json ./... > results/default.json 2> results/default.err
+          echo "$?" > results/default.exit
+          cat results/default.err
+          echo "exit=$(cat results/default.exit)"
+
+      - name: go test -tags integration
+        run: |
+          set +e
+          PKGS=$(.github/scripts/build-tags.sh packages integration)
+          # shellcheck disable=SC2086 # word splitting is the point: one -json arg per package
+          go test -count=1 -timeout 35m -tags integration -json $PKGS > results/integration.json 2> results/integration.err
+          echo "$?" > results/integration.exit
+          cat results/integration.err
+          echo "exit=$(cat results/integration.exit)"
+
+      - name: Upload raw results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ubuntu-baseline
+          path: results/
+          if-no-files-found: warn
+          retention-days: 14
