@@ -33,7 +33,8 @@
 #
 # `announce_open_bugs` runs on every `check`, so every line below is reprinted
 # as a warning until its issue closes. An empty section is the intended resting
-# state; it is not empty right now.
+# state; it is empty right now: the last line (BEO-117, the agent-readiness
+# predicate) left with the fix that made the function reachable from the binary.
 
 # --- Not findings: GOOS-union artifacts --------------------------------------
 # The set is the union across every GOOS, so a function reachable on one
