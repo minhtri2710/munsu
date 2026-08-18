@@ -53,7 +53,7 @@ jobs:
       # overwrites a run's conclusion, and only the attempt-level endpoints
       # still hold what the original run said.
       actions: read
-      # Read-only, and only for `actions/checkout`. This job used to end by
+      # Read-only. This job used to end by
       # opening a ledger PR and held `contents: write` and `pull-requests: write`
       # for that one step. It could never work: Actions is not permitted to
       # create pull requests in this repository (`default_workflow_permissions:
@@ -66,6 +66,15 @@ jobs:
       # than left to be discovered: nobody's branch is prepared any more. Whoever
       # fixes the ledger runs `.github/scripts/flake-sweep.sh sync` locally, from
       # the diff this job writes to its run summary.
+      #
+      # `contents: read` is not only for the checkout: `observe` reads
+      # `/repos/../compare/A...B` twice, for the self-heal touch check and for
+      # `fixed:` reachability. And one call has no grant here at all --
+      # `/repos/../commits/<sha>/pulls`, documented as `pull-requests: read`.
+      # It works because this repository is public and the token keeps public
+      # read; run 32105880361 exercised it end-to-end under exactly this block.
+      # If munsu is ever made private that call breaks first, and it is the
+      # fast path -- the route most verdicts come from.
       contents: read
     steps:
       - uses: actions/checkout@v6
@@ -209,11 +218,24 @@ jobs:
       #
       # 14 days is the ledger's deadline, so the evidence outlives the row it is
       # about by exactly as long as anyone has to act on it.
+      #
+      # `overwrite` and `continue-on-error` are both about one path, and it is
+      # the reflex this whole mechanism exists to correct: pressing "Re-run
+      # failed jobs" on a red sweep. A rerun is attempt 2 of the same run id, a
+      # v4 artifact is immutable per run, and a second upload under the same name
+      # is a 409. Without `overwrite` the rerun loses the artifact; without
+      # `continue-on-error` the 409 fails this step, and every later step with an
+      # `if:` that carries no status function is skipped -- `Report the verdicts`
+      # included. That would leave the job red at an upload, saying nothing about
+      # the ledger, and would break the invariant stated six lines below. This
+      # step reports; it does not get a vote on the verdict.
       - name: Upload the records and the synced ledger
         if: steps.compare.outcome == 'failure'
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: flake-sweep
+          overwrite: true
           path: |
             records.tsv
             ledger.diff
@@ -222,10 +244,12 @@ jobs:
           retention-days: 14
 
       # The two verdicts above are this job's verdict, and this is the only step
-      # that fails. `continue-on-error` on both exists so a wrong fix ref does not
-      # stop the comparison from being reported, and so the diff still gets
-      # written and uploaded when the comparison fails -- not to swallow either of
-      # them. `steps.diff` is not tested here on purpose: it only runs when
+      # that fails. Every other step carries `continue-on-error` to keep it that
+      # way: so a wrong fix ref does not stop the comparison from being reported,
+      # so the diff still gets written and uploaded when the comparison fails,
+      # and so no reporting step can end the job before this one is reached --
+      # not to swallow any of them. `steps.diff` is not tested here on purpose:
+      # it only runs when
       # `compare` already failed, so this step is already red whenever it is, and
       # naming it would be a condition that can never change the outcome.
       - name: Report the verdicts

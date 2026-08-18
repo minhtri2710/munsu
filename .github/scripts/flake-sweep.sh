@@ -739,7 +739,7 @@ sync() {
 			seen="$first_seen"
 			deadline="$(date_shift "$(today)" "+$DEADLINE_DAYS")"
 			# The bot cannot know which issue will own a flake, and
-			# flake-ledger.sh refuses TBD, so the PR this produces cannot merge
+			# flake-ledger.sh refuses TBD, so the diff this produces cannot merge
 			# until a person files that issue. Filing the flake and filing the
 			# work are meant to be the same act.
 			owner="TBD"
@@ -832,7 +832,7 @@ selftest() {
 	ledger="$(mktemp)"
 
 	# 1. Observed and unfiled. check() must be red and name the test; sync() must
-	# file it with TBD in owner_issue, which is what makes the bot PR unmergeable
+	# file it with TBD in owner_issue, which is what makes the sweep's diff unmergeable
 	# until a person files the work.
 	#
 	# Mutation this answers: replace the `if [ -n "$missing" ]` guard in check()
