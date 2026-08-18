@@ -219,23 +219,27 @@ jobs:
       # 14 days is the ledger's deadline, so the evidence outlives the row it is
       # about by exactly as long as anyone has to act on it.
       #
-      # `overwrite` and `continue-on-error` are both about one path, and it is
-      # the reflex this whole mechanism exists to correct: pressing "Re-run
-      # failed jobs" on a red sweep. A rerun is attempt 2 of the same run id, a
-      # v4 artifact is immutable per run, and a second upload under the same name
-      # is a 409. Without `overwrite` the rerun loses the artifact; without
-      # `continue-on-error` the 409 fails this step, and every later step with an
-      # `if:` that carries no status function is skipped -- `Report the verdicts`
-      # included. That would leave the job red at an upload, saying nothing about
-      # the ledger, and would break the invariant stated six lines below. This
-      # step reports; it does not get a vote on the verdict.
+      # `continue-on-error` because this step reports and does not get a vote on
+      # the verdict. A failed step skips every later step whose `if:` carries no
+      # status function -- GitHub ANDs an implicit `success()` in -- so without
+      # it an upload failure would skip `Report the verdicts` and leave the job
+      # red at an upload, saying nothing about the ledger. That is the invariant
+      # stated six lines below, and this is the one step that could take it.
+      #
+      # `overwrite: true` was proposed here for a 409 on "Re-run failed jobs",
+      # and it is not needed: artifacts are scoped per *attempt*, not per run.
+      # Re-running the failed job of run 32105880361 under this exact step
+      # uploaded a second `flake-sweep` (id 9315866367) beside attempt 1's
+      # (9313120233), both retained, no conflict. Left out rather than kept as
+      # insurance -- the reason it was wanted does not exist, and a flag whose
+      # comment describes a conflict that cannot happen is the defect this file
+      # was just cleaned of.
       - name: Upload the records and the synced ledger
         if: steps.compare.outcome == 'failure'
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: flake-sweep
-          overwrite: true
           path: |
             records.tsv
             ledger.diff
