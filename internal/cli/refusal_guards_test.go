@@ -689,7 +689,31 @@ func TestGuardSendRefusesACaptainWithNoHomeRecorded(t *testing.T) {
 	if err := mhome.WriteMeta(homeDir, "captain:c1", map[string]string{"kind": "captain"}); err != nil {
 		t.Fatal(err)
 	}
-	_, err := runRoot(t, "send", "captain:c1", "do the thing", "--home", homeDir)
+	// send refuses gate agents before it reads meta, so this guard is only
+	// reachable from a non-gate working directory with the gate marker
+	// cleared. Run it from the temp home (not a git checkout) with
+	// NO_MISTAKES_GATE unset so the suite also passes when run inside a
+	// no-mistakes gate worktree.
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(homeDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldDir) })
+	gateMarker, hadMarker := os.LookupEnv("NO_MISTAKES_GATE")
+	if err := os.Unsetenv("NO_MISTAKES_GATE"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if hadMarker {
+			_ = os.Setenv("NO_MISTAKES_GATE", gateMarker)
+		} else {
+			_ = os.Unsetenv("NO_MISTAKES_GATE")
+		}
+	})
+	_, err = runRoot(t, "send", "captain:c1", "do the thing", "--home", homeDir)
 	wantErrContains(t, err, "has no home in meta", "send to a captain whose meta records no home")
 }
 

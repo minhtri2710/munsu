@@ -14,9 +14,14 @@ import "golang.org/x/sys/windows"
 // handle, ask for the exit code, and treat STILL_ACTIVE (259) as alive. A PID
 // we cannot open is reported dead.
 //
-// No lane runs this. `GOOS=windows go vet ./...` compiles it, and
-// watcher_lease_windows_test.go binds it at the shape its callers use; its
-// answer for a real live process stays unproven in this repository.
+// No lane runs this. `GOOS=windows go vet ./...` compiles it, and its answer for
+// a real live process stays unproven in this repository.
+//
+// watcher_lease_windows_test.go is not what holds the signature: this function
+// has a production call site that compiles in the same lane
+// (watcher_lease.go), so a drifting signature turns the lane red there before it
+// reaches any test file. Do not read that test as coverage for the behaviour
+// above.
 func isProcessAlive(pid int) bool {
 	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
 	if err != nil {
