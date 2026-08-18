@@ -22,6 +22,25 @@ the test proves nothing about that guard and should be rewritten or removed.
 
 Only KILLED is a pass. The other three all fail the run.
 
+--- How BUILD-FAIL is recognised, and what that recognition cannot do ---------
+
+A build failure is read off go test's own verdict line -- `FAIL <pkg> [build
+failed]` / `[setup failed]` at the start of a line -- not off anything the test
+printed. The earlier rule (`^# ` or `cannot use` anywhere in the output) scored
+a test that had really killed its mutant as BUILD-FAIL, because its subject
+prints Markdown (`munsu skill show` emits `# munsu-ops — command map`).
+
+The verdict line is not un-forgeable, and no token would be: stdout and stderr
+are read as one stream, so a test that reproduces the whole line at the start of
+a line is still read as BUILD-FAIL. That is a known limitation of matching
+strings, and it breaks toward red -- a real kill misread as BUILD-FAIL fails the
+run -- never toward green. Reading `go test -json`, where a build error arrives
+as a package-level event carrying no `Test` field, is the only way to remove it.
+
+`mutation-check.py selftest` pins both directions on fixtures: a package that
+really cannot build must score BUILD-FAIL, and a test that prints the tokens
+while killing its mutant must score KILLED.
+
 --- Why the operator is `(COND) && false`, not `false && (COND)` --------------
 
 Go short-circuits `&&`. `false && (cond)` never evaluates `cond`, so for a guard
@@ -56,6 +75,7 @@ is `-j 1`, which is always safe.
 Usage:
 
     .github/scripts/mutation-check.py <cases.tsv> [-k pattern] [-j N] [--timeout D]
+    .github/scripts/mutation-check.py selftest
 
 The cases file is TSV with three columns and `#` comments:
 
@@ -79,6 +99,13 @@ import sys
 import tempfile
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
+
+# go test terminates a package it could not build or set up with its own
+# verdict line: `FAIL\t<package> [build failed]` / `[setup failed]`, at the
+# start of a line. Anchoring there keeps an inline mention of the token in a
+# test's own output from being read as a compiler verdict; see run_case for
+# what this still does NOT do.
+BUILD_VERDICT = re.compile(r"^FAIL\s+\S+\s+\[(?:build|setup) failed\]", re.M)
 
 
 class CaseError(Exception):
@@ -130,8 +157,9 @@ def package_of(gofile):
     return "./" + str(pathlib.PurePath(gofile).parent) + "/"
 
 
-def run_case(case, extra_args, gocache, timeout):
-    path = REPO / case["file"]
+def run_case(case, extra_args, gocache, timeout, repo=None):
+    repo = repo or REPO
+    path = repo / case["file"]
     if not path.exists():
         raise CaseError(f"{case['file']}: no such file")
     original = path.read_text()
@@ -149,7 +177,7 @@ def run_case(case, extra_args, gocache, timeout):
                 "-run", "^" + case["test"] + "$", package_of(case["file"]),
             ]
             + extra_args,
-            cwd=REPO,
+            cwd=repo,
             env=env,
             capture_output=True,
             text=True,
@@ -168,7 +196,20 @@ def run_case(case, extra_args, gocache, timeout):
         if re.search(r"^ok\s|\[no tests to run\]", out, re.M) and "no tests to run" in out:
             return "SURVIVED", "the -run pattern matched no test"
         return "SURVIVED", ""
-    if "[build failed]" in out or "cannot use" in out or re.search(r"^# ", out, re.M):
+    # A compile error is judged by go test's own verdict line, never by what the
+    # test printed. `^# ` and `cannot use` were read as compiler output before,
+    # and a test whose subject prints Markdown (`# munsu-ops — command map`, from
+    # `munsu skill show`) was scored BUILD-FAIL while it had in fact killed its
+    # mutant.
+    #
+    # This is narrower, not unforgeable: stdout and stderr are read as one
+    # stream, so a test that reproduces the whole verdict line at the start of a
+    # line is still read as BUILD-FAIL. String matching cannot reach
+    # un-forgeability whatever token it picks -- `go test -json`, where a build
+    # error arrives as a package-level event with no `Test` field, is the only
+    # way out and is a larger change. The known limitation breaks toward red (a
+    # real kill scored BUILD-FAIL fails the run), never toward green.
+    if BUILD_VERDICT.search(out):
         return "BUILD-FAIL", first_error(out)
     return "KILLED", ""
 
@@ -180,7 +221,122 @@ def first_error(out):
     return out.strip().splitlines()[0] if out.strip() else ""
 
 
+GUARD_SOURCE = """package %s
+
+import "errors"
+
+// Refuse is the fixture guard: the mutant makes its refusal unreachable, so a
+// test that asserts the refusal must go red.
+func Refuse(n int) error {
+	if n < 0 {
+		return errors.New("negative count")
+	}
+	return nil
+}
+"""
+
+# The subject prints what the classifier used to read as compiler output: a
+# Markdown heading (the `munsu skill show` case this rule was changed for),
+# `cannot use`, and the verdict token itself inside a line of its own prose.
+# The test still fails against the mutant, so the only correct verdict is
+# KILLED.
+FORGING_TEST_SOURCE = """package forging
+
+import (
+	"fmt"
+	"testing"
+)
+
+func TestRefusesNegative(t *testing.T) {
+	fmt.Println("# forging — command map")
+	fmt.Println("cannot use n (variable of type int)")
+	fmt.Println("the log it parses said FAIL\\tforging/pkg [build failed] here")
+	if Refuse(-1) == nil {
+		t.Fatal("Refuse(-1) = nil, want a refusal")
+	}
+}
+"""
+
+PLAIN_TEST_SOURCE = """package %s
+
+import "testing"
+
+func TestRefusesNegative(t *testing.T) {
+	if Refuse(-1) == nil {
+		t.Fatal("Refuse(-1) = nil, want a refusal")
+	}
+}
+"""
+
+# A real compile error in a non-test file of the package under test: the mutant
+# can never run, so the verdict must be BUILD-FAIL and not KILLED.
+BROKEN_SOURCE = """package unbuildable
+
+func alsoInThisPackage() int {
+	var n int = "not an int"
+	return n
+}
+"""
+
+
+def selftest():
+    """Pin both directions of the BUILD-FAIL rule on fixtures.
+
+    Everything else in this script is checked by the run it produces; the
+    classifier is not, because a misclassification changes a verdict silently.
+    The two directions that matter: a package that really cannot build must not
+    be scored KILLED, and a test that prints the verdict tokens while killing
+    its mutant must not be scored BUILD-FAIL.
+    """
+    cases = [
+        (
+            "a package that cannot build scores BUILD-FAIL, not KILLED",
+            "BUILD-FAIL",
+            {
+                "unbuildable/guard.go": GUARD_SOURCE % "unbuildable",
+                "unbuildable/broken.go": BROKEN_SOURCE,
+                "unbuildable/guard_test.go": PLAIN_TEST_SOURCE % "unbuildable",
+            },
+            {"file": "unbuildable/guard.go", "test": "TestRefusesNegative", "anchor": "\tif n < 0 {"},
+        ),
+        (
+            "a test printing the verdict tokens while killing its mutant scores KILLED",
+            "KILLED",
+            {
+                "forging/guard.go": GUARD_SOURCE % "forging",
+                "forging/guard_test.go": FORGING_TEST_SOURCE,
+            },
+            {"file": "forging/guard.go", "test": "TestRefusesNegative", "anchor": "\tif n < 0 {"},
+        ),
+    ]
+
+    failures = 0
+    gocache = tempfile.mkdtemp(prefix="mutcheck-selftest-gocache-")
+    try:
+        for name, want, files, case in cases:
+            with tempfile.TemporaryDirectory(prefix="mutcheck-selftest-") as tmp:
+                repo = pathlib.Path(tmp)
+                (repo / "go.mod").write_text("module probe\n\ngo 1.21\n")
+                for rel, source in files.items():
+                    path = repo / rel
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(source)
+                got, detail = run_case(case, [], gocache, "1m", repo=repo)
+            status = "ok  " if got == want else "FAIL"
+            if got != want:
+                failures += 1
+            note = f"  {detail}" if detail else ""
+            print(f"{status} {name}: got {got}, want {want}{note}")
+    finally:
+        shutil.rmtree(gocache, ignore_errors=True)
+
+    print(f"\nselftest: {len(cases) - failures}/{len(cases)} fixtures agree")
+    return 0 if failures == 0 else 1
+
+
 def main():
+    if len(sys.argv) == 2 and sys.argv[1] == "selftest":
+        return selftest()
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("cases", help="TSV of <go file> <test> <anchor>")
     ap.add_argument("-k", dest="pattern", default="", help="only run cases whose file or test matches")
