@@ -76,6 +76,12 @@ the wake payload. The digest also records:
 
 - `wedge_alarm` — if a wedge condition was detected during the window
 
+A stop is normally graceful — SIGTERM runs the daemon's final flush — but on windows
+`munsu afk return` terminates the daemon without it: up to one window of entries never
+reaches the digest and cannot be drained. The return report then prints a `Lossy stop`
+notice and refuses to claim "All clear" — treat the drained digest as a lower bound, not
+the full record (`stopProcessIsLossy`, afk_process_windows.go; afk_return.go).
+
 ### Wedge alarm
 
 Detects three conditions:

@@ -28,9 +28,12 @@ import (
 // a decimal string -- opaque, compared only against another token produced by
 // this same function, never parsed or ordered.
 //
-// No lane runs this. `GOOS=windows go vet ./...` compiles it; whether these two
-// syscalls return what this comment claims for a real windows process is
-// unproven in this repository -- read and compile only, no windows execution.
+// No required lane runs this. `GOOS=windows go vet ./...` compiles it; the
+// windows-observation lane (.github/workflows/windows-observation.yml,
+// workflow_dispatch, not required) is the only thing that executes it when
+// dispatched. Compile is not execution -- whether these two syscalls return
+// what this comment claims for a real windows process stays unproven in this
+// repository.
 func processIdentity(pid int) (string, string, error) {
 	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
 	if err != nil {
