@@ -93,11 +93,13 @@ func TestWatcherLease_ReleaseIdempotent(t *testing.T) {
 	}
 }
 
-// TestWatcherLease_LateReleaseByOldHolderPreservesSuccessorLease reproduces the
-// stop-then-restart ordering rather than asserting that some lease exists: the
-// old watcher has been signalled but has not finished exiting, the replacement
-// claims the lease, and only then does the old watcher's deferred release run.
-// The successor's lease must survive it.
+// TestWatcherLease_LateReleaseByOldHolderPreservesSuccessorLease pins the
+// release guard at the state the stop-then-restart race leaves behind: the
+// lease on disk already belongs to the successor when the old holder's deferred
+// release finally runs. The state is set up directly — ClaimWatcherLease
+// refuses a live holder, so the successor's claim here only succeeds because
+// the old PID is dead. Reproducing the ordering with two live processes is not
+// what this test does.
 func TestWatcherLease_LateReleaseByOldHolderPreservesSuccessorLease(t *testing.T) {
 	home := t.TempDir()
 	const oldPID, newPID = 9999998, 9999999
@@ -106,7 +108,7 @@ func TestWatcherLease_LateReleaseByOldHolderPreservesSuccessorLease(t *testing.T
 		t.Fatalf("old watcher claim = (%v, %v), want (true, nil)", claimed, err)
 	}
 
-	// Replacement watcher claims while the old holder is still winding down.
+	// Replacement watcher takes the lease over the old holder's record.
 	if claimed, err := ClaimWatcherLease(home, newPID); err != nil || !claimed {
 		t.Fatalf("successor claim = (%v, %v), want (true, nil)", claimed, err)
 	}

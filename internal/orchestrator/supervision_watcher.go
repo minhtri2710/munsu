@@ -221,10 +221,16 @@ func stopRunningWatcher(homeDir string) error {
 // waitForWatcherExit observes the signalled watcher until it is gone or the
 // bound expires. It exists for one reason: ArmBackground's restart path starts
 // a replacement whose own AcquireWatch takes the watch flock, and that flock is
-// still held while the old process runs. Expiry is deliberately not an error —
-// nothing durable depends on the old watcher being gone by now
-// (home.ReleaseWatcherLeaseIfMatches refuses to delete a successor's lease),
-// and a watcher inside a slow cycle can outlast any bound we pick.
+// still held while the old process runs.
+//
+// Expiry is not an error here because the one caller that restarts
+// (completeHandshake, the only caller of ArmBackground(restart=true)) proves
+// convergence itself via waitForNewWatcher; the other reachable caller, Stop,
+// starts no replacement. A caller without that handshake would lose the "no
+// watcher at all" signal entirely — that is the condition to re-read before
+// adding one. Nothing durable depends on the old watcher being gone by now
+// either: home.ReleaseWatcherLeaseIfMatches refuses to delete a successor's
+// lease, and a watcher inside a slow cycle can outlast any bound we pick.
 func waitForWatcherExit(pid int) {
 	deadline := time.Now().Add(watcherStopWait)
 	for time.Now().Before(deadline) {
