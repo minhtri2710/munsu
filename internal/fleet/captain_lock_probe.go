@@ -18,8 +18,13 @@ func LockHeld(lockPath string) (bool, error) {
 		}
 		return false, err
 	}
-	f, err := os.OpenFile(lockPath, os.O_RDWR|os.O_CREATE, 0644)
+	// No O_CREATE: if a concurrent release removed the file between the stat
+	// and here, the probe must report it free, not recreate it.
+	f, err := os.OpenFile(lockPath, os.O_RDWR, 0644)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
 		return false, err
 	}
 	defer f.Close()
