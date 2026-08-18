@@ -18,6 +18,14 @@ import (
 
 const watcherPollInterval = 5 * time.Second
 
+const (
+	// watcherStopWait bounds how long stopRunningWatcher observes a signalled
+	// watcher, and watcherStopPoll is how often it looks. See waitForWatcherExit
+	// for why the bound expiring is not a failure.
+	watcherStopWait = 2 * time.Second
+	watcherStopPoll = 20 * time.Millisecond
+)
+
 // WakeReason describes an actionable watcher condition.
 type WakeReason struct {
 	Kind                 string // signal, stale, check, heartbeat
@@ -75,14 +83,15 @@ func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-cha
 	defer ReleaseWatch(homeDir)
 
 	// Claim the watcher lease — unique per home.
-	claimed, err := home.ClaimWatcherLease(homeDir, os.Getpid())
+	pid := os.Getpid()
+	claimed, err := home.ClaimWatcherLease(homeDir, pid)
 	if err != nil {
 		return nil, fmt.Errorf("claiming watcher lease: %w", err)
 	}
 	if !claimed {
 		return nil, fmt.Errorf("watcher lease already held by another process")
 	}
-	defer home.ReleaseWatcherLease(homeDir)
+	defer home.ReleaseWatcherLeaseIfMatches(homeDir, pid)
 
 	// Write watcher identity on start and clear it on exit.
 	identity := NewIdentity(homeDir)
@@ -205,8 +214,31 @@ func stopRunningWatcher(homeDir string) error {
 		return fmt.Errorf("signaling watcher pid %d: %w", pid, err)
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	waitForWatcherExit(pid)
 	return nil
+}
+
+// waitForWatcherExit observes the signalled watcher until it is gone or the
+// bound expires. It exists for one reason: ArmBackground's restart path starts
+// a replacement whose own AcquireWatch takes the watch flock, and that flock is
+// still held while the old process runs.
+//
+// Expiry is not an error here because the one caller that restarts
+// (completeHandshake, the only caller of ArmBackground(restart=true)) proves
+// convergence itself via waitForNewWatcher; the other reachable caller, Stop,
+// starts no replacement. A caller without that handshake would lose the "no
+// watcher at all" signal entirely — that is the condition to re-read before
+// adding one. Nothing durable depends on the old watcher being gone by now
+// either: home.ReleaseWatcherLeaseIfMatches refuses to delete a successor's
+// lease, and a watcher inside a slow cycle can outlast any bound we pick.
+func waitForWatcherExit(pid int) {
+	deadline := time.Now().Add(watcherStopWait)
+	for time.Now().Before(deadline) {
+		if !isProcessAlive(pid) {
+			return
+		}
+		time.Sleep(watcherStopPoll)
+	}
 }
 
 // Stop signals the running watcher for the given home and clears its beat.

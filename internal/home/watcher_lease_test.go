@@ -48,8 +48,12 @@ func TestWatcherLease_ClaimAndRelease(t *testing.T) {
 	}
 
 	// Release the lease.
-	if err := ReleaseWatcherLease(home); err != nil {
-		t.Fatalf("ReleaseWatcherLease: %v", err)
+	released, err := ReleaseWatcherLeaseIfMatches(home, pid)
+	if err != nil {
+		t.Fatalf("ReleaseWatcherLeaseIfMatches: %v", err)
+	}
+	if !released {
+		t.Fatal("ReleaseWatcherLeaseIfMatches did not release the holder's own lease")
 	}
 
 	// Verify lease file is gone.
@@ -62,18 +66,71 @@ func TestWatcherLease_ReleaseIdempotent(t *testing.T) {
 	home := t.TempDir()
 
 	// Release on empty home should not error.
-	if err := ReleaseWatcherLease(home); err != nil {
-		t.Fatalf("ReleaseWatcherLease on empty home: %v", err)
+	released, err := ReleaseWatcherLeaseIfMatches(home, 12345)
+	if err != nil {
+		t.Fatalf("ReleaseWatcherLeaseIfMatches on empty home: %v", err)
+	}
+	if released {
+		t.Fatal("released a lease that never existed")
 	}
 
 	// Claim then release twice.
 	ClaimWatcherLease(home, 12345)
-	if err := ReleaseWatcherLease(home); err != nil {
+	released, err = ReleaseWatcherLeaseIfMatches(home, 12345)
+	if err != nil {
 		t.Fatalf("first release: %v", err)
 	}
+	if !released {
+		t.Fatal("first release did not remove the lease")
+	}
 	// Second release should be idempotent.
-	if err := ReleaseWatcherLease(home); err != nil {
+	released, err = ReleaseWatcherLeaseIfMatches(home, 12345)
+	if err != nil {
 		t.Fatalf("second release: %v", err)
+	}
+	if released {
+		t.Fatal("second release reported removing a lease that was already gone")
+	}
+}
+
+// TestWatcherLease_LateReleaseByOldHolderPreservesSuccessorLease pins the
+// release guard at the state the stop-then-restart race leaves behind: the
+// lease on disk already belongs to the successor when the old holder's deferred
+// release finally runs. The state is set up directly — ClaimWatcherLease
+// refuses a live holder, so the successor's claim here only succeeds because
+// the old PID is dead. Reproducing the ordering with two live processes is not
+// what this test does.
+func TestWatcherLease_LateReleaseByOldHolderPreservesSuccessorLease(t *testing.T) {
+	home := t.TempDir()
+	const oldPID, newPID = 9999998, 9999999
+
+	if claimed, err := ClaimWatcherLease(home, oldPID); err != nil || !claimed {
+		t.Fatalf("old watcher claim = (%v, %v), want (true, nil)", claimed, err)
+	}
+
+	// Replacement watcher takes the lease over the old holder's record.
+	if claimed, err := ClaimWatcherLease(home, newPID); err != nil || !claimed {
+		t.Fatalf("successor claim = (%v, %v), want (true, nil)", claimed, err)
+	}
+
+	// The old watcher finally exits and runs its deferred release.
+	released, err := ReleaseWatcherLeaseIfMatches(home, oldPID)
+	if err != nil {
+		t.Fatalf("late release by old holder: %v", err)
+	}
+	if released {
+		t.Fatal("old watcher released a lease it no longer held")
+	}
+
+	lease, err := ReadWatcherLease(home)
+	if err != nil {
+		t.Fatalf("ReadWatcherLease: %v", err)
+	}
+	if lease == nil {
+		t.Fatal("old watcher deleted the successor's lease")
+	}
+	if lease.PID != newPID {
+		t.Fatalf("lease PID = %d, want %d", lease.PID, newPID)
 	}
 }
 
