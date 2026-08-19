@@ -43,8 +43,6 @@ const (
 	DispatchPolicyCaptainMediated DispatchPolicy = "captain-mediated"
 )
 
-func (p DispatchPolicy) String() string { return string(p) }
-
 // DispatchPolicyProblem names the policy-matrix row that rejected a
 // parent/home/config combination at the Fleet boundary.
 type DispatchPolicyProblem string

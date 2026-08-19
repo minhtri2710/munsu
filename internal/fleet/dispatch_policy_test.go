@@ -320,9 +320,6 @@ func TestDispatchPolicyConstants(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("dispatch policy constants = %v, want %v", got, want)
 	}
-	if !strings.Contains((DispatchPolicyGeneralDirect).String(), "general-direct") {
-		t.Fatal("DispatchPolicy.String() must expose the policy value")
-	}
 }
 
 // The policy error text names the exact refusing evidence so an operator never
