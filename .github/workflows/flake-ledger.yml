@@ -64,8 +64,8 @@ jobs:
       #
       # So the lane stops at reporting, and the cost of that is named here rather
       # than left to be discovered: nobody's branch is prepared any more. Whoever
-      # fixes the ledger runs `.github/scripts/flake-sweep.sh sync` locally, from
-      # the diff this job writes to its run summary.
+      # fixes the ledger runs `.github/scripts/flake-sweep.sh sync --owner
+      # <ISSUE_ID>` locally, from the diff this job writes to its run summary.
       #
       # `contents: read` is not only for the checkout: `observe` reads
       # `/repos/../compare/A...B` twice, for the self-heal touch check and for
@@ -140,6 +140,11 @@ jobs:
       # is a local write and needs no token at all -- `contents: write` is about
       # the API, and nothing below calls it. No commit, no branch, no push.
       #
+      # It runs without `--owner`: the bot cannot know which issue will own a
+      # flake, so the diff it prints carries the TBD rows flake-ledger.sh
+      # refuses, and the summary block below tells the reader to re-run sync
+      # with the real issue id.
+      #
       # `continue-on-error` for the same reason as the two steps above: `Report
       # the verdicts` is the one place this job fails, and this step exiting
       # non-zero on its own would report one red twice.
@@ -188,15 +193,15 @@ jobs:
             echo 'Nothing prepares a branch for you. Apply this yourself, on a branch of your own:'
             echo
             echo '```sh'
-            echo '.github/scripts/flake-sweep.sh sync'
+            echo '.github/scripts/flake-sweep.sh sync --owner <ISSUE_ID>'
             echo '```'
             echo
-            echo 'Then **fill in `owner_issue` by hand**. Every new row the sweep writes says'
-            echo '`owner_issue: TBD`, and `.github/scripts/flake-ledger.sh check` refuses TBD, so'
-            echo '`invariants` stays red until someone files the issue that will fix the test and'
-            echo 'writes its id in that column. Filing the flake and filing the work are meant to'
-            echo 'be the same act -- this is the one field the sweep deliberately cannot fill, not'
-            echo 'a gap in it.'
+            echo '`--owner` names the issue that will fix the test, and it has to be a real one:'
+            echo '`.github/scripts/flake-ledger.sh check` refuses `owner_issue: TBD` on purpose, so'
+            echo '`invariants` stays red until a real issue id sits in that column. Filing the flake'
+            echo 'and filing the work are meant to be the same act -- run `sync` with `--owner` and'
+            echo 'the rows it writes carry that issue and merge; run it without and they say `TBD`,'
+            echo 'which the same refusal rejects the same way.'
             echo
             echo 'If you think a row is wrong, argue with it in the owning issue rather than'
             echo 'deleting it -- the sweep re-derives the same row on the next `main` run.'
@@ -209,7 +214,7 @@ jobs:
             echo
             echo '</details>'
           } >>"$GITHUB_STEP_SUMMARY"
-          echo "::error::.github/flake-ledger.md is out of date. Run '.github/scripts/flake-sweep.sh sync' locally, then replace every 'owner_issue: TBD' it writes with the id of the issue that will fix that test -- flake-ledger.sh check refuses TBD on purpose, so that filing the flake and filing the work stay the same act. The diff and the rest of this are in the run summary."
+          echo "::error::.github/flake-ledger.md is out of date. Run '.github/scripts/flake-sweep.sh sync --owner <ISSUE_ID>' locally -- a real issue id is required because flake-ledger.sh check refuses TBD on purpose, and filing the flake and filing the work stay the same act. The diff and the rest of this are in the run summary."
 
       # The summary is what a person reads on the run page; this is for the diff
       # that is too long to read there, and for `records.tsv`. The records matter

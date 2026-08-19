@@ -85,7 +85,7 @@
 #   flake-sweep.sh observe [--window-days N]   API -> observation records (TSV)
 #   flake-sweep.sh classify < records          records -> verdicts (pure text)
 #   flake-sweep.sh check    [--window-days N]  observed set vs ledger, both ways
-#   flake-sweep.sh sync     [--window-days N]  rewrite the ledger table to match
+#   flake-sweep.sh sync     [--owner ISSUE] [--window-days N]  rewrite the ledger table to match
 #   flake-sweep.sh verify-fixed                every `fixed:<sha>` is on main
 #   flake-sweep.sh selftest                    classify against committed fixtures
 #
@@ -596,7 +596,7 @@ check() {
 			classify <"$records" | awk -F '\t' -v t="$test" -v l="$lane" '
 				$1 == "flake" && $2 == t && $3 == l { printf "      %s %s attempt %s: %s\n", substr($4,1,8), $5, $6, $7 }' >&2
 		done
-		echo "  Run '.github/scripts/flake-sweep.sh sync' to file them, then fill in owner_issue." >&2
+		echo "  Run '.github/scripts/flake-sweep.sh sync --owner <ISSUE_ID>' to file them under the issue that will fix them." >&2
 		failed=1
 	fi
 
@@ -738,11 +738,13 @@ sync() {
 		else
 			seen="$first_seen"
 			deadline="$(date_shift "$(today)" "+$DEADLINE_DAYS")"
-			# The bot cannot know which issue will own a flake, and
-			# flake-ledger.sh refuses TBD, so the diff this produces cannot merge
-			# until a person files that issue. Filing the flake and filing the
-			# work are meant to be the same act.
-			owner="TBD"
+			# --owner names the issue that will do the fixing, so a row filed
+			# with it is mergeable in the same act that files the work. Without
+			# the flag the bot still cannot know which issue owns a flake, so it
+			# writes TBD -- and flake-ledger.sh refuses TBD, so that diff stays
+			# unmergeable until a person files the issue and re-runs with
+			# --owner. Filing the flake and filing the work stay the same act.
+			owner="${OWNER:-TBD}"
 			state="open"
 		fi
 		printf '| %s | %s | %s | %s | %s | %s | %s |\n' "$test" "$lane" "$seen" "$last_seen" "$deadline" "$owner" "$state"
@@ -853,6 +855,69 @@ selftest() {
 	}
 	if ! grep -q '| TestReopens | integration | aaaa1111@3001/1 | cccc3333@3003/1 |.*| TBD | open |' "$ledger"; then
 		echo "::error::unfiled scenario: sync did not file the observed flake with owner_issue TBD" >&2
+		failed=1
+	fi
+
+	# 1b. `sync --owner <ISSUE_ID>` writes that issue into every row it files,
+	# so the same act that files the flake files the work, and the row it writes
+	# is one flake-ledger.sh accepts. Without the flag sync still writes TBD
+	# (scenario 1), and the refusal below is unchanged: --owner only moves the
+	# hand-edit earlier, it does not remove it.
+	#
+	# Mutation this answers: ignore OWNER in sync(), or drop it from the row it
+	# writes.
+	scratch_ledger "$ledger"
+	SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" sync --owner BEO-541 >/dev/null || {
+		echo "::error::owner scenario: sync --owner failed" >&2
+		failed=1
+	}
+	if ! grep -q '| TestReopens | integration | aaaa1111@3001/1 | cccc3333@3003/1 |.*| BEO-541 | open |' "$ledger"; then
+		echo "::error::owner scenario: sync --owner BEO-541 did not write BEO-541 into the filed row" >&2
+		failed=1
+	fi
+	if grep -q '| TBD |' "$ledger"; then
+		echo "::error::owner scenario: sync --owner still wrote a row with owner_issue TBD" >&2
+		failed=1
+	fi
+	if ! LEDGER="$ledger" "$ROOT/.github/scripts/flake-ledger.sh" check >/dev/null 2>&1; then
+		echo "::error::owner scenario: flake-ledger.sh rejects the row sync filed with --owner" >&2
+		failed=1
+	fi
+
+	# 1c. A bad --owner is refused at the argument, not written into the ledger:
+	# TBD re-creates the refusal flake-ledger.sh exists for, an empty value is
+	# no owner at all, a value with whitespace would break the markdown row it
+	# lands in, and a value that looks like a flag is a swallowed argument.
+	# None of them may reach the table.
+	#
+	# Mutation this answers: drop the owner checks in the argument handling.
+	for bad in TBD "" "two words" "--window-days"; do
+		scratch_ledger "$ledger"
+		if SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" sync --owner "$bad" >/dev/null 2>&1; then
+			echo "::error::owner scenario: sync --owner \"$bad\" was accepted" >&2
+			failed=1
+		fi
+	done
+	# A trailing --owner with nothing after it is refused too, and named, rather
+	# than left to die silently under `set -e` when shift runs out of arguments.
+	scratch_ledger "$ledger"
+	if SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" sync --owner >/dev/null 2>&1; then
+		echo "::error::owner scenario: sync --owner with no value was accepted" >&2
+		failed=1
+	fi
+
+	# 1d. --owner is sync's argument: no other command writes rows, so none of
+	# them may take it. Refusing it here keeps a command that cannot use the
+	# owner from silently ignoring the issue a person meant to file under.
+	#
+	# classify is the probe because it succeeds when the guard is gone: it is
+	# pure text in, text out, so a removed guard makes this subprocess exit 0
+	# and trips the check below, where a command that already fails for another
+	# reason would not.
+	#
+	# Mutation this answers: drop the `[ "$cmd" = "sync" ]` check.
+	if "$0" classify --owner BEO-541 </dev/null >/dev/null 2>&1; then
+		echo "::error::owner scenario: classify accepted --owner" >&2
 		failed=1
 	fi
 
@@ -991,8 +1056,18 @@ selftest() {
 
 cmd="${1:-}"
 [ $# -gt 0 ] && shift
+OWNER=""
 while [ $# -gt 0 ]; do
 	case "$1" in
+	--owner)
+		# Value demanded here, where it can be named: shift 2 on a missing one
+		# would exit silently under set -e, and this script's fail-closed cases
+		# are supposed to say what they refuse.
+		[ $# -ge 2 ] || die "--owner takes an issue id, e.g. --owner BEO-541"
+		OWNER="${2}"
+		shift 2
+		[ -n "$OWNER" ] || die "--owner takes an issue id, e.g. --owner BEO-541"
+		;;
 	--window-days)
 		WINDOW_DAYS="${2:-}"
 		shift 2
@@ -1010,6 +1085,24 @@ esac
 [ "$WINDOW_DAYS" -ge "$WINDOW_FLOOR" ] ||
 	die "--window-days $WINDOW_DAYS is narrower than the $WINDOW_FLOOR days this ledger's $DEADLINE_DAYS-day deadline needs: a row whose evidence ages out before its deadline is overdue and unfounded at once, and deleting it reads green in both halves"
 
+# --owner names the issue that will own the rows sync writes. Checked here, in
+# the same place every flag is checked, so a bad value is refused before it can
+# reach the table: whitespace would break the markdown row it lands in, a value
+# that looks like a flag is a swallowed argument, and TBD is the refusal
+# flake-ledger.sh exists for -- naming it here just moves that refusal earlier.
+# --owner only applies to sync; no other command writes rows, so none of them
+# may take it, and refusing it keeps a command that cannot use the owner from
+# silently ignoring the issue a person meant to file under.
+if [ -n "$OWNER" ]; then
+	case "$OWNER" in
+	*[[:space:]]*) die "--owner takes one issue id, got \"$OWNER\"" ;;
+	-*) die "--owner takes an issue id, got \"$OWNER\"" ;;
+	TBD) die "--owner must name a real issue, not TBD -- flake-ledger.sh refuses TBD on purpose" ;;
+	esac
+	[ "$cmd" = "sync" ] ||
+		die "--owner only applies to sync; it names the issue that owns the rows sync writes, and $cmd writes no rows"
+fi
+
 case "$cmd" in
 observe) observe ;;
 classify) classify ;;
@@ -1018,7 +1111,7 @@ sync) sync ;;
 verify-fixed) verify_fixed ;;
 selftest) selftest ;;
 *)
-	echo "usage: flake-sweep.sh {observe|classify|check|sync|verify-fixed|selftest} [--window-days N]" >&2
+	echo "usage: flake-sweep.sh {observe|classify|check|sync [--owner ISSUE]|verify-fixed|selftest} [--window-days N]" >&2
 	exit 2
 	;;
 esac
