@@ -256,8 +256,9 @@ where anyone looking at the code will be standing. This repository already puts 
 sentences in the right place and should keep doing so:
 
 * `.github/build-tags.manifest` classifies `windows` as `goos-vet` and states its limit in
-  the row — the coverage is the `GOOS=windows go vet ./...` compile, no figure (the file's
-  header explains why a count no job verifies is not carried). That row is gated — an
+  the row — the coverage is the `GOOS=windows go vet ./...` compile plus the native
+  `windows-build-vet` gate (#544), no figure (the file's header explains why a count no job
+  verifies is not carried). That row is gated — an
   unclassified tag turns `invariants` red — so the *existence* of a declaration is enforced
   even though its content is not.
 * BEO-114's own commit message carries the model sentence: *"The added test asserts
@@ -275,15 +276,18 @@ adds is the sentence.
 prerequisite.** `.github/scripts/guardsites` finds 941 refusal sites at `22009ed`. Eight sit
 in files no `ubuntu-latest` lane compiles: six across
 `internal/home/{watcher,taskmeta,canonical}_lock_windows.go` and two in
-`internal/orchestrator/afk_process_identity_darwin.go`. Every job in `ci.yml` is
-`runs-on: ubuntu-latest`; the only Windows coverage in the repository is
-`GOOS=windows go vet ./...`, which compiles the three Windows `_test.go` files and runs
-none of them.
+`internal/orchestrator/afk_process_identity_darwin.go`. In `ci.yml`, every job runs on
+`ubuntu-latest` except the `windows-build-vet` gate (#544), which builds and vets natively
+on `windows-latest`; Windows coverage is therefore the `GOOS=windows go vet ./...` compile
+plus that gate. Both compile the three Windows `_test.go` files (vet includes test files)
+and neither executes them — only the dispatch-only windows-observation lane does. The gate
+produces no coverage profile, so the eight sites stay unmeasured.
 
 Eight is small enough that 6.2 costs eight sentences, and large enough that a
-`windows-latest` job would be worth its cost — it would move six of them from unmeasured
-to measured. But the two answer different questions and neither waits on the other: 6.2
-governs what may be **claimed**, a Windows lane changes what can be **measured**. 6.2
+`windows-latest` *test* lane would be worth its cost — it would move six of them from
+unmeasured to measured. But the two answer different questions and neither waits on the
+other: 6.2 governs what may be **claimed**, a Windows lane changes what can be **measured**.
+6.2
 belongs here because it is a rule about claims, and this document is where the repository's
 rules about claims live. The lane belongs in its own issue, sized against the matrix cost,
 and is listed as work below.
@@ -320,8 +324,9 @@ of these four is a specific way of getting one of them wrong that has already ha
 least once. They have no removal condition, and saying so is more useful than inventing one.
 
 **§6 is superseded, not removed, by measurement.** Every site 6.2 covers leaves its scope
-the moment a lane executes it. If a Windows lane lands, the six `_lock_windows.go` sites
-stop needing a sentence — they will be measured, and the guards lane will say so. §6 shrinks
+the moment a lane executes it. If a Windows *test* lane ever lands, the six
+`_lock_windows.go` sites stop needing a sentence — they will be measured, and the guards
+lane will say so. §6 shrinks
 as coverage grows and is deleted when `uncovered-guards.sh` reports zero `unmeasured` files.
 
 ## Work this creates

@@ -31,8 +31,10 @@ jobs:
       - run: go test -coverprofile=coverage/default.out ./...
       # GOOS-gated files never compile on a linux runner, so no test lane can
       # reach them -- three _test.go files had never been compiled by CI at
-      # all. Cross-target vet is the only cover for them; `go vet` includes
-      # test files. GOOS=windows also covers the `!darwin && !linux` file.
+      # all. Cross-target vet is the only cover for the darwin-gated files; the
+      # windows-gated files are also compiled and vetted natively by the
+      # `windows-build-vet` job below, and `go vet` includes test files.
+      # GOOS=windows also covers the `!darwin && !linux` file.
       - name: Cross-target vet for GOOS-gated files
         run: |
           GOOS=darwin go vet ./...
