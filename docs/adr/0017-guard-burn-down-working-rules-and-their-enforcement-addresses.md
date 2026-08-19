@@ -184,7 +184,7 @@ a gate.
 **Address for (c) in the reachability lane: `announce_open_bugs` in
 `.github/scripts/deadcode.sh`, which re-prints every `OPEN-BUG`-prefixed reason as a
 `::warning` on every run. Address for (c) in the coverage lane: the same mechanism, added
-as `announce_open_bugs` in `.github/scripts/uncovered-guards.sh` (#542) with the reason
+as `announce_open_bugs` in `.github/scripts/uncovered-guards.sh` (issue #542) with the reason
 read from the baseline's fifth column; the `open-bug` fixture pins it.**
 
 Every unreachable function is one of three things:
@@ -202,7 +202,7 @@ this check.
 The marker is live machinery with zero users today: `.github/deadcode.allow` currently
 contains no `OPEN-BUG` line. That is the correct state — the last four were the BEO-112
 relay chain above, cleared by #509 — and it is also why the convention is easy to forget
-exists; the file reads as if it only ever held debt. That asymmetry is closed as of #542:
+exists; the file reads as if it only ever held debt. That asymmetry is closed as of issue #542:
 `uncovered-guards.sh` carries the same marker, so a refusal branch uncovered because of a
 production bug is announced on every run instead of being waivable as though it were debt.
 
