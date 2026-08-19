@@ -470,7 +470,6 @@ var typeCheckGOOS = []string{"linux", "darwin", "windows"}
 // itself has type `error`.
 func loadTypes(root string) (*resolver, error) {
 	r := &resolver{byFile: map[string]map[span]types.Type{}, loaded: map[string]bool{}}
-	var failures []string
 	for _, goos := range typeCheckGOOS {
 		cfg := &packages.Config{
 			Mode: packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo,
@@ -479,16 +478,14 @@ func loadTypes(root string) (*resolver, error) {
 		}
 		pkgs, err := packages.Load(cfg, "./...")
 		if err != nil {
-			failures = append(failures, fmt.Sprintf("GOOS=%s: %v", goos, err))
-			continue
+			return nil, fmt.Errorf("GOOS=%s: %v", goos, err)
 		}
+		typeChecked := 0
 		for _, p := range pkgs {
-			// A package with type errors has an incomplete TypesInfo. Leave its
-			// files out of the loaded set for this GOOS rather than record half
-			// a package; another GOOS may still type-check it cleanly.
 			if len(p.Errors) > 0 {
-				continue
+				return nil, fmt.Errorf("GOOS=%s: package %s did not type-check: %v", goos, p.PkgPath, p.Errors[0])
 			}
+			typeChecked += len(p.Syntax)
 			for _, f := range p.Syntax {
 				if abs, err := filepath.Abs(p.Fset.Position(f.Pos()).Filename); err == nil {
 					r.loaded[abs] = true
@@ -510,12 +507,9 @@ func loadTypes(root string) (*resolver, error) {
 				}
 			}
 		}
-	}
-	// Every load failing is not an empty answer, it is a broken instrument: the
-	// recognizer would silently fall back to the name heuristic for the whole
-	// tree, which is the exact fail-open this replaced.
-	if len(r.loaded) == 0 {
-		return nil, fmt.Errorf("no package type-checked under any of %v: %s", typeCheckGOOS, strings.Join(failures, "; "))
+		if typeChecked == 0 {
+			return nil, fmt.Errorf("GOOS=%s: no package files type-checked", goos)
+		}
 	}
 	return r, nil
 }

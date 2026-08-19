@@ -1,0 +1,4 @@
+::error::guardsites could not scan the tree, so it cannot derive the guard set: type-checking the tree: GOOS=windows: package  did not type-check: -: # github.com/minhtri2710/munsu/.github/testdata/guardsites/windows-type-error
+./b_windows.go:3:9: undefined: UndefinedSymbol
+exit status 1
+exit 1

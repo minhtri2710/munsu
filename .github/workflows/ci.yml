@@ -398,10 +398,13 @@ jobs:
     needs: [build, integration]
     steps:
       - uses: actions/checkout@v6
-      # Derivation is `go run ./.github/scripts/guardsites`, which type-checks
-      # nothing and loads no packages -- go/ast over 305 files, ~0.9s including
-      # the build of the tool itself. Same toolchain as every other job so the
-      # parse agrees with the compiler that produced the profiles.
+      # Derivation is a go/packages type-check of the whole tree once for each of
+      # GOOS linux, darwin and windows (the union that covers every build-gated
+      # file), run with `go run .` from the tool's own module directory (see
+      # uncovered-guards.sh sites). This job now also downloads that module's
+      # dependencies; the whole run is roughly one to five seconds depending on
+      # the build cache. Same toolchain as every other job so the type-check
+      # agrees with the compiler that produced the profiles.
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26"
