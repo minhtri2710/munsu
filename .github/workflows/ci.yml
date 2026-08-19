@@ -38,10 +38,11 @@ jobs:
           GOOS=darwin go vet ./...
           GOOS=windows go vet ./...
       # `go test ./...` never builds these two tags, which is where a compile
-      # break sat unnoticed for four months. The tagged tests themselves cost
-      # 0.88s and 0.29s, so they run for real rather than being compile-
-      # checked. Go's granularity is the package, so each step also repeats
-      # its package's default suite (~24s total); deriving the package from
+      # break sat unnoticed for four months. The tagged suites are small and
+      # fast; the reason, without a figure, is in the matching row of
+      # .github/build-tags.manifest. So they run for real rather than being
+      # compile-checked. Go's granularity is the package, so each step also
+      # repeats its package's default suite (~24s total); deriving the package from
       # the tag is worth that over an enumerated -run filter that a new test
       # would silently fall outside of.
       - name: e2e-tagged tests
