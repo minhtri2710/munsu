@@ -1,0 +1,4 @@
+::warning file=internal/fake/gated_linux.go::no lane compiles this file on this platform, so its refusal branches are outside the lane in both directions
+::warning file=internal/fake/guard.go::Refuse is uncovered and known to be a bug, not accepted debt: OPEN-BUG: the condition is inverted and the fixture pins the warning on every run
+guards: 3 sites, 2 waived, deadcode: 2 allowed
+exit 0
