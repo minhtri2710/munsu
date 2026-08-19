@@ -68,6 +68,29 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
 
+  windows-build-vet:
+    name: Windows build and vet
+    runs-on: windows-latest
+    timeout-minutes: 30
+    # Gate for the two steps promoted out of the windows observation lane
+    # (windows-observation.yml): `go build ./...` and `go vet ./...` were green
+    # on windows before this landed, and this job runs them on every push and
+    # every pull request. Making it a required check -- by name, "Windows build
+    # and vet" -- is a branch-protection change owned by a human, and that
+    # change has not been made. The failing windows tests stay in the
+    # observation lane and are not gated here. If anything else is promoted out
+    # of that lane later, promotion has to invert the lane's exit-code capture
+    # -- a failure has to fail this job directly. Do not promote by adding
+    # continue-on-error.
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+      - run: go build ./...
+      - run: go vet ./...
+
   race:
     name: Race detector
     runs-on: ubuntu-latest

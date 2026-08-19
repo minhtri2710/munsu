@@ -1,11 +1,12 @@
 # BEO-122: measure what `go test` actually does on windows. This is an
 # OBSERVATION lane, not a gate.
 #
-# The repo has never run a test on windows. The only windows coverage in ci.yml
-# is `GOOS=windows go vet ./...`, which compiles the windows halves and never
-# executes them -- five bugs reached main through exactly that gap
-# (BEO-112/114/116/120). Compiling is not running, and the difference is what
-# this file measures.
+# The repo has never run a test on windows. ci.yml now also builds and vets
+# natively on windows-latest (the `windows-build-vet` gate); before that, the
+# only windows coverage in ci.yml was `GOOS=windows go vet ./...`, which
+# compiles the windows halves and never executes them -- five bugs reached main
+# through exactly that gap (BEO-112/114/116/120). Compiling is still not
+# running, and the difference is still what this file measures.
 #
 # Read this before changing anything here:
 #
@@ -20,9 +21,12 @@
 #     *measured*, and the exit code it measured is data in the artifact -- not a
 #     hidden failure.
 #   - The verdict lives in the artifact and in the job summary, never in the
-#     job's own green tick. If this lane is ever promoted to a gate, that
-#     promotion has to invert this: drop the exit-code capture and let `go test`
-#     fail the step directly. Do not promote it by adding `continue-on-error`.
+#     job's own green tick. Build and vet already crossed this line: they were
+#     promoted to the `windows-build-vet` gate in ci.yml by dropping the
+#     exit-code capture, so `go build` / `go vet` fail the gate directly. The
+#     remaining test steps below still hold this rule: any future promotion has
+#     to invert it the same way -- drop the capture and let `go test` fail the
+#     step directly. Do not promote anything by adding `continue-on-error`.
 #
 # The ubuntu job exists only as a timing reference measured the same way on the
 # same commit, so "windows is slower" is a number rather than a hunch.
@@ -73,22 +77,6 @@ jobs:
           echo "gcc_exit=$?" >> results/toolchain.txt
           head -1 results/gcc.log >> results/toolchain.txt
           cat results/toolchain.txt
-
-      - name: Build
-        run: |
-          set +e
-          go build ./... 2> results/build.err
-          echo "$?" > results/build.exit
-          cat results/build.err
-          echo "exit=$(cat results/build.exit)"
-
-      - name: Vet
-        run: |
-          set +e
-          go vet ./... 2> results/vet.err
-          echo "$?" > results/vet.exit
-          cat results/vet.err
-          echo "exit=$(cat results/vet.exit)"
 
       # -json is what makes the classification work downstream: it gives a
       # per-test pass/fail/skip with elapsed time and the failure output
@@ -176,7 +164,7 @@ jobs:
             echo ""
             echo "| step | exit |"
             echo "| --- | --- |"
-            for f in build vet default integration e2e lifecycle race-probe; do
+            for f in default integration e2e lifecycle race-probe; do
               if [ -f "results/$f.exit" ]; then
                 echo "| $f | $(cat results/$f.exit) |"
               else
