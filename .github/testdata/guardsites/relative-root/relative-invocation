@@ -1,0 +1,4 @@
+Invoke with the root given relative to the guardsites directory: the selftest
+harness passes `../../testdata/guardsites/relative-root` instead of the absolute
+fixture path, pinning that a relative-root invocation derives the same set as
+an absolute one.

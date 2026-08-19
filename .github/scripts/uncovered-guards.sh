@@ -464,7 +464,16 @@ exit $rc"
 		dir="${dir%/}"
 		name="$(basename "$dir")"
 		[ -f "$dir/want" ] || die "fixture $name has no want"
-		if got="$(cd "$ROOT/.github/scripts/guardsites" && go run . "$dir" 2>&1)"; then rc=0; else rc=$?; fi
+		# The relative-root fixture pins the invocation shape too: an empty
+		# `relative-invocation` sentinel in the fixture makes the harness pass
+		# the root the way a hand caller would, relative to the tool's own
+		# directory, instead of letting the harness absolutise it. A fixture
+		# cannot otherwise say how it was run.
+		arg="$dir"
+		if [ -f "$dir/relative-invocation" ]; then
+			arg="../../testdata/guardsites/$name"
+		fi
+		if got="$(cd "$ROOT/.github/scripts/guardsites" && go run . "$arg" 2>&1)"; then rc=0; else rc=$?; fi
 		got="$got
 exit $rc"
 		if [ "$got" = "$(cat "$dir/want")" ]; then
@@ -475,6 +484,17 @@ exit $rc"
 			failed=1
 		fi
 	done
+
+	# The self-measure refusal is not pinnable by a fixture tree: no fixture can
+	# contain the tool's own compiled-from source, which is what the check keys
+	# against. Pin it directly: `go run . .` from the tool's own directory must
+	# fail closed, not print the tool's handful of sites as the tree's answer.
+	if out="$(cd "$ROOT/.github/scripts/guardsites" && go run . . 2>&1)"; then rc=0; else rc=$?; fi
+	if [ "$rc" -eq 0 ] || ! printf '%s\n' "$out" | grep -q "tool's own source"; then
+		echo "::error::guardsites measured itself from '.' instead of failing closed:" >&2
+		printf '%s\n' "$out" >&2
+		failed=1
+	fi
 
 	[ "$failed" -eq 0 ] || exit 1
 	echo "uncovered-guards selftest: all fixtures agree"
