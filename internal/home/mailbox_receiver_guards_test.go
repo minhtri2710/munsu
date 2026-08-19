@@ -129,6 +129,18 @@ func TestReceiveAndAckRefuseEnvelopesThatFailProvenance(t *testing.T) {
 			},
 			wantSub: "superseded",
 		},
+		{
+			// The envelope is addressed to this receiver's identity but to a
+			// different rank. Identity and rank are separate assertions, and a
+			// receiver must refuse work addressed to a rank it does not hold.
+			name: "an envelope addressed to a different rank",
+			break_: func(t *testing.T, store *Store, env Envelope, ref NotificationRef) NotificationRef {
+				env.SenderRank, env.ReceiverRank = RankCaptain, RankSoldier
+				writeEnvelopeUnder(t, store, ref.SenderIdentity, env)
+				return ref
+			},
+			wantSub: "receiver rank mismatch",
+		},
 	}
 
 	for _, tc := range cases {

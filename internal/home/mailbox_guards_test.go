@@ -220,3 +220,68 @@ func TestRemoveSenderPendingRefusesWhenNoAckExists(t *testing.T) {
 		t.Fatalf("RemoveSenderPending with an ack on disk: %v", err)
 	}
 }
+
+// Rank is what makes the mailbox one-hop. An unrecognised rank has no place in
+// the hierarchy at all, and a recognised one still may not skip a level: the
+// three transition refusals below are what stop a general addressing a soldier
+// directly, or a captain addressing another captain. These branches were
+// invisible to the guards lane until BEO-123 fixed the instrument, which had
+// been reading SenderRank and ReceiverRank as error values on their names.
+func TestValidateEnvelopeRefusesInvalidRanksAndIllegalTransitions(t *testing.T) {
+	runGuardCases(t, validGuardEnvelope,
+		func(env Envelope) error { return ValidateEnvelope(&env) },
+		[]guardCase[Envelope]{
+			{"an unrecognised sender rank", func(e *Envelope) { e.SenderRank = Rank("admiral") }, "invalid sender rank"},
+			{"an unrecognised receiver rank", func(e *Envelope) { e.ReceiverRank = Rank("admiral") }, "invalid receiver rank"},
+			{"a general addressing a soldier directly", func(e *Envelope) {
+				e.SenderRank, e.ReceiverRank = RankGeneral, RankSoldier
+			}, "general can only send to captain"},
+			{"a captain addressing another captain", func(e *Envelope) {
+				e.SenderRank, e.ReceiverRank = RankCaptain, RankCaptain
+			}, "captain can only send to general or soldier"},
+			{"a soldier addressing a general directly", func(e *Envelope) {
+				e.SenderRank, e.ReceiverRank = RankSoldier, RankGeneral
+			}, "soldier can only send to captain"},
+		})
+}
+
+// The rank halves of the ack. An ack whose ranks disagree with the envelope is
+// an ack for a different hop, and retiring the pending record on it would drop
+// a message that was never processed.
+func TestValidateAckRefusesRanksThatDoNotMatchTheEnvelope(t *testing.T) {
+	env := validGuardEnvelope()
+	runGuardCases(t, validGuardAck,
+		func(ack ProcessingAck) error { return ValidateAck(&env, &ack) },
+		[]guardCase[ProcessingAck]{
+			{"a different sender rank", func(a *ProcessingAck) { a.SenderRank = RankCaptain }, "sender rank mismatch"},
+			{"a different receiver rank", func(a *ProcessingAck) { a.ReceiverRank = RankSoldier }, "receiver rank mismatch"},
+		})
+}
+
+// The inbox is keyed by message ID, so a second write under an ID that already
+// exists is either a replay or a collision. Identical content replays
+// harmlessly; different content under the same ID means two different messages
+// are claiming one identity, and the store refuses rather than overwriting the
+// one already delivered.
+func TestStoreWriteEnvelopeRefusesConflictingContentUnderOneMessageID(t *testing.T) {
+	store := NewStore(t.TempDir())
+	env := validGuardEnvelope()
+	if err := store.WriteEnvelope(&env); err != nil {
+		t.Fatalf("WriteEnvelope: %v", err)
+	}
+	// Control: the identical envelope replays without error.
+	replay := validGuardEnvelope()
+	if err := store.WriteEnvelope(&replay); err != nil {
+		t.Fatalf("identical rewrite must be idempotent, got: %v", err)
+	}
+	conflicting := validGuardEnvelope()
+	conflicting.Payload = "spawn task t2"
+	conflicting.PayloadHash = PayloadHashHex(conflicting.Payload)
+	err := store.WriteEnvelope(&conflicting)
+	if err == nil {
+		t.Fatal("store accepted a different payload under an existing message ID")
+	}
+	if !strings.Contains(err.Error(), "already exists with different content") {
+		t.Fatalf("error = %v, want the conflict refusal", err)
+	}
+}

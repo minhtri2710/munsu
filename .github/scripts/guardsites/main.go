@@ -56,11 +56,14 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"golang.org/x/tools/go/packages"
 )
 
 func main() {
@@ -129,10 +132,24 @@ func scan(root string) ([]site, error) {
 		return nil, fmt.Errorf("no non-test .go files under %s", root)
 	}
 
+	// Type info is the whole point of the fix: it lets the recognizer tell an
+	// error VALUE from a variable that merely carries a name that looks like
+	// one. go/packages only type-checks the files that build for this
+	// GOOS/GOARCH; a GOOS-gated file that never builds here stays out of the
+	// loaded set and is handled by the legacy name heuristic below.
+	resolver, err := loadTypes(root)
+	if err != nil {
+		return nil, fmt.Errorf("type-checking the tree: %w", err)
+	}
+
 	fset := token.NewFileSet()
 	var rows []site
 	for _, path := range files {
 		src, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		abs, err := filepath.Abs(path)
 		if err != nil {
 			return nil, err
 		}
@@ -161,7 +178,7 @@ func scan(root string) ([]site, error) {
 				if !ok {
 					return true
 				}
-				if !isRefusal(stmt.Body) || !isSelfOriginating(stmt.Init, stmt.Cond) {
+				if !isRefusal(stmt.Body) || !isSelfOriginating(resolver, abs, fset, stmt.Init, stmt.Cond) {
 					return true
 				}
 				pos := fset.Position(stmt.Body.Lbrace)
@@ -367,30 +384,30 @@ func sentinel(name string) bool {
 //	if errors.Is(err, fs.ErrNotExist)                 classification by errors
 //	if ee, ok := err.(*exec.ExitError); ok            classification by assertion
 //
-// The last one is why the init statement is read too: its condition is a bare
-// `ok` and says nothing, while the branch is unmistakably error handling.
-//
 // `if len(failures) > 0`, `if identity != Worktree`, `if stored.HeadRef !=
 // snap.HeadRef` mention no error and are predicates over data that is already
 // type-valid, so they stay.
 //
-// The cost of the broad rule, paid deliberately: a genuine guard on a field
-// named `Error` (`if resp.Error != ""`) drops out of the set. That direction is
-// the safe one -- it shrinks the lower bound rather than filling the lane with
-// error handling nobody would call a guard.
-func isSelfOriginating(init ast.Stmt, cond ast.Expr) bool {
+// Identifiers are judged by their resolved TYPE, not their name. go/packages
+// type-checks the whole tree up front (see loadTypes), so a string field named
+// `Error` (`if resp.Error != ""`) is data and stays in the set, while an
+// `error`-typed field or parameter is propagation and drops out no matter what
+// it is called. The old rule judged names, which is why a validator whose
+// parameter was literally named `e` lost every branch: a launch-argument
+// validator is not an error value just because its parameter is called `e`.
+//
+// Three edges. An identifier in a type-loaded file whose type cannot be
+// resolved fails CLOSED to "error" (the safe direction -- shrink the lower
+// bound rather than guess a branch is a guard). A GOOS-gated file that never
+// builds on this platform is never type-loaded at all; those unmeasured files
+// keep the legacy name heuristic so their guards stay visible to the coverage
+// lane, exactly as they always were. And the `_` blank is never an error value.
+func isSelfOriginating(r *resolver, file string, fset *token.FileSet, init ast.Stmt, cond ast.Expr) bool {
 	self := true
 	mentionsErr := func(n ast.Node) bool {
 		ast.Inspect(n, func(n ast.Node) bool {
-			switch v := n.(type) {
-			case *ast.Ident:
-				if errValue(v.Name) {
-					self = false
-				}
-			case *ast.SelectorExpr:
-				if errValue(v.Sel.Name) {
-					self = false
-				}
+			if expr, ok := n.(ast.Expr); ok && r.errish(file, fset, expr) {
+				self = false
 			}
 			return self
 		})
@@ -405,7 +422,151 @@ func isSelfOriginating(init ast.Stmt, cond ast.Expr) bool {
 // A name that holds or classifies an error value: the local `err`/`e`, a field
 // or helper whose name says error. Unlike sentinel() this DOES accept a bare
 // `err` -- here the question is what the value is, not where it came from.
+//
+// This is now only the fallback for GOOS-gated files that go/packages cannot
+// type-check on this platform; type-loaded files are judged by the real type of
+// each identifier.
 func errValue(name string) bool {
 	l := strings.ToLower(name)
 	return l == "e" || strings.Contains(l, "err")
+}
+
+// A span is a node's byte range within its file: (start offset, end offset).
+// The start offset alone is not a key. In `ctx.Err()` the CallExpr, the
+// SelectorExpr and the identifier `ctx` all begin at the same byte, so keying
+// on the start would let one overwrite the others and the call's `error` result
+// would be indistinguishable from the receiver's type. The end offset separates
+// them. Offsets, not *ast.Node pointers, are the key at all because the
+// recognizer re-parses each file with its own FileSet: byte offsets in the same
+// source agree across independent parses, while AST pointers do not.
+type span struct{ off, end int }
+
+// A resolver maps every typed node in a type-loaded file to its resolved type,
+// so the recognizer can tell a genuine error value from a data variable no
+// matter what it is named.
+//
+// go/packages type-checks only the files that build for one GOOS/GOARCH at a
+// time, so a single load cannot see platform-gated siblings. loadTypes unions
+// GOOS=linux, darwin and windows, which between them cover every build-gated
+// file in this tree except one gated to a GOOS the repo never targets; that
+// file stays unloaded and keeps the legacy name heuristic.
+type resolver struct {
+	byFile map[string]map[span]types.Type // abs path -> node span -> type
+	loaded map[string]bool                // abs paths type-checked under some GOOS
+}
+
+// The three GOOS values whose union covers this tree's build-gated files.
+// `.github/build-tags.manifest` is the authority on which files are gated and
+// how; keep these in step with its goos-vet rows.
+var typeCheckGOOS = []string{"linux", "darwin", "windows"}
+
+// loadTypes type-checks the tree under root once per GOOS and records, for
+// every loaded file, the resolved type of each identifier and each typed
+// expression, keyed by span.
+//
+// Recording expressions and not just identifiers is what makes `ctx.Err() != nil`
+// read as error propagation: the identifier `ctx` is a context, the selector
+// `ctx.Err` is a `func() error`, and neither is an error value -- only the call
+// itself has type `error`.
+func loadTypes(root string) (*resolver, error) {
+	r := &resolver{byFile: map[string]map[span]types.Type{}, loaded: map[string]bool{}}
+	var failures []string
+	for _, goos := range typeCheckGOOS {
+		cfg := &packages.Config{
+			Mode: packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo,
+			Dir:  root,
+			Env:  append(os.Environ(), "GOOS="+goos, "GOARCH=amd64", "CGO_ENABLED=0"),
+		}
+		pkgs, err := packages.Load(cfg, "./...")
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("GOOS=%s: %v", goos, err))
+			continue
+		}
+		for _, p := range pkgs {
+			// A package with type errors has an incomplete TypesInfo. Leave its
+			// files out of the loaded set for this GOOS rather than record half
+			// a package; another GOOS may still type-check it cleanly.
+			if len(p.Errors) > 0 {
+				continue
+			}
+			for _, f := range p.Syntax {
+				if abs, err := filepath.Abs(p.Fset.Position(f.Pos()).Filename); err == nil {
+					r.loaded[abs] = true
+				}
+			}
+			for id, obj := range p.TypesInfo.Uses {
+				if obj != nil && obj.Type() != nil {
+					r.record(p.Fset, id, obj.Type())
+				}
+			}
+			for id, obj := range p.TypesInfo.Defs {
+				if obj != nil && obj.Type() != nil {
+					r.record(p.Fset, id, obj.Type())
+				}
+			}
+			for expr, tv := range p.TypesInfo.Types {
+				if tv.Type != nil {
+					r.record(p.Fset, expr, tv.Type)
+				}
+			}
+		}
+	}
+	// Every load failing is not an empty answer, it is a broken instrument: the
+	// recognizer would silently fall back to the name heuristic for the whole
+	// tree, which is the exact fail-open this replaced.
+	if len(r.loaded) == 0 {
+		return nil, fmt.Errorf("no package type-checked under any of %v: %s", typeCheckGOOS, strings.Join(failures, "; "))
+	}
+	return r, nil
+}
+
+// record stores n's type under its own file and span. Nodes seen under more
+// than one GOOS are written more than once with the same key and type, so the
+// union is order-independent.
+func (r *resolver) record(fset *token.FileSet, n ast.Node, t types.Type) {
+	pos := fset.Position(n.Pos())
+	abs, err := filepath.Abs(pos.Filename)
+	if err != nil {
+		return
+	}
+	m := r.byFile[abs]
+	if m == nil {
+		m = map[span]types.Type{}
+		r.byFile[abs] = m
+	}
+	m[span{pos.Offset, fset.Position(n.End()).Offset}] = t
+}
+
+// errish reports whether expr in file is an error value. Type info wins where
+// it exists; the open cases are stated in isSelfOriginating's doc comment.
+func (r *resolver) errish(file string, fset *token.FileSet, expr ast.Expr) bool {
+	if id, ok := expr.(*ast.Ident); ok && id.Name == "_" {
+		return false
+	}
+	if r == nil || !r.loaded[file] {
+		// Unmeasured under every GOOS we load: the real type is unknowable
+		// here, so keep exactly the name heuristic these files always used.
+		id, ok := expr.(*ast.Ident)
+		return ok && errValue(id.Name)
+	}
+	t, ok := r.byFile[file][span{fset.Position(expr.Pos()).Offset, fset.Position(expr.End()).Offset}]
+	if !ok {
+		// An identifier in a type-loaded file with no resolved type fails
+		// CLOSED to "error": shrinking the set is the safe direction, the same
+		// one the package doc pays for elsewhere. Other expression nodes
+		// legitimately carry no recorded type, and reading that absence as an
+		// error value would empty the register instead of shrinking it.
+		_, isIdent := expr.(*ast.Ident)
+		return isIdent
+	}
+	return isErrorType(t)
+}
+
+// The universe `error` interface, resolved once. types.Implements against it
+// answers "is this an error value?" for concrete types, interfaces, named
+// alias errors, and `error` itself.
+var errorInterface = types.Universe.Lookup("error").Type().Underlying().(*types.Interface)
+
+func isErrorType(t types.Type) bool {
+	return types.Implements(t, errorInterface)
 }

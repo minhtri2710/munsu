@@ -1178,3 +1178,25 @@ func TestConsumeAllReadyEvents_DuplicateReadyIdempotent(t *testing.T) {
 		t.Errorf("pending should not be acked yet")
 	}
 }
+
+// A ready event that parses as JSON but names no event carries no identity to
+// deduplicate or acknowledge against. Well-formed JSON is not the same as a
+// usable event, so the empty ID is refused after the unmarshal succeeds rather
+// than flowing on as a zero-valued event.
+func TestParseReadyEventRefusesEventWithNoID(t *testing.T) {
+	if _, err := ParseReadyEvent(`{"task_id":"t1","key":"spawn"}`); err == nil {
+		t.Fatal("parser accepted a ready event with no event ID")
+	} else if !strings.Contains(err.Error(), "empty event ID after parse") {
+		t.Fatalf("error = %v, want the empty-event-ID refusal", err)
+	}
+
+	// Control: the same document with an event ID is accepted, so the refusal
+	// above is attributable to the missing ID and not to the rest of the shape.
+	ev, err := ParseReadyEvent(`{"event_id":"ev1","task_id":"t1","key":"spawn"}`)
+	if err != nil {
+		t.Fatalf("parser refused a complete ready event: %v", err)
+	}
+	if ev.EventID != "ev1" {
+		t.Fatalf("event ID = %q, want ev1", ev.EventID)
+	}
+}

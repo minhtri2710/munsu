@@ -291,3 +291,54 @@ func TestValidateWorktreeBindingRefusesIncompleteBinding(t *testing.T) {
 			{"negative bound timestamp", func(b *WorktreeBinding) { b.BoundAtUnix = -1 }, "worktree binding missing bound timestamp"},
 		})
 }
+
+// The acquired-endpoint record is the committed proof that a soldier holds an
+// endpoint. Every field below is what makes the hold attributable and
+// releasable: without the operation id nothing says which operation acquired
+// it, and without the lease or fence token a stale holder cannot be fenced off.
+// These refusals were invisible to the guards lane until BEO-123 fixed the
+// instrument that was misreading them as error propagation.
+func TestValidateAcquiredEndpointRefusesIncompleteRecord(t *testing.T) {
+	runGuardCases(t,
+		func() AcquiredEndpoint {
+			return AcquiredEndpoint{
+				OperationID: "op-attach-1", Backend: "tmux", Handle: "pane-1",
+				LeaseID: "ep-res-1", FenceToken: "ep-fence-1",
+				SessionOwner: "sess-1", WorkspaceID: "ws-1", TabID: "tab-1",
+				Incarnation: "inc-1", AcquiredAt: 1700000000,
+			}
+		},
+		validateAcquiredEndpoint,
+		[]guardCase[AcquiredEndpoint]{
+			{"no operation id", func(e *AcquiredEndpoint) { e.OperationID = "" }, "acquired endpoint missing operation id"},
+			{"path-separating operation id", func(e *AcquiredEndpoint) { e.OperationID = "op/attach" }, "acquired endpoint missing operation id"},
+			{"no backend", func(e *AcquiredEndpoint) { e.Backend = "   " }, "acquired endpoint missing backend"},
+			{"no handle", func(e *AcquiredEndpoint) { e.Handle = "" }, "acquired endpoint missing handle"},
+			{"no lease id", func(e *AcquiredEndpoint) { e.LeaseID = "\t" }, "acquired endpoint missing lease id"},
+			{"no fence token", func(e *AcquiredEndpoint) { e.FenceToken = "" }, "acquired endpoint missing fence token"},
+			{"no acquisition timestamp", func(e *AcquiredEndpoint) { e.AcquiredAt = 0 }, "acquired endpoint missing acquisition timestamp"},
+		})
+}
+
+// The launch evidence is what ties a running process back to the command that
+// was actually submitted. A digest that is not a real sha256 would make the
+// submitted command unverifiable, which is the whole purpose of the record.
+func TestValidateLaunchEvidenceRefusesUnverifiableRecord(t *testing.T) {
+	runGuardCases(t,
+		func() LaunchEvidence {
+			return LaunchEvidence{
+				OperationID:   "op-launch-1",
+				LaunchID:      "launch-1",
+				CommandDigest: testSHA256Hex,
+				SubmittedAt:   1700000000,
+			}
+		},
+		validateLaunchEvidence,
+		[]guardCase[LaunchEvidence]{
+			{"no operation id", func(e *LaunchEvidence) { e.OperationID = "" }, "launch evidence missing operation id"},
+			{"path-separating operation id", func(e *LaunchEvidence) { e.OperationID = `op\launch` }, "launch evidence missing operation id"},
+			{"no launch identity", func(e *LaunchEvidence) { e.LaunchID = "" }, "launch evidence missing launch identity"},
+			{"path-separating launch identity", func(e *LaunchEvidence) { e.LaunchID = "launch/1" }, "launch evidence missing launch identity"},
+			{"digest is not a sha256", func(e *LaunchEvidence) { e.CommandDigest = "not-a-digest" }, "launch evidence command digest must be a 64-hex sha256 digest"},
+		})
+}
