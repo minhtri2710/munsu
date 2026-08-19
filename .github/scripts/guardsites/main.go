@@ -95,8 +95,12 @@ type site struct {
 }
 
 // Directories that never hold production Go source. `.git` and `.github` are
-// skipped by the leading dot, which also keeps this program from scanning
-// itself; `testdata` is skipped by name, matching what the go tool does.
+// skipped by the leading dot, which is what keeps a normal repository-root scan
+// from including this program's own source; `testdata` is skipped by name,
+// matching what the go tool does. The leading dot is NOT a guarantee: a caller
+// who aims the walk at the tool's own directory (any root inside .github/scripts)
+// defeats it, so scan() also fails closed on the walked set containing this
+// source (see the self-measure guard in scan).
 func skipDir(name string) bool {
 	if name == "testdata" || name == "vendor" {
 		return true
