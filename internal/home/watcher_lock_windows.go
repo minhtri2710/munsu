@@ -14,9 +14,9 @@ var errWatcherLockUnavailable = errors.New("Windows file locking unavailable")
 
 func lockWatcherFile(file *os.File, nonblock bool) error {
 	overlapped := new(windows.Overlapped)
-	flags := uint32(0)
+	flags := uint32(windows.LOCKFILE_EXCLUSIVE_LOCK)
 	if nonblock {
-		flags = windows.LOCKFILE_FAIL_IMMEDIATELY
+		flags |= windows.LOCKFILE_FAIL_IMMEDIATELY
 	}
 	ret, _, callErr := windows.NewLazySystemDLL("kernel32.dll").NewProc("LockFileEx").Call(
 		uintptr(file.Fd()), uintptr(flags), 0, ^uintptr(0), ^uintptr(0), uintptr(unsafe.Pointer(overlapped)))

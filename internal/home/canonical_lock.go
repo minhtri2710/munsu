@@ -3,6 +3,7 @@ package home
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -111,8 +112,17 @@ func (h *Home) lockPath(scope string) string {
 // it by one, returning the new token. The caller holds the exclusive lock, so
 // read-modify-write is safe.
 func nextFence(file *os.File) (FenceToken, error) {
-	data, err := os.ReadFile(file.Name())
-	if err != nil && !os.IsNotExist(err) {
+	// Read through the already-open, already-locked handle: os.ReadFile(file.Name())
+	// opens a second handle, which Windows byte-range locks deny access through.
+	if _, err := file.Seek(0, 0); err != nil {
+		return 0, fmt.Errorf("home: read lock fence: %w", err)
+	}
+	// No os.IsNotExist tolerance: that was meaningful for os.ReadFile, which
+	// could be handed a path that had since vanished. Home.Lock opened this
+	// handle with O_CREATE and holds it, so a read through it cannot report a
+	// missing file -- tolerating one would describe a state that cannot occur.
+	data, err := io.ReadAll(file)
+	if err != nil {
 		return 0, fmt.Errorf("home: read lock fence: %w", err)
 	}
 	var cur uint64

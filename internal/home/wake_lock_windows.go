@@ -9,14 +9,15 @@ import "os"
 // fourth copy: one windows locking implementation in this package, and no new
 // guard sites for a lane that can never run this code.
 //
-// What this does NOT yet give ClaimWakes, stated plainly rather than left to be
-// discovered: lockExclusive currently passes no LOCKFILE_EXCLUSIVE_LOCK bit, so
-// it requests a SHARED lock, and a shared lock excludes nothing. Until #532
-// lands, the wake-claim critical section in wake_lease.go is still not mutually
-// excluded on windows -- it is wired correctly, not yet locked correctly. The
-// unix sibling (wake_lock_unix.go) does take a real Flock(LOCK_EX).
+// What this now gives ClaimWakes: lockExclusive requests a blocking exclusive
+// LockFileEx (LOCKFILE_EXCLUSIVE_LOCK, no LOCKFILE_FAIL_IMMEDIATELY), the
+// windows counterpart of the unix sibling's blocking Flock(LOCK_EX), so the
+// wake-claim critical section in wake_lease.go is mutually excluded on windows
+// per the Win32 contract -- a shared lock, which is what this requested before
+// #532, would exclude nothing and deny even this process's own writes. Runtime
+// behaviour on a real windows box remains the observation lane's job to confirm.
 //
-// Delegating is what makes #532 a one-place fix: correcting lockExclusive
-// corrects this caller too. A fourth hand-rolled copy would have needed its own.
+// Delegating is what made #532 a one-place fix: correcting lockExclusive
+// corrected this caller too. A fourth hand-rolled copy would have needed its own.
 func lockWakeFile(file *os.File) error   { return lockExclusive(file) }
 func unlockWakeFile(file *os.File) error { return unlockFile(file) }
