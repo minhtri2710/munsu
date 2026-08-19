@@ -56,7 +56,7 @@ func (testCycleSender) Send(string, map[string]string, string) BoundSendResult {
 }
 
 func testScanFleet(home string) *WakeReason {
-	reasons := scanFleetWithProbe(home, false, testEndpointProbe{}, testTaskStatePort{})
+	reasons := scanFleetWithProbe(home, false, testEndpointProbe{}, testTaskStatePort{}, nil)
 	if len(reasons) == 0 {
 		return nil
 	}

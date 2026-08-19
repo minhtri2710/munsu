@@ -51,6 +51,40 @@ func helperProc(t *testing.T, home string) (*exec.Cmd, string) {
 	return cmd, strings.TrimSpace(scan.Text())
 }
 
+// TestLifecycleEnqueueToClaimLatency is the lifecycle_integration enqueue-to-
+// claim assertion for the typed internal wake-to-claim latency observation
+// (issue #546): it enqueues a wake through the durable queue and claims it,
+// then asserts the claim reports a non-negative, sane latency measured since
+// the latest enqueue Epoch end-to-end through the real queue and lease path.
+func TestLifecycleEnqueueToClaimLatency(t *testing.T) {
+	home := freshHome(t)
+
+	if err := EnqueueWake(home, "signal", "task-1", "payload"); err != nil {
+		t.Fatalf("EnqueueWake: %v", err)
+	}
+	if !HasQueuedWakes(home) {
+		t.Fatal("wake should be queued after EnqueueWake")
+	}
+
+	res, err := ClaimWakes(home, "consumer", 60, 10)
+	if err != nil {
+		t.Fatalf("ClaimWakes: %v", err)
+	}
+	if len(res.Wakes) != 1 {
+		t.Fatalf("claimed %d wakes, want 1", len(res.Wakes))
+	}
+	if len(res.WakeToClaimLatencies) != len(res.Wakes) {
+		t.Fatalf("latencies = %d, want %d (one per claimed wake)", len(res.WakeToClaimLatencies), len(res.Wakes))
+	}
+	lat := res.WakeToClaimLatencies[0]
+	if lat < 0 {
+		t.Fatalf("enqueue-to-claim latency %v is negative (clock skew)", lat)
+	}
+	if lat > 10*time.Minute {
+		t.Fatalf("enqueue-to-claim latency %v exceeds sane bound", lat)
+	}
+}
+
 // TestLockCrossProcessReleaseAtExit proves the real end-user invariant that
 // munsu relies on: the lock is exclusive across processes, and it is released
 // when the holding process exits (the leaked FD closes). This is the behavior

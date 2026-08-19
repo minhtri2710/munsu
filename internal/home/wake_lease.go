@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -40,6 +41,29 @@ type ClaimResult struct {
 	ExpiresAt int64 // unix captains
 	Wakes     []ClaimedWakeRecord
 	Reclaimed int // count of expired-lease wakes that were reclaimed
+
+	// WakeToClaimLatencies is the typed internal wake-to-claim latency per
+	// claimed wake, aligned by index with Wakes. Each value is measured as time
+	// since the record's LATEST enqueue Epoch: ReclaimExpiredLeases re-enqueues
+	// reclaimed wakes under a fresh Epoch before they are claimed again, so a
+	// reclaimed wake reports the short time since its latest enqueue, never its
+	// original emission age. It is an internal observation and is never surfaced
+	// through the CLI response contract.
+	WakeToClaimLatencies []time.Duration
+}
+
+// WakeAgeSinceEnqueue returns the latency between a wake record's latest
+// enqueue Epoch and now. Because a newly claimed record is read after
+// ReclaimExpiredLeases has re-enqueued reclaimed wakes, the Epoch on the
+// record IS the latest enqueue (reclaim creates a new Epoch), so this reports
+// time since the latest enqueue rather than original emission age. A malformed
+// Epoch measures as zero latency.
+func WakeAgeSinceEnqueue(epoch string, now time.Time) time.Duration {
+	secs, err := strconv.ParseInt(epoch, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return now.Sub(time.Unix(secs, 0))
 }
 
 // ClaimWakes claims up to limit wake records from the queue under a lease.
@@ -133,6 +157,7 @@ func ClaimWakes(homeDir, consumer string, leaseCaptains, limit int) (*ClaimResul
 	}
 
 	var resultWakes []ClaimedWakeRecord
+	var claimLatencies []time.Duration
 	for _, r := range claimed {
 		line := fmt.Sprintf("%s\t%s\t%s\t%s\t%s\n", r.Epoch, r.Seq, r.Kind, r.Key, r.Payload)
 		if _, err := f.WriteString(line); err != nil {
@@ -145,6 +170,7 @@ func ClaimWakes(homeDir, consumer string, leaseCaptains, limit int) (*ClaimResul
 			Key:     r.Key,
 			Payload: r.Payload,
 		})
+		claimLatencies = append(claimLatencies, WakeAgeSinceEnqueue(r.Epoch, time.Now()))
 	}
 
 	// Rewrite the queue file with remaining records
@@ -163,11 +189,12 @@ func ClaimWakes(homeDir, consumer string, leaseCaptains, limit int) (*ClaimResul
 	}
 
 	return &ClaimResult{
-		LeaseID:   leaseID,
-		Consumer:  consumer,
-		ExpiresAt: expiresAt,
-		Wakes:     resultWakes,
-		Reclaimed: reclaimed,
+		LeaseID:              leaseID,
+		Consumer:             consumer,
+		ExpiresAt:            expiresAt,
+		Wakes:                resultWakes,
+		Reclaimed:            reclaimed,
+		WakeToClaimLatencies: claimLatencies,
 	}, nil
 }
 
