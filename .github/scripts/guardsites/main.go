@@ -60,6 +60,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -104,8 +105,24 @@ func skipDir(name string) bool {
 }
 
 func scan(root string) ([]site, error) {
+	// Absolutise the root ONCE, before it reaches the walk, the re-parser and
+	// packages.Config.Dir. The resolver keys type info by filepath.Abs on the
+	// filenames go/packages hands back and the walk keys by its own paths; the
+	// two sides only agree when both resolve against the same base. With a
+	// relative root, a go list that answers in relative filenames keys the type
+	// info against one directory while the walk keys against another, every
+	// span lookup misses, and each type-dependent guard silently falls back to
+	// the name heuristic -- the fail-open this function exists to prevent.
+	// Documenting "pass an absolute root" is not the fix; the instrument's
+	// value is that it fails closed no matter how it is invoked.
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+	root = absRoot
+
 	var files []string
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -132,6 +149,22 @@ func scan(root string) ([]site, error) {
 		return nil, fmt.Errorf("no non-test .go files under %s", root)
 	}
 
+	// The tool must not measure itself. Every scan of this repository skips
+	// .github by the leading-dot rule, so the tool's own source can appear in
+	// the walked set only because the caller aimed the walk at the tool's own
+	// directory (`go run . .` from here, or any root inside .github/scripts).
+	// Such a run measures a one-package tree, prints a handful of sites and
+	// exits 0 -- an "all clear" that has measured no repository. The lane's
+	// whole value is deriving the REPOSITORY's refusal set, so this is the same
+	// mis-invocation class as an unreadable tree and fails closed like one.
+	_, self, _, _ := runtime.Caller(0)
+	selfClean := filepath.Clean(self)
+	for _, path := range files {
+		if filepath.Clean(path) == selfClean {
+			return nil, fmt.Errorf("root %s contains the tool's own source (%s); the refusal set is derived for the repository, not for guardsites itself, so this run would report all clear having measured nothing", root, self)
+		}
+	}
+
 	// Type info is the whole point of the fix: it lets the recognizer tell an
 	// error VALUE from a variable that merely carries a name that looks like
 	// one. go/packages only type-checks the files that build for one GOOS/GOARCH
@@ -141,6 +174,37 @@ func scan(root string) ([]site, error) {
 	resolver, err := loadTypes(root)
 	if err != nil {
 		return nil, fmt.Errorf("type-checking the tree: %w", err)
+	}
+
+	// Type-checking RAN, but the question is whether its output is usable for
+	// THIS walk. The old guard (`typeChecked == 0`) only proved that files were
+	// loaded somewhere; it could not tell a run whose type info keys line up
+	// with the walk's paths from one where every lookup misses. If none of the
+	// walked files resolves to a recorded span under the key the walk computes,
+	// the resolver and the walk disagree about where the tree lives and every
+	// type-dependent guard silently falls back to name matching -- a derived set
+	// that is not just incomplete, it is unusable, and the run must be fatal
+	// rather than silent.
+	//
+	// The rule is deliberately "all of them", not "any". A walked file can be
+	// without spans for reasons that are the lane's designed "unmeasured" state,
+	// not a broken instrument: a file no loaded GOOS pass compiles (an
+	// untargeted build tag, a nested module `./...` never descends into), and a
+	// doc-only file with no identifiers at all. This tree has both kinds today.
+	// Counting them keeps the legacy name heuristic -- the lane treats them as
+	// unmeasured rather than wrong -- and a rule that fired on any empty file
+	// would take the lane down on a tree with nothing wrong. Only a total miss
+	// leaves the instrument measuring this tree not at all, and the defect this
+	// guard exists to catch is total: a base mismatch shifts EVERY resolver key
+	// away from every walk key (the two sides resolve against different
+	// directories), so no loaded file ever lines up. Recognising the
+	// should-have-resolved file from the legitimately-excluded one would mean
+	// reimplementing go/build's file selection -- name suffixes, build
+	// constraints, cgo, nested modules -- exactly as go list applies it, and a
+	// single disagreement would break the lane on a tree with nothing wrong. The
+	// total-miss signal is the honest fail-closed boundary.
+	if zero := countFilesWithoutSpans(files, resolver); zero == len(files) {
+		return nil, fmt.Errorf("type info resolved no spans for any of the %d files the walk found, so the resolver's output is unusable for this tree and every type-dependent guard would silently fall back to the name heuristic", zero)
 	}
 
 	fset := token.NewFileSet()
@@ -490,12 +554,10 @@ func loadTypes(root string) (*resolver, error) {
 		if err != nil {
 			return nil, fmt.Errorf("GOOS=%s: %v", goos, err)
 		}
-		typeChecked := 0
 		for _, p := range pkgs {
 			if len(p.Errors) > 0 {
 				return nil, fmt.Errorf("GOOS=%s: package %s did not type-check: %v", goos, p.PkgPath, p.Errors[0])
 			}
-			typeChecked += len(p.Syntax)
 			for _, f := range p.Syntax {
 				if abs, err := filepath.Abs(p.Fset.Position(f.Pos()).Filename); err == nil {
 					r.loaded[abs] = true
@@ -517,11 +579,23 @@ func loadTypes(root string) (*resolver, error) {
 				}
 			}
 		}
-		if typeChecked == 0 {
-			return nil, fmt.Errorf("GOOS=%s: no package files type-checked", goos)
-		}
 	}
 	return r, nil
+}
+
+// The number of walked files under which the resolver recorded no type span,
+// keyed by the walk's own absolute path. The walk and the resolver must key by
+// the same path for type info to be usable; a base mismatch between the two
+// shows up here as every file resolving to nothing.
+func countFilesWithoutSpans(files []string, r *resolver) int {
+	n := 0
+	for _, f := range files {
+		abs, err := filepath.Abs(f)
+		if err != nil || len(r.byFile[abs]) == 0 {
+			n++
+		}
+	}
+	return n
 }
 
 // record stores n's type under its own file and span. Nodes seen under more
