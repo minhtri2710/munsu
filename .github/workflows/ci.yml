@@ -400,7 +400,9 @@ jobs:
       - uses: actions/checkout@v6
       # Derivation is a go/packages type-check of the whole tree once for each of
       # GOOS linux, darwin and windows (the union that covers every build-gated
-      # file), run with `go run .` from the tool's own module directory (see
+      # file for the repository's targeted GOOS; a file gated to an untargeted
+      # GOOS stays unloaded and uses the name fallback), run with `go run .` from
+      # the tool's own module directory (see
       # uncovered-guards.sh sites). This job now also downloads that module's
       # dependencies; the whole run is roughly one to five seconds depending on
       # the build cache. Same toolchain as every other job so the type-check

@@ -4,9 +4,12 @@ package fixture
 
 import "errors"
 
-// A single-GOOS load never type-checks this file, so every identifier in it
-// falls back to the name heuristic: e reads as an error and this refusal goes
-// unmeasured. That is the fail-open the guards lane was measuring itself with.
+// This file is type-checked in the GOOS=windows pass of the three-GOOS union
+// (loadTypes unions linux, darwin and windows), so `e` resolves to string and
+// WindowsEndpoint's refusal IS measured. The comment survives here to record
+// the old failure mode: under a single-host-GOOS load, or a name-only
+// heuristic, `e` read as an error and every branch of this function silently
+// vanished from the lane -- the fail-open the fix removes.
 func WindowsEndpoint(e string) error {
 	if e == "" {
 		return errors.New("empty endpoint")

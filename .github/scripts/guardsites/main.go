@@ -134,8 +134,9 @@ func scan(root string) ([]site, error) {
 
 	// Type info is the whole point of the fix: it lets the recognizer tell an
 	// error VALUE from a variable that merely carries a name that looks like
-	// one. go/packages only type-checks the files that build for this
-	// GOOS/GOARCH; a GOOS-gated file that never builds here stays out of the
+	// one. go/packages only type-checks the files that build for one GOOS/GOARCH
+	// at a time, so loadTypes runs it once per GOOS and unions the results; a
+	// GOOS-gated file that builds under none of typeCheckGOOS stays out of the
 	// loaded set and is handled by the legacy name heuristic below.
 	resolver, err := loadTypes(root)
 	if err != nil {
@@ -399,9 +400,10 @@ func sentinel(name string) bool {
 // Three edges. An identifier in a type-loaded file whose type cannot be
 // resolved fails CLOSED to "error" (the safe direction -- shrink the lower
 // bound rather than guess a branch is a guard). A GOOS-gated file that never
-// builds on this platform is never type-loaded at all; those unmeasured files
-// keep the legacy name heuristic so their guards stay visible to the coverage
-// lane, exactly as they always were. And the `_` blank is never an error value.
+// builds under any GOOS in typeCheckGOOS is never type-loaded at all; those
+// unmeasured files keep the legacy name heuristic so their guards stay visible
+// to the coverage lane, exactly as they always were. And the `_` blank is
+// never an error value.
 func isSelfOriginating(r *resolver, file string, fset *token.FileSet, init ast.Stmt, cond ast.Expr) bool {
 	self := true
 	mentionsErr := func(n ast.Node) bool {
@@ -424,8 +426,8 @@ func isSelfOriginating(r *resolver, file string, fset *token.FileSet, init ast.S
 // `err` -- here the question is what the value is, not where it came from.
 //
 // This is now only the fallback for GOOS-gated files that go/packages cannot
-// type-check on this platform; type-loaded files are judged by the real type of
-// each identifier.
+// type-check under any GOOS in typeCheckGOOS; type-loaded files are judged by
+// the real type of each identifier.
 func errValue(name string) bool {
 	l := strings.ToLower(name)
 	return l == "e" || strings.Contains(l, "err")
