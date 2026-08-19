@@ -183,8 +183,9 @@ a gate.
 
 **Address for (c) in the reachability lane: `announce_open_bugs` in
 `.github/scripts/deadcode.sh`, which re-prints every `OPEN-BUG`-prefixed reason as a
-`::warning` on every run. Address for (c) in the coverage lane: none — `uncovered-guards.sh`
-has no equivalent marker.**
+`::warning` on every run. Address for (c) in the coverage lane: the same mechanism, added
+as `announce_open_bugs` in `.github/scripts/uncovered-guards.sh` (#542) with the reason
+read from the baseline's fifth column; the `open-bug` fixture pins it.**
 
 Every unreachable function is one of three things:
 
@@ -201,9 +202,9 @@ this check.
 The marker is live machinery with zero users today: `.github/deadcode.allow` currently
 contains no `OPEN-BUG` line. That is the correct state — the last four were the BEO-112
 relay chain above, cleared by #509 — and it is also why the convention is easy to forget
-exists; the file reads as if it only ever held debt. The asymmetry is the real gap: a
-refusal branch unreachable because of a production bug has no marker in the coverage lane,
-so it can only be waived as though it were debt.
+exists; the file reads as if it only ever held debt. That asymmetry is closed as of #542:
+`uncovered-guards.sh` carries the same marker, so a refusal branch uncovered because of a
+production bug is announced on every run instead of being waivable as though it were debt.
 
 ### 6. A guard no lane can measure: what may be claimed about it
 
@@ -335,8 +336,6 @@ Named, not done. None of it is in the PR that carries this ADR.
 * **W3 — check that `Premise pinned by <TestName>` names a test that exists.** Small: read
   the fifth column of the baseline, match the phrase, confirm `go test -list` finds each
   name. Closes the §4 gap where deleting a premise test leaves its waivers green.
-* **W4 — give `uncovered-guards.sh` an `OPEN-BUG` marker with reachability-lane parity**
-  (§5), so a refusal branch uncovered because of a production bug cannot be filed as debt.
 * **W5 — repoint the five `ADR-0009` citations and decide where layer 1's record lives.**
   This ADR does not do it: one of the five is in `.github/deadcode.allow`, which the PR
   carrying this document is scoped out of touching. Whether layer 1 gets its own ADR or the
