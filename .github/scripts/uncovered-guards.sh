@@ -99,7 +99,11 @@ sites() {
 		cat "$SITES"
 		return
 	fi
-	(cd "$ROOT" && go run ./.github/scripts/guardsites .) ||
+	# The tool is its own module (see its go.mod), so it is run from its own
+	# directory and told which tree to read. It type-checks that tree, which is
+	# the parent module -- go/packages runs `go list` in the directory it is
+	# given, not in the one the binary was built from.
+	(cd "$ROOT/.github/scripts/guardsites" && go run . "$ROOT") ||
 		die "guardsites could not derive the refusal set, so this lane cannot judge coverage"
 }
 
@@ -442,7 +446,7 @@ exit $rc"
 		dir="${dir%/}"
 		name="$(basename "$dir")"
 		[ -f "$dir/want" ] || die "fixture $name has no want"
-		if got="$(cd "$ROOT" && go run ./.github/scripts/guardsites "$dir" 2>&1)"; then rc=0; else rc=$?; fi
+		if got="$(cd "$ROOT/.github/scripts/guardsites" && go run . "$dir" 2>&1)"; then rc=0; else rc=$?; fi
 		got="$got
 exit $rc"
 		if [ "$got" = "$(cat "$dir/want")" ]; then

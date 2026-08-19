@@ -702,3 +702,58 @@ func TestWorkspaceIDToClose_PrefersLastCreate(t *testing.T) {
 		t.Errorf("workspaceIDToClose after lastCreate = %q, want from-new-window", wsID)
 	}
 }
+
+// writeFakeHerdrAgentGetError creates a fake herdr whose `agent get` succeeds
+// at the process level and answers with a structured error carrying a code
+// other than agent_not_found. That is a different state from the exec-failure
+// path above: the command worked, and the backend is being told the agent
+// could not be reported on.
+func writeFakeHerdrAgentGetError(t *testing.T, dir, code string) string {
+	t.Helper()
+	bin := filepath.Join(dir, "herdr")
+	script := "#!/usr/bin/env bash\n" +
+		`if [ "$1" = "--session" ]; then` + "\n" +
+		`  shift 2` + "\n" +
+		`fi` + "\n" +
+		`case "$1" in` + "\n" +
+		"  agent)\n" +
+		`    if [ "$2" = "get" ]; then` + "\n" +
+		`      echo '{"error":{"code":"` + code + `","message":"agent subsystem degraded"}}'` + "\n" +
+		"      exit 0\n" +
+		"    fi\n" +
+		"    ;;\n" +
+		"  pane)\n" +
+		`    if [ "$2" = "get" ]; then` + "\n" +
+		`      echo '{"id":"cli:pane:get","result":{"pane_id":"'"$3"'"}}'` + "\n" +
+		"      exit 0\n" +
+		"    fi\n" +
+		"    ;;\n" +
+		"esac\n" +
+		"exit 1\n"
+	if err := os.WriteFile(bin, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// A structured agent-get error that is NOT agent_not_found means the backend
+// could not determine anything about the agent. Reporting the agent as alive
+// would be a guess, and reporting it dead would authorize a relaunch on no
+// evidence, so this fails closed with the error surfaced.
+func TestHerdrBackend_CheckAgentAliveFailsClosedOnStructuredAgentGetError(t *testing.T) {
+	tmp := t.TempDir()
+	writeFakeHerdrAgentGetError(t, tmp, "agent_subsystem_unavailable")
+	t.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
+
+	h := NewHerdrBackend("test-s")
+	paneAlive, agentAlive, err := h.CheckAgentAlive("wTest:p1")
+	if err == nil {
+		t.Fatal("CheckAgentAlive accepted a structured agent get error")
+	}
+	if !strings.Contains(err.Error(), "agent get error") {
+		t.Fatalf("error = %v, want the agent-get refusal", err)
+	}
+	if paneAlive || agentAlive {
+		t.Fatalf("liveness = pane:%v agent:%v, want both false on an undetermined answer", paneAlive, agentAlive)
+	}
+}

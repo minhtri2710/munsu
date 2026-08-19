@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/domain"
@@ -505,5 +506,68 @@ func TestCanonicalTransferSurvivesHomeReopen(t *testing.T) {
 	}
 	if agg.Transfer == nil || agg.Transfer.ReservationID != "res-t1" {
 		t.Fatalf("transfer provenance lost across reopen: %+v", agg.Transfer)
+	}
+}
+
+// A task activated at the destination still carries the inbound transfer
+// record: it names the source it came from, and its DestinationHome is empty
+// because this home IS the destination. That record is not a live outbound
+// reservation, so the reservation fence lets ordinary mutations through — and
+// ReserveTransfer's own guard is what refuses an onward transfer while the
+// inbound record is still attached. The fence and this guard cover disjoint
+// states, which is why removing either one would go unnoticed by the other's
+// tests.
+func TestCanonicalReserveTransferRefusesOnwardTransferOfAnInboundRecord(t *testing.T) {
+	cDest, _, _ := newTestCanonical(t)
+	req := receiveTransferRequest(t, cDest, "t1", "res-t1", "source-home", 3)
+	if _, err := cDest.ReceiveTransfer(mustOperation(t, "op-receive-1", req), req); err != nil {
+		t.Fatalf("ReceiveTransfer: %v", err)
+	}
+	activate := CanonicalActivateTransferRequest{
+		HomeID: cDest.HomeID(), TaskID: mustTaskID(t, "t1"),
+		Precondition: preconditionOf(1, 1), ReservationID: "res-t1", Reason: "activate",
+	}
+	if _, err := cDest.ActivateTransfer(mustOperation(t, "op-activate-1", activate), activate); err != nil {
+		t.Fatalf("ActivateTransfer: %v", err)
+	}
+
+	onward := reserveTransferRequest(t, cDest, "t1", preconditionOf(1, 2), "res-2", "onward-home")
+	_, err := cDest.ReserveTransfer(mustOperation(t, "op-reserve-onward", onward), onward)
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("onward reserve = %v, want ErrConflict", err)
+	}
+	if !strings.Contains(err.Error(), "already reserved for transfer") {
+		t.Fatalf("error = %v, want the already-reserved refusal", err)
+	}
+}
+
+// Premise test for the CommitTransfer `cur.Transfer.Transferred` waiver in
+// .github/uncovered-guards.baseline.
+//
+// It builds the state that WOULD enter that guard -- a second commit of an
+// already-committed transfer -- and asserts the refusal carries the EARLIER
+// guard's message instead. Transferred is written at exactly one site, and the
+// same atomic change-set clears Current, so mutateTaskTransfer's supersession
+// check always refuses first. If that ordering ever changes, this test goes red
+// and the waiver has to be re-argued rather than quietly becoming wrong.
+func TestPremiseCommitTransferRefusesOnSupersessionBeforeItCanSeeACommittedTransfer(t *testing.T) {
+	c, _, _ := newTestCanonical(t)
+	mustCreate(t, c, "t1")
+	mustReserveTransfer(t, c, "t1", preconditionOf(1, 1), "dest-home")
+
+	commit := commitTransferRequest(t, c, "t1", preconditionOf(1, 2), "res-t1", "dest-home")
+	out, err := c.CommitTransfer(mustOperation(t, "op-commit-1", commit), commit)
+	if err != nil {
+		t.Fatalf("first commit: %v", err)
+	}
+
+	// The generation the first commit both marked Transferred and superseded.
+	again := commitTransferRequest(t, c, "t1", preconditionOf(1, uint64(out.Revision)), "res-t1", "dest-home")
+	_, err = c.CommitTransfer(mustOperation(t, "op-commit-2", again), again)
+	if err == nil {
+		t.Fatal("a second commit of a committed transfer was accepted")
+	}
+	if !strings.Contains(err.Error(), "is not current; it is superseded and cannot be mutated") {
+		t.Fatalf("error = %v, want the supersession refusal that shadows the already-committed guard", err)
 	}
 }
