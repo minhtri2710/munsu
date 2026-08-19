@@ -16,7 +16,7 @@ func publishExclusive(path string, data []byte) error {
 	}
 	tempPath := temp.Name()
 	defer os.Remove(tempPath)
-	if err := temp.Chmod(0600); err != nil {
+	if err := secureFile(tempPath); err != nil {
 		temp.Close()
 		return err
 	}

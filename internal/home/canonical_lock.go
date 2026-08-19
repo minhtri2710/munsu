@@ -78,6 +78,10 @@ func (h *Home) Lock(scope string) (*Lock, error) {
 		if err != nil {
 			return nil, fmt.Errorf("home: open lock: %w", err)
 		}
+		if err := secureFile(path); err != nil {
+			_ = file.Close()
+			return nil, fmt.Errorf("home: secure lock: %w", err)
+		}
 		lockErr := lockScopedFile(file)
 		if lockErr == nil {
 			break

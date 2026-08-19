@@ -80,7 +80,10 @@ func ensurePrivateStateDir(path string) error {
 	if err != nil {
 		return err
 	}
-	return os.Chmod(path, info.Mode().Perm()&0700)
+	if !info.IsDir() {
+		return fmt.Errorf("creating state directory: not a directory: %s", path)
+	}
+	return restrictDir(path)
 }
 
 // WriteMeta writes a task meta file at $MUNSU_HOME/state/<id>.meta.
@@ -120,7 +123,7 @@ func writeMetaLocked(homeDir string, id string, meta map[string]string) error {
 		return fmt.Errorf("creating temp meta file: %w", err)
 	}
 	tmpPath := tmpF.Name()
-	if err := tmpF.Chmod(0600); err != nil {
+	if err := secureFile(tmpPath); err != nil {
 		tmpF.Close()
 		os.Remove(tmpPath)
 		return fmt.Errorf("securing temp meta file: %w", err)
@@ -185,6 +188,10 @@ func AppendStatus(homeDir string, id, line string) error {
 	f, err := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		return fmt.Errorf("opening status file: %w", err)
+	}
+	if err := secureFile(p); err != nil {
+		f.Close()
+		return fmt.Errorf("securing status file: %w", err)
 	}
 	defer f.Close()
 	if _, err := f.WriteString(line + "\n"); err != nil {
@@ -389,6 +396,10 @@ func acquireMetaLock(homeDir, id string) (*os.File, func(), error) {
 	f, err := os.OpenFile(lp, os.O_RDONLY|os.O_CREATE, 0600)
 	if err != nil {
 		return nil, nil, fmt.Errorf("opening lock file: %w", err)
+	}
+	if err := secureFile(lp); err != nil {
+		f.Close()
+		return nil, nil, fmt.Errorf("securing lock file: %w", err)
 	}
 	if err := lockExclusive(f); err != nil {
 		f.Close()

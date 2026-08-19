@@ -16,7 +16,7 @@ func canonicalAtomicWrite(path string, data []byte) error {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("home: create write dir: %w", err)
 	}
-	if err := os.Chmod(dir, 0700); err != nil {
+	if err := secureDir(dir); err != nil {
 		return fmt.Errorf("home: secure write dir: %w", err)
 	}
 	tmp, err := os.CreateTemp(dir, ".home-write-*")
@@ -25,7 +25,7 @@ func canonicalAtomicWrite(path string, data []byte) error {
 	}
 	tmpPath := tmp.Name()
 	defer os.Remove(tmpPath)
-	if err := tmp.Chmod(0600); err != nil {
+	if err := secureFile(tmpPath); err != nil {
 		tmp.Close()
 		return fmt.Errorf("home: secure temp: %w", err)
 	}
