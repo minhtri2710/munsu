@@ -28,7 +28,11 @@ func OpenActivities(path string) []domain.Activity {
 	return domain.FoldOpenActivities(statusLines(path))
 }
 func AbsorbClass(id, stateDir string) domain.AbsorbResult {
-	return domain.ClassifyAbsorb(lastStatusLine(filepath.Join(stateDir, id+".status")))
+	stem, err := durableKey(id)
+	if err != nil {
+		return domain.None
+	}
+	return domain.ClassifyAbsorb(lastStatusLine(filepath.Join(stateDir, stem+".status")))
 }
 func ScanGeneralRelevant(stateDir string) []domain.StatusMatch {
 	es, e := os.ReadDir(stateDir)
@@ -40,10 +44,14 @@ func ScanGeneralRelevant(stateDir string) []domain.StatusMatch {
 		if !strings.HasSuffix(x.Name(), ".status") {
 			continue
 		}
+		id, err := reverseDurableKey(strings.TrimSuffix(x.Name(), ".status"))
+		if err != nil {
+			continue
+		}
 		p := filepath.Join(stateDir, x.Name())
 		line := lastStatusLine(p)
 		if domain.GeneralRelevant(line) {
-			out = append(out, domain.StatusMatch{Path: p, TaskID: strings.TrimSuffix(x.Name(), ".status"), LastLine: line})
+			out = append(out, domain.StatusMatch{Path: p, TaskID: id, LastLine: line})
 		}
 	}
 	return out

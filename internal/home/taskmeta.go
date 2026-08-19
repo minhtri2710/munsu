@@ -15,20 +15,32 @@ func StateDir(homeDir string) string {
 	return filepath.Join(homeDir, "state")
 }
 
-// metaPath returns the path to the meta file for the given task ID.
+// metaPath returns the path to the meta file for the given task ID. The
+// persisted file stem is the platform durable key for the logical id (see
+// durableKey), so the same logical id always resolves to the one persisted
+// key for the platform.
 func metaPath(homeDir string, id string) (string, error) {
 	if err := validateTaskID(id); err != nil {
 		return "", err
 	}
-	return filepath.Join(StateDir(homeDir), id+".meta"), nil
+	stem, err := durableKey(id)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(StateDir(homeDir), stem+".meta"), nil
 }
 
-// statusPath returns the path to the status file for the given task ID.
+// statusPath returns the path to the status file for the given task ID. The
+// persisted file stem is the platform durable key for the logical id.
 func statusPath(homeDir string, id string) (string, error) {
 	if err := validateTaskID(id); err != nil {
 		return "", err
 	}
-	return filepath.Join(StateDir(homeDir), id+".status"), nil
+	stem, err := durableKey(id)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(StateDir(homeDir), stem+".status"), nil
 }
 
 func validateTaskID(id string) error {
@@ -99,8 +111,11 @@ func writeMetaLocked(homeDir string, id string, meta map[string]string) error {
 	for k, v := range meta {
 		b.WriteString(fmt.Sprintf("%s=%s\n", k, v))
 	}
-	// Use os.CreateTemp for a unique temp file in the same directory
-	tmpF, err := os.CreateTemp(filepath.Dir(p), id+".meta.*.tmp")
+	// Use os.CreateTemp for a unique temp file in the same directory. The temp
+	// name is derived from the persisted stem (the durable key), never the raw
+	// logical id, so it is a safe filename on every platform.
+	stem := strings.TrimSuffix(filepath.Base(p), ".meta")
+	tmpF, err := os.CreateTemp(filepath.Dir(p), stem+".meta.*.tmp")
 	if err != nil {
 		return fmt.Errorf("creating temp meta file: %w", err)
 	}
@@ -283,7 +298,9 @@ func ListMeta(homeDir string) ([]MetaEntry, error) {
 		return nil, fmt.Errorf("reading state dir: %w", err)
 	}
 
-	// Collect unique task IDs from .meta files
+	// Collect unique logical task IDs from .meta files, reversing the durable
+	// key so enumeration and the write path agree on the logical id. Stems that
+	// are not a key this home persisted are skipped.
 	var taskIDs []string
 	seen := make(map[string]bool)
 	for _, fi := range entries {
@@ -291,7 +308,10 @@ func ListMeta(homeDir string) ([]MetaEntry, error) {
 		if !strings.HasSuffix(name, ".meta") {
 			continue
 		}
-		id := strings.TrimSuffix(name, ".meta")
+		id, err := reverseDurableKey(strings.TrimSuffix(name, ".meta"))
+		if err != nil {
+			continue
+		}
 		if !seen[id] {
 			seen[id] = true
 			taskIDs = append(taskIDs, id)
