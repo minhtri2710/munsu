@@ -98,5 +98,6 @@ owning issue rather than deleting it -- the sweep will re-add it on the next
 | TestListMarkedProcessesSeesSetsidChildWithoutItsSecrets | integration | 869319d8@31805867146/1 | 869319d8@31805867146/1 | 2026-08-30 | BEO-79 | fixed:7e295ea |
 | TestRegistryBindingScaleBound | integration | 665c301e@31805801020/1 | 665c301e@31805801020/1 | 2026-08-30 | BEO-79 | fixed:7e295ea |
 | TestRegistryBindingScaleBound | race | 282f6cfb@31680287927/1 | 282f6cfb@31680287927/1 | 2026-08-30 | BEO-79 | fixed:7e295ea |
+| TestStoreWriteAckRefusesUnusableAckRecords | race | e31d83a1@32094709771/1 | e31d83a1@32094709771/1 | 2026-09-01 | BEO-115 | fixed:8eafcd37 |
 | TestTmux_Alive_UnknownWindow | integration | 6c408310@31805831782/1 | 6c408310@31805831782/1 | 2026-08-30 | BEO-79 | fixed:7e295ea |
 <!-- flake-ledger:end -->
