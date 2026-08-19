@@ -15,16 +15,21 @@
 #
 # Columns are tab-separated: tag <TAB> treatment <TAB> reason
 #
+# Rows carry no totals on purpose: a figure in prose is nothing a job derives or
+# verifies, so it goes stale -- the counts this file used to carry were hand-corrected
+# repeatedly. The tree is the count; `check` compares the tag and treatment columns
+# against it. Do not add a total back unless a job verifies it.
+#
 # Treatments:
 #   test-lane      a lane runs `go test -tags <tag>` over the packages carrying it
 #   goos-vet       GOOS-gated; no lane on ubuntu compiles it, `GOOS=<tag> go vet` does
 #   default        satisfied on ubuntu-latest, so every lane already compiles it
 #   race-excluded  only ever negated; deliberately kept out of the race lane
 
-integration	test-lane	60 test files across 5 packages. Run by the "Integration tests" lane over the package set derived from the tag.
-e2e	test-lane	2 tests in internal/cli, 0.88s of actual test time, so the "Build and test" lane runs them for real rather than compile-checking them.
-lifecycle_integration	test-lane	2 tests in internal/orchestrator, 0.29s of actual test time, so the "Build and test" lane runs them for real rather than compile-checking them.
-windows	goos-vet	24 files, 9 of them _test.go that no lane runs. `GOOS=windows go vet ./...` compiles all 24 -- that compile is the whole of the coverage, never a claim the windows halves were exercised -- and also covers internal/fleet/orphan_inventory_other.go (`!darwin && !linux`). The 19 `!windows` files need nothing extra: ubuntu satisfies the negation. One half is covered by no lane at all: internal/orchestrator/afk_process_identity_other.go is `!darwin && !linux && !windows`, so windows vet excludes it too. `GOOS=freebsd go vet ./internal/orchestrator/ ./internal/home/` compiles it, but the tree does not build for freebsd as a whole (internal/fleet has no such half), so that is a manual check, not a lane.
-darwin	goos-vet	4 files. `GOOS=darwin go vet ./...` covers them, and also covers the `darwin || linux` files through their darwin branch.
-linux	default	4 `//go:build linux` files, compiled by every lane on ubuntu. The negated use inside `!darwin && !linux` is covered by the windows goos-vet entry.
-race	race-excluded	Only appears as `//go:build !race` on internal/orchestrator/lifecycle_lifecycle_test.go. Those 7 lock and queue tests measure their own timing, which the race detector distorts, so their absence from the race lane is intended rather than a gap.
+integration	test-lane	Run by the "Integration tests" lane over the package set derived from the tag; a new tagged file joins the lane by existing.
+e2e	test-lane	In internal/cli. The "Build and test" lane runs it for real rather than compile-checking, which is cheap: the suite is small and fast.
+lifecycle_integration	test-lane	In internal/orchestrator. The "Build and test" lane runs it for real rather than compile-checking, which is cheap: the suite is small and fast.
+windows	goos-vet	`GOOS=windows go vet ./...` compiles every windows-gated file -- test halves included, though no lane runs them -- and that compile is the whole of the coverage, never a claim the windows halves were exercised. It also covers internal/fleet/orphan_inventory_other.go (`!darwin && !linux`). The `!windows` files need nothing extra: ubuntu satisfies the negation. One half is covered by no lane at all: internal/orchestrator/afk_process_identity_other.go is `!darwin && !linux && !windows`, so windows vet excludes it too. `GOOS=freebsd go vet ./internal/orchestrator/ ./internal/home/` compiles it, but the tree does not build for freebsd as a whole (internal/fleet has no such half), so that is a manual check, not a lane.
+darwin	goos-vet	`GOOS=darwin go vet ./...` covers every darwin-gated file, and also covers the `darwin || linux` files through their darwin branch.
+linux	default	Every `//go:build linux` file is compiled by every lane on ubuntu. The negated use inside `!darwin && !linux` is covered by the windows goos-vet entry.
+race	race-excluded	Only appears as `//go:build !race` on internal/orchestrator/lifecycle_lifecycle_test.go. The lock and queue tests there measure their own timing, which the race detector distorts, so their absence from the race lane is intended rather than a gap.

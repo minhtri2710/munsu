@@ -255,10 +255,11 @@ as a result. But a PR body is not in the repository, nothing reads it, and it is
 where anyone looking at the code will be standing. This repository already puts these
 sentences in the right place and should keep doing so:
 
-* `.github/build-tags.manifest` classifies `windows` as `goos-vet` with the sentence
-  *"15 files, 3 of them `_test.go` that no lane had ever compiled. `GOOS=windows go vet
-  ./...` covers them"*. That row is gated — an unclassified tag turns `invariants` red — so
-  the *existence* of a declaration is enforced even though its content is not.
+* `.github/build-tags.manifest` classifies `windows` as `goos-vet` and states its limit in
+  the row — the coverage is the `GOOS=windows go vet ./...` compile, no figure (the file's
+  header explains why a count no job verifies is not carried). That row is gated — an
+  unclassified tag turns `invariants` red — so the *existence* of a declaration is enforced
+  even though its content is not.
 * BEO-114's own commit message carries the model sentence: *"The added test asserts
   SysProcAttr carries the flag when compiled for windows; it does not exercise real process
   -group behaviour."* Stating the limit, claiming nothing more.
