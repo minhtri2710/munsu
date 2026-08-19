@@ -221,6 +221,33 @@ platform-dependent, red on a laptop and green on the runner. Two fixtures
 in place through `uncovered-guards.sh selftest`. The strong form would reverse it. An ADR
 line that contradicts a tested invariant is not a rule; it is a future argument.
 
+**A narrower form of the same demand was asserted in review, retracted, and is rejected
+here by name.** During the BEO-69/BEO-122 Windows batch, a review comment claimed this ADR
+requires every `_unix.go`/`_windows.go` pair sharing a function name to have a `_test.go`
+that the `goos-vet` lane compiles. It does not, and the claim was withdrawn (issue #543);
+this paragraph records it so nobody re-derives it from the comment it appeared in. The
+claimed rule is the strong form of §6.1 with the objection narrowed from "no lane measures
+it" to "the lane must compile a test of it", and it fails on the same three grounds. First,
+it is the strong form: §6.1 already declines the demand that GOOS-gated code carry
+lane-measurable coverage, on fixture-pinned grounds rather than cost. Second, the tree does
+not satisfy it: at `91551afc` four of the twelve `_unix.go`/`_windows.go` pairs share a
+function name no test the lane compiles references — `cli/watch_process`'s
+`processIsAlive` and `signalWatchProcess`, `fleet/process_runtime`'s `isProcessMissing`,
+`home/taskmeta_lock`'s `lockExclusive` and `unlockFile`, `home/watcher_lock`'s
+`lockWatcherFile` and `unlockWatcherFile`; five of the twelve if a `!windows` test only the
+darwin half of the lane compiles (`canonical_lock_errno_unix_test.go` on
+`lockScopedFile`/`unlockScopedFile`) is not allowed to satisfy it. Adopting it would not
+tighten a mostly-held rule; it would declare a third of the platform-split pairs
+non-compliant on the spot, each a burn-down of its own. Third, where a production call site
+already compiles in the same lane it was measured to add nothing: the `var _ f = g`
+assertions it would have demanded guard functions whose signature drift is already caught
+by live call sites — `lockWakeFile`/`unlockWakeFile` at `wake_lease.go:58,61`,
+`isProcessAlive` at `watcher_lease.go:47,107` and `supervision_watcher.go:237`,
+`stopProcess`/`stopProcessIsLossy` at `afk_return.go:134,178`, `signalWatcherProcess` at
+`supervision_watcher.go:213` — that `GOOS=windows go vet ./...` compiles before any test
+file matters. Making the rule real would require an ADR of its own and a burn-down of the
+violating files; a review comment is neither.
+
 **6.2 — The declaration obligation is accepted, and its home is the artifact, not the PR
 body.** Where a lane cannot reach, the limit is stated, and stated as a limit rather than
 as a result. But a PR body is not in the repository, nothing reads it, and it is not
