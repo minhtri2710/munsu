@@ -147,24 +147,29 @@ func WriteRetirementRecord(homeDir string, rec *PollRetirementRecord) error {
 	path := retirementRecordPath(homeDir, rec.TaskID)
 	tmpPath := path + ".tmp"
 
-	// Write temp file.
-	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
-		os.Remove(tmpPath)
+	// Write and fsync the temp through a single write-capable handle.
+	// On Windows, FlushFileBuffers (os.File.Sync) requires a handle opened
+	// for write, so a read-only reopen would fail; writing and syncing one
+	// write handle preserves the durable-before-rename atomic contract on
+	// both platforms.
+	f, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
 		return fmt.Errorf("writing retirement temp: %w", err)
 	}
-
-	// Sync the temp file before rename.
-	f, err := os.OpenFile(tmpPath, os.O_RDONLY, 0644)
-	if err != nil {
+	if _, err := f.Write(data); err != nil {
+		f.Close()
 		os.Remove(tmpPath)
-		return fmt.Errorf("opening temp for sync: %w", err)
+		return fmt.Errorf("writing retirement temp: %w", err)
 	}
 	if err := f.Sync(); err != nil {
 		f.Close()
 		os.Remove(tmpPath)
 		return fmt.Errorf("fsync temp: %w", err)
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("closing retirement temp: %w", err)
+	}
 
 	// Atomic rename with directory sync for crash safety.
 	if err := home.RenameDurable(tmpPath, path); err != nil {
@@ -297,9 +302,13 @@ func ValidateCheckWithLstat(path string) error {
 	if !fi.Mode().IsRegular() {
 		return fmt.Errorf("check is not a regular file: %s", path)
 	}
-	// Must be executable (owner at minimum).
-	if fi.Mode()&0100 == 0 {
-		return fmt.Errorf("check is not executable: %s", path)
+	// Must be executable. Recognition differs by platform: Unix requires the
+	// owner-execute mode bit; Windows, where Go never reports exec bits, keys
+	// executability off the shebang (see check_exec_windows.go). The fail-closed
+	// rejections above (symlink, non-regular) and below (empty, missing shebang)
+	// are shared.
+	if err := checkExecutable(path, fi); err != nil {
+		return err
 	}
 	// Read first line to verify shebang.
 	data := make([]byte, 2)
