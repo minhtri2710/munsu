@@ -279,7 +279,7 @@ in files no `ubuntu-latest` lane compiles: six across
 `internal/orchestrator/afk_process_identity_darwin.go`. In `ci.yml`, every job runs on
 `ubuntu-latest` except the `windows-build-vet` gate (#544), which builds and vets natively
 on `windows-latest`; Windows coverage is therefore the `GOOS=windows go vet ./...` compile
-plus that gate. Both compile the three Windows `_test.go` files (vet includes test files)
+plus that gate. Both compile the Windows `_test.go` files (vet includes test files)
 and neither executes them — only the dispatch-only windows-observation lane does. The gate
 produces no coverage profile, so the eight sites stay unmeasured.
 
