@@ -1,6 +1,10 @@
 # Binaries
 /bin/munsu
 /munsu
+# `go build` with no -o inside the guards lane's tool directory drops a 7MB
+# binary named after the directory. Nothing in CI fails on a committed build
+# artifact, so it merges silently unless it is ignored here.
+/.github/scripts/guardsites/guardsites
 *.test
 *.test.exe
 *.test.exe~

@@ -476,7 +476,15 @@ func loadTypes(root string) (*resolver, error) {
 		cfg := &packages.Config{
 			Mode: packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo,
 			Dir:  root,
-			Env:  append(os.Environ(), "GOOS="+goos, "GOARCH=amd64", "CGO_ENABLED=0"),
+			// Appending is the documented way to override one variable:
+			// packages.Config.Env says "only the last value in the slice for
+			// each environment key is used" and gives this exact idiom. An
+			// inherited GOOS earlier in the slice does not win, so this does
+			// not need filtering. Reviewed once on the opposite premise and
+			// measured: with GOOS=darwin exported, the type-not-name fixture
+			// still yields b_windows.go, which only resolves when the windows
+			// pass type-checks. Do not "fix" this without re-running that.
+			Env: append(os.Environ(), "GOOS="+goos, "GOARCH=amd64", "CGO_ENABLED=0"),
 		}
 		pkgs, err := packages.Load(cfg, "./...")
 		if err != nil {
