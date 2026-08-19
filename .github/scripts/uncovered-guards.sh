@@ -267,6 +267,20 @@ delta() {
 	printf ' (%+d)' "$((now - then))"
 }
 
+# Entries whose reason marks them as a known-open bug rather than accepted debt,
+# reprinted on every run so a known-broken guard stays visible until it is wired
+# up or deleted. An annotation on every single run is the difference between a
+# waiver and a silent line. Same treatment and rationale as deadcode.sh's
+# announce_open_bugs; the reason column is field 5 here rather than field 3.
+announce_open_bugs() {
+	awk -F '\t' '
+		/^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+		$5 ~ /^OPEN-BUG/ {
+			printf "::warning file=%s::%s is uncovered and known to be a bug, not accepted debt: %s\n", $1, $2, $5
+		}
+	' "$BASELINE"
+}
+
 check() {
 	local failed=0 verdicts anomalies unmeasured uncovered covered baseline added removed stale waived
 
@@ -350,6 +364,8 @@ check() {
 
 	[ "$failed" -eq 0 ] || exit 1
 
+	announce_open_bugs
+
 	local n m p
 	n="$(printf '%s\n' "$verdicts" | grep -c . || true)"
 	m="$(printf '%s\n' "$baseline" | grep -c . || true)"
@@ -392,6 +408,8 @@ generate() {
 # The mutation each fixture answers, verbatim:
 #
 #   clean                  none; the tree every other fixture is a copy of
+#   open-bug               delete announce_open_bugs -- an OPEN-BUG reason must
+#                          warn on every run, an ordinary waiver must stay silent
 #   merge-four-lanes       take the default profile alone instead of the max
 #                          across lanes -- the trap the design record hit while measuring
 #   missing-lane           treat an absent lane profile as zeros
