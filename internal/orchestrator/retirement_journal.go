@@ -35,8 +35,11 @@ func PrepareForcedRetirementEvidence(homeDir, taskID string) ([]string, error) {
 	if err := os.MkdirAll(backupDir, 0700); err != nil {
 		return nil, err
 	}
-	stateDir := filepath.Join(homeDir, "state")
-	if src, err := os.ReadFile(filepath.Join(stateDir, taskID+".status")); err == nil {
+	statusPath, err := home.StatusFilePath(homeDir, taskID)
+	if err != nil {
+		return nil, err
+	}
+	if src, err := os.ReadFile(statusPath); err == nil {
 		if err := os.WriteFile(filepath.Join(backupDir, taskID+".status"), src, 0600); err != nil {
 			return nil, err
 		}
@@ -61,7 +64,10 @@ func PrepareForcedRetirementEvidence(homeDir, taskID string) ([]string, error) {
 
 func FinalizeRetirementJournals(homeDir, taskID string) ([]string, error) {
 	var steps []string
-	statusPath := filepath.Join(homeDir, "state", taskID+".status")
+	statusPath, err := home.StatusFilePath(homeDir, taskID)
+	if err != nil {
+		return steps, err
+	}
 	for _, activity := range home.OpenActivities(statusPath) {
 		line := fmt.Sprintf("resolved [key=%s]: soldier torn down", activity.Key)
 		if err := home.AppendStatus(homeDir, taskID, line); err != nil {
