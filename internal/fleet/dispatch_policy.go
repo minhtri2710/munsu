@@ -94,6 +94,15 @@ func policyError(problem DispatchPolicyProblem, parent, homeDir, detail string) 
 	return &DispatchPolicyError{Problem: problem, Parent: parent, HomeDir: homeDir, Detail: detail}
 }
 
+// generalOnCaptainHomeError builds the typed fail-closed refusal for a General
+// (or unranked) parent aimed at a Captain-owned operation home. It is the
+// single construction point for the row so the Runner's early boundary and
+// ResolveDispatchPolicy cannot drift on message or evidence.
+func generalOnCaptainHomeError(parent, captainID, homeDir string) error {
+	return policyError(DispatchPolicyProblemGeneralOnCaptainHome, parent, homeDir,
+		fmt.Sprintf("the operation home is Captain-owned (captain %s, .munsu-captain-home); the General never reads or mutates Captain-owned state — run the dispatch from the General home or as the Captain (ADR-0008 §4)", captainID))
+}
+
 // ResolveDispatchPolicy resolves the explicit dispatch policy for one
 // operation home and parent rank. parentRank is the resolved parent role
 // evidence ("general", "captain", or "" = general, matching authorizeSpawn).
@@ -155,8 +164,7 @@ func ResolveDispatchPolicy(homeDir, parentRank string) (DispatchPolicy, string, 
 
 	case "general", "":
 		if provenanced {
-			return "", "", policyError(DispatchPolicyProblemGeneralOnCaptainHome, parentRank, homeDir,
-				fmt.Sprintf("the operation home is Captain-owned (captain %s, .munsu-captain-home); the General never reads or mutates Captain-owned state — run the dispatch from the General home or as the Captain (ADR-0008 §4)", captainID))
+			return "", "", generalOnCaptainHomeError(parentRank, captainID, homeDir)
 		}
 		if published {
 			return "", "", policyError(DispatchPolicyProblemConfigSurfaceContradiction, parentRank, homeDir,

@@ -161,6 +161,9 @@ func (r *Runner) Run() (string, error) {
 	if err := r.resolveHome(); err != nil {
 		return "", err
 	}
+	if err := r.checkFleetBoundary(); err != nil {
+		return "", err
+	}
 	if err := r.checkSupervision(); err != nil {
 		return "", err
 	}
@@ -317,6 +320,53 @@ func (r *Runner) resolveHome() error {
 	}
 	r.homeDir = h
 	return nil
+}
+
+// checkFleetBoundary enforces the Fleet-boundary refusal on a Captain-owned
+// home immediately after home resolution, before checkSupervision or
+// checkSpawnAuthority can read the target home's watcher lease or state
+// metadata (issue #546 Slice 6). It examines only the durable .munsu-captain-home
+// provenance marker (never state/, watcher files, or config surfaces): a
+// valid Captain-owned home reached by a General, an unranked parent, or an
+// unknown role is refused here, while an explicit Captain from its own home
+// is authorized state-free and allowed to proceed through its own phases.
+func (r *Runner) checkFleetBoundary() error {
+	captainID := ""
+	switch _, err := os.Stat(filepath.Join(r.homeDir, home.CaptainProvenanceMarkerName)); {
+	case err == nil:
+		id, verr := home.ValidateCaptainProvenance(r.homeDir)
+		if verr != nil {
+			return policyError(DispatchPolicyProblemCaptainOnUnprovenHome, strings.TrimSpace(os.Getenv("MUNSU_ROLE")), r.homeDir,
+				fmt.Sprintf("captain provenance marker is malformed or unreadable: %v", verr))
+		}
+		captainID = id
+	case os.IsNotExist(err):
+		return nil // General home; no early boundary refusal.
+	default:
+		return policyError(DispatchPolicyProblemCaptainOnUnprovenHome, strings.TrimSpace(os.Getenv("MUNSU_ROLE")), r.homeDir,
+			fmt.Sprintf("reading captain provenance marker: %v", err))
+	}
+
+	parent := strings.TrimSpace(os.Getenv("MUNSU_ROLE"))
+	switch parent {
+	case "captain":
+		cwd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("spawn authority: resolving current directory: %w", err)
+		}
+		return authorizeSpawn("captain", r.homeDir, cwd)
+	case "general", "":
+		if parent == "" {
+			parent = "general"
+		}
+		return generalOnCaptainHomeError(parent, captainID, r.homeDir)
+	default: // soldier or unknown role: keep the spawn-authority refusal semantics.
+		cwd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("spawn authority: resolving current directory: %w", err)
+		}
+		return authorizeSpawn(parent, r.homeDir, cwd)
+	}
 }
 
 func (r *Runner) checkSpawnAuthority() error {

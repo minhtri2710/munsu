@@ -8,6 +8,7 @@ package fleet
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -184,6 +185,93 @@ func TestRunnerBoundaryRefusesGeneralDispatchIntoCaptainHome(t *testing.T) {
 			names = append(names, e.Name())
 		}
 		t.Fatalf("Captain home content after refused General dispatch = %v; want only the provenance marker", names)
+	}
+}
+
+// TestRunnerBoundaryRefusesGeneralOnCaptainHomeBeforeSupervisionRead proves the
+// early Fleet boundary fires before checkSupervision: a General dispatch aimed
+// at a Captain-owned home whose watcher lease is degraded returns the typed
+// GeneralOnCaptainHome row, not the supervision (ErrUnhealthyWatcher) error the
+// supervision phase would otherwise raise first.
+func TestRunnerBoundaryRefusesGeneralOnCaptainHomeBeforeSupervisionRead(t *testing.T) {
+	captainHome := t.TempDir()
+	if err := home.SeedCaptainProvenance(captainHome, "sm-42"); err != nil {
+		t.Fatal(err)
+	}
+	// A present-but-unhealthy watcher lease: parseable (home+pid) but with no
+	// fresh beat, so CheckSupervisionForDispatch would fail closed first if the
+	// boundary were not enforced before the supervision read.
+	leasePath := home.WatcherLeasePath(captainHome)
+	if err := os.MkdirAll(filepath.Dir(leasePath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	lease := fmt.Sprintf(`{"home":%q,"pid":%d,"started_at":0,"updated_at":0}`, captainHome, os.Getpid())
+	if err := os.WriteFile(leasePath, []byte(lease), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("MUNSU_ROLE", "general")
+	t.Chdir(t.TempDir())
+
+	r := NewRunner(Args{ID: "task-1", ProjectName: "alpha", HomeDir: captainHome})
+	_, err := r.Run()
+	var perr *DispatchPolicyError
+	if !errors.As(err, &perr) || perr.Problem != DispatchPolicyProblemGeneralOnCaptainHome {
+		t.Fatalf("Run err = %v, want GeneralOnCaptainHome boundary refusal ahead of the supervision read", err)
+	}
+}
+
+// TestRunnerBoundaryDoesNotScanCaptainStateForGeneral proves the early boundary
+// refuses a General dispatch into a Captain-owned home without ever scanning
+// the Captain's endpoint state: the tmux pane resolver (the one piece of state
+// the spawn-authority phase would touch) is never invoked.
+func TestRunnerBoundaryDoesNotScanCaptainStateForGeneral(t *testing.T) {
+	captainHome := t.TempDir()
+	if err := home.SeedCaptainProvenance(captainHome, "sm-42"); err != nil {
+		t.Fatal(err)
+	}
+	scanned := false
+	original := tmuxWindowForPane
+	t.Cleanup(func() { tmuxWindowForPane = original })
+	tmuxWindowForPane = func(pane string) (string, error) {
+		scanned = true
+		return "@9", nil
+	}
+
+	t.Setenv("MUNSU_ROLE", "general")
+	t.Setenv("HERDR_PANE_ID", "")
+	t.Setenv("TMUX_PANE", "%9")
+	t.Chdir(t.TempDir())
+
+	r := NewRunner(Args{ID: "task-1", ProjectName: "alpha", HomeDir: captainHome})
+	_, err := r.Run()
+	var perr *DispatchPolicyError
+	if !errors.As(err, &perr) || perr.Problem != DispatchPolicyProblemGeneralOnCaptainHome {
+		t.Fatalf("Run err = %v, want GeneralOnCaptainHome boundary refusal", err)
+	}
+	if scanned {
+		t.Fatalf("General dispatch into a Captain home scanned endpoint state (currentEndpointKind invoked)")
+	}
+}
+
+// TestRunnerBoundaryAllowsExplicitCaptainFromItsHome proves the early boundary
+// does not disturb a legitimate Captain dispatch: a proven Captain home reached
+// by an explicit MUNSU_ROLE=captain from the Captain's own home passes the
+// boundary and proceeds to the Captain dispatch policy handling.
+func TestRunnerBoundaryAllowsExplicitCaptainFromItsHome(t *testing.T) {
+	captainHome := t.TempDir()
+	if err := home.SeedCaptainProvenance(captainHome, "sm-7"); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MUNSU_ROLE", "captain")
+	t.Chdir(captainHome)
+
+	r := NewRunner(Args{ID: "task-1", HomeDir: captainHome})
+	if err := r.resolveHome(); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.checkFleetBoundary(); err != nil {
+		t.Fatalf("checkFleetBoundary refused an explicit Captain from its own home: %v", err)
 	}
 }
 
