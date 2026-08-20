@@ -4,9 +4,10 @@
 // (issue #546 EP-5). They prove, over the existing Report/Recover/Ack/retire
 // surfaces in this package, the lifecycle
 //
-//	Intent -> Durable -> Delivered -> Acked -> Retired
+//	Intent -> Durable -> Acked -> Retired
 //
-// across the named acceptance paths:
+// Notification and receiver observation are orthogonal to that lifecycle;
+// the tests cover their delivery/replay behavior across the named paths:
 //
 //   - crash/replay: a durable report that is never acked survives a simulated
 //     crash and is retired exactly once after the receiver acks
