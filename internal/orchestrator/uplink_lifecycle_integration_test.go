@@ -253,12 +253,36 @@ func TestUplinkLifecycle_DirectVersusRelayDelivery(t *testing.T) {
 		t.Fatal("relayed pending must live in the captain sender home")
 	}
 
-	// General acks the relayed report.
+	// Recover must notify the general before its exact ref is acknowledged.
 	generalRecv, err := NewReceiver(generalHome)
 	if err != nil {
 		t.Fatal(err)
 	}
 	relayRef := NotificationRef{MessageID: relay.MessageID, SenderIdentity: "captain-one"}
+	notifications := 0
+	notified, err := Recover(RecoverRequest{
+		SenderHome:     captainHome,
+		ReceiverHome:   generalHome,
+		ReceiverRank:   RankGeneral,
+		SenderIdentity: "captain-one",
+		ForceNotify:    true,
+		Notify: func(ref NotificationRef) UplinkNotifyResult {
+			notifications++
+			if ref != relayRef {
+				t.Fatalf("relay notification ref = %+v, want %+v", ref, relayRef)
+			}
+			return UplinkNotifyResult{Acknowledged: true}
+		},
+	})
+	if err != nil {
+		t.Fatalf("relay notification Recover: %v", err)
+	}
+	if notified.Notified != 1 || notified.Accepted != 0 || notifications != 1 {
+		t.Fatalf("relay notification recovery = %+v, notifications=%d, want notified=1 accepted=0 notifications=1", notified, notifications)
+	}
+	if pending, _ := NewStore(captainHome).ReadPending("captain-one", relay.MessageID); pending == nil {
+		t.Fatal("relay pending must remain until the general acknowledges it")
+	}
 	if _, err := generalRecv.Ack(relayRef); err != nil {
 		t.Fatalf("general Ack: %v", err)
 	}
