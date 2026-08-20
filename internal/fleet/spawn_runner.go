@@ -46,9 +46,22 @@ type Runner struct {
 	briefData             []byte
 	windowID              string
 	spawnRole             string
-	incarnation           string // opaque generation-bound endpoint incarnation, minted once per launch
-	projectConfig         SpawnProjectConfig
-	projectConfigLoaded   bool
+
+	// dispatchPolicy is the explicit Fleet-boundary topology choice resolved
+	// once per Run (ResolveDispatchPolicy, issue #546 Slice 6): GeneralDirect
+	// dispatches the soldier from the General home; CaptainMediated dispatches
+	// through a Captain running in its own proven home. Every downstream phase
+	// consumes the policy — never a re-derived rank, home marker, or config
+	// inference — so a General dispatch can never read the Captain assignment
+	// surface and a Captain can never fall back to base/local configuration.
+	dispatchPolicy DispatchPolicy
+	// parentCaptainID is the parent identity dispatched under: the provenance
+	// captain ID for CaptainMediated, or the "general" sentinel for
+	// GeneralDirect.
+	parentCaptainID     string
+	incarnation         string // opaque generation-bound endpoint incarnation, minted once per launch
+	projectConfig       SpawnProjectConfig
+	projectConfigLoaded bool
 
 	// dispatchSel caches the single dispatch-selection resolution so the quota
 	// selector is invoked at most once per spawn and the selection used for
@@ -148,10 +161,23 @@ func (r *Runner) Run() (string, error) {
 	if err := r.resolveHome(); err != nil {
 		return "", err
 	}
+	if err := r.checkFleetBoundary(); err != nil {
+		return "", err
+	}
 	if err := r.checkSupervision(); err != nil {
 		return "", err
 	}
 	if err := r.checkSpawnAuthority(); err != nil {
+		return "", err
+	}
+	// The Fleet-boundary dispatch policy is resolved from the resolved parent
+	// rank, the home's durable provenance, and the home's config surface
+	// BEFORE any config resolution, Task Authority interaction, or mutation.
+	// An ambiguous parent/home/config combination (issue #546 Slice 6) — most
+	// importantly a General dispatch aimed at a Captain-owned home — fails
+	// closed here, so General dispatch code never reads or mutates
+	// Captain-owned state.
+	if err := r.resolveDispatchPolicy(); err != nil {
 		return "", err
 	}
 	if err := r.checkCaptainBacklogAuthority(); err != nil {
@@ -296,6 +322,53 @@ func (r *Runner) resolveHome() error {
 	return nil
 }
 
+// checkFleetBoundary enforces the Fleet-boundary refusal on a Captain-owned
+// home immediately after home resolution, before checkSupervision or
+// checkSpawnAuthority can read the target home's watcher lease or state
+// metadata (issue #546 Slice 6). It examines only the durable .munsu-captain-home
+// provenance marker (never state/, watcher files, or config surfaces): a
+// valid Captain-owned home reached by a General, an unranked parent, or an
+// unknown role is refused here, while an explicit Captain from its own home
+// is authorized state-free and allowed to proceed through its own phases.
+func (r *Runner) checkFleetBoundary() error {
+	captainID := ""
+	switch _, err := os.Stat(filepath.Join(r.homeDir, home.CaptainProvenanceMarkerName)); {
+	case err == nil:
+		id, verr := home.ValidateCaptainProvenance(r.homeDir)
+		if verr != nil {
+			return policyError(DispatchPolicyProblemCaptainOnUnprovenHome, strings.TrimSpace(os.Getenv("MUNSU_ROLE")), r.homeDir,
+				fmt.Sprintf("captain provenance marker is malformed or unreadable: %v", verr))
+		}
+		captainID = id
+	case os.IsNotExist(err):
+		return nil // General home; no early boundary refusal.
+	default:
+		return policyError(DispatchPolicyProblemCaptainOnUnprovenHome, strings.TrimSpace(os.Getenv("MUNSU_ROLE")), r.homeDir,
+			fmt.Sprintf("reading captain provenance marker: %v", err))
+	}
+
+	parent := strings.TrimSpace(os.Getenv("MUNSU_ROLE"))
+	switch parent {
+	case "captain":
+		cwd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("spawn authority: resolving current directory: %w", err)
+		}
+		return authorizeSpawn("captain", r.homeDir, cwd)
+	case "general", "":
+		if parent == "" {
+			parent = "general"
+		}
+		return generalOnCaptainHomeError(parent, captainID, r.homeDir)
+	default: // soldier or unknown role: keep the spawn-authority refusal semantics.
+		cwd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("spawn authority: resolving current directory: %w", err)
+		}
+		return authorizeSpawn(parent, r.homeDir, cwd)
+	}
+}
+
 func (r *Runner) checkSpawnAuthority() error {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -412,6 +485,21 @@ func canonicalExistingPath(path string) (string, error) {
 		return "", err
 	}
 	return filepath.Abs(resolved)
+}
+
+// resolveDispatchPolicy resolves the explicit Fleet-boundary dispatch policy
+// (issue #546 Slice 6) from the resolved parent rank, the home's durable
+// provenance, and its config surface. It names the exact policy-matrix row on
+// refusal and records the policy plus the parent identity dispatched under for
+// every downstream phase (config surface, parent identity, captain checks).
+func (r *Runner) resolveDispatchPolicy() error {
+	policy, parentID, err := ResolveDispatchPolicy(r.homeDir, r.spawnRole)
+	if err != nil {
+		return err
+	}
+	r.dispatchPolicy = policy
+	r.parentCaptainID = parentID
+	return nil
 }
 
 // checkCaptainBacklogAuthority validates that when the spawner role is captain,
@@ -1153,8 +1241,12 @@ func (r *Runner) resolveHarness() error {
 // dispatchSelection loads the typed config dispatch profiles and matches
 // against the brief body. The first resolution is cached so the selection is
 // computed exactly once per spawn (the quota selector must not run twice).
-// Checks the published snapshot first (captain context), then the fleet base
-// document (general context).
+// The resolved dispatch policy names the ONLY config surface a dispatch may
+// read (issue #546 Slice 6, ADR-0008 §6): CaptainMediated reads the Captain's
+// assigned published snapshot; GeneralDirect reads the fleet base document.
+// The opposite read — or any read without a resolved policy — fails closed,
+// so a General dispatch never consumes the Captain assignment surface and a
+// Captain never falls back to base/local configuration.
 func (r *Runner) dispatchSelection() (harness.DispatchSelection, bool) {
 	if r.dispatchResolved {
 		if r.dispatchSel == nil {
@@ -1163,38 +1255,40 @@ func (r *Runner) dispatchSelection() (harness.DispatchSelection, bool) {
 		return *r.dispatchSel, true
 	}
 	defer func() { r.dispatchResolved = true }()
-	// 1. Try published snapshot (captain context).
-	snapshot, err := config.LoadPublishedSnapshot(r.homeDir)
-	if err == nil {
-		cfg := snapshot.Config()
-		if len(cfg.DispatchProfiles) > 0 || cfg.SoldierHarness != "" {
-			dispatch := &harness.DispatchConfig{
-				DefaultHarness: cfg.SoldierHarness,
-				DefaultModel:   cfg.Model,
-				Profiles:       append([]harness.DispatchProfile(nil), cfg.DispatchProfiles...),
-			}
-			desc := r.taskDescription()
-			sel := harness.ResolveDispatchSelection(dispatch, desc)
-			r.dispatchSel = &sel
-			return sel, true
-		}
-	}
 
-	// 2. Try fleet base document (general context).
-	base, err := config.LoadFleetBase(r.homeDir)
-	if err == nil && (len(base.Config.DispatchProfiles) > 0 || base.Config.SoldierHarness != "") {
-		dispatch := &harness.DispatchConfig{
-			DefaultHarness: base.Config.SoldierHarness,
-			DefaultModel:   base.Config.Model,
-			Profiles:       append([]harness.DispatchProfile(nil), base.Config.DispatchProfiles...),
+	desc := r.taskDescription()
+	selectFrom := func(profiles []config.DispatchProfile, harnessName, model string) (harness.DispatchSelection, bool) {
+		if len(profiles) == 0 && harnessName == "" {
+			return harness.DispatchSelection{}, false
 		}
-		desc := r.taskDescription()
+		dispatch := &harness.DispatchConfig{
+			DefaultHarness: harnessName,
+			DefaultModel:   model,
+			Profiles:       append([]harness.DispatchProfile(nil), profiles...),
+		}
 		sel := harness.ResolveDispatchSelection(dispatch, desc)
-		r.dispatchSel = &sel
 		return sel, true
 	}
 
-	return harness.DispatchSelection{}, false
+	switch r.dispatchPolicy {
+	case DispatchPolicyCaptainMediated:
+		snapshot, err := config.LoadPublishedSnapshot(r.homeDir)
+		if err != nil {
+			return harness.DispatchSelection{}, false
+		}
+		cfg := snapshot.Config()
+		return selectFrom(cfg.DispatchProfiles, cfg.SoldierHarness, cfg.Model)
+	case DispatchPolicyGeneralDirect:
+		base, err := config.LoadFleetBase(r.homeDir)
+		if err != nil {
+			return harness.DispatchSelection{}, false
+		}
+		cfg := base.Config
+		return selectFrom(cfg.DispatchProfiles, cfg.SoldierHarness, cfg.Model)
+	default:
+		// Unresolved or invalid policy: no dispatch surface is readable.
+		return harness.DispatchSelection{}, false
+	}
 }
 
 // taskDescription returns text used to match dispatch profiles (brief body or id).
@@ -1616,16 +1710,13 @@ func (r *Runner) resolveSkills() (required, optional []SkillEntry, diags []strin
 	return required, optional, diags
 }
 
-// resolveParentCaptainID returns the parent captain ID from the endpoint meta.
-// Returns empty string when not running under a captain.
+// resolveParentCaptainID returns the parent identity the dispatch policy
+// resolved at the Fleet boundary: the provenance captain ID under
+// DispatchPolicyCaptainMediated, or the "general" sentinel under
+// DispatchPolicyGeneralDirect. The identity was captured once by
+// resolveDispatchPolicy and is never re-derived from home markers here.
 func (r *Runner) resolveParentCaptainID() string {
-	if r.spawnRole == "captain" {
-		if id, err := home.ValidateCaptainProvenance(r.homeDir); err == nil {
-			return id
-		}
-	}
-	// For general launches, use a generic identifier.
-	return "general"
+	return r.parentCaptainID
 }
 
 // shQuote wraps s in single quotes, escaping embedded single quotes.

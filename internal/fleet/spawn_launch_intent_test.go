@@ -166,6 +166,8 @@ func newLaunchFixture(t *testing.T, taskID string) *launchFixture {
 		effectiveMode:       "direct-PR",
 		requestedMode:       "direct-PR",
 		spawnRole:           "general",
+		dispatchPolicy:      DispatchPolicyGeneralDirect,
+		parentCaptainID:     "general", // the General-direct parent sentinel the boundary policy resolves
 		projectConfigLoaded: true,
 		projectConfig: SpawnProjectConfig{
 			Frozen:         snap,
