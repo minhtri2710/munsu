@@ -20,6 +20,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // Role identifies which role the obligation set targets.
@@ -444,7 +446,10 @@ func MaterialStates(state string) bool {
 // (done, failed, needs-decision, blocked) in its status file.
 // FAILS CLOSED: returns error on unreadable status.
 func MaterialReportExists(homeDir, taskID string) (bool, error) {
-	statusPath := filepath.Join(homeDir, "state", taskID+".status")
+	statusPath, err := home.StatusFilePath(homeDir, taskID)
+	if err != nil {
+		return false, err
+	}
 	f, err := os.Open(statusPath)
 	if err != nil {
 		if os.IsNotExist(err) {

@@ -3,7 +3,6 @@ package fleet
 import (
 	"errors"
 	"fmt"
-	"path/filepath"
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
@@ -118,6 +117,8 @@ func (canonicalCurrentStateQ) Read(homeDir, taskID string) (*CurrentStateInfo, e
 	if info.Description == "" {
 		info.Description = agg.Definition.Description
 	}
-	info.OpenActivities = home.OpenActivities(filepath.Join(home.StateDir(homeDir), taskID+".status"))
+	if statusPath, err := home.StatusFilePath(homeDir, taskID); err == nil {
+		info.OpenActivities = home.OpenActivities(statusPath)
+	}
 	return info, nil
 }

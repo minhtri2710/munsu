@@ -109,7 +109,10 @@ func durableAppendStatus(homeDir, taskID, line string) (bool, error) {
 	}
 
 	// Open file for append with fsync.
-	statusPath := filepath.Join(home.StateDir(homeDir), taskID+".status")
+	statusPath, err := home.StatusFilePath(homeDir, taskID)
+	if err != nil {
+		return false, err
+	}
 	if err := os.MkdirAll(filepath.Dir(statusPath), 0755); err != nil {
 		return false, fmt.Errorf("creating state dir: %w", err)
 	}

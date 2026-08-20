@@ -309,13 +309,13 @@ func TestMetaPath_RespectsHomeOverride(t *testing.T) {
 	os.Setenv("MUNSU_HOME", tmp)
 	defer os.Unsetenv("MUNSU_HOME")
 
-	fullPath, err := metaPath(tmp, "test-id")
+	fullPath, err := MetaFilePath(tmp, "test-id")
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := filepath.Join(tmp, "state", "test-id.meta")
 	if fullPath != want {
-		t.Errorf("metaPath() = %q, want %q", fullPath, want)
+		t.Errorf("MetaFilePath() = %q, want %q", fullPath, want)
 	}
 }
 

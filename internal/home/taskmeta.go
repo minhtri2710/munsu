@@ -15,28 +15,28 @@ func StateDir(homeDir string) string {
 	return filepath.Join(homeDir, "state")
 }
 
-// metaPath returns the path to the meta file for the given task ID. The
+// MetaFilePath returns the path to the meta file for the given task ID. The
 // persisted file stem is the platform durable key for the logical id (see
-// durableKey), so the same logical id always resolves to the one persisted
+// DurableKey), so the same logical id always resolves to the one persisted
 // key for the platform.
-func metaPath(homeDir string, id string) (string, error) {
+func MetaFilePath(homeDir string, id string) (string, error) {
 	if err := validateTaskID(id); err != nil {
 		return "", err
 	}
-	stem, err := durableKey(id)
+	stem, err := DurableKey(id)
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(StateDir(homeDir), stem+".meta"), nil
 }
 
-// statusPath returns the path to the status file for the given task ID. The
-// persisted file stem is the platform durable key for the logical id.
-func statusPath(homeDir string, id string) (string, error) {
+// StatusFilePath returns the path to the status file for the given task ID.
+// The persisted file stem is the platform durable key for the logical id.
+func StatusFilePath(homeDir string, id string) (string, error) {
 	if err := validateTaskID(id); err != nil {
 		return "", err
 	}
-	stem, err := durableKey(id)
+	stem, err := DurableKey(id)
 	if err != nil {
 		return "", err
 	}
@@ -103,7 +103,7 @@ func WriteMeta(homeDir string, id string, meta map[string]string) error {
 // writeMetaLocked writes a task meta file while the lock is already held.
 // Uses a unique temp file (os.CreateTemp) for safe atomic writes.
 func writeMetaLocked(homeDir string, id string, meta map[string]string) error {
-	p, err := metaPath(homeDir, id)
+	p, err := MetaFilePath(homeDir, id)
 	if err != nil {
 		return err
 	}
@@ -148,7 +148,7 @@ func writeMetaLocked(homeDir string, id string, meta map[string]string) error {
 // Each key=value line is parsed into the returned map.
 // Returns an error if the file does not exist.
 func ReadMeta(homeDir string, id string) (map[string]string, error) {
-	p, err := metaPath(homeDir, id)
+	p, err := MetaFilePath(homeDir, id)
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +178,7 @@ func ReadMeta(homeDir string, id string) (map[string]string, error) {
 
 // AppendStatus appends a status line to $MUNSU_HOME/state/<id>.status.
 func AppendStatus(homeDir string, id, line string) error {
-	p, err := statusPath(homeDir, id)
+	p, err := StatusFilePath(homeDir, id)
 	if err != nil {
 		return err
 	}
@@ -202,7 +202,7 @@ func AppendStatus(homeDir string, id, line string) error {
 
 // ReadStatus reads all status lines from $MUNSU_HOME/state/<id>.status.
 func ReadStatus(homeDir string, id string) ([]string, error) {
-	p, err := statusPath(homeDir, id)
+	p, err := StatusFilePath(homeDir, id)
 	if err != nil {
 		return nil, err
 	}
@@ -315,7 +315,7 @@ func ListMeta(homeDir string) ([]MetaEntry, error) {
 		if !strings.HasSuffix(name, ".meta") {
 			continue
 		}
-		id, err := reverseDurableKey(strings.TrimSuffix(name, ".meta"))
+		id, err := ReverseDurableKey(strings.TrimSuffix(name, ".meta"))
 		if err != nil {
 			continue
 		}
@@ -375,7 +375,7 @@ func pickProject(meta map[string]string) string {
 
 // lockPath returns the path to the advisory lock file for a meta file.
 func lockPath(homeDir, id string) (string, error) {
-	p, err := metaPath(homeDir, id)
+	p, err := MetaFilePath(homeDir, id)
 	if err != nil {
 		return "", err
 	}

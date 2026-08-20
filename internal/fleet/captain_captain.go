@@ -1144,7 +1144,10 @@ func inFlightSoldierIDs(captainHome string) ([]string, error) {
 		if !strings.HasSuffix(name, ".meta") || strings.HasPrefix(name, ".") {
 			continue
 		}
-		id := strings.TrimSuffix(name, ".meta")
+		id, err := mhome.ReverseDurableKey(strings.TrimSuffix(name, ".meta"))
+		if err != nil {
+			continue
+		}
 		meta, err := mhome.ReadMeta(captainHome, id)
 		if err != nil {
 			continue
@@ -1217,7 +1220,10 @@ func Retire(captainHome, parentHome string, removeHome, force bool, endpoint Ret
 
 		// Clear parent task meta so husk prune and fleet snapshot stop treating this
 		// captain as live. Status log is retained as historical return-channel evidence.
-		metaPath := filepath.Join(parentHome, "state", taskID+".meta")
+		metaPath, mpErr := mhome.MetaFilePath(parentHome, taskID)
+		if mpErr != nil {
+			return fmt.Errorf("failed to resolve captain task meta path for %s: %w", taskID, mpErr)
+		}
 		if rmErr := os.Remove(metaPath); rmErr != nil && !os.IsNotExist(rmErr) {
 			return fmt.Errorf("failed to remove captain task meta %s: %w", taskID, rmErr)
 		}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/fleet"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // ToolStatus represents whether a tool was found during bootstrap.
@@ -210,9 +211,8 @@ func installTool(tool string) error {
 // gcOrphanDataDirs scans data/<id>/ directories and removes orphan dirs
 // that have no meta, status, brief, or report AND are older than the grace
 // period (24h mtime). Returns the list of removed directory names.
-func gcOrphanDataDirs(home string) []string {
-	dataDir := filepath.Join(home, "data")
-	stateDir := filepath.Join(home, "state")
+func gcOrphanDataDirs(homeDir string) []string {
+	dataDir := filepath.Join(homeDir, "data")
 
 	entries, err := os.ReadDir(dataDir)
 	if err != nil {
@@ -240,13 +240,19 @@ func gcOrphanDataDirs(home string) []string {
 		}
 
 		// Skip if corresponding meta file exists
-		metaPath := filepath.Join(stateDir, id+".meta")
+		metaPath, err := home.MetaFilePath(homeDir, id)
+		if err != nil {
+			continue
+		}
 		if _, err := os.Stat(metaPath); err == nil {
 			continue
 		}
 
 		// Skip if corresponding status file exists
-		statusPath := filepath.Join(stateDir, id+".status")
+		statusPath, err := home.StatusFilePath(homeDir, id)
+		if err != nil {
+			continue
+		}
 		if _, err := os.Stat(statusPath); err == nil {
 			continue
 		}

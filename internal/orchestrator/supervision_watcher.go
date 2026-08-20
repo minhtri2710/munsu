@@ -293,7 +293,10 @@ func scanFleetWithProbe(homeDir string, clearResolved bool, probe TaskEndpointPr
 		if !strings.HasSuffix(entry.Name(), ".meta") || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
-		id := strings.TrimSuffix(entry.Name(), ".meta")
+		id, err := home.ReverseDurableKey(strings.TrimSuffix(entry.Name(), ".meta"))
+		if err != nil {
+			continue
+		}
 		if seenStatus[id] {
 			// Status signal already actionable for this id; skip stale scan.
 			continue
@@ -340,7 +343,11 @@ func collectStatusIDs(stateDir string) map[string]struct{} {
 		if !strings.HasSuffix(name, ".status") || strings.HasPrefix(name, ".") {
 			continue
 		}
-		out[strings.TrimSuffix(name, ".status")] = struct{}{}
+		id, err := home.ReverseDurableKey(strings.TrimSuffix(name, ".status"))
+		if err != nil {
+			continue
+		}
+		out[id] = struct{}{}
 	}
 	return out
 }
@@ -381,19 +388,20 @@ func scanTaskWithProbe(homeDir, id string, probe TaskEndpointProbe, states TaskS
 		return handleStale(id, fmt.Sprintf("pane %s is dead", windowID))
 	}
 
-	statusPath := filepath.Join(homeDir, "state", id+".status")
-	if fi, err := os.Stat(statusPath); err == nil {
-		age := time.Since(fi.ModTime())
-		if age > StaleThreshold() {
-			if isStatusGeneralRelevant(homeDir, id) {
-				return handleStale(id, fmt.Sprintf("pane %s idle beyond threshold (general-relevant status)", windowID))
+	if statusPath, err := home.StatusFilePath(homeDir, id); err == nil {
+		if fi, err := os.Stat(statusPath); err == nil {
+			age := time.Since(fi.ModTime())
+			if age > StaleThreshold() {
+				if isStatusGeneralRelevant(homeDir, id) {
+					return handleStale(id, fmt.Sprintf("pane %s idle beyond threshold (general-relevant status)", windowID))
+				}
+				if shouldAbsorbStale(homeDir, id, true, states) {
+					resetStreak(id)
+					return nil
+				}
+				// Stable message (no wall-clock age) so wake fingerprints dedupe.
+				return handleStale(id, fmt.Sprintf("pane %s idle beyond threshold", windowID))
 			}
-			if shouldAbsorbStale(homeDir, id, true, states) {
-				resetStreak(id)
-				return nil
-			}
-			// Stable message (no wall-clock age) so wake fingerprints dedupe.
-			return handleStale(id, fmt.Sprintf("pane %s idle beyond threshold", windowID))
 		}
 	}
 
@@ -705,7 +713,10 @@ func isStatusPaused(homeDir, id string) bool {
 // longer than the resurface threshold and should surface as stale.
 // Uses the status file's modification time as a proxy for pause duration.
 func isPausedBeyondResurface(homeDir, id string) bool {
-	statusPath := filepath.Join(homeDir, "state", id+".status")
+	statusPath, err := home.StatusFilePath(homeDir, id)
+	if err != nil {
+		return false
+	}
 	fi, err := os.Stat(statusPath)
 	if err != nil {
 		return false

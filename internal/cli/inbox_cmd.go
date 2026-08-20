@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
 )
@@ -234,7 +235,11 @@ func formatCaptainStatusLines(stateDir string) []string {
 	var lines []string
 	for _, entry := range entries {
 		name := entry.Name()
-		if !strings.HasPrefix(name, "captain:") || !strings.HasSuffix(name, ".status") {
+		if !strings.HasSuffix(name, ".status") {
+			continue
+		}
+		id, err := home.ReverseDurableKey(strings.TrimSuffix(name, ".status"))
+		if err != nil || !strings.HasPrefix(id, "captain:") {
 			continue
 		}
 
@@ -243,7 +248,7 @@ func formatCaptainStatusLines(stateDir string) []string {
 			continue
 		}
 
-		captainID := strings.TrimPrefix(name[:len(name)-len(".status")], "captain:")
+		captainID := strings.TrimPrefix(id, "captain:")
 		marker := " "
 		if domain.GeneralRelevant(lastLine) {
 			marker = "!"

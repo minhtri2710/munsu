@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
-	"path/filepath"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/domain"
@@ -80,11 +79,12 @@ func ReadWithProbe(homeDir string, id string, probe StateEndpointProbe) (*State,
 
 	// .status contributes diagnostic evidence only (never lifecycle state).
 	statusLines, _ := home.ReadStatus(homeDir, id)
-	statusPath := filepath.Join(home.StateDir(homeDir), id+".status")
 	if len(statusLines) > 0 {
 		s.StatusLines = len(statusLines)
 	}
-	s.OpenActivities = home.OpenActivities(statusPath)
+	if statusPath, err := home.StatusFilePath(homeDir, id); err == nil {
+		s.OpenActivities = home.OpenActivities(statusPath)
+	}
 
 	// No-mistakes run-step is diagnostic evidence only; it never changes the
 	// canonical phase.

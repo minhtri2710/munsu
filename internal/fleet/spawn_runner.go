@@ -427,7 +427,10 @@ func currentEndpointKind(homeDir string) (string, bool, error) {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".meta") {
 			continue
 		}
-		id := strings.TrimSuffix(entry.Name(), ".meta")
+		id, err := home.ReverseDurableKey(strings.TrimSuffix(entry.Name(), ".meta"))
+		if err != nil {
+			continue
+		}
 		meta, err := home.ReadMeta(homeDir, id)
 		if err != nil {
 			continue

@@ -899,26 +899,11 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		result.Steps = append(result.Steps, journalSteps...)
 
 		// 4. Remove residual state artifacts
-		stateDir := filepath.Join(opts.HomeDir, "state")
-		munsuArtifacts := []string{
-			// Munsu-native: canonical names (item-5 rename)
-			opts.ID + ".status",
-			opts.ID + ".check",   // new canonical name
-			opts.ID + ".turnend", // new canonical name
-			// Legacy names (dual-read, remove next release)
-			opts.ID + ".check.sh",   // legacy name (deprecated)
-			opts.ID + ".turn-ended", // legacy name (deprecated)
-		}
-		harnessArtifacts := harness.StateArtifactsForHarness(meta["harness"])
-		for _, suffix := range harnessArtifacts {
-			munsuArtifacts = append(munsuArtifacts, opts.ID+"."+suffix)
-		}
-		for _, name := range munsuArtifacts {
-			p := filepath.Join(stateDir, name)
+		for _, p := range cleanupResidualArtifactPaths(opts.HomeDir, opts.ID, meta) {
 			if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
-				result.Steps = append(result.Steps, fmt.Sprintf("remove residual %s: %v", name, err))
+				result.Steps = append(result.Steps, fmt.Sprintf("remove residual %s: %v", filepath.Base(p), err))
 			} else {
-				result.Steps = append(result.Steps, fmt.Sprintf("residual %s removed", name))
+				result.Steps = append(result.Steps, fmt.Sprintf("residual %s removed", filepath.Base(p)))
 			}
 		}
 
@@ -1300,7 +1285,22 @@ func checkRemoteBranch(wtPath string) error {
 
 // taskMetaFilePath returns the path to the task meta file.
 func taskMetaFilePath(homeDir, id string) (string, error) {
-	return filepath.Join(homeDir, "state", id+".meta"), nil
+	return home.MetaFilePath(homeDir, id)
+}
+
+func cleanupResidualArtifactPaths(homeDir, id string, meta map[string]string) []string {
+	var paths []string
+	if p, err := home.StatusFilePath(homeDir, id); err == nil {
+		paths = append(paths, p)
+	}
+	stateDir := home.StateDir(homeDir)
+	for _, suffix := range []string{"check", "turnend", "check.sh", "turn-ended"} {
+		paths = append(paths, filepath.Join(stateDir, id+"."+suffix))
+	}
+	for _, suffix := range harness.StateArtifactsForHarness(meta["harness"]) {
+		paths = append(paths, filepath.Join(stateDir, id+"."+suffix))
+	}
+	return paths
 }
 
 // killProcessesOnPath tries to kill any processes still accessing the given
@@ -1369,7 +1369,10 @@ func otherWorkspaceRefs(homeDir, excludeID, workspaceID string) []string {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".meta") {
 			continue
 		}
-		taskID := strings.TrimSuffix(entry.Name(), ".meta")
+		taskID, err := home.ReverseDurableKey(strings.TrimSuffix(entry.Name(), ".meta"))
+		if err != nil {
+			continue
+		}
 		if taskID == excludeID {
 			continue
 		}

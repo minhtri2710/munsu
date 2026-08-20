@@ -171,7 +171,10 @@ func appendHomeTasks(snap *FleetSnapshot, taskHome, source, homeLabel string, de
 		if !strings.HasSuffix(entry.Name(), ".meta") || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
-		id := strings.TrimSuffix(entry.Name(), ".meta")
+		id, err := mhome.ReverseDurableKey(strings.TrimSuffix(entry.Name(), ".meta"))
+		if err != nil {
+			continue
+		}
 		if _, hasCanonical := canonical[id]; hasCanonical {
 			continue
 		}
@@ -238,12 +241,13 @@ func appendHomeTasks(snap *FleetSnapshot, taskHome, source, homeLabel string, de
 		}
 
 		// LastStatus is a diagnostic display line (never state truth).
-		statusPath := filepath.Join(taskHome, "state", id+".status")
-		if data, err := os.ReadFile(statusPath); err == nil {
-			lines := strings.TrimSpace(string(data))
-			if lines != "" {
-				parts := strings.Split(lines, "\n")
-				ts.LastStatus = strings.TrimSpace(parts[len(parts)-1])
+		if statusPath, err := mhome.StatusFilePath(taskHome, id); err == nil {
+			if data, err := os.ReadFile(statusPath); err == nil {
+				lines := strings.TrimSpace(string(data))
+				if lines != "" {
+					parts := strings.Split(lines, "\n")
+					ts.LastStatus = strings.TrimSpace(parts[len(parts)-1])
+				}
 			}
 		}
 
@@ -256,7 +260,10 @@ func appendHomeTasks(snap *FleetSnapshot, taskHome, source, homeLabel string, de
 		if !strings.HasSuffix(entry.Name(), ".meta") || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
-		id := strings.TrimSuffix(entry.Name(), ".meta")
+		id, err := mhome.ReverseDurableKey(strings.TrimSuffix(entry.Name(), ".meta"))
+		if err != nil {
+			continue
+		}
 		meta, metaErr := mhome.ReadMeta(taskHome, id)
 		if metaErr != nil || meta["kind"] != "captain" {
 			continue

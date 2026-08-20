@@ -1,7 +1,6 @@
 package fleet
 
 import (
-	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -239,9 +238,11 @@ func SummarizeCaptainHome(homeDir string) HomeSummary {
 
 	var decisionsAll []DecisionBrief
 	seenDecision := map[string]bool{}
-	stateDir := home.StateDir(homeDir)
 	for _, c := range children {
-		path := filepath.Join(stateDir, c.id+".status")
+		path, err := home.StatusFilePath(homeDir, c.id)
+		if err != nil {
+			continue
+		}
 		for _, d := range home.OpenDecisions(path) {
 			key := c.id + "\x00" + d.Key + "\x00" + d.Verb
 			if seenDecision[key] {
