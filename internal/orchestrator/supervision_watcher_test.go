@@ -24,6 +24,30 @@ func (testTaskStatePort) ReadTaskState(string, string) (*ObservedTaskState, erro
 	return &ObservedTaskState{}, nil
 }
 
+type testRetirementPort struct {
+	validate     func(string) error
+	validated    []string
+	retireErr    error
+	retiredPaths []string
+}
+
+func (p *testRetirementPort) RecoverPendingRetirements(string) (int, []error) {
+	return 0, nil
+}
+
+func (p *testRetirementPort) ValidateCheck(path string) error {
+	p.validated = append(p.validated, path)
+	if p.validate != nil {
+		return p.validate(path)
+	}
+	return nil
+}
+
+func (p *testRetirementPort) RetireMergedPoll(_ string, _ string, checkPath string) error {
+	p.retiredPaths = append(p.retiredPaths, checkPath)
+	return p.retireErr
+}
+
 type testCycleSender struct{}
 
 func (testCycleSender) Alive(string, map[string]string) (bool, error) { return false, nil }
@@ -60,6 +84,99 @@ var activeTestHooks WatcherHooks = NoopWatcherHooks{}
 
 func testRunCycle(home string) (bool, error) {
 	return RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, activeTestHooks, NoopRetirementPort{}, testTaskStatePort{})
+}
+
+func TestRunCycle_CheckValidationPortAllowsCheckWake(t *testing.T) {
+	home := t.TempDir()
+	checksDir := filepath.Join(home, "state", "checks")
+	if err := os.MkdirAll(checksDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	checkPath := filepath.Join(checksDir, "global.check")
+	if err := os.WriteFile(checkPath, []byte("#!/bin/sh\necho ready\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	retirement := &testRetirementPort{}
+	resetRecovery()
+	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, retirement, testTaskStatePort{}); err != nil {
+		t.Fatalf("run cycle: %v", err)
+	}
+
+	records, err := DrainWakes(home)
+	if err != nil {
+		t.Fatalf("drain wakes: %v", err)
+	}
+	if len(records) != 1 || records[0].Kind != "check" || records[0].Key != "global:global" {
+		t.Fatalf("wake records = %#v, want one global check wake", records)
+	}
+	if len(retirement.validated) != 1 || retirement.validated[0] != checkPath {
+		t.Fatalf("validated paths = %#v, want [%q]", retirement.validated, checkPath)
+	}
+}
+
+func TestRunCycle_CheckValidationPortRefusesCheck(t *testing.T) {
+	home := t.TempDir()
+	stateDir := filepath.Join(home, "state")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	checkPath := filepath.Join(stateDir, "task-1.check")
+	if err := os.WriteFile(checkPath, []byte("#!/bin/sh\necho ready\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	retirement := &testRetirementPort{validate: func(string) error { return fmt.Errorf("refused") }}
+	resetRecovery()
+	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, retirement, testTaskStatePort{}); err != nil {
+		t.Fatalf("run cycle: %v", err)
+	}
+
+	records, err := DrainWakes(home)
+	if err != nil {
+		t.Fatalf("drain wakes: %v", err)
+	}
+	if len(records) != 0 {
+		t.Fatalf("wake records = %#v, want none", records)
+	}
+	if len(retirement.retiredPaths) != 0 {
+		t.Fatalf("retired paths = %#v, want none", retirement.retiredPaths)
+	}
+	if len(retirement.validated) != 1 || retirement.validated[0] != checkPath {
+		t.Fatalf("validated paths = %#v, want [%q]", retirement.validated, checkPath)
+	}
+}
+
+func TestRunCycle_CheckValidationPortAuthorizesRetirement(t *testing.T) {
+	home := t.TempDir()
+	stateDir := filepath.Join(home, "state")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	checkPath := filepath.Join(stateDir, "task-1.check")
+	if err := os.WriteFile(checkPath, []byte("#!/bin/sh\necho ready\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	retirement := &testRetirementPort{}
+	resetRecovery()
+	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, retirement, testTaskStatePort{}); err != nil {
+		t.Fatalf("run cycle: %v", err)
+	}
+
+	records, err := DrainWakes(home)
+	if err != nil {
+		t.Fatalf("drain wakes: %v", err)
+	}
+	if len(records) != 0 {
+		t.Fatalf("wake records = %#v, want none after retirement", records)
+	}
+	if len(retirement.retiredPaths) != 1 || retirement.retiredPaths[0] != checkPath {
+		t.Fatalf("retired paths = %#v, want [%q]", retirement.retiredPaths, checkPath)
+	}
+	if len(retirement.validated) != 2 {
+		t.Fatalf("validated paths = %#v, want discovery and retirement validation", retirement.validated)
+	}
 }
 
 // --- absorbStaleSignal tests (pure predicate) ---
