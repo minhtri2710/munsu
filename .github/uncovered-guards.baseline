@@ -298,7 +298,6 @@ internal/orchestrator/afk_process_identity_darwin.go	processIdentity	1	len(raw) 
 internal/orchestrator/afk_process_identity_linux.go	processIdentity	1	end < 0	burn-down(BEO-69): GOOS-gated, unmeasured where this baseline was generated; imported unwaived rather than left for the other platform to demand
 internal/orchestrator/afk_process_identity_linux.go	processIdentity	1	len(fields) <= 19	burn-down(BEO-69): GOOS-gated, unmeasured where this baseline was generated; imported unwaived rather than left for the other platform to demand
 internal/orchestrator/afk_target.go	ValidateTargetOwnership	1	result == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/retirement_journal.go	VerifyRetirementContinuity	1	HasPendingReport(homeDir, taskID) || HasAnyOpenReport(homeDir, taskID)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/supervision_check.go	ValidateCheck	1	fi.Mode()&os.ModeSymlink != 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/supervision_watcher.go	run	1	!acquired	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/supervision_watcher.go	run	1	!claimed	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
