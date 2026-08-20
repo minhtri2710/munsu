@@ -6,7 +6,8 @@
 //
 //	Intent -> Durable -> Acked -> Retired
 //
-// Notification and receiver observation are orthogonal to that lifecycle;
+// The authoritative phase contract is ADR-0002 §4. Notification and receiver
+// observation are orthogonal to that lifecycle;
 // the tests cover their delivery/replay behavior across the named paths:
 //
 //   - crash/replay: a durable report that is never acked survives a simulated
