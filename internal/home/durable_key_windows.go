@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// durableKey returns the NTFS/Win32-safe file stem (no extension) used to
+// DurableKey returns the NTFS/Win32-safe file stem (no extension) used to
 // persist a logical task key (id) on Windows. Win32 forbids the bytes
 // < > : " / \ | ? * and control characters in filenames, treats ':' as an
 // alternate-data-stream separator, trims trailing dots and spaces, and
@@ -27,9 +27,9 @@ import (
 // NTFS is case-insensitive, so two logical keys differing only in case (which
 // munsu does not mint) would share one file on disk; that is a property of the
 // filesystem, not of this mapping.
-func durableKey(id string) (string, error) {
-	if id == "" {
-		return "", fmt.Errorf("durable key: empty id")
+func DurableKey(id string) (string, error) {
+	if err := validateTaskID(id); err != nil {
+		return "", err
 	}
 	var b strings.Builder
 	b.Grow(len(id))
@@ -48,11 +48,11 @@ func durableKey(id string) (string, error) {
 	return stem, nil
 }
 
-// reverseDurableKey returns the logical task key for a persisted file stem
-// created by durableKey. A stem that is not a well-formed encoding (a stray
+// ReverseDurableKey returns the logical task key for a persisted file stem
+// created by DurableKey. A stem that is not a well-formed encoding (a stray
 // or truncated escape, or an unescaped byte the encoder would never emit)
 // fails closed instead of guessing a key.
-func reverseDurableKey(stem string) (string, error) {
+func ReverseDurableKey(stem string) (string, error) {
 	var b strings.Builder
 	b.Grow(len(stem))
 	for i := 0; i < len(stem); i++ {
@@ -75,7 +75,18 @@ func reverseDurableKey(stem string) (string, error) {
 			return "", fmt.Errorf("durable key: unescaped byte %q in %q", c, stem)
 		}
 	}
-	return b.String(), nil
+	id := b.String()
+	if err := validateTaskID(id); err != nil {
+		return "", fmt.Errorf("durable key: invalid logical id from stem %q", stem)
+	}
+	canonical, err := DurableKey(id)
+	if err != nil {
+		return "", err
+	}
+	if canonical != stem {
+		return "", fmt.Errorf("durable key: non-canonical stem %q", stem)
+	}
+	return id, nil
 }
 
 func isDurableSafeByte(c byte) bool {

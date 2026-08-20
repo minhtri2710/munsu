@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/backend"
+	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
@@ -99,6 +100,9 @@ func scanBoundEndpoints(homeDir string) ([]boundEndpoint, error) {
 	var out []boundEndpoint
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".meta") {
+			continue
+		}
+		if _, err := home.ReverseDurableKey(strings.TrimSuffix(entry.Name(), ".meta")); err != nil {
 			continue
 		}
 		meta, err := readMetaFile(filepath.Join(stateDir, entry.Name()))

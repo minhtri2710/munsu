@@ -17,17 +17,17 @@ func TestWindowsDurableKeyEscapes(t *testing.T) {
 		{"a%3Ab", "a%253Ab"},
 	}
 	for _, c := range cases {
-		got, err := durableKey(c.id)
+		got, err := DurableKey(c.id)
 		if err != nil {
-			t.Errorf("durableKey(%q): %v", c.id, err)
+			t.Errorf("DurableKey(%q): %v", c.id, err)
 			continue
 		}
 		if got != c.want {
-			t.Errorf("durableKey(%q) = %q, want %q", c.id, got, c.want)
+			t.Errorf("DurableKey(%q) = %q, want %q", c.id, got, c.want)
 		}
-		back, err := reverseDurableKey(got)
+		back, err := ReverseDurableKey(got)
 		if err != nil {
-			t.Errorf("reverseDurableKey(%q): %v", got, err)
+			t.Errorf("ReverseDurableKey(%q): %v", got, err)
 			continue
 		}
 		if back != c.id {
@@ -41,9 +41,9 @@ func TestWindowsDurableKeyIsInjective(t *testing.T) {
 	ids := []string{"captain:foo", "captain_foo", "captain%3Afoo", "a:b", "ab", "a%2Ab"}
 	seen := map[string]string{}
 	for _, id := range ids {
-		stem, err := durableKey(id)
+		stem, err := DurableKey(id)
 		if err != nil {
-			t.Fatalf("durableKey(%q): %v", id, err)
+			t.Fatalf("DurableKey(%q): %v", id, err)
 		}
 		if other, dup := seen[stem]; dup {
 			t.Errorf("collision: %q and %q both map to %q", other, id, stem)
@@ -54,20 +54,28 @@ func TestWindowsDurableKeyIsInjective(t *testing.T) {
 
 func TestWindowsDurableKeyRejectsReservedNames(t *testing.T) {
 	for _, id := range []string{"CON", "con", "prn", "AUX", "NUL", "COM1", "com9", "LPT1", "lpt8"} {
-		if _, err := durableKey(id); err == nil {
-			t.Errorf("durableKey(%q) succeeded, want reserved-name error", id)
+		if _, err := DurableKey(id); err == nil {
+			t.Errorf("DurableKey(%q) succeeded, want reserved-name error", id)
 		}
 	}
 	// Captain keys are never reserved device names even with a reserved suffix.
-	if _, err := durableKey("captain:con"); err != nil {
-		t.Errorf("durableKey(captain:con) errored: %v", err)
+	if _, err := DurableKey("captain:con"); err != nil {
+		t.Errorf("DurableKey(captain:con) errored: %v", err)
 	}
 }
 
 func TestWindowsReverseRejectsMalformed(t *testing.T) {
 	for _, stem := range []string{"%", "a%2", "a%GGb", "a:b"} {
-		if _, err := reverseDurableKey(stem); err == nil {
-			t.Errorf("reverseDurableKey(%q) succeeded, want error", stem)
+		if _, err := ReverseDurableKey(stem); err == nil {
+			t.Errorf("ReverseDurableKey(%q) succeeded, want error", stem)
+		}
+	}
+}
+
+func TestWindowsReverseRejectsNonCanonical(t *testing.T) {
+	for _, stem := range []string{"a%2b", "%41", "%2E%2E", "CON"} {
+		if _, err := ReverseDurableKey(stem); err == nil {
+			t.Errorf("ReverseDurableKey(%q) succeeded, want error", stem)
 		}
 	}
 }

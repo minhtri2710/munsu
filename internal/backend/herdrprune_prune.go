@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // PruneOptions controls the prune operation.
@@ -109,7 +111,9 @@ func liveWorkspaceIDsFromTaskMeta(homeDir string) (map[string]bool, error) {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".meta") {
 			continue
 		}
-		id := strings.TrimSuffix(e.Name(), ".meta")
+		if _, err := home.ReverseDurableKey(strings.TrimSuffix(e.Name(), ".meta")); err != nil {
+			continue
+		}
 		meta, err := readMetaFile(filepath.Join(stateDir, e.Name()))
 		if err != nil {
 			continue // skip unreadable meta
@@ -117,7 +121,6 @@ func liveWorkspaceIDsFromTaskMeta(homeDir string) (map[string]bool, error) {
 		if wsID := meta["herdr_workspace_id"]; wsID != "" {
 			ids[wsID] = true
 		}
-		_ = id // meta file read for workspace id extraction only
 	}
 	return ids, nil
 }

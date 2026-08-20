@@ -102,6 +102,14 @@ func TestScanGeneralRelevantReturnsLogicalIDs(t *testing.T) {
 	}
 }
 
+func TestDurableKeyRejectsInvalidIDs(t *testing.T) {
+	for _, id := range []string{"", ".", "..", "a/b", "a\\b"} {
+		if _, err := DurableKey(id); err == nil {
+			t.Errorf("DurableKey(%q) succeeded, want invalid-id error", id)
+		}
+	}
+}
+
 // TestAbsorbClassReadsDurableKey verifies AbsorbClass resolves the logical id
 // to the durable status file.
 func TestAbsorbClassReadsDurableKey(t *testing.T) {

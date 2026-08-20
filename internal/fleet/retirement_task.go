@@ -1369,7 +1369,10 @@ func otherWorkspaceRefs(homeDir, excludeID, workspaceID string) []string {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".meta") {
 			continue
 		}
-		taskID := strings.TrimSuffix(entry.Name(), ".meta")
+		taskID, err := home.ReverseDurableKey(strings.TrimSuffix(entry.Name(), ".meta"))
+		if err != nil {
+			continue
+		}
 		if taskID == excludeID {
 			continue
 		}

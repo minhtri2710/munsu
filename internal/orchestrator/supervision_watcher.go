@@ -293,7 +293,10 @@ func scanFleetWithProbe(homeDir string, clearResolved bool, probe TaskEndpointPr
 		if !strings.HasSuffix(entry.Name(), ".meta") || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
-		id := strings.TrimSuffix(entry.Name(), ".meta")
+		id, err := home.ReverseDurableKey(strings.TrimSuffix(entry.Name(), ".meta"))
+		if err != nil {
+			continue
+		}
 		if seenStatus[id] {
 			// Status signal already actionable for this id; skip stale scan.
 			continue
@@ -340,7 +343,11 @@ func collectStatusIDs(stateDir string) map[string]struct{} {
 		if !strings.HasSuffix(name, ".status") || strings.HasPrefix(name, ".") {
 			continue
 		}
-		out[strings.TrimSuffix(name, ".status")] = struct{}{}
+		id, err := home.ReverseDurableKey(strings.TrimSuffix(name, ".status"))
+		if err != nil {
+			continue
+		}
+		out[id] = struct{}{}
 	}
 	return out
 }

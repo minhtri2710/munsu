@@ -17,13 +17,13 @@ func StateDir(homeDir string) string {
 
 // metaPath returns the path to the meta file for the given task ID. The
 // persisted file stem is the platform durable key for the logical id (see
-// durableKey), so the same logical id always resolves to the one persisted
+// DurableKey), so the same logical id always resolves to the one persisted
 // key for the platform.
 func metaPath(homeDir string, id string) (string, error) {
 	if err := validateTaskID(id); err != nil {
 		return "", err
 	}
-	stem, err := durableKey(id)
+	stem, err := DurableKey(id)
 	if err != nil {
 		return "", err
 	}
@@ -36,7 +36,7 @@ func statusPath(homeDir string, id string) (string, error) {
 	if err := validateTaskID(id); err != nil {
 		return "", err
 	}
-	stem, err := durableKey(id)
+	stem, err := DurableKey(id)
 	if err != nil {
 		return "", err
 	}
@@ -315,7 +315,7 @@ func ListMeta(homeDir string) ([]MetaEntry, error) {
 		if !strings.HasSuffix(name, ".meta") {
 			continue
 		}
-		id, err := reverseDurableKey(strings.TrimSuffix(name, ".meta"))
+		id, err := ReverseDurableKey(strings.TrimSuffix(name, ".meta"))
 		if err != nil {
 			continue
 		}

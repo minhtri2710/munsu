@@ -171,7 +171,10 @@ func appendHomeTasks(snap *FleetSnapshot, taskHome, source, homeLabel string, de
 		if !strings.HasSuffix(entry.Name(), ".meta") || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
-		id := strings.TrimSuffix(entry.Name(), ".meta")
+		id, err := mhome.ReverseDurableKey(strings.TrimSuffix(entry.Name(), ".meta"))
+		if err != nil {
+			continue
+		}
 		if _, hasCanonical := canonical[id]; hasCanonical {
 			continue
 		}
@@ -256,7 +259,10 @@ func appendHomeTasks(snap *FleetSnapshot, taskHome, source, homeLabel string, de
 		if !strings.HasSuffix(entry.Name(), ".meta") || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
-		id := strings.TrimSuffix(entry.Name(), ".meta")
+		id, err := mhome.ReverseDurableKey(strings.TrimSuffix(entry.Name(), ".meta"))
+		if err != nil {
+			continue
+		}
 		meta, metaErr := mhome.ReadMeta(taskHome, id)
 		if metaErr != nil || meta["kind"] != "captain" {
 			continue

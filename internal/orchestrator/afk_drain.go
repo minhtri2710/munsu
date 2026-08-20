@@ -196,7 +196,10 @@ func peekFleet(homeDir string, provider FleetSnapshotProvider) (*DrainFleetPeek,
 		if err == nil {
 			for _, e := range entries {
 				if strings.HasSuffix(e.Name(), ".meta") && !strings.HasPrefix(e.Name(), ".") {
-					id := strings.TrimSuffix(e.Name(), ".meta")
+					id, err := home.ReverseDurableKey(strings.TrimSuffix(e.Name(), ".meta"))
+					if err != nil {
+						continue
+					}
 					meta, err := home.ReadMeta(homeDir, id)
 					if err == nil {
 						tasks = append(tasks, FleetTaskSnapshot{

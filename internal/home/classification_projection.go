@@ -28,7 +28,7 @@ func OpenActivities(path string) []domain.Activity {
 	return domain.FoldOpenActivities(statusLines(path))
 }
 func AbsorbClass(id, stateDir string) domain.AbsorbResult {
-	stem, err := durableKey(id)
+	stem, err := DurableKey(id)
 	if err != nil {
 		return domain.None
 	}
@@ -44,7 +44,7 @@ func ScanGeneralRelevant(stateDir string) []domain.StatusMatch {
 		if !strings.HasSuffix(x.Name(), ".status") {
 			continue
 		}
-		id, err := reverseDurableKey(strings.TrimSuffix(x.Name(), ".status"))
+		id, err := ReverseDurableKey(strings.TrimSuffix(x.Name(), ".status"))
 		if err != nil {
 			continue
 		}

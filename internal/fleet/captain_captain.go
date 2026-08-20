@@ -1144,7 +1144,10 @@ func inFlightSoldierIDs(captainHome string) ([]string, error) {
 		if !strings.HasSuffix(name, ".meta") || strings.HasPrefix(name, ".") {
 			continue
 		}
-		id := strings.TrimSuffix(name, ".meta")
+		id, err := mhome.ReverseDurableKey(strings.TrimSuffix(name, ".meta"))
+		if err != nil {
+			continue
+		}
 		meta, err := mhome.ReadMeta(captainHome, id)
 		if err != nil {
 			continue
