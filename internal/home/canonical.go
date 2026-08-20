@@ -149,6 +149,12 @@ func Open(root string) (*Home, error) {
 	if err := verifyLayout(abs); err != nil {
 		return nil, err
 	}
+	// The home's owner boundary must be owner-private. A root or logical root
+	// whose protection was weakened or tampered with fails closed rather than
+	// exposing durable records to other principals.
+	if err := verifyHomeProtection(abs); err != nil {
+		return nil, err
+	}
 	h := &Home{root: id.CanonicalRoot, id: id}
 	if err := h.recover(); err != nil {
 		return nil, err
@@ -215,7 +221,7 @@ func createHome(abs string) (*Home, error) {
 	if err := os.MkdirAll(abs, 0700); err != nil {
 		return nil, fmt.Errorf("home: create root: %w", err)
 	}
-	if err := os.Chmod(abs, 0700); err != nil {
+	if err := secureDir(abs); err != nil {
 		return nil, fmt.Errorf("home: secure root: %w", err)
 	}
 	canonical, err := canonicalRoot(abs)
@@ -267,8 +273,31 @@ func createLayout(root string) error {
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			return fmt.Errorf("home: create layout %s: %w", dir, err)
 		}
-		if err := os.Chmod(dir, 0700); err != nil {
+		if err := secureDir(dir); err != nil {
 			return fmt.Errorf("home: secure layout %s: %w", dir, err)
+		}
+	}
+	return nil
+}
+
+// verifyHomeProtection confirms that the home's owner boundary is still
+// owner-private: the root and each logical root directory must be accessible
+// only by the owner. A home whose protection was weakened or tampered with
+// fails closed so durable records are never exposed to other principals.
+func verifyHomeProtection(root string) error {
+	for _, name := range []string{
+		"", // the home root itself
+		CanonicalLayout.State,
+		CanonicalLayout.Data,
+		CanonicalLayout.Config,
+		CanonicalLayout.Projects,
+	} {
+		path := root
+		if name != "" {
+			path = filepath.Join(root, name)
+		}
+		if err := verifyProtection(path, true); err != nil {
+			return err
 		}
 	}
 	return nil

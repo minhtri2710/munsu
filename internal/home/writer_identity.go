@@ -67,7 +67,7 @@ func PublishWriterIdentity(homeDir, kind string, identity WriterIdentity) error 
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("creating identity directory: %w", err)
 	}
-	if err := os.Chmod(dir, 0700); err != nil {
+	if err := secureDir(dir); err != nil {
 		return fmt.Errorf("securing identity directory: %w", err)
 	}
 	data, err := json.Marshal(identity)
@@ -80,7 +80,7 @@ func PublishWriterIdentity(homeDir, kind string, identity WriterIdentity) error 
 	}
 	tmp := file.Name()
 	defer os.Remove(tmp)
-	if err := file.Chmod(0600); err != nil {
+	if err := secureFile(tmp); err != nil {
 		file.Close()
 		return err
 	}
@@ -98,7 +98,7 @@ func PublishWriterIdentity(homeDir, kind string, identity WriterIdentity) error 
 	if err := os.Rename(tmp, path); err != nil {
 		return err
 	}
-	if err := os.Chmod(path, 0600); err != nil {
+	if err := secureFile(path); err != nil {
 		return err
 	}
 	return nil

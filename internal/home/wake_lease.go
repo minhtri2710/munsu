@@ -78,7 +78,6 @@ func ClaimWakes(homeDir, consumer string, leaseCaptains, limit int) (*ClaimResul
 	queueFile, err := os.Open(qPath)
 	var queueRecords []WakeRecord
 	if err == nil {
-		defer queueFile.Close()
 		scanner := bufio.NewScanner(queueFile)
 		for scanner.Scan() {
 			parts := strings.SplitN(scanner.Text(), "\t", 5)
@@ -93,6 +92,11 @@ func ClaimWakes(homeDir, consumer string, leaseCaptains, limit int) (*ClaimResul
 				Payload: parts[4],
 			})
 		}
+		// Close the read handle before any rewrite or removal below. Windows
+		// refuses to unlink (and misbehaves on truncate of) a file that is
+		// still open, so a deferred close would leave the stale queue behind
+		// on every drain and re-deliver the claimed wakes (#549).
+		_ = queueFile.Close()
 	}
 
 	// Take up to limit records
@@ -153,7 +157,9 @@ func ClaimWakes(homeDir, consumer string, leaseCaptains, limit int) (*ClaimResul
 			return nil, fmt.Errorf("rewriting wake queue: %w", err)
 		}
 	} else {
-		os.Remove(qPath)
+		if err := os.Remove(qPath); err != nil && !os.IsNotExist(err) {
+			return nil, fmt.Errorf("removing claimed wake queue: %w", err)
+		}
 	}
 
 	return &ClaimResult{

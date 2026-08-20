@@ -86,5 +86,5 @@ func privateDir(dir string) error {
 	if !info.IsDir() {
 		return ErrNotDirectory
 	}
-	return os.Chmod(dir, 0700)
+	return secureDir(dir)
 }
