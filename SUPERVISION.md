@@ -51,7 +51,9 @@ with a shebang (`#!`). On Unix, the file must also have the owner-execute mode
 bit. Windows does not provide executable mode bits through Go and does not
 require a Windows executable extension for these scripts, so a valid shebang is
 the executability gate there. Empty, unreadable, non-regular,
-symlinked, or missing-shebang checks are refused on every platform.
+symlinked, or missing-shebang checks are refused on every platform. Retirement
+polling and the supervision watcher use this same validator, so both paths apply
+these platform-specific rules consistently.
 
 ## Watch arm
 
