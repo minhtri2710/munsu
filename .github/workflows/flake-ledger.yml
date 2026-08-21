@@ -64,7 +64,7 @@ jobs:
       #
       # So the lane stops at reporting, and the cost of that is named here rather
       # than left to be discovered: nobody's branch is prepared any more. Whoever
-      # fixes the ledger runs `.github/scripts/flake-sweep.sh sync --owner BEO-541`
+      # fixes the ledger runs `.github/scripts/flake-sweep.sh sync --owner <ISSUE_ID>`
       # locally, using the repository's `BEO-<number>` issue-ID format, from the
       # diff this job writes to its run summary.
       #
@@ -194,7 +194,7 @@ jobs:
             echo 'Nothing prepares a branch for you. Apply this yourself, on a branch of your own:'
             echo
             echo '```sh'
-            echo '.github/scripts/flake-sweep.sh sync --owner BEO-541'
+            echo '.github/scripts/flake-sweep.sh sync --owner <ISSUE_ID>'
             echo '```'
             echo
             echo '`--owner` names the issue that will fix the test, and it has to be a real one:'
@@ -215,7 +215,7 @@ jobs:
             echo
             echo '</details>'
           } >>"$GITHUB_STEP_SUMMARY"
-          echo "::error::.github/flake-ledger.md is out of date. Run '.github/scripts/flake-sweep.sh sync --owner BEO-541' locally -- owners must use the BEO-<number> issue-ID format, and a real issue id is required because flake-ledger.sh check refuses TBD on purpose. The diff and the rest of this are in the run summary."
+          echo "::error::.github/flake-ledger.md is out of date. Run '.github/scripts/flake-sweep.sh sync --owner <ISSUE_ID>' locally -- owners must use the BEO-<number> issue-ID format, and a real issue id is required because flake-ledger.sh check refuses TBD on purpose. The diff and the rest of this are in the run summary."
 
       # The summary is what a person reads on the run page; this is for the diff
       # that is too long to read there, and for `records.tsv`. The records matter

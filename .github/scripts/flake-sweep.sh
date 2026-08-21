@@ -1063,10 +1063,10 @@ while [ $# -gt 0 ]; do
 		# Value demanded here, where it can be named: shift 2 on a missing one
 		# would exit silently under set -e, and this script's fail-closed cases
 		# are supposed to say what they refuse.
-		[ $# -ge 2 ] || die "--owner takes an issue id, e.g. --owner BEO-541"
+		[ $# -ge 2 ] || die "--owner takes an issue id, e.g. --owner <ISSUE_ID>"
 		OWNER="${2}"
 		shift 2
-		[ -n "$OWNER" ] || die "--owner takes an issue id, e.g. --owner BEO-541"
+		[ -n "$OWNER" ] || die "--owner takes an issue id, e.g. --owner <ISSUE_ID>"
 		;;
 	--window-days)
 		WINDOW_DAYS="${2:-}"
