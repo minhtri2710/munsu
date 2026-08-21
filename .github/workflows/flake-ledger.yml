@@ -180,7 +180,7 @@ jobs:
               echo
               echo '```sh'
               echo 'SWEEP_RECORDS=records.tsv .github/scripts/flake-sweep.sh check'
-              echo 'SWEEP_RECORDS=records.tsv .github/scripts/flake-sweep.sh sync'
+              echo 'SWEEP_RECORDS=records.tsv .github/scripts/flake-sweep.sh sync --owner <ISSUE_ID>'
               echo '```'
             } >>"$GITHUB_STEP_SUMMARY"
             echo "::error::the comparison failed but sync changed nothing -- the two disagree, which is a bug in flake-sweep.sh, not a stale ledger; the run summary and the flake-sweep artifact have the records to debug it"

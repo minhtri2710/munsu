@@ -866,13 +866,14 @@ selftest() {
 	#
 	# Mutation this answers: ignore OWNER in sync(), or drop it from the row it
 	# writes.
+	local owner_fixture="BEO-541"
 	scratch_ledger "$ledger"
-	SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" sync --owner BEO-541 >/dev/null || {
+	SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" sync --owner "$owner_fixture" >/dev/null || {
 		echo "::error::owner scenario: sync --owner failed" >&2
 		failed=1
 	}
-	if ! grep -q '| TestReopens | integration | aaaa1111@3001/1 | cccc3333@3003/1 |.*| BEO-541 | open |' "$ledger"; then
-		echo "::error::owner scenario: sync --owner BEO-541 did not write BEO-541 into the filed row" >&2
+	if ! grep -q "| TestReopens | integration | aaaa1111@3001/1 | cccc3333@3003/1 |.*| $owner_fixture | open |" "$ledger"; then
+		echo "::error::owner scenario: sync --owner <ISSUE_ID> did not write the validated owner into the filed row" >&2
 		failed=1
 	fi
 	if grep -q '| TBD |' "$ledger"; then
@@ -916,7 +917,7 @@ selftest() {
 	# reason would not.
 	#
 	# Mutation this answers: drop the `[ "$cmd" = "sync" ]` check.
-	if "$0" classify --owner BEO-541 </dev/null >/dev/null 2>&1; then
+	if "$0" classify --owner "$owner_fixture" </dev/null >/dev/null 2>&1; then
 		echo "::error::owner scenario: classify accepted --owner" >&2
 		failed=1
 	fi
