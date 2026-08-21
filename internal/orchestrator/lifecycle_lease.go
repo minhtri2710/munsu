@@ -8,7 +8,11 @@ type ClaimedWakeRecord = home.ClaimedWakeRecord
 type ClaimResult = home.ClaimResult
 
 func ClaimWakes(h, c string, seconds, limit int) (*ClaimResult, error) {
-	return home.ClaimWakes(h, c, seconds, limit)
+	result, err := home.ClaimWakes(h, c, seconds, limit)
+	if err == nil {
+		logWakeClaimObservation(result)
+	}
+	return result, err
 }
 func AckWakes(h, id string, events []string) error { return home.AckWakes(h, id, events) }
 func ResolveWake(h, leaseID, eventID, summary string) error {

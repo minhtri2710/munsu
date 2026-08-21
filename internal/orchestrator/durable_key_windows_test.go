@@ -27,7 +27,7 @@ func TestScanFleetWithProbeCheckPath(t *testing.T) {
 	if err := home.WriteMeta(tmp, "ship:1", map[string]string{"kind": "ship", "window": "@win"}); err != nil {
 		t.Fatal(err)
 	}
-	reasons := scanFleetWithProbe(tmp, false, nil, testTaskStatePort{})
+	reasons := scanFleetWithProbe(tmp, false, nil, testTaskStatePort{}, nil)
 	if len(reasons) == 0 {
 		t.Fatalf("scanFleetWithProbe returned no reasons for encoded ship:1 meta")
 	}

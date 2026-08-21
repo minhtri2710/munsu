@@ -128,6 +128,32 @@ func TestWakeClaimEmptyQueueReturnsEmptyWithoutLease(t *testing.T) {
 	}
 }
 
+func TestWakeClaimNonEmptyJSONOmitsInternalLatency(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MUNSU_HOME", home)
+	if err := mhome.EnqueueWake(home, "signal", "task", "payload"); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runContract(t, []string{"wake", "claim", "--consumer", "test", "--output", "json"})
+	if err != nil {
+		t.Fatalf("wake claim: %v\\n%s", err, out)
+	}
+	var envelope struct {
+		Kind string    `json:"kind"`
+		Data WakeClaim `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(out), &envelope); err != nil {
+		t.Fatalf("invalid JSON: %v\\n%s", err, out)
+	}
+	if envelope.Kind != "wake.claim" || envelope.Data.State != "claimed" || envelope.Data.WakeID == "" {
+		t.Fatalf("unexpected non-empty claim: %+v", envelope)
+	}
+	if strings.Contains(out, "wake-to-claim") || strings.Contains(out, "latenc") || strings.Contains(out, "scanned") {
+		t.Fatalf("internal observation leaked into wake.claim JSON: %s", out)
+	}
+}
+
 func TestSessionStartUsesSessionStartKind(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("MUNSU_HOME", home)

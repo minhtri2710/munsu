@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -40,12 +41,43 @@ type ClaimResult struct {
 	ExpiresAt int64 // unix captains
 	Wakes     []ClaimedWakeRecord
 	Reclaimed int // count of expired-lease wakes that were reclaimed
+
+	// WakeToClaimLatencies is the typed internal wake-to-claim latency per
+	// claimed wake, aligned by index with Wakes. Each value is measured as time
+	// since the record's LATEST enqueue Epoch: ReclaimExpiredLeases re-enqueues
+	// reclaimed wakes under a fresh Epoch before they are claimed again, so a
+	// reclaimed wake reports the short time since its latest enqueue, never its
+	// original emission age. It is an internal observation and is never surfaced
+	// through the CLI response contract.
+	WakeToClaimLatencies []time.Duration
+}
+
+// WakeAgeSinceEnqueue returns the latency between a wake record's latest
+// enqueue Epoch and now. Because a newly claimed record is read after
+// ReclaimExpiredLeases has re-enqueued reclaimed wakes, the Epoch on the
+// record IS the latest enqueue (reclaim creates a new Epoch), so this reports
+// time since the latest enqueue rather than original emission age. A malformed
+// Epoch measures as zero latency.
+func WakeAgeSinceEnqueue(epoch string, now time.Time) time.Duration {
+	secs, err := strconv.ParseInt(epoch, 10, 64)
+	if err != nil {
+		return 0
+	}
+	age := now.Sub(time.Unix(secs, 0))
+	if age < 0 {
+		return 0
+	}
+	return age
 }
 
 // ClaimWakes claims up to limit wake records from the queue under a lease.
 // Unacked wakes that have expired leases are reclaimed (re-enqueued then claimed).
 // Returns the claim result or an error.
 func ClaimWakes(homeDir, consumer string, leaseCaptains, limit int) (*ClaimResult, error) {
+	return claimWakesAt(homeDir, consumer, leaseCaptains, limit, time.Now)
+}
+
+func claimWakesAt(homeDir, consumer string, leaseCaptains, limit int, now func() time.Time) (*ClaimResult, error) {
 	stateDir := filepath.Join(homeDir, "state")
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
 		return nil, fmt.Errorf("creating state directory: %w", err)
@@ -67,8 +99,10 @@ func ClaimWakes(homeDir, consumer string, leaseCaptains, limit int) (*ClaimResul
 		limit = 10
 	}
 
-	// Reclaim expired leases first — re-enqueue their wakes
-	reclaimed, err := ReclaimExpiredLeases(homeDir)
+	// Reclaim expired leases first — re-enqueue their wakes. Keep the clock
+	// calls at the same behavioral boundary as the pre-observation code; the
+	// injected clock only makes those calls deterministic in tests.
+	reclaimed, err := reclaimExpiredLeasesAt(homeDir, now)
 	if err != nil {
 		return nil, err
 	}
@@ -115,8 +149,9 @@ func ClaimWakes(homeDir, consumer string, leaseCaptains, limit int) (*ClaimResul
 	if err := os.MkdirAll(leaseDir, 0755); err != nil {
 		return nil, fmt.Errorf("creating lease directory: %w", err)
 	}
-	leaseID := fmt.Sprintf("lease-%d", time.Now().UnixNano())
-	expiresAt := time.Now().Unix() + int64(leaseCaptains)
+	claimNow := now()
+	leaseID := fmt.Sprintf("lease-%d", claimNow.UnixNano())
+	expiresAt := now().Unix() + int64(leaseCaptains)
 
 	// Write lease file
 	leasePath := LeaseFilePath(homeDir, leaseID)
@@ -127,12 +162,13 @@ func ClaimWakes(homeDir, consumer string, leaseCaptains, limit int) (*ClaimResul
 	defer f.Close()
 
 	// Header: leaseID, consumer, expiresAt, claimedAt
-	header := fmt.Sprintf("%s\t%s\t%d\t%d\n", leaseID, consumer, expiresAt, time.Now().Unix())
+	header := fmt.Sprintf("%s\t%s\t%d\t%d\n", leaseID, consumer, expiresAt, now().Unix())
 	if _, err := f.WriteString(header); err != nil {
 		return nil, fmt.Errorf("writing lease header: %w", err)
 	}
 
 	var resultWakes []ClaimedWakeRecord
+	var claimLatencies []time.Duration
 	for _, r := range claimed {
 		line := fmt.Sprintf("%s\t%s\t%s\t%s\t%s\n", r.Epoch, r.Seq, r.Kind, r.Key, r.Payload)
 		if _, err := f.WriteString(line); err != nil {
@@ -145,6 +181,7 @@ func ClaimWakes(homeDir, consumer string, leaseCaptains, limit int) (*ClaimResul
 			Key:     r.Key,
 			Payload: r.Payload,
 		})
+		claimLatencies = append(claimLatencies, WakeAgeSinceEnqueue(r.Epoch, claimNow))
 	}
 
 	// Rewrite the queue file with remaining records
@@ -163,11 +200,12 @@ func ClaimWakes(homeDir, consumer string, leaseCaptains, limit int) (*ClaimResul
 	}
 
 	return &ClaimResult{
-		LeaseID:   leaseID,
-		Consumer:  consumer,
-		ExpiresAt: expiresAt,
-		Wakes:     resultWakes,
-		Reclaimed: reclaimed,
+		LeaseID:              leaseID,
+		Consumer:             consumer,
+		ExpiresAt:            expiresAt,
+		Wakes:                resultWakes,
+		Reclaimed:            reclaimed,
+		WakeToClaimLatencies: claimLatencies,
 	}, nil
 }
 
@@ -239,13 +277,17 @@ func AckWakes(homeDir, leaseID string, eventIDs []string) error {
 // reclaimExpiredLeases finds expired lease files and re-enqueues their wakes.
 // Returns the count of re-enqueued wakes.
 func ReclaimExpiredLeases(homeDir string) (int, error) {
+	return reclaimExpiredLeasesAt(homeDir, time.Now)
+}
+
+func reclaimExpiredLeasesAt(homeDir string, now func() time.Time) (int, error) {
 	leaseDir := LeaseDir(homeDir)
 	entries, err := os.ReadDir(leaseDir)
 	if err != nil {
 		return 0, nil
 	}
 
-	now := time.Now().Unix()
+	reclaimNow := now().Unix()
 	reclaimed := 0
 
 	for _, entry := range entries {
@@ -281,7 +323,7 @@ func ReclaimExpiredLeases(homeDir string) (int, error) {
 			continue
 		}
 
-		if now < expiresAt {
+		if reclaimNow < expiresAt {
 			f.Close()
 			continue // not expired yet
 		}
@@ -300,7 +342,7 @@ func ReclaimExpiredLeases(homeDir string) (int, error) {
 			if wakeResolutionCompleted(homeDir, wakeParts[0]+":"+wakeParts[1]) {
 				continue
 			}
-			if err := EnqueueWake(homeDir, wakeParts[2], wakeParts[3], wakeParts[4]); err == nil {
+			if err := enqueueWakeAt(homeDir, wakeParts[2], wakeParts[3], wakeParts[4], now()); err == nil {
 				enqueued++
 			}
 		}
