@@ -891,7 +891,7 @@ selftest() {
 	# None of them may reach the table.
 	#
 	# Mutation this answers: drop the owner checks in the argument handling.
-	for bad in TBD "" "two words" "--window-days"; do
+	for bad in TBD "" "two words" "--window-days" not-an-issue; do
 		scratch_ledger "$ledger"
 		if SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" sync --owner "$bad" >/dev/null 2>&1; then
 			echo "::error::owner scenario: sync --owner \"$bad\" was accepted" >&2
@@ -1099,6 +1099,9 @@ if [ -n "$OWNER" ]; then
 	-*) die "--owner takes an issue id, got \"$OWNER\"" ;;
 	TBD) die "--owner must name a real issue, not TBD -- flake-ledger.sh refuses TBD on purpose" ;;
 	esac
+	if [[ ! "$OWNER" =~ ^BEO-[0-9]+$ ]]; then
+		die "--owner must match BEO-<number>, got \"$OWNER\""
+	fi
 	[ "$cmd" = "sync" ] ||
 		die "--owner only applies to sync; it names the issue that owns the rows sync writes, and $cmd writes no rows"
 fi
