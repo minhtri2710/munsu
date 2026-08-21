@@ -234,6 +234,32 @@ func TestHerdrEventSource_Wait_Timeout(t *testing.T) {
 	}
 }
 
+// spawnBackstop bounds a wait on a spawned process by a share of the test
+// binary's OWN remaining -timeout budget instead of by a literal.
+//
+// A literal is what made this file flaky (#574): `2 * time.Second` is not a
+// property of the adapter, it is a claim about how fast this machine forks,
+// execs a shell and lands its first write. Under `go test ./...` on a loaded
+// runner that claim is false while nothing at all is wrong with the code under
+// test. Deriving the bound from -timeout gives a loaded runner and an idle one
+// the same semantics; the slow one merely takes longer to reach the same
+// verdict. Halving what remains leaves room for the rest of the test and still
+// fails ahead of the binary's own timeout panic, so the failure keeps its
+// message instead of becoming a goroutine dump.
+//
+// This is a backstop for a genuine hang, never the primary signal: every
+// caller also ends on evidence (see awaitFakeBlocking). `go test -timeout 0`
+// asks for no deadline at all, so honour that with a nil channel that never
+// fires and let the evidence do the work.
+func spawnBackstop(t *testing.T) <-chan time.Time {
+	t.Helper()
+	deadline, ok := t.Deadline()
+	if !ok {
+		return nil
+	}
+	return time.After(time.Until(deadline) / 2)
+}
+
 // awaitFakeBlocking blocks until the fake herdr has recorded its agent-wait
 // argv line, which it does immediately before `exec sleep`. Polling this
 // marker replaces a fixed sleep: on a loaded runner a fixed sleep can elapse
@@ -241,16 +267,30 @@ func TestHerdrEventSource_Wait_Timeout(t *testing.T) {
 // during exec/start-up instead of while it is blocked. That variant still
 // passes (ctx.Err() is non-nil either way) but never exercises the
 // kill-the-blocked-process path — silent coverage loss, not a visible flake.
-func awaitFakeBlocking(t *testing.T, logPath string) {
+//
+// The polling itself is unbounded on purpose. What ends this wait is evidence,
+// not a clock: either the marker appears, or waitReturned proves the fake can
+// no longer reach the blocking branch because the process running it is
+// already gone — the same "the child died instead of signalling" signal the
+// readiness pipe in internal/orchestrator gets from EOF. Both outcomes are
+// exact, so the derived backstop below only ever catches a true hang.
+func awaitFakeBlocking(t *testing.T, logPath string, waitReturned <-chan error) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
+	backstop := spawnBackstop(t)
+	poll := time.NewTicker(2 * time.Millisecond)
+	defer poll.Stop()
+	for {
 		if fi, err := os.Stat(logPath); err == nil && fi.Size() > 0 {
 			return
 		}
-		time.Sleep(2 * time.Millisecond)
+		select {
+		case err := <-waitReturned:
+			t.Fatalf("Wait returned (err = %v) while the fake herdr was still short of its blocking agent-wait branch (no argv recorded at %s): the fake never blocked, so the kill-the-blocked-process path cannot be exercised", err, logPath)
+		case <-backstop:
+			t.Fatalf("fake herdr never reached its blocking agent-wait branch and Wait is still in flight (no argv recorded at %s)", logPath)
+		case <-poll.C:
+		}
 	}
-	t.Fatalf("fake herdr never reached its blocking agent-wait branch (no argv recorded at %s)", logPath)
 }
 
 func TestHerdrEventSource_Wait_ContextCancellation(t *testing.T) {
@@ -266,7 +306,7 @@ func TestHerdrEventSource_Wait_ContextCancellation(t *testing.T) {
 	}()
 	// Synchronize on the fake actually reaching its blocking branch, so the
 	// cancellation below can only be observed by killing a blocked process.
-	awaitFakeBlocking(t, logPath)
+	awaitFakeBlocking(t, logPath, done)
 	// Guard the other half of the same property: Wait must still be in flight
 	// when cancel() fires. If it already returned, whatever error arrives says
 	// nothing about the cancellation path.
@@ -281,7 +321,7 @@ func TestHerdrEventSource_Wait_ContextCancellation(t *testing.T) {
 		if !errors.Is(err, context.Canceled) {
 			t.Errorf("err = %v, want context.Canceled", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-spawnBackstop(t):
 		t.Fatal("Wait did not return after context cancellation")
 	}
 }
