@@ -41,6 +41,31 @@ func TestLogcycleObservation_EmitsStaleTaskAndAge(t *testing.T) {
 	}
 }
 
+func TestRunCycleWithProbeAndSenderLogsObservation(t *testing.T) {
+	home := t.TempDir()
+	resetRecovery()
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := os.Stderr
+	os.Stderr = writer
+	_, cycleErr := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, activeTestHooks, NoopRetirementPort{}, testTaskStatePort{})
+	_ = writer.Close()
+	os.Stderr = previous
+	if cycleErr != nil {
+		t.Fatalf("RunCycleWithProbeAndSender: %v", cycleErr)
+	}
+	output, err := io.ReadAll(reader)
+	_ = reader.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(output), "[watcher-obs] scanned=0 suppressed=0") {
+		t.Fatalf("cycle observation output %q omits scan and suppression counts", output)
+	}
+}
+
 func TestCycleObservation_ScannedCount(t *testing.T) {
 	home := t.TempDir()
 	for i := 0; i < 4; i++ {

@@ -52,3 +52,12 @@ func logCycleObservation(obs *cycleObservation) {
 		fmt.Fprintf(os.Stderr, "[watcher-obs] stale task=%s age=%s\n", id, obs.staleByTask[id])
 	}
 }
+
+func logWakeClaimObservation(result *ClaimResult) {
+	if result == nil {
+		return
+	}
+	for i, latency := range result.WakeToClaimLatencies {
+		fmt.Fprintf(os.Stderr, "[watcher-obs] wake=%d wake-to-claim=%s\n", i, latency)
+	}
+}

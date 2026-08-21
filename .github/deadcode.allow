@@ -115,6 +115,7 @@ internal/harness/launch.go	LaunchString	burn-down(BEO-63): pre-existing, importe
 internal/harness/launch.go	LaunchStringFromAdapter	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/harness/preflight.go	PreflightBinaryName	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/harness/quota_balanced.go	newQuotaSelectorWithProvider	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
+internal/home/wake_lease.go	ReclaimExpiredLeases	triaged as a test-only reclaim seam used across home and orchestrator tests; ClaimWakes would immediately claim re-enqueued wakes and hide re-enqueue counts, resolved-event suppression, and lease-file removal
 internal/home/atomic.go	publishExclusive	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/home/atomic_windows.go	publishExclusive	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/taskauthority/canonical_cleanup.go	cleanupStatusLabel	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged

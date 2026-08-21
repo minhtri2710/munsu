@@ -428,10 +428,14 @@ var recoveryDone sync.Map
 
 // RunCycle performs one durable scan/enqueue cycle with condition dedupe.
 // It is the shared path used by the persistent daemon and `munsu watch run`;
-// it does not capture internal cycle observations (the daemon passes an
-// observation via runCycleWithProbeAndSender).
+// both paths capture and log the cycle's internal observations.
 func RunCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, states TaskStatePort) (bool, error) {
-	return runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement, states, nil)
+	obs := newCycleObservation()
+	emitted, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement, states, obs)
+	if err == nil {
+		logCycleObservation(obs)
+	}
+	return emitted, err
 }
 
 // runRecovery executes the one-shot recovery on watcher startup.

@@ -76,7 +76,11 @@ func TestReclaimUsesOneEligibilitySnapshot(t *testing.T) {
 		t.Fatalf("mkdir lease directory: %v", err)
 	}
 	for i := 0; i < 2; i++ {
-		contents := fmt.Sprintf("lease-%d\\tconsumer\\t1700000005\\t1700000000\\n1700000000\\t%d\\tsignal\\ttask-%d\\tpayload\\n", i, i+1, i)
+		expiresAt := int64(1700000005)
+		if i == 0 {
+			expiresAt = 1700000000
+		}
+		contents := fmt.Sprintf("lease-%d\tconsumer\t%d\t1700000000\n1700000000\t%d\tsignal\ttask-%d\tpayload\n", i, expiresAt, i+1, i)
 		if err := os.WriteFile(filepath.Join(leaseDir, fmt.Sprintf("lease-%d", i)), []byte(contents), 0600); err != nil {
 			t.Fatalf("write lease %d: %v", i, err)
 		}
@@ -93,8 +97,8 @@ func TestReclaimUsesOneEligibilitySnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reclaimExpiredLeasesAt: %v", err)
 	}
-	if reclaimed != 0 {
-		t.Fatalf("reclaimed=%d, want 0 when the initial eligibility snapshot is before both expiries", reclaimed)
+	if reclaimed != 1 {
+		t.Fatalf("reclaimed=%d, want 1 eligible lease from the initial snapshot", reclaimed)
 	}
 }
 
