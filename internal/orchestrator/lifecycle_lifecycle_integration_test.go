@@ -76,6 +76,9 @@ func TestLifecycleEnqueueToClaimLatency(t *testing.T) {
 	if len(res.WakeToClaimLatencies) != len(res.Wakes) {
 		t.Fatalf("latencies = %d, want %d (one per claimed wake)", len(res.WakeToClaimLatencies), len(res.Wakes))
 	}
+	if latency := res.WakeToClaimLatencies[0]; latency < 0 || latency > 5*time.Second {
+		t.Fatalf("wake-to-claim latency = %v, want a non-negative value below 5s", latency)
+	}
 }
 
 // TestLockCrossProcessReleaseAtExit proves the real end-user invariant that
