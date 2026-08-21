@@ -32,8 +32,8 @@ func TestWakeAgeSinceEnqueue_MalformedOrFutureEpochIsZero(t *testing.T) {
 
 // TestClaimReportsWakeToClaimLatency verifies ClaimWakes reports one latency
 // per claimed wake, aligned with the Wakes slice, measured since the latest
-// enqueue Epoch. The bound is loose (under a few minutes) so the assertion is
-// about alignment and non-negativity, not wall-clock precision.
+// enqueue Epoch. The clock is injected, so each latency is asserted exactly
+// (enqueue 1700000000, claim 1700000010) rather than against a loose bound.
 func TestClaimReportsWakeToClaimLatency(t *testing.T) {
 	home := t.TempDir()
 	enqueueAt := time.Unix(1700000000, 0)
@@ -58,17 +58,12 @@ func TestClaimReportsWakeToClaimLatency(t *testing.T) {
 		t.Fatalf("latencies = %d, want %d (aligned with Wakes)", len(res.WakeToClaimLatencies), len(res.Wakes))
 	}
 	for i, lat := range res.WakeToClaimLatencies {
-		if lat < 0 {
-			t.Fatalf("wake %d latency %v is negative (clock skew)", i, lat)
-		}
 		if lat != 10*time.Second {
 			t.Fatalf("wake %d latency %v, want 10s", i, lat)
 		}
 	}
 }
 
-// TestReclaimReStampsEpochForLatency constructs an already-expired lease with
-// a fixed old enqueue epoch and verifies reclaim writes a fresh enqueue epoch.
 func TestReclaimUsesOneEligibilitySnapshot(t *testing.T) {
 	home := t.TempDir()
 	leaseDir := LeaseDir(home)
@@ -102,6 +97,8 @@ func TestReclaimUsesOneEligibilitySnapshot(t *testing.T) {
 	}
 }
 
+// TestReclaimReStampsEpochForLatency constructs an already-expired lease with
+// a fixed old enqueue epoch and verifies reclaim writes a fresh enqueue epoch.
 func TestReclaimReStampsEpochForLatency(t *testing.T) {
 	home := t.TempDir()
 	leaseDir := LeaseDir(home)

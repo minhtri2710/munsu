@@ -137,20 +137,41 @@ func TestWakeClaimNonEmptyJSONOmitsInternalLatency(t *testing.T) {
 
 	out, err := runContract(t, []string{"wake", "claim", "--consumer", "test", "--output", "json"})
 	if err != nil {
-		t.Fatalf("wake claim: %v\\n%s", err, out)
+		t.Fatalf("wake claim: %v\n%s", err, out)
 	}
 	var envelope struct {
-		Kind string    `json:"kind"`
-		Data WakeClaim `json:"data"`
+		Kind string          `json:"kind"`
+		Data json.RawMessage `json:"data"`
 	}
 	if err := json.Unmarshal([]byte(out), &envelope); err != nil {
-		t.Fatalf("invalid JSON: %v\\n%s", err, out)
+		t.Fatalf("invalid JSON: %v\n%s", err, out)
 	}
-	if envelope.Kind != "wake.claim" || envelope.Data.State != "claimed" || envelope.Data.WakeID == "" {
-		t.Fatalf("unexpected non-empty claim: %+v", envelope)
+	var claim WakeClaim
+	if err := json.Unmarshal(envelope.Data, &claim); err != nil {
+		t.Fatalf("invalid wake.claim data: %v\n%s", err, out)
 	}
-	if strings.Contains(out, "wake-to-claim") || strings.Contains(out, "latenc") || strings.Contains(out, "scanned") {
-		t.Fatalf("internal observation leaked into wake.claim JSON: %s", out)
+	if envelope.Kind != "wake.claim" || claim.State != "claimed" || claim.WakeID == "" {
+		t.Fatalf("unexpected non-empty claim: %+v", claim)
+	}
+	// The contract's field set is pinned here instead of substring-matching the
+	// rendered text: an internal supervision measurement added to WakeClaim
+	// serializes as a key outside this set whatever it is named, tagged or not.
+	contractFields := map[string]bool{
+		"wake_id":       true,
+		"claim_id":      true,
+		"owner":         true,
+		"state":         true,
+		"lease_expires": true,
+		"reclaimed":     true,
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(envelope.Data, &fields); err != nil {
+		t.Fatalf("wake.claim data is not a JSON object: %v\n%s", err, out)
+	}
+	for name := range fields {
+		if !contractFields[name] {
+			t.Fatalf("undeclared field %q in wake.claim JSON; internal observations must never reach the contract: %s", name, out)
+		}
 	}
 }
 
