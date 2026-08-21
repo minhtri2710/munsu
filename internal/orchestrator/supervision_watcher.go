@@ -269,7 +269,7 @@ var (
 	pauseResurfaceThreshold = 5 * time.Minute
 )
 
-func scanFleetWithProbe(homeDir string, clearResolved bool, probe TaskEndpointProbe, states TaskStatePort, obs *CycleObservation) []*WakeReason {
+func scanFleetWithProbe(homeDir string, clearResolved bool, probe TaskEndpointProbe, states TaskStatePort, obs *cycleObservation) []*WakeReason {
 	entries, err := os.ReadDir(filepath.Join(homeDir, "state"))
 	if err != nil {
 		return nil
@@ -307,7 +307,7 @@ func scanFleetWithProbe(homeDir string, clearResolved bool, probe TaskEndpointPr
 			continue
 		}
 		if obs != nil {
-			obs.ScannedTasks++
+			obs.scannedTasks++
 		}
 		reason := scanTaskWithProbe(homeDir, id, probe, states)
 		if reason == nil {
@@ -320,7 +320,7 @@ func scanFleetWithProbe(homeDir string, clearResolved bool, probe TaskEndpointPr
 			// Measured stale age is an internal observation only; it is never
 			// written into WakeReason.Message or a fingerprint input, so a still-
 			// stale task's fingerprint (and its duplicate suppression) is stable.
-			obs.StaleByTask[id] = staleAge(id, time.Now())
+			obs.staleByTask[id] = staleAge(id, obs.now())
 		}
 		reasons = append(reasons, reason)
 	}
@@ -474,7 +474,7 @@ func runRecovery(homeDir string, sender BoundSender, hooks WatcherHooks) error {
 // staleAge returns the measured duration a task has been continuously stale,
 // from the first continuous stale detection. It is an INTERNAL observation:
 // the value is never written into WakeReason.Message or any fingerprint input,
-// so duplicate suppression is preserved (see CycleObservation).
+// so duplicate suppression is preserved (see cycleObservation).
 func staleAge(id string, now time.Time) time.Duration {
 	staleFirstSeenMu.Lock()
 	defer staleFirstSeenMu.Unlock()
@@ -485,7 +485,7 @@ func staleAge(id string, now time.Time) time.Duration {
 	return now.Sub(first)
 }
 
-func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, states TaskStatePort, obs *CycleObservation) (bool, error) {
+func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, states TaskStatePort, obs *cycleObservation) (bool, error) {
 	// Snapshot recovery state before the call — prevents double invocation
 	// of the mailbox reconcile hook on cycle 1 (recovery handles startup).
 	_, recoveryWasDone := recoveryDone.Load(homeDir)
@@ -538,7 +538,7 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 		marker := wakeMarkerPath(homeDir, id)
 		if data, err := os.ReadFile(marker); err == nil && string(data) == fingerprint {
 			if obs != nil {
-				obs.SuppressedDuplicates++
+				obs.suppressedDuplicates++
 			}
 			continue
 		}
@@ -604,7 +604,7 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 		marker := wakeMarkerPath(homeDir, "check:"+checkID)
 		if data, err := os.ReadFile(marker); err == nil && string(data) == fingerprint {
 			if obs != nil {
-				obs.SuppressedDuplicates++
+				obs.suppressedDuplicates++
 			}
 			continue
 		}

@@ -74,6 +74,10 @@ func WakeAgeSinceEnqueue(epoch string, now time.Time) time.Duration {
 // Unacked wakes that have expired leases are reclaimed (re-enqueued then claimed).
 // Returns the claim result or an error.
 func ClaimWakes(homeDir, consumer string, leaseCaptains, limit int) (*ClaimResult, error) {
+	return claimWakesAt(homeDir, consumer, leaseCaptains, limit, time.Now)
+}
+
+func claimWakesAt(homeDir, consumer string, leaseCaptains, limit int, now func() time.Time) (*ClaimResult, error) {
 	stateDir := filepath.Join(homeDir, "state")
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
 		return nil, fmt.Errorf("creating state directory: %w", err)
@@ -96,7 +100,8 @@ func ClaimWakes(homeDir, consumer string, leaseCaptains, limit int) (*ClaimResul
 	}
 
 	// Reclaim expired leases first — re-enqueue their wakes
-	reclaimed, err := ReclaimExpiredLeases(homeDir)
+	claimNow := now()
+	reclaimed, err := reclaimExpiredLeasesAt(homeDir, claimNow)
 	if err != nil {
 		return nil, err
 	}
@@ -143,8 +148,8 @@ func ClaimWakes(homeDir, consumer string, leaseCaptains, limit int) (*ClaimResul
 	if err := os.MkdirAll(leaseDir, 0755); err != nil {
 		return nil, fmt.Errorf("creating lease directory: %w", err)
 	}
-	leaseID := fmt.Sprintf("lease-%d", time.Now().UnixNano())
-	expiresAt := time.Now().Unix() + int64(leaseCaptains)
+	leaseID := fmt.Sprintf("lease-%d", claimNow.UnixNano())
+	expiresAt := claimNow.Unix() + int64(leaseCaptains)
 
 	// Write lease file
 	leasePath := LeaseFilePath(homeDir, leaseID)
@@ -155,7 +160,7 @@ func ClaimWakes(homeDir, consumer string, leaseCaptains, limit int) (*ClaimResul
 	defer f.Close()
 
 	// Header: leaseID, consumer, expiresAt, claimedAt
-	header := fmt.Sprintf("%s\t%s\t%d\t%d\n", leaseID, consumer, expiresAt, time.Now().Unix())
+	header := fmt.Sprintf("%s\t%s\t%d\t%d\n", leaseID, consumer, expiresAt, claimNow.Unix())
 	if _, err := f.WriteString(header); err != nil {
 		return nil, fmt.Errorf("writing lease header: %w", err)
 	}
@@ -174,7 +179,7 @@ func ClaimWakes(homeDir, consumer string, leaseCaptains, limit int) (*ClaimResul
 			Key:     r.Key,
 			Payload: r.Payload,
 		})
-		claimLatencies = append(claimLatencies, WakeAgeSinceEnqueue(r.Epoch, time.Now()))
+		claimLatencies = append(claimLatencies, WakeAgeSinceEnqueue(r.Epoch, claimNow))
 	}
 
 	// Rewrite the queue file with remaining records
@@ -270,13 +275,17 @@ func AckWakes(homeDir, leaseID string, eventIDs []string) error {
 // reclaimExpiredLeases finds expired lease files and re-enqueues their wakes.
 // Returns the count of re-enqueued wakes.
 func ReclaimExpiredLeases(homeDir string) (int, error) {
+	return reclaimExpiredLeasesAt(homeDir, time.Now())
+}
+
+func reclaimExpiredLeasesAt(homeDir string, claimNow time.Time) (int, error) {
 	leaseDir := LeaseDir(homeDir)
 	entries, err := os.ReadDir(leaseDir)
 	if err != nil {
 		return 0, nil
 	}
 
-	now := time.Now().Unix()
+	now := claimNow.Unix()
 	reclaimed := 0
 
 	for _, entry := range entries {
@@ -331,7 +340,7 @@ func ReclaimExpiredLeases(homeDir string) (int, error) {
 			if wakeResolutionCompleted(homeDir, wakeParts[0]+":"+wakeParts[1]) {
 				continue
 			}
-			if err := EnqueueWake(homeDir, wakeParts[2], wakeParts[3], wakeParts[4]); err == nil {
+			if err := enqueueWakeAt(homeDir, wakeParts[2], wakeParts[3], wakeParts[4], claimNow); err == nil {
 				enqueued++
 			}
 		}

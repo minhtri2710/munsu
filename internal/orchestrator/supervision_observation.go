@@ -22,39 +22,33 @@ import (
 
 // CycleObservation captures typed internal measurements from one watcher
 // scan/enqueue cycle.
-type CycleObservation struct {
-	// ScannedTasks is the number of task .meta files the watcher examined for
-	// staleness this cycle.
-	ScannedTasks int
-	// StaleByTask is the measured stale duration per task, keyed by task id.
-	// Ages are reported here only — never into WakeReason.Message or a
-	// fingerprint input, so duplicate suppression is preserved.
-	StaleByTask map[string]time.Duration
-	// SuppressedDuplicates is the number of watcher task or check wakes skipped
-	// because the durable fingerprint marker already matched.
-	SuppressedDuplicates int
+type cycleObservation struct {
+	scannedTasks         int
+	staleByTask          map[string]time.Duration
+	suppressedDuplicates int
+	now                  func() time.Time
 }
 
 // newCycleObservation returns an empty observation with the per-task map ready.
-func newCycleObservation() *CycleObservation {
-	return &CycleObservation{StaleByTask: map[string]time.Duration{}}
+func newCycleObservation() *cycleObservation {
+	return &cycleObservation{staleByTask: map[string]time.Duration{}, now: time.Now}
 }
 
 // logCycleObservation writes the cycle's internal measurements to stderr so
 // the watcher daemon surfaces them without touching any CLI response contract
 // (stderr is separate from the contract stdout).
-func logCycleObservation(obs *CycleObservation) {
+func logCycleObservation(obs *cycleObservation) {
 	if obs == nil {
 		return
 	}
 	fmt.Fprintf(os.Stderr, "[watcher-obs] scanned=%d suppressed=%d\n",
-		obs.ScannedTasks, obs.SuppressedDuplicates)
-	ids := make([]string, 0, len(obs.StaleByTask))
-	for id := range obs.StaleByTask {
+		obs.scannedTasks, obs.suppressedDuplicates)
+	ids := make([]string, 0, len(obs.staleByTask))
+	for id := range obs.staleByTask {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
 	for _, id := range ids {
-		fmt.Fprintf(os.Stderr, "[watcher-obs] stale task=%s age=%s\n", id, obs.StaleByTask[id])
+		fmt.Fprintf(os.Stderr, "[watcher-obs] stale task=%s age=%s\n", id, obs.staleByTask[id])
 	}
 }

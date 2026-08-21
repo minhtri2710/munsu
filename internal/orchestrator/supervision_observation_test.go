@@ -18,16 +18,16 @@ import (
 // TestCycleObservation_ScannedCount asserts the watcher scan count equals the
 // number of task .meta files examined for staleness in one cycle. Deterministic
 // with a fixed set of alive tasks: none wake, all are counted.
-func TestLogCycleObservation_EmitsStaleTaskAndAge(t *testing.T) {
+func TestLogcycleObservation_EmitsStaleTaskAndAge(t *testing.T) {
 	reader, writer, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
 	previous := os.Stderr
 	os.Stderr = writer
-	logCycleObservation(&CycleObservation{
-		ScannedTasks: 1,
-		StaleByTask:  map[string]time.Duration{"task-x": 12 * time.Second},
+	logCycleObservation(&cycleObservation{
+		scannedTasks: 1,
+		staleByTask:  map[string]time.Duration{"task-x": 12 * time.Second},
 	})
 	_ = writer.Close()
 	os.Stderr = previous
@@ -56,11 +56,11 @@ func TestCycleObservation_ScannedCount(t *testing.T) {
 	if len(reasons) != 0 {
 		t.Fatalf("alive fleet produced %d wake reasons, want 0", len(reasons))
 	}
-	if obs.ScannedTasks != 4 {
-		t.Fatalf("scanned = %d, want 4", obs.ScannedTasks)
+	if obs.scannedTasks != 4 {
+		t.Fatalf("scanned = %d, want 4", obs.scannedTasks)
 	}
-	if len(obs.StaleByTask) != 0 {
-		t.Fatalf("stale map = %v, want empty for alive tasks", obs.StaleByTask)
+	if len(obs.staleByTask) != 0 {
+		t.Fatalf("stale map = %v, want empty for alive tasks", obs.staleByTask)
 	}
 }
 
@@ -85,11 +85,8 @@ func TestStaleAge_Exact(t *testing.T) {
 	}
 }
 
-// TestCycleObservation_StaleAgeCaptured exercises the real scan path: a stale
-// (dead-pane) task is captured into the observation with its measured age. The
-// age comes from the real clock, so it is asserted in a wide band; the durable
-// invariant is that the age is reported ONLY as an observation, never in the
-// wake message or fingerprint (which would break duplicate suppression).
+// TestCycleObservation_StaleAgeCaptured exercises the real scan path with a
+// fixed observation clock and verifies that age remains observation-only.
 func TestCycleObservation_StaleAgeCaptured(t *testing.T) {
 	home := t.TempDir()
 	mustWriteMeta(t, home, "task-z", map[string]string{
@@ -97,22 +94,23 @@ func TestCycleObservation_StaleAgeCaptured(t *testing.T) {
 		"window":  "w:z",
 	})
 	// No status file -> a dead pane is not general-relevant, not absorbable.
-	// Seed the continuous-stale first-seen a moment ago on the real clock.
 	seedAge := 5 * time.Second
-	setStaleFirstSeen("task-z", time.Now().Add(-seedAge))
+	ref := time.Unix(1700000000, 0)
+	setStaleFirstSeen("task-z", ref.Add(-seedAge))
 	defer setStaleFirstSeen("task-z", time.Time{})
 
 	obs := newCycleObservation()
+	obs.now = func() time.Time { return ref }
 	reasons := scanFleetWithProbe(home, false, testEndpointProbe{}, testTaskStatePort{}, obs)
 	if len(reasons) != 1 || reasons[0].Kind != "stale" {
 		t.Fatalf("expected one stale reason, got %v", reasons)
 	}
-	if got, ok := obs.StaleByTask["task-z"]; !ok || got < seedAge-2*time.Second || got > seedAge+2*time.Second {
+	if got, ok := obs.staleByTask["task-z"]; !ok || got != seedAge {
 		t.Fatalf("observed stale age = %v (present=%v), want ~%v", got, ok, seedAge)
 	}
 	// The wall-clock age must NOT appear in the wake message (duplicate
 	// suppression depends on a stable message/fingerprint).
-	if msg := reasons[0].Message; msg != "pane w:z is dead" {
+	if msg := reasons[0].Message; msg != "pane w:z is dead; demand-deep-inspection" {
 		t.Fatalf("wake message = %q, want stable message with no wall-clock age", msg)
 	}
 	if fp := wakeFingerprint(home, reasons[0]); containsSubstr(fp, "1700000000") || containsSubstr(fp, "5s") {
@@ -139,15 +137,15 @@ func TestCycleObservation_CheckDuplicateSuppression(t *testing.T) {
 	if _, err := runCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, activeTestHooks, &testRetirementPort{}, testTaskStatePort{}, obs1); err != nil {
 		t.Fatalf("cycle 1: %v", err)
 	}
-	if obs1.SuppressedDuplicates != 0 {
-		t.Fatalf("cycle 1 suppressed = %d, want 0", obs1.SuppressedDuplicates)
+	if obs1.suppressedDuplicates != 0 {
+		t.Fatalf("cycle 1 suppressed = %d, want 0", obs1.suppressedDuplicates)
 	}
 	obs2 := newCycleObservation()
 	if _, err := runCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, activeTestHooks, &testRetirementPort{}, testTaskStatePort{}, obs2); err != nil {
 		t.Fatalf("cycle 2: %v", err)
 	}
-	if obs2.SuppressedDuplicates != 1 {
-		t.Fatalf("cycle 2 suppressed = %d, want 1 for duplicate check wake", obs2.SuppressedDuplicates)
+	if obs2.suppressedDuplicates != 1 {
+		t.Fatalf("cycle 2 suppressed = %d, want 1 for duplicate check wake", obs2.suppressedDuplicates)
 	}
 	records, err := mhome.DrainWakes(home)
 	if err != nil {
@@ -175,8 +173,8 @@ func TestCycleObservation_DuplicateSuppression(t *testing.T) {
 	if err1 != nil {
 		t.Fatalf("cycle 1: %v", err1)
 	}
-	if obs1.SuppressedDuplicates != 0 {
-		t.Fatalf("cycle 1 suppressed = %d, want 0", obs1.SuppressedDuplicates)
+	if obs1.suppressedDuplicates != 0 {
+		t.Fatalf("cycle 1 suppressed = %d, want 0", obs1.suppressedDuplicates)
 	}
 	if !mhome.HasQueuedWakes(home) {
 		t.Fatal("cycle 1 should have enqueued a wake")
@@ -189,8 +187,8 @@ func TestCycleObservation_DuplicateSuppression(t *testing.T) {
 	if err2 != nil {
 		t.Fatalf("cycle 2: %v", err2)
 	}
-	if obs2.SuppressedDuplicates != 1 {
-		t.Fatalf("cycle 2 suppressed = %d, want 1", obs2.SuppressedDuplicates)
+	if obs2.suppressedDuplicates != 1 {
+		t.Fatalf("cycle 2 suppressed = %d, want 1", obs2.suppressedDuplicates)
 	}
 	recs, err := mhome.DrainWakes(home)
 	if err != nil {
@@ -202,7 +200,7 @@ func TestCycleObservation_DuplicateSuppression(t *testing.T) {
 }
 
 // runCycleObs runs one full scan/enqueue cycle with the observation capture.
-func runCycleObs(home string, obs *CycleObservation) (*CycleObservation, error) {
+func runCycleObs(home string, obs *cycleObservation) (*cycleObservation, error) {
 	_, err := runCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, activeTestHooks, NoopRetirementPort{}, testTaskStatePort{}, obs)
 	return obs, err
 }

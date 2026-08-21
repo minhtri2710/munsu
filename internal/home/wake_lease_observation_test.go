@@ -36,13 +36,18 @@ func TestWakeAgeSinceEnqueue_MalformedOrFutureEpochIsZero(t *testing.T) {
 // about alignment and non-negativity, not wall-clock precision.
 func TestClaimReportsWakeToClaimLatency(t *testing.T) {
 	home := t.TempDir()
+	enqueueAt := time.Unix(1700000000, 0)
+	if err := os.MkdirAll(filepath.Dir(WakeQueuePath(home)), 0755); err != nil {
+		t.Fatal(err)
+	}
 	for i := 0; i < 3; i++ {
-		if err := EnqueueWake(home, "signal", fmt.Sprintf("task-%d", i), "payload"); err != nil {
+		if err := enqueueWakeAt(home, "signal", fmt.Sprintf("task-%d", i), "payload", enqueueAt); err != nil {
 			t.Fatalf("EnqueueWake #%d: %v", i, err)
 		}
 	}
 
-	res, err := ClaimWakes(home, "consumer", 60, 10)
+	claimAt := time.Unix(1700000010, 0)
+	res, err := claimWakesAt(home, "consumer", 60, 10, func() time.Time { return claimAt })
 	if err != nil {
 		t.Fatalf("ClaimWakes: %v", err)
 	}
@@ -56,8 +61,8 @@ func TestClaimReportsWakeToClaimLatency(t *testing.T) {
 		if lat < 0 {
 			t.Fatalf("wake %d latency %v is negative (clock skew)", i, lat)
 		}
-		if lat > 10*time.Minute {
-			t.Fatalf("wake %d latency %v exceeds sane bound", i, lat)
+		if lat != 10*time.Second {
+			t.Fatalf("wake %d latency %v, want 10s", i, lat)
 		}
 	}
 }
@@ -78,14 +83,18 @@ func TestReclaimReStampsEpochForLatency(t *testing.T) {
 		t.Fatalf("write expired lease: %v", err)
 	}
 
-	result, err := ClaimWakes(home, "consumer2", 60, 10)
+	claimAt := time.Unix(1700000010, 0)
+	result, err := claimWakesAt(home, "consumer2", 60, 10, func() time.Time { return claimAt })
 	if err != nil {
 		t.Fatalf("ClaimWakes: %v", err)
 	}
 	if result.Reclaimed != 1 || len(result.Wakes) != 1 {
 		t.Fatalf("reclaimed=%d wakes=%d, want one reclaimed wake", result.Reclaimed, len(result.Wakes))
 	}
-	if result.Wakes[0].Epoch <= oldEpoch {
-		t.Fatalf("reclaimed epoch %q <= fixed old epoch %q; reclaim must restamp enqueue time", result.Wakes[0].Epoch, oldEpoch)
+	if result.Wakes[0].Epoch != fmt.Sprint(claimAt.Unix()) {
+		t.Fatalf("reclaimed epoch %q, want %d; reclaim must restamp enqueue time", result.Wakes[0].Epoch, claimAt.Unix())
+	}
+	if result.WakeToClaimLatencies[0] != 0 {
+		t.Fatalf("reclaimed latency = %v, want 0", result.WakeToClaimLatencies[0])
 	}
 }

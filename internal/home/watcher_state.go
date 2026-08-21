@@ -52,6 +52,10 @@ func ReadWatcherBeatStatus(h string, now time.Time) WatcherBeatStatus {
 var wakeSeq int64
 
 func EnqueueWake(h, kind, key, payload string) error {
+	return enqueueWakeAt(h, kind, key, payload, time.Now())
+}
+
+func enqueueWakeAt(h, kind, key, payload string, at time.Time) error {
 	p := WakeQueuePath(h)
 	if e := os.MkdirAll(filepath.Dir(p), 0755); e != nil {
 		return e
@@ -61,7 +65,7 @@ func EnqueueWake(h, kind, key, payload string) error {
 		return e
 	}
 	defer f.Close()
-	_, e = fmt.Fprintf(f, "%d\t%d-%d\t%s\t%s\t%s\n", time.Now().Unix(), os.Getpid(), atomic.AddInt64(&wakeSeq, 1), kind, key, payload)
+	_, e = fmt.Fprintf(f, "%d\t%d-%d\t%s\t%s\t%s\n", at.Unix(), os.Getpid(), atomic.AddInt64(&wakeSeq, 1), kind, key, payload)
 	return e
 }
 
