@@ -69,6 +69,35 @@ func TestClaimReportsWakeToClaimLatency(t *testing.T) {
 
 // TestReclaimReStampsEpochForLatency constructs an already-expired lease with
 // a fixed old enqueue epoch and verifies reclaim writes a fresh enqueue epoch.
+func TestReclaimUsesOneEligibilitySnapshot(t *testing.T) {
+	home := t.TempDir()
+	leaseDir := LeaseDir(home)
+	if err := os.MkdirAll(leaseDir, 0755); err != nil {
+		t.Fatalf("mkdir lease directory: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		contents := fmt.Sprintf("lease-%d\\tconsumer\\t1700000005\\t1700000000\\n1700000000\\t%d\\tsignal\\ttask-%d\\tpayload\\n", i, i+1, i)
+		if err := os.WriteFile(filepath.Join(leaseDir, fmt.Sprintf("lease-%d", i)), []byte(contents), 0600); err != nil {
+			t.Fatalf("write lease %d: %v", i, err)
+		}
+	}
+	clockValues := []time.Time{time.Unix(1700000000, 0), time.Unix(1700000010, 0)}
+	clockIndex := 0
+	reclaimed, err := reclaimExpiredLeasesAt(home, func() time.Time {
+		value := clockValues[clockIndex]
+		if clockIndex < len(clockValues)-1 {
+			clockIndex++
+		}
+		return value
+	})
+	if err != nil {
+		t.Fatalf("reclaimExpiredLeasesAt: %v", err)
+	}
+	if reclaimed != 0 {
+		t.Fatalf("reclaimed=%d, want 0 when the initial eligibility snapshot is before both expiries", reclaimed)
+	}
+}
+
 func TestReclaimReStampsEpochForLatency(t *testing.T) {
 	home := t.TempDir()
 	leaseDir := LeaseDir(home)

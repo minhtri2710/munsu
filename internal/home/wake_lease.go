@@ -99,9 +99,10 @@ func claimWakesAt(homeDir, consumer string, leaseCaptains, limit int, now func()
 		limit = 10
 	}
 
-	// Reclaim expired leases first — re-enqueue their wakes
-	claimNow := now()
-	reclaimed, err := reclaimExpiredLeasesAt(homeDir, claimNow)
+	// Reclaim expired leases first — re-enqueue their wakes. Keep the clock
+	// calls at the same behavioral boundary as the pre-observation code; the
+	// injected clock only makes those calls deterministic in tests.
+	reclaimed, err := reclaimExpiredLeasesAt(homeDir, now)
 	if err != nil {
 		return nil, err
 	}
@@ -148,8 +149,9 @@ func claimWakesAt(homeDir, consumer string, leaseCaptains, limit int, now func()
 	if err := os.MkdirAll(leaseDir, 0755); err != nil {
 		return nil, fmt.Errorf("creating lease directory: %w", err)
 	}
+	claimNow := now()
 	leaseID := fmt.Sprintf("lease-%d", claimNow.UnixNano())
-	expiresAt := claimNow.Unix() + int64(leaseCaptains)
+	expiresAt := now().Unix() + int64(leaseCaptains)
 
 	// Write lease file
 	leasePath := LeaseFilePath(homeDir, leaseID)
@@ -160,7 +162,7 @@ func claimWakesAt(homeDir, consumer string, leaseCaptains, limit int, now func()
 	defer f.Close()
 
 	// Header: leaseID, consumer, expiresAt, claimedAt
-	header := fmt.Sprintf("%s\t%s\t%d\t%d\n", leaseID, consumer, expiresAt, claimNow.Unix())
+	header := fmt.Sprintf("%s\t%s\t%d\t%d\n", leaseID, consumer, expiresAt, now().Unix())
 	if _, err := f.WriteString(header); err != nil {
 		return nil, fmt.Errorf("writing lease header: %w", err)
 	}
@@ -275,17 +277,17 @@ func AckWakes(homeDir, leaseID string, eventIDs []string) error {
 // reclaimExpiredLeases finds expired lease files and re-enqueues their wakes.
 // Returns the count of re-enqueued wakes.
 func ReclaimExpiredLeases(homeDir string) (int, error) {
-	return reclaimExpiredLeasesAt(homeDir, time.Now())
+	return reclaimExpiredLeasesAt(homeDir, time.Now)
 }
 
-func reclaimExpiredLeasesAt(homeDir string, claimNow time.Time) (int, error) {
+func reclaimExpiredLeasesAt(homeDir string, now func() time.Time) (int, error) {
 	leaseDir := LeaseDir(homeDir)
 	entries, err := os.ReadDir(leaseDir)
 	if err != nil {
 		return 0, nil
 	}
 
-	now := claimNow.Unix()
+	reclaimNow := now().Unix()
 	reclaimed := 0
 
 	for _, entry := range entries {
@@ -321,7 +323,7 @@ func reclaimExpiredLeasesAt(homeDir string, claimNow time.Time) (int, error) {
 			continue
 		}
 
-		if now < expiresAt {
+		if reclaimNow < expiresAt {
 			f.Close()
 			continue // not expired yet
 		}
@@ -340,7 +342,7 @@ func reclaimExpiredLeasesAt(homeDir string, claimNow time.Time) (int, error) {
 			if wakeResolutionCompleted(homeDir, wakeParts[0]+":"+wakeParts[1]) {
 				continue
 			}
-			if err := enqueueWakeAt(homeDir, wakeParts[2], wakeParts[3], wakeParts[4], claimNow); err == nil {
+			if err := enqueueWakeAt(homeDir, wakeParts[2], wakeParts[3], wakeParts[4], now()); err == nil {
 				enqueued++
 			}
 		}
