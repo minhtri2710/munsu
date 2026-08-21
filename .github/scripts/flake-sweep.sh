@@ -607,7 +607,7 @@ check() {
 			printf '  %s (%s)\n' "$test" "$lane" >&2
 		done
 		echo "  Their first_seen run is inside the window just read, and nothing in it says they were" >&2
-		echo "  flaky. Either the evidence moved or the row did. Run 'flake-sweep.sh sync' to drop them" >&2
+		echo "  flaky. Either the evidence moved or the row did. Run 'flake-sweep.sh sync --owner <ISSUE_ID>' to drop them" >&2
 		echo "  -- the long-term record of a flake is its owning issue, not this file." >&2
 		failed=1
 	fi
@@ -623,7 +623,7 @@ check() {
 		printf '%s\n' "$stale" | while IFS=$'\t' read -r test lane recorded observed what; do
 			printf '  %s (%s): recorded %s, observed %s -- %s\n' "$test" "$lane" "$recorded" "$observed" "$what" >&2
 		done
-		echo "  Run 'flake-sweep.sh sync' to record the evidence; a row that flaked again after being" >&2
+		echo "  Run 'flake-sweep.sh sync --owner <ISSUE_ID>' to record the evidence; a row that flaked again after being" >&2
 		echo "  declared fixed is reopened with a fresh deadline, keeping its owning issue." >&2
 		failed=1
 	fi
