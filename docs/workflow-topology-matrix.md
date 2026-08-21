@@ -6,9 +6,9 @@ today. It states no new topology or delivery policy, proposes no behavior change
 is not authoritative over the documents or code it maps — it is a navigation aid that
 points each trace and invariant to its owner.
 
-Every row cites the owning Go symbol and the document/ADR that grounds it. Nothing here
-should be trusted over the cited authority; where they disagree, the cited code or ADR
-wins and this matrix should be corrected.
+Every topology row cites its implementation owner and authoritative symbol; the Grounding section
+identifies the governing documents and ADRs. Nothing here should be trusted over the cited
+authority; where they disagree, the cited code or ADR wins and this matrix should be corrected.
 
 ## Grounding
 
@@ -25,12 +25,13 @@ wins and this matrix should be corrected.
 
 The following index traces every concrete command form named in `COMMANDS.md`. Execution
 home is stated as observed: ordinary commands use the resolved current home (`--home`,
-`MUNSU_HOME`, or the default), captain administration is invoked from the General home,
-and soldier operations run from the General or Captain home that owns the soldier. Where
+`MUNSU_HOME`, or the default), captain administration uses the resolved current home as
+the General/parent authority, and soldier operations run from the General or Captain home
+that owns the soldier. Where
 `COMMANDS.md` names a form that is not registered by the current CLI, the absence is
 recorded rather than inferred away.
 
-| Command (`COMMANDS.md`) | Execution home | Owner module | Authoritative symbol | Observed implementation behavior |
+| Command | Execution home | Owner module | Authoritative symbol | Observed implementation behavior |
 |---|---|---|---|---|
 | `munsu home [--mkdir]` | Resolved current home | `internal/cli` + `internal/home` | `newHomeCmd`; `home.Init` | Prints the resolved home; `--mkdir` initializes its canonical layout. |
 | `munsu init` | Resolved current home | `internal/cli` + `internal/home` + `internal/bootstrap` | `newInitCmd`; `home.Init`; `bootstrap.Run` | Creates the home, detects configuration, writes the manual, installs skills, and prints diagnostics. |
@@ -47,7 +48,7 @@ recorded rather than inferred away.
 | `munsu worktree return <path>` | Resolved current home | `internal/cli` + `internal/backend` | `newWorktreeCmd`; `backend.ReturnWorktree` | Returns the specified worktree to the pool. |
 | `munsu worktree status` | Resolved current home | `internal/cli` + `internal/backend` | `newWorktreeCmd`; `backend.WorktreeStatus` | Prints the backend/treehouse worktree status. |
 | `munsu bootstrap [install <tools>...]` | Resolved current home | `internal/cli` + `internal/bootstrap` | `newBootstrapCmd`; `bootstrap.Run` | Detects tools and runs setup sweeps; `install` passes requested tools to bootstrap. |
-| `munsu ensure-agents-md <project>` | Resolved current home plus target project | `internal/cli` + `internal/fleet` | `newEnsureAgentsMdCmd`; `Ensure` | Creates or updates the target `AGENTS.md` and `CLAUDE.md` symlink. |
+| `munsu ensure-agents-md <project>` | Resolved current home | `internal/cli` + `internal/fleet` | `newEnsureAgentsMdCmd` (`internal/cli/stow_cmd.go`); `cli.Ensure` (`internal/cli/agentsmd_agentsmd.go`) | Resolves the project name or absolute path against the current home, then creates or updates the target `AGENTS.md` and `CLAUDE.md` symlink. |
 | `munsu session-start` | Resolved current home | `internal/cli` + `internal/bootstrap` + `internal/orchestrator` | `newSessionStartCmd`; `bootstrap.RunSessionStartWithWatcher` | Acquires the session lock when possible, bootstraps, ensures the watcher, and emits a digest. |
 | `munsu harness detect` | No home required | `internal/cli` + `internal/harness` | `newHarnessCmd`; `harness.Detect` | Detects the running harness from environment/process evidence. |
 | `munsu harness soldier` | Resolved current home | `internal/cli` + `internal/harness` | `newHarnessCmd`; `harness.Soldier` | Resolves the soldier harness from dispatch/config/detection precedence. |
@@ -61,29 +62,29 @@ recorded rather than inferred away.
 | `munsu promote <id>` | Resolved current home | `internal/cli` + `internal/taskauthority` | `newPromoteCmd`; `Canonical.Promote` | Promotes a scout only after canonical kind/phase checks and a report file check. |
 | `munsu watch` | Resolved current home | `internal/cli` + `internal/orchestrator` | `newWatchCmd`; `orchestrator.RunWithProbeSenderAndEvents` | Runs the persistent singleton watcher until stopped or an actionable wake reason ends the loop. |
 | `munsu watch-arm [--restart]` | Resolved current home | `internal/cli` + `internal/orchestrator` | `newWatchArmCmd`; `ensureWatcher` | Starts or reuses the watcher; `--restart` signals a validated existing watcher first. |
-| `munsu wake claim <consumer-id> [--lease-seconds 60] [--limit 10]` | Resolved current home | `internal/cli` + `internal/orchestrator` | `newWakeCmd`; `orchestrator.ClaimWakes` | The documented positional/flag form is not the registered interface: the CLI currently requires `--consumer` and exposes `--lease-captains`. |
+| `munsu wake claim <consumer-id> [--lease-seconds 60] [--limit 10]` | Resolved current home | `internal/cli` + `internal/orchestrator` | `newWakeCmd` (`internal/cli/wake_cmd.go`); `orchestrator.ClaimWakes` (`internal/orchestrator/lifecycle_lease.go`) | The documented positional/flag form is not the registered interface: the CLI currently requires `--consumer` and exposes `--lease-captains`. |
 | `munsu wake ack <lease-id> <event-id...>` | Resolved current home | `internal/cli` + `internal/orchestrator` | `newWakeCmd`; `orchestrator.AckWakes` | Acknowledges the supplied event IDs under the lease. |
 | `munsu guard` | Resolved current home | `internal/cli` + `internal/orchestrator` | `newContractGuardCmd`; `orchestrator.EvaluateGuard` | Evaluates watcher, fleet, and project-tangle conditions and emits structured violations. |
-| `munsu afk` | Resolved current home | `internal/cli` + `internal/orchestrator` | `newAfkCmd`; `orchestrator.Daemon` | Runs the away-mode supervision daemon until interruption. |
+| `munsu afk` | Resolved current home | `internal/cli` + `internal/orchestrator` | `newAfkCmd` (`internal/cli/session_cmd.go`); `orchestrator.Daemon.Start` | Starts the away-mode daemon, which sets the AFK flag, acquires its identity lock, runs a wake-triage cycle, and blocks until interruption. |
 | `munsu fleet sync [<project>]` | Resolved current home | `internal/cli` + `internal/fleet` | `newFleetSyncCmd`; `fleet.Sync` | Fast-forwards selected or all registered project clones and reports stuck/errors. |
 | `munsu fleet snapshot` | Resolved current home | `internal/cli` + `internal/fleet` | `newFleetSnapshotCmd`; `fleet.Snapshot`/`runFleetSnapshotV2` | Emits the selected fleet snapshot schema. |
 | `munsu fleet view` | Resolved current home | `internal/cli` + `internal/fleet` | `newFleetViewCmd`; `fleet.View` | Renders a fleet view from snapshot dependencies. |
 | `munsu fleet bearings [<project-dir>]` | Resolved current home | `internal/cli` + `internal/fleet` | `newFleetBearingsCmd`; `fleet.Bearings` | Prints a compact fleet or project resume report. |
-| `munsu captain seed <id> <home-path>` | General home | `internal/cli` + `internal/fleet` | `newCaptainCmd`; `fleet.SeedCaptain`/`SeedCaptainFromWorktree` | Seeds a state-only or managed-worktree captain home and registers it. |
-| `munsu captain launch <captain-home>` | General home | `internal/cli` + `internal/fleet` + `internal/harness` | `newCaptainCmd`; `harness.Captain`; `fleet.Launch` | Resolves the captain harness, checks integration, and launches the captain session. |
-| `munsu captain retire <captain-home>` | General home | `internal/cli` + `internal/fleet` | `newCaptainCmd`; `fleet.Retire` | Retires the captain and unregisters it, refusing in-flight soldiers unless `--force`. |
-| `munsu captain list` | General home | `internal/cli` + `internal/fleet` | `newCaptainCmd`; `fleet.ListCaptains` | Lists registered captains or returns an empty success result. |
-| `munsu captain recover <captain-id>` | General home | `internal/cli` + `internal/fleet` | `newCaptainCmd`; `newCaptainRecoverTransaction().Recover` | Runs the structured recovery transaction and prints each step outcome. |
-| `munsu captain converge` | General home | `internal/cli` + `internal/fleet` | `newCaptainCmd`; `fleet.Converge` | Runs the locked multi-captain validation, update, propagation, liveness, and nudge sweep. |
-| `munsu captain update <captain-home>` | General home | `internal/cli` + `internal/fleet` | `newCaptainCmd`; `fleet.Update` | Performs safe local fast-forward and reports a typed outcome. |
-| `munsu captain migrate <captain-home> <id>` | General home | `internal/cli` + `internal/fleet` | `newCaptainCmd`; `fleet.Migrate`/`MigrateCaptainToWorktree` | Migrates a state-only captain home, optionally transactionally into a managed worktree. |
-| `munsu captain validate <captain-home>` | General home | `internal/cli` + `internal/fleet` | `newCaptainCmd`; `fleet.Validate` | Validates captain structure and provenance, printing `valid` on success. |
-| `munsu captain config-push <captain-home>` | General home | `internal/cli` + `internal/fleet` + `internal/config` | `newCaptainCmd`; `fleet.PropagateConfigCLI` | Writes inheritable config to the captain and emits the propagation result. |
-| `munsu captain handoff <captain-home> <task-id...>` | General home | `internal/cli` + `internal/fleet` + `internal/taskauthority` | `newCaptainCmd`; `fleet.Handoff`; `Canonical.ReserveTransfer`/`CommitTransfer`/`ReceiveTransfer`/`ActivateTransfer` (`internal/taskauthority/canonical_transfer.go`) | Transfers queued task generations through the durable handoff journal. |
+| `munsu captain seed <id> <home-path>` | Resolved current home, used as the General/parent home | `internal/cli` + `internal/fleet` | `newCaptainCmd`; `fleet.SeedCaptain`/`SeedCaptainFromWorktree` | Seeds a state-only or managed-worktree captain home and registers it. |
+| `munsu captain launch <captain-home>` | Resolved current home, used as the General/parent home | `internal/cli` + `internal/fleet` + `internal/harness` | `newCaptainCmd`; `harness.Captain`; `fleet.Launch` | Resolves the captain harness, checks integration, and launches the captain session. |
+| `munsu captain retire <captain-home>` | Resolved current home, used as the General/parent home | `internal/cli` + `internal/fleet` | `newCaptainCmd`; `fleet.Retire` | Retires the captain and unregisters it, refusing in-flight soldiers unless `--force`. |
+| `munsu captain list` | Resolved current home, used as the General/parent home | `internal/cli` + `internal/fleet` | `newCaptainCmd`; `fleet.ListCaptains` | Lists registered captains or returns an empty success result. |
+| `munsu captain recover <captain-id>` | Resolved current home, used as the General/parent home | `internal/cli` + `internal/fleet` | `newCaptainCmd` / recover handler (`internal/cli/captain_cmd.go`); `newCaptainRecoverTransaction().Recover` (`internal/cli/captain_recover.go`) | Runs the structured recovery transaction and prints each step outcome. |
+| `munsu captain converge` | Resolved current home, used as the General/parent home | `internal/cli` + `internal/fleet` | `newCaptainCmd`; `fleet.Converge` | Runs the locked multi-captain validation, update, propagation, liveness, and nudge sweep. |
+| `munsu captain update <captain-home>` | Resolved current home, used as the General/parent home | `internal/cli` + `internal/fleet` | `newCaptainCmd`; `fleet.Update` | Performs safe local fast-forward and reports a typed outcome. |
+| `munsu captain migrate <captain-home> <id>` | Resolved current home, used as the General/parent home | `internal/cli` + `internal/fleet` | `newCaptainCmd`; `fleet.Migrate`/`MigrateCaptainToWorktree` | Migrates a state-only captain home, optionally transactionally into a managed worktree. |
+| `munsu captain validate <captain-home>` | Resolved current home, used as the General/parent home | `internal/cli` + `internal/fleet` | `newCaptainCmd`; `fleet.Validate` | Validates captain structure and provenance, printing `valid` on success. |
+| `munsu captain config-push <captain-home>` | Resolved current home, used as the General/parent home | `internal/cli` + `internal/fleet` + `internal/config` | `newCaptainCmd`; `fleet.PropagateConfigCLI` | Writes inheritable config to the captain and emits the propagation result. |
+| `munsu captain handoff <captain-home> <task-id...>` | Resolved current home, used as the General/parent home | `internal/cli` + `internal/fleet` + `internal/taskauthority` | `newCaptainCmd`; `fleet.Handoff`; `Canonical.ReserveTransfer`/`CommitTransfer`/`ReceiveTransfer`/`ActivateTransfer` (`internal/taskauthority/canonical_transfer.go`) | Transfers queued task generations through the durable handoff journal. |
 | `munsu delivery review-diff <id>` | General or Captain task home | `internal/cli` + `internal/fleet` | `newReviewDiffCmd`; `fleet.ReviewDiff` | Prints a Markdown summary comparing the soldier branch with its authoritative base. |
-| `munsu delivery pr-check <id> <pr-url>` | General or Captain task home | `internal/cli` | No symbol registered in `newDeliveryCmd` | Named in `COMMANDS.md`, but the current delivery command registers no `pr-check` handler. |
-| `munsu delivery pr-merge <id> <pr-url> [-- --merge\|--rebase]` | General or Captain task home | `internal/cli` + `internal/fleet` + `internal/taskauthority` | `newPRMergeCmd`; `fleet.Deliver`; delivery authorization operations | Captures provider identity, authorizes the exact task generation, and performs journaled delivery. |
-| `munsu delivery merge-local <id>` | General or Captain task home | `internal/cli` | No symbol registered in `newDeliveryCmd` | Named in `COMMANDS.md`, but the current delivery command registers no `merge-local` handler. |
+| `munsu delivery pr-check <id> <pr-url>` | Not applicable — command unregistered | `internal/cli` | `newDeliveryCmd` (`internal/cli/delivery_cmd.go`); no `pr-check` symbol | Named in `COMMANDS.md`, but the current delivery command registers no `pr-check` handler. |
+| `munsu delivery pr-merge <id> <pr-url> [-- --merge\|--rebase]` | Invoked from the resolved current home; selected task home may be current or a registered Captain home | `internal/cli` + `internal/fleet` + `internal/taskauthority` | `newPRMergeCmd` (`internal/cli/delivery_cmd.go`); `buildDeliverRequest` (`internal/cli/delivery_cmd.go`); `fleet.Deliver`; `Canonical.AuthorizeDelivery`/`CommitDeliveryOutcome` | Resolves task metadata from the current home first and then registered Captain homes, captures provider identity, authorizes the exact task generation, and performs journaled delivery. |
+| `munsu delivery merge-local <id>` | Not applicable — command unregistered | `internal/cli` | `newDeliveryCmd` (`internal/cli/delivery_cmd.go`); no `merge-local` symbol | Named in `COMMANDS.md`, but the current delivery command registers no `merge-local` handler. |
 | `munsu task add <id> <description> [--kind ship\|scout] [--repo <name>]` | Resolved current home | `internal/cli` + `internal/taskauthority` | `newTaskCmd`; `Canonical.Create` | Creates a queued canonical task and then writes post-commit meta/status projections. |
 | `munsu task list [--state <filter>]` | Resolved current home | `internal/cli` + `internal/taskauthority` | `newTaskCmd`; `Canonical.List` | Lists canonical task aggregates, optionally filtering phase text. |
 | `munsu task show <id> [--full]` | Resolved current home | `internal/cli` + `internal/taskauthority` | `newTaskCmd`; `resolveCurrentTaskID`; `auth.Get` (`internal/cli/task_cmd.go`, `internal/taskauthority`) | Shows canonical task details and optional status-log fields. |
@@ -93,9 +94,9 @@ recorded rather than inferred away.
 | `munsu task unblock <id>` | Resolved current home | `internal/cli` + `internal/taskauthority` | `newTaskUnblockCmd`; `runTaskLifecycleTransition`; `Canonical.Unblock` (`internal/cli/task_cmd.go`, `internal/taskauthority/canonical_ops.go`) | Removes a canonical task block. |
 | `munsu task reopen <id>` | Resolved current home | `internal/cli` + `internal/taskauthority` | `newTaskReopenCmd`; `runTaskLifecycleTransition`; `Canonical.Reopen` (`internal/cli/task_cmd.go`, `internal/taskauthority/canonical_ops.go`) | Reopens a terminal task as a new generation. |
 | `munsu task retry <id>` | Resolved current home | `internal/cli` + `internal/taskauthority` | `newTaskRetryCmd`; `runTaskLifecycleTransition`; `Canonical.Reopen` (`internal/cli/task_cmd.go`, `internal/taskauthority/canonical_ops.go`) | Supersedes a terminal generation as a new queued generation. |
-| `munsu task status <id> <state> <message>` | Resolved current home | `internal/cli` + `internal/home` | `newTaskCmd` status handler; `home.AppendStatus`; `orchestrator.FromTaskStatus`/`AppendWithID` (`internal/cli/task_cmd.go`, `internal/home`, `internal/orchestrator`) | Appends an audit-only status line and does not replace canonical lifecycle truth. |
-| `munsu stow [text...] [--kind learning\|captain] [--general]` | Resolved current home | `internal/cli` | `newStowCmd`; `RunKinded` | Inspect-then-updates durable learning or general-preference files, or reports a no-op. |
-| `munsu update` | Installation/source checkout, with resolved current home for watcher handshake | `internal/cli` + `internal/orchestrator` | `newUpdateCmd`; `UpdateWithHandshakeEx` | Fast-forward-updates and rebuilds the binary, then optionally handshakes with the watcher. |
+| `munsu task status <id> <state> <message>` | Resolved current home | `internal/cli` + `internal/home` | `newTaskCmd` status branch (`internal/cli/task_cmd.go`); `home.AppendStatus`; `orchestrator.FromTaskStatus`/`AppendWithID` (`internal/cli/task_cmd.go`, `internal/home`, `internal/orchestrator`) | Appends an audit-only status line and does not replace canonical lifecycle truth. |
+| `munsu stow [text...] [--kind learning\|captain] [--general]` | Resolved current home | `internal/cli` | `newStowCmd` (`internal/cli/stow_cmd.go`); `cli.RunKinded` (`internal/cli/stow_stow.go`) | Inspect-then-updates durable learning or general-preference files, or reports a no-op. |
+| `munsu update` | Resolved current home; install root is resolved separately | `internal/cli` + `internal/orchestrator` | `newUpdateCmd` (`internal/cli/stow_cmd.go`); `UpdateWithHandshakeEx` (`internal/cli/selfupdate_update.go`) | Resolves the install root, fast-forwards and rebuilds the binary, then optionally handshakes with the watcher; `--captains` additionally runs `fleet.Converge`. |
 
 
 ### 1.1 General → Soldier (direct)
@@ -107,7 +108,7 @@ launched soldier environment, whose `MUNSU_HOME` is that General home.
 "Supervision" here means observation and downlink steering, not supervision-metric
 generation; metrics are out of scope for this matrix.
 
-| Step | Execution home | Command (`COMMANDS.md`) | Owner module | Authoritative symbol |
+| Step | Execution home | Command | Owner module | Authoritative symbol |
 |---|---|---|---|---|
 | Create task | General home | `munsu task add` | `internal/cli` + `internal/taskauthority` | `newTaskCmd` / task-add handler (`internal/cli/task_cmd.go`); `Canonical.Create` (`internal/taskauthority/canonical_ops.go`) |
 | Scaffold brief | General home | `munsu brief` | `internal/cli` + `internal/fleet` | `newBriefCmd` (`internal/cli/session_cmd.go`); `fleet.Scaffold` (`internal/fleet/brief.go`) |
@@ -140,7 +141,7 @@ spawn path used by a General (the runner runs inside the Captain home).
 Before this table, follow §1.1's General-side `munsu task add` step: `munsu captain handoff` transfers an existing queued, source-owned canonical task from the General home and does not create it.
 General-home rows below must run from the General context, especially `config-push`, whose `ParentHome` is the current home; Captain-home commands select the Captain home through the launched environment's `MUNSU_HOME` or an explicit `--home <captain-home>`.
 
-| Step | Execution home | Command (`COMMANDS.md`) | Owner module | Authoritative symbol |
+| Step | Execution home | Command | Owner module | Authoritative symbol |
 |---|---|---|---|---|
 | Seed captain | General home | `munsu captain seed` | `internal/cli` + `internal/fleet` | `newCaptainCmd` / seed handler (`internal/cli/captain_cmd.go`); `fleet.SeedCaptain` (`internal/fleet/captain_captain.go`) |
 | Launch captain | General home | `munsu captain launch` | `internal/cli` + `internal/fleet` | `newCaptainCmd` / launch handler (`internal/cli/captain_cmd.go`); `fleet.Launch`, resolves via `internal/harness` and fails closed for unknown harnesses (`internal/fleet/captain_captain.go`) |
@@ -181,7 +182,7 @@ General-home rows below must run from the General context, especially `config-pu
 - The **General → Captain** trace (seed/launch/update/retire/config-push, `internal/fleet/captain_captain.go`) is the source of the Captain home this matrix's Captain → Soldier trace runs inside. Its config-push implementation is an explicit filesystem exception: it reads General-side config and directly writes `config/parent-home`, refreshes `.captain-charter.md`, conditionally publishes `config/resolved-project.json`, and advances `state/.config-reread-gen` when the digest changes before creating or healing the mailbox requirement/notification. This matrix therefore does not claim that the General never inspects or mutates Captain filesystem state; complete filesystem isolation remains an ADR-0008 aspiration, not the current implementation contract.
 - **Supervision** observes endpoints and interprets observations, but never mutates lifecycle directly; lifecycle, delivery, binding and handoff mutations go through `internal/taskauthority`. The Captain → General uplink (`munsu report` with `MUNSU_ROLE=captain`) is an adjacent route, not a substitute for the Soldier → Captain report row above; `newReportCmd` routes captain material states to the General via `orchestrator.Report` and other captain states through `orchestrator.DeliverWake`.
   - `munsu watch` is owned by `newWatchCmd` (`internal/cli/session_cmd.go`) and runs the watcher in `internal/cli/watch_cmd.go`; its one-cycle orchestration is `orchestrator.RunCycleWithProbeAndSender`, with PID ownership checked by `orchestrator.ValidatePIDOwnership`.
-  - `munsu afk` is owned by `newAfkCmd` (`internal/cli/session_cmd.go`), with `newAfkDrainCmd` and `newAfkReturnCmd` subcommands; the daemon entry is `orchestrator.Daemon`, and AFK supervision is implemented in `internal/orchestrator/afk_main.go`, `internal/orchestrator/afk_daemon.go`, and `internal/orchestrator/afk_drain.go`.
+  - `munsu afk` is owned by `newAfkCmd` (`internal/cli/session_cmd.go`); `newAfkDrainCmd` calls `orchestrator.DrainCycle`, `newAfkReturnCmd` calls `orchestrator.Return`, and its nested `check` calls `orchestrator.IsClean`. AFK supervision is implemented in `internal/orchestrator/afk_main.go`, `internal/orchestrator/afk_daemon.go`, and `internal/orchestrator/afk_drain.go`.
   - `munsu guard` is a root command owned by `newContractGuardCmd` (`internal/cli/contract_commands.go`); it evaluates conditions through `orchestrator.EvaluateGuard`.
   Supervision-metric generation is out of scope for this matrix.
 
