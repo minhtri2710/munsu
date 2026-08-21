@@ -140,7 +140,7 @@ func TestWakeClaimNonEmptyJSONOmitsInternalLatency(t *testing.T) {
 		t.Fatalf("wake claim: %v\\n%s", err, out)
 	}
 	var envelope struct {
-		Kind string `json:"kind"`
+		Kind string    `json:"kind"`
 		Data WakeClaim `json:"data"`
 	}
 	if err := json.Unmarshal([]byte(out), &envelope); err != nil {
