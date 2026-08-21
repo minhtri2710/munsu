@@ -200,7 +200,7 @@ jobs:
             echo '`--owner` names the issue that will fix the test, and it has to be a real one:'
             echo '`.github/scripts/flake-ledger.sh check` refuses `owner_issue: TBD` on purpose, so'
             echo '`invariants` stays red until a real issue id sits in that column. Filing the flake'
-            echo 'and filing the work are meant to be the same act -- run `sync` with `--owner` and'
+            echo 'and filing the work are meant to be the same act -- run `flake-sweep.sh sync --owner <ISSUE_ID>` and'
             echo 'the rows it writes carry that issue and merge; run it without and they say `TBD`,'
             echo 'which the same refusal rejects the same way.'
             echo
