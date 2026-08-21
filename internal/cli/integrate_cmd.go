@@ -774,7 +774,7 @@ func lockPIDInAncestry(homeDir string) bool {
 		if pid == lockPID {
 			return true
 		}
-		// Read parent PID from /proc (Linux) or fallback to ps
+		// Read the parent PID using the platform-specific implementation.
 		ppid := readParentPID(pid)
 		if ppid <= 1 {
 			return false

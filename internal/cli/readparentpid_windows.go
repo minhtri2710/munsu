@@ -13,8 +13,9 @@ import (
 // It uses the Toolhelp32 process-snapshot API, which needs no handle to the
 // target process and therefore no elevation. The snapshot lists every process
 // once; the entry whose ProcessID matches pid carries the parent in
-// ParentProcessID. A missing process or a snapshot failure returns -1 so
-// callers fail closed rather than report a parent they did not observe.
+// ParentProcessID. A missing process, snapshot failure, or enumeration failure
+// returns -1 so callers fail closed rather than report a parent they did not
+// observe.
 func readParentPID(pid int) int {
 	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
 	if err != nil {
