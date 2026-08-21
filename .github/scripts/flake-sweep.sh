@@ -85,7 +85,7 @@
 #   flake-sweep.sh observe [--window-days N]   API -> observation records (TSV)
 #   flake-sweep.sh classify < records          records -> verdicts (pure text)
 #   flake-sweep.sh check    [--window-days N]  observed set vs ledger, both ways
-#   flake-sweep.sh sync     [--owner ISSUE] [--window-days N]  rewrite the ledger table to match
+#   flake-sweep.sh sync     [--owner <ISSUE_ID>] [--window-days N]  rewrite the ledger table to match
 #   flake-sweep.sh verify-fixed                every `fixed:<sha>` is on main
 #   flake-sweep.sh selftest                    classify against committed fixtures
 #
@@ -869,19 +869,19 @@ selftest() {
 	local owner_fixture="BEO-541"
 	scratch_ledger "$ledger"
 	SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" sync --owner "$owner_fixture" >/dev/null || {
-		echo "::error::owner scenario: sync --owner failed" >&2
+		echo "::error::owner scenario: sync --owner $owner_fixture failed" >&2
 		failed=1
 	}
 	if ! grep -q "| TestReopens | integration | aaaa1111@3001/1 | cccc3333@3003/1 |.*| $owner_fixture | open |" "$ledger"; then
-		echo "::error::owner scenario: sync --owner <ISSUE_ID> did not write the validated owner into the filed row" >&2
+		echo "::error::owner scenario: sync --owner $owner_fixture did not write the validated owner into the filed row" >&2
 		failed=1
 	fi
 	if grep -q '| TBD |' "$ledger"; then
-		echo "::error::owner scenario: sync --owner still wrote a row with owner_issue TBD" >&2
+		echo "::error::owner scenario: sync --owner $owner_fixture still wrote a row with owner_issue TBD" >&2
 		failed=1
 	fi
 	if ! LEDGER="$ledger" "$ROOT/.github/scripts/flake-ledger.sh" check >/dev/null 2>&1; then
-		echo "::error::owner scenario: flake-ledger.sh rejects the row sync filed with --owner" >&2
+		echo "::error::owner scenario: flake-ledger.sh rejects the row sync filed with --owner $owner_fixture" >&2
 		failed=1
 	fi
 
@@ -918,7 +918,7 @@ selftest() {
 	#
 	# Mutation this answers: drop the `[ "$cmd" = "sync" ]` check.
 	if "$0" classify --owner "$owner_fixture" </dev/null >/dev/null 2>&1; then
-		echo "::error::owner scenario: classify accepted --owner" >&2
+		echo "::error::owner scenario: classify --owner $owner_fixture was accepted" >&2
 		failed=1
 	fi
 
@@ -1115,7 +1115,7 @@ sync) sync ;;
 verify-fixed) verify_fixed ;;
 selftest) selftest ;;
 *)
-	echo "usage: flake-sweep.sh {observe|classify|check|sync [--owner ISSUE]|verify-fixed|selftest} [--window-days N]" >&2
+	echo "usage: flake-sweep.sh {observe|classify|check|sync [--owner <ISSUE_ID>]|verify-fixed|selftest} [--window-days N]" >&2
 	exit 2
 	;;
 esac
