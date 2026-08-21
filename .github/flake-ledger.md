@@ -17,8 +17,10 @@ The `Flake ledger` workflow runs `.github/scripts/flake-sweep.sh` over what CI
 already ran, per **attempt**, and goes red with the exact diff on its run
 summary. It prepares no branch for you: GitHub Actions is not permitted to open
 pull requests in this repository, so the lane stops at reporting and a person
-applies that diff by running `.github/scripts/flake-sweep.sh sync` locally. It
-is not a sampler either: it never re-runs anything and it computes no failure
+applies that diff by running `.github/scripts/flake-sweep.sh sync --owner <ISSUE_ID>`
+locally. Use the enforced `BEO-<number>` format for `<ISSUE_ID>` and name the
+real issue that will fix the flake. It is not a sampler either: it never re-runs
+anything and it computes no failure
 rate. Four pushes to `main` on 2026-08-14 13:40-13:41 produced three red
 `integration` lanes; two of those runs read `success` today,
 because a rerun overwrites a run's conclusion. `gh run list` says that cluster
@@ -86,11 +88,12 @@ against the tree: observed but unfiled is red, filed but no longer observable is
 red too. `flake-sweep.sh verify-fixed` is the half that can check a `fixed:` ref
 against `main`.
 
-The rows between the markers below are machine-maintained. Edit `owner_issue`,
-`deadline` and `state` by hand; leave `test`, `lane`, `first_seen` and
-`last_seen` to the sweep, and if you disagree with a row, argue with it in the
-owning issue rather than deleting it -- the sweep will re-add it on the next
-`main` run.
+The rows between the markers below are machine-maintained. File new rows with
+`.github/scripts/flake-sweep.sh sync --owner <ISSUE_ID>`, using the enforced
+`BEO-<number>` format for the real issue that will fix the flake. Edit `deadline`
+and `state` by hand; leave `test`, `lane`, `first_seen` and `last_seen` to the
+sweep, and if you disagree with a row, argue with it in the owning issue rather
+than deleting it -- the sweep will re-add it on the next `main` run.
 
 <!-- flake-ledger:begin -->
 | test | lane | first_seen | last_seen | deadline | owner_issue | state |
