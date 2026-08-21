@@ -29,6 +29,9 @@ on:
         # to get it.
         description: Days of main runs to re-derive (default and minimum come from flake-sweep.sh)
         required: false
+      owner:
+        description: Owning issue for rows filed by a manual sweep (BEO-<number>)
+        required: true
 
 permissions:
   contents: read
@@ -141,10 +144,10 @@ jobs:
       # is a local write and needs no token at all -- `contents: write` is about
       # the API, and nothing below calls it. No commit, no branch, no push.
       #
-      # It runs without `--owner`: the bot cannot know which issue will own a
-      # flake, so the diff it prints carries the TBD rows flake-ledger.sh
-      # refuses, and the summary block below tells the reader to re-run sync
-      # with the real issue id.
+      # A manual dispatch supplies the owning issue through `inputs.owner`; an
+      # automatic workflow_run has no owner input, so it keeps the preview-only
+      # TBD rows that flake-ledger.sh refuses. The summary block below tells a
+      # reader of an automatic run to re-run sync with the real issue id.
       #
       # `continue-on-error` for the same reason as the two steps above: `Report
       # the verdicts` is the one place this job fails, and this step exiting
@@ -155,9 +158,14 @@ jobs:
         continue-on-error: true
         env:
           SWEEP_RECORDS: records.tsv
+          OWNER: ${{ inputs.owner }}
         run: |
           set -eu
-          .github/scripts/flake-sweep.sh sync
+          if [ -n "${OWNER:-}" ]; then
+            .github/scripts/flake-sweep.sh sync --owner "$OWNER"
+          else
+            .github/scripts/flake-sweep.sh sync
+          fi
 
           # Kept from the step that used to open the PR, and kept separate for
           # the reason `verify-fixed` is a separate step: two causes with
