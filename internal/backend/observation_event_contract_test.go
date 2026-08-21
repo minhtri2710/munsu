@@ -285,9 +285,14 @@ func awaitFakeBlocking(t *testing.T, logPath string, waitReturned <-chan error) 
 		}
 		select {
 		case err := <-waitReturned:
-			t.Fatalf("Wait returned (err = %v) while the fake herdr was still short of its blocking agent-wait branch (no argv recorded at %s): the fake never blocked, so the kill-the-blocked-process path cannot be exercised", err, logPath)
+			t.Fatalf("no fake herdr argv marker was observed at %s, but Wait returned with err = %v; this is consistent with the fake exiting before reaching or recording the branch, or reaching it without recording the marker and later exiting after its finite blocker", logPath, err)
 		case <-backstop:
-			t.Fatalf("fake herdr never reached its blocking agent-wait branch and Wait is still in flight (no argv recorded at %s)", logPath)
+			select {
+			case err := <-waitReturned:
+				t.Fatalf("no fake herdr argv marker was observed at %s, but Wait returned with err = %v; this is consistent with the fake exiting before reaching or recording the branch, or reaching it without recording the marker and later exiting after its finite blocker", logPath, err)
+			default:
+				t.Fatalf("no fake herdr argv marker and no Wait result were observed at %s before the derived backstop; this is consistent with the fake being stalled before the branch, or blocked there without recording the marker", logPath)
+			}
 		case <-poll.C:
 		}
 	}
