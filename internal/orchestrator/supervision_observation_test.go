@@ -15,9 +15,6 @@ import (
 	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
-// TestCycleObservation_ScannedCount asserts the watcher scan count equals the
-// number of task .meta files examined for staleness in one cycle. Deterministic
-// with a fixed set of alive tasks: none wake, all are counted.
 func TestLogcycleObservation_EmitsStaleTaskAndAge(t *testing.T) {
 	reader, writer, err := os.Pipe()
 	if err != nil {
@@ -66,6 +63,9 @@ func TestRunCycleWithProbeAndSenderLogsObservation(t *testing.T) {
 	}
 }
 
+// TestCycleObservation_ScannedCount asserts the watcher scan count equals the
+// number of task .meta files examined for staleness in one cycle. Deterministic
+// with a fixed set of alive tasks: none wake, all are counted.
 func TestCycleObservation_ScannedCount(t *testing.T) {
 	home := t.TempDir()
 	for i := 0; i < 4; i++ {
@@ -143,11 +143,6 @@ func TestCycleObservation_StaleAgeCaptured(t *testing.T) {
 	}
 }
 
-// TestCycleObservation_DuplicateSuppression runs two real cycles over a stale
-// task and asserts the second cycle suppresses the duplicate (one wake in the
-// queue) and records that suppression in the observation. Deterministic because
-// both cycles run far below the deep-inspection threshold and the stale
-// fingerprint is stable.
 func TestCycleObservation_CheckDuplicateSuppression(t *testing.T) {
 	home := t.TempDir()
 	checksDir := filepath.Join(home, "state", "checks")
@@ -181,6 +176,11 @@ func TestCycleObservation_CheckDuplicateSuppression(t *testing.T) {
 	}
 }
 
+// TestCycleObservation_DuplicateSuppression runs two real cycles over a stale
+// task and asserts the second cycle suppresses the duplicate (one wake in the
+// queue) and records that suppression in the observation. Deterministic because
+// both cycles run far below the deep-inspection threshold and the stale
+// fingerprint is stable.
 func TestCycleObservation_DuplicateSuppression(t *testing.T) {
 	home := t.TempDir()
 	mustWriteMeta(t, home, "task-d", map[string]string{

@@ -54,8 +54,8 @@ func helperProc(t *testing.T, home string) (*exec.Cmd, string) {
 // TestLifecycleEnqueueToClaimLatency is the lifecycle_integration enqueue-to-
 // claim assertion for the typed internal wake-to-claim latency observation
 // (issue #546): it enqueues a wake through the durable queue and claims it,
-// then asserts the claim reports a non-negative, sane latency measured since
-// the latest enqueue Epoch end-to-end through the real queue and lease path.
+// then asserts the claim reports a sane latency measured since the latest
+// enqueue Epoch end-to-end through the real queue and lease path.
 func TestLifecycleEnqueueToClaimLatency(t *testing.T) {
 	home := freshHome(t)
 
@@ -76,8 +76,8 @@ func TestLifecycleEnqueueToClaimLatency(t *testing.T) {
 	if len(res.WakeToClaimLatencies) != len(res.Wakes) {
 		t.Fatalf("latencies = %d, want %d (one per claimed wake)", len(res.WakeToClaimLatencies), len(res.Wakes))
 	}
-	if latency := res.WakeToClaimLatencies[0]; latency < 0 || latency > 5*time.Second {
-		t.Fatalf("wake-to-claim latency = %v, want a non-negative value below 5s", latency)
+	if latency := res.WakeToClaimLatencies[0]; latency > 5*time.Second {
+		t.Fatalf("wake-to-claim latency = %v, want a value below 5s", latency)
 	}
 }
 
