@@ -32,23 +32,23 @@ generation; metrics are out of scope for this matrix.
 
 | Step | Command (`COMMANDS.md`) | Owner module | Authoritative symbol |
 |---|---|---|---|
-| Create task | `munsu task add` | `internal/taskauthority` | `Canonical.Create` (`internal/taskauthority/canonical_ops.go`) |
-| Start task | `munsu task start` | `internal/cli` + `internal/taskauthority` | `newTaskStartCmd` / `runTaskLifecycleTransition` (`internal/cli/task_cmd.go`); `taskauthority.Canonical.Start` (`internal/taskauthority/canonical_ops.go`) |
-| Scaffold brief | `munsu brief` | `internal/fleet` | `fleet.Scaffold` (`internal/fleet/brief.go`; CLI wiring `internal/cli/session_cmd.go`) |
-| Spawn soldier | `munsu spawn` | `internal/fleet` + `internal/taskauthority` | `fleet.Spawn` / `Runner.Run` (`internal/fleet/spawn_spawn.go`, `internal/fleet/spawn_runner.go`); `Canonical.BindWorktree`/`BindEndpoint` (`internal/taskauthority/canonical_binding.go`); `Canonical.BeginSpawn`/`RecordLaunch` (`internal/taskauthority/canonical_launch.go`) |
-| Downlink steering | `munsu send` | `internal/cli` + `internal/fleet` + `internal/home` | `fleet.SendToSoldier` (`internal/fleet/captain_soldier_queue.go`); durable mailbox (`internal/home/mailbox_envelope.go`, `mailbox_store.go`, `mailbox_receiver.go`) |
+| Create task | `munsu task add` | `internal/cli` + `internal/taskauthority` | `newTaskCmd` / task-add handler (`internal/cli/task_cmd.go`); `Canonical.Create` (`internal/taskauthority/canonical_ops.go`) |
+| Scaffold brief | `munsu brief` | `internal/cli` + `internal/fleet` | `newBriefCmd` (`internal/cli/session_cmd.go`); `fleet.Scaffold` (`internal/fleet/brief.go`) |
+| Spawn soldier (queued → working at endpoint bind) | `munsu spawn` | `internal/cli` + `internal/fleet` + `internal/taskauthority` | `newSpawnCmd` (`internal/cli/spawn_cmd.go`); `fleet.Spawn` / `Runner.Run` (`internal/fleet/spawn_spawn.go`, `internal/fleet/spawn_runner.go`); `Canonical.BindWorktree`/`BindEndpoint` (`internal/taskauthority/canonical_binding.go`); `Canonical.BeginSpawn`/`RecordLaunch` (`internal/taskauthority/canonical_launch.go`) |
+| Downlink steering | `munsu send` | `internal/cli` + `internal/fleet` + `internal/home` | `newSendCmd` (`internal/cli/spawn_cmd.go`); `fleet.SendToSoldier` (`internal/fleet/captain_soldier_queue.go`); durable mailbox (`internal/home/mailbox_envelope.go`, `mailbox_store.go`, `mailbox_receiver.go`) |
 | Observe soldier output | `munsu peek` | `internal/cli` | `newPeekCmd` / `newPeekCmdWithCapture` (`internal/cli/spawn_cmd.go`); default capture `sessionBoundCapture` (`internal/cli/bound_capture.go`) |
 | Report status upward | `munsu report` | `internal/cli` + `internal/orchestrator` | `newReportCmd` / `newReportCmdWithNotifier` (`internal/cli/report_cmd.go`); material soldier states route through `orchestrator.Report`, while terminal scout `done` routes through `orchestrator.DeliverWake` (`internal/cli/report_cmd.go`; `internal/orchestrator/uplink_uplink.go`, `internal/orchestrator/wakedelivery_deliver.go`) |
-| Current-state read | `munsu soldier-state`, `munsu fleet snapshot` | `internal/fleet` | `fleet.ReadWithProbe` (`internal/fleet/soldierstate_soldierstate.go`); `fleet.NewCanonicalCurrentState` (`internal/fleet/taskauthority_reads.go`); `fleet.PhaseFromProjection` (`internal/fleet/snapshot.go`) |
-| Delivery | `munsu delivery ...` | `internal/fleet` + `internal/taskauthority` + `internal/domain` | `fleet.Deliver` (`internal/fleet/delivery_deliver.go`); `Canonical.AuthorizeDelivery`/`RevokeDeliveryAuthorization`/`CommitDeliveryOutcome` (`internal/taskauthority/canonical_delivery.go`); `PR.CanMerge`/`Review.IsApproving` (`internal/domain/domain.go`) |
-| Close task | `munsu task done` | `internal/taskauthority` | `Canonical.Complete` (`canonical_ops.go`) |
-| Teardown | `munsu teardown` | `internal/cli` + `internal/fleet` + `internal/taskauthority` + `internal/orchestrator` | `fleet.RetireTask` (`internal/fleet/retirement_task.go`); `Canonical.Retire` (`internal/taskauthority/canonical_retirement.go`); `Canonical.BeginCleanup`/`CompleteCleanup`/`AbortCleanup` (`internal/taskauthority/canonical_cleanup.go`); `orchestrator.VerifyRetirementContinuity` (`internal/orchestrator/retirement_journal.go`); CLI `munsu teardown` (`internal/cli/spawn_cmd.go`) |
+| Current-state read | `munsu soldier-state`, `munsu fleet snapshot` | `internal/cli` + `internal/fleet` | `newSoldierStateCmd` / `newFleetSnapshotCmd` (`internal/cli/spawn_cmd.go`, `internal/cli/fleet_cmd.go`); `fleet.ReadWithProbe` (`internal/fleet/soldierstate_soldierstate.go`); `fleet.NewCanonicalCurrentState` (`internal/fleet/taskauthority_reads.go`); `fleet.PhaseFromProjection` (`internal/fleet/snapshot.go`) |
+| Delivery | `munsu delivery pr-merge` | `internal/cli` + `internal/fleet` + `internal/taskauthority` + `internal/domain` | `newPRMergeCmd` (`internal/cli/delivery_cmd.go`); `fleet.Deliver` (`internal/fleet/delivery_deliver.go`); `Canonical.AuthorizeDelivery`/`RevokeDeliveryAuthorization`/`CommitDeliveryOutcome` (`internal/taskauthority/canonical_delivery.go`); `PR.CanMerge`/`Review.IsApproving` (`internal/domain/domain.go`) |
+| Close task | `munsu task done` | `internal/cli` + `internal/taskauthority` | `newTaskDoneCmd` (`internal/cli/task_cmd.go`); `Canonical.Complete` (`internal/taskauthority/canonical_ops.go`) |
+| Teardown | `munsu teardown` | `internal/cli` + `internal/fleet` + `internal/taskauthority` + `internal/orchestrator` | `newTeardownCmd` (`internal/cli/spawn_cmd.go`); `fleet.RetireTask` (`internal/fleet/retirement_task.go`); `Canonical.Retire` (`internal/taskauthority/canonical_retirement.go`); `Canonical.BeginCleanup`/`CompleteCleanup`/`AbortCleanup` (`internal/taskauthority/canonical_cleanup.go`); `orchestrator.VerifyRetirementContinuity` (`internal/orchestrator/retirement_journal.go`) |
 
-`munsu task start` is a separate canonical queued-to-working transition owned by
-`taskauthority.Canonical.Start` through the CLI's `newTaskStartCmd` /
-`runTaskLifecycleTransition` path. It is not a pre-spawn step: `BeginSpawn`,
-`AttachEndpoint`, and `BindEndpoint` require the task to remain queued, and final
-`BindEndpoint` performs the queued-to-working transition.
+`munsu task start` is an alternative, non-spawn lifecycle path: its CLI owner is
+`newTaskStartCmd`, which dispatches through `runTaskLifecycleTransition`
+(`internal/cli/task_cmd.go`) to `taskauthority.Canonical.Start`
+(`internal/taskauthority/canonical_ops.go`). It must not precede `munsu spawn`:
+`BeginSpawn`, `AttachEndpoint`, and `BindEndpoint` require the task to remain
+queued, and `BindEndpoint` performs the spawn path's queued-to-working transition.
 
 ### 1.2 Captain → Soldier
 
@@ -62,13 +62,13 @@ spawn path used by a General (the runner runs inside the Captain home).
 
 | Step | Command (`COMMANDS.md`) | Owner module | Authoritative symbol |
 |---|---|---|---|
-| Seed captain | `munsu captain seed` | `internal/fleet` | `fleet.SeedCaptain` (`internal/fleet/captain_captain.go`) |
-| Launch captain | `munsu captain launch` | `internal/fleet` | `fleet.Launch`, resolves via `internal/harness` and fails closed for unknown harnesses (`internal/fleet/captain_captain.go`) |
-| Assign tasks | `munsu captain handoff` | `internal/fleet` + `internal/taskauthority` | `fleet.Handoff` (durable Fleet-owned Task Transfer journal, `internal/fleet/task_handoff_transaction.go`); `Canonical.ReserveTransfer`/`CommitTransfer`/`ReceiveTransfer`/`ActivateTransfer` (`internal/taskauthority/canonical_transfer.go`) |
-| Config propagation | `munsu captain config-push` | `internal/fleet` + `internal/config` | `PropagateConfig` (`internal/fleet/propagate_config.go`) calls `configPushWithResult` / `publishResolvedSnapshot` (`internal/fleet/captain_captain.go`), then ensures or heals the config-reread requirement and mailbox notification; `config.StorePublishedSnapshot` / `LoadPublishedSnapshot` (`internal/config/published_snapshot.go`) handle the Captain-home snapshot |
+| Seed captain | `munsu captain seed` | `internal/cli` + `internal/fleet` | `newCaptainCmd` / seed handler (`internal/cli/captain_cmd.go`); `fleet.SeedCaptain` (`internal/fleet/captain_captain.go`) |
+| Launch captain | `munsu captain launch` | `internal/cli` + `internal/fleet` | `newCaptainCmd` / launch handler (`internal/cli/captain_cmd.go`); `fleet.Launch`, resolves via `internal/harness` and fails closed for unknown harnesses (`internal/fleet/captain_captain.go`) |
+| Assign tasks | `munsu captain handoff` | `internal/cli` + `internal/fleet` + `internal/taskauthority` | `newCaptainCmd` / handoff handler (`internal/cli/captain_cmd.go`); `fleet.Handoff` (durable Fleet-owned Task Transfer journal, `internal/fleet/task_handoff_transaction.go`); `Canonical.ReserveTransfer`/`CommitTransfer`/`ReceiveTransfer`/`ActivateTransfer` (`internal/taskauthority/canonical_transfer.go`) |
+| Config propagation | `munsu captain config-push` | `internal/cli` + `internal/fleet` + `internal/config` | `newCaptainCmd` / config-push handler (`internal/cli/captain_cmd.go`); `PropagateConfig` (`internal/fleet/propagate_config.go`) calls `configPushWithResult` / `publishResolvedSnapshot` (`internal/fleet/captain_captain.go`), then ensures or heals the config-reread requirement and mailbox notification; `config.StorePublishedSnapshot` / `LoadPublishedSnapshot` (`internal/config/published_snapshot.go`) handle the Captain-home snapshot |
 | Observe soldier output | `munsu peek` (same CLI/capture path as General → Soldier) | `internal/cli` | `newPeekCmd` / `newPeekCmdWithCapture` (`internal/cli/spawn_cmd.go`); default capture `sessionBoundCapture` (`internal/cli/bound_capture.go`) |
-| Spawn / steer / deliver / tear down soldiers | (same `munsu spawn`/`send`/`delivery`/`teardown` path, run inside the captain home) | `internal/fleet` + `internal/taskauthority` | `Runner.Run` incl. `checkCaptainBacklogAuthority` / `resolveParentCaptainID` (`internal/fleet/spawn_runner.go`); soldier queue/downlink `fleet.SendToSoldier` (`internal/fleet/captain_soldier_queue.go`); `fleet.Deliver` (`internal/fleet/delivery_deliver.go`); `fleet.RetireTask` (`internal/fleet/retirement_task.go`) |
-| Captain uplink | `munsu report` (captain role) | `internal/orchestrator` | `orchestrator.Report` / `Recover` / `NotifyParentWithTransport` (`internal/orchestrator/uplink_uplink.go`) |
+| Spawn / steer / deliver / tear down soldiers | (same `munsu spawn`/`send`/`delivery pr-merge`/`teardown` path, run inside the captain home) | `internal/cli` + `internal/fleet` + `internal/taskauthority` | `newSpawnCmd`, `newSendCmd`, `newPRMergeCmd`, `newTeardownCmd` (`internal/cli/spawn_cmd.go`, `internal/cli/delivery_cmd.go`); `Runner.Run` incl. `checkCaptainBacklogAuthority` / `resolveParentCaptainID` (`internal/fleet/spawn_runner.go`); soldier queue/downlink `fleet.SendToSoldier` (`internal/fleet/captain_soldier_queue.go`); `fleet.Deliver` (`internal/fleet/delivery_deliver.go`); `fleet.RetireTask` (`internal/fleet/retirement_task.go`) |
+| Captain uplink | `munsu report` (captain role) | `internal/cli` + `internal/orchestrator` | `newReportCmd` / `newReportCmdWithNotifier` (`internal/cli/report_cmd.go`); `orchestrator.Report` / `Recover` / `NotifyParentWithTransport` (`internal/orchestrator/uplink_uplink.go`) |
 
 ## 2. Boundaries: task / config / snapshot / propagation
 
@@ -92,7 +92,19 @@ spawn path used by a General (the runner runs inside the Captain home).
 ## 4. Relationship to other traces
 
 - The **General → Captain** trace (seed/launch/update/retire/config-push, `internal/fleet/captain_captain.go`) is the source of the Captain home this matrix's Captain → Soldier trace runs inside. Its config-push implementation is an explicit filesystem exception: it reads General-side config and directly writes `config/parent-home`, refreshes `.captain-charter.md`, conditionally publishes `config/resolved-project.json`, and advances `state/.config-reread-gen` when the digest changes before creating or healing the mailbox requirement/notification. This matrix therefore does not claim that the General never inspects or mutates Captain filesystem state; complete filesystem isolation remains an ADR-0008 aspiration, not the current implementation contract.
-- **Supervision** (`munsu watch`, `munsu guard`, `munsu afk`, `internal/orchestrator`) observes endpoints and interprets observations, but never mutates lifecycle directly; lifecycle, delivery, binding and handoff mutations go through `internal/taskauthority`. Supervision-metric generation is out of scope for this matrix.
+- **Supervision** observes endpoints and interprets observations, but never mutates lifecycle directly; lifecycle, delivery, binding and handoff mutations go through `internal/taskauthority`.
+  - `munsu watch` is owned by `newWatchCmd` (`internal/cli/session_cmd.go`) and runs the watcher in `internal/cli/watch_cmd.go`; its one-cycle orchestration is `orchestrator.RunCycleWithProbeAndSender`, with PID ownership checked by `orchestrator.ValidatePIDOwnership`.
+  - `munsu afk` is owned by `newAfkCmd` (`internal/cli/session_cmd.go`), with `newAfkDrainCmd` and `newAfkReturnCmd` subcommands; the daemon entry is `orchestrator.Daemon`, and AFK supervision is implemented in `internal/orchestrator/afk_*.go`.
+  - `munsu guard` is a root command owned by `newContractGuardCmd` (`internal/cli/contract_commands.go`); it evaluates conditions through `orchestrator.EvaluateGuard`.
+  Supervision-metric generation is out of scope for this matrix.
+
+### 4.1 Deliberately out of scope
+
+Other project, config, harness, doctor, bootstrap, fleet, delivery, and captain-administration
+commands not named above are deliberately excluded because they are not commands in the
+General → Soldier or Captain → Soldier workflow traces documented here. The mapped commands
+in those groups remain in scope. The matrix also excludes supervision metrics and unrelated
+compatibility or migration paths.
 
 This matrix is intentionally narrow: it covers the two named rank traces, the
 task/config/snapshot/propagation boundaries, and the report/deliver/ack/teardown
