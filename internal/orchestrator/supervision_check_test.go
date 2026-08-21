@@ -7,68 +7,6 @@ import (
 	"time"
 )
 
-// --- ValidateCheck tests ---
-
-func TestValidateCheck_Valid(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "test.check")
-	writeExecScript(t, path, "#!/bin/bash\necho hello\n")
-	if err := ValidateCheck(path); err != nil {
-		t.Errorf("expected valid check, got: %v", err)
-	}
-}
-
-func TestValidateCheck_NotFound(t *testing.T) {
-	err := ValidateCheck("/nonexistent/check.check")
-	if err == nil {
-		t.Fatal("expected error for missing check")
-	}
-}
-
-func TestValidateCheck_NotExecutable(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "test.check")
-	if err := os.WriteFile(path, []byte("#!/bin/bash\necho\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	err := ValidateCheck(path)
-	if err == nil {
-		t.Fatal("expected error for non-executable check")
-	}
-}
-
-func TestValidateCheck_MissingShebang(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "test.check")
-	writeExecScript(t, path, "echo hello\n")
-	err := ValidateCheck(path)
-	if err == nil {
-		t.Fatal("expected error for missing shebang")
-	}
-}
-
-func TestValidateCheck_EmptyFile(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "test.check")
-	writeExecScript(t, path, "")
-	err := ValidateCheck(path)
-	if err == nil {
-		t.Fatal("expected error for empty check")
-	}
-}
-
-func TestValidateCheck_DirectoryInsteadOfFile(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "test.check")
-	if err := os.Mkdir(path, 0755); err != nil {
-		t.Fatal(err)
-	}
-	err := ValidateCheck(path)
-	if err == nil {
-		t.Fatal("expected error for directory")
-	}
-}
-
 // --- MigrateOrRefuseStale tests ---
 
 func TestMigrateOrRefuseStale_Valid(t *testing.T) {

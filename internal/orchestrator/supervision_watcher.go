@@ -54,6 +54,7 @@ type TaskStatePort interface {
 }
 type RetirementPort interface {
 	RecoverPendingRetirements(homeDir string) (int, []error)
+	ValidateCheck(path string) error
 	RetireMergedPoll(homeDir, taskID, checkPath string) error
 }
 
@@ -529,7 +530,7 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 	}
 	for _, plugin := range checks {
 		// Validate the check artifact before surfacing
-		if err := ValidateCheck(plugin.Path); err != nil {
+		if err := retirement.ValidateCheck(plugin.Path); err != nil {
 			continue
 		}
 		// Migrate-or-refuse: skip if stale
@@ -551,11 +552,11 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 			}
 
 			// Attempt crash-safe retirement for merged polls.
-			// Uses ValidateCheckWithLstat for symlink rejection.
+			// Uses the shared check validator for symlink rejection.
 			// On success, the poll is removed and a durable status line
 			// is published. The check wake is NOT emitted — the status
 			// scan will surface it as a signal wake on the next cycle.
-			if err := ValidateCheck(plugin.Path); err == nil {
+			if err := retirement.ValidateCheck(plugin.Path); err == nil {
 				if retireErr := retirement.RetireMergedPoll(homeDir, plugin.Label, plugin.Path); retireErr == nil {
 					// Poll retired successfully. Skip wake emission;
 					// the status signal path will surface the publication.

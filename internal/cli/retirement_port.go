@@ -24,6 +24,10 @@ func (p fleetRetirementPort) RecoverPendingRetirements(homeDir string) (int, []e
 	return fleet.RecoverAllPendingRetirements(homeDir, auth)
 }
 
+func (p fleetRetirementPort) ValidateCheck(path string) error {
+	return fleet.ValidateCheckWithLstat(path)
+}
+
 func (p fleetRetirementPort) RetireMergedPoll(homeDir, taskID, checkPath string) error {
 	auth, err := p.compose(homeDir)
 	if err != nil {

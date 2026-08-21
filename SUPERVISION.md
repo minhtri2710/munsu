@@ -43,6 +43,18 @@ polls (~15s), the wake reason is marked with `DemandDeepInspection = true`,
 signalling that the orchestrator should inspect more thoroughly before deciding
 what to do.
 
+### Check plugins
+
+The watcher discovers per-task `.check` files in `state/` and shared checks in
+`state/checks/`. A check must be a regular, non-symlink file whose content starts
+with a shebang (`#!`). On Unix, the file must also have the owner-execute mode
+bit. Windows does not provide executable mode bits through Go and does not
+require a Windows executable extension for these scripts, so a valid shebang is
+the executability gate there. Empty, unreadable, non-regular,
+symlinked, or missing-shebang checks are refused on every platform. Retirement
+polling and the supervision watcher use this same validator, so both paths apply
+these platform-specific rules consistently.
+
 ## Watch arm
 
 `munsu watch-arm [--restart]` launches the watcher as a background child process
