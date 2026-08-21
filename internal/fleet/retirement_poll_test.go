@@ -225,15 +225,30 @@ func TestValidateCheckWithLstat_Symlink(t *testing.T) {
 	}
 }
 
-func TestValidateCheckWithLstat_NotExecutable(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "test.check")
-	if err := os.WriteFile(path, []byte("#!/bin/bash\necho\n"), 0644); err != nil {
+func TestValidateCheckWithLstat_NotFound(t *testing.T) {
+	err := ValidateCheckWithLstat(filepath.Join(t.TempDir(), "missing.check"))
+	if err == nil {
+		t.Fatal("expected error for missing check")
+	}
+}
+
+func TestValidateCheckWithLstat_EmptyFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "empty.check")
+	if err := os.WriteFile(path, nil, 0755); err != nil {
 		t.Fatal(err)
 	}
-	err := ValidateCheckWithLstat(path)
-	if err == nil {
-		t.Fatal("expected error for non-executable")
+	if err := ValidateCheckWithLstat(path); err == nil {
+		t.Fatal("expected error for empty check")
+	}
+}
+
+func TestValidateCheckWithLstat_Directory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "directory.check")
+	if err := os.Mkdir(path, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateCheckWithLstat(path); err == nil {
+		t.Fatal("expected error for directory")
 	}
 }
 

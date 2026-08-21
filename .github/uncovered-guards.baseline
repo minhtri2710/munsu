@@ -215,7 +215,6 @@ internal/fleet/retirement_poll.go	requireCanonicalCompletedOutcome	1	out.Status 
 internal/fleet/retirement_poll.go	requireRetirementIdentity	1	ident == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/retirement_poll.go	RetireMergedPoll	1	currentDigest != pollDigest	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/retirement_poll.go	RetireMergedPoll	1	status.HeadSHA == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/retirement_poll.go	ValidateCheckWithLstat	1	!fi.Mode().IsRegular()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/retirement_poll.go	ValidateRetirementPath	1	!strings.HasPrefix(absPath, absDir+string(filepath.Separator)) && absPath != absDir	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/retirement_task.go	currentOwnershipConflict	1	current.AcquiredEndpoint != nil && (current.AcquiredEndpoint.LeaseID == ev.Acquired.LeaseID || current.AcquiredEndpoint.Handle == ev.Acquired.Handle)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/retirement_task.go	currentOwnershipConflict	1	current.Endpoint != nil && (current.Endpoint.LeaseID == ev.Acquired.LeaseID || current.Endpoint.Handle == ev.Acquired.Handle)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
@@ -298,7 +297,6 @@ internal/orchestrator/afk_process_identity_darwin.go	processIdentity	1	len(raw) 
 internal/orchestrator/afk_process_identity_linux.go	processIdentity	1	end < 0	burn-down(BEO-69): GOOS-gated, unmeasured where this baseline was generated; imported unwaived rather than left for the other platform to demand
 internal/orchestrator/afk_process_identity_linux.go	processIdentity	1	len(fields) <= 19	burn-down(BEO-69): GOOS-gated, unmeasured where this baseline was generated; imported unwaived rather than left for the other platform to demand
 internal/orchestrator/afk_target.go	ValidateTargetOwnership	1	result == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/supervision_check.go	ValidateCheck	1	fi.Mode()&os.ModeSymlink != 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/supervision_watcher.go	run	1	!acquired	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/supervision_watcher.go	run	1	!claimed	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/supervision_watcher.go	stopRunningWatcher	1	!ValidatePIDOwnership(homeDir, pid)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged

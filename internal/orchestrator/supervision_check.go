@@ -96,41 +96,6 @@ func DiscoverAllChecks(homeDir string) ([]CheckPlugin, error) {
 	return append(perTask, global...), nil
 }
 
-// ValidateCheck ensures the check script exists, is a regular file (no symlinks),
-// is executable, and starts with a valid shebang.
-func ValidateCheck(path string) error {
-	// Use Lstat to reject symlinks.
-	fi, err := os.Lstat(path)
-	if err != nil {
-		return fmt.Errorf("check not found: %w", err)
-	}
-	if fi.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("check is a symlink (refused): %s", path)
-	}
-	if !fi.Mode().IsRegular() {
-		return fmt.Errorf("check is not a regular file: %s", path)
-	}
-	// Must be executable (owner at minimum)
-	if fi.Mode()&0100 == 0 {
-		return fmt.Errorf("check is not executable: %s", path)
-	}
-	// Read first line to verify shebang
-	data := make([]byte, 2)
-	f, err := os.Open(path)
-	if err != nil {
-		return fmt.Errorf("opening check: %w", err)
-	}
-	defer f.Close()
-	n, err := f.Read(data)
-	if err != nil || n < 2 {
-		return fmt.Errorf("check is empty or unreadable: %s", path)
-	}
-	if data[0] != '#' || data[1] != '!' {
-		return fmt.Errorf("check is missing shebang (#!): %s", path)
-	}
-	return nil
-}
-
 // MigrateOrRefuseStale checks whether a check artifact is stale and either
 // migrates it (if possible) or signals refusal. Returns true if the check
 // was migrated, false if it was refused (caller should remove/recreate).
