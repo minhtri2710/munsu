@@ -285,13 +285,13 @@ func awaitFakeBlocking(t *testing.T, logPath string, waitReturned <-chan error) 
 		}
 		select {
 		case err := <-waitReturned:
-			t.Fatalf("no fake herdr argv marker was observed at %s, but Wait returned with err = %v; this is consistent with the fake exiting before reaching or recording the branch, or reaching it without recording the marker and later exiting after its finite blocker", logPath, err)
+			t.Fatalf("Wait exited before the fake herdr blocking-branch marker was recorded at %s (err = %v); the fake exited before reaching the branch or reached it without recording the marker", logPath, err)
 		case <-backstop:
 			select {
 			case err := <-waitReturned:
-				t.Fatalf("no fake herdr argv marker was observed at %s, but Wait returned with err = %v; this is consistent with the fake exiting before reaching or recording the branch, or reaching it without recording the marker and later exiting after its finite blocker", logPath, err)
+				t.Fatalf("Wait exited before the fake herdr blocking-branch marker was recorded at %s (err = %v); the fake exited before reaching the branch or reached it without recording the marker", logPath, err)
 			default:
-				t.Fatalf("no fake herdr argv marker and no Wait result were observed at %s before the derived backstop; this is consistent with the fake being stalled before the branch, or blocked there without recording the marker", logPath)
+				t.Fatalf("Wait remained blocked without the fake herdr blocking-branch marker at %s before the test-deadline-derived backstop; the fake stalled before the branch or blocked there without recording the marker", logPath)
 			}
 		case <-poll.C:
 		}
@@ -304,6 +304,7 @@ func TestHerdrEventSource_Wait_ContextCancellation(t *testing.T) {
 	logPath := filepath.Join(t.TempDir(), "args.log")
 	src, _ := eventSourceWithFakeBlocking(t, logPath)
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	done := make(chan error, 1)
 	go func() {
 		_, err := src.Wait(ctx, EndpointRef{Backend: "herdr", Handle: "w:p"}, "")
