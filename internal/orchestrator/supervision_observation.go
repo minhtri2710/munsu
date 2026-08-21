@@ -16,6 +16,7 @@ package orchestrator
 import (
 	"fmt"
 	"os"
+	"sort"
 	"time"
 )
 
@@ -29,8 +30,8 @@ type CycleObservation struct {
 	// Ages are reported here only — never into WakeReason.Message or a
 	// fingerprint input, so duplicate suppression is preserved.
 	StaleByTask map[string]time.Duration
-	// SuppressedDuplicates is the number of watcher task wakes skipped because
-	// the durable fingerprint marker already matched (duplicate suppression).
+	// SuppressedDuplicates is the number of watcher task or check wakes skipped
+	// because the durable fingerprint marker already matched.
 	SuppressedDuplicates int
 }
 
@@ -46,6 +47,14 @@ func logCycleObservation(obs *CycleObservation) {
 	if obs == nil {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "[watcher-obs] scanned=%d stale=%d suppressed=%d\n",
-		obs.ScannedTasks, len(obs.StaleByTask), obs.SuppressedDuplicates)
+	fmt.Fprintf(os.Stderr, "[watcher-obs] scanned=%d suppressed=%d\n",
+		obs.ScannedTasks, obs.SuppressedDuplicates)
+	ids := make([]string, 0, len(obs.StaleByTask))
+	for id := range obs.StaleByTask {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		fmt.Fprintf(os.Stderr, "[watcher-obs] stale task=%s age=%s\n", id, obs.StaleByTask[id])
+	}
 }

@@ -63,7 +63,11 @@ func WakeAgeSinceEnqueue(epoch string, now time.Time) time.Duration {
 	if err != nil {
 		return 0
 	}
-	return now.Sub(time.Unix(secs, 0))
+	age := now.Sub(time.Unix(secs, 0))
+	if age < 0 {
+		return 0
+	}
+	return age
 }
 
 // ClaimWakes claims up to limit wake records from the queue under a lease.

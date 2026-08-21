@@ -6,6 +6,8 @@ package home
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -18,9 +20,13 @@ func TestWakeAgeSinceEnqueue_ExactClicks(t *testing.T) {
 	}
 }
 
-func TestWakeAgeSinceEnqueue_MalformedEpochIsZero(t *testing.T) {
-	if got := WakeAgeSinceEnqueue("not-a-number", time.Now()); got != 0 {
+func TestWakeAgeSinceEnqueue_MalformedOrFutureEpochIsZero(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	if got := WakeAgeSinceEnqueue("not-a-number", now); got != 0 {
 		t.Fatalf("WakeAgeSinceEnqueue(malformed) = %v, want 0", got)
+	}
+	if got := WakeAgeSinceEnqueue("1700000001", now); got != 0 {
+		t.Fatalf("WakeAgeSinceEnqueue(future epoch) = %v, want 0", got)
 	}
 }
 
@@ -56,54 +62,30 @@ func TestClaimReportsWakeToClaimLatency(t *testing.T) {
 	}
 }
 
-// TestReclaimReStampsEpochForLatency proves the "reclaim creates a new Epoch"
-// invariant that the latency definition relies on: a wake reclaimed from an
-// expired lease is re-enqueued, which stamps a FRESH epoch, so the claimed
-// latency is measured from the latest enqueue, never the original emission
-// age. The stale original epoch, if it had been preserved, would report a far
-// older age after the sleep.
+// TestReclaimReStampsEpochForLatency constructs an already-expired lease with
+// a fixed old enqueue epoch and verifies reclaim writes a fresh enqueue epoch.
 func TestReclaimReStampsEpochForLatency(t *testing.T) {
 	home := t.TempDir()
-	if err := EnqueueWake(home, "signal", "task-1", "payload"); err != nil {
-		t.Fatalf("EnqueueWake: %v", err)
+	leaseDir := LeaseDir(home)
+	if err := os.MkdirAll(leaseDir, 0755); err != nil {
+		t.Fatalf("mkdir lease directory: %v", err)
+	}
+	const oldEpoch = "1700000000"
+	lease := "lease-expired"
+	contents := lease + "\tconsumer\t0\t1700000000\n" +
+		oldEpoch + "\t1\tsignal\ttask-1\tpayload\n"
+	if err := os.WriteFile(filepath.Join(leaseDir, lease), []byte(contents), 0600); err != nil {
+		t.Fatalf("write expired lease: %v", err)
 	}
 
-	// First claim with an immediate-expiry lease: the wake moves to the lease
-	// under its ORIGINAL epoch.
-	first, err := ClaimWakes(home, "consumer", 0, 10)
+	result, err := ClaimWakes(home, "consumer2", 60, 10)
 	if err != nil {
-		t.Fatalf("first ClaimWakes: %v", err)
+		t.Fatalf("ClaimWakes: %v", err)
 	}
-	if len(first.Wakes) != 1 {
-		t.Fatalf("first claim woke %d wakes, want 1", len(first.Wakes))
+	if result.Reclaimed != 1 || len(result.Wakes) != 1 {
+		t.Fatalf("reclaimed=%d wakes=%d, want one reclaimed wake", result.Reclaimed, len(result.Wakes))
 	}
-	origEpoch := first.Wakes[0].Epoch
-
-	// Let the wall clock advance so a re-stamped epoch is strictly newer than
-	// the original emission second.
-	time.Sleep(1100 * time.Millisecond)
-
-	// Second claim triggers reclaim of the expired lease, which re-enqueues the
-	// wake under a FRESH epoch.
-	second, err := ClaimWakes(home, "consumer2", 60, 10)
-	if err != nil {
-		t.Fatalf("second ClaimWakes: %v", err)
-	}
-	var reclaimed *ClaimedWakeRecord
-	for i, w := range second.Wakes {
-		if w.Key == "task-1" {
-			reclaimed = &second.Wakes[i]
-		}
-	}
-	if reclaimed == nil {
-		t.Fatal("reclaimed wake for task-1 not found")
-	}
-	if reclaimed.Epoch <= origEpoch {
-		t.Fatalf("reclaimed epoch %q <= original epoch %q; reclaim must create a fresh Epoch", reclaimed.Epoch, origEpoch)
-	}
-	// The latency is measured from the fresh epoch (recent enqueue), so it must
-	// be far below the elapsed since the original emission (which is ~1.1s+).
-	if lat := WakeAgeSinceEnqueue(reclaimed.Epoch, time.Now()); lat >= 1000*time.Millisecond {
-		t.Fatalf("reclaimed wake latency %v too large; latency must be since the latest (fresh) enqueue, not original emission age", lat)
+	if result.Wakes[0].Epoch <= oldEpoch {
+		t.Fatalf("reclaimed epoch %q <= fixed old epoch %q; reclaim must restamp enqueue time", result.Wakes[0].Epoch, oldEpoch)
 	}
 }

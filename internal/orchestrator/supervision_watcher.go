@@ -603,6 +603,9 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 		fingerprint := "check\n" + msg
 		marker := wakeMarkerPath(homeDir, "check:"+checkID)
 		if data, err := os.ReadFile(marker); err == nil && string(data) == fingerprint {
+			if obs != nil {
+				obs.SuppressedDuplicates++
+			}
 			continue
 		}
 		if err := EnqueueWake(homeDir, "check", checkID, msg); err != nil {

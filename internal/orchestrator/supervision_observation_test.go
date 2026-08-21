@@ -5,6 +5,10 @@
 package orchestrator
 
 import (
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,6 +18,29 @@ import (
 // TestCycleObservation_ScannedCount asserts the watcher scan count equals the
 // number of task .meta files examined for staleness in one cycle. Deterministic
 // with a fixed set of alive tasks: none wake, all are counted.
+func TestLogCycleObservation_EmitsStaleTaskAndAge(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := os.Stderr
+	os.Stderr = writer
+	logCycleObservation(&CycleObservation{
+		ScannedTasks: 1,
+		StaleByTask:  map[string]time.Duration{"task-x": 12 * time.Second},
+	})
+	_ = writer.Close()
+	os.Stderr = previous
+	output, err := io.ReadAll(reader)
+	_ = reader.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(output), "task=task-x age=12s") {
+		t.Fatalf("observation output %q omits stale task identity or age", output)
+	}
+}
+
 func TestCycleObservation_ScannedCount(t *testing.T) {
 	home := t.TempDir()
 	for i := 0; i < 4; i++ {
@@ -98,6 +125,39 @@ func TestCycleObservation_StaleAgeCaptured(t *testing.T) {
 // queue) and records that suppression in the observation. Deterministic because
 // both cycles run far below the deep-inspection threshold and the stale
 // fingerprint is stable.
+func TestCycleObservation_CheckDuplicateSuppression(t *testing.T) {
+	home := t.TempDir()
+	checksDir := filepath.Join(home, "state", "checks")
+	if err := os.MkdirAll(checksDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(checksDir, "global.check"), []byte("#!/bin/sh\necho ready\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	resetRecovery()
+	obs1 := newCycleObservation()
+	if _, err := runCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, activeTestHooks, &testRetirementPort{}, testTaskStatePort{}, obs1); err != nil {
+		t.Fatalf("cycle 1: %v", err)
+	}
+	if obs1.SuppressedDuplicates != 0 {
+		t.Fatalf("cycle 1 suppressed = %d, want 0", obs1.SuppressedDuplicates)
+	}
+	obs2 := newCycleObservation()
+	if _, err := runCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, activeTestHooks, &testRetirementPort{}, testTaskStatePort{}, obs2); err != nil {
+		t.Fatalf("cycle 2: %v", err)
+	}
+	if obs2.SuppressedDuplicates != 1 {
+		t.Fatalf("cycle 2 suppressed = %d, want 1 for duplicate check wake", obs2.SuppressedDuplicates)
+	}
+	records, err := mhome.DrainWakes(home)
+	if err != nil {
+		t.Fatalf("DrainWakes: %v", err)
+	}
+	if len(records) != 1 || records[0].Kind != "check" {
+		t.Fatalf("wake records = %#v, want one check wake", records)
+	}
+}
+
 func TestCycleObservation_DuplicateSuppression(t *testing.T) {
 	home := t.TempDir()
 	mustWriteMeta(t, home, "task-d", map[string]string{
