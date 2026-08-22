@@ -593,10 +593,9 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 			fmt.Fprintf(os.Stderr, "poll check invalid (skipped): %v\n", err)
 			continue
 		}
-		// Accept-or-refuse: a refused check wakes nobody and is left exactly
-		// where it is. No refusal below justifies deleting it — the artifact is
-		// externally authored, and the reason it was refused (stale against a
-		// newer .meta, most often) is precisely what a human needs to see.
+		// Acceptance refusal leaves the externally authored artifact exactly
+		// where it is and emits no wake; the refusal is reported for the
+		// operator to resolve.
 		if err := AcceptOrRefuseStale(plugin.Path); err != nil {
 			fmt.Fprintf(os.Stderr, "poll check refused (left in place): %v\n", err)
 			continue

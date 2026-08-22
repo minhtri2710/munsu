@@ -355,9 +355,11 @@ func ValidateCheckWithLstat(path string) error {
 //  7. Remove the exact poll artifact (with digest revalidation).
 //  8. Remove the pending retirement record.
 //
-// Fail-closed on validation before publication: preserves the poll. After
-// publication, revalidation refusal cleans the record because the durable
-// outcome already exists.
+// Fail-closed on acceptance: validation refusal before publication preserves
+// the externally authored poll. After publication, revalidation refusal cleans
+// the record because the durable outcome already exists. Recovery completion
+// is separate: it removes a previously committed poll only after publication
+// evidence and the recorded content digest both match.
 func RetireMergedPoll(homeDir, taskID, checkPath string, auth *taskauthority.Canonical) error {
 	// Step 0: Lstat validation on check path for crash safety.
 	if err := ValidateCheckWithLstat(checkPath); err != nil {
@@ -551,10 +553,16 @@ func requireCanonicalCompletedOutcome(auth *taskauthority.Canonical, taskID stri
 //
 // Recovery logic:
 //  1. Validate record filename, schema, and file integrity.
-//  2. If poll still exists and matches digest, revalidate against current meta.
+//  2. Validate current task identity and canonical completion when available.
 //  3. Append publication only if exact evidence is absent.
-//  4. Remove poll only after evidence exists (or accept missing poll).
+//  4. Remove poll only after publication is confirmed and its content digest
+//     matches the committed record (or accept an already-missing poll).
 //  5. Remove completed record.
+//
+// Validation refusal governs acceptance of a newly offered operator artifact;
+// recovery instead requires durable retirement intent, canonical completion,
+// confirmed publication, and this exact content identity. Current executable
+// mode is not recovery identity.
 func RecoverPendingRetirement(homeDir, taskID string, auth *taskauthority.Canonical) (bool, error) {
 	// Validate record path.
 	if err := ValidateRetirementPath(homeDir, taskID); err != nil {
@@ -579,28 +587,29 @@ func RecoverPendingRetirement(homeDir, taskID string, auth *taskauthority.Canoni
 	// Build the poll path.
 	checkPath := filepath.Join(home.StateDir(homeDir), rec.PollPath)
 
-	// Attempt to validate current task identity (best-effort; corruption
-	// preserves everything).
+	// Task metadata and canonical completion are required before recovery can
+	// publish or remove anything. Missing metadata preserves the poll and
+	// record for the next recovery cycle.
 	currentMeta, metaErr := home.ReadMeta(homeDir, taskID)
-	if metaErr == nil {
-		if currentProvider := currentMeta["pr_provider"]; currentProvider != "" && currentProvider != rec.Provider {
-			return false, fmt.Errorf("stale retirement: current provider=%q, record provider=%q", currentProvider, rec.Provider)
-		}
-		if currentURL := currentMeta["pr_url"]; currentURL != "" && currentURL != rec.URL {
-			return false, fmt.Errorf("stale retirement: current pr_url=%q, record pr_url=%q", currentURL, rec.URL)
-		}
-		if currentHead := currentMeta["pr_head_sha"]; currentHead != "" && currentHead != rec.HeadSHA {
-			return false, fmt.Errorf("stale retirement: current head SHA=%q, record head SHA=%q", currentHead, rec.HeadSHA)
-		}
+	if metaErr != nil {
+		return false, fmt.Errorf("recovery: reading task metadata (preserving poll and record): %w", metaErr)
+	}
+	if currentProvider := currentMeta["pr_provider"]; currentProvider != "" && currentProvider != rec.Provider {
+		return false, fmt.Errorf("stale retirement: current provider=%q, record provider=%q", currentProvider, rec.Provider)
+	}
+	if currentURL := currentMeta["pr_url"]; currentURL != "" && currentURL != rec.URL {
+		return false, fmt.Errorf("stale retirement: current pr_url=%q, record pr_url=%q", currentURL, rec.URL)
+	}
+	if currentHead := currentMeta["pr_head_sha"]; currentHead != "" && currentHead != rec.HeadSHA {
+		return false, fmt.Errorf("stale retirement: current head SHA=%q, record head SHA=%q", currentHead, rec.HeadSHA)
+	}
 
-		// Derive merged truth from the canonical committed delivery outcome:
-		// a committed completed outcome is required before any poll artifact
-		// is removed. The .meta delivery_state projection never authorizes
-		// merged truth and no parallel delivery state is written here.
-		// Fail-closed: preserves record and poll for the next recovery cycle.
-		if err := requireCanonicalCompletedOutcome(auth, taskID); err != nil {
-			return false, fmt.Errorf("recovery: canonical merged truth required: %w", err)
-		}
+	// Derive merged truth from the canonical committed delivery outcome:
+	// a committed completed outcome is required before any poll artifact
+	// is removed. The .meta delivery_state projection never authorizes
+	// merged truth and no parallel delivery state is written here.
+	if err := requireCanonicalCompletedOutcome(auth, taskID); err != nil {
+		return false, fmt.Errorf("recovery: canonical merged truth required: %w", err)
 	}
 
 	// Check if poll still exists.
@@ -644,8 +653,10 @@ func RecoverPendingRetirement(homeDir, taskID string, auth *taskauthority.Canoni
 		return false, fmt.Errorf("recovery: publication could not be confirmed; preserving poll and record")
 	}
 
-	// Publication exists. A changed poll is a different artifact and must
-	// preserve the recovery record for operator attention.
+	// Publication exists. Recovery deletes only after this confirmed
+	// publication and an exact content-digest match. A changed poll is a
+	// different artifact and must preserve the recovery record for operator
+	// attention; current validation state does not change that identity check.
 	if pollExists && !pollMatches {
 		return false, fmt.Errorf("recovery: poll digest changed; preserving poll and retirement record")
 	}

@@ -869,6 +869,9 @@ func TestRecoverPendingRetirement_PublicationExists(t *testing.T) {
 		t.Fatalf("WriteRetirementRecord: %v", err)
 	}
 	durableAppendStatus(home, taskID, pubLine)
+	if err := os.Chmod(checkPath, 0644); err != nil {
+		t.Fatalf("chmod check: %v", err)
+	}
 
 	// Recovery: should skip duplicate append, remove poll, clean record.
 	resolved, err := RecoverPendingRetirement(home, taskID, retirementPollAuth(t, home, taskID))
@@ -1055,6 +1058,62 @@ func TestRecoverPendingRetirement_WrongTaskIdentity(t *testing.T) {
 
 	if _, err := os.Stat(checkPath); err != nil {
 		t.Fatal("check should be preserved")
+	}
+}
+
+func TestRecoverPendingRetirement_MissingMetadataPreservesArtifacts(t *testing.T) {
+	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+	defer cleanup()
+
+	digest, err := pollContentDigest(checkPath)
+	if err != nil {
+		t.Fatalf("pollContentDigest: %v", err)
+	}
+	rec := &PollRetirementRecord{
+		SchemaVersion:   1,
+		TaskID:          taskID,
+		PollPath:        taskID + ".check",
+		PollDigest:      digest,
+		Provider:        "github",
+		Owner:           "testowner",
+		Repo:            "testrepo",
+		Number:          42,
+		URL:             "https://github.com/testowner/testrepo/pull/42",
+		BaseRef:         "main",
+		HeadRef:         "feature-branch",
+		HeadSHA:         "0000111122223333444455556666777788889999",
+		MergedSHA:       "aaaabbbbccccddddeeeeffff0000111122223333",
+		PublicationLine: publicationLine(taskID, "https://github.com/testowner/testrepo/pull/42", "aaaabbbbccccddddeeeeffff0000111122223333"),
+	}
+	if err := WriteRetirementRecord(home, rec); err != nil {
+		t.Fatalf("WriteRetirementRecord: %v", err)
+	}
+	auth := retirementPollAuth(t, home, taskID)
+	metaPath, err := mhome.MetaFilePath(home, taskID)
+	if err != nil {
+		t.Fatalf("MetaFilePath: %v", err)
+	}
+	if err := os.Remove(metaPath); err != nil {
+		t.Fatalf("remove metadata: %v", err)
+	}
+
+	resolved, err := RecoverPendingRetirement(home, taskID, auth)
+	if err == nil || resolved {
+		t.Fatalf("expected unresolved missing metadata, got resolved=%v err=%v", resolved, err)
+	}
+	if _, err := os.Stat(checkPath); err != nil {
+		t.Fatalf("poll should be preserved: %v", err)
+	}
+	if got := readRetirementRecordOrNil(t, home, taskID); got == nil {
+		t.Fatal("retirement record should be preserved")
+	}
+	lines, err := mhome.ReadStatus(home, taskID)
+	if err == nil {
+		for _, line := range lines {
+			if line == rec.PublicationLine {
+				t.Fatal("recovery should not publish without metadata")
+			}
+		}
 	}
 }
 
