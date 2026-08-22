@@ -167,7 +167,7 @@ Check the spawned soldier: `munsu soldier-state <id>`.
 ### Supervise
 
 Ensure the persistent watcher: `munsu watch ensure`.
-On wake: claim with `munsu wake claim`, then `munsu soldier-state <id>` as ground truth.
+On wake: claim with `munsu wake claim --consumer <id>`, then `munsu soldier-state <id>` as ground truth.
 Steer with: `munsu send <id> "<line>"`.
 Peek at output: `munsu peek <id> [--lines N]`.
 
@@ -191,6 +191,7 @@ Only run when the task is fully landed:
 munsu teardown <id> [--force]
 ```
 
+Retirement is terminal for the generation, so record completion with `munsu task done <id>` before either `munsu teardown <id>` or `munsu delivery pr-merge <id> <pr-url> --teardown`.
 A teardown refusal for uncommitted or unlanded work is a stop-and-investigate result.
 Never force teardown without explicit discard authority.
 
@@ -430,10 +431,11 @@ Run: `munsu skill show <name>` to read any skill.
 5. munsu spawn <id> <project>        # launch soldier in worktree+tmux window
 6. munsu watch ensure                # ensure persistent supervision
 7. munsu send <id> "<msg>"           # steer as needed
-8. munsu wake claim / soldier-state   # on wake from watcher
-9. munsu delivery pr-merge <id> <url> [--teardown]  # merge; --teardown cleans soldier
-10. munsu captain converge           # flush send outbox after captain lifecycle
-11. munsu teardown <id>              # clean up if merge was without --teardown
+8. munsu wake claim --consumer <id>; munsu soldier-state <id> # on wake from watcher
+9. munsu task done <id>              # record completion before retirement
+10. munsu delivery pr-merge <id> <url> [--teardown]  # merge; --teardown cleans soldier
+11. munsu captain converge           # flush send outbox after captain lifecycle
+12. munsu teardown <id>              # clean up if merge was without --teardown
 ```
 
 ---
