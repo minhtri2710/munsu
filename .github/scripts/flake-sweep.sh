@@ -944,6 +944,22 @@ selftest() {
 		failed=1
 	fi
 
+	# 1f. An existing row with no newer evidence keeps a hand-edited state,
+	# including a non-default `fixed:` value; this is the preservation guarantee
+	# the ledger documents, distinct from the fixed-row reopen rule in scenario 3.
+	#
+	# Mutation this answers: force every existing row sync emits to use `open`.
+	local state_kept='| TestReopens | integration | aaaa1111@3001/1 | cccc3333@3003/1 | 9999-12-31 | BEO-99 | fixed:abc1234 |'
+	scratch_ledger "$ledger" "$state_kept"
+	SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" sync --owner "$owner_fixture" >/dev/null || {
+		echo "::error::state scenario: sync --owner $owner_fixture failed over a row with no newer evidence" >&2
+		failed=1
+	}
+	if ! grep -qF "$state_kept" "$ledger"; then
+		echo "::error::state scenario: sync --owner $owner_fixture did not preserve the hand-edited state without newer evidence" >&2
+		failed=1
+	fi
+
 	# 2. Filed, in scope, and no longer derivable. check() must be red and name
 	# TestVanished; it must not name TestOutsideWindow, whose first_seen run this
 	# record set never read -- that scoping is what stops a narrow window from
