@@ -24,13 +24,19 @@ import (
 // than one that is gone, and so does a GetExitCodeProcess that fails on a
 // handle we did open.
 //
-// This is compiled and vetted natively on windows: ci.yml's `windows-build-vet`
-// job runs `go build ./...` and `go vet ./...` on windows-latest for every push
-// and pull request, and `GOOS=windows go vet ./...` compiles it on ubuntu as
-// well. Natively compiled is not natively executed. No required check runs it --
-// the only lane that runs tests on windows is windows-observation.yml, which is
-// workflow_dispatch-only -- so the repository holds no windows runtime proof,
-// including which error OpenProcess actually returns for an unopenable live PID.
+// This is compiled and vetted natively on windows, but only where the change
+// meets main: ci.yml triggers on pull requests targeting main and on pushes to
+// main, so its `windows-build-vet` job runs `go build ./...` and `go vet ./...`
+// on windows-latest at those two points and nowhere else. A push to a feature
+// branch with no open PR runs it not at all, and a green branch is therefore no
+// evidence that windows compiles. `GOOS=windows go vet ./...` on ubuntu is in
+// the same workflow and inherits the same two triggers.
+//
+// Natively compiled is still not natively executed, and no required check runs
+// this either way -- the only lane that runs tests on windows is
+// windows-observation.yml, which is workflow_dispatch-only. So the repository
+// holds no windows runtime proof, including which error OpenProcess actually
+// returns for an unopenable live PID.
 //
 // watcher_lease_windows_test.go is not what holds the signature: this function
 // has a production call site that compiles in the same lane
