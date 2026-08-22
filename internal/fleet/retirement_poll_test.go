@@ -1012,6 +1012,55 @@ func TestRecoverPendingRetirement_StaleIdentity(t *testing.T) {
 	}
 }
 
+func TestRecoverPendingRetirement_DeliveryIdentityMismatchPreservesArtifacts(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*PollRetirementRecord)
+	}{
+		{name: "owner", mutate: func(rec *PollRetirementRecord) { rec.Owner = "other-owner" }},
+		{name: "repo", mutate: func(rec *PollRetirementRecord) { rec.Repo = "other-repo" }},
+		{name: "number", mutate: func(rec *PollRetirementRecord) { rec.Number = 43 }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+			defer cleanup()
+
+			rec := recoveryRecordForTest(t, home, taskID, checkPath)
+			tc.mutate(rec)
+			if err := WriteRetirementRecord(home, rec); err != nil {
+				t.Fatalf("WriteRetirementRecord: %v", err)
+			}
+
+			resolved, err := RecoverPendingRetirement(home, taskID, retirementPollAuth(t, home, taskID))
+			if err == nil || resolved {
+				t.Fatalf("expected unresolved delivery identity mismatch, got resolved=%v err=%v", resolved, err)
+			}
+			assertRecoveryArtifactsPreserved(t, home, taskID, checkPath, rec.PublicationLine)
+		})
+	}
+}
+
+func TestRecoverPendingRetirement_MutableAttributesDoNotBlockRecovery(t *testing.T) {
+	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+	defer cleanup()
+
+	rec := recoveryRecordForTest(t, home, taskID, checkPath)
+	rec.BaseRef = "release"
+	rec.HeadRef = "retargeted-feature"
+	rec.CapturedAt = "2025-01-01T00:00:00Z"
+	if err := WriteRetirementRecord(home, rec); err != nil {
+		t.Fatalf("WriteRetirementRecord: %v", err)
+	}
+
+	resolved, err := RecoverPendingRetirement(home, taskID, retirementPollAuth(t, home, taskID))
+	if err != nil || !resolved {
+		t.Fatalf("expected recovery despite mutable attribute changes, got resolved=%v err=%v", resolved, err)
+	}
+	if _, err := os.Stat(checkPath); !os.IsNotExist(err) {
+		t.Fatalf("check should be removed after recovery, got err=%v", err)
+	}
+}
+
 func TestRecoverPendingRetirement_WrongTaskIdentity(t *testing.T) {
 	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
 	defer cleanup()

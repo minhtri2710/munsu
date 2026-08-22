@@ -360,6 +360,13 @@ func ValidateCheckWithLstat(path string) error {
 // the record because the durable outcome already exists. Recovery completion
 // is separate: it removes a previously committed poll only after publication
 // evidence and the recorded content digest both match.
+//
+// The normal removal site requires successful pre-publication identity and
+// canonical-outcome checks, confirmed publication, and a matching digest after
+// publication. The recovery removal site requires the durable record, current
+// delivery identity, canonical completion, confirmed publication, and the
+// recorded digest. Both sites retain the known verification-to-remove pathname
+// replacement window tracked by #602; a replacement is not repaired here.
 func RetireMergedPoll(homeDir, taskID, checkPath string, auth *taskauthority.Canonical) error {
 	// Step 0: Lstat validation on check path for crash safety.
 	if err := ValidateCheckWithLstat(checkPath); err != nil {
@@ -561,7 +568,8 @@ func requireCanonicalCompletedOutcome(auth *taskauthority.Canonical, taskID stri
 //  2. Validate current task identity and canonical completion when available.
 //  3. Append publication only if exact evidence is absent.
 //  4. Remove poll only after publication is confirmed and its content digest
-//     matches the committed record (or accept an already-missing poll).
+//     matches the committed record (or accept an already-missing poll); a
+//     digest mismatch preserves the poll and record.
 //  5. Remove completed record.
 //
 // Validation refusal governs acceptance of a newly offered operator artifact;
@@ -603,8 +611,21 @@ func RecoverPendingRetirement(homeDir, taskID string, auth *taskauthority.Canoni
 	if identityErr != nil {
 		return false, fmt.Errorf("recovery: task identity required (preserving poll and record): %w", identityErr)
 	}
+	// Delivery identity names one pull request at one commit: Provider,
+	// Owner, Repo, Number, URL, and HeadSHA. BaseRef and HeadRef are mutable
+	// PR attributes, and CapturedAt is observation time, so neither is part
+	// of the identity comparison.
 	if ident.Provider != rec.Provider {
 		return false, fmt.Errorf("stale retirement: current provider=%q, record provider=%q", ident.Provider, rec.Provider)
+	}
+	if ident.Owner != rec.Owner {
+		return false, fmt.Errorf("stale retirement: current owner=%q, record owner=%q", ident.Owner, rec.Owner)
+	}
+	if ident.Repo != rec.Repo {
+		return false, fmt.Errorf("stale retirement: current repo=%q, record repo=%q", ident.Repo, rec.Repo)
+	}
+	if ident.Number != rec.Number {
+		return false, fmt.Errorf("stale retirement: current number=%d, record number=%d", ident.Number, rec.Number)
 	}
 	if ident.URL != rec.URL {
 		return false, fmt.Errorf("stale retirement: current pr_url=%q, record pr_url=%q", ident.URL, rec.URL)
