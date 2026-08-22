@@ -91,9 +91,13 @@ jobs:
       # back out. If that ever stops holding, this job stops before it can file
       # anything.
       #
-      # It runs here rather than in `invariants` so ci.yml keeps exactly one new
-      # step. The cost is real and worth naming: a PR that breaks the
-      # classifier stays green until it merges.
+      # It also runs in the `invariants` job of ci.yml, which is the half that
+      # fires on the pull-request path (#565): this workflow never does, so
+      # while these fixtures ran only here, a PR that broke the classifier
+      # stayed green until it merged and failed first on `main`. Kept here as
+      # well, and not as duplication -- there it stops the change, here it stops
+      # this job from measuring live data with a classifier that no longer
+      # agrees with its fixtures.
       - name: Classifier must agree with its fixtures
         run: .github/scripts/flake-sweep.sh selftest
 
@@ -161,8 +165,63 @@ jobs:
           OWNER: ${{ inputs.owner }}
         run: |
           set -eu
-          if [ -n "${OWNER:-}" ]; then
-            .github/scripts/flake-sweep.sh sync --owner "$OWNER"
+          # Pasting an issue id out of a title brings whitespace with it, and
+          # `BEO-541 ` is not a different intent from `BEO-541`. Trimmed before
+          # the test below so it takes the path the clean value takes, rather
+          # than passing the `-n` test and then being refused by the validation
+          # every flag goes through -- which, under `set -e`, ended this step
+          # before the diff it exists to produce was written (#569). Only the
+          # ends: whitespace *inside* an owner is still two values where one
+          # belongs, and stays refused, so this widens nothing. A value that is
+          # nothing but whitespace trims to empty and takes the no-owner branch
+          # below, which is the preview-only TBD result an automatic run gets --
+          # so it does not matter here whether the API lets a `required` input
+          # through as an empty string.
+          OWNER="${OWNER:-}"
+          OWNER="${OWNER#"${OWNER%%[![:space:]]*}"}"
+          OWNER="${OWNER%"${OWNER##*[![:space:]]}"}"
+
+          if [ -n "$OWNER" ]; then
+            # The refusal below is right and stays right; what was wrong was
+            # reporting it as a stale ledger. Caught here so the summary a
+            # person reads on the run page says which of the two they have.
+            if sync_out="$(.github/scripts/flake-sweep.sh sync --owner "$OWNER" 2>&1)"; then
+              printf '%s\n' "$sync_out"
+            else
+              printf '%s\n' "$sync_out" >&2
+              {
+                echo '## Flake sweep: the `owner` this dispatch supplied was refused'
+                echo
+                echo '`.github/scripts/flake-sweep.sh check` did find the ledger out of date, and'
+                echo 'this step is where the diff that fixes it would normally be. There is'
+                echo 'none: `sync --owner` exited non-zero before writing a single row. **The'
+                echo 'ledger still needs fixing; this run just cannot tell you how.**'
+                echo
+                echo 'What `sync` said:'
+                echo
+                echo '```'
+                # Without the `::error::`: it is how a step raises an
+                # annotation, not part of what the script said, and inside a
+                # code block it is noise the reader has to look past.
+                printf '%s\n' "$sync_out" | sed 's/^::error:://'
+                echo '```'
+                echo
+                echo 'Nearly always that is the `owner` input itself. It has to match'
+                echo '`BEO-<number>` exactly: a real issue id, never `TBD`, no whitespace inside'
+                echo 'it, nothing that looks like a flag. Leading and trailing whitespace is'
+                echo 'trimmed before it gets here, so a pasted `BEO-541 ` is not the cause.'
+                echo
+                echo 'Nothing was written anywhere -- this job only ever writes the runner'"'"'s own'
+                echo 'checkout. Re-dispatch with a value that matches, or get the same diff'
+                echo 'locally:'
+                echo
+                echo '```sh'
+                echo '.github/scripts/flake-sweep.sh sync --owner <ISSUE_ID>'
+                echo '```'
+              } >>"$GITHUB_STEP_SUMMARY"
+              echo "::error::flake-sweep.sh sync refused this dispatch's owner input, so the ledger is out of date and this run produced no diff for it. Owners must match BEO-<number>; the run summary carries sync's own message."
+              exit 1
+            fi
           else
             .github/scripts/flake-sweep.sh sync
           fi

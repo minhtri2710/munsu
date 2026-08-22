@@ -82,6 +82,9 @@ admits to, and permanent.
 with no network access at all, next to the ADR-number and gofmt rules, and
 `flake-ledger.sh selftest` runs beside it with one fixture per rule -- the rules
 themselves are guards, and a guard nothing tests stops protecting silently.
+`flake-sweep.sh selftest` runs in that same job for the same reason: it is
+hermetic too, and when it ran only in the ledger workflow, a PR could take a rule
+out of the sweep and stay green.
 `.github/scripts/flake-sweep.sh check` compares this table against the API in
 both directions, the way `deadcode.sh check` compares `.github/deadcode.allow`
 against the tree: observed but unfiled is red, filed but no longer observable is
@@ -90,9 +93,19 @@ against `main`.
 
 The rows between the markers below are machine-maintained. File new rows with
 `.github/scripts/flake-sweep.sh sync --owner <ISSUE_ID>` as described above. Edit
-`deadline` and `state` by hand; leave `test`, `lane`, `first_seen` and `last_seen`
-to the sweep, and if you disagree with a row, argue with it in the owning issue
-rather than deleting it -- the sweep will re-add it on the next `main` run.
+`deadline`, `owner_issue` and `state` by hand; the sweep keeps all three on a row
+that already exists, so a hand edit survives the next sweep -- with the single
+exception named above, where a `fixed:` row seen flaking again is reopened and has
+its `state` and `deadline` rewritten (never its `owner_issue`). Leave `test`,
+`lane`, `first_seen` and `last_seen` to the sweep, and if you disagree with a row,
+argue with it in the owning issue rather than deleting it -- the sweep will re-add
+it on the next `main` run.
+
+`owner_issue` is on that list because one `sync --owner` gives *every* row it files
+the same issue, and re-running `sync` with a different one changes nothing -- the
+preserve-on-re-run rule that protects `BEO-79` from being clobbered is the same
+rule that refuses to move a row. So when a sweep files two flakes that belong to
+two issues, the second one is moved here, by hand, and stays moved.
 
 <!-- flake-ledger:begin -->
 | test | lane | first_seen | last_seen | deadline | owner_issue | state |
