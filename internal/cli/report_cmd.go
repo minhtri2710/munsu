@@ -140,13 +140,12 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 						senderIdentity = identity
 					}
 				}
-				receiverIdentity, _, err := orchestrator.ReadHomeIdentity(parentHome)
+				// The receiving home's own provenance is the only authority on
+				// its rank: a captain home under Captain dispatch, the General
+				// home under direct General dispatch.
+				receiverIdentity, receiverRank, err := orchestrator.ReadHomeIdentity(parentHome)
 				if err != nil {
 					return fmt.Errorf("report: deriving receiver identity: %w", err)
-				}
-				receiverRank := orchestrator.RankCaptain
-				if role == "captain" {
-					receiverRank = orchestrator.RankGeneral
 				}
 				uplinkResult, err = orchestrator.Report(orchestrator.ReportRequest{
 					SenderHome: senderHomeForRole(role, homeDir, parentHome), ReceiverHome: parentHome,

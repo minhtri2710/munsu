@@ -10,6 +10,11 @@ import (
 func TestReportCmdMaterialSoldierUsesMailboxOnly(t *testing.T) {
 	soldierHome := t.TempDir()
 	captainHome := t.TempDir()
+	// The receiving home must actually be a Captain home: the receiver rank is
+	// derived from its durable provenance, not asserted by the sender.
+	if err := orchestrator.WriteHomeIdentity(captainHome, "captain-one", orchestrator.RankCaptain); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("MUNSU_HOME", soldierHome)
 	t.Setenv("MUNSU_TASK_ID", "task:one")
 	t.Setenv("MUNSU_ROLE", "soldier")

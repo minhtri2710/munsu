@@ -22,6 +22,9 @@ var materialStates = map[string]bool{
 type UplinkNotifyResult struct {
 	Acknowledged bool
 	Queued       bool
+	// Err carries a notification path that failed rather than a target that
+	// was merely unavailable. A failed path is never reported as queued.
+	Err error
 }
 
 type ReportRequest struct {
@@ -71,6 +74,11 @@ func Report(req ReportRequest) (*ReportResult, error) {
 	if req.Key == "" {
 		req.Key = "default"
 	}
+	if _, homeRank, err := ReadHomeIdentity(req.ReceiverHome); err != nil {
+		return nil, fmt.Errorf("uplink report: reading receiver home rank: %w", err)
+	} else if req.ReceiverRank != homeRank {
+		return nil, fmt.Errorf("uplink report: receiver rank %q cannot be satisfied by receiving home %s of rank %q", req.ReceiverRank, req.ReceiverHome, homeRank)
+	}
 	oldReports, err := supersededReports(req)
 	if err != nil {
 		return nil, err
@@ -106,6 +114,9 @@ func Report(req ReportRequest) (*ReportResult, error) {
 	nr := req.Notify(ref)
 	if err := markNotificationAttempt(req.SenderHome, env.MessageID); err != nil {
 		return nil, err
+	}
+	if nr.Err != nil {
+		return nil, fmt.Errorf("uplink report: notify: %w", nr.Err)
 	}
 	if nr.Acknowledged {
 		result.Notified, result.Queued = true, false
@@ -162,6 +173,9 @@ func Recover(req RecoverRequest) (*RecoverResult, error) {
 		nr := req.Notify(ref)
 		if err := markNotificationAttempt(req.SenderHome, env.MessageID); err != nil {
 			return nil, err
+		}
+		if nr.Err != nil {
+			return nil, fmt.Errorf("uplink recover: notify: %w", nr.Err)
 		}
 		if nr.Acknowledged {
 			result.Notified++
@@ -290,7 +304,10 @@ func NotifyParentWithTransport(senderHome, receiverHome string, ref Notification
 
 func NotifyParentWithTargetResolver(senderHome, receiverHome string, ref NotificationRef, resolveTarget TargetResolver, transport NotificationTransport) UplinkNotifyResult {
 	target, err := resolveTarget(receiverHome, ref)
-	if err != nil || target.Handle == "" || target.Source == Unsupported || transport == nil {
+	if err != nil {
+		return UplinkNotifyResult{Err: fmt.Errorf("resolving receiver target in %s: %w", receiverHome, err)}
+	}
+	if target.Handle == "" || target.Source == Unsupported || transport == nil {
 		return UplinkNotifyResult{Queued: true}
 	}
 	return transport.Notify(senderHome, target, ref.Encode())

@@ -222,9 +222,9 @@ func TestRemoveSenderPendingRefusesWhenNoAckExists(t *testing.T) {
 }
 
 // Rank is what makes the mailbox one-hop. An unrecognised rank has no place in
-// the hierarchy at all, and a recognised one still may not skip a level: the
-// three transition refusals below are what stop a general addressing a soldier
-// directly, or a captain addressing another captain. These branches were
+// the hierarchy at all, and a recognised one still may not skip a level or
+// address its own: the refusals below are what stop a general addressing a
+// soldier directly, or a captain addressing another captain. These branches were
 // invisible to the guards lane until BEO-123 fixed the instrument, which had
 // been reading SenderRank and ReceiverRank as error values on their names.
 func TestValidateEnvelopeRefusesInvalidRanksAndIllegalTransitions(t *testing.T) {
@@ -236,13 +236,29 @@ func TestValidateEnvelopeRefusesInvalidRanksAndIllegalTransitions(t *testing.T) 
 			{"a general addressing a soldier directly", func(e *Envelope) {
 				e.SenderRank, e.ReceiverRank = RankGeneral, RankSoldier
 			}, "general can only send to captain"},
+			{"a general addressing another general", func(e *Envelope) {
+				e.SenderRank, e.ReceiverRank = RankGeneral, RankGeneral
+			}, "general can only send to captain"},
 			{"a captain addressing another captain", func(e *Envelope) {
 				e.SenderRank, e.ReceiverRank = RankCaptain, RankCaptain
 			}, "captain can only send to general or soldier"},
-			{"a soldier addressing a general directly", func(e *Envelope) {
-				e.SenderRank, e.ReceiverRank = RankSoldier, RankGeneral
-			}, "soldier can only send to captain"},
+			{"a soldier addressing another soldier", func(e *Envelope) {
+				e.SenderRank, e.ReceiverRank = RankSoldier, RankSoldier
+			}, "soldier can only send to captain or general"},
 		})
+}
+
+// The Soldier -> General edge is the one direct-dispatch hop the matrix section
+// 1.1 report row depends on: with no Captain in the topology, the soldier's
+// parent home is the General itself. Admitting it is what lets the receiving
+// General accept its own inbox item (issue #562); it is not a general
+// relaxation, which is why the refusals above still stand.
+func TestValidateEnvelopeAdmitsSoldierToGeneralDirectDispatch(t *testing.T) {
+	env := validGuardEnvelope()
+	env.SenderRank, env.ReceiverRank = RankSoldier, RankGeneral
+	if err := ValidateEnvelope(&env); err != nil {
+		t.Fatalf("soldier -> general under direct dispatch must be legal: %v", err)
+	}
 }
 
 // The rank halves of the ack. An ack whose ranks disagree with the envelope is
