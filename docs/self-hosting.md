@@ -297,7 +297,7 @@ will no longer be cleaned up during teardown. The canonical names are now
 
 Munsu never writes a `.check`. Per-task checks are authored externally — by
 the operator or an agent — and dropped into the state directory; munsu
-discovers, validates, consumes and removes them. What it does do is read
+discovers and validates them, emits a wake for a valid check while leaving its file in place, and removes a check only when it is refused or a merged poll is retired successfully. What it does do is read
 **both** old and new names during teardown cleanup. If you have scripts that
 write `.check.sh` files into the state directory, change them to write
 `.check`. Existing `.check.sh` and `.turn-ended` files will still be cleaned
