@@ -27,7 +27,9 @@ func WatcherLeasePath(homeDir string) string {
 
 // ClaimWatcherLease attempts to claim the watcher lease for the given home.
 // Returns true if the lease was claimed. Returns false with an error describing
-// the conflicting lease if another watcher already holds the lease.
+// the conflicting lease if another watcher holds it or its liveness cannot be
+// answered; reclamation is allowed only after the OS definitively reports the
+// recorded PID absent.
 // The lease is claimed by writing the lease file atomically.
 func ClaimWatcherLease(homeDir string, pid int) (bool, error) {
 	path := WatcherLeasePath(homeDir)
@@ -47,7 +49,7 @@ func ClaimWatcherLease(homeDir string, pid int) (bool, error) {
 		if isProcessAlive(existing.PID) {
 			return false, fmt.Errorf("watcher lease held by pid %d", existing.PID)
 		}
-		// PID is dead — reclaim the lease.
+		// The probe definitively reported that the PID is absent — reclaim the lease.
 	}
 
 	lease := &WatcherLease{
@@ -97,7 +99,7 @@ func ReadWatcherLease(homeDir string) (*WatcherLease, error) {
 // IsWatcherLeaseHealthy checks whether the watcher lease is healthy.
 // A lease is healthy when:
 //   - The lease file exists
-//   - The lease holder's PID is alive
+//   - The lease holder's PID is not definitively absent
 //   - The watcher beat is fresh (not stale)
 func IsWatcherLeaseHealthy(homeDir string) bool {
 	lease, err := ReadWatcherLease(homeDir)

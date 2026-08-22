@@ -54,8 +54,9 @@ PID-based lock that prevents two daemon instances in the same home. Format:
 <PID>\t<RFC3339>
 ```
 
-Idempotent acquire: if the lock exists and the PID is alive, `Start` returns an error. Stale
-locks (dead PID) are reclaimed silently.
+Idempotent acquire: if the lock exists and its PID is alive—or liveness cannot be
+answered—the lock remains held and `Start` returns an error. The lock is reclaimed
+silently only when the OS definitively reports that the PID is absent.
 
 ### Sentinel marker (U+2063)
 
@@ -118,5 +119,5 @@ never merges, approves, or modifies delivery state.
 
 1. **No repair, only diagnosis** — the daemon never writes to the general pane (ADR-0013)
 2. **No digest without consent flag** — every digestion path checks `state/.afk`
-3. **Stale lock reclamation** — dead PID lock is reclaimed, never blocking a new start
+3. **Stale lock reclamation** — a lock is reclaimed only after the OS definitively reports its PID absent; an unanswerable probe never authorizes a new start
 4. **Idempotent return** — multiple `munsu afk return` calls on clean state succeed

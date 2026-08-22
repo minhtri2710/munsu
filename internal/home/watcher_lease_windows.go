@@ -24,10 +24,10 @@ import (
 // than one that is gone, and so does a GetExitCodeProcess that fails on a
 // handle we did open.
 //
-// No lane runs this. `GOOS=windows go vet ./...` and the native windows gate
-// compile it, and its answer for a real live process stays unproven in this
-// repository -- including which errno OpenProcess actually returns for an
-// unopenable live PID.
+// Windows has not executed this implementation in this change. Its Windows
+// behavior is checked only by cross-compilation and static analysis, so the
+// repository has no Windows runtime proof -- including which error
+// OpenProcess actually returns for an unopenable live PID.
 //
 // watcher_lease_windows_test.go is not what holds the signature: this function
 // has a production call site that compiles in the same lane
