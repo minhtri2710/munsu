@@ -54,8 +54,19 @@ type TaskStatePort interface {
 }
 type RetirementPort interface {
 	RecoverPendingRetirements(homeDir string) (int, []error)
-	ValidateCheck(path string) error
 	RetireMergedPoll(homeDir, taskID, checkPath string) error
+}
+
+// CheckValidationPort validates a check artifact before the watcher surfaces or
+// retires it. It is its own port rather than a method on RetirementPort because
+// the watcher needs to validate checks whether or not anything retires them,
+// and because the distinction that matters here is structural: supplying an
+// implementation asserts the capability exists, so a returned error can only
+// mean "this artifact is invalid" — skip it and keep scanning. The capability
+// being absent is a different failure and is expressed differently: a nil port
+// fails the whole cycle, loudly, instead of quietly emitting no checks at all.
+type CheckValidationPort interface {
+	ValidateCheck(path string) error
 }
 
 // RunWithProbeSenderAndEvents starts the persistent watcher and also runs the
@@ -63,8 +74,8 @@ type RetirementPort interface {
 // triggers an immediate re-probe cycle; every other outcome keeps the polling
 // ticker as the cadence authority (the watcher is never silent). A nil port
 // keeps the watcher on pure polling.
-func RunWithProbeSenderAndEvents(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, states TaskStatePort, events ObservationEventPort) (*WakeReason, error) {
-	return run(homeDir, time.NewTicker, signalChannel(), probe, sender, hooks, retirement, states, events)
+func RunWithProbeSenderAndEvents(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, checks CheckValidationPort, states TaskStatePort, events ObservationEventPort) (*WakeReason, error) {
+	return run(homeDir, time.NewTicker, signalChannel(), probe, sender, hooks, retirement, checks, states, events)
 }
 
 func signalChannel() <-chan os.Signal {
@@ -73,7 +84,7 @@ func signalChannel() <-chan os.Signal {
 	return sigCh
 }
 
-func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-chan os.Signal, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, states TaskStatePort, events ObservationEventPort) (*WakeReason, error) {
+func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-chan os.Signal, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, checks CheckValidationPort, states TaskStatePort, events ObservationEventPort) (*WakeReason, error) {
 	acquired, err := AcquireWatch(homeDir)
 	if err != nil {
 		return nil, fmt.Errorf("watcher lock: %w", err)
@@ -124,7 +135,7 @@ func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-cha
 		case <-ticker.C:
 			WriteBeat(homeDir)
 			obs := newCycleObservation()
-			if _, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement, states, obs); err != nil {
+			if _, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement, checks, states, obs); err != nil {
 				return nil, err
 			}
 			logCycleObservation(obs)
@@ -143,7 +154,7 @@ func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-cha
 				// Task phase.
 				WriteBeat(homeDir)
 				obs := newCycleObservation()
-				if _, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement, states, obs); err != nil {
+				if _, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement, checks, states, obs); err != nil {
 					return nil, err
 				}
 				logCycleObservation(obs)
@@ -429,9 +440,9 @@ var recoveryDone sync.Map
 // RunCycle performs one durable scan/enqueue cycle with condition dedupe.
 // It is the shared path used by the persistent daemon and `munsu watch run`;
 // both paths capture and log the cycle's internal observations.
-func RunCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, states TaskStatePort) (bool, error) {
+func RunCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, checks CheckValidationPort, states TaskStatePort) (bool, error) {
 	obs := newCycleObservation()
-	emitted, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement, states, obs)
+	emitted, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement, checks, states, obs)
 	if err == nil {
 		logCycleObservation(obs)
 	}
@@ -489,7 +500,15 @@ func staleAge(id string, now time.Time) time.Duration {
 	return now.Sub(first)
 }
 
-func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, states TaskStatePort, obs *cycleObservation) (bool, error) {
+func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, checks CheckValidationPort, states TaskStatePort, obs *cycleObservation) (bool, error) {
+	// A watcher with no way to validate a check artifact cannot decide anything
+	// about one, and skipping every check would make that look like "no checks
+	// are ready". Fail the cycle instead: the capability is required, and its
+	// absence is not a per-check outcome.
+	if checks == nil {
+		return false, fmt.Errorf("check validation capability is required")
+	}
+
 	// Snapshot recovery state before the call — prevents double invocation
 	// of the mailbox reconcile hook on cycle 1 (recovery handles startup).
 	_, recoveryWasDone := recoveryDone.Load(homeDir)
@@ -560,20 +579,24 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 
 	// Discover and emit check plugin wakes (per-task .check files + global checks).
 	// These cover PR merge polls and custom checks registered under state/checks/.
-	checks, err := DiscoverAllChecks(homeDir)
+	plugins, err := DiscoverAllChecks(homeDir)
 	if err != nil {
 		return emitted, err
 	}
-	for _, plugin := range checks {
-		// Validate the check artifact before surfacing
-		if err := retirement.ValidateCheck(plugin.Path); err != nil {
+	for _, plugin := range plugins {
+		// Validate the check artifact before surfacing. The port exists, so
+		// this error is about this artifact and nothing else: drop this check,
+		// keep scanning the rest, and say so rather than swallowing it.
+		if err := checks.ValidateCheck(plugin.Path); err != nil {
+			fmt.Fprintf(os.Stderr, "poll check invalid (skipped): %v\n", err)
 			continue
 		}
-		// Accept-or-refuse: skip if stale
-		if accepted, err := AcceptOrRefuseStale(plugin.Path); err != nil {
-			if !accepted {
-				os.Remove(plugin.Path)
-			}
+		// Accept-or-refuse: a refused check wakes nobody and is left exactly
+		// where it is. No refusal below justifies deleting it — the artifact is
+		// externally authored, and the reason it was refused (stale against a
+		// newer .meta, most often) is precisely what a human needs to see.
+		if err := AcceptOrRefuseStale(plugin.Path); err != nil {
+			fmt.Fprintf(os.Stderr, "poll check refused (left in place): %v\n", err)
 			continue
 		}
 
@@ -592,7 +615,7 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 			// On success, the poll is removed and a durable status line
 			// is published. The check wake is NOT emitted — the status
 			// scan will surface it as a signal wake on the next cycle.
-			if err := retirement.ValidateCheck(plugin.Path); err == nil {
+			if err := checks.ValidateCheck(plugin.Path); err == nil {
 				if retireErr := retirement.RetireMergedPoll(homeDir, plugin.Label, plugin.Path); retireErr == nil {
 					// Poll retired successfully. Skip wake emission;
 					// the status signal path will surface the publication.

@@ -245,7 +245,7 @@ func newWatchRunCmd() *cobra.Command {
 			}
 
 			retirementPort := fleetRetirementPort{compose: func(h string) (*taskauthority.Canonical, error) { return ctx.TaskAuthorityFor(h) }}
-			emitted, err := orchestrator.RunCycleWithProbeAndSender(ctx.Home, runtimeTaskEndpointProbe(), newSessionMailboxSender(), watcherHooks(), retirementPort, runtimeTaskStatePort{})
+			emitted, err := orchestrator.RunCycleWithProbeAndSender(ctx.Home, runtimeTaskEndpointProbe(), newSessionMailboxSender(), watcherHooks(), retirementPort, fleetCheckValidationPort{}, runtimeTaskStatePort{})
 			if err != nil {
 				return err
 			}

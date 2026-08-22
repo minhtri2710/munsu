@@ -25,8 +25,6 @@ func (testTaskStatePort) ReadTaskState(string, string) (*ObservedTaskState, erro
 }
 
 type testRetirementPort struct {
-	validate     func(string) error
-	validated    []string
 	retireErr    error
 	retiredPaths []string
 }
@@ -35,17 +33,22 @@ func (p *testRetirementPort) RecoverPendingRetirements(string) (int, []error) {
 	return 0, nil
 }
 
-func (p *testRetirementPort) ValidateCheck(path string) error {
+func (p *testRetirementPort) RetireMergedPoll(_ string, _ string, checkPath string) error {
+	p.retiredPaths = append(p.retiredPaths, checkPath)
+	return p.retireErr
+}
+
+type testCheckValidationPort struct {
+	validate  func(string) error
+	validated []string
+}
+
+func (p *testCheckValidationPort) ValidateCheck(path string) error {
 	p.validated = append(p.validated, path)
 	if p.validate != nil {
 		return p.validate(path)
 	}
 	return nil
-}
-
-func (p *testRetirementPort) RetireMergedPoll(_ string, _ string, checkPath string) error {
-	p.retiredPaths = append(p.retiredPaths, checkPath)
-	return p.retireErr
 }
 
 type testCycleSender struct{}
@@ -83,7 +86,7 @@ func (h testWatcherHooks) Activate(home string) {
 var activeTestHooks WatcherHooks = NoopWatcherHooks{}
 
 func testRunCycle(home string) (bool, error) {
-	return RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, activeTestHooks, NoopRetirementPort{}, testTaskStatePort{})
+	return RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, activeTestHooks, NoopRetirementPort{}, acceptingCheckValidationPort{}, testTaskStatePort{})
 }
 
 func TestRunCycle_CheckValidationPortAllowsCheckWake(t *testing.T) {
@@ -98,8 +101,9 @@ func TestRunCycle_CheckValidationPortAllowsCheckWake(t *testing.T) {
 	}
 
 	retirement := &testRetirementPort{}
+	validation := &testCheckValidationPort{}
 	resetRecovery()
-	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, retirement, testTaskStatePort{}); err != nil {
+	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, retirement, validation, testTaskStatePort{}); err != nil {
 		t.Fatalf("run cycle: %v", err)
 	}
 
@@ -110,8 +114,8 @@ func TestRunCycle_CheckValidationPortAllowsCheckWake(t *testing.T) {
 	if len(records) != 1 || records[0].Kind != "check" || records[0].Key != "global:global" {
 		t.Fatalf("wake records = %#v, want one global check wake", records)
 	}
-	if len(retirement.validated) != 1 || retirement.validated[0] != checkPath {
-		t.Fatalf("validated paths = %#v, want [%q]", retirement.validated, checkPath)
+	if len(validation.validated) != 1 || validation.validated[0] != checkPath {
+		t.Fatalf("validated paths = %#v, want [%q]", validation.validated, checkPath)
 	}
 }
 
@@ -126,9 +130,10 @@ func TestRunCycle_CheckValidationPortRefusesCheck(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	retirement := &testRetirementPort{validate: func(string) error { return fmt.Errorf("refused") }}
+	retirement := &testRetirementPort{}
+	validation := &testCheckValidationPort{validate: func(string) error { return fmt.Errorf("refused") }}
 	resetRecovery()
-	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, retirement, testTaskStatePort{}); err != nil {
+	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, retirement, validation, testTaskStatePort{}); err != nil {
 		t.Fatalf("run cycle: %v", err)
 	}
 
@@ -142,8 +147,8 @@ func TestRunCycle_CheckValidationPortRefusesCheck(t *testing.T) {
 	if len(retirement.retiredPaths) != 0 {
 		t.Fatalf("retired paths = %#v, want none", retirement.retiredPaths)
 	}
-	if len(retirement.validated) != 1 || retirement.validated[0] != checkPath {
-		t.Fatalf("validated paths = %#v, want [%q]", retirement.validated, checkPath)
+	if len(validation.validated) != 1 || validation.validated[0] != checkPath {
+		t.Fatalf("validated paths = %#v, want [%q]", validation.validated, checkPath)
 	}
 }
 
@@ -159,8 +164,9 @@ func TestRunCycle_CheckValidationPortAuthorizesRetirement(t *testing.T) {
 	}
 
 	retirement := &testRetirementPort{}
+	validation := &testCheckValidationPort{}
 	resetRecovery()
-	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, retirement, testTaskStatePort{}); err != nil {
+	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, retirement, validation, testTaskStatePort{}); err != nil {
 		t.Fatalf("run cycle: %v", err)
 	}
 
@@ -174,8 +180,138 @@ func TestRunCycle_CheckValidationPortAuthorizesRetirement(t *testing.T) {
 	if len(retirement.retiredPaths) != 1 || retirement.retiredPaths[0] != checkPath {
 		t.Fatalf("retired paths = %#v, want [%q]", retirement.retiredPaths, checkPath)
 	}
-	if len(retirement.validated) != 2 {
-		t.Fatalf("validated paths = %#v, want discovery and retirement validation", retirement.validated)
+	if len(validation.validated) != 2 {
+		t.Fatalf("validated paths = %#v, want discovery and retirement validation", validation.validated)
+	}
+}
+
+// --- refused-check disposition, asserted against the loop ---
+//
+// AcceptOrRefuseStale is also tested directly (supervision_check_test.go), but
+// a direct-call test says nothing about what the only caller does with the
+// verdict: it used to delete every artifact the function refused, including the
+// one that test asserts must survive. These run the real cycle and look at the
+// disk afterwards.
+
+// runCycleOverCheck runs one cycle over a home whose check artifacts the caller
+// has already written, and returns the wakes it queued. The validated-paths
+// assertion is the control: if the port recorded nothing, discovery never
+// reached the artifact and anything the test then claims about its fate is
+// vacuous.
+func runCycleOverCheck(t *testing.T, home, checkPath string) []WakeRecord {
+	t.Helper()
+	validation := &testCheckValidationPort{}
+	resetRecovery()
+	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, &testRetirementPort{}, validation, testTaskStatePort{}); err != nil {
+		t.Fatalf("run cycle: %v", err)
+	}
+	if len(validation.validated) != 1 || validation.validated[0] != checkPath {
+		t.Fatalf("validated paths = %#v, want [%q] — the cycle never reached the artifact", validation.validated, checkPath)
+	}
+	records, err := DrainWakes(home)
+	if err != nil {
+		t.Fatalf("drain wakes: %v", err)
+	}
+	for _, r := range records {
+		if r.Kind == "check" {
+			t.Fatalf("refused check emitted a wake: %#v", r)
+		}
+	}
+	return records
+}
+
+// writeCheck writes a check artifact, creating its directory.
+func writeCheck(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A check that is valid but older than its task's .meta is the refusal a real
+// production port actually reaches: fleet.ValidateCheckWithLstat accepts the
+// artifact, and AcceptOrRefuseStale then refuses it as stale. Before this
+// change the loop deleted the operator's working script at that point.
+func TestRunCycle_StaleCheckSurvivesTheLoop(t *testing.T) {
+	home := t.TempDir()
+	checkPath := filepath.Join(home, "state", "task-1.check")
+	writeCheck(t, checkPath, "#!/bin/sh\necho ready\n")
+
+	metaPath := filepath.Join(home, "state", "task-1.meta")
+	if err := os.WriteFile(metaPath, []byte("kind=ship\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	checkFI, err := os.Stat(checkPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	future := checkFI.ModTime().Add(time.Hour)
+	if err := os.Chtimes(metaPath, future, future); err != nil {
+		t.Fatal(err)
+	}
+
+	runCycleOverCheck(t, home, checkPath)
+	if _, err := os.Stat(checkPath); err != nil {
+		t.Fatalf("stale check must survive the cycle for a human to inspect: %v", err)
+	}
+}
+
+// The shebang-less case is the one TestAcceptOrRefuseStale_NoShebang asserts
+// must survive; it reaches AcceptOrRefuseStale only through a validation port
+// that accepts it, which is why the direct-call test could pass while the loop
+// deleted the file.
+func TestRunCycle_ShebangLessCheckSurvivesTheLoop(t *testing.T) {
+	home := t.TempDir()
+	checkPath := filepath.Join(home, "state", "checks", "global.check")
+	writeCheck(t, checkPath, "echo hello\n")
+
+	runCycleOverCheck(t, home, checkPath)
+	if _, err := os.Stat(checkPath); err != nil {
+		t.Fatalf("shebang-less check must survive the cycle for inspection: %v", err)
+	}
+}
+
+func TestRunCycle_ZeroLengthCheckSurvivesTheLoop(t *testing.T) {
+	home := t.TempDir()
+	checkPath := filepath.Join(home, "state", "checks", "empty.check")
+	writeCheck(t, checkPath, "")
+
+	runCycleOverCheck(t, home, checkPath)
+	if _, err := os.Stat(checkPath); err != nil {
+		t.Fatalf("no refusal deletes an externally authored check: %v", err)
+	}
+}
+
+// A watcher with no check-validation capability must say so. Skipping every
+// check instead would look exactly like "no checks are ready".
+func TestRunCycle_MissingCheckValidationPortFailsTheCycle(t *testing.T) {
+	home := t.TempDir()
+	checksDir := filepath.Join(home, "state", "checks")
+	if err := os.MkdirAll(checksDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	checkPath := filepath.Join(checksDir, "global.check")
+	if err := os.WriteFile(checkPath, []byte("#!/bin/sh\necho ready\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	resetRecovery()
+	_, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, &testRetirementPort{}, nil, testTaskStatePort{})
+	if err == nil {
+		t.Fatal("expected the cycle to fail without a check validation capability")
+	}
+	if !strings.Contains(err.Error(), "check validation capability is required") {
+		t.Fatalf("error = %v, want it to name the missing capability", err)
+	}
+	records, drainErr := DrainWakes(home)
+	if drainErr != nil {
+		t.Fatalf("drain wakes: %v", drainErr)
+	}
+	if len(records) != 0 {
+		t.Fatalf("wake records = %#v, want none from a failed cycle", records)
 	}
 }
 

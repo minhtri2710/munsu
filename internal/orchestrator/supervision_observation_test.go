@@ -47,7 +47,7 @@ func TestRunCycleWithProbeAndSenderLogsObservation(t *testing.T) {
 	}
 	previous := os.Stderr
 	os.Stderr = writer
-	_, cycleErr := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, activeTestHooks, NoopRetirementPort{}, testTaskStatePort{})
+	_, cycleErr := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, activeTestHooks, NoopRetirementPort{}, acceptingCheckValidationPort{}, testTaskStatePort{})
 	_ = writer.Close()
 	os.Stderr = previous
 	if cycleErr != nil {
@@ -154,14 +154,14 @@ func TestCycleObservation_CheckDuplicateSuppression(t *testing.T) {
 	}
 	resetRecovery()
 	obs1 := newCycleObservation()
-	if _, err := runCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, activeTestHooks, &testRetirementPort{}, testTaskStatePort{}, obs1); err != nil {
+	if _, err := runCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, activeTestHooks, &testRetirementPort{}, acceptingCheckValidationPort{}, testTaskStatePort{}, obs1); err != nil {
 		t.Fatalf("cycle 1: %v", err)
 	}
 	if obs1.suppressedDuplicates != 0 {
 		t.Fatalf("cycle 1 suppressed = %d, want 0", obs1.suppressedDuplicates)
 	}
 	obs2 := newCycleObservation()
-	if _, err := runCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, activeTestHooks, &testRetirementPort{}, testTaskStatePort{}, obs2); err != nil {
+	if _, err := runCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, activeTestHooks, &testRetirementPort{}, acceptingCheckValidationPort{}, testTaskStatePort{}, obs2); err != nil {
 		t.Fatalf("cycle 2: %v", err)
 	}
 	if obs2.suppressedDuplicates != 1 {
@@ -226,7 +226,7 @@ func TestCycleObservation_DuplicateSuppression(t *testing.T) {
 
 // runCycleObs runs one full scan/enqueue cycle with the observation capture.
 func runCycleObs(home string, obs *cycleObservation) (*cycleObservation, error) {
-	_, err := runCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, activeTestHooks, NoopRetirementPort{}, testTaskStatePort{}, obs)
+	_, err := runCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, activeTestHooks, NoopRetirementPort{}, acceptingCheckValidationPort{}, testTaskStatePort{}, obs)
 	return obs, err
 }
 

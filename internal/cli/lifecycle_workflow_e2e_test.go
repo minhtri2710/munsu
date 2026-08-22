@@ -733,7 +733,7 @@ func workflowSupervisionCycle(t *testing.T, homeDir string, uplink workflowUplin
 		runtimeTaskEndpointProbe(), newSessionMailboxSender(), hooks,
 		fleetRetirementPort{compose: func(h string) (*taskauthority.Canonical, error) {
 			return taskauthority.NewCanonical(mustOpenHome(t, h))
-		}}, runtimeTaskStatePort{})
+		}}, fleetCheckValidationPort{}, runtimeTaskStatePort{})
 	if err != nil {
 		t.Fatalf("supervision cycle on %s: %v", homeDir, err)
 	}

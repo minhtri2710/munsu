@@ -8,17 +8,17 @@ import (
 )
 
 // --- AcceptOrRefuseStale tests ---
+//
+// These pin what the function reports. What the watcher then does with a
+// refused artifact is pinned separately, against the loop itself, in
+// supervision_watcher_test.go — the two used to disagree.
 
 func TestAcceptOrRefuseStale_Valid(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "task-1.check")
 	writeExecScript(t, path, "#!/bin/bash\necho poll\n")
-	accepted, err := AcceptOrRefuseStale(path)
-	if err != nil {
+	if err := AcceptOrRefuseStale(path); err != nil {
 		t.Fatalf("unexpected error: %v", err)
-	}
-	if !accepted {
-		t.Error("expected valid check to be accepted (accepted=true)")
 	}
 }
 
@@ -26,16 +26,12 @@ func TestAcceptOrRefuseStale_ZeroLength(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bad.check")
 	writeExecScript(t, path, "")
-	accepted, err := AcceptOrRefuseStale(path)
-	if err == nil {
+	if err := AcceptOrRefuseStale(path); err == nil {
 		t.Fatal("expected error for zero-length check")
 	}
-	if accepted {
-		t.Error("expected zero-length check to be refused")
-	}
-	// File should have been removed
-	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
-		t.Error("expected zero-length check to be removed")
+	// Refusing is a verdict, not a disposal: the artifact is still here.
+	if _, statErr := os.Stat(path); statErr != nil {
+		t.Errorf("expected zero-length check to remain: %v", statErr)
 	}
 }
 
@@ -43,16 +39,18 @@ func TestAcceptOrRefuseStale_NoShebang(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bad.check")
 	writeExecScript(t, path, "echo hello\n")
-	accepted, err := AcceptOrRefuseStale(path)
-	if err == nil {
+	if err := AcceptOrRefuseStale(path); err == nil {
 		t.Fatal("expected error for no-shebang check")
-	}
-	if accepted {
-		t.Error("expected no-shebang check to be refused")
 	}
 	// File should remain (no valid shebang means unsafe to remove)
 	if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
 		t.Error("expected no-shebang check to remain for inspection")
+	}
+}
+
+func TestAcceptOrRefuseStale_MissingFile(t *testing.T) {
+	if err := AcceptOrRefuseStale(filepath.Join(t.TempDir(), "gone.check")); err == nil {
+		t.Fatal("expected error for a check that cannot be stat'd")
 	}
 }
 
@@ -71,12 +69,11 @@ func TestAcceptOrRefuseStale_MetaNewer(t *testing.T) {
 	future := checkFI.ModTime().Add(time.Hour)
 	os.Chtimes(metaPath, future, future)
 
-	accepted, err := AcceptOrRefuseStale(checkPath)
-	if err == nil {
+	if err := AcceptOrRefuseStale(checkPath); err == nil {
 		t.Fatal("expected error for stale check (meta newer)")
 	}
-	if accepted {
-		t.Error("expected stale check to be refused (meta newer)")
+	if _, statErr := os.Stat(checkPath); os.IsNotExist(statErr) {
+		t.Error("expected stale check to remain for inspection")
 	}
 }
 
@@ -95,12 +92,8 @@ func TestAcceptOrRefuseStale_NotStale(t *testing.T) {
 	checkPath := filepath.Join(dir, "task-2.check")
 	writeExecScript(t, checkPath, "#!/bin/bash\necho poll\n")
 
-	accepted, err := AcceptOrRefuseStale(checkPath)
-	if err != nil {
+	if err := AcceptOrRefuseStale(checkPath); err != nil {
 		t.Fatalf("unexpected error: %v", err)
-	}
-	if !accepted {
-		t.Error("expected valid non-stale check to be accepted")
 	}
 }
 

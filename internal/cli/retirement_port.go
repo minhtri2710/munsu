@@ -24,7 +24,13 @@ func (p fleetRetirementPort) RecoverPendingRetirements(homeDir string) (int, []e
 	return fleet.RecoverAllPendingRetirements(homeDir, auth)
 }
 
-func (p fleetRetirementPort) ValidateCheck(path string) error {
+// fleetCheckValidationPort adapts the orchestrator CheckValidationPort to the
+// fleet validator that owns the rule. It composes nothing: validating a check
+// artifact is a question about a file, not about task authority, which is why
+// it is not a method on fleetRetirementPort.
+type fleetCheckValidationPort struct{}
+
+func (fleetCheckValidationPort) ValidateCheck(path string) error {
 	return fleet.ValidateCheckWithLstat(path)
 }
 
