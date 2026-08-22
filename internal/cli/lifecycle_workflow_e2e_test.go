@@ -441,11 +441,13 @@ func runLifecycleWorkflow(t *testing.T, tc workflowCase) {
 		t.Fatalf("phase after terminal report = %s, want done", agg.Phase)
 	}
 	// ADR-0015: the terminal report closes its own handoff. Nothing else can.
-	if !orchestrator.IsReceiptAcked(spawnHome, taskID, taskID) {
+	receiptAcked := orchestrator.IsReceiptAcked(spawnHome, taskID, taskID)
+	if !receiptAcked {
 		t.Fatal("terminal receipt was not acknowledged by its writer")
 	}
-	if open, err := orchestrator.IsTaskReportRelayOpen(spawnHome, taskID); err != nil || open {
-		t.Fatalf("report relay obligation open=%v err=%v, want closed", open, err)
+	relayOpen, err := orchestrator.IsTaskReportRelayOpen(spawnHome, taskID)
+	if err != nil || relayOpen {
+		t.Fatalf("report relay obligation open=%v err=%v, want closed", relayOpen, err)
 	}
 
 	// --- relay/ack + supervision wake -------------------------------------
@@ -465,7 +467,8 @@ func runLifecycleWorkflow(t *testing.T, tc workflowCase) {
 	// report closed its own handoff and there is nothing to relay. Any
 	// pending uplink here is a topology violation.
 	pending := workflowPendingUplinks(t, spawnHome)
-	if len(pending) != tc.relayed {
+	pendingBeforeReplay := len(pending)
+	if pendingBeforeReplay != tc.relayed {
 		t.Fatalf("pending captain->General uplinks = %d, want %d under %s",
 			len(pending), tc.relayed, tc.policy)
 	}
@@ -473,11 +476,13 @@ func runLifecycleWorkflow(t *testing.T, tc workflowCase) {
 	// The supervision cycle replays the pending uplink; with no ack yet it
 	// must stay pending. A cycle that retired it without an ack would lose
 	// the report.
-	if emitted := workflowSupervisionCycle(t, spawnHome, uplink, activation); !emitted {
+	supervisionEmitted := workflowSupervisionCycle(t, spawnHome, uplink, activation)
+	if !supervisionEmitted {
 		t.Fatalf("supervision cycle emitted = false, want true under %s", tc.policy)
 	}
-	if got := len(workflowPendingUplinks(t, spawnHome)); got != tc.relayed {
-		t.Fatalf("pending uplinks after replay = %d, want %d (an unacked report must not retire)", got, tc.relayed)
+	pendingAfterReplay := len(workflowPendingUplinks(t, spawnHome))
+	if pendingAfterReplay != tc.relayed {
+		t.Fatalf("pending uplinks after replay = %d, want %d (an unacked report must not retire)", pendingAfterReplay, tc.relayed)
 	}
 
 	if tc.relayed > 0 {
@@ -506,6 +511,7 @@ func runLifecycleWorkflow(t *testing.T, tc workflowCase) {
 			t.Fatalf("pending uplinks after ack = %d, want 0 (the acked relay must retire)", got)
 		}
 	}
+	pendingFinal := len(workflowPendingUplinks(t, spawnHome))
 
 	// The Captain is nudged for the soldier receipt that landed in its home,
 	// and the nudge is idempotent across the cycles above. A General-direct
@@ -535,6 +541,11 @@ func runLifecycleWorkflow(t *testing.T, tc workflowCase) {
 	if retired.Phase != taskauthority.PhaseRetired {
 		t.Fatalf("phase after teardown = %s, want retired", retired.Phase)
 	}
+	t.Logf("workflow evidence: policy=%s model=%s digest=%s parent=%s endpoint(create=%d submit=%d ready-captures=%d) receipt-acked=%t relay-open=%t pending(before=%d after-replay=%d final=%d) supervision-emitted=%t activations=%d teardown(phase=%s returned=%d disposed=%d)",
+		tc.policy, meta["model"], meta["config_snapshot_digest"], tc.parentCaptainID,
+		endpoints.creates, endpoints.submits, endpoints.captures, receiptAcked, relayOpen,
+		pendingBeforeReplay, pendingAfterReplay, pendingFinal, supervisionEmitted,
+		activation.attempts, retired.Phase, teardown.returned, teardown.disposed)
 }
 
 // workflowSeedCaptainHome builds the Captain-owned side of the captain-
