@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -63,29 +64,59 @@ func eventSourceWithFake(t *testing.T, waitJSON string, waitExit int, logPath st
 
 // eventSourceWithFakeBlocking creates a fake herdr binary whose agent-wait
 // branch blocks until the invoking process is killed (context cancellation
-// via exec.CommandContext), then returns a placeholder JSON body.
+// via exec.CommandContext), then returns the path of the FIFO that fake blocks
+// on. Opening the write end of that FIFO is what proves the fake is blocked —
+// see awaitFakeBlocking.
 func eventSourceWithFakeBlocking(t *testing.T, logPath string) (*HerdrEventSource, string) {
 	t.Helper()
 	tmp := t.TempDir()
-	writeFakeHerdrEventWaitBlocking(t, tmp, fakeHerdrSchemaReady, logPath)
+	blockedOn := filepath.Join(t.TempDir(), "blocked.fifo")
+	makeRendezvousFIFO(t, blockedOn)
+	writeFakeHerdrEventWaitBlocking(t, tmp, fakeHerdrSchemaReady, logPath, blockedOn)
 	oldPath := os.Getenv("PATH")
 	t.Setenv("PATH", tmp+":"+oldPath)
-	return &HerdrEventSource{Session: "test-s"}, tmp
+	return &HerdrEventSource{Session: "test-s"}, blockedOn
+}
+
+// makeRendezvousFIFO creates the named pipe the blocking fake blocks on.
+//
+// The POSIX utility is used rather than syscall.Mkfifo because this file
+// carries no build constraint and must still type-check for GOOS=windows,
+// where syscall.Mkfifo does not exist. Requiring `mkfifo` at run time costs
+// nothing here: every fake in this file is a bash script, so these tests
+// already only execute on a POSIX host.
+func makeRendezvousFIFO(t *testing.T, path string) {
+	t.Helper()
+	if out, err := exec.Command("mkfifo", path).CombinedOutput(); err != nil {
+		t.Fatalf("mkfifo %s: %v (%s)", path, err, strings.TrimSpace(string(out)))
+	}
 }
 
 // writeFakeHerdrEventWaitBlocking is like writeFakeHerdrEventWait but the
-// `agent wait` branch sleeps until killed (models a herdr CLI blocked inside
+// `agent wait` branch blocks until killed (models a herdr CLI blocked inside
 // its own bounded wait, only interruptible by the caller's context).
 //
-// The blocking branch uses `exec sleep` so the sleeping process REPLACES the
-// shell and keeps the same pid exec.CommandContext knows about. A plain
-// `sleep 300` would be a grandchild: CommandContext kills only the direct
-// child (the shell), the surviving grandchild keeps the write end of the
-// stdout pipe open, and cmd.Output() blocks waiting for an EOF that never
-// comes until the sleep elapses. With `exec` there is no grandchild at all,
-// so cancellation is deterministic on both macOS and Linux and does not
-// depend on process-group kill semantics, which differ between them.
-func writeFakeHerdrEventWaitBlocking(t *testing.T, dir, schemaJSON, logPath string) string {
+// The blocking branch uses `exec` so the blocked process REPLACES the shell
+// and keeps the same pid exec.CommandContext knows about. A backgrounded
+// blocker would be a grandchild: CommandContext kills only the direct child
+// (the shell), the surviving grandchild keeps the write end of the stdout pipe
+// open, and cmd.Output() blocks waiting for an EOF that never comes. With
+// `exec` there is no grandchild at all, so cancellation is deterministic on
+// both macOS and Linux and does not depend on process-group kill semantics,
+// which differ between them.
+//
+// What it execs is `cat` on a FIFO rather than `sleep`, because that makes
+// blocked-ness observable to the test without adding a grandchild (#577).
+// `cat` opens the FIFO ITSELF, after the exec — the path is an argument, not a
+// shell redirection, which the shell would have performed before the exec. A
+// FIFO open for reading completes only when a writer opens the same FIFO, so
+// the test's own open returning is proof that the exec has already happened
+// and that the surviving process is the blocked reader. It also removes the
+// `sleep 300` expiry: a blocked read has no duration to run out.
+//
+// The argv marker stays, but it is now only a breadcrumb for failure messages:
+// it is written before the exec, so it proves branch entry and nothing more.
+func writeFakeHerdrEventWaitBlocking(t *testing.T, dir, schemaJSON, logPath, blockedOn string) string {
 	t.Helper()
 	bin := filepath.Join(dir, "herdr")
 	script := "#!/usr/bin/env bash\n" +
@@ -101,7 +132,7 @@ func writeFakeHerdrEventWaitBlocking(t *testing.T, dir, schemaJSON, logPath stri
 		"fi\n" +
 		`if [ "$3" = "agent" ] && [ "$4" = "wait" ]; then` + "\n" +
 		`  echo "$@" >> "` + logPath + `"` + "\n" +
-		"  exec sleep 300\n" +
+		`  exec cat "` + blockedOn + `"` + "\n" +
 		"fi\n" +
 		`echo '{"error":{"code":"unknown_command"}}'` + "\n" +
 		"exit 1\n"
@@ -260,49 +291,73 @@ func spawnBackstop(t *testing.T) <-chan time.Time {
 	return time.After(time.Until(deadline) / 2)
 }
 
-// awaitFakeBlocking blocks until the fake herdr has recorded its agent-wait
-// argv line, which it does immediately before `exec sleep`. Polling this
-// marker replaces a fixed sleep: on a loaded runner a fixed sleep can elapse
-// while the fake is still starting up, so cancel() would kill the process
-// during exec/start-up instead of while it is blocked. That variant still
-// passes (ctx.Err() is non-nil either way) but never exercises the
-// kill-the-blocked-process path — silent coverage loss, not a visible flake.
+// awaitFakeBlocking returns only once the fake herdr is demonstrably blocked.
 //
-// The polling itself is unbounded on purpose. What ends this wait is evidence,
-// not a clock: either the marker appears, or waitReturned proves the fake can
-// no longer reach the blocking branch because the process running it is
-// already gone — the same "the child died instead of signalling" signal the
-// readiness pipe in internal/orchestrator gets from EOF. Both outcomes are
-// exact, so the derived backstop below only ever catches a true hang.
-func awaitFakeBlocking(t *testing.T, logPath string, waitReturned <-chan error) {
+// The proof is a FIFO rendezvous, not a marker file. The fake's blocking
+// branch ends in `exec cat <fifo>`, so the process that opens that FIFO for
+// reading is the one that survived the exec and the one exec.CommandContext
+// will kill. Opening a FIFO for reading completes only when a writer opens it
+// and vice versa, so this open returning proves the exec has already happened
+// and that what remains is a reader parked on a pipe nobody writes to.
+// cancel() therefore cannot land on a shell that is still on its way to the
+// blocking call.
+//
+// The argv marker the fake writes is deliberately NOT that proof. It is
+// written immediately BEFORE the exec, so it can only ever show that the shell
+// reached the branch — the gap #577 was filed for. It is still read here, but
+// only to say which of the two failures happened.
+//
+// What ends this wait is evidence, not a clock: either the rendezvous
+// completes, or waitReturned proves the fake can no longer block because the
+// process running it is already gone — the same "the child died instead of
+// signalling" signal the readiness pipe in internal/orchestrator gets from
+// EOF. Both outcomes are exact, so the derived backstop only ever catches a
+// true hang.
+//
+// The write end stays open until the test ends: closing it hands cat EOF and
+// lets the fake exit, which is exactly what must not happen before cancel().
+// On either failure path the opening goroutine stays parked in open(2) until
+// the test binary exits, because the test has already failed and no reader is
+// ever going to arrive.
+func awaitFakeBlocking(t *testing.T, blockedOn, logPath string, waitReturned <-chan error) {
 	t.Helper()
-	backstop := spawnBackstop(t)
-	poll := time.NewTicker(2 * time.Millisecond)
-	defer poll.Stop()
-	for {
-		if fi, err := os.Stat(logPath); err == nil && fi.Size() > 0 {
-			return
-		}
-		select {
-		case err := <-waitReturned:
-			t.Fatalf("Wait exited before the fake herdr blocking-branch marker was recorded at %s (err = %v); the fake exited before reaching the branch or reached it without recording the marker", logPath, err)
-		case <-backstop:
-			select {
-			case err := <-waitReturned:
-				t.Fatalf("Wait exited before the fake herdr blocking-branch marker was recorded at %s (err = %v); the fake exited before reaching the branch or reached it without recording the marker", logPath, err)
-			default:
-				t.Fatalf("Wait remained blocked without the fake herdr blocking-branch marker at %s before the test-deadline-derived backstop; the fake stalled before the branch or blocked there without recording the marker", logPath)
-			}
-		case <-poll.C:
-		}
+	type rendezvous struct {
+		writer *os.File
+		err    error
 	}
+	opened := make(chan rendezvous, 1)
+	go func() {
+		writer, err := os.OpenFile(blockedOn, os.O_WRONLY, 0)
+		opened <- rendezvous{writer: writer, err: err}
+	}()
+	select {
+	case r := <-opened:
+		if r.err != nil {
+			t.Fatalf("opening the write end of the fake herdr's blocking FIFO %s: %v", blockedOn, r.err)
+		}
+		t.Cleanup(func() { r.writer.Close() })
+	case err := <-waitReturned:
+		t.Fatalf("Wait exited (err = %v) before the fake herdr blocked on %s; %s", err, blockedOn, fakeBranchEvidence(logPath))
+	case <-spawnBackstop(t):
+		t.Fatalf("Wait is still in flight but the fake herdr had not blocked on %s when the test-deadline-derived backstop elapsed; %s", blockedOn, fakeBranchEvidence(logPath))
+	}
+}
+
+// fakeBranchEvidence reports how far the fake got, which is all its argv
+// marker can say: the marker is written before the exec, so it distinguishes
+// "never reached the agent-wait branch" from "entered it but got no further".
+func fakeBranchEvidence(logPath string) string {
+	if fi, err := os.Stat(logPath); err == nil && fi.Size() > 0 {
+		return "it recorded its agent-wait argv at " + logPath + ", so it entered the branch but never reached the blocking call"
+	}
+	return "it recorded no agent-wait argv at " + logPath + ", so it never reached the agent-wait branch at all"
 }
 
 func TestHerdrEventSource_Wait_ContextCancellation(t *testing.T) {
 	// Caller cancellation must surface as the caller's own ctx.Err() (the
 	// adapter never masks a cancelled bounded wait as anything else).
 	logPath := filepath.Join(t.TempDir(), "args.log")
-	src, _ := eventSourceWithFakeBlocking(t, logPath)
+	src, blockedOn := eventSourceWithFakeBlocking(t, logPath)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
@@ -310,9 +365,9 @@ func TestHerdrEventSource_Wait_ContextCancellation(t *testing.T) {
 		_, err := src.Wait(ctx, EndpointRef{Backend: "herdr", Handle: "w:p"}, "")
 		done <- err
 	}()
-	// Synchronize on the fake actually reaching its blocking branch, so the
-	// cancellation below can only be observed by killing a blocked process.
-	awaitFakeBlocking(t, logPath, done)
+	// Synchronize on the fake actually being blocked, so the cancellation
+	// below can only be observed by killing a blocked process.
+	awaitFakeBlocking(t, blockedOn, logPath, done)
 	// Guard the other half of the same property: Wait must still be in flight
 	// when cancel() fires. If it already returned, whatever error arrives says
 	// nothing about the cancellation path.
