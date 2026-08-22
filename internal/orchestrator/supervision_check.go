@@ -34,7 +34,7 @@ type CheckResult struct {
 }
 
 // DiscoverPerTaskChecks finds per-task .check files under state/.
-// These are written by `munsu delivery pr-check` and named <task-id>.check.
+// These are legacy check artifacts named <task-id>.check.
 func DiscoverPerTaskChecks(homeDir string) ([]CheckPlugin, error) {
 	stateDir := filepath.Join(homeDir, "state")
 	entries, err := os.ReadDir(stateDir)

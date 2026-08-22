@@ -40,7 +40,7 @@ Determine the task kind (ship vs scout), identify the project from the registry,
 - `munsu task add <id> "<desc>" --kind ship|scout --repo <name>` — register the queued task; use `munsu task start <id>` only after readiness checks.
 - `munsu brief <id> <repo> [--scout]` — scaffold the soldier brief.
 - Fill in the `{TASK}` placeholder in `data/<id>/brief.md`.
-- `munsu spawn <id> <project> [--kind ship|scout] [--mode no-mistakes|direct-PR|local-only]` — launch the soldier.
+- `munsu spawn <id> [<project>] [--kind ship|scout] [--mode no-mistakes|direct-PR|local-only]` — launch the soldier; project is inferred from the current directory when omitted.
 
 **Completion:** Meta exists, endpoint is alive (verify with `munsu peek <id>` or `munsu soldier-state <id>`).
 
@@ -107,7 +107,7 @@ munsu teardown <id> [--force]
 
 ## See also
 
-- `COMMANDS.md` — full command map grouped by lifecycle phase.
+- `COMMANDS.md` — curated command map grouped by lifecycle phase; use `munsu --help` and per-command `--help` for the complete registered set.
 - `SUPERVISION.md` — canonical watch/wake/guard/AFK loop.
 - `munsu skill show decision-hold-lifecycle` — decision-hold lifecycle reference.
 - `munsu doctor` — toolchain diagnostics with fix commands.
