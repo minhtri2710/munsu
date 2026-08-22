@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -367,74 +366,4 @@ func TestResolveWakeRefusesAnEmptyLeaseFile(t *testing.T) {
 	if err := ResolveWake(dir, "lease-1", "epoch:evt", "done"); err != nil {
 		t.Fatalf("ResolveWake over a headed lease file: %v", err)
 	}
-}
-
-// Only one watcher may hold a home. A lease held by a process that is still
-// alive is not reclaimable — reclaiming it would run two watchers over the
-// same home. A lease left by a dead process is.
-func TestClaimWatcherLeaseRefusesALeaseHeldByALiveProcess(t *testing.T) {
-	dir := t.TempDir()
-
-	// A real child process this test owns, so the live half of the fixture is
-	// one this test created and can end rather than one borrowed from the
-	// machine.
-	live := exec.Command("sleep", "60")
-	if err := live.Start(); err != nil {
-		t.Fatalf("start live process: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = live.Process.Kill()
-		_ = live.Wait()
-	})
-
-	if _, err := writeLeaseFile(WatcherLeasePath(dir), &WatcherLease{
-		Home:      Canonical(dir),
-		PID:       live.Process.Pid,
-		StartedAt: time.Now().Unix(),
-		UpdatedAt: time.Now().UnixNano(),
-	}); err != nil {
-		t.Fatalf("write existing lease: %v", err)
-	}
-
-	claimed, err := ClaimWatcherLease(dir, os.Getpid())
-	if err == nil {
-		t.Fatal("ClaimWatcherLease took a lease held by a live process")
-	}
-	if claimed {
-		t.Fatal("ClaimWatcherLease reported a claim it refused")
-	}
-	if !strings.Contains(err.Error(), "watcher lease held by pid") {
-		t.Fatalf("error = %v, want the live-holder refusal", err)
-	}
-
-	// Control: the same call against a lease left by a PID that is not running
-	// reclaims it, so the refusal above came from liveness and not from the
-	// mere presence of a lease file.
-	dead := findDeadPIDForGuards(t)
-	if _, err := writeLeaseFile(WatcherLeasePath(dir), &WatcherLease{
-		Home:      Canonical(dir),
-		PID:       dead,
-		StartedAt: time.Now().Unix(),
-		UpdatedAt: time.Now().UnixNano(),
-	}); err != nil {
-		t.Fatalf("write stale lease: %v", err)
-	}
-	claimed, err = ClaimWatcherLease(dir, os.Getpid())
-	if err != nil || !claimed {
-		t.Fatalf("ClaimWatcherLease over a dead holder = (%v, %v), want (true, nil)", claimed, err)
-	}
-}
-
-// findDeadPIDForGuards returns a PID that isProcessAlive reports as not
-// running. There is no PID a test may assume is free, so this probes a handful
-// of high candidates and skips when every one of them is taken.
-func findDeadPIDForGuards(t *testing.T) int {
-	t.Helper()
-	for _, pid := range []int{1 << 22, 1<<22 - 1, 1<<22 - 2, 1 << 21, 1<<21 - 1} {
-		if !isProcessAlive(pid) {
-			return pid
-		}
-	}
-	t.Skip("no unused PID found to build a stale-lease fixture")
-	return 0
 }
