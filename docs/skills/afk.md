@@ -17,7 +17,7 @@ All three take `--home` / `MUNSU_HOME` to scope to a specific home.
 
 ```
       consent flag set (state/.afk)
-      identity lock (state/.afk.lock)
+      identity lock (state/.lock)
       stale artifacts cleared
             │
             ▼
@@ -46,7 +46,7 @@ All digestion gates check this flag. Absence == no AFK.
 
 Contents: RFC3339 UTC timestamp of start.
 
-### Identity lock (`state/.afk.lock`)
+### Identity lock (`state/.lock`)
 
 PID-based lock that prevents two daemon instances in the same home. Format:
 
@@ -110,7 +110,7 @@ never merges, approves, or modifies delivery state.
 | Path | Purpose |
 |------|---------|
 | `state/.afk` | Consent flag (RFC3339 timestamp) |
-| `state/.afk.lock` | Identity lock (PID + timestamp) |
+| `state/.lock` | Identity lock (PID + timestamp) |
 | `state/.afk-digest` | Batched escalation digest (JSON) |
 | `state/.seen-*` | Watcher dedup markers (cleared on start) |
 | `state/.subsuper-*` | Subsupervisor artifacts (cleared on start) |

@@ -76,8 +76,9 @@ jobs:
     timeout-minutes: 30
     # Gate for the two steps promoted out of the windows observation lane
     # (windows-observation.yml): `go build ./...` and `go vet ./...` were green
-    # on windows before this landed, and this job runs them on every push and
-    # every pull request. Making it a required check -- by name, "Windows build
+    # on windows before this landed, and this job runs them on pushes to `main`
+    # and pull requests targeting `main`, matching the workflow triggers above.
+    # Making it a required check -- by name, "Windows build
     # and vet" -- is a branch-protection change owned by a human, and that
     # change has not been made. The failing windows tests stay in the
     # observation lane and are not gated here. If anything else is promoted out
