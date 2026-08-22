@@ -509,6 +509,11 @@ func requireRetirementIdentity(homeDir, id string) (*domain.DeliveryIdentity, er
 	if err != nil {
 		return nil, fmt.Errorf("reading task meta for identity: %w", err)
 	}
+	for _, key := range []string{"pr_provider", "pr_url", "pr_head_sha"} {
+		if meta[key] == "" {
+			return nil, fmt.Errorf("required identity field %q is missing", key)
+		}
+	}
 	ident, err := domain.IdentityFromMeta(meta)
 	if err != nil {
 		return nil, fmt.Errorf("parsing delivery identity: %w", err)
@@ -584,24 +589,28 @@ func RecoverPendingRetirement(homeDir, taskID string, auth *taskauthority.Canoni
 			rec.SchemaVersion, PollRetirementSchema)
 	}
 
-	// Build the poll path.
+	// Recovery accepts only the canonical task check basename.
+	expectedPollPath := taskID + ".check"
+	if filepath.IsAbs(rec.PollPath) || strings.ContainsAny(rec.PollPath, `/\\`) || rec.PollPath != expectedPollPath {
+		return false, fmt.Errorf("recovery: invalid poll path %q (preserving poll and retirement record)", rec.PollPath)
+	}
 	checkPath := filepath.Join(home.StateDir(homeDir), rec.PollPath)
 
 	// Task metadata and canonical completion are required before recovery can
-	// publish or remove anything. Missing metadata preserves the poll and
-	// record for the next recovery cycle.
-	currentMeta, metaErr := home.ReadMeta(homeDir, taskID)
-	if metaErr != nil {
-		return false, fmt.Errorf("recovery: reading task metadata (preserving poll and record): %w", metaErr)
+	// publish or remove anything. Missing or incomplete metadata preserves the
+	// poll and record for the next recovery cycle.
+	ident, identityErr := requireRetirementIdentity(homeDir, taskID)
+	if identityErr != nil {
+		return false, fmt.Errorf("recovery: task identity required (preserving poll and record): %w", identityErr)
 	}
-	if currentProvider := currentMeta["pr_provider"]; currentProvider != "" && currentProvider != rec.Provider {
-		return false, fmt.Errorf("stale retirement: current provider=%q, record provider=%q", currentProvider, rec.Provider)
+	if ident.Provider != rec.Provider {
+		return false, fmt.Errorf("stale retirement: current provider=%q, record provider=%q", ident.Provider, rec.Provider)
 	}
-	if currentURL := currentMeta["pr_url"]; currentURL != "" && currentURL != rec.URL {
-		return false, fmt.Errorf("stale retirement: current pr_url=%q, record pr_url=%q", currentURL, rec.URL)
+	if ident.URL != rec.URL {
+		return false, fmt.Errorf("stale retirement: current pr_url=%q, record pr_url=%q", ident.URL, rec.URL)
 	}
-	if currentHead := currentMeta["pr_head_sha"]; currentHead != "" && currentHead != rec.HeadSHA {
-		return false, fmt.Errorf("stale retirement: current head SHA=%q, record head SHA=%q", currentHead, rec.HeadSHA)
+	if ident.HeadSHA != rec.HeadSHA {
+		return false, fmt.Errorf("stale retirement: current head SHA=%q, record head SHA=%q", ident.HeadSHA, rec.HeadSHA)
 	}
 
 	// Derive merged truth from the canonical committed delivery outcome:
