@@ -152,6 +152,88 @@ func TestRunCycle_CheckValidationPortRefusesCheck(t *testing.T) {
 	}
 }
 
+func TestRunCycle_CheckValidationRefusalBeforeRetirementIsReportedAndLeavesCheck(t *testing.T) {
+	home := t.TempDir()
+	stateDir := filepath.Join(home, "state")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	checkPath := filepath.Join(stateDir, "task-1.check")
+	if err := os.WriteFile(checkPath, []byte("#!/bin/sh\necho ready\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	retirement := &testRetirementPort{}
+	validationCalls := 0
+	validation := &testCheckValidationPort{validate: func(string) error {
+		validationCalls++
+		if validationCalls == 2 {
+			return fmt.Errorf("changed while retiring")
+		}
+		return nil
+	}}
+	stderrR, stderrW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalStderr := os.Stderr
+	os.Stderr = stderrW
+	resetRecovery()
+	_, cycleErr := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, retirement, validation, testTaskStatePort{})
+	_ = stderrW.Close()
+	os.Stderr = originalStderr
+	stderrOutput, readErr := io.ReadAll(stderrR)
+	_ = stderrR.Close()
+	if cycleErr != nil {
+		t.Fatalf("run cycle: %v", cycleErr)
+	}
+	if readErr != nil {
+		t.Fatalf("read stderr: %v", readErr)
+	}
+	if !strings.Contains(string(stderrOutput), "poll check refused (left in place): changed while retiring") {
+		t.Fatalf("stderr = %q, want retirement-time refusal", stderrOutput)
+	}
+	if _, err := os.Stat(checkPath); err != nil {
+		t.Fatalf("refused check must remain on disk: %v", err)
+	}
+	if len(retirement.retiredPaths) != 0 {
+		t.Fatalf("retired paths = %#v, want none", retirement.retiredPaths)
+	}
+	records, err := DrainWakes(home)
+	if err != nil {
+		t.Fatalf("drain wakes: %v", err)
+	}
+	if len(records) != 0 {
+		t.Fatalf("wake records = %#v, want none", records)
+	}
+}
+
+func TestRunCycle_RetirementRefusalStillEmitsCheckWake(t *testing.T) {
+	home := t.TempDir()
+	stateDir := filepath.Join(home, "state")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	checkPath := filepath.Join(stateDir, "task-1.check")
+	if err := os.WriteFile(checkPath, []byte("#!/bin/sh\necho ready\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	retirement := &testRetirementPort{retireErr: fmt.Errorf("not merged")}
+	validation := &testCheckValidationPort{}
+	resetRecovery()
+	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, retirement, validation, testTaskStatePort{}); err != nil {
+		t.Fatalf("run cycle: %v", err)
+	}
+	records, err := DrainWakes(home)
+	if err != nil {
+		t.Fatalf("drain wakes: %v", err)
+	}
+	if len(records) != 1 || records[0].Kind != "check" || records[0].Key != "task-1" {
+		t.Fatalf("wake records = %#v, want one task check wake", records)
+	}
+}
+
 func TestRunCycle_CheckValidationPortAuthorizesRetirement(t *testing.T) {
 	home := t.TempDir()
 	stateDir := filepath.Join(home, "state")
