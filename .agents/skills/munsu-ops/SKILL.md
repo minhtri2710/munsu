@@ -70,15 +70,15 @@ Determine the task kind (ship vs scout), identify the project from the registry,
 
 Delivery mode is set at spawn time (`--mode`). Act according to mode:
 
-- **no-mistakes** (default): The soldier runs the no-mistakes pipeline. When it notifies completion, verify the PR is open and checks are green.
-- **direct-PR**: `munsu delivery review-diff <id>` to review the branch, then `munsu delivery pr-merge <id> <pr-url>` once approved. `munsu delivery merge-status <id>` reports whether it landed.
+- **no-mistakes** (default): The soldier runs the no-mistakes pipeline. When it notifies completion, verify the PR is open and checks are green, then after it is merged run `munsu task done <id>`.
+- **direct-PR**: `munsu delivery review-diff <id>` to review the branch, then `munsu delivery pr-merge <id> <pr-url>` once approved. `munsu delivery merge-status <id>` reports whether it landed; after it lands, run `munsu task done <id>`.
 - **local-only**: munsu registers no local merge command; land the branch outside munsu, then close the task with `munsu task done <id>`.
 
 **Completion:** PR URL (for remote modes) or local merge note documented.
 
 ### 7. Teardown
 
-Only run when the task is fully landed (merged or report submitted).
+For the standalone path, only run after the task is already done and fully landed (merged or report submitted). The combined `munsu delivery pr-merge <id> <pr-url> --teardown` path retires directly from the working phase without marking the task done.
 
 ```sh
 munsu teardown <id> [--force]

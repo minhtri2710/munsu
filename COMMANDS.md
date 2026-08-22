@@ -59,10 +59,13 @@ The recommended workflow for running a soldier task end-to-end:
    Spawn the soldier — acquires a worktree, creates a session pane, writes task meta, and launches the harness. Project inferred from cwd if omitted.
 4. **`munsu peek <id>` / `munsu send <id> <line>`**
    Monitor and interact with the running soldier as needed.
-5. **`munsu task done <id>`**
+5. **`munsu delivery pr-merge <id> <pr-url>`**
+   Land the work while the task is still working; delivery is refused once the task is terminal.
+   Skip this step only for the local-only mode, where the branch lands outside munsu.
+6. **`munsu task done <id>`**
    Mark the task complete. Completion must precede a standalone teardown: teardown
    retires the generation, and a retired task can no longer be completed.
-6. **`munsu teardown <id>`**
+7. **`munsu teardown <id>`**
    Terminate the soldier, release the worktree, and clean up runtime state.
 
 > **Note:** Add tasks queued, then use `task start <id>` after readiness checks; the Task Authority links brief → spawn → closure → teardown.
