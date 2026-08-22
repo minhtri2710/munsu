@@ -5,6 +5,8 @@ package home
 import (
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -61,11 +63,12 @@ func unusedPID() (int, bool) {
 // The PATH tests above do not reach it -- they exercise the probe's mechanism,
 // not the errno it has to discriminate.
 func TestProcessAliveTreatsAnUnsignallablePIDAsAlive(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("running as root: no PID this process is forbidden to signal, so EPERM cannot be built")
+	pid := unsignallablePID(t)
+	if err := syscall.Kill(pid, 0); err != syscall.EPERM {
+		t.Skipf("EPERM proof did not run: PID %d no longer returns EPERM from raw syscall.Kill(pid, 0): %v", pid, err)
 	}
-	if !isProcessAlive(1) {
-		t.Error("PID 1 is running but reads as dead")
+	if !isProcessAlive(pid) {
+		t.Errorf("PID %d is unsignallable but reads as dead", pid)
 	}
 }
 
@@ -75,13 +78,14 @@ func TestProcessAliveTreatsAnUnsignallablePIDAsAlive(t *testing.T) {
 // over one home. The lease layer would still read like a singleton guard while
 // having stopped being one.
 func TestClaimWatcherLeaseRefusesAnUnsignallableHolder(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("running as root: no PID this process is forbidden to signal, so EPERM cannot be built")
+	pid := unsignallablePID(t)
+	if err := syscall.Kill(pid, 0); err != syscall.EPERM {
+		t.Skipf("EPERM proof did not run: PID %d no longer returns EPERM from raw syscall.Kill(pid, 0): %v", pid, err)
 	}
 	dir := t.TempDir()
 	if _, err := writeLeaseFile(WatcherLeasePath(dir), &WatcherLease{
 		Home:      Canonical(dir),
-		PID:       1,
+		PID:       pid,
 		StartedAt: time.Now().Unix(),
 		UpdatedAt: time.Now().UnixNano(),
 	}); err != nil {
@@ -91,6 +95,48 @@ func TestClaimWatcherLeaseRefusesAnUnsignallableHolder(t *testing.T) {
 	if claimed || err == nil {
 		t.Fatalf("ClaimWatcherLease over a live holder this process may not signal = (%v, %v), want the live-holder refusal", claimed, err)
 	}
+}
+
+func unsignallablePID(t *testing.T) int {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("EPERM proof did not run: tests run as root, so no foreign unsignallable process can be established")
+	}
+
+	var pids []int
+	var discoveryErrors []string
+	if entries, err := os.ReadDir("/proc"); err == nil {
+		for _, entry := range entries {
+			if pid, err := strconv.Atoi(entry.Name()); err == nil && pid > 0 {
+				pids = append(pids, pid)
+			}
+		}
+	} else {
+		discoveryErrors = append(discoveryErrors, "read /proc: "+err.Error())
+	}
+	if len(pids) == 0 {
+		output, err := exec.Command("/bin/ps", "-e", "-o", "pid=").Output()
+		if err != nil {
+			discoveryErrors = append(discoveryErrors, "run ps: "+err.Error())
+		} else {
+			for _, line := range strings.Split(string(output), "\n") {
+				if pid, err := strconv.Atoi(strings.TrimSpace(line)); err == nil && pid > 0 {
+					pids = append(pids, pid)
+				}
+			}
+		}
+	}
+	for _, pid := range pids {
+		if syscall.Kill(pid, 0) == syscall.EPERM {
+			return pid
+		}
+	}
+	message := "EPERM proof did not run: checked %d candidate PIDs with raw syscall.Kill(pid, 0), but none returned EPERM"
+	if len(discoveryErrors) > 0 {
+		message += " (" + strings.Join(discoveryErrors, "; ") + ")"
+	}
+	t.Skipf(message, len(pids))
+	return 0
 }
 
 // TestClaimWatcherLeaseRefusesALiveHolderWithoutPATH is the consequence of the

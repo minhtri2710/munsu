@@ -5,7 +5,10 @@ package orchestrator
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -40,12 +43,55 @@ func TestProcessAliveAnswersWithoutPATH(t *testing.T) {
 // collapse: EPERM means the process exists and is not ours, which is the one
 // answer that must never reach a caller as "dead".
 func TestProcessAliveTreatsAnUnsignallablePIDAsAlive(t *testing.T) {
+	pid := unsignallablePID(t)
+	if err := syscall.Kill(pid, 0); err != syscall.EPERM {
+		t.Skipf("EPERM proof did not run: PID %d no longer returns EPERM from raw syscall.Kill(pid, 0): %v", pid, err)
+	}
+	if !isProcessAlive(pid) {
+		t.Errorf("PID %d is unsignallable but reads as dead", pid)
+	}
+}
+
+func unsignallablePID(t *testing.T) int {
+	t.Helper()
 	if os.Geteuid() == 0 {
-		t.Skip("running as root: no PID this process is forbidden to signal, so EPERM cannot be built")
+		t.Skip("EPERM proof did not run: tests run as root, so no foreign unsignallable process can be established")
 	}
-	if !isProcessAlive(1) {
-		t.Error("PID 1 is running but reads as dead")
+
+	var pids []int
+	var discoveryErrors []string
+	if entries, err := os.ReadDir("/proc"); err == nil {
+		for _, entry := range entries {
+			if pid, err := strconv.Atoi(entry.Name()); err == nil && pid > 0 {
+				pids = append(pids, pid)
+			}
+		}
+	} else {
+		discoveryErrors = append(discoveryErrors, "read /proc: "+err.Error())
 	}
+	if len(pids) == 0 {
+		output, err := exec.Command("/bin/ps", "-e", "-o", "pid=").Output()
+		if err != nil {
+			discoveryErrors = append(discoveryErrors, "run ps: "+err.Error())
+		} else {
+			for _, line := range strings.Split(string(output), "\n") {
+				if pid, err := strconv.Atoi(strings.TrimSpace(line)); err == nil && pid > 0 {
+					pids = append(pids, pid)
+				}
+			}
+		}
+	}
+	for _, pid := range pids {
+		if syscall.Kill(pid, 0) == syscall.EPERM {
+			return pid
+		}
+	}
+	message := "EPERM proof did not run: checked %d candidate PIDs with raw syscall.Kill(pid, 0), but none returned EPERM"
+	if len(discoveryErrors) > 0 {
+		message += " (" + strings.Join(discoveryErrors, "; ") + ")"
+	}
+	t.Skipf(message, len(pids))
+	return 0
 }
 
 // TestSessionLockIsNotStolenWhenLivenessIsUnprobable builds the state #580
