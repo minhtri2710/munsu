@@ -375,9 +375,9 @@ func TestResolveWakeRefusesAnEmptyLeaseFile(t *testing.T) {
 func TestClaimWatcherLeaseRefusesALeaseHeldByALiveProcess(t *testing.T) {
 	dir := t.TempDir()
 
-	// A real child process this test owns. PID 1 would not do: isProcessAlive
-	// shells out to `kill -0`, which an unprivileged user cannot signal, so
-	// init reads as dead.
+	// A real child process this test owns, so the live half of the fixture is
+	// one this test created and can end rather than one borrowed from the
+	// machine.
 	live := exec.Command("sleep", "60")
 	if err := live.Start(); err != nil {
 		t.Fatalf("start live process: %v", err)
@@ -426,8 +426,8 @@ func TestClaimWatcherLeaseRefusesALeaseHeldByALiveProcess(t *testing.T) {
 }
 
 // findDeadPIDForGuards returns a PID that isProcessAlive reports as not
-// running. isProcessAlive shells out per call, so this probes a handful of
-// candidates rather than scanning a range.
+// running. There is no PID a test may assume is free, so this probes a handful
+// of high candidates and skips when every one of them is taken.
 func findDeadPIDForGuards(t *testing.T) int {
 	t.Helper()
 	for _, pid := range []int{1 << 22, 1<<22 - 1, 1<<22 - 2, 1 << 21, 1<<21 - 1} {

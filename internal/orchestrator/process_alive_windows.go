@@ -2,21 +2,41 @@
 
 package orchestrator
 
-import "golang.org/x/sys/windows"
+import (
+	"errors"
+
+	"golang.org/x/sys/windows"
+)
 
 // isProcessAlive checks whether a process with the given PID is running.
 //
-// Windows has no `kill`, so the unix half's shell probe cannot be used: it
-// would fail for every PID and report every process dead. Both callers read
-// that answer as permission — the watcher lock policy deletes a live watcher's
-// lock file (home.acquireWatcherLock) and the AFK identity lock is reclaimed
-// (afk_lock.go) — so a blind implementation here fails open on singleton, which
-// is worse than having no guard. This follows the pattern already in the tree at
-// internal/cli/watch_process_windows.go: open a handle, ask for the exit code,
-// and treat STILL_ACTIVE (259) as alive. A PID we cannot open is reported dead.
+// Windows has no `kill`, so the unix half's signal probe cannot be used. This
+// follows the pattern already in the tree at internal/cli/watch_process_windows.go:
+// open a handle, ask for the exit code, and treat STILL_ACTIVE (259) as alive.
 //
-// No lane runs this. `GOOS=windows go vet ./...` compiles it, and its answer for
-// a real live process stays unproven in this repository.
+// The answer is fail-closed on the same terms as the unix half (#580). Every
+// caller reads false as permission to act -- the watcher lock policy deletes a
+// live watcher's lock file (home.acquireWatcherLock), the AFK identity lock is
+// reclaimed (afk_lock.go), and the exit waits conclude the process is gone --
+// so only a positively observed absence may answer false. OpenProcess reports
+// ERROR_INVALID_PARAMETER for a PID that does not exist; every other failure,
+// ERROR_ACCESS_DENIED above all, means a process we could not inspect rather
+// than one that is gone, and so does a GetExitCodeProcess that fails on a
+// handle we did open.
+//
+// This is compiled and vetted natively on windows, but only where the change
+// meets main: ci.yml triggers on pull requests targeting main and on pushes to
+// main, so its `windows-build-vet` job runs `go build ./...` and `go vet ./...`
+// on windows-latest at those two points and nowhere else. A push to a feature
+// branch with no open PR runs it not at all, and a green branch is therefore no
+// evidence that windows compiles. `GOOS=windows go vet ./...` on ubuntu is in
+// the same workflow and inherits the same two triggers.
+//
+// Natively compiled is still not natively executed, and no required check runs
+// this either way -- the only lane that runs tests on windows is
+// windows-observation.yml, which is workflow_dispatch-only. So the repository
+// holds no windows runtime proof, including which error OpenProcess actually
+// returns for an unopenable live PID.
 //
 // process_alive_windows_test.go is not what holds the signature: this function
 // has production call sites that compile in the same lane (afk_lock.go,
@@ -26,9 +46,12 @@ import "golang.org/x/sys/windows"
 func isProcessAlive(pid int) bool {
 	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
 	if err != nil {
-		return false
+		return !errors.Is(err, windows.ERROR_INVALID_PARAMETER)
 	}
 	defer windows.CloseHandle(handle)
 	var code uint32
-	return windows.GetExitCodeProcess(handle, &code) == nil && code == 259
+	if err := windows.GetExitCodeProcess(handle, &code); err != nil {
+		return true
+	}
+	return code == 259
 }

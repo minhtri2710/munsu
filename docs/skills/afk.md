@@ -17,7 +17,7 @@ All three take `--home` / `MUNSU_HOME` to scope to a specific home.
 
 ```
       consent flag set (state/.afk)
-      identity lock (state/.afk.lock)
+      identity lock (state/.lock)
       stale artifacts cleared
             │
             ▼
@@ -46,7 +46,7 @@ All digestion gates check this flag. Absence == no AFK.
 
 Contents: RFC3339 UTC timestamp of start.
 
-### Identity lock (`state/.afk.lock`)
+### Identity lock (`state/.lock`)
 
 PID-based lock that prevents two daemon instances in the same home. Format:
 
@@ -54,8 +54,9 @@ PID-based lock that prevents two daemon instances in the same home. Format:
 <PID>\t<RFC3339>
 ```
 
-Idempotent acquire: if the lock exists and the PID is alive, `Start` returns an error. Stale
-locks (dead PID) are reclaimed silently.
+Idempotent acquire: if the lock exists and its PID is alive—or liveness cannot be
+answered—the lock remains held and `Start` returns an error. The lock is reclaimed
+silently only when the OS definitively reports that the PID is absent.
 
 ### Sentinel marker (U+2063)
 
@@ -109,7 +110,7 @@ never merges, approves, or modifies delivery state.
 | Path | Purpose |
 |------|---------|
 | `state/.afk` | Consent flag (RFC3339 timestamp) |
-| `state/.afk.lock` | Identity lock (PID + timestamp) |
+| `state/.lock` | Identity lock (PID + timestamp) |
 | `state/.afk-digest` | Batched escalation digest (JSON) |
 | `state/.seen-*` | Watcher dedup markers (cleared on start) |
 | `state/.subsuper-*` | Subsupervisor artifacts (cleared on start) |
@@ -118,5 +119,5 @@ never merges, approves, or modifies delivery state.
 
 1. **No repair, only diagnosis** — the daemon never writes to the general pane (ADR-0013)
 2. **No digest without consent flag** — every digestion path checks `state/.afk`
-3. **Stale lock reclamation** — dead PID lock is reclaimed, never blocking a new start
+3. **Stale lock reclamation** — a lock is reclaimed only after the OS definitively reports its PID absent; an unanswerable probe never authorizes a new start
 4. **Idempotent return** — multiple `munsu afk return` calls on clean state succeed

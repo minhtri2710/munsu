@@ -13,8 +13,9 @@ const afkLockFile = "state/.lock"
 
 // Lock represents an identity-backed daemon lock for the AFK daemon.
 // It stores the PID and start time, enabling idempotent acquire: if the
-// lock names a live process, AcquireLock is a no-op. Stale locks (dead PID)
-// are silently reclaimed.
+// lock names a live process, or liveness cannot be answered, AcquireLock is a
+// no-op. A lock is silently reclaimed only after the OS definitively reports
+// that its PID is absent.
 type Lock struct {
 	pid     int
 	startAt time.Time
@@ -23,7 +24,8 @@ type Lock struct {
 
 // AcquireLock attempts to acquire the AFK daemon lock.
 // Returns the lock and true if acquired. If the lock is already held by a
-// running process, returns (nil, false, nil) — idempotent no-op.
+// running process, or its liveness cannot be answered, returns
+// (nil, false, nil) — idempotent no-op.
 func AcquireLock(homeDir string) (*Lock, bool, error) {
 	lockPath := filepath.Join(homeDir, afkLockFile)
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0755); err != nil {

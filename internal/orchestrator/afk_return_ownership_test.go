@@ -115,8 +115,8 @@ func TestReturn_StopsAVerifiedDaemon(t *testing.T) {
 	// Reap concurrently. Production never hits this: Return runs in its own CLI
 	// process and is not the daemon's parent. Here it is the parent, so without
 	// a waiter the killed child stays a zombie -- which the unix isProcessAlive
-	// (kill -0) reports as alive, and waitForDaemonExit would correctly time out
-	// on a state that cannot occur at the real call site.
+	// (a signal-0 kill) reports as alive, and waitForDaemonExit would correctly
+	// time out on a state that cannot occur at the real call site.
 	reaped := make(chan struct{})
 	go func() {
 		_, _ = child.Process.Wait()
