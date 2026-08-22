@@ -1,6 +1,9 @@
 # munsu COMMANDS.md
 
-Full command map grouped by lifecycle phase.
+A curated command map grouped by lifecycle phase. It is not an exhaustive index:
+`munsu` registers more commands than are listed here. The complete registered set
+is whatever `munsu --help` prints (and `munsu <command> --help` for each group);
+that output is the authority, not this file.
 
 ## Init and Setup
 
@@ -56,20 +59,24 @@ The recommended workflow for running a soldier task end-to-end:
    Spawn the soldier — acquires a worktree, creates a session pane, writes task meta, and launches the harness. Project inferred from cwd if omitted.
 4. **`munsu peek <id>` / `munsu send <id> <line>`**
    Monitor and interact with the running soldier as needed.
-5. **`munsu teardown <id>`**
-   Terminate the soldier, release the worktree, and clean up runtime state.
+5. **`munsu delivery pr-merge <id> <pr-url>`**
+   Land the work while the task is still working; delivery is refused once the task is terminal.
+   Skip this step only for the local-only mode, where the branch lands outside munsu.
 6. **`munsu task done <id>`**
-   Mark the task complete (separate operator step after teardown).
+   Mark the task complete. Completion must precede a standalone teardown: teardown
+   retires the generation, and a retired task can no longer be completed.
+7. **`munsu teardown <id>`**
+   Terminate the soldier, release the worktree, and clean up runtime state.
 
-> **Note:** Add tasks queued, then use `task start <id>` after readiness checks; the Task Authority links brief → spawn → teardown → closure.
+> **Note:** Add tasks queued, then use `task start <id>` after readiness checks; the Task Authority links brief → spawn → closure → teardown.
 
 ## Supervision
 
 | Command | Description |
 |---------|-------------|
-| `munsu watch` | Run the event-driven watcher loop. Singleton-safe via home-scoped lock. Exits with a wake reason when an actionable event is found. |
-| `munsu watch-arm [--restart]` | Arm the watcher as a background process. With `--restart`, signal existing watcher first. |
-| `munsu wake claim <consumer-id> [--lease-seconds 60] [--limit 10]` | Claim a batch of pending wakes under a lease. |
+| `munsu watch` | Run the persistent watcher daemon. Singleton-safe via home-scoped lock. Actionable conditions are durably queued while the watcher keeps polling until SIGTERM or SIGINT. |
+| `munsu watch-arm [--restart]` | Arm the watcher as a background process (deprecated: use `munsu watch ensure`). With `--restart`, signal existing watcher first. |
+| `munsu wake claim --consumer <id> [--lease-seconds 60] [--limit 10]` | Claim a batch of pending wakes under a lease. Takes no positional argument; `--consumer` is required. |
 | `munsu wake ack <lease-id> <event-id...>` | Acknowledge one or more processed wakes. |
 | `munsu guard` | Warn on tangle (non-default branch in primary checkout) or stale watcher beat. |
 | `munsu afk` | Enter away-mode supervision daemon; polls at reduced cadence; stops on SIGTERM/SIGINT. |
@@ -92,7 +99,7 @@ The recommended workflow for running a soldier task end-to-end:
 | `munsu captain migrate <captain-home> <id>` | Migrate a state-only home to managed worktree. Use `--repo` for transactional git-worktree migration. |
 | `munsu captain validate <captain-home>` | Validate a captain home structure and provenance. |
 | `munsu captain config-push <captain-home>` | Push inheritable config to a captain and advance generation tracking. Creates config-reread requirement on change. |
-| `munsu captain handoff <captain-home> <task-id...>` | Hand off queued tasks to a captain (tasks must be queued). |
+| `munsu captain handoff <captain-home> <item-key...>` | Hand off queued tasks to a captain (tasks must be queued). |
 
 ### Recovery paths
 
@@ -105,9 +112,8 @@ Session-start `Recover()` (invoked via `munsu session-start` with captain livene
 | Command | Description |
 |---------|-------------|
 | `munsu delivery review-diff <id>` | Review diff between soldier branch and base. |
-| `munsu delivery pr-check <id> <pr-url>` | Record PR URL and SHA in task meta, write check.sh to poll merge status. |
+| `munsu delivery merge-status <id>` | Query merge status of the recorded delivery identity. Exit 0 = merged, 1 = not merged, 2+ = error. |
 | `munsu delivery pr-merge <id> <pr-url> [-- --merge\|--rebase]` | Merge a PR via gh-axi CLI. Default method is squash. |
-| `munsu delivery merge-local <id>` | Fast-forward merge soldier branch to local default branch (no-remote projects only). |
 
 ## Task Lifecycle
 
@@ -128,7 +134,7 @@ Session-start `Recover()` (invoked via `munsu session-start` with captain livene
 
 | Command | Description |
 |---------|-------------|
-| `munsu stow [text...] [--kind learning\|captain] [--general]` | Sweep session for durable knowledge. Uses inspect-then-update to avoid duplicates. |
+| `munsu stow [text...] [--kind learning\|general] [--general]` | Sweep session for durable knowledge. Uses inspect-then-update to avoid duplicates. |
 
 ## Maintenance
 

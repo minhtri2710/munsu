@@ -16,7 +16,7 @@ The user is the **captain**. Your job:
    git worktrees) using `munsu spawn` / `munsu send`.
 3. Supervise soldiers via `munsu peek` / `munsu soldier-state` / the watcher
    (`munsu watch ensure`).
-4. Deliver finished work as a PR (`munsu delivery pr-check` / `munsu delivery pr-merge`) or report
+4. Deliver finished work as a PR (`munsu delivery pr-merge`) or report
    (`munsu teardown`).
 
 You never do project work yourself — you delegate to soldiers.
@@ -92,7 +92,7 @@ Detect your harness: `munsu harness detect`.
 The harnesses with adapters are `pi`, `claude`, `codex`, `opencode`, `grok`, and `agy`.
 Pi is live-verified (runtime-tested locally); all others are contract + unit verified (deferred until installed locally).
 Never dispatch on a harness without a known adapter.
-Run `munsu integrate status --harness <name>` to check integration state before relying on turn-end guards.
+Run `munsu integrate status [harness]` to check integration state before relying on turn-end guards.
 
 Run `munsu backend capabilities` to inspect session backend support.
 Use `munsu spawn <id> <project> --harness <name>` to override soldier harness.
@@ -124,7 +124,7 @@ If away mode is active (`state/.afk` exists), run `munsu afk` and let the daemon
 ## 6. Project and knowledge management
 
 Project registry:
-- `munsu project add <name> [--repo <url>]` — register a project
+- `munsu project add <name> <path-or-url>` — register a project
 - `munsu project list` — list registered projects
 - `munsu project mode <name>` — resolve delivery mode
 
@@ -167,7 +167,7 @@ Check the spawned soldier: `munsu soldier-state <id>`.
 ### Supervise
 
 Ensure the persistent watcher: `munsu watch ensure`.
-On wake: claim with `munsu wake claim`, then `munsu soldier-state <id>` as ground truth.
+On wake: claim with `munsu wake claim --consumer <id>`, then `munsu soldier-state <id>` as ground truth.
 Steer with: `munsu send <id> "<line>"`.
 Peek at output: `munsu peek <id> [--lines N]`.
 
@@ -179,10 +179,9 @@ When a soldier is unresponsive, run `munsu skill show stuck-soldier-recovery`.
 |------|-------------|-------------|
 | `no-mistakes` | Full pipeline (review → fix → test → push → PR → CI) | `done: PR <url> checks green` |
 | `direct-PR` | Push + open PR without pipeline | `done: PR <url>` |
-| `local-only` | Clean branch ready for local merge | ready for `munsu delivery merge-local` |
+| `local-only` | Clean branch ready for local merge | ready for local merge |
 
-Record the PR: `munsu delivery pr-check <id> <pr-url>`.
-Merge when instructed: `munsu delivery pr-merge <id> <pr-url>` (prefer `--teardown` to clean soldier pane/worktree after land; never bare `gh pr merge` when task meta lives in a captain home). Meta resolves primary then captain homes.
+Merge when instructed: `munsu delivery pr-merge <id> <pr-url>`; use standalone teardown after `munsu task done` for the normal lifecycle (never bare `gh pr merge` when task meta lives in a captain home). The optional `--teardown` form is a combined path that intentionally retires without marking the task done. Meta resolves primary then captain homes.
 
 ### Teardown
 
@@ -192,6 +191,7 @@ Only run when the task is fully landed:
 munsu teardown <id> [--force]
 ```
 
+For standalone teardown, deliver first, then record completion with `munsu task done <id>` before `munsu teardown <id>`, because retirement is terminal for the generation. The combined `munsu delivery pr-merge <id> <pr-url> --teardown` path retires directly from the working phase, so the task is never marked done.
 A teardown refusal for uncommitted or unlanded work is a stop-and-investigate result.
 Never force teardown without explicit discard authority.
 
@@ -200,7 +200,7 @@ Never force teardown without explicit discard authority.
 A completed scout must leave a self-contained report before teardown.
 Before marking complete, run `munsu skill show decision-hold-lifecycle` to ensure
 unresolved general decisions are durably tracked.
-When implementation is separately authorized, promote: `munsu promote <id> <project>`.
+When implementation is separately authorized, promote: `munsu promote <id>`.
 
 ---
 
@@ -232,12 +232,12 @@ Cross-cutting rules:
 The `munsu wake claim` API is the lease-based wake queue surface:
 
 ```
-munsu wake claim <consumer-id> [--lease-seconds 60] [--limit 10]
+munsu wake claim --consumer <id> [--lease-seconds 60] [--limit 10]
 munsu wake ack <lease-id> <event-id...>
 ```
 
 Flow:
-1. Call `munsu wake claim $CONSUMER_ID` to claim a batch of pending wakes.
+1. Call `munsu wake claim --consumer $CONSUMER_ID` to claim a batch of pending wakes.
 2. For each wake, check `munsu soldier-state <id>` for ground truth.
 3. Act on the wake (steer, recover, or note the signal).
 4. Call `munsu wake ack <lease-id> <event-id>` to release each processed wake.
@@ -403,16 +403,13 @@ Run: `munsu skill show <name>` to read any skill.
 | Read output | `munsu peek <id>` |
 | Ensure watcher | `munsu watch ensure` |
 | Claim wakes | `munsu wake claim --consumer <id>`
-| Claim wakes | `munsu wake claim <consumer-id>`
 | Acknowledge wakes | `munsu wake ack <lease-id> <event-id...>`
 | Guard check | `munsu guard`
 | Fleet view | `munsu fleet view`
 | Captain converge | `munsu captain converge`
 | Fleet bearings | `munsu fleet bearings` |
 | Fleet sync | `munsu fleet sync [<project>]` |
-| Record PR | `munsu delivery pr-check <id> <pr-url>` |
 | Merge PR | `munsu delivery pr-merge <id> <pr-url> [--teardown]` |
-| Merge local | `munsu delivery merge-local <id>` |
 | Stow learnings | `munsu stow [text...]` |
 | Stow captain pref | `munsu stow --general [text...]` |
 | Self-update | `munsu update` |
@@ -434,11 +431,11 @@ Run: `munsu skill show <name>` to read any skill.
 5. munsu spawn <id> <project>        # launch soldier in worktree+tmux window
 6. munsu watch ensure                # ensure persistent supervision
 7. munsu send <id> "<msg>"           # steer as needed
-8. munsu wake claim / soldier-state   # on wake from watcher
-9. munsu delivery pr-check <id> <url> # record PR when done
-10. munsu delivery pr-merge <id> <url> [--teardown]  # merge; --teardown cleans soldier
+8. munsu wake claim --consumer <id>; munsu soldier-state <id> # on wake from watcher
+9. munsu delivery pr-merge <id> <url> # merge while the task is working
+10. munsu task done <id>              # record completion before standalone retirement
 11. munsu captain converge           # flush send outbox after captain lifecycle
-12. munsu teardown <id>              # clean up if merge was without --teardown
+12. munsu teardown <id>              # clean up after standalone merge
 ```
 
 ---

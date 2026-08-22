@@ -17,7 +17,7 @@ The watcher is a singleton persistent event-driven daemon. It queues actionable 
 When the watcher queues actionable events, prefer lease-based handling:
 
 ```sh
-munsu wake claim <consumer-id>       # claim a bounded batch under a lease
+munsu wake claim --consumer <id>     # claim a bounded batch under a lease
 munsu soldier-state <id>             # read ground truth, not a raw status tail
 munsu wake ack <lease-id> <event-id> # acknowledge each processed event
 ```

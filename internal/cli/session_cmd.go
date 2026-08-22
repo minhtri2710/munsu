@@ -870,7 +870,7 @@ Ack claimed wakes after steering: munsu wake ack <lease-id> <event-id...>.`,
 	}
 	configureContractCommand(cmd)
 	cmd.Flags().StringVar(&consumer, "consumer", "", "Consumer identifier (required)")
-	cmd.Flags().IntVar(&leaseCaptains, "lease-captains", 60, "Lease duration in seconds")
+	cmd.Flags().IntVar(&leaseCaptains, "lease-seconds", 60, "Lease duration in seconds")
 	cmd.Flags().IntVar(&limit, "limit", 10, "Maximum wakes to claim")
 	cmd.Flags().BoolVar(&noPeek, "no-peek", false, "Skip the fleet peek")
 	return cmd

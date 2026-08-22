@@ -40,7 +40,7 @@ Determine the task kind (ship vs scout), identify the project from the registry,
 - `munsu task add <id> "<desc>" --kind ship|scout --repo <name>` — register the queued task; use `munsu task start <id>` only after readiness checks.
 - `munsu brief <id> <repo> [--scout]` — scaffold the soldier brief.
 - Fill in the `{TASK}` placeholder in `data/<id>/brief.md`.
-- `munsu spawn <id> <project> [--kind ship|scout] [--mode no-mistakes|direct-PR|local-only]` — launch the soldier.
+- `munsu spawn <id> [<project>] [--kind ship|scout] [--mode no-mistakes|direct-PR|local-only]` — launch the soldier; project is inferred from the current directory when omitted.
 
 **Completion:** Meta exists, endpoint is alive (verify with `munsu peek <id>` or `munsu soldier-state <id>`).
 
@@ -51,7 +51,7 @@ Determine the task kind (ship vs scout), identify the project from the registry,
 ### 5. Supervise
 
 - Ensure the watcher: `munsu watch ensure [--restart]`.
-- On wake: prefer `munsu wake claim <consumer-id>` with lease management;
+- On wake: prefer `munsu wake claim --consumer <id>` with lease management;
   `munsu wake claim` is the lease-based wake queue surface.
 - Ground truth: `munsu soldier-state <id>` (not raw status tail).
 - Steer as needed: `munsu send <id> "<line>"` (downlink only; Soldier and Captain targets are valid, while uplink to `general` is refused).
@@ -70,15 +70,15 @@ Determine the task kind (ship vs scout), identify the project from the registry,
 
 Delivery mode is set at spawn time (`--mode`). Act according to mode:
 
-- **no-mistakes** (default): The soldier runs the no-mistakes pipeline. When it notifies completion, verify the PR is open and checks are green.
-- **direct-PR**: `munsu delivery pr-check <id> <pr-url>` to record the PR, then `munsu delivery pr-merge <id> <pr-url>` once approved.
-- **local-only**: `munsu delivery merge-local <id>` for a fast-forward merge to the local default branch.
+- **no-mistakes** (default): The soldier runs the no-mistakes pipeline. When it notifies completion, verify the PR is open and checks are green, then after it is merged run `munsu task done <id>`.
+- **direct-PR**: `munsu delivery review-diff <id>` to review the branch, then `munsu delivery pr-merge <id> <pr-url>` once approved. `munsu delivery merge-status <id>` reports whether it landed; after it lands, run `munsu task done <id>`.
+- **local-only**: munsu registers no local merge command; land the branch outside munsu, then close the task with `munsu task done <id>`.
 
 **Completion:** PR URL (for remote modes) or local merge note documented.
 
 ### 7. Teardown
 
-Only run when the task is fully landed (merged or report submitted).
+For the standalone path, only run after the task is already done and fully landed (merged or report submitted). The combined `munsu delivery pr-merge <id> <pr-url> --teardown` path retires directly from the working phase without marking the task done.
 
 ```sh
 munsu teardown <id> [--force]
@@ -107,7 +107,7 @@ munsu teardown <id> [--force]
 
 ## See also
 
-- `COMMANDS.md` — full command map grouped by lifecycle phase.
+- `COMMANDS.md` — curated command map grouped by lifecycle phase; use `munsu --help` and per-command `--help` for the complete registered set.
 - `SUPERVISION.md` — canonical watch/wake/guard/AFK loop.
 - `munsu skill show decision-hold-lifecycle` — decision-hold lifecycle reference.
 - `munsu doctor` — toolchain diagnostics with fix commands.

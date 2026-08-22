@@ -41,7 +41,7 @@ Every contract command accepts `--output toon|json`; `toon` is the default and `
 | `munsu guard` | none | `--output` | guard result |
 | `munsu watch ensure` | none | `--interval <duration>`, `--output` | ensure receipt |
 | `munsu watch run` | none | `--output` | one run receipt |
-| `munsu wake claim` | `--consumer <id>` (required) | `--consumer`, `--lease-captains`, `--limit`, `--output` | claim receipt |
+| `munsu wake claim` | `--consumer <id>` (required) | `--consumer`, `--lease-seconds`, `--limit`, `--output` | claim receipt |
 | `munsu wake resolve` | `--claim-id <lease-id>`, `--event-id <event-id>`, `--summary <text>` | `--claim-id`, `--event-id`, `--summary`, `--output` | resolve receipt |
 | `munsu wake ack <lease-id> <event-id...>` | lease ID + at least one event ID | `--output` | acknowledgement receipt |
 | `munsu backend capabilities` | none | `--backend <name>`, `--output` | backend capabilities (structured discovery currently exposes only `tmux` and `herdr`; zellij/cmux/orca remain experimental runtime backends and are not part of this contract surface) |

@@ -195,7 +195,7 @@ export default function (pi: ExtensionAPI) {
 
     const result = await pi.exec(MUNSU_BIN, [
       "wake", "claim", "--consumer", SESSION_CONSUMER,
-      "--lease-captains", "120", "--limit", "1",
+      "--lease-seconds", "120", "--limit", "1",
       "--output", "json",
     ]);
     if (result.code !== 0) return;

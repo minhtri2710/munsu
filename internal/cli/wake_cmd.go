@@ -20,7 +20,7 @@ func newWakeCmd() *cobra.Command {
 		Args:  contractNoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			consumer, _ := cmd.Flags().GetString("consumer")
-			leaseSec, _ := cmd.Flags().GetInt("lease-captains")
+			leaseSec, _ := cmd.Flags().GetInt("lease-seconds")
 			limit, _ := cmd.Flags().GetInt("limit")
 
 			if consumer == "" {
@@ -65,7 +65,7 @@ func newWakeCmd() *cobra.Command {
 		}),
 	}
 	claimCmd.Flags().String("consumer", "", "Consumer identifier (required)")
-	claimCmd.Flags().Int("lease-captains", 60, "Lease duration in captains")
+	claimCmd.Flags().Int("lease-seconds", 60, "Lease duration in seconds")
 	claimCmd.Flags().Int("limit", 10, "Maximum wakes to claim")
 
 	resolveCmd := &cobra.Command{
