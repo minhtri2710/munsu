@@ -83,8 +83,8 @@ with no network access at all, next to the ADR-number and gofmt rules, and
 `flake-ledger.sh selftest` runs beside it with one fixture per rule -- the rules
 themselves are guards, and a guard nothing tests stops protecting silently.
 `flake-sweep.sh selftest` runs in that same job for the same reason: it is
-hermetic too, and while it ran only after a merge, a PR could take a rule out of
-the sweep and stay green.
+hermetic too, and when it ran only in the ledger workflow, a PR could take a rule
+out of the sweep and stay green.
 `.github/scripts/flake-sweep.sh check` compares this table against the API in
 both directions, the way `deadcode.sh check` compares `.github/deadcode.allow`
 against the tree: observed but unfiled is red, filed but no longer observable is
