@@ -191,7 +191,7 @@ Only run when the task is fully landed:
 munsu teardown <id> [--force]
 ```
 
-Retirement is terminal for the generation, so record completion with `munsu task done <id>` before either `munsu teardown <id>` or `munsu delivery pr-merge <id> <pr-url> --teardown`.
+For standalone teardown, deliver first, then record completion with `munsu task done <id>` before `munsu teardown <id>`, because retirement is terminal for the generation. The combined `munsu delivery pr-merge <id> <pr-url> --teardown` path retires directly from the working phase, so the task is never marked done.
 A teardown refusal for uncommitted or unlanded work is a stop-and-investigate result.
 Never force teardown without explicit discard authority.
 
@@ -432,10 +432,10 @@ Run: `munsu skill show <name>` to read any skill.
 6. munsu watch ensure                # ensure persistent supervision
 7. munsu send <id> "<msg>"           # steer as needed
 8. munsu wake claim --consumer <id>; munsu soldier-state <id> # on wake from watcher
-9. munsu task done <id>              # record completion before retirement
-10. munsu delivery pr-merge <id> <url> [--teardown]  # merge; --teardown cleans soldier
+9. munsu delivery pr-merge <id> <url> # merge while the task is working
+10. munsu task done <id>              # record completion before standalone retirement
 11. munsu captain converge           # flush send outbox after captain lifecycle
-12. munsu teardown <id>              # clean up if merge was without --teardown
+12. munsu teardown <id>              # clean up after standalone merge
 ```
 
 ---
