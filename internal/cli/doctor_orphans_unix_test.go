@@ -83,8 +83,11 @@ func TestOrphanScanReportsRealGarbageAndLeavesItRunning(t *testing.T) {
 
 // spawnBackstop bounds a wait on a spawned process by a share of the test
 // binary's OWN remaining -timeout budget instead of by a literal. It is the
-// same helper internal/backend grew for #574; unexported test helpers do not
-// cross packages, so the idiom is restated rather than shared.
+// same helper internal/backend grew for #574. A shared home does exist —
+// internal/testutil is test infrastructure only by the topology rule in
+// internal/testutil/architecture_policy_test.go — so this is restated rather
+// than shared only because two copies sit below the threshold where that
+// indirection pays. A third would not.
 //
 // Halving what remains leaves room for the rest of the test and still fails
 // ahead of the binary's own timeout panic, so the failure keeps its message

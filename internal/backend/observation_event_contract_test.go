@@ -302,6 +302,17 @@ func spawnBackstop(t *testing.T) <-chan time.Time {
 // cancel() therefore cannot land on a shell that is still on its way to the
 // blocking call.
 //
+// Be exact about where that proof stops, because it stops one syscall short:
+// at the instant this open returns, the reader has just been RELEASED from
+// its own blocking open and has not yet entered read(2). What the rendezvous
+// establishes is that the exec completed and that the FIFO was opened by the
+// right process image — not that the process is inside the read. Nothing
+// observable from outside the process could establish the latter, and nothing
+// here needs it: out of that window `cat` has no path but the read, and the
+// only thing that ends the read is the kill this test asserts about. The gap
+// #577 was filed for is the one where the killed process is the WRONG
+// process, and that gap is closed.
+//
 // The argv marker the fake writes is deliberately NOT that proof. It is
 // written immediately BEFORE the exec, so it can only ever show that the shell
 // reached the branch — the gap #577 was filed for. It is still read here, but
