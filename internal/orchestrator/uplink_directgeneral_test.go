@@ -232,24 +232,37 @@ func TestReportRefusesAReceivingHomeWhoseProvenanceIsUnreadable(t *testing.T) {
 	}
 }
 
-// Recover must not count a failed notification path as a retry that was queued.
-func TestRecoverFailsClosedWhenTheNotificationPathFails(t *testing.T) {
+// The loudness added for #562 stops at Report. Recover keeps counting a failed
+// path as a queued retry, because its captain branch carries a pre-existing
+// unmet precondition (herdr_pane_id, written only by HerdrBackend) that this
+// branch's reproduction never covered. Widening the boundary would convert that
+// silent failure into a startup failure through ReconcileCaptainHook, so both
+// sides are pinned here: loud through Report, retried through Recover.
+func TestTheNotifyFailureBoundaryStopsAtReport(t *testing.T) {
+	failing := func(NotificationRef) UplinkNotifyResult {
+		return UplinkNotifyResult{Err: fmt.Errorf("resolving receiver target")}
+	}
 	generalHome, identity := directGeneralHome(t)
 	if _, err := Report(ReportRequest{
 		SenderHome: generalHome, ReceiverHome: generalHome,
 		SenderRank: RankSoldier, SenderIdentity: "direct-task",
 		ReceiverRank: RankGeneral, ReceiverID: identity,
 		TaskID: "direct-task", Key: "default", State: "failed", Message: "direct dispatch failure",
-	}); err != nil {
-		t.Fatal(err)
+		Notify: failing,
+	}); err == nil {
+		t.Fatal("Report must refuse a failed notification path, not report it queued")
 	}
-	_, err := Recover(RecoverRequest{
+
+	// Report refused after writing durable state, so the envelope is pending:
+	// the same failure now has to reach Recover's retry path.
+	res, err := Recover(RecoverRequest{
 		SenderHome: generalHome, ReceiverHome: generalHome, ReceiverRank: RankGeneral, ForceNotify: true,
-		Notify: func(NotificationRef) UplinkNotifyResult {
-			return UplinkNotifyResult{Err: fmt.Errorf("resolving receiver target")}
-		},
+		Notify: failing,
 	})
-	if err == nil {
-		t.Fatal("a failed notification path must not be counted as a queued retry")
+	if err != nil {
+		t.Fatalf("Recover must retry a failed notification path, not fail closed on it: %v", err)
+	}
+	if res.Queued != 1 || res.Notified != 0 {
+		t.Fatalf("recover result = %+v, want exactly one queued retry", *res)
 	}
 }

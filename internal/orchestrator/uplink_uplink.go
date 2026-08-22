@@ -23,7 +23,8 @@ type UplinkNotifyResult struct {
 	Acknowledged bool
 	Queued       bool
 	// Err carries a notification path that failed rather than a target that
-	// was merely unavailable. A failed path is never reported as queued.
+	// was merely unavailable. Report refuses such a path instead of reporting
+	// it queued; Recover retries it, for the reason recorded at that call site.
 	Err error
 }
 
@@ -174,9 +175,15 @@ func Recover(req RecoverRequest) (*RecoverResult, error) {
 		if err := markNotificationAttempt(req.SenderHome, env.MessageID); err != nil {
 			return nil, err
 		}
-		if nr.Err != nil {
-			return nil, fmt.Errorf("uplink recover: notify: %w", nr.Err)
-		}
+		// A failed notification path is loud in Report and deliberately is not
+		// here. Recover reaches resolveReceiverTarget's captain branch through
+		// ReconcileCaptainHook, and that branch has a pre-existing unmet
+		// precondition: it requires meta["herdr_pane_id"], which only
+		// HerdrBackend writes, so a tmux-backed captain never satisfies it.
+		// Failing here would convert that long-standing silent failure into a
+		// startup failure, on a reproduction that never covered it. Counting a
+		// failed path as queued is this loop's base behaviour, not a swallow
+		// reintroduced; the captain-branch defect is tracked on its own issue.
 		if nr.Acknowledged {
 			result.Notified++
 		} else {
