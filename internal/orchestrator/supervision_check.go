@@ -34,7 +34,9 @@ type CheckResult struct {
 }
 
 // DiscoverPerTaskChecks finds per-task .check files under state/.
-// These are legacy check artifacts named <task-id>.check.
+// A per-task check is named <task-id>.check; nothing in munsu writes one, so it
+// arrives from the operator or agent. The watcher validates each, retires the
+// ones whose PR has merged, and surfaces the rest as check wakes.
 func DiscoverPerTaskChecks(homeDir string) ([]CheckPlugin, error) {
 	stateDir := filepath.Join(homeDir, "state")
 	entries, err := os.ReadDir(stateDir)
