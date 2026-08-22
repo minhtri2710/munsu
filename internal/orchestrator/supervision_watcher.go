@@ -569,9 +569,9 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 		if err := retirement.ValidateCheck(plugin.Path); err != nil {
 			continue
 		}
-		// Migrate-or-refuse: skip if stale
-		if migrated, err := MigrateOrRefuseStale(plugin.Path); err != nil {
-			if !migrated {
+		// Accept-or-refuse: skip if stale
+		if accepted, err := AcceptOrRefuseStale(plugin.Path); err != nil {
+			if !accepted {
 				os.Remove(plugin.Path)
 			}
 			continue

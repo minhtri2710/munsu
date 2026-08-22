@@ -295,7 +295,10 @@ In a future release, the legacy state suffixes `.check.sh` and `.turn-ended`
 will no longer be cleaned up during teardown. The canonical names are now
 `.check` and `.turnend`.
 
-Munsu currently writes `.check` and reads **both** old and new names during
-teardown cleanup. If you have scripts that reference `.check.sh` files in
-the state directory, update them to `.check`. Existing `.check.sh` and
-`.turn-ended` files will still be cleaned up. No immediate action required.
+Munsu never writes a `.check`. Per-task checks are authored externally — by
+the operator or an agent — and dropped into the state directory; munsu
+discovers, validates, consumes and removes them. What it does do is read
+**both** old and new names during teardown cleanup. If you have scripts that
+write `.check.sh` files into the state directory, change them to write
+`.check`. Existing `.check.sh` and `.turn-ended` files will still be cleaned
+up. No immediate action required.

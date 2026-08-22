@@ -7,30 +7,30 @@ import (
 	"time"
 )
 
-// --- MigrateOrRefuseStale tests ---
+// --- AcceptOrRefuseStale tests ---
 
-func TestMigrateOrRefuseStale_Valid(t *testing.T) {
+func TestAcceptOrRefuseStale_Valid(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "task-1.check")
 	writeExecScript(t, path, "#!/bin/bash\necho poll\n")
-	migrated, err := MigrateOrRefuseStale(path)
+	accepted, err := AcceptOrRefuseStale(path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !migrated {
-		t.Error("expected valid check to be accepted (migrated=true)")
+	if !accepted {
+		t.Error("expected valid check to be accepted (accepted=true)")
 	}
 }
 
-func TestMigrateOrRefuseStale_ZeroLength(t *testing.T) {
+func TestAcceptOrRefuseStale_ZeroLength(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bad.check")
 	writeExecScript(t, path, "")
-	migrated, err := MigrateOrRefuseStale(path)
+	accepted, err := AcceptOrRefuseStale(path)
 	if err == nil {
 		t.Fatal("expected error for zero-length check")
 	}
-	if migrated {
+	if accepted {
 		t.Error("expected zero-length check to be refused")
 	}
 	// File should have been removed
@@ -39,15 +39,15 @@ func TestMigrateOrRefuseStale_ZeroLength(t *testing.T) {
 	}
 }
 
-func TestMigrateOrRefuseStale_NoShebang(t *testing.T) {
+func TestAcceptOrRefuseStale_NoShebang(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bad.check")
 	writeExecScript(t, path, "echo hello\n")
-	migrated, err := MigrateOrRefuseStale(path)
+	accepted, err := AcceptOrRefuseStale(path)
 	if err == nil {
 		t.Fatal("expected error for no-shebang check")
 	}
-	if migrated {
+	if accepted {
 		t.Error("expected no-shebang check to be refused")
 	}
 	// File should remain (no valid shebang means unsafe to remove)
@@ -56,7 +56,7 @@ func TestMigrateOrRefuseStale_NoShebang(t *testing.T) {
 	}
 }
 
-func TestMigrateOrRefuseStale_MetaNewer(t *testing.T) {
+func TestAcceptOrRefuseStale_MetaNewer(t *testing.T) {
 	dir := t.TempDir()
 	checkPath := filepath.Join(dir, "task-1.check")
 	writeExecScript(t, checkPath, "#!/bin/bash\necho poll\n")
@@ -71,16 +71,16 @@ func TestMigrateOrRefuseStale_MetaNewer(t *testing.T) {
 	future := checkFI.ModTime().Add(time.Hour)
 	os.Chtimes(metaPath, future, future)
 
-	migrated, err := MigrateOrRefuseStale(checkPath)
+	accepted, err := AcceptOrRefuseStale(checkPath)
 	if err == nil {
 		t.Fatal("expected error for stale check (meta newer)")
 	}
-	if migrated {
+	if accepted {
 		t.Error("expected stale check to be refused (meta newer)")
 	}
 }
 
-func TestMigrateOrRefuseStale_NotStale(t *testing.T) {
+func TestAcceptOrRefuseStale_NotStale(t *testing.T) {
 	dir := t.TempDir()
 
 	// Write meta BEFORE check so check mod time is newer
@@ -95,11 +95,11 @@ func TestMigrateOrRefuseStale_NotStale(t *testing.T) {
 	checkPath := filepath.Join(dir, "task-2.check")
 	writeExecScript(t, checkPath, "#!/bin/bash\necho poll\n")
 
-	migrated, err := MigrateOrRefuseStale(checkPath)
+	accepted, err := AcceptOrRefuseStale(checkPath)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !migrated {
+	if !accepted {
 		t.Error("expected valid non-stale check to be accepted")
 	}
 }
