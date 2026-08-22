@@ -25,14 +25,6 @@ type CheckPlugin struct {
 	Kind  CheckKind // origin classification
 }
 
-// CheckResult holds the outcome of validating or migrating a check plugin.
-type CheckResult struct {
-	Plugin    CheckPlugin
-	Valid     bool   // true when the check is present and ready
-	Stale     bool   // true when the artifact should be refused/migrated
-	Staleness string // description of what is stale, if applicable
-}
-
 // DiscoverPerTaskChecks finds per-task .check files under state/.
 // A per-task check is named <task-id>.check; nothing in munsu writes one, so it
 // arrives from the operator or agent. The watcher validates each, retires the
@@ -98,16 +90,16 @@ func DiscoverAllChecks(homeDir string) ([]CheckPlugin, error) {
 	return append(perTask, global...), nil
 }
 
-// MigrateOrRefuseStale checks whether a check artifact is stale and either
-// migrates it (if possible) or signals refusal. Returns true if the check
-// was migrated, false if it was refused (caller should remove/recreate).
-// A check is stale when:
+// AcceptOrRefuseStale returns a verdict on a check artifact: true when the
+// check is usable as it stands, false with an error naming what is stale.
+// Nothing here migrates or rewrites a check; the only artifact it touches is
+// a zero-length one, which it removes. A check is stale when:
 //   - The file is zero-length
 //   - The file content does not start with a shebang
 //   - The file is older than its companion .meta file's last modification
 //     (meta has been updated since the check was written, meaning the
 //     task state has advanced but the check was not regenerated)
-func MigrateOrRefuseStale(path string) (bool, error) {
+func AcceptOrRefuseStale(path string) (bool, error) {
 	fi, err := os.Stat(path)
 	if err != nil {
 		return false, fmt.Errorf("cannot stat check: %w", err)

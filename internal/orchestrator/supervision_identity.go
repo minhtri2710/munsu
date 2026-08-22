@@ -56,7 +56,7 @@ type WatcherIdentity struct {
 	Executable      string `json:"executable"`
 	BuildVersion    string `json:"build_version"`
 	ProtocolVersion int    `json:"protocol_version"`
-	StartTime       int64  `json:"start_time"` // unix captains, for human-readable age
+	StartTime       int64  `json:"start_time"` // unix seconds, for human-readable age
 	CommitSHA       string `json:"commit_sha"` // verified commit SHA for identity comparison
 }
 

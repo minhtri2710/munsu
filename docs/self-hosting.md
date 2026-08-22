@@ -72,7 +72,7 @@ the command. Silence with `MUNSU_GUARD_SKIP=1`.
 The watcher liveness beat is stored in `state/.last-watcher-beat` with format:
 
 ```
-<unix_epoch_captains> <pid>
+<unix_epoch_seconds> <pid>
 ```
 
 - **Content-timestamp drives staleness** — `ReadBeatStatus` reads the Unix
@@ -295,7 +295,10 @@ In a future release, the legacy state suffixes `.check.sh` and `.turn-ended`
 will no longer be cleaned up during teardown. The canonical names are now
 `.check` and `.turnend`.
 
-Munsu currently writes `.check` and reads **both** old and new names during
-teardown cleanup. If you have scripts that reference `.check.sh` files in
-the state directory, update them to `.check`. Existing `.check.sh` and
+Munsu never writes a `.check`. Per-task checks are authored externally — by
+the operator or an agent — and placed in the state directory. Munsu discovers
+and validates these files for watcher polling and wake generation. Task teardown
+removes leftover `<id>.check` files. During teardown, munsu recognizes **both**
+old and new suffixes. If you have scripts that write `.check.sh` files into the
+state directory, change them to write `.check`. Existing `.check.sh` and
 `.turn-ended` files will still be cleaned up. No immediate action required.
