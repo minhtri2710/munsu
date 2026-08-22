@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/bootstrap"
@@ -254,6 +255,17 @@ type workflowCase struct {
 }
 
 func TestFleetLifecycleWorkflowAcrossTopologyPolicies(t *testing.T) {
+	gateMarker, hadGateMarker := os.LookupEnv("NO_MISTAKES_GATE")
+	if err := os.Unsetenv("NO_MISTAKES_GATE"); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if hadGateMarker {
+			_ = os.Setenv("NO_MISTAKES_GATE", gateMarker)
+		} else {
+			_ = os.Unsetenv("NO_MISTAKES_GATE")
+		}
+	}()
 	cases := []workflowCase{
 		{
 			name:            "general-direct",
@@ -398,6 +410,14 @@ func runLifecycleWorkflow(t *testing.T, tc workflowCase) {
 	// A session restarting over the live scout must arm supervision for it.
 	workflowSessionStart(t, spawnHome, tc.role, 1)
 
+	checkDir := filepath.Join(spawnHome, "state", "checks")
+	if err := os.MkdirAll(checkDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(checkDir, "workflow-wake.check"), []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
 	// --- report (soldier terminal uplink) ---------------------------------
 	// The soldier's home and parent home are both the spawning home, exactly
 	// as the generated launch script exports them.
@@ -453,7 +473,9 @@ func runLifecycleWorkflow(t *testing.T, tc workflowCase) {
 	// The supervision cycle replays the pending uplink; with no ack yet it
 	// must stay pending. A cycle that retired it without an ack would lose
 	// the report.
-	workflowSupervisionCycle(t, spawnHome, uplink, activation)
+	if emitted := workflowSupervisionCycle(t, spawnHome, uplink, activation); !emitted {
+		t.Fatalf("supervision cycle emitted = false, want true under %s", tc.policy)
+	}
 	if got := len(workflowPendingUplinks(t, spawnHome)); got != tc.relayed {
 		t.Fatalf("pending uplinks after replay = %d, want %d (an unacked report must not retire)", got, tc.relayed)
 	}
@@ -569,8 +591,22 @@ func workflowSeedCaptainHome(t *testing.T, generalHome, repo, captainID string) 
 // fails closed on anything short of a full, lock-acquiring start. The watcher
 // ensure is injected so the scenario never leaves a supervisor process behind;
 // everything up to and including the ensure handoff is production code.
-func workflowSessionStart(t *testing.T, homeDir, role string, wantEnsured int) {
-	t.Helper()
+const (
+	workflowSessionHomeEnv   = "MUNSU_WORKFLOW_SESSION_HOME"
+	workflowSessionRoleEnv   = "MUNSU_WORKFLOW_SESSION_ROLE"
+	workflowSessionEnsureEnv = "MUNSU_WORKFLOW_SESSION_ENSURE"
+)
+
+func TestWorkflowSessionStartHelper(t *testing.T) {
+	homeDir := os.Getenv(workflowSessionHomeEnv)
+	if homeDir == "" {
+		return
+	}
+	role := os.Getenv(workflowSessionRoleEnv)
+	wantEnsured, err := strconv.Atoi(os.Getenv(workflowSessionEnsureEnv))
+	if err != nil {
+		t.Fatalf("parse expected ensure count: %v", err)
+	}
 	t.Setenv("MUNSU_ROLE", role)
 	ensured := 0
 	res, err := bootstrap.RunSessionStartWithWatcher(io.Discard, homeDir,
@@ -590,10 +626,28 @@ func workflowSessionStart(t *testing.T, homeDir, role string, wantEnsured int) {
 	if res.RuntimeIdentity == nil || res.Bootstrap == nil {
 		t.Fatalf("session-start returned no runtime identity or bootstrap result: %+v", res)
 	}
-	// The ensure handoff is driven by in-flight work: a fresh home is idle and
-	// must not arm a supervisor, while a home with a live scout must.
 	if ensured != wantEnsured {
 		t.Fatalf("watcher ensure ran %d times, want %d (state=%q)", ensured, wantEnsured, res.Watcher.State)
+	}
+}
+
+func workflowSessionStart(t *testing.T, homeDir, role string, wantEnsured int) {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run", "^TestWorkflowSessionStartHelper$", "-test.v")
+	env := make([]string, 0, len(os.Environ())+3)
+	for _, entry := range os.Environ() {
+		if len(entry) >= len("NO_MISTAKES_GATE=") && entry[:len("NO_MISTAKES_GATE=")] == "NO_MISTAKES_GATE=" {
+			continue
+		}
+		env = append(env, entry)
+	}
+	cmd.Env = append(env,
+		workflowSessionHomeEnv+"="+homeDir,
+		workflowSessionRoleEnv+"="+role,
+		workflowSessionEnsureEnv+"="+strconv.Itoa(wantEnsured),
+	)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("session-start subprocess on %s: %v\n%s", homeDir, err, output)
 	}
 }
 
@@ -627,14 +681,16 @@ func workflowPendingUplinks(t *testing.T, homeDir string) []*orchestrator.Envelo
 // workflowSupervisionCycle runs one real supervision cycle with the production
 // captain watcher hooks, so the captain->General uplink replay and the
 // activation nudge are driven by the same code the watcher runs.
-func workflowSupervisionCycle(t *testing.T, homeDir string, uplink workflowUplink, activation *workflowActivation) {
+func workflowSupervisionCycle(t *testing.T, homeDir string, uplink workflowUplink, activation *workflowActivation) bool {
 	t.Helper()
 	hooks := orchestrator.NewCaptainWatcherHooks(uplink, activation)
-	if _, err := orchestrator.RunCycleWithProbeAndSender(homeDir,
+	emitted, err := orchestrator.RunCycleWithProbeAndSender(homeDir,
 		runtimeTaskEndpointProbe(), newSessionMailboxSender(), hooks,
 		fleetRetirementPort{compose: func(h string) (*taskauthority.Canonical, error) {
 			return taskauthority.NewCanonical(mustOpenHome(t, h))
-		}}, runtimeTaskStatePort{}); err != nil {
+		}}, runtimeTaskStatePort{})
+	if err != nil {
 		t.Fatalf("supervision cycle on %s: %v", homeDir, err)
 	}
+	return emitted
 }
