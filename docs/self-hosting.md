@@ -296,9 +296,9 @@ will no longer be cleaned up during teardown. The canonical names are now
 `.check` and `.turnend`.
 
 Munsu never writes a `.check`. Per-task checks are authored externally — by
-the operator or an agent — and dropped into the state directory; munsu
-discovers and validates them, emits a wake for a valid check while leaving its file in place; the watcher removes a check when it refuses it or when a merged poll is retired successfully, and task teardown separately removes a leftover `<id>.check` as a residual state artifact. What it does do is read
-**both** old and new names during teardown cleanup. If you have scripts that
-write `.check.sh` files into the state directory, change them to write
-`.check`. Existing `.check.sh` and `.turn-ended` files will still be cleaned
-up. No immediate action required.
+the operator or an agent — and placed in the state directory. Munsu discovers
+and validates these files for watcher polling and wake generation. Task teardown
+removes leftover `<id>.check` files. During teardown, munsu recognizes **both**
+old and new suffixes. If you have scripts that write `.check.sh` files into the
+state directory, change them to write `.check`. Existing `.check.sh` and
+`.turn-ended` files will still be cleaned up. No immediate action required.
