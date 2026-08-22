@@ -16,7 +16,7 @@ The user is the **captain**. Your job:
    git worktrees) using `munsu spawn` / `munsu send`.
 3. Supervise soldiers via `munsu peek` / `munsu soldier-state` / the watcher
    (`munsu watch ensure`).
-4. Deliver finished work as a PR (`munsu delivery pr-check` / `munsu delivery pr-merge`) or report
+4. Deliver finished work as a PR (`munsu delivery pr-merge`) or report
    (`munsu teardown`).
 
 You never do project work yourself — you delegate to soldiers.
@@ -92,7 +92,7 @@ Detect your harness: `munsu harness detect`.
 The harnesses with adapters are `pi`, `claude`, `codex`, `opencode`, `grok`, and `agy`.
 Pi is live-verified (runtime-tested locally); all others are contract + unit verified (deferred until installed locally).
 Never dispatch on a harness without a known adapter.
-Run `munsu integrate status --harness <name>` to check integration state before relying on turn-end guards.
+Run `munsu integrate status [harness]` to check integration state before relying on turn-end guards.
 
 Run `munsu backend capabilities` to inspect session backend support.
 Use `munsu spawn <id> <project> --harness <name>` to override soldier harness.
@@ -124,7 +124,7 @@ If away mode is active (`state/.afk` exists), run `munsu afk` and let the daemon
 ## 6. Project and knowledge management
 
 Project registry:
-- `munsu project add <name> [--repo <url>]` — register a project
+- `munsu project add <name> <path-or-url>` — register a project
 - `munsu project list` — list registered projects
 - `munsu project mode <name>` — resolve delivery mode
 
@@ -179,9 +179,8 @@ When a soldier is unresponsive, run `munsu skill show stuck-soldier-recovery`.
 |------|-------------|-------------|
 | `no-mistakes` | Full pipeline (review → fix → test → push → PR → CI) | `done: PR <url> checks green` |
 | `direct-PR` | Push + open PR without pipeline | `done: PR <url>` |
-| `local-only` | Clean branch ready for local merge | ready for `munsu delivery merge-local` |
+| `local-only` | Clean branch ready for local merge | ready for local merge |
 
-Record the PR: `munsu delivery pr-check <id> <pr-url>`.
 Merge when instructed: `munsu delivery pr-merge <id> <pr-url>` (prefer `--teardown` to clean soldier pane/worktree after land; never bare `gh pr merge` when task meta lives in a captain home). Meta resolves primary then captain homes.
 
 ### Teardown
@@ -409,9 +408,7 @@ Run: `munsu skill show <name>` to read any skill.
 | Captain converge | `munsu captain converge`
 | Fleet bearings | `munsu fleet bearings` |
 | Fleet sync | `munsu fleet sync [<project>]` |
-| Record PR | `munsu delivery pr-check <id> <pr-url>` |
 | Merge PR | `munsu delivery pr-merge <id> <pr-url> [--teardown]` |
-| Merge local | `munsu delivery merge-local <id>` |
 | Stow learnings | `munsu stow [text...]` |
 | Stow captain pref | `munsu stow --general [text...]` |
 | Self-update | `munsu update` |
@@ -434,10 +431,9 @@ Run: `munsu skill show <name>` to read any skill.
 6. munsu watch ensure                # ensure persistent supervision
 7. munsu send <id> "<msg>"           # steer as needed
 8. munsu wake claim / soldier-state   # on wake from watcher
-9. munsu delivery pr-check <id> <url> # record PR when done
-10. munsu delivery pr-merge <id> <url> [--teardown]  # merge; --teardown cleans soldier
-11. munsu captain converge           # flush send outbox after captain lifecycle
-12. munsu teardown <id>              # clean up if merge was without --teardown
+9. munsu delivery pr-merge <id> <url> [--teardown]  # merge; --teardown cleans soldier
+10. munsu captain converge           # flush send outbox after captain lifecycle
+11. munsu teardown <id>              # clean up if merge was without --teardown
 ```
 
 ---

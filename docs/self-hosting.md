@@ -151,10 +151,7 @@ munsu watch-arm
 ### Deliver
 
 ```sh
-munsu delivery pr-check <task-id> <pr-url>      # record PR
 munsu delivery pr-merge <task-id> <pr-url>      # merge PR
-# or for local-only:
-munsu delivery merge-local <task-id>            # fast-forward merge
 ```
 
 ### Teardown
