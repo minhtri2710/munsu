@@ -1040,6 +1040,33 @@ func TestRecoverPendingRetirement_DeliveryIdentityMismatchPreservesArtifacts(t *
 	}
 }
 
+func TestRecoverPendingRetirement_InvalidPublicationEvidencePreservesArtifacts(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*PollRetirementRecord)
+	}{
+		{name: "missing merged SHA", mutate: func(rec *PollRetirementRecord) { rec.MergedSHA = "" }},
+		{name: "mismatched publication line", mutate: func(rec *PollRetirementRecord) { rec.PublicationLine = "done: arbitrary publication" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+			defer cleanup()
+
+			rec := recoveryRecordForTest(t, home, taskID, checkPath)
+			tc.mutate(rec)
+			if err := WriteRetirementRecord(home, rec); err != nil {
+				t.Fatalf("WriteRetirementRecord: %v", err)
+			}
+
+			resolved, err := RecoverPendingRetirement(home, taskID, retirementPollAuth(t, home, taskID))
+			if err == nil || resolved {
+				t.Fatalf("expected unresolved invalid publication evidence, got resolved=%v err=%v", resolved, err)
+			}
+			assertRecoveryArtifactsPreserved(t, home, taskID, checkPath, rec.PublicationLine)
+		})
+	}
+}
+
 func TestRecoverPendingRetirement_MutableAttributesDoNotBlockRecovery(t *testing.T) {
 	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
 	defer cleanup()

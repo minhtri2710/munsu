@@ -363,8 +363,9 @@ func ValidateCheckWithLstat(path string) error {
 //
 // The normal removal site requires successful pre-publication identity and
 // canonical-outcome checks, confirmed publication, and a matching digest after
-// publication. The recovery removal site requires the durable record, current
-// delivery identity, canonical completion, confirmed publication, and the
+// publication. The recovery removal site requires the durable record, the
+// expected safe poll basename, current delivery identity, canonical completion,
+// deterministic recorded publication evidence, confirmed publication, and the
 // recorded digest. Both sites retain the known verification-to-remove pathname
 // replacement window tracked by #602; a replacement is not repaired here.
 func RetireMergedPoll(homeDir, taskID, checkPath string, auth *taskauthority.Canonical) error {
@@ -566,7 +567,8 @@ func requireCanonicalCompletedOutcome(auth *taskauthority.Canonical, taskID stri
 // Recovery logic:
 //  1. Validate record filename, schema, and file integrity.
 //  2. Validate current task identity and canonical completion when available.
-//  3. Append publication only if exact evidence is absent.
+//  3. Validate deterministic recorded publication evidence, then append
+//     publication only if exact evidence is absent.
 //  4. Remove poll only after publication is confirmed and its content digest
 //     matches the committed record (or accept an already-missing poll); a
 //     digest mismatch preserves the poll and record.
@@ -632,6 +634,10 @@ func RecoverPendingRetirement(homeDir, taskID string, auth *taskauthority.Canoni
 	}
 	if ident.HeadSHA != rec.HeadSHA {
 		return false, fmt.Errorf("stale retirement: current head SHA=%q, record head SHA=%q", ident.HeadSHA, rec.HeadSHA)
+	}
+
+	if rec.MergedSHA == "" || rec.PublicationLine != publicationLine(taskID, rec.URL, rec.MergedSHA) {
+		return false, fmt.Errorf("recovery: invalid publication evidence (preserving poll and retirement record)")
 	}
 
 	// Derive merged truth from the canonical committed delivery outcome:
