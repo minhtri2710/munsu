@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -133,8 +134,17 @@ func TestDirectGeneralDispatchReportIsReceivableByItsOwnGeneral(t *testing.T) {
 }
 
 // Fact 4. Recover filters pending records by receiver rank, so a report
-// mislabelled Captain was invisible to the General-rank recovery pass that
-// exists to retire it.
+// mislabelled Captain was invisible to a General-rank recovery pass.
+//
+// Read what this proves narrowly. It calls Recover directly, and proves that
+// Recover handles a General-rank envelope correctly WHEN INVOKED. It does not
+// prove that anything in production invokes it under direct General dispatch,
+// and today nothing does: the only hook that recovers soldier pendings is
+// ReconcileCaptainHook, which returns nil at captain_relay.go:61-64 when the
+// home has no parent-home -- which a General home never has. So the pending
+// record and open evidence this test retires by hand are not retired by any
+// live path. That missing pass is tracked as its own issue; this test is not
+// end-to-end closure of it, and must not be cited as such.
 func TestDirectGeneralDispatchReportIsVisibleToGeneralRankRecovery(t *testing.T) {
 	generalHome, identity := directGeneralHome(t)
 	res := reportUnderDirectGeneralDispatch(t, generalHome, identity, &countingTransport{})
@@ -211,6 +221,19 @@ func TestReportFailsClosedWhenTheNotificationPathFails(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("a failed notification path must not be reported as a successful queue")
+	}
+	// The failure lands after the durable write, and the caller has to be able
+	// to tell that apart from a report that never happened -- otherwise the
+	// repair for it is a second report over the same state.
+	if !errors.Is(err, ErrReportedNotNotified) {
+		t.Fatalf("err = %v, want it to identify itself as durable-but-not-notified", err)
+	}
+	pending, listErr := NewStore(generalHome).ListPending("direct-task")
+	if listErr != nil || len(pending) != 1 {
+		t.Fatalf("pending = %d err = %v, want the report to have landed durably", len(pending), listErr)
+	}
+	if !strings.Contains(err.Error(), pending[0].MessageID) {
+		t.Fatalf("err = %v, want it to name the durable message id %s", err, pending[0].MessageID)
 	}
 }
 

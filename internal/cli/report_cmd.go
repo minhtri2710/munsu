@@ -160,6 +160,13 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 					},
 				})
 				if err != nil {
+					// A notification failure lands after the durable write, so
+					// the operator has to be told not to "recover" by running
+					// report again: the receiver already holds this report and
+					// a second one double-writes.
+					if errors.Is(err, orchestrator.ErrReportedNotNotified) {
+						return fmt.Errorf("report: %w -- the report is durable and only the notification failed, so do not re-run report for this state", err)
+					}
 					return fmt.Errorf("report: %w", err)
 				}
 			} else {

@@ -3,6 +3,7 @@ package orchestrator
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,6 +16,12 @@ import (
 
 const retryInterval = 60 * time.Second
 
+// ErrReportedNotNotified marks the one Report failure that happens after the
+// durable write. Envelope, pending record, open evidence and receiver wake all
+// committed; only the notification path failed. Callers must not treat it as a
+// report that did not happen -- re-reporting double-writes.
+var ErrReportedNotNotified = errors.New("uplink report: durable, not notified")
+
 var materialStates = map[string]bool{
 	"done": true, "failed": true, "blocked": true, "needs-decision": true,
 }
@@ -24,7 +31,12 @@ type UplinkNotifyResult struct {
 	Queued       bool
 	// Err carries a notification path that failed rather than a target that
 	// was merely unavailable. Report refuses such a path instead of reporting
-	// it queued; Recover retries it, for the reason recorded at that call site.
+	// it queued, in every topology. Recover retries it, for the reason recorded
+	// at that call site -- but that retry exists only under Captain dispatch,
+	// where ReconcileCaptainHook drives Recover. Under direct General dispatch
+	// nothing calls Recover over the General home's outbox, so a failed path
+	// there is retried by no one today. Do not read this field as proof that
+	// some loop closes; ask first which topology is running.
 	Err error
 }
 
@@ -117,7 +129,11 @@ func Report(req ReportRequest) (*ReportResult, error) {
 		return nil, err
 	}
 	if nr.Err != nil {
-		return nil, fmt.Errorf("uplink report: notify: %w", nr.Err)
+		// Everything durable above this line already committed, so the error
+		// has to carry which side of that split it is on and keep the message
+		// id addressable. The exit is still non-zero: a report nobody was told
+		// about is a failure, just not one a retry of Report can repair.
+		return nil, fmt.Errorf("%w: message %s landed in %s; notify: %w", ErrReportedNotNotified, env.MessageID, req.ReceiverHome, nr.Err)
 	}
 	if nr.Acknowledged {
 		result.Notified, result.Queued = true, false
