@@ -922,6 +922,28 @@ selftest() {
 		failed=1
 	fi
 
+	# 1e. --owner names the issue for rows this sweep files for the first time,
+	# and a row that already exists keeps the owner it has. That rule is what
+	# stops a later sweep clobbering the BEO-79 a person moved a row to, and the
+	# hand edit is the only way to move it: one sweep files every new row under
+	# one issue, so two flakes belonging to two issues cannot both be filed
+	# right (#568). .github/flake-ledger.md tells the reader to correct
+	# owner_issue by hand on the strength of this rule, so the rule is pinned
+	# here rather than left to hold by accident.
+	#
+	# Mutation this answers: apply OWNER to every row sync writes rather than
+	# only to the ones it is adding.
+	local kept='| TestReopens | integration | aaaa1111@3001/1 | cccc3333@3003/1 | 9999-12-31 | BEO-99 | open |'
+	scratch_ledger "$ledger" "$kept"
+	SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" sync --owner "$owner_fixture" >/dev/null || {
+		echo "::error::owner scenario: sync --owner $owner_fixture failed over a row that already existed" >&2
+		failed=1
+	}
+	if ! grep -qF "$kept" "$ledger"; then
+		echo "::error::owner scenario: sync --owner $owner_fixture overwrote the hand-set owner of an existing row" >&2
+		failed=1
+	fi
+
 	# 2. Filed, in scope, and no longer derivable. check() must be red and name
 	# TestVanished; it must not name TestOutsideWindow, whose first_seen run this
 	# record set never read -- that scoping is what stops a narrow window from

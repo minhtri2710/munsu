@@ -396,6 +396,31 @@ jobs:
       # telling anyone a rule had gone.
       - name: Guard-coverage rules must agree with their fixtures
         run: .github/scripts/uncovered-guards.sh selftest
+      # The third of these, and the one whose absence was the gap it closes: the
+      # sweep's own fixtures ran only from .github/workflows/flake-ledger.yml,
+      # which fires on `workflow_run` for CI on `main` and on
+      # `workflow_dispatch` and never on the pull-request path. So a PR that
+      # broke the classifier -- or any of the check(), sync() and verify-fixed()
+      # rules its scenarios pin -- went green on every gating check and first
+      # failed after merge, where a failure costs most and is attributable
+      # least (#565).
+      #
+      # Only `selftest` moves onto this path. `flake-sweep.sh` also has a
+      # networked half and that stays in its own workflow, for the reason the
+      # flake-ledger step gives two above: this job is trusted because nothing
+      # outside the checkout can change what it says. `selftest` reads
+      # .github/testdata/flake-sweep and a scratch ledger under $TMPDIR and
+      # nothing else -- `verify-fixed`'s three answers are records in the
+      # fixture rather than API calls, which is why that half is a pure function
+      # of the record stream -- so running it here keeps that property intact.
+      # ~1s, like the two above.
+      #
+      # It still runs in flake-ledger.yml as well, and that is not duplication:
+      # there it is the sweep refusing to measure live data with a classifier
+      # that disagrees with its fixtures, which is a different refusal from this
+      # one, which is a PR not being allowed to merge the change that broke it.
+      - name: Flake sweep rules must agree with their fixtures
+        run: .github/scripts/flake-sweep.sh selftest
       - name: Flake ledger deadlines must not have passed
         run: .github/scripts/flake-ledger.sh check
       - name: Personal fleet paths must not be tracked
