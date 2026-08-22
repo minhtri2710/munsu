@@ -3,6 +3,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"os"
@@ -410,14 +411,6 @@ func runLifecycleWorkflow(t *testing.T, tc workflowCase) {
 	// A session restarting over the live scout must arm supervision for it.
 	workflowSessionStart(t, spawnHome, tc.role, 1)
 
-	checkDir := filepath.Join(spawnHome, "state", "checks")
-	if err := os.MkdirAll(checkDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(checkDir, "workflow-wake.check"), []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
-
 	// --- report (soldier terminal uplink) ---------------------------------
 	// The soldier's home and parent home are both the spawning home, exactly
 	// as the generated launch script exports them.
@@ -473,12 +466,36 @@ func runLifecycleWorkflow(t *testing.T, tc workflowCase) {
 			len(pending), tc.relayed, tc.policy)
 	}
 
+	// The soldier's own terminal report enqueued a signal wake of its own, so
+	// drain the queue first: whatever is read back below is then exactly what
+	// the supervision cycle emitted and nothing that preceded it.
+	if _, err := orchestrator.DrainWakes(spawnHome); err != nil {
+		t.Fatalf("drain wakes before supervision cycle: %v", err)
+	}
+
 	// The supervision cycle replays the pending uplink; with no ack yet it
 	// must stay pending. A cycle that retired it without an ack would lose
 	// the report.
 	supervisionEmitted := workflowSupervisionCycle(t, spawnHome, uplink, activation)
-	if !supervisionEmitted {
-		t.Fatalf("supervision cycle emitted = false, want true under %s", tc.policy)
+	// "a wake was emitted" is the wrong claim: any wake source at all -- a
+	// planted check, an unrelated task -- satisfies it while every lifecycle
+	// wake source is dead. The claim is that the fleet scan read THIS task's
+	// done: status line and woke the supervisor for it, so assert the wake's
+	// kind and its key.
+	wakes, err := orchestrator.DrainWakes(spawnHome)
+	if err != nil {
+		t.Fatalf("drain supervision wakes on %s: %v", spawnHome, err)
+	}
+	signalled := false
+	for _, wake := range wakes {
+		if wake.Kind == "signal" && wake.Key == taskID {
+			signalled = true
+			break
+		}
+	}
+	if !signalled {
+		t.Fatalf("supervision cycle under %s emitted no signal wake keyed to %s (emitted=%t, wakes=%v)",
+			tc.policy, taskID, supervisionEmitted, wakes)
 	}
 	pendingAfterReplay := len(workflowPendingUplinks(t, spawnHome))
 	if pendingAfterReplay != tc.relayed {
@@ -606,6 +623,13 @@ const (
 	workflowSessionHomeEnv   = "MUNSU_WORKFLOW_SESSION_HOME"
 	workflowSessionRoleEnv   = "MUNSU_WORKFLOW_SESSION_ROLE"
 	workflowSessionEnsureEnv = "MUNSU_WORKFLOW_SESSION_ENSURE"
+	// workflowSessionHelper is the single place the helper is named: the
+	// -test.run selector below is built from it.
+	workflowSessionHelper = "TestWorkflowSessionStartHelper"
+	// workflowSessionDone is the last thing the helper emits. A -test.run
+	// selector that matches nothing runs no test and still exits 0, so the
+	// subprocess exit status is no evidence at all; this marker is.
+	workflowSessionDone = "workflow-session-start-complete"
 )
 
 func TestWorkflowSessionStartHelper(t *testing.T) {
@@ -640,11 +664,12 @@ func TestWorkflowSessionStartHelper(t *testing.T) {
 	if ensured != wantEnsured {
 		t.Fatalf("watcher ensure ran %d times, want %d (state=%q)", ensured, wantEnsured, res.Watcher.State)
 	}
+	t.Logf("%s home=%s", workflowSessionDone, homeDir)
 }
 
 func workflowSessionStart(t *testing.T, homeDir, role string, wantEnsured int) {
 	t.Helper()
-	cmd := exec.Command(os.Args[0], "-test.run", "^TestWorkflowSessionStartHelper$", "-test.v")
+	cmd := exec.Command(os.Args[0], "-test.run", "^"+workflowSessionHelper+"$", "-test.v")
 	env := make([]string, 0, len(os.Environ())+3)
 	for _, entry := range os.Environ() {
 		if len(entry) >= len("NO_MISTAKES_GATE=") && entry[:len("NO_MISTAKES_GATE=")] == "NO_MISTAKES_GATE=" {
@@ -657,8 +682,17 @@ func workflowSessionStart(t *testing.T, homeDir, role string, wantEnsured int) {
 		workflowSessionRoleEnv+"="+role,
 		workflowSessionEnsureEnv+"="+strconv.Itoa(wantEnsured),
 	)
-	if output, err := cmd.CombinedOutput(); err != nil {
+	output, err := cmd.CombinedOutput()
+	if err != nil {
 		t.Fatalf("session-start subprocess on %s: %v\n%s", homeDir, err, output)
+	}
+	// Rename the helper and the selector matches nothing, the subprocess exits
+	// 0 having run no session-start at all, and this leg silently becomes a
+	// no-op. Only the helper's own end-of-body marker, carrying the home it
+	// actually ran against, proves otherwise.
+	if want := workflowSessionDone + " home=" + homeDir; !bytes.Contains(output, []byte(want)) {
+		t.Fatalf("session-start subprocess did not run %s to completion on %s (no %q in output):\n%s",
+			workflowSessionHelper, homeDir, want, output)
 	}
 }
 
