@@ -160,9 +160,10 @@ munsu delivery merge-local <task-id>            # fast-forward merge
 ### Teardown
 
 ```sh
+munsu task done <task-id>                       # close the task first: a retired
+                                                # task can no longer be completed
 munsu teardown <task-id>                        # safety-gated teardown
 munsu teardown <task-id> --force                # skip safety checks, removes data/<id>/
-munsu task done <task-id>                       # close the task
 ```
 
 Without --force, scout teardown requires report.md and no unresolved decision
