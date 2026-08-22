@@ -2,6 +2,10 @@
 
 Command names match `munsu --help` output verbatim. All commands accept `--home` (or `MUNSU_HOME`).
 
+This is a curated subset, not an exhaustive index: `munsu` registers more commands
+than are listed here. Run `munsu --help` (and `munsu <command> --help` per group)
+for the complete registered set.
+
 ---
 
 ## Init / Config
@@ -41,7 +45,7 @@ Command names match `munsu --help` output verbatim. All commands accept `--home`
 
 | Command | Description |
 |---------|-------------|
-| `munsu spawn <id> <project> [--kind ship\|scout] [--mode no-mistakes\|direct-PR\|local-only] [--backend tmux\|herdr] [--yolo]` | Launch a soldier agent in a worktree+tmux/herdr window. |
+| `munsu spawn <id> [<project>] [--kind ship\|scout] [--mode no-mistakes\|direct-PR\|local-only] [--backend tmux\|herdr] [--yolo]` | Launch a soldier agent in a worktree+tmux/herdr window. |
 | `munsu send <id> "<line>"` | Send a mailbox command downlink to a Soldier or Captain endpoint; uplink to General is refused. |
 | `munsu report <state> "<msg>" [--key <slug>]` | Report status up the hierarchy (rank-aware uplink). |
 | `munsu notify <state> "<msg>"` | Alias for 'munsu report'. |
@@ -57,9 +61,9 @@ Command names match `munsu --help` output verbatim. All commands accept `--home`
 | `munsu watch run` | Run one diagnostic cycle. |
 | `munsu watch status` | Show bounded watcher health without entering daemon mode. |
 | `munsu watch stop` | Stop the watcher idempotently. |
-| `munsu wake claim <consumer-id> [--lease-seconds 60] [--limit 10]` | Claim a batch of pending wakes under a lease. |
+| `munsu wake claim --consumer <id> [--lease-seconds 60] [--limit 10]` | Claim a batch of queued wakes under a lease. Takes no positional argument; `--consumer` is required. |
 | `munsu wake ack <lease-id> <event-id...>` | Acknowledge one or more processed wakes. |
-| `munsu wake claim --consumer <id>` | Claim queued wakes under a lease. |
+| `munsu wake resolve --claim-id <lease-id> --event-id <event-id> --summary <text>` | Resolve one claimed wake with durable evidence. |
 | `munsu guard` | Report fleet guard conditions, or act as a harness Stop-hook guard. |
 
 ## Captain
@@ -84,7 +88,7 @@ Command names match `munsu --help` output verbatim. All commands accept `--home`
 | `munsu task unblock <id>` | Mark a blocked task queued again. |
 | `munsu task done <id>` | Mark a task as done. |
 | `munsu task reopen <id>` | Reopen a terminal task as a new generation. |
-| `munsu task observe <id> [--fields description,branch,pane_alive,no_mistakes_step]` | Observe one task using the orchestration contract. |
+| `munsu task observe <task-id> [--fields description,branch,pane_alive,no_mistakes_step]` | Observe one task using the orchestration contract. |
 | `munsu brief <id> <repo> [--scout]` | Scaffold a task brief. |
 | `munsu soldier-state <id>` | Read soldier current state. |
 | `munsu promote <id>` | Promote a scout task to ship. |
@@ -94,9 +98,9 @@ Command names match `munsu --help` output verbatim. All commands accept `--home`
 
 | Command | Description |
 |---------|-------------|
-| `munsu delivery pr-check|pr-merge|pr-amend` | Record, merge, or amend PR delivery identity. |
-| `munsu delivery merge-local <id>` | Fast-forward merge a task branch to the local default branch. |
-| `munsu delivery merge-status|reconcile|review-diff` | Inspect or reconcile delivery state and review the diff. |
+| `munsu delivery review-diff <id>` | Review the diff between the task branch and its base. |
+| `munsu delivery merge-status <id>` | Query merge status of the recorded delivery identity. |
+| `munsu delivery pr-merge <id> <pr-url> [--teardown]` | Merge a PR through the journaled delivery execution. |
 
 ## Event / Stow / Decision Hold
 
@@ -106,8 +110,9 @@ Command names match `munsu --help` output verbatim. All commands accept `--home`
 | `munsu stow [text...]` | Capture durable learnings. |
 | `munsu stow --general [text...]` | Capture General preferences in `data/general.md`. |
 | `munsu stow --kind general [text...]` | Same as --general. |
-| `munsu decision-hold list [--task <id>]` | List decision holds. |
-| `munsu decision-hold resolve <hold-id> [rationale...]` | Resolve a decision hold. |
+| `munsu decision-hold hold <key> --reason <summary> --from <task-id>` | Record a new decision hold. |
+| `munsu decision-hold list <origin-id>` | List unresolved decisions for an origin task. |
+| `munsu decision-hold resolve <key> --answer <text> --from <origin-id> [--unblock <dep-id>...]` | Resolve a decision hold and unblock dependents. |
 
 ## Integrate / Update / Skill
 
@@ -115,7 +120,7 @@ Command names match `munsu --help` output verbatim. All commands accept `--home`
 |---------|-------------|
 | `munsu integrate install [--harness <name>]` | Install munsu integrate extension for a harness. |
 | `munsu integrate repair [--harness <name>]` | Check or repair a munsu integrate installation. |
-| `munsu integrate status [--harness <name>]` | Show integration state for a harness. |
+| `munsu integrate status [harness]` | Show integration state for a harness. |
 | `munsu update` | Fast-forward the munsu install root from origin. |
 | `munsu skill list` | Show available skill names. |
 | `munsu skill show <name>` | Display a skill's SKILL.md content. |
@@ -141,7 +146,7 @@ Command names match `munsu --help` output verbatim. All commands accept `--home`
 | Command | Description |
 |---------|-------------|
 | `munsu capabilities` | Show agent-facing orchestration capabilities (contract). |
-| `munsu task observe <id>` | Observe one task using the orchestration contract. |
+| `munsu task observe <task-id>` | Observe one task using the orchestration contract. |
 | `munsu fleet snapshot --version 2` | Compact fleet state snapshot with aggregate counts. |
 | `munsu guard` | Report fleet guard conditions. |
 | `munsu event append` | Append a typed event to the event log. |

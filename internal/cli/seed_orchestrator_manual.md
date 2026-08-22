@@ -232,12 +232,12 @@ Cross-cutting rules:
 The `munsu wake claim` API is the lease-based wake queue surface:
 
 ```
-munsu wake claim <consumer-id> [--lease-seconds 60] [--limit 10]
+munsu wake claim --consumer <id> [--lease-seconds 60] [--limit 10]
 munsu wake ack <lease-id> <event-id...>
 ```
 
 Flow:
-1. Call `munsu wake claim $CONSUMER_ID` to claim a batch of pending wakes.
+1. Call `munsu wake claim --consumer $CONSUMER_ID` to claim a batch of pending wakes.
 2. For each wake, check `munsu soldier-state <id>` for ground truth.
 3. Act on the wake (steer, recover, or note the signal).
 4. Call `munsu wake ack <lease-id> <event-id>` to release each processed wake.
@@ -403,7 +403,6 @@ Run: `munsu skill show <name>` to read any skill.
 | Read output | `munsu peek <id>` |
 | Ensure watcher | `munsu watch ensure` |
 | Claim wakes | `munsu wake claim --consumer <id>`
-| Claim wakes | `munsu wake claim <consumer-id>`
 | Acknowledge wakes | `munsu wake ack <lease-id> <event-id...>`
 | Guard check | `munsu guard`
 | Fleet view | `munsu fleet view`

@@ -51,7 +51,7 @@ Determine the task kind (ship vs scout), identify the project from the registry,
 ### 5. Supervise
 
 - Ensure the watcher: `munsu watch ensure [--restart]`.
-- On wake: prefer `munsu wake claim <consumer-id>` with lease management;
+- On wake: prefer `munsu wake claim --consumer <id>` with lease management;
   `munsu wake claim` is the lease-based wake queue surface.
 - Ground truth: `munsu soldier-state <id>` (not raw status tail).
 - Steer as needed: `munsu send <id> "<line>"` (downlink only; Soldier and Captain targets are valid, while uplink to `general` is refused).
@@ -71,8 +71,8 @@ Determine the task kind (ship vs scout), identify the project from the registry,
 Delivery mode is set at spawn time (`--mode`). Act according to mode:
 
 - **no-mistakes** (default): The soldier runs the no-mistakes pipeline. When it notifies completion, verify the PR is open and checks are green.
-- **direct-PR**: `munsu delivery pr-check <id> <pr-url>` to record the PR, then `munsu delivery pr-merge <id> <pr-url>` once approved.
-- **local-only**: `munsu delivery merge-local <id>` for a fast-forward merge to the local default branch.
+- **direct-PR**: `munsu delivery review-diff <id>` to review the branch, then `munsu delivery pr-merge <id> <pr-url>` once approved. `munsu delivery merge-status <id>` reports whether it landed.
+- **local-only**: munsu registers no local merge command; land the branch outside munsu, then close the task with `munsu task done <id>`.
 
 **Completion:** PR URL (for remote modes) or local merge note documented.
 
