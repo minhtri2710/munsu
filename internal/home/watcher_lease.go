@@ -101,6 +101,23 @@ func ReadWatcherLease(homeDir string) (*WatcherLease, error) {
 //   - The lease file exists
 //   - The lease holder's PID is not definitively absent
 //   - The watcher beat is fresh (not stale)
+//
+// The second condition reads the permissive direction of the #580 semantics,
+// and this is the only caller where it does: isProcessAlive answers false only
+// for a positively observed absence, so a holder the kernel will not classify
+// reads not-absent here, and CheckWatcherHealthForDispatch then permits a
+// dispatch that the older "unanswerable means dead" answer would have blocked.
+// ClaimWatcherLease wants that same narrowing in the other direction.
+//
+// Naming the reversal rather than leaving it implicit: the three conditions are
+// AND-ed, not alternatives, and the beat is what carries the weight. A beat is
+// positive evidence of a running watcher, which a signal probe cannot supply --
+// a watcher that is not running stops writing one, and watcherStaleThreshold
+// (a 300s const, with no override anywhere) bounds how long a lease can look
+// healthy on the strength of a beat nobody is refreshing. On unix the reversal
+// is narrower still: kill(pid, 0) for pid > 0 answers nil, EPERM or ESRCH, and
+// only EPERM changed sides -- a PID that exists and is not ours to signal. No
+// dead holder reads alive through this.
 func IsWatcherLeaseHealthy(homeDir string) bool {
 	lease, err := ReadWatcherLease(homeDir)
 	if err != nil || lease == nil {

@@ -55,6 +55,44 @@ func unusedPID() (int, bool) {
 	return 0, false
 }
 
+// TestProcessAliveTreatsAnUnsignallablePIDAsAlive covers the other half of the
+// collapse #580 named: EPERM means the process exists and is not ours to
+// signal, which is the one answer that must never reach a caller as "dead".
+// The PATH tests above do not reach it -- they exercise the probe's mechanism,
+// not the errno it has to discriminate.
+func TestProcessAliveTreatsAnUnsignallablePIDAsAlive(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: no PID this process is forbidden to signal, so EPERM cannot be built")
+	}
+	if !isProcessAlive(1) {
+		t.Error("PID 1 is running but reads as dead")
+	}
+}
+
+// TestClaimWatcherLeaseRefusesAnUnsignallableHolder is that answer's
+// consequence, and it is the state the original defect produced: a lease held
+// by a live PID belonging to another user is reclaimed, and two watchers run
+// over one home. The lease layer would still read like a singleton guard while
+// having stopped being one.
+func TestClaimWatcherLeaseRefusesAnUnsignallableHolder(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: no PID this process is forbidden to signal, so EPERM cannot be built")
+	}
+	dir := t.TempDir()
+	if _, err := writeLeaseFile(WatcherLeasePath(dir), &WatcherLease{
+		Home:      Canonical(dir),
+		PID:       1,
+		StartedAt: time.Now().Unix(),
+		UpdatedAt: time.Now().UnixNano(),
+	}); err != nil {
+		t.Fatalf("write existing lease: %v", err)
+	}
+	claimed, err := ClaimWatcherLease(dir, os.Getpid())
+	if claimed || err == nil {
+		t.Fatalf("ClaimWatcherLease over a live holder this process may not signal = (%v, %v), want the live-holder refusal", claimed, err)
+	}
+}
+
 // TestClaimWatcherLeaseRefusesALiveHolderWithoutPATH is the consequence of the
 // probe above: two watchers over one home, which is exactly what the lease
 // exists to prevent.

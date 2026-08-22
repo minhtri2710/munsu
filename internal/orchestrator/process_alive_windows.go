@@ -24,10 +24,13 @@ import (
 // than one that is gone, and so does a GetExitCodeProcess that fails on a
 // handle we did open.
 //
-// Windows has not executed this implementation in this change. Its Windows
-// behavior is checked only by cross-compilation and static analysis, so the
-// repository has no Windows runtime proof -- including which error
-// OpenProcess actually returns for an unopenable live PID.
+// This is compiled and vetted natively on windows: ci.yml's `windows-build-vet`
+// job runs `go build ./...` and `go vet ./...` on windows-latest for every push
+// and pull request, and `GOOS=windows go vet ./...` compiles it on ubuntu as
+// well. Natively compiled is not natively executed. No required check runs it --
+// the only lane that runs tests on windows is windows-observation.yml, which is
+// workflow_dispatch-only -- so the repository holds no windows runtime proof,
+// including which error OpenProcess actually returns for an unopenable live PID.
 //
 // process_alive_windows_test.go is not what holds the signature: this function
 // has production call sites that compile in the same lane (afk_lock.go,
