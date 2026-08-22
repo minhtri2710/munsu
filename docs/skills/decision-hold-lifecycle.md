@@ -10,27 +10,12 @@ This doc records the mechanism and regression evidence.
 
 General decisions discovered during investigations or visual reviews must be tracked as structured holds before the originating work may be treated as complete.
 
-### Hold lifecycle (Phase A — protocol only)
+### Hold lifecycle
 
-In Phase A, decision-hold uses status-file conventions and Task Authority block/unblock primitives. Structured `munsu decision-hold` commands will be added in PR sequence D.
-
-| Step | Action | Command |
-|------|--------|---------|
-| Record | Append `needs-decision` status | `munsu task status <id> "needs-decision" "<key>: <summary>"` |
-| Block | Block dependent task | `munsu task block <dependent-id> --by <blocker-id>` |
-| Record answer | Append resolved status | `munsu task status <id> "resolved" "<key>: <answer>"` |
-| Unblock | Clear blocker | `munsu task unblock <dependent-id>` |
-| Verify | No stale needs-decision lines remain | `munsu task show <id>` |
-
-### Hold lifecycle (Phase D+ — structured commands)
-
-When the `munsu decision-hold` subcommand exists:
-
-```
-munsu decision-hold hold <key> --reason "<summary>" --from <task-id>
-munsu decision-hold complete <key>... [--none]
-munsu decision-hold resolve <key> --answer "<answer>" --unblock <dep-id>
-```
+The embedded policy owner is authoritative for the unresolved-decision procedure:
+`internal/cli/skills/decision-hold-lifecycle/SKILL.md`. For the registered command
+forms and flags, use `munsu decision-hold --help` and the relevant subcommand help;
+this reference intentionally does not duplicate that syntax.
 
 ### Key rules
 

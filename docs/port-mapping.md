@@ -23,7 +23,7 @@ for harnesses with a verified adapter; unverified harnesses show "planned/unsupp
 | Capability | munsu command | munsu Go package | Status |
 |---|---|---|---|
 | Home directory | `munsu home` | `internal/home` | **implemented** |
-| Task lifecycle (canonical aggregate: Create/Start/Block/Unblock/Complete/Reopen/Supersede/Retire/Promote) | `munsu task add/start/done/block/unblock/reopen`, `munsu spawn promote`, retirement flows | `internal/taskauthority` (canonical `Canonical` over `internal/home` durable mechanics), `internal/cli`/`internal/fleet` (composition) | **implemented** |
+| Task lifecycle (canonical aggregate: Create/Start/Block/Unblock/Complete/Reopen/Supersede/Retire/Promote) | `munsu task add/start/done/block/unblock/reopen`, `munsu promote`, retirement flows | `internal/taskauthority` (canonical `Canonical` over `internal/home` durable mechanics), `internal/cli`/`internal/fleet` (composition) | **implemented** |
 | Task meta + status records (post-commit projections written after authoritative commits; `.status` append-only, ADR-0007 §7) | `munsu task add/show/status`; current via `soldier-state` | `internal/taskauthority` (authoritative source), `internal/home` (generic `.meta`/`.status` primitives), `internal/fleet`/`internal/cli` (projection writers) | **implemented** |
 | Dispatch control (holds/interpretation/decision) | `munsu decision-hold hold/complete/verify/resolve/list`, spawn and supervision flows | `internal/taskauthority` | **implemented** |
 | Worktree/endpoint binding + spawn confirmation | `munsu spawn` | `internal/taskauthority` (`BindWorktree`, launch operations), `internal/fleet` | **implemented** |
@@ -35,7 +35,7 @@ for harnesses with a verified adapter; unverified harnesses show "planned/unsupp
 | Teardown soldier context | `munsu teardown` | `internal/orchestrator` | **implemented** |
 | Peek at soldier output | `munsu peek` | `internal/cli` | **implemented** |
 | Soldier state query | `munsu soldier-state` | `internal/fleet` | **implemented** |
-| Promote soldier task | `munsu spawn promote` | `internal/taskauthority` (`Canonical.Promote`), `internal/cli` | **implemented** |
+| Promote soldier task | `munsu promote` | `internal/taskauthority` (`Canonical.Promote`), `internal/cli` | **implemented** |
 | Harness detection/verification | `munsu harness detect/soldier/captain` | `internal/harness` | **implemented** |
 | Project mode | `munsu project mode` | `internal/fleet` | **implemented** |
 | Fleet sync | `munsu fleet sync` | `internal/fleet` | **implemented** |

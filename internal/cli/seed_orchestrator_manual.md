@@ -181,7 +181,7 @@ When a soldier is unresponsive, run `munsu skill show stuck-soldier-recovery`.
 | `direct-PR` | Push + open PR without pipeline | `done: PR <url>` |
 | `local-only` | Clean branch ready for local merge | ready for local merge |
 
-Merge when instructed: `munsu delivery pr-merge <id> <pr-url>` (prefer `--teardown` to clean soldier pane/worktree after land; never bare `gh pr merge` when task meta lives in a captain home). Meta resolves primary then captain homes.
+Merge when instructed: `munsu delivery pr-merge <id> <pr-url>`; use standalone teardown after `munsu task done` for the normal lifecycle (never bare `gh pr merge` when task meta lives in a captain home). The optional `--teardown` form is a combined path that intentionally retires without marking the task done. Meta resolves primary then captain homes.
 
 ### Teardown
 
