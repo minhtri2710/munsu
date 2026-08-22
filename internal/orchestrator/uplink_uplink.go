@@ -16,11 +16,23 @@ import (
 
 const retryInterval = 60 * time.Second
 
-// ErrReportedNotNotified marks the one Report failure that happens after the
-// durable write. Envelope, pending record, open evidence and receiver wake all
-// committed; only the notification path failed. Callers must not treat it as a
-// report that did not happen -- re-reporting double-writes.
-var ErrReportedNotNotified = errors.New("uplink report: durable, not notified")
+// ErrReportDurable marks a Report failure that happens after the full durable
+// record set -- envelope, pending record, open evidence, receiver wake -- has
+// committed. Three paths carry it: retiring superseded reports, recording the
+// notification attempt, and the notification itself. The report exists, so none
+// of them mean "the report did not happen", and re-running report supersedes
+// this record rather than adding a second one.
+//
+// It says nothing about whether the receiver was notified: the notify path may
+// have succeeded and the failure landed after it. Of the three, only the notify
+// path is reachable from a test today -- the other two need a durable-write
+// failure this package has no fault injection for, so they are checked by
+// inspection, not by a lane. It is deliberately NOT carried
+// by failures inside the durable sequence itself (pending, evidence, wake),
+// because supersededReports derives what to retire from the sender's pending
+// records -- with that record missing a re-report supersedes nothing and leaves
+// two live envelopes in the receiver's inbox, so the advice above would be false.
+var ErrReportDurable = errors.New("uplink report: durable")
 
 var materialStates = map[string]bool{
 	"done": true, "failed": true, "blocked": true, "needs-decision": true,
@@ -116,7 +128,7 @@ func Report(req ReportRequest) (*ReportResult, error) {
 		return nil, fmt.Errorf("uplink report: enqueue receiver wake: %w", err)
 	}
 	if err := retireSuperseded(req.SenderHome, req.ReceiverHome, oldReports); err != nil {
-		return nil, fmt.Errorf("uplink report: retire superseded: %w", err)
+		return nil, fmt.Errorf("%w: message %s landed in %s; retire superseded: %w", ErrReportDurable, env.MessageID, req.ReceiverHome, err)
 	}
 
 	result := &ReportResult{MessageID: env.MessageID, Queued: true}
@@ -125,15 +137,14 @@ func Report(req ReportRequest) (*ReportResult, error) {
 	}
 	ref := NotificationRef{MessageID: env.MessageID, SenderIdentity: req.SenderIdentity}
 	nr := req.Notify(ref)
+	// Both failures below land after the durable commit, and this one lands
+	// after Notify has already run -- the receiver may well have been told.
+	// Neither is a report that did not happen, so both say so.
 	if err := markNotificationAttempt(req.SenderHome, env.MessageID); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: message %s landed in %s and the notification path already ran; recording the attempt: %w", ErrReportDurable, env.MessageID, req.ReceiverHome, err)
 	}
 	if nr.Err != nil {
-		// Everything durable above this line already committed, so the error
-		// has to carry which side of that split it is on and keep the message
-		// id addressable. The exit is still non-zero: a report nobody was told
-		// about is a failure, just not one a retry of Report can repair.
-		return nil, fmt.Errorf("%w: message %s landed in %s; notify: %w", ErrReportedNotNotified, env.MessageID, req.ReceiverHome, nr.Err)
+		return nil, fmt.Errorf("%w: message %s landed in %s; notify: %w", ErrReportDurable, env.MessageID, req.ReceiverHome, nr.Err)
 	}
 	if nr.Acknowledged {
 		result.Notified, result.Queued = true, false
