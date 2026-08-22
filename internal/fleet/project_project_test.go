@@ -224,10 +224,10 @@ func TestAddIdempotent(t *testing.T) {
 	// Add the same project twice with an identical definition — the canonical
 	// Fleet Registry treats the re-registration as a successful no-op and
 	// never creates a duplicate entry.
-	if err := Add(homeDir, "dup-proj", "/path/captain", "fix", false); err != nil {
+	if err := Add(homeDir, "dup-proj", "/path/second", "fix", false); err != nil {
 		t.Fatal(err)
 	}
-	if err := Add(homeDir, "dup-proj", "/path/captain", "fix", false); err != nil {
+	if err := Add(homeDir, "dup-proj", "/path/second", "fix", false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -251,8 +251,8 @@ func TestAddIdempotent(t *testing.T) {
 	if p.Yolo {
 		t.Error("Yolo = true, want false")
 	}
-	if p.Description != "/path/captain" {
-		t.Errorf("Description = %q, want %q", p.Description, "/path/captain")
+	if p.Description != "/path/second" {
+		t.Errorf("Description = %q, want %q", p.Description, "/path/second")
 	}
 }
 

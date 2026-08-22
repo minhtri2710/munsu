@@ -247,7 +247,7 @@ func TestCrashAtEachStepNoLostWakes(t *testing.T) {
 	}
 
 	// Simulate crash: don't ack anything, lease expires
-	// Captain claim should reclaim + get remaining from queue
+	// Second claim should reclaim + get remaining from queue
 	r2, err := ClaimWakes(home, "consumer2", 60, 10)
 	if err != nil {
 		t.Fatal(err)

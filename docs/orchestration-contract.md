@@ -119,7 +119,7 @@ TOON is the default because it is compact for agents. JSON is an opt-in transpor
 
 The installed command resolves portability in this order: use `munsu` only if PATH resolves to the currently executing binary; otherwise use that binary's absolute path. `repair` rechecks and updates a stale path. Repeating `install` with identical content and path is a successful silent no-op. The ambient session context is cwd-scoped and compact: executable, one-line purpose, and only live aggregate/action state that helps the next command; it never injects full fleet or long task content.
 
-Hooks are primary where supported. The installable `munsu-ops` skill is captainary discovery for harnesses without hooks or users who prefer on-demand context. A future consistency check must compare static command guidance generated for the skill with the no-args home-view guidance after removing live state; CI must fail when that check detects drift. No skill, adapter, hook, or generated command is added by this Phase 0 PR.
+Hooks are primary where supported. The installable `munsu-ops` skill is secondary discovery for harnesses without hooks or users who prefer on-demand context. A future consistency check must compare static command guidance generated for the skill with the no-args home-view guidance after removing live state; CI must fail when that check detects drift. No skill, adapter, hook, or generated command is added by this Phase 0 PR.
 
 ## Adapter delivery contract (future)
 

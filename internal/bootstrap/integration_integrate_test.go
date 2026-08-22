@@ -357,7 +357,7 @@ func TestWriteAtomic_NoopOnIdentical(t *testing.T) {
 		t.Fatalf("first write: %v", err)
 	}
 	if err := writeAtomic(target, "hello world", 0644); err != nil {
-		t.Fatalf("captain write (should be no-op): %v", err)
+		t.Fatalf("second write (should be no-op): %v", err)
 	}
 
 	data, err := os.ReadFile(target)
@@ -1416,15 +1416,15 @@ func TestGrokMergeHookFile(t *testing.T) {
 		t.Errorf("expected first matcher hook to be munsu-command, got %v", firstHook["command"])
 	}
 
-	// Captain matcher should be user's
-	captainMatcher := matchers[1].(map[string]interface{})
-	captainHookList, ok := captainMatcher["hooks"].([]interface{})
-	if !ok || len(captainHookList) == 0 {
-		t.Fatal("missing hooks array in captain matcher")
+	// Second matcher should be user's
+	secondMatcher := matchers[1].(map[string]interface{})
+	secondHookList, ok := secondMatcher["hooks"].([]interface{})
+	if !ok || len(secondHookList) == 0 {
+		t.Fatal("missing hooks array in second matcher")
 	}
-	captainHook := captainHookList[0].(map[string]interface{})
-	if captainHook["command"] != "user-command" {
-		t.Errorf("expected captain matcher hook to be user-command, got %v", captainHook["command"])
+	secondHook := secondHookList[0].(map[string]interface{})
+	if secondHook["command"] != "user-command" {
+		t.Errorf("expected second matcher hook to be user-command, got %v", secondHook["command"])
 	}
 }
 
