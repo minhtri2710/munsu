@@ -339,7 +339,7 @@ func TestIdentitySummary_Valid(t *testing.T) {
 
 func TestIdentitySummary_IncludesAge(t *testing.T) {
 	id := NewIdentity(t.TempDir())
-	// Should have a reasonable age (less than 5 captains old)
+	// Should have a reasonable age (less than 5 seconds old)
 	s := IdentitySummary(&id)
 	if !strings.Contains(s, "age=") {
 		t.Error("summary should contain age=")
@@ -485,7 +485,7 @@ func TestStartTime_IsReasonable(t *testing.T) {
 	now := time.Now().Unix()
 	diff := now - id.StartTime
 	if diff < 0 || diff > 10 {
-		t.Errorf("StartTime diff = %d captains, expected 0-10", diff)
+		t.Errorf("StartTime diff = %d seconds, expected 0-10", diff)
 	}
 }
 

@@ -38,7 +38,7 @@ type ClaimedWakeRecord struct {
 type ClaimResult struct {
 	LeaseID   string
 	Consumer  string
-	ExpiresAt int64 // unix captains
+	ExpiresAt int64 // unix seconds
 	Wakes     []ClaimedWakeRecord
 	Reclaimed int // count of expired-lease wakes that were reclaimed
 
@@ -73,11 +73,11 @@ func WakeAgeSinceEnqueue(epoch string, now time.Time) time.Duration {
 // ClaimWakes claims up to limit wake records from the queue under a lease.
 // Unacked wakes that have expired leases are reclaimed (re-enqueued then claimed).
 // Returns the claim result or an error.
-func ClaimWakes(homeDir, consumer string, leaseCaptains, limit int) (*ClaimResult, error) {
-	return claimWakesAt(homeDir, consumer, leaseCaptains, limit, time.Now)
+func ClaimWakes(homeDir, consumer string, leaseSeconds, limit int) (*ClaimResult, error) {
+	return claimWakesAt(homeDir, consumer, leaseSeconds, limit, time.Now)
 }
 
-func claimWakesAt(homeDir, consumer string, leaseCaptains, limit int, now func() time.Time) (*ClaimResult, error) {
+func claimWakesAt(homeDir, consumer string, leaseSeconds, limit int, now func() time.Time) (*ClaimResult, error) {
 	stateDir := filepath.Join(homeDir, "state")
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
 		return nil, fmt.Errorf("creating state directory: %w", err)
@@ -92,8 +92,8 @@ func claimWakesAt(homeDir, consumer string, leaseCaptains, limit int, now func()
 	}
 	defer unlockWakeFile(lock)
 
-	if leaseCaptains < 0 {
-		leaseCaptains = 0
+	if leaseSeconds < 0 {
+		leaseSeconds = 0
 	}
 	if limit < 1 {
 		limit = 10
@@ -151,7 +151,7 @@ func claimWakesAt(homeDir, consumer string, leaseCaptains, limit int, now func()
 	}
 	claimNow := now()
 	leaseID := fmt.Sprintf("lease-%d", claimNow.UnixNano())
-	expiresAt := now().Unix() + int64(leaseCaptains)
+	expiresAt := now().Unix() + int64(leaseSeconds)
 
 	// Write lease file
 	leasePath := LeaseFilePath(homeDir, leaseID)

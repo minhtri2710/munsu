@@ -782,7 +782,7 @@ Subcommands:
 
 func newAfkDrainCmd() *cobra.Command {
 	var consumer string
-	var leaseCaptains int
+	var leaseSeconds int
 	var limit int
 	var noPeek bool
 	cmd := &cobra.Command{
@@ -806,11 +806,11 @@ Ack claimed wakes after steering: munsu wake ack <lease-id> <event-id...>.`,
 			}
 
 			report, err := orchestrator.DrainCycle(orchestrator.DrainCycleOptions{
-				HomeDir:       ctx.Home,
-				Consumer:      consumer,
-				LeaseCaptains: leaseCaptains,
-				Limit:         limit,
-				PeekFleet:     !noPeek,
+				HomeDir:      ctx.Home,
+				Consumer:     consumer,
+				LeaseSeconds: leaseSeconds,
+				Limit:        limit,
+				PeekFleet:    !noPeek,
 				FleetSnapshot: func(homeDir string) ([]orchestrator.FleetTaskSnapshot, error) {
 					snap, err := fleet.Snapshot(homeDir, snapshotDeps())
 					if err != nil {
@@ -870,7 +870,7 @@ Ack claimed wakes after steering: munsu wake ack <lease-id> <event-id...>.`,
 	}
 	configureContractCommand(cmd)
 	cmd.Flags().StringVar(&consumer, "consumer", "", "Consumer identifier (required)")
-	cmd.Flags().IntVar(&leaseCaptains, "lease-seconds", 60, "Lease duration in seconds")
+	cmd.Flags().IntVar(&leaseSeconds, "lease-seconds", 60, "Lease duration in seconds")
 	cmd.Flags().IntVar(&limit, "limit", 10, "Maximum wakes to claim")
 	cmd.Flags().BoolVar(&noPeek, "no-peek", false, "Skip the fleet peek")
 	return cmd

@@ -65,7 +65,7 @@ beat PID before starting a new one.
 
 The watcher writes a timestamp + PID to `state/.last-watcher-beat` at every
 poll tick. Guard commands read this beat to determine if the watcher is alive.
-The stale threshold is 300 captains (5 minutes) — if the beat is older than this,
+The stale threshold is 300 seconds (5 minutes) — if the beat is older than this,
 the watcher is considered dead.
 
 ## Return channel closed loop

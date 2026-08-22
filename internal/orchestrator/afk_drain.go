@@ -113,7 +113,7 @@ func (r *DrainReport) String() string {
 type DrainCycleOptions struct {
 	HomeDir       string
 	Consumer      string // required
-	LeaseCaptains int
+	LeaseSeconds  int
 	Limit         int
 	PeekFleet     bool // include a fleet snapshot peek
 	FleetSnapshot FleetSnapshotProvider
@@ -131,16 +131,16 @@ func DrainCycle(opts DrainCycleOptions) (*DrainReport, error) {
 	if opts.Consumer == "" {
 		return nil, fmt.Errorf("drain: consumer is required")
 	}
-	leaseCaptains := opts.LeaseCaptains
-	if leaseCaptains <= 0 {
-		leaseCaptains = 60
+	leaseSeconds := opts.LeaseSeconds
+	if leaseSeconds <= 0 {
+		leaseSeconds = 60
 	}
 	limit := opts.Limit
 	if limit < 1 {
 		limit = 10
 	}
 
-	claim, err := ClaimWakes(opts.HomeDir, opts.Consumer, leaseCaptains, limit)
+	claim, err := ClaimWakes(opts.HomeDir, opts.Consumer, leaseSeconds, limit)
 	if err != nil {
 		return nil, fmt.Errorf("claiming wakes: %w", err)
 	}

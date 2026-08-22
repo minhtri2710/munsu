@@ -72,7 +72,7 @@ the command. Silence with `MUNSU_GUARD_SKIP=1`.
 The watcher liveness beat is stored in `state/.last-watcher-beat` with format:
 
 ```
-<unix_epoch_captains> <pid>
+<unix_epoch_seconds> <pid>
 ```
 
 - **Content-timestamp drives staleness** — `ReadBeatStatus` reads the Unix

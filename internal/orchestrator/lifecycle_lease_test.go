@@ -167,7 +167,7 @@ func TestLeaseExpiryReclaim(t *testing.T) {
 		"1780000000\t1\tsignal\tkey1\tpayload1",
 	})
 
-	// Claim with 0-captain lease (expires immediately)
+	// Claim with 0-second lease (expires immediately)
 	result, err := ClaimWakes(home, "consumer", 0, 10)
 	if err != nil {
 		t.Fatal(err)
@@ -238,7 +238,7 @@ func TestCrashAtEachStepNoLostWakes(t *testing.T) {
 	})
 
 	// First claim (2 wakes)
-	r1, err := ClaimWakes(home, "consumer", 0, 2) // 0-captain lease = immediate expiry
+	r1, err := ClaimWakes(home, "consumer", 0, 2) // 0-second lease = immediate expiry
 	if err != nil {
 		t.Fatal(err)
 	}
