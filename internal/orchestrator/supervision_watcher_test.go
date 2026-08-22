@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 )
@@ -205,6 +206,63 @@ func TestRunCycle_CheckValidationRefusalBeforeRetirementIsReportedAndLeavesCheck
 	}
 	if len(records) != 0 {
 		t.Fatalf("wake records = %#v, want none", records)
+	}
+}
+
+func TestRunCycle_ClassifiedRetirementValidationRefusalReportsAndSuppressesWake(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "before retirement", err: fleet.ErrCheckValidationRefused, want: "poll check refused (left in place)"},
+		{name: "after publication", err: fleet.ErrCheckInvalidAfterPublication, want: "poll check invalid after publication"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			stateDir := filepath.Join(home, "state")
+			if err := os.MkdirAll(stateDir, 0755); err != nil {
+				t.Fatal(err)
+			}
+			checkPath := filepath.Join(stateDir, "task-1.check")
+			if err := os.WriteFile(checkPath, []byte("#!/bin/sh\necho ready\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			retirement := &testRetirementPort{retireErr: tc.err}
+			validation := &testCheckValidationPort{}
+			stderrR, stderrW, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			originalStderr := os.Stderr
+			os.Stderr = stderrW
+			resetRecovery()
+			_, cycleErr := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, retirement, validation, testTaskStatePort{})
+			_ = stderrW.Close()
+			os.Stderr = originalStderr
+			stderrOutput, readErr := io.ReadAll(stderrR)
+			_ = stderrR.Close()
+			if cycleErr != nil {
+				t.Fatalf("run cycle: %v", cycleErr)
+			}
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if !strings.Contains(string(stderrOutput), tc.want) {
+				t.Fatalf("stderr = %q, want %q", stderrOutput, tc.want)
+			}
+			if _, err := os.Stat(checkPath); err != nil {
+				t.Fatalf("refused check must remain on disk: %v", err)
+			}
+			records, err := DrainWakes(home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(records) != 0 {
+				t.Fatalf("wake records = %#v, want none", records)
+			}
+		})
 	}
 }
 

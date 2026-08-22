@@ -21,6 +21,15 @@ import (
 // PollRetirementSchema is the schema version for PollRetirementRecord.
 const PollRetirementSchema = 1
 
+// ErrCheckValidationRefused indicates that a check artifact failed validation
+// during retirement.
+var ErrCheckValidationRefused = errors.New("check validation refused")
+
+// ErrCheckInvalidAfterPublication indicates that post-publication
+// revalidation refused the check artifact. It also matches
+// ErrCheckValidationRefused because this is a validation refusal.
+var ErrCheckInvalidAfterPublication = fmt.Errorf("%w: check invalid after publication", ErrCheckValidationRefused)
+
 // retirementDir is the private state directory for pending retirement records.
 const retirementDir = "state/.poll-retirements"
 
@@ -328,8 +337,10 @@ func ValidateCheckWithLstat(path string) error {
 }
 
 // RetireMergedPoll performs the full crash-safe poll retirement sequence for
-// one per-task check whose poll script reports a merged PR. Returns true if
-// retirement was completed (record written, published, poll removed, record cleaned).
+// one per-task check whose poll script reports a merged PR. It returns nil only
+// when retirement is complete; validation failures before retirement preserve
+// the poll, while post-publication invalidation preserves the durable outcome
+// and reports the artifact state.
 //
 // Sequence:
 //  1. Validate task identity and poll digest against delivery meta.
@@ -344,11 +355,13 @@ func ValidateCheckWithLstat(path string) error {
 //  7. Remove the exact poll artifact (with digest revalidation).
 //  8. Remove the pending retirement record.
 //
-// Fail-closed on any validation step: preserves poll and all artifacts.
+// Fail-closed on validation before publication: preserves the poll. After
+// publication, revalidation refusal cleans the record because the durable
+// outcome already exists.
 func RetireMergedPoll(homeDir, taskID, checkPath string, auth *taskauthority.Canonical) error {
 	// Step 0: Lstat validation on check path for crash safety.
 	if err := ValidateCheckWithLstat(checkPath); err != nil {
-		return fmt.Errorf("poll validation failed: %w", err)
+		return fmt.Errorf("%w: poll validation failed: %w", ErrCheckValidationRefused, err)
 	}
 
 	// Compute poll digest BEFORE any mutation.
@@ -448,11 +461,12 @@ func RetireMergedPoll(homeDir, taskID, checkPath string, auth *taskauthority.Can
 
 	// Step 7: Revalidate poll path and digest, then remove.
 	if err := ValidateCheckWithLstat(checkPath); err != nil {
-		// Poll was removed or became invalid between discovery and retirement.
-		// Check if publication evidence exists (recovery step handles this).
-		// Clean up the record since evidence is durably published.
-		RemoveRetirementRecord(homeDir, taskID)
-		return fmt.Errorf("poll disappeared or became invalid after publication (record cleaned): %w", err)
+		// Poll was removed or became invalid after publication. The record is
+		// cleaned because publication evidence is already durable.
+		if cleanupErr := RemoveRetirementRecord(homeDir, taskID); cleanupErr != nil {
+			return fmt.Errorf("%w: poll disappeared or became invalid after publication; cleanup failed: %v: %w", ErrCheckInvalidAfterPublication, cleanupErr, err)
+		}
+		return fmt.Errorf("%w: poll disappeared or became invalid after publication (record cleaned): %w", ErrCheckInvalidAfterPublication, err)
 	}
 
 	currentDigest, err := pollContentDigest(checkPath)

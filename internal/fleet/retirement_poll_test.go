@@ -5,6 +5,7 @@ package fleet
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -1178,7 +1179,68 @@ func TestRecoverPendingRetirement_DirectoryRecord(t *testing.T) {
 	}
 }
 
-// --- Provider error / open / closed-unmerged preserve poll ---
+// --- Validation refusal and provider error / open / closed-unmerged preserve poll ---
+
+func TestRetireMergedPoll_ValidationRefusalIsClassifiedAndPreservesPoll(t *testing.T) {
+	home := t.TempDir()
+	taskID := "task-validation-refusal"
+	checkPath := filepath.Join(home, "invalid.check")
+	if err := os.WriteFile(checkPath, []byte("not an executable check\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := RetireMergedPoll(home, taskID, checkPath, nil)
+	if err == nil {
+		t.Fatal("expected validation refusal")
+	}
+	if !errors.Is(err, ErrCheckValidationRefused) {
+		t.Fatalf("error = %v, want ErrCheckValidationRefused", err)
+	}
+	if errors.Is(err, ErrCheckInvalidAfterPublication) {
+		t.Fatalf("pre-retirement refusal classified after publication: %v", err)
+	}
+	if _, statErr := os.Stat(checkPath); statErr != nil {
+		t.Fatalf("invalid check was not preserved: %v", statErr)
+	}
+}
+
+func TestRetireMergedPoll_PostPublicationRevalidationRefusalIsClassified(t *testing.T) {
+	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+	defer cleanup()
+	auth := retirementPollAuth(t, home, taskID)
+	originalQuery := QueryDeliveryMergeStatus
+	QueryDeliveryMergeStatus = func(ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
+		if err := os.Remove(checkPath); err != nil {
+			t.Fatalf("remove check before return: %v", err)
+		}
+		if err := os.Mkdir(checkPath, 0755); err != nil {
+			t.Fatalf("replace check with directory: %v", err)
+		}
+		return &domain.PRMergeStatus{Merged: true, MergedSHA: ident.HeadSHA, HeadSHA: ident.HeadSHA, State: "MERGED"}, nil
+	}
+	defer func() { QueryDeliveryMergeStatus = originalQuery }()
+
+	err := RetireMergedPoll(home, taskID, checkPath, auth)
+	if err == nil {
+		t.Fatal("expected post-publication validation refusal")
+	}
+	if !errors.Is(err, ErrCheckValidationRefused) || !errors.Is(err, ErrCheckInvalidAfterPublication) {
+		t.Fatalf("error = %v, want both validation sentinels", err)
+	}
+	lines, readErr := mhome.ReadStatus(home, taskID)
+	if readErr != nil {
+		t.Fatalf("ReadStatus: %v", readErr)
+	}
+	if len(lines) != 1 || !strings.Contains(lines[0], "merged at") {
+		t.Fatalf("status lines = %v, want durable publication", lines)
+	}
+	if rec := readRetirementRecordOrNil(t, home, taskID); rec != nil {
+		t.Fatal("retirement record should be cleaned after publication")
+	}
+	if info, statErr := os.Stat(checkPath); statErr != nil || !info.IsDir() {
+		t.Fatalf("replacement directory should remain: info=%v err=%v", info, statErr)
+	}
+}
 
 func TestRetireMergedPoll_OpenPreservesPoll(t *testing.T) {
 	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")

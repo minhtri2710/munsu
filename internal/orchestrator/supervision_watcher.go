@@ -2,6 +2,7 @@
 package orchestrator
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -610,9 +612,9 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 				}
 			}
 
-			// Attempt crash-safe retirement for merged polls.
-			// Validate again here so an artifact refusal is distinct from
-			// an ordinary retirement refusal.
+			// Attempt crash-safe retirement for merged polls. The outer
+			// validation distinguishes a refusal before retirement begins;
+			// RetireMergedPoll classifies validation races after that point.
 			if err := checks.ValidateCheck(plugin.Path); err != nil {
 				fmt.Fprintf(os.Stderr, "poll check refused (left in place): %v\n", err)
 				continue
@@ -620,14 +622,22 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 			// On successful retirement, the poll is removed and a durable
 			// status line is published. The check wake is NOT emitted — the
 			// status scan will surface it as a signal wake on the next cycle.
-			if retireErr := retirement.RetireMergedPoll(homeDir, plugin.Label, plugin.Path); retireErr == nil {
+			retireErr := retirement.RetireMergedPoll(homeDir, plugin.Label, plugin.Path)
+			if retireErr == nil {
 				// Poll retired successfully. Skip wake emission;
 				// the status signal path will surface the publication.
 				continue
 			}
-			// Retirement failed for a non-crash reason:
-			// open/unmerged/closed PR, provider error, or digest mismatch.
-			// Fall through to normal check wake emission.
+			if errors.Is(retireErr, fleet.ErrCheckInvalidAfterPublication) {
+				fmt.Fprintf(os.Stderr, "poll check invalid after publication: %v\n", retireErr)
+				continue
+			}
+			if errors.Is(retireErr, fleet.ErrCheckValidationRefused) {
+				fmt.Fprintf(os.Stderr, "poll check refused (left in place): %v\n", retireErr)
+				continue
+			}
+			// Other retirement failures retain the normal check wake so the
+			// poll can be tried again.
 		}
 
 		fingerprint := "check\n" + msg
