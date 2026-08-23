@@ -82,7 +82,7 @@ func TestDirectGeneralDispatchResolvesTheGeneralPaneNotACaptainParent(t *testing
 	generalHome, identity := directGeneralHome(t)
 	res := reportUnderDirectGeneralDispatch(t, generalHome, identity, &countingTransport{})
 
-	target, err := resolveReceiverTarget(generalHome, NotificationRef{MessageID: res.MessageID, SenderIdentity: "direct-task"})
+	target, err := resolveReceiverTarget(generalHome, true, NotificationRef{MessageID: res.MessageID, SenderIdentity: "direct-task"})
 	if err != nil {
 		t.Fatalf("resolving a direct General report must not go through a Captain parent: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestReportRefusesAReceiverRankTheReceivingHomeCannotSatisfy(t *testing.T) {
 func TestNotifyParentWithTargetResolverQueuesResolutionError(t *testing.T) {
 	transport := &countingTransport{}
 	result := NotifyParentWithTargetResolver("sender", "receiver", NotificationRef{MessageID: "m", SenderIdentity: "s"},
-		func(string, NotificationRef) (TargetResult, error) {
+		func(string, bool, NotificationRef) (TargetResult, error) {
 			return TargetResult{}, errors.New("captain parent-home unavailable")
 		}, transport)
 	if !result.Queued || result.Err != nil || result.Acknowledged {
