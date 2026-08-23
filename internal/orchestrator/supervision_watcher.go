@@ -65,8 +65,9 @@ type RetirementPort interface {
 // and because the distinction that matters here is structural: supplying an
 // implementation asserts the capability exists, so a returned error can only
 // mean "this artifact is invalid" — skip it and keep scanning. The capability
-// being absent is a different failure and is expressed differently: a nil port
-// fails the whole cycle, loudly, instead of quietly emitting no checks at all.
+// being absent is a different failure and is expressed differently: a nil check
+// validation port fails the whole cycle, loudly, instead of quietly emitting no
+// checks at all.
 type CheckValidationPort interface {
 	ValidateCheck(path string) error
 }
@@ -74,8 +75,9 @@ type CheckValidationPort interface {
 // RunWithProbeSenderAndEvents starts the persistent watcher and also runs the
 // bounded native observation event lane (BEO-17/P1b): a validated event hint
 // triggers an immediate re-probe cycle; every other outcome keeps the polling
-// ticker as the cadence authority (the watcher is never silent). A nil port
-// keeps the watcher on pure polling.
+// ticker as the cadence authority (the watcher is never silent). A nil observation
+// event port keeps the watcher on pure polling; a nil check-validation port is refused as a
+// fatal cycle capability error.
 func RunWithProbeSenderAndEvents(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, checks CheckValidationPort, states TaskStatePort, events ObservationEventPort) (*WakeReason, error) {
 	return run(homeDir, time.NewTicker, signalChannel(), probe, sender, hooks, retirement, checks, states, events)
 }
