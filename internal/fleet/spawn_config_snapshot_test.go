@@ -12,6 +12,26 @@ import (
 	homepkg "github.com/minhtri2710/munsu/internal/home"
 )
 
+func TestResolveSpawnProjectConfigRejectsUnresolvedPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		policy DispatchPolicy
+	}{
+		{name: "zero policy", policy: DispatchPolicy("")},
+		{name: "invalid policy", policy: DispatchPolicy("unknown")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ResolveSpawnProjectConfig(t.TempDir(), Args{ProjectName: "alpha"}, tc.policy)
+			if err == nil || !strings.Contains(err.Error(), "unresolved dispatch policy") {
+				t.Fatalf("error = %v, want unresolved-policy refusal", err)
+			}
+			if !reflect.DeepEqual(got, SpawnProjectConfig{}) {
+				t.Fatalf("config = %+v, want empty config", got)
+			}
+		})
+	}
+}
+
 func TestResolveSpawnProjectConfigExplicitIdentityAssertions(t *testing.T) {
 	home := t.TempDir()
 	writeSpawnSnapshotDocuments(t, home)
