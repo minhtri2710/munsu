@@ -37,6 +37,14 @@ func newCycleObservation() *cycleObservation {
 // logCycleObservation writes the cycle's internal measurements to stderr so
 // the watcher daemon surfaces them without touching any CLI response contract
 // (stderr is separate from the contract stdout).
+//
+// This one is deliberately per-cycle, unlike the check loop's refusal reports,
+// which fire on state change (see reportCheckRefusal). The difference is what
+// the line is: a measurement of the cycle that just ran, whose absence is
+// itself information and whose volume is one line per cycle no matter how much
+// state exists. A refusal report is a fact about one artifact, identical on
+// every repeat and growing with the number of artifacts. Suppressing a
+// measurement would hide a silent watcher; repeating a fact only buries it.
 func logCycleObservation(obs *cycleObservation) {
 	if obs == nil {
 		return

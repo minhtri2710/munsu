@@ -598,14 +598,18 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 		// this error is about this artifact and nothing else: drop this check,
 		// keep scanning the rest, and say so rather than swallowing it.
 		if err := checks.ValidateCheck(plugin.Path); err != nil {
-			fmt.Fprintf(os.Stderr, "poll check invalid (skipped): %v\n", err)
+			if repErr := reportCheckRefusal(homeDir, plugin.Label, fmt.Sprintf("poll check invalid (skipped): %v", err)); repErr != nil {
+				return emitted, repErr
+			}
 			continue
 		}
 		// Acceptance refusal leaves the externally authored artifact exactly
 		// where it is and emits no wake; the refusal is reported for the
 		// operator to resolve.
 		if err := AcceptOrRefuseStale(plugin.Path); err != nil {
-			fmt.Fprintf(os.Stderr, "poll check refused (left in place): %v\n", err)
+			if repErr := reportCheckRefusal(homeDir, plugin.Label, fmt.Sprintf("poll check refused (left in place): %v", err)); repErr != nil {
+				return emitted, repErr
+			}
 			continue
 		}
 
@@ -635,19 +639,30 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 			if retireErr == nil {
 				// Poll retired successfully. Skip wake emission;
 				// the status signal path will surface the publication.
+				clearCheckRefusalMarker(homeDir, plugin.Label)
 				continue
 			}
 			if errors.Is(retireErr, domain.ErrCheckInvalidAfterPublication) {
-				fmt.Fprintf(os.Stderr, "poll check invalid after publication: %v\n", retireErr)
+				if repErr := reportCheckRefusal(homeDir, plugin.Label, fmt.Sprintf("poll check invalid after publication: %v", retireErr)); repErr != nil {
+					return emitted, repErr
+				}
 				continue
 			}
 			if errors.Is(retireErr, domain.ErrCheckValidationRefused) {
-				fmt.Fprintf(os.Stderr, "poll check refused (wake suppressed): %v\n", retireErr)
+				if repErr := reportCheckRefusal(homeDir, plugin.Label, fmt.Sprintf("poll check refused (wake suppressed): %v", retireErr)); repErr != nil {
+					return emitted, repErr
+				}
 				continue
 			}
 			// Other retirement failures retain the normal check wake so the
 			// poll can be tried again.
 		}
+
+		// The artifact is accepted and about to be surfaced. Drop any refusal
+		// it is still carrying so that if it is refused again later — for the
+		// same reason or a new one — that refusal is reported as the new state
+		// it is.
+		clearCheckRefusalMarker(homeDir, plugin.Label)
 
 		fingerprint := "check\n" + msg
 		marker := wakeMarkerPath(homeDir, "check:"+checkID)
@@ -693,9 +708,47 @@ func wakeFingerprint(homeDir string, reason *WakeReason) string {
 	return reason.Kind + "\n" + message + "\n" + status
 }
 
-func wakeMarkerPath(homeDir, id string) string {
+func markerPath(homeDir, prefix, id string) string {
 	safeID := strings.NewReplacer("/", "_", ":", "_", ".", "_").Replace(id)
-	return filepath.Join(homeDir, "state", ".watcher-seen-"+safeID)
+	return filepath.Join(homeDir, "state", prefix+safeID)
+}
+
+func wakeMarkerPath(homeDir, id string) string {
+	return markerPath(homeDir, ".watcher-seen-", id)
+}
+
+// checkRefusalMarkerPath records the refusal the loop last reported for one
+// check artifact, so the report follows the artifact's state rather than the
+// poll cadence. Same mechanism as the wake marker four lines below its call
+// sites, for the same reason: the loop revisits every artifact every cycle, and
+// an artifact that is refused stays refused until somebody acts on it.
+func checkRefusalMarkerPath(homeDir, label string) string {
+	return markerPath(homeDir, ".watcher-refused-", label)
+}
+
+// reportCheckRefusal writes message to stderr the first time this artifact is
+// refused for this reason and stays silent while that answer is unchanged. A
+// different reason is a different state and reports again; so does the same
+// reason after the artifact has been accepted once, because the loop clears the
+// marker when it accepts.
+//
+// Marker-write failure fails the cycle rather than degrading to unbounded
+// reporting: that is what the wake marker two blocks down does with the same
+// error, and one error policy per loop is worth more here than a log line.
+func reportCheckRefusal(homeDir, label, message string) error {
+	marker := checkRefusalMarkerPath(homeDir, label)
+	if data, err := os.ReadFile(marker); err == nil && string(data) == message {
+		return nil
+	}
+	fmt.Fprintln(os.Stderr, message)
+	if err := os.MkdirAll(filepath.Dir(marker), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(marker, []byte(message), 0644)
+}
+
+func clearCheckRefusalMarker(homeDir, label string) {
+	_ = os.Remove(checkRefusalMarkerPath(homeDir, label))
 }
 
 func clearWakeMarker(homeDir, id string) {
