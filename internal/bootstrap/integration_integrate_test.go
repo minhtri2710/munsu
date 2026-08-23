@@ -647,7 +647,7 @@ func TestCheckPiCapability_HangingNode(t *testing.T) {
 			// First call: pi --version succeeds.
 			return "0.79.0", nil
 		}
-		// Captain call: node --experimental-strip-types — hang until timeout.
+		// Second call: node --experimental-strip-types — hang until timeout.
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 		cmd := exec.CommandContext(ctx, "sleep", "5")
