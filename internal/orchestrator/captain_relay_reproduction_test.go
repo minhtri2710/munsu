@@ -51,8 +51,11 @@ func TestReproductionCaptainRelayMissingPane(t *testing.T) {
 	ref := NotificationRef{MessageID: env.MessageID, SenderIdentity: env.SenderIdentity}
 	directTarget, directErr := ResolveTargetWithSource(captainHome)
 	t.Logf("direct_target=%+v direct_error=%v", directTarget, directErr)
-	_, crossErr := resolveReceiverTarget(captainHome, false, ref)
-	t.Logf("cross_process_resolver_error=%v", crossErr)
+	crossTarget, crossErr := resolveReceiverTarget(captainHome, false, ref)
+	t.Logf("cross_process_target=%+v cross_process_resolver_error=%v", crossTarget, crossErr)
+	crossTransport := &reproductionNotificationTransport{}
+	crossResult := NotifyParentWithTransport(filepath.Join(captainHome, "different-sender"), captainHome, ref, crossTransport)
+	t.Logf("cross_process_notify_result=%+v calls=%d", crossResult, crossTransport.calls)
 	selfTarget, selfErr := resolveReceiverTarget(captainHome, true, ref)
 	t.Logf("self_target=%+v self_error=%v", selfTarget, selfErr)
 	transport := &reproductionNotificationTransport{}
@@ -82,8 +85,11 @@ func TestReproductionCaptainRelayMissingPane(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("pending_after=%d messages=%v", len(pending), pending)
-	if crossErr == nil || crossErr.Error() != "captain meta has no herdr_pane_id" {
-		t.Fatalf("unexpected cross-process resolver error: %v", crossErr)
+	if crossErr == nil || crossErr.Error() != "captain meta has no herdr_pane_id" || crossTarget.Handle != "" {
+		t.Fatalf("unexpected cross-process resolution: target=%+v error=%v", crossTarget, crossErr)
+	}
+	if !crossResult.Queued || crossResult.Acknowledged || crossTransport.calls != 0 {
+		t.Fatalf("cross-process notification was not refused: result=%+v calls=%d", crossResult, crossTransport.calls)
 	}
 	if selfErr != nil || selfTarget.Handle != "%reproduction" {
 		t.Fatalf("unexpected self target: %+v error=%v", selfTarget, selfErr)

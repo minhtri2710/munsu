@@ -312,8 +312,11 @@ func notificationDue(home, messageID string, now time.Time) bool {
 	return err != nil || now.Sub(info.ModTime()) >= retryInterval
 }
 
-// NotifyParent attempts immediate delivery of a NotificationRef to the parent
-// agent pane. Durable state must already exist before this adapter is called.
+// TargetResolver resolves a receiver's notification target. selfDirected is
+// true exactly when senderHome == receiverHome; the default resolver then uses
+// receiverHome's own runtime target. Cross-process captain resolution uses
+// authoritative parent metadata and fails closed when its pane identity is
+// unavailable.
 type TargetResolver func(receiverHome string, selfDirected bool, ref NotificationRef) (TargetResult, error)
 
 type NotificationTransport interface {
