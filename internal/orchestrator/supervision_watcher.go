@@ -599,7 +599,7 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 		// this error is about this artifact and nothing else: drop this check,
 		// keep scanning the rest, and say so rather than swallowing it.
 		if err := checks.ValidateCheck(plugin.Path); err != nil {
-			if repErr := reportCheckRefusal(homeDir, plugin.Path, fmt.Sprintf("poll check invalid (skipped): %v", err)); repErr != nil {
+			if repErr := reportCheckRefusal(homeDir, plugin.Path, refusalState(err), fmt.Sprintf("poll check invalid (skipped): %v", err)); repErr != nil {
 				return emitted, repErr
 			}
 			continue
@@ -608,7 +608,7 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 		// where it is and emits no wake; the refusal is reported for the
 		// operator to resolve.
 		if err := AcceptOrRefuseStale(plugin.Path); err != nil {
-			if repErr := reportCheckRefusal(homeDir, plugin.Path, fmt.Sprintf("poll check refused (left in place): %v", err)); repErr != nil {
+			if repErr := reportCheckRefusal(homeDir, plugin.Path, refusalState(err), fmt.Sprintf("poll check refused (left in place): %v", err)); repErr != nil {
 				return emitted, repErr
 			}
 			continue
@@ -644,13 +644,13 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 				continue
 			}
 			if errors.Is(retireErr, domain.ErrCheckInvalidAfterPublication) {
-				if repErr := reportCheckRefusal(homeDir, plugin.Path, fmt.Sprintf("poll check invalid after publication: %v", retireErr)); repErr != nil {
+				if repErr := reportCheckRefusal(homeDir, plugin.Path, refusalState(retireErr), fmt.Sprintf("poll check invalid after publication: %v", retireErr)); repErr != nil {
 					return emitted, repErr
 				}
 				continue
 			}
 			if errors.Is(retireErr, domain.ErrCheckValidationRefused) {
-				if repErr := reportCheckRefusal(homeDir, plugin.Path, fmt.Sprintf("poll check refused (wake suppressed): %v", retireErr)); repErr != nil {
+				if repErr := reportCheckRefusal(homeDir, plugin.Path, refusalState(retireErr), fmt.Sprintf("poll check refused (wake suppressed): %v", retireErr)); repErr != nil {
 					return emitted, repErr
 				}
 				continue
@@ -735,24 +735,41 @@ func checkRefusalMarkerPath(homeDir, artifactPath string) string {
 }
 
 // reportCheckRefusal writes message to stderr the first time this artifact is
-// refused for this reason and stays silent while that answer is unchanged. A
-// different reason is a different state and reports again; so does the same
-// reason after the artifact has been accepted once, because the loop clears the
-// marker when it accepts.
+// refused for this state and stays silent while that answer is unchanged. A
+// different state reports again; so does the same state after the artifact has
+// been accepted once, because the loop clears the marker when it accepts.
 //
 // Marker-write failure fails the cycle rather than degrading to unbounded
 // reporting: that is what the wake marker two blocks down does with the same
 // error, and one error policy per loop is worth more here than a log line.
-func reportCheckRefusal(homeDir, artifactPath, message string) error {
+func reportCheckRefusal(homeDir, artifactPath, state, message string) error {
 	marker := checkRefusalMarkerPath(homeDir, artifactPath)
-	if data, err := os.ReadFile(marker); err == nil && string(data) == message {
+	if data, err := os.ReadFile(marker); err == nil && string(data) == state {
 		return nil
 	}
 	fmt.Fprintln(os.Stderr, message)
 	if err := os.MkdirAll(filepath.Dir(marker), 0755); err != nil {
 		return err
 	}
-	return os.WriteFile(marker, []byte(message), 0644)
+	return os.WriteFile(marker, []byte(state), 0644)
+}
+
+// refusalState reduces a refusal error to the fact that identifies it, with the
+// classification the retirement path wraps around it stripped off. The loop can
+// notice one refusal from two vantage points — the validation at the top of the
+// cycle, and RetireMergedPoll applying the same rule to the same path as its
+// first action — and prints a different message at each. Those are one state,
+// so the marker keys on the cause and the message stays free to say where the
+// loop was standing when it noticed.
+func refusalState(err error) string {
+	if multi, ok := err.(interface{ Unwrap() []error }); ok {
+		for _, e := range multi.Unwrap() {
+			if !errors.Is(e, domain.ErrCheckValidationRefused) {
+				return refusalState(e)
+			}
+		}
+	}
+	return err.Error()
 }
 
 func clearCheckRefusalMarker(homeDir, artifactPath string) {

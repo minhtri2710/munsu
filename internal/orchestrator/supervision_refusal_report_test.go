@@ -2,12 +2,15 @@ package orchestrator
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/minhtri2710/munsu/internal/domain"
 )
 
 // countRefusalLines runs n real cycles over the given home and returns how many
@@ -81,6 +84,67 @@ func TestRunCycle_StaleCheckReportsItsRefusalOncePerState(t *testing.T) {
 	count, output := countRefusalLines(t, home, 5, nil)
 	if count != 1 {
 		t.Fatalf("refusal lines across 5 cycles = %d, want 1\n%s", count, output)
+	}
+}
+
+func TestRunCycle_RetirementThenDiscoverySameRefusalReportsOnce(t *testing.T) {
+	home := staleCheckHome(t)
+	checkPath := filepath.Join(home, "state", "task-1.check")
+	metaPath := filepath.Join(home, "state", "task-1.meta")
+	metaFI, err := os.Stat(metaPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted := metaFI.ModTime().Add(time.Hour)
+	if err := os.Chtimes(checkPath, accepted, accepted); err != nil {
+		t.Fatal(err)
+	}
+
+	cause := errors.New("same validation refusal")
+	validationCalls := 0
+	validation := &testCheckValidationPort{validate: func(string) error {
+		validationCalls++
+		if validationCalls == 1 {
+			return nil
+		}
+		return cause
+	}}
+	retirement := &testRetirementPort{
+		retireErr: fmt.Errorf("%w: poll validation failed: %w", domain.ErrCheckValidationRefused, cause),
+	}
+
+	stderrR, stderrW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	outputDone := make(chan string, 1)
+	go func() {
+		output, _ := io.ReadAll(stderrR)
+		outputDone <- string(output)
+	}()
+	original := os.Stderr
+	os.Stderr = stderrW
+	for cycle := 0; cycle < 2; cycle++ {
+		resetRecovery()
+		if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, retirement, validation, testTaskStatePort{}); err != nil {
+			os.Stderr = original
+			_ = stderrW.Close()
+			t.Fatalf("cycle %d: %v", cycle+1, err)
+		}
+	}
+	os.Stderr = original
+	_ = stderrW.Close()
+	output := <-outputDone
+	_ = stderrR.Close()
+
+	count := 0
+	for _, line := range strings.Split(output, "\n") {
+		if strings.Contains(line, "poll check refused") || strings.Contains(line, "poll check invalid") {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("refusal lines across retirement and discovery = %d, want 1\n%s", count, output)
 	}
 }
 
