@@ -1,0 +1,2 @@
+::error::.github/testdata/uncovered-guards/malformed-end/profiles/default.out:2: invalid coverage block coordinates: github.com/minhtri2710/munsu/internal/fake/guard.go:20.25,not-a-point
+exit 1

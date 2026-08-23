@@ -148,8 +148,20 @@ merge() {
 	awk -F' ' -v prefix="$module/" -v root="$ROOT/" '
 		function short(p) { return index(p, root) == 1 ? substr(p, length(root) + 1) : p }
 		function position(spec, which,   parts) {
-			split(spec, parts, /,/)
+			if (split(spec, parts, /,/) != 2) return ""
 			return parts[which]
+		}
+		function pointLine(point,   parts) {
+			split(point, parts, /\./)
+			return parts[1] + 0
+		}
+		function pointColumn(point,   parts) {
+			split(point, parts, /\./)
+			return parts[2] + 0
+		}
+		function before(left, right) {
+			return pointLine(left) < pointLine(right) ||
+				(pointLine(left) == pointLine(right) && pointColumn(left) < pointColumn(right))
 		}
 		FNR == 1 && $0 !~ /^mode:/ { printf "::error::%s is not a coverage profile\n", short(FILENAME) > "/dev/stderr"; bad = 1; exit }
 		/^mode:/ { next }
@@ -159,9 +171,20 @@ merge() {
 			sub("^" prefix, "", spec)
 			key = position(spec, 1)
 			end = position(spec, 2)
+			if (key !~ /:[1-9][0-9]*\.[1-9][0-9]*$/ ||
+				end !~ /^[1-9][0-9]*\.[1-9][0-9]*$/) {
+				printf "::error::%s:%d: invalid coverage block coordinates: %s\n", short(FILENAME), FNR, $1 > "/dev/stderr"
+				bad = 1
+				next
+			}
 			match(key, /:[0-9]+\.[0-9]+$/)
 			file = substr(key, 1, RSTART - 1)
 			start = substr(key, RSTART + 1)
+			if (before(end, start)) {
+				printf "::error::%s:%d: inverted coverage block range: %s\n", short(FILENAME), FNR, $1 > "/dev/stderr"
+				bad = 1
+				next
+			}
 			block = file ":" start "-" end
 			if (!(block in max) || $3 + 0 > max[block]) max[block] = $3 + 0
 		}
@@ -193,18 +216,31 @@ classify() {
 	derived="$(sites)" || exit 1
 	[ -n "$derived" ] || die "no refusal site was derived from the tree -- the recognizer has stopped matching, so this lane proves nothing"
 	awk -F'\t' '
-		function point(line, col,   parts) {
-			return (line + 0) * 1000000 + (col + 0)
-		}
 		function startPoint(range,   parts, pointParts) {
 			split(range, parts, /-/)
 			split(parts[1], pointParts, /\./)
-			return point(pointParts[1], pointParts[2])
+			return sprintf("%d:%d", pointParts[1], pointParts[2])
 		}
 		function endPoint(range,   parts, pointParts) {
 			split(range, parts, /-/)
 			split(parts[2], pointParts, /\./)
-			return point(pointParts[1], pointParts[2])
+			return sprintf("%d:%d", pointParts[1], pointParts[2])
+		}
+		function pointLine(point,   parts) {
+			split(point, parts, /:/)
+			return parts[1] + 0
+		}
+		function pointColumn(point,   parts) {
+			split(point, parts, /:/)
+			return parts[2] + 0
+		}
+		function before(left, right) {
+			return pointLine(left) < pointLine(right) ||
+				(pointLine(left) == pointLine(right) && pointColumn(left) < pointColumn(right))
+		}
+		function after(left, right) { return before(right, left) }
+		function inside(point, lower, upper) {
+			return !before(point, lower) && !after(point, upper)
 		}
 		NR == FNR {
 			file = $1
@@ -217,20 +253,27 @@ classify() {
 			bodyStart = startPoint($5)
 			bodyEnd = endPoint($5)
 			file = $1
-			best = -1
+			best = ""
 			matches = 0
+			incompatible = 0
 			n = split(blocks[file], lines, /\n/)
 			for (i = 1; i <= n; i++) {
 				if (lines[i] == "") continue
 				split(lines[i], fields, /\t/)
-				start = fields[1]
-				sub(/^[^:]+:/, "", start)
-				if (startPoint(start) < bodyStart || startPoint(start) > bodyEnd) continue
-				if (best < 0 || startPoint(start) < best) {
-					best = startPoint(start)
+				blockRange = fields[1]
+				sub(/^[^:]+:/, "", blockRange)
+				blockStart = startPoint(blockRange)
+				blockEnd = endPoint(blockRange)
+				if (!inside(blockStart, bodyStart, bodyEnd)) continue
+				if (!inside(blockEnd, bodyStart, bodyEnd) || before(blockEnd, blockStart)) {
+					incompatible = 1
+					continue
+				}
+				if (best == "" || before(blockStart, best)) {
+					best = blockStart
 					matches = 1
 					bestLine = lines[i]
-				} else if (startPoint(start) == best) {
+				} else if (blockStart == best) {
 					matches++
 				}
 			}
@@ -238,7 +281,8 @@ classify() {
 			# baseline has no line numbers by design, so this is the only thing
 			# that can tell an author which `if` to go and write a test for.
 			id = $1 "\t" $2 "\t" $3 "\t" $4 "\t" $5
-			if (matches == 1) {
+			if (incompatible) print "anomaly\t" id
+			else if (matches == 1) {
 				split(bestLine, fields, /\t/)
 				print (fields[2] + 0 > 0 ? "covered" : "uncovered") "\t" id
 			} else if (!(file in compiled)) print "unmeasured\t" id
@@ -469,6 +513,9 @@ generate() {
 #   anomaly                accept a site whose refusal body range matches no counter
 #   no-reason              delete the fifth-column requirement
 #   bad-nth                delete the numeric check on nth
+#   malformed-end          accept a profile block with a malformed end coordinate
+#   inverted-end            accept a profile block whose end precedes its start
+#   incompatible-end        accept a profile block whose end exceeds the refusal body
 #   short-row              delete the NF < 4 check
 #   duplicate-row          delete the `key in seen` check
 #   toolchain-block-go126  match a Go 1.26-style block start at the opening brace
