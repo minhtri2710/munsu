@@ -855,17 +855,17 @@ func TestSessionStartNudgeRetryBeforeSuccess(t *testing.T) {
 		t.Errorf("first nudge should print instruction, got: %s", stdout1)
 	}
 
-	// Captain nudge: still no lock (simulates session-start not yet run,
+	// Second nudge: still no lock (simulates session-start not yet run,
 	// e.g. underlying command failed or was cancelled)
 	// Should also produce output - retry is allowed before success
 	stdout2, _ := captureBoth(func() {
 		err := runSessionStartNudge(cmd, Ctx{Home: tmpDir})
 		if err != nil {
-			t.Errorf("captain nudge returned error: %v", err)
+			t.Errorf("second nudge returned error: %v", err)
 		}
 	})
 	if !strings.Contains(stdout2, "session-start") {
-		t.Errorf("captain nudge should also print instruction before lock acquired, got: %s", stdout2)
+		t.Errorf("second nudge should also print instruction before lock acquired, got: %s", stdout2)
 	}
 
 	// Verify both calls produce the same nudge (retry is identical to first attempt)
@@ -907,11 +907,11 @@ func TestSessionStartNudgeIdempotentAfterLock(t *testing.T) {
 		t.Errorf("expected silent output when lock held, got: %s", stdout1)
 	}
 
-	// Captain call: still silent (lock still held)
+	// Second call: still silent (lock still held)
 	stdout2, _ := captureBoth(func() {
 		err := runSessionStartNudge(cmd, Ctx{Home: tmpDir})
 		if err != nil {
-			t.Errorf("captain nudge with lock returned error: %v", err)
+			t.Errorf("second nudge with lock returned error: %v", err)
 		}
 	})
 	if strings.TrimSpace(stdout2) != "" {
