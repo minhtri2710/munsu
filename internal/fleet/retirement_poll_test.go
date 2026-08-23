@@ -1179,6 +1179,36 @@ func assertRecoveryArtifactsPreserved(t *testing.T, home, taskID, checkPath, pub
 	}
 }
 
+func TestRecoverPendingRetirement_AcceptsLegacyIdentityAliases(t *testing.T) {
+	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+	defer cleanup()
+	meta, err := mhome.ReadMeta(home, taskID)
+	if err != nil {
+		t.Fatalf("ReadMeta: %v", err)
+	}
+	meta["pr"] = meta["pr_url"]
+	delete(meta, "pr_url")
+	meta["pr_head"] = meta["pr_head_sha"]
+	delete(meta, "pr_head_sha")
+	if err := mhome.WriteMeta(home, taskID, meta); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+	rec := recoveryRecordForTest(t, home, taskID, checkPath)
+	if err := WriteRetirementRecord(home, rec); err != nil {
+		t.Fatalf("WriteRetirementRecord: %v", err)
+	}
+	resolved, err := RecoverPendingRetirement(home, taskID, retirementPollAuth(t, home, taskID))
+	if err != nil || !resolved {
+		t.Fatalf("expected recovery with legacy identity aliases, got resolved=%v err=%v", resolved, err)
+	}
+	if _, err := os.Stat(checkPath); !os.IsNotExist(err) {
+		t.Fatalf("poll should be removed, stat error = %v", err)
+	}
+	if got := readRetirementRecordOrNil(t, home, taskID); got != nil {
+		t.Fatal("retirement record should be removed")
+	}
+}
+
 func TestRecoverPendingRetirement_IncompleteMetadataPreservesArtifacts(t *testing.T) {
 	fields := []string{"pr_provider", "pr_url", "pr_head_sha"}
 	for _, field := range fields {
@@ -1192,6 +1222,12 @@ func TestRecoverPendingRetirement_IncompleteMetadataPreservesArtifacts(t *testin
 				t.Fatalf("ReadMeta: %v", err)
 			}
 			meta[field] = ""
+			if field == "pr_url" {
+				meta["pr"] = ""
+			}
+			if field == "pr_head_sha" {
+				meta["pr_head"] = ""
+			}
 			if err := mhome.WriteMeta(home, taskID, meta); err != nil {
 				t.Fatalf("write incomplete metadata: %v", err)
 			}
@@ -1558,6 +1594,33 @@ func TestRetireMergedPoll_PostPublicationRevalidationRefusalIsClassified(t *test
 	}
 	if info, statErr := os.Stat(checkPath); statErr != nil || !info.IsDir() {
 		t.Fatalf("replacement directory should remain: info=%v err=%v", info, statErr)
+	}
+}
+
+func TestRetireMergedPoll_AcceptsLegacyIdentityAliases(t *testing.T) {
+	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+	defer cleanup()
+	meta, err := mhome.ReadMeta(home, taskID)
+	if err != nil {
+		t.Fatalf("ReadMeta: %v", err)
+	}
+	meta["pr"] = meta["pr_url"]
+	delete(meta, "pr_url")
+	meta["pr_head"] = meta["pr_head_sha"]
+	delete(meta, "pr_head_sha")
+	if err := mhome.WriteMeta(home, taskID, meta); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+	restore := installMockMergeStatus(t, true, "0000111122223333444455556666777788889999", "aaaabbbbccccddddeeeeffff0000111122223333")
+	defer restore()
+	if err := RetireMergedPoll(home, taskID, checkPath, retirementPollAuth(t, home, taskID)); err != nil {
+		t.Fatalf("RetireMergedPoll with legacy identity aliases: %v", err)
+	}
+	if _, err := os.Stat(checkPath); !os.IsNotExist(err) {
+		t.Fatalf("poll should be removed, stat error = %v", err)
+	}
+	if rec := readRetirementRecordOrNil(t, home, taskID); rec != nil {
+		t.Fatal("retirement record should be removed")
 	}
 }
 
