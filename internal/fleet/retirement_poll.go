@@ -34,21 +34,6 @@ func quarantinePollPath(homeDir, taskID string) (string, error) {
 	return filepath.Join(retirementDirPath(homeDir), fmt.Sprintf(".poll-%s-%s.quarantine", hex.EncodeToString(digest[:]), hex.EncodeToString(suffix[:]))), nil
 }
 
-func quarantinePoll(homeDir, taskID, checkPath string) (string, error) {
-	return quarantinePollWith(homeDir, taskID, checkPath, home.RenameDurable)
-}
-
-func quarantinePollWith(homeDir, taskID, checkPath string, renameFn func(string, string) error) (string, error) {
-	path, err := quarantinePollPath(homeDir, taskID)
-	if err != nil {
-		return "", err
-	}
-	if err := quarantinePollAt(checkPath, path, renameFn); err != nil {
-		return "", err
-	}
-	return path, nil
-}
-
 func quarantinePollAt(checkPath, quarantinePath string, renameFn func(string, string) error) error {
 	if err := renameFn(checkPath, quarantinePath); err != nil {
 		return fmt.Errorf("quarantining poll artifact: %w", err)

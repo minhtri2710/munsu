@@ -729,6 +729,8 @@ func TestRetireMergedPoll_CrashAfterPollRemovalBeforeRecordRemoval(t *testing.T)
 		TaskID:          taskID,
 		PollPath:        taskID + ".check",
 		PollDigest:      digest,
+		QuarantinePath:  quarantinePathForTest(taskID),
+		Quarantined:     true,
 		Provider:        "github",
 		Owner:           "testowner",
 		Repo:            "testrepo",
@@ -747,7 +749,16 @@ func TestRetireMergedPoll_CrashAfterPollRemovalBeforeRecordRemoval(t *testing.T)
 		t.Fatalf("WriteRetirementRecord: %v", err)
 	}
 	durableAppendStatus(home, taskID, rec.PublicationLine)
-	os.Remove(checkPath)
+	quarantinePath := filepath.Join(retirementDirPath(home), rec.QuarantinePath)
+	if err := os.MkdirAll(filepath.Dir(quarantinePath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(checkPath, quarantinePath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(quarantinePath); err != nil {
+		t.Fatal(err)
+	}
 
 	// Use recovery (not RetireMergedPoll) to handle the already-removed poll case.
 	resolved, err := RecoverPendingRetirement(home, taskID, retirementPollAuth(t, home, taskID))
@@ -1091,6 +1102,7 @@ func TestRecoverPendingRetirement_PublicationExists(t *testing.T) {
 		TaskID:          taskID,
 		PollPath:        taskID + ".check",
 		PollDigest:      digest,
+		QuarantinePath:  quarantinePathForTest(taskID),
 		Provider:        "github",
 		Owner:           "testowner",
 		Repo:            "testrepo",
@@ -1165,6 +1177,7 @@ func TestRecoverPendingRetirement_RepeatedRecovery(t *testing.T) {
 		TaskID:          taskID,
 		PollPath:        taskID + ".check",
 		PollDigest:      digest,
+		QuarantinePath:  quarantinePathForTest(taskID),
 		Provider:        "github",
 		Owner:           "testowner",
 		Repo:            "testrepo",
@@ -1600,6 +1613,7 @@ func TestRecoverPendingRetirement_PollDigestMismatch(t *testing.T) {
 		TaskID:          taskID,
 		PollPath:        taskID + ".check",
 		PollDigest:      "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+		QuarantinePath:  quarantinePathForTest(taskID),
 		Provider:        "github",
 		Owner:           "testowner",
 		Repo:            "testrepo",
@@ -2139,6 +2153,7 @@ func TestRecoverAllPendingRetirements_Multiple(t *testing.T) {
 			TaskID:          id,
 			PollPath:        id + ".check",
 			PollDigest:      digest,
+			QuarantinePath:  quarantinePathForTest(id),
 			Provider:        "github",
 			Owner:           "o",
 			Repo:            "r",
@@ -2449,6 +2464,7 @@ func TestRecoverPendingRetirement_RequiresCanonicalCompletedOutcome(t *testing.T
 		TaskID:          taskID,
 		PollPath:        taskID + ".check",
 		PollDigest:      digest,
+		QuarantinePath:  quarantinePathForTest(taskID),
 		Provider:        "github",
 		Owner:           "testowner",
 		Repo:            "testrepo",
