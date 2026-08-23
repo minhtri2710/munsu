@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/config"
 )
 
 // The receiver derives the sender's rank from durable state rather than
@@ -41,6 +43,20 @@ func hostSoldier(t *testing.T, homeDir, taskID string) {
 	}
 }
 
+func configureParent(t *testing.T, captainHome, parentHome string) {
+	t.Helper()
+	if err := config.Set(captainHome, "parent-home", parentHome); err != nil {
+		t.Fatalf("config.Set parent-home: %v", err)
+	}
+}
+
+func hostCaptain(t *testing.T, generalHome, captainID, captainHome string) {
+	t.Helper()
+	if err := WriteMeta(generalHome, "captain:"+captainID, map[string]string{"kind": "captain", "home": captainHome}); err != nil {
+		t.Fatalf("WriteMeta captain: %v", err)
+	}
+}
+
 // deliver writes env into the receiving home's inbox and returns its ref.
 func deliver(t *testing.T, homeDir string, env *Envelope) NotificationRef {
 	t.Helper()
@@ -64,6 +80,7 @@ func TestSenderRankDerivesForEveryHopTheTopologiesProduce(t *testing.T) {
 				if err := WriteHomeIdentity(dir, senderRankCaptainID, RankCaptain); err != nil {
 					t.Fatalf("WriteHomeIdentity: %v", err)
 				}
+				configureParent(t, dir, namedHome(t, senderRankGeneralID))
 				r, err := NewReceiver(dir)
 				if err != nil {
 					t.Fatalf("NewReceiver: %v", err)
@@ -87,6 +104,7 @@ func TestSenderRankDerivesForEveryHopTheTopologiesProduce(t *testing.T) {
 				if err := WriteHomeIdentity(dir, senderRankCaptainID, RankCaptain); err != nil {
 					t.Fatalf("WriteHomeIdentity: %v", err)
 				}
+				configureParent(t, dir, namedHome(t, senderRankGeneralID))
 				r, err := NewReceiver(dir)
 				if err != nil {
 					t.Fatalf("NewReceiver: %v", err)
@@ -109,7 +127,11 @@ func TestSenderRankDerivesForEveryHopTheTopologiesProduce(t *testing.T) {
 			name: "captain to general",
 			build: func(t *testing.T) (*Receiver, string) {
 				dir := namedHome(t, senderRankGeneralID)
-				hostSoldier(t, dir, "captain:"+senderRankCaptainID)
+				captainHome := namedHome(t, senderRankCaptainID)
+				if err := WriteHomeIdentity(captainHome, senderRankCaptainID, RankCaptain); err != nil {
+					t.Fatalf("WriteHomeIdentity: %v", err)
+				}
+				hostCaptain(t, dir, senderRankCaptainID, captainHome)
 				r, err := NewReceiver(dir)
 				if err != nil {
 					t.Fatalf("NewReceiver: %v", err)
@@ -231,6 +253,172 @@ func TestSenderRankDerivesForEveryHopTheTopologiesProduce(t *testing.T) {
 	}
 }
 
+func TestSenderRankRefusesMissingOrInvalidHomeProvenance(t *testing.T) {
+	tests := []struct {
+		name  string
+		build func(t *testing.T) (*Receiver, *Envelope)
+		want  string
+	}{
+		{
+			name: "captain missing parent home",
+			build: func(t *testing.T) (*Receiver, *Envelope) {
+				dir := namedHome(t, senderRankCaptainID)
+				if err := WriteHomeIdentity(dir, senderRankCaptainID, RankCaptain); err != nil {
+					t.Fatal(err)
+				}
+				r, err := NewReceiver(dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return r, &Envelope{SenderIdentity: senderRankGeneralID, ReceiverID: senderRankCaptainID}
+			},
+			want: "parent home",
+		},
+		{
+			name: "general missing captain record",
+			build: func(t *testing.T) (*Receiver, *Envelope) {
+				dir := namedHome(t, senderRankGeneralID)
+				r, err := NewReceiver(dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return r, &Envelope{SenderIdentity: senderRankCaptainID, ReceiverID: senderRankGeneralID}
+			},
+			want: "captain sender provenance",
+		},
+		{
+			name: "general captain record with wrong kind",
+			build: func(t *testing.T) (*Receiver, *Envelope) {
+				dir := namedHome(t, senderRankGeneralID)
+				if err := WriteMeta(dir, "captain:"+senderRankCaptainID, map[string]string{"kind": "scout", "home": "/missing"}); err != nil {
+					t.Fatal(err)
+				}
+				r, err := NewReceiver(dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return r, &Envelope{SenderIdentity: senderRankCaptainID, ReceiverID: senderRankGeneralID}
+			},
+			want: "kind",
+		},
+		{
+			name: "general captain record without home",
+			build: func(t *testing.T) (*Receiver, *Envelope) {
+				dir := namedHome(t, senderRankGeneralID)
+				if err := WriteMeta(dir, "captain:"+senderRankCaptainID, map[string]string{"kind": "captain"}); err != nil {
+					t.Fatal(err)
+				}
+				r, err := NewReceiver(dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return r, &Envelope{SenderIdentity: senderRankCaptainID, ReceiverID: senderRankGeneralID}
+			},
+			want: "no home",
+		},
+		{
+			name: "general captain home identity mismatch",
+			build: func(t *testing.T) (*Receiver, *Envelope) {
+				dir := namedHome(t, senderRankGeneralID)
+				captainHome := namedHome(t, "other-captain")
+				if err := WriteHomeIdentity(captainHome, "other-captain", RankCaptain); err != nil {
+					t.Fatal(err)
+				}
+				hostCaptain(t, dir, senderRankCaptainID, captainHome)
+				r, err := NewReceiver(dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return r, &Envelope{SenderIdentity: senderRankCaptainID, ReceiverID: senderRankGeneralID}
+			},
+			want: "captain home provenance",
+		},
+		{
+			name: "captain parent home malformed",
+			build: func(t *testing.T) (*Receiver, *Envelope) {
+				dir := namedHome(t, senderRankCaptainID)
+				if err := WriteHomeIdentity(dir, senderRankCaptainID, RankCaptain); err != nil {
+					t.Fatal(err)
+				}
+				parent := t.TempDir()
+				if err := os.WriteFile(filepath.Join(parent, captainMarkerName), []byte("broken\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+				configureParent(t, dir, parent)
+				r, err := NewReceiver(dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return r, &Envelope{SenderIdentity: senderRankGeneralID, ReceiverID: senderRankCaptainID}
+			},
+			want: "parent home provenance",
+		},
+		{
+			name: "captain parent home wrong identity",
+			build: func(t *testing.T) (*Receiver, *Envelope) {
+				dir := namedHome(t, senderRankCaptainID)
+				if err := WriteHomeIdentity(dir, senderRankCaptainID, RankCaptain); err != nil {
+					t.Fatal(err)
+				}
+				configureParent(t, dir, namedHome(t, "other-general"))
+				r, err := NewReceiver(dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return r, &Envelope{SenderIdentity: senderRankGeneralID, ReceiverID: senderRankCaptainID}
+			},
+			want: "parent home provenance",
+		},
+		{
+			name: "general captain home malformed",
+			build: func(t *testing.T) (*Receiver, *Envelope) {
+				dir := namedHome(t, senderRankGeneralID)
+				captainHome := t.TempDir()
+				if err := os.WriteFile(filepath.Join(captainHome, captainMarkerName), []byte("broken\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+				hostCaptain(t, dir, senderRankCaptainID, captainHome)
+				r, err := NewReceiver(dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return r, &Envelope{SenderIdentity: senderRankCaptainID, ReceiverID: senderRankGeneralID}
+			},
+			want: "captain sender home provenance",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r, env := tc.build(t)
+			if _, err := r.deriveSenderRank(env); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("deriveSenderRank error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestSenderRankRefusesCaptainTaskAsSoldier(t *testing.T) {
+	dir := namedHome(t, senderRankGeneralID)
+	if err := WriteMeta(dir, "captain:"+senderRankCaptainID, map[string]string{"kind": "captain", "home": "/missing"}); err != nil {
+		t.Fatal(err)
+	}
+	r, err := NewReceiver(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := &Envelope{SenderIdentity: ReceiverIDForTask("captain:" + senderRankCaptainID), TaskID: "captain:" + senderRankCaptainID}
+	if rank, err := r.deriveSenderRank(env); err == nil || rank == RankSoldier {
+		t.Fatalf("deriveSenderRank = (%q, %v), want non-soldier refusal", rank, err)
+	}
+}
+
+func TestSenderRankRejectsUnsupportedReceiverRank(t *testing.T) {
+	r := &Receiver{rank: Rank("unknown"), store: NewStore(t.TempDir())}
+	if _, err := r.deriveSenderRank(&Envelope{SenderIdentity: "sender"}); err == nil || !strings.Contains(err.Error(), "unsupported receiver rank") {
+		t.Fatalf("deriveSenderRank error = %v, want unsupported-rank refusal", err)
+	}
+}
+
 func TestSenderRankRefusesWhatProvenanceContradicts(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -320,7 +508,7 @@ func TestSenderRankRefusesWhatProvenanceContradicts(t *testing.T) {
 					Payload: "claims soldier",
 				}
 			},
-			wantSub: "sender rank mismatch",
+			wantSub: "sender rank underivable",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

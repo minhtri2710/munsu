@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/minhtri2710/munsu/internal/config"
 )
 
 // captainMarkerName is the provenance marker file used by captain homes.
@@ -118,12 +120,15 @@ func ReceiverIDForTask(taskID string) string {
 // the task, just as ReadHomeIdentity establishes that a home is a captain
 // home. Neither check authenticates the caller.
 func NewSoldierReceiver(homeDir, taskID string) (*Receiver, error) {
-	metaPath, err := MetaFilePath(homeDir, taskID)
-	if err != nil {
+	if _, err := MetaFilePath(homeDir, taskID); err != nil {
 		return nil, fmt.Errorf("new soldier receiver: %w", err)
 	}
-	if _, statErr := os.Stat(metaPath); statErr != nil {
-		return nil, fmt.Errorf("new soldier receiver: home %s hosts no task %q: %w", homeDir, taskID, statErr)
+	meta, readErr := ReadMeta(homeDir, taskID)
+	if readErr != nil {
+		return nil, fmt.Errorf("new soldier receiver: home %s hosts no task %q (unreadable): %w", homeDir, taskID, readErr)
+	}
+	if meta["kind"] == "captain" {
+		return nil, fmt.Errorf("new soldier receiver: task %q is a captain task", taskID)
 	}
 	return &Receiver{
 		identity: ReceiverIDForTask(taskID),
@@ -199,45 +204,63 @@ func WriteHomeIdentity(homeDir, identity string, rank Rank) error {
 	return nil
 }
 
-// deriveSenderRank returns the rank the receiving home can establish for the
-// sender of env from durable state, independent of the rank env claims.
-//
-// The receiver does not read the sender's home, and in the general case
-// cannot: only a captain home carries a durable pointer to its General
-// (config/parent-home), a General home holds no home-level pointer back to a
-// captain, and a soldier has no home at all. What makes the rank derivable
-// anyway is the one-hop table. Every rank has exactly two legal in-edges, and
-// for every rank one of the two is the soldier edge. A soldier is always
-// hosted by the home the envelope is sitting in -- it is launched with
-// MUNSU_HOME set to its dispatcher's home, and both the dispatch queue and
-// the report uplink write through that same home -- so the soldier edge is
-// decidable here from the task record. Once it is excluded, the remaining
-// legal in-edge for the receiver's own durable rank is unique.
-//
-// A soldier receiver has no such remainder: both of its in-edges come from
-// homes, and the only home it can read is the one hosting it. If the sender
-// is not that home's owner, provenance cannot be established and the caller
-// refuses. No supported topology produces that refusal -- a soldier only ever
-// receives from the dispatcher whose home it runs in.
+// deriveSenderRank returns the sender rank established by durable provenance
+// reachable from the receiving role, independent of the envelope claim. A
+// soldier receiver reads its hosting home's owner. A captain receiver reads
+// its configured parent General. A General receiver reads the captain record
+// naming the sender and then that captain home's identity. General and captain
+// receivers first check for a hosted non-captain task because that is the
+// durable soldier edge; the remaining home edge uses its role-specific pointer.
 func (r *Receiver) deriveSenderRank(env *Envelope) (Rank, error) {
+	if r.rank == RankSoldier {
+		ownerID, ownerRank, err := ReadHomeIdentity(r.store.homeDir)
+		if err != nil {
+			return "", fmt.Errorf("reading soldier hosting home provenance: %w", err)
+		}
+		if env.SenderIdentity != ownerID {
+			return "", fmt.Errorf("sender %q is not the hosting home owner %q", env.SenderIdentity, ownerID)
+		}
+		return ownerRank, nil
+	}
 	if r.hostsSenderAsTask(env) {
 		return RankSoldier, nil
 	}
-	ownerID, ownerRank, err := ReadHomeIdentity(r.store.homeDir)
-	if err != nil {
-		return "", fmt.Errorf("reading receiving home provenance: %w", err)
-	}
-	if env.SenderIdentity == ownerID {
-		return ownerRank, nil
-	}
 	switch r.rank {
-	case RankGeneral:
-		return RankCaptain, nil
 	case RankCaptain:
+		parentHome, err := config.Get(r.store.homeDir, "parent-home")
+		if err != nil {
+			return "", fmt.Errorf("reading captain parent home: %w", err)
+		}
+		identity, rank, err := ReadHomeIdentity(parentHome)
+		if err != nil {
+			return "", fmt.Errorf("reading parent home provenance: %w", err)
+		}
+		if identity != env.SenderIdentity || rank != RankGeneral {
+			return "", fmt.Errorf("parent home provenance is (%q, %q), want (%q, %q)", identity, rank, env.SenderIdentity, RankGeneral)
+		}
 		return RankGeneral, nil
+	case RankGeneral:
+		meta, err := ReadMeta(r.store.homeDir, "captain:"+env.SenderIdentity)
+		if err != nil {
+			return "", fmt.Errorf("reading captain sender provenance: %w", err)
+		}
+		if meta["kind"] != "captain" {
+			return "", fmt.Errorf("captain sender provenance has kind %q", meta["kind"])
+		}
+		captainHome := meta["home"]
+		if captainHome == "" {
+			return "", fmt.Errorf("captain sender provenance has no home")
+		}
+		identity, rank, err := ReadHomeIdentity(captainHome)
+		if err != nil {
+			return "", fmt.Errorf("reading captain sender home provenance: %w", err)
+		}
+		if identity != env.SenderIdentity || rank != RankCaptain {
+			return "", fmt.Errorf("captain home provenance is (%q, %q), want (%q, %q)", identity, rank, env.SenderIdentity, RankCaptain)
+		}
+		return RankCaptain, nil
 	default:
-		return "", fmt.Errorf("sender %q is neither a task hosted by %s nor its owner %q",
-			env.SenderIdentity, r.store.homeDir, ownerID)
+		return "", fmt.Errorf("unsupported receiver rank %q", r.rank)
 	}
 }
 
@@ -249,12 +272,11 @@ func (r *Receiver) hostsSenderAsTask(env *Envelope) bool {
 	if env.TaskID == "" || env.SenderIdentity != ReceiverIDForTask(env.TaskID) {
 		return false
 	}
-	metaPath, err := MetaFilePath(r.store.homeDir, env.TaskID)
+	meta, err := ReadMeta(r.store.homeDir, env.TaskID)
 	if err != nil {
 		return false
 	}
-	_, statErr := os.Stat(metaPath)
-	return statErr == nil
+	return meta["kind"] != "captain"
 }
 
 // Receive validates and loads an envelope from the receiver's inbox for the

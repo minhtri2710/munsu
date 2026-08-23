@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/config"
 )
 
 // The refusal branches on the receiver side of the mailbox.
@@ -28,6 +30,13 @@ func newGuardReceiver(t *testing.T) (*Receiver, *Store, string) {
 	dir := t.TempDir()
 	if err := WriteHomeIdentity(dir, guardReceiverID, RankCaptain); err != nil {
 		t.Fatalf("WriteHomeIdentity: %v", err)
+	}
+	parent := filepath.Join(t.TempDir(), guardSenderID)
+	if err := os.MkdirAll(parent, 0755); err != nil {
+		t.Fatalf("MkdirAll parent: %v", err)
+	}
+	if err := config.Set(dir, "parent-home", parent); err != nil {
+		t.Fatalf("config.Set parent-home: %v", err)
 	}
 	r, err := NewReceiver(dir)
 	if err != nil {
@@ -335,6 +344,18 @@ func TestSoldierReceiverRejectsCollidingTaskID(t *testing.T) {
 	}
 	if store.IsAcked(env.SenderIdentity, env.MessageID) {
 		t.Fatal("colliding task envelope received an ack")
+	}
+}
+
+func TestNewSoldierReceiverRefusesCaptainTask(t *testing.T) {
+	dir := t.TempDir()
+	if err := WriteMeta(dir, "captain:captain-1", map[string]string{"kind": "captain", "home": filepath.Join(dir, "captain")}); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+	if _, err := NewSoldierReceiver(dir, "captain:captain-1"); err == nil {
+		t.Fatal("NewSoldierReceiver accepted a captain task")
+	} else if !strings.Contains(err.Error(), "captain task") {
+		t.Fatalf("error = %v, want captain-task refusal", err)
 	}
 }
 
