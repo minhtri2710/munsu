@@ -395,10 +395,13 @@ func (r *Receiver) Receive(ref NotificationRef) (*Envelope, error) {
 //  4. Envelope ReceiverID matches receiver identity
 //  5. Envelope ReceiverRank matches receiver rank
 //  6. Envelope SenderIdentity matches ref.SenderIdentity
-//  7. Envelope SenderRank matches the rank the receiving home derives for
-//     that sender (see deriveSenderRank)
-//  8. Payload hash verification
-//  9. Existing ack: same outcome "accepted" = idempotent, different = conflict (fail closed)
+//  7. Payload hash verification
+//  8. Existing ack: same outcome "accepted" = idempotent, different = conflict
+//     (fail closed); replaying a persisted decision does not require current
+//     sender provenance
+//  9. Envelope SenderRank matches the rank the receiving home derives for
+//     that sender (see deriveSenderRank); current provenance is required
+//     before writing a new ack
 //  10. Write "accepted" ack
 func (r *Receiver) Ack(ref NotificationRef) (*ProcessingAck, error) {
 	// 1. Validate ref.
@@ -447,24 +450,12 @@ func (r *Receiver) Ack(ref NotificationRef) (*ProcessingAck, error) {
 			env.SenderIdentity, ref.SenderIdentity)
 	}
 
-	// 7. Validate sender rank against provenance the receiving home can
-	// establish, so the one-hop transition table is enforced against a
-	// derived value rather than a self-reported one.
-	derived, err := r.deriveSenderRank(env)
-	if err != nil {
-		return nil, fmt.Errorf("ack sender rank underivable: %w", err)
-	}
-	if env.SenderRank != derived {
-		return nil, fmt.Errorf("ack sender rank mismatch: envelope claims %q, provenance derives %q",
-			env.SenderRank, derived)
-	}
-
-	// 8. Validate payload hash (detect tampering).
+	// 7. Validate payload hash (detect tampering).
 	if env.PayloadHash != PayloadHashHex(env.Payload) {
 		return nil, fmt.Errorf("ack tampered payload: hash mismatch")
 	}
 
-	// 9. Check for existing ack.
+	// 8. Check for existing ack before requiring current sender provenance.
 	existing, err := r.store.ReadAck(ref.SenderIdentity, ref.MessageID)
 	if err != nil {
 		return nil, fmt.Errorf("ack read existing ack: %w", err)
@@ -478,6 +469,18 @@ func (r *Receiver) Ack(ref NotificationRef) (*ProcessingAck, error) {
 		// Conflicting outcome: fail closed.
 		return nil, fmt.Errorf("ack conflicting: existing outcome %q != %q",
 			existing.Outcome, OutcomeAccepted)
+	}
+
+	// 9. Validate sender rank against provenance the receiving home can
+	// establish, so the one-hop transition table is enforced against a
+	// derived value rather than a self-reported one.
+	derived, err := r.deriveSenderRank(env)
+	if err != nil {
+		return nil, fmt.Errorf("ack sender rank underivable: %w", err)
+	}
+	if env.SenderRank != derived {
+		return nil, fmt.Errorf("ack sender rank mismatch: envelope claims %q, provenance derives %q",
+			env.SenderRank, derived)
 	}
 
 	// 10. Build and write "accepted" ack.

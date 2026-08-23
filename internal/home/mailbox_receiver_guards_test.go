@@ -189,6 +189,61 @@ func TestReceiveAndAckRefuseEnvelopesThatFailProvenance(t *testing.T) {
 // with the same outcome replays it; a different outcome on disk means somebody
 // else recorded a conflicting decision for this message, and that fails closed
 // rather than being overwritten.
+func TestAckRemainsIdempotentAfterSenderProvenanceTeardown(t *testing.T) {
+	generalHome := namedHome(t, senderRankGeneralID)
+	captainHome := namedHome(t, senderRankCaptainID)
+	if err := WriteHomeIdentity(captainHome, senderRankCaptainID, RankCaptain); err != nil {
+		t.Fatalf("WriteHomeIdentity: %v", err)
+	}
+	hostCaptain(t, generalHome, senderRankCaptainID, captainHome)
+	r, err := NewReceiver(generalHome)
+	if err != nil {
+		t.Fatalf("NewReceiver: %v", err)
+	}
+
+	env := &Envelope{
+		SenderRank: RankCaptain, SenderIdentity: senderRankCaptainID,
+		ReceiverRank: RankGeneral, ReceiverID: senderRankGeneralID,
+		TaskID: "captain:" + senderRankCaptainID, Key: "phase",
+		Payload: "captain report",
+	}
+	store := NewStore(generalHome)
+	ref := deliver(t, generalHome, env)
+	first, err := r.Ack(ref)
+	if err != nil {
+		t.Fatalf("first Ack: %v", err)
+	}
+
+	metaPath, err := MetaFilePath(generalHome, "captain:"+senderRankCaptainID)
+	if err != nil {
+		t.Fatalf("MetaFilePath: %v", err)
+	}
+	if err := os.Remove(metaPath); err != nil {
+		t.Fatalf("remove captain provenance: %v", err)
+	}
+	second, err := r.Ack(ref)
+	if err != nil {
+		t.Fatalf("idempotent Ack after provenance teardown: %v", err)
+	}
+	if second.ProcessedAt != first.ProcessedAt {
+		t.Fatalf("replayed ack timestamp = %d, want original %d", second.ProcessedAt, first.ProcessedAt)
+	}
+
+	fresh := *env
+	fresh.MessageID = "fresh-message"
+	fresh.Payload = "fresh captain report"
+	fresh.PayloadHash = PayloadHashHex(fresh.Payload)
+	freshRef := deliver(t, generalHome, &fresh)
+	if _, err := r.Ack(freshRef); err == nil {
+		t.Fatal("fresh Ack succeeded after sender provenance teardown")
+	} else if !strings.Contains(err.Error(), "sender rank underivable") {
+		t.Fatalf("fresh Ack error = %v, want underivable provenance", err)
+	}
+	if store.IsAcked(fresh.SenderIdentity, fresh.MessageID) {
+		t.Fatal("fresh envelope received an ack after provenance teardown")
+	}
+}
+
 func TestAckRefusesToOverwriteAConflictingOutcome(t *testing.T) {
 	r, store, _ := newGuardReceiver(t)
 	env, ref := deliverGuardEnvelope(t, store)
