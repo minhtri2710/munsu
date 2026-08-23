@@ -50,10 +50,12 @@ func cleanReceiverID(raw string) string {
 // Soldier agent when it accepts the command into context via inbox ack.
 // The pending record is retained until reconciled against a matching ack.
 //
-// senderHome is the captain home directory (same as soldierHome; the shared
-// home where state/.inbox and state/.outbox live).
+// senderHome is the General or Captain home that owns the soldier and stores
+// the shared state/.inbox and state/.outbox records.
 // soldierTaskID is the task identifier (MUNSU_TASK_ID).
-// senderIdentity is the captain's identity (from ReadHomeIdentity or basename).
+// senderIdentity identifies the dispatching home in the envelope and outbox.
+// The envelope SenderRank is read from senderHome's durable identity rather
+// than inferred from senderIdentity.
 // line is the command text to send.
 func SendToSoldier(senderHome, soldierTaskID, senderIdentity, line string, endpoint SoldierEndpointCapabilities) *SendToSoldierResult {
 	result := &SendToSoldierResult{}
