@@ -711,20 +711,24 @@ func wakeFingerprint(homeDir string, reason *WakeReason) string {
 	return reason.Kind + "\n" + message + "\n" + status
 }
 
-func markerPath(homeDir, prefix, id string) string {
-	safeID := strings.NewReplacer("/", "_", ":", "_", ".", "_").Replace(id)
-	return filepath.Join(homeDir, "state", prefix+safeID)
-}
-
 func wakeMarkerPath(homeDir, id string) string {
-	return markerPath(homeDir, ".watcher-seen-", id)
+	safeID := strings.NewReplacer("/", "_", ":", "_", ".", "_").Replace(id)
+	return filepath.Join(homeDir, "state", ".watcher-seen-"+safeID)
 }
 
 // checkRefusalMarkerPath records the refusal the loop last reported for one
 // check artifact, so the report follows the artifact's state rather than the
-// poll cadence. Same mechanism as the wake marker four lines below its call
-// sites, for the same reason: the loop revisits every artifact every cycle, and
-// an artifact that is refused stays refused until somebody acts on it.
+// poll cadence: the loop revisits every artifact every cycle, and an artifact
+// that is refused stays refused until somebody acts on it.
+//
+// Keyed by the hash of the artifact path, not by its label. The label is not a
+// unique identity — a per-task check named "global:foo.check" and the global
+// check "checks/foo.check" both label as global:foo — and sanitizing one for
+// use as a filename collides further ("a.b" and "a_b" land on the same name).
+// Two artifacts sharing a marker would overwrite each other's refusal every
+// cycle, which is the volume this whole mechanism exists to bound. The path is
+// unique by construction. The refusal text stays in the file, so an operator
+// grepping state/ still sees which artifact and why.
 func checkRefusalMarkerPath(homeDir, artifactPath string) string {
 	suffix := fmt.Sprintf("%x", sha256.Sum256([]byte(artifactPath)))
 	return filepath.Join(homeDir, "state", ".watcher-refused-"+suffix)
