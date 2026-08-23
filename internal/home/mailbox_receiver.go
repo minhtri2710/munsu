@@ -199,6 +199,64 @@ func WriteHomeIdentity(homeDir, identity string, rank Rank) error {
 	return nil
 }
 
+// deriveSenderRank returns the rank the receiving home can establish for the
+// sender of env from durable state, independent of the rank env claims.
+//
+// The receiver does not read the sender's home, and in the general case
+// cannot: only a captain home carries a durable pointer to its General
+// (config/parent-home), a General home holds no home-level pointer back to a
+// captain, and a soldier has no home at all. What makes the rank derivable
+// anyway is the one-hop table. Every rank has exactly two legal in-edges, and
+// for every rank one of the two is the soldier edge. A soldier is always
+// hosted by the home the envelope is sitting in -- it is launched with
+// MUNSU_HOME set to its dispatcher's home, and both the dispatch queue and
+// the report uplink write through that same home -- so the soldier edge is
+// decidable here from the task record. Once it is excluded, the remaining
+// legal in-edge for the receiver's own durable rank is unique.
+//
+// A soldier receiver has no such remainder: both of its in-edges come from
+// homes, and the only home it can read is the one hosting it. If the sender
+// is not that home's owner, provenance cannot be established and the caller
+// refuses. No supported topology produces that refusal -- a soldier only ever
+// receives from the dispatcher whose home it runs in.
+func (r *Receiver) deriveSenderRank(env *Envelope) (Rank, error) {
+	if r.hostsSenderAsTask(env) {
+		return RankSoldier, nil
+	}
+	ownerID, ownerRank, err := ReadHomeIdentity(r.store.homeDir)
+	if err != nil {
+		return "", fmt.Errorf("reading receiving home provenance: %w", err)
+	}
+	if env.SenderIdentity == ownerID {
+		return ownerRank, nil
+	}
+	switch r.rank {
+	case RankGeneral:
+		return RankCaptain, nil
+	case RankCaptain:
+		return RankGeneral, nil
+	default:
+		return "", fmt.Errorf("sender %q is neither a task hosted by %s nor its owner %q",
+			env.SenderIdentity, r.store.homeDir, ownerID)
+	}
+}
+
+// hostsSenderAsTask reports whether the receiving home durably hosts the
+// envelope's task and the sender identifies itself as exactly that task.
+// Both halves are needed: the task record alone says such a soldier exists,
+// and the identity match says this envelope came from it.
+func (r *Receiver) hostsSenderAsTask(env *Envelope) bool {
+	if env.TaskID == "" || env.SenderIdentity != ReceiverIDForTask(env.TaskID) {
+		return false
+	}
+	metaPath, err := MetaFilePath(r.store.homeDir, env.TaskID)
+	if err != nil {
+		return false
+	}
+	_, statErr := os.Stat(metaPath)
+	return statErr == nil
+}
+
 // Receive validates and loads an envelope from the receiver's inbox for the
 // given NotificationRef. It validates all provenance fields (receiver identity,
 // receiver rank, sender identity, payload hash) and returns the envelope.
@@ -214,8 +272,10 @@ func WriteHomeIdentity(homeDir, identity string, rank Rank) error {
 //  4. Envelope ReceiverID matches receiver identity (home provenance)
 //  5. Envelope ReceiverRank matches receiver rank (home provenance)
 //  6. Envelope SenderIdentity matches ref.SenderIdentity
-//  7. Payload hash matches envelope payload (redundant after ValidateEnvelope)
-//  8. No ack is written — that is a separate Ack() call
+//  7. Envelope SenderRank matches the rank the receiving home derives for
+//     that sender (see deriveSenderRank)
+//  8. Payload hash matches envelope payload (redundant after ValidateEnvelope)
+//  9. No ack is written — that is a separate Ack() call
 func (r *Receiver) Receive(ref NotificationRef) (*Envelope, error) {
 	// 1. Validate ref.
 	if err := ref.Validate(); err != nil {
@@ -263,13 +323,25 @@ func (r *Receiver) Receive(ref NotificationRef) (*Envelope, error) {
 			env.SenderIdentity, ref.SenderIdentity)
 	}
 
-	// 7. Validate payload hash (detect tampering).
+	// 7. Validate sender rank against provenance the receiving home can
+	// establish, so the one-hop transition table is enforced against a
+	// derived value rather than a self-reported one.
+	derived, err := r.deriveSenderRank(env)
+	if err != nil {
+		return nil, fmt.Errorf("receive sender rank underivable: %w", err)
+	}
+	if env.SenderRank != derived {
+		return nil, fmt.Errorf("receive sender rank mismatch: envelope claims %q, provenance derives %q",
+			env.SenderRank, derived)
+	}
+
+	// 8. Validate payload hash (detect tampering).
 	// This is redundant after ValidateEnvelope but kept as defense-in-depth.
 	if env.PayloadHash != PayloadHashHex(env.Payload) {
 		return nil, fmt.Errorf("receive tampered payload: hash mismatch")
 	}
 
-	// 8. No ack is written — call Ack() separately after accepting into context.
+	// 9. No ack is written — call Ack() separately after accepting into context.
 	return env, nil
 }
 
@@ -294,9 +366,11 @@ func (r *Receiver) Receive(ref NotificationRef) (*Envelope, error) {
 //  4. Envelope ReceiverID matches receiver identity
 //  5. Envelope ReceiverRank matches receiver rank
 //  6. Envelope SenderIdentity matches ref.SenderIdentity
-//  7. Payload hash verification
-//  8. Existing ack: same outcome "accepted" = idempotent, different = conflict (fail closed)
-//  9. Write "accepted" ack
+//  7. Envelope SenderRank matches the rank the receiving home derives for
+//     that sender (see deriveSenderRank)
+//  8. Payload hash verification
+//  9. Existing ack: same outcome "accepted" = idempotent, different = conflict (fail closed)
+//  10. Write "accepted" ack
 func (r *Receiver) Ack(ref NotificationRef) (*ProcessingAck, error) {
 	// 1. Validate ref.
 	if err := ref.Validate(); err != nil {
@@ -344,12 +418,24 @@ func (r *Receiver) Ack(ref NotificationRef) (*ProcessingAck, error) {
 			env.SenderIdentity, ref.SenderIdentity)
 	}
 
-	// 7. Validate payload hash (detect tampering).
+	// 7. Validate sender rank against provenance the receiving home can
+	// establish, so the one-hop transition table is enforced against a
+	// derived value rather than a self-reported one.
+	derived, err := r.deriveSenderRank(env)
+	if err != nil {
+		return nil, fmt.Errorf("ack sender rank underivable: %w", err)
+	}
+	if env.SenderRank != derived {
+		return nil, fmt.Errorf("ack sender rank mismatch: envelope claims %q, provenance derives %q",
+			env.SenderRank, derived)
+	}
+
+	// 8. Validate payload hash (detect tampering).
 	if env.PayloadHash != PayloadHashHex(env.Payload) {
 		return nil, fmt.Errorf("ack tampered payload: hash mismatch")
 	}
 
-	// 8. Check for existing ack.
+	// 9. Check for existing ack.
 	existing, err := r.store.ReadAck(ref.SenderIdentity, ref.MessageID)
 	if err != nil {
 		return nil, fmt.Errorf("ack read existing ack: %w", err)
@@ -365,7 +451,7 @@ func (r *Receiver) Ack(ref NotificationRef) (*ProcessingAck, error) {
 			existing.Outcome, OutcomeAccepted)
 	}
 
-	// 9. Build and write "accepted" ack.
+	// 10. Build and write "accepted" ack.
 	ack := &ProcessingAck{
 		MessageID:      env.MessageID,
 		SenderRank:     env.SenderRank,

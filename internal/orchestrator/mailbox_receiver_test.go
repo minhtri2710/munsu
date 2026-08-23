@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 // --- Test helpers ---
@@ -877,12 +879,15 @@ func TestReceiver_Ack_DifferentRankTransitions(t *testing.T) {
 		name         string
 		senderRank   Rank
 		senderID     string
+		taskID       string
 		receiverRank Rank
 		receiverID   string
 	}{
-		{"general-to-captain", RankGeneral, "general-1", RankCaptain, "captain-1"},
-		{"captain-to-general", RankCaptain, "captain-1", RankGeneral, "general-main"},
-		{"soldier-to-captain", RankSoldier, "soldier-1", RankCaptain, "captain-1"},
+		{"general-to-captain", RankGeneral, "general-1", "", RankCaptain, "captain-1"},
+		{"captain-to-general", RankCaptain, "captain-1", "", RankGeneral, "general-main"},
+		// A soldier identifies itself as the task its receiving home hosts;
+		// that record is what the receiver derives the soldier rank from.
+		{"soldier-to-captain", RankSoldier, mhome.ReceiverIDForTask("task:s1"), "task:s1", RankCaptain, "captain-1"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -894,12 +899,18 @@ func TestReceiver_Ack_DifferentRankTransitions(t *testing.T) {
 				os.MkdirAll(home, 0755)
 			}
 			store := NewStore(home)
+			if tt.taskID != "" {
+				if err := mhome.WriteMeta(home, tt.taskID, map[string]string{"window": "w"}); err != nil {
+					t.Fatalf("WriteMeta: %v", err)
+				}
+			}
 
 			env := setupEnvelope(t, store, &Envelope{
 				SenderRank:     tt.senderRank,
 				SenderIdentity: tt.senderID,
 				ReceiverRank:   tt.receiverRank,
 				ReceiverID:     tt.receiverID,
+				TaskID:         tt.taskID,
 				Payload:        "work",
 			})
 

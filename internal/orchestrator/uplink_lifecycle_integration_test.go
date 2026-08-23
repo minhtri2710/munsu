@@ -32,7 +32,21 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	mhome "github.com/minhtri2710/munsu/internal/home"
 )
+
+// hostSoldierTask records the durable task the receiving home holds for a
+// soldier it dispatched, and returns the identity that soldier sends under.
+// The record is what lets the receiver derive the soldier rank rather than
+// take the envelope's word for it.
+func hostSoldierTask(t *testing.T, homeDir, taskID string) string {
+	t.Helper()
+	if err := mhome.WriteMeta(homeDir, taskID, map[string]string{"window": "w"}); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+	return mhome.ReceiverIDForTask(taskID)
+}
 
 // ackedNotifier returns a Notify callback that acknowledges delivery into the
 // parent pane without touching any ack state (notification ack != ProcessingAck).
@@ -56,7 +70,7 @@ func directReport(t *testing.T, captainHome, taskID string) *ReportResult {
 	t.Helper()
 	res, err := Report(ReportRequest{
 		SenderHome:     captainHome,
-		SenderIdentity: "soldier-one",
+		SenderIdentity: hostSoldierTask(t, captainHome, taskID),
 		SenderRank:     RankSoldier,
 		ReceiverHome:   captainHome,
 		ReceiverID:     "captain-one",
@@ -85,10 +99,10 @@ func TestUplinkLifecycle_CrashReplay_ReportReplayAckRetire(t *testing.T) {
 	res := directReport(t, captainHome, taskID)
 
 	// Durable: envelope + pending + open evidence all exist before any ack.
-	if env, _ := NewStore(captainHome).ReadEnvelope("soldier-one", res.MessageID); env == nil {
+	if env, _ := NewStore(captainHome).ReadEnvelope(mhome.ReceiverIDForTask(taskID), res.MessageID); env == nil {
 		t.Fatal("envelope must be durable before ack")
 	}
-	if pending, _ := NewStore(captainHome).ReadPending("soldier-one", res.MessageID); pending == nil {
+	if pending, _ := NewStore(captainHome).ReadPending(mhome.ReceiverIDForTask(taskID), res.MessageID); pending == nil {
 		t.Fatal("pending must be durable before ack")
 	}
 	if !hasEvidence(openEvidencePath(captainHome, taskID, "default")) {
@@ -105,7 +119,7 @@ func TestUplinkLifecycle_CrashReplay_ReportReplayAckRetire(t *testing.T) {
 		SenderHome:     captainHome,
 		ReceiverHome:   captainHome,
 		ReceiverRank:   RankCaptain,
-		SenderIdentity: "soldier-one",
+		SenderIdentity: mhome.ReceiverIDForTask(taskID),
 		ForceNotify:    true,
 		Notify:         ackedNotifier(),
 	})
@@ -121,7 +135,7 @@ func TestUplinkLifecycle_CrashReplay_ReportReplayAckRetire(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewReceiver: %v", err)
 	}
-	ref := NotificationRef{MessageID: res.MessageID, SenderIdentity: "soldier-one"}
+	ref := NotificationRef{MessageID: res.MessageID, SenderIdentity: mhome.ReceiverIDForTask(taskID)}
 	env, err := recv.Receive(ref)
 	if err != nil || env == nil {
 		t.Fatalf("Receive: %v", err)
@@ -139,7 +153,7 @@ func TestUplinkLifecycle_CrashReplay_ReportReplayAckRetire(t *testing.T) {
 		SenderHome:     captainHome,
 		ReceiverHome:   captainHome,
 		ReceiverRank:   RankCaptain,
-		SenderIdentity: "soldier-one",
+		SenderIdentity: mhome.ReceiverIDForTask(taskID),
 		ForceNotify:    true,
 		Notify:         failOnNotify(t),
 	})
@@ -149,7 +163,7 @@ func TestUplinkLifecycle_CrashReplay_ReportReplayAckRetire(t *testing.T) {
 	if retired.Accepted != 1 || retired.Notified != 0 {
 		t.Fatalf("retire = %+v, want accepted=1 notified=0", retired)
 	}
-	if pending, _ := NewStore(captainHome).ReadPending("soldier-one", res.MessageID); pending != nil {
+	if pending, _ := NewStore(captainHome).ReadPending(mhome.ReceiverIDForTask(taskID), res.MessageID); pending != nil {
 		t.Fatal("pending must be removed after exact ack")
 	}
 	if hasEvidence(openEvidencePath(captainHome, taskID, "default")) {
@@ -179,13 +193,13 @@ func TestUplinkLifecycle_DuplicateDeliverySuppressedAfterRetire(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ref := NotificationRef{MessageID: res.MessageID, SenderIdentity: "soldier-one"}
+	ref := NotificationRef{MessageID: res.MessageID, SenderIdentity: mhome.ReceiverIDForTask(taskID)}
 	if _, err := recv.Ack(ref); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Recover(RecoverRequest{
 		SenderHome: captainHome, ReceiverHome: captainHome,
-		ReceiverRank: RankCaptain, SenderIdentity: "soldier-one",
+		ReceiverRank: RankCaptain, SenderIdentity: mhome.ReceiverIDForTask(taskID),
 		ForceNotify: true, Notify: failOnNotify(t),
 	}); err != nil {
 		t.Fatal(err)
@@ -194,7 +208,7 @@ func TestUplinkLifecycle_DuplicateDeliverySuppressedAfterRetire(t *testing.T) {
 	// Replay after retire must not re-deliver or re-notify anything.
 	again, err := Recover(RecoverRequest{
 		SenderHome: captainHome, ReceiverHome: captainHome,
-		ReceiverRank: RankCaptain, SenderIdentity: "soldier-one",
+		ReceiverRank: RankCaptain, SenderIdentity: mhome.ReceiverIDForTask(taskID),
 		ForceNotify: true, Notify: failOnNotify(t),
 	})
 	if err != nil {
@@ -324,7 +338,7 @@ func TestUplinkLifecycle_NotificationThrottleSuppressesDuplicateDelivery(t *test
 	taskID := "task:throttle"
 	_, err := Report(ReportRequest{
 		SenderHome:     captainHome,
-		SenderIdentity: "soldier-one",
+		SenderIdentity: hostSoldierTask(t, captainHome, taskID),
 		SenderRank:     RankSoldier,
 		ReceiverHome:   captainHome,
 		ReceiverID:     "captain-one",
@@ -350,7 +364,7 @@ func TestUplinkLifecycle_NotificationThrottleSuppressesDuplicateDelivery(t *test
 		SenderHome:     captainHome,
 		ReceiverHome:   captainHome,
 		ReceiverRank:   RankCaptain,
-		SenderIdentity: "soldier-one",
+		SenderIdentity: mhome.ReceiverIDForTask(taskID),
 		Now:            time.Now(),
 		Notify:         notify,
 	})
@@ -366,7 +380,7 @@ func TestUplinkLifecycle_NotificationThrottleSuppressesDuplicateDelivery(t *test
 		SenderHome:     captainHome,
 		ReceiverHome:   captainHome,
 		ReceiverRank:   RankCaptain,
-		SenderIdentity: "soldier-one",
+		SenderIdentity: mhome.ReceiverIDForTask(taskID),
 		ForceNotify:    true,
 		Now:            time.Now(),
 		Notify:         notify,
