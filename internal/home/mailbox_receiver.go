@@ -113,7 +113,10 @@ func ReceiverIDForTask(taskID string) string {
 //
 // The durable statement that this home hosts this soldier is the task meta
 // file the home keeps for it. Without that record there is no soldier to be,
-// and construction fails closed.
+// and construction fails closed. The trust boundary for this check is the
+// home directory, not the task: it establishes that this home durably hosts
+// the task, just as ReadHomeIdentity establishes that a home is a captain
+// home. Neither check authenticates the caller.
 func NewSoldierReceiver(homeDir, taskID string) (*Receiver, error) {
 	metaPath, err := MetaFilePath(homeDir, taskID)
 	if err != nil {
