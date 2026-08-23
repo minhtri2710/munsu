@@ -28,24 +28,33 @@ type SpawnProjectConfig struct {
 	Soldier               SpawnSoldierConfig
 }
 
-func ResolveSpawnProjectConfig(homeDir string, args Args, rank string) (SpawnProjectConfig, error) {
+// ResolveSpawnProjectConfig loads the only config surface authorized by the
+// resolved dispatch policy (issue #546 Slice 6, ADR-0008 §6): CaptainMediated
+// reads the Captain's assigned published snapshot; GeneralDirect resolves the
+// requested project from the typed fleet and project documents. The opposite
+// read — or any read without a resolved policy — fails closed with an empty
+// config.
+func ResolveSpawnProjectConfig(homeDir string, args Args, policy DispatchPolicy) (SpawnProjectConfig, error) {
 	var (
 		snapshot fleetconfig.ResolvedSnapshot
 		err      error
 	)
-	if rank == "captain" {
+	switch policy {
+	case DispatchPolicyCaptainMediated:
 		snapshot, err = fleetconfig.LoadPublishedSnapshot(homeDir)
-	} else {
+	case DispatchPolicyGeneralDirect:
 		// Resolve the immutable project snapshot without substituting CLI
 		// identities. Explicit flags are assertions about the resolved snapshot,
 		// not a second configuration authority.
 		snapshot, err = ResolveProjectSnapshot(homeDir, args.ProjectName, fleetconfig.BoundaryOverrides{})
+	default:
+		return SpawnProjectConfig{}, fmt.Errorf("unresolved dispatch policy %q", policy)
 	}
 	if err != nil {
 		return SpawnProjectConfig{}, classifySnapshotError(args.ProjectName, err)
 	}
 	resolved := snapshot.Config()
-	if rank == "captain" && args.ProjectName != "" && resolved.Project != args.ProjectName {
+	if policy == DispatchPolicyCaptainMediated && args.ProjectName != "" && resolved.Project != args.ProjectName {
 		return SpawnProjectConfig{}, fleetconfig.Remediate(
 			fleetconfig.RemediateIncompatibleSnapshot,
 			"publish a snapshot for the Captain's owning project",
@@ -141,12 +150,9 @@ func TypedConfigAvailable(homeDir string) bool {
 }
 
 // ResolveGeneralHomeBackend resolves the session backend identity for a home
-// without task context from the typed snapshot surface, mirroring the
-// ResolveSpawnProjectConfig rank precedence:
-//   - captain context: the published config snapshot (the composed
-//     config.ResolveProject output; its Backend is required non-empty by
-//     strict snapshot validation).
-//   - general context: the fleet base document's typed Backend.
+// without task context from its typed snapshot surface. A published snapshot
+// is authoritative when present; otherwise the typed fleet base document is
+// used.
 //
 // There is no auto-detection and no fallback identity: an empty identity is a
 // typed failure, never a device/PATH/env choice.

@@ -1044,7 +1044,7 @@ func TestEventLane_EventToReprobe(t *testing.T) {
 	sigCh := make(chan os.Signal)
 	done := make(chan *WakeReason, 1)
 	go func() {
-		reason, _ := run(homeDir, neverTicker, sigCh, probe, raceCycleSender{}, raceTestHooks{}, NoopRetirementPort{}, raceTaskStatePort{}, port)
+		reason, _ := run(homeDir, neverTicker, sigCh, probe, raceCycleSender{}, raceTestHooks{}, NoopRetirementPort{}, acceptingCheckValidationPort{}, raceTaskStatePort{}, port)
 		done <- reason
 	}()
 
@@ -1192,7 +1192,7 @@ func TestEventLane_RaceWatcherAndRecovery(t *testing.T) {
 					return
 				default:
 				}
-				if _, err := RunCycleWithProbeAndSender(homeDir, probe, sender, hooks, NoopRetirementPort{}, states); err != nil {
+				if _, err := RunCycleWithProbeAndSender(homeDir, probe, sender, hooks, NoopRetirementPort{}, acceptingCheckValidationPort{}, states); err != nil {
 					return
 				}
 			}

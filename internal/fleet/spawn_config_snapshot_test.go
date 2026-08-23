@@ -12,11 +12,48 @@ import (
 	homepkg "github.com/minhtri2710/munsu/internal/home"
 )
 
+func TestResolveSpawnProjectConfigRejectsUnresolvedPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		policy DispatchPolicy
+	}{
+		{name: "zero policy", policy: DispatchPolicy("")},
+		{name: "invalid policy", policy: DispatchPolicy("unknown")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ResolveSpawnProjectConfig(t.TempDir(), Args{ProjectName: "alpha"}, tc.policy)
+			if err == nil || !strings.Contains(err.Error(), "unresolved dispatch policy") {
+				t.Fatalf("error = %v, want unresolved-policy refusal", err)
+			}
+			if !reflect.DeepEqual(got, SpawnProjectConfig{}) {
+				t.Fatalf("config = %+v, want empty config", got)
+			}
+		})
+	}
+}
+
+func TestRunnerResolveModeRejectsUnresolvedPolicy(t *testing.T) {
+	home := t.TempDir()
+	writeSpawnSnapshotDocuments(t, home)
+
+	r := NewRunner(Args{ID: "alpha-task", ProjectName: "alpha", HomeDir: home})
+	r.homeDir = home
+	if err := r.resolveMode(); err == nil || !strings.Contains(err.Error(), "unresolved dispatch policy") {
+		t.Fatalf("resolveMode error = %v, want unresolved-policy refusal", err)
+	}
+	if !reflect.DeepEqual(r.projectConfig, SpawnProjectConfig{}) {
+		t.Fatalf("project config = %+v, want empty config", r.projectConfig)
+	}
+	if r.projectConfigLoaded {
+		t.Fatal("project config marked loaded after unresolved-policy refusal")
+	}
+}
+
 func TestResolveSpawnProjectConfigExplicitIdentityAssertions(t *testing.T) {
 	home := t.TempDir()
 	writeSpawnSnapshotDocuments(t, home)
 
-	resolved, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, "general")
+	resolved, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, DispatchPolicyGeneralDirect)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +66,7 @@ func TestResolveSpawnProjectConfigExplicitIdentityAssertions(t *testing.T) {
 		{name: "matching mode", args: Args{ProjectName: "alpha", Mode: resolved.Soldier.Mode}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := ResolveSpawnProjectConfig(home, tc.args, "general")
+			got, err := ResolveSpawnProjectConfig(home, tc.args, DispatchPolicyGeneralDirect)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -52,7 +89,7 @@ func TestResolveSpawnProjectConfigRejectsConflictingIdentityAssertions(t *testin
 		{name: "mode", args: Args{ProjectName: "alpha", Mode: "local-only"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := ResolveSpawnProjectConfig(home, tc.args, "general"); err == nil || !strings.Contains(err.Error(), "conflicts with resolved project snapshot") {
+			if _, err := ResolveSpawnProjectConfig(home, tc.args, DispatchPolicyGeneralDirect); err == nil || !strings.Contains(err.Error(), "conflicts with resolved project snapshot") {
 				t.Fatalf("error = %v, want conflicting identity failure", err)
 			}
 		})
@@ -63,14 +100,14 @@ func TestResolveSpawnProjectConfigCrossRankIdentical(t *testing.T) {
 	home := t.TempDir()
 	writeSpawnSnapshotDocuments(t, home)
 
-	general, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, "general")
+	general, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, DispatchPolicyGeneralDirect)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := fleetconfig.StorePublishedSnapshot(home, general.Frozen.Config()); err != nil {
 		t.Fatal(err)
 	}
-	captain, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, "captain")
+	captain, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, DispatchPolicyCaptainMediated)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +127,7 @@ func TestResolveSpawnProjectConfigMultiProjectProfilesAndOverridesIsolated(t *te
 	home := t.TempDir()
 	writeSpawnSnapshotDocuments(t, home)
 
-	alphaDocs, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha", TaskDescription: "write docs"}, "general")
+	alphaDocs, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha", TaskDescription: "write docs"}, DispatchPolicyGeneralDirect)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,11 +136,11 @@ func TestResolveSpawnProjectConfigMultiProjectProfilesAndOverridesIsolated(t *te
 		TaskDescription: "polish ui",
 		ModelFlag:       "spawn-model",
 		EffortFlag:      "spawn-effort",
-	}, "general")
+	}, DispatchPolicyGeneralDirect)
 	if err != nil {
 		t.Fatal(err)
 	}
-	beta, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "beta", TaskDescription: "polish ui"}, "general")
+	beta, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "beta", TaskDescription: "polish ui"}, DispatchPolicyGeneralDirect)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +166,7 @@ func TestResolveSpawnProjectConfigFreezesSnapshotAndDigest(t *testing.T) {
 	home := t.TempDir()
 	writeSpawnSnapshotDocuments(t, home)
 
-	resolved, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, "general")
+	resolved, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, DispatchPolicyGeneralDirect)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +186,7 @@ func TestResolveSpawnProjectConfigFreezesSnapshotAndDigest(t *testing.T) {
 	if !reflect.DeepEqual(before, after) {
 		t.Fatalf("frozen snapshot changed after disk mutation\nbefore=%+v\nafter=%+v", before, after)
 	}
-	fresh, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, "general")
+	fresh, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, DispatchPolicyGeneralDirect)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +198,7 @@ func TestResolveSpawnProjectConfigFreezesSnapshotAndDigest(t *testing.T) {
 func TestRunnerWriteTaskMetaRecordsConfigSnapshotDigest(t *testing.T) {
 	home := t.TempDir()
 	writeSpawnSnapshotDocuments(t, home)
-	resolved, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, "general")
+	resolved, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, DispatchPolicyGeneralDirect)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +249,7 @@ func TestCaptainSpawnConsumesPublishedSnapshotWithoutLocalResolution(t *testing.
 		t.Fatalf("expected captain project overlay document to be absent, got %v", err)
 	}
 
-	got, err := ResolveSpawnProjectConfig(captain, Args{ProjectName: "alpha"}, "captain")
+	got, err := ResolveSpawnProjectConfig(captain, Args{ProjectName: "alpha"}, DispatchPolicyCaptainMediated)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +261,7 @@ func TestCaptainSpawnConsumesPublishedSnapshotWithoutLocalResolution(t *testing.
 func TestCaptainSpawnFailsClosedWithoutPublishedSnapshot(t *testing.T) {
 	home := t.TempDir()
 	writeSpawnSnapshotDocuments(t, home)
-	_, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, "captain")
+	_, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, DispatchPolicyCaptainMediated)
 	if err == nil {
 		t.Fatal("captain resolution should require a published snapshot")
 	}
@@ -294,7 +331,7 @@ func TestResolveSpawnProjectConfigFailsClosedWithTypedRemediation(t *testing.T) 
 				tc.mutate(home)
 			}
 
-			_, err := ResolveSpawnProjectConfig(home, Args{ProjectName: tc.project}, "general")
+			_, err := ResolveSpawnProjectConfig(home, Args{ProjectName: tc.project}, DispatchPolicyGeneralDirect)
 			if err == nil {
 				t.Fatal("ResolveSpawnProjectConfig() error = nil, want fail-closed remediation")
 			}
@@ -358,7 +395,7 @@ func TestResolveSpawnProjectConfigConsumesRequireNoMistakes(t *testing.T) {
 			{Name: "alpha", Path: filepath.Join(home, "projects", "alpha")},
 		}, nil)
 
-		_, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, "general")
+		_, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, DispatchPolicyGeneralDirect)
 		if err == nil {
 			t.Fatal("expected error when require-no-mistakes is set but binary is absent")
 		}
@@ -405,7 +442,7 @@ exit 0
 			{Name: "alpha", Path: filepath.Join(home, "projects", "alpha")},
 		}, nil)
 
-		resolved, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, "general")
+		resolved, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, DispatchPolicyGeneralDirect)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -426,7 +463,7 @@ exit 0
 			{Name: "alpha", Path: filepath.Join(home, "projects", "alpha")},
 		}, nil)
 
-		resolved, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, "general")
+		resolved, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, DispatchPolicyGeneralDirect)
 		if err != nil {
 			t.Fatal(err)
 		}

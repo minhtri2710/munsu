@@ -208,13 +208,10 @@ internal/fleet/registry_registry.go	validateProjectRegistry	1	p.ID == "" || p.Na
 internal/fleet/registry_registry.go	verifyPrecondition	1	!ok	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/retirement_poll.go	ListPendingRetirements	1	rec.TaskID == "" || retirementRecordPath(homeDir, rec.TaskID) != filepath.Join(dir, entry.Name())	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/retirement_poll.go	RecoverPendingRetirement	1	!hasPublication	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/retirement_poll.go	RecoverPendingRetirement	1	currentURL != "" && currentURL != rec.URL	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/retirement_poll.go	RecoverPendingRetirement	1	rec.SchemaVersion != PollRetirementSchema	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/retirement_poll.go	requireCanonicalCompletedOutcome	1	auth == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/retirement_poll.go	requireCanonicalCompletedOutcome	1	out.Status != taskauthority.DeliveryOutcomeCompleted	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/retirement_poll.go	requireRetirementIdentity	1	ident == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/retirement_poll.go	RetireMergedPoll	1	currentDigest != pollDigest	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/retirement_poll.go	RetireMergedPoll	1	status.HeadSHA == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/retirement_poll.go	ValidateRetirementPath	1	!strings.HasPrefix(absPath, absDir+string(filepath.Separator)) && absPath != absDir	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/retirement_task.go	currentOwnershipConflict	1	current.AcquiredEndpoint != nil && (current.AcquiredEndpoint.LeaseID == ev.Acquired.LeaseID || current.AcquiredEndpoint.Handle == ev.Acquired.Handle)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/retirement_task.go	currentOwnershipConflict	1	current.Endpoint != nil && (current.Endpoint.LeaseID == ev.Acquired.LeaseID || current.Endpoint.Handle == ev.Acquired.Handle)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
