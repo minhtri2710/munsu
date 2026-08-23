@@ -290,6 +290,41 @@ func TestFlushPendingSoldierCommands_FlushesNotificationRef(t *testing.T) {
 	}
 }
 
+func TestFlushPendingSoldierCommands_IgnoresCollidingTaskID(t *testing.T) {
+	captainHome, _, senderIdentity := setupSoldierTestHomes(t, "idle")
+	soldierTaskID := "task:a"
+	collidingTaskID := "task_a"
+	if err := mhome.WriteMeta(captainHome, soldierTaskID, map[string]string{"window": "test-window"}); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+	env := &home.Envelope{
+		SenderRank:     home.RankCaptain,
+		SenderIdentity: senderIdentity,
+		ReceiverRank:   home.RankSoldier,
+		ReceiverID:     home.ReceiverIDForTask(collidingTaskID),
+		TaskID:         collidingTaskID,
+		Payload:        "wrong task",
+	}
+	store := home.NewStore(captainHome)
+	if err := store.WriteEnvelope(env); err != nil {
+		t.Fatalf("WriteEnvelope: %v", err)
+	}
+	if err := store.WritePending(env); err != nil {
+		t.Fatalf("WritePending: %v", err)
+	}
+	be := &fakeAgentEndpoint{acknowledged: true}
+	result := FlushPendingSoldierCommands(captainHome, soldierTaskID, senderIdentity, be)
+	if result.Err != nil {
+		t.Fatalf("FlushPendingSoldierCommands: %v", result.Err)
+	}
+	if result.MessageID != "" || result.Sent || result.Queued {
+		t.Fatalf("flush matched colliding task: result=%+v", result)
+	}
+	if be.promptCalls != 0 {
+		t.Fatalf("promptCalls=%d, want 0", be.promptCalls)
+	}
+}
+
 // TestFlushPendingSoldierCommands_NoPending_IsNoop verifies that flush with
 // no pending is a no-op.
 func TestFlushPendingSoldierCommands_NoPending_IsNoop(t *testing.T) {
@@ -1015,6 +1050,41 @@ func TestConsumeAllReadyEvents_NoPendingIsNoop(t *testing.T) {
 	events, _ := ScanReadyEvents(captainHome, soldierTaskID)
 	if len(events) != 0 {
 		t.Errorf("expected 0 ready events (consumed even without pending), got %d", len(events))
+	}
+}
+
+func TestConsumeAllReadyEvents_IgnoresCollidingTaskID(t *testing.T) {
+	captainHome, _, senderIdentity := setupSoldierTestHomes(t, "idle")
+	soldierTaskID := "task:a"
+	collidingTaskID := "task_a"
+	if err := mhome.WriteMeta(captainHome, soldierTaskID, map[string]string{"window": "test-window"}); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+	env := &home.Envelope{
+		SenderRank:     home.RankCaptain,
+		SenderIdentity: senderIdentity,
+		ReceiverRank:   home.RankSoldier,
+		ReceiverID:     home.ReceiverIDForTask(collidingTaskID),
+		TaskID:         collidingTaskID,
+		Payload:        "wrong task",
+	}
+	store := home.NewStore(captainHome)
+	if err := store.WriteEnvelope(env); err != nil {
+		t.Fatalf("WriteEnvelope: %v", err)
+	}
+	if err := store.WritePending(env); err != nil {
+		t.Fatalf("WritePending: %v", err)
+	}
+	if _, err := EmitReadyEvent(captainHome, soldierTaskID, "collision", ""); err != nil {
+		t.Fatalf("EmitReadyEvent: %v", err)
+	}
+	be := &fakeAgentEndpoint{acknowledged: true}
+	flushed, err := ConsumeAllReadyEvents(captainHome, soldierTaskID, senderIdentity, "", be)
+	if err != nil {
+		t.Fatalf("ConsumeAllReadyEvents: %v", err)
+	}
+	if flushed != 0 || be.promptCalls != 0 {
+		t.Fatalf("consumed colliding task: flushed=%d promptCalls=%d", flushed, be.promptCalls)
 	}
 }
 

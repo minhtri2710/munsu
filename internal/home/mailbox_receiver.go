@@ -76,6 +76,7 @@ func (ref NotificationRef) Validate() error {
 type Receiver struct {
 	identity string
 	rank     Rank
+	taskID   string
 	store    *Store
 }
 
@@ -124,6 +125,7 @@ func NewSoldierReceiver(homeDir, taskID string) (*Receiver, error) {
 	return &Receiver{
 		identity: ReceiverIDForTask(taskID),
 		rank:     RankSoldier,
+		taskID:   taskID,
 		store:    NewStore(homeDir),
 	}, nil
 }
@@ -247,6 +249,11 @@ func (r *Receiver) Receive(ref NotificationRef) (*Envelope, error) {
 			env.ReceiverRank, r.rank)
 	}
 
+	if r.taskID != "" && env.TaskID != r.taskID {
+		return nil, fmt.Errorf("receive task ID mismatch: envelope has %q, receiver is %q",
+			env.TaskID, r.taskID)
+	}
+
 	// 6. Validate sender identity matches ref.
 	if env.SenderIdentity != ref.SenderIdentity {
 		return nil, fmt.Errorf("receive sender identity mismatch: envelope has %q, ref has %q",
@@ -321,6 +328,11 @@ func (r *Receiver) Ack(ref NotificationRef) (*ProcessingAck, error) {
 	if env.ReceiverRank != r.rank {
 		return nil, fmt.Errorf("ack receiver rank mismatch: envelope has %q, receiver is %q",
 			env.ReceiverRank, r.rank)
+	}
+
+	if r.taskID != "" && env.TaskID != r.taskID {
+		return nil, fmt.Errorf("ack task ID mismatch: envelope has %q, receiver is %q",
+			env.TaskID, r.taskID)
 	}
 
 	// 6. Validate sender identity matches ref.

@@ -299,6 +299,45 @@ func TestWriteHomeIdentityRefusesUnusableIdentities(t *testing.T) {
 // A soldier's receiver identity is the task its hosting home holds a durable
 // record for. The home cannot vouch for a task it never hosted, so a claim it
 // has no record of must not resolve to a receiver.
+func TestSoldierReceiverRejectsCollidingTaskID(t *testing.T) {
+	dir := t.TempDir()
+	const receiverTask = "task:a"
+	const collidingTask = "task_a"
+	if err := WriteMeta(dir, receiverTask, map[string]string{"window": "w"}); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+	r, err := NewSoldierReceiver(dir, receiverTask)
+	if err != nil {
+		t.Fatalf("NewSoldierReceiver: %v", err)
+	}
+	env := &Envelope{
+		SenderRank:     RankCaptain,
+		SenderIdentity: "captain-main",
+		ReceiverRank:   RankSoldier,
+		ReceiverID:     ReceiverIDForTask(collidingTask),
+		TaskID:         collidingTask,
+		Payload:        "wrong task",
+	}
+	store := NewStore(dir)
+	if err := store.WriteEnvelope(env); err != nil {
+		t.Fatalf("WriteEnvelope: %v", err)
+	}
+	ref := NotificationRef{MessageID: env.MessageID, SenderIdentity: env.SenderIdentity}
+	if _, err := r.Receive(ref); err == nil {
+		t.Fatal("soldier receiver accepted an envelope for a colliding task ID")
+	} else if !strings.Contains(err.Error(), "task ID mismatch") {
+		t.Fatalf("error = %v, want task-ID mismatch", err)
+	}
+	if _, err := r.Ack(ref); err == nil {
+		t.Fatal("soldier receiver acknowledged an envelope for a colliding task ID")
+	} else if !strings.Contains(err.Error(), "task ID mismatch") {
+		t.Fatalf("ack error = %v, want task-ID mismatch", err)
+	}
+	if store.IsAcked(env.SenderIdentity, env.MessageID) {
+		t.Fatal("colliding task envelope received an ack")
+	}
+}
+
 func TestNewSoldierReceiverRefusesTasksTheHomeDoesNotHost(t *testing.T) {
 	dir := t.TempDir()
 
