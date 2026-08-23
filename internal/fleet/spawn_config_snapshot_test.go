@@ -32,6 +32,23 @@ func TestResolveSpawnProjectConfigRejectsUnresolvedPolicy(t *testing.T) {
 	}
 }
 
+func TestRunnerResolveModeRejectsUnresolvedPolicy(t *testing.T) {
+	home := t.TempDir()
+	writeSpawnSnapshotDocuments(t, home)
+
+	r := NewRunner(Args{ID: "alpha-task", ProjectName: "alpha", HomeDir: home})
+	r.homeDir = home
+	if err := r.resolveMode(); err == nil || !strings.Contains(err.Error(), "unresolved dispatch policy") {
+		t.Fatalf("resolveMode error = %v, want unresolved-policy refusal", err)
+	}
+	if !reflect.DeepEqual(r.projectConfig, SpawnProjectConfig{}) {
+		t.Fatalf("project config = %+v, want empty config", r.projectConfig)
+	}
+	if r.projectConfigLoaded {
+		t.Fatal("project config marked loaded after unresolved-policy refusal")
+	}
+}
+
 func TestResolveSpawnProjectConfigExplicitIdentityAssertions(t *testing.T) {
 	home := t.TempDir()
 	writeSpawnSnapshotDocuments(t, home)

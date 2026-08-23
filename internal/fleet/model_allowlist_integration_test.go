@@ -406,6 +406,9 @@ func TestSpawn_AllowlistResolutionCachedForPreflightAndLaunch(t *testing.T) {
 
 	r := NewRunner(Args{ID: "beta-task", ProjectName: "beta", HomeDir: homeDir, TaskDescription: "beta work"})
 	r.homeDir = homeDir
+	if err := r.resolveDispatchPolicy(); err != nil {
+		t.Fatalf("resolveDispatchPolicy: %v", err)
+	}
 	if err := r.resolveMode(); err != nil {
 		t.Fatalf("resolveMode: %v", err)
 	}
@@ -530,6 +533,9 @@ func TestSpawn_DispatchSelectionResolvedOnce(t *testing.T) {
 
 	r := NewRunner(Args{ID: "quota-task", ProjectName: "quota-proj", HomeDir: homeDir, TaskDescription: "quota work"})
 	r.homeDir = homeDir
+	if err := r.resolveDispatchPolicy(); err != nil {
+		t.Fatalf("resolveDispatchPolicy: %v", err)
+	}
 	if err := r.resolveMode(); err != nil {
 		t.Fatalf("resolveMode: %v", err)
 	}

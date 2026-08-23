@@ -62,12 +62,6 @@ type Runner struct {
 	projectConfig       SpawnProjectConfig
 	projectConfigLoaded bool
 
-	// dispatchSel caches the single dispatch-selection resolution so the quota
-	// selector is invoked at most once per spawn and the selection used for
-	// allowlist validation is the same one used for preflight and launch.
-	dispatchSel      *harness.DispatchSelection
-	dispatchResolved bool
-
 	// soldier launch prompt state
 	prompt     string
 	promptEnv  *LaunchEnvelope
@@ -614,10 +608,10 @@ func (r *Runner) validateHarnessFlag() error {
 }
 
 // Phase 3a: resolveEffectiveIdentity resolves the exact harness/model/effort
-// once, caching the dispatch selection, and stores the identity on the Runner
-// so allowlist validation, preflight, and launch all use the same selection.
+// from the resolved project config and stores the identity on the Runner so
+// allowlist validation, preflight, and launch all use the same selection.
 // Runs before any worktree/pane/meta/status side effects; it only
-// reads project config, dispatch config, and harness metadata.
+// reads project config and harness metadata.
 func (r *Runner) resolveEffectiveIdentity() error {
 	if r.harness == "" {
 		h := r.args.HarnessFlag
@@ -638,8 +632,8 @@ func (r *Runner) resolveEffectiveIdentity() error {
 }
 
 // resolveModelAndEffort resolves the effective model/effort with the same
-// precedence as the launch: adapter template defaults, then project config or
-// the cached dispatch selection, then explicit CLI flags.
+// precedence as the launch: adapter template defaults, then project config,
+// then explicit CLI flags.
 func (r *Runner) resolveModelAndEffort() {
 	adapter, ok := harness.GetAdapter(r.harness)
 	if !ok {
