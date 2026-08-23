@@ -1020,6 +1020,7 @@ func TestRecoverPendingRetirement_DeliveryIdentityMismatchPreservesArtifacts(t *
 		{name: "owner", mutate: func(rec *PollRetirementRecord) { rec.Owner = "other-owner" }},
 		{name: "repo", mutate: func(rec *PollRetirementRecord) { rec.Repo = "other-repo" }},
 		{name: "number", mutate: func(rec *PollRetirementRecord) { rec.Number = 43 }},
+		{name: "url", mutate: func(rec *PollRetirementRecord) { rec.URL = "https://github.com/other-owner/other-repo/pull/42" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
@@ -1482,6 +1483,33 @@ func TestRetireMergedPoll_DigestAcquisitionRefusalBeforePublication(t *testing.T
 	}
 	if rec := readRetirementRecordOrNil(t, home, taskID); rec != nil {
 		t.Fatal("digest refusal must not create a retirement record")
+	}
+}
+
+func TestRetireMergedPoll_EmptyProviderHeadSHARefusesBeforePublication(t *testing.T) {
+	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+	defer cleanup()
+	restore := installMockMergeStatus(t, true, "", "aaaabbbbccccddddeeeeffff0000111122223333")
+	defer restore()
+
+	err := retireMergedPoll(home, taskID, checkPath, retirementPollAuth(t, home, taskID), pollContentDigest)
+	if err == nil || !strings.Contains(err.Error(), "empty head SHA") {
+		t.Fatalf("error = %v, want empty-head-SHA refusal", err)
+	}
+	if _, statErr := os.Stat(checkPath); statErr != nil {
+		t.Fatalf("check was not preserved: %v", statErr)
+	}
+	if rec := readRetirementRecordOrNil(t, home, taskID); rec != nil {
+		t.Fatal("empty head SHA refusal must not create a retirement record")
+	}
+	lines, readErr := mhome.ReadStatus(home, taskID)
+	if readErr != nil {
+		t.Fatalf("ReadStatus: %v", readErr)
+	}
+	for _, line := range lines {
+		if line == publicationLine(taskID, "https://github.com/testowner/testrepo/pull/42", "aaaabbbbccccddddeeeeffff0000111122223333") {
+			t.Fatal("empty head SHA refusal must not publish a merge")
+		}
 	}
 }
 
