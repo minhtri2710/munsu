@@ -90,35 +90,30 @@ func DiscoverAllChecks(homeDir string) ([]CheckPlugin, error) {
 	return append(perTask, global...), nil
 }
 
-// AcceptOrRefuseStale reports whether a check artifact is usable as it stands:
-// nil when it is, otherwise an error naming what is stale. It only reads. No
-// refusal removes or rewrites the artifact, here or in the caller, because a
-// .check file is written by an operator or an agent and never by munsu —
-// deleting one destroys the only copy of something a human may need to look at,
-// and no refusal below is worth that. A check is stale when:
-//   - The file is zero-length
-//   - The file content does not start with a shebang
-//   - The file is older than its companion .meta file's last modification
-//     (meta has been updated since the check was written, meaning the
-//     task state has advanced but the check was not regenerated)
+// AcceptOrRefuseStale reports whether a check artifact the caller has already
+// validated is still current: nil when it is, otherwise an error naming what is
+// stale. A check is stale when it is older than its companion .meta file's last
+// modification — meta has been updated since the check was written, so the task
+// state has advanced but the check was not regenerated. Global checks have no
+// companion and are never stale.
+//
+// It only reads. No refusal removes or rewrites the artifact, here or in the
+// caller, because a .check file is written by an operator or an agent and never
+// by munsu — deleting one destroys the only copy of something a human may need
+// to look at, and no refusal here is worth that.
+//
+// PRECONDITION: path has passed CheckValidationPort.ValidateCheck. That rule —
+// fleet.ValidateCheckWithLstat in production — owns the question of whether the
+// artifact is a runnable check script at all: symlink, non-regular,
+// non-executable, zero-length, no shebang. This function does not re-ask any
+// part of it. The watcher's check loop, its only caller, validates and skips
+// before it gets here, so a partial second copy of that rule would be
+// unreachable, and a partial copy is worse than none: it reads as a safety net
+// while leaving most of the shapes through.
 func AcceptOrRefuseStale(path string) error {
 	fi, err := os.Stat(path)
 	if err != nil {
 		return fmt.Errorf("cannot stat check: %w", err)
-	}
-	if fi.Size() == 0 {
-		return fmt.Errorf("refused zero-length check: %s", path)
-	}
-	// Read first bytes for shebang
-	data := make([]byte, 2)
-	f, err := os.Open(path)
-	if err != nil {
-		return fmt.Errorf("opening check: %w", err)
-	}
-	defer f.Close()
-	n, err := f.Read(data)
-	if err != nil || n < 2 || data[0] != '#' || data[1] != '!' {
-		return fmt.Errorf("refused stale check (no valid shebang): %s", path)
 	}
 	// Check against companion .meta modification time if applicable
 	// (per-task checks only — global checks have no companion)
