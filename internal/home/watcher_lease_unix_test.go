@@ -30,7 +30,7 @@ func TestProcessAliveAnswersWithoutPATH(t *testing.T) {
 			t.Errorf("PID %d is not running but reads as alive", pid)
 		}
 	} else {
-		t.Log("every candidate PID is in use on this machine, so the dead-PID control did not run")
+		t.Fatal("the kernel supplied no unused PID, so the dead-PID control could not run")
 	}
 }
 
@@ -40,9 +40,8 @@ func TestProcessAliveAnswersWithoutPATH(t *testing.T) {
 // candidates rather than scanning, because there is no PID a test is entitled
 // to assume is free.
 //
-// It reports the miss instead of calling t.Skip: a skip would cancel the whole
-// enclosing test, including the assertions that need no dead PID at all, and a
-// silent green is exactly what this file exists to prevent.
+// A miss is returned to the caller so the caller can fail without skipping the
+// enclosing test and cancelling assertions that need no dead PID.
 func unusedPID() (int, bool) {
 	for _, pid := range []int{1 << 22, 1<<22 - 1, 1<<22 - 2, 1 << 21, 1<<21 - 1} {
 		if syscall.Kill(pid, 0) == syscall.ESRCH {
@@ -215,12 +214,11 @@ func TestClaimWatcherLeaseRefusesALeaseHeldByALiveProcess(t *testing.T) {
 	// as not running reclaims it, so the refusal above came from liveness and
 	// not from the mere presence of a lease file. The PID comes from the
 	// kernel and not from isProcessAlive, so the control discriminates against
-	// the predicate the refusal is built on; and a miss is reported rather
-	// than skipped, so it cannot cancel the refusal assertions above.
+	// the predicate the refusal is built on. A miss fails the test here, after
+	// the refusal assertions above have run.
 	dead, ok := unusedPID()
 	if !ok {
-		t.Log("every candidate PID is in use on this machine, so the dead-holder reclaim control did not run")
-		return
+		t.Fatal("the kernel supplied no unused PID, so the dead-holder control could not run")
 	}
 	if _, err := writeLeaseFile(WatcherLeasePath(dir), &WatcherLease{
 		Home:      Canonical(dir),
