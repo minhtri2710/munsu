@@ -45,7 +45,7 @@ func TestProcessAliveAnswersWithoutPATH(t *testing.T) {
 func TestProcessAliveTreatsAnUnsignallablePIDAsAlive(t *testing.T) {
 	pid := unsignallablePID(t)
 	if err := syscall.Kill(pid, 0); err != syscall.EPERM {
-		t.Skipf("EPERM proof did not run: PID %d no longer returns EPERM from raw syscall.Kill(pid, 0): %v", pid, err)
+		t.Fatalf("EPERM proof did not run: PID %d no longer returns EPERM from raw syscall.Kill(pid, 0): %v", pid, err)
 	}
 	if !isProcessAlive(pid) {
 		t.Errorf("PID %d is unsignallable but reads as dead", pid)
@@ -54,8 +54,11 @@ func TestProcessAliveTreatsAnUnsignallablePIDAsAlive(t *testing.T) {
 
 func unsignallablePID(t *testing.T) int {
 	t.Helper()
+	// Bounded patch for #596: an unprivileged test cannot create a process with
+	// foreign credentials. Fail closed until the proof can do so without an
+	// ambient-user or extra-privilege assumption; do not silently skip it.
 	if os.Geteuid() == 0 {
-		t.Skip("EPERM proof did not run: tests run as root, so no foreign unsignallable process can be established")
+		t.Fatal("EPERM proof did not run: tests run as root, so no foreign unsignallable process can be established")
 	}
 
 	var pids []int
@@ -90,7 +93,7 @@ func unsignallablePID(t *testing.T) int {
 	if len(discoveryErrors) > 0 {
 		message += " (" + strings.Join(discoveryErrors, "; ") + ")"
 	}
-	t.Skipf(message, len(pids))
+	t.Fatalf(message, len(pids))
 	return 0
 }
 
