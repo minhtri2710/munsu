@@ -30,9 +30,10 @@ type SpawnProjectConfig struct {
 
 // ResolveSpawnProjectConfig loads the only config surface authorized by the
 // resolved dispatch policy (issue #546 Slice 6, ADR-0008 §6): CaptainMediated
-// reads the Captain's assigned published snapshot; GeneralDirect reads the
-// fleet base document. The opposite read — or any read without a resolved
-// policy — fails closed.
+// reads the Captain's assigned published snapshot; GeneralDirect resolves the
+// requested project from the typed fleet and project documents. The opposite
+// read — or any read without a resolved policy — fails closed with an empty
+// config.
 func ResolveSpawnProjectConfig(homeDir string, args Args, policy DispatchPolicy) (SpawnProjectConfig, error) {
 	var (
 		snapshot fleetconfig.ResolvedSnapshot
@@ -149,12 +150,9 @@ func TypedConfigAvailable(homeDir string) bool {
 }
 
 // ResolveGeneralHomeBackend resolves the session backend identity for a home
-// without task context from the typed snapshot surface, mirroring the
-// ResolveSpawnProjectConfig rank precedence:
-//   - captain context: the published config snapshot (the composed
-//     config.ResolveProject output; its Backend is required non-empty by
-//     strict snapshot validation).
-//   - general context: the fleet base document's typed Backend.
+// without task context from its typed snapshot surface. A published snapshot
+// is authoritative when present; otherwise the typed fleet base document is
+// used.
 //
 // There is no auto-detection and no fallback identity: an empty identity is a
 // typed failure, never a device/PATH/env choice.

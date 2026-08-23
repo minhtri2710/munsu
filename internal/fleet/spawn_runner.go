@@ -164,11 +164,11 @@ func (r *Runner) Run() (string, error) {
 		return "", err
 	}
 	// The Fleet-boundary dispatch policy is resolved from the resolved parent
-	// rank, the home's durable provenance, and the home's config surface
+	// rank, the home's durable provenance, and its config-surface evidence
 	// BEFORE any config resolution, Task Authority interaction, or mutation.
 	// An ambiguous parent/home/config combination (issue #546 Slice 6) — most
 	// importantly a General dispatch aimed at a Captain-owned home — fails
-	// closed here, so General dispatch code never reads or mutates
+	// closed here, so downstream config resolution cannot read or mutate
 	// Captain-owned state.
 	if err := r.resolveDispatchPolicy(); err != nil {
 		return "", err
@@ -485,9 +485,9 @@ func canonicalExistingPath(path string) (string, error) {
 
 // resolveDispatchPolicy resolves the explicit Fleet-boundary dispatch policy
 // (issue #546 Slice 6) from the resolved parent rank, the home's durable
-// provenance, and its config surface. It names the exact policy-matrix row on
-// refusal and records the policy plus the parent identity dispatched under for
-// every downstream phase (config surface, parent identity, captain checks).
+// provenance, and its config-surface evidence. It names the exact policy-matrix
+// row on refusal and records the policy plus the parent identity dispatched
+// under for every downstream phase, including policy-owned config resolution.
 func (r *Runner) resolveDispatchPolicy() error {
 	policy, parentID, err := ResolveDispatchPolicy(r.homeDir, r.spawnRole)
 	if err != nil {
@@ -1189,10 +1189,10 @@ func buildTaskWorktreeBinding(primaryPath, worktreePath, leaseID, fenceToken str
 
 // Phase 9: resolveHarness resolves the soldier harness.
 // Precedence: already-resolved (preflight) > project config snapshot >
-// --harness flag > dispatch profile match on brief > snapshot-only fail-closed
-// resolution (ResolveSoldierFromSnapshot). There is no flat-file or Detect
-// fallback: when the snapshot carries no soldier harness identity, resolution
-// fails closed with ErrNoSoldierHarnessInSnapshot.
+// --harness flag > snapshot-only fail-closed resolution
+// (ResolveSoldierFromSnapshot). There is no flat-file, Detect, or independent
+// dispatch-selection fallback: when the snapshot carries no soldier harness
+// identity, resolution fails closed with ErrNoSoldierHarnessInSnapshot.
 func (r *Runner) resolveHarness() error {
 	if r.harness != "" {
 		return nil // already resolved by preflightHarness
@@ -1230,7 +1230,8 @@ func (r *Runner) taskDescription() string {
 
 // Phase 10: resolveLaunchConfig finalizes the launch command from the identity
 // already resolved by resolveEffectiveIdentity (harness, model, effort). The
-// selection is resolved once so validation, preflight, and launch all share it.
+// policy-owned project selection is resolved once so validation, preflight,
+// and launch all share it.
 func (r *Runner) resolveLaunchConfig() {
 	adapter, ok := harness.GetAdapter(r.harness)
 	if !ok {
