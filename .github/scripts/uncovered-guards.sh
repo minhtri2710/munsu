@@ -192,6 +192,13 @@ merge() {
 				next
 			}
 			block = file ":" start "-" end
+			if (!(block in statements)) statements[block] = $2 + 0
+			else if (statements[block] != $2 + 0) {
+				current = $2 + 0
+				printf "::error::conflicting statement counts for coverage block %s: %d versus %d\n", block, statements[block], current > "/dev/stderr"
+				bad = 1
+				next
+			}
 			if (!(block in max) || $3 + 0 > max[block]) max[block] = $3 + 0
 		}
 		END {
@@ -524,6 +531,8 @@ generate() {
 #                          warn on every run, an ordinary waiver must stay silent
 #   merge-four-lanes       take the default profile alone instead of the max
 #                          across lanes -- the trap the design record hit while measuring
+#   statement-count-conflict merge identical ranges with conflicting statement counts
+#                          instead of failing closed at the merge boundary
 #   missing-lane           treat an absent lane profile as zeros
 #   empty-profile          accept a profile with no blocks in it
 #   not-a-profile          accept a file that is not a coverage profile
