@@ -140,13 +140,12 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 						senderIdentity = identity
 					}
 				}
-				receiverIdentity, _, err := orchestrator.ReadHomeIdentity(parentHome)
+				// The receiving home's own provenance is the only authority on
+				// its rank: a captain home under Captain dispatch, the General
+				// home under direct General dispatch.
+				receiverIdentity, receiverRank, err := orchestrator.ReadHomeIdentity(parentHome)
 				if err != nil {
 					return fmt.Errorf("report: deriving receiver identity: %w", err)
-				}
-				receiverRank := orchestrator.RankCaptain
-				if role == "captain" {
-					receiverRank = orchestrator.RankGeneral
 				}
 				uplinkResult, err = orchestrator.Report(orchestrator.ReportRequest{
 					SenderHome: senderHomeForRole(role, homeDir, parentHome), ReceiverHome: parentHome,
@@ -161,6 +160,17 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 					},
 				})
 				if err != nil {
+					// This failure landed after the durable commit, so it must
+					// not read as "the report did not happen": the receiver
+					// has it. Re-running report is the repair rather than a
+					// hazard -- it supersedes this record instead of adding a
+					// second one, verified in
+					// TestReReportingAfterANotifyFailureSupersedesInsteadOfDoubleWriting
+					// -- and under direct General dispatch no recovery pass
+					// retries the notification, so it is the only repair there.
+					if errors.Is(err, orchestrator.ErrReportDurable) {
+						return fmt.Errorf("report: %w -- the receiver already holds this report; re-running report for this state supersedes it rather than adding a second one, and is how to retry", err)
+					}
 					return fmt.Errorf("report: %w", err)
 				}
 			} else {

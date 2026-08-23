@@ -68,6 +68,6 @@ func TestDisable_Idempotent(t *testing.T) {
 	}
 	// Repeated calls should also succeed
 	if err := Disable(tmp); err != nil {
-		t.Fatalf("Disable() captain call: unexpected error: %v", err)
+		t.Fatalf("Disable() second call: unexpected error: %v", err)
 	}
 }

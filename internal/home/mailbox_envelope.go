@@ -180,8 +180,11 @@ func ValidateEnvelope(env *Envelope) error {
 			return fmt.Errorf("envelope: captain can only send to general or soldier, not %q", env.ReceiverRank)
 		}
 	case RankSoldier:
-		if env.ReceiverRank != RankCaptain {
-			return fmt.Errorf("envelope: soldier can only send to captain, not %q", env.ReceiverRank)
+		// A soldier reports to its parent home. Under Captain dispatch that
+		// home is a Captain; under direct General dispatch (topology matrix
+		// section 1.1) it is the General itself.
+		if env.ReceiverRank != RankCaptain && env.ReceiverRank != RankGeneral {
+			return fmt.Errorf("envelope: soldier can only send to captain or general, not %q", env.ReceiverRank)
 		}
 	}
 	return nil

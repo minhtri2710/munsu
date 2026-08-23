@@ -16,7 +16,7 @@ func TestNotifyParentWithTargetResolverSubmitsOnlyNotificationRef(t *testing.T) 
 	transport := &notifyTransport{}
 	var receiverSeen string
 	result := NotifyParentWithTargetResolver("sender", "receiver", ref,
-		func(receiver string, got NotificationRef) (TargetResult, error) {
+		func(receiver string, _ bool, got NotificationRef) (TargetResult, error) {
 			receiverSeen = receiver
 			return TargetResult{Source: RuntimeSource, Handle: "fleet:p9"}, nil
 		}, transport)
@@ -36,7 +36,7 @@ func TestNotifyParentWithTargetResolverSubmitsOnlyNotificationRef(t *testing.T) 
 
 func TestNotifyParentWithTargetResolverQueuesUnavailableTarget(t *testing.T) {
 	result := NotifyParentWithTargetResolver("sender", "receiver", NotificationRef{},
-		func(string, NotificationRef) (TargetResult, error) {
+		func(string, bool, NotificationRef) (TargetResult, error) {
 			return TargetResult{Source: Unsupported}, nil
 		}, &notifyTransport{})
 	if !result.Queued || result.Acknowledged {

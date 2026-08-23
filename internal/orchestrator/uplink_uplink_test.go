@@ -7,6 +7,18 @@ import (
 	"time"
 )
 
+// captainReceiverHome builds a receiving home whose durable provenance really
+// is a Captain's. The uplink derives the receiver rank from the home, so a bare
+// temp dir is a General home no matter what rank the sender names.
+func captainReceiverHome(t *testing.T, identity string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := WriteHomeIdentity(dir, identity, RankCaptain); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 // hasEvidence reports whether a keyed uplink evidence file exists. The binary
 // only ever asks the task-wide question (HasAnyOpenReport, HasPendingReport),
 // so the per-key lookup belongs to the tests that assert the keyed lifecycle.
@@ -17,7 +29,7 @@ func hasEvidence(path string) bool {
 
 func TestReportPersistsBeforeNotificationAndQueuesFailure(t *testing.T) {
 	senderHome := t.TempDir()
-	receiverHome := t.TempDir()
+	receiverHome := captainReceiverHome(t, "captain-1")
 	var observedDurable bool
 
 	result, err := Report(ReportRequest{
@@ -54,7 +66,7 @@ func TestReportPersistsBeforeNotificationAndQueuesFailure(t *testing.T) {
 
 func TestReportLatestSupersedesSameTaskAndKey(t *testing.T) {
 	senderHome := t.TempDir()
-	receiverHome := t.TempDir()
+	receiverHome := captainReceiverHome(t, "captain-1")
 
 	first, err := Report(ReportRequest{
 		SenderHome: senderHome, ReceiverHome: receiverHome,
@@ -94,7 +106,7 @@ func TestReportLatestSupersedesSameTaskAndKey(t *testing.T) {
 
 func TestReportReplacementFailurePreservesOldPending(t *testing.T) {
 	senderHome := t.TempDir()
-	receiverHome := t.TempDir()
+	receiverHome := captainReceiverHome(t, "captain-1")
 	first, err := Report(ReportRequest{
 		SenderHome: senderHome, ReceiverHome: receiverHome,
 		SenderRank: RankSoldier, SenderIdentity: "soldier-1",
@@ -185,7 +197,7 @@ func TestRecoverUsesNotificationRefAndClosesAfterExactAck(t *testing.T) {
 
 func TestRecoverRetriesSameRefAfterSixtySeconds(t *testing.T) {
 	senderHome := t.TempDir()
-	receiverHome := t.TempDir()
+	receiverHome := captainReceiverHome(t, "captain-1")
 	result, err := Report(ReportRequest{
 		SenderHome: senderHome, ReceiverHome: receiverHome,
 		SenderRank: RankSoldier, SenderIdentity: "soldier-1",

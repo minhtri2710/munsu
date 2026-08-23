@@ -116,13 +116,13 @@ func TestInstallOneSkill(t *testing.T) {
 		t.Fatalf("expected SKILL.md at %s", skillPath)
 	}
 
-	// Captain install with overwrite=false should not install
+	// Second install with overwrite=false should not install
 	ok, err = installOneSkill(dest, "munsu-ops", false)
 	if err != nil {
-		t.Fatalf("installOneSkill (captain): %v", err)
+		t.Fatalf("installOneSkill (second): %v", err)
 	}
 	if ok {
-		t.Error("expected false for captain install without overwrite")
+		t.Error("expected false for second install without overwrite")
 	}
 
 	// Install with overwrite=true

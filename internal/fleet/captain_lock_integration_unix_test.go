@@ -99,10 +99,10 @@ func TestAcquireExclusiveLock_NoRemoveOnFailure(t *testing.T) {
 	// Write a marker so we can detect if it's removed.
 	os.WriteFile(lockPath, []byte("other-content\n"), 0644)
 
-	// Captain acquire should fail (LOCK_NB) but NOT remove the file.
+	// Second acquire should fail (LOCK_NB) but NOT remove the file.
 	_, err = acquireExclusiveLock(lockPath)
 	if err == nil {
-		t.Fatal("expected captain acquire to fail")
+		t.Fatal("expected second acquire to fail")
 	}
 
 	// The file should still exist with its original content (not removed).

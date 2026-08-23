@@ -88,3 +88,33 @@ func TestReportCmdImmediateNotificationUsesRefAndReturnsNotified(t *testing.T) {
 		t.Fatalf("response=%+v", resp.Data.Injection)
 	}
 }
+
+// Under direct General dispatch the soldier's parent home is the General
+// itself. The persisted envelope must say so: issue #562 reproduced a durable
+// artifact stamped receiver_rank "captain" in a topology with no captain,
+// which the receiving General's own inbox then refused.
+func TestReportCmdStampsReceiverRankFromTheReceivingHome(t *testing.T) {
+	var ref orchestrator.NotificationRef
+	_, receiverHome, _ := runUplinkReport(t, func(_, _ string, got orchestrator.NotificationRef) orchestrator.UplinkNotifyResult {
+		ref = got
+		return orchestrator.UplinkNotifyResult{Acknowledged: true}
+	}, "--ring", "ring", "failed", "direct dispatch failure")
+
+	_, homeRank, err := orchestrator.ReadHomeIdentity(receiverHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if homeRank != orchestrator.RankGeneral {
+		t.Fatalf("fixture receiver home rank = %q, want %q", homeRank, orchestrator.RankGeneral)
+	}
+	env, err := orchestrator.NewStore(receiverHome).ReadEnvelope(ref.SenderIdentity, ref.MessageID)
+	if err != nil || env == nil {
+		t.Fatalf("env=%+v err=%v", env, err)
+	}
+	if env.ReceiverRank != orchestrator.RankGeneral {
+		t.Fatalf("receiver_rank = %q, want %q for a home of rank %q", env.ReceiverRank, orchestrator.RankGeneral, homeRank)
+	}
+	if _, err := orchestrator.NewReceiver(receiverHome); err != nil {
+		t.Fatal(err)
+	}
+}

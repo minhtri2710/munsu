@@ -35,7 +35,7 @@ func TestLockPathSingleSourceOfTruth(t *testing.T) {
 	}
 }
 
-// TestLockExclusivity proves the flock exclusion mechanism: a captain acquire
+// TestLockExclusivity proves the flock exclusion mechanism: a second acquire
 // in the same process is refused while the first holds the lock.
 func TestLockExclusivity(t *testing.T) {
 	home := freshHome(t)
@@ -53,10 +53,10 @@ func TestLockExclusivity(t *testing.T) {
 
 	acq2, err := AcquireSession(home)
 	if err != nil {
-		t.Fatalf("captain AcquireSession error: %v", err)
+		t.Fatalf("second AcquireSession error: %v", err)
 	}
 	if acq2 {
-		t.Fatal("captain AcquireSession succeeded; expected refusal while held")
+		t.Fatal("second AcquireSession succeeded; expected refusal while held")
 	}
 	if !IsSessionLocked(home) {
 		t.Fatal("IsSessionLocked false while held")

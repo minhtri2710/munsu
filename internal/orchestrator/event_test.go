@@ -53,7 +53,7 @@ func TestAppendAndRead(t *testing.T) {
 		t.Fatalf("Append() error = %v", err)
 	}
 	if id2 != 2 {
-		t.Errorf("captain ID = %d, want 2", id2)
+		t.Errorf("second ID = %d, want 2", id2)
 	}
 
 	records := readEventLog(t, home)
