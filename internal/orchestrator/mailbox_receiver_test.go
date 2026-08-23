@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/config"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -37,6 +38,28 @@ func setupEnvelope(t *testing.T, store *Store, env *Envelope) *Envelope {
 		t.Fatalf("WriteEnvelope: %v", err)
 	}
 	return env
+}
+
+func wireCaptainToGeneral(t *testing.T, captainHome, generalID string) string {
+	t.Helper()
+	generalHome := filepath.Join(t.TempDir(), generalID)
+	if err := os.MkdirAll(generalHome, 0755); err != nil {
+		t.Fatalf("MkdirAll general home: %v", err)
+	}
+	if err := config.Set(captainHome, "parent-home", generalHome); err != nil {
+		t.Fatalf("config.Set parent-home: %v", err)
+	}
+	return generalHome
+}
+
+func wireGeneralToCaptain(t *testing.T, generalHome, captainID, captainHome string) {
+	t.Helper()
+	if err := mhome.WriteMeta(generalHome, "captain:"+captainID, map[string]string{
+		"kind": "captain",
+		"home": captainHome,
+	}); err != nil {
+		t.Fatalf("WriteMeta captain: %v", err)
+	}
 }
 
 // --- NotificationRef Encode / Parse ---
@@ -174,6 +197,7 @@ func TestNotificationRef_EmptySenderIdentity(t *testing.T) {
 
 func TestReceiver_Receive_Valid(t *testing.T) {
 	home := t.TempDir()
+	wireCaptainToGeneral(t, home, "general-main")
 	store := NewStore(home)
 
 	env := setupEnvelope(t, store, &Envelope{
@@ -215,6 +239,7 @@ func TestReceiver_Receive_Valid(t *testing.T) {
 
 func TestReceiver_Receive_ReturnsMarkedPayload(t *testing.T) {
 	home := t.TempDir()
+	wireCaptainToGeneral(t, home, "general-main")
 	store := NewStore(home)
 
 	env := setupEnvelope(t, store, &Envelope{
@@ -316,6 +341,7 @@ func TestReceiver_Receive_ValidateEnvelopeGate(t *testing.T) {
 
 func TestReceiver_Receive_OmitemptyFields(t *testing.T) {
 	home := t.TempDir()
+	wireCaptainToGeneral(t, home, "general-1")
 	store := NewStore(home)
 
 	env := setupEnvelope(t, store, &Envelope{
@@ -500,6 +526,7 @@ func TestReceiver_Receive_TamperedHashField(t *testing.T) {
 
 func TestReceiver_Ack_Valid(t *testing.T) {
 	home := t.TempDir()
+	wireCaptainToGeneral(t, home, "general-main")
 	store := NewStore(home)
 
 	env := setupEnvelope(t, store, &Envelope{
@@ -619,6 +646,7 @@ func TestReceiver_Ack_ValidateEnvelopeGate(t *testing.T) {
 
 func TestReceiver_Ack_OmitemptyFields(t *testing.T) {
 	home := t.TempDir()
+	wireCaptainToGeneral(t, home, "general-1")
 	store := NewStore(home)
 
 	env := setupEnvelope(t, store, &Envelope{
@@ -782,6 +810,7 @@ func TestReceiver_Ack_TamperedHashField(t *testing.T) {
 
 func TestReceiver_Ack_DuplicateSameOutcome(t *testing.T) {
 	home := t.TempDir()
+	wireCaptainToGeneral(t, home, "general-1")
 	store := NewStore(home)
 
 	env := setupEnvelope(t, store, &Envelope{
@@ -835,6 +864,7 @@ func TestReceiver_Ack_DuplicateSameOutcome(t *testing.T) {
 
 func TestReceiver_Ack_ConflictingOutcome(t *testing.T) {
 	home := t.TempDir()
+	wireCaptainToGeneral(t, home, "general-1")
 	store := NewStore(home)
 
 	env := setupEnvelope(t, store, &Envelope{
@@ -899,6 +929,19 @@ func TestReceiver_Ack_DifferentRankTransitions(t *testing.T) {
 				os.MkdirAll(home, 0755)
 			}
 			store := NewStore(home)
+			if tt.receiverRank == RankCaptain && tt.senderRank == RankGeneral {
+				wireCaptainToGeneral(t, home, tt.senderID)
+			}
+			if tt.receiverRank == RankGeneral && tt.senderRank == RankCaptain {
+				captainHome := filepath.Join(t.TempDir(), tt.senderID)
+				if err := os.MkdirAll(captainHome, 0755); err != nil {
+					t.Fatalf("MkdirAll captain home: %v", err)
+				}
+				if err := mhome.WriteHomeIdentity(captainHome, tt.senderID, RankCaptain); err != nil {
+					t.Fatalf("WriteHomeIdentity: %v", err)
+				}
+				wireGeneralToCaptain(t, home, tt.senderID, captainHome)
+			}
 			if tt.taskID != "" {
 				if err := mhome.WriteMeta(home, tt.taskID, map[string]string{"window": "w"}); err != nil {
 					t.Fatalf("WriteMeta: %v", err)
@@ -935,6 +978,7 @@ func TestReceiver_Ack_DifferentRankTransitions(t *testing.T) {
 
 func TestReceiver_Ack_WithTaskAndKey(t *testing.T) {
 	home := t.TempDir()
+	wireCaptainToGeneral(t, home, "general-1")
 	store := NewStore(home)
 
 	env := setupEnvelope(t, store, &Envelope{

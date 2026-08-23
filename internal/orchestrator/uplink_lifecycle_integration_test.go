@@ -243,6 +243,12 @@ func TestUplinkLifecycle_DirectVersusRelayDelivery(t *testing.T) {
 	if err := os.MkdirAll(generalHome, 0755); err != nil {
 		t.Fatal(err)
 	}
+	if err := mhome.WriteMeta(generalHome, "captain:captain-one", map[string]string{
+		"kind": "captain",
+		"home": captainHome,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	relayTask := "task:relay"
 	relay, err := Report(ReportRequest{
 		SenderHome:     captainHome,
