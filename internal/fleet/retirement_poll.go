@@ -72,20 +72,26 @@ func quarantinePollAt(checkPath, quarantinePath string, renameFn func(string, st
 //     digest mismatch means the file was read and changed, so it preserves the
 //     changed artifact, attempts record cleanup, and retains the normal wake;
 //     cleanup failure leaves the record pending.
-//   - After publication, validation or digest-acquisition failure does not
-//     remove the artifact; it attempts to clean the durable record, reports the
-//     post-publication invalidation, and suppresses the wake. Cleanup failure
+//   - After publication, the poll is first atomically moved to its private
+//     quarantine pathname. Validation and digest checks then operate only on
+//     that pathname; a failed quarantine refuses retirement without fallback to
+//     the public pathname. Post-publication validation or digest-acquisition
+//     failure preserves the quarantined artifact, attempts to clean the durable
+//     record, reports the invalidation, and suppresses the wake. Cleanup failure
 //     leaves the record pending. A matching digest plus confirmed deterministic
-//     publication permits normal removal; removal failure also leaves the
-//     record pending for recovery.
-//   - RecoverPendingRetirement preserves the artifact and record when the safe
-//     basename, complete matching delivery identity, canonical completion,
-//     deterministic publication evidence, or confirmed publication is absent.
-//     A path that does not Lstat as a regular non-symlink is treated as absent,
-//     left untouched, and its record is removed after confirmed publication,
-//     regardless of recorded digest evidence. For a remaining regular artifact,
-//     a matching recorded digest permits removal; absent digest evidence, digest
-//     acquisition failure, or a mismatch preserves the artifact and record.
+//     publication permits removal of the quarantined artifact; removal failure
+//     also leaves the record pending for recovery.
+//   - Normal retirement atomically renames the public artifact to its private
+//     quarantine path before verification and removal; a failed rename returns
+//     validation refusal. Recovery quarantines a still-public artifact only
+//     when the record has valid quarantine ownership and is not yet marked
+//     quarantined; a failed rename leaves recovery unresolved while preserving
+//     the public artifact and record. An already-quarantined or missing owned
+//     artifact never causes the public pathname to be touched. Recovery
+//     preserves the quarantine and record when identity, canonical completion,
+//     publication evidence, confirmation, or the recorded digest is absent or
+//     mismatched. A missing already-owned quarantine is treated as absent and,
+//     after confirmed publication, its record is removed.
 
 // PollRetirementRecord captures a durable write-ahead record for merged PR
 // poll retirement. It is persisted BEFORE publication and removed only AFTER
@@ -408,14 +414,17 @@ func ValidateCheckWithLstat(path string) error {
 //     projection never authorizes merged truth and no parallel delivery
 //     state is written here.
 //  6. Durably publish one deterministic keyed status line.
-//  7. Remove the exact poll artifact (with digest revalidation).
+//  7. Atomically quarantine the public poll, then validate, digest-check, and
+//     remove only the quarantined artifact.
 //  8. Remove the pending retirement record.
 //
 // Fail-closed on acceptance: validation refusal before publication preserves
-// the externally authored poll. After publication, revalidation refusal
+// the externally authored poll. A quarantine rename failure also refuses
+// retirement and never falls back to removing the public pathname. After
+// publication, revalidation refusal preserves the quarantined artifact and
 // attempts record cleanup because the durable outcome already exists; cleanup
-// failure leaves the record pending. Recovery completion
-// is separate: it removes a previously committed poll only after publication
+// failure leaves the record pending. Recovery completion is separate: it
+// removes a previously committed quarantined poll only after publication
 // evidence and the recorded content digest both match.
 //
 // The normal removal site requires successful pre-publication identity and
@@ -644,18 +653,22 @@ func requireCanonicalCompletedOutcome(auth *taskauthority.Canonical, taskID stri
 //
 // Recovery logic:
 //  1. Validate record filename, schema, and file integrity.
-//  2. Validate current task identity and canonical completion when available.
-//  3. Validate deterministic recorded publication evidence, then append
+//  2. Require current task identity and canonical completion.
+//  3. Validate the record-owned quarantine path. If the artifact is still at
+//     the public pathname, atomically quarantine it; a failed rename preserves
+//     the public artifact and record.
+//  4. Validate deterministic recorded publication evidence, then append
 //     publication only if exact evidence is absent.
-//  4. Remove poll only after publication is confirmed and its content digest
-//     matches the committed record (or accept an already-missing poll); a
-//     digest mismatch preserves the poll and record.
-//  5. Remove completed record.
+//  5. Remove only the quarantined poll after publication is confirmed and its
+//     content digest matches the committed record. A missing quarantine is
+//     accepted as already removed; a digest mismatch preserves the quarantine
+//     and record, while a public replacement remains untouched.
+//  6. Remove completed record.
 //
 // Validation refusal governs acceptance of a newly offered operator artifact;
-// recovery instead requires durable retirement intent, canonical completion,
-// confirmed publication, and this exact content identity. Current executable
-// mode is not recovery identity.
+// recovery instead requires durable retirement intent, valid quarantine
+// ownership, canonical completion, confirmed publication, and this exact
+// content identity. Current executable mode is not recovery identity.
 func RecoverPendingRetirement(homeDir, taskID string, auth *taskauthority.Canonical) (bool, error) {
 	return recoverPendingRetirement(homeDir, taskID, auth, pollContentDigest)
 }
