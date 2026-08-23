@@ -28,24 +28,32 @@ type SpawnProjectConfig struct {
 	Soldier               SpawnSoldierConfig
 }
 
-func ResolveSpawnProjectConfig(homeDir string, args Args, rank string) (SpawnProjectConfig, error) {
+// ResolveSpawnProjectConfig loads the only config surface authorized by the
+// resolved dispatch policy (issue #546 Slice 6, ADR-0008 §6): CaptainMediated
+// reads the Captain's assigned published snapshot; GeneralDirect reads the
+// fleet base document. The opposite read — or any read without a resolved
+// policy — fails closed.
+func ResolveSpawnProjectConfig(homeDir string, args Args, policy DispatchPolicy) (SpawnProjectConfig, error) {
 	var (
 		snapshot fleetconfig.ResolvedSnapshot
 		err      error
 	)
-	if rank == "captain" {
+	switch policy {
+	case DispatchPolicyCaptainMediated:
 		snapshot, err = fleetconfig.LoadPublishedSnapshot(homeDir)
-	} else {
+	case DispatchPolicyGeneralDirect:
 		// Resolve the immutable project snapshot without substituting CLI
 		// identities. Explicit flags are assertions about the resolved snapshot,
 		// not a second configuration authority.
 		snapshot, err = ResolveProjectSnapshot(homeDir, args.ProjectName, fleetconfig.BoundaryOverrides{})
+	default:
+		return SpawnProjectConfig{}, fmt.Errorf("unresolved dispatch policy %q", policy)
 	}
 	if err != nil {
 		return SpawnProjectConfig{}, classifySnapshotError(args.ProjectName, err)
 	}
 	resolved := snapshot.Config()
-	if rank == "captain" && args.ProjectName != "" && resolved.Project != args.ProjectName {
+	if policy == DispatchPolicyCaptainMediated && args.ProjectName != "" && resolved.Project != args.ProjectName {
 		return SpawnProjectConfig{}, fleetconfig.Remediate(
 			fleetconfig.RemediateIncompatibleSnapshot,
 			"publish a snapshot for the Captain's owning project",

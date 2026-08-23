@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/backend"
-	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
@@ -573,7 +572,7 @@ func (r *Runner) resolveMode() error {
 	if TypedConfigAvailable(r.homeDir) {
 		args := r.args
 		args.TaskDescription = r.taskDescription()
-		resolved, err := ResolveSpawnProjectConfig(r.homeDir, args, r.spawnRole)
+		resolved, err := ResolveSpawnProjectConfig(r.homeDir, args, r.dispatchPolicy)
 		if err != nil {
 			return err
 		}
@@ -626,14 +625,10 @@ func (r *Runner) resolveEffectiveIdentity() error {
 			h = r.projectConfig.Soldier.Harness
 		}
 		if h == "" {
-			if sel, ok := r.dispatchSelection(); ok && sel.Harness != "" {
-				h = sel.Harness
-			} else {
-				var err error
-				h, err = harness.ResolveSoldierFromSnapshot(r.projectConfig.Frozen.Config())
-				if err != nil {
-					return fmt.Errorf("resolving harness: %w", err)
-				}
+			var err error
+			h, err = harness.ResolveSoldierFromSnapshot(r.projectConfig.Frozen.Config())
+			if err != nil {
+				return fmt.Errorf("resolving harness: %w", err)
 			}
 		}
 		r.harness = h
@@ -659,13 +654,6 @@ func (r *Runner) resolveModelAndEffort() {
 		}
 		if r.projectConfig.Soldier.Effort != "" {
 			r.effort = r.projectConfig.Soldier.Effort
-		}
-	} else if sel, ok := r.dispatchSelection(); ok {
-		if sel.Model != "" {
-			r.model = sel.Model
-		}
-		if sel.Effort != "" {
-			r.effort = sel.Effort
 		}
 	}
 	if r.args.ModelFlag != "" {
@@ -1226,72 +1214,12 @@ func (r *Runner) resolveHarness() error {
 		r.harness = r.args.HarnessFlag
 		return nil
 	}
-	if sel, ok := r.dispatchSelection(); ok && sel.Harness != "" {
-		if err := harness.ValidateHarness(sel.Harness); err != nil {
-			return fmt.Errorf("dispatch harness: %w", err)
-		}
-		r.harness = sel.Harness
-		return nil
-	}
 	h, err := harness.ResolveSoldierFromSnapshot(r.projectConfig.Frozen.Config())
 	if err != nil {
 		return fmt.Errorf("resolving harness: %w", err)
 	}
 	r.harness = h
 	return nil
-}
-
-// dispatchSelection loads the typed config dispatch profiles and matches
-// against the brief body. The first resolution is cached so the selection is
-// computed exactly once per spawn (the quota selector must not run twice).
-// The resolved dispatch policy names the ONLY config surface a dispatch may
-// read (issue #546 Slice 6, ADR-0008 §6): CaptainMediated reads the Captain's
-// assigned published snapshot; GeneralDirect reads the fleet base document.
-// The opposite read — or any read without a resolved policy — fails closed,
-// so a General dispatch never consumes the Captain assignment surface and a
-// Captain never falls back to base/local configuration.
-func (r *Runner) dispatchSelection() (harness.DispatchSelection, bool) {
-	if r.dispatchResolved {
-		if r.dispatchSel == nil {
-			return harness.DispatchSelection{}, false
-		}
-		return *r.dispatchSel, true
-	}
-	defer func() { r.dispatchResolved = true }()
-
-	desc := r.taskDescription()
-	selectFrom := func(profiles []config.DispatchProfile, harnessName, model string) (harness.DispatchSelection, bool) {
-		if len(profiles) == 0 && harnessName == "" {
-			return harness.DispatchSelection{}, false
-		}
-		dispatch := &harness.DispatchConfig{
-			DefaultHarness: harnessName,
-			DefaultModel:   model,
-			Profiles:       append([]harness.DispatchProfile(nil), profiles...),
-		}
-		sel := harness.ResolveDispatchSelection(dispatch, desc)
-		return sel, true
-	}
-
-	switch r.dispatchPolicy {
-	case DispatchPolicyCaptainMediated:
-		snapshot, err := config.LoadPublishedSnapshot(r.homeDir)
-		if err != nil {
-			return harness.DispatchSelection{}, false
-		}
-		cfg := snapshot.Config()
-		return selectFrom(cfg.DispatchProfiles, cfg.SoldierHarness, cfg.Model)
-	case DispatchPolicyGeneralDirect:
-		base, err := config.LoadFleetBase(r.homeDir)
-		if err != nil {
-			return harness.DispatchSelection{}, false
-		}
-		cfg := base.Config
-		return selectFrom(cfg.DispatchProfiles, cfg.SoldierHarness, cfg.Model)
-	default:
-		// Unresolved or invalid policy: no dispatch surface is readable.
-		return harness.DispatchSelection{}, false
-	}
 }
 
 // taskDescription returns text used to match dispatch profiles (brief body or id).
