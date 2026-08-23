@@ -233,9 +233,6 @@ func TestValidateEnvelopeRefusesInvalidRanksAndIllegalTransitions(t *testing.T) 
 		[]guardCase[Envelope]{
 			{"an unrecognised sender rank", func(e *Envelope) { e.SenderRank = Rank("admiral") }, "invalid sender rank"},
 			{"an unrecognised receiver rank", func(e *Envelope) { e.ReceiverRank = Rank("admiral") }, "invalid receiver rank"},
-			{"a general addressing a soldier directly", func(e *Envelope) {
-				e.SenderRank, e.ReceiverRank = RankGeneral, RankSoldier
-			}, "general can only send to captain"},
 			{"a general addressing another general", func(e *Envelope) {
 				e.SenderRank, e.ReceiverRank = RankGeneral, RankGeneral
 			}, "general can only send to captain"},

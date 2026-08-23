@@ -70,11 +70,16 @@ func SendToSoldier(senderHome, soldierTaskID, senderIdentity, line string, endpo
 		return result
 	}
 
-	// 2. Create the mailbox Envelope (captain→soldier).
+	// 2. Create the mailbox Envelope (sender→soldier).
 	// ReceiverID is the sanitized soldier task ID; ReceiverRank is RankSoldier.
+	_, senderRank, err := home.ReadHomeIdentity(senderHome)
+	if err != nil {
+		result.Err = fmt.Errorf("reading sender home identity: %w", err)
+		return result
+	}
 	receiverID := cleanReceiverID(soldierTaskID)
 	env := &home.Envelope{
-		SenderRank:     home.RankCaptain,
+		SenderRank:     senderRank,
 		SenderIdentity: senderIdentity,
 		ReceiverRank:   home.RankSoldier,
 		ReceiverID:     receiverID, // sanitized task ID

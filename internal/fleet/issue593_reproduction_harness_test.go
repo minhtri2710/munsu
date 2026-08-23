@@ -11,65 +11,58 @@ import (
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
-// TestIssue593ReproductionHarness records the direct general downlink path and
-// the counterfactual envelope path without changing the sender implementation.
+// TestIssue593ReproductionHarness pins both halves of the direct General
+// downlink fix and keeps the Captain control path covered.
 func TestIssue593ReproductionHarness(t *testing.T) {
 	generalHome := filepath.Join(t.TempDir(), "general-home")
-	if err := os.MkdirAll(generalHome, 0755); err != nil {
+	captainHome := filepath.Join(t.TempDir(), "captain-home")
+	for _, dir := range []string{generalHome, captainHome} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := home.WriteMeta(dir, "task-soldier", map[string]string{"window": "soldier-window"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := home.WriteHomeIdentity(captainHome, "captain-home", home.RankCaptain); err != nil {
 		t.Fatal(err)
 	}
-	if err := home.WriteMeta(generalHome, "task-soldier", map[string]string{"window": "soldier-window"}); err != nil {
-		t.Fatal(err)
+
+	generalResult := SendToSoldier(generalHome, "task-soldier", "general-home", "general work", &harnessEndpoint{})
+	if generalResult.Err != nil || !generalResult.Sent {
+		t.Fatalf("General dispatch failed: sent=%v err=%v", generalResult.Sent, generalResult.Err)
+	}
+	generalEnvelopes, err := home.NewStore(generalHome).ListInbox("general-home")
+	if err != nil || len(generalEnvelopes) != 1 {
+		t.Fatalf("reading General envelope: count=%d err=%v", len(generalEnvelopes), err)
+	}
+	generalEnvelope := generalEnvelopes[0]
+	if generalEnvelope.SenderRank != home.RankGeneral {
+		t.Fatalf("persisted General sender rank = %q, want general", generalEnvelope.SenderRank)
+	}
+	if err := home.ValidateEnvelope(generalEnvelope); err != nil {
+		t.Fatalf("persisted General envelope rejected: %v", err)
 	}
 
-	result := SendToSoldier(generalHome, "task-soldier", filepath.Base(generalHome), "do work", &harnessEndpoint{})
-	if result.Err != nil || !result.Sent {
-		t.Fatalf("direct general dispatch failed unexpectedly: sent=%v err=%v", result.Sent, result.Err)
+	captainResult := SendToSoldier(captainHome, "task-soldier", "captain-home", "captain work", &harnessEndpoint{})
+	if captainResult.Err != nil || !captainResult.Sent {
+		t.Fatalf("Captain dispatch failed: sent=%v err=%v", captainResult.Sent, captainResult.Err)
+	}
+	captainEnvelopes, err := home.NewStore(captainHome).ListInbox("captain-home")
+	if err != nil || len(captainEnvelopes) != 1 {
+		t.Fatalf("reading Captain envelope: count=%d err=%v", len(captainEnvelopes), err)
+	}
+	if captainEnvelopes[0].SenderRank != home.RankCaptain {
+		t.Fatalf("persisted Captain sender rank = %q, want captain", captainEnvelopes[0].SenderRank)
+	}
+	if err := home.ValidateEnvelope(captainEnvelopes[0]); err != nil {
+		t.Fatalf("persisted Captain envelope rejected: %v", err)
 	}
 
-	envelopes, err := home.NewStore(generalHome).ListInbox(filepath.Base(generalHome))
-	if err != nil || len(envelopes) != 1 {
-		t.Fatalf("reading published envelope: count=%d err=%v", len(envelopes), err)
-	}
-	if envelopes[0].SenderRank != home.RankCaptain {
-		t.Fatalf("published sender rank = %q, want captain", envelopes[0].SenderRank)
-	}
-	receiver, err := home.NewReceiver(generalHome)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = receiver.Receive(home.NotificationRef{MessageID: envelopes[0].MessageID, SenderIdentity: filepath.Base(generalHome)})
-	if err == nil || !strings.Contains(err.Error(), "receiver identity mismatch") {
-		t.Fatalf("receiver result = %v, want durable receiver identity refusal", err)
-	}
-
-	correct := &home.Envelope{
-		SenderRank:     home.RankGeneral,
-		SenderIdentity: filepath.Base(generalHome),
-		ReceiverRank:   home.RankSoldier,
-		ReceiverID:     "task-soldier",
-		TaskID:         "task-soldier",
-		Payload:        "do work",
-	}
-	correct.MessageID, _ = home.NewMessageID()
-	correct.PayloadHash = home.PayloadHashHex(correct.Payload)
-	if err := home.ValidateEnvelope(correct); err == nil {
-		t.Fatal("expected the correct general-to-soldier envelope to be refused")
-	} else if !strings.Contains(err.Error(), "general can only send to captain") {
-		t.Fatalf("unexpected counterfactual validation error: %v", err)
-	}
-
-	ack := &home.ProcessingAck{
-		MessageID:      correct.MessageID,
-		SenderRank:     home.RankGeneral,
-		SenderIdentity: correct.SenderIdentity,
-		ReceiverRank:   correct.ReceiverRank,
-		ReceiverID:     correct.ReceiverID,
-		TaskID:         correct.TaskID,
-		PayloadHash:    correct.PayloadHash,
-	}
-	if err := home.ValidateAck(correct, ack); err != nil {
-		t.Fatalf("matching general sender rank should pass field binding: %v", err)
+	closed := *generalEnvelope
+	closed.ReceiverRank = home.RankGeneral
+	if err := home.ValidateEnvelope(&closed); err == nil || !strings.Contains(err.Error(), "general can only send to captain or soldier") {
+		t.Fatalf("closed General-to-General transition result = %v", err)
 	}
 }
 
