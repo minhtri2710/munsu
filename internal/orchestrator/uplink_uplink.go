@@ -314,7 +314,7 @@ func notificationDue(home, messageID string, now time.Time) bool {
 
 // NotifyParent attempts immediate delivery of a NotificationRef to the parent
 // agent pane. Durable state must already exist before this adapter is called.
-type TargetResolver func(receiverHome string, ref NotificationRef) (TargetResult, error)
+type TargetResolver func(receiverHome string, selfDirected bool, ref NotificationRef) (TargetResult, error)
 
 type NotificationTransport interface {
 	Notify(senderHome string, target TargetResult, payload string) UplinkNotifyResult
@@ -325,7 +325,7 @@ func NotifyParentWithTransport(senderHome, receiverHome string, ref Notification
 }
 
 func NotifyParentWithTargetResolver(senderHome, receiverHome string, ref NotificationRef, resolveTarget TargetResolver, transport NotificationTransport) UplinkNotifyResult {
-	target, err := resolveTarget(receiverHome, ref)
+	target, err := resolveTarget(receiverHome, senderHome == receiverHome, ref)
 	if err != nil {
 		return UplinkNotifyResult{Queued: true}
 	}
@@ -335,7 +335,10 @@ func NotifyParentWithTargetResolver(senderHome, receiverHome string, ref Notific
 	return transport.Notify(senderHome, target, ref.Encode())
 }
 
-func resolveReceiverTarget(receiverHome string, ref NotificationRef) (TargetResult, error) {
+func resolveReceiverTarget(receiverHome string, selfDirected bool, ref NotificationRef) (TargetResult, error) {
+	if selfDirected {
+		return ResolveTargetWithSource(receiverHome)
+	}
 	env, err := NewStore(receiverHome).ReadEnvelope(ref.SenderIdentity, ref.MessageID)
 	if err != nil || env == nil {
 		return TargetResult{}, fmt.Errorf("reading receiver envelope: %w", err)
