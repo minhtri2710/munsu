@@ -3,12 +3,13 @@
 // read, config resolution, or mutation:
 //
 //   - DispatchPolicyGeneralDirect (General → Soldier): the operation home is a
-//     General-owned home and the config surface is the fleet base document
-//     (or the legacy flat path when no typed documents exist). The parent
-//     identity sent to the soldier stays the "general" sentinel.
+//     General-owned home and typed spawn config resolves the requested project
+//     from the fleet and project documents (or the legacy flat path when no
+//     typed documents exist). The parent identity sent to the soldier stays
+//     the "general" sentinel.
 //   - DispatchPolicyCaptainMediated (Captain → Soldier): the operation home is
-//     the Captain's own provenanced home (.munsu-captain-home) and the config
-//     surface is the Captain's assigned published snapshot. A Captain never
+//     the Captain's own provenanced home (.munsu-captain-home) and typed spawn
+//     config reads the Captain's assigned published snapshot. A Captain never
 //     re-resolves, never reads the General's files, and never falls back to
 //     local/base configuration (ADR-0008 §6).
 //

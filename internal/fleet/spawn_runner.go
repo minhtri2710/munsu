@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/backend"
-	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
@@ -62,12 +61,6 @@ type Runner struct {
 	incarnation         string // opaque generation-bound endpoint incarnation, minted once per launch
 	projectConfig       SpawnProjectConfig
 	projectConfigLoaded bool
-
-	// dispatchSel caches the single dispatch-selection resolution so the quota
-	// selector is invoked at most once per spawn and the selection used for
-	// allowlist validation is the same one used for preflight and launch.
-	dispatchSel      *harness.DispatchSelection
-	dispatchResolved bool
 
 	// soldier launch prompt state
 	prompt     string
@@ -171,11 +164,11 @@ func (r *Runner) Run() (string, error) {
 		return "", err
 	}
 	// The Fleet-boundary dispatch policy is resolved from the resolved parent
-	// rank, the home's durable provenance, and the home's config surface
+	// rank, the home's durable provenance, and its config-surface evidence
 	// BEFORE any config resolution, Task Authority interaction, or mutation.
 	// An ambiguous parent/home/config combination (issue #546 Slice 6) — most
 	// importantly a General dispatch aimed at a Captain-owned home — fails
-	// closed here, so General dispatch code never reads or mutates
+	// closed here, so downstream config resolution cannot read or mutate
 	// Captain-owned state.
 	if err := r.resolveDispatchPolicy(); err != nil {
 		return "", err
@@ -492,9 +485,9 @@ func canonicalExistingPath(path string) (string, error) {
 
 // resolveDispatchPolicy resolves the explicit Fleet-boundary dispatch policy
 // (issue #546 Slice 6) from the resolved parent rank, the home's durable
-// provenance, and its config surface. It names the exact policy-matrix row on
-// refusal and records the policy plus the parent identity dispatched under for
-// every downstream phase (config surface, parent identity, captain checks).
+// provenance, and its config-surface evidence. It names the exact policy-matrix
+// row on refusal and records the policy plus the parent identity dispatched
+// under for every downstream phase, including policy-owned config resolution.
 func (r *Runner) resolveDispatchPolicy() error {
 	policy, parentID, err := ResolveDispatchPolicy(r.homeDir, r.spawnRole)
 	if err != nil {
@@ -573,7 +566,7 @@ func (r *Runner) resolveMode() error {
 	if TypedConfigAvailable(r.homeDir) {
 		args := r.args
 		args.TaskDescription = r.taskDescription()
-		resolved, err := ResolveSpawnProjectConfig(r.homeDir, args, r.spawnRole)
+		resolved, err := ResolveSpawnProjectConfig(r.homeDir, args, r.dispatchPolicy)
 		if err != nil {
 			return err
 		}
@@ -615,10 +608,10 @@ func (r *Runner) validateHarnessFlag() error {
 }
 
 // Phase 3a: resolveEffectiveIdentity resolves the exact harness/model/effort
-// once, caching the dispatch selection, and stores the identity on the Runner
-// so allowlist validation, preflight, and launch all use the same selection.
+// from the resolved project config and stores the identity on the Runner so
+// allowlist validation, preflight, and launch all use the same selection.
 // Runs before any worktree/pane/meta/status side effects; it only
-// reads project config, dispatch config, and harness metadata.
+// reads project config and harness metadata.
 func (r *Runner) resolveEffectiveIdentity() error {
 	if r.harness == "" {
 		h := r.args.HarnessFlag
@@ -626,14 +619,10 @@ func (r *Runner) resolveEffectiveIdentity() error {
 			h = r.projectConfig.Soldier.Harness
 		}
 		if h == "" {
-			if sel, ok := r.dispatchSelection(); ok && sel.Harness != "" {
-				h = sel.Harness
-			} else {
-				var err error
-				h, err = harness.ResolveSoldierFromSnapshot(r.projectConfig.Frozen.Config())
-				if err != nil {
-					return fmt.Errorf("resolving harness: %w", err)
-				}
+			var err error
+			h, err = harness.ResolveSoldierFromSnapshot(r.projectConfig.Frozen.Config())
+			if err != nil {
+				return fmt.Errorf("resolving harness: %w", err)
 			}
 		}
 		r.harness = h
@@ -643,8 +632,8 @@ func (r *Runner) resolveEffectiveIdentity() error {
 }
 
 // resolveModelAndEffort resolves the effective model/effort with the same
-// precedence as the launch: adapter template defaults, then project config or
-// the cached dispatch selection, then explicit CLI flags.
+// precedence as the launch: adapter template defaults, then project config,
+// then explicit CLI flags.
 func (r *Runner) resolveModelAndEffort() {
 	adapter, ok := harness.GetAdapter(r.harness)
 	if !ok {
@@ -659,13 +648,6 @@ func (r *Runner) resolveModelAndEffort() {
 		}
 		if r.projectConfig.Soldier.Effort != "" {
 			r.effort = r.projectConfig.Soldier.Effort
-		}
-	} else if sel, ok := r.dispatchSelection(); ok {
-		if sel.Model != "" {
-			r.model = sel.Model
-		}
-		if sel.Effort != "" {
-			r.effort = sel.Effort
 		}
 	}
 	if r.args.ModelFlag != "" {
@@ -1207,10 +1189,10 @@ func buildTaskWorktreeBinding(primaryPath, worktreePath, leaseID, fenceToken str
 
 // Phase 9: resolveHarness resolves the soldier harness.
 // Precedence: already-resolved (preflight) > project config snapshot >
-// --harness flag > dispatch profile match on brief > snapshot-only fail-closed
-// resolution (ResolveSoldierFromSnapshot). There is no flat-file or Detect
-// fallback: when the snapshot carries no soldier harness identity, resolution
-// fails closed with ErrNoSoldierHarnessInSnapshot.
+// --harness flag > snapshot-only fail-closed resolution
+// (ResolveSoldierFromSnapshot). There is no flat-file, Detect, or independent
+// dispatch-selection fallback: when the snapshot carries no soldier harness
+// identity, resolution fails closed with ErrNoSoldierHarnessInSnapshot.
 func (r *Runner) resolveHarness() error {
 	if r.harness != "" {
 		return nil // already resolved by preflightHarness
@@ -1226,72 +1208,12 @@ func (r *Runner) resolveHarness() error {
 		r.harness = r.args.HarnessFlag
 		return nil
 	}
-	if sel, ok := r.dispatchSelection(); ok && sel.Harness != "" {
-		if err := harness.ValidateHarness(sel.Harness); err != nil {
-			return fmt.Errorf("dispatch harness: %w", err)
-		}
-		r.harness = sel.Harness
-		return nil
-	}
 	h, err := harness.ResolveSoldierFromSnapshot(r.projectConfig.Frozen.Config())
 	if err != nil {
 		return fmt.Errorf("resolving harness: %w", err)
 	}
 	r.harness = h
 	return nil
-}
-
-// dispatchSelection loads the typed config dispatch profiles and matches
-// against the brief body. The first resolution is cached so the selection is
-// computed exactly once per spawn (the quota selector must not run twice).
-// The resolved dispatch policy names the ONLY config surface a dispatch may
-// read (issue #546 Slice 6, ADR-0008 §6): CaptainMediated reads the Captain's
-// assigned published snapshot; GeneralDirect reads the fleet base document.
-// The opposite read — or any read without a resolved policy — fails closed,
-// so a General dispatch never consumes the Captain assignment surface and a
-// Captain never falls back to base/local configuration.
-func (r *Runner) dispatchSelection() (harness.DispatchSelection, bool) {
-	if r.dispatchResolved {
-		if r.dispatchSel == nil {
-			return harness.DispatchSelection{}, false
-		}
-		return *r.dispatchSel, true
-	}
-	defer func() { r.dispatchResolved = true }()
-
-	desc := r.taskDescription()
-	selectFrom := func(profiles []config.DispatchProfile, harnessName, model string) (harness.DispatchSelection, bool) {
-		if len(profiles) == 0 && harnessName == "" {
-			return harness.DispatchSelection{}, false
-		}
-		dispatch := &harness.DispatchConfig{
-			DefaultHarness: harnessName,
-			DefaultModel:   model,
-			Profiles:       append([]harness.DispatchProfile(nil), profiles...),
-		}
-		sel := harness.ResolveDispatchSelection(dispatch, desc)
-		return sel, true
-	}
-
-	switch r.dispatchPolicy {
-	case DispatchPolicyCaptainMediated:
-		snapshot, err := config.LoadPublishedSnapshot(r.homeDir)
-		if err != nil {
-			return harness.DispatchSelection{}, false
-		}
-		cfg := snapshot.Config()
-		return selectFrom(cfg.DispatchProfiles, cfg.SoldierHarness, cfg.Model)
-	case DispatchPolicyGeneralDirect:
-		base, err := config.LoadFleetBase(r.homeDir)
-		if err != nil {
-			return harness.DispatchSelection{}, false
-		}
-		cfg := base.Config
-		return selectFrom(cfg.DispatchProfiles, cfg.SoldierHarness, cfg.Model)
-	default:
-		// Unresolved or invalid policy: no dispatch surface is readable.
-		return harness.DispatchSelection{}, false
-	}
 }
 
 // taskDescription returns text used to match dispatch profiles (brief body or id).
@@ -1308,7 +1230,8 @@ func (r *Runner) taskDescription() string {
 
 // Phase 10: resolveLaunchConfig finalizes the launch command from the identity
 // already resolved by resolveEffectiveIdentity (harness, model, effort). The
-// selection is resolved once so validation, preflight, and launch all share it.
+// policy-owned project selection is resolved once so validation, preflight,
+// and launch all share it.
 func (r *Runner) resolveLaunchConfig() {
 	adapter, ok := harness.GetAdapter(r.harness)
 	if !ok {
