@@ -56,7 +56,7 @@
 #
 # Usage:
 #   uncovered-guards.sh sites      derived refusal sites, tab-separated
-#   uncovered-guards.sh merge      merged profile, block key <TAB> max count
+#   uncovered-guards.sh merge      merged profile, block range and max count
 #   uncovered-guards.sh classify   every site with its coverage verdict
 #   uncovered-guards.sh generate   a fresh baseline body, for the first landing
 #   uncovered-guards.sh check      tree and baseline agree, in both directions
@@ -90,7 +90,7 @@ die() {
 	exit 1
 }
 
-# The derived set: file, func, nth, predicate, block. SITES exists for the
+# The derived set: file, func, nth, predicate, body. SITES exists for the
 # selftest, which needs to drive `check` from a fixed site list rather than from
 # whatever the real tree happens to hold today.
 sites() {
@@ -107,14 +107,15 @@ sites() {
 		die "guardsites could not derive the refusal set, so this lane cannot judge coverage"
 }
 
-# One line per coverage block, `path:line.col <TAB> count`, keyed on the block's
-# START position only and carrying the largest count any lane recorded for it.
+# One line per coverage block, `path:start-end<TAB>count`, carrying the
+# largest count any lane recorded for it. The profile is the source of truth for
+# the block's start: Go toolchains may place it at the `if` body's opening brace
+# or at its first statement. A site therefore supplies a source body range and
+# classify() selects the earliest profile block that starts inside that range.
 #
-# Start position alone is the key because that is the one coordinate cmd/cover
-# and go/ast agree on exactly: cover opens an `if` body's counter at Body.Lbrace,
-# while the block's END is the closing brace for a `return` body and the last
-# statement for a `panic` one. Matching both would silently drop every panic
-# guard. Start positions are unique within a file -- blocks do not overlap.
+# The complete range is retained so a malformed or ambiguous profile cannot be
+# mistaken for a match. The start is what selects the block; the end is evidence
+# and keeps the merged representation faithful to the profile.
 merge() {
 	local module lane path missing=""
 	module="$(awk '/^module / { print $2; exit }' "$ROOT/go.mod")"
@@ -146,18 +147,27 @@ merge() {
 	# shellcheck disable=SC2046 # word splitting is the point: one path per lane
 	awk -F' ' -v prefix="$module/" -v root="$ROOT/" '
 		function short(p) { return index(p, root) == 1 ? substr(p, length(root) + 1) : p }
+		function position(spec, which,   parts) {
+			split(spec, parts, /,/)
+			return parts[which]
+		}
 		FNR == 1 && $0 !~ /^mode:/ { printf "::error::%s is not a coverage profile\n", short(FILENAME) > "/dev/stderr"; bad = 1; exit }
 		/^mode:/ { next }
 		NF != 3 { printf "::error::%s:%d: unreadable profile line: %s\n", short(FILENAME), FNR, $0 > "/dev/stderr"; bad = 1; exit }
 		{
 			spec = $1
 			sub("^" prefix, "", spec)
-			sub(/,[0-9]+\.[0-9]+$/, "", spec)
-			if (!(spec in max) || $3 + 0 > max[spec]) max[spec] = $3 + 0
+			key = position(spec, 1)
+			end = position(spec, 2)
+			match(key, /:[0-9]+\.[0-9]+$/)
+			file = substr(key, 1, RSTART - 1)
+			start = substr(key, RSTART + 1)
+			block = file ":" start "-" end
+			if (!(block in max) || $3 + 0 > max[block]) max[block] = $3 + 0
 		}
 		END {
 			if (bad) exit 1
-			for (spec in max) printf "%s\t%d\n", spec, max[spec]
+			for (block in max) printf "%s\t%d\n", block, max[block]
 		}
 	' $(for lane in $(lane_files); do printf '%s ' "$PROFILES/$lane"; done) | sort
 }
@@ -165,9 +175,11 @@ merge() {
 # Every site with a verdict: covered, uncovered, unmeasured, or anomaly.
 #
 # `anomaly` is the one that must never be waived away: the file IS in the
-# profile, so the lane compiled it, yet this site's block start matches nothing.
-# That means go/ast and cmd/cover have stopped agreeing on where an `if` body
-# begins, and every verdict this script prints is suspect. It is fatal in check().
+# profile, so the lane compiled it, yet no profile block can be resolved from
+# this site's refusal-body range. That means the coverage instrumenter's block
+# convention has changed, or the profile is otherwise incompatible with the
+# source tree, and every verdict this script prints is suspect. It is fatal in
+# check().
 classify() {
 	local merged derived
 	# `|| exit 1` on both, rather than leaning on `set -e`: a command
@@ -181,21 +193,55 @@ classify() {
 	derived="$(sites)" || exit 1
 	[ -n "$derived" ] || die "no refusal site was derived from the tree -- the recognizer has stopped matching, so this lane proves nothing"
 	awk -F'\t' '
+		function point(line, col,   parts) {
+			return (line + 0) * 1000000 + (col + 0)
+		}
+		function startPoint(range,   parts, pointParts) {
+			split(range, parts, /-/)
+			split(parts[1], pointParts, /\./)
+			return point(pointParts[1], pointParts[2])
+		}
+		function endPoint(range,   parts, pointParts) {
+			split(range, parts, /-/)
+			split(parts[2], pointParts, /\./)
+			return point(pointParts[1], pointParts[2])
+		}
 		NR == FNR {
-			count[$1] = $2
-			f = $1
-			sub(/:[0-9]+\.[0-9]+$/, "", f)
-			compiled[f] = 1
+			file = $1
+			sub(/:[0-9]+\.[0-9]+-.*/, "", file)
+			compiled[file] = 1
+			blocks[file] = blocks[file] $0 "\n"
 			next
 		}
 		{
-			key = $1 ":" $5
+			bodyStart = startPoint($5)
+			bodyEnd = endPoint($5)
+			file = $1
+			best = -1
+			matches = 0
+			n = split(blocks[file], lines, /\n/)
+			for (i = 1; i <= n; i++) {
+				if (lines[i] == "") continue
+				split(lines[i], fields, /\t/)
+				start = fields[1]
+				sub(/^[^:]+:/, "", start)
+				if (startPoint(start) < bodyStart || startPoint(start) > bodyEnd) continue
+				if (best < 0 || startPoint(start) < best) {
+					best = startPoint(start)
+					matches = 1
+					bestLine = lines[i]
+				} else if (startPoint(start) == best) {
+					matches++
+				}
+			}
 			# The block travels with every verdict, not just the anomaly: the
 			# baseline has no line numbers by design, so this is the only thing
 			# that can tell an author which `if` to go and write a test for.
 			id = $1 "\t" $2 "\t" $3 "\t" $4 "\t" $5
-			if (key in count) print (count[key] + 0 > 0 ? "covered" : "uncovered") "\t" id
-			else if (!($1 in compiled)) print "unmeasured\t" id
+			if (matches == 1) {
+				split(bestLine, fields, /\t/)
+				print (fields[2] + 0 > 0 ? "covered" : "uncovered") "\t" id
+			} else if (!(file in compiled)) print "unmeasured\t" id
 			else print "anomaly\t" id
 		}
 	' <(printf '%s\n' "$merged") <(printf '%s\n' "$derived")
@@ -291,12 +337,12 @@ check() {
 
 	anomalies="$(printf '%s\n' "$verdicts" | { grep '^anomaly	' || true; })"
 	if [ -n "$anomalies" ]; then
-		echo "::error::a refusal site sits in a file the lanes compiled, yet its block start matches no counter:" >&2
+		echo "::error::a refusal site sits in a file the lanes compiled, yet no coverage block resolves inside its refusal body:" >&2
 		printf '%s\n' "$anomalies" | while IFS=$'\t' read -r _ file func nth pred block; do
-			printf '  %s: %s (#%s) %s -- expected a block at %s\n' "$file" "$func" "$nth" "$pred" "$block" >&2
+			printf '  %s: %s (#%s) %s -- refusal body range %s\n' "$file" "$func" "$nth" "$pred" "$block" >&2
 		done
-		echo "  go/ast and cmd/cover disagree about where an if-body opens, so every verdict below is unsafe." >&2
-		echo "  Fix .github/scripts/guardsites/main.go before trusting this lane again." >&2
+		echo "  The coverage profile and source tree disagree about the instrumenter's block convention, so every verdict below is unsafe." >&2
+		echo "  Check the Go toolchain/profile artifact and the profile-derived matcher before trusting this lane again." >&2
 		exit 1
 	fi
 
@@ -420,11 +466,13 @@ generate() {
 #   covered-still-waived   delete the `waived` comparison
 #   stale-entry            delete the `stale` comparison
 #   unmeasured-file        count a file no lane compiled as uncovered
-#   anomaly                accept a site whose block start matches no counter
+#   anomaly                accept a site whose refusal body range matches no counter
 #   no-reason              delete the fifth-column requirement
 #   bad-nth                delete the numeric check on nth
 #   short-row              delete the NF < 4 check
 #   duplicate-row          delete the `key in seen` check
+#   toolchain-block-go126  match a Go 1.26-style block start at the opening brace
+#   toolchain-block-go127  match a Go 1.27-style block start at the first statement
 #
 # Each fixture is a directory holding `sites.tsv`, `baseline`, `profiles/` and
 # `want`. Driving `check` from a fixed site list rather than from the real tree
