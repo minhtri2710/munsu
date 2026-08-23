@@ -35,7 +35,7 @@ func TestProcessAliveAnswersWithoutPATH(t *testing.T) {
 			t.Errorf("PID %d is not running but reads as alive", pid)
 		}
 	} else {
-		t.Log("every candidate PID is in use on this machine, so the dead-PID control did not run")
+		t.Fatal("the kernel supplied no unused PID, so the dead-PID control could not run")
 	}
 }
 
@@ -146,9 +146,8 @@ func TestSessionLockIsNotStolenWhenLivenessIsUnprobable(t *testing.T) {
 // was found. It probes a few high candidates rather than scanning, because
 // there is no PID a test is entitled to assume is free.
 //
-// It reports the miss instead of calling t.Skip: a skip would cancel the whole
-// enclosing test, including the assertions that need no dead PID at all, and a
-// silent green is exactly what this file exists to prevent.
+// A miss is returned to the caller so the caller can fail without skipping the
+// enclosing test and cancelling assertions that need no dead PID.
 func unusedPID() (int, bool) {
 	for _, pid := range []int{1 << 22, 1<<22 - 1, 1<<22 - 2, 1 << 21, 1<<21 - 1} {
 		if syscall.Kill(pid, 0) == syscall.ESRCH {
