@@ -66,15 +66,14 @@ type RetirementPort interface {
 	RetireMergedPoll(homeDir, taskID, checkPath string) error
 }
 
-// CheckValidationPort validates a check artifact before the watcher surfaces or
-// retires it. It is its own port rather than a method on RetirementPort because
-// the watcher needs to validate checks whether or not anything retires them,
-// and because the distinction that matters here is structural: supplying an
-// implementation asserts the capability exists, so a returned error can only
-// mean "this artifact is invalid" — skip it and keep scanning. The capability
-// being absent is a different failure and is expressed differently: a nil check
-// validation port fails the whole cycle, loudly, instead of quietly emitting no
-// checks at all.
+// CheckValidationPort validates a check artifact before the watcher surfaces it.
+// Retirement validates its own artifact at the destructive boundary through
+// RetirementPort; this port is separate because the watcher must still validate
+// checks that will never be retired. Supplying an implementation asserts the
+// capability exists, so a returned error can only mean "this artifact is
+// invalid" — skip it and keep scanning. The capability being absent is a
+// different failure and is expressed differently: a nil check validation port
+// fails the whole cycle, loudly, instead of quietly emitting no checks at all.
 type CheckValidationPort interface {
 	ValidateCheck(path string) error
 }
