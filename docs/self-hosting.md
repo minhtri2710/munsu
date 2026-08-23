@@ -297,9 +297,9 @@ will no longer be cleaned up during teardown. The canonical names are now
 
 Munsu never writes a `.check`. Per-task checks are authored externally — by
 the operator or an agent — and placed in the state directory. Munsu discovers
-and validates these files for watcher polling and wake generation. A validation
-or staleness refusal is reported on stderr, emits no wake for that cycle, and
-leaves the externally authored file unchanged on disk for operator resolution.
+and validates these files for watcher polling and wake generation. See the
+canonical [Supervision check-plugin contract](../SUPERVISION.md#check-plugins)
+for refusal reporting, wake suppression, and artifact-preservation behavior.
 Task teardown removes leftover `<id>.check` files. During teardown, munsu recognizes **both**
 old and new suffixes. If you have scripts that write `.check.sh` files into the
 state directory, change them to write `.check`. Existing `.check.sh` and
