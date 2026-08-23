@@ -180,8 +180,8 @@ merge() {
 			match(key, /:[0-9]+\.[0-9]+$/)
 			file = substr(key, 1, RSTART - 1)
 			start = substr(key, RSTART + 1)
-			if (before(end, start)) {
-				printf "::error::%s:%d: inverted coverage block range: %s\n", short(FILENAME), FNR, $1 > "/dev/stderr"
+			if (!before(start, end)) {
+				printf "::error::%s:%d: non-positive coverage block range: %s\n", short(FILENAME), FNR, $1 > "/dev/stderr"
 				bad = 1
 				next
 			}
@@ -264,8 +264,8 @@ classify() {
 				sub(/^[^:]+:/, "", blockRange)
 				blockStart = startPoint(blockRange)
 				blockEnd = endPoint(blockRange)
-				if (!inside(blockStart, bodyStart, bodyEnd)) continue
-				if (!inside(blockEnd, bodyStart, bodyEnd) || before(blockEnd, blockStart)) {
+				if (!inside(blockStart, bodyStart, bodyEnd) || blockStart == bodyEnd) continue
+				if (!inside(blockEnd, bodyStart, bodyEnd) || !before(blockStart, blockEnd)) {
 					incompatible = 1
 					continue
 				}
@@ -515,6 +515,7 @@ generate() {
 #   bad-nth                delete the numeric check on nth
 #   malformed-end          accept a profile block with a malformed end coordinate
 #   inverted-end            accept a profile block whose end precedes its start
+#   zero-width-endpoint     accept a profile block whose endpoints are equal
 #   incompatible-end        accept a profile block whose end exceeds the refusal body
 #   short-row              delete the NF < 4 check
 #   duplicate-row          delete the `key in seen` check

@@ -1,2 +1,2 @@
-::error::.github/testdata/uncovered-guards/inverted-end/profiles/default.out:2: inverted coverage block range: github.com/minhtri2710/munsu/internal/fake/guard.go:20.25,19.1
+::error::.github/testdata/uncovered-guards/inverted-end/profiles/default.out:2: non-positive coverage block range: github.com/minhtri2710/munsu/internal/fake/guard.go:20.25,19.1
 exit 1
