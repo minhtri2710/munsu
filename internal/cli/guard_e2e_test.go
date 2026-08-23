@@ -149,9 +149,9 @@ func TestGuardE2E_CooldownSuppressesIdenticalState(t *testing.T) {
 	if !strings.Contains(first, "WARNING:") {
 		t.Errorf("first call expected WARNING, got: %s", first)
 	}
-	captain := captureStderr(func() { _ = guardWarnWatcher() })
-	if strings.Contains(captain, "WARNING:") {
-		t.Errorf("captain call with same state expected suppressed WARNING, got: %s", captain)
+	second := captureStderr(func() { _ = guardWarnWatcher() })
+	if strings.Contains(second, "WARNING:") {
+		t.Errorf("second call with same state expected suppressed WARNING, got: %s", second)
 	}
 }
 
@@ -171,9 +171,9 @@ func TestGuardE2E_CooldownExpiredReWarns(t *testing.T) {
 	cdPath := guardCooldownPath(tmpDir)
 	oldTs := time.Now().Add(-6 * time.Minute).Unix()
 	_ = os.WriteFile(cdPath, []byte("stale:1\n"+fmt.Sprint(oldTs)+"\n"), 0644)
-	captain := captureStderr(func() { _ = guardWarnWatcher() })
-	if !strings.Contains(captain, "WARNING:") {
-		t.Errorf("captain call after cooldown expiry expected WARNING, got: %s", captain)
+	second := captureStderr(func() { _ = guardWarnWatcher() })
+	if !strings.Contains(second, "WARNING:") {
+		t.Errorf("second call after cooldown expiry expected WARNING, got: %s", second)
 	}
 }
 
@@ -191,12 +191,12 @@ func TestGuardE2E_CooldownStateChangeReWarns(t *testing.T) {
 		t.Errorf("first call expected WARNING, got: %s", first)
 	}
 	writeTaskMeta(t, tmpDir, "task-b", "scout")
-	captain := captureStderr(func() { _ = guardWarnWatcher() })
-	if !strings.Contains(captain, "WARNING:") {
-		t.Errorf("captain call with state change expected WARNING, got: %s", captain)
+	second := captureStderr(func() { _ = guardWarnWatcher() })
+	if !strings.Contains(second, "WARNING:") {
+		t.Errorf("second call with state change expected WARNING, got: %s", second)
 	}
-	if !strings.Contains(captain, "2 task(s) in flight") {
-		t.Errorf("expected '2 task(s) in flight' after state change, got: %s", captain)
+	if !strings.Contains(second, "2 task(s) in flight") {
+		t.Errorf("expected '2 task(s) in flight' after state change, got: %s", second)
 	}
 }
 

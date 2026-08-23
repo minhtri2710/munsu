@@ -3,6 +3,7 @@ package orchestrator
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,6 +16,24 @@ import (
 
 const retryInterval = 60 * time.Second
 
+// ErrReportDurable marks a Report failure that happens after the full durable
+// record set -- envelope, pending record, open evidence, receiver wake -- has
+// committed. Three paths carry it: retiring superseded reports, recording the
+// notification attempt, and the notification itself. The report exists, so none
+// of them mean "the report did not happen", and re-running report supersedes
+// this record rather than adding a second one.
+//
+// It says nothing about whether the receiver was notified: the notify path may
+// have succeeded and the failure landed after it. Of the three, only the notify
+// path is reachable from a test today -- the other two need a durable-write
+// failure this package has no fault injection for, so they are checked by
+// inspection, not by a lane. It is deliberately NOT carried
+// by failures inside the durable sequence itself (pending, evidence, wake),
+// because supersededReports derives what to retire from the sender's pending
+// records -- with that record missing a re-report supersedes nothing and leaves
+// two live envelopes in the receiver's inbox, so the advice above would be false.
+var ErrReportDurable = errors.New("uplink report: durable")
+
 var materialStates = map[string]bool{
 	"done": true, "failed": true, "blocked": true, "needs-decision": true,
 }
@@ -22,6 +41,9 @@ var materialStates = map[string]bool{
 type UplinkNotifyResult struct {
 	Acknowledged bool
 	Queued       bool
+	// Err carries a notification path whose transport was invoked and failed.
+	// A target that cannot be resolved is merely unavailable and remains queued.
+	Err error
 }
 
 type ReportRequest struct {
@@ -71,6 +93,11 @@ func Report(req ReportRequest) (*ReportResult, error) {
 	if req.Key == "" {
 		req.Key = "default"
 	}
+	if _, homeRank, err := ReadHomeIdentity(req.ReceiverHome); err != nil {
+		return nil, fmt.Errorf("uplink report: reading receiver home rank: %w", err)
+	} else if req.ReceiverRank != homeRank {
+		return nil, fmt.Errorf("uplink report: receiver rank %q cannot be satisfied by receiving home %s of rank %q", req.ReceiverRank, req.ReceiverHome, homeRank)
+	}
 	oldReports, err := supersededReports(req)
 	if err != nil {
 		return nil, err
@@ -95,7 +122,7 @@ func Report(req ReportRequest) (*ReportResult, error) {
 		return nil, fmt.Errorf("uplink report: enqueue receiver wake: %w", err)
 	}
 	if err := retireSuperseded(req.SenderHome, req.ReceiverHome, oldReports); err != nil {
-		return nil, fmt.Errorf("uplink report: retire superseded: %w", err)
+		return nil, fmt.Errorf("%w: message %s landed in %s; retire superseded: %w", ErrReportDurable, env.MessageID, req.ReceiverHome, err)
 	}
 
 	result := &ReportResult{MessageID: env.MessageID, Queued: true}
@@ -104,8 +131,14 @@ func Report(req ReportRequest) (*ReportResult, error) {
 	}
 	ref := NotificationRef{MessageID: env.MessageID, SenderIdentity: req.SenderIdentity}
 	nr := req.Notify(ref)
+	// Both failures below land after the durable commit, and this one lands
+	// after Notify has already run -- the receiver may well have been told.
+	// Neither is a report that did not happen, so both say so.
 	if err := markNotificationAttempt(req.SenderHome, env.MessageID); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: message %s landed in %s and the notification path already ran; recording the attempt: %w", ErrReportDurable, env.MessageID, req.ReceiverHome, err)
+	}
+	if nr.Err != nil {
+		return nil, fmt.Errorf("%w: message %s landed in %s; notify: %w", ErrReportDurable, env.MessageID, req.ReceiverHome, nr.Err)
 	}
 	if nr.Acknowledged {
 		result.Notified, result.Queued = true, false
@@ -163,6 +196,9 @@ func Recover(req RecoverRequest) (*RecoverResult, error) {
 		if err := markNotificationAttempt(req.SenderHome, env.MessageID); err != nil {
 			return nil, err
 		}
+		// An unacknowledged notification remains queued for a later retry. A
+		// resolver may be temporarily unavailable, while a transport failure is
+		// surfaced by Report because the transport was actually invoked there.
 		if nr.Acknowledged {
 			result.Notified++
 		} else {
@@ -276,9 +312,12 @@ func notificationDue(home, messageID string, now time.Time) bool {
 	return err != nil || now.Sub(info.ModTime()) >= retryInterval
 }
 
-// NotifyParent attempts immediate delivery of a NotificationRef to the parent
-// agent pane. Durable state must already exist before this adapter is called.
-type TargetResolver func(receiverHome string, ref NotificationRef) (TargetResult, error)
+// TargetResolver resolves a receiver's notification target. selfDirected is
+// true exactly when senderHome == receiverHome; the default resolver then uses
+// receiverHome's own runtime target. Cross-process captain resolution uses
+// authoritative parent metadata and fails closed when its pane identity is
+// unavailable.
+type TargetResolver func(receiverHome string, selfDirected bool, ref NotificationRef) (TargetResult, error)
 
 type NotificationTransport interface {
 	Notify(senderHome string, target TargetResult, payload string) UplinkNotifyResult
@@ -289,14 +328,20 @@ func NotifyParentWithTransport(senderHome, receiverHome string, ref Notification
 }
 
 func NotifyParentWithTargetResolver(senderHome, receiverHome string, ref NotificationRef, resolveTarget TargetResolver, transport NotificationTransport) UplinkNotifyResult {
-	target, err := resolveTarget(receiverHome, ref)
-	if err != nil || target.Handle == "" || target.Source == Unsupported || transport == nil {
+	target, err := resolveTarget(receiverHome, senderHome == receiverHome, ref)
+	if err != nil {
+		return UplinkNotifyResult{Queued: true}
+	}
+	if target.Handle == "" || target.Source == Unsupported || transport == nil {
 		return UplinkNotifyResult{Queued: true}
 	}
 	return transport.Notify(senderHome, target, ref.Encode())
 }
 
-func resolveReceiverTarget(receiverHome string, ref NotificationRef) (TargetResult, error) {
+func resolveReceiverTarget(receiverHome string, selfDirected bool, ref NotificationRef) (TargetResult, error) {
+	if selfDirected {
+		return ResolveTargetWithSource(receiverHome)
+	}
 	env, err := NewStore(receiverHome).ReadEnvelope(ref.SenderIdentity, ref.MessageID)
 	if err != nil || env == nil {
 		return TargetResult{}, fmt.Errorf("reading receiver envelope: %w", err)

@@ -82,7 +82,7 @@ func TestValidateEnvelope_ValidTransitions(t *testing.T) {
 		{"general->soldier", RankGeneral, RankSoldier, true},
 		{"general->general", RankGeneral, RankGeneral, true},
 		{"captain->captain", RankCaptain, RankCaptain, true},
-		{"soldier->general", RankSoldier, RankGeneral, true},
+		{"soldier->general", RankSoldier, RankGeneral, false}, // direct General dispatch
 		{"soldier->soldier", RankSoldier, RankSoldier, true},
 	}
 	for _, tt := range tests {

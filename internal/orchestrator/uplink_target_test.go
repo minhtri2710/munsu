@@ -24,7 +24,7 @@ func TestResolveReceiverTargetCaptainUsesParentMetaNotTaskID(t *testing.T) {
 		t.Fatal(err)
 	}
 	ref := NotificationRef{MessageID: env.MessageID, SenderIdentity: env.SenderIdentity}
-	target, err := resolveReceiverTarget(captainHome, ref)
+	target, err := resolveReceiverTarget(captainHome, false, ref)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestResolveReceiverTargetCaptainFailsClosedWithoutMeta(t *testing.T) {
 	if err := NewStore(captainHome).WriteEnvelope(env); err != nil {
 		t.Fatal(err)
 	}
-	_, err := resolveReceiverTarget(captainHome, NotificationRef{MessageID: env.MessageID, SenderIdentity: env.SenderIdentity})
+	_, err := resolveReceiverTarget(captainHome, false, NotificationRef{MessageID: env.MessageID, SenderIdentity: env.SenderIdentity})
 	if err == nil {
 		t.Fatal("missing authoritative captain meta must fail closed")
 	}

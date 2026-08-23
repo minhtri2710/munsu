@@ -383,13 +383,13 @@ func TestReturn_IdempotentCleanState(t *testing.T) {
 		t.Fatal("first Return: HasActionable() = true, want false")
 	}
 
-	// Captain Return should also be clean.
+	// Second Return should also be clean.
 	report, err = Return(tmp)
 	if err != nil {
-		t.Fatalf("captain Return: %v", err)
+		t.Fatalf("second Return: %v", err)
 	}
 	if report.HasActionable() {
-		t.Fatal("captain Return: HasActionable() = true, want false")
+		t.Fatal("second Return: HasActionable() = true, want false")
 	}
 }
 
