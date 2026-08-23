@@ -56,12 +56,17 @@ type TaskStatePort interface {
 }
 
 // RetirementPort retires the poll artifact of a task whose PR has merged.
-// RetireMergedPoll owns validation of the artifact it is given: it must apply
-// the check-validation rule to checkPath before it queries, records or mutates
-// anything, and report a refusal as domain.ErrCheckValidationRefused. That is
-// why the watcher does not validate again on its behalf — the guard nearest
-// the destructive act is the only one that can close the window, and a copy in
-// the caller would be a second disposition to keep in step for no gain.
+// RetireMergedPoll validates checkPath before it publishes anything or touches
+// the artifact, and reports a refusal as domain.ErrCheckValidationRefused.
+// Any work before that validation must be non-destructive and must fail without
+// touching the artifact. For example, if composing task authority fails, the
+// error is an ordinary retirement failure: nothing was retired, the check wake
+// is retained, and the untouched artifact is retried on the next cycle, where
+// discovery-time validation is authoritative for an artifact that became
+// invalid. The watcher does not validate again on this port's behalf because
+// the guard nearest the destructive act is the only one that can close the
+// window, and a caller-side copy would be a second disposition to keep in step
+// for no gain.
 type RetirementPort interface {
 	RecoverPendingRetirements(homeDir string) (int, []error)
 	RetireMergedPoll(homeDir, taskID, checkPath string) error
@@ -625,13 +630,14 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 			}
 
 			// Attempt crash-safe retirement for merged polls. The loop does
-			// not re-validate the artifact here: RetireMergedPoll applies the
-			// same rule to the same path as its first action, before any
-			// query, record or mutation, and reports a refusal as
-			// ErrCheckValidationRefused — handled below with the disposition a
-			// caller-side check would have produced. A second copy here could
-			// only ever agree, and would be one more disposition to keep in
-			// step with the one at the top of this loop.
+			// not re-validate the artifact here: RetireMergedPoll validates the
+			// same path before publishing anything or touching the artifact, and
+			// reports a refusal as ErrCheckValidationRefused — handled below with
+			// the disposition a caller-side check would have produced. Work before
+			// that validation must be non-destructive; if it fails, the ordinary
+			// retirement error retains the check wake for a retry. A second copy
+			// here could only ever agree, and would be one more disposition to
+			// keep in step with the one at the top of this loop.
 			//
 			// On successful retirement, the poll is removed and a durable
 			// status line is published. The check wake is NOT emitted — the
