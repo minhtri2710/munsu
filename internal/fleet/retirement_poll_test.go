@@ -834,6 +834,48 @@ func TestRecoverPendingRetirement_IncompleteSequence(t *testing.T) {
 	}
 }
 
+func TestRecoverPendingRetirement_QuarantinePreservesReplacement(t *testing.T) {
+	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+	defer cleanup()
+	rec := recoveryRecordForTest(t, home, taskID, checkPath)
+	if err := WriteRetirementRecord(home, rec); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := durableAppendStatus(home, taskID, rec.PublicationLine); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := quarantinePoll(home, taskID, checkPath); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := recoverPendingRetirement(home, taskID, retirementPollAuth(t, home, taskID), func(path string) (string, error) {
+		if err := os.WriteFile(checkPath, []byte("replacement"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		return rec.PollDigest, nil
+	})
+	if err != nil || !resolved {
+		t.Fatalf("recovery = %v, %v", resolved, err)
+	}
+	data, err := os.ReadFile(checkPath)
+	if err != nil || string(data) != "replacement" {
+		t.Fatalf("replacement = %q, %v", data, err)
+	}
+}
+
+func TestRetireMergedPoll_QuarantineRenameFailureRefuses(t *testing.T) {
+	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+	defer cleanup()
+	restore := installMockMergeStatus(t, true, "0000111122223333444455556666777788889999", "aaaabbbbccccddddeeeeffff0000111122223333")
+	defer restore()
+	err := retireMergedPoll(home, taskID, checkPath, retirementPollAuth(t, home, taskID), pollContentDigest, func(string, string) error { return errors.New("rename refused") })
+	if err == nil || !errors.Is(err, domain.ErrCheckValidationRefused) {
+		t.Fatalf("error = %v, want validation refusal", err)
+	}
+	if _, err := os.Stat(checkPath); err != nil {
+		t.Fatalf("original must survive: %v", err)
+	}
+}
+
 func TestRecoverPendingRetirement_PublicationExists(t *testing.T) {
 	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
 	defer cleanup()
@@ -1524,6 +1566,9 @@ func TestRetireMergedPoll_DigestAcquisitionRefusalAfterPublication(t *testing.T)
 	err := retireMergedPoll(home, taskID, checkPath, auth, func(path string) (string, error) {
 		calls++
 		if calls == 2 {
+			if writeErr := os.WriteFile(checkPath, []byte("replacement"), 0644); writeErr != nil {
+				t.Fatalf("write replacement: %v", writeErr)
+			}
 			return "", digestErr
 		}
 		return pollContentDigest(path)
@@ -1531,8 +1576,8 @@ func TestRetireMergedPoll_DigestAcquisitionRefusalAfterPublication(t *testing.T)
 	if err == nil || !errors.Is(err, domain.ErrCheckInvalidAfterPublication) {
 		t.Fatalf("error = %v, want ErrCheckInvalidAfterPublication", err)
 	}
-	if _, statErr := os.Stat(checkPath); statErr != nil {
-		t.Fatalf("still-present check was not preserved: %v", statErr)
+	if data, readErr := os.ReadFile(checkPath); readErr != nil || string(data) != "replacement" {
+		t.Fatalf("replacement should survive: %q, %v", data, readErr)
 	}
 	if rec := readRetirementRecordOrNil(t, home, taskID); rec != nil {
 		t.Fatal("post-publication digest refusal must clean the retirement record")
@@ -1549,6 +1594,9 @@ func TestRetireMergedPoll_DigestMismatchIsNotValidationRefusal(t *testing.T) {
 	err := retireMergedPoll(home, taskID, checkPath, auth, func(path string) (string, error) {
 		calls++
 		if calls == 2 {
+			if writeErr := os.WriteFile(checkPath, []byte("replacement"), 0644); writeErr != nil {
+				t.Fatalf("write replacement: %v", writeErr)
+			}
 			return "different-digest", nil
 		}
 		return pollContentDigest(path)
@@ -1556,8 +1604,8 @@ func TestRetireMergedPoll_DigestMismatchIsNotValidationRefusal(t *testing.T) {
 	if err == nil || errors.Is(err, domain.ErrCheckValidationRefused) || errors.Is(err, domain.ErrCheckInvalidAfterPublication) {
 		t.Fatalf("error = %v, want ordinary digest mismatch", err)
 	}
-	if _, statErr := os.Stat(checkPath); statErr != nil {
-		t.Fatalf("changed check was not preserved: %v", statErr)
+	if data, readErr := os.ReadFile(checkPath); readErr != nil || string(data) != "replacement" {
+		t.Fatalf("replacement should survive: %q, %v", data, readErr)
 	}
 	if rec := readRetirementRecordOrNil(t, home, taskID); rec != nil {
 		t.Fatal("digest mismatch must clean the retirement record")
@@ -1620,8 +1668,8 @@ func TestRetireMergedPoll_PostPublicationRevalidationRefusalIsClassified(t *test
 	if rec := readRetirementRecordOrNil(t, home, taskID); rec != nil {
 		t.Fatal("retirement record should be cleaned after publication")
 	}
-	if info, statErr := os.Stat(checkPath); statErr != nil || !info.IsDir() {
-		t.Fatalf("replacement directory should remain: info=%v err=%v", info, statErr)
+	if _, statErr := os.Stat(checkPath); !os.IsNotExist(statErr) {
+		t.Fatalf("replacement directory should not be touched by quarantine: %v", statErr)
 	}
 }
 
