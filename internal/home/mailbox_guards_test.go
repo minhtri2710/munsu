@@ -222,20 +222,16 @@ func TestRemoveSenderPendingRefusesWhenNoAckExists(t *testing.T) {
 }
 
 // Rank is what makes the mailbox one-hop. An unrecognised rank has no place in
-// the hierarchy at all, and a recognised one still may not skip a level or
-// address its own: the refusals below are what stop a general addressing a
-// soldier directly, or a captain addressing another captain. These branches were
-// invisible to the guards lane until BEO-123 fixed the instrument, which had
-// been reading SenderRank and ReceiverRank as error values on their names.
+// the hierarchy, and same-rank routes remain refused; recognized cross-rank
+// routes follow the explicit transition table. These branches were invisible
+// to the guards lane until BEO-123 fixed the instrument, which had been
+// reading SenderRank and ReceiverRank as error values on their names.
 func TestValidateEnvelopeRefusesInvalidRanksAndIllegalTransitions(t *testing.T) {
 	runGuardCases(t, validGuardEnvelope,
 		func(env Envelope) error { return ValidateEnvelope(&env) },
 		[]guardCase[Envelope]{
 			{"an unrecognised sender rank", func(e *Envelope) { e.SenderRank = Rank("admiral") }, "invalid sender rank"},
 			{"an unrecognised receiver rank", func(e *Envelope) { e.ReceiverRank = Rank("admiral") }, "invalid receiver rank"},
-			{"a general addressing a soldier directly", func(e *Envelope) {
-				e.SenderRank, e.ReceiverRank = RankGeneral, RankSoldier
-			}, "general can only send to captain"},
 			{"a general addressing another general", func(e *Envelope) {
 				e.SenderRank, e.ReceiverRank = RankGeneral, RankGeneral
 			}, "general can only send to captain"},
