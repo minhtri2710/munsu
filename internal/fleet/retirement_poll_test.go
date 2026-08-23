@@ -5,6 +5,7 @@ package fleet
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -769,31 +770,14 @@ func TestRecoverPendingRetirement_IncompleteSequence(t *testing.T) {
 	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
 	defer cleanup()
 
-	// Create pending record (no publication, no poll removal).
+	// Create a modern pending record before quarantine and publication.
 	digest, err := pollContentDigest(checkPath)
 	if err != nil {
 		t.Fatalf("pollContentDigest: %v", err)
 	}
 
-	rec := &PollRetirementRecord{
-		SchemaVersion:   1,
-		TaskID:          taskID,
-		PollPath:        taskID + ".check",
-		PollDigest:      digest,
-		Provider:        "github",
-		Owner:           "testowner",
-		Repo:            "testrepo",
-		Number:          42,
-		URL:             "https://github.com/testowner/testrepo/pull/42",
-		BaseRef:         "main",
-		HeadRef:         "feature-branch",
-		HeadSHA:         "0000111122223333444455556666777788889999",
-		CapturedAt:      "2024-01-01T00:00:00Z",
-		MergedSHA:       "aaaabbbbccccddddeeeeffff0000111122223333",
-		PublicationLine: publicationLine(taskID, "https://github.com/testowner/testrepo/pull/42", "aaaabbbbccccddddeeeeffff0000111122223333"),
-		DiscoveredAt:    "2024-01-01T00:01:00Z",
-		RecordedAt:      "2024-01-01T00:01:00Z",
-	}
+	rec := recoveryRecordForTest(t, home, taskID, checkPath)
+	rec.PollDigest = digest
 	if err := WriteRetirementRecord(home, rec); err != nil {
 		t.Fatalf("WriteRetirementRecord: %v", err)
 	}
@@ -831,6 +815,72 @@ func TestRecoverPendingRetirement_IncompleteSequence(t *testing.T) {
 	rec2 := readRetirementRecordOrNil(t, home, taskID)
 	if rec2 != nil {
 		t.Fatal("record should be removed")
+	}
+}
+
+func TestRecoverPendingRetirement_LegacyRecordPreservesReplacement(t *testing.T) {
+	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+	defer cleanup()
+	original, err := os.ReadFile(checkPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := recoveryRecordForTest(t, home, taskID, checkPath)
+	legacyRecord := map[string]any{
+		"schemaVersion":   rec.SchemaVersion,
+		"taskId":          rec.TaskID,
+		"pollPath":        rec.PollPath,
+		"pollDigest":      rec.PollDigest,
+		"provider":        rec.Provider,
+		"owner":           rec.Owner,
+		"repo":            rec.Repo,
+		"number":          rec.Number,
+		"url":             rec.URL,
+		"baseRef":         rec.BaseRef,
+		"headRef":         rec.HeadRef,
+		"headSHA":         rec.HeadSHA,
+		"capturedAt":      rec.CapturedAt,
+		"mergedSHA":       rec.MergedSHA,
+		"publicationLine": rec.PublicationLine,
+		"discoveredAt":    rec.DiscoveredAt,
+		"recordedAt":      rec.RecordedAt,
+	}
+	data, err := json.Marshal(legacyRecord)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(retirementDirPath(home), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(retirementRecordPath(home, taskID), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(checkPath, []byte("replacement"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, err := RecoverPendingRetirement(home, taskID, retirementPollAuth(t, home, taskID))
+	if err == nil || resolved {
+		t.Fatalf("recovery = %v, %v", resolved, err)
+	}
+	got, err := os.ReadFile(checkPath)
+	if err != nil || string(got) != "replacement" {
+		t.Fatalf("replacement = %q, %v", got, err)
+	}
+	if string(original) == string(got) {
+		t.Fatal("replacement was not installed")
+	}
+	entries, err := os.ReadDir(retirementDirPath(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".quarantine") {
+			t.Fatalf("unexpected quarantine artifact %q", entry.Name())
+		}
+	}
+	if readRetirementRecordOrNil(t, home, taskID) == nil {
+		t.Fatal("retirement record should be preserved")
 	}
 }
 
