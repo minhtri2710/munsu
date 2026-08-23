@@ -288,9 +288,9 @@ func TestRunCycle_RetirementIsAttemptedAfterOneValidation(t *testing.T) {
 // assertion is the control: if the port recorded nothing, discovery never
 // reached the artifact and anything the test then claims about its fate is
 // vacuous.
-func runCycleOverCheck(t *testing.T, home, checkPath string) []WakeRecord {
+func runCycleOverCheck(t *testing.T, home, checkPath string, validate func(string) error) []WakeRecord {
 	t.Helper()
-	validation := &testCheckValidationPort{}
+	validation := &testCheckValidationPort{validate: validate}
 	resetRecovery()
 	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, &testRetirementPort{}, validation, testTaskStatePort{}); err != nil {
 		t.Fatalf("run cycle: %v", err)
@@ -308,6 +308,22 @@ func runCycleOverCheck(t *testing.T, home, checkPath string) []WakeRecord {
 		}
 	}
 	return records
+}
+
+// refuseUnrunnableCheck is the validation-port stand-in for the part of
+// fleet.ValidateCheckWithLstat these tests depend on: an artifact that is empty
+// or does not open with a shebang is not a runnable check script. That rule
+// belongs to the validator, not to AcceptOrRefuseStale, so the loop refuses
+// these before staleness is ever asked about.
+func refuseUnrunnableCheck(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if len(data) < 2 || data[0] != '#' || data[1] != '!' {
+		return fmt.Errorf("not a runnable check script: %s", path)
+	}
+	return nil
 }
 
 // writeCheck writes a check artifact, creating its directory.
@@ -343,22 +359,22 @@ func TestRunCycle_StaleCheckSurvivesTheLoop(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runCycleOverCheck(t, home, checkPath)
+	runCycleOverCheck(t, home, checkPath, nil)
 	if _, err := os.Stat(checkPath); err != nil {
 		t.Fatalf("stale check must survive the cycle for a human to inspect: %v", err)
 	}
 }
 
-// The shebang-less case is the one TestAcceptOrRefuseStale_NoShebang asserts
-// must survive; it reaches AcceptOrRefuseStale only through a validation port
-// that accepts it, which is why the direct-call test could pass while the loop
-// deleted the file.
+// A shebang-less artifact is refused by the check-validation rule, which in
+// production is fleet.ValidateCheckWithLstat. The port stands in for it here;
+// what the test is about is the disposition the loop gives that verdict, which
+// used to be deletion of the operator's file.
 func TestRunCycle_ShebangLessCheckSurvivesTheLoop(t *testing.T) {
 	home := t.TempDir()
 	checkPath := filepath.Join(home, "state", "checks", "global.check")
 	writeCheck(t, checkPath, "echo hello\n")
 
-	runCycleOverCheck(t, home, checkPath)
+	runCycleOverCheck(t, home, checkPath, refuseUnrunnableCheck)
 	if _, err := os.Stat(checkPath); err != nil {
 		t.Fatalf("shebang-less check must survive the cycle for inspection: %v", err)
 	}
@@ -369,7 +385,7 @@ func TestRunCycle_ZeroLengthCheckSurvivesTheLoop(t *testing.T) {
 	checkPath := filepath.Join(home, "state", "checks", "empty.check")
 	writeCheck(t, checkPath, "")
 
-	runCycleOverCheck(t, home, checkPath)
+	runCycleOverCheck(t, home, checkPath, refuseUnrunnableCheck)
 	if _, err := os.Stat(checkPath); err != nil {
 		t.Fatalf("no refusal deletes an externally authored check: %v", err)
 	}
