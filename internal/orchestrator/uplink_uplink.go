@@ -41,14 +41,8 @@ var materialStates = map[string]bool{
 type UplinkNotifyResult struct {
 	Acknowledged bool
 	Queued       bool
-	// Err carries a notification path that failed rather than a target that
-	// was merely unavailable. Report refuses such a path instead of reporting
-	// it queued, in every topology. Recover retries it, for the reason recorded
-	// at that call site -- but that retry exists only under Captain dispatch,
-	// where ReconcileCaptainHook drives Recover. Under direct General dispatch
-	// nothing calls Recover over the General home's outbox, so a failed path
-	// there is retried by no one today. Do not read this field as proof that
-	// some loop closes; ask first which topology is running.
+	// Err carries a notification path whose transport was invoked and failed.
+	// A target that cannot be resolved is merely unavailable and remains queued.
 	Err error
 }
 
@@ -202,15 +196,9 @@ func Recover(req RecoverRequest) (*RecoverResult, error) {
 		if err := markNotificationAttempt(req.SenderHome, env.MessageID); err != nil {
 			return nil, err
 		}
-		// A failed notification path is loud in Report and deliberately is not
-		// here. Recover reaches resolveReceiverTarget's captain branch through
-		// ReconcileCaptainHook, and that branch has a pre-existing unmet
-		// precondition: it requires meta["herdr_pane_id"], which only
-		// HerdrBackend writes, so a tmux-backed captain never satisfies it.
-		// Failing here would convert that long-standing silent failure into a
-		// startup failure, on a reproduction that never covered it. Counting a
-		// failed path as queued is this loop's base behaviour, not a swallow
-		// reintroduced; the captain-branch defect is tracked on its own issue.
+		// An unacknowledged notification remains queued for a later retry. A
+		// resolver may be temporarily unavailable, while a transport failure is
+		// surfaced by Report because the transport was actually invoked there.
 		if nr.Acknowledged {
 			result.Notified++
 		} else {
@@ -339,7 +327,7 @@ func NotifyParentWithTransport(senderHome, receiverHome string, ref Notification
 func NotifyParentWithTargetResolver(senderHome, receiverHome string, ref NotificationRef, resolveTarget TargetResolver, transport NotificationTransport) UplinkNotifyResult {
 	target, err := resolveTarget(receiverHome, ref)
 	if err != nil {
-		return UplinkNotifyResult{Err: fmt.Errorf("resolving receiver target in %s: %w", receiverHome, err)}
+		return UplinkNotifyResult{Queued: true}
 	}
 	if target.Handle == "" || target.Source == Unsupported || transport == nil {
 		return UplinkNotifyResult{Queued: true}

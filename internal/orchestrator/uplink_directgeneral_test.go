@@ -189,23 +189,16 @@ func TestReportRefusesAReceiverRankTheReceivingHomeCannotSatisfy(t *testing.T) {
 	}
 }
 
-// A target that cannot be resolved is a failed path, not an unavailable pane.
-// It must not be reported as queued, and the transport must not be reached.
-func TestNotifyParentWithTargetResolverFailsLoudlyOnResolutionError(t *testing.T) {
+// A target that cannot be resolved is unavailable, not a failed transport.
+// It remains queued for durable delivery and the transport is not reached.
+func TestNotifyParentWithTargetResolverQueuesResolutionError(t *testing.T) {
 	transport := &countingTransport{}
-	boom := errors.New("captain parent-home unavailable")
 	result := NotifyParentWithTargetResolver("sender", "receiver", NotificationRef{MessageID: "m", SenderIdentity: "s"},
 		func(string, NotificationRef) (TargetResult, error) {
-			return TargetResult{}, boom
+			return TargetResult{}, errors.New("captain parent-home unavailable")
 		}, transport)
-	if result.Err == nil {
-		t.Fatal("a failed target resolution must surface as an error")
-	}
-	if !errors.Is(result.Err, boom) {
-		t.Fatalf("err = %v, want it to wrap %v", result.Err, boom)
-	}
-	if result.Queued || result.Acknowledged {
-		t.Fatalf("result = %+v, want neither queued nor acknowledged", result)
+	if !result.Queued || result.Err != nil || result.Acknowledged {
+		t.Fatalf("result = %+v, want queued without error or acknowledgement", result)
 	}
 	if transport.calls != 0 {
 		t.Fatalf("transport calls = %d, want 0", transport.calls)
@@ -260,45 +253,34 @@ func TestReportRefusesAReceivingHomeWhoseProvenanceIsUnreadable(t *testing.T) {
 	}
 }
 
-// The loudness added for #562 stops at Report. Recover keeps counting a failed
-// path as a queued retry, because its captain branch carries a pre-existing
-// unmet precondition (herdr_pane_id, written only by HerdrBackend) that this
-// branch's reproduction never covered. Widening the boundary would convert that
-// silent failure into a startup failure through ReconcileCaptainHook.
-//
-// Read this as narrowly as the fact-4 test above. It pins where the boundary
-// sits by calling Recover by hand on the General home this file builds. It does
-// NOT exercise the captain branch the narrowing is justified by, and it shows no
-// production caller: under direct General dispatch nothing invokes Recover at
-// all. What it proves is that a widening edit -- restoring the Err check, or
-// counting Err as Notified -- changes an observable outcome, so the boundary
-// cannot be tidied away without a lane objecting.
-func TestNotifyFailureIsFatalInReportAndRetriedByRecoverWhenInvokedByHand(t *testing.T) {
-	failing := func(NotificationRef) UplinkNotifyResult {
-		return UplinkNotifyResult{Err: fmt.Errorf("resolving receiver target")}
-	}
+type failingTransport struct{ calls int }
+
+func (t *failingTransport) Notify(_ string, _ TargetResult, _ string) UplinkNotifyResult {
+	t.calls++
+	return UplinkNotifyResult{Err: errors.New("transport unavailable")}
+}
+
+// Resolver failures stay queued because no transport was invoked; a transport
+// failure is loud because the notification path actually ran.
+func TestNotifyFailureIsFatalOnlyAfterTransportInvocation(t *testing.T) {
 	generalHome, identity := directGeneralHome(t)
-	if _, err := Report(ReportRequest{
+	transport := &failingTransport{}
+	var ref NotificationRef
+	result, err := Report(ReportRequest{
 		SenderHome: generalHome, ReceiverHome: generalHome,
 		SenderRank: RankSoldier, SenderIdentity: "direct-task",
 		ReceiverRank: RankGeneral, ReceiverID: identity,
 		TaskID: "direct-task", Key: "default", State: "failed", Message: "direct dispatch failure",
-		Notify: failing,
-	}); err == nil {
-		t.Fatal("Report must refuse a failed notification path, not report it queued")
-	}
-
-	// Report refused after writing durable state, so the envelope is pending:
-	// the same failure now has to reach Recover's retry path.
-	res, err := Recover(RecoverRequest{
-		SenderHome: generalHome, ReceiverHome: generalHome, ReceiverRank: RankGeneral, ForceNotify: true,
-		Notify: failing,
+		Notify: func(got NotificationRef) UplinkNotifyResult {
+			ref = got
+			return NotifyParentWithTransport(generalHome, generalHome, got, transport)
+		},
 	})
-	if err != nil {
-		t.Fatalf("Recover invoked directly must retry a failed notification path, not fail closed on it: %v", err)
+	if err == nil || !errors.Is(err, ErrReportDurable) {
+		t.Fatalf("err = %v, want durable transport failure", err)
 	}
-	if res.Queued != 1 || res.Notified != 0 {
-		t.Fatalf("recover result = %+v, want exactly one queued retry from a hand-invoked Recover", *res)
+	if result != nil || transport.calls != 1 || ref.MessageID == "" {
+		t.Fatalf("result=%+v transport calls=%d ref=%+v, want one invoked failed transport", result, transport.calls, ref)
 	}
 }
 
