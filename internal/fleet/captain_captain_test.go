@@ -2038,25 +2038,25 @@ func TestAcquireExclusiveLock_ConcurrentRefusal(t *testing.T) {
 		t.Fatalf("first acquire: %v", err)
 	}
 
-	// Captain acquire with LOCK_NB should fail immediately.
+	// Second acquire with LOCK_NB should fail immediately.
 	// Use channel + timeout to prove non-blocking behavior.
 	done := make(chan struct{})
-	var captainErr error
+	var secondErr error
 	go func() {
-		_, captainErr = acquireExclusiveLock(lockPath)
+		_, secondErr = acquireExclusiveLock(lockPath)
 		close(done)
 	}()
 
 	select {
 	case <-done:
-		if captainErr == nil {
-			t.Fatal("captain concurrent lock should have failed with LOCK_NB")
+		if secondErr == nil {
+			t.Fatal("second concurrent lock should have failed with LOCK_NB")
 		}
-		if !strings.Contains(captainErr.Error(), "held by another process") {
-			t.Logf("captain lock error (expected): %v", captainErr)
+		if !strings.Contains(secondErr.Error(), "held by another process") {
+			t.Logf("second lock error (expected): %v", secondErr)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("captain lock acquisition blocked for 5s — LOCK_NB not working")
+		t.Fatal("second lock acquisition blocked for 5s — LOCK_NB not working")
 	}
 
 	release1()

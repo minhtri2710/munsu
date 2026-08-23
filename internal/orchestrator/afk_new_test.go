@@ -72,7 +72,7 @@ func TestLockIdempotentSameProcess(t *testing.T) {
 	}
 	defer lock1.Release()
 
-	// Captain acquire should be no-op (lock held by same process or
+	// Second acquire should be no-op (lock held by same process or
 	// more precisely, by the PID we wrote — which is ourselves).
 	// The lock file exists and names our PID (which is alive), so
 	// it should return (nil, false, nil).
@@ -279,7 +279,7 @@ func TestTriageDrainsQueue(t *testing.T) {
 		t.Errorf("wake queue still exists after drain: %v", err)
 	}
 
-	// Captain call should return nil (empty queue)
+	// Second call should return nil (empty queue)
 	digest2, err := OneCycle(tmp)
 	if err != nil {
 		t.Fatalf("OneCycle #2: %v", err)
