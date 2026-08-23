@@ -322,8 +322,10 @@ func ValidateRetirementPath(homeDir, taskID string) error {
 	return nil
 }
 
-// ValidateCheckWithLstat validates a check plugin with Lstat to reject
-// symlinks and non-regular files. This is the crash-safe variant.
+// ValidateCheckWithLstat owns check-plugin runnability validation. It requires
+// an existing regular non-symlink file, the owner-execute bit on Unix (Windows
+// has no mode-bit requirement), and at least two readable bytes beginning with
+// a shebang. Watcher discovery and retirement use this same validator.
 func ValidateCheckWithLstat(path string) error {
 	// Use Lstat to detect symlinks.
 	fi, err := os.Lstat(path)
