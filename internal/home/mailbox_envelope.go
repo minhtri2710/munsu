@@ -172,8 +172,9 @@ func ValidateEnvelope(env *Envelope) error {
 	// Validate rank transitions (one-hop semantics).
 	switch env.SenderRank {
 	case RankGeneral:
-		if env.ReceiverRank != RankCaptain {
-			return fmt.Errorf("envelope: general can only send to captain, not %q", env.ReceiverRank)
+		// Direct General dispatch sends commands straight to soldiers.
+		if env.ReceiverRank != RankCaptain && env.ReceiverRank != RankSoldier {
+			return fmt.Errorf("envelope: general can only send to captain or soldier, not %q", env.ReceiverRank)
 		}
 	case RankCaptain:
 		if env.ReceiverRank != RankGeneral && env.ReceiverRank != RankSoldier {
