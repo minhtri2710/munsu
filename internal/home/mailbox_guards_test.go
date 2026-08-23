@@ -1,6 +1,10 @@
 package home
 
 import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -275,6 +279,78 @@ func TestValidateAckRefusesRanksThatDoNotMatchTheEnvelope(t *testing.T) {
 // harmlessly; different content under the same ID means two different messages
 // are claiming one identity, and the store refuses rather than overwriting the
 // one already delivered.
+func TestStoreReadEnvelopeRefusesPathMessageIDMismatch(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir)
+	env := validGuardEnvelope()
+	path := store.inboxPath(env.SenderIdentity, env.MessageID)
+	data, err := json.MarshalIndent(env, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("mkdir inbox: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatalf("write envelope: %v", err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read envelope fixture: %v", err)
+	}
+
+	otherPath := store.inboxPath(env.SenderIdentity, "other-message")
+	if err := os.Rename(path, otherPath); err != nil {
+		t.Fatalf("rename envelope fixture: %v", err)
+	}
+	if _, err := store.ReadEnvelope(env.SenderIdentity, "other-message"); err == nil {
+		t.Fatal("ReadEnvelope accepted a mismatched decoded message ID")
+	} else if !strings.Contains(err.Error(), "other-message") || !strings.Contains(err.Error(), env.MessageID) {
+		t.Fatalf("error = %v, want both message IDs", err)
+	}
+	after, err := os.ReadFile(otherPath)
+	if err != nil {
+		t.Fatalf("read envelope after refusal: %v", err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("ReadEnvelope changed the mismatched envelope")
+	}
+}
+
+func TestStoreReadAckRefusesPathMessageIDMismatch(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir)
+	ack := validGuardAck()
+	path := store.ackPath(ack.SenderIdentity, "other-message")
+	data, err := json.MarshalIndent(ack, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal ack: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("mkdir ack inbox: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatalf("write ack: %v", err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read ack fixture: %v", err)
+	}
+
+	if _, err := store.ReadAck(ack.SenderIdentity, "other-message"); err == nil {
+		t.Fatal("ReadAck accepted a mismatched decoded message ID")
+	} else if !strings.Contains(err.Error(), "other-message") || !strings.Contains(err.Error(), ack.MessageID) {
+		t.Fatalf("error = %v, want both message IDs", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read ack after refusal: %v", err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("ReadAck changed the mismatched ack")
+	}
+}
+
 func TestStoreWriteEnvelopeRefusesConflictingContentUnderOneMessageID(t *testing.T) {
 	store := NewStore(t.TempDir())
 	env := validGuardEnvelope()

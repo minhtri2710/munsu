@@ -190,6 +190,10 @@ func (s *Store) ReadEnvelope(senderIdentity, messageID string) (*Envelope, error
 	if err := json.Unmarshal(data, &env); err != nil {
 		return nil, fmt.Errorf("unmarshal envelope %s: %w", messageID, err)
 	}
+	path := s.inboxPath(senderIdentity, messageID)
+	if env.MessageID != messageID {
+		return nil, fmt.Errorf("read envelope %s: path message ID %q does not match decoded message ID %q", path, messageID, env.MessageID)
+	}
 	return &env, nil
 }
 
@@ -303,6 +307,10 @@ func (s *Store) ReadAck(senderIdentity, messageID string) (*ProcessingAck, error
 	var ack ProcessingAck
 	if err := json.Unmarshal(data, &ack); err != nil {
 		return nil, fmt.Errorf("unmarshal ack %s: %w", messageID, err)
+	}
+	path := s.ackPath(senderIdentity, messageID)
+	if ack.MessageID != messageID {
+		return nil, fmt.Errorf("read ack %s: path message ID %q does not match decoded message ID %q", path, messageID, ack.MessageID)
 	}
 	return &ack, nil
 }
