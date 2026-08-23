@@ -102,14 +102,9 @@ func DiscoverAllChecks(homeDir string) ([]CheckPlugin, error) {
 // by munsu — deleting one destroys the only copy of something a human may need
 // to look at, and no refusal here is worth that.
 //
-// PRECONDITION: path has passed CheckValidationPort.ValidateCheck. That rule —
-// fleet.ValidateCheckWithLstat in production — owns the question of whether the
-// artifact is a runnable check script at all: symlink, non-regular,
-// non-executable, zero-length, no shebang. This function does not re-ask any
-// part of it. The watcher's check loop, its only caller, validates and skips
-// before it gets here, so a partial second copy of that rule would be
-// unreachable, and a partial copy is worse than none: it reads as a safety net
-// while leaving most of the shapes through.
+// PRECONDITION: path has passed CheckValidationPort.ValidateCheck. Check
+// runnability is owned by fleet.ValidateCheckWithLstat; this function only
+// compares artifact and task-state timestamps.
 func AcceptOrRefuseStale(path string) error {
 	fi, err := os.Stat(path)
 	if err != nil {
