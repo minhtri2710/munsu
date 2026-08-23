@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/minhtri2710/munsu/internal/config"
 )
 
 // captainMarkerName is the provenance marker file used by captain homes.
@@ -211,6 +209,22 @@ func WriteHomeIdentity(homeDir, identity string, rank Rank) error {
 	return nil
 }
 
+// readParentHome reads the durable parent-home pointer directly because home
+// may not depend on config under the package-topology rule. internal/config
+// remains the owner of the configuration surface; this is one durable pointer
+// read in a home, which is what internal/home is for.
+func readParentHome(homeDir string) (string, error) {
+	path := filepath.Join(homeDir, "config", "parent-home")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("config key %q not found", "parent-home")
+		}
+		return "", fmt.Errorf("reading config file %s: %w", path, err)
+	}
+	return strings.TrimSpace(string(data)), nil
+}
+
 // verifySenderRank verifies the rank claimed by env against the one durable
 // provenance record that can prove that claim for this receiver. The claim
 // selects the proof obligation, never whether proof is needed, so a task
@@ -269,7 +283,7 @@ func (r *Receiver) verifySenderRank(env *Envelope) error {
 	case RankGeneral:
 		switch r.rank {
 		case RankCaptain:
-			parentHome, err := config.Get(r.store.homeDir, "parent-home")
+			parentHome, err := readParentHome(r.store.homeDir)
 			if err != nil {
 				return fmt.Errorf("reading captain parent home: %w", err)
 			}

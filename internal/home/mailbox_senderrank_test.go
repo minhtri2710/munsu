@@ -5,8 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/minhtri2710/munsu/internal/config"
 )
 
 // The receiver derives the sender's rank from durable state rather than
@@ -45,8 +43,12 @@ func hostSoldier(t *testing.T, homeDir, taskID string) {
 
 func configureParent(t *testing.T, captainHome, parentHome string) {
 	t.Helper()
-	if err := config.Set(captainHome, "parent-home", parentHome); err != nil {
-		t.Fatalf("config.Set parent-home: %v", err)
+	configDir := filepath.Join(captainHome, "config")
+	if err := os.MkdirAll(configDir, 0700); err != nil {
+		t.Fatalf("MkdirAll config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "parent-home"), []byte(parentHome+"\n"), 0600); err != nil {
+		t.Fatalf("WriteFile parent-home: %v", err)
 	}
 }
 
@@ -273,6 +275,22 @@ func TestSenderRankRefusesMissingOrInvalidHomeProvenance(t *testing.T) {
 				return r, &Envelope{SenderIdentity: senderRankGeneralID, ReceiverID: senderRankCaptainID}
 			},
 			want: "parent home",
+		},
+		{
+			name: "captain empty parent home",
+			build: func(t *testing.T) (*Receiver, *Envelope) {
+				dir := namedHome(t, senderRankCaptainID)
+				if err := WriteHomeIdentity(dir, senderRankCaptainID, RankCaptain); err != nil {
+					t.Fatal(err)
+				}
+				configureParent(t, dir, "   ")
+				r, err := NewReceiver(dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return r, &Envelope{SenderIdentity: senderRankGeneralID, ReceiverID: senderRankCaptainID}
+			},
+			want: "parent home provenance",
 		},
 		{
 			name: "general missing captain record",
