@@ -403,9 +403,11 @@ func (r *Receiver) Receive(ref NotificationRef) (*Envelope, error) {
 //  5. Envelope ReceiverRank matches receiver rank
 //  6. Envelope SenderIdentity matches ref.SenderIdentity
 //  7. Payload hash verification
-//  8. Existing ack: same outcome "accepted" = idempotent, different = conflict
-//     (fail closed); replaying a persisted decision does not require current
-//     sender provenance
+//  8. Existing ack: a persisted "accepted" ack must pass both its own
+//     validation and exact envelope matching before it can be replayed;
+//     different outcomes and corrupt or mismatched accepted acks fail closed.
+//     This narrow idempotent read does not require current sender provenance,
+//     but current provenance is required before writing a new ack.
 //  9. Envelope SenderRank is proven by the claim-directed durable provenance
 //     check (see verifySenderRank); current provenance is required before
 //     writing a new ack
@@ -469,8 +471,15 @@ func (r *Receiver) Ack(ref NotificationRef) (*ProcessingAck, error) {
 	}
 	if existing != nil {
 		if existing.Outcome == OutcomeAccepted {
+			if err := ValidateProcessingAck(existing); err != nil {
+				return nil, fmt.Errorf("ack existing accepted record invalid: %w", err)
+			}
+			if err := ValidateAck(env, existing); err != nil {
+				return nil, fmt.Errorf("ack existing accepted record mismatch: %w", err)
+			}
 			// Idempotent: same outcome, return existing ack preserving
-			// the original ProcessedAt timestamp.
+			// the original ProcessedAt timestamp. This validated replay
+			// does not require current sender provenance.
 			return existing, nil
 		}
 		// Conflicting outcome: fail closed.

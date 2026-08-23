@@ -244,6 +244,35 @@ func TestAckRemainsIdempotentAfterSenderProvenanceTeardown(t *testing.T) {
 	}
 }
 
+func TestAckRefusesMismatchedPersistedAcceptedAck(t *testing.T) {
+	r, store, _ := newGuardReceiver(t)
+	env, ref := deliverGuardEnvelope(t, store)
+
+	persisted := validGuardAck()
+	persisted.MessageID = env.MessageID
+	persisted.SenderIdentity = env.SenderIdentity
+	persisted.ReceiverID = env.ReceiverID
+	persisted.PayloadHash = env.PayloadHash
+	persisted.Key = "different-key"
+	if err := store.WriteAck(&persisted); err != nil {
+		t.Fatalf("WriteAck: %v", err)
+	}
+
+	if _, err := r.Ack(ref); err == nil {
+		t.Fatal("Ack accepted a persisted ack that mismatches the envelope")
+	} else if !strings.Contains(err.Error(), "ack existing accepted record mismatch") {
+		t.Fatalf("error = %v, want the persisted-ack mismatch refusal", err)
+	}
+
+	unchanged, err := store.ReadAck(env.SenderIdentity, env.MessageID)
+	if err != nil {
+		t.Fatalf("ReadAck after refusal: %v", err)
+	}
+	if unchanged == nil || unchanged.Key != persisted.Key {
+		t.Fatalf("persisted ack changed after refusal: got %+v, want %+v", unchanged, persisted)
+	}
+}
+
 func TestAckRefusesToOverwriteAConflictingOutcome(t *testing.T) {
 	r, store, _ := newGuardReceiver(t)
 	env, ref := deliverGuardEnvelope(t, store)
