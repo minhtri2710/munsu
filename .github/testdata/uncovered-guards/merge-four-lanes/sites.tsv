@@ -1,4 +1,4 @@
-internal/fake/lanes.go	PerLane	1	n == 1	10.12-12.4
-internal/fake/lanes.go	PerLane	2	n == 2	20.12-22.4
-internal/fake/lanes.go	PerLane	3	n == 3	30.12-32.4
-internal/fake/lanes.go	PerLane	4	n == 4	40.12-42.4
+internal/fake/lanes.go	PerLane	1	n == 1	10.12-12.4	10.12,10.12
+internal/fake/lanes.go	PerLane	2	n == 2	20.12-22.4	20.12,20.12
+internal/fake/lanes.go	PerLane	3	n == 3	30.12-32.4	30.12,30.12
+internal/fake/lanes.go	PerLane	4	n == 4	40.12-42.4	40.12,40.12

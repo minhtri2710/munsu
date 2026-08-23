@@ -1,4 +1,4 @@
-a.go	Once	1	!ok	18.24-20.3
-a.go	Twice	1	!ok	8.24-10.3
-a.go	Twice	2	!ok	11.24-13.3
+a.go	Once	1	!ok	18.24-20.3	18.24,19.3
+a.go	Twice	1	!ok	8.24-10.3	8.24,9.3
+a.go	Twice	2	!ok	11.24-13.3	11.24,12.3
 exit 0

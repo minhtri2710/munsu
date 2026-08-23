@@ -110,12 +110,13 @@ sites() {
 # One line per coverage block, `path:start-end<TAB>count`, carrying the
 # largest count any lane recorded for it. The profile is the source of truth for
 # the block's start: Go toolchains may place it at the `if` body's opening brace
-# or at its first statement. A site therefore supplies a source body range and
-# classify() selects the earliest profile block that starts inside that range.
+# or at its first statement. A site therefore supplies its body range and the
+# supported entry coordinates; classify() accepts only a unique entry block.
 #
 # The complete range is retained so a malformed or ambiguous profile cannot be
-# mistaken for a match. The start is what selects the block; the end is evidence
-# and keeps the merged representation faithful to the profile.
+# mistaken for a match. The start selects the entry coordinate; the end is
+# validated against the source body and keeps the merged representation faithful
+# to the profile.
 merge() {
 	local module lane path missing=""
 	module="$(awk '/^module / { print $2; exit }' "$ROOT/go.mod")"
@@ -198,11 +199,11 @@ merge() {
 # Every site with a verdict: covered, uncovered, unmeasured, or anomaly.
 #
 # `anomaly` is the one that must never be waived away: the file IS in the
-# profile, so the lane compiled it, yet no profile block can be resolved from
-# this site's refusal-body range. That means the coverage instrumenter's block
-# convention has changed, or the profile is otherwise incompatible with the
-# source tree, and every verdict this script prints is suspect. It is fatal in
-# check().
+# profile, so the lane compiled it, yet no unique valid entry block can be
+# resolved from this site's refusal-body coordinates. That means the coverage
+# instrumenter's block convention has changed, or the profile is otherwise
+# incompatible with the source tree, and every verdict this script prints is
+# suspect. It is fatal in check().
 classify() {
 	local merged derived
 	# `|| exit 1` on both, rather than leaning on `set -e`: a command
@@ -242,6 +243,13 @@ classify() {
 		function inside(point, lower, upper) {
 			return !before(point, lower) && !after(point, upper)
 		}
+		function bodyStart(point, lower, upper) {
+			return !before(point, lower) && before(point, upper)
+		}
+		function coordinate(point,   parts) {
+			split(point, parts, /\./)
+			return sprintf("%d:%d", parts[1], parts[2])
+		}
 		NR == FNR {
 			file = $1
 			sub(/:[0-9]+\.[0-9]+-.*/, "", file)
@@ -250,10 +258,22 @@ classify() {
 			next
 		}
 		{
-			bodyStart = startPoint($5)
-			bodyEnd = endPoint($5)
+			if (NF != 6) {
+				printf "::error::derived refusal site has invalid columns: %s\n", $0 > "/dev/stderr"
+				bad = 1
+				next
+			}
+			bodyLower = startPoint($5)
+			bodyUpper = endPoint($5)
+			split($6, entries, /,/)
+			if (split($6, entries, /,/) != 2 || entries[1] !~ /^[1-9][0-9]*\.[1-9][0-9]*$/ || entries[2] !~ /^[1-9][0-9]*\.[1-9][0-9]*$/) {
+				printf "::error::derived refusal site has invalid entry coordinates: %s\n", $0 > "/dev/stderr"
+				bad = 1
+				next
+			}
+			entryBrace = coordinate(entries[1])
+			entryFirst = coordinate(entries[2])
 			file = $1
-			best = ""
 			matches = 0
 			incompatible = 0
 			n = split(blocks[file], lines, /\n/)
@@ -264,18 +284,14 @@ classify() {
 				sub(/^[^:]+:/, "", blockRange)
 				blockStart = startPoint(blockRange)
 				blockEnd = endPoint(blockRange)
-				if (!inside(blockStart, bodyStart, bodyEnd) || blockStart == bodyEnd) continue
-				if (!inside(blockEnd, bodyStart, bodyEnd) || !before(blockStart, blockEnd)) {
+				if (!bodyStart(blockStart, bodyLower, bodyUpper)) continue
+				if (!inside(blockEnd, bodyLower, bodyUpper) || !before(blockStart, blockEnd)) {
 					incompatible = 1
 					continue
 				}
-				if (best == "" || before(blockStart, best)) {
-					best = blockStart
-					matches = 1
-					bestLine = lines[i]
-				} else if (blockStart == best) {
-					matches++
-				}
+				if (blockStart != entryBrace && blockStart != entryFirst) continue
+				matches++
+				bestLine = lines[i]
 			}
 			# The block travels with every verdict, not just the anomaly: the
 			# baseline has no line numbers by design, so this is the only thing
@@ -288,6 +304,7 @@ classify() {
 			} else if (!(file in compiled)) print "unmeasured\t" id
 			else print "anomaly\t" id
 		}
+		END { if (bad) exit 1 }
 	' <(printf '%s\n' "$merged") <(printf '%s\n' "$derived")
 }
 
@@ -381,7 +398,7 @@ check() {
 
 	anomalies="$(printf '%s\n' "$verdicts" | { grep '^anomaly	' || true; })"
 	if [ -n "$anomalies" ]; then
-		echo "::error::a refusal site sits in a file the lanes compiled, yet no coverage block resolves inside its refusal body:" >&2
+		echo "::error::a refusal site sits in a file the lanes compiled, yet no unique coverage block resolves at its refusal-body entry:" >&2
 		printf '%s\n' "$anomalies" | while IFS=$'\t' read -r _ file func nth pred block; do
 			printf '  %s: %s (#%s) %s -- refusal body range %s\n' "$file" "$func" "$nth" "$pred" "$block" >&2
 		done
@@ -510,7 +527,7 @@ generate() {
 #   covered-still-waived   delete the `waived` comparison
 #   stale-entry            delete the `stale` comparison
 #   unmeasured-file        count a file no lane compiled as uncovered
-#   anomaly                accept a site whose refusal body range matches no counter
+#   anomaly                accept a site whose refusal body has no unique entry counter
 #   no-reason              delete the fifth-column requirement
 #   bad-nth                delete the numeric check on nth
 #   malformed-end          accept a profile block with a malformed end coordinate
@@ -521,6 +538,7 @@ generate() {
 #   duplicate-row          delete the `key in seen` check
 #   toolchain-block-go126  match a Go 1.26-style block start at the opening brace
 #   toolchain-block-go127  match a Go 1.27-style block start at the first statement
+#   later-nested           accept a covered block that starts at a later nested statement
 #
 # Each fixture is a directory holding `sites.tsv`, `baseline`, `profiles/` and
 # `want`. Driving `check` from a fixed site list rather than from the real tree

@@ -7,13 +7,14 @@
 // waivers. Adding a guard therefore cannot fail open, because there is no
 // register to forget to update.
 //
-// Output columns: file <TAB> func <TAB> nth <TAB> predicate <TAB> body
+// Output columns: file <TAB> func <TAB> nth <TAB> predicate <TAB> body <TAB> entries
 //
 //	file       repo-relative path of the non-test .go file
 //	func       enclosing top-level function, `Type.Method` for methods
 //	nth        1-based occurrence of this exact predicate in this function
 //	predicate  the `if` condition, source text, whitespace collapsed
 //	body       source range of the refusal body, `start-end` as `line.col`
+//	entries    opening-brace and first-statement coordinates, comma-separated
 //
 // The first four columns are the identity of a site and are what the baseline
 // file stores. `body` is deliberately NOT part of that identity: it is the
@@ -31,12 +32,11 @@
 // so it only moves when a sibling with the *same* predicate is added or removed
 // -- which is a guard change, exactly when the baseline should move.
 //
-// The body range is the stable source fact available to the coverage matcher.
-// The profile-derived matcher chooses the earliest unique coverage block whose
-// start lies within this range, so it handles toolchains that start the block at
-// the opening brace as well as ones that start it at the first statement. Keeping
-// the range rather than a predicted profile key is what makes the contract
-// independent of a particular Go instrumenter.
+// The body range and entry coordinates are the stable source facts available to
+// the coverage matcher. The profile-derived matcher accepts only a unique block
+// starting at the opening brace or first statement, so a later nested block
+// cannot masquerade as entry. Keeping these facts rather than a predicted
+// profile key makes the contract independent of a particular Go instrumenter.
 //
 // What counts as a site, and why the definition is this narrow: a guard's
 // defining property is that on valid input it contributes nothing, so no
@@ -81,7 +81,7 @@ func main() {
 	}
 	out := &bytes.Buffer{}
 	for _, r := range rows {
-		fmt.Fprintf(out, "%s\t%s\t%d\t%s\t%s\n", r.File, r.Func, r.Nth, r.Predicate, r.Body)
+		fmt.Fprintf(out, "%s\t%s\t%d\t%s\t%s\t%s\n", r.File, r.Func, r.Nth, r.Predicate, r.Body, r.Entries)
 	}
 	os.Stdout.Write(out.Bytes())
 }
@@ -92,6 +92,7 @@ type site struct {
 	Nth       int
 	Predicate string
 	Body      string
+	Entries   string
 	line      int
 	col       int
 }
@@ -258,6 +259,7 @@ func scan(root string) ([]site, error) {
 					Func:      owner,
 					Predicate: exprText(src, fset, stmt.Cond),
 					Body:      sourceRange(fset, stmt.Body),
+					Entries:   entryPoints(fset, stmt.Body),
 					line:      pos.Line,
 					col:       pos.Column,
 				})
@@ -328,6 +330,12 @@ func sourceRange(fset *token.FileSet, body *ast.BlockStmt) string {
 	start := fset.Position(body.Lbrace)
 	end := fset.Position(body.End())
 	return fmt.Sprintf("%d.%d-%d.%d", start.Line, start.Column, end.Line, end.Column)
+}
+
+func entryPoints(fset *token.FileSet, body *ast.BlockStmt) string {
+	brace := fset.Position(body.Lbrace)
+	first := fset.Position(body.List[0].Pos())
+	return fmt.Sprintf("%d.%d,%d.%d", brace.Line, brace.Column, first.Line, first.Column)
 }
 
 // Source text of the condition with every run of whitespace collapsed to one

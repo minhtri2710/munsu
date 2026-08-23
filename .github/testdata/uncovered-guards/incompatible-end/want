@@ -1,4 +1,4 @@
-::error::a refusal site sits in a file the lanes compiled, yet no coverage block resolves inside its refusal body:
+::error::a refusal site sits in a file the lanes compiled, yet no unique coverage block resolves at its refusal-body entry:
   internal/fake/guard.go: Refuse (#1) identity != Worktree -- refusal body range 20.25-22.4
   The coverage profile and source tree disagree about the instrumenter's block convention, so every verdict below is unsafe.
   Check the Go toolchain/profile artifact and the profile-derived matcher before trusting this lane again.

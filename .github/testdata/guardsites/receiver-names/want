@@ -1,5 +1,5 @@
-a.go	Outer	1	n < 0	36.13-38.5
-a.go	Runner.Pointer	1	n < 0	20.11-22.3
-a.go	Runner.Value	1	n < 0	13.11-15.3
-a.go	Store.Generic	1	n < 0	27.11-29.3
+a.go	Outer	1	n < 0	36.13-38.5	36.13,37.5
+a.go	Runner.Pointer	1	n < 0	20.11-22.3	20.11,21.3
+a.go	Runner.Value	1	n < 0	13.11-15.3	13.11,14.3
+a.go	Store.Generic	1	n < 0	27.11-29.3	27.11,28.3
 exit 0
