@@ -1,8 +1,8 @@
-a.go	AfterLogging	1	rank != "captain"	57.23-60.2
-a.go	Constructed	1	n < 0	24.11-26.2
-a.go	Exits	1	code > 125	51.16-53.2
-a.go	Literal	1	name == ""	38.16-40.2
-a.go	Panics	1	fence == 0	45.16-47.2
-a.go	Sentinel	1	!ok	31.9-33.2
-a.go	Wrapped	1	identity != "worktree"	17.28-19.2
+a.go	AfterLogging	1	rank != "captain"	57.23-60.3
+a.go	Constructed	1	n < 0	24.11-26.3
+a.go	Exits	1	code > 125	51.16-53.3
+a.go	Literal	1	name == ""	38.16-40.3
+a.go	Panics	1	fence == 0	45.16-47.3
+a.go	Sentinel	1	!ok	31.9-33.3
+a.go	Wrapped	1	identity != "worktree"	17.28-19.3
 exit 0

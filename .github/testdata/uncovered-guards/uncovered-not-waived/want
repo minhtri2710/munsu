@@ -1,6 +1,6 @@
 ::warning file=internal/fake/gated_linux.go::no lane compiles this file on this platform, so its refusal branches are outside the lane in both directions
 ::error::refusal branches no test enters, and not in .github/testdata/uncovered-guards/uncovered-not-waived/baseline:
-  internal/fake/guard.go:28.22-30.3: Refuse (#1): if len(failures) > 0
+  internal/fake/guard.go:28.22-30.4: Refuse (#1): if len(failures) > 0
   Nothing has ever taken these branches, so nothing would notice if the condition were
   inverted or the branch deleted. Write a test that builds the state the guard refuses --
   5 to 15 lines for the ones already burnt down. If the branch genuinely cannot be reached

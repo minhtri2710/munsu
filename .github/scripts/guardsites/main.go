@@ -326,7 +326,7 @@ func funcName(fn *ast.FuncDecl) string {
 
 func sourceRange(fset *token.FileSet, body *ast.BlockStmt) string {
 	start := fset.Position(body.Lbrace)
-	end := fset.Position(body.Rbrace)
+	end := fset.Position(body.End())
 	return fmt.Sprintf("%d.%d-%d.%d", start.Line, start.Column, end.Line, end.Column)
 }
 

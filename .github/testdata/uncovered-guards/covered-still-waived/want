@@ -1,5 +1,5 @@
 ::warning file=internal/fake/gated_linux.go::no lane compiles this file on this platform, so its refusal branches are outside the lane in both directions
 ::error::.github/testdata/uncovered-guards/covered-still-waived/baseline waives branches that are now covered:
-  internal/fake/guard.go:20.25-22.3: Refuse (#1): if identity != Worktree
+  internal/fake/guard.go:20.25-22.4: Refuse (#1): if identity != Worktree
   A test enters each of these now. Drop the line.
 exit 1
