@@ -277,7 +277,7 @@ func TestReceiver_Receive_MissingEnvelope(t *testing.T) {
 
 func TestReceiver_Receive_ValidateEnvelopeGate(t *testing.T) {
 	// Write an envelope file directly that fails ValidateEnvelope
-	// (general->soldier invalid transition). Bypass WriteEnvelope's
+	// (general->general is an invalid transition). Bypass WriteEnvelope's
 	// own validation to test that Receive calls ValidateEnvelope.
 	home := filepath.Join(t.TempDir(), "soldier-1")
 	os.MkdirAll(home, 0755)
@@ -286,7 +286,7 @@ func TestReceiver_Receive_ValidateEnvelopeGate(t *testing.T) {
 		MessageID:      "test-invalid-transition",
 		SenderRank:     RankGeneral,
 		SenderIdentity: "general-main",
-		ReceiverRank:   RankSoldier,
+		ReceiverRank:   RankGeneral,
 		ReceiverID:     "soldier-1",
 		Payload:        "hello",
 		PayloadHash:    PayloadHashHex("hello"),
@@ -300,7 +300,7 @@ func TestReceiver_Receive_ValidateEnvelopeGate(t *testing.T) {
 		t.Fatalf("write envelope: %v", err)
 	}
 
-	recv := setupReceiver(t, home, "soldier-1", RankSoldier)
+	recv := setupReceiver(t, home, "soldier-1", RankGeneral)
 	_, err := recv.Receive(NotificationRef{
 		MessageID: env.MessageID, SenderIdentity: "general-main",
 	})
