@@ -21,17 +21,16 @@ func TestProcessAliveAnswersWithoutPATH(t *testing.T) {
 	if !isProcessAlive(os.Getpid()) {
 		t.Error("the calling process reads as dead when PATH cannot resolve `kill`")
 	}
-	// Control: a PID the kernel reports as not running still reads as dead.
-	// findDeadPIDForGuards would not do here -- it defines "not running" as
-	// !isProcessAlive, so it agrees with any answer the function under test
-	// gives, and under an always-alive probe it finds no candidate and skips
-	// the assertion above along with itself.
+	// Control: the probe still says dead when the kernel says no such process,
+	// so the assertion above is not satisfied by a probe that answers true for
+	// everything. A control that defined "not running" as !isProcessAlive
+	// would agree with any answer the function under test gave.
 	if pid, ok := unusedPID(); ok {
 		if isProcessAlive(pid) {
 			t.Errorf("PID %d is not running but reads as alive", pid)
 		}
 	} else {
-		t.Log("every candidate PID is in use on this machine, so the dead-PID control did not run")
+		t.Fatal("the kernel supplied no unused PID, so the dead-PID control could not run")
 	}
 }
 
@@ -41,13 +40,8 @@ func TestProcessAliveAnswersWithoutPATH(t *testing.T) {
 // candidates rather than scanning, because there is no PID a test is entitled
 // to assume is free.
 //
-// It reports the miss instead of calling t.Skip: a skip would cancel the whole
-// enclosing test, including the assertions that need no dead PID at all, and a
-// silent green is exactly what this file exists to prevent.
-//
-// findDeadPIDForGuards (canonical_guards_test.go) stays as it is. That file
-// carries no build constraint, so it compiles under `GOOS=windows go vet`,
-// where syscall.Kill does not exist.
+// A miss is returned to the caller so the caller can fail without skipping the
+// enclosing test and cancelling assertions that need no dead PID.
 func unusedPID() (int, bool) {
 	for _, pid := range []int{1 << 22, 1<<22 - 1, 1<<22 - 2, 1 << 21, 1<<21 - 1} {
 		if syscall.Kill(pid, 0) == syscall.ESRCH {
@@ -170,5 +164,72 @@ func TestClaimWatcherLeaseRefusesALiveHolderWithoutPATH(t *testing.T) {
 	claimed, err := ClaimWatcherLease(dir, os.Getpid())
 	if claimed || err == nil {
 		t.Fatalf("ClaimWatcherLease over a live holder = (%v, %v), want the live-holder refusal", claimed, err)
+	}
+}
+
+// Only one watcher may hold a home. A lease held by a process that is still
+// alive is not reclaimable — reclaiming it would run two watchers over the
+// same home. A lease left by a dead process is.
+//
+// It lives on this !windows file because its dead-holder control needs the
+// kernel's own answer, and syscall.Kill does not exist on Windows -- the file
+// this test came from carries no build constraint, so it compiles under
+// `GOOS=windows go vet ./...`.
+func TestClaimWatcherLeaseRefusesALeaseHeldByALiveProcess(t *testing.T) {
+	dir := t.TempDir()
+
+	// A real child process this test owns, so the live half of the fixture is
+	// one this test created and can end rather than one borrowed from the
+	// machine.
+	live := exec.Command("sleep", "60")
+	if err := live.Start(); err != nil {
+		t.Fatalf("start live process: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = live.Process.Kill()
+		_ = live.Wait()
+	})
+
+	if _, err := writeLeaseFile(WatcherLeasePath(dir), &WatcherLease{
+		Home:      Canonical(dir),
+		PID:       live.Process.Pid,
+		StartedAt: time.Now().Unix(),
+		UpdatedAt: time.Now().UnixNano(),
+	}); err != nil {
+		t.Fatalf("write existing lease: %v", err)
+	}
+
+	claimed, err := ClaimWatcherLease(dir, os.Getpid())
+	if err == nil {
+		t.Fatal("ClaimWatcherLease took a lease held by a live process")
+	}
+	if claimed {
+		t.Fatal("ClaimWatcherLease reported a claim it refused")
+	}
+	if !strings.Contains(err.Error(), "watcher lease held by pid") {
+		t.Fatalf("error = %v, want the live-holder refusal", err)
+	}
+
+	// Control: the same call against a lease left by a PID the kernel reports
+	// as not running reclaims it, so the refusal above came from liveness and
+	// not from the mere presence of a lease file. The PID comes from the
+	// kernel and not from isProcessAlive, so the control discriminates against
+	// the predicate the refusal is built on. A miss fails the test here, after
+	// the refusal assertions above have run.
+	dead, ok := unusedPID()
+	if !ok {
+		t.Fatal("the kernel supplied no unused PID, so the dead-holder control could not run")
+	}
+	if _, err := writeLeaseFile(WatcherLeasePath(dir), &WatcherLease{
+		Home:      Canonical(dir),
+		PID:       dead,
+		StartedAt: time.Now().Unix(),
+		UpdatedAt: time.Now().UnixNano(),
+	}); err != nil {
+		t.Fatalf("write stale lease: %v", err)
+	}
+	claimed, err = ClaimWatcherLease(dir, os.Getpid())
+	if err != nil || !claimed {
+		t.Fatalf("ClaimWatcherLease over a dead holder = (%v, %v), want (true, nil)", claimed, err)
 	}
 }
