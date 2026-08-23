@@ -588,26 +588,30 @@ func TestReceiver_Ack_ValidateEnvelopeGate(t *testing.T) {
 		MessageID:      "test-invalid-transition",
 		SenderRank:     RankGeneral,
 		SenderIdentity: "general-main",
-		ReceiverRank:   RankSoldier,
-		ReceiverID:     "soldier-1",
+		ReceiverRank:   RankGeneral,
+		ReceiverID:     filepath.Base(home),
 		Payload:        "hello",
 		PayloadHash:    PayloadHashHex("hello"),
 		SchemaVersion:  SchemaVersion,
 		CreatedAt:      time.Now().UnixNano(),
 	}
-	inboxDir := filepath.Join(home, "state", InboxDir, "general-main")
+	inboxDir := filepath.Join(home, "state", InboxDir, env.SenderIdentity)
 	os.MkdirAll(inboxDir, 0755)
 	data, _ := json.MarshalIndent(env, "", "  ")
-	if err := os.WriteFile(filepath.Join(inboxDir, "test-invalid-transition.json"), data, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(inboxDir, env.MessageID+".json"), data, 0644); err != nil {
 		t.Fatalf("write envelope: %v", err)
 	}
 
-	recv := setupReceiver(t, home, "soldier-1", RankSoldier)
+	recv := setupReceiver(t, home, env.ReceiverID, env.ReceiverRank)
 	_, err := recv.Ack(NotificationRef{
-		MessageID: env.MessageID, SenderIdentity: "general-main",
+		MessageID: env.MessageID, SenderIdentity: env.SenderIdentity,
 	})
 	if err == nil {
 		t.Fatal("expected error for invalid rank transition")
+	}
+	want := "ack validate envelope: envelope: general can only send to captain or soldier"
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("expected wrapped envelope validation error containing %q, got: %v", want, err)
 	}
 }
 
