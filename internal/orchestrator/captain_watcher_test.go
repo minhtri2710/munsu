@@ -22,7 +22,7 @@ func (captainTestSender) Send(string, map[string]string, string) BoundSendResult
 }
 
 func captainRunCycle(home string) (bool, error) {
-	return RunCycleWithProbeAndSender(home, captainTestProbe{}, captainTestSender{}, NewCaptainWatcherHooks(&captainNotificationTransport{acknowledged: true}, nil), NoopRetirementPort{}, NoopTaskStatePort{})
+	return RunCycleWithProbeAndSender(home, captainTestProbe{}, captainTestSender{}, NewCaptainWatcherHooks(&captainNotificationTransport{acknowledged: true}, nil), NoopRetirementPort{}, acceptingCheckValidationPort{}, NoopTaskStatePort{})
 }
 
 // --- WatcherStatusSummary tests ---
