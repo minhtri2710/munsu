@@ -14,13 +14,24 @@ func RenameDurable(from, to string) error {
 	if err := os.Rename(from, to); err != nil {
 		return err
 	}
-	d, err := os.Open(filepath.Dir(to))
+	toDir := filepath.Dir(to)
+	if err := syncDir(toDir); err != nil {
+		return err
+	}
+	fromDir := filepath.Dir(from)
+	if fromDir != toDir {
+		if err := syncDir(fromDir); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func syncDir(path string) error {
+	d, err := os.Open(path)
 	if err != nil {
 		return err
 	}
 	defer d.Close()
-	if err := d.Sync(); err != nil {
-		return err
-	}
-	return nil
+	return d.Sync()
 }

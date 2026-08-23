@@ -43,32 +43,17 @@ func quarantinePollWith(homeDir, taskID, checkPath string, renameFn func(string,
 	if err != nil {
 		return "", err
 	}
-	if err := renameFn(checkPath, path); err != nil {
-		return "", fmt.Errorf("quarantining poll artifact: %w", err)
+	if err := quarantinePollAt(checkPath, path, renameFn); err != nil {
+		return "", err
 	}
 	return path, nil
 }
 
-func pendingPollQuarantine(homeDir, taskID string) (string, error) {
-	digest := sha256.Sum256([]byte(taskID))
-	prefix := fmt.Sprintf(".poll-%s-", hex.EncodeToString(digest[:]))
-	entries, err := os.ReadDir(retirementDirPath(homeDir))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", nil
-		}
-		return "", err
+func quarantinePollAt(checkPath, quarantinePath string, renameFn func(string, string) error) error {
+	if err := renameFn(checkPath, quarantinePath); err != nil {
+		return fmt.Errorf("quarantining poll artifact: %w", err)
 	}
-	var found string
-	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), prefix) && strings.HasSuffix(entry.Name(), ".quarantine") {
-			if found != "" {
-				return "", fmt.Errorf("multiple poll quarantine artifacts")
-			}
-			found = filepath.Join(retirementDirPath(homeDir), entry.Name())
-		}
-	}
-	return found, nil
+	return nil
 }
 
 // Check artifact disposition map (derived from every check-artifact removal or
@@ -112,8 +97,9 @@ type PollRetirementRecord struct {
 	TaskID string `json:"taskId"`
 
 	// Poll identity: state-relative path + SHA-256 content digest
-	PollPath   string `json:"pollPath"`   // relative to state dir (e.g. "<id>.check")
-	PollDigest string `json:"pollDigest"` // hex-encoded SHA-256 of poll content at discovery
+	PollPath       string `json:"pollPath"`       // relative to state dir (e.g. "<id>.check")
+	PollDigest     string `json:"pollDigest"`     // hex-encoded SHA-256 of poll content at discovery
+	QuarantinePath string `json:"quarantinePath"` // basename relative to the retirement directory
 
 	// Delivery identity (complete, validated at capture)
 	Provider   string `json:"provider"`
@@ -502,11 +488,16 @@ func retireMergedPoll(homeDir, taskID, checkPath string, auth *taskauthority.Can
 
 	// Step 4: Persist pending retirement record BEFORE publication.
 	now := time.Now().UTC().Format(time.RFC3339)
+	quarantinePath, err := quarantinePollPath(homeDir, taskID)
+	if err != nil {
+		return fmt.Errorf("creating poll quarantine name: %w", err)
+	}
 	rec := &PollRetirementRecord{
 		SchemaVersion:   PollRetirementSchema,
 		TaskID:          taskID,
 		PollPath:        pollRel,
 		PollDigest:      pollDigest,
+		QuarantinePath:  filepath.Base(quarantinePath),
 		Provider:        ident.Provider,
 		Owner:           ident.Owner,
 		Repo:            ident.Repo,
@@ -552,8 +543,7 @@ func retireMergedPoll(homeDir, taskID, checkPath string, auth *taskauthority.Can
 	// to removing checkPath. If verification fails after quarantine, leave the
 	// artifact quarantined and report its path: restoring it would recreate the
 	// replacement race and os.Rename could clobber a replacement.
-	quarantinePath, err := quarantinePollWith(homeDir, taskID, checkPath, renameFn)
-	if err != nil {
+	if err := quarantinePollAt(checkPath, quarantinePath, renameFn); err != nil {
 		return fmt.Errorf("%w: poll quarantine failed (pending record exists): %w", domain.ErrCheckValidationRefused, err)
 	}
 	if err := ValidateCheckWithLstat(quarantinePath); err != nil {
@@ -665,7 +655,11 @@ func RecoverPendingRetirement(homeDir, taskID string, auth *taskauthority.Canoni
 	return recoverPendingRetirement(homeDir, taskID, auth, pollContentDigest)
 }
 
-func recoverPendingRetirement(homeDir, taskID string, auth *taskauthority.Canonical, digestFn func(string) (string, error)) (bool, error) {
+func recoverPendingRetirement(homeDir, taskID string, auth *taskauthority.Canonical, digestFn func(string) (string, error), renameFns ...func(string, string) error) (bool, error) {
+	renameFn := home.RenameDurable
+	if len(renameFns) > 0 {
+		renameFn = renameFns[0]
+	}
 	// Validate record path.
 	if err := ValidateRetirementPath(homeDir, taskID); err != nil {
 		return false, fmt.Errorf("invalid retirement path: %w", err)
@@ -735,24 +729,43 @@ func recoverPendingRetirement(homeDir, taskID string, auth *taskauthority.Canoni
 		return false, fmt.Errorf("recovery: canonical merged truth required: %w", err)
 	}
 
-	// Adopt an existing private quarantine before examining the public name.
-	// A quarantine is the artifact this record owns; never let recovery touch a
-	// replacement recreated at checkPath.
-	quarantinePath, quarantineErr := pendingPollQuarantine(homeDir, taskID)
-	if quarantineErr != nil {
-		return false, fmt.Errorf("recovery: locating poll quarantine: %w", quarantineErr)
+	if rec.QuarantinePath == "" {
+		generatedPath, pathErr := quarantinePollPath(homeDir, taskID)
+		if pathErr != nil {
+			return false, fmt.Errorf("recovery: creating quarantine path: %w", pathErr)
+		}
+		rec.QuarantinePath = filepath.Base(generatedPath)
+		if err := WriteRetirementRecord(homeDir, rec); err != nil {
+			return false, fmt.Errorf("recovery: persisting quarantine path: %w", err)
+		}
 	}
-	pollPath := checkPath
-	if quarantinePath != "" {
-		pollPath = quarantinePath
+	if filepath.Base(rec.QuarantinePath) != rec.QuarantinePath || filepath.Ext(rec.QuarantinePath) != ".quarantine" || strings.ContainsAny(rec.QuarantinePath, `/\\`) || !strings.HasPrefix(rec.QuarantinePath, fmt.Sprintf(".poll-%x-", sha256.Sum256([]byte(taskID)))) {
+		return false, fmt.Errorf("recovery: invalid quarantine path %q (preserving poll and retirement record)", rec.QuarantinePath)
 	}
+	quarantinePath := filepath.Join(retirementDirPath(homeDir), rec.QuarantinePath)
 	pollExists := false
 	pollMatches := false
-	if fi, statErr := os.Lstat(pollPath); statErr == nil && fi.Mode().IsRegular() && fi.Mode()&os.ModeSymlink == 0 {
-		pollExists = true
-		if digest, digestErr := digestFn(pollPath); digestErr == nil && digest == rec.PollDigest {
-			pollMatches = true
+	if fi, statErr := os.Lstat(quarantinePath); statErr == nil {
+		if fi.Mode().IsRegular() && fi.Mode()&os.ModeSymlink == 0 {
+			pollExists = true
+			if digest, digestErr := digestFn(quarantinePath); digestErr == nil && digest == rec.PollDigest {
+				pollMatches = true
+			}
 		}
+	} else if !os.IsNotExist(statErr) {
+		return false, fmt.Errorf("recovery: inspecting quarantine: %w", statErr)
+	} else if fi, publicErr := os.Lstat(checkPath); publicErr == nil {
+		if fi.Mode().IsRegular() && fi.Mode()&os.ModeSymlink == 0 {
+			if err := quarantinePollAt(checkPath, quarantinePath, renameFn); err != nil {
+				return false, fmt.Errorf("recovery: quarantining public poll (preserving poll and retirement record): %w", err)
+			}
+			pollExists = true
+			if digest, digestErr := digestFn(quarantinePath); digestErr == nil && digest == rec.PollDigest {
+				pollMatches = true
+			}
+		}
+	} else if !os.IsNotExist(publicErr) {
+		return false, fmt.Errorf("recovery: inspecting public poll: %w", publicErr)
 	}
 
 	// Check if publication evidence exists.
@@ -794,7 +807,7 @@ func recoverPendingRetirement(homeDir, taskID string, auth *taskauthority.Canoni
 		return false, fmt.Errorf("recovery: poll digest changed; preserving poll and retirement record")
 	}
 	if pollExists {
-		if err := os.Remove(pollPath); err != nil && !os.IsNotExist(err) {
+		if err := os.Remove(quarantinePath); err != nil && !os.IsNotExist(err) {
 			return false, fmt.Errorf("recovery: removing poll: %w", err)
 		}
 	}
