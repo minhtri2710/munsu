@@ -2,10 +2,20 @@
 package domain
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 )
+
+// ErrCheckValidationRefused indicates that a check artifact failed validation
+// during retirement.
+var ErrCheckValidationRefused = errors.New("check validation refused")
+
+// ErrCheckInvalidAfterPublication indicates that post-publication
+// revalidation refused the check artifact. It also matches
+// ErrCheckValidationRefused because this is a validation refusal.
+var ErrCheckInvalidAfterPublication = fmt.Errorf("%w: check invalid after publication", ErrCheckValidationRefused)
 
 // MetaKeys returns the task meta keys used to persist this identity.
 func (id *DeliveryIdentity) MetaKeys() []string {

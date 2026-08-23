@@ -1474,7 +1474,7 @@ func TestRetireMergedPoll_DigestAcquisitionRefusalBeforePublication(t *testing.T
 	err := retireMergedPoll(home, taskID, checkPath, nil, func(string) (string, error) {
 		return "", digestErr
 	})
-	if err == nil || !errors.Is(err, ErrCheckValidationRefused) {
+	if err == nil || !errors.Is(err, domain.ErrCheckValidationRefused) {
 		t.Fatalf("error = %v, want ErrCheckValidationRefused", err)
 	}
 	if _, statErr := os.Stat(checkPath); statErr != nil {
@@ -1500,7 +1500,7 @@ func TestRetireMergedPoll_DigestAcquisitionRefusalAfterPublication(t *testing.T)
 		}
 		return pollContentDigest(path)
 	})
-	if err == nil || !errors.Is(err, ErrCheckInvalidAfterPublication) {
+	if err == nil || !errors.Is(err, domain.ErrCheckInvalidAfterPublication) {
 		t.Fatalf("error = %v, want ErrCheckInvalidAfterPublication", err)
 	}
 	if _, statErr := os.Stat(checkPath); statErr != nil {
@@ -1525,7 +1525,7 @@ func TestRetireMergedPoll_DigestMismatchIsNotValidationRefusal(t *testing.T) {
 		}
 		return pollContentDigest(path)
 	})
-	if err == nil || errors.Is(err, ErrCheckValidationRefused) || errors.Is(err, ErrCheckInvalidAfterPublication) {
+	if err == nil || errors.Is(err, domain.ErrCheckValidationRefused) || errors.Is(err, domain.ErrCheckInvalidAfterPublication) {
 		t.Fatalf("error = %v, want ordinary digest mismatch", err)
 	}
 	if _, statErr := os.Stat(checkPath); statErr != nil {
@@ -1548,10 +1548,10 @@ func TestRetireMergedPoll_ValidationRefusalIsClassifiedAndPreservesPoll(t *testi
 	if err == nil {
 		t.Fatal("expected validation refusal")
 	}
-	if !errors.Is(err, ErrCheckValidationRefused) {
+	if !errors.Is(err, domain.ErrCheckValidationRefused) {
 		t.Fatalf("error = %v, want ErrCheckValidationRefused", err)
 	}
-	if errors.Is(err, ErrCheckInvalidAfterPublication) {
+	if errors.Is(err, domain.ErrCheckInvalidAfterPublication) {
 		t.Fatalf("pre-retirement refusal classified after publication: %v", err)
 	}
 	if _, statErr := os.Stat(checkPath); statErr != nil {
@@ -1579,7 +1579,7 @@ func TestRetireMergedPoll_PostPublicationRevalidationRefusalIsClassified(t *test
 	if err == nil {
 		t.Fatal("expected post-publication validation refusal")
 	}
-	if !errors.Is(err, ErrCheckValidationRefused) || !errors.Is(err, ErrCheckInvalidAfterPublication) {
+	if !errors.Is(err, domain.ErrCheckValidationRefused) || !errors.Is(err, domain.ErrCheckInvalidAfterPublication) {
 		t.Fatalf("error = %v, want both validation sentinels", err)
 	}
 	lines, readErr := mhome.ReadStatus(home, taskID)

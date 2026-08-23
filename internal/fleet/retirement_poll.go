@@ -21,15 +21,6 @@ import (
 // PollRetirementSchema is the schema version for PollRetirementRecord.
 const PollRetirementSchema = 1
 
-// ErrCheckValidationRefused indicates that a check artifact failed validation
-// during retirement.
-var ErrCheckValidationRefused = errors.New("check validation refused")
-
-// ErrCheckInvalidAfterPublication indicates that post-publication
-// revalidation refused the check artifact. It also matches
-// ErrCheckValidationRefused because this is a validation refusal.
-var ErrCheckInvalidAfterPublication = fmt.Errorf("%w: check invalid after publication", ErrCheckValidationRefused)
-
 // retirementDir is the private state directory for pending retirement records.
 const retirementDir = "state/.poll-retirements"
 
@@ -410,13 +401,13 @@ func RetireMergedPoll(homeDir, taskID, checkPath string, auth *taskauthority.Can
 func retireMergedPoll(homeDir, taskID, checkPath string, auth *taskauthority.Canonical, digestFn func(string) (string, error)) error {
 	// Step 0: Lstat validation on check path for crash safety.
 	if err := ValidateCheckWithLstat(checkPath); err != nil {
-		return fmt.Errorf("%w: poll validation failed: %w", ErrCheckValidationRefused, err)
+		return fmt.Errorf("%w: poll validation failed: %w", domain.ErrCheckValidationRefused, err)
 	}
 
 	// Compute poll digest BEFORE any mutation.
 	pollDigest, err := digestFn(checkPath)
 	if err != nil {
-		return fmt.Errorf("%w: poll digest acquisition failed before publication: %w", ErrCheckValidationRefused, err)
+		return fmt.Errorf("%w: poll digest acquisition failed before publication: %w", domain.ErrCheckValidationRefused, err)
 	}
 
 	// Read task delivery identity.
@@ -513,9 +504,9 @@ func retireMergedPoll(homeDir, taskID, checkPath string, auth *taskauthority.Can
 		// Poll was removed or became invalid after publication. Record cleanup
 		// is attempted because publication evidence is already durable.
 		if cleanupErr := RemoveRetirementRecord(homeDir, taskID); cleanupErr != nil {
-			return fmt.Errorf("%w: poll disappeared or became invalid after publication; cleanup failed: %v: %w", ErrCheckInvalidAfterPublication, cleanupErr, err)
+			return fmt.Errorf("%w: poll disappeared or became invalid after publication; cleanup failed: %v: %w", domain.ErrCheckInvalidAfterPublication, cleanupErr, err)
 		}
-		return fmt.Errorf("%w: poll disappeared or became invalid after publication (record cleanup attempted): %w", ErrCheckInvalidAfterPublication, err)
+		return fmt.Errorf("%w: poll disappeared or became invalid after publication (record cleanup attempted): %w", domain.ErrCheckInvalidAfterPublication, err)
 	}
 
 	currentDigest, err := digestFn(checkPath)
@@ -523,9 +514,9 @@ func retireMergedPoll(homeDir, taskID, checkPath string, auth *taskauthority.Can
 		// Poll disappeared between validation and digest; publication is durable,
 		// so clean the record and report post-publication invalidation.
 		if cleanupErr := RemoveRetirementRecord(homeDir, taskID); cleanupErr != nil {
-			return fmt.Errorf("%w: poll digest acquisition failed after publication; cleanup failed: %v: %w", ErrCheckInvalidAfterPublication, cleanupErr, err)
+			return fmt.Errorf("%w: poll digest acquisition failed after publication; cleanup failed: %v: %w", domain.ErrCheckInvalidAfterPublication, cleanupErr, err)
 		}
-		return fmt.Errorf("%w: poll digest acquisition failed after publication (record cleanup attempted): %w", ErrCheckInvalidAfterPublication, err)
+		return fmt.Errorf("%w: poll digest acquisition failed after publication (record cleanup attempted): %w", domain.ErrCheckInvalidAfterPublication, err)
 	}
 
 	// Digest must still match the record.

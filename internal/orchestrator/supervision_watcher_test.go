@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/fleet"
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 )
@@ -215,8 +215,8 @@ func TestRunCycle_ClassifiedRetirementValidationRefusalReportsAndSuppressesWake(
 		err  error
 		want string
 	}{
-		{name: "before retirement", err: fleet.ErrCheckValidationRefused, want: "poll check refused (wake suppressed)"},
-		{name: "after publication", err: fleet.ErrCheckInvalidAfterPublication, want: "poll check invalid after publication"},
+		{name: "before retirement", err: domain.ErrCheckValidationRefused, want: "poll check refused (wake suppressed)"},
+		{name: "after publication", err: domain.ErrCheckInvalidAfterPublication, want: "poll check invalid after publication"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
@@ -251,6 +251,9 @@ func TestRunCycle_ClassifiedRetirementValidationRefusalReportsAndSuppressesWake(
 			}
 			if !strings.Contains(string(stderrOutput), tc.want) {
 				t.Fatalf("stderr = %q, want %q", stderrOutput, tc.want)
+			}
+			if tc.name == "after publication" && strings.Contains(string(stderrOutput), "poll check refused (wake suppressed)") {
+				t.Fatalf("stderr = %q, must not use generic refusal classification", stderrOutput)
 			}
 			if _, err := os.Stat(checkPath); err != nil {
 				t.Fatalf("refused check must remain on disk: %v", err)

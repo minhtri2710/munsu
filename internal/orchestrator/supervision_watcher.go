@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/domain"
-	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -629,11 +628,11 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 				// the status signal path will surface the publication.
 				continue
 			}
-			if errors.Is(retireErr, fleet.ErrCheckInvalidAfterPublication) {
+			if errors.Is(retireErr, domain.ErrCheckInvalidAfterPublication) {
 				fmt.Fprintf(os.Stderr, "poll check invalid after publication: %v\n", retireErr)
 				continue
 			}
-			if errors.Is(retireErr, fleet.ErrCheckValidationRefused) {
+			if errors.Is(retireErr, domain.ErrCheckValidationRefused) {
 				fmt.Fprintf(os.Stderr, "poll check refused (wake suppressed): %v\n", retireErr)
 				continue
 			}
