@@ -26,15 +26,6 @@ type SoldierEndpointCapabilities interface {
 	Busy(home string, meta map[string]string) (bool, error)
 }
 
-// cleanReceiverID sanitizes an identifier for use as mailbox ReceiverID.
-// Task IDs often contain colons (e.g., "task:test-1") which are rejected
-// by ValidatePathComponent. Since ReceiverID is not used in file paths
-// (paths use SenderIdentity + MessageID), we replace unsafechars with
-// underscores.
-func cleanReceiverID(raw string) string {
-	return strings.NewReplacer(":", "_", "/", "_", "\\", "_", "..", "_").Replace(raw)
-}
-
 // SendToSoldier sends a command to a soldier using the mailbox envelope pattern.
 //
 // Flow:
@@ -79,7 +70,7 @@ func SendToSoldier(senderHome, soldierTaskID, senderIdentity, line string, endpo
 		result.Err = fmt.Errorf("reading sender home identity: %w", err)
 		return result
 	}
-	receiverID := cleanReceiverID(soldierTaskID)
+	receiverID := home.ReceiverIDForTask(soldierTaskID)
 	env := &home.Envelope{
 		SenderRank:     senderRank,
 		SenderIdentity: senderIdentity,
@@ -164,7 +155,7 @@ func FlushPendingSoldierCommands(senderHome, soldierTaskID, senderIdentity strin
 	}
 
 	// Filter to only pending targeting this soldier (ReceiverID matches).
-	receiverID := cleanReceiverID(soldierTaskID)
+	receiverID := home.ReceiverIDForTask(soldierTaskID)
 	var targetEnv *home.Envelope
 	for _, env := range pending {
 		if env.ReceiverID == receiverID {
@@ -466,7 +457,7 @@ func ConsumeAllReadyEvents(senderHome, soldierTaskID, senderIdentity, metaGenera
 		}
 
 		// Filter to pending targeting this soldier.
-		receiverID := cleanReceiverID(soldierTaskID)
+		receiverID := home.ReceiverIDForTask(soldierTaskID)
 		var pendingEnv *home.Envelope
 		for _, p := range pending {
 			if p.ReceiverID == receiverID {
