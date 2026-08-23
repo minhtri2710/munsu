@@ -295,3 +295,40 @@ func TestWriteHomeIdentityRefusesUnusableIdentities(t *testing.T) {
 		t.Fatalf("error = %v, want the invalid-rank refusal", err)
 	}
 }
+
+// A soldier's receiver identity is the task its hosting home holds a durable
+// record for. The home cannot vouch for a task it never hosted, so a claim it
+// has no record of must not resolve to a receiver.
+func TestNewSoldierReceiverRefusesTasksTheHomeDoesNotHost(t *testing.T) {
+	dir := t.TempDir()
+
+	// Control: a task the home holds a meta record for resolves to a soldier
+	// receiver identified by that task.
+	if err := WriteMeta(dir, "task:hosted", map[string]string{"window": "w"}); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+	r, err := NewSoldierReceiver(dir, "task:hosted")
+	if err != nil {
+		t.Fatalf("NewSoldierReceiver: %v", err)
+	}
+	if r.identity != ReceiverIDForTask("task:hosted") || r.rank != RankSoldier {
+		t.Fatalf("receiver = (%q, %q), want (%q, soldier)", r.identity, r.rank, ReceiverIDForTask("task:hosted"))
+	}
+
+	for _, tc := range []struct {
+		name    string
+		taskID  string
+		wantSub string
+	}{
+		{"a task this home has no record of", "task:not-hosted", "hosts no task"},
+		{"a task ID that is not a task ID", "../escape", "invalid task ID"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := NewSoldierReceiver(dir, tc.taskID); err == nil {
+				t.Fatalf("NewSoldierReceiver accepted %s", tc.name)
+			} else if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Fatalf("error = %v, want the %q refusal", err, tc.wantSub)
+			}
+		})
+	}
+}

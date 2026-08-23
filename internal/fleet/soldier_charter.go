@@ -65,6 +65,7 @@ Your authority is bounded by the task brief and this charter.
 6. Open a PR (only when delivery mode allows it).
 7. Use gh-axi for GitHub operations.
 8. Use %[5]smunsu report%[5]s for terminal state reporting.
+8a. Use %[5]smunsu inbox receive%[5]s and %[5]smunsu inbox ack%[5]s for commands sent to you.
 9. Read %[5]sAGENTS.md%[5]s before making edits.
 10. Use session-scoped state files (%[5]sstate/%[5]s) for durable progress tracking.
 
@@ -94,6 +95,21 @@ You MUST NOT:
   - Use %[5]smunsu report blocked "{why}"%[5]s after the second encounter of the same obstacle.
   - Use %[5]smunsu report needs-decision "{summary}"%[5]s when a human decision is required.
   - Terminal report: %[5]smunsu report done "%[6]s"%[5]s — %[7]s.
+
+## Incoming Commands
+
+Commands from your Captain do not arrive as text. What lands in your pane is a
+NotificationRef -- a JSON object with %[5]smessage_id%[5]s and
+%[5]ssender_identity%[5]s. The command itself is the envelope it points at.
+
+1. Read it: %[5]smunsu inbox receive '<ref>'%[5]s — returns the payload. No ack.
+2. Take the command into context.
+3. Accept it: %[5]smunsu inbox ack '<ref>'%[5]s — writes the Processing Ack.
+
+The ack means "accepted into my context", not "finished"; completion still goes
+through %[5]smunsu report%[5]s. Until you ack, your Captain holds the command as
+pending and will keep re-sending the same ref: nothing else can write that ack
+for you.
 
 ## Durable Files
 
