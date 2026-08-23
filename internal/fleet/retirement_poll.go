@@ -33,6 +33,37 @@ var ErrCheckInvalidAfterPublication = fmt.Errorf("%w: check invalid after public
 // retirementDir is the private state directory for pending retirement records.
 const retirementDir = "state/.poll-retirements"
 
+// Check artifact disposition map (derived from every check-artifact removal or
+// preservation boundary):
+//   - Watcher discovery validates each artifact; a refusal is reported, no
+//     removal is attempted, and no wake is emitted. A missing validator fails
+//     the cycle rather than making discovery appear empty.
+//   - RetireMergedPoll validates and acquires a digest before mutation.
+//     Validation refusal leaves an existing artifact untouched; digest-
+//     acquisition failure performs no removal because the artifact may already
+//     be absent. Neither creates a record, and both suppress the wake.
+//     Provider/query/open/
+//     unmerged/closed outcomes also happen before record creation; they preserve
+//     the artifact and retain the normal retry wake. Canonical-outcome or
+//     publication failure happens after record creation and preserves both. A
+//     digest mismatch means the file was read and changed, so it preserves the
+//     changed artifact, cleans the record, and retains the normal wake.
+//   - After publication, validation or digest-acquisition failure does not
+//     remove the artifact; it cleans the durable record, reports the
+//     post-publication invalidation, and suppresses the wake. A matching digest
+//     plus confirmed deterministic publication permits normal removal; removal
+//     failure leaves the record pending for recovery.
+//   - RecoverPendingRetirement preserves the artifact and record whenever safe
+//     basename, complete matching delivery identity, canonical completion,
+//     deterministic publication evidence, confirmed publication, or recorded
+//     digest evidence is absent. Negative evidence (such as a digest mismatch)
+//     is distinct from absent evidence and also preserves both. Only confirmed
+//     publication plus a matching recorded digest permits removal; an artifact
+//     already missing after those checks is accepted and the record is removed.
+//   - Both normal and recovery removal retain the known verification-to-remove
+//     pathname replacement window tracked by #602; a replacement is not repaired
+//     here.
+
 // PollRetirementRecord captures a durable write-ahead record for merged PR
 // poll retirement. It is persisted BEFORE publication and removed only AFTER
 // the poll artifact is gone, making crashes recoverable.
@@ -369,15 +400,19 @@ func ValidateCheckWithLstat(path string) error {
 // recorded digest. Both sites retain the known verification-to-remove pathname
 // replacement window tracked by #602; a replacement is not repaired here.
 func RetireMergedPoll(homeDir, taskID, checkPath string, auth *taskauthority.Canonical) error {
+	return retireMergedPoll(homeDir, taskID, checkPath, auth, pollContentDigest)
+}
+
+func retireMergedPoll(homeDir, taskID, checkPath string, auth *taskauthority.Canonical, digestFn func(string) (string, error)) error {
 	// Step 0: Lstat validation on check path for crash safety.
 	if err := ValidateCheckWithLstat(checkPath); err != nil {
 		return fmt.Errorf("%w: poll validation failed: %w", ErrCheckValidationRefused, err)
 	}
 
 	// Compute poll digest BEFORE any mutation.
-	pollDigest, err := pollContentDigest(checkPath)
+	pollDigest, err := digestFn(checkPath)
 	if err != nil {
-		return fmt.Errorf("poll digest: %w", err)
+		return fmt.Errorf("%w: poll digest acquisition failed before publication: %w", ErrCheckValidationRefused, err)
 	}
 
 	// Read task delivery identity.
@@ -479,11 +514,14 @@ func RetireMergedPoll(homeDir, taskID, checkPath string, auth *taskauthority.Can
 		return fmt.Errorf("%w: poll disappeared or became invalid after publication (record cleaned): %w", ErrCheckInvalidAfterPublication, err)
 	}
 
-	currentDigest, err := pollContentDigest(checkPath)
+	currentDigest, err := digestFn(checkPath)
 	if err != nil {
-		// Poll disappeared between validation and digest.
-		RemoveRetirementRecord(homeDir, taskID)
-		return fmt.Errorf("poll disappeared after publication (record cleaned): %w", err)
+		// Poll disappeared between validation and digest; publication is durable,
+		// so clean the record and report post-publication invalidation.
+		if cleanupErr := RemoveRetirementRecord(homeDir, taskID); cleanupErr != nil {
+			return fmt.Errorf("%w: poll digest acquisition failed after publication; cleanup failed: %v: %w", ErrCheckInvalidAfterPublication, cleanupErr, err)
+		}
+		return fmt.Errorf("%w: poll digest acquisition failed after publication (record cleaned): %w", ErrCheckInvalidAfterPublication, err)
 	}
 
 	// Digest must still match the record.

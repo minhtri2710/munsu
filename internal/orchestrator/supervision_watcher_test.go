@@ -215,7 +215,7 @@ func TestRunCycle_ClassifiedRetirementValidationRefusalReportsAndSuppressesWake(
 		err  error
 		want string
 	}{
-		{name: "before retirement", err: fleet.ErrCheckValidationRefused, want: "poll check refused (left in place)"},
+		{name: "before retirement", err: fleet.ErrCheckValidationRefused, want: "poll check refused (wake suppressed)"},
 		{name: "after publication", err: fleet.ErrCheckInvalidAfterPublication, want: "poll check invalid after publication"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

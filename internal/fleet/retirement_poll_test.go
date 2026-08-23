@@ -1430,6 +1430,76 @@ func TestRecoverPendingRetirement_DirectoryRecord(t *testing.T) {
 
 // --- Validation refusal and provider error / open / closed-unmerged preserve poll ---
 
+func TestRetireMergedPoll_DigestAcquisitionRefusalBeforePublication(t *testing.T) {
+	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+	defer cleanup()
+
+	digestErr := errors.New("digest read failed")
+	err := retireMergedPoll(home, taskID, checkPath, nil, func(string) (string, error) {
+		return "", digestErr
+	})
+	if err == nil || !errors.Is(err, ErrCheckValidationRefused) {
+		t.Fatalf("error = %v, want ErrCheckValidationRefused", err)
+	}
+	if _, statErr := os.Stat(checkPath); statErr != nil {
+		t.Fatalf("check was not preserved: %v", statErr)
+	}
+	if rec := readRetirementRecordOrNil(t, home, taskID); rec != nil {
+		t.Fatal("digest refusal must not create a retirement record")
+	}
+}
+
+func TestRetireMergedPoll_DigestAcquisitionRefusalAfterPublication(t *testing.T) {
+	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+	defer cleanup()
+	auth := retirementPollAuth(t, home, taskID)
+	restore := installMockMergeStatus(t, true, "0000111122223333444455556666777788889999", "aaaabbbbccccddddeeeeffff0000111122223333")
+	defer restore()
+	calls := 0
+	digestErr := errors.New("digest read failed after publication")
+	err := retireMergedPoll(home, taskID, checkPath, auth, func(path string) (string, error) {
+		calls++
+		if calls == 2 {
+			return "", digestErr
+		}
+		return pollContentDigest(path)
+	})
+	if err == nil || !errors.Is(err, ErrCheckInvalidAfterPublication) {
+		t.Fatalf("error = %v, want ErrCheckInvalidAfterPublication", err)
+	}
+	if _, statErr := os.Stat(checkPath); statErr != nil {
+		t.Fatalf("still-present check was not preserved: %v", statErr)
+	}
+	if rec := readRetirementRecordOrNil(t, home, taskID); rec != nil {
+		t.Fatal("post-publication digest refusal must clean the retirement record")
+	}
+}
+
+func TestRetireMergedPoll_DigestMismatchIsNotValidationRefusal(t *testing.T) {
+	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+	defer cleanup()
+	auth := retirementPollAuth(t, home, taskID)
+	restore := installMockMergeStatus(t, true, "0000111122223333444455556666777788889999", "aaaabbbbccccddddeeeeffff0000111122223333")
+	defer restore()
+	calls := 0
+	err := retireMergedPoll(home, taskID, checkPath, auth, func(path string) (string, error) {
+		calls++
+		if calls == 2 {
+			return "different-digest", nil
+		}
+		return pollContentDigest(path)
+	})
+	if err == nil || errors.Is(err, ErrCheckValidationRefused) || errors.Is(err, ErrCheckInvalidAfterPublication) {
+		t.Fatalf("error = %v, want ordinary digest mismatch", err)
+	}
+	if _, statErr := os.Stat(checkPath); statErr != nil {
+		t.Fatalf("changed check was not preserved: %v", statErr)
+	}
+	if rec := readRetirementRecordOrNil(t, home, taskID); rec != nil {
+		t.Fatal("digest mismatch must clean the retirement record")
+	}
+}
+
 func TestRetireMergedPoll_ValidationRefusalIsClassifiedAndPreservesPoll(t *testing.T) {
 	home := t.TempDir()
 	taskID := "task-validation-refusal"

@@ -632,7 +632,7 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 				continue
 			}
 			if errors.Is(retireErr, fleet.ErrCheckValidationRefused) {
-				fmt.Fprintf(os.Stderr, "poll check refused (left in place): %v\n", retireErr)
+				fmt.Fprintf(os.Stderr, "poll check refused (wake suppressed): %v\n", retireErr)
 				continue
 			}
 			// Other retirement failures retain the normal check wake so the
