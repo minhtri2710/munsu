@@ -466,6 +466,26 @@ func TestSenderRankRefusesWhatProvenanceContradicts(t *testing.T) {
 			wantSub: "sender rank underivable",
 		},
 		{
+			name: "a captain whose parent home does not exist",
+			build: func(t *testing.T) (*Receiver, string, *Envelope) {
+				dir := namedHome(t, senderRankCaptainID)
+				if err := WriteHomeIdentity(dir, senderRankCaptainID, RankCaptain); err != nil {
+					t.Fatalf("WriteHomeIdentity: %v", err)
+				}
+				configureParent(t, dir, filepath.Join(t.TempDir(), senderRankGeneralID))
+				r, err := NewReceiver(dir)
+				if err != nil {
+					t.Fatalf("NewReceiver: %v", err)
+				}
+				return r, dir, &Envelope{
+					SenderRank: RankGeneral, SenderIdentity: senderRankGeneralID,
+					ReceiverRank: RankCaptain, ReceiverID: senderRankCaptainID,
+					Payload: "orders",
+				}
+			},
+			wantSub: "sender rank underivable",
+		},
+		{
 			// Without readable provenance for the receiving home there is no
 			// rank to derive against, so nothing is accepted on trust.
 			name: "a receiving home whose provenance is unreadable",

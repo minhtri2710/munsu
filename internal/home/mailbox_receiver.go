@@ -148,6 +148,13 @@ func ReadHomeIdentity(homeDir string) (identity string, rank Rank, err error) {
 	data, readErr := os.ReadFile(markerPath)
 	if readErr != nil {
 		if os.IsNotExist(readErr) {
+			info, statErr := os.Stat(homeDir)
+			if statErr != nil {
+				return "", "", fmt.Errorf("reading markerless home %s: %w", homeDir, statErr)
+			}
+			if !info.IsDir() {
+				return "", "", fmt.Errorf("reading markerless home %s: not a directory", homeDir)
+			}
 			// No captain marker — treat as general/parent home.
 			base := filepath.Base(homeDir)
 			if base == "" || base == "." || base == "/" {
