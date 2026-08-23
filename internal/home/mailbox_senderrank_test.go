@@ -390,8 +390,13 @@ func TestSenderRankRefusesMissingOrInvalidHomeProvenance(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			r, env := tc.build(t)
-			if _, err := r.deriveSenderRank(env); err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("deriveSenderRank error = %v, want %q", err, tc.want)
+			if env.SenderIdentity == senderRankGeneralID {
+				env.SenderRank = RankGeneral
+			} else {
+				env.SenderRank = RankCaptain
+			}
+			if err := r.verifySenderRank(env); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("verifySenderRank error = %v, want %q", err, tc.want)
 			}
 		})
 	}
@@ -402,20 +407,72 @@ func TestSenderRankRefusesCaptainTaskAsSoldier(t *testing.T) {
 	if err := WriteMeta(dir, "captain:"+senderRankCaptainID, map[string]string{"kind": "captain", "home": "/missing"}); err != nil {
 		t.Fatal(err)
 	}
-	r, err := NewReceiver(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	env := &Envelope{SenderIdentity: ReceiverIDForTask("captain:" + senderRankCaptainID), TaskID: "captain:" + senderRankCaptainID}
-	if rank, err := r.deriveSenderRank(env); err == nil || rank == RankSoldier {
-		t.Fatalf("deriveSenderRank = (%q, %v), want non-soldier refusal", rank, err)
+	env := &Envelope{SenderRank: RankSoldier, SenderIdentity: ReceiverIDForTask("captain:" + senderRankCaptainID), TaskID: "captain:" + senderRankCaptainID}
+	r := &Receiver{rank: RankGeneral, store: NewStore(dir)}
+	if err := r.verifySenderRank(env); err == nil {
+		t.Fatal("verifySenderRank accepted a captain task as a soldier")
 	}
 }
 
 func TestSenderRankRejectsUnsupportedReceiverRank(t *testing.T) {
-	r := &Receiver{rank: Rank("unknown"), store: NewStore(t.TempDir())}
-	if _, err := r.deriveSenderRank(&Envelope{SenderIdentity: "sender"}); err == nil || !strings.Contains(err.Error(), "unsupported receiver rank") {
-		t.Fatalf("deriveSenderRank error = %v, want unsupported-rank refusal", err)
+	if err := (&Receiver{rank: Rank("unknown"), store: NewStore(t.TempDir())}).verifySenderRank(&Envelope{SenderRank: RankGeneral, SenderIdentity: "sender"}); err == nil || !strings.Contains(err.Error(), "general sender cannot address receiver rank") {
+		t.Fatalf("verifySenderRank error = %v, want unsupported-rank refusal", err)
+	}
+}
+
+func TestSenderRankRefusesUnsupportedClaimCombinations(t *testing.T) {
+	dir := namedHome(t, senderRankGeneralID)
+	hostSoldier(t, dir, senderRankTaskID)
+	cases := []struct {
+		name         string
+		rank         Rank
+		receiverRank Rank
+		identity     string
+		taskID       string
+		want         string
+	}{
+		{"soldier to soldier", RankSoldier, RankSoldier, ReceiverIDForTask(senderRankTaskID), senderRankTaskID, "soldier sender cannot address receiver rank"},
+		{"soldier identity mismatch", RankSoldier, RankGeneral, "other-soldier", senderRankTaskID, "soldier sender identity does not match"},
+		{"soldier to unknown receiver", RankSoldier, Rank("unknown"), ReceiverIDForTask(senderRankTaskID), senderRankTaskID, "soldier sender cannot address receiver rank"},
+		{"captain to unknown receiver", RankCaptain, Rank("unknown"), senderRankCaptainID, "", "captain sender cannot address receiver rank"},
+		{"general to unknown receiver", RankGeneral, Rank("unknown"), senderRankGeneralID, "", "general sender cannot address receiver rank"},
+		{"unsupported sender", Rank("unknown"), RankGeneral, "sender", "", "unsupported sender rank"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &Receiver{rank: tc.receiverRank, store: NewStore(dir)}
+			err := r.verifySenderRank(&Envelope{SenderRank: tc.rank, SenderIdentity: tc.identity, TaskID: tc.taskID})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("verifySenderRank error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestSenderRankAcceptsCollidingCaptainAndSoldierClaims(t *testing.T) {
+	generalHome := namedHome(t, "general-collision")
+	captainHome := namedHome(t, "captain-collision")
+	if err := WriteHomeIdentity(captainHome, "task_relay", RankCaptain); err != nil {
+		t.Fatal(err)
+	}
+	hostCaptain(t, generalHome, "task_relay", captainHome)
+	hostSoldier(t, generalHome, "task:relay")
+	r, err := NewReceiver(generalHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, env := range []*Envelope{
+		{SenderRank: RankCaptain, SenderIdentity: "task_relay", ReceiverRank: RankGeneral, ReceiverID: "general-collision", TaskID: "task:relay", Key: "report", Payload: "captain report"},
+		{SenderRank: RankSoldier, SenderIdentity: ReceiverIDForTask("task:relay"), ReceiverRank: RankGeneral, ReceiverID: "general-collision", TaskID: "task:relay", Key: "report", Payload: "soldier report"},
+	} {
+		ref := deliver(t, generalHome, env)
+		if _, err := r.Receive(ref); err != nil {
+			t.Fatalf("Receive refused colliding %q claim: %v", env.SenderRank, err)
+		}
+		if _, err := r.Ack(ref); err != nil {
+			t.Fatalf("Ack refused colliding %q claim: %v", env.SenderRank, err)
+		}
 	}
 }
 
@@ -444,7 +501,7 @@ func TestSenderRankRefusesWhatProvenanceContradicts(t *testing.T) {
 					Payload: "claims captain",
 				}
 			},
-			wantSub: "sender rank mismatch",
+			wantSub: "sender rank underivable",
 		},
 		{
 			// The home owner is the only sender a soldier receiver can place.

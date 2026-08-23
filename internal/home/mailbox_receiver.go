@@ -211,79 +211,91 @@ func WriteHomeIdentity(homeDir, identity string, rank Rank) error {
 	return nil
 }
 
-// deriveSenderRank returns the sender rank established by durable provenance
-// reachable from the receiving role, independent of the envelope claim. A
-// soldier receiver reads its hosting home's owner. A captain receiver reads
-// its configured parent General. A General receiver reads the captain record
-// naming the sender and then that captain home's identity. General and captain
-// receivers first check for a hosted non-captain task because that is the
-// durable soldier edge; the remaining home edge uses its role-specific pointer.
-func (r *Receiver) deriveSenderRank(env *Envelope) (Rank, error) {
-	if r.rank == RankSoldier {
-		ownerID, ownerRank, err := ReadHomeIdentity(r.store.homeDir)
+// verifySenderRank verifies the rank claimed by env against the one durable
+// provenance record that can prove that claim for this receiver. The claim
+// selects the proof obligation, never whether proof is needed, so a task
+// identity collision cannot make one provenance record shadow another.
+func (r *Receiver) verifySenderRank(env *Envelope) error {
+	switch env.SenderRank {
+	case RankSoldier:
+		if r.rank != RankGeneral && r.rank != RankCaptain {
+			return fmt.Errorf("soldier sender cannot address receiver rank %q", r.rank)
+		}
+		if env.TaskID == "" || env.SenderIdentity != ReceiverIDForTask(env.TaskID) {
+			return fmt.Errorf("soldier sender identity does not match task %q", env.TaskID)
+		}
+		meta, err := ReadMeta(r.store.homeDir, env.TaskID)
 		if err != nil {
-			return "", fmt.Errorf("reading soldier hosting home provenance: %w", err)
+			return fmt.Errorf("reading soldier sender provenance: %w", err)
 		}
-		if env.SenderIdentity != ownerID {
-			return "", fmt.Errorf("sender %q is not the hosting home owner %q", env.SenderIdentity, ownerID)
+		if meta["kind"] == "captain" {
+			return fmt.Errorf("soldier sender provenance names a captain task")
 		}
-		return ownerRank, nil
-	}
-	if r.hostsSenderAsTask(env) {
-		return RankSoldier, nil
-	}
-	switch r.rank {
+		return nil
 	case RankCaptain:
-		parentHome, err := config.Get(r.store.homeDir, "parent-home")
-		if err != nil {
-			return "", fmt.Errorf("reading captain parent home: %w", err)
+		switch r.rank {
+		case RankGeneral:
+			meta, err := ReadMeta(r.store.homeDir, "captain:"+env.SenderIdentity)
+			if err != nil {
+				return fmt.Errorf("reading captain sender provenance: %w", err)
+			}
+			if meta["kind"] != "captain" {
+				return fmt.Errorf("captain sender provenance has kind %q", meta["kind"])
+			}
+			captainHome := meta["home"]
+			if captainHome == "" {
+				return fmt.Errorf("captain sender provenance has no home")
+			}
+			identity, rank, err := ReadHomeIdentity(captainHome)
+			if err != nil {
+				return fmt.Errorf("reading captain sender home provenance: %w", err)
+			}
+			if identity != env.SenderIdentity || rank != RankCaptain {
+				return fmt.Errorf("captain home provenance is (%q, %q), want (%q, %q)", identity, rank, env.SenderIdentity, RankCaptain)
+			}
+			return nil
+		case RankSoldier:
+			identity, rank, err := ReadHomeIdentity(r.store.homeDir)
+			if err != nil {
+				return fmt.Errorf("reading soldier hosting home provenance: %w", err)
+			}
+			if identity != env.SenderIdentity || rank != RankCaptain {
+				return fmt.Errorf("hosting home provenance is (%q, %q), want (%q, %q)", identity, rank, env.SenderIdentity, RankCaptain)
+			}
+			return nil
+		default:
+			return fmt.Errorf("captain sender cannot address receiver rank %q", r.rank)
 		}
-		identity, rank, err := ReadHomeIdentity(parentHome)
-		if err != nil {
-			return "", fmt.Errorf("reading parent home provenance: %w", err)
-		}
-		if identity != env.SenderIdentity || rank != RankGeneral {
-			return "", fmt.Errorf("parent home provenance is (%q, %q), want (%q, %q)", identity, rank, env.SenderIdentity, RankGeneral)
-		}
-		return RankGeneral, nil
 	case RankGeneral:
-		meta, err := ReadMeta(r.store.homeDir, "captain:"+env.SenderIdentity)
-		if err != nil {
-			return "", fmt.Errorf("reading captain sender provenance: %w", err)
+		switch r.rank {
+		case RankCaptain:
+			parentHome, err := config.Get(r.store.homeDir, "parent-home")
+			if err != nil {
+				return fmt.Errorf("reading captain parent home: %w", err)
+			}
+			identity, rank, err := ReadHomeIdentity(parentHome)
+			if err != nil {
+				return fmt.Errorf("reading parent home provenance: %w", err)
+			}
+			if identity != env.SenderIdentity || rank != RankGeneral {
+				return fmt.Errorf("parent home provenance is (%q, %q), want (%q, %q)", identity, rank, env.SenderIdentity, RankGeneral)
+			}
+			return nil
+		case RankSoldier:
+			identity, rank, err := ReadHomeIdentity(r.store.homeDir)
+			if err != nil {
+				return fmt.Errorf("reading soldier hosting home provenance: %w", err)
+			}
+			if identity != env.SenderIdentity || rank != RankGeneral {
+				return fmt.Errorf("hosting home provenance is (%q, %q), want (%q, %q)", identity, rank, env.SenderIdentity, RankGeneral)
+			}
+			return nil
+		default:
+			return fmt.Errorf("general sender cannot address receiver rank %q", r.rank)
 		}
-		if meta["kind"] != "captain" {
-			return "", fmt.Errorf("captain sender provenance has kind %q", meta["kind"])
-		}
-		captainHome := meta["home"]
-		if captainHome == "" {
-			return "", fmt.Errorf("captain sender provenance has no home")
-		}
-		identity, rank, err := ReadHomeIdentity(captainHome)
-		if err != nil {
-			return "", fmt.Errorf("reading captain sender home provenance: %w", err)
-		}
-		if identity != env.SenderIdentity || rank != RankCaptain {
-			return "", fmt.Errorf("captain home provenance is (%q, %q), want (%q, %q)", identity, rank, env.SenderIdentity, RankCaptain)
-		}
-		return RankCaptain, nil
 	default:
-		return "", fmt.Errorf("unsupported receiver rank %q", r.rank)
+		return fmt.Errorf("unsupported sender rank %q", env.SenderRank)
 	}
-}
-
-// hostsSenderAsTask reports whether the receiving home durably hosts the
-// envelope's task and the sender identifies itself as exactly that task.
-// Both halves are needed: the task record alone says such a soldier exists,
-// and the identity match says this envelope came from it.
-func (r *Receiver) hostsSenderAsTask(env *Envelope) bool {
-	if env.TaskID == "" || env.SenderIdentity != ReceiverIDForTask(env.TaskID) {
-		return false
-	}
-	meta, err := ReadMeta(r.store.homeDir, env.TaskID)
-	if err != nil {
-		return false
-	}
-	return meta["kind"] != "captain"
 }
 
 // Receive validates and loads an envelope from the receiver's inbox for the
@@ -301,8 +313,8 @@ func (r *Receiver) hostsSenderAsTask(env *Envelope) bool {
 //  4. Envelope ReceiverID matches receiver identity (home provenance)
 //  5. Envelope ReceiverRank matches receiver rank (home provenance)
 //  6. Envelope SenderIdentity matches ref.SenderIdentity
-//  7. Envelope SenderRank matches the rank the receiving home derives for
-//     that sender (see deriveSenderRank)
+//  7. Envelope SenderRank is proven by the claim-directed durable provenance
+//     check (see verifySenderRank)
 //  8. Payload hash matches envelope payload (redundant after ValidateEnvelope)
 //  9. No ack is written — that is a separate Ack() call
 func (r *Receiver) Receive(ref NotificationRef) (*Envelope, error) {
@@ -355,13 +367,8 @@ func (r *Receiver) Receive(ref NotificationRef) (*Envelope, error) {
 	// 7. Validate sender rank against provenance the receiving home can
 	// establish, so the one-hop transition table is enforced against a
 	// derived value rather than a self-reported one.
-	derived, err := r.deriveSenderRank(env)
-	if err != nil {
+	if err := r.verifySenderRank(env); err != nil {
 		return nil, fmt.Errorf("receive sender rank underivable: %w", err)
-	}
-	if env.SenderRank != derived {
-		return nil, fmt.Errorf("receive sender rank mismatch: envelope claims %q, provenance derives %q",
-			env.SenderRank, derived)
 	}
 
 	// 8. Validate payload hash (detect tampering).
@@ -399,9 +406,9 @@ func (r *Receiver) Receive(ref NotificationRef) (*Envelope, error) {
 //  8. Existing ack: same outcome "accepted" = idempotent, different = conflict
 //     (fail closed); replaying a persisted decision does not require current
 //     sender provenance
-//  9. Envelope SenderRank matches the rank the receiving home derives for
-//     that sender (see deriveSenderRank); current provenance is required
-//     before writing a new ack
+//  9. Envelope SenderRank is proven by the claim-directed durable provenance
+//     check (see verifySenderRank); current provenance is required before
+//     writing a new ack
 //  10. Write "accepted" ack
 func (r *Receiver) Ack(ref NotificationRef) (*ProcessingAck, error) {
 	// 1. Validate ref.
@@ -474,13 +481,8 @@ func (r *Receiver) Ack(ref NotificationRef) (*ProcessingAck, error) {
 	// 9. Validate sender rank against provenance the receiving home can
 	// establish, so the one-hop transition table is enforced against a
 	// derived value rather than a self-reported one.
-	derived, err := r.deriveSenderRank(env)
-	if err != nil {
+	if err := r.verifySenderRank(env); err != nil {
 		return nil, fmt.Errorf("ack sender rank underivable: %w", err)
-	}
-	if env.SenderRank != derived {
-		return nil, fmt.Errorf("ack sender rank mismatch: envelope claims %q, provenance derives %q",
-			env.SenderRank, derived)
 	}
 
 	// 10. Build and write "accepted" ack.
