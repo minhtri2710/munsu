@@ -255,6 +255,15 @@ identity is declared through `MUNSU_ROLE=general|captain|soldier`. Captain label
 use `captain-<id>-<hometag>`, windows use `mu-captain-<id>`, provenance is stored
 in `.munsu-captain-home`, and registration lives in `data/captains.md`.
 
+Mailbox receiver identity and rank are derived from durable local provenance, not
+from caller-provided values. General and Captain receivers use their home
+provenance; a Soldier receiver uses the durable task record in its dispatcher's
+home because a Soldier has no separate home. On receipt or a new ack, the
+one-hop rank transition is checked against the sender rank proven by the
+receiver's locally readable provenance. The envelope's `SenderRank` is only a
+claim that selects the provenance proof obligation; it is never the authority
+for the transition. Missing, mismatched, or ambiguous provenance fails closed.
+
 ## Architectural enforcement
 
 `internal/testutil/architecture_policy_test.go` enforces the allowed package topology
