@@ -90,36 +90,35 @@ func DiscoverAllChecks(homeDir string) ([]CheckPlugin, error) {
 	return append(perTask, global...), nil
 }
 
-// AcceptOrRefuseStale returns a verdict on a check artifact: true when the
-// check is usable as it stands, false with an error naming what is stale.
-// Nothing here migrates or rewrites a check; the only artifact it touches is
-// a zero-length one, which it removes. A check is stale when:
+// AcceptOrRefuseStale reports whether a check artifact is usable as it stands:
+// nil when it is, otherwise an error naming what is stale. It only reads. No
+// refusal removes or rewrites the artifact, here or in the caller, because a
+// .check file is written by an operator or an agent and never by munsu —
+// deleting one destroys the only copy of something a human may need to look at,
+// and no refusal below is worth that. A check is stale when:
 //   - The file is zero-length
 //   - The file content does not start with a shebang
 //   - The file is older than its companion .meta file's last modification
 //     (meta has been updated since the check was written, meaning the
 //     task state has advanced but the check was not regenerated)
-func AcceptOrRefuseStale(path string) (bool, error) {
+func AcceptOrRefuseStale(path string) error {
 	fi, err := os.Stat(path)
 	if err != nil {
-		return false, fmt.Errorf("cannot stat check: %w", err)
+		return fmt.Errorf("cannot stat check: %w", err)
 	}
 	if fi.Size() == 0 {
-		// Zero-length: remove it
-		os.Remove(path)
-		return false, fmt.Errorf("refused zero-length check: %s", path)
+		return fmt.Errorf("refused zero-length check: %s", path)
 	}
 	// Read first bytes for shebang
 	data := make([]byte, 2)
 	f, err := os.Open(path)
 	if err != nil {
-		return false, fmt.Errorf("opening check: %w", err)
+		return fmt.Errorf("opening check: %w", err)
 	}
 	defer f.Close()
 	n, err := f.Read(data)
 	if err != nil || n < 2 || data[0] != '#' || data[1] != '!' {
-		// Invalid content: re-write is not safe; refuse
-		return false, fmt.Errorf("refused stale check (no valid shebang): %s", path)
+		return fmt.Errorf("refused stale check (no valid shebang): %s", path)
 	}
 	// Check against companion .meta modification time if applicable
 	// (per-task checks only — global checks have no companion)
@@ -130,9 +129,9 @@ func AcceptOrRefuseStale(path string) (bool, error) {
 		if metaFI, err := os.Stat(metaPath); err == nil {
 			if fi.ModTime().Before(metaFI.ModTime()) {
 				// Meta was updated after check was written — stale
-				return false, fmt.Errorf("refused stale check (meta newer): %s", path)
+				return fmt.Errorf("refused stale check (meta newer): %s", path)
 			}
 		}
 	}
-	return true, nil // check is valid
+	return nil
 }

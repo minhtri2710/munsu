@@ -5,6 +5,7 @@ package fleet
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -868,6 +869,9 @@ func TestRecoverPendingRetirement_PublicationExists(t *testing.T) {
 		t.Fatalf("WriteRetirementRecord: %v", err)
 	}
 	durableAppendStatus(home, taskID, pubLine)
+	if err := os.Chmod(checkPath, 0644); err != nil {
+		t.Fatalf("chmod check: %v", err)
+	}
 
 	// Recovery: should skip duplicate append, remove poll, clean record.
 	resolved, err := RecoverPendingRetirement(home, taskID, retirementPollAuth(t, home, taskID))
@@ -1008,6 +1012,83 @@ func TestRecoverPendingRetirement_StaleIdentity(t *testing.T) {
 	}
 }
 
+func TestRecoverPendingRetirement_DeliveryIdentityMismatchPreservesArtifacts(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*PollRetirementRecord)
+	}{
+		{name: "owner", mutate: func(rec *PollRetirementRecord) { rec.Owner = "other-owner" }},
+		{name: "repo", mutate: func(rec *PollRetirementRecord) { rec.Repo = "other-repo" }},
+		{name: "number", mutate: func(rec *PollRetirementRecord) { rec.Number = 43 }},
+		{name: "url", mutate: func(rec *PollRetirementRecord) { rec.URL = "https://github.com/other-owner/other-repo/pull/42" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+			defer cleanup()
+
+			rec := recoveryRecordForTest(t, home, taskID, checkPath)
+			tc.mutate(rec)
+			if err := WriteRetirementRecord(home, rec); err != nil {
+				t.Fatalf("WriteRetirementRecord: %v", err)
+			}
+
+			resolved, err := RecoverPendingRetirement(home, taskID, retirementPollAuth(t, home, taskID))
+			if err == nil || resolved {
+				t.Fatalf("expected unresolved delivery identity mismatch, got resolved=%v err=%v", resolved, err)
+			}
+			assertRecoveryArtifactsPreserved(t, home, taskID, checkPath, rec.PublicationLine)
+		})
+	}
+}
+
+func TestRecoverPendingRetirement_InvalidPublicationEvidencePreservesArtifacts(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*PollRetirementRecord)
+	}{
+		{name: "missing merged SHA", mutate: func(rec *PollRetirementRecord) { rec.MergedSHA = "" }},
+		{name: "mismatched publication line", mutate: func(rec *PollRetirementRecord) { rec.PublicationLine = "done: arbitrary publication" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+			defer cleanup()
+
+			rec := recoveryRecordForTest(t, home, taskID, checkPath)
+			tc.mutate(rec)
+			if err := WriteRetirementRecord(home, rec); err != nil {
+				t.Fatalf("WriteRetirementRecord: %v", err)
+			}
+
+			resolved, err := RecoverPendingRetirement(home, taskID, retirementPollAuth(t, home, taskID))
+			if err == nil || resolved {
+				t.Fatalf("expected unresolved invalid publication evidence, got resolved=%v err=%v", resolved, err)
+			}
+			assertRecoveryArtifactsPreserved(t, home, taskID, checkPath, rec.PublicationLine)
+		})
+	}
+}
+
+func TestRecoverPendingRetirement_MutableAttributesDoNotBlockRecovery(t *testing.T) {
+	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+	defer cleanup()
+
+	rec := recoveryRecordForTest(t, home, taskID, checkPath)
+	rec.BaseRef = "release"
+	rec.HeadRef = "retargeted-feature"
+	rec.CapturedAt = "2025-01-01T00:00:00Z"
+	if err := WriteRetirementRecord(home, rec); err != nil {
+		t.Fatalf("WriteRetirementRecord: %v", err)
+	}
+
+	resolved, err := RecoverPendingRetirement(home, taskID, retirementPollAuth(t, home, taskID))
+	if err != nil || !resolved {
+		t.Fatalf("expected recovery despite mutable attribute changes, got resolved=%v err=%v", resolved, err)
+	}
+	if _, err := os.Stat(checkPath); !os.IsNotExist(err) {
+		t.Fatalf("check should be removed after recovery, got err=%v", err)
+	}
+}
+
 func TestRecoverPendingRetirement_WrongTaskIdentity(t *testing.T) {
 	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
 	defer cleanup()
@@ -1054,6 +1135,212 @@ func TestRecoverPendingRetirement_WrongTaskIdentity(t *testing.T) {
 
 	if _, err := os.Stat(checkPath); err != nil {
 		t.Fatal("check should be preserved")
+	}
+}
+
+func recoveryRecordForTest(t *testing.T, home, taskID, checkPath string) *PollRetirementRecord {
+	t.Helper()
+	digest, err := pollContentDigest(checkPath)
+	if err != nil {
+		t.Fatalf("pollContentDigest: %v", err)
+	}
+	return &PollRetirementRecord{
+		SchemaVersion:   PollRetirementSchema,
+		TaskID:          taskID,
+		PollPath:        taskID + ".check",
+		PollDigest:      digest,
+		Provider:        "github",
+		Owner:           "testowner",
+		Repo:            "testrepo",
+		Number:          42,
+		URL:             "https://github.com/testowner/testrepo/pull/42",
+		BaseRef:         "main",
+		HeadRef:         "feature-branch",
+		HeadSHA:         "0000111122223333444455556666777788889999",
+		MergedSHA:       "aaaabbbbccccddddeeeeffff0000111122223333",
+		PublicationLine: publicationLine(taskID, "https://github.com/testowner/testrepo/pull/42", "aaaabbbbccccddddeeeeffff0000111122223333"),
+	}
+}
+
+func assertRecoveryArtifactsPreserved(t *testing.T, home, taskID, checkPath, publication string) {
+	t.Helper()
+	if _, err := os.Stat(checkPath); err != nil {
+		t.Fatalf("poll should be preserved: %v", err)
+	}
+	if got := readRetirementRecordOrNil(t, home, taskID); got == nil {
+		t.Fatal("retirement record should be preserved")
+	}
+	lines, err := mhome.ReadStatus(home, taskID)
+	if err == nil {
+		for _, line := range lines {
+			if line == publication {
+				t.Fatal("recovery should not publish")
+			}
+		}
+	}
+}
+
+func TestRecoverPendingRetirement_AcceptsLegacyIdentityAliases(t *testing.T) {
+	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+	defer cleanup()
+	meta, err := mhome.ReadMeta(home, taskID)
+	if err != nil {
+		t.Fatalf("ReadMeta: %v", err)
+	}
+	meta["pr"] = meta["pr_url"]
+	delete(meta, "pr_url")
+	meta["pr_head"] = meta["pr_head_sha"]
+	delete(meta, "pr_head_sha")
+	if err := mhome.WriteMeta(home, taskID, meta); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+	rec := recoveryRecordForTest(t, home, taskID, checkPath)
+	if err := WriteRetirementRecord(home, rec); err != nil {
+		t.Fatalf("WriteRetirementRecord: %v", err)
+	}
+	resolved, err := RecoverPendingRetirement(home, taskID, retirementPollAuth(t, home, taskID))
+	if err != nil || !resolved {
+		t.Fatalf("expected recovery with legacy identity aliases, got resolved=%v err=%v", resolved, err)
+	}
+	if _, err := os.Stat(checkPath); !os.IsNotExist(err) {
+		t.Fatalf("poll should be removed, stat error = %v", err)
+	}
+	if got := readRetirementRecordOrNil(t, home, taskID); got != nil {
+		t.Fatal("retirement record should be removed")
+	}
+}
+
+func TestRecoverPendingRetirement_IncompleteMetadataPreservesArtifacts(t *testing.T) {
+	fields := []string{"pr_provider", "pr_url", "pr_head_sha"}
+	for _, field := range fields {
+		t.Run(field, func(t *testing.T) {
+			home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+			defer cleanup()
+			auth := retirementPollAuth(t, home, taskID)
+
+			meta, err := mhome.ReadMeta(home, taskID)
+			if err != nil {
+				t.Fatalf("ReadMeta: %v", err)
+			}
+			meta[field] = ""
+			if field == "pr_url" {
+				meta["pr"] = ""
+			}
+			if field == "pr_head_sha" {
+				meta["pr_head"] = ""
+			}
+			if err := mhome.WriteMeta(home, taskID, meta); err != nil {
+				t.Fatalf("write incomplete metadata: %v", err)
+			}
+
+			rec := recoveryRecordForTest(t, home, taskID, checkPath)
+			if err := WriteRetirementRecord(home, rec); err != nil {
+				t.Fatalf("WriteRetirementRecord: %v", err)
+			}
+
+			resolved, err := RecoverPendingRetirement(home, taskID, auth)
+			if err == nil || resolved {
+				t.Fatalf("expected unresolved incomplete metadata, got resolved=%v err=%v", resolved, err)
+			}
+			assertRecoveryArtifactsPreserved(t, home, taskID, checkPath, rec.PublicationLine)
+		})
+	}
+}
+
+func TestRecoverPendingRetirement_MissingMetadataPreservesArtifacts(t *testing.T) {
+	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+	defer cleanup()
+
+	digest, err := pollContentDigest(checkPath)
+	if err != nil {
+		t.Fatalf("pollContentDigest: %v", err)
+	}
+	rec := &PollRetirementRecord{
+		SchemaVersion:   1,
+		TaskID:          taskID,
+		PollPath:        taskID + ".check",
+		PollDigest:      digest,
+		Provider:        "github",
+		Owner:           "testowner",
+		Repo:            "testrepo",
+		Number:          42,
+		URL:             "https://github.com/testowner/testrepo/pull/42",
+		BaseRef:         "main",
+		HeadRef:         "feature-branch",
+		HeadSHA:         "0000111122223333444455556666777788889999",
+		MergedSHA:       "aaaabbbbccccddddeeeeffff0000111122223333",
+		PublicationLine: publicationLine(taskID, "https://github.com/testowner/testrepo/pull/42", "aaaabbbbccccddddeeeeffff0000111122223333"),
+	}
+	if err := WriteRetirementRecord(home, rec); err != nil {
+		t.Fatalf("WriteRetirementRecord: %v", err)
+	}
+	auth := retirementPollAuth(t, home, taskID)
+	metaPath, err := mhome.MetaFilePath(home, taskID)
+	if err != nil {
+		t.Fatalf("MetaFilePath: %v", err)
+	}
+	if err := os.Remove(metaPath); err != nil {
+		t.Fatalf("remove metadata: %v", err)
+	}
+
+	resolved, err := RecoverPendingRetirement(home, taskID, auth)
+	if err == nil || resolved {
+		t.Fatalf("expected unresolved missing metadata, got resolved=%v err=%v", resolved, err)
+	}
+	if _, err := os.Stat(checkPath); err != nil {
+		t.Fatalf("poll should be preserved: %v", err)
+	}
+	if got := readRetirementRecordOrNil(t, home, taskID); got == nil {
+		t.Fatal("retirement record should be preserved")
+	}
+	lines, err := mhome.ReadStatus(home, taskID)
+	if err == nil {
+		for _, line := range lines {
+			if line == rec.PublicationLine {
+				t.Fatal("recovery should not publish without metadata")
+			}
+		}
+	}
+}
+
+func TestRecoverPendingRetirement_InvalidPollPathPreservesArtifacts(t *testing.T) {
+	paths := []string{"../victim", filepath.Join("foreign", "victim"), filepath.Join(t.TempDir(), "victim")}
+	for _, pollPath := range paths {
+		t.Run(pollPath, func(t *testing.T) {
+			home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+			defer cleanup()
+
+			resolvedPath := filepath.Join(mhome.StateDir(home), pollPath)
+			if err := os.MkdirAll(filepath.Dir(resolvedPath), 0755); err != nil {
+				t.Fatalf("create victim directory: %v", err)
+			}
+			if err := os.WriteFile(resolvedPath, []byte("must remain\n"), 0644); err != nil {
+				t.Fatalf("write victim: %v", err)
+			}
+			victimDigest, err := pollContentDigest(resolvedPath)
+			if err != nil {
+				t.Fatalf("victim digest: %v", err)
+			}
+			rec := recoveryRecordForTest(t, home, taskID, checkPath)
+			rec.PollPath = pollPath
+			rec.PollDigest = victimDigest
+			if err := WriteRetirementRecord(home, rec); err != nil {
+				t.Fatalf("WriteRetirementRecord: %v", err)
+			}
+
+			resolved, err := RecoverPendingRetirement(home, taskID, retirementPollAuth(t, home, taskID))
+			if err == nil || resolved {
+				t.Fatalf("expected invalid path refusal, got resolved=%v err=%v", resolved, err)
+			}
+			assertRecoveryArtifactsPreserved(t, home, taskID, checkPath, rec.PublicationLine)
+			contents, readErr := os.ReadFile(resolvedPath)
+			if readErr != nil {
+				t.Fatalf("victim was removed: %v", readErr)
+			}
+			if string(contents) != "must remain\n" {
+				t.Fatalf("victim contents = %q", contents)
+			}
+		})
 	}
 }
 
@@ -1178,7 +1465,192 @@ func TestRecoverPendingRetirement_DirectoryRecord(t *testing.T) {
 	}
 }
 
-// --- Provider error / open / closed-unmerged preserve poll ---
+// --- Validation refusal and provider error / open / closed-unmerged preserve poll ---
+
+func TestRetireMergedPoll_DigestAcquisitionRefusalBeforePublication(t *testing.T) {
+	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+	defer cleanup()
+
+	digestErr := errors.New("digest read failed")
+	err := retireMergedPoll(home, taskID, checkPath, nil, func(string) (string, error) {
+		return "", digestErr
+	})
+	if err == nil || !errors.Is(err, domain.ErrCheckValidationRefused) {
+		t.Fatalf("error = %v, want ErrCheckValidationRefused", err)
+	}
+	if _, statErr := os.Stat(checkPath); statErr != nil {
+		t.Fatalf("check was not preserved: %v", statErr)
+	}
+	if rec := readRetirementRecordOrNil(t, home, taskID); rec != nil {
+		t.Fatal("digest refusal must not create a retirement record")
+	}
+}
+
+func TestRetireMergedPoll_EmptyProviderHeadSHARefusesBeforePublication(t *testing.T) {
+	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+	defer cleanup()
+	restore := installMockMergeStatus(t, true, "", "aaaabbbbccccddddeeeeffff0000111122223333")
+	defer restore()
+
+	err := retireMergedPoll(home, taskID, checkPath, retirementPollAuth(t, home, taskID), pollContentDigest)
+	if err == nil || !strings.Contains(err.Error(), "empty head SHA") {
+		t.Fatalf("error = %v, want empty-head-SHA refusal", err)
+	}
+	if _, statErr := os.Stat(checkPath); statErr != nil {
+		t.Fatalf("check was not preserved: %v", statErr)
+	}
+	if rec := readRetirementRecordOrNil(t, home, taskID); rec != nil {
+		t.Fatal("empty head SHA refusal must not create a retirement record")
+	}
+	lines, readErr := mhome.ReadStatus(home, taskID)
+	if readErr != nil {
+		t.Fatalf("ReadStatus: %v", readErr)
+	}
+	for _, line := range lines {
+		if line == publicationLine(taskID, "https://github.com/testowner/testrepo/pull/42", "aaaabbbbccccddddeeeeffff0000111122223333") {
+			t.Fatal("empty head SHA refusal must not publish a merge")
+		}
+	}
+}
+
+func TestRetireMergedPoll_DigestAcquisitionRefusalAfterPublication(t *testing.T) {
+	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+	defer cleanup()
+	auth := retirementPollAuth(t, home, taskID)
+	restore := installMockMergeStatus(t, true, "0000111122223333444455556666777788889999", "aaaabbbbccccddddeeeeffff0000111122223333")
+	defer restore()
+	calls := 0
+	digestErr := errors.New("digest read failed after publication")
+	err := retireMergedPoll(home, taskID, checkPath, auth, func(path string) (string, error) {
+		calls++
+		if calls == 2 {
+			return "", digestErr
+		}
+		return pollContentDigest(path)
+	})
+	if err == nil || !errors.Is(err, domain.ErrCheckInvalidAfterPublication) {
+		t.Fatalf("error = %v, want ErrCheckInvalidAfterPublication", err)
+	}
+	if _, statErr := os.Stat(checkPath); statErr != nil {
+		t.Fatalf("still-present check was not preserved: %v", statErr)
+	}
+	if rec := readRetirementRecordOrNil(t, home, taskID); rec != nil {
+		t.Fatal("post-publication digest refusal must clean the retirement record")
+	}
+}
+
+func TestRetireMergedPoll_DigestMismatchIsNotValidationRefusal(t *testing.T) {
+	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+	defer cleanup()
+	auth := retirementPollAuth(t, home, taskID)
+	restore := installMockMergeStatus(t, true, "0000111122223333444455556666777788889999", "aaaabbbbccccddddeeeeffff0000111122223333")
+	defer restore()
+	calls := 0
+	err := retireMergedPoll(home, taskID, checkPath, auth, func(path string) (string, error) {
+		calls++
+		if calls == 2 {
+			return "different-digest", nil
+		}
+		return pollContentDigest(path)
+	})
+	if err == nil || errors.Is(err, domain.ErrCheckValidationRefused) || errors.Is(err, domain.ErrCheckInvalidAfterPublication) {
+		t.Fatalf("error = %v, want ordinary digest mismatch", err)
+	}
+	if _, statErr := os.Stat(checkPath); statErr != nil {
+		t.Fatalf("changed check was not preserved: %v", statErr)
+	}
+	if rec := readRetirementRecordOrNil(t, home, taskID); rec != nil {
+		t.Fatal("digest mismatch must clean the retirement record")
+	}
+}
+
+func TestRetireMergedPoll_ValidationRefusalIsClassifiedAndPreservesPoll(t *testing.T) {
+	home := t.TempDir()
+	taskID := "task-validation-refusal"
+	checkPath := filepath.Join(home, "invalid.check")
+	if err := os.WriteFile(checkPath, []byte("not an executable check\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := RetireMergedPoll(home, taskID, checkPath, nil)
+	if err == nil {
+		t.Fatal("expected validation refusal")
+	}
+	if !errors.Is(err, domain.ErrCheckValidationRefused) {
+		t.Fatalf("error = %v, want ErrCheckValidationRefused", err)
+	}
+	if errors.Is(err, domain.ErrCheckInvalidAfterPublication) {
+		t.Fatalf("pre-retirement refusal classified after publication: %v", err)
+	}
+	if _, statErr := os.Stat(checkPath); statErr != nil {
+		t.Fatalf("invalid check was not preserved: %v", statErr)
+	}
+}
+
+func TestRetireMergedPoll_PostPublicationRevalidationRefusalIsClassified(t *testing.T) {
+	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+	defer cleanup()
+	auth := retirementPollAuth(t, home, taskID)
+	originalQuery := QueryDeliveryMergeStatus
+	QueryDeliveryMergeStatus = func(ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
+		if err := os.Remove(checkPath); err != nil {
+			t.Fatalf("remove check before return: %v", err)
+		}
+		if err := os.Mkdir(checkPath, 0755); err != nil {
+			t.Fatalf("replace check with directory: %v", err)
+		}
+		return &domain.PRMergeStatus{Merged: true, MergedSHA: ident.HeadSHA, HeadSHA: ident.HeadSHA, State: "MERGED"}, nil
+	}
+	defer func() { QueryDeliveryMergeStatus = originalQuery }()
+
+	err := RetireMergedPoll(home, taskID, checkPath, auth)
+	if err == nil {
+		t.Fatal("expected post-publication validation refusal")
+	}
+	if !errors.Is(err, domain.ErrCheckValidationRefused) || !errors.Is(err, domain.ErrCheckInvalidAfterPublication) {
+		t.Fatalf("error = %v, want both validation sentinels", err)
+	}
+	lines, readErr := mhome.ReadStatus(home, taskID)
+	if readErr != nil {
+		t.Fatalf("ReadStatus: %v", readErr)
+	}
+	if len(lines) != 1 || !strings.Contains(lines[0], "merged at") {
+		t.Fatalf("status lines = %v, want durable publication", lines)
+	}
+	if rec := readRetirementRecordOrNil(t, home, taskID); rec != nil {
+		t.Fatal("retirement record should be cleaned after publication")
+	}
+	if info, statErr := os.Stat(checkPath); statErr != nil || !info.IsDir() {
+		t.Fatalf("replacement directory should remain: info=%v err=%v", info, statErr)
+	}
+}
+
+func TestRetireMergedPoll_AcceptsLegacyIdentityAliases(t *testing.T) {
+	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+	defer cleanup()
+	meta, err := mhome.ReadMeta(home, taskID)
+	if err != nil {
+		t.Fatalf("ReadMeta: %v", err)
+	}
+	meta["pr"] = meta["pr_url"]
+	delete(meta, "pr_url")
+	meta["pr_head"] = meta["pr_head_sha"]
+	delete(meta, "pr_head_sha")
+	if err := mhome.WriteMeta(home, taskID, meta); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+	restore := installMockMergeStatus(t, true, "0000111122223333444455556666777788889999", "aaaabbbbccccddddeeeeffff0000111122223333")
+	defer restore()
+	if err := RetireMergedPoll(home, taskID, checkPath, retirementPollAuth(t, home, taskID)); err != nil {
+		t.Fatalf("RetireMergedPoll with legacy identity aliases: %v", err)
+	}
+	if _, err := os.Stat(checkPath); !os.IsNotExist(err) {
+		t.Fatalf("poll should be removed, stat error = %v", err)
+	}
+	if rec := readRetirementRecordOrNil(t, home, taskID); rec != nil {
+		t.Fatal("retirement record should be removed")
+	}
+}
 
 func TestRetireMergedPoll_OpenPreservesPoll(t *testing.T) {
 	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
