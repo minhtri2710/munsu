@@ -100,6 +100,7 @@ type PollRetirementRecord struct {
 	PollPath       string `json:"pollPath"`       // relative to state dir (e.g. "<id>.check")
 	PollDigest     string `json:"pollDigest"`     // hex-encoded SHA-256 of poll content at discovery
 	QuarantinePath string `json:"quarantinePath"` // basename relative to the retirement directory
+	Quarantined    bool   `json:"quarantined,omitempty"`
 
 	// Delivery identity (complete, validated at capture)
 	Provider   string `json:"provider"`
@@ -546,6 +547,10 @@ func retireMergedPoll(homeDir, taskID, checkPath string, auth *taskauthority.Can
 	if err := quarantinePollAt(checkPath, quarantinePath, renameFn); err != nil {
 		return fmt.Errorf("%w: poll quarantine failed (pending record exists): %w", domain.ErrCheckValidationRefused, err)
 	}
+	rec.Quarantined = true
+	if err := WriteRetirementRecord(homeDir, rec); err != nil {
+		return fmt.Errorf("persisting quarantined retirement record (pending record exists): %w", err)
+	}
 	if err := ValidateCheckWithLstat(quarantinePath); err != nil {
 		if cleanupErr := RemoveRetirementRecord(homeDir, taskID); cleanupErr != nil {
 			return fmt.Errorf("%w: quarantined poll invalid at %s; cleanup failed: %v: %w", domain.ErrCheckInvalidAfterPublication, quarantinePath, cleanupErr, err)
@@ -748,24 +753,35 @@ func recoverPendingRetirement(homeDir, taskID string, auth *taskauthority.Canoni
 	if fi, statErr := os.Lstat(quarantinePath); statErr == nil {
 		if fi.Mode().IsRegular() && fi.Mode()&os.ModeSymlink == 0 {
 			pollExists = true
-			if digest, digestErr := digestFn(quarantinePath); digestErr == nil && digest == rec.PollDigest {
-				pollMatches = true
-			}
+		} else {
+			return false, fmt.Errorf("recovery: quarantine is not a regular file (preserving poll and retirement record)")
 		}
 	} else if !os.IsNotExist(statErr) {
 		return false, fmt.Errorf("recovery: inspecting quarantine: %w", statErr)
-	} else if fi, publicErr := os.Lstat(checkPath); publicErr == nil {
-		if fi.Mode().IsRegular() && fi.Mode()&os.ModeSymlink == 0 {
-			if err := quarantinePollAt(checkPath, quarantinePath, renameFn); err != nil {
-				return false, fmt.Errorf("recovery: quarantining public poll (preserving poll and retirement record): %w", err)
+	} else if !rec.Quarantined {
+		if fi, publicErr := os.Lstat(checkPath); publicErr == nil {
+			if fi.Mode().IsRegular() && fi.Mode()&os.ModeSymlink == 0 {
+				if err := quarantinePollAt(checkPath, quarantinePath, renameFn); err != nil {
+					return false, fmt.Errorf("recovery: quarantining public poll (preserving poll and retirement record): %w", err)
+				}
+				pollExists = true
+			} else {
+				return false, fmt.Errorf("recovery: public poll is not a regular file (preserving poll and retirement record)")
 			}
-			pollExists = true
-			if digest, digestErr := digestFn(quarantinePath); digestErr == nil && digest == rec.PollDigest {
-				pollMatches = true
-			}
+		} else if !os.IsNotExist(publicErr) {
+			return false, fmt.Errorf("recovery: inspecting public poll: %w", publicErr)
 		}
-	} else if !os.IsNotExist(publicErr) {
-		return false, fmt.Errorf("recovery: inspecting public poll: %w", publicErr)
+	}
+	if !rec.Quarantined && pollExists {
+		rec.Quarantined = true
+		if err := WriteRetirementRecord(homeDir, rec); err != nil {
+			return false, fmt.Errorf("recovery: persisting quarantine completion: %w", err)
+		}
+	}
+	if pollExists {
+		if digest, digestErr := digestFn(quarantinePath); digestErr == nil && digest == rec.PollDigest {
+			pollMatches = true
+		}
 	}
 
 	// Check if publication evidence exists.

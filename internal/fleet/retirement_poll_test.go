@@ -903,6 +903,52 @@ func TestRecoverPendingRetirement_QuarantineRenameFailurePreservesRecord(t *test
 	assertRecoveryArtifactsPreserved(t, home, taskID, checkPath, "")
 }
 
+func TestRecoverPendingRetirement_DoesNotTouchReplacementAfterQuarantine(t *testing.T) {
+	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+	defer cleanup()
+	original, err := os.ReadFile(checkPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := recoveryRecordForTest(t, home, taskID, checkPath)
+	rec.Quarantined = true
+	quarantinePath := filepath.Join(retirementDirPath(home), rec.QuarantinePath)
+	if err := os.MkdirAll(filepath.Dir(quarantinePath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(checkPath, quarantinePath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(quarantinePath); err != nil {
+		t.Fatal(err)
+	}
+	replacement := original
+	if err := os.WriteFile(checkPath, original, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteRetirementRecord(home, rec); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := durableAppendStatus(home, taskID, rec.PublicationLine); err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, err := RecoverPendingRetirement(home, taskID, retirementPollAuth(t, home, taskID))
+	if err != nil || !resolved {
+		t.Fatalf("recovery = %v, %v", resolved, err)
+	}
+	got, err := os.ReadFile(checkPath)
+	if err != nil {
+		t.Fatalf("replacement should survive: %v", err)
+	}
+	if string(got) != string(replacement) {
+		t.Fatalf("replacement changed to %q", got)
+	}
+	if rec := readRetirementRecordOrNil(t, home, taskID); rec != nil {
+		t.Fatal("retirement record should be removed")
+	}
+}
+
 func TestRecoverPendingRetirement_IgnoresStaleQuarantine(t *testing.T) {
 	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
 	defer cleanup()
@@ -913,7 +959,8 @@ func TestRecoverPendingRetirement_IgnoresStaleQuarantine(t *testing.T) {
 	if _, err := durableAppendStatus(home, taskID, rec.PublicationLine); err != nil {
 		t.Fatal(err)
 	}
-	stalePath := filepath.Join(retirementDirPath(home), ".poll-stale.quarantine")
+	digest := sha256.Sum256([]byte(taskID))
+	stalePath := filepath.Join(retirementDirPath(home), fmt.Sprintf(".poll-%x-stale.quarantine", digest))
 	if err := os.WriteFile(stalePath, []byte("stale"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -1475,11 +1522,16 @@ func TestRecoverPendingRetirement_PollDigestMismatch(t *testing.T) {
 	if err == nil || resolved {
 		t.Fatalf("expected digest mismatch to remain unresolved, got resolved=%v err=%v", resolved, err)
 	}
-	if _, err := os.Stat(checkPath); err != nil {
-		t.Fatal("poll should be preserved on digest mismatch")
+	quarantinePath := filepath.Join(retirementDirPath(home), rec.QuarantinePath)
+	if _, err := os.Stat(checkPath); !os.IsNotExist(err) {
+		t.Fatalf("public poll should not remain after quarantine, got %v", err)
 	}
-	if got := readRetirementRecordOrNil(t, home, taskID); got == nil {
-		t.Fatal("retirement record should be preserved on digest mismatch")
+	if _, err := os.Stat(quarantinePath); err != nil {
+		t.Fatalf("quarantined poll should be preserved: %v", err)
+	}
+	got := readRetirementRecordOrNil(t, home, taskID)
+	if got == nil || !got.Quarantined {
+		t.Fatalf("quarantined retirement record should be preserved: %+v", got)
 	}
 }
 
