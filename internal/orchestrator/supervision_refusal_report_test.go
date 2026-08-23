@@ -102,6 +102,67 @@ func TestRunCycle_EachRefusedArtifactReportsSeparately(t *testing.T) {
 	}
 }
 
+func TestRunCycle_CollidingLabelsReportSeparately(t *testing.T) {
+	home := t.TempDir()
+	stateDir := filepath.Join(home, "state")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"a.b", "a_b"} {
+		checkPath := filepath.Join(stateDir, name+".check")
+		if err := os.WriteFile(checkPath, []byte("#!/bin/sh\necho ready\n"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		metaPath := filepath.Join(stateDir, name+".meta")
+		if err := os.WriteFile(metaPath, []byte("kind=ship\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		fi, err := os.Stat(checkPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		future := fi.ModTime().Add(time.Hour)
+		if err := os.Chtimes(metaPath, future, future); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	count, output := countRefusalLines(t, home, 5, nil)
+	if count != 2 {
+		t.Fatalf("refusal lines across 5 cycles = %d, want 2 (one per colliding label)\n%s", count, output)
+	}
+}
+
+func TestRunCycle_RefusalReportsAgainAfterRecreation(t *testing.T) {
+	home := staleCheckHome(t)
+	checkPath := filepath.Join(home, "state", "task-1.check")
+
+	if n, out := countRefusalLines(t, home, 2, nil); n != 1 {
+		t.Fatalf("initial refusal lines = %d, want 1\n%s", n, out)
+	}
+	if err := os.Remove(checkPath); err != nil {
+		t.Fatal(err)
+	}
+	if n, out := countRefusalLines(t, home, 1, nil); n != 0 {
+		t.Fatalf("absent phase lines = %d, want 0\n%s", n, out)
+	}
+	if err := os.WriteFile(checkPath, []byte("#!/bin/sh\necho ready\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	metaPath := filepath.Join(home, "state", "task-1.meta")
+	metaFI, err := os.Stat(metaPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeMeta := metaFI.ModTime().Add(-time.Hour)
+	if err := os.Chtimes(checkPath, beforeMeta, beforeMeta); err != nil {
+		t.Fatal(err)
+	}
+	if n, out := countRefusalLines(t, home, 2, nil); n != 1 {
+		t.Fatalf("recreated refusal lines = %d, want 1\n%s", n, out)
+	}
+}
+
 // A refusal that changes its answer is a new state and says so.
 func TestRunCycle_ChangedRefusalReasonReportsAgain(t *testing.T) {
 	home := staleCheckHome(t)
