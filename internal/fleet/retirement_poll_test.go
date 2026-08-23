@@ -936,6 +936,38 @@ func TestRetireMergedPoll_QuarantinePreservesReplacement(t *testing.T) {
 	t.Logf("verified private path=%s; replacement=%q survived at public path; quarantine removed; retirement record removed", filepath.Base(verifiedPath), data)
 }
 
+func TestRecoverPendingRetirement_RejectsUnsupportedSchema(t *testing.T) {
+	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+	defer cleanup()
+	rec := recoveryRecordForTest(t, home, taskID, checkPath)
+	rec.SchemaVersion++
+	if err := WriteRetirementRecord(home, rec); err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, err := recoverPendingRetirement(home, taskID, retirementPollAuth(t, home, taskID), pollContentDigest)
+	if err == nil || !strings.Contains(err.Error(), "unsupported schema version") || resolved {
+		t.Fatalf("recovery = %v, %v; want unsupported-schema refusal", resolved, err)
+	}
+	assertRecoveryArtifactsPreserved(t, home, taskID, checkPath, "")
+}
+
+func TestRecoverPendingRetirement_RejectsInvalidQuarantinePath(t *testing.T) {
+	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+	defer cleanup()
+	rec := recoveryRecordForTest(t, home, taskID, checkPath)
+	rec.QuarantinePath = "../bad.quarantine"
+	if err := WriteRetirementRecord(home, rec); err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, err := recoverPendingRetirement(home, taskID, retirementPollAuth(t, home, taskID), pollContentDigest)
+	if err == nil || !strings.Contains(err.Error(), "invalid quarantine path") || resolved {
+		t.Fatalf("recovery = %v, %v; want invalid-quarantine refusal", resolved, err)
+	}
+	assertRecoveryArtifactsPreserved(t, home, taskID, checkPath, "")
+}
+
 func TestRecoverPendingRetirement_QuarantinePreservesReplacement(t *testing.T) {
 	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
 	defer cleanup()

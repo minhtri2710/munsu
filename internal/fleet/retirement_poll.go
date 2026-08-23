@@ -791,19 +791,12 @@ func recoverPendingRetirement(homeDir, taskID string, auth *taskauthority.Canoni
 
 	// Append publication if absent.
 	if !hasPublication {
-		appended, err := durableAppendStatus(homeDir, taskID, rec.PublicationLine)
-		if err != nil {
+		if _, err := durableAppendStatus(homeDir, taskID, rec.PublicationLine); err != nil {
 			return false, fmt.Errorf("recovery: durable append failed: %w", err)
 		}
-		if appended {
-			hasPublication = true
-		}
-	}
-
-	// If publication evidence does not exist after append attempt, we cannot
-	// safely remove the poll. Preserve everything.
-	if !hasPublication {
-		return false, fmt.Errorf("recovery: publication could not be confirmed; preserving poll and record")
+		// A nil error means the exact line was either appended or was already
+		// present under durableAppendStatus's duplicate check.
+		hasPublication = true
 	}
 
 	// Publication exists. Recovery deletes only after this confirmed
