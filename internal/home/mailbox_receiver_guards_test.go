@@ -351,6 +351,20 @@ func TestReadHomeIdentityRefusesUnusableMarkers(t *testing.T) {
 		})
 	}
 
+	// A markerless path must still be a directory before its basename can be
+	// treated as durable general-home provenance.
+	t.Run("a markerless home that is not a directory", func(t *testing.T) {
+		home := filepath.Join(t.TempDir(), "general-home")
+		if err := os.WriteFile(home, []byte("not a home directory"), 0644); err != nil {
+			t.Fatalf("write markerless home: %v", err)
+		}
+		if _, _, err := ReadHomeIdentity(home); err == nil {
+			t.Fatal("ReadHomeIdentity accepted a regular file as a home")
+		} else if !strings.Contains(err.Error(), "not a directory") {
+			t.Fatalf("error = %v, want the non-directory refusal", err)
+		}
+	})
+
 	// A home with no marker falls back to the directory basename. A path whose
 	// basename is not a name — "." — yields no identity, so it refuses instead
 	// of taking "." as one. t.Chdir keeps the relative path inside a fresh temp

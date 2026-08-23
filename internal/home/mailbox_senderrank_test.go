@@ -432,6 +432,25 @@ func TestSenderRankRefusesCaptainTaskAsSoldier(t *testing.T) {
 	}
 }
 
+func TestSenderRankRefusesGeneralClaimWithMismatchedHostingHome(t *testing.T) {
+	home := namedHome(t, "hosting-home")
+	hostSoldier(t, home, senderRankTaskID)
+	r, err := NewSoldierReceiver(home, senderRankTaskID)
+	if err != nil {
+		t.Fatalf("NewSoldierReceiver: %v", err)
+	}
+	env := &Envelope{
+		SenderRank: RankGeneral, SenderIdentity: "other-general",
+		ReceiverRank: RankSoldier, ReceiverID: ReceiverIDForTask(senderRankTaskID),
+		TaskID: senderRankTaskID,
+	}
+	if err := r.verifySenderRank(env); err == nil {
+		t.Fatal("verifySenderRank accepted general provenance with a mismatched identity")
+	} else if !strings.Contains(err.Error(), "hosting home provenance") {
+		t.Fatalf("verifySenderRank error = %v, want the hosting-home provenance refusal", err)
+	}
+}
+
 func TestSenderRankRejectsUnsupportedReceiverRank(t *testing.T) {
 	if err := (&Receiver{rank: Rank("unknown"), store: NewStore(t.TempDir())}).verifySenderRank(&Envelope{SenderRank: RankGeneral, SenderIdentity: "sender"}); err == nil || !strings.Contains(err.Error(), "general sender cannot address receiver rank") {
 		t.Fatalf("verifySenderRank error = %v, want unsupported-rank refusal", err)
