@@ -167,6 +167,11 @@ merge() {
 		FNR == 1 && $0 !~ /^mode:/ { printf "::error::%s is not a coverage profile\n", short(FILENAME) > "/dev/stderr"; bad = 1; exit }
 		/^mode:/ { next }
 		NF != 3 { printf "::error::%s:%d: unreadable profile line: %s\n", short(FILENAME), FNR, $0 > "/dev/stderr"; bad = 1; exit }
+		$2 !~ /^[0-9]+$/ || $3 !~ /^[0-9]+$/ {
+			printf "::error::%s:%d: invalid coverage block counts: %s\n", short(FILENAME), FNR, $0 > "/dev/stderr"
+			bad = 1
+			exit
+		}
 		{
 			spec = $1
 			sub("^" prefix, "", spec)
@@ -531,6 +536,7 @@ generate() {
 #   no-reason              delete the fifth-column requirement
 #   bad-nth                delete the numeric check on nth
 #   malformed-end          accept a profile block with a malformed end coordinate
+#   malformed-count        accept a profile block with malformed count text
 #   inverted-end            accept a profile block whose end precedes its start
 #   zero-width-endpoint     accept a profile block whose endpoints are equal
 #   incompatible-end        accept a profile block whose end exceeds the refusal body
