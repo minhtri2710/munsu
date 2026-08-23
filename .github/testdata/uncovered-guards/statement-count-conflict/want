@@ -1,2 +1,2 @@
-::error::conflicting statement counts for coverage block internal/fake/lanes.go:10.12-12.3: 1 versus 2
+::error::conflicting statement counts for coverage block internal/fake/lanes.go:10.12-12.3: 9007199254740992 versus 9007199254740993
 exit 1

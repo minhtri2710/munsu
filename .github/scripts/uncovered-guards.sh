@@ -164,8 +164,34 @@ merge() {
 			return pointLine(left) < pointLine(right) ||
 				(pointLine(left) == pointLine(right) && pointColumn(left) < pointColumn(right))
 		}
-		FNR == 1 && $0 !~ /^mode:/ { printf "::error::%s is not a coverage profile\n", short(FILENAME) > "/dev/stderr"; bad = 1; exit }
-		/^mode:/ { next }
+		function decimal(value) {
+			sub(/^0+/, "", value)
+			return value == "" ? "0" : value
+		}
+		function greaterDecimal(left, right) {
+			left = decimal(left)
+			right = decimal(right)
+			return length(left) > length(right) ||
+				(length(left) == length(right) && ("x" left) > ("x" right))
+		}
+		FNR == 1 {
+			if ($0 !~ /^mode:/) {
+				printf "::error::%s is not a coverage profile\n", short(FILENAME) > "/dev/stderr"
+				bad = 1
+				exit
+			}
+			if ($0 !~ /^mode: (set|count|atomic)$/) {
+				printf "::error::%s:%d: unsupported or missing coverage profile mode: %s\n", short(FILENAME), FNR, $0 > "/dev/stderr"
+				bad = 1
+				exit
+			}
+			next
+		}
+		/^mode:/ {
+			printf "::error::%s:%d: repeated or misplaced coverage profile mode: %s\n", short(FILENAME), FNR, $0 > "/dev/stderr"
+			bad = 1
+			exit
+		}
 		NF != 3 { printf "::error::%s:%d: unreadable profile line: %s\n", short(FILENAME), FNR, $0 > "/dev/stderr"; bad = 1; exit }
 		$2 !~ /^[0-9]+$/ || $3 !~ /^[0-9]+$/ {
 			printf "::error::%s:%d: invalid coverage block counts: %s\n", short(FILENAME), FNR, $0 > "/dev/stderr"
@@ -192,18 +218,19 @@ merge() {
 				next
 			}
 			block = file ":" start "-" end
-			if (!(block in statements)) statements[block] = $2 + 0
-			else if (statements[block] != $2 + 0) {
-				current = $2 + 0
-				printf "::error::conflicting statement counts for coverage block %s: %d versus %d\n", block, statements[block], current > "/dev/stderr"
+			statement = decimal($2)
+			count = decimal($3)
+			if (!(block in statements)) statements[block] = statement
+			else if (("x" statements[block]) != ("x" statement)) {
+				printf "::error::conflicting statement counts for coverage block %s: %s versus %s\n", block, statements[block], statement > "/dev/stderr"
 				bad = 1
 				next
 			}
-			if (!(block in max) || $3 + 0 > max[block]) max[block] = $3 + 0
+			if (!(block in max) || greaterDecimal(count, max[block])) max[block] = count
 		}
 		END {
 			if (bad) exit 1
-			for (block in max) printf "%s\t%d\n", block, max[block]
+			for (block in max) printf "%s\t%s\n", block, max[block]
 		}
 	' $(for lane in $(lane_files); do printf '%s ' "$PROFILES/$lane"; done) | sort
 }
@@ -312,7 +339,7 @@ classify() {
 			if (incompatible) print "anomaly\t" id
 			else if (matches == 1) {
 				split(bestLine, fields, /\t/)
-				print (fields[2] + 0 > 0 ? "covered" : "uncovered") "\t" id
+				print (("x" fields[2]) != "x0" ? "covered" : "uncovered") "\t" id
 			} else if (!(file in compiled)) print "unmeasured\t" id
 			else print "anomaly\t" id
 		}
