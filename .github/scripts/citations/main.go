@@ -307,6 +307,22 @@ func scanInlineSpans(line string, openRun *int, openText *string) []span {
 	return spans
 }
 
+func sameFenceContainers(a, b []fenceContainer) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func inlineBlockBoundary(line string) bool {
+	return thematicBreakRe.MatchString(line) || markdownBlockStartRe.MatchString(line)
+}
+
 // Fenced code blocks are excluded. They hold commands, transcripts and sample
 // output -- text that is not asserting anything about this tree -- and a lane
 // that read them would spend its whole waiver on `go install
@@ -495,7 +511,8 @@ var (
 	callSuffixRe               = regexp.MustCompile(`\([^()]*\)$`)
 	invalidFenceLikeRe         = regexp.MustCompile(`^[ \t]*(?:[-+*]|[0-9]{1,10}[.)])[ \t]*\x60{3}`)
 	invalidBacktickFenceLikeRe = regexp.MustCompile(`^[ \t]*\x60{3,}.*\x60`)
-	markdownBlockStartRe       = regexp.MustCompile(`^[ \t]{0,3}(?:#{1,6}[ \t]|>[ \t]?|(?:[-+*]|[0-9]{1,9}[.)])[ \t]+)`)
+	markdownBlockStartRe       = regexp.MustCompile(`^[ \t]{0,3}(?:#{1,6}[ \t]|(?:[-+*]|[0-9]{1,9}[.)])[ \t]+)`)
+	thematicBreakRe            = regexp.MustCompile(`^[ \t]{0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|={3,})$`)
 )
 
 // The punctuation a reference can never contain, because it belongs to
@@ -1207,6 +1224,7 @@ func scan(root string) ([]string, error) {
 		var fenceContainers []fenceContainer
 		var openRun int
 		var openText string
+		var openContainers []fenceContainer
 		var spans []span
 		for _, line := range strings.Split(string(body), "\n") {
 			if fenceRun > 0 {
@@ -1230,18 +1248,34 @@ func scan(root string) ([]string, error) {
 				continue
 			}
 			if strings.TrimSpace(line) == "" {
-				openRun, openText = 0, ""
+				openRun, openText, openContainers = 0, "", nil
 				continue
 			}
-			if openRun > 0 && markdownBlockStartRe.MatchString(line) {
-				openRun, openText = 0, ""
-			}
-			indent := len(line) - len(strings.TrimLeft(line, " \t"))
-			if strings.TrimSpace(line) == "" || markdownColumns(line[:indent]) > 3 || invalidFenceLikeRe.MatchString(line) || invalidBacktickFenceLikeRe.MatchString(line) {
-				openRun, openText = 0, ""
+			normalized, containers, ok := parseMarkdownContainers(line)
+			if !ok {
+				openRun, openText, openContainers = 0, "", nil
 				continue
 			}
-			spans = scanInlineSpans(line, &openRun, &openText)
+			if openRun > 0 {
+				if !sameFenceContainers(containers, openContainers) {
+					openRun, openText, openContainers = 0, "", nil
+				} else if inlineBlockBoundary(normalized) {
+					openRun, openText, openContainers = 0, "", nil
+				}
+			}
+			indent := len(normalized) - len(strings.TrimLeft(normalized, " \t"))
+			if strings.TrimSpace(normalized) == "" || markdownColumns(normalized[:indent]) > 3 || invalidFenceLikeRe.MatchString(normalized) || invalidBacktickFenceLikeRe.MatchString(normalized) {
+				openRun, openText, openContainers = 0, "", nil
+				continue
+			}
+			previouslyOpen := openRun > 0
+			spans = scanInlineSpans(normalized, &openRun, &openText)
+			if !previouslyOpen && openRun > 0 {
+				openContainers = append([]fenceContainer(nil), containers...)
+			}
+			if openRun == 0 {
+				openContainers = nil
+			}
 			for _, s := range spans {
 				if strings.ContainsAny(s.text, "\t\r\x00") || strings.IndexFunc(strings.ReplaceAll(s.text, "\n", ""), unicode.IsControl) >= 0 {
 					return nil, fmt.Errorf("citation in %s contains a control character: %q", doc, s.text)
