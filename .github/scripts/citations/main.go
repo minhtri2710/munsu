@@ -214,9 +214,8 @@ type span struct {
 }
 
 // Inline code spans. Fenced blocks are handled by the caller. A span is a run
-// of N backticks closed by the next run of exactly N. An unclosed run on a
-// line that has further backticks to its right is treated as literal text so
-// subsequent code spans on the same line are scanned.
+// of N backticks closed by the next run of exactly N. Unclosed runs are
+// returned as pending state for the caller to resolve at a block boundary.
 func inlineSpans(line string) []span {
 	spans, _, _ := inlineSpansState(line, 0, "")
 	return spans
@@ -305,10 +304,6 @@ func inlineSpansState(line string, openRun int, openText string) ([]span, int, s
 			j += m
 		}
 		if !closed {
-			if strings.Contains(line[i+n:], "`") {
-				i += n
-				continue
-			}
 			return out, n, line[i+n:]
 		}
 	}
@@ -1259,11 +1254,30 @@ func scan(root string) ([]string, error) {
 		var openRun int
 		var openText string
 		var openContainers []fenceContainer
-		var spans []span
+		addSpans := func(spans []span) error {
+			for _, s := range spans {
+				if strings.ContainsAny(s.text, "\t\r\x00") || strings.IndexFunc(strings.ReplaceAll(s.text, "\n", ""), unicode.IsControl) >= 0 {
+					return fmt.Errorf("citation in %s contains a control character: %q", doc, s.text)
+				}
+				s.text = strings.ReplaceAll(s.text, "\n", " ")
+				for _, row := range classify(root, idx, fi, doc, s.text) {
+					rows[row] = true
+				}
+			}
+			return nil
+		}
+		flushOpen := func() error {
+			if openRun == 0 {
+				return nil
+			}
+			spans := inlineSpans(openText)
+			openRun, openText, openContainers = 0, "", nil
+			return addSpans(spans)
+		}
 		for _, line := range strings.Split(string(body), "\n") {
 			if fenceRun > 0 {
-				if openRun > 0 {
-					openRun, openText = 0, ""
+				if err := flushOpen(); err != nil {
+					return nil, err
 				}
 				normalized, ok := stripFenceContainers(line, fenceContainers)
 				if ok {
@@ -1278,50 +1292,59 @@ func scan(root string) ([]string, error) {
 			if marker, run, _, ok := fenceMarker(line); ok {
 				_, containers, _ := parseMarkdownContainers(line)
 				fenceMarkerByte, fenceRun, fenceContainers = marker, run, containers
-				openRun, openText = 0, ""
+				if err := flushOpen(); err != nil {
+					return nil, err
+				}
 				continue
 			}
 			if strings.TrimSpace(line) == "" {
-				openRun, openText, openContainers = 0, "", nil
+				if err := flushOpen(); err != nil {
+					return nil, err
+				}
 				continue
 			}
 			normalized, containers, ok := parseMarkdownContainers(line)
 			if !ok {
-				openRun, openText, openContainers = 0, "", nil
+				if err := flushOpen(); err != nil {
+					return nil, err
+				}
 				continue
 			}
 			if openRun > 0 {
 				if continuation, continuationOK := stripFenceContainers(line, openContainers); continuationOK {
 					normalized = continuation
 				} else if !sameFenceContainers(containers, openContainers) {
-					openRun, openText, openContainers = 0, "", nil
+					if err := flushOpen(); err != nil {
+						return nil, err
+					}
 				}
 				if openRun > 0 && inlineBlockBoundary(normalized) {
-					openRun, openText, openContainers = 0, "", nil
+					if err := flushOpen(); err != nil {
+						return nil, err
+					}
 				}
 			}
 			indent := len(normalized) - len(strings.TrimLeft(normalized, " \t"))
 			if strings.TrimSpace(normalized) == "" || markdownColumns(normalized[:indent]) > 3 || invalidFenceLikeRe.MatchString(normalized) || invalidBacktickFenceLikeRe.MatchString(normalized) {
-				openRun, openText, openContainers = 0, "", nil
+				if err := flushOpen(); err != nil {
+					return nil, err
+				}
 				continue
 			}
 			previouslyOpen := openRun > 0
-			spans = scanInlineSpans(normalized, &openRun, &openText)
+			spans := scanInlineSpans(normalized, &openRun, &openText)
 			if !previouslyOpen && openRun > 0 {
 				openContainers = append([]fenceContainer(nil), containers...)
 			}
 			if openRun == 0 {
 				openContainers = nil
 			}
-			for _, s := range spans {
-				if strings.ContainsAny(s.text, "\t\r\x00") || strings.IndexFunc(strings.ReplaceAll(s.text, "\n", ""), unicode.IsControl) >= 0 {
-					return nil, fmt.Errorf("citation in %s contains a control character: %q", doc, s.text)
-				}
-				s.text = strings.ReplaceAll(s.text, "\n", " ")
-				for _, row := range classify(root, idx, fi, doc, s.text) {
-					rows[row] = true
-				}
+			if err := addSpans(spans); err != nil {
+				return nil, err
 			}
+		}
+		if err := flushOpen(); err != nil {
+			return nil, err
 		}
 	}
 	if len(rows) == 0 {
