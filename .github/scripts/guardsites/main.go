@@ -313,7 +313,7 @@ func appendFunctionSites(r *resolver, abs string, rows *[]site, body *ast.BlockS
 	ast.Inspect(body, func(n ast.Node) bool {
 		switch stmt := n.(type) {
 		case *ast.IfStmt:
-			if !isRefusal(r, abs, fset, stmt.Body) || !isSelfOriginating(r, abs, fset, stmt.Init, stmt.Cond) {
+			if !isLegacyRefusal(stmt.Body) || !isSelfOriginating(r, abs, fset, stmt.Init, stmt.Cond) {
 				return true
 			}
 			pos := fset.Position(stmt.Body.Lbrace)
@@ -482,6 +482,62 @@ func exprText(src []byte, fset *token.FileSet, e ast.Expr) string {
 // The LAST statement decides, so a branch that logs before it refuses still
 // counts. `return nil` and `return err` do not: the first is an early exit with
 // no refusal, the second is propagation of somebody else's.
+func isLegacyRefusal(body *ast.BlockStmt) bool {
+	if body == nil || len(body.List) == 0 {
+		return false
+	}
+	switch statement := body.List[len(body.List)-1].(type) {
+	case *ast.ReturnStmt:
+		for _, result := range statement.Results {
+			if legacyConstructsError(result) {
+				return true
+			}
+		}
+	case *ast.ExprStmt:
+		call, ok := statement.X.(*ast.CallExpr)
+		if !ok {
+			return false
+		}
+		switch function := call.Fun.(type) {
+		case *ast.Ident:
+			return function.Name == "panic"
+		case *ast.SelectorExpr:
+			pkg, ok := function.X.(*ast.Ident)
+			return ok && pkg.Name == "os" && function.Sel.Name == "Exit"
+		}
+	}
+	return false
+}
+
+func legacyConstructsError(expr ast.Expr) bool {
+	switch value := expr.(type) {
+	case *ast.CallExpr:
+		return legacyErrorish(calleeName(value.Fun))
+	case *ast.UnaryExpr:
+		return value.Op == token.AND && legacyConstructsError(value.X)
+	case *ast.CompositeLit:
+		return legacyErrorish(typeName(value.Type))
+	case *ast.Ident:
+		return legacySentinel(value.Name)
+	case *ast.SelectorExpr:
+		return legacySentinel(value.Sel.Name)
+	}
+	return false
+}
+
+func legacyErrorish(name string) bool {
+	return strings.Contains(strings.ToLower(name), "err")
+}
+
+func legacySentinel(name string) bool {
+	for _, prefix := range []string{"Err", "err"} {
+		if strings.HasPrefix(name, prefix) && len(name) > len(prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func isRefusal(r *resolver, file string, fset *token.FileSet, body *ast.BlockStmt) bool {
 	return body != nil && isRefusalStatements(r, file, fset, body.List)
 }

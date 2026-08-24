@@ -4,9 +4,18 @@ import (
 	"errors"
 )
 
+func validationError(message string) error { return errors.New(message) }
+
 var Direct = func(ok bool) error {
 	if !ok {
 		return errors.New("direct refusal")
+	}
+	return nil
+}
+
+var Helper = func(ok bool) error {
+	if !ok {
+		return validationError("helper refusal")
 	}
 	return nil
 }
@@ -48,6 +57,20 @@ var Parenthesized = (func(ok bool) error {
 	}
 	return nil
 })
+
+var SwitchHelper = func(value int) error {
+	switch value {
+	default:
+		return validationError("switch helper refusal")
+	}
+}
+
+var TypeSwitchHelper = func(value any) error {
+	switch value.(type) {
+	default:
+		return validationError("type switch helper refusal")
+	}
+}
 
 var (
 	Grouped = func(ok bool) error {
