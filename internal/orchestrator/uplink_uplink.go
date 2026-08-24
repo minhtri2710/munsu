@@ -220,9 +220,9 @@ func Recover(req RecoverRequest) (*RecoverResult, error) {
 		if err := markNotificationAttempt(req.SenderHome, env.MessageID); err != nil {
 			return nil, err
 		}
-		// An unacknowledged notification remains queued for a later retry. A
-		// resolver may be temporarily unavailable, while a transport failure is
-		// surfaced by Report because the transport was actually invoked there.
+		if nr.Failed() {
+			return nil, fmt.Errorf("uplink recover: notifying parent: %w", nr.Failure())
+		}
 		if nr.Acknowledged() {
 			result.Notified++
 		} else {
