@@ -1,0 +1,7 @@
+docs/doc.md	symbol	home.Run	fixture: qualified ownership
+
+docs/doc.md	symbol	PR.CanMerge	fixture: qualified ownership
+
+docs/doc.md	symbol	(*Store).Missing	fixture: qualified ownership
+
+docs/doc.md	symbol	Store.NestedField	fixture: nested ownership

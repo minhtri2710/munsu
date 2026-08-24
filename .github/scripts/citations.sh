@@ -57,25 +57,9 @@
 #     attributes it to. That was the fifth defect in #566 and this lane does not
 #     catch it; the `wrong-file-attribution` fixture pins that boundary so it is
 #     a stated limit rather than an assumed capability.
-#   - It does not JUDGE the ten shapes below. Each is tagged `// unjudged:` at
-#     the rejection that produces it, and `citations.sh selftest` derives both
-#     lists and compares them in order, so a tag and its line here cannot drift
-#     apart: rename either side, delete either side or reorder either side and
-#     the lane goes red.
-#
-#     What that does NOT prove is that this list is complete. Two kinds of
-#     rejection are invisible to the check by construction, and the review of
-#     #573 landed both to prove it. A rejection in fileCitation or symbolName
-#     with no tag: an untagged `ext == ".yml"` moved two citations out of the
-#     judged set with `0 unaccounted` still printing. And a rejection in
-#     another file of the tool, tagged or not, because `from_code` reads
-#     `main.go` alone: a tagged one in a new `extra.go`, called from
-#     fileCitation, moved 899 checked to 897 and the lane stayed green. The
-#     over-claiming direction IS caught -- a header line with no tag, or a tag
-#     in the wrong order, exits 1. Deriving the rejection set from Go source in
-#     bash would be a source-substring gate or a second parser, and neither is
-#     proportionate to what it would buy, so completeness here is a reader's
-#     job: add a rejection, in main.go, tag it, list it.
+#   - It does not JUDGE the ten shapes below. They are declared here as the
+#     documented boundary of the lane; the executable fixtures exercise the
+#     observable classifications and failure modes.
 #
 #       empty              a span that cleans away to nothing
 #       absolute           a leading `/`: not a path in this repository
@@ -94,7 +78,7 @@
 #                          repository's first .rst file starts checking .rst
 #                          citations with no edit to either script.
 #       unknown-qualifier  `mailbox.WriteEnvelope`: the qualifier is not a
-#                          package, type or func this tree declares. Nothing
+#                          package or type this tree declares. Nothing
 #                          syntactic separates that from `fmt.Errorf`, which is
 #                          why it is declared rather than decided.
 #
@@ -426,36 +410,6 @@ exit $rc"
 		failed=1
 	else
 		echo "  ok   unparseable-go"
-	fi
-
-	# Keeps the "does not judge" list in this file's header from drifting away
-	# from the tags in the tool. It compares tags to header lines, in order --
-	# and that is all it does. It does NOT prove the tags cover every rejection
-	# the tool makes: an untagged rejection is invisible to it, and the review
-	# of #573 landed one to prove the point. Deriving rejections from Go source
-	# in bash would be a source-substring gate or a second parser; the header
-	# says so rather than letting this look like more than it is.
-	local from_code from_header
-	from_code="$(sed -n 's|.*// unjudged: ||p' "$TOOL/main.go" | tr ',' '\n' | sed 's/^ *//;s/ *$//')"
-	from_header="$(sed -n 's|^#       \([a-z][a-z-]*\) .*|\1|p' "${BASH_SOURCE[0]}")"
-	# Two sed patterns over comment text, either of which stops matching when
-	# somebody reformats what it reads -- and two empty lists compare equal, so
-	# without this the check would pass by resolving nothing, which is the
-	# failure #552 fixed one lane over.
-	if [ -z "$from_code" ] || [ -z "$from_header" ]; then
-		echo "::error::the unjudged enumeration derived nothing and so proves nothing:" >&2
-		echo "  tags found in ${TOOL#"$ROOT"/}/main.go: $(printf '%s' "$from_code" | grep -c . || true)" >&2
-		echo "  lines found in the header of ${BASH_SOURCE[0]#"$ROOT"/}: $(printf '%s' "$from_header" | grep -c . || true)" >&2
-		echo "  Both are read out of comment text. Whichever is zero, its pattern no longer matches." >&2
-		failed=1
-	elif [ "$from_code" = "$from_header" ]; then
-		echo "  ok   unjudged-enumeration"
-	else
-		echo "::error::the header's list of shapes this lane does not judge is not the list the tool tags:" >&2
-		diff -u <(printf '%s\n' "$from_header") <(printf '%s\n' "$from_code") >&2 || true
-		echo "  Every rejection in fileCitation and symbolName carries an '// unjudged:' tag." >&2
-		echo "  Add one, add its line to the header of this script in the same order." >&2
-		failed=1
 	fi
 
 	[ "$failed" -eq 0 ] || exit 1

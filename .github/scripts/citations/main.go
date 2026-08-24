@@ -211,7 +211,29 @@ func inlineSpans(line string) []span {
 // golang.org/x/tools/...` lines. The cost is real and stated: a citation that
 // only ever appears inside a fence is not checked. Counted as one of the lane's
 // silent drops in referenceShaped's enumeration, which is the complete list.
-var fenceRe = regexp.MustCompile("^\\s{0,3}(```|~~~)")
+func fenceMarker(line string) (byte, int, bool) {
+	trimmed := strings.TrimLeft(line, " \\t")
+	if len(line)-len(trimmed) > 3 || len(trimmed) < 3 || (trimmed[0] != '`' && trimmed[0] != '~') {
+		return 0, 0, false
+	}
+	marker := trimmed[0]
+	run := 0
+	for run < len(trimmed) && trimmed[run] == marker {
+		run++
+	}
+	if run < 3 {
+		return 0, 0, false
+	}
+	return marker, run, true
+}
+
+func closesFence(line string, marker byte, openingRun int) bool {
+	gotMarker, run, ok := fenceMarker(line)
+	if !ok || gotMarker != marker || run < openingRun {
+		return false
+	}
+	return strings.TrimSpace(strings.TrimLeft(line, " \\t")[run:]) == ""
+}
 
 // ---------------------------------------------------------------------------
 // classification
@@ -436,7 +458,7 @@ func fileCitation(fi *files, tok string) bool {
 // on purpose: a limit stated only where it is implemented is a limit the
 // reader has to already know about to find.
 //
-//  1. a span inside a fenced code block, dropped by the scanner: see fenceRe.
+//  1. a span inside a fenced code block, dropped by the scanner.
 //     A citation that only ever appears in a fence is never checked.
 //  2. everything to the right of an unmatched backtick run, dropped by
 //     inlineSpans, which abandons the rest of the line rather than resuming
@@ -490,7 +512,7 @@ func referenceShaped(tok string) bool {
 // backticked words are claims about the Go tree at all. Two shapes qualify:
 //
 //   - qualified (`home.Init`, `PR.CanMerge`, `(*Store).WriteEnvelope`), where
-//     the qualifier names a package, type or func declared in this repo. That
+//     the qualifier names a package or type declared in this repo. That
 //     qualifier test is what keeps `fmt.Errorf`, `t.Skip` and `go/parser` out:
 //     they are qualified by something this tree does not declare, so no claim
 //     about this tree is being made.
@@ -509,36 +531,33 @@ func referenceShaped(tok string) bool {
 // tree does not declare, which is #566's defect class when the rename lands on
 // the qualifier -- is caught by referenceShaped and declared as `unchecked`,
 // because a citation that vanishes is indistinguishable from one that passed.
-func symbolName(idx *index, text string) (string, bool) {
+func symbolName(idx *index, text string) (bool, bool) {
 	tok := strings.TrimSpace(text)
-	// `(*Store).WriteEnvelope`: the receiver has to be a type this tree
-	// declares, or the span is somebody else's method expression.
+	tok = cleanToken(callSuffixRe.ReplaceAllString(tok, ""))
 	if m := methodExprRe.FindStringSubmatch(tok); m != nil {
 		if !idx.types[m[1]] {
-			return "", false
+			return false, false
 		}
-		return m[2], true
+		return true, idx.typeMembers[m[1]][m[2]]
 	}
-	// `newCaptainRecoverTransaction().Recover` and
-	// `harness.CaptainProfileFromHome(parentHome)` are citations of the name,
-	// written as a call. Nothing else is stripped: taking `*` out wherever it
-	// appears turned the glob `issue_link_N_*` into an identifier.
-	tok = cleanToken(callSuffixRe.ReplaceAllString(strings.ReplaceAll(tok, "()", ""), ""))
 	if tok == "" || !identRe.MatchString(tok) {
-		return "", false
+		return false, false
 	}
-	if i := strings.LastIndex(tok, "."); i >= 0 {
-		qualifier, name := tok[:strings.Index(tok, ".")], tok[i+1:]
-		// unjudged: unknown-qualifier
-		if !idx.pkgs[qualifier] && !idx.types[qualifier] && !idx.funcs[qualifier] {
-			return "", false
+	if i := strings.IndexByte(tok, '.'); i >= 0 {
+		qualifier, name := tok[:i], tok[i+1:]
+		if strings.Contains(name, ".") {
+			return false, false
 		}
-		return name, true
+		if idx.pkgs[qualifier] || idx.types[qualifier] {
+			return true, idx.pkgMembers[qualifier][name] || idx.typeMembers[qualifier][name]
+		}
+		// unjudged: unknown-qualifier
+		return false, false
 	}
 	if allCapsRe.MatchString(tok) {
-		return "", false
+		return false, false
 	}
-	return tok, strings.IndexFunc(tok[1:], func(r rune) bool { return r >= 'A' && r <= 'Z' }) >= 0
+	return strings.IndexFunc(tok[1:], func(r rune) bool { return r >= 'A' && r <= 'Z' }) >= 0, idx.names[tok]
 }
 
 // ---------------------------------------------------------------------------
@@ -546,10 +565,11 @@ func symbolName(idx *index, text string) (string, bool) {
 // ---------------------------------------------------------------------------
 
 type index struct {
-	names map[string]bool
-	pkgs  map[string]bool
-	types map[string]bool
-	funcs map[string]bool
+	names       map[string]bool
+	pkgs        map[string]bool
+	types       map[string]bool
+	pkgMembers  map[string]map[string]bool
+	typeMembers map[string]map[string]bool
 }
 
 // Every name declared anywhere in the Go tree, by parsing every .go file.
@@ -566,10 +586,11 @@ type index struct {
 // fabricated symbol must not resolve against a fixture.
 func buildIndex(root string) (*index, error) {
 	idx := &index{
-		names: map[string]bool{},
-		pkgs:  map[string]bool{},
-		types: map[string]bool{},
-		funcs: map[string]bool{},
+		names:       map[string]bool{},
+		pkgs:        map[string]bool{},
+		types:       map[string]bool{},
+		pkgMembers:  map[string]map[string]bool{},
+		typeMembers: map[string]map[string]bool{},
 	}
 	fset := token.NewFileSet()
 	seen := 0
@@ -601,8 +622,11 @@ func buildIndex(root string) (*index, error) {
 		}
 		seen++
 		idx.pkgs[f.Name.Name] = true
+		if idx.pkgMembers[f.Name.Name] == nil {
+			idx.pkgMembers[f.Name.Name] = map[string]bool{}
+		}
 		for _, decl := range f.Decls {
-			idx.collect(decl)
+			idx.collect(f.Name.Name, decl)
 		}
 		return nil
 	})
@@ -615,55 +639,89 @@ func buildIndex(root string) (*index, error) {
 	return idx, nil
 }
 
-func (idx *index) collect(decl ast.Decl) {
+func (idx *index) collect(pkg string, decl ast.Decl) {
+	addPackageMember := func(name string) {
+		idx.names[name] = true
+		idx.pkgMembers[pkg][name] = true
+	}
 	switch d := decl.(type) {
 	case *ast.FuncDecl:
 		idx.names[d.Name.Name] = true
-		idx.funcs[d.Name.Name] = true
+		if d.Recv == nil {
+			addPackageMember(d.Name.Name)
+		} else if receiver := receiverName(d.Recv); receiver != "" {
+			idx.addTypeMember(receiver, d.Name.Name)
+		}
 	case *ast.GenDecl:
 		for _, spec := range d.Specs {
 			switch s := spec.(type) {
 			case *ast.TypeSpec:
 				idx.names[s.Name.Name] = true
 				idx.types[s.Name.Name] = true
-				idx.collectMembers(s.Type)
+				addPackageMember(s.Name.Name)
+				idx.collectMembers(s.Name.Name, s.Type)
 			case *ast.ValueSpec:
 				for _, n := range s.Names {
-					idx.names[n.Name] = true
+					addPackageMember(n.Name)
 				}
 			}
 		}
 	}
 }
 
-// Struct fields and interface methods, including those of types nested inside
-// another type expression. These are two of the six accepted forms and they are
-// the two a `^func`/`^type` grep cannot see: `ParentHome` is a struct field and
-// the reviewer's prototype reported it as fabricated (#573).
-func (idx *index) collectMembers(expr ast.Expr) {
-	ast.Inspect(expr, func(n ast.Node) bool {
-		var fields *ast.FieldList
-		switch t := n.(type) {
-		case *ast.StructType:
-			fields = t.Fields
-		case *ast.InterfaceType:
-			fields = t.Methods
+func (idx *index) addTypeMember(typeName, member string) {
+	idx.names[member] = true
+	if idx.typeMembers[typeName] == nil {
+		idx.typeMembers[typeName] = map[string]bool{}
+	}
+	idx.typeMembers[typeName][member] = true
+}
+
+func receiverName(fields *ast.FieldList) string {
+	if fields == nil || len(fields.List) != 1 {
+		return ""
+	}
+	var receiver ast.Expr = fields.List[0].Type
+	for {
+		switch t := receiver.(type) {
+		case *ast.StarExpr:
+			receiver = t.X
+		case *ast.Ident:
+			return t.Name
+		case *ast.IndexExpr:
+			receiver = t.X
+		case *ast.IndexListExpr:
+			receiver = t.X
 		default:
-			return true
+			return ""
 		}
-		for _, f := range fields.List {
-			for _, name := range f.Names {
-				idx.names[name.Name] = true
-			}
-			if len(f.Names) == 0 {
-				// Embedded: the field's name is the embedded type's.
-				if name := embeddedName(f.Type); name != "" {
-					idx.names[name] = true
-				}
+	}
+}
+
+// Direct struct fields, embedded fields and interface methods are three of the
+// six accepted forms. They are the forms a `^func`/`^type` grep cannot see:
+// `ParentHome` is a struct field and the reviewer's prototype reported it as
+// fabricated (#573).
+func (idx *index) collectMembers(typeName string, expr ast.Expr) {
+	var fields *ast.FieldList
+	switch t := expr.(type) {
+	case *ast.StructType:
+		fields = t.Fields
+	case *ast.InterfaceType:
+		fields = t.Methods
+	default:
+		return
+	}
+	for _, f := range fields.List {
+		for _, name := range f.Names {
+			idx.addTypeMember(typeName, name.Name)
+		}
+		if len(f.Names) == 0 {
+			if name := embeddedName(f.Type); name != "" {
+				idx.addTypeMember(typeName, name)
 			}
 		}
-		return true
-	})
+	}
 }
 
 func embeddedName(expr ast.Expr) string {
@@ -701,13 +759,17 @@ func scan(root string) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		fenced := false
+		var fenceMarkerByte byte
+		var fenceRun int
 		for _, line := range strings.Split(string(body), "\n") {
-			if fenceRe.MatchString(line) {
-				fenced = !fenced
+			if fenceRun > 0 {
+				if closesFence(line, fenceMarkerByte, fenceRun) {
+					fenceMarkerByte, fenceRun = 0, 0
+				}
 				continue
 			}
-			if fenced {
+			if marker, run, ok := fenceMarker(line); ok {
+				fenceMarkerByte, fenceRun = marker, run
 				continue
 			}
 			for _, s := range inlineSpans(line) {
@@ -768,9 +830,9 @@ func classify(root string, idx *index, fi *files, doc, text string) []string {
 	// otherwise be split into a package qualifier and a name and reported twice
 	// for one citation.
 	if len(fields) == 1 && !claimed {
-		if name, ok := symbolName(idx, text); ok {
+		if judged, resolved := symbolName(idx, text); judged {
 			status := "unresolved"
-			if idx.names[name] {
+			if resolved {
 				status = "resolved"
 			}
 			rows = append(rows, strings.Join([]string{status, doc, "symbol", cleanToken(strings.TrimSpace(text))}, "\t"))
