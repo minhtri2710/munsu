@@ -343,29 +343,17 @@ func hasContainerKind(containers []fenceContainer, kind byte) bool {
 }
 
 func nonInterruptingOrderedList(line string, containers, openContainers []fenceContainer) (string, bool) {
-	parentLen := len(openContainers)
-	if len(containers) == len(openContainers)+1 && isContainerPrefix(openContainers, containers) {
-		parentLen = len(openContainers)
-	} else if len(containers) == len(openContainers) && len(containers) > 0 &&
-		isContainerPrefix(containers[:len(containers)-1], openContainers[:len(openContainers)-1]) &&
-		containers[len(containers)-1].kind == 'l' &&
-		(openContainers[len(openContainers)-1].kind != 'l' ||
-			containers[len(containers)-1].marker != openContainers[len(openContainers)-1].marker) {
-		parentLen = len(containers) - 1
-	} else if len(containers) == len(openContainers) && len(containers) == 1 &&
-		containers[0].kind == 'l' && openContainers[0].kind == '>' {
-		parentLen = 0
-	} else {
+	if len(containers) == 0 || containers[len(containers)-1].kind != 'l' {
 		return "", false
 	}
-	normalized, ok := stripFenceContainers(line, containers[:parentLen])
-	if !ok {
+	if len(openContainers) == len(containers) && len(openContainers) > 0 &&
+		openContainers[len(openContainers)-1].kind == 'l' &&
+		openContainers[len(openContainers)-1].marker == containers[len(containers)-1].marker &&
+		isContainerPrefix(openContainers[:len(openContainers)-1], containers[:len(containers)-1]) {
 		return "", false
 	}
-	if len(normalized) == 0 {
-		normalized = line
-	}
-	if normalized[0] < '0' || normalized[0] > '9' {
+	normalized, ok := stripFenceContainers(line, containers[:len(containers)-1])
+	if !ok || len(normalized) == 0 || normalized[0] < '0' || normalized[0] > '9' {
 		return "", false
 	}
 	end := 0

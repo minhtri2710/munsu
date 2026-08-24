@@ -214,6 +214,35 @@ func TestScanRecoversCitationAfterBlockquoteNonOneOrderedMarker(t *testing.T) {
 	t.Fatalf("scan output missing citation after blockquote non-interrupting marker: %#v", rows)
 }
 
+func TestScanRecoversCitationAfterNestedNonOneOrderedMarker(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package home\n\nfunc MissingAfterNested() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"AGENTS.md", "CLAUDE.md", "README.md"} {
+		if err := os.WriteFile(filepath.Join(root, name), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Mkdir(filepath.Join(root, "docs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	doc := "> > An unmatched `` run\n2. inner`` and `home.MissingAfterNested` then ```\n"
+	if err := os.WriteFile(filepath.Join(root, "docs", "doc.md"), []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := scan(root)
+	if err != nil {
+		t.Fatalf("scan(%q): %v", root, err)
+	}
+	for _, row := range rows {
+		if row == "resolved\tdocs/doc.md\tsymbol\thome.MissingAfterNested" {
+			return
+		}
+	}
+	t.Fatalf("scan output missing nested non-interrupting citation: %#v", rows)
+}
+
 func TestScanRecoversCitationAfterOrderedListItemReplacement(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package home\n\nfunc MissingAfterItemReplacement() {}\n"), 0o600); err != nil {
