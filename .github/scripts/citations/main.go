@@ -260,15 +260,85 @@ func fenceMarker(line string) (byte, int, int, bool) {
 	return fenceMarkerNormalized(normalized)
 }
 
-func fenceContinuationPrefix(line string) string {
-	_, offset, _ := stripMarkdownContainer(line)
-	prefix := []byte(line[:offset])
-	for i, b := range prefix {
-		if b != ' ' && b != '\t' && b != '>' {
-			prefix[i] = ' '
+func fenceContinuationIndent(line string) (int, bool) {
+	start := 0
+	for start < len(line) && line[start] == ' ' && start < 4 {
+		start++
+	}
+	markerEnd := start
+	if markerEnd < len(line) && (line[markerEnd] == '-' || line[markerEnd] == '*' || line[markerEnd] == '+') {
+		markerEnd++
+	} else {
+		digits := 0
+		for markerEnd < len(line) && line[markerEnd] >= '0' && line[markerEnd] <= '9' && digits < 9 {
+			markerEnd++
+			digits++
+		}
+		if digits == 0 || markerEnd >= len(line) || (line[markerEnd] != '.' && line[markerEnd] != ')') {
+			return 0, false
+		}
+		markerEnd++
+	}
+	if markerEnd >= len(line) || (line[markerEnd] != ' ' && line[markerEnd] != '\t') {
+		return 0, false
+	}
+	prefixEnd := markerEnd
+	for prefixEnd < len(line) && (line[prefixEnd] == ' ' || line[prefixEnd] == '\t') {
+		prefixEnd++
+	}
+	return markdownColumns(line[:prefixEnd]), true
+}
+
+func markdownColumns(text string) int {
+	columns := 0
+	for _, b := range []byte(text) {
+		switch b {
+		case ' ':
+			columns++
+		case '\t':
+			columns = (columns/4 + 1) * 4
+		default:
+			columns++
 		}
 	}
-	return string(prefix)
+	return columns
+}
+
+func stripBlockquoteContainers(line string) (string, int) {
+	start := 0
+	depth := 0
+	for {
+		spaces := 0
+		for start < len(line) && line[start] == ' ' && spaces < 4 {
+			start++
+			spaces++
+		}
+		if spaces > 3 || start >= len(line) || line[start] != '>' {
+			return line[start-spaces:], depth
+		}
+		start++
+		if start < len(line) && (line[start] == ' ' || line[start] == '\t') {
+			start++
+		}
+		depth++
+	}
+}
+
+func stripFenceContinuation(line string, columns int) (string, bool) {
+	current := 0
+	start := 0
+	for start < len(line) {
+		switch line[start] {
+		case ' ':
+			current++
+		case '\t':
+			current = (current/4 + 1) * 4
+		default:
+			return line[start:], current >= columns
+		}
+		start++
+	}
+	return line[start:], current >= columns
 }
 
 func fenceMarkerNormalized(line string) (byte, int, int, bool) {
@@ -1081,33 +1151,39 @@ func scan(root string) ([]string, error) {
 		var fenceMarkerByte byte
 		var fenceRun int
 		var fenceQuoteDepth int
-		var fenceContinuationPrefixValue string
+		var fenceContinuationColumns int
 		for _, line := range strings.Split(string(body), "\n") {
 			if fenceRun > 0 {
-				if fenceContinuationPrefixValue == "" {
+				if fenceContinuationColumns == 0 {
 					if closesFence(line, fenceMarkerByte, fenceRun, fenceQuoteDepth) {
-						fenceMarkerByte, fenceRun, fenceQuoteDepth, fenceContinuationPrefixValue = 0, 0, 0, ""
+						fenceMarkerByte, fenceRun, fenceQuoteDepth, fenceContinuationColumns = 0, 0, 0, 0
+						continue
 					}
-					continue
+					_, _, quoteDepth := stripMarkdownContainer(line)
+					if quoteDepth == fenceQuoteDepth {
+						continue
+					}
+					fenceMarkerByte, fenceRun, fenceQuoteDepth, fenceContinuationColumns = 0, 0, 0, 0
 				}
-				_, _, quoteDepth := stripMarkdownContainer(line)
+				normalized, quoteDepth := stripBlockquoteContainers(line)
 				if quoteDepth < fenceQuoteDepth {
-					fenceMarkerByte, fenceRun, fenceQuoteDepth, fenceContinuationPrefixValue = 0, 0, 0, ""
+					fenceMarkerByte, fenceRun, fenceQuoteDepth, fenceContinuationColumns = 0, 0, 0, 0
+				} else if quoteDepth != fenceQuoteDepth {
+					continue
 				} else {
-					normalized := line
-					if fenceContinuationPrefixValue != "" {
-						if !strings.HasPrefix(line, fenceContinuationPrefixValue) {
+					if fenceContinuationColumns > 0 {
+						var ok bool
+						normalized, ok = stripFenceContinuation(normalized, fenceContinuationColumns)
+						if !ok {
 							if strings.TrimSpace(line) != "" {
-								fenceMarkerByte, fenceRun, fenceQuoteDepth, fenceContinuationPrefixValue = 0, 0, 0, ""
+								fenceMarkerByte, fenceRun, fenceQuoteDepth, fenceContinuationColumns = 0, 0, 0, 0
 							} else {
 								continue
 							}
-						} else {
-							normalized = line[len(fenceContinuationPrefixValue):]
 						}
 					}
 					if fenceRun > 0 && closesFenceNormalized(normalized, fenceMarkerByte, fenceRun) {
-						fenceMarkerByte, fenceRun, fenceQuoteDepth, fenceContinuationPrefixValue = 0, 0, 0, ""
+						fenceMarkerByte, fenceRun, fenceQuoteDepth, fenceContinuationColumns = 0, 0, 0, 0
 						continue
 					}
 					if fenceRun > 0 {
@@ -1116,8 +1192,9 @@ func scan(root string) ([]string, error) {
 				}
 			}
 			if marker, run, _, ok := fenceMarker(line); ok {
-				_, _, fenceQuoteDepth = stripMarkdownContainer(line)
-				fenceContinuationPrefixValue = fenceContinuationPrefix(line)
+				normalized, quoteDepth := stripBlockquoteContainers(line)
+				fenceQuoteDepth = quoteDepth
+				fenceContinuationColumns, _ = fenceContinuationIndent(normalized)
 				fenceMarkerByte, fenceRun = marker, run
 				continue
 			}
@@ -1147,9 +1224,10 @@ func scan(root string) ([]string, error) {
 // claim about a Go declaration.
 func classify(root string, idx *index, fi *files, doc, text string) []string {
 	var rows []string
-	if expr, err := parser.ParseExpr(strings.TrimSpace(text)); err == nil {
+	expressionText := strings.TrimRight(strings.TrimSpace(text), ".,;:'\"")
+	if expr, err := parser.ParseExpr(expressionText); err == nil {
 		if selectorRootedInCall(expr) {
-			return []string{strings.Join([]string{"unchecked", doc, "token", strings.TrimSpace(text)}, "\t")}
+			return []string{strings.Join([]string{"unchecked", doc, "token", expressionText}, "\t")}
 		}
 		if call, ok := expr.(*ast.CallExpr); ok {
 			if callee, ok := declarationExprName(call.Fun); ok {
@@ -1159,10 +1237,10 @@ func classify(root string, idx *index, fi *files, doc, text string) []string {
 					if resolved {
 						status = "resolved"
 					}
-					return []string{strings.Join([]string{status, doc, "symbol", cleanToken(strings.TrimSpace(text))}, "\t")}
+					return []string{strings.Join([]string{status, doc, "symbol", expressionText}, "\t")}
 				}
 				if referenceShaped(callee) {
-					return []string{strings.Join([]string{"unchecked", doc, "token", strings.TrimSpace(text)}, "\t")}
+					return []string{strings.Join([]string{"unchecked", doc, "token", expressionText}, "\t")}
 				}
 			}
 		}
@@ -1199,12 +1277,12 @@ func classify(root string, idx *index, fi *files, doc, text string) []string {
 	// otherwise be split into a package qualifier and a name and reported twice
 	// for one citation.
 	if len(fields) == 1 && !claimed {
-		if judged, resolved := symbolName(idx, text); judged {
+		if judged, resolved := symbolName(idx, expressionText); judged {
 			status := "unresolved"
 			if resolved {
 				status = "resolved"
 			}
-			rows = append(rows, strings.Join([]string{status, doc, "symbol", cleanToken(strings.TrimSpace(text))}, "\t"))
+			rows = append(rows, strings.Join([]string{status, doc, "symbol", expressionText}, "\t"))
 			unjudged = nil
 		}
 	}

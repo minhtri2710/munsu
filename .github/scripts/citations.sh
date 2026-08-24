@@ -476,11 +476,11 @@ exit $rc"
 	: >"$tabbed/CLAUDE.md"
 	: >"$tabbed/README.md"
 	printf 'package x\n\nfunc SomethingDeclared() {}\n' >"$tabbed/good.go"
-	printf '\t```\nA missing citation is `MissingTabCitation`.\n    ```\nA second missing citation is `MissingSpaceCitation`.\n' >"$tabbed/docs/doc.md"
+	printf '\t```\nA missing citation is `MissingTabCitation`.\n    ```\nA second missing citation is `MissingSpaceCitation`.\n-\t```go\n\tA fenced citation is `MissingListTabCitation`.\n\t```\nA citation after a tab-indented list fence is `MissingAfterListFence`.\n' >"$tabbed/docs/doc.md"
 	: >"$tabbed/waiver"
 	if got="$(SCAN_ROOT="$tabbed" WAIVER="$tabbed/waiver" "$0" check 2>&1)"; then rc=0; else rc=$?; fi
-	if [ "$rc" -eq 0 ] || ! printf '%s\n' "$got" | grep -q 'symbol MissingTabCitation' || ! printf '%s\n' "$got" | grep -q 'symbol MissingSpaceCitation'; then
-		echo "::error::citations treated a four-column tab indentation as a fence:" >&2
+	if [ "$rc" -eq 0 ] || ! printf '%s\n' "$got" | grep -q 'symbol MissingTabCitation' || ! printf '%s\n' "$got" | grep -q 'symbol MissingSpaceCitation' || ! printf '%s\n' "$got" | grep -q 'symbol MissingAfterListFence' || printf '%s\n' "$got" | grep -q 'MissingListTabCitation'; then
+		echo "::error::citations mishandled tab-indented fences:" >&2
 		printf '%s\n' "$got" >&2
 		failed=1
 	else
@@ -584,9 +584,9 @@ EOF
 	: >"$callresult/CLAUDE.md"
 	: >"$callresult/README.md"
 	printf 'package x\n\ntype Store struct{}\nfunc (Store) WriteEnvelope(any) {}\nfunc RecoverNow(any) {}\nfunc GenericNow[T any]() {}\n' >"$callresult/good.go"
-	printf 'Call-result citations are `newCaptainRecoverTransaction().Recover`, `newFoo(ctx, option()).Recover()`, `RecoverNow(context.Background())`, `GenericNow[int]()` and `(*Store).WriteEnvelope(context.Background())`.\n' >"$callresult/docs/doc.md"
+	printf 'Call-result citations are `newCaptainRecoverTransaction().Recover`, `newFoo(ctx, option()).Recover()`, `mailbox.WriteEnvelope(ctx, envelope).`, `newPunctuatedFoo(ctx).Recover().`, `RecoverNow(context.Background())`, `GenericNow[int]()` and `(*Store).WriteEnvelope(context.Background())`.\n' >"$callresult/docs/doc.md"
 	: >"$callresult/waiver"
-	if unchecked="$(SCAN_ROOT="$callresult" WAIVER="$callresult/waiver" "$0" unchecked 2>&1)" && printf '%s\n' "$unchecked" | grep -q 'newCaptainRecoverTransaction().Recover' && printf '%s\n' "$unchecked" | grep -q 'newFoo(ctx, option()).Recover()'; then
+	if unchecked="$(SCAN_ROOT="$callresult" WAIVER="$callresult/waiver" "$0" unchecked 2>&1)" && printf '%s\n' "$unchecked" | grep -q 'newCaptainRecoverTransaction().Recover' && printf '%s\n' "$unchecked" | grep -q 'newFoo(ctx, option()).Recover()' && printf '%s\n' "$unchecked" | grep -q 'mailbox.WriteEnvelope(ctx, envelope)' && printf '%s\n' "$unchecked" | grep -q 'newPunctuatedFoo(ctx).Recover()'; then
 		if rows="$(cd "$TOOL" && go run . "$callresult" 2>&1)" && printf '%s\n' "$rows" | grep -Fq $'resolved\tdocs/doc.md\tsymbol\tRecoverNow(context.Background())' && printf '%s\n' "$rows" | grep -Fq $'resolved\tdocs/doc.md\tsymbol\tGenericNow[int]()' && printf '%s\n' "$rows" | grep -Fq $'resolved\tdocs/doc.md\tsymbol\t(*Store).WriteEnvelope(context.Background())'; then
 			echo "  ok   call-result-selector"
 		else
