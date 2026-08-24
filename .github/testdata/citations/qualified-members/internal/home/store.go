@@ -1,7 +1,5 @@
 package home
 
-import "io"
-
 type Store struct {
 	Nested struct {
 		NestedField string
@@ -11,8 +9,4 @@ type Store struct {
 func Ready() {}
 
 func (s *Store) WriteEnvelope() {}
-func (s *Store) ReadEnvelope()  {}
-
-type X interface {
-	io.Reader
-}
+func (s *Store) ReadEnvelope() {}

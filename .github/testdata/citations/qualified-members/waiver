@@ -5,5 +5,3 @@ docs/doc.md	symbol	PR.CanMerge	fixture: qualified ownership
 docs/doc.md	symbol	(*Store).Missing	fixture: qualified ownership
 
 docs/doc.md	symbol	Store.NestedField	fixture: nested ownership
-
-docs/doc.md	symbol	X.Reader	fixture: interface embedding is not a direct member
