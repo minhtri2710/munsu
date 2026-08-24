@@ -10,9 +10,8 @@
 // Output columns: file <TAB> func <TAB> nth <TAB> predicate <TAB> body <TAB> entries
 //
 //	file       repo-relative path of the non-test .go file
-//	func       stable owner identity: top-level function/method or package variable
-//	           initialized by a function literal (`Type.Method` for methods)
-//	nth        1-based occurrence of this exact predicate in this owner
+//	func       enclosing top-level function, `Type.Method` for methods
+//	nth        1-based occurrence of this exact predicate in this function
 //	predicate  the `if` condition, or `default` for a refusing switch default
 //	body       source range of the refusal body, `start-end` as `line.col`
 //	entries    body-start and first-statement coordinates, comma-separated
@@ -27,10 +26,10 @@
 // within this source body their counter range starts.
 //
 // `nth` is what makes the remaining three columns unique. It is not decoration:
-// An owner can refuse twice on the same predicate, and without an ordinal those
-// pairs would collapse into one key, so waiving either would waive both. It is
-// assigned in source order, so it only moves when a sibling with the *same*
-// predicate is added or removed
+// nine functions in this repo refuse twice on the same predicate (`!ok` twice in
+// Canonical.DeliveryCurrency), and without it those pairs would collapse into
+// one key, so waiving either would waive both. It is assigned in source order,
+// so it only moves when a sibling with the *same* predicate is added or removed
 // -- which is a guard change, exactly when the baseline should move.
 //
 // The body range and entry coordinates are the stable source facts available to
@@ -241,38 +240,38 @@ func scan(root string) ([]site, error) {
 		}
 		rel = filepath.ToSlash(rel)
 		for _, decl := range f.Decls {
-			switch decl := decl.(type) {
-			case *ast.FuncDecl:
-				appendFunctionSites(resolver, abs, &rows, decl.Body, funcName(decl), rel, src, fset)
-			case *ast.GenDecl:
-				if decl.Tok != token.VAR {
-					continue
-				}
-				for _, spec := range decl.Specs {
-					valueSpec, ok := spec.(*ast.ValueSpec)
-					if !ok {
-						return nil, fmt.Errorf("%s: var declaration has non-value specification %T", path, spec)
-					}
-					if len(valueSpec.Values) == 0 {
-						continue
-					}
-					if len(valueSpec.Names) != len(valueSpec.Values) {
-						for _, value := range valueSpec.Values {
-							if unwrapFuncLit(value) != nil {
-								return nil, fmt.Errorf("%s: cannot map function literal initializer to declared variable names", path)
-							}
-						}
-						continue
-					}
-					for i, value := range valueSpec.Values {
-						fn := unwrapFuncLit(value)
-						if fn == nil || valueSpec.Names[i].Name == "_" {
-							continue
-						}
-						appendFunctionSites(resolver, abs, &rows, fn.Body, valueSpec.Names[i].Name, rel, src, fset)
-					}
-				}
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
 			}
+			owner := funcName(fn)
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				switch stmt := n.(type) {
+				case *ast.IfStmt:
+					if !isRefusal(resolver, abs, fset, stmt.Body) || !isSelfOriginating(resolver, abs, fset, stmt.Init, stmt.Cond) {
+						return true
+					}
+					pos := fset.Position(stmt.Body.Lbrace)
+					rows = append(rows, site{
+						File:      rel,
+						Func:      owner,
+						Predicate: exprText(src, fset, stmt.Cond),
+						Body:      sourceRange(fset, stmt.Body),
+						Entries:   entryPoints(fset, stmt.Body),
+						line:      pos.Line,
+						col:       pos.Column,
+					})
+				case *ast.SwitchStmt:
+					if switchSelfOriginating(resolver, abs, fset, stmt) {
+						appendDefaultSites(resolver, abs, &rows, stmt.Body, owner, rel, fset)
+					}
+				case *ast.TypeSwitchStmt:
+					if typeSwitchSelfOriginating(resolver, abs, fset, stmt) {
+						appendDefaultSites(resolver, abs, &rows, stmt.Body, owner, rel, fset)
+					}
+				}
+				return true
+			})
 		}
 	}
 	// Ordinals in source order, so `nth` names the same branch on every machine
@@ -307,64 +306,10 @@ func scan(root string) ([]site, error) {
 	return rows, nil
 }
 
-func appendFunctionSites(r *resolver, abs string, rows *[]site, body *ast.BlockStmt, owner, file string, src []byte, fset *token.FileSet) {
-	if body == nil {
-		return
-	}
-	ast.Inspect(body, func(n ast.Node) bool {
-		switch stmt := n.(type) {
-		case *ast.IfStmt:
-			if !isLegacyRefusal(stmt.Body) || !isSelfOriginating(r, abs, fset, stmt.Init, stmt.Cond) {
-				return true
-			}
-			pos := fset.Position(stmt.Body.Lbrace)
-			*rows = append(*rows, site{
-				File:      file,
-				Func:      owner,
-				Predicate: exprText(src, fset, stmt.Cond),
-				Body:      sourceRange(fset, stmt.Body),
-				Entries:   entryPoints(fset, stmt.Body),
-				line:      pos.Line,
-				col:       pos.Column,
-			})
-		case *ast.SwitchStmt:
-			if switchSelfOriginating(r, abs, fset, stmt) {
-				appendDefaultSites(r, abs, rows, stmt.Body, owner, file, fset)
-			}
-		case *ast.TypeSwitchStmt:
-			if typeSwitchSelfOriginating(r, abs, fset, stmt) {
-				appendDefaultSites(r, abs, rows, stmt.Body, owner, file, fset)
-			}
-		}
-		return true
-	})
-}
-
-// Top-level declarations are FuncDecl or GenDecl; only a var GenDecl's
-// ValueSpecs can introduce the requested package-level function owner. Each
-// ValueSpec is therefore either initializer-free, positionally mapped to a
-// direct or parenthesized FuncLit and a non-blank name, or ignored as a
-// non-function or unsupported initializer shape; an ambiguous function-literal
-// mapping fails closed. Missing initializers are ignored. This is complete for
-// the direct-assignment contract, so calls, conversions, composites, and nested
-// initializer expressions are not chased.
-func unwrapFuncLit(expr ast.Expr) *ast.FuncLit {
-	for {
-		switch current := expr.(type) {
-		case *ast.ParenExpr:
-			expr = current.X
-		case *ast.FuncLit:
-			return current
-		default:
-			return nil
-		}
-	}
-}
-
-// `Type.Method` for methods, bare name for plain functions, and the declared
-// variable name for package-var function literals -- the same owner vocabulary
-// used by the derived guard identity. A guard inside a nested closure is
-// attributed to the currently scanned owner because closures have no stable name.
+// `Type.Method` for methods, bare name for plain functions -- the same shape
+// .github/deadcode.allow uses, so a name means one thing in both files. A guard
+// inside a closure is attributed to the enclosing top-level function: a closure
+// has no stable name, and `func1` renumbers when a sibling closure is added.
 func funcName(fn *ast.FuncDecl) string {
 	if fn.Recv == nil || len(fn.Recv.List) == 0 {
 		return fn.Name.Name
@@ -484,62 +429,6 @@ func exprText(src []byte, fset *token.FileSet, e ast.Expr) string {
 // The LAST statement decides, so a branch that logs before it refuses still
 // counts. `return nil` and `return err` do not: the first is an early exit with
 // no refusal, the second is propagation of somebody else's.
-func isLegacyRefusal(body *ast.BlockStmt) bool {
-	if body == nil || len(body.List) == 0 {
-		return false
-	}
-	switch statement := body.List[len(body.List)-1].(type) {
-	case *ast.ReturnStmt:
-		for _, result := range statement.Results {
-			if legacyConstructsError(result) {
-				return true
-			}
-		}
-	case *ast.ExprStmt:
-		call, ok := statement.X.(*ast.CallExpr)
-		if !ok {
-			return false
-		}
-		switch function := call.Fun.(type) {
-		case *ast.Ident:
-			return function.Name == "panic"
-		case *ast.SelectorExpr:
-			pkg, ok := function.X.(*ast.Ident)
-			return ok && pkg.Name == "os" && function.Sel.Name == "Exit"
-		}
-	}
-	return false
-}
-
-func legacyConstructsError(expr ast.Expr) bool {
-	switch value := expr.(type) {
-	case *ast.CallExpr:
-		return legacyErrorish(calleeName(value.Fun))
-	case *ast.UnaryExpr:
-		return value.Op == token.AND && legacyConstructsError(value.X)
-	case *ast.CompositeLit:
-		return legacyErrorish(typeName(value.Type))
-	case *ast.Ident:
-		return legacySentinel(value.Name)
-	case *ast.SelectorExpr:
-		return legacySentinel(value.Sel.Name)
-	}
-	return false
-}
-
-func legacyErrorish(name string) bool {
-	return strings.Contains(strings.ToLower(name), "err")
-}
-
-func legacySentinel(name string) bool {
-	for _, prefix := range []string{"Err", "err"} {
-		if strings.HasPrefix(name, prefix) && len(name) > len(prefix) {
-			return true
-		}
-	}
-	return false
-}
-
 func isRefusal(r *resolver, file string, fset *token.FileSet, body *ast.BlockStmt) bool {
 	return body != nil && isRefusalStatements(r, file, fset, body.List)
 }
