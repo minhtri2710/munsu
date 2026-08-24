@@ -518,6 +518,12 @@ func callRoot(expr ast.Expr) bool {
 		return callRoot(t.X)
 	case *ast.ParenExpr:
 		return callRoot(t.X)
+	case *ast.TypeAssertExpr:
+		return callRoot(t.X)
+	case *ast.SliceExpr:
+		return callRoot(t.X)
+	case *ast.StarExpr:
+		return callRoot(t.X)
 	}
 	return false
 }
@@ -915,10 +921,10 @@ func buildIndex(root string) (*index, error) {
 		if !strings.HasSuffix(p, ".go") {
 			return nil
 		}
+		if d.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
 		if _, err := containedPath(root, p); err != nil {
-			if d.Type()&os.ModeSymlink != 0 {
-				return nil
-			}
 			return err
 		}
 		f, perr := parser.ParseFile(fset, p, nil, parser.SkipObjectResolution)
