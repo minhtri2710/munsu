@@ -394,7 +394,8 @@ exit $rc"
 	tabbed=""
 	rootdoc=""
 	outside=""
-	trap 'rm -rf "${scratch:-}" "${escape:-}" "${tabbed:-}" "${rootdoc:-}" "${outside:-}"' RETURN
+	ambiguous=""
+	trap 'rm -rf "${scratch:-}" "${escape:-}" "${tabbed:-}" "${rootdoc:-}" "${outside:-}" "${ambiguous:-}"' RETURN
 	scratch="$(mktemp -d)"
 	mkdir -p "$scratch/docs"
 	printf 'A citation of `SomethingDeclared`.\n' >"$scratch/docs/doc.md"
@@ -474,6 +475,17 @@ exit $rc"
 		echo "  ok   docs-symlink-escape"
 	fi
 
+	mv "$tabbed/docs" "$tabbed/docs-real"
+	ln -s "$tabbed/docs-real" "$tabbed/docs"
+	if got="$(SCAN_ROOT="$tabbed" WAIVER="$tabbed/waiver" "$0" check 2>&1)"; then rc=0; else rc=$?; fi
+	if [ "$rc" -eq 0 ] || ! printf '%s\n' "$got" | grep -q 'covered directory docs/ is missing or symlinked'; then
+		echo "::error::citations accepted a symlinked docs root:" >&2
+		printf '%s\n' "$got" >&2
+		failed=1
+	else
+		echo "  ok   docs-root-symlink"
+	fi
+
 	rootdoc="$(mktemp -d)"
 	mkdir -p "$rootdoc/docs"
 	: >"$rootdoc/AGENTS.md"
@@ -490,6 +502,57 @@ exit $rc"
 		failed=1
 	else
 		echo "  ok   root-document-symlink-escape"
+	fi
+
+	printf 'package outside\n\nfunc ExternalOnly() {}\n' >"$outside/external.go"
+	ln -s "$outside/external.go" "$escape/external.go"
+	printf 'A file citation is `external.go` and a symbol citation is `ExternalOnly`.\n' >"$escape/docs/doc.md"
+	if got="$(SCAN_ROOT="$escape" WAIVER="$escape/waiver" "$0" check 2>&1)"; then rc=0; else rc=$?; fi
+	if [ "$rc" -eq 0 ] || ! printf '%s\n' "$got" | grep -q 'path external.go' || ! printf '%s\n' "$got" | grep -q 'symbol ExternalOnly'; then
+		echo "::error::citations resolved declarations or files through an external Go symlink:" >&2
+		printf '%s\n' "$got" >&2
+		failed=1
+	else
+		echo "  ok   go-symlink-escape"
+	fi
+
+	ambiguous="$(mktemp -d)"
+	mkdir -p "$ambiguous/docs" "$ambiguous/one" "$ambiguous/two"
+	: >"$ambiguous/AGENTS.md"
+	: >"$ambiguous/CLAUDE.md"
+	: >"$ambiguous/README.md"
+	cat >"$ambiguous/one/one.go" <<'EOF'
+package home
+
+func Run() {}
+type PR struct{}
+func (PR) CanMerge() {}
+type Store struct{}
+func (*Store) WriteEnvelope() {}
+EOF
+	cat >"$ambiguous/two/two.go" <<'EOF'
+package home
+
+func Other() {}
+type PR struct{}
+type Store struct{}
+EOF
+	printf 'Ambiguous citations are `home.Run`, `PR.CanMerge`, and `(*Store).WriteEnvelope`.\n' >"$ambiguous/docs/doc.md"
+	: >"$ambiguous/waiver"
+	if got="$(SCAN_ROOT="$ambiguous" WAIVER="$ambiguous/waiver" "$0" check 2>&1)"; then rc=0; else rc=$?; fi
+	if [ "$rc" -ne 0 ] || ! printf '%s\n' "$got" | grep -q '3 unchecked'; then
+		echo "::error::citations resolved an ambiguous package or type qualifier:" >&2
+		printf '%s\n' "$got" >&2
+		failed=1
+	else
+		if unchecked="$(SCAN_ROOT="$ambiguous" WAIVER="$ambiguous/waiver" "$0" unchecked 2>&1)"; then urc=0; else urc=$?; fi
+		if [ "$urc" -ne 0 ] || ! printf '%s\n' "$unchecked" | grep -q 'home.Run' || ! printf '%s\n' "$unchecked" | grep -q 'PR.CanMerge' || ! printf '%s\n' "$unchecked" | grep -q '(*Store).WriteEnvelope'; then
+			echo "::error::citations resolved an ambiguous package or type qualifier:" >&2
+			printf '%s\n' "$unchecked" >&2
+			failed=1
+		else
+			echo "  ok   ambiguous-qualified-ownership"
+		fi
 	fi
 
 	[ "$failed" -eq 0 ] || exit 1

@@ -145,9 +145,12 @@ func docFiles(root string) ([]string, error) {
 		out = append(out, name)
 	}
 	docs := filepath.Join(root, "docs")
-	info, err := os.Stat(docs)
-	if err != nil || !info.IsDir() {
-		return nil, fmt.Errorf("covered directory docs/ is missing")
+	info, err := os.Lstat(docs)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("covered directory docs/ is missing or symlinked")
+	}
+	if _, err := containedPath(root, docs); err != nil {
+		return nil, fmt.Errorf("covered directory docs/: %w", err)
 	}
 	err = filepath.WalkDir(docs, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -428,6 +431,12 @@ func buildFiles(root string) (*files, error) {
 			}
 			return nil
 		}
+		if _, err := containedPath(root, p); err != nil {
+			if d.Type()&os.ModeSymlink != 0 {
+				return nil
+			}
+			return err
+		}
 		rel, err := filepath.Rel(root, p)
 		if err != nil {
 			return err
@@ -560,6 +569,9 @@ func referenceShaped(tok string) bool {
 	// is disclosed rather than swallowed by the parens rule below. This is the
 	// same normalisation symbolName applies, for the same reason.
 	tok = callSuffixRe.ReplaceAllString(tok, "")
+	if methodExprRe.MatchString(tok) {
+		return true
+	}
 	if tok == "" || strings.ContainsAny(tok, codeChars) {
 		return false
 	}
@@ -598,10 +610,11 @@ func symbolName(idx *index, text string) (bool, bool) {
 	tok := strings.TrimSpace(text)
 	tok = cleanToken(callSuffixRe.ReplaceAllString(tok, ""))
 	if m := methodExprRe.FindStringSubmatch(tok); m != nil {
-		if !idx.types[m[1]] {
+		typeID, ok := uniqueQualifier(idx.typeQualifiers, m[1])
+		if !ok {
 			return false, false
 		}
-		return true, idx.typeMembers[m[1]][m[2]]
+		return true, idx.typeMembers[typeID][m[2]]
 	}
 	if tok == "" || !identRe.MatchString(tok) {
 		return false, false
@@ -611,9 +624,23 @@ func symbolName(idx *index, text string) (bool, bool) {
 		if strings.Contains(name, ".") {
 			return false, false
 		}
-		if idx.pkgs[qualifier] || idx.types[qualifier] {
-			return true, idx.pkgMembers[qualifier][name] || idx.typeMembers[qualifier][name]
+		var candidates []struct {
+			members map[string]bool
 		}
+		if ids := idx.pkgQualifiers[qualifier]; len(ids) == 1 {
+			for id := range ids {
+				candidates = append(candidates, struct{ members map[string]bool }{idx.pkgMembers[id]})
+			}
+		}
+		if ids := idx.typeQualifiers[qualifier]; len(ids) == 1 {
+			for id := range ids {
+				candidates = append(candidates, struct{ members map[string]bool }{idx.typeMembers[id]})
+			}
+		}
+		if len(candidates) != 1 {
+			return false, false
+		}
+		return true, candidates[0].members[name]
 		// unjudged: unknown-qualifier
 		return false, false
 	}
@@ -628,11 +655,11 @@ func symbolName(idx *index, text string) (bool, bool) {
 // ---------------------------------------------------------------------------
 
 type index struct {
-	names       map[string]bool
-	pkgs        map[string]bool
-	types       map[string]bool
-	pkgMembers  map[string]map[string]bool
-	typeMembers map[string]map[string]bool
+	names          map[string]bool
+	pkgQualifiers  map[string]map[string]bool
+	typeQualifiers map[string]map[string]bool
+	pkgMembers     map[string]map[string]bool
+	typeMembers    map[string]map[string]bool
 }
 
 // Every name declared anywhere in the Go tree, by parsing every .go file.
@@ -649,11 +676,11 @@ type index struct {
 // fabricated symbol must not resolve against a fixture.
 func buildIndex(root string) (*index, error) {
 	idx := &index{
-		names:       map[string]bool{},
-		pkgs:        map[string]bool{},
-		types:       map[string]bool{},
-		pkgMembers:  map[string]map[string]bool{},
-		typeMembers: map[string]map[string]bool{},
+		names:          map[string]bool{},
+		pkgQualifiers:  map[string]map[string]bool{},
+		typeQualifiers: map[string]map[string]bool{},
+		pkgMembers:     map[string]map[string]bool{},
+		typeMembers:    map[string]map[string]bool{},
 	}
 	fset := token.NewFileSet()
 	seen := 0
@@ -675,6 +702,12 @@ func buildIndex(root string) (*index, error) {
 		if !strings.HasSuffix(p, ".go") {
 			return nil
 		}
+		if _, err := containedPath(root, p); err != nil {
+			if d.Type()&os.ModeSymlink != 0 {
+				return nil
+			}
+			return err
+		}
 		f, perr := parser.ParseFile(fset, p, nil, parser.SkipObjectResolution)
 		if perr != nil {
 			// Fail closed. A file this tool cannot parse is a file whose
@@ -684,12 +717,17 @@ func buildIndex(root string) (*index, error) {
 			return fmt.Errorf("parse %s: %w", p, perr)
 		}
 		seen++
-		idx.pkgs[f.Name.Name] = true
-		if idx.pkgMembers[f.Name.Name] == nil {
-			idx.pkgMembers[f.Name.Name] = map[string]bool{}
+		relDir, err := filepath.Rel(root, filepath.Dir(p))
+		if err != nil {
+			return err
+		}
+		pkg := packageIdentity(filepath.ToSlash(relDir), f.Name.Name)
+		addQualifier(idx.pkgQualifiers, f.Name.Name, pkg)
+		if idx.pkgMembers[pkg] == nil {
+			idx.pkgMembers[pkg] = map[string]bool{}
 		}
 		for _, decl := range f.Decls {
-			idx.collect(f.Name.Name, decl)
+			idx.collect(pkg, decl)
 		}
 		return nil
 	})
@@ -700,6 +738,28 @@ func buildIndex(root string) (*index, error) {
 		return nil, fmt.Errorf("no .go files found under %s -- an empty index would report every symbol citation as fabricated", root)
 	}
 	return idx, nil
+}
+
+func packageIdentity(dir, pkg string) string {
+	return dir + "::" + pkg
+}
+
+func addQualifier(index map[string]map[string]bool, name, identity string) {
+	if index[name] == nil {
+		index[name] = map[string]bool{}
+	}
+	index[name][identity] = true
+}
+
+func uniqueQualifier(index map[string]map[string]bool, name string) (string, bool) {
+	ids := index[name]
+	if len(ids) != 1 {
+		return "", false
+	}
+	for id := range ids {
+		return id, true
+	}
+	return "", false
 }
 
 func (idx *index) collect(pkg string, decl ast.Decl) {
@@ -713,16 +773,17 @@ func (idx *index) collect(pkg string, decl ast.Decl) {
 		if d.Recv == nil {
 			addPackageMember(d.Name.Name)
 		} else if receiver := receiverName(d.Recv); receiver != "" {
-			idx.addTypeMember(receiver, d.Name.Name)
+			idx.addTypeMember(packageIdentityForType(pkg, receiver), receiver, d.Name.Name)
 		}
 	case *ast.GenDecl:
 		for _, spec := range d.Specs {
 			switch s := spec.(type) {
 			case *ast.TypeSpec:
 				idx.names[s.Name.Name] = true
-				idx.types[s.Name.Name] = true
 				addPackageMember(s.Name.Name)
-				idx.collectMembers(s.Name.Name, s.Type)
+				typeID := packageIdentityForType(pkg, s.Name.Name)
+				addQualifier(idx.typeQualifiers, s.Name.Name, typeID)
+				idx.collectMembers(typeID, s.Type)
 			case *ast.ValueSpec:
 				for _, n := range s.Names {
 					addPackageMember(n.Name)
@@ -732,12 +793,17 @@ func (idx *index) collect(pkg string, decl ast.Decl) {
 	}
 }
 
-func (idx *index) addTypeMember(typeName, member string) {
+func packageIdentityForType(pkg, typeName string) string {
+	return pkg + "::" + typeName
+}
+
+func (idx *index) addTypeMember(typeID, typeName, member string) {
 	idx.names[member] = true
-	if idx.typeMembers[typeName] == nil {
-		idx.typeMembers[typeName] = map[string]bool{}
+	if idx.typeMembers[typeID] == nil {
+		idx.typeMembers[typeID] = map[string]bool{}
 	}
-	idx.typeMembers[typeName][member] = true
+	idx.typeMembers[typeID][member] = true
+	addQualifier(idx.typeQualifiers, typeName, typeID)
 }
 
 func receiverName(fields *ast.FieldList) string {
@@ -765,7 +831,8 @@ func receiverName(fields *ast.FieldList) string {
 // six accepted forms. They are the forms a `^func`/`^type` grep cannot see:
 // `ParentHome` is a struct field and the reviewer's prototype reported it as
 // fabricated (#573).
-func (idx *index) collectMembers(typeName string, expr ast.Expr) {
+func (idx *index) collectMembers(typeID string, expr ast.Expr) {
+	typeName := typeID[strings.LastIndex(typeID, "::")+2:]
 	var fields *ast.FieldList
 	switch t := expr.(type) {
 	case *ast.StructType:
@@ -777,11 +844,11 @@ func (idx *index) collectMembers(typeName string, expr ast.Expr) {
 	}
 	for _, f := range fields.List {
 		for _, name := range f.Names {
-			idx.addTypeMember(typeName, name.Name)
+			idx.addTypeMember(typeID, typeName, name.Name)
 		}
 		if len(f.Names) == 0 {
 			if name := embeddedName(f.Type); name != "" {
-				idx.addTypeMember(typeName, name)
+				idx.addTypeMember(typeID, typeName, name)
 			}
 		}
 	}
