@@ -7,6 +7,10 @@ func AfterListFence() {}
 
 func AfterNestedListFence() {}
 
+func AfterListThenQuoteFence() {}
+
+func AfterQuoteThenListFence() {}
+
 type Store struct {
 	ParentHome string
 }

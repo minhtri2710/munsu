@@ -263,42 +263,100 @@ func inlineSpans(line string) []span {
 // golang.org/x/tools/...` lines. The cost is real and stated: a citation that
 // only ever appears inside a fence is not checked. Counted as one of the lane's
 // silent drops in referenceShaped's enumeration, which is the complete list.
+type fenceContainer struct {
+	kind    byte
+	columns int
+}
+
 func fenceMarker(line string) (byte, int, int, bool) {
-	normalized, _, _ := stripMarkdownContainer(line)
+	normalized, _, ok := parseMarkdownContainers(line)
+	if !ok {
+		return 0, 0, 0, false
+	}
 	return fenceMarkerNormalized(normalized)
 }
 
-func fenceContinuationIndent(line string) (int, bool) {
+func parseMarkdownContainers(line string) (string, []fenceContainer, bool) {
 	start := 0
+	containers := []fenceContainer{}
 	for {
-		for start < len(line) && line[start] == ' ' && start < 4 {
+		indentStart := start
+		for start < len(line) && line[start] == ' ' && start-indentStart < 4 {
 			start++
 		}
-		markerEnd := start
-		if markerEnd < len(line) && (line[markerEnd] == '-' || line[markerEnd] == '*' || line[markerEnd] == '+') {
-			markerEnd++
+		if start-indentStart > 3 {
+			if len(containers) == 0 {
+				return line, nil, true
+			}
+			return line[indentStart:], containers, true
+		}
+		if start < len(line) && line[start] == '>' {
+			containers = append(containers, fenceContainer{kind: '>'})
+			start++
+			if start < len(line) && (line[start] == ' ' || line[start] == '\t') {
+				start++
+			}
+			continue
+		}
+		markerStart := start
+		if start < len(line) && (line[start] == '-' || line[start] == '*' || line[start] == '+') {
+			start++
 		} else {
 			digits := 0
-			for markerEnd < len(line) && line[markerEnd] >= '0' && line[markerEnd] <= '9' && digits < 9 {
-				markerEnd++
+			for start < len(line) && line[start] >= '0' && line[start] <= '9' && digits < 10 {
+				start++
 				digits++
 			}
-			if digits == 0 || markerEnd >= len(line) || (line[markerEnd] != '.' && line[markerEnd] != ')') {
-				return 0, false
+			if digits == 0 || digits > 9 || start >= len(line) || (line[start] != '.' && line[start] != ')') {
+				if len(containers) == 0 {
+					return line, nil, true
+				}
+				return line[markerStart:], containers, true
 			}
-			markerEnd++
+			start++
 		}
-		if markerEnd >= len(line) || (line[markerEnd] != ' ' && line[markerEnd] != '\t') {
-			return 0, false
+		if start == markerStart || start >= len(line) || (line[start] != ' ' && line[start] != '\t') {
+			if len(containers) == 0 {
+				return line, nil, true
+			}
+			return line[markerStart:], containers, true
 		}
-		start = markerEnd
 		for start < len(line) && (line[start] == ' ' || line[start] == '\t') {
 			start++
 		}
-		if start >= len(line) || (line[start] != '-' && line[start] != '*' && line[start] != '+' && (line[start] < '0' || line[start] > '9')) {
-			return markdownColumns(line[:start]), true
+		containers = append(containers, fenceContainer{kind: 'l', columns: markdownColumns(line[markerStart:start])})
+	}
+}
+
+func stripFenceContainers(line string, containers []fenceContainer) (string, bool) {
+	normalized := line
+	for _, container := range containers {
+		switch container.kind {
+		case 'l':
+			var ok bool
+			normalized, ok = stripFenceContinuation(normalized, container.columns)
+			if !ok {
+				if strings.TrimSpace(normalized) == "" {
+					return "", true
+				}
+				return line, false
+			}
+		case '>':
+			start := 0
+			for start < len(normalized) && normalized[start] == ' ' && start < 4 {
+				start++
+			}
+			if start > 3 || start >= len(normalized) || normalized[start] != '>' {
+				return line, false
+			}
+			start++
+			if start < len(normalized) && (normalized[start] == ' ' || normalized[start] == '\t') {
+				start++
+			}
+			normalized = normalized[start:]
 		}
 	}
+	return normalized, true
 }
 
 func markdownColumns(text string) int {
@@ -314,26 +372,6 @@ func markdownColumns(text string) int {
 		}
 	}
 	return columns
-}
-
-func stripBlockquoteContainers(line string) (string, int) {
-	start := 0
-	depth := 0
-	for {
-		spaces := 0
-		for start < len(line) && line[start] == ' ' && spaces < 4 {
-			start++
-			spaces++
-		}
-		if spaces > 3 || start >= len(line) || line[start] != '>' {
-			return line[start-spaces:], depth
-		}
-		start++
-		if start < len(line) && (line[start] == ' ' || line[start] == '\t') {
-			start++
-		}
-		depth++
-	}
 }
 
 func stripFenceContinuation(line string, columns int) (string, bool) {
@@ -384,83 +422,12 @@ func fenceMarkerNormalized(line string) (byte, int, int, bool) {
 	return marker, run, start, true
 }
 
-func stripMarkdownContainer(line string) (string, int, int) {
-	start := 0
-	consumed := false
-	quoteDepth := 0
-	for {
-		indentStart := start
-		for start < len(line) && line[start] == ' ' {
-			start++
-		}
-		if start-indentStart > 3 {
-			if consumed {
-				return line[indentStart:], indentStart, quoteDepth
-			}
-			return line, 0, quoteDepth
-		}
-		if start < len(line) && line[start] == '>' {
-			consumed = true
-			quoteDepth++
-			start++
-			if start < len(line) && (line[start] == ' ' || line[start] == '\t') {
-				start++
-			}
-			continue
-		}
-		markerStart := start
-		if start < len(line) && (line[start] == '-' || line[start] == '*' || line[start] == '+') {
-			start++
-		} else {
-			digits := 0
-			for start < len(line) && line[start] >= '0' && line[start] <= '9' && digits < 10 {
-				start++
-				digits++
-			}
-			if digits == 0 || digits > 9 || start >= len(line) || (line[start] != '.' && line[start] != ')') {
-				if consumed {
-					return line[markerStart:], markerStart, quoteDepth
-				}
-				return line, 0, quoteDepth
-			}
-			start++
-		}
-		if start == markerStart || start >= len(line) || (line[start] != ' ' && line[start] != '\t') {
-			if consumed {
-				return line[markerStart:], markerStart, quoteDepth
-			}
-			return line, 0, quoteDepth
-		}
-		consumed = true
-		for start < len(line) && (line[start] == ' ' || line[start] == '\t') {
-			start++
-		}
-	}
-}
-
 func closesFenceNormalized(line string, marker byte, openingRun int) bool {
 	gotMarker, run, start, ok := fenceMarkerNormalized(line)
 	if !ok || gotMarker != marker || run < openingRun {
 		return false
 	}
 	return strings.TrimSpace(line[start+run:]) == ""
-}
-
-func closesFence(line string, marker byte, openingRun, openingQuoteDepth, openingContinuationColumns int) bool {
-	normalized, quoteDepth := stripBlockquoteContainers(line)
-	if quoteDepth != openingQuoteDepth {
-		return false
-	}
-	if openingContinuationColumns > 0 {
-		var ok bool
-		normalized, ok = stripFenceContinuation(normalized, openingContinuationColumns)
-		if !ok {
-			return false
-		}
-	} else if normalized != line && quoteDepth == 0 {
-		return false
-	}
-	return closesFenceNormalized(normalized, marker, openingRun)
 }
 
 // ---------------------------------------------------------------------------
@@ -1190,43 +1157,22 @@ func scan(root string) ([]string, error) {
 		}
 		var fenceMarkerByte byte
 		var fenceRun int
-		var fenceQuoteDepth int
-		var fenceContinuationColumns int
+		var fenceContainers []fenceContainer
 		for _, line := range strings.Split(string(body), "\n") {
 			if fenceRun > 0 {
-				if closesFence(line, fenceMarkerByte, fenceRun, fenceQuoteDepth, fenceContinuationColumns) {
-					fenceMarkerByte, fenceRun, fenceQuoteDepth, fenceContinuationColumns = 0, 0, 0, 0
+				normalized, ok := stripFenceContainers(line, fenceContainers)
+				if ok {
+					if closesFenceNormalized(normalized, fenceMarkerByte, fenceRun) {
+						fenceMarkerByte, fenceRun, fenceContainers = 0, 0, nil
+						continue
+					}
 					continue
 				}
-				normalized, quoteDepth := stripBlockquoteContainers(line)
-				if quoteDepth != fenceQuoteDepth {
-					if quoteDepth < fenceQuoteDepth {
-						fenceMarkerByte, fenceRun, fenceQuoteDepth, fenceContinuationColumns = 0, 0, 0, 0
-					} else {
-						continue
-					}
-				} else {
-					if fenceContinuationColumns > 0 {
-						var ok bool
-						normalized, ok = stripFenceContinuation(normalized, fenceContinuationColumns)
-						if !ok {
-							if strings.TrimSpace(line) != "" {
-								fenceMarkerByte, fenceRun, fenceQuoteDepth, fenceContinuationColumns = 0, 0, 0, 0
-							} else {
-								continue
-							}
-						}
-					}
-					if fenceRun > 0 {
-						continue
-					}
-				}
+				fenceMarkerByte, fenceRun, fenceContainers = 0, 0, nil
 			}
 			if marker, run, _, ok := fenceMarker(line); ok {
-				normalized, quoteDepth := stripBlockquoteContainers(line)
-				fenceQuoteDepth = quoteDepth
-				fenceContinuationColumns, _ = fenceContinuationIndent(normalized)
-				fenceMarkerByte, fenceRun = marker, run
+				_, containers, _ := parseMarkdownContainers(line)
+				fenceMarkerByte, fenceRun, fenceContainers = marker, run, containers
 				continue
 			}
 			for _, s := range inlineSpans(line) {

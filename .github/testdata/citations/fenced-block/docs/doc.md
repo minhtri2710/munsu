@@ -28,3 +28,13 @@ The citation after the list-contained fence is `AfterListFence`.
 
 The citation after the nested list fence is `AfterNestedListFence`.
 
+- > ```go
+  > `MissingInsideListThenQuote`
+  > ```
+  The citation after the list-then-quote fence is `AfterListThenQuoteFence`.
+
+> - ```go
+>   `MissingInsideQuoteThenList`
+>   ```
+>   The citation after the quote-then-list fence is `AfterQuoteThenListFence`.
+
