@@ -457,7 +457,8 @@ baseline_shrink_only() {
 	local base_file="${GUARDS_BASELINE_BASE:-}"
 	local base_ref tmp="" current base added
 	if [ -z "$base_file" ]; then
-		base_ref="${GUARDS_BASE_REF:-origin/main}"
+		base_ref="${GUARDS_BASE_REF:-}"
+		[ -n "$base_ref" ] || die "GUARDS_BASE_REF is required when GUARDS_BASELINE_BASE is not set; the shrink-only ratchet cannot be evaluated"
 		tmp="$(mktemp)"
 		if ! git -C "$ROOT" show "$base_ref:$BASELINE_REL" >"$tmp"; then
 			rm -f "$tmp"
