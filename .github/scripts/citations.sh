@@ -57,7 +57,7 @@
 #     attributes it to. That was the fifth defect in #566 and this lane does not
 #     catch it; the `wrong-file-attribution` fixture pins that boundary so it is
 #     a stated limit rather than an assumed capability.
-#   - It does not JUDGE the ten shapes below. They are declared here as the
+#   - It does not JUDGE the eleven shapes below. They are declared here as the
 #     documented boundary of the lane; the executable fixtures exercise the
 #     observable classifications and failure modes.
 #
@@ -81,8 +81,10 @@
 #                          package or type this tree declares. Nothing
 #                          syntactic separates that from `fmt.Errorf`, which is
 #                          why it is declared rather than decided.
+#       call-result-selector `newCaptainRecoverTransaction().Recover`: the
+#                          owner cannot be resolved without type information.
 #
-#     Eight of the ten are printed with status `unchecked`, `citations.sh
+#     Nine of the eleven are printed with status `unchecked`, `citations.sh
 #     unchecked` lists them, and `check` prints their count beside the
 #     classified one -- so `0 unaccounted` cannot be read as "everything was
 #     looked at". The two that are not are `empty`, which has nothing to
@@ -388,14 +390,18 @@ exit $rc"
 	# committed fixture because it cannot be one: an unparseable .go file in the
 	# tree makes `gofmt -l .` exit 2, which turns the gofmt step of this same job
 	# red for a reason that is not this rule. Built in a scratch tree instead.
-	local scratch escape tabbed rootdoc outside
+	local scratch escape tabbed rootdoc outside ambiguous callresult nested coverage invalidfence
 	scratch=""
 	escape=""
 	tabbed=""
 	rootdoc=""
 	outside=""
 	ambiguous=""
-	trap 'rm -rf "${scratch:-}" "${escape:-}" "${tabbed:-}" "${rootdoc:-}" "${outside:-}" "${ambiguous:-}"' RETURN
+	callresult=""
+	nested=""
+	coverage=""
+	invalidfence=""
+	trap 'rm -rf "${scratch:-}" "${escape:-}" "${tabbed:-}" "${rootdoc:-}" "${outside:-}" "${ambiguous:-}" "${callresult:-}" "${nested:-}" "${coverage:-}" "${invalidfence:-}"' RETURN
 	scratch="$(mktemp -d)"
 	mkdir -p "$scratch/docs"
 	printf 'A citation of `SomethingDeclared`.\n' >"$scratch/docs/doc.md"
@@ -553,6 +559,89 @@ EOF
 		else
 			echo "  ok   ambiguous-qualified-ownership"
 		fi
+	fi
+
+	callresult="$(mktemp -d)"
+	mkdir -p "$callresult/docs"
+	: >"$callresult/AGENTS.md"
+	: >"$callresult/CLAUDE.md"
+	: >"$callresult/README.md"
+	printf 'package x\n\nfunc Recover() {}\n' >"$callresult/good.go"
+	printf 'A call-result citation is `newCaptainRecoverTransaction().Recover`.\n' >"$callresult/docs/doc.md"
+	: >"$callresult/waiver"
+	if unchecked="$(SCAN_ROOT="$callresult" WAIVER="$callresult/waiver" "$0" unchecked 2>&1)" && printf '%s\n' "$unchecked" | grep -q 'newCaptainRecoverTransaction().Recover'; then
+		echo "  ok   call-result-selector"
+	else
+		echo "::error::citations silently dropped a call-result selector:" >&2
+		printf '%s\n' "${unchecked:-$?}" >&2
+		failed=1
+	fi
+
+	nested="$(mktemp -d)"
+	mkdir -p "$nested/docs"
+	: >"$nested/AGENTS.md"
+	: >"$nested/CLAUDE.md"
+	: >"$nested/README.md"
+	cat >"$nested/good.go" <<'EOF'
+package x
+
+type Outer struct {
+	Nested *struct {
+		DeepField string
+	}
+}
+EOF
+	printf 'A nested declaration is `DeepField`.\n' >"$nested/docs/doc.md"
+	: >"$nested/waiver"
+	if rows="$(cd "$TOOL" && go run . "$nested" 2>&1)" && printf '%s\n' "$rows" | grep -q $'resolved\tdocs/doc.md\tsymbol\tDeepField'; then
+		echo "  ok   nested-field"
+	else
+		echo "::error::citations failed to index a nested field:" >&2
+		printf '%s\n' "${rows:-$?}" >&2
+		failed=1
+	fi
+
+	coverage="$(mktemp -d)"
+	mkdir -p "$coverage/docs/guides/plans" "$coverage/docs/plans"
+	: >"$coverage/AGENTS.md"
+	: >"$coverage/CLAUDE.md"
+	: >"$coverage/README.md"
+	printf 'package x\n\nfunc SomethingDeclared() {}\n' >"$coverage/good.go"
+	printf 'Nested plan cites `missing_nested.go`.\n' >"$coverage/docs/guides/plans/doc.md"
+	printf 'Top plan cites `missing_top.go`.\n' >"$coverage/docs/plans/doc.md"
+	: >"$coverage/waiver"
+	if listed="$(SCAN_ROOT="$coverage" WAIVER="$coverage/waiver" "$0" list 2>&1)" && printf '%s\n' "$listed" | grep -q 'docs/guides/plans/doc.md' && ! printf '%s\n' "$listed" | grep -q 'docs/plans/doc.md'; then
+		echo "  ok   nested-plans-coverage"
+	else
+		echo "::error::citations excluded nested plans or scanned top-level plans:" >&2
+		printf '%s\n' "${listed:-$?}" >&2
+		failed=1
+	fi
+
+	ln -s "$coverage/docs/guides" "$coverage/docs/shared"
+	if got="$(SCAN_ROOT="$coverage" WAIVER="$coverage/waiver" "$0" check 2>&1)"; then rc=0; else rc=$?; fi
+	if [ "$rc" -ne 0 ] && printf '%s\n' "$got" | grep -q 'covered documentation directory docs/shared is symlinked'; then
+		echo "  ok   docs-directory-symlink"
+	else
+		echo "::error::citations silently skipped a symlinked docs directory:" >&2
+		printf '%s\n' "$got" >&2
+		failed=1
+	fi
+
+	invalidfence="$(mktemp -d)"
+	mkdir -p "$invalidfence/docs"
+	: >"$invalidfence/AGENTS.md"
+	: >"$invalidfence/CLAUDE.md"
+	: >"$invalidfence/README.md"
+	printf 'package x\n\nfunc InvalidFenceCitation() {}\n' >"$invalidfence/good.go"
+	printf '`````lang `example`\nThe citation is `InvalidFenceCitation`.\n' >"$invalidfence/docs/doc.md"
+	: >"$invalidfence/waiver"
+	if rows="$(cd "$TOOL" && go run . "$invalidfence" 2>&1)" && printf '%s\n' "$rows" | grep -q $'resolved\tdocs/doc.md\tsymbol\tInvalidFenceCitation'; then
+		echo "  ok   invalid-backtick-fence"
+	else
+		echo "::error::citations treated an invalid backtick opener as a fence:" >&2
+		printf '%s\n' "${rows:-$?}" >&2
+		failed=1
 	fi
 
 	[ "$failed" -eq 0 ] || exit 1

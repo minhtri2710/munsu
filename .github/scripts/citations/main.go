@@ -145,6 +145,7 @@ func docFiles(root string) ([]string, error) {
 		out = append(out, name)
 	}
 	docs := filepath.Join(root, "docs")
+	plans := filepath.Join(docs, "plans")
 	info, err := os.Lstat(docs)
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return nil, fmt.Errorf("covered directory docs/ is missing or symlinked")
@@ -157,10 +158,15 @@ func docFiles(root string) ([]string, error) {
 			return err
 		}
 		if d.IsDir() {
-			if p != docs && d.Name() == "plans" {
+			if p == plans {
 				return fs.SkipDir
 			}
 			return nil
+		}
+		if d.Type()&os.ModeSymlink != 0 {
+			if targetInfo, statErr := os.Stat(p); statErr == nil && targetInfo.IsDir() {
+				return fmt.Errorf("covered documentation directory %s is symlinked", filepath.ToSlash(strings.TrimPrefix(p, root+string(filepath.Separator))))
+			}
 		}
 		if !strings.HasSuffix(p, ".md") {
 			return nil
@@ -268,7 +274,7 @@ func fenceMarker(line string) (byte, int, int, bool) {
 	for start+run < len(line) && line[start+run] == marker {
 		run++
 	}
-	if run < 3 {
+	if run < 3 || (marker == '`' && strings.Contains(line[start+run:], "`")) {
 		return 0, 0, 0, false
 	}
 	return marker, run, start, true
@@ -292,7 +298,8 @@ var (
 	allCapsRe = regexp.MustCompile(`^[A-Z0-9_]+$`)
 	// `(Type).Method` and `(*Type).Method`, the way a method is cited when the
 	// receiver matters.
-	methodExprRe = regexp.MustCompile(`^\(\*?([A-Za-z_][A-Za-z0-9_]*)\)\.([A-Za-z_][A-Za-z0-9_]*)$`)
+	methodExprRe         = regexp.MustCompile(`^\(\*?([A-Za-z_][A-Za-z0-9_]*)\)\.([A-Za-z_][A-Za-z0-9_]*)$`)
+	callResultSelectorRe = regexp.MustCompile(`^[^()]+\([^()]*\)\.[A-Za-z_][A-Za-z0-9_]*$`)
 	// A trailing argument list on a cited call.
 	callSuffixRe = regexp.MustCompile(`\([^()]*\)$`)
 )
@@ -500,7 +507,7 @@ func fileCitation(fi *files, tok string) bool {
 //
 // It is the answer to the question "what did this lane not look at", and the
 // answer has to be a rule rather than a list, because the shapes that reach it
-// are exactly the shapes nobody anticipated. Five of them are known:
+// are exactly the shapes nobody anticipated. Six of them are known:
 //
 //   - `mailbox.WriteEnvelope`: a qualified name whose QUALIFIER this tree does
 //     not declare. Judging it is not available. Nothing syntactic separates a
@@ -522,11 +529,13 @@ func fileCitation(fi *files, tok string) bool {
 //     files that exist today and nothing here would notice if they stopped.
 //   - `MUNSU_HOME=/tmp/munsu-dogfood`, `~/.munsu`: a path written as an
 //     assignment, or under a home directory this lane cannot see.
+//   - `newCaptainRecoverTransaction().Recover`: a selector on a call result;
+//     its owner cannot be resolved without type information.
 //
 // What this function declines gets NO row -- not `unchecked`, nothing. This is
 // the one place that enumerates ALL of the lane's silence, which is why the
 // summaries in citations.sh and AGENTS.md point here instead of restating it.
-// Two of the five ways in are upstream of this function and are repeated here
+// Two of the six ways in are upstream of this function and are repeated here
 // on purpose: a limit stated only where it is implemented is a limit the
 // reader has to already know about to find.
 //
@@ -551,7 +560,7 @@ func fileCitation(fi *files, tok string) bool {
 //     goes, and with it every bare capitalised word symbolName declined for
 //     having no interior capital: `Report`, `Retire`, `open` and `Digester`
 //     produce no row at all, while `SetTargetSafety` in the same sentence
-//     produces one. It is the largest of the five by far and the one a reader
+//     produces one. It is the largest of the six by far and the one a reader
 //     is most likely to mistake for coverage.
 //
 // The count has been wrong twice, in the same direction each time. It read
@@ -564,6 +573,9 @@ func fileCitation(fi *files, tok string) bool {
 func referenceShaped(tok string) bool {
 	if tok == "" || strings.Contains(tok, "://") {
 		return false
+	}
+	if callResultSelectorRe.MatchString(tok) {
+		return true
 	}
 	// A cited call is the same reference as the name it calls, so `time.Now()`
 	// is disclosed rather than swallowed by the parens rule below. This is the
@@ -851,7 +863,33 @@ func (idx *index) collectMembers(typeID string, expr ast.Expr) {
 				idx.addTypeMember(typeID, typeName, name)
 			}
 		}
+		idx.collectNestedMemberNames(f.Type)
 	}
+}
+
+func (idx *index) collectNestedMemberNames(expr ast.Expr) {
+	ast.Inspect(expr, func(node ast.Node) bool {
+		var fields *ast.FieldList
+		switch t := node.(type) {
+		case *ast.StructType:
+			fields = t.Fields
+		case *ast.InterfaceType:
+			fields = t.Methods
+		default:
+			return true
+		}
+		for _, f := range fields.List {
+			for _, name := range f.Names {
+				idx.names[name.Name] = true
+			}
+			if len(f.Names) == 0 {
+				if name := embeddedName(f.Type); name != "" {
+					idx.names[name] = true
+				}
+			}
+		}
+		return true
+	})
 }
 
 func embeddedName(expr ast.Expr) string {
