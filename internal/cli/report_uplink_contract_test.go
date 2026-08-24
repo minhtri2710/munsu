@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -65,6 +66,30 @@ func TestReportCmdNotificationFailureReturnsQueued(t *testing.T) {
 	}, "--ring", "ring", "failed", "failed")
 	if resp.Data.Injection == nil || resp.Data.Injection.Outcome != "queued" {
 		t.Fatalf("response=%+v", resp.Data.Injection)
+	}
+}
+
+func TestReportCmdTransportFailureFailsLoud(t *testing.T) {
+	senderHome, receiverHome := t.TempDir(), t.TempDir()
+	t.Setenv("MUNSU_HOME", senderHome)
+	t.Setenv("MUNSU_TASK_ID", "task:failed-transport")
+	t.Setenv("MUNSU_ROLE", "soldier")
+	t.Setenv("MUNSU_PARENT_STATUS", receiverHome)
+	cmd := newReportCmdWithNotifier(func(string, string, orchestrator.NotificationRef) orchestrator.UplinkNotifyResult {
+		return orchestrator.FailedNotification(errors.New("backend failed"))
+	})
+	root := &cobra.Command{Use: "munsu"}
+	root.AddCommand(cmd)
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs([]string{"report", "--output", "json", "failed", "backend execution error"})
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("invoked transport failure must fail loud, not return success")
+	}
+	if !errors.Is(err, orchestrator.ErrReportDurable) {
+		t.Fatalf("err = %v, want ErrReportDurable", err)
 	}
 }
 
