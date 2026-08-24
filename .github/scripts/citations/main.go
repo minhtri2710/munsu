@@ -400,7 +400,7 @@ func htmlBlockTerminated(block htmlBlock, line string) bool {
 	lower := strings.ToLower(line)
 	switch block.kind {
 	case "raw":
-		return strings.Contains(lower, "</"+block.tag+">") || strings.Contains(lower, "</"+block.tag+" ")
+		return strings.Contains(lower, "</"+block.tag+">")
 	case "comment":
 		return strings.Contains(line, "-->")
 	case "processing":
@@ -1480,7 +1480,7 @@ func scan(root string) ([]string, error) {
 				}
 			}
 			indent := len(normalized) - len(strings.TrimLeft(normalized, " \t"))
-			if strings.TrimSpace(normalized) == "" || markdownColumns(normalized[:indent]) > 3 || invalidFenceLikeRe.MatchString(normalized) || invalidBacktickFenceLikeRe.MatchString(normalized) {
+			if strings.TrimSpace(normalized) == "" || (openRun == 0 && markdownColumns(normalized[:indent]) > 3) || invalidFenceLikeRe.MatchString(normalized) || invalidBacktickFenceLikeRe.MatchString(normalized) {
 				if err := flushOpen(); err != nil {
 					return nil, err
 				}

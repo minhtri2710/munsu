@@ -19,6 +19,12 @@ continuation`` and `home.MissingAfterLazyItem`.
 Then `home.MissingAfterHTML` then ``.
 
 <script>
+</script bogus
+An unmatched `` run inside HTML.
+</script>
+Then `home.MissingAfterRawHTML` then ``.
+
+<script>
 An unmatched `` run inside HTML.
 </script>
 Then `home.MissingAfterMultilineHTML` then ``.
@@ -37,3 +43,6 @@ A lazy continuation before list HTML.
   An unmatched `` run inside list HTML.
   </script>
 Then `home.MissingAfterListHTML` then ``.
+
+An unmatched `` run
+    Then `home.MissingAfterIndented`.
