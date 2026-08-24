@@ -38,24 +38,38 @@ var materialStates = map[string]bool{
 	"done": true, "failed": true, "blocked": true, "needs-decision": true,
 }
 
-type UplinkNotifyOutcome string
+type uplinkNotifyKind uint8
 
 const (
-	UplinkNotifyQueued       UplinkNotifyOutcome = "queued"
-	UplinkNotifyAcknowledged UplinkNotifyOutcome = "acknowledged"
-	UplinkNotifyFailed       UplinkNotifyOutcome = "failed"
+	uplinkNotifyQueued uplinkNotifyKind = iota
+	uplinkNotifyAcknowledged
+	uplinkNotifyFailed
 )
 
 type UplinkNotifyResult struct {
-	Outcome UplinkNotifyOutcome
-	// Err carries a notification path whose transport was invoked and failed.
-	// A target that cannot be resolved is merely unavailable and remains queued.
-	Err error
+	kind uplinkNotifyKind
+	err  error
 }
 
-func (r UplinkNotifyResult) Acknowledged() bool { return r.Outcome == UplinkNotifyAcknowledged }
-func (r UplinkNotifyResult) Queued() bool       { return r.Outcome == UplinkNotifyQueued || r.Outcome == "" }
-func (r UplinkNotifyResult) Failed() bool       { return r.Outcome == UplinkNotifyFailed }
+func QueuedNotification() UplinkNotifyResult {
+	return UplinkNotifyResult{kind: uplinkNotifyQueued}
+}
+
+func AcknowledgedNotification() UplinkNotifyResult {
+	return UplinkNotifyResult{kind: uplinkNotifyAcknowledged}
+}
+
+func FailedNotification(err error) UplinkNotifyResult {
+	if err == nil {
+		err = errors.New("notification transport failed")
+	}
+	return UplinkNotifyResult{kind: uplinkNotifyFailed, err: err}
+}
+
+func (r UplinkNotifyResult) Acknowledged() bool { return r.kind == uplinkNotifyAcknowledged }
+func (r UplinkNotifyResult) Queued() bool       { return r.kind == uplinkNotifyQueued }
+func (r UplinkNotifyResult) Failed() bool       { return r.kind == uplinkNotifyFailed }
+func (r UplinkNotifyResult) Failure() error     { return r.err }
 
 type ReportRequest struct {
 	SenderHome, ReceiverHome    string
@@ -148,17 +162,10 @@ func Report(req ReportRequest) (*ReportResult, error) {
 	if err := markNotificationAttempt(req.SenderHome, env.MessageID); err != nil {
 		return nil, fmt.Errorf("%w: message %s landed in %s and the notification path already ran; recording the attempt: %w", ErrReportDurable, env.MessageID, req.ReceiverHome, err)
 	}
-	switch nr.Outcome {
-	case UplinkNotifyAcknowledged:
+	if nr.Acknowledged() {
 		result.Notified, result.Queued = true, false
-	case UplinkNotifyFailed:
-		err := nr.Err
-		if err == nil {
-			err = errors.New("notification transport failed")
-		}
-		return nil, fmt.Errorf("%w: message %s landed in %s; notify: %w", ErrReportDurable, env.MessageID, req.ReceiverHome, err)
-	case UplinkNotifyQueued, "":
-		// Left as Queued: true
+	} else if nr.Failed() {
+		return nil, fmt.Errorf("%w: message %s landed in %s; notify: %w", ErrReportDurable, env.MessageID, req.ReceiverHome, nr.Failure())
 	}
 	return result, nil
 }
@@ -216,10 +223,9 @@ func Recover(req RecoverRequest) (*RecoverResult, error) {
 		// An unacknowledged notification remains queued for a later retry. A
 		// resolver may be temporarily unavailable, while a transport failure is
 		// surfaced by Report because the transport was actually invoked there.
-		switch nr.Outcome {
-		case UplinkNotifyAcknowledged:
+		if nr.Acknowledged() {
 			result.Notified++
-		case UplinkNotifyFailed, UplinkNotifyQueued, "":
+		} else {
 			result.Queued++
 		}
 	}
@@ -348,10 +354,10 @@ func NotifyParentWithTransport(senderHome, receiverHome string, ref Notification
 func NotifyParentWithTargetResolver(senderHome, receiverHome string, ref NotificationRef, resolveTarget TargetResolver, transport NotificationTransport) UplinkNotifyResult {
 	target, err := resolveTarget(receiverHome, senderHome == receiverHome, ref)
 	if err != nil {
-		return UplinkNotifyResult{Outcome: UplinkNotifyQueued}
+		return QueuedNotification()
 	}
 	if target.Handle == "" || target.Source == Unsupported || transport == nil {
-		return UplinkNotifyResult{Outcome: UplinkNotifyQueued}
+		return QueuedNotification()
 	}
 	return transport.Notify(senderHome, target, ref.Encode())
 }

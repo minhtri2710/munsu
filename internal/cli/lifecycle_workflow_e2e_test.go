@@ -86,7 +86,7 @@ func (e *workflowEndpoints) Dispose(fleet.CreatedEndpoint) error { return nil }
 type workflowUplink struct{}
 
 func (workflowUplink) Notify(string, orchestrator.TargetResult, string) orchestrator.UplinkNotifyResult {
-	return orchestrator.UplinkNotifyResult{Outcome: orchestrator.UplinkNotifyQueued}
+	return orchestrator.QueuedNotification()
 }
 
 // workflowActivation counts the activation nudges the captain watcher hook

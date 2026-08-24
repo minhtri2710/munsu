@@ -19,7 +19,7 @@ type reproductionNotificationTransport struct {
 func (t *reproductionNotificationTransport) Notify(_ string, target TargetResult, _ string) UplinkNotifyResult {
 	t.calls++
 	t.target = target
-	return UplinkNotifyResult{Outcome: UplinkNotifyAcknowledged}
+	return AcknowledgedNotification()
 }
 
 func TestReproductionCaptainRelayMissingPane(t *testing.T) {

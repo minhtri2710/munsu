@@ -8,7 +8,7 @@ type captainNotificationTransport struct {
 func (t *captainNotificationTransport) Notify(string, TargetResult, string) UplinkNotifyResult {
 	t.calls++
 	if t.acknowledged {
-		return UplinkNotifyResult{Outcome: UplinkNotifyAcknowledged}
+		return AcknowledgedNotification()
 	}
-	return UplinkNotifyResult{Outcome: UplinkNotifyQueued}
+	return QueuedNotification()
 }

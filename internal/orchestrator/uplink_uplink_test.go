@@ -47,7 +47,7 @@ func TestReportPersistsBeforeNotificationAndQueuesFailure(t *testing.T) {
 			pending, _ := NewStore(senderHome).ReadPending("soldier-1", ref.MessageID)
 			envelope, _ := NewStore(receiverHome).ReadEnvelope("soldier-1", ref.MessageID)
 			observedDurable = pending != nil && envelope != nil
-			return UplinkNotifyResult{Outcome: UplinkNotifyQueued}
+			return QueuedNotification()
 		},
 	})
 	if err != nil {
@@ -171,7 +171,7 @@ func TestRecoverUsesNotificationRefAndClosesAfterExactAck(t *testing.T) {
 		SenderIdentity: "captain-1", ForceNotify: true,
 		Notify: func(ref NotificationRef) UplinkNotifyResult {
 			notified = ref.Encode()
-			return UplinkNotifyResult{Outcome: UplinkNotifyAcknowledged}
+			return AcknowledgedNotification()
 		},
 	})
 	if err != nil {
@@ -203,7 +203,7 @@ func TestRecoverRetriesSameRefAfterSixtySeconds(t *testing.T) {
 		SenderRank: RankSoldier, SenderIdentity: "soldier-1",
 		ReceiverRank: RankCaptain, ReceiverID: "captain-1",
 		TaskID: "task:1", Key: "default", State: "done", Message: "complete",
-		Notify: func(NotificationRef) UplinkNotifyResult { return UplinkNotifyResult{Outcome: UplinkNotifyAcknowledged} },
+		Notify: func(NotificationRef) UplinkNotifyResult { return AcknowledgedNotification() },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -221,7 +221,7 @@ func TestRecoverRetriesSameRefAfterSixtySeconds(t *testing.T) {
 		SenderIdentity: "soldier-1", Now: time.Now(),
 		Notify: func(ref NotificationRef) UplinkNotifyResult {
 			got = ref
-			return UplinkNotifyResult{Outcome: UplinkNotifyAcknowledged}
+			return AcknowledgedNotification()
 		},
 	})
 	if err != nil {
@@ -251,7 +251,7 @@ func TestUplinkNotifyResult_ClassifiedOutcomesAgreement(t *testing.T) {
 		State:          "done",
 		Message:        "complete",
 		Notify: func(NotificationRef) UplinkNotifyResult {
-			return UplinkNotifyResult{Outcome: UplinkNotifyAcknowledged}
+			return AcknowledgedNotification()
 		},
 	})
 	if err != nil {
@@ -267,7 +267,7 @@ func TestUplinkNotifyResult_ClassifiedOutcomesAgreement(t *testing.T) {
 		SenderIdentity: "soldier-1",
 		ForceNotify:    true,
 		Notify: func(NotificationRef) UplinkNotifyResult {
-			return UplinkNotifyResult{Outcome: UplinkNotifyAcknowledged}
+			return AcknowledgedNotification()
 		},
 	})
 	if err != nil {
@@ -290,7 +290,7 @@ func TestUplinkNotifyResult_ClassifiedOutcomesAgreement(t *testing.T) {
 		State:          "done",
 		Message:        "complete",
 		Notify: func(NotificationRef) UplinkNotifyResult {
-			return UplinkNotifyResult{Outcome: UplinkNotifyQueued}
+			return QueuedNotification()
 		},
 	})
 	if err != nil {
@@ -306,7 +306,7 @@ func TestUplinkNotifyResult_ClassifiedOutcomesAgreement(t *testing.T) {
 		SenderIdentity: "soldier-1",
 		ForceNotify:    true,
 		Notify: func(NotificationRef) UplinkNotifyResult {
-			return UplinkNotifyResult{Outcome: UplinkNotifyQueued}
+			return QueuedNotification()
 		},
 	})
 	if err != nil {

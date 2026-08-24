@@ -8,7 +8,7 @@ type notifyTransport struct{ submitted string }
 
 func (t *notifyTransport) Notify(_ string, _ TargetResult, payload string) UplinkNotifyResult {
 	t.submitted = payload
-	return UplinkNotifyResult{Outcome: UplinkNotifyAcknowledged}
+	return AcknowledgedNotification()
 }
 
 func TestNotifyParentWithTargetResolverSubmitsOnlyNotificationRef(t *testing.T) {

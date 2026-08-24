@@ -38,7 +38,7 @@ import (
 // parent pane without touching any ack state (notification ack != ProcessingAck).
 func ackedNotifier() func(NotificationRef) UplinkNotifyResult {
 	return func(NotificationRef) UplinkNotifyResult {
-		return UplinkNotifyResult{Outcome: UplinkNotifyAcknowledged}
+		return AcknowledgedNotification()
 	}
 }
 
@@ -46,7 +46,7 @@ func ackedNotifier() func(NotificationRef) UplinkNotifyResult {
 func failOnNotify(t *testing.T) func(NotificationRef) UplinkNotifyResult {
 	return func(NotificationRef) UplinkNotifyResult {
 		t.Fatal("unexpected re-notification of an already-retired report")
-		return UplinkNotifyResult{}
+		return QueuedNotification()
 	}
 }
 
@@ -274,7 +274,7 @@ func TestUplinkLifecycle_DirectVersusRelayDelivery(t *testing.T) {
 			if ref != relayRef {
 				t.Fatalf("relay notification ref = %+v, want %+v", ref, relayRef)
 			}
-			return UplinkNotifyResult{Outcome: UplinkNotifyAcknowledged}
+			return AcknowledgedNotification()
 		},
 	})
 	if err != nil {
@@ -344,7 +344,7 @@ func TestUplinkLifecycle_NotificationThrottleSuppressesDuplicateDelivery(t *test
 	notifications := 0
 	notify := func(NotificationRef) UplinkNotifyResult {
 		notifications++
-		return UplinkNotifyResult{Outcome: UplinkNotifyAcknowledged}
+		return AcknowledgedNotification()
 	}
 	// Recover without ForceNotify: the fresh report is still inside its 60s
 	// notification window, so it must not be re-notified.

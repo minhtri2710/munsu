@@ -20,7 +20,7 @@ type countingTransport struct {
 func (t *countingTransport) Notify(_ string, target TargetResult, _ string) UplinkNotifyResult {
 	t.calls++
 	t.handles = append(t.handles, target.Handle)
-	return UplinkNotifyResult{Outcome: UplinkNotifyAcknowledged}
+	return AcknowledgedNotification()
 }
 
 // directGeneralHome builds the topology of matrix section 1.1: one General home,
@@ -235,7 +235,7 @@ func TestNotifyParentWithTargetResolverQueuesResolutionError(t *testing.T) {
 		func(string, bool, NotificationRef) (TargetResult, error) {
 			return TargetResult{}, errors.New("captain parent-home unavailable")
 		}, transport)
-	if !result.Queued() || result.Err != nil || result.Acknowledged() {
+	if !result.Queued() || result.Failure() != nil || result.Acknowledged() {
 		t.Fatalf("result = %+v, want queued without error or acknowledgement", result)
 	}
 	if transport.calls != 0 {
@@ -252,7 +252,7 @@ func TestReportFailsClosedWhenTheNotificationPathFails(t *testing.T) {
 		ReceiverRank: RankGeneral, ReceiverID: identity,
 		TaskID: "direct-task", Key: "default", State: "failed", Message: "direct dispatch failure",
 		Notify: func(NotificationRef) UplinkNotifyResult {
-			return UplinkNotifyResult{Outcome: UplinkNotifyFailed, Err: fmt.Errorf("resolving receiver target")}
+			return FailedNotification(fmt.Errorf("resolving receiver target"))
 		},
 	})
 	if err == nil {
@@ -295,7 +295,7 @@ type failingTransport struct{ calls int }
 
 func (t *failingTransport) Notify(_ string, _ TargetResult, _ string) UplinkNotifyResult {
 	t.calls++
-	return UplinkNotifyResult{Outcome: UplinkNotifyFailed, Err: errors.New("transport unavailable")}
+	return FailedNotification(errors.New("transport unavailable"))
 }
 
 // Resolver failures stay queued because no transport was invoked; a transport
@@ -339,7 +339,7 @@ func TestReReportingAfterANotifyFailureSupersedesInsteadOfDoubleWriting(t *testi
 		})
 	}
 	if _, err := report(func(NotificationRef) UplinkNotifyResult {
-		return UplinkNotifyResult{Outcome: UplinkNotifyFailed, Err: fmt.Errorf("transport blip")}
+		return FailedNotification(fmt.Errorf("transport blip"))
 	}); err == nil {
 		t.Fatal("the first report must fail on its notification path")
 	}
