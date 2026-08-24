@@ -320,7 +320,28 @@ func sameFenceContainers(a, b []fenceContainer) bool {
 }
 
 func inlineBlockBoundary(line string) bool {
-	return thematicBreakRe.MatchString(line) || markdownBlockStartRe.MatchString(line)
+	return thematicBreakRe.MatchString(line) || setextUnderline(line) || markdownBlockStartRe.MatchString(line)
+}
+
+func setextUnderline(line string) bool {
+	indent := 0
+	start := 0
+	for start < len(line) && (line[start] == ' ' || line[start] == '\t') {
+		start++
+	}
+	indent = markdownColumns(line[:start])
+	if indent > 3 {
+		return false
+	}
+	text := strings.TrimRight(line[start:], " \t")
+	if text == "" {
+		return false
+	}
+	marker := text[0]
+	if marker != '=' && marker != '-' {
+		return false
+	}
+	return strings.Trim(text, string(marker)) == ""
 }
 
 // Fenced code blocks are excluded. They hold commands, transcripts and sample
@@ -1257,9 +1278,12 @@ func scan(root string) ([]string, error) {
 				continue
 			}
 			if openRun > 0 {
-				if !sameFenceContainers(containers, openContainers) {
+				if continuation, continuationOK := stripFenceContainers(line, openContainers); continuationOK {
+					normalized = continuation
+				} else if !sameFenceContainers(containers, openContainers) {
 					openRun, openText, openContainers = 0, "", nil
-				} else if inlineBlockBoundary(normalized) {
+				}
+				if openRun > 0 && inlineBlockBoundary(normalized) {
 					openRun, openText, openContainers = 0, "", nil
 				}
 			}

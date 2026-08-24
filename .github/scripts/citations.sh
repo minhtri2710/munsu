@@ -416,7 +416,7 @@ exit $rc"
 	# committed fixture because it cannot be one: an unparseable .go file in the
 	# tree makes `gofmt -l .` exit 2, which turns the gofmt step of this same job
 	# red for a reason that is not this rule. Built in a scratch tree instead.
-	local scratch escape tabbed rootdoc outside ambiguous callresult nested coverage invalidfence container rootrelative ignoredgo escapedbacktick controlchars unsafe_doc_path broken_docs
+	local scratch escape tabbed rootdoc outside ambiguous callresult nested coverage invalidfence container rootrelative ignoredgo escapedbacktick controlchars unsafe_doc_path broken_docs multiline_blocks
 	scratch=""
 	escape=""
 	tabbed=""
@@ -434,7 +434,8 @@ exit $rc"
 	controlchars=""
 	unsafe_doc_path=""
 	broken_docs=""
-	trap 'rm -rf "${scratch:-}" "${escape:-}" "${tabbed:-}" "${rootdoc:-}" "${outside:-}" "${ambiguous:-}" "${callresult:-}" "${nested:-}" "${coverage:-}" "${invalidfence:-}" "${container:-}" "${rootrelative:-}" "${ignoredgo:-}" "${escapedbacktick:-}" "${controlchars:-}" "${unsafe_doc_path:-}" "${broken_docs:-}"' RETURN
+	multiline_blocks=""
+	trap 'rm -rf "${scratch:-}" "${escape:-}" "${tabbed:-}" "${rootdoc:-}" "${outside:-}" "${ambiguous:-}" "${callresult:-}" "${nested:-}" "${coverage:-}" "${invalidfence:-}" "${container:-}" "${rootrelative:-}" "${ignoredgo:-}" "${escapedbacktick:-}" "${controlchars:-}" "${unsafe_doc_path:-}" "${broken_docs:-}" "${multiline_blocks:-}"' RETURN
 	scratch="$(mktemp -d)"
 	mkdir -p "$scratch/docs"
 	printf 'A citation of `SomethingDeclared`.\n' >"$scratch/docs/doc.md"
@@ -839,6 +840,22 @@ EOF
 		echo "  ok   explicit-root-relative-path"
 	else
 		echo "::error::citations weakened an explicit root-relative path:" >&2
+		printf '%s\n' "${rows:-$?}" >&2
+		failed=1
+	fi
+
+	multiline_blocks="$(mktemp -d)"
+	mkdir -p "$multiline_blocks/docs"
+	: >"$multiline_blocks/AGENTS.md"
+	: >"$multiline_blocks/CLAUDE.md"
+	: >"$multiline_blocks/README.md"
+	printf 'package x\n\nfunc ListCitation() {}\nfunc IndependentCitation() {}\n' >"$multiline_blocks/good.go"
+	printf '%s\n' '- A multiline citation starts `ListCitation(' '  )`' 'A `StaleEquals' '=' 'and closes `StaleEqualsAgain' '==' 'and closes `StaleDash' '-' 'and closes `StaleDashAgain' '--' 'and closes here.' 'A valid citation is `IndependentCitation`.' >"$multiline_blocks/docs/doc.md"
+	: >"$multiline_blocks/waiver"
+	if rows="$(cd "$TOOL" && go run . "$multiline_blocks" 2>&1)" && printf '%s\n' "$rows" | grep -Fq $'resolved\tdocs/doc.md\tsymbol\tListCitation( )' && printf '%s\n' "$rows" | grep -Fq $'resolved\tdocs/doc.md\tsymbol\tIndependentCitation' && ! printf '%s\n' "$rows" | grep -Eq 'StaleEquals|StaleDash'; then
+		echo "  ok   multiline-list-and-setext-boundary"
+	else
+		echo "::error::citations lost a list continuation or crossed a setext boundary:" >&2
 		printf '%s\n' "${rows:-$?}" >&2
 		failed=1
 	fi
