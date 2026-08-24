@@ -1,0 +1,2 @@
+::error::.github/testdata/uncovered-guards/overflow-statement/profiles/default.out:2: statement count is outside Go int range: 9223372036854775808
+exit 1

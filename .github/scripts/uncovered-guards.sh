@@ -118,8 +118,12 @@ sites() {
 # validated against the source body and keeps the merged representation faithful
 # to the profile.
 merge() {
-	local module lane path missing=""
+	local module lane path missing="" max_int
 	module="$(awk '/^module / { print $2; exit }' "$ROOT/go.mod")"
+	case "$(go env GOARCH)" in
+		386|arm|mips|mipsle|wasm) max_int=2147483647 ;;
+		*) max_int=9223372036854775807 ;;
+	esac
 	[ -n "$module" ] || die "could not read the module path from go.mod"
 	[ -d "$PROFILES" ] || die "missing coverage directory ${PROFILES#"$ROOT"/} -- the lane profiles have to be downloaded before this runs"
 
@@ -146,8 +150,26 @@ merge() {
 	# with absolute fixture paths and pins the output, so an absolute FILENAME
 	# would put this checkout in a committed file.
 	# shellcheck disable=SC2046 # word splitting is the point: one path per lane
-	awk -F' ' -v prefix="$module/" -v root="$ROOT/" '
+	awk -F' ' -v prefix="$module/" -v root="$ROOT/" -v maxInt="$max_int" '
 		function short(p) { return index(p, root) == 1 ? substr(p, length(root) + 1) : p }
+		function decimal(value) {
+			sub(/^0+/, "", value)
+			return value == "" ? "0" : value
+		}
+		function fitsInt(value, normalized) {
+			normalized = decimal(value)
+			return length(normalized) < length(maxInt) ||
+				(length(normalized) == length(maxInt) && ("x" normalized) <= ("x" maxInt))
+		}
+		function requireInt(value, label, normalized) {
+			normalized = decimal(value)
+			if (!fitsInt(normalized)) {
+				printf "::error::%s:%d: %s is outside Go int range: %s\n", short(FILENAME), FNR, label, value > "/dev/stderr"
+				bad = 1
+				return ""
+			}
+			return normalized
+		}
 		function position(spec, which,   parts) {
 			if (split(spec, parts, /,/) != 2) return ""
 			return parts[which]
@@ -163,10 +185,6 @@ merge() {
 		function before(left, right) {
 			return pointLine(left) < pointLine(right) ||
 				(pointLine(left) == pointLine(right) && pointColumn(left) < pointColumn(right))
-		}
-		function decimal(value) {
-			sub(/^0+/, "", value)
-			return value == "" ? "0" : value
 		}
 		function greaterDecimal(left, right) {
 			left = decimal(left)
@@ -214,16 +232,25 @@ merge() {
 				next
 			}
 			match(key, /:[0-9]+\.[0-9]+$/)
-			file = substr(key, 1, RSTART - 1)
 			start = substr(key, RSTART + 1)
+			startLine = substr(start, 1, index(start, ".") - 1)
+			startCol = substr(start, index(start, ".") + 1)
+			endLine = substr(end, 1, index(end, ".") - 1)
+			endCol = substr(end, index(end, ".") + 1)
+			if (requireInt(startLine, "coverage block start line") == "" ||
+				requireInt(startCol, "coverage block start column") == "" ||
+				requireInt(endLine, "coverage block end line") == "" ||
+				requireInt(endCol, "coverage block end column") == "") next
+			file = substr(key, 1, RSTART - 1)
 			if (!before(start, end)) {
 				printf "::error::%s:%d: non-positive coverage block range: %s\n", short(FILENAME), FNR, $1 > "/dev/stderr"
 				bad = 1
 				next
 			}
 			block = file ":" start "-" end
-			statement = decimal($2)
-			count = decimal($3)
+			statement = requireInt($2, "statement count")
+			count = requireInt($3, "execution count")
+			if (statement == "" || count == "") next
 			if (!(block in statements)) statements[block] = statement
 			else if (("x" statements[block]) != ("x" statement)) {
 				printf "::error::conflicting statement counts for coverage block %s: %s versus %s\n", block, statements[block], statement > "/dev/stderr"
@@ -577,6 +604,8 @@ generate() {
 #   bad-nth                delete the numeric check on nth
 #   malformed-end          accept a profile block with a malformed end coordinate
 #   malformed-count        accept a profile block with malformed count text
+#   overflow-statement     accept a profile block with an overflowing statement count
+#   overflow-execution     accept a profile block with an overflowing execution count
 #   inverted-end            accept a profile block whose end precedes its start
 #   zero-width-endpoint     accept a profile block whose endpoints are equal
 #   incompatible-end        accept a profile block whose end exceeds the refusal body
