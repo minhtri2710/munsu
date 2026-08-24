@@ -107,16 +107,16 @@ sites() {
 		die "guardsites could not derive the refusal set, so this lane cannot judge coverage"
 }
 
-# One line per coverage block, `path:start-end<TAB>count`, carrying the
-# largest count any lane recorded for it. The profile is the source of truth for
-# the block's start: Go toolchains may place it at the `if` body's opening brace
-# or at its first statement. A site therefore supplies its body range and the
-# supported entry coordinates; classify() accepts only a unique entry block.
+# One line per coverage block, `path:start-end<TAB>statements<TAB>count`, carrying
+# the largest count any lane recorded for it. The profile is the source of truth
+# for the block's start: Go toolchains may place it at the `if` body's opening
+# brace or at its first statement. A site therefore supplies its body range and
+# the supported entry coordinates; classify() accepts only a unique entry block.
 #
-# The complete range is retained so a malformed or ambiguous profile cannot be
-# mistaken for a match. The start selects the entry coordinate; the end is
-# validated against the source body and keeps the merged representation faithful
-# to the profile.
+# The complete range and statement count are retained so a malformed or
+# ambiguous profile cannot be mistaken for a match. The start selects the entry
+# coordinate; the end is validated against the source body and keeps the merged
+# representation faithful to the profile.
 merge() {
 	local module lane path missing="" max_int
 	module="$(awk '/^module / { print $2; exit }' "$ROOT/go.mod")"
@@ -252,6 +252,11 @@ merge() {
 			statement = requireInt($2, "statement count")
 			count = requireInt($3, "execution count")
 			if (statement == "" || count == "") next
+			if (mode == "set" && count != "0" && count != "1") {
+				printf "::error::%s:%d: mode set execution count must be 0 or 1: %s\n", short(FILENAME), FNR, $3 > "/dev/stderr"
+				bad = 1
+				next
+			}
 			if (!before(start, end) && start != end) {
 				printf "::error::%s:%d: non-positive coverage block range: %s\n", short(FILENAME), FNR, $1 > "/dev/stderr"
 				bad = 1
@@ -273,7 +278,7 @@ merge() {
 		}
 		END {
 			if (bad) exit 1
-			for (block in max) printf "%s\t%s\n", block, max[block]
+			for (block in max) printf "%s\t%s\t%s\n", block, statements[block], max[block]
 		}
 	' $(for lane in $(lane_files); do printf '%s ' "$PROFILES/$lane"; done) | sort
 }
@@ -335,8 +340,11 @@ classify() {
 		NR == FNR {
 			file = $1
 			sub(/:[0-9]+\.[0-9]+-.*/, "", file)
-			compiled[file] = 1
-			blocks[file] = blocks[file] $0 "\n"
+			split($0, mergedFields, /\t/)
+			if (mergedFields[2] != "0") {
+				compiled[file] = 1
+				blocks[file] = blocks[file] $0 "\n"
+			}
 			next
 		}
 		{
@@ -383,7 +391,7 @@ classify() {
 			if (incompatible) print "anomaly\t" id
 			else if (matches == 1) {
 				split(bestLine, fields, /\t/)
-				print (("x" fields[2]) != "x0" ? "covered" : "uncovered") "\t" id
+				print (("x" fields[3]) != "x0" ? "covered" : "uncovered") "\t" id
 			} else if (!(file in compiled)) print "unmeasured\t" id
 			else print "anomaly\t" id
 		}
@@ -628,6 +636,8 @@ generate() {
 #   zero-width-endpoint     accept a zero-width profile block that claims statements
 #   zero-width-marker-only  retain a zero-statement marker as compilation evidence
 #                           and fail with an anomaly rather than calling the file unmeasured
+#   zero-statement-block    let a positive-count zero-statement block cover a guard
+#   invalid-set-count       accept an execution count other than 0 or 1 in set mode
 #   incompatible-end        accept a profile block whose end exceeds the refusal body
 #   short-row              delete the NF < 4 check
 #   duplicate-row          delete the `key in seen` check
