@@ -422,8 +422,36 @@ jobs:
       # one, which is a PR not being allowed to merge the change that broke it.
       - name: Flake sweep rules must agree with their fixtures
         run: .github/scripts/flake-sweep.sh selftest
+      # The fourth of these, and the one where the argument is sharpest, because
+      # what it pins is a classifier rather than a file format. Loosening a
+      # classifier rule does not fail: it just stops seeing a shape, silently,
+      # with every lane green -- which is the same defect as the citation lane
+      # not existing at all, one level up. Its own prototype is the evidence: a
+      # `^func`/`^type` grep over docs/workflow-topology-matrix.md reported four
+      # unresolved identifiers of which two were real, and both false positives
+      # were ordinary declaration forms the grep cannot see (a struct field and
+      # a const). The harness discovers every citation fixture directory and
+      # checks each one against its expected behavior.
+      # One further check has no fixture because an unparseable .go file would
+      # turn this job's gofmt step red instead. Hermetic and ~15s.
+      - name: Citation rules must agree with their fixtures
+        run: .github/scripts/citations.sh selftest
       - name: Flake ledger deadlines must not have passed
         run: .github/scripts/flake-ledger.sh check
+      # munsu's documents cite the code as their primary evidence, and this step
+      # checks the classified paths and symbols in the covered set against the
+      # tree. It compares both ways against .github/citations.allow, so a
+      # citation that resolves again cannot leave its waiver behind. The set of
+      # covered documents and citations is derived from the tree, except
+      # docs/plans/, which is excluded as a dated document class; docFiles in
+      # .github/scripts/citations/main.go owns that boundary.
+      #
+      # Text only, no network: the stdlib-only Go program parses the tree with
+      # go/parser. It ignores line numbers and reports classified-but-unjudged
+      # shapes as `unchecked`; extractor and classifier boundaries are owned by
+      # .github/scripts/citations/main.go.
+      - name: Documentation citations must resolve
+        run: .github/scripts/citations.sh check
       - name: Personal fleet paths must not be tracked
         run: |
           set -eu

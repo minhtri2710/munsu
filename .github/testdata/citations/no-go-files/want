@@ -1,0 +1,4 @@
+::error::citations could not scan the tree, so it cannot judge any citation: no .go files found under <fixture> -- an empty index would report every symbol citation as fabricated
+exit status 1
+::error::citations could not scan <fixture>, so it cannot judge any citation
+exit 1

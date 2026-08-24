@@ -1,0 +1,288 @@
+# Every documentation citation that does not resolve, and why it is allowed to stay.
+#
+# `.github/scripts/citations.sh check` derives the citation set from the tree
+# (`.github/scripts/citations`) and compares it against this file in both
+# directions: unresolved in the tree but missing here is red, and listed here
+# while the citation resolves again -- or while no document makes it any more --
+# is red too. So a fabricated symbol cannot land quietly, and a line here cannot
+# outlive the citation it waives.
+#
+# Nothing declares which documents are covered or which backticked words are
+# citations. Both come out of the tree, and this file lists only the waivers, so
+# a new document joins the lane by existing. A register OF citations would fail
+# open at exactly the moment it has to fail closed.
+#
+# docs/plans/ is NOT covered, and that is a decision about the document class
+# rather than about the size of this file. A plan is dated: its citations were
+# true on the day it was written, nobody maintains it afterwards, and the
+# correct state of a June plan citing a since-renamed symbol is unchanged. A
+# ratchet over documents that are never supposed to change is a ratchet that
+# cannot reach zero. The reasoning is at docFiles in
+# .github/scripts/citations/main.go. ADRs stay covered: CLAUDE.md cites 0017 as
+# governing rules soldiers work under today, so a stale citation in one is a
+# real defect.
+#
+# This is a ratchet. It is only supposed to get shorter. The reason column is
+# self-declared, so a waiver nobody would accept keeps this green -- reading the
+# diff is what catches that, not the script.
+#
+# What a reason owes is governed by ADR-0017 §4 (premise, invalidation condition,
+# pinning test). This register splits into two classes:
+#
+#   - 81 rows are argued individually with a premise (a) and an invalidation
+#     condition (b). For part (c), where the premise is that the cited symbol or
+#     file is gone or belongs to another tree/runtime layout, this lane's
+#     two-way comparison serves the pinning function (reintroducing the symbol
+#     or file resolves the citation and causes the `removed` check to fail).
+#     Where the premise is about what a document says, it is unpinned, sharing
+#     the same stated limit as .github/deadcode.allow.
+#   - 134 rows are pre-existing unresolved citations in docs/adr/ imported
+#     untriaged at the lane's launch with the `burn-down(#624)` marker so the
+#     lane could land fail-closed, following the precedent of
+#     .github/uncovered-guards.baseline (burn-down(BEO-69)). These are tracked
+#     for burn-down in issue #624.
+#
+# Columns are tab-separated: document <TAB> kind <TAB> citation <TAB> reason
+#
+# No line numbers, in the key or in the citation: `internal/x/y.go:41` is keyed
+# and checked as `internal/x/y.go`. Run `.github/scripts/citations.sh list` for
+# the current keys, and `.github/scripts/citations.sh unchecked` for the
+# citations no rule here judges at all -- those take no line in this file, and
+# `check` prints their count on every run so this file is not mistaken for a
+# complete account of what the documents claim.
+#
+# A reason starting with OPEN-BUG marks a citation known to be wrong rather than
+# accepted debt; `check` reprints every one as a warning on every run (ADR-0017
+# §5). There are none today.
+
+# --- Documents whose citation is deliberate: the absence is the claim ----------
+# These do not resolve and are not defects. Each names something the document itself says is gone,
+# belongs to another tree or to a munsu home rather than to this repo, or is not a Go declaration at
+# all. They are the shape of citation this lane cannot distinguish from a stale one, and each line
+# says why a reader should not go looking. 81 lines.
+AGENTS.md	path	data/captains.md	a path inside a munsu HOME directory, not a file in this repository: it is the runtime layout `munsu init` creates. Wrong if the repo ever ships a file at that path.
+docs/adr/0001-four-core-domain-boundaries.md	path	captain_parity_test.go	the decision recorded on line 36 is `Remove legacy parity tests (captain_parity_test.go)` -- naming the file it deletes is the point of the line. Wrong if a file by that name is reintroduced.
+docs/adr/0003-config-deepening-typed-documents-and-project-overlay.md	path	config/base.json	a path inside a munsu HOME directory, not a file in this repository: it is the runtime layout `munsu init` creates. Wrong if the repo ever ships a file at that path.
+docs/adr/0003-config-deepening-typed-documents-and-project-overlay.md	path	data/captains.json	a path inside a munsu HOME directory, not a file in this repository: it is the runtime layout `munsu init` creates. Wrong if the repo ever ships a file at that path.
+docs/adr/0003-config-deepening-typed-documents-and-project-overlay.md	path	data/captains.md	a path inside a munsu HOME directory, not a file in this repository: it is the runtime layout `munsu init` creates. Wrong if the repo ever ships a file at that path.
+docs/adr/0003-config-deepening-typed-documents-and-project-overlay.md	path	data/general-shared.md	a path inside a munsu HOME directory, not a file in this repository: it is the runtime layout `munsu init` creates. Wrong if the repo ever ships a file at that path.
+docs/adr/0003-config-deepening-typed-documents-and-project-overlay.md	path	data/projects.json	a path inside a munsu HOME directory, not a file in this repository: it is the runtime layout `munsu init` creates. Wrong if the repo ever ships a file at that path.
+docs/adr/0003-config-deepening-typed-documents-and-project-overlay.md	path	data/projects.md	a path inside a munsu HOME directory, not a file in this repository: it is the runtime layout `munsu init` creates. Wrong if the repo ever ships a file at that path.
+docs/adr/0003-config-deepening-typed-documents-and-project-overlay.md	path	soldier-dispatch.json	a path inside a munsu HOME directory, not a file in this repository: it is the runtime layout `munsu init` creates. Wrong if the repo ever ships a file at that path.
+docs/adr/0003-config-deepening-typed-documents-and-project-overlay.md	symbol	captainProfile	a JSON field name (a stored snapshot document / the GitHub API's PR fields), not a Go declaration. Wrong if it is ever declared as one.
+docs/adr/0003-config-deepening-typed-documents-and-project-overlay.md	symbol	defaultMode	a JSON field name (a stored snapshot document / the GitHub API's PR fields), not a Go declaration. Wrong if it is ever declared as one.
+docs/adr/0003-config-deepening-typed-documents-and-project-overlay.md	symbol	schemaVersion	a JSON field name (a stored snapshot document / the GitHub API's PR fields), not a Go declaration. Wrong if a Go type ever declares this field by this name and the citation starts meaning it.
+docs/adr/0004-authoritative-task-lifecycle-delivery-and-projections.md	path	munsu-workflow-incident-report-2026-07-30.md	the incident report that triggered the ADR; it was never committed to this repo. Wrong if it is ever added.
+docs/adr/0005-runtime-bindings-supervision-recovery-and-mutation-fencing.md	path	.soldier-brief.md	a path inside a munsu HOME directory, not a file in this repository: it is the runtime layout `munsu init` creates. Wrong if the repo ever ships a file at that path.
+docs/adr/0005-runtime-bindings-supervision-recovery-and-mutation-fencing.md	path	munsu-workflow-incident-report-2026-07-30.md	the incident report that triggered the ADR; it was never committed to this repo. Wrong if it is ever added.
+docs/adr/0008-owner-clean-architecture-and-pre-public-v1-reset.md	path	backlog.md	a path inside a munsu HOME directory, not a file in this repository: it is the runtime layout `munsu init` creates. Wrong if the repo ever ships a file at that path.
+docs/adr/0009-checkout-identity-single-owner.md	symbol	EvalSymlinks	a rule limit, not a stale citation: this is `filepath.EvalSymlinks` cited without its qualifier, and the qualifier test is the only thing that keeps stdlib names out. Wrong once an unqualified foreign symbol can be told from a local one.
+docs/adr/0010-delivery-head-invariant-two-owners.md	path	backlog.md	a path inside a munsu HOME directory, not a file in this repository: it is the runtime layout `munsu init` creates. Wrong if the repo ever ships a file at that path.
+docs/adr/0012-quiescence-before-destruction-has-one-owner.md	path	endpoint_fence.go	names a file of `the dead one` -- the superseded cluster this ADR removes (line 22). Wrong if a file by that name is reintroduced.
+docs/adr/0012-quiescence-before-destruction-has-one-owner.md	path	endpoint_fence_test.go	names a file of `the dead one` -- the superseded cluster this ADR removes (line 22). Wrong if a file by that name is reintroduced.
+docs/adr/0013-afk-is-diagnosis-and-manual-action.md	path	afk_24_test.go	cited only at line 16, past-tense, describing the state before this ADR: the file was deleted by the ADR's own implementation commit e0449f6e (#501). Wrong if a file by that name is reintroduced.
+docs/adr/0013-afk-is-diagnosis-and-manual-action.md	path	afk_circuit.go	line 43 says this file is gone; the ADR is the record of removing it. Wrong if a file by that name is reintroduced.
+docs/adr/0013-afk-is-diagnosis-and-manual-action.md	symbol	Digester.SetTargetSafety	line 43 says this is gone; the ADR is the record of removing it. Wrong if it is reintroduced.
+docs/adr/0014-shell-write-targets-and-the-scope-of-refusal.md	symbol	checkPath	a rule limit, not a stale citation: `checkPath` is live in the tree as a parameter of evaluateGitMutationSafety at internal/cli/git_worktree_safety.go:26. The declaration index holds package-level declarations, struct fields and interface methods, not locals or parameters. Wrong once the index reads function bodies.
+docs/adr/0014-shell-write-targets-and-the-scope-of-refusal.md	symbol	commonDir	a rule limit, not a stale citation: `commonDir` is live in the tree as a parameter of IsBoundRepository at internal/bootstrap/integration_boundrepo.go:29. The declaration index holds package-level declarations, struct fields and interface methods, not locals or parameters. Wrong once the index reads function bodies.
+docs/adr/0015-the-soldier-closes-its-own-terminal-handoff.md	symbol	isCaptainHome	a rule limit, not a stale citation: `isCaptainHome` is live in the tree as a local at internal/orchestrator/supervision_watcher.go:283. The declaration index holds package-level declarations, struct fields and interface methods, not locals or parameters. Wrong once the index reads function bodies.
+docs/adr/0017-guard-burn-down-working-rules-and-their-enforcement-addresses.md	path	adr/NNNN-slug.md	a path FORM, not a path: line 52 cites it as the naming convention an ADR reference takes. Wrong if `NNNN` ever names a real file.
+docs/agents/domain.md	path	CONTEXT-MAP.md	the citing sentence is conditional -- `at the repo root if it exists` -- so its absence is the case the line describes. Wrong if munsu becomes a multi-context repo.
+docs/agents/issue-tracker.md	symbol	authorAssociation	a JSON field name (a stored snapshot document / the GitHub API's PR fields), not a Go declaration. Wrong if a Go type ever declares this field by this name and the citation starts meaning it.
+docs/architecture.md	path	config/soldier-dispatch.json	a path inside a munsu HOME directory, not a file in this repository: it is the runtime layout `munsu init` creates. Wrong if the repo ever ships a file at that path.
+docs/architecture.md	path	data/captains.md	a path inside a munsu HOME directory, not a file in this repository: it is the runtime layout `munsu init` creates. Wrong if the repo ever ships a file at that path.
+docs/architecture.md	path	internal/fleet.ReadWithProbe	a package-path-qualified symbol, not a path: `ReadWithProbe` is declared at internal/fleet/soldierstate_soldierstate.go and the citation reads as a path only because its first segment is a root entry. Wrong the moment internal/fleet stops declaring it.
+docs/architecture.md	symbol	Backend.Alive	the sentence citing it says the API was removed -- naming the removed symbol is the point of the line. Wrong if the API is reintroduced.
+docs/architecture.md	symbol	backend.Capabilities	the sentence citing it says the descriptor table was removed -- naming the removed symbol is the point of the line. Wrong if the API is reintroduced.
+docs/architecture.md	symbol	CapabilityMatrix	the sentence citing it says it was removed -- naming the removed symbol is the point of the line. Wrong if the line is ever rewritten to claim the descriptor table exists.
+docs/firstmate-skill-audit.md	path	.agents/skills/afk	not a path in this repository: this document audits an external firstmate checkout and names its source at the top (`firstmate-8bf1b0/2/firstmate/`), so its Source Locator Map resolves there. Wrong the moment the document cites a munsu path without saying which tree it means.
+docs/firstmate-skill-audit.md	path	.agents/skills/decision-hold-lifecycle	not a path in this repository: this document audits an external firstmate checkout and names its source at the top (`firstmate-8bf1b0/2/firstmate/`), so its Source Locator Map resolves there. Wrong the moment the document cites a munsu path without saying which tree it means.
+docs/firstmate-skill-audit.md	path	.agents/skills/project-management	not a path in this repository: this document audits an external firstmate checkout and names its source at the top (`firstmate-8bf1b0/2/firstmate/`), so its Source Locator Map resolves there. Wrong the moment the document cites a munsu path without saying which tree it means.
+docs/firstmate-skill-audit.md	path	.agents/skills/secondmate-provisioning	not a path in this repository: this document audits an external firstmate checkout and names its source at the top (`firstmate-8bf1b0/2/firstmate/`), so its Source Locator Map resolves there. Wrong the moment the document cites a munsu path without saying which tree it means.
+docs/firstmate-skill-audit.md	path	.agents/skills/secondmate-provisioning/SKILL.md	not a path in this repository: this document audits an external firstmate checkout and names its source at the top (`firstmate-8bf1b0/2/firstmate/`), so its Source Locator Map resolves there. Wrong the moment the document cites a munsu path without saying which tree it means.
+docs/firstmate-skill-audit.md	path	.agents/skills/stuck-crewmate-recovery	not a path in this repository: this document audits an external firstmate checkout and names its source at the top (`firstmate-8bf1b0/2/firstmate/`), so its Source Locator Map resolves there. Wrong the moment the document cites a munsu path without saying which tree it means.
+docs/firstmate-skill-audit.md	path	.agents/skills/stuck-crewmate-recovery/SKILL.md	not a path in this repository: this document audits an external firstmate checkout and names its source at the top (`firstmate-8bf1b0/2/firstmate/`), so its Source Locator Map resolves there. Wrong the moment the document cites a munsu path without saying which tree it means.
+docs/firstmate-skill-audit.md	path	.agents/skills/updatefirstmate	not a path in this repository: this document audits an external firstmate checkout and names its source at the top (`firstmate-8bf1b0/2/firstmate/`), so its Source Locator Map resolves there. Wrong the moment the document cites a munsu path without saying which tree it means.
+docs/firstmate-skill-audit.md	path	bin/fm-brief.sh	not a path in this repository: this document audits an external firstmate checkout and names its source at the top. Wrong if munsu ever vendors that tree.
+docs/firstmate-skill-audit.md	path	bin/fm-delivery-preflight.sh	not a path in this repository: this document audits an external firstmate checkout and names its source at the top. Wrong if munsu ever vendors that tree.
+docs/firstmate-skill-audit.md	path	bin/fm-fleet-sync.sh	not a path in this repository: this document audits an external firstmate checkout and names its source at the top. Wrong if munsu ever vendors that tree.
+docs/firstmate-skill-audit.md	path	bin/fm-recover.sh	not a path in this repository: this document audits an external firstmate checkout and names its source at the top. Wrong if munsu ever vendors that tree.
+docs/firstmate-skill-audit.md	path	bin/fm-spawn.sh	not a path in this repository: this document audits an external firstmate checkout and names its source at the top. Wrong if munsu ever vendors that tree.
+docs/firstmate-skill-audit.md	path	bin/fm-teardown.sh	not a path in this repository: this document audits an external firstmate checkout and names its source at the top. Wrong if munsu ever vendors that tree.
+docs/firstmate-skill-audit.md	path	bin/fm-watch-ensure.sh	not a path in this repository: this document audits an external firstmate checkout and names its source at the top. Wrong if munsu ever vendors that tree.
+docs/firstmate-skill-audit.md	path	config/crew-dispatch.json	not a path in this repository: this document audits an external firstmate checkout and names its source at the top. Wrong if munsu ever vendors that tree.
+docs/firstmate-skill-audit.md	path	data/example-scout/brief.md	not a path in this repository: this document audits an external firstmate checkout and names its source at the top. Wrong if munsu ever vendors that tree.
+docs/firstmate-skill-audit.md	path	data/example-ship/brief.md	not a path in this repository: this document audits an external firstmate checkout and names its source at the top. Wrong if munsu ever vendors that tree.
+docs/firstmate-skill-audit.md	path	internal/backlog	not a path in this repository: this document audits an external firstmate checkout and names its source at the top (`firstmate-8bf1b0/2/firstmate/`), so its Source Locator Map resolves there. Wrong the moment the document cites a munsu path without saying which tree it means.
+docs/firstmate-skill-audit.md	path	internal/brief/brief.go	not a path in this repository: this document audits an external firstmate checkout and names its source at the top (`firstmate-8bf1b0/2/firstmate/`), so its Source Locator Map resolves there. Wrong the moment the document cites a munsu path without saying which tree it means.
+docs/firstmate-skill-audit.md	path	internal/captain	not a path in this repository: this document audits an external firstmate checkout and names its source at the top (`firstmate-8bf1b0/2/firstmate/`), so its Source Locator Map resolves there. Wrong the moment the document cites a munsu path without saying which tree it means.
+docs/firstmate-skill-audit.md	path	internal/captain/captain.go	not a path in this repository: this document audits an external firstmate checkout and names its source at the top (`firstmate-8bf1b0/2/firstmate/`), so its Source Locator Map resolves there. Wrong the moment the document cites a munsu path without saying which tree it means.
+docs/firstmate-skill-audit.md	path	internal/delivery/preflight.go	not a path in this repository: this document audits an external firstmate checkout and names its source at the top (`firstmate-8bf1b0/2/firstmate/`), so its Source Locator Map resolves there. Wrong the moment the document cites a munsu path without saying which tree it means.
+docs/firstmate-skill-audit.md	path	internal/project	not a path in this repository: this document audits an external firstmate checkout and names its source at the top (`firstmate-8bf1b0/2/firstmate/`), so its Source Locator Map resolves there. Wrong the moment the document cites a munsu path without saying which tree it means.
+docs/firstmate-skill-audit.md	path	internal/spawn/spawn.go	not a path in this repository: this document audits an external firstmate checkout and names its source at the top (`firstmate-8bf1b0/2/firstmate/`), so its Source Locator Map resolves there. Wrong the moment the document cites a munsu path without saying which tree it means.
+docs/firstmate-skill-audit.md	path	internal/supervision	not a path in this repository: this document audits an external firstmate checkout and names its source at the top (`firstmate-8bf1b0/2/firstmate/`), so its Source Locator Map resolves there. Wrong the moment the document cites a munsu path without saying which tree it means.
+docs/firstmate-skill-audit.md	path	internal/task	not a path in this repository: this document audits an external firstmate checkout and names its source at the top (`firstmate-8bf1b0/2/firstmate/`), so its Source Locator Map resolves there. Wrong the moment the document cites a munsu path without saying which tree it means.
+docs/firstmate-skill-audit.md	path	soldier-dispatch.json	a path inside a munsu HOME directory, not a file in this repository: line 76 contrasts firstmate's `config/crew-dispatch.json` with the munsu file of that name. Wrong if the repo ever ships a file at that path.
+docs/orchestration-contract.md	path	internal/contract	the same paragraph states there is no package literally named `internal/contract` -- the absence is the claim. Wrong if a package by that name is ever created.
+docs/orchestration-contract.md	path	internal/integrate	names a package docs/orchestration-contract.md line 15 lists as absorbed into the packages that replaced it -- the absence is what the sentence asserts. Wrong the moment that sentence stops saying so.
+docs/orchestration-contract.md	path	internal/session	names a package docs/orchestration-contract.md line 15 lists as absorbed into the packages that replaced it -- the absence is what the sentence asserts. Wrong the moment that sentence stops saying so.
+docs/orchestration-contract.md	path	internal/soldierstate	names a package docs/orchestration-contract.md line 15 lists as absorbed into the packages that replaced it -- the absence is what the sentence asserts. Wrong the moment that sentence stops saying so.
+docs/orchestration-contract.md	path	internal/spawn	names a package docs/orchestration-contract.md line 15 lists as absorbed into the packages that replaced it -- the absence is what the sentence asserts. Wrong the moment that sentence stops saying so.
+docs/orchestration-contract.md	path	internal/supervision	names a package docs/orchestration-contract.md line 15 lists as absorbed into the packages that replaced it -- the absence is what the sentence asserts. Wrong the moment that sentence stops saying so.
+docs/orchestration-contract.md	path	internal/task	names a package docs/orchestration-contract.md line 15 lists as absorbed into the packages that replaced it -- the absence is what the sentence asserts. Wrong the moment that sentence stops saying so.
+docs/orchestration-contract.md	path	internal/waker	names a package docs/orchestration-contract.md line 15 lists as absorbed into the packages that replaced it -- the absence is what the sentence asserts. Wrong the moment that sentence stops saying so.
+docs/orchestration-contract.md	symbol	backend.capabilities	a contract response `kind` (`schema_version`/`kind` envelope), not a Go declaration. It reads as a qualified symbol only because its first element collides with a package name. Wrong if the response kinds stop being written in dotted form.
+docs/orchestration-contract.md	symbol	fleet.snapshot	a contract response `kind` (`schema_version`/`kind` envelope), not a Go declaration. It reads as a qualified symbol only because its first element collides with a package name. Wrong if the response kinds stop being written in dotted form.
+docs/port-mapping.md	path	.agents/hooks.json	the hook file of an agy checkout being integrated, not a file in this repo -- it is cited beside `~/.gemini/config/hooks.json` in the same list. Wrong if munsu ever ships one of its own.
+docs/port-mapping.md	path	config/soldier-dispatch.json	a path inside a munsu HOME directory, not a file in this repository: it is the runtime layout `munsu init` creates. Wrong if the repo ever ships a file at that path.
+docs/port-mapping.md	symbol	Backend.Alive	the sentence citing it says the API was removed -- naming the removed symbol is the point of the line. Wrong if the API is reintroduced.
+docs/self-hosting.md	path	.check.sh	a LEGACY state-file suffix munsu no longer writes: lines 294-300 say the canonical name is `.check` and that this one survives only in old homes. Wrong if munsu writes that suffix again.
+docs/self-hosting.md	path	config/soldier-dispatch.json	a path inside a munsu HOME directory, not a file in this repository: it is the runtime layout `munsu init` creates. Wrong if the repo ever ships a file at that path.
+docs/workflow-topology-matrix.md	path	.captain-charter.md	a path inside a munsu HOME directory, not a file in this repository: it is the runtime layout `munsu init` creates. Wrong if the repo ever ships a file at that path.
+docs/workflow-topology-matrix.md	path	config/resolved-project.json	a path inside a munsu HOME directory, not a file in this repository: it is the runtime layout `munsu init` creates. Wrong if the repo ever ships a file at that path.
+docs/workflow-topology-matrix.md	symbol	schemaVersion	a JSON field name (a stored snapshot document / the GitHub API's PR fields), not a Go declaration. Wrong if a Go type ever declares this field by this name and the citation starts meaning it.
+
+# --- Imported backlog: the burn-down -------------------------------------------
+# Every citation that did not resolve when this lane was first run, kept so the lane could go green
+# on the day it landed -- the same import .github/uncovered-guards.baseline made for 283 refusal
+# sites. It is 134 lines and it is only allowed to get shorter.
+#
+# The shape of it, so nobody mistakes the number for a triage: all 134 are in docs/adr/, mostly
+# pre-reset vocabulary in decision records ADR-0008 superseded. Not one has been read individually.
+# Correcting an accepted ADR's citation may well be the wrong move -- a decision record is a record
+# -- in which case the right end state for that row is a line in the section above with a real
+# reason, not a correction and not this marker.
+docs/adr/0002-deep-module-clean-break-and-durable-lifecycle.md	symbol	AbandonCaptain	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0002-deep-module-clean-break-and-durable-lifecycle.md	symbol	AbandonTask	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0002-deep-module-clean-break-and-durable-lifecycle.md	symbol	AcceptActivation	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0002-deep-module-clean-break-and-durable-lifecycle.md	symbol	ActivateCaptain	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0002-deep-module-clean-break-and-durable-lifecycle.md	symbol	AdvanceStartTask	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0002-deep-module-clean-break-and-durable-lifecycle.md	symbol	AlreadyAcked	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0002-deep-module-clean-break-and-durable-lifecycle.md	symbol	CompleteCaptainActivation	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0002-deep-module-clean-break-and-durable-lifecycle.md	symbol	CompleteCaptainProvisioning	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0002-deep-module-clean-break-and-durable-lifecycle.md	symbol	CompleteCaptainRecovery	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0002-deep-module-clean-break-and-durable-lifecycle.md	symbol	CompleteCaptainRetirement	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0002-deep-module-clean-break-and-durable-lifecycle.md	symbol	CompleteRetirement	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0002-deep-module-clean-break-and-durable-lifecycle.md	symbol	CompleteTaskRecovery	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0002-deep-module-clean-break-and-durable-lifecycle.md	symbol	CorruptState	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0002-deep-module-clean-break-and-durable-lifecycle.md	symbol	EscalateCaptain	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0002-deep-module-clean-break-and-durable-lifecycle.md	symbol	EscalateCaptainRetirement	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0002-deep-module-clean-break-and-durable-lifecycle.md	symbol	EscalateRetirement	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0002-deep-module-clean-break-and-durable-lifecycle.md	symbol	EscalateTask	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0002-deep-module-clean-break-and-durable-lifecycle.md	symbol	HoldDecision	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0002-deep-module-clean-break-and-durable-lifecycle.md	symbol	HoldTask	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0002-deep-module-clean-break-and-durable-lifecycle.md	symbol	IsFallback	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0002-deep-module-clean-break-and-durable-lifecycle.md	symbol	NeedsOperator	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0002-deep-module-clean-break-and-durable-lifecycle.md	symbol	OpenDecision	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0002-deep-module-clean-break-and-durable-lifecycle.md	symbol	PlanTask	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0002-deep-module-clean-break-and-durable-lifecycle.md	symbol	PrepareDelivery	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0002-deep-module-clean-break-and-durable-lifecycle.md	symbol	ProvisionCaptain	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0002-deep-module-clean-break-and-durable-lifecycle.md	symbol	RecoverCaptain	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0002-deep-module-clean-break-and-durable-lifecycle.md	symbol	RecoverTask	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0002-deep-module-clean-break-and-durable-lifecycle.md	symbol	ReleaseDecisionHold	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0002-deep-module-clean-break-and-durable-lifecycle.md	symbol	ReopenCaptain	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0002-deep-module-clean-break-and-durable-lifecycle.md	symbol	ReopenDecision	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0002-deep-module-clean-break-and-durable-lifecycle.md	symbol	ReopenTask	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0002-deep-module-clean-break-and-durable-lifecycle.md	symbol	ResumeTask	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0002-deep-module-clean-break-and-durable-lifecycle.md	symbol	SetCaptainIdle	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0002-deep-module-clean-break-and-durable-lifecycle.md	symbol	StartTask	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0002-deep-module-clean-break-and-durable-lifecycle.md	symbol	SubmitScoutReport	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0003-config-deepening-typed-documents-and-project-overlay.md	path	internal/fleetconfig	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0003-config-deepening-typed-documents-and-project-overlay.md	symbol	LoadResolvedSnapshot	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0003-config-deepening-typed-documents-and-project-overlay.md	symbol	LoadResolvedSnapshot(home, project)	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0004-authoritative-task-lifecycle-delivery-and-projections.md	symbol	ContextManifest	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0004-authoritative-task-lifecycle-delivery-and-projections.md	symbol	DeliveryPlan	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0004-authoritative-task-lifecycle-delivery-and-projections.md	symbol	DispatchInterpretation	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0004-authoritative-task-lifecycle-delivery-and-projections.md	symbol	IssueLink	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0004-authoritative-task-lifecycle-delivery-and-projections.md	symbol	MergeAttempt	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0004-authoritative-task-lifecycle-delivery-and-projections.md	symbol	MergeDelivery	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0004-authoritative-task-lifecycle-delivery-and-projections.md	symbol	PrepareDelivery	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0004-authoritative-task-lifecycle-delivery-and-projections.md	symbol	ReportReady	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0004-authoritative-task-lifecycle-delivery-and-projections.md	symbol	TaskLifecycle	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0005-runtime-bindings-supervision-recovery-and-mutation-fencing.md	symbol	LaunchDiagnostic	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0007-task-authority-deep-module-and-transactional-store.md	path	internal/taskauthorityfs	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0007-task-authority-deep-module-and-transactional-store.md	symbol	ConfirmSpawn	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0007-task-authority-deep-module-and-transactional-store.md	symbol	CreateHold	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0007-task-authority-deep-module-and-transactional-store.md	symbol	InterpretDispatch	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0007-task-authority-deep-module-and-transactional-store.md	symbol	ResolveDecision	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0007-task-authority-deep-module-and-transactional-store.md	symbol	SetState	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0007-task-authority-deep-module-and-transactional-store.md	symbol	TaskAuditLog	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0007-task-authority-deep-module-and-transactional-store.md	symbol	taskauthority.Store	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0007-task-authority-deep-module-and-transactional-store.md	symbol	UpdateAggregate	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0008-owner-clean-architecture-and-pre-public-v1-reset.md	path	internal/configmigration	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0008-owner-clean-architecture-and-pre-public-v1-reset.md	path	internal/taskauthority/storecontract	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0008-owner-clean-architecture-and-pre-public-v1-reset.md	path	internal/taskauthorityfs	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0009-checkout-identity-single-owner.md	symbol	EnsureNotPrimary	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0009-checkout-identity-single-owner.md	symbol	IsIsolated	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0009-checkout-identity-single-owner.md	symbol	backend.EnsureNotPrimary	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0009-checkout-identity-single-owner.md	symbol	backend.IsIsolated	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0009-checkout-identity-single-owner.md	symbol	gitRevParse	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0009-checkout-identity-single-owner.md	symbol	resolveGitDir	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0010-delivery-head-invariant-two-owners.md	path	internal/fleet/delivery_amend_test.go	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0010-delivery-head-invariant-two-owners.md	symbol	AmendRecord	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0010-delivery-head-invariant-two-owners.md	symbol	EnsureNotPrimary	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0010-delivery-head-invariant-two-owners.md	symbol	MetaAmendExpectedHead	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0010-delivery-head-invariant-two-owners.md	symbol	MetaAmendHistory	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0010-delivery-head-invariant-two-owners.md	symbol	MetaAmendStartedAt	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0010-delivery-head-invariant-two-owners.md	symbol	MetaIdentityRevision	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0010-delivery-head-invariant-two-owners.md	symbol	MetaLegacyMergeAuth	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0010-delivery-head-invariant-two-owners.md	symbol	appendAmendHistory	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0010-delivery-head-invariant-two-owners.md	symbol	buildAmendGitRepo	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0010-delivery-head-invariant-two-owners.md	symbol	incrementRevision	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0010-delivery-head-invariant-two-owners.md	symbol	verifyAncestry	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0010-delivery-head-invariant-two-owners.md	symbol	verifySnapshotIdentity	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0011-munsu-does-not-own-issue-closure.md	path	internal/fleet/delivery_issuelinks.go	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0011-munsu-does-not-own-issue-closure.md	path	internal/fleet/delivery_terminal.go	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0011-munsu-does-not-own-issue-closure.md	symbol	GitHubClient.ViewIssueState	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0011-munsu-does-not-own-issue-closure.md	symbol	IssueLink	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0011-munsu-does-not-own-issue-closure.md	symbol	PrepareDeliveryIssueLinks	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0011-munsu-does-not-own-issue-closure.md	symbol	ReconcileIssueLinks	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0011-munsu-does-not-own-issue-closure.md	symbol	ValidateIssueLink	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0011-munsu-does-not-own-issue-closure.md	symbol	VerifyDeliveryIssueLinks	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0011-munsu-does-not-own-issue-closure.md	symbol	defaultCheckIssueState	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0011-munsu-does-not-own-issue-closure.md	symbol	defaultCheckIssueStateImpl	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0011-munsu-does-not-own-issue-closure.md	symbol	validateIssueLinkDefinition	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0012-quiescence-before-destruction-has-one-owner.md	path	internal/fleet/endpoint_fence.go	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0012-quiescence-before-destruction-has-one-owner.md	path	internal/home/migrate.go	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0012-quiescence-before-destruction-has-one-owner.md	symbol	BoundEndpoint	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0012-quiescence-before-destruction-has-one-owner.md	symbol	EndpointArtifacts	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0012-quiescence-before-destruction-has-one-owner.md	symbol	EndpointController	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0012-quiescence-before-destruction-has-one-owner.md	symbol	EndpointDrainer	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0012-quiescence-before-destruction-has-one-owner.md	symbol	EndpointScanner	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0012-quiescence-before-destruction-has-one-owner.md	symbol	EndpointService	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0012-quiescence-before-destruction-has-one-owner.md	symbol	ExactProcessController	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0012-quiescence-before-destruction-has-one-owner.md	symbol	FenceBoundEndpoints	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0012-quiescence-before-destruction-has-one-owner.md	symbol	FenceOSWriters	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0012-quiescence-before-destruction-has-one-owner.md	symbol	FenceWriters	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0012-quiescence-before-destruction-has-one-owner.md	symbol	MigrateAndActivate	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0012-quiescence-before-destruction-has-one-owner.md	symbol	NoEndpointDrainer	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0012-quiescence-before-destruction-has-one-owner.md	symbol	OSProcessController	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0012-quiescence-before-destruction-has-one-owner.md	symbol	RetireArtifact	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0012-quiescence-before-destruction-has-one-owner.md	symbol	ServiceEndpointController	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0012-quiescence-before-destruction-has-one-owner.md	symbol	TaskEndpointScanner	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0012-quiescence-before-destruction-has-one-owner.md	symbol	TerminateExact	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0012-quiescence-before-destruction-has-one-owner.md	symbol	TestCompositeWriterFenceFailsWhenProcessAppearsAfterRescan	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0012-quiescence-before-destruction-has-one-owner.md	symbol	TestFenceEndpointsFailsClosedWithoutCurrentGenerationRevision	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0012-quiescence-before-destruction-has-one-owner.md	symbol	TestFenceEndpointsRetainsMetadataOnLiveWithoutAcquisitionEvidence	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0012-quiescence-before-destruction-has-one-owner.md	symbol	correlateWriters	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0012-quiescence-before-destruction-has-one-owner.md	symbol	fenceEndpoints	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0012-quiescence-before-destruction-has-one-owner.md	symbol	metaUint	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0012-quiescence-before-destruction-has-one-owner.md	symbol	readEndpointMeta	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0012-quiescence-before-destruction-has-one-owner.md	symbol	sameBoundEndpoint	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0012-quiescence-before-destruction-has-one-owner.md	symbol	terminateProcess	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0012-quiescence-before-destruction-has-one-owner.md	symbol	validBoundEndpoint	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0012-quiescence-before-destruction-has-one-owner.md	symbol	writerPair	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0013-afk-is-diagnosis-and-manual-action.md	symbol	InjectOutcome	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0013-afk-is-diagnosis-and-manual-action.md	symbol	LaunchDiagnostic	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0013-afk-is-diagnosis-and-manual-action.md	symbol	RedactSensitive	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0013-afk-is-diagnosis-and-manual-action.md	symbol	ResolveRecovery	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0013-afk-is-diagnosis-and-manual-action.md	symbol	SetBackend	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0013-afk-is-diagnosis-and-manual-action.md	symbol	SetPaneCapture	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0013-afk-is-diagnosis-and-manual-action.md	symbol	maybeInitInjector	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0015-the-soldier-closes-its-own-terminal-handoff.md	symbol	ActivateOnReceipt	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0015-the-soldier-closes-its-own-terminal-handoff.md	symbol	ReconcileOutcome	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0015-the-soldier-closes-its-own-terminal-handoff.md	symbol	ReconcileResult	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0015-the-soldier-closes-its-own-terminal-handoff.md	symbol	ReconcileTerminal	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0015-the-soldier-closes-its-own-terminal-handoff.md	symbol	reconcileOne	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0015-the-soldier-closes-its-own-terminal-handoff.md	symbol	stepTerminalReconcile	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0017-guard-burn-down-working-rules-and-their-enforcement-addresses.md	symbol	EnsureNotPrimary	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.

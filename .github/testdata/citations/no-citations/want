@@ -1,0 +1,4 @@
+::error::citations could not scan the tree, so it cannot judge any citation: no citations extracted from 4 documents -- the extractor no longer matches, so this proves nothing
+exit status 1
+::error::citations could not scan <fixture>, so it cannot judge any citation
+exit 1

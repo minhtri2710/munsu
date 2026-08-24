@@ -1,0 +1,2 @@
+::error::.github/testdata/citations/no-reason/waiver:2: docs/doc.md: home.ReadMailboxEnvelope: entry needs a reason in the fourth column
+exit 1

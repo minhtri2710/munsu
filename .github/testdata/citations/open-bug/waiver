@@ -1,0 +1,2 @@
+docs/doc.md	symbol	home.WriteMailboxEnvelope	OPEN-BUG(#566): fabricated; the declared name is (*Store).WriteEnvelope. Kept red-flagged until the document is corrected.
+docs/doc.md	symbol	home.ReadMailboxEnvelope	burn-down(#573): pre-existing, imported with the waiver, not yet triaged.
