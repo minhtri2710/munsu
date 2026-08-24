@@ -512,6 +512,7 @@ func refusalHasErrorChildren(r *resolver, file string, fset *token.FileSet, expr
 				return true
 			}
 		}
+		return false
 	case *ast.KeyValueExpr:
 		if !r.isFieldLabel(file, fset, node.Key) && refusalHasErrorOperand(r, file, fset, node.Key) {
 			return true
@@ -519,8 +520,28 @@ func refusalHasErrorChildren(r *resolver, file string, fset *token.FileSet, expr
 		return refusalHasErrorOperand(r, file, fset, node.Value)
 	case *ast.Ellipsis:
 		return check(node.Elt)
+	case *ast.FuncLit:
+		found := false
+		ast.Inspect(node.Body, func(n ast.Node) bool {
+			if expr, ok := n.(ast.Expr); ok {
+				if refusalHasErrorOperand(r, file, fset, expr) {
+					found = true
+				}
+				return false
+			}
+			return !found
+		})
+		return found
+	case *ast.Ident, *ast.BasicLit,
+		*ast.ArrayType, *ast.StructType, *ast.FuncType,
+		*ast.InterfaceType, *ast.MapType, *ast.ChanType:
+		return false
+	case *ast.BadExpr:
+		return true
+	default:
+		return true
 	}
-	return false
+	return true
 }
 
 func isRefusalStatements(statements []ast.Stmt) bool {

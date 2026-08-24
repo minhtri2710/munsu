@@ -111,3 +111,10 @@ func KeyedConstruct(value int) error {
 		return &LifecyclePartialError{Cause: errors.New("unsupported")}
 	}
 }
+
+func ClosurePropagate(value int, err error) error {
+	switch value {
+	default:
+		return fmt.Errorf("operation failed: %s", func() string { return err.Error() }())
+	}
+}
