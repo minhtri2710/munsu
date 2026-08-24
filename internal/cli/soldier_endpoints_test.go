@@ -78,6 +78,20 @@ func TestSoldierEndpointsBusyCheckerOutcomes(t *testing.T) {
 	}
 }
 
+func TestSoldierEndpointsBusyRejectsUnknownRecognizedAgentStatus(t *testing.T) {
+	bk := recognizedOnlyBackend{base: &soldierEndpointBackend{alive: true, recognized: true, status: "mystery"}}
+	endpoint := sessionSoldierEndpoints{resolve: func(string, map[string]string) (backend.Backend, string, error) {
+		return bk, "custom", nil
+	}}
+	busy, err := endpoint.Busy("home", map[string]string{"window": "pane"})
+	if busy {
+		t.Fatal("Busy() = true, want false for unknown status")
+	}
+	if err == nil || !strings.Contains(err.Error(), `endpoint status unknown: "mystery"`) {
+		t.Fatalf("Busy() error = %v, want unknown-status refusal", err)
+	}
+}
+
 func TestSoldierEndpointsRecognizedAgentOutcomes(t *testing.T) {
 	for _, tt := range []struct {
 		status                           string
