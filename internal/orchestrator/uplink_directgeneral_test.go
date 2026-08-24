@@ -20,7 +20,7 @@ type countingTransport struct {
 func (t *countingTransport) Notify(_ string, target TargetResult, _ string) UplinkNotifyResult {
 	t.calls++
 	t.handles = append(t.handles, target.Handle)
-	return UplinkNotifyResult{Acknowledged: true}
+	return AcknowledgedNotification()
 }
 
 // directGeneralHome builds the topology of matrix section 1.1: one General home,
@@ -138,36 +138,74 @@ func TestDirectGeneralDispatchReportIsReceivableByItsOwnGeneral(t *testing.T) {
 	}
 }
 
-// Fact 4. Recover filters pending records by receiver rank, so a report
-// mislabelled Captain was invisible to a General-rank recovery pass.
-//
-// Read what this proves narrowly. It calls Recover directly, and proves that
-// Recover handles a General-rank envelope correctly WHEN INVOKED. It does not
-// prove that anything in production invokes it under direct General dispatch,
-// and today nothing does: the only hook that recovers soldier pendings is
-// ReconcileCaptainHook, which returns nil at captain_relay.go:61-64 when the
-// home has no parent-home -- which a General home never has. So the pending
-// record and open evidence this test retires by hand are not retired by any
-// live path. That missing pass is tracked as its own issue; this test is not
-// end-to-end closure of it, and must not be cited as such.
-func TestRecoverInvokedByHandRetiresAGeneralRankReport(t *testing.T) {
+// Fact 4. Under direct General dispatch, a soldier report whose notification
+// was queued must be recovered by the production recovery pass (ReconcileCaptainHook)
+// once the report is acknowledged, allowing VerifyRetirementContinuity to succeed.
+func TestDirectGeneralDispatchRecoveryPassRetiresAcknowledgedReport(t *testing.T) {
 	generalHome, identity := directGeneralHome(t)
-	res := reportUnderDirectGeneralDispatch(t, generalHome, identity, &countingTransport{})
 
+	// The first notification reaches the transport but encounters a transient
+	// failure. The report must still be durable so reconciliation can recover it.
+	failed := &failingTransport{}
+	res, err := Report(ReportRequest{
+		SenderHome: generalHome, ReceiverHome: generalHome,
+		SenderRank: RankSoldier, SenderIdentity: "direct-task",
+		ReceiverRank: RankGeneral, ReceiverID: identity,
+		TaskID: "direct-task", Key: "default", State: "failed", Message: "direct dispatch failure",
+		Notify: func(ref NotificationRef) UplinkNotifyResult {
+			return NotifyParentWithTransport(generalHome, generalHome, ref, failed)
+		},
+	})
+	if err == nil || !errors.Is(err, ErrReportDurable) {
+		t.Fatalf("Report error = %v, want durable transient-notify failure", err)
+	}
+	if res != nil || failed.calls != 1 {
+		t.Fatalf("result=%+v transport calls=%d, want durable failure after one transport call", res, failed.calls)
+	}
+	pending, err := NewStore(generalHome).ListPending("direct-task")
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("pending after transient notify failure = %d err=%v, want 1", len(pending), err)
+	}
+	messageID := pending[0].MessageID
+	t.Logf("transient notify failure: durable message %s remains pending", messageID)
+	if err := VerifyRetirementContinuity(generalHome, "direct-task"); err == nil {
+		t.Fatal("VerifyRetirementContinuity must refuse while the durable report is pending")
+	}
+	t.Logf("retirement blocked while message %s is pending", messageID)
+
+	// Reconciliation on the General home must retry the pending uplink.
+	retried := &countingTransport{}
+	if err := ReconcileCaptainHook(generalHome, true, retried); err != nil {
+		t.Fatalf("ReconcileCaptainHook retry: %v", err)
+	}
+	if retried.calls != 1 {
+		t.Fatalf("reconciliation transport calls = %d, want 1", retried.calls)
+	}
+	t.Logf("General reconciliation retried message %s successfully", messageID)
+
+	// The receiving General acknowledges the retried durable envelope.
 	recv, err := NewReceiver(generalHome)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := recv.Ack(NotificationRef{MessageID: res.MessageID, SenderIdentity: "direct-task"}); err != nil {
+	ref := NotificationRef{MessageID: messageID, SenderIdentity: "direct-task"}
+	if _, err := recv.Ack(ref); err != nil {
 		t.Fatal(err)
 	}
-	rec, err := Recover(RecoverRequest{SenderHome: generalHome, ReceiverHome: generalHome, ReceiverRank: RankGeneral})
-	if err != nil {
-		t.Fatalf("Recover: %v", err)
+	t.Logf("General receiver acknowledged message %s", messageID)
+
+	// The next reconciliation cycle observes the ack and retires the outbox item.
+	if err := ReconcileCaptainHook(generalHome, false, retried); err != nil {
+		t.Fatalf("ReconcileCaptainHook retirement: %v", err)
 	}
-	if rec.Accepted != 1 {
-		t.Fatalf("accepted = %d, want 1; Recover invoked directly must retire a report addressed to the General (no production path invokes it under direct General dispatch)", rec.Accepted)
+	pending, err = NewStore(generalHome).ListPending("direct-task")
+	if err != nil || len(pending) != 0 {
+		t.Fatalf("pending after acknowledged reconciliation = %d err=%v, want 0", len(pending), err)
 	}
+	if err := VerifyRetirementContinuity(generalHome, "direct-task"); err != nil {
+		t.Fatalf("VerifyRetirementContinuity refused after recovery pass: %v", err)
+	}
+	t.Logf("message %s retired from General outbox; task retirement continuity restored", messageID)
 }
 
 // The uplink now validates the requested rank against the receiving home rather
@@ -197,7 +235,7 @@ func TestNotifyParentWithTargetResolverQueuesResolutionError(t *testing.T) {
 		func(string, bool, NotificationRef) (TargetResult, error) {
 			return TargetResult{}, errors.New("captain parent-home unavailable")
 		}, transport)
-	if !result.Queued || result.Err != nil || result.Acknowledged {
+	if !result.Queued() || result.Failure() != nil || result.Acknowledged() {
 		t.Fatalf("result = %+v, want queued without error or acknowledgement", result)
 	}
 	if transport.calls != 0 {
@@ -214,7 +252,7 @@ func TestReportFailsClosedWhenTheNotificationPathFails(t *testing.T) {
 		ReceiverRank: RankGeneral, ReceiverID: identity,
 		TaskID: "direct-task", Key: "default", State: "failed", Message: "direct dispatch failure",
 		Notify: func(NotificationRef) UplinkNotifyResult {
-			return UplinkNotifyResult{Err: fmt.Errorf("resolving receiver target")}
+			return FailedNotification(fmt.Errorf("resolving receiver target"))
 		},
 	})
 	if err == nil {
@@ -257,7 +295,7 @@ type failingTransport struct{ calls int }
 
 func (t *failingTransport) Notify(_ string, _ TargetResult, _ string) UplinkNotifyResult {
 	t.calls++
-	return UplinkNotifyResult{Err: errors.New("transport unavailable")}
+	return FailedNotification(errors.New("transport unavailable"))
 }
 
 // Resolver failures stay queued because no transport was invoked; a transport
@@ -301,7 +339,7 @@ func TestReReportingAfterANotifyFailureSupersedesInsteadOfDoubleWriting(t *testi
 		})
 	}
 	if _, err := report(func(NotificationRef) UplinkNotifyResult {
-		return UplinkNotifyResult{Err: fmt.Errorf("transport blip")}
+		return FailedNotification(fmt.Errorf("transport blip"))
 	}); err == nil {
 		t.Fatal("the first report must fail on its notification path")
 	}
