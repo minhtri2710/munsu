@@ -2620,3 +2620,96 @@ func TestRecoverPendingRetirement_PreservesRecordWhenPollDigestChanges(t *testin
 		t.Fatalf("poll was removed after digest mismatch: %v", err)
 	}
 }
+
+// The watcher validates a check artifact before it surfaces one, and its
+// production validator is this same ValidateCheckWithLstat. Step 0 of
+// retirement re-applies that rule to the same path as its first action, before
+// any query, record or mutation. This table pins that: every shape the
+// validator rejects, retirement refuses in the classified way that suppresses
+// the wake and preserves the artifact — so a second caller-side validation
+// immediately before this call can change nothing about the outcome.
+func TestRetireMergedPoll_RefusesEveryShapeTheCheckValidatorRefuses(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		reshape func(t *testing.T, checkPath string)
+		gone    bool
+	}{
+		{
+			name: "symlink",
+			reshape: func(t *testing.T, checkPath string) {
+				target := checkPath + ".target"
+				if err := os.WriteFile(target, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Remove(checkPath); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(target, checkPath); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "missing",
+			reshape: func(t *testing.T, checkPath string) {
+				if err := os.Remove(checkPath); err != nil {
+					t.Fatal(err)
+				}
+			},
+			gone: true,
+		},
+		{
+			name: "directory",
+			reshape: func(t *testing.T, checkPath string) {
+				if err := os.Remove(checkPath); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(checkPath, 0755); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "empty",
+			reshape: func(t *testing.T, checkPath string) {
+				if err := os.WriteFile(checkPath, nil, 0755); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "missing shebang",
+			reshape: func(t *testing.T, checkPath string) {
+				if err := os.WriteFile(checkPath, []byte("echo ready\n"), 0755); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+			defer cleanup()
+			restore := installMockMergeStatus(t, true, "0000111122223333444455556666777788889999", "aaaabbbbccccddddeeeeffff0000111122223333")
+			defer restore()
+			tc.reshape(t, checkPath)
+
+			// Control: without this the case proves nothing about agreement.
+			if err := ValidateCheckWithLstat(checkPath); err == nil {
+				t.Fatalf("check validator accepted %s — the shapes must disagree with it first", tc.name)
+			}
+
+			err := RetireMergedPoll(home, taskID, checkPath, retirementPollAuth(t, home, taskID))
+			if !errors.Is(err, domain.ErrCheckValidationRefused) {
+				t.Fatalf("error = %v, want ErrCheckValidationRefused", err)
+			}
+			if !tc.gone {
+				if _, statErr := os.Lstat(checkPath); statErr != nil {
+					t.Fatalf("refused artifact must be preserved: %v", statErr)
+				}
+			}
+			if rec := readRetirementRecordOrNil(t, home, taskID); rec != nil {
+				t.Fatal("a step-0 refusal must not persist a retirement record")
+			}
+		})
+	}
+}
