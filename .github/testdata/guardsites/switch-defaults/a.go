@@ -77,3 +77,17 @@ func WrappedError(value int, err error) error {
 		return fmt.Errorf("operation failed: %w", err)
 	}
 }
+
+func PanicPropagate(value int, err error) error {
+	switch value {
+	default:
+		panic(err)
+	}
+}
+
+func MixedPropagate(value int, err error) (error, error) {
+	switch value {
+	default:
+		return errors.New("unsupported"), err
+	}
+}

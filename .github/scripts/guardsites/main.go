@@ -437,63 +437,57 @@ func isSelfOriginatingRefusal(r *resolver, file string, fset *token.FileSet, sta
 	if !isRefusalStatements(statements) {
 		return false
 	}
-	last, ok := statements[len(statements)-1].(*ast.ReturnStmt)
-	if !ok {
-		return true
-	}
-	for _, result := range last.Results {
-		if constructsError(result) && refusalHasErrorOperand(r, file, fset, result) {
-			return false
+	last := statements[len(statements)-1]
+	switch stmt := last.(type) {
+	case *ast.ReturnStmt:
+		for _, result := range stmt.Results {
+			if refusalHasErrorOperand(r, file, fset, result) {
+				return false
+			}
+		}
+	case *ast.ExprStmt:
+		call, ok := stmt.X.(*ast.CallExpr)
+		if ok {
+			if fn, ok := call.Fun.(*ast.Ident); ok && fn.Name == "panic" {
+				for _, arg := range call.Args {
+					if refusalHasErrorOperand(r, file, fset, arg) {
+						return false
+					}
+				}
+			}
 		}
 	}
 	return true
 }
 
 func refusalHasErrorOperand(r *resolver, file string, fset *token.FileSet, expr ast.Expr) bool {
-	var found bool
-	var visit func(ast.Expr)
-	visit = func(expr ast.Expr) {
-		if found || expr == nil {
-			return
-		}
-		switch node := expr.(type) {
-		case *ast.CallExpr:
-			for _, arg := range node.Args {
-				if r.errish(file, fset, arg) {
-					found = true
-					return
-				}
-				visit(arg)
-			}
-		case *ast.UnaryExpr:
-			if r.errish(file, fset, node.X) {
-				found = true
-				return
-			}
-			visit(node.X)
-		case *ast.CompositeLit:
-			for _, elt := range node.Elts {
-				if value, ok := elt.(ast.Expr); ok {
-					if r.errish(file, fset, value) {
-						found = true
-						return
-					}
-					visit(value)
-				}
-			}
-		case *ast.BinaryExpr:
-			visit(node.X)
-			visit(node.Y)
-		case *ast.ParenExpr:
-			if r.errish(file, fset, node.X) {
-				found = true
-				return
-			}
-			visit(node.X)
-		}
+	if expr == nil {
+		return false
 	}
-	visit(expr)
-	return found
+	if !constructsError(expr) {
+		return r.errish(file, fset, expr)
+	}
+	switch node := expr.(type) {
+	case *ast.CallExpr:
+		for _, arg := range node.Args {
+			if refusalHasErrorOperand(r, file, fset, arg) {
+				return true
+			}
+		}
+	case *ast.UnaryExpr:
+		return refusalHasErrorOperand(r, file, fset, node.X)
+	case *ast.CompositeLit:
+		for _, elt := range node.Elts {
+			if value, ok := elt.(ast.Expr); ok && refusalHasErrorOperand(r, file, fset, value) {
+				return true
+			}
+		}
+	case *ast.BinaryExpr:
+		return refusalHasErrorOperand(r, file, fset, node.X) || refusalHasErrorOperand(r, file, fset, node.Y)
+	case *ast.ParenExpr:
+		return refusalHasErrorOperand(r, file, fset, node.X)
+	}
+	return false
 }
 
 func isRefusalStatements(statements []ast.Stmt) bool {
