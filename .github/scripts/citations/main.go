@@ -343,10 +343,17 @@ func hasContainerKind(containers []fenceContainer, kind byte) bool {
 }
 
 func nonInterruptingOrderedList(line string, containers, openContainers []fenceContainer) (string, bool) {
-	if len(containers) != len(openContainers)+1 || !isContainerPrefix(openContainers, containers) {
+	parentLen := len(openContainers)
+	if len(containers) == len(openContainers)+1 && isContainerPrefix(openContainers, containers) {
+		parentLen = len(openContainers)
+	} else if len(containers) == len(openContainers) && len(containers) > 0 &&
+		isContainerPrefix(containers[:len(containers)-1], openContainers[:len(openContainers)-1]) &&
+		containers[len(containers)-1].kind == 'l' && openContainers[len(openContainers)-1].kind == 'l' {
+		parentLen = len(containers) - 1
+	} else {
 		return "", false
 	}
-	normalized, ok := stripFenceContainers(line, openContainers)
+	normalized, ok := stripFenceContainers(line, containers[:parentLen])
 	if !ok || len(normalized) == 0 || (normalized[0] < '0' || normalized[0] > '9') {
 		return "", false
 	}
@@ -640,12 +647,11 @@ var (
 	// receiver matters.
 	methodExprRe = regexp.MustCompile(`^\(\*?([A-Za-z_][A-Za-z0-9_]*)\)\.([A-Za-z_][A-Za-z0-9_]*)$`)
 	// A trailing argument list on a cited call.
-	callSuffixRe               = regexp.MustCompile(`\([^()]*\)$`)
-	invalidFenceLikeRe         = regexp.MustCompile(`^[ \t]*(?:[-+*]|[0-9]{1,10}[.)])[ \t]*\x60{3}`)
-	invalidBacktickFenceLikeRe = regexp.MustCompile(`^[ \t]*\x60{3,}.*\x60`)
-	markdownBlockStartRe       = regexp.MustCompile(`^[ \t]{0,3}(?:#{1,6}(?:[ \t]|$)|(?:[-+*]|[0-9]{1,9}[.)])[ \t]+)`)
-	htmlBlockStartRe           = regexp.MustCompile(`^[ \t]{0,3}(?:<(?i:(?:script|pre|style|textarea))(?:[ \t>]|$)|<!--|<\?|<![A-Z]|<!\[CDATA\[|</?(?i:(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|pre|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul))(?:[ \t/>]|$))`)
-	thematicBreakRe            = regexp.MustCompile(`^[ \t]{0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|={3,})$`)
+	callSuffixRe         = regexp.MustCompile(`\([^()]*\)$`)
+	invalidFenceLikeRe   = regexp.MustCompile(`^[ \t]*(?:[-+*]|[0-9]{1,10}[.)])[ \t]*\x60{3}`)
+	markdownBlockStartRe = regexp.MustCompile(`^[ \t]{0,3}(?:#{1,6}(?:[ \t]|$)|(?:[-+*]|[0-9]{1,9}[.)])[ \t]+)`)
+	htmlBlockStartRe     = regexp.MustCompile(`^[ \t]{0,3}(?:<(?i:(?:script|pre|style|textarea))(?:[ \t>]|$)|<!--|<\?|<![A-Z]|<!\[CDATA\[|</?(?i:(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|pre|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul))(?:[ \t/>]|$))`)
+	thematicBreakRe      = regexp.MustCompile(`^[ \t]{0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|={3,})$`)
 )
 
 // The punctuation a reference can never contain, because it belongs to
@@ -1504,7 +1510,7 @@ func scan(root string) ([]string, error) {
 				}
 			}
 			indent := len(normalized) - len(strings.TrimLeft(normalized, " \t"))
-			if strings.TrimSpace(normalized) == "" || (openRun == 0 && markdownColumns(normalized[:indent]) > 3) || invalidFenceLikeRe.MatchString(normalized) || invalidBacktickFenceLikeRe.MatchString(normalized) {
+			if strings.TrimSpace(normalized) == "" || (openRun == 0 && markdownColumns(normalized[:indent]) > 3) || invalidFenceLikeRe.MatchString(normalized) {
 				if err := flushOpen(); err != nil {
 					return nil, err
 				}

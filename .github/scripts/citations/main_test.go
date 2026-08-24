@@ -127,6 +127,35 @@ func TestScanRawHTMLClosingTagAllowsHorizontalWhitespace(t *testing.T) {
 	}
 }
 
+func TestScanRecoversCitationAfterInlineTripleBackticks(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package home\n\nfunc MissingAfterInlineTriple() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"AGENTS.md", "CLAUDE.md", "README.md"} {
+		if err := os.WriteFile(filepath.Join(root, name), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Mkdir(filepath.Join(root, "docs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	doc := "An unmatched `` run\n```example``` and `home.MissingAfterInlineTriple`\n"
+	if err := os.WriteFile(filepath.Join(root, "docs", "doc.md"), []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := scan(root)
+	if err != nil {
+		t.Fatalf("scan(%q): %v", root, err)
+	}
+	for _, row := range rows {
+		if row == "resolved\tdocs/doc.md\tsymbol\thome.MissingAfterInlineTriple" {
+			return
+		}
+	}
+	t.Fatal("scan output missing inline citation after rejected triple-backtick fence-like line")
+}
+
 func TestScanRecoversCitationAfterNonOneOrderedListMarker(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package home\n\nfunc MissingAfterOrdered() {}\nfunc MissingAfterFollowing() {}\n"), 0o600); err != nil {
@@ -140,7 +169,7 @@ func TestScanRecoversCitationAfterNonOneOrderedListMarker(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(root, "docs"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	doc := "An unmatched ``` then ``outer\n2. inner`` and `home.MissingAfterOrdered`\nThen `home.MissingAfterFollowing`\n"
+	doc := "- An unmatched ``` then ``outer\n2. inner`` and `home.MissingAfterOrdered`\nThen `home.MissingAfterFollowing`\n"
 	if err := os.WriteFile(filepath.Join(root, "docs", "doc.md"), []byte(doc), 0o600); err != nil {
 		t.Fatal(err)
 	}

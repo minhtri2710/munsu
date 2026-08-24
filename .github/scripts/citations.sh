@@ -237,7 +237,7 @@ check() {
 			# Best-effort context, so `|| true`: the key is the cleaned
 			# citation, and a citation written `internal/x/y.go:41` or
 			# `(*Store).Write` does not appear in the source in that form.
-			hits="$(grep -nF -- "$citation" "$SCAN_ROOT/$doc" | head -3 || true)"
+			hits="$(grep -nF -- "\`$citation\`" "$SCAN_ROOT/$doc" | head -3 || true)"
 			[ -z "$hits" ] || printf '%s\n' "$hits" | while IFS= read -r hit; do
 				printf '    %s:%s\n' "$doc" "$hit" >&2
 			done
