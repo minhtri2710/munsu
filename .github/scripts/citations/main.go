@@ -260,6 +260,17 @@ func fenceMarker(line string) (byte, int, int, bool) {
 	return fenceMarkerNormalized(normalized)
 }
 
+func fenceContinuationPrefix(line string) string {
+	_, offset, _ := stripMarkdownContainer(line)
+	prefix := []byte(line[:offset])
+	for i, b := range prefix {
+		if b != ' ' && b != '\t' && b != '>' {
+			prefix[i] = ' '
+		}
+	}
+	return string(prefix)
+}
+
 func fenceMarkerNormalized(line string) (byte, int, int, bool) {
 	columns := 0
 	start := 0
@@ -337,6 +348,14 @@ func stripMarkdownContainer(line string) (string, int, int) {
 			start++
 		}
 	}
+}
+
+func closesFenceNormalized(line string, marker byte, openingRun int) bool {
+	gotMarker, run, start, ok := fenceMarkerNormalized(line)
+	if !ok || gotMarker != marker || run < openingRun {
+		return false
+	}
+	return strings.TrimSpace(line[start+run:]) == ""
 }
 
 func closesFence(line string, marker byte, openingRun, openingQuoteDepth int) bool {
@@ -1062,20 +1081,43 @@ func scan(root string) ([]string, error) {
 		var fenceMarkerByte byte
 		var fenceRun int
 		var fenceQuoteDepth int
+		var fenceContinuationPrefixValue string
 		for _, line := range strings.Split(string(body), "\n") {
 			if fenceRun > 0 {
-				_, _, quoteDepth := stripMarkdownContainer(line)
-				if quoteDepth < fenceQuoteDepth {
-					fenceMarkerByte, fenceRun, fenceQuoteDepth = 0, 0, 0
-				} else {
+				if fenceContinuationPrefixValue == "" {
 					if closesFence(line, fenceMarkerByte, fenceRun, fenceQuoteDepth) {
-						fenceMarkerByte, fenceRun, fenceQuoteDepth = 0, 0, 0
+						fenceMarkerByte, fenceRun, fenceQuoteDepth, fenceContinuationPrefixValue = 0, 0, 0, ""
 					}
 					continue
+				}
+				_, _, quoteDepth := stripMarkdownContainer(line)
+				if quoteDepth < fenceQuoteDepth {
+					fenceMarkerByte, fenceRun, fenceQuoteDepth, fenceContinuationPrefixValue = 0, 0, 0, ""
+				} else {
+					normalized := line
+					if fenceContinuationPrefixValue != "" {
+						if !strings.HasPrefix(line, fenceContinuationPrefixValue) {
+							if strings.TrimSpace(line) != "" {
+								fenceMarkerByte, fenceRun, fenceQuoteDepth, fenceContinuationPrefixValue = 0, 0, 0, ""
+							} else {
+								continue
+							}
+						} else {
+							normalized = line[len(fenceContinuationPrefixValue):]
+						}
+					}
+					if fenceRun > 0 && closesFenceNormalized(normalized, fenceMarkerByte, fenceRun) {
+						fenceMarkerByte, fenceRun, fenceQuoteDepth, fenceContinuationPrefixValue = 0, 0, 0, ""
+						continue
+					}
+					if fenceRun > 0 {
+						continue
+					}
 				}
 			}
 			if marker, run, _, ok := fenceMarker(line); ok {
 				_, _, fenceQuoteDepth = stripMarkdownContainer(line)
+				fenceContinuationPrefixValue = fenceContinuationPrefix(line)
 				fenceMarkerByte, fenceRun = marker, run
 				continue
 			}

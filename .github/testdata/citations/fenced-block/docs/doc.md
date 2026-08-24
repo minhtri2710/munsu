@@ -20,3 +20,11 @@ Top-level prose after the quote is `SomethingDeclared`. Built-in prose such as `
   $ grep -n `fabricated_list` `internal/cli/fake.go`
   ```
 
+The citation after the list-contained fence is `AfterListFence`.
+
+> - ```sh
+>   $ grep -n `fabricated_nested_list` `internal/cli/fake.go`
+>   ```
+
+The citation after the nested list fence is `AfterNestedListFence`.
+

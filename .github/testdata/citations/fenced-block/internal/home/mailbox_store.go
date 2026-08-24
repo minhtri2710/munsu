@@ -3,6 +3,10 @@ package home
 // Store is a mailbox store.
 func SomethingDeclared() {}
 
+func AfterListFence() {}
+
+func AfterNestedListFence() {}
+
 type Store struct {
 	ParentHome string
 }
