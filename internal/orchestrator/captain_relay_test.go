@@ -315,6 +315,24 @@ func TestReconcileHook_ReconcilesGeneralHomeWhenParentStatusEqualsHomeDir(t *tes
 	}
 }
 
+func TestReconcileHook_RejectsUnreadableHomeIdentityBeforeRecovery(t *testing.T) {
+	tmp := t.TempDir()
+	parentHome := t.TempDir()
+	t.Setenv("MUNSU_PARENT_STATUS", parentHome)
+	if err := os.WriteFile(filepath.Join(tmp, captainMarkerName), []byte("malformed"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	transport := &captainNotificationTransport{acknowledged: true}
+
+	err := ReconcileCaptainHook(tmp, false, transport)
+	if err == nil || !strings.Contains(err.Error(), "reading home rank") {
+		t.Fatalf("error = %v, want unreadable home rank error", err)
+	}
+	if transport.calls != 0 {
+		t.Fatalf("notification calls = %d, want 0 when home rank is unreadable", transport.calls)
+	}
+}
+
 func TestReconcileHook_RequiresNotificationTransport(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("MUNSU_PARENT_STATUS", "")
