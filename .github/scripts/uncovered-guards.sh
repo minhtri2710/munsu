@@ -109,9 +109,10 @@ sites() {
 
 # One line per coverage block, `path:start-end<TAB>statements<TAB>count`, carrying
 # the largest count any lane recorded for it. The profile is the source of truth
-# for the block's start: Go toolchains may place it at the `if` body's opening
-# brace or at its first statement. A site therefore supplies its body range and
-# the supported entry coordinates; classify() accepts only a unique entry block.
+# for the block's start: Go toolchains may place it at an if body's brace, a
+# switch-default clause boundary, or the first statement. A site therefore supplies
+# its refusal-body range and supported entry coordinates; classify() accepts only a
+# unique entry block.
 #
 # The complete range and statement count are retained so a malformed or
 # ambiguous profile cannot be mistaken for a match. The start selects the entry
@@ -386,7 +387,7 @@ classify() {
 			}
 			# The refusal body range travels with every verdict, not just the anomaly: the
 			# baseline has no source coordinates by design, so this is the only thing that
-			# can tell an author which `if` to go and write a test for.
+			# can tell an author which refusal site to go and write a test for.
 			id = $1 "\t" $2 "\t" $3 "\t" $4 "\t" $5
 			if (incompatible) print "anomaly\t" id
 			else if (matches == 1) {

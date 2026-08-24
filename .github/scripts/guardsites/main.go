@@ -14,7 +14,7 @@
 //	nth        1-based occurrence of this exact predicate in this function
 //	predicate  the `if` condition, or `default` for a refusing switch default
 //	body       source range of the refusal body, `start-end` as `line.col`
-//	entries    opening-brace and first-statement coordinates, comma-separated
+//	entries    body-start and first-statement coordinates, comma-separated
 //
 // The first four columns are the identity of a site and are what the baseline
 // file stores. `body` is deliberately NOT part of that identity: it is the
@@ -34,8 +34,8 @@
 //
 // The body range and entry coordinates are the stable source facts available to
 // the coverage matcher. The profile-derived matcher accepts only a unique block
-// starting at the opening brace or first statement, so a later nested block
-// cannot masquerade as entry. Keeping these facts rather than a predicted
+// starting at the syntactic body boundary or first statement, so a later nested
+// block cannot masquerade as entry. Keeping these facts rather than a predicted
 // profile key makes the contract independent of a particular Go instrumenter.
 //
 // What counts as a site, and why the definition is this narrow: a guard's

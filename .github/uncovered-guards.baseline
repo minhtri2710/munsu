@@ -19,9 +19,12 @@
 # diff is what catches that, not the script.
 #
 # Columns are tab-separated: file <TAB> func <TAB> nth <TAB> predicate <TAB> reason
+# `predicate` is the if condition, or the literal `default` for a refusing switch
+# default. For a switch default, `nth` is the 1-based occurrence of that default
+# within the function; otherwise it is the occurrence of that exact predicate.
 #
-# `nth` is the 1-based occurrence of that exact predicate in that function; it is
-# what separates the nine functions here that refuse twice on the same condition.
+# `nth` is what separates the nine functions here that refuse twice on the same
+# condition, and also keeps multiple refusing defaults in one function distinct.
 # No line numbers on purpose -- they are not part of an entry's identity, and
 # including them would rewrite this file on every unrelated edit above a guard.
 # Run `.github/scripts/uncovered-guards.sh classify` for the current verdicts.
