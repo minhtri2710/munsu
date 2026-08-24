@@ -620,21 +620,89 @@ func isDefiniteSelfOriginatingError(r *resolver, file string, fset *token.FileSe
 		case pkg == "errors" && name == "New":
 			return true
 		case pkg == "errors" && name == "Join":
-			for _, arg := range node.Args {
-				if isDefiniteSelfOriginatingError(r, file, fset, arg) {
-					return true
-				}
-			}
-			return false
+			return isDefiniteErrorsJoin(r, file, fset, node)
 		case pkg == "fmt" && name == "Errorf":
 			return true
 		default:
 			return false
 		}
-	case *ast.Ellipsis:
-		return isDefiniteSelfOriginatingError(r, file, fset, node.Elt)
 	}
 	return false
+}
+
+func isDefiniteErrorsJoin(r *resolver, file string, fset *token.FileSet, call *ast.CallExpr) bool {
+	args := call.Args
+	if call.Ellipsis == token.NoPos {
+		valid, found := definiteErrorsJoinArguments(r, file, fset, args)
+		return valid && found
+	}
+	if len(args) == 0 {
+		return false
+	}
+	// CallExpr.Args contains direct arguments followed by the final ellipsis expansion; unsupported or unknown forms fail closed.
+	valid, _ := definiteErrorsJoinArguments(r, file, fset, args[:len(args)-1])
+	if !valid {
+		return false
+	}
+	expansion := unwrapParens(args[len(args)-1])
+	literal, ok := expansion.(*ast.CompositeLit)
+	if !ok || !isErrorSlice(r, file, fset, literal) || len(literal.Elts) == 0 {
+		return false
+	}
+	valid, found := definiteErrorsJoinArguments(r, file, fset, compositeValues(literal.Elts))
+	return valid && found
+}
+
+func definiteErrorsJoinArguments(r *resolver, file string, fset *token.FileSet, args []ast.Expr) (bool, bool) {
+	found := false
+	for _, arg := range args {
+		if isNilExpr(arg) {
+			continue
+		}
+		if !isDefiniteSelfOriginatingError(r, file, fset, arg) {
+			return false, false
+		}
+		found = true
+	}
+	return true, found
+}
+
+func compositeValues(elements []ast.Expr) []ast.Expr {
+	values := make([]ast.Expr, 0, len(elements))
+	for _, element := range elements {
+		if keyed, ok := element.(*ast.KeyValueExpr); ok {
+			values = append(values, keyed.Value)
+		} else {
+			values = append(values, element)
+		}
+	}
+	return values
+}
+
+func isErrorSlice(r *resolver, file string, fset *token.FileSet, expr ast.Expr) bool {
+	if r == nil || r.byFile[file] == nil {
+		return false
+	}
+	t, ok := r.byFile[file][span{fset.Position(expr.Pos()).Offset, fset.Position(expr.End()).Offset}]
+	if !ok {
+		return false
+	}
+	return types.AssignableTo(t, types.NewSlice(types.Universe.Lookup("error").Type()))
+}
+
+func unwrapParens(expr ast.Expr) ast.Expr {
+	for {
+		paren, ok := expr.(*ast.ParenExpr)
+		if !ok {
+			return expr
+		}
+		expr = paren.X
+	}
+}
+
+func isNilExpr(expr ast.Expr) bool {
+	ident, ok := unwrapParens(expr).(*ast.Ident)
+	return ok && ident.Name == "nil"
 }
 
 func isErrorExpression(r *resolver, file string, fset *token.FileSet, expr ast.Expr) bool {

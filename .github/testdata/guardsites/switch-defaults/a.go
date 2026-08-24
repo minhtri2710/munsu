@@ -191,6 +191,55 @@ func JoinConstruct(value int) error {
 	}
 }
 
+func JoinDirectMixed(value int) error {
+	switch value {
+	default:
+		return errors.Join(nil, errors.New("unsupported"))
+	}
+}
+
+func JoinDirectPropagate(value int, err error) error {
+	switch value {
+	default:
+		return errors.Join(errors.New("unsupported"), err)
+	}
+}
+
+func JoinExpandedConstruct(value int) error {
+	switch value {
+	default:
+		return errors.Join([]error{nil, errors.New("unsupported")}...)
+	}
+}
+
+func JoinExpandedEmpty(value int) error {
+	switch value {
+	default:
+		return errors.Join([]error{}...)
+	}
+}
+
+func JoinExpandedAllNil(value int) error {
+	switch value {
+	default:
+		return errors.Join([]error{nil, nil}...)
+	}
+}
+
+func JoinExpandedUnknown(value int, reasons []error) error {
+	switch value {
+	default:
+		return errors.Join(reasons...)
+	}
+}
+
+func JoinExpandedPropagate(value int, err error) error {
+	switch value {
+	default:
+		return errors.Join([]error{errors.New("unsupported"), err}...)
+	}
+}
+
 func Sentinel(value int) error {
 	switch value {
 	default:
