@@ -75,7 +75,30 @@ func main() {
 // the same argument the gofmt step in ci.yml makes for passing `.` instead of a
 // package list. Not opt-in inside that boundary: a file nobody remembered to
 // add is a file nobody checks, which is the failure this lane exists to end.
-//
+func containedPath(root, target string) (string, error) {
+	canonicalRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", fmt.Errorf("canonical repository root: %w", err)
+	}
+	canonicalRoot, err = filepath.Abs(canonicalRoot)
+	if err != nil {
+		return "", fmt.Errorf("absolute repository root: %w", err)
+	}
+	resolved, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return "", err
+	}
+	resolved, err = filepath.Abs(resolved)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(canonicalRoot, resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("path resolves outside repository root")
+	}
+	return resolved, nil
+}
+
 // docs/plans/ is excluded, and the reason is a property of the document class
 // rather than of its backlog. A plan is a dated artifact: it records what
 // someone intended on a day, its citations were true on that day, and nobody
@@ -109,6 +132,12 @@ func docFiles(root string) ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("covered document %s: %w", name, err)
 		}
+		if _, err := containedPath(root, filepath.Join(root, name)); err != nil {
+			if strings.Contains(err.Error(), "outside repository root") {
+				return nil, fmt.Errorf("covered document %s resolves outside repository root", name)
+			}
+			return nil, fmt.Errorf("covered document %s: %w", name, err)
+		}
 		if seen[target] {
 			continue
 		}
@@ -132,6 +161,12 @@ func docFiles(root string) ([]string, error) {
 		}
 		if !strings.HasSuffix(p, ".md") {
 			return nil
+		}
+		if _, err := containedPath(root, p); err != nil {
+			if strings.Contains(err.Error(), "outside repository root") {
+				return fmt.Errorf("covered document %s resolves outside repository root", filepath.ToSlash(strings.TrimPrefix(p, root+string(filepath.Separator))))
+			}
+			return err
 		}
 		rel, err := filepath.Rel(root, p)
 		if err != nil {
@@ -211,28 +246,37 @@ func inlineSpans(line string) []span {
 // golang.org/x/tools/...` lines. The cost is real and stated: a citation that
 // only ever appears inside a fence is not checked. Counted as one of the lane's
 // silent drops in referenceShaped's enumeration, which is the complete list.
-func fenceMarker(line string) (byte, int, bool) {
-	trimmed := strings.TrimLeft(line, " \\t")
-	if len(line)-len(trimmed) > 3 || len(trimmed) < 3 || (trimmed[0] != '`' && trimmed[0] != '~') {
-		return 0, 0, false
+func fenceMarker(line string) (byte, int, int, bool) {
+	columns := 0
+	start := 0
+	for start < len(line) && (line[start] == ' ' || line[start] == '\t') {
+		if line[start] == ' ' {
+			columns++
+		} else {
+			columns = (columns/4 + 1) * 4
+		}
+		start++
 	}
-	marker := trimmed[0]
+	if columns > 3 || len(line)-start < 3 || (line[start] != '`' && line[start] != '~') {
+		return 0, 0, 0, false
+	}
+	marker := line[start]
 	run := 0
-	for run < len(trimmed) && trimmed[run] == marker {
+	for start+run < len(line) && line[start+run] == marker {
 		run++
 	}
 	if run < 3 {
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
-	return marker, run, true
+	return marker, run, start, true
 }
 
 func closesFence(line string, marker byte, openingRun int) bool {
-	gotMarker, run, ok := fenceMarker(line)
+	gotMarker, run, start, ok := fenceMarker(line)
 	if !ok || gotMarker != marker || run < openingRun {
 		return false
 	}
-	return strings.TrimSpace(strings.TrimLeft(line, " \\t")[run:]) == ""
+	return strings.TrimSpace(line[start+run:]) == ""
 }
 
 // ---------------------------------------------------------------------------
@@ -787,7 +831,7 @@ func scan(root string) ([]string, error) {
 				}
 				continue
 			}
-			if marker, run, ok := fenceMarker(line); ok {
+			if marker, run, _, ok := fenceMarker(line); ok {
 				fenceMarkerByte, fenceRun = marker, run
 				continue
 			}

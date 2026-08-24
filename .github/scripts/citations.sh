@@ -388,9 +388,14 @@ exit $rc"
 	# committed fixture because it cannot be one: an unparseable .go file in the
 	# tree makes `gofmt -l .` exit 2, which turns the gofmt step of this same job
 	# red for a reason that is not this rule. Built in a scratch tree instead.
-	local scratch
+	local scratch escape tabbed rootdoc outside
+	scratch=""
+	escape=""
+	tabbed=""
+	rootdoc=""
+	outside=""
+	trap 'rm -rf "${scratch:-}" "${escape:-}" "${tabbed:-}" "${rootdoc:-}" "${outside:-}"' RETURN
 	scratch="$(mktemp -d)"
-	trap 'rm -rf "$scratch" "$escape"' RETURN
 	mkdir -p "$scratch/docs"
 	printf 'A citation of `SomethingDeclared`.\n' >"$scratch/docs/doc.md"
 	: >"$scratch/AGENTS.md"
@@ -412,9 +417,7 @@ exit $rc"
 		echo "  ok   unparseable-go"
 	fi
 
-	local escape
 	escape="$(mktemp -d)"
-	trap 'rm -rf "$escape"' RETURN
 	mkdir -p "$escape/docs"
 	: >"$escape/AGENTS.md"
 	: >"$escape/CLAUDE.md"
@@ -440,6 +443,53 @@ exit $rc"
 		failed=1
 	else
 		echo "  ok   symlink-escape"
+	fi
+
+	tabbed="$(mktemp -d)"
+	outside="$(mktemp -d)"
+	mkdir -p "$tabbed/docs"
+	: >"$tabbed/AGENTS.md"
+	: >"$tabbed/CLAUDE.md"
+	: >"$tabbed/README.md"
+	printf 'package x\n\nfunc SomethingDeclared() {}\n' >"$tabbed/good.go"
+	printf '\t```\nA missing citation is `MissingTabCitation`.\n' >"$tabbed/docs/doc.md"
+	: >"$tabbed/waiver"
+	if got="$(SCAN_ROOT="$tabbed" WAIVER="$tabbed/waiver" "$0" check 2>&1)"; then rc=0; else rc=$?; fi
+	if [ "$rc" -eq 0 ] || ! printf '%s\n' "$got" | grep -q 'symbol MissingTabCitation'; then
+		echo "::error::citations treated a four-column tab indentation as a fence:" >&2
+		printf '%s\n' "$got" >&2
+		failed=1
+	else
+		echo "  ok   tab-indented-fence"
+	fi
+
+	printf 'External document.\n' >"$outside/doc.md"
+	ln -s "$outside/doc.md" "$tabbed/docs/external.md"
+	if got="$(SCAN_ROOT="$tabbed" WAIVER="$tabbed/waiver" "$0" check 2>&1)"; then rc=0; else rc=$?; fi
+	if [ "$rc" -eq 0 ] || ! printf '%s\n' "$got" | grep -q 'docs/external.md resolves outside repository root'; then
+		echo "::error::citations scanned a docs symlink outside the repository:" >&2
+		printf '%s\n' "$got" >&2
+		failed=1
+	else
+		echo "  ok   docs-symlink-escape"
+	fi
+
+	rootdoc="$(mktemp -d)"
+	mkdir -p "$rootdoc/docs"
+	: >"$rootdoc/AGENTS.md"
+	: >"$rootdoc/CLAUDE.md"
+	printf 'External content.\n' >"$outside/README.md"
+	ln -s "$outside/README.md" "$rootdoc/README.md"
+	printf 'package x\n\nfunc SomethingDeclared() {}\n' >"$rootdoc/good.go"
+	printf 'A citation is `SomethingDeclared`.\n' >"$rootdoc/docs/doc.md"
+	: >"$rootdoc/waiver"
+	if got="$(SCAN_ROOT="$rootdoc" WAIVER="$rootdoc/waiver" "$0" check 2>&1)"; then rc=0; else rc=$?; fi
+	if [ "$rc" -eq 0 ] || ! printf '%s\n' "$got" | grep -q 'README.md resolves outside repository root'; then
+		echo "::error::citations scanned a root document outside the repository:" >&2
+		printf '%s\n' "$got" >&2
+		failed=1
+	else
+		echo "  ok   root-document-symlink-escape"
 	fi
 
 	[ "$failed" -eq 0 ] || exit 1
