@@ -1,0 +1,29 @@
+::error::citations that do not resolve and are not in .github/testdata/citations/unmatched-backtick-continue/waiver:
+  docs/doc.md: symbol home.MissingAfterHTML
+    docs/doc.md:19:Then `home.MissingAfterHTML` then ``.
+  docs/doc.md: symbol home.MissingAfterHTMLBlank
+    docs/doc.md:35:Then `home.MissingAfterHTMLBlank` then ``.
+  docs/doc.md: symbol home.MissingAfterIndented
+    docs/doc.md:48:    Then `home.MissingAfterIndented`.
+  docs/doc.md: symbol home.MissingAfterInlineHTML
+    docs/doc.md:38:<span>inline html</span>`` and `home.MissingAfterInlineHTML`.
+  docs/doc.md: symbol home.MissingAfterItem
+    docs/doc.md:9:- `home.MissingAfterItem` then ``
+  docs/doc.md: symbol home.MissingAfterLazy
+    docs/doc.md:12:After`` and `home.MissingAfterLazy`.
+  docs/doc.md: symbol home.MissingAfterLazyItem
+    docs/doc.md:15:continuation`` and `home.MissingAfterLazyItem`.
+  docs/doc.md: symbol home.MissingAfterListHTML
+    docs/doc.md:45:Then `home.MissingAfterListHTML` then ``.
+  docs/doc.md: symbol home.MissingAfterMultilineHTML
+    docs/doc.md:30:Then `home.MissingAfterMultilineHTML` then ``.
+  docs/doc.md: symbol home.MissingAfterQuote
+    docs/doc.md:6:> `home.MissingAfterQuote`.
+  docs/doc.md: symbol home.MissingAfterRawHTML
+    docs/doc.md:25:Then `home.MissingAfterRawHTML` then ``.
+  docs/doc.md: symbol home.MissingAfterRuns
+    docs/doc.md:3:Finally `home.MissingAfterRuns`.
+  A path citation must name a file that exists; a symbol citation must name a func,
+  method, type, const, var or struct field this tree declares. Correct the citation,
+  or add a line to that file with a reason -- see ADR-0017 4 for what a reason has to say.
+exit 1

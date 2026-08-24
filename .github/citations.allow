@@ -36,9 +36,10 @@
 #     or file resolves the citation and causes the `removed` check to fail).
 #     Where the premise is about what a document says, it is unpinned, sharing
 #     the same stated limit as .github/deadcode.allow.
-#   - 134 rows are pre-existing unresolved citations in docs/adr/ imported
-#     untriaged at the lane's launch with the `burn-down(#624)` marker so the
-#     lane could land fail-closed, following the precedent of
+#   - 136 rows are pre-existing unresolved citations in docs/adr/ imported
+#     untriaged with the `burn-down(#624)` marker so the lane could land
+#     fail-closed (134 at lane launch, plus 2 that surfaced when #595 fixed
+#     the unmatched-backtick drop), following the precedent of
 #     .github/uncovered-guards.baseline (burn-down(BEO-69)). These are tracked
 #     for burn-down in issue #624.
 #
@@ -143,11 +144,12 @@ docs/workflow-topology-matrix.md	path	config/resolved-project.json	a path inside
 docs/workflow-topology-matrix.md	symbol	schemaVersion	a JSON field name (a stored snapshot document / the GitHub API's PR fields), not a Go declaration. Wrong if a Go type ever declares this field by this name and the citation starts meaning it.
 
 # --- Imported backlog: the burn-down -------------------------------------------
-# Every citation that did not resolve when this lane was first run, kept so the lane could go green
-# on the day it landed -- the same import .github/uncovered-guards.baseline made for 283 refusal
-# sites. It is 134 lines and it is only allowed to get shorter.
+# Every citation that did not resolve when this lane was first run (plus two that surfaced
+# when #595 fixed the unmatched-backtick drop), kept so the lane could go green on the day
+# it landed -- the same import .github/uncovered-guards.baseline made for 283 refusal
+# sites. It is 136 lines and it is only allowed to get shorter.
 #
-# The shape of it, so nobody mistakes the number for a triage: all 134 are in docs/adr/, mostly
+# The shape of it, so nobody mistakes the number for a triage: all 136 are in docs/adr/, mostly
 # pre-reset vocabulary in decision records ADR-0008 superseded. Not one has been read individually.
 # Correcting an accepted ADR's citation may well be the wrong move -- a decision record is a record
 # -- in which case the right end state for that row is a line in the section above with a real
@@ -278,7 +280,9 @@ docs/adr/0013-afk-is-diagnosis-and-manual-action.md	symbol	RedactSensitive	burn-
 docs/adr/0013-afk-is-diagnosis-and-manual-action.md	symbol	ResolveRecovery	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
 docs/adr/0013-afk-is-diagnosis-and-manual-action.md	symbol	SetBackend	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
 docs/adr/0013-afk-is-diagnosis-and-manual-action.md	symbol	SetPaneCapture	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0013-afk-is-diagnosis-and-manual-action.md	symbol	DirectInject	burn-down(#624): newly surfaced when #595 fixed the unmatched-backtick drop, imported unwaived rather than corrected here, not yet triaged.
 docs/adr/0013-afk-is-diagnosis-and-manual-action.md	symbol	maybeInitInjector	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0013-afk-is-diagnosis-and-manual-action.md	symbol	nudgeTracker	burn-down(#624): newly surfaced when #595 fixed the unmatched-backtick drop, imported unwaived rather than corrected here, not yet triaged.
 docs/adr/0015-the-soldier-closes-its-own-terminal-handoff.md	symbol	ActivateOnReceipt	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
 docs/adr/0015-the-soldier-closes-its-own-terminal-handoff.md	symbol	ReconcileOutcome	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
 docs/adr/0015-the-soldier-closes-its-own-terminal-handoff.md	symbol	ReconcileResult	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
