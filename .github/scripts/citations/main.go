@@ -1422,9 +1422,18 @@ func scan(root string) ([]string, error) {
 				}
 				fenceMarkerByte, fenceRun, fenceContainers = 0, 0, nil
 			}
+			normalized, containers, containersOK := parseMarkdownContainers(line)
+			orderedLine, orderedContinuation := "", false
+			if openRun > 0 && containersOK {
+				orderedLine, orderedContinuation = nonInterruptingOrderedList(line, containers, openContainers)
+			}
+			if orderedContinuation {
+				normalized = orderedLine
+				containers = append([]fenceContainer(nil), openContainers...)
+			}
 			block, blockOK := htmlBlockStartInfo(line)
 			var blockContainers []fenceContainer
-			if len(activeContainers) > 0 {
+			if !orderedContinuation && len(activeContainers) > 0 {
 				if normalizedLine, ok := stripFenceContainers(line, activeContainers); ok {
 					block, blockOK = htmlBlockStartInfo(normalizedLine)
 					if blockOK {
@@ -1434,13 +1443,13 @@ func scan(root string) ([]string, error) {
 					activeContainers = nil
 				}
 			}
-			if !blockOK {
-				if normalizedLine, containers, ok := parseMarkdownContainers(line); ok {
+			if !orderedContinuation && !blockOK {
+				if normalizedLine, parsedContainers, ok := parseMarkdownContainers(line); ok {
 					block, blockOK = htmlBlockStartInfo(normalizedLine)
-					blockContainers = containers
+					blockContainers = parsedContainers
 				}
 			}
-			if blockOK {
+			if !orderedContinuation && blockOK {
 				if err := flushOpen(); err != nil {
 					return nil, err
 				}
@@ -1454,13 +1463,15 @@ func scan(root string) ([]string, error) {
 				}
 				continue
 			}
-			if marker, run, _, ok := fenceMarker(line); ok {
-				_, containers, _ := parseMarkdownContainers(line)
-				fenceMarkerByte, fenceRun, fenceContainers = marker, run, containers
-				if err := flushOpen(); err != nil {
-					return nil, err
+			if !orderedContinuation {
+				if marker, run, _, ok := fenceMarker(line); ok {
+					_, containers, _ := parseMarkdownContainers(line)
+					fenceMarkerByte, fenceRun, fenceContainers = marker, run, containers
+					if err := flushOpen(); err != nil {
+						return nil, err
+					}
+					continue
 				}
-				continue
 			}
 			if strings.TrimSpace(line) == "" {
 				if err := flushOpen(); err != nil {
@@ -1469,21 +1480,12 @@ func scan(root string) ([]string, error) {
 				activeContainers = nil
 				continue
 			}
-			normalized, containers, ok := parseMarkdownContainers(line)
-			if !ok {
+			if !containersOK {
 				if err := flushOpen(); err != nil {
 					return nil, err
 				}
 				activeContainers = nil
 				continue
-			}
-			orderedLine, orderedContinuation := "", false
-			if openRun > 0 {
-				orderedLine, orderedContinuation = nonInterruptingOrderedList(line, containers, openContainers)
-			}
-			if orderedContinuation {
-				normalized = orderedLine
-				containers = append([]fenceContainer(nil), openContainers...)
 			}
 			if len(activeContainers) > 0 && !orderedContinuation {
 				if continuation, continuationOK := stripFenceContainers(line, activeContainers); continuationOK {
