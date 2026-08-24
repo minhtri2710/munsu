@@ -39,6 +39,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -281,18 +282,6 @@ func inlineSpansState(line string, openRun int, openText string) ([]span, int, s
 			i++
 			continue
 		}
-		if i > 0 && (line[i-1] == '-' || line[i-1] == '*' || line[i-1] == '+' || line[i-1] == '.' || (line[i-1] >= '0' && line[i-1] <= '9')) {
-			i += 1
-			continue
-		}
-		backslashes := 0
-		for j := i - 1; j >= 0 && line[j] == '\\'; j-- {
-			backslashes++
-		}
-		if backslashes%2 == 1 {
-			i++
-			continue
-		}
 		n := 0
 		for i+n < len(line) && line[i+n] == '`' {
 			n++
@@ -351,6 +340,31 @@ func hasContainerKind(containers []fenceContainer, kind byte) bool {
 		}
 	}
 	return false
+}
+
+func nonInterruptingOrderedList(line string, containers, openContainers []fenceContainer) (string, bool) {
+	if len(containers) != len(openContainers)+1 || !isContainerPrefix(openContainers, containers) {
+		return "", false
+	}
+	normalized, ok := stripFenceContainers(line, openContainers)
+	if !ok || len(normalized) == 0 || (normalized[0] < '0' || normalized[0] > '9') {
+		return "", false
+	}
+	end := 0
+	for end < len(normalized) && normalized[end] >= '0' && normalized[end] <= '9' {
+		end++
+	}
+	if end == 0 || end >= len(normalized) || (normalized[end] != '.' && normalized[end] != ')') {
+		return "", false
+	}
+	n, err := strconv.Atoi(normalized[:end])
+	if err != nil || n == 1 || end+1 >= len(normalized) || (normalized[end+1] != ' ' && normalized[end+1] != '\t') {
+		return "", false
+	}
+	for end+1 < len(normalized) && (normalized[end+1] == ' ' || normalized[end+1] == '\t') {
+		end++
+	}
+	return normalized[end+1:], true
 }
 
 func lazyParagraphContinuation(line string, containers, openContainers []fenceContainer) bool {
@@ -629,7 +643,7 @@ var (
 	callSuffixRe               = regexp.MustCompile(`\([^()]*\)$`)
 	invalidFenceLikeRe         = regexp.MustCompile(`^[ \t]*(?:[-+*]|[0-9]{1,10}[.)])[ \t]*\x60{3}`)
 	invalidBacktickFenceLikeRe = regexp.MustCompile(`^[ \t]*\x60{3,}.*\x60`)
-	markdownBlockStartRe       = regexp.MustCompile(`^[ \t]{0,3}(?:#{1,6}[ \t]|(?:[-+*]|[0-9]{1,9}[.)])[ \t]+)`)
+	markdownBlockStartRe       = regexp.MustCompile(`^[ \t]{0,3}(?:#{1,6}(?:[ \t]|$)|(?:[-+*]|[0-9]{1,9}[.)])[ \t]+)`)
 	htmlBlockStartRe           = regexp.MustCompile(`^[ \t]{0,3}(?:<(?i:(?:script|pre|style|textarea))(?:[ \t>]|$)|<!--|<\?|<![A-Z]|<!\[CDATA\[|</?(?i:(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|pre|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul))(?:[ \t/>]|$))`)
 	thematicBreakRe            = regexp.MustCompile(`^[ \t]{0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|={3,})$`)
 )
@@ -1447,7 +1461,15 @@ func scan(root string) ([]string, error) {
 				activeContainers = nil
 				continue
 			}
-			if len(activeContainers) > 0 {
+			orderedLine, orderedContinuation := "", false
+			if openRun > 0 {
+				orderedLine, orderedContinuation = nonInterruptingOrderedList(line, containers, openContainers)
+			}
+			if orderedContinuation {
+				normalized = orderedLine
+				containers = append([]fenceContainer(nil), openContainers...)
+			}
+			if len(activeContainers) > 0 && !orderedContinuation {
 				if continuation, continuationOK := stripFenceContainers(line, activeContainers); continuationOK {
 					normalized = continuation
 				} else if lazyParagraphContinuation(line, containers, activeContainers) {
@@ -1460,20 +1482,22 @@ func scan(root string) ([]string, error) {
 				activeContainers = append([]fenceContainer(nil), containers...)
 			}
 			if openRun > 0 {
-				if len(containers) > len(openContainers) || !isContainerPrefix(containers, openContainers) {
+				if !orderedContinuation && (len(containers) > len(openContainers) || !isContainerPrefix(containers, openContainers)) {
 					if err := flushOpen(); err != nil {
 						return nil, err
 					}
-				} else if continuation, continuationOK := stripFenceContainers(line, openContainers); continuationOK {
-					normalized = continuation
-				} else if lazyParagraphContinuation(line, containers, openContainers) {
-					normalized = line
-				} else {
-					if err := flushOpen(); err != nil {
-						return nil, err
+				} else if !orderedContinuation {
+					if continuation, continuationOK := stripFenceContainers(line, openContainers); continuationOK {
+						normalized = continuation
+					} else if lazyParagraphContinuation(line, containers, openContainers) {
+						normalized = line
+					} else {
+						if err := flushOpen(); err != nil {
+							return nil, err
+						}
 					}
 				}
-				if openRun > 0 && inlineBlockBoundary(normalized) {
+				if openRun > 0 && !orderedContinuation && inlineBlockBoundary(normalized) {
 					if err := flushOpen(); err != nil {
 						return nil, err
 					}
