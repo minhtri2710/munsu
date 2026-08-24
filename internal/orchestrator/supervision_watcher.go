@@ -2,6 +2,7 @@
 package orchestrator
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -594,18 +595,23 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 		return emitted, err
 	}
 	for _, plugin := range plugins {
+		artifactGeneration := checkArtifactGeneration(plugin.Path)
 		// Validate the check artifact before surfacing. The port exists, so
 		// this error is about this artifact and nothing else: drop this check,
 		// keep scanning the rest, and say so rather than swallowing it.
 		if err := checks.ValidateCheck(plugin.Path); err != nil {
-			fmt.Fprintf(os.Stderr, "poll check invalid (skipped): %v\n", err)
+			if repErr := reportCheckRefusal(homeDir, plugin.Path, checkRefusalMarkerState(artifactGeneration, err), fmt.Sprintf("poll check invalid (skipped): %v", err)); repErr != nil {
+				return emitted, repErr
+			}
 			continue
 		}
 		// Acceptance refusal leaves the externally authored artifact exactly
 		// where it is and emits no wake; the refusal is reported for the
 		// operator to resolve.
 		if err := AcceptOrRefuseStale(plugin.Path); err != nil {
-			fmt.Fprintf(os.Stderr, "poll check refused (left in place): %v\n", err)
+			if repErr := reportCheckRefusal(homeDir, plugin.Path, checkRefusalMarkerState(artifactGeneration, err), fmt.Sprintf("poll check refused (left in place): %v", err)); repErr != nil {
+				return emitted, repErr
+			}
 			continue
 		}
 
@@ -635,18 +641,33 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 			if retireErr == nil {
 				// Poll retired successfully. Skip wake emission;
 				// the status signal path will surface the publication.
+				if err := clearCheckRefusalMarker(homeDir, plugin.Path); err != nil {
+					return emitted, err
+				}
 				continue
 			}
 			if errors.Is(retireErr, domain.ErrCheckInvalidAfterPublication) {
-				fmt.Fprintf(os.Stderr, "poll check invalid after publication: %v\n", retireErr)
+				if repErr := reportCheckRefusal(homeDir, plugin.Path, checkRefusalMarkerState(artifactGeneration, retireErr), fmt.Sprintf("poll check invalid after publication: %v", retireErr)); repErr != nil {
+					return emitted, repErr
+				}
 				continue
 			}
 			if errors.Is(retireErr, domain.ErrCheckValidationRefused) {
-				fmt.Fprintf(os.Stderr, "poll check refused (wake suppressed): %v\n", retireErr)
+				if repErr := reportCheckRefusal(homeDir, plugin.Path, checkRefusalMarkerState(artifactGeneration, retireErr), fmt.Sprintf("poll check refused (wake suppressed): %v", retireErr)); repErr != nil {
+					return emitted, repErr
+				}
 				continue
 			}
 			// Other retirement failures retain the normal check wake so the
 			// poll can be tried again.
+		}
+
+		// The artifact is accepted and about to be surfaced. Drop any refusal
+		// it is still carrying so that if it is refused again later — for the
+		// same reason or a new one — that refusal is reported as the new state
+		// it is.
+		if err := clearCheckRefusalMarker(homeDir, plugin.Path); err != nil {
+			return emitted, err
 		}
 
 		fingerprint := "check\n" + msg
@@ -667,6 +688,10 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 			return emitted, err
 		}
 		emitted = true
+	}
+
+	if err := reconcileCheckRefusalMarkers(homeDir, plugins); err != nil {
+		return emitted, err
 	}
 
 	// Mailbox inbox recovery is handled in runRecovery, called once at
@@ -696,6 +721,120 @@ func wakeFingerprint(homeDir string, reason *WakeReason) string {
 func wakeMarkerPath(homeDir, id string) string {
 	safeID := strings.NewReplacer("/", "_", ":", "_", ".", "_").Replace(id)
 	return filepath.Join(homeDir, "state", ".watcher-seen-"+safeID)
+}
+
+// checkRefusalMarkerPath records the refusal the loop last reported for one
+// check artifact, so the report follows the artifact's state rather than the
+// poll cadence: the loop revisits every artifact every cycle, and an artifact
+// that is refused stays refused until somebody acts on it.
+//
+// Keyed by the hash of the artifact path, not by its label. The label is not a
+// unique identity — a per-task check named "global:foo.check" and the global
+// check "checks/foo.check" both label as global:foo — and sanitizing one for
+// use as a filename collides further ("a.b" and "a_b" land on the same name).
+// Two artifacts sharing a marker would overwrite each other's refusal every
+// cycle, which is the volume this whole mechanism exists to bound. The path is
+// unique by construction. The refusal text stays in the file, so an operator
+// grepping state/ still sees which artifact and why.
+func checkRefusalMarkerPath(homeDir, artifactPath string) string {
+	suffix := fmt.Sprintf("%x", sha256.Sum256([]byte(artifactPath)))
+	return filepath.Join(homeDir, "state", ".watcher-refused-"+suffix)
+}
+
+// reportCheckRefusal writes message to stderr the first time this artifact is
+// refused for this state and stays silent while that answer is unchanged. A
+// different state reports again; so does the same state after the artifact has
+// been accepted once, because the loop clears the marker when it accepts.
+//
+// Marker-write failure fails the cycle rather than degrading to unbounded
+// reporting: persist before printing so an unwritable state directory cannot
+// turn each retry into another refusal line. Losing a report to a crash after
+// persistence but before printing is cheaper than restoring poll-volume logs.
+func reportCheckRefusal(homeDir, artifactPath, state, message string) error {
+	marker := checkRefusalMarkerPath(homeDir, artifactPath)
+	if data, err := os.ReadFile(marker); err == nil && string(data) == state {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(marker), 0755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(marker, []byte(state), 0644); err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stderr, message)
+	return nil
+}
+
+// checkArtifactGeneration captures the checked artifact itself rather than a
+// symlink target. This lookup is not a new cost class: validation and stale
+// acceptance already stat the artifact during each cycle. Size and mtime avoid
+// hashing or rereading artifacts, which matters when an artifact is unreadable.
+func checkArtifactGeneration(artifactPath string) string {
+	fi, err := os.Lstat(artifactPath)
+	if err != nil {
+		return "gone"
+	}
+	return fmt.Sprintf("%d %d", fi.Size(), fi.ModTime().UnixNano())
+}
+
+// checkRefusalMarkerState combines the generation captured before validation
+// with its refusal reason. Capturing first means a replacement between the
+// observation and validation can only make the marker stale, never falsely
+// fresh: (generation A, reason from B) is followed by (generation B, same
+// reason), which reports again. A replacement with identical size and a
+// deliberately forged identical nanosecond mtime remains the accepted
+// residual case; hashing every cycle would also require rereading unreadable
+// artifacts.
+func checkRefusalMarkerState(generation string, err error) string {
+	return fmt.Sprintf("%s %s", generation, refusalState(err))
+}
+
+// refusalState reduces a refusal error to the fact that identifies it, with the
+// classification the retirement path wraps around it stripped off. The loop can
+// notice one refusal from two vantage points — the validation at the top of the
+// cycle, and RetireMergedPoll applying the same rule to the same path as its
+// first action — and prints a different message at each. Those are one state,
+// so the marker keys on the cause and the message stays free to say where the
+// loop was standing when it noticed.
+func refusalState(err error) string {
+	if multi, ok := err.(interface{ Unwrap() []error }); ok {
+		for _, e := range multi.Unwrap() {
+			if !errors.Is(e, domain.ErrCheckValidationRefused) {
+				return refusalState(e)
+			}
+		}
+	}
+	return err.Error()
+}
+
+func clearCheckRefusalMarker(homeDir, artifactPath string) error {
+	err := os.Remove(checkRefusalMarkerPath(homeDir, artifactPath))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
+}
+
+func reconcileCheckRefusalMarkers(homeDir string, plugins []CheckPlugin) error {
+	active := make(map[string]struct{}, len(plugins))
+	for _, plugin := range plugins {
+		active[filepath.Base(checkRefusalMarkerPath(homeDir, plugin.Path))] = struct{}{}
+	}
+	entries, err := os.ReadDir(filepath.Join(homeDir, "state"))
+	if err != nil {
+		return nil
+	}
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), ".watcher-refused-") {
+			continue
+		}
+		if _, ok := active[entry.Name()]; !ok {
+			if err := os.Remove(filepath.Join(homeDir, "state", entry.Name())); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func clearWakeMarker(homeDir, id string) {

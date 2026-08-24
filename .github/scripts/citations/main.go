@@ -39,6 +39,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -214,10 +215,23 @@ type span struct {
 }
 
 // Inline code spans. Fenced blocks are handled by the caller. A span is a run
-// of N backticks closed by the next run of exactly N, including when the
-// closing run is on a later line.
+// of N backticks closed by the next run of exactly N. Unclosed runs are
+// returned as pending state for the caller to resolve at a block boundary.
 func inlineSpans(line string) []span {
 	spans, _, _ := inlineSpansState(line, 0, "")
+	return spans
+}
+
+func recoverInlineSpans(text string) []span {
+	var spans []span
+	for text != "" {
+		found, openRun, pending := inlineSpansState(text, 0, "")
+		spans = append(spans, found...)
+		if openRun == 0 || pending == "" || len(pending) >= len(text) {
+			break
+		}
+		text = pending
+	}
 	return spans
 }
 
@@ -268,10 +282,6 @@ func inlineSpansState(line string, openRun int, openText string) ([]span, int, s
 			i++
 			continue
 		}
-		if i > 0 && (line[i-1] == '-' || line[i-1] == '*' || line[i-1] == '+' || line[i-1] == '.' || (line[i-1] >= '0' && line[i-1] <= '9')) {
-			i += 1
-			continue
-		}
 		n := 0
 		for i+n < len(line) && line[i+n] == '`' {
 			n++
@@ -308,19 +318,155 @@ func scanInlineSpans(line string, openRun *int, openText *string) []span {
 }
 
 func sameFenceContainers(a, b []fenceContainer) bool {
-	if len(a) != len(b) {
+	return isContainerPrefix(a, b) && len(a) == len(b)
+}
+
+func isContainerPrefix(prefix, containers []fenceContainer) bool {
+	if len(prefix) > len(containers) {
 		return false
 	}
-	for i := range a {
-		if a[i] != b[i] {
+	for i := range prefix {
+		if prefix[i] != containers[i] {
 			return false
 		}
 	}
 	return true
 }
 
+func hasContainerKind(containers []fenceContainer, kind byte) bool {
+	for _, container := range containers {
+		if container.kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
+func nonInterruptingOrderedList(line string, containers, openContainers []fenceContainer) (string, bool) {
+	if len(containers) == 0 || containers[len(containers)-1].kind != 'l' {
+		return "", false
+	}
+	if len(openContainers) == len(containers) && len(openContainers) > 0 &&
+		openContainers[len(openContainers)-1].kind == 'l' &&
+		openContainers[len(openContainers)-1].marker == containers[len(containers)-1].marker &&
+		isContainerPrefix(openContainers[:len(openContainers)-1], containers[:len(containers)-1]) {
+		return "", false
+	}
+	normalized, ok := stripFenceContainers(line, containers[:len(containers)-1])
+	if !ok || len(normalized) == 0 || normalized[0] < '0' || normalized[0] > '9' {
+		return "", false
+	}
+	end := 0
+	for end < len(normalized) && normalized[end] >= '0' && normalized[end] <= '9' {
+		end++
+	}
+	if end == 0 || end >= len(normalized) || (normalized[end] != '.' && normalized[end] != ')') {
+		return "", false
+	}
+	n, err := strconv.Atoi(normalized[:end])
+	if err != nil || n == 1 || end+1 >= len(normalized) || (normalized[end+1] != ' ' && normalized[end+1] != '\t') {
+		return "", false
+	}
+	for end+1 < len(normalized) && (normalized[end+1] == ' ' || normalized[end+1] == '\t') {
+		end++
+	}
+	return normalized, true
+}
+
+func explicitSiblingListItem(containers, openContainers []fenceContainer) bool {
+	if len(containers) == 0 || len(containers) != len(openContainers) {
+		return false
+	}
+	last := len(containers) - 1
+	if containers[last].kind != 'l' || openContainers[last].kind != 'l' {
+		return false
+	}
+	for i := 0; i < last; i++ {
+		if containers[i] != openContainers[i] {
+			return false
+		}
+	}
+	return containers[last].marker == openContainers[last].marker
+}
+
+func lazyParagraphContinuation(line string, containers, openContainers []fenceContainer) bool {
+	if len(containers) >= len(openContainers) || inlineBlockBoundary(line) {
+		return false
+	}
+	for i := range containers {
+		if containers[i] != openContainers[i] {
+			return false
+		}
+	}
+	return true
+}
+
+type htmlBlock struct {
+	kind       string
+	tag        string
+	containers []fenceContainer
+}
+
+func htmlBlockStartInfo(line string) (htmlBlock, bool) {
+	trimmed := strings.TrimSpace(line)
+	if !htmlBlockStartRe.MatchString(line) {
+		return htmlBlock{}, false
+	}
+	lower := strings.ToLower(trimmed)
+	for _, tag := range []string{"script", "pre", "style", "textarea"} {
+		if strings.HasPrefix(lower, "<"+tag) {
+			return htmlBlock{kind: "raw", tag: tag}, true
+		}
+	}
+	switch {
+	case strings.HasPrefix(trimmed, "<!--"):
+		return htmlBlock{kind: "comment"}, true
+	case strings.HasPrefix(trimmed, "<?"):
+		return htmlBlock{kind: "processing"}, true
+	case strings.HasPrefix(trimmed, "<![CDATA["):
+		return htmlBlock{kind: "cdata"}, true
+	case strings.HasPrefix(trimmed, "<!"):
+		return htmlBlock{kind: "declaration"}, true
+	default:
+		return htmlBlock{kind: "tag"}, true
+	}
+}
+
+func (block htmlBlock) interruptsParagraph() bool {
+	switch block.kind {
+	case "raw", "comment", "processing", "cdata", "declaration", "tag":
+		return true
+	default:
+		return false
+	}
+}
+
+func htmlBlockTerminated(block htmlBlock, line string) bool {
+	switch block.kind {
+	case "raw":
+		closingTag := regexp.MustCompile(`(?i)</` + regexp.QuoteMeta(block.tag) + `[ \t]*>`)
+		return closingTag.MatchString(line)
+	case "comment":
+		return strings.Contains(line, "-->")
+	case "processing":
+		return strings.Contains(line, "?>")
+	case "cdata":
+		return strings.Contains(line, "]]>")
+	case "declaration":
+		return strings.Contains(line, ">")
+	case "tag":
+		return strings.TrimSpace(line) == ""
+	default:
+		return false
+	}
+}
+
 func inlineBlockBoundary(line string) bool {
-	return thematicBreakRe.MatchString(line) || setextUnderline(line) || markdownBlockStartRe.MatchString(line)
+	if thematicBreakRe.MatchString(line) || setextUnderline(line) || markdownBlockStartRe.MatchString(line) {
+		return true
+	}
+	block, ok := htmlBlockStartInfo(line)
+	return ok && block.interruptsParagraph()
 }
 
 func setextUnderline(line string) bool {
@@ -352,6 +498,7 @@ func setextUnderline(line string) bool {
 // silent drops in referenceShaped's enumeration, which is the complete list.
 type fenceContainer struct {
 	kind    byte
+	marker  byte
 	columns int
 }
 
@@ -411,7 +558,16 @@ func parseMarkdownContainers(line string) (string, []fenceContainer, bool) {
 		for start < len(line) && (line[start] == ' ' || line[start] == '\t') {
 			start++
 		}
-		containers = append(containers, fenceContainer{kind: 'l', columns: markdownColumns(line[markerStart:start])})
+		marker := line[markerStart]
+		if marker >= '0' && marker <= '9' {
+			for markerEnd := markerStart; markerEnd < start; markerEnd++ {
+				if line[markerEnd] == '.' || line[markerEnd] == ')' {
+					marker = line[markerEnd]
+					break
+				}
+			}
+		}
+		containers = append(containers, fenceContainer{kind: 'l', marker: marker, columns: markdownColumns(line[markerStart:start])})
 	}
 }
 
@@ -529,11 +685,10 @@ var (
 	// receiver matters.
 	methodExprRe = regexp.MustCompile(`^\(\*?([A-Za-z_][A-Za-z0-9_]*)\)\.([A-Za-z_][A-Za-z0-9_]*)$`)
 	// A trailing argument list on a cited call.
-	callSuffixRe               = regexp.MustCompile(`\([^()]*\)$`)
-	invalidFenceLikeRe         = regexp.MustCompile(`^[ \t]*(?:[-+*]|[0-9]{1,10}[.)])[ \t]*\x60{3}`)
-	invalidBacktickFenceLikeRe = regexp.MustCompile(`^[ \t]*\x60{3,}.*\x60`)
-	markdownBlockStartRe       = regexp.MustCompile(`^[ \t]{0,3}(?:#{1,6}[ \t]|(?:[-+*]|[0-9]{1,9}[.)])[ \t]+)`)
-	thematicBreakRe            = regexp.MustCompile(`^[ \t]{0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|={3,})$`)
+	callSuffixRe         = regexp.MustCompile(`\([^()]*\)$`)
+	markdownBlockStartRe = regexp.MustCompile(`^[ \t]{0,3}(?:#{1,6}(?:[ \t]|$)|(?:[-+*]|[0-9]{1,9}[.)])[ \t]+)`)
+	htmlBlockStartRe     = regexp.MustCompile(`^[ \t]{0,3}(?:<(?i:(?:script|pre|style|textarea))(?:[ \t>]|$)|<!--|<\?|<![A-Z]|<!\[CDATA\[|</?(?i:(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|pre|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul))(?:[ \t/>]|$))`)
+	thematicBreakRe      = regexp.MustCompile(`^[ \t]{0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|={3,})$`)
 )
 
 // The punctuation a reference can never contain, because it belongs to
@@ -822,9 +977,11 @@ func fileCitation(fi *files, tok string) bool {
 //
 //  1. a span inside a fenced code block, dropped by the scanner.
 //     A citation that only ever appears in a fence is never checked.
-//  2. everything to the right of an unmatched backtick run, dropped by the
-//     inline-span scanner until a matching delimiter appears. This is an
-//     unterminated span, not a citation-bearing code span.
+//  2. an unmatched backtick run itself (e.g. a lone backtick or unclosed double
+//     backtick), dropped by the inline-span scanner as literal text while
+//     subsequent well-formed spans continue to be scanned. Recovery may happen
+//     at a supported Markdown block or container boundary, so this remains true
+//     across lines, list and blockquote continuations, and HTML containers.
 //  3. empty, or a URL: nothing about this tree is being claimed.
 //  4. executable punctuation, the codeChars set above: a fragment of a command
 //     or an expression -- `'[.[]`, `[.labels[].name]`,
@@ -1246,11 +1403,44 @@ func scan(root string) ([]string, error) {
 		var openRun int
 		var openText string
 		var openContainers []fenceContainer
-		var spans []span
+		var activeContainers []fenceContainer
+		var htmlState *htmlBlock
+		var paragraphOpen bool
+		addSpans := func(spans []span) error {
+			for _, s := range spans {
+				if strings.ContainsAny(s.text, "\t\r\x00") || strings.IndexFunc(strings.ReplaceAll(s.text, "\n", ""), unicode.IsControl) >= 0 {
+					return fmt.Errorf("citation in %s contains a control character: %q", doc, s.text)
+				}
+				s.text = strings.ReplaceAll(s.text, "\n", " ")
+				for _, row := range classify(root, idx, fi, doc, s.text) {
+					rows[row] = true
+				}
+			}
+			return nil
+		}
+		flushOpen := func() error {
+			if openRun == 0 {
+				return nil
+			}
+			spans := recoverInlineSpans(openText)
+			openRun, openText, openContainers = 0, "", nil
+			return addSpans(spans)
+		}
 		for _, line := range strings.Split(string(body), "\n") {
+			if htmlState != nil {
+				normalized, ok := stripFenceContainers(line, htmlState.containers)
+				if !ok {
+					htmlState = nil
+				} else {
+					if htmlBlockTerminated(*htmlState, normalized) {
+						htmlState = nil
+					}
+					continue
+				}
+			}
 			if fenceRun > 0 {
-				if openRun > 0 {
-					openRun, openText = 0, ""
+				if err := flushOpen(); err != nil {
+					return nil, err
 				}
 				normalized, ok := stripFenceContainers(line, fenceContainers)
 				if ok {
@@ -1262,53 +1452,146 @@ func scan(root string) ([]string, error) {
 				}
 				fenceMarkerByte, fenceRun, fenceContainers = 0, 0, nil
 			}
-			if marker, run, _, ok := fenceMarker(line); ok {
-				_, containers, _ := parseMarkdownContainers(line)
-				fenceMarkerByte, fenceRun, fenceContainers = marker, run, containers
-				openRun, openText = 0, ""
+			normalized, containers, containersOK := parseMarkdownContainers(line)
+			if openRun > 0 && containersOK && explicitSiblingListItem(containers, openContainers) {
+				if err := flushOpen(); err != nil {
+					return nil, err
+				}
+				activeContainers = nil
+				paragraphOpen = false
+			}
+			orderedLine, orderedContinuation := "", false
+			if openRun > 0 && containersOK {
+				orderedLine, orderedContinuation = nonInterruptingOrderedList(line, containers, openContainers)
+			}
+			if orderedContinuation {
+				normalized = orderedLine
+				containers = append([]fenceContainer(nil), openContainers...)
+			}
+			block, blockOK := htmlBlockStartInfo(line)
+			var blockContainers []fenceContainer
+			if !orderedContinuation && len(activeContainers) > 0 {
+				if normalizedLine, ok := stripFenceContainers(line, activeContainers); ok {
+					block, blockOK = htmlBlockStartInfo(normalizedLine)
+					if blockOK {
+						blockContainers = append([]fenceContainer(nil), activeContainers...)
+					}
+				} else {
+					activeContainers = nil
+				}
+			}
+			if !orderedContinuation && !blockOK {
+				if normalizedLine, parsedContainers, ok := parseMarkdownContainers(line); ok {
+					block, blockOK = htmlBlockStartInfo(normalizedLine)
+					if blockOK && paragraphOpen && !block.interruptsParagraph() {
+						blockOK = false
+					}
+					blockContainers = parsedContainers
+				}
+			}
+			if !orderedContinuation && blockOK && paragraphOpen && !block.interruptsParagraph() {
+				blockOK = false
+			}
+			if !orderedContinuation && blockOK {
+				if err := flushOpen(); err != nil {
+					return nil, err
+				}
+				if blockContainers == nil {
+					_, blockContainers, _ = parseMarkdownContainers(line)
+				}
+				block.containers = blockContainers
+				normalized, stripped := stripFenceContainers(line, blockContainers)
+				if stripped && !htmlBlockTerminated(block, normalized) {
+					htmlState = &block
+				}
+				paragraphOpen = false
 				continue
+			}
+			if !orderedContinuation {
+				if marker, run, _, ok := fenceMarker(line); ok {
+					_, containers, _ := parseMarkdownContainers(line)
+					fenceMarkerByte, fenceRun, fenceContainers = marker, run, containers
+					if err := flushOpen(); err != nil {
+						return nil, err
+					}
+					paragraphOpen = false
+					continue
+				}
 			}
 			if strings.TrimSpace(line) == "" {
-				openRun, openText, openContainers = 0, "", nil
+				if err := flushOpen(); err != nil {
+					return nil, err
+				}
+				activeContainers = nil
+				paragraphOpen = false
 				continue
 			}
-			normalized, containers, ok := parseMarkdownContainers(line)
-			if !ok {
-				openRun, openText, openContainers = 0, "", nil
+			if !containersOK {
+				if err := flushOpen(); err != nil {
+					return nil, err
+				}
+				activeContainers = nil
+				paragraphOpen = false
 				continue
+			}
+			if len(activeContainers) > 0 && !orderedContinuation {
+				if continuation, continuationOK := stripFenceContainers(line, activeContainers); continuationOK {
+					normalized = continuation
+				} else if lazyParagraphContinuation(line, containers, activeContainers) {
+					normalized = line
+				} else {
+					activeContainers = nil
+				}
+			}
+			if len(containers) > 0 {
+				activeContainers = append([]fenceContainer(nil), containers...)
 			}
 			if openRun > 0 {
-				if continuation, continuationOK := stripFenceContainers(line, openContainers); continuationOK {
-					normalized = continuation
-				} else if !sameFenceContainers(containers, openContainers) {
-					openRun, openText, openContainers = 0, "", nil
+				if !orderedContinuation && (len(containers) > len(openContainers) || !isContainerPrefix(containers, openContainers)) {
+					if err := flushOpen(); err != nil {
+						return nil, err
+					}
+				} else if !orderedContinuation {
+					if continuation, continuationOK := stripFenceContainers(line, openContainers); continuationOK {
+						normalized = continuation
+					} else if lazyParagraphContinuation(line, containers, openContainers) {
+						normalized = line
+					} else {
+						if err := flushOpen(); err != nil {
+							return nil, err
+						}
+					}
 				}
-				if openRun > 0 && inlineBlockBoundary(normalized) {
-					openRun, openText, openContainers = 0, "", nil
+				if openRun > 0 && !orderedContinuation && inlineBlockBoundary(normalized) {
+					if err := flushOpen(); err != nil {
+						return nil, err
+					}
 				}
 			}
 			indent := len(normalized) - len(strings.TrimLeft(normalized, " \t"))
-			if strings.TrimSpace(normalized) == "" || markdownColumns(normalized[:indent]) > 3 || invalidFenceLikeRe.MatchString(normalized) || invalidBacktickFenceLikeRe.MatchString(normalized) {
-				openRun, openText, openContainers = 0, "", nil
+			if strings.TrimSpace(normalized) == "" || (openRun == 0 && markdownColumns(normalized[:indent]) > 3) {
+				if err := flushOpen(); err != nil {
+					return nil, err
+				}
+				activeContainers = nil
+				paragraphOpen = false
 				continue
 			}
 			previouslyOpen := openRun > 0
-			spans = scanInlineSpans(normalized, &openRun, &openText)
+			spans := scanInlineSpans(normalized, &openRun, &openText)
 			if !previouslyOpen && openRun > 0 {
 				openContainers = append([]fenceContainer(nil), containers...)
 			}
 			if openRun == 0 {
 				openContainers = nil
 			}
-			for _, s := range spans {
-				if strings.ContainsAny(s.text, "\t\r\x00") || strings.IndexFunc(strings.ReplaceAll(s.text, "\n", ""), unicode.IsControl) >= 0 {
-					return nil, fmt.Errorf("citation in %s contains a control character: %q", doc, s.text)
-				}
-				s.text = strings.ReplaceAll(s.text, "\n", " ")
-				for _, row := range classify(root, idx, fi, doc, s.text) {
-					rows[row] = true
-				}
+			if err := addSpans(spans); err != nil {
+				return nil, err
 			}
+			paragraphOpen = true
+		}
+		if err := flushOpen(); err != nil {
+			return nil, err
 		}
 	}
 	if len(rows) == 0 {
