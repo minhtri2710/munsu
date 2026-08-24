@@ -10,3 +10,13 @@ An unclosed ` paragraph run.
 
 > ``outer `
 After`` and `home.MissingAfterLazy`.
+
+- ``outer lazy
+continuation`` and `home.MissingAfterLazyItem`.
+
+> An unmatched `` quote run.
+<SCRIPT></SCRIPT>
+Then `home.MissingAfterHTML` then ``.
+
+> ``outer `
+<span>inline html</span>`` and `home.MissingAfterInlineHTML`.

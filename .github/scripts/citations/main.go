@@ -329,11 +329,15 @@ func scanInlineSpans(line string, openRun *int, openText *string) []span {
 }
 
 func sameFenceContainers(a, b []fenceContainer) bool {
-	if len(a) != len(b) {
+	return isContainerPrefix(a, b) && len(a) == len(b)
+}
+
+func isContainerPrefix(prefix, containers []fenceContainer) bool {
+	if len(prefix) > len(containers) {
 		return false
 	}
-	for i := range a {
-		if a[i] != b[i] {
+	for i := range prefix {
+		if prefix[i] != containers[i] {
 			return false
 		}
 	}
@@ -349,15 +353,20 @@ func hasContainerKind(containers []fenceContainer, kind byte) bool {
 	return false
 }
 
-func lazyBlockquoteContinuation(line string, containers, openContainers []fenceContainer) bool {
-	return hasContainerKind(openContainers, '>') &&
-		!hasContainerKind(containers, '>') &&
-		!hasContainerKind(containers, 'l') &&
-		!inlineBlockBoundary(line)
+func lazyParagraphContinuation(line string, containers, openContainers []fenceContainer) bool {
+	if len(containers) >= len(openContainers) || inlineBlockBoundary(line) {
+		return false
+	}
+	for i := range containers {
+		if containers[i] != openContainers[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func inlineBlockBoundary(line string) bool {
-	return thematicBreakRe.MatchString(line) || setextUnderline(line) || markdownBlockStartRe.MatchString(line)
+	return thematicBreakRe.MatchString(line) || setextUnderline(line) || markdownBlockStartRe.MatchString(line) || htmlBlockStartRe.MatchString(line)
 }
 
 func setextUnderline(line string) bool {
@@ -570,6 +579,7 @@ var (
 	invalidFenceLikeRe         = regexp.MustCompile(`^[ \t]*(?:[-+*]|[0-9]{1,10}[.)])[ \t]*\x60{3}`)
 	invalidBacktickFenceLikeRe = regexp.MustCompile(`^[ \t]*\x60{3,}.*\x60`)
 	markdownBlockStartRe       = regexp.MustCompile(`^[ \t]{0,3}(?:#{1,6}[ \t]|(?:[-+*]|[0-9]{1,9}[.)])[ \t]+)`)
+	htmlBlockStartRe           = regexp.MustCompile(`^[ \t]{0,3}(?:<(?i:(?:script|pre|style|textarea))(?:[ \t>]|$)|<!--|<\?|<![A-Z]|<!\[CDATA\[|</?(?i:(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|pre|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul))(?:[ \t/>]|$))`)
 	thematicBreakRe            = regexp.MustCompile(`^[ \t]{0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|={3,})$`)
 )
 
@@ -1340,19 +1350,15 @@ func scan(root string) ([]string, error) {
 				continue
 			}
 			if openRun > 0 {
-				if len(containers) > 0 && !sameFenceContainers(containers, openContainers) {
+				if len(containers) > len(openContainers) || !isContainerPrefix(containers, openContainers) {
 					if err := flushOpen(); err != nil {
 						return nil, err
 					}
 				} else if continuation, continuationOK := stripFenceContainers(line, openContainers); continuationOK {
 					normalized = continuation
-				} else if hasContainerKind(containers, 'l') {
-					if err := flushOpen(); err != nil {
-						return nil, err
-					}
-				} else if lazyBlockquoteContinuation(line, containers, openContainers) {
+				} else if lazyParagraphContinuation(line, containers, openContainers) {
 					normalized = line
-				} else if !sameFenceContainers(containers, openContainers) {
+				} else {
 					if err := flushOpen(); err != nil {
 						return nil, err
 					}
