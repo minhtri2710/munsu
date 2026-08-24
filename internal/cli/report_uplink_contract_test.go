@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/orchestrator"
@@ -90,6 +91,9 @@ func TestReportCmdTransportFailureFailsLoud(t *testing.T) {
 	}
 	if !errors.Is(err, orchestrator.ErrReportDurable) {
 		t.Fatalf("err = %v, want ErrReportDurable", err)
+	}
+	if !strings.Contains(err.Error(), "notification remains pending for reconciliation and retry") {
+		t.Fatalf("err = %v, want reconciliation guidance", err)
 	}
 }
 

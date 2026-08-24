@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -232,6 +233,57 @@ func TestRecoverRetriesSameRefAfterSixtySeconds(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(receiverHome, "state", InboxDir, "soldier-1", result.MessageID+".json")); err != nil {
 		t.Fatal("recovery must retain the original envelope")
+	}
+}
+
+func TestRecoverTransportFailureIsLoudAndRetriable(t *testing.T) {
+	senderHome := t.TempDir()
+	receiverHome := captainReceiverHome(t, "captain-1")
+	result, err := Report(ReportRequest{
+		SenderHome: senderHome, ReceiverHome: receiverHome,
+		SenderRank: RankSoldier, SenderIdentity: "soldier-1",
+		ReceiverRank: RankCaptain, ReceiverID: "captain-1",
+		TaskID: "task:transport", Key: "default", State: "failed", Message: "failed",
+		Notify: func(NotificationRef) UplinkNotifyResult { return QueuedNotification() },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sentinel := errors.New("transport unavailable")
+	calls := 0
+	_, err = Recover(RecoverRequest{
+		SenderHome: senderHome, ReceiverHome: receiverHome,
+		SenderIdentity: "soldier-1", ForceNotify: true,
+		Notify: func(NotificationRef) UplinkNotifyResult {
+			calls++
+			return FailedNotification(sentinel)
+		},
+	})
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("Recover error = %v, want transport failure", err)
+	}
+	pending, readErr := NewStore(senderHome).ReadPending("soldier-1", result.MessageID)
+	if readErr != nil || pending == nil {
+		t.Fatalf("pending report = %v, want durable retry record", readErr)
+	}
+	if calls != 1 {
+		t.Fatalf("notification calls = %d, want 1", calls)
+	}
+
+	_, err = Recover(RecoverRequest{
+		SenderHome: senderHome, ReceiverHome: receiverHome,
+		SenderIdentity: "soldier-1", ForceNotify: true,
+		Notify: func(NotificationRef) UplinkNotifyResult {
+			calls++
+			return AcknowledgedNotification()
+		},
+	})
+	if err != nil {
+		t.Fatalf("retry Recover: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("notification calls after retry = %d, want 2", calls)
 	}
 }
 
