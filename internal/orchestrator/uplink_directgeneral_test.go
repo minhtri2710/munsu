@@ -143,47 +143,69 @@ func TestDirectGeneralDispatchReportIsReceivableByItsOwnGeneral(t *testing.T) {
 // once the report is acknowledged, allowing VerifyRetirementContinuity to succeed.
 func TestDirectGeneralDispatchRecoveryPassRetiresAcknowledgedReport(t *testing.T) {
 	generalHome, identity := directGeneralHome(t)
-	// Make the pane unresolvable during the initial report so notification is queued.
-	_ = os.Remove(filepath.Join(generalHome, "config", "general-pane"))
 
-	transport := &countingTransport{}
-	res := reportUnderDirectGeneralDispatch(t, generalHome, identity, transport)
-	if transport.calls != 0 {
-		t.Fatalf("transport calls during unresolvable report = %d, want 0", transport.calls)
+	// The first notification reaches the transport but encounters a transient
+	// failure. The report must still be durable so reconciliation can recover it.
+	failed := &failingTransport{}
+	res, err := Report(ReportRequest{
+		SenderHome: generalHome, ReceiverHome: generalHome,
+		SenderRank: RankSoldier, SenderIdentity: "direct-task",
+		ReceiverRank: RankGeneral, ReceiverID: identity,
+		TaskID: "direct-task", Key: "default", State: "failed", Message: "direct dispatch failure",
+		Notify: func(ref NotificationRef) UplinkNotifyResult {
+			return NotifyParentWithTransport(generalHome, generalHome, ref, failed)
+		},
+	})
+	if err == nil || !errors.Is(err, ErrReportDurable) {
+		t.Fatalf("Report error = %v, want durable transient-notify failure", err)
 	}
-	if !res.Queued {
-		t.Fatalf("result = %+v, want queued", *res)
+	if res != nil || failed.calls != 1 {
+		t.Fatalf("result=%+v transport calls=%d, want durable failure after one transport call", res, failed.calls)
 	}
-
-	// Before acknowledgement and recovery, VerifyRetirementContinuity must refuse.
+	pending, err := NewStore(generalHome).ListPending("direct-task")
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("pending after transient notify failure = %d err=%v, want 1", len(pending), err)
+	}
+	messageID := pending[0].MessageID
+	t.Logf("transient notify failure: durable message %s remains pending", messageID)
 	if err := VerifyRetirementContinuity(generalHome, "direct-task"); err == nil {
-		t.Fatal("VerifyRetirementContinuity must refuse when report is pending")
+		t.Fatal("VerifyRetirementContinuity must refuse while the durable report is pending")
 	}
+	t.Logf("retirement blocked while message %s is pending", messageID)
 
-	// General receiver acknowledges the durable report.
+	// Reconciliation on the General home must retry the pending uplink.
+	retried := &countingTransport{}
+	if err := ReconcileCaptainHook(generalHome, true, retried); err != nil {
+		t.Fatalf("ReconcileCaptainHook retry: %v", err)
+	}
+	if retried.calls != 1 {
+		t.Fatalf("reconciliation transport calls = %d, want 1", retried.calls)
+	}
+	t.Logf("General reconciliation retried message %s successfully", messageID)
+
+	// The receiving General acknowledges the retried durable envelope.
 	recv, err := NewReceiver(generalHome)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ref := NotificationRef{MessageID: res.MessageID, SenderIdentity: "direct-task"}
+	ref := NotificationRef{MessageID: messageID, SenderIdentity: "direct-task"}
 	if _, err := recv.Ack(ref); err != nil {
 		t.Fatal(err)
 	}
+	t.Logf("General receiver acknowledged message %s", messageID)
 
-	// Even with Ack written, before the recovery pass runs, pending records remain.
-	if err := VerifyRetirementContinuity(generalHome, "direct-task"); err == nil {
-		t.Fatal("VerifyRetirementContinuity must refuse before recovery pass has run")
+	// The next reconciliation cycle observes the ack and retires the outbox item.
+	if err := ReconcileCaptainHook(generalHome, false, retried); err != nil {
+		t.Fatalf("ReconcileCaptainHook retirement: %v", err)
 	}
-
-	// Run the production recovery pass on the General home.
-	if err := ReconcileCaptainHook(generalHome, true, transport); err != nil {
-		t.Fatalf("ReconcileCaptainHook: %v", err)
+	pending, err = NewStore(generalHome).ListPending("direct-task")
+	if err != nil || len(pending) != 0 {
+		t.Fatalf("pending after acknowledged reconciliation = %d err=%v, want 0", len(pending), err)
 	}
-
-	// After the real recovery pass runs, the pending report is retired and VerifyRetirementContinuity succeeds.
 	if err := VerifyRetirementContinuity(generalHome, "direct-task"); err != nil {
 		t.Fatalf("VerifyRetirementContinuity refused after recovery pass: %v", err)
 	}
+	t.Logf("message %s retired from General outbox; task retirement continuity restored", messageID)
 }
 
 // The uplink now validates the requested rank against the receiving home rather
