@@ -1,0 +1,3 @@
+::warning file=docs/doc.md::home.WriteMailboxEnvelope does not resolve and is known to be wrong, not accepted debt: OPEN-BUG(#566): fabricated; the declared name is (*Store).WriteEnvelope. Kept red-flagged until the document is corrected.
+citations: 3 checked (1 path, 2 symbol), 2 waived, 0 unaccounted, 0 unchecked
+exit 0

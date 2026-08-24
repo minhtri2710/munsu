@@ -1,0 +1,9 @@
+::error::citations that do not resolve and are not in .github/testdata/citations/fabricated-symbol/waiver:
+  docs/doc.md: symbol home.ReadMailboxEnvelope
+    docs/doc.md:1:The document cites `home.WriteMailboxEnvelope` and `home.ReadMailboxEnvelope` in
+  docs/doc.md: symbol home.WriteMailboxEnvelope
+    docs/doc.md:1:The document cites `home.WriteMailboxEnvelope` and `home.ReadMailboxEnvelope` in
+  A path citation must name a file that exists; a symbol citation must name a func,
+  method, type, const, var or struct field this tree declares. Correct the citation,
+  or add a line to that file with a reason -- see ADR-0017 4 for what a reason has to say.
+exit 1

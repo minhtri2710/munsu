@@ -3,6 +3,7 @@
 package fleet
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -24,6 +25,22 @@ const PollRetirementSchema = 1
 // retirementDir is the private state directory for pending retirement records.
 const retirementDir = "state/.poll-retirements"
 
+func quarantinePollPath(homeDir, taskID string) (string, error) {
+	var suffix [16]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		return "", fmt.Errorf("creating poll quarantine name: %w", err)
+	}
+	digest := sha256.Sum256([]byte(taskID))
+	return filepath.Join(retirementDirPath(homeDir), fmt.Sprintf(".poll-%s-%s.quarantine", hex.EncodeToString(digest[:]), hex.EncodeToString(suffix[:]))), nil
+}
+
+func quarantinePollAt(checkPath, quarantinePath string, renameFn func(string, string) error) error {
+	if err := renameFn(checkPath, quarantinePath); err != nil {
+		return fmt.Errorf("quarantining poll artifact: %w", err)
+	}
+	return nil
+}
+
 // Check artifact disposition map (derived from every check-artifact removal or
 // preservation boundary):
 //   - Watcher discovery validates each artifact; a refusal is reported, no
@@ -40,23 +57,26 @@ const retirementDir = "state/.poll-retirements"
 //     digest mismatch means the file was read and changed, so it preserves the
 //     changed artifact, attempts record cleanup, and retains the normal wake;
 //     cleanup failure leaves the record pending.
-//   - After publication, validation or digest-acquisition failure does not
-//     remove the artifact; it attempts to clean the durable record, reports the
-//     post-publication invalidation, and suppresses the wake. Cleanup failure
+//   - After publication, the poll is first atomically moved to its private
+//     quarantine pathname. Validation and digest checks then operate only on
+//     that pathname; a failed quarantine refuses retirement without fallback to
+//     the public pathname. Post-publication validation or digest-acquisition
+//     failure preserves the quarantined artifact, attempts to clean the durable
+//     record, reports the invalidation, and suppresses the wake. Cleanup failure
 //     leaves the record pending. A matching digest plus confirmed deterministic
-//     publication permits normal removal; removal failure also leaves the
-//     record pending for recovery.
-//   - RecoverPendingRetirement preserves the artifact and record when the safe
-//     basename, complete matching delivery identity, canonical completion,
-//     deterministic publication evidence, or confirmed publication is absent.
-//     A path that does not Lstat as a regular non-symlink is treated as absent,
-//     left untouched, and its record is removed after confirmed publication,
-//     regardless of recorded digest evidence. For a remaining regular artifact,
-//     a matching recorded digest permits removal; absent digest evidence, digest
-//     acquisition failure, or a mismatch preserves the artifact and record.
-//   - Both normal and recovery removal retain the known verification-to-remove
-//     pathname replacement window tracked by #602; a replacement is not repaired
-//     here.
+//     publication permits removal of the quarantined artifact; removal failure
+//     also leaves the record pending for recovery.
+//   - Normal retirement atomically renames the public artifact to its private
+//     quarantine path before verification and removal; a failed rename returns
+//     validation refusal. Recovery quarantines a still-public artifact only
+//     when the record has valid quarantine ownership and is not yet marked
+//     quarantined; a failed rename leaves recovery unresolved while preserving
+//     the public artifact and record. An already-quarantined or missing owned
+//     artifact never causes the public pathname to be touched. Recovery
+//     preserves the quarantine and record when identity, canonical completion,
+//     publication evidence, confirmation, or the recorded digest is absent or
+//     mismatched. A missing already-owned quarantine is treated as absent and,
+//     after confirmed publication, its record is removed.
 
 // PollRetirementRecord captures a durable write-ahead record for merged PR
 // poll retirement. It is persisted BEFORE publication and removed only AFTER
@@ -68,8 +88,10 @@ type PollRetirementRecord struct {
 	TaskID string `json:"taskId"`
 
 	// Poll identity: state-relative path + SHA-256 content digest
-	PollPath   string `json:"pollPath"`   // relative to state dir (e.g. "<id>.check")
-	PollDigest string `json:"pollDigest"` // hex-encoded SHA-256 of poll content at discovery
+	PollPath       string `json:"pollPath"`       // relative to state dir (e.g. "<id>.check")
+	PollDigest     string `json:"pollDigest"`     // hex-encoded SHA-256 of poll content at discovery
+	QuarantinePath string `json:"quarantinePath"` // basename relative to the retirement directory
+	Quarantined    bool   `json:"quarantined,omitempty"`
 
 	// Delivery identity (complete, validated at capture)
 	Provider   string `json:"provider"`
@@ -322,8 +344,10 @@ func ValidateRetirementPath(homeDir, taskID string) error {
 	return nil
 }
 
-// ValidateCheckWithLstat validates a check plugin with Lstat to reject
-// symlinks and non-regular files. This is the crash-safe variant.
+// ValidateCheckWithLstat owns check-plugin runnability validation. It requires
+// an existing regular non-symlink file, the owner-execute bit on Unix (Windows
+// has no mode-bit requirement), and at least two readable bytes beginning with
+// a shebang. Watcher discovery and retirement use this same validator.
 func ValidateCheckWithLstat(path string) error {
 	// Use Lstat to detect symlinks.
 	fi, err := os.Lstat(path)
@@ -377,14 +401,17 @@ func ValidateCheckWithLstat(path string) error {
 //     projection never authorizes merged truth and no parallel delivery
 //     state is written here.
 //  6. Durably publish one deterministic keyed status line.
-//  7. Remove the exact poll artifact (with digest revalidation).
+//  7. Atomically quarantine the public poll, then validate, digest-check, and
+//     remove only the quarantined artifact.
 //  8. Remove the pending retirement record.
 //
 // Fail-closed on acceptance: validation refusal before publication preserves
-// the externally authored poll. After publication, revalidation refusal
+// the externally authored poll. A quarantine rename failure also refuses
+// retirement and never falls back to removing the public pathname. After
+// publication, revalidation refusal preserves the quarantined artifact and
 // attempts record cleanup because the durable outcome already exists; cleanup
-// failure leaves the record pending. Recovery completion
-// is separate: it removes a previously committed poll only after publication
+// failure leaves the record pending. Recovery completion is separate: it
+// removes a previously committed quarantined poll only after publication
 // evidence and the recorded content digest both match.
 //
 // The normal removal site requires successful pre-publication identity and
@@ -392,13 +419,17 @@ func ValidateCheckWithLstat(path string) error {
 // publication. The recovery removal site requires the durable record, the
 // expected safe poll basename, current delivery identity, canonical completion,
 // deterministic recorded publication evidence, confirmed publication, and the
-// recorded digest. Both sites retain the known verification-to-remove pathname
-// replacement window tracked by #602; a replacement is not repaired here.
+// recorded digest. Both sites quarantine the artifact before verification so
+// verification and removal operate on the same private pathname.
 func RetireMergedPoll(homeDir, taskID, checkPath string, auth *taskauthority.Canonical) error {
 	return retireMergedPoll(homeDir, taskID, checkPath, auth, pollContentDigest)
 }
 
-func retireMergedPoll(homeDir, taskID, checkPath string, auth *taskauthority.Canonical, digestFn func(string) (string, error)) error {
+func retireMergedPoll(homeDir, taskID, checkPath string, auth *taskauthority.Canonical, digestFn func(string) (string, error), renameFns ...func(string, string) error) error {
+	renameFn := home.RenameDurable
+	if len(renameFns) > 0 {
+		renameFn = renameFns[0]
+	}
 	// Step 0: Lstat validation on check path for crash safety.
 	if err := ValidateCheckWithLstat(checkPath); err != nil {
 		return fmt.Errorf("%w: poll validation failed: %w", domain.ErrCheckValidationRefused, err)
@@ -454,11 +485,16 @@ func retireMergedPoll(homeDir, taskID, checkPath string, auth *taskauthority.Can
 
 	// Step 4: Persist pending retirement record BEFORE publication.
 	now := time.Now().UTC().Format(time.RFC3339)
+	quarantinePath, err := quarantinePollPath(homeDir, taskID)
+	if err != nil {
+		return fmt.Errorf("creating poll quarantine name: %w", err)
+	}
 	rec := &PollRetirementRecord{
 		SchemaVersion:   PollRetirementSchema,
 		TaskID:          taskID,
 		PollPath:        pollRel,
 		PollDigest:      pollDigest,
+		QuarantinePath:  filepath.Base(quarantinePath),
 		Provider:        ident.Provider,
 		Owner:           ident.Owner,
 		Repo:            ident.Repo,
@@ -499,36 +535,46 @@ func retireMergedPoll(homeDir, taskID, checkPath string, auth *taskauthority.Can
 		// Continue to poll removal.
 	}
 
-	// Step 7: Revalidate poll path and digest, then remove.
-	if err := ValidateCheckWithLstat(checkPath); err != nil {
-		// Poll was removed or became invalid after publication. Record cleanup
-		// is attempted because publication evidence is already durable.
+	// Step 7: Atomically quarantine, then verify and remove the quarantined file.
+	// A failed quarantine refuses retirement; there is deliberately no fallback
+	// to removing checkPath. If verification fails after quarantine, leave the
+	// artifact quarantined and report its path: restoring it would recreate the
+	// replacement race and os.Rename could clobber a replacement.
+	if err := quarantinePollAt(checkPath, quarantinePath, renameFn); err != nil {
+		return fmt.Errorf("%w: poll quarantine failed (pending record exists): %w", domain.ErrCheckValidationRefused, err)
+	}
+	rec.Quarantined = true
+	if err := WriteRetirementRecord(homeDir, rec); err != nil {
+		return fmt.Errorf("persisting quarantined retirement record (pending record exists): %w", err)
+	}
+	if err := ValidateCheckWithLstat(quarantinePath); err != nil {
 		if cleanupErr := RemoveRetirementRecord(homeDir, taskID); cleanupErr != nil {
-			return fmt.Errorf("%w: poll disappeared or became invalid after publication; cleanup failed: %v: %w", domain.ErrCheckInvalidAfterPublication, cleanupErr, err)
+			return fmt.Errorf("%w: quarantined poll invalid at %s; cleanup failed: %v: %w", domain.ErrCheckInvalidAfterPublication, quarantinePath, cleanupErr, err)
 		}
-		return fmt.Errorf("%w: poll disappeared or became invalid after publication (record cleanup attempted): %w", domain.ErrCheckInvalidAfterPublication, err)
+		return fmt.Errorf("%w: quarantined poll invalid at %s (record cleanup attempted): %w", domain.ErrCheckInvalidAfterPublication, quarantinePath, err)
 	}
 
-	currentDigest, err := digestFn(checkPath)
+	currentDigest, err := digestFn(quarantinePath)
 	if err != nil {
 		// Poll disappeared between validation and digest; publication is durable,
 		// so clean the record and report post-publication invalidation.
 		if cleanupErr := RemoveRetirementRecord(homeDir, taskID); cleanupErr != nil {
 			return fmt.Errorf("%w: poll digest acquisition failed after publication; cleanup failed: %v: %w", domain.ErrCheckInvalidAfterPublication, cleanupErr, err)
 		}
-		return fmt.Errorf("%w: poll digest acquisition failed after publication (record cleanup attempted): %w", domain.ErrCheckInvalidAfterPublication, err)
+		return fmt.Errorf("%w: quarantined poll digest acquisition failed at %s (record cleanup attempted): %w", domain.ErrCheckInvalidAfterPublication, quarantinePath, err)
 	}
 
 	// Digest must still match the record.
 	if currentDigest != pollDigest {
 		RemoveRetirementRecord(homeDir, taskID)
 		// Return error after attempting record cleanup; publication evidence exists.
-		return fmt.Errorf("poll digest changed between discovery and removal (record cleanup attempted): old=%q new=%q",
-			pollDigest, currentDigest)
+		return fmt.Errorf("poll digest changed in quarantine at %s (record cleanup attempted): old=%q new=%q",
+			quarantinePath, pollDigest, currentDigest)
 	}
 
-	// Remove the poll artifact.
-	if err := os.Remove(checkPath); err != nil {
+	// Remove only the quarantined artifact; the original pathname may already
+	// have been rebound to a replacement and is never touched here.
+	if err := os.Remove(quarantinePath); err != nil {
 		if os.IsNotExist(err) {
 			// Already removed; continue cleanup.
 		} else {
@@ -594,19 +640,31 @@ func requireCanonicalCompletedOutcome(auth *taskauthority.Canonical, taskID stri
 //
 // Recovery logic:
 //  1. Validate record filename, schema, and file integrity.
-//  2. Validate current task identity and canonical completion when available.
-//  3. Validate deterministic recorded publication evidence, then append
+//  2. Require current task identity and canonical completion.
+//  3. Validate the record-owned quarantine path. If the artifact is still at
+//     the public pathname, atomically quarantine it; a failed rename preserves
+//     the public artifact and record.
+//  4. Validate deterministic recorded publication evidence, then append
 //     publication only if exact evidence is absent.
-//  4. Remove poll only after publication is confirmed and its content digest
-//     matches the committed record (or accept an already-missing poll); a
-//     digest mismatch preserves the poll and record.
-//  5. Remove completed record.
+//  5. Remove only the quarantined poll after publication is confirmed and its
+//     content digest matches the committed record. A missing quarantine is
+//     accepted as already removed; a digest mismatch preserves the quarantine
+//     and record, while a public replacement remains untouched.
+//  6. Remove completed record.
 //
 // Validation refusal governs acceptance of a newly offered operator artifact;
-// recovery instead requires durable retirement intent, canonical completion,
-// confirmed publication, and this exact content identity. Current executable
-// mode is not recovery identity.
+// recovery instead requires durable retirement intent, valid quarantine
+// ownership, canonical completion, confirmed publication, and this exact
+// content identity. Current executable mode is not recovery identity.
 func RecoverPendingRetirement(homeDir, taskID string, auth *taskauthority.Canonical) (bool, error) {
+	return recoverPendingRetirement(homeDir, taskID, auth, pollContentDigest)
+}
+
+func recoverPendingRetirement(homeDir, taskID string, auth *taskauthority.Canonical, digestFn func(string) (string, error), renameFns ...func(string, string) error) (bool, error) {
+	renameFn := home.RenameDurable
+	if len(renameFns) > 0 {
+		renameFn = renameFns[0]
+	}
 	// Validate record path.
 	if err := ValidateRetirementPath(homeDir, taskID); err != nil {
 		return false, fmt.Errorf("invalid retirement path: %w", err)
@@ -676,12 +734,45 @@ func RecoverPendingRetirement(homeDir, taskID string, auth *taskauthority.Canoni
 		return false, fmt.Errorf("recovery: canonical merged truth required: %w", err)
 	}
 
-	// Check if poll still exists.
+	if rec.QuarantinePath == "" {
+		return false, fmt.Errorf("recovery: missing durable quarantine ownership (preserving poll and retirement record)")
+	}
+	if filepath.Base(rec.QuarantinePath) != rec.QuarantinePath || filepath.Ext(rec.QuarantinePath) != ".quarantine" || strings.ContainsAny(rec.QuarantinePath, `/\\`) || !strings.HasPrefix(rec.QuarantinePath, fmt.Sprintf(".poll-%x-", sha256.Sum256([]byte(taskID)))) {
+		return false, fmt.Errorf("recovery: invalid quarantine path %q (preserving poll and retirement record)", rec.QuarantinePath)
+	}
+	quarantinePath := filepath.Join(retirementDirPath(homeDir), rec.QuarantinePath)
 	pollExists := false
 	pollMatches := false
-	if fi, statErr := os.Lstat(checkPath); statErr == nil && fi.Mode().IsRegular() && fi.Mode()&os.ModeSymlink == 0 {
-		pollExists = true
-		if digest, digestErr := pollContentDigest(checkPath); digestErr == nil && digest == rec.PollDigest {
+	if fi, statErr := os.Lstat(quarantinePath); statErr == nil {
+		if fi.Mode().IsRegular() && fi.Mode()&os.ModeSymlink == 0 {
+			pollExists = true
+		} else {
+			return false, fmt.Errorf("recovery: quarantine is not a regular file (preserving poll and retirement record)")
+		}
+	} else if !os.IsNotExist(statErr) {
+		return false, fmt.Errorf("recovery: inspecting quarantine: %w", statErr)
+	} else if !rec.Quarantined {
+		if fi, publicErr := os.Lstat(checkPath); publicErr == nil {
+			if fi.Mode().IsRegular() && fi.Mode()&os.ModeSymlink == 0 {
+				if err := quarantinePollAt(checkPath, quarantinePath, renameFn); err != nil {
+					return false, fmt.Errorf("recovery: quarantining public poll (preserving poll and retirement record): %w", err)
+				}
+				pollExists = true
+			} else {
+				return false, fmt.Errorf("recovery: public poll is not a regular file (preserving poll and retirement record)")
+			}
+		} else if !os.IsNotExist(publicErr) {
+			return false, fmt.Errorf("recovery: inspecting public poll: %w", publicErr)
+		}
+	}
+	if !rec.Quarantined && pollExists {
+		rec.Quarantined = true
+		if err := WriteRetirementRecord(homeDir, rec); err != nil {
+			return false, fmt.Errorf("recovery: persisting quarantine completion: %w", err)
+		}
+	}
+	if pollExists {
+		if digest, digestErr := digestFn(quarantinePath); digestErr == nil && digest == rec.PollDigest {
 			pollMatches = true
 		}
 	}
@@ -702,19 +793,12 @@ func RecoverPendingRetirement(homeDir, taskID string, auth *taskauthority.Canoni
 
 	// Append publication if absent.
 	if !hasPublication {
-		appended, err := durableAppendStatus(homeDir, taskID, rec.PublicationLine)
-		if err != nil {
+		if _, err := durableAppendStatus(homeDir, taskID, rec.PublicationLine); err != nil {
 			return false, fmt.Errorf("recovery: durable append failed: %w", err)
 		}
-		if appended {
-			hasPublication = true
-		}
-	}
-
-	// If publication evidence does not exist after append attempt, we cannot
-	// safely remove the poll. Preserve everything.
-	if !hasPublication {
-		return false, fmt.Errorf("recovery: publication could not be confirmed; preserving poll and record")
+		// A nil error means the exact line was either appended or was already
+		// present under durableAppendStatus's duplicate check.
+		hasPublication = true
 	}
 
 	// Publication exists. Recovery deletes only after this confirmed
@@ -725,7 +809,7 @@ func RecoverPendingRetirement(homeDir, taskID string, auth *taskauthority.Canoni
 		return false, fmt.Errorf("recovery: poll digest changed; preserving poll and retirement record")
 	}
 	if pollExists {
-		if err := os.Remove(checkPath); err != nil && !os.IsNotExist(err) {
+		if err := os.Remove(quarantinePath); err != nil && !os.IsNotExist(err) {
 			return false, fmt.Errorf("recovery: removing poll: %w", err)
 		}
 	}

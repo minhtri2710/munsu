@@ -1,0 +1,2 @@
+::error::.github/testdata/uncovered-guards/invalid-mode/profiles/default.out:1: unsupported or missing coverage profile mode: mode: bogus
+exit 1

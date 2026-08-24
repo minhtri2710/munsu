@@ -42,6 +42,19 @@ Working either register — writing a waiver, scoring a mutant, triaging an
 unreachable function — is governed by `docs/adr/0017-guard-burn-down-working-rules-and-their-enforcement-addresses.md`,
 which also states which of those rules a machine checks and which only a reader does.
 
+That job also checks documentation citations against the tree, compared both
+ways with `.github/citations.allow` (`.github/scripts/citations.sh check`).
+Classified file paths and Go identifiers in the covered set must resolve to an
+existing file or a declaration this tree makes; the parser recognizes funcs,
+methods, types, consts, vars and struct fields. The covered set is `docs/**`
+except `docs/plans/`, plus `AGENTS.md`, `CLAUDE.md` and `README.md` (the first
+two are the same file here). Line numbers are ignored. The tool reports
+classified-but-unjudged shapes as `unchecked` and does not extract some fenced
+or malformed spans; the implementation comment at
+`.github/scripts/citations/main.go` owns those boundaries. Rules are pinned by
+fixtures (`citations.sh selftest`), and waiver rows follow ADR-0017 §4 as
+described in `.github/citations.allow`.
+
 That job also enforces `.github/flake-ledger.md`: a test CI caught being flaky
 on `main` has a row there with a deadline, and an `open` row past its deadline
 turns `invariants` red on every PR until someone fixes the test. Rows are

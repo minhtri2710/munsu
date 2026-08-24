@@ -51,14 +51,16 @@ func hostSoldierTask(t *testing.T, homeDir, taskID string) string {
 // ackedNotifier returns a Notify callback that acknowledges delivery into the
 // parent pane without touching any ack state (notification ack != ProcessingAck).
 func ackedNotifier() func(NotificationRef) UplinkNotifyResult {
-	return func(NotificationRef) UplinkNotifyResult { return UplinkNotifyResult{Acknowledged: true} }
+	return func(NotificationRef) UplinkNotifyResult {
+		return AcknowledgedNotification()
+	}
 }
 
 // failOnNotify returns a Notify callback that fails the test if it is invoked.
 func failOnNotify(t *testing.T) func(NotificationRef) UplinkNotifyResult {
 	return func(NotificationRef) UplinkNotifyResult {
 		t.Fatal("unexpected re-notification of an already-retired report")
-		return UplinkNotifyResult{}
+		return QueuedNotification()
 	}
 }
 
@@ -292,7 +294,7 @@ func TestUplinkLifecycle_DirectVersusRelayDelivery(t *testing.T) {
 			if ref != relayRef {
 				t.Fatalf("relay notification ref = %+v, want %+v", ref, relayRef)
 			}
-			return UplinkNotifyResult{Acknowledged: true}
+			return AcknowledgedNotification()
 		},
 	})
 	if err != nil {
@@ -362,7 +364,7 @@ func TestUplinkLifecycle_NotificationThrottleSuppressesDuplicateDelivery(t *test
 	notifications := 0
 	notify := func(NotificationRef) UplinkNotifyResult {
 		notifications++
-		return UplinkNotifyResult{Acknowledged: true}
+		return AcknowledgedNotification()
 	}
 	// Recover without ForceNotify: the fresh report is still inside its 60s
 	// notification window, so it must not be re-notified.

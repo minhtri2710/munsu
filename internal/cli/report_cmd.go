@@ -159,22 +159,18 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 					TaskID: taskID, Key: key, State: state, Message: msg,
 					Notify: func(ref orchestrator.NotificationRef) orchestrator.UplinkNotifyResult {
 						if resolveRingPolicy(ring, homeDir) == "no-ring" {
-							return orchestrator.UplinkNotifyResult{Queued: true}
+							return orchestrator.QueuedNotification()
 						}
 						return notify(homeDir, parentHome, ref)
 					},
 				})
 				if err != nil {
-					// This failure landed after the durable commit, so it must
-					// not read as "the report did not happen": the receiver
-					// has it. Re-running report is the repair rather than a
-					// hazard -- it supersedes this record instead of adding a
-					// second one, verified in
-					// TestReReportingAfterANotifyFailureSupersedesInsteadOfDoubleWriting
-					// -- and under direct General dispatch no recovery pass
-					// retries the notification, so it is the only repair there.
+					// This failure landed after the durable commit, so the receiver
+					// already holds the report and its notification remains pending
+					// for reconciliation and retry. Re-running report is also safe:
+					// it supersedes this record rather than adding a second one.
 					if errors.Is(err, orchestrator.ErrReportDurable) {
-						return fmt.Errorf("report: %w -- the receiver already holds this report; re-running report for this state supersedes it rather than adding a second one, and is how to retry", err)
+						return fmt.Errorf("report: %w -- the receiver already holds this report; its notification remains pending for reconciliation and retry; re-running report for this state safely supersedes it rather than adding a second one", err)
 					}
 					return fmt.Errorf("report: %w", err)
 				}
