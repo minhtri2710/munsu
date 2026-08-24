@@ -1193,6 +1193,30 @@ func scan(root string) ([]string, error) {
 	return out, nil
 }
 
+func isGenericReference(idx *index, expr ast.Expr) bool {
+	switch expr.(type) {
+	case *ast.IndexExpr, *ast.IndexListExpr:
+		base, ok := declarationExprName(expr)
+		if !ok {
+			return false
+		}
+		if !strings.Contains(base, ".") && !strings.HasPrefix(base, "(") {
+			judged, _ := symbolName(idx, base)
+			return idx.names[base] || judged
+		}
+		return referenceShaped(base)
+	default:
+		return false
+	}
+}
+
+func genericSymbolName(idx *index, text string) (bool, bool) {
+	if !strings.Contains(text, ".") && !strings.HasPrefix(text, "(") && idx.names[text] {
+		return true, true
+	}
+	return symbolName(idx, text)
+}
+
 // One span can hold several citations: `.github/scripts/build-tags.sh packages
 // <tag>` is a command whose first word is a path. Path classification therefore
 // runs per whitespace-separated token, and the "first segment exists at the
@@ -1205,6 +1229,18 @@ func classify(root string, idx *index, fi *files, doc, text string) []string {
 	if expr, err := parser.ParseExpr(expressionText); err == nil {
 		if selectorRootedInCall(expr) {
 			return []string{strings.Join([]string{"unchecked", doc, "token", expressionText}, "\t")}
+		}
+		if isGenericReference(idx, expr) {
+			if base, ok := declarationExprName(expr); ok {
+				if judged, resolved := genericSymbolName(idx, base); judged {
+					status := "unresolved"
+					if resolved {
+						status = "resolved"
+					}
+					return []string{strings.Join([]string{status, doc, "symbol", expressionText}, "\t")}
+				}
+				return []string{strings.Join([]string{"unchecked", doc, "token", expressionText}, "\t")}
+			}
 		}
 		if call, ok := expr.(*ast.CallExpr); ok {
 			if callee, ok := declarationExprName(call.Fun); ok {

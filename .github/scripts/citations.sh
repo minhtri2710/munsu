@@ -401,6 +401,15 @@ exit $rc"
 		failed=1
 	fi
 
+	local unknown_generic
+	if unknown_generic="$(SCAN_ROOT="$ROOT/.github/testdata/citations/generic-reference" WAIVER="$ROOT/.github/testdata/citations/generic-reference/waiver" "$0" unchecked 2>&1)" && printf '%s\n' "$unknown_generic" | grep -Fxq $'docs/doc.md\tunknown.GenericNow[int]'; then
+		echo "  ok   unknown-generic-reference"
+	else
+		echo "::error::citations did not disclose the complete unknown generic reference:" >&2
+		printf '%s\n' "${unknown_generic:-$?}" >&2
+		failed=1
+	fi
+
 	# A Go file the parser cannot read is a file whose declarations are missing
 	# from the index, and a missing declaration reads as a fabricated citation.
 	# This has to fail closed rather than scan a short index. It is not a
