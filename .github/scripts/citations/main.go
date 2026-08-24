@@ -256,6 +256,7 @@ func inlineSpans(line string) []span {
 // only ever appears inside a fence is not checked. Counted as one of the lane's
 // silent drops in referenceShaped's enumeration, which is the complete list.
 func fenceMarker(line string) (byte, int, int, bool) {
+	line, _ = stripMarkdownContainer(line)
 	columns := 0
 	start := 0
 	for start < len(line) && (line[start] == ' ' || line[start] == '\t') {
@@ -278,6 +279,52 @@ func fenceMarker(line string) (byte, int, int, bool) {
 		return 0, 0, 0, false
 	}
 	return marker, run, start, true
+}
+
+func stripMarkdownContainer(line string) (string, int) {
+	start := 0
+	consumed := false
+	for {
+		markerStart := start
+		for start < len(line) && line[start] == ' ' {
+			start++
+		}
+		if start < len(line) && line[start] == '>' {
+			consumed = true
+			start++
+			if start < len(line) && line[start] == ' ' {
+				start++
+			}
+			continue
+		}
+		if start < len(line) && (line[start] == '-' || line[start] == '*' || line[start] == '+') {
+			consumed = true
+			start++
+		} else {
+			for start < len(line) && line[start] >= '0' && line[start] <= '9' {
+				start++
+			}
+			if start == markerStart || (start < len(line) && line[start] != '.' && line[start] != ')') {
+				if consumed {
+					return line[start:], start
+				}
+				return line, 0
+			}
+			if start < len(line) {
+				start++
+			}
+		}
+		if start == markerStart || start >= len(line) || (line[start] != ' ' && line[start] != '\t') {
+			if consumed {
+				return line[start:], start
+			}
+			return line, 0
+		}
+		for start < len(line) && (line[start] == ' ' || line[start] == '\t') {
+			start++
+		}
+	}
+	return line[start:], start
 }
 
 func closesFence(line string, marker byte, openingRun int) bool {
@@ -943,6 +990,26 @@ func embeddedName(expr ast.Expr) string {
 	return ""
 }
 
+func declarationExprName(expr ast.Expr) (string, bool) {
+	switch t := expr.(type) {
+	case *ast.Ident:
+		return t.Name, true
+	case *ast.SelectorExpr:
+		left, ok := declarationExprName(t.X)
+		if !ok {
+			return "", false
+		}
+		return left + "." + t.Sel.Name, true
+	case *ast.IndexExpr:
+		return declarationExprName(t.X)
+	case *ast.IndexListExpr:
+		return declarationExprName(t.X)
+	case *ast.ParenExpr:
+		return declarationExprName(t.X)
+	}
+	return "", false
+}
+
 // ---------------------------------------------------------------------------
 // the scan
 // ---------------------------------------------------------------------------
@@ -1005,6 +1072,26 @@ func scan(root string) ([]string, error) {
 // claim about a Go declaration.
 func classify(root string, idx *index, fi *files, doc, text string) []string {
 	var rows []string
+	if expr, err := parser.ParseExpr(strings.TrimSpace(text)); err == nil {
+		if selectorRootedInCall(expr) {
+			return []string{strings.Join([]string{"unchecked", doc, "token", strings.TrimSpace(text)}, "\t")}
+		}
+		if call, ok := expr.(*ast.CallExpr); ok {
+			if callee, ok := declarationExprName(call.Fun); ok {
+				judged, resolved := symbolName(idx, callee)
+				if !strings.Contains(callee, ".") && !strings.Contains(callee, "(") {
+					judged, resolved = true, idx.names[callee]
+				}
+				if judged {
+					status := "unresolved"
+					if resolved {
+						status = "resolved"
+					}
+					return []string{strings.Join([]string{status, doc, "symbol", cleanToken(strings.TrimSpace(text))}, "\t")}
+				}
+			}
+		}
+	}
 	fields := strings.Fields(text)
 	claimed := false
 	var unjudged []string

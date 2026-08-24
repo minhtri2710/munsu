@@ -467,10 +467,10 @@ exit $rc"
 	: >"$tabbed/CLAUDE.md"
 	: >"$tabbed/README.md"
 	printf 'package x\n\nfunc SomethingDeclared() {}\n' >"$tabbed/good.go"
-	printf '\t```\nA missing citation is `MissingTabCitation`.\n' >"$tabbed/docs/doc.md"
+	printf '\t```\nA missing citation is `MissingTabCitation`.\n    ```\nA second missing citation is `MissingSpaceCitation`.\n' >"$tabbed/docs/doc.md"
 	: >"$tabbed/waiver"
 	if got="$(SCAN_ROOT="$tabbed" WAIVER="$tabbed/waiver" "$0" check 2>&1)"; then rc=0; else rc=$?; fi
-	if [ "$rc" -eq 0 ] || ! printf '%s\n' "$got" | grep -q 'symbol MissingTabCitation'; then
+	if [ "$rc" -eq 0 ] || ! printf '%s\n' "$got" | grep -q 'symbol MissingTabCitation' || ! printf '%s\n' "$got" | grep -q 'symbol MissingSpaceCitation'; then
 		echo "::error::citations treated a four-column tab indentation as a fence:" >&2
 		printf '%s\n' "$got" >&2
 		failed=1
@@ -574,11 +574,17 @@ EOF
 	: >"$callresult/AGENTS.md"
 	: >"$callresult/CLAUDE.md"
 	: >"$callresult/README.md"
-	printf 'package x\n\nfunc Recover() {}\n' >"$callresult/good.go"
-	printf 'A call-result citation is `newCaptainRecoverTransaction().Recover`.\n' >"$callresult/docs/doc.md"
+	printf 'package x\n\nfunc Recover(any) {}\nfunc Generic[T any]() {}\n' >"$callresult/good.go"
+	printf 'Call-result citations are `newCaptainRecoverTransaction().Recover`, `newFoo(ctx, option()).Recover()`, `Recover(context.Background())`, and `Generic[int]()`.\n' >"$callresult/docs/doc.md"
 	: >"$callresult/waiver"
-	if unchecked="$(SCAN_ROOT="$callresult" WAIVER="$callresult/waiver" "$0" unchecked 2>&1)" && printf '%s\n' "$unchecked" | grep -q 'newCaptainRecoverTransaction().Recover'; then
-		echo "  ok   call-result-selector"
+	if unchecked="$(SCAN_ROOT="$callresult" WAIVER="$callresult/waiver" "$0" unchecked 2>&1)" && printf '%s\n' "$unchecked" | grep -q 'newCaptainRecoverTransaction().Recover' && printf '%s\n' "$unchecked" | grep -q 'newFoo(ctx, option()).Recover()'; then
+		if rows="$(cd "$TOOL" && go run . "$callresult" 2>&1)" && printf '%s\n' "$rows" | grep -Fq $'resolved\tdocs/doc.md\tsymbol\tRecover(context.Background())' && printf '%s\n' "$rows" | grep -Fq $'resolved\tdocs/doc.md\tsymbol\tGeneric[int]()'; then
+			echo "  ok   call-result-selector"
+		else
+			echo "::error::citations failed to resolve ordinary or generic calls:" >&2
+			printf '%s\n' "${rows:-$?}" >&2
+			failed=1
+		fi
 	else
 		echo "::error::citations silently dropped a call-result selector:" >&2
 		printf '%s\n' "${unchecked:-$?}" >&2
