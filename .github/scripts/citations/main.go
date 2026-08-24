@@ -348,14 +348,24 @@ func nonInterruptingOrderedList(line string, containers, openContainers []fenceC
 		parentLen = len(openContainers)
 	} else if len(containers) == len(openContainers) && len(containers) > 0 &&
 		isContainerPrefix(containers[:len(containers)-1], openContainers[:len(openContainers)-1]) &&
-		containers[len(containers)-1].kind == 'l' && openContainers[len(openContainers)-1].kind == 'l' &&
-		containers[len(containers)-1].marker != openContainers[len(openContainers)-1].marker {
+		containers[len(containers)-1].kind == 'l' &&
+		(openContainers[len(openContainers)-1].kind != 'l' ||
+			containers[len(containers)-1].marker != openContainers[len(openContainers)-1].marker) {
 		parentLen = len(containers) - 1
+	} else if len(containers) == len(openContainers) && len(containers) == 1 &&
+		containers[0].kind == 'l' && openContainers[0].kind == '>' {
+		parentLen = 0
 	} else {
 		return "", false
 	}
 	normalized, ok := stripFenceContainers(line, containers[:parentLen])
-	if !ok || len(normalized) == 0 || (normalized[0] < '0' || normalized[0] > '9') {
+	if !ok {
+		return "", false
+	}
+	if len(normalized) == 0 {
+		normalized = line
+	}
+	if normalized[0] < '0' || normalized[0] > '9' {
 		return "", false
 	}
 	end := 0
@@ -372,7 +382,7 @@ func nonInterruptingOrderedList(line string, containers, openContainers []fenceC
 	for end+1 < len(normalized) && (normalized[end+1] == ' ' || normalized[end+1] == '\t') {
 		end++
 	}
-	return normalized[end+1:], true
+	return normalized, true
 }
 
 func lazyParagraphContinuation(line string, containers, openContainers []fenceContainer) bool {
