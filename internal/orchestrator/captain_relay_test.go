@@ -315,6 +315,24 @@ func TestReconcileHook_ReconcilesGeneralHomeWhenParentStatusEqualsHomeDir(t *tes
 	}
 }
 
+func TestReconcileHook_RejectsUnsupportedHomeRankBeforeRecovery(t *testing.T) {
+	tmp := t.TempDir()
+	transport := &captainNotificationTransport{acknowledged: true}
+	originalReadHomeIdentity := ReadHomeIdentity
+	ReadHomeIdentity = func(string) (string, Rank, error) {
+		return "soldier-home", RankSoldier, nil
+	}
+	t.Cleanup(func() { ReadHomeIdentity = originalReadHomeIdentity })
+
+	err := ReconcileCaptainHook(tmp, false, transport)
+	if err == nil || !strings.Contains(err.Error(), "unsupported home rank") {
+		t.Fatalf("error = %v, want unsupported home rank error", err)
+	}
+	if transport.calls != 0 {
+		t.Fatalf("notification calls = %d, want 0 for unsupported home rank", transport.calls)
+	}
+}
+
 func TestReconcileHook_RejectsUnreadableHomeIdentityBeforeRecovery(t *testing.T) {
 	tmp := t.TempDir()
 	parentHome := t.TempDir()
