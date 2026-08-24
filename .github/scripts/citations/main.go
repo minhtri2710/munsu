@@ -158,10 +158,13 @@ func docFiles(root string) ([]string, error) {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() {
-			if p == plans {
+		if p == plans {
+			if d.IsDir() {
 				return fs.SkipDir
 			}
+			return nil
+		}
+		if d.IsDir() {
 			return nil
 		}
 		if d.Type()&os.ModeSymlink != 0 {
@@ -210,24 +213,52 @@ type span struct {
 	end   int // byte offset just past the closing backtick run
 }
 
-// Inline code spans on one line. Fenced blocks are handled by the caller.
-//
-// A span is a run of N backticks closed by the next run of exactly N. Spans
-// that open on one line and close on another are skipped rather than guessed
-// at: an unterminated run is either a multi-line span (nothing in the covered
-// set cites across a line break) or a typo, and inventing a citation out of one
-// would put a row in the waiver that no reader can find. Note the `break`
-// rather than a `continue`: an unmatched run abandons the rest of its line, so
-// a well-formed span after it is dropped too. Counted, with that effect, as one
-// of the lane's silent drops in referenceShaped's enumeration, which is the
-// complete list.
+// Inline code spans. Fenced blocks are handled by the caller. A span is a run
+// of N backticks closed by the next run of exactly N, including when the
+// closing run is on a later line.
 func inlineSpans(line string) []span {
+	spans, _, _ := inlineSpansState(line, 0, "")
+	return spans
+}
+
+func inlineSpansState(line string, openRun int, openText string) ([]span, int, string) {
 	var out []span
 	i := 0
-	for i < len(line) {
-		if line[i] != '`' {
+	for {
+		if openRun > 0 {
+			found := -1
+			for j := 0; j < len(line); {
+				if line[j] != '`' {
+					j++
+					continue
+				}
+				backslashes := 0
+				for k := j - 1; k >= 0 && line[k] == '\\'; k-- {
+					backslashes++
+				}
+				m := 0
+				for j+m < len(line) && line[j+m] == '`' {
+					m++
+				}
+				if backslashes%2 == 0 && m == openRun {
+					found = j
+					break
+				}
+				j += m
+			}
+			if found < 0 {
+				return out, openRun, openText + "\n" + line
+			}
+			out = append(out, span{text: openText + "\n" + line[:found]})
+			i = found + openRun
+			openRun = 0
+			openText = ""
+		}
+		for i < len(line) && line[i] != '`' {
 			i++
-			continue
+		}
+		if i >= len(line) {
+			return out, 0, ""
 		}
 		backslashes := 0
 		for j := i - 1; j >= 0 && line[j] == '\\'; j-- {
@@ -237,11 +268,16 @@ func inlineSpans(line string) []span {
 			i++
 			continue
 		}
+		if i > 0 && (line[i-1] == '-' || line[i-1] == '*' || line[i-1] == '+' || line[i-1] == '.' || (line[i-1] >= '0' && line[i-1] <= '9')) {
+			i += 1
+			continue
+		}
 		n := 0
 		for i+n < len(line) && line[i+n] == '`' {
 			n++
 		}
-		j, closed := i+n, false
+		j := i + n
+		closed := false
 		for j < len(line) {
 			if line[j] != '`' {
 				j++
@@ -252,18 +288,23 @@ func inlineSpans(line string) []span {
 				m++
 			}
 			if m == n {
+				out = append(out, span{text: line[i+n : j], start: i, end: j + n})
+				i = j + n
 				closed = true
 				break
 			}
 			j += m
 		}
 		if !closed {
-			break
+			return out, n, line[i+n:]
 		}
-		out = append(out, span{text: line[i+n : j], start: i, end: j + n})
-		i = j + n
 	}
-	return out
+}
+
+func scanInlineSpans(line string, openRun *int, openText *string) []span {
+	spans, run, text := inlineSpansState(line, *openRun, *openText)
+	*openRun, *openText = run, text
+	return spans
 }
 
 // Fenced code blocks are excluded. They hold commands, transcripts and sample
@@ -451,7 +492,9 @@ var (
 	// receiver matters.
 	methodExprRe = regexp.MustCompile(`^\(\*?([A-Za-z_][A-Za-z0-9_]*)\)\.([A-Za-z_][A-Za-z0-9_]*)$`)
 	// A trailing argument list on a cited call.
-	callSuffixRe = regexp.MustCompile(`\([^()]*\)$`)
+	callSuffixRe               = regexp.MustCompile(`\([^()]*\)$`)
+	invalidFenceLikeRe         = regexp.MustCompile(`^[ \t]*(?:[-+*]|[0-9]{1,10}[.)])[ \t]*\x60{3}`)
+	invalidBacktickFenceLikeRe = regexp.MustCompile(`^[ \t]*\x60{3,}.*\x60`)
 )
 
 // The punctuation a reference can never contain, because it belongs to
@@ -740,15 +783,9 @@ func fileCitation(fi *files, tok string) bool {
 //
 //  1. a span inside a fenced code block, dropped by the scanner.
 //     A citation that only ever appears in a fence is never checked.
-//  2. everything to the right of an unmatched backtick run, dropped by
-//     inlineSpans, which abandons the rest of the line rather than resuming
-//     after the run. So the silence is wider than the typo that causes it: a
-//     correctly written, properly closed citation later in the same sentence
-//     goes with it, in a span markdown renders as code. Nothing here cites
-//     across a line break, so the run itself is a typo and guessing at it
-//     would seed the waiver with a citation no reader can find -- but the
-//     collateral is the part worth knowing, and no line in the covered set
-//     has backticks to the right of an unmatched run today.
+//  2. everything to the right of an unmatched backtick run, dropped by the
+//     inline-span scanner until a matching delimiter appears. This is an
+//     unterminated span, not a citation-bearing code span.
 //  3. empty, or a URL: nothing about this tree is being claimed.
 //  4. executable punctuation, the codeChars set above: a fragment of a command
 //     or an expression -- `'[.[]`, `[.labels[].name]`,
@@ -1167,8 +1204,14 @@ func scan(root string) ([]string, error) {
 		var fenceMarkerByte byte
 		var fenceRun int
 		var fenceContainers []fenceContainer
+		var openRun int
+		var openText string
+		var spans []span
 		for _, line := range strings.Split(string(body), "\n") {
 			if fenceRun > 0 {
+				if openRun > 0 {
+					openRun, openText = 0, ""
+				}
 				normalized, ok := stripFenceContainers(line, fenceContainers)
 				if ok {
 					if closesFenceNormalized(normalized, fenceMarkerByte, fenceRun) {
@@ -1182,12 +1225,23 @@ func scan(root string) ([]string, error) {
 			if marker, run, _, ok := fenceMarker(line); ok {
 				_, containers, _ := parseMarkdownContainers(line)
 				fenceMarkerByte, fenceRun, fenceContainers = marker, run, containers
+				openRun, openText = 0, ""
 				continue
 			}
-			for _, s := range inlineSpans(line) {
-				if strings.IndexFunc(s.text, unicode.IsControl) >= 0 {
+			if openRun > 0 && strings.TrimSpace(line) == "" {
+				continue
+			}
+			indent := len(line) - len(strings.TrimLeft(line, " \t"))
+			if strings.TrimSpace(line) == "" || markdownColumns(line[:indent]) > 3 || invalidFenceLikeRe.MatchString(line) || invalidBacktickFenceLikeRe.MatchString(line) {
+				openRun, openText = 0, ""
+				continue
+			}
+			spans = scanInlineSpans(line, &openRun, &openText)
+			for _, s := range spans {
+				if strings.ContainsAny(s.text, "\t\r\x00") || strings.IndexFunc(strings.ReplaceAll(s.text, "\n", ""), unicode.IsControl) >= 0 {
 					return nil, fmt.Errorf("citation in %s contains a control character: %q", doc, s.text)
 				}
+				s.text = strings.ReplaceAll(s.text, "\n", " ")
 				for _, row := range classify(root, idx, fi, doc, s.text) {
 					rows[row] = true
 				}

@@ -743,18 +743,27 @@ EOF
 	fi
 
 	coverage="$(mktemp -d)"
-	mkdir -p "$coverage/docs/guides/plans" "$coverage/docs/plans"
+	mkdir -p "$coverage/docs/guides/plans" "$coverage/plans-target"
+	ln -s "$coverage/plans-target" "$coverage/docs/plans"
 	: >"$coverage/AGENTS.md"
 	: >"$coverage/CLAUDE.md"
 	: >"$coverage/README.md"
 	printf 'package x\n\nfunc SomethingDeclared() {}\n' >"$coverage/good.go"
 	printf 'Nested plan cites `missing_nested.go`.\n' >"$coverage/docs/guides/plans/doc.md"
-	printf 'Top plan cites `missing_top.go`.\n' >"$coverage/docs/plans/doc.md"
+	printf 'Top plan cites `missing_top.go`.\n' >"$coverage/plans-target/doc.md"
 	: >"$coverage/waiver"
 	if listed="$(SCAN_ROOT="$coverage" WAIVER="$coverage/waiver" "$0" list 2>&1)" && printf '%s\n' "$listed" | grep -q 'docs/guides/plans/doc.md' && ! printf '%s\n' "$listed" | grep -q 'docs/plans/doc.md'; then
 		echo "  ok   nested-plans-coverage"
 	else
 		echo "::error::citations excluded nested plans or scanned top-level plans:" >&2
+		printf '%s\n' "${listed:-$?}" >&2
+		failed=1
+	fi
+
+	if listed="$(SCAN_ROOT="$coverage" WAIVER="$coverage/waiver" "$0" list 2>&1)" && ! printf '%s\n' "$listed" | grep -q 'docs/plans-target'; then
+		echo "  ok   symlinked-plans-exclusion"
+	else
+		echo "::error::citations rejected or scanned excluded symlinked plans:" >&2
 		printf '%s\n' "${listed:-$?}" >&2
 		failed=1
 	fi
