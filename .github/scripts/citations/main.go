@@ -165,7 +165,11 @@ func docFiles(root string) ([]string, error) {
 			return nil
 		}
 		if d.Type()&os.ModeSymlink != 0 {
-			if targetInfo, statErr := os.Stat(p); statErr == nil && targetInfo.IsDir() {
+			targetInfo, statErr := os.Stat(p)
+			if statErr != nil {
+				return fmt.Errorf("covered documentation symlink %s: %w", filepath.ToSlash(strings.TrimPrefix(p, root+string(filepath.Separator))), statErr)
+			}
+			if targetInfo.IsDir() {
 				return fmt.Errorf("covered documentation directory %s is symlinked", filepath.ToSlash(strings.TrimPrefix(p, root+string(filepath.Separator))))
 			}
 		}

@@ -416,7 +416,7 @@ exit $rc"
 	# committed fixture because it cannot be one: an unparseable .go file in the
 	# tree makes `gofmt -l .` exit 2, which turns the gofmt step of this same job
 	# red for a reason that is not this rule. Built in a scratch tree instead.
-	local scratch escape tabbed rootdoc outside ambiguous callresult nested coverage invalidfence container rootrelative ignoredgo escapedbacktick controlchars unsafe_doc_path
+	local scratch escape tabbed rootdoc outside ambiguous callresult nested coverage invalidfence container rootrelative ignoredgo escapedbacktick controlchars unsafe_doc_path broken_docs
 	scratch=""
 	escape=""
 	tabbed=""
@@ -433,7 +433,8 @@ exit $rc"
 	escapedbacktick=""
 	controlchars=""
 	unsafe_doc_path=""
-	trap 'rm -rf "${scratch:-}" "${escape:-}" "${tabbed:-}" "${rootdoc:-}" "${outside:-}" "${ambiguous:-}" "${callresult:-}" "${nested:-}" "${coverage:-}" "${invalidfence:-}" "${container:-}" "${rootrelative:-}" "${ignoredgo:-}" "${escapedbacktick:-}" "${controlchars:-}" "${unsafe_doc_path:-}"' RETURN
+	broken_docs=""
+	trap 'rm -rf "${scratch:-}" "${escape:-}" "${tabbed:-}" "${rootdoc:-}" "${outside:-}" "${ambiguous:-}" "${callresult:-}" "${nested:-}" "${coverage:-}" "${invalidfence:-}" "${container:-}" "${rootrelative:-}" "${ignoredgo:-}" "${escapedbacktick:-}" "${controlchars:-}" "${unsafe_doc_path:-}" "${broken_docs:-}"' RETURN
 	scratch="$(mktemp -d)"
 	mkdir -p "$scratch/docs"
 	printf 'A citation of `SomethingDeclared`.\n' >"$scratch/docs/doc.md"
@@ -560,6 +561,24 @@ exit $rc"
 		failed=1
 	else
 		echo "  ok   docs-root-symlink"
+	fi
+
+	broken_docs="$(mktemp -d)"
+	mkdir -p "$broken_docs/docs"
+	: >"$broken_docs/AGENTS.md"
+	: >"$broken_docs/CLAUDE.md"
+	: >"$broken_docs/README.md"
+	printf 'package x\n\nfunc SomethingDeclared() {}\n' >"$broken_docs/good.go"
+	printf 'A citation is `SomethingDeclared`.\n' >"$broken_docs/docs/doc.md"
+	ln -s "$broken_docs/missing-docs" "$broken_docs/docs/shared"
+	: >"$broken_docs/waiver"
+	if got="$(SCAN_ROOT="$broken_docs" WAIVER="$broken_docs/waiver" "$0" check 2>&1)"; then rc=0; else rc=$?; fi
+	if [ "$rc" -eq 0 ] || ! printf '%s\n' "$got" | grep -q 'covered documentation symlink docs/shared'; then
+		echo "::error::citations silently skipped a broken docs symlink:" >&2
+		printf '%s\n' "$got" >&2
+		failed=1
+	else
+		echo "  ok   broken-doc-symlink"
 	fi
 
 	rootdoc="$(mktemp -d)"
