@@ -453,11 +453,13 @@ exit $rc"
 	printf 'package x\nfunc RealDeclaration() {}\n' >"$ignoredgo/good.go"
 	printf 'package x\nfunc IgnoredDeclaration() {}\n' >"$ignoredgo/_fixture.go"
 	printf 'package x\nfunc DotIgnoredDeclaration() {}\n' >"$ignoredgo/.fixture.go"
-	printf 'The real declaration is `RealDeclaration`; ignored declarations are `IgnoredDeclaration` and `DotIgnoredDeclaration`.\n' >"$ignoredgo/docs/doc.md"
+	mkdir -p "$ignoredgo/_fixtures"
+	printf 'package x\nfunc IgnoredDirectoryDeclaration() {}\n' >"$ignoredgo/_fixtures/source.go"
+	printf 'The real declaration is `RealDeclaration`; ignored declarations are `IgnoredDeclaration`, `DotIgnoredDeclaration`, and `IgnoredDirectoryDeclaration`.\n' >"$ignoredgo/docs/doc.md"
 	: >"$ignoredgo/waiver"
 	if got="$(cd "$TOOL" && go run . "$ignoredgo" 2>&1)"; then rc=0; else rc=$?; fi
-	if [ "$rc" -eq 0 ] && printf '%s\n' "$got" | grep -Fq $'unresolved\tdocs/doc.md\tsymbol\tIgnoredDeclaration' && printf '%s\n' "$got" | grep -Fq $'unresolved\tdocs/doc.md\tsymbol\tDotIgnoredDeclaration' && printf '%s\n' "$got" | grep -Fq $'resolved\tdocs/doc.md\tsymbol\tRealDeclaration'; then
-		echo "  ok   ignored-go-basename"
+	if [ "$rc" -eq 0 ] && printf '%s\n' "$got" | grep -Fq $'unresolved\tdocs/doc.md\tsymbol\tIgnoredDeclaration' && printf '%s\n' "$got" | grep -Fq $'unresolved\tdocs/doc.md\tsymbol\tDotIgnoredDeclaration' && printf '%s\n' "$got" | grep -Fq $'unresolved\tdocs/doc.md\tsymbol\tIgnoredDirectoryDeclaration' && printf '%s\n' "$got" | grep -Fq $'resolved\tdocs/doc.md\tsymbol\tRealDeclaration'; then
+		echo "  ok   ignored-go-sources"
 	else
 		echo "::error::citations indexed Go-ignored basenames:" >&2
 		printf '%s\n' "${got:-$?}" >&2

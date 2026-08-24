@@ -903,7 +903,7 @@ type index struct {
 // declared, which is a syntactic question, and answering it syntactically buys
 // two things a type-checked answer does not. It reads files under every build
 // tag and every GOOS at once -- a parser applies no build constraints -- so a
-// `_darwin.go` declaration resolves on a linux runner, which is the hole
+// `source_darwin.go` declaration resolves on a linux runner, which is the hole
 // deadcode.sh has to run one analysis per GOOS to close. And it needs no module
 // download, which is what keeps this lane hermetic.
 //
@@ -924,12 +924,12 @@ func buildIndex(root string) (*index, error) {
 			return err
 		}
 		if d.IsDir() {
-			// Leading-dot directories and testdata hold no product Go source:
-			// .github carries this lane's own instrument and guardsites', and
-			// testdata carries fixture sources for both. A documentation symbol
-			// must not resolve against either -- the same exclusion, for the
-			// same reason, that guardsites makes.
-			if name := d.Name(); p != root && (strings.HasPrefix(name, ".") || name == "testdata" || name == "vendor") {
+			// Leading-dot and underscore-prefixed directories, testdata, and
+			// vendor hold no product Go source: .github carries this lane's own
+			// instrument and guardsites, and testdata carries fixture sources for
+			// both. A documentation symbol must not resolve against either -- the
+			// same exclusion, for the same reason, that guardsites makes.
+			if name := d.Name(); p != root && (strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") || name == "testdata" || name == "vendor") {
 				return fs.SkipDir
 			}
 			return nil
