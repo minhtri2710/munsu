@@ -90,8 +90,8 @@ die() {
 	exit 1
 }
 
-# The derived set: file, func, nth, predicate, body. SITES exists for the
-# selftest, which needs to drive `check` from a fixed site list rather than from
+# The derived set: file, func, nth, predicate, body, entries. SITES exists for
+# the selftest, which needs to drive `check` from a fixed site list rather than from
 # whatever the real tree happens to hold today.
 sites() {
 	if [ -n "${SITES:-}" ]; then
@@ -363,9 +363,9 @@ classify() {
 				matches++
 				bestLine = lines[i]
 			}
-			# The block travels with every verdict, not just the anomaly: the
-			# baseline has no line numbers by design, so this is the only thing
-			# that can tell an author which `if` to go and write a test for.
+			# The refusal body range travels with every verdict, not just the anomaly: the
+			# baseline has no source coordinates by design, so this is the only thing that
+			# can tell an author which `if` to go and write a test for.
 			id = $1 "\t" $2 "\t" $3 "\t" $4 "\t" $5
 			if (incompatible) print "anomaly\t" id
 			else if (matches == 1) {
@@ -490,10 +490,10 @@ check() {
 	covered="$(printf '%s\n' "$verdicts" | { grep '^covered	' || true; } | cut -f2,3,4,5 | sort -u)"
 	baseline="$(baseline_entries)"
 
-	# `file:line: func (#nth): if <predicate>` for a list of site keys. The line
-	# comes back from the verdicts, which is where it stayed: putting it in the
-	# baseline would rewrite that file on every edit above a guard, and leaving
-	# it out of the message would make an author grep for the branch by hand.
+	# `file:body-range: func (#nth): if <predicate>` for a list of site keys. The
+	# body range comes from the derived site data, where it helps locate the guard
+	# without becoming part of the baseline identity; putting it in the baseline
+	# would rewrite that file on every edit above a guard.
 	sited() {
 		awk -F'\t' 'NR == FNR { at[$2 "\t" $3 "\t" $4 "\t" $5] = $6; next }
 			{ printf "  %s:%s: %s (#%s): if %s\n", $1, at[$0], $2, $3, $4 }' \
