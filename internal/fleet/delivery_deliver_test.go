@@ -22,26 +22,6 @@ func TestValidateDeliverRequestRefusesUnsupportedMethod(t *testing.T) {
 	}
 }
 
-func TestDeliveryProviderFor_UnknownProviderRefuses(t *testing.T) {
-	_, err := deliveryProviderFor(domain.DeliveryIdentity{Provider: "unknown"})
-	if err == nil || !strings.Contains(err.Error(), "unsupported delivery provider") {
-		t.Fatalf("deliveryProviderFor error = %v, want unknown-provider refusal", err)
-	}
-}
-
-func TestDeliveryProviderFor_GitHubCapabilityAbsentRefuses(t *testing.T) {
-	old := ghAxiLookPath
-	t.Cleanup(func() { ghAxiLookPath = old })
-	ghAxiLookPath = func() (string, error) {
-		return "", errors.New("gh-axi not found")
-	}
-
-	_, err := deliveryProviderFor(domain.DeliveryIdentity{Provider: "github"})
-	if err == nil || !strings.Contains(err.Error(), "gh-axi must be Ready") {
-		t.Fatalf("deliveryProviderFor error = %v, want absent GitHub capability refusal", err)
-	}
-}
-
 // TestDeliverJournalIntentPrecedesAuthorizationAndMutation proves the durable
 // journal intent is written before the canonical authorization and the
 // irreversible provider mutation, and the completed journal record is

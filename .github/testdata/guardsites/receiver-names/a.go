@@ -1,6 +1,6 @@
 // The func column names a method the way .github/deadcode.allow does, so one
 // name means one thing in both files. A guard inside a closure is attributed to
-// the currently scanned owner -- a closure has no stable name.
+// the enclosing top-level function -- a closure has no stable name.
 package fixture
 
 import "fmt"
