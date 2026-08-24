@@ -59,10 +59,13 @@ func (ref NotificationRef) Validate() error {
 // It loads envelopes from the receiver's own inbox and validates all
 // provenance fields before writing acks.
 //
-// Identity and rank are derived from durable files in the home directory
-// rather than trusting caller-provided strings. Captain homes carry a
-// .munsu-captain-home provenance marker; other homes derive identity
-// from the directory basename with general rank.
+// Identity and rank are derived from durable files rather than from
+// caller-provided strings. Which durable file depends on whether the
+// receiver owns a home: a general or captain owns the home it runs in, so
+// NewReceiver reads home provenance. A soldier owns no home -- it is
+// launched with MUNSU_HOME set to its dispatcher's home -- so
+// NewSoldierReceiver reads the durable per-task record that home holds for
+// the soldier instead.
 //
 // The Receiver exposes two independent operations:
 //   - Receive: validate and load the envelope, returning the payload.
@@ -73,13 +76,14 @@ func (ref NotificationRef) Validate() error {
 type Receiver struct {
 	identity string
 	rank     Rank
+	taskID   string
 	store    *Store
 }
 
-// NewReceiver creates a Receiver backed by the store at the receiver's
-// home directory. The receiver identity and rank are derived from durable
-// home provenance (e.g., .munsu-captain-home marker) instead of trusting
-// caller strings.
+// NewReceiver creates a Receiver for the owner of homeDir: the captain whose
+// .munsu-captain-home marker it carries, or the general whose home it is.
+// Identity and rank come from durable home provenance instead of caller
+// strings. Soldiers are not home owners -- see NewSoldierReceiver.
 func NewReceiver(homeDir string) (*Receiver, error) {
 	ident, rnk, err := ReadHomeIdentity(homeDir)
 	if err != nil {
@@ -88,6 +92,43 @@ func NewReceiver(homeDir string) (*Receiver, error) {
 	return &Receiver{
 		identity: ident,
 		rank:     rnk,
+		store:    NewStore(homeDir),
+	}, nil
+}
+
+// ReceiverIDForTask returns the mailbox ReceiverID that addresses a task.
+// Task IDs carry characters that are rejected as path components (colons in
+// "task:foo", separators); ReceiverID never names a file -- inbox paths are
+// built from SenderIdentity and MessageID -- so those characters are folded
+// to underscores. This is the one sanitizer: the sender that addresses a
+// soldier and the soldier that identifies itself must agree exactly.
+func ReceiverIDForTask(taskID string) string {
+	return strings.NewReplacer(":", "_", "/", "_", "\\", "_", "..", "_").Replace(taskID)
+}
+
+// NewSoldierReceiver creates a Receiver for the soldier task that homeDir
+// hosts. A soldier has no home of its own: it is launched with MUNSU_HOME
+// set to the home of the general or captain that dispatched it, so home
+// provenance there names the dispatcher and can never name the soldier.
+//
+// The durable statement that this home hosts this soldier is the task meta
+// file the home keeps for it. Without that record there is no soldier to be,
+// and construction fails closed. The trust boundary for this check is the
+// home directory, not the task: it establishes that this home durably hosts
+// the task, just as ReadHomeIdentity establishes that a home is a captain
+// home. Neither check authenticates the caller.
+func NewSoldierReceiver(homeDir, taskID string) (*Receiver, error) {
+	metaPath, err := MetaFilePath(homeDir, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("new soldier receiver: %w", err)
+	}
+	if _, statErr := os.Stat(metaPath); statErr != nil {
+		return nil, fmt.Errorf("new soldier receiver: home %s hosts no task %q: %w", homeDir, taskID, statErr)
+	}
+	return &Receiver{
+		identity: ReceiverIDForTask(taskID),
+		rank:     RankSoldier,
+		taskID:   taskID,
 		store:    NewStore(homeDir),
 	}, nil
 }
@@ -132,9 +173,9 @@ func ReadHomeIdentity(homeDir string) (identity string, rank Rank, err error) {
 // Used in tests and provisioning.
 //
 // For captain homes, a .munsu-captain-home provenance marker is written.
-// For non-captain homes, identity is derived from the directory basename
-// with general rank (soldier/general distinction is not stored durably in
-// the current model — tests use named subdirectories).
+// For general homes, identity is derived from the directory basename. There
+// is no soldier marker to write: a soldier is a task inside its dispatcher's
+// home, so its provenance is that home's task record, not a home marker.
 func WriteHomeIdentity(homeDir, identity string, rank Rank) error {
 	if identity == "" {
 		return fmt.Errorf("write home identity: empty identity")
@@ -211,6 +252,11 @@ func (r *Receiver) Receive(ref NotificationRef) (*Envelope, error) {
 			env.ReceiverRank, r.rank)
 	}
 
+	if r.taskID != "" && env.TaskID != r.taskID {
+		return nil, fmt.Errorf("receive task ID mismatch: envelope has %q, receiver is %q",
+			env.TaskID, r.taskID)
+	}
+
 	// 6. Validate sender identity matches ref.
 	if env.SenderIdentity != ref.SenderIdentity {
 		return nil, fmt.Errorf("receive sender identity mismatch: envelope has %q, ref has %q",
@@ -285,6 +331,11 @@ func (r *Receiver) Ack(ref NotificationRef) (*ProcessingAck, error) {
 	if env.ReceiverRank != r.rank {
 		return nil, fmt.Errorf("ack receiver rank mismatch: envelope has %q, receiver is %q",
 			env.ReceiverRank, r.rank)
+	}
+
+	if r.taskID != "" && env.TaskID != r.taskID {
+		return nil, fmt.Errorf("ack task ID mismatch: envelope has %q, receiver is %q",
+			env.TaskID, r.taskID)
 	}
 
 	// 6. Validate sender identity matches ref.

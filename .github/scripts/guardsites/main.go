@@ -7,20 +7,23 @@
 // waivers. Adding a guard therefore cannot fail open, because there is no
 // register to forget to update.
 //
-// Output columns: file <TAB> func <TAB> nth <TAB> predicate <TAB> block
+// Output columns: file <TAB> func <TAB> nth <TAB> predicate <TAB> body <TAB> entries
 //
 //	file       repo-relative path of the non-test .go file
 //	func       enclosing top-level function, `Type.Method` for methods
 //	nth        1-based occurrence of this exact predicate in this function
 //	predicate  the `if` condition, source text, whitespace collapsed
-//	block      `line.col` of the body's opening brace
+//	body       source range of the refusal body, `start-end` as `line.col`
+//	entries    opening-brace and first-statement coordinates, comma-separated
 //
 // The first four columns are the identity of a site and are what the baseline
-// file stores. `block` is deliberately NOT part of that identity: it is the key
-// used to look the site up in a coverage profile on this exact revision, and it
-// moves every time an unrelated edit shifts a function down a few lines. A
-// baseline keyed on it would churn on diffs that changed no guard -- the same
-// reason .github/deadcode.allow drops line:col from its keys.
+// file stores. `body` is deliberately NOT part of that identity: it is the
+// source range used to find the corresponding coverage block in the profiles,
+// and it moves every time an unrelated edit shifts a function down a few lines.
+// A baseline keyed on it would churn on diffs that changed no guard -- the same
+// reason .github/deadcode.allow drops line:col from its keys. The coverage block
+// itself is not predicted here because Go toolchains are free to choose where
+// within this source body their counter range starts.
 //
 // `nth` is what makes the remaining three columns unique. It is not decoration:
 // nine functions in this repo refuse twice on the same predicate (`!ok` twice in
@@ -29,12 +32,11 @@
 // so it only moves when a sibling with the *same* predicate is added or removed
 // -- which is a guard change, exactly when the baseline should move.
 //
-// `block` is the position of `Body.Lbrace`, which is exactly where cmd/cover
-// opens the counter for an `if` body (`addCounters(s.Body.Lbrace, ...)`), so a
-// site matches a profile block by start position alone. Matching the end
-// position too would be wrong, not merely redundant: cover ends the block at the
-// closing brace for a `return` body and at the last statement for a `panic` one,
-// so half the sites would silently stop matching.
+// The body range and entry coordinates are the stable source facts available to
+// the coverage matcher. The profile-derived matcher accepts only a unique block
+// starting at the opening brace or first statement, so a later nested block
+// cannot masquerade as entry. Keeping these facts rather than a predicted
+// profile key makes the contract independent of a particular Go instrumenter.
 //
 // What counts as a site, and why the definition is this narrow: a guard's
 // defining property is that on valid input it contributes nothing, so no
@@ -79,7 +81,7 @@ func main() {
 	}
 	out := &bytes.Buffer{}
 	for _, r := range rows {
-		fmt.Fprintf(out, "%s\t%s\t%d\t%s\t%s\n", r.File, r.Func, r.Nth, r.Predicate, r.Block)
+		fmt.Fprintf(out, "%s\t%s\t%d\t%s\t%s\t%s\n", r.File, r.Func, r.Nth, r.Predicate, r.Body, r.Entries)
 	}
 	os.Stdout.Write(out.Bytes())
 }
@@ -89,7 +91,8 @@ type site struct {
 	Func      string
 	Nth       int
 	Predicate string
-	Block     string
+	Body      string
+	Entries   string
 	line      int
 	col       int
 }
@@ -255,7 +258,8 @@ func scan(root string) ([]site, error) {
 					File:      rel,
 					Func:      owner,
 					Predicate: exprText(src, fset, stmt.Cond),
-					Block:     fmt.Sprintf("%d.%d", pos.Line, pos.Column),
+					Body:      sourceRange(fset, stmt.Body),
+					Entries:   entryPoints(fset, stmt.Body),
 					line:      pos.Line,
 					col:       pos.Column,
 				})
@@ -320,6 +324,18 @@ func funcName(fn *ast.FuncDecl) string {
 		}
 	}
 	return fn.Name.Name
+}
+
+func sourceRange(fset *token.FileSet, body *ast.BlockStmt) string {
+	start := fset.Position(body.Lbrace)
+	end := fset.Position(body.End())
+	return fmt.Sprintf("%d.%d-%d.%d", start.Line, start.Column, end.Line, end.Column)
+}
+
+func entryPoints(fset *token.FileSet, body *ast.BlockStmt) string {
+	brace := fset.Position(body.Lbrace)
+	first := fset.Position(body.List[0].Pos())
+	return fmt.Sprintf("%d.%d,%d.%d", brace.Line, brace.Column, first.Line, first.Column)
 }
 
 // Source text of the condition with every run of whitespace collapsed to one

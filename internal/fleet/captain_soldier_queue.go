@@ -26,15 +26,6 @@ type SoldierEndpointCapabilities interface {
 	Busy(home string, meta map[string]string) (bool, error)
 }
 
-// cleanReceiverID sanitizes an identifier for use as mailbox ReceiverID.
-// Task IDs often contain colons (e.g., "task:test-1") which are rejected
-// by ValidatePathComponent. Since ReceiverID is not used in file paths
-// (paths use SenderIdentity + MessageID), we replace unsafechars with
-// underscores.
-func cleanReceiverID(raw string) string {
-	return strings.NewReplacer(":", "_", "/", "_", "\\", "_", "..", "_").Replace(raw)
-}
-
 // SendToSoldier sends a command to a soldier using the mailbox envelope pattern.
 //
 // Flow:
@@ -79,7 +70,7 @@ func SendToSoldier(senderHome, soldierTaskID, senderIdentity, line string, endpo
 		result.Err = fmt.Errorf("reading sender home identity: %w", err)
 		return result
 	}
-	receiverID := cleanReceiverID(soldierTaskID)
+	receiverID := home.ReceiverIDForTask(soldierTaskID)
 	env := &home.Envelope{
 		SenderRank:     senderRank,
 		SenderIdentity: senderIdentity,
@@ -163,11 +154,10 @@ func FlushPendingSoldierCommands(senderHome, soldierTaskID, senderIdentity strin
 		return result
 	}
 
-	// Filter to only pending targeting this soldier (ReceiverID matches).
-	receiverID := cleanReceiverID(soldierTaskID)
+	// Filter to only pending targeting this exact soldier task.
 	var targetEnv *home.Envelope
 	for _, env := range pending {
-		if env.ReceiverID == receiverID {
+		if matchesSoldierTask(env, soldierTaskID) {
 			targetEnv = env
 			break
 		}
@@ -415,6 +405,13 @@ func CleanAllReadyEvents(homeDir, taskID string) error {
 	return os.RemoveAll(readyEventDir(homeDir, taskID))
 }
 
+func matchesSoldierTask(env *home.Envelope, taskID string) bool {
+	return env != nil &&
+		env.ReceiverRank == home.RankSoldier &&
+		env.ReceiverID == home.ReceiverIDForTask(taskID) &&
+		env.TaskID == taskID
+}
+
 // ConsumeAllReadyEvents scans for ready events for a task and flushes pending
 // commands for each valid ready event. After flush, the ready event marker is
 // cleaned up. Returns the number of commands flushed and any errors.
@@ -465,11 +462,10 @@ func ConsumeAllReadyEvents(senderHome, soldierTaskID, senderIdentity, metaGenera
 			return flushed, fmt.Errorf("consume ready: list pending: %w", listErr)
 		}
 
-		// Filter to pending targeting this soldier.
-		receiverID := cleanReceiverID(soldierTaskID)
+		// Filter to pending targeting this exact soldier task.
 		var pendingEnv *home.Envelope
 		for _, p := range pending {
-			if p.ReceiverID == receiverID {
+			if matchesSoldierTask(p, soldierTaskID) {
 				pendingEnv = p
 				break
 			}

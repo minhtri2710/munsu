@@ -295,3 +295,79 @@ func TestWriteHomeIdentityRefusesUnusableIdentities(t *testing.T) {
 		t.Fatalf("error = %v, want the invalid-rank refusal", err)
 	}
 }
+
+// A soldier's receiver identity is the task its hosting home holds a durable
+// record for. The home cannot vouch for a task it never hosted, so a claim it
+// has no record of must not resolve to a receiver.
+func TestSoldierReceiverRejectsCollidingTaskID(t *testing.T) {
+	dir := t.TempDir()
+	const receiverTask = "task:a"
+	const collidingTask = "task_a"
+	if err := WriteMeta(dir, receiverTask, map[string]string{"window": "w"}); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+	r, err := NewSoldierReceiver(dir, receiverTask)
+	if err != nil {
+		t.Fatalf("NewSoldierReceiver: %v", err)
+	}
+	env := &Envelope{
+		SenderRank:     RankCaptain,
+		SenderIdentity: "captain-main",
+		ReceiverRank:   RankSoldier,
+		ReceiverID:     ReceiverIDForTask(collidingTask),
+		TaskID:         collidingTask,
+		Payload:        "wrong task",
+	}
+	store := NewStore(dir)
+	if err := store.WriteEnvelope(env); err != nil {
+		t.Fatalf("WriteEnvelope: %v", err)
+	}
+	ref := NotificationRef{MessageID: env.MessageID, SenderIdentity: env.SenderIdentity}
+	if _, err := r.Receive(ref); err == nil {
+		t.Fatal("soldier receiver accepted an envelope for a colliding task ID")
+	} else if !strings.Contains(err.Error(), "task ID mismatch") {
+		t.Fatalf("error = %v, want task-ID mismatch", err)
+	}
+	if _, err := r.Ack(ref); err == nil {
+		t.Fatal("soldier receiver acknowledged an envelope for a colliding task ID")
+	} else if !strings.Contains(err.Error(), "task ID mismatch") {
+		t.Fatalf("ack error = %v, want task-ID mismatch", err)
+	}
+	if store.IsAcked(env.SenderIdentity, env.MessageID) {
+		t.Fatal("colliding task envelope received an ack")
+	}
+}
+
+func TestNewSoldierReceiverRefusesTasksTheHomeDoesNotHost(t *testing.T) {
+	dir := t.TempDir()
+
+	// Control: a task the home holds a meta record for resolves to a soldier
+	// receiver identified by that task.
+	if err := WriteMeta(dir, "task:hosted", map[string]string{"window": "w"}); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+	r, err := NewSoldierReceiver(dir, "task:hosted")
+	if err != nil {
+		t.Fatalf("NewSoldierReceiver: %v", err)
+	}
+	if r.identity != ReceiverIDForTask("task:hosted") || r.rank != RankSoldier {
+		t.Fatalf("receiver = (%q, %q), want (%q, soldier)", r.identity, r.rank, ReceiverIDForTask("task:hosted"))
+	}
+
+	for _, tc := range []struct {
+		name    string
+		taskID  string
+		wantSub string
+	}{
+		{"a task this home has no record of", "task:not-hosted", "hosts no task"},
+		{"a task ID that is not a task ID", "../escape", "invalid task ID"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := NewSoldierReceiver(dir, tc.taskID); err == nil {
+				t.Fatalf("NewSoldierReceiver accepted %s", tc.name)
+			} else if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Fatalf("error = %v, want the %q refusal", err, tc.wantSub)
+			}
+		})
+	}
+}

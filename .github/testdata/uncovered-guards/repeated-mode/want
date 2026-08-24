@@ -1,0 +1,2 @@
+::error::.github/testdata/uncovered-guards/repeated-mode/profiles/default.out:2: repeated or misplaced coverage profile mode: mode: count
+exit 1
