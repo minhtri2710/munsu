@@ -285,54 +285,61 @@ func stripMarkdownContainer(line string) (string, int) {
 	start := 0
 	consumed := false
 	for {
-		markerStart := start
+		indentStart := start
 		for start < len(line) && line[start] == ' ' {
 			start++
+		}
+		if start-indentStart > 3 {
+			if consumed {
+				return line[indentStart:], indentStart
+			}
+			return line, 0
 		}
 		if start < len(line) && line[start] == '>' {
 			consumed = true
 			start++
-			if start < len(line) && line[start] == ' ' {
+			if start < len(line) && (line[start] == ' ' || line[start] == '\t') {
 				start++
 			}
 			continue
 		}
+		markerStart := start
 		if start < len(line) && (line[start] == '-' || line[start] == '*' || line[start] == '+') {
-			consumed = true
 			start++
 		} else {
-			for start < len(line) && line[start] >= '0' && line[start] <= '9' {
+			digits := 0
+			for start < len(line) && line[start] >= '0' && line[start] <= '9' && digits < 10 {
 				start++
+				digits++
 			}
-			if start == markerStart || (start < len(line) && line[start] != '.' && line[start] != ')') {
+			if digits == 0 || digits > 9 || start >= len(line) || (line[start] != '.' && line[start] != ')') {
 				if consumed {
-					return line[start:], start
+					return line[markerStart:], markerStart
 				}
 				return line, 0
 			}
-			if start < len(line) {
-				start++
-			}
+			start++
 		}
 		if start == markerStart || start >= len(line) || (line[start] != ' ' && line[start] != '\t') {
 			if consumed {
-				return line[start:], start
+				return line[markerStart:], markerStart
 			}
 			return line, 0
 		}
+		consumed = true
 		for start < len(line) && (line[start] == ' ' || line[start] == '\t') {
 			start++
 		}
 	}
-	return line[start:], start
 }
 
 func closesFence(line string, marker byte, openingRun int) bool {
-	gotMarker, run, start, ok := fenceMarker(line)
+	normalized, _ := stripMarkdownContainer(line)
+	gotMarker, run, start, ok := fenceMarker(normalized)
 	if !ok || gotMarker != marker || run < openingRun {
 		return false
 	}
-	return strings.TrimSpace(line[start+run:]) == ""
+	return strings.TrimSpace(normalized[start+run:]) == ""
 }
 
 // ---------------------------------------------------------------------------
@@ -1088,6 +1095,9 @@ func classify(root string, idx *index, fi *files, doc, text string) []string {
 						status = "resolved"
 					}
 					return []string{strings.Join([]string{status, doc, "symbol", cleanToken(strings.TrimSpace(text))}, "\t")}
+				}
+				if referenceShaped(callee) {
+					return []string{strings.Join([]string{"unchecked", doc, "token", strings.TrimSpace(text)}, "\t")}
 				}
 			}
 		}

@@ -1,2 +1,3 @@
 The write path is `mailbox.WriteEnvelope`; package `mailbox` is not one this tree
-declares, so nothing here can say whether that name is right.
+declares, so nothing here can say whether that name is right. The call form is
+`mailbox.WriteEnvelope(ctx, envelope)`.

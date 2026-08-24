@@ -433,10 +433,8 @@ jobs:
       # a const). Thirty-four rules, one fixture each -- the count is
       # `ls .github/testdata/citations | wc -l`, not a number to take on trust
       # -- and the script header lists the mutation every one of them answers.
-      # Two further checks have no fixture because neither can be a tree: an
-      # unparseable .go file would turn this job's gofmt step red instead, and
-      # the enumeration check compares the script's own header against the
-      # tool's source. Hermetic and ~15s.
+      # One further check has no fixture because an unparseable .go file would
+      # turn this job's gofmt step red instead. Hermetic and ~15s.
       - name: Citation rules must agree with their fixtures
         run: .github/scripts/citations.sh selftest
       - name: Flake ledger deadlines must not have passed

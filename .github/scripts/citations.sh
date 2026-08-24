@@ -392,6 +392,15 @@ exit $rc"
 		fi
 	done
 
+	local unknown_call
+	if unknown_call="$(SCAN_ROOT="$ROOT/.github/testdata/citations/unknown-qualifier" WAIVER="$ROOT/.github/testdata/citations/unknown-qualifier/waiver" "$0" unchecked 2>&1)" && printf '%s\n' "$unknown_call" | grep -Fxq $'docs/doc.md\tmailbox.WriteEnvelope(ctx, envelope)'; then
+		echo "  ok   unknown-qualifier-call"
+	else
+		echo "::error::citations did not disclose the complete unknown-qualifier call:" >&2
+		printf '%s\n' "${unknown_call:-$?}" >&2
+		failed=1
+	fi
+
 	# A Go file the parser cannot read is a file whose declarations are missing
 	# from the index, and a missing declaration reads as a fabricated citation.
 	# This has to fail closed rather than scan a short index. It is not a
