@@ -417,7 +417,12 @@ func htmlBlockStartInfo(line string) (htmlBlock, bool) {
 }
 
 func (block htmlBlock) interruptsParagraph() bool {
-	return block.kind != "tag"
+	switch block.kind {
+	case "raw", "comment", "processing", "cdata", "declaration", "tag":
+		return true
+	default:
+		return false
+	}
 }
 
 func htmlBlockTerminated(block htmlBlock, line string) bool {

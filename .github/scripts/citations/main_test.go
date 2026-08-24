@@ -363,9 +363,9 @@ func TestScanRecoversCitationAfterNonOneOrderedListMarker(t *testing.T) {
 	}
 }
 
-func TestScanDoesNotLetTypeSixHTMLInterruptParagraph(t *testing.T) {
+func TestScanTypeSixHTMLInterruptsParagraph(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package home\n\nfunc MissingAfterTag() {}\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package home\n\nfunc MissingAfterTag() {}\nfunc MissingAfterBlock() {}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"AGENTS.md", "CLAUDE.md", "README.md"} {
@@ -376,7 +376,7 @@ func TestScanDoesNotLetTypeSixHTMLInterruptParagraph(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(root, "docs"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	doc := "An unmatched `` run\n<div>`` and `home.MissingAfterTag`\n"
+	doc := "An unmatched `` run\n<div>`` and `home.MissingAfterTag`\n\n`home.MissingAfterBlock`\n"
 	if err := os.WriteFile(filepath.Join(root, "docs", "doc.md"), []byte(doc), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -384,7 +384,12 @@ func TestScanDoesNotLetTypeSixHTMLInterruptParagraph(t *testing.T) {
 	if err != nil {
 		t.Fatalf("scan(%q): %v", root, err)
 	}
-	want := "resolved\tdocs/doc.md\tsymbol\thome.MissingAfterTag"
+	for _, row := range rows {
+		if row == "resolved\tdocs/doc.md\tsymbol\thome.MissingAfterTag" {
+			t.Fatalf("type-six HTML block did not interrupt paragraph: %#v", rows)
+		}
+	}
+	want := "resolved\tdocs/doc.md\tsymbol\thome.MissingAfterBlock"
 	for _, row := range rows {
 		if row == want {
 			return
