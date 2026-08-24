@@ -438,35 +438,18 @@ jobs:
         run: .github/scripts/citations.sh selftest
       - name: Flake ledger deadlines must not have passed
         run: .github/scripts/flake-ledger.sh check
-      # munsu's documents cite the code as their primary evidence -- CLAUDE.md,
-      # docs/architecture.md, docs/port-mapping.md and the ADRs are all written
-      # to be checkable by reading the file or the symbol they name -- and until
-      # this step nothing checked that any citation resolved. A renamed path, a
-      # moved symbol, a name that was never spelled that way: all of it stayed
-      # green forever. docs/workflow-topology-matrix.md was written, reviewed,
-      # corrected and reviewed again and still shipped to its second review
-      # citing `home.WriteMailboxEnvelope` and `home.ReadMailboxEnvelope`, two
-      # names that appear nowhere in the Go tree, plus
-      # `internal/cli/captain_recover.go`, which does not exist. A reviewer
-      # caught them by hand at a cost that is exactly why it does not happen
-      # every time (#573).
+      # munsu's documents cite the code as their primary evidence, and this step
+      # checks the classified paths and symbols in the covered set against the
+      # tree. It compares both ways against .github/citations.allow, so a
+      # citation that resolves again cannot leave its waiver behind. The set of
+      # covered documents and citations is derived from the tree, except
+      # docs/plans/, which is excluded as a dated document class; docFiles in
+      # .github/scripts/citations/main.go owns that boundary.
       #
-      # Fail-closed and compared both ways against .github/citations.allow, like
-      # the reachability lane above: a citation that resolves again cannot leave
-      # its waiver behind. The set of covered documents and the set of citations
-      # are both derived from the tree, so a new document joins this lane by
-      # existing -- except docs/plans/, which is excluded because a dated plan's
-      # citations are correct as written and a ratchet over them can never reach
-      # zero. docFiles in .github/scripts/citations/main.go carries the argument.
-      #
-      # Text only, no network, like the rules around it: the derivation is a
-      # stdlib-only Go program (.github/scripts/citations) that parses the tree
-      # with go/parser, so it downloads no module and reads nothing outside the
-      # checkout. It does not judge line numbers -- see the script header for
-      # that boundary and the others it states. What no rule can judge is not
-      # dropped: `check` prints an `unchecked` count beside `0 unaccounted` on
-      # every run, so the success line cannot be read as a larger claim than the
-      # classifier makes.
+      # Text only, no network: the stdlib-only Go program parses the tree with
+      # go/parser. It ignores line numbers and reports classified-but-unjudged
+      # shapes as `unchecked`; extractor and classifier boundaries are owned by
+      # .github/scripts/citations/main.go.
       - name: Documentation citations must resolve
         run: .github/scripts/citations.sh check
       - name: Personal fleet paths must not be tracked
