@@ -397,10 +397,10 @@ func htmlBlockStartInfo(line string) (htmlBlock, bool) {
 }
 
 func htmlBlockTerminated(block htmlBlock, line string) bool {
-	lower := strings.ToLower(line)
 	switch block.kind {
 	case "raw":
-		return strings.Contains(lower, "</"+block.tag+">")
+		closingTag := regexp.MustCompile(`(?i)</` + regexp.QuoteMeta(block.tag) + `[ \t]*>`)
+		return closingTag.MatchString(line)
 	case "comment":
 		return strings.Contains(line, "-->")
 	case "processing":

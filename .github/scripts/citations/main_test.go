@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -72,6 +73,40 @@ func TestInlineSpansRecoversSuccessivePendingRuns(t *testing.T) {
 	}
 }
 
+func TestScanRawHTMLClosingTagAllowsHorizontalWhitespace(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package home\n\nfunc MissingAfterSpace() {}\nfunc MissingAfterTab() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"AGENTS.md", "CLAUDE.md", "README.md"} {
+		if err := os.WriteFile(filepath.Join(root, name), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	doc := "<script>\n</script bogus\nAn unmatched `` run inside HTML.\n</script >\nThen `home.MissingAfterSpace` then ``.\n\n<SCRIPT>\nAn unmatched `` run inside HTML.\n</SCRIPT\t>\nThen `home.MissingAfterTab` then ``.\n"
+	if err := os.Mkdir(filepath.Join(root, "docs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "docs", "doc.md"), []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := scan(root)
+	if err != nil {
+		t.Fatalf("scan(%q): %v", root, err)
+	}
+	want := map[string]bool{
+		"resolved\tdocs/doc.md\tsymbol\thome.MissingAfterSpace": true,
+		"resolved\tdocs/doc.md\tsymbol\thome.MissingAfterTab":   true,
+	}
+	for _, row := range rows {
+		delete(want, row)
+	}
+	for row := range want {
+		t.Errorf("scan output missing %q", row)
+	}
+}
+
 func TestScanRecoversUnmatchedRunsAcrossBoundaries(t *testing.T) {
 	root := filepath.Join("..", "..", "testdata", "citations", "unmatched-backtick-continue")
 	rows, err := scan(root)
@@ -89,7 +124,7 @@ func TestScanRecoversUnmatchedRunsAcrossBoundaries(t *testing.T) {
 		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterInlineHTML":    true,
 		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterMultilineHTML": true,
 		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterListHTML":      true,
-		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterIndented":       true,
+		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterIndented":      true,
 		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterHTMLBlank":     true,
 	}
 	for _, row := range rows {
