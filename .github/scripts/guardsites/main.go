@@ -263,11 +263,11 @@ func scan(root string) ([]site, error) {
 					})
 				case *ast.SwitchStmt:
 					if switchSelfOriginating(resolver, abs, fset, stmt) {
-						appendDefaultSites(&rows, stmt.Body, owner, rel, fset)
+						appendDefaultSites(resolver, abs, &rows, stmt.Body, owner, rel, fset)
 					}
 				case *ast.TypeSwitchStmt:
 					if typeSwitchSelfOriginating(resolver, abs, fset, stmt) {
-						appendDefaultSites(&rows, stmt.Body, owner, rel, fset)
+						appendDefaultSites(resolver, abs, &rows, stmt.Body, owner, rel, fset)
 					}
 				}
 				return true
@@ -393,10 +393,10 @@ func typeSwitchSelfOriginating(r *resolver, file string, fset *token.FileSet, st
 	return true
 }
 
-func appendDefaultSites(rows *[]site, body *ast.BlockStmt, owner, file string, fset *token.FileSet) {
+func appendDefaultSites(r *resolver, abs string, rows *[]site, body *ast.BlockStmt, owner, file string, fset *token.FileSet) {
 	for _, stmt := range body.List {
 		clause, ok := stmt.(*ast.CaseClause)
-		if !ok || len(clause.List) != 0 || len(clause.Body) == 0 || !isRefusalStatements(clause.Body) {
+		if !ok || len(clause.List) != 0 || len(clause.Body) == 0 || !isSelfOriginatingRefusal(r, abs, fset, clause.Body) {
 			continue
 		}
 		start := fset.Position(clause.Colon + 1)
@@ -431,6 +431,69 @@ func exprText(src []byte, fset *token.FileSet, e ast.Expr) string {
 // no refusal, the second is propagation of somebody else's.
 func isRefusal(body *ast.BlockStmt) bool {
 	return body != nil && isRefusalStatements(body.List)
+}
+
+func isSelfOriginatingRefusal(r *resolver, file string, fset *token.FileSet, statements []ast.Stmt) bool {
+	if !isRefusalStatements(statements) {
+		return false
+	}
+	last, ok := statements[len(statements)-1].(*ast.ReturnStmt)
+	if !ok {
+		return true
+	}
+	for _, result := range last.Results {
+		if constructsError(result) && refusalHasErrorOperand(r, file, fset, result) {
+			return false
+		}
+	}
+	return true
+}
+
+func refusalHasErrorOperand(r *resolver, file string, fset *token.FileSet, expr ast.Expr) bool {
+	var found bool
+	var visit func(ast.Expr)
+	visit = func(expr ast.Expr) {
+		if found || expr == nil {
+			return
+		}
+		switch node := expr.(type) {
+		case *ast.CallExpr:
+			for _, arg := range node.Args {
+				if r.errish(file, fset, arg) {
+					found = true
+					return
+				}
+				visit(arg)
+			}
+		case *ast.UnaryExpr:
+			if r.errish(file, fset, node.X) {
+				found = true
+				return
+			}
+			visit(node.X)
+		case *ast.CompositeLit:
+			for _, elt := range node.Elts {
+				if value, ok := elt.(ast.Expr); ok {
+					if r.errish(file, fset, value) {
+						found = true
+						return
+					}
+					visit(value)
+				}
+			}
+		case *ast.BinaryExpr:
+			visit(node.X)
+			visit(node.Y)
+		case *ast.ParenExpr:
+			if r.errish(file, fset, node.X) {
+				found = true
+				return
+			}
+			visit(node.X)
+		}
+	}
+	visit(expr)
+	return found
 }
 
 func isRefusalStatements(statements []ast.Stmt) bool {

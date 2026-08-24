@@ -70,3 +70,10 @@ func TaglessError(err error) error {
 		return fmt.Errorf("operation failed: %w", err)
 	}
 }
+
+func WrappedError(value int, err error) error {
+	switch value {
+	default:
+		return fmt.Errorf("operation failed: %w", err)
+	}
+}

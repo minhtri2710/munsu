@@ -1,0 +1,2 @@
+::error::coverage profile mode mismatch: expected set, found count in .github/testdata/uncovered-guards/mixed-mode/profiles/e2e.out
+exit 1

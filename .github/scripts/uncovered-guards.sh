@@ -203,6 +203,13 @@ merge() {
 				bad = 1
 				exit
 			}
+			mode = substr($0, 7)
+			if (profileMode == "") profileMode = mode
+			else if (mode != profileMode) {
+				printf "::error::coverage profile mode mismatch: expected %s, found %s in %s\n", profileMode, mode, short(FILENAME) > "/dev/stderr"
+				bad = 1
+				exit
+			}
 			next
 		}
 		/^mode:/ {
