@@ -1,6 +1,8 @@
 package home
 
 // Store is a mailbox store.
+func SomethingDeclared() {}
+
 type Store struct {
 	ParentHome string
 }

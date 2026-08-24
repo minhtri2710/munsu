@@ -11,6 +11,11 @@ $ grep -n `home.WriteMailboxEnvelope` `internal/cli/captain_recover.go`
 
 The citation after the contained fence is `(*Store).WriteEnvelope`.
 
+> ```go
+> `fabricated_inside_quote`
+
+Top-level prose after the quote is `SomethingDeclared`. Built-in prose such as `len(x)` is not a declaration citation.
+
 - ```sh
   $ grep -n `fabricated_list` `internal/cli/fake.go`
   ```

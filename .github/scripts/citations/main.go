@@ -256,7 +256,11 @@ func inlineSpans(line string) []span {
 // only ever appears inside a fence is not checked. Counted as one of the lane's
 // silent drops in referenceShaped's enumeration, which is the complete list.
 func fenceMarker(line string) (byte, int, int, bool) {
-	line, _ = stripMarkdownContainer(line)
+	normalized, _, _ := stripMarkdownContainer(line)
+	return fenceMarkerNormalized(normalized)
+}
+
+func fenceMarkerNormalized(line string) (byte, int, int, bool) {
 	columns := 0
 	start := 0
 	for start < len(line) && (line[start] == ' ' || line[start] == '\t') {
@@ -281,9 +285,10 @@ func fenceMarker(line string) (byte, int, int, bool) {
 	return marker, run, start, true
 }
 
-func stripMarkdownContainer(line string) (string, int) {
+func stripMarkdownContainer(line string) (string, int, int) {
 	start := 0
 	consumed := false
+	quoteDepth := 0
 	for {
 		indentStart := start
 		for start < len(line) && line[start] == ' ' {
@@ -291,12 +296,13 @@ func stripMarkdownContainer(line string) (string, int) {
 		}
 		if start-indentStart > 3 {
 			if consumed {
-				return line[indentStart:], indentStart
+				return line[indentStart:], indentStart, quoteDepth
 			}
-			return line, 0
+			return line, 0, quoteDepth
 		}
 		if start < len(line) && line[start] == '>' {
 			consumed = true
+			quoteDepth++
 			start++
 			if start < len(line) && (line[start] == ' ' || line[start] == '\t') {
 				start++
@@ -314,17 +320,17 @@ func stripMarkdownContainer(line string) (string, int) {
 			}
 			if digits == 0 || digits > 9 || start >= len(line) || (line[start] != '.' && line[start] != ')') {
 				if consumed {
-					return line[markerStart:], markerStart
+					return line[markerStart:], markerStart, quoteDepth
 				}
-				return line, 0
+				return line, 0, quoteDepth
 			}
 			start++
 		}
 		if start == markerStart || start >= len(line) || (line[start] != ' ' && line[start] != '\t') {
 			if consumed {
-				return line[markerStart:], markerStart
+				return line[markerStart:], markerStart, quoteDepth
 			}
-			return line, 0
+			return line, 0, quoteDepth
 		}
 		consumed = true
 		for start < len(line) && (line[start] == ' ' || line[start] == '\t') {
@@ -333,9 +339,12 @@ func stripMarkdownContainer(line string) (string, int) {
 	}
 }
 
-func closesFence(line string, marker byte, openingRun int) bool {
-	normalized, _ := stripMarkdownContainer(line)
-	gotMarker, run, start, ok := fenceMarker(normalized)
+func closesFence(line string, marker byte, openingRun, openingQuoteDepth int) bool {
+	normalized, _, quoteDepth := stripMarkdownContainer(line)
+	if quoteDepth != openingQuoteDepth {
+		return false
+	}
+	gotMarker, run, start, ok := fenceMarkerNormalized(normalized)
 	if !ok || gotMarker != marker || run < openingRun {
 		return false
 	}
@@ -948,8 +957,10 @@ func (idx *index) collectMembers(typeID string, expr ast.Expr) {
 			idx.addTypeMember(typeID, typeName, name.Name)
 		}
 		if len(f.Names) == 0 {
-			if name := embeddedName(f.Type); name != "" {
-				idx.addTypeMember(typeID, typeName, name)
+			if _, isInterface := expr.(*ast.InterfaceType); !isInterface {
+				if name := embeddedName(f.Type); name != "" {
+					idx.addTypeMember(typeID, typeName, name)
+				}
 			}
 		}
 		idx.collectNestedMemberNames(f.Type)
@@ -972,8 +983,10 @@ func (idx *index) collectNestedMemberNames(expr ast.Expr) {
 				idx.names[name.Name] = true
 			}
 			if len(f.Names) == 0 {
-				if name := embeddedName(f.Type); name != "" {
-					idx.names[name] = true
+				if _, isInterface := node.(*ast.InterfaceType); !isInterface {
+					if name := embeddedName(f.Type); name != "" {
+						idx.names[name] = true
+					}
 				}
 			}
 		}
@@ -1013,6 +1026,12 @@ func declarationExprName(expr ast.Expr) (string, bool) {
 		return declarationExprName(t.X)
 	case *ast.ParenExpr:
 		return declarationExprName(t.X)
+	case *ast.StarExpr:
+		name, ok := declarationExprName(t.X)
+		if !ok {
+			return "", false
+		}
+		return "(*" + name + ")", true
 	}
 	return "", false
 }
@@ -1042,14 +1061,21 @@ func scan(root string) ([]string, error) {
 		}
 		var fenceMarkerByte byte
 		var fenceRun int
+		var fenceQuoteDepth int
 		for _, line := range strings.Split(string(body), "\n") {
 			if fenceRun > 0 {
-				if closesFence(line, fenceMarkerByte, fenceRun) {
-					fenceMarkerByte, fenceRun = 0, 0
+				_, _, quoteDepth := stripMarkdownContainer(line)
+				if quoteDepth < fenceQuoteDepth {
+					fenceMarkerByte, fenceRun, fenceQuoteDepth = 0, 0, 0
+				} else {
+					if closesFence(line, fenceMarkerByte, fenceRun, fenceQuoteDepth) {
+						fenceMarkerByte, fenceRun, fenceQuoteDepth = 0, 0, 0
+					}
+					continue
 				}
-				continue
 			}
 			if marker, run, _, ok := fenceMarker(line); ok {
+				_, _, fenceQuoteDepth = stripMarkdownContainer(line)
 				fenceMarkerByte, fenceRun = marker, run
 				continue
 			}
@@ -1086,9 +1112,6 @@ func classify(root string, idx *index, fi *files, doc, text string) []string {
 		if call, ok := expr.(*ast.CallExpr); ok {
 			if callee, ok := declarationExprName(call.Fun); ok {
 				judged, resolved := symbolName(idx, callee)
-				if !strings.Contains(callee, ".") && !strings.Contains(callee, "(") {
-					judged, resolved = true, idx.names[callee]
-				}
 				if judged {
 					status := "unresolved"
 					if resolved {

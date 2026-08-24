@@ -430,9 +430,8 @@ jobs:
       # `^func`/`^type` grep over docs/workflow-topology-matrix.md reported four
       # unresolved identifiers of which two were real, and both false positives
       # were ordinary declaration forms the grep cannot see (a struct field and
-      # a const). Thirty-four rules, one fixture each -- the count is
-      # `ls .github/testdata/citations | wc -l`, not a number to take on trust
-      # -- and the script header lists the mutation every one of them answers.
+      # a const). The harness discovers every citation fixture directory and
+      # checks each one against its expected behavior.
       # One further check has no fixture because an unparseable .go file would
       # turn this job's gofmt step red instead. Hermetic and ~15s.
       - name: Citation rules must agree with their fixtures

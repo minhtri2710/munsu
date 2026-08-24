@@ -51,7 +51,7 @@ resolved with `go/parser` rather than with a grep that cannot see the last two.
 A path is judged whether it is written root-relative, package-relative or as a
 bare filename. Covered: `docs/**` except `docs/plans/`, plus `AGENTS.md` and
 `README.md`; a dated plan is excluded because its citations are correct as
-written. Line numbers are not judged. Ten shapes no rule judges are printed as an
+written. Line numbers are not judged. Shapes no rule judges are printed as an
 `unchecked` count beside the result rather than dropped — so read the summary
 line, not just its `0 unaccounted` — and several classes are dropped in
 silence, from a fenced code block down to a token no rule can name, enumerated

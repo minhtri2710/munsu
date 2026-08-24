@@ -583,11 +583,11 @@ EOF
 	: >"$callresult/AGENTS.md"
 	: >"$callresult/CLAUDE.md"
 	: >"$callresult/README.md"
-	printf 'package x\n\nfunc Recover(any) {}\nfunc Generic[T any]() {}\n' >"$callresult/good.go"
-	printf 'Call-result citations are `newCaptainRecoverTransaction().Recover`, `newFoo(ctx, option()).Recover()`, `Recover(context.Background())`, and `Generic[int]()`.\n' >"$callresult/docs/doc.md"
+	printf 'package x\n\ntype Store struct{}\nfunc (Store) WriteEnvelope(any) {}\nfunc RecoverNow(any) {}\nfunc GenericNow[T any]() {}\n' >"$callresult/good.go"
+	printf 'Call-result citations are `newCaptainRecoverTransaction().Recover`, `newFoo(ctx, option()).Recover()`, `RecoverNow(context.Background())`, `GenericNow[int]()` and `(*Store).WriteEnvelope(context.Background())`.\n' >"$callresult/docs/doc.md"
 	: >"$callresult/waiver"
 	if unchecked="$(SCAN_ROOT="$callresult" WAIVER="$callresult/waiver" "$0" unchecked 2>&1)" && printf '%s\n' "$unchecked" | grep -q 'newCaptainRecoverTransaction().Recover' && printf '%s\n' "$unchecked" | grep -q 'newFoo(ctx, option()).Recover()'; then
-		if rows="$(cd "$TOOL" && go run . "$callresult" 2>&1)" && printf '%s\n' "$rows" | grep -Fq $'resolved\tdocs/doc.md\tsymbol\tRecover(context.Background())' && printf '%s\n' "$rows" | grep -Fq $'resolved\tdocs/doc.md\tsymbol\tGeneric[int]()'; then
+		if rows="$(cd "$TOOL" && go run . "$callresult" 2>&1)" && printf '%s\n' "$rows" | grep -Fq $'resolved\tdocs/doc.md\tsymbol\tRecoverNow(context.Background())' && printf '%s\n' "$rows" | grep -Fq $'resolved\tdocs/doc.md\tsymbol\tGenericNow[int]()' && printf '%s\n' "$rows" | grep -Fq $'resolved\tdocs/doc.md\tsymbol\t(*Store).WriteEnvelope(context.Background())'; then
 			echo "  ok   call-result-selector"
 		else
 			echo "::error::citations failed to resolve ordinary or generic calls:" >&2
