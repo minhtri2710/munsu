@@ -182,35 +182,35 @@ func TestActivationHook_NoParent(t *testing.T) {
 	// Should not panic and should not try to activate
 	CaptainActivationHook(tmp, nil)
 }
-func TestReconcileHook_ReturnsNilWhenParentStatusEmpty(t *testing.T) {
+func TestReconcileHook_ReconcilesGeneralHomeWhenParentStatusEmpty(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("MUNSU_PARENT_STATUS", "")
+	os.MkdirAll(filepath.Join(tmp, "state"), 0755)
 
-	err := ReconcileCaptainHook(tmp, false, nil)
+	err := ReconcileCaptainHook(tmp, false, &captainNotificationTransport{acknowledged: true})
 	if err != nil {
-		t.Errorf("expected nil when MUNSU_PARENT_STATUS is empty, got: %v", err)
+		t.Errorf("expected nil when MUNSU_PARENT_STATUS is empty with valid transport, got: %v", err)
 	}
 }
 
-// TestReconcileHook_ReturnsNilWhenParentStatusEqualsHomeDir verifies that
-// reconcileHook returns nil when MUNSU_PARENT_STATUS equals homeDir (a
-// non-Captain/General guard against self-referencing parent).
-func TestReconcileHook_ReturnsNilWhenParentStatusEqualsHomeDir(t *testing.T) {
+// TestReconcileHook_ReconcilesGeneralHomeWhenParentStatusEqualsHomeDir verifies that
+// ReconcileCaptainHook recovers the General home when MUNSU_PARENT_STATUS equals homeDir
+// (a General guard against self-referencing parent).
+func TestReconcileHook_ReconcilesGeneralHomeWhenParentStatusEqualsHomeDir(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("MUNSU_PARENT_STATUS", tmp)
+	os.MkdirAll(filepath.Join(tmp, "state"), 0755)
 
-	err := ReconcileCaptainHook(tmp, false, nil)
+	err := ReconcileCaptainHook(tmp, false, &captainNotificationTransport{acknowledged: true})
 	if err != nil {
-		t.Errorf("expected nil when MUNSU_PARENT_STATUS equals homeDir, got: %v", err)
+		t.Errorf("expected nil when MUNSU_PARENT_STATUS equals homeDir with valid transport, got: %v", err)
 	}
 }
 
-func TestReconcileHook_RequiresNotificationTransportWhenParentSet(t *testing.T) {
+func TestReconcileHook_RequiresNotificationTransport(t *testing.T) {
 	tmp := t.TempDir()
-	parentHome := t.TempDir()
-	t.Setenv("MUNSU_PARENT_STATUS", parentHome)
+	t.Setenv("MUNSU_PARENT_STATUS", "")
 	os.MkdirAll(filepath.Join(tmp, "state"), 0755)
-	home.SeedCaptainProvenance(tmp, "test-captain")
 
 	err := ReconcileCaptainHook(tmp, false, nil)
 	if err == nil || !strings.Contains(err.Error(), "uplink notification transport capability is required") {

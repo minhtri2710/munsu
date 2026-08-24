@@ -55,15 +55,22 @@ func CaptainActivationHook(homeDir string, activation ActivationTransport) {
 	ActivateOnReceiptWithTransport(homeDir, parentHome, activation)
 }
 
-// reconcileHook recovers mailbox uplinks for a captain home on watcher
+// ReconcileCaptainHook recovers mailbox uplinks for a home on watcher
 // startup and each polling cycle.
 func ReconcileCaptainHook(homeDir string, startup bool, transport NotificationTransport) error {
-	parentHome := ResolveCaptainParentHome(homeDir)
-	if parentHome == "" {
-		return nil
-	}
 	if transport == nil {
 		return fmt.Errorf("uplink notification transport capability is required")
+	}
+	parentHome := ResolveCaptainParentHome(homeDir)
+	if parentHome == "" {
+		_, err := Recover(RecoverRequest{
+			SenderHome: homeDir, ReceiverHome: homeDir,
+			ReceiverRank: RankGeneral, ForceNotify: startup,
+			Notify: func(ref NotificationRef) UplinkNotifyResult {
+				return NotifyParentWithTransport(homeDir, homeDir, ref, transport)
+			},
+		})
+		return err
 	}
 	if _, err := Recover(RecoverRequest{
 		SenderHome: homeDir, ReceiverHome: homeDir,

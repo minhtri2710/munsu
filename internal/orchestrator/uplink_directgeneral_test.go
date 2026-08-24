@@ -138,35 +138,51 @@ func TestDirectGeneralDispatchReportIsReceivableByItsOwnGeneral(t *testing.T) {
 	}
 }
 
-// Fact 4. Recover filters pending records by receiver rank, so a report
-// mislabelled Captain was invisible to a General-rank recovery pass.
-//
-// Read what this proves narrowly. It calls Recover directly, and proves that
-// Recover handles a General-rank envelope correctly WHEN INVOKED. It does not
-// prove that anything in production invokes it under direct General dispatch,
-// and today nothing does: the only hook that recovers soldier pendings is
-// ReconcileCaptainHook, which returns nil at captain_relay.go:61-64 when the
-// home has no parent-home -- which a General home never has. So the pending
-// record and open evidence this test retires by hand are not retired by any
-// live path. That missing pass is tracked as its own issue; this test is not
-// end-to-end closure of it, and must not be cited as such.
-func TestRecoverInvokedByHandRetiresAGeneralRankReport(t *testing.T) {
+// Fact 4. Under direct General dispatch, a soldier report whose notification
+// was queued must be recovered by the production recovery pass (ReconcileCaptainHook)
+// once the report is acknowledged, allowing VerifyRetirementContinuity to succeed.
+func TestDirectGeneralDispatchRecoveryPassRetiresAcknowledgedReport(t *testing.T) {
 	generalHome, identity := directGeneralHome(t)
-	res := reportUnderDirectGeneralDispatch(t, generalHome, identity, &countingTransport{})
+	// Make the pane unresolvable during the initial report so notification is queued.
+	_ = os.Remove(filepath.Join(generalHome, "config", "general-pane"))
 
+	transport := &countingTransport{}
+	res := reportUnderDirectGeneralDispatch(t, generalHome, identity, transport)
+	if transport.calls != 0 {
+		t.Fatalf("transport calls during unresolvable report = %d, want 0", transport.calls)
+	}
+	if !res.Queued {
+		t.Fatalf("result = %+v, want queued", *res)
+	}
+
+	// Before acknowledgement and recovery, VerifyRetirementContinuity must refuse.
+	if err := VerifyRetirementContinuity(generalHome, "direct-task"); err == nil {
+		t.Fatal("VerifyRetirementContinuity must refuse when report is pending")
+	}
+
+	// General receiver acknowledges the durable report.
 	recv, err := NewReceiver(generalHome)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := recv.Ack(NotificationRef{MessageID: res.MessageID, SenderIdentity: "direct-task"}); err != nil {
+	ref := NotificationRef{MessageID: res.MessageID, SenderIdentity: "direct-task"}
+	if _, err := recv.Ack(ref); err != nil {
 		t.Fatal(err)
 	}
-	rec, err := Recover(RecoverRequest{SenderHome: generalHome, ReceiverHome: generalHome, ReceiverRank: RankGeneral})
-	if err != nil {
-		t.Fatalf("Recover: %v", err)
+
+	// Even with Ack written, before the recovery pass runs, pending records remain.
+	if err := VerifyRetirementContinuity(generalHome, "direct-task"); err == nil {
+		t.Fatal("VerifyRetirementContinuity must refuse before recovery pass has run")
 	}
-	if rec.Accepted != 1 {
-		t.Fatalf("accepted = %d, want 1; Recover invoked directly must retire a report addressed to the General (no production path invokes it under direct General dispatch)", rec.Accepted)
+
+	// Run the production recovery pass on the General home.
+	if err := ReconcileCaptainHook(generalHome, true, transport); err != nil {
+		t.Fatalf("ReconcileCaptainHook: %v", err)
+	}
+
+	// After the real recovery pass runs, the pending report is retired and VerifyRetirementContinuity succeeds.
+	if err := VerifyRetirementContinuity(generalHome, "direct-task"); err != nil {
+		t.Fatalf("VerifyRetirementContinuity refused after recovery pass: %v", err)
 	}
 }
 
