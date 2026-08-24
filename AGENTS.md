@@ -42,6 +42,27 @@ Working either register — writing a waiver, scoring a mutant, triaging an
 unreachable function — is governed by `docs/adr/0017-guard-burn-down-working-rules-and-their-enforcement-addresses.md`,
 which also states which of those rules a machine checks and which only a reader does.
 
+That job also fails on any documentation citation that does not resolve,
+compared both ways against `.github/citations.allow`
+(`.github/scripts/citations.sh check`). Every backticked file path and every
+backticked Go identifier in the covered set must name a file that exists or a
+declaration this tree makes — func, method, type, const, var or struct field,
+resolved with `go/parser` rather than with a grep that cannot see the last two.
+A path is judged whether it is written root-relative, package-relative or as a
+bare filename. Covered: `docs/**` except `docs/plans/`, plus `AGENTS.md` and
+`README.md`; a dated plan is excluded because its citations are correct as
+written. Line numbers are not judged. Ten shapes no rule judges are printed as an
+`unchecked` count beside the result rather than dropped — so read the summary
+line, not just its `0 unaccounted` — and several classes are dropped in
+silence, from a fenced code block down to a token no rule can name, enumerated
+in the referenceShaped comment of `.github/scripts/citations/main.go`, which is
+the complete list. The largest is every backticked English word. `docs/workflow-topology-matrix.md` shipped
+two fabricated symbols and a path that does not exist past two reviews before
+this lane existed. Its rules are pinned by fixtures (`citations.sh selftest`).
+A waiver row owes what ADR-0017 §4 asks of one, and the header of
+`.github/citations.allow` records which of §4's three parts this register
+actually meets.
+
 That job also enforces `.github/flake-ledger.md`: a test CI caught being flaky
 on `main` has a row there with a deadline, and an `open` row past its deadline
 turns `invariants` red on every PR until someone fixes the test. Rows are

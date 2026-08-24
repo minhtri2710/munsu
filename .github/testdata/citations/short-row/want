@@ -1,0 +1,11 @@
+::error::.github/testdata/citations/short-row/waiver:2: expected doc<TAB>kind<TAB>citation<TAB>reason
+::error::citations that do not resolve and are not in .github/testdata/citations/short-row/waiver:
+  docs/doc.md: symbol home.ReadMailboxEnvelope
+    docs/doc.md:1:The document cites `home.WriteMailboxEnvelope` and `home.ReadMailboxEnvelope` in
+  A path citation must name a file that exists; a symbol citation must name a func,
+  method, type, const, var or struct field this tree declares. Correct the citation,
+  or add a line to that file with a reason -- see ADR-0017 4 for what a reason has to say.
+::error::.github/testdata/citations/short-row/waiver entries that now resolve, or that no document makes any more:
+  docs/doc.md: home.ReadMailboxEnvelope 
+  Each was either corrected or removed -- both are good news. Drop the line.
+exit 1

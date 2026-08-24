@@ -1,0 +1,2 @@
+::error::.github/testdata/citations/duplicate-row/waiver:3: docs/doc.md: home.WriteMailboxEnvelope: already listed on line 1
+exit 1

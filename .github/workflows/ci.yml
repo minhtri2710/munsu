@@ -422,8 +422,56 @@ jobs:
       # one, which is a PR not being allowed to merge the change that broke it.
       - name: Flake sweep rules must agree with their fixtures
         run: .github/scripts/flake-sweep.sh selftest
+      # The fourth of these, and the one where the argument is sharpest, because
+      # what it pins is a classifier rather than a file format. Loosening a
+      # classifier rule does not fail: it just stops seeing a shape, silently,
+      # with every lane green -- which is the same defect as the citation lane
+      # not existing at all, one level up. Its own prototype is the evidence: a
+      # `^func`/`^type` grep over docs/workflow-topology-matrix.md reported four
+      # unresolved identifiers of which two were real, and both false positives
+      # were ordinary declaration forms the grep cannot see (a struct field and
+      # a const). Thirty-four rules, one fixture each -- the count is
+      # `ls .github/testdata/citations | wc -l`, not a number to take on trust
+      # -- and the script header lists the mutation every one of them answers.
+      # Two further checks have no fixture because neither can be a tree: an
+      # unparseable .go file would turn this job's gofmt step red instead, and
+      # the enumeration check compares the script's own header against the
+      # tool's source. Hermetic and ~15s.
+      - name: Citation rules must agree with their fixtures
+        run: .github/scripts/citations.sh selftest
       - name: Flake ledger deadlines must not have passed
         run: .github/scripts/flake-ledger.sh check
+      # munsu's documents cite the code as their primary evidence -- CLAUDE.md,
+      # docs/architecture.md, docs/port-mapping.md and the ADRs are all written
+      # to be checkable by reading the file or the symbol they name -- and until
+      # this step nothing checked that any citation resolved. A renamed path, a
+      # moved symbol, a name that was never spelled that way: all of it stayed
+      # green forever. docs/workflow-topology-matrix.md was written, reviewed,
+      # corrected and reviewed again and still shipped to its second review
+      # citing `home.WriteMailboxEnvelope` and `home.ReadMailboxEnvelope`, two
+      # names that appear nowhere in the Go tree, plus
+      # `internal/cli/captain_recover.go`, which does not exist. A reviewer
+      # caught them by hand at a cost that is exactly why it does not happen
+      # every time (#573).
+      #
+      # Fail-closed and compared both ways against .github/citations.allow, like
+      # the reachability lane above: a citation that resolves again cannot leave
+      # its waiver behind. The set of covered documents and the set of citations
+      # are both derived from the tree, so a new document joins this lane by
+      # existing -- except docs/plans/, which is excluded because a dated plan's
+      # citations are correct as written and a ratchet over them can never reach
+      # zero. docFiles in .github/scripts/citations/main.go carries the argument.
+      #
+      # Text only, no network, like the rules around it: the derivation is a
+      # stdlib-only Go program (.github/scripts/citations) that parses the tree
+      # with go/parser, so it downloads no module and reads nothing outside the
+      # checkout. It does not judge line numbers -- see the script header for
+      # that boundary and the others it states. What no rule can judge is not
+      # dropped: `check` prints an `unchecked` count beside `0 unaccounted` on
+      # every run, so the success line cannot be read as a larger claim than the
+      # classifier makes.
+      - name: Documentation citations must resolve
+        run: .github/scripts/citations.sh check
       - name: Personal fleet paths must not be tracked
         run: |
           set -eu

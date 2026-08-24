@@ -1,0 +1,3 @@
+citations: 0 checked (0 path, 0 symbol), 0 waived, 0 unaccounted, 1 unchecked
+  1 citation(s) matched no rule and were not judged; `citations.sh unchecked` lists them.
+exit 0

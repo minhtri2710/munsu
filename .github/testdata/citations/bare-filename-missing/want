@@ -1,0 +1,7 @@
+::error::citations that do not resolve and are not in .github/testdata/citations/bare-filename-missing/waiver:
+  docs/doc.md: path mailbox_retry.go
+    docs/doc.md:1:The envelope path is `mailbox_store.go` and the retry path is `mailbox_retry.go`.
+  A path citation must name a file that exists; a symbol citation must name a func,
+  method, type, const, var or struct field this tree declares. Correct the citation,
+  or add a line to that file with a reason -- see ADR-0017 4 for what a reason has to say.
+exit 1
