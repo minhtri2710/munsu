@@ -407,7 +407,7 @@ exit $rc"
 	# committed fixture because it cannot be one: an unparseable .go file in the
 	# tree makes `gofmt -l .` exit 2, which turns the gofmt step of this same job
 	# red for a reason that is not this rule. Built in a scratch tree instead.
-	local scratch escape tabbed rootdoc outside ambiguous callresult nested coverage invalidfence
+	local scratch escape tabbed rootdoc outside ambiguous callresult nested coverage invalidfence container rootrelative
 	scratch=""
 	escape=""
 	tabbed=""
@@ -418,7 +418,9 @@ exit $rc"
 	nested=""
 	coverage=""
 	invalidfence=""
-	trap 'rm -rf "${scratch:-}" "${escape:-}" "${tabbed:-}" "${rootdoc:-}" "${outside:-}" "${ambiguous:-}" "${callresult:-}" "${nested:-}" "${coverage:-}" "${invalidfence:-}"' RETURN
+	container=""
+	rootrelative=""
+	trap 'rm -rf "${scratch:-}" "${escape:-}" "${tabbed:-}" "${rootdoc:-}" "${outside:-}" "${ambiguous:-}" "${callresult:-}" "${nested:-}" "${coverage:-}" "${invalidfence:-}" "${container:-}" "${rootrelative:-}"' RETURN
 	scratch="$(mktemp -d)"
 	mkdir -p "$scratch/docs"
 	printf 'A citation of `SomethingDeclared`.\n' >"$scratch/docs/doc.md"
@@ -663,6 +665,47 @@ EOF
 		echo "  ok   invalid-backtick-fence"
 	else
 		echo "::error::citations treated an invalid backtick opener as a fence:" >&2
+		printf '%s\n' "${rows:-$?}" >&2
+		failed=1
+	fi
+
+	container="$(mktemp -d)"
+	mkdir -p "$container/docs"
+	: >"$container/AGENTS.md"
+	: >"$container/CLAUDE.md"
+	: >"$container/README.md"
+	printf 'package x\n\nfunc FenceAfterList() {}\n' >"$container/good.go"
+	printf '```go\n- ```\n```\nA citation after the fence is `FenceAfterList`.\n' >"$container/docs/doc.md"
+	: >"$container/waiver"
+	if rows="$(cd "$TOOL" && go run . "$container" 2>&1)" && printf '%s\n' "$rows" | grep -q $'resolved\tdocs/doc.md\tsymbol\tFenceAfterList'; then
+		echo "  ok   top-level-fence-container"
+	else
+		echo "::error::citations let a list marker close a top-level fence:" >&2
+		printf '%s\n' "${rows:-$?}" >&2
+		failed=1
+	fi
+	printf '%s\n' '- - ```go' '- ```' '  A nested fenced citation is `NestedFenceCitation`.' '  ```' 'A citation after the nested fence is `AfterNestedFence`.' >"$container/docs/doc.md"
+	if rows="$(cd "$TOOL" && go run . "$container" 2>&1)" && printf '%s\n' "$rows" | grep -q $'resolved\tdocs/doc.md\tsymbol\tAfterNestedFence' && ! printf '%s\n' "$rows" | grep -q 'NestedFenceCitation'; then
+		echo "  ok   nested-list-fence-container"
+	else
+		echo "::error::citations accepted a shallower list marker for a nested fence:" >&2
+		printf '%s\n' "${rows:-$?}" >&2
+		failed=1
+	fi
+
+	rootrelative="$(mktemp -d)"
+	mkdir -p "$rootrelative/docs" "$rootrelative/nested"
+	: >"$rootrelative/AGENTS.md"
+	: >"$rootrelative/CLAUDE.md"
+	: >"$rootrelative/README.md"
+	printf 'package x\n\nfunc RootRelativeSentinel() {}\n' >"$rootrelative/nested/foo.go"
+	printf 'A path citation is `./foo.go`.\n' >"$rootrelative/docs/doc.md"
+	: >"$rootrelative/waiver"
+	if rows="$(SCAN_ROOT="$rootrelative" WAIVER="$rootrelative/waiver" "$0" check 2>&1)"; then rc=0; else rc=$?; fi
+	if [ "$rc" -ne 0 ] && printf '%s\n' "$rows" | grep -Fq 'path ./foo.go' && ! printf '%s\n' "$rows" | grep -Fq $'resolved\tdocs/doc.md\tpath\t./foo.go'; then
+		echo "  ok   explicit-root-relative-path"
+	else
+		echo "::error::citations weakened an explicit root-relative path:" >&2
 		printf '%s\n' "${rows:-$?}" >&2
 		failed=1
 	fi

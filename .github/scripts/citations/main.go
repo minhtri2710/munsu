@@ -262,31 +262,35 @@ func fenceMarker(line string) (byte, int, int, bool) {
 
 func fenceContinuationIndent(line string) (int, bool) {
 	start := 0
-	for start < len(line) && line[start] == ' ' && start < 4 {
-		start++
-	}
-	markerEnd := start
-	if markerEnd < len(line) && (line[markerEnd] == '-' || line[markerEnd] == '*' || line[markerEnd] == '+') {
-		markerEnd++
-	} else {
-		digits := 0
-		for markerEnd < len(line) && line[markerEnd] >= '0' && line[markerEnd] <= '9' && digits < 9 {
-			markerEnd++
-			digits++
+	for {
+		for start < len(line) && line[start] == ' ' && start < 4 {
+			start++
 		}
-		if digits == 0 || markerEnd >= len(line) || (line[markerEnd] != '.' && line[markerEnd] != ')') {
+		markerEnd := start
+		if markerEnd < len(line) && (line[markerEnd] == '-' || line[markerEnd] == '*' || line[markerEnd] == '+') {
+			markerEnd++
+		} else {
+			digits := 0
+			for markerEnd < len(line) && line[markerEnd] >= '0' && line[markerEnd] <= '9' && digits < 9 {
+				markerEnd++
+				digits++
+			}
+			if digits == 0 || markerEnd >= len(line) || (line[markerEnd] != '.' && line[markerEnd] != ')') {
+				return 0, false
+			}
+			markerEnd++
+		}
+		if markerEnd >= len(line) || (line[markerEnd] != ' ' && line[markerEnd] != '\t') {
 			return 0, false
 		}
-		markerEnd++
+		start = markerEnd
+		for start < len(line) && (line[start] == ' ' || line[start] == '\t') {
+			start++
+		}
+		if start >= len(line) || (line[start] != '-' && line[start] != '*' && line[start] != '+' && (line[start] < '0' || line[start] > '9')) {
+			return markdownColumns(line[:start]), true
+		}
 	}
-	if markerEnd >= len(line) || (line[markerEnd] != ' ' && line[markerEnd] != '\t') {
-		return 0, false
-	}
-	prefixEnd := markerEnd
-	for prefixEnd < len(line) && (line[prefixEnd] == ' ' || line[prefixEnd] == '\t') {
-		prefixEnd++
-	}
-	return markdownColumns(line[:prefixEnd]), true
 }
 
 func markdownColumns(text string) int {
@@ -428,16 +432,21 @@ func closesFenceNormalized(line string, marker byte, openingRun int) bool {
 	return strings.TrimSpace(line[start+run:]) == ""
 }
 
-func closesFence(line string, marker byte, openingRun, openingQuoteDepth int) bool {
-	normalized, _, quoteDepth := stripMarkdownContainer(line)
+func closesFence(line string, marker byte, openingRun, openingQuoteDepth, openingContinuationColumns int) bool {
+	normalized, quoteDepth := stripBlockquoteContainers(line)
 	if quoteDepth != openingQuoteDepth {
 		return false
 	}
-	gotMarker, run, start, ok := fenceMarkerNormalized(normalized)
-	if !ok || gotMarker != marker || run < openingRun {
+	if openingContinuationColumns > 0 {
+		var ok bool
+		normalized, ok = stripFenceContinuation(normalized, openingContinuationColumns)
+		if !ok {
+			return false
+		}
+	} else if normalized != line && quoteDepth == 0 {
 		return false
 	}
-	return strings.TrimSpace(normalized[start+run:]) == ""
+	return closesFenceNormalized(normalized, marker, openingRun)
 }
 
 // ---------------------------------------------------------------------------
@@ -525,7 +534,6 @@ func cleanToken(tok string) string {
 			break
 		}
 	}
-	tok = strings.TrimPrefix(tok, "./")
 	if tok != "/" {
 		tok = strings.TrimRight(tok, "/")
 	}
@@ -552,10 +560,15 @@ func isRepoPath(root, tok string) bool {
 	if tok == "" || strings.HasPrefix(tok, "/") || strings.HasPrefix(tok, "~") {
 		return false
 	}
-	if strings.ContainsAny(tok, "*?<>|$\\{} \t") || strings.Contains(tok, "://") {
+	explicitRoot := strings.HasPrefix(tok, "./")
+	pathTok := strings.TrimPrefix(tok, "./")
+	if strings.ContainsAny(pathTok, "*?<>|$\\{} \t") || strings.Contains(pathTok, "://") {
 		return false
 	}
-	first, _, hasSlash := strings.Cut(tok, "/")
+	if explicitRoot {
+		return pathTok != "" && pathTok != "." && pathTok != ".." && !strings.HasPrefix(pathTok, "../")
+	}
+	first, _, hasSlash := strings.Cut(pathTok, "/")
 	if !hasSlash || first == "" || first == "." || first == ".." {
 		return false
 	}
@@ -564,6 +577,7 @@ func isRepoPath(root, tok string) bool {
 }
 
 func repoPathExists(canonicalRoot, tok string) bool {
+	tok = strings.TrimPrefix(tok, "./")
 	candidate := filepath.Join(canonicalRoot, filepath.FromSlash(tok))
 	resolved, err := filepath.EvalSymlinks(candidate)
 	if err != nil {
@@ -1154,22 +1168,17 @@ func scan(root string) ([]string, error) {
 		var fenceContinuationColumns int
 		for _, line := range strings.Split(string(body), "\n") {
 			if fenceRun > 0 {
-				if fenceContinuationColumns == 0 {
-					if closesFence(line, fenceMarkerByte, fenceRun, fenceQuoteDepth) {
-						fenceMarkerByte, fenceRun, fenceQuoteDepth, fenceContinuationColumns = 0, 0, 0, 0
-						continue
-					}
-					_, _, quoteDepth := stripMarkdownContainer(line)
-					if quoteDepth == fenceQuoteDepth {
-						continue
-					}
+				if closesFence(line, fenceMarkerByte, fenceRun, fenceQuoteDepth, fenceContinuationColumns) {
 					fenceMarkerByte, fenceRun, fenceQuoteDepth, fenceContinuationColumns = 0, 0, 0, 0
+					continue
 				}
 				normalized, quoteDepth := stripBlockquoteContainers(line)
-				if quoteDepth < fenceQuoteDepth {
-					fenceMarkerByte, fenceRun, fenceQuoteDepth, fenceContinuationColumns = 0, 0, 0, 0
-				} else if quoteDepth != fenceQuoteDepth {
-					continue
+				if quoteDepth != fenceQuoteDepth {
+					if quoteDepth < fenceQuoteDepth {
+						fenceMarkerByte, fenceRun, fenceQuoteDepth, fenceContinuationColumns = 0, 0, 0, 0
+					} else {
+						continue
+					}
 				} else {
 					if fenceContinuationColumns > 0 {
 						var ok bool
@@ -1181,10 +1190,6 @@ func scan(root string) ([]string, error) {
 								continue
 							}
 						}
-					}
-					if fenceRun > 0 && closesFenceNormalized(normalized, fenceMarkerByte, fenceRun) {
-						fenceMarkerByte, fenceRun, fenceQuoteDepth, fenceContinuationColumns = 0, 0, 0, 0
-						continue
 					}
 					if fenceRun > 0 {
 						continue
