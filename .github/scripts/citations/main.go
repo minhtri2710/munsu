@@ -272,6 +272,14 @@ func inlineSpansState(line string, openRun int, openText string) ([]span, int, s
 			i += 1
 			continue
 		}
+		backslashes := 0
+		for j := i - 1; j >= 0 && line[j] == '\\'; j-- {
+			backslashes++
+		}
+		if backslashes%2 == 1 {
+			i++
+			continue
+		}
 		n := 0
 		for i+n < len(line) && line[i+n] == '`' {
 			n++
