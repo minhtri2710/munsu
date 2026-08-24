@@ -3,6 +3,7 @@ package fixture
 import (
 	"errors"
 	"fmt"
+	"os"
 )
 
 type LifecyclePartialError struct {
@@ -117,4 +118,99 @@ func ClosurePropagate(value int, err error) error {
 	default:
 		return fmt.Errorf("operation failed: %s", func() string { return err.Error() }())
 	}
+}
+
+func EarlierDeclaration(value int, err error) error {
+	switch value {
+	default:
+		reason := err.Error()
+		return fmt.Errorf("operation failed: %s", reason)
+	}
+}
+
+func EarlierAssignment(value int, err error) error {
+	reason := ""
+	switch value {
+	default:
+		reason = err.Error()
+		return fmt.Errorf("operation failed: %s", reason)
+	}
+}
+
+func EarlierCall(value int, err error) error {
+	switch value {
+	default:
+		fmt.Sprintf("%v", err)
+		return errors.New("unsupported")
+	}
+}
+
+func EarlierNested(value int, err error) error {
+	switch value {
+	default:
+		if err != nil {
+			_ = err
+		}
+		return errors.New("unsupported")
+	}
+}
+
+func EmptyBefore(value int) error {
+	switch value {
+	default:
+
+		return errors.New("unsupported")
+	}
+}
+
+func IsResult(value int, err error) bool {
+	switch value {
+	default:
+		return errors.Is(errors.New("left"), errors.New("right"))
+	}
+}
+
+func JoinEmpty(value int) error {
+	switch value {
+	default:
+		return errors.Join()
+	}
+}
+
+func JoinNil(value int) error {
+	switch value {
+	default:
+		return errors.Join(nil)
+	}
+}
+
+func JoinConstruct(value int) error {
+	switch value {
+	default:
+		return errors.Join(errors.New("unsupported"))
+	}
+}
+
+func Sentinel(value int) error {
+	switch value {
+	default:
+		return ErrUnsupported
+	}
+}
+
+var ErrUnsupported = errors.New("unsupported")
+
+func PanicConstruct(value int) error {
+	switch value {
+	default:
+		panic("unsupported")
+	}
+}
+
+func ExitDefault(value int) error {
+	switch value {
+	default:
+		os.Exit(1)
+	}
+	return nil
 }
