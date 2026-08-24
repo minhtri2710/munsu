@@ -597,6 +597,7 @@ func refusalHasErrorOperands(r *resolver, file string, fset *token.FileSet, expr
 }
 
 func isDefiniteSelfOriginatingError(r *resolver, file string, fset *token.FileSet, expr ast.Expr) bool {
+	expr = unwrapParens(expr)
 	if expr == nil || !isErrorExpression(r, file, fset, expr) || refusalHasErrorOperand(r, file, fset, expr) {
 		return false
 	}
@@ -609,20 +610,11 @@ func isDefiniteSelfOriginatingError(r *resolver, file string, fset *token.FileSe
 		return isErrorComposite(r, file, fset, node)
 	case *ast.CompositeLit:
 		return isErrorComposite(r, file, fset, node)
-	case *ast.ParenExpr:
-		return isDefiniteSelfOriginatingError(r, file, fset, node.X)
 	case *ast.CallExpr:
-		name, pkg := callIdentity(r, file, fset, node)
-		switch {
-		case pkg == "errors" && name == "New":
+		if isPackageCall(r, file, fset, node, "errors", "New") || isPackageCall(r, file, fset, node, "fmt", "Errorf") {
 			return true
-		case pkg == "errors" && name == "Join":
-			return isDefiniteErrorsJoin(r, file, fset, node)
-		case pkg == "fmt" && name == "Errorf":
-			return true
-		default:
-			return false
 		}
+		return isPackageCall(r, file, fset, node, "errors", "Join") && isDefiniteErrorsJoin(r, file, fset, node)
 	}
 	return false
 }
@@ -740,6 +732,7 @@ func callIdentity(r *resolver, file string, fset *token.FileSet, call *ast.CallE
 }
 
 func refusalHasErrorOperand(r *resolver, file string, fset *token.FileSet, expr ast.Expr) bool {
+	expr = unwrapParens(expr)
 	if expr == nil {
 		return false
 	}
@@ -855,9 +848,12 @@ func isRefusalStatements(r *resolver, file string, fset *token.FileSet, statemen
 // variables are accepted only when resolver-backed object information proves
 // they are package-scope error variables.
 func constructsError(r *resolver, file string, fset *token.FileSet, e ast.Expr) bool {
+	e = unwrapParens(e)
 	switch v := e.(type) {
 	case *ast.CallExpr:
-		return errorish(calleeName(v.Fun))
+		return isPackageCall(r, file, fset, v, "errors", "New") ||
+			isPackageCall(r, file, fset, v, "fmt", "Errorf") ||
+			(isPackageCall(r, file, fset, v, "errors", "Join") && isDefiniteErrorsJoin(r, file, fset, v))
 	case *ast.UnaryExpr:
 		return v.Op == token.AND && isErrorComposite(r, file, fset, v)
 	case *ast.CompositeLit:
@@ -912,13 +908,6 @@ func typeName(e ast.Expr) string {
 		return typeName(v.X)
 	}
 	return ""
-}
-
-// A name that says "error" anywhere in it, qualifier included. The qualifier has
-// to count: `errors.New` is the second most common way to build one in this
-// repo and its bare selector says nothing at all.
-func errorish(name string) bool {
-	return strings.Contains(strings.ToLower(name), "err")
 }
 
 func isSentinel(r *resolver, file string, fset *token.FileSet, expr ast.Expr) bool {

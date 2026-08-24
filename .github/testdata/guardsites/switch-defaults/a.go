@@ -1,6 +1,7 @@
 package fixture
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -103,6 +104,64 @@ func WrappedError(value int, err error) error {
 		return fmt.Errorf("operation failed: %w", err)
 	}
 }
+
+func WrappedMethod(value int, ctx context.Context) error {
+	switch value {
+	default:
+		return fmt.Errorf("operation failed: %w", ctx.Err())
+	}
+}
+
+func UnknownConstructor(value int) error {
+	switch value {
+	default:
+		return errorFactory()
+	}
+}
+
+func ParenthesizedConstructor(value int) error {
+	switch value {
+	default:
+		return (errors.New("unsupported"))
+	}
+}
+
+func ParenthesizedSentinel(value int) error {
+	switch value {
+	default:
+		return (ErrUnsupported)
+	}
+}
+
+func ParenthesizedImportedSentinel(value int) error {
+	switch value {
+	default:
+		return (io.EOF)
+	}
+}
+
+func ParenthesizedValueComposite(value int) error {
+	switch value {
+	default:
+		return (Refusal{})
+	}
+}
+
+func ParenthesizedComposite(value int) error {
+	switch value {
+	default:
+		return (&Refusal{})
+	}
+}
+
+func ParenthesizedPanic(value int) error {
+	switch value {
+	default:
+		panic((errors.New("unsupported")))
+	}
+}
+
+func errorFactory() error { return nil }
 
 func PanicPropagate(value int, err error) error {
 	switch value {
