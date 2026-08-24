@@ -177,9 +177,16 @@ waiver_format_errors() {
 			printf "::error::%s:%d: %s: unknown kind %s -- the tool emits path or symbol\n", name, NR, $1, $2
 			bad = 1
 		}
-		NF < 4 || $4 == "" {
-			printf "::error::%s:%d: %s: %s: entry needs a reason in the fourth column\n", name, NR, $1, $3
-			bad = 1
+		{
+			reason = ""
+			for (i = 4; i <= NF; i++) {
+				if (i > 4) reason = reason "\t"
+				reason = reason $i
+			}
+			if (NF < 4 || reason !~ /[^[:space:]]/) {
+				printf "::error::%s:%d: %s: %s: entry needs a reason in the fourth column\n", name, NR, $1, $3
+				bad = 1
+			}
 		}
 		{
 			key = $1 "\t" $2 "\t" $3
@@ -356,6 +363,7 @@ check() {
 #                             accounted for by a reason fails anyway
 #   resolved-still-waived     delete the `removed` comparison
 #   no-reason                 delete the fourth-column requirement
+#   whitespace-reason         accept a fourth column containing only whitespace
 #   bad-kind                  delete the kind check
 #   short-row                 delete the NF < 3 check
 #   duplicate-row             delete the `key in seen` check

@@ -298,8 +298,7 @@ var (
 	allCapsRe = regexp.MustCompile(`^[A-Z0-9_]+$`)
 	// `(Type).Method` and `(*Type).Method`, the way a method is cited when the
 	// receiver matters.
-	methodExprRe         = regexp.MustCompile(`^\(\*?([A-Za-z_][A-Za-z0-9_]*)\)\.([A-Za-z_][A-Za-z0-9_]*)$`)
-	callResultSelectorRe = regexp.MustCompile(`^[^()]+\([^()]*\)\.[A-Za-z_][A-Za-z0-9_]*$`)
+	methodExprRe = regexp.MustCompile(`^\(\*?([A-Za-z_][A-Za-z0-9_]*)\)\.([A-Za-z_][A-Za-z0-9_]*)$`)
 	// A trailing argument list on a cited call.
 	callSuffixRe = regexp.MustCompile(`\([^()]*\)$`)
 )
@@ -325,6 +324,42 @@ var (
 // three ways a token gets no row at all; referenceShaped's header enumerates
 // all three, and this is not the largest.
 const codeChars = "\"'`$!\\()[]|;&"
+
+func callResultSelector(tok string) bool {
+	expr, err := parser.ParseExpr(tok)
+	if err != nil {
+		return false
+	}
+	return selectorRootedInCall(expr)
+}
+
+func selectorRootedInCall(expr ast.Expr) bool {
+	switch t := expr.(type) {
+	case *ast.CallExpr:
+		return selectorRootedInCall(t.Fun)
+	case *ast.SelectorExpr:
+		return callRoot(t.X)
+	case *ast.ParenExpr:
+		return selectorRootedInCall(t.X)
+	}
+	return false
+}
+
+func callRoot(expr ast.Expr) bool {
+	switch t := expr.(type) {
+	case *ast.CallExpr:
+		return true
+	case *ast.SelectorExpr:
+		return callRoot(t.X)
+	case *ast.IndexExpr:
+		return callRoot(t.X)
+	case *ast.IndexListExpr:
+		return callRoot(t.X)
+	case *ast.ParenExpr:
+		return callRoot(t.X)
+	}
+	return false
+}
 
 // Trailing prose punctuation, a trailing slash and a `:line` or `:line-line`
 // suffix are not part of the citation.
@@ -574,7 +609,7 @@ func referenceShaped(tok string) bool {
 	if tok == "" || strings.Contains(tok, "://") {
 		return false
 	}
-	if callResultSelectorRe.MatchString(tok) {
+	if callResultSelector(tok) {
 		return true
 	}
 	// A cited call is the same reference as the name it calls, so `time.Now()`
@@ -900,6 +935,10 @@ func embeddedName(expr ast.Expr) string {
 		return embeddedName(t.X)
 	case *ast.SelectorExpr:
 		return t.Sel.Name
+	case *ast.IndexExpr:
+		return embeddedName(t.X)
+	case *ast.IndexListExpr:
+		return embeddedName(t.X)
 	}
 	return ""
 }
