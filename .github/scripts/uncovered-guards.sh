@@ -107,16 +107,17 @@ sites() {
 		die "guardsites could not derive the refusal set, so this lane cannot judge coverage"
 }
 
-# One line per coverage block, `path:start-end<TAB>count`, carrying the
-# largest count any lane recorded for it. The profile is the source of truth for
-# the block's start: Go toolchains may place it at the `if` body's opening brace
-# or at its first statement. A site therefore supplies its body range and the
-# supported entry coordinates; classify() accepts only a unique entry block.
+# One line per coverage block, `path:start-end<TAB>statements<TAB>count`, carrying
+# the largest count any lane recorded for it. The profile is the source of truth
+# for the block's start: Go toolchains may place it at an if body's brace, a
+# switch-default clause boundary, or the first statement. A site therefore supplies
+# its refusal-body range and supported entry coordinates; classify() accepts only a
+# unique entry block.
 #
-# The complete range is retained so a malformed or ambiguous profile cannot be
-# mistaken for a match. The start selects the entry coordinate; the end is
-# validated against the source body and keeps the merged representation faithful
-# to the profile.
+# The complete range and statement count are retained so a malformed or
+# ambiguous profile cannot be mistaken for a match. The start selects the entry
+# coordinate; the end is validated against the source body and keeps the merged
+# representation faithful to the profile.
 merge() {
 	local module lane path missing="" max_int
 	module="$(awk '/^module / { print $2; exit }' "$ROOT/go.mod")"
@@ -203,6 +204,13 @@ merge() {
 				bad = 1
 				exit
 			}
+			mode = substr($0, 7)
+			if (profileMode == "") profileMode = mode
+			else if (mode != profileMode) {
+				printf "::error::coverage profile mode mismatch: expected %s, found %s in %s\n", profileMode, mode, short(FILENAME) > "/dev/stderr"
+				bad = 1
+				exit
+			}
 			next
 		}
 		/^mode:/ {
@@ -245,6 +253,11 @@ merge() {
 			statement = requireInt($2, "statement count")
 			count = requireInt($3, "execution count")
 			if (statement == "" || count == "") next
+			if (mode == "set" && count != "0" && count != "1") {
+				printf "::error::%s:%d: mode set execution count must be 0 or 1: %s\n", short(FILENAME), FNR, $3 > "/dev/stderr"
+				bad = 1
+				next
+			}
 			if (!before(start, end) && start != end) {
 				printf "::error::%s:%d: non-positive coverage block range: %s\n", short(FILENAME), FNR, $1 > "/dev/stderr"
 				bad = 1
@@ -266,7 +279,7 @@ merge() {
 		}
 		END {
 			if (bad) exit 1
-			for (block in max) printf "%s\t%s\n", block, max[block]
+			for (block in max) printf "%s\t%s\t%s\n", block, statements[block], max[block]
 		}
 	' $(for lane in $(lane_files); do printf '%s ' "$PROFILES/$lane"; done) | sort
 }
@@ -328,8 +341,11 @@ classify() {
 		NR == FNR {
 			file = $1
 			sub(/:[0-9]+\.[0-9]+-.*/, "", file)
-			compiled[file] = 1
-			blocks[file] = blocks[file] $0 "\n"
+			split($0, mergedFields, /\t/)
+			if (mergedFields[2] != "0") {
+				compiled[file] = 1
+				blocks[file] = blocks[file] $0 "\n"
+			}
 			next
 		}
 		{
@@ -371,12 +387,12 @@ classify() {
 			}
 			# The refusal body range travels with every verdict, not just the anomaly: the
 			# baseline has no source coordinates by design, so this is the only thing that
-			# can tell an author which `if` to go and write a test for.
+			# can tell an author which refusal site to go and write a test for.
 			id = $1 "\t" $2 "\t" $3 "\t" $4 "\t" $5
 			if (incompatible) print "anomaly\t" id
 			else if (matches == 1) {
 				split(bestLine, fields, /\t/)
-				print (("x" fields[2]) != "x0" ? "covered" : "uncovered") "\t" id
+				print (("x" fields[3]) != "x0" ? "covered" : "uncovered") "\t" id
 			} else if (!(file in compiled)) print "unmeasured\t" id
 			else print "anomaly\t" id
 		}
@@ -496,12 +512,13 @@ check() {
 	covered="$(printf '%s\n' "$verdicts" | { grep '^covered	' || true; } | cut -f2,3,4,5 | sort -u)"
 	baseline="$(baseline_entries)"
 
-	# `file:body-range: func (#nth): if <predicate>` for a list of site keys. The
-	# body range comes from the derived site data, where it helps locate the guard
-	# without becoming part of the baseline identity; putting it in the baseline
-	# would rewrite that file on every edit above a guard.
+	# `file:body-range: func (#nth): if <predicate>` or `switch default` for
+	# a list of site keys. The body range comes from the derived site data, where
+	# it helps locate the guard without becoming part of the baseline identity;
+	# putting it in the baseline would rewrite that file on every edit above a guard.
 	sited() {
 		awk -F'\t' 'NR == FNR { at[$2 "\t" $3 "\t" $4 "\t" $5] = $6; next }
+			$4 == "default" { printf "  %s:%s: %s (#%s): switch default\n", $1, at[$0], $2, $3; next }
 			{ printf "  %s:%s: %s (#%s): if %s\n", $1, at[$0], $2, $3, $4 }' \
 			<(printf '%s\n' "$verdicts") -
 	}
@@ -539,7 +556,11 @@ check() {
 	if [ -n "$stale" ]; then
 		echo "::error::$BASELINE_REL entries that match no refusal branch in the tree:" >&2
 		printf '%s\n' "$stale" | while IFS=$'\t' read -r file func nth pred; do
-			printf '  %s: %s (#%s): if %s\n' "$file" "$func" "$nth" "$pred" >&2
+			if [ "$pred" = default ]; then
+				printf '  %s: %s (#%s): switch default\n' "$file" "$func" "$nth" >&2
+			else
+				printf '  %s: %s (#%s): if %s\n' "$file" "$func" "$nth" "$pred" >&2
+			fi
 		done
 		echo "  Each was deleted or rewritten -- both are fine. Drop the line." >&2
 		failed=1
@@ -616,6 +637,8 @@ generate() {
 #   zero-width-endpoint     accept a zero-width profile block that claims statements
 #   zero-width-marker-only  retain a zero-statement marker as compilation evidence
 #                           and fail with an anomaly rather than calling the file unmeasured
+#   zero-statement-block    let a positive-count zero-statement block cover a guard
+#   invalid-set-count       accept an execution count other than 0 or 1 in set mode
 #   incompatible-end        accept a profile block whose end exceeds the refusal body
 #   short-row              delete the NF < 4 check
 #   duplicate-row          delete the `key in seen` check

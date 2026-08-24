@@ -105,7 +105,10 @@ func EnsureDeliveryModeRunnable(mode string) error {
 	if mode != "no-mistakes" {
 		return nil
 	}
-	probe := NoMistakesProbe()
+	return ensureDeliveryModeRunnableForProbe(NoMistakesProbe())
+}
+
+func ensureDeliveryModeRunnableForProbe(probe ProbeResult) error {
 	switch probe.State {
 	case backend.Absent:
 		return fmt.Errorf("delivery mode 'no-mistakes' requires the no-mistakes binary on PATH; run 'munsu doctor' or 'go install github.com/kunchenguid/no-mistakes@latest'")

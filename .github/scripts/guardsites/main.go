@@ -12,9 +12,9 @@
 //	file       repo-relative path of the non-test .go file
 //	func       enclosing top-level function, `Type.Method` for methods
 //	nth        1-based occurrence of this exact predicate in this function
-//	predicate  the `if` condition, source text, whitespace collapsed
+//	predicate  the `if` condition, or `default` for a refusing switch default
 //	body       source range of the refusal body, `start-end` as `line.col`
-//	entries    opening-brace and first-statement coordinates, comma-separated
+//	entries    body-start and first-statement coordinates, comma-separated
 //
 // The first four columns are the identity of a site and are what the baseline
 // file stores. `body` is deliberately NOT part of that identity: it is the
@@ -34,8 +34,8 @@
 //
 // The body range and entry coordinates are the stable source facts available to
 // the coverage matcher. The profile-derived matcher accepts only a unique block
-// starting at the opening brace or first statement, so a later nested block
-// cannot masquerade as entry. Keeping these facts rather than a predicted
+// starting at the syntactic body boundary or first statement, so a later nested
+// block cannot masquerade as entry. Keeping these facts rather than a predicted
 // profile key makes the contract independent of a particular Go instrumenter.
 //
 // What counts as a site, and why the definition is this narrow: a guard's
@@ -46,9 +46,9 @@
 // to one, so a lane that flagged it would be noise.
 //
 // The recognizer is a heuristic and this number is a LOWER BOUND. It does not
-// see: a guard written as a `switch` default, a guard that returns early with a
-// bare `nil`, a guard wrapped in a helper call (`mustBeWorktree(p)`), or a guard
-// at the *function* level -- a complete refusal that nothing calls. That last
+// see: a guard that returns early with a bare `nil`, a guard wrapped in a helper
+// call (`mustBeWorktree(p)`), or a guard at the *function* level -- a complete
+// refusal that nothing calls. That last
 // shape is not a gap here, it is the reachability lane's job (deadcode.sh).
 package main
 
@@ -246,23 +246,30 @@ func scan(root string) ([]site, error) {
 			}
 			owner := funcName(fn)
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				stmt, ok := n.(*ast.IfStmt)
-				if !ok {
-					return true
+				switch stmt := n.(type) {
+				case *ast.IfStmt:
+					if !isRefusal(resolver, abs, fset, stmt.Body) || !isSelfOriginating(resolver, abs, fset, stmt.Init, stmt.Cond) {
+						return true
+					}
+					pos := fset.Position(stmt.Body.Lbrace)
+					rows = append(rows, site{
+						File:      rel,
+						Func:      owner,
+						Predicate: exprText(src, fset, stmt.Cond),
+						Body:      sourceRange(fset, stmt.Body),
+						Entries:   entryPoints(fset, stmt.Body),
+						line:      pos.Line,
+						col:       pos.Column,
+					})
+				case *ast.SwitchStmt:
+					if switchSelfOriginating(resolver, abs, fset, stmt) {
+						appendDefaultSites(resolver, abs, &rows, stmt.Body, owner, rel, fset)
+					}
+				case *ast.TypeSwitchStmt:
+					if typeSwitchSelfOriginating(resolver, abs, fset, stmt) {
+						appendDefaultSites(resolver, abs, &rows, stmt.Body, owner, rel, fset)
+					}
 				}
-				if !isRefusal(stmt.Body) || !isSelfOriginating(resolver, abs, fset, stmt.Init, stmt.Cond) {
-					return true
-				}
-				pos := fset.Position(stmt.Body.Lbrace)
-				rows = append(rows, site{
-					File:      rel,
-					Func:      owner,
-					Predicate: exprText(src, fset, stmt.Cond),
-					Body:      sourceRange(fset, stmt.Body),
-					Entries:   entryPoints(fset, stmt.Body),
-					line:      pos.Line,
-					col:       pos.Column,
-				})
 				return true
 			})
 		}
@@ -338,6 +345,75 @@ func entryPoints(fset *token.FileSet, body *ast.BlockStmt) string {
 	return fmt.Sprintf("%d.%d,%d.%d", brace.Line, brace.Column, first.Line, first.Column)
 }
 
+func switchSelfOriginating(r *resolver, file string, fset *token.FileSet, stmt *ast.SwitchStmt) bool {
+	if !isSelfOriginating(r, file, fset, stmt.Init, stmt.Tag) {
+		return false
+	}
+	for _, clause := range stmt.Body.List {
+		caseClause, ok := clause.(*ast.CaseClause)
+		if !ok || len(caseClause.List) == 0 {
+			continue
+		}
+		for _, expr := range caseClause.List {
+			if !isSelfOriginating(r, file, fset, nil, expr) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func typeSwitchSelfOriginating(r *resolver, file string, fset *token.FileSet, stmt *ast.TypeSwitchStmt) bool {
+	var rhs ast.Expr
+	switch assign := stmt.Assign.(type) {
+	case *ast.ExprStmt:
+		rhs = assign.X
+	case *ast.AssignStmt:
+		if len(assign.Rhs) != 1 {
+			return false
+		}
+		rhs = assign.Rhs[0]
+	default:
+		return false
+	}
+	if !isSelfOriginating(r, file, fset, stmt.Init, rhs) {
+		return false
+	}
+	for _, clause := range stmt.Body.List {
+		caseClause, ok := clause.(*ast.CaseClause)
+		if !ok || len(caseClause.List) == 0 {
+			continue
+		}
+		for _, expr := range caseClause.List {
+			if !isSelfOriginating(r, file, fset, nil, expr) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func appendDefaultSites(r *resolver, abs string, rows *[]site, body *ast.BlockStmt, owner, file string, fset *token.FileSet) {
+	for _, stmt := range body.List {
+		clause, ok := stmt.(*ast.CaseClause)
+		if !ok || len(clause.List) != 0 || len(clause.Body) == 0 || !isSelfOriginatingRefusal(r, abs, fset, clause.Body) {
+			continue
+		}
+		start := fset.Position(clause.Colon + 1)
+		end := fset.Position(clause.End())
+		first := fset.Position(clause.Body[0].Pos())
+		*rows = append(*rows, site{
+			File:      file,
+			Func:      owner,
+			Predicate: "default",
+			Body:      fmt.Sprintf("%d.%d-%d.%d", start.Line, start.Column, end.Line, end.Column),
+			Entries:   fmt.Sprintf("%d.%d,%d.%d", start.Line, start.Column, first.Line, first.Column),
+			line:      start.Line,
+			col:       start.Column,
+		})
+	}
+}
+
 // Source text of the condition with every run of whitespace collapsed to one
 // space. The output is tab-separated, so a condition spanning lines or holding
 // a tab would otherwise split into columns that are not columns.
@@ -353,14 +429,401 @@ func exprText(src []byte, fset *token.FileSet, e ast.Expr) string {
 // The LAST statement decides, so a branch that logs before it refuses still
 // counts. `return nil` and `return err` do not: the first is an early exit with
 // no refusal, the second is propagation of somebody else's.
-func isRefusal(body *ast.BlockStmt) bool {
-	if body == nil || len(body.List) == 0 {
+func isRefusal(r *resolver, file string, fset *token.FileSet, body *ast.BlockStmt) bool {
+	return body != nil && isRefusalStatements(r, file, fset, body.List)
+}
+
+func isSelfOriginatingRefusal(r *resolver, file string, fset *token.FileSet, statements []ast.Stmt) bool {
+	if len(statements) == 0 {
 		return false
 	}
-	switch s := body.List[len(body.List)-1].(type) {
+	for _, statement := range statements[:len(statements)-1] {
+		if statementHasErrorOperand(r, file, fset, statement) {
+			return false
+		}
+	}
+
+	switch stmt := statements[len(statements)-1].(type) {
 	case *ast.ReturnStmt:
-		for _, r := range s.Results {
-			if constructsError(r) {
+		definite := false
+		for _, result := range stmt.Results {
+			if refusalHasErrorOperand(r, file, fset, result) {
+				return false
+			}
+			if isDefiniteSelfOriginatingError(r, file, fset, result) {
+				definite = true
+			}
+		}
+		return definite
+	case *ast.ExprStmt:
+		call, ok := stmt.X.(*ast.CallExpr)
+		if !ok {
+			return false
+		}
+		if isBuiltinCall(r, file, fset, call, "panic") || isPackageCall(r, file, fset, call, "os", "Exit") {
+			return !refusalHasErrorOperands(r, file, fset, call.Args)
+		}
+	}
+	return false
+}
+
+func statementHasErrorOperand(r *resolver, file string, fset *token.FileSet, statement ast.Stmt) bool {
+	if statement == nil {
+		return false
+	}
+	checkExpr := func(expressions ...ast.Expr) bool {
+		return refusalHasErrorOperands(r, file, fset, expressions)
+	}
+	checkBlock := func(block *ast.BlockStmt) bool {
+		if block == nil {
+			return false
+		}
+		for _, nested := range block.List {
+			if statementHasErrorOperand(r, file, fset, nested) {
+				return true
+			}
+		}
+		return false
+	}
+	checkLHS := func(expressions ...ast.Expr) bool {
+		for _, expression := range expressions {
+			switch expression.(type) {
+			case *ast.Ident:
+				continue
+			}
+			if refusalHasErrorOperand(r, file, fset, expression) {
+				return true
+			}
+		}
+		return false
+	}
+
+	switch node := statement.(type) {
+	case *ast.EmptyStmt, *ast.BranchStmt:
+		return false
+	case *ast.DeclStmt:
+		decl, ok := node.Decl.(*ast.GenDecl)
+		if !ok {
+			return true
+		}
+		for _, spec := range decl.Specs {
+			valueSpec, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			if checkExpr(valueSpec.Values...) {
+				return true
+			}
+		}
+		return false
+	case *ast.AssignStmt:
+		return checkLHS(node.Lhs...) || checkExpr(node.Rhs...)
+	case *ast.ExprStmt:
+		return checkExpr(node.X)
+	case *ast.ReturnStmt:
+		return checkExpr(node.Results...)
+	case *ast.IncDecStmt:
+		return checkLHS(node.X)
+	case *ast.SendStmt:
+		return checkExpr(node.Chan, node.Value)
+	case *ast.GoStmt:
+		return checkExpr(node.Call)
+	case *ast.DeferStmt:
+		return checkExpr(node.Call)
+	case *ast.IfStmt:
+		return statementHasErrorOperand(r, file, fset, node.Init) || checkExpr(node.Cond) || checkBlock(node.Body) || statementHasErrorOperand(r, file, fset, node.Else)
+	case *ast.ForStmt:
+		return statementHasErrorOperand(r, file, fset, node.Init) || checkExpr(node.Cond) || statementHasErrorOperand(r, file, fset, node.Post) || checkBlock(node.Body)
+	case *ast.RangeStmt:
+		return checkLHS(node.Key, node.Value) || checkExpr(node.X) || checkBlock(node.Body)
+	case *ast.BlockStmt:
+		return checkBlock(node)
+	case *ast.SwitchStmt:
+		if statementHasErrorOperand(r, file, fset, node.Init) || checkExpr(node.Tag) {
+			return true
+		}
+		for _, clause := range node.Body.List {
+			if statementHasErrorOperand(r, file, fset, clause) {
+				return true
+			}
+		}
+		return false
+	case *ast.TypeSwitchStmt:
+		if statementHasErrorOperand(r, file, fset, node.Init) || statementHasErrorOperand(r, file, fset, node.Assign) {
+			return true
+		}
+		for _, clause := range node.Body.List {
+			if statementHasErrorOperand(r, file, fset, clause) {
+				return true
+			}
+		}
+		return false
+	case *ast.SelectStmt:
+		return statementHasErrorOperand(r, file, fset, node.Body)
+	case *ast.CaseClause:
+		if checkExpr(node.List...) {
+			return true
+		}
+		for _, nested := range node.Body {
+			if statementHasErrorOperand(r, file, fset, nested) {
+				return true
+			}
+		}
+		return false
+	case *ast.CommClause:
+		if statementHasErrorOperand(r, file, fset, node.Comm) {
+			return true
+		}
+		for _, nested := range node.Body {
+			if statementHasErrorOperand(r, file, fset, nested) {
+				return true
+			}
+		}
+		return false
+	case *ast.LabeledStmt:
+		return statementHasErrorOperand(r, file, fset, node.Stmt)
+	default:
+		return true
+	}
+}
+
+func refusalHasErrorOperands(r *resolver, file string, fset *token.FileSet, expressions []ast.Expr) bool {
+	for _, expression := range expressions {
+		if refusalHasErrorOperand(r, file, fset, expression) {
+			return true
+		}
+	}
+	return false
+}
+
+func isDefiniteSelfOriginatingError(r *resolver, file string, fset *token.FileSet, expr ast.Expr) bool {
+	expr = unwrapParens(expr)
+	if expr == nil || !isErrorExpression(r, file, fset, expr) || refusalHasErrorOperand(r, file, fset, expr) {
+		return false
+	}
+	switch node := expr.(type) {
+	case *ast.Ident:
+		return isSentinel(r, file, fset, node)
+	case *ast.SelectorExpr:
+		return isSentinel(r, file, fset, node)
+	case *ast.UnaryExpr:
+		return isErrorComposite(r, file, fset, node)
+	case *ast.CompositeLit:
+		return isErrorComposite(r, file, fset, node)
+	case *ast.CallExpr:
+		if isPackageCall(r, file, fset, node, "errors", "New") || isPackageCall(r, file, fset, node, "fmt", "Errorf") {
+			return true
+		}
+		return isPackageCall(r, file, fset, node, "errors", "Join") && isDefiniteErrorsJoin(r, file, fset, node)
+	}
+	return false
+}
+
+func isDefiniteErrorsJoin(r *resolver, file string, fset *token.FileSet, call *ast.CallExpr) bool {
+	args := call.Args
+	if call.Ellipsis == token.NoPos {
+		valid, found := definiteErrorsJoinArguments(r, file, fset, args)
+		return valid && found
+	}
+	if len(args) == 0 {
+		return false
+	}
+	// CallExpr.Args contains direct arguments followed by the final ellipsis expansion; unsupported or unknown forms fail closed.
+	valid, _ := definiteErrorsJoinArguments(r, file, fset, args[:len(args)-1])
+	if !valid {
+		return false
+	}
+	expansion := unwrapParens(args[len(args)-1])
+	literal, ok := expansion.(*ast.CompositeLit)
+	if !ok || !isErrorSlice(r, file, fset, literal) || len(literal.Elts) == 0 {
+		return false
+	}
+	valid, found := definiteErrorsJoinArguments(r, file, fset, compositeValues(literal.Elts))
+	return valid && found
+}
+
+func definiteErrorsJoinArguments(r *resolver, file string, fset *token.FileSet, args []ast.Expr) (bool, bool) {
+	found := false
+	for _, arg := range args {
+		if isNilExpr(arg) {
+			continue
+		}
+		if !isDefiniteSelfOriginatingError(r, file, fset, arg) {
+			return false, false
+		}
+		found = true
+	}
+	return true, found
+}
+
+func compositeValues(elements []ast.Expr) []ast.Expr {
+	values := make([]ast.Expr, 0, len(elements))
+	for _, element := range elements {
+		if keyed, ok := element.(*ast.KeyValueExpr); ok {
+			values = append(values, keyed.Value)
+		} else {
+			values = append(values, element)
+		}
+	}
+	return values
+}
+
+func isErrorSlice(r *resolver, file string, fset *token.FileSet, expr ast.Expr) bool {
+	if r == nil || r.byFile[file] == nil {
+		return false
+	}
+	t, ok := r.byFile[file][span{fset.Position(expr.Pos()).Offset, fset.Position(expr.End()).Offset}]
+	if !ok {
+		return false
+	}
+	return types.AssignableTo(t, types.NewSlice(types.Universe.Lookup("error").Type()))
+}
+
+func unwrapParens(expr ast.Expr) ast.Expr {
+	for {
+		paren, ok := expr.(*ast.ParenExpr)
+		if !ok {
+			return expr
+		}
+		expr = paren.X
+	}
+}
+
+func isNilExpr(expr ast.Expr) bool {
+	ident, ok := unwrapParens(expr).(*ast.Ident)
+	return ok && ident.Name == "nil"
+}
+
+func isErrorExpression(r *resolver, file string, fset *token.FileSet, expr ast.Expr) bool {
+	return r.errish(file, fset, expr)
+}
+
+func isBuiltinCall(r *resolver, file string, fset *token.FileSet, call *ast.CallExpr, name string) bool {
+	got, pkg := callIdentity(r, file, fset, call)
+	return pkg == "builtin" && got == name
+}
+
+func isPackageCall(r *resolver, file string, fset *token.FileSet, call *ast.CallExpr, pkg, name string) bool {
+	got, path := callIdentity(r, file, fset, call)
+	return path == pkg && got == name
+}
+
+func callIdentity(r *resolver, file string, fset *token.FileSet, call *ast.CallExpr) (string, string) {
+	lookup := func(expr ast.Expr) types.Object {
+		return r.objects[file][span{fset.Position(expr.Pos()).Offset, fset.Position(expr.End()).Offset}]
+	}
+	var obj types.Object
+	switch fun := call.Fun.(type) {
+	case *ast.SelectorExpr:
+		obj = lookup(fun.Sel)
+	default:
+		obj = lookup(call.Fun)
+	}
+	switch fn := obj.(type) {
+	case *types.Builtin:
+		return fn.Name(), "builtin"
+	case *types.Func:
+		if fn.Pkg() == nil {
+			return fn.Name(), "builtin"
+		}
+		return fn.Name(), fn.Pkg().Path()
+	}
+	return calleeName(call.Fun), ""
+}
+
+func refusalHasErrorOperand(r *resolver, file string, fset *token.FileSet, expr ast.Expr) bool {
+	expr = unwrapParens(expr)
+	if expr == nil {
+		return false
+	}
+	if !constructsError(r, file, fset, expr) && r.errish(file, fset, expr) {
+		return true
+	}
+	return refusalHasErrorChildren(r, file, fset, expr)
+}
+
+func refusalHasErrorChildren(r *resolver, file string, fset *token.FileSet, expr ast.Expr) bool {
+	check := func(exprs ...ast.Expr) bool {
+		for _, child := range exprs {
+			if refusalHasErrorOperand(r, file, fset, child) {
+				return true
+			}
+		}
+		return false
+	}
+	switch node := expr.(type) {
+	case *ast.CallExpr:
+		if refusalHasErrorOperand(r, file, fset, node.Fun) {
+			return true
+		}
+		return check(node.Args...)
+	case *ast.UnaryExpr:
+		return check(node.X)
+	case *ast.StarExpr:
+		return check(node.X)
+	case *ast.ParenExpr:
+		return check(node.X)
+	case *ast.SelectorExpr:
+		return check(node.X)
+	case *ast.IndexExpr:
+		return check(node.X, node.Index)
+	case *ast.IndexListExpr:
+		if refusalHasErrorOperand(r, file, fset, node.X) {
+			return true
+		}
+		return check(node.Indices...)
+	case *ast.SliceExpr:
+		return check(node.X, node.Low, node.High, node.Max)
+	case *ast.TypeAssertExpr:
+		return check(node.X)
+	case *ast.BinaryExpr:
+		return check(node.X, node.Y)
+	case *ast.CompositeLit:
+		for _, elt := range node.Elts {
+			if value, ok := elt.(ast.Expr); ok && refusalHasErrorOperand(r, file, fset, value) {
+				return true
+			}
+		}
+		return false
+	case *ast.KeyValueExpr:
+		if !r.isFieldLabel(file, fset, node.Key) && refusalHasErrorOperand(r, file, fset, node.Key) {
+			return true
+		}
+		return refusalHasErrorOperand(r, file, fset, node.Value)
+	case *ast.Ellipsis:
+		return check(node.Elt)
+	case *ast.FuncLit:
+		found := false
+		ast.Inspect(node.Body, func(n ast.Node) bool {
+			if expr, ok := n.(ast.Expr); ok {
+				if refusalHasErrorOperand(r, file, fset, expr) {
+					found = true
+				}
+				return false
+			}
+			return !found
+		})
+		return found
+	case *ast.Ident, *ast.BasicLit,
+		*ast.ArrayType, *ast.StructType, *ast.FuncType,
+		*ast.InterfaceType, *ast.MapType, *ast.ChanType:
+		return false
+	case *ast.BadExpr:
+		return true
+	default:
+		return true
+	}
+	return true
+}
+
+func isRefusalStatements(r *resolver, file string, fset *token.FileSet, statements []ast.Stmt) bool {
+	if len(statements) == 0 {
+		return false
+	}
+	switch s := statements[len(statements)-1].(type) {
+	case *ast.ReturnStmt:
+		for _, result := range s.Results {
+			if constructsError(r, file, fset, result) {
 				return true
 			}
 		}
@@ -381,32 +844,43 @@ func isRefusal(body *ast.BlockStmt) bool {
 }
 
 // Whether an expression produces an error value that did not exist before this
-// branch ran. Three shapes, and no type information is used -- go/types would
-// answer this exactly but costs a full load of every package, which is the
-// budget the whole lane has.
-//
-//	fmt.Errorf(...) / errors.New(...) / anything named *Err*  a constructed error
-//	&fooError{...} / fooError{...}                            a literal error value
-//	ErrNotFound / errNotWorktree                              a sentinel
-//
-// `err` and `e` themselves are excluded by requiring something after the prefix:
-// those name a value that arrived from elsewhere.
-func constructsError(e ast.Expr) bool {
+// branch ran. Constructors and literals are recognized structurally; sentinel
+// variables are accepted only when resolver-backed object information proves
+// they are package-scope error variables.
+func constructsError(r *resolver, file string, fset *token.FileSet, e ast.Expr) bool {
+	e = unwrapParens(e)
 	switch v := e.(type) {
 	case *ast.CallExpr:
-		return errorish(calleeName(v.Fun))
+		return isPackageCall(r, file, fset, v, "errors", "New") ||
+			isPackageCall(r, file, fset, v, "fmt", "Errorf") ||
+			(isPackageCall(r, file, fset, v, "errors", "Join") && isDefiniteErrorsJoin(r, file, fset, v))
 	case *ast.UnaryExpr:
-		if v.Op == token.AND {
-			return constructsError(v.X)
-		}
+		return v.Op == token.AND && isErrorComposite(r, file, fset, v)
 	case *ast.CompositeLit:
-		return errorish(typeName(v.Type))
+		return isErrorComposite(r, file, fset, v)
 	case *ast.Ident:
-		return sentinel(v.Name)
+		return isSentinel(r, file, fset, v)
 	case *ast.SelectorExpr:
-		return sentinel(v.Sel.Name)
+		return isSentinel(r, file, fset, v)
 	}
 	return false
+}
+
+func isErrorComposite(r *resolver, file string, fset *token.FileSet, expr ast.Expr) bool {
+	if _, ok := expr.(*ast.CompositeLit); !ok {
+		unary, ok := expr.(*ast.UnaryExpr)
+		if !ok || unary.Op != token.AND {
+			return false
+		}
+		if _, ok := unary.X.(*ast.CompositeLit); !ok {
+			return false
+		}
+	}
+	if r == nil {
+		return false
+	}
+	t, ok := r.byFile[file][span{fset.Position(expr.Pos()).Offset, fset.Position(expr.End()).Offset}]
+	return ok && isErrorType(t)
 }
 
 func calleeName(e ast.Expr) string {
@@ -436,18 +910,34 @@ func typeName(e ast.Expr) string {
 	return ""
 }
 
-// A name that says "error" anywhere in it, qualifier included. The qualifier has
-// to count: `errors.New` is the second most common way to build one in this
-// repo and its bare selector says nothing at all.
-func errorish(name string) bool {
-	return strings.Contains(strings.ToLower(name), "err")
+func isSentinel(r *resolver, file string, fset *token.FileSet, expr ast.Expr) bool {
+	var node ast.Node
+	switch value := expr.(type) {
+	case *ast.Ident:
+		node = value
+	case *ast.SelectorExpr:
+		node = value.Sel
+	default:
+		return false
+	}
+	name := node.(*ast.Ident)
+	if r == nil {
+		return false
+	}
+	object := r.objects[file][span{fset.Position(name.Pos()).Offset, fset.Position(name.End()).Offset}]
+	variable, ok := object.(*types.Var)
+	if !ok || variable.Pkg() == nil || variable.IsField() || variable.Parent() != variable.Pkg().Scope() || !isErrorType(variable.Type()) {
+		return false
+	}
+	if _, imported := expr.(*ast.SelectorExpr); imported {
+		return true
+	}
+	return sentinel(name.Name)
 }
 
-// A package-level sentinel: `ErrNotFound`, `errNotWorktree`. The suffix must be
-// non-empty, which is what keeps the local `err` out.
 func sentinel(name string) bool {
-	for _, p := range []string{"Err", "err"} {
-		if strings.HasPrefix(name, p) && len(name) > len(p) {
+	for _, prefix := range []string{"Err", "err"} {
+		if strings.HasPrefix(name, prefix) && len(name) > len(prefix) {
 			return true
 		}
 	}
@@ -488,9 +978,12 @@ func sentinel(name string) bool {
 // unmeasured files keep the legacy name heuristic so their guards stay visible
 // to the coverage lane, exactly as they always were. And the `_` blank is
 // never an error value.
-func isSelfOriginating(r *resolver, file string, fset *token.FileSet, init ast.Stmt, cond ast.Expr) bool {
+func isSelfOriginating(r *resolver, file string, fset *token.FileSet, init ast.Stmt, cond ast.Node) bool {
 	self := true
 	mentionsErr := func(n ast.Node) bool {
+		if n == nil {
+			return true
+		}
 		ast.Inspect(n, func(n ast.Node) bool {
 			if expr, ok := n.(ast.Expr); ok && r.errish(file, fset, expr) {
 				self = false
@@ -537,8 +1030,10 @@ type span struct{ off, end int }
 // file in this tree except one gated to a GOOS the repo never targets; that
 // file stays unloaded and keeps the legacy name heuristic.
 type resolver struct {
-	byFile map[string]map[span]types.Type // abs path -> node span -> type
-	loaded map[string]bool                // abs paths type-checked under some GOOS
+	byFile      map[string]map[span]types.Type // abs path -> node span -> type
+	objects     map[string]map[span]types.Object
+	fieldLabels map[string]map[span]bool // struct field labels in keyed literals
+	loaded      map[string]bool          // abs paths type-checked under some GOOS
 }
 
 // The three GOOS values whose union covers this tree's build-gated files.
@@ -555,7 +1050,12 @@ var typeCheckGOOS = []string{"linux", "darwin", "windows"}
 // `ctx.Err` is a `func() error`, and neither is an error value -- only the call
 // itself has type `error`.
 func loadTypes(root string) (*resolver, error) {
-	r := &resolver{byFile: map[string]map[span]types.Type{}, loaded: map[string]bool{}}
+	r := &resolver{
+		byFile:      map[string]map[span]types.Type{},
+		objects:     map[string]map[span]types.Object{},
+		fieldLabels: map[string]map[span]bool{},
+		loaded:      map[string]bool{},
+	}
 	for _, goos := range typeCheckGOOS {
 		cfg := &packages.Config{
 			Mode: packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo,
@@ -584,11 +1084,20 @@ func loadTypes(root string) (*resolver, error) {
 				}
 			}
 			for id, obj := range p.TypesInfo.Uses {
+				if obj != nil {
+					r.recordObject(p.Fset, id, obj)
+				}
 				if obj != nil && obj.Type() != nil {
 					r.record(p.Fset, id, obj.Type())
 				}
+				if field, ok := obj.(*types.Var); ok && field.IsField() {
+					r.recordFieldLabel(p.Fset, id)
+				}
 			}
 			for id, obj := range p.TypesInfo.Defs {
+				if obj != nil {
+					r.recordObject(p.Fset, id, obj)
+				}
 				if obj != nil && obj.Type() != nil {
 					r.record(p.Fset, id, obj.Type())
 				}
@@ -621,6 +1130,20 @@ func countFilesWithoutSpans(files []string, r *resolver) int {
 // record stores n's type under its own file and span. Nodes seen under more
 // than one GOOS are written more than once with the same key and type, so the
 // union is order-independent.
+func (r *resolver) recordObject(fset *token.FileSet, n ast.Node, obj types.Object) {
+	pos := fset.Position(n.Pos())
+	abs, err := filepath.Abs(pos.Filename)
+	if err != nil {
+		return
+	}
+	m := r.objects[abs]
+	if m == nil {
+		m = map[span]types.Object{}
+		r.objects[abs] = m
+	}
+	m[span{pos.Offset, fset.Position(n.End()).Offset}] = obj
+}
+
 func (r *resolver) record(fset *token.FileSet, n ast.Node, t types.Type) {
 	pos := fset.Position(n.Pos())
 	abs, err := filepath.Abs(pos.Filename)
@@ -633,6 +1156,27 @@ func (r *resolver) record(fset *token.FileSet, n ast.Node, t types.Type) {
 		r.byFile[abs] = m
 	}
 	m[span{pos.Offset, fset.Position(n.End()).Offset}] = t
+}
+
+func (r *resolver) recordFieldLabel(fset *token.FileSet, n ast.Node) {
+	pos := fset.Position(n.Pos())
+	abs, err := filepath.Abs(pos.Filename)
+	if err != nil {
+		return
+	}
+	m := r.fieldLabels[abs]
+	if m == nil {
+		m = map[span]bool{}
+		r.fieldLabels[abs] = m
+	}
+	m[span{pos.Offset, fset.Position(n.End()).Offset}] = true
+}
+
+func (r *resolver) isFieldLabel(file string, fset *token.FileSet, expr ast.Expr) bool {
+	if expr == nil {
+		return false
+	}
+	return r.fieldLabels[file][span{fset.Position(expr.Pos()).Offset, fset.Position(expr.End()).Offset}]
 }
 
 // errish reports whether expr in file is an error value. Type info wins where

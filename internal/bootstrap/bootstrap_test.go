@@ -12,6 +12,42 @@ import (
 	"github.com/minhtri2710/munsu/internal/config"
 )
 
+func TestInvalidClosedSetInputsRefuse(t *testing.T) {
+	t.Run("install tool", func(t *testing.T) {
+		err := installTool("unknown-tool")
+		if err == nil || !strings.Contains(err.Error(), "no automatic install") {
+			t.Fatalf("installTool error = %v, want unsupported tool refusal", err)
+		}
+	})
+
+	scopeCases := []struct {
+		name string
+		call func() error
+	}{
+		{"agy", func() error { _, err := agyHooksDir(Scope("invalid"), ""); return err }},
+		{"claude", func() error { _, err := claudeSettingsPath(Scope("invalid"), ""); return err }},
+		{"codex", func() error { _, err := codexHooksPath(Scope("invalid"), ""); return err }},
+		{"grok", func() error { _, err := grokHooksDir(Scope("invalid"), ""); return err }},
+		{"opencode", func() error { _, err := opencodePluginsDir(Scope("invalid"), ""); return err }},
+		{"pi", func() error { _, err := ExpectedTargetPath(Scope("invalid"), ""); return err }},
+	}
+	for _, tc := range scopeCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.call()
+			if err == nil || !strings.Contains(err.Error(), "unsupported scope") {
+				t.Fatalf("scope error = %v, want unsupported scope refusal", err)
+			}
+		})
+	}
+
+	t.Run("doctor role", func(t *testing.T) {
+		_, err := Doctor(t.TempDir(), Role("invalid"))
+		if err == nil || !strings.Contains(err.Error(), "unknown role") {
+			t.Fatalf("Doctor error = %v, want unknown role refusal", err)
+		}
+	})
+}
+
 // assertConfigContains fails t if result.Configs does not contain a ConfigDiagnostic
 // whose String() output matches want.
 func assertConfigContains(t *testing.T, configs []ConfigDiagnostic, want string) {

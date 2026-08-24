@@ -3,8 +3,16 @@ package home
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestInitRefusesStatErrors(t *testing.T) {
+	_, err := Init("bad\x00root")
+	if err == nil || !strings.Contains(err.Error(), "home: stat root") {
+		t.Fatalf("Init error = %v, want stat-root refusal", err)
+	}
+}
 
 func TestCanonicalEmpty(t *testing.T) {
 	if got := Canonical(""); got != "" {

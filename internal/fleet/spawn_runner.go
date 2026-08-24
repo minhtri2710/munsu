@@ -513,9 +513,6 @@ func (r *Runner) checkCaptainBacklogAuthority() error {
 	if r.spawnRole != "captain" {
 		return nil
 	}
-
-	// Already-live = meta proves a soldier was spawned (window or pane id).
-	// Kind-only meta (e.g. task add) is NOT live execution.
 	if meta, err := home.ReadMeta(r.homeDir, r.args.ID); err == nil {
 		if win := meta["window"]; win != "" {
 			return fmt.Errorf("captain task authority: task %s already has a live soldier session (window=%s); refuse duplicate live execution", r.args.ID, win)
@@ -524,23 +521,26 @@ func (r *Runner) checkCaptainBacklogAuthority() error {
 			return fmt.Errorf("captain task authority: task %s already has a live soldier session (pane=%s); refuse duplicate live execution", r.args.ID, pane)
 		}
 	}
-
 	agg, err := r.taskAggregate()
 	if err != nil {
 		return err
 	}
-	switch agg.Phase {
+	return r.checkCaptainBacklogAuthorityForPhase(r.args.ID, agg.Phase)
+}
+
+func (r *Runner) checkCaptainBacklogAuthorityForPhase(taskID string, phase taskauthority.Phase) error {
+	switch phase {
 	case taskauthority.PhaseWorking:
 		// start→spawn: working without live window/pane is allowed.
 		return nil
 	case taskauthority.PhaseDone:
-		return fmt.Errorf("captain task authority: task %s is already done; reopen requires General instruction", r.args.ID)
+		return fmt.Errorf("captain task authority: task %s is already done; reopen requires General instruction", taskID)
 	case taskauthority.PhaseBlocked:
-		return fmt.Errorf("captain task authority: task %s is blocked; resolve dependencies before dispatch", r.args.ID)
+		return fmt.Errorf("captain task authority: task %s is blocked; resolve dependencies before dispatch", taskID)
 	case taskauthority.PhaseQueued:
 		return nil
 	default:
-		return fmt.Errorf("captain task authority: task %s has unexpected phase %q", r.args.ID, agg.Phase)
+		return fmt.Errorf("captain task authority: task %s has unexpected phase %q", taskID, phase)
 	}
 }
 

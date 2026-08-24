@@ -14,6 +14,18 @@ import (
 	"github.com/minhtri2710/munsu/internal/harness"
 )
 
+func TestInvalidClosedSetInputsRefuse(t *testing.T) {
+	savedChoice := skillChoice
+	skillChoice = "invalid"
+	t.Cleanup(func() { skillChoice = savedChoice })
+	if err := runSkillInstall(nil, t.TempDir()); err == nil || !strings.Contains(err.Error(), "invalid --skill value") {
+		t.Fatalf("runSkillInstall error = %v, want invalid skill refusal", err)
+	}
+	if _, err := resolveIntegrateScope("invalid"); err == nil || !strings.Contains(err.Error(), "unsupported scope") {
+		t.Fatalf("resolveIntegrateScope error = %v, want unsupported scope refusal", err)
+	}
+}
+
 // captureOutput runs fn with os.Stdout/os.Stderr redirected.
 func captureOutput(fn func()) (stdout, stderr string) {
 	rOut, wOut, _ := os.Pipe()

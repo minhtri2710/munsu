@@ -66,7 +66,10 @@ func fetchProviderSnapshotImpl(prURL string) (*ProviderSnapshot, error) {
 	if err != nil {
 		return nil, fmt.Errorf("unrecognized PR/MR URL: %w", err)
 	}
+	return fetchProviderSnapshotForProvider(provider, prURL)
+}
 
+func fetchProviderSnapshotForProvider(provider, prURL string) (*ProviderSnapshot, error) {
 	switch provider {
 	case "github":
 		return fetchGitHubProviderSnapshot(prURL)

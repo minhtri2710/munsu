@@ -695,3 +695,17 @@ func TestHerdrBackend_NotFound(t *testing.T) {
 		}
 	})
 }
+
+func TestTmuxBackendFindOrCreateWindowRefusesDuplicateWindows(t *testing.T) {
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "tmux")
+	script := "#!/bin/sh\ncase \"$1\" in\nhas-session) exit 0;;\nlist-windows) printf 'dup\\t@1\\ndup\\t@2\\n';;\nesac\n"
+	if err := os.WriteFile(bin, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", tmp)
+	_, err := (&TmuxBackend{}).FindOrCreateWindow("s", "dup")
+	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("FindOrCreateWindow error = %v, want ambiguous", err)
+	}
+}

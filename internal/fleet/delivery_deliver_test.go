@@ -16,6 +16,12 @@ import (
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
+func TestValidateDeliverRequestRefusesUnsupportedMethod(t *testing.T) {
+	if err := validateDeliverRequest(deliverRequest(), "unsupported"); err == nil || !strings.Contains(err.Error(), "unsupported provider merge method") {
+		t.Fatalf("validateDeliverRequest error = %v, want unsupported method refusal", err)
+	}
+}
+
 // TestDeliverJournalIntentPrecedesAuthorizationAndMutation proves the durable
 // journal intent is written before the canonical authorization and the
 // irreversible provider mutation, and the completed journal record is

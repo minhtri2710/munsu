@@ -1,0 +1,3 @@
+::error::.github/testdata/uncovered-guards/invalid-set-count/profiles/default.out:2: mode set execution count must be 0 or 1: 2
+::error::.github/testdata/uncovered-guards/invalid-set-count/profiles/default.out:3: mode set execution count must be 0 or 1: 2
+exit 1

@@ -18,6 +18,12 @@ func (p *sequenceCaptainProbe) Probe(string, map[string]string) (fleet.CaptainPr
 	return result, nil
 }
 
+func TestRecoverCaptainEndpointReportsFailedRecoveryStep(t *testing.T) {
+	if err := recoverCaptainEndpoint(t.TempDir(), fleet.Info{}); err == nil {
+		t.Fatal("expected failed captain recovery to be reported")
+	}
+}
+
 func TestEnsureCaptainReadyDefersLiveAgentThatIsNotReady(t *testing.T) {
 	parent := t.TempDir()
 	captainHome := t.TempDir()

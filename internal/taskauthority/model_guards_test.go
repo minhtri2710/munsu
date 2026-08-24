@@ -108,6 +108,7 @@ func TestValidateCleanupClaimRefusesUnattributableClaim(t *testing.T) {
 		[]guardCase[CleanupClaim]{
 			{"no operation id", func(c *CleanupClaim) { c.OperationID = "" }, "cleanup claim missing operation id"},
 			{"path-separating operation id", func(c *CleanupClaim) { c.OperationID = `op\retire` }, "cleanup claim missing operation id"},
+			{"invalid status", func(c *CleanupClaim) { c.Status = CleanupStatus("invalid") }, "cleanup claim has invalid status"},
 			{"no claimed timestamp", func(c *CleanupClaim) { c.ClaimedAt = 0 }, "cleanup claim missing claimed timestamp"},
 			{"negative claimed timestamp", func(c *CleanupClaim) { c.ClaimedAt = -1 }, "cleanup claim missing claimed timestamp"},
 		})

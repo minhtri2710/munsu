@@ -12,6 +12,13 @@ import (
 	"github.com/minhtri2710/munsu/internal/domain"
 )
 
+func TestGitLabClientForStateUnknownRefuses(t *testing.T) {
+	_, err := GitLabClientForState(backend.State(99))
+	if err == nil || !strings.Contains(err.Error(), "unknown state") {
+		t.Fatalf("GitLabClientForState error = %v, want unknown-state refusal", err)
+	}
+}
+
 // fakeGlabRunner implements GlabRunner for testing.
 type fakeGlabRunner struct {
 	lookPathErr error

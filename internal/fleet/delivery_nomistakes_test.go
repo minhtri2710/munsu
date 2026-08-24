@@ -6,10 +6,18 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/backend"
 )
+
+func TestEnsureDeliveryModeRunnable_UnexpectedProbeStateRefuses(t *testing.T) {
+	err := ensureDeliveryModeRunnableForProbe(ProbeResult{State: backend.State(99)})
+	if err == nil || !strings.Contains(err.Error(), "unexpected probe state") {
+		t.Fatalf("unexpected probe error = %v, want unexpected state refusal", err)
+	}
+}
 
 // TestNoMistakesProbe_Absent verifies that a missing binary returns Absent.
 func TestNoMistakesProbe_Absent(t *testing.T) {
