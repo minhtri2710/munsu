@@ -497,10 +497,16 @@ jobs:
           pattern: coverage-*
           merge-multiple: true
           path: .github/coverage
-      # The ratchet line prints a delta against main, which needs main's copy of
-      # the two files. Best-effort: with no base ref the delta is omitted rather
-      # than guessed, and nothing is judged on it.
-      - name: Fetch the base ref for the ratchet delta
-        run: git fetch --depth=1 origin main || true
+      # The shrink-only ratchet compares baseline identities with the exact
+      # target branch base. A stacked PR must not compare against origin/main:
+      # that would mistake the parent stack's legitimate baseline entries for
+      # growth in this child. Pushes use the predecessor commit instead.
+      - name: Fetch the exact base for the guard ratchet
+        env:
+          GUARDS_BASE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -eu
+          git fetch --no-tags --depth=1 origin "$GUARDS_BASE_REF"
+          echo "GUARDS_BASE_REF=$GUARDS_BASE_REF" >> "$GITHUB_ENV"
       - name: Every refusal branch must be tested or waived
         run: .github/scripts/uncovered-guards.sh check

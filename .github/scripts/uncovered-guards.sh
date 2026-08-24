@@ -412,7 +412,9 @@ classify() {
 # awk rather than a `read` loop, for the reason deadcode.sh gives: bash 3.2 still
 # ships on macOS and misparses a `case` inside a command substitution.
 baseline_format_errors() {
-	awk -F '\t' -v name="$BASELINE_REL" '
+	local file="$1"
+	local name="${file#"$ROOT"/}"
+	awk -F '\t' -v name="$name" '
 		/^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
 		NF < 4 || $1 == "" || $2 == "" || $3 == "" || $4 == "" {
 			printf "::error::%s:%d: expected file<TAB>func<TAB>nth<TAB>predicate<TAB>reason\n", name, NR
@@ -438,11 +440,51 @@ baseline_format_errors() {
 			}
 		}
 		END { exit bad }
-	' "$BASELINE"
+	' "$file"
 }
 
 baseline_entries() {
-	{ grep -vE '^[[:space:]]*(#|$)' "$BASELINE" || true; } | cut -f1,2,3,4 | sort -u
+	local file="$1"
+	{ grep -vE '^[[:space:]]*(#|$)' "$file" || true; } | cut -f1,2,3,4 | sort -u
+}
+
+# The ratchet compares identities, not reasons: comments, blank lines and the
+# fifth-column explanation may change, but every current baseline key must have
+# existed in the target baseline. The base source is either a fixture-provided
+# file or the exact git revision supplied by CI; missing or malformed base data
+# fails closed rather than silently disabling the ratchet.
+baseline_shrink_only() {
+	local base_file="${GUARDS_BASELINE_BASE:-}"
+	local base_ref tmp="" current base added
+	if [ -z "$base_file" ]; then
+		base_ref="${GUARDS_BASE_REF:-origin/main}"
+		tmp="$(mktemp)"
+		if ! git -C "$ROOT" show "$base_ref:$BASELINE_REL" >"$tmp"; then
+			rm -f "$tmp"
+			die "could not read $BASELINE_REL from base revision $base_ref; the shrink-only ratchet cannot be evaluated"
+		fi
+		base_file="$tmp"
+	fi
+	if [ ! -f "$base_file" ]; then
+		rm -f "$tmp"
+		die "base baseline ${base_file#"$ROOT"/} is missing; the shrink-only ratchet cannot be evaluated"
+	fi
+	local base_name="${base_file#"$ROOT"/}"
+	if ! baseline_format_errors "$base_file" >&2; then
+		rm -f "$tmp"
+		die "base baseline $base_name is malformed; the shrink-only ratchet cannot be evaluated"
+	fi
+	current="$(baseline_entries "$BASELINE")"
+	base="$(baseline_entries "$base_file")"
+	added="$(comm -23 <(printf '%s\n' "$current") <(printf '%s\n' "$base"))"
+	rm -f "$tmp"
+	if [ -n "$added" ]; then
+		echo "::error::$BASELINE_REL is shrink-only; current identities absent from the base baseline:" >&2
+		printf '%s\n' "$added" | while IFS=$'\t' read -r file func nth predicate; do
+			printf '  %s: %s (#%s): %s\n' "$file" "$func" "$nth" "$predicate" >&2
+		done
+		return 1
+	fi
 }
 
 # Count of entries in the sibling ratchet, read only. The summary line carries
@@ -487,7 +529,7 @@ check() {
 	local failed=0 verdicts anomalies unmeasured uncovered covered baseline added removed stale waived
 
 	[ -f "$BASELINE" ] || die "missing $BASELINE_REL"
-	baseline_format_errors >&2 || failed=1
+	baseline_format_errors "$BASELINE" >&2 || failed=1
 
 	verdicts="$(classify)" || exit 1
 
@@ -513,7 +555,7 @@ check() {
 
 	uncovered="$(printf '%s\n' "$verdicts" | { grep '^uncovered	' || true; } | cut -f2,3,4,5 | sort -u)"
 	covered="$(printf '%s\n' "$verdicts" | { grep '^covered	' || true; } | cut -f2,3,4,5 | sort -u)"
-	baseline="$(baseline_entries)"
+	baseline="$(baseline_entries "$BASELINE")"
 
 	# `file:body-range: func (#nth): if <predicate>` or `switch default` for
 	# a list of site keys. The body range comes from the derived site data, where
@@ -570,6 +612,8 @@ check() {
 	fi
 
 	[ "$failed" -eq 0 ] || exit 1
+
+	baseline_shrink_only || exit 1
 
 	announce_open_bugs
 
@@ -647,6 +691,10 @@ generate() {
 #   toolchain-block-go126  match a Go 1.26-style block start at the opening brace
 #   toolchain-block-go127  match a Go 1.27-style block start at the first statement
 #   later-nested           accept a covered block that starts at a later nested statement
+#   baseline-growth        reject a current baseline identity absent from its base
+#   baseline-replacement   reject same-count replacement of a base identity
+#   baseline-shrink        allow removal from the current baseline's identity set
+#   baseline-malformed     reject a malformed base baseline
 #
 # Each fixture is a directory holding `sites.tsv`, `baseline`, `profiles/` and
 # `want`. Driving `check` from a fixed site list rather than from the real tree
@@ -663,8 +711,10 @@ selftest() {
 		# A subprocess, not a function call: `check` exits, and its exit status
 		# is half of what each fixture pins. The deadcode count is pinned to a
 		# stub for the reason given where GUARDS_DEADCODE_ALLOW is read.
+		base="$dir/baseline"
+		[ -f "$dir/base-baseline" ] && base="$dir/base-baseline"
 		if got="$(SITES="$dir/sites.tsv" BASELINE="$dir/baseline" PROFILES="$dir/profiles" \
-			GUARDS_BASE_REF=__none__ GUARDS_DEADCODE_ALLOW="$FIXTURES/deadcode.allow" \
+			GUARDS_BASELINE_BASE="$base" GUARDS_BASE_REF=__none__ GUARDS_DEADCODE_ALLOW="$FIXTURES/deadcode.allow" \
 			"$0" check 2>&1)"; then rc=0; else rc=$?; fi
 		got="$got
 exit $rc"

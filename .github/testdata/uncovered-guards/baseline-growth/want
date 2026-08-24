@@ -1,0 +1,3 @@
+::error::.github/testdata/uncovered-guards/baseline-growth/baseline is shrink-only; current identities absent from the base baseline:
+  internal/fake/guard.go: Refuse (#1): len(failures) > 0
+exit 1
