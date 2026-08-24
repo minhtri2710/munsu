@@ -248,7 +248,7 @@ func scan(root string) ([]site, error) {
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				switch stmt := n.(type) {
 				case *ast.IfStmt:
-					if !isRefusal(stmt.Body) || !isSelfOriginating(resolver, abs, fset, stmt.Init, stmt.Cond) {
+					if !isRefusal(resolver, abs, fset, stmt.Body) || !isSelfOriginating(resolver, abs, fset, stmt.Init, stmt.Cond) {
 						return true
 					}
 					pos := fset.Position(stmt.Body.Lbrace)
@@ -429,8 +429,8 @@ func exprText(src []byte, fset *token.FileSet, e ast.Expr) string {
 // The LAST statement decides, so a branch that logs before it refuses still
 // counts. `return nil` and `return err` do not: the first is an early exit with
 // no refusal, the second is propagation of somebody else's.
-func isRefusal(body *ast.BlockStmt) bool {
-	return body != nil && isRefusalStatements(body.List)
+func isRefusal(r *resolver, file string, fset *token.FileSet, body *ast.BlockStmt) bool {
+	return body != nil && isRefusalStatements(r, file, fset, body.List)
 }
 
 func isSelfOriginatingRefusal(r *resolver, file string, fset *token.FileSet, statements []ast.Stmt) bool {
@@ -468,6 +468,9 @@ func isSelfOriginatingRefusal(r *resolver, file string, fset *token.FileSet, sta
 }
 
 func statementHasErrorOperand(r *resolver, file string, fset *token.FileSet, statement ast.Stmt) bool {
+	if statement == nil {
+		return false
+	}
 	checkExpr := func(expressions ...ast.Expr) bool {
 		return refusalHasErrorOperands(r, file, fset, expressions)
 	}
@@ -599,9 +602,9 @@ func isDefiniteSelfOriginatingError(r *resolver, file string, fset *token.FileSe
 	}
 	switch node := expr.(type) {
 	case *ast.Ident:
-		return sentinel(node.Name)
+		return isSentinel(r, file, fset, node)
 	case *ast.SelectorExpr:
-		return sentinel(node.Sel.Name)
+		return isSentinel(r, file, fset, node)
 	case *ast.UnaryExpr:
 		if node.Op != token.AND {
 			return false
@@ -746,7 +749,7 @@ func refusalHasErrorOperand(r *resolver, file string, fset *token.FileSet, expr 
 	if expr == nil {
 		return false
 	}
-	if !constructsError(expr) && r.errish(file, fset, expr) {
+	if !constructsError(r, file, fset, expr) && r.errish(file, fset, expr) {
 		return true
 	}
 	return refusalHasErrorChildren(r, file, fset, expr)
@@ -826,14 +829,14 @@ func refusalHasErrorChildren(r *resolver, file string, fset *token.FileSet, expr
 	return true
 }
 
-func isRefusalStatements(statements []ast.Stmt) bool {
+func isRefusalStatements(r *resolver, file string, fset *token.FileSet, statements []ast.Stmt) bool {
 	if len(statements) == 0 {
 		return false
 	}
 	switch s := statements[len(statements)-1].(type) {
 	case *ast.ReturnStmt:
-		for _, r := range s.Results {
-			if constructsError(r) {
+		for _, result := range s.Results {
+			if constructsError(r, file, fset, result) {
 				return true
 			}
 		}
@@ -854,30 +857,23 @@ func isRefusalStatements(statements []ast.Stmt) bool {
 }
 
 // Whether an expression produces an error value that did not exist before this
-// branch ran. Three shapes, and no type information is used -- go/types would
-// answer this exactly but costs a full load of every package, which is the
-// budget the whole lane has.
-//
-//	fmt.Errorf(...) / errors.New(...) / anything named *Err*  a constructed error
-//	&fooError{...} / fooError{...}                            a literal error value
-//	ErrNotFound / errNotWorktree                              a sentinel
-//
-// `err` and `e` themselves are excluded by requiring something after the prefix:
-// those name a value that arrived from elsewhere.
-func constructsError(e ast.Expr) bool {
+// branch ran. Constructors and literals are recognized structurally; sentinel
+// variables are accepted only when resolver-backed object information proves
+// they are package-scope error variables.
+func constructsError(r *resolver, file string, fset *token.FileSet, e ast.Expr) bool {
 	switch v := e.(type) {
 	case *ast.CallExpr:
 		return errorish(calleeName(v.Fun))
 	case *ast.UnaryExpr:
 		if v.Op == token.AND {
-			return constructsError(v.X)
+			return constructsError(r, file, fset, v.X)
 		}
 	case *ast.CompositeLit:
 		return errorish(typeName(v.Type))
 	case *ast.Ident:
-		return sentinel(v.Name)
+		return isSentinel(r, file, fset, v)
 	case *ast.SelectorExpr:
-		return sentinel(v.Sel.Name)
+		return isSentinel(r, file, fset, v)
 	}
 	return false
 }
@@ -916,11 +912,34 @@ func errorish(name string) bool {
 	return strings.Contains(strings.ToLower(name), "err")
 }
 
-// A package-level sentinel: `ErrNotFound`, `errNotWorktree`. The suffix must be
-// non-empty, which is what keeps the local `err` out.
+func isSentinel(r *resolver, file string, fset *token.FileSet, expr ast.Expr) bool {
+	var node ast.Node
+	switch value := expr.(type) {
+	case *ast.Ident:
+		node = value
+	case *ast.SelectorExpr:
+		node = value.Sel
+	default:
+		return false
+	}
+	name := node.(*ast.Ident)
+	if r == nil {
+		return false
+	}
+	object := r.objects[file][span{fset.Position(name.Pos()).Offset, fset.Position(name.End()).Offset}]
+	variable, ok := object.(*types.Var)
+	if !ok || variable.Pkg() == nil || variable.IsField() || variable.Parent() != variable.Pkg().Scope() || !isErrorType(variable.Type()) {
+		return false
+	}
+	if _, imported := expr.(*ast.SelectorExpr); imported {
+		return true
+	}
+	return sentinel(name.Name)
+}
+
 func sentinel(name string) bool {
-	for _, p := range []string{"Err", "err"} {
-		if strings.HasPrefix(name, p) && len(name) > len(p) {
+	for _, prefix := range []string{"Err", "err"} {
+		if strings.HasPrefix(name, prefix) && len(name) > len(prefix) {
 			return true
 		}
 	}

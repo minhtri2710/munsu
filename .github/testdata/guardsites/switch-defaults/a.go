@@ -3,6 +3,7 @@ package fixture
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 )
 
@@ -246,6 +247,56 @@ func Sentinel(value int) error {
 		return ErrUnsupported
 	}
 }
+
+func ImportedSentinel(value int) error {
+	switch value {
+	default:
+		return io.EOF
+	}
+}
+
+func NestedNoError(value int) error {
+	switch value {
+	default:
+		if value > 0 {
+			logNested(value)
+		}
+		for value > 1 {
+			value--
+			break
+		}
+		if value == 0 {
+			logNested(value)
+		}
+		return errors.New("unsupported")
+	}
+}
+
+func ParameterSentinel(ErrCause error, value int) error {
+	switch value {
+	default:
+		return ErrCause
+	}
+}
+
+func LocalSentinel(value int) error {
+	ErrCause := errors.New("existing")
+	switch value {
+	default:
+		return ErrCause
+	}
+}
+
+type sentinelHolder struct{ ErrCause error }
+
+func FieldSentinel(holder sentinelHolder, value int) error {
+	switch value {
+	default:
+		return holder.ErrCause
+	}
+}
+
+func logNested(value int) {}
 
 var ErrUnsupported = errors.New("unsupported")
 

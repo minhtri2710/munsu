@@ -1,12 +1,14 @@
-a.go	EmptyBefore	1	default	160.10-162.35	160.10,162.3
-a.go	ExitDefault	1	default	261.10-262.13	261.10,262.3
-a.go	Expression	1	default	19.10-20.47	19.10,20.3
-a.go	JoinConstruct	1	default	189.10-190.48	189.10,190.3
-a.go	JoinDirectMixed	1	default	196.10-197.53	196.10,197.3
-a.go	JoinExpandedConstruct	1	default	210.10-211.65	210.10,211.3
-a.go	KeyedConstruct	1	default	111.10-112.66	111.10,112.3
-a.go	NamedType	1	default	37.10-38.48	37.10,38.3
-a.go	PanicConstruct	1	default	254.10-255.23	254.10,255.3
-a.go	Sentinel	1	default	245.10-246.24	245.10,246.3
-a.go	Type	1	default	28.10-29.40	28.10,29.3
+a.go	EmptyBefore	1	default	161.10-163.35	161.10,163.3
+a.go	ExitDefault	1	default	312.10-313.13	312.10,313.3
+a.go	Expression	1	default	20.10-21.47	20.10,21.3
+a.go	ImportedSentinel	1	default	253.10-254.16	253.10,254.3
+a.go	JoinConstruct	1	default	190.10-191.48	190.10,191.3
+a.go	JoinDirectMixed	1	default	197.10-198.53	197.10,198.3
+a.go	JoinExpandedConstruct	1	default	211.10-212.65	211.10,212.3
+a.go	KeyedConstruct	1	default	112.10-113.66	112.10,113.3
+a.go	NamedType	1	default	38.10-39.48	38.10,39.3
+a.go	NestedNoError	1	default	260.10-271.35	260.10,261.3
+a.go	PanicConstruct	1	default	305.10-306.23	305.10,306.3
+a.go	Sentinel	1	default	246.10-247.24	246.10,247.3
+a.go	Type	1	default	29.10-30.40	29.10,30.3
 exit 0
