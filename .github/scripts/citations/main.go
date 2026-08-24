@@ -322,6 +322,20 @@ func isRepoPath(root, tok string) bool {
 	return err == nil
 }
 
+func repoPathExists(canonicalRoot, tok string) bool {
+	candidate := filepath.Join(canonicalRoot, filepath.FromSlash(tok))
+	resolved, err := filepath.EvalSymlinks(candidate)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(canonicalRoot, resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	_, err = os.Lstat(candidate)
+	return err == nil
+}
+
 // ---------------------------------------------------------------------------
 // the file index
 // ---------------------------------------------------------------------------
@@ -335,8 +349,9 @@ func isRepoPath(root, tok string) bool {
 // ways and the issue's first acceptance clause says every backticked file path,
 // not every root-relative one.
 type files struct {
-	exts   map[string]bool
-	suffix map[string]bool
+	exts          map[string]bool
+	suffix        map[string]bool
+	canonicalRoot string
 }
 
 // The extension set is DERIVED, like everything else this lane judges. It is
@@ -348,8 +363,12 @@ type files struct {
 // none of them is read as a claim about a file. A new kind of file in the tree
 // teaches this rule about itself.
 func buildFiles(root string) (*files, error) {
-	fi := &files{exts: map[string]bool{}, suffix: map[string]bool{}}
-	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+	canonicalRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return nil, fmt.Errorf("resolve repository root %s: %w", root, err)
+	}
+	fi := &files{exts: map[string]bool{}, suffix: map[string]bool{}, canonicalRoot: canonicalRoot}
+	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -808,7 +827,7 @@ func classify(root string, idx *index, fi *files, doc, text string) []string {
 		case isRepoPath(root, tok):
 			// Root-relative: held to the exact path it names.
 			status = "unresolved"
-			if _, err := os.Lstat(filepath.Join(root, filepath.FromSlash(tok))); err == nil {
+			if repoPathExists(fi.canonicalRoot, tok) {
 				status = "resolved"
 			}
 		case fileCitation(fi, tok):

@@ -390,7 +390,7 @@ exit $rc"
 	# red for a reason that is not this rule. Built in a scratch tree instead.
 	local scratch
 	scratch="$(mktemp -d)"
-	trap 'rm -rf "$scratch"' RETURN
+	trap 'rm -rf "$scratch" "$escape"' RETURN
 	mkdir -p "$scratch/docs"
 	printf 'A citation of `SomethingDeclared`.\n' >"$scratch/docs/doc.md"
 	: >"$scratch/AGENTS.md"
@@ -410,6 +410,36 @@ exit $rc"
 		failed=1
 	else
 		echo "  ok   unparseable-go"
+	fi
+
+	local escape
+	escape="$(mktemp -d)"
+	trap 'rm -rf "$escape"' RETURN
+	mkdir -p "$escape/docs"
+	: >"$escape/AGENTS.md"
+	: >"$escape/CLAUDE.md"
+	: >"$escape/README.md"
+	printf 'package x\n\nfunc SomethingDeclared() {}\n' >"$escape/good.go"
+	printf 'A traversal citation is `docs/../../../../etc/passwd`.\n' >"$escape/docs/doc.md"
+	: >"$escape/waiver"
+	if got="$(SCAN_ROOT="$escape" WAIVER="$escape/waiver" "$0" check 2>&1)"; then rc=0; else rc=$?; fi
+	if [ "$rc" -eq 0 ] || ! printf '%s\n' "$got" | grep -q 'path docs/../../../../etc/passwd'; then
+		echo "::error::citations resolved a path that traverses outside the repository:" >&2
+		printf '%s\n' "$got" >&2
+		failed=1
+	else
+		echo "  ok   path-traversal"
+	fi
+
+	ln -s /etc "$escape/outside"
+	printf 'A symlink citation is `outside/passwd`.\n' >"$escape/docs/doc.md"
+	if got="$(SCAN_ROOT="$escape" WAIVER="$escape/waiver" "$0" check 2>&1)"; then rc=0; else rc=$?; fi
+	if [ "$rc" -eq 0 ] || ! printf '%s\n' "$got" | grep -q 'path outside/passwd'; then
+		echo "::error::citations resolved a symlink that escapes the repository:" >&2
+		printf '%s\n' "$got" >&2
+		failed=1
+	else
+		echo "  ok   symlink-escape"
 	fi
 
 	[ "$failed" -eq 0 ] || exit 1
