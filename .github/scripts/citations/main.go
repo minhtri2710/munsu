@@ -495,6 +495,7 @@ var (
 	callSuffixRe               = regexp.MustCompile(`\([^()]*\)$`)
 	invalidFenceLikeRe         = regexp.MustCompile(`^[ \t]*(?:[-+*]|[0-9]{1,10}[.)])[ \t]*\x60{3}`)
 	invalidBacktickFenceLikeRe = regexp.MustCompile(`^[ \t]*\x60{3,}.*\x60`)
+	markdownBlockStartRe       = regexp.MustCompile(`^[ \t]{0,3}(?:#{1,6}[ \t]|>[ \t]?|(?:[-+*]|[0-9]{1,9}[.)])[ \t]+)`)
 )
 
 // The punctuation a reference can never contain, because it belongs to
@@ -1228,8 +1229,12 @@ func scan(root string) ([]string, error) {
 				openRun, openText = 0, ""
 				continue
 			}
-			if openRun > 0 && strings.TrimSpace(line) == "" {
+			if strings.TrimSpace(line) == "" {
+				openRun, openText = 0, ""
 				continue
+			}
+			if openRun > 0 && markdownBlockStartRe.MatchString(line) {
+				openRun, openText = 0, ""
 			}
 			indent := len(line) - len(strings.TrimLeft(line, " \t"))
 			if strings.TrimSpace(line) == "" || markdownColumns(line[:indent]) > 3 || invalidFenceLikeRe.MatchString(line) || invalidBacktickFenceLikeRe.MatchString(line) {
