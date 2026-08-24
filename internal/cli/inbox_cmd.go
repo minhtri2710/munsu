@@ -81,10 +81,10 @@ This produces output with kind=inbox.receive.`,
 					fmt.Sprintf("parsing NotificationRef: %v", err))
 			}
 
-			recv, err := orchestrator.NewReceiver(ctx.Home)
+			recv, err := inboxReceiver(ctx.Home)
 			if err != nil {
 				return operationError("receiver_init_failed",
-					"Ensure MUNSU_HOME points to a valid captain or general home with provenance",
+					"Ensure MUNSU_HOME points to a home with provenance for this role; a soldier also needs MUNSU_TASK_ID",
 					fmt.Sprintf("creating receiver: %v", err))
 			}
 
@@ -151,10 +151,10 @@ This produces output with kind=inbox.ack.`,
 					fmt.Sprintf("parsing NotificationRef: %v", err))
 			}
 
-			recv, err := orchestrator.NewReceiver(ctx.Home)
+			recv, err := inboxReceiver(ctx.Home)
 			if err != nil {
 				return operationError("receiver_init_failed",
-					"Ensure MUNSU_HOME points to a valid captain or general home with provenance",
+					"Ensure MUNSU_HOME points to a home with provenance for this role; a soldier also needs MUNSU_TASK_ID",
 					fmt.Sprintf("creating receiver: %v", err))
 			}
 
@@ -178,6 +178,24 @@ This produces output with kind=inbox.ack.`,
 
 	configureContractCommand(cmd)
 	return cmd
+}
+
+// inboxReceiver constructs the receiver for the agent running this command.
+//
+// A general or captain owns the home it runs in, so its receiver identity is
+// that home's provenance. A soldier owns no home: it is launched with
+// MUNSU_HOME set to its dispatcher's home, so its receiver identity is the
+// durable task record that home holds for MUNSU_TASK_ID. Both paths derive
+// identity from durable state and fail closed when it is absent.
+func inboxReceiver(homeDir string) (*orchestrator.Receiver, error) {
+	if os.Getenv("MUNSU_ROLE") != "soldier" {
+		return orchestrator.NewReceiver(homeDir)
+	}
+	taskID := os.Getenv("MUNSU_TASK_ID")
+	if taskID == "" {
+		return nil, fmt.Errorf("MUNSU_ROLE=soldier without MUNSU_TASK_ID: a soldier is identified by its task")
+	}
+	return orchestrator.NewSoldierReceiver(homeDir, taskID)
 }
 
 // renderInbox prints the inbox view to the given writer.

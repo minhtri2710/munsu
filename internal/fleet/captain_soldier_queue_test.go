@@ -131,8 +131,8 @@ func TestSendToSoldier_Idle_SendsNotificationRef(t *testing.T) {
 	if env.ReceiverRank != home.RankSoldier {
 		t.Errorf("receiver rank=%q, want soldier", env.ReceiverRank)
 	}
-	if env.ReceiverID != cleanReceiverID(soldierTaskID) {
-		t.Errorf("receiver ID=%q, want %q", env.ReceiverID, cleanReceiverID(soldierTaskID))
+	if env.ReceiverID != home.ReceiverIDForTask(soldierTaskID) {
+		t.Errorf("receiver ID=%q, want %q", env.ReceiverID, home.ReceiverIDForTask(soldierTaskID))
 	}
 	if env.TaskID != soldierTaskID {
 		t.Errorf("task ID=%q, want %q", env.TaskID, soldierTaskID)
@@ -234,7 +234,7 @@ func TestFlushPendingSoldierCommands_FlushesNotificationRef(t *testing.T) {
 		SenderRank:     home.RankCaptain,
 		SenderIdentity: senderIdentity,
 		ReceiverRank:   home.RankSoldier,
-		ReceiverID:     cleanReceiverID(soldierTaskID),
+		ReceiverID:     home.ReceiverIDForTask(soldierTaskID),
 		TaskID:         soldierTaskID,
 		Payload:        "do: queued work",
 	}
@@ -290,6 +290,41 @@ func TestFlushPendingSoldierCommands_FlushesNotificationRef(t *testing.T) {
 	}
 }
 
+func TestFlushPendingSoldierCommands_IgnoresCollidingTaskID(t *testing.T) {
+	captainHome, _, senderIdentity := setupSoldierTestHomes(t, "idle")
+	soldierTaskID := "task:a"
+	collidingTaskID := "task_a"
+	if err := mhome.WriteMeta(captainHome, soldierTaskID, map[string]string{"window": "test-window"}); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+	env := &home.Envelope{
+		SenderRank:     home.RankCaptain,
+		SenderIdentity: senderIdentity,
+		ReceiverRank:   home.RankSoldier,
+		ReceiverID:     home.ReceiverIDForTask(collidingTaskID),
+		TaskID:         collidingTaskID,
+		Payload:        "wrong task",
+	}
+	store := home.NewStore(captainHome)
+	if err := store.WriteEnvelope(env); err != nil {
+		t.Fatalf("WriteEnvelope: %v", err)
+	}
+	if err := store.WritePending(env); err != nil {
+		t.Fatalf("WritePending: %v", err)
+	}
+	be := &fakeAgentEndpoint{acknowledged: true}
+	result := FlushPendingSoldierCommands(captainHome, soldierTaskID, senderIdentity, be)
+	if result.Err != nil {
+		t.Fatalf("FlushPendingSoldierCommands: %v", result.Err)
+	}
+	if result.MessageID != "" || result.Sent || result.Queued {
+		t.Fatalf("flush matched colliding task: result=%+v", result)
+	}
+	if be.promptCalls != 0 {
+		t.Fatalf("promptCalls=%d, want 0", be.promptCalls)
+	}
+}
+
 // TestFlushPendingSoldierCommands_NoPending_IsNoop verifies that flush with
 // no pending is a no-op.
 func TestFlushPendingSoldierCommands_NoPending_IsNoop(t *testing.T) {
@@ -320,7 +355,7 @@ func TestFlushPendingSoldierCommands_StillBusy_RetainsPending(t *testing.T) {
 		SenderRank:     home.RankCaptain,
 		SenderIdentity: senderIdentity,
 		ReceiverRank:   home.RankSoldier,
-		ReceiverID:     cleanReceiverID(soldierTaskID),
+		ReceiverID:     home.ReceiverIDForTask(soldierTaskID),
 		TaskID:         soldierTaskID,
 		Payload:        "do: queued work",
 	}
@@ -436,7 +471,7 @@ func TestReconcileSoldierPending_ExactAckClears(t *testing.T) {
 		SenderRank:     home.RankCaptain,
 		SenderIdentity: senderIdentity,
 		ReceiverRank:   home.RankSoldier,
-		ReceiverID:     cleanReceiverID(soldierTaskID),
+		ReceiverID:     home.ReceiverIDForTask(soldierTaskID),
 		TaskID:         soldierTaskID,
 		Payload:        "do: reconcile test",
 	}
@@ -485,7 +520,7 @@ func TestReconcileSoldierPending_WrongAckFailsClosed(t *testing.T) {
 		SenderRank:     home.RankCaptain,
 		SenderIdentity: senderIdentity,
 		ReceiverRank:   home.RankSoldier,
-		ReceiverID:     cleanReceiverID(soldierTaskID),
+		ReceiverID:     home.ReceiverIDForTask(soldierTaskID),
 		TaskID:         soldierTaskID,
 		Payload:        "do: work",
 		PayloadHash:    home.PayloadHashHex("do: work"),
@@ -1018,6 +1053,41 @@ func TestConsumeAllReadyEvents_NoPendingIsNoop(t *testing.T) {
 	}
 }
 
+func TestConsumeAllReadyEvents_IgnoresCollidingTaskID(t *testing.T) {
+	captainHome, _, senderIdentity := setupSoldierTestHomes(t, "idle")
+	soldierTaskID := "task:a"
+	collidingTaskID := "task_a"
+	if err := mhome.WriteMeta(captainHome, soldierTaskID, map[string]string{"window": "test-window"}); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+	env := &home.Envelope{
+		SenderRank:     home.RankCaptain,
+		SenderIdentity: senderIdentity,
+		ReceiverRank:   home.RankSoldier,
+		ReceiverID:     home.ReceiverIDForTask(collidingTaskID),
+		TaskID:         collidingTaskID,
+		Payload:        "wrong task",
+	}
+	store := home.NewStore(captainHome)
+	if err := store.WriteEnvelope(env); err != nil {
+		t.Fatalf("WriteEnvelope: %v", err)
+	}
+	if err := store.WritePending(env); err != nil {
+		t.Fatalf("WritePending: %v", err)
+	}
+	if _, err := EmitReadyEvent(captainHome, soldierTaskID, "collision", ""); err != nil {
+		t.Fatalf("EmitReadyEvent: %v", err)
+	}
+	be := &fakeAgentEndpoint{acknowledged: true}
+	flushed, err := ConsumeAllReadyEvents(captainHome, soldierTaskID, senderIdentity, "", be)
+	if err != nil {
+		t.Fatalf("ConsumeAllReadyEvents: %v", err)
+	}
+	if flushed != 0 || be.promptCalls != 0 {
+		t.Fatalf("consumed colliding task: flushed=%d promptCalls=%d", flushed, be.promptCalls)
+	}
+}
+
 // TestConsumeAllReadyEvents_FullFlow verifies: emit ready → flush pending command.
 func TestConsumeAllReadyEvents_FullFlow(t *testing.T) {
 	captainHome, soldierTaskID, senderIdentity := setupSoldierTestHomes(t, "working")
@@ -1198,5 +1268,56 @@ func TestParseReadyEventRefusesEventWithNoID(t *testing.T) {
 	}
 	if ev.EventID != "ev1" {
 		t.Fatalf("event ID = %q, want ev1", ev.EventID)
+	}
+}
+
+// TestSoldierAckHasAProductionWriter is the #617 reproduction. It builds the
+// exact state the captain queue waits in -- an envelope addressed to a soldier
+// with a pending record retained until an exact ack -- and then asks the only
+// production ack writer, home.Receiver.Ack, to write it.
+//
+// The soldier runs with MUNSU_HOME set to the dispatching home (see
+// buildLaunchArtifact), so the receiver it constructs is rooted at the same
+// shared home the captain sends from. If no receiver in that home can be a
+// soldier, nothing can write the ack the queue reconciles against, and the
+// pending record is retained forever: FlushPendingSoldierCommands and
+// ConsumeAllReadyEvents both branch on store.IsAcked and neither has a
+// deadline.
+func TestSoldierAckHasAProductionWriter(t *testing.T) {
+	captainHome, soldierTaskID, senderIdentity := setupSoldierTestHomes(t, "idle")
+
+	be := &fakeAgentEndpoint{acknowledged: true}
+	result := SendToSoldier(captainHome, soldierTaskID, senderIdentity, "do: work", be)
+	if result.Err != nil {
+		t.Fatalf("SendToSoldier: %v", result.Err)
+	}
+
+	ref := home.NotificationRef{MessageID: result.MessageID, SenderIdentity: senderIdentity}
+
+	// The soldier's own home is the dispatching home; its receiver identity is
+	// its task ID.
+	recv, err := home.NewSoldierReceiver(captainHome, soldierTaskID)
+	if err != nil {
+		t.Fatalf("NewSoldierReceiver: %v", err)
+	}
+	if _, err := recv.Receive(ref); err != nil {
+		t.Fatalf("soldier Receive: %v", err)
+	}
+	if _, err := recv.Ack(ref); err != nil {
+		t.Fatalf("soldier Ack: %v", err)
+	}
+
+	store := home.NewStore(captainHome)
+	if !store.IsAcked(senderIdentity, result.MessageID) {
+		t.Fatal("the queue reconciles against an ack the soldier cannot write")
+	}
+
+	// The ack the soldier wrote must be the one the queue accepts.
+	if err := ReconcileSoldierPending(captainHome, senderIdentity); err != nil {
+		t.Fatalf("ReconcileSoldierPending: %v", err)
+	}
+	pending, _ := store.ReadPending(senderIdentity, result.MessageID)
+	if pending != nil {
+		t.Fatal("pending must be cleared by the soldier's own ack")
 	}
 }
