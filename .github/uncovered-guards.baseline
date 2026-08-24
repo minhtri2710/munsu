@@ -20,8 +20,8 @@
 #
 # Columns are tab-separated: file <TAB> func <TAB> nth <TAB> predicate <TAB> reason
 #
-# `nth` is the 1-based occurrence of that exact predicate in that function; it is
-# what separates the nine functions here that refuse twice on the same condition.
+# `nth` is the 1-based occurrence of that exact predicate in that owner identity;
+# see `.github/scripts/guardsites` for the owner forms and derivation contract.
 # No line numbers on purpose -- they are not part of an entry's identity, and
 # including them would rewrite this file on every unrelated edit above a guard.
 # Run `.github/scripts/uncovered-guards.sh classify` for the current verdicts.

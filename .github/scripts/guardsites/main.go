@@ -10,8 +10,9 @@
 // Output columns: file <TAB> func <TAB> nth <TAB> predicate <TAB> body <TAB> entries
 //
 //	file       repo-relative path of the non-test .go file
-//	func       enclosing top-level function, `Type.Method` for methods
-//	nth        1-based occurrence of this exact predicate in this function
+//	func       stable owner identity: top-level function/method or package variable
+//	           initialized by a function literal (`Type.Method` for methods)
+//	nth        1-based occurrence of this exact predicate in this owner
 //	predicate  the `if` condition, or `default` for a refusing switch default
 //	body       source range of the refusal body, `start-end` as `line.col`
 //	entries    body-start and first-statement coordinates, comma-separated
@@ -26,10 +27,10 @@
 // within this source body their counter range starts.
 //
 // `nth` is what makes the remaining three columns unique. It is not decoration:
-// nine functions in this repo refuse twice on the same predicate (`!ok` twice in
-// Canonical.DeliveryCurrency), and without it those pairs would collapse into
-// one key, so waiving either would waive both. It is assigned in source order,
-// so it only moves when a sibling with the *same* predicate is added or removed
+// An owner can refuse twice on the same predicate, and without an ordinal those
+// pairs would collapse into one key, so waiving either would waive both. It is
+// assigned in source order, so it only moves when a sibling with the *same*
+// predicate is added or removed
 // -- which is a guard change, exactly when the baseline should move.
 //
 // The body range and entry coordinates are the stable source facts available to
@@ -342,10 +343,11 @@ func appendFunctionSites(r *resolver, abs string, rows *[]site, body *ast.BlockS
 // Top-level declarations are FuncDecl or GenDecl; only a var GenDecl's
 // ValueSpecs can introduce the requested package-level function owner. Each
 // ValueSpec is therefore either initializer-free, positionally mapped to a
-// parenthesized FuncLit and a non-blank name, or ignored as a non-function
-// initializer; an ambiguous function-literal mapping fails closed. This is
-// complete for the direct-assignment contract, so calls, conversions,
-// composites, and nested initializer expressions are not chased.
+// direct or parenthesized FuncLit and a non-blank name, or ignored as a
+// non-function or unsupported initializer shape; an ambiguous function-literal
+// mapping fails closed. Missing initializers are ignored. This is complete for
+// the direct-assignment contract, so calls, conversions, composites, and nested
+// initializer expressions are not chased.
 func unwrapFuncLit(expr ast.Expr) *ast.FuncLit {
 	for {
 		switch current := expr.(type) {
@@ -359,10 +361,10 @@ func unwrapFuncLit(expr ast.Expr) *ast.FuncLit {
 	}
 }
 
-// `Type.Method` for methods, bare name for plain functions -- the same shape
-// .github/deadcode.allow uses, so a name means one thing in both files. A guard
-// inside a closure is attributed to the enclosing top-level function: a closure
-// has no stable name, and `func1` renumbers when a sibling closure is added.
+// `Type.Method` for methods, bare name for plain functions, and the declared
+// variable name for package-var function literals -- the same owner vocabulary
+// used by the derived guard identity. A guard inside a nested closure is
+// attributed to the currently scanned owner because closures have no stable name.
 func funcName(fn *ast.FuncDecl) string {
 	if fn.Recv == nil || len(fn.Recv.List) == 0 {
 		return fn.Name.Name
