@@ -250,6 +250,23 @@ func TestHerdrEventSource_NegotiationGates(t *testing.T) {
 	})
 }
 
+func TestHerdrEventSource_Wait_ExpiredDeadline(t *testing.T) {
+	src := &HerdrEventSource{CLIPath: "unused-herdr"}
+	src.once.Do(func() {
+		src.info = CapabilityInfo{State: HerdrReady, Flags: HerdrCapabilityFlags{CapAgentWait: true}}
+	})
+
+	ctx, cancel := context.WithDeadline(context.Background(), time.Unix(1, 0))
+	defer cancel()
+	sig, err := src.Wait(ctx, EndpointRef{Backend: "herdr", Handle: "w:p"}, "")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want context.DeadlineExceeded", err)
+	}
+	if sig != (ObservationSignal{}) {
+		t.Fatalf("signal = %+v, want empty signal", sig)
+	}
+}
+
 func TestHerdrEventSource_Wait_Timeout(t *testing.T) {
 	// The fake exits non-zero with a STRUCTURED timeout error envelope. The
 	// adapter must map the herdr CLI's own bounded-wait timeout to
