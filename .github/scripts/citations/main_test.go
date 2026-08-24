@@ -87,6 +87,7 @@ func TestScanRecoversUnmatchedRunsAcrossBoundaries(t *testing.T) {
 		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterHTML":          true,
 		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterInlineHTML":    true,
 		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterMultilineHTML": true,
+		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterListHTML":      true,
 		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterHTMLBlank":     true,
 	}
 	for _, row := range rows {

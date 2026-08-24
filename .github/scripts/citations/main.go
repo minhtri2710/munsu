@@ -1344,6 +1344,7 @@ func scan(root string) ([]string, error) {
 		var openRun int
 		var openText string
 		var openContainers []fenceContainer
+		var activeContainers []fenceContainer
 		var htmlState *htmlBlock
 		addSpans := func(spans []span) error {
 			for _, s := range spans {
@@ -1393,6 +1394,16 @@ func scan(root string) ([]string, error) {
 			}
 			block, blockOK := htmlBlockStartInfo(line)
 			var blockContainers []fenceContainer
+			if len(activeContainers) > 0 {
+				if normalizedLine, ok := stripFenceContainers(line, activeContainers); ok {
+					block, blockOK = htmlBlockStartInfo(normalizedLine)
+					if blockOK {
+						blockContainers = append([]fenceContainer(nil), activeContainers...)
+					}
+				} else {
+					activeContainers = nil
+				}
+			}
 			if !blockOK {
 				if normalizedLine, containers, ok := parseMarkdownContainers(line); ok {
 					block, blockOK = htmlBlockStartInfo(normalizedLine)
@@ -1425,6 +1436,7 @@ func scan(root string) ([]string, error) {
 				if err := flushOpen(); err != nil {
 					return nil, err
 				}
+				activeContainers = nil
 				continue
 			}
 			normalized, containers, ok := parseMarkdownContainers(line)
@@ -1432,7 +1444,20 @@ func scan(root string) ([]string, error) {
 				if err := flushOpen(); err != nil {
 					return nil, err
 				}
+				activeContainers = nil
 				continue
+			}
+			if len(activeContainers) > 0 {
+				if continuation, continuationOK := stripFenceContainers(line, activeContainers); continuationOK {
+					normalized = continuation
+				} else if lazyParagraphContinuation(line, containers, activeContainers) {
+					normalized = line
+				} else {
+					activeContainers = nil
+				}
+			}
+			if len(containers) > 0 {
+				activeContainers = append([]fenceContainer(nil), containers...)
 			}
 			if openRun > 0 {
 				if len(containers) > len(openContainers) || !isContainerPrefix(containers, openContainers) {
@@ -1459,6 +1484,7 @@ func scan(root string) ([]string, error) {
 				if err := flushOpen(); err != nil {
 					return nil, err
 				}
+				activeContainers = nil
 				continue
 			}
 			previouslyOpen := openRun > 0

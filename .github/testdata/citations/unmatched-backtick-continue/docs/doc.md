@@ -30,3 +30,10 @@ Then `home.MissingAfterHTMLBlank` then ``.
 
 > ``outer `
 <span>inline html</span>`` and `home.MissingAfterInlineHTML`.
+
+- item
+A lazy continuation before list HTML.
+  <script>
+  An unmatched `` run inside list HTML.
+  </script>
+Then `home.MissingAfterListHTML` then ``.

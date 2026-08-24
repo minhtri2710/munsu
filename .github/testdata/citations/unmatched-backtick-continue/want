@@ -1,4 +1,22 @@
 ::error::citations that do not resolve and are not in .github/testdata/citations/unmatched-backtick-continue/waiver:
+  docs/doc.md: symbol home.MissingAfterHTML
+    docs/doc.md:19:Then `home.MissingAfterHTML` then ``.
+    docs/doc.md:29:Then `home.MissingAfterHTMLBlank` then ``.
+  docs/doc.md: symbol home.MissingAfterHTMLBlank
+    docs/doc.md:29:Then `home.MissingAfterHTMLBlank` then ``.
+  docs/doc.md: symbol home.MissingAfterInlineHTML
+    docs/doc.md:32:<span>inline html</span>`` and `home.MissingAfterInlineHTML`.
+  docs/doc.md: symbol home.MissingAfterItem
+    docs/doc.md:9:- `home.MissingAfterItem` then ```
+  docs/doc.md: symbol home.MissingAfterLazy
+    docs/doc.md:12:After`` and `home.MissingAfterLazy`.
+    docs/doc.md:15:continuation`` and `home.MissingAfterLazyItem`.
+  docs/doc.md: symbol home.MissingAfterLazyItem
+    docs/doc.md:15:continuation`` and `home.MissingAfterLazyItem`.
+  docs/doc.md: symbol home.MissingAfterListHTML
+    docs/doc.md:39:Then `home.MissingAfterListHTML` then ``.
+  docs/doc.md: symbol home.MissingAfterMultilineHTML
+    docs/doc.md:24:Then `home.MissingAfterMultilineHTML` then ``.
   docs/doc.md: symbol home.MissingAfterQuote
     docs/doc.md:6:> `home.MissingAfterQuote`.
   docs/doc.md: symbol home.MissingAfterRuns
