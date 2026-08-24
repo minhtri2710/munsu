@@ -243,6 +243,39 @@ func TestScanRecoversCitationAfterNestedNonOneOrderedMarker(t *testing.T) {
 	t.Fatalf("scan output missing nested non-interrupting citation: %#v", rows)
 }
 
+func TestScanRecoversCitationAfterSiblingListItemDoubleBacktick(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package home\n\nfunc MissingAfterSiblingItem() {}\nfunc MissingAfterOrderedItem() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"AGENTS.md", "CLAUDE.md", "README.md"} {
+		if err := os.WriteFile(filepath.Join(root, name), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Mkdir(filepath.Join(root, "docs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	doc := "- An unmatched `` run\n- `home.MissingAfterSiblingItem` then ``\n1. An unmatched `` run\n2. `home.MissingAfterOrderedItem` then ``\n"
+	if err := os.WriteFile(filepath.Join(root, "docs", "doc.md"), []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := scan(root)
+	if err != nil {
+		t.Fatalf("scan(%q): %v", root, err)
+	}
+	want := map[string]bool{
+		"resolved\tdocs/doc.md\tsymbol\thome.MissingAfterSiblingItem": true,
+		"resolved\tdocs/doc.md\tsymbol\thome.MissingAfterOrderedItem": true,
+	}
+	for _, row := range rows {
+		delete(want, row)
+	}
+	for row := range want {
+		t.Errorf("scan output missing %q: %#v", row, rows)
+	}
+}
+
 func TestScanRecoversCitationAfterOrderedListItemReplacement(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package home\n\nfunc MissingAfterItemReplacement() {}\n"), 0o600); err != nil {

@@ -373,6 +373,22 @@ func nonInterruptingOrderedList(line string, containers, openContainers []fenceC
 	return normalized, true
 }
 
+func explicitSiblingListItem(containers, openContainers []fenceContainer) bool {
+	if len(containers) == 0 || len(containers) != len(openContainers) {
+		return false
+	}
+	last := len(containers) - 1
+	if containers[last].kind != 'l' || openContainers[last].kind != 'l' {
+		return false
+	}
+	for i := 0; i < last; i++ {
+		if containers[i] != openContainers[i] {
+			return false
+		}
+	}
+	return containers[last].marker == openContainers[last].marker
+}
+
 func lazyParagraphContinuation(line string, containers, openContainers []fenceContainer) bool {
 	if len(containers) >= len(openContainers) || inlineBlockBoundary(line) {
 		return false
@@ -1437,6 +1453,13 @@ func scan(root string) ([]string, error) {
 				fenceMarkerByte, fenceRun, fenceContainers = 0, 0, nil
 			}
 			normalized, containers, containersOK := parseMarkdownContainers(line)
+			if openRun > 0 && containersOK && explicitSiblingListItem(containers, openContainers) {
+				if err := flushOpen(); err != nil {
+					return nil, err
+				}
+				activeContainers = nil
+				paragraphOpen = false
+			}
 			orderedLine, orderedContinuation := "", false
 			if openRun > 0 && containersOK {
 				orderedLine, orderedContinuation = nonInterruptingOrderedList(line, containers, openContainers)
