@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // countingTransport records how many times the notification transport was
@@ -24,7 +26,10 @@ func (t *countingTransport) Notify(_ string, target TargetResult, _ string) Upli
 }
 
 // directGeneralHome builds the topology of matrix section 1.1: one General home,
-// no Captain anywhere, and a General pane the uplink is expected to reach.
+// no Captain anywhere, one soldier task dispatched into that home, and a
+// General pane the uplink is expected to reach. The task record is part of the
+// topology, not decoration: it is what lets the receiving home derive that the
+// sender is a soldier rather than take its word for it.
 func directGeneralHome(t *testing.T) (string, string) {
 	t.Helper()
 	generalHome := filepath.Join(t.TempDir(), "general-home")
@@ -36,6 +41,9 @@ func directGeneralHome(t *testing.T) (string, string) {
 	}
 	if err := os.WriteFile(filepath.Join(generalHome, "config", "general-pane"), []byte("fleet:p1\n"), 0600); err != nil {
 		t.Fatal(err)
+	}
+	if err := home.WriteMeta(generalHome, "direct-task", map[string]string{"kind": "ship"}); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
 	}
 	identity, rank, err := ReadHomeIdentity(generalHome)
 	if err != nil {

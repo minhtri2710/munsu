@@ -133,12 +133,17 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 					return fmt.Errorf("report: delivering scout terminal wake: %w", err)
 				}
 			} else if materialStates[state] && (role == "soldier" || role == "captain") {
-				senderIdentity := strings.NewReplacer(":", "_", "/", "_", "\\", "_").Replace(taskID)
+				// A soldier identifies itself as the task its home hosts, in
+				// exactly the form the receiver derives from the envelope's
+				// task ID; a captain identifies itself as its own home.
+				senderIdentity := home.ReceiverIDForTask(taskID)
 				senderRank := orchestrator.Rank(role)
 				if role == "captain" {
-					if identity, _, err := orchestrator.ReadHomeIdentity(homeDir); err == nil {
-						senderIdentity = identity
+					identity, _, idErr := orchestrator.ReadHomeIdentity(homeDir)
+					if idErr != nil {
+						return fmt.Errorf("report: deriving sender identity: %w", idErr)
 					}
+					senderIdentity = identity
 				}
 				// The receiving home's own provenance is the only authority on
 				// its rank: a captain home under Captain dispatch, the General

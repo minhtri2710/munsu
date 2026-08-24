@@ -193,6 +193,12 @@ func TestReconcileHook_ReconcilesGeneralHomeWhenParentStatusEmpty(t *testing.T) 
 	if rank != RankGeneral {
 		t.Fatalf("home rank = %q, want %q", rank, RankGeneral)
 	}
+	// Direct General dispatch launches the soldier with this home as its own,
+	// and writes the task record here; that record is the durable provenance
+	// the receiver derives the soldier rank from.
+	if err := home.WriteMeta(tmp, "general-recovery-test", map[string]string{"kind": "ship"}); err != nil {
+		t.Fatal(err)
+	}
 	result, err := Report(ReportRequest{
 		SenderHome: tmp, ReceiverHome: tmp, SenderRank: RankSoldier,
 		SenderIdentity: "general-recovery-test", ReceiverRank: rank, ReceiverID: identity,
@@ -235,6 +241,19 @@ func TestReconcileHook_GeneralHomeIgnoresStaleParentMetadata(t *testing.T) {
 	if rank != RankGeneral {
 		t.Fatalf("home rank = %q, want %q", rank, RankGeneral)
 	}
+	// A General home holds a captain task record for every captain it
+	// launched, naming that captain's home; the pair is the durable
+	// provenance the receiver derives the captain rank from.
+	captainHome := t.TempDir()
+	if err := home.SeedCaptainProvenance(captainHome, "general-stale-parent-test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := home.WriteMeta(tmp, "captain:general-stale-parent-test", map[string]string{
+		"kind": "captain",
+		"home": captainHome,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	result, err := Report(ReportRequest{
 		SenderHome: tmp, ReceiverHome: tmp, SenderRank: RankCaptain,
 		SenderIdentity: "general-stale-parent-test", ReceiverRank: rank, ReceiverID: identity,
@@ -274,6 +293,11 @@ func TestReconcileHook_CaptainWithoutParentUsesCaptainRecovery(t *testing.T) {
 	}
 	if rank != RankCaptain {
 		t.Fatalf("home rank = %q, want %q", rank, RankCaptain)
+	}
+	// Captain dispatch writes the soldier's task record into the captain
+	// home, which is the durable provenance behind the soldier rank claim.
+	if err := home.WriteMeta(tmp, "captain-recovery-test", map[string]string{"kind": "ship"}); err != nil {
+		t.Fatal(err)
 	}
 	result, err := Report(ReportRequest{
 		SenderHome: tmp, ReceiverHome: tmp, SenderRank: RankSoldier,

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/config"
 )
 
 // The refusal branches on the receiver side of the mailbox.
@@ -28,6 +30,13 @@ func newGuardReceiver(t *testing.T) (*Receiver, *Store, string) {
 	dir := t.TempDir()
 	if err := WriteHomeIdentity(dir, guardReceiverID, RankCaptain); err != nil {
 		t.Fatalf("WriteHomeIdentity: %v", err)
+	}
+	parent := filepath.Join(t.TempDir(), guardSenderID)
+	if err := os.MkdirAll(parent, 0755); err != nil {
+		t.Fatalf("MkdirAll parent: %v", err)
+	}
+	if err := config.Set(dir, "parent-home", parent); err != nil {
+		t.Fatalf("config.Set parent-home: %v", err)
 	}
 	r, err := NewReceiver(dir)
 	if err != nil {
@@ -180,6 +189,90 @@ func TestReceiveAndAckRefuseEnvelopesThatFailProvenance(t *testing.T) {
 // with the same outcome replays it; a different outcome on disk means somebody
 // else recorded a conflicting decision for this message, and that fails closed
 // rather than being overwritten.
+func TestAckRemainsIdempotentAfterSenderProvenanceTeardown(t *testing.T) {
+	generalHome := namedHome(t, senderRankGeneralID)
+	captainHome := namedHome(t, senderRankCaptainID)
+	if err := WriteHomeIdentity(captainHome, senderRankCaptainID, RankCaptain); err != nil {
+		t.Fatalf("WriteHomeIdentity: %v", err)
+	}
+	hostCaptain(t, generalHome, senderRankCaptainID, captainHome)
+	r, err := NewReceiver(generalHome)
+	if err != nil {
+		t.Fatalf("NewReceiver: %v", err)
+	}
+
+	env := &Envelope{
+		SenderRank: RankCaptain, SenderIdentity: senderRankCaptainID,
+		ReceiverRank: RankGeneral, ReceiverID: senderRankGeneralID,
+		TaskID: "captain:" + senderRankCaptainID, Key: "phase",
+		Payload: "captain report",
+	}
+	store := NewStore(generalHome)
+	ref := deliver(t, generalHome, env)
+	first, err := r.Ack(ref)
+	if err != nil {
+		t.Fatalf("first Ack: %v", err)
+	}
+
+	metaPath, err := MetaFilePath(generalHome, "captain:"+senderRankCaptainID)
+	if err != nil {
+		t.Fatalf("MetaFilePath: %v", err)
+	}
+	if err := os.Remove(metaPath); err != nil {
+		t.Fatalf("remove captain provenance: %v", err)
+	}
+	second, err := r.Ack(ref)
+	if err != nil {
+		t.Fatalf("idempotent Ack after provenance teardown: %v", err)
+	}
+	if second.ProcessedAt != first.ProcessedAt {
+		t.Fatalf("replayed ack timestamp = %d, want original %d", second.ProcessedAt, first.ProcessedAt)
+	}
+
+	fresh := *env
+	fresh.MessageID = "fresh-message"
+	fresh.Payload = "fresh captain report"
+	fresh.PayloadHash = PayloadHashHex(fresh.Payload)
+	freshRef := deliver(t, generalHome, &fresh)
+	if _, err := r.Ack(freshRef); err == nil {
+		t.Fatal("fresh Ack succeeded after sender provenance teardown")
+	} else if !strings.Contains(err.Error(), "sender rank underivable") {
+		t.Fatalf("fresh Ack error = %v, want underivable provenance", err)
+	}
+	if store.IsAcked(fresh.SenderIdentity, fresh.MessageID) {
+		t.Fatal("fresh envelope received an ack after provenance teardown")
+	}
+}
+
+func TestAckRefusesMismatchedPersistedAcceptedAck(t *testing.T) {
+	r, store, _ := newGuardReceiver(t)
+	env, ref := deliverGuardEnvelope(t, store)
+
+	persisted := validGuardAck()
+	persisted.MessageID = env.MessageID
+	persisted.SenderIdentity = env.SenderIdentity
+	persisted.ReceiverID = env.ReceiverID
+	persisted.PayloadHash = env.PayloadHash
+	persisted.Key = "different-key"
+	if err := store.WriteAck(&persisted); err != nil {
+		t.Fatalf("WriteAck: %v", err)
+	}
+
+	if _, err := r.Ack(ref); err == nil {
+		t.Fatal("Ack accepted a persisted ack that mismatches the envelope")
+	} else if !strings.Contains(err.Error(), "ack existing accepted record mismatch") {
+		t.Fatalf("error = %v, want the persisted-ack mismatch refusal", err)
+	}
+
+	unchanged, err := store.ReadAck(env.SenderIdentity, env.MessageID)
+	if err != nil {
+		t.Fatalf("ReadAck after refusal: %v", err)
+	}
+	if unchanged == nil || unchanged.Key != persisted.Key {
+		t.Fatalf("persisted ack changed after refusal: got %+v, want %+v", unchanged, persisted)
+	}
+}
+
 func TestAckRefusesToOverwriteAConflictingOutcome(t *testing.T) {
 	r, store, _ := newGuardReceiver(t)
 	env, ref := deliverGuardEnvelope(t, store)
@@ -258,6 +351,20 @@ func TestReadHomeIdentityRefusesUnusableMarkers(t *testing.T) {
 		})
 	}
 
+	// A markerless path must still be a directory before its basename can be
+	// treated as durable general-home provenance.
+	t.Run("a markerless home that is not a directory", func(t *testing.T) {
+		home := filepath.Join(t.TempDir(), "general-home")
+		if err := os.WriteFile(home, []byte("not a home directory"), 0644); err != nil {
+			t.Fatalf("write markerless home: %v", err)
+		}
+		if _, _, err := ReadHomeIdentity(home); err == nil {
+			t.Fatal("ReadHomeIdentity accepted a regular file as a home")
+		} else if !strings.Contains(err.Error(), "not a directory") {
+			t.Fatalf("error = %v, want the non-directory refusal", err)
+		}
+	})
+
 	// A home with no marker falls back to the directory basename. A path whose
 	// basename is not a name — "." — yields no identity, so it refuses instead
 	// of taking "." as one. t.Chdir keeps the relative path inside a fresh temp
@@ -335,6 +442,18 @@ func TestSoldierReceiverRejectsCollidingTaskID(t *testing.T) {
 	}
 	if store.IsAcked(env.SenderIdentity, env.MessageID) {
 		t.Fatal("colliding task envelope received an ack")
+	}
+}
+
+func TestNewSoldierReceiverRefusesCaptainTask(t *testing.T) {
+	dir := t.TempDir()
+	if err := WriteMeta(dir, "captain:captain-1", map[string]string{"kind": "captain", "home": filepath.Join(dir, "captain")}); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+	if _, err := NewSoldierReceiver(dir, "captain:captain-1"); err == nil {
+		t.Fatal("NewSoldierReceiver accepted a captain task")
+	} else if !strings.Contains(err.Error(), "captain task") {
+		t.Fatalf("error = %v, want captain-task refusal", err)
 	}
 }
 

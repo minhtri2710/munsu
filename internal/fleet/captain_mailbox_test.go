@@ -395,6 +395,13 @@ func TestInboxAckCmd_AckRef(t *testing.T) {
 	if err := home.WriteHomeIdentity(captainHome, "test-captain", home.RankCaptain); err != nil {
 		t.Fatalf("WriteHomeIdentity: %v", err)
 	}
+	generalHome := filepath.Join(t.TempDir(), "general-main")
+	if err := os.MkdirAll(generalHome, 0755); err != nil {
+		t.Fatalf("mkdir general: %v", err)
+	}
+	if err := config.Set(captainHome, "parent-home", generalHome); err != nil {
+		t.Fatalf("config.Set parent-home: %v", err)
+	}
 
 	// Write an envelope in the captain's inbox (as if General sent it).
 	env := &home.Envelope{
