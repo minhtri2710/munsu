@@ -278,7 +278,9 @@ docs/adr/0013-afk-is-diagnosis-and-manual-action.md	symbol	RedactSensitive	burn-
 docs/adr/0013-afk-is-diagnosis-and-manual-action.md	symbol	ResolveRecovery	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
 docs/adr/0013-afk-is-diagnosis-and-manual-action.md	symbol	SetBackend	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
 docs/adr/0013-afk-is-diagnosis-and-manual-action.md	symbol	SetPaneCapture	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0013-afk-is-diagnosis-and-manual-action.md	symbol	DirectInject	burn-down(#630): historical API named by ADR-0013; declaration removed by the AFK inject/recovery cleanup, retained as unresolved historical debt.
 docs/adr/0013-afk-is-diagnosis-and-manual-action.md	symbol	maybeInitInjector	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0013-afk-is-diagnosis-and-manual-action.md	symbol	nudgeTracker	burn-down(#630): historical implementation detail named by ADR-0013; declaration removed by the AFK inject/recovery cleanup, retained as unresolved historical debt.
 docs/adr/0015-the-soldier-closes-its-own-terminal-handoff.md	symbol	ActivateOnReceipt	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
 docs/adr/0015-the-soldier-closes-its-own-terminal-handoff.md	symbol	ReconcileOutcome	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
 docs/adr/0015-the-soldier-closes-its-own-terminal-handoff.md	symbol	ReconcileResult	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
