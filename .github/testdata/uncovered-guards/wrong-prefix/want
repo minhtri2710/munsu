@@ -1,0 +1,2 @@
+::error::.github/testdata/uncovered-guards/wrong-prefix/profiles/default.out:2: coverage block has an unexpected module path: githubXcom/minhtri2710/munsu/internal/fake/guard.go:20.25,22.4
+exit 1

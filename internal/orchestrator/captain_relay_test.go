@@ -182,35 +182,179 @@ func TestActivationHook_NoParent(t *testing.T) {
 	// Should not panic and should not try to activate
 	CaptainActivationHook(tmp, nil)
 }
-func TestReconcileHook_ReturnsNilWhenParentStatusEmpty(t *testing.T) {
+func TestReconcileHook_ReconcilesGeneralHomeWhenParentStatusEmpty(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("MUNSU_PARENT_STATUS", "")
-
-	err := ReconcileCaptainHook(tmp, false, nil)
+	os.MkdirAll(filepath.Join(tmp, "state"), 0755)
+	identity, rank, err := ReadHomeIdentity(tmp)
 	if err != nil {
-		t.Errorf("expected nil when MUNSU_PARENT_STATUS is empty, got: %v", err)
+		t.Fatal(err)
+	}
+	if rank != RankGeneral {
+		t.Fatalf("home rank = %q, want %q", rank, RankGeneral)
+	}
+	result, err := Report(ReportRequest{
+		SenderHome: tmp, ReceiverHome: tmp, SenderRank: RankSoldier,
+		SenderIdentity: "general-recovery-test", ReceiverRank: rank, ReceiverID: identity,
+		TaskID: "general-recovery-test", State: "failed", Message: "queued report",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiver, err := NewReceiver(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := receiver.Ack(NotificationRef{MessageID: result.MessageID, SenderIdentity: "general-recovery-test"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ReconcileCaptainHook(tmp, false, &captainNotificationTransport{acknowledged: true}); err != nil {
+		t.Fatalf("reconcile General home: %v", err)
+	}
+	if pending, err := NewStore(tmp).ListAllPending(); err != nil {
+		t.Fatal(err)
+	} else if len(pending) != 0 {
+		t.Fatalf("pending reports after General recovery = %d, want 0", len(pending))
 	}
 }
 
-// TestReconcileHook_ReturnsNilWhenParentStatusEqualsHomeDir verifies that
-// reconcileHook returns nil when MUNSU_PARENT_STATUS equals homeDir (a
-// non-Captain/General guard against self-referencing parent).
-func TestReconcileHook_ReturnsNilWhenParentStatusEqualsHomeDir(t *testing.T) {
+func TestReconcileHook_GeneralHomeIgnoresStaleParentMetadata(t *testing.T) {
+	tmp := t.TempDir()
+	staleParent := t.TempDir()
+	t.Setenv("MUNSU_PARENT_STATUS", staleParent)
+	os.MkdirAll(filepath.Join(tmp, "state"), 0755)
+	if err := config.Set(tmp, "parent-home", staleParent); err != nil {
+		t.Fatal(err)
+	}
+
+	identity, rank, err := ReadHomeIdentity(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rank != RankGeneral {
+		t.Fatalf("home rank = %q, want %q", rank, RankGeneral)
+	}
+	result, err := Report(ReportRequest{
+		SenderHome: tmp, ReceiverHome: tmp, SenderRank: RankCaptain,
+		SenderIdentity: "general-stale-parent-test", ReceiverRank: rank, ReceiverID: identity,
+		TaskID: "general-stale-parent-test", State: "failed", Message: "queued report",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiver, err := NewReceiver(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := receiver.Ack(NotificationRef{MessageID: result.MessageID, SenderIdentity: "general-stale-parent-test"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ReconcileCaptainHook(tmp, false, &captainNotificationTransport{acknowledged: true}); err != nil {
+		t.Fatalf("reconcile General home: %v", err)
+	}
+	if pending, err := NewStore(tmp).ListAllPending(); err != nil {
+		t.Fatal(err)
+	} else if len(pending) != 0 {
+		t.Fatalf("pending reports after General recovery = %d, want 0", len(pending))
+	}
+}
+
+func TestReconcileHook_CaptainWithoutParentUsesCaptainRecovery(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("MUNSU_PARENT_STATUS", "")
+	os.MkdirAll(filepath.Join(tmp, "state"), 0755)
+	if err := home.SeedCaptainProvenance(tmp, "test-captain"); err != nil {
+		t.Fatal(err)
+	}
+	identity, rank, err := ReadHomeIdentity(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rank != RankCaptain {
+		t.Fatalf("home rank = %q, want %q", rank, RankCaptain)
+	}
+	result, err := Report(ReportRequest{
+		SenderHome: tmp, ReceiverHome: tmp, SenderRank: RankSoldier,
+		SenderIdentity: "captain-recovery-test", ReceiverRank: rank, ReceiverID: identity,
+		TaskID: "captain-recovery-test", State: "failed", Message: "queued report",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiver, err := NewReceiver(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := receiver.Ack(NotificationRef{MessageID: result.MessageID, SenderIdentity: "captain-recovery-test"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ReconcileCaptainHook(tmp, false, &captainNotificationTransport{acknowledged: true}); err != nil {
+		t.Fatalf("reconcile Captain home: %v", err)
+	}
+	if pending, err := NewStore(tmp).ListAllPending(); err != nil {
+		t.Fatal(err)
+	} else if len(pending) != 0 {
+		t.Fatalf("pending reports after Captain recovery = %d, want 0", len(pending))
+	}
+}
+
+// TestReconcileHook_ReconcilesGeneralHomeWhenParentStatusEqualsHomeDir verifies that
+// ReconcileCaptainHook recovers the General home when MUNSU_PARENT_STATUS equals homeDir
+// (a General guard against self-referencing parent).
+func TestReconcileHook_ReconcilesGeneralHomeWhenParentStatusEqualsHomeDir(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("MUNSU_PARENT_STATUS", tmp)
+	os.MkdirAll(filepath.Join(tmp, "state"), 0755)
 
-	err := ReconcileCaptainHook(tmp, false, nil)
+	err := ReconcileCaptainHook(tmp, false, &captainNotificationTransport{acknowledged: true})
 	if err != nil {
-		t.Errorf("expected nil when MUNSU_PARENT_STATUS equals homeDir, got: %v", err)
+		t.Errorf("expected nil when MUNSU_PARENT_STATUS equals homeDir with valid transport, got: %v", err)
 	}
 }
 
-func TestReconcileHook_RequiresNotificationTransportWhenParentSet(t *testing.T) {
+func TestReconcileHook_RejectsUnsupportedHomeRankBeforeRecovery(t *testing.T) {
+	tmp := t.TempDir()
+	transport := &captainNotificationTransport{acknowledged: true}
+	originalReadHomeIdentity := ReadHomeIdentity
+	ReadHomeIdentity = func(string) (string, Rank, error) {
+		return "soldier-home", RankSoldier, nil
+	}
+	t.Cleanup(func() { ReadHomeIdentity = originalReadHomeIdentity })
+
+	err := ReconcileCaptainHook(tmp, false, transport)
+	if err == nil || !strings.Contains(err.Error(), "unsupported home rank") {
+		t.Fatalf("error = %v, want unsupported home rank error", err)
+	}
+	if transport.calls != 0 {
+		t.Fatalf("notification calls = %d, want 0 for unsupported home rank", transport.calls)
+	}
+}
+
+func TestReconcileHook_RejectsUnreadableHomeIdentityBeforeRecovery(t *testing.T) {
 	tmp := t.TempDir()
 	parentHome := t.TempDir()
 	t.Setenv("MUNSU_PARENT_STATUS", parentHome)
+	if err := os.WriteFile(filepath.Join(tmp, captainMarkerName), []byte("malformed"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	transport := &captainNotificationTransport{acknowledged: true}
+
+	err := ReconcileCaptainHook(tmp, false, transport)
+	if err == nil || !strings.Contains(err.Error(), "reading home rank") {
+		t.Fatalf("error = %v, want unreadable home rank error", err)
+	}
+	if transport.calls != 0 {
+		t.Fatalf("notification calls = %d, want 0 when home rank is unreadable", transport.calls)
+	}
+}
+
+func TestReconcileHook_RequiresNotificationTransport(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("MUNSU_PARENT_STATUS", "")
 	os.MkdirAll(filepath.Join(tmp, "state"), 0755)
-	home.SeedCaptainProvenance(tmp, "test-captain")
 
 	err := ReconcileCaptainHook(tmp, false, nil)
 	if err == nil || !strings.Contains(err.Error(), "uplink notification transport capability is required") {

@@ -1,0 +1,2 @@
+::error::.github/testdata/uncovered-guards/malformed-end/profiles/default.out:2: unreadable profile line: github.com/minhtri2710/munsu/internal/fake/guard.go:20.25,not-a-point 1 1
+exit 1
