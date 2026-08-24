@@ -364,7 +364,19 @@ func switchSelfOriginating(r *resolver, file string, fset *token.FileSet, stmt *
 }
 
 func typeSwitchSelfOriginating(r *resolver, file string, fset *token.FileSet, stmt *ast.TypeSwitchStmt) bool {
-	if !isSelfOriginating(r, file, fset, stmt.Init, stmt.Assign) {
+	var rhs ast.Expr
+	switch assign := stmt.Assign.(type) {
+	case *ast.ExprStmt:
+		rhs = assign.X
+	case *ast.AssignStmt:
+		if len(assign.Rhs) != 1 {
+			return false
+		}
+		rhs = assign.Rhs[0]
+	default:
+		return false
+	}
+	if !isSelfOriginating(r, file, fset, stmt.Init, rhs) {
 		return false
 	}
 	for _, clause := range stmt.Body.List {

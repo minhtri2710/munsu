@@ -23,6 +23,15 @@ func Type(v any) error {
 	}
 }
 
+func NamedType(v any) error {
+	switch got := v.(type) {
+	case string:
+		return nil
+	default:
+		return fmt.Errorf("unsupported type %T", got)
+	}
+}
+
 func ErrorCase(v any) error {
 	switch v.(type) {
 	case error:

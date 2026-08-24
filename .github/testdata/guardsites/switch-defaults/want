@@ -1,3 +1,4 @@
 a.go	Expression	1	default	12.10-13.47	12.10,13.3
+a.go	NamedType	1	default	30.10-31.48	30.10,31.3
 a.go	Type	1	default	21.10-22.40	21.10,22.3
 exit 0
