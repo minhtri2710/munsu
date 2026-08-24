@@ -103,7 +103,7 @@ A receiver may process or acknowledge a durable report while notification remain
 
 The receiver-local versioned journal is the source of truth. Receiver envelopes, wake records, sender pending/open evidence, and audit projections are repairable projections. The receiver journal is updated before sender projections are retired.
 
-Durability determines report success. A failed Delivery Notification returns a successful `Queued` outcome and is retried. Recovery uses exponential backoff with deterministic jitter, a cap, per-receiver rate limiting, and journaled retry deadlines. Pending obligations never expire automatically; they may become `Stalled/NeedsOperator`.
+Durability determines report success. Each notification attempt has exactly one runtime outcome: `Queued`, `Acknowledged`, or `Failed`. `Queued` covers an unresolved or unavailable target with no transport failure and remains eligible for retry. `Failed` means a resolved transport was invoked and failed; `Report` returns `ErrReportDurable` after the durable record is committed, while recovery leaves the unacknowledged record queued for a later retry. Recovery uses exponential backoff with deterministic jitter, a cap, per-receiver rate limiting, and journaled retry deadlines. Pending obligations never expire automatically; they may become `Stalled/NeedsOperator`.
 
 The journal uses canonical versioned JSON with a checksum. Writes use the strongest documented platform durability behavior:
 
