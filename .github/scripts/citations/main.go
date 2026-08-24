@@ -40,6 +40,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode"
 )
 
 func main() {
@@ -1176,6 +1177,9 @@ func scan(root string) ([]string, error) {
 				continue
 			}
 			for _, s := range inlineSpans(line) {
+				if strings.IndexFunc(s.text, unicode.IsControl) >= 0 {
+					return nil, fmt.Errorf("citation in %s contains a control character: %q", doc, s.text)
+				}
 				for _, row := range classify(root, idx, fi, doc, s.text) {
 					rows[row] = true
 				}
@@ -1193,26 +1197,60 @@ func scan(root string) ([]string, error) {
 	return out, nil
 }
 
-func isGenericReference(idx *index, expr ast.Expr) bool {
+func genericTypeArgument(expr ast.Expr) bool {
 	switch expr.(type) {
-	case *ast.IndexExpr, *ast.IndexListExpr:
-		base, ok := declarationExprName(expr)
-		if !ok {
-			return false
-		}
-		if !strings.Contains(base, ".") && !strings.HasPrefix(base, "(") {
-			judged, _ := symbolName(idx, base)
-			return idx.names[base] || judged
-		}
-		return referenceShaped(base)
-	default:
+	case *ast.BasicLit, *ast.CallExpr, *ast.BinaryExpr, *ast.UnaryExpr:
 		return false
+	default:
+		return true
 	}
 }
 
+func genericInstantiation(expr ast.Expr) bool {
+	switch t := expr.(type) {
+	case *ast.IndexExpr:
+		return genericTypeArgument(t.Index)
+	case *ast.IndexListExpr:
+		if len(t.Indices) == 0 {
+			return false
+		}
+		for _, index := range t.Indices {
+			if !genericTypeArgument(index) {
+				return false
+			}
+		}
+		return true
+	case *ast.SelectorExpr:
+		return genericInstantiation(t.X)
+	case *ast.ParenExpr:
+		return genericInstantiation(t.X)
+	case *ast.StarExpr:
+		return genericInstantiation(t.X)
+	}
+	return false
+}
+
+func isGenericReference(idx *index, expr ast.Expr) bool {
+	if !genericInstantiation(expr) {
+		return false
+	}
+	base, ok := declarationExprName(expr)
+	if !ok {
+		return false
+	}
+	if !strings.Contains(base, ".") && !strings.HasPrefix(base, "(") {
+		judged, _ := symbolName(idx, base)
+		return idx.names[base] || judged || base != ""
+	}
+	return referenceShaped(base)
+}
+
 func genericSymbolName(idx *index, text string) (bool, bool) {
-	if !strings.Contains(text, ".") && !strings.HasPrefix(text, "(") && idx.names[text] {
-		return true, true
+	if !strings.Contains(text, ".") && !strings.HasPrefix(text, "(") {
+		if idx.names[text] {
+			return true, true
+		}
+		return false, false
 	}
 	return symbolName(idx, text)
 }
