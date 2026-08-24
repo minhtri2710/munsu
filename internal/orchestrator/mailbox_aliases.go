@@ -32,6 +32,7 @@ const (
 
 var NewStore = home.NewStore
 var NewReceiver = home.NewReceiver
+var NewSoldierReceiver = home.NewSoldierReceiver
 var ParseNotificationRef = home.ParseNotificationRef
 var ReadHomeIdentity = home.ReadHomeIdentity
 var WriteHomeIdentity = home.WriteHomeIdentity
