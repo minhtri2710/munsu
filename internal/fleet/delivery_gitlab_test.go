@@ -19,6 +19,17 @@ func TestGitLabClientForStateUnknownRefuses(t *testing.T) {
 	}
 }
 
+func TestDeliveryProviderFor_GitLabCapabilityAbsentRefuses(t *testing.T) {
+	old := defaultGlabRunner
+	t.Cleanup(func() { defaultGlabRunner = old })
+	defaultGlabRunner = &fakeGlabRunner{lookPathErr: errors.New("glab not found")}
+
+	_, err := deliveryProviderFor(domain.DeliveryIdentity{Provider: "gitlab"})
+	if err == nil || !strings.Contains(err.Error(), "glab must be Ready") {
+		t.Fatalf("deliveryProviderFor error = %v, want absent GitLab capability refusal", err)
+	}
+}
+
 // fakeGlabRunner implements GlabRunner for testing.
 type fakeGlabRunner struct {
 	lookPathErr error

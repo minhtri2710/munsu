@@ -1,0 +1,8 @@
+a.go	Direct	1	!ok	8.9-10.3	8.9,9.3
+a.go	Explicit	1	!ok	39.9-41.3	39.9,40.3
+a.go	First	1	!ok	60.10-62.4	60.10,61.4
+a.go	Grouped	1	!ok	54.10-56.4	54.10,55.4
+a.go	Parenthesized	1	!ok	46.9-48.3	46.9,47.3
+a.go	Second	1	!ok	65.10-67.4	65.10,66.4
+a.go	Switch	1	default	16.10-17.38	16.10,17.3
+exit 0

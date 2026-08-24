@@ -988,6 +988,19 @@ func TestCurrentEndpointKindFailsClosedWhenTmuxPaneCannotResolve(t *testing.T) {
 	}
 }
 
+func TestTmuxWindowForPaneFailsClosedWhenWindowIsEmpty(t *testing.T) {
+	binDir := t.TempDir()
+	tmuxPath := filepath.Join(binDir, "tmux")
+	if err := os.WriteFile(tmuxPath, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(filepath.ListSeparator)+os.Getenv("PATH"))
+
+	if _, err := tmuxWindowForPane("%3"); err == nil || !strings.Contains(err.Error(), "returned empty window id") {
+		t.Fatalf("tmuxWindowForPane() error = %v, want empty-window refusal", err)
+	}
+}
+
 func TestAuthorizeSpawnAllowsValidatedCaptain(t *testing.T) {
 	homeDir := t.TempDir()
 	if err := home.SeedCaptainProvenance(homeDir, "sm-1"); err != nil {

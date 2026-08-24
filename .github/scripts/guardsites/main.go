@@ -240,38 +240,38 @@ func scan(root string) ([]site, error) {
 		}
 		rel = filepath.ToSlash(rel)
 		for _, decl := range f.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil {
-				continue
-			}
-			owner := funcName(fn)
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				switch stmt := n.(type) {
-				case *ast.IfStmt:
-					if !isRefusal(resolver, abs, fset, stmt.Body) || !isSelfOriginating(resolver, abs, fset, stmt.Init, stmt.Cond) {
-						return true
+			switch decl := decl.(type) {
+			case *ast.FuncDecl:
+				appendFunctionSites(resolver, abs, &rows, decl.Body, funcName(decl), rel, src, fset)
+			case *ast.GenDecl:
+				if decl.Tok != token.VAR {
+					continue
+				}
+				for _, spec := range decl.Specs {
+					valueSpec, ok := spec.(*ast.ValueSpec)
+					if !ok {
+						return nil, fmt.Errorf("%s: var declaration has non-value specification %T", path, spec)
 					}
-					pos := fset.Position(stmt.Body.Lbrace)
-					rows = append(rows, site{
-						File:      rel,
-						Func:      owner,
-						Predicate: exprText(src, fset, stmt.Cond),
-						Body:      sourceRange(fset, stmt.Body),
-						Entries:   entryPoints(fset, stmt.Body),
-						line:      pos.Line,
-						col:       pos.Column,
-					})
-				case *ast.SwitchStmt:
-					if switchSelfOriginating(resolver, abs, fset, stmt) {
-						appendDefaultSites(resolver, abs, &rows, stmt.Body, owner, rel, fset)
+					if len(valueSpec.Values) == 0 {
+						continue
 					}
-				case *ast.TypeSwitchStmt:
-					if typeSwitchSelfOriginating(resolver, abs, fset, stmt) {
-						appendDefaultSites(resolver, abs, &rows, stmt.Body, owner, rel, fset)
+					if len(valueSpec.Names) != len(valueSpec.Values) {
+						for _, value := range valueSpec.Values {
+							if unwrapFuncLit(value) != nil {
+								return nil, fmt.Errorf("%s: cannot map function literal initializer to declared variable names", path)
+							}
+						}
+						continue
+					}
+					for i, value := range valueSpec.Values {
+						fn := unwrapFuncLit(value)
+						if fn == nil || valueSpec.Names[i].Name == "_" {
+							continue
+						}
+						appendFunctionSites(resolver, abs, &rows, fn.Body, valueSpec.Names[i].Name, rel, src, fset)
 					}
 				}
-				return true
-			})
+			}
 		}
 	}
 	// Ordinals in source order, so `nth` names the same branch on every machine
@@ -304,6 +304,59 @@ func scan(root string) ([]site, error) {
 		return rows[i].Nth < rows[j].Nth
 	})
 	return rows, nil
+}
+
+func appendFunctionSites(r *resolver, abs string, rows *[]site, body *ast.BlockStmt, owner, file string, src []byte, fset *token.FileSet) {
+	if body == nil {
+		return
+	}
+	ast.Inspect(body, func(n ast.Node) bool {
+		switch stmt := n.(type) {
+		case *ast.IfStmt:
+			if !isRefusal(r, abs, fset, stmt.Body) || !isSelfOriginating(r, abs, fset, stmt.Init, stmt.Cond) {
+				return true
+			}
+			pos := fset.Position(stmt.Body.Lbrace)
+			*rows = append(*rows, site{
+				File:      file,
+				Func:      owner,
+				Predicate: exprText(src, fset, stmt.Cond),
+				Body:      sourceRange(fset, stmt.Body),
+				Entries:   entryPoints(fset, stmt.Body),
+				line:      pos.Line,
+				col:       pos.Column,
+			})
+		case *ast.SwitchStmt:
+			if switchSelfOriginating(r, abs, fset, stmt) {
+				appendDefaultSites(r, abs, rows, stmt.Body, owner, file, fset)
+			}
+		case *ast.TypeSwitchStmt:
+			if typeSwitchSelfOriginating(r, abs, fset, stmt) {
+				appendDefaultSites(r, abs, rows, stmt.Body, owner, file, fset)
+			}
+		}
+		return true
+	})
+}
+
+// Top-level declarations are FuncDecl or GenDecl; only a var GenDecl's
+// ValueSpecs can introduce the requested package-level function owner. Each
+// ValueSpec is therefore either initializer-free, positionally mapped to a
+// parenthesized FuncLit and a non-blank name, or ignored as a non-function
+// initializer; an ambiguous function-literal mapping fails closed. This is
+// complete for the direct-assignment contract, so calls, conversions,
+// composites, and nested initializer expressions are not chased.
+func unwrapFuncLit(expr ast.Expr) *ast.FuncLit {
+	for {
+		switch current := expr.(type) {
+		case *ast.ParenExpr:
+			expr = current.X
+		case *ast.FuncLit:
+			return current
+		default:
+			return nil
+		}
+	}
 }
 
 // `Type.Method` for methods, bare name for plain functions -- the same shape
