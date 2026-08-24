@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
 )
@@ -76,8 +77,21 @@ func TestReportCmdTransportFailureFailsLoud(t *testing.T) {
 	t.Setenv("MUNSU_TASK_ID", "task:failed-transport")
 	t.Setenv("MUNSU_ROLE", "soldier")
 	t.Setenv("MUNSU_PARENT_STATUS", receiverHome)
-	cmd := newReportCmdWithNotifier(func(string, string, orchestrator.NotificationRef) orchestrator.UplinkNotifyResult {
-		return orchestrator.FailedNotification(errors.New("backend failed"))
+	transportErr := errors.New("backend failed")
+	transport := sessionUplinkTransport{
+		identity: func(string) (string, error) { return "tmux", nil },
+		resolve: func(string, string) (backend.Backend, string, error) {
+			return uplinkPromptBackend{result: backend.PromptResult{
+				Status: backend.PromptBackendFailed,
+				Err:    transportErr,
+			}}, "tmux", nil
+		},
+	}
+	cmd := newReportCmdWithNotifier(func(sender, _ string, ref orchestrator.NotificationRef) orchestrator.UplinkNotifyResult {
+		return transport.Notify(sender, orchestrator.TargetResult{
+			Source: orchestrator.RuntimeSource,
+			Handle: "pane",
+		}, ref.Encode())
 	})
 	root := &cobra.Command{Use: "munsu"}
 	root.AddCommand(cmd)
@@ -92,9 +106,24 @@ func TestReportCmdTransportFailureFailsLoud(t *testing.T) {
 	if !errors.Is(err, orchestrator.ErrReportDurable) {
 		t.Fatalf("err = %v, want ErrReportDurable", err)
 	}
+	if !errors.Is(err, transportErr) {
+		t.Fatalf("err = %v, want backend failure", err)
+	}
 	if !strings.Contains(err.Error(), "notification remains pending for reconciliation and retry") {
 		t.Fatalf("err = %v, want reconciliation guidance", err)
 	}
+	// Soldier reports use the owning parent home as the sender home, which is
+	// the same durable home as this direct-dispatch receiver.
+	pending, pendingErr := orchestrator.NewStore(receiverHome).ListAllPending()
+	if pendingErr != nil || len(pending) != 1 {
+		t.Fatalf("sender pending records = %d, err = %v; want one durable retry record", len(pending), pendingErr)
+	}
+	envelope, envelopeErr := orchestrator.NewStore(receiverHome).ReadEnvelope(pending[0].SenderIdentity, pending[0].MessageID)
+	if envelopeErr != nil || envelope == nil {
+		t.Fatalf("receiver envelope = %v, err = %v; want durable committed report", envelope, envelopeErr)
+	}
+	t.Logf("CLI error: %v", err)
+	t.Logf("durable message %s: receiver envelope committed; sender pending retry record retained", pending[0].MessageID)
 }
 
 func TestReportCmdImmediateNotificationUsesRefAndReturnsNotified(t *testing.T) {
