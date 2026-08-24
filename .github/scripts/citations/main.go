@@ -365,6 +365,57 @@ func lazyParagraphContinuation(line string, containers, openContainers []fenceCo
 	return true
 }
 
+type htmlBlock struct {
+	kind       string
+	tag        string
+	containers []fenceContainer
+}
+
+func htmlBlockStartInfo(line string) (htmlBlock, bool) {
+	trimmed := strings.TrimSpace(line)
+	if !htmlBlockStartRe.MatchString(line) {
+		return htmlBlock{}, false
+	}
+	lower := strings.ToLower(trimmed)
+	for _, tag := range []string{"script", "pre", "style", "textarea"} {
+		if strings.HasPrefix(lower, "<"+tag) {
+			return htmlBlock{kind: "raw", tag: tag}, true
+		}
+	}
+	switch {
+	case strings.HasPrefix(trimmed, "<!--"):
+		return htmlBlock{kind: "comment"}, true
+	case strings.HasPrefix(trimmed, "<?"):
+		return htmlBlock{kind: "processing"}, true
+	case strings.HasPrefix(trimmed, "<![CDATA["):
+		return htmlBlock{kind: "cdata"}, true
+	case strings.HasPrefix(trimmed, "<!"):
+		return htmlBlock{kind: "declaration"}, true
+	default:
+		return htmlBlock{kind: "tag"}, true
+	}
+}
+
+func htmlBlockTerminated(block htmlBlock, line string) bool {
+	lower := strings.ToLower(line)
+	switch block.kind {
+	case "raw":
+		return strings.Contains(lower, "</"+block.tag+">") || strings.Contains(lower, "</"+block.tag+" ")
+	case "comment":
+		return strings.Contains(line, "-->")
+	case "processing":
+		return strings.Contains(line, "?>")
+	case "cdata":
+		return strings.Contains(line, "]]>")
+	case "declaration":
+		return strings.Contains(line, ">")
+	case "tag":
+		return strings.TrimSpace(line) == ""
+	default:
+		return false
+	}
+}
+
 func inlineBlockBoundary(line string) bool {
 	return thematicBreakRe.MatchString(line) || setextUnderline(line) || markdownBlockStartRe.MatchString(line) || htmlBlockStartRe.MatchString(line)
 }
@@ -1293,6 +1344,7 @@ func scan(root string) ([]string, error) {
 		var openRun int
 		var openText string
 		var openContainers []fenceContainer
+		var htmlState *htmlBlock
 		addSpans := func(spans []span) error {
 			for _, s := range spans {
 				if strings.ContainsAny(s.text, "\t\r\x00") || strings.IndexFunc(strings.ReplaceAll(s.text, "\n", ""), unicode.IsControl) >= 0 {
@@ -1314,6 +1366,17 @@ func scan(root string) ([]string, error) {
 			return addSpans(spans)
 		}
 		for _, line := range strings.Split(string(body), "\n") {
+			if htmlState != nil {
+				normalized, ok := stripFenceContainers(line, htmlState.containers)
+				if !ok {
+					htmlState = nil
+				} else {
+					if htmlBlockTerminated(*htmlState, normalized) {
+						htmlState = nil
+					}
+					continue
+				}
+			}
 			if fenceRun > 0 {
 				if err := flushOpen(); err != nil {
 					return nil, err
@@ -1327,6 +1390,28 @@ func scan(root string) ([]string, error) {
 					continue
 				}
 				fenceMarkerByte, fenceRun, fenceContainers = 0, 0, nil
+			}
+			block, blockOK := htmlBlockStartInfo(line)
+			var blockContainers []fenceContainer
+			if !blockOK {
+				if normalizedLine, containers, ok := parseMarkdownContainers(line); ok {
+					block, blockOK = htmlBlockStartInfo(normalizedLine)
+					blockContainers = containers
+				}
+			}
+			if blockOK {
+				if err := flushOpen(); err != nil {
+					return nil, err
+				}
+				if blockContainers == nil {
+					_, blockContainers, _ = parseMarkdownContainers(line)
+				}
+				block.containers = blockContainers
+				normalized, stripped := stripFenceContainers(line, blockContainers)
+				if stripped && !htmlBlockTerminated(block, normalized) {
+					htmlState = &block
+				}
+				continue
 			}
 			if marker, run, _, ok := fenceMarker(line); ok {
 				_, containers, _ := parseMarkdownContainers(line)

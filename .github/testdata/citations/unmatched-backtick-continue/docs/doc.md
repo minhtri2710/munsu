@@ -18,5 +18,15 @@ continuation`` and `home.MissingAfterLazyItem`.
 <SCRIPT></SCRIPT>
 Then `home.MissingAfterHTML` then ``.
 
+<script>
+An unmatched `` run inside HTML.
+</script>
+Then `home.MissingAfterMultilineHTML` then ``.
+
+<div>
+An unmatched `` run inside a block tag.
+
+Then `home.MissingAfterHTMLBlank` then ``.
+
 > ``outer `
 <span>inline html</span>`` and `home.MissingAfterInlineHTML`.

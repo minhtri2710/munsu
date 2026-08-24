@@ -79,13 +79,15 @@ func TestScanRecoversUnmatchedRunsAcrossBoundaries(t *testing.T) {
 		t.Fatalf("scan(%q): %v", root, err)
 	}
 	want := map[string]bool{
-		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterQuote":      true,
-		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterRuns":       true,
-		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterItem":       true,
-		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterLazy":       true,
-		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterLazyItem":   true,
-		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterHTML":       true,
-		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterInlineHTML": true,
+		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterQuote":         true,
+		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterRuns":          true,
+		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterItem":          true,
+		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterLazy":          true,
+		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterLazyItem":      true,
+		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterHTML":          true,
+		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterInlineHTML":    true,
+		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterMultilineHTML": true,
+		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterHTMLBlank":     true,
 	}
 	for _, row := range rows {
 		if want[row] {
