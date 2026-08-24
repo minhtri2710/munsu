@@ -4,9 +4,26 @@ package fleet
 
 import (
 	"encoding/json"
-	"github.com/minhtri2710/munsu/internal/domain"
+	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/backend"
+	"github.com/minhtri2710/munsu/internal/domain"
 )
+
+func TestQueryGLMergeStatusForStateRefusesUnknownState(t *testing.T) {
+	_, err := queryGLMergeStatusForState(backend.State(99), &domain.DeliveryIdentity{})
+	if err == nil || !strings.Contains(err.Error(), "unknown state") {
+		t.Fatalf("queryGLMergeStatusForState error = %v, want unknown-state refusal", err)
+	}
+}
+
+func TestFetchProviderSnapshotForProviderRefusesUnknownProvider(t *testing.T) {
+	_, err := fetchProviderSnapshotForProvider("unknown", "https://example.invalid")
+	if err == nil || !strings.Contains(err.Error(), "unknown provider") {
+		t.Fatalf("fetchProviderSnapshotForProvider error = %v, want unknown-provider refusal", err)
+	}
+}
 
 func TestPRMergeStatus_JSONUnmarshal(t *testing.T) {
 	// Test the domain.PRMergeStatus can be unmarshaled from gh CLI output

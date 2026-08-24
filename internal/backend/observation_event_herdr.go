@@ -46,7 +46,10 @@ func (s *HerdrEventSource) capability() CapabilityInfo {
 // negotiate classifies the negotiated capability into the typed event-seam
 // fallback contract. READY + CapAgentWait is the only usable state.
 func (s *HerdrEventSource) negotiate() error {
-	info := s.capability()
+	return negotiateHerdrCapability(s.capability())
+}
+
+func negotiateHerdrCapability(info CapabilityInfo) error {
 	switch info.State {
 	case HerdrReady:
 		if !info.Flags.Has(CapAgentWait) {

@@ -496,12 +496,13 @@ check() {
 	covered="$(printf '%s\n' "$verdicts" | { grep '^covered	' || true; } | cut -f2,3,4,5 | sort -u)"
 	baseline="$(baseline_entries)"
 
-	# `file:body-range: func (#nth): if <predicate>` for a list of site keys. The
-	# body range comes from the derived site data, where it helps locate the guard
-	# without becoming part of the baseline identity; putting it in the baseline
-	# would rewrite that file on every edit above a guard.
+	# `file:body-range: func (#nth): if <predicate>` or `switch default` for
+	# a list of site keys. The body range comes from the derived site data, where
+	# it helps locate the guard without becoming part of the baseline identity;
+	# putting it in the baseline would rewrite that file on every edit above a guard.
 	sited() {
 		awk -F'\t' 'NR == FNR { at[$2 "\t" $3 "\t" $4 "\t" $5] = $6; next }
+			$4 == "default" { printf "  %s:%s: %s (#%s): switch default\n", $1, at[$0], $2, $3; next }
 			{ printf "  %s:%s: %s (#%s): if %s\n", $1, at[$0], $2, $3, $4 }' \
 			<(printf '%s\n' "$verdicts") -
 	}
@@ -539,7 +540,11 @@ check() {
 	if [ -n "$stale" ]; then
 		echo "::error::$BASELINE_REL entries that match no refusal branch in the tree:" >&2
 		printf '%s\n' "$stale" | while IFS=$'\t' read -r file func nth pred; do
-			printf '  %s: %s (#%s): if %s\n' "$file" "$func" "$nth" "$pred" >&2
+			if [ "$pred" = default ]; then
+				printf '  %s: %s (#%s): switch default\n' "$file" "$func" "$nth" >&2
+			else
+				printf '  %s: %s (#%s): if %s\n' "$file" "$func" "$nth" "$pred" >&2
+			fi
 		done
 		echo "  Each was deleted or rewritten -- both are fine. Drop the line." >&2
 		failed=1

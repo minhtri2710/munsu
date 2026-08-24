@@ -12,7 +12,7 @@
 //	file       repo-relative path of the non-test .go file
 //	func       enclosing top-level function, `Type.Method` for methods
 //	nth        1-based occurrence of this exact predicate in this function
-//	predicate  the `if` condition, source text, whitespace collapsed
+//	predicate  the `if` condition, or `default` for a refusing switch default
 //	body       source range of the refusal body, `start-end` as `line.col`
 //	entries    opening-brace and first-statement coordinates, comma-separated
 //
@@ -46,9 +46,9 @@
 // to one, so a lane that flagged it would be noise.
 //
 // The recognizer is a heuristic and this number is a LOWER BOUND. It does not
-// see: a guard written as a `switch` default, a guard that returns early with a
-// bare `nil`, a guard wrapped in a helper call (`mustBeWorktree(p)`), or a guard
-// at the *function* level -- a complete refusal that nothing calls. That last
+// see: a guard that returns early with a bare `nil`, a guard wrapped in a helper
+// call (`mustBeWorktree(p)`), or a guard at the *function* level -- a complete
+// refusal that nothing calls. That last
 // shape is not a gap here, it is the reachability lane's job (deadcode.sh).
 package main
 
@@ -246,23 +246,30 @@ func scan(root string) ([]site, error) {
 			}
 			owner := funcName(fn)
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				stmt, ok := n.(*ast.IfStmt)
-				if !ok {
-					return true
+				switch stmt := n.(type) {
+				case *ast.IfStmt:
+					if !isRefusal(stmt.Body) || !isSelfOriginating(resolver, abs, fset, stmt.Init, stmt.Cond) {
+						return true
+					}
+					pos := fset.Position(stmt.Body.Lbrace)
+					rows = append(rows, site{
+						File:      rel,
+						Func:      owner,
+						Predicate: exprText(src, fset, stmt.Cond),
+						Body:      sourceRange(fset, stmt.Body),
+						Entries:   entryPoints(fset, stmt.Body),
+						line:      pos.Line,
+						col:       pos.Column,
+					})
+				case *ast.SwitchStmt:
+					if switchSelfOriginating(resolver, abs, fset, stmt) {
+						appendDefaultSites(&rows, stmt.Body, owner, rel, fset)
+					}
+				case *ast.TypeSwitchStmt:
+					if isSelfOriginating(resolver, abs, fset, stmt.Init, stmt.Assign) {
+						appendDefaultSites(&rows, stmt.Body, owner, rel, fset)
+					}
 				}
-				if !isRefusal(stmt.Body) || !isSelfOriginating(resolver, abs, fset, stmt.Init, stmt.Cond) {
-					return true
-				}
-				pos := fset.Position(stmt.Body.Lbrace)
-				rows = append(rows, site{
-					File:      rel,
-					Func:      owner,
-					Predicate: exprText(src, fset, stmt.Cond),
-					Body:      sourceRange(fset, stmt.Body),
-					Entries:   entryPoints(fset, stmt.Body),
-					line:      pos.Line,
-					col:       pos.Column,
-				})
 				return true
 			})
 		}
@@ -338,6 +345,45 @@ func entryPoints(fset *token.FileSet, body *ast.BlockStmt) string {
 	return fmt.Sprintf("%d.%d,%d.%d", brace.Line, brace.Column, first.Line, first.Column)
 }
 
+func switchSelfOriginating(r *resolver, file string, fset *token.FileSet, stmt *ast.SwitchStmt) bool {
+	if !isSelfOriginating(r, file, fset, stmt.Init, stmt.Tag) {
+		return false
+	}
+	for _, clause := range stmt.Body.List {
+		caseClause, ok := clause.(*ast.CaseClause)
+		if !ok || len(caseClause.List) == 0 {
+			continue
+		}
+		for _, expr := range caseClause.List {
+			if !isSelfOriginating(r, file, fset, nil, expr) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func appendDefaultSites(rows *[]site, body *ast.BlockStmt, owner, file string, fset *token.FileSet) {
+	for _, stmt := range body.List {
+		clause, ok := stmt.(*ast.CaseClause)
+		if !ok || len(clause.List) != 0 || len(clause.Body) == 0 || !isRefusalStatements(clause.Body) {
+			continue
+		}
+		start := fset.Position(clause.Colon + 1)
+		end := fset.Position(clause.End())
+		first := fset.Position(clause.Body[0].Pos())
+		*rows = append(*rows, site{
+			File:      file,
+			Func:      owner,
+			Predicate: "default",
+			Body:      fmt.Sprintf("%d.%d-%d.%d", start.Line, start.Column, end.Line, end.Column),
+			Entries:   fmt.Sprintf("%d.%d,%d.%d", start.Line, start.Column, first.Line, first.Column),
+			line:      start.Line,
+			col:       start.Column,
+		})
+	}
+}
+
 // Source text of the condition with every run of whitespace collapsed to one
 // space. The output is tab-separated, so a condition spanning lines or holding
 // a tab would otherwise split into columns that are not columns.
@@ -354,10 +400,14 @@ func exprText(src []byte, fset *token.FileSet, e ast.Expr) string {
 // counts. `return nil` and `return err` do not: the first is an early exit with
 // no refusal, the second is propagation of somebody else's.
 func isRefusal(body *ast.BlockStmt) bool {
-	if body == nil || len(body.List) == 0 {
+	return body != nil && isRefusalStatements(body.List)
+}
+
+func isRefusalStatements(statements []ast.Stmt) bool {
+	if len(statements) == 0 {
 		return false
 	}
-	switch s := body.List[len(body.List)-1].(type) {
+	switch s := statements[len(statements)-1].(type) {
 	case *ast.ReturnStmt:
 		for _, r := range s.Results {
 			if constructsError(r) {
@@ -488,9 +538,12 @@ func sentinel(name string) bool {
 // unmeasured files keep the legacy name heuristic so their guards stay visible
 // to the coverage lane, exactly as they always were. And the `_` blank is
 // never an error value.
-func isSelfOriginating(r *resolver, file string, fset *token.FileSet, init ast.Stmt, cond ast.Expr) bool {
+func isSelfOriginating(r *resolver, file string, fset *token.FileSet, init ast.Stmt, cond ast.Node) bool {
 	self := true
 	mentionsErr := func(n ast.Node) bool {
+		if n == nil {
+			return true
+		}
 		ast.Inspect(n, func(n ast.Node) bool {
 			if expr, ok := n.(ast.Expr); ok && r.errish(file, fset, expr) {
 				self = false

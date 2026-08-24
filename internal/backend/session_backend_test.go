@@ -216,3 +216,18 @@ func TestBackendForTask_HerdrVerifiesBeforeSessionBinding(t *testing.T) {
 		t.Errorf("Hometag = %q, want %q (home binding)", hb.Hometag, WorkspaceTag(tmpDir))
 	}
 }
+
+func TestHerdrBackendFindTabByLabelRefusesDuplicateTabsDefaultLane(t *testing.T) {
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "herdr")
+	script := "#!/bin/sh\nif [ \"$1\" = \"--session\" ]; then shift 2; fi\ncat <<'JSON'\n{\"result\":{\"tabs\":[{\"label\":\"dup\",\"tab_id\":\"t1\"},{\"label\":\"dup\",\"tab_id\":\"t2\"}]}}\nJSON\n"
+	if err := os.WriteFile(bin, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", tmp+string(os.PathListSeparator)+os.Getenv("PATH"))
+	h := NewHerdrBackend("test")
+	_, err := h.findTabByLabel("w1", "dup")
+	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("findTabByLabel error = %v, want ambiguous", err)
+	}
+}

@@ -528,3 +528,10 @@ func TestHerdrEventSource_After(t *testing.T) {
 		}
 	}
 }
+
+func TestHerdrEventSource_NegotiateUnknownStateRefuses(t *testing.T) {
+	err := negotiateHerdrCapability(CapabilityInfo{State: HerdrCapabilityState("UNKNOWN")})
+	if err == nil || !strings.Contains(err.Error(), "unexpected herdr capability state") {
+		t.Fatalf("negotiate error = %v, want unknown capability refusal", err)
+	}
+}

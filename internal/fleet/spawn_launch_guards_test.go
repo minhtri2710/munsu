@@ -485,3 +485,11 @@ func TestValidateAttestationReferenceRefusesIncompleteReference(t *testing.T) {
 		t.Fatalf("complete reference refused: %v", err)
 	}
 }
+
+func TestCaptainBacklogAuthorityHelperUnknownPhaseRefuses(t *testing.T) {
+	r := &Runner{homeDir: t.TempDir()}
+	err := r.checkCaptainBacklogAuthorityForPhase("task-unknown", taskauthority.Phase("unknown"))
+	if err == nil || !strings.Contains(err.Error(), "unexpected phase") {
+		t.Fatalf("checkCaptainBacklogAuthorityForPhase error = %v, want unexpected-phase refusal", err)
+	}
+}

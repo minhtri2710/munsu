@@ -11,6 +11,13 @@ import (
 	"github.com/minhtri2710/munsu/internal/domain"
 )
 
+func TestGitHubClientForStateUnknownRefuses(t *testing.T) {
+	_, err := GitHubClientForState(backend.State(99))
+	if err == nil || !strings.Contains(err.Error(), "unknown state") {
+		t.Fatalf("GitHubClientForState error = %v, want unknown-state refusal", err)
+	}
+}
+
 // --- Capability probe tests ---
 
 func TestProbeGitHubCapability_ReadsGhAxiPresence(t *testing.T) {

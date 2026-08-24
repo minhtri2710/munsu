@@ -68,7 +68,10 @@ var QueryDeliveryMergeStatus = func(ident *domain.DeliveryIdentity) (*domain.PRM
 // Fail-closed on Failed; Absent/Unsupported may fall through.
 // Returns a domain.PRMergeStatus normalized from GitLab's state model.
 func queryGLMergeStatus(ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
-	state := ProbeGitLabCapability()
+	return queryGLMergeStatusForState(ProbeGitLabCapability(), ident)
+}
+
+func queryGLMergeStatusForState(state backend.State, ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
 	switch state {
 	case backend.Ready:
 		// Use the typed GitLabClient

@@ -1639,3 +1639,10 @@ func TestCheckBacklogAuthorityRequiresCanonicalAggregate(t *testing.T) {
 		t.Fatal("checkBacklogAuthority created legacy v1 aggregate state")
 	}
 }
+
+func TestEnsureDeliveryModeRunnableHelperUnknownStateRefuses(t *testing.T) {
+	err := ensureDeliveryModeRunnableForProbe(ProbeResult{State: backend.State(99)})
+	if err == nil || !strings.Contains(err.Error(), "unexpected probe state") {
+		t.Fatalf("ensureDeliveryModeRunnableForProbe error = %v, want unknown-state refusal", err)
+	}
+}
