@@ -363,6 +363,36 @@ func TestScanRecoversCitationAfterNonOneOrderedListMarker(t *testing.T) {
 	}
 }
 
+func TestScanDoesNotLetTypeSixHTMLInterruptParagraph(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package home\n\nfunc MissingAfterTag() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"AGENTS.md", "CLAUDE.md", "README.md"} {
+		if err := os.WriteFile(filepath.Join(root, name), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Mkdir(filepath.Join(root, "docs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	doc := "An unmatched `` run\n<div>`` and `home.MissingAfterTag`\n"
+	if err := os.WriteFile(filepath.Join(root, "docs", "doc.md"), []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := scan(root)
+	if err != nil {
+		t.Fatalf("scan(%q): %v", root, err)
+	}
+	want := "resolved\tdocs/doc.md\tsymbol\thome.MissingAfterTag"
+	for _, row := range rows {
+		if row == want {
+			return
+		}
+	}
+	t.Fatalf("scan output missing %q: %#v", want, rows)
+}
+
 func TestScanRecoversUnmatchedRunsAcrossBoundaries(t *testing.T) {
 	root := filepath.Join("..", "..", "testdata", "citations", "unmatched-backtick-continue")
 	rows, err := scan(root)

@@ -416,6 +416,10 @@ func htmlBlockStartInfo(line string) (htmlBlock, bool) {
 	}
 }
 
+func (block htmlBlock) interruptsParagraph() bool {
+	return block.kind != "tag"
+}
+
 func htmlBlockTerminated(block htmlBlock, line string) bool {
 	switch block.kind {
 	case "raw":
@@ -437,7 +441,11 @@ func htmlBlockTerminated(block htmlBlock, line string) bool {
 }
 
 func inlineBlockBoundary(line string) bool {
-	return thematicBreakRe.MatchString(line) || setextUnderline(line) || markdownBlockStartRe.MatchString(line) || htmlBlockStartRe.MatchString(line)
+	if thematicBreakRe.MatchString(line) || setextUnderline(line) || markdownBlockStartRe.MatchString(line) {
+		return true
+	}
+	block, ok := htmlBlockStartInfo(line)
+	return ok && block.interruptsParagraph()
 }
 
 func setextUnderline(line string) bool {
@@ -1376,6 +1384,7 @@ func scan(root string) ([]string, error) {
 		var openContainers []fenceContainer
 		var activeContainers []fenceContainer
 		var htmlState *htmlBlock
+		var paragraphOpen bool
 		addSpans := func(spans []span) error {
 			for _, s := range spans {
 				if strings.ContainsAny(s.text, "\t\r\x00") || strings.IndexFunc(strings.ReplaceAll(s.text, "\n", ""), unicode.IsControl) >= 0 {
@@ -1446,8 +1455,14 @@ func scan(root string) ([]string, error) {
 			if !orderedContinuation && !blockOK {
 				if normalizedLine, parsedContainers, ok := parseMarkdownContainers(line); ok {
 					block, blockOK = htmlBlockStartInfo(normalizedLine)
+					if blockOK && paragraphOpen && !block.interruptsParagraph() {
+						blockOK = false
+					}
 					blockContainers = parsedContainers
 				}
+			}
+			if !orderedContinuation && blockOK && paragraphOpen && !block.interruptsParagraph() {
+				blockOK = false
 			}
 			if !orderedContinuation && blockOK {
 				if err := flushOpen(); err != nil {
@@ -1461,6 +1476,7 @@ func scan(root string) ([]string, error) {
 				if stripped && !htmlBlockTerminated(block, normalized) {
 					htmlState = &block
 				}
+				paragraphOpen = false
 				continue
 			}
 			if !orderedContinuation {
@@ -1470,6 +1486,7 @@ func scan(root string) ([]string, error) {
 					if err := flushOpen(); err != nil {
 						return nil, err
 					}
+					paragraphOpen = false
 					continue
 				}
 			}
@@ -1478,6 +1495,7 @@ func scan(root string) ([]string, error) {
 					return nil, err
 				}
 				activeContainers = nil
+				paragraphOpen = false
 				continue
 			}
 			if !containersOK {
@@ -1485,6 +1503,7 @@ func scan(root string) ([]string, error) {
 					return nil, err
 				}
 				activeContainers = nil
+				paragraphOpen = false
 				continue
 			}
 			if len(activeContainers) > 0 && !orderedContinuation {
@@ -1527,6 +1546,7 @@ func scan(root string) ([]string, error) {
 					return nil, err
 				}
 				activeContainers = nil
+				paragraphOpen = false
 				continue
 			}
 			previouslyOpen := openRun > 0
@@ -1540,6 +1560,7 @@ func scan(root string) ([]string, error) {
 			if err := addSpans(spans); err != nil {
 				return nil, err
 			}
+			paragraphOpen = true
 		}
 		if err := flushOpen(); err != nil {
 			return nil, err
