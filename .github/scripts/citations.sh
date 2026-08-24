@@ -407,7 +407,7 @@ exit $rc"
 	# committed fixture because it cannot be one: an unparseable .go file in the
 	# tree makes `gofmt -l .` exit 2, which turns the gofmt step of this same job
 	# red for a reason that is not this rule. Built in a scratch tree instead.
-	local scratch escape tabbed rootdoc outside ambiguous callresult nested coverage invalidfence container rootrelative
+	local scratch escape tabbed rootdoc outside ambiguous callresult nested coverage invalidfence container rootrelative ignoredgo escapedbacktick
 	scratch=""
 	escape=""
 	tabbed=""
@@ -420,7 +420,9 @@ exit $rc"
 	invalidfence=""
 	container=""
 	rootrelative=""
-	trap 'rm -rf "${scratch:-}" "${escape:-}" "${tabbed:-}" "${rootdoc:-}" "${outside:-}" "${ambiguous:-}" "${callresult:-}" "${nested:-}" "${coverage:-}" "${invalidfence:-}" "${container:-}" "${rootrelative:-}"' RETURN
+	ignoredgo=""
+	escapedbacktick=""
+	trap 'rm -rf "${scratch:-}" "${escape:-}" "${tabbed:-}" "${rootdoc:-}" "${outside:-}" "${ambiguous:-}" "${callresult:-}" "${nested:-}" "${coverage:-}" "${invalidfence:-}" "${container:-}" "${rootrelative:-}" "${ignoredgo:-}" "${escapedbacktick:-}"' RETURN
 	scratch="$(mktemp -d)"
 	mkdir -p "$scratch/docs"
 	printf 'A citation of `SomethingDeclared`.\n' >"$scratch/docs/doc.md"
@@ -441,6 +443,42 @@ exit $rc"
 		failed=1
 	else
 		echo "  ok   unparseable-go"
+	fi
+
+	ignoredgo="$(mktemp -d)"
+	mkdir -p "$ignoredgo/docs"
+	: >"$ignoredgo/AGENTS.md"
+	: >"$ignoredgo/CLAUDE.md"
+	: >"$ignoredgo/README.md"
+	printf 'package x\nfunc RealDeclaration() {}\n' >"$ignoredgo/good.go"
+	printf 'package x\nfunc IgnoredDeclaration() {}\n' >"$ignoredgo/_fixture.go"
+	printf 'package x\nfunc DotIgnoredDeclaration() {}\n' >"$ignoredgo/.fixture.go"
+	printf 'The real declaration is `RealDeclaration`; ignored declarations are `IgnoredDeclaration` and `DotIgnoredDeclaration`.\n' >"$ignoredgo/docs/doc.md"
+	: >"$ignoredgo/waiver"
+	if got="$(cd "$TOOL" && go run . "$ignoredgo" 2>&1)"; then rc=0; else rc=$?; fi
+	if [ "$rc" -eq 0 ] && printf '%s\n' "$got" | grep -Fq $'unresolved\tdocs/doc.md\tsymbol\tIgnoredDeclaration' && printf '%s\n' "$got" | grep -Fq $'unresolved\tdocs/doc.md\tsymbol\tDotIgnoredDeclaration' && printf '%s\n' "$got" | grep -Fq $'resolved\tdocs/doc.md\tsymbol\tRealDeclaration'; then
+		echo "  ok   ignored-go-basename"
+	else
+		echo "::error::citations indexed Go-ignored basenames:" >&2
+		printf '%s\n' "${got:-$?}" >&2
+		failed=1
+	fi
+
+	escapedbacktick="$(mktemp -d)"
+	mkdir -p "$escapedbacktick/docs"
+	: >"$escapedbacktick/AGENTS.md"
+	: >"$escapedbacktick/CLAUDE.md"
+	: >"$escapedbacktick/README.md"
+	printf 'package x\nfunc RealDeclaration() {}\n' >"$escapedbacktick/good.go"
+	printf 'An escaped delimiter \\\`MissingSymbol\\\` is literal; a real span is `RealDeclaration`.\n' >"$escapedbacktick/docs/doc.md"
+	: >"$escapedbacktick/waiver"
+	if got="$(cd "$TOOL" && go run . "$escapedbacktick" 2>&1)"; then rc=0; else rc=$?; fi
+	if [ "$rc" -eq 0 ] && printf '%s\n' "$got" | grep -Fq $'resolved\tdocs/doc.md\tsymbol\tRealDeclaration' && ! printf '%s\n' "$got" | grep -Fq 'MissingSymbol'; then
+		echo "  ok   escaped-backtick"
+	else
+		echo "::error::citations treated an escaped backtick as an inline span:" >&2
+		printf '%s\n' "${got:-$?}" >&2
+		failed=1
 	fi
 
 	escape="$(mktemp -d)"

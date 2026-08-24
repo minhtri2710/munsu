@@ -220,6 +220,14 @@ func inlineSpans(line string) []span {
 			i++
 			continue
 		}
+		backslashes := 0
+		for j := i - 1; j >= 0 && line[j] == '\\'; j-- {
+			backslashes++
+		}
+		if backslashes%2 == 1 {
+			i++
+			continue
+		}
 		n := 0
 		for i+n < len(line) && line[i+n] == '`' {
 			n++
@@ -927,6 +935,10 @@ func buildIndex(root string) (*index, error) {
 			return nil
 		}
 		if !strings.HasSuffix(p, ".go") {
+			return nil
+		}
+		base := filepath.Base(p)
+		if strings.HasPrefix(base, ".") || strings.HasPrefix(base, "_") {
 			return nil
 		}
 		if d.Type()&os.ModeSymlink != 0 {
