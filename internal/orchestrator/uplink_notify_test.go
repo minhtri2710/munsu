@@ -8,7 +8,7 @@ type notifyTransport struct{ submitted string }
 
 func (t *notifyTransport) Notify(_ string, _ TargetResult, payload string) UplinkNotifyResult {
 	t.submitted = payload
-	return UplinkNotifyResult{Acknowledged: true}
+	return UplinkNotifyResult{Outcome: UplinkNotifyAcknowledged}
 }
 
 func TestNotifyParentWithTargetResolverSubmitsOnlyNotificationRef(t *testing.T) {
@@ -20,7 +20,7 @@ func TestNotifyParentWithTargetResolverSubmitsOnlyNotificationRef(t *testing.T) 
 			receiverSeen = receiver
 			return TargetResult{Source: RuntimeSource, Handle: "fleet:p9"}, nil
 		}, transport)
-	if !result.Acknowledged {
+	if !result.Acknowledged() {
 		t.Fatal("notification should be acknowledged")
 	}
 	if receiverSeen != "receiver" {
@@ -39,7 +39,7 @@ func TestNotifyParentWithTargetResolverQueuesUnavailableTarget(t *testing.T) {
 		func(string, bool, NotificationRef) (TargetResult, error) {
 			return TargetResult{Source: Unsupported}, nil
 		}, &notifyTransport{})
-	if !result.Queued || result.Acknowledged {
+	if !result.Queued() || result.Acknowledged() {
 		t.Fatalf("result = %+v", result)
 	}
 }

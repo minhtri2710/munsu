@@ -26,7 +26,7 @@ func TestSessionUplinkTransportMapsTypedPromptOutcomes(t *testing.T) {
 		}, identity: func(string) (string, error) { return "tmux", nil }}
 		got := transport.Notify("home", orchestrator.TargetResult{Source: orchestrator.RuntimeSource, Handle: "pane"}, "payload")
 		wantAck := status == backend.PromptSubmitted || status == backend.PromptQueuedWhileBusy
-		if got.Acknowledged != wantAck || got.Queued == wantAck {
+		if got.Acknowledged() != wantAck || got.Queued() == wantAck {
 			t.Fatalf("status %s: %+v", status, got)
 		}
 	}
@@ -37,7 +37,7 @@ func TestSessionUplinkTransportQueuesResolutionFailure(t *testing.T) {
 		return nil, "", errors.New("unavailable")
 	}, identity: func(string) (string, error) { return "tmux", nil }}
 	got := transport.Notify("home", orchestrator.TargetResult{Source: orchestrator.RuntimeSource, Handle: "pane"}, "payload")
-	if !got.Queued || got.Acknowledged {
+	if !got.Queued() || got.Acknowledged() {
 		t.Fatalf("result = %+v", got)
 	}
 }

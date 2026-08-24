@@ -154,7 +154,7 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 					TaskID: taskID, Key: key, State: state, Message: msg,
 					Notify: func(ref orchestrator.NotificationRef) orchestrator.UplinkNotifyResult {
 						if resolveRingPolicy(ring, homeDir) == "no-ring" {
-							return orchestrator.UplinkNotifyResult{Queued: true}
+							return orchestrator.UplinkNotifyResult{Outcome: orchestrator.UplinkNotifyQueued}
 						}
 						return notify(homeDir, parentHome, ref)
 					},

@@ -19,7 +19,7 @@ type reproductionNotificationTransport struct {
 func (t *reproductionNotificationTransport) Notify(_ string, target TargetResult, _ string) UplinkNotifyResult {
 	t.calls++
 	t.target = target
-	return UplinkNotifyResult{Acknowledged: true}
+	return UplinkNotifyResult{Outcome: UplinkNotifyAcknowledged}
 }
 
 func TestReproductionCaptainRelayMissingPane(t *testing.T) {
@@ -88,7 +88,7 @@ func TestReproductionCaptainRelayMissingPane(t *testing.T) {
 	if crossErr == nil || crossErr.Error() != "captain meta has no herdr_pane_id" || crossTarget.Handle != "" {
 		t.Fatalf("unexpected cross-process resolution: target=%+v error=%v", crossTarget, crossErr)
 	}
-	if !crossResult.Queued || crossResult.Acknowledged || crossTransport.calls != 0 {
+	if !crossResult.Queued() || crossResult.Acknowledged() || crossTransport.calls != 0 {
 		t.Fatalf("cross-process notification was not refused: result=%+v calls=%d", crossResult, crossTransport.calls)
 	}
 	if selfErr != nil || selfTarget.Handle != "%reproduction" {

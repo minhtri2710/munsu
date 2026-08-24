@@ -17,20 +17,23 @@ func newSessionUplinkTransport() orchestrator.NotificationTransport {
 
 func (t sessionUplinkTransport) Notify(senderHome string, target orchestrator.TargetResult, payload string) orchestrator.UplinkNotifyResult {
 	if t.identity == nil {
-		return orchestrator.UplinkNotifyResult{Queued: true}
+		return orchestrator.UplinkNotifyResult{Outcome: orchestrator.UplinkNotifyQueued}
 	}
 	backendName, err := t.identity(senderHome)
 	if err != nil {
-		return orchestrator.UplinkNotifyResult{Queued: true}
+		return orchestrator.UplinkNotifyResult{Outcome: orchestrator.UplinkNotifyQueued}
 	}
 	bk, _, err := t.resolve(senderHome, backendName)
 	if err != nil {
-		return orchestrator.UplinkNotifyResult{Queued: true}
+		return orchestrator.UplinkNotifyResult{Outcome: orchestrator.UplinkNotifyQueued}
 	}
 	safe, _, err := orchestrator.IsSafeInjectTarget(bk, target.Handle)
 	if err != nil || !safe {
-		return orchestrator.UplinkNotifyResult{Queued: true}
+		return orchestrator.UplinkNotifyResult{Outcome: orchestrator.UplinkNotifyQueued}
 	}
 	result := backend.SubmitPrompt(bk, target.Handle, payload)
-	return orchestrator.UplinkNotifyResult{Acknowledged: result.Acknowledged(), Queued: !result.Acknowledged()}
+	if result.Acknowledged() {
+		return orchestrator.UplinkNotifyResult{Outcome: orchestrator.UplinkNotifyAcknowledged}
+	}
+	return orchestrator.UplinkNotifyResult{Outcome: orchestrator.UplinkNotifyQueued}
 }

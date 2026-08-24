@@ -61,7 +61,7 @@ func TestReportCmdNoRingCreatesDurableMailboxOnly(t *testing.T) {
 
 func TestReportCmdNotificationFailureReturnsQueued(t *testing.T) {
 	_, _, resp := runUplinkReport(t, func(string, string, orchestrator.NotificationRef) orchestrator.UplinkNotifyResult {
-		return orchestrator.UplinkNotifyResult{Queued: true}
+		return orchestrator.UplinkNotifyResult{Outcome: orchestrator.UplinkNotifyQueued}
 	}, "--ring", "ring", "failed", "failed")
 	if resp.Data.Injection == nil || resp.Data.Injection.Outcome != "queued" {
 		t.Fatalf("response=%+v", resp.Data.Injection)
@@ -72,7 +72,7 @@ func TestReportCmdImmediateNotificationUsesRefAndReturnsNotified(t *testing.T) {
 	var got orchestrator.NotificationRef
 	_, receiverHome, resp := runUplinkReport(t, func(_, _ string, ref orchestrator.NotificationRef) orchestrator.UplinkNotifyResult {
 		got = ref
-		return orchestrator.UplinkNotifyResult{Acknowledged: true}
+		return orchestrator.UplinkNotifyResult{Outcome: orchestrator.UplinkNotifyAcknowledged}
 	}, "--ring", "ring", "blocked", "waiting")
 	if got.MessageID == "" || got.SenderIdentity != "task_with_slash" {
 		t.Fatalf("ref=%+v", got)
@@ -97,7 +97,7 @@ func TestReportCmdStampsReceiverRankFromTheReceivingHome(t *testing.T) {
 	var ref orchestrator.NotificationRef
 	_, receiverHome, _ := runUplinkReport(t, func(_, _ string, got orchestrator.NotificationRef) orchestrator.UplinkNotifyResult {
 		ref = got
-		return orchestrator.UplinkNotifyResult{Acknowledged: true}
+		return orchestrator.UplinkNotifyResult{Outcome: orchestrator.UplinkNotifyAcknowledged}
 	}, "--ring", "ring", "failed", "direct dispatch failure")
 
 	_, homeRank, err := orchestrator.ReadHomeIdentity(receiverHome)
