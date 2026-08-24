@@ -55,10 +55,11 @@ symlinked, or missing-shebang checks are refused on every platform. Retirement
 polling and the supervision watcher use this same validator, so both paths apply
 these platform-specific rules consistently.
 
-A refusal is reported to stderr once per artifact and refusal state, rather than
-once on every poll. Repeated polls stay quiet while the artifact has the same
-refusal; a changed refusal reason, acceptance followed by a new refusal, or
-removal observed by the watcher followed by recreation reports again.
+A refusal is reported to stderr once per artifact generation and refusal state,
+rather than once on every poll. Repeated polls stay quiet while both the artifact
+generation and refusal reason are unchanged; replacing a still-broken artifact,
+a changed refusal reason, acceptance followed by a new refusal, or removal
+observed by the watcher followed by recreation reports again.
 Refusals are tracked per artifact, so separate checks are reported
 independently. A refusal still suppresses that check's wake and leaves the
 externally authored artifact in place for inspection.

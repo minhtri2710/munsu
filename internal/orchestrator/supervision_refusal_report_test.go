@@ -227,6 +227,81 @@ func TestRunCycle_RefusalReportsAgainAfterRecreation(t *testing.T) {
 	}
 }
 
+func TestRunCycle_RefusedReplacementWithSameReasonReportsAgain(t *testing.T) {
+	home := staleCheckHome(t)
+	checkPath := filepath.Join(home, "state", "task-1.check")
+	metaPath := filepath.Join(home, "state", "task-1.meta")
+	validate := func(string) error { return errors.New("same reason") }
+
+	if n, out := countRefusalLines(t, home, 2, validate); n != 1 {
+		t.Fatalf("initial refusal lines = %d, want 1\n%s", n, out)
+	}
+	if err := os.WriteFile(checkPath, []byte("#!/bin/sh\necho replacement with more content\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	metaFI, err := os.Stat(metaPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacementTime := metaFI.ModTime().Add(-2 * time.Hour)
+	if err := os.Chtimes(checkPath, replacementTime, replacementTime); err != nil {
+		t.Fatal(err)
+	}
+	if n, out := countRefusalLines(t, home, 2, validate); n != 1 {
+		t.Fatalf("replacement refusal lines = %d, want 1\n%s", n, out)
+	}
+}
+
+func TestRunCycle_UntouchedRefusalReportsOnce(t *testing.T) {
+	home := staleCheckHome(t)
+	validate := func(string) error { return errors.New("unchanged reason") }
+	if n, out := countRefusalLines(t, home, 5, validate); n != 1 {
+		t.Fatalf("untouched refusal lines = %d, want 1\n%s", n, out)
+	}
+}
+
+func TestClearCheckRefusalMarkerReportsRemovalFailure(t *testing.T) {
+	home := t.TempDir()
+	artifactPath := filepath.Join(home, "state", "task-1.check")
+	marker := checkRefusalMarkerPath(home, artifactPath)
+	if err := os.MkdirAll(marker, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(marker, "held"), []byte("marker"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := clearCheckRefusalMarker(home, artifactPath); err == nil {
+		t.Fatal("clearCheckRefusalMarker returned nil for a non-empty marker directory")
+	}
+}
+
+func TestReportCheckRefusalDoesNotPrintBeforePersistence(t *testing.T) {
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "state"), []byte("not a directory"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	stderrR, stderrW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := os.Stderr
+	os.Stderr = stderrW
+	reportErr := reportCheckRefusal(home, filepath.Join(home, "task-1.check"), "state", "should not print")
+	os.Stderr = original
+	_ = stderrW.Close()
+	output, readErr := io.ReadAll(stderrR)
+	_ = stderrR.Close()
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if reportErr == nil {
+		t.Fatal("reportCheckRefusal returned nil when marker persistence failed")
+	}
+	if len(output) != 0 {
+		t.Fatalf("stderr = %q, want empty output", output)
+	}
+}
+
 // A refusal that changes its answer is a new state and says so.
 func TestRunCycle_ChangedRefusalReasonReportsAgain(t *testing.T) {
 	home := staleCheckHome(t)
