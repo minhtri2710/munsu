@@ -192,15 +192,19 @@ merge() {
 			bad = 1
 			exit
 		}
-		NF != 3 { printf "::error::%s:%d: unreadable profile line: %s\n", short(FILENAME), FNR, $0 > "/dev/stderr"; bad = 1; exit }
-		$2 !~ /^[0-9]+$/ || $3 !~ /^[0-9]+$/ {
-			printf "::error::%s:%d: invalid coverage block counts: %s\n", short(FILENAME), FNR, $0 > "/dev/stderr"
+		$0 !~ /^[^[:space:]]+:[1-9][0-9]*\.[1-9][0-9]*,[1-9][0-9]*\.[1-9][0-9]* [0-9]+ [0-9]+$/ {
+			printf "::error::%s:%d: unreadable profile line: %s\n", short(FILENAME), FNR, $0 > "/dev/stderr"
 			bad = 1
 			exit
 		}
 		{
 			spec = $1
-			sub("^" prefix, "", spec)
+			if (index(spec, prefix) != 1) {
+				printf "::error::%s:%d: coverage block has an unexpected module path: %s\n", short(FILENAME), FNR, $1 > "/dev/stderr"
+				bad = 1
+				exit
+			}
+			spec = substr(spec, length(prefix) + 1)
 			key = position(spec, 1)
 			end = position(spec, 2)
 			if (key !~ /:[1-9][0-9]*\.[1-9][0-9]*$/ ||
