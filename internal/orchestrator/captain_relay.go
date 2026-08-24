@@ -61,19 +61,20 @@ func ReconcileCaptainHook(homeDir string, startup bool, transport NotificationTr
 	if transport == nil {
 		return fmt.Errorf("uplink notification transport capability is required")
 	}
+	_, homeRank, rankErr := ReadHomeIdentity(homeDir)
+	if rankErr == nil && homeRank == RankGeneral {
+		_, err := Recover(RecoverRequest{
+			SenderHome: homeDir, ReceiverHome: homeDir,
+			ReceiverRank: RankGeneral, ForceNotify: startup,
+			Notify: func(ref NotificationRef) UplinkNotifyResult {
+				return NotifyParentWithTransport(homeDir, homeDir, ref, transport)
+			},
+		})
+		return err
+	}
+
 	parentHome := ResolveCaptainParentHome(homeDir)
 	if parentHome == "" {
-		_, homeRank, rankErr := ReadHomeIdentity(homeDir)
-		if rankErr == nil && homeRank == RankGeneral {
-			_, err := Recover(RecoverRequest{
-				SenderHome: homeDir, ReceiverHome: homeDir,
-				ReceiverRank: RankGeneral, ForceNotify: startup,
-				Notify: func(ref NotificationRef) UplinkNotifyResult {
-					return NotifyParentWithTransport(homeDir, homeDir, ref, transport)
-				},
-			})
-			return err
-		}
 		if _, err := Recover(RecoverRequest{
 			SenderHome: homeDir, ReceiverHome: homeDir,
 			ReceiverRank: RankCaptain, ForceNotify: startup,
