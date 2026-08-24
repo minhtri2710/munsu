@@ -280,9 +280,9 @@ docs/adr/0013-afk-is-diagnosis-and-manual-action.md	symbol	RedactSensitive	burn-
 docs/adr/0013-afk-is-diagnosis-and-manual-action.md	symbol	ResolveRecovery	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
 docs/adr/0013-afk-is-diagnosis-and-manual-action.md	symbol	SetBackend	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
 docs/adr/0013-afk-is-diagnosis-and-manual-action.md	symbol	SetPaneCapture	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
-docs/adr/0013-afk-is-diagnosis-and-manual-action.md	symbol	DirectInject	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0013-afk-is-diagnosis-and-manual-action.md	symbol	DirectInject	burn-down(#624): newly surfaced when #595 fixed the unmatched-backtick drop, imported unwaived rather than corrected here, not yet triaged.
 docs/adr/0013-afk-is-diagnosis-and-manual-action.md	symbol	maybeInitInjector	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
-docs/adr/0013-afk-is-diagnosis-and-manual-action.md	symbol	nudgeTracker	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
+docs/adr/0013-afk-is-diagnosis-and-manual-action.md	symbol	nudgeTracker	burn-down(#624): newly surfaced when #595 fixed the unmatched-backtick drop, imported unwaived rather than corrected here, not yet triaged.
 docs/adr/0015-the-soldier-closes-its-own-terminal-handoff.md	symbol	ActivateOnReceipt	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
 docs/adr/0015-the-soldier-closes-its-own-terminal-handoff.md	symbol	ReconcileOutcome	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
 docs/adr/0015-the-soldier-closes-its-own-terminal-handoff.md	symbol	ReconcileResult	burn-down(#624): pre-existing at this lane's first run, imported unwaived rather than corrected here, not yet triaged.
