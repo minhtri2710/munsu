@@ -260,6 +260,34 @@ func TestRunCycle_UntouchedRefusalReportsOnce(t *testing.T) {
 	}
 }
 
+func TestRunCycle_ReplacementDuringValidationWithSameReasonReportsAgain(t *testing.T) {
+	home := staleCheckHome(t)
+	checkPath := filepath.Join(home, "state", "task-1.check")
+	replacement := filepath.Join(home, "state", "task-1.check.new")
+	reason := errors.New("same validation reason")
+	calls := 0
+	validate := func(path string) error {
+		calls++
+		if calls == 1 {
+			if err := os.WriteFile(replacement, []byte("#!/bin/sh\necho replaced during validation\n"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			mtime := time.Now().Add(2 * time.Hour)
+			if err := os.Chtimes(replacement, mtime, mtime); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Rename(replacement, checkPath); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return reason
+	}
+
+	if n, out := countRefusalLines(t, home, 2, validate); n != 2 {
+		t.Fatalf("replacement during validation refusal lines = %d, want 2\n%s", n, out)
+	}
+}
+
 func TestClearCheckRefusalMarkerReportsRemovalFailure(t *testing.T) {
 	home := t.TempDir()
 	artifactPath := filepath.Join(home, "state", "task-1.check")

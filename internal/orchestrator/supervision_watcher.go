@@ -595,11 +595,12 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 		return emitted, err
 	}
 	for _, plugin := range plugins {
+		artifactGeneration := checkArtifactGeneration(plugin.Path)
 		// Validate the check artifact before surfacing. The port exists, so
 		// this error is about this artifact and nothing else: drop this check,
 		// keep scanning the rest, and say so rather than swallowing it.
 		if err := checks.ValidateCheck(plugin.Path); err != nil {
-			if repErr := reportCheckRefusal(homeDir, plugin.Path, checkRefusalMarkerState(plugin.Path, err), fmt.Sprintf("poll check invalid (skipped): %v", err)); repErr != nil {
+			if repErr := reportCheckRefusal(homeDir, plugin.Path, checkRefusalMarkerState(artifactGeneration, err), fmt.Sprintf("poll check invalid (skipped): %v", err)); repErr != nil {
 				return emitted, repErr
 			}
 			continue
@@ -608,7 +609,7 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 		// where it is and emits no wake; the refusal is reported for the
 		// operator to resolve.
 		if err := AcceptOrRefuseStale(plugin.Path); err != nil {
-			if repErr := reportCheckRefusal(homeDir, plugin.Path, checkRefusalMarkerState(plugin.Path, err), fmt.Sprintf("poll check refused (left in place): %v", err)); repErr != nil {
+			if repErr := reportCheckRefusal(homeDir, plugin.Path, checkRefusalMarkerState(artifactGeneration, err), fmt.Sprintf("poll check refused (left in place): %v", err)); repErr != nil {
 				return emitted, repErr
 			}
 			continue
@@ -646,13 +647,13 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 				continue
 			}
 			if errors.Is(retireErr, domain.ErrCheckInvalidAfterPublication) {
-				if repErr := reportCheckRefusal(homeDir, plugin.Path, checkRefusalMarkerState(plugin.Path, retireErr), fmt.Sprintf("poll check invalid after publication: %v", retireErr)); repErr != nil {
+				if repErr := reportCheckRefusal(homeDir, plugin.Path, checkRefusalMarkerState(artifactGeneration, retireErr), fmt.Sprintf("poll check invalid after publication: %v", retireErr)); repErr != nil {
 					return emitted, repErr
 				}
 				continue
 			}
 			if errors.Is(retireErr, domain.ErrCheckValidationRefused) {
-				if repErr := reportCheckRefusal(homeDir, plugin.Path, checkRefusalMarkerState(plugin.Path, retireErr), fmt.Sprintf("poll check refused (wake suppressed): %v", retireErr)); repErr != nil {
+				if repErr := reportCheckRefusal(homeDir, plugin.Path, checkRefusalMarkerState(artifactGeneration, retireErr), fmt.Sprintf("poll check refused (wake suppressed): %v", retireErr)); repErr != nil {
 					return emitted, repErr
 				}
 				continue
@@ -764,17 +765,28 @@ func reportCheckRefusal(homeDir, artifactPath, state, message string) error {
 	return nil
 }
 
-// checkRefusalMarkerState combines the artifact generation with its refusal
-// reason. Size and mtime avoid hashing or rereading artifacts, which matters
-// when validation already reports an unreadable artifact; Lstat also records
-// the checked artifact itself rather than a symlink target.
-func checkRefusalMarkerState(artifactPath string, err error) string {
-	reason := refusalState(err)
-	fi, statErr := os.Lstat(artifactPath)
-	if statErr != nil {
-		return fmt.Sprintf("gone gone %s", reason)
+// checkArtifactGeneration captures the checked artifact itself rather than a
+// symlink target. This lookup is not a new cost class: validation and stale
+// acceptance already stat the artifact during each cycle. Size and mtime avoid
+// hashing or rereading artifacts, which matters when an artifact is unreadable.
+func checkArtifactGeneration(artifactPath string) string {
+	fi, err := os.Lstat(artifactPath)
+	if err != nil {
+		return "gone"
 	}
-	return fmt.Sprintf("%d %d %s", fi.Size(), fi.ModTime().UnixNano(), reason)
+	return fmt.Sprintf("%d %d", fi.Size(), fi.ModTime().UnixNano())
+}
+
+// checkRefusalMarkerState combines the generation captured before validation
+// with its refusal reason. Capturing first means a replacement between the
+// observation and validation can only make the marker stale, never falsely
+// fresh: (generation A, reason from B) is followed by (generation B, same
+// reason), which reports again. A replacement with identical size and a
+// deliberately forged identical nanosecond mtime remains the accepted
+// residual case; hashing every cycle would also require rereading unreadable
+// artifacts.
+func checkRefusalMarkerState(generation string, err error) string {
+	return fmt.Sprintf("%s %s", generation, refusalState(err))
 }
 
 // refusalState reduces a refusal error to the fact that identifies it, with the
