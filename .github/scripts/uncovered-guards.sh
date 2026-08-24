@@ -242,15 +242,20 @@ merge() {
 				requireInt(endLine, "coverage block end line") == "" ||
 				requireInt(endCol, "coverage block end column") == "") next
 			file = substr(key, 1, RSTART - 1)
-			if (!before(start, end)) {
+			statement = requireInt($2, "statement count")
+			count = requireInt($3, "execution count")
+			if (statement == "" || count == "") next
+			if (!before(start, end) && start != end) {
 				printf "::error::%s:%d: non-positive coverage block range: %s\n", short(FILENAME), FNR, $1 > "/dev/stderr"
 				bad = 1
 				next
 			}
+			if (start == end && statement != "0") {
+				printf "::error::%s:%d: incompatible zero-width coverage block with nonzero statement count: %s\n", short(FILENAME), FNR, $1 > "/dev/stderr"
+				bad = 1
+				next
+			}
 			block = file ":" start "-" end
-			statement = requireInt($2, "statement count")
-			count = requireInt($3, "execution count")
-			if (statement == "" || count == "") next
 			if (!(block in statements)) statements[block] = statement
 			else if (("x" statements[block]) != ("x" statement)) {
 				printf "::error::conflicting statement counts for coverage block %s: %s versus %s\n", block, statements[block], statement > "/dev/stderr"
@@ -354,6 +359,7 @@ classify() {
 				sub(/^[^:]+:/, "", blockRange)
 				blockStart = startPoint(blockRange)
 				blockEnd = endPoint(blockRange)
+				if (blockStart == blockEnd) continue
 				if (!bodyStart(blockStart, bodyLower, bodyUpper)) continue
 				if (!inside(blockEnd, bodyLower, bodyUpper) || !before(blockStart, blockEnd)) {
 					incompatible = 1
@@ -472,8 +478,8 @@ check() {
 		printf '%s\n' "$anomalies" | while IFS=$'\t' read -r _ file func nth pred block; do
 			printf '  %s: %s (#%s) %s -- refusal body range %s\n' "$file" "$func" "$nth" "$pred" "$block" >&2
 		done
-		echo "  The coverage profile and source tree disagree about the instrumenter's block convention, so every verdict below is unsafe." >&2
-		echo "  Check the Go toolchain/profile artifact and the profile-derived matcher before trusting this lane again." >&2
+		echo "  The coverage profile does not uniquely map this refusal body under the current source/toolchain coordinates, so every verdict below is unsafe." >&2
+		echo "  Check that every profile was produced from this source revision by a compatible Go toolchain before trusting this lane again." >&2
 		exit 1
 	fi
 
@@ -607,7 +613,9 @@ generate() {
 #   overflow-statement     accept a profile block with an overflowing statement count
 #   overflow-execution     accept a profile block with an overflowing execution count
 #   inverted-end            accept a profile block whose end precedes its start
-#   zero-width-endpoint     accept a profile block whose endpoints are equal
+#   zero-width-endpoint     accept a zero-width profile block that claims statements
+#   zero-width-marker-only  retain a zero-statement marker as compilation evidence
+#                           and fail with an anomaly rather than calling the file unmeasured
 #   incompatible-end        accept a profile block whose end exceeds the refusal body
 #   short-row              delete the NF < 4 check
 #   duplicate-row          delete the `key in seen` check
