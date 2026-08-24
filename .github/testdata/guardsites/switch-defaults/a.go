@@ -5,6 +5,12 @@ import (
 	"fmt"
 )
 
+type LifecyclePartialError struct {
+	Cause error
+}
+
+func (e *LifecyclePartialError) Error() string { return e.Cause.Error() }
+
 func Expression(n int) error {
 	switch n {
 	case 1:
@@ -89,5 +95,19 @@ func MixedPropagate(value int, err error) (error, error) {
 	switch value {
 	default:
 		return errors.New("unsupported"), err
+	}
+}
+
+func KeyedPropagate(value int, err error) error {
+	switch value {
+	default:
+		return &LifecyclePartialError{Cause: err}
+	}
+}
+
+func KeyedConstruct(value int) error {
+	switch value {
+	default:
+		return &LifecyclePartialError{Cause: errors.New("unsupported")}
 	}
 }

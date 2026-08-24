@@ -1,4 +1,5 @@
-a.go	Expression	1	default	12.10-13.47	12.10,13.3
-a.go	NamedType	1	default	30.10-31.48	30.10,31.3
-a.go	Type	1	default	21.10-22.40	21.10,22.3
+a.go	Expression	1	default	18.10-19.47	18.10,19.3
+a.go	KeyedConstruct	1	default	110.10-111.66	110.10,111.3
+a.go	NamedType	1	default	36.10-37.48	36.10,37.3
+a.go	Type	1	default	27.10-28.40	27.10,28.3
 exit 0

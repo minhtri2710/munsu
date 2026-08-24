@@ -464,28 +464,61 @@ func refusalHasErrorOperand(r *resolver, file string, fset *token.FileSet, expr 
 	if expr == nil {
 		return false
 	}
-	if !constructsError(expr) {
-		return r.errish(file, fset, expr)
+	if !constructsError(expr) && r.errish(file, fset, expr) {
+		return true
 	}
-	switch node := expr.(type) {
-	case *ast.CallExpr:
-		for _, arg := range node.Args {
-			if refusalHasErrorOperand(r, file, fset, arg) {
+	return refusalHasErrorChildren(r, file, fset, expr)
+}
+
+func refusalHasErrorChildren(r *resolver, file string, fset *token.FileSet, expr ast.Expr) bool {
+	check := func(exprs ...ast.Expr) bool {
+		for _, child := range exprs {
+			if refusalHasErrorOperand(r, file, fset, child) {
 				return true
 			}
 		}
+		return false
+	}
+	switch node := expr.(type) {
+	case *ast.CallExpr:
+		if refusalHasErrorOperand(r, file, fset, node.Fun) {
+			return true
+		}
+		return check(node.Args...)
 	case *ast.UnaryExpr:
-		return refusalHasErrorOperand(r, file, fset, node.X)
+		return check(node.X)
+	case *ast.StarExpr:
+		return check(node.X)
+	case *ast.ParenExpr:
+		return check(node.X)
+	case *ast.SelectorExpr:
+		return check(node.X)
+	case *ast.IndexExpr:
+		return check(node.X, node.Index)
+	case *ast.IndexListExpr:
+		if refusalHasErrorOperand(r, file, fset, node.X) {
+			return true
+		}
+		return check(node.Indices...)
+	case *ast.SliceExpr:
+		return check(node.X, node.Low, node.High, node.Max)
+	case *ast.TypeAssertExpr:
+		return check(node.X)
+	case *ast.BinaryExpr:
+		return check(node.X, node.Y)
 	case *ast.CompositeLit:
 		for _, elt := range node.Elts {
 			if value, ok := elt.(ast.Expr); ok && refusalHasErrorOperand(r, file, fset, value) {
 				return true
 			}
 		}
-	case *ast.BinaryExpr:
-		return refusalHasErrorOperand(r, file, fset, node.X) || refusalHasErrorOperand(r, file, fset, node.Y)
-	case *ast.ParenExpr:
-		return refusalHasErrorOperand(r, file, fset, node.X)
+	case *ast.KeyValueExpr:
+		if !r.isFieldLabel(file, fset, node.Key) && refusalHasErrorOperand(r, file, fset, node.Key) {
+			return true
+		}
+		return refusalHasErrorOperand(r, file, fset, node.Value)
+	case *ast.Ellipsis:
+		return check(node.Elt)
 	}
 	return false
 }
@@ -677,8 +710,9 @@ type span struct{ off, end int }
 // file in this tree except one gated to a GOOS the repo never targets; that
 // file stays unloaded and keeps the legacy name heuristic.
 type resolver struct {
-	byFile map[string]map[span]types.Type // abs path -> node span -> type
-	loaded map[string]bool                // abs paths type-checked under some GOOS
+	byFile      map[string]map[span]types.Type // abs path -> node span -> type
+	fieldLabels map[string]map[span]bool       // struct field labels in keyed literals
+	loaded      map[string]bool                // abs paths type-checked under some GOOS
 }
 
 // The three GOOS values whose union covers this tree's build-gated files.
@@ -695,7 +729,11 @@ var typeCheckGOOS = []string{"linux", "darwin", "windows"}
 // `ctx.Err` is a `func() error`, and neither is an error value -- only the call
 // itself has type `error`.
 func loadTypes(root string) (*resolver, error) {
-	r := &resolver{byFile: map[string]map[span]types.Type{}, loaded: map[string]bool{}}
+	r := &resolver{
+		byFile:      map[string]map[span]types.Type{},
+		fieldLabels: map[string]map[span]bool{},
+		loaded:      map[string]bool{},
+	}
 	for _, goos := range typeCheckGOOS {
 		cfg := &packages.Config{
 			Mode: packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo,
@@ -726,6 +764,9 @@ func loadTypes(root string) (*resolver, error) {
 			for id, obj := range p.TypesInfo.Uses {
 				if obj != nil && obj.Type() != nil {
 					r.record(p.Fset, id, obj.Type())
+				}
+				if field, ok := obj.(*types.Var); ok && field.IsField() {
+					r.recordFieldLabel(p.Fset, id)
 				}
 			}
 			for id, obj := range p.TypesInfo.Defs {
@@ -773,6 +814,27 @@ func (r *resolver) record(fset *token.FileSet, n ast.Node, t types.Type) {
 		r.byFile[abs] = m
 	}
 	m[span{pos.Offset, fset.Position(n.End()).Offset}] = t
+}
+
+func (r *resolver) recordFieldLabel(fset *token.FileSet, n ast.Node) {
+	pos := fset.Position(n.Pos())
+	abs, err := filepath.Abs(pos.Filename)
+	if err != nil {
+		return
+	}
+	m := r.fieldLabels[abs]
+	if m == nil {
+		m = map[span]bool{}
+		r.fieldLabels[abs] = m
+	}
+	m[span{pos.Offset, fset.Position(n.End()).Offset}] = true
+}
+
+func (r *resolver) isFieldLabel(file string, fset *token.FileSet, expr ast.Expr) bool {
+	if expr == nil {
+		return false
+	}
+	return r.fieldLabels[file][span{fset.Position(expr.Pos()).Offset, fset.Position(expr.End()).Offset}]
 }
 
 // errish reports whether expr in file is an error value. Type info wins where
