@@ -214,8 +214,9 @@ type span struct {
 }
 
 // Inline code spans. Fenced blocks are handled by the caller. A span is a run
-// of N backticks closed by the next run of exactly N, including when the
-// closing run is on a later line.
+// of N backticks closed by the next run of exactly N. An unclosed run on a
+// line that has further backticks to its right is treated as literal text so
+// subsequent code spans on the same line are scanned.
 func inlineSpans(line string) []span {
 	spans, _, _ := inlineSpansState(line, 0, "")
 	return spans
@@ -304,6 +305,10 @@ func inlineSpansState(line string, openRun int, openText string) ([]span, int, s
 			j += m
 		}
 		if !closed {
+			if strings.Contains(line[i+n:], "`") {
+				i += n
+				continue
+			}
 			return out, n, line[i+n:]
 		}
 	}
@@ -830,9 +835,9 @@ func fileCitation(fi *files, tok string) bool {
 //
 //  1. a span inside a fenced code block, dropped by the scanner.
 //     A citation that only ever appears in a fence is never checked.
-//  2. everything to the right of an unmatched backtick run, dropped by the
-//     inline-span scanner until a matching delimiter appears. This is an
-//     unterminated span, not a citation-bearing code span.
+//  2. an unmatched backtick run itself (e.g. a lone backtick or unclosed double
+//     backtick), dropped by the inline-span scanner as literal text while
+//     subsequent well-formed spans on the same line continue to be scanned.
 //  3. empty, or a URL: nothing about this tree is being claimed.
 //  4. executable punctuation, the codeChars set above: a fragment of a command
 //     or an expression -- `'[.[]`, `[.labels[].name]`,
