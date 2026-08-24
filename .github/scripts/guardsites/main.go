@@ -606,15 +606,9 @@ func isDefiniteSelfOriginatingError(r *resolver, file string, fset *token.FileSe
 	case *ast.SelectorExpr:
 		return isSentinel(r, file, fset, node)
 	case *ast.UnaryExpr:
-		if node.Op != token.AND {
-			return false
-		}
-		if literal, ok := node.X.(*ast.CompositeLit); ok {
-			return isErrorExpression(r, file, fset, node) && !refusalHasErrorOperand(r, file, fset, literal)
-		}
-		return isDefiniteSelfOriginatingError(r, file, fset, node.X)
+		return isErrorComposite(r, file, fset, node)
 	case *ast.CompositeLit:
-		return true
+		return isErrorComposite(r, file, fset, node)
 	case *ast.ParenExpr:
 		return isDefiniteSelfOriginatingError(r, file, fset, node.X)
 	case *ast.CallExpr:
@@ -865,17 +859,32 @@ func constructsError(r *resolver, file string, fset *token.FileSet, e ast.Expr) 
 	case *ast.CallExpr:
 		return errorish(calleeName(v.Fun))
 	case *ast.UnaryExpr:
-		if v.Op == token.AND {
-			return constructsError(r, file, fset, v.X)
-		}
+		return v.Op == token.AND && isErrorComposite(r, file, fset, v)
 	case *ast.CompositeLit:
-		return errorish(typeName(v.Type))
+		return isErrorComposite(r, file, fset, v)
 	case *ast.Ident:
 		return isSentinel(r, file, fset, v)
 	case *ast.SelectorExpr:
 		return isSentinel(r, file, fset, v)
 	}
 	return false
+}
+
+func isErrorComposite(r *resolver, file string, fset *token.FileSet, expr ast.Expr) bool {
+	if _, ok := expr.(*ast.CompositeLit); !ok {
+		unary, ok := expr.(*ast.UnaryExpr)
+		if !ok || unary.Op != token.AND {
+			return false
+		}
+		if _, ok := unary.X.(*ast.CompositeLit); !ok {
+			return false
+		}
+	}
+	if r == nil {
+		return false
+	}
+	t, ok := r.byFile[file][span{fset.Position(expr.Pos()).Offset, fset.Position(expr.End()).Offset}]
+	return ok && isErrorType(t)
 }
 
 func calleeName(e ast.Expr) string {

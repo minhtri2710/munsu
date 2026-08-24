@@ -13,6 +13,24 @@ type LifecyclePartialError struct {
 
 func (e *LifecyclePartialError) Error() string { return e.Cause.Error() }
 
+type Refusal struct{}
+
+func (Refusal) Error() string { return "unsupported" }
+
+func ValueComposite(n int) error {
+	switch n {
+	default:
+		return Refusal{}
+	}
+}
+
+func PointerComposite(n int) error {
+	switch n {
+	default:
+		return &Refusal{}
+	}
+}
+
 func Expression(n int) error {
 	switch n {
 	case 1:
