@@ -140,7 +140,7 @@ func TestScanRecoversCitationAfterInlineTripleBackticks(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(root, "docs"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	doc := "An unmatched `` run\n```example``` and `home.MissingAfterInlineTriple`\n"
+	doc := "An unmatched `` run\n-```example``` and `home.MissingAfterInlineTriple`\n"
 	if err := os.WriteFile(filepath.Join(root, "docs", "doc.md"), []byte(doc), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -154,6 +154,35 @@ func TestScanRecoversCitationAfterInlineTripleBackticks(t *testing.T) {
 		}
 	}
 	t.Fatal("scan output missing inline citation after rejected triple-backtick fence-like line")
+}
+
+func TestScanRecoversCitationAfterOrderedListItemReplacement(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package home\n\nfunc MissingAfterItemReplacement() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"AGENTS.md", "CLAUDE.md", "README.md"} {
+		if err := os.WriteFile(filepath.Join(root, name), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Mkdir(filepath.Join(root, "docs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	doc := "1. An unmatched `` run\n2. `home.MissingAfterItemReplacement` then ```\n"
+	if err := os.WriteFile(filepath.Join(root, "docs", "doc.md"), []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := scan(root)
+	if err != nil {
+		t.Fatalf("scan(%q): %v", root, err)
+	}
+	for _, row := range rows {
+		if row == "resolved\tdocs/doc.md\tsymbol\thome.MissingAfterItemReplacement" {
+			return
+		}
+	}
+	t.Fatalf("scan output missing citation after ordered list item replacement: %#v", rows)
 }
 
 func TestScanRecoversCitationAfterNonOneOrderedListMarker(t *testing.T) {

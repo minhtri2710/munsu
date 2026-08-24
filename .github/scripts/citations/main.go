@@ -348,7 +348,8 @@ func nonInterruptingOrderedList(line string, containers, openContainers []fenceC
 		parentLen = len(openContainers)
 	} else if len(containers) == len(openContainers) && len(containers) > 0 &&
 		isContainerPrefix(containers[:len(containers)-1], openContainers[:len(openContainers)-1]) &&
-		containers[len(containers)-1].kind == 'l' && openContainers[len(openContainers)-1].kind == 'l' {
+		containers[len(containers)-1].kind == 'l' && openContainers[len(openContainers)-1].kind == 'l' &&
+		containers[len(containers)-1].marker != openContainers[len(openContainers)-1].marker {
 		parentLen = len(containers) - 1
 	} else {
 		return "", false
@@ -470,6 +471,7 @@ func setextUnderline(line string) bool {
 // silent drops in referenceShaped's enumeration, which is the complete list.
 type fenceContainer struct {
 	kind    byte
+	marker  byte
 	columns int
 }
 
@@ -529,7 +531,16 @@ func parseMarkdownContainers(line string) (string, []fenceContainer, bool) {
 		for start < len(line) && (line[start] == ' ' || line[start] == '\t') {
 			start++
 		}
-		containers = append(containers, fenceContainer{kind: 'l', columns: markdownColumns(line[markerStart:start])})
+		marker := line[markerStart]
+		if marker >= '0' && marker <= '9' {
+			for markerEnd := markerStart; markerEnd < start; markerEnd++ {
+				if line[markerEnd] == '.' || line[markerEnd] == ')' {
+					marker = line[markerEnd]
+					break
+				}
+			}
+		}
+		containers = append(containers, fenceContainer{kind: 'l', marker: marker, columns: markdownColumns(line[markerStart:start])})
 	}
 }
 
@@ -648,7 +659,6 @@ var (
 	methodExprRe = regexp.MustCompile(`^\(\*?([A-Za-z_][A-Za-z0-9_]*)\)\.([A-Za-z_][A-Za-z0-9_]*)$`)
 	// A trailing argument list on a cited call.
 	callSuffixRe         = regexp.MustCompile(`\([^()]*\)$`)
-	invalidFenceLikeRe   = regexp.MustCompile(`^[ \t]*(?:[-+*]|[0-9]{1,10}[.)])[ \t]*\x60{3}`)
 	markdownBlockStartRe = regexp.MustCompile(`^[ \t]{0,3}(?:#{1,6}(?:[ \t]|$)|(?:[-+*]|[0-9]{1,9}[.)])[ \t]+)`)
 	htmlBlockStartRe     = regexp.MustCompile(`^[ \t]{0,3}(?:<(?i:(?:script|pre|style|textarea))(?:[ \t>]|$)|<!--|<\?|<![A-Z]|<!\[CDATA\[|</?(?i:(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|pre|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul))(?:[ \t/>]|$))`)
 	thematicBreakRe      = regexp.MustCompile(`^[ \t]{0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|={3,})$`)
@@ -1510,7 +1520,7 @@ func scan(root string) ([]string, error) {
 				}
 			}
 			indent := len(normalized) - len(strings.TrimLeft(normalized, " \t"))
-			if strings.TrimSpace(normalized) == "" || (openRun == 0 && markdownColumns(normalized[:indent]) > 3) || invalidFenceLikeRe.MatchString(normalized) {
+			if strings.TrimSpace(normalized) == "" || (openRun == 0 && markdownColumns(normalized[:indent]) > 3) {
 				if err := flushOpen(); err != nil {
 					return nil, err
 				}
