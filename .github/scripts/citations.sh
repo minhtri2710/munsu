@@ -416,7 +416,7 @@ exit $rc"
 	# committed fixture because it cannot be one: an unparseable .go file in the
 	# tree makes `gofmt -l .` exit 2, which turns the gofmt step of this same job
 	# red for a reason that is not this rule. Built in a scratch tree instead.
-	local scratch escape tabbed rootdoc outside ambiguous callresult nested coverage invalidfence container rootrelative ignoredgo escapedbacktick controlchars
+	local scratch escape tabbed rootdoc outside ambiguous callresult nested coverage invalidfence container rootrelative ignoredgo escapedbacktick controlchars unsafe_doc_path
 	scratch=""
 	escape=""
 	tabbed=""
@@ -432,7 +432,8 @@ exit $rc"
 	ignoredgo=""
 	escapedbacktick=""
 	controlchars=""
-	trap 'rm -rf "${scratch:-}" "${escape:-}" "${tabbed:-}" "${rootdoc:-}" "${outside:-}" "${ambiguous:-}" "${callresult:-}" "${nested:-}" "${coverage:-}" "${invalidfence:-}" "${container:-}" "${rootrelative:-}" "${ignoredgo:-}" "${escapedbacktick:-}" "${controlchars:-}"' RETURN
+	unsafe_doc_path=""
+	trap 'rm -rf "${scratch:-}" "${escape:-}" "${tabbed:-}" "${rootdoc:-}" "${outside:-}" "${ambiguous:-}" "${callresult:-}" "${nested:-}" "${coverage:-}" "${invalidfence:-}" "${container:-}" "${rootrelative:-}" "${ignoredgo:-}" "${escapedbacktick:-}" "${controlchars:-}" "${unsafe_doc_path:-}"' RETURN
 	scratch="$(mktemp -d)"
 	mkdir -p "$scratch/docs"
 	printf 'A citation of `SomethingDeclared`.\n' >"$scratch/docs/doc.md"
@@ -648,10 +649,10 @@ EOF
 	: >"$callresult/CLAUDE.md"
 	: >"$callresult/README.md"
 	printf 'package x\n\ntype Store struct{}\nfunc (Store) WriteEnvelope(any) {}\nfunc RecoverNow(any) {}\nfunc GenericNow[T any]() {}\n' >"$callresult/good.go"
-	printf 'Call-result citations are `newCaptainRecoverTransaction().Recover`, `newFoo(ctx, option()).Recover()`, `newFoo().(Reader).Read()`, `newFoo()[:].Read()`, `(*newFoo()).Read()`, `(<-newReader()).Read()`, `mailbox.WriteEnvelope(ctx, envelope).`, `newPunctuatedFoo(ctx).Recover().`, `RecoverNow(context.Background())`, `GenericNow[int]()`, `Store[string].WriteEnvelope(context.Background())`, `(*Store[string]).WriteEnvelope(context.Background())`, and stale `MissingStore[string]`.\n' >"$callresult/docs/doc.md"
+	printf 'Call-result citations are `newCaptainRecoverTransaction().Recover`, `newFoo(ctx, option()).Recover()`, `newFoo().(Reader).Read()`, `newFoo()[:].Read()`, `(*newFoo()).Read()`, `(<-newReader()).Read()`, `mailbox.WriteEnvelope(ctx, envelope).`, `newPunctuatedFoo(ctx).Recover().`, `RecoverNow(context.Background())`, `GenericNow[int]()`, `GenericNow[int]:12`, `Store[string].WriteEnvelope(context.Background())`, `(*Store[string]).WriteEnvelope(context.Background())`, and stale `MissingStore[string]`.\n' >"$callresult/docs/doc.md"
 	: >"$callresult/waiver"
 	if unchecked="$(SCAN_ROOT="$callresult" WAIVER="$callresult/waiver" "$0" unchecked 2>&1)" && printf '%s\n' "$unchecked" | grep -Fq 'newCaptainRecoverTransaction().Recover' && printf '%s\n' "$unchecked" | grep -Fq 'newFoo(ctx, option()).Recover()' && printf '%s\n' "$unchecked" | grep -Fq 'newFoo().(Reader).Read()' && printf '%s\n' "$unchecked" | grep -Fq 'newFoo()[:].Read()' && printf '%s\n' "$unchecked" | grep -Fq '(*newFoo()).Read()' && printf '%s\n' "$unchecked" | grep -Fq '(<-newReader()).Read()' && printf '%s\n' "$unchecked" | grep -Fq 'mailbox.WriteEnvelope(ctx, envelope)' && printf '%s\n' "$unchecked" | grep -Fq 'newPunctuatedFoo(ctx).Recover()'; then
-		if rows="$(cd "$TOOL" && go run . "$callresult" 2>&1)" && printf '%s\n' "$rows" | grep -Fq $'resolved\tdocs/doc.md\tsymbol\tRecoverNow(context.Background())' && printf '%s\n' "$rows" | grep -Fq $'resolved\tdocs/doc.md\tsymbol\tGenericNow[int]()' && printf '%s\n' "$rows" | grep -Fq $'resolved\tdocs/doc.md\tsymbol\tStore[string].WriteEnvelope(context.Background())' && printf '%s\n' "$rows" | grep -Fq $'resolved\tdocs/doc.md\tsymbol\t(*Store[string]).WriteEnvelope(context.Background())' && printf '%s\n' "$rows" | grep -Fq $'unchecked\tdocs/doc.md\ttoken\tMissingStore[string]'; then
+		if rows="$(cd "$TOOL" && go run . "$callresult" 2>&1)" && printf '%s\n' "$rows" | grep -Fq $'resolved\tdocs/doc.md\tsymbol\tRecoverNow(context.Background())' && printf '%s\n' "$rows" | grep -Fq $'resolved\tdocs/doc.md\tsymbol\tGenericNow[int]()' && printf '%s\n' "$rows" | grep -Fxq $'resolved\tdocs/doc.md\tsymbol\tGenericNow[int]' && printf '%s\n' "$rows" | grep -Fq $'resolved\tdocs/doc.md\tsymbol\tStore[string].WriteEnvelope(context.Background())' && printf '%s\n' "$rows" | grep -Fq $'resolved\tdocs/doc.md\tsymbol\t(*Store[string]).WriteEnvelope(context.Background())' && printf '%s\n' "$rows" | grep -Fq $'unchecked\tdocs/doc.md\ttoken\tMissingStore[string]'; then
 			echo "  ok   call-result-selector"
 		else
 			echo "::error::citations failed to resolve ordinary or generic calls:" >&2
@@ -677,6 +678,23 @@ EOF
 		echo "  ok   control-character-citation"
 	else
 		echo "::error::citations emitted malformed TSV for a control-character citation:" >&2
+		printf '%s\n' "${rows:-$?}" >&2
+		failed=1
+	fi
+
+	unsafe_doc_path="$(mktemp -d)"
+	mkdir -p "$unsafe_doc_path/docs"
+	: >"$unsafe_doc_path/AGENTS.md"
+	: >"$unsafe_doc_path/CLAUDE.md"
+	: >"$unsafe_doc_path/README.md"
+	printf 'package x\n\nfunc SomethingDeclared() {}\n' >"$unsafe_doc_path/good.go"
+	printf 'A citation is `SomethingDeclared`.\n' >"$unsafe_doc_path/docs/a$(printf '\t')b.md"
+	: >"$unsafe_doc_path/waiver"
+	if rows="$(cd "$TOOL" && go run . "$unsafe_doc_path" 2>&1)"; then rc=0; else rc=$?; fi
+	if [ "$rc" -ne 0 ] && printf '%s\n' "$rows" | grep -Fq 'contains a control character'; then
+		echo "  ok   control-character-document-path"
+	else
+		echo "::error::citations emitted or accepted a control-character document path:" >&2
 		printf '%s\n' "${rows:-$?}" >&2
 		failed=1
 	fi

@@ -182,7 +182,11 @@ func docFiles(root string) ([]string, error) {
 		if err != nil {
 			return err
 		}
-		out = append(out, filepath.ToSlash(rel))
+		rel = filepath.ToSlash(rel)
+		if strings.IndexFunc(rel, unicode.IsControl) >= 0 {
+			return fmt.Errorf("covered document %q contains a control character", rel)
+		}
+		out = append(out, rel)
 		return nil
 	})
 	if err != nil {
@@ -1263,7 +1267,7 @@ func genericSymbolName(idx *index, text string) (bool, bool) {
 // claim about a Go declaration.
 func classify(root string, idx *index, fi *files, doc, text string) []string {
 	var rows []string
-	expressionText := strings.TrimRight(strings.TrimSpace(text), ".,;:'\"")
+	expressionText := cleanToken(text)
 	if expr, err := parser.ParseExpr(expressionText); err == nil {
 		if selectorRootedInCall(expr) {
 			return []string{strings.Join([]string{"unchecked", doc, "token", expressionText}, "\t")}
