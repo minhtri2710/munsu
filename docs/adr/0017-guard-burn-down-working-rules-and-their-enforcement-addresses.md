@@ -26,9 +26,10 @@ simply not be re-typed. ADR-0016 §2 named this shape for a different constraint
 that lives in one orchestrator's memory disappears on the first run that orchestrator is
 not part of.
 
-Recording them is the whole of this ADR. It changes no code, no workflow, and neither
-register. Where a rule needs machinery that does not exist, the machinery is named as work
-and not built here.
+Recording them was the original scope of this ADR. It changed no code, no workflow, and
+neither register. Where a rule needed machinery that did not exist, the machinery was named
+as work and not built there. Section 2.5 is a later layer-1 amendment: it records the
+mechanical shrink-only baseline ratchet now enforced by the coverage lane.
 
 ### What is actually in the tree, and what is not
 
@@ -67,10 +68,10 @@ properties of a script somebody chooses to run — not of a check that runs. Der
 case list is the missing infrastructure, named in [Work this creates](#work-this-creates)
 and not attempted here.
 
-### 2. Rules the mutation script enforces mechanically
+### 2. Rules enforced mechanically
 
-**Address: `.github/scripts/mutation-check.py`, pending #511. Not a required check, not in
-`ci.yml`, run by hand on a case file per batch.**
+**Address for §§2.1–2.4: `.github/scripts/mutation-check.py`, pending #511. Not a required
+check, not in `ci.yml`, run by hand on a case file per batch.**
 
 **2.1 — The operator is `(COND) && false`, never bare `false` and never `false && (COND)`.**
 Go short-circuits `&&`, so `false && (cond)` never evaluates `cond`. Where the condition
@@ -99,8 +100,23 @@ verdict is attributable to its own guard. The script groups cases by package and
 `-j > 1` outright when every selected case lives in a single package. Grouping by file —
 what it did before the #511 fixup — is that mistake with extra steps.
 
-These four are the only rules in this document that a machine already checks end to end,
+These four are the only mutation rules in this document that a machine already checks end to end,
 and only for the cases somebody listed.
+
+**2.5 — The uncovered-guards baseline is a shrink-only identity ratchet.** The authoritative
+implementation is `.github/scripts/uncovered-guards.sh check`, with its derived site identity
+owned by `.github/scripts/guardsites`. The identity is exactly `(file, function, ordinal,
+predicate)`; the fifth-column reason and any comments are metadata and are ignored by the
+ratchet comparison. The current identity set must be a subset of the baseline stored at the
+exact target-branch base commit. Removing identities is allowed; adding an identity, including
+same-count replacement, is rejected. Missing or malformed base data fails closed. This ratchet
+is additional to the existing bidirectional coverage checks, which still require every current
+uncovered site to be listed and reject listed sites that are covered or no longer exist.
+
+In production, the exact base is selected through `GUARDS_BASE_REF`, which CI supplies as the
+pull request base SHA or, for a push, the predecessor commit. The `GUARDS_BASELINE_BASE` seam
+exists only for executable fixtures; it is not a production input. CI fetches that exact ref
+rather than assuming `origin/main`, so stacked changes compare against their immediate parent.
 
 ### 3. Rules only a reader enforces
 
@@ -376,9 +392,11 @@ behaviour pinned by two fixtures and would make the baseline platform-dependent.
 
 * Ten rules carried in dispatch comments are now in the repository, each with the address
   that enforces it or an explicit statement that nothing does.
-* Four of them (§2) are mechanically enforced, by a script that is not yet on `main` and is
-  not a required check. Five (§3, §4a-b) have no address and are recorded as owned in the
-  ADR-0016 sense. The rest are split, and the split is written out rather than averaged.
+* The four mutation rules in §2 are mechanically enforced, by a script that is not yet on
+  `main` and is not a required check. The §2.5 coverage ratchet is mechanically enforced by a
+  required CI check, alongside the bidirectional coverage comparison. Five (§3, §4a-b) have
+  no address and are recorded as owned in the ADR-0016 sense. The rest are split, and the split
+  is written out rather than averaged.
 * The rule set is now falsifiable: §4 says a waiver must declare how to invalidate itself,
   and §6.3, §5 and the removal conditions apply that standard to this document's own claims.
 * Three corrections stand against the brief this was written from — `mutation-check.py`'s
