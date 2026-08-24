@@ -598,9 +598,9 @@ EOF
 	: >"$callresult/CLAUDE.md"
 	: >"$callresult/README.md"
 	printf 'package x\n\ntype Store struct{}\nfunc (Store) WriteEnvelope(any) {}\nfunc RecoverNow(any) {}\nfunc GenericNow[T any]() {}\n' >"$callresult/good.go"
-	printf 'Call-result citations are `newCaptainRecoverTransaction().Recover`, `newFoo(ctx, option()).Recover()`, `newFoo().(Reader).Read()`, `newFoo()[:].Read()`, `(*newFoo()).Read()`, `mailbox.WriteEnvelope(ctx, envelope).`, `newPunctuatedFoo(ctx).Recover().`, `RecoverNow(context.Background())`, `GenericNow[int]()` and `(*Store).WriteEnvelope(context.Background())`.\n' >"$callresult/docs/doc.md"
+	printf 'Call-result citations are `newCaptainRecoverTransaction().Recover`, `newFoo(ctx, option()).Recover()`, `newFoo().(Reader).Read()`, `newFoo()[:].Read()`, `(*newFoo()).Read()`, `(<-newReader()).Read()`, `mailbox.WriteEnvelope(ctx, envelope).`, `newPunctuatedFoo(ctx).Recover().`, `RecoverNow(context.Background())`, `GenericNow[int]()` and `(*Store).WriteEnvelope(context.Background())`.\n' >"$callresult/docs/doc.md"
 	: >"$callresult/waiver"
-	if unchecked="$(SCAN_ROOT="$callresult" WAIVER="$callresult/waiver" "$0" unchecked 2>&1)" && printf '%s\n' "$unchecked" | grep -Fq 'newCaptainRecoverTransaction().Recover' && printf '%s\n' "$unchecked" | grep -Fq 'newFoo(ctx, option()).Recover()' && printf '%s\n' "$unchecked" | grep -Fq 'newFoo().(Reader).Read()' && printf '%s\n' "$unchecked" | grep -Fq 'newFoo()[:].Read()' && printf '%s\n' "$unchecked" | grep -Fq '(*newFoo()).Read()' && printf '%s\n' "$unchecked" | grep -Fq 'mailbox.WriteEnvelope(ctx, envelope)' && printf '%s\n' "$unchecked" | grep -Fq 'newPunctuatedFoo(ctx).Recover()'; then
+	if unchecked="$(SCAN_ROOT="$callresult" WAIVER="$callresult/waiver" "$0" unchecked 2>&1)" && printf '%s\n' "$unchecked" | grep -Fq 'newCaptainRecoverTransaction().Recover' && printf '%s\n' "$unchecked" | grep -Fq 'newFoo(ctx, option()).Recover()' && printf '%s\n' "$unchecked" | grep -Fq 'newFoo().(Reader).Read()' && printf '%s\n' "$unchecked" | grep -Fq 'newFoo()[:].Read()' && printf '%s\n' "$unchecked" | grep -Fq '(*newFoo()).Read()' && printf '%s\n' "$unchecked" | grep -Fq '(<-newReader()).Read()' && printf '%s\n' "$unchecked" | grep -Fq 'mailbox.WriteEnvelope(ctx, envelope)' && printf '%s\n' "$unchecked" | grep -Fq 'newPunctuatedFoo(ctx).Recover()'; then
 		if rows="$(cd "$TOOL" && go run . "$callresult" 2>&1)" && printf '%s\n' "$rows" | grep -Fq $'resolved\tdocs/doc.md\tsymbol\tRecoverNow(context.Background())' && printf '%s\n' "$rows" | grep -Fq $'resolved\tdocs/doc.md\tsymbol\tGenericNow[int]()' && printf '%s\n' "$rows" | grep -Fq $'resolved\tdocs/doc.md\tsymbol\t(*Store).WriteEnvelope(context.Background())'; then
 			echo "  ok   call-result-selector"
 		else
@@ -701,6 +701,14 @@ EOF
 		echo "  ok   nested-list-fence-container"
 	else
 		echo "::error::citations accepted a shallower list marker for a nested fence:" >&2
+		printf '%s\n' "${rows:-$?}" >&2
+		failed=1
+	fi
+	printf '%s\n' '- ```go' '      ```' '  ```' 'A citation after the fence is `AfterOverIndentedFence`.' >"$container/docs/doc.md"
+	if rows="$(cd "$TOOL" && go run . "$container" 2>&1)" && printf '%s\n' "$rows" | grep -q $'unresolved\tdocs/doc.md\tsymbol\tAfterOverIndentedFence'; then
+		echo "  ok   overindented-list-fence-closer"
+	else
+		echo "::error::citations accepted an over-indented list fence closer:" >&2
 		printf '%s\n' "${rows:-$?}" >&2
 		failed=1
 	fi

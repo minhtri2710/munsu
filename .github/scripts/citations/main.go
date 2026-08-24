@@ -331,18 +331,24 @@ func stripBlockquoteContainers(line string) (string, int) {
 func stripFenceContinuation(line string, columns int) (string, bool) {
 	current := 0
 	start := 0
-	for start < len(line) {
+	for start < len(line) && current < columns {
 		switch line[start] {
 		case ' ':
 			current++
 		case '\t':
 			current = (current/4 + 1) * 4
 		default:
-			return line[start:], current >= columns
+			return line[start:], false
 		}
 		start++
 	}
-	return line[start:], current >= columns
+	if current < columns {
+		return line[start:], false
+	}
+	if current > columns {
+		return strings.Repeat(" ", current-columns) + line[start:], true
+	}
+	return line[start:], true
 }
 
 func fenceMarkerNormalized(line string) (byte, int, int, bool) {
@@ -523,6 +529,8 @@ func callRoot(expr ast.Expr) bool {
 	case *ast.SliceExpr:
 		return callRoot(t.X)
 	case *ast.StarExpr:
+		return callRoot(t.X)
+	case *ast.UnaryExpr:
 		return callRoot(t.X)
 	}
 	return false
