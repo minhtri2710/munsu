@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 func TestInlineSpansRecoversCitationAfterUnmatchedRunAcrossLines(t *testing.T) {
 	openRun := 0
@@ -49,8 +52,42 @@ func TestInlineSpansRecoversPendingTextAtEOF(t *testing.T) {
 		t.Fatalf("openRun = %d, want 2 before EOF recovery", openRun)
 	}
 
-	spans := inlineSpans(openText)
+	spans := recoverInlineSpans(openText)
 	if len(spans) != 1 || spans[0].text != "home.MissingAtEOF" {
 		t.Fatalf("EOF recovery = %#v, want the citation span", spans)
+	}
+}
+
+func TestInlineSpansRecoversSuccessivePendingRuns(t *testing.T) {
+	openRun := 0
+	openText := ""
+	scanInlineSpans("prefix ``` then `` then `home.MissingAfterRuns`", &openRun, &openText)
+	if openRun != 3 {
+		t.Fatalf("openRun = %d, want 3 before boundary recovery", openRun)
+	}
+
+	spans := recoverInlineSpans(openText)
+	if len(spans) != 1 || spans[0].text != "home.MissingAfterRuns" {
+		t.Fatalf("boundary recovery = %#v, want the citation span", spans)
+	}
+}
+
+func TestScanRecoversUnmatchedRunsAcrossBoundaries(t *testing.T) {
+	root := filepath.Join("..", "..", "testdata", "citations", "unmatched-backtick-continue")
+	rows, err := scan(root)
+	if err != nil {
+		t.Fatalf("scan(%q): %v", root, err)
+	}
+	want := map[string]bool{
+		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterQuote": true,
+		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterRuns":  true,
+	}
+	for _, row := range rows {
+		if want[row] {
+			delete(want, row)
+		}
+	}
+	for row := range want {
+		t.Errorf("scan output missing %q", row)
 	}
 }

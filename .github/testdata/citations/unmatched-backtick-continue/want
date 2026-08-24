@@ -1,6 +1,8 @@
 ::error::citations that do not resolve and are not in .github/testdata/citations/unmatched-backtick-continue/waiver:
-  docs/doc.md: symbol home.MissingAfterUnmatched
-    docs/doc.md:1:An unclosed `` double-backtick run followed by `home.MissingAfterUnmatched` on the same line.
+  docs/doc.md: symbol home.MissingAfterQuote
+    docs/doc.md:6:> `home.MissingAfterQuote`.
+  docs/doc.md: symbol home.MissingAfterRuns
+    docs/doc.md:3:Finally `home.MissingAfterRuns`.
   A path citation must name a file that exists; a symbol citation must name a func,
   method, type, const, var or struct field this tree declares. Correct the citation,
   or add a line to that file with a reason -- see ADR-0017 4 for what a reason has to say.

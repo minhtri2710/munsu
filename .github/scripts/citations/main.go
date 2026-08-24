@@ -221,6 +221,19 @@ func inlineSpans(line string) []span {
 	return spans
 }
 
+func recoverInlineSpans(text string) []span {
+	var spans []span
+	for text != "" {
+		found, openRun, pending := inlineSpansState(text, 0, "")
+		spans = append(spans, found...)
+		if openRun == 0 || pending == "" || len(pending) >= len(text) {
+			break
+		}
+		text = pending
+	}
+	return spans
+}
+
 func inlineSpansState(line string, openRun int, openText string) ([]span, int, string) {
 	var out []span
 	i := 0
@@ -1270,7 +1283,7 @@ func scan(root string) ([]string, error) {
 			if openRun == 0 {
 				return nil
 			}
-			spans := inlineSpans(openText)
+			spans := recoverInlineSpans(openText)
 			openRun, openText, openContainers = 0, "", nil
 			return addSpans(spans)
 		}
@@ -1311,7 +1324,11 @@ func scan(root string) ([]string, error) {
 				continue
 			}
 			if openRun > 0 {
-				if continuation, continuationOK := stripFenceContainers(line, openContainers); continuationOK {
+				if len(containers) > 0 && !sameFenceContainers(containers, openContainers) {
+					if err := flushOpen(); err != nil {
+						return nil, err
+					}
+				} else if continuation, continuationOK := stripFenceContainers(line, openContainers); continuationOK {
 					normalized = continuation
 				} else if !sameFenceContainers(containers, openContainers) {
 					if err := flushOpen(); err != nil {
