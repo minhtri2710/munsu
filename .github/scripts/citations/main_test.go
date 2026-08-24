@@ -81,6 +81,8 @@ func TestScanRecoversUnmatchedRunsAcrossBoundaries(t *testing.T) {
 	want := map[string]bool{
 		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterQuote": true,
 		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterRuns":  true,
+		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterItem":  true,
+		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterLazy":  true,
 	}
 	for _, row := range rows {
 		if want[row] {

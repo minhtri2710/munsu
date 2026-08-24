@@ -340,6 +340,22 @@ func sameFenceContainers(a, b []fenceContainer) bool {
 	return true
 }
 
+func hasContainerKind(containers []fenceContainer, kind byte) bool {
+	for _, container := range containers {
+		if container.kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
+func lazyBlockquoteContinuation(line string, containers, openContainers []fenceContainer) bool {
+	return hasContainerKind(openContainers, '>') &&
+		!hasContainerKind(containers, '>') &&
+		!hasContainerKind(containers, 'l') &&
+		!inlineBlockBoundary(line)
+}
+
 func inlineBlockBoundary(line string) bool {
 	return thematicBreakRe.MatchString(line) || setextUnderline(line) || markdownBlockStartRe.MatchString(line)
 }
@@ -1330,6 +1346,12 @@ func scan(root string) ([]string, error) {
 					}
 				} else if continuation, continuationOK := stripFenceContainers(line, openContainers); continuationOK {
 					normalized = continuation
+				} else if hasContainerKind(containers, 'l') {
+					if err := flushOpen(); err != nil {
+						return nil, err
+					}
+				} else if lazyBlockquoteContinuation(line, containers, openContainers) {
+					normalized = line
 				} else if !sameFenceContainers(containers, openContainers) {
 					if err := flushOpen(); err != nil {
 						return nil, err
