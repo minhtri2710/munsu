@@ -56,7 +56,7 @@
 #
 # Usage:
 #   uncovered-guards.sh sites      derived refusal sites, tab-separated
-#   uncovered-guards.sh merge      merged profile, block key <TAB> max count
+#   uncovered-guards.sh merge      merged profile, block range and max count
 #   uncovered-guards.sh classify   every site with its coverage verdict
 #   uncovered-guards.sh generate   a fresh baseline body, for the first landing
 #   uncovered-guards.sh check      tree and baseline agree, in both directions
@@ -90,8 +90,8 @@ die() {
 	exit 1
 }
 
-# The derived set: file, func, nth, predicate, block. SITES exists for the
-# selftest, which needs to drive `check` from a fixed site list rather than from
+# The derived set: file, func, nth, predicate, body, entries. SITES exists for
+# the selftest, which needs to drive `check` from a fixed site list rather than from
 # whatever the real tree happens to hold today.
 sites() {
 	if [ -n "${SITES:-}" ]; then
@@ -107,17 +107,23 @@ sites() {
 		die "guardsites could not derive the refusal set, so this lane cannot judge coverage"
 }
 
-# One line per coverage block, `path:line.col <TAB> count`, keyed on the block's
-# START position only and carrying the largest count any lane recorded for it.
+# One line per coverage block, `path:start-end<TAB>count`, carrying the
+# largest count any lane recorded for it. The profile is the source of truth for
+# the block's start: Go toolchains may place it at the `if` body's opening brace
+# or at its first statement. A site therefore supplies its body range and the
+# supported entry coordinates; classify() accepts only a unique entry block.
 #
-# Start position alone is the key because that is the one coordinate cmd/cover
-# and go/ast agree on exactly: cover opens an `if` body's counter at Body.Lbrace,
-# while the block's END is the closing brace for a `return` body and the last
-# statement for a `panic` one. Matching both would silently drop every panic
-# guard. Start positions are unique within a file -- blocks do not overlap.
+# The complete range is retained so a malformed or ambiguous profile cannot be
+# mistaken for a match. The start selects the entry coordinate; the end is
+# validated against the source body and keeps the merged representation faithful
+# to the profile.
 merge() {
-	local module lane path missing=""
+	local module lane path missing="" max_int
 	module="$(awk '/^module / { print $2; exit }' "$ROOT/go.mod")"
+	case "$(go env GOARCH)" in
+		386|arm|mips|mipsle|wasm) max_int=2147483647 ;;
+		*) max_int=9223372036854775807 ;;
+	esac
 	[ -n "$module" ] || die "could not read the module path from go.mod"
 	[ -d "$PROFILES" ] || die "missing coverage directory ${PROFILES#"$ROOT"/} -- the lane profiles have to be downloaded before this runs"
 
@@ -144,20 +150,123 @@ merge() {
 	# with absolute fixture paths and pins the output, so an absolute FILENAME
 	# would put this checkout in a committed file.
 	# shellcheck disable=SC2046 # word splitting is the point: one path per lane
-	awk -F' ' -v prefix="$module/" -v root="$ROOT/" '
+	awk -F' ' -v prefix="$module/" -v root="$ROOT/" -v maxInt="$max_int" '
 		function short(p) { return index(p, root) == 1 ? substr(p, length(root) + 1) : p }
-		FNR == 1 && $0 !~ /^mode:/ { printf "::error::%s is not a coverage profile\n", short(FILENAME) > "/dev/stderr"; bad = 1; exit }
-		/^mode:/ { next }
-		NF != 3 { printf "::error::%s:%d: unreadable profile line: %s\n", short(FILENAME), FNR, $0 > "/dev/stderr"; bad = 1; exit }
+		function decimal(value) {
+			sub(/^0+/, "", value)
+			return value == "" ? "0" : value
+		}
+		function fitsInt(value, normalized) {
+			normalized = decimal(value)
+			return length(normalized) < length(maxInt) ||
+				(length(normalized) == length(maxInt) && ("x" normalized) <= ("x" maxInt))
+		}
+		function requireInt(value, label, normalized) {
+			normalized = decimal(value)
+			if (!fitsInt(normalized)) {
+				printf "::error::%s:%d: %s is outside Go int range: %s\n", short(FILENAME), FNR, label, value > "/dev/stderr"
+				bad = 1
+				return ""
+			}
+			return normalized
+		}
+		function position(spec, which,   parts) {
+			if (split(spec, parts, /,/) != 2) return ""
+			return parts[which]
+		}
+		function pointLine(point,   parts) {
+			split(point, parts, /\./)
+			return parts[1] + 0
+		}
+		function pointColumn(point,   parts) {
+			split(point, parts, /\./)
+			return parts[2] + 0
+		}
+		function before(left, right) {
+			return pointLine(left) < pointLine(right) ||
+				(pointLine(left) == pointLine(right) && pointColumn(left) < pointColumn(right))
+		}
+		function greaterDecimal(left, right) {
+			left = decimal(left)
+			right = decimal(right)
+			return length(left) > length(right) ||
+				(length(left) == length(right) && ("x" left) > ("x" right))
+		}
+		FNR == 1 {
+			if ($0 !~ /^mode:/) {
+				printf "::error::%s is not a coverage profile\n", short(FILENAME) > "/dev/stderr"
+				bad = 1
+				exit
+			}
+			if ($0 !~ /^mode: (set|count|atomic)$/) {
+				printf "::error::%s:%d: unsupported or missing coverage profile mode: %s\n", short(FILENAME), FNR, $0 > "/dev/stderr"
+				bad = 1
+				exit
+			}
+			next
+		}
+		/^mode:/ {
+			printf "::error::%s:%d: repeated or misplaced coverage profile mode: %s\n", short(FILENAME), FNR, $0 > "/dev/stderr"
+			bad = 1
+			exit
+		}
+		$0 !~ /^[^[:space:]]+:[1-9][0-9]*\.[1-9][0-9]*,[1-9][0-9]*\.[1-9][0-9]* [0-9]+ [0-9]+$/ {
+			printf "::error::%s:%d: unreadable profile line: %s\n", short(FILENAME), FNR, $0 > "/dev/stderr"
+			bad = 1
+			exit
+		}
 		{
 			spec = $1
-			sub("^" prefix, "", spec)
-			sub(/,[0-9]+\.[0-9]+$/, "", spec)
-			if (!(spec in max) || $3 + 0 > max[spec]) max[spec] = $3 + 0
+			if (index(spec, prefix) != 1) {
+				printf "::error::%s:%d: coverage block has an unexpected module path: %s\n", short(FILENAME), FNR, $1 > "/dev/stderr"
+				bad = 1
+				exit
+			}
+			spec = substr(spec, length(prefix) + 1)
+			key = position(spec, 1)
+			end = position(spec, 2)
+			if (key !~ /:[1-9][0-9]*\.[1-9][0-9]*$/ ||
+				end !~ /^[1-9][0-9]*\.[1-9][0-9]*$/) {
+				printf "::error::%s:%d: invalid coverage block coordinates: %s\n", short(FILENAME), FNR, $1 > "/dev/stderr"
+				bad = 1
+				next
+			}
+			match(key, /:[0-9]+\.[0-9]+$/)
+			start = substr(key, RSTART + 1)
+			startLine = substr(start, 1, index(start, ".") - 1)
+			startCol = substr(start, index(start, ".") + 1)
+			endLine = substr(end, 1, index(end, ".") - 1)
+			endCol = substr(end, index(end, ".") + 1)
+			if (requireInt(startLine, "coverage block start line") == "" ||
+				requireInt(startCol, "coverage block start column") == "" ||
+				requireInt(endLine, "coverage block end line") == "" ||
+				requireInt(endCol, "coverage block end column") == "") next
+			file = substr(key, 1, RSTART - 1)
+			statement = requireInt($2, "statement count")
+			count = requireInt($3, "execution count")
+			if (statement == "" || count == "") next
+			if (!before(start, end) && start != end) {
+				printf "::error::%s:%d: non-positive coverage block range: %s\n", short(FILENAME), FNR, $1 > "/dev/stderr"
+				bad = 1
+				next
+			}
+			if (start == end && statement != "0") {
+				printf "::error::%s:%d: incompatible zero-width coverage block with nonzero statement count: %s\n", short(FILENAME), FNR, $1 > "/dev/stderr"
+				bad = 1
+				next
+			}
+			block = file ":" start "-" end
+			if (!(block in statements)) statements[block] = statement
+			else if (("x" statements[block]) != ("x" statement)) {
+				printf "::error::conflicting statement counts for coverage block %s: %s versus %s\n", block, statements[block], statement > "/dev/stderr"
+				bad = 1
+				next
+			}
+			if (!(block in max) || greaterDecimal(count, max[block])) max[block] = count
 		}
 		END {
 			if (bad) exit 1
-			for (spec in max) printf "%s\t%d\n", spec, max[spec]
+			for (block in max) printf "%s\t%s\n", block, max[block]
 		}
 	' $(for lane in $(lane_files); do printf '%s ' "$PROFILES/$lane"; done) | sort
 }
@@ -165,9 +274,11 @@ merge() {
 # Every site with a verdict: covered, uncovered, unmeasured, or anomaly.
 #
 # `anomaly` is the one that must never be waived away: the file IS in the
-# profile, so the lane compiled it, yet this site's block start matches nothing.
-# That means go/ast and cmd/cover have stopped agreeing on where an `if` body
-# begins, and every verdict this script prints is suspect. It is fatal in check().
+# profile, so the lane compiled it, yet no unique valid entry block can be
+# resolved from this site's refusal-body coordinates. That means the coverage
+# instrumenter's block convention has changed, or the profile is otherwise
+# incompatible with the source tree, and every verdict this script prints is
+# suspect. It is fatal in check().
 classify() {
 	local merged derived
 	# `|| exit 1` on both, rather than leaning on `set -e`: a command
@@ -181,23 +292,95 @@ classify() {
 	derived="$(sites)" || exit 1
 	[ -n "$derived" ] || die "no refusal site was derived from the tree -- the recognizer has stopped matching, so this lane proves nothing"
 	awk -F'\t' '
+		function startPoint(range,   parts, pointParts) {
+			split(range, parts, /-/)
+			split(parts[1], pointParts, /\./)
+			return sprintf("%d:%d", pointParts[1], pointParts[2])
+		}
+		function endPoint(range,   parts, pointParts) {
+			split(range, parts, /-/)
+			split(parts[2], pointParts, /\./)
+			return sprintf("%d:%d", pointParts[1], pointParts[2])
+		}
+		function pointLine(point,   parts) {
+			split(point, parts, /:/)
+			return parts[1] + 0
+		}
+		function pointColumn(point,   parts) {
+			split(point, parts, /:/)
+			return parts[2] + 0
+		}
+		function before(left, right) {
+			return pointLine(left) < pointLine(right) ||
+				(pointLine(left) == pointLine(right) && pointColumn(left) < pointColumn(right))
+		}
+		function after(left, right) { return before(right, left) }
+		function inside(point, lower, upper) {
+			return !before(point, lower) && !after(point, upper)
+		}
+		function bodyStart(point, lower, upper) {
+			return !before(point, lower) && before(point, upper)
+		}
+		function coordinate(point,   parts) {
+			split(point, parts, /\./)
+			return sprintf("%d:%d", parts[1], parts[2])
+		}
 		NR == FNR {
-			count[$1] = $2
-			f = $1
-			sub(/:[0-9]+\.[0-9]+$/, "", f)
-			compiled[f] = 1
+			file = $1
+			sub(/:[0-9]+\.[0-9]+-.*/, "", file)
+			compiled[file] = 1
+			blocks[file] = blocks[file] $0 "\n"
 			next
 		}
 		{
-			key = $1 ":" $5
-			# The block travels with every verdict, not just the anomaly: the
-			# baseline has no line numbers by design, so this is the only thing
-			# that can tell an author which `if` to go and write a test for.
+			if (NF != 6) {
+				printf "::error::derived refusal site has invalid columns: %s\n", $0 > "/dev/stderr"
+				bad = 1
+				next
+			}
+			bodyLower = startPoint($5)
+			bodyUpper = endPoint($5)
+			split($6, entries, /,/)
+			if (split($6, entries, /,/) != 2 || entries[1] !~ /^[1-9][0-9]*\.[1-9][0-9]*$/ || entries[2] !~ /^[1-9][0-9]*\.[1-9][0-9]*$/) {
+				printf "::error::derived refusal site has invalid entry coordinates: %s\n", $0 > "/dev/stderr"
+				bad = 1
+				next
+			}
+			entryBrace = coordinate(entries[1])
+			entryFirst = coordinate(entries[2])
+			file = $1
+			matches = 0
+			incompatible = 0
+			n = split(blocks[file], lines, /\n/)
+			for (i = 1; i <= n; i++) {
+				if (lines[i] == "") continue
+				split(lines[i], fields, /\t/)
+				blockRange = fields[1]
+				sub(/^[^:]+:/, "", blockRange)
+				blockStart = startPoint(blockRange)
+				blockEnd = endPoint(blockRange)
+				if (blockStart == blockEnd) continue
+				if (!bodyStart(blockStart, bodyLower, bodyUpper)) continue
+				if (!inside(blockEnd, bodyLower, bodyUpper) || !before(blockStart, blockEnd)) {
+					incompatible = 1
+					continue
+				}
+				if (blockStart != entryBrace && blockStart != entryFirst) continue
+				matches++
+				bestLine = lines[i]
+			}
+			# The refusal body range travels with every verdict, not just the anomaly: the
+			# baseline has no source coordinates by design, so this is the only thing that
+			# can tell an author which `if` to go and write a test for.
 			id = $1 "\t" $2 "\t" $3 "\t" $4 "\t" $5
-			if (key in count) print (count[key] + 0 > 0 ? "covered" : "uncovered") "\t" id
-			else if (!($1 in compiled)) print "unmeasured\t" id
+			if (incompatible) print "anomaly\t" id
+			else if (matches == 1) {
+				split(bestLine, fields, /\t/)
+				print (("x" fields[2]) != "x0" ? "covered" : "uncovered") "\t" id
+			} else if (!(file in compiled)) print "unmeasured\t" id
 			else print "anomaly\t" id
 		}
+		END { if (bad) exit 1 }
 	' <(printf '%s\n' "$merged") <(printf '%s\n' "$derived")
 }
 
@@ -291,12 +474,12 @@ check() {
 
 	anomalies="$(printf '%s\n' "$verdicts" | { grep '^anomaly	' || true; })"
 	if [ -n "$anomalies" ]; then
-		echo "::error::a refusal site sits in a file the lanes compiled, yet its block start matches no counter:" >&2
+		echo "::error::a refusal site sits in a file the lanes compiled, yet no unique coverage block resolves at its refusal-body entry:" >&2
 		printf '%s\n' "$anomalies" | while IFS=$'\t' read -r _ file func nth pred block; do
-			printf '  %s: %s (#%s) %s -- expected a block at %s\n' "$file" "$func" "$nth" "$pred" "$block" >&2
+			printf '  %s: %s (#%s) %s -- refusal body range %s\n' "$file" "$func" "$nth" "$pred" "$block" >&2
 		done
-		echo "  go/ast and cmd/cover disagree about where an if-body opens, so every verdict below is unsafe." >&2
-		echo "  Fix .github/scripts/guardsites/main.go before trusting this lane again." >&2
+		echo "  The coverage profile does not uniquely map this refusal body under the current source/toolchain coordinates, so every verdict below is unsafe." >&2
+		echo "  Check that every profile was produced from this source revision by a compatible Go toolchain before trusting this lane again." >&2
 		exit 1
 	fi
 
@@ -313,10 +496,10 @@ check() {
 	covered="$(printf '%s\n' "$verdicts" | { grep '^covered	' || true; } | cut -f2,3,4,5 | sort -u)"
 	baseline="$(baseline_entries)"
 
-	# `file:line: func (#nth): if <predicate>` for a list of site keys. The line
-	# comes back from the verdicts, which is where it stayed: putting it in the
-	# baseline would rewrite that file on every edit above a guard, and leaving
-	# it out of the message would make an author grep for the branch by hand.
+	# `file:body-range: func (#nth): if <predicate>` for a list of site keys. The
+	# body range comes from the derived site data, where it helps locate the guard
+	# without becoming part of the baseline identity; putting it in the baseline
+	# would rewrite that file on every edit above a guard.
 	sited() {
 		awk -F'\t' 'NR == FNR { at[$2 "\t" $3 "\t" $4 "\t" $5] = $6; next }
 			{ printf "  %s:%s: %s (#%s): if %s\n", $1, at[$0], $2, $3, $4 }' \
@@ -412,6 +595,8 @@ generate() {
 #                          warn on every run, an ordinary waiver must stay silent
 #   merge-four-lanes       take the default profile alone instead of the max
 #                          across lanes -- the trap the design record hit while measuring
+#   statement-count-conflict merge identical ranges with conflicting statement counts
+#                          instead of failing closed at the merge boundary
 #   missing-lane           treat an absent lane profile as zeros
 #   empty-profile          accept a profile with no blocks in it
 #   not-a-profile          accept a file that is not a coverage profile
@@ -420,11 +605,23 @@ generate() {
 #   covered-still-waived   delete the `waived` comparison
 #   stale-entry            delete the `stale` comparison
 #   unmeasured-file        count a file no lane compiled as uncovered
-#   anomaly                accept a site whose block start matches no counter
+#   anomaly                accept a site whose refusal body has no unique entry counter
 #   no-reason              delete the fifth-column requirement
 #   bad-nth                delete the numeric check on nth
+#   malformed-end          accept a profile block with a malformed end coordinate
+#   malformed-count        accept a profile block with malformed count text
+#   overflow-statement     accept a profile block with an overflowing statement count
+#   overflow-execution     accept a profile block with an overflowing execution count
+#   inverted-end            accept a profile block whose end precedes its start
+#   zero-width-endpoint     accept a zero-width profile block that claims statements
+#   zero-width-marker-only  retain a zero-statement marker as compilation evidence
+#                           and fail with an anomaly rather than calling the file unmeasured
+#   incompatible-end        accept a profile block whose end exceeds the refusal body
 #   short-row              delete the NF < 4 check
 #   duplicate-row          delete the `key in seen` check
+#   toolchain-block-go126  match a Go 1.26-style block start at the opening brace
+#   toolchain-block-go127  match a Go 1.27-style block start at the first statement
+#   later-nested           accept a covered block that starts at a later nested statement
 #
 # Each fixture is a directory holding `sites.tsv`, `baseline`, `profiles/` and
 # `want`. Driving `check` from a fixed site list rather than from the real tree

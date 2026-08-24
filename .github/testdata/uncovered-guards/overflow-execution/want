@@ -1,0 +1,2 @@
+::error::.github/testdata/uncovered-guards/overflow-execution/profiles/default.out:2: execution count is outside Go int range: 9223372036854775808
+exit 1
