@@ -47,7 +47,7 @@ func TestReportPersistsBeforeNotificationAndQueuesFailure(t *testing.T) {
 			pending, _ := NewStore(senderHome).ReadPending("soldier-1", ref.MessageID)
 			envelope, _ := NewStore(receiverHome).ReadEnvelope("soldier-1", ref.MessageID)
 			observedDurable = pending != nil && envelope != nil
-			return UplinkNotifyResult{Queued: true}
+			return QueuedNotification()
 		},
 	})
 	if err != nil {
@@ -171,7 +171,7 @@ func TestRecoverUsesNotificationRefAndClosesAfterExactAck(t *testing.T) {
 		SenderIdentity: "captain-1", ForceNotify: true,
 		Notify: func(ref NotificationRef) UplinkNotifyResult {
 			notified = ref.Encode()
-			return UplinkNotifyResult{Acknowledged: true}
+			return AcknowledgedNotification()
 		},
 	})
 	if err != nil {
@@ -203,7 +203,7 @@ func TestRecoverRetriesSameRefAfterSixtySeconds(t *testing.T) {
 		SenderRank: RankSoldier, SenderIdentity: "soldier-1",
 		ReceiverRank: RankCaptain, ReceiverID: "captain-1",
 		TaskID: "task:1", Key: "default", State: "done", Message: "complete",
-		Notify: func(NotificationRef) UplinkNotifyResult { return UplinkNotifyResult{Acknowledged: true} },
+		Notify: func(NotificationRef) UplinkNotifyResult { return AcknowledgedNotification() },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -221,7 +221,7 @@ func TestRecoverRetriesSameRefAfterSixtySeconds(t *testing.T) {
 		SenderIdentity: "soldier-1", Now: time.Now(),
 		Notify: func(ref NotificationRef) UplinkNotifyResult {
 			got = ref
-			return UplinkNotifyResult{Acknowledged: true}
+			return AcknowledgedNotification()
 		},
 	})
 	if err != nil {
@@ -232,5 +232,89 @@ func TestRecoverRetriesSameRefAfterSixtySeconds(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(receiverHome, "state", InboxDir, "soldier-1", result.MessageID+".json")); err != nil {
 		t.Fatal("recovery must retain the original envelope")
+	}
+}
+
+func TestUplinkNotifyResult_ClassifiedOutcomesAgreement(t *testing.T) {
+	// 1. Acknowledged outcome: Report sets Notified=true, Queued=false; Recover counts Notified++.
+	senderHome := t.TempDir()
+	receiverHome := captainReceiverHome(t, "captain-1")
+	repRes, err := Report(ReportRequest{
+		SenderHome:     senderHome,
+		ReceiverHome:   receiverHome,
+		SenderRank:     RankSoldier,
+		SenderIdentity: "soldier-1",
+		ReceiverRank:   RankCaptain,
+		ReceiverID:     "captain-1",
+		TaskID:         "task:ack",
+		Key:            "default",
+		State:          "done",
+		Message:        "complete",
+		Notify: func(NotificationRef) UplinkNotifyResult {
+			return AcknowledgedNotification()
+		},
+	})
+	if err != nil {
+		t.Fatalf("Report with acknowledged outcome: %v", err)
+	}
+	if !repRes.Notified || repRes.Queued {
+		t.Fatalf("ReportResult for acknowledged = %+v, want Notified=true, Queued=false", *repRes)
+	}
+
+	recRes, err := Recover(RecoverRequest{
+		SenderHome:     senderHome,
+		ReceiverHome:   receiverHome,
+		SenderIdentity: "soldier-1",
+		ForceNotify:    true,
+		Notify: func(NotificationRef) UplinkNotifyResult {
+			return AcknowledgedNotification()
+		},
+	})
+	if err != nil {
+		t.Fatalf("Recover with acknowledged outcome: %v", err)
+	}
+	if recRes.Notified != 1 || recRes.Queued != 0 {
+		t.Fatalf("RecoverResult for acknowledged = %+v, want Notified=1, Queued=0", *recRes)
+	}
+
+	// 2. Queued outcome: Report sets Notified=false, Queued=true; Recover counts Queued++.
+	repQueued, err := Report(ReportRequest{
+		SenderHome:     senderHome,
+		ReceiverHome:   receiverHome,
+		SenderRank:     RankSoldier,
+		SenderIdentity: "soldier-1",
+		ReceiverRank:   RankCaptain,
+		ReceiverID:     "captain-1",
+		TaskID:         "task:queued",
+		Key:            "default",
+		State:          "done",
+		Message:        "complete",
+		Notify: func(NotificationRef) UplinkNotifyResult {
+			return QueuedNotification()
+		},
+	})
+	if err != nil {
+		t.Fatalf("Report with queued outcome: %v", err)
+	}
+	if repQueued.Notified || !repQueued.Queued {
+		t.Fatalf("ReportResult for queued = %+v, want Notified=false, Queued=true", *repQueued)
+	}
+
+	recQueued, err := Recover(RecoverRequest{
+		SenderHome:     senderHome,
+		ReceiverHome:   receiverHome,
+		SenderIdentity: "soldier-1",
+		ForceNotify:    true,
+		Notify: func(NotificationRef) UplinkNotifyResult {
+			return QueuedNotification()
+		},
+	})
+	if err != nil {
+		t.Fatalf("Recover with queued outcome: %v", err)
+	}
+	// Note: 2 pending envelopes now in senderHome (task:ack and task:queued).
+	// With notify returning queued, both increment Queued count.
+	if recQueued.Queued != 2 || recQueued.Notified != 0 {
+		t.Fatalf("RecoverResult for queued = %+v, want Queued=2, Notified=0", *recQueued)
 	}
 }

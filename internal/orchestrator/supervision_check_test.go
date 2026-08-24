@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -12,6 +13,11 @@ import (
 // These pin what the function reports. What the watcher then does with a
 // refused artifact is pinned separately, against the loop itself, in
 // supervision_watcher_test.go — the two used to disagree.
+//
+// The function answers one question — has task state advanced past this
+// artifact — and assumes its caller has already applied the check-validation
+// rule. Whether an artifact is a runnable script is pinned where that rule
+// lives (fleet.ValidateCheckWithLstat) and where the loop applies it, not here.
 
 func TestAcceptOrRefuseStale_Valid(t *testing.T) {
 	dir := t.TempDir()
@@ -22,29 +28,26 @@ func TestAcceptOrRefuseStale_Valid(t *testing.T) {
 	}
 }
 
-func TestAcceptOrRefuseStale_ZeroLength(t *testing.T) {
+// An artifact the check-validation rule rejects never reaches this function,
+// so it has no verdict to give on one. Pinning that keeps the boundary
+// explicit: if a shape like this ever arrives here, the caller stopped
+// validating, and that is the bug to fix rather than a rule to duplicate.
+func TestAcceptOrRefuseStale_JudgesOnlyStaleness(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "bad.check")
-	writeExecScript(t, path, "")
-	if err := AcceptOrRefuseStale(path); err == nil {
-		t.Fatal("expected error for zero-length check")
-	}
-	// Refusing is a verdict, not a disposal: the artifact is still here.
-	if _, statErr := os.Stat(path); statErr != nil {
-		t.Errorf("expected zero-length check to remain: %v", statErr)
-	}
-}
-
-func TestAcceptOrRefuseStale_NoShebang(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "bad.check")
-	writeExecScript(t, path, "echo hello\n")
-	if err := AcceptOrRefuseStale(path); err == nil {
-		t.Fatal("expected error for no-shebang check")
-	}
-	// File should remain (no valid shebang means unsafe to remove)
-	if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
-		t.Error("expected no-shebang check to remain for inspection")
+	for _, tc := range []struct {
+		name    string
+		content string
+	}{
+		{name: "zero length", content: ""},
+		{name: "no shebang", content: "echo hello\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(dir, strings.ReplaceAll(tc.name, " ", "-")+".check")
+			writeExecScript(t, path, tc.content)
+			if err := AcceptOrRefuseStale(path); err != nil {
+				t.Fatalf("error = %v; the runnability rule is the caller's, not this function's", err)
+			}
+		})
 	}
 }
 
