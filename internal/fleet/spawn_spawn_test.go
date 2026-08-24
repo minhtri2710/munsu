@@ -1286,6 +1286,20 @@ func TestCheckCaptainTaskAuthority_RefusesDoneTask(t *testing.T) {
 	}
 }
 
+func TestCheckCaptainTaskAuthority_RefusesLiveSessionBeforeAuthorityLookup(t *testing.T) {
+	homeDir := t.TempDir()
+	_ = home.WriteMeta(homeDir, "live-task", map[string]string{"kind": "ship", "window": "default:w1:p1"})
+	r := &Runner{
+		args:      Args{ID: "live-task"},
+		spawnRole: "captain",
+		homeDir:   homeDir,
+	}
+	err := r.checkCaptainBacklogAuthority()
+	if err == nil || !strings.Contains(err.Error(), "already has a live soldier session") {
+		t.Fatalf("error = %v, want live-session refusal before authority lookup", err)
+	}
+}
+
 func TestCheckCaptainTaskAuthority_RefusesLiveSessionWithWindow(t *testing.T) {
 	homeDir := t.TempDir()
 	_ = home.WriteMeta(homeDir, "live-task", map[string]string{"kind": "ship", "window": "default:w1:p1"})

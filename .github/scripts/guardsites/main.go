@@ -266,7 +266,7 @@ func scan(root string) ([]site, error) {
 						appendDefaultSites(&rows, stmt.Body, owner, rel, fset)
 					}
 				case *ast.TypeSwitchStmt:
-					if isSelfOriginating(resolver, abs, fset, stmt.Init, stmt.Assign) {
+					if typeSwitchSelfOriginating(resolver, abs, fset, stmt) {
 						appendDefaultSites(&rows, stmt.Body, owner, rel, fset)
 					}
 				}
@@ -347,6 +347,24 @@ func entryPoints(fset *token.FileSet, body *ast.BlockStmt) string {
 
 func switchSelfOriginating(r *resolver, file string, fset *token.FileSet, stmt *ast.SwitchStmt) bool {
 	if !isSelfOriginating(r, file, fset, stmt.Init, stmt.Tag) {
+		return false
+	}
+	for _, clause := range stmt.Body.List {
+		caseClause, ok := clause.(*ast.CaseClause)
+		if !ok || len(caseClause.List) == 0 {
+			continue
+		}
+		for _, expr := range caseClause.List {
+			if !isSelfOriginating(r, file, fset, nil, expr) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func typeSwitchSelfOriginating(r *resolver, file string, fset *token.FileSet, stmt *ast.TypeSwitchStmt) bool {
+	if !isSelfOriginating(r, file, fset, stmt.Init, stmt.Assign) {
 		return false
 	}
 	for _, clause := range stmt.Body.List {

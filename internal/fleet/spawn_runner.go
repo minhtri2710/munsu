@@ -513,6 +513,14 @@ func (r *Runner) checkCaptainBacklogAuthority() error {
 	if r.spawnRole != "captain" {
 		return nil
 	}
+	if meta, err := home.ReadMeta(r.homeDir, r.args.ID); err == nil {
+		if win := meta["window"]; win != "" {
+			return fmt.Errorf("captain task authority: task %s already has a live soldier session (window=%s); refuse duplicate live execution", r.args.ID, win)
+		}
+		if pane := meta["herdr_pane_id"]; pane != "" {
+			return fmt.Errorf("captain task authority: task %s already has a live soldier session (pane=%s); refuse duplicate live execution", r.args.ID, pane)
+		}
+	}
 	agg, err := r.taskAggregate()
 	if err != nil {
 		return err
@@ -521,17 +529,6 @@ func (r *Runner) checkCaptainBacklogAuthority() error {
 }
 
 func (r *Runner) checkCaptainBacklogAuthorityForPhase(taskID string, phase taskauthority.Phase) error {
-	// Already-live = meta proves a soldier was spawned (window or pane id).
-	// Kind-only meta (e.g. task add) is NOT live execution.
-	if meta, err := home.ReadMeta(r.homeDir, taskID); err == nil {
-		if win := meta["window"]; win != "" {
-			return fmt.Errorf("captain task authority: task %s already has a live soldier session (window=%s); refuse duplicate live execution", taskID, win)
-		}
-		if pane := meta["herdr_pane_id"]; pane != "" {
-			return fmt.Errorf("captain task authority: task %s already has a live soldier session (pane=%s); refuse duplicate live execution", taskID, pane)
-		}
-	}
-
 	switch phase {
 	case taskauthority.PhaseWorking:
 		// start→spawn: working without live window/pane is allowed.

@@ -23,6 +23,15 @@ func Type(v any) error {
 	}
 }
 
+func ErrorCase(v any) error {
+	switch v.(type) {
+	case error:
+		return nil
+	default:
+		return fmt.Errorf("unsupported")
+	}
+}
+
 func Fallback(n int) int {
 	switch n {
 	default:
