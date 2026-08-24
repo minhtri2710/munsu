@@ -950,7 +950,9 @@ func fileCitation(fi *files, tok string) bool {
 //     A citation that only ever appears in a fence is never checked.
 //  2. an unmatched backtick run itself (e.g. a lone backtick or unclosed double
 //     backtick), dropped by the inline-span scanner as literal text while
-//     subsequent well-formed spans on the same line continue to be scanned.
+//     subsequent well-formed spans continue to be scanned. Recovery may happen
+//     at a supported Markdown block or container boundary, so this remains true
+//     across lines, list and blockquote continuations, and HTML containers.
 //  3. empty, or a URL: nothing about this tree is being claimed.
 //  4. executable punctuation, the codeChars set above: a fragment of a command
 //     or an expression -- `'[.[]`, `[.labels[].name]`,
