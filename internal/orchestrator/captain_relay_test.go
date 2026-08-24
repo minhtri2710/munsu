@@ -186,10 +186,76 @@ func TestReconcileHook_ReconcilesGeneralHomeWhenParentStatusEmpty(t *testing.T) 
 	tmp := t.TempDir()
 	t.Setenv("MUNSU_PARENT_STATUS", "")
 	os.MkdirAll(filepath.Join(tmp, "state"), 0755)
-
-	err := ReconcileCaptainHook(tmp, false, &captainNotificationTransport{acknowledged: true})
+	identity, rank, err := ReadHomeIdentity(tmp)
 	if err != nil {
-		t.Errorf("expected nil when MUNSU_PARENT_STATUS is empty with valid transport, got: %v", err)
+		t.Fatal(err)
+	}
+	if rank != RankGeneral {
+		t.Fatalf("home rank = %q, want %q", rank, RankGeneral)
+	}
+	result, err := Report(ReportRequest{
+		SenderHome: tmp, ReceiverHome: tmp, SenderRank: RankSoldier,
+		SenderIdentity: "general-recovery-test", ReceiverRank: rank, ReceiverID: identity,
+		TaskID: "general-recovery-test", State: "failed", Message: "queued report",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiver, err := NewReceiver(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := receiver.Ack(NotificationRef{MessageID: result.MessageID, SenderIdentity: "general-recovery-test"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ReconcileCaptainHook(tmp, false, &captainNotificationTransport{acknowledged: true}); err != nil {
+		t.Fatalf("reconcile General home: %v", err)
+	}
+	if pending, err := NewStore(tmp).ListAllPending(); err != nil {
+		t.Fatal(err)
+	} else if len(pending) != 0 {
+		t.Fatalf("pending reports after General recovery = %d, want 0", len(pending))
+	}
+}
+
+func TestReconcileHook_CaptainWithoutParentUsesCaptainRecovery(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("MUNSU_PARENT_STATUS", "")
+	os.MkdirAll(filepath.Join(tmp, "state"), 0755)
+	if err := home.SeedCaptainProvenance(tmp, "test-captain"); err != nil {
+		t.Fatal(err)
+	}
+	identity, rank, err := ReadHomeIdentity(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rank != RankCaptain {
+		t.Fatalf("home rank = %q, want %q", rank, RankCaptain)
+	}
+	result, err := Report(ReportRequest{
+		SenderHome: tmp, ReceiverHome: tmp, SenderRank: RankSoldier,
+		SenderIdentity: "captain-recovery-test", ReceiverRank: rank, ReceiverID: identity,
+		TaskID: "captain-recovery-test", State: "failed", Message: "queued report",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiver, err := NewReceiver(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := receiver.Ack(NotificationRef{MessageID: result.MessageID, SenderIdentity: "captain-recovery-test"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ReconcileCaptainHook(tmp, false, &captainNotificationTransport{acknowledged: true}); err != nil {
+		t.Fatalf("reconcile Captain home: %v", err)
+	}
+	if pending, err := NewStore(tmp).ListAllPending(); err != nil {
+		t.Fatal(err)
+	} else if len(pending) != 0 {
+		t.Fatalf("pending reports after Captain recovery = %d, want 0", len(pending))
 	}
 }
 

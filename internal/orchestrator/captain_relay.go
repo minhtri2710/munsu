@@ -63,14 +63,30 @@ func ReconcileCaptainHook(homeDir string, startup bool, transport NotificationTr
 	}
 	parentHome := ResolveCaptainParentHome(homeDir)
 	if parentHome == "" {
-		_, err := Recover(RecoverRequest{
+		_, homeRank, rankErr := ReadHomeIdentity(homeDir)
+		if rankErr == nil && homeRank == RankGeneral {
+			_, err := Recover(RecoverRequest{
+				SenderHome: homeDir, ReceiverHome: homeDir,
+				ReceiverRank: RankGeneral, ForceNotify: startup,
+				Notify: func(ref NotificationRef) UplinkNotifyResult {
+					return NotifyParentWithTransport(homeDir, homeDir, ref, transport)
+				},
+			})
+			return err
+		}
+		if _, err := Recover(RecoverRequest{
 			SenderHome: homeDir, ReceiverHome: homeDir,
-			ReceiverRank: RankGeneral, ForceNotify: startup,
+			ReceiverRank: RankCaptain, ForceNotify: startup,
 			Notify: func(ref NotificationRef) UplinkNotifyResult {
 				return NotifyParentWithTransport(homeDir, homeDir, ref, transport)
 			},
-		})
-		return err
+		}); err != nil {
+			return err
+		}
+		if rankErr != nil {
+			return fmt.Errorf("reconcile uplink: reading home rank: %w", rankErr)
+		}
+		return nil
 	}
 	if _, err := Recover(RecoverRequest{
 		SenderHome: homeDir, ReceiverHome: homeDir,
