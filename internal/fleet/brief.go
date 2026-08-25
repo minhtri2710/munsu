@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/taskauthority"
@@ -221,7 +222,19 @@ func HasReportEvidence(dataDir string) bool {
 		if name == "report.md" {
 			return true
 		}
-		if strings.HasPrefix(name, archivedReportPrefix) && strings.HasSuffix(name, archivedReportSuffix) {
+		info, err := e.Info()
+		if err != nil {
+			return true
+		}
+		if !info.Mode().IsRegular() {
+			continue
+		}
+		if !strings.HasPrefix(name, archivedReportPrefix) || !strings.HasSuffix(name, archivedReportSuffix) {
+			continue
+		}
+		generation := strings.TrimSuffix(strings.TrimPrefix(name, archivedReportPrefix), archivedReportSuffix)
+		parsed, err := strconv.ParseUint(generation, 10, 64)
+		if err == nil && archivedReportPrefix+strconv.FormatUint(parsed, 10)+archivedReportSuffix == name {
 			return true
 		}
 	}
