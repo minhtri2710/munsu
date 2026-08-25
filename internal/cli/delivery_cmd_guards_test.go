@@ -134,6 +134,7 @@ func installTerminalGhAxi(t *testing.T, state string, merged bool) string {
 	t.Helper()
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "merge-attempt")
+	markerTarget := "'" + strings.ReplaceAll(filepath.ToSlash(marker), "'", "'\\''") + "'"
 	script := fmt.Sprintf(`#!/bin/sh
 case "$1" in
 api)
@@ -141,12 +142,12 @@ api)
   printf 'state: %s\nheadSha: %s\nbaseRef: main\nmerged: %t\nmergedSha: merge123\n'
   ;;
 pr)
-  touch %q
+  touch %s
   exit 1
   ;;
 *) exit 1 ;;
 esac
-`, strings.ToLower(state), deliveryGuardHead, merged, marker)
+`, strings.ToLower(state), deliveryGuardHead, merged, markerTarget)
 	path := filepath.Join(dir, "gh-axi")
 	testutil.WriteFakeExecutable(t, path, script)
 	testutil.PrependPath(t, dir)
