@@ -912,37 +912,34 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		}
 
 		// 5. Clean up data directory
-		// Policy: --force always removes the data dir (GC orphan briefs).
-		// Normal teardown keeps the data dir if report.md or brief.md exist.
+		// One retention policy for every teardown: --force skips safety
+		// checks and is not a destructive action of its own, so it never
+		// widens what teardown deletes. A report.md, or a brief.md large
+		// enough not to be a stub, is work worth reading after teardown and
+		// is kept; a stub brief with no report is reclaimed here, and a data
+		// directory holding neither is reclaimed by the session-start GC in
+		// internal/bootstrap.
 		dataDir := filepath.Join(opts.HomeDir, "data", opts.ID)
 		if fi, err := os.Stat(dataDir); err == nil && fi.IsDir() {
-			if opts.Force {
-				if err := os.RemoveAll(dataDir); err != nil {
-					result.Steps = append(result.Steps, fmt.Sprintf("remove data dir: %v", err))
-				} else {
-					result.Steps = append(result.Steps, "data dir removed (--force)")
-				}
-			} else {
-				reportPath := filepath.Join(dataDir, "report.md")
-				briefPath := filepath.Join(dataDir, "brief.md")
-				briefInfo, briefErr := os.Stat(briefPath)
-				_, reportErr := os.Stat(reportPath)
+			reportPath := filepath.Join(dataDir, "report.md")
+			briefPath := filepath.Join(dataDir, "brief.md")
+			briefInfo, briefErr := os.Stat(briefPath)
+			_, reportErr := os.Stat(reportPath)
 
-				if os.IsNotExist(reportErr) {
-					// No report.md — safe to remove orphan brief/data dir
-					// Also remove if brief.md is tiny (< 256 bytes, likely a stub)
-					if briefErr == nil && briefInfo.Size() < 256 {
-						if err := os.RemoveAll(dataDir); err != nil {
-							result.Steps = append(result.Steps, fmt.Sprintf("remove small brief data dir: %v", err))
-						} else {
-							result.Steps = append(result.Steps, "data dir removed (small brief, no report)")
-						}
+			if os.IsNotExist(reportErr) {
+				// No report.md — safe to remove orphan brief/data dir
+				// Also remove if brief.md is tiny (< 256 bytes, likely a stub)
+				if briefErr == nil && briefInfo.Size() < 256 {
+					if err := os.RemoveAll(dataDir); err != nil {
+						result.Steps = append(result.Steps, fmt.Sprintf("remove small brief data dir: %v", err))
 					} else {
-						result.Steps = append(result.Steps, "data dir kept (brief present, no report)")
+						result.Steps = append(result.Steps, "data dir removed (small brief, no report)")
 					}
 				} else {
-					result.Steps = append(result.Steps, "data dir kept (report.md present)")
+					result.Steps = append(result.Steps, "data dir kept (brief present, no report)")
 				}
+			} else {
+				result.Steps = append(result.Steps, "data dir kept (report.md present)")
 			}
 		}
 	}

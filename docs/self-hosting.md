@@ -160,13 +160,16 @@ munsu delivery pr-merge <task-id> <pr-url>      # merge PR
 munsu task done <task-id>                       # close the task first: a retired
                                                 # task can no longer be completed
 munsu teardown <task-id>                        # safety-gated teardown
-munsu teardown <task-id> --force                # skip safety checks, removes data/<id>/
+munsu teardown <task-id> --force                # skip safety checks
 ```
 
 Without --force, scout teardown requires report.md and no unresolved decision
 holds. Ship teardown requires clean git state with a remote tracking branch.
-With --force, all safety checks are bypassed and the data/<id>/ directory
-(including report.md and brief.md) is removed.
+With --force, all safety checks are bypassed and nothing else changes: --force
+never deletes more than a plain teardown does. Either way the data/<id>/
+directory is kept when it holds a report.md, or a brief.md large enough not to
+be a stub; a stub brief with no report is reclaimed by the teardown itself, and
+a data directory holding neither is reclaimed by the session-start GC.
 
 ## 5. Decision-hold scout gate
 
