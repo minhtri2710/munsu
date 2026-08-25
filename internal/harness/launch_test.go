@@ -5,6 +5,22 @@ import (
 	"testing"
 )
 
+// LaunchString builds the shell command string to launch a harness agent
+// using the template defaults for model and effort (test helper).
+func LaunchString(h string, tmpl Template) string {
+	return LaunchStringWith(h, tmpl, tmpl.DefaultModel, tmpl.DefaultEffort)
+}
+
+// LaunchStringFromAdapter builds the launch string for a harness using its
+// adapter from the registry (test helper).
+func LaunchStringFromAdapter(h string) string {
+	a, ok := GetAdapter(h)
+	if !ok {
+		return ""
+	}
+	return LaunchString(h, a.LaunchTemplate)
+}
+
 func TestBuildHarnessLaunch_Agy(t *testing.T) {
 	tmpl := Templates[Agy]
 	cmd := LaunchString(Agy, tmpl)

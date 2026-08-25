@@ -223,7 +223,7 @@ func TestRunKinded_EmptyTextItems(t *testing.T) {
 
 func TestRun(t *testing.T) {
 	homeDir := setupTempHome(t, nil, nil)
-	res, err := Run(homeDir, []string{"test learning"})
+	res, err := RunKinded(homeDir, KindLearning, []string{"test learning"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +231,7 @@ func TestRun(t *testing.T) {
 		t.Fatal("expected learnings path")
 	}
 	if res.DataCaptain != "" {
-		t.Error("expected no captain path from Run()")
+		t.Error("expected no captain path from RunKinded(KindLearning)")
 	}
 }
 

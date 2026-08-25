@@ -16,6 +16,29 @@ import (
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
+var doUpdate = Update
+
+func setHandshakeTimeout(d time.Duration) func() {
+	prev := handshakeTimeout
+	handshakeTimeout = d
+	return func() { handshakeTimeout = prev }
+}
+
+func setHeartBeatPoll(d time.Duration) func() {
+	prev := heartBeatPoll
+	heartBeatPoll = d
+	return func() { heartBeatPoll = prev }
+}
+
+func UpdateWithHandshake(homeDir string) (*WatcherSnapshot, error) {
+	snap := snapshotWatcher(homeDir)
+	if err := doUpdate(); err != nil {
+		return snap, err
+	}
+	resolveInstalledVersion(snap)
+	return completeHandshake(homeDir, snap)
+}
+
 // TestVersionString verifies that VersionString produces the expected label.
 func TestVersionString(t *testing.T) {
 	tests := []struct {

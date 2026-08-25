@@ -151,22 +151,6 @@ func GrokHooksContent(munsuBinPath string, hookName string) string {
 	return grokHookFile(munsuBinPath, hookName)
 }
 
-// GrokHooksDigest returns the SHA-256 hex digest of the hook content.
-func GrokHooksDigest(munsuBinPath string, hookName string) string {
-	content := GrokHooksContent(munsuBinPath, hookName)
-	sum := sha256.Sum256([]byte(content))
-	return hex.EncodeToString(sum[:])
-}
-
-// GrokHooksTargetPath returns the expected path to a Grok hook file for the given scope+cwd.
-func GrokHooksTargetPath(scope Scope, cwd string, hookName string) (string, error) {
-	dir, err := grokHooksDir(scope, cwd)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, hookName), nil
-}
-
 // GrokHooksAllTargetPaths returns all 4 hook file paths for the given scope+cwd.
 func GrokHooksAllTargetPaths(scope Scope, cwd string) ([]string, error) {
 	dir, err := grokHooksDir(scope, cwd)

@@ -192,10 +192,6 @@ func printCaptainLiveness(w io.Writer, home string, acquired bool, fn CaptainLiv
 	return &res
 }
 
-func RunSessionStart(w io.Writer, home string) (*SessionStartResult, error) {
-	return RunSessionStartWithWatcher(w, home, nil, nil)
-}
-
 func currentWorkingDirOrHome(home string) string {
 	cwd, err := os.Getwd()
 	if err != nil {

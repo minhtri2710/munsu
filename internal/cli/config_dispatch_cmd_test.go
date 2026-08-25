@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -149,7 +150,7 @@ func TestConfigDispatchClear(t *testing.T) {
 	}
 }
 
-func TestSaveDispatchRoundTrip(t *testing.T) {
+func TestDispatchConfig_JSONRoundTrip(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "soldier-dispatch.json")
 	cfg := &harness.DispatchConfig{
@@ -160,11 +161,15 @@ func TestSaveDispatchRoundTrip(t *testing.T) {
 			{Name: "hard", When: "deep architectural redesign", Harness: "pi", Model: "glm", Effort: "high"},
 		},
 	}
-	if err := harness.SaveDispatch(path, cfg); err != nil {
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, '\n'), 0644); err != nil {
 		t.Fatal(err)
 	}
 	// Re-read the file and verify the shape via json round-trip.
-	data, err := os.ReadFile(path)
+	readData, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +177,7 @@ func TestSaveDispatchRoundTrip(t *testing.T) {
 	if sel.Model != "glm" || sel.Effort != "high" {
 		t.Fatalf("selection = %+v", sel)
 	}
-	if !strings.Contains(string(data), "defaultHarness") {
-		t.Fatalf("saved dispatch missing defaultHarness: %s", string(data))
+	if !strings.Contains(string(readData), "defaultHarness") {
+		t.Fatalf("saved dispatch missing defaultHarness: %s", string(readData))
 	}
 }

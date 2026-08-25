@@ -476,30 +476,6 @@ export const MunsuWatchArm = async ({ client, directory, worktree }) => {
 `, munsuBin)
 }
 
-// OpencodePluginsContent returns the JS plugin content for the given plugin name.
-func OpencodePluginsContent(munsuBinPath, pluginName string) string {
-	return opencodePluginContent(munsuBinPath, pluginName)
-}
-
-// OpencodePluginsDigest returns the SHA-256 hex digest of the plugin content.
-func OpencodePluginsDigest(munsuBinPath, pluginName string) string {
-	content := OpencodePluginsContent(munsuBinPath, pluginName)
-	sum := sha256.Sum256([]byte(content))
-	return hex.EncodeToString(sum[:])
-}
-
-// OpencodePluginsContentDigest returns the combined SHA-256 hex digest of all
-// 4 plugin files concatenated.
-func OpencodePluginsContentDigest(munsuBinPath string) string {
-	var all []string
-	for _, name := range opencodePluginFileNames {
-		all = append(all, OpencodePluginsContent(munsuBinPath, name))
-	}
-	combined := strings.Join(all, "\x00")
-	sum := sha256.Sum256([]byte(combined))
-	return hex.EncodeToString(sum[:])
-}
-
 // OpencodePluginsHasOwnedHooks checks whether the plugin files in pluginsDir
 // contain munsu-owned content anchored to the given munsu binary path.
 // Uses structural ownership detection (JS files can't carry a reliable
@@ -579,15 +555,6 @@ func OpencodePluginsAllTargetPaths(scope Scope, cwd string) ([]string, error) {
 		paths = append(paths, filepath.Join(dir, name))
 	}
 	return paths, nil
-}
-
-// OpencodePluginsTargetPath returns the path to a single plugin file for the given scope+cwd.
-func OpencodePluginsTargetPath(scope Scope, cwd, pluginName string) (string, error) {
-	dir, err := opencodePluginsDir(scope, cwd)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, pluginName), nil
 }
 
 // OpencodeAdapter implements plugin generation and installation for the OpenCode harness.

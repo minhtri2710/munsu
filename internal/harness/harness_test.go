@@ -560,6 +560,11 @@ func TestResolveCaptainFromSnapshot(t *testing.T) {
 	})
 }
 
+func PreflightBinaryName(harnessName string) (string, bool) {
+	binary, ok := preflightBinaryNames[harnessName]
+	return binary, ok
+}
+
 func TestPreflightBinaryName(t *testing.T) {
 	for _, h := range KnownHarnesses {
 		binary, ok := PreflightBinaryName(h)
