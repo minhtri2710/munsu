@@ -53,7 +53,7 @@ for harnesses with a verified adapter; unverified harnesses show "planned/unsupp
 | Ensure AGENTS.md | `munsu ensure-agents-md` | `internal/cli` | **implemented** |
 | Project registry | `munsu project add/list/show/rm` | `internal/fleet` | **implemented** |
 | Review diff | `munsu delivery review-diff` | `internal/fleet` | **implemented** |
-| PR merge | `munsu delivery pr-merge` | `internal/fleet`, `internal/taskauthority` (invariants) | **implemented** |
+| PR merge and terminal reconciliation | `munsu delivery pr-merge` | `internal/fleet`, `internal/taskauthority` (invariants) | **implemented**: terminal reconciliation is mutation-free; current GitHub/GitLab adapters intentionally fail closed for OPEN mutation because they cannot atomically enforce mergeability plus the exact authorized head and base |
 | Worktree pool (treehouse) | `munsu worktree get/return/status` | `internal/backend`, `internal/cli` | **implemented** |
 | Config | `munsu config get/set` | `internal/config` | **implemented** |
 | Session backend (tmux + herdr + zellij + cmux + orca) | `--backend` flag | `internal/backend` | **implemented** (cmux/orca experimental, alongside zellij). Structured `munsu backend capabilities` currently exposes only `tmux` and `herdr`. |

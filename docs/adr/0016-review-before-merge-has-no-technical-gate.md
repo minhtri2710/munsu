@@ -1,6 +1,6 @@
 # 0016. Review Before Merge Has No Technical Gate; the Orchestrator Owns It Until a Second Review Identity Exists
 
-* **Status:** Accepted — temporary constraint, see [Removal condition](#removal-condition)
+* **Status:** Partially superseded; the application delivery enforcement claim is superseded, while branch-protection guidance remains current
 * **Date:** 2026-08-17
 * **Extends:** ADR-0008 (the least-painful patch is chosen only under a bounded constraint, and then the constraint and its removal condition are recorded in-repo)
 * **Triggered by:** BEO-111 (branch protection audit during the #502 review) ← BEO-101 verdict on #483
@@ -59,26 +59,26 @@ entire difference between a finding and a defect in production.
 
 ## Decision
 
-### 1. There is no technical review gate. State it plainly, everywhere.
+The branch-protection findings and guidance in this ADR remain current. Only the
+application-level claim that the orchestrator is the sole review-enforcement owner is
+superseded by the live delivery acceptance contract.
 
-Do not read "four required checks, `strict`, `enforce_admins`" as review protection. Those
-checks prove the tree builds, the tests pass, the race detector is quiet and the repo
-invariants hold. They do not prove anyone read the diff. The only thing between an
-unreviewed change and `main` is the orchestrator choosing to wait.
+At the time of this decision, there was no technical review gate and review-before-merge
+was owned only by the orchestrator. That remains the historical explanation for the
+incident, but it is no longer the live application delivery contract.
 
-Nothing in this repository may be written as though a review gate exists.
+The current delivery acceptance owner is `internal/domain/domain.go`, with provider
+observation and orchestration in `internal/fleet/delivery_*.go`: an OPEN delivery must
+have effective approving review and passing checks, and the provider mutation boundary
+must fail closed when those conditions and the exact authorized head/base cannot be
+enforced. MERGED and CLOSED observations may be reconciled without mutation when their
+identity evidence matches the authorization.
 
-### 2. The constraint has one owner: the orchestrator
+### 2. The application delivery constraint now has a shared owner
 
-Whoever performs the merge owns the claim that review happened. Concretely: an independent
-verdict exists on the issue, from an identity other than the change's author, before the
-merge — not after.
-
-Because nothing checks this, it is **owned** rather than enforced. Two consequences follow
-directly. A merge with no verdict waits, however long the queue is. And a merge performed
-without one is a breach of this rule, reported as a breach — not repaired by
-commissioning the review afterwards, which is what happened on #483 and is why the review
-issue contradicted reality four minutes after it was written.
+The former orchestrator-only claim that review happened is superseded for application
+delivery by the live acceptance path described above. Provider adapters must still fail
+closed when effective review/check evidence or exact mutation constraints are unavailable.
 
 ### 3. Do not enable `required_pull_request_reviews` in the current configuration
 
@@ -104,9 +104,9 @@ pending. Loosening the required checks would quietly hand that bot a merge path.
 
 ## Removal condition
 
-Sections 1–3 are a temporary constraint. They exist because a second review identity does
-not, and they must be **deleted** when it does — a temporary constraint that outlives its
-reason is debt.
+Sections 3 and its supporting branch-protection guidance are a temporary constraint. They
+exist because a second review identity does not, and must be deleted when it does. This
+condition governs GitHub branch protection, not the current application delivery checks.
 
 A GitHub App or machine user is the right answer, not a rejected one. The reason it is not
 being done in this ADR is an **access constraint, not cost**: creating a GitHub App,
@@ -170,11 +170,9 @@ until a review that had been commissioned too late contradicted itself.
 
 ## Consequences
 
-* No branch protection changes. The measured configuration above stays exactly as it is,
-  and this ADR authorises no `gh api` write against `main`.
-* The rule "an independent verdict before merge" now has a named owner and a written
-  breach condition, instead of being an assumption each participant re-derives.
-* A future reader who finds `required_pull_request_reviews` missing has the reason and the
-  prerequisite in one place, and does not enable it into a repository-wide deadlock.
-* The gap is stated, not closed: until a second identity exists, a hurried merge is still
-  possible, and #483 remains the recorded proof that it happens.
+* No branch protection changes were made by this decision; the measured configuration
+  and incident evidence remain current context for the branch-protection guidance.
+* The former orchestrator-only application rule is superseded by the current delivery
+  acceptance owner and fail-closed provider boundary described above.
+* The `required_pull_request_reviews` removal condition remains operative for branch
+  protection and is not the implementation contract for application delivery.
