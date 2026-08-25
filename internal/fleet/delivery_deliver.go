@@ -526,6 +526,9 @@ func resumeDeliveryJournal(h *home.Home, lk *home.Lock, c *taskauthority.Canonic
 			}
 		}
 		obs, obsErr := provider.Observe(journal.Identity)
+		if obsErr == nil {
+			obsErr = verifyProviderHead(journal, obs)
+		}
 		return pinAndCommitOutcome(h, lk, c, journal, deriveDeliveryOutcome(journal, obs, obsErr, mergeErr))
 	}
 
@@ -607,9 +610,8 @@ func verifyDeliveryCurrency(c *taskauthority.Canonical, journal *deliveryJournal
 // change since capture). The base ref matters because the provider merge
 // lands in the PR's CURRENT base, not the authorized one: a base changed
 // inside the capture-to-merge window would land the irreversible mutation on
-// a branch that was never authorized. Merged observations carry consumed
-// evidence and are not re-checked; open observations require explicit
-// mergeability evidence.
+// a branch that was never authorized. Every terminal observation must carry
+// the consumed head and base evidence.
 func verifyProviderMergeability(obs DeliveryProviderObservation) error {
 	if obs.State == "MERGED" || obs.Mergeability == DeliveryMergeabilityAllowed {
 		return nil
@@ -621,9 +623,6 @@ func verifyProviderMergeability(obs DeliveryProviderObservation) error {
 }
 
 func verifyProviderHead(journal *deliveryJournal, obs DeliveryProviderObservation) error {
-	if obs.State == "MERGED" {
-		return nil
-	}
 	if obs.HeadSHA == "" {
 		return fmt.Errorf("provider observation is missing head evidence")
 	}

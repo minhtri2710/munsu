@@ -97,6 +97,23 @@ func TestDeliverCrashAfterMutationNeverRepeatsMutation(t *testing.T) {
 // crash after the durable mutating boundary (the mutation may or may not have
 // executed) is recovered by provider observation and classification; the
 // mutation is never repeated and the truthful outcome is committed.
+func TestDeliverCrashAtMutatingMergedIdentityMismatchIsRemoteUnknown(t *testing.T) {
+	c, homeDir := newFleetCanonical(t)
+	taskID := "t1"
+	mustWorkingDeliveryTask(t, c, taskID)
+	installScriptedProviderFor(t, "open-then-merged")
+	runDeliveryCrashHelper(t, homeDir, taskID, "mutating", "open-then-merged")
+	provider := newFakeDeliveryProvider().script(DeliveryProviderObservation{State: "MERGED", HeadSHA: "different", BaseRef: deliveryTestBase})
+	installDeliveryProviderFor(t, provider)
+	if err := RecoverDeliveryJournals(homeDir); err != nil {
+		t.Fatalf("RecoverDeliveryJournals: %v", err)
+	}
+	out, err := c.DeliveryOutcome(mustFleetTaskID(t, taskID))
+	if err != nil || out.Status != taskauthority.DeliveryOutcomeRemoteUnknown {
+		t.Fatalf("outcome = %v %+v, want remote-unknown", err, out)
+	}
+}
+
 func TestDeliverCrashAtMutatingReconcilesObservationAndNeverMutates(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	taskID := "t1"
