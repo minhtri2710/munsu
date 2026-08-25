@@ -21,13 +21,22 @@ func processIdentity(pid int) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	end := strings.LastIndexByte(string(data), ')')
+	startToken, err := parseLinuxProcessStat(data)
+	if err != nil {
+		return "", "", err
+	}
+	return executable, startToken, nil
+}
+
+func parseLinuxProcessStat(data []byte) (string, error) {
+	text := string(data)
+	end := strings.LastIndexByte(text, ')')
 	if end < 0 {
-		return "", "", fmt.Errorf("malformed process stat")
+		return "", fmt.Errorf("malformed process stat")
 	}
-	fields := strings.Fields(string(data[end+1:]))
+	fields := strings.Fields(text[end+1:])
 	if len(fields) <= 19 {
-		return "", "", fmt.Errorf("truncated process stat")
+		return "", fmt.Errorf("truncated process stat")
 	}
-	return executable, fields[19], nil
+	return fields[19], nil
 }
