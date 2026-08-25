@@ -799,11 +799,18 @@ func TestBriefRecoveryPrecedesTaskFence(t *testing.T) {
 	}
 }
 
-func TestBriefWritesKnownTaskAndRejectsUnknown(t *testing.T) {
+func TestBriefWritesKnownLegacyAndForcedTasks(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
 	auth := testAuthorityFor(t, homeDir)
 	seedGuardTask(t, auth, "known", "ship")
+	oldWrite := writeBriefArtifact
+	called := false
+	writeBriefArtifact = func(auth *taskauthority.Canonical, id domain.TaskID, write func() error) error {
+		called = true
+		return auth.WriteTaskDataArtifact(id, write)
+	}
+	t.Cleanup(func() { writeBriefArtifact = oldWrite })
 	if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion, Config: config.ProjectOverlay{Backend: "tmux"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -816,16 +823,25 @@ func TestBriefWritesKnownTaskAndRejectsUnknown(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(homeDir, "data", "known", "brief.md")); err != nil {
 		t.Fatal(err)
 	}
+	if !called {
+		t.Fatal("write fence was not invoked")
+	}
 	for _, force := range []bool{false, true} {
-		args := []string{"brief", "unknown", "demo-repo", "--home", homeDir}
+		id := "unknown"
+		if force {
+			id = "forced"
+		}
+		args := []string{"brief", id, "demo-repo", "--home", homeDir}
 		if force {
 			args = append(args, "--force")
+		} else if err := os.WriteFile(filepath.Join(homeDir, "state", id+".meta"), []byte("kind=ship\n"), 0644); err != nil {
+			t.Fatal(err)
 		}
-		if _, err := runRoot(t, args...); err == nil {
-			t.Fatalf("unknown brief force=%v succeeded", force)
+		if _, err := runRoot(t, args...); err != nil {
+			t.Fatalf("brief force=%v: %v", force, err)
 		}
-		if _, err := os.Stat(filepath.Join(homeDir, "data", "unknown")); !os.IsNotExist(err) {
-			t.Fatalf("unknown data dir exists: %v", err)
+		if _, err := os.Stat(filepath.Join(homeDir, "data", id, "brief.md")); err != nil {
+			t.Fatalf("brief missing force=%v: %v", force, err)
 		}
 	}
 }

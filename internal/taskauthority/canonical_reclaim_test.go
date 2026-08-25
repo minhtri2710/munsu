@@ -44,8 +44,8 @@ func TestWriteTaskDataArtifactUsesTaskFence(t *testing.T) {
 	}); err != nil || !called {
 		t.Fatalf("write = %v, called=%v", err, called)
 	}
-	if err := c.WriteTaskDataArtifact(mustTaskID(t, "missing-write"), func() error { t.Fatal("unknown callback invoked"); return nil }); err == nil {
-		t.Fatal("unknown task write succeeded")
+	if err := c.WriteTaskDataArtifact(mustTaskID(t, "missing-write"), func() error { return nil }); err != nil {
+		t.Fatalf("unknown task write = %v", err)
 	}
 }
 

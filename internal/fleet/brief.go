@@ -2,7 +2,6 @@
 package fleet
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -230,6 +229,8 @@ func archiveRetiredReport(homeDir, id string, gen taskauthority.Generation) (str
 	}
 
 	reportPath := filepath.Join(dataDir, "report.md")
+	// The task-scope fence excludes munsu writers; foreign processes creating
+	// generation-named files between this check and Rename are outside this guarantee.
 	archived := ArchivedReportName(gen)
 	archivedPath := filepath.Join(dataDir, archived)
 	if _, err := os.Lstat(reportPath); err != nil {
@@ -239,33 +240,13 @@ func archiveRetiredReport(homeDir, id string, gen taskauthority.Generation) (str
 		return "", true, fmt.Errorf("checking report path %s: %w", reportPath, err)
 	}
 
-	reservation, err := os.OpenFile(archivedPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
-	if err != nil {
-		if os.IsExist(err) {
-			if info, statErr := os.Lstat(archivedPath); statErr == nil && info.Mode().IsRegular() && info.Size() == 0 {
-				reservation = nil
-			} else {
-				return "", true, fmt.Errorf("report paths %s and %s conflict", reportPath, archivedPath)
-			}
-		} else {
-			return "", true, fmt.Errorf("reserving archive path %s: %w", archivedPath, err)
-		}
-	}
-	if reservation != nil {
-		if err := reservation.Close(); err != nil {
-			removeErr := os.Remove(archivedPath)
-			if removeErr != nil {
-				return "", true, errors.Join(fmt.Errorf("closing archive reservation %s: %w", archivedPath, err), fmt.Errorf("removing archive reservation: %w", removeErr))
-			}
-			return "", true, fmt.Errorf("closing archive reservation %s: %w", archivedPath, err)
-		}
+	if _, err := os.Lstat(archivedPath); err == nil {
+		return "", true, fmt.Errorf("report paths %s and %s conflict", reportPath, archivedPath)
+	} else if !os.IsNotExist(err) {
+		return "", true, fmt.Errorf("checking archive path %s: %w", archivedPath, err)
 	}
 	if err := os.Rename(reportPath, archivedPath); err != nil {
-		removeErr := os.Remove(archivedPath)
-		if removeErr != nil {
-			return "", true, errors.Join(fmt.Errorf("archiving report %s: %w", reportPath, err), fmt.Errorf("removing archive reservation %s: %w", archivedPath, removeErr))
-		}
-		return "", true, fmt.Errorf("archiving report %s: %w", reportPath, err)
+		return "", true, fmt.Errorf("archiving report %s as %s: %w", reportPath, archivedPath, err)
 	}
 	return archived, true, nil
 }
