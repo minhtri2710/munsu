@@ -118,14 +118,17 @@ func Obligations(role Role) []Obligation {
 const obligationsDir = "state/.obligations"
 
 // taskObligationsPath returns the per-task obligations file path.
-func taskObligationsPath(homeDir, taskID string) string {
-	return filepath.Join(homeDir, obligationsDir, taskID+".obligations")
+func taskObligationsPath(homeDir, taskID string) (string, error) {
+	return home.DurableFilePath(filepath.Join(homeDir, obligationsDir), taskID, ".obligations")
 }
 
 // InitTaskObligations creates per-task soldier obligations for a given taskID.
 // Idempotent: no-op if per-task file already exists.
 func InitTaskObligations(homeDir, taskID, termKey string) error {
-	p := taskObligationsPath(homeDir, taskID)
+	p, err := taskObligationsPath(homeDir, taskID)
+	if err != nil {
+		return err
+	}
 	if _, err := os.Stat(p); err == nil {
 		return nil // already exists — idempotent
 	}
@@ -157,7 +160,10 @@ func InitTaskObligations(homeDir, taskID, termKey string) error {
 // LoadTaskObligations reads the per-task obligation state.
 // Returns nil, nil if no per-task file exists.
 func LoadTaskObligations(homeDir, taskID string) ([]Obligation, error) {
-	p := taskObligationsPath(homeDir, taskID)
+	p, err := taskObligationsPath(homeDir, taskID)
+	if err != nil {
+		return nil, err
+	}
 	f, err := os.Open(p)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -172,7 +178,10 @@ func LoadTaskObligations(homeDir, taskID string) ([]Obligation, error) {
 
 // SaveTaskObligations persists the per-task obligation state.
 func SaveTaskObligations(homeDir, taskID string, obligations []Obligation) error {
-	p := taskObligationsPath(homeDir, taskID)
+	p, err := taskObligationsPath(homeDir, taskID)
+	if err != nil {
+		return err
+	}
 	return writeObligationsFile(p, obligations)
 }
 
@@ -240,13 +249,13 @@ func ReceiptDir(homeDir string) string {
 }
 
 // ReceiptPath returns the path for a terminal receipt file.
-func ReceiptPath(homeDir, taskID, termKey string) string {
-	return filepath.Join(homeDir, receiptsDir, taskID+"."+termKey+".receipt")
+func ReceiptPath(homeDir, taskID, termKey string) (string, error) {
+	return home.DurableFilePath(ReceiptDir(homeDir), taskID, "."+termKey+".receipt")
 }
 
 // AckPath returns the path for an ack file marking a receipt as relayed.
-func AckPath(homeDir, taskID, termKey string) string {
-	return filepath.Join(homeDir, receiptsDir, taskID+"."+termKey+".ack")
+func AckPath(homeDir, taskID, termKey string) (string, error) {
+	return home.DurableFilePath(ReceiptDir(homeDir), taskID, "."+termKey+".ack")
 }
 
 // WriteReceipt writes a durable relay receipt for a terminal report.
@@ -257,7 +266,10 @@ func AckPath(homeDir, taskID, termKey string) string {
 // file is cleaned up; on post-rename failure the old receipt (now pending)
 // is acceptable fail-closed behavior.
 func WriteReceipt(homeDir, taskID, termKey, state, msg string) error {
-	p := ReceiptPath(homeDir, taskID, termKey)
+	p, err := ReceiptPath(homeDir, taskID, termKey)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
 		return fmt.Errorf("creating receipts dir: %w", err)
 	}
@@ -272,7 +284,12 @@ func WriteReceipt(homeDir, taskID, termKey, state, msg string) error {
 	}
 
 	// Remove any prior ack so the new receipt starts pending
-	if err := os.Remove(AckPath(homeDir, taskID, termKey)); err != nil && !os.IsNotExist(err) {
+	ackPath, err := AckPath(homeDir, taskID, termKey)
+	if err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := os.Remove(ackPath); err != nil && !os.IsNotExist(err) {
 		os.Remove(tmpPath)
 		return fmt.Errorf("removing stale ack: %w", err)
 	}
@@ -288,13 +305,20 @@ func WriteReceipt(homeDir, taskID, termKey, state, msg string) error {
 
 // IsReceiptAcked checks whether a terminal receipt has been acknowledged.
 func IsReceiptAcked(homeDir, taskID, termKey string) bool {
-	_, err := os.Stat(AckPath(homeDir, taskID, termKey))
+	p, err := AckPath(homeDir, taskID, termKey)
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(p)
 	return err == nil
 }
 
 // WriteAck marks a terminal receipt as acknowledged by the Captain.
 func WriteAck(homeDir, taskID, termKey string) error {
-	p := AckPath(homeDir, taskID, termKey)
+	p, err := AckPath(homeDir, taskID, termKey)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
 		return fmt.Errorf("creating receipts dir: %w", err)
 	}
@@ -329,8 +353,12 @@ func ListPendingReceipts(homeDir string) ([]PendingReceipt, error) {
 			continue
 		}
 		core := strings.TrimSuffix(name, ".receipt")
-		taskID, termKey, ok := strings.Cut(core, ".")
-		if !ok || taskID == "" || termKey == "" {
+		stem, termKey, ok := strings.Cut(core, ".")
+		if !ok || stem == "" || termKey == "" {
+			continue
+		}
+		taskID, err := home.ReverseDurableKey(stem)
+		if err != nil {
 			continue
 		}
 		if IsReceiptAcked(homeDir, taskID, termKey) {

@@ -201,21 +201,28 @@ func diagLog(d ActivationDiagnostic) {
 const activationSeenSuffix = ".activation-seen"
 
 // ActivationSeenPath returns the path for an activation-seen marker.
-func ActivationSeenPath(captainHome, taskID, termKey string) string {
-	return filepath.Join(ReceiptDir(captainHome), taskID+"."+termKey+activationSeenSuffix)
+func ActivationSeenPath(captainHome, taskID, termKey string) (string, error) {
+	return mhome.DurableFilePath(ReceiptDir(captainHome), taskID, "."+termKey+activationSeenSuffix)
 }
 
 // IsActivationSeen checks whether a receipt has already triggered an
 // activation nudge (idempotency guard).
 func IsActivationSeen(captainHome, taskID, termKey string) bool {
-	_, err := os.Stat(ActivationSeenPath(captainHome, taskID, termKey))
+	p, err := ActivationSeenPath(captainHome, taskID, termKey)
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(p)
 	return err == nil
 }
 
 // MarkActivationSeen writes a durable marker that a receipt has triggered
 // an activation nudge, preventing duplicate nudges on subsequent cycles.
 func MarkActivationSeen(captainHome, taskID, termKey string) error {
-	p := ActivationSeenPath(captainHome, taskID, termKey)
+	p, err := ActivationSeenPath(captainHome, taskID, termKey)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
 		return fmt.Errorf("creating activation-seen dir: %w", err)
 	}

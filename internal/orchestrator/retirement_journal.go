@@ -31,7 +31,11 @@ func VerifyRetirementContinuity(homeDir, taskID string) error {
 }
 
 func PrepareForcedRetirementEvidence(homeDir, taskID string) ([]string, error) {
-	backupDir := filepath.Join(homeDir, "state", ".backup", taskID)
+	stem, err := home.DurableKey(taskID)
+	if err != nil {
+		return nil, err
+	}
+	backupDir := filepath.Join(homeDir, "state", ".backup", stem)
 	if err := os.MkdirAll(backupDir, 0700); err != nil {
 		return nil, err
 	}
@@ -40,12 +44,12 @@ func PrepareForcedRetirementEvidence(homeDir, taskID string) ([]string, error) {
 		return nil, err
 	}
 	if src, err := os.ReadFile(statusPath); err == nil {
-		if err := os.WriteFile(filepath.Join(backupDir, taskID+".status"), src, 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(backupDir, filepath.Base(statusPath)), src, 0600); err != nil {
 			return nil, err
 		}
 	}
 	if entries, err := os.ReadDir(ReceiptDir(homeDir)); err == nil {
-		prefix := taskID + "."
+		prefix := stem + "."
 		for _, entry := range entries {
 			if !strings.HasPrefix(entry.Name(), prefix) {
 				continue
@@ -59,7 +63,7 @@ func PrepareForcedRetirementEvidence(homeDir, taskID string) ([]string, error) {
 			}
 		}
 	}
-	return []string{"evidence preserved to state/.backup/" + taskID + " (--force)"}, nil
+	return []string{"evidence preserved to state/.backup/" + stem + " (--force)"}, nil
 }
 
 func FinalizeRetirementJournals(homeDir, taskID string) ([]string, error) {

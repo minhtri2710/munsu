@@ -15,32 +15,28 @@ func StateDir(homeDir string) string {
 	return filepath.Join(homeDir, "state")
 }
 
+// DurableFilePath returns a path whose filename starts with the platform
+// durable key for the logical task ID.
+func DurableFilePath(dir, id, suffix string) (string, error) {
+	stem, err := DurableKey(id)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, stem+suffix), nil
+}
+
 // MetaFilePath returns the path to the meta file for the given task ID. The
 // persisted file stem is the platform durable key for the logical id (see
 // DurableKey), so the same logical id always resolves to the one persisted
 // key for the platform.
 func MetaFilePath(homeDir string, id string) (string, error) {
-	if err := validateTaskID(id); err != nil {
-		return "", err
-	}
-	stem, err := DurableKey(id)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(StateDir(homeDir), stem+".meta"), nil
+	return DurableFilePath(StateDir(homeDir), id, ".meta")
 }
 
 // StatusFilePath returns the path to the status file for the given task ID.
 // The persisted file stem is the platform durable key for the logical id.
 func StatusFilePath(homeDir string, id string) (string, error) {
-	if err := validateTaskID(id); err != nil {
-		return "", err
-	}
-	stem, err := DurableKey(id)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(StateDir(homeDir), stem+".status"), nil
+	return DurableFilePath(StateDir(homeDir), id, ".status")
 }
 
 func validateTaskID(id string) error {

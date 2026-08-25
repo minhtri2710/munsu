@@ -134,7 +134,10 @@ func TestDeliverWake_SoldierMaterialState(t *testing.T) {
 	}
 
 	// Captain receipt should exist
-	receiptPath := ReceiptPath(captainHome, "test-soldier", "test-key")
+	receiptPath, err := ReceiptPath(captainHome, "test-soldier", "test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := os.Stat(receiptPath); err != nil {
 		t.Errorf("captain receipt should exist: %v", err)
 	}
@@ -191,7 +194,10 @@ func TestDeliverWake_SoldierNonMaterialState(t *testing.T) {
 	}
 
 	// Captain receipt should NOT exist
-	receiptPath := ReceiptPath(captainHome, "test-worker", "default")
+	receiptPath, err := ReceiptPath(captainHome, "test-worker", "default")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := os.Stat(receiptPath); err == nil {
 		t.Error("receipt should NOT exist for non-material state")
 	}
@@ -296,7 +302,10 @@ func TestDeliverWake_ObligationsInitFails(t *testing.T) {
 	}
 
 	// Receipt should exist (WriteReceipt succeeded before obligation failure)
-	receiptPath := ReceiptPath(captainHome, "test-obl-fail", "default")
+	receiptPath, err := ReceiptPath(captainHome, "test-obl-fail", "default")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := os.Stat(receiptPath); err != nil {
 		t.Errorf("receipt should exist even when obligations fail: %v", err)
 	}
@@ -462,7 +471,10 @@ func TestDeliverWake_KeyDefault(t *testing.T) {
 	}
 
 	// Receipt should use "default" key
-	receiptPath := ReceiptPath(captainHome, "test-default-key", "default")
+	receiptPath, err := ReceiptPath(captainHome, "test-default-key", "default")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := os.Stat(receiptPath); err != nil {
 		t.Errorf("receipt with default key should exist: %v", err)
 	}
@@ -540,7 +552,10 @@ func TestActivationSeen_MarkerDirect(t *testing.T) {
 	}
 
 	// Marker should be in the receipts directory.
-	markerPath := ActivationSeenPath(captainHome, taskID, termKey)
+	markerPath, err := ActivationSeenPath(captainHome, taskID, termKey)
+	if err != nil {
+		t.Fatal(err)
+	}
 	data, err := os.ReadFile(markerPath)
 	if err != nil {
 		t.Fatalf("reading marker: %v", err)

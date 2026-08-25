@@ -408,7 +408,11 @@ func TestWriteReceipt_StaleAckInvalidation(t *testing.T) {
 	}
 
 	// But old receipt should be overwritten with new content
-	data, err := os.ReadFile(ReceiptPath(homeDir, taskID, termKey))
+	receiptPath, err := ReceiptPath(homeDir, taskID, termKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(receiptPath)
 	if err != nil {
 		t.Fatalf("reading receipt: %v", err)
 	}
@@ -420,7 +424,7 @@ func TestWriteReceipt_StaleAckInvalidation(t *testing.T) {
 	}
 
 	// No temp file should remain
-	tmpPath := ReceiptPath(homeDir, taskID, termKey) + ".tmp"
+	tmpPath := receiptPath + ".tmp"
 	if _, err := os.Stat(tmpPath); err == nil {
 		t.Error("temporary file should be cleaned up after successful WriteReceipt")
 	}
