@@ -35,6 +35,8 @@ type Options struct {
 	ExpectedGeneration *taskauthority.Generation
 }
 
+var afterReportArchive = func(string, string, taskauthority.Generation) error { return nil }
+
 // TeardownResult describes the outcome of each teardown step.
 type TeardownResult struct {
 	Steps  []string
@@ -939,25 +941,35 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		//
 		// A report is evidence produced by the generation that just retired,
 		// so it is archived under that generation's number instead of being
-		// left at the name the next generation writes. That is what binds
-		// scoutSafetyCheck's report check to the current generation: a
-		// reopened task starts with no report.md and cannot inherit evidence
-		// it did not produce. Reopen is unreachable until the cleanup claim
-		// below reconciles, so no later generation can observe the unarchived
-		// name. A brief is operator input rather than evidence: it survives
-		// for a relaunch of the same task and is reclaimed by the
-		// session-start GC in internal/bootstrap once the task is retired.
+		// left at the name the next generation writes. The fenced recheck
+		// catches report recreation before terminal reconciliation; a process
+		// that writes after reconciliation remains exposed until soldiers
+		// write generation-named reports directly. A brief is operator input
+		// rather than evidence: it survives for a relaunch of the same task
+		// and is reclaimed by the session-start GC in internal/bootstrap once
+		// the task is retired.
 		dataDir := filepath.Join(opts.HomeDir, "data", opts.ID)
 		var archived string
 		var exists bool
 		work := func() error {
 			var err error
 			archived, exists, err = archiveRetiredReport(opts.HomeDir, opts.ID, claimGen)
-			if err == nil && exists {
-				now := time.Now()
-				err = os.Chtimes(dataDir, now, now)
+			if err != nil || !exists {
+				return err
 			}
-			return err
+			now := time.Now()
+			if err := os.Chtimes(dataDir, now, now); err != nil {
+				return err
+			}
+			if err := afterReportArchive(opts.HomeDir, opts.ID, claimGen); err != nil {
+				return err
+			}
+			if _, err := os.Lstat(filepath.Join(dataDir, "report.md")); err == nil {
+				return fmt.Errorf("report.md reappeared after generation %s archival", claimGen)
+			} else if !os.IsNotExist(err) {
+				return fmt.Errorf("checking report.md after archival: %w", err)
+			}
+			return nil
 		}
 		// Residual artifacts are removed first and metadata is always last so a
 		// failed projection cleanup leaves the retry identity intact. Failures

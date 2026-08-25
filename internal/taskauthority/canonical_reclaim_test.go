@@ -2,6 +2,8 @@ package taskauthority
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -138,6 +140,22 @@ func TestReclaimReleasedTaskArtifactsAllowsSupersededTask(t *testing.T) {
 	ok, err := c.ReclaimReleasedTaskArtifacts(mustTaskID(t, id), func() error { called = true; return nil })
 	if err != nil || !ok || !called {
 		t.Fatalf("reclaim superseded = %v, %v, called=%v", ok, err, called)
+	}
+}
+
+func TestReclaimReleasedTaskArtifactsUnknownBriefIsKept(t *testing.T) {
+	c, _, _ := newTestCanonical(t)
+	id := "unknown-brief"
+	if err := os.MkdirAll(filepath.Join(c.h.Root(), "data", id), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(c.h.Root(), "data", id, "brief.md"), []byte("brief"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	got, err := c.ReclaimReleasedTaskArtifactsByID(id, func() error { called = true; return nil })
+	if err != nil || got || called {
+		t.Fatalf("reclaim = %v, err=%v, called=%v", got, err, called)
 	}
 }
 

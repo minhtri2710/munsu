@@ -3,6 +3,8 @@ package taskauthority
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -231,7 +233,9 @@ func (c *Canonical) ReconcileCompletedCleanup(taskID domain.TaskID, generation G
 }
 
 // ReclaimReleasedTaskArtifacts holds the task scope through the bounded local
-// removal callback; callbacks must not acquire another lock scope.
+// removal callback; callbacks must not acquire another lock scope. Authority-backed
+// released tasks may reclaim briefs, while unknown directories are reclaimable only
+// without a brief because no authority record can vouch for their contents.
 func (c *Canonical) ReclaimReleasedTaskArtifacts(taskID domain.TaskID, reclaim func() error) (bool, error) {
 	return c.ReclaimReleasedTaskArtifactsByID(taskID.Value(), reclaim)
 }
@@ -266,6 +270,11 @@ func (c *Canonical) ReclaimReleasedTaskArtifactsByID(id string, reclaim func() e
 			default:
 				return false, nil
 			}
+		}
+	} else if !exists {
+		briefPath := filepath.Join(c.h.Root(), "data", id, "brief.md")
+		if _, statErr := os.Lstat(briefPath); statErr == nil || !os.IsNotExist(statErr) {
+			return false, nil
 		}
 	}
 	if err := reclaim(); err != nil {

@@ -166,7 +166,10 @@ munsu teardown <task-id> --force                # skip safety checks
 Without --force, scout teardown requires report.md and no unresolved decision
 holds. Ship teardown requires clean git state with a remote tracking branch.
 With --force, all safety checks are bypassed and nothing else changes: --force
-never deletes more than a plain teardown does.
+never deletes more than a plain teardown does. The report archive is checked again
+inside teardown's fence before cleanup commits; a report written after that fence
+has closed is outside this guard and must be generation-named by the report writer
+in a future soldier-facing contract.
 
 Either way the teardown first establishes authoritative endpoint absence, then archives the retired generation's report as
 report-g<generation>.md. It stays there to be read, and because the check above

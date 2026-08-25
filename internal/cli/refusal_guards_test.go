@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,6 +23,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/backend"
+	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/fleet"
@@ -843,6 +845,57 @@ func TestBriefWritesKnownLegacyAndForcedTasks(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(homeDir, "data", id, "brief.md")); err != nil {
 			t.Fatalf("brief missing force=%v: %v", force, err)
 		}
+	}
+}
+
+func TestSessionStartGCUsesRawIDOwnershipForForcedBriefs(t *testing.T) {
+	oldGate, hadGate := os.LookupEnv("NO_MISTAKES_GATE")
+	_ = os.Unsetenv("NO_MISTAKES_GATE")
+	t.Cleanup(func() {
+		if hadGate {
+			_ = os.Setenv("NO_MISTAKES_GATE", oldGate)
+		} else {
+			_ = os.Unsetenv("NO_MISTAKES_GATE")
+		}
+	})
+	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
+	if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion, Config: config.ProjectOverlay{Backend: "tmux"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runRoot(t, "project", "add", "demo-repo", t.TempDir(), "--home", homeDir); err != nil {
+		t.Fatal(err)
+	}
+	id := "forced-unknown"
+	if _, err := runRoot(t, "brief", id, "demo-repo", "--force", "--home", homeDir); err != nil {
+		t.Fatalf("forced brief: %v", err)
+	}
+	briefDir := filepath.Join(homeDir, "data", id)
+	old := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(briefDir, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bootstrap.RunSessionStartWithWatcher(io.Discard, homeDir, nil, nil, taskDataDirReclaimer(homeDir)); err != nil {
+		t.Fatalf("session-start: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(briefDir, "brief.md")); err != nil {
+		t.Fatalf("forced brief was reclaimed: %v", err)
+	}
+
+	captainHome := t.TempDir()
+	initCLITestHome(t, captainHome)
+	captainDir := filepath.Join(captainHome, "data", "captain:c1")
+	if err := os.MkdirAll(captainDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(captainDir, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bootstrap.RunSessionStartWithWatcher(io.Discard, captainHome, nil, nil, taskDataDirReclaimer(captainHome)); err != nil {
+		t.Fatalf("captain cleanup session-start: %v", err)
+	}
+	if _, err := os.Stat(captainDir); !os.IsNotExist(err) {
+		t.Fatalf("empty captain directory remains, stat err: %v", err)
 	}
 }
 
