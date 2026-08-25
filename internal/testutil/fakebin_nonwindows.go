@@ -28,3 +28,6 @@ func posixShellPath() (string, error) {
 	}
 	return "", fmt.Errorf("no POSIX shell on PATH=%s: %w", bootPath, errors.ErrUnsupported)
 }
+
+// userHomeEnv is the variable os.UserHomeDir reads on this platform.
+const userHomeEnv = "HOME"

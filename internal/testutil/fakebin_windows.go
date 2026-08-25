@@ -154,3 +154,6 @@ func copyFile(src, dst string) error {
 }
 
 func posixShellPath() (string, error) { return resolvePOSIXShell(bootPath) }
+
+// userHomeEnv is the variable os.UserHomeDir reads on this platform.
+const userHomeEnv = "USERPROFILE"

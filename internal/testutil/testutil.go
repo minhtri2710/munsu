@@ -143,3 +143,25 @@ func PathInMessage(message, path string) bool {
 	quoted := strconv.Quote(path)
 	return strings.Contains(message, quoted[1:len(quoted)-1])
 }
+
+// SetUserHome points os.UserHomeDir at dir for the duration of the test.
+//
+// os.UserHomeDir reads $HOME on Unix and %USERPROFILE% on windows, so a
+// fixture that sets HOME directly moves nothing on windows: the product goes
+// on resolving the real user profile and the test compares it against a temp
+// directory it thought it had installed.
+//
+// The postcondition is checked rather than assumed, so a platform whose rule
+// differs from either of these fails here, naming the variable, instead of
+// surfacing as an unrelated path mismatch somewhere downstream.
+func SetUserHome(t *testing.T, dir string) {
+	t.Helper()
+	t.Setenv(userHomeEnv, dir)
+	got, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("os.UserHomeDir after setting %s=%s: %v", userHomeEnv, dir, err)
+	}
+	if got != dir {
+		t.Fatalf("os.UserHomeDir = %q after setting %s=%q; this platform reads some other variable", got, userHomeEnv, dir)
+	}
+}
