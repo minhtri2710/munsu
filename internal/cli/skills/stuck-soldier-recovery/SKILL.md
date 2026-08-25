@@ -15,8 +15,8 @@ Agent-only wrapper for the bundled `REFERENCE.md`, covering the escalation ladde
 1. **Peek** — `munsu peek <id>`
 2. **Steer** — `munsu send <id> "<instruction>"`
 3. **Interrupt** — harness-specific Ctrl+C via herdr/tmux send-keys
-4. **Relaunch** — `munsu teardown <id> --force` then re-spawn. See
-   `docs/self-hosting.md` for report retention.
+4. **Relaunch** — `munsu teardown <id> --force` then re-spawn. Teardown
+   retains the task data directory and any report under its generation-bound name.
 5. **Fail** — append `failed:` to status file with evidence
 
 ## When to use each level

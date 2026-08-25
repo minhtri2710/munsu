@@ -6,7 +6,7 @@
 2. Steer with one bounded `munsu send <id> "<instruction>"` command.
 3. Interrupt a spinning harness with Ctrl+C through its session backend.
 4. Relaunch with `munsu teardown <id> --force`, then spawn again with a progress note.
-   See `docs/self-hosting.md` for report retention.
+   Teardown retains the task data directory and any report under its generation-bound name.
 5. Report failure only after the preceding steps are exhausted.
 
 | Condition | Action |
