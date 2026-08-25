@@ -34,7 +34,7 @@ compared both ways against `.github/uncovered-guards.baseline`
 tree (`.github/scripts/guardsites`), never declared, so a new guard with no test
 fails closed. The baseline header owns waiver admission and ratchet rules. It
 merges the coverage profiles of all four test lanes: on the default lane alone,
-105 branches the `integration` lane is the only cover for read as untested. When
+branches covered only by the `integration` lane read as untested. When
 it goes red, write a test that builds the state the guard refuses, or add a line
 with a reason. Its rules are pinned by fixtures (`uncovered-guards.sh selftest`).
 
