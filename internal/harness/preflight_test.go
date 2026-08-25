@@ -365,30 +365,11 @@ func TestPreflight_PiCredentialStore_EnvVarTakesPrecedence(t *testing.T) {
 func injectPiCredentialCheck(t *testing.T, tmpDir string) func() {
 	t.Helper()
 	origConfigDir := piConfigDir
-	origCredentialFile := piCredentialFile
-
 	piConfigDir = func() string {
 		return tmpDir
-	}
-	piCredentialFile = func(path string) bool {
-		// Only honor paths under the temp dir (safety)
-		info, err := os.Stat(path)
-		if err != nil {
-			return false
-		}
-		if !info.Mode().IsRegular() {
-			return false
-		}
-		f, err := os.Open(path)
-		if err != nil {
-			return false
-		}
-		f.Close()
-		return true
 	}
 
 	return func() {
 		piConfigDir = origConfigDir
-		piCredentialFile = origCredentialFile
 	}
 }

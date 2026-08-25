@@ -15,8 +15,6 @@ import (
 const unreadableAccess = windows.FILE_GENERIC_READ
 const readOnlyAccess = windows.FILE_WRITE_DATA | windows.FILE_APPEND_DATA | windows.FILE_WRITE_EA | windows.FILE_WRITE_ATTRIBUTES | windows.DELETE | 0x40
 
-var getEffectiveRightsFromACL = windows.NewLazySystemDLL("advapi32.dll").NewProc("GetEffectiveRightsFromAclW")
-
 // MakeUnreadable adds an explicit deny ACE for the current user while retaining
 // WRITE_DAC, verifies that reading/listing is refused, and restores the exact
 // original DACL at test cleanup.
