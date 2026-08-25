@@ -97,8 +97,10 @@ out of the sweep and stay green.
 both directions, the way `deadcode.sh check` compares `.github/deadcode.allow`
 against the tree: observed but unfiled is red, filed but no longer observable is
 red too. `flake-sweep.sh verify-fixed` is the half that can check a `fixed:` ref
-against `main`. Both need the API, so both live in the `Flake ledger`
-workflow, which fires after a merge and never on a pull request.
+against `main`. Both need the API. The post-merge `Flake ledger` workflow runs
+them to report the diff and propose remediation; the pull-request `invariants`
+step runs the same two commands through `applied` to refuse the merge until the
+checkout answers its observation.
 
 `.github/scripts/flake-sweep.sh applied` is the one rule that runs on the
 pull-request path *and* reads the API. It observes the window and re-derives

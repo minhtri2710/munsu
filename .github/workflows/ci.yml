@@ -168,11 +168,11 @@ jobs:
     name: Repo invariants
     runs-on: ubuntu-latest
     # Every other rule in this job reads the checkout and nothing else, and the
-    # workflow-level `contents: read` is all they need. The last step reads the
-    # conclusion of main's newest flake sweep, which is an Actions API call; the
-    # argument for admitting it is at that step. A job-level block replaces the
-    # workflow-level one rather than adding to it, so `contents: read` is
-    # repeated here for the checkout.
+    # workflow-level `contents: read` is all they need. The last step observes
+    # the CI window and validates this checkout through the Actions API; the
+    # argument for admitting that networked check is documented at that step.
+    # A job-level block replaces the workflow-level one rather than adding to it,
+    # so `contents: read` is repeated here for the checkout.
     permissions:
       contents: read
       actions: read
@@ -475,13 +475,12 @@ jobs:
       # and the reason it is here rather than in a lane of its own.
       #
       # The ledger rules above enforce .github/flake-ledger.md against the
-      # checkout. None of them can see that the *sweep* observed a flake the
-      # file does not name, because that comparison needs the Actions API, so it
-      # lives in .github/workflows/flake-ledger.yml -- which fires on
-      # `workflow_run` after CI on main and never on the pull-request path. Run
-      # 32153420356 reported a race-lane flake with no row on 2026-08-18 and the
-      # row was still unfiled twelve days later (#541). Nothing was broken: the
-      # one job that knew was the one nobody's merge waited for.
+      # checkout. This final rule also observes the CI window through the
+      # Actions API, so the same evidence is checked on the pull-request path
+      # instead of relying on a post-merge report. Run 32153420356 reported a
+      # race-lane flake with no row on 2026-08-18 and the row was still unfiled
+      # twelve days later (#541). Nothing was broken: the one job that knew was
+      # the one nobody's merge waited for.
       #
       # A fifth lane would reproduce that exactly. Branch protection on main
       # requires four contexts -- "Build and test", "Race detector",
@@ -509,10 +508,10 @@ jobs:
       #
       # Last in the job on purpose, so every rule that can answer from the
       # checkout has already reported before the one that can fail for a reason
-      # outside this repository. While the newest main CI run is still running,
-      # no verdict about its flake exists yet; the ledger appoints the next
+      # outside this repository. While a new main CI attempt is still running,
+      # its attempt records do not exist yet; the ledger appoints the next
       # merger after that flake becomes observable.
-      - name: Main's last flake sweep must have been acted on
+      - name: Flake ledger must answer current observations
         env:
           GH_TOKEN: ${{ github.token }}
         run: .github/scripts/flake-sweep.sh applied
