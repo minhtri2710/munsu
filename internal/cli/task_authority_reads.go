@@ -128,43 +128,16 @@ func taskAuthorityForRead(homeDir string) (*taskauthority.Canonical, error) {
 	return taskauthority.NewCanonical(h)
 }
 
-// taskDataDirOwnership answers, for the session-start orphan sweep, whether a
-// task still owns its data directory. The sweep cannot answer it from files:
-// teardown removes both the .meta and the .status projection, so a directory
-// left by a retired task looks exactly like one holding a brief written for a
-// task that has not been spawned yet. Only the canonical phase separates them,
-// so the composition root resolves it here (ADR-0007 §9).
-//
-// It fails closed. Only a task the Authority does not know, or a retired task
-// whose cleanup claim has reconciled, has released its data directory;
-// everything else — including every error — still owns it.
-func taskDataDirOwnership(homeDir string) bootstrap.TaskOwnsDataDir {
+func taskDataDirReclaimer(homeDir string) bootstrap.ReclaimTaskDataDir {
 	auth, err := taskAuthorityForRead(homeDir)
 	if err != nil {
-		return func(string) bool { return true }
+		return func(string, func() error) (bool, error) { return false, nil }
 	}
-	return func(id string) bool {
+	return func(id string, reclaim func() error) (bool, error) {
 		tid, err := domain.NewTaskID(id)
 		if err != nil {
-			return true
+			return false, nil
 		}
-		agg, err := auth.Get(tid)
-		if err != nil {
-			return !errors.Is(err, taskauthority.ErrNotFound)
-		}
-		if agg.Phase != taskauthority.PhaseRetired {
-			return true
-		}
-		if claim := agg.CleanupClaim; claim != nil {
-			switch claim.Status {
-			case taskauthority.CleanupActive:
-				return true
-			case taskauthority.CleanupCompleted, taskauthority.CleanupAborted:
-				return false
-			default:
-				return true
-			}
-		}
-		return false
+		return auth.ReclaimReleasedTaskArtifacts(tid, reclaim)
 	}
 }

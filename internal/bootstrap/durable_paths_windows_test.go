@@ -29,7 +29,7 @@ func TestGCOrphanDataDirsKeepsEncodedLiveTask(t *testing.T) {
 		t.Fatalf("Chtimes on data dir: %v", err)
 	}
 
-	cleaned := gcOrphanDataDirs(homeDir, ownsNone)
+	cleaned := gcOrphanDataDirs(homeDir, reclaimNone)
 	for _, c := range cleaned {
 		if c == id {
 			t.Fatalf("live task data dir %q was GC'd", id)

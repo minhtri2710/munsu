@@ -235,6 +235,9 @@ func TestRun_BackendDiagnostics_AutoConfigFileWithNothingAvailable(t *testing.T)
 	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: none (source: no persisted backend identity (set backend in the fleet base config))")
 }
 
+func reclaimNone(_ string, reclaim func() error) (bool, error) { return true, reclaim() }
+func reclaimEvery(string, func() error) (bool, error)          { return false, nil }
+
 func setDirMtime(t *testing.T, dir string, age time.Duration) {
 	t.Helper()
 	at := time.Now().Add(-age)
@@ -293,7 +296,7 @@ func TestGCOrphanDataDirs_EmptyDirOlderThanGrace(t *testing.T) {
 	// Make it older than the grace period
 	setDirMtime(t, filepath.Join(dataDir, "orphan-id"), 48*time.Hour)
 
-	cleaned := gcOrphanDataDirs(home, ownsNone)
+	cleaned := gcOrphanDataDirs(home, reclaimNone)
 	if len(cleaned) != 1 || cleaned[0] != "orphan-id" {
 		t.Errorf("expected [orphan-id], got %v", cleaned)
 	}
@@ -316,7 +319,7 @@ func TestGCOrphanDataDirs_WithReportKept(t *testing.T) {
 	// Make it older than the grace period so only the report keeps it
 	setDirMtime(t, filepath.Join(dataDir, "with-report"), 48*time.Hour)
 
-	cleaned := gcOrphanDataDirs(home, ownsNone)
+	cleaned := gcOrphanDataDirs(home, reclaimNone)
 	// Should not remove dir with report.md
 	for _, id := range cleaned {
 		if id == "with-report" {
@@ -342,7 +345,7 @@ func TestGCOrphanDataDirs_BriefOfOwnedTaskKept(t *testing.T) {
 	}
 	setDirMtime(t, filepath.Join(dataDir, "with-brief"), 48*time.Hour)
 
-	cleaned := gcOrphanDataDirs(home, ownsEvery)
+	cleaned := gcOrphanDataDirs(home, reclaimEvery)
 	for _, id := range cleaned {
 		if id == "with-brief" {
 			t.Errorf("expected brief of an owned task to be kept, but it was removed")
@@ -367,7 +370,7 @@ func TestGCOrphanDataDirs_BriefOfReleasedTaskReclaimed(t *testing.T) {
 	}
 	setDirMtime(t, filepath.Join(dataDir, "torn-down"), 48*time.Hour)
 
-	cleaned := gcOrphanDataDirs(home, ownsNone)
+	cleaned := gcOrphanDataDirs(home, reclaimNone)
 	if len(cleaned) != 1 || cleaned[0] != "torn-down" {
 		t.Fatalf("expected [torn-down], got %v", cleaned)
 	}
@@ -389,7 +392,7 @@ func TestGCOrphanDataDirs_ArchivedReportKept(t *testing.T) {
 	}
 	setDirMtime(t, filepath.Join(dataDir, "retired-scout"), 48*time.Hour)
 
-	cleaned := gcOrphanDataDirs(home, ownsNone)
+	cleaned := gcOrphanDataDirs(home, reclaimNone)
 	for _, id := range cleaned {
 		if id == "retired-scout" {
 			t.Errorf("expected archived report to be kept, but the dir was removed")
@@ -408,7 +411,7 @@ func TestGCOrphanDataDirs_RecentDirKept(t *testing.T) {
 	}
 	// Leave it at its original mtime (current time) — should be too recent to GC
 
-	cleaned := gcOrphanDataDirs(home, ownsNone)
+	cleaned := gcOrphanDataDirs(home, reclaimNone)
 	for _, id := range cleaned {
 		if id == "recent-id" {
 			t.Errorf("expected recent dir to be kept, but it was removed")

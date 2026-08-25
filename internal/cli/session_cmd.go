@@ -245,7 +245,7 @@ func newSessionStartCmd() *cobra.Command {
 				return bootstrap.WatchEnsureResult{State: r.Data.State}
 			}, func(home string, doRecover bool) bootstrap.CaptainLivenessResult {
 				return captainLivenessForSession(home, doRecover && wantRecover)
-			}, taskDataDirOwnership(ctx.Home))
+			}, taskDataDirReclaimer(ctx.Home))
 			if err != nil {
 				return err
 			}
@@ -290,7 +290,7 @@ func newBootstrapCmd() *cobra.Command {
 			if len(args) > 1 && args[0] == "install" {
 				installTools = args[1:]
 			}
-			result, err := bootstrap.Run(ctx.Home, !locked, installTools, taskDataDirOwnership(ctx.Home))
+			result, err := bootstrap.Run(ctx.Home, !locked, installTools, taskDataDirReclaimer(ctx.Home))
 			if err != nil {
 				return err
 			}

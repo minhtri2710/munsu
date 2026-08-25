@@ -73,16 +73,16 @@ type Result struct {
 
 // Run executes bootstrap diagnostics for the given munsu home.
 // If lockHeld is true, mutating sweeps (fleet-sync) may run.
-func Run(home string, lockHeld bool, installTools []string, owns TaskOwnsDataDir) (*Result, error) {
+func Run(home string, lockHeld bool, installTools []string, reclaim ReclaimTaskDataDir) (*Result, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		cwd = home
 	}
 	runtimeIdentity := CollectRuntimeIdentity(home, cwd, "")
-	return runWithRuntimeIdentity(home, lockHeld, installTools, &runtimeIdentity, owns)
+	return runWithRuntimeIdentity(home, lockHeld, installTools, &runtimeIdentity, reclaim)
 }
 
-func runWithRuntimeIdentity(home string, lockHeld bool, installTools []string, runtimeIdentity *RuntimeIdentity, owns TaskOwnsDataDir) (*Result, error) {
+func runWithRuntimeIdentity(home string, lockHeld bool, installTools []string, runtimeIdentity *RuntimeIdentity, reclaim ReclaimTaskDataDir) (*Result, error) {
 	res := &Result{
 		LockAcquired:    lockHeld,
 		RuntimeIdentity: runtimeIdentity,
@@ -175,10 +175,10 @@ func runWithRuntimeIdentity(home string, lockHeld bool, installTools []string, r
 	switch {
 	case !lockHeld:
 		res.GC = &GCDiagnostic{SkippedReason: "session lock not held"}
-	case owns == nil:
+	case reclaim == nil:
 		res.GC = &GCDiagnostic{SkippedReason: "no task ownership source"}
 	default:
-		if cleaned := gcOrphanDataDirs(home, owns); len(cleaned) > 0 {
+		if cleaned := gcOrphanDataDirs(home, reclaim); len(cleaned) > 0 {
 			res.GC = &GCDiagnostic{Removed: len(cleaned), Dirs: cleaned}
 		}
 	}
@@ -214,19 +214,14 @@ func installTool(tool string) error {
 	}
 }
 
-// TaskOwnsDataDir reports whether task id still owns data/<id>/. The CLI
-// composition root supplies it from the Task Authority (ADR-0007 §9): the
-// sweep genuinely needs the canonical phase and cannot derive it from files.
-// A task briefed but not yet spawned leaves exactly the same directory as one
-// that was torn down, because teardown removes both the .meta and the .status
-// projection, so only the canonical phase separates a brief still waiting for
-// its soldier from a brief nobody will read again.
-type TaskOwnsDataDir func(id string) bool
+// ReclaimTaskDataDir reclaims a released task directory while its lifecycle
+// authority holds the task-scope fence.
+type ReclaimTaskDataDir func(id string, reclaim func() error) (bool, error)
 
 // gcOrphanDataDirs scans data/<id>/ directories and removes those no task
 // owns any more, that hold no report evidence, and whose mtime is older than
 // the grace period. Returns the list of removed directory names.
-func gcOrphanDataDirs(homeDir string, owns TaskOwnsDataDir) []string {
+func gcOrphanDataDirs(homeDir string, reclaim ReclaimTaskDataDir) []string {
 	dataDir := filepath.Join(homeDir, "data")
 
 	entries, err := os.ReadDir(dataDir)
@@ -274,9 +269,6 @@ func gcOrphanDataDirs(homeDir string, owns TaskOwnsDataDir) []string {
 
 		// Skip while a task still owns the directory. This is what protects a
 		// brief written before the task was ever spawned.
-		if owns(id) {
-			continue
-		}
 
 		// Skip if the directory holds report evidence: the current
 		// generation's report.md, or a report teardown archived for a
@@ -285,8 +277,7 @@ func gcOrphanDataDirs(homeDir string, owns TaskOwnsDataDir) []string {
 			continue
 		}
 
-		// Dir is truly orphan and past grace period — remove
-		if err := os.RemoveAll(dirPath); err == nil {
+		if reclaimed, err := reclaim(id, func() error { return os.RemoveAll(dirPath) }); err == nil && reclaimed {
 			cleaned = append(cleaned, id)
 		}
 	}

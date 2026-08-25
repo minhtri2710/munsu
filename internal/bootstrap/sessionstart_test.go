@@ -467,7 +467,7 @@ func TestRunSessionStartReportsRuntimeIdentityBeforeScopeRefusal(t *testing.T) {
 	res, err := RunSessionStartWithWatcher(&buf, home, func(string) WatchEnsureResult {
 		t.Fatal("watcher ensure must not run after scope refusal")
 		return WatchEnsureResult{}
-	}, nil, ownsEvery)
+	}, nil, reclaimEvery)
 	if err == nil {
 		t.Fatal("expected scope refusal")
 	}
@@ -604,7 +604,7 @@ func TestRunSessionStartReportsRuntimeIdentityBeforeWatcherEnsure(t *testing.T) 
 			t.Fatalf("watcher ensure ran before runtime identity skew was printed; output so far:\n%s", buf.String())
 		}
 		return WatchEnsureResult{State: "healthy"}
-	}, nil, ownsEvery)
+	}, nil, reclaimEvery)
 	if err != nil {
 		t.Fatalf("RunSessionStartWithWatcher: %v", err)
 	}
@@ -701,9 +701,3 @@ func TestPrintCaptainLiveness_RecoverSummaryPrinted(t *testing.T) {
 		t.Errorf("output missing recover entry line: %q", out)
 	}
 }
-
-// ownsNone and ownsEvery stand in for the composition root's answer about
-// whether a task still owns its data directory.
-func ownsNone(string) bool { return false }
-
-func ownsEvery(string) bool { return true }
