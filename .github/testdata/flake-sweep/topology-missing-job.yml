@@ -1,0 +1,4 @@
+jobs:
+  other:
+    steps:
+      - run: .github/scripts/flake-sweep.sh applied

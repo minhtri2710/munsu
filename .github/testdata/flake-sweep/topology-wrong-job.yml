@@ -1,0 +1,7 @@
+jobs:
+  invariants:
+    steps:
+      - run: echo ok
+  other:
+    steps:
+      - run: .github/scripts/flake-sweep.sh applied

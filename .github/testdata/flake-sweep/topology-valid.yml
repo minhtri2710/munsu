@@ -1,0 +1,5 @@
+jobs:
+  invariants:
+    steps:
+      - name: Flake ledger must answer current observations
+        run: .github/scripts/flake-sweep.sh applied

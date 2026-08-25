@@ -99,6 +99,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 LEDGER="${LEDGER:-$ROOT/.github/flake-ledger.md}"
 LEDGER_REL=".github/flake-ledger.md"
 FIXTURES="$ROOT/.github/testdata/flake-sweep"
+WORKFLOW_FILE="${WORKFLOW_FILE:-$ROOT/.github/workflows/ci.yml}"
 
 # Evidence older than this cannot be re-derived from the API, so it is also how
 # long an entry stays grounded. It has to stay comfortably wider than the
@@ -835,6 +836,30 @@ sync() {
 
 # A throwaway ledger with the given table rows, for the scenarios below. The
 # prose around the markers is what a real ledger has and sync() must not touch.
+workflow_gate_present() {
+	local file="$1" line in_invariants=0 in_steps=0
+	[ -f "$file" ] || return 1
+	while IFS= read -r line || [ -n "$line" ]; do
+		case "$line" in
+		'  invariants:') in_invariants=1; in_steps=0; continue ;;
+		esac
+		if [ "${line:0:2}" = "  " ] && [ "${line:2:1}" != " " ] && [ "$in_invariants" -eq 1 ]; then
+			return 1
+		fi
+		case "$line" in
+		'    steps:') [ "$in_invariants" -eq 1 ] || continue; in_steps=1; continue ;;
+		esac
+		if [ "${line:0:4}" = "    " ] && [ "${line:4:1}" != " " ] && [ "$in_invariants" -eq 1 ]; then
+			in_steps=0
+			continue
+		fi
+		if [ "$in_invariants" -eq 1 ] && [ "$in_steps" -eq 1 ]; then
+			case "$line" in *'.github/scripts/flake-sweep.sh applied'*) return 0 ;; esac
+		fi
+	done <"$file"
+	return 1
+}
+
 scratch_ledger() {
 	local file="$1"
 	shift
@@ -1128,6 +1153,28 @@ selftest() {
 	fi
 
 	rm -f "$ledger"
+
+	# The topology scan is structural rather than a YAML parser: it recognizes
+	# only the job, steps list, and run indentation this workflow uses. It fails
+	# closed on shapes it cannot read, making a rewrite a visible false red rather
+	# than a silent green. This selftest protects its own job, so deleting this
+	# scenario deletes its guard too; the remaining protection is the visible edit
+	# to the invariants job and the selftest step itself.
+	local topology
+	workflow_gate_present "$WORKFLOW_FILE" || {
+		echo "::error::invariants must retain the applied gate; branch protection requires this context" >&2
+		failed=1
+	}
+	if ! workflow_gate_present "$FIXTURES/topology-valid.yml"; then
+		echo "::error::valid topology fixture was refused" >&2
+		failed=1
+	fi
+	for topology in missing-step missing-job wrong-job; do
+		if workflow_gate_present "$FIXTURES/topology-$topology.yml"; then
+			echo "::error::topology fixture $topology was accepted" >&2
+			failed=1
+		fi
+	done
 
 	# 6. `applied` re-derives the ledger against this checkout.
 	# The scenarios exercise both directions and verify-fixed independently.

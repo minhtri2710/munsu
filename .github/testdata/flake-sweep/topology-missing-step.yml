@@ -1,0 +1,5 @@
+jobs:
+  invariants:
+    steps:
+      - name: Other check
+        run: echo ok
