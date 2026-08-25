@@ -57,6 +57,9 @@ func TestHasReportEvidence(t *testing.T) {
 		{"valid archive", func(dir string) error {
 			return os.WriteFile(filepath.Join(dir, "report-g7.md"), []byte("findings"), 0644)
 		}, true},
+		{"valid recovery archive", func(dir string) error {
+			return os.WriteFile(filepath.Join(dir, "report-g7-2.md"), []byte("findings"), 0644)
+		}, true},
 		{"malformed archive", func(dir string) error {
 			return os.WriteFile(filepath.Join(dir, "report-garbage.md"), []byte("not a report"), 0644)
 		}, false},

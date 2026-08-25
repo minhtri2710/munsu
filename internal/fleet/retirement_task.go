@@ -205,7 +205,7 @@ func abortRetirementCleanup(authority *taskauthority.Canonical, homeDir string, 
 		}
 	}
 	archive := func() error {
-		_, dataDirExists, err := archiveRetiredReport(homeDir, taskID.Value(), claimGen)
+		_, dataDirExists, err := archiveRetiredReportWithRecovery(homeDir, taskID.Value(), claimGen, true)
 		if err != nil || !dataDirExists {
 			return err
 		}
@@ -303,6 +303,9 @@ func retireTaskAuthoritatively(opts Options, meta map[string]string, authority *
 					Phase:      prior.phase,
 					Replayed:   true,
 				}, nil
+			}
+			if prior.claim != nil && prior.claim.Status == taskauthority.CleanupCompleted {
+				return taskauthority.Outcome{TaskID: taskID, Generation: prior.generation, Revision: prior.revision, Phase: prior.phase, Replayed: true}, nil
 			}
 			return taskauthority.Outcome{}, &RetirementStaleTeardownError{
 				TaskID:            opts.ID,
@@ -659,23 +662,39 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 	// reports the terminal state without releasing anything).
 	claimGen := committed.Generation
 	claimCompleted := false
+	claimAborted := false
 	curForClaim, err := authority.Get(taskID)
 	if err != nil {
 		return cleanupPending(fmt.Errorf("teardown %s: resolving current state for cleanup claim: %w", opts.ID, err))
 	}
-	if claim := curForClaim.CleanupClaim; claim != nil && claim.Generation == claimGen {
+	claim := curForClaim.CleanupClaim
+	if curForClaim.Generation != claimGen {
+		historical, historyErr := authority.GetGeneration(taskID, claimGen)
+		if historyErr != nil {
+			return cleanupPending(fmt.Errorf("teardown %s: resolving historical cleanup claim: %w", opts.ID, historyErr))
+		}
+		claim = historical.CleanupClaim
+	}
+	if claim != nil && claim.Generation == claimGen {
 		switch claim.Status {
 		case taskauthority.CleanupCompleted:
 			claimCompleted = true
 			result.Steps = append(result.Steps, fmt.Sprintf("resuming projection cleanup for completed generation %s", claimGen))
 		case taskauthority.CleanupAborted:
-			result.Steps = append(result.Steps, fmt.Sprintf("cleanup was aborted for generation %s; abort is terminal and nothing is released", claimGen))
-			return result, nil
+			claimAborted = true
 		}
 	}
+	if claimAborted {
+		result.Steps = append(result.Steps, fmt.Sprintf("cleanup was aborted for generation %s; abort is terminal and nothing is released", claimGen))
+		return result, nil
+	}
 	if claimCompleted {
-		if err := authority.ReconcileCompletedCleanup(taskID, claimGen, func() error { return finalizeCompletedProjectionCleanup(opts, meta, result) }); err != nil {
+		reconcileResult, err := authority.ReconcileCompletedCleanup(taskID, claimGen, func() error { return finalizeCompletedProjectionCleanup(opts, meta, result) })
+		if err != nil {
 			return result, &RetirementProjectionError{TaskID: opts.ID, Err: err}
+		}
+		if reconcileResult == taskauthority.CompletedCleanupSuperseded {
+			result.Steps = append(result.Steps, fmt.Sprintf("projections for generation %s superseded; nothing removed", claimGen))
 		}
 		return result, nil
 	}
@@ -953,7 +972,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		var exists bool
 		work := func() error {
 			var err error
-			archived, exists, err = archiveRetiredReport(opts.HomeDir, opts.ID, claimGen)
+			archived, exists, err = archiveRetiredReportWithRecovery(opts.HomeDir, opts.ID, claimGen, committed.Replayed)
 			if err != nil || !exists {
 				return err
 			}

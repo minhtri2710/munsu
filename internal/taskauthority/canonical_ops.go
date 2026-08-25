@@ -211,25 +211,46 @@ func (c *Canonical) WriteTaskDataArtifactByID(id string, write func() error) err
 	return write()
 }
 
+// CompletedCleanupResult describes whether completed-cleanup projection work ran.
+type CompletedCleanupResult string
+
+const (
+	CompletedCleanupRepaired   CompletedCleanupResult = "repaired"
+	CompletedCleanupSuperseded CompletedCleanupResult = "superseded"
+)
+
 // ReconcileCompletedCleanup runs only bounded local projection work while the
 // completed task remains fenced; callbacks must not acquire another lock scope.
-func (c *Canonical) ReconcileCompletedCleanup(taskID domain.TaskID, generation Generation, work func() error) error {
+func (c *Canonical) ReconcileCompletedCleanup(taskID domain.TaskID, generation Generation, work func() error) (CompletedCleanupResult, error) {
 	if work == nil {
-		return fmt.Errorf("cleanup callback is nil")
+		return "", fmt.Errorf("cleanup callback is nil")
 	}
 	lk, err := c.h.Lock(taskScope(taskID.Value()))
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer lk.Release()
 	doc, exists, err := c.readTaskDoc(taskID.Value())
 	if err != nil {
-		return err
+		return "", err
+	}
+	if exists && doc.Aggregate.Current && doc.Aggregate.Generation > generation {
+		historical, historyErr := c.GetGeneration(taskID, generation)
+		if historyErr == nil && historical.CleanupClaim != nil && historical.CleanupClaim.Generation == generation && historical.CleanupClaim.Status == CleanupCompleted {
+			return CompletedCleanupSuperseded, nil
+		}
+		if historyErr != nil {
+			return "", historyErr
+		}
+		return "", conflictError(ErrConflict, "task %s generation %s cleanup is not completed", taskID, generation)
 	}
 	if !exists || !doc.Aggregate.Current || doc.Aggregate.Phase != PhaseRetired || doc.Aggregate.CleanupClaim == nil || doc.Aggregate.CleanupClaim.Status != CleanupCompleted || doc.Aggregate.CleanupClaim.Generation != generation {
-		return conflictError(ErrConflict, "task %s generation %s cleanup is not completed", taskID, generation)
+		return "", conflictError(ErrConflict, "task %s generation %s cleanup is not completed", taskID, generation)
 	}
-	return work()
+	if err := work(); err != nil {
+		return "", err
+	}
+	return CompletedCleanupRepaired, nil
 }
 
 // ReclaimReleasedTaskArtifacts holds the task scope through the bounded local

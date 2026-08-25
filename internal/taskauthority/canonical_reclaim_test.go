@@ -96,7 +96,35 @@ func TestArchiveRetiredReportRequiresExactActiveClaim(t *testing.T) {
 	}
 }
 
-func TestReconcileRetirementCleanupPostCommitCallbackIsFenced(t *testing.T) {
+func TestReconcileCompletedCleanupReportsSupersededGeneration(t *testing.T) {
+	c, _, _ := newTestCanonical(t)
+	id := "completed-superseded"
+	mustCreate(t, c, id)
+	retireWithClaim(t, c, id, preconditionOf(1, 1), "op-superseded-retire")
+	agg, err := c.Get(mustTaskID(t, id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	complete := CanonicalCompleteCleanupRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, id), Precondition: preconditionOf(uint64(agg.Generation), uint64(agg.Revision)), ClaimOperationID: "op-superseded-retire", ClaimGeneration: 1, Reason: "done"}
+	if _, err := c.CompleteCleanup(mustOperation(t, "op-superseded-complete", complete), complete); err != nil {
+		t.Fatal(err)
+	}
+	agg, err = c.Get(mustTaskID(t, id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopen := CanonicalReopenRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, id), Precondition: preconditionOf(uint64(agg.Generation), uint64(agg.Revision)), Reason: "reopen"}
+	if _, err := c.Reopen(mustOperation(t, "op-superseded-reopen", reopen), reopen); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	result, err := c.ReconcileCompletedCleanup(mustTaskID(t, id), 1, func() error { called = true; return nil })
+	if err != nil || result != CompletedCleanupSuperseded || called {
+		t.Fatalf("result=%q err=%v called=%v", result, err, called)
+	}
+}
+
+func TestReconcileCompletedCleanupPostCommitCallbackIsFenced(t *testing.T) {
 	c, h, _ := newTestCanonical(t)
 	id := "post-commit-fence"
 	mustCreate(t, c, id)
