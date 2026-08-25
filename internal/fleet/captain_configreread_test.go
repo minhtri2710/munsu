@@ -15,8 +15,8 @@ import (
 
 // TestConfigRereadGenPath verifies the generation file path helper.
 func TestConfigRereadGenPath(t *testing.T) {
-	home := "/tmp/test-captain"
-	expected := "/tmp/test-captain/state/.config-reread-gen"
+	home := filepath.Join(string(os.PathSeparator), "tmp", "test-captain")
+	expected := filepath.Join(home, "state", ".config-reread-gen")
 	if got := ConfigRereadGenPath(home); got != expected {
 		t.Errorf("ConfigRereadGenPath(%q) = %q, want %q", home, got, expected)
 	}

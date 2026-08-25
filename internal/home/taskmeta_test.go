@@ -275,8 +275,9 @@ func TestReadStatus_Nonexistent(t *testing.T) {
 }
 
 func TestStateDir(t *testing.T) {
-	dir := StateDir("/tmp/munsu-home")
-	want := "/tmp/munsu-home/state"
+	root := absTestPath(t, "tmp", "munsu-home")
+	dir := StateDir(root)
+	want := filepath.Join(root, "state")
 	if dir != want {
 		t.Errorf("StateDir = %q, want %q", dir, want)
 	}

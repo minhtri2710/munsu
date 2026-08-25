@@ -344,7 +344,15 @@ func TestSeed_CreatesDirectoryStructure(t *testing.T) {
 }
 
 func TestSeed_InvalidPath(t *testing.T) {
-	err := seedTest("test-sm", "/nonexistent/parent/sm", "# charter")
+	// A home under a parent that is a regular file cannot be created on any
+	// platform. "/nonexistent/parent/sm" was not that: on Windows a leading
+	// separator names the current drive's root, so the whole chain was simply
+	// created and the refusal under test never happened.
+	blocker := filepath.Join(t.TempDir(), "parent")
+	if err := os.WriteFile(blocker, []byte("not a directory\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	err := seedTest("test-sm", filepath.Join(blocker, "sm"), "# charter")
 	if err == nil {
 		t.Fatal("expected error for invalid path")
 	}

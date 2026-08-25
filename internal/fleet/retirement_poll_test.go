@@ -1601,7 +1601,14 @@ func TestRecoverPendingRetirement_InvalidPollPathPreservesArtifacts(t *testing.T
 			home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
 			defer cleanup()
 
+			// An absolute poll path names a file outside the home outright, so
+			// the artifact it must not touch is the one already at that path.
+			// Joining it under the state directory made it a path component,
+			// which on Windows carries a volume letter and cannot be one.
 			resolvedPath := filepath.Join(mhome.StateDir(home), pollPath)
+			if filepath.IsAbs(pollPath) {
+				resolvedPath = pollPath
+			}
 			if err := os.MkdirAll(filepath.Dir(resolvedPath), 0755); err != nil {
 				t.Fatalf("create victim directory: %v", err)
 			}

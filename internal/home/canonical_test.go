@@ -3,14 +3,29 @@ package home
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
 func TestInitRefusesStatErrors(t *testing.T) {
-	_, err := Init("bad\x00root")
-	if err == nil || !strings.Contains(err.Error(), "home: stat root") {
-		t.Fatalf("Init error = %v, want stat-root refusal", err)
+	// A NUL byte makes a root unusable everywhere, but not at the same stage:
+	// POSIX carries it as far as the stat and reports "home: stat root", while
+	// Windows rejects it during path resolution and reports "home: resolve
+	// root". Pinning either string asserts which branch happened to fire, not
+	// the contract. The contract is that an unusable root is refused and
+	// nothing is left behind for it, so that is what is asserted — on both
+	// platforms, and including the side-effect check the stage assertion never
+	// made.
+	parent := t.TempDir()
+	_, err := Init(filepath.Join(parent, "bad\x00root"))
+	if err == nil {
+		t.Fatal("Init accepted a root containing a NUL byte")
+	}
+	entries, readErr := os.ReadDir(parent)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("refused Init created %d entries, want none", len(entries))
 	}
 }
 
