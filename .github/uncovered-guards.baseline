@@ -14,13 +14,19 @@
 # declared". A register OF guards fails open at exactly the moment it has to
 # fail closed.
 #
-# The baseline normally shrinks as guards gain coverage or leave the tree. A
-# recognizer expansion may expose pre-existing sites, but each added row must be
-# explicitly reviewed and marked `growth(#<issue>):` in its reason. The reason
-# column is self-declared, so a waiver nobody would accept keeps this green --
-# reading the diff is what catches that, not the script.
+# Equal identity sets and pure shrink pass as guards gain coverage or leave the
+# tree. A recognizer expansion may expose pre-existing sites, but pure growth is
+# admitted only when every added row is explicitly reviewed and marked
+# `growth(#[1-9][0-9]*): <nonblank reason>`; undisclosed growth and every mixed
+# addition/removal fail. The reason column is self-declared, so a waiver nobody
+# would accept keeps this green -- reading the diff is what catches that, not the
+# script. Missing or malformed current or exact-base data fails closed.
 #
-# Columns are tab-separated: file <TAB> func <TAB> nth <TAB> predicate <TAB> reason
+# Data rows are exactly five tab-separated columns:
+# file <TAB> func <TAB> nth <TAB> predicate <TAB> reason. Every field is
+# non-empty, and `nth` must be a positive decimal ordinal. `predicate` is the if
+# condition, or the literal `default` for a refusing switch default. The same
+# format validation applies to the exact base baseline used by the ratchet.
 #
 # `nth` is the 1-based occurrence of that exact predicate in that owner identity;
 # see `.github/scripts/guardsites` for the owner forms and derivation contract.

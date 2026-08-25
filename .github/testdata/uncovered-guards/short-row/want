@@ -1,4 +1,4 @@
-::error::.github/testdata/uncovered-guards/short-row/baseline:1: expected file<TAB>func<TAB>nth<TAB>predicate<TAB>reason
+::error::.github/testdata/uncovered-guards/short-row/baseline:1: expected exactly file<TAB>func<TAB>nth<TAB>predicate<TAB>reason
 ::warning file=internal/fake/gated_linux.go::no lane compiles this file on this platform, so its refusal branches are outside the lane in both directions
 ::error::refusal branches no test enters, and not in .github/testdata/uncovered-guards/short-row/baseline:
   internal/fake/guard.go:28.22-30.4: Refuse (#1): if len(failures) > 0

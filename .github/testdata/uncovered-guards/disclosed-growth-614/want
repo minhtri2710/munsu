@@ -1,0 +1,30 @@
+::notice::.github/testdata/uncovered-guards/disclosed-growth-614/baseline adds these identities relative to its exact base:
+  internal/fake/guard.go: Func001 (#1): guard001 != nil
+  internal/fake/guard.go: Func002 (#1): guard002 != nil
+  internal/fake/guard.go: Func003 (#1): guard003 != nil
+  internal/fake/guard.go: Func004 (#1): guard004 != nil
+  internal/fake/guard.go: Func005 (#1): guard005 != nil
+  internal/fake/guard.go: Func006 (#1): guard006 != nil
+  internal/fake/guard.go: Func007 (#1): guard007 != nil
+  internal/fake/guard.go: Func008 (#1): guard008 != nil
+  internal/fake/guard.go: Func009 (#1): guard009 != nil
+  internal/fake/guard.go: Func010 (#1): guard010 != nil
+  internal/fake/guard.go: Func011 (#1): guard011 != nil
+  internal/fake/guard.go: Func012 (#1): guard012 != nil
+  internal/fake/guard.go: Func013 (#1): guard013 != nil
+  internal/fake/guard.go: Func014 (#1): guard014 != nil
+  internal/fake/guard.go: Func015 (#1): guard015 != nil
+  internal/fake/guard.go: Func016 (#1): guard016 != nil
+  internal/fake/guard.go: Func017 (#1): guard017 != nil
+  internal/fake/guard.go: Func018 (#1): guard018 != nil
+  internal/fake/guard.go: Func019 (#1): guard019 != nil
+  internal/fake/guard.go: Func020 (#1): guard020 != nil
+  internal/fake/guard.go: Func021 (#1): guard021 != nil
+  internal/fake/guard.go: Func022 (#1): guard022 != nil
+  internal/fake/guard.go: Func023 (#1): guard023 != nil
+  internal/fake/guard.go: Func024 (#1): guard024 != nil
+  internal/fake/guard.go: Func025 (#1): guard025 != nil
+  internal/fake/guard.go: Func026 (#1): guard026 != nil
+  internal/fake/guard.go: Func027 (#1): guard027 != nil
+guards: 311 sites, 27 waived, deadcode: 2 allowed
+exit 0

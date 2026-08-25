@@ -1,0 +1,2 @@
+internal/fake/guard.go	Refuse	1	identity != Worktree	current A
+internal/fake/guard.go	Refuse	1	len(failures) > 0	growth(#614):    

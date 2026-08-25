@@ -18,8 +18,8 @@
 #
 # The baseline is compared BOTH ways, like .github/deadcode.allow: a guard the
 # tree shows uncovered and the file does not list is red, and a line whose guard
-# is now covered, or has gone, is red too. The second direction is the ratchet --
-# without it the file only grows.
+# is now covered, or has gone, is red too. The exact-base identity ratchet also
+# requires pure growth to carry an explicit disclosure and rejects mixed changes.
 #
 # --- Merging four lanes is a correctness condition, not an optimisation -------
 #
@@ -412,21 +412,19 @@ classify() {
 # awk rather than a `read` loop, for the reason deadcode.sh gives: bash 3.2 still
 # ships on macOS and misparses a `case` inside a command substitution.
 baseline_format_errors() {
-	awk -F '\t' -v name="$BASELINE_REL" '
+	local file="$1"
+	local name="${file#"$ROOT"/}"
+	awk -F '\t' -v name="$name" '
 		/^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
-		NF < 4 || $1 == "" || $2 == "" || $3 == "" || $4 == "" {
-			printf "::error::%s:%d: expected file<TAB>func<TAB>nth<TAB>predicate<TAB>reason\n", name, NR
+		NF != 5 || $1 == "" || $2 == "" || $3 == "" || $4 == "" || $5 == "" {
+			printf "::error::%s:%d: expected exactly file<TAB>func<TAB>nth<TAB>predicate<TAB>reason\n", name, NR
 			bad = 1
 			next
 		}
-		$3 !~ /^[0-9]+$/ {
-			printf "::error::%s:%d: %s: %s: nth must be a number, got \"%s\"\n", name, NR, $1, $2, $3
+		$3 !~ /^[1-9][0-9]*$/ {
+			printf "::error::%s:%d: %s: %s: nth must be a positive number, got \"%s\"\n", name, NR, $1, $2, $3
 			bad = 1
 			next
-		}
-		NF < 5 || $5 == "" {
-			printf "::error::%s:%d: %s: %s: entry needs a reason in the fifth column\n", name, NR, $1, $2
-			bad = 1
 		}
 		{
 			key = $1 "\t" $2 "\t" $3 "\t" $4
@@ -438,11 +436,87 @@ baseline_format_errors() {
 			}
 		}
 		END { exit bad }
-	' "$BASELINE"
+	' "$file"
 }
 
 baseline_entries() {
-	{ grep -vE '^[[:space:]]*(#|$)' "$BASELINE" || true; } | cut -f1,2,3,4 | sort -u
+	local file="$1"
+	{ grep -vE '^[[:space:]]*(#|$)' "$file" || true; } | cut -f1,2,3,4 | sort -u
+}
+
+# The ratchet compares identities, not comments or ordinary reason edits. A
+# pure shrink is allowed. A pure growth is allowed only when every added row is
+# explicitly disclosed in its reason as `growth(#<issue>): <reason>`; this lets a
+# genuinely new guard class land without turning the ratchet into a blocker that
+# prevents the change which expands the derived set. A mixed add/remove change,
+# including equal-count replacement, remains forbidden. The base source is either
+# a fixture-provided file or the exact git revision supplied by CI; missing or
+# malformed base data fails closed rather than silently disabling the ratchet.
+baseline_added_rows() {
+	local base_file="$1" current_file="$2"
+	awk -F '\t' -v base_name="$base_file" '
+		/^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+		FILENAME == base_name {
+			seen[$1 "\t" $2 "\t" $3 "\t" $4] = 1
+			next
+		}
+		FILENAME != base_name && seen[$1 "\t" $2 "\t" $3 "\t" $4] == 0 { print }
+	' "$base_file" "$current_file"
+}
+
+baseline_print_keys() {
+	while IFS=$'\t' read -r file func nth predicate; do
+		[ -n "$file" ] || continue
+		printf '  %s: %s (#%s): %s\n' "$file" "$func" "$nth" "$predicate"
+	done
+}
+
+baseline_ratchet() {
+	local base_file="${GUARDS_BASELINE_BASE:-}"
+	local base_ref tmp="" current base added removed added_rows invalid_added
+	if [ -z "$base_file" ]; then
+		base_ref="${GUARDS_BASE_REF:-}"
+		[ -n "$base_ref" ] || die "GUARDS_BASE_REF is required when GUARDS_BASELINE_BASE is not set; the baseline ratchet cannot be evaluated"
+		tmp="$(mktemp)"
+		if ! git -C "$ROOT" show "$base_ref:$BASELINE_REL" >"$tmp"; then
+			rm -f "$tmp"
+			die "could not read $BASELINE_REL from base revision $base_ref; the baseline ratchet cannot be evaluated"
+		fi
+		base_file="$tmp"
+	fi
+	if [ ! -f "$base_file" ]; then
+		rm -f "$tmp"
+		die "base baseline ${base_file#"$ROOT"/} is missing; the baseline ratchet cannot be evaluated"
+	fi
+	local base_name="${base_file#"$ROOT"/}"
+	if ! baseline_format_errors "$base_file" >&2; then
+		rm -f "$tmp"
+		die "base baseline $base_name is malformed; the baseline ratchet cannot be evaluated"
+	fi
+	current="$(baseline_entries "$BASELINE")"
+	base="$(baseline_entries "$base_file")"
+	added="$(comm -23 <(printf '%s\n' "$current") <(printf '%s\n' "$base"))"
+	removed="$(comm -13 <(printf '%s\n' "$current") <(printf '%s\n' "$base"))"
+	added_rows="$(baseline_added_rows "$base_file" "$BASELINE")"
+	rm -f "$tmp"
+	if [ -z "$added" ]; then
+		return 0
+	fi
+
+	echo "::notice::$BASELINE_REL adds these identities relative to its exact base:" >&2
+	printf '%s\n' "$added" | baseline_print_keys >&2
+	if [ -n "$removed" ]; then
+		echo "::error::$BASELINE_REL mixes identity growth with removals; split the changes before updating the ratchet:" >&2
+		printf '%s\n' "$removed" | baseline_print_keys >&2
+		return 1
+	fi
+
+	invalid_added="$(printf '%s\n' "$added_rows" | awk -F '\t' 'NF != 5 || $5 !~ /^growth\(#[1-9][0-9]*\):[[:space:]]+.*[^[:space:]][[:space:]]*$/ { print }')"
+	if [ -n "$invalid_added" ]; then
+		echo "::error::$BASELINE_REL adds identities without a valid growth acknowledgment (growth(#<issue>): <reason>):" >&2
+		printf '%s\n' "$invalid_added" | cut -f1,2,3,4 | baseline_print_keys >&2
+		return 1
+	fi
 }
 
 # Count of entries in the sibling ratchet, read only. The summary line carries
@@ -462,7 +536,8 @@ deadcode_allowed() {
 # guessing, because a wrong delta is worse than an absent one. Nothing is judged
 # on it -- the two directions above are what fail the run.
 delta() {
-	local file="$1" base="${GUARDS_BASE_REF:-origin/main}" now="$2" then
+	local file="$1" base="${GUARDS_BASE_REF:-}" now="$2" then
+	[ -n "$base" ] || return 0
 	git -C "$ROOT" rev-parse --verify --quiet "$base" >/dev/null 2>&1 || return 0
 	then="$(git -C "$ROOT" show "$base:$file" 2>/dev/null | grep -cvE '^[[:space:]]*(#|$)' || true)"
 	[ -n "$then" ] || return 0
@@ -487,7 +562,7 @@ check() {
 	local failed=0 verdicts anomalies unmeasured uncovered covered baseline added removed stale waived
 
 	[ -f "$BASELINE" ] || die "missing $BASELINE_REL"
-	baseline_format_errors >&2 || failed=1
+	baseline_format_errors "$BASELINE" >&2 || failed=1
 
 	verdicts="$(classify)" || exit 1
 
@@ -513,7 +588,7 @@ check() {
 
 	uncovered="$(printf '%s\n' "$verdicts" | { grep '^uncovered	' || true; } | cut -f2,3,4,5 | sort -u)"
 	covered="$(printf '%s\n' "$verdicts" | { grep '^covered	' || true; } | cut -f2,3,4,5 | sort -u)"
-	baseline="$(baseline_entries)"
+	baseline="$(baseline_entries "$BASELINE")"
 
 	# `file:body-range: func (#nth): if <predicate>` or `switch default` for
 	# a list of site keys. The body range comes from the derived site data, where
@@ -571,15 +646,19 @@ check() {
 
 	[ "$failed" -eq 0 ] || exit 1
 
+	baseline_ratchet || exit 1
+
 	announce_open_bugs
 
 	local n m p
 	n="$(printf '%s\n' "$verdicts" | grep -c . || true)"
 	m="$(printf '%s\n' "$baseline" | grep -c . || true)"
 	p="$(deadcode_allowed)"
-	# Printed on every run so the ratchet is visible in the log: waived is only
-	# allowed to fall. Standing still while the site count climbs is the shape of
-	# a mechanism being routed around, and it is only visible if it is printed.
+	# Printed on every run so the ratchet is visible in the log: waived falls as
+	# guards gain coverage, and rises only where the exact-base identity ratchet
+	# has admitted each added row as disclosed growth. Standing still while the
+	# site count climbs is the shape of a mechanism being routed around, and it
+	# is only visible if it is printed.
 	printf 'guards: %d sites, %d waived%s, deadcode: %d allowed%s\n' \
 		"$n" "$m" "$(delta "$BASELINE_REL" "$m")" "$p" "$(delta "${ALLOW#"$ROOT"/}" "$p")"
 }
@@ -638,8 +717,9 @@ generate() {
 #   overflow-execution     accept a profile block with an overflowing execution count
 #   inverted-end            accept a profile block whose end precedes its start
 #   zero-width-endpoint     accept a zero-width profile block that claims statements
-#   zero-width-marker-only  treat a zero-statement-only record set as anomalous
-#   zero-statement-block    let a zero-statement block cover a guard
+#   zero-width-marker-only  retain a zero-statement marker as compilation evidence
+#                           and fail with an anomaly rather than calling the file unmeasured
+#   zero-statement-block    let a positive-count zero-statement block cover a guard
 #   invalid-set-count       accept an execution count other than 0 or 1 in set mode
 #   incompatible-end        accept a profile block whose end exceeds the refusal body
 #   short-row              delete the NF < 4 check
@@ -647,6 +727,16 @@ generate() {
 #   toolchain-block-go126  match a Go 1.26-style block start at the opening brace
 #   toolchain-block-go127  match a Go 1.27-style block start at the first statement
 #   later-nested           accept a covered block that starts at a later nested statement
+#   baseline-growth        reject undisclosed pure growth
+#   baseline-replacement   reject same-count replacement and mixed changes
+#   baseline-shrink        allow pure removal from the current identity set
+#   baseline-malformed     reject a malformed base baseline
+#   disclosed-growth-614   allow +311 sites and +27 acknowledged rows
+#   invalid-extra-column  reject current rows with more than five columns
+#   invalid-zero-nth      reject current rows with a zero ordinal
+#   base-extra-column     reject a malformed base row with more than five columns
+#   base-zero-nth         reject a malformed base row with a zero ordinal
+#   disclosed-growth-zero-issue reject growth(#0) acknowledgments
 #
 # Each fixture is a directory holding `sites.tsv`, `baseline`, `profiles/` and
 # `want`. Driving `check` from a fixed site list rather than from the real tree
@@ -663,8 +753,10 @@ selftest() {
 		# A subprocess, not a function call: `check` exits, and its exit status
 		# is half of what each fixture pins. The deadcode count is pinned to a
 		# stub for the reason given where GUARDS_DEADCODE_ALLOW is read.
+		base="$dir/baseline"
+		[ -f "$dir/base-baseline" ] && base="$dir/base-baseline"
 		if got="$(SITES="$dir/sites.tsv" BASELINE="$dir/baseline" PROFILES="$dir/profiles" \
-			GUARDS_BASE_REF=__none__ GUARDS_DEADCODE_ALLOW="$FIXTURES/deadcode.allow" \
+			GUARDS_BASELINE_BASE="$base" GUARDS_BASE_REF=__none__ GUARDS_DEADCODE_ALLOW="$FIXTURES/deadcode.allow" \
 			"$0" check 2>&1)"; then rc=0; else rc=$?; fi
 		got="$got
 exit $rc"
