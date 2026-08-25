@@ -73,8 +73,8 @@ func SetPath(t *testing.T, dirs ...string) {
 
 // resolvePOSIXShell picks the interpreter the windows shim hands its script
 // to, searching searchPath. It prefers a shell already on that path and
-// otherwise derives one from git's own install root -- every fixture that
-// installs a fake also drives git, and Git for Windows ships the same shell.
+// otherwise derives one from a Git for Windows install on PATH, which ships
+// the same shell.
 // Finding none is an error rather than a skip: it means the fake would never
 // run, which is a fact about the machine, not a behaviour windows lacks.
 func resolvePOSIXShell(searchPath string) (string, error) {
