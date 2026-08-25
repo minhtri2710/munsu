@@ -18,6 +18,10 @@ func TestPrepareForcedRetirementEvidenceEncodedID(t *testing.T) {
 	}
 	id := "captain:failed"
 	termKey := "terminal-1"
+	stem, err := home.DurableKey(id)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := home.AppendStatus(tmp, id, "done: milestone"); err != nil {
 		t.Fatal(err)
 	}
@@ -80,10 +84,6 @@ func TestPrepareForcedRetirementEvidenceEncodedID(t *testing.T) {
 	}
 	if len(entries) == 0 {
 		t.Fatal("no evidence-preserved entry returned")
-	}
-	stem, err := home.DurableKey(id)
-	if err != nil {
-		t.Fatal(err)
 	}
 	backupDir := filepath.Join(tmp, "state", ".backup", stem)
 	statusBackup := filepath.Join(backupDir, stem+".status")
