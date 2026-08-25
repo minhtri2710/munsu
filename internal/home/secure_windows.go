@@ -18,6 +18,8 @@ import (
 // implicitly denied because the DACL contains no ACE that could grant them.
 const ownerAllAccess = 0x001F01FF
 
+var getEffectiveRightsFromACL = windows.NewLazySystemDLL("advapi32.dll").NewProc("GetEffectiveRightsFromAclW")
+
 // secureFile establishes owner-private protection on an already-created file.
 // On Windows this replaces Unix mode-bit enforcement with an owner-only DACL
 // that is verified after being set. It fails closed if the ACL cannot be
@@ -121,12 +123,9 @@ func effectiveRights(dacl *windows.ACL, sid *windows.SID) (uint32, error) {
 	var pinner runtime.Pinner
 	pinner.Pin(sid)
 	defer pinner.Unpin()
-	ret, _, callErr := windows.NewLazySystemDLL("advapi32.dll").NewProc("GetEffectiveRightsFromAclW").Call(
+	ret, _, _ := getEffectiveRightsFromACL.Call(
 		uintptr(unsafe.Pointer(dacl)), uintptr(unsafe.Pointer(&trustee)), uintptr(unsafe.Pointer(&rights)))
 	if ret != 0 {
-		if callErr != nil {
-			return 0, callErr
-		}
 		return 0, windows.Errno(ret)
 	}
 	return rights, nil
