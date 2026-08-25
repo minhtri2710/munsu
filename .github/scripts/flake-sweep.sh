@@ -129,7 +129,8 @@ REPO="${GITHUB_REPOSITORY:-minhtri2710/munsu}"
 # The workflow whose verdict `applied` reads, and how many of its runs it asks
 # for. A merge burst produces four runs in a minute and flake-ledger.yml cancels
 # all but the last, so the newest record is routinely one this command has to
-# skip past; 20 is five of the largest burst this repository has produced.
+# skip past. This is a bounded lookback, not a correctness bound: exhausting
+# the page without an eligible record falls back to re-derivation.
 SWEEP_WORKFLOW="flake-ledger.yml"
 SWEEP_RUNS_PAGE=20
 
@@ -749,7 +750,7 @@ sweep_runs() {
 		-f branch=main -f "per_page=$SWEEP_RUNS_PAGE" \
 		--jq '.workflow_runs[] | ["ci", (.id|tostring), .status, (.conclusion // "-"), .head_sha, .created_at] | @tsv')" ||
 		die "could not read CI runs from the Actions API"
-	printf '%s\n%s\n' "$sweep" "$ci" | sed '/^$/d' | sort -t "$(printf '\t')" -k6,6r
+	printf '%s\n%s\n' "$sweep" "$ci" | sed '/^$/d'
 }
 
 sweep_runs_file() {
@@ -771,6 +772,7 @@ sweep_runs_file() {
 applied() {
 	local runs line kind id status conclusion sha created extra
 	local v_id="" v_conc="" v_sha="" ci_id="" ci_sha=""
+	local prev_sweep_created="" prev_ci_created=""
 	local reason=""
 	runs="$(sweep_runs_file)"
 
@@ -781,6 +783,15 @@ applied() {
 		[ -z "$extra" ] || die "$kind record has more fields than the six it is defined with: $line"
 		[ -n "$id" ] && [ -n "$status" ] && [ -n "$conclusion" ] && [ -n "$sha" ] && [ -n "$created" ] ||
 			die "$kind record is missing a field: $line"
+		if [ "$kind" = sweep ]; then
+			[ -z "$prev_sweep_created" ] || [ "$created" \< "$prev_sweep_created" ] || [ "$created" = "$prev_sweep_created" ] ||
+				die "$kind run stream is not newest-first; cannot establish the newest eligible record: $line"
+			prev_sweep_created="$created"
+		else
+			[ -z "$prev_ci_created" ] || [ "$created" \< "$prev_ci_created" ] || [ "$created" = "$prev_ci_created" ] ||
+				die "$kind run stream is not newest-first; cannot establish the newest eligible record: $line"
+			prev_ci_created="$created"
+		fi
 		[ "$status" = completed ] || continue
 		case "$conclusion" in cancelled | skipped) continue ;; esac
 		if [ "$kind" = sweep ] && [ -z "$v_id" ]; then
@@ -790,6 +801,10 @@ applied() {
 		fi
 	done <"$runs"
 
+	# No eligible record also covers a bounded page containing only unfinished,
+	# cancelled, or skipped records. Since newest-first ordering was checked,
+	# truncation can hide only older records, so both cases re-derive rather than
+	# exposing an older verdict; the command cannot distinguish them.
 	if [ -z "$v_id" ]; then reason=no-runs
 	elif [ -z "$ci_id" ]; then reason=no-ci
 	elif [ "$v_conc" != success ]; then reason="$v_conc"
@@ -1241,7 +1256,17 @@ selftest() {
 	# SWEEP_RUNS and its records through SWEEP_RECORDS.
 	local runs verdict want_verdict rc want_rc
 	scratch_ledger "$ledger"
+	local out_of_order="$FIXTURES/sweep-out-of-order.runs.tsv" out_stdout out_rc=0
+	out_stdout="$(GITHUB_REPOSITORY=nonexistent/repo GH_TOKEN=invalid SWEEP_RUNS="$out_of_order" SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" applied 2>/dev/null)" || out_rc=$?
+	if [ "$out_rc" -eq 0 ] || [ -n "$out_stdout" ]; then
+		echo "::error::applied scenario: out-of-order run stream was not refused cleanly" >&2
+		failed=1
+	else
+		echo "  ok   sweep-out-of-order-refused"
+	fi
+
 	for runs in "$FIXTURES"/sweep-*.runs.tsv; do
+		[ "$runs" = "$out_of_order" ] && continue
 		name="$(basename "$runs" .runs.tsv)"
 		want="${runs%.runs.tsv}.verdict"
 		[ -f "$want" ] || die "fixture $name has no .verdict"
@@ -1264,7 +1289,7 @@ selftest() {
 	# checkout answers the observation and fixed-ref questions.
 	scratch_ledger "$ledger" \
 		'| TestReopens | integration | aaaa1111@3001/1 | cccc3333@3003/1 | 9999-12-31 | BEO-99 | open |'
-	for runs in sweep-none sweep-no-ci sweep-stale-green sweep-inflight-green; do
+	for runs in sweep-none sweep-no-ci sweep-page-no-runs sweep-page-no-ci sweep-stale-green sweep-inflight-green; do
 		rc=0
 		verdict="$(GITHUB_REPOSITORY=nonexistent/repo GH_TOKEN=invalid SWEEP_RUNS="$FIXTURES/$runs.runs.tsv" SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" applied 2>/dev/null | head -1)" || rc=$?
 		if [ "${verdict%%$'\t'*}" = answered ] && [ "$rc" -eq 0 ]; then
