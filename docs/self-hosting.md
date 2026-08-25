@@ -166,18 +166,30 @@ munsu teardown <task-id> --force                # skip safety checks
 Without --force, scout teardown requires report.md and no unresolved decision
 holds. Ship teardown requires clean git state with a remote tracking branch.
 With --force, all safety checks are bypassed and nothing else changes: --force
-never deletes more than a plain teardown does. The report archive is checked again
-inside teardown's fence before cleanup commits; a report written after that fence
-has closed is outside this guard and must be generation-named by the report writer
-in a future soldier-facing contract.
+never deletes more than a plain teardown does.
 
-Either way the teardown first establishes authoritative endpoint absence, then archives the retired generation's report as
-report-g<generation>.md. It stays there to be read, and because the check above
-reads only the unarchived name, a task reopened to a later generation cannot
-pass its own teardown on evidence an earlier generation wrote. A data directory
-holding no report is kept for a relaunch of the same task and is reclaimed by
-the session-start sweep once the task is retired and past a 24h grace period;
-teardown itself does not delete a brief.
+Either way the teardown first establishes authoritative endpoint absence, then archives the retired generation's report under a generation-bound name such as
+`report-g<generation>.md`. If a retry finds that archive after archival was
+already attempted for the active cleanup claim, a reappeared `report.md` is
+preserved under the smallest unused suffix, such as `report-g<generation>-2.md`;
+all such archive names count as report evidence. The attempt marker is recorded
+in the fenced cleanup claim before the rename, so ownership is not inferred from
+hard links, symlinks, or other filesystem witnesses. Before that marker exists,
+an existing generation archive is an unproved collision and teardown refuses
+rather than guessing. The archived entry remains available for inspection, and
+because the safety check reads only the unarchived name, a task reopened to a
+later generation cannot pass its own teardown on evidence an earlier generation
+wrote. A report written after the teardown fence has closed remains outside that
+recheck and must eventually be generation-named by the report writer.
+
+The data directory is never removed by teardown, including with `--force`.
+Session-start reclamation runs after the 24h grace period under the task
+Authority's fence: an Authority-confirmed released task (retired with a
+terminal or absent cleanup claim, or superseded by transfer) may have its
+directory reclaimed, including a leftover brief, while any report evidence
+always keeps the directory. If no Authority record exists, the sweep reclaims the directory
+only when it has no brief; a brief is retained as the only evidence that an
+unknown directory may still be intended for a task.
 
 ## 5. Decision-hold scout gate
 
