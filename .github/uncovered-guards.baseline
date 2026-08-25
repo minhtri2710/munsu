@@ -14,9 +14,11 @@
 # declared". A register OF guards fails open at exactly the moment it has to
 # fail closed.
 #
-# This is a ratchet. It is only supposed to get shorter. The reason column is
-# self-declared, so a waiver nobody would accept keeps this green -- reading the
-# diff is what catches that, not the script.
+# The baseline normally shrinks as guards gain coverage or leave the tree. A
+# recognizer expansion may expose pre-existing sites, but each added row must be
+# explicitly reviewed and marked `growth(#<issue>):` in its reason. The reason
+# column is self-declared, so a waiver nobody would accept keeps this green --
+# reading the diff is what catches that, not the script.
 #
 # Columns are tab-separated: file <TAB> func <TAB> nth <TAB> predicate <TAB> reason
 #
