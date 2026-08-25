@@ -203,13 +203,6 @@ func (c *Canonical) WriteTaskDataArtifact(taskID domain.TaskID, write func() err
 		return err
 	}
 	defer lk.Release()
-	doc, exists, err := c.readTaskDoc(taskID.Value())
-	if err != nil {
-		return err
-	}
-	if !exists || !doc.Aggregate.Current {
-		return conflictError(ErrNotFound, "task %s not found", taskID.Value())
-	}
 	return write()
 }
 

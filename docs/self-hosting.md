@@ -168,7 +168,7 @@ holds. Ship teardown requires clean git state with a remote tracking branch.
 With --force, all safety checks are bypassed and nothing else changes: --force
 never deletes more than a plain teardown does.
 
-Either way the teardown archives the retired generation's report as
+Either way the teardown first establishes authoritative endpoint absence, then archives the retired generation's report as
 report-g<generation>.md. It stays there to be read, and because the check above
 reads only the unarchived name, a task reopened to a later generation cannot
 pass its own teardown on evidence an earlier generation wrote. A data directory
