@@ -252,10 +252,7 @@ func (c *Canonical) ReclaimReleasedTaskArtifacts(taskID domain.TaskID, reclaim f
 	if err != nil {
 		return false, err
 	}
-	if exists {
-		if !doc.Aggregate.Current {
-			return false, nil
-		}
+	if exists && doc.Aggregate.Current {
 		agg := doc.Aggregate
 		if agg.Phase != PhaseRetired {
 			return false, nil

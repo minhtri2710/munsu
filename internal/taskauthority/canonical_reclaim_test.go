@@ -117,6 +117,22 @@ func TestReconcileRetirementCleanupPostCommitCallbackIsFenced(t *testing.T) {
 	}
 }
 
+func TestReclaimReleasedTaskArtifactsAllowsSupersededTask(t *testing.T) {
+	c, _, _ := newTestCanonical(t)
+	id := "superseded-reclaim"
+	mustCreate(t, c, id)
+	mustReserveTransfer(t, c, id, preconditionOf(1, 1), "dest-home")
+	commit := commitTransferRequest(t, c, id, preconditionOf(1, 2), "res-"+id, "dest-home")
+	if _, err := c.CommitTransfer(mustOperation(t, "op-commit-"+id, commit), commit); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	ok, err := c.ReclaimReleasedTaskArtifacts(mustTaskID(t, id), func() error { called = true; return nil })
+	if err != nil || !ok || !called {
+		t.Fatalf("reclaim superseded = %v, %v, called=%v", ok, err, called)
+	}
+}
+
 func TestReclaimReleasedTaskArtifactsLifecycleStates(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
 	mustCreate(t, c, "working")
