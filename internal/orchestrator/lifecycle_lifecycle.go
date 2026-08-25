@@ -31,7 +31,8 @@ func IsSessionLocked(homeDir string) bool { return home.IsSessionLockHeld(homeDi
 func AcquireWatch(homeDir string) (bool, error) {
 	return home.AcquireWatchLock(homeDir, lifecycleLockPolicy())
 }
-func ReleaseWatch(homeDir string) error { return home.ReleaseWatchLock(homeDir) }
+func ReleaseWatch(homeDir string) error   { return home.ReleaseWatchLock(homeDir) }
+func ReleaseSession(homeDir string) error { return home.ReleaseSessionLock(homeDir) }
 
 // isWatchProcess checks whether the given PID is a munsu watch process.
 // Reads /proc/PID/cmdline on Linux (NUL-separated args) and falls back to

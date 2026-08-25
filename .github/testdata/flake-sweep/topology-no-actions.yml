@@ -1,0 +1,8 @@
+jobs:
+  invariants:
+    name: Repo invariants
+    permissions:
+      contents: read
+    steps:
+      - name: gate
+        run: .github/scripts/flake-sweep.sh applied

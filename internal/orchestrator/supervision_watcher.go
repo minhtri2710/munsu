@@ -107,12 +107,9 @@ func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-cha
 
 	// Claim the watcher lease — unique per home.
 	pid := os.Getpid()
-	claimed, err := home.ClaimWatcherLease(homeDir, pid)
+	_, err = home.ClaimWatcherLease(homeDir, pid)
 	if err != nil {
 		return nil, fmt.Errorf("claiming watcher lease: %w", err)
-	}
-	if !claimed {
-		return nil, fmt.Errorf("watcher lease already held by another process")
 	}
 	defer home.ReleaseWatcherLeaseIfMatches(homeDir, pid)
 

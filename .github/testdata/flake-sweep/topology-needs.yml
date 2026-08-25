@@ -1,0 +1,10 @@
+jobs:
+  prerequisite:
+    if: ${{ false }}
+    steps: [{run: echo skipped}]
+  invariants:
+    name: Repo invariants
+    needs: prerequisite
+    permissions: {contents: read, actions: read}
+    steps:
+      - run: .github/scripts/flake-sweep.sh applied

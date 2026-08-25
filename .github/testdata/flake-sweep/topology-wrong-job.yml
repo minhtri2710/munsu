@@ -1,0 +1,9 @@
+jobs:
+  invariants:
+    name: Repo invariants
+    permissions: {contents: read, actions: read}
+    steps: [{run: echo ok}]
+  other:
+    name: Other job
+    permissions: {contents: read, actions: read}
+    steps: [{run: .github/scripts/flake-sweep.sh applied}]

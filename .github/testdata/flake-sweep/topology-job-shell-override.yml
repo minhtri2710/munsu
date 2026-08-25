@@ -1,0 +1,12 @@
+defaults:
+  run:
+    shell: python
+jobs:
+  invariants:
+    name: Repo invariants
+    defaults:
+      run:
+        shell: bash
+    permissions: {contents: read, actions: read}
+    steps:
+      - run: .github/scripts/flake-sweep.sh applied

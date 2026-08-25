@@ -6,12 +6,6 @@ import (
 	"testing"
 )
 
-// releaseSessionLockForTest releases the session lock through the same
-// primitive ReleaseWatchLock uses. Production never releases this lock --
-// session-start holds it for the process lifetime and the flock drops on
-// exit -- so the exported wrapper lived only for these tests.
-func releaseSessionLockForTest(h string) error { return releaseWatcherLock(SessionLockPath(h)) }
-
 func TestWatcherLockPaths(t *testing.T) {
 	h := t.TempDir()
 	if got, want := SessionLockPath(h), filepath.Join(h, "state/.lock"); got != want {
@@ -64,7 +58,7 @@ func TestWatcherPIDPolicyOnlyAppliesToSessionLock(t *testing.T) {
 		release func(string) error
 		calls   int
 	}{
-		{"session", SessionLockPath, AcquireSessionLock, releaseSessionLockForTest, 1},
+		{"session", SessionLockPath, AcquireSessionLock, ReleaseSessionLock, 1},
 		{"watch", WatchLockPath, AcquireWatchLock, ReleaseWatchLock, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
