@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/testutil/fsaccess"
 	"github.com/spf13/cobra"
 )
 
@@ -676,20 +677,19 @@ func TestClaudeGuardParentHomeUnreadableFailsClosed(t *testing.T) {
 
 	// Create receipt dir with restricted permissions
 	parentReceipts := filepath.Join(parentHome, "state", ".terminal-receipts")
-	os.MkdirAll(parentReceipts, 0755)
-	os.WriteFile(filepath.Join(parentReceipts, "task-1.uplink.receipt"), []byte("state=done\n"), 0644)
-	// Make the directory unreadable
-	os.Chmod(parentReceipts, 0000)
-	if err := os.Chmod(parentReceipts, 0000); err == nil {
-		// Only test if we can actually restrict permissions
+	if err := os.MkdirAll(parentReceipts, 0755); err != nil {
+		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(parentReceipts, "task-1.uplink.receipt"), []byte("state=done\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	fsaccess.MakeUnreadable(t, parentReceipts)
 
 	var exitCode int
 	oldExit := exitWithCode
 	exitWithCode = func(code int) { exitCode = code }
 	defer func() {
 		exitWithCode = oldExit
-		os.Chmod(parentReceipts, 0755)
 	}()
 
 	captureBoth(func() {
