@@ -36,10 +36,15 @@ func TestGuardBurnDownSendNudgeRefusesWrongMetaKind(t *testing.T) {
 		meta["kind"] = "ship"
 	})
 
-	err := sendNudge(parentHome, Info{ID: "captain", Home: captainHome}, &testNudgeEndpoint{})
+	endpoint := &testNudgeEndpoint{}
+	err := sendNudge(parentHome, Info{ID: "captain", Home: captainHome}, endpoint)
 	if err == nil || !strings.Contains(err.Error(), `meta kind="ship", expected captain`) {
 		t.Fatalf("sendNudge error = %v, want wrong-kind refusal", err)
 	}
+	if endpoint.calls != 0 {
+		t.Fatalf("nudge endpoint calls = %d, want refusal before send", endpoint.calls)
+	}
+	t.Logf("nudge refused before endpoint side effects: %v", err)
 }
 
 func TestGuardBurnDownSendNudgeRefusesWrongMetaID(t *testing.T) {

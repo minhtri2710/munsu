@@ -20,6 +20,7 @@ func TestGuardBurnDownLaunchRefusesNilEndpoint(t *testing.T) {
 	if err == nil || err.Error() != "captain launch endpoint capability is required" {
 		t.Fatalf("Launch error = %v, want nil-endpoint refusal", err)
 	}
+	t.Logf("launch refused before endpoint side effects: %v", err)
 }
 
 func TestGuardBurnDownPreflightConfigPushRefusesParentHomeEscape(t *testing.T) {

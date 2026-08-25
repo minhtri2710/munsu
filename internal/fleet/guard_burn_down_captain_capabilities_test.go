@@ -26,4 +26,5 @@ func TestGuardBurnDownConvergeRefusesMissingNotificationCapability(t *testing.T)
 	if err == nil || !strings.Contains(err.Error(), "uplink notification transport capability is required") {
 		t.Fatalf("Converge error = %v, want missing-notification refusal", err)
 	}
+	t.Logf("converge refused before notification side effects: %v", err)
 }

@@ -58,11 +58,17 @@ func newGuardSafeFFFixture(t *testing.T) guardSafeFFFixture {
 func TestGuardBurnDownSafeFFRefusesRemoteMismatch(t *testing.T) {
 	f := newGuardSafeFFFixture(t)
 	guardGitTestRun(t, f.captain, "remote", "set-url", "origin", "https://example.invalid/other/repo.git")
+	before := guardGitTestRun(t, f.captain, "rev-parse", "HEAD")
 
 	_, _, _, err := safeFF(f.captain, f.parent)
 	if err == nil || !strings.Contains(err.Error(), "differs from upstream remote") {
 		t.Fatalf("safeFF error = %v, want remote-mismatch refusal", err)
 	}
+	after := guardGitTestRun(t, f.captain, "rev-parse", "HEAD")
+	if after != before {
+		t.Fatalf("captain HEAD changed after refusal: before=%s after=%s", before, after)
+	}
+	t.Logf("safeFF refused without changing captain HEAD: %v", err)
 }
 
 func TestGuardBurnDownSafeFFRefusesMalformedOriginHead(t *testing.T) {
