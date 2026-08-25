@@ -110,7 +110,9 @@ timing cannot certify stale evidence. While main CI for a new commit is still
 running, its attempt records do not exist yet, so a flake it will reveal is not
 observable by anyone; a merge can still land ahead of it, and the ledger then
 appoints the next merger. There is no exemption for "the PR edits this file" --
-re-deriving means the only way past the refusal is the fix.
+re-deriving means deleting or omitting a row cannot bypass the refusal; the
+checkout must reconcile every fresh observation and provide valid `fixed:`
+evidence where a row claims the flake is fixed.
 
 The rows between the markers below are machine-maintained. File new rows with
 `.github/scripts/flake-sweep.sh sync --owner <ISSUE_ID>` as described above. Edit

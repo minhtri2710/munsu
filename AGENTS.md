@@ -55,24 +55,12 @@ or malformed spans; the implementation comment at
 fixtures (`citations.sh selftest`), and waiver rows follow ADR-0017 §4 as
 described in `.github/citations.allow`.
 
-That job also enforces `.github/flake-ledger.md`: a test CI caught being flaky
-on `main` has a row there with a deadline, and an `open` row past its deadline
-turns `invariants` red on every PR until someone fixes the test. Rows are
-derived by `.github/scripts/flake-sweep.sh` from per-attempt Actions data (a
-rerun overwrites a run's conclusion, so run-level history is not evidence) and
-are applied by hand from the diff the `Flake ledger` workflow prints on its run
-summary; the deadline half (`.github/scripts/flake-ledger.sh`) reads nothing but
-the committed file. Applying that diff is enforced, not trusted: the last step of
-`invariants` runs `.github/scripts/flake-sweep.sh applied`, which observes the
-window and directly re-derives `check` and `verify-fixed` against the PR's own
-checkout on every run. It trusts no prior sweep verdict, so CI reruns and
-asynchronous workflow timing cannot certify stale evidence; a stale ledger reds
-every PR, and the PR that fixes it goes green. While main CI is still running,
-its attempt records do not exist yet, so its flake has no observable verdict and
-the ledger appoints the next merger after it is observed. It is the only step in that job
-that touches the network, and the argument for admitting it is beside it in
-`ci.yml`. Never close a row because the test has
-been green for a while — refusing that inference is why the file exists.
+That job also enforces the flake ledger: a test CI caught being flaky on
+`main` has a row there with a deadline, and an `open` row past its deadline
+turns `invariants` red on every PR until someone fixes the test. The ledger
+workflow and pull-request re-derivation rules are documented authoritatively in
+`.github/flake-ledger.md`; never close a row because the test has been green for
+a while.
 
 Delivery mode: no-mistakes (push through the gate, never to `origin` directly).
 
