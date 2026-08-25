@@ -985,6 +985,92 @@ func TestRun_RenameFailureRemovesArchiveReservation(t *testing.T) {
 	}
 }
 
+func TestRun_AbortRefusesLiveEndpoint(t *testing.T) {
+	tmp := t.TempDir()
+	auth := mergeTestAuth(t, tmp, "abort-live")
+	stateDir := filepath.Join(tmp, "state")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "abort-live.meta"), []byte("kind=ship\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	dataDir := filepath.Join(tmp, "data", "abort-live")
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "report.md"), []byte("findings"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RetireTask(Options{HomeDir: tmp, ID: "abort-live", Force: true}, fakeTeardown{alive: true, disposeErr: errors.New("stuck")}, fakeRetirementJournals{}, auth); err == nil {
+		t.Fatal("expected cleanup to remain pending")
+	}
+	err := AbortRetirementCleanup(auth, tmp, fakeTeardown{alive: true}, mustTaskID(t, "abort-live"), 1)
+	if err == nil || !strings.Contains(err.Error(), "not authoritatively absent") {
+		t.Fatalf("abort error = %v, want live-endpoint refusal", err)
+	}
+	agg, err := auth.Get(mustTaskID(t, "abort-live"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.CleanupClaim == nil || agg.CleanupClaim.Status != taskauthority.CleanupActive {
+		t.Fatalf("cleanup claim = %+v, want active", agg.CleanupClaim)
+	}
+}
+
+func TestRun_AbortRefusesReportReappearance(t *testing.T) {
+	tmp := t.TempDir()
+	auth := canonicalMergeTestAuth(t, tmp, "abort-reappears")
+	stateDir := filepath.Join(tmp, "state")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	dataDir := filepath.Join(tmp, "data", "abort-reappears")
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "report.md"), []byte("findings"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "abort-reappears.meta"), []byte("kind=scout\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dataDir, 0555); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RetireTask(Options{HomeDir: tmp, ID: "abort-reappears", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth); err == nil {
+		t.Fatal("expected cleanup to remain pending")
+	}
+	if err := os.Chmod(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	claimID := mustTaskID(t, "abort-reappears")
+	called := false
+	err := abortRetirementCleanup(auth, tmp, fakeTeardown{}, claimID, 1, func() error {
+		called = true
+		return os.WriteFile(filepath.Join(dataDir, "report.md"), []byte("late"), 0644)
+	})
+	if err == nil || !strings.Contains(err.Error(), "reappeared") {
+		t.Fatalf("abort error = %v, want report reappearance refusal", err)
+	}
+	if !called {
+		t.Fatal("after-archive callback did not run")
+	}
+	agg, err := auth.Get(claimID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.CleanupClaim == nil || agg.CleanupClaim.Status != taskauthority.CleanupActive {
+		t.Fatalf("cleanup claim = %+v, want active", agg.CleanupClaim)
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "report-g1.md")); err != nil {
+		t.Fatalf("archived evidence missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "report.md")); err != nil {
+		t.Fatalf("late report missing: %v", err)
+	}
+}
+
 func TestRun_ArchivingTheReportFailsClosed(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Fatal("permission proof did not run: tests run as root, so a directory that refuses a rename cannot be established")
@@ -1049,7 +1135,7 @@ func TestRun_AbortRefusesUnarchivedReport(t *testing.T) {
 	if _, err := RetireTask(Options{HomeDir: tmp, ID: "abort-report", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth); err == nil {
 		t.Fatal("expected teardown cleanup to remain pending")
 	}
-	if err := AbortRetirementCleanup(auth, tmp, mustTaskID(t, "abort-report"), 1); err == nil {
+	if err := AbortRetirementCleanup(auth, tmp, fakeTeardown{}, mustTaskID(t, "abort-report"), 1); err == nil {
 		t.Fatal("abort should refuse while report evacuation is blocked")
 	}
 	agg, err := auth.Get(mustTaskID(t, "abort-report"))
@@ -1062,7 +1148,7 @@ func TestRun_AbortRefusesUnarchivedReport(t *testing.T) {
 	if err := os.Chmod(dataDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := AbortRetirementCleanup(auth, tmp, mustTaskID(t, "abort-report"), 1); err != nil {
+	if err := AbortRetirementCleanup(auth, tmp, fakeTeardown{}, mustTaskID(t, "abort-report"), 1); err != nil {
 		t.Fatalf("abort after restoring access: %v", err)
 	}
 	if _, err := os.Lstat(reportPath); !os.IsNotExist(err) {

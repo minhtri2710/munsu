@@ -178,13 +178,18 @@ func completeRetirementCleanup(authority *taskauthority.Canonical, taskID domain
 }
 
 // AbortRetirementCleanup releases the active cleanup claim of the given
-// retired generation WITHOUT completing cleanup (operator escape hatch for a
-// stuck claim). The task becomes reopenable only after report.md has been
-// evacuated; then the retired generation's preserved evidence remains a
+// retired generation WITHOUT completing cleanup. It refuses while a preserved
+// endpoint is live or ambiguously observed, archives only after authoritative
+// absence, and rechecks report.md before releasing the claim. The task becomes
+// reopenable only after those fences succeed; then preserved evidence remains a
 // historical record. Abort is TERMINAL: a later teardown retry does not
 // re-activate the claim and never resumes the aborted cleanup against a
 // reopened generation.
-func AbortRetirementCleanup(authority *taskauthority.Canonical, homeDir string, taskID domain.TaskID, claimGen taskauthority.Generation) error {
+func AbortRetirementCleanup(authority *taskauthority.Canonical, homeDir string, backend BoundTeardown, taskID domain.TaskID, claimGen taskauthority.Generation) error {
+	return abortRetirementCleanup(authority, homeDir, backend, taskID, claimGen, nil)
+}
+
+func abortRetirementCleanup(authority *taskauthority.Canonical, homeDir string, backend BoundTeardown, taskID domain.TaskID, claimGen taskauthority.Generation, afterArchive func() error) error {
 	cur, err := authority.Get(taskID)
 	if err != nil {
 		return fmt.Errorf("resolving current state to abort cleanup claim: %w", err)
@@ -192,9 +197,43 @@ func AbortRetirementCleanup(authority *taskauthority.Canonical, homeDir string, 
 	if cur.CleanupClaim == nil || cur.CleanupClaim.Status != taskauthority.CleanupActive || cur.CleanupClaim.Generation != claimGen {
 		return fmt.Errorf("cleanup claim for %s generation %s is not active", taskID, claimGen)
 	}
-	if _, dataDirExists, err := archiveRetiredReport(homeDir, taskID.Value(), claimGen); err != nil {
+	var endpointProof *exactEndpointProof
+	meta := map[string]string{}
+	if cur.Retirement != nil {
+		switch {
+		case cur.Retirement.Endpoint != nil:
+			ep := cur.Retirement.Endpoint
+			meta = map[string]string{"backend": ep.Backend, "window": ep.Handle, "herdr_session": ep.SessionOwner, "herdr_workspace_id": ep.WorkspaceID, "herdr_tab_id": ep.TabID}
+			endpointProof = &exactEndpointProof{backend: ep.Backend, handle: ep.Handle, incarnation: ep.Incarnation, leaseID: ep.LeaseID, fenceToken: ep.FenceToken, generation: uint64(cur.Generation), revision: uint64(cur.Revision), acquired: true}
+		case cur.Retirement.Acquired != nil:
+			ep := cur.Retirement.Acquired
+			meta = map[string]string{"backend": ep.Backend, "window": ep.Handle, "herdr_session": ep.SessionOwner, "herdr_workspace_id": ep.WorkspaceID, "herdr_tab_id": ep.TabID}
+			endpointProof = &exactEndpointProof{backend: ep.Backend, handle: ep.Handle, incarnation: ep.Incarnation, leaseID: ep.LeaseID, fenceToken: ep.FenceToken, generation: uint64(cur.Generation), revision: uint64(cur.Revision), acquired: true}
+		}
+	}
+	if endpointProof != nil {
+		status, err := backend.Probe(homeDir, meta)
+		if err != nil {
+			return fmt.Errorf("probing endpoint before aborting cleanup for %s: %w", taskID, err)
+		}
+		if !status.AuthorizedAbsence(*endpointProof).AuthoritativeAbsent() {
+			return fmt.Errorf("endpoint for %s generation %s is not authoritatively absent; refusing cleanup abort", taskID, claimGen)
+		}
+	}
+	_, dataDirExists, err := archiveRetiredReport(homeDir, taskID.Value(), claimGen)
+	if err != nil {
 		return fmt.Errorf("archiving report before aborting cleanup for %s generation %s: %w", taskID, claimGen, err)
 	} else if dataDirExists {
+		if afterArchive != nil {
+			if err := afterArchive(); err != nil {
+				return err
+			}
+		}
+		if _, err := os.Lstat(filepath.Join(homeDir, "data", taskID.Value(), "report.md")); err == nil {
+			return fmt.Errorf("report.md reappeared while aborting cleanup for %s generation %s", taskID, claimGen)
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("checking report after archiving for %s generation %s: %w", taskID, claimGen, err)
+		}
 		now := time.Now()
 		if err := os.Chtimes(filepath.Join(homeDir, "data", taskID.Value()), now, now); err != nil {
 			return fmt.Errorf("refreshing data directory before aborting cleanup for %s generation %s: %w", taskID, claimGen, err)
