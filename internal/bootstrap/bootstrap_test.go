@@ -536,6 +536,87 @@ func mustBootstrapOperation(t *testing.T, value string, intent domain.Intent) do
 	return op
 }
 
+func TestGCOrphanDataDirs_ReclaimsSupersededSource(t *testing.T) {
+	source, dest := t.TempDir(), t.TempDir()
+	if _, err := mhome.Init(source); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mhome.Init(dest); err != nil {
+		t.Fatal(err)
+	}
+	h, err := mhome.Open(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth, err := taskauthority.NewCanonical(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := "superseded-source"
+	tid, err := domain.NewTaskID(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := domain.NewProjectID("munsu")
+	if err != nil {
+		t.Fatal(err)
+	}
+	create := taskauthority.CanonicalCreateRequest{HomeID: auth.HomeID(), TaskID: tid, Owner: "owner", Description: "work", Kind: "scout", Project: project, ScoutScope: "scope", ScoutRuntimeBudgetSecs: 60, Reason: "test"}
+	if _, err := auth.Create(mustBootstrapOperation(t, "source-create", create), create); err != nil {
+		t.Fatal(err)
+	}
+	dataDir := filepath.Join(source, "data", id)
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "brief.md"), []byte("brief"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	setDirMtime(t, dataDir, 48*time.Hour)
+	cur, err := auth.Get(tid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reserve := taskauthority.CanonicalReserveTransferRequest{HomeID: auth.HomeID(), TaskID: tid, Precondition: domain.Of(uint64(cur.Generation), uint64(cur.Revision)), ReservationID: "reservation-source", Destination: mustHomeID(t, dest), FenceToken: "fence-source", Reason: "test"}
+	if _, err := auth.ReserveTransfer(mustBootstrapOperation(t, "source-reserve", reserve), reserve); err != nil {
+		t.Fatal(err)
+	}
+	cur, err = auth.Get(tid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit := taskauthority.CanonicalCommitTransferRequest{HomeID: auth.HomeID(), TaskID: tid, Precondition: domain.Of(uint64(cur.Generation), uint64(cur.Revision)), ReservationID: reserve.ReservationID, FenceToken: reserve.FenceToken, Evidence: taskauthority.TransferActivationInfo{ReservationID: reserve.ReservationID, TaskID: id, SourceHome: auth.HomeID().Value(), SourceGeneration: 1, DestinationHome: reserve.Destination.Value(), DestinationGeneration: 1, ActivationOperationID: "activation", ActivationDigest: strings.Repeat("a", 64)}, Reason: "test"}
+	if _, err := auth.CommitTransfer(mustBootstrapOperation(t, "source-commit", commit), commit); err != nil {
+		t.Fatal(err)
+	}
+	cleaned := gcOrphanDataDirs(source, func(id string, reclaim func() error) (bool, error) {
+		taskID, err := domain.NewTaskID(id)
+		if err != nil {
+			return false, err
+		}
+		return auth.ReclaimReleasedTaskArtifacts(taskID, reclaim)
+	})
+	if len(cleaned) != 1 || cleaned[0] != id {
+		t.Fatalf("cleaned = %v", cleaned)
+	}
+	if _, err := os.Stat(dataDir); !os.IsNotExist(err) {
+		t.Fatalf("source data remains: %v", err)
+	}
+}
+
+func mustHomeID(t *testing.T, dir string) domain.HomeID {
+	t.Helper()
+	h, err := mhome.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := domain.NewHomeID(h.Identity().ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
 func TestGCOrphanDataDirs_EmptyDirOlderThanGrace(t *testing.T) {
 	home := t.TempDir()
 	dataDir := filepath.Join(home, "data")
