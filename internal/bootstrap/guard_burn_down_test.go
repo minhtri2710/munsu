@@ -161,6 +161,8 @@ func TestPiInstallRejectsUnownedTarget(t *testing.T) {
 	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
+	writeTestExecutable(t, filepath.Join(dir, "pi"), "#!/bin/sh\necho 0.79.0\n")
+	t.Setenv("PATH", dir+string(filepath.ListSeparator)+os.Getenv("PATH"))
 	SetMunsuPathResolver(testMunsuResolver{path: bin})
 	defer ResetMunsuPathResolver()
 	callCount := 0
