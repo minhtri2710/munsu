@@ -15,9 +15,8 @@ Thin agent-only wrapper for `docs/skills/stuck-soldier-recovery.md`. The canonic
 1. **Peek** — `munsu peek <id>`
 2. **Steer** — `munsu send <id> "<instruction>"`
 3. **Interrupt** — harness-specific Ctrl+C via herdr/tmux send-keys
-4. **Relaunch** — `munsu teardown <id> --force` then re-spawn. `--force` skips
-   safety checks only; any report the soldier wrote is preserved under a
-   generation-bound archive name — read it first. The self-hosting teardown documentation owns the retention contract.
+4. **Relaunch** — `munsu teardown <id> --force` then re-spawn. See
+   `docs/self-hosting.md` for report retention.
 5. **Fail** — append `failed:` to status file with evidence
 
 ## When to use each level

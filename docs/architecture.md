@@ -131,24 +131,29 @@ while the claim is active — so even though each revalidation fence
 claim keeps the task pinned across the external backend/filesystem actions
 (Dispose, worktree return, the projection multi-remove sequence) that follow
 it; a concurrent reopen/rebind between a fence and an action is rejected, not
-merely detected. The claim is reconciled by the cleanup continuation
-operations: `CompleteCleanup` (all evidence-pinned releases + projection
-removal succeeded — the task becomes reopenable), `AbortCleanup` (operator
-escape hatch — the task becomes reopenable without cleanup; abort is
-TERMINAL, so a later teardown retry never re-activates or resumes the aborted
-cleanup against a reopened generation), and the idempotent `BeginCleanup`
-assert (crash resume only), which is exact-generation/phase/evidence fenced:
-it accepts only a current aggregate retired at exactly the claimed generation
-with preserved retirement evidence matching the claim identity, and every
-Begin/Complete/Abort path is identity-fenced even on completed/aborted
-idempotency paths (a foreign continuation is never a no-op and never
-overwrites the stored claim). Delivery mutations (`AuthorizeDelivery`/
-`RevokeDeliveryAuthorization`/`CommitDeliveryOutcome`) are gated by the
-active claim too, so the revision snapshot cleanup revalidates against cannot
-move. The fences additionally fail
-`cleanup-pending` without releasing anything when the claim is missing/
-foreign/reconciled, when generation/revision advanced, when a reopen owns any
-evidence-pinned identity, or when the preserved retirement evidence changed.
+merely detected. `ReconcileRetirementCleanup` runs the bounded archival and
+cleanup work under the active claim, then commits the terminal cleanup state
+exactly once before any remaining projection repair. `ReconcileCompletedCleanup`
+repairs leftover projections after a crash; if the task has reopened to a later
+generation it returns superseded and removes nothing. `fleet.AbortRetirementCleanup` is the terminal operator escape hatch; it
+uses the Authority reconciliation operation with an aborted terminal state, so
+a later teardown retry never re-activates or resumes the aborted cleanup
+against a reopened generation.
+The idempotent `BeginCleanup` assert is crash-resume-only and exact-generation,
+phase, and evidence fenced; every cleanup continuation is identity-fenced, and
+foreign or reconciled claims are never treated as no-ops. Delivery mutations
+(`AuthorizeDelivery`/`RevokeDeliveryAuthorization`/`CommitDeliveryOutcome`) are
+gated by the active claim too, so the revision snapshot cleanup revalidates
+against cannot move. The fences fail `cleanup-pending` without releasing
+anything when the claim is missing/foreign/reconciled, generation or revision
+advanced, a reopen owns an evidence-pinned identity, or preserved retirement
+evidence changed. Teardown archives the task report as a generation-bound report
+name while the cleanup claim is fenced; `--force` skips safety checks only and
+never broadens data deletion. The task data directory is retained by teardown,
+and session-start reclamation may remove it only after the grace period under
+the Task Authority's fence: an authority-confirmed released task may be
+reclaimed unless report evidence remains, while an unknown directory is
+reclaimed only when it has no brief.
 `Backend.Alive` (the
 former boolean liveness surface) is fully removed, and the typed
 `EndpointObservation.Alive()` compatibility helper is deleted as well: every
