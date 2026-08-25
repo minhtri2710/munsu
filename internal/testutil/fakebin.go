@@ -46,11 +46,25 @@ func WriteFakeExecutableAt(path, script string) error {
 	return os.WriteFile(path+".cmd", []byte(shim), 0o755)
 }
 
-// WriteFakeExecutable is WriteFakeExecutableAt for a test, returning path.
+// WriteFakeExecutable is WriteFakeExecutableAt for a test, returning the path
+// that runs the fake -- see FakeExecutablePath.
 func WriteFakeExecutable(t *testing.T, path, script string) string {
 	t.Helper()
 	if err := WriteFakeExecutableAt(path, script); err != nil {
 		t.Fatalf("fake %s: %v", filepath.Base(path), err)
+	}
+	return FakeExecutablePath(path)
+}
+
+// FakeExecutablePath returns the path that runs the fake written at path.
+//
+// A fixture that hands production an explicit path rather than a name needs
+// this: on windows the script itself is not something CreateProcess can start,
+// so what runs -- and what exec.LookPath resolves for a bare name -- is the
+// .cmd companion beside it.
+func FakeExecutablePath(path string) string {
+	if runtime.GOOS == "windows" {
+		return path + ".cmd"
 	}
 	return path
 }

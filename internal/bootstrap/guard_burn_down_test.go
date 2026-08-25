@@ -158,8 +158,7 @@ func TestPiInstallRejectsUnownedTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	bin := filepath.Join(dir, "munsu")
-	testutil.WriteFakeExecutable(t, bin, "#!/bin/sh\n")
+	bin := testutil.WriteFakeExecutable(t, filepath.Join(dir, "munsu"), "#!/bin/sh\n")
 	writeTestExecutable(t, filepath.Join(dir, "pi"), "#!/bin/sh\necho 0.79.0\n")
 	t.Setenv("PATH", dir+string(filepath.ListSeparator)+os.Getenv("PATH"))
 	SetMunsuPathResolver(testMunsuResolver{path: bin})
