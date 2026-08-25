@@ -147,36 +147,6 @@ func beginRetirementCleanup(authority *taskauthority.Canonical, taskID domain.Ta
 	return nil
 }
 
-// completeRetirementCleanup reconciles the active cleanup claim to completed
-// after all evidence-pinned releases and projection removal succeeded,
-// releasing the task for reopen.
-func completeRetirementCleanup(authority *taskauthority.Canonical, taskID domain.TaskID, claimGen taskauthority.Generation) error {
-	cur, err := authority.Get(taskID)
-	if err != nil {
-		return fmt.Errorf("resolving current state to complete cleanup claim: %w", err)
-	}
-	req := taskauthority.CanonicalCompleteCleanupRequest{
-		HomeID:           authority.HomeID(),
-		TaskID:           taskID,
-		Precondition:     domain.Of(uint64(cur.Generation), uint64(cur.Revision)),
-		ClaimOperationID: taskRetireOperationID(taskID.Value(), claimGen),
-		ClaimGeneration:  claimGen,
-		Reason:           "retirement cleanup complete",
-	}
-	opID, err := domain.NewOperationID(taskCleanupOperationID("complete", taskID.Value(), claimGen))
-	if err != nil {
-		return fmt.Errorf("cleanup complete operation identity: %w", err)
-	}
-	op, err := domain.NewOperation(opID, req)
-	if err != nil {
-		return fmt.Errorf("cleanup complete operation: %w", err)
-	}
-	if _, err := authority.CompleteCleanup(op, req); err != nil {
-		return err
-	}
-	return nil
-}
-
 // AbortRetirementCleanup releases the active cleanup claim of the given
 // retired generation WITHOUT completing cleanup. It refuses while a preserved
 // endpoint is live or ambiguously observed, archives only after authoritative
@@ -235,33 +205,11 @@ func abortRetirementCleanup(authority *taskauthority.Canonical, homeDir string, 
 		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("checking report after archiving for %s generation %s: %w", taskID, claimGen, err)
 		}
-		now := time.Now()
-		if err := os.Chtimes(filepath.Join(homeDir, "data", taskID.Value()), now, now); err != nil {
-			return fmt.Errorf("refreshing data directory before aborting cleanup for %s generation %s: %w", taskID, claimGen, err)
-		}
+
 		return nil
 	}
-	if err := authority.ArchiveRetiredReport(taskID, claimGen, archive); err != nil {
+	if err := authority.ReconcileRetirementCleanup(taskID, claimGen, taskauthority.CleanupAborted, archive); err != nil {
 		return fmt.Errorf("archiving report before aborting cleanup for %s generation %s: %w", taskID, claimGen, err)
-	}
-	req := taskauthority.CanonicalAbortCleanupRequest{
-		HomeID:           authority.HomeID(),
-		TaskID:           taskID,
-		Precondition:     domain.Of(uint64(cur.Generation), uint64(cur.Revision)),
-		ClaimOperationID: taskRetireOperationID(taskID.Value(), claimGen),
-		ClaimGeneration:  claimGen,
-		Reason:           "operator abort",
-	}
-	opID, err := domain.NewOperationID(taskCleanupOperationID("abort", taskID.Value(), claimGen))
-	if err != nil {
-		return fmt.Errorf("cleanup abort operation identity: %w", err)
-	}
-	op, err := domain.NewOperation(opID, req)
-	if err != nil {
-		return fmt.Errorf("cleanup abort operation: %w", err)
-	}
-	if _, err := authority.AbortCleanup(op, req); err != nil {
-		return err
 	}
 	return nil
 }
@@ -985,9 +933,13 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		dataDir := filepath.Join(opts.HomeDir, "data", opts.ID)
 		var archived string
 		var exists bool
-		archiveErr := authority.ArchiveRetiredReport(taskID, claimGen, func() error {
+		archiveErr := authority.ReconcileRetirementCleanup(taskID, claimGen, taskauthority.CleanupCompleted, func() error {
 			var err error
 			archived, exists, err = archiveRetiredReport(opts.HomeDir, opts.ID, claimGen)
+			if err == nil && exists {
+				now := time.Now()
+				err = os.Chtimes(dataDir, now, now)
+			}
 			return err
 		})
 		if archiveErr != nil {
@@ -998,10 +950,6 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		}
 		if exists {
 			result.Steps = append(result.Steps, "data dir kept for relaunch or session-start sweep")
-			now := time.Now()
-			if err := os.Chtimes(dataDir, now, now); err != nil {
-				return cleanupPending(fmt.Errorf("teardown %s: refreshing data directory for generation %s: %w", opts.ID, claimGen, err))
-			}
 		}
 	}
 
@@ -1010,9 +958,6 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 	// becomes reopenable (BEO-16/P1a completion reconciliation). A crash or
 	// failure before this commit leaves the claim active and the next retry
 	// resumes cleanup idempotently.
-	if err := completeRetirementCleanup(authority, taskID, claimGen); err != nil {
-		return cleanupPending(fmt.Errorf("teardown %s: completing cleanup claim: %w", opts.ID, err))
-	}
 	result.Steps = append(result.Steps, fmt.Sprintf("cleanup claim completed for generation %s", claimGen))
 
 	return result, nil

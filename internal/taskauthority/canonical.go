@@ -463,13 +463,15 @@ func (c *Canonical) mutateTaskFenced(op domain.Operation, taskID domain.TaskID, 
 		return Outcome{}, err
 	}
 	defer lk.Release()
+	return c.mutateTaskFencedLocked(lk, op, taskID, prec, apply, gate, cleanup)
+}
 
+func (c *Canonical) mutateTaskFencedLocked(lk *home.Lock, op domain.Operation, taskID domain.TaskID, prec domain.Precondition, apply func(Aggregate) (Aggregate, error), gate *reservationGate, cleanup *cleanupGate) (Outcome, error) {
 	if rec, ok, err := c.checkedReceipt(op); err != nil {
 		return Outcome{}, err
 	} else if ok {
 		return rec.outcome(), nil
 	}
-
 	doc, exists, err := c.readTaskDoc(taskID.Value())
 	if err != nil {
 		return Outcome{}, err
@@ -480,9 +482,6 @@ func (c *Canonical) mutateTaskFenced(op domain.Operation, taskID domain.TaskID, 
 	if err := verifyPrecondition(taskID, doc.Aggregate, prec); err != nil {
 		return Outcome{}, err
 	}
-	// Reject non-current/superseded generations first, independently of
-	// Transfer/cleanup state; then apply the active-reservation fence and the
-	// active-cleanup-claim fence for current tasks.
 	if err := c.checkMutableCurrent(doc.Aggregate); err != nil {
 		return Outcome{}, err
 	}
@@ -496,7 +495,6 @@ func (c *Canonical) mutateTaskFenced(op domain.Operation, taskID domain.TaskID, 
 	if err != nil {
 		return Outcome{}, err
 	}
-
 	newDoc := taskDoc{HomeRevision: doc.HomeRevision + 1, Aggregate: next}
 	rec := receiptFor(op, next)
 	items, err := taskItems(taskID.Value(), newDoc, rec)

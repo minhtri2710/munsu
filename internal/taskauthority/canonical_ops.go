@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
@@ -121,11 +122,14 @@ func (c *Canonical) Get(taskID domain.TaskID) (Aggregate, error) {
 // or after it, never in between. It returns the same current-Task-truth
 // contract as Get: a superseded/non-current generation fails closed with
 // ErrNotFound.
-// ArchiveRetiredReport runs a bounded archive callback while the exact retired
-// generation's active cleanup claim is fenced by the task-scope lock.
-func (c *Canonical) ArchiveRetiredReport(taskID domain.TaskID, generation Generation, archive func() error) error {
-	if archive == nil {
-		return fmt.Errorf("archive callback is nil")
+// ReconcileRetirementCleanup runs bounded data-path work and commits the terminal
+// cleanup state under one task-scope lock.
+func (c *Canonical) ReconcileRetirementCleanup(taskID domain.TaskID, generation Generation, terminal CleanupStatus, work func() error) error {
+	if work == nil {
+		return fmt.Errorf("cleanup callback is nil")
+	}
+	if terminal != CleanupCompleted && terminal != CleanupAborted {
+		return fmt.Errorf("invalid cleanup terminal status %q", terminal)
 	}
 	if err := taskID.Validate(); err != nil {
 		return err
@@ -145,7 +149,32 @@ func (c *Canonical) ArchiveRetiredReport(taskID domain.TaskID, generation Genera
 	if !exists || !doc.Aggregate.Current || doc.Aggregate.Phase != PhaseRetired || doc.Aggregate.CleanupClaim == nil || doc.Aggregate.CleanupClaim.Status != CleanupActive || doc.Aggregate.CleanupClaim.Generation != generation {
 		return conflictError(ErrConflict, "task %s generation %s cleanup claim is not active", taskID, generation)
 	}
-	return archive()
+	claimID := doc.Aggregate.CleanupClaim.OperationID
+	var req domain.Intent
+	if terminal == CleanupCompleted {
+		req = CanonicalCompleteCleanupRequest{HomeID: c.HomeID(), TaskID: taskID, Precondition: domain.Of(uint64(doc.Aggregate.Generation), uint64(doc.Aggregate.Revision)), ClaimOperationID: claimID, ClaimGeneration: generation, Reason: "retirement cleanup complete"}
+	} else {
+		req = CanonicalAbortCleanupRequest{HomeID: c.HomeID(), TaskID: taskID, Precondition: domain.Of(uint64(doc.Aggregate.Generation), uint64(doc.Aggregate.Revision)), ClaimOperationID: claimID, ClaimGeneration: generation, Reason: "retirement cleanup abort"}
+	}
+	opID, err := domain.NewOperationID(fmt.Sprintf("cleanup-%s-%s-%d", terminal, taskID.Value(), time.Now().UnixNano()))
+	if err != nil {
+		return err
+	}
+	op, err := domain.NewOperation(opID, req)
+	if err != nil {
+		return err
+	}
+	if err := work(); err != nil {
+		return err
+	}
+	_, err = c.mutateTaskFencedLocked(lk, op, taskID, domain.Of(uint64(doc.Aggregate.Generation), uint64(doc.Aggregate.Revision)), func(cur Aggregate) (Aggregate, error) {
+		next := cur.clone()
+		next.CleanupClaim.Status = terminal
+		next.CleanupClaim.ReconciledAt = c.now().UnixNano()
+		next.Revision++
+		return next, nil
+	}, nil, &cleanupGate{operationID: claimID, generation: generation})
+	return err
 }
 
 func (c *Canonical) ReclaimReleasedTaskArtifacts(taskID domain.TaskID, reclaim func() error) (bool, error) {
