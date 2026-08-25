@@ -1,0 +1,6 @@
+jobs:
+  invariants:
+    name: Repo invariants
+    env: {BASH_ENV: poison}
+    permissions: {contents: read, actions: read}
+    steps: [{run: .github/scripts/flake-sweep.sh applied}]

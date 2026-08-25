@@ -20,7 +20,15 @@ pull requests in this repository, so the lane stops at reporting and a person
 applies that diff by running `.github/scripts/flake-sweep.sh sync --owner <ISSUE_ID>`
 locally. The `--owner` value must not be empty, whitespace-only, or `TBD`,
 and otherwise must match the anchored `BEO-<number>` format; name the real issue
-that will fix the flake. It is not a sampler either: it never re-runs anything and
+that will fix the flake. Applying it is enforced, not trusted:
+`.github/scripts/flake-sweep.sh applied` turns `invariants` red on every open PR
+unless the PR's own ledger answers a fresh observation of the window. It observes
+and validates this checkout on every run rather than trusting anything main did
+previously, so CI reruns and asynchronous workflow timing cannot certify stale
+evidence. For
+twelve days in August 2026 nothing did -- run 32153420356 reported a race-lane
+flake with no row and no check a merge waited on could see it. It is not a
+sampler either: it never re-runs anything and
 it computes no failure rate. Four pushes to `main` on 2026-08-14 13:40-13:41 produced three red
 `integration` lanes; two of those runs read `success` today,
 because a rerun overwrites a run's conclusion. `gh run list` says that cluster
@@ -89,7 +97,22 @@ out of the sweep and stay green.
 both directions, the way `deadcode.sh check` compares `.github/deadcode.allow`
 against the tree: observed but unfiled is red, filed but no longer observable is
 red too. `flake-sweep.sh verify-fixed` is the half that can check a `fixed:` ref
-against `main`.
+against `main`. Both need the API. The post-merge `Flake ledger` workflow runs
+them to report the diff and propose remediation; the pull-request `invariants`
+step runs the same two commands through `applied` to refuse the merge until the
+checkout answers its observation.
+
+`.github/scripts/flake-sweep.sh applied` is the one rule that runs on the
+pull-request path *and* reads the API. It observes the window and re-derives
+`check` and `verify-fixed` against *this* checkout on every run, passing only if
+this checkout answers it. No prior sweep verdict is trusted, so CI reruns and asynchronous workflow
+timing cannot certify stale evidence. While main CI for a new commit is still
+running, its attempt records do not exist yet, so a flake it will reveal is not
+observable by anyone; a merge can still land ahead of it, and the ledger then
+appoints the next merger. There is no exemption for "the PR edits this file" --
+re-deriving means deleting or omitting a row cannot bypass the refusal; the
+checkout must reconcile every fresh observation and provide valid `fixed:`
+evidence where a row claims the flake is fixed.
 
 The rows between the markers below are machine-maintained. File new rows with
 `.github/scripts/flake-sweep.sh sync --owner <ISSUE_ID>` as described above. Edit
