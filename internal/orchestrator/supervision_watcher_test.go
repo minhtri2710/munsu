@@ -1038,7 +1038,13 @@ func TestRunCycle_StatusSignalFromParentStatus(t *testing.T) {
 	os.MkdirAll(state, 0755)
 	// Captain return-channel status without requiring dead pane.
 	os.WriteFile(filepath.Join(state, "captain:api.meta"), []byte("window=w1\nkind=captain\nbackend=tmux\n"), 0644)
-	os.WriteFile(filepath.Join(state, "captain:api.status"), []byte("done [key=x]: PR https://example/1\n"), 0644)
+	statusPath, err := mhome.StatusFilePath(home, "captain:api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statusPath, []byte("done [key=x]: PR https://example/1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	emitted, err := testRunCycle(home)
 	if err != nil {
@@ -1287,9 +1293,17 @@ func TestScanFleet_CaptainKindAbsorbsStale(t *testing.T) {
 		"window":  "@nonexistent-captain",
 		"backend": "tmux",
 	})
-	os.WriteFile(filepath.Join(stateDir, "captain:domain.status"), []byte("working: idle healthy\n"), 0644)
+	statusPath, err := mhome.StatusFilePath(tmp, "captain:domain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statusPath, []byte("working: idle healthy\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	past := time.Now().Add(-(StaleThreshold() + time.Second))
-	os.Chtimes(filepath.Join(stateDir, "captain:domain.status"), past, past)
+	if err := os.Chtimes(statusPath, past, past); err != nil {
+		t.Fatal(err)
+	}
 
 	reason := testScanFleet(tmp)
 	if reason != nil {
@@ -1307,7 +1321,13 @@ func TestScanFleet_CaptainTerminalStillSignals(t *testing.T) {
 		"window":  "@nonexistent-captain",
 		"backend": "tmux",
 	})
-	os.WriteFile(filepath.Join(stateDir, "captain:domain.status"), []byte("done: handoff complete\n"), 0644)
+	statusPath, err := mhome.StatusFilePath(tmp, "captain:domain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statusPath, []byte("done: handoff complete\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	reason := testScanFleet(tmp)
 	if reason == nil {
