@@ -1166,16 +1166,23 @@ selftest() {
 	topology_rc=0
 	go run "$ROOT/.github/scripts/flake-sweep-topology" "$WORKFLOW_FILE" || topology_rc=$?
 	[ "$topology_rc" -eq 0 ] || failed=1
-	for topology in valid missing-step missing-job wrong-name wrong-job comment-only swallow if-step continue-on-error no-actions; do
+	for topology in valid job-shell-override job-directory-override missing-step missing-job wrong-name wrong-job comment-only swallow if-step continue-on-error no-actions if-block function extra-command step-shell job-default-shell workflow-default-shell working-directory job-default-directory workflow-default-directory; do
 		topology_rc=0
 		go run "$ROOT/.github/scripts/flake-sweep-topology" "$FIXTURES/topology-$topology.yml" >/dev/null 2>&1 || topology_rc=$?
-		if [ "$topology" = valid ] && [ "$topology_rc" -ne 0 ]; then
-			echo "::error::topology fixture $topology was refused" >&2
-			failed=1
-		elif [ "$topology" != valid ] && [ "$topology_rc" -eq 0 ]; then
-			echo "::error::topology fixture $topology was accepted" >&2
-			failed=1
-		fi
+		case "$topology" in
+		valid|job-shell-override|job-directory-override)
+			if [ "$topology_rc" -ne 0 ]; then
+				echo "::error::topology fixture $topology was refused" >&2
+				failed=1
+			fi
+			;;
+		*)
+			if [ "$topology_rc" -eq 0 ]; then
+				echo "::error::topology fixture $topology was accepted" >&2
+				failed=1
+			fi
+			;;
+		esac
 	done
 
 	# 6. `applied` re-derives the ledger against this checkout.
