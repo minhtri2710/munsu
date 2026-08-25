@@ -205,8 +205,9 @@ func TestClassifyGitHubRESTObservation(t *testing.T) {
 
 func TestGhAxiClient_ObservePR_UsesRESTContract(t *testing.T) {
 	dir := t.TempDir()
-	argsFile := filepath.Join(dir, "args")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsFile + "\nprintf '%s\\n' 'state: open' 'headSha: abc' 'baseRef: main' 'merged: false'\n"
+	argsFile := filepath.Join(dir, "args capture")
+	argsTarget := shQuote(filepath.ToSlash(argsFile))
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsTarget + "\nprintf '%s\\n' 'state: open' 'headSha: abc' 'baseRef: main' 'merged: false'\n"
 	testutil.WriteFakeExecutable(t, filepath.Join(dir, "gh-axi"), script)
 	testutil.PrependPath(t, dir)
 
