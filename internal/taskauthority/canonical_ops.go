@@ -127,9 +127,9 @@ func (c *Canonical) Get(taskID domain.TaskID) (Aggregate, error) {
 // ReconcileRetirementCleanup runs bounded local data-path work and commits the
 // terminal cleanup state under one task-scope lock. Handoff scope precedes task
 // scope; callbacks must not acquire another lock scope.
-func (c *Canonical) ReconcileRetirementCleanup(taskID domain.TaskID, generation Generation, terminal CleanupStatus, work func() error, after ...func() error) error {
-	if work == nil {
-		return fmt.Errorf("cleanup callback is nil")
+func (c *Canonical) ReconcileRetirementCleanup(taskID domain.TaskID, generation Generation, terminal CleanupStatus, preflight func(bool) error, work func(bool) error, after ...func() error) error {
+	if preflight == nil || work == nil {
+		return fmt.Errorf("cleanup callbacks are required")
 	}
 	if terminal != CleanupCompleted && terminal != CleanupAborted {
 		return fmt.Errorf("invalid cleanup terminal status %q", terminal)
@@ -149,13 +149,38 @@ func (c *Canonical) ReconcileRetirementCleanup(taskID domain.TaskID, generation 
 	if err != nil {
 		return err
 	}
-	if !exists || !doc.Aggregate.Current || doc.Aggregate.Phase != PhaseRetired || doc.Aggregate.CleanupClaim == nil || doc.Aggregate.CleanupClaim.Generation != generation {
-		return conflictError(ErrConflict, "task %s generation %s cleanup claim is not active", taskID, generation)
-	}
-	if doc.Aggregate.CleanupClaim.Status != CleanupActive {
+	if !exists || !doc.Aggregate.Current || doc.Aggregate.Phase != PhaseRetired || doc.Aggregate.CleanupClaim == nil || doc.Aggregate.CleanupClaim.Generation != generation || doc.Aggregate.CleanupClaim.Status != CleanupActive {
 		return conflictError(ErrConflict, "task %s generation %s cleanup claim is not active", taskID, generation)
 	}
 	claimID := doc.Aggregate.CleanupClaim.OperationID
+	attempted := doc.Aggregate.CleanupClaim.ReportArchiveAttempted
+	if err := preflight(attempted); err != nil {
+		return err
+	}
+	if !attempted {
+		req := CanonicalMarkReportArchiveAttemptedRequest{HomeID: c.HomeID(), TaskID: taskID, Precondition: domain.Of(uint64(doc.Aggregate.Generation), uint64(doc.Aggregate.Revision)), ClaimOperationID: claimID, ClaimGeneration: generation, Reason: "retirement report archival"}
+		opID, err := domain.NewOperationID(fmt.Sprintf("archive-marker-%s-%d", taskID.Value(), time.Now().UnixNano()))
+		if err != nil {
+			return err
+		}
+		op, err := domain.NewOperation(opID, req)
+		if err != nil {
+			return err
+		}
+		if _, err := c.mutateTaskFencedLocked(lk, op, taskID, domain.Of(uint64(doc.Aggregate.Generation), uint64(doc.Aggregate.Revision)), func(cur Aggregate) (Aggregate, error) {
+			next := cur.clone()
+			next.CleanupClaim.ReportArchiveAttempted = true
+			next.Revision++
+			return next, nil
+		}, nil, &cleanupGate{operationID: claimID, generation: generation}); err != nil {
+			return err
+		}
+		doc, _, err = c.readTaskDoc(taskID.Value())
+		if err != nil {
+			return err
+		}
+		attempted = true
+	}
 	var req domain.Intent
 	if terminal == CleanupCompleted {
 		req = CanonicalCompleteCleanupRequest{HomeID: c.HomeID(), TaskID: taskID, Precondition: domain.Of(uint64(doc.Aggregate.Generation), uint64(doc.Aggregate.Revision)), ClaimOperationID: claimID, ClaimGeneration: generation, Reason: "retirement cleanup complete"}
@@ -170,7 +195,7 @@ func (c *Canonical) ReconcileRetirementCleanup(taskID domain.TaskID, generation 
 	if err != nil {
 		return err
 	}
-	if err := work(); err != nil {
+	if err := work(attempted); err != nil {
 		return err
 	}
 	_, err = c.mutateTaskFencedLocked(lk, op, taskID, domain.Of(uint64(doc.Aggregate.Generation), uint64(doc.Aggregate.Revision)), func(cur Aggregate) (Aggregate, error) {
@@ -212,6 +237,24 @@ func (c *Canonical) WriteTaskDataArtifactByID(id string, write func() error) err
 }
 
 // CompletedCleanupResult describes whether completed-cleanup projection work ran.
+type CanonicalMarkReportArchiveAttemptedRequest struct {
+	HomeID           domain.HomeID
+	TaskID           domain.TaskID
+	Precondition     domain.Precondition
+	ClaimOperationID string
+	ClaimGeneration  Generation
+	Reason           string
+}
+
+func (r CanonicalMarkReportArchiveAttemptedRequest) DigestBytes() ([]byte, error) {
+	return json.Marshal(struct {
+		HomeID, TaskID, Reason string
+		Generation, Revision   uint64
+		ClaimOperationID       string
+		ClaimGeneration        Generation
+	}{r.HomeID.Value(), r.TaskID.Value(), r.Reason, r.Precondition.Generation, r.Precondition.Revision, r.ClaimOperationID, r.ClaimGeneration})
+}
+
 type CompletedCleanupResult string
 
 const (

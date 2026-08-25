@@ -215,11 +215,7 @@ func ArchivedReportName(gen taskauthority.Generation) string {
 	return archivedReportPrefix + gen.String() + archivedReportSuffix
 }
 
-func archiveRetiredReport(homeDir, id string, gen taskauthority.Generation) (string, bool, error) {
-	return archiveRetiredReportWithRecovery(homeDir, id, gen, false)
-}
-
-func archiveRetiredReportWithRecovery(homeDir, id string, gen taskauthority.Generation, recoverExisting bool) (string, bool, error) {
+func archiveRetiredReport(homeDir, id string, gen taskauthority.Generation, recoverExisting bool) (string, bool, error) {
 	dataDir := filepath.Join(homeDir, "data", id)
 	dataInfo, err := os.Lstat(dataDir)
 	if err != nil {
@@ -244,23 +240,10 @@ func archiveRetiredReportWithRecovery(homeDir, id string, gen taskauthority.Gene
 		return "", true, fmt.Errorf("checking report path %s: %w", reportPath, err)
 	}
 
-	archiveExists := false
-	ownershipEstablished := false
 	if _, err := os.Lstat(archivedPath); err == nil {
-		archiveExists = true
-	} else if !os.IsNotExist(err) {
-		return "", true, fmt.Errorf("checking archive path %s: %w", archivedPath, err)
-	}
-	if archiveExists {
 		if !recoverExisting {
 			return "", true, fmt.Errorf("report paths %s and %s conflict", reportPath, archivedPath)
 		}
-		witnessInfo, witnessErr := os.Lstat(archivedReportOwnershipMarker(dataDir, gen))
-		archiveInfo, archiveErr := os.Lstat(archivedPath)
-		if witnessErr != nil || archiveErr != nil || !os.SameFile(witnessInfo, archiveInfo) {
-			return "", true, fmt.Errorf("archive %s has no durable ownership proof", archived)
-		}
-		ownershipEstablished = true
 		for suffix := uint64(2); ; suffix++ {
 			candidate := archivedReportRecoveryName(gen, suffix)
 			candidatePath := filepath.Join(dataDir, candidate)
@@ -272,37 +255,8 @@ func archiveRetiredReportWithRecovery(homeDir, id string, gen taskauthority.Gene
 			archived, archivedPath = candidate, candidatePath
 			break
 		}
-	} else if recoverExisting {
-		witnessInfo, witnessErr := os.Lstat(archivedReportOwnershipMarker(dataDir, gen))
-		reportInfo, reportErr := os.Lstat(reportPath)
-		if witnessErr == nil && reportErr == nil && os.SameFile(witnessInfo, reportInfo) {
-			if err := os.Rename(reportPath, archivedPath); err != nil {
-				return "", true, fmt.Errorf("completing report archival %s as %s: %w", reportPath, archived, err)
-			}
-			return archived, true, nil
-		}
-	}
-	// A primary collision is recoverable only when the hard-link witness proves
-	// this protocol created the archive. An unproved collision may be foreign
-	// evidence, so it refuses even on retry; a proved collision is this
-	// generation's straggler and may use the next generation-bound name.
-	if !ownershipEstablished {
-		reportInfo, infoErr := os.Lstat(reportPath)
-		if infoErr != nil {
-			return "", true, fmt.Errorf("checking report ownership for %s: %w", reportPath, infoErr)
-		}
-		witness := archivedReportOwnershipMarker(dataDir, gen)
-		if reportInfo.Mode()&os.ModeSymlink != 0 {
-			target, readErr := os.Readlink(reportPath)
-			if readErr != nil {
-				return "", true, fmt.Errorf("reading report ownership for %s: %w", reportPath, readErr)
-			}
-			if err := os.Symlink(target, witness); err != nil {
-				return "", true, fmt.Errorf("recording report ownership for %s: %w", archived, err)
-			}
-		} else if err := os.Link(reportPath, witness); err != nil {
-			return "", true, fmt.Errorf("recording archive ownership for %s: %w", archived, err)
-		}
+	} else if !os.IsNotExist(err) {
+		return "", true, fmt.Errorf("checking archive path %s: %w", archivedPath, err)
 	}
 	if err := os.Rename(reportPath, archivedPath); err != nil {
 		return "", true, fmt.Errorf("archiving report %s as %s: %w", reportPath, archivedPath, err)
@@ -318,10 +272,6 @@ func archiveRetiredReportWithRecovery(homeDir, id string, gen taskauthority.Gene
 // so an unreadable directory is never reclaimed on the strength of a guess.
 func archivedReportRecoveryName(gen taskauthority.Generation, suffix uint64) string {
 	return archivedReportPrefix + gen.String() + "-" + strconv.FormatUint(suffix, 10) + archivedReportSuffix
-}
-
-func archivedReportOwnershipMarker(dataDir string, gen taskauthority.Generation) string {
-	return filepath.Join(dataDir, "."+ArchivedReportName(gen)+"-owned")
 }
 
 func isArchivedReportName(name string) bool {

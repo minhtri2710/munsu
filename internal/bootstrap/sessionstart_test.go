@@ -499,7 +499,7 @@ func TestRunSessionStartBootstrapFailureReleasesSessionLock(t *testing.T) {
 	}()
 	bootstrapErr := errors.New("bootstrap failed")
 	savedBootstrap := sessionStartBootstrap
-	sessionStartBootstrap = func(string, bool, []string, *RuntimeIdentity) (*Result, error) {
+	sessionStartBootstrap = func(string, bool, []string, *RuntimeIdentity, ReclaimTaskDataDir) (*Result, error) {
 		return nil, bootstrapErr
 	}
 	defer func() { sessionStartBootstrap = savedBootstrap }()
@@ -508,7 +508,7 @@ func TestRunSessionStartBootstrapFailureReleasesSessionLock(t *testing.T) {
 	res, err := RunSessionStartWithWatcher(&buf, home, func(string) WatchEnsureResult {
 		t.Fatal("watcher ensure must not run after bootstrap failure")
 		return WatchEnsureResult{}
-	}, nil)
+	}, nil, nil)
 	if err == nil || !errors.Is(err, bootstrapErr) {
 		t.Fatalf("error = %v, want bootstrap failure", err)
 	}
@@ -543,7 +543,7 @@ func TestRunSessionStartBootstrapFailureSurfacesReleaseError(t *testing.T) {
 	releaseErr := errors.New("release failed")
 	savedBootstrap := sessionStartBootstrap
 	savedRelease := sessionStartRelease
-	sessionStartBootstrap = func(string, bool, []string, *RuntimeIdentity) (*Result, error) {
+	sessionStartBootstrap = func(string, bool, []string, *RuntimeIdentity, ReclaimTaskDataDir) (*Result, error) {
 		return nil, bootstrapErr
 	}
 	sessionStartRelease = func(string) error { return releaseErr }
@@ -554,7 +554,7 @@ func TestRunSessionStartBootstrapFailureSurfacesReleaseError(t *testing.T) {
 	}()
 
 	var buf bytes.Buffer
-	res, err := RunSessionStartWithWatcher(&buf, home, nil, nil)
+	res, err := RunSessionStartWithWatcher(&buf, home, nil, nil, nil)
 	if err == nil || !errors.Is(err, bootstrapErr) || !errors.Is(err, releaseErr) {
 		t.Fatalf("error = %v, want bootstrap and release errors", err)
 	}
@@ -596,6 +596,15 @@ func TestRunSessionStartReportsRuntimeIdentityBeforeWatcherEnsure(t *testing.T) 
 	}
 	defer func() { defaultRuntimeIdentityProbe = saved }()
 
+	savedGate, hadGate := os.LookupEnv("NO_MISTAKES_GATE")
+	_ = os.Unsetenv("NO_MISTAKES_GATE")
+	t.Cleanup(func() {
+		if hadGate {
+			_ = os.Setenv("NO_MISTAKES_GATE", savedGate)
+		} else {
+			_ = os.Unsetenv("NO_MISTAKES_GATE")
+		}
+	})
 	var buf bytes.Buffer
 	ensured := false
 	res, err := RunSessionStartWithWatcher(&buf, home, func(string) WatchEnsureResult {

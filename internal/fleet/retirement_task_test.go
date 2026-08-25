@@ -953,6 +953,86 @@ func TestRun_DanglingReportIsArchived(t *testing.T) {
 	}
 }
 
+func TestRun_DanglingReportRecoveryCompletes(t *testing.T) {
+	tmp := t.TempDir()
+	taskID := "dangling-recovery-complete"
+	auth := canonicalMergeTestAuth(t, tmp, taskID)
+	if err := os.WriteFile(filepath.Join(tmp, "state", taskID+".meta"), []byte("kind=scout\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	dataDir := filepath.Join(tmp, "data", taskID)
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("first-target", filepath.Join(dataDir, "report.md")); err != nil {
+		t.Fatal(err)
+	}
+	oldHook := afterReportArchive
+	first := true
+	afterReportArchive = func(home, id string, _ taskauthority.Generation) error {
+		if !first {
+			return nil
+		}
+		first = false
+		return os.Symlink("second-target", filepath.Join(home, "data", id, "report.md"))
+	}
+	t.Cleanup(func() { afterReportArchive = oldHook })
+	if _, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth); err == nil {
+		t.Fatal("expected pending cleanup")
+	}
+	if _, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	for name, target := range map[string]string{"report-g1.md": "first-target", "report-g1-2.md": "second-target"} {
+		got, err := os.Readlink(filepath.Join(dataDir, name))
+		if err != nil || got != target {
+			t.Fatalf("%s = %q, %v", name, got, err)
+		}
+	}
+}
+
+func TestRun_DanglingReportRecoveryAborts(t *testing.T) {
+	tmp := t.TempDir()
+	taskID := "dangling-recovery-abort"
+	auth := canonicalMergeTestAuth(t, tmp, taskID)
+	if err := os.WriteFile(filepath.Join(tmp, "state", taskID+".meta"), []byte("kind=scout\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	dataDir := filepath.Join(tmp, "data", taskID)
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("first-target", filepath.Join(dataDir, "report.md")); err != nil {
+		t.Fatal(err)
+	}
+	oldHook := afterReportArchive
+	first := true
+	afterReportArchive = func(home, id string, _ taskauthority.Generation) error {
+		if !first {
+			return nil
+		}
+		first = false
+		return os.Symlink("second-target", filepath.Join(home, "data", id, "report.md"))
+	}
+	t.Cleanup(func() { afterReportArchive = oldHook })
+	if _, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth); err == nil {
+		t.Fatal("expected pending cleanup")
+	}
+	if err := AbortRetirementCleanup(auth, tmp, fakeTeardown{}, mustTaskID(t, taskID), 1); err != nil {
+		t.Fatalf("abort retry: %v", err)
+	}
+	for name, target := range map[string]string{"report-g1.md": "first-target", "report-g1-2.md": "second-target"} {
+		got, err := os.Readlink(filepath.Join(dataDir, name))
+		if err != nil || got != target {
+			t.Fatalf("%s = %q, %v", name, got, err)
+		}
+	}
+	claim, err := auth.Get(mustTaskID(t, taskID))
+	if err != nil || claim.CleanupClaim == nil || claim.CleanupClaim.Status != taskauthority.CleanupAborted {
+		t.Fatalf("claim = %+v, %v", claim.CleanupClaim, err)
+	}
+}
+
 func TestRun_ArchiveConflictLeavesReportUntouched(t *testing.T) {
 	tmp := t.TempDir()
 	auth := canonicalMergeTestAuth(t, tmp, "rename-failure")

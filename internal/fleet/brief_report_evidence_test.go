@@ -23,7 +23,7 @@ func TestArchiveRetiredReportRejectsSymlinkReservation(t *testing.T) {
 	if err := os.Symlink(target, archive); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := archiveRetiredReport(homeDir, "symlink-reservation", 1); err == nil {
+	if _, _, err := archiveRetiredReport(homeDir, "symlink-reservation", 1, false); err == nil {
 		t.Fatal("expected symlink reservation conflict")
 	}
 	archiveInfo, err := os.Lstat(archive)
