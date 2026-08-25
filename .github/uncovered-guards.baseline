@@ -50,12 +50,10 @@ internal/fleet/captain_captain.go	Launch	1	endpoint == nil	burn-down(BEO-69): pr
 internal/fleet/captain_captain.go	preflightConfigPushDestinations	1	!isSafeConfigPath(parentHomeDst, parentHome, captainHome)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_captain.go	publishResolvedSnapshot	1	canonRegistered != canonCaptain	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_captain.go	publishResolvedSnapshot	1	projectID == (domain.ProjectID{})	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/captain_captain.go	Register	1	id == "" || homePath == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_captain.go	requireHealthyPiIntegration	1	integration == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_captain.go	safeFF	1	len(remoteRefParts) < 4 || remoteRefParts[0] != "refs" || remoteRefParts[1] != "remotes" || remoteRefParts[2] != "origin"	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_captain.go	safeFF	1	mergeBase != before	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_captain.go	safeFF	1	normalizeGitRemote(parentRemote) != normalizeGitRemote(smRemote)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/captain_captain.go	SeedCaptain	1	parentHome == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_captain.go	sendNudge	1	!result.Acknowledged	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_captain.go	sendNudge	1	endpoint == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_captain.go	sendNudge	1	marker["commit"] == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
@@ -66,7 +64,6 @@ internal/fleet/captain_captain.go	sendNudge	1	meta["home"] != canonSM	burn-down(
 internal/fleet/captain_captain.go	sendNudge	1	meta["kind"] != "captain"	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_captain.go	sendNudge	1	meta["sm_id"] != sm.ID	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_captain.go	sendNudge	1	windowID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/captain_captain.go	Unregister	1	id == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_captain.go	Validate	1	!fi.IsDir()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_captain.go	validateStructure	1	!fi.IsDir()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_configreread.go	EnsureConfigRereadRequirement	1	sender == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
