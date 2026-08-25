@@ -8,6 +8,8 @@ import (
 	"testing"
 )
 
+const chmodRelevantMode = os.ModePerm | os.ModeSetuid | os.ModeSetgid | os.ModeSticky
+
 // MakeUnreadable removes read and search access for the current user and
 // verifies that the path can no longer be read. Access is restored at cleanup.
 func MakeUnreadable(t *testing.T, path string) {
@@ -16,7 +18,7 @@ func MakeUnreadable(t *testing.T, path string) {
 	if err != nil {
 		t.Fatalf("stat unreadable path %q: %v", path, err)
 	}
-	old := info.Mode().Perm()
+	old := info.Mode() & chmodRelevantMode
 	if err := os.Chmod(path, old&^0o500); err != nil {
 		t.Fatalf("make path unreadable %q: %v", path, err)
 	}
@@ -41,7 +43,7 @@ func MakeReadOnly(t *testing.T, path string) {
 	if err != nil {
 		t.Fatalf("stat read-only path %q: %v", path, err)
 	}
-	old := info.Mode().Perm()
+	old := info.Mode() & chmodRelevantMode
 	if err := os.Chmod(path, old&^0o200); err != nil {
 		t.Fatalf("make path read-only %q: %v", path, err)
 	}
