@@ -494,12 +494,9 @@ func (h *HerdrBackend) Capture(windowID string, lines int) (string, error) {
 //	(false, false, err) — backend resolution failure (fail closed)
 func (h *HerdrBackend) CheckAgentAlive(windowID string) (bool, bool, error) {
 	// First verify pane exists.
-	alive, err := h.CheckAlive(windowID)
+	_, err := h.CheckAlive(windowID)
 	if err != nil {
 		return false, false, err
-	}
-	if !alive {
-		return false, false, ErrPaneNotFound
 	}
 
 	// Pane exists; now check agent registration.
