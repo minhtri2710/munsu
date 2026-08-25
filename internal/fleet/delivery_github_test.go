@@ -173,7 +173,7 @@ func TestClassifyGitHubGraphQLObservation(t *testing.T) {
 	}
 	merged := strings.Replace(base, `"merged":false`, `"merged":true`, 1)
 	got, err := classifyGitHubGraphQLObservation([]byte(merged))
-	if err != nil || got.State != "MERGED" {
+	if err != nil || got.State != "MERGED" || got.HeadSHA != "abc" || got.BaseRef != "main" {
 		t.Fatalf("merged observation = %+v, %v", got, err)
 	}
 	if _, err := classifyGitHubGraphQLObservation([]byte(`{"data":{"repository":{"pullRequest":{"state":"OPEN"}}}}`)); err == nil {

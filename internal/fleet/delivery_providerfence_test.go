@@ -91,22 +91,30 @@ func TestDeliverProviderBaseRefMatchDeliversNormally(t *testing.T) {
 	}
 }
 
-// TestDeliverProviderFenceAcceptsUnverifiableAndMergedObservations proves the
-// The pre-mutation fence accepts explicit mergeability evidence for open
-// observations, while merged truth carries consumed evidence that is not re-checked.
-func TestDeliverProviderFenceAcceptsUnverifiableAndMergedObservations(t *testing.T) {
+// TestDeliverProviderFenceAcceptsMatchingObservations proves the provider
+// identity fence accepts matching head and base evidence.
+func TestDeliverProviderFenceAcceptsAndRejectsObservations(t *testing.T) {
 	journal := &deliveryJournal{Identity: deliveryTestIdentity()}
 	cases := []struct {
 		name string
 		obs  DeliveryProviderObservation
 	}{
 		{"explicit-mergeability", DeliveryProviderObservation{State: "OPEN", HeadSHA: deliveryTestHead, BaseRef: deliveryTestBase, Mergeability: DeliveryMergeabilityAllowed}},
-		{"merged-drifted-base", DeliveryProviderObservation{State: "MERGED", HeadSHA: "9999888877776666555544443333222211110000", BaseRef: "release/1.0"}},
+		{"merged", DeliveryProviderObservation{State: "MERGED", HeadSHA: deliveryTestHead, BaseRef: deliveryTestBase}},
+		{"merged-missing-head", DeliveryProviderObservation{State: "MERGED", BaseRef: deliveryTestBase}},
+		{"merged-drifted-head", DeliveryProviderObservation{State: "MERGED", HeadSHA: "9999888877776666555544443333222211110000", BaseRef: deliveryTestBase}},
+		{"merged-missing-base", DeliveryProviderObservation{State: "MERGED", HeadSHA: deliveryTestHead}},
+		{"merged-drifted-base", DeliveryProviderObservation{State: "MERGED", HeadSHA: deliveryTestHead, BaseRef: "release/1.0"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if err := verifyProviderHead(journal, tc.obs); err != nil {
-				t.Fatalf("verifyProviderHead = %v, want accepted", err)
+			err := verifyProviderHead(journal, tc.obs)
+			if tc.name == "explicit-mergeability" || tc.name == "merged" {
+				if err != nil {
+					t.Fatalf("verifyProviderHead = %v, want accepted", err)
+				}
+			} else if err == nil {
+				t.Fatal("verifyProviderHead unexpectedly accepted invalid merged evidence")
 			}
 		})
 	}
