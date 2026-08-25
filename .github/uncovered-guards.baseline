@@ -40,28 +40,7 @@
 # compile is measured on one platform and not the other. Those lines are carried
 # for both platforms and ignored by whichever one cannot measure them.
 
-internal/backend/observation_event_herdr.go	HerdrEventSource.Wait	1	endpoint.Handle == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/backend/session_backend_cmux.go	CmuxBackend.checkWorkspaceAlive	1	workspaceID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/backend/session_backend_cmux.go	CmuxBackend.NewWindow	1	surfaceID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/backend/session_backend_cmux.go	CmuxBackend.NewWindow	1	wid == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/backend/session_backend_cmux.go	CmuxBackend.NewWindow	2	surfaceID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/backend/session_backend_herdr.go	HerdrBackend.CheckAgentAlive	1	!alive	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/backend/session_backend_herdr.go	HerdrBackend.FindOrCreateWindow	1	paneID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/backend/session_backend_herdr.go	HerdrBackend.NewWindow	1	paneID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/backend/session_backend_herdr.go	HerdrBackend.protocolVersion	1	h.protocolCache < 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/backend/session_backend_orca.go	OrcaBackend.NewWindow	1	resp.ContainerID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/backend/session_backend_orca.go	OrcaBackend.NewWindow	1	resp.TerminalID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/backend/worktree.go	GetWorktreeReserved	1	strings.TrimSpace(reservationID) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/backend/worktree.go	gitWorktreeProvider.Return	1	!strings.HasPrefix(line, "gitdir: ")	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/backend/worktree.go	selectProvider	1	homeDir == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/backend/worktree.go	treehouseProvider.GetReserved	1	recovery	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/backend/worktree.go	treehouseProvider.GetReserved	1	wtPath == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/cli/report_cmd.go	enforceScoutReportBudget	1	agg.LaunchEvidence.SubmittedAt <= 0	unreachable because validateAggregate rejects SubmittedAt <= 0 on the READ path (canonical.go readTaskDoc), so auth.Get never serves such a record; the only writer, Canonical.RecordLaunch, additionally stamps it from the authority clock. Wrong the moment a read path skips validateAggregate, or validateLaunchEvidence stops checking SubmittedAt. Premise pinned by TestPremiseGetRefusesLaunchEvidenceWithNoSubmissionTimestamp, which writes a task doc carrying SubmittedAt = 0 straight to the store and asserts auth.Get refuses it
-internal/config/documents.go	finalResolvedOverlay	1	facts.Name == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/config/documents.go	finalResolvedOverlay	1	facts.Path == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/config/published_snapshot.go	PublishedSnapshotDocument.Validate	1	d.Config.Digest == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/config/published_snapshot.go	PublishedSnapshotDocument.Validate	1	d.Config.Project == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/config/published_snapshot.go	PublishedSnapshotDocument.Validate	1	d.Config.ProjectPath == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_captain.go	buildLaunchArgs	1	!contract.CwdAtHome || (!contract.PromptArg && adapter.Name != "pi")	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_captain.go	buildLaunchArgs	1	contract.ProjectArg	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_captain.go	checkAliveWithProbe	1	probe == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
@@ -245,9 +224,6 @@ internal/fleet/task_handoff_transaction.go	verifyTransferReceived	1	received.Tra
 internal/fleet/task_handoff_transaction.go	verifyTransferReceived	1	received.Transfer.SourceHome != sourceHomeID.Value()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/task_handoff_transaction.go	verifyTransferReceived	1	uint64(received.Transfer.SourceGeneration) != task.SourceGeneration	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/taskauthority_reads.go	canonicalCurrentStateQ.Read	1	!canonical	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/harness/dispatch.go	ResolveDispatchSelectionWithPreflight	1	result.AuthConfigured == PreflightAbsent	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/harness/dispatch.go	ResolveDispatchSelectionWithPreflight	1	result.BinaryOnPath == PreflightAbsent	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/harness/dispatch.go	SaveDispatch	1	cfg == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/home/canonical_lock_windows.go	lockScopedFile	1	ret == 0	growth(#614): BEO-69: unmeasured. A GOOS=windows syscall failure path; no lane compiles this file, so it has no block in any coverage profile and is excluded from both directions of the comparison.
 internal/home/canonical_lock_windows.go	unlockScopedFile	1	ret == 0	growth(#614): BEO-69: unmeasured. A GOOS=windows syscall failure path; no lane compiles this file, so it has no block in any coverage profile and is excluded from both directions of the comparison.
 internal/home/canonical_path.go	joinContained	1	rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))	BEO-69: unreachable post-check. The loop above rejects every "", "." and ".." component of the raw key before Clean/Join run, so no accepted key can produce a rel that escapes. Both branches return the identical ErrKeyEscapes, so a message-asserting test would go green without entering this one (the BEO-87 shape). Probed: every escaping key is refused by the component loop.
