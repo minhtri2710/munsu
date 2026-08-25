@@ -90,11 +90,6 @@ type GitLabClient interface {
 	ViewMRJSON(host, owner, project string, iid int) ([]byte, error)
 	// ApprovalState fetches authoritative approval evidence from GitLab.
 	ApprovalState(host, owner, project string, iid int) (bool, error)
-
-	// MergeMR merges a merge request via glab. It is the irreversible
-	// provider mutation of the delivery execution path, called at most once
-	// per delivery journal.
-	MergeMR(host, owner, project string, iid int, method string, expectedHeadSHA string) error
 }
 
 // glabClient implements GitLabClient backed by glab CLI via GlabRunner.
@@ -172,18 +167,15 @@ type gitlabDeliveryProvider struct {
 var _ DeliveryProvider = (*gitlabDeliveryProvider)(nil)
 
 // Merge executes the irreversible provider merge under the exact identity.
+func (p *gitlabDeliveryProvider) ValidateMergeRequest(ident domain.DeliveryIdentity, request DeliveryMergeRequest) error {
+	if request.HeadSHA == "" || request.HeadSHA != ident.HeadSHA || request.BaseRef == "" || request.BaseRef != ident.BaseRef {
+		return fmt.Errorf("GitLab merge constraints do not match the delivery identity")
+	}
+	return ErrDeliveryMergeConstraintsUnsupported
+}
+
 func (p *gitlabDeliveryProvider) Merge(ident domain.DeliveryIdentity, request DeliveryMergeRequest) error {
-	if p.client == nil {
-		return fmt.Errorf("GitLab delivery capability is not composed")
-	}
-	glURL, err := domain.ParseMRURL(ident.URL)
-	if err != nil {
-		return fmt.Errorf("invalid MR URL in identity: %w", err)
-	}
-	if request.HeadSHA == "" || request.HeadSHA != ident.HeadSHA {
-		return fmt.Errorf("GitLab merge expected head does not match the delivery identity")
-	}
-	return p.client.MergeMR(glURL.Host, glURL.Owner, glURL.Project, glURL.IID, request.Method, request.HeadSHA)
+	return p.ValidateMergeRequest(ident, request)
 }
 
 // Observe reads the current provider state under the exact identity.
@@ -248,36 +240,6 @@ func parseGLTargetBranch(data []byte) (string, error) {
 		return "", fmt.Errorf("parsing glab mr view JSON: %w", err)
 	}
 	return raw.TargetBranch, nil
-}
-
-// MergeMR merges a merge request via glab with the given method: squash,
-// merge (default merge commit), or rebase.
-func (c *glabClient) MergeMR(host, owner, project string, iid int, method string, expectedHeadSHA string) error {
-	if expectedHeadSHA == "" {
-		return fmt.Errorf("GitLab merge requires an expected head SHA")
-	}
-	args := []string{
-		"mr", "merge",
-		fmt.Sprintf("%s/%s!%d", owner, project, iid),
-		"--sha", expectedHeadSHA,
-	}
-	if host != "" && host != "gitlab.com" {
-		args = append(args, "--hostname", host)
-	}
-	switch method {
-	case "squash":
-		args = append(args, "--squash")
-	case "rebase":
-		args = append(args, "--rebase")
-	case "merge":
-		// glab default: merge commit
-	default:
-		return fmt.Errorf("unsupported GitLab merge method %q", method)
-	}
-	if _, err := c.runner.Run(args...); err != nil {
-		return err
-	}
-	return nil
 }
 
 // ViewMRState returns the MR state (OPEN, MERGED, CLOSED) via glab.

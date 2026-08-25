@@ -807,77 +807,21 @@ func TestExistingGitHubTestsStillPass(t *testing.T) {
 // --- CaptureIdentity provider routing (dispatcher removed with the legacy
 // delivery path; the typed clients own identity capture) ---
 
-// --- MergeMR typed mutation tests ---
-
-func TestMergeMR_SquashExactArgs(t *testing.T) {
-	var got []string
-	client := &glabClient{runner: &fakeGlabRunner{
-		runFn: func(args ...string) ([]byte, error) {
-			got = args
-			return []byte("merged"), nil
-		},
-	}}
-	if err := client.MergeMR("gitlab.com", "owner", "project", 7, "squash", sampleSHA); err != nil {
-		t.Fatalf("MergeMR: %v", err)
-	}
-	want := []string{"mr", "merge", "owner/project!7", "--sha", sampleSHA, "--squash"}
-	if strings.Join(got, " ") != strings.Join(want, " ") {
-		t.Fatalf("args = %v, want %v", got, want)
-	}
-}
-
-func TestMergeMR_SelfHostedExactArgs(t *testing.T) {
-	var got []string
-	client := &glabClient{runner: &fakeGlabRunner{
-		runFn: func(args ...string) ([]byte, error) {
-			got = args
-			return []byte("merged"), nil
-		},
-	}}
-	if err := client.MergeMR("git.example.com", "owner", "project", 7, "rebase", sampleSHA); err != nil {
-		t.Fatalf("MergeMR: %v", err)
-	}
-	want := []string{"mr", "merge", "owner/project!7", "--sha", sampleSHA, "--hostname", "git.example.com", "--rebase"}
-	if strings.Join(got, " ") != strings.Join(want, " ") {
-		t.Fatalf("args = %v, want %v", got, want)
-	}
-}
-
-func TestMergeMR_MergeMethodDefaultsToMergeCommit(t *testing.T) {
-	var got []string
-	client := &glabClient{runner: &fakeGlabRunner{
-		runFn: func(args ...string) ([]byte, error) {
-			got = args
-			return []byte("merged"), nil
-		},
-	}}
-	if err := client.MergeMR("gitlab.com", "owner", "project", 7, "merge", sampleSHA); err != nil {
-		t.Fatalf("MergeMR: %v", err)
-	}
-	want := []string{"mr", "merge", "owner/project!7", "--sha", sampleSHA}
-	if strings.Join(got, " ") != strings.Join(want, " ") {
-		t.Fatalf("args = %v, want %v", got, want)
-	}
-}
-
-func TestMergeMR_UnsupportedMethodFailsClosed(t *testing.T) {
-	client := &glabClient{runner: &fakeGlabRunner{}}
-	if err := client.MergeMR("gitlab.com", "owner", "project", 7, "explode", sampleSHA); err == nil {
-		t.Fatal("expected error for unsupported merge method")
-	}
-}
-
-func TestMergeMR_RequiresExpectedHead(t *testing.T) {
+func TestGitlabDeliveryProvider_RefusesAtomicMergeConstraints(t *testing.T) {
 	called := false
 	client := &glabClient{runner: &fakeGlabRunner{runFn: func(args ...string) ([]byte, error) {
 		called = true
 		return nil, nil
 	}}}
-	if err := client.MergeMR("gitlab.com", "owner", "project", 7, "merge", ""); err == nil {
-		t.Fatal("expected missing-head refusal")
+	provider := &gitlabDeliveryProvider{client: client}
+	ident := domain.DeliveryIdentity{URL: "https://gitlab.com/owner/project/-/merge_requests/7", HeadSHA: sampleSHA, BaseRef: "main"}
+	for _, request := range []DeliveryMergeRequest{{}, {HeadSHA: "other", BaseRef: "main"}, {HeadSHA: sampleSHA, BaseRef: "release"}, {HeadSHA: sampleSHA, BaseRef: "main"}} {
+		if err := provider.ValidateMergeRequest(ident, request); err == nil {
+			t.Fatalf("request %+v unexpectedly accepted", request)
+		}
 	}
 	if called {
-		t.Fatal("runner called after missing-head refusal")
+		t.Fatal("runner invoked during constraint validation")
 	}
 }
 
@@ -932,7 +876,7 @@ func TestGitlabDeliveryProvider_UsesTypedCapabilityOnly(t *testing.T) {
 	if obs.BaseRef != "main" {
 		t.Fatalf("observation base ref = %q, want the MR target_branch %q", obs.BaseRef, "main")
 	}
-	if err := provider.Merge(ident, DeliveryMergeRequest{Method: "squash", HeadSHA: ident.HeadSHA}); err != nil {
-		t.Fatalf("Merge: %v", err)
+	if err := provider.Merge(ident, DeliveryMergeRequest{Method: "squash", HeadSHA: ident.HeadSHA, BaseRef: ident.BaseRef}); err == nil {
+		t.Fatal("expected unsupported atomic merge constraints")
 	}
 }

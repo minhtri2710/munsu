@@ -137,7 +137,10 @@ type DeliveryProviderObservation struct {
 type DeliveryMergeRequest struct {
 	Method  string
 	HeadSHA string
+	BaseRef string
 }
+
+var ErrDeliveryMergeConstraintsUnsupported = errors.New("provider cannot atomically enforce mergeability, head, and base constraints")
 
 // DeliveryProvider is the one narrow typed Fleet capability consumed by
 // Deliver, with separate observation and irreversible mutation methods.
@@ -146,8 +149,11 @@ type DeliveryMergeRequest struct {
 // journal mutation authorization; there is no default provider, raw CLI
 // fallback, shell script, or alternate execution route.
 type DeliveryProvider interface {
+	// ValidateMergeRequest checks whether the provider can enforce every
+	// authorization constraint atomically before mutation.
+	ValidateMergeRequest(ident domain.DeliveryIdentity, request DeliveryMergeRequest) error
 	// Merge executes the irreversible provider merge only for the expected
-	// observed head. It is called at most once per journal.
+	// observed head and base. It is called at most once per journal.
 	Merge(ident domain.DeliveryIdentity, request DeliveryMergeRequest) error
 	// Observe reads the current provider state under the exact identity.
 	Observe(ident domain.DeliveryIdentity) (DeliveryProviderObservation, error)
@@ -484,6 +490,10 @@ func resumeDeliveryJournal(h *home.Home, lk *home.Lock, c *taskauthority.Canonic
 			if err := verifyProviderMergeability(obs); err != nil {
 				return failClosedDelivery(h, lk, c, journal, err)
 			}
+			request := DeliveryMergeRequest{Method: journal.Method, HeadSHA: journal.Identity.HeadSHA, BaseRef: journal.Identity.BaseRef}
+			if err := provider.ValidateMergeRequest(journal.Identity, request); err != nil {
+				return failClosedDelivery(h, lk, c, journal, err)
+			}
 			// Persist the irreversible-mutation boundary, then execute the
 			// provider merge exactly once.
 			if err := transitionDeliveryJournal(h, lk, journal, "mutating", func(j *deliveryJournal) {
@@ -508,7 +518,12 @@ func resumeDeliveryJournal(h *home.Home, lk *home.Lock, c *taskauthority.Canonic
 		}
 		var mergeErr error
 		if !alreadyMutating {
-			mergeErr = provider.Merge(journal.Identity, DeliveryMergeRequest{Method: journal.Method, HeadSHA: journal.Identity.HeadSHA})
+			request := DeliveryMergeRequest{Method: journal.Method, HeadSHA: journal.Identity.HeadSHA, BaseRef: journal.Identity.BaseRef}
+			if err := provider.ValidateMergeRequest(journal.Identity, request); err != nil {
+				mergeErr = err
+			} else {
+				mergeErr = provider.Merge(journal.Identity, request)
+			}
 		}
 		obs, obsErr := provider.Observe(journal.Identity)
 		return pinAndCommitOutcome(h, lk, c, journal, deriveDeliveryOutcome(journal, obs, obsErr, mergeErr))
