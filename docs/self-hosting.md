@@ -193,13 +193,13 @@ munsu task unblock <dependent-id>
 
 ### Scout teardown with open holds
 
-Teardown **warns but does not block** when the scout's meta contains
-a `needs-decision` state in its status log. The operator must explicitly
-decide to proceed:
+Teardown refuses when the scout's meta contains a `needs-decision` state
+in its status log. Use `--force` only when the operator has explicitly
+decided to skip the safety checks:
 
 ```sh
-munsu teardown <scout-id>          # warns about unresolved holds
-munsu teardown <scout-id> --force  # bypass hold warning
+munsu teardown <scout-id>          # refuses with unresolved holds
+munsu teardown <scout-id> --force  # skips the safety checks
 ```
 
 **Design principle:** The scout gathers evidence. The general decides.
