@@ -718,12 +718,8 @@ func ValidateStrict(m Manifest, expectedHarness, expectedScope, expectedVersion 
 			return fmt.Errorf("target path %q is not absolute", tp)
 		}
 		// Check for symlink escape on each target path.
-		clean, err := filepath.Abs(tp)
-		if err != nil {
+		if _, err := filepath.Abs(tp); err != nil {
 			return fmt.Errorf("target path %q cannot be resolved: %w", tp, err)
-		}
-		if clean != filepath.Clean(tp) {
-			return fmt.Errorf("target path %q is not canonical (clean: %q)", tp, clean)
 		}
 	}
 

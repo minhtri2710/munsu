@@ -109,6 +109,13 @@ func TestValidateStrictRejectsManifestMismatches(t *testing.T) {
 	}
 }
 
+func TestOpencodePluginsDirRejectsEmptyProjectCwd(t *testing.T) {
+	_, err := opencodePluginsDir(ScopeProject, "")
+	if err == nil || !strings.Contains(err.Error(), "cwd is required for project scope") {
+		t.Fatalf("opencodePluginsDir error = %v, want empty-cwd refusal", err)
+	}
+}
+
 func TestOpencodeInstallRejectsUnknownPluginContent(t *testing.T) {
 	original := append([]string(nil), opencodePluginFileNames...)
 	opencodePluginFileNames = []string{"unknown.js"}
