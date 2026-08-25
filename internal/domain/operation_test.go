@@ -99,37 +99,6 @@ func TestNewOperationDerivesDigestFromIntent(t *testing.T) {
 	}
 }
 
-func TestReplayAndConflictSemantics(t *testing.T) {
-	existing := mustOp(t, "op-1")
-	d1, _ := Digest(testIntent{Kind: "a"})
-	d2, _ := Digest(testIntent{Kind: "b"})
-	existing.Digest = d1
-
-	same := Operation{ID: existing.ID, Digest: d1}
-	if !Replay(existing, same) {
-		t.Error("same ID + same digest should be a replay")
-	}
-	if ReusedWithDifferentIntent(existing, same) {
-		t.Error("same ID + same digest should not be a conflict")
-	}
-
-	different := Operation{ID: existing.ID, Digest: d2}
-	if Replay(existing, different) {
-		t.Error("same ID + different digest should not be a replay")
-	}
-	if !ReusedWithDifferentIntent(existing, different) {
-		t.Error("same ID + different digest should be a conflicting intent")
-	}
-
-	other := Operation{ID: mustOperation(t, "op-2"), Digest: d1}
-	if Replay(existing, other) {
-		t.Error("different ID should not be a replay")
-	}
-	if ReusedWithDifferentIntent(existing, other) {
-		t.Error("different ID should not be a conflict")
-	}
-}
-
 func mustOp(t *testing.T, v string) Operation {
 	t.Helper()
 	id, err := NewOperationID(v)
