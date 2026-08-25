@@ -96,6 +96,10 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+LEDGER_WAS_SET=0
+[ "${LEDGER+x}" = x ] && LEDGER_WAS_SET=1
+SWEEP_RECORDS_WAS_SET=0
+[ "${SWEEP_RECORDS+x}" = x ] && SWEEP_RECORDS_WAS_SET=1
 LEDGER="${LEDGER:-$ROOT/.github/flake-ledger.md}"
 LEDGER_REL=".github/flake-ledger.md"
 FIXTURES="$ROOT/.github/testdata/flake-sweep"
@@ -240,7 +244,7 @@ observe() {
 	# below.
 	local pass1 conclusion
 	pass1="$(mktemp)"
-	{
+	(
 	while IFS=$'\t' read -r run_id attempts sha created conclusion; do
 		# A run with one attempt and conclusion `success` has one green job per
 		# lane and nothing else to learn, so its jobs are written out rather
@@ -290,7 +294,11 @@ observe() {
 			done <<<"$jobs"
 		done
 	done <<<"$runs"
-	} | tee "$pass1"
+	) >"$pass1" || {
+		rm -f "$pass1"
+		die "could not observe the CI window; observation is incomplete and cannot be told apart from clean"
+	}
+	cat "$pass1"
 
 	# Pass two: the fast path and the touch check cost three or four calls per
 	# SHA, and most reds do not need them. Ask the classifier what pass one
@@ -304,9 +312,15 @@ observe() {
 	# to count until the touch check has had its say). In a 30-day window that is
 	# a handful of SHAs instead of the 31 that went red.
 	local enrich head_sha head_run headjobs
-	enrich="$(classify <"$pass1" |
+	enrich_file="$(mktemp)"
+	if ! classify <"$pass1" |
 		awk -F '\t' '$1 == "pending" || ($1 == "flake" && $7 ~ /^self-healing/) { print $4 }' |
-		sort -u)"
+		sort -u >"$enrich_file"; then
+		rm -f "$pass1" "$enrich_file"
+		die "could not classify the CI window; observation is incomplete and cannot be told apart from clean"
+	fi
+	enrich="$(cat "$enrich_file")"
+	rm -f "$enrich_file"
 
 	# Every call here dies on failure, like every other call in this script, and
 	# the distinction it is protecting is worth stating: an empty answer means
@@ -365,11 +379,16 @@ observe() {
 			# compared". Without that distinction an absent comparison reads
 			# as an untouched package, and a fix would be filed as a flake.
 			printf 'compared\t%s\t%s\n' "$prev_sha" "$next_sha"
-			printf '%s\n' "$files" | sed -E 's|/[^/]+$||' | sort -u |
-				while IFS= read -r dir; do
-					[ -n "$dir" ] || continue
-					printf 'touch\t%s\t%s\t%s\n' "$prev_sha" "$next_sha" "$dir"
-				done
+			touch_dirs="$(mktemp)"
+			if ! printf '%s\n' "$files" | sed -E 's|/[^/]+$||' | sort -u >"$touch_dirs"; then
+				rm -f "$pass1" "$touch_dirs"
+				die "could not classify changed files; observation is incomplete and cannot be told apart from clean"
+			fi
+			while IFS= read -r dir; do
+				[ -n "$dir" ] || continue
+				printf 'touch\t%s\t%s\t%s\n' "$prev_sha" "$next_sha" "$dir"
+			done <"$touch_dirs"
+			rm -f "$touch_dirs"
 		fi
 		prev_sha="$sha"
 	done <<<"$runs"
@@ -380,7 +399,14 @@ observe() {
 	# purpose -- so the answer is fetched here, with every other API call, and
 	# written out as a record. That keeps `verify-fixed` a pure function of this
 	# stream, so the selftest can pin all three answers without a network.
-	local fsha status
+	local fsha status fixed_refs
+	fixed_refs="$(mktemp)"
+	if ! "$ROOT/.github/scripts/flake-ledger.sh" entries |
+		awk -F '\t' '$7 ~ /^fixed:/ { print substr($7, 7) }' |
+		sort -u >"$fixed_refs"; then
+		rm -f "$pass1" "$fixed_refs"
+		die "could not read fixed ledger entries; observation is incomplete and cannot be told apart from clean"
+	fi
 	while IFS= read -r fsha; do
 		[ -n "$fsha" ] || continue
 		if status="$(gh api "repos/$REPO/compare/$fsha...main" --jq '.status' 2>&1)"; then
@@ -391,10 +417,11 @@ observe() {
 		elif printf '%s' "$status" | grep -q 'HTTP 404'; then
 			printf 'fixedsha\t%s\tunknown-sha\n' "$fsha"
 		else
+			rm -f "$pass1" "$fixed_refs"
 			die "cannot tell whether $fsha is on main: $status"
 		fi
-	done < <("$ROOT/.github/scripts/flake-ledger.sh" entries |
-		awk -F '\t' '$7 ~ /^fixed:/ { print substr($7, 7) }' | sort -u)
+	done <"$fixed_refs"
+	rm -f "$fixed_refs"
 
 	rm -f "$pass1"
 }
@@ -578,7 +605,7 @@ records_file() {
 		return
 	fi
 	f="$(mktemp)"
-	if ! observe >"$f"; then
+	if ! (observe) >"$f"; then
 		rm -f "$f"
 		die "could not observe the CI window; observation is incomplete and unknown is red"
 	fi
@@ -726,11 +753,21 @@ verify_fixed() {
 #
 # There is no exemption for a pull request touching the ledger. Re-deriving is
 # the only way past the refusal, so deleting a row cannot make the fix merge.
+rederive() {
+	local records="$1" ledger="$2" rc=0
+	LEDGER="$ledger" SWEEP_RECORDS="$records" "$0" check --window-days "$WINDOW_DAYS" >&2 || rc=1
+	LEDGER="$ledger" SWEEP_RECORDS="$records" "$0" verify-fixed --window-days "$WINDOW_DAYS" >&2 || rc=1
+	return "$rc"
+}
+
 applied() {
+	[ "$SWEEP_RECORDS_WAS_SET" -eq 0 ] || die "applied refuses SWEEP_RECORDS: supplying it replaces the observation question with a different one"
+	[ "$LEDGER_WAS_SET" -eq 0 ] || die "applied refuses LEDGER: supplying it replaces the checkout ledger question with a different one"
 	local records rc=0
-	records="$(records_file)"
-	SWEEP_RECORDS="$records" "$0" check --window-days "$WINDOW_DAYS" >&2 || rc=1
-	SWEEP_RECORDS="$records" "$0" verify-fixed --window-days "$WINDOW_DAYS" >&2 || rc=1
+	if ! records="$(records_file)"; then
+		die "could not obtain a complete CI observation; incomplete cannot be told apart from clean"
+	fi
+	rederive "$records" "$ROOT/.github/flake-ledger.md" || rc=1
 	if [ "$rc" -eq 0 ]; then
 		printf 'clean\n'
 		return 0
@@ -1166,7 +1203,7 @@ selftest() {
 	topology_rc=0
 	go run "$ROOT/.github/scripts/flake-sweep-topology" "$WORKFLOW_FILE" || topology_rc=$?
 	[ "$topology_rc" -eq 0 ] || failed=1
-	for topology in valid job-shell-override job-directory-override missing-step missing-job wrong-name wrong-job comment-only swallow if-step continue-on-error no-actions if-block function extra-command step-shell job-default-shell workflow-default-shell working-directory job-default-directory workflow-default-directory; do
+	for topology in valid job-shell-override job-directory-override missing-step missing-job wrong-name wrong-job comment-only swallow if-step continue-on-error no-actions if-block function extra-command step-shell job-default-shell workflow-default-shell working-directory job-default-directory workflow-default-directory needs; do
 		topology_rc=0
 		go run "$ROOT/.github/scripts/flake-sweep-topology" "$FIXTURES/topology-$topology.yml" >/dev/null 2>&1 || topology_rc=$?
 		case "$topology" in
@@ -1193,8 +1230,8 @@ selftest() {
 	scratch_ledger "$ledger" \
 		'| TestReopens | integration | aaaa1111@3001/1 | cccc3333@3003/1 | 9999-12-31 | BEO-99 | open |'
 	applied_rc=0
-	applied_stdout="$(GITHUB_REPOSITORY=nonexistent/repo GH_TOKEN=invalid SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" applied 2>/dev/null)" || applied_rc=$?
-	if [ "$applied_stdout" = clean ] && [ "$applied_rc" -eq 0 ]; then
+	applied_stdout="$(rederive "$reopen" "$ledger" 2>/dev/null)" || applied_rc=$?
+	if [ "$applied_rc" -eq 0 ]; then
 		echo "  ok   applied-clean"
 	else
 		echo "::error::applied clean scenario failed: got $applied_stdout rc=$applied_rc" >&2
@@ -1204,8 +1241,8 @@ selftest() {
 	# An observed flake with no row stays red.
 	scratch_ledger "$ledger"
 	applied_rc=0
-	applied_stdout="$(GITHUB_REPOSITORY=nonexistent/repo GH_TOKEN=invalid SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" applied 2>/dev/null)" || applied_rc=$?
-	if [ "$applied_stdout" = dirty ] && [ "$applied_rc" -eq 1 ]; then
+	applied_stdout="$(rederive "$reopen" "$ledger" 2>/dev/null)" || applied_rc=$?
+	if [ "$applied_rc" -eq 1 ]; then
 		echo "  ok   applied-unfiled"
 	else
 		echo "::error::applied unfiled scenario failed: got $applied_stdout rc=$applied_rc" >&2
@@ -1217,13 +1254,25 @@ selftest() {
 		'| TestReopens | integration | aaaa1111@3001/1 | cccc3333@3003/1 | 9999-12-31 | BEO-99 | open |' \
 		'| TestFixedOffMain | integration | bbbb2222@2998/1 | bbbb2222@2998/1 | 9999-12-31 | BEO-99 | fixed:f00dbab |'
 	applied_rc=0
-	applied_stdout="$(GITHUB_REPOSITORY=nonexistent/repo GH_TOKEN=invalid SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" applied 2>/dev/null)" || applied_rc=$?
-	if [ "$applied_stdout" = dirty ] && [ "$applied_rc" -eq 1 ]; then
+	applied_stdout="$(rederive "$reopen" "$ledger" 2>/dev/null)" || applied_rc=$?
+	if [ "$applied_rc" -eq 1 ]; then
 		echo "  ok   applied-fixed-off-main"
 	else
 		echo "::error::applied fixed-ref scenario failed: got $applied_stdout rc=$applied_rc" >&2
 		failed=1
 	fi
+
+	# Production applied refuses alternate observation and ledger inputs.
+	applied_stdout="$(GITHUB_REPOSITORY=nonexistent/repo GH_TOKEN=invalid SWEEP_RECORDS="$reopen" "$0" applied 2>&1)" || applied_rc=$?
+	case "$applied_stdout" in
+	*"refuses SWEEP_RECORDS"*) echo "  ok   applied-refuses-record-override" ;;
+	*) echo "::error::applied accepted SWEEP_RECORDS override" >&2; failed=1 ;;
+	esac
+	applied_stdout="$(GITHUB_REPOSITORY=nonexistent/repo GH_TOKEN=invalid LEDGER="$ledger" "$0" applied 2>&1)" || applied_rc=$?
+	case "$applied_stdout" in
+	*"refuses LEDGER"*) echo "  ok   applied-refuses-ledger-override" ;;
+	*) echo "::error::applied accepted LEDGER override" >&2; failed=1 ;;
+	esac
 
 	rm -f "$ledger"
 

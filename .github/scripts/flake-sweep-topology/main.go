@@ -121,6 +121,9 @@ func validate(path string) error {
 	if has(invariants, "if") {
 		return fmt.Errorf("invariants job is conditional")
 	}
+	if has(invariants, "needs") {
+		return fmt.Errorf("invariants job must not depend on needs: a skipped dependency makes the required context report success without running")
+	}
 	jobContinueOnError, _ := mapping(invariants, "continue-on-error")
 	if disabled, err := optionalTrue(jobContinueOnError); err != nil {
 		return fmt.Errorf("invariants job has an unsupported continue-on-error field")
