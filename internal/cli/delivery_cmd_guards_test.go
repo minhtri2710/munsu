@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -147,10 +148,8 @@ pr)
 esac
 `, strings.ToLower(state), deliveryGuardHead, merged, marker)
 	path := filepath.Join(dir, "gh-axi")
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	testutil.WriteFakeExecutable(t, path, script)
+	testutil.PrependPath(t, dir)
 	return marker
 }
 

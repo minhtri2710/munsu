@@ -11,6 +11,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 func TestGitHubDeliveryProvider_RejectsMismatchedPinnedConstraints(t *testing.T) {
@@ -205,14 +206,9 @@ func TestClassifyGitHubRESTObservation(t *testing.T) {
 func TestGhAxiClient_ObservePR_UsesRESTContract(t *testing.T) {
 	dir := t.TempDir()
 	argsFile := filepath.Join(dir, "args")
-	script := filepath.Join(dir, "gh-axi")
-	content := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsFile + "\nprintf '%s\\n' 'state: open' 'headSha: abc' 'baseRef: main' 'merged: false'\n"
-	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	old := ghAxiLookPath
-	t.Cleanup(func() { ghAxiLookPath = old })
-	ghAxiLookPath = func() (string, error) { return script, nil }
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsFile + "\nprintf '%s\\n' 'state: open' 'headSha: abc' 'baseRef: main' 'merged: false'\n"
+	testutil.WriteFakeExecutable(t, filepath.Join(dir, "gh-axi"), script)
+	testutil.PrependPath(t, dir)
 
 	obs, err := (&ghAxiClient{}).ObservePR("owner", "repo", 7)
 	if err != nil {
