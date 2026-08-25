@@ -1977,15 +1977,20 @@ func TestRetire_NonexistentHomeRefused(t *testing.T) {
 
 func TestRetire_RefusesWrongKindMeta(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# charter\n"), 0644)
 	SeedProvenance(smHome, "test-sm")
 
-	// Write bad meta.
-	os.MkdirAll(filepath.Join(parent, "state"), 0755)
-	os.WriteFile(filepath.Join(parent, "state", "captain:test-sm.meta"),
-		[]byte("kind=not-captain\nsm_id=test-sm\nhome="+smHome+"\nwindow=w\nbackend=tmux\n"), 0644)
+	// Write bad meta through the logical task-ID accessor.
+	if err := home.WriteMeta(parent, taskIDForCaptain("test-sm"), map[string]string{
+		"kind": "not-captain", "sm_id": "test-sm", "home": smHome, "window": "w", "backend": "tmux",
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	err := Retire(smHome, parent, false, false, &testRetireEndpoint{})
 	if err == nil {
@@ -1998,15 +2003,20 @@ func TestRetire_RefusesWrongKindMeta(t *testing.T) {
 
 func TestRetire_RefusesMismatchedID(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# charter\n"), 0644)
 	SeedProvenance(smHome, "test-sm")
 
-	// Write meta with different sm_id.
-	os.MkdirAll(filepath.Join(parent, "state"), 0755)
-	os.WriteFile(filepath.Join(parent, "state", "captain:test-sm.meta"),
-		[]byte("kind=captain\nsm_id=wrong-id\nhome="+smHome+"\nwindow=w\nbackend=tmux\n"), 0644)
+	// Write meta with different sm_id through the logical task-ID accessor.
+	if err := home.WriteMeta(parent, taskIDForCaptain("test-sm"), map[string]string{
+		"kind": "captain", "sm_id": "wrong-id", "home": smHome, "window": "w", "backend": "tmux",
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	err := Retire(smHome, parent, false, false, &testRetireEndpoint{})
 	if err == nil {
@@ -2019,15 +2029,20 @@ func TestRetire_RefusesMismatchedID(t *testing.T) {
 
 func TestRetire_RefusesMismatchedHome(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# charter\n"), 0644)
 	SeedProvenance(smHome, "test-sm")
 
-	// Write meta with different home.
-	os.MkdirAll(filepath.Join(parent, "state"), 0755)
-	os.WriteFile(filepath.Join(parent, "state", "captain:test-sm.meta"),
-		[]byte("kind=captain\nsm_id=test-sm\nhome=/some/other/path\nwindow=w\nbackend=tmux\n"), 0644)
+	// Write meta with different home through the logical task-ID accessor.
+	if err := home.WriteMeta(parent, taskIDForCaptain("test-sm"), map[string]string{
+		"kind": "captain", "sm_id": "test-sm", "home": "/some/other/path", "window": "w", "backend": "tmux",
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	err := Retire(smHome, parent, false, false, &testRetireEndpoint{})
 	if err == nil {
