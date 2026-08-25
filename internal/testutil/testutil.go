@@ -3,6 +3,8 @@ package testutil
 import (
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -117,4 +119,27 @@ func (b *FakeSessionBackend) Teardown(windowID string) error {
 		win.IsAlive = false
 	}
 	return nil
+}
+
+// PathInMessage reports whether message names path.
+//
+// A message that renders a path with %q, or carries one inside a JSON
+// document, escapes every separator in it: a Windows home written as
+// C:\Users\x appears in the text as C:\\Users\\x, and a substring search for
+// the path as spelled finds nothing. On Unix there is no separator to escape,
+// so the two renderings are the same string and searching for the raw path
+// worked by coincidence.
+//
+// Exactly those two renderings are accepted. The path must still appear in
+// full, so this answers the same question as a raw substring search rather
+// than a weaker one.
+func PathInMessage(message, path string) bool {
+	if path == "" {
+		return false
+	}
+	if strings.Contains(message, path) {
+		return true
+	}
+	quoted := strconv.Quote(path)
+	return strings.Contains(message, quoted[1:len(quoted)-1])
 }
