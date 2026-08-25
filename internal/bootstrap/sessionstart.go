@@ -2,6 +2,7 @@
 package bootstrap
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -66,6 +67,9 @@ type CaptainLivenessResult struct {
 // true it also relaunches launched-but-dead endpoints (fail-closed on unknown harness).
 // Wired by the CLI layer to avoid an import cycle between session and captain.
 type CaptainLivenessFunc func(home string, recover bool) CaptainLivenessResult
+
+var sessionStartBootstrap = runWithRuntimeIdentity
+var sessionStartRelease = orchestrator.ReleaseSession
 
 func printDataFile(w io.Writer, home, name string) {
 	data, err := os.ReadFile(filepath.Join(home, "data", name))
@@ -282,15 +286,17 @@ func RunSessionStartWithWatcher(w io.Writer, home string, ensure WatchEnsureFunc
 		fmt.Fprintln(w, "WARNING: Another session holds the lock. Operating read-only.")
 	}
 
-	bootRes, err := runWithRuntimeIdentity(home, acquired, nil, res.RuntimeIdentity)
+	bootRes, err := sessionStartBootstrap(home, acquired, nil, res.RuntimeIdentity)
 	if err != nil {
-		// The session did not start, so nothing should go on holding its lock:
-		// the process-lifetime hold below is earned by a session that ran.
-		if acquired {
-			_ = orchestrator.ReleaseSession(home)
-			res.LockAcquired = false
+		bootstrapErr := fmt.Errorf("bootstrap: %w", err)
+		if !acquired {
+			return res, bootstrapErr
 		}
-		return res, fmt.Errorf("bootstrap: %w", err)
+		if releaseErr := sessionStartRelease(home); releaseErr != nil {
+			return res, errors.Join(bootstrapErr, fmt.Errorf("lock release: %w", releaseErr))
+		}
+		res.LockAcquired = false
+		return res, bootstrapErr
 	}
 	res.Bootstrap = bootRes
 
