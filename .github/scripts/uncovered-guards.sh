@@ -511,7 +511,7 @@ baseline_ratchet() {
 		return 1
 	fi
 
-	invalid_added="$(printf '%s\n' "$added_rows" | awk -F '\t' 'NF != 5 || $5 !~ /^growth\(#[1-9][0-9]*\): .+$/ { print }')"
+	invalid_added="$(printf '%s\n' "$added_rows" | awk -F '\t' 'NF != 5 || $5 !~ /^growth\(#[1-9][0-9]*\):[[:space:]]+.*[^[:space:]][[:space:]]*$/ { print }')"
 	if [ -n "$invalid_added" ]; then
 		echo "::error::$BASELINE_REL adds identities without a valid growth acknowledgment (growth(#<issue>): <reason>):" >&2
 		printf '%s\n' "$invalid_added" | cut -f1,2,3,4 | baseline_print_keys >&2
