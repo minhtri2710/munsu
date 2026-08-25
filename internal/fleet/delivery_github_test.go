@@ -4,8 +4,6 @@ package fleet
 
 import (
 	"errors"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -13,48 +11,25 @@ import (
 	"github.com/minhtri2710/munsu/internal/domain"
 )
 
-func TestGhAxiClient_MergePinsExpectedHead(t *testing.T) {
-	dir := t.TempDir()
-	argsFile := filepath.Join(dir, "args")
-	script := filepath.Join(dir, "gh-axi")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > "+argsFile+"\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	old := ghAxiLookPath
-	t.Cleanup(func() { ghAxiLookPath = old })
-	ghAxiLookPath = func() (string, error) { return script, nil }
-	if err := (&ghAxiClient{}).MergePR("owner", "repo", 7, "squash", sampleSHA); err != nil {
-		t.Fatalf("MergePR: %v", err)
-	}
-	args, err := os.ReadFile(argsFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(args), "--match-head-commit\n"+sampleSHA) {
-		t.Fatalf("args = %q, missing expected head constraint", args)
-	}
-}
-
-func TestGitHubDeliveryProvider_RejectsSubstitutedHead(t *testing.T) {
+func TestGitHubDeliveryProvider_RejectsUnenforceableConstraints(t *testing.T) {
 	called := false
-	client := &recordingGitHubClient{merge: func(string, string, int, string, string) error { called = true; return nil }}
+	client := &recordingGitHubClient{}
 	provider := &githubDeliveryProvider{client: client}
-	ident := domain.DeliveryIdentity{Owner: "owner", Repo: "repo", Number: 7, HeadSHA: sampleSHA}
-	if err := provider.Merge(ident, DeliveryMergeRequest{Method: "merge", HeadSHA: "other"}); err == nil {
-		t.Fatal("expected substituted-head refusal")
+	ident := domain.DeliveryIdentity{Owner: "owner", Repo: "repo", Number: 7, HeadSHA: sampleSHA, BaseRef: "main"}
+	request := DeliveryMergeRequest{Method: "merge", HeadSHA: sampleSHA, BaseRef: "main"}
+	if err := provider.ValidateMergeRequest(ident, request); err == nil {
+		t.Fatal("expected unsupported atomic constraints")
+	}
+	if err := provider.Merge(ident, request); err == nil {
+		t.Fatal("expected merge refusal")
 	}
 	if called {
-		t.Fatal("client invoked after substituted-head refusal")
+		t.Fatal("client invoked after unsupported-constraint refusal")
 	}
 }
 
-type recordingGitHubClient struct {
-	merge func(string, string, int, string, string) error
-}
+type recordingGitHubClient struct{}
 
-func (c *recordingGitHubClient) MergePR(o, r string, n int, m, s string) error {
-	return c.merge(o, r, n, m, s)
-}
 func (c *recordingGitHubClient) ObservePR(string, string, int) (DeliveryProviderObservation, error) {
 	return DeliveryProviderObservation{}, nil
 }

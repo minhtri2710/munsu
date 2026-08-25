@@ -32,6 +32,8 @@ const deliveryTestBase = "main"
 type fakeDeliveryProvider struct {
 	merges       int
 	mergeErr     error
+	validateErr  error
+	requests     []DeliveryMergeRequest
 	observations []DeliveryProviderObservation
 	observeErrs  []error
 	onMerge      func()
@@ -49,6 +51,11 @@ func (f *fakeDeliveryProvider) script(obs ...DeliveryProviderObservation) *fakeD
 func (f *fakeDeliveryProvider) scriptErr(errs ...error) *fakeDeliveryProvider {
 	f.observeErrs = append(f.observeErrs, errs...)
 	return f
+}
+
+func (f *fakeDeliveryProvider) ValidateMergeRequest(ident domain.DeliveryIdentity, request DeliveryMergeRequest) error {
+	f.requests = append(f.requests, request)
+	return f.validateErr
 }
 
 func (f *fakeDeliveryProvider) Merge(ident domain.DeliveryIdentity, request DeliveryMergeRequest) error {
