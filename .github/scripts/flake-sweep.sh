@@ -87,7 +87,7 @@
 #   flake-sweep.sh check    [--window-days N]  observed set vs ledger, both ways
 #   flake-sweep.sh sync     [--owner <ISSUE_ID>] [--window-days N]  rewrite the ledger table to match
 #   flake-sweep.sh verify-fixed                every `fixed:<sha>` is on main
-#   flake-sweep.sh applied                     main's sweep matches newest completed CI
+#   flake-sweep.sh applied                     observe and validate this checkout's ledger
 #   flake-sweep.sh selftest                    classify against committed fixtures
 #
 # `observe` and `classify` are separate on purpose: classification is pure text

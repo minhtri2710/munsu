@@ -489,22 +489,12 @@ jobs:
       # merged past, which is the hole rather than the fix. `Refusal-branch
       # coverage` and `Windows build and vet` are already in that position.
       #
-      # So one step here reads over the network. On a healthy repository it
-      # reads one thing -- the conclusion of main's newest completed sweep --
-      # and is done in two seconds. When that is red it re-asks the sweep's own
-      # question of the ledger in this checkout and passes if this checkout
-      # answers it, which is the sweep's full cost and is only paid while main's
-      # ledger is actually stale. That second half is not optional: main's old
-      # verdict is not a verdict about this branch, and gating on it alone would
-      # refuse the very pull request that applies the diff, leaving nothing able
-      # to clear either. It re-derives rather than exempting a PR that touches
-      # the file, so the only way out of the deadlock is the fix.
-      #
-      # The cost is the property the steps above used to claim for the whole job
-      # -- its verdict is no longer reproducible from a checkout alone, and an
-      # Actions API outage reds every open PR. Priced and accepted, because it
-      # is the mechanism the deadline rule already runs on: that one also reds
-      # PRs with nothing to do with the flake, and for the same reason. A flake
+      # So one step here reads over the network. It observes the window itself
+      # and runs check and verify-fixed against this checkout on every run,
+      # whatever main did previously. The cost is the same every time: about
+      # 130 seconds and 90 API requests against the 1000-per-hour token budget.
+      # Losing the API or exhausting the budget fails closed and reds every PR;
+      # that is the cheap direction for a check that should be green. A flake
       # has no owner until something appoints one, and the appointment is always
       # the next person to merge.
       #

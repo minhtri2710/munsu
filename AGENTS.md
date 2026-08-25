@@ -63,9 +63,9 @@ rerun overwrites a run's conclusion, so run-level history is not evidence) and
 are applied by hand from the diff the `Flake ledger` workflow prints on its run
 summary; the deadline half (`.github/scripts/flake-ledger.sh`) reads nothing but
 the committed file. Applying that diff is enforced, not trusted: the last step of
-`invariants` runs `.github/scripts/flake-sweep.sh applied`, which directly
-re-derives `check` and `verify-fixed` against the PR's own checkout from one fresh
-per-attempt observation stream. It trusts no prior sweep verdict, so CI reruns and
+`invariants` runs `.github/scripts/flake-sweep.sh applied`, which observes the
+window and directly re-derives `check` and `verify-fixed` against the PR's own
+checkout on every run. It trusts no prior sweep verdict, so CI reruns and
 asynchronous workflow timing cannot certify stale evidence; a stale ledger reds
 every PR, and the PR that fixes it goes green. While main CI is still running,
 its attempt records do not exist yet, so its flake has no observable verdict and
