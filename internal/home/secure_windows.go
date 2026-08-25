@@ -18,7 +18,7 @@ import (
 // implicitly denied because the DACL contains no ACE that could grant them.
 const ownerAllAccess = 0x001F01FF
 
-var getEffectiveRightsFromACL = windows.NewLazySystemDLL("advapi32.dll").NewProc("GetEffectiveRightsFromAclW")
+var accessCheck = windows.NewLazySystemDLL("advapi32.dll").NewProc("AccessCheck")
 
 // secureFile establishes owner-private protection on an already-created file.
 // On Windows this replaces Unix mode-bit enforcement with an owner-only DACL
@@ -42,7 +42,7 @@ func restrictDir(path string) error {
 	if err != nil {
 		return err
 	}
-	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.GROUP_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
 		return fmt.Errorf("home: read DACL for %s: %w", path, err)
 	}
@@ -53,7 +53,7 @@ func restrictDir(path string) error {
 	if err != nil && err != windows.ERROR_OBJECT_NOT_FOUND {
 		return fmt.Errorf("home: read DACL for %s: %w", path, err)
 	}
-	rights, err := effectiveRights(dacl, sid)
+	rights, err := effectiveRights(sd)
 	if err != nil {
 		return fmt.Errorf("home: read effective rights for %s: %w", path, err)
 	}
@@ -110,25 +110,53 @@ func ownerACL(sid *windows.SID, rights uint32) (*windows.ACL, error) {
 	return windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{ea}, nil)
 }
 
-func effectiveRights(dacl *windows.ACL, sid *windows.SID) (uint32, error) {
-	if dacl == nil {
-		return ownerAllAccess, nil
+func effectiveRights(sd *windows.SECURITY_DESCRIPTOR) (uint32, error) {
+	processToken := windows.GetCurrentProcessToken()
+	var token windows.Token
+	if err := windows.DuplicateTokenEx(processToken, windows.TOKEN_QUERY, nil, windows.SecurityImpersonation, windows.TokenImpersonation, &token); err != nil {
+		return 0, fmt.Errorf("duplicate current token: %w", err)
 	}
-	trustee := windows.TRUSTEE{
-		TrusteeForm:  windows.TRUSTEE_IS_SID,
-		TrusteeType:  windows.TRUSTEE_IS_USER,
-		TrusteeValue: windows.TrusteeValueFromSID(sid),
+	defer token.Close()
+
+	mapping := genericMapping{
+		GenericRead:    windows.FILE_GENERIC_READ,
+		GenericWrite:   windows.FILE_GENERIC_WRITE,
+		GenericExecute: windows.FILE_GENERIC_EXECUTE,
+		GenericAll:     ownerAllAccess,
 	}
-	var rights uint32
-	var pinner runtime.Pinner
-	pinner.Pin(sid)
-	defer pinner.Unpin()
-	ret, _, _ := getEffectiveRightsFromACL.Call(
-		uintptr(unsafe.Pointer(dacl)), uintptr(unsafe.Pointer(&trustee)), uintptr(unsafe.Pointer(&rights)))
-	if ret != 0 {
-		return 0, windows.Errno(ret)
+	privileges := make([]byte, 1024)
+	for {
+		privilegeLength := uint32(len(privileges))
+		var granted uint32
+		var accessGranted uint32
+		ret, _, callErr := accessCheck.Call(
+			uintptr(unsafe.Pointer(sd)),
+			uintptr(token),
+			uintptr(windows.MAXIMUM_ALLOWED),
+			uintptr(unsafe.Pointer(&mapping)),
+			uintptr(unsafe.Pointer(&privileges[0])),
+			uintptr(unsafe.Pointer(&privilegeLength)),
+			uintptr(unsafe.Pointer(&granted)),
+			uintptr(unsafe.Pointer(&accessGranted)),
+		)
+		if ret != 0 {
+			if accessGranted == 0 {
+				return 0, fmt.Errorf("current token has no effective access")
+			}
+			return granted, nil
+		}
+		if callErr != windows.ERROR_INSUFFICIENT_BUFFER || privilegeLength <= uint32(len(privileges)) {
+			return 0, fmt.Errorf("access check failed: %w", callErr)
+		}
+		privileges = make([]byte, privilegeLength)
 	}
-	return rights, nil
+}
+
+type genericMapping struct {
+	GenericRead    uint32
+	GenericWrite   uint32
+	GenericExecute uint32
+	GenericAll     uint32
 }
 
 func verifyRestrictedProtection(path string, rights uint32) error {

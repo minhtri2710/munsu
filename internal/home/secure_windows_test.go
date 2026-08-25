@@ -84,6 +84,26 @@ func TestRestrictDirPreservesReadOnlyOwnerRightsWindows(t *testing.T) {
 	}
 }
 
+func TestRestrictDirPreservesGroupGrantedRightsWindows(t *testing.T) {
+	dir := t.TempDir()
+	grantEveryoneWindows(t, dir)
+	if _, err := os.ReadDir(dir); err != nil {
+		t.Fatalf("group-readable directory is not readable: %v", err)
+	}
+	if err := restrictDir(dir); err != nil {
+		t.Fatalf("restrictDir: %v", err)
+	}
+	if _, err := os.ReadDir(dir); err != nil {
+		t.Fatalf("group-granted read access was not preserved: %v", err)
+	}
+	probe := filepath.Join(dir, "write-probe")
+	if f, err := os.Create(probe); err == nil {
+		f.Close()
+		_ = os.Remove(probe)
+		t.Fatal("restrictDir upgraded group-granted read access to writable")
+	}
+}
+
 func TestRestrictDirPreservesNullDACLRightsWindows(t *testing.T) {
 	dir := t.TempDir()
 	if err := windows.SetNamedSecurityInfo(

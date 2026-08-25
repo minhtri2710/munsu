@@ -127,19 +127,27 @@ func applyDeniedAccess(t *testing.T, path string, access uint32) {
 	entry.Trustee.TrusteeType = windows.TRUSTEE_IS_USER
 	entry.Trustee.TrusteeValue = windows.TrusteeValueFromSID(sid)
 	entries := []windows.EXPLICIT_ACCESS{entry}
+	var everyone *windows.SID
 	if oldDACL == nil {
+		everyone, err = windows.StringToSid("S-1-1-0")
+		if err != nil {
+			t.Fatalf("Everyone SID: %v", err)
+		}
 		allow := windows.EXPLICIT_ACCESS{
 			AccessPermissions: windows.ACCESS_MASK(0x001F01FF),
 			AccessMode:        windows.GRANT_ACCESS,
 			Inheritance:       windows.NO_INHERITANCE,
 		}
 		allow.Trustee.TrusteeForm = windows.TRUSTEE_IS_SID
-		allow.Trustee.TrusteeType = windows.TRUSTEE_IS_USER
-		allow.Trustee.TrusteeValue = windows.TrusteeValueFromSID(sid)
+		allow.Trustee.TrusteeType = windows.TRUSTEE_IS_WELL_KNOWN_GROUP
+		allow.Trustee.TrusteeValue = windows.TrusteeValueFromSID(everyone)
 		entries = append(entries, allow)
 	}
 	var pinner runtime.Pinner
 	pinner.Pin(sid)
+	if everyone != nil {
+		pinner.Pin(everyone)
+	}
 	newDACL, err := windows.ACLFromEntries(entries, oldDACL)
 	pinner.Unpin()
 	if err != nil {
