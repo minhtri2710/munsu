@@ -63,9 +63,9 @@ func eventSourceWithFake(t *testing.T, waitJSON string, waitExit int, logPath st
 
 // eventSourceWithFakeBlocking creates a fake herdr binary whose agent-wait
 // branch blocks until the invoking process is killed (context cancellation
-// via exec.CommandContext), then returns the path of the FIFO that fake blocks
-// on. Opening the write end of that FIFO is what proves the fake is blocked —
-// see awaitFakeBlocking.
+// via exec.CommandContext), then returns the platform-specific rendezvous
+// that the fake blocks on. Completing the test process's end of that
+// rendezvous is what proves the fake is blocked — see awaitFakeBlocking.
 func eventSourceWithFakeBlocking(t *testing.T, logPath string) (*HerdrEventSource, rendezvous) {
 	t.Helper()
 	tmp := t.TempDir()
@@ -299,14 +299,13 @@ func spawnBackstop(t *testing.T) <-chan time.Time {
 
 // awaitFakeBlocking returns only once the fake herdr is demonstrably blocked.
 //
-// The proof is a FIFO rendezvous, not a marker file. The fake's blocking
-// branch ends in `exec cat <fifo>`, so the process that opens that FIFO for
-// reading is the one that survived the exec and the one exec.CommandContext
-// will kill. Opening a FIFO for reading completes only when a writer opens it
-// and vice versa, so this open returning proves the exec has already happened
-// and that what remains is a reader parked on a pipe nobody writes to.
-// cancel() therefore cannot land on a shell that is still on its way to the
-// blocking call.
+// The proof is a rendezvous, not a marker file. The fake's blocking branch
+// ends in `exec cat <rendezvous>`, so the process that opens that rendezvous
+// for reading is the one that survived the exec and the one
+// exec.CommandContext will kill. Completing the test process's end of the
+// rendezvous proves the exec has already happened and that what remains is a
+// reader parked on a pipe nobody writes to. cancel() therefore cannot land on
+// a shell that is still on its way to the blocking call.
 //
 // Be exact about where that proof stops, because it stops one syscall short:
 // at the instant this open returns, the reader has just been RELEASED from

@@ -14,7 +14,8 @@ import (
 // is launched, so changing PATH for one fixture cannot affect another.
 var bootPath = os.Getenv("PATH")
 
-// WriteFakeExecutableAt writes script as a POSIX shell program at path.
+// WriteFakeExecutableAt writes script as a POSIX shell program at path and
+// installs any platform-native launcher needed to resolve that fake by name.
 func WriteFakeExecutableAt(path, script string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -25,8 +26,8 @@ func WriteFakeExecutableAt(path, script string) error {
 	return installWindowsFake(path)
 }
 
-// WriteFakeExecutable is WriteFakeExecutableAt for a test, returning the path
-// that runs the fake -- see FakeExecutablePath.
+// WriteFakeExecutable is WriteFakeExecutableAt for a test, returning the
+// platform-resolvable path that runs the fake -- see FakeExecutablePath.
 func WriteFakeExecutable(t *testing.T, path, script string) string {
 	t.Helper()
 	if err := WriteFakeExecutableAt(path, script); err != nil {
@@ -35,7 +36,8 @@ func WriteFakeExecutable(t *testing.T, path, script string) string {
 	return FakeExecutablePath(path)
 }
 
-// FakeExecutablePath returns the path that runs the fake written at path.
+// FakeExecutablePath returns the platform-resolvable path that runs the fake
+// written at path.
 func FakeExecutablePath(path string) string {
 	return fakeExecutablePath(path)
 }
