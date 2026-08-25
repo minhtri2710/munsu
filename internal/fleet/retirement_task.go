@@ -55,6 +55,18 @@ type RetirementCleanupPendingError struct {
 	CleanupErr error
 }
 
+// RetirementProjectionError reports a completed cleanup whose projections
+// remain; retrying teardown repairs them without releasing retired resources.
+type RetirementProjectionError struct {
+	TaskID string
+	Err    error
+}
+
+func (e *RetirementProjectionError) Error() string {
+	return fmt.Sprintf("cleanup claim completed for %s but projections remain: %v", e.TaskID, e.Err)
+}
+func (e *RetirementProjectionError) Unwrap() error { return e.Err }
+
 func (e *RetirementCleanupPendingError) Error() string {
 	return fmt.Sprintf("retirement committed for %s (generation %s revision %d) but cleanup is pending: %v", e.TaskID, e.Generation, e.Revision, e.CleanupErr)
 }
@@ -661,7 +673,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 	}
 	if claimCompleted {
 		if err := authority.ReconcileCompletedCleanup(taskID, claimGen, func() error { return finalizeCompletedProjectionCleanup(opts, meta, result) }); err != nil {
-			return cleanupPending(err)
+			return result, &RetirementProjectionError{TaskID: opts.ID, Err: err}
 		}
 		return result, nil
 	}
@@ -918,24 +930,24 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 			}
 			return err
 		}
-		// Potentially failing work is complete before projections are touched;
-		// only these best-effort removals follow terminal reconciliation.
+		// Residual artifacts are removed first and metadata is always last so a
+		// failed projection cleanup leaves the retry identity intact. Failures
+		// are propagated because completed-claim retry repairs the projections.
 		projectionCleanup := func() error {
-			metaFilePath, err := taskMetaFilePath(opts.HomeDir, opts.ID)
-			if err == nil {
-				if err := os.Remove(metaFilePath); err != nil && !os.IsNotExist(err) {
-					result.Steps = append(result.Steps, fmt.Sprintf("remove meta: %v", err))
-				} else {
-					result.Steps = append(result.Steps, "task meta removed")
-				}
-			}
 			for _, p := range cleanupResidualArtifactPaths(opts.HomeDir, opts.ID, meta) {
 				if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
-					result.Steps = append(result.Steps, fmt.Sprintf("remove residual %s: %v", filepath.Base(p), err))
-				} else {
-					result.Steps = append(result.Steps, fmt.Sprintf("residual %s removed", filepath.Base(p)))
+					return &RetirementProjectionError{TaskID: opts.ID, Err: fmt.Errorf("remove residual %s: %w", filepath.Base(p), err)}
 				}
+				result.Steps = append(result.Steps, fmt.Sprintf("residual %s removed", filepath.Base(p)))
 			}
+			metaFilePath, err := taskMetaFilePath(opts.HomeDir, opts.ID)
+			if err != nil {
+				return &RetirementProjectionError{TaskID: opts.ID, Err: err}
+			}
+			if err := os.Remove(metaFilePath); err != nil && !os.IsNotExist(err) {
+				return &RetirementProjectionError{TaskID: opts.ID, Err: fmt.Errorf("remove meta: %w", err)}
+			}
+			result.Steps = append(result.Steps, "task meta removed")
 			return nil
 		}
 		journalSteps, err := journals.FinalizeRetirementJournals(opts.HomeDir, opts.ID)
@@ -945,6 +957,10 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		result.Steps = append(result.Steps, journalSteps...)
 		archiveErr := authority.ReconcileRetirementCleanup(taskID, claimGen, taskauthority.CleanupCompleted, work, projectionCleanup)
 		if archiveErr != nil {
+			var projectionErr *RetirementProjectionError
+			if errors.As(archiveErr, &projectionErr) {
+				return result, projectionErr
+			}
 			return cleanupPending(fmt.Errorf("teardown %s: archiving report for generation %s: %w", opts.ID, claimGen, archiveErr))
 		}
 		if exists && archived != "" {
@@ -963,16 +979,17 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 }
 
 func finalizeCompletedProjectionCleanup(opts Options, meta map[string]string, result *TeardownResult) error {
-	metaPath, err := taskMetaFilePath(opts.HomeDir, opts.ID)
-	if err == nil {
-		if err := os.Remove(metaPath); err != nil && !os.IsNotExist(err) {
-			result.Steps = append(result.Steps, fmt.Sprintf("remove meta: %v", err))
-		}
-	}
 	for _, p := range cleanupResidualArtifactPaths(opts.HomeDir, opts.ID, meta) {
 		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
-			result.Steps = append(result.Steps, fmt.Sprintf("remove residual %s: %v", filepath.Base(p), err))
+			return err
 		}
+	}
+	metaPath, err := taskMetaFilePath(opts.HomeDir, opts.ID)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(metaPath); err != nil && !os.IsNotExist(err) {
+		return err
 	}
 	return nil
 }

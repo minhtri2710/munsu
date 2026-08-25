@@ -266,8 +266,6 @@ func (c *Canonical) ReclaimReleasedTaskArtifactsByID(id string, reclaim func() e
 			default:
 				return false, nil
 			}
-		} else {
-			return false, nil
 		}
 	}
 	if err := reclaim(); err != nil {
