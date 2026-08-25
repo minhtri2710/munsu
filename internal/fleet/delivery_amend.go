@@ -4,6 +4,7 @@ package fleet
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/domain"
@@ -39,18 +40,33 @@ const (
 // reads; the journaled delivery path uses the typed DeliveryProvider
 // observation instead.
 type ProviderSnapshot struct {
-	Provider   string `json:"provider"`
-	Owner      string `json:"owner"`
-	Repo       string `json:"repo"`
-	Number     int    `json:"number"`
-	URL        string `json:"url"`
-	BaseRef    string `json:"baseRef"`
-	HeadRef    string `json:"headRef"`
-	HeadSHA    string `json:"headSHA"`
-	State      string `json:"state"` // OPEN, MERGED, CLOSED
-	Merged     bool   `json:"merged"`
-	MergedSHA  string `json:"mergedSHA,omitempty"` // merge commit SHA (nonempty only when merged)
-	ObservedAt string `json:"observedAt"`          // ISO 8601
+	Provider   string            `json:"provider"`
+	Owner      string            `json:"owner"`
+	Repo       string            `json:"repo"`
+	Number     int               `json:"number"`
+	URL        string            `json:"url"`
+	BaseRef    string            `json:"baseRef"`
+	HeadRef    string            `json:"headRef"`
+	HeadSHA    string            `json:"headSHA"`
+	State      string            `json:"state"` // OPEN, MERGED, CLOSED
+	Checks     []domain.CheckRun `json:"checks,omitempty"`
+	Reviews    []domain.Review   `json:"reviews,omitempty"`
+	Merged     bool              `json:"merged"`
+	MergedSHA  string            `json:"mergedSHA,omitempty"` // merge commit SHA (nonempty only when merged)
+	ObservedAt string            `json:"observedAt"`          // ISO 8601
+}
+
+// Mergeable reports whether the provider snapshot satisfies the domain delivery
+// acceptance rule before a delivery request is journaled.
+func (s ProviderSnapshot) Mergeable() bool {
+	checks := make([]domain.CheckRun, len(s.Checks))
+	copy(checks, s.Checks)
+	return domain.PR{
+		Number:  s.Number,
+		Status:  domain.PRStatus(strings.ToLower(s.State)),
+		Checks:  checks,
+		Reviews: s.Reviews,
+	}.CanMerge()
 }
 
 // MetaDeliveryState is the meta field key for the delivery lifecycle projection.
@@ -91,16 +107,24 @@ func fetchGitHubProviderSnapshot(prURL string) (*ProviderSnapshot, error) {
 		return nil, fmt.Errorf("GitHub provider not available: %w", err)
 	}
 
-	data, err := client.ViewPRJSON(ghURL.Owner, ghURL.Repo, ghURL.Num, "state,headRefOid,headRefName,baseRefName,mergeCommit")
+	data, err := client.ViewPRJSON(ghURL.Owner, ghURL.Repo, ghURL.Num, "state,headRefOid,headRefName,baseRefName,mergeCommit,statusCheckRollup,reviews")
 	if err != nil {
 		return nil, err
 	}
 
 	var raw struct {
-		State       string `json:"state"`
-		HeadRefOid  string `json:"headRefOid"`
-		HeadRefName string `json:"headRefName"`
-		BaseRefName string `json:"baseRefName"`
+		State             string `json:"state"`
+		HeadRefOid        string `json:"headRefOid"`
+		HeadRefName       string `json:"headRefName"`
+		BaseRefName       string `json:"baseRefName"`
+		StatusCheckRollup []struct {
+			State      string `json:"state"`
+			Conclusion string `json:"conclusion"`
+			Status     string `json:"status"`
+		} `json:"statusCheckRollup"`
+		Reviews []struct {
+			State string `json:"state"`
+		} `json:"reviews"`
 		MergeCommit *struct {
 			Oid string `json:"oid"`
 		} `json:"mergeCommit"`
@@ -129,8 +153,27 @@ func fetchGitHubProviderSnapshot(prURL string) (*ProviderSnapshot, error) {
 		BaseRef:    raw.BaseRefName,
 		HeadRef:    raw.HeadRefName,
 		HeadSHA:    raw.HeadRefOid,
-		State:      raw.State,
+		State:      strings.ToUpper(raw.State),
 		ObservedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	for _, check := range raw.StatusCheckRollup {
+		status := strings.ToLower(check.Conclusion)
+		if status == "" {
+			status = strings.ToLower(check.State)
+		}
+		mapped := domain.CheckPending
+		switch status {
+		case "success", "passed":
+			mapped = domain.CheckPassed
+		case "failure", "failed", "error":
+			mapped = domain.CheckFailed
+		case "skipped":
+			mapped = domain.CheckSkipped
+		}
+		snap.Checks = append(snap.Checks, domain.CheckRun{Status: mapped})
+	}
+	for _, review := range raw.Reviews {
+		snap.Reviews = append(snap.Reviews, domain.Review{State: domain.ReviewState(strings.ToLower(review.State))})
 	}
 
 	switch raw.State {
@@ -166,6 +209,8 @@ func fetchGitLabProviderSnapshot(mrURL string) (*ProviderSnapshot, error) {
 		SHA            string `json:"sha"`
 		SourceBranch   string `json:"source_branch"`
 		TargetBranch   string `json:"target_branch"`
+		Approved       bool   `json:"approved"`
+		PipelineStatus string `json:"pipeline_status"`
 		MergeCommitSHA string `json:"merge_commit_sha"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -189,6 +234,21 @@ func fetchGitLabProviderSnapshot(mrURL string) (*ProviderSnapshot, error) {
 		HeadSHA:    raw.SHA,
 		State:      normalizedState,
 		ObservedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	if raw.PipelineStatus != "" {
+		status := domain.CheckPending
+		switch strings.ToLower(raw.PipelineStatus) {
+		case "success", "passed":
+			status = domain.CheckPassed
+		case "failed", "failure", "error":
+			status = domain.CheckFailed
+		case "skipped":
+			status = domain.CheckSkipped
+		}
+		snap.Checks = []domain.CheckRun{{Status: status}}
+	}
+	if raw.Approved {
+		snap.Reviews = []domain.Review{{State: domain.ReviewApproved}}
 	}
 
 	switch normalizedState {
