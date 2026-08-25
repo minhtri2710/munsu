@@ -6,10 +6,10 @@
 # function that nothing in the binary can call cannot land quietly, and a line
 # here cannot outlive the function it waives.
 #
-# This is a ratchet. It is only supposed to get shorter. Adding a line is
-# allowed and sometimes right; doing it without a reason anyone would accept is
-# how the file turns into a graveyard, and the reason column is self-declared,
-# so reading the diff is what catches that -- not the script.
+# This register contains only current, reviewed exceptions. Every reason states
+# the premise, the test that pins it, and the condition that invalidates it.
+# New unreachable functions must be wired, deleted, or added here with the same
+# standard; the comparison never treats a reason as proof.
 #
 # Columns are tab-separated: file <TAB> function <TAB> reason
 #
@@ -33,30 +33,14 @@
 #
 # `announce_open_bugs` runs on every `check`, so every line below is reprinted
 # as a warning until its issue closes. An empty section is the intended resting
-# state; it is empty right now: the last line (BEO-117, the agent-readiness
-# predicate) left with the fix that made the function reachable from the binary.
+# state; it is empty right now.
 
-# --- Not findings: GOOS-union artifacts --------------------------------------
-# The set is the union across every GOOS, so a function reachable on one
-# platform and unreachable on another lands in the union. These two are live
-# code on the platforms that call them; there is nothing to burn down and no
-# issue to open. Intersecting the platforms instead would be the wrong fix --
-# it would hide a genuinely dead function in any GOOS-gated file.
-#
-# A platform-gated file whose function is unreachable on the very platform that
-# compiles it is NOT this case. Those are ordinary debt and stay below.
-internal/fleet/process_args.go	splitProcessCommand	GOOS-union artifact: live on darwin via process_inventory_darwin.go; the linux and windows builds have no caller for it
-internal/fleet/process_args.go	writerKindForArgs	GOOS-union artifact: live on linux and darwin via process_inventory_{linux,darwin}.go; only the windows build cannot reach it
-
-# --- Accepted debt, imported as the baseline --------------------------------
-# What `deadcode ./cmd/munsu` reported on b7536f6, the first time it was ever
-# run here, minus the ones triaged away since. They are pre-existing debt made
-# visible, not debt this lane created. Triaging them one by one -- wire up,
-# delete, or waive with a real reason -- is the burn-down in ADR-0009 (BEO-67).
-#
-# Every line below carries the same marker, and that marker means "nobody has
-# looked at this yet". It is not a justification and must not be reused on a
-# new entry -- a new entry gets a real reason or it does not go in.
-internal/config/project_overlay.go	StoreProjectOverlay	triaged as test-only, kept in production code on purpose. Production reads project overlays (fleet ResolveProjectSnapshot -> config.LoadProjectOverlay) but has never written one: the document is operator-authored and a missing document is a valid empty overlay by design. Its only writers are tests in internal/config AND internal/fleet, so it cannot move into a config _test.go the way SetDeliveryCrashHookForTest did.
-internal/fleet/task_handoff_transaction.go	SetHandoffCrashHookForTest	burn-down(BEO-63): triaged as test-only, kept in production code on purpose. Its only consumer is internal/cli/captain_handoff_test.go, a different package, so the hook cannot move into a fleet _test.go the way SetDeliveryCrashHookForTest did. The binary never reaches it; the crash-boundary variable it sets stays package-private.
-internal/home/wake_lease.go	ReclaimExpiredLeases	triaged as a test-only reclaim seam used across home and orchestrator tests; ClaimWakes would immediately claim re-enqueued wakes and hide re-enqueue counts, resolved-event suppression, and lease-file removal
+# --- Current exceptions ------------------------------------------------------
+# These are not an imported backlog. Each is a deliberate exception to the
+# shipped binary's reachability graph and must be removed when its stated
+# invalidation condition becomes true.
+internal/fleet/process_args.go	splitProcessCommand	GOOS-union exception: process_inventory_darwin.go calls this parser on darwin, while linux and windows have no caller. Pinned by TestDarwinCommandSplitterPreservesQuotedHome in internal/fleet/writer_runtime_test.go; remove this exception if the darwin inventory path is deleted or the parser becomes reachable on every analyzed GOOS.
+internal/fleet/process_args.go	writerKindForArgs	GOOS-union exception: process_inventory_linux.go and process_inventory_darwin.go call this classifier, while the windows build has no caller. Pinned by TestWriterKindForArgsParsesHomeFormsAndCanonicalAliases in internal/fleet/writer_runtime_test.go; remove this exception if the platform inventories converge or the windows inventory gains a caller.
+internal/config/project_overlay.go	StoreProjectOverlay	Test-only writer retained in production config because project overlays are operator-authored documents: production reads them through fleet ResolveProjectSnapshot -> config.LoadProjectOverlay, but no shipped command writes them. Pinned by TestProjectOverlayDocumentCarriesBackend and the cross-package fleet fixture uses; move it to a test-owned seam or delete this exception when a production overlay-writing command is added.
+internal/fleet/task_handoff_transaction.go	SetHandoffCrashHookForTest	Test-only crash-boundary seam retained in fleet because internal/cli/captain_handoff_test.go is a different package and must inject subprocess crash points without exposing the package-private hook. Pinned by TestTaskShowRecoversPendingTransferAndReadsCanonicalState; move it to a test-only external seam or delete this exception if the cross-package subprocess test no longer needs injection.
+internal/home/wake_lease.go	ReclaimExpiredLeases	Test-only durable reclaim seam retained because home and orchestrator tests must create expired lease state and observe re-enqueue, resolved-event suppression, and lease-file removal before ClaimWakes runs. Pinned by wake_resolve_test.go and TestDispatchWakeReclaimsExpiredLease in internal/orchestrator/wake_dispatch_test.go; delete this exception if those tests gain an equivalent public setup path or the reclaim operation becomes a shipped command.
