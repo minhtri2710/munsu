@@ -701,3 +701,10 @@ func TestPrintCaptainLiveness_RecoverSummaryPrinted(t *testing.T) {
 		t.Errorf("output missing recover entry line: %q", out)
 	}
 }
+
+// reclaimNone and reclaimEvery stand in for the composition root's
+// reclaimer. They live in this untagged file because the untagged and
+// windows tests use them too, and a helper defined only under the
+// integration tag is invisible to those builds.
+func reclaimNone(_ string, reclaim func() error) (bool, error) { return true, reclaim() }
+func reclaimEvery(string, func() error) (bool, error)          { return false, nil }
