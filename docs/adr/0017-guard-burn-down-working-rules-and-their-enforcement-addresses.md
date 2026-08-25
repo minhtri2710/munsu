@@ -342,9 +342,9 @@ Split by what each part is attached to, because they do not expire together. The
 claim that "these rules die when the burn-down finishes" is false for half of them.
 
 **Dies with the burn-down.** The *cadence* of §2 — one hand-written case file per batch,
-run once, reviewed, discarded. When `.github/uncovered-guards.baseline` holds no
-`burn-down(BEO-69)` line and `.github/deadcode.allow` holds no `burn-down(BEO-63)` line,
-there are no batches, and §2 describes a script nobody has a reason to invoke. At that point
+run once, reviewed, discarded. When `.github/uncovered-guards.baseline` holds no untriaged batch rows and
+`.github/deadcode.allow` holds no untriaged batch rows, there are no batches, and §2
+ describes a script nobody has a reason to invoke. At that point
 there are exactly two honest outcomes and no third: the derived case list of
 [W2](#work-this-creates) exists and §2 becomes a real check, or `mutation-check.py` and this
 section are **deleted together**. A batch tool kept "just in case" after its batches end is

@@ -1,4 +1,4 @@
 # A two-entry stand-in for .github/deadcode.allow, so the summary line in every
-# `want` below stays put while BEO-67 burns the real file down.
-internal/fake/a.go	Dead.One	burn-down(BEO-63): pre-existing
-internal/fake/b.go	Dead.Two	burn-down(BEO-63): pre-existing
+# `want` below stays put while the real register changes.
+internal/fake/a.go	Dead.One	fixture waiver one
+internal/fake/b.go	Dead.Two	fixture waiver two
