@@ -88,6 +88,94 @@ func TestPRMergeStatus_Open(t *testing.T) {
 	}
 }
 
+func TestProviderSnapshotMergeableRequiresCompleteApprovalEvidence(t *testing.T) {
+	base := ProviderSnapshot{
+		State:   "OPEN",
+		Checks:  []domain.CheckRun{{Status: domain.CheckPassed}},
+		Reviews: []domain.Review{{State: domain.ReviewApproved}},
+	}
+	cases := []struct {
+		name   string
+		mutate func(*ProviderSnapshot)
+		want   bool
+	}{
+		{name: "open passed approved", want: true},
+		{name: "closed", mutate: func(s *ProviderSnapshot) { s.State = "CLOSED" }},
+		{name: "merged", mutate: func(s *ProviderSnapshot) { s.State = "MERGED" }},
+		{name: "pending check", mutate: func(s *ProviderSnapshot) { s.Checks[0].Status = domain.CheckPending }},
+		{name: "failed check", mutate: func(s *ProviderSnapshot) { s.Checks[0].Status = domain.CheckFailed }},
+		{name: "no approval", mutate: func(s *ProviderSnapshot) { s.Reviews = nil }},
+		{name: "changes requested", mutate: func(s *ProviderSnapshot) { s.Reviews[0].State = domain.ReviewChangesRequested }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			snapshot := base
+			snapshot.Checks = append([]domain.CheckRun(nil), base.Checks...)
+			snapshot.Reviews = append([]domain.Review(nil), base.Reviews...)
+			if tc.mutate != nil {
+				tc.mutate(&snapshot)
+			}
+			if got := snapshot.Mergeable(); got != tc.want {
+				t.Fatalf("Mergeable() = %t, want %t for %+v", got, tc.want, snapshot)
+			}
+		})
+	}
+}
+
+func TestNormalizeGitHubReviewState(t *testing.T) {
+	cases := map[string]domain.ReviewState{
+		"APPROVED":          domain.ReviewApproved,
+		"CHANGES_REQUESTED": domain.ReviewChangesRequested,
+		"changes-requested": domain.ReviewChangesRequested,
+		"DISMISSED":         domain.ReviewDismissed,
+		"COMMENTED":         domain.ReviewPending,
+	}
+	for input, want := range cases {
+		if got := normalizeGitHubReviewState(input); got != want {
+			t.Errorf("normalizeGitHubReviewState(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestGitLabProviderSnapshotUsesNestedPipelineAndApprovalEvidence(t *testing.T) {
+	old := defaultGlabRunner
+	defaultGlabRunner = mergeabilityRunner(`{"state":"opened","sha":"abc123","source_branch":"feature","target_branch":"main","approved":true,"pipeline":{"status":"success"}}`)
+	t.Cleanup(func() { defaultGlabRunner = old })
+
+	snapshot, err := fetchGitLabProviderSnapshot("https://gitlab.com/owner/project/-/merge_requests/42")
+	if err != nil {
+		t.Fatalf("fetchGitLabProviderSnapshot: %v", err)
+	}
+	if !snapshot.Mergeable() {
+		t.Fatalf("snapshot = %+v, want mergeable", snapshot)
+	}
+}
+
+func TestGitLabProviderSnapshotRefusesMissingMergeabilityEvidence(t *testing.T) {
+	old := defaultGlabRunner
+	defaultGlabRunner = mergeabilityRunner(`{"state":"opened","sha":"abc123","source_branch":"feature","target_branch":"main"}`)
+	t.Cleanup(func() { defaultGlabRunner = old })
+
+	if _, err := fetchGitLabProviderSnapshot("https://gitlab.com/owner/project/-/merge_requests/42"); err == nil || !strings.Contains(err.Error(), "approval evidence") {
+		t.Fatalf("fetchGitLabProviderSnapshot error = %v, want missing-evidence refusal", err)
+	}
+}
+
+func mergeabilityRunner(json string) *fakeGlabRunner {
+	return &fakeGlabRunner{runFn: func(args ...string) ([]byte, error) {
+		if len(args) == 1 && args[0] == "--version" {
+			return []byte("glab version 1.45.0"), nil
+		}
+		if len(args) == 3 && args[0] == "mr" && args[1] == "view" && args[2] == "--help" {
+			return []byte("view a merge request\n"), nil
+		}
+		if len(args) == 2 && args[0] == "auth" && args[1] == "status" {
+			return []byte("authenticated to gitlab.com\n"), nil
+		}
+		return []byte(json), nil
+	}}
+}
+
 func TestPRMergeStatus_FieldTags(t *testing.T) {
 	// Verify the JSON field tags match gh CLI output format
 	var status domain.PRMergeStatus

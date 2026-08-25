@@ -250,7 +250,7 @@ EOF
 selftest_expect_fail() {
 	local name="$1" expected="$2"; shift 2
 	local output rc
-	if output="$($@ 2>&1)"; then
+	if output=$("$@" 2>&1); then
 		rc=0
 	else
 		rc=$?

@@ -69,6 +69,32 @@ func (s ProviderSnapshot) Mergeable() bool {
 	}.CanMerge()
 }
 
+func normalizeGitHubReviewState(value string) domain.ReviewState {
+	switch strings.ToUpper(strings.ReplaceAll(value, "-", "_")) {
+	case "APPROVED":
+		return domain.ReviewApproved
+	case "CHANGES_REQUESTED":
+		return domain.ReviewChangesRequested
+	case "DISMISSED":
+		return domain.ReviewDismissed
+	default:
+		return domain.ReviewPending
+	}
+}
+
+func mapCheckStatus(value string) domain.CheckStatus {
+	switch strings.ToLower(value) {
+	case "success", "passed":
+		return domain.CheckPassed
+	case "failure", "failed", "error", "canceled", "cancelled":
+		return domain.CheckFailed
+	case "skipped":
+		return domain.CheckSkipped
+	default:
+		return domain.CheckPending
+	}
+}
+
 // MetaDeliveryState is the meta field key for the delivery lifecycle projection.
 const MetaDeliveryState = "delivery_state"
 
@@ -161,22 +187,14 @@ func fetchGitHubProviderSnapshot(prURL string) (*ProviderSnapshot, error) {
 		if status == "" {
 			status = strings.ToLower(check.State)
 		}
-		mapped := domain.CheckPending
-		switch status {
-		case "success", "passed":
-			mapped = domain.CheckPassed
-		case "failure", "failed", "error":
-			mapped = domain.CheckFailed
-		case "skipped":
-			mapped = domain.CheckSkipped
-		}
+		mapped := mapCheckStatus(status)
 		snap.Checks = append(snap.Checks, domain.CheckRun{Status: mapped})
 	}
 	for _, review := range raw.Reviews {
-		snap.Reviews = append(snap.Reviews, domain.Review{State: domain.ReviewState(strings.ToLower(review.State))})
+		snap.Reviews = append(snap.Reviews, domain.Review{State: normalizeGitHubReviewState(review.State)})
 	}
 
-	switch raw.State {
+	switch strings.ToUpper(raw.State) {
 	case "MERGED":
 		snap.Merged = true
 		if raw.MergeCommit != nil && raw.MergeCommit.Oid != "" {
@@ -205,12 +223,14 @@ func fetchGitLabProviderSnapshot(mrURL string) (*ProviderSnapshot, error) {
 	}
 
 	var raw struct {
-		State          string `json:"state"`
-		SHA            string `json:"sha"`
-		SourceBranch   string `json:"source_branch"`
-		TargetBranch   string `json:"target_branch"`
-		Approved       bool   `json:"approved"`
-		PipelineStatus string `json:"pipeline_status"`
+		State        string `json:"state"`
+		SHA          string `json:"sha"`
+		SourceBranch string `json:"source_branch"`
+		TargetBranch string `json:"target_branch"`
+		Approved     *bool  `json:"approved"`
+		Pipeline     *struct {
+			Status string `json:"status"`
+		} `json:"pipeline"`
 		MergeCommitSHA string `json:"merge_commit_sha"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -235,19 +255,11 @@ func fetchGitLabProviderSnapshot(mrURL string) (*ProviderSnapshot, error) {
 		State:      normalizedState,
 		ObservedAt: time.Now().UTC().Format(time.RFC3339),
 	}
-	if raw.PipelineStatus != "" {
-		status := domain.CheckPending
-		switch strings.ToLower(raw.PipelineStatus) {
-		case "success", "passed":
-			status = domain.CheckPassed
-		case "failed", "failure", "error":
-			status = domain.CheckFailed
-		case "skipped":
-			status = domain.CheckSkipped
-		}
-		snap.Checks = []domain.CheckRun{{Status: status}}
+	if raw.Pipeline == nil || raw.Pipeline.Status == "" || raw.Approved == nil {
+		return nil, fmt.Errorf("glab mr view did not provide pipeline status and approval evidence; refusing to infer mergeability")
 	}
-	if raw.Approved {
+	snap.Checks = []domain.CheckRun{{Status: mapCheckStatus(raw.Pipeline.Status)}}
+	if *raw.Approved {
 		snap.Reviews = []domain.Review{{State: domain.ReviewApproved}}
 	}
 
