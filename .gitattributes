@@ -1,0 +1,18 @@
+# Tracked text files check out with LF on every platform.
+#
+# Two things in this tree read tracked bytes back and compare them. `//go:embed`
+# pulls the contract fixtures and the shipped skills into the binary at compile
+# time, and the scripts under .github/scripts parse tracked files line by line.
+# Under git's Windows default (core.autocrlf=true) those bytes gain CRLF on
+# checkout, so a Windows build of a commit embeds different content than a Linux
+# build of the same commit. That is not hypothetical: it is what
+# TestEncodeTOONMatchesCapabilitiesFixture measured on #549's observation lane,
+# where the embedded fixture arrived with CRLF and the encoder's output did not.
+#
+# This governs munsu's own checkout only. Tests that build a git repo inside
+# t.TempDir() inherit the host's git config instead, and set core.autocrlf
+# themselves -- see initTestRepo in internal/fleet.
+#
+# Nothing tracked here is binary (`git grep -I` reaches every non-empty file),
+# so text=auto has nothing to misdetect.
+* text=auto eol=lf
