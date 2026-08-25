@@ -1,6 +1,6 @@
 jobs:
   invariants:
-    name: Repo invariants
+    name: Other context
     permissions:
       contents: read
       actions: read

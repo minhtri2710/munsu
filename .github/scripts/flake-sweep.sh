@@ -200,6 +200,8 @@ job_log() {
 # self-heal touch check, and `-` when the line is missing simply means that
 # check cannot exclude anything.
 extract_failures() {
+	local log="$1"
+	[ -r "$log" ] || die "cannot read job log $log; observation is incomplete and cannot distinguish no flake from no look"
 	awk '
 		{
 			line = $0
@@ -218,11 +220,11 @@ extract_failures() {
 			}
 		}
 		END { for (i = 1; i <= np; i++) print pending[i] "\t-" }
-	' | sort -u
+	' "$log" | sort -u
 }
 
 observe() {
-	local since runs run_id attempts sha created a jobs job_id job_name conc lane
+	local since runs run_id attempts sha created a jobs job_id job_name conc lane local_log failures
 	since="$(date_shift "$(today)" "-$WINDOW_DAYS")"
 
 	# The CI workflow by file name, not every workflow in the repo: this
@@ -271,10 +273,20 @@ observe() {
 				[ -n "$lane" ] || continue
 				printf 'job\t%s\t%s\t%s\t%s\n' "$run_id" "$a" "$lane" "$conc"
 				[ "$conc" = "failure" ] || continue
-				job_log "$job_id" | extract_failures |
-					while IFS=$'\t' read -r test pkg; do
-						printf 'fail\t%s\t%s\t%s\t%s\t%s\n' "$run_id" "$a" "$lane" "$test" "$pkg"
-					done
+				local_log="$(mktemp)"
+				if ! job_log "$job_id" >"$local_log"; then
+					rm -f "$local_log"
+					die "cannot read job log $job_id; observation is incomplete and cannot distinguish no flake from no look"
+				fi
+				failures="$(mktemp)"
+				if ! extract_failures "$local_log" >"$failures"; then
+					rm -f "$local_log" "$failures"
+					die "cannot parse job log $job_id; observation is incomplete and cannot distinguish no flake from no look"
+				fi
+				while IFS=$'\t' read -r test pkg; do
+					printf 'fail\t%s\t%s\t%s\t%s\t%s\n' "$run_id" "$a" "$lane" "$test" "$pkg"
+				done <"$failures"
+				rm -f "$local_log" "$failures"
 			done <<<"$jobs"
 		done
 	done <<<"$runs"
@@ -566,7 +578,10 @@ records_file() {
 		return
 	fi
 	f="$(mktemp)"
-	observe >"$f"
+	if ! observe >"$f"; then
+		rm -f "$f"
+		die "could not observe the CI window; observation is incomplete and unknown is red"
+	fi
 	printf '%s' "$f"
 }
 
@@ -836,30 +851,6 @@ sync() {
 
 # A throwaway ledger with the given table rows, for the scenarios below. The
 # prose around the markers is what a real ledger has and sync() must not touch.
-workflow_gate_present() {
-	local file="$1" line in_invariants=0 in_steps=0
-	[ -f "$file" ] || return 1
-	while IFS= read -r line || [ -n "$line" ]; do
-		case "$line" in
-		'  invariants:') in_invariants=1; in_steps=0; continue ;;
-		esac
-		if [ "${line:0:2}" = "  " ] && [ "${line:2:1}" != " " ] && [ "$in_invariants" -eq 1 ]; then
-			return 1
-		fi
-		case "$line" in
-		'    steps:') [ "$in_invariants" -eq 1 ] || continue; in_steps=1; continue ;;
-		esac
-		if [ "${line:0:4}" = "    " ] && [ "${line:4:1}" != " " ] && [ "$in_invariants" -eq 1 ]; then
-			in_steps=0
-			continue
-		fi
-		if [ "$in_invariants" -eq 1 ] && [ "$in_steps" -eq 1 ]; then
-			case "$line" in *'.github/scripts/flake-sweep.sh applied'*) return 0 ;; esac
-		fi
-	done <"$file"
-	return 1
-}
-
 scratch_ledger() {
 	local file="$1"
 	shift
@@ -895,6 +886,18 @@ selftest() {
 	# set is a single pair, first_seen aaaa1111@3001/1, last_seen cccc3333@3003/1.
 	# What changes between them is the ledger they are compared against.
 	local ledger msg expect
+	local missing_log_msg missing_log_rc
+	missing_log_msg="$(mktemp)"
+	missing_log_rc=0
+	(extract_failures "$FIXTURES/missing-log") >"$missing_log_msg" 2>&1 || missing_log_rc=$?
+	if [ "$missing_log_rc" -ne 0 ] && grep -q "observation is incomplete" "$missing_log_msg" && grep -q "cannot distinguish no flake from no look" "$missing_log_msg"; then
+		echo "  ok   missing-job-log-refused"
+	else
+		echo "::error::missing log scenario: extract_failures did not explain the incomplete observation" >&2
+		cat "$missing_log_msg" >&2
+		failed=1
+	fi
+	rm -f "$missing_log_msg"
 	local reopen="$FIXTURES/reopen.obs.tsv"
 	ledger="$(mktemp)"
 
@@ -1154,23 +1157,22 @@ selftest() {
 
 	rm -f "$ledger"
 
-	# The topology scan is structural rather than a YAML parser: it recognizes
-	# only the job, steps list, and run indentation this workflow uses. It fails
-	# closed on shapes it cannot read, making a rewrite a visible false red rather
-	# than a silent green. This selftest protects its own job, so deleting this
-	# scenario deletes its guard too; the remaining protection is the visible edit
-	# to the invariants job and the selftest step itself.
-	local topology
-	workflow_gate_present "$WORKFLOW_FILE" || {
-		echo "::error::invariants must retain the applied gate; branch protection requires this context" >&2
-		failed=1
-	}
-	if ! workflow_gate_present "$FIXTURES/topology-valid.yml"; then
-		echo "::error::valid topology fixture was refused" >&2
-		failed=1
-	fi
-	for topology in missing-step missing-job wrong-job; do
-		if workflow_gate_present "$FIXTURES/topology-$topology.yml"; then
+	# The topology validator uses a typed YAML model rather than source matching.
+	# It fails closed on shapes it cannot read, making a workflow rewrite a visible
+	# false red rather than a silent green. This selftest protects its own job, so
+	# deleting this scenario deletes its guard too; the remaining protection is the
+	# visible edit to the invariants job and the selftest step itself.
+	local topology_rc
+	topology_rc=0
+	go run "$ROOT/.github/scripts/flake-sweep-topology" "$WORKFLOW_FILE" || topology_rc=$?
+	[ "$topology_rc" -eq 0 ] || failed=1
+	for topology in valid missing-step missing-job wrong-name wrong-job comment-only swallow if-step continue-on-error no-actions; do
+		topology_rc=0
+		go run "$ROOT/.github/scripts/flake-sweep-topology" "$FIXTURES/topology-$topology.yml" >/dev/null 2>&1 || topology_rc=$?
+		if [ "$topology" = valid ] && [ "$topology_rc" -ne 0 ]; then
+			echo "::error::topology fixture $topology was refused" >&2
+			failed=1
+		elif [ "$topology" != valid ] && [ "$topology_rc" -eq 0 ]; then
 			echo "::error::topology fixture $topology was accepted" >&2
 			failed=1
 		fi

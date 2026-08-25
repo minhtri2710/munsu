@@ -6,4 +6,4 @@ jobs:
       actions: read
     steps:
       - name: gate
-        run: .github/scripts/flake-sweep.sh applied
+        run: .github/scripts/flake-sweep.sh applied || true
