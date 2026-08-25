@@ -99,7 +99,10 @@ func TestMergeAndRetireRetiresThroughAuthority(t *testing.T) {
 	}
 
 	// Saga-side cleanup removed the task meta.
-	metaPath := filepath.Join(homeDir, "state", taskID+".meta")
+	metaPath, err := home.MetaFilePath(homeDir, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
 		t.Fatal("meta should be removed after successful retirement")
 	}
@@ -113,7 +116,10 @@ func TestMergeAndRetireCleanupFailurePreservesCanonicalTruth(t *testing.T) {
 	taskID := "test-cleanup-failure"
 	auth := mergedShipFixture(t, homeDir, taskID)
 
-	metaPath := filepath.Join(homeDir, "state", taskID+".meta")
+	metaPath, err := home.MetaFilePath(homeDir, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	before, err := os.ReadFile(metaPath)
 	if err != nil {
 		t.Fatal(err)
@@ -216,7 +222,11 @@ func TestMergeAndRetireCrossHomeRetirement(t *testing.T) {
 	if agg.Phase != taskauthority.PhaseRetired {
 		t.Fatalf("captain-home aggregate phase = %q, want retired", agg.Phase)
 	}
-	if _, err := os.Stat(filepath.Join(capHome, "state", taskID+".meta")); !os.IsNotExist(err) {
+	metaPath, err := home.MetaFilePath(capHome, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
 		t.Fatal("captain-home meta should be removed after retirement")
 	}
 }
