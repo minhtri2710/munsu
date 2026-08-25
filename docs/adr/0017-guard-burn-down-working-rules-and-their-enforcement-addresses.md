@@ -103,18 +103,38 @@ what it did before the #511 fixup — is that mistake with extra steps.
 These four are the only mutation rules in this document that a machine already checks end to end,
 and only for the cases somebody listed.
 
-**2.5 — The uncovered-guards baseline is a shrink-only identity ratchet.** The authoritative
-implementation is `.github/scripts/uncovered-guards.sh check`, with its derived site identity
-owned by `.github/scripts/guardsites`. The identity is exactly `(file, function, ordinal,
-predicate)`; the fifth-column reason and any comments are metadata and are ignored by the
-ratchet comparison. The current identity set must be a subset of the baseline stored at the
-exact target-branch base commit. Removing identities is allowed; adding an identity, including
-same-count replacement, is rejected. Missing or malformed base data fails closed. This ratchet
-is additional to the existing bidirectional coverage checks, which still require every current
-uncovered site to be listed and reject listed sites that are covered or no longer exist.
+**2.5 — The uncovered-guards baseline is an identity ratchet with disclosed growth.** The
+authoritative implementation is `.github/scripts/uncovered-guards.sh check`, with its derived
+site identity owned by `.github/scripts/guardsites`. The identity is exactly `(file, function,
+ordinal, predicate)`; the fifth-column reason and any comments are metadata except for the
+reserved growth acknowledgment described below.
 
-In production, the exact base is selected through `GUARDS_BASE_REF`, which CI supplies as the
-pull request base SHA or, for a push, the predecessor commit. The `GUARDS_BASELINE_BASE` seam
+The complete ratchet dispositions are:
+
+* Equal identity sets pass; reason and comment edits on existing identities pass.
+* Pure shrink passes.
+* Pure growth passes only when every added row's reason begins with
+  `growth(#<issue>): <reason>`. The acknowledgment discloses which issue introduced the new
+  guard class and preserves the row's substantive explanation. The check still lists every
+  added identity, so a green result cannot hide the scope of the growth.
+* Undisclosed growth fails and enumerates every added identity.
+* Any mixed removal and addition fails, including equal-count replacement, even when the added
+  rows carry valid acknowledgments. Growth disclosure is not a way to replace one identity
+  with another; replacement must be split into a separately reviewable shrink and growth.
+* Missing or malformed current/base data fails closed.
+
+This policy is necessary because a genuinely new guard class must be able to land with its
+waivers disclosed. Issue #614 is the pinned example: it derives **+311 refusal sites** and
+adds **+27 baseline identities**, all acknowledged with `growth(#614): ...`; the remaining
+284 sites are covered in the executable `disclosed-growth-614` fixture. Rejecting all growth
+would make the guard-class improvement unable to land through the same required check. The
+acknowledgment is deliberately per identity and machine-validated, rather than relying on a
+PR description alone.
+
+This ratchet is additional to the existing bidirectional coverage checks, which still require
+every current uncovered site to be listed and reject listed sites that are covered or no longer
+exist. In production, the exact base is selected through `GUARDS_BASE_REF`, which CI supplies as
+the pull request base SHA or, for a push, the predecessor commit. The `GUARDS_BASELINE_BASE` seam
 exists only for executable fixtures; it is not a production input. CI fetches that exact ref
 rather than assuming `origin/main`, so stacked changes compare against their immediate parent.
 

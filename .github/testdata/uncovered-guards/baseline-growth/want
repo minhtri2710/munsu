@@ -1,3 +1,5 @@
-::error::.github/testdata/uncovered-guards/baseline-growth/baseline is shrink-only; current identities absent from the base baseline:
+::notice::.github/testdata/uncovered-guards/baseline-growth/baseline adds these identities relative to its exact base:
+  internal/fake/guard.go: Refuse (#1): len(failures) > 0
+::error::.github/testdata/uncovered-guards/baseline-growth/baseline adds identities without a valid growth acknowledgment (growth(#<issue>): <reason>):
   internal/fake/guard.go: Refuse (#1): len(failures) > 0
 exit 1

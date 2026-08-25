@@ -18,8 +18,8 @@
 #
 # The baseline is compared BOTH ways, like .github/deadcode.allow: a guard the
 # tree shows uncovered and the file does not list is red, and a line whose guard
-# is now covered, or has gone, is red too. The second direction is the ratchet --
-# without it the file only grows.
+# is now covered, or has gone, is red too. The exact-base identity ratchet also
+# requires pure growth to carry an explicit disclosure and rejects mixed changes.
 #
 # --- Merging four lanes is a correctness condition, not an optimisation -------
 #
@@ -285,6 +285,8 @@ merge() {
 }
 
 # Every site with a verdict: covered, uncovered, unmeasured, or anomaly.
+# The merged profile is the closed set of lane records; zero-statement records
+# prove presence but never become executable blocks.
 #
 # `anomaly` is the one that must never be waived away: the file IS in the
 # profile, so the lane compiled it, yet no unique valid entry block can be
@@ -342,6 +344,7 @@ classify() {
 			file = $1
 			sub(/:[0-9]+\.[0-9]+-.*/, "", file)
 			split($0, mergedFields, /\t/)
+			recorded[file] = 1
 			if (mergedFields[2] != "0") {
 				compiled[file] = 1
 				blocks[file] = blocks[file] $0 "\n"
@@ -393,7 +396,7 @@ classify() {
 			else if (matches == 1) {
 				split(bestLine, fields, /\t/)
 				print (("x" fields[3]) != "x0" ? "covered" : "uncovered") "\t" id
-			} else if (!(file in compiled)) print "unmeasured\t" id
+			} else if (!(file in recorded)) print "unmeasured\t" id
 			else print "anomaly\t" id
 		}
 		END { if (bad) exit 1 }
@@ -445,42 +448,77 @@ baseline_entries() {
 	{ grep -vE '^[[:space:]]*(#|$)' "$file" || true; } | cut -f1,2,3,4 | sort -u
 }
 
-# The ratchet compares identities, not reasons: comments, blank lines and the
-# fifth-column explanation may change, but every current baseline key must have
-# existed in the target baseline. The base source is either a fixture-provided
-# file or the exact git revision supplied by CI; missing or malformed base data
-# fails closed rather than silently disabling the ratchet.
-baseline_shrink_only() {
+# The ratchet compares identities, not comments or ordinary reason edits. A
+# pure shrink is allowed. A pure growth is allowed only when every added row is
+# explicitly disclosed in its reason as `growth(#<issue>): <reason>`; this lets a
+# genuinely new guard class land without turning the ratchet into a blocker that
+# prevents the change which expands the derived set. A mixed add/remove change,
+# including equal-count replacement, remains forbidden. The base source is either
+# a fixture-provided file or the exact git revision supplied by CI; missing or
+# malformed base data fails closed rather than silently disabling the ratchet.
+baseline_added_rows() {
+	local base_file="$1" current_file="$2"
+	awk -F '\t' -v base_name="$base_file" '
+		/^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+		FILENAME == base_name {
+			seen[$1 "\t" $2 "\t" $3 "\t" $4] = 1
+			next
+		}
+		FILENAME != base_name && seen[$1 "\t" $2 "\t" $3 "\t" $4] == 0 { print }
+	' "$base_file" "$current_file"
+}
+
+baseline_print_keys() {
+	while IFS=$'\t' read -r file func nth predicate; do
+		[ -n "$file" ] || continue
+		printf '  %s: %s (#%s): %s\n' "$file" "$func" "$nth" "$predicate"
+	done
+}
+
+baseline_ratchet() {
 	local base_file="${GUARDS_BASELINE_BASE:-}"
-	local base_ref tmp="" current base added
+	local base_ref tmp="" current base added removed added_rows invalid_added
 	if [ -z "$base_file" ]; then
 		base_ref="${GUARDS_BASE_REF:-}"
-		[ -n "$base_ref" ] || die "GUARDS_BASE_REF is required when GUARDS_BASELINE_BASE is not set; the shrink-only ratchet cannot be evaluated"
+		[ -n "$base_ref" ] || die "GUARDS_BASE_REF is required when GUARDS_BASELINE_BASE is not set; the baseline ratchet cannot be evaluated"
 		tmp="$(mktemp)"
 		if ! git -C "$ROOT" show "$base_ref:$BASELINE_REL" >"$tmp"; then
 			rm -f "$tmp"
-			die "could not read $BASELINE_REL from base revision $base_ref; the shrink-only ratchet cannot be evaluated"
+			die "could not read $BASELINE_REL from base revision $base_ref; the baseline ratchet cannot be evaluated"
 		fi
 		base_file="$tmp"
 	fi
 	if [ ! -f "$base_file" ]; then
 		rm -f "$tmp"
-		die "base baseline ${base_file#"$ROOT"/} is missing; the shrink-only ratchet cannot be evaluated"
+		die "base baseline ${base_file#"$ROOT"/} is missing; the baseline ratchet cannot be evaluated"
 	fi
 	local base_name="${base_file#"$ROOT"/}"
 	if ! baseline_format_errors "$base_file" >&2; then
 		rm -f "$tmp"
-		die "base baseline $base_name is malformed; the shrink-only ratchet cannot be evaluated"
+		die "base baseline $base_name is malformed; the baseline ratchet cannot be evaluated"
 	fi
 	current="$(baseline_entries "$BASELINE")"
 	base="$(baseline_entries "$base_file")"
 	added="$(comm -23 <(printf '%s\n' "$current") <(printf '%s\n' "$base"))"
+	removed="$(comm -13 <(printf '%s\n' "$current") <(printf '%s\n' "$base"))"
+	added_rows="$(baseline_added_rows "$base_file" "$BASELINE")"
 	rm -f "$tmp"
-	if [ -n "$added" ]; then
-		echo "::error::$BASELINE_REL is shrink-only; current identities absent from the base baseline:" >&2
-		printf '%s\n' "$added" | while IFS=$'\t' read -r file func nth predicate; do
-			printf '  %s: %s (#%s): %s\n' "$file" "$func" "$nth" "$predicate" >&2
-		done
+	if [ -z "$added" ]; then
+		return 0
+	fi
+
+	echo "::notice::$BASELINE_REL adds these identities relative to its exact base:" >&2
+	printf '%s\n' "$added" | baseline_print_keys >&2
+	if [ -n "$removed" ]; then
+		echo "::error::$BASELINE_REL mixes identity growth with removals; split the changes before updating the ratchet:" >&2
+		printf '%s\n' "$removed" | baseline_print_keys >&2
+		return 1
+	fi
+
+	invalid_added="$(printf '%s\n' "$added_rows" | awk -F '\t' 'NF < 5 || $5 !~ /^growth\(#[0-9]+\): .+$/ { print }')"
+	if [ -n "$invalid_added" ]; then
+		echo "::error::$BASELINE_REL adds identities without a valid growth acknowledgment (growth(#<issue>): <reason>):" >&2
+		printf '%s\n' "$invalid_added" | cut -f1,2,3,4 | baseline_print_keys >&2
 		return 1
 	fi
 }
@@ -502,7 +540,8 @@ deadcode_allowed() {
 # guessing, because a wrong delta is worse than an absent one. Nothing is judged
 # on it -- the two directions above are what fail the run.
 delta() {
-	local file="$1" base="${GUARDS_BASE_REF:-origin/main}" now="$2" then
+	local file="$1" base="${GUARDS_BASE_REF:-}" now="$2" then
+	[ -n "$base" ] || return 0
 	git -C "$ROOT" rev-parse --verify --quiet "$base" >/dev/null 2>&1 || return 0
 	then="$(git -C "$ROOT" show "$base:$file" 2>/dev/null | grep -cvE '^[[:space:]]*(#|$)' || true)"
 	[ -n "$then" ] || return 0
@@ -611,7 +650,7 @@ check() {
 
 	[ "$failed" -eq 0 ] || exit 1
 
-	baseline_shrink_only || exit 1
+	baseline_ratchet || exit 1
 
 	announce_open_bugs
 
@@ -690,10 +729,11 @@ generate() {
 #   toolchain-block-go126  match a Go 1.26-style block start at the opening brace
 #   toolchain-block-go127  match a Go 1.27-style block start at the first statement
 #   later-nested           accept a covered block that starts at a later nested statement
-#   baseline-growth        reject a current baseline identity absent from its base
-#   baseline-replacement   reject same-count replacement of a base identity
-#   baseline-shrink        allow removal from the current baseline's identity set
+#   baseline-growth        reject undisclosed pure growth
+#   baseline-replacement   reject same-count replacement and mixed changes
+#   baseline-shrink        allow pure removal from the current identity set
 #   baseline-malformed     reject a malformed base baseline
+#   disclosed-growth-614   allow +311 sites and +27 acknowledged rows
 #
 # Each fixture is a directory holding `sites.tsv`, `baseline`, `profiles/` and
 # `want`. Driving `check` from a fixed site list rather than from the real tree

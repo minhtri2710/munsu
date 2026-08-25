@@ -1,1 +1,1 @@
-internal/fake/guard.go	Refuse	1	len(failures) > 0	current B
+internal/fake/guard.go	Refuse	1	len(failures) > 0	growth(#614): current B

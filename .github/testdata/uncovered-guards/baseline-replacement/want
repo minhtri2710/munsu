@@ -1,3 +1,5 @@
-::error::.github/testdata/uncovered-guards/baseline-replacement/baseline is shrink-only; current identities absent from the base baseline:
+::notice::.github/testdata/uncovered-guards/baseline-replacement/baseline adds these identities relative to its exact base:
   internal/fake/guard.go: Refuse (#1): len(failures) > 0
+::error::.github/testdata/uncovered-guards/baseline-replacement/baseline mixes identity growth with removals; split the changes before updating the ratchet:
+  internal/fake/guard.go: Refuse (#1): identity != Worktree
 exit 1
