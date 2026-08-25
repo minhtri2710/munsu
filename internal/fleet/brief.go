@@ -28,10 +28,9 @@ type ScaffoldOptions struct {
 // Scaffold writes a brief.md at $MUNSU_HOME/data/<id>/brief.md and refreshes
 // the directory timestamp so the retention grace period starts at the latest
 // brief write or cleanup-ownership release.
+// Scaffold writes only the local brief artifact. Callers that need handoff
+// recovery must complete it before entering the task-data fence.
 func Scaffold(opts ScaffoldOptions) error {
-	if err := RecoverTaskHandoffs(opts.HomeDir); err != nil {
-		return err
-	}
 	// Ensure data/<id> directory exists
 	dir := filepath.Join(opts.HomeDir, "data", opts.ID)
 	if err := os.MkdirAll(dir, 0755); err != nil {

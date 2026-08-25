@@ -122,8 +122,9 @@ func (c *Canonical) Get(taskID domain.TaskID) (Aggregate, error) {
 // or after it, never in between. It returns the same current-Task-truth
 // contract as Get: a superseded/non-current generation fails closed with
 // ErrNotFound.
-// ReconcileRetirementCleanup runs bounded data-path work and commits the terminal
-// cleanup state under one task-scope lock.
+// ReconcileRetirementCleanup runs bounded local data-path work and commits the
+// terminal cleanup state under one task-scope lock. Handoff scope precedes task
+// scope; callbacks must not acquire another lock scope.
 func (c *Canonical) ReconcileRetirementCleanup(taskID domain.TaskID, generation Generation, terminal CleanupStatus, work func() error, after ...func() error) error {
 	if work == nil {
 		return fmt.Errorf("cleanup callback is nil")
@@ -188,6 +189,8 @@ func (c *Canonical) ReconcileRetirementCleanup(taskID domain.TaskID, generation 
 
 // WriteTaskDataArtifact serializes a bounded task-data write with
 // ReclaimReleasedTaskArtifacts so a brief writer cannot race reclamation.
+// Handoff scope precedes task scope; callbacks may perform only bounded local
+// filesystem work and must not acquire another lock scope.
 func (c *Canonical) WriteTaskDataArtifact(taskID domain.TaskID, write func() error) error {
 	if write == nil {
 		return fmt.Errorf("task-data callback is nil")
@@ -210,6 +213,8 @@ func (c *Canonical) WriteTaskDataArtifact(taskID domain.TaskID, write func() err
 	return write()
 }
 
+// ReconcileCompletedCleanup runs only bounded local projection work while the
+// completed task remains fenced; callbacks must not acquire another lock scope.
 func (c *Canonical) ReconcileCompletedCleanup(taskID domain.TaskID, generation Generation, work func() error) error {
 	if work == nil {
 		return fmt.Errorf("cleanup callback is nil")
@@ -229,6 +234,8 @@ func (c *Canonical) ReconcileCompletedCleanup(taskID domain.TaskID, generation G
 	return work()
 }
 
+// ReclaimReleasedTaskArtifacts holds the task scope through the bounded local
+// removal callback; callbacks must not acquire another lock scope.
 func (c *Canonical) ReclaimReleasedTaskArtifacts(taskID domain.TaskID, reclaim func() error) (bool, error) {
 	if reclaim == nil {
 		return false, fmt.Errorf("reclaim callback is nil")
