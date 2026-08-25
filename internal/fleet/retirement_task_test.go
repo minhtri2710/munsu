@@ -952,7 +952,7 @@ func TestRun_DanglingReportIsArchived(t *testing.T) {
 	}
 }
 
-func TestRun_RenameFailureRemovesArchiveReservation(t *testing.T) {
+func TestRun_ArchiveConflictLeavesReportUntouched(t *testing.T) {
 	tmp := t.TempDir()
 	auth := canonicalMergeTestAuth(t, tmp, "rename-failure")
 	stateDir := filepath.Join(tmp, "state")
@@ -968,7 +968,10 @@ func TestRun_RenameFailureRemovesArchiveReservation(t *testing.T) {
 	}
 	reportPath := filepath.Join(dataDir, "report.md")
 	archivePath := filepath.Join(dataDir, "report-g1.md")
-	if err := os.Mkdir(reportPath, 0755); err != nil {
+	if err := os.WriteFile(reportPath, []byte("current"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(archivePath, []byte("existing"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -977,11 +980,13 @@ func TestRun_RenameFailureRemovesArchiveReservation(t *testing.T) {
 	if !errors.As(err, &pending) {
 		t.Fatalf("teardown error = %T %v, want typed RetirementCleanupPendingError", err, err)
 	}
-	if _, err := os.Stat(reportPath); err != nil {
-		t.Fatalf("report entry should remain after rename refusal: %v", err)
+	body, readErr := os.ReadFile(reportPath)
+	if readErr != nil || string(body) != "current" {
+		t.Fatalf("report changed: %q %v", body, readErr)
 	}
-	if _, err := os.Lstat(archivePath); !os.IsNotExist(err) {
-		t.Fatalf("archive reservation should be removed, lstat err = %v", err)
+	body, readErr = os.ReadFile(archivePath)
+	if readErr != nil || string(body) != "existing" {
+		t.Fatalf("archive changed: %q %v", body, readErr)
 	}
 }
 

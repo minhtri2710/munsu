@@ -117,6 +117,14 @@ func TestReconcileRetirementCleanupPostCommitCallbackIsFenced(t *testing.T) {
 	}
 }
 
+func retireWithoutClaim(t *testing.T, c *Canonical, taskID string) {
+	t.Helper()
+	req := retireRequest(t, c, taskID, preconditionOf(1, 1))
+	if _, err := c.Retire(mustOperation(t, "op-retire-no-claim-"+taskID, req), req); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestReclaimReleasedTaskArtifactsAllowsSupersededTask(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
 	id := "superseded-reclaim"
@@ -146,8 +154,9 @@ func TestReclaimReleasedTaskArtifactsLifecycleStates(t *testing.T) {
 			retireWithClaim(t, c, id, preconditionOf(1, 1), "op-active-retire")
 		}, false},
 		{"nil claim", func(t *testing.T, c *Canonical, id string) {
-			mustCreate(t, c, id)
-		}, false},
+			retireWithoutClaim(t, c, id)
+			rewriteTaskDocForTest(t, c, id, func(agg Aggregate) Aggregate { agg.CleanupClaim = nil; return agg })
+		}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			id := strings.ReplaceAll(tc.name, " ", "-") + "-task"
