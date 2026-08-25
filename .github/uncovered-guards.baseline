@@ -68,9 +68,6 @@ internal/fleet/delivery_amend.go	fetchGitLabProviderSnapshot	1	raw.State == "" |
 internal/fleet/delivery_deliver.go	commitPinnedOutcome	1	journal.OutcomeDigest != "" && journal.OutcomeDigest != digest	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_deliver.go	commitPinnedOutcome	1	journal.OutcomeStatus == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_deliver.go	issueDeliveryAuthorization	1	journal.AuthorizeDigest != "" && journal.AuthorizeDigest != digest	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/delivery_deliver.go	prevalidateDeliveryTask	1	!agg.Current	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/delivery_deliver.go	prevalidateDeliveryTask	1	agg.Phase != taskauthority.PhaseWorking	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/delivery_deliver.go	prevalidateDeliveryTask	1	agg.Worktree == nil || agg.Endpoint == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_deliver.go	prevalidateDeliveryTask	1	cur.Authorization != nil && !isRevokedCurrency(cur)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_deliver.go	prevalidateDeliveryTask	1	deliveryOutcomeTerminal(out.Status)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_deliver.go	prevalidateDeliveryTask	1	hold.Matches(taskauthority.DispatchActionDelivery, agg.TaskID, agg.Definition.Project, agg.Generation.String(), agg.Definition.ParentTaskID)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
