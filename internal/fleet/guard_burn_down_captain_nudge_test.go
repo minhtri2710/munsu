@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -114,5 +115,87 @@ func TestGuardBurnDownSendNudgeRefusesEmptyMarkerCommit(t *testing.T) {
 	err := sendNudge(parentHome, Info{ID: "captain", Home: captainHome}, &testNudgeEndpoint{})
 	if err == nil || !strings.Contains(err.Error(), "marker has empty commit") {
 		t.Fatalf("sendNudge error = %v, want empty-commit refusal", err)
+	}
+}
+
+func newGuardNudgeValidFixture(t *testing.T) (string, string, string, string) {
+	t.Helper()
+	parentHome := t.TempDir()
+	captainHome := t.TempDir()
+	guardGitTestRun(t, captainHome, "init", "-b", "main")
+	guardGitTestRun(t, captainHome, "config", "user.name", "Munsu Test")
+	guardGitTestRun(t, captainHome, "config", "user.email", "munsu@example.invalid")
+	if err := os.WriteFile(filepath.Join(captainHome, "AGENTS.md"), []byte("# captain\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	guardGitTestRun(t, captainHome, "add", "AGENTS.md")
+	guardGitTestRun(t, captainHome, "commit", "-m", "initial instructions")
+	commit := guardGitTestRun(t, captainHome, "rev-parse", "HEAD")
+	digest, err := instructionSurfaceDigest(captainHome, commit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := "captain"
+	writeGuardNudgeMeta(t, parentHome, captainHome, id, nil)
+	message := "instruction surface changed in " + commit[:8]
+	if err := writeNudgeMarker(parentHome, id, captainHome, commit, digest, message); err != nil {
+		t.Fatal(err)
+	}
+	return parentHome, captainHome, id, digest
+}
+
+func TestGuardBurnDownSendNudgeRefusesInstructionDigestMismatch(t *testing.T) {
+	parentHome, captainHome, id, _ := newGuardNudgeValidFixture(t)
+	markerPath := nudgeMarkerPath(parentHome, id)
+	data, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = []byte(strings.Replace(string(data), "instructions=", "instructions=wrong-", 1))
+	if err := os.WriteFile(markerPath, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err = sendNudge(parentHome, Info{ID: id, Home: captainHome}, &testNudgeEndpoint{})
+	if err == nil || !strings.Contains(err.Error(), "marker instruction digest does not match commit") {
+		t.Fatalf("sendNudge error = %v, want instruction-digest refusal", err)
+	}
+}
+
+func TestGuardBurnDownSendNudgeRefusesMessageMismatch(t *testing.T) {
+	parentHome, captainHome, id, _ := newGuardNudgeValidFixture(t)
+	markerPath := nudgeMarkerPath(parentHome, id)
+	data, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = []byte(strings.Replace(string(data), "message=instruction surface changed", "message=wrong message", 1))
+	if err := os.WriteFile(markerPath, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err = sendNudge(parentHome, Info{ID: id, Home: captainHome}, &testNudgeEndpoint{})
+	if err == nil || !strings.Contains(err.Error(), "marker message") || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("sendNudge error = %v, want message-mismatch refusal", err)
+	}
+}
+
+func TestGuardBurnDownSendNudgeRefusesNilEndpoint(t *testing.T) {
+	parentHome, captainHome, id, _ := newGuardNudgeValidFixture(t)
+	err := sendNudge(parentHome, Info{ID: id, Home: captainHome}, nil)
+	if err == nil || err.Error() != "captain nudge endpoint capability is required" {
+		t.Fatalf("sendNudge error = %v, want nil-endpoint refusal", err)
+	}
+}
+
+func TestGuardBurnDownSendNudgeRefusesUnacknowledgedResult(t *testing.T) {
+	parentHome, captainHome, id, _ := newGuardNudgeValidFixture(t)
+	endpoint := &testNudgeEndpoint{result: NudgeResult{Status: "submitted", Acknowledged: false}}
+	err := sendNudge(parentHome, Info{ID: id, Home: captainHome}, endpoint)
+	if err == nil || !strings.Contains(err.Error(), "send not acknowledged (status=submitted)") {
+		t.Fatalf("sendNudge error = %v, want unacknowledged refusal", err)
+	}
+	if endpoint.calls != 1 {
+		t.Fatalf("nudge endpoint calls = %d, want 1", endpoint.calls)
 	}
 }

@@ -41,10 +41,6 @@
 # for both platforms and ignored by whichever one cannot measure them.
 
 internal/cli/report_cmd.go	enforceScoutReportBudget	1	agg.LaunchEvidence.SubmittedAt <= 0	unreachable because validateAggregate rejects SubmittedAt <= 0 on the READ path (canonical.go readTaskDoc), so auth.Get never serves such a record; the only writer, Canonical.RecordLaunch, additionally stamps it from the authority clock. Wrong the moment a read path skips validateAggregate, or validateLaunchEvidence stops checking SubmittedAt. Premise pinned by TestPremiseGetRefusesLaunchEvidenceWithNoSubmissionTimestamp, which writes a task doc carrying SubmittedAt = 0 straight to the store and asserts auth.Get refuses it
-internal/fleet/captain_captain.go	sendNudge	1	!result.Acknowledged	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/captain_captain.go	sendNudge	1	endpoint == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/captain_captain.go	sendNudge	1	marker["instructions"] != expectedDigest	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/captain_captain.go	sendNudge	1	marker["message"] != expectedMessage	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_configreread.go	EnsureConfigRereadRequirement	1	sender == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_mailbox.go	resendNotification	1	!result.Acknowledged	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_mailbox.go	resendNotification	1	sender == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
