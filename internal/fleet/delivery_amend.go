@@ -180,28 +180,30 @@ func fetchGitHubProviderSnapshot(prURL string) (*ProviderSnapshot, error) {
 		State:      strings.ToUpper(raw.State),
 		ObservedAt: time.Now().UTC().Format(time.RFC3339),
 	}
-	if len(raw.StatusCheckRollup) == 0 {
-		return nil, fmt.Errorf("gh pr view returned empty statusCheckRollup")
-	}
-	for _, check := range raw.StatusCheckRollup {
-		status := strings.ToLower(check.Conclusion)
-		if status == "" {
-			status = strings.ToLower(check.State)
-		}
-		mapped := mapCheckStatus(status)
-		snap.Checks = append(snap.Checks, domain.CheckRun{Status: mapped})
-	}
-	if raw.ReviewDecision == "" {
-		return nil, fmt.Errorf("gh pr view returned empty reviewDecision")
-	}
-	snap.Reviews = []domain.Review{{State: normalizeGitHubReviewState(raw.ReviewDecision)}}
-
-	switch strings.ToUpper(raw.State) {
+	switch snap.State {
 	case "MERGED":
 		snap.Merged = true
 		if raw.MergeCommit != nil && raw.MergeCommit.Oid != "" {
 			snap.MergedSHA = raw.MergeCommit.Oid
 		}
+	case "CLOSED":
+	case "OPEN":
+		if len(raw.StatusCheckRollup) == 0 {
+			return nil, fmt.Errorf("gh pr view returned empty statusCheckRollup")
+		}
+		for _, check := range raw.StatusCheckRollup {
+			status := strings.ToLower(check.Conclusion)
+			if status == "" {
+				status = strings.ToLower(check.State)
+			}
+			snap.Checks = append(snap.Checks, domain.CheckRun{Status: mapCheckStatus(status)})
+		}
+		if raw.ReviewDecision == "" {
+			return nil, fmt.Errorf("gh pr view returned empty reviewDecision")
+		}
+		snap.Reviews = []domain.Review{{State: normalizeGitHubReviewState(raw.ReviewDecision)}}
+	default:
+		return nil, fmt.Errorf("gh pr view returned unrecognized state %q", raw.State)
 	}
 
 	return snap, nil
@@ -253,31 +255,34 @@ func fetchGitLabProviderSnapshot(mrURL string) (*ProviderSnapshot, error) {
 		State:      normalizedState,
 		ObservedAt: time.Now().UTC().Format(time.RFC3339),
 	}
-	pipeline, pipelineOK := parseGLPipeline(data)
-	if !pipelineOK || pipeline.SHA != raw.SHA {
-		return nil, fmt.Errorf("GitLab MR did not provide pipeline evidence for the current head; refusing to infer mergeability")
-	}
-	snap.Checks = []domain.CheckRun{{Status: mapCheckStatus(pipeline.Status)}}
-	approved, err := client.ApprovalState(glURL.Host, glURL.Owner, glURL.Project, glURL.IID)
-	if err != nil {
-		return nil, err
-	}
-	if approved {
-		snap.Reviews = []domain.Review{{State: domain.ReviewApproved}}
-	}
-	var mergeRaw struct {
-		Status string `json:"detailed_merge_status"`
-	}
-	if err := json.Unmarshal(data, &mergeRaw); err != nil || mergeRaw.Status != "mergeable" {
-		return nil, fmt.Errorf("GitLab MR is not mergeable")
-	}
-
 	switch normalizedState {
 	case "MERGED":
 		snap.Merged = true
 		if raw.MergeCommitSHA != "" {
 			snap.MergedSHA = raw.MergeCommitSHA
 		}
+	case "CLOSED":
+	case "OPEN":
+		pipeline, pipelineOK := parseGLPipeline(data)
+		if !pipelineOK || pipeline.SHA != raw.SHA {
+			return nil, fmt.Errorf("GitLab MR did not provide pipeline evidence for the current head; refusing to infer mergeability")
+		}
+		snap.Checks = []domain.CheckRun{{Status: mapCheckStatus(pipeline.Status)}}
+		approved, err := client.ApprovalState(glURL.Host, glURL.Owner, glURL.Project, glURL.IID)
+		if err != nil {
+			return nil, err
+		}
+		if approved {
+			snap.Reviews = []domain.Review{{State: domain.ReviewApproved}}
+		}
+		var mergeRaw struct {
+			Status string `json:"detailed_merge_status"`
+		}
+		if err := json.Unmarshal(data, &mergeRaw); err != nil || mergeRaw.Status != "mergeable" {
+			return nil, fmt.Errorf("GitLab MR is not mergeable")
+		}
+	default:
+		return nil, fmt.Errorf("glab mr view returned unrecognized state %q", raw.State)
 	}
 
 	return snap, nil

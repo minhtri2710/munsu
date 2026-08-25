@@ -4,6 +4,7 @@ package fleet
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -134,6 +135,86 @@ func TestNormalizeGitHubReviewState(t *testing.T) {
 		if got := normalizeGitHubReviewState(input); got != want {
 			t.Errorf("normalizeGitHubReviewState(%q) = %q, want %q", input, got, want)
 		}
+	}
+}
+
+func TestGitHubProviderSnapshotTerminalStatesNeedNoMergeabilityEvidence(t *testing.T) {
+	old := DefaultGitHubClient
+	DefaultGitHubClient = func() (GitHubClient, error) {
+		return &terminalGitHubClient{}, nil
+	}
+	t.Cleanup(func() { DefaultGitHubClient = old })
+	for _, tc := range []struct {
+		state    string
+		merged   bool
+		mergeSHA string
+		data     string
+	}{
+		{"MERGED", true, "merge123", `{"state":"MERGED","headRefOid":"head123","headRefName":"feature","baseRefName":"main","mergeCommit":{"oid":"merge123"}}`},
+		{"CLOSED", false, "", `{"state":"CLOSED","headRefOid":"head123","headRefName":"feature","baseRefName":"main"}`},
+	} {
+		t.Run(tc.state, func(t *testing.T) {
+			DefaultGitHubClient = func() (GitHubClient, error) { return terminalGitHubClient{data: tc.data}, nil }
+			snapshot, err := fetchGitHubProviderSnapshot("https://github.com/owner/project/pull/42")
+			if err != nil {
+				t.Fatalf("fetchGitHubProviderSnapshot: %v", err)
+			}
+			if snapshot.State != tc.state || snapshot.Merged != tc.merged || snapshot.HeadSHA != "head123" || snapshot.MergedSHA != tc.mergeSHA {
+				t.Fatalf("snapshot = %+v", snapshot)
+			}
+		})
+	}
+}
+
+type terminalGitHubClient struct{ data string }
+
+func (c terminalGitHubClient) ViewPRJSON(string, string, int, string) ([]byte, error) {
+	return []byte(c.data), nil
+}
+func (terminalGitHubClient) ObservePR(string, string, int) (DeliveryProviderObservation, error) {
+	return DeliveryProviderObservation{}, nil
+}
+func (terminalGitHubClient) CaptureIdentity(string) (*domain.DeliveryIdentity, error) {
+	return nil, nil
+}
+
+func TestGitLabProviderSnapshotTerminalStatesNeedNoMergeabilityEvidence(t *testing.T) {
+	old := defaultGlabRunner
+	defaultGlabRunner = &fakeGlabRunner{runFn: func(args ...string) ([]byte, error) {
+		if len(args) >= 1 && args[0] == "--version" {
+			return []byte("glab version 1.45.0"), nil
+		}
+		if len(args) >= 2 && args[0] == "api" && args[1] == "--help" {
+			return []byte("api access"), nil
+		}
+		if len(args) >= 2 && args[0] == "auth" {
+			return []byte("authenticated"), nil
+		}
+		return []byte(`{"state":"merged","sha":"head123","source_branch":"feature","target_branch":"main","merge_commit_sha":"merge123"}`), nil
+	}}
+	t.Cleanup(func() { defaultGlabRunner = old })
+	for _, state := range []string{"merged", "closed"} {
+		t.Run(state, func(t *testing.T) {
+			defaultGlabRunner = &fakeGlabRunner{runFn: func(args ...string) ([]byte, error) {
+				if len(args) >= 1 && args[0] == "--version" {
+					return []byte("glab version 1.45.0"), nil
+				}
+				if len(args) >= 2 && args[0] == "api" && args[1] == "--help" {
+					return []byte("api access"), nil
+				}
+				if len(args) >= 2 && args[0] == "auth" {
+					return []byte("authenticated"), nil
+				}
+				return []byte(fmt.Sprintf(`{"state":"%s","sha":"head123","source_branch":"feature","target_branch":"main","merge_commit_sha":"merge123"}`, state)), nil
+			}}
+			snapshot, err := fetchGitLabProviderSnapshot("https://gitlab.com/owner/project/-/merge_requests/42")
+			if err != nil {
+				t.Fatalf("fetchGitLabProviderSnapshot: %v", err)
+			}
+			if snapshot.State != strings.ToUpper(state) || snapshot.Merged != (state == "merged") {
+				t.Fatalf("snapshot = %+v", snapshot)
+			}
+		})
 	}
 }
 
