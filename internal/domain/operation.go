@@ -77,16 +77,3 @@ func IsSHA256(s string) bool {
 	_, err := hex.DecodeString(s)
 	return err == nil
 }
-
-// Replay reports whether incoming is the same intent as existing: same
-// Operation ID and same digest.
-func Replay(existing, incoming Operation) bool {
-	return existing.ID == incoming.ID && existing.Digest == incoming.Digest
-}
-
-// ReusedWithDifferentIntent reports whether incoming reuses an existing
-// Operation ID with a different digest, which is a conflicting intent that
-// must fail closed rather than be replayed against newer state.
-func ReusedWithDifferentIntent(existing, incoming Operation) bool {
-	return existing.ID == incoming.ID && existing.Digest != incoming.Digest
-}

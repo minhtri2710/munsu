@@ -58,12 +58,5 @@ internal/fleet/process_args.go	writerKindForArgs	GOOS-union artifact: live on li
 # looked at this yet". It is not a justification and must not be reused on a
 # new entry -- a new entry gets a real reason or it does not go in.
 internal/config/project_overlay.go	StoreProjectOverlay	triaged as test-only, kept in production code on purpose. Production reads project overlays (fleet ResolveProjectSnapshot -> config.LoadProjectOverlay) but has never written one: the document is operator-authored and a missing document is a valid empty overlay by design. Its only writers are tests in internal/config AND internal/fleet, so it cannot move into a config _test.go the way SetDeliveryCrashHookForTest did.
-internal/domain/identity.go	NewResourceID	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/domain/identity.go	ParseCanonical	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/domain/lifecycle.go	NextGeneration	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/domain/lifecycle.go	RetryAfter	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/domain/lifecycle.go	ValidateUplinkTransition	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/domain/operation.go	Replay	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/domain/operation.go	ReusedWithDifferentIntent	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/task_handoff_transaction.go	SetHandoffCrashHookForTest	burn-down(BEO-63): triaged as test-only, kept in production code on purpose. Its only consumer is internal/cli/captain_handoff_test.go, a different package, so the hook cannot move into a fleet _test.go the way SetDeliveryCrashHookForTest did. The binary never reaches it; the crash-boundary variable it sets stays package-private.
 internal/home/wake_lease.go	ReclaimExpiredLeases	triaged as a test-only reclaim seam used across home and orchestrator tests; ClaimWakes would immediately claim re-enqueued wakes and hide re-enqueue counts, resolved-event suppression, and lease-file removal
