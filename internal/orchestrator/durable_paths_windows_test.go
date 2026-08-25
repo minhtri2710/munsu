@@ -24,6 +24,56 @@ func TestPrepareForcedRetirementEvidenceEncodedID(t *testing.T) {
 	if err := WriteReceipt(tmp, id, termKey, "done", "milestone"); err != nil {
 		t.Fatal(err)
 	}
+	if err := InitTaskObligations(tmp, id, termKey); err != nil {
+		t.Fatal(err)
+	}
+	obligationsPath, err := home.DurableFilePath(filepath.Join(tmp, "state", ".obligations"), id, ".obligations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(obligationsPath); err != nil {
+		t.Fatalf("obligations path %q missing for encoded id: %v", obligationsPath, err)
+	}
+	receiptPath, err := ReceiptPath(tmp, id, termKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ackPath, err := AckPath(tmp, id, termKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantReceipt := stem + "." + termKey + ".receipt"
+	wantAck := stem + "." + termKey + ".ack"
+	if filepath.Base(receiptPath) != wantReceipt || filepath.Base(ackPath) != wantAck {
+		t.Fatalf("receipt/ack paths = %q, %q; want basenames %q, %q", receiptPath, ackPath, wantReceipt, wantAck)
+	}
+	pending, err := ListPendingReceipts(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 1 || pending[0].TaskID != id || pending[0].TermKey != termKey {
+		t.Fatalf("pending receipts before ack = %+v, want logical task %q and key %q", pending, id, termKey)
+	}
+	if err := WriteAck(tmp, id, termKey); err != nil {
+		t.Fatal(err)
+	}
+	pending, err = ListPendingReceipts(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 0 {
+		t.Fatalf("pending receipts after ack = %+v, want none", pending)
+	}
+	if err := MarkActivationSeen(tmp, id, termKey); err != nil {
+		t.Fatal(err)
+	}
+	markerPath, err := ActivationSeenPath(tmp, id, termKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(markerPath) != "captain%3Afailed.terminal-1.activation-seen" {
+		t.Fatalf("activation marker path = %q", markerPath)
+	}
 	entries, err := PrepareForcedRetirementEvidence(tmp, id)
 	if err != nil {
 		t.Fatalf("PrepareForcedRetirementEvidence: %v", err)
@@ -43,10 +93,6 @@ func TestPrepareForcedRetirementEvidenceEncodedID(t *testing.T) {
 	}
 	if string(data) != "done: milestone\n" {
 		t.Fatalf("evidence backup %q = %q, want %q", statusBackup, data, "done: milestone\n")
-	}
-	receiptPath, err := ReceiptPath(tmp, id, termKey)
-	if err != nil {
-		t.Fatal(err)
 	}
 	receiptBackup := filepath.Join(backupDir, filepath.Base(receiptPath))
 	if _, err := os.Stat(receiptBackup); err != nil {

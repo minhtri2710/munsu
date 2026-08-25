@@ -113,7 +113,7 @@ func Obligations(role Role) []Obligation {
 
 // --- Per-task obligation persistence ---
 // Per-task obligations bind ReportRelay to the exact taskID + terminalKey.
-// File: state/.obligations/<taskID>.obligations
+// File: state/.obligations/<durable-task-key>.obligations
 
 const obligationsDir = "state/.obligations"
 
@@ -238,8 +238,8 @@ func ClearTaskCompleted(homeDir, taskID string) error {
 
 // --- Durable relay receipts ---
 // Receipt: Soldier->Captain durable proof that a material terminal report
-// was sent. Stored in captain-owned state/.terminal-receipts/<taskID>.<key>.receipt
-// Ack: Captain marks relay to General by writing <taskID>.<key>.ack
+// was sent. Stored in captain-owned state/.terminal-receipts/<durable-task-key>.<key>.receipt
+// Ack: Captain marks relay to General by writing <durable-task-key>.<key>.ack
 
 const receiptsDir = "state/.terminal-receipts"
 
