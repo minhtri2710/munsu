@@ -479,7 +479,7 @@ func tryBindEndpointExpectClaimConflict(t *testing.T, auth *taskauthority.Canoni
 // asserting it reconciled to aborted.
 func abortCleanupFor(t *testing.T, auth *taskauthority.Canonical, homeDir, taskID string, gen taskauthority.Generation) {
 	t.Helper()
-	if err := AbortRetirementCleanup(auth, homeDir, mustTaskID(t, taskID), gen); err != nil {
+	if err := AbortRetirementCleanup(auth, homeDir, fakeTeardown{}, mustTaskID(t, taskID), gen); err != nil {
 		t.Fatalf("AbortRetirementCleanup: %v", err)
 	}
 	agg, err := auth.Get(mustTaskID(t, taskID))

@@ -155,8 +155,15 @@ func taskDataDirOwnership(homeDir string) bootstrap.TaskOwnsDataDir {
 		if agg.Phase != taskauthority.PhaseRetired {
 			return true
 		}
-		if claim := agg.CleanupClaim; claim != nil && claim.Status != taskauthority.CleanupCompleted {
-			return true
+		if claim := agg.CleanupClaim; claim != nil {
+			switch claim.Status {
+			case taskauthority.CleanupActive:
+				return true
+			case taskauthority.CleanupCompleted, taskauthority.CleanupAborted:
+				return false
+			default:
+				return true
+			}
 		}
 		return false
 	}

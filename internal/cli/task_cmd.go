@@ -478,7 +478,7 @@ func newTaskCleanupAbortCmd() *cobra.Command {
 			if agg.CleanupClaim.Status == taskauthority.CleanupCompleted {
 				return fmt.Errorf("task %s cleanup claim for generation %s is already completed; nothing to abort", args[0], agg.CleanupClaim.Generation)
 			}
-			if err := fleet.AbortRetirementCleanup(auth, ctx.Home, tid, agg.CleanupClaim.Generation); err != nil {
+			if err := fleet.AbortRetirementCleanup(auth, ctx.Home, newSessionBoundTeardown(), tid, agg.CleanupClaim.Generation); err != nil {
 				return err
 			}
 			return nil

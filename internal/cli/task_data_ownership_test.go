@@ -100,7 +100,7 @@ func TestTaskDataDirOwnershipKeepsATaskThatHasNotRetired(t *testing.T) {
 	}
 }
 
-func TestTaskDataDirOwnershipReleasesOnlyAfterCleanupReconciles(t *testing.T) {
+func TestTaskDataDirOwnershipReleasesAfterTerminalCleanup(t *testing.T) {
 	dir := t.TempDir()
 	auth := ownershipHome(t, dir)
 	tid := ownershipTaskID(t, "retired-task")
@@ -151,13 +151,58 @@ func TestTaskDataDirOwnershipReleasesOnlyAfterCleanupReconciles(t *testing.T) {
 		Precondition:     domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
 		ClaimOperationID: "op-retire-retired-task",
 		ClaimGeneration:  agg.Generation,
-		Reason:           "test",
+		Reason:           "test complete",
 	}
 	if _, err := auth.CompleteCleanup(ownershipOp(t, "op-complete-retired-task", complete), complete); err != nil {
 		t.Fatal(err)
 	}
-
 	if taskDataDirOwnership(dir)("retired-task") {
-		t.Fatal("a reconciled retirement has released its data directory")
+		t.Fatal("a completed retirement has released its data directory")
+	}
+
+	abortedID := ownershipTaskID(t, "aborted-task")
+	createAborted := taskauthority.CanonicalCreateRequest{HomeID: auth.HomeID(), TaskID: abortedID, Owner: "general", Description: "Aborted", Kind: "ship", Reason: "test"}
+	if _, err := auth.Create(ownershipOp(t, "op-create-aborted-task", createAborted), createAborted); err != nil {
+		t.Fatal(err)
+	}
+	abortedAgg, err := auth.Get(abortedID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retireAborted := taskauthority.CanonicalRetireRequest{HomeID: auth.HomeID(), TaskID: abortedID, Precondition: domain.Of(uint64(abortedAgg.Generation), uint64(abortedAgg.Revision)), Reason: "test"}
+	if _, err := auth.Retire(ownershipOp(t, "op-retire-aborted-task", retireAborted), retireAborted); err != nil {
+		t.Fatal(err)
+	}
+	abortedAgg, err = auth.Get(abortedID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beginAborted := taskauthority.CanonicalBeginCleanupRequest{HomeID: auth.HomeID(), TaskID: abortedID, Precondition: domain.Of(uint64(abortedAgg.Generation), uint64(abortedAgg.Revision)), ClaimOperationID: "op-retire-aborted-task", ClaimGeneration: abortedAgg.Generation, Reason: "test"}
+	if _, err := auth.BeginCleanup(ownershipOp(t, "op-begin-aborted-task", beginAborted), beginAborted); err != nil {
+		t.Fatal(err)
+	}
+	abortedAgg, err = auth.Get(abortedID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	abort := taskauthority.CanonicalAbortCleanupRequest{
+		HomeID: auth.HomeID(), TaskID: abortedID,
+		Precondition:     domain.Of(uint64(abortedAgg.Generation), uint64(abortedAgg.Revision)),
+		ClaimOperationID: "op-retire-aborted-task",
+		ClaimGeneration:  abortedAgg.Generation,
+		Reason:           "test abort",
+	}
+	if _, err := auth.AbortCleanup(ownershipOp(t, "op-abort-aborted-task", abort), abort); err != nil {
+		t.Fatal(err)
+	}
+	if taskDataDirOwnership(dir)("aborted-task") {
+		t.Fatal("an aborted retirement has released its data directory")
+	}
+
+	if abortedAgg, err = auth.Get(abortedID); err != nil {
+		t.Fatal(err)
+	}
+	if abortedAgg.CleanupClaim == nil || abortedAgg.CleanupClaim.Status != taskauthority.CleanupAborted {
+		t.Fatalf("claim not aborted: %+v", abortedAgg.CleanupClaim)
 	}
 }
