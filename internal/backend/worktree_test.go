@@ -110,12 +110,8 @@ func TestProviderSelection(t *testing.T) {
 	}
 
 	// With a mock treehouse on PATH, selectProvider should return treehouseProvider.
-	mockDir := t.TempDir()
-	mockScript := filepath.Join(mockDir, "treehouse")
-	if err := os.WriteFile(mockScript, []byte("#!/bin/sh\necho ok\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	os.Setenv("PATH", mockDir+":"+oldPath)
+	os.Setenv("PATH", oldPath)
+	fakeTreehouseOnPath(t, fakeCmd{stdout: "ok"})
 	p2, err2 := selectProvider("")
 	if err2 != nil {
 		t.Fatalf("selectProvider with treehouse on PATH should succeed, got: %v", err2)
@@ -125,16 +121,8 @@ func TestProviderSelection(t *testing.T) {
 	}
 }
 func TestGet_EmptyPath_ReturnsError(t *testing.T) {
-	// Create a mock treehouse that returns empty stdout
-	mockDir := t.TempDir()
-	mockScript := filepath.Join(mockDir, "treehouse")
-	if err := os.WriteFile(mockScript, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	oldPath := os.Getenv("PATH")
-	defer os.Setenv("PATH", oldPath)
-	os.Setenv("PATH", mockDir+":"+oldPath)
+	// A treehouse that returns empty stdout.
+	fakeTreehouseOnPath(t, fakeCmd{})
 
 	repoDir := t.TempDir()
 
@@ -149,16 +137,8 @@ func TestGet_EmptyPath_ReturnsError(t *testing.T) {
 }
 
 func TestGet_WithLease_ReturnsPath(t *testing.T) {
-	// Create a mock treehouse that returns a path
-	mockDir := t.TempDir()
-	mockScript := filepath.Join(mockDir, "treehouse")
-	if err := os.WriteFile(mockScript, []byte("#!/bin/sh\necho /tmp/wt-12345\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	oldPath := os.Getenv("PATH")
-	defer os.Setenv("PATH", oldPath)
-	os.Setenv("PATH", mockDir+":"+oldPath)
+	// A treehouse that returns a path.
+	fakeTreehouseOnPath(t, fakeCmd{stdout: "/tmp/wt-12345"})
 
 	repoDir := t.TempDir()
 
@@ -175,18 +155,10 @@ func TestGet_WithLease_ReturnsPath(t *testing.T) {
 }
 
 func TestReturn_AbortedExit0_ReturnsError(t *testing.T) {
-	mockDir := t.TempDir()
-	mockScript := filepath.Join(mockDir, "treehouse")
 	// treehouse return without --force prompts interactively when the worktree
 	// has uncommitted changes. With stdin closed / no tty, it prints "Aborted"
 	// and exits 0. Our Return must detect this as an error.
-	mockContent := []byte("#!/bin/sh\necho 'Aborted'\nexit 0\n")
-	if err := os.WriteFile(mockScript, mockContent, 0755); err != nil {
-		t.Fatal(err)
-	}
-	oldPath := os.Getenv("PATH")
-	defer os.Setenv("PATH", oldPath)
-	os.Setenv("PATH", mockDir+":"+oldPath)
+	fakeTreehouseOnPath(t, fakeCmd{stdout: "Aborted"})
 
 	err := ReturnWorktree(t.TempDir(), "/some/wt-path")
 	if err == nil {
@@ -198,16 +170,8 @@ func TestReturn_AbortedExit0_ReturnsError(t *testing.T) {
 }
 
 func TestReturn_Clean_ReturnsNil(t *testing.T) {
-	mockDir := t.TempDir()
-	mockScript := filepath.Join(mockDir, "treehouse")
 	// Clean success: "worktree returned to pool" and exit 0.
-	mockContent := []byte("#!/bin/sh\necho 'worktree returned to pool'\nexit 0\n")
-	if err := os.WriteFile(mockScript, mockContent, 0755); err != nil {
-		t.Fatal(err)
-	}
-	oldPath := os.Getenv("PATH")
-	defer os.Setenv("PATH", oldPath)
-	os.Setenv("PATH", mockDir+":"+oldPath)
+	fakeTreehouseOnPath(t, fakeCmd{stdout: "worktree returned to pool"})
 
 	err := ReturnWorktree(t.TempDir(), "/some/wt-path")
 	if err != nil {
@@ -216,16 +180,8 @@ func TestReturn_Clean_ReturnsNil(t *testing.T) {
 }
 
 func TestReturn_ErrorExit_ReturnsError(t *testing.T) {
-	mockDir := t.TempDir()
-	mockScript := filepath.Join(mockDir, "treehouse")
 	// treehouse exit non-zero (e.g. path not found)
-	mockContent := []byte("#!/bin/sh\necho 'path not found'\nexit 1\n")
-	if err := os.WriteFile(mockScript, mockContent, 0755); err != nil {
-		t.Fatal(err)
-	}
-	oldPath := os.Getenv("PATH")
-	defer os.Setenv("PATH", oldPath)
-	os.Setenv("PATH", mockDir+":"+oldPath)
+	fakeTreehouseOnPath(t, fakeCmd{stdout: "path not found", exitCode: 1})
 
 	err := ReturnWorktree(t.TempDir(), "/some/wt-path")
 	if err == nil {
@@ -367,17 +323,8 @@ func TestGet_RelativeRepoPath_PassesAbsolute(t *testing.T) {
 	// Regression: treehouseProvider.Get must pass an ABSOLUTE repo path to
 	// `treehouse get` and use it as cmd.Dir. A relative repoPath previously
 	// produced a cryptic "not a directory" error.
-	mockDir := t.TempDir()
-	argsFile := filepath.Join(mockDir, "args.txt")
-	mockScript := filepath.Join(mockDir, "treehouse")
-	mockBody := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsFile + "\necho /tmp/wt-rel\n"
-	if err := os.WriteFile(mockScript, []byte(mockBody), 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	oldPath := os.Getenv("PATH")
-	defer os.Setenv("PATH", oldPath)
-	os.Setenv("PATH", mockDir+":"+oldPath)
+	argsFile := filepath.Join(t.TempDir(), "args.txt")
+	fakeTreehouseOnPath(t, fakeCmd{stdout: "/tmp/wt-rel", argsFile: argsFile})
 
 	// Build a real repo dir and reference it by a RELATIVE path from its parent.
 	repoDir := t.TempDir()
