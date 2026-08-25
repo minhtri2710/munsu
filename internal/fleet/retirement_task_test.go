@@ -1154,6 +1154,51 @@ func TestRun_RetryAfterJournalFailureKeepsMeta(t *testing.T) {
 	}
 }
 
+func TestRun_ReportReappearsBeforeCleanupCommit(t *testing.T) {
+	tmp := t.TempDir()
+	taskID := "report-reappears"
+	auth := canonicalMergeTestAuth(t, tmp, taskID)
+	stateDir := filepath.Join(tmp, "state")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, taskID+".meta"), []byte("kind=scout\\nbackend=tmux\\nwindow=@1\\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	dataDir := filepath.Join(tmp, "data", taskID)
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "report.md"), []byte("original"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	oldHook := afterReportArchive
+	afterReportArchive = func(home, id string, _ taskauthority.Generation) error {
+		return os.WriteFile(filepath.Join(home, "data", id, "report.md"), []byte("late"), 0644)
+	}
+	t.Cleanup(func() { afterReportArchive = oldHook })
+	_, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, &recordingTeardown{alive: true}, fakeRetirementJournals{}, auth)
+	var pending *RetirementCleanupPendingError
+	if !errors.As(err, &pending) {
+		t.Fatalf("error = %T %v, want pending cleanup", err, err)
+	}
+	body, readErr := os.ReadFile(filepath.Join(dataDir, "report-g1.md"))
+	if readErr != nil || string(body) != "original" {
+		t.Fatalf("archived report = %q, %v", body, readErr)
+	}
+	body, readErr = os.ReadFile(filepath.Join(dataDir, "report.md"))
+	if readErr != nil || string(body) != "late" {
+		t.Fatalf("recreated report = %q, %v", body, readErr)
+	}
+	claim, getErr := auth.Get(mustTaskID(t, taskID))
+	if getErr != nil {
+		t.Fatal(getErr)
+	}
+	if claim.CleanupClaim == nil || claim.CleanupClaim.Status != taskauthority.CleanupActive {
+		t.Fatalf("claim = %+v, want active", claim.CleanupClaim)
+	}
+}
+
 func TestRun_RetryAfterArchiveFailureKeepsMeta(t *testing.T) {
 	tmp := t.TempDir()
 	taskID := "retry-meta"
