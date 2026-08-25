@@ -34,13 +34,6 @@ var preflightBinaryNames = map[string]string{
 	Agy:      "agy",
 }
 
-// PreflightBinaryName returns the CLI binary name used for PATH checks of the
-// given harness and whether the harness has a known binary.
-func PreflightBinaryName(harnessName string) (string, bool) {
-	binary, ok := preflightBinaryNames[harnessName]
-	return binary, ok
-}
-
 // preflightAuthEnv maps harness names to environment variables that hold
 // their API authentication credentials.
 var preflightAuthEnv = map[string][]string{

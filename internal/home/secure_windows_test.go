@@ -131,12 +131,4 @@ func TestAtomicWriterPathsOwnerOnlyWindows(t *testing.T) {
 	if err := verifyProtection(atomicPath, false); err != nil {
 		t.Fatalf("canonicalAtomicWrite result not owner-only: %v", err)
 	}
-
-	activationPath := filepath.Join(dir, "activation.txt")
-	if err := publishExclusive(activationPath, []byte("payload")); err != nil {
-		t.Fatalf("publishExclusive: %v", err)
-	}
-	if err := verifyProtection(activationPath, false); err != nil {
-		t.Fatalf("publishExclusive result not owner-only: %v", err)
-	}
 }

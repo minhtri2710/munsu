@@ -247,15 +247,6 @@ func (c *Canonical) AbortCleanup(op domain.Operation, req CanonicalAbortCleanupR
 	})
 }
 
-// cleanupStatusLabel renders the claim status for diagnostics (nil claim
-// included).
-func cleanupStatusLabel(claim *CleanupClaim) string {
-	if claim == nil {
-		return "absent"
-	}
-	return string(claim.Status)
-}
-
 // validateClaimIdentity checks the continuation gate shape: a safe owning
 // retirement Operation ID and a valid cleaned generation.
 func validateClaimIdentity(operationID string, generation Generation) error {

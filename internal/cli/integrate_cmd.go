@@ -292,22 +292,6 @@ type integrateResultData struct {
 	Drifted     bool   `json:"drifted,omitempty"`
 }
 
-func renderIntegrateResult(data integrateResultData) string {
-	var b strings.Builder
-	b.WriteString(fmt.Sprintf("harness:    %s\n", data.Harness))
-	b.WriteString(fmt.Sprintf("state:      %s\n", data.State))
-	if data.Message != "" {
-		b.WriteString(fmt.Sprintf("message:    %s\n", data.Message))
-	}
-	if data.Version != "" {
-		b.WriteString(fmt.Sprintf("version:    %s\n", data.Version))
-	}
-	if data.InstalledAt != "" {
-		b.WriteString(fmt.Sprintf("installed:  %s\n", data.InstalledAt))
-	}
-	return strings.TrimSpace(b.String())
-}
-
 // exitWithCode is overridable for testing. Defaults to os.Exit.
 var exitWithCode = func(code int) {
 	os.Exit(code)

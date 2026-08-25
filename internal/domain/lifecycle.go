@@ -5,14 +5,6 @@ import (
 	"time"
 )
 
-type Attention string
-
-const (
-	AttentionNone          Attention = "none"
-	AttentionNeedsOperator Attention = "needs-operator"
-	AttentionQuarantined   Attention = "quarantined"
-)
-
 type UplinkPhase string
 
 const (

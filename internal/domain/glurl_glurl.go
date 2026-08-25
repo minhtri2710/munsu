@@ -132,11 +132,6 @@ func ParseMRURL(raw string) (GLURL, error) {
 	}, nil
 }
 
-// FormatMRRef returns the MR reference string like "owner/project!123".
-func (g GLURL) FormatMRRef() string {
-	return fmt.Sprintf("%s/%s!%d", g.Owner, g.Project, g.IID)
-}
-
 // FullURL reconstructs the full MR URL.
 func (g GLURL) FullURL() string {
 	return fmt.Sprintf("https://%s/%s/%s/-/merge_requests/%d", g.Host, g.Owner, g.Project, g.IID)

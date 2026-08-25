@@ -225,22 +225,6 @@ func TestParseMRURL_PercentEncoded(t *testing.T) {
 	}
 }
 
-func TestParseMRURL_FormatMRRef(t *testing.T) {
-	gl := GLURL{Host: "gitlab.com", Owner: "owner", Project: "project", IID: 42}
-	ref := gl.FormatMRRef()
-	if ref != "owner/project!42" {
-		t.Errorf("FormatMRRef: got %q, want %q", ref, "owner/project!42")
-	}
-}
-
-func TestFormatMRRef_NestedGroup(t *testing.T) {
-	gl := GLURL{Host: "gitlab.com", Owner: "group/subgroup", Project: "my-project", IID: 7}
-	ref := gl.FormatMRRef()
-	if ref != "group/subgroup/my-project!7" {
-		t.Errorf("FormatMRRef: got %q, want %q", ref, "group/subgroup/my-project!7")
-	}
-}
-
 func TestFullURL(t *testing.T) {
 	gl := GLURL{Host: "gitlab.com", Owner: "owner", Project: "project", IID: 42}
 	url := gl.FullURL()

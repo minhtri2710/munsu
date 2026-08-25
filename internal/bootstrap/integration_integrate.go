@@ -164,22 +164,6 @@ func ProjectExtensionsDir(cwd string) string {
 // exact first line are treated as unowned (conflict on overwrite).
 const MunsuFirstLine = "// munsu-integrate v1 -- do not edit this section"
 
-// AssertSupportedHarness checks that name is a known harness with supported
-// integration capabilities.
-func AssertSupportedHarness(name string) error {
-	if name == "" {
-		return fmt.Errorf("no harness specified and automatic detection failed")
-	}
-	if !harness.IsKnownHarness(name) {
-		return fmt.Errorf("unknown harness %q: must be one of %v", name, harness.KnownHarnesses)
-	}
-	caps := EnabledCapabilities(name)
-	if len(caps) == 0 {
-		return fmt.Errorf("harness %q is recognised but has no integration capabilities yet", name)
-	}
-	return nil
-}
-
 // homePathForScope resolves the filesystem location for munsu home artifacts
 // based on scope and harness. Returns per-harness per-scope path.
 // For project scope, includes a deterministic SHA-256 slug of the cwd/canonical path.
@@ -208,12 +192,6 @@ func (defaultMunsuResolver) Resolve() (string, error) {
 }
 
 var munsuResolver MunsuPathResolver = defaultMunsuResolver{}
-
-// SetMunsuPathResolver sets a custom resolver (for testing).
-func SetMunsuPathResolver(r MunsuPathResolver) { munsuResolver = r }
-
-// ResetMunsuPathResolver restores the default resolver.
-func ResetMunsuPathResolver() { munsuResolver = defaultMunsuResolver{} }
 
 // resolveMunsuPath finds the munsu binary using exec.LookPath("munsu") first
 // with EvalSymlinks, falling back to os.Executable only when the basename
@@ -375,30 +353,11 @@ const DefaultCapabilityProbeTimeout = 30 * time.Second
 // capabilityProbeTimeout is injectable for tests. Default is 30s.
 var capabilityProbeTimeout = DefaultCapabilityProbeTimeout
 
-// SetProbeTimeout sets the capability probe timeout for testing.
-func SetProbeTimeout(d time.Duration) time.Duration {
-	prev := capabilityProbeTimeout
-	capabilityProbeTimeout = d
-	return prev
-}
-
 // runCapabilityCommand runs cmd with args in dir with a timeout. It starts the
 // child in its own process group (Setpgid) and kills the process tree (SIGKILL
 // to the negated PID) when the timeout expires before waiting. Returns combined
 // stdout+stderr. Fails closed on timeout or any execution error.
 var runCapabilityCommand = runCapabilityCommandDefault
-
-// SetCapabilityCommandRunner overrides the capability command runner (for tests).
-func SetCapabilityCommandRunner(fn func(name string, args []string, dir string, timeout time.Duration) (string, error)) func(name string, args []string, dir string, timeout time.Duration) (string, error) {
-	prev := runCapabilityCommand
-	runCapabilityCommand = fn
-	return prev
-}
-
-// ResetCapabilityCommandRunner restores the default runner.
-func ResetCapabilityCommandRunner() {
-	runCapabilityCommand = runCapabilityCommandDefault
-}
 
 func runCapabilityCommandDefault(name string, args []string, dir string, timeout time.Duration) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)

@@ -15,6 +15,10 @@ func (s *stubQuotaProvider) Run() (string, error) {
 	return s.output, s.err
 }
 
+func newQuotaSelectorWithProvider(provider QuotaAxiProvider) quotaSelector {
+	return &quotaBalancedSelector{provider: provider}
+}
+
 // TestQuotaSelector_UnavailableQuota verifies that when quota-axi is not
 // on PATH (returns an error), the selector falls back to the first candidate.
 func TestQuotaSelector_UnavailableQuota(t *testing.T) {
