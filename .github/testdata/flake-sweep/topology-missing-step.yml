@@ -1,0 +1,5 @@
+jobs:
+  invariants:
+    name: Repo invariants
+    permissions: {contents: read, actions: read}
+    steps: [{run: echo ok}]

@@ -1,0 +1,10 @@
+jobs:
+  invariants:
+    name: Repo invariants
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - continue-on-error: true
+        name: gate
+        run: .github/scripts/flake-sweep.sh applied

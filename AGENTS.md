@@ -55,15 +55,12 @@ or malformed spans; the implementation comment at
 fixtures (`citations.sh selftest`), and waiver rows follow ADR-0017 §4 as
 described in `.github/citations.allow`.
 
-That job also enforces `.github/flake-ledger.md`: a test CI caught being flaky
-on `main` has a row there with a deadline, and an `open` row past its deadline
-turns `invariants` red on every PR until someone fixes the test. Rows are
-derived by `.github/scripts/flake-sweep.sh` from per-attempt Actions data (a
-rerun overwrites a run's conclusion, so run-level history is not evidence) and
-are applied by hand from the diff the `Flake ledger` workflow prints on its run
-summary; the deadline half (`.github/scripts/flake-ledger.sh`) reads nothing but
-the committed file. Never close a row because the test has
-been green for a while — refusing that inference is why the file exists.
+That job also enforces the flake ledger: a test CI caught being flaky on
+`main` has a row there with a deadline, and an `open` row past its deadline
+turns `invariants` red on every PR until someone fixes the test. The ledger
+workflow and pull-request re-derivation rules are documented authoritatively in
+`.github/flake-ledger.md`; never close a row because the test has been green for
+a while.
 
 Delivery mode: no-mistakes (push through the gate, never to `origin` directly).
 
