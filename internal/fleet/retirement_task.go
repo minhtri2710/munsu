@@ -220,10 +220,11 @@ func abortRetirementCleanup(authority *taskauthority.Canonical, homeDir string, 
 			return fmt.Errorf("endpoint for %s generation %s is not authoritatively absent; refusing cleanup abort", taskID, claimGen)
 		}
 	}
-	_, dataDirExists, err := archiveRetiredReport(homeDir, taskID.Value(), claimGen)
-	if err != nil {
-		return fmt.Errorf("archiving report before aborting cleanup for %s generation %s: %w", taskID, claimGen, err)
-	} else if dataDirExists {
+	archive := func() error {
+		_, dataDirExists, err := archiveRetiredReport(homeDir, taskID.Value(), claimGen)
+		if err != nil || !dataDirExists {
+			return err
+		}
 		if afterArchive != nil {
 			if err := afterArchive(); err != nil {
 				return err
@@ -238,6 +239,10 @@ func abortRetirementCleanup(authority *taskauthority.Canonical, homeDir string, 
 		if err := os.Chtimes(filepath.Join(homeDir, "data", taskID.Value()), now, now); err != nil {
 			return fmt.Errorf("refreshing data directory before aborting cleanup for %s generation %s: %w", taskID, claimGen, err)
 		}
+		return nil
+	}
+	if err := authority.ArchiveRetiredReport(taskID, claimGen, archive); err != nil {
+		return fmt.Errorf("archiving report before aborting cleanup for %s generation %s: %w", taskID, claimGen, err)
 	}
 	req := taskauthority.CanonicalAbortCleanupRequest{
 		HomeID:           authority.HomeID(),
@@ -978,9 +983,15 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		// for a relaunch of the same task and is reclaimed by the
 		// session-start GC in internal/bootstrap once the task is retired.
 		dataDir := filepath.Join(opts.HomeDir, "data", opts.ID)
-		archived, exists, err := archiveRetiredReport(opts.HomeDir, opts.ID, claimGen)
-		if err != nil {
-			return cleanupPending(fmt.Errorf("teardown %s: archiving report for generation %s: %w", opts.ID, claimGen, err))
+		var archived string
+		var exists bool
+		archiveErr := authority.ArchiveRetiredReport(taskID, claimGen, func() error {
+			var err error
+			archived, exists, err = archiveRetiredReport(opts.HomeDir, opts.ID, claimGen)
+			return err
+		})
+		if archiveErr != nil {
+			return cleanupPending(fmt.Errorf("teardown %s: archiving report for generation %s: %w", opts.ID, claimGen, archiveErr))
 		}
 		if exists && archived != "" {
 			result.Steps = append(result.Steps, fmt.Sprintf("report.md archived as %s", archived))

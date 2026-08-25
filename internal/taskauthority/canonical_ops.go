@@ -121,10 +121,33 @@ func (c *Canonical) Get(taskID domain.TaskID) (Aggregate, error) {
 // or after it, never in between. It returns the same current-Task-truth
 // contract as Get: a superseded/non-current generation fails closed with
 // ErrNotFound.
-// ReclaimReleasedTaskArtifacts evaluates ownership and runs the bounded local
-// reclaim callback while the task-scope lock is held, fencing reopen and other
-// lifecycle mutations against the deletion. The callback must remain local and
-// bounded; external or blocking work must not run under this lock.
+// ArchiveRetiredReport runs a bounded archive callback while the exact retired
+// generation's active cleanup claim is fenced by the task-scope lock.
+func (c *Canonical) ArchiveRetiredReport(taskID domain.TaskID, generation Generation, archive func() error) error {
+	if archive == nil {
+		return fmt.Errorf("archive callback is nil")
+	}
+	if err := taskID.Validate(); err != nil {
+		return err
+	}
+	if err := generation.Validate(); err != nil {
+		return err
+	}
+	lk, err := c.h.Lock(taskScope(taskID.Value()))
+	if err != nil {
+		return err
+	}
+	defer lk.Release()
+	doc, exists, err := c.readTaskDoc(taskID.Value())
+	if err != nil {
+		return err
+	}
+	if !exists || !doc.Aggregate.Current || doc.Aggregate.Phase != PhaseRetired || doc.Aggregate.CleanupClaim == nil || doc.Aggregate.CleanupClaim.Status != CleanupActive || doc.Aggregate.CleanupClaim.Generation != generation {
+		return conflictError(ErrConflict, "task %s generation %s cleanup claim is not active", taskID, generation)
+	}
+	return archive()
+}
+
 func (c *Canonical) ReclaimReleasedTaskArtifacts(taskID domain.TaskID, reclaim func() error) (bool, error) {
 	if reclaim == nil {
 		return false, fmt.Errorf("reclaim callback is nil")
@@ -151,12 +174,12 @@ func (c *Canonical) ReclaimReleasedTaskArtifacts(taskID domain.TaskID, reclaim f
 		}
 		if claim := agg.CleanupClaim; claim != nil {
 			switch claim.Status {
-			case CleanupActive:
-				return false, nil
 			case CleanupCompleted, CleanupAborted:
 			default:
 				return false, nil
 			}
+		} else {
+			return false, nil
 		}
 	}
 	if err := reclaim(); err != nil {
