@@ -923,17 +923,31 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		// for a relaunch of the same task and is reclaimed by the
 		// session-start GC in internal/bootstrap once the task is retired.
 		dataDir := filepath.Join(opts.HomeDir, "data", opts.ID)
-		if fi, err := os.Stat(dataDir); err == nil && fi.IsDir() {
+		dataInfo, dataErr := os.Lstat(dataDir)
+		if dataErr != nil && !os.IsNotExist(dataErr) {
+			return cleanupPending(fmt.Errorf("teardown %s: checking data directory for generation %s: %w", opts.ID, claimGen, dataErr))
+		}
+		if dataErr == nil && !dataInfo.IsDir() {
+			return cleanupPending(fmt.Errorf("teardown %s: data path %s for generation %s is not a directory", opts.ID, dataDir, claimGen))
+		}
+		if dataErr == nil {
 			reportPath := filepath.Join(dataDir, "report.md")
-			_, reportErr := os.Stat(reportPath)
-			switch {
-			case reportErr == nil:
-				archived := ArchivedReportName(claimGen)
-				if err := os.Rename(reportPath, filepath.Join(dataDir, archived)); err != nil {
+			archived := ArchivedReportName(claimGen)
+			archivedPath := filepath.Join(dataDir, archived)
+			_, reportErr := os.Lstat(reportPath)
+			if reportErr == nil {
+				_, archiveErr := os.Lstat(archivedPath)
+				switch {
+				case archiveErr == nil:
+					return cleanupPending(fmt.Errorf("teardown %s: report paths %s and %s conflict for generation %s", opts.ID, reportPath, archivedPath, claimGen))
+				case !os.IsNotExist(archiveErr):
+					return cleanupPending(fmt.Errorf("teardown %s: checking archive path %s for generation %s: %w", opts.ID, archivedPath, claimGen, archiveErr))
+				}
+				if err := os.Rename(reportPath, archivedPath); err != nil {
 					return cleanupPending(fmt.Errorf("teardown %s: archiving report for generation %s: %w", opts.ID, claimGen, err))
 				}
 				result.Steps = append(result.Steps, fmt.Sprintf("report.md archived as %s", archived))
-			case !os.IsNotExist(reportErr):
+			} else if !os.IsNotExist(reportErr) {
 				return cleanupPending(fmt.Errorf("teardown %s: checking report for generation %s: %w", opts.ID, claimGen, reportErr))
 			}
 
