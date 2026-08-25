@@ -16,15 +16,10 @@ func processIdentity(pid int) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	if len(raw) <= 4 {
-		return "", "", fmt.Errorf("truncated process args")
+	executable, err := parseDarwinProcessArgs(raw)
+	if err != nil {
+		return "", "", err
 	}
-	_ = binary.LittleEndian.Uint32(raw[:4])
-	end := bytes.IndexByte(raw[4:], 0)
-	if end <= 0 {
-		return "", "", fmt.Errorf("missing executable")
-	}
-	executable := string(raw[4 : 4+end])
 	if resolved, err := filepath.EvalSymlinks(executable); err == nil {
 		executable = resolved
 	}
@@ -34,4 +29,16 @@ func processIdentity(pid int) (string, string, error) {
 	}
 	start := info.Proc.P_starttime
 	return executable, fmt.Sprintf("%d:%d", start.Sec, start.Usec), nil
+}
+
+func parseDarwinProcessArgs(raw []byte) (string, error) {
+	if len(raw) <= 4 {
+		return "", fmt.Errorf("truncated process args")
+	}
+	_ = binary.LittleEndian.Uint32(raw[:4])
+	end := bytes.IndexByte(raw[4:], 0)
+	if end <= 0 {
+		return "", fmt.Errorf("missing executable")
+	}
+	return string(raw[4 : 4+end]), nil
 }
