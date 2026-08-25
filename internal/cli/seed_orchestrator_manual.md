@@ -311,8 +311,8 @@ Communication with soldiers and captains follows a strict direction policy:
   Use before `munsu wake claim` to preview what needs attention.
   Rank-aware: shows captain:* status lines from the General's state directory.
 Rank-aware routing via MUNSU_ROLE:
-  - soldier appends to its own task .status in the current home
-  - captain appends to General home state/captain:<id>.status
+  - soldier appends to its own task's durable `.status` projection in the current home
+  - captain appends to the General home status projection for logical ID `captain:<id>`
   - general appends locally
 
 Never use `munsu send` for parent communication. Use `munsu report` instead.

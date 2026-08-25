@@ -1064,8 +1064,9 @@ func TestRunCycle_StatusSignalFromParentStatus(t *testing.T) {
 }
 
 // TestReturnChannelClosedLoop proves Phase 3 C1 without live herdr/pane:
-// marked General send (contract) → Captain appends parent state/captain:<id>.status
-// → watcher RunCycle enqueues a signal wake → wake claim leases it.
+// marked General send (contract) → Captain appends status for logical ID
+// captain:<id> using its durable filename stem → watcher RunCycle enqueues a
+// signal wake → wake claim leases it.
 func TestReturnChannelClosedLoop(t *testing.T) {
 	homeDir := t.TempDir()
 	state := filepath.Join(homeDir, "state")

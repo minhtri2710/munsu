@@ -15,7 +15,8 @@ the orchestrator can act on.
 watcher loop (every 5s):
   1. Touch liveness beat at state/.last-watcher-beat
   2. Scan state/*.status for general-relevant last lines (done/failed/blocked/...)
-     including Captain return-channel files state/captain:<id>.status
+     including Captain return-channel status for logical IDs `captain:<id>`;
+     files use the platform durable stem (`state/<durable-stem>.status`)
      → enqueue Kind=signal (even while the captain pane is alive)
   3. Scan all tasks in state/<durable-stem>.meta not already signaled;
      decode each durable stem to its logical task ID
