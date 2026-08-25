@@ -133,7 +133,7 @@ func fetchGitHubProviderSnapshot(prURL string) (*ProviderSnapshot, error) {
 		return nil, fmt.Errorf("GitHub provider not available: %w", err)
 	}
 
-	data, err := client.ViewPRJSON(ghURL.Owner, ghURL.Repo, ghURL.Num, "state,headRefOid,headRefName,baseRefName,mergeCommit,statusCheckRollup,reviews")
+	data, err := client.ViewPRJSON(ghURL.Owner, ghURL.Repo, ghURL.Num, "state,headRefOid,headRefName,baseRefName,mergeCommit,statusCheckRollup,reviewDecision")
 	if err != nil {
 		return nil, err
 	}
@@ -148,10 +148,8 @@ func fetchGitHubProviderSnapshot(prURL string) (*ProviderSnapshot, error) {
 			Conclusion string `json:"conclusion"`
 			Status     string `json:"status"`
 		} `json:"statusCheckRollup"`
-		Reviews []struct {
-			State string `json:"state"`
-		} `json:"reviews"`
-		MergeCommit *struct {
+		ReviewDecision string `json:"reviewDecision"`
+		MergeCommit    *struct {
 			Oid string `json:"oid"`
 		} `json:"mergeCommit"`
 	}
@@ -182,6 +180,9 @@ func fetchGitHubProviderSnapshot(prURL string) (*ProviderSnapshot, error) {
 		State:      strings.ToUpper(raw.State),
 		ObservedAt: time.Now().UTC().Format(time.RFC3339),
 	}
+	if len(raw.StatusCheckRollup) == 0 {
+		return nil, fmt.Errorf("gh pr view returned empty statusCheckRollup")
+	}
 	for _, check := range raw.StatusCheckRollup {
 		status := strings.ToLower(check.Conclusion)
 		if status == "" {
@@ -190,9 +191,10 @@ func fetchGitHubProviderSnapshot(prURL string) (*ProviderSnapshot, error) {
 		mapped := mapCheckStatus(status)
 		snap.Checks = append(snap.Checks, domain.CheckRun{Status: mapped})
 	}
-	for _, review := range raw.Reviews {
-		snap.Reviews = append(snap.Reviews, domain.Review{State: normalizeGitHubReviewState(review.State)})
+	if raw.ReviewDecision == "" {
+		return nil, fmt.Errorf("gh pr view returned empty reviewDecision")
 	}
+	snap.Reviews = []domain.Review{{State: normalizeGitHubReviewState(raw.ReviewDecision)}}
 
 	switch strings.ToUpper(raw.State) {
 	case "MERGED":
@@ -227,10 +229,9 @@ func fetchGitLabProviderSnapshot(mrURL string) (*ProviderSnapshot, error) {
 		SHA          string `json:"sha"`
 		SourceBranch string `json:"source_branch"`
 		TargetBranch string `json:"target_branch"`
-		Approved     *bool  `json:"approved"`
 		Pipeline     *struct {
 			Status string `json:"status"`
-		} `json:"pipeline"`
+		} `json:"head_pipeline"`
 		MergeCommitSHA string `json:"merge_commit_sha"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -255,12 +256,22 @@ func fetchGitLabProviderSnapshot(mrURL string) (*ProviderSnapshot, error) {
 		State:      normalizedState,
 		ObservedAt: time.Now().UTC().Format(time.RFC3339),
 	}
-	if raw.Pipeline == nil || raw.Pipeline.Status == "" || raw.Approved == nil {
-		return nil, fmt.Errorf("glab mr view did not provide pipeline status and approval evidence; refusing to infer mergeability")
+	if raw.Pipeline == nil || raw.Pipeline.Status == "" {
+		return nil, fmt.Errorf("GitLab MR did not provide pipeline status; refusing to infer mergeability")
 	}
 	snap.Checks = []domain.CheckRun{{Status: mapCheckStatus(raw.Pipeline.Status)}}
-	if *raw.Approved {
+	approved, err := client.ApprovalState(glURL.Host, glURL.Owner, glURL.Project, glURL.IID)
+	if err != nil {
+		return nil, err
+	}
+	if approved {
 		snap.Reviews = []domain.Review{{State: domain.ReviewApproved}}
+	}
+	var mergeRaw struct {
+		Status string `json:"detailed_merge_status"`
+	}
+	if err := json.Unmarshal(data, &mergeRaw); err != nil || mergeRaw.Status != "mergeable" {
+		return nil, fmt.Errorf("GitLab MR is not mergeable")
 	}
 
 	switch normalizedState {

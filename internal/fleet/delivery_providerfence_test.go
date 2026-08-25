@@ -28,12 +28,12 @@ func TestDeliverProviderIdentityDriftFailsClosedBeforeMutation(t *testing.T) {
 	}{
 		{
 			name:    "head-drift",
-			obs:     DeliveryProviderObservation{State: "OPEN", HeadSHA: "9999888877776666555544443333222211110000", BaseRef: pinned.BaseRef},
+			obs:     DeliveryProviderObservation{State: "OPEN", HeadSHA: "9999888877776666555544443333222211110000", BaseRef: pinned.BaseRef, Mergeability: DeliveryMergeabilityAllowed},
 			wantErr: "provider head changed since capture",
 		},
 		{
 			name:    "base-ref-drift",
-			obs:     DeliveryProviderObservation{State: "OPEN", HeadSHA: pinned.HeadSHA, BaseRef: "release/1.0"},
+			obs:     DeliveryProviderObservation{State: "OPEN", HeadSHA: pinned.HeadSHA, BaseRef: "release/1.0", Mergeability: DeliveryMergeabilityAllowed},
 			wantErr: "provider base ref changed since capture",
 		},
 	}
@@ -74,7 +74,7 @@ func TestDeliverProviderBaseRefMatchDeliversNormally(t *testing.T) {
 	mustWorkingDeliveryTask(t, c, taskID)
 	pinned := deliveryTestIdentity()
 	provider := newFakeDeliveryProvider().script(
-		DeliveryProviderObservation{State: "OPEN", HeadSHA: pinned.HeadSHA, BaseRef: pinned.BaseRef},
+		DeliveryProviderObservation{State: "OPEN", HeadSHA: pinned.HeadSHA, BaseRef: pinned.BaseRef, Mergeability: DeliveryMergeabilityAllowed},
 		DeliveryProviderObservation{State: "MERGED", HeadSHA: pinned.HeadSHA, BaseRef: pinned.BaseRef, MergedSHA: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"},
 	)
 	installDeliveryProviderFor(t, provider)
@@ -92,16 +92,15 @@ func TestDeliverProviderBaseRefMatchDeliversNormally(t *testing.T) {
 }
 
 // TestDeliverProviderFenceAcceptsUnverifiableAndMergedObservations proves the
-// two accepted shapes of the pre-mutation fence: a provider that cannot
-// report a field leaves it empty (unverifiable, accepted), and merged truth
-// carries consumed evidence that is never re-checked.
+// The pre-mutation fence accepts explicit mergeability evidence for open
+// observations, while merged truth carries consumed evidence that is not re-checked.
 func TestDeliverProviderFenceAcceptsUnverifiableAndMergedObservations(t *testing.T) {
 	journal := &deliveryJournal{Identity: deliveryTestIdentity()}
 	cases := []struct {
 		name string
 		obs  DeliveryProviderObservation
 	}{
-		{"unverifiable-fields", DeliveryProviderObservation{State: "OPEN"}},
+		{"explicit-mergeability", DeliveryProviderObservation{State: "OPEN", HeadSHA: deliveryTestHead, BaseRef: deliveryTestBase, Mergeability: DeliveryMergeabilityAllowed}},
 		{"merged-drifted-base", DeliveryProviderObservation{State: "MERGED", HeadSHA: "9999888877776666555544443333222211110000", BaseRef: "release/1.0"}},
 	}
 	for _, tc := range cases {

@@ -139,7 +139,7 @@ func TestNormalizeGitHubReviewState(t *testing.T) {
 
 func TestGitLabProviderSnapshotUsesNestedPipelineAndApprovalEvidence(t *testing.T) {
 	old := defaultGlabRunner
-	defaultGlabRunner = mergeabilityRunner(`{"state":"opened","sha":"abc123","source_branch":"feature","target_branch":"main","approved":true,"pipeline":{"status":"success"}}`)
+	defaultGlabRunner = mergeabilityRunner(`{"state":"opened","sha":"abc123","source_branch":"feature","target_branch":"main","detailed_merge_status":"mergeable","head_pipeline":{"status":"success"}}`)
 	t.Cleanup(func() { defaultGlabRunner = old })
 
 	snapshot, err := fetchGitLabProviderSnapshot("https://gitlab.com/owner/project/-/merge_requests/42")
@@ -156,7 +156,7 @@ func TestGitLabProviderSnapshotRefusesMissingMergeabilityEvidence(t *testing.T) 
 	defaultGlabRunner = mergeabilityRunner(`{"state":"opened","sha":"abc123","source_branch":"feature","target_branch":"main"}`)
 	t.Cleanup(func() { defaultGlabRunner = old })
 
-	if _, err := fetchGitLabProviderSnapshot("https://gitlab.com/owner/project/-/merge_requests/42"); err == nil || !strings.Contains(err.Error(), "approval evidence") {
+	if _, err := fetchGitLabProviderSnapshot("https://gitlab.com/owner/project/-/merge_requests/42"); err == nil || !strings.Contains(err.Error(), "pipeline status") {
 		t.Fatalf("fetchGitLabProviderSnapshot error = %v, want missing-evidence refusal", err)
 	}
 }
@@ -166,11 +166,14 @@ func mergeabilityRunner(json string) *fakeGlabRunner {
 		if len(args) == 1 && args[0] == "--version" {
 			return []byte("glab version 1.45.0"), nil
 		}
-		if len(args) == 3 && args[0] == "mr" && args[1] == "view" && args[2] == "--help" {
-			return []byte("view a merge request\n"), nil
+		if len(args) == 2 && args[0] == "api" && args[1] == "--help" {
+			return []byte("api access\n"), nil
 		}
 		if len(args) == 2 && args[0] == "auth" && args[1] == "status" {
 			return []byte("authenticated to gitlab.com\n"), nil
+		}
+		if len(args) >= 2 && args[0] == "api" && strings.HasSuffix(args[1], "/approvals") {
+			return []byte(`{"approved":true,"approved_by":[{"user":{"username":"reviewer"}}]}`), nil
 		}
 		return []byte(json), nil
 	}}
