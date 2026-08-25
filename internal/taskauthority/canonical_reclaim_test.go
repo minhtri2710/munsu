@@ -25,6 +25,51 @@ func TestReclaimReleasedTaskArtifactsOwnershipAndFence(t *testing.T) {
 	}
 }
 
+func TestArchiveRetiredReportRequiresExactActiveClaim(t *testing.T) {
+	c, h, _ := newTestCanonical(t)
+	id := "archive-task"
+	mustCreate(t, c, id)
+	retireWithClaim(t, c, id, preconditionOf(1, 1), "op-archive-retire")
+	called := false
+	if err := c.ArchiveRetiredReport(mustTaskID(t, id), 1, func() error {
+		called = true
+		_, err := h.Lock(taskScope(id))
+		if !errors.Is(err, home.ErrLockTimeout) {
+			t.Fatalf("lock error = %v", err)
+		}
+		return nil
+	}); err != nil || !called {
+		t.Fatalf("active archive = %v, called=%v", err, called)
+	}
+	called = false
+	if err := c.ArchiveRetiredReport(mustTaskID(t, id), 2, func() error { called = true; return nil }); err == nil || called {
+		t.Fatalf("wrong-generation archive = %v, called=%v", err, called)
+	}
+	for _, status := range []CleanupStatus{CleanupCompleted, CleanupAborted} {
+		t.Run(string(status), func(t *testing.T) {
+			id := "archive-" + string(status)
+			mustCreate(t, c, id)
+			retireWithClaim(t, c, id, preconditionOf(1, 1), "op-"+id)
+			agg, _ := c.Get(mustTaskID(t, id))
+			if status == CleanupCompleted {
+				req := CanonicalCompleteCleanupRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, id), Precondition: preconditionOf(uint64(agg.Generation), uint64(agg.Revision)), ClaimOperationID: "op-" + id, ClaimGeneration: 1, Reason: "done"}
+				if _, err := c.CompleteCleanup(mustOperation(t, "complete-"+id, req), req); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				req := CanonicalAbortCleanupRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, id), Precondition: preconditionOf(uint64(agg.Generation), uint64(agg.Revision)), ClaimOperationID: "op-" + id, ClaimGeneration: 1, Reason: "abort"}
+				if _, err := c.AbortCleanup(mustOperation(t, "abort-"+id, req), req); err != nil {
+					t.Fatal(err)
+				}
+			}
+			called := false
+			if err := c.ArchiveRetiredReport(mustTaskID(t, id), 1, func() error { called = true; return nil }); err == nil || called {
+				t.Fatalf("archive = %v, called=%v", err, called)
+			}
+		})
+	}
+}
+
 func TestReclaimReleasedTaskArtifactsLifecycleStates(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
 	mustCreate(t, c, "working")
@@ -36,6 +81,9 @@ func TestReclaimReleasedTaskArtifactsLifecycleStates(t *testing.T) {
 		{"not retired", func(*testing.T, *Canonical, string) {}, false},
 		{"active", func(t *testing.T, c *Canonical, id string) {
 			retireWithClaim(t, c, id, preconditionOf(1, 1), "op-active-retire")
+		}, false},
+		{"nil claim", func(t *testing.T, c *Canonical, id string) {
+			mustCreate(t, c, id)
 		}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
