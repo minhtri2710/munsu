@@ -50,83 +50,37 @@ func (f *fakeGlabRunner) Run(args ...string) ([]byte, error) {
 	return f.runFn(args...)
 }
 
+func fakeGitLabRunner(mrJSON string, approvalJSON string) *fakeGlabRunner {
+	return &fakeGlabRunner{runFn: func(args ...string) ([]byte, error) {
+		if len(args) == 1 && args[0] == "--version" {
+			return []byte("glab version 1.45.0"), nil
+		}
+		if len(args) == 2 && args[0] == "api" && args[1] == "--help" {
+			return []byte("api access\n"), nil
+		}
+		if len(args) == 2 && args[0] == "auth" && args[1] == "status" {
+			return []byte("authenticated to gitlab.com\n"), nil
+		}
+		if len(args) >= 2 && args[0] == "api" && strings.HasSuffix(args[1], "/approvals") {
+			return []byte(approvalJSON), nil
+		}
+		if len(args) >= 2 && args[0] == "api" {
+			return []byte(mrJSON), nil
+		}
+		return []byte("{}"), nil
+	}}
+}
+
 func readyRunner() *fakeGlabRunner {
-	return &fakeGlabRunner{
-		runFn: func(args ...string) ([]byte, error) {
-			if len(args) >= 1 && args[0] == "--version" {
-				return []byte("glab version 1.45.0"), nil
-			}
-			if len(args) >= 3 && args[0] == "api" && args[1] == "--help" {
-				return []byte("api access\n"), nil
-			}
-			if len(args) >= 2 && args[0] == "auth" && args[1] == "status" {
-				return []byte("authenticated to gitlab.com\n"), nil
-			}
-			// mr view with JSON — return valid GitLab JSON
-			if len(args) >= 4 && args[0] == "mr" && args[1] == "view" {
-				return []byte(fmt.Sprintf(`{
-					"sha": "%s",
-					"source_branch": "feature/test",
-					"target_branch": "main",
-					"state": "opened",
-					"merge_commit_sha": null
-				}`, sampleSHA)), nil
-			}
-			return []byte("{}"), nil
-		},
-	}
+	return fakeGitLabRunner(fmt.Sprintf(`{"sha":"%s","source_branch":"feature/test","target_branch":"main","state":"opened","detailed_merge_status":"mergeable","head_pipeline":{"status":"success"}}`, sampleSHA), `{"approved":true,"approved_by":[{"user":{"username":"reviewer"}}]}`)
 }
 
 func mergedRunner() *fakeGlabRunner {
-	return &fakeGlabRunner{
-		runFn: func(args ...string) ([]byte, error) {
-			if len(args) >= 1 && args[0] == "--version" {
-				return []byte("glab version 1.45.0"), nil
-			}
-			if len(args) >= 3 && args[0] == "api" && args[1] == "--help" {
-				return []byte("api access\n"), nil
-			}
-			if len(args) >= 2 && args[0] == "auth" && args[1] == "status" {
-				return []byte("authenticated to gitlab.com\n"), nil
-			}
-			if len(args) >= 4 && args[0] == "mr" && args[1] == "view" {
-				return []byte(`{
-					"sha": "abc123def456abc123def456abc123def456abc1",
-					"source_branch": "feature/test",
-					"target_branch": "main",
-					"state": "merged",
-					"merge_commit_sha": "def456abc123def456abc123def456abc123def4"
-				}`), nil
-			}
-			return []byte("{}"), nil
-		},
-	}
+	return fakeGitLabRunner(`{"sha":"abc123def456abc123def456abc123def456abc1","source_branch":"feature/test","target_branch":"main","state":"merged","merge_commit_sha":"def456abc123def456abc123def456abc123def4"}`, `{"approved":false,"approved_by":[]}`)
 }
 
 func closedRunner() *fakeGlabRunner {
-	return &fakeGlabRunner{
-		runFn: func(args ...string) ([]byte, error) {
-			if len(args) >= 1 && args[0] == "--version" {
-				return []byte("glab version 1.45.0"), nil
-			}
-			if len(args) >= 3 && args[0] == "api" && args[1] == "--help" {
-				return []byte("api access\n"), nil
-			}
-			if len(args) >= 2 && args[0] == "auth" && args[1] == "status" {
-				return []byte("authenticated to gitlab.com\n"), nil
-			}
-			if len(args) >= 4 && args[0] == "mr" && args[1] == "view" {
-				return []byte(`{
-					"sha": "abc123def456abc123def456abc123def456abc1",
-					"source_branch": "feature/test",
-					"target_branch": "main",
-					"state": "closed",
-					"merge_commit_sha": null
-				}`), nil
-			}
-			return []byte("{}"), nil
-		},
-	}
+	return fakeGitLabRunner(`{"sha":"abc123def456abc123def456abc123def456abc1","source_branch":"feature/test","target_branch":"main","state":"closed","merge_commit_sha":null}`, `{"approved":false,"approved_by":[]}`)
 }
 
 func failedVersionRunner() *fakeGlabRunner {
@@ -146,7 +100,7 @@ func failedAuthRunner() *fakeGlabRunner {
 			if len(args) >= 1 && args[0] == "--version" {
 				return []byte("glab version 1.45.0"), nil
 			}
-			if len(args) >= 3 && args[0] == "api" && args[1] == "--help" {
+			if len(args) == 2 && args[0] == "api" && args[1] == "--help" {
 				return []byte("api access\n"), nil
 			}
 			if len(args) >= 2 && args[0] == "auth" && args[1] == "status" {
@@ -163,7 +117,7 @@ func unsupportedRunner() *fakeGlabRunner {
 			if len(args) >= 1 && args[0] == "--version" {
 				return []byte("glab version 1.45.0"), nil
 			}
-			if len(args) >= 3 && args[0] == "api" && args[1] == "--help" {
+			if len(args) == 2 && args[0] == "api" && args[1] == "--help" {
 				return nil, errors.New("unknown command")
 			}
 			return []byte("{}"), nil
@@ -919,8 +873,11 @@ func TestMergeMR_UnsupportedMethodFailsClosed(t *testing.T) {
 func TestGitlabDeliveryProvider_UsesTypedCapabilityOnly(t *testing.T) {
 	client := &glabClient{runner: &fakeGlabRunner{
 		runFn: func(args ...string) ([]byte, error) {
-			if len(args) >= 2 && args[0] == "mr" && args[1] == "view" {
-				return []byte(`{"sha": "abc123def456abc123def456abc123def456abc1", "source_branch": "feature", "target_branch": "main", "state": "opened", "merge_commit_sha": null}`), nil
+			if len(args) >= 2 && args[0] == "api" && strings.HasSuffix(args[1], "/approvals") {
+				return []byte(`{"approved":true,"approved_by":[{"user":{"username":"reviewer"}}]}`), nil
+			}
+			if len(args) >= 2 && args[0] == "api" {
+				return []byte(`{"sha":"abc123def456abc123def456abc123def456abc1","source_branch":"feature","target_branch":"main","state":"opened","detailed_merge_status":"mergeable","head_pipeline":{"status":"success"}}`), nil
 			}
 			return []byte("merged"), nil
 		},

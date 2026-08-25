@@ -144,7 +144,10 @@ func installStuckOpenGhAxi(t *testing.T) {
 	script := fmt.Sprintf(`#!/bin/sh
 case "$1" in
 api)
-  printf 'state: OPEN\nheadSha: %s\nbaseRef: main\nmergedSha: \nmerged: false\n'
+  if [ "$2" != "graphql" ]; then
+    exit 1
+  fi
+  printf '{"data":{"repository":{"pullRequest":{"state":"OPEN","headRefOid":"%s","baseRefName":"main","merged":false,"reviewDecision":"APPROVED","mergeable":"MERGEABLE","commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"SUCCESS"}}}]}}}}}\n'
   ;;
 pr)
   exit 0
