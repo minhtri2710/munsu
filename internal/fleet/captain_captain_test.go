@@ -242,7 +242,10 @@ func TestDefaultCaptainCharter_ContainsReturnChannel(t *testing.T) {
 	if !strings.Contains(charter, home.FromGeneralLabel) {
 		t.Fatalf("charter missing marshal marker label")
 	}
-	status := filepath.Join(parent, "state", "captain:api.status")
+	status, err := home.StatusFilePath(parent, "captain:api")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !strings.Contains(charter, status) {
 		t.Fatalf("charter missing status path %q", status)
 	}

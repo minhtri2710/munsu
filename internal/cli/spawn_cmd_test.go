@@ -16,6 +16,34 @@ import (
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
+func writeTaskMeta(t *testing.T, homeDir, id, content string) {
+	t.Helper()
+	path, err := home.MetaFilePath(homeDir, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeTaskStatus(t *testing.T, homeDir, id, content string) {
+	t.Helper()
+	path, err := home.StatusFilePath(homeDir, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestSendCmd_UsesMetaBackend verifies that send reads the backend from task meta
 // instead of using the global config when meta has backend set.
 func TestSendCmd_UsesMetaBackend(t *testing.T) {
@@ -31,18 +59,8 @@ func TestSendCmd_UsesMetaBackend(t *testing.T) {
 	}
 
 	// Write task meta with backend=tmux (overrides global config)
-	stateDir := filepath.Join(tmpDir, "state")
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	metaContent := "window=@0\nbackend=tmux\nkind=ship\n"
-	if err := os.WriteFile(filepath.Join(stateDir, "test-task.meta"), []byte(metaContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-	statusContent := "working: spawned\n"
-	if err := os.WriteFile(filepath.Join(stateDir, "test-task.status"), []byte(statusContent), 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeTaskMeta(t, tmpDir, "test-task", "window=@0\nbackend=tmux\nkind=ship\n")
+	writeTaskStatus(t, tmpDir, "test-task", "working: spawned\n")
 
 	// Remove both tmux and herdr from PATH so whichever backend is attempted will fail
 	// and tell us which one it tried.
@@ -83,14 +101,8 @@ func TestSendCmd_UnknownMetaBackendFallsThroughToResolve(t *testing.T) {
 	}
 
 	// Write task meta with backend=nonexistent (falls through to config/resolve)
-	stateDir := filepath.Join(tmpDir, "state")
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		t.Fatal(err)
-	}
 	metaContent := "window=@0\nbackend=nonexistent\nkind=ship\n"
-	if err := os.WriteFile(filepath.Join(stateDir, "test-task.meta"), []byte(metaContent), 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeTaskMeta(t, tmpDir, "test-task", metaContent)
 
 	// Set PATH to nothing so backend resolution fails
 	oldPath := os.Getenv("PATH")
@@ -126,14 +138,8 @@ func TestPeekCmd_UsesMetaBackend(t *testing.T) {
 	}
 
 	// Write task meta with backend=tmux (overrides global config)
-	stateDir := filepath.Join(tmpDir, "state")
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		t.Fatal(err)
-	}
 	metaContent := "window=@0\nbackend=tmux\nkind=ship\n"
-	if err := os.WriteFile(filepath.Join(stateDir, "test-task.meta"), []byte(metaContent), 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeTaskMeta(t, tmpDir, "test-task", metaContent)
 
 	oldPath := os.Getenv("PATH")
 	os.Setenv("PATH", "/dev/null")
@@ -166,14 +172,8 @@ func TestPeekCmd_RejectsMetaWithoutBoundBackend(t *testing.T) {
 	}
 
 	// Write task meta with NO backend field (uses global config)
-	stateDir := filepath.Join(tmpDir, "state")
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		t.Fatal(err)
-	}
 	metaContent := "window=@0\nkind=ship\n" // no backend field
-	if err := os.WriteFile(filepath.Join(stateDir, "test-task.meta"), []byte(metaContent), 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeTaskMeta(t, tmpDir, "test-task", metaContent)
 
 	oldPath := os.Getenv("PATH")
 	os.Setenv("PATH", "/dev/null")
@@ -209,10 +209,8 @@ func TestSendCmd_CaptainSendFailsGracefully(t *testing.T) {
 	// fail gracefully (not hit the uplink guard). No outbox for new sends;
 	// pending is retained durably until converge reconciles the ack.
 	tmpDir := t.TempDir()
-	stateDir := filepath.Join(tmpDir, "state")
-	os.MkdirAll(stateDir, 0755)
 	metaContent := "window=@dead\nbackend=herdr\nkind=captain\nsm_id=munsu\nhome=/tmp/captain-home\n"
-	os.WriteFile(filepath.Join(stateDir, "captain:munsu.meta"), []byte(metaContent), 0644)
+	writeTaskMeta(t, tmpDir, "captain:munsu", metaContent)
 
 	root := NewRootCommand()
 	root.SetArgs([]string{"send", "captain:munsu", "report status", "--home", tmpDir})

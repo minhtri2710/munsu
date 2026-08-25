@@ -156,7 +156,11 @@ func TestRetirementTerminalUplinkContinuity(t *testing.T) {
 	if _, err := fleet.RetireTask(fleet.Options{HomeDir: homeDir, ID: taskID, Force: true}, e2eTeardown{}, orchestratorRetirementJournals{}, auth); err != nil {
 		t.Fatal(err)
 	}
-	backup := filepath.Join(homeDir, "state", ".backup", taskID, taskID+".status")
+	stem, err := home.DurableKey(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backup := filepath.Join(homeDir, "state", ".backup", stem, stem+".status")
 	if _, err := os.Stat(backup); err != nil {
 		t.Fatalf("forced evidence missing: %v", err)
 	}
