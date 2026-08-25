@@ -51,8 +51,8 @@ Default home: `~/.munsu` (overridable via `MUNSU_HOME` or `--home`).
 ~/.munsu/
   state/                   Task state, canonical Task Authority documents, locks, wakes and receipts
     task-authority/        Canonical Task Authority documents (tasks/, holds/, receipts/)
-    <id>.meta              Task metadata projection
-    <id>.status            Append-only status/event projection
+    <durable-stem>.meta    Task metadata projection (logical IDs are encoded per platform)
+    <durable-stem>.status  Append-only status/event projection (logical IDs are decoded at read boundaries)
   data/
     projects.md            Project registry
     captains.md            Captain registry

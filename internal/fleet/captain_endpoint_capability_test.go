@@ -3,7 +3,6 @@ package fleet
 import (
 	"errors"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -19,7 +18,11 @@ type orderedRetireEndpoint struct {
 
 func (e *orderedRetireEndpoint) Retire(string, map[string]string) error {
 	e.calls++
-	if _, err := os.Stat(filepath.Join(e.parent, "state", e.taskID+".meta")); err != nil {
+	metaPath, err := mhome.MetaFilePath(e.parent, e.taskID)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	if _, err := os.Stat(metaPath); err != nil {
 		e.t.Fatalf("metadata removed before endpoint retirement: %v", err)
 	}
 	return e.err

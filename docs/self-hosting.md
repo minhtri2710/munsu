@@ -121,7 +121,7 @@ The spawn flow:
 3. Harness detection (pi, claude-code, etc.)
 4. Launch template from `config/soldier-dispatch.json`
 5. Session window creation
-6. Meta write to `state/<task-id>.meta`
+6. Meta write to the durable task metadata projection (derived from the logical task ID)
 
 With `--arm`, the watcher is armed automatically after spawn.
 
@@ -249,7 +249,7 @@ gates, and the return catch-up gate.
                    │ every 5s
           ┌────────▼─────────┐
           │  Touch beat      │  state/.last-watcher-beat
-          │  Scan tasks      │  state/<id>.meta
+          │  Scan tasks      │  state/<durable-stem>.meta (decode to logical ID)
           │  Check liveness  │  session backend (tmux/herdr)
           │  Check staleness │  >5 min idle → "stale" wake
           └────────┬─────────┘

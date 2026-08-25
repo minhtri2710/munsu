@@ -899,7 +899,11 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		result.Steps = append(result.Steps, journalSteps...)
 
 		// 4. Remove residual state artifacts
-		for _, p := range cleanupResidualArtifactPaths(opts.HomeDir, opts.ID, meta) {
+		residualPaths, err := cleanupResidualArtifactPaths(opts.HomeDir, opts.ID, meta)
+		if err != nil {
+			return cleanupPending(fmt.Errorf("teardown %s: resolving residual artifacts: %w", opts.ID, err))
+		}
+		for _, p := range residualPaths {
 			if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
 				result.Steps = append(result.Steps, fmt.Sprintf("remove residual %s: %v", filepath.Base(p), err))
 			} else {
@@ -1288,19 +1292,28 @@ func taskMetaFilePath(homeDir, id string) (string, error) {
 	return home.MetaFilePath(homeDir, id)
 }
 
-func cleanupResidualArtifactPaths(homeDir, id string, meta map[string]string) []string {
-	var paths []string
-	if p, err := home.StatusFilePath(homeDir, id); err == nil {
-		paths = append(paths, p)
+func cleanupResidualArtifactPaths(homeDir, id string, meta map[string]string) ([]string, error) {
+	statusPath, err := home.StatusFilePath(homeDir, id)
+	if err != nil {
+		return nil, err
 	}
+	paths := []string{statusPath}
 	stateDir := home.StateDir(homeDir)
 	for _, suffix := range []string{"check", "turnend", "check.sh", "turn-ended"} {
-		paths = append(paths, filepath.Join(stateDir, id+"."+suffix))
+		p, err := home.DurableFilePath(stateDir, id, "."+suffix)
+		if err != nil {
+			return nil, err
+		}
+		paths = append(paths, p)
 	}
 	for _, suffix := range harness.StateArtifactsForHarness(meta["harness"]) {
-		paths = append(paths, filepath.Join(stateDir, id+"."+suffix))
+		p, err := home.DurableFilePath(stateDir, id, "."+suffix)
+		if err != nil {
+			return nil, err
+		}
+		paths = append(paths, p)
 	}
-	return paths
+	return paths, nil
 }
 
 // killProcessesOnPath tries to kill any processes still accessing the given

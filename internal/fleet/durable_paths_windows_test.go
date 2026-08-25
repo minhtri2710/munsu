@@ -86,7 +86,11 @@ func TestTeardownCleanupTargetsEncodedProjections(t *testing.T) {
 	if err := os.Remove(metaPath); err != nil {
 		t.Fatalf("removing teardown meta target %q: %v", metaPath, err)
 	}
-	for _, p := range cleanupResidualArtifactPaths(tmp, id, meta) {
+	residualPaths, err := cleanupResidualArtifactPaths(tmp, id, meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range residualPaths {
 		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
 			t.Fatalf("removing teardown residual target %q: %v", p, err)
 		}

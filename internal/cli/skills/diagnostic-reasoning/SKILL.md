@@ -17,7 +17,7 @@ Never guess or assume root causes. Collect concrete evidence first:
 1. Run `munsu doctor` to check toolchain readiness and environment diagnostics.
 2. Read the full un-truncated error log or test output.
 3. Check `munsu soldier-state <id>` to inspect pane liveness and current run-step.
-4. Inspect task metadata (`state/<id>.meta`) and status event stream (`state/<id>.status`).
+4. Inspect the task's durable metadata projection and status event stream; use the logical task ID when querying them.
 
 ### Step 2: Isolation & Boundary Check
 

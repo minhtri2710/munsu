@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/backend"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 func TestObservationEventPort_Sources_HerdrEndpoint(t *testing.T) {
@@ -123,7 +124,11 @@ func mustWriteCLIMeta(t *testing.T, homeDir, id string, kv map[string]string) {
 	for k, v := range kv {
 		b = append(b, []byte(k+"="+v+"\n")...)
 	}
-	if err := os.WriteFile(filepath.Join(stateDir, id+".meta"), b, 0644); err != nil {
+	metaPath, err := home.MetaFilePath(homeDir, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(metaPath, b, 0644); err != nil {
 		t.Fatal(err)
 	}
 }

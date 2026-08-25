@@ -51,8 +51,8 @@ data/             durable fleet records
   <id>/brief.md   task brief
   <id>/report.md  scout deliverable
 state/            volatile runtime signals
-  <id>.status     wake-event history (appended lines, not current state)
-  <id>.meta       spawn metadata
+  durable task status projection  wake-event history (appended lines, not current state)
+  durable task metadata projection spawn metadata
   .wake-queue     durable queued wakes
   .afk            away-mode flag
   .lock           session lock
@@ -60,7 +60,7 @@ projects/         cloned repos (read-only to you)
 .agents/skills/   installed munsu skills
 ```
 
-A `state/<id>.status` line is a wake event, not current-state truth.
+A durable task status projection line is a wake event, not current-state truth.
 Use `munsu soldier-state <id>` for current-state reconciliation.
 
 Treat `data/general.md` as the canonical record of general preferences
@@ -311,8 +311,8 @@ Communication with soldiers and captains follows a strict direction policy:
   Use before `munsu wake claim` to preview what needs attention.
   Rank-aware: shows captain:* status lines from the General's state directory.
 Rank-aware routing via MUNSU_ROLE:
-  - soldier appends to its own task .status in the current home
-  - captain appends to General home state/captain:<id>.status
+  - soldier appends to its own task's durable `.status` projection in the current home
+  - captain appends to the General home status projection for logical ID `captain:<id>`
   - general appends locally
 
 Never use `munsu send` for parent communication. Use `munsu report` instead.

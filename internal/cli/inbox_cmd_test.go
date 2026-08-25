@@ -65,16 +65,30 @@ func TestInboxCmd_CaptainStatus(t *testing.T) {
 
 	// Create captain status files
 	stateDir := filepath.Join(tmpDir, "state")
-	os.MkdirAll(stateDir, 0755)
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Actionable captain status (done = general-relevant)
-	os.WriteFile(filepath.Join(stateDir, "captain:domain.status"),
+	domainStatusPath, err := home.StatusFilePath(tmpDir, "captain:domain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(domainStatusPath,
 		[]byte("working: processing\n"+
-			"done: phase-1 complete\n"), 0644)
+			"done: phase-1 complete\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Non-actionable captain status (working)
-	os.WriteFile(filepath.Join(stateDir, "captain:infra.status"),
-		[]byte("working: healthy\n"), 0644)
+	infraStatusPath, err := home.StatusFilePath(tmpDir, "captain:infra")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(infraStatusPath,
+		[]byte("working: healthy\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	root := NewRootCommand()
 	buf := new(bytes.Buffer)
@@ -82,7 +96,7 @@ func TestInboxCmd_CaptainStatus(t *testing.T) {
 	root.SetErr(buf)
 
 	root.SetArgs([]string{"inbox"})
-	err := root.Execute()
+	err = root.Execute()
 	if err != nil {
 		t.Fatalf("inbox: unexpected error: %v", err)
 	}

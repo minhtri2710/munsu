@@ -15,9 +15,11 @@ the orchestrator can act on.
 watcher loop (every 5s):
   1. Touch liveness beat at state/.last-watcher-beat
   2. Scan state/*.status for general-relevant last lines (done/failed/blocked/...)
-     including Captain return-channel files state/captain:<id>.status
+     including Captain return-channel status for logical IDs `captain:<id>`;
+     files use the platform durable stem (`state/<durable-stem>.status`)
      → enqueue Kind=signal (even while the captain pane is alive)
-  3. Scan all tasks in state/<id>.meta not already signaled
+  3. Scan all tasks in state/<durable-stem>.meta not already signaled;
+     decode each durable stem to its logical task ID
   4. For each remaining task, check:
      a. Pane liveness via session backend (tmux/herdr)
      b. Status log staleness (> 5 min idle)
@@ -82,7 +84,7 @@ the watcher is considered dead.
 General does not read Captain chat. The operable path is:
 
 1. **Marked send** — `munsu send <captain-id> "..."` prefixes `[mu-from-general]` + U+2063 for `kind=captain`.
-2. **Captain status** — Captain appends one line to General home `state/captain:<id>.status` (charter return channel).
+2. **Captain status** — Captain reports one line to the General's durable status projection for logical ID `captain:<id>` (charter return channel).
 3. **Signal wake** — watcher `RunCycle` / `munsu watch run` enqueues `kind=signal` for general-relevant last lines.
 4. **Claim** — General leases wakes with `munsu wake claim --consumer <id>`.
 
@@ -94,8 +96,8 @@ Operator checklist (live home):
 # 1) Send (marks automatically when meta kind=captain)
 munsu send captain:munsu "report status on <task>"
 
-# 2) Captain (or operator) appends parent status
-echo "done [key=<task>]: one short line" >> "$MUNSU_HOME/state/captain:munsu.status"
+# 2) In the Captain context, report the return-channel status
+munsu report status "done [key=<task>]: one short line"
 
 # 3) One watcher cycle (daemon does this every 5s)
 munsu watch run
@@ -154,5 +156,5 @@ All paths are relative to `$MUNSU_HOME` (default `~/.munsu`).
 | `state/.last-watcher-beat` | Liveness timestamp + PID |
 | `state/.wake-queue` | Durable wake event queue |
 | `state/.watcher-refused-*` | Per-artifact refusal state used to suppress duplicate check reports |
-| `state/<id>.meta` | Per-task metadata |
-| `state/<id>.status` | Per-task append-only event log (not sole current state; use `soldier-state`) |
+| `state/<durable-stem>.meta` | Per-task metadata; the filename stem is decoded to the logical task ID |
+| `state/<durable-stem>.status` | Per-task append-only event log (not sole current state; use `soldier-state`) |
