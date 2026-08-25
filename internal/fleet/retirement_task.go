@@ -910,32 +910,43 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		// 5. Clean up data directory
 		// One retention policy for every teardown: --force skips safety
 		// checks and is not a destructive action of its own, so it never
-		// widens what teardown deletes. A report.md, or a brief.md large
-		// enough not to be a stub, is work worth reading after teardown and
-		// is kept; a stub brief with no report is reclaimed here, and a data
-		// directory holding neither is reclaimed by the session-start GC in
-		// internal/bootstrap.
+		// widens what teardown deletes.
+		//
+		// A report is evidence produced by the generation that just retired,
+		// so it is archived under that generation's number instead of being
+		// left at the name the next generation writes. That is what binds
+		// scoutSafetyCheck's report check to the current generation: a
+		// reopened task starts with no report.md and cannot inherit evidence
+		// it did not produce. Reopen is unreachable until the cleanup claim
+		// below reconciles, so no later generation can observe the unarchived
+		// name. A brief is operator input rather than evidence: it survives
+		// for a relaunch of the same task and is reclaimed by the
+		// session-start GC in internal/bootstrap once the task is retired.
 		dataDir := filepath.Join(opts.HomeDir, "data", opts.ID)
 		if fi, err := os.Stat(dataDir); err == nil && fi.IsDir() {
 			reportPath := filepath.Join(dataDir, "report.md")
-			briefPath := filepath.Join(dataDir, "brief.md")
-			briefInfo, briefErr := os.Stat(briefPath)
-			_, reportErr := os.Stat(reportPath)
-
-			if os.IsNotExist(reportErr) {
-				// No report.md — safe to remove orphan brief/data dir
-				// Also remove if brief.md is tiny (< 256 bytes, likely a stub)
-				if briefErr == nil && briefInfo.Size() < 256 {
-					if err := os.RemoveAll(dataDir); err != nil {
-						result.Steps = append(result.Steps, fmt.Sprintf("remove small brief data dir: %v", err))
-					} else {
-						result.Steps = append(result.Steps, "data dir removed (small brief, no report)")
-					}
-				} else {
-					result.Steps = append(result.Steps, "data dir kept (brief present, no report)")
+			if _, err := os.Stat(reportPath); err == nil {
+				archived := ArchivedReportName(claimGen)
+				if err := os.Rename(reportPath, filepath.Join(dataDir, archived)); err != nil {
+					return cleanupPending(fmt.Errorf("teardown %s: archiving report for generation %s: %w", opts.ID, claimGen, err))
 				}
-			} else {
-				result.Steps = append(result.Steps, "data dir kept (report.md present)")
+				result.Steps = append(result.Steps, fmt.Sprintf("report.md archived as %s", archived))
+			}
+
+			briefInfo, briefErr := os.Stat(filepath.Join(dataDir, "brief.md"))
+
+			switch {
+			case HasReportEvidence(dataDir):
+				result.Steps = append(result.Steps, "data dir kept (archived report present)")
+			case briefErr == nil && briefInfo.Size() < 256:
+				// A stub brief with no report is nothing to read.
+				if err := os.RemoveAll(dataDir); err != nil {
+					result.Steps = append(result.Steps, fmt.Sprintf("remove small brief data dir: %v", err))
+				} else {
+					result.Steps = append(result.Steps, "data dir removed (small brief, no report)")
+				}
+			default:
+				result.Steps = append(result.Steps, "data dir kept (brief present, no report)")
 			}
 		}
 	}

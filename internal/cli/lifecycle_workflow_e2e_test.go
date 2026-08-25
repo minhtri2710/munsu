@@ -651,7 +651,7 @@ func TestWorkflowSessionStartHelper(t *testing.T) {
 			}
 			ensured++
 			return bootstrap.WatchEnsureResult{State: "idle"}
-		}, nil)
+		}, nil, taskDataDirOwnership(homeDir))
 	if err != nil {
 		t.Fatalf("session-start on %s: %v", homeDir, err)
 	}

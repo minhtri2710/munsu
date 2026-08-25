@@ -71,7 +71,7 @@ func TestRun_BackendDiagnostics_NoPersistedIdentityWithActiveTMUX(t *testing.T) 
 	t.Setenv("TMUX", "/tmp/tmux-xxx/default")
 	t.Setenv("HERDR_ENV", "")
 
-	result, err := Run(home, false, nil)
+	result, err := Run(home, false, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestRun_BackendDiagnostics_NoPersistedIdentityWithActiveHERDRENV(t *testing
 	t.Setenv("TMUX", "")
 	t.Setenv("HERDR_ENV", "1")
 
-	result, err := Run(home, false, nil)
+	result, err := Run(home, false, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestRun_BackendDiagnostics_NoPersistedIdentityWithTmuxOnPATH(t *testing.T) 
 	oldPath := os.Getenv("PATH")
 	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
 
-	result, err := Run(home, false, nil)
+	result, err := Run(home, false, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestRun_BackendDiagnostics_LegacyPinAloneIsNotAnIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := Run(home, false, nil)
+	result, err := Run(home, false, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestRun_BackendDiagnostics_PersistedFleetBaseBackend(t *testing.T) {
 	// Env must not shadow the persisted typed Backend.
 	t.Setenv("HERDR_ENV", "1")
 
-	result, err := Run(home, false, nil)
+	result, err := Run(home, false, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func TestRun_BackendDiagnostics_PersistedPublishedSnapshotWins(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := Run(home, false, nil)
+	result, err := Run(home, false, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +195,7 @@ func TestRun_BackendDiagnostics_UnrelatedOutputStable(t *testing.T) {
 	t.Setenv("TMUX", "/tmp/tmux-xxx")
 	t.Setenv("HERDR_ENV", "")
 
-	result, err := Run(home, false, nil)
+	result, err := Run(home, false, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +226,7 @@ func TestRun_BackendDiagnostics_AutoConfigFileWithNothingAvailable(t *testing.T)
 	// Scrub PATH so no tmux is findable
 	t.Setenv("PATH", "/dev/null")
 
-	result, err := Run(home, false, nil)
+	result, err := Run(home, false, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +256,7 @@ func TestRun_RequireNoMistakesDiagnosticFromTypedBase(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		result, err := Run(home, false, nil)
+		result, err := Run(home, false, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -272,7 +272,7 @@ func TestRun_RequireNoMistakesDiagnosticFromTypedBase(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		result, err := Run(home, false, nil)
+		result, err := Run(home, false, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -293,7 +293,7 @@ func TestGCOrphanDataDirs_EmptyDirOlderThanGrace(t *testing.T) {
 	// Make it older than the grace period
 	setDirMtime(t, filepath.Join(dataDir, "orphan-id"), 48*time.Hour)
 
-	cleaned := gcOrphanDataDirs(home)
+	cleaned := gcOrphanDataDirs(home, ownsNone)
 	if len(cleaned) != 1 || cleaned[0] != "orphan-id" {
 		t.Errorf("expected [orphan-id], got %v", cleaned)
 	}
@@ -316,7 +316,7 @@ func TestGCOrphanDataDirs_WithReportKept(t *testing.T) {
 	// Make it older than the grace period so only the report keeps it
 	setDirMtime(t, filepath.Join(dataDir, "with-report"), 48*time.Hour)
 
-	cleaned := gcOrphanDataDirs(home)
+	cleaned := gcOrphanDataDirs(home, ownsNone)
 	// Should not remove dir with report.md
 	for _, id := range cleaned {
 		if id == "with-report" {
@@ -329,27 +329,74 @@ func TestGCOrphanDataDirs_WithReportKept(t *testing.T) {
 	}
 }
 
-func TestGCOrphanDataDirs_WithBriefKept(t *testing.T) {
+func TestGCOrphanDataDirs_BriefOfOwnedTaskKept(t *testing.T) {
 	home := t.TempDir()
 	dataDir := filepath.Join(home, "data")
 	if err := os.MkdirAll(filepath.Join(dataDir, "with-brief"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	// Create brief.md — should protect from GC
+	// A brief written before the task was ever spawned: no meta, no status,
+	// and nothing else on disk says the task is still coming.
 	if err := os.WriteFile(filepath.Join(dataDir, "with-brief", "brief.md"), []byte("brief"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	// Make it older than the grace period so only the brief keeps it
 	setDirMtime(t, filepath.Join(dataDir, "with-brief"), 48*time.Hour)
 
-	cleaned := gcOrphanDataDirs(home)
+	cleaned := gcOrphanDataDirs(home, ownsEvery)
 	for _, id := range cleaned {
 		if id == "with-brief" {
-			t.Errorf("expected dir with brief.md to be kept, but it was removed")
+			t.Errorf("expected brief of an owned task to be kept, but it was removed")
 		}
 	}
 	if _, err := os.Stat(filepath.Join(dataDir, "with-brief")); os.IsNotExist(err) {
-		t.Errorf("expected dir with brief.md to still exist")
+		t.Errorf("expected brief of an owned task to still exist")
+	}
+}
+
+func TestGCOrphanDataDirs_BriefOfReleasedTaskReclaimed(t *testing.T) {
+	home := t.TempDir()
+	dataDir := filepath.Join(home, "data")
+	if err := os.MkdirAll(filepath.Join(dataDir, "torn-down"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Byte-identical to the case above. Only ownership separates a brief
+	// waiting for its soldier from one left by a teardown that wrote no
+	// report, which is what the forced stuck-soldier relaunch leaves behind.
+	if err := os.WriteFile(filepath.Join(dataDir, "torn-down", "brief.md"), []byte("brief"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	setDirMtime(t, filepath.Join(dataDir, "torn-down"), 48*time.Hour)
+
+	cleaned := gcOrphanDataDirs(home, ownsNone)
+	if len(cleaned) != 1 || cleaned[0] != "torn-down" {
+		t.Fatalf("expected [torn-down], got %v", cleaned)
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "torn-down")); !os.IsNotExist(err) {
+		t.Errorf("expected released brief dir to be removed, stat err: %v", err)
+	}
+}
+
+func TestGCOrphanDataDirs_ArchivedReportKept(t *testing.T) {
+	home := t.TempDir()
+	dataDir := filepath.Join(home, "data")
+	if err := os.MkdirAll(filepath.Join(dataDir, "retired-scout"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	// What a teardown leaves for the operator to read: the retired
+	// generation's report, under that generation's name.
+	if err := os.WriteFile(filepath.Join(dataDir, "retired-scout", "report-g1.md"), []byte("findings"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	setDirMtime(t, filepath.Join(dataDir, "retired-scout"), 48*time.Hour)
+
+	cleaned := gcOrphanDataDirs(home, ownsNone)
+	for _, id := range cleaned {
+		if id == "retired-scout" {
+			t.Errorf("expected archived report to be kept, but the dir was removed")
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "retired-scout", "report-g1.md")); err != nil {
+		t.Errorf("expected archived report to survive the sweep: %v", err)
 	}
 }
 
@@ -361,7 +408,7 @@ func TestGCOrphanDataDirs_RecentDirKept(t *testing.T) {
 	}
 	// Leave it at its original mtime (current time) — should be too recent to GC
 
-	cleaned := gcOrphanDataDirs(home)
+	cleaned := gcOrphanDataDirs(home, ownsNone)
 	for _, id := range cleaned {
 		if id == "recent-id" {
 			t.Errorf("expected recent dir to be kept, but it was removed")
@@ -369,5 +416,25 @@ func TestGCOrphanDataDirs_RecentDirKept(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dataDir, "recent-id")); os.IsNotExist(err) {
 		t.Errorf("expected recent dir to still exist")
+	}
+}
+
+func TestRunSkipsGCWithoutATaskOwnershipSource(t *testing.T) {
+	home := t.TempDir()
+	dataDir := filepath.Join(home, "data")
+	if err := os.MkdirAll(filepath.Join(dataDir, "orphan-id"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	setDirMtime(t, filepath.Join(dataDir, "orphan-id"), 48*time.Hour)
+
+	result, err := Run(home, true, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.GC == nil || result.GC.SkippedReason != "no task ownership source" {
+		t.Fatalf("GC = %+v, want the sweep skipped for want of an ownership source", result.GC)
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "orphan-id")); err != nil {
+		t.Fatalf("a sweep that cannot ask about ownership must remove nothing: %v", err)
 	}
 }

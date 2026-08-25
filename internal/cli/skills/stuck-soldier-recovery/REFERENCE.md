@@ -6,8 +6,8 @@
 2. Steer with one bounded `munsu send <id> "<instruction>"` command.
 3. Interrupt a spinning harness with Ctrl+C through its session backend.
 4. Relaunch with `munsu teardown <id> --force`, then spawn again with a progress note.
-   --force skips the safety checks and nothing else: a partial report.md survives
-   the teardown and is worth reading before the new run starts.
+   --force skips the safety checks and nothing else: a partial report survives the
+   teardown as report-g<generation>.md and is worth reading before the new run starts.
 5. Report failure only after the preceding steps are exhausted.
 
 | Condition | Action |
