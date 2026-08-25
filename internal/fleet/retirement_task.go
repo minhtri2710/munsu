@@ -929,28 +929,22 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		dataDir := filepath.Join(opts.HomeDir, "data", opts.ID)
 		if fi, err := os.Stat(dataDir); err == nil && fi.IsDir() {
 			reportPath := filepath.Join(dataDir, "report.md")
-			if _, err := os.Stat(reportPath); err == nil {
+			_, reportErr := os.Stat(reportPath)
+			switch {
+			case reportErr == nil:
 				archived := ArchivedReportName(claimGen)
 				if err := os.Rename(reportPath, filepath.Join(dataDir, archived)); err != nil {
 					return cleanupPending(fmt.Errorf("teardown %s: archiving report for generation %s: %w", opts.ID, claimGen, err))
 				}
 				result.Steps = append(result.Steps, fmt.Sprintf("report.md archived as %s", archived))
+			case !os.IsNotExist(reportErr):
+				return cleanupPending(fmt.Errorf("teardown %s: checking report for generation %s: %w", opts.ID, claimGen, reportErr))
 			}
 
-			briefInfo, briefErr := os.Stat(filepath.Join(dataDir, "brief.md"))
-
-			switch {
-			case HasReportEvidence(dataDir):
-				result.Steps = append(result.Steps, "data dir kept (archived report present)")
-			case briefErr == nil && briefInfo.Size() < 256:
-				// A stub brief with no report is nothing to read.
-				if err := os.RemoveAll(dataDir); err != nil {
-					result.Steps = append(result.Steps, fmt.Sprintf("remove small brief data dir: %v", err))
-				} else {
-					result.Steps = append(result.Steps, "data dir removed (small brief, no report)")
-				}
-			default:
-				result.Steps = append(result.Steps, "data dir kept (brief present, no report)")
+			result.Steps = append(result.Steps, "data dir kept for relaunch or session-start sweep")
+			now := time.Now()
+			if err := os.Chtimes(dataDir, now, now); err != nil {
+				return cleanupPending(fmt.Errorf("teardown %s: refreshing data directory for generation %s: %w", opts.ID, claimGen, err))
 			}
 		}
 	}

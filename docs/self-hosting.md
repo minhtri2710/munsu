@@ -173,8 +173,8 @@ report-g<generation>.md. It stays there to be read, and because the check above
 reads only the unarchived name, a task reopened to a later generation cannot
 pass its own teardown on evidence an earlier generation wrote. A data directory
 holding no report is kept for a relaunch of the same task and is reclaimed by
-the session-start sweep once the task is retired and past a 24h grace period; a
-stub brief with no report is reclaimed by the teardown itself.
+the session-start sweep once the task is retired and past a 24h grace period;
+teardown itself does not delete a brief.
 
 ## 5. Decision-hold scout gate
 

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	mhome "github.com/minhtri2710/munsu/internal/home"
 )
@@ -493,8 +494,8 @@ func TestRun_ForcePreservesReport(t *testing.T) {
 	if !hasStep(result.Steps, "report.md archived as report-g1.md") {
 		t.Fatalf("steps = %v, want the report-archived step", result.Steps)
 	}
-	if !hasStep(result.Steps, "data dir kept (archived report present)") {
-		t.Fatalf("steps = %v, want the report-kept step", result.Steps)
+	if !hasStep(result.Steps, "data dir kept for relaunch or session-start sweep") {
+		t.Fatalf("steps = %v, want the data-dir-kept step", result.Steps)
 	}
 
 	// The report belongs to generation 1 and stops answering for any other:
@@ -514,7 +515,7 @@ func TestRun_ForcePreservesReport(t *testing.T) {
 	}
 }
 
-func TestRun_ForceStillReclaimsStubBriefOrphan(t *testing.T) {
+func TestRun_ForcePreservesBriefForSweep(t *testing.T) {
 	tmp := t.TempDir()
 	os.Setenv("MUNSU_HOME", tmp)
 	defer os.Unsetenv("MUNSU_HOME")
@@ -529,11 +530,22 @@ func TestRun_ForceStillReclaimsStubBriefOrphan(t *testing.T) {
 	os.MkdirAll(dataDir, 0755)
 	os.WriteFile(filepath.Join(dataDir, "brief.md"), []byte("stub\n"), 0644)
 
+	old := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(dataDir, old, old); err != nil {
+		t.Fatalf("age data dir: %v", err)
+	}
 	if _, err := RetireTask(Options{HomeDir: tmp, ID: "stub-brief", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth); err != nil {
 		t.Fatalf("forced teardown: %v", err)
 	}
-	if _, err := os.Stat(dataDir); !os.IsNotExist(err) {
-		t.Fatalf("stub-brief orphan data dir must still be reclaimed, stat err = %v", err)
+	if _, err := os.Stat(filepath.Join(dataDir, "brief.md")); err != nil {
+		t.Fatalf("forced teardown must preserve the brief: %v", err)
+	}
+	info, err := os.Stat(dataDir)
+	if err != nil {
+		t.Fatalf("preserved data dir: %v", err)
+	}
+	if time.Since(info.ModTime()) > time.Minute {
+		t.Fatalf("preserved data dir mtime = %v, want refreshed at teardown", info.ModTime())
 	}
 }
 
@@ -762,6 +774,45 @@ func TestRun_ForceSkipsDecisionHoldCheck(t *testing.T) {
 // Completing the cleanup claim is what makes a task reopenable, so a report
 // still sitting at the name the next generation writes must never reach that
 // commit: the retirement stops at the typed partial outcome instead.
+func TestRun_ReportStatFailsClosed(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Fatal("permission proof did not run: tests run as root, so a child stat refusal cannot be established")
+	}
+	tmp := t.TempDir()
+	auth := canonicalMergeTestAuth(t, tmp, "report-stat")
+	stateDir := filepath.Join(tmp, "state")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "report-stat.meta"), []byte("kind=scout\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	dataDir := filepath.Join(tmp, "data", "report-stat")
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	reportPath := filepath.Join(dataDir, "report.md")
+	if err := os.WriteFile(reportPath, []byte("# findings\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dataDir, 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dataDir, 0755) })
+
+	_, err := RetireTask(Options{HomeDir: tmp, ID: "report-stat", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth)
+	var pending *RetirementCleanupPendingError
+	if !errors.As(err, &pending) {
+		t.Fatalf("teardown error = %T %v, want typed RetirementCleanupPendingError", err, err)
+	}
+	if err := os.Chmod(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(reportPath); err != nil {
+		t.Fatalf("a stat refusal must leave the report where it was: %v", err)
+	}
+}
+
 func TestRun_ArchivingTheReportFailsClosed(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Fatal("permission proof did not run: tests run as root, so a directory that refuses a rename cannot be established")

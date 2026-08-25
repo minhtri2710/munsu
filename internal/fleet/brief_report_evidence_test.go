@@ -7,24 +7,34 @@ import (
 )
 
 func TestHasReportEvidence(t *testing.T) {
-	dir := t.TempDir()
-
-	if HasReportEvidence(filepath.Join(dir, "missing")) != true {
+	if HasReportEvidence(filepath.Join(t.TempDir(), "missing")) != true {
 		t.Fatal("a directory that cannot be read must be reported as holding evidence")
 	}
-	if HasReportEvidence(dir) {
-		t.Fatal("an empty data directory holds no report evidence")
+
+	tests := []struct {
+		name  string
+		setup func(string) error
+		want  bool
+	}{
+		{"empty", func(string) error { return nil }, false},
+		{"brief", func(dir string) error { return os.WriteFile(filepath.Join(dir, "brief.md"), []byte("brief"), 0644) }, false},
+		{"valid archive", func(dir string) error {
+			return os.WriteFile(filepath.Join(dir, "report-g7.md"), []byte("findings"), 0644)
+		}, true},
+		{"malformed archive", func(dir string) error {
+			return os.WriteFile(filepath.Join(dir, "report-garbage.md"), []byte("not a report"), 0644)
+		}, false},
+		{"archive-shaped directory", func(dir string) error { return os.Mkdir(filepath.Join(dir, "report-g8.md"), 0755) }, false},
 	}
-	if err := os.WriteFile(filepath.Join(dir, "brief.md"), []byte("brief"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if HasReportEvidence(dir) {
-		t.Fatal("a brief is input, not report evidence")
-	}
-	if err := os.WriteFile(filepath.Join(dir, "report-g7.md"), []byte("findings"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if !HasReportEvidence(dir) {
-		t.Fatal("a retired generation's archived report is evidence")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := tt.setup(dir); err != nil {
+				t.Fatal(err)
+			}
+			if got := HasReportEvidence(dir); got != tt.want {
+				t.Fatalf("HasReportEvidence = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
