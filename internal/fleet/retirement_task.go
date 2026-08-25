@@ -914,6 +914,8 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 			}
 			return err
 		}
+		// Potentially failing work is complete before projections are touched;
+		// only these best-effort removals follow terminal reconciliation.
 		projectionCleanup := func() error {
 			metaFilePath, err := taskMetaFilePath(opts.HomeDir, opts.ID)
 			if err == nil {
@@ -923,11 +925,6 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 					result.Steps = append(result.Steps, "task meta removed")
 				}
 			}
-			journalSteps, err := journals.FinalizeRetirementJournals(opts.HomeDir, opts.ID)
-			if err != nil {
-				return fmt.Errorf("teardown %s: finalizing journals: %w", opts.ID, err)
-			}
-			result.Steps = append(result.Steps, journalSteps...)
 			for _, p := range cleanupResidualArtifactPaths(opts.HomeDir, opts.ID, meta) {
 				if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
 					result.Steps = append(result.Steps, fmt.Sprintf("remove residual %s: %v", filepath.Base(p), err))
@@ -937,6 +934,11 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 			}
 			return nil
 		}
+		journalSteps, err := journals.FinalizeRetirementJournals(opts.HomeDir, opts.ID)
+		if err != nil {
+			return cleanupPending(fmt.Errorf("teardown %s: finalizing journals: %w", opts.ID, err))
+		}
+		result.Steps = append(result.Steps, journalSteps...)
 		var archiveErr error
 		if claimCompleted {
 			archiveErr = authority.ReconcileCompletedCleanup(taskID, claimGen, func() error {
