@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/harness"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 func TestPiCompatibilityAliasesAreRejectedByStatus(t *testing.T) {
@@ -123,7 +124,7 @@ func installTestPiIntegration(t *testing.T) (string, string) {
 	writeTestExecutable(t, filepath.Join(bin, "node"), "#!/bin/sh\necho 'API probe passed'\n")
 	writeTestExecutable(t, filepath.Join(bin, "munsu"), "#!/bin/sh\nexit 0\n")
 	t.Setenv("PATH", bin+string(filepath.ListSeparator)+os.Getenv("PATH"))
-	SetMunsuPathResolver(testMunsuResolver{path: filepath.Join(bin, "munsu")})
+	SetMunsuPathResolver(testMunsuResolver{path: testutil.FakeExecutablePath(filepath.Join(bin, "munsu"))})
 	t.Cleanup(ResetMunsuPathResolver)
 	if _, err := Install(home, home, harness.Pi, ScopeProject, false); err != nil {
 		t.Fatal(err)
@@ -133,7 +134,5 @@ func installTestPiIntegration(t *testing.T) (string, string) {
 
 func writeTestExecutable(t *testing.T, path, content string) {
 	t.Helper()
-	if err := os.WriteFile(path, []byte(content), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, path, content)
 }

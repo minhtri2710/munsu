@@ -3,13 +3,13 @@
 package fleet
 
 import (
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/backend"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 func TestEnsureDeliveryModeRunnable_UnexpectedProbeStateRefuses(t *testing.T) {
@@ -45,10 +45,8 @@ case "$1" in
 esac
 exit 1
 `
-	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+	testutil.WriteFakeExecutable(t, binPath, script)
+	testutil.PrependPath(t, tmpDir)
 
 	result := NoMistakesProbe()
 	// v0.5.0 is below MinNoMistakesVersion (1.20.0), should be Unsupported
@@ -68,10 +66,8 @@ func TestNoMistakesProbe_Failed_MalformedVersion(t *testing.T) {
 echo "not-a-valid-version-string"
 exit 0
 `
-	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+	testutil.WriteFakeExecutable(t, binPath, script)
+	testutil.PrependPath(t, tmpDir)
 
 	result := NoMistakesProbe()
 	if result.State != backend.Failed {
@@ -84,10 +80,8 @@ func TestNoMistakesProbe_Failed_EmptyVersion(t *testing.T) {
 	tmpDir := t.TempDir()
 	binPath := filepath.Join(tmpDir, "no-mistakes")
 	script := "#!/bin/sh\nexit 0\n"
-	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+	testutil.WriteFakeExecutable(t, binPath, script)
+	testutil.PrependPath(t, tmpDir)
 
 	result := NoMistakesProbe()
 	// Binary exists but produces no --version output
@@ -101,10 +95,8 @@ func TestNoMistakesProbe_Failed_VersionCommandFails(t *testing.T) {
 	tmpDir := t.TempDir()
 	binPath := filepath.Join(tmpDir, "no-mistakes")
 	script := "#!/bin/sh\nexit 1\n"
-	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+	testutil.WriteFakeExecutable(t, binPath, script)
+	testutil.PrependPath(t, tmpDir)
 
 	result := NoMistakesProbe()
 	if result.State != backend.Failed {
@@ -157,10 +149,8 @@ case "$1" in
 esac
 exit 1
 `
-	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+	testutil.WriteFakeExecutable(t, binPath, script)
+	testutil.PrependPath(t, tmpDir)
 
 	result := NoMistakesProbe()
 	if result.State != backend.Ready {
@@ -182,10 +172,8 @@ func TestPreflight_NoMistakes_IncompatibleVersion(t *testing.T) {
 echo "no-mistakes version v0.5.0 (ancient)"
 exit 0
 `
-	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+	testutil.WriteFakeExecutable(t, binPath, script)
+	testutil.PrependPath(t, tmpDir)
 
 	result, err := Preflight("no-mistakes", "")
 	if err != nil {

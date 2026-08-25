@@ -1,13 +1,13 @@
 package fleet
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // The refusal branches on the spawn/launch path. Every fixture case here
@@ -383,9 +383,7 @@ func TestConfirmSpawnRefusesBindingOutsideTheLaunchFence(t *testing.T) {
 // configured fails preflight before any resource is allocated.
 func TestPreflightHarnessRefusesUnconfiguredAuth(t *testing.T) {
 	binDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(binDir, "claude"), []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
-		t.Fatalf("writing claude stub: %v", err)
-	}
+	testutil.WriteFakeExecutable(t, filepath.Join(binDir, "claude"), "#!/bin/sh\nexit 0\n")
 	t.Setenv("PATH", binDir)
 	t.Setenv("ANTHROPIC_API_KEY", "")
 

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 func TestInvalidClosedSetInputsRefuse(t *testing.T) {
@@ -103,11 +104,8 @@ func TestRun_BackendDiagnostics_NoPersistedIdentityWithTmuxOnPATH(t *testing.T) 
 	// A fake tmux on PATH must NOT be treated as a backend selection: PATH
 	// probing is not a selection contract for diagnostics.
 	fakeBin := t.TempDir()
-	if err := os.WriteFile(filepath.Join(fakeBin, "tmux"), []byte("#!/bin/sh\nexit 0"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
+	testutil.WriteFakeExecutable(t, filepath.Join(fakeBin, "tmux"), "#!/bin/sh\nexit 0")
+	testutil.PrependPath(t, fakeBin)
 
 	result, err := Run(home, false, nil)
 	if err != nil {

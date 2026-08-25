@@ -17,6 +17,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 func TestCheckScopeGate_YoloDoesNotBypassGate(t *testing.T) {
@@ -466,7 +467,7 @@ func TestNoMistakesOnPath(t *testing.T) {
 func TestEffectiveModeForSpawn_AutoNoMistakesPresent(t *testing.T) {
 	// Create a fake no-mistakes binary on PATH
 	tmpDir := createFakeNoMistakes(t, true, true)
-	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, tmpDir)
 
 	mode, err := effectiveModeForSpawn(t.TempDir(), Args{})
 	if err != nil {
@@ -493,7 +494,7 @@ func TestEffectiveModeForSpawn_AutoNoMistakesAbsent(t *testing.T) {
 func TestEffectiveModeForSpawn_ExplicitNoMistakesWithBinary(t *testing.T) {
 	// Fake no-mistakes on PATH, explicit flag
 	tmpDir := createFakeNoMistakes(t, true, true)
-	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, tmpDir)
 
 	mode, err := effectiveModeForSpawn(t.TempDir(), Args{Mode: "no-mistakes"})
 	if err != nil {
@@ -529,7 +530,7 @@ func TestEffectiveModeForSpawn_ExplicitNoMistakesNeverFallsBackToDirectPR(t *tes
 
 	t.Run("unsupported version", func(t *testing.T) {
 		tmpDir := createFakeNoMistakesVersion(t, "0.5.0")
-		t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+		testutil.PrependPath(t, tmpDir)
 
 		mode, err := effectiveModeForSpawn(t.TempDir(), Args{Mode: "no-mistakes"})
 		if err == nil {
@@ -543,10 +544,8 @@ func TestEffectiveModeForSpawn_ExplicitNoMistakesNeverFallsBackToDirectPR(t *tes
 	t.Run("failed probe", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		binPath := filepath.Join(tmpDir, "no-mistakes")
-		if err := os.WriteFile(binPath, []byte("#!/bin/sh\nexit 1\n"), 0755); err != nil {
-			t.Fatal(err)
-		}
-		t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+		testutil.WriteFakeExecutable(t, binPath, "#!/bin/sh\nexit 1\n")
+		testutil.PrependPath(t, tmpDir)
 
 		mode, err := effectiveModeForSpawn(t.TempDir(), Args{Mode: "no-mistakes"})
 		if err == nil {
@@ -574,7 +573,7 @@ func TestEffectiveModeForSpawn_ProjectNoMistakesNeverFallsBackToDirectPR(t *test
 
 	t.Run("unsupported version", func(t *testing.T) {
 		tmpDir := createFakeNoMistakesVersion(t, "0.5.0")
-		t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+		testutil.PrependPath(t, tmpDir)
 
 		mode, err := effectiveModeForSpawn(t.TempDir(), Args{ProjectMode: "no-mistakes"})
 		if err == nil {
@@ -604,7 +603,7 @@ func TestResolveDeliveryMode_TypedNoMistakesNeverFallsBackToDirectPR(t *testing.
 
 	t.Run("unsupported version", func(t *testing.T) {
 		tmpDir := createFakeNoMistakesVersion(t, "0.5.0")
-		t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+		testutil.PrependPath(t, tmpDir)
 
 		mode, err := ResolveDeliveryMode("", "no-mistakes", false)
 		if err == nil {
@@ -620,7 +619,7 @@ func TestResolveDeliveryMode_TypedNoMistakesNeverFallsBackToDirectPR(t *testing.
 // falls back to direct-PR when no-mistakes is on PATH but incompatible.
 func TestResolveDeliveryMode_AutoFallbackOnIncompatible(t *testing.T) {
 	tmpDir := createFakeNoMistakesVersion(t, "0.5.0")
-	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, tmpDir)
 
 	mode, err := ResolveDeliveryMode("", "", false)
 	if err != nil {
@@ -991,9 +990,7 @@ func TestCurrentEndpointKindFailsClosedWhenTmuxPaneCannotResolve(t *testing.T) {
 func TestTmuxWindowForPaneFailsClosedWhenWindowIsEmpty(t *testing.T) {
 	binDir := t.TempDir()
 	tmuxPath := filepath.Join(binDir, "tmux")
-	if err := os.WriteFile(tmuxPath, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, tmuxPath, "#!/bin/sh\nexit 0\n")
 	t.Setenv("PATH", binDir+string(filepath.ListSeparator)+os.Getenv("PATH"))
 
 	if _, err := tmuxWindowForPane("%3"); err == nil || !strings.Contains(err.Error(), "returned empty window id") {
@@ -1400,9 +1397,7 @@ esac
 	script += "exit 0\n"
 
 	content := "#!/bin/sh\n" + script
-	if err := os.WriteFile(binPath, []byte(content), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, binPath, content)
 	return tmpDir
 }
 
@@ -1414,10 +1409,8 @@ func TestSpawn_PostCreateVerificationFailure_NoMetaNoSpawnedStatus(t *testing.T)
 		t.Fatal(err)
 	}
 	binDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(binDir, "pi"), []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
+	testutil.WriteFakeExecutable(t, filepath.Join(binDir, "pi"), "#!/bin/sh\nexit 0\n")
+	testutil.PrependPath(t, binDir)
 	t.Setenv("GEMINI_API_KEY", "test-key")
 
 	projectDir := filepath.Join(homeDir, "projects", "test-proj")

@@ -1,9 +1,10 @@
 package fleet
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 type fakeBackend struct {
@@ -56,8 +57,6 @@ func createFakeNoMistakesVersion(t *testing.T, version string) string {
 	tmpDir := t.TempDir()
 	binPath := filepath.Join(tmpDir, "no-mistakes")
 	script := "#!/bin/sh\necho \"no-mistakes version v" + version + " (test)\"\nexit 0\n"
-	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, binPath, script)
 	return tmpDir
 }

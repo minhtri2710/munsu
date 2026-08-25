@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // TestNoMistakesYAML_DisableProjectSettingsIsTrue asserts that the repository's
@@ -46,7 +48,7 @@ func TestEnsureDeliveryModeRunnable_AbsentBinary(t *testing.T) {
 // TestEnsureDeliveryModeRunnable_UnsupportedVersion tests explicit mode fails on old version.
 func TestEnsureDeliveryModeRunnable_UnsupportedVersion(t *testing.T) {
 	tmpDir := createFakeNoMistakesVersion(t, "0.5.0")
-	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, tmpDir)
 
 	err := EnsureDeliveryModeRunnable("no-mistakes")
 	if err == nil {
@@ -87,10 +89,8 @@ func TestNoMistakesProbe_AutoFallbackNeverErrors(t *testing.T) {
 func TestPreflight_NoMistakes_FailedProbe(t *testing.T) {
 	tmpDir := t.TempDir()
 	binPath := filepath.Join(tmpDir, "no-mistakes")
-	if err := os.WriteFile(binPath, []byte("#!/bin/sh\nexit 1\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+	testutil.WriteFakeExecutable(t, binPath, "#!/bin/sh\nexit 1\n")
+	testutil.PrependPath(t, tmpDir)
 
 	// Preflight should see the binary on PATH but the probe will fail
 	result, err := Preflight("no-mistakes", "")

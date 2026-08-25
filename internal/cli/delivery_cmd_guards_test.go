@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -13,6 +12,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // The bound worktree head the fixture pins. The delivery identity, the
@@ -153,10 +153,8 @@ pr)
 esac
 `, deliveryGuardHead)
 	path := filepath.Join(dir, "gh-axi")
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	testutil.WriteFakeExecutable(t, path, script)
+	testutil.PrependPath(t, dir)
 }
 
 // TestPRMergeRefusesADeliveryThatCommittedANonCompletedOutcome enters the

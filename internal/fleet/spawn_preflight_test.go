@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/harness"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 func TestRun_PreflightBlocksBeforeWorktreeAllocation(t *testing.T) {
@@ -76,10 +77,8 @@ func TestRun_PreflightUnknownPassesThrough(t *testing.T) {
 	// Create a fake codex binary on PATH so the binary check also passes.
 	binDir := t.TempDir()
 	binPath := filepath.Join(binDir, "codex")
-	if err := os.WriteFile(binPath, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
+	testutil.WriteFakeExecutable(t, binPath, "#!/bin/sh\nexit 0\n")
+	testutil.PrependPath(t, binDir)
 
 	homeDir := t.TempDir()
 	projectDir := t.TempDir()

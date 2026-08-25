@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // writeFakeHerdrPrompt creates a fake herdr tuned for agent prompt tests.
@@ -70,9 +72,7 @@ func writeFakeHerdrPrompt(t *testing.T, dir, apiSchema string) string {
 		`>&2 echo "unknown command: $*"` + "\n" +
 		`exit 1` + "\n"
 
-	if err := os.WriteFile(bin, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, bin, script)
 	return bin
 }
 
@@ -89,7 +89,7 @@ func setFakeEnv(t *testing.T, dir string, kv ...string) {
 func TestAgentPrompt_NoWaitFlag(t *testing.T) {
 	tmp := t.TempDir()
 	writeFakeHerdrPrompt(t, tmp, "protocol: 17")
-	t.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, tmp)
 
 	h := NewHerdrBackend("test-s")
 	result := h.AgentPrompt("test-s:w1:p1", "hello")
@@ -101,7 +101,7 @@ func TestAgentPrompt_NoWaitFlag(t *testing.T) {
 func TestAgentPrompt_IdleAgent(t *testing.T) {
 	tmp := t.TempDir()
 	writeFakeHerdrPrompt(t, tmp, "protocol: 17")
-	t.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, tmp)
 
 	// Agent is idle before submission.
 	setFakeEnv(t, tmp,
@@ -121,7 +121,7 @@ func TestAgentPrompt_IdleAgent(t *testing.T) {
 func TestAgentPrompt_BusyAgentReturnsPromptly(t *testing.T) {
 	tmp := t.TempDir()
 	writeFakeHerdrPrompt(t, tmp, "protocol: 17")
-	t.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, tmp)
 
 	// Agent is working before submission, prompt returns immediately.
 	setFakeEnv(t, tmp,
@@ -143,7 +143,7 @@ func TestAgentPrompt_BusyAgentReturnsPromptly(t *testing.T) {
 func TestAgentPrompt_Stalled(t *testing.T) {
 	tmp := t.TempDir()
 	writeFakeHerdrPrompt(t, tmp, "protocol: 17")
-	t.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, tmp)
 
 	setFakeEnv(t, tmp,
 		"AGENT_GET_STATUS=idle",
@@ -160,7 +160,7 @@ func TestAgentPrompt_Stalled(t *testing.T) {
 func TestAgentPrompt_AgentNotFound(t *testing.T) {
 	tmp := t.TempDir()
 	writeFakeHerdrPrompt(t, tmp, "protocol: 17")
-	t.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, tmp)
 
 	// agent get returns agent_not_found and pane is also gone.
 	setFakeEnv(t, tmp,
@@ -178,7 +178,7 @@ func TestAgentPrompt_AgentNotFound(t *testing.T) {
 func TestAgentPrompt_UnsupportedPane(t *testing.T) {
 	tmp := t.TempDir()
 	writeFakeHerdrPrompt(t, tmp, "protocol: 17")
-	t.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, tmp)
 
 	// agent get returns agent_not_found, but pane is alive.
 	setFakeEnv(t, tmp,
@@ -196,7 +196,7 @@ func TestAgentPrompt_UnsupportedPane(t *testing.T) {
 func TestAgentPrompt_BackendFailed(t *testing.T) {
 	tmp := t.TempDir()
 	writeFakeHerdrPrompt(t, tmp, "protocol: 17")
-	t.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, tmp)
 
 	setFakeEnv(t, tmp,
 		"AGENT_GET_STATUS=idle",
@@ -213,7 +213,7 @@ func TestAgentPrompt_BackendFailed(t *testing.T) {
 func TestAgentPrompt_UnsupportedProtocol(t *testing.T) {
 	tmp := t.TempDir()
 	writeFakeHerdrPrompt(t, tmp, "protocol: 16")
-	t.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, tmp)
 
 	h := NewHerdrBackend("test-s")
 	result := h.AgentPrompt("test-s:w1:p1", "hello")
@@ -225,7 +225,7 @@ func TestAgentPrompt_UnsupportedProtocol(t *testing.T) {
 func TestAgentPrompt_DeadEndpoint(t *testing.T) {
 	tmp := t.TempDir()
 	writeFakeHerdrPrompt(t, tmp, "protocol: 17")
-	t.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, tmp)
 
 	// agent get returns agent_not_found and pane get fails.
 	setFakeEnv(t, tmp,
@@ -243,7 +243,7 @@ func TestAgentPrompt_DeadEndpoint(t *testing.T) {
 func TestAgentPrompt_ResponseParsing(t *testing.T) {
 	tmp := t.TempDir()
 	writeFakeHerdrPrompt(t, tmp, "protocol: 17")
-	t.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, tmp)
 
 	// Unparseable response.
 	setFakeEnv(t, tmp,
@@ -260,7 +260,7 @@ func TestAgentPrompt_ResponseParsing(t *testing.T) {
 func TestAgentPrompt_EmptyResponse(t *testing.T) {
 	tmp := t.TempDir()
 	writeFakeHerdrPrompt(t, tmp, "protocol: 17")
-	t.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, tmp)
 
 	// Empty stdout on error.
 	setFakeEnv(t, tmp,
@@ -278,7 +278,7 @@ func TestAgentPrompt_EmptyResponse(t *testing.T) {
 func TestSubmitPrompt_NoFallbackAfterTypedFailure(t *testing.T) {
 	tmp := t.TempDir()
 	writeFakeHerdrPrompt(t, tmp, "protocol: 17")
-	t.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, tmp)
 
 	// Stalled must NOT fall back to legacy.
 	setFakeEnv(t, tmp,
@@ -296,7 +296,7 @@ func TestSubmitPrompt_NoFallbackAfterTypedFailure(t *testing.T) {
 func TestSubmitPrompt_LegacyFallback(t *testing.T) {
 	tmp := t.TempDir()
 	writeFakeHerdrPrompt(t, tmp, "protocol: 16")
-	t.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, tmp)
 
 	h := NewHerdrBackend("test-s")
 	result := SubmitPrompt(h, "test-s:w1:p1", "hello")
@@ -308,7 +308,7 @@ func TestSubmitPrompt_LegacyFallback(t *testing.T) {
 func TestAgentPrompt_NoWaitArgVerification(t *testing.T) {
 	tmp := t.TempDir()
 	_ = writeFakeHerdrPrompt(t, tmp, "protocol: 17")
-	t.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, tmp)
 
 	// If --wait leaks through, the fake herdr exits 99.
 	// This test verifies it doesn't.
@@ -333,10 +333,8 @@ func TestAgentPrompt_ProtocolProbeFailure(t *testing.T) {
 	script := "#!/usr/bin/env bash\n" +
 		`>&2 echo "herdr: not available"` + "\n" +
 		"exit 1\n"
-	if err := os.WriteFile(bin, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
+	testutil.WriteFakeExecutable(t, bin, script)
+	testutil.PrependPath(t, tmp)
 
 	h := NewHerdrBackend("test-s")
 	result := h.AgentPrompt("test-s:w1:p1", "hello")
@@ -371,7 +369,7 @@ func TestAgentPromptCommandArgs(t *testing.T) {
 func TestAgentPrompt_EmptyResponseOnSuccess(t *testing.T) {
 	tmp := t.TempDir()
 	writeFakeHerdrPrompt(t, tmp, "protocol: 17")
-	t.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, tmp)
 
 	setFakeEnv(t, tmp,
 		"AGENT_GET_STATUS=idle",

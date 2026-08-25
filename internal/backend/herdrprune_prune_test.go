@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // writeFakeHerdrPrune creates a fake herdr executable in dir that responds to
@@ -44,17 +46,14 @@ func writeFakeHerdrPrune(t *testing.T, dir string, workspaceJSON string) string 
 		"esac\n" +
 		`echo '{"error":{"code":"unknown_command"}}'` + "\n" +
 		"exit 1\n"
-	if err := os.WriteFile(bin, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, bin, script)
 	return dir
 }
 
 func TestRunPrune_DryRunListsCandidates(t *testing.T) {
 	tmp := t.TempDir()
 	fakePath := writeFakeHerdrPrune(t, tmp, `[{"label":"a1b2c3","workspace_id":"wEmpty","tab_count":0,"agent_status":"none"},{"label":"a1b2c3","workspace_id":"wBusy","tab_count":2,"agent_status":"none"}]`)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", fakePath+":"+oldPath)
+	testutil.PrependPath(t, fakePath)
 
 	homeDir := filepath.Join(tmp, "home")
 	os.MkdirAll(homeDir, 0755)
@@ -94,8 +93,7 @@ func TestRunPrune_ApplyClosesHometagMatch(t *testing.T) {
 	tag := Hometag(homeDir)
 	wsJSON := `[{"label":"` + tag + `","workspace_id":"wMatch","tab_count":0,"agent_status":"none"}]`
 	fakePath := writeFakeHerdrPrune(t, tmp, wsJSON)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", fakePath+":"+oldPath)
+	testutil.PrependPath(t, fakePath)
 
 	result, err := RunPrune(PruneOptions{
 		Session: "test-session",
@@ -138,8 +136,7 @@ func TestRunPrune_LiveAgentSkipped(t *testing.T) {
 			tag := Hometag(homeDir)
 			wsJSON := `[{"label":"` + tag + `","workspace_id":"wLive","tab_count":0,"agent_status":"` + status + `"}]`
 			fakePath := writeFakeHerdrPrune(t, subTmp, wsJSON)
-			oldPath := os.Getenv("PATH")
-			t.Setenv("PATH", fakePath+":"+oldPath)
+			testutil.PrependPath(t, fakePath)
 
 			result, err := RunPrune(PruneOptions{
 				Session: "test-session",
@@ -174,8 +171,7 @@ func TestRunPrune_NonHometagLabelKept(t *testing.T) {
 	// Workspace with a label that doesn't match the hometag.
 	wsJSON := `[{"label":"non-hometag-label","workspace_id":"wForeign","tab_count":0,"agent_status":"none"}]`
 	fakePath := writeFakeHerdrPrune(t, tmp, wsJSON)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", fakePath+":"+oldPath)
+	testutil.PrependPath(t, fakePath)
 
 	result, err := RunPrune(PruneOptions{
 		Session: "test-session",
@@ -208,8 +204,7 @@ func TestRunPrune_TabCountGtZeroKept(t *testing.T) {
 	wsJSON := `[{"label":"` + tag + `","workspace_id":"wBusy","tab_count":2,"agent_status":"none"}]
 `
 	fakePath := writeFakeHerdrPrune(t, tmp, wsJSON)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", fakePath+":"+oldPath)
+	testutil.PrependPath(t, fakePath)
 
 	result, err := RunPrune(PruneOptions{
 		Session: "test-session",
@@ -242,8 +237,7 @@ func TestRunPrune_ApplyNoMatchIsNoop(t *testing.T) {
 	// Workspace with a label that won't match the hometag.
 	wsJSON := `[{"label":"not-matching","workspace_id":"wNope","tab_count":0,"agent_status":"none"}]`
 	fakePath := writeFakeHerdrPrune(t, tmp, wsJSON)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", fakePath+":"+oldPath)
+	testutil.PrependPath(t, fakePath)
 
 	result, err := RunPrune(PruneOptions{
 		Session: "test-session",
@@ -284,8 +278,7 @@ func TestRunPrune_CaptainHomesLabelsOwned(t *testing.T) {
 
 	wsJSON := `[{"label":"` + captainTag + `","workspace_id":"wCaptain","tab_count":0,"agent_status":"none"}]`
 	fakePath := writeFakeHerdrPrune(t, tmp, wsJSON)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", fakePath+":"+oldPath)
+	testutil.PrependPath(t, fakePath)
 
 	// Without the caller-supplied captain homes the captain label is foreign.
 	result, err := RunPrune(PruneOptions{
@@ -336,8 +329,7 @@ func TestRunPrune_MetaReferencedSkipped(t *testing.T) {
 
 	wsJSON := `[{"label":"` + tag + `","workspace_id":"wReferenced","tab_count":0,"agent_status":"none"}]`
 	fakePath := writeFakeHerdrPrune(t, tmp, wsJSON)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", fakePath+":"+oldPath)
+	testutil.PrependPath(t, fakePath)
 
 	result, err := RunPrune(PruneOptions{
 		Session: "test-session",
@@ -375,8 +367,7 @@ func TestRunPrune_MixedWorkspaces(t *testing.T) {
 		`{"label":"` + tag + `","workspace_id":"w4","tab_count":3,"agent_status":"none"},` +
 		`{"label":"other-tag","workspace_id":"w5","tab_count":0,"agent_status":"none"}]`
 	fakePath := writeFakeHerdrPrune(t, tmp, ws)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", fakePath+":"+oldPath)
+	testutil.PrependPath(t, fakePath)
 
 	result, err := RunPrune(PruneOptions{
 		Session: "test-session",
@@ -477,8 +468,7 @@ func TestRunPrune_DryRunDoesNotClose(t *testing.T) {
 	tag := Hometag(homeDir)
 	wsJSON := `[{"label":"` + tag + `","workspace_id":"wDry","tab_count":0,"agent_status":"none"}]`
 	fakePath := writeFakeHerdrPrune(t, tmp, wsJSON)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", fakePath+":"+oldPath)
+	testutil.PrependPath(t, fakePath)
 
 	// Dry-run
 	result, err := RunPrune(PruneOptions{
@@ -518,8 +508,7 @@ func TestRunPrune_WithSession(t *testing.T) {
 
 	wsJSON := `[{"label":"some-tag","workspace_id":"wDef","tab_count":0,"agent_status":"none"}]`
 	fakePath := writeFakeHerdrPrune(t, tmp, wsJSON)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", fakePath+":"+oldPath)
+	testutil.PrependPath(t, fakePath)
 
 	_, err := RunPrune(PruneOptions{
 		Session: "test-session",

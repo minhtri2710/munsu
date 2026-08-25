@@ -1,10 +1,11 @@
 package harness
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 func TestGuardBurnDownDispatchPreflightRejectsAbsentBinary(t *testing.T) {
@@ -30,9 +31,7 @@ func TestGuardBurnDownDispatchPreflightRejectsAbsentAuth(t *testing.T) {
 
 func writeTestHarnessExecutable(t *testing.T, dir, name string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, filepath.Join(dir, name), "#!/bin/sh\nexit 0\n")
 }
 
 func TestGuardBurnDownSaveDispatchRejectsNilConfig(t *testing.T) {

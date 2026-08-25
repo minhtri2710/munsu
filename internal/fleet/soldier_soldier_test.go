@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/harness"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // =============================================================================
@@ -450,9 +451,7 @@ func requiredSkillLaunchInput(t *testing.T, mode string, required ...SkillEntry)
 func skillBinaryOnPath(t *testing.T, name string) {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
-		t.Fatalf("writing %s stub: %v", name, err)
-	}
+	testutil.WriteFakeExecutable(t, filepath.Join(dir, name), "#!/bin/sh\nexit 0\n")
 	t.Setenv("PATH", dir)
 }
 

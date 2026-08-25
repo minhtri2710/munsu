@@ -14,6 +14,7 @@ import (
 	fleetconfig "github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 func writeModelAllowlist(t *testing.T, homeDir, content string) {
@@ -533,12 +534,10 @@ func TestSpawn_DispatchSelectionResolvedOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := "#!/usr/bin/env bash\nprintf 'x' >> \"$QUOTA_COUNTER\"\ncat \"$QUOTA_FIXTURE\"\n"
-	if err := os.WriteFile(filepath.Join(fakeDir, "quota-axi"), []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, filepath.Join(fakeDir, "quota-axi"), script)
 	t.Setenv("QUOTA_COUNTER", counter)
 	t.Setenv("QUOTA_FIXTURE", fixture)
-	t.Setenv("PATH", fakeDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	testutil.PrependPath(t, fakeDir)
 
 	r := NewRunner(Args{ID: "quota-task", ProjectName: "quota-proj", HomeDir: homeDir, TaskDescription: "quota work"})
 	r.homeDir = homeDir

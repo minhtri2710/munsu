@@ -16,6 +16,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // writeFakeHerdrEventWait creates a fake herdr binary that responds to the
@@ -43,9 +45,7 @@ func writeFakeHerdrEventWait(t *testing.T, dir, schemaJSON, waitJSON string, wai
 		"fi\n" +
 		`echo '{"error":{"code":"unknown_command"}}'` + "\n" +
 		"exit 1\n"
-	if err := os.WriteFile(bin, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, bin, script)
 	return dir
 }
 
@@ -57,8 +57,7 @@ func eventSourceWithFake(t *testing.T, waitJSON string, waitExit int, logPath st
 	t.Helper()
 	tmp := t.TempDir()
 	writeFakeHerdrEventWait(t, tmp, fakeHerdrSchemaReady, waitJSON, waitExit, logPath)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", tmp+":"+oldPath)
+	testutil.PrependPath(t, tmp)
 	return &HerdrEventSource{Session: "test-s"}, tmp
 }
 
@@ -66,15 +65,17 @@ func eventSourceWithFake(t *testing.T, waitJSON string, waitExit int, logPath st
 // branch blocks until the invoking process is killed (context cancellation
 // via exec.CommandContext), then returns the path of the FIFO that fake blocks
 // on. Opening the write end of that FIFO is what proves the fake is blocked —
-// see awaitFakeBlocking.
+// see awaitFakeBlocking. The external `mkfifo` command avoids a compile-time
+// dependency on a syscall unavailable on Windows, but remains a runtime PATH
+// dependency of this blocking fixture on every host where it executes. The
+// Windows fake launcher separately owns fake-shell descendant cleanup.
 func eventSourceWithFakeBlocking(t *testing.T, logPath string) (*HerdrEventSource, string) {
 	t.Helper()
 	tmp := t.TempDir()
 	blockedOn := filepath.Join(t.TempDir(), "blocked.fifo")
 	makeRendezvousFIFO(t, blockedOn)
 	writeFakeHerdrEventWaitBlocking(t, tmp, fakeHerdrSchemaReady, logPath, blockedOn)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", tmp+":"+oldPath)
+	testutil.PrependPath(t, tmp)
 	return &HerdrEventSource{Session: "test-s"}, blockedOn
 }
 
@@ -82,9 +83,10 @@ func eventSourceWithFakeBlocking(t *testing.T, logPath string) (*HerdrEventSourc
 //
 // The POSIX utility is used rather than syscall.Mkfifo because this file
 // carries no build constraint and must still type-check for GOOS=windows,
-// where syscall.Mkfifo does not exist. Requiring `mkfifo` at run time costs
-// nothing here: every fake in this file is a bash script, so these tests
-// already only execute on a POSIX host.
+// where syscall.Mkfifo does not exist. Requiring `mkfifo` at run time keeps
+// the fixture source portable at compile time, while making the command an
+// explicit runtime PATH dependency. On Windows, the fake launcher's job
+// object owns the fake shell and its descendants.
 func makeRendezvousFIFO(t *testing.T, path string) {
 	t.Helper()
 	if out, err := exec.Command("mkfifo", path).CombinedOutput(); err != nil {
@@ -96,14 +98,15 @@ func makeRendezvousFIFO(t *testing.T, path string) {
 // `agent wait` branch blocks until killed (models a herdr CLI blocked inside
 // its own bounded wait, only interruptible by the caller's context).
 //
-// The blocking branch uses `exec` so the blocked process REPLACES the shell
-// and keeps the same pid exec.CommandContext knows about. A backgrounded
-// blocker would be a grandchild: CommandContext kills only the direct child
-// (the shell), the surviving grandchild keeps the write end of the stdout pipe
-// open, and cmd.Output() blocks waiting for an EOF that never comes. With
-// `exec` there is no grandchild at all, so cancellation is deterministic on
-// both macOS and Linux and does not depend on process-group kill semantics,
-// which differ between them.
+// On POSIX, the blocking branch uses `exec` so the blocked process REPLACES
+// the shell and keeps the same pid exec.CommandContext knows about. A
+// backgrounded blocker would be a grandchild: CommandContext kills only the
+// direct child (the shell), the surviving grandchild keeps the write end of
+// the stdout pipe open, and cmd.Output() blocks waiting for an EOF that never
+// comes. On Windows, the native launcher in internal/testutil is the direct
+// child and its job object owns the shell and its descendants, so cancellation
+// closes that ownership boundary. The shell script remains the single source
+// of fake behavior on both platforms.
 //
 // What it execs is `cat` on a FIFO rather than `sleep`, because that makes
 // blocked-ness observable to the test without adding a grandchild (#577).
@@ -136,9 +139,7 @@ func writeFakeHerdrEventWaitBlocking(t *testing.T, dir, schemaJSON, logPath, blo
 		"fi\n" +
 		`echo '{"error":{"code":"unknown_command"}}'` + "\n" +
 		"exit 1\n"
-	if err := os.WriteFile(bin, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, bin, script)
 	return dir
 }
 
@@ -212,41 +213,35 @@ func TestHerdrEventSource_Wait_IdleAndBlockedNormalization(t *testing.T) {
 
 func TestHerdrEventSource_NegotiationGates(t *testing.T) {
 	t.Run("absent binary -> ErrEventUnavailable", func(t *testing.T) {
-		oldPath := os.Getenv("PATH")
 		t.Setenv("PATH", "/nonexistent")
 		src := &HerdrEventSource{Session: "test-s"}
 		_, err := src.Wait(context.Background(), EndpointRef{Backend: "herdr", Handle: "w:p"}, "")
 		if !errors.Is(err, ErrEventUnavailable) {
 			t.Errorf("err = %v, want ErrEventUnavailable", err)
 		}
-		_ = oldPath
 	})
 
 	t.Run("unsupported protocol -> ErrEventProtocolMismatch", func(t *testing.T) {
 		tmp := t.TempDir()
 		writeFakeHerdrEventWait(t, tmp, `{"protocol":99,"schema_version":2,"schemas":{}}`, `{}`, 0, filepath.Join(tmp, "a.log"))
-		oldPath := os.Getenv("PATH")
-		t.Setenv("PATH", tmp+":"+oldPath)
+		testutil.PrependPath(t, tmp)
 		src := &HerdrEventSource{Session: "test-s"}
 		_, err := src.Wait(context.Background(), EndpointRef{Backend: "herdr", Handle: "w:p"}, "")
 		if !errors.Is(err, ErrEventProtocolMismatch) {
 			t.Errorf("err = %v, want ErrEventProtocolMismatch", err)
 		}
-		_ = oldPath
 	})
 
 	t.Run("protocol without agent-wait flag -> ErrEventUnsupported", func(t *testing.T) {
 		// Protocol 16 has pane_wait_output but no agent_wait.
 		tmp := t.TempDir()
 		writeFakeHerdrEventWait(t, tmp, `{"protocol":16,"schema_version":1,"schemas":{}}`, `{}`, 0, filepath.Join(tmp, "a.log"))
-		oldPath := os.Getenv("PATH")
-		t.Setenv("PATH", tmp+":"+oldPath)
+		testutil.PrependPath(t, tmp)
 		src := &HerdrEventSource{Session: "test-s"}
 		_, err := src.Wait(context.Background(), EndpointRef{Backend: "herdr", Handle: "w:p"}, "")
 		if !errors.Is(err, ErrEventUnsupported) {
 			t.Errorf("err = %v, want ErrEventUnsupported", err)
 		}
-		_ = oldPath
 	})
 }
 
@@ -312,12 +307,13 @@ func spawnBackstop(t *testing.T) <-chan time.Time {
 //
 // The proof is a FIFO rendezvous, not a marker file. The fake's blocking
 // branch ends in `exec cat <fifo>`, so the process that opens that FIFO for
-// reading is the one that survived the exec and the one exec.CommandContext
-// will kill. Opening a FIFO for reading completes only when a writer opens it
-// and vice versa, so this open returning proves the exec has already happened
-// and that what remains is a reader parked on a pipe nobody writes to.
-// cancel() therefore cannot land on a shell that is still on its way to the
-// blocking call.
+// reading is the process image that reached the blocking call. Opening a FIFO
+// for reading completes only when a writer opens it and vice versa, so this
+// open returning proves the exec has happened and that what remains is a
+// reader parked on a pipe nobody writes to. On POSIX, that process image is
+// the direct child exec.CommandContext kills; on Windows, the native launcher
+// owns it and its shell descendants through a job object. cancel() therefore
+// cannot land on a shell that is still on its way to the blocking call.
 //
 // Be exact about where that proof stops, because it stops one syscall short:
 // at the instant this open returns, the reader has just been RELEASED from
