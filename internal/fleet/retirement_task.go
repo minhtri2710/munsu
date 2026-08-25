@@ -205,6 +205,10 @@ func abortRetirementCleanup(authority *taskauthority.Canonical, homeDir string, 
 		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("checking report after archiving for %s generation %s: %w", taskID, claimGen, err)
 		}
+		now := time.Now()
+		if err := os.Chtimes(filepath.Join(homeDir, "data", taskID.Value()), now, now); err != nil {
+			return fmt.Errorf("refreshing data directory before aborting cleanup for %s generation %s: %w", taskID, claimGen, err)
+		}
 
 		return nil
 	}
