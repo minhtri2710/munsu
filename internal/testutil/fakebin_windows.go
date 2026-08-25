@@ -152,3 +152,5 @@ func copyFile(src, dst string) error {
 	}
 	return out.Close()
 }
+
+func posixShellPath() (string, error) { return resolvePOSIXShell(bootPath) }

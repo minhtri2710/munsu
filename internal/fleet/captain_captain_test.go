@@ -1647,7 +1647,7 @@ func TestBuildLaunchScript_ShellExecution(t *testing.T) {
 	}
 
 	// Execute via /bin/sh -c (the returned command is already bash <script>).
-	cmd := exec.Command("/bin/sh", "-c", scriptCmd)
+	cmd := exec.Command(testutil.POSIXShell(t), "-c", scriptCmd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("shell execution failed: %v\noutput: %s", err, string(out))

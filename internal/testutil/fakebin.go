@@ -107,3 +107,33 @@ func isFile(path string) bool {
 	st, err := os.Stat(path)
 	return err == nil && !st.IsDir()
 }
+
+// POSIXShell returns the absolute path of an interpreter for POSIX shell
+// scripts, failing the test if the machine has none.
+//
+// Tests that prove a generated launch script actually executes have to run it
+// through a shell. Naming "sh" or "/bin/sh" directly asserts a filesystem
+// layout rather than the script's behaviour: windows has neither, so six such
+// fixtures died at `exec: "sh": executable file not found in %PATH%` without
+// ever reaching the thing they were written to check.
+//
+// This resolves the same interpreter the windows fake-binary shim hands its
+// scripts to, so a fixture and the fakes it puts on PATH agree about what runs
+// them. Finding none is a failure rather than a skip: a machine with no POSIX
+// shell cannot run the fixture at all, which is a fact about the machine and
+// not a behaviour the platform lacks.
+func POSIXShell(t *testing.T) string {
+	t.Helper()
+	shell, err := posixShellPath()
+	if err != nil {
+		t.Fatalf("resolve POSIX shell: %v", err)
+	}
+	return shell
+}
+
+// POSIXShellDir returns the directory to place on PATH so that a POSIX shell
+// resolves by name. It is the portable stand-in for "/bin" in a PATH fixture.
+func POSIXShellDir(t *testing.T) string {
+	t.Helper()
+	return filepath.Dir(POSIXShell(t))
+}
