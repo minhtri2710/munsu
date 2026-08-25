@@ -30,6 +30,9 @@ func VerifyRetirementContinuity(homeDir, taskID string) error {
 	return nil
 }
 
+// PrepareForcedRetirementEvidence preserves forced-retirement evidence under
+// state/.backup/<durable-stem>/<durable-stem>.status (and matching receipt
+// basenames); the logical task ID is used only to derive the durable stem.
 func PrepareForcedRetirementEvidence(homeDir, taskID string) ([]string, error) {
 	stem, err := home.DurableKey(taskID)
 	if err != nil {

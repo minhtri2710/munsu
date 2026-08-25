@@ -10,7 +10,8 @@ import (
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
-// ResolveTaskHome finds which munsu home owns state/<id>.meta.
+// ResolveTaskHome finds which munsu home owns the durable-stem projection
+// for the requested logical task ID (`state/<durable-stem>.meta`).
 //
 // Lookup order:
 //  1. primary homeDir (general or current MUNSU_HOME)

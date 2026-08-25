@@ -1,5 +1,7 @@
 // Package task manages task lifecycle data, including reading and writing
-// task meta files (key=value lines stored at $MUNSU_HOME/state/<id>.meta).
+// task meta files (key=value lines stored at $MUNSU_HOME/state/<durable-stem>.meta).
+// Durable stems are platform-specific filename projections of logical task IDs;
+// callers pass logical IDs and discovery boundaries reverse-decode persisted stems.
 package home
 
 import (
@@ -16,7 +18,8 @@ func StateDir(homeDir string) string {
 }
 
 // DurableFilePath returns a path whose filename starts with the platform
-// durable key for the logical task ID.
+// durable key for the logical task ID. It is for filename-backed artifacts;
+// logical IDs stored as journal keys are not transformed.
 func DurableFilePath(dir, id, suffix string) (string, error) {
 	stem, err := DurableKey(id)
 	if err != nil {
@@ -82,7 +85,7 @@ func ensurePrivateStateDir(path string) error {
 	return restrictDir(path)
 }
 
-// WriteMeta writes a task meta file at $MUNSU_HOME/state/<id>.meta.
+// WriteMeta writes a task meta file at $MUNSU_HOME/state/<durable-stem>.meta.
 // The map is serialized as key=value lines, one per field.
 // Uses atomic write: unique temp file + rename to prevent partial writes.
 // Acquires the advisory lock to serialize concurrent writers.
@@ -140,7 +143,7 @@ func writeMetaLocked(homeDir string, id string, meta map[string]string) error {
 	return nil
 }
 
-// ReadMeta reads a task meta file at $MUNSU_HOME/state/<id>.meta.
+// ReadMeta reads a task meta file at $MUNSU_HOME/state/<durable-stem>.meta.
 // Each key=value line is parsed into the returned map.
 // Returns an error if the file does not exist.
 func ReadMeta(homeDir string, id string) (map[string]string, error) {
@@ -172,7 +175,7 @@ func ReadMeta(homeDir string, id string) (map[string]string, error) {
 	return meta, nil
 }
 
-// AppendStatus appends a status line to $MUNSU_HOME/state/<id>.status.
+// AppendStatus appends a status line to $MUNSU_HOME/state/<durable-stem>.status.
 func AppendStatus(homeDir string, id, line string) error {
 	p, err := StatusFilePath(homeDir, id)
 	if err != nil {
@@ -196,7 +199,7 @@ func AppendStatus(homeDir string, id, line string) error {
 	return nil
 }
 
-// ReadStatus reads all status lines from $MUNSU_HOME/state/<id>.status.
+// ReadStatus reads all status lines from $MUNSU_HOME/state/<durable-stem>.status.
 func ReadStatus(homeDir string, id string) ([]string, error) {
 	p, err := StatusFilePath(homeDir, id)
 	if err != nil {

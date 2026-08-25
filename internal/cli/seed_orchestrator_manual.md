@@ -51,8 +51,8 @@ data/             durable fleet records
   <id>/brief.md   task brief
   <id>/report.md  scout deliverable
 state/            volatile runtime signals
-  <id>.status     wake-event history (appended lines, not current state)
-  <id>.meta       spawn metadata
+  durable task status projection  wake-event history (appended lines, not current state)
+  durable task metadata projection spawn metadata
   .wake-queue     durable queued wakes
   .afk            away-mode flag
   .lock           session lock
@@ -60,7 +60,7 @@ projects/         cloned repos (read-only to you)
 .agents/skills/   installed munsu skills
 ```
 
-A `state/<id>.status` line is a wake event, not current-state truth.
+A durable task status projection line is a wake event, not current-state truth.
 Use `munsu soldier-state <id>` for current-state reconciliation.
 
 Treat `data/general.md` as the canonical record of general preferences

@@ -4,7 +4,6 @@ package fleet
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 

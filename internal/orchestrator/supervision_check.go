@@ -16,7 +16,7 @@ import (
 type CheckKind string
 
 const (
-	CheckPerTask CheckKind = "per-task" // state/<id>.check — one per task
+	CheckPerTask CheckKind = "per-task" // state/<durable-stem>.check — one per task
 	CheckGlobal  CheckKind = "global"   // state/checks/<name>.check — shared
 )
 
@@ -27,10 +27,11 @@ type CheckPlugin struct {
 	Kind  CheckKind // origin classification
 }
 
-// DiscoverPerTaskChecks finds per-task .check files under state/.
-// A per-task check is named <task-id>.check; nothing in munsu writes one, so it
-// arrives from the operator or agent. The watcher validates each, retires the
-// ones whose PR has merged, and surfaces the rest as check wakes.
+// DiscoverPerTaskChecks finds per-task .check files under state/. Their
+// durable filename stems are reverse-decoded to logical task IDs at this
+// discovery boundary; malformed stems fail closed. Nothing in munsu writes
+// these files, so they arrive from the operator or agent. The watcher validates
+// each, retires the ones whose PR has merged, and surfaces the rest as check wakes.
 func DiscoverPerTaskChecks(homeDir string) ([]CheckPlugin, error) {
 	stateDir := filepath.Join(homeDir, "state")
 	entries, err := os.ReadDir(stateDir)
