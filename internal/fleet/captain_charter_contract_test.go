@@ -10,6 +10,15 @@ import (
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
+func defaultCaptainCharter(t *testing.T, id, parent string) string {
+	t.Helper()
+	charter, err := DefaultCaptainCharter(id, parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return charter
+}
+
 // =============================================================================
 // Charter contract tests: delivered by review as REQUIRED for PR #302
 // =============================================================================
@@ -67,7 +76,7 @@ func TestExistingAGENTSMD_Preservation(t *testing.T) {
 // TestCharter_CommandRecipesValid verifies all recipe commands use correct
 // authoritative syntax and no deprecated/removed commands appear.
 func TestCharter_CommandRecipesValid(t *testing.T) {
-	charter := DefaultCaptainCharter("recipe-test", t.TempDir())
+	charter := defaultCaptainCharter(t, "recipe-test", t.TempDir())
 
 	// Must contain the correct spawn command (not deprecated munsu launch).
 	if !strings.Contains(charter, "munsu spawn") {
@@ -125,7 +134,7 @@ func TestCharter_CommandRecipesValid(t *testing.T) {
 // TestCharter_DeliveryModeNeutrality verifies the charter documents mode-specific
 // behavior and does NOT mandate no-mistakes for all paths.
 func TestCharter_DeliveryModeNeutrality(t *testing.T) {
-	charter := DefaultCaptainCharter("mode-test", t.TempDir())
+	charter := defaultCaptainCharter(t, "mode-test", t.TempDir())
 
 	// Must mention all three delivery modes.
 	if !strings.Contains(charter, "direct-PR") {
@@ -152,7 +161,7 @@ func TestCharter_DeliveryModeNeutrality(t *testing.T) {
 // TestCharter_TaskAuthority verifies the charter delegates task lifecycle to
 // the canonical Task Authority rather than parsing backlog files directly.
 func TestCharter_TaskAuthority(t *testing.T) {
-	charter := DefaultCaptainCharter("task-test", t.TempDir())
+	charter := defaultCaptainCharter(t, "task-test", t.TempDir())
 
 	// Must say the Task Authority is authoritative.
 	if !strings.Contains(charter, "Task Authority") {
@@ -172,7 +181,7 @@ func TestCharter_TaskAuthority(t *testing.T) {
 
 // TestCharter_RelaySemantics verifies the mailbox-only one-hop Uplink Report contract.
 func TestCharter_RelaySemantics(t *testing.T) {
-	charter := DefaultCaptainCharter("relay-test", t.TempDir())
+	charter := defaultCaptainCharter(t, "relay-test", t.TempDir())
 
 	for _, required := range []string{
 		"One-Hop Uplink Report",

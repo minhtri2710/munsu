@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // --- DeliverWake tests ---
@@ -99,7 +101,10 @@ func TestDeliverWake_SoldierMaterialState(t *testing.T) {
 	}
 
 	// Local task status should exist
-	statusPath := filepath.Join(soldierHome, "state", "test-soldier.status")
+	statusPath, err := home.StatusFilePath(soldierHome, "test-soldier")
+	if err != nil {
+		t.Fatal(err)
+	}
 	data, err := os.ReadFile(statusPath)
 	if err != nil {
 		t.Fatalf("status file: %v", err)
@@ -134,7 +139,10 @@ func TestDeliverWake_SoldierMaterialState(t *testing.T) {
 	}
 
 	// Captain receipt should exist
-	receiptPath := ReceiptPath(captainHome, "test-soldier", "test-key")
+	receiptPath, err := ReceiptPath(captainHome, "test-soldier", "test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := os.Stat(receiptPath); err != nil {
 		t.Errorf("captain receipt should exist: %v", err)
 	}
@@ -174,7 +182,10 @@ func TestDeliverWake_SoldierNonMaterialState(t *testing.T) {
 	}
 
 	// Local status should exist
-	statusPath := filepath.Join(soldierHome, "state", "test-worker.status")
+	statusPath, err := home.StatusFilePath(soldierHome, "test-worker")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := os.Stat(statusPath); err != nil {
 		t.Errorf("status file should exist: %v", err)
 	}
@@ -191,7 +202,10 @@ func TestDeliverWake_SoldierNonMaterialState(t *testing.T) {
 	}
 
 	// Captain receipt should NOT exist
-	receiptPath := ReceiptPath(captainHome, "test-worker", "default")
+	receiptPath, err := ReceiptPath(captainHome, "test-worker", "default")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := os.Stat(receiptPath); err == nil {
 		t.Error("receipt should NOT exist for non-material state")
 	}
@@ -259,7 +273,10 @@ func TestDeliverWake_ReceiptWriteFails(t *testing.T) {
 	}
 
 	// Status should exist (it comes before receipt in pipeline)
-	statusPath := filepath.Join(soldierHome, "state", "test-fail-closed.status")
+	statusPath, err := home.StatusFilePath(soldierHome, "test-fail-closed")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := os.Stat(statusPath); os.IsNotExist(err) {
 		t.Error("status should exist even after receipt failure (written before)")
 	}
@@ -296,7 +313,10 @@ func TestDeliverWake_ObligationsInitFails(t *testing.T) {
 	}
 
 	// Receipt should exist (WriteReceipt succeeded before obligation failure)
-	receiptPath := ReceiptPath(captainHome, "test-obl-fail", "default")
+	receiptPath, err := ReceiptPath(captainHome, "test-obl-fail", "default")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := os.Stat(receiptPath); err != nil {
 		t.Errorf("receipt should exist even when obligations fail: %v", err)
 	}
@@ -343,7 +363,10 @@ func TestDeliverWake_CaptainMaterialState(t *testing.T) {
 
 	// Captain gets no receipt/obligation (that's soldier→captain only)
 	// But should get local status, event log, wake queue
-	statusPath := filepath.Join(captainHome, "state", "captain-task.status")
+	statusPath, err := home.StatusFilePath(captainHome, "captain-task")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := os.Stat(statusPath); err != nil {
 		t.Errorf("captain status should exist: %v", err)
 	}
@@ -462,7 +485,10 @@ func TestDeliverWake_KeyDefault(t *testing.T) {
 	}
 
 	// Receipt should use "default" key
-	receiptPath := ReceiptPath(captainHome, "test-default-key", "default")
+	receiptPath, err := ReceiptPath(captainHome, "test-default-key", "default")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := os.Stat(receiptPath); err != nil {
 		t.Errorf("receipt with default key should exist: %v", err)
 	}
@@ -540,7 +566,10 @@ func TestActivationSeen_MarkerDirect(t *testing.T) {
 	}
 
 	// Marker should be in the receipts directory.
-	markerPath := ActivationSeenPath(captainHome, taskID, termKey)
+	markerPath, err := ActivationSeenPath(captainHome, taskID, termKey)
+	if err != nil {
+		t.Fatal(err)
+	}
 	data, err := os.ReadFile(markerPath)
 	if err != nil {
 		t.Fatalf("reading marker: %v", err)
@@ -569,7 +598,10 @@ func parentHomeWithMeta(t *testing.T, captainHome, captainID, paneID, session st
 	// Write captain task meta to parent home (mimics Launch).
 	taskID := "captain:" + captainID
 	metaContent := fmt.Sprintf("kind=captain\nherdr_pane_id=%s\nherdr_session=%s\nbackend=herdr\n", paneID, session)
-	metaPath := filepath.Join(parentHome, "state", taskID+".meta")
+	metaPath, err := home.MetaFilePath(parentHome, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(metaPath, []byte(metaContent), 0644); err != nil {
 		t.Fatalf("writing captain meta: %v", err)
 	}
@@ -735,7 +767,10 @@ func TestActivateOnReceipt_MetaWithMissingSession(t *testing.T) {
 
 	taskID := "captain:test-captain"
 	metaContent := "kind=captain\nherdr_pane_id=p1\nbackend=herdr\n"
-	metaPath := filepath.Join(parentHome, "state", taskID+".meta")
+	metaPath, err := home.MetaFilePath(parentHome, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	os.WriteFile(metaPath, []byte(metaContent), 0644)
 
 	target, err := resolveCaptainActivationTarget(captainHome, parentHome)

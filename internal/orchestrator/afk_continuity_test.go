@@ -2,6 +2,7 @@ package orchestrator_test
 
 import (
 	"fmt"
+	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"os"
 	"path/filepath"
@@ -187,7 +188,11 @@ func TestLiteralFailClosedTeardown_NoForce(t *testing.T) {
 
 	// Write a minimal meta file that would pass the kind check.
 	metaContent := "kind=ship\nworktree=" + home + "\n"
-	if err := os.WriteFile(filepath.Join(stateDir, taskID+".meta"), []byte(metaContent), 0644); err != nil {
+	metaPath, err := mhome.MetaFilePath(home, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(metaPath, []byte(metaContent), 0644); err != nil {
 		t.Fatalf("meta: %v", err)
 	}
 

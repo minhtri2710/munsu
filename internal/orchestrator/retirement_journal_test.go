@@ -67,7 +67,11 @@ func TestPrepareForcedRetirementEvidenceCopiesStatus(t *testing.T) {
 	if len(steps) != 1 || !strings.Contains(steps[0], "evidence preserved") {
 		t.Fatalf("steps = %v", steps)
 	}
-	path := filepath.Join(h, "state", ".backup", id, id+".status")
+	stem, err := home.DurableKey(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(h, "state", ".backup", stem, stem+".status")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

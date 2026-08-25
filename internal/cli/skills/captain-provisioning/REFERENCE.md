@@ -135,14 +135,14 @@ tasks from the parent home to a captain.
 
 **Phase 1 — Copy all.** For each item key:
 
-1. Copy `<parent-home>/state/<key>.meta` to `<captain-home>/state/<key>.meta`.
-2. If a `.status` file exists for the key, copy it too.
+1. Resolve the key's platform durable stem, then copy `<parent-home>/state/<durable-stem>.meta` to `<captain-home>/state/<durable-stem>.meta`.
+2. If a `.status` file exists for the key, copy the matching `<durable-stem>.status` too.
 3. If **any** copy fails, the function returns immediately with an error. No originals are removed.
 
 **Phase 2 — Remove originals.** Only when all copies in phase 1 succeeded:
 
-1. Remove `<parent-home>/state/<key>.meta`.
-2. If a `.status` was copied, remove `<parent-home>/state/<key>.status`.
+1. Remove `<parent-home>/state/<durable-stem>.meta`.
+2. If a `.status` was copied, remove `<parent-home>/state/<durable-stem>.status`.
 3. Print: `handed-off <key>` for each item.
 
 Keys without a meta file are silently skipped (warning to stderr).

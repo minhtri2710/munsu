@@ -4,7 +4,6 @@ package fleet
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -263,7 +262,11 @@ func TestRetireTaskForceFailsClosedWithoutAuthoritativeEvidence(t *testing.T) {
 		t.Fatal("task was retired without canonical merged truth")
 	}
 	// The meta is never removed on a refused retirement.
-	if _, statErr := os.Stat(filepath.Join(homeDir, "state", taskID+".meta")); statErr != nil {
+	metaPath, err := home.MetaFilePath(homeDir, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, statErr := os.Stat(metaPath); statErr != nil {
 		t.Fatalf("meta removed on refused retirement: %v", statErr)
 	}
 }

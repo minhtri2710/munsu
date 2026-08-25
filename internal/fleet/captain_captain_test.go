@@ -238,11 +238,14 @@ func TestBuildLaunchArgs_ConfigModelPropagation(t *testing.T) {
 
 func TestDefaultCaptainCharter_ContainsReturnChannel(t *testing.T) {
 	parent := "/tmp/marshal-home"
-	charter := DefaultCaptainCharter("api", parent)
+	charter := defaultCaptainCharter(t, "api", parent)
 	if !strings.Contains(charter, home.FromGeneralLabel) {
 		t.Fatalf("charter missing marshal marker label")
 	}
-	status := filepath.Join(parent, "state", "captain:api.status")
+	status, err := home.StatusFilePath(parent, "captain:api")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !strings.Contains(charter, status) {
 		t.Fatalf("charter missing status path %q", status)
 	}
@@ -275,8 +278,12 @@ func TestSeedWithParent_WritesDefaultCaptainCharter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(body), "captain:api.status") {
-		t.Fatalf("default charter missing status file path, got: %s", body)
+	expectedStatusPath, err := home.StatusFilePath(parent, "captain:api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), filepath.Base(expectedStatusPath)) {
+		t.Fatalf("default charter missing status file path %q, got: %s", filepath.Base(expectedStatusPath), body)
 	}
 	// AGENTS.md should be a minimal pointer, not the full charter.
 	agentsBody, err := os.ReadFile(filepath.Join(sm, "AGENTS.md"))
@@ -615,8 +622,12 @@ func TestSeedWorktree_ParentHomeCharter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(body), "captain:test-captain.status") {
-		t.Errorf("charter missing captain status path, got: %s", body)
+	expectedStatusPath, err := home.StatusFilePath(parent, "captain:test-captain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), filepath.Base(expectedStatusPath)) {
+		t.Errorf("charter missing captain status path %q, got: %s", filepath.Base(expectedStatusPath), body)
 	}
 }
 

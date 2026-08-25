@@ -423,7 +423,8 @@ func SummarizeCaptainHome(homeDir string) HomeSummary {
 	return sum
 }
 
-// LastParentStatus returns the last line of parent state/captain:<id>.status.
+// LastParentStatus returns the last line of the parent status projection
+// for logical captain:<id>; home path encoding is owned by internal/home.
 func LastParentStatus(parentHome, captainID string) string {
 	lines, err := home.ReadStatus(parentHome, "captain:"+captainID)
 	if err != nil || len(lines) == 0 {

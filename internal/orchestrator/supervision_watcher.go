@@ -295,8 +295,8 @@ func scanFleetWithProbe(homeDir string, clearResolved bool, probe TaskEndpointPr
 	}
 
 	var reasons []*WakeReason
-	// Status-signal path: captain-relevant last lines (including Captain return-channel
-	// files state/captain:<id>.status) wake General even when the pane is alive.
+	// Status-signal path: captain-relevant last lines, including the Captain
+	// return-channel status projection, wake General even when the pane is alive.
 	seenStatus := map[string]bool{}
 	_, captainHomeErr := os.Stat(filepath.Join(homeDir, home.CaptainProvenanceMarkerName))
 	isCaptainHome := captainHomeErr == nil

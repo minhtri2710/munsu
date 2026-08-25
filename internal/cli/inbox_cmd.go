@@ -242,8 +242,8 @@ func renderInbox(homeDir string, w interface{ Write([]byte) (int, error) }) erro
 	return nil
 }
 
-// formatCaptainStatusLines reads state/captain:<id>.status files and returns
-// formatted display lines with actionable markers.
+// formatCaptainStatusLines reads durable-stem status files for logical
+// captain:<id> IDs and returns formatted display lines with actionable markers.
 func formatCaptainStatusLines(stateDir string) []string {
 	entries, err := os.ReadDir(stateDir)
 	if err != nil {

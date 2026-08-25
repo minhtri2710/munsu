@@ -686,8 +686,11 @@ func recoverPendingRetirement(homeDir, taskID string, auth *taskauthority.Canoni
 	}
 
 	// Recovery accepts only the canonical task check basename.
-	expectedPollPath := taskID + ".check"
-	if filepath.IsAbs(rec.PollPath) || strings.ContainsAny(rec.PollPath, `/\\`) || rec.PollPath != expectedPollPath {
+	expectedPollPath, err := home.DurableFilePath(home.StateDir(homeDir), taskID, ".check")
+	if err != nil {
+		return false, fmt.Errorf("recovery: resolving canonical poll path: %w", err)
+	}
+	if filepath.IsAbs(rec.PollPath) || strings.ContainsAny(rec.PollPath, `/\\`) || rec.PollPath != filepath.Base(expectedPollPath) {
 		return false, fmt.Errorf("recovery: invalid poll path %q (preserving poll and retirement record)", rec.PollPath)
 	}
 	checkPath := filepath.Join(home.StateDir(homeDir), rec.PollPath)

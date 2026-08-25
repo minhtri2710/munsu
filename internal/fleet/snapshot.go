@@ -360,7 +360,8 @@ func Bearings(homeDir string, projectDir string, deps SnapshotDependencies) erro
 }
 
 // CaptainStatus returns endpoint/meta truth for a captain.
-// Prefer parent state/captain:<id>.meta window + backend Alive when meta exists.
+// Prefer the parent state durable-stem meta projection for logical
+// captain:<id> plus backend Alive when meta exists.
 // Home presence without launch meta is seeded; missing home is unknown.
 // Captain-home state/.lock is not used for launched liveness.
 func CaptainStatus(parentHome, captainID, homeDir string, probe EndpointProbe) string {

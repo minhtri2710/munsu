@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/domain"
+	homepkg "github.com/minhtri2710/munsu/internal/home"
 )
 
 // countRefusalLines runs n real cycles over the given home and returns how many
@@ -64,7 +65,10 @@ func staleCheckHome(t *testing.T) string {
 	if err := os.WriteFile(checkPath, []byte("#!/bin/sh\necho ready\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	metaPath := filepath.Join(home, "state", "task-1.meta")
+	metaPath, err := homepkg.MetaFilePath(home, "task-1")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(metaPath, []byte("kind=ship\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +94,10 @@ func TestRunCycle_StaleCheckReportsItsRefusalOncePerState(t *testing.T) {
 func TestRunCycle_RetirementThenDiscoverySameRefusalReportsOnce(t *testing.T) {
 	home := staleCheckHome(t)
 	checkPath := filepath.Join(home, "state", "task-1.check")
-	metaPath := filepath.Join(home, "state", "task-1.meta")
+	metaPath, err := homepkg.MetaFilePath(home, "task-1")
+	if err != nil {
+		t.Fatal(err)
+	}
 	metaFI, err := os.Stat(metaPath)
 	if err != nil {
 		t.Fatal(err)
@@ -230,7 +237,10 @@ func TestRunCycle_RefusalReportsAgainAfterRecreation(t *testing.T) {
 func TestRunCycle_RefusedReplacementWithSameReasonReportsAgain(t *testing.T) {
 	home := staleCheckHome(t)
 	checkPath := filepath.Join(home, "state", "task-1.check")
-	metaPath := filepath.Join(home, "state", "task-1.meta")
+	metaPath, err := homepkg.MetaFilePath(home, "task-1")
+	if err != nil {
+		t.Fatal(err)
+	}
 	validate := func(string) error { return errors.New("same reason") }
 
 	if n, out := countRefusalLines(t, home, 2, validate); n != 1 {
@@ -352,7 +362,10 @@ func TestRunCycle_ChangedRefusalReasonReportsAgain(t *testing.T) {
 func TestRunCycle_RefusalReportsAgainAfterTheArtifactIsAccepted(t *testing.T) {
 	home := staleCheckHome(t)
 	checkPath := filepath.Join(home, "state", "task-1.check")
-	metaPath := filepath.Join(home, "state", "task-1.meta")
+	metaPath, err := homepkg.MetaFilePath(home, "task-1")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if n, out := countRefusalLines(t, home, 3, nil); n != 1 {
 		t.Fatalf("stale phase lines = %d, want 1\n%s", n, out)

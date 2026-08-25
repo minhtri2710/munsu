@@ -13,6 +13,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/config"
 	fleetconfig "github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/harness"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 func writeModelAllowlist(t *testing.T, homeDir, content string) {
@@ -34,9 +35,17 @@ func spawnContext(t *testing.T, homeDir string) {
 
 func assertNoTaskSideEffects(t *testing.T, homeDir, id string) {
 	t.Helper()
+	metaPath, err := home.MetaFilePath(homeDir, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statusPath, err := home.StatusFilePath(homeDir, id)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, path := range []string{
-		filepath.Join(homeDir, "state", id+".meta"),
-		filepath.Join(homeDir, "state", id+".status"),
+		metaPath,
+		statusPath,
 		filepath.Join(homeDir, "state", ".task-authority", "aggregates", id),
 		filepath.Join(homeDir, "data", id),
 	} {

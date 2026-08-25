@@ -169,7 +169,11 @@ func seedFromWorktree(id, homePath, repoPath, parentHome, charter string, force 
 			err = fmt.Errorf("seeding captain %s: empty charter requires parent home for return-channel path", id)
 			return
 		}
-		charter = DefaultCaptainCharter(id, parentHome)
+		charter, err = DefaultCaptainCharter(id, parentHome)
+		if err != nil {
+			err = fmt.Errorf("creating default charter: %w", err)
+			return
+		}
 	}
 	if err = os.WriteFile(filepath.Join(absHome, CaptainCharterName), []byte(charter), 0644); err != nil {
 		err = fmt.Errorf("writing %s: %w", CaptainCharterName, err)
