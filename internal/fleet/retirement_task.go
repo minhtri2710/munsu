@@ -1045,7 +1045,11 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		// failed projection cleanup leaves the retry identity intact. Failures
 		// are propagated because completed-claim retry repairs the projections.
 		projectionCleanup := func() error {
-			for _, p := range cleanupResidualArtifactPaths(opts.HomeDir, opts.ID, meta) {
+			residualPaths, err := cleanupResidualArtifactPaths(opts.HomeDir, opts.ID, meta)
+			if err != nil {
+				return &RetirementProjectionError{TaskID: opts.ID, Err: err}
+			}
+			for _, p := range residualPaths {
 				if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
 					return &RetirementProjectionError{TaskID: opts.ID, Err: fmt.Errorf("remove residual %s: %w", filepath.Base(p), err)}
 				}
@@ -1061,7 +1065,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 			result.Steps = append(result.Steps, "task meta removed")
 			return nil
 		}
-		journalSteps, err := journals.FinalizeRetirementJournals(opts.HomeDir, opts.ID)
+		journalSteps, err = journals.FinalizeRetirementJournals(opts.HomeDir, opts.ID)
 		if err != nil {
 			return cleanupPending(fmt.Errorf("teardown %s: finalizing journals: %w", opts.ID, err))
 		}
@@ -1090,7 +1094,11 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 }
 
 func finalizeCompletedProjectionCleanup(opts Options, meta map[string]string, result *TeardownResult) error {
-	for _, p := range cleanupResidualArtifactPaths(opts.HomeDir, opts.ID, meta) {
+	residualPaths, err := cleanupResidualArtifactPaths(opts.HomeDir, opts.ID, meta)
+	if err != nil {
+		return err
+	}
+	for _, p := range residualPaths {
 		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
 			return err
 		}
