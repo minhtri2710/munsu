@@ -71,16 +71,6 @@ var resolveInstalledVersion = func(snap *WatcherSnapshot) {
 	resolveBuildIdentity(snap, commit)
 }
 
-// Update performs a fast-forward-only git pull on the munsu installation
-// using binary-ancestry resolution for backward compatibility.
-func Update() error {
-	installRoot, err := resolveBinaryForUpdate()
-	if err != nil {
-		return err
-	}
-	return UpdateIn(installRoot)
-}
-
 // UpdateIn performs a fast-forward-only git pull + rebuild on the given
 // install root. The root must be a verified munsu git repository.
 func UpdateIn(root string) error {
@@ -89,23 +79,6 @@ func UpdateIn(root string) error {
 		return err
 	}
 	return updateIn(root, realPath)
-}
-
-// resolveBinaryForUpdate resolves the install root from binary ancestry.
-func resolveBinaryForUpdate() (string, error) {
-	execPath, err := os.Executable()
-	if err != nil {
-		return "", fmt.Errorf("finding munsu binary: %w", err)
-	}
-	realPath, err := filepath.EvalSymlinks(execPath)
-	if err != nil {
-		return "", fmt.Errorf("resolving munsu path: %w", err)
-	}
-	installRoot, err := findGitRoot(filepath.Dir(realPath))
-	if err != nil {
-		return "", fmt.Errorf("finding munsu repository: %w", err)
-	}
-	return installRoot, nil
 }
 
 // execRealPath returns the real (symlink-resolved) path of the running binary.

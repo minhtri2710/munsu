@@ -57,11 +57,7 @@ internal/fleet/process_args.go	writerKindForArgs	GOOS-union artifact: live on li
 # Every line below carries the same marker, and that marker means "nobody has
 # looked at this yet". It is not a justification and must not be reused on a
 # new entry -- a new entry gets a real reason or it does not go in.
-internal/cli/selfupdate_update.go	Update	burn-down(BEO-63): the legacy binary-ancestry update entrypoint became unreachable when its test-only handshake wrapper moved out of production; disposition pending this burn-down
-internal/cli/selfupdate_update.go	resolveBinaryForUpdate	burn-down(BEO-63): reachable only through the now-unreachable legacy Update entrypoint; disposition pending this burn-down
 internal/config/project_overlay.go	StoreProjectOverlay	triaged as test-only, kept in production code on purpose. Production reads project overlays (fleet ResolveProjectSnapshot -> config.LoadProjectOverlay) but has never written one: the document is operator-authored and a missing document is a valid empty overlay by design. Its only writers are tests in internal/config AND internal/fleet, so it cannot move into a config _test.go the way SetDeliveryCrashHookForTest did.
-internal/domain/domain.go	PR.CanMerge	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/domain/domain.go	Review.IsApproving	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/domain/identity.go	NewResourceID	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/domain/identity.go	ParseCanonical	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/domain/lifecycle.go	NextGeneration	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged

@@ -16,7 +16,9 @@ import (
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
-var doUpdate = Update
+var doUpdate = func() error {
+	return fmt.Errorf("legacy self-update path is unavailable in tests")
+}
 
 func setHandshakeTimeout(d time.Duration) func() {
 	prev := handshakeTimeout
