@@ -717,14 +717,6 @@ func ValidateStrict(m Manifest, expectedHarness, expectedScope, expectedVersion 
 		if !filepath.IsAbs(tp) {
 			return fmt.Errorf("target path %q is not absolute", tp)
 		}
-		// Check for symlink escape on each target path.
-		clean, err := filepath.Abs(tp)
-		if err != nil {
-			return fmt.Errorf("target path %q cannot be resolved: %w", tp, err)
-		}
-		if clean != filepath.Clean(tp) {
-			return fmt.Errorf("target path %q is not canonical (clean: %q)", tp, clean)
-		}
 	}
 
 	// Reject unknown extra JSON fields by checking we can round-trip.

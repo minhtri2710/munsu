@@ -56,25 +56,6 @@ internal/backend/worktree.go	gitWorktreeProvider.Return	1	!strings.HasPrefix(lin
 internal/backend/worktree.go	selectProvider	1	homeDir == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/backend/worktree.go	treehouseProvider.GetReserved	1	recovery	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/backend/worktree.go	treehouseProvider.GetReserved	1	wtPath == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/bootstrap/integration_agy.go	agyHooksDir	1	cwd == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/bootstrap/integration_claude.go	claudeSettingsPath	1	cwd == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/bootstrap/integration_codex.go	codexHooksPath	1	cwd == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/bootstrap/integration_grok.go	grokHooksDir	1	cwd == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/bootstrap/integration_integrate.go	AssertSupportedHarness	1	len(caps) == 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/bootstrap/integration_integrate.go	ExpectedTargetPath	1	cwd == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/bootstrap/integration_integrate.go	ExpectedTargetPath	1	dir == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/bootstrap/integration_integrate.go	probePiAPIs	1	!strings.Contains(out, "API probe passed")	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/bootstrap/integration_integrate.go	probePiAPIs	1	piBin == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/bootstrap/integration_integrate.go	ValidateStrict	1	!filepath.IsAbs(tp)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/bootstrap/integration_integrate.go	ValidateStrict	1	clean != filepath.Clean(tp)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/bootstrap/integration_integrate.go	ValidateStrict	1	len(m.TargetPaths) != expectedTargets	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/bootstrap/integration_integrate.go	ValidateStrict	1	m.Harness != expectedHarness	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/bootstrap/integration_integrate.go	ValidateStrict	1	m.Scope != expectedScope	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/bootstrap/integration_integrate.go	ValidateStrict	1	m.Version != expectedVersion	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/bootstrap/integration_opencode.go	OpencodeAdapter.InstallOpencodePlugins	1	content == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/bootstrap/integration_opencode.go	opencodePluginsDir	1	cwd == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/bootstrap/integration_pi.go	PiAdapter.InstallPiExtension	1	!FileContainsOwnershipMarker(targetPath)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/bootstrap/integration_pi.go	PiAdapter.InstallPiExtension	1	extDir == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/cli/report_cmd.go	enforceScoutReportBudget	1	agg.LaunchEvidence.SubmittedAt <= 0	unreachable because validateAggregate rejects SubmittedAt <= 0 on the READ path (canonical.go readTaskDoc), so auth.Get never serves such a record; the only writer, Canonical.RecordLaunch, additionally stamps it from the authority clock. Wrong the moment a read path skips validateAggregate, or validateLaunchEvidence stops checking SubmittedAt. Premise pinned by TestPremiseGetRefusesLaunchEvidenceWithNoSubmissionTimestamp, which writes a task doc carrying SubmittedAt = 0 straight to the store and asserts auth.Get refuses it
 internal/config/documents.go	finalResolvedOverlay	1	facts.Name == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/config/documents.go	finalResolvedOverlay	1	facts.Path == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
