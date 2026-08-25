@@ -284,7 +284,7 @@ func checkStaleLegacyRecords(parentHome, captainID string) error {
 // task authority, soldier lifecycle, downlink/uplink discipline, one-hop relay,
 // delivery/merge with mode-specific behavior, AXI-first fail-closed, persistence/recovery,
 // watcher/AFK safety, forbidden actions, and concise command recipes.
-// parentHome must be the General home whose state/captain:<id>.status is the escalation file.
+// parentHome must be the General home whose captain task status projection is the escalation channel.
 func DefaultCaptainCharter(id, parentHome string) (string, error) {
 	statusFile, err := home.StatusFilePath(parentHome, taskIDForCaptain(id))
 	if err != nil {

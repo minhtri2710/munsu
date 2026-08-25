@@ -31,10 +31,7 @@ func TestPrepareForcedRetirementEvidenceEncodedID(t *testing.T) {
 	if err := InitTaskObligations(tmp, id, termKey); err != nil {
 		t.Fatal(err)
 	}
-	obligationsPath, err := home.DurableFilePath(filepath.Join(tmp, "state", ".obligations"), id, ".obligations")
-	if err != nil {
-		t.Fatal(err)
-	}
+	obligationsPath := filepath.Join(tmp, "state", ".obligations", stem+".obligations")
 	if _, err := os.Stat(obligationsPath); err != nil {
 		t.Fatalf("obligations path %q missing for encoded id: %v", obligationsPath, err)
 	}
@@ -75,8 +72,9 @@ func TestPrepareForcedRetirementEvidenceEncodedID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if filepath.Base(markerPath) != "captain%3Afailed.terminal-1.activation-seen" {
-		t.Fatalf("activation marker path = %q", markerPath)
+	wantMarker := stem + "." + termKey + activationSeenSuffix
+	if filepath.Base(markerPath) != wantMarker {
+		t.Fatalf("activation marker path = %q; want basename %q", markerPath, wantMarker)
 	}
 	entries, err := PrepareForcedRetirementEvidence(tmp, id)
 	if err != nil {
