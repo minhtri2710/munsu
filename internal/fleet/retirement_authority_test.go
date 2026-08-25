@@ -94,8 +94,8 @@ func TestMergeAndRetireRetiresThroughAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != 7 {
-		t.Fatalf("aggregate = phase %q revision %d, want retired revision 7", agg.Phase, agg.Revision)
+	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != 8 {
+		t.Fatalf("aggregate = phase %q revision %d, want retired revision 8", agg.Phase, agg.Revision)
 	}
 
 	// Saga-side cleanup removed the task meta.
@@ -191,8 +191,8 @@ func TestMergeAndRetireCleanupFailurePreservesCanonicalTruth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agg.Revision != 7 {
-		t.Fatalf("retry re-committed the retirement: revision = %d, want 7 (claim completion only)", agg.Revision)
+	if agg.Revision != 8 {
+		t.Fatalf("retry re-committed the retirement: revision = %d, want 8 after archival marker and claim completion", agg.Revision)
 	}
 	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
 		t.Fatal("retry should complete the cleanup and remove meta")
@@ -265,7 +265,7 @@ func TestRetireTaskCleanupFailureReturnsResumableReceipt(t *testing.T) {
 		t.Fatalf("resume failed: %v", err)
 	}
 	agg, _ := auth.Get(mustTaskID(t, taskID))
-	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != 7 {
-		t.Fatalf("aggregate after resume = %+v, want retired revision 7", agg)
+	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != 8 {
+		t.Fatalf("aggregate after resume = %+v, want retired revision 8", agg)
 	}
 }

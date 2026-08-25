@@ -286,7 +286,7 @@ func RunSessionStartWithWatcher(w io.Writer, home string, ensure WatchEnsureFunc
 		fmt.Fprintln(w, "WARNING: Another session holds the lock. Operating read-only.")
 	}
 
-	bootRes, err := runWithRuntimeIdentity(home, acquired, nil, res.RuntimeIdentity, reclaim)
+	bootRes, err := sessionStartBootstrap(home, acquired, nil, res.RuntimeIdentity, reclaim)
 	if err != nil {
 		bootstrapErr := fmt.Errorf("bootstrap: %w", err)
 		if !acquired {

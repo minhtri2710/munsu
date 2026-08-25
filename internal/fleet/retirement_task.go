@@ -204,8 +204,21 @@ func abortRetirementCleanup(authority *taskauthority.Canonical, homeDir string, 
 			return fmt.Errorf("endpoint for %s generation %s is not authoritatively absent; refusing cleanup abort", taskID, claimGen)
 		}
 	}
-	archive := func() error {
-		_, dataDirExists, err := archiveRetiredReportWithRecovery(homeDir, taskID.Value(), claimGen, true)
+	preflight := func(attempted bool) error {
+		if attempted {
+			return nil
+		}
+		_, err := os.Lstat(filepath.Join(homeDir, "data", taskID.Value(), ArchivedReportName(claimGen)))
+		if err == nil {
+			return fmt.Errorf("report paths %s and %s conflict", filepath.Join(homeDir, "data", taskID.Value(), "report.md"), filepath.Join(homeDir, "data", taskID.Value(), ArchivedReportName(claimGen)))
+		}
+		if !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	archive := func(attempted bool) error {
+		_, dataDirExists, err := archiveRetiredReport(homeDir, taskID.Value(), claimGen, attempted)
 		if err != nil || !dataDirExists {
 			return err
 		}
@@ -226,7 +239,7 @@ func abortRetirementCleanup(authority *taskauthority.Canonical, homeDir string, 
 
 		return nil
 	}
-	if err := authority.ReconcileRetirementCleanup(taskID, claimGen, taskauthority.CleanupAborted, archive); err != nil {
+	if err := authority.ReconcileRetirementCleanup(taskID, claimGen, taskauthority.CleanupAborted, preflight, archive); err != nil {
 		return fmt.Errorf("archiving report before aborting cleanup for %s generation %s: %w", taskID, claimGen, err)
 	}
 	return nil
@@ -970,9 +983,22 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		dataDir := filepath.Join(opts.HomeDir, "data", opts.ID)
 		var archived string
 		var exists bool
-		work := func() error {
+		preflight := func(attempted bool) error {
+			if attempted {
+				return nil
+			}
+			_, err := os.Lstat(filepath.Join(dataDir, ArchivedReportName(claimGen)))
+			if err == nil {
+				return fmt.Errorf("report paths %s and %s conflict", filepath.Join(opts.HomeDir, "data", opts.ID, "report.md"), filepath.Join(opts.HomeDir, "data", opts.ID, ArchivedReportName(claimGen)))
+			}
+			if !os.IsNotExist(err) {
+				return err
+			}
+			return nil
+		}
+		work := func(attempted bool) error {
 			var err error
-			archived, exists, err = archiveRetiredReportWithRecovery(opts.HomeDir, opts.ID, claimGen, committed.Replayed)
+			archived, exists, err = archiveRetiredReport(opts.HomeDir, opts.ID, claimGen, attempted)
 			if err != nil || !exists {
 				return err
 			}
@@ -1015,7 +1041,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 			return cleanupPending(fmt.Errorf("teardown %s: finalizing journals: %w", opts.ID, err))
 		}
 		result.Steps = append(result.Steps, journalSteps...)
-		archiveErr := authority.ReconcileRetirementCleanup(taskID, claimGen, taskauthority.CleanupCompleted, work, projectionCleanup)
+		archiveErr := authority.ReconcileRetirementCleanup(taskID, claimGen, taskauthority.CleanupCompleted, preflight, work, projectionCleanup)
 		if archiveErr != nil {
 			var projectionErr *RetirementProjectionError
 			if errors.As(archiveErr, &projectionErr) {

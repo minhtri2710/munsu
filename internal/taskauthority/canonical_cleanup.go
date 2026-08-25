@@ -158,11 +158,12 @@ func (c *Canonical) CompleteCleanup(op domain.Operation, req CanonicalCompleteCl
 		}
 		next := cur.clone()
 		next.CleanupClaim = &CleanupClaim{
-			OperationID:  claim.OperationID,
-			Generation:   claim.Generation,
-			Status:       CleanupCompleted,
-			ClaimedAt:    claim.ClaimedAt,
-			ReconciledAt: c.now().UnixNano(),
+			OperationID:            claim.OperationID,
+			Generation:             claim.Generation,
+			Status:                 CleanupCompleted,
+			ClaimedAt:              claim.ClaimedAt,
+			ReconciledAt:           c.now().UnixNano(),
+			ReportArchiveAttempted: claim.ReportArchiveAttempted,
 		}
 		next.Revision++
 		return next, nil
@@ -226,11 +227,12 @@ func (c *Canonical) AbortCleanup(op domain.Operation, req CanonicalAbortCleanupR
 		}
 		next := cur.clone()
 		next.CleanupClaim = &CleanupClaim{
-			OperationID:  claim.OperationID,
-			Generation:   claim.Generation,
-			Status:       CleanupAborted,
-			ClaimedAt:    claim.ClaimedAt,
-			ReconciledAt: c.now().UnixNano(),
+			OperationID:            claim.OperationID,
+			Generation:             claim.Generation,
+			Status:                 CleanupAborted,
+			ClaimedAt:              claim.ClaimedAt,
+			ReconciledAt:           c.now().UnixNano(),
+			ReportArchiveAttempted: claim.ReportArchiveAttempted,
 		}
 		next.Revision++
 		return next, nil

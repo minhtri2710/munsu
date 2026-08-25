@@ -57,7 +57,7 @@ func TestArchiveRetiredReportRequiresExactActiveClaim(t *testing.T) {
 	mustCreate(t, c, id)
 	retireWithClaim(t, c, id, preconditionOf(1, 1), "op-archive-retire")
 	called := false
-	if err := c.ReconcileRetirementCleanup(mustTaskID(t, id), 1, CleanupCompleted, func() error {
+	if err := c.ReconcileRetirementCleanup(mustTaskID(t, id), 1, CleanupCompleted, func(bool) error { return nil }, func(bool) error {
 		called = true
 		_, err := h.Lock(taskScope(id))
 		if !errors.Is(err, home.ErrLockTimeout) {
@@ -68,7 +68,7 @@ func TestArchiveRetiredReportRequiresExactActiveClaim(t *testing.T) {
 		t.Fatalf("active archive = %v, called=%v", err, called)
 	}
 	called = false
-	if err := c.ReconcileRetirementCleanup(mustTaskID(t, id), 2, CleanupCompleted, func() error { called = true; return nil }); err == nil || called {
+	if err := c.ReconcileRetirementCleanup(mustTaskID(t, id), 2, CleanupCompleted, func(bool) error { return nil }, func(bool) error { called = true; return nil }); err == nil || called {
 		t.Fatalf("wrong-generation archive = %v, called=%v", err, called)
 	}
 	for _, status := range []CleanupStatus{CleanupCompleted, CleanupAborted} {
@@ -89,7 +89,7 @@ func TestArchiveRetiredReportRequiresExactActiveClaim(t *testing.T) {
 				}
 			}
 			called := false
-			if err := c.ReconcileRetirementCleanup(mustTaskID(t, id), 1, CleanupCompleted, func() error { called = true; return nil }); err == nil || called {
+			if err := c.ReconcileRetirementCleanup(mustTaskID(t, id), 1, CleanupCompleted, func(bool) error { return nil }, func(bool) error { called = true; return nil }); err == nil || called {
 				t.Fatalf("archive = %v, called=%v", err, called)
 			}
 		})
@@ -124,12 +124,44 @@ func TestReconcileCompletedCleanupReportsSupersededGeneration(t *testing.T) {
 	}
 }
 
+func TestReconcileRetirementCleanupPersistsArchiveAttempt(t *testing.T) {
+	c, _, _ := newTestCanonical(t)
+	id := "archive-attempt"
+	mustCreate(t, c, id)
+	retireWithClaim(t, c, id, preconditionOf(1, 1), "op-archive-attempt")
+	failed := true
+	if err := c.ReconcileRetirementCleanup(mustTaskID(t, id), 1, CleanupCompleted, func(bool) error { return nil }, func(attempted bool) error {
+		if !attempted {
+			t.Fatal("work did not observe committed archive attempt")
+		}
+		if failed {
+			failed = false
+			return errors.New("archive failed")
+		}
+		return nil
+	}); err == nil {
+		t.Fatal("expected archival failure")
+	}
+	agg, err := c.Get(mustTaskID(t, id))
+	if err != nil || agg.CleanupClaim == nil || !agg.CleanupClaim.ReportArchiveAttempted {
+		t.Fatalf("claim = %+v, %v", agg.CleanupClaim, err)
+	}
+	if err := c.ReconcileRetirementCleanup(mustTaskID(t, id), 1, CleanupCompleted, func(bool) error { return nil }, func(attempted bool) error {
+		if !attempted {
+			t.Fatal("retry lost archive attempt")
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+}
+
 func TestReconcileCompletedCleanupPostCommitCallbackIsFenced(t *testing.T) {
 	c, h, _ := newTestCanonical(t)
 	id := "post-commit-fence"
 	mustCreate(t, c, id)
 	retireWithClaim(t, c, id, preconditionOf(1, 1), "op-post-commit-retire")
-	if err := c.ReconcileRetirementCleanup(mustTaskID(t, id), 1, CleanupCompleted, func() error { return nil }, func() error {
+	if err := c.ReconcileRetirementCleanup(mustTaskID(t, id), 1, CleanupCompleted, func(bool) error { return nil }, func(bool) error { return nil }, func() error {
 		_, err := h.Lock(taskScope(id))
 		if !errors.Is(err, home.ErrLockTimeout) {
 			t.Fatalf("lock error = %v", err)
