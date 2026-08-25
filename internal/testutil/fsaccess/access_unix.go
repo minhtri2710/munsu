@@ -20,7 +20,13 @@ func MakeUnreadable(t *testing.T, path string) {
 	if err := os.Chmod(path, old&^0o500); err != nil {
 		t.Fatalf("make path unreadable %q: %v", path, err)
 	}
-	restore := registerRestore(t, func() error { return os.Chmod(path, old) })
+	restore := registerRestore(t, func() error {
+		err := os.Chmod(path, old)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	})
 	if err := verifyUnreadable(path, info.IsDir()); err != nil {
 		_ = restore()
 		t.Fatalf("unreadable path %q was still readable: %v", path, err)
@@ -39,7 +45,13 @@ func MakeReadOnly(t *testing.T, path string) {
 	if err := os.Chmod(path, old&^0o200); err != nil {
 		t.Fatalf("make path read-only %q: %v", path, err)
 	}
-	restore := registerRestore(t, func() error { return os.Chmod(path, old) })
+	restore := registerRestore(t, func() error {
+		err := os.Chmod(path, old)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	})
 	if info.IsDir() {
 		probe := path + "/.fsaccess-write-probe"
 		if f, err := os.Create(probe); err == nil {

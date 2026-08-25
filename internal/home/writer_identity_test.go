@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/testutil/fsaccess"
 )
 
 func testWriterIdentity(t *testing.T, homeDir string) WriterIdentity {
@@ -28,20 +30,8 @@ func TestWriterIdentityRoundTripAndPrivatePermissions(t *testing.T) {
 	if got != id {
 		t.Fatalf("got=%+v want=%+v", got, id)
 	}
-	info, err := os.Stat(WriterIdentityPath(h, "watcher"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0600 {
-		t.Fatalf("mode=%o", info.Mode().Perm())
-	}
-	dir, err := os.Stat(filepath.Dir(WriterIdentityPath(h, "watcher")))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if dir.Mode().Perm() != 0700 {
-		t.Fatalf("dir mode=%o", dir.Mode().Perm())
-	}
+	fsaccess.AssertPrivateFile(t, WriterIdentityPath(h, "watcher"))
+	fsaccess.AssertPrivateDir(t, filepath.Dir(WriterIdentityPath(h, "watcher")))
 }
 func TestPublishWriterIdentityRejectsInvalidIdentity(t *testing.T) {
 	h := t.TempDir()

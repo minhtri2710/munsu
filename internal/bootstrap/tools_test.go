@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/testutil/fsaccess"
 )
 
 func TestIsHardRequired(t *testing.T) {
@@ -108,19 +109,7 @@ func TestIsHardRequiredByConfig_ReturnsReadErrors(t *testing.T) {
 			if err := os.WriteFile(path, []byte("{}"), 0644); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.Chmod(path, 0000); err != nil {
-				t.Fatal(err)
-			}
-			// Under root/privileged environments the file remains readable and no
-			// read error is produced, so this subcase is not portable. Skip it
-			// rather than falsely failing; the malformed-JSON and EISDIR subcases
-			// already provide deterministic fail-closed read-error evidence and
-			// the permission subcase remains meaningful when running as a normal
-			// user.
-			if f, err := os.Open(path); err == nil {
-				f.Close()
-				t.Skip("environment can still read chmod 0000 file (privileged); skipping permission subcase")
-			}
+			fsaccess.MakeUnreadable(t, path)
 		}},
 	}
 

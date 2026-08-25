@@ -94,7 +94,11 @@ func (s aclState) restore(path string) error {
 	} else {
 		securityInfo |= windows.UNPROTECTED_DACL_SECURITY_INFORMATION
 	}
-	return windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, securityInfo, nil, nil, dacl, nil)
+	err = windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, securityInfo, nil, nil, dacl, nil)
+	if err != nil && os.IsNotExist(err) {
+		return nil
+	}
+	return err
 }
 
 func applyDeniedAccess(t *testing.T, path string, access uint32) {

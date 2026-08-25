@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/minhtri2710/munsu/internal/testutil/fsaccess"
 )
 
 // newTestHome returns a fresh canonical home on an isolated real temp dir.
@@ -39,14 +41,8 @@ func TestInitCreatesVerifiedV1Home(t *testing.T) {
 	if id.CanonicalRoot == "" {
 		t.Error("CanonicalRoot is empty")
 	}
-	// identity file exists and is 0600
-	info, err := os.Stat(filepath.Join(root, IdentityFileName))
-	if err != nil {
-		t.Fatalf("identity file: %v", err)
-	}
-	if info.Mode().Perm() != 0600 {
-		t.Errorf("identity perms = %o, want 0600", info.Mode().Perm())
-	}
+	// identity file is owner-private.
+	fsaccess.AssertPrivateFile(t, filepath.Join(root, IdentityFileName))
 	// stable identity across Opens
 	h2, err := Open(root)
 	if err != nil {
@@ -201,9 +197,7 @@ func TestLayoutAndPermissionsPrivate(t *testing.T) {
 		if !info.IsDir() {
 			t.Errorf("%s is not a dir", name)
 		}
-		if info.Mode().Perm() != 0700 {
-			t.Errorf("%s perms = %o, want 0700", name, info.Mode().Perm())
-		}
+		fsaccess.AssertPrivateDir(t, dir)
 	}
 }
 
@@ -625,13 +619,7 @@ func TestCommitOverwritesAtomically(t *testing.T) {
 	}
 	// Data file perms are private.
 	path, _ := h.Path(RootData, "k")
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0600 {
-		t.Errorf("data file perms = %o, want 0600", info.Mode().Perm())
-	}
+	fsaccess.AssertPrivateFile(t, path)
 }
 
 func TestCommitBetweenTwoHomesOnSameRoot(t *testing.T) {

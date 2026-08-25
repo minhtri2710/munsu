@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/testutil/fsaccess"
 )
 
 // setHomeEnv sets MUNSU_HOME for the duration of a test.
@@ -29,18 +31,12 @@ func TestTaskMetadataRejectsPathTraversal(t *testing.T) {
 func TestTaskMetadataDoesNotIncreaseExistingDirectoryPermissions(t *testing.T) {
 	tmp := t.TempDir()
 	state := filepath.Join(tmp, "state")
-	if err := os.Mkdir(state, 0500); err != nil {
+	if err := os.Mkdir(state, 0700); err != nil {
 		t.Fatal(err)
 	}
+	fsaccess.MakeReadOnly(t, state)
 	if err := WriteMeta(tmp, "restricted", map[string]string{"kind": "ship"}); err == nil {
 		t.Fatal("WriteMeta succeeded in read-only state directory")
-	}
-	info, err := os.Stat(state)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := info.Mode().Perm(); got != 0500 {
-		t.Fatalf("state permissions = %04o, want 0500", got)
 	}
 }
 
@@ -57,21 +53,9 @@ func TestTaskMetadataUsesPrivatePermissions(t *testing.T) {
 		filepath.Join(tmp, "state", "private.meta.lock"),
 		filepath.Join(tmp, "state", "private.status"),
 	} {
-		info, err := os.Stat(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got := info.Mode().Perm(); got != 0600 {
-			t.Errorf("%s permissions = %04o, want 0600", path, got)
-		}
+		fsaccess.AssertPrivateFile(t, path)
 	}
-	info, err := os.Stat(filepath.Join(tmp, "state"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := info.Mode().Perm(); got != 0700 {
-		t.Errorf("state permissions = %04o, want 0700", got)
-	}
+	fsaccess.AssertPrivateDir(t, filepath.Join(tmp, "state"))
 }
 
 func TestWriteMeta(t *testing.T) {

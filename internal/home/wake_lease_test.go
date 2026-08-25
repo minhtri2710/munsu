@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/testutil/fsaccess"
 )
 
 func TestClaimWakesEmptyQueueDoesNotCreateLease(t *testing.T) {
@@ -130,10 +132,7 @@ func TestClaimWakesRemovalErrorPropagated(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := os.Chmod(stateDir, 0o500); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chmod(stateDir, 0o700)
+	fsaccess.MakeReadOnly(t, stateDir)
 
 	_, err := ClaimWakes(home, "consumer", 60, 10)
 	if err == nil {
