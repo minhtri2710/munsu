@@ -20,7 +20,12 @@ pull requests in this repository, so the lane stops at reporting and a person
 applies that diff by running `.github/scripts/flake-sweep.sh sync --owner <ISSUE_ID>`
 locally. The `--owner` value must not be empty, whitespace-only, or `TBD`,
 and otherwise must match the anchored `BEO-<number>` format; name the real issue
-that will fix the flake. It is not a sampler either: it never re-runs anything and
+that will fix the flake. Applying it is enforced, not trusted:
+`.github/scripts/flake-sweep.sh applied` turns `invariants` red on every open PR
+while `main`'s last sweep is red and the PR's own ledger does not answer it. For
+twelve days in August 2026 nothing did -- run 32153420356 reported a race-lane
+flake with no row and no check a merge waited on could see it. It is not a
+sampler either: it never re-runs anything and
 it computes no failure rate. Four pushes to `main` on 2026-08-14 13:40-13:41 produced three red
 `integration` lanes; two of those runs read `success` today,
 because a rerun overwrites a run's conclusion. `gh run list` says that cluster
@@ -89,7 +94,21 @@ out of the sweep and stay green.
 both directions, the way `deadcode.sh check` compares `.github/deadcode.allow`
 against the tree: observed but unfiled is red, filed but no longer observable is
 red too. `flake-sweep.sh verify-fixed` is the half that can check a `fixed:` ref
-against `main`.
+against `main`. Both need the API, so both live in the `Flake ledger`
+workflow, which fires after a merge and never on a pull request.
+
+`.github/scripts/flake-sweep.sh applied` is the one rule that runs on the
+pull-request path *and* reads the API. It starts with a much smaller question
+than those two: not "is this table right", which needs the whole sweep, but "did
+the last sweep that said it wasn't get acted on", which is one run's conclusion.
+Green there and it stops -- a run still going is not yet a verdict, a run the
+concurrency group cancelled never was, and no run to read at all is red rather
+than clean. Red there and it runs `check` and `verify-fixed` against *this*
+checkout, passing only if this checkout answers them. That second half is what
+lets the fix merge: a verdict about `main` is not a verdict about your branch,
+and without it the PR applying the diff would be refused by the rule it fixes.
+There is no exemption for "the PR edits this file" -- re-deriving means the only
+way past the refusal is the fix.
 
 The rows between the markers below are machine-maintained. File new rows with
 `.github/scripts/flake-sweep.sh sync --owner <ISSUE_ID>` as described above. Edit

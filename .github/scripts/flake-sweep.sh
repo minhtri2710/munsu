@@ -87,6 +87,7 @@
 #   flake-sweep.sh check    [--window-days N]  observed set vs ledger, both ways
 #   flake-sweep.sh sync     [--owner <ISSUE_ID>] [--window-days N]  rewrite the ledger table to match
 #   flake-sweep.sh verify-fixed                every `fixed:<sha>` is on main
+#   flake-sweep.sh applied                     main's last sweep verdict was acted on
 #   flake-sweep.sh selftest                    classify against committed fixtures
 #
 # `observe` and `classify` are separate on purpose: classification is pure text
@@ -124,6 +125,13 @@ DEADLINE_DAYS=14
 WINDOW_FLOOR=$((DEADLINE_DAYS * 2))
 
 REPO="${GITHUB_REPOSITORY:-minhtri2710/munsu}"
+
+# The workflow whose verdict `applied` reads, and how many of its runs it asks
+# for. A merge burst produces four runs in a minute and flake-ledger.yml cancels
+# all but the last, so the newest record is routinely one this command has to
+# skip past; 20 is five of the largest burst this repository has produced.
+SWEEP_WORKFLOW="flake-ledger.yml"
+SWEEP_RUNS_PAGE=20
 
 die() {
 	echo "::error::$*" >&2
@@ -691,6 +699,156 @@ verify_fixed() {
 	echo "flake sweep: every fixed: row cites a commit on main"
 }
 
+# ---------------------------------------------------------------------------
+# applied
+# ---------------------------------------------------------------------------
+#
+# `check` and `verify-fixed` answer "is the ledger right?", and they can only be
+# asked where the Actions API is reachable, which is .github/workflows/flake-ledger.yml,
+# which runs on main and on nobody's pull request. So for the whole of v0 their
+# answer was a red run on a workflow no merge waits for: on 2026-08-18 run
+# 32153420356 reported a race-lane flake with no row, and the row was still
+# unfiled twelve days later (#541). Every check that could have said so was
+# green, because every check that could have said so reads only the checkout.
+#
+# This is the one that does not. Its cheap half asks a different and much
+# smaller question than `check` -- not "is the ledger right", but "has anyone
+# acted on the last time we said it wasn't" -- and that has a one-call answer:
+# the conclusion of the newest completed sweep on main. Green, and there is
+# nothing to act on; that is every run on a healthy repository, and it costs one
+# API call.
+#
+# Red is where the care goes, because the cheap answer alone would deadlock. A
+# verdict about main is not a verdict about this working tree, and the change
+# that fixes main's ledger arrives as a pull request: gate that pull request on
+# main's old verdict and it is refused by the rule it fixes, main's ledger stays
+# stale, and nothing can ever clear either. So the red path re-asks the sweep's
+# own question -- `check` and `verify-fixed`, over the same observation stream
+# they always read -- of the ledger in *this* checkout, and passes when this
+# checkout answers it. That is the sweep's full cost, and it is only paid while
+# main's ledger is actually stale.
+#
+# There is deliberately no exemption in that second half. "The pull request
+# touches the ledger" would have been one line and would have let any edit
+# through, including one that deletes the row; re-deriving is what makes the
+# escape from the deadlock the same act as the fix.
+#
+# Split the way `observe`/`classify` are split, and for the same reason: the
+# fetch is four lines, and everything that decides anything is a pure function
+# of its inputs. Both of them come in through an environment variable a fixture
+# can set -- the run stream through SWEEP_RUNS, the observation stream through
+# the SWEEP_RECORDS `check` already reads -- so .github/testdata/flake-sweep
+# pins the whole command, red path included, without a network. The run records
+# there are the real ones from #541's own history.
+#
+#   sweep  <run_id>  <status>  <conclusion>  <sha>  <created_at>
+#
+# Newest first, which is the order the API returns and the order the verdict
+# depends on. created_at is not read by anything below; it is in the record so a
+# person reading a fixture can check that ordering by eye, the same way `run`
+# records carry theirs.
+
+sweep_runs() {
+	api "repos/$REPO/actions/workflows/$SWEEP_WORKFLOW/runs" \
+		-f branch=main -f "per_page=$SWEEP_RUNS_PAGE" \
+		--jq '.workflow_runs[] | ["sweep", (.id|tostring), .status, (.conclusion // "-"), .head_sha, .created_at] | @tsv'
+}
+
+sweep_runs_file() {
+	local f="${SWEEP_RUNS:-}"
+	if [ -n "$f" ]; then
+		[ -f "$f" ] || die "SWEEP_RUNS=$f does not exist"
+		printf '%s' "$f"
+		return
+	fi
+	f="$(mktemp)"
+	# Named rather than left to `set -e`: an unreachable API is the likeliest
+	# way this command fails in CI, and "could not measure" has to read as that
+	# rather than as a bare non-zero exit next to a rule about the ledger.
+	sweep_runs >"$f" ||
+		die "could not read $SWEEP_WORKFLOW runs from the Actions API, so whether main's ledger is current is unknown -- and unknown is red"
+	printf '%s' "$f"
+}
+
+applied() {
+	local runs line kind id status conclusion sha created extra
+	local v_id="" v_conc="" v_sha=""
+	runs="$(sweep_runs_file)"
+
+	while IFS= read -r line || [ -n "$line" ]; do
+		[ -n "$line" ] || continue
+		IFS=$'\t' read -r kind id status conclusion sha created extra <<<"$line"
+		[ "$kind" = sweep ] || die "unknown record kind \"$kind\" in the sweep run stream"
+		[ -z "$extra" ] || die "sweep record has more fields than the six it is defined with: $line"
+		[ -n "$id" ] && [ -n "$status" ] && [ -n "$conclusion" ] && [ -n "$sha" ] && [ -n "$created" ] ||
+			die "sweep record is missing a field: $line"
+
+		# A sweep that has not finished is not yet a verdict, and one the
+		# concurrency group cancelled never was: flake-ledger.yml sets
+		# cancel-in-progress, so a merge burst leaves cancelled runs above the
+		# one that measured the whole window. Neither may stand in for the
+		# newest run that actually reached a conclusion -- 32206967181 is
+		# exactly that shape, cancelled at bd0b4fd0 directly above a red.
+		[ "$status" = completed ] || continue
+		case "$conclusion" in
+		cancelled | skipped) continue ;;
+		esac
+		v_id="$id"
+		v_conc="$conclusion"
+		v_sha="$sha"
+		break
+	done <"$runs"
+
+	# Fail closed on no verdict at all. "The API returned nothing" is not
+	# "nothing is wrong": it is this command being unable to measure, which is
+	# the state it exists to stop passing silently.
+	if [ -z "$v_id" ]; then
+		printf 'unknown\n'
+		echo "::error::no completed $SWEEP_WORKFLOW run on main to read a verdict from" >&2
+		echo "  This command reports whether main's last flake sweep was acted on, and there is no" >&2
+		echo "  last sweep to report. Either the workflow has never run on main, or the API returned" >&2
+		echo "  nothing for it -- both mean the ledger's freshness is unknown, and unknown is red." >&2
+		exit 1
+	fi
+
+	if [ "$v_conc" = success ]; then
+		printf 'applied\t%s\t%s\n' "$v_id" "$v_sha"
+		echo "flake sweep: main's last verdict (run $v_id on ${v_sha:0:8}) is green"
+		return 0
+	fi
+
+	# Main's ledger was stale, or its fix refs were, as of that run. Ask the
+	# same two questions of the ledger in this working tree: a checkout that
+	# answers them is the fix, and refusing it would refuse every fix.
+	local records rc=0
+	echo "flake sweep: main's last verdict (run $v_id on ${v_sha:0:8}) is $v_conc -- re-asking it of this working tree" >&2
+	records="$(records_file)"
+	# --window-days forwarded rather than left to the children's default: this
+	# command's own observation used the window in effect here, and a child
+	# scoping the ledger by a different one would compare a set against a
+	# boundary that did not produce it.
+	SWEEP_RECORDS="$records" "$0" check --window-days "$WINDOW_DAYS" >&2 || rc=1
+	SWEEP_RECORDS="$records" "$0" verify-fixed --window-days "$WINDOW_DAYS" >&2 || rc=1
+	if [ "$rc" -eq 0 ]; then
+		printf 'answered\t%s\t%s\n' "$v_id" "$v_sha"
+		echo "flake sweep: run $v_id was red and this working tree's $LEDGER_REL answers it"
+		return 0
+	fi
+
+	printf 'unapplied\t%s\t%s\t%s\n' "$v_id" "$v_sha" "$v_conc"
+	echo "::error::main's last flake sweep concluded $v_conc, and this working tree does not answer it" >&2
+	echo "  Run $v_id, on ${v_sha:0:8}: https://github.com/$REPO/actions/runs/$v_id" >&2
+	echo "  The reasons are the check and verify-fixed output above, re-derived against this" >&2
+	echo "  checkout: a flaky test CI observed with no row, or a fixed: row citing a commit main" >&2
+	echo "  cannot reach. Fix them here and this step goes green before the merge, not after:" >&2
+	echo "    .github/scripts/flake-sweep.sh sync --owner <ISSUE_ID>" >&2
+	echo "  This is not a prompt to press rerun, and waiting does not clear it: the sweep re-derives" >&2
+	echo "  the same verdict from the same attempt records on every main run. A row closes on a fix" >&2
+	echo "  that landed, never because the test has been green since -- refusing that inference is" >&2
+	echo "  why $LEDGER_REL exists." >&2
+	exit 1
+}
+
 # Strictly-newer comparison of two <sha>@<run_id>/<attempt> citations: run ids
 # grow with time, and equal run ids are disambiguated by attempt.
 newer() {
@@ -1089,6 +1247,115 @@ selftest() {
 
 	rm -f "$ledger"
 
+	# 6. `applied` reads one thing -- the newest completed sweep on main -- and
+	# every fixture below is the real record stream from the history of the
+	# omission it exists to catch (#541). Its stdout is the verdict and is a
+	# pure function of that stream; its stderr is the message for a person, and
+	# only the verdict is compared here.
+	#
+	#   sweep-unfiled   run 32153420356 itself: the sweep reported a race-lane
+	#                   flake with no row and every gating check stayed green.
+	#   sweep-filed     the same stream once bd0b4fd0 filed the row -- the sweep
+	#                   goes green and the pull-request path unblocks. This pair
+	#                   is the before and after of #541's own remediation.
+	#   sweep-cancelled a run flake-ledger.yml's concurrency group cancelled,
+	#                   sitting directly above a red. Reading it as the verdict
+	#                   would hide that red.
+	#   sweep-inflight  a sweep still running above a green one. Reading it as
+	#                   the verdict would red every pull request for the minute
+	#                   a sweep takes.
+	#   sweep-none      no runs at all: unknown, and unknown is red.
+	#
+	# Mutations these answer: treat a cancelled or unfinished run as the
+	# verdict, accept any conclusion that is not `failure`, or return 0 when the
+	# stream is empty.
+	#
+	# The red path re-derives, so every case below also pins an observation
+	# stream and a ledger: reopen.obs.tsv against an empty table, which is stale
+	# in the one direction that keeps a red verdict red. Nothing here reaches
+	# the network -- that is the whole reason `applied` reads its runs through
+	# SWEEP_RUNS and its records through SWEEP_RECORDS.
+	local runs verdict want_verdict rc want_rc
+	scratch_ledger "$ledger"
+	for runs in "$FIXTURES"/sweep-*.runs.tsv; do
+		name="$(basename "$runs" .runs.tsv)"
+		want="${runs%.runs.tsv}.verdict"
+		[ -f "$want" ] || die "fixture $name has no .verdict"
+		want_verdict="$(cat "$want")"
+		case "${want_verdict%%$'\t'*}" in
+		applied | answered) want_rc=0 ;;
+		*) want_rc=1 ;;
+		esac
+		rc=0
+		verdict="$(SWEEP_RUNS="$runs" SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" applied 2>/dev/null | head -1)" || rc=$?
+		if [ "$verdict" = "$want_verdict" ] && [ "$rc" -eq "$want_rc" ]; then
+			echo "  ok   $name"
+		else
+			echo "::error::flake-sweep applied disagrees with fixture $name: got \"$verdict\" rc=$rc, want \"$want_verdict\" rc=$want_rc" >&2
+			failed=1
+		fi
+	done
+
+	# 6d. The red path is not a verdict about this working tree, and a checkout
+	# that answers it must pass -- otherwise the pull request applying the
+	# sweep's diff is refused by the rule it fixes and main's ledger can never
+	# be repaired. Same red run stream as sweep-unfiled, same records, and the
+	# one thing that differs is that the row is filed here.
+	#
+	# Mutation this answers: end `applied` at the run conclusion, or let the
+	# re-derived `check` and `verify-fixed` results not decide the outcome.
+	scratch_ledger "$ledger" \
+		'| TestReopens | integration | aaaa1111@3001/1 | cccc3333@3003/1 | 9999-12-31 | BEO-99 | open |'
+	rc=0
+	verdict="$(SWEEP_RUNS="$FIXTURES/sweep-unfiled.runs.tsv" SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" applied 2>/dev/null | head -1)" || rc=$?
+	if [ "${verdict%%$'\t'*}" = answered ] && [ "$rc" -eq 0 ]; then
+		echo "  ok   sweep-unfiled-answered-by-this-tree"
+	else
+		echo "::error::applied scenario: a red run whose verdict this working tree already answers was still refused: got \"$verdict\" rc=$rc" >&2
+		failed=1
+	fi
+
+	# 6e. ...and answering only half of it is not answering it. A ledger whose
+	# rows are all filed but whose fixed: ref names no commit on main leaves the
+	# sweep red for the other reason, and this step has to stay red with it.
+	#
+	# Mutation this answers: drop the verify-fixed call from the red path.
+	scratch_ledger "$ledger" \
+		'| TestReopens | integration | aaaa1111@3001/1 | cccc3333@3003/1 | 9999-12-31 | BEO-99 | open |' \
+		'| TestFixedOffMain | integration | bbbb2222@2998/1 | bbbb2222@2998/1 | 9999-12-31 | BEO-99 | fixed:f00dbab |'
+	if SWEEP_RUNS="$FIXTURES/sweep-unfiled.runs.tsv" SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" applied >/dev/null 2>&1; then
+		echo "::error::applied scenario: a red run was treated as answered by a tree whose fixed: ref is not on main" >&2
+		failed=1
+	fi
+	rm -f "$ledger"
+
+	# 6b. A record stream this command cannot parse is refused rather than
+	# skipped past. A skipped record is a run that silently stops counting, and
+	# the one it would skip is the newest -- the only one the verdict reads.
+	#
+	# Mutation this answers: `continue` instead of `die` on an unparseable record.
+	local malformed
+	malformed="$(mktemp)"
+	for bad in $'run\t32153420356\tcompleted\tfailure\t16421f37\t2026-08-18T15:16:08Z' \
+		$'sweep\t32153420356\tcompleted\tfailure\t16421f37' \
+		$'sweep\t32153420356\tcompleted\tfailure\t16421f37\t2026-08-18T15:16:08Z\textra'; do
+		printf '%s\n' "$bad" >"$malformed"
+		if SWEEP_RUNS="$malformed" "$0" applied >/dev/null 2>&1; then
+			echo "::error::applied scenario: a malformed sweep record was accepted: $bad" >&2
+			failed=1
+		fi
+	done
+	rm -f "$malformed"
+
+	# 6c. The fixture override is the only way this command reads anything but
+	# the API, so a path that does not exist must be refused rather than read as
+	# an empty stream -- which would otherwise be the one input that turns a
+	# missing file into a verdict.
+	if SWEEP_RUNS="$FIXTURES/does-not-exist.runs.tsv" "$0" applied >/dev/null 2>&1; then
+		echo "::error::applied scenario: a missing SWEEP_RUNS file was accepted" >&2
+		failed=1
+	fi
+
 	[ "$failed" -eq 0 ] || exit 1
 	echo "flake sweep selftest: all fixtures agree"
 }
@@ -1151,9 +1418,10 @@ classify) classify ;;
 check) check ;;
 sync) sync ;;
 verify-fixed) verify_fixed ;;
+applied) applied ;;
 selftest) selftest ;;
 *)
-	echo "usage: flake-sweep.sh {observe|classify|check|sync [--owner <ISSUE_ID>]|verify-fixed|selftest} [--window-days N]" >&2
+	echo "usage: flake-sweep.sh {observe|classify|check|sync [--owner <ISSUE_ID>]|verify-fixed|applied|selftest} [--window-days N]" >&2
 	exit 2
 	;;
 esac

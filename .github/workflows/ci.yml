@@ -167,6 +167,15 @@ jobs:
   invariants:
     name: Repo invariants
     runs-on: ubuntu-latest
+    # Every other rule in this job reads the checkout and nothing else, and the
+    # workflow-level `contents: read` is all they need. The last step reads the
+    # conclusion of main's newest flake sweep, which is an Actions API call; the
+    # argument for admitting it is at that step. A job-level block replaces the
+    # workflow-level one rather than adding to it, so `contents: read` is
+    # repeated here for the checkout.
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@v6
       # gofmt's output is a function of the toolchain version, so the runner
@@ -374,9 +383,10 @@ jobs:
       # Text only, no network, like the four rules above it -- it reads one
       # committed file and today's date and nothing else. The half that has to
       # talk to the Actions API is a separate workflow
-      # (.github/workflows/flake-ledger.yml), deliberately not here: this job is
-      # trusted precisely because nothing outside the checkout can change what
-      # it says.
+      # (.github/workflows/flake-ledger.yml) and stays there; what this step
+      # cannot see is that the sweep found a flake this file does not name, and
+      # the last step in this job is the one that does, over the network, for
+      # the reasons stated there.
       #
       # The selftest runs first, and it is here rather than in the sweep's own
       # workflow for the reason the step below exists at all: this script is the
@@ -405,15 +415,16 @@ jobs:
       # failed after merge, where a failure costs most and is attributable
       # least (#565).
       #
-      # Only `selftest` moves onto this path. `flake-sweep.sh` also has a
-      # networked half and that stays in its own workflow, for the reason the
-      # flake-ledger step gives two above: this job is trusted because nothing
-      # outside the checkout can change what it says. `selftest` reads
+      # `selftest` is hermetic and this step keeps it that way: it reads
       # .github/testdata/flake-sweep and a scratch ledger under $TMPDIR and
       # nothing else -- `verify-fixed`'s three answers are records in the
-      # fixture rather than API calls, which is why that half is a pure function
-      # of the record stream -- so running it here keeps that property intact.
-      # ~1s, like the two above.
+      # fixture rather than API calls, and `applied`'s verdict is a pure
+      # function of a committed record stream for the same reason -- so running
+      # it here costs no network. Hermetic like the two above, and a few
+      # seconds rather than their one -- it drives the scripted scenarios
+      # through subshells, and `applied`'s red path adds five more. The sweep's
+      # measuring half stays in its own workflow; the one networked call this
+      # job does make is the last step, argued there.
       #
       # It still runs in flake-ledger.yml as well, and that is not duplication:
       # there it is the sweep refusing to measure live data with a classifier
@@ -460,6 +471,55 @@ jobs:
             printf '%s\n' "$tracked"
             exit 1
           fi
+      # The one step in this job that is not a pure function of the checkout,
+      # and the reason it is here rather than in a lane of its own.
+      #
+      # The ledger rules above enforce .github/flake-ledger.md against the
+      # checkout. None of them can see that the *sweep* observed a flake the
+      # file does not name, because that comparison needs the Actions API, so it
+      # lives in .github/workflows/flake-ledger.yml -- which fires on
+      # `workflow_run` after CI on main and never on the pull-request path. Run
+      # 32153420356 reported a race-lane flake with no row on 2026-08-18 and the
+      # row was still unfiled twelve days later (#541). Nothing was broken: the
+      # one job that knew was the one nobody's merge waited for.
+      #
+      # A fifth lane would reproduce that exactly. Branch protection on main
+      # requires four contexts -- "Build and test", "Race detector",
+      # "Integration tests" and this one -- so a new job would go red and be
+      # merged past, which is the hole rather than the fix. `Refusal-branch
+      # coverage` and `Windows build and vet` are already in that position.
+      #
+      # So one step here reads over the network. On a healthy repository it
+      # reads one thing -- the conclusion of main's newest completed sweep --
+      # and is done in two seconds. When that is red it re-asks the sweep's own
+      # question of the ledger in this checkout and passes if this checkout
+      # answers it, which is the sweep's full cost and is only paid while main's
+      # ledger is actually stale. That second half is not optional: main's old
+      # verdict is not a verdict about this branch, and gating on it alone would
+      # refuse the very pull request that applies the diff, leaving nothing able
+      # to clear either. It re-derives rather than exempting a PR that touches
+      # the file, so the only way out of the deadlock is the fix.
+      #
+      # The cost is the property the steps above used to claim for the whole job
+      # -- its verdict is no longer reproducible from a checkout alone, and an
+      # Actions API outage reds every open PR. Priced and accepted, because it
+      # is the mechanism the deadline rule already runs on: that one also reds
+      # PRs with nothing to do with the flake, and for the same reason. A flake
+      # has no owner until something appoints one, and the appointment is always
+      # the next person to merge.
+      #
+      # Fail-closed in both directions this can be uncertain: no run to read and
+      # a record it cannot parse are each red. Everything that decides anything
+      # is a pure function of the record streams and is pinned by the fixtures
+      # the selftest above runs, which are the real runs from #541's history.
+      #
+      # Last in the job on purpose, so every rule that can answer from the
+      # checkout has already reported before the one that can fail for a reason
+      # outside this repository.
+      - name: Main's last flake sweep must have been acted on
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/flake-sweep.sh applied
 
   guards:
     name: Refusal-branch coverage
