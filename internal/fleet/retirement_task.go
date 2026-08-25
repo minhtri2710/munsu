@@ -659,14 +659,18 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 			return result, nil
 		}
 	}
+	if claimCompleted {
+		if err := authority.ReconcileCompletedCleanup(taskID, claimGen, func() error { return finalizeCompletedProjectionCleanup(opts, meta, result) }); err != nil {
+			return cleanupPending(err)
+		}
+		return result, nil
+	}
 	// Assert the claim before any probe/release; a crash is reconciled here
 	// (the claim is already active under the same stable retirement identity,
 	// so the assert is a no-op). An aborted or completed claim never reaches
 	// this point (handled above); BeginCleanup itself fails closed if it does.
-	if !claimCompleted {
-		if err := beginRetirementCleanup(authority, taskID, claimGen); err != nil {
-			return cleanupPending(fmt.Errorf("teardown %s: asserting cleanup claim: %w", opts.ID, err))
-		}
+	if err := beginRetirementCleanup(authority, taskID, claimGen); err != nil {
+		return cleanupPending(fmt.Errorf("teardown %s: asserting cleanup claim: %w", opts.ID, err))
 	}
 
 	// Resolve the authoritative cleanup identity from the committed canonical
@@ -939,17 +943,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 			return cleanupPending(fmt.Errorf("teardown %s: finalizing journals: %w", opts.ID, err))
 		}
 		result.Steps = append(result.Steps, journalSteps...)
-		var archiveErr error
-		if claimCompleted {
-			archiveErr = authority.ReconcileCompletedCleanup(taskID, claimGen, func() error {
-				if err := work(); err != nil {
-					return err
-				}
-				return projectionCleanup()
-			})
-		} else {
-			archiveErr = authority.ReconcileRetirementCleanup(taskID, claimGen, taskauthority.CleanupCompleted, work, projectionCleanup)
-		}
+		archiveErr := authority.ReconcileRetirementCleanup(taskID, claimGen, taskauthority.CleanupCompleted, work, projectionCleanup)
 		if archiveErr != nil {
 			return cleanupPending(fmt.Errorf("teardown %s: archiving report for generation %s: %w", opts.ID, claimGen, archiveErr))
 		}
@@ -966,6 +960,21 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 	result.Steps = append(result.Steps, fmt.Sprintf("cleanup claim completed for generation %s", claimGen))
 
 	return result, nil
+}
+
+func finalizeCompletedProjectionCleanup(opts Options, meta map[string]string, result *TeardownResult) error {
+	metaPath, err := taskMetaFilePath(opts.HomeDir, opts.ID)
+	if err == nil {
+		if err := os.Remove(metaPath); err != nil && !os.IsNotExist(err) {
+			result.Steps = append(result.Steps, fmt.Sprintf("remove meta: %v", err))
+		}
+	}
+	for _, p := range cleanupResidualArtifactPaths(opts.HomeDir, opts.ID, meta) {
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			result.Steps = append(result.Steps, fmt.Sprintf("remove residual %s: %v", filepath.Base(p), err))
+		}
+	}
+	return nil
 }
 
 // safetyCheck verifies that work is landed before allowing
