@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 	"testing"
 )
 
@@ -39,7 +38,7 @@ func WriteFakeExecutableAt(path, script string) error {
 	if runtime.GOOS != "windows" {
 		return nil
 	}
-	shell, err := posixShell()
+	shell, err := resolvePOSIXShell(bootPath)
 	if err != nil {
 		return err
 	}
@@ -85,43 +84,29 @@ func SetPath(t *testing.T, dirs ...string) {
 	t.Setenv("PATH", strings.Join(dirs, string(os.PathListSeparator)))
 }
 
-var shell struct {
-	sync.Once
-	path string
-}
-
-// posixShell resolves the interpreter the windows shim hands its script to. It
-// prefers a shell already on the boot PATH and otherwise derives one from git's
-// own install root -- every fixture that installs a fake here also drives git,
-// and Git for Windows ships the same shell. Finding none is an error rather
-// than a skip: it means the fake would never run, which is a fact about the
-// machine, not a behaviour that windows lacks.
-func posixShell() (string, error) {
-	shell.Do(func() {
-		if p := findOnBootPath("sh.exe", "bash.exe"); p != "" {
-			shell.path = p
-			return
-		}
-		git := findOnBootPath("git.exe")
-		if git == "" {
-			return
-		}
+// resolvePOSIXShell picks the interpreter the windows shim hands its script
+// to, searching searchPath. It prefers a shell already on that path and
+// otherwise derives one from git's own install root -- every fixture that
+// installs a fake also drives git, and Git for Windows ships the same shell.
+// Finding none is an error rather than a skip: it means the fake would never
+// run, which is a fact about the machine, not a behaviour windows lacks.
+func resolvePOSIXShell(searchPath string) (string, error) {
+	if p := findOnPath(searchPath, "sh.exe", "bash.exe"); p != "" {
+		return p, nil
+	}
+	if git := findOnPath(searchPath, "git.exe"); git != "" {
 		root := filepath.Dir(filepath.Dir(git)) // ...\Git\cmd or ...\Git\bin -> ...\Git
-		for _, rel := range []string{`usr\bin\sh.exe`, `bin\sh.exe`, `usr\bin\bash.exe`, `bin\bash.exe`} {
-			if p := filepath.Join(root, rel); isFile(p) {
-				shell.path = p
-				return
+		for _, rel := range [][]string{{"usr", "bin", "sh.exe"}, {"bin", "sh.exe"}, {"usr", "bin", "bash.exe"}, {"bin", "bash.exe"}} {
+			if p := filepath.Join(append([]string{root}, rel...)...); isFile(p) {
+				return p, nil
 			}
 		}
-	})
-	if shell.path == "" {
-		return "", fmt.Errorf("no POSIX shell for the windows fake-binary shim on PATH=%s: %w", bootPath, errors.ErrUnsupported)
 	}
-	return shell.path, nil
+	return "", fmt.Errorf("no POSIX shell for the windows fake-binary shim on PATH=%s: %w", searchPath, errors.ErrUnsupported)
 }
 
-func findOnBootPath(names ...string) string {
-	for _, dir := range filepath.SplitList(bootPath) {
+func findOnPath(searchPath string, names ...string) string {
+	for _, dir := range filepath.SplitList(searchPath) {
 		for _, name := range names {
 			if p := filepath.Join(dir, name); isFile(p) {
 				return p
