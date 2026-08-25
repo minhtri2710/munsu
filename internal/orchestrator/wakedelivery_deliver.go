@@ -295,9 +295,13 @@ func listAllReceipts(homeDir string) ([]PendingReceipt, error) {
 			continue
 		}
 		core := strings.TrimSuffix(name, ".receipt")
-		taskID, termKey, ok := strings.Cut(core, ".")
-		if !ok || taskID == "" || termKey == "" {
+		taskStem, termKey, ok := strings.Cut(core, ".")
+		if !ok || taskStem == "" || termKey == "" {
 			continue
+		}
+		taskID, err := mhome.ReverseDurableKey(taskStem)
+		if err != nil {
+			return nil, fmt.Errorf("decoding receipt task stem %q: %w", taskStem, err)
 		}
 		key := taskID + "/" + termKey
 		if seen[key] {

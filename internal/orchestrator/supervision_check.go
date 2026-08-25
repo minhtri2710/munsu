@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // CheckKind classifies a check plugin origin.
@@ -41,9 +43,13 @@ func DiscoverPerTaskChecks(homeDir string) ([]CheckPlugin, error) {
 			continue
 		}
 		name := entry.Name()
-		taskID := strings.TrimSuffix(name, ".check")
-		if taskID == "" || strings.HasPrefix(taskID, ".") {
+		taskStem := strings.TrimSuffix(name, ".check")
+		if taskStem == "" || strings.HasPrefix(taskStem, ".") {
 			continue
+		}
+		taskID, err := home.ReverseDurableKey(taskStem)
+		if err != nil {
+			return nil, fmt.Errorf("decoding per-task check stem %q: %w", taskStem, err)
 		}
 		plugins = append(plugins, CheckPlugin{
 			Path:  filepath.Join(stateDir, name),

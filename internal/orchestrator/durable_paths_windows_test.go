@@ -5,6 +5,7 @@ package orchestrator
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -95,6 +96,106 @@ func TestPrepareForcedRetirementEvidenceEncodedID(t *testing.T) {
 	receiptBackup := filepath.Join(backupDir, filepath.Base(receiptPath))
 	if _, err := os.Stat(receiptBackup); err != nil {
 		t.Fatalf("receipt backup %q missing for encoded id: %v", receiptBackup, err)
+	}
+}
+
+type recordingActivationTransport struct {
+	payloads []string
+}
+
+func (r *recordingActivationTransport) Attempt(_ string, _ TargetResult, payload string) ActivationAttempt {
+	r.payloads = append(r.payloads, payload)
+	return ActivationAttempt{Acknowledged: true, SubmitStatus: "submitted"}
+}
+
+func TestActivateOnReceiptDecodesDurableTaskStem(t *testing.T) {
+	captainHome := t.TempDir()
+	parentHome := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(parentHome, "state"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(captainHome, ProvenanceMarkerName), []byte("captain=api\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	taskID, termKey := "captain:api", "terminal-1"
+	metaPath, err := home.MetaFilePath(parentHome, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(metaPath, []byte("kind=captain\nherdr_pane_id=p1\nherdr_session=w1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteReceipt(captainHome, taskID, termKey, "done", "complete"); err != nil {
+		t.Fatal(err)
+	}
+
+	transport := &recordingActivationTransport{}
+	if got := ActivateOnReceiptWithTransport(captainHome, parentHome, transport); got != 1 {
+		t.Fatalf("activation count = %d, want 1", got)
+	}
+	if len(transport.payloads) != 1 || !strings.Contains(transport.payloads[0], "soldier "+taskID) {
+		t.Fatalf("activation payloads = %q, want logical task id", transport.payloads)
+	}
+	if !IsActivationSeen(captainHome, taskID, termKey) {
+		t.Fatal("logical receipt was not marked activation-seen")
+	}
+	if got := ActivateOnReceiptWithTransport(captainHome, parentHome, transport); got != 0 {
+		t.Fatalf("second activation count = %d, want 0", got)
+	}
+	if len(transport.payloads) != 1 {
+		t.Fatalf("second activation duplicated payload: %q", transport.payloads)
+	}
+}
+
+func TestListAllReceiptsRejectsMalformedDurableStem(t *testing.T) {
+	tmp := t.TempDir()
+	receiptDir := filepath.Join(tmp, "state", "receipts")
+	if err := os.MkdirAll(receiptDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(receiptDir, "captain%ZZ.terminal.receipt"), []byte("state=done\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := listAllReceipts(tmp); err == nil {
+		t.Fatal("listAllReceipts accepted malformed durable stem")
+	}
+}
+
+func TestDiscoverPerTaskChecksDecodesDurableTaskStem(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	taskID := "captain:api"
+	checkPath, err := home.DurableFilePath(stateDir, taskID, ".check")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(checkPath, []byte("#!/bin/sh\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	plugins, err := DiscoverPerTaskChecks(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plugins) != 1 || plugins[0].Label != taskID || plugins[0].Path != checkPath {
+		t.Fatalf("plugins = %+v, want logical label and durable path %q", plugins, checkPath)
+	}
+}
+
+func TestDiscoverPerTaskChecksRejectsMalformedDurableStem(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "captain%ZZ.check"), []byte("#!/bin/sh\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DiscoverPerTaskChecks(tmp); err == nil {
+		t.Fatal("DiscoverPerTaskChecks accepted malformed durable stem")
 	}
 }
 
