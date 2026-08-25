@@ -78,7 +78,15 @@ func newBriefCmd() *cobra.Command {
 				ScoutScope: scoutScope, ScoutRuntimeBudgetSecs: scoutBudget,
 			}
 
-			if err := fleet.Scaffold(opts); err != nil {
+			auth, err := ctx.TaskAuthority()
+			if err != nil {
+				return err
+			}
+			taskID, err := domain.NewTaskID(id)
+			if err != nil {
+				return err
+			}
+			if err := auth.WriteTaskDataArtifact(taskID, func() error { return fleet.Scaffold(opts) }); err != nil {
 				return err
 			}
 

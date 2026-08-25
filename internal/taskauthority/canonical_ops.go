@@ -186,6 +186,30 @@ func (c *Canonical) ReconcileRetirementCleanup(taskID domain.TaskID, generation 
 	return nil
 }
 
+// WriteTaskDataArtifact serializes a bounded task-data write with
+// ReclaimReleasedTaskArtifacts so a brief writer cannot race reclamation.
+func (c *Canonical) WriteTaskDataArtifact(taskID domain.TaskID, write func() error) error {
+	if write == nil {
+		return fmt.Errorf("task-data callback is nil")
+	}
+	if err := taskID.Validate(); err != nil {
+		return err
+	}
+	lk, err := c.h.Lock(taskScope(taskID.Value()))
+	if err != nil {
+		return err
+	}
+	defer lk.Release()
+	doc, exists, err := c.readTaskDoc(taskID.Value())
+	if err != nil {
+		return err
+	}
+	if !exists || !doc.Aggregate.Current {
+		return conflictError(ErrNotFound, "task %s not found", taskID.Value())
+	}
+	return write()
+}
+
 func (c *Canonical) ReconcileCompletedCleanup(taskID domain.TaskID, generation Generation, work func() error) error {
 	if work == nil {
 		return fmt.Errorf("cleanup callback is nil")

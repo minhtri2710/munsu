@@ -772,6 +772,37 @@ func TestGuardPromoteRefusesATaskThatIsNotAScout(t *testing.T) {
 
 // --- internal/cli/session_cmd.go -------------------------------------------
 
+func TestBriefWritesKnownTaskAndRejectsUnknown(t *testing.T) {
+	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
+	auth := testAuthorityFor(t, homeDir)
+	seedGuardTask(t, auth, "known", "ship")
+	if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion, Config: config.ProjectOverlay{Backend: "tmux"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runRoot(t, "project", "add", "demo-repo", t.TempDir(), "--home", homeDir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runRoot(t, "brief", "known", "demo-repo", "--home", homeDir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(homeDir, "data", "known", "brief.md")); err != nil {
+		t.Fatal(err)
+	}
+	for _, force := range []bool{false, true} {
+		args := []string{"brief", "unknown", "demo-repo", "--home", homeDir}
+		if force {
+			args = append(args, "--force")
+		}
+		if _, err := runRoot(t, args...); err == nil {
+			t.Fatalf("unknown brief force=%v succeeded", force)
+		}
+		if _, err := os.Stat(filepath.Join(homeDir, "data", "unknown")); !os.IsNotExist(err) {
+			t.Fatalf("unknown data dir exists: %v", err)
+		}
+	}
+}
+
 func TestGuardBriefRefusesATaskThatIsNotAScout(t *testing.T) {
 	homeDir := t.TempDir()
 	auth := testAuthorityFor(t, homeDir)

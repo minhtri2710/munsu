@@ -25,6 +25,30 @@ func TestReclaimReleasedTaskArtifactsOwnershipAndFence(t *testing.T) {
 	}
 }
 
+func TestWriteTaskDataArtifactUsesTaskFence(t *testing.T) {
+	c, h, _ := newTestCanonical(t)
+	id := mustTaskID(t, "write-fence")
+	mustCreate(t, c, id.Value())
+	called := false
+	if err := c.WriteTaskDataArtifact(id, func() error {
+		called = true
+		_, err := h.Lock(taskScope(id.Value()))
+		if !errors.Is(err, home.ErrLockTimeout) {
+			t.Fatalf("lock error = %v", err)
+		}
+		reclaimedCalled := false
+		if reclaimed, reclaimErr := c.ReclaimReleasedTaskArtifacts(id, func() error { reclaimedCalled = true; return nil }); reclaimed || !errors.Is(reclaimErr, home.ErrLockTimeout) || reclaimedCalled {
+			t.Fatalf("nested reclaim = %v, %v, called=%v", reclaimed, reclaimErr, reclaimedCalled)
+		}
+		return nil
+	}); err != nil || !called {
+		t.Fatalf("write = %v, called=%v", err, called)
+	}
+	if err := c.WriteTaskDataArtifact(mustTaskID(t, "missing-write"), func() error { t.Fatal("unknown callback invoked"); return nil }); err == nil {
+		t.Fatal("unknown task write succeeded")
+	}
+}
+
 func TestArchiveRetiredReportRequiresExactActiveClaim(t *testing.T) {
 	c, h, _ := newTestCanonical(t)
 	id := "archive-task"
