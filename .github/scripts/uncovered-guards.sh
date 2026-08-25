@@ -654,9 +654,11 @@ check() {
 	n="$(printf '%s\n' "$verdicts" | grep -c . || true)"
 	m="$(printf '%s\n' "$baseline" | grep -c . || true)"
 	p="$(deadcode_allowed)"
-	# Printed on every run so the ratchet is visible in the log: waived is only
-	# allowed to fall. Standing still while the site count climbs is the shape of
-	# a mechanism being routed around, and it is only visible if it is printed.
+	# Printed on every run so the ratchet is visible in the log: waived falls as
+	# guards gain coverage, and rises only where the exact-base identity ratchet
+	# has admitted each added row as disclosed growth. Standing still while the
+	# site count climbs is the shape of a mechanism being routed around, and it
+	# is only visible if it is printed.
 	printf 'guards: %d sites, %d waived%s, deadcode: %d allowed%s\n' \
 		"$n" "$m" "$(delta "$BASELINE_REL" "$m")" "$p" "$(delta "${ALLOW#"$ROOT"/}" "$p")"
 }
