@@ -322,7 +322,11 @@ func TestRetirementDisposesAndReturnsOnlyEvidenceOwnedResources(t *testing.T) {
 	}
 	// Projection removed after full cleanup; canonical retirement evidence is
 	// preserved (projection removal must not erase it).
-	if _, err := os.Stat(filepath.Join(homeDir, "state", taskID+".meta")); !os.IsNotExist(err) {
+	metaPath, err := home.MetaFilePath(homeDir, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
 		t.Fatal("meta should be removed after successful retirement")
 	}
 	agg, err := auth.Get(mustTaskID(t, taskID))
@@ -583,7 +587,11 @@ func TestRetirementClaimBarrierBetweenProbeAndDispose(t *testing.T) {
 	if len(second.returned) != 1 || second.returned[0] != wtDir {
 		t.Fatalf("returned=%v, want evidence worktree %s", second.returned, wtDir)
 	}
-	if _, err := os.Stat(filepath.Join(homeDir, "state", taskID+".meta")); !os.IsNotExist(err) {
+	metaPath, err := home.MetaFilePath(homeDir, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
 		t.Fatalf("meta should be removed after completed cleanup: %v", err)
 	}
 	assertClaimCompleted(t, auth, taskID, taskauthority.Generation(1))
@@ -671,10 +679,18 @@ func TestRetirementClaimBarrierDuringProjectionMultiRemove(t *testing.T) {
 	if len(rec.disposed) != 1 || len(rec.returned) != 1 {
 		t.Fatalf("disposed=%v returned=%v, want endpoint and worktree released", rec.disposed, rec.returned)
 	}
-	if _, err := os.Stat(filepath.Join(homeDir, "state", taskID+".meta")); !os.IsNotExist(err) {
+	metaPath, err := home.MetaFilePath(homeDir, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
 		t.Fatalf("meta should be removed: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(homeDir, "state", taskID+".status")); !os.IsNotExist(err) {
+	statusPath, err := home.StatusFilePath(homeDir, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(statusPath); !os.IsNotExist(err) {
 		t.Fatalf("status artifact should be removed: %v", err)
 	}
 	assertClaimCompleted(t, auth, taskID, taskauthority.Generation(1))
@@ -768,7 +784,11 @@ func TestRetirementCrashResumeReusesReceiptWithoutDoubleTransition(t *testing.T)
 	if len(second.returned) != 1 || second.returned[0] != wtDir {
 		t.Fatalf("resume returned=%v, want evidence worktree %s", second.returned, wtDir)
 	}
-	if _, err := os.Stat(filepath.Join(homeDir, "state", taskID+".meta")); !os.IsNotExist(err) {
+	metaPath, err := home.MetaFilePath(homeDir, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
 		t.Fatal("meta should be removed on resume")
 	}
 }
@@ -814,7 +834,11 @@ func TestRetirementCrashResumeAfterWorktreeReturnInterruption(t *testing.T) {
 	if len(second.returned) != 1 || second.returned[0] != wtDir {
 		t.Fatalf("resume returned=%v, want evidence worktree %s", second.returned, wtDir)
 	}
-	if _, err := os.Stat(filepath.Join(homeDir, "state", taskID+".meta")); !os.IsNotExist(err) {
+	metaPath, err := home.MetaFilePath(homeDir, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
 		t.Fatal("meta should be removed on resume")
 	}
 }
@@ -973,7 +997,11 @@ func TestRetirementAbortTerminalOldRetryNeverReleasesReopenedOwnership(t *testin
 	if hist.CleanupClaim == nil || hist.CleanupClaim.Status != taskauthority.CleanupAborted || hist.CleanupClaim.Generation != 1 {
 		t.Fatalf("generation-1 claim = %+v, want aborted (terminal)", hist.CleanupClaim)
 	}
-	if _, err := os.Stat(filepath.Join(homeDir, "state", taskID+".meta")); !os.IsNotExist(err) {
+	metaPath, err := home.MetaFilePath(homeDir, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
 		t.Fatalf("meta should be removed after the generation-2 retirement: %v", err)
 	}
 }
@@ -1084,7 +1112,11 @@ func TestRetirementAbortTerminalOldRetryReleasesOnlyReopenedResources(t *testing
 	// The reopened generation's own projection is removed after its fresh
 	// retirement; the aborted generation-1 projection (oldWT meta) is gone
 	// because the current projection describes generation 2.
-	if _, err := os.Stat(filepath.Join(homeDir, "state", taskID+".meta")); !os.IsNotExist(err) {
+	metaPath, err := home.MetaFilePath(homeDir, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
 		t.Fatalf("meta should be removed after the generation-2 retirement: %v", err)
 	}
 }
@@ -1333,7 +1365,11 @@ func TestRetirementAbortTerminalSameGenerationRetryNeverResumes(t *testing.T) {
 		t.Fatalf("claim not retained as aborted: %+v", agg.CleanupClaim)
 	}
 	// The projectons survive (nothing was released/removed).
-	if _, err := os.Stat(filepath.Join(homeDir, "state", taskID+".meta")); err != nil {
+	metaPath, err := home.MetaFilePath(homeDir, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(metaPath); err != nil {
 		t.Fatalf("meta destroyed on aborted retry: %v", err)
 	}
 }
