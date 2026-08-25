@@ -314,7 +314,7 @@ func TestBootstrapRunReturnsRuntimeIdentityEvenWhenSkewExists(t *testing.T) {
 	}
 	defer func() { defaultRuntimeIdentityProbe = saved }()
 
-	result, err := Run(home, false, nil)
+	result, err := Run(home, false, nil, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}

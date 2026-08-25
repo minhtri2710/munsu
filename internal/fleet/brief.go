@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // ScaffoldOptions controls brief generation.
@@ -188,4 +190,40 @@ func ReportPath(homeDir, id string) string {
 func ReportExists(homeDir, id string) bool {
 	_, err := os.Stat(ReportPath(homeDir, id))
 	return err == nil
+}
+
+// archivedReportPrefix and archivedReportSuffix bracket the name a retired
+// generation's report takes. Teardown renames the report out of report.md so
+// that the next generation cannot inherit evidence it did not produce.
+const (
+	archivedReportPrefix = "report-g"
+	archivedReportSuffix = ".md"
+)
+
+// ArchivedReportName is the file name a retired generation's report takes.
+func ArchivedReportName(gen taskauthority.Generation) string {
+	return archivedReportPrefix + gen.String() + archivedReportSuffix
+}
+
+// HasReportEvidence reports whether a task data directory holds a report worth
+// keeping: the current generation's report.md, or any retired generation's
+// archived report. It is the one owner of that question — teardown asks it
+// before reclaiming a directory and the session-start sweep asks it before
+// collecting one. A directory it cannot read is reported as holding evidence,
+// so an unreadable directory is never reclaimed on the strength of a guess.
+func HasReportEvidence(dataDir string) bool {
+	entries, err := os.ReadDir(dataDir)
+	if err != nil {
+		return true
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if name == "report.md" {
+			return true
+		}
+		if strings.HasPrefix(name, archivedReportPrefix) && strings.HasSuffix(name, archivedReportSuffix) {
+			return true
+		}
+	}
+	return false
 }

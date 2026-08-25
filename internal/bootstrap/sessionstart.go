@@ -193,7 +193,7 @@ func printCaptainLiveness(w io.Writer, home string, acquired bool, fn CaptainLiv
 }
 
 func RunSessionStart(w io.Writer, home string) (*SessionStartResult, error) {
-	return RunSessionStartWithWatcher(w, home, nil, nil)
+	return RunSessionStartWithWatcher(w, home, nil, nil, nil)
 }
 
 func currentWorkingDirOrHome(home string) string {
@@ -262,7 +262,7 @@ func printIntegrationMatrix(w io.Writer, home string) {
 	}
 }
 
-func RunSessionStartWithWatcher(w io.Writer, home string, ensure WatchEnsureFunc, captainLiveness CaptainLivenessFunc) (*SessionStartResult, error) {
+func RunSessionStartWithWatcher(w io.Writer, home string, ensure WatchEnsureFunc, captainLiveness CaptainLivenessFunc, owns TaskOwnsDataDir) (*SessionStartResult, error) {
 	res := &SessionStartResult{}
 	runtimeIdentity := CollectRuntimeIdentity(home, currentWorkingDirOrHome(home), "")
 	res.RuntimeIdentity = &runtimeIdentity
@@ -286,7 +286,7 @@ func RunSessionStartWithWatcher(w io.Writer, home string, ensure WatchEnsureFunc
 		fmt.Fprintln(w, "WARNING: Another session holds the lock. Operating read-only.")
 	}
 
-	bootRes, err := sessionStartBootstrap(home, acquired, nil, res.RuntimeIdentity)
+	bootRes, err := runWithRuntimeIdentity(home, acquired, nil, res.RuntimeIdentity, owns)
 	if err != nil {
 		bootstrapErr := fmt.Errorf("bootstrap: %w", err)
 		if !acquired {

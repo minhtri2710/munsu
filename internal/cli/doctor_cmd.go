@@ -64,7 +64,7 @@ Use --role for role-specific integration matrix:
 				return nil
 			}
 
-			result, err := bootstrap.Run(ctx.Home, false, nil)
+			result, err := bootstrap.Run(ctx.Home, false, nil, nil)
 			if err != nil {
 				return fmt.Errorf("bootstrap: %w", err)
 			}

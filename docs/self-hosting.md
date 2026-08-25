@@ -166,10 +166,15 @@ munsu teardown <task-id> --force                # skip safety checks
 Without --force, scout teardown requires report.md and no unresolved decision
 holds. Ship teardown requires clean git state with a remote tracking branch.
 With --force, all safety checks are bypassed and nothing else changes: --force
-never deletes more than a plain teardown does. Either way the data/<id>/
-directory is kept when it holds a report.md, or a brief.md large enough not to
-be a stub; a stub brief with no report is reclaimed by the teardown itself, and
-a data directory holding neither is reclaimed by the session-start GC.
+never deletes more than a plain teardown does.
+
+Either way the teardown archives the retired generation's report as
+report-g<generation>.md. It stays there to be read, and because the check above
+reads only the unarchived name, a task reopened to a later generation cannot
+pass its own teardown on evidence an earlier generation wrote. A data directory
+holding no report is kept for a relaunch of the same task and is reclaimed by
+the session-start sweep once the task is retired and past a 24h grace period; a
+stub brief with no report is reclaimed by the teardown itself.
 
 ## 5. Decision-hold scout gate
 

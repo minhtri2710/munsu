@@ -3,6 +3,7 @@
 package fleet
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -481,11 +482,29 @@ func TestRun_ForcePreservesReport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("forced teardown: %v", err)
 	}
-	if _, err := os.Stat(reportPath); err != nil {
-		t.Fatalf("--force must not delete report.md: %v", err)
+	archivedPath := filepath.Join(dataDir, "report-g1.md")
+	body, err := os.ReadFile(archivedPath)
+	if err != nil {
+		t.Fatalf("--force must not delete the report: %v", err)
 	}
-	if !hasStep(result.Steps, "data dir kept (report.md present)") {
+	if !strings.Contains(string(body), "partial work worth reading") {
+		t.Fatalf("archived report = %q, want the retired generation's findings", body)
+	}
+	if !hasStep(result.Steps, "report.md archived as report-g1.md") {
+		t.Fatalf("steps = %v, want the report-archived step", result.Steps)
+	}
+	if !hasStep(result.Steps, "data dir kept (archived report present)") {
 		t.Fatalf("steps = %v, want the report-kept step", result.Steps)
+	}
+
+	// The report belongs to generation 1 and stops answering for any other:
+	// scoutSafetyCheck reads report.md, and only the generation that writes
+	// one has it there.
+	if _, err := os.Stat(reportPath); !os.IsNotExist(err) {
+		t.Fatalf("report.md must not survive under the name the next generation writes, stat err = %v", err)
+	}
+	if err := scoutSafetyCheck(Options{HomeDir: tmp, ID: "scout-report"}, map[string]string{"kind": "scout"}); err == nil {
+		t.Fatal("scoutSafetyCheck must refuse a generation that wrote no report of its own")
 	}
 
 	// The retirement itself committed, so the report survives a teardown that
@@ -736,5 +755,42 @@ func TestRun_ForceSkipsDecisionHoldCheck(t *testing.T) {
 	}
 	if len(result.Steps) == 0 {
 		t.Error("expected teardown steps")
+	}
+}
+
+// TestRun_ArchivingTheReportFailsClosed proves the archive is not advisory.
+// Completing the cleanup claim is what makes a task reopenable, so a report
+// still sitting at the name the next generation writes must never reach that
+// commit: the retirement stops at the typed partial outcome instead.
+func TestRun_ArchivingTheReportFailsClosed(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Fatal("permission proof did not run: tests run as root, so a directory that refuses a rename cannot be established")
+	}
+	tmp := t.TempDir()
+	os.Setenv("MUNSU_HOME", tmp)
+	defer os.Unsetenv("MUNSU_HOME")
+
+	auth := canonicalMergeTestAuth(t, tmp, "unarchivable")
+
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+	os.WriteFile(filepath.Join(stateDir, "unarchivable.meta"), []byte("kind=scout\nbackend=tmux\nwindow=@1\n"), 0644)
+
+	dataDir := filepath.Join(tmp, "data", "unarchivable")
+	os.MkdirAll(dataDir, 0755)
+	reportPath := filepath.Join(dataDir, "report.md")
+	os.WriteFile(reportPath, []byte("# findings\n"), 0644)
+	if err := os.Chmod(dataDir, 0555); err != nil {
+		t.Fatalf("permission proof did not run: %v", err)
+	}
+	t.Cleanup(func() { os.Chmod(dataDir, 0755) })
+
+	_, err := RetireTask(Options{HomeDir: tmp, ID: "unarchivable", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth)
+	var pending *RetirementCleanupPendingError
+	if !errors.As(err, &pending) {
+		t.Fatalf("teardown error = %T %v, want typed RetirementCleanupPendingError", err, err)
+	}
+	if _, err := os.Stat(reportPath); err != nil {
+		t.Fatalf("a refused archive must leave the report where it was: %v", err)
 	}
 }
