@@ -32,11 +32,39 @@ func secureDir(path string) error {
 	return securePath(path, true)
 }
 
-// restrictDir ensures path grants no access to other principals. On Windows it
-// sets the same owner-only DACL as secureDir; the platform has no owner-bit
-// granularity to preserve, and owner-only only ever reduces exposure.
+// restrictDir removes access for other principals while preserving the
+// current user's effective directory rights. Unlike secureDir, it must not
+// upgrade a pre-existing read-only directory to full control.
 func restrictDir(path string) error {
-	return securePath(path, true)
+	sid, err := currentUserSID()
+	if err != nil {
+		return err
+	}
+	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		return fmt.Errorf("home: read DACL for %s: %w", path, err)
+	}
+	if sd == nil {
+		return fmt.Errorf("home: %s has no security descriptor", path)
+	}
+	dacl, _, err := sd.DACL()
+	if err != nil && err != windows.ERROR_OBJECT_NOT_FOUND {
+		return fmt.Errorf("home: read DACL for %s: %w", path, err)
+	}
+	rights, err := effectiveRights(dacl, sid)
+	if err != nil {
+		return fmt.Errorf("home: read effective rights for %s: %w", path, err)
+	}
+	dacl, err = ownerACL(sid, rights)
+	if err != nil {
+		return fmt.Errorf("home: build restricted ACL for %s: %w", path, err)
+	}
+	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		nil, nil, dacl, nil); err != nil {
+		return fmt.Errorf("home: set restricted ACL for %s: %w", path, err)
+	}
+	return verifyRestrictedProtection(path, rights)
 }
 
 // securePath sets and verifies an owner-only DACL on path. The DACL contains a
@@ -48,21 +76,7 @@ func securePath(path string, isDir bool) error {
 		return err
 	}
 
-	ea := windows.EXPLICIT_ACCESS{
-		AccessPermissions: ownerAllAccess,
-		AccessMode:        windows.GRANT_ACCESS,
-		Inheritance:       windows.NO_INHERITANCE,
-	}
-	ea.Trustee.TrusteeForm = windows.TRUSTEE_IS_SID
-	ea.Trustee.TrusteeType = windows.TRUSTEE_IS_USER
-	ea.Trustee.TrusteeValue = windows.TrusteeValueFromSID(sid)
-
-	// TrusteeValueFromSID points the trustee at sid; the SID must stay alive
-	// while ACLFromEntries copies it into the ACE.
-	var pinner runtime.Pinner
-	pinner.Pin(sid)
-	dacl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{ea}, nil)
-	pinner.Unpin()
+	dacl, err := ownerACL(sid, ownerAllAccess)
 	if err != nil {
 		return fmt.Errorf("home: build owner-only ACL for %s: %w", path, err)
 	}
@@ -77,6 +91,84 @@ func securePath(path string, isDir bool) error {
 	}
 
 	return verifyProtection(path, isDir)
+}
+
+func ownerACL(sid *windows.SID, rights uint32) (*windows.ACL, error) {
+	ea := windows.EXPLICIT_ACCESS{
+		AccessPermissions: windows.ACCESS_MASK(rights),
+		AccessMode:        windows.GRANT_ACCESS,
+		Inheritance:       windows.NO_INHERITANCE,
+	}
+	ea.Trustee.TrusteeForm = windows.TRUSTEE_IS_SID
+	ea.Trustee.TrusteeType = windows.TRUSTEE_IS_USER
+	ea.Trustee.TrusteeValue = windows.TrusteeValueFromSID(sid)
+	var pinner runtime.Pinner
+	pinner.Pin(sid)
+	defer pinner.Unpin()
+	return windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{ea}, nil)
+}
+
+func effectiveRights(dacl *windows.ACL, sid *windows.SID) (uint32, error) {
+	if dacl == nil {
+		return 0, nil
+	}
+	trustee := windows.TRUSTEE{
+		TrusteeForm:  windows.TRUSTEE_IS_SID,
+		TrusteeType:  windows.TRUSTEE_IS_USER,
+		TrusteeValue: windows.TrusteeValueFromSID(sid),
+	}
+	var rights uint32
+	var pinner runtime.Pinner
+	pinner.Pin(sid)
+	defer pinner.Unpin()
+	ret, _, callErr := windows.NewLazySystemDLL("advapi32.dll").NewProc("GetEffectiveRightsFromAclW").Call(
+		uintptr(unsafe.Pointer(dacl)), uintptr(unsafe.Pointer(&trustee)), uintptr(unsafe.Pointer(&rights)))
+	if ret != 0 {
+		if callErr != nil {
+			return 0, callErr
+		}
+		return 0, windows.Errno(ret)
+	}
+	return rights, nil
+}
+
+func verifyRestrictedProtection(path string, rights uint32) error {
+	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		return fmt.Errorf("home: read restricted DACL for %s: %w", path, err)
+	}
+	if sd == nil {
+		return fmt.Errorf("home: %s has no security descriptor", path)
+	}
+	control, _, err := sd.Control()
+	if err != nil {
+		return err
+	}
+	if control&windows.SE_DACL_PROTECTED == 0 {
+		return fmt.Errorf("home: %s restricted DACL is inheritable", path)
+	}
+	dacl, _, err := sd.DACL()
+	if err != nil {
+		return err
+	}
+	if dacl == nil || dacl.AceCount != 1 {
+		return fmt.Errorf("home: %s restricted DACL does not contain exactly one ACE", path)
+	}
+	var ace *windows.ACCESS_ALLOWED_ACE
+	if err := windows.GetAce(dacl, 0, &ace); err != nil {
+		return err
+	}
+	if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE || ace.Header.AceFlags&windows.INHERITED_ACE != 0 || uint32(ace.Mask) != rights {
+		return fmt.Errorf("home: %s restricted DACL does not preserve effective rights %#x", path, rights)
+	}
+	sid, err := currentUserSID()
+	if err != nil {
+		return err
+	}
+	if !windows.EqualSid((*windows.SID)(unsafe.Pointer(&ace.SidStart)), sid) {
+		return fmt.Errorf("home: %s restricted DACL grants another principal", path)
+	}
+	return nil
 }
 
 // currentUserSID returns a copy of the SID of the user running this process.

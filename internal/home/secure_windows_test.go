@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/testutil/fsaccess"
 	"golang.org/x/sys/windows"
 )
 
@@ -66,6 +67,20 @@ func TestSecureDirOwnerOnlyWindows(t *testing.T) {
 	}
 	if err := verifyProtection(dir, true); err != nil {
 		t.Fatalf("verifyProtection after secureDir: %v", err)
+	}
+}
+
+func TestRestrictDirPreservesReadOnlyOwnerRightsWindows(t *testing.T) {
+	dir := t.TempDir()
+	fsaccess.MakeReadOnly(t, dir)
+	if err := restrictDir(dir); err != nil {
+		t.Fatalf("restrictDir: %v", err)
+	}
+	probe := filepath.Join(dir, "write-probe")
+	if f, err := os.Create(probe); err == nil {
+		f.Close()
+		_ = os.Remove(probe)
+		t.Fatal("restrictDir upgraded a read-only directory to writable")
 	}
 }
 
