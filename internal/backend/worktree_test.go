@@ -350,10 +350,7 @@ func TestGet_RelativeRepoPath_PassesAbsolute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The fake records one argument per line in its own language's line
-	// ending, so normalize before splitting: a windows CRLF would otherwise
-	// leave a trailing \r on every recorded argument (#549 group 8).
-	parts := strings.Split(strings.TrimSpace(strings.ReplaceAll(string(data), "\r\n", "\n")), "\n")
+	parts := strings.Split(strings.TrimSpace(string(data)), "\n")
 	if len(parts) < 2 {
 		t.Fatalf("expected >=2 args recorded, got %#v", parts)
 	}
