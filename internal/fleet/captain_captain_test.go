@@ -2826,6 +2826,11 @@ func newWorktreeFixture(t *testing.T) string {
 	if out, err := exec.Command("git", "clone", remote, project).CombinedOutput(); err != nil {
 		t.Fatalf("git clone: %v\n%s", err, out)
 	}
+	// See initTestRepo: a repo built in t.TempDir() inherits the host's
+	// core.autocrlf, and the managed-worktree tests compare checked-out bytes
+	// to the bytes they wrote. Set on the clone rather than the bare remote
+	// because the linked worktree SeedFromWorktree creates shares this config.
+	gitTestRun(t, project, "config", "core.autocrlf", "false")
 	gitTestRun(t, project, "config", "user.name", "Munsu Test")
 	gitTestRun(t, project, "config", "user.email", "munsu@example.invalid")
 	gitTestRun(t, project, "checkout", "-b", "main")
@@ -3386,9 +3391,21 @@ func TestSeedWorktree_GitClean(t *testing.T) {
 	}
 }
 
-// TestRepairWorktreeAdminPath proves that after renaming a worktree directory,
-// repairWorktreeAdminPath updates git's worktree admin so that "git worktree list"
-// shows the final (renamed) path, not the old temp path.
+// gitListsPath reports whether `git worktree list` output names path.
+//
+// The raw comparison is tried first so this stays exactly as strict as it was.
+// The fallback is for windows, where git prints the long path with forward
+// slashes while t.TempDir() hands back a backslash path under the 8.3 short
+// name of the user profile (RUNNER~1) -- two spellings of one directory, which
+// a substring test reads as a missing worktree (#549 group 8).
+func gitListsPath(out, path string) bool {
+	hay := filepath.ToSlash(out)
+	if strings.Contains(hay, filepath.ToSlash(path)) {
+		return true
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	return err == nil && strings.Contains(hay, filepath.ToSlash(resolved))
+}
 
 // TestRepairWorktreeAdminPath proves that after renaming a worktree directory,
 // repairWorktreeAdminPath updates git's worktree admin so that "git worktree list"
@@ -3408,7 +3425,7 @@ func TestRepairWorktreeAdminPath(t *testing.T) {
 
 	// Verify git worktree list shows temp path before rename.
 	worktreeOut := gitTestRun(t, project, "worktree", "list", "--porcelain")
-	if !strings.Contains(worktreeOut, tempPath) {
+	if !gitListsPath(worktreeOut, tempPath) {
 		t.Fatalf("expected worktree list to contain %q before rename, got:\n%s", tempPath, worktreeOut)
 	}
 
@@ -3420,7 +3437,7 @@ func TestRepairWorktreeAdminPath(t *testing.T) {
 
 	// After rename, git worktree list still shows old temp path — stale.
 	staleOut := gitTestRun(t, project, "worktree", "list", "--porcelain")
-	if strings.Contains(staleOut, finalPath) {
+	if gitListsPath(staleOut, finalPath) {
 		t.Skip("rename already updated git worktree list — nothing to repair")
 	}
 
@@ -3431,7 +3448,7 @@ func TestRepairWorktreeAdminPath(t *testing.T) {
 
 	// Verify git worktree list now shows final path.
 	repairedOut := gitTestRun(t, project, "worktree", "list", "--porcelain")
-	if !strings.Contains(repairedOut, finalPath) {
+	if !gitListsPath(repairedOut, finalPath) {
 		t.Errorf("expected worktree list to contain %q after repair, got:\n%s", finalPath, repairedOut)
 	}
 

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -413,8 +414,7 @@ func TestLaunchWorktreeTreehouseFirstAttemptConsumesReservation(t *testing.T) {
 		t.Fatalf("beginLaunchIntent: %v", err)
 	}
 	logPath := filepath.Join(t.TempDir(), "treehouse-args.log")
-	binDir := fakeTreehouseOnPath(t, logPath)
-	t.Setenv("PATH", binDir+":/usr/bin:/bin")
+	fakeTreehouseOnPath(t, logPath)
 	if err := f.runner.acquireWorktree(); err != nil {
 		t.Fatalf("acquireWorktree: %v", err)
 	}
@@ -445,8 +445,7 @@ func TestLaunchWorktreeTreehouseRecoveryFailsClosed(t *testing.T) {
 		t.Fatalf("re-entry beginLaunchIntent: %v", err)
 	}
 	logPath := filepath.Join(t.TempDir(), "treehouse-args.log")
-	binDir := fakeTreehouseOnPath(t, logPath)
-	t.Setenv("PATH", binDir+":/usr/bin:/bin")
+	fakeTreehouseOnPath(t, logPath)
 	if err := f.runner.acquireWorktree(); err == nil {
 		t.Fatal("treehouse recovery must fail closed, got nil")
 	} else if !strings.Contains(err.Error(), "DEPENDENCY_REQUEST") {
@@ -461,17 +460,31 @@ func TestLaunchWorktreeTreehouseRecoveryFailsClosed(t *testing.T) {
 	}
 }
 
-// fakeTreehouseOnPath installs a fake treehouse CLI that records its
-// arguments to logPath and returns a fresh existing directory as the acquired
-// worktree. It returns the directory to prepend to PATH.
-func fakeTreehouseOnPath(t *testing.T, logPath string) string {
+// fakeTreehouseOnPath installs a fake treehouse CLI that appends its arguments
+// to logPath and returns an existing directory as the acquired worktree, and
+// prepends it to PATH for the duration of the test.
+//
+// The fake is emitted in the host's own script language. exec.LookPath on
+// windows only considers names carrying a PATHEXT extension, so a bare
+// `treehouse` shell script is invisible there: the provider finds no treehouse,
+// falls back to real `git worktree`, and the test measures git rather than the
+// fake it installed (#549 group 8). PATH is prepended to rather than replaced
+// because the fallback this test is trying not to reach still needs to find
+// git.
+func fakeTreehouseOnPath(t *testing.T, logPath string) {
 	t.Helper()
 	dir := t.TempDir()
-	content := fmt.Sprintf("#!/bin/sh\necho \"$@\" >> %q\nwt=\"$(mktemp -d /tmp/fake-treehouse-wt.XXXXXX)\"\necho \"$wt\"\n", logPath)
-	if err := os.WriteFile(filepath.Join(dir, "treehouse"), []byte(content), 0755); err != nil {
+	wt := t.TempDir()
+	name := "treehouse"
+	content := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\nprintf '%%s\\n' %q\n", logPath, wt)
+	if runtime.GOOS == "windows" {
+		name = "treehouse.cmd"
+		content = fmt.Sprintf("@echo off\r\n>> %q echo %%*\r\necho %s\r\n", logPath, wt)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0755); err != nil {
 		t.Fatal(err)
 	}
-	return dir
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 // TestLaunchArtifactGuardProvesSingleProcessLaunches runs the REAL production
