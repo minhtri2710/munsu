@@ -77,7 +77,7 @@ func (f *fakeDeliveryProvider) Observe(ident domain.DeliveryIdentity) (DeliveryP
 		f.observations = f.observations[1:]
 		return obs, nil
 	}
-	return DeliveryProviderObservation{State: "OPEN", HeadSHA: ident.HeadSHA, Mergeability: DeliveryMergeabilityAllowed}, nil
+	return DeliveryProviderObservation{State: "OPEN", HeadSHA: ident.HeadSHA, BaseRef: ident.BaseRef, Mergeability: DeliveryMergeabilityAllowed}, nil
 }
 
 // deliveryFixtureIdentity is the typed delivery identity the deliver tests
