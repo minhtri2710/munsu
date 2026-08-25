@@ -31,7 +31,7 @@ func TestArchiveRetiredReportRequiresExactActiveClaim(t *testing.T) {
 	mustCreate(t, c, id)
 	retireWithClaim(t, c, id, preconditionOf(1, 1), "op-archive-retire")
 	called := false
-	if err := c.ArchiveRetiredReport(mustTaskID(t, id), 1, func() error {
+	if err := c.ReconcileRetirementCleanup(mustTaskID(t, id), 1, CleanupCompleted, func() error {
 		called = true
 		_, err := h.Lock(taskScope(id))
 		if !errors.Is(err, home.ErrLockTimeout) {
@@ -42,7 +42,7 @@ func TestArchiveRetiredReportRequiresExactActiveClaim(t *testing.T) {
 		t.Fatalf("active archive = %v, called=%v", err, called)
 	}
 	called = false
-	if err := c.ArchiveRetiredReport(mustTaskID(t, id), 2, func() error { called = true; return nil }); err == nil || called {
+	if err := c.ReconcileRetirementCleanup(mustTaskID(t, id), 2, CleanupCompleted, func() error { called = true; return nil }); err == nil || called {
 		t.Fatalf("wrong-generation archive = %v, called=%v", err, called)
 	}
 	for _, status := range []CleanupStatus{CleanupCompleted, CleanupAborted} {
@@ -63,7 +63,7 @@ func TestArchiveRetiredReportRequiresExactActiveClaim(t *testing.T) {
 				}
 			}
 			called := false
-			if err := c.ArchiveRetiredReport(mustTaskID(t, id), 1, func() error { called = true; return nil }); err == nil || called {
+			if err := c.ReconcileRetirementCleanup(mustTaskID(t, id), 1, CleanupCompleted, func() error { called = true; return nil }); err == nil || called {
 				t.Fatalf("archive = %v, called=%v", err, called)
 			}
 		})

@@ -233,16 +233,23 @@ func archiveRetiredReport(homeDir, id string, gen taskauthority.Generation) (str
 	reservation, err := os.OpenFile(archivedPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
 	if err != nil {
 		if os.IsExist(err) {
-			return "", true, fmt.Errorf("report paths %s and %s conflict", reportPath, archivedPath)
+			if info, statErr := os.Stat(archivedPath); statErr == nil && info.Mode().IsRegular() && info.Size() == 0 {
+				reservation = nil
+			} else {
+				return "", true, fmt.Errorf("report paths %s and %s conflict", reportPath, archivedPath)
+			}
+		} else {
+			return "", true, fmt.Errorf("reserving archive path %s: %w", archivedPath, err)
 		}
-		return "", true, fmt.Errorf("reserving archive path %s: %w", archivedPath, err)
 	}
-	if err := reservation.Close(); err != nil {
-		removeErr := os.Remove(archivedPath)
-		if removeErr != nil {
-			return "", true, errors.Join(fmt.Errorf("closing archive reservation %s: %w", archivedPath, err), fmt.Errorf("removing archive reservation: %w", removeErr))
+	if reservation != nil {
+		if err := reservation.Close(); err != nil {
+			removeErr := os.Remove(archivedPath)
+			if removeErr != nil {
+				return "", true, errors.Join(fmt.Errorf("closing archive reservation %s: %w", archivedPath, err), fmt.Errorf("removing archive reservation: %w", removeErr))
+			}
+			return "", true, fmt.Errorf("closing archive reservation %s: %w", archivedPath, err)
 		}
-		return "", true, fmt.Errorf("closing archive reservation %s: %w", archivedPath, err)
 	}
 	if err := os.Rename(reportPath, archivedPath); err != nil {
 		removeErr := os.Remove(archivedPath)
