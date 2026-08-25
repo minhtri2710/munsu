@@ -380,13 +380,12 @@ jobs:
       # that person always exists. Without it the file is `t.Skip` with better
       # paperwork.
       #
-      # Text only, no network, like the four rules above it -- it reads one
-      # committed file and today's date and nothing else. The half that has to
-      # talk to the Actions API is a separate workflow
-      # (.github/workflows/flake-ledger.yml) and stays there; what this step
-      # cannot see is that the sweep found a flake this file does not name, and
-      # the last step in this job is the one that does, over the network, for
-      # the reasons stated there.
+      # Text only, no network, like the four rules above it -- this hermetic
+      # half reads one committed file and today's date and nothing else. The
+      # networked half has two consumers: flake-ledger.yml runs after a merge
+      # to report and propose the remediation, while the last step in this job
+      # runs on pull requests to refuse the merge until the checkout answers
+      # the observation.
       #
       # The selftest runs first, and it is here rather than in the sweep's own
       # workflow for the reason the step below exists at all: this script is the
@@ -417,19 +416,11 @@ jobs:
       #
       # `selftest` is hermetic and this step keeps it that way: it reads
       # .github/testdata/flake-sweep and a scratch ledger under $TMPDIR and
-      # nothing else -- `verify-fixed`'s three answers are records in the
-      # fixture rather than API calls, and `applied`'s verdict is a pure
-      # function of a committed record stream for the same reason -- so running
-      # it here costs no network. Hermetic like the two above, and a few
-      # seconds rather than their one -- it drives the scripted scenarios
-      # through subshells, and `applied`'s red path adds five more. The sweep's
-      # measuring half stays in its own workflow; the one networked call this
-      # job does make is the last step, argued there.
-      #
-      # It still runs in flake-ledger.yml as well, and that is not duplication:
-      # there it is the sweep refusing to measure live data with a classifier
-      # that disagrees with its fixtures, which is a different refusal from this
-      # one, which is a PR not being allowed to merge the change that broke it.
+      # nothing else. It pins the classifier and the check/sync/verify-fixed
+      # rules without making API calls. The post-merge workflow runs the same
+      # selftest while reporting live sweep data; this PR-side selftest protects
+      # the rules that can otherwise be broken while every happy-path lane stays
+      # green.
       - name: Flake sweep rules must agree with their fixtures
         run: .github/scripts/flake-sweep.sh selftest
       # The fourth of these, and the one where the argument is sharpest, because
