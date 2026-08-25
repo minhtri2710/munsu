@@ -126,14 +126,6 @@ WINDOW_FLOOR=$((DEADLINE_DAYS * 2))
 
 REPO="${GITHUB_REPOSITORY:-minhtri2710/munsu}"
 
-# The workflow whose verdict `applied` reads, and how many of its runs it asks
-# for. A merge burst produces four runs in a minute and flake-ledger.yml cancels
-# all but the last, so the newest record is routinely one this command has to
-# skip past. This is a bounded lookback, not a correctness bound: exhausting
-# the page without an eligible record falls back to re-derivation.
-SWEEP_WORKFLOW="flake-ledger.yml"
-SWEEP_RUNS_PAGE=20
-
 die() {
 	echo "::error::$*" >&2
 	exit 1
@@ -704,133 +696,38 @@ verify_fixed() {
 # applied
 # ---------------------------------------------------------------------------
 #
-# `check` and `verify-fixed` answer "is the ledger right?", and they can only be
-# asked where the Actions API is reachable, which is .github/workflows/flake-ledger.yml,
-# which runs on main and on nobody's pull request. So for the whole of v0 their
-# answer was a red run on a workflow no merge waits for: on 2026-08-18 run
-# 32153420356 reported a race-lane flake with no row, and the row was still
-# unfiled twelve days later (#541). Every check that could have said so was
-# green, because every check that could have said so reads only the checkout.
+# This path asks the sweep's question directly against the checkout being
+# merged. It observes once, then runs `check` and `verify-fixed` over that same
+# per-attempt record stream, so no prior workflow run or freshness proxy can
+# certify stale evidence. A full 30-day observation costs about 130 seconds and
+# about 90 API requests against the 1000-per-hour token budget; that is the
+# measured cost of removing the race between CI attempts and the asynchronous
+# ledger workflow. Losing the API or exhausting the budget fails closed: observe
+# dies and the PR is red, which is the cheap direction for a check that should be
+# green. While main CI for a new commit is still running, its attempt records do
+# not exist yet, so a flake it will reveal is not observable by anyone; a merge
+# can still land ahead of it, and the ledger appoints the next merger afterward.
 #
-# This is the one that does not. Its cheap half asks whether the newest completed
-# sweep verdict belongs to the newest completed main CI run. Green there stops
-# only when those SHAs match. Every other case re-asks the sweep's own question --
-# `check` and `verify-fixed`, over the same observation stream they always read --
-# of the ledger in *this* checkout, and passes when this checkout answers it.
-# While main CI for a new commit is still running, no verdict about it exists
-# anywhere; a merge can still land before that flake is observable, and the
-# ledger appoints the next merger after it is observed.
-#
-# There is deliberately no exemption in that second half. "The pull request
-# touches the ledger" would have been one line and would have let any edit
-# through, including one that deletes the row; re-deriving is what makes the
-# escape from the deadlock the same act as the fix.
-#
-# Split the way `observe`/`classify` are split, and for the same reason: the
-# fetch is four lines, and everything that decides anything is a pure function
-# of its inputs. Both of them come in through an environment variable a fixture
-# can set -- the run stream through SWEEP_RUNS, the observation stream through
-# the SWEEP_RECORDS `check` already reads -- so .github/testdata/flake-sweep
-# pins the whole command, red path included, without a network. The run records
-# there are the real ones from #541's own history.
-#
-#   sweep  <run_id>  <status>  <conclusion>  <sha>  <created_at>  <started_at>
-#   ci     <run_id>  <status>  <conclusion>  <sha>  <created_at>  <started_at>
-#
-# Newest first. `ci` records let the cheap path certify that the sweep verdict
-# belongs to the newest completed main CI run rather than an older commit.
-
-sweep_runs() {
-	local sweep ci
-	sweep="$(api "repos/$REPO/actions/workflows/$SWEEP_WORKFLOW/runs" \
-		-f branch=main -f "per_page=$SWEEP_RUNS_PAGE" \
-		--jq '.workflow_runs[] | ["sweep", (.id|tostring), .status, (.conclusion // "-"), .head_sha, .created_at, .run_started_at] | @tsv')" ||
-		die "could not read $SWEEP_WORKFLOW runs from the Actions API"
-	ci="$(api "repos/$REPO/actions/workflows/ci.yml/runs" \
-		-f branch=main -f "per_page=$SWEEP_RUNS_PAGE" \
-		--jq '.workflow_runs[] | ["ci", (.id|tostring), .status, (.conclusion // "-"), .head_sha, .created_at, .run_started_at] | @tsv')" ||
-		die "could not read CI runs from the Actions API"
-	printf '%s\n%s\n' "$sweep" "$ci" | sed '/^$/d'
-}
-
-sweep_runs_file() {
-	local f="${SWEEP_RUNS:-}"
-	if [ -n "$f" ]; then
-		[ -f "$f" ] || die "SWEEP_RUNS=$f does not exist"
-		printf '%s' "$f"
-		return
-	fi
-	f="$(mktemp)"
-	# Named rather than left to `set -e`: an unreachable API is the likeliest
-	# way this command fails in CI, and "could not measure" has to read as that
-	# rather than as a bare non-zero exit next to a rule about the ledger.
-	sweep_runs >"$f" ||
-		die "could not read $SWEEP_WORKFLOW runs from the Actions API, so whether main's ledger is current is unknown -- and unknown is red"
-	printf '%s' "$f"
-}
-
+# There is no exemption for a pull request touching the ledger. Re-deriving is
+# the only way past the refusal, so deleting a row cannot make the fix merge.
 applied() {
-	local runs line kind id status conclusion sha created extra
-	local v_id="" v_conc="" v_sha="" v_created="" ci_id="" ci_sha="" ci_started=""
-	local prev_sweep_created="" prev_ci_created=""
-	local reason=""
-	runs="$(sweep_runs_file)"
-
-	while IFS= read -r line || [ -n "$line" ]; do
-		[ -n "$line" ] || continue
-		IFS=$'\t' read -r kind id status conclusion sha created started extra <<<"$line"
-		case "$kind" in sweep | ci) ;; *) die "unknown record kind \"$kind\" in the sweep run stream" ;; esac
-		[ -z "$extra" ] || die "$kind record has more fields than the seven it is defined with: $line"
-		[ -n "$id" ] && [ -n "$status" ] && [ -n "$conclusion" ] && [ -n "$sha" ] && [ -n "$created" ] && [ -n "$started" ] ||
-			die "$kind record is missing a field: $line"
-		if [ "$kind" = sweep ]; then
-			[ -z "$prev_sweep_created" ] || [ "$created" \< "$prev_sweep_created" ] || [ "$created" = "$prev_sweep_created" ] ||
-				die "$kind run stream is not newest-first; cannot establish the newest eligible record: $line"
-			prev_sweep_created="$created"
-		else
-			[ -z "$prev_ci_created" ] || [ "$created" \< "$prev_ci_created" ] || [ "$created" = "$prev_ci_created" ] ||
-				die "$kind run stream is not newest-first; cannot establish the newest eligible record: $line"
-			prev_ci_created="$created"
-		fi
-		[ "$status" = completed ] || continue
-		case "$conclusion" in cancelled | skipped) continue ;; esac
-		if [ "$kind" = sweep ] && [ -z "$v_id" ]; then
-			v_id="$id"; v_conc="$conclusion"; v_sha="$sha"; v_created="$created"
-		elif [ "$kind" = ci ] && [ -z "$ci_id" ]; then
-			ci_id="$id"; ci_sha="$sha"; ci_started="$started"
-		fi
-	done <"$runs"
-
-	# No eligible record also covers a bounded page containing only unfinished,
-	# cancelled, or skipped records. Since newest-first ordering was checked,
-	# truncation can hide only older records, so both cases re-derive rather than
-	# exposing an older verdict; the command cannot distinguish them.
-	if [ -z "$v_id" ]; then reason=no-runs
-	elif [ -z "$ci_id" ]; then reason=no-ci
-	elif [ "$v_conc" != success ]; then reason="$v_conc"
-	elif [ "$v_sha" != "$ci_sha" ] || [ "$v_created" \< "$ci_started" ] || [ "$v_created" = "$ci_started" ]; then
-		# The sweep must be created after the CI run started. GitHub reuses a run
-		# record for reruns, so its SHA and created_at stay unchanged while
-		# run_started_at moves forward; the ISO timestamps are fixed-width UTC and
-		# sort lexically, while run-list responses do not expose attempt numbers.
-		reason=stale-sweep
-	else
-		printf 'applied\t%s\t%s\tcheap path certified\n' "$v_id" "$v_sha"
-		echo "flake sweep: run $v_id certifies completed CI run $ci_id" >&2
-		return 0
-	fi
-
 	local records rc=0
-	echo "flake sweep: cheap path could not certify ($reason) -- re-deriving this working tree" >&2
 	records="$(records_file)"
 	SWEEP_RECORDS="$records" "$0" check --window-days "$WINDOW_DAYS" >&2 || rc=1
 	SWEEP_RECORDS="$records" "$0" verify-fixed --window-days "$WINDOW_DAYS" >&2 || rc=1
 	if [ "$rc" -eq 0 ]; then
-		printf 'answered\t%s\t%s\t%s\n' "${v_id:--}" "${v_sha:--}" "$reason"
+		printf 'clean\n'
 		return 0
 	fi
-	printf 'unapplied\t%s\t%s\t%s\n' "${v_id:--}" "${v_sha:--}" "$reason"
-	echo "::error::flake sweep could not certify this working tree ($reason)" >&2
+
+	printf 'dirty\n'
+	echo "::error::this working tree does not answer the flake ledger" >&2
+	echo "  The reasons are the check and verify-fixed output above, derived against this" >&2
+	echo "  checkout: a flaky test observed with no row, or a fixed: row citing a commit main" >&2
+	echo "  cannot reach. Fix them here and this step goes green before the merge, not after:" >&2
+	echo "    .github/scripts/flake-sweep.sh sync --owner <ISSUE_ID>" >&2
+	echo "  This is not a prompt to press rerun. A row closes on a fix that landed, never because" >&2
+	echo "  the test has been green since -- refusing that inference is why $LEDGER_REL exists." >&2
 	exit 1
 }
 
@@ -1232,137 +1129,46 @@ selftest() {
 
 	rm -f "$ledger"
 
-	# 6. `applied` reads the newest completed CI and sweep records on main, and
-	# every fixture below is the real record stream from the history of the
-	# omission it exists to catch (#541). Its stdout is the verdict and is a
-	# pure function of that stream; its stderr is the message for a person, and
-	# only the verdict is compared here.
-	#
-	#   sweep-unfiled   run 32153420356 itself: the sweep reported a race-lane
-	#                   flake with no row and every gating check stayed green.
-	#   sweep-filed     the same stream once bd0b4fd0 filed the row -- the sweep
-	#                   goes green and the pull-request path unblocks. This pair
-	#                   is the before and after of #541's own remediation.
-	#   sweep-cancelled a run flake-ledger.yml's concurrency group cancelled,
-	#                   sitting directly above a red. Reading it as the verdict
-	#                   would hide that red.
-	#   sweep-inflight  a sweep still running above an older verdict; the
-	#                   completed CI record prevents a stale sweep from passing.
-	#   sweep-none      no runs at all: re-derive rather than silently pass.
-	#
-	# Mutations these answer: treat a cancelled or unfinished run as the
-	# verdict, accept any conclusion that is not `failure`, or return 0 when the
-	# stream is empty.
-	#
-	# The red path re-derives, so every case below also pins an observation
-	# stream and a ledger: reopen.obs.tsv against an empty table, which is stale
-	# in the one direction that keeps a red verdict red. Nothing here reaches
-	# the network -- that is the whole reason `applied` reads its runs through
-	# SWEEP_RUNS and its records through SWEEP_RECORDS.
-	local runs verdict want_verdict rc want_rc
+	# 6. `applied` re-derives the ledger against this checkout.
+	# The scenarios exercise both directions and verify-fixed independently.
+	local applied_stdout applied_rc
+
+	# A ledger that answers the observation passes.
+	scratch_ledger "$ledger" \
+		'| TestReopens | integration | aaaa1111@3001/1 | cccc3333@3003/1 | 9999-12-31 | BEO-99 | open |'
+	applied_rc=0
+	applied_stdout="$(GITHUB_REPOSITORY=nonexistent/repo GH_TOKEN=invalid SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" applied 2>/dev/null)" || applied_rc=$?
+	if [ "$applied_stdout" = clean ] && [ "$applied_rc" -eq 0 ]; then
+		echo "  ok   applied-clean"
+	else
+		echo "::error::applied clean scenario failed: got $applied_stdout rc=$applied_rc" >&2
+		failed=1
+	fi
+
+	# An observed flake with no row stays red.
 	scratch_ledger "$ledger"
-	local out_of_order="$FIXTURES/sweep-out-of-order.runs.tsv" out_stdout out_rc=0
-	out_stdout="$(GITHUB_REPOSITORY=nonexistent/repo GH_TOKEN=invalid SWEEP_RUNS="$out_of_order" SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" applied 2>/dev/null)" || out_rc=$?
-	if [ "$out_rc" -eq 0 ] || [ -n "$out_stdout" ]; then
-		echo "::error::applied scenario: out-of-order run stream was not refused cleanly" >&2
-		failed=1
+	applied_rc=0
+	applied_stdout="$(GITHUB_REPOSITORY=nonexistent/repo GH_TOKEN=invalid SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" applied 2>/dev/null)" || applied_rc=$?
+	if [ "$applied_stdout" = dirty ] && [ "$applied_rc" -eq 1 ]; then
+		echo "  ok   applied-unfiled"
 	else
-		echo "  ok   sweep-out-of-order-refused"
-	fi
-
-	for runs in "$FIXTURES"/sweep-*.runs.tsv; do
-		[ "$runs" = "$out_of_order" ] && continue
-		name="$(basename "$runs" .runs.tsv)"
-		want="${runs%.runs.tsv}.verdict"
-		[ -f "$want" ] || die "fixture $name has no .verdict"
-		want_verdict="$(cat "$want")"
-		case "${want_verdict%%$'\t'*}" in
-		applied | answered) want_rc=0 ;;
-		*) want_rc=1 ;;
-		esac
-		rc=0
-		verdict="$(GITHUB_REPOSITORY=nonexistent/repo GH_TOKEN=invalid SWEEP_RUNS="$runs" SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" applied 2>/dev/null | head -1)" || rc=$?
-		if [ "$verdict" = "$want_verdict" ] && [ "$rc" -eq "$want_rc" ]; then
-			echo "  ok   $name"
-		else
-			echo "::error::flake-sweep applied disagrees with fixture $name: got \"$verdict\" rc=$rc, want \"$want_verdict\" rc=$want_rc" >&2
-			failed=1
-		fi
-	done
-
-	# Every uncertain cheap-path reason must still be able to pass when this
-	# checkout answers the observation and fixed-ref questions.
-	scratch_ledger "$ledger" \
-		'| TestReopens | integration | aaaa1111@3001/1 | cccc3333@3003/1 | 9999-12-31 | BEO-99 | open |'
-	for runs in sweep-none sweep-no-ci sweep-page-no-runs sweep-page-no-ci sweep-stale-green sweep-inflight-green; do
-		rc=0
-		verdict="$(GITHUB_REPOSITORY=nonexistent/repo GH_TOKEN=invalid SWEEP_RUNS="$FIXTURES/$runs.runs.tsv" SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" applied 2>/dev/null | head -1)" || rc=$?
-		if [ "${verdict%%$'\t'*}" = answered ] && [ "$rc" -eq 0 ]; then
-			echo "  ok   $runs-answered-by-this-tree"
-		else
-			echo "::error::applied scenario: $runs did not re-derive to answered: got \"$verdict\" rc=$rc" >&2
-			failed=1
-		fi
-	done
-
-	# 6d. The red path is not a verdict about this working tree, and a checkout
-	# that answers it must pass -- otherwise the pull request applying the
-	# sweep's diff is refused by the rule it fixes and main's ledger can never
-	# be repaired. Same red run stream as sweep-unfiled, same records, and the
-	# one thing that differs is that the row is filed here.
-	#
-	# Mutation this answers: end `applied` at the run conclusion, or let the
-	# re-derived `check` and `verify-fixed` results not decide the outcome.
-	scratch_ledger "$ledger" \
-		'| TestReopens | integration | aaaa1111@3001/1 | cccc3333@3003/1 | 9999-12-31 | BEO-99 | open |'
-	rc=0
-	verdict="$(GITHUB_REPOSITORY=nonexistent/repo GH_TOKEN=invalid SWEEP_RUNS="$FIXTURES/sweep-unfiled.runs.tsv" SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" applied 2>/dev/null | head -1)" || rc=$?
-	if [ "${verdict%%$'\t'*}" = answered ] && [ "$rc" -eq 0 ]; then
-		echo "  ok   sweep-unfiled-answered-by-this-tree"
-	else
-		echo "::error::applied scenario: a red run whose verdict this working tree already answers was still refused: got \"$verdict\" rc=$rc" >&2
+		echo "::error::applied unfiled scenario failed: got $applied_stdout rc=$applied_rc" >&2
 		failed=1
 	fi
 
-	# 6e. ...and answering only half of it is not answering it. A ledger whose
-	# rows are all filed but whose fixed: ref names no commit on main leaves the
-	# sweep red for the other reason, and this step has to stay red with it.
-	#
-	# Mutation this answers: drop the verify-fixed call from the red path.
+	# A fixed ref that main cannot reach also stays red.
 	scratch_ledger "$ledger" \
 		'| TestReopens | integration | aaaa1111@3001/1 | cccc3333@3003/1 | 9999-12-31 | BEO-99 | open |' \
 		'| TestFixedOffMain | integration | bbbb2222@2998/1 | bbbb2222@2998/1 | 9999-12-31 | BEO-99 | fixed:f00dbab |'
-	if GITHUB_REPOSITORY=nonexistent/repo GH_TOKEN=invalid SWEEP_RUNS="$FIXTURES/sweep-unfiled.runs.tsv" SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" applied >/dev/null 2>&1; then
-		echo "::error::applied scenario: a red run was treated as answered by a tree whose fixed: ref is not on main" >&2
+	applied_rc=0
+	applied_stdout="$(GITHUB_REPOSITORY=nonexistent/repo GH_TOKEN=invalid SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" applied 2>/dev/null)" || applied_rc=$?
+	if [ "$applied_stdout" = dirty ] && [ "$applied_rc" -eq 1 ]; then
+		echo "  ok   applied-fixed-off-main"
+	else
+		echo "::error::applied fixed-ref scenario failed: got $applied_stdout rc=$applied_rc" >&2
 		failed=1
 	fi
 
-	# 6b. A record stream this command cannot parse is refused rather than
-	# skipped past. A skipped record is a run that silently stops counting, and
-	# the one it would skip is the newest -- the only one the verdict reads.
-	#
-	# Mutation this answers: `continue` instead of `die` on an unparseable record.
-	local malformed
-	malformed="$(mktemp)"
-	for bad in $'run\t32153420356\tcompleted\tfailure\t16421f37\t2026-08-18T15:16:08Z\t2026-08-18T15:14:17Z' \
-		$'sweep\t32153420356\tcompleted\tfailure\t16421f37' \
-		$'sweep\t32153420356\tcompleted\tfailure\t16421f37\t2026-08-18T15:16:08Z\t2026-08-18T15:14:17Z\textra'; do
-		printf '%s\n' "$bad" >"$malformed"
-		if GITHUB_REPOSITORY=nonexistent/repo GH_TOKEN=invalid SWEEP_RUNS="$malformed" SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" applied >/dev/null 2>&1; then
-			echo "::error::applied scenario: a malformed sweep record was accepted: $bad" >&2
-			failed=1
-		fi
-	done
-	rm -f "$malformed"
-
-	# 6c. The fixture override is the only way this command reads anything but
-	# the API, so a path that does not exist must be refused rather than read as
-	# an empty stream -- which would otherwise be the one input that turns a
-	# missing file into a verdict.
-	if GITHUB_REPOSITORY=nonexistent/repo GH_TOKEN=invalid SWEEP_RUNS="$FIXTURES/does-not-exist.runs.tsv" SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" applied >/dev/null 2>&1; then
-		echo "::error::applied scenario: a missing SWEEP_RUNS file was accepted" >&2
-		failed=1
-	fi
 	rm -f "$ledger"
 
 	[ "$failed" -eq 0 ] || exit 1
