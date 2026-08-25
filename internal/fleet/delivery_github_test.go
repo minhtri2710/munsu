@@ -4,6 +4,8 @@ package fleet
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -149,35 +151,69 @@ merged: true
 	}
 }
 
-func TestClassifyGitHubGraphQLObservation(t *testing.T) {
-	base := `{"data":{"repository":{"pullRequest":{"state":"OPEN","headRefOid":"abc","baseRefName":"main","merged":false,"reviewDecision":"APPROVED","mergeable":"MERGEABLE","commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"SUCCESS"}}}]}}}}}`
-	obs, err := classifyGitHubGraphQLObservation([]byte(base))
-	if err != nil || obs.State != "OPEN" || obs.Mergeability != DeliveryMergeabilityAllowed {
+func TestClassifyGitHubRESTObservation(t *testing.T) {
+	open := []byte("state: open\nheadSha: abc\nbaseRef: main\nmerged: false\n")
+	obs, err := classifyGitHubRESTObservation(open)
+	if err != nil || obs.State != "OPEN" || obs.Mergeability != DeliveryMergeabilityUnknown {
 		t.Fatalf("open observation = %+v, %v", obs, err)
 	}
-	cases := []struct {
+	merged, err := classifyGitHubRESTObservation([]byte("state: closed\nheadSha: abc\nbaseRef: main\nmerged: true\nmergedSha: def\n"))
+	if err != nil || merged.State != "MERGED" || merged.MergedSHA != "def" {
+		t.Fatalf("merged observation = %+v, %v", merged, err)
+	}
+	closed, err := classifyGitHubRESTObservation([]byte("state: closed\nheadSha: abc\nbaseRef: main\nmerged: false\n"))
+	if err != nil || closed.State != "CLOSED" {
+		t.Fatalf("closed observation = %+v, %v", closed, err)
+	}
+	for _, tc := range []struct {
 		name string
 		data string
 	}{
-		{name: "changes requested", data: strings.Replace(base, `"reviewDecision":"APPROVED"`, `"reviewDecision":"CHANGES_REQUESTED"`, 1)},
-		{name: "not mergeable", data: strings.Replace(base, `"mergeable":"MERGEABLE"`, `"mergeable":"CONFLICTING"`, 1)},
-		{name: "checks pending", data: strings.Replace(base, `"statusCheckRollup":{"state":"SUCCESS"}`, `"statusCheckRollup":{"state":"EXPECTED"}`, 1)},
-	}
-	for _, tc := range cases {
+		{"missing identity", "state: open\nmerged: false\n"},
+		{"invalid state", "state: draft\nheadSha: abc\nbaseRef: main\nmerged: false\n"},
+		{"missing merged evidence", "state: open\nheadSha: abc\nbaseRef: main\n"},
+		{"invalid merged evidence", "state: open\nheadSha: abc\nbaseRef: main\nmerged: maybe\n"},
+		{"missing merged sha", "state: closed\nheadSha: abc\nbaseRef: main\nmerged: true\n"},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := classifyGitHubGraphQLObservation([]byte(tc.data))
-			if err != nil || got.Mergeability != DeliveryMergeabilityDenied {
-				t.Fatalf("observation = %+v, %v", got, err)
+			if _, err := classifyGitHubRESTObservation([]byte(tc.data)); err == nil {
+				t.Fatal("expected incomplete observation to fail closed")
 			}
 		})
 	}
-	merged := strings.Replace(base, `"merged":false`, `"merged":true`, 1)
-	got, err := classifyGitHubGraphQLObservation([]byte(merged))
-	if err != nil || got.State != "MERGED" || got.HeadSHA != "abc" || got.BaseRef != "main" {
-		t.Fatalf("merged observation = %+v, %v", got, err)
+}
+
+func TestGhAxiClient_ObservePR_UsesRESTContract(t *testing.T) {
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "args")
+	script := filepath.Join(dir, "gh-axi")
+	content := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsFile + "\nprintf '%s\\n' 'state: open' 'headSha: abc' 'baseRef: main' 'merged: false'\n"
+	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := classifyGitHubGraphQLObservation([]byte(`{"data":{"repository":{"pullRequest":{"state":"OPEN"}}}}`)); err == nil {
-		t.Fatal("missing mergeability evidence unexpectedly succeeded")
+	old := ghAxiLookPath
+	t.Cleanup(func() { ghAxiLookPath = old })
+	ghAxiLookPath = func() (string, error) { return script, nil }
+
+	obs, err := (&ghAxiClient{}).ObservePR("owner", "repo", 7)
+	if err != nil {
+		t.Fatalf("ObservePR: %v", err)
+	}
+	if obs.State != "OPEN" || obs.HeadSHA != "abc" || obs.BaseRef != "main" {
+		t.Fatalf("observation = %+v", obs)
+	}
+	args, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(args)
+	for _, want := range []string{"api\n", "/repos/owner/repo/pulls/7\n", "--jq\n", "{state: .state, headSha: .head.sha, baseRef: .base.ref, merged: .merged, mergedSha: .merge_commit_sha}\n"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("gh-axi args %q missing %q", got, want)
+		}
+	}
+	if strings.Contains(got, "graphql") || strings.Contains(got, "-f\n") || strings.Contains(got, "-F\n") {
+		t.Fatalf("unsupported GraphQL invocation used: %q", got)
 	}
 }
 
