@@ -43,13 +43,10 @@
 internal/cli/report_cmd.go	enforceScoutReportBudget	1	agg.LaunchEvidence.SubmittedAt <= 0	unreachable because validateAggregate rejects SubmittedAt <= 0 on the READ path (canonical.go readTaskDoc), so auth.Get never serves such a record; the only writer, Canonical.RecordLaunch, additionally stamps it from the authority clock. Wrong the moment a read path skips validateAggregate, or validateLaunchEvidence stops checking SubmittedAt. Premise pinned by TestPremiseGetRefusesLaunchEvidenceWithNoSubmissionTimestamp, which writes a task doc carrying SubmittedAt = 0 straight to the store and asserts auth.Get refuses it
 internal/fleet/captain_captain.go	buildLaunchArgs	1	!contract.CwdAtHome || (!contract.PromptArg && adapter.Name != "pi")	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_captain.go	buildLaunchArgs	1	contract.ProjectArg	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/captain_captain.go	checkAliveWithProbe	1	probe == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/captain_captain.go	Converge	1	len(registered) > 0 && caps.Notification == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_captain.go	Launch	1	endpoint == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_captain.go	preflightConfigPushDestinations	1	!isSafeConfigPath(parentHomeDst, parentHome, captainHome)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_captain.go	publishResolvedSnapshot	1	canonRegistered != canonCaptain	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_captain.go	publishResolvedSnapshot	1	projectID == (domain.ProjectID{})	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/captain_captain.go	requireHealthyPiIntegration	1	integration == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_captain.go	safeFF	1	len(remoteRefParts) < 4 || remoteRefParts[0] != "refs" || remoteRefParts[1] != "remotes" || remoteRefParts[2] != "origin"	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_captain.go	safeFF	1	mergeBase != before	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_captain.go	safeFF	1	normalizeGitRemote(parentRemote) != normalizeGitRemote(smRemote)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
