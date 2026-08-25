@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 func TestObligationsByRole(t *testing.T) {
@@ -307,7 +309,10 @@ func TestMaterialReportExists(t *testing.T) {
 	}
 
 	// Write a non-material status line
-	statusPath := filepath.Join(stateDir, taskID+".status")
+	statusPath, err := mhome.StatusFilePath(home, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	os.WriteFile(statusPath, []byte("working: in progress\n"), 0644)
 	has, err = MaterialReportExists(home, taskID)
 	if err != nil {

@@ -286,7 +286,10 @@ func checkStaleLegacyRecords(parentHome, captainID string) error {
 // watcher/AFK safety, forbidden actions, and concise command recipes.
 // parentHome must be the General home whose state/captain:<id>.status is the escalation file.
 func DefaultCaptainCharter(id, parentHome string) string {
-	statusFile := filepath.Join(parentHome, "state", taskIDForCaptain(id)+".status")
+	statusFile, err := home.StatusFilePath(parentHome, taskIDForCaptain(id))
+	if err != nil {
+		panic(fmt.Sprintf("invalid captain ID %q: %v", id, err))
+	}
 	bt := "`"
 	return fmt.Sprintf(`# Captain Charter: %[1]s
 
