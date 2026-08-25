@@ -284,6 +284,12 @@ func RunSessionStartWithWatcher(w io.Writer, home string, ensure WatchEnsureFunc
 
 	bootRes, err := runWithRuntimeIdentity(home, acquired, nil, res.RuntimeIdentity)
 	if err != nil {
+		// The session did not start, so nothing should go on holding its lock:
+		// the process-lifetime hold below is earned by a session that ran.
+		if acquired {
+			_ = orchestrator.ReleaseSession(home)
+			res.LockAcquired = false
+		}
 		return res, fmt.Errorf("bootstrap: %w", err)
 	}
 	res.Bootstrap = bootRes

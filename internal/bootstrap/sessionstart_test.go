@@ -493,6 +493,11 @@ func TestRunSessionStartReportsRuntimeIdentityBeforeWatcherEnsure(t *testing.T) 
 		t.Fatal(err)
 	}
 	seedCanonicalTask(t, home, "task-1", "scout")
+	// session-start acquires state/.lock and, by design, holds it for the
+	// process lifetime -- a real `munsu session-start` is a process, and exit
+	// drops the flock. This test is not a process, and on Windows the still-open
+	// handle also blocks TempDir's RemoveAll, so release it here (#549 group 10).
+	t.Cleanup(func() { _ = mhome.ReleaseSessionLock(home) })
 	running := writeExecutable(t, home, "bin/munsu", "current")
 	shadow := writeExecutable(t, home, "shadow/munsu", "shadow")
 

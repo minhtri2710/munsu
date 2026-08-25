@@ -76,6 +76,16 @@ func releaseWatcherLock(p string) error {
 	return f.Close()
 }
 func ReleaseWatchLock(h string) error { return releaseWatcherLock(WatchLockPath(h)) }
+
+// ReleaseSessionLock drops a session lock this process holds.
+//
+// Session-start holds this lock for the process lifetime and lets exit drop it,
+// so the success path never calls this. An ABORTED session-start must, because
+// the session it locked for never started -- and on windows the cost of not
+// calling it is larger than a stale flock: the open handle also pins the file,
+// so the home directory cannot be removed while this process lives (#549
+// group 10).
+func ReleaseSessionLock(h string) error { return releaseWatcherLock(SessionLockPath(h)) }
 func watcherLockHeld(p string) bool {
 	f, e := os.OpenFile(p, os.O_RDWR|os.O_CREATE, 0644)
 	if e != nil {

@@ -178,6 +178,11 @@ func TestWakeClaimNonEmptyJSONOmitsInternalLatency(t *testing.T) {
 func TestSessionStartUsesSessionStartKind(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("MUNSU_HOME", home)
+	// session-start acquires state/.lock and, by design, holds it for the
+	// process lifetime -- a real `munsu session-start` is a process, and exit
+	// drops the flock. This test is not a process, and on Windows the still-open
+	// handle also blocks TempDir's RemoveAll, so release it here (#549 group 10).
+	t.Cleanup(func() { _ = mhome.ReleaseSessionLock(home) })
 
 	out, err := runContract(t, []string{"session-start", "--output", "json"})
 	if err != nil {
