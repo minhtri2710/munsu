@@ -359,7 +359,7 @@ func ListPendingReceipts(homeDir string) ([]PendingReceipt, error) {
 		}
 		taskID, err := home.ReverseDurableKey(stem)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("decoding receipt task stem %q: %w", stem, err)
 		}
 		if IsReceiptAcked(homeDir, taskID, termKey) {
 			continue

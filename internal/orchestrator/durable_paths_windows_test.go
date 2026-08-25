@@ -161,6 +161,19 @@ func TestListAllReceiptsRejectsMalformedDurableStem(t *testing.T) {
 	}
 }
 
+func TestListPendingReceiptsRejectsMalformedDurableStem(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.MkdirAll(ReceiptDir(tmp), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ReceiptDir(tmp), "captain%ZZ.terminal.receipt"), []byte("state=done\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ListPendingReceipts(tmp); err == nil {
+		t.Fatal("ListPendingReceipts accepted malformed durable stem")
+	}
+}
+
 func TestDiscoverPerTaskChecksDecodesDurableTaskStem(t *testing.T) {
 	tmp := t.TempDir()
 	stateDir := filepath.Join(tmp, "state")
