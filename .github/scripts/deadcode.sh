@@ -33,9 +33,10 @@
 #   deadcode.sh check   tree and allow file agree, in both directions
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-ALLOW="$ROOT/.github/deadcode.allow"
-MANIFEST="$ROOT/.github/build-tags.manifest"
+ROOT="${DEADCODE_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+ALLOW="${DEADCODE_ALLOW:-$ROOT/.github/deadcode.allow}"
+MANIFEST="${DEADCODE_MANIFEST:-$ROOT/.github/build-tags.manifest}"
+DEADCODE_BIN="${DEADCODE_BIN:-deadcode}"
 
 die() { echo "::error::$*" >&2; exit 1; }
 
@@ -87,7 +88,7 @@ tree_entries() {
 	platforms="$(goos_list)" || exit 1
 	[ -n "$platforms" ] || die "no GOOS to analyze -- ${MANIFEST#"$ROOT"/} classifies none"
 	for goos in $platforms; do
-		raw="$(cd "$ROOT" && GOOS="$goos" deadcode ./cmd/munsu)" ||
+		raw="$(cd "$ROOT" && GOOS="$goos" "$DEADCODE_BIN" ./cmd/munsu)" ||
 			die "deadcode could not analyze ./cmd/munsu for GOOS=${goos}, so it cannot judge reachability"
 		all="${all}${raw}"$'\n'
 	done
@@ -166,7 +167,7 @@ announce_open_bugs() {
 check() {
 	local failed=0 tree allow added removed
 	[ -f "$ALLOW" ] || die "missing ${ALLOW#"$ROOT"/}"
-	command -v deadcode >/dev/null || die "deadcode is not on PATH -- go install golang.org/x/tools/cmd/deadcode"
+	command -v "$DEADCODE_BIN" >/dev/null || die "deadcode analyzer is not available at '$DEADCODE_BIN' -- go install golang.org/x/tools/cmd/deadcode"
 
 	allow_format_errors >&2 || failed=1
 
@@ -210,11 +211,107 @@ check() {
 	echo "deadcode: $(printf '%s\n' "$allow" | grep -c . || true) unreachable funcs allowed, 0 unaccounted"
 }
 
+selftest_case_root() {
+	local name="$1" root="$2"
+	mkdir -p "$root/.github" "$root/bin"
+	cat >"$root/.github/build-tags.manifest" <<'EOF'
+# tag	treatment	reason
+darwin	goos-vet	fixture platform
+windows	goos-vet	fixture platform
+EOF
+	cat >"$root/bin/deadcode-stub" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${DEADCODE_STUB_MODE:-exact}" in
+exact)
+	case "$GOOS" in
+	linux) printf '%s\n' 'internal/fixture.go:1:1: unreachable func: LinuxOnly' ;;
+	darwin) printf '%s\n' 'internal/fixture.go:1:1: unreachable func: DarwinOnly' ;;
+	windows) printf '%s\n' 'internal/fixture.go:1:1: unreachable func: WindowsOnly' ;;
+	esac
+	;;
+tree-only) printf '%s\n' 'internal/fixture.go:1:1: unreachable func: TreeOnly' ;;
+allow-only) : ;;
+union)
+	case "$GOOS" in
+	linux) printf '%s\n' 'internal/fixture.go:1:1: unreachable func: LinuxOnly' ;;
+	darwin) printf '%s\n' 'internal/fixture.go:1:1: unreachable func: DarwinOnly' ;;
+	windows) printf '%s\n' 'internal/fixture.go:1:1: unreachable func: WindowsOnly' ;;
+	esac
+	;;
+invalid-output) printf '%s\n' 'analyzer output this fixture cannot parse' ;;
+fail) exit 42 ;;
+*) exit 43 ;;
+esac
+EOF
+	chmod +x "$root/bin/deadcode-stub"
+}
+
+selftest_expect_fail() {
+	local name="$1" expected="$2"; shift 2
+	local output rc
+	if output="$($@ 2>&1)"; then
+		rc=0
+	else
+		rc=$?
+	fi
+	if [ "$rc" -eq 0 ] || ! printf '%s\n' "$output" | grep -Fq "$expected"; then
+		echo "::error::deadcode selftest ${name} did not fail as expected" >&2
+		printf '%s\n' "$output" >&2
+		return 1
+	fi
+}
+
+selftest() {
+	local tmp root allow stub
+	tmp="$(mktemp -d)"
+	trap 'rm -rf "$tmp"' RETURN
+	root="$tmp/exact"
+	selftest_case_root exact "$root"
+	stub="$root/bin/deadcode-stub"
+	allow="$root/.github/deadcode.allow"
+	cat >"$allow" <<'EOF'
+internal/fixture.go	LinuxOnly	exact fixture
+internal/fixture.go	DarwinOnly	exact fixture
+internal/fixture.go	WindowsOnly	exact fixture
+EOF
+	DEADCODE_ROOT="$root" DEADCODE_ALLOW="$allow" DEADCODE_MANIFEST="$root/.github/build-tags.manifest" DEADCODE_BIN="$stub" DEADCODE_STUB_MODE=union "$0" check >/dev/null
+
+	root="$tmp/tree-only"
+	selftest_case_root tree-only "$root"
+	allow="$root/.github/deadcode.allow"
+	printf 'internal/fixture.go\tOther\treason\n' >"$allow"
+	selftest_expect_fail tree-only 'unreachable from cmd/munsu and not in' env DEADCODE_ROOT="$root" DEADCODE_ALLOW="$allow" DEADCODE_MANIFEST="$root/.github/build-tags.manifest" DEADCODE_BIN="$root/bin/deadcode-stub" DEADCODE_STUB_MODE=tree-only "$0" check
+
+	root="$tmp/allow-only"
+	selftest_case_root allow-only "$root"
+	allow="$root/.github/deadcode.allow"
+	printf 'internal/fixture.go\tGone\treason\n' >"$allow"
+	selftest_expect_fail allow-only 'entries that are no longer unreachable' env DEADCODE_ROOT="$root" DEADCODE_ALLOW="$allow" DEADCODE_MANIFEST="$root/.github/build-tags.manifest" DEADCODE_BIN="$root/bin/deadcode-stub" DEADCODE_STUB_MODE=allow-only "$0" check
+
+	root="$tmp/malformed"
+	selftest_case_root malformed "$root"
+	allow="$root/.github/deadcode.allow"
+	printf 'internal/fixture.go\tLinuxOnly\n' >"$allow"
+	selftest_expect_fail missing-reason 'entry needs a reason' env DEADCODE_ROOT="$root" DEADCODE_ALLOW="$allow" DEADCODE_MANIFEST="$root/.github/build-tags.manifest" DEADCODE_BIN="$root/bin/deadcode-stub" DEADCODE_STUB_MODE=exact "$0" check
+	printf 'internal/fixture.go\tLinuxOnly\treason\ninternal/fixture.go\tLinuxOnly\tduplicate\n' >"$allow"
+	selftest_expect_fail duplicate 'already listed' env DEADCODE_ROOT="$root" DEADCODE_ALLOW="$allow" DEADCODE_MANIFEST="$root/.github/build-tags.manifest" DEADCODE_BIN="$root/bin/deadcode-stub" DEADCODE_STUB_MODE=exact "$0" check
+
+	root="$tmp/analyzer"
+	selftest_case_root analyzer "$root"
+	allow="$root/.github/deadcode.allow"
+	printf 'internal/fixture.go\tLinuxOnly\treason\ninternal/fixture.go\tDarwinOnly\treason\ninternal/fixture.go\tWindowsOnly\treason\n' >"$allow"
+	selftest_expect_fail analyzer-failure 'deadcode could not analyze' env DEADCODE_ROOT="$root" DEADCODE_ALLOW="$allow" DEADCODE_MANIFEST="$root/.github/build-tags.manifest" DEADCODE_BIN="$root/bin/deadcode-stub" DEADCODE_STUB_MODE=fail "$0" check
+	selftest_expect_fail unparseable 'deadcode printed output this lane cannot read' env DEADCODE_ROOT="$root" DEADCODE_ALLOW="$allow" DEADCODE_MANIFEST="$root/.github/build-tags.manifest" DEADCODE_BIN="$root/bin/deadcode-stub" DEADCODE_STUB_MODE=invalid-output "$0" check
+	echo "deadcode selftest: all fixtures agree"
+}
+
 case "${1:-}" in
 list) tree_entries ;;
 check) check ;;
+selftest) selftest ;;
 *)
-	echo "usage: deadcode.sh {list|check}" >&2
+	echo "usage: deadcode.sh {list|check|selftest}" >&2
 	exit 2
 	;;
 esac

@@ -303,6 +303,7 @@ jobs:
         run: |
           set -eu
           go install golang.org/x/tools/cmd/deadcode@v0.49.0
+          PATH="$(go env GOPATH)/bin:$PATH" .github/scripts/deadcode.sh selftest
           PATH="$(go env GOPATH)/bin:$PATH" .github/scripts/deadcode.sh check
       # Two ADRs landed as 0010 (BEO-93): #468 and #469 both reserved the number
       # while it was free, #469 rebased onto main without renumbering, and every
