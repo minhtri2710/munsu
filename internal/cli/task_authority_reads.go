@@ -134,10 +134,6 @@ func taskDataDirReclaimer(homeDir string) bootstrap.ReclaimTaskDataDir {
 		return func(string, func() error) (bool, error) { return false, nil }
 	}
 	return func(id string, reclaim func() error) (bool, error) {
-		tid, err := domain.NewTaskID(id)
-		if err != nil {
-			return false, nil
-		}
-		return auth.ReclaimReleasedTaskArtifacts(tid, reclaim)
+		return auth.ReclaimReleasedTaskArtifactsByID(id, reclaim)
 	}
 }

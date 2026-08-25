@@ -776,7 +776,7 @@ func TestBriefRecoveryPrecedesTaskFence(t *testing.T) {
 	oldRecover, oldWrite := recoverBriefHandoffs, writeBriefArtifact
 	order := []string{}
 	recoverBriefHandoffs = func(string) error { order = append(order, "recover"); return nil }
-	writeBriefArtifact = func(auth *taskauthority.Canonical, id domain.TaskID, write func() error) error {
+	writeBriefArtifact = func(auth *taskauthority.Canonical, id string, write func() error) error {
 		order = append(order, "write")
 		return nil
 	}
@@ -806,9 +806,9 @@ func TestBriefWritesKnownLegacyAndForcedTasks(t *testing.T) {
 	seedGuardTask(t, auth, "known", "ship")
 	oldWrite := writeBriefArtifact
 	called := false
-	writeBriefArtifact = func(auth *taskauthority.Canonical, id domain.TaskID, write func() error) error {
+	writeBriefArtifact = func(auth *taskauthority.Canonical, id string, write func() error) error {
 		called = true
-		return auth.WriteTaskDataArtifact(id, write)
+		return auth.WriteTaskDataArtifactByID(id, write)
 	}
 	t.Cleanup(func() { writeBriefArtifact = oldWrite })
 	if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion, Config: config.ProjectOverlay{Backend: "tmux"}}); err != nil {
