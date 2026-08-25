@@ -7,7 +7,8 @@
 3. Interrupt a spinning harness with Ctrl+C through its session backend.
 4. Relaunch with `munsu teardown <id> --force`, then spawn again with a progress note.
    --force skips the safety checks and nothing else: a partial report survives the
-   teardown as report-g<generation>.md and is worth reading before the new run starts.
+   teardown under a generation-bound archive name and is worth reading before the
+   new run starts. The self-hosting teardown documentation owns the retention contract.
 5. Report failure only after the preceding steps are exhausted.
 
 | Condition | Action |
