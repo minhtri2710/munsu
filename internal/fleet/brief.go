@@ -2,6 +2,7 @@
 package fleet
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -206,6 +207,53 @@ func ArchivedReportName(gen taskauthority.Generation) string {
 	return archivedReportPrefix + gen.String() + archivedReportSuffix
 }
 
+func archiveRetiredReport(homeDir, id string, gen taskauthority.Generation) (string, bool, error) {
+	dataDir := filepath.Join(homeDir, "data", id)
+	dataInfo, err := os.Lstat(dataDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("checking data directory %s: %w", dataDir, err)
+	}
+	if !dataInfo.IsDir() {
+		return "", false, fmt.Errorf("data path %s is not a directory", dataDir)
+	}
+
+	reportPath := filepath.Join(dataDir, "report.md")
+	archived := ArchivedReportName(gen)
+	archivedPath := filepath.Join(dataDir, archived)
+	if _, err := os.Lstat(reportPath); err != nil {
+		if os.IsNotExist(err) {
+			return "", true, nil
+		}
+		return "", true, fmt.Errorf("checking report path %s: %w", reportPath, err)
+	}
+
+	reservation, err := os.OpenFile(archivedPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+	if err != nil {
+		if os.IsExist(err) {
+			return "", true, fmt.Errorf("report paths %s and %s conflict", reportPath, archivedPath)
+		}
+		return "", true, fmt.Errorf("reserving archive path %s: %w", archivedPath, err)
+	}
+	if err := reservation.Close(); err != nil {
+		removeErr := os.Remove(archivedPath)
+		if removeErr != nil {
+			return "", true, errors.Join(fmt.Errorf("closing archive reservation %s: %w", archivedPath, err), fmt.Errorf("removing archive reservation: %w", removeErr))
+		}
+		return "", true, fmt.Errorf("closing archive reservation %s: %w", archivedPath, err)
+	}
+	if err := os.Rename(reportPath, archivedPath); err != nil {
+		removeErr := os.Remove(archivedPath)
+		if removeErr != nil {
+			return "", true, errors.Join(fmt.Errorf("archiving report %s: %w", reportPath, err), fmt.Errorf("removing archive reservation %s: %w", archivedPath, removeErr))
+		}
+		return "", true, fmt.Errorf("archiving report %s: %w", reportPath, err)
+	}
+	return archived, true, nil
+}
+
 // HasReportEvidence reports whether a task data directory holds a report worth
 // keeping: the current generation's report.md, or any retired generation's
 // archived report. It is the one owner of that question — teardown asks it
@@ -221,13 +269,6 @@ func HasReportEvidence(dataDir string) bool {
 		name := e.Name()
 		if name == "report.md" {
 			return true
-		}
-		info, err := e.Info()
-		if err != nil {
-			return true
-		}
-		if !info.Mode().IsRegular() {
-			continue
 		}
 		if !strings.HasPrefix(name, archivedReportPrefix) || !strings.HasSuffix(name, archivedReportSuffix) {
 			continue

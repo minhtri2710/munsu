@@ -24,7 +24,8 @@ func TestHasReportEvidence(t *testing.T) {
 		{"malformed archive", func(dir string) error {
 			return os.WriteFile(filepath.Join(dir, "report-garbage.md"), []byte("not a report"), 0644)
 		}, false},
-		{"archive-shaped directory", func(dir string) error { return os.Mkdir(filepath.Join(dir, "report-g8.md"), 0755) }, false},
+		{"dangling archive symlink", func(dir string) error { return os.Symlink("missing", filepath.Join(dir, "report-g8.md")) }, true},
+		{"archive-shaped directory", func(dir string) error { return os.Mkdir(filepath.Join(dir, "report-g9.md"), 0755) }, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

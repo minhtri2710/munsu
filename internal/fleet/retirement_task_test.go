@@ -13,6 +13,7 @@ import (
 	"time"
 
 	mhome "github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // setupGitRepo initializes a git repo in dir.
@@ -951,6 +952,39 @@ func TestRun_DanglingReportIsArchived(t *testing.T) {
 	}
 }
 
+func TestRun_RenameFailureRemovesArchiveReservation(t *testing.T) {
+	tmp := t.TempDir()
+	auth := canonicalMergeTestAuth(t, tmp, "rename-failure")
+	stateDir := filepath.Join(tmp, "state")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "rename-failure.meta"), []byte("kind=scout\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	dataDir := filepath.Join(tmp, "data", "rename-failure")
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	reportPath := filepath.Join(dataDir, "report.md")
+	archivePath := filepath.Join(dataDir, "report-g1.md")
+	if err := os.Mkdir(reportPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := RetireTask(Options{HomeDir: tmp, ID: "rename-failure", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth)
+	var pending *RetirementCleanupPendingError
+	if !errors.As(err, &pending) {
+		t.Fatalf("teardown error = %T %v, want typed RetirementCleanupPendingError", err, err)
+	}
+	if _, err := os.Stat(reportPath); err != nil {
+		t.Fatalf("report entry should remain after rename refusal: %v", err)
+	}
+	if _, err := os.Lstat(archivePath); !os.IsNotExist(err) {
+		t.Fatalf("archive reservation should be removed, lstat err = %v", err)
+	}
+}
+
 func TestRun_ArchivingTheReportFailsClosed(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Fatal("permission proof did not run: tests run as root, so a directory that refuses a rename cannot be established")
@@ -984,5 +1018,65 @@ func TestRun_ArchivingTheReportFailsClosed(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(dataDir, "report-g1.md")); !os.IsNotExist(err) {
 		t.Fatalf("a refused archive must not leave a reservation, lstat err = %v", err)
+	}
+}
+
+func TestRun_AbortRefusesUnarchivedReport(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Fatal("permission proof did not run: tests run as root, so abort archival refusal cannot be established")
+	}
+	tmp := t.TempDir()
+	auth := canonicalMergeTestAuth(t, tmp, "abort-report")
+	stateDir := filepath.Join(tmp, "state")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "abort-report.meta"), []byte("kind=scout\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	dataDir := filepath.Join(tmp, "data", "abort-report")
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	reportPath := filepath.Join(dataDir, "report.md")
+	if err := os.WriteFile(reportPath, []byte("findings"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dataDir, 0555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dataDir, 0755) })
+	if _, err := RetireTask(Options{HomeDir: tmp, ID: "abort-report", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth); err == nil {
+		t.Fatal("expected teardown cleanup to remain pending")
+	}
+	if err := AbortRetirementCleanup(auth, tmp, mustTaskID(t, "abort-report"), 1); err == nil {
+		t.Fatal("abort should refuse while report evacuation is blocked")
+	}
+	agg, err := auth.Get(mustTaskID(t, "abort-report"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.CleanupClaim == nil || agg.CleanupClaim.Status != taskauthority.CleanupActive {
+		t.Fatalf("cleanup claim = %+v, want active", agg.CleanupClaim)
+	}
+	if err := os.Chmod(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := AbortRetirementCleanup(auth, tmp, mustTaskID(t, "abort-report"), 1); err != nil {
+		t.Fatalf("abort after restoring access: %v", err)
+	}
+	if _, err := os.Lstat(reportPath); !os.IsNotExist(err) {
+		t.Fatalf("report.md should be evacuated, lstat err = %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(dataDir, "report-g1.md"))
+	if err != nil || string(body) != "findings" {
+		t.Fatalf("archived report = %q, err = %v", body, err)
+	}
+	agg, err = auth.Get(mustTaskID(t, "abort-report"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.CleanupClaim == nil || agg.CleanupClaim.Status != taskauthority.CleanupAborted {
+		t.Fatalf("cleanup claim = %+v, want aborted", agg.CleanupClaim)
 	}
 }
