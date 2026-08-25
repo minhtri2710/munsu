@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -19,7 +20,9 @@ func writeGuardNudgeMeta(t *testing.T, parentHome, captainHome, id string, mutat
 		"home":   canonical,
 		"window": "captain-window",
 	}
-	mutate(meta)
+	if mutate != nil {
+		mutate(meta)
+	}
 	if err := home.WriteMeta(parentHome, taskIDForCaptain(id), meta); err != nil {
 		t.Fatal(err)
 	}
@@ -61,5 +64,55 @@ func TestGuardBurnDownSendNudgeRefusesMetaHomeMismatch(t *testing.T) {
 	err := sendNudge(parentHome, Info{ID: "captain", Home: captainHome}, &testNudgeEndpoint{})
 	if err == nil || !strings.Contains(err.Error(), "meta home=") || !strings.Contains(err.Error(), "does not match canonical home") {
 		t.Fatalf("sendNudge error = %v, want home-mismatch refusal", err)
+	}
+}
+
+func TestGuardBurnDownSendNudgeRefusesEmptyWindow(t *testing.T) {
+	parentHome := t.TempDir()
+	captainHome := t.TempDir()
+	writeGuardNudgeMeta(t, parentHome, captainHome, "captain", func(meta map[string]string) {
+		meta["window"] = ""
+	})
+
+	err := sendNudge(parentHome, Info{ID: "captain", Home: captainHome}, &testNudgeEndpoint{})
+	if err == nil || !strings.Contains(err.Error(), "no window in meta") {
+		t.Fatalf("sendNudge error = %v, want empty-window refusal", err)
+	}
+}
+
+func TestGuardBurnDownSendNudgeRefusesMarkerIDMismatch(t *testing.T) {
+	parentHome := t.TempDir()
+	captainHome := t.TempDir()
+	writeGuardNudgeMeta(t, parentHome, captainHome, "captain", nil)
+	if err := writeNudgeMarker(parentHome, "captain", captainHome, "commit", "digest", "message"); err != nil {
+		t.Fatal(err)
+	}
+	markerPath := nudgeMarkerPath(parentHome, "captain")
+	marker, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker = []byte(strings.Replace(string(marker), "id=captain", "id=other", 1))
+	if err := os.WriteFile(markerPath, marker, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err = sendNudge(parentHome, Info{ID: "captain", Home: captainHome}, &testNudgeEndpoint{})
+	if err == nil || !strings.Contains(err.Error(), "does not match registry id") {
+		t.Fatalf("sendNudge error = %v, want marker-id refusal", err)
+	}
+}
+
+func TestGuardBurnDownSendNudgeRefusesEmptyMarkerCommit(t *testing.T) {
+	parentHome := t.TempDir()
+	captainHome := t.TempDir()
+	writeGuardNudgeMeta(t, parentHome, captainHome, "captain", nil)
+	if err := writeNudgeMarker(parentHome, "captain", captainHome, "", "digest", "message"); err != nil {
+		t.Fatal(err)
+	}
+
+	err := sendNudge(parentHome, Info{ID: "captain", Home: captainHome}, &testNudgeEndpoint{})
+	if err == nil || !strings.Contains(err.Error(), "marker has empty commit") {
+		t.Fatalf("sendNudge error = %v, want empty-commit refusal", err)
 	}
 }
