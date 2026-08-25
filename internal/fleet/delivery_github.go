@@ -14,16 +14,13 @@ import (
 )
 
 // GitHubClient defines the typed GitHub capability used by the delivery
-// surfaces. Delivery execution (Deliver) uses only MergePR (irreversible
-// mutation) and ObservePR (read-only observation) through the gh-axi
+// surfaces. Delivery execution (Deliver) observes provider state through
+// ObservePR and validates the typed delivery request through the gh-axi
 // capability; the capability must be Ready and no raw gh fallback or
 // alternate execution route exists on the delivery path. Read-only status
 // and identity helpers (ViewPRJSON, CaptureIdentity) back the retained
 // provider-neutral seams and route through gh-axi.
 type GitHubClient interface {
-	// MergePR merges a pull request via gh-axi. It is the irreversible
-	// provider mutation of the delivery execution path, called at most once
-	// per delivery journal.
 	// ObservePR reads the current provider state of a pull request via
 	// gh-axi, returning the exact observation (OPEN/MERGED/CLOSED plus head
 	// and merged SHAs) needed to reconcile after a mutation.
@@ -103,7 +100,8 @@ type githubDeliveryProvider struct {
 // compile-time check
 var _ DeliveryProvider = (*githubDeliveryProvider)(nil)
 
-// Merge executes the irreversible provider merge under the exact identity.
+// ValidateMergeRequest verifies the pinned identity constraints. The current
+// gh-axi capability cannot atomically enforce them for an irreversible merge.
 func (p *githubDeliveryProvider) ValidateMergeRequest(ident domain.DeliveryIdentity, request DeliveryMergeRequest) error {
 	if request.HeadSHA == "" || request.HeadSHA != ident.HeadSHA || request.BaseRef == "" || request.BaseRef != ident.BaseRef {
 		return fmt.Errorf("GitHub merge constraints do not match the delivery identity")

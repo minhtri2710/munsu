@@ -166,7 +166,8 @@ type gitlabDeliveryProvider struct {
 // compile-time check
 var _ DeliveryProvider = (*gitlabDeliveryProvider)(nil)
 
-// Merge executes the irreversible provider merge under the exact identity.
+// ValidateMergeRequest verifies the pinned identity constraints. The current
+// glab capability cannot atomically enforce them for an irreversible merge.
 func (p *gitlabDeliveryProvider) ValidateMergeRequest(ident domain.DeliveryIdentity, request DeliveryMergeRequest) error {
 	if request.HeadSHA == "" || request.HeadSHA != ident.HeadSHA || request.BaseRef == "" || request.BaseRef != ident.BaseRef {
 		return fmt.Errorf("GitLab merge constraints do not match the delivery identity")
