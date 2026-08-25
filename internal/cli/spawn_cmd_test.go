@@ -16,7 +16,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
-func writeTaskMeta(t *testing.T, homeDir, id, content string) {
+func writeRawTaskMeta(t *testing.T, homeDir, id, content string) {
 	t.Helper()
 	path, err := home.MetaFilePath(homeDir, id)
 	if err != nil {
@@ -59,7 +59,7 @@ func TestSendCmd_UsesMetaBackend(t *testing.T) {
 	}
 
 	// Write task meta with backend=tmux (overrides global config)
-	writeTaskMeta(t, tmpDir, "test-task", "window=@0\nbackend=tmux\nkind=ship\n")
+	writeRawTaskMeta(t, tmpDir, "test-task", "window=@0\nbackend=tmux\nkind=ship\n")
 	writeTaskStatus(t, tmpDir, "test-task", "working: spawned\n")
 
 	// Remove both tmux and herdr from PATH so whichever backend is attempted will fail
@@ -102,7 +102,7 @@ func TestSendCmd_UnknownMetaBackendFallsThroughToResolve(t *testing.T) {
 
 	// Write task meta with backend=nonexistent (falls through to config/resolve)
 	metaContent := "window=@0\nbackend=nonexistent\nkind=ship\n"
-	writeTaskMeta(t, tmpDir, "test-task", metaContent)
+	writeRawTaskMeta(t, tmpDir, "test-task", metaContent)
 
 	// Set PATH to nothing so backend resolution fails
 	oldPath := os.Getenv("PATH")
@@ -139,7 +139,7 @@ func TestPeekCmd_UsesMetaBackend(t *testing.T) {
 
 	// Write task meta with backend=tmux (overrides global config)
 	metaContent := "window=@0\nbackend=tmux\nkind=ship\n"
-	writeTaskMeta(t, tmpDir, "test-task", metaContent)
+	writeRawTaskMeta(t, tmpDir, "test-task", metaContent)
 
 	oldPath := os.Getenv("PATH")
 	os.Setenv("PATH", "/dev/null")
@@ -173,7 +173,7 @@ func TestPeekCmd_RejectsMetaWithoutBoundBackend(t *testing.T) {
 
 	// Write task meta with NO backend field (uses global config)
 	metaContent := "window=@0\nkind=ship\n" // no backend field
-	writeTaskMeta(t, tmpDir, "test-task", metaContent)
+	writeRawTaskMeta(t, tmpDir, "test-task", metaContent)
 
 	oldPath := os.Getenv("PATH")
 	os.Setenv("PATH", "/dev/null")
@@ -210,7 +210,7 @@ func TestSendCmd_CaptainSendFailsGracefully(t *testing.T) {
 	// pending is retained durably until converge reconciles the ack.
 	tmpDir := t.TempDir()
 	metaContent := "window=@dead\nbackend=herdr\nkind=captain\nsm_id=munsu\nhome=/tmp/captain-home\n"
-	writeTaskMeta(t, tmpDir, "captain:munsu", metaContent)
+	writeRawTaskMeta(t, tmpDir, "captain:munsu", metaContent)
 
 	root := NewRootCommand()
 	root.SetArgs([]string{"send", "captain:munsu", "report status", "--home", tmpDir})
@@ -432,7 +432,7 @@ func TestTeardownCmd_UplinkAckInTempHome(t *testing.T) {
 
 	// Create task meta (kind=scout so scoutSafetyCheck runs — just needs report.md)
 	metaContent := "kind=scout\nbackend=tmux\nwindow=@1\nworktree=/nonexistent\n"
-	writeTaskMeta(t, tmpDir, soldierID, metaContent)
+	writeRawTaskMeta(t, tmpDir, soldierID, metaContent)
 
 	// Create status with material state so uplinkCheck can detect it
 	if err := home.AppendStatus(tmpDir, soldierID, "done: task complete"); err != nil {
@@ -499,7 +499,7 @@ func TestTeardownCmd_ForceSkipsUplinkCheckInTempHome(t *testing.T) {
 	seedRetireAuthority(t, tmpDir, soldierID)
 
 	metaContent := "kind=scout\nbackend=tmux\nwindow=@1\nworktree=/nonexistent\n"
-	writeTaskMeta(t, tmpDir, soldierID, metaContent)
+	writeRawTaskMeta(t, tmpDir, soldierID, metaContent)
 	if err := home.AppendStatus(tmpDir, soldierID, "done: task complete"); err != nil {
 		t.Fatal(err)
 	}
@@ -551,7 +551,7 @@ func TestTeardownCmd_WrongKeyAckDoesNotSatisfyGating(t *testing.T) {
 	termKey := "uplink"
 
 	metaContent := "kind=scout\nbackend=tmux\nwindow=@1\nworktree=/nonexistent\n"
-	writeTaskMeta(t, tmpDir, soldierID, metaContent)
+	writeRawTaskMeta(t, tmpDir, soldierID, metaContent)
 	if err := home.AppendStatus(tmpDir, soldierID, "done: task complete"); err != nil {
 		t.Fatal(err)
 	}
