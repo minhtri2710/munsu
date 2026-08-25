@@ -78,7 +78,7 @@ func TestRun_PreflightUnknownPassesThrough(t *testing.T) {
 	binDir := t.TempDir()
 	binPath := filepath.Join(binDir, "codex")
 	testutil.WriteFakeExecutable(t, binPath, "#!/bin/sh\nexit 0\n")
-	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, binDir)
 
 	homeDir := t.TempDir()
 	projectDir := t.TempDir()

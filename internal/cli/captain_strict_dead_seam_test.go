@@ -143,7 +143,7 @@ func putFakePiOnPath(t *testing.T) {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), "pi")
 	testutil.WriteFakeExecutable(t, bin, "#!/bin/sh\nexit 0\n")
-	t.Setenv("PATH", filepath.Dir(bin)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	testutil.PrependPath(t, filepath.Dir(bin))
 }
 
 // TestProbeLivenessSeam_StrictDeadOnly drives the production probe seam into

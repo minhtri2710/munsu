@@ -3,7 +3,6 @@
 package fleet
 
 import (
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -47,7 +46,7 @@ esac
 exit 1
 `
 	testutil.WriteFakeExecutable(t, binPath, script)
-	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, tmpDir)
 
 	result := NoMistakesProbe()
 	// v0.5.0 is below MinNoMistakesVersion (1.20.0), should be Unsupported
@@ -68,7 +67,7 @@ echo "not-a-valid-version-string"
 exit 0
 `
 	testutil.WriteFakeExecutable(t, binPath, script)
-	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, tmpDir)
 
 	result := NoMistakesProbe()
 	if result.State != backend.Failed {
@@ -82,7 +81,7 @@ func TestNoMistakesProbe_Failed_EmptyVersion(t *testing.T) {
 	binPath := filepath.Join(tmpDir, "no-mistakes")
 	script := "#!/bin/sh\nexit 0\n"
 	testutil.WriteFakeExecutable(t, binPath, script)
-	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, tmpDir)
 
 	result := NoMistakesProbe()
 	// Binary exists but produces no --version output
@@ -97,7 +96,7 @@ func TestNoMistakesProbe_Failed_VersionCommandFails(t *testing.T) {
 	binPath := filepath.Join(tmpDir, "no-mistakes")
 	script := "#!/bin/sh\nexit 1\n"
 	testutil.WriteFakeExecutable(t, binPath, script)
-	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, tmpDir)
 
 	result := NoMistakesProbe()
 	if result.State != backend.Failed {
@@ -151,7 +150,7 @@ esac
 exit 1
 `
 	testutil.WriteFakeExecutable(t, binPath, script)
-	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, tmpDir)
 
 	result := NoMistakesProbe()
 	if result.State != backend.Ready {
@@ -174,7 +173,7 @@ echo "no-mistakes version v0.5.0 (ancient)"
 exit 0
 `
 	testutil.WriteFakeExecutable(t, binPath, script)
-	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, tmpDir)
 
 	result, err := Preflight("no-mistakes", "")
 	if err != nil {

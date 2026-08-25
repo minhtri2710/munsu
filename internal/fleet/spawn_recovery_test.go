@@ -103,7 +103,7 @@ func TestLaunchRecoveryPostSubmitPreRecordGuardProvesSingleProcess(t *testing.T)
 	if err != nil {
 		t.Fatalf("git on PATH: %v", err)
 	}
-	t.Setenv("PATH", harnessDir+":"+filepath.Dir(gitBin)+":"+requiredSkillStubDir(t)+":/bin")
+	testutil.SetPath(t, harnessDir, filepath.Dir(gitBin), requiredSkillStubDir(t), "/bin")
 	// The endpoint executes the production artifact in a real shell (the
 	// pane) and reports a crash (error) AFTER the first delivery — the
 	// post-Submit/pre-Record boundary. No LaunchEvidence is committed.
@@ -155,7 +155,7 @@ func TestLaunchRecoverySubmitErrorBeforeExecutionRetryable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("git on PATH: %v", err)
 	}
-	t.Setenv("PATH", harnessDir+":"+filepath.Dir(gitBin)+":"+requiredSkillStubDir(t)+":/bin")
+	testutil.SetPath(t, harnessDir, filepath.Dir(gitBin), requiredSkillStubDir(t), "/bin")
 	// The first Submit fails BEFORE any script execution (delivery failure).
 	exec := &executingEndpointCapabilities{
 		inner:          f.endpoints,
@@ -501,7 +501,7 @@ func TestLaunchArtifactGuardProvesSingleProcessLaunches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("git on PATH: %v", err)
 	}
-	t.Setenv("PATH", harnessDir+":"+filepath.Dir(gitBin)+":"+requiredSkillStubDir(t)+":/bin")
+	testutil.SetPath(t, harnessDir, filepath.Dir(gitBin), requiredSkillStubDir(t), "/bin")
 
 	agg := f.aggregate()
 	artifact, err := buildLaunchArtifact(LaunchArtifactInput{
@@ -582,7 +582,7 @@ func TestLaunchArtifactGuardExistsSkipsProcessOnReEntry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("git on PATH: %v", err)
 	}
-	t.Setenv("PATH", harnessDir+":"+filepath.Dir(gitBin)+":"+requiredSkillStubDir(t)+":/bin")
+	testutil.SetPath(t, harnessDir, filepath.Dir(gitBin), requiredSkillStubDir(t), "/bin")
 
 	agg := f.aggregate()
 	artifact, err := buildLaunchArtifact(LaunchArtifactInput{
@@ -641,7 +641,7 @@ func TestLaunchArtifactGuardConcurrentSubmissionsSingleProcess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("git on PATH: %v", err)
 	}
-	t.Setenv("PATH", harnessDir+":"+filepath.Dir(gitBin)+":"+requiredSkillStubDir(t)+":/bin")
+	testutil.SetPath(t, harnessDir, filepath.Dir(gitBin), requiredSkillStubDir(t), "/bin")
 	agg := f.aggregate()
 	artifact, err := buildLaunchArtifact(LaunchArtifactInput{
 		WorktreePath:   f.runner.wtPath,

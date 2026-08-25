@@ -122,8 +122,7 @@ func writeFakeZellijNotFound(t *testing.T, dir string) string {
 func TestZellijBackend_NewWindow(t *testing.T) {
 	tmp := t.TempDir()
 	fakePath := writeFakeZellij(t, tmp)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", fakePath+":"+oldPath)
+	testutil.PrependPath(t, fakePath)
 
 	z := NewZellijBackend("test-session")
 	win, err := z.NewWindow("test-ws", "task-1")
@@ -139,8 +138,7 @@ func TestZellijBackend_NewWindow(t *testing.T) {
 func TestZellijBackend_Alive(t *testing.T) {
 	tmp := t.TempDir()
 	fakePath := writeFakeZellij(t, tmp)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", fakePath+":"+oldPath)
+	testutil.PrependPath(t, fakePath)
 
 	z := NewZellijBackend("test-s")
 	if alive, err := z.CheckAlive("test-s:terminal_1"); !alive || err != nil {
@@ -151,8 +149,7 @@ func TestZellijBackend_Alive(t *testing.T) {
 func TestZellijBackend_Alive_ReturnsFalseWhenNotFound(t *testing.T) {
 	tmp := t.TempDir()
 	writeFakeZellijNotFound(t, tmp)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", tmp+":"+oldPath)
+	testutil.PrependPath(t, tmp)
 
 	z := NewZellijBackend("test-s")
 	if alive, err := z.CheckAlive("test-s:terminal_999"); alive || err == nil {
@@ -163,8 +160,7 @@ func TestZellijBackend_Alive_ReturnsFalseWhenNotFound(t *testing.T) {
 func TestZellijBackend_SendKeys(t *testing.T) {
 	tmp := t.TempDir()
 	fakePath := writeFakeZellij(t, tmp)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", fakePath+":"+oldPath)
+	testutil.PrependPath(t, fakePath)
 
 	z := NewZellijBackend("test-s")
 	if err := z.SendKeys("test-s:terminal_1", "hello"); err != nil {
@@ -175,8 +171,7 @@ func TestZellijBackend_SendKeys(t *testing.T) {
 func TestZellijBackend_Capture(t *testing.T) {
 	tmp := t.TempDir()
 	fakePath := writeFakeZellij(t, tmp)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", fakePath+":"+oldPath)
+	testutil.PrependPath(t, fakePath)
 
 	z := NewZellijBackend("test-s")
 	out, err := z.Capture("test-s:terminal_1", 5)
@@ -192,8 +187,7 @@ func TestZellijBackend_Capture(t *testing.T) {
 func TestZellijBackend_Teardown(t *testing.T) {
 	tmp := t.TempDir()
 	fakePath := writeFakeZellij(t, tmp)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", fakePath+":"+oldPath)
+	testutil.PrependPath(t, fakePath)
 
 	z := NewZellijBackend("test-s")
 	if err := z.Teardown("test-s:terminal_1"); err != nil {
@@ -204,8 +198,7 @@ func TestZellijBackend_Teardown(t *testing.T) {
 func TestZellijBackend_Teardown_Idempotent(t *testing.T) {
 	tmp := t.TempDir()
 	writeFakeZellijNotFound(t, tmp)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", tmp+":"+oldPath)
+	testutil.PrependPath(t, tmp)
 
 	z := NewZellijBackend("test-s")
 	if err := z.Teardown("test-s:terminal_999"); err != nil {

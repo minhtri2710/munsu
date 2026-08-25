@@ -104,8 +104,7 @@ func writeFakeHerdr(t *testing.T, dir string) string {
 func TestHerdrBackend_NewWindow_CreatesWorkspace(t *testing.T) {
 	tmp := t.TempDir()
 	fakePath := writeFakeHerdr(t, tmp)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", fakePath+":"+oldPath)
+	testutil.PrependPath(t, fakePath)
 
 	h := NewHerdrBackend("test-session")
 	win, err := h.NewWindow("test-ws", "task-1")
@@ -135,8 +134,7 @@ func TestHerdrBackend_NewWindow_CreatesWorkspace(t *testing.T) {
 func TestHerdrBackend_NewWindow_CreatesMissingWorkspace(t *testing.T) {
 	tmp := t.TempDir()
 	fakePath := writeFakeHerdr(t, tmp)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", fakePath+":"+oldPath)
+	testutil.PrependPath(t, fakePath)
 
 	h := NewHerdrBackend("test-ms")
 	win, err := h.NewWindow("missing-ws", "task-2")
@@ -155,8 +153,7 @@ func TestHerdrBackend_NewWindow_CreatesMissingWorkspace(t *testing.T) {
 func TestHerdrBackend_Alive(t *testing.T) {
 	tmp := t.TempDir()
 	fakePath := writeFakeHerdr(t, tmp)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", fakePath+":"+oldPath)
+	testutil.PrependPath(t, fakePath)
 
 	h := NewHerdrBackend("test-s")
 	if alive, _ := h.CheckAlive("wTest:p1"); !alive {
@@ -170,8 +167,7 @@ func TestHerdrBackend_Alive(t *testing.T) {
 func TestHerdrBackend_SendKeys(t *testing.T) {
 	tmp := t.TempDir()
 	fakePath := writeFakeHerdr(t, tmp)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", fakePath+":"+oldPath)
+	testutil.PrependPath(t, fakePath)
 
 	h := NewHerdrBackend("test-s")
 	if err := h.SendKeys("wTest:p1", "hello"); err != nil {
@@ -185,8 +181,7 @@ func TestHerdrBackend_SendKeys(t *testing.T) {
 func TestHerdrBackend_Capture(t *testing.T) {
 	tmp := t.TempDir()
 	fakePath := writeFakeHerdr(t, tmp)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", fakePath+":"+oldPath)
+	testutil.PrependPath(t, fakePath)
 
 	h := NewHerdrBackend("test-s")
 	out, err := h.Capture("wTest:p1", 5)
@@ -201,8 +196,7 @@ func TestHerdrBackend_Capture(t *testing.T) {
 func TestHerdrBackend_Teardown_Idempotent(t *testing.T) {
 	tmp := t.TempDir()
 	fakePath := writeFakeHerdr(t, tmp)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", fakePath+":"+oldPath)
+	testutil.PrependPath(t, fakePath)
 
 	h := NewHerdrBackend("test-s")
 	if err := h.Teardown("wTest:p1"); err != nil {
@@ -230,8 +224,7 @@ func writeFakeHerdrNotFound(t *testing.T, dir string) string {
 func TestHerdrBackend_Teardown_NotFoundIgnored(t *testing.T) {
 	tmp := t.TempDir()
 	writeFakeHerdrNotFound(t, tmp)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", tmp+":"+oldPath)
+	testutil.PrependPath(t, tmp)
 
 	h := NewHerdrBackend("test-s")
 	if err := h.Teardown("x"); err != nil {
@@ -242,8 +235,7 @@ func TestHerdrBackend_Teardown_NotFoundIgnored(t *testing.T) {
 func TestHerdrBackend_Alive_ReturnsFalseWhenNotFound(t *testing.T) {
 	tmp := t.TempDir()
 	writeFakeHerdrNotFound(t, tmp)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", tmp+":"+oldPath)
+	testutil.PrependPath(t, tmp)
 
 	h := NewHerdrBackend("test-s")
 	if alive, err := h.CheckAlive("nonexistent"); alive || err == nil {
@@ -297,7 +289,7 @@ func writeFakeHerdrWithAgent(t *testing.T, dir string, agentStatus string) strin
 func TestHerdrBackend_CheckAgentAlive_WithAgent(t *testing.T) {
 	tmp := t.TempDir()
 	writeFakeHerdrWithAgent(t, tmp, "working")
-	t.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, tmp)
 
 	h := NewHerdrBackend("test-s")
 	alive, agentAlive, err := h.CheckAgentAlive("wTest:p1")
@@ -315,7 +307,7 @@ func TestHerdrBackend_CheckAgentAlive_WithAgent(t *testing.T) {
 func TestHerdrBackend_CheckAgentAlive_DoneAgentPaneRemainsAlive(t *testing.T) {
 	tmp := t.TempDir()
 	writeFakeHerdrWithAgent(t, tmp, "done")
-	t.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, tmp)
 
 	h := NewHerdrBackend("test-s")
 	paneAlive, agentAlive, err := h.CheckAgentAlive("wTest:p1")
@@ -333,7 +325,7 @@ func TestHerdrBackend_CheckAgentAlive_DoneAgentPaneRemainsAlive(t *testing.T) {
 func TestHerdrBackend_CheckAgentAlive_NoAgent(t *testing.T) {
 	tmp := t.TempDir()
 	writeFakeHerdrWithAgent(t, tmp, "") // agent_not_found
-	t.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, tmp)
 
 	h := NewHerdrBackend("test-s")
 	alive, agentAlive, err := h.CheckAgentAlive("wTest:p1")
@@ -356,7 +348,7 @@ func TestHerdrBackend_CheckAgentAlive_NoAgent(t *testing.T) {
 func TestHerdrBackend_CheckAgentAlive_PaneNotFound(t *testing.T) {
 	tmp := t.TempDir()
 	writeFakeHerdrNotFound(t, tmp)
-	t.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, tmp)
 
 	h := NewHerdrBackend("test-s")
 	alive, agentAlive, err := h.CheckAgentAlive("nonexistent")
@@ -428,7 +420,7 @@ func TestHerdrBackend_CheckAlive_PaneNotFound(t *testing.T) {
 		`echo '{"error":{"code":"pane_not_found","message":"pane w6E:p3 not found"}}'` + "\n" +
 		"exit 1\n"
 	testutil.WriteFakeExecutable(t, bin, script)
-	t.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, tmp)
 
 	h := NewHerdrBackend("default")
 	alive, err := h.CheckAlive("default:w6E:p3")
@@ -606,8 +598,7 @@ func TestSeedTeardownTab(t *testing.T) {
 func TestSeedTeardownTab_WithFakeHerdr(t *testing.T) {
 	tmp := t.TempDir()
 	fakePath := writeFakeHerdr(t, tmp)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", fakePath+":"+oldPath)
+	testutil.PrependPath(t, fakePath)
 
 	h := NewHerdrBackend("test-s")
 	// Seed a tab ID (simulating reconstruction from meta)
@@ -622,8 +613,7 @@ func TestSeedTeardownTab_WithFakeHerdr(t *testing.T) {
 func TestTeardown_ClosesWorkspace_WhenHometagMatches(t *testing.T) {
 	tmp := t.TempDir()
 	fakePath := writeFakeHerdr(t, tmp)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", fakePath+":"+oldPath)
+	testutil.PrependPath(t, fakePath)
 
 	h := NewHerdrBackend("test-s")
 	h.TeardownWorkspaceID = "wTest"
@@ -638,8 +628,7 @@ func TestTeardown_ClosesWorkspace_WhenHometagMatches(t *testing.T) {
 func TestTeardown_NoWorkspaceClose_WhenInDenyList(t *testing.T) {
 	tmp := t.TempDir()
 	fakePath := writeFakeHerdr(t, tmp)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", fakePath+":"+oldPath)
+	testutil.PrependPath(t, fakePath)
 
 	h := NewHerdrBackend("test-s")
 	h.TeardownWorkspaceID = "wTest"
@@ -654,8 +643,7 @@ func TestTeardown_NoWorkspaceClose_WhenInDenyList(t *testing.T) {
 func TestTeardown_NoWorkspaceClose_WhenForeignLabel(t *testing.T) {
 	tmp := t.TempDir()
 	fakePath := writeFakeHerdr(t, tmp)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", fakePath+":"+oldPath)
+	testutil.PrependPath(t, fakePath)
 
 	h := NewHerdrBackend("test-s")
 	h.TeardownWorkspaceID = "wTest"
@@ -669,8 +657,7 @@ func TestTeardown_NoWorkspaceClose_WhenForeignLabel(t *testing.T) {
 func TestTeardown_NoWorkspaceClose_WhenEmptyHometag(t *testing.T) {
 	tmp := t.TempDir()
 	fakePath := writeFakeHerdr(t, tmp)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", fakePath+":"+oldPath)
+	testutil.PrependPath(t, fakePath)
 
 	h := NewHerdrBackend("test-s")
 	h.TeardownWorkspaceID = "wTest"
@@ -735,7 +722,7 @@ func writeFakeHerdrAgentGetError(t *testing.T, dir, code string) string {
 func TestHerdrBackend_CheckAgentAliveFailsClosedOnStructuredAgentGetError(t *testing.T) {
 	tmp := t.TempDir()
 	writeFakeHerdrAgentGetError(t, tmp, "agent_subsystem_unavailable")
-	t.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, tmp)
 
 	h := NewHerdrBackend("test-s")
 	paneAlive, agentAlive, err := h.CheckAgentAlive("wTest:p1")
@@ -755,7 +742,7 @@ func TestHerdrBackendFindTabByLabelRefusesDuplicateTabs(t *testing.T) {
 	bin := filepath.Join(tmp, "herdr")
 	script := "#!/bin/sh\nif [ \"$1\" = \"--session\" ]; then shift 2; fi\ncat <<'JSON'\n{\"result\":{\"tabs\":[{\"label\":\"dup\",\"tab_id\":\"t1\"},{\"label\":\"dup\",\"tab_id\":\"t2\"}]}}\nJSON\n"
 	testutil.WriteFakeExecutable(t, bin, script)
-	t.Setenv("PATH", tmp+string(os.PathListSeparator)+os.Getenv("PATH"))
+	testutil.PrependPath(t, tmp)
 	h := NewHerdrBackend("test")
 	_, err := h.findTabByLabel("w1", "dup")
 	if err == nil || !strings.Contains(err.Error(), "ambiguous") {

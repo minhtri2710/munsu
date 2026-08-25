@@ -172,7 +172,7 @@ func workflowHarnessOnPath(t *testing.T, name string) {
 	if err != nil {
 		t.Fatalf("git on PATH: %v", err)
 	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+filepath.Dir(gitBin))
+	testutil.SetPath(t, dir, filepath.Dir(gitBin))
 	t.Setenv("ANTHROPIC_API_KEY", "workflow-e2e-stub")
 	t.Setenv("OPENAI_API_KEY", "workflow-e2e-stub")
 }

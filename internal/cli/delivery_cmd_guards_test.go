@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -155,7 +154,7 @@ esac
 `, deliveryGuardHead)
 	path := filepath.Join(dir, "gh-axi")
 	testutil.WriteFakeExecutable(t, path, script)
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	testutil.PrependPath(t, dir)
 }
 
 // TestPRMergeRefusesADeliveryThatCommittedANonCompletedOutcome enters the

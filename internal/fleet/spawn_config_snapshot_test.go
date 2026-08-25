@@ -428,7 +428,7 @@ esac
 exit 0
 `
 		testutil.WriteFakeExecutable(t, binPath, content)
-		t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+		testutil.PrependPath(t, tmpDir)
 		home := t.TempDir()
 		storeTestDocuments(t, home, fleetconfig.FleetBaseDocument{
 			SchemaVersion: fleetconfig.FleetBaseSchemaVersion,

@@ -537,7 +537,7 @@ func TestSpawn_DispatchSelectionResolvedOnce(t *testing.T) {
 	testutil.WriteFakeExecutable(t, filepath.Join(fakeDir, "quota-axi"), script)
 	t.Setenv("QUOTA_COUNTER", counter)
 	t.Setenv("QUOTA_FIXTURE", fixture)
-	t.Setenv("PATH", fakeDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	testutil.PrependPath(t, fakeDir)
 
 	r := NewRunner(Args{ID: "quota-task", ProjectName: "quota-proj", HomeDir: homeDir, TaskDescription: "quota work"})
 	r.homeDir = homeDir

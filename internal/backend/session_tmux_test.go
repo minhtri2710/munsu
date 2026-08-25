@@ -292,7 +292,7 @@ func fakeFailingTmux(t *testing.T, msg string) {
 	dir := t.TempDir()
 	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' %q >&2\nexit 1\n", msg)
 	testutil.WriteFakeExecutable(t, filepath.Join(dir, "tmux"), script)
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	testutil.PrependPath(t, dir)
 }
 
 // TestTmux_Alive_ServerFailureIsNotPaneNotFound pins the classification

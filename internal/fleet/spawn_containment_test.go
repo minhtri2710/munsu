@@ -48,7 +48,7 @@ func TestEnsureDeliveryModeRunnable_AbsentBinary(t *testing.T) {
 // TestEnsureDeliveryModeRunnable_UnsupportedVersion tests explicit mode fails on old version.
 func TestEnsureDeliveryModeRunnable_UnsupportedVersion(t *testing.T) {
 	tmpDir := createFakeNoMistakesVersion(t, "0.5.0")
-	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, tmpDir)
 
 	err := EnsureDeliveryModeRunnable("no-mistakes")
 	if err == nil {
@@ -90,7 +90,7 @@ func TestPreflight_NoMistakes_FailedProbe(t *testing.T) {
 	tmpDir := t.TempDir()
 	binPath := filepath.Join(tmpDir, "no-mistakes")
 	testutil.WriteFakeExecutable(t, binPath, "#!/bin/sh\nexit 1\n")
-	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, tmpDir)
 
 	// Preflight should see the binary on PATH but the probe will fail
 	result, err := Preflight("no-mistakes", "")

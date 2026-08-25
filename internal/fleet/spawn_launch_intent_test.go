@@ -135,7 +135,7 @@ func newLaunchFixture(t *testing.T, taskID string) *launchFixture {
 	if err != nil {
 		t.Fatalf("git on PATH: %v", err)
 	}
-	t.Setenv("PATH", filepath.Dir(gitBin)+string(os.PathListSeparator)+requiredSkillStubDir(t))
+	testutil.SetPath(t, filepath.Dir(gitBin), requiredSkillStubDir(t))
 
 	snap, err := config.NewResolvedSnapshot(
 		config.FleetBaseDocument{

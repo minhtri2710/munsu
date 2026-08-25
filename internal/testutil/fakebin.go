@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -65,10 +66,23 @@ func FakeOnPath(t *testing.T, name, script string) string {
 	return path
 }
 
-// PrependPath puts dir first on PATH for the duration of the test.
-func PrependPath(t *testing.T, dir string) {
+// PrependPath puts dirs, in order, ahead of the current PATH for the duration
+// of the test.
+func PrependPath(t *testing.T, dirs ...string) {
 	t.Helper()
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("PATH", strings.Join(append(dirs, os.Getenv("PATH")), string(os.PathListSeparator)))
+}
+
+// SetPath replaces PATH with exactly dirs for the duration of the test, for
+// fixtures that decide presence by what they installed and nothing else.
+//
+// Both helpers exist because the separator is not ":" everywhere: a fixture
+// that hardcodes it builds one unsplittable PATH entry on windows, and every
+// fake it installed is then absent for a reason that has nothing to do with
+// the contract under test (#549 group 1).
+func SetPath(t *testing.T, dirs ...string) {
+	t.Helper()
+	t.Setenv("PATH", strings.Join(dirs, string(os.PathListSeparator)))
 }
 
 var shell struct {

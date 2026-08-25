@@ -2,7 +2,6 @@ package backend
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -13,7 +12,7 @@ func TestRuntimeAdapterObservationContract(t *testing.T) {
 	fakeBin := t.TempDir()
 	writeObservationFakeTmux(t, fakeBin)
 	writeObservationFakeHerdr(t, fakeBin)
-	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	testutil.PrependPath(t, fakeBin)
 
 	tests := []struct {
 		name   string
@@ -67,7 +66,7 @@ func TestListAdapterObservationContract(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("PATH", tc.binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			testutil.PrependPath(t, tc.binDir)
 			obs := ObserveEndpoint(tc.mk(), tc.handle)
 			if obs.Lifecycle != tc.want {
 				t.Fatalf("lifecycle = %v (state=%v) want %v (detail=%q)", obs.Lifecycle, obs.State(), tc.want, obs.Detail)

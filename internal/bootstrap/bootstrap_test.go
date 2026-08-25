@@ -105,8 +105,7 @@ func TestRun_BackendDiagnostics_NoPersistedIdentityWithTmuxOnPATH(t *testing.T) 
 	// probing is not a selection contract for diagnostics.
 	fakeBin := t.TempDir()
 	testutil.WriteFakeExecutable(t, filepath.Join(fakeBin, "tmux"), "#!/bin/sh\nexit 0")
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
+	testutil.PrependPath(t, fakeBin)
 
 	result, err := Run(home, false, nil)
 	if err != nil {

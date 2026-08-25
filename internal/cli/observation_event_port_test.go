@@ -25,8 +25,7 @@ func TestObservationEventPort_Sources_HerdrEndpoint(t *testing.T) {
 	// Fake herdr on PATH with a ready protocol so resolution succeeds.
 	fakeDir := t.TempDir()
 	writeFakeHerdrCLI(t, fakeDir)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", fakeDir+":"+oldPath)
+	testutil.PrependPath(t, fakeDir)
 
 	port := observationEventPort{resolve: backend.BackendForTask}
 	sources, err := port.Sources(homeDir)
@@ -102,7 +101,6 @@ func TestObservationEventPort_Sources_UnresolvableSkipped(t *testing.T) {
 		"window":  "w:p",
 	})
 	// No herdr on PATH → BackendForTask fails → endpoint omitted → pure polling.
-	oldPath := os.Getenv("PATH")
 	t.Setenv("PATH", "/nonexistent")
 	port := observationEventPort{resolve: backend.BackendForTask}
 	sources, err := port.Sources(homeDir)
@@ -112,7 +110,6 @@ func TestObservationEventPort_Sources_UnresolvableSkipped(t *testing.T) {
 	if len(sources) != 0 {
 		t.Fatalf("Sources = %d, want 0 (unresolvable backend → poll)", len(sources))
 	}
-	_ = oldPath
 }
 
 func mustWriteCLIMeta(t *testing.T, homeDir, id string, kv map[string]string) {

@@ -207,41 +207,35 @@ func TestHerdrEventSource_Wait_IdleAndBlockedNormalization(t *testing.T) {
 
 func TestHerdrEventSource_NegotiationGates(t *testing.T) {
 	t.Run("absent binary -> ErrEventUnavailable", func(t *testing.T) {
-		oldPath := os.Getenv("PATH")
 		t.Setenv("PATH", "/nonexistent")
 		src := &HerdrEventSource{Session: "test-s"}
 		_, err := src.Wait(context.Background(), EndpointRef{Backend: "herdr", Handle: "w:p"}, "")
 		if !errors.Is(err, ErrEventUnavailable) {
 			t.Errorf("err = %v, want ErrEventUnavailable", err)
 		}
-		_ = oldPath
 	})
 
 	t.Run("unsupported protocol -> ErrEventProtocolMismatch", func(t *testing.T) {
 		tmp := t.TempDir()
 		writeFakeHerdrEventWait(t, tmp, `{"protocol":99,"schema_version":2,"schemas":{}}`, `{}`, 0, filepath.Join(tmp, "a.log"))
-		oldPath := os.Getenv("PATH")
-		t.Setenv("PATH", tmp+":"+oldPath)
+		testutil.PrependPath(t, tmp)
 		src := &HerdrEventSource{Session: "test-s"}
 		_, err := src.Wait(context.Background(), EndpointRef{Backend: "herdr", Handle: "w:p"}, "")
 		if !errors.Is(err, ErrEventProtocolMismatch) {
 			t.Errorf("err = %v, want ErrEventProtocolMismatch", err)
 		}
-		_ = oldPath
 	})
 
 	t.Run("protocol without agent-wait flag -> ErrEventUnsupported", func(t *testing.T) {
 		// Protocol 16 has pane_wait_output but no agent_wait.
 		tmp := t.TempDir()
 		writeFakeHerdrEventWait(t, tmp, `{"protocol":16,"schema_version":1,"schemas":{}}`, `{}`, 0, filepath.Join(tmp, "a.log"))
-		oldPath := os.Getenv("PATH")
-		t.Setenv("PATH", tmp+":"+oldPath)
+		testutil.PrependPath(t, tmp)
 		src := &HerdrEventSource{Session: "test-s"}
 		_, err := src.Wait(context.Background(), EndpointRef{Backend: "herdr", Handle: "w:p"}, "")
 		if !errors.Is(err, ErrEventUnsupported) {
 			t.Errorf("err = %v, want ErrEventUnsupported", err)
 		}
-		_ = oldPath
 	})
 }
 

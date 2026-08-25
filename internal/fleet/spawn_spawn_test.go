@@ -467,7 +467,7 @@ func TestNoMistakesOnPath(t *testing.T) {
 func TestEffectiveModeForSpawn_AutoNoMistakesPresent(t *testing.T) {
 	// Create a fake no-mistakes binary on PATH
 	tmpDir := createFakeNoMistakes(t, true, true)
-	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, tmpDir)
 
 	mode, err := effectiveModeForSpawn(t.TempDir(), Args{})
 	if err != nil {
@@ -494,7 +494,7 @@ func TestEffectiveModeForSpawn_AutoNoMistakesAbsent(t *testing.T) {
 func TestEffectiveModeForSpawn_ExplicitNoMistakesWithBinary(t *testing.T) {
 	// Fake no-mistakes on PATH, explicit flag
 	tmpDir := createFakeNoMistakes(t, true, true)
-	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, tmpDir)
 
 	mode, err := effectiveModeForSpawn(t.TempDir(), Args{Mode: "no-mistakes"})
 	if err != nil {
@@ -530,7 +530,7 @@ func TestEffectiveModeForSpawn_ExplicitNoMistakesNeverFallsBackToDirectPR(t *tes
 
 	t.Run("unsupported version", func(t *testing.T) {
 		tmpDir := createFakeNoMistakesVersion(t, "0.5.0")
-		t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+		testutil.PrependPath(t, tmpDir)
 
 		mode, err := effectiveModeForSpawn(t.TempDir(), Args{Mode: "no-mistakes"})
 		if err == nil {
@@ -545,7 +545,7 @@ func TestEffectiveModeForSpawn_ExplicitNoMistakesNeverFallsBackToDirectPR(t *tes
 		tmpDir := t.TempDir()
 		binPath := filepath.Join(tmpDir, "no-mistakes")
 		testutil.WriteFakeExecutable(t, binPath, "#!/bin/sh\nexit 1\n")
-		t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+		testutil.PrependPath(t, tmpDir)
 
 		mode, err := effectiveModeForSpawn(t.TempDir(), Args{Mode: "no-mistakes"})
 		if err == nil {
@@ -573,7 +573,7 @@ func TestEffectiveModeForSpawn_ProjectNoMistakesNeverFallsBackToDirectPR(t *test
 
 	t.Run("unsupported version", func(t *testing.T) {
 		tmpDir := createFakeNoMistakesVersion(t, "0.5.0")
-		t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+		testutil.PrependPath(t, tmpDir)
 
 		mode, err := effectiveModeForSpawn(t.TempDir(), Args{ProjectMode: "no-mistakes"})
 		if err == nil {
@@ -603,7 +603,7 @@ func TestResolveDeliveryMode_TypedNoMistakesNeverFallsBackToDirectPR(t *testing.
 
 	t.Run("unsupported version", func(t *testing.T) {
 		tmpDir := createFakeNoMistakesVersion(t, "0.5.0")
-		t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+		testutil.PrependPath(t, tmpDir)
 
 		mode, err := ResolveDeliveryMode("", "no-mistakes", false)
 		if err == nil {
@@ -619,7 +619,7 @@ func TestResolveDeliveryMode_TypedNoMistakesNeverFallsBackToDirectPR(t *testing.
 // falls back to direct-PR when no-mistakes is on PATH but incompatible.
 func TestResolveDeliveryMode_AutoFallbackOnIncompatible(t *testing.T) {
 	tmpDir := createFakeNoMistakesVersion(t, "0.5.0")
-	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, tmpDir)
 
 	mode, err := ResolveDeliveryMode("", "", false)
 	if err != nil {
@@ -1410,7 +1410,7 @@ func TestSpawn_PostCreateVerificationFailure_NoMetaNoSpawnedStatus(t *testing.T)
 	}
 	binDir := t.TempDir()
 	testutil.WriteFakeExecutable(t, filepath.Join(binDir, "pi"), "#!/bin/sh\nexit 0\n")
-	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
+	testutil.PrependPath(t, binDir)
 	t.Setenv("GEMINI_API_KEY", "test-key")
 
 	projectDir := filepath.Join(homeDir, "projects", "test-proj")

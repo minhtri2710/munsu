@@ -4,7 +4,6 @@
 package backend
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -86,7 +85,6 @@ const schemaVUnknown = `{"protocol":99,"schema_version":2,"$schema":"https://jso
 
 func TestProbeHerdrCapability_Absent(t *testing.T) {
 	// Empty PATH — herdr not found.
-	oldPath := os.Getenv("PATH")
 	t.Setenv("PATH", "/nonexistent")
 
 	info := ProbeHerdrCapability("")
@@ -96,14 +94,12 @@ func TestProbeHerdrCapability_Absent(t *testing.T) {
 	if info.CLIPath != "" {
 		t.Errorf("CLIPath = %q, want empty", info.CLIPath)
 	}
-	_ = oldPath
 }
 
 func TestProbeHerdrCapability_ReadyV074(t *testing.T) {
 	tmp := t.TempDir()
 	fakePath := writeFakeHerdrWithSchema(t, tmp, "herdr 0.7.4", schemaV074)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", fakePath+":"+oldPath)
+	testutil.PrependPath(t, fakePath)
 
 	info := ProbeHerdrCapability("")
 	if info.State != HerdrReady {
@@ -127,14 +123,12 @@ func TestProbeHerdrCapability_ReadyV074(t *testing.T) {
 	if info.Flags.Has(CapAgentWait) {
 		t.Errorf("CapAgentWait should be false for protocol 16")
 	}
-	_ = oldPath
 }
 
 func TestProbeHerdrCapability_ReadyV075(t *testing.T) {
 	tmp := t.TempDir()
 	fakePath := writeFakeHerdrWithSchema(t, tmp, "herdr 0.7.5", schemaV075)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", fakePath+":"+oldPath)
+	testutil.PrependPath(t, fakePath)
 
 	info := ProbeHerdrCapability("")
 	if info.State != HerdrReady {
@@ -157,8 +151,7 @@ func TestProbeHerdrCapability_ReadyV075(t *testing.T) {
 func TestProbeHerdrCapability_UnsupportedProtocol(t *testing.T) {
 	tmp := t.TempDir()
 	fakePath := writeFakeHerdrWithSchema(t, tmp, "herdr 0.99.0", schemaVUnknown)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", fakePath+":"+oldPath)
+	testutil.PrependPath(t, fakePath)
 
 	info := ProbeHerdrCapability("")
 	if info.State != HerdrUnsupported {
@@ -175,8 +168,7 @@ func TestProbeHerdrCapability_UnsupportedProtocol(t *testing.T) {
 func TestProbeHerdrCapability_FailedSchema(t *testing.T) {
 	tmp := t.TempDir()
 	fakePath := writeFakeHerdrFailingSchema(t, tmp)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", fakePath+":"+oldPath)
+	testutil.PrependPath(t, fakePath)
 
 	info := ProbeHerdrCapability("")
 	if info.State != HerdrFailed {
@@ -187,8 +179,7 @@ func TestProbeHerdrCapability_FailedSchema(t *testing.T) {
 func TestProbeHerdrCapability_MalformedSchema(t *testing.T) {
 	tmp := t.TempDir()
 	fakePath := writeFakeHerdrWithMalformedSchema(t, tmp)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", fakePath+":"+oldPath)
+	testutil.PrependPath(t, fakePath)
 
 	info := ProbeHerdrCapability("")
 	if info.State != HerdrFailed {
@@ -227,8 +218,7 @@ func TestProbeHerdrCapability_ExplicitPathNotFound(t *testing.T) {
 func TestHerdrBackend_Capability(t *testing.T) {
 	tmp := t.TempDir()
 	fakePath := writeFakeHerdrWithSchema(t, tmp, "herdr 0.7.5", schemaV075)
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", fakePath+":"+oldPath)
+	testutil.PrependPath(t, fakePath)
 
 	h := NewHerdrBackend("test-s")
 	info := h.Capability()
@@ -238,7 +228,6 @@ func TestHerdrBackend_Capability(t *testing.T) {
 	if info.Protocol != 17 {
 		t.Errorf("Protocol = %d, want 17", info.Protocol)
 	}
-	_ = oldPath
 }
 
 func TestParseHerdrError_PaneNotFound(t *testing.T) {
