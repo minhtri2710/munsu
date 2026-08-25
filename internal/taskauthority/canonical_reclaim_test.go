@@ -70,6 +70,29 @@ func TestArchiveRetiredReportRequiresExactActiveClaim(t *testing.T) {
 	}
 }
 
+func TestReconcileRetirementCleanupPostCommitCallbackIsFenced(t *testing.T) {
+	c, h, _ := newTestCanonical(t)
+	id := "post-commit-fence"
+	mustCreate(t, c, id)
+	retireWithClaim(t, c, id, preconditionOf(1, 1), "op-post-commit-retire")
+	if err := c.ReconcileRetirementCleanup(mustTaskID(t, id), 1, CleanupCompleted, func() error { return nil }, func() error {
+		_, err := h.Lock(taskScope(id))
+		if !errors.Is(err, home.ErrLockTimeout) {
+			t.Fatalf("lock error = %v", err)
+		}
+		return errors.New("projection cleanup failed")
+	}); err == nil {
+		t.Fatal("expected post-commit callback error")
+	}
+	agg, err := c.Get(mustTaskID(t, id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.CleanupClaim == nil || agg.CleanupClaim.Status != CleanupCompleted {
+		t.Fatalf("claim = %+v, want completed", agg.CleanupClaim)
+	}
+}
+
 func TestReclaimReleasedTaskArtifactsLifecycleStates(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
 	mustCreate(t, c, "working")

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestShipBriefTemplateNoMistakes(t *testing.T) {
@@ -104,6 +105,28 @@ func TestScoutBriefTemplate(t *testing.T) {
 	}
 	if strings.Contains(tmpl, "git checkout -b") {
 		t.Error("scout brief should not contain branch creation")
+	}
+}
+
+func TestScaffoldRefreshesDirectoryMtime(t *testing.T) {
+	tmp := t.TempDir()
+	dir := filepath.Join(tmp, "data", "aged")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Unix(1, 0)
+	if err := os.Chtimes(dir, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := Scaffold(ScaffoldOptions{HomeDir: tmp, ID: "aged", Repo: "munsu"}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.ModTime().After(old) {
+		t.Fatalf("directory mtime = %v, want refreshed", info.ModTime())
 	}
 }
 

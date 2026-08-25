@@ -124,7 +124,7 @@ func (c *Canonical) Get(taskID domain.TaskID) (Aggregate, error) {
 // ErrNotFound.
 // ReconcileRetirementCleanup runs bounded data-path work and commits the terminal
 // cleanup state under one task-scope lock.
-func (c *Canonical) ReconcileRetirementCleanup(taskID domain.TaskID, generation Generation, terminal CleanupStatus, work func() error) error {
+func (c *Canonical) ReconcileRetirementCleanup(taskID domain.TaskID, generation Generation, terminal CleanupStatus, work func() error, after ...func() error) error {
 	if work == nil {
 		return fmt.Errorf("cleanup callback is nil")
 	}
@@ -146,7 +146,10 @@ func (c *Canonical) ReconcileRetirementCleanup(taskID domain.TaskID, generation 
 	if err != nil {
 		return err
 	}
-	if !exists || !doc.Aggregate.Current || doc.Aggregate.Phase != PhaseRetired || doc.Aggregate.CleanupClaim == nil || doc.Aggregate.CleanupClaim.Status != CleanupActive || doc.Aggregate.CleanupClaim.Generation != generation {
+	if !exists || !doc.Aggregate.Current || doc.Aggregate.Phase != PhaseRetired || doc.Aggregate.CleanupClaim == nil || doc.Aggregate.CleanupClaim.Generation != generation {
+		return conflictError(ErrConflict, "task %s generation %s cleanup claim is not active", taskID, generation)
+	}
+	if doc.Aggregate.CleanupClaim.Status != CleanupActive {
 		return conflictError(ErrConflict, "task %s generation %s cleanup claim is not active", taskID, generation)
 	}
 	claimID := doc.Aggregate.CleanupClaim.OperationID
@@ -174,7 +177,32 @@ func (c *Canonical) ReconcileRetirementCleanup(taskID domain.TaskID, generation 
 		next.Revision++
 		return next, nil
 	}, nil, &cleanupGate{operationID: claimID, generation: generation})
-	return err
+	if err != nil {
+		return err
+	}
+	if len(after) > 0 && after[0] != nil {
+		return after[0]()
+	}
+	return nil
+}
+
+func (c *Canonical) ReconcileCompletedCleanup(taskID domain.TaskID, generation Generation, work func() error) error {
+	if work == nil {
+		return fmt.Errorf("cleanup callback is nil")
+	}
+	lk, err := c.h.Lock(taskScope(taskID.Value()))
+	if err != nil {
+		return err
+	}
+	defer lk.Release()
+	doc, exists, err := c.readTaskDoc(taskID.Value())
+	if err != nil {
+		return err
+	}
+	if !exists || !doc.Aggregate.Current || doc.Aggregate.Phase != PhaseRetired || doc.Aggregate.CleanupClaim == nil || doc.Aggregate.CleanupClaim.Status != CleanupCompleted || doc.Aggregate.CleanupClaim.Generation != generation {
+		return conflictError(ErrConflict, "task %s generation %s cleanup is not completed", taskID, generation)
+	}
+	return work()
 }
 
 func (c *Canonical) ReclaimReleasedTaskArtifacts(taskID domain.TaskID, reclaim func() error) (bool, error) {

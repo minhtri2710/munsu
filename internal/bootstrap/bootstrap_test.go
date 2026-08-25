@@ -388,6 +388,85 @@ func TestGCOrphanDataDirs_AbortedCleanupKeepsBrief(t *testing.T) {
 	}
 }
 
+func TestGCOrphanDataDirs_ScaffoldedBriefKeepsTerminalTask(t *testing.T) {
+	homeDir := t.TempDir()
+	if _, err := mhome.Init(homeDir); err != nil {
+		t.Fatal(err)
+	}
+	h, err := mhome.Open(homeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth, err := taskauthority.NewCanonical(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := "terminal-brief"
+	tid, err := domain.NewTaskID(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := domain.NewProjectID("munsu")
+	if err != nil {
+		t.Fatal(err)
+	}
+	create := taskauthority.CanonicalCreateRequest{HomeID: auth.HomeID(), TaskID: tid, Owner: "owner", Description: "work", Kind: "scout", Project: project, ScoutScope: "scope", ScoutRuntimeBudgetSecs: 60, Reason: "test"}
+	if _, err := auth.Create(mustBootstrapOperation(t, "terminal-create", create), create); err != nil {
+		t.Fatal(err)
+	}
+	cur, err := auth.Get(tid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retire := taskauthority.CanonicalRetireRequest{HomeID: auth.HomeID(), TaskID: tid, Precondition: domain.Of(uint64(cur.Generation), uint64(cur.Revision)), Reason: "test"}
+	if _, err := auth.Retire(mustBootstrapOperation(t, "terminal-retire", retire), retire); err != nil {
+		t.Fatal(err)
+	}
+	cur, err = auth.Get(tid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	begin := taskauthority.CanonicalBeginCleanupRequest{HomeID: auth.HomeID(), TaskID: tid, Precondition: domain.Of(uint64(cur.Generation), uint64(cur.Revision)), ClaimOperationID: "terminal-retire", ClaimGeneration: cur.Generation, Reason: "test"}
+	if _, err := auth.BeginCleanup(mustBootstrapOperation(t, "terminal-begin", begin), begin); err != nil {
+		t.Fatal(err)
+	}
+	complete := taskauthority.CanonicalCompleteCleanupRequest{HomeID: auth.HomeID(), TaskID: tid, Precondition: domain.Of(uint64(cur.Generation), uint64(cur.Revision)), ClaimOperationID: "terminal-retire", ClaimGeneration: cur.Generation, Reason: "test"}
+	if _, err := auth.CompleteCleanup(mustBootstrapOperation(t, "terminal-complete", complete), complete); err != nil {
+		t.Fatal(err)
+	}
+	dataDir := filepath.Join(homeDir, "data", id)
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	setDirMtime(t, dataDir, 48*time.Hour)
+	if err := fleet.Scaffold(fleet.ScaffoldOptions{HomeDir: homeDir, ID: id, Repo: "munsu"}); err != nil {
+		t.Fatal(err)
+	}
+	cleaned := gcOrphanDataDirs(homeDir, func(id string, reclaim func() error) (bool, error) {
+		taskID, err := domain.NewTaskID(id)
+		if err != nil {
+			return false, err
+		}
+		return auth.ReclaimReleasedTaskArtifacts(taskID, reclaim)
+	})
+	if len(cleaned) != 0 {
+		t.Fatalf("cleaned = %v", cleaned)
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "brief.md")); err != nil {
+		t.Fatalf("brief removed: %v", err)
+	}
+}
+
+func mustBootstrapOperation(t *testing.T, value string, intent domain.Intent) domain.Operation {
+	t.Helper()
+	opID := mustBootstrapOperationID(t, value)
+	op, err := domain.NewOperation(opID, intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return op
+}
+
 func TestGCOrphanDataDirs_EmptyDirOlderThanGrace(t *testing.T) {
 	home := t.TempDir()
 	dataDir := filepath.Join(home, "data")

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
@@ -24,7 +25,9 @@ type ScaffoldOptions struct {
 	ScoutRuntimeBudgetSecs int64
 }
 
-// Scaffold writes a brief.md at $MUNSU_HOME/data/<id>/brief.md.
+// Scaffold writes a brief.md at $MUNSU_HOME/data/<id>/brief.md and refreshes
+// the directory timestamp so the retention grace period starts at the latest
+// brief write or cleanup-ownership release.
 func Scaffold(opts ScaffoldOptions) error {
 	if err := RecoverTaskHandoffs(opts.HomeDir); err != nil {
 		return err
@@ -37,7 +40,14 @@ func Scaffold(opts ScaffoldOptions) error {
 
 	content := buildBrief(opts)
 	path := filepath.Join(dir, "brief.md")
-	return os.WriteFile(path, []byte(content), 0644)
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		return err
+	}
+	now := time.Now()
+	if err := os.Chtimes(dir, now, now); err != nil {
+		return fmt.Errorf("refreshing brief directory: %w", err)
+	}
+	return nil
 }
 
 // buildBrief assembles the brief markdown template.
