@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
@@ -1262,10 +1263,239 @@ func TestRun_RetryAfterArchiveFailureKeepsMeta(t *testing.T) {
 	}
 }
 
+func TestRun_RetryAfterUnknownArchiveStillRefuses(t *testing.T) {
+	tmp := t.TempDir()
+	taskID := "retry-unknown-archive"
+	auth := canonicalMergeTestAuth(t, tmp, taskID)
+	if err := os.WriteFile(filepath.Join(tmp, "state", taskID+".meta"), []byte("kind=ship\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	dataDir := filepath.Join(tmp, "data", taskID)
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "report.md"), []byte("current"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "report-g1.md"), []byte("foreign"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		if _, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, &recordingTeardown{alive: true}, fakeRetirementJournals{}, auth); err == nil {
+			t.Fatal("expected cleanup refusal")
+		}
+	}
+	for name, want := range map[string]string{"report.md": "current", "report-g1.md": "foreign"} {
+		body, err := os.ReadFile(filepath.Join(dataDir, name))
+		if err != nil || string(body) != want {
+			t.Fatalf("%s = %q, %v", name, body, err)
+		}
+	}
+	claim, err := auth.Get(mustTaskID(t, taskID))
+	if err != nil || claim.CleanupClaim == nil || claim.CleanupClaim.Status != taskauthority.CleanupActive {
+		t.Fatalf("claim = %+v, err=%v, want active", claim.CleanupClaim, err)
+	}
+}
+
+func TestRun_RetryAfterStragglerReportArchivesRecovery(t *testing.T) {
+	tmp := t.TempDir()
+	taskID := "retry-straggler"
+	auth := canonicalMergeTestAuth(t, tmp, taskID)
+	stateDir := filepath.Join(tmp, "state")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, taskID+".meta"), []byte("kind=ship\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	dataDir := filepath.Join(tmp, "data", taskID)
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "report.md"), []byte("first"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	oldHook := afterReportArchive
+	firstArchive := true
+	afterReportArchive = func(home, id string, _ taskauthority.Generation) error {
+		if !firstArchive {
+			return nil
+		}
+		firstArchive = false
+		return os.WriteFile(filepath.Join(home, "data", id, "report.md"), []byte("straggler"), 0644)
+	}
+	t.Cleanup(func() { afterReportArchive = oldHook })
+	if _, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, &recordingTeardown{alive: true}, fakeRetirementJournals{}, auth); err == nil {
+		t.Fatal("expected pending cleanup")
+	}
+	if _, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, &recordingTeardown{alive: true}, fakeRetirementJournals{}, auth); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	claim, err := auth.Get(mustTaskID(t, taskID))
+	if err != nil || claim.CleanupClaim == nil || claim.CleanupClaim.Status != taskauthority.CleanupCompleted {
+		t.Fatalf("claim = %+v, err=%v, want completed", claim.CleanupClaim, err)
+	}
+	for name, want := range map[string]string{"report-g1.md": "first", "report-g1-2.md": "straggler"} {
+		body, err := os.ReadFile(filepath.Join(dataDir, name))
+		if err != nil || string(body) != want {
+			t.Fatalf("%s = %q, %v", name, body, err)
+		}
+	}
+}
+
+func TestRun_AbortAfterStragglerReportArchivesRecovery(t *testing.T) {
+	tmp := t.TempDir()
+	taskID := "abort-straggler"
+	auth := canonicalMergeTestAuth(t, tmp, taskID)
+	if err := os.WriteFile(filepath.Join(tmp, "state", taskID+".meta"), []byte("kind=ship\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	dataDir := filepath.Join(tmp, "data", taskID)
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "report.md"), []byte("first"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	oldHook := afterReportArchive
+	firstArchive := true
+	afterReportArchive = func(home, id string, _ taskauthority.Generation) error {
+		if !firstArchive {
+			return nil
+		}
+		firstArchive = false
+		return os.WriteFile(filepath.Join(home, "data", id, "report.md"), []byte("straggler"), 0644)
+	}
+	t.Cleanup(func() { afterReportArchive = oldHook })
+	if _, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, &recordingTeardown{alive: true}, fakeRetirementJournals{}, auth); err == nil {
+		t.Fatal("expected pending cleanup")
+	}
+	if err := AbortRetirementCleanup(auth, tmp, fakeTeardown{}, mustTaskID(t, taskID), 1); err != nil {
+		t.Fatalf("abort: %v", err)
+	}
+	for name, want := range map[string]string{"report-g1.md": "first", "report-g1-2.md": "straggler"} {
+		body, err := os.ReadFile(filepath.Join(dataDir, name))
+		if err != nil || string(body) != want {
+			t.Fatalf("%s = %q, %v", name, body, err)
+		}
+	}
+	claim, err := auth.Get(mustTaskID(t, taskID))
+	if err != nil || claim.CleanupClaim == nil || claim.CleanupClaim.Status != taskauthority.CleanupAborted {
+		t.Fatalf("claim = %+v, err=%v, want aborted", claim.CleanupClaim, err)
+	}
+}
+
+func TestRun_ProjectionFailureRetriesWhileRetired(t *testing.T) {
+	tmp := t.TempDir()
+	taskID := "projection-retry"
+	auth := canonicalMergeTestAuth(t, tmp, taskID)
+	if err := os.WriteFile(filepath.Join(tmp, "state", taskID+".meta"), []byte("kind=ship\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	statusPath := filepath.Join(tmp, "state", taskID+".status")
+	if err := os.Mkdir(statusPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(statusPath, "child"), []byte("blocked"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, &recordingTeardown{alive: true}, fakeRetirementJournals{}, auth)
+	var projectionErr *RetirementProjectionError
+	if !errors.As(err, &projectionErr) {
+		t.Fatalf("error = %T %v, want projection error", err, err)
+	}
+	claim, err := auth.Get(mustTaskID(t, taskID))
+	if err != nil || claim.CleanupClaim == nil || claim.CleanupClaim.Status != taskauthority.CleanupCompleted {
+		t.Fatalf("claim = %+v, err=%v, want completed", claim.CleanupClaim, err)
+	}
+	if err := os.Remove(filepath.Join(statusPath, "child")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(statusPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, &recordingTeardown{alive: true}, fakeRetirementJournals{}, auth); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+}
+
+func TestRun_ProjectionFailureThenReopenIsSuperseded(t *testing.T) {
+	tmp := t.TempDir()
+	taskID := "projection-superseded"
+	auth := canonicalMergeTestAuth(t, tmp, taskID)
+	metaPath := filepath.Join(tmp, "state", taskID+".meta")
+	statusPath := filepath.Join(tmp, "state", taskID+".status")
+	if err := os.WriteFile(metaPath, []byte("kind=ship\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(statusPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(statusPath, "child"), []byte("blocked"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, &recordingTeardown{alive: true}, fakeRetirementJournals{}, auth)
+	var projectionErr *RetirementProjectionError
+	if !errors.As(err, &projectionErr) {
+		t.Fatalf("error = %T %v, want projection error", err, err)
+	}
+	if err := os.Remove(filepath.Join(statusPath, "child")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(statusPath); err != nil {
+		t.Fatal(err)
+	}
+	agg, err := auth.Get(mustTaskID(t, taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopen := taskauthority.CanonicalReopenRequest{HomeID: auth.HomeID(), TaskID: mustTaskID(t, taskID), Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), Reason: "reopen"}
+	opID, err := domain.NewOperationID("reopen-projection-superseded")
+	if err != nil {
+		t.Fatal(err)
+	}
+	op, err := domain.NewOperation(opID, reopen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := auth.Reopen(op, reopen); err != nil {
+		t.Fatal(err)
+	}
+	metaV2 := []byte("generation=2 meta\n")
+	statusV2 := []byte("generation=2 status\n")
+	if err := os.WriteFile(metaPath, metaV2, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statusPath, statusV2, 0644); err != nil {
+		t.Fatal(err)
+	}
+	result, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, &recordingTeardown{alive: true}, fakeRetirementJournals{}, auth)
+	if err != nil {
+		t.Fatalf("superseded retry: %v", err)
+	}
+	found := false
+	for _, step := range result.Steps {
+		if strings.Contains(step, "superseded") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("steps = %v, want superseded outcome", result.Steps)
+	}
+	gotMeta, _ := os.ReadFile(metaPath)
+	gotStatus, _ := os.ReadFile(statusPath)
+	if string(gotMeta) != string(metaV2) || string(gotStatus) != string(statusV2) {
+		t.Fatalf("current projections changed: meta=%q status=%q", gotMeta, gotStatus)
+	}
+}
+
 func TestRun_AbortRefreshesBriefOnlyDirectory(t *testing.T) {
 	tmp := t.TempDir()
 	taskID := "abort-brief-only"
 	auth := canonicalMergeTestAuth(t, tmp, taskID)
+	if err := os.WriteFile(filepath.Join(tmp, "state", taskID+".meta"), []byte("kind=ship\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	dataDir := filepath.Join(tmp, "data", taskID)
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		t.Fatal(err)
@@ -1277,7 +1507,13 @@ func TestRun_AbortRefreshesBriefOnlyDirectory(t *testing.T) {
 	if err := os.Chtimes(dataDir, old, old); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, fakeTeardown{disposeErr: errors.New("blocked")}, fakeRetirementJournals{}, auth); err == nil {
+	if err := os.WriteFile(filepath.Join(tmp, "state", taskID+".status"), []byte("status"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	oldHook := afterReportArchive
+	afterReportArchive = func(string, string, taskauthority.Generation) error { return errors.New("blocked") }
+	t.Cleanup(func() { afterReportArchive = oldHook })
+	if _, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth); err == nil {
 		t.Fatal("expected pending cleanup")
 	}
 	if err := AbortRetirementCleanup(auth, tmp, fakeTeardown{}, mustTaskID(t, taskID), 1); err != nil {
