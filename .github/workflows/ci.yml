@@ -509,7 +509,8 @@ jobs:
       # the next person to merge.
       #
       # The cheap path is certified only when the newest completed sweep matches
-      # the newest completed main CI SHA. Every other uncertain case re-derives
+      # the newest completed main CI SHA and was created after that CI attempt
+      # started. Every other uncertain case re-derives
       # against this checkout; no run and an unparseable record are each red if
       # that checkout does not answer. Everything that decides anything is a pure
       # function of the record streams and is pinned by the fixtures

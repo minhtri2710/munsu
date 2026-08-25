@@ -99,9 +99,9 @@ against `main`. Both need the API, so both live in the `Flake ledger`
 workflow, which fires after a merge and never on a pull request.
 
 `.github/scripts/flake-sweep.sh applied` is the one rule that runs on the
-pull-request path *and* reads the API. Its cheap path passes only when the newest
-completed sweep verdict has the same SHA as the newest completed main CI run.
-Every other case, including no completed CI or sweep verdict, re-derives `check`
+pull-request path *and* reads the API. Its cheap path passes only when the newest completed sweep verdict has the same
+SHA as the newest completed main CI run and was created after that CI attempt
+started. Every other case, including no completed CI or sweep verdict, re-derives `check`
 and `verify-fixed` against *this* checkout, passing only if this checkout answers
 it. That fallback lets the fix merge without treating an uncertain remote record
 as clean. While main CI for a new commit is still running, no verdict about it

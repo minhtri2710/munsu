@@ -64,8 +64,9 @@ are applied by hand from the diff the `Flake ledger` workflow prints on its run
 summary; the deadline half (`.github/scripts/flake-ledger.sh`) reads nothing but
 the committed file. Applying that diff is enforced, not trusted: the last step of
 `invariants` runs `.github/scripts/flake-sweep.sh applied`, which synchronizes
-`main`'s newest completed sweep with its newest completed CI SHA and otherwise
-re-derives `check` and `verify-fixed` against the PR's own checkout — so a stale
+`main`'s newest completed sweep with its newest completed CI SHA and confirms the
+sweep started after that CI attempt began; otherwise it re-derives `check` and
+`verify-fixed` against the PR's own checkout — so a stale
 ledger reds every PR, and the PR that fixes it goes green. While main CI is still
 running, its flake has no observable verdict; the ledger appoints the next merger
 after it is observed. It is the only step in that job

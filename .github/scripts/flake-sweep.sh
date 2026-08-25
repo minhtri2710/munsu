@@ -734,8 +734,8 @@ verify_fixed() {
 # pins the whole command, red path included, without a network. The run records
 # there are the real ones from #541's own history.
 #
-#   sweep  <run_id>  <status>  <conclusion>  <sha>  <created_at>
-#   ci     <run_id>  <status>  <conclusion>  <sha>  <created_at>
+#   sweep  <run_id>  <status>  <conclusion>  <sha>  <created_at>  <started_at>
+#   ci     <run_id>  <status>  <conclusion>  <sha>  <created_at>  <started_at>
 #
 # Newest first. `ci` records let the cheap path certify that the sweep verdict
 # belongs to the newest completed main CI run rather than an older commit.
@@ -744,11 +744,11 @@ sweep_runs() {
 	local sweep ci
 	sweep="$(api "repos/$REPO/actions/workflows/$SWEEP_WORKFLOW/runs" \
 		-f branch=main -f "per_page=$SWEEP_RUNS_PAGE" \
-		--jq '.workflow_runs[] | ["sweep", (.id|tostring), .status, (.conclusion // "-"), .head_sha, .created_at] | @tsv')" ||
+		--jq '.workflow_runs[] | ["sweep", (.id|tostring), .status, (.conclusion // "-"), .head_sha, .created_at, .run_started_at] | @tsv')" ||
 		die "could not read $SWEEP_WORKFLOW runs from the Actions API"
 	ci="$(api "repos/$REPO/actions/workflows/ci.yml/runs" \
 		-f branch=main -f "per_page=$SWEEP_RUNS_PAGE" \
-		--jq '.workflow_runs[] | ["ci", (.id|tostring), .status, (.conclusion // "-"), .head_sha, .created_at] | @tsv')" ||
+		--jq '.workflow_runs[] | ["ci", (.id|tostring), .status, (.conclusion // "-"), .head_sha, .created_at, .run_started_at] | @tsv')" ||
 		die "could not read CI runs from the Actions API"
 	printf '%s\n%s\n' "$sweep" "$ci" | sed '/^$/d'
 }
@@ -771,17 +771,17 @@ sweep_runs_file() {
 
 applied() {
 	local runs line kind id status conclusion sha created extra
-	local v_id="" v_conc="" v_sha="" ci_id="" ci_sha=""
+	local v_id="" v_conc="" v_sha="" v_created="" ci_id="" ci_sha="" ci_started=""
 	local prev_sweep_created="" prev_ci_created=""
 	local reason=""
 	runs="$(sweep_runs_file)"
 
 	while IFS= read -r line || [ -n "$line" ]; do
 		[ -n "$line" ] || continue
-		IFS=$'\t' read -r kind id status conclusion sha created extra <<<"$line"
+		IFS=$'\t' read -r kind id status conclusion sha created started extra <<<"$line"
 		case "$kind" in sweep | ci) ;; *) die "unknown record kind \"$kind\" in the sweep run stream" ;; esac
-		[ -z "$extra" ] || die "$kind record has more fields than the six it is defined with: $line"
-		[ -n "$id" ] && [ -n "$status" ] && [ -n "$conclusion" ] && [ -n "$sha" ] && [ -n "$created" ] ||
+		[ -z "$extra" ] || die "$kind record has more fields than the seven it is defined with: $line"
+		[ -n "$id" ] && [ -n "$status" ] && [ -n "$conclusion" ] && [ -n "$sha" ] && [ -n "$created" ] && [ -n "$started" ] ||
 			die "$kind record is missing a field: $line"
 		if [ "$kind" = sweep ]; then
 			[ -z "$prev_sweep_created" ] || [ "$created" \< "$prev_sweep_created" ] || [ "$created" = "$prev_sweep_created" ] ||
@@ -795,9 +795,9 @@ applied() {
 		[ "$status" = completed ] || continue
 		case "$conclusion" in cancelled | skipped) continue ;; esac
 		if [ "$kind" = sweep ] && [ -z "$v_id" ]; then
-			v_id="$id"; v_conc="$conclusion"; v_sha="$sha"
+			v_id="$id"; v_conc="$conclusion"; v_sha="$sha"; v_created="$created"
 		elif [ "$kind" = ci ] && [ -z "$ci_id" ]; then
-			ci_id="$id"; ci_sha="$sha"
+			ci_id="$id"; ci_sha="$sha"; ci_started="$started"
 		fi
 	done <"$runs"
 
@@ -808,7 +808,12 @@ applied() {
 	if [ -z "$v_id" ]; then reason=no-runs
 	elif [ -z "$ci_id" ]; then reason=no-ci
 	elif [ "$v_conc" != success ]; then reason="$v_conc"
-	elif [ "$v_sha" != "$ci_sha" ]; then reason=stale-sweep
+	elif [ "$v_sha" != "$ci_sha" ] || [ "$v_created" \< "$ci_started" ] || [ "$v_created" = "$ci_started" ]; then
+		# The sweep must be created after the CI run started. GitHub reuses a run
+		# record for reruns, so its SHA and created_at stay unchanged while
+		# run_started_at moves forward; the ISO timestamps are fixed-width UTC and
+		# sort lexically, while run-list responses do not expose attempt numbers.
+		reason=stale-sweep
 	else
 		printf 'applied\t%s\t%s\tcheap path certified\n' "$v_id" "$v_sha"
 		echo "flake sweep: run $v_id certifies completed CI run $ci_id" >&2
@@ -1339,9 +1344,9 @@ selftest() {
 	# Mutation this answers: `continue` instead of `die` on an unparseable record.
 	local malformed
 	malformed="$(mktemp)"
-	for bad in $'run\t32153420356\tcompleted\tfailure\t16421f37\t2026-08-18T15:16:08Z' \
+	for bad in $'run\t32153420356\tcompleted\tfailure\t16421f37\t2026-08-18T15:16:08Z\t2026-08-18T15:14:17Z' \
 		$'sweep\t32153420356\tcompleted\tfailure\t16421f37' \
-		$'sweep\t32153420356\tcompleted\tfailure\t16421f37\t2026-08-18T15:16:08Z\textra'; do
+		$'sweep\t32153420356\tcompleted\tfailure\t16421f37\t2026-08-18T15:16:08Z\t2026-08-18T15:14:17Z\textra'; do
 		printf '%s\n' "$bad" >"$malformed"
 		if GITHUB_REPOSITORY=nonexistent/repo GH_TOKEN=invalid SWEEP_RUNS="$malformed" SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" applied >/dev/null 2>&1; then
 			echo "::error::applied scenario: a malformed sweep record was accepted: $bad" >&2
