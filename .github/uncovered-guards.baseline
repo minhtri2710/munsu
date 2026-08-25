@@ -76,9 +76,6 @@ internal/fleet/delivery_deliver.go	prevalidateDeliveryTask	1	deliveryOutcomeTerm
 internal/fleet/delivery_deliver.go	prevalidateDeliveryTask	1	hold.Matches(taskauthority.DispatchActionDelivery, agg.TaskID, agg.Definition.Project, agg.Generation.String(), agg.Definition.ParentTaskID)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_deliver.go	prevalidateDeliveryTask	1	strings.TrimSpace(agg.Definition.Owner) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_deliver.go	releaseDeliveryAuthorization	1	pinned != "" && pinned != digest	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/delivery_deliver.go	validateDeliverRequest	1	!p.Valid()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/delivery_deliver.go	validateDeliverRequest	1	len(req.Preconditions) == 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/delivery_deliver.go	validateDeliverRequest	1	seen[p]	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_deliver.go	verifyDeliveryCurrency	1	!equalDeliveryPreconditions(cur.Authorization.Preconditions, journal.Preconditions)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_deliver.go	verifyDeliveryCurrency	1	cur.Authorization == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_deliver.go	verifyDeliveryCurrency	1	cur.Authorization.Identity.HeadSHA != journal.Identity.HeadSHA	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
