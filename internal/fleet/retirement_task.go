@@ -644,6 +644,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 	// ABORTED means the operator stopped it (abort is never resumed; a retry
 	// reports the terminal state without releasing anything).
 	claimGen := committed.Generation
+	claimCompleted := false
 	curForClaim, err := authority.Get(taskID)
 	if err != nil {
 		return cleanupPending(fmt.Errorf("teardown %s: resolving current state for cleanup claim: %w", opts.ID, err))
@@ -651,8 +652,8 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 	if claim := curForClaim.CleanupClaim; claim != nil && claim.Generation == claimGen {
 		switch claim.Status {
 		case taskauthority.CleanupCompleted:
-			result.Steps = append(result.Steps, fmt.Sprintf("cleanup already completed for generation %s", claimGen))
-			return result, nil
+			claimCompleted = true
+			result.Steps = append(result.Steps, fmt.Sprintf("resuming projection cleanup for completed generation %s", claimGen))
 		case taskauthority.CleanupAborted:
 			result.Steps = append(result.Steps, fmt.Sprintf("cleanup was aborted for generation %s; abort is terminal and nothing is released", claimGen))
 			return result, nil
@@ -662,8 +663,10 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 	// (the claim is already active under the same stable retirement identity,
 	// so the assert is a no-op). An aborted or completed claim never reaches
 	// this point (handled above); BeginCleanup itself fails closed if it does.
-	if err := beginRetirementCleanup(authority, taskID, claimGen); err != nil {
-		return cleanupPending(fmt.Errorf("teardown %s: asserting cleanup claim: %w", opts.ID, err))
+	if !claimCompleted {
+		if err := beginRetirementCleanup(authority, taskID, claimGen); err != nil {
+			return cleanupPending(fmt.Errorf("teardown %s: asserting cleanup claim: %w", opts.ID, err))
+		}
 	}
 
 	// Resolve the authoritative cleanup identity from the committed canonical
@@ -884,37 +887,6 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		if cur.Generation != committed.Generation {
 			return cleanupPending(fmt.Errorf("teardown %s: task reopened to generation %s during cleanup; refusing to remove current projections", opts.ID, cur.Generation))
 		}
-		// 3. Remove task meta file
-		metaFilePath, err := taskMetaFilePath(opts.HomeDir, opts.ID)
-		if err == nil {
-			if err := os.Remove(metaFilePath); err != nil && !os.IsNotExist(err) {
-				result.Steps = append(result.Steps, fmt.Sprintf("remove meta: %v", err))
-			} else {
-				result.Steps = append(result.Steps, "task meta removed")
-			}
-		}
-
-		// 3.5. Terminal event: close any open keyed phases before removing the status file.
-		// This ensures the append-only log has proper terminal events for each
-		// open keyed phase (working/paused), preventing stale working/blocked status
-		// from appearing as the current reconciled state after
-		// Appending to both the status file (before cleanup) and the typed event log
-		// (for permanent durability) follows the current-state precedence pattern.
-		journalSteps, err := journals.FinalizeRetirementJournals(opts.HomeDir, opts.ID)
-		if err != nil {
-			return cleanupPending(fmt.Errorf("teardown %s: finalizing journals: %w", opts.ID, err))
-		}
-		result.Steps = append(result.Steps, journalSteps...)
-
-		// 4. Remove residual state artifacts
-		for _, p := range cleanupResidualArtifactPaths(opts.HomeDir, opts.ID, meta) {
-			if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
-				result.Steps = append(result.Steps, fmt.Sprintf("remove residual %s: %v", filepath.Base(p), err))
-			} else {
-				result.Steps = append(result.Steps, fmt.Sprintf("residual %s removed", filepath.Base(p)))
-			}
-		}
-
 		// 5. Clean up data directory
 		// One retention policy for every teardown: --force skips safety
 		// checks and is not a destructive action of its own, so it never
@@ -933,7 +905,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		dataDir := filepath.Join(opts.HomeDir, "data", opts.ID)
 		var archived string
 		var exists bool
-		archiveErr := authority.ReconcileRetirementCleanup(taskID, claimGen, taskauthority.CleanupCompleted, func() error {
+		work := func() error {
 			var err error
 			archived, exists, err = archiveRetiredReport(opts.HomeDir, opts.ID, claimGen)
 			if err == nil && exists {
@@ -941,7 +913,41 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 				err = os.Chtimes(dataDir, now, now)
 			}
 			return err
-		})
+		}
+		projectionCleanup := func() error {
+			metaFilePath, err := taskMetaFilePath(opts.HomeDir, opts.ID)
+			if err == nil {
+				if err := os.Remove(metaFilePath); err != nil && !os.IsNotExist(err) {
+					result.Steps = append(result.Steps, fmt.Sprintf("remove meta: %v", err))
+				} else {
+					result.Steps = append(result.Steps, "task meta removed")
+				}
+			}
+			journalSteps, err := journals.FinalizeRetirementJournals(opts.HomeDir, opts.ID)
+			if err != nil {
+				return fmt.Errorf("teardown %s: finalizing journals: %w", opts.ID, err)
+			}
+			result.Steps = append(result.Steps, journalSteps...)
+			for _, p := range cleanupResidualArtifactPaths(opts.HomeDir, opts.ID, meta) {
+				if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+					result.Steps = append(result.Steps, fmt.Sprintf("remove residual %s: %v", filepath.Base(p), err))
+				} else {
+					result.Steps = append(result.Steps, fmt.Sprintf("residual %s removed", filepath.Base(p)))
+				}
+			}
+			return nil
+		}
+		var archiveErr error
+		if claimCompleted {
+			archiveErr = authority.ReconcileCompletedCleanup(taskID, claimGen, func() error {
+				if err := work(); err != nil {
+					return err
+				}
+				return projectionCleanup()
+			})
+		} else {
+			archiveErr = authority.ReconcileRetirementCleanup(taskID, claimGen, taskauthority.CleanupCompleted, work, projectionCleanup)
+		}
 		if archiveErr != nil {
 			return cleanupPending(fmt.Errorf("teardown %s: archiving report for generation %s: %w", opts.ID, claimGen, archiveErr))
 		}
@@ -953,11 +959,8 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		}
 	}
 
-	// Reconcile the durable cleanup claim: every evidence-pinned release and
-	// projection removal succeeded, so the claim completes and the task
-	// becomes reopenable (BEO-16/P1a completion reconciliation). A crash or
-	// failure before this commit leaves the claim active and the next retry
-	// resumes cleanup idempotently.
+	// Reconciliation commits the terminal cleanup claim before projections are
+	// removed, and keeps the task fence through bounded projection cleanup.
 	result.Steps = append(result.Steps, fmt.Sprintf("cleanup claim completed for generation %s", claimGen))
 
 	return result, nil

@@ -1107,6 +1107,69 @@ func TestRun_ArchivingTheReportFailsClosed(t *testing.T) {
 	}
 }
 
+func TestRun_RetryAfterArchiveFailureKeepsMeta(t *testing.T) {
+	tmp := t.TempDir()
+	taskID := "retry-meta"
+	auth := canonicalMergeTestAuth(t, tmp, taskID)
+	stateDir := filepath.Join(tmp, "state")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	metaPath := filepath.Join(stateDir, taskID+".meta")
+	if err := os.WriteFile(metaPath, []byte("kind=scout\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	dataDir := filepath.Join(tmp, "data", taskID)
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "report.md"), []byte("findings"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "report-g1.md"), []byte("existing"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	first := &recordingTeardown{alive: true}
+	if _, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, first, fakeRetirementJournals{}, auth); err == nil {
+		t.Fatal("expected cleanup failure")
+	} else {
+		var pending *RetirementCleanupPendingError
+		if !errors.As(err, &pending) {
+			t.Fatalf("error = %T %v, want pending cleanup", err, err)
+		}
+	}
+	if _, err := os.Stat(metaPath); err != nil {
+		t.Fatalf("meta removed after failed cleanup: %v", err)
+	}
+	claim, err := auth.Get(mustTaskID(t, taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claim.CleanupClaim == nil || claim.CleanupClaim.Status != taskauthority.CleanupActive {
+		t.Fatalf("claim = %+v, want active", claim.CleanupClaim)
+	}
+	if err := os.Remove(filepath.Join(dataDir, "report-g1.md")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, first, fakeRetirementJournals{}, auth); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
+		t.Fatalf("meta remains after retry: %v", err)
+	}
+	claim, err = auth.Get(mustTaskID(t, taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claim.CleanupClaim == nil || claim.CleanupClaim.Status != taskauthority.CleanupCompleted {
+		t.Fatalf("claim after retry = %+v, want completed", claim.CleanupClaim)
+	}
+	body, err := os.ReadFile(filepath.Join(dataDir, "report-g1.md"))
+	if err != nil || string(body) != "findings" {
+		t.Fatalf("archived report = %q, err=%v", body, err)
+	}
+}
+
 func TestRun_AbortRefreshesBriefOnlyDirectory(t *testing.T) {
 	tmp := t.TempDir()
 	taskID := "abort-brief-only"

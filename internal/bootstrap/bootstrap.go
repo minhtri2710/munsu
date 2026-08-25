@@ -240,7 +240,8 @@ func gcOrphanDataDirs(homeDir string, reclaim ReclaimTaskDataDir) []string {
 
 		dirPath := filepath.Join(dataDir, id)
 
-		// Check directory mtime — skip if younger than grace period
+		// The directory timestamp is refreshed by brief writes and cleanup
+		// ownership release; skip until that grace period has elapsed.
 		info, err := os.Stat(dirPath)
 		if err != nil {
 			continue
