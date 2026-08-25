@@ -29,7 +29,7 @@ not part of.
 Recording them was the original scope of this ADR. It changed no code, no workflow, and
 neither register. Where a rule needed machinery that did not exist, the machinery was named
 as work and not built there. Section 2.5 is a later layer-1 amendment: it records the
-mechanical shrink-only baseline ratchet now enforced by the coverage lane.
+mechanical identity ratchet with disclosed growth now enforced by the coverage lane.
 
 ### What is actually in the tree, and what is not
 
@@ -121,7 +121,7 @@ The complete ratchet dispositions are:
 * Any mixed removal and addition fails, including equal-count replacement, even when the added
   rows carry valid acknowledgments. Growth disclosure is not a way to replace one identity
   with another; replacement must be split into a separately reviewable shrink and growth.
-* Missing or malformed current/base data fails closed.
+* Missing current or base data fails closed. Malformed current or base rows also fail closed: every data row must contain exactly five tab-separated columns, with no empty field and a positive decimal `nth` ordinal in the third column.
 
 This policy is necessary because a genuinely new guard class must be able to land with its
 waivers disclosed. Issue #614 is the pinned example: it derives **+311 refusal sites** and

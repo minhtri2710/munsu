@@ -496,8 +496,9 @@ jobs:
           pattern: coverage-*
           merge-multiple: true
           path: .github/coverage
-      # The shrink-only ratchet compares baseline identities with the exact
-      # target branch base. A stacked PR must not compare against origin/main:
+      # The identity ratchet admits disclosed pure growth but rejects mixed
+      # changes, and compares baseline identities with the exact target branch
+      # base. A stacked PR must not compare against origin/main:
       # that would mistake the parent stack's legitimate baseline entries for
       # growth in this child. Pushes use the predecessor commit instead.
       - name: Fetch the exact base for the guard ratchet
