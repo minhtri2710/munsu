@@ -168,9 +168,6 @@ internal/fleet/soldier_manifest.go	CheckLegacyBriefMigration	1	isTrackedByGit(wo
 internal/fleet/soldier_manifest.go	ReadManifest	1	!fi.Mode().IsRegular()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/soldier_manifest.go	ReadManifest	1	!isWithinWorktreeRoot(worktreePath, realPath)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/soldier_manifest.go	ReadManifest	1	fi.Mode()&os.ModeSymlink != 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/soldier_manifest.go	ValidateManifest	1	cleaned != entry.Path	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/soldier_manifest.go	ValidateManifest	1	manifest == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/soldier_manifest.go	ValidateManifest	1	strings.ContainsRune(entry.Path, 0)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/soldier_manifest.go	verifyManifestEntry	1	!fi.Mode().IsRegular()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/soldier_manifest.go	verifyManifestEntry	1	!isWithinWorktreeRoot(worktreeRoot, realPath)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/soldier_manifest.go	verifyManifestEntry	1	entry.Policy != DisposalPolicyCleanable	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
