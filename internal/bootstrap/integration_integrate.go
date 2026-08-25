@@ -717,9 +717,6 @@ func ValidateStrict(m Manifest, expectedHarness, expectedScope, expectedVersion 
 		if !filepath.IsAbs(tp) {
 			return fmt.Errorf("target path %q is not absolute", tp)
 		}
-		if _, err := filepath.Abs(tp); err != nil {
-			return fmt.Errorf("target path %q cannot be resolved: %w", tp, err)
-		}
 	}
 
 	// Reject unknown extra JSON fields by checking we can round-trip.
