@@ -22,7 +22,8 @@ locally. The `--owner` value must not be empty, whitespace-only, or `TBD`,
 and otherwise must match the anchored `BEO-<number>` format; name the real issue
 that will fix the flake. Applying it is enforced, not trusted:
 `.github/scripts/flake-sweep.sh applied` turns `invariants` red on every open PR
-while `main`'s last sweep is red and the PR's own ledger does not answer it. For
+unless the newest completed sweep certifies the newest completed main CI commit,
+or the PR's own ledger answers a case that cannot be cheaply certified. For
 twelve days in August 2026 nothing did -- run 32153420356 reported a race-lane
 flake with no row and no check a merge waited on could see it. It is not a
 sampler either: it never re-runs anything and
@@ -98,17 +99,15 @@ against `main`. Both need the API, so both live in the `Flake ledger`
 workflow, which fires after a merge and never on a pull request.
 
 `.github/scripts/flake-sweep.sh applied` is the one rule that runs on the
-pull-request path *and* reads the API. It starts with a much smaller question
-than those two: not "is this table right", which needs the whole sweep, but "did
-the last sweep that said it wasn't get acted on", which is one run's conclusion.
-Green there and it stops -- a run still going is not yet a verdict, a run the
-concurrency group cancelled never was, and no run to read at all is red rather
-than clean. Red there and it runs `check` and `verify-fixed` against *this*
-checkout, passing only if this checkout answers them. That second half is what
-lets the fix merge: a verdict about `main` is not a verdict about your branch,
-and without it the PR applying the diff would be refused by the rule it fixes.
-There is no exemption for "the PR edits this file" -- re-deriving means the only
-way past the refusal is the fix.
+pull-request path *and* reads the API. Its cheap path passes only when the newest
+completed sweep verdict has the same SHA as the newest completed main CI run.
+Every other case, including no completed CI or sweep verdict, re-derives `check`
+and `verify-fixed` against *this* checkout, passing only if this checkout answers
+it. That fallback lets the fix merge without treating an uncertain remote record
+as clean. While main CI for a new commit is still running, no verdict about it
+exists anywhere, so a merge can still land before its flake is observable; the
+ledger then appoints the next merger. There is no exemption for "the PR edits
+this file" -- re-deriving means the only way past the refusal is the fix.
 
 The rows between the markers below are machine-maintained. File new rows with
 `.github/scripts/flake-sweep.sh sync --owner <ISSUE_ID>` as described above. Edit

@@ -63,10 +63,12 @@ rerun overwrites a run's conclusion, so run-level history is not evidence) and
 are applied by hand from the diff the `Flake ledger` workflow prints on its run
 summary; the deadline half (`.github/scripts/flake-ledger.sh`) reads nothing but
 the committed file. Applying that diff is enforced, not trusted: the last step of
-`invariants` runs `.github/scripts/flake-sweep.sh applied`, which reads the
-conclusion of `main`'s newest completed sweep and, when it is red, re-derives
-`check` and `verify-fixed` against the PR's own checkout — so a stale ledger reds
-every PR, and the PR that fixes it goes green. It is the only step in that job
+`invariants` runs `.github/scripts/flake-sweep.sh applied`, which synchronizes
+`main`'s newest completed sweep with its newest completed CI SHA and otherwise
+re-derives `check` and `verify-fixed` against the PR's own checkout — so a stale
+ledger reds every PR, and the PR that fixes it goes green. While main CI is still
+running, its flake has no observable verdict; the ledger appoints the next merger
+after it is observed. It is the only step in that job
 that touches the network, and the argument for admitting it is beside it in
 `ci.yml`. Never close a row because the test has
 been green for a while — refusing that inference is why the file exists.

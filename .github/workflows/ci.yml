@@ -508,14 +508,18 @@ jobs:
       # has no owner until something appoints one, and the appointment is always
       # the next person to merge.
       #
-      # Fail-closed in both directions this can be uncertain: no run to read and
-      # a record it cannot parse are each red. Everything that decides anything
-      # is a pure function of the record streams and is pinned by the fixtures
+      # The cheap path is certified only when the newest completed sweep matches
+      # the newest completed main CI SHA. Every other uncertain case re-derives
+      # against this checkout; no run and an unparseable record are each red if
+      # that checkout does not answer. Everything that decides anything is a pure
+      # function of the record streams and is pinned by the fixtures
       # the selftest above runs, which are the real runs from #541's history.
       #
       # Last in the job on purpose, so every rule that can answer from the
       # checkout has already reported before the one that can fail for a reason
-      # outside this repository.
+      # outside this repository. While the newest main CI run is still running,
+      # no verdict about its flake exists yet; the ledger appoints the next
+      # merger after that flake becomes observable.
       - name: Main's last flake sweep must have been acted on
         env:
           GH_TOKEN: ${{ github.token }}
