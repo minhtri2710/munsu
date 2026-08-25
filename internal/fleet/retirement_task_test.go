@@ -982,4 +982,7 @@ func TestRun_ArchivingTheReportFailsClosed(t *testing.T) {
 	if _, err := os.Stat(reportPath); err != nil {
 		t.Fatalf("a refused archive must leave the report where it was: %v", err)
 	}
+	if _, err := os.Lstat(filepath.Join(dataDir, "report-g1.md")); !os.IsNotExist(err) {
+		t.Fatalf("a refused archive must not leave a reservation, lstat err = %v", err)
+	}
 }

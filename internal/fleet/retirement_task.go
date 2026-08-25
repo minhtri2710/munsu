@@ -936,14 +936,19 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 			archivedPath := filepath.Join(dataDir, archived)
 			_, reportErr := os.Lstat(reportPath)
 			if reportErr == nil {
-				_, archiveErr := os.Lstat(archivedPath)
-				switch {
-				case archiveErr == nil:
-					return cleanupPending(fmt.Errorf("teardown %s: report paths %s and %s conflict for generation %s", opts.ID, reportPath, archivedPath, claimGen))
-				case !os.IsNotExist(archiveErr):
-					return cleanupPending(fmt.Errorf("teardown %s: checking archive path %s for generation %s: %w", opts.ID, archivedPath, claimGen, archiveErr))
+				reservation, reserveErr := os.OpenFile(archivedPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+				if reserveErr != nil {
+					if os.IsExist(reserveErr) {
+						return cleanupPending(fmt.Errorf("teardown %s: report paths %s and %s conflict for generation %s", opts.ID, reportPath, archivedPath, claimGen))
+					}
+					return cleanupPending(fmt.Errorf("teardown %s: reserving archive path %s for generation %s: %w", opts.ID, archivedPath, claimGen, reserveErr))
+				}
+				if err := reservation.Close(); err != nil {
+					_ = os.Remove(archivedPath)
+					return cleanupPending(fmt.Errorf("teardown %s: closing archive reservation %s for generation %s: %w", opts.ID, archivedPath, claimGen, err))
 				}
 				if err := os.Rename(reportPath, archivedPath); err != nil {
+					_ = os.Remove(archivedPath)
 					return cleanupPending(fmt.Errorf("teardown %s: archiving report for generation %s: %w", opts.ID, claimGen, err))
 				}
 				result.Steps = append(result.Steps, fmt.Sprintf("report.md archived as %s", archived))
