@@ -839,6 +839,31 @@ func TestGitlabDeliveryProvider_MergedObservationPreservesEvidence(t *testing.T)
 	}
 }
 
+func TestGitlabDeliveryProvider_MergedObservationRequiresMergeCommitSHA(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		json string
+	}{
+		{name: "empty", json: `""`},
+		{name: "null", json: "null"},
+		{name: "omitted", json: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mergeField := ""
+			if tc.json != "" {
+				mergeField = `,"merge_commit_sha":` + tc.json
+			}
+			client := &glabClient{runner: &fakeGlabRunner{runFn: func(args ...string) ([]byte, error) {
+				return []byte(fmt.Sprintf(`{"sha":"head123","target_branch":"main","state":"merged"%s}`, mergeField)), nil
+			}}}
+			provider := &gitlabDeliveryProvider{client: client}
+			if _, err := provider.Observe(domain.DeliveryIdentity{URL: "https://gitlab.com/owner/project/-/merge_requests/7"}); err == nil {
+				t.Fatal("Observe accepted merged MR without merge commit evidence")
+			}
+		})
+	}
+}
+
 func TestGitlabDeliveryProvider_RejectsPipelineHeadMismatch(t *testing.T) {
 	for _, pipeline := range []string{"", "other"} {
 		t.Run(pipeline, func(t *testing.T) {

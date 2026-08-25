@@ -194,6 +194,7 @@ func TestClassifyGitHubRESTObservation(t *testing.T) {
 		{"missing merged evidence", "state: open\nheadSha: abc\nbaseRef: main\n"},
 		{"invalid merged evidence", "state: open\nheadSha: abc\nbaseRef: main\nmerged: maybe\n"},
 		{"missing merged sha", "state: closed\nheadSha: abc\nbaseRef: main\nmerged: true\n"},
+		{"null merged sha", "state: closed\nheadSha: abc\nbaseRef: main\nmerged: true\nmergedSha: null\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := classifyGitHubRESTObservation([]byte(tc.data)); err == nil {
@@ -222,14 +223,20 @@ func TestGhAxiClient_ObservePR_UsesRESTContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := string(args)
-	for _, want := range []string{"api\n", "/repos/owner/repo/pulls/7\n", "--jq\n", "{state: .state, headSha: .head.sha, baseRef: .base.ref, merged: .merged, mergedSha: .merge_commit_sha}\n"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("gh-axi args %q missing %q", got, want)
-		}
+	got := strings.Split(strings.TrimSuffix(string(args), "\n"), "\n")
+	want := []string{
+		"api",
+		"/repos/owner/repo/pulls/7",
+		"--jq",
+		"{state: .state, headSha: .head.sha, baseRef: .base.ref, merged: .merged, mergedSha: .merge_commit_sha}",
 	}
-	if strings.Contains(got, "graphql") || strings.Contains(got, "-f\n") || strings.Contains(got, "-F\n") {
-		t.Fatalf("unsupported GraphQL invocation used: %q", got)
+	if len(got) != len(want) {
+		t.Fatalf("gh-axi args = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("gh-axi arg %d = %q, want %q; args = %#v", i, got[i], want[i], got)
+		}
 	}
 }
 

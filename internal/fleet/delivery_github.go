@@ -190,11 +190,12 @@ func classifyGitHubRESTObservation(data []byte) (DeliveryProviderObservation, er
 		Mergeability: DeliveryMergeabilityUnknown,
 	}
 	if merged {
-		if values["mergedSha"] == "" {
+		mergedSHA := strings.TrimSpace(values["mergedSha"])
+		if mergedSHA == "" || strings.EqualFold(mergedSHA, "null") {
 			return DeliveryProviderObservation{}, fmt.Errorf("gh-axi api: merged pull request is missing merge commit evidence")
 		}
 		obs.State = "MERGED"
-		obs.MergedSHA = values["mergedSha"]
+		obs.MergedSHA = mergedSHA
 	}
 	return obs, nil
 }
