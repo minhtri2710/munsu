@@ -25,7 +25,7 @@ type GitHubClient interface {
 	// MergePR merges a pull request via gh-axi. It is the irreversible
 	// provider mutation of the delivery execution path, called at most once
 	// per delivery journal.
-	MergePR(owner, repo string, number int, method string) error
+	MergePR(owner, repo string, number int, method string, expectedHeadSHA string) error
 
 	// ObservePR reads the current provider state of a pull request via
 	// gh-axi, returning the exact observation (OPEN/MERGED/CLOSED plus head
@@ -107,11 +107,14 @@ type githubDeliveryProvider struct {
 var _ DeliveryProvider = (*githubDeliveryProvider)(nil)
 
 // Merge executes the irreversible provider merge under the exact identity.
-func (p *githubDeliveryProvider) Merge(ident domain.DeliveryIdentity, method string) error {
+func (p *githubDeliveryProvider) Merge(ident domain.DeliveryIdentity, request DeliveryMergeRequest) error {
 	if p.client == nil {
 		return fmt.Errorf("GitHub delivery capability is not composed")
 	}
-	return p.client.MergePR(ident.Owner, ident.Repo, ident.Number, method)
+	if request.HeadSHA == "" || request.HeadSHA != ident.HeadSHA {
+		return fmt.Errorf("GitHub merge expected head does not match the delivery identity")
+	}
+	return p.client.MergePR(ident.Owner, ident.Repo, ident.Number, request.Method, request.HeadSHA)
 }
 
 // Observe reads the current provider state under the exact identity.
@@ -123,16 +126,20 @@ func (p *githubDeliveryProvider) Observe(ident domain.DeliveryIdentity) (Deliver
 }
 
 // MergePR merges a PR via gh-axi CLI. Stdout/stderr pass through to the caller.
-func (c *ghAxiClient) MergePR(owner, repo string, number int, method string) error {
+func (c *ghAxiClient) MergePR(owner, repo string, number int, method string, expectedHeadSHA string) error {
 	ghAxiPath, err := ghAxiLookPath()
 	if err != nil {
 		return fmt.Errorf("gh-axi not found on PATH: %w", err)
+	}
+	if expectedHeadSHA == "" {
+		return fmt.Errorf("GitHub merge requires an expected head SHA")
 	}
 	args := []string{
 		"pr", "merge",
 		fmt.Sprintf("%d", number),
 		"--repo", fmt.Sprintf("%s/%s", owner, repo),
 		fmt.Sprintf("--%s", method),
+		"--match-head-commit", expectedHeadSHA,
 	}
 	cmd := exec.Command(ghAxiPath, args...)
 	return cmd.Run()

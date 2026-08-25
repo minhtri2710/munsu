@@ -139,7 +139,7 @@ func TestNormalizeGitHubReviewState(t *testing.T) {
 
 func TestGitLabProviderSnapshotUsesNestedPipelineAndApprovalEvidence(t *testing.T) {
 	old := defaultGlabRunner
-	defaultGlabRunner = mergeabilityRunner(`{"state":"opened","sha":"abc123","source_branch":"feature","target_branch":"main","detailed_merge_status":"mergeable","head_pipeline":{"status":"success"}}`)
+	defaultGlabRunner = mergeabilityRunner(`{"state":"opened","sha":"abc123","source_branch":"feature","target_branch":"main","detailed_merge_status":"mergeable","head_pipeline":{"status":"success","sha":"abc123"}}`)
 	t.Cleanup(func() { defaultGlabRunner = old })
 
 	snapshot, err := fetchGitLabProviderSnapshot("https://gitlab.com/owner/project/-/merge_requests/42")
@@ -156,8 +156,18 @@ func TestGitLabProviderSnapshotRefusesMissingMergeabilityEvidence(t *testing.T) 
 	defaultGlabRunner = mergeabilityRunner(`{"state":"opened","sha":"abc123","source_branch":"feature","target_branch":"main"}`)
 	t.Cleanup(func() { defaultGlabRunner = old })
 
-	if _, err := fetchGitLabProviderSnapshot("https://gitlab.com/owner/project/-/merge_requests/42"); err == nil || !strings.Contains(err.Error(), "pipeline status") {
+	if _, err := fetchGitLabProviderSnapshot("https://gitlab.com/owner/project/-/merge_requests/42"); err == nil || !strings.Contains(err.Error(), "pipeline evidence") {
 		t.Fatalf("fetchGitLabProviderSnapshot error = %v, want missing-evidence refusal", err)
+	}
+}
+
+func TestGitLabProviderSnapshotRefusesStalePipeline(t *testing.T) {
+	old := defaultGlabRunner
+	defaultGlabRunner = mergeabilityRunner(`{"state":"opened","sha":"abc123","source_branch":"feature","target_branch":"main","detailed_merge_status":"mergeable","head_pipeline":{"status":"success","sha":"old456"}}`)
+	t.Cleanup(func() { defaultGlabRunner = old })
+
+	if _, err := fetchGitLabProviderSnapshot("https://gitlab.com/owner/project/-/merge_requests/42"); err == nil || !strings.Contains(err.Error(), "pipeline evidence") {
+		t.Fatalf("fetchGitLabProviderSnapshot error = %v, want stale-pipeline refusal", err)
 	}
 }
 

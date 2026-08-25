@@ -225,13 +225,10 @@ func fetchGitLabProviderSnapshot(mrURL string) (*ProviderSnapshot, error) {
 	}
 
 	var raw struct {
-		State        string `json:"state"`
-		SHA          string `json:"sha"`
-		SourceBranch string `json:"source_branch"`
-		TargetBranch string `json:"target_branch"`
-		Pipeline     *struct {
-			Status string `json:"status"`
-		} `json:"head_pipeline"`
+		State          string `json:"state"`
+		SHA            string `json:"sha"`
+		SourceBranch   string `json:"source_branch"`
+		TargetBranch   string `json:"target_branch"`
 		MergeCommitSHA string `json:"merge_commit_sha"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -256,10 +253,11 @@ func fetchGitLabProviderSnapshot(mrURL string) (*ProviderSnapshot, error) {
 		State:      normalizedState,
 		ObservedAt: time.Now().UTC().Format(time.RFC3339),
 	}
-	if raw.Pipeline == nil || raw.Pipeline.Status == "" {
-		return nil, fmt.Errorf("GitLab MR did not provide pipeline status; refusing to infer mergeability")
+	pipeline, pipelineOK := parseGLPipeline(data)
+	if !pipelineOK || pipeline.SHA != raw.SHA {
+		return nil, fmt.Errorf("GitLab MR did not provide pipeline evidence for the current head; refusing to infer mergeability")
 	}
-	snap.Checks = []domain.CheckRun{{Status: mapCheckStatus(raw.Pipeline.Status)}}
+	snap.Checks = []domain.CheckRun{{Status: mapCheckStatus(pipeline.Status)}}
 	approved, err := client.ApprovalState(glURL.Host, glURL.Owner, glURL.Project, glURL.IID)
 	if err != nil {
 		return nil, err

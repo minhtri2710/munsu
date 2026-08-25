@@ -72,7 +72,7 @@ func fakeGitLabRunner(mrJSON string, approvalJSON string) *fakeGlabRunner {
 }
 
 func readyRunner() *fakeGlabRunner {
-	return fakeGitLabRunner(fmt.Sprintf(`{"sha":"%s","source_branch":"feature/test","target_branch":"main","state":"opened","detailed_merge_status":"mergeable","head_pipeline":{"status":"success"}}`, sampleSHA), `{"approved":true,"approved_by":[{"user":{"username":"reviewer"}}]}`)
+	return fakeGitLabRunner(fmt.Sprintf(`{"sha":"%s","source_branch":"feature/test","target_branch":"main","state":"opened","detailed_merge_status":"mergeable","head_pipeline":{"status":"success","sha":"%s"}}`, sampleSHA, sampleSHA), `{"approved":true,"approved_by":[{"user":{"username":"reviewer"}}]}`)
 }
 
 func mergedRunner() *fakeGlabRunner {
@@ -817,10 +817,10 @@ func TestMergeMR_SquashExactArgs(t *testing.T) {
 			return []byte("merged"), nil
 		},
 	}}
-	if err := client.MergeMR("gitlab.com", "owner", "project", 7, "squash"); err != nil {
+	if err := client.MergeMR("gitlab.com", "owner", "project", 7, "squash", sampleSHA); err != nil {
 		t.Fatalf("MergeMR: %v", err)
 	}
-	want := []string{"mr", "merge", "owner/project!7", "--squash"}
+	want := []string{"mr", "merge", "owner/project!7", "--sha", sampleSHA, "--squash"}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Fatalf("args = %v, want %v", got, want)
 	}
@@ -834,10 +834,10 @@ func TestMergeMR_SelfHostedExactArgs(t *testing.T) {
 			return []byte("merged"), nil
 		},
 	}}
-	if err := client.MergeMR("git.example.com", "owner", "project", 7, "rebase"); err != nil {
+	if err := client.MergeMR("git.example.com", "owner", "project", 7, "rebase", sampleSHA); err != nil {
 		t.Fatalf("MergeMR: %v", err)
 	}
-	want := []string{"mr", "merge", "owner/project!7", "--hostname", "git.example.com", "--rebase"}
+	want := []string{"mr", "merge", "owner/project!7", "--sha", sampleSHA, "--hostname", "git.example.com", "--rebase"}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Fatalf("args = %v, want %v", got, want)
 	}
@@ -851,10 +851,10 @@ func TestMergeMR_MergeMethodDefaultsToMergeCommit(t *testing.T) {
 			return []byte("merged"), nil
 		},
 	}}
-	if err := client.MergeMR("gitlab.com", "owner", "project", 7, "merge"); err != nil {
+	if err := client.MergeMR("gitlab.com", "owner", "project", 7, "merge", sampleSHA); err != nil {
 		t.Fatalf("MergeMR: %v", err)
 	}
-	want := []string{"mr", "merge", "owner/project!7"}
+	want := []string{"mr", "merge", "owner/project!7", "--sha", sampleSHA}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Fatalf("args = %v, want %v", got, want)
 	}
@@ -862,8 +862,40 @@ func TestMergeMR_MergeMethodDefaultsToMergeCommit(t *testing.T) {
 
 func TestMergeMR_UnsupportedMethodFailsClosed(t *testing.T) {
 	client := &glabClient{runner: &fakeGlabRunner{}}
-	if err := client.MergeMR("gitlab.com", "owner", "project", 7, "explode"); err == nil {
+	if err := client.MergeMR("gitlab.com", "owner", "project", 7, "explode", sampleSHA); err == nil {
 		t.Fatal("expected error for unsupported merge method")
+	}
+}
+
+func TestMergeMR_RequiresExpectedHead(t *testing.T) {
+	called := false
+	client := &glabClient{runner: &fakeGlabRunner{runFn: func(args ...string) ([]byte, error) {
+		called = true
+		return nil, nil
+	}}}
+	if err := client.MergeMR("gitlab.com", "owner", "project", 7, "merge", ""); err == nil {
+		t.Fatal("expected missing-head refusal")
+	}
+	if called {
+		t.Fatal("runner called after missing-head refusal")
+	}
+}
+
+func TestGitlabDeliveryProvider_RejectsPipelineHeadMismatch(t *testing.T) {
+	for _, pipeline := range []string{"", "other"} {
+		t.Run(pipeline, func(t *testing.T) {
+			client := &glabClient{runner: &fakeGlabRunner{runFn: func(args ...string) ([]byte, error) {
+				if len(args) >= 2 && args[0] == "api" && strings.HasSuffix(args[1], "/approvals") {
+					return []byte(`{"approved":true,"approved_by":[{"user":{}}]}`), nil
+				}
+				return []byte(fmt.Sprintf(`{"sha":"%s","source_branch":"feature","target_branch":"main","state":"opened","detailed_merge_status":"mergeable","head_pipeline":{"status":"success","sha":"%s"}}`, sampleSHA, pipeline)), nil
+			}}}
+			provider := &gitlabDeliveryProvider{client: client}
+			ident := domain.DeliveryIdentity{URL: "https://gitlab.com/owner/project/-/merge_requests/7"}
+			if _, err := provider.Observe(ident); err == nil {
+				t.Fatal("expected stale or missing pipeline refusal")
+			}
+		})
 	}
 }
 
@@ -877,7 +909,7 @@ func TestGitlabDeliveryProvider_UsesTypedCapabilityOnly(t *testing.T) {
 				return []byte(`{"approved":true,"approved_by":[{"user":{"username":"reviewer"}}]}`), nil
 			}
 			if len(args) >= 2 && args[0] == "api" {
-				return []byte(`{"sha":"abc123def456abc123def456abc123def456abc1","source_branch":"feature","target_branch":"main","state":"opened","detailed_merge_status":"mergeable","head_pipeline":{"status":"success"}}`), nil
+				return []byte(`{"sha":"abc123def456abc123def456abc123def456abc1","source_branch":"feature","target_branch":"main","state":"opened","detailed_merge_status":"mergeable","head_pipeline":{"status":"success","sha":"abc123def456abc123def456abc123def456abc1"}}`), nil
 			}
 			return []byte("merged"), nil
 		},
@@ -900,7 +932,7 @@ func TestGitlabDeliveryProvider_UsesTypedCapabilityOnly(t *testing.T) {
 	if obs.BaseRef != "main" {
 		t.Fatalf("observation base ref = %q, want the MR target_branch %q", obs.BaseRef, "main")
 	}
-	if err := provider.Merge(ident, "squash"); err != nil {
+	if err := provider.Merge(ident, DeliveryMergeRequest{Method: "squash", HeadSHA: ident.HeadSHA}); err != nil {
 		t.Fatalf("Merge: %v", err)
 	}
 }
