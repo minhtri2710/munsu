@@ -136,8 +136,8 @@ func installTerminalGhAxi(t *testing.T, state string, merged bool) string {
 	script := fmt.Sprintf(`#!/bin/sh
 case "$1" in
 api)
-  if [ "$2" != "graphql" ]; then exit 1; fi
-  printf '{"data":{"repository":{"pullRequest":{"state":"%s","headRefOid":"%s","baseRefName":"main","merged":%t,"mergeCommit":{"oid":"merge123"}}}}}\n'
+  if [ "$2" != "/repos/acme/widgets/pulls/42" ]; then exit 1; fi
+  printf 'state: %s\nheadSha: %s\nbaseRef: main\nmerged: %t\nmergedSha: merge123\n'
   ;;
 pr)
   touch %q
@@ -145,7 +145,7 @@ pr)
   ;;
 *) exit 1 ;;
 esac
-`, state, deliveryGuardHead, merged, marker)
+`, strings.ToLower(state), deliveryGuardHead, merged, marker)
 	path := filepath.Join(dir, "gh-axi")
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
@@ -161,10 +161,10 @@ func installStuckOpenGhAxi(t *testing.T) {
 	script := fmt.Sprintf(`#!/bin/sh
 case "$1" in
 api)
-  if [ "$2" != "graphql" ]; then
+  if [ "$2" != "/repos/acme/widgets/pulls/42" ]; then
     exit 1
   fi
-  printf '{"data":{"repository":{"pullRequest":{"state":"OPEN","headRefOid":"%s","baseRefName":"main","merged":false,"reviewDecision":"APPROVED","mergeable":"MERGEABLE","commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"SUCCESS"}}}]}}}}}\n'
+  printf 'state: open\nheadSha: %s\nbaseRef: main\nmerged: false\n'
   ;;
 pr)
   exit 0
@@ -259,8 +259,8 @@ func TestPRMergeRefusesUnenforceableOpenDelivery(t *testing.T) {
 	if err == nil {
 		t.Fatal("pr-merge returned nil for a delivery that did not complete")
 	}
-	if !strings.Contains(err.Error(), "cannot atomically enforce") {
-		t.Fatalf("error = %v, want atomic-constraint refusal", err)
+	if !strings.Contains(err.Error(), "mergeability evidence is missing or unknown") {
+		t.Fatalf("error = %v, want fail-closed mergeability refusal", err)
 	}
 }
 
@@ -277,7 +277,7 @@ func TestPRMergeTeardownRefusesUnenforceableOpenDelivery(t *testing.T) {
 	if err == nil {
 		t.Fatal("pr-merge --teardown returned nil for a merge-and-retire that did not complete")
 	}
-	if !strings.Contains(err.Error(), "cannot atomically enforce") {
-		t.Fatalf("error = %v, want atomic-constraint refusal", err)
+	if !strings.Contains(err.Error(), "mergeability evidence is missing or unknown") {
+		t.Fatalf("error = %v, want fail-closed mergeability refusal", err)
 	}
 }
