@@ -461,6 +461,72 @@ func TestRun_ForceScoutWithoutReport(t *testing.T) {
 	}
 }
 
+func TestRun_ForcePreservesReport(t *testing.T) {
+	tmp := t.TempDir()
+	os.Setenv("MUNSU_HOME", tmp)
+	defer os.Unsetenv("MUNSU_HOME")
+
+	auth := canonicalMergeTestAuth(t, tmp, "scout-report")
+
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+	os.WriteFile(filepath.Join(stateDir, "scout-report.meta"), []byte("kind=scout\nbackend=tmux\nwindow=@1\n"), 0644)
+
+	dataDir := filepath.Join(tmp, "data", "scout-report")
+	os.MkdirAll(dataDir, 0755)
+	reportPath := filepath.Join(dataDir, "report.md")
+	os.WriteFile(reportPath, []byte("# findings\npartial work worth reading\n"), 0644)
+
+	result, err := RetireTask(Options{HomeDir: tmp, ID: "scout-report", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth)
+	if err != nil {
+		t.Fatalf("forced teardown: %v", err)
+	}
+	if _, err := os.Stat(reportPath); err != nil {
+		t.Fatalf("--force must not delete report.md: %v", err)
+	}
+	if !hasStep(result.Steps, "data dir kept (report.md present)") {
+		t.Fatalf("steps = %v, want the report-kept step", result.Steps)
+	}
+
+	// The retirement itself committed, so the report survives a teardown that
+	// went all the way through cleanup — not merely one that stopped early.
+	if !hasStep(result.Steps, "cleanup claim completed for generation 1") {
+		t.Fatalf("steps = %v, want the cleanup claim to have completed", result.Steps)
+	}
+}
+
+func TestRun_ForceStillReclaimsStubBriefOrphan(t *testing.T) {
+	tmp := t.TempDir()
+	os.Setenv("MUNSU_HOME", tmp)
+	defer os.Unsetenv("MUNSU_HOME")
+
+	auth := canonicalMergeTestAuth(t, tmp, "stub-brief")
+
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+	os.WriteFile(filepath.Join(stateDir, "stub-brief.meta"), []byte("kind=scout\nbackend=tmux\nwindow=@1\n"), 0644)
+
+	dataDir := filepath.Join(tmp, "data", "stub-brief")
+	os.MkdirAll(dataDir, 0755)
+	os.WriteFile(filepath.Join(dataDir, "brief.md"), []byte("stub\n"), 0644)
+
+	if _, err := RetireTask(Options{HomeDir: tmp, ID: "stub-brief", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth); err != nil {
+		t.Fatalf("forced teardown: %v", err)
+	}
+	if _, err := os.Stat(dataDir); !os.IsNotExist(err) {
+		t.Fatalf("stub-brief orphan data dir must still be reclaimed, stat err = %v", err)
+	}
+}
+
+func hasStep(steps []string, want string) bool {
+	for _, s := range steps {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestRun_RemovesResidualArtifacts(t *testing.T) {
 	tmp := t.TempDir()
 	os.Setenv("MUNSU_HOME", tmp)

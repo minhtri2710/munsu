@@ -54,4 +54,6 @@ If a soldier is unresponsive, do not re-implement recovery logic here. Run `muns
 2. `munsu send <id> "<instruction>"` — steer.
 3. Interrupt (harness-specific: Ctrl+C via tmux/herdr send-keys).
 4. `munsu teardown <id> --force` then `munsu spawn <id> <project>` — relaunch.
+   `--force` skips the safety checks only; a `report.md` the stuck soldier
+   already wrote survives the teardown, so read it before re-spawning.
 5. Append `failed:` only after all above exhausted.

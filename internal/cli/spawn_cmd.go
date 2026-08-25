@@ -399,8 +399,10 @@ holds before teardown proceeds. Use --force to skip all safety checks.
 
 With --force:
   - Skips report.md and decision-hold checks
-  - Removes data/<id>/ including report.md and fleet.md
-  - Use when the scout completed without a formal report or for cleanup
+  - Use when the scout completed without a formal report
+  - data/<id>/ is treated exactly as it is without --force: a report.md, or a
+    brief.md large enough not to be a stub, is preserved for reading after
+    teardown. --force never deletes more than a plain teardown does.
 
 --generation binds this invocation to the exact generation it intends to
 retire (captured when the teardown request was issued). A delayed retry that
