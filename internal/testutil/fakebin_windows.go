@@ -14,6 +14,29 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// installWindowsFake makes the fake at path resolvable and launchable on
+// windows by putting a native launcher beside it.
+//
+// exec.LookPath on windows only considers names carrying a PATHEXT extension
+// (.COM;.EXE;.BAT;.CMD;...), so a bare `#!/bin/sh` file named `herdr` is
+// invisible to it no matter what its mode bits say: production reports the
+// binary as absent and the test measures a lookup failure rather than the
+// contract it meant to exercise (#549 group 1). LookPath appends each PATHEXT
+// entry to the whole name, so `herdr.exe` answers a lookup for `herdr` and the
+// shell script beside it stays the single source of the fake's behaviour on
+// both platforms.
+//
+// The launcher is a COPY of the running test binary, never a hard link to it.
+// A hard link is a second name for the same file, so the launcher would share
+// the running binary's image section, and windows denies unlink on a file with
+// an active image section. Every fake would then be undeletable for the whole
+// test process, and t.TempDir cleanup would fail with "Access is denied" --
+// which is exactly what a hard-linked launcher did: it turned 245 PATH-lookup
+// failures into 202 cleanup failures, a reclassification rather than a fix.
+// That is structural, not a race: no retry or backoff reaches it. A copy is a
+// distinct file, mapped only while the fake is actually executing, and
+// runFakeLauncher's cmd.Run plus JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE guarantee
+// the fake and its shell children have exited before cleanup runs.
 func installWindowsFake(path string) error {
 	executable, err := os.Executable()
 	if err != nil {
@@ -37,10 +60,8 @@ func installWindowsFake(path string) error {
 	if err := os.WriteFile(launcher+".fake.shell", []byte(shell), 0o600); err != nil {
 		return fmt.Errorf("write fake shell metadata %s: %w", launcher+".fake.shell", err)
 	}
-	if err := windows.CreateHardLink(windows.StringToUTF16Ptr(launcher), windows.StringToUTF16Ptr(executable), 0); err != nil {
-		if err := copyFile(executable, launcher); err != nil {
-			return fmt.Errorf("install fake launcher %s: %w", launcher, err)
-		}
+	if err := copyFile(executable, launcher); err != nil {
+		return fmt.Errorf("install fake launcher %s: %w", launcher, err)
 	}
 	return nil
 }
