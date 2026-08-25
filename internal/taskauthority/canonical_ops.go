@@ -2,6 +2,7 @@ package taskauthority
 
 import (
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
 
@@ -120,6 +121,50 @@ func (c *Canonical) Get(taskID domain.TaskID) (Aggregate, error) {
 // or after it, never in between. It returns the same current-Task-truth
 // contract as Get: a superseded/non-current generation fails closed with
 // ErrNotFound.
+// ReclaimReleasedTaskArtifacts evaluates ownership and runs the bounded local
+// reclaim callback while the task-scope lock is held, fencing reopen and other
+// lifecycle mutations against the deletion. The callback must remain local and
+// bounded; external or blocking work must not run under this lock.
+func (c *Canonical) ReclaimReleasedTaskArtifacts(taskID domain.TaskID, reclaim func() error) (bool, error) {
+	if reclaim == nil {
+		return false, fmt.Errorf("reclaim callback is nil")
+	}
+	if err := taskID.Validate(); err != nil {
+		return false, err
+	}
+	lk, err := c.h.Lock(taskScope(taskID.Value()))
+	if err != nil {
+		return false, err
+	}
+	defer lk.Release()
+	doc, exists, err := c.readTaskDoc(taskID.Value())
+	if err != nil {
+		return false, err
+	}
+	if exists {
+		if !doc.Aggregate.Current {
+			return false, nil
+		}
+		agg := doc.Aggregate
+		if agg.Phase != PhaseRetired {
+			return false, nil
+		}
+		if claim := agg.CleanupClaim; claim != nil {
+			switch claim.Status {
+			case CleanupActive:
+				return false, nil
+			case CleanupCompleted, CleanupAborted:
+			default:
+				return false, nil
+			}
+		}
+	}
+	if err := reclaim(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (c *Canonical) CurrentLocked(taskID domain.TaskID) (Aggregate, error) {
 	if err := taskID.Validate(); err != nil {
 		return Aggregate{}, err
