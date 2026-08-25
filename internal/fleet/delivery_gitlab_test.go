@@ -56,8 +56,8 @@ func readyRunner() *fakeGlabRunner {
 			if len(args) >= 1 && args[0] == "--version" {
 				return []byte("glab version 1.45.0"), nil
 			}
-			if len(args) >= 3 && args[0] == "mr" && args[1] == "view" && args[2] == "--help" {
-				return []byte("view a merge request\n"), nil
+			if len(args) >= 3 && args[0] == "api" && args[1] == "--help" {
+				return []byte("api access\n"), nil
 			}
 			if len(args) >= 2 && args[0] == "auth" && args[1] == "status" {
 				return []byte("authenticated to gitlab.com\n"), nil
@@ -83,8 +83,8 @@ func mergedRunner() *fakeGlabRunner {
 			if len(args) >= 1 && args[0] == "--version" {
 				return []byte("glab version 1.45.0"), nil
 			}
-			if len(args) >= 3 && args[0] == "mr" && args[1] == "view" && args[2] == "--help" {
-				return []byte("view a merge request\n"), nil
+			if len(args) >= 3 && args[0] == "api" && args[1] == "--help" {
+				return []byte("api access\n"), nil
 			}
 			if len(args) >= 2 && args[0] == "auth" && args[1] == "status" {
 				return []byte("authenticated to gitlab.com\n"), nil
@@ -109,8 +109,8 @@ func closedRunner() *fakeGlabRunner {
 			if len(args) >= 1 && args[0] == "--version" {
 				return []byte("glab version 1.45.0"), nil
 			}
-			if len(args) >= 3 && args[0] == "mr" && args[1] == "view" && args[2] == "--help" {
-				return []byte("view a merge request\n"), nil
+			if len(args) >= 3 && args[0] == "api" && args[1] == "--help" {
+				return []byte("api access\n"), nil
 			}
 			if len(args) >= 2 && args[0] == "auth" && args[1] == "status" {
 				return []byte("authenticated to gitlab.com\n"), nil
@@ -146,8 +146,8 @@ func failedAuthRunner() *fakeGlabRunner {
 			if len(args) >= 1 && args[0] == "--version" {
 				return []byte("glab version 1.45.0"), nil
 			}
-			if len(args) >= 3 && args[0] == "mr" && args[1] == "view" && args[2] == "--help" {
-				return []byte("view a merge request\n"), nil
+			if len(args) >= 3 && args[0] == "api" && args[1] == "--help" {
+				return []byte("api access\n"), nil
 			}
 			if len(args) >= 2 && args[0] == "auth" && args[1] == "status" {
 				return nil, errors.New("not authenticated")
@@ -163,7 +163,7 @@ func unsupportedRunner() *fakeGlabRunner {
 			if len(args) >= 1 && args[0] == "--version" {
 				return []byte("glab version 1.45.0"), nil
 			}
-			if len(args) >= 3 && args[0] == "mr" && args[1] == "view" && args[2] == "--help" {
+			if len(args) >= 3 && args[0] == "api" && args[1] == "--help" {
 				return nil, errors.New("unknown command")
 			}
 			return []byte("{}"), nil
@@ -329,7 +329,7 @@ func TestViewMRJSON_ExactArgs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	expected := []string{"mr", "view", "owner/project!42", "-F", "json"}
+	expected := []string{"api", "/projects/owner%2Fproject/merge_requests/42"}
 	if len(capturedArgs) != len(expected) {
 		t.Fatalf("args: got %v, want %v", capturedArgs, expected)
 	}
@@ -353,7 +353,7 @@ func TestViewMRJSON_SelfHostedExactArgs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	expected := []string{"mr", "view", "group/project!7", "--hostname", "gitlab.example.com", "-F", "json"}
+	expected := []string{"api", "/projects/group%2Fproject/merge_requests/7", "--hostname", "gitlab.example.com"}
 	if len(capturedArgs) != len(expected) {
 		t.Fatalf("args: got %v, want %v", capturedArgs, expected)
 	}

@@ -4,6 +4,7 @@
 package fleet
 
 import (
+	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -176,14 +177,78 @@ func parseGhAxiKeyValues(output string) map[string]string {
 // reports merged PRs as state=closed with merged=true and a non-empty
 // merge_commit_sha, so the merged classification never trusts state alone.
 func (c *ghAxiClient) ObservePR(owner, repo string, number int) (DeliveryProviderObservation, error) {
-	out, err := ghAxiAPI(
-		fmt.Sprintf("/repos/%s/%s/pulls/%d", owner, repo, number),
-		"--jq", `{state: .state, headSha: .head.sha, baseRef: .base.ref, mergedSha: (.merge_commit_sha // ""), merged: (.merged // false)}`,
-	)
+	query := `query($owner:String!, $repo:String!, $number:Int!) { repository(owner:$owner, name:$repo) { pullRequest(number:$number) { state headRefOid baseRefName merged mergeCommit { oid } reviewDecision mergeable commits(last:1) { nodes { commit { statusCheckRollup { state } } } } } } }`
+	out, err := ghAxiAPI("graphql", "-f", "query="+query, "-f", "owner="+owner, "-f", "repo="+repo, "-F", fmt.Sprintf("number=%d", number))
 	if err != nil {
 		return DeliveryProviderObservation{}, err
 	}
-	return classifyGitHubObservation(parseGhAxiKeyValues(string(out)))
+	return classifyGitHubGraphQLObservation(out)
+}
+
+func classifyGitHubGraphQLObservation(data []byte) (DeliveryProviderObservation, error) {
+	var raw struct {
+		Data struct {
+			Repository struct {
+				PullRequest *struct {
+					State       string `json:"state"`
+					Head        string `json:"headRefOid"`
+					Base        string `json:"baseRefName"`
+					Merged      bool   `json:"merged"`
+					Review      string `json:"reviewDecision"`
+					Mergeable   string `json:"mergeable"`
+					MergeCommit *struct {
+						OID string `json:"oid"`
+					} `json:"mergeCommit"`
+					Commits struct {
+						Nodes []struct {
+							Commit struct {
+								Rollup *struct {
+									State string `json:"state"`
+								} `json:"statusCheckRollup"`
+							} `json:"commit"`
+						} `json:"nodes"`
+					} `json:"commits"`
+				} `json:"pullRequest"`
+			} `json:"repository"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil || raw.Data.Repository.PullRequest == nil {
+		return DeliveryProviderObservation{}, fmt.Errorf("gh-axi graphql: incomplete pull request evidence")
+	}
+	pr := raw.Data.Repository.PullRequest
+	obs := DeliveryProviderObservation{State: pr.State, HeadSHA: pr.Head, BaseRef: pr.Base, Mergeability: DeliveryMergeabilityUnknown}
+	if pr.Merged {
+		obs.State = "MERGED"
+	}
+	if pr.MergeCommit != nil {
+		obs.MergedSHA = pr.MergeCommit.OID
+	}
+	if obs.State != "OPEN" {
+		return obs, nil
+	}
+	if pr.Review == "" || pr.Mergeable == "" || len(pr.Commits.Nodes) == 0 || pr.Commits.Nodes[0].Commit.Rollup == nil {
+		return DeliveryProviderObservation{}, fmt.Errorf("gh-axi graphql: missing or unknown mergeability evidence")
+	}
+	if pr.Review == "APPROVED" && pr.Mergeable == "MERGEABLE" && pr.Commits.Nodes[0].Commit.Rollup.State == "SUCCESS" {
+		obs.Mergeability = DeliveryMergeabilityAllowed
+	} else {
+		obs.Mergeability = DeliveryMergeabilityDenied
+	}
+	return obs, nil
+}
+
+func classifyGitHubMergeability(obs DeliveryProviderObservation, values map[string]string) (DeliveryProviderObservation, error) {
+	review, reviewOK := values["reviewDecision"]
+	checks, checksOK := values["checkState"]
+	if !reviewOK || review == "" || !checksOK || checks == "" {
+		return DeliveryProviderObservation{}, fmt.Errorf("gh-axi api: missing or unknown mergeability evidence")
+	}
+	if review == "APPROVED" && checks == "SUCCESS" {
+		obs.Mergeability = DeliveryMergeabilityAllowed
+	} else {
+		obs.Mergeability = DeliveryMergeabilityDenied
+	}
+	return obs, nil
 }
 
 // classifyGitHubObservation is the pure GitHub REST observation classifier:
@@ -193,10 +258,11 @@ func (c *ghAxiClient) ObservePR(owner, repo string, number int) (DeliveryProvide
 func classifyGitHubObservation(values map[string]string) (DeliveryProviderObservation, error) {
 	state := strings.ToUpper(strings.TrimSpace(values["state"]))
 	obs := DeliveryProviderObservation{
-		State:     state,
-		HeadSHA:   values["headSha"],
-		MergedSHA: values["mergedSha"],
-		BaseRef:   values["baseRef"],
+		State:        state,
+		HeadSHA:      values["headSha"],
+		MergedSHA:    values["mergedSha"],
+		BaseRef:      values["baseRef"],
+		Mergeability: DeliveryMergeabilityUnknown,
 	}
 	switch {
 	case strings.EqualFold(values["merged"], "true") || obs.MergedSHA != "":

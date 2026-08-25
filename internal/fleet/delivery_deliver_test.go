@@ -189,7 +189,7 @@ func TestDeliverClassification(t *testing.T) {
 		want   taskauthority.DeliveryOutcomeStatus
 	}{
 		{"merged", DeliveryProviderObservation{State: "MERGED", HeadSHA: deliveryTestHead, MergedSHA: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"}, nil, taskauthority.DeliveryOutcomeCompleted},
-		{"open", DeliveryProviderObservation{State: "OPEN", HeadSHA: deliveryTestHead}, nil, taskauthority.DeliveryOutcomeRetryable},
+		{"open", DeliveryProviderObservation{State: "OPEN", HeadSHA: deliveryTestHead, Mergeability: DeliveryMergeabilityAllowed}, nil, taskauthority.DeliveryOutcomeRetryable},
 		{"closed", DeliveryProviderObservation{State: "CLOSED", HeadSHA: deliveryTestHead}, nil, taskauthority.DeliveryOutcomePartial},
 		{"ambiguous", DeliveryProviderObservation{State: "UNKNOWN"}, nil, taskauthority.DeliveryOutcomeRemoteUnknown},
 		{"unreachable", DeliveryProviderObservation{}, errors.New("provider unreachable"), taskauthority.DeliveryOutcomeRemoteUnknown},

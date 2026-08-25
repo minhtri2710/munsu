@@ -70,7 +70,7 @@ func (f *fakeDeliveryProvider) Observe(ident domain.DeliveryIdentity) (DeliveryP
 		f.observations = f.observations[1:]
 		return obs, nil
 	}
-	return DeliveryProviderObservation{State: "OPEN", HeadSHA: ident.HeadSHA}, nil
+	return DeliveryProviderObservation{State: "OPEN", HeadSHA: ident.HeadSHA, Mergeability: DeliveryMergeabilityAllowed}, nil
 }
 
 // deliveryFixtureIdentity is the typed delivery identity the deliver tests
@@ -176,7 +176,7 @@ func installScriptedProviderFor(t *testing.T, script string) *fakeDeliveryProvid
 	switch script {
 	case "open-then-merged":
 		provider.script(
-			DeliveryProviderObservation{State: "OPEN", HeadSHA: deliveryTestHead, BaseRef: deliveryTestBase},
+			DeliveryProviderObservation{State: "OPEN", HeadSHA: deliveryTestHead, BaseRef: deliveryTestBase, Mergeability: DeliveryMergeabilityAllowed},
 			DeliveryProviderObservation{State: "MERGED", HeadSHA: deliveryTestHead, BaseRef: deliveryTestBase, MergedSHA: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"},
 		)
 	case "open-then-unreachable":
@@ -185,7 +185,7 @@ func installScriptedProviderFor(t *testing.T, script string) *fakeDeliveryProvid
 		)
 		provider.scriptErr(fmt.Errorf("provider unreachable after merge"))
 	case "open":
-		provider.script(DeliveryProviderObservation{State: "OPEN", HeadSHA: deliveryTestHead, BaseRef: deliveryTestBase})
+		provider.script(DeliveryProviderObservation{State: "OPEN", HeadSHA: deliveryTestHead, BaseRef: deliveryTestBase, Mergeability: DeliveryMergeabilityAllowed})
 	case "merged":
 		provider.script(DeliveryProviderObservation{State: "MERGED", HeadSHA: deliveryTestHead, BaseRef: deliveryTestBase, MergedSHA: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"})
 	case "closed":
