@@ -68,8 +68,6 @@ internal/fleet/delivery_amend.go	fetchGitLabProviderSnapshot	1	raw.State == "" |
 internal/fleet/delivery_deliver.go	commitPinnedOutcome	1	journal.OutcomeDigest != "" && journal.OutcomeDigest != digest	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_deliver.go	commitPinnedOutcome	1	journal.OutcomeStatus == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_deliver.go	issueDeliveryAuthorization	1	journal.AuthorizeDigest != "" && journal.AuthorizeDigest != digest	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/delivery_deliver.go	prevalidateDeliveryTask	1	cur.Authorization != nil && !isRevokedCurrency(cur)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/delivery_deliver.go	prevalidateDeliveryTask	1	strings.TrimSpace(agg.Definition.Owner) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_deliver.go	releaseDeliveryAuthorization	1	pinned != "" && pinned != digest	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_deliver.go	verifyDeliveryCurrency	1	!equalDeliveryPreconditions(cur.Authorization.Preconditions, journal.Preconditions)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_deliver.go	verifyDeliveryCurrency	1	cur.Authorization == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
