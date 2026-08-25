@@ -772,6 +772,33 @@ func TestGuardPromoteRefusesATaskThatIsNotAScout(t *testing.T) {
 
 // --- internal/cli/session_cmd.go -------------------------------------------
 
+func TestBriefRecoveryPrecedesTaskFence(t *testing.T) {
+	oldRecover, oldWrite := recoverBriefHandoffs, writeBriefArtifact
+	order := []string{}
+	recoverBriefHandoffs = func(string) error { order = append(order, "recover"); return nil }
+	writeBriefArtifact = func(auth *taskauthority.Canonical, id domain.TaskID, write func() error) error {
+		order = append(order, "write")
+		return nil
+	}
+	t.Cleanup(func() { recoverBriefHandoffs, writeBriefArtifact = oldRecover, oldWrite })
+	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
+	auth := testAuthorityFor(t, homeDir)
+	seedGuardTask(t, auth, "ordered", "ship")
+	if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion, Config: config.ProjectOverlay{Backend: "tmux"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runRoot(t, "project", "add", "demo-repo", t.TempDir(), "--home", homeDir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runRoot(t, "brief", "ordered", "demo-repo", "--home", homeDir); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(order, ",") != "recover,write" {
+		t.Fatalf("order = %v", order)
+	}
+}
+
 func TestBriefWritesKnownTaskAndRejectsUnknown(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)

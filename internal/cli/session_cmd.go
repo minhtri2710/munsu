@@ -17,6 +17,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var recoverBriefHandoffs = fleet.RecoverTaskHandoffs
+var writeBriefArtifact = func(auth *taskauthority.Canonical, id domain.TaskID, write func() error) error {
+	return auth.WriteTaskDataArtifact(id, write)
+}
+
 func newBriefCmd() *cobra.Command {
 	var scout bool
 	var force bool
@@ -78,6 +83,9 @@ func newBriefCmd() *cobra.Command {
 				ScoutScope: scoutScope, ScoutRuntimeBudgetSecs: scoutBudget,
 			}
 
+			if err := recoverBriefHandoffs(ctx.Home); err != nil {
+				return err
+			}
 			auth, err := ctx.TaskAuthority()
 			if err != nil {
 				return err
@@ -86,7 +94,7 @@ func newBriefCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := auth.WriteTaskDataArtifact(taskID, func() error { return fleet.Scaffold(opts) }); err != nil {
+			if err := writeBriefArtifact(auth, taskID, func() error { return fleet.Scaffold(opts) }); err != nil {
 				return err
 			}
 

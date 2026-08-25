@@ -390,6 +390,75 @@ func TestGCOrphanDataDirs_AbortedCleanupKeepsBrief(t *testing.T) {
 	}
 }
 
+func TestGCOrphanDataDirs_WriterInterleavingKeepsBrief(t *testing.T) {
+	homeDir := t.TempDir()
+	if _, err := mhome.Init(homeDir); err != nil {
+		t.Fatal(err)
+	}
+	h, err := mhome.Open(homeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth, err := taskauthority.NewCanonical(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := "interleaved-brief"
+	tid, err := domain.NewTaskID(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := domain.NewProjectID("munsu")
+	if err != nil {
+		t.Fatal(err)
+	}
+	create := taskauthority.CanonicalCreateRequest{HomeID: auth.HomeID(), TaskID: tid, Owner: "owner", Description: "work", Kind: "scout", Project: project, ScoutScope: "scope", ScoutRuntimeBudgetSecs: 60, Reason: "test"}
+	if _, err := auth.Create(mustBootstrapOperation(t, "interleave-create", create), create); err != nil {
+		t.Fatal(err)
+	}
+	cur, err := auth.Get(tid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retire := taskauthority.CanonicalRetireRequest{HomeID: auth.HomeID(), TaskID: tid, Precondition: domain.Of(uint64(cur.Generation), uint64(cur.Revision)), Reason: "test"}
+	if _, err := auth.Retire(mustBootstrapOperation(t, "interleave-retire", retire), retire); err != nil {
+		t.Fatal(err)
+	}
+	cur, err = auth.Get(tid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	begin := taskauthority.CanonicalBeginCleanupRequest{HomeID: auth.HomeID(), TaskID: tid, Precondition: domain.Of(uint64(cur.Generation), uint64(cur.Revision)), ClaimOperationID: "interleave-retire", ClaimGeneration: cur.Generation, Reason: "test"}
+	if _, err := auth.BeginCleanup(mustBootstrapOperation(t, "interleave-begin", begin), begin); err != nil {
+		t.Fatal(err)
+	}
+	cur, err = auth.Get(tid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	complete := taskauthority.CanonicalCompleteCleanupRequest{HomeID: auth.HomeID(), TaskID: tid, Precondition: domain.Of(uint64(cur.Generation), uint64(cur.Revision)), ClaimOperationID: "interleave-retire", ClaimGeneration: cur.Generation, Reason: "test"}
+	if _, err := auth.CompleteCleanup(mustBootstrapOperation(t, "interleave-complete", complete), complete); err != nil {
+		t.Fatal(err)
+	}
+	dataDir := filepath.Join(homeDir, "data", id)
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	setDirMtime(t, dataDir, 48*time.Hour)
+	wrapped := func(taskID string, reclaim func() error) (bool, error) {
+		if err := auth.WriteTaskDataArtifact(tid, func() error { return fleet.Scaffold(fleet.ScaffoldOptions{HomeDir: homeDir, ID: id, Repo: "munsu"}) }); err != nil {
+			return false, err
+		}
+		return auth.ReclaimReleasedTaskArtifacts(tid, reclaim)
+	}
+	if cleaned := gcOrphanDataDirs(homeDir, wrapped); len(cleaned) != 0 {
+		t.Fatalf("cleaned = %v", cleaned)
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "brief.md")); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestGCOrphanDataDirs_ScaffoldedBriefKeepsTerminalTask(t *testing.T) {
 	homeDir := t.TempDir()
 	if _, err := mhome.Init(homeDir); err != nil {

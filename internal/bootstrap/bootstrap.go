@@ -2,6 +2,7 @@
 package bootstrap
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -240,45 +241,40 @@ func gcOrphanDataDirs(homeDir string, reclaim ReclaimTaskDataDir) []string {
 
 		dirPath := filepath.Join(dataDir, id)
 
-		// The directory timestamp is refreshed by brief writes and cleanup
-		// ownership release; skip until that grace period has elapsed.
-		info, err := os.Stat(dirPath)
-		if err != nil {
-			continue
-		}
-		if time.Since(info.ModTime()) < gracePeriod {
-			continue
-		}
-
-		// Skip if corresponding meta file exists
-		metaPath, err := home.MetaFilePath(homeDir, id)
-		if err != nil {
-			continue
-		}
-		if _, err := os.Stat(metaPath); err == nil {
-			continue
-		}
-
-		// Skip if corresponding status file exists
-		statusPath, err := home.StatusFilePath(homeDir, id)
-		if err != nil {
-			continue
-		}
-		if _, err := os.Stat(statusPath); err == nil {
-			continue
-		}
-
-		// Skip while a task still owns the directory. This is what protects a
-		// brief written before the task was ever spawned.
-
-		// Skip if the directory holds report evidence: the current
-		// generation's report.md, or a report teardown archived for a
-		// retired generation.
-		if fleet.HasReportEvidence(dirPath) {
-			continue
-		}
-
-		if reclaimed, err := reclaim(id, func() error { return os.RemoveAll(dirPath) }); err == nil && reclaimed {
+		// The unlocked pass only discovers candidates. The writer fence means
+		// every mutable eligibility condition must be re-read inside the locked
+		// callback immediately before removal.
+		if reclaimed, err := reclaim(id, func() error {
+			info, err := os.Stat(dirPath)
+			if err != nil {
+				return err
+			}
+			if time.Since(info.ModTime()) < gracePeriod {
+				return errors.New("data directory is still within retention grace")
+			}
+			metaPath, err := home.MetaFilePath(homeDir, id)
+			if err != nil {
+				return err
+			}
+			if _, err := os.Stat(metaPath); err == nil {
+				return errors.New("task metadata still exists")
+			} else if !os.IsNotExist(err) {
+				return err
+			}
+			statusPath, err := home.StatusFilePath(homeDir, id)
+			if err != nil {
+				return err
+			}
+			if _, err := os.Stat(statusPath); err == nil {
+				return errors.New("task status still exists")
+			} else if !os.IsNotExist(err) {
+				return err
+			}
+			if fleet.HasReportEvidence(dirPath) {
+				return errors.New("report evidence exists")
+			}
+			return os.RemoveAll(dirPath)
+		}); err == nil && reclaimed {
 			cleaned = append(cleaned, id)
 		}
 	}
