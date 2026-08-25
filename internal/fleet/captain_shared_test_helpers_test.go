@@ -14,7 +14,14 @@ import (
 
 func initTestRepo(t *testing.T, dir, parentRemote string) {
 	t.Helper()
-	for _, args := range [][]string{{"init", "-b", "main"}, {"config", "user.email", "test@test"}, {"config", "user.name", "Test"}, {"remote", "add", "origin", parentRemote}, {"commit", "--allow-empty", "-m", "initial"}} {
+	// core.autocrlf is set explicitly because these repos live in t.TempDir()
+	// and inherit the host's git config, where it defaults to true on Windows.
+	// The charter tests write LF, commit, and then compare the checked-out
+	// bytes to what they wrote, so an inherited autocrlf turns a byte-for-byte
+	// preservation assertion into an assertion about the host -- #549 group 9.
+	// munsu's own checkout is governed by .gitattributes, which cannot reach a
+	// repo created here.
+	for _, args := range [][]string{{"init", "-b", "main"}, {"config", "core.autocrlf", "false"}, {"config", "user.email", "test@test"}, {"config", "user.name", "Test"}, {"remote", "add", "origin", parentRemote}, {"commit", "--allow-empty", "-m", "initial"}} {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = dir
 		if out, err := cmd.CombinedOutput(); err != nil {

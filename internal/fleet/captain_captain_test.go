@@ -2826,6 +2826,11 @@ func newWorktreeFixture(t *testing.T) string {
 	if out, err := exec.Command("git", "clone", remote, project).CombinedOutput(); err != nil {
 		t.Fatalf("git clone: %v\n%s", err, out)
 	}
+	// See initTestRepo: a repo built in t.TempDir() inherits the host's
+	// core.autocrlf, and the managed-worktree tests compare checked-out bytes
+	// to the bytes they wrote. Set on the clone rather than the bare remote
+	// because the linked worktree SeedFromWorktree creates shares this config.
+	gitTestRun(t, project, "config", "core.autocrlf", "false")
 	gitTestRun(t, project, "config", "user.name", "Munsu Test")
 	gitTestRun(t, project, "config", "user.email", "munsu@example.invalid")
 	gitTestRun(t, project, "checkout", "-b", "main")
