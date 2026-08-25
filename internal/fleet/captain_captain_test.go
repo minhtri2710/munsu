@@ -238,7 +238,7 @@ func TestBuildLaunchArgs_ConfigModelPropagation(t *testing.T) {
 
 func TestDefaultCaptainCharter_ContainsReturnChannel(t *testing.T) {
 	parent := "/tmp/marshal-home"
-	charter := DefaultCaptainCharter("api", parent)
+	charter := defaultCaptainCharter(t, "api", parent)
 	if !strings.Contains(charter, home.FromGeneralLabel) {
 		t.Fatalf("charter missing marshal marker label")
 	}

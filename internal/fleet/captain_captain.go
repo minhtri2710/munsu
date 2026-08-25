@@ -285,10 +285,10 @@ func checkStaleLegacyRecords(parentHome, captainID string) error {
 // delivery/merge with mode-specific behavior, AXI-first fail-closed, persistence/recovery,
 // watcher/AFK safety, forbidden actions, and concise command recipes.
 // parentHome must be the General home whose state/captain:<id>.status is the escalation file.
-func DefaultCaptainCharter(id, parentHome string) string {
+func DefaultCaptainCharter(id, parentHome string) (string, error) {
 	statusFile, err := home.StatusFilePath(parentHome, taskIDForCaptain(id))
 	if err != nil {
-		panic(fmt.Sprintf("invalid captain ID %q: %v", id, err))
+		return "", err
 	}
 	bt := "`"
 	return fmt.Sprintf(`# Captain Charter: %[1]s
@@ -461,7 +461,7 @@ You MUST NOT:
 | Start task | %[6]smunsu task start <id>%[6]s |
 | Complete task | %[6]smunsu task done <id>%[6]s |
 
-`, id, CaptainCharterVersion, home.FromGeneralLabel, "[mu-system:captain-bootstrap]", shQuote(statusFile), bt)
+`, id, CaptainCharterVersion, home.FromGeneralLabel, "[mu-system:captain-bootstrap]", shQuote(statusFile), bt), nil
 }
 
 // writeCaptainCharter writes the charter to .captain-charter.md (runtime-owned, untracked).
@@ -522,7 +522,11 @@ func SeedCaptain(opts CaptainSeedOptions) error {
 		if parentHome == "" {
 			return fmt.Errorf("seeding captain %s: empty charter requires parent home for return-channel path", id)
 		}
-		charter = DefaultCaptainCharter(id, parentHome)
+		generated, err := DefaultCaptainCharter(id, parentHome)
+		if err != nil {
+			return fmt.Errorf("creating default charter: %w", err)
+		}
+		charter = generated
 	}
 
 	// Write the canonical runtime-owned charter to .captain-charter.md.
@@ -1530,7 +1534,10 @@ func RefreshCharter(captainHome, parentHome string) error {
 	if err != nil {
 		return fmt.Errorf("refresh charter: %w", err)
 	}
-	charter := DefaultCaptainCharter(markerID, parentHome)
+	charter, err := DefaultCaptainCharter(markerID, parentHome)
+	if err != nil {
+		return fmt.Errorf("refresh charter: %w", err)
+	}
 	if err := writeCaptainCharter(captainHome, charter); err != nil {
 		return fmt.Errorf("refresh charter: %w", err)
 	}
