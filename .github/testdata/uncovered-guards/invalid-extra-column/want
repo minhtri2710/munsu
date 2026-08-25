@@ -1,0 +1,8 @@
+::error::.github/testdata/uncovered-guards/invalid-extra-column/baseline:1: expected exactly file<TAB>func<TAB>nth<TAB>predicate<TAB>reason
+::error::refusal branches no test enters, and not in .github/testdata/uncovered-guards/invalid-extra-column/baseline:
+  internal/fake/guard.go:20.25-22.4: Refuse (#1): if identity != Worktree
+  Nothing has ever taken these branches, so nothing would notice if the condition were
+  inverted or the branch deleted. Write a test that builds the state the guard refuses --
+  5 to 15 lines for the ones already burnt down. If the branch genuinely cannot be reached
+  from a test, add a line to that file with a reason.
+exit 1

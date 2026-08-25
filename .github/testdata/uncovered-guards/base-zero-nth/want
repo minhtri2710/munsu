@@ -1,0 +1,3 @@
+::error::.github/testdata/uncovered-guards/base-zero-nth/base-baseline:1: internal/fake/guard.go: Refuse: nth must be a positive number, got "0"
+::error::base baseline .github/testdata/uncovered-guards/base-zero-nth/base-baseline is malformed; the baseline ratchet cannot be evaluated
+exit 1

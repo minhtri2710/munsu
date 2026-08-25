@@ -416,19 +416,15 @@ baseline_format_errors() {
 	local name="${file#"$ROOT"/}"
 	awk -F '\t' -v name="$name" '
 		/^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
-		NF < 4 || $1 == "" || $2 == "" || $3 == "" || $4 == "" {
-			printf "::error::%s:%d: expected file<TAB>func<TAB>nth<TAB>predicate<TAB>reason\n", name, NR
+		NF != 5 || $1 == "" || $2 == "" || $3 == "" || $4 == "" || $5 == "" {
+			printf "::error::%s:%d: expected exactly file<TAB>func<TAB>nth<TAB>predicate<TAB>reason\n", name, NR
 			bad = 1
 			next
 		}
-		$3 !~ /^[0-9]+$/ {
-			printf "::error::%s:%d: %s: %s: nth must be a number, got \"%s\"\n", name, NR, $1, $2, $3
+		$3 !~ /^[1-9][0-9]*$/ {
+			printf "::error::%s:%d: %s: %s: nth must be a positive number, got \"%s\"\n", name, NR, $1, $2, $3
 			bad = 1
 			next
-		}
-		NF < 5 || $5 == "" {
-			printf "::error::%s:%d: %s: %s: entry needs a reason in the fifth column\n", name, NR, $1, $2
-			bad = 1
 		}
 		{
 			key = $1 "\t" $2 "\t" $3 "\t" $4
@@ -515,7 +511,7 @@ baseline_ratchet() {
 		return 1
 	fi
 
-	invalid_added="$(printf '%s\n' "$added_rows" | awk -F '\t' 'NF < 5 || $5 !~ /^growth\(#[0-9]+\): .+$/ { print }')"
+	invalid_added="$(printf '%s\n' "$added_rows" | awk -F '\t' 'NF != 5 || $5 !~ /^growth\(#[1-9][0-9]*\): .+$/ { print }')"
 	if [ -n "$invalid_added" ]; then
 		echo "::error::$BASELINE_REL adds identities without a valid growth acknowledgment (growth(#<issue>): <reason>):" >&2
 		printf '%s\n' "$invalid_added" | cut -f1,2,3,4 | baseline_print_keys >&2
@@ -734,6 +730,11 @@ generate() {
 #   baseline-shrink        allow pure removal from the current identity set
 #   baseline-malformed     reject a malformed base baseline
 #   disclosed-growth-614   allow +311 sites and +27 acknowledged rows
+#   invalid-extra-column  reject current rows with more than five columns
+#   invalid-zero-nth      reject current rows with a zero ordinal
+#   base-extra-column     reject a malformed base row with more than five columns
+#   base-zero-nth         reject a malformed base row with a zero ordinal
+#   disclosed-growth-zero-issue reject growth(#0) acknowledgments
 #
 # Each fixture is a directory holding `sites.tsv`, `baseline`, `profiles/` and
 # `want`. Driving `check` from a fixed site list rather than from the real tree

@@ -1,0 +1,5 @@
+::notice::.github/testdata/uncovered-guards/disclosed-growth-zero-issue/baseline adds these identities relative to its exact base:
+  internal/fake/guard.go: Refuse (#1): identity != Worktree
+::error::.github/testdata/uncovered-guards/disclosed-growth-zero-issue/baseline adds identities without a valid growth acknowledgment (growth(#<issue>): <reason>):
+  internal/fake/guard.go: Refuse (#1): identity != Worktree
+exit 1

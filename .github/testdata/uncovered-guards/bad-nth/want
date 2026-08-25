@@ -1,4 +1,4 @@
-::error::.github/testdata/uncovered-guards/bad-nth/baseline:1: internal/fake/guard.go: Refuse: nth must be a number, got "x"
+::error::.github/testdata/uncovered-guards/bad-nth/baseline:1: internal/fake/guard.go: Refuse: nth must be a positive number, got "x"
 ::warning file=internal/fake/gated_linux.go::no lane compiles this file on this platform, so its refusal branches are outside the lane in both directions
 ::error::refusal branches no test enters, and not in .github/testdata/uncovered-guards/bad-nth/baseline:
   internal/fake/guard.go:28.22-30.4: Refuse (#1): if len(failures) > 0
