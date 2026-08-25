@@ -100,6 +100,13 @@ func validate(path string) error {
 		return fmt.Errorf("workflow has no document")
 	}
 	document := root.Content[0]
+	// This boundary prevents silent neutralisation by workflow edits: deleted,
+	// renamed, conditional, dependent, substituted-input, and startup-poisoned
+	// gates are decidable here. A prior step writing GITHUB_ENV would require
+	// interpreting arbitrary shell, so it remains a visible same-diff threat.
+	if has(document, "env") {
+		return fmt.Errorf("workflow env is refused: the topology boundary cannot permit Bash startup injection")
+	}
 	workflowDefaults, _ := mapping(document, "defaults")
 	workflowShell, workflowDirectory, err := defaultsValues(workflowDefaults, "workflow")
 	if err != nil {
@@ -123,6 +130,9 @@ func validate(path string) error {
 	}
 	if has(invariants, "needs") {
 		return fmt.Errorf("invariants job must not depend on needs: a skipped dependency makes the required context report success without running")
+	}
+	if has(invariants, "env") {
+		return fmt.Errorf("invariants job env is refused: the topology boundary cannot permit Bash startup injection")
 	}
 	jobContinueOnError, _ := mapping(invariants, "continue-on-error")
 	if disabled, err := optionalTrue(jobContinueOnError); err != nil {
@@ -179,6 +189,11 @@ func validate(path string) error {
 		}
 		if has(step, "shell") {
 			continue
+		}
+		if env, found := mapping(step, "env"); found {
+			if env.Kind != yaml.MappingNode || len(env.Content) != 2 || env.Content[0].Value != "GH_TOKEN" {
+				return fmt.Errorf("invariants step env may contain only GH_TOKEN")
+			}
 		}
 		stepDirectory, _ := mapping(step, "working-directory")
 		if stepDirectory == nil {

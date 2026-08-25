@@ -566,7 +566,8 @@ observed_set() {
 }
 
 ledger_set() {
-	"$ROOT/.github/scripts/flake-ledger.sh" entries | awk -F '\t' '{ print $1 "\t" $2 }' | sort
+	local entries="$1"
+	awk -F '\t' '{ print $1 "\t" $2 }' "$entries" | sort
 }
 
 # The run ids this sweep actually read, one per line, in a file awk can load.
@@ -584,16 +585,15 @@ window_runs() {
 # comparison honest at any window, which is what lets the workflow run a cheap
 # window after every push and a wide one by hand.
 ledger_in_scope() {
-	local records="$1" runs
+	local records="$1" entries="$2" runs
 	runs="$(mktemp)"
 	window_runs "$records" >"$runs"
-	"$ROOT/.github/scripts/flake-ledger.sh" entries |
-		awk -F '\t' -v runs="$runs" '
+	awk -F '\t' -v runs="$runs" '
 			BEGIN { while ((getline r < runs) > 0) inwindow[r] = 1 }
 			{
 				split($3, part, /[@\/]/)
 				if (part[2] in inwindow) print $1 "\t" $2
-			}' | sort
+			}' "$entries" | sort
 	rm -f "$runs"
 }
 
@@ -625,14 +625,26 @@ records_file() {
 # entry is only demanded for deletion when this sweep actually read the run it
 # cites.
 check() {
-	local records obs obstmp failed=0 missing extra stale
+	local records obs obstmp failed=0 missing extra stale ledger_entries ledger_pairs obs_pairs in_scope
 	records="$(records_file)"
+	ledger_entries="$(mktemp)"
+	if ! "$ROOT/.github/scripts/flake-ledger.sh" entries >"$ledger_entries"; then
+		rm -f "$ledger_entries"
+		die "could not read ledger entries; observation is incomplete and cannot be told apart from clean"
+	fi
 
 	obs="$(observed_set "$records")"
 	obstmp="$(mktemp)"
 	printf '%s\n' "$obs" >"$obstmp"
+	ledger_pairs="$(mktemp)"
+	obs_pairs="$(mktemp)"
+	in_scope="$(mktemp)"
+	if ! ledger_set "$ledger_entries" >"$ledger_pairs" || ! cut -f1,2 "$obstmp" | sort >"$obs_pairs"; then
+		rm -f "$ledger_entries" "$ledger_pairs" "$obs_pairs" "$in_scope" "$obstmp"
+		die "could not normalize ledger entries; observation is incomplete and cannot be told apart from clean"
+	fi
 
-	missing="$(comm -23 <(printf '%s\n' "$obs" | cut -f1,2) <(ledger_set))"
+	missing="$(comm -23 "$obs_pairs" "$ledger_pairs")"
 	if [ -n "$missing" ]; then
 		echo "::error::flaky tests observed in CI with no entry in $LEDGER_REL:" >&2
 		printf '%s\n' "$missing" | while IFS=$'\t' read -r test lane; do
@@ -644,7 +656,11 @@ check() {
 		failed=1
 	fi
 
-	extra="$(comm -13 <(printf '%s\n' "$obs" | cut -f1,2) <(ledger_in_scope "$records"))"
+	if ! ledger_in_scope "$records" "$ledger_entries" >"$in_scope"; then
+		rm -f "$ledger_entries" "$ledger_pairs" "$obs_pairs" "$in_scope" "$obstmp"
+		die "could not scope ledger entries; observation is incomplete and cannot be told apart from clean"
+	fi
+	extra="$(comm -13 "$obs_pairs" "$in_scope")"
 	if [ -n "$extra" ]; then
 		echo "::error::$LEDGER_REL entries this sweep can no longer derive from the run they cite:" >&2
 		printf '%s\n' "$extra" | while IFS=$'\t' read -r test lane; do
@@ -661,7 +677,7 @@ check() {
 		($1 "\t" $2) in newest && $4 != newest[$1 "\t" $2] {
 			what = ($7 ~ /^fixed:/) ? "flaked again after being declared fixed; must be reopened" : "has new evidence to record"
 			print $1 "\t" $2 "\t" $4 "\t" newest[$1 "\t" $2] "\t" what
-		}' <<<"$("$ROOT/.github/scripts/flake-ledger.sh" entries)")"
+		}' "$ledger_entries")"
 	if [ -n "$stale" ]; then
 		echo "::error::$LEDGER_REL rows whose last_seen lags the evidence this sweep observed:" >&2
 		printf '%s\n' "$stale" | while IFS=$'\t' read -r test lane recorded observed what; do
@@ -672,7 +688,7 @@ check() {
 		failed=1
 	fi
 
-	rm -f "$obstmp"
+	rm -f "$ledger_entries" "$ledger_pairs" "$obs_pairs" "$in_scope" "$obstmp"
 	[ "$failed" -eq 0 ] || exit 1
 	echo "flake sweep: $(printf '%s\n' "$obs" | grep -c . || true) flaky (test, lane) pairs observed, all filed"
 }
@@ -698,8 +714,13 @@ check() {
 # whose fix ref is wrong is repaired by a person, and sync cannot produce that
 # diff -- folding it in would make a human-fixable row look like a bug here.
 verify_fixed() {
-	local records unfounded
+	local records unfounded ledger_entries
 	records="$(records_file)"
+	ledger_entries="$(mktemp)"
+	if ! "$ROOT/.github/scripts/flake-ledger.sh" entries >"$ledger_entries"; then
+		rm -f "$ledger_entries"
+		die "could not read ledger entries; observation is incomplete and cannot be told apart from clean"
+	fi
 
 	# Absence of an answer is not an answer: a row whose sha this sweep never
 	# asked about is reported too, so a lookup that silently stops happening
@@ -715,7 +736,7 @@ verify_fixed() {
 			sha = substr($7, 7)
 			verdict = (sha in answer) ? answer[sha] : "not-checked"
 			if (verdict != "on-main") print $1 "\t" $2 "\t" sha "\t" verdict
-		}' <<<"$("$ROOT/.github/scripts/flake-ledger.sh" entries)")"
+		}' "$ledger_entries")"
 
 	if [ -n "$unfounded" ]; then
 		echo "::error::$LEDGER_REL rows whose fixed: state does not cite a commit on main:" >&2
@@ -730,8 +751,10 @@ verify_fixed() {
 		echo "  A fix that is not on main has not fixed main. Cite the commit that landed, or set the" >&2
 		echo "  row back to 'open' with a deadline -- 'fixed:' is the one state no deadline is compared" >&2
 		echo "  against, so it is the one state that has to be checkable." >&2
+		rm -f "$ledger_entries"
 		exit 1
 	fi
+	rm -f "$ledger_entries"
 	echo "flake sweep: every fixed: row cites a commit on main"
 }
 
@@ -755,6 +778,11 @@ verify_fixed() {
 # the only way past the refusal, so deleting a row cannot make the fix merge.
 rederive() {
 	local records="$1" ledger="$2" rc=0
+	# The workflow's earlier step validates the committed file; this call validates
+	# the exact ledger this derivation consumes, so two steps cannot disagree silently.
+	if ! LEDGER="$ledger" "$ROOT/.github/scripts/flake-ledger.sh" check >&2; then
+		die "cannot derive flake results from an invalid ledger; this derivation's ledger must pass the hermetic ledger check"
+	fi
 	LEDGER="$ledger" SWEEP_RECORDS="$records" "$0" check --window-days "$WINDOW_DAYS" >&2 || rc=1
 	LEDGER="$ledger" SWEEP_RECORDS="$records" "$0" verify-fixed --window-days "$WINDOW_DAYS" >&2 || rc=1
 	return "$rc"
@@ -1203,11 +1231,11 @@ selftest() {
 	topology_rc=0
 	go run "$ROOT/.github/scripts/flake-sweep-topology" "$WORKFLOW_FILE" || topology_rc=$?
 	[ "$topology_rc" -eq 0 ] || failed=1
-	for topology in valid job-shell-override job-directory-override missing-step missing-job wrong-name wrong-job comment-only swallow if-step continue-on-error no-actions if-block function extra-command step-shell job-default-shell workflow-default-shell working-directory job-default-directory workflow-default-directory needs; do
+	for topology in valid job-shell-override job-directory-override env-only-token missing-step missing-job wrong-name wrong-job comment-only swallow if-step continue-on-error no-actions if-block function extra-command step-shell job-default-shell workflow-default-shell working-directory job-default-directory workflow-default-directory needs env-workflow env-job env-step env-extra env-workflow-bash env-job-bash env-step-bash env-workflow-env env-job-env env-step-env env-step-extra; do
 		topology_rc=0
 		go run "$ROOT/.github/scripts/flake-sweep-topology" "$FIXTURES/topology-$topology.yml" >/dev/null 2>&1 || topology_rc=$?
 		case "$topology" in
-		valid|job-shell-override|job-directory-override)
+		valid|job-shell-override|job-directory-override|env-only-token)
 			if [ "$topology_rc" -ne 0 ]; then
 				echo "::error::topology fixture $topology was refused" >&2
 				failed=1
@@ -1260,6 +1288,15 @@ selftest() {
 	else
 		echo "::error::applied fixed-ref scenario failed: got $applied_stdout rc=$applied_rc" >&2
 		failed=1
+	fi
+
+	# A malformed ledger is refused before parsed-entry consumers can drop its rows.
+	printf '%s\n' '# malformed' >"$ledger"
+	if (rederive "$reopen" "$ledger") >/dev/null 2>&1; then
+		echo "::error::malformed ledger scenario: rederive accepted an invalid ledger" >&2
+		failed=1
+	else
+		echo "  ok   applied-refuses-malformed-ledger"
 	fi
 
 	# Production applied refuses alternate observation and ledger inputs.
