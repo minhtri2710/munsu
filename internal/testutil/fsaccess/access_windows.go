@@ -126,9 +126,21 @@ func applyDeniedAccess(t *testing.T, path string, access uint32) {
 	entry.Trustee.TrusteeForm = windows.TRUSTEE_IS_SID
 	entry.Trustee.TrusteeType = windows.TRUSTEE_IS_USER
 	entry.Trustee.TrusteeValue = windows.TrusteeValueFromSID(sid)
+	entries := []windows.EXPLICIT_ACCESS{entry}
+	if oldDACL == nil {
+		allow := windows.EXPLICIT_ACCESS{
+			AccessPermissions: windows.ACCESS_MASK(0x001F01FF),
+			AccessMode:        windows.GRANT_ACCESS,
+			Inheritance:       windows.NO_INHERITANCE,
+		}
+		allow.Trustee.TrusteeForm = windows.TRUSTEE_IS_SID
+		allow.Trustee.TrusteeType = windows.TRUSTEE_IS_USER
+		allow.Trustee.TrusteeValue = windows.TrusteeValueFromSID(sid)
+		entries = append(entries, allow)
+	}
 	var pinner runtime.Pinner
 	pinner.Pin(sid)
-	newDACL, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{entry}, oldDACL)
+	newDACL, err := windows.ACLFromEntries(entries, oldDACL)
 	pinner.Unpin()
 	if err != nil {
 		t.Fatalf("build denied DACL for %q: %v", path, err)
@@ -164,6 +176,9 @@ func verifyUnreadable(path string, isDir bool) error {
 
 func verifyReadOnly(path string, isDir bool) error {
 	if isDir {
+		if _, err := os.ReadDir(path); err != nil {
+			return fmt.Errorf("directory listing failed: %w", err)
+		}
 		probe := path + `\fsaccess-write-probe`
 		f, err := os.Create(probe)
 		if err == nil {
@@ -172,6 +187,11 @@ func verifyReadOnly(path string, isDir bool) error {
 			return fmt.Errorf("directory create succeeded")
 		}
 		return nil
+	}
+	if f, err := os.Open(path); err != nil {
+		return fmt.Errorf("file open for read failed: %w", err)
+	} else {
+		f.Close()
 	}
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
 	if err == nil {

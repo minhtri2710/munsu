@@ -112,7 +112,7 @@ func ownerACL(sid *windows.SID, rights uint32) (*windows.ACL, error) {
 
 func effectiveRights(dacl *windows.ACL, sid *windows.SID) (uint32, error) {
 	if dacl == nil {
-		return 0, nil
+		return ownerAllAccess, nil
 	}
 	trustee := windows.TRUSTEE{
 		TrusteeForm:  windows.TRUSTEE_IS_SID,

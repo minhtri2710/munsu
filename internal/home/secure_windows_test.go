@@ -84,6 +84,30 @@ func TestRestrictDirPreservesReadOnlyOwnerRightsWindows(t *testing.T) {
 	}
 }
 
+func TestRestrictDirPreservesNullDACLRightsWindows(t *testing.T) {
+	dir := t.TempDir()
+	if err := windows.SetNamedSecurityInfo(
+		dir,
+		windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		nil, nil, nil, nil,
+	); err != nil {
+		t.Fatalf("set NULL DACL: %v", err)
+	}
+	if err := restrictDir(dir); err != nil {
+		t.Fatalf("restrictDir: %v", err)
+	}
+	if _, err := os.ReadDir(dir); err != nil {
+		t.Fatalf("restricted NULL-DACL directory is not readable: %v", err)
+	}
+	probe := filepath.Join(dir, "write-probe")
+	f, err := os.Create(probe)
+	if err != nil {
+		t.Fatalf("restricted NULL-DACL directory is not writable: %v", err)
+	}
+	f.Close()
+}
+
 // TestSecureRefusesMissingPath confirms that the contract fails closed when
 // the protection cannot be established for a path that does not exist.
 func TestSecureRefusesMissingPath(t *testing.T) {
