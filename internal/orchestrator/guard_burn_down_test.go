@@ -27,8 +27,10 @@ func TestGuardBurnDownDaemonStartRefusesHeldLock(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "already running") {
 		t.Fatalf("Daemon.Start error = %v, want held-lock refusal", err)
 	}
+	t.Logf("Daemon.Start refusal: %v", err)
 	select {
 	case <-ready:
+		t.Log("Daemon.Start readiness seam closed before refusal")
 	default:
 		t.Fatal("Daemon.Start did not close readiness seam before refusal")
 	}
@@ -37,6 +39,8 @@ func TestGuardBurnDownDaemonStartRefusesHeldLock(t *testing.T) {
 func TestGuardBurnDownValidateTargetOwnershipRejectsNil(t *testing.T) {
 	if err := ValidateTargetOwnership(nil); err == nil || !strings.Contains(err.Error(), "target is nil") {
 		t.Fatalf("ValidateTargetOwnership error = %v, want nil-target refusal", err)
+	} else {
+		t.Logf("ValidateTargetOwnership refusal: %v", err)
 	}
 }
 
@@ -52,6 +56,7 @@ func TestGuardBurnDownWatcherRunRefusesHeldWatchLock(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "another watcher is already running") {
 		t.Fatalf("run error = %v, want held-watch-lock refusal", err)
 	}
+	t.Logf("run held-watch-lock refusal: %v", err)
 }
 
 func TestWatcherRunPropagatesLiveLeaseConflict(t *testing.T) {
@@ -77,6 +82,7 @@ func TestWatcherRunPropagatesLiveLeaseConflict(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "claiming watcher lease: watcher lease held by pid") {
 		t.Fatalf("run error = %v, want live-lease conflict propagation", err)
 	}
+	t.Logf("run live-lease conflict: %v", err)
 }
 
 func TestGuardBurnDownStopRunningWatcherRefusesUnownedPID(t *testing.T) {
@@ -90,6 +96,7 @@ func TestGuardBurnDownStopRunningWatcherRefusesUnownedPID(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "ownership could not be verified") {
 		t.Fatalf("stopRunningWatcher error = %v, want ownership refusal", err)
 	}
+	t.Logf("stopRunningWatcher refusal: %v", err)
 }
 
 func TestGuardBurnDownRecoverRejectsNonAcceptedAck(t *testing.T) {
@@ -123,6 +130,7 @@ func TestGuardBurnDownRecoverRejectsNonAcceptedAck(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "is not accepted") {
 		t.Fatalf("Recover error = %v, want non-accepted-ack refusal", err)
 	}
+	t.Logf("Recover refusal: %v", err)
 }
 
 func TestGuardBurnDownReportRejectsNonMaterialState(t *testing.T) {
@@ -141,6 +149,7 @@ func TestGuardBurnDownReportRejectsNonMaterialState(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "is not material") {
 		t.Fatalf("Report error = %v, want non-material-state refusal", err)
 	}
+	t.Logf("Report non-material-state refusal: %v", err)
 }
 
 func TestGuardBurnDownReportRejectsMissingRequiredFields(t *testing.T) {
@@ -148,6 +157,7 @@ func TestGuardBurnDownReportRejectsMissingRequiredFields(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "required identity") {
 		t.Fatalf("Report error = %v, want missing-required-fields refusal", err)
 	}
+	t.Logf("Report missing-required-fields refusal: %v", err)
 }
 
 func TestGuardBurnDownResolveCaptainActivationTargetRejectsEmptyPane(t *testing.T) {
@@ -168,4 +178,5 @@ func TestGuardBurnDownResolveCaptainActivationTargetRejectsEmptyPane(t *testing.
 	if err == nil || !strings.Contains(err.Error(), "no herdr_pane_id") {
 		t.Fatalf("resolveCaptainActivationTarget error = %v, want empty-pane refusal", err)
 	}
+	t.Logf("resolveCaptainActivationTarget refusal: %v", err)
 }
