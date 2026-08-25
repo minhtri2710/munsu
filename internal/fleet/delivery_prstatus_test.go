@@ -138,6 +138,49 @@ func TestNormalizeGitHubReviewState(t *testing.T) {
 	}
 }
 
+func TestGitHubProviderSnapshotRefusesIncompleteOpenEvidence(t *testing.T) {
+	old := DefaultGitHubClient
+	t.Cleanup(func() { DefaultGitHubClient = old })
+
+	for _, tc := range []struct {
+		name string
+		data string
+		want string
+	}{
+		{
+			name: "missing status checks",
+			data: `{"state":"OPEN","headRefOid":"head123","headRefName":"feature","baseRefName":"main","reviewDecision":"APPROVED"}`,
+			want: "empty statusCheckRollup",
+		},
+		{
+			name: "missing review decision",
+			data: `{"state":"OPEN","headRefOid":"head123","headRefName":"feature","baseRefName":"main","statusCheckRollup":[{"conclusion":"SUCCESS"}]}`,
+			want: "empty reviewDecision",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			DefaultGitHubClient = func() (GitHubClient, error) {
+				return terminalGitHubClient{data: tc.data}, nil
+			}
+			if _, err := fetchGitHubProviderSnapshot("https://github.com/owner/project/pull/42"); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("fetchGitHubProviderSnapshot error = %v, want %q refusal", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestGitHubProviderSnapshotRefusesUnknownState(t *testing.T) {
+	old := DefaultGitHubClient
+	DefaultGitHubClient = func() (GitHubClient, error) {
+		return terminalGitHubClient{data: `{"state":"DRAFT","headRefOid":"head123","headRefName":"feature","baseRefName":"main"}`}, nil
+	}
+	t.Cleanup(func() { DefaultGitHubClient = old })
+
+	if _, err := fetchGitHubProviderSnapshot("https://github.com/owner/project/pull/42"); err == nil || !strings.Contains(err.Error(), "unrecognized state") {
+		t.Fatalf("fetchGitHubProviderSnapshot error = %v, want unknown-state refusal", err)
+	}
+}
+
 func TestGitHubProviderSnapshotTerminalStatesNeedNoMergeabilityEvidence(t *testing.T) {
 	old := DefaultGitHubClient
 	DefaultGitHubClient = func() (GitHubClient, error) {
@@ -215,6 +258,27 @@ func TestGitLabProviderSnapshotTerminalStatesNeedNoMergeabilityEvidence(t *testi
 				t.Fatalf("snapshot = %+v", snapshot)
 			}
 		})
+	}
+}
+
+func TestGitLabProviderSnapshotRefusesUnknownState(t *testing.T) {
+	old := defaultGlabRunner
+	defaultGlabRunner = &fakeGlabRunner{runFn: func(args ...string) ([]byte, error) {
+		if len(args) == 1 && args[0] == "--version" {
+			return []byte("glab version 1.45.0"), nil
+		}
+		if len(args) == 2 && args[0] == "api" && args[1] == "--help" {
+			return []byte("api access"), nil
+		}
+		if len(args) == 2 && args[0] == "auth" && args[1] == "status" {
+			return []byte("authenticated"), nil
+		}
+		return []byte(`{"state":"draft","sha":"head123","source_branch":"feature","target_branch":"main"}`), nil
+	}}
+	t.Cleanup(func() { defaultGlabRunner = old })
+
+	if _, err := fetchGitLabProviderSnapshot("https://gitlab.com/owner/project/-/merge_requests/42"); err == nil || !strings.Contains(err.Error(), "unrecognized state") {
+		t.Fatalf("fetchGitLabProviderSnapshot error = %v, want unknown-state refusal", err)
 	}
 }
 

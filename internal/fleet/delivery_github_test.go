@@ -13,6 +13,25 @@ import (
 	"github.com/minhtri2710/munsu/internal/domain"
 )
 
+func TestGitHubDeliveryProvider_RejectsMismatchedPinnedConstraints(t *testing.T) {
+	provider := &githubDeliveryProvider{client: &recordingGitHubClient{}}
+	ident := domain.DeliveryIdentity{HeadSHA: sampleSHA, BaseRef: "main"}
+
+	for _, tc := range []struct {
+		name    string
+		request DeliveryMergeRequest
+	}{
+		{name: "head mismatch", request: DeliveryMergeRequest{Method: "merge", HeadSHA: "different", BaseRef: "main"}},
+		{name: "base mismatch", request: DeliveryMergeRequest{Method: "merge", HeadSHA: sampleSHA, BaseRef: "release"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := provider.ValidateMergeRequest(ident, tc.request); err == nil || !strings.Contains(err.Error(), "do not match") {
+				t.Fatalf("ValidateMergeRequest error = %v, want identity-mismatch refusal", err)
+			}
+		})
+	}
+}
+
 func TestGitHubDeliveryProvider_RejectsUnenforceableConstraints(t *testing.T) {
 	called := false
 	client := &recordingGitHubClient{}
