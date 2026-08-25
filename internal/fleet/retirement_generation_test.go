@@ -473,9 +473,9 @@ func tryBindEndpointExpectClaimConflict(t *testing.T, auth *taskauthority.Canoni
 // abortCleanupFor releases the durable cleanup claim of the given generation
 // through the canonical AbortCleanup operation (the operator escape hatch),
 // asserting it reconciled to aborted.
-func abortCleanupFor(t *testing.T, auth *taskauthority.Canonical, taskID string, gen taskauthority.Generation) {
+func abortCleanupFor(t *testing.T, auth *taskauthority.Canonical, homeDir, taskID string, gen taskauthority.Generation) {
 	t.Helper()
-	if err := AbortRetirementCleanup(auth, mustTaskID(t, taskID), gen); err != nil {
+	if err := AbortRetirementCleanup(auth, homeDir, mustTaskID(t, taskID), gen); err != nil {
 		t.Fatalf("AbortRetirementCleanup: %v", err)
 	}
 	agg, err := auth.Get(mustTaskID(t, taskID))
@@ -886,7 +886,7 @@ func TestRetirementAbortTerminalOldRetryNeverReleasesReopenedOwnership(t *testin
 
 	// The operator aborts the generation-1 claim (escape hatch) and reopens:
 	// generation 2 re-acquires the SAME endpoint handle under a NEW lease.
-	abortCleanupFor(t, auth, taskID, taskauthority.Generation(1))
+	abortCleanupFor(t, auth, homeDir, taskID, taskauthority.Generation(1))
 	agg, err = auth.Get(mustTaskID(t, taskID))
 	if err != nil {
 		t.Fatal(err)
@@ -1000,7 +1000,7 @@ func TestRetirementAbortTerminalOldRetryReleasesOnlyReopenedResources(t *testing
 	// The durable cleanup claim rejects a direct reopen of the still-active
 	// claim; the operator aborts the claim first (escape hatch), then the
 	// task reopens to generation 2, which acquires DIFFERENT resources.
-	abortCleanupFor(t, auth, taskID, taskauthority.Generation(1))
+	abortCleanupFor(t, auth, homeDir, taskID, taskauthority.Generation(1))
 	agg, err := auth.Get(mustTaskID(t, taskID))
 	if err != nil {
 		t.Fatal(err)
@@ -1115,7 +1115,7 @@ func TestRetirementAbortTerminalOldRetryNeverClaimsPreBindAcquisition(t *testing
 	}
 
 	// Operator aborts (terminal) and reopens to generation 2.
-	abortCleanupFor(t, auth, taskID, taskauthority.Generation(1))
+	abortCleanupFor(t, auth, homeDir, taskID, taskauthority.Generation(1))
 	agg, err := auth.Get(mustTaskID(t, taskID))
 	if err != nil {
 		t.Fatal(err)
@@ -1303,7 +1303,7 @@ func TestRetirementAbortTerminalSameGenerationRetryNeverResumes(t *testing.T) {
 	}
 
 	// Operator aborts; the task stays on generation 1 with an aborted claim.
-	abortCleanupFor(t, auth, taskID, taskauthority.Generation(1))
+	abortCleanupFor(t, auth, homeDir, taskID, taskauthority.Generation(1))
 
 	// A teardown retry reports the terminal abort and releases nothing: the
 	// claim is never re-activated and the evidence-pinned endpoint/worktree
@@ -1549,7 +1549,7 @@ func TestRetirementExplicitTargetConflictWhenGenerationAdvanced(t *testing.T) {
 	if _, err := RetireTask(opts, first, fakeRetirementJournals{}, auth); err == nil {
 		t.Fatal("expected pending cleanup")
 	}
-	abortCleanupFor(t, auth, taskID, taskauthority.Generation(1))
+	abortCleanupFor(t, auth, homeDir, taskID, taskauthority.Generation(1))
 	agg, err := auth.Get(mustTaskID(t, taskID))
 	if err != nil {
 		t.Fatal(err)

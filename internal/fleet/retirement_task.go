@@ -179,14 +179,26 @@ func completeRetirementCleanup(authority *taskauthority.Canonical, taskID domain
 
 // AbortRetirementCleanup releases the active cleanup claim of the given
 // retired generation WITHOUT completing cleanup (operator escape hatch for a
-// stuck claim): the task becomes reopenable and the retired generation's
-// preserved evidence remains as a historical record. Abort is TERMINAL: a
-// later teardown retry does not re-activate the claim and never resumes the
-// aborted cleanup against a reopened generation.
-func AbortRetirementCleanup(authority *taskauthority.Canonical, taskID domain.TaskID, claimGen taskauthority.Generation) error {
+// stuck claim). The task becomes reopenable only after report.md has been
+// evacuated; then the retired generation's preserved evidence remains a
+// historical record. Abort is TERMINAL: a later teardown retry does not
+// re-activate the claim and never resumes the aborted cleanup against a
+// reopened generation.
+func AbortRetirementCleanup(authority *taskauthority.Canonical, homeDir string, taskID domain.TaskID, claimGen taskauthority.Generation) error {
 	cur, err := authority.Get(taskID)
 	if err != nil {
 		return fmt.Errorf("resolving current state to abort cleanup claim: %w", err)
+	}
+	if cur.CleanupClaim == nil || cur.CleanupClaim.Status != taskauthority.CleanupActive || cur.CleanupClaim.Generation != claimGen {
+		return fmt.Errorf("cleanup claim for %s generation %s is not active", taskID, claimGen)
+	}
+	if _, dataDirExists, err := archiveRetiredReport(homeDir, taskID.Value(), claimGen); err != nil {
+		return fmt.Errorf("archiving report before aborting cleanup for %s generation %s: %w", taskID, claimGen, err)
+	} else if dataDirExists {
+		now := time.Now()
+		if err := os.Chtimes(filepath.Join(homeDir, "data", taskID.Value()), now, now); err != nil {
+			return fmt.Errorf("refreshing data directory before aborting cleanup for %s generation %s: %w", taskID, claimGen, err)
+		}
 	}
 	req := taskauthority.CanonicalAbortCleanupRequest{
 		HomeID:           authority.HomeID(),
@@ -923,39 +935,14 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		// for a relaunch of the same task and is reclaimed by the
 		// session-start GC in internal/bootstrap once the task is retired.
 		dataDir := filepath.Join(opts.HomeDir, "data", opts.ID)
-		dataInfo, dataErr := os.Lstat(dataDir)
-		if dataErr != nil && !os.IsNotExist(dataErr) {
-			return cleanupPending(fmt.Errorf("teardown %s: checking data directory for generation %s: %w", opts.ID, claimGen, dataErr))
+		archived, exists, err := archiveRetiredReport(opts.HomeDir, opts.ID, claimGen)
+		if err != nil {
+			return cleanupPending(fmt.Errorf("teardown %s: archiving report for generation %s: %w", opts.ID, claimGen, err))
 		}
-		if dataErr == nil && !dataInfo.IsDir() {
-			return cleanupPending(fmt.Errorf("teardown %s: data path %s for generation %s is not a directory", opts.ID, dataDir, claimGen))
+		if exists && archived != "" {
+			result.Steps = append(result.Steps, fmt.Sprintf("report.md archived as %s", archived))
 		}
-		if dataErr == nil {
-			reportPath := filepath.Join(dataDir, "report.md")
-			archived := ArchivedReportName(claimGen)
-			archivedPath := filepath.Join(dataDir, archived)
-			_, reportErr := os.Lstat(reportPath)
-			if reportErr == nil {
-				reservation, reserveErr := os.OpenFile(archivedPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
-				if reserveErr != nil {
-					if os.IsExist(reserveErr) {
-						return cleanupPending(fmt.Errorf("teardown %s: report paths %s and %s conflict for generation %s", opts.ID, reportPath, archivedPath, claimGen))
-					}
-					return cleanupPending(fmt.Errorf("teardown %s: reserving archive path %s for generation %s: %w", opts.ID, archivedPath, claimGen, reserveErr))
-				}
-				if err := reservation.Close(); err != nil {
-					_ = os.Remove(archivedPath)
-					return cleanupPending(fmt.Errorf("teardown %s: closing archive reservation %s for generation %s: %w", opts.ID, archivedPath, claimGen, err))
-				}
-				if err := os.Rename(reportPath, archivedPath); err != nil {
-					_ = os.Remove(archivedPath)
-					return cleanupPending(fmt.Errorf("teardown %s: archiving report for generation %s: %w", opts.ID, claimGen, err))
-				}
-				result.Steps = append(result.Steps, fmt.Sprintf("report.md archived as %s", archived))
-			} else if !os.IsNotExist(reportErr) {
-				return cleanupPending(fmt.Errorf("teardown %s: checking report for generation %s: %w", opts.ID, claimGen, reportErr))
-			}
-
+		if exists {
 			result.Steps = append(result.Steps, "data dir kept for relaunch or session-start sweep")
 			now := time.Now()
 			if err := os.Chtimes(dataDir, now, now); err != nil {
