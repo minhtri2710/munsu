@@ -112,7 +112,6 @@ internal/fleet/delivery_deliver.go	verifyDeliveryCurrency	1	cur.Authorization ==
 internal/fleet/delivery_deliver.go	verifyDeliveryCurrency	1	cur.Authorization.Identity.HeadSHA != journal.Identity.HeadSHA	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_deliver.go	verifyDeliveryCurrency	1	cur.Authorization.Kind != journal.Kind	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_deliver.go	verifyDeliveryCurrency	1	cur.Authorization.OperationID != journal.AuthorizeOpID	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/delivery_github.go	classifyGitHubObservation	1	obs.State == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_github.go	ghAxiClient.CaptureIdentity	1	values["headRefOid"] == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_github.go	githubDeliveryProvider.Merge	1	p.client == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_github.go	githubDeliveryProvider.Observe	1	p.client == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged

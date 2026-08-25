@@ -11,13 +11,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/domain"
 )
 
-func TestClassifyGitHubObservationRefusesUnknownState(t *testing.T) {
-	_, err := classifyGitHubObservation(map[string]string{"state": "pending"})
-	if err == nil || !strings.Contains(err.Error(), "could not determine") {
-		t.Fatalf("classifyGitHubObservation error = %v, want unknown-state refusal", err)
-	}
-}
-
 func TestGitHubClientForStateUnknownRefuses(t *testing.T) {
 	_, err := GitHubClientForState(backend.State(99))
 	if err == nil || !strings.Contains(err.Error(), "unknown state") {
@@ -127,55 +120,35 @@ merged: true
 	}
 }
 
-// observePRFromOutput exercises the REST classification directly through the
-// production classifier.
-func observePRFromOutput(output string) (DeliveryProviderObservation, error) {
-	return classifyGitHubObservation(parseGhAxiKeyValues(output))
-}
-
-func TestObservePR_ClassifiesMergedByEvidence(t *testing.T) {
-	// REST reports merged PRs as state=closed with merged=true and a
-	// non-empty merge_commit_sha.
-	obs, err := observePRFromOutput("state: closed\nheadSha: abc\nmergedSha: def\nmerged: true\n")
-	if err != nil {
-		t.Fatal(err)
+func TestClassifyGitHubGraphQLObservation(t *testing.T) {
+	base := `{"data":{"repository":{"pullRequest":{"state":"OPEN","headRefOid":"abc","baseRefName":"main","merged":false,"reviewDecision":"APPROVED","mergeable":"MERGEABLE","commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"SUCCESS"}}}]}}}}}`
+	obs, err := classifyGitHubGraphQLObservation([]byte(base))
+	if err != nil || obs.State != "OPEN" || obs.Mergeability != DeliveryMergeabilityAllowed {
+		t.Fatalf("open observation = %+v, %v", obs, err)
 	}
-	if obs.State != "MERGED" {
-		t.Errorf("state = %q, want MERGED", obs.State)
+	cases := []struct {
+		name string
+		data string
+	}{
+		{name: "changes requested", data: strings.Replace(base, `"reviewDecision":"APPROVED"`, `"reviewDecision":"CHANGES_REQUESTED"`, 1)},
+		{name: "not mergeable", data: strings.Replace(base, `"mergeable":"MERGEABLE"`, `"mergeable":"CONFLICTING"`, 1)},
+		{name: "checks pending", data: strings.Replace(base, `"statusCheckRollup":{"state":"SUCCESS"}`, `"statusCheckRollup":{"state":"EXPECTED"}`, 1)},
 	}
-	if obs.HeadSHA != "abc" || obs.MergedSHA != "def" {
-		t.Errorf("obs = %+v", obs)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := classifyGitHubGraphQLObservation([]byte(tc.data))
+			if err != nil || got.Mergeability != DeliveryMergeabilityDenied {
+				t.Fatalf("observation = %+v, %v", got, err)
+			}
+		})
 	}
-}
-
-func TestObservePR_ClassifiesOpen(t *testing.T) {
-	obs, err := observePRFromOutput("state: open\nheadSha: abc\nbaseRef: main\nmergedSha: \nmerged: false\n")
-	if err != nil {
-		t.Fatal(err)
+	merged := strings.Replace(base, `"merged":false`, `"merged":true`, 1)
+	got, err := classifyGitHubGraphQLObservation([]byte(merged))
+	if err != nil || got.State != "MERGED" {
+		t.Fatalf("merged observation = %+v, %v", got, err)
 	}
-	if obs.State != "OPEN" {
-		t.Errorf("state = %q, want OPEN", obs.State)
-	}
-	// The PR base ref feeds the pre-mutation base ref fence: an observation
-	// without it cannot reject a base changed since capture.
-	if obs.BaseRef != "main" {
-		t.Errorf("baseRef = %q, want main", obs.BaseRef)
-	}
-}
-
-func TestObservePR_ClassifiesClosedUnmerged(t *testing.T) {
-	obs, err := observePRFromOutput("state: closed\nheadSha: abc\nmergedSha: \nmerged: false\n")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if obs.State != "CLOSED" {
-		t.Errorf("state = %q, want CLOSED", obs.State)
-	}
-}
-
-func TestObservePR_EmptyOutputFailsClosed(t *testing.T) {
-	if _, err := observePRFromOutput(""); err == nil {
-		t.Fatal("expected error for empty output")
+	if _, err := classifyGitHubGraphQLObservation([]byte(`{"data":{"repository":{"pullRequest":{"state":"OPEN"}}}}`)); err == nil {
+		t.Fatal("missing mergeability evidence unexpectedly succeeded")
 	}
 }
 

@@ -237,49 +237,6 @@ func classifyGitHubGraphQLObservation(data []byte) (DeliveryProviderObservation,
 	return obs, nil
 }
 
-func classifyGitHubMergeability(obs DeliveryProviderObservation, values map[string]string) (DeliveryProviderObservation, error) {
-	review, reviewOK := values["reviewDecision"]
-	checks, checksOK := values["checkState"]
-	if !reviewOK || review == "" || !checksOK || checks == "" {
-		return DeliveryProviderObservation{}, fmt.Errorf("gh-axi api: missing or unknown mergeability evidence")
-	}
-	if review == "APPROVED" && checks == "SUCCESS" {
-		obs.Mergeability = DeliveryMergeabilityAllowed
-	} else {
-		obs.Mergeability = DeliveryMergeabilityDenied
-	}
-	return obs, nil
-}
-
-// classifyGitHubObservation is the pure GitHub REST observation classifier:
-// merged evidence (merged=true or a non-empty merge_commit_sha) wins over
-// the closed state GitHub reports for merged PRs; otherwise open/closed map
-// directly. Unknown or empty state fails closed.
-func classifyGitHubObservation(values map[string]string) (DeliveryProviderObservation, error) {
-	state := strings.ToUpper(strings.TrimSpace(values["state"]))
-	obs := DeliveryProviderObservation{
-		State:        state,
-		HeadSHA:      values["headSha"],
-		MergedSHA:    values["mergedSha"],
-		BaseRef:      values["baseRef"],
-		Mergeability: DeliveryMergeabilityUnknown,
-	}
-	switch {
-	case strings.EqualFold(values["merged"], "true") || obs.MergedSHA != "":
-		obs.State = "MERGED"
-	case state == "OPEN":
-		obs.State = "OPEN"
-	case state == "CLOSED":
-		obs.State = "CLOSED"
-	default:
-		return DeliveryProviderObservation{}, fmt.Errorf("gh-axi api: could not determine pull request state")
-	}
-	if obs.State == "" {
-		return DeliveryProviderObservation{}, fmt.Errorf("gh-axi api: could not determine pull request state")
-	}
-	return obs, nil
-}
-
 // ViewPRJSON fetches PR metadata as JSON via gh CLI. This backs the retained
 // provider-neutral read-only status seam (QueryPRMergeStatus); the delivery
 // execution path never uses it.
