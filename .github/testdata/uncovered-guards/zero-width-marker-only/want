@@ -1,3 +1,5 @@
-::warning file=internal/fake/guard.go::no lane compiles this file on this platform, so its refusal branches are outside the lane in both directions
-guards: 1 sites, 0 waived, deadcode: 2 allowed
-exit 0
+::error::a refusal site sits in a file the lanes compiled, yet no unique coverage block resolves at its refusal-body entry:
+  internal/fake/guard.go: Refuse (#1) moved != here -- refusal body range 99.7-100.1
+  The coverage profile does not uniquely map this refusal body under the current source/toolchain coordinates, so every verdict below is unsafe.
+  Check that every profile was produced from this source revision by a compatible Go toolchain before trusting this lane again.
+exit 1
