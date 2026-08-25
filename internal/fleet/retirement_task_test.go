@@ -1107,6 +1107,48 @@ func TestRun_ArchivingTheReportFailsClosed(t *testing.T) {
 	}
 }
 
+type failingRetirementJournals struct{}
+
+func (failingRetirementJournals) VerifyRetirementContinuity(string, string) error { return nil }
+func (failingRetirementJournals) PrepareForcedRetirementEvidence(string, string) ([]string, error) {
+	return nil, nil
+}
+func (failingRetirementJournals) FinalizeRetirementJournals(string, string) ([]string, error) {
+	return nil, errors.New("journal finalization failed")
+}
+
+func TestRun_RetryAfterJournalFailureKeepsMeta(t *testing.T) {
+	tmp := t.TempDir()
+	taskID := "retry-journal"
+	auth := canonicalMergeTestAuth(t, tmp, taskID)
+	metaPath := filepath.Join(tmp, "state", taskID+".meta")
+	if err := os.MkdirAll(filepath.Dir(metaPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(metaPath, []byte("kind=scout\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, &recordingTeardown{alive: true}, failingRetirementJournals{}, auth); err == nil {
+		t.Fatal("expected pending cleanup")
+	}
+	if _, err := os.Stat(metaPath); err != nil {
+		t.Fatalf("meta removed: %v", err)
+	}
+	if _, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, &recordingTeardown{alive: true}, fakeRetirementJournals{}, auth); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
+		t.Fatalf("meta remains after retry: %v", err)
+	}
+	claim, err := auth.Get(mustTaskID(t, taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claim.CleanupClaim == nil || claim.CleanupClaim.Status != taskauthority.CleanupCompleted {
+		t.Fatalf("claim = %+v", claim.CleanupClaim)
+	}
+}
+
 func TestRun_RetryAfterArchiveFailureKeepsMeta(t *testing.T) {
 	tmp := t.TempDir()
 	taskID := "retry-meta"
