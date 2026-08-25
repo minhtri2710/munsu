@@ -320,8 +320,13 @@ func TestTargetDirectoryFlagRefused(t *testing.T) {
 // without a git fixture: what counts as a write target and what deliberately
 // does not (ADR-0014 §2).
 func TestShellWriteTargetExtraction(t *testing.T) {
-	base := string(os.PathSeparator) + filepath.Join("base")
-	abs := string(os.PathSeparator) + filepath.Join("shared", "README.md")
+	// A leading separator is an absolute path on Unix but only a
+	// current-drive-relative one on Windows, where filepath.IsAbs wants a
+	// volume. These stand in for absolute paths, so they have to be absolute
+	// on both platforms or the resolution under test never happens.
+	base := mustAbsTestPath(t, "base")
+	abs := filepath.Join(mustAbsTestPath(t, "shared"), "README.md")
+	elsewhere := mustAbsTestPath(t, "elsewhere")
 
 	for _, tc := range []struct {
 		command string
@@ -337,7 +342,7 @@ func TestShellWriteTargetExtraction(t *testing.T) {
 		{"perl -pi -e s/a/b/ " + abs, []string{filepath.Join(base, "s/a/b/"), abs}},
 		{"dd if=/dev/zero of=" + abs, []string{abs}},
 		{"echo x > out.txt", []string{filepath.Join(base, "out.txt")}},
-		{"cd /elsewhere && echo x > out.txt", []string{filepath.Join("/elsewhere", "out.txt")}},
+		{"cd " + elsewhere + " && echo x > out.txt", []string{filepath.Join(elsewhere, "out.txt")}},
 
 		// Deliberately not claimed.
 		{"cat " + abs, nil},
@@ -376,6 +381,26 @@ func TestShellWriteTargetExtraction(t *testing.T) {
 		{"cat <<\\EOF > notes.md\nrm -rf " + abs + "\nEOF\nrm -rf " + abs,
 			[]string{filepath.Join(base, "notes.md"), abs}},
 		{"cat <<-\\END > notes.md\n\tEND\nrm -rf " + abs, []string{filepath.Join(base, "notes.md"), abs}},
+
+		// A lone backslash is read both ways (#664). munsu does not know which
+		// shell will interpret the command, so the Windows reading — `\` is an
+		// ordinary path separator — has to yield a candidate even on a platform
+		// whose shell would dissolve it, and the POSIX reading has to keep
+		// yielding one on a platform whose shell would not. Both appear here on
+		// every OS, which is the whole of the guarantee: whichever shell runs
+		// the command, the path it actually opens was classified.
+		{"echo x > " + `\shared\README.md`, []string{
+			filepath.Join(base, "sharedREADME.md"),
+			filepath.Join(base, `\shared\README.md`),
+		}},
+		{"rm -rf " + `\shared\README.md`, []string{
+			filepath.Join(base, "sharedREADME.md"),
+			filepath.Join(base, `\shared\README.md`),
+		}},
+		// The two readings collapse when there is no backslash to read, so a
+		// command that never mentions one produces exactly one target and no
+		// duplicate survives the union.
+		{"echo x > plain.md", []string{filepath.Join(base, "plain.md")}},
 	} {
 		got := shellWriteTargets(base, tc.command)
 		if len(got) != len(tc.want) {
@@ -389,4 +414,15 @@ func TestShellWriteTargetExtraction(t *testing.T) {
 			}
 		}
 	}
+}
+
+// mustAbsTestPath returns name as an absolute path rooted at the filesystem
+// root on Unix and at the current volume's root on Windows.
+func mustAbsTestPath(t *testing.T, name string) string {
+	t.Helper()
+	abs, err := filepath.Abs(string(os.PathSeparator) + name)
+	if err != nil {
+		t.Fatalf("Abs(%q): %v", name, err)
+	}
+	return abs
 }

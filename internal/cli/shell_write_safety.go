@@ -2,6 +2,7 @@ package cli
 
 import (
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -31,12 +32,49 @@ type shellToken struct {
 // shared checkout are legitimate work, and refusing them is the failure mode
 // this guard must not have.
 //
-// Tokenization cannot fail, so this channel has no unparseable state and
-// inherits none of the fail-closed obligation applyPatchTargets carries.
+// A lone backslash has no single meaning here, so the command is resolved twice
+// (#664). munsu never runs this string: the only call site is the harness hook
+// in integrate_cmd.go, which inspects a command the harness proposes to run.
+// Which shell interprets it depends on the harness and the platform, and
+// neither is on the wire — so the guard cannot know whether `\` quotes the next
+// character and disappears, as POSIX shells read it, or is an ordinary path
+// separator, as Windows shells do. Reading it only as an escape deleted every
+// separator in a Windows absolute path: the target stopped naming the shared
+// checkout, and the write proceeded unopposed.
+//
+// Both readings are therefore extracted and the targets unioned. There is no
+// platform gate, because the platform is not what decides this. Over-refusal
+// stays bounded by the narrow claim above: only a redirection target and a
+// named write verb's arguments are targets at all, so the candidate the second
+// reading adds can only ever be one more write path, never a read.
 func shellWriteTargets(checkPath, command string) []string {
+	targets := shellWriteTargetsUnder(backslashEscapes, checkPath, command)
+	for _, target := range shellWriteTargetsUnder(backslashLiteral, checkPath, command) {
+		if !slices.Contains(targets, target) {
+			targets = append(targets, target)
+		}
+	}
+	return targets
+}
+
+// backslashMode is one reading of a lone backslash while tokenizing.
+type backslashMode int
+
+const (
+	// backslashEscapes is the POSIX shell reading: `\` quotes the character
+	// after it and is itself removed.
+	backslashEscapes backslashMode = iota
+	// backslashLiteral is the Windows shell reading: `\` is an ordinary
+	// character that quotes nothing, and separates path components.
+	backslashLiteral
+)
+
+// shellWriteTargetsUnder extracts the write targets of command under one
+// reading of the backslash.
+func shellWriteTargetsUnder(mode backslashMode, checkPath, command string) []string {
 	var targets []string
 	currentPath := checkPath
-	for _, segment := range shellSegments(command) {
+	for _, segment := range shellSegments(mode, command) {
 		if len(segment) == 0 {
 			continue
 		}
@@ -73,11 +111,11 @@ func evaluateWriteTargets(targets []string) (bool, string) {
 // command line, and the same "one payload, one channel" rule BEO-62 settled
 // applies to it. Tokenizing it refused a legitimate write whenever the content
 // happened to look like a command — this file's own ADR is such a document.
-func shellSegments(command string) [][]shellToken {
-	return tokenizeSegments(stripHeredocBodies(command))
+func shellSegments(mode backslashMode, command string) [][]shellToken {
+	return tokenizeSegments(mode, stripHeredocBodies(mode, command))
 }
 
-func tokenizeSegments(command string) [][]shellToken {
+func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 	var segments [][]shellToken
 	var segment []shellToken
 	var word strings.Builder
@@ -106,7 +144,7 @@ func tokenizeSegments(command string) [][]shellToken {
 			escaped = false
 			continue
 		}
-		if r == '\\' {
+		if r == '\\' && mode == backslashEscapes {
 			escaped = true
 			continue
 		}
@@ -164,7 +202,7 @@ type heredocSpec struct {
 // real write target, and a `cd <shared>` line inside a document moved the
 // resolution base for the genuine commands after the terminator. Both refused
 // writes that must go through, which is the one failure this guard cannot have.
-func stripHeredocBodies(command string) string {
+func stripHeredocBodies(mode backslashMode, command string) string {
 	runes := []rune(command)
 	var out strings.Builder
 	var pending []heredocSpec
@@ -178,7 +216,7 @@ func stripHeredocBodies(command string) string {
 			escaped = false
 			continue
 		}
-		if r == '\\' {
+		if r == '\\' && mode == backslashEscapes {
 			out.WriteRune(r)
 			escaped = true
 			continue
@@ -203,7 +241,7 @@ func stripHeredocBodies(command string) string {
 				run++
 			}
 			if run-i == 2 {
-				if spec, next, ok := readHeredocRedirect(runes, i); ok {
+				if spec, next, ok := readHeredocRedirect(mode, runes, i); ok {
 					pending = append(pending, spec)
 					out.WriteRune(' ')
 					i = next - 1
@@ -256,7 +294,7 @@ func skipRedirectSource(runes []rune, j int) int {
 
 // readHeredocRedirect reads a `<<DELIM` / `<<-DELIM` operator starting at i and
 // returns the index just past the delimiter word.
-func readHeredocRedirect(runes []rune, i int) (heredocSpec, int, bool) {
+func readHeredocRedirect(mode backslashMode, runes []rune, i int) (heredocSpec, int, bool) {
 	j := i + 2
 	spec := heredocSpec{}
 	if j < len(runes) && runes[j] == '-' {
@@ -273,7 +311,7 @@ func readHeredocRedirect(runes []rune, i int) (heredocSpec, int, bool) {
 		// that ends at `EOF`. Reading the backslash into the delimiter made it
 		// match nothing and swallowed the rest of the payload — every command
 		// after the terminator, including ones this guard claims to cover.
-		if r == '\\' {
+		if r == '\\' && mode == backslashEscapes {
 			j++
 			if j < len(runes) {
 				delimiter.WriteRune(runes[j])
