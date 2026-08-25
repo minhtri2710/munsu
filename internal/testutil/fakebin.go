@@ -5,29 +5,16 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
 
-// bootPath is PATH as it stood before any test rewrote it. Windows shim
-// resolution reads this instead of the live PATH so that installing one fake
-// cannot change how the next fake is built: t.Setenv("PATH", ...) is the
-// normal way these fixtures work, and a resolution that depended on it would
-// be order-dependent.
+// bootPath is PATH as it stood before any test rewrote it. Windows fake
+// installation resolves and records the shell from this path before the fake
+// is launched, so changing PATH for one fixture cannot affect another.
 var bootPath = os.Getenv("PATH")
 
 // WriteFakeExecutableAt writes script as a POSIX shell program at path.
-//
-// On windows it also writes a name.cmd companion that hands the same script to
-// a POSIX shell. exec.LookPath on windows only considers names that carry a
-// PATHEXT extension (.COM;.EXE;.BAT;.CMD;...), so a bare `#!/bin/sh` file named
-// `herdr` is invisible to it no matter what its mode bits say: production
-// reports the binary as absent and the test measures a lookup failure rather
-// than the contract it meant to exercise (#549 group 1). LookPath appends each
-// PATHEXT entry to the whole name, so `herdr.cmd` answers a lookup for `herdr`
-// and the shell script stays the single source of the fake's behaviour on both
-// platforms.
 func WriteFakeExecutableAt(path, script string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -35,15 +22,7 @@ func WriteFakeExecutableAt(path, script string) error {
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		return err
 	}
-	if runtime.GOOS != "windows" {
-		return nil
-	}
-	shell, err := resolvePOSIXShell(bootPath)
-	if err != nil {
-		return err
-	}
-	shim := "@echo off\r\n\"" + shell + "\" \"%~dp0" + filepath.Base(path) + "\" %*\r\nexit /b %errorlevel%\r\n"
-	return os.WriteFile(path+".cmd", []byte(shim), 0o755)
+	return installWindowsFake(path)
 }
 
 // WriteFakeExecutable is WriteFakeExecutableAt for a test, returning the path
@@ -57,16 +36,8 @@ func WriteFakeExecutable(t *testing.T, path, script string) string {
 }
 
 // FakeExecutablePath returns the path that runs the fake written at path.
-//
-// A fixture that hands production an explicit path rather than a name needs
-// this: on windows the script itself is not something CreateProcess can start,
-// so what runs -- and what exec.LookPath resolves for a bare name -- is the
-// .cmd companion beside it.
 func FakeExecutablePath(path string) string {
-	if runtime.GOOS == "windows" {
-		return path + ".cmd"
-	}
-	return path
+	return fakeExecutablePath(path)
 }
 
 // FakeOnPath installs one fake program in a fresh directory and prepends that

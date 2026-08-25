@@ -3,6 +3,7 @@ package testutil
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -65,6 +66,36 @@ func TestWriteFakeExecutableAtWritesTheScriptVerbatim(t *testing.T) {
 	}
 	if string(got) != script {
 		t.Errorf("script = %q, want %q", got, script)
+	}
+}
+
+func TestFakeOnPathRunsShellBehavior(t *testing.T) {
+	name := "fake-args"
+	FakeOnPath(t, name, "#!/bin/sh\nprintf 'out:%s:%s\\n' \"$1\" \"$2\"\nprintf 'err\\n' >&2\nexit 7\n")
+	cmd := exec.Command(name, "one", "two")
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatal("fake command succeeded, want exit status 7")
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 7 {
+		t.Fatalf("err = %v, want exit status 7", err)
+	}
+	if got, want := string(output), "out:one:two\nerr\n"; got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+}
+
+func TestFakeExecutablePathResolvesOnPath(t *testing.T) {
+	dir := t.TempDir()
+	path := WriteFakeExecutable(t, filepath.Join(dir, "fake"), "#!/bin/sh\nprintf ok\n")
+	SetPath(t, dir)
+	resolved, err := exec.LookPath(filepath.Base(path))
+	if err != nil {
+		t.Fatalf("LookPath: %v", err)
+	}
+	if resolved != path {
+		t.Fatalf("resolved = %q, want %q", resolved, path)
 	}
 }
 
