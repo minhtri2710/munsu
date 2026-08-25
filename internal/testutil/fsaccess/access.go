@@ -1,7 +1,6 @@
 package fsaccess
 
 import (
-	"fmt"
 	"sync"
 	"testing"
 )
@@ -23,8 +22,4 @@ func registerRestore(t *testing.T, restore func() error) func() error {
 		}
 	})
 	return restoreOnce
-}
-
-func invalidPathKind(path string) error {
-	return fmt.Errorf("unsupported filesystem path %q", path)
 }

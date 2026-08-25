@@ -13,7 +13,7 @@ import (
 )
 
 const unreadableAccess = windows.FILE_GENERIC_READ
-const readOnlyAccess = windows.FILE_GENERIC_WRITE | windows.DELETE
+const readOnlyAccess = windows.FILE_GENERIC_WRITE | windows.DELETE | 0x40
 
 // MakeUnreadable adds an explicit deny ACE for the current user while retaining
 // WRITE_DAC, verifies that reading/listing is refused, and restores the exact

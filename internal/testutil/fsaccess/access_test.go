@@ -44,15 +44,32 @@ func TestMakeReadOnlyRefusesWrites(t *testing.T) {
 	}
 }
 
-func TestPrivateAssertions(t *testing.T) {
+func TestMakeReadOnlyRefusesDirectoryCreate(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.Chmod(dir, 0700); err != nil {
-		t.Fatal(err)
+	MakeReadOnly(t, dir)
+	probe := filepath.Join(dir, "child")
+	if err := os.Mkdir(probe, 0700); err == nil {
+		t.Fatal("read-only directory remained writable")
 	}
+}
+
+func TestAccessRestoresAfterNestedTest(t *testing.T) {
+	dir := t.TempDir()
 	file := filepath.Join(dir, "file")
 	if err := os.WriteFile(file, []byte("data"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	AssertPrivateFile(t, file)
-	AssertPrivateDir(t, dir)
+	if !t.Run("unreadable", func(t *testing.T) {
+		MakeUnreadable(t, file)
+		if _, err := os.Open(file); err == nil {
+			t.Fatal("file remained readable")
+		}
+	}) {
+		t.Fatal("nested unreadable test failed")
+	}
+	if f, err := os.Open(file); err != nil {
+		t.Fatalf("file was not restored: %v", err)
+	} else {
+		f.Close()
+	}
 }
