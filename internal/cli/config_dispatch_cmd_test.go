@@ -168,16 +168,19 @@ func TestDispatchConfig_JSONRoundTrip(t *testing.T) {
 	if err := os.WriteFile(path, append(data, '\n'), 0644); err != nil {
 		t.Fatal(err)
 	}
-	// Re-read the file and verify the shape via json round-trip.
+	var persisted harness.DispatchConfig
 	readData, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sel := harness.ResolveDispatchSelection(cfg, "please do deep architectural redesign")
+	if err := json.Unmarshal(readData, &persisted); err != nil {
+		t.Fatal(err)
+	}
+	if persisted.DefaultHarness != "pi" || persisted.DefaultModel != "flash" || persisted.DefaultEffort != "low" {
+		t.Fatalf("persisted config = %+v", persisted)
+	}
+	sel := harness.ResolveDispatchSelection(&persisted, "please do deep architectural redesign")
 	if sel.Model != "glm" || sel.Effort != "high" {
 		t.Fatalf("selection = %+v", sel)
-	}
-	if !strings.Contains(string(readData), "defaultHarness") {
-		t.Fatalf("saved dispatch missing defaultHarness: %s", string(readData))
 	}
 }
