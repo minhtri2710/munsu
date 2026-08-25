@@ -81,20 +81,6 @@ internal/config/documents.go	finalResolvedOverlay	1	facts.Path == ""	burn-down(B
 internal/config/published_snapshot.go	PublishedSnapshotDocument.Validate	1	d.Config.Digest == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/config/published_snapshot.go	PublishedSnapshotDocument.Validate	1	d.Config.Project == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/config/published_snapshot.go	PublishedSnapshotDocument.Validate	1	d.Config.ProjectPath == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/domain/domain.go	IdentityFromMeta	1	meta[key] != ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/domain/domain.go	IdentityFromMeta	1	metaProvider != "" && metaProvider != urlProvider	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/domain/domain.go	IdentityFromMeta	1	num > 0 && num != parsedNum	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/domain/domain.go	IdentityFromMeta	1	other != "" && other != baseRef	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/domain/domain.go	IdentityFromMeta	1	other != "" && other != headSHA	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/domain/domain.go	IdentityFromMeta	1	owner != "" && owner != parsedOwner	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/domain/domain.go	IdentityFromMeta	1	repo != "" && repo != parsedRepo	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/domain/ghurl_ghurl.go	ParseGHURL	1	owner == "" || repo == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/domain/glurl_glurl.go	ParseMRURL	1	afterMRSegment != trimmedIID	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/domain/glurl_glurl.go	ParseMRURL	1	iidStr == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/domain/glurl_glurl.go	ParseMRURL	1	len(nsParts) < 1	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/domain/glurl_glurl.go	ParseMRURL	1	namespacePath == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/domain/glurl_glurl.go	ParseMRURL	1	project == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/domain/glurl_glurl.go	ParseMRURL	1	u.Opaque != ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_captain.go	buildLaunchArgs	1	!contract.CwdAtHome || (!contract.PromptArg && adapter.Name != "pi")	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_captain.go	buildLaunchArgs	1	contract.ProjectArg	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_captain.go	checkAliveWithProbe	1	probe == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
