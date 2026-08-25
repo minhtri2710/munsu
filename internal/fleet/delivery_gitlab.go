@@ -94,7 +94,7 @@ type GitLabClient interface {
 	// MergeMR merges a merge request via glab. It is the irreversible
 	// provider mutation of the delivery execution path, called at most once
 	// per delivery journal.
-	MergeMR(host, owner, project string, iid int, method string) error
+	MergeMR(host, owner, project string, iid int, method string, expectedHeadSHA string) error
 }
 
 // glabClient implements GitLabClient backed by glab CLI via GlabRunner.
@@ -172,7 +172,7 @@ type gitlabDeliveryProvider struct {
 var _ DeliveryProvider = (*gitlabDeliveryProvider)(nil)
 
 // Merge executes the irreversible provider merge under the exact identity.
-func (p *gitlabDeliveryProvider) Merge(ident domain.DeliveryIdentity, method string) error {
+func (p *gitlabDeliveryProvider) Merge(ident domain.DeliveryIdentity, request DeliveryMergeRequest) error {
 	if p.client == nil {
 		return fmt.Errorf("GitLab delivery capability is not composed")
 	}
@@ -180,7 +180,10 @@ func (p *gitlabDeliveryProvider) Merge(ident domain.DeliveryIdentity, method str
 	if err != nil {
 		return fmt.Errorf("invalid MR URL in identity: %w", err)
 	}
-	return p.client.MergeMR(glURL.Host, glURL.Owner, glURL.Project, glURL.IID, method)
+	if request.HeadSHA == "" || request.HeadSHA != ident.HeadSHA {
+		return fmt.Errorf("GitLab merge expected head does not match the delivery identity")
+	}
+	return p.client.MergeMR(glURL.Host, glURL.Owner, glURL.Project, glURL.IID, request.Method, request.HeadSHA)
 }
 
 // Observe reads the current provider state under the exact identity.
@@ -220,11 +223,11 @@ func (p *gitlabDeliveryProvider) Observe(ident domain.DeliveryIdentity) (Deliver
 			obs.Mergeability = DeliveryMergeabilityDenied
 			return obs, nil
 		}
-		pipeline, pipelineOK := parseGLPipelineStatus(data)
-		if !pipelineOK {
-			return DeliveryProviderObservation{}, fmt.Errorf("GitLab MR observation is missing pipeline evidence")
+		pipeline, pipelineOK := parseGLPipeline(data)
+		if !pipelineOK || pipeline.SHA != status.HeadSHA {
+			return DeliveryProviderObservation{}, fmt.Errorf("GitLab MR observation is missing pipeline SHA evidence for the current head")
 		}
-		if approved && mapCheckStatus(pipeline) == domain.CheckPassed {
+		if approved && mapCheckStatus(pipeline.Status) == domain.CheckPassed {
 			obs.Mergeability = DeliveryMergeabilityAllowed
 		} else {
 			obs.Mergeability = DeliveryMergeabilityDenied
@@ -249,10 +252,14 @@ func parseGLTargetBranch(data []byte) (string, error) {
 
 // MergeMR merges a merge request via glab with the given method: squash,
 // merge (default merge commit), or rebase.
-func (c *glabClient) MergeMR(host, owner, project string, iid int, method string) error {
+func (c *glabClient) MergeMR(host, owner, project string, iid int, method string, expectedHeadSHA string) error {
+	if expectedHeadSHA == "" {
+		return fmt.Errorf("GitLab merge requires an expected head SHA")
+	}
 	args := []string{
 		"mr", "merge",
 		fmt.Sprintf("%s/%s!%d", owner, project, iid),
+		"--sha", expectedHeadSHA,
 	}
 	if host != "" && host != "gitlab.com" {
 		args = append(args, "--hostname", host)
@@ -344,16 +351,22 @@ func parseGLDetailedMergeStatus(data []byte) (string, bool) {
 	return raw.Status, true
 }
 
-func parseGLPipelineStatus(data []byte) (string, bool) {
+type glPipelineEvidence struct {
+	Status string
+	SHA    string
+}
+
+func parseGLPipeline(data []byte) (glPipelineEvidence, bool) {
 	var raw struct {
 		Pipeline *struct {
 			Status string `json:"status"`
+			SHA    string `json:"sha"`
 		} `json:"head_pipeline"`
 	}
-	if json.Unmarshal(data, &raw) != nil || raw.Pipeline == nil || raw.Pipeline.Status == "" {
-		return "", false
+	if json.Unmarshal(data, &raw) != nil || raw.Pipeline == nil || raw.Pipeline.Status == "" || raw.Pipeline.SHA == "" {
+		return glPipelineEvidence{}, false
 	}
-	return raw.Pipeline.Status, true
+	return glPipelineEvidence{Status: raw.Pipeline.Status, SHA: raw.Pipeline.SHA}, true
 }
 
 func (c *glabClient) ViewMRJSON(host, owner, project string, iid int) ([]byte, error) {

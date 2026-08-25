@@ -51,7 +51,7 @@ func (f *fakeDeliveryProvider) scriptErr(errs ...error) *fakeDeliveryProvider {
 	return f
 }
 
-func (f *fakeDeliveryProvider) Merge(ident domain.DeliveryIdentity, method string) error {
+func (f *fakeDeliveryProvider) Merge(ident domain.DeliveryIdentity, request DeliveryMergeRequest) error {
 	f.merges++
 	if f.onMerge != nil {
 		f.onMerge()
