@@ -22,6 +22,12 @@ func TestValidateDeliverRequestRefusesUnsupportedMethod(t *testing.T) {
 	}
 }
 
+func TestVerifyProviderMergeabilityRefusesDeniedObservation(t *testing.T) {
+	if err := verifyProviderMergeability(DeliveryProviderObservation{Mergeability: DeliveryMergeabilityDenied}); err == nil || !strings.Contains(err.Error(), "not mergeable") {
+		t.Fatalf("verifyProviderMergeability error = %v, want denied-mergeability refusal", err)
+	}
+}
+
 func TestDeliveryProviderFor_UnknownProviderRefuses(t *testing.T) {
 	_, err := deliveryProviderFor(domain.DeliveryIdentity{Provider: "unknown"})
 	if err == nil || !strings.Contains(err.Error(), "unsupported delivery provider") {
