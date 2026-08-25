@@ -47,11 +47,6 @@ func ParseMRURL(raw string) (GLURL, error) {
 		return GLURL{}, fmt.Errorf("URL %q has no host", raw)
 	}
 
-	// Reject opaque URLs (no scheme-based parsing)
-	if u.Opaque != "" {
-		return GLURL{}, fmt.Errorf("URL must not be opaque, got %q", raw)
-	}
-
 	// Reject any RawPath (percent-encoded or escaped path).
 	// Even if RawPath equals Path, percent-encoded paths are not valid MR URLs.
 	if u.RawPath != "" {
@@ -91,10 +86,6 @@ func ParseMRURL(raw string) (GLURL, error) {
 
 	// Everything after mrSegment is the MR IID
 	iidStr := path[idx+len(mrSegment):]
-	if iidStr == "" {
-		return GLURL{}, fmt.Errorf("merge request IID is empty in URL %q", raw)
-	}
-
 	iid, err := strconv.Atoi(iidStr)
 	if err != nil {
 		return GLURL{}, fmt.Errorf("invalid merge request IID %q: %w", iidStr, err)
@@ -102,20 +93,6 @@ func ParseMRURL(raw string) (GLURL, error) {
 
 	if iid <= 0 {
 		return GLURL{}, fmt.Errorf("merge request IID must be positive, got %d", iid)
-	}
-
-	// Reject extra path content after the IID (e.g., /-/merge_requests/42/foo).
-	// After trimming trailing slash, the segment after mrSegment must be exactly
-	// the IID as a string.
-	afterMRSegment := path[idx+len(mrSegment):]
-	if afterMRSegment != iidStr {
-		// Trailing slash is fine, but anything else after is not.
-		// iidStr is the raw suffix before trimming, afterMRSegment is the trimmed one.
-		// If they differ by more than a trailing slash, reject.
-		trimmedIID := strings.TrimRight(iidStr, "/")
-		if afterMRSegment != trimmedIID {
-			return GLURL{}, fmt.Errorf("extra path content after merge request IID %d in %q", iid, raw)
-		}
 	}
 
 	// The namespace+project is everything before the MR segment
@@ -128,9 +105,6 @@ func ParseMRURL(raw string) (GLURL, error) {
 	// Split the namespace path. Everything before the last segment is the namespace,
 	// the last segment is the project name.
 	nsParts := strings.Split(namespacePath, "/")
-	if len(nsParts) < 1 {
-		return GLURL{}, fmt.Errorf("namespace/project path is empty in URL %q", raw)
-	}
 
 	// Reject empty segments (e.g., "group//project") and dot segments
 	for _, part := range nsParts {
@@ -143,10 +117,6 @@ func ParseMRURL(raw string) (GLURL, error) {
 	}
 
 	project := nsParts[len(nsParts)-1]
-	if project == "" {
-		return GLURL{}, fmt.Errorf("project name is empty in URL %q", raw)
-	}
-
 	// Owner is everything before the last segment (could be empty for flat namespace)
 	owner := strings.Join(nsParts[:len(nsParts)-1], "/")
 
