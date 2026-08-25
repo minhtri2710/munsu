@@ -122,6 +122,8 @@ func stubDeliverySnapshot(t *testing.T) {
 			HeadRef:    "feature",
 			HeadSHA:    deliveryGuardHead,
 			State:      "OPEN",
+			Checks:     []domain.CheckRun{{Status: domain.CheckPassed}},
+			Reviews:    []domain.Review{{State: domain.ReviewApproved}},
 			ObservedAt: time.Now().UTC().Format(time.RFC3339),
 		}, nil
 	}
