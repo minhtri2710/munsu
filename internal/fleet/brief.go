@@ -233,7 +233,7 @@ func archiveRetiredReport(homeDir, id string, gen taskauthority.Generation) (str
 	reservation, err := os.OpenFile(archivedPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
 	if err != nil {
 		if os.IsExist(err) {
-			if info, statErr := os.Stat(archivedPath); statErr == nil && info.Mode().IsRegular() && info.Size() == 0 {
+			if info, statErr := os.Lstat(archivedPath); statErr == nil && info.Mode().IsRegular() && info.Size() == 0 {
 				reservation = nil
 			} else {
 				return "", true, fmt.Errorf("report paths %s and %s conflict", reportPath, archivedPath)

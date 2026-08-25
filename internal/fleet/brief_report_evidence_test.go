@@ -6,6 +6,42 @@ import (
 	"testing"
 )
 
+func TestArchiveRetiredReportRejectsSymlinkReservation(t *testing.T) {
+	homeDir := t.TempDir()
+	dataDir := filepath.Join(homeDir, "data", "symlink-reservation")
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "report.md"), []byte("current"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(dataDir, "empty-target")
+	if err := os.WriteFile(target, nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(dataDir, "report-g1.md")
+	if err := os.Symlink(target, archive); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := archiveRetiredReport(homeDir, "symlink-reservation", 1); err == nil {
+		t.Fatal("expected symlink reservation conflict")
+	}
+	archiveInfo, err := os.Lstat(archive)
+	if err != nil {
+		t.Fatalf("symlink removed: %v", err)
+	}
+	if archiveInfo.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("archive entry mode = %v, want symlink", archiveInfo.Mode())
+	}
+	contents, err := os.ReadFile(filepath.Join(dataDir, "report.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(contents) != "current" {
+		t.Fatalf("report changed to %q", contents)
+	}
+}
+
 func TestHasReportEvidence(t *testing.T) {
 	if HasReportEvidence(filepath.Join(t.TempDir(), "missing")) != true {
 		t.Fatal("a directory that cannot be read must be reported as holding evidence")

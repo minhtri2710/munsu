@@ -1107,6 +1107,39 @@ func TestRun_ArchivingTheReportFailsClosed(t *testing.T) {
 	}
 }
 
+func TestRun_AbortRefreshesBriefOnlyDirectory(t *testing.T) {
+	tmp := t.TempDir()
+	taskID := "abort-brief-only"
+	auth := canonicalMergeTestAuth(t, tmp, taskID)
+	dataDir := filepath.Join(tmp, "data", taskID)
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "brief.md"), []byte("brief"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Unix(1, 0)
+	if err := os.Chtimes(dataDir, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, fakeTeardown{disposeErr: errors.New("blocked")}, fakeRetirementJournals{}, auth); err == nil {
+		t.Fatal("expected pending cleanup")
+	}
+	if err := AbortRetirementCleanup(auth, tmp, fakeTeardown{}, mustTaskID(t, taskID), 1); err != nil {
+		t.Fatalf("abort: %v", err)
+	}
+	info, err := os.Stat(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.ModTime().After(old) {
+		t.Fatalf("directory mtime = %v, want refreshed", info.ModTime())
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "brief.md")); err != nil {
+		t.Fatalf("brief removed: %v", err)
+	}
+}
+
 func TestRun_AbortRefusesUnarchivedReport(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Fatal("permission proof did not run: tests run as root, so abort archival refusal cannot be established")

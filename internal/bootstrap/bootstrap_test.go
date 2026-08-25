@@ -10,6 +10,10 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/fleet"
+	mhome "github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
@@ -233,6 +237,15 @@ func TestRun_BackendDiagnostics_AutoConfigFileWithNothingAvailable(t *testing.T)
 	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: none (source: no persisted backend identity (set backend in the fleet base config))")
 }
 
+func mustBootstrapOperationID(t *testing.T, value string) domain.OperationID {
+	t.Helper()
+	id, err := domain.NewOperationID(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
 func reclaimNone(_ string, reclaim func() error) (bool, error) { return true, reclaim() }
 func reclaimEvery(string, func() error) (bool, error)          { return false, nil }
 
@@ -283,6 +296,96 @@ func TestRun_RequireNoMistakesDiagnosticFromTypedBase(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestGCOrphanDataDirs_AbortedCleanupKeepsBrief(t *testing.T) {
+	homeDir := t.TempDir()
+	id := "aborted-brief"
+	if _, err := mhome.Init(homeDir); err != nil {
+		t.Fatal(err)
+	}
+	h, err := mhome.Open(homeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth, err := taskauthority.NewCanonical(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tidValue, err := domain.NewTaskID(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := domain.NewProjectID("munsu")
+	if err != nil {
+		t.Fatal(err)
+	}
+	create := taskauthority.CanonicalCreateRequest{HomeID: auth.HomeID(), TaskID: tidValue, Owner: "owner", Description: "brief", Kind: "scout", Project: project, ScoutScope: "scope", ScoutRuntimeBudgetSecs: 60, Reason: "test"}
+	createOp, err := domain.NewOperation(mustBootstrapOperationID(t, "bootstrap-create-brief"), create)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := auth.Create(createOp, create); err != nil {
+		t.Fatal(err)
+	}
+	current, err := auth.Get(tidValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retire := taskauthority.CanonicalRetireRequest{HomeID: auth.HomeID(), TaskID: tidValue, Precondition: domain.Of(uint64(current.Generation), uint64(current.Revision)), Reason: "test"}
+	retireOp, err := domain.NewOperation(mustBootstrapOperationID(t, "bootstrap-retire-brief"), retire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := auth.Retire(retireOp, retire); err != nil {
+		t.Fatal(err)
+	}
+	current, err = auth.Get(tidValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	begin := taskauthority.CanonicalBeginCleanupRequest{HomeID: auth.HomeID(), TaskID: tidValue, Precondition: domain.Of(uint64(current.Generation), uint64(current.Revision)), ClaimOperationID: "bootstrap-retire-brief", ClaimGeneration: current.Generation, Reason: "test"}
+	beginOp, err := domain.NewOperation(mustBootstrapOperationID(t, "bootstrap-begin-brief"), begin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := auth.BeginCleanup(beginOp, begin); err != nil {
+		t.Fatal(err)
+	}
+	dataDir := filepath.Join(homeDir, "data", id)
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "brief.md"), []byte("brief"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Unix(1, 0)
+	if err := os.Chtimes(dataDir, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := fleet.AbortRetirementCleanup(auth, homeDir, nil, tidValue, current.Generation); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.ModTime().After(old) {
+		t.Fatalf("mtime = %v, want refreshed", info.ModTime())
+	}
+	cleaned := gcOrphanDataDirs(homeDir, func(id string, reclaim func() error) (bool, error) {
+		taskID, err := domain.NewTaskID(id)
+		if err != nil {
+			return false, err
+		}
+		return auth.ReclaimReleasedTaskArtifacts(taskID, reclaim)
+	})
+	if len(cleaned) != 0 {
+		t.Fatalf("cleaned = %v, want none", cleaned)
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "brief.md")); err != nil {
+		t.Fatalf("brief removed: %v", err)
+	}
 }
 
 func TestGCOrphanDataDirs_EmptyDirOlderThanGrace(t *testing.T) {
