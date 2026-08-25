@@ -432,9 +432,7 @@ func TestTeardownCmd_UplinkAckInTempHome(t *testing.T) {
 
 	// Create task meta (kind=scout so scoutSafetyCheck runs — just needs report.md)
 	metaContent := "kind=scout\nbackend=tmux\nwindow=@1\nworktree=/nonexistent\n"
-	if err := os.WriteFile(filepath.Join(stateDir, soldierID+".meta"), []byte(metaContent), 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeTaskMeta(t, tmpDir, soldierID, metaContent)
 
 	// Create status with material state so uplinkCheck can detect it
 	if err := home.AppendStatus(tmpDir, soldierID, "done: task complete"); err != nil {
@@ -500,15 +498,8 @@ func TestTeardownCmd_ForceSkipsUplinkCheckInTempHome(t *testing.T) {
 	// spawn.
 	seedRetireAuthority(t, tmpDir, soldierID)
 
-	stateDir := filepath.Join(tmpDir, "state")
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
 	metaContent := "kind=scout\nbackend=tmux\nwindow=@1\nworktree=/nonexistent\n"
-	if err := os.WriteFile(filepath.Join(stateDir, soldierID+".meta"), []byte(metaContent), 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeTaskMeta(t, tmpDir, soldierID, metaContent)
 	if err := home.AppendStatus(tmpDir, soldierID, "done: task complete"); err != nil {
 		t.Fatal(err)
 	}
@@ -559,15 +550,8 @@ func TestTeardownCmd_WrongKeyAckDoesNotSatisfyGating(t *testing.T) {
 	seedRetireAuthority(t, tmpDir, soldierID)
 	termKey := "uplink"
 
-	stateDir := filepath.Join(tmpDir, "state")
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
 	metaContent := "kind=scout\nbackend=tmux\nwindow=@1\nworktree=/nonexistent\n"
-	if err := os.WriteFile(filepath.Join(stateDir, soldierID+".meta"), []byte(metaContent), 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeTaskMeta(t, tmpDir, soldierID, metaContent)
 	if err := home.AppendStatus(tmpDir, soldierID, "done: task complete"); err != nil {
 		t.Fatal(err)
 	}
