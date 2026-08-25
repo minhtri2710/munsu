@@ -18,8 +18,8 @@ import (
 )
 
 var recoverBriefHandoffs = fleet.RecoverTaskHandoffs
-var writeBriefArtifact = func(auth *taskauthority.Canonical, id domain.TaskID, write func() error) error {
-	return auth.WriteTaskDataArtifact(id, write)
+var writeBriefArtifact = func(auth *taskauthority.Canonical, id string, write func() error) error {
+	return auth.WriteTaskDataArtifactByID(id, write)
 }
 
 func newBriefCmd() *cobra.Command {
@@ -90,11 +90,7 @@ func newBriefCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			taskID, err := domain.NewTaskID(id)
-			if err != nil {
-				return err
-			}
-			if err := writeBriefArtifact(auth, taskID, func() error { return fleet.Scaffold(opts) }); err != nil {
+			if err := writeBriefArtifact(auth, id, func() error { return fleet.Scaffold(opts) }); err != nil {
 				return err
 			}
 

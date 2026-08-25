@@ -192,13 +192,16 @@ func (c *Canonical) ReconcileRetirementCleanup(taskID domain.TaskID, generation 
 // Handoff scope precedes task scope; callbacks may perform only bounded local
 // filesystem work and must not acquire another lock scope.
 func (c *Canonical) WriteTaskDataArtifact(taskID domain.TaskID, write func() error) error {
+	return c.WriteTaskDataArtifactByID(taskID.Value(), write)
+}
+
+// WriteTaskDataArtifactByID provides synchronization only for a raw durable
+// task-data ID; it does not authorize the write.
+func (c *Canonical) WriteTaskDataArtifactByID(id string, write func() error) error {
 	if write == nil {
 		return fmt.Errorf("task-data callback is nil")
 	}
-	if err := taskID.Validate(); err != nil {
-		return err
-	}
-	lk, err := c.h.Lock(taskScope(taskID.Value()))
+	lk, err := c.h.Lock(taskScope(id))
 	if err != nil {
 		return err
 	}
@@ -230,20 +233,27 @@ func (c *Canonical) ReconcileCompletedCleanup(taskID domain.TaskID, generation G
 // ReclaimReleasedTaskArtifacts holds the task scope through the bounded local
 // removal callback; callbacks must not acquire another lock scope.
 func (c *Canonical) ReclaimReleasedTaskArtifacts(taskID domain.TaskID, reclaim func() error) (bool, error) {
+	return c.ReclaimReleasedTaskArtifactsByID(taskID.Value(), reclaim)
+}
+
+func (c *Canonical) ReclaimReleasedTaskArtifactsByID(id string, reclaim func() error) (bool, error) {
 	if reclaim == nil {
 		return false, fmt.Errorf("reclaim callback is nil")
 	}
-	if err := taskID.Validate(); err != nil {
-		return false, err
-	}
-	lk, err := c.h.Lock(taskScope(taskID.Value()))
+	lk, err := c.h.Lock(taskScope(id))
 	if err != nil {
 		return false, err
 	}
 	defer lk.Release()
-	doc, exists, err := c.readTaskDoc(taskID.Value())
-	if err != nil {
-		return false, err
+	var taskID domain.TaskID
+	var doc taskDoc
+	var exists bool
+	if parsed, parseErr := domain.NewTaskID(id); parseErr == nil {
+		taskID = parsed
+		doc, exists, err = c.readTaskDoc(taskID.Value())
+		if err != nil {
+			return false, err
+		}
 	}
 	if exists && doc.Aggregate.Current {
 		agg := doc.Aggregate
