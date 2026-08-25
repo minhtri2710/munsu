@@ -285,6 +285,8 @@ merge() {
 }
 
 # Every site with a verdict: covered, uncovered, unmeasured, or anomaly.
+# The merged profile is the closed set of lane records; zero-statement records
+# prove presence but never become executable blocks.
 #
 # `anomaly` is the one that must never be waived away: the file IS in the
 # profile, so the lane compiled it, yet no unique valid entry block can be
@@ -342,6 +344,7 @@ classify() {
 			file = $1
 			sub(/:[0-9]+\.[0-9]+-.*/, "", file)
 			split($0, mergedFields, /\t/)
+			recorded[file] = 1
 			if (mergedFields[2] != "0") {
 				compiled[file] = 1
 				blocks[file] = blocks[file] $0 "\n"
@@ -393,7 +396,7 @@ classify() {
 			else if (matches == 1) {
 				split(bestLine, fields, /\t/)
 				print (("x" fields[3]) != "x0" ? "covered" : "uncovered") "\t" id
-			} else if (!(file in compiled)) print "unmeasured\t" id
+			} else if (!(file in recorded)) print "unmeasured\t" id
 			else print "anomaly\t" id
 		}
 		END { if (bad) exit 1 }
@@ -635,9 +638,8 @@ generate() {
 #   overflow-execution     accept a profile block with an overflowing execution count
 #   inverted-end            accept a profile block whose end precedes its start
 #   zero-width-endpoint     accept a zero-width profile block that claims statements
-#   zero-width-marker-only  retain a zero-statement marker as compilation evidence
-#                           and fail with an anomaly rather than calling the file unmeasured
-#   zero-statement-block    let a positive-count zero-statement block cover a guard
+#   zero-width-marker-only  treat a zero-statement-only record set as anomalous
+#   zero-statement-block    let a zero-statement block cover a guard
 #   invalid-set-count       accept an execution count other than 0 or 1 in set mode
 #   incompatible-end        accept a profile block whose end exceeds the refusal body
 #   short-row              delete the NF < 4 check

@@ -18,6 +18,20 @@ func TestQueryGLMergeStatusForStateRefusesUnknownState(t *testing.T) {
 	}
 }
 
+func TestQueryDeliveryMergeStatus_RefusesNilIdentity(t *testing.T) {
+	_, err := QueryDeliveryMergeStatus(nil)
+	if err == nil || !strings.Contains(err.Error(), "delivery identity is nil") {
+		t.Fatalf("QueryDeliveryMergeStatus error = %v, want nil-identity refusal", err)
+	}
+}
+
+func TestQueryDeliveryMergeStatus_RefusesUnknownProvider(t *testing.T) {
+	_, err := QueryDeliveryMergeStatus(&domain.DeliveryIdentity{Provider: "unknown"})
+	if err == nil || !strings.Contains(err.Error(), "unknown provider") {
+		t.Fatalf("QueryDeliveryMergeStatus error = %v, want unknown-provider refusal", err)
+	}
+}
+
 func TestFetchProviderSnapshotForProviderRefusesUnknownProvider(t *testing.T) {
 	_, err := fetchProviderSnapshotForProvider("unknown", "https://example.invalid")
 	if err == nil || !strings.Contains(err.Error(), "unknown provider") {
