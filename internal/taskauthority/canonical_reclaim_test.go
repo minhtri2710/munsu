@@ -124,35 +124,41 @@ func TestReconcileCompletedCleanupReportsSupersededGeneration(t *testing.T) {
 	}
 }
 
-func TestReconcileRetirementCleanupPersistsArchiveAttempt(t *testing.T) {
+// TestReconcileRetirementCleanupCommitsExactlyOnce proves the ownership
+// observation rides the claim that Retire already commits, so reconciliation
+// advances the revision exactly once. A second change-set here would make
+// crash-resume receipt reuse non-idempotent.
+func TestReconcileRetirementCleanupCommitsExactlyOnce(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
-	id := "archive-attempt"
+	id := "archive-once"
 	mustCreate(t, c, id)
-	retireWithClaim(t, c, id, preconditionOf(1, 1), "op-archive-attempt")
-	failed := true
-	if err := c.ReconcileRetirementCleanup(mustTaskID(t, id), 1, CleanupCompleted, func(bool) error { return nil }, func(attempted bool) error {
-		if !attempted {
-			t.Fatal("work did not observe committed archive attempt")
-		}
-		if failed {
-			failed = false
-			return errors.New("archive failed")
+	retireWithClaim(t, c, id, preconditionOf(1, 1), "op-archive-once")
+	before, err := c.Get(mustTaskID(t, id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.CleanupClaim.ArchiveNameOccupied {
+		t.Fatal("claim observed an occupied archive name for a task with no data dir")
+	}
+	saw := false
+	if err := c.ReconcileRetirementCleanup(mustTaskID(t, id), 1, CleanupCompleted, func(occupied bool) error {
+		saw = true
+		if occupied {
+			t.Fatal("work observed an occupied archive name")
 		}
 		return nil
-	}); err == nil {
-		t.Fatal("expected archival failure")
+	}, func(bool) error { return nil }); err != nil {
+		t.Fatalf("reconcile: %v", err)
 	}
-	agg, err := c.Get(mustTaskID(t, id))
-	if err != nil || agg.CleanupClaim == nil || !agg.CleanupClaim.ReportArchiveAttempted {
-		t.Fatalf("claim = %+v, %v", agg.CleanupClaim, err)
+	if !saw {
+		t.Fatal("work never ran")
 	}
-	if err := c.ReconcileRetirementCleanup(mustTaskID(t, id), 1, CleanupCompleted, func(bool) error { return nil }, func(attempted bool) error {
-		if !attempted {
-			t.Fatal("retry lost archive attempt")
-		}
-		return nil
-	}); err != nil {
-		t.Fatalf("retry: %v", err)
+	after, err := c.Get(mustTaskID(t, id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Revision != before.Revision+1 {
+		t.Fatalf("revision %d -> %d, want exactly one claim-completion bump", before.Revision, after.Revision)
 	}
 }
 

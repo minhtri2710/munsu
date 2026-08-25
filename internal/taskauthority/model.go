@@ -292,12 +292,12 @@ const (
 // generation) and are the only mutations allowed while the claim is active.
 // taskauthority persists the claim opaquely; Fleet owns the lifecycle.
 type CleanupClaim struct {
-	OperationID            string        `json:"operation_id"`
-	Generation             Generation    `json:"generation"`
-	Status                 CleanupStatus `json:"status"`
-	ClaimedAt              int64         `json:"claimed_at"`
-	ReconciledAt           int64         `json:"reconciled_at,omitempty"`
-	ReportArchiveAttempted bool          `json:"report_archive_attempted,omitempty"`
+	OperationID         string        `json:"operation_id"`
+	Generation          Generation    `json:"generation"`
+	Status              CleanupStatus `json:"status"`
+	ClaimedAt           int64         `json:"claimed_at"`
+	ReconciledAt        int64         `json:"reconciled_at,omitempty"`
+	ArchiveNameOccupied bool          `json:"archive_name_occupied,omitempty"`
 }
 
 // Aggregate is the authoritative record of one Task Generation.

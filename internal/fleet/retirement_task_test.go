@@ -1549,18 +1549,16 @@ func TestRun_ProjectionFailureThenReopenIsSuperseded(t *testing.T) {
 	if err := os.WriteFile(statusPath, statusV2, 0644); err != nil {
 		t.Fatal(err)
 	}
-	result, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, &recordingTeardown{alive: true}, fakeRetirementJournals{}, auth)
-	if err != nil {
-		t.Fatalf("superseded retry: %v", err)
+	_, err = RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, &recordingTeardown{alive: true}, fakeRetirementJournals{}, auth)
+	// The prior generation's claim is terminal and the task reopened, so this
+	// unpinned continuation is stale (BEO-16/P1a) and must fail closed. The
+	// point of this case is that it removes nothing from generation 2.
+	var staleErr *RetirementStaleTeardownError
+	if !errors.As(err, &staleErr) {
+		t.Fatalf("superseded retry error = %T %v, want stale teardown error", err, err)
 	}
-	found := false
-	for _, step := range result.Steps {
-		if strings.Contains(step, "superseded") {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("steps = %v, want superseded outcome", result.Steps)
+	if staleErr.PriorGeneration != 1 || staleErr.CurrentGeneration != 2 || staleErr.TerminalStatus != "completed" {
+		t.Fatalf("stale error = %+v, want prior 1 / current 2 / completed", staleErr)
 	}
 	gotMeta, _ := os.ReadFile(metaPath)
 	gotStatus, _ := os.ReadFile(statusPath)

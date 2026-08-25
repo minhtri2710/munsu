@@ -153,33 +153,13 @@ func (c *Canonical) ReconcileRetirementCleanup(taskID domain.TaskID, generation 
 		return conflictError(ErrConflict, "task %s generation %s cleanup claim is not active", taskID, generation)
 	}
 	claimID := doc.Aggregate.CleanupClaim.OperationID
-	attempted := doc.Aggregate.CleanupClaim.ReportArchiveAttempted
-	if err := preflight(attempted); err != nil {
+	// The claim's observation is the ownership proof: it was committed by
+	// BeginCleanup before any archival could run. Nothing commits a change-set
+	// between that claim and the terminal cleanup commit below, so a retry
+	// advances the revision exactly once.
+	occupied := doc.Aggregate.CleanupClaim.ArchiveNameOccupied
+	if err := preflight(occupied); err != nil {
 		return err
-	}
-	if !attempted {
-		req := CanonicalMarkReportArchiveAttemptedRequest{HomeID: c.HomeID(), TaskID: taskID, Precondition: domain.Of(uint64(doc.Aggregate.Generation), uint64(doc.Aggregate.Revision)), ClaimOperationID: claimID, ClaimGeneration: generation, Reason: "retirement report archival"}
-		opID, err := domain.NewOperationID(fmt.Sprintf("archive-marker-%s-%d", taskID.Value(), time.Now().UnixNano()))
-		if err != nil {
-			return err
-		}
-		op, err := domain.NewOperation(opID, req)
-		if err != nil {
-			return err
-		}
-		if _, err := c.mutateTaskFencedLocked(lk, op, taskID, domain.Of(uint64(doc.Aggregate.Generation), uint64(doc.Aggregate.Revision)), func(cur Aggregate) (Aggregate, error) {
-			next := cur.clone()
-			next.CleanupClaim.ReportArchiveAttempted = true
-			next.Revision++
-			return next, nil
-		}, nil, &cleanupGate{operationID: claimID, generation: generation}); err != nil {
-			return err
-		}
-		doc, _, err = c.readTaskDoc(taskID.Value())
-		if err != nil {
-			return err
-		}
-		attempted = true
 	}
 	var req domain.Intent
 	if terminal == CleanupCompleted {
@@ -195,7 +175,7 @@ func (c *Canonical) ReconcileRetirementCleanup(taskID domain.TaskID, generation 
 	if err != nil {
 		return err
 	}
-	if err := work(attempted); err != nil {
+	if err := work(occupied); err != nil {
 		return err
 	}
 	_, err = c.mutateTaskFencedLocked(lk, op, taskID, domain.Of(uint64(doc.Aggregate.Generation), uint64(doc.Aggregate.Revision)), func(cur Aggregate) (Aggregate, error) {
@@ -237,24 +217,6 @@ func (c *Canonical) WriteTaskDataArtifactByID(id string, write func() error) err
 }
 
 // CompletedCleanupResult describes whether completed-cleanup projection work ran.
-type CanonicalMarkReportArchiveAttemptedRequest struct {
-	HomeID           domain.HomeID
-	TaskID           domain.TaskID
-	Precondition     domain.Precondition
-	ClaimOperationID string
-	ClaimGeneration  Generation
-	Reason           string
-}
-
-func (r CanonicalMarkReportArchiveAttemptedRequest) DigestBytes() ([]byte, error) {
-	return json.Marshal(struct {
-		HomeID, TaskID, Reason string
-		Generation, Revision   uint64
-		ClaimOperationID       string
-		ClaimGeneration        Generation
-	}{r.HomeID.Value(), r.TaskID.Value(), r.Reason, r.Precondition.Generation, r.Precondition.Revision, r.ClaimOperationID, r.ClaimGeneration})
-}
-
 type CompletedCleanupResult string
 
 const (

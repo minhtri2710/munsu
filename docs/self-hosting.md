@@ -170,7 +170,7 @@ never deletes more than a plain teardown does.
 
 Either way the teardown first establishes authoritative endpoint absence, then archives the retired generation's report under a generation-bound name such as
 `report-g<generation>.md`. If a retry finds that archive after archival was
-already attempted for the active cleanup claim, a reappeared `report.md` is
+already attempted for the active cleanup claim, a reappeared report.md is
 preserved under the smallest unused suffix, such as `report-g<generation>-2.md`;
 all such archive names count as report evidence. The attempt marker is recorded
 in the fenced cleanup claim before the rename, so ownership is not inferred from

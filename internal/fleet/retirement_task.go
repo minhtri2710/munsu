@@ -134,7 +134,15 @@ func taskCleanupOperationID(kind, taskID string, generation taskauthority.Genera
 // advance), an aborted claim is re-activated under the same identity, and a
 // completed claim is left untouched (the caller skips completed claims before
 // calling this).
-func beginRetirementCleanup(authority *taskauthority.Canonical, taskID domain.TaskID, claimGen taskauthority.Generation) error {
+// archiveNameOccupied reports whether the generation-bound report archive name
+// is already taken. Recorded on the claim so a later retry can tell its own
+// archive from foreign evidence without inspecting filesystem identity.
+func archiveNameOccupied(homeDir, id string, gen taskauthority.Generation) bool {
+	_, err := os.Lstat(filepath.Join(homeDir, "data", id, ArchivedReportName(gen)))
+	return err == nil
+}
+
+func beginRetirementCleanup(authority *taskauthority.Canonical, homeDir, id string, taskID domain.TaskID, claimGen taskauthority.Generation) error {
 	cur, err := authority.Get(taskID)
 	if err != nil {
 		return fmt.Errorf("resolving current state for cleanup claim: %w", err)
@@ -146,6 +154,8 @@ func beginRetirementCleanup(authority *taskauthority.Canonical, taskID domain.Ta
 		ClaimOperationID: taskRetireOperationID(taskID.Value(), claimGen),
 		ClaimGeneration:  claimGen,
 		Reason:           "retirement cleanup",
+		// Observed before the claim commits, so no archival can have run yet.
+		ArchiveNameOccupied: archiveNameOccupied(homeDir, id, claimGen),
 	}
 	opID, err := domain.NewOperationID(taskCleanupOperationID("begin", taskID.Value(), claimGen))
 	if err != nil {
@@ -204,9 +214,14 @@ func abortRetirementCleanup(authority *taskauthority.Canonical, homeDir string, 
 			return fmt.Errorf("endpoint for %s generation %s is not authoritatively absent; refusing cleanup abort", taskID, claimGen)
 		}
 	}
-	preflight := func(attempted bool) error {
-		if attempted {
+	preflight := func(occupied bool) error {
+		if !occupied {
 			return nil
+		}
+		if _, err := os.Lstat(filepath.Join(homeDir, "data", taskID.Value(), "report.md")); os.IsNotExist(err) {
+			return nil
+		} else if err != nil {
+			return err
 		}
 		_, err := os.Lstat(filepath.Join(homeDir, "data", taskID.Value(), ArchivedReportName(claimGen)))
 		if err == nil {
@@ -217,8 +232,8 @@ func abortRetirementCleanup(authority *taskauthority.Canonical, homeDir string, 
 		}
 		return nil
 	}
-	archive := func(attempted bool) error {
-		_, dataDirExists, err := archiveRetiredReport(homeDir, taskID.Value(), claimGen, attempted)
+	archive := func(occupied bool) error {
+		_, dataDirExists, err := archiveRetiredReport(homeDir, taskID.Value(), claimGen, !occupied)
 		if err != nil || !dataDirExists {
 			return err
 		}
@@ -317,9 +332,6 @@ func retireTaskAuthoritatively(opts Options, meta map[string]string, authority *
 					Replayed:   true,
 				}, nil
 			}
-			if prior.claim != nil && prior.claim.Status == taskauthority.CleanupCompleted {
-				return taskauthority.Outcome{TaskID: taskID, Generation: prior.generation, Revision: prior.revision, Phase: prior.phase, Replayed: true}, nil
-			}
 			return taskauthority.Outcome{}, &RetirementStaleTeardownError{
 				TaskID:            opts.ID,
 				PriorGeneration:   prior.generation,
@@ -350,6 +362,8 @@ func retireTaskAuthoritatively(opts Options, meta map[string]string, authority *
 		TaskID:       taskID,
 		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
 		Reason:       "retirement",
+		// Observed before the claim commits, so no archival can have run yet.
+		ArchiveNameOccupied: archiveNameOccupied(opts.HomeDir, opts.ID, agg.Generation),
 	}
 	opID, err := domain.NewOperationID(taskRetireOperationID(opts.ID, agg.Generation))
 	if err != nil {
@@ -715,7 +729,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 	// (the claim is already active under the same stable retirement identity,
 	// so the assert is a no-op). An aborted or completed claim never reaches
 	// this point (handled above); BeginCleanup itself fails closed if it does.
-	if err := beginRetirementCleanup(authority, taskID, claimGen); err != nil {
+	if err := beginRetirementCleanup(authority, opts.HomeDir, opts.ID, taskID, claimGen); err != nil {
 		return cleanupPending(fmt.Errorf("teardown %s: asserting cleanup claim: %w", opts.ID, err))
 	}
 
@@ -983,9 +997,18 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		dataDir := filepath.Join(opts.HomeDir, "data", opts.ID)
 		var archived string
 		var exists bool
-		preflight := func(attempted bool) error {
-			if attempted {
+		preflight := func(occupied bool) error {
+			if !occupied {
 				return nil
+			}
+			// Nothing to rename means no collision is possible. Without this,
+			// a crash between a successful rename and the terminal commit
+			// would refuse forever on a claim whose archive name was occupied
+			// when it was created.
+			if _, err := os.Lstat(filepath.Join(dataDir, "report.md")); os.IsNotExist(err) {
+				return nil
+			} else if err != nil {
+				return err
 			}
 			_, err := os.Lstat(filepath.Join(dataDir, ArchivedReportName(claimGen)))
 			if err == nil {
@@ -996,9 +1019,11 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 			}
 			return nil
 		}
-		work := func(attempted bool) error {
+		work := func(occupied bool) error {
 			var err error
-			archived, exists, err = archiveRetiredReport(opts.HomeDir, opts.ID, claimGen, attempted)
+			// A name free at claim creation and present now was written by this
+			// claim, so a reappeared report.md is this generation's straggler.
+			archived, exists, err = archiveRetiredReport(opts.HomeDir, opts.ID, claimGen, !occupied)
 			if err != nil || !exists {
 				return err
 			}
