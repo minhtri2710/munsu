@@ -248,9 +248,6 @@ func mustBootstrapOperationID(t *testing.T, value string) domain.OperationID {
 	return id
 }
 
-func reclaimNone(_ string, reclaim func() error) (bool, error) { return true, reclaim() }
-func reclaimEvery(string, func() error) (bool, error)          { return false, nil }
-
 func setDirMtime(t *testing.T, dir string, age time.Duration) {
 	t.Helper()
 	at := time.Now().Add(-age)
