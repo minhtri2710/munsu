@@ -10,6 +10,7 @@ import (
 
 	fleetconfig "github.com/minhtri2710/munsu/internal/config"
 	homepkg "github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 func TestResolveSpawnProjectConfigRejectsUnresolvedPolicy(t *testing.T) {
@@ -426,9 +427,7 @@ case "$1" in
 esac
 exit 0
 `
-		if err := os.WriteFile(binPath, []byte(content), 0755); err != nil {
-			t.Fatal(err)
-		}
+		testutil.WriteFakeExecutable(t, binPath, content)
 		t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
 		home := t.TempDir()
 		storeTestDocuments(t, home, fleetconfig.FleetBaseDocument{

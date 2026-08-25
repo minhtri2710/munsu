@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // writeFakeHerdrPrune creates a fake herdr executable in dir that responds to
@@ -44,9 +46,7 @@ func writeFakeHerdrPrune(t *testing.T, dir string, workspaceJSON string) string 
 		"esac\n" +
 		`echo '{"error":{"code":"unknown_command"}}'` + "\n" +
 		"exit 1\n"
-	if err := os.WriteFile(bin, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, bin, script)
 	return dir
 }
 

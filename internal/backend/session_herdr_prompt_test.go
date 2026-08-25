@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // writeFakeHerdrPrompt creates a fake herdr tuned for agent prompt tests.
@@ -70,9 +72,7 @@ func writeFakeHerdrPrompt(t *testing.T, dir, apiSchema string) string {
 		`>&2 echo "unknown command: $*"` + "\n" +
 		`exit 1` + "\n"
 
-	if err := os.WriteFile(bin, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, bin, script)
 	return bin
 }
 
@@ -333,9 +333,7 @@ func TestAgentPrompt_ProtocolProbeFailure(t *testing.T) {
 	script := "#!/usr/bin/env bash\n" +
 		`>&2 echo "herdr: not available"` + "\n" +
 		"exit 1\n"
-	if err := os.WriteFile(bin, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, bin, script)
 	t.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
 
 	h := NewHerdrBackend("test-s")

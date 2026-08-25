@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 func TestRuntimeAdapterObservationContract(t *testing.T) {
@@ -89,9 +91,7 @@ func writeObservationFakeEmptyList(t *testing.T, name, emptyJSON string) string 
 	t.Helper()
 	dir := t.TempDir()
 	script := "#!/bin/sh\n" + "echo '" + emptyJSON + "'\n" + "exit 0\n"
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, filepath.Join(dir, name), script)
 	return dir
 }
 
@@ -102,9 +102,7 @@ func writeObservationFakeFailing(t *testing.T, name, stderr string) string {
 	t.Helper()
 	dir := t.TempDir()
 	script := "#!/bin/sh\n" + fmt.Sprintf("echo %q >&2\n", stderr) + "exit 1\n"
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, filepath.Join(dir, name), script)
 	return dir
 }
 
@@ -121,9 +119,7 @@ if [ "$1" = "list-panes" ]; then
 fi
 exit 0
 `
-	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, path, script)
 }
 
 func writeObservationFakeHerdr(t *testing.T, dir string) {
@@ -148,7 +144,5 @@ if [ "$1" = "agent" ] && [ "$2" = "get" ]; then
 fi
 exit 1
 `
-	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, path, script)
 }

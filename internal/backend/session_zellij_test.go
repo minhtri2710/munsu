@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // writeFakeZellij creates a fake zellij executable in dir that responds to
@@ -83,9 +85,7 @@ func writeFakeZellij(t *testing.T, dir string) string {
 		`echo '{"error":{"code":"unknown_command"}}'` + "\n" +
 		"exit 1\n"
 
-	if err := os.WriteFile(bin, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, bin, script)
 	return dir
 }
 
@@ -115,9 +115,7 @@ func writeFakeZellijNotFound(t *testing.T, dir string) string {
 		"fi\n" +
 		`>&2 echo 'Error: pane not found'` + "\n" +
 		"exit 1\n"
-	if err := os.WriteFile(bin, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, bin, script)
 	return dir
 }
 

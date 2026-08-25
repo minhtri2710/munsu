@@ -7,15 +7,15 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 func writeGuardExecutable(t *testing.T, name, content string) string {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte(content), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, path, content)
 	t.Setenv("PATH", dir)
 	return path
 }

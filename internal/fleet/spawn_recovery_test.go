@@ -6,13 +6,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // TestLaunchRecoveryCrashBoundariesNoDuplicates drives a crash at every
@@ -464,27 +464,16 @@ func TestLaunchWorktreeTreehouseRecoveryFailsClosed(t *testing.T) {
 // to logPath and returns an existing directory as the acquired worktree, and
 // prepends it to PATH for the duration of the test.
 //
-// The fake is emitted in the host's own script language. exec.LookPath on
-// windows only considers names carrying a PATHEXT extension, so a bare
-// `treehouse` shell script is invisible there: the provider finds no treehouse,
-// falls back to real `git worktree`, and the test measures git rather than the
-// fake it installed (#549 group 8). PATH is prepended to rather than replaced
-// because the fallback this test is trying not to reach still needs to find
-// git.
+// Without it the provider finds no treehouse on windows, falls back to real
+// `git worktree`, and the test measures git rather than the fake it installed
+// (#549 group 8); testutil.FakeOnPath owns why a shell script needs a companion
+// to be visible there. PATH is prepended to rather than replaced because the
+// fallback this test is trying not to reach still needs to find git.
 func fakeTreehouseOnPath(t *testing.T, logPath string) {
 	t.Helper()
-	dir := t.TempDir()
 	wt := t.TempDir()
-	name := "treehouse"
 	content := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\nprintf '%%s\\n' %q\n", logPath, wt)
-	if runtime.GOOS == "windows" {
-		name = "treehouse.cmd"
-		content = fmt.Sprintf("@echo off\r\n>> %q echo %%*\r\necho %s\r\n", logPath, wt)
-	}
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	testutil.FakeOnPath(t, "treehouse", content)
 }
 
 // TestLaunchArtifactGuardProvesSingleProcessLaunches runs the REAL production
@@ -689,9 +678,7 @@ func fakeHarnessDir(t *testing.T, binName, counterPath string) string {
 	t.Helper()
 	dir := t.TempDir()
 	content := fmt.Sprintf("#!/bin/sh\necho launch >> %q\n", counterPath)
-	if err := os.WriteFile(filepath.Join(dir, binName), []byte(content), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, filepath.Join(dir, binName), content)
 	return dir
 }
 

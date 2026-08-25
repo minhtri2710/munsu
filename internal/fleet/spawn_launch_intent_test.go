@@ -15,6 +15,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // reentrantEndpointCapabilities is a reservation-aware endpoint capability
@@ -113,9 +114,7 @@ type launchFixture struct {
 func requiredSkillStubDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, shipRequiredSkill), []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
-		t.Fatalf("writing %s stub: %v", shipRequiredSkill, err)
-	}
+	testutil.WriteFakeExecutable(t, filepath.Join(dir, shipRequiredSkill), "#!/bin/sh\nexit 0\n")
 	return dir
 }
 

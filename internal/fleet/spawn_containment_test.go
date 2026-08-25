@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // TestNoMistakesYAML_DisableProjectSettingsIsTrue asserts that the repository's
@@ -87,9 +89,7 @@ func TestNoMistakesProbe_AutoFallbackNeverErrors(t *testing.T) {
 func TestPreflight_NoMistakes_FailedProbe(t *testing.T) {
 	tmpDir := t.TempDir()
 	binPath := filepath.Join(tmpDir, "no-mistakes")
-	if err := os.WriteFile(binPath, []byte("#!/bin/sh\nexit 1\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, binPath, "#!/bin/sh\nexit 1\n")
 	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
 
 	// Preflight should see the binary on PATH but the probe will fail

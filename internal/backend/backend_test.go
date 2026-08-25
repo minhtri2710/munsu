@@ -39,9 +39,7 @@ func TestResolveExplicitIdentity(t *testing.T) {
 	// Controlled PATH: the requested binary must be verifiably present, and
 	// no real tmux install is required (Resolve verifies the capability).
 	fakeBin := t.TempDir()
-	if err := os.WriteFile(filepath.Join(fakeBin, "tmux"), []byte("#!/bin/sh\nexit 0"), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, filepath.Join(fakeBin, "tmux"), "#!/bin/sh\nexit 0")
 	oldPath := os.Getenv("PATH")
 	defer os.Setenv("PATH", oldPath)
 	os.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)

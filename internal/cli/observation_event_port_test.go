@@ -11,6 +11,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 func TestObservationEventPort_Sources_HerdrEndpoint(t *testing.T) {
@@ -149,7 +150,5 @@ func writeFakeHerdrCLI(t *testing.T, dir string) {
 		"fi\n" +
 		`echo '{"error":{"code":"unknown_command"}}'` + "\n" +
 		"exit 1\n"
-	if err := os.WriteFile(bin, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, bin, script)
 }

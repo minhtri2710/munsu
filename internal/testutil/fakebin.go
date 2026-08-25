@@ -1,6 +1,8 @@
 package testutil
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -15,8 +17,7 @@ import (
 // be order-dependent.
 var bootPath = os.Getenv("PATH")
 
-// WriteFakeExecutable writes script as a POSIX shell program named name in dir
-// and returns the path it wrote.
+// WriteFakeExecutableAt writes script as a POSIX shell program at path.
 //
 // On windows it also writes a name.cmd companion that hands the same script to
 // a POSIX shell. exec.LookPath on windows only considers names that carry a
@@ -27,21 +28,29 @@ var bootPath = os.Getenv("PATH")
 // PATHEXT entry to the whole name, so `herdr.cmd` answers a lookup for `herdr`
 // and the shell script stays the single source of the fake's behaviour on both
 // platforms.
-func WriteFakeExecutable(t *testing.T, dir, name, script string) string {
-	t.Helper()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("fake %s: %v", name, err)
+func WriteFakeExecutableAt(path, script string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
 	}
-	path := filepath.Join(dir, name)
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
-		t.Fatalf("fake %s: %v", name, err)
+		return err
 	}
 	if runtime.GOOS != "windows" {
-		return path
+		return nil
 	}
-	shim := "@echo off\r\n\"" + posixShell(t) + "\" \"%~dp0" + name + "\" %*\r\nexit /b %errorlevel%\r\n"
-	if err := os.WriteFile(path+".cmd", []byte(shim), 0o755); err != nil {
-		t.Fatalf("fake %s: %v", name, err)
+	shell, err := posixShell()
+	if err != nil {
+		return err
+	}
+	shim := "@echo off\r\n\"" + shell + "\" \"%~dp0" + filepath.Base(path) + "\" %*\r\nexit /b %errorlevel%\r\n"
+	return os.WriteFile(path+".cmd", []byte(shim), 0o755)
+}
+
+// WriteFakeExecutable is WriteFakeExecutableAt for a test, returning path.
+func WriteFakeExecutable(t *testing.T, path, script string) string {
+	t.Helper()
+	if err := WriteFakeExecutableAt(path, script); err != nil {
+		t.Fatalf("fake %s: %v", filepath.Base(path), err)
 	}
 	return path
 }
@@ -51,20 +60,18 @@ func WriteFakeExecutable(t *testing.T, dir, name, script string) string {
 func FakeOnPath(t *testing.T, name, script string) string {
 	t.Helper()
 	dir := t.TempDir()
-	path := WriteFakeExecutable(t, dir, name, script)
+	path := WriteFakeExecutable(t, filepath.Join(dir, name), script)
 	PrependPath(t, dir)
 	return path
 }
 
-// PrependPath puts dir first on PATH for the duration of the test. Fixtures
-// prepend rather than replace: on windows a replaced PATH loses the system
-// directories that the shim's own shell and cmd.exe are found through.
+// PrependPath puts dir first on PATH for the duration of the test.
 func PrependPath(t *testing.T, dir string) {
 	t.Helper()
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
-var shellOnce struct {
+var shell struct {
 	sync.Once
 	path string
 }
@@ -72,14 +79,13 @@ var shellOnce struct {
 // posixShell resolves the interpreter the windows shim hands its script to. It
 // prefers a shell already on the boot PATH and otherwise derives one from git's
 // own install root -- every fixture that installs a fake here also drives git,
-// and Git for Windows ships the same shell. It fails the test rather than
-// skipping it: a missing shell means the fake never ran, which is a fact about
-// the machine, not a behaviour that windows lacks.
-func posixShell(t *testing.T) string {
-	t.Helper()
-	shellOnce.Do(func() {
+// and Git for Windows ships the same shell. Finding none is an error rather
+// than a skip: it means the fake would never run, which is a fact about the
+// machine, not a behaviour that windows lacks.
+func posixShell() (string, error) {
+	shell.Do(func() {
 		if p := findOnBootPath("sh.exe", "bash.exe"); p != "" {
-			shellOnce.path = p
+			shell.path = p
 			return
 		}
 		git := findOnBootPath("git.exe")
@@ -89,15 +95,15 @@ func posixShell(t *testing.T) string {
 		root := filepath.Dir(filepath.Dir(git)) // ...\Git\cmd or ...\Git\bin -> ...\Git
 		for _, rel := range []string{`usr\bin\sh.exe`, `bin\sh.exe`, `usr\bin\bash.exe`, `bin\bash.exe`} {
 			if p := filepath.Join(root, rel); isFile(p) {
-				shellOnce.path = p
+				shell.path = p
 				return
 			}
 		}
 	})
-	if shellOnce.path == "" {
-		t.Fatalf("no POSIX shell found for the windows fake-binary shim; PATH=%s", bootPath)
+	if shell.path == "" {
+		return "", fmt.Errorf("no POSIX shell for the windows fake-binary shim on PATH=%s: %w", bootPath, errors.ErrUnsupported)
 	}
-	return shellOnce.path
+	return shell.path, nil
 }
 
 func findOnBootPath(names ...string) string {

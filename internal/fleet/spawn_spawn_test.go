@@ -17,6 +17,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 func TestCheckScopeGate_YoloDoesNotBypassGate(t *testing.T) {
@@ -543,9 +544,7 @@ func TestEffectiveModeForSpawn_ExplicitNoMistakesNeverFallsBackToDirectPR(t *tes
 	t.Run("failed probe", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		binPath := filepath.Join(tmpDir, "no-mistakes")
-		if err := os.WriteFile(binPath, []byte("#!/bin/sh\nexit 1\n"), 0755); err != nil {
-			t.Fatal(err)
-		}
+		testutil.WriteFakeExecutable(t, binPath, "#!/bin/sh\nexit 1\n")
 		t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
 
 		mode, err := effectiveModeForSpawn(t.TempDir(), Args{Mode: "no-mistakes"})
@@ -991,9 +990,7 @@ func TestCurrentEndpointKindFailsClosedWhenTmuxPaneCannotResolve(t *testing.T) {
 func TestTmuxWindowForPaneFailsClosedWhenWindowIsEmpty(t *testing.T) {
 	binDir := t.TempDir()
 	tmuxPath := filepath.Join(binDir, "tmux")
-	if err := os.WriteFile(tmuxPath, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, tmuxPath, "#!/bin/sh\nexit 0\n")
 	t.Setenv("PATH", binDir+string(filepath.ListSeparator)+os.Getenv("PATH"))
 
 	if _, err := tmuxWindowForPane("%3"); err == nil || !strings.Contains(err.Error(), "returned empty window id") {
@@ -1400,9 +1397,7 @@ esac
 	script += "exit 0\n"
 
 	content := "#!/bin/sh\n" + script
-	if err := os.WriteFile(binPath, []byte(content), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, binPath, content)
 	return tmpDir
 }
 
@@ -1414,9 +1409,7 @@ func TestSpawn_PostCreateVerificationFailure_NoMetaNoSpawnedStatus(t *testing.T)
 		t.Fatal(err)
 	}
 	binDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(binDir, "pi"), []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, filepath.Join(binDir, "pi"), "#!/bin/sh\nexit 0\n")
 	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
 	t.Setenv("GEMINI_API_KEY", "test-key")
 

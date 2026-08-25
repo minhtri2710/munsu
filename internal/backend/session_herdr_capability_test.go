@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // writeFakeHerdrWithSchema creates a fake herdr binary that responds to
@@ -32,9 +34,7 @@ func writeFakeHerdrWithSchema(t *testing.T, dir, version, schemaJSON string) str
 		`echo '{"error":{"code":"unknown_command"}}'` + "\n" +
 		"exit 1\n"
 
-	if err := os.WriteFile(bin, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, bin, script)
 	return dir
 }
 
@@ -54,9 +54,7 @@ func writeFakeHerdrFailingSchema(t *testing.T, dir string) string {
 		`echo '{"error":{"code":"unknown_command"}}'` + "\n" +
 		"exit 1\n"
 
-	if err := os.WriteFile(bin, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, bin, script)
 	return dir
 }
 
@@ -76,9 +74,7 @@ func writeFakeHerdrWithMalformedSchema(t *testing.T, dir string) string {
 		`echo '{"error":{"code":"unknown_command"}}'` + "\n" +
 		"exit 1\n"
 
-	if err := os.WriteFile(bin, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, bin, script)
 	return dir
 }
 

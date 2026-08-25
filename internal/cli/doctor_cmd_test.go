@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 func TestDoctor_ConfigReadFailureSurfaces(t *testing.T) {
@@ -20,9 +22,7 @@ func TestDoctor_ConfigReadFailureSurfaces(t *testing.T) {
 	}
 	for _, name := range []string{"git", "tmux"} {
 		stub := filepath.Join(bin, name)
-		if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
-			t.Fatal(err)
-		}
+		testutil.WriteFakeExecutable(t, stub, "#!/bin/sh\nexit 0\n")
 	}
 	t.Setenv("PATH", bin)
 

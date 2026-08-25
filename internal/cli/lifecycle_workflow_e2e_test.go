@@ -20,6 +20,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // workflowEndpoints is the terminal-backend seam for the workflow scenario. It
@@ -166,9 +167,7 @@ func workflowInitRepo(t *testing.T) string {
 func workflowHarnessOnPath(t *testing.T, name string) {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, filepath.Join(dir, name), "#!/bin/sh\nexit 0\n")
 	gitBin, err := exec.LookPath("git")
 	if err != nil {
 		t.Fatalf("git on PATH: %v", err)

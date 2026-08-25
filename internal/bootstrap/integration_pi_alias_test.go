@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/harness"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 func TestPiCompatibilityAliasesAreRejectedByStatus(t *testing.T) {
@@ -133,7 +134,5 @@ func installTestPiIntegration(t *testing.T) (string, string) {
 
 func writeTestExecutable(t *testing.T, path, content string) {
 	t.Helper()
-	if err := os.WriteFile(path, []byte(content), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, path, content)
 }

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // hasTmux reports whether tmux is available on PATH.
@@ -23,9 +25,7 @@ func fakeExecutables(t *testing.T, names ...string) string {
 	fakeBin := t.TempDir()
 	for _, name := range names {
 		path := filepath.Join(fakeBin, name)
-		if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0"), 0755); err != nil {
-			t.Fatal(err)
-		}
+		testutil.WriteFakeExecutable(t, path, "#!/bin/sh\nexit 0")
 	}
 	return fakeBin
 }
@@ -291,9 +291,7 @@ func fakeFailingTmux(t *testing.T, msg string) {
 	t.Helper()
 	dir := t.TempDir()
 	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' %q >&2\nexit 1\n", msg)
-	if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, filepath.Join(dir, "tmux"), script)
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
@@ -700,9 +698,7 @@ func TestTmuxBackendFindOrCreateWindowRefusesDuplicateWindows(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "tmux")
 	script := "#!/bin/sh\ncase \"$1\" in\nhas-session) exit 0;;\nlist-windows) printf 'dup\\t@1\\ndup\\t@2\\n';;\nesac\n"
-	if err := os.WriteFile(bin, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, bin, script)
 	t.Setenv("PATH", tmp)
 	_, err := (&TmuxBackend{}).FindOrCreateWindow("s", "dup")
 	if err == nil || !strings.Contains(err.Error(), "ambiguous") {

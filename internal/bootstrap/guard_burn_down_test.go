@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/harness"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 func TestHarnessHookDirsRejectEmptyProjectCwd(t *testing.T) {
@@ -158,9 +159,7 @@ func TestPiInstallRejectsUnownedTarget(t *testing.T) {
 	}
 
 	bin := filepath.Join(dir, "munsu")
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, bin, "#!/bin/sh\n")
 	writeTestExecutable(t, filepath.Join(dir, "pi"), "#!/bin/sh\necho 0.79.0\n")
 	t.Setenv("PATH", dir+string(filepath.ListSeparator)+os.Getenv("PATH"))
 	SetMunsuPathResolver(testMunsuResolver{path: bin})

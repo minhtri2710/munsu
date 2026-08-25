@@ -11,6 +11,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // seamProbeBackend is a controllable agent-aware backend used to drive the
@@ -141,9 +142,7 @@ func seedSeamCaptain(t *testing.T, id string) (parent, captainHome string) {
 func putFakePiOnPath(t *testing.T) {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), "pi")
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, bin, "#!/bin/sh\nexit 0\n")
 	t.Setenv("PATH", filepath.Dir(bin)+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 

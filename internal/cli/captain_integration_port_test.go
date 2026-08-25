@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 func TestCaptainIntegrationEnsureMissingPiFailsClosed(t *testing.T) {
@@ -114,9 +116,7 @@ func TestRequireCaptainIntegrationRejectsDigestDrift(t *testing.T) {
 
 func writeExecutable(t *testing.T, path, content string) {
 	t.Helper()
-	if err := os.WriteFile(path, []byte(content), 0755); err != nil {
-		t.Fatalf("WriteFile(%s): %v", path, err)
-	}
+	testutil.WriteFakeExecutable(t, path, content)
 }
 
 func entryNames(entries []os.DirEntry) []string {

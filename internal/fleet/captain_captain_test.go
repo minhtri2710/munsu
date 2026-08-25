@@ -15,6 +15,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // fakeBinDir is a temp directory with fake pi/munsu binaries prepended to PATH
@@ -48,25 +49,18 @@ func setupFakeBins() (string, func()) {
 		os.Exit(1)
 	}
 
-	// Fake pi: returns a supported version.
-	piShim := filepath.Join(dir, "pi")
-	if err := os.WriteFile(piShim, []byte("#!/bin/sh\necho '0.79.0'\n"), 0755); err != nil {
-		fmt.Fprintf(os.Stderr, "captain TestMain: writing pi shim: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Fake node: returns "API probe passed" so probePiAPIs succeeds.
-	nodeShim := filepath.Join(dir, "node")
-	if err := os.WriteFile(nodeShim, []byte("#!/bin/sh\necho 'API probe passed'\n"), 0755); err != nil {
-		fmt.Fprintf(os.Stderr, "captain TestMain: writing node shim: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Fake munsu: needed by EnsureCaptainPiExtensions for path resolution.
-	munsuShim := filepath.Join(dir, "munsu")
-	if err := os.WriteFile(munsuShim, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
-		fmt.Fprintf(os.Stderr, "captain TestMain: writing munsu shim: %v\n", err)
-		os.Exit(1)
+	// Fake pi returns a supported version; fake node returns "API probe passed"
+	// so probePiAPIs succeeds; fake munsu is needed by
+	// EnsureCaptainPiExtensions for path resolution.
+	for name, script := range map[string]string{
+		"pi":    "#!/bin/sh\necho '0.79.0'\n",
+		"node":  "#!/bin/sh\necho 'API probe passed'\n",
+		"munsu": "#!/bin/sh\nexit 0\n",
+	} {
+		if err := testutil.WriteFakeExecutableAt(filepath.Join(dir, name), script); err != nil {
+			fmt.Fprintf(os.Stderr, "captain TestMain: fake %s: %v\n", name, err)
+			os.Exit(1)
+		}
 	}
 
 	return dir, func() { os.RemoveAll(dir) }

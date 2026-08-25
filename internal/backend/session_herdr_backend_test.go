@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // hasHerdr reports whether herdr is available on PATH.
@@ -95,9 +97,7 @@ func writeFakeHerdr(t *testing.T, dir string) string {
 		"esac\n" +
 		`echo '{"error":{"code":"unknown_command"}}'` + "\n" +
 		"exit 1\n"
-	if err := os.WriteFile(bin, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, bin, script)
 	return dir
 }
 
@@ -223,9 +223,7 @@ func writeFakeHerdrNotFound(t *testing.T, dir string) string {
 		`fi` + "\n" +
 		`>&2 echo '{"error":{"code":"pane_not_found","message":"pane not found"}}'` + "\n" +
 		"exit 1\n"
-	if err := os.WriteFile(bin, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, bin, script)
 	return dir
 }
 
@@ -292,9 +290,7 @@ func writeFakeHerdrWithAgent(t *testing.T, dir string, agentStatus string) strin
 		"esac\n" +
 		"exit 1\n"
 
-	if err := os.WriteFile(bin, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, bin, script)
 	return dir
 }
 
@@ -431,9 +427,7 @@ func TestHerdrBackend_CheckAlive_PaneNotFound(t *testing.T) {
 	script := "#!/usr/bin/env bash\n" +
 		`echo '{"error":{"code":"pane_not_found","message":"pane w6E:p3 not found"}}'` + "\n" +
 		"exit 1\n"
-	if err := os.WriteFile(bin, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, bin, script)
 	t.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
 
 	h := NewHerdrBackend("default")
@@ -730,9 +724,7 @@ func writeFakeHerdrAgentGetError(t *testing.T, dir, code string) string {
 		"    ;;\n" +
 		"esac\n" +
 		"exit 1\n"
-	if err := os.WriteFile(bin, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, bin, script)
 	return dir
 }
 
@@ -762,9 +754,7 @@ func TestHerdrBackendFindTabByLabelRefusesDuplicateTabs(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "herdr")
 	script := "#!/bin/sh\nif [ \"$1\" = \"--session\" ]; then shift 2; fi\ncat <<'JSON'\n{\"result\":{\"tabs\":[{\"label\":\"dup\",\"tab_id\":\"t1\"},{\"label\":\"dup\",\"tab_id\":\"t2\"}]}}\nJSON\n"
-	if err := os.WriteFile(bin, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteFakeExecutable(t, bin, script)
 	t.Setenv("PATH", tmp+string(os.PathListSeparator)+os.Getenv("PATH"))
 	h := NewHerdrBackend("test")
 	_, err := h.findTabByLabel("w1", "dup")
