@@ -98,8 +98,6 @@ internal/fleet/registry_ops.go	Registry.RegisterProject	1	req.Precondition.Gener
 internal/fleet/registry_ops.go	Registry.RetireCaptain	1	idx < 0	growth(#614): burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/registry_ops.go	Registry.RetireCaptain	1	req.Precondition.Generation != registryGeneration	growth(#614): burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/registry_ops.go	Registry.RetireProject	1	req.Precondition.Generation != registryGeneration	growth(#614): burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/registry_registry.go	validateCaptainRegistry	1	c.ID == "" || c.Home == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/registry_registry.go	validateCaptainRegistry	1	exists	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/registry_registry.go	verifyPrecondition	1	!ok	growth(#614): burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/retirement_poll.go	ListPendingRetirements	1	rec.TaskID == "" || retirementRecordPath(homeDir, rec.TaskID) != filepath.Join(dir, entry.Name())	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/retirement_poll.go	requireCanonicalCompletedOutcome	1	auth == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
