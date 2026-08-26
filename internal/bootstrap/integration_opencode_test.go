@@ -3,6 +3,8 @@ package bootstrap
 import (
 	"crypto/sha256"
 	"encoding/hex"
+
+	"github.com/minhtri2710/munsu/internal/testutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -369,7 +371,7 @@ func TestOpencodePluginsHasOwnedHooks_EmptyDir(t *testing.T) {
 func TestOpencodePluginsAllTargetPaths(t *testing.T) {
 	t.Run("user scope", func(t *testing.T) {
 		home := t.TempDir()
-		t.Setenv("HOME", home)
+		testutil.SetUserHome(t, home)
 		paths, err := OpencodePluginsAllTargetPaths(ScopeUser, "")
 		if err != nil {
 			t.Fatal(err)
@@ -412,7 +414,7 @@ func TestOpencodePluginsAllTargetPaths(t *testing.T) {
 // TestOpencodePluginsTargetPath verifies single target path resolution.
 func TestOpencodePluginsTargetPath(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testutil.SetUserHome(t, home)
 
 	path, err := OpencodePluginsTargetPath(ScopeUser, "", "munsu-pretool-check.js")
 	if err != nil {

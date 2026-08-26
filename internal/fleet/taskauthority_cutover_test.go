@@ -10,6 +10,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // canonicalHomeAuthority opens the canonical home and constructs the canonical
@@ -169,7 +170,7 @@ func TestSnapshotFailsClosedOnLegacyMetaOnlyMerged(t *testing.T) {
 	if err == nil {
 		t.Fatal("Snapshot over a legacy meta-only task = nil error, want fail-closed rejection")
 	}
-	if !strings.Contains(err.Error(), "t1") || !strings.Contains(err.Error(), homeDir) {
+	if !strings.Contains(err.Error(), "t1") || !testutil.PathInMessage(err.Error(), homeDir) {
 		t.Fatalf("clean-break error must carry task+home context, got: %v", err)
 	}
 }
@@ -188,7 +189,7 @@ func TestReadWithProbeFailsClosedOnLegacyMetaOnlyMerged(t *testing.T) {
 	if err == nil {
 		t.Fatal("ReadSoldierState over a legacy meta-only task = nil, want fail-closed")
 	}
-	if !strings.Contains(err.Error(), homeDir) {
+	if !testutil.PathInMessage(err.Error(), homeDir) {
 		t.Errorf("clean-break error must carry home context, got: %v", err)
 	}
 }
@@ -210,7 +211,7 @@ func TestReadWithProbeFailsClosedOnLegacyMergeAuthorization(t *testing.T) {
 	if err == nil {
 		t.Fatal("ReadSoldierState over a legacy meta-only task = nil, want fail-closed")
 	}
-	if !strings.Contains(err.Error(), homeDir) {
+	if !testutil.PathInMessage(err.Error(), homeDir) {
 		t.Errorf("clean-break error must carry home context, got: %v", err)
 	}
 }

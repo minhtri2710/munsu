@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/testutil"
 	"github.com/spf13/cobra"
 )
 
@@ -576,7 +577,7 @@ func TestAgyGuardParentHomeReceiptContinues(t *testing.T) {
 	if !strings.Contains(stdout, "material relay pending") {
 		t.Errorf("reason must contain 'material relay pending', got: %s", stdout)
 	}
-	if !strings.Contains(stdout, parentHome) {
+	if !testutil.PathInMessage(stdout, parentHome) {
 		t.Errorf("reason must mention parent-home path, got: %s", stdout)
 	}
 }

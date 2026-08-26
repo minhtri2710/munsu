@@ -89,6 +89,10 @@ func (h *Home) Root() string { return h.root }
 // returns it unchanged. A directory that exists but is not a recognized home,
 // or a home whose identity is incompatible or malformed, fails closed.
 func Init(root string) (*Home, error) {
+	return initWithLstat(root, os.Lstat)
+}
+
+func initWithLstat(root string, lstat func(string) (os.FileInfo, error)) (*Home, error) {
 	if root == "" {
 		return nil, ErrEmptyRoot
 	}
@@ -98,7 +102,7 @@ func Init(root string) (*Home, error) {
 	}
 	abs = filepath.Clean(abs)
 
-	info, err := os.Lstat(abs)
+	info, err := lstat(abs)
 	switch {
 	case err == nil:
 		if !info.IsDir() {

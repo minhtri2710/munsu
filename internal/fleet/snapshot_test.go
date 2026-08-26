@@ -14,6 +14,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 func captureStdout(fn func() error) (string, error) {
@@ -472,7 +473,7 @@ func TestSnapshot_ResolverErrorFailsClosedOverStaleStatus(t *testing.T) {
 	if err == nil {
 		t.Fatal("Snapshot = nil error, want fail-closed error")
 	}
-	if !strings.Contains(err.Error(), "t1") || !strings.Contains(err.Error(), tmp) {
+	if !strings.Contains(err.Error(), "t1") || !testutil.PathInMessage(err.Error(), tmp) {
 		t.Errorf("resolver error must carry task and home context, got: %v", err)
 	}
 }
