@@ -104,7 +104,7 @@ func TestDeliverCrashAtMutatingMergedIdentityMismatchIsRemoteUnknown(t *testing.
 	mustWorkingDeliveryTask(t, c, taskID)
 	installScriptedProviderFor(t, "open-then-merged")
 	runDeliveryCrashHelper(t, homeDir, taskID, "mutating", "open-then-merged")
-	provider := newFakeDeliveryProvider().script(DeliveryProviderObservation{State: "MERGED", HeadSHA: "different", BaseRef: deliveryTestBase})
+	provider := newFakeDeliveryProvider().script(DeliveryProviderObservation{State: "MERGED", HeadSHA: "different", BaseRef: deliveryTestBase, MergedSHA: "0123456789abcdef0123456789abcdef01234567"})
 	installDeliveryProviderFor(t, provider)
 	if err := RecoverDeliveryJournals(homeDir); err != nil {
 		t.Fatalf("RecoverDeliveryJournals: %v", err)
@@ -195,6 +195,42 @@ func TestDeliverRecoveryRejectsInvalidPinnedMergedSHA(t *testing.T) {
 // canonical outcome commit conflict after mutation resolves to the already
 // committed record (partial/remote-unknown stand) and completed is never
 // fabricated.
+func TestDeliverOutcomeCommitConflictWithInvalidMergedSHAFailsClosed(t *testing.T) {
+	c, homeDir := newFleetCanonical(t)
+	taskID := "t1"
+	mustWorkingDeliveryTask(t, c, taskID)
+	installScriptedProviderFor(t, "open-then-merged")
+	runDeliveryCrashHelper(t, homeDir, taskID, "outcome", "open-then-merged")
+
+	active := listActiveDeliveryJournals(t, homeDir)
+	journal, err := readDeliveryJournalRecord(t, homeDir, active[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	tid := mustFleetTaskID(t, taskID)
+	committedReq := taskauthority.CanonicalDeliveryOutcomeRequest{
+		HomeID: c.HomeID(), TaskID: tid,
+		Precondition:             domain.Of(journal.Generation, journal.Revision+1),
+		AuthorizationOperationID: journal.AuthorizeOpID,
+		Status:                   taskauthority.DeliveryOutcomeCompleted,
+		Detail:                   "invalid committed evidence", HeadSHA: journal.OutcomeHeadSHA,
+		MergedSHA: "not-a-git-object-id",
+	}
+	if _, err := c.CommitDeliveryOutcome(mustFleetOperation(t, journal.OutcomeOpID, committedReq), committedReq); err != nil {
+		t.Fatalf("committing invalid outcome: %v", err)
+	}
+	provider := installScriptedProviderFor(t, "merged")
+	if err := RecoverDeliveryJournals(homeDir); err == nil {
+		t.Fatal("recovery accepted invalid committed merge SHA")
+	}
+	if provider.merges != 0 {
+		t.Fatalf("recovery mutated = %d, want 0", provider.merges)
+	}
+	if active := listActiveDeliveryJournals(t, homeDir); len(active) != 1 {
+		t.Fatalf("active journals = %v, want 1", active)
+	}
+}
+
 func TestDeliverOutcomeCommitConflictYieldsCommittedNeverCompleted(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	taskID := "t1"

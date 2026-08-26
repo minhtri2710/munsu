@@ -777,6 +777,9 @@ func commitPinnedOutcome(h *home.Home, lk *home.Lock, c *taskauthority.Canonical
 		}
 	}
 	out := res.Outcome
+	if out.Status == taskauthority.DeliveryOutcomeCompleted && !validGitObjectID(out.MergedSHA) {
+		return nil, fmt.Errorf("committed delivery outcome has missing or invalid merge commit evidence")
+	}
 	deliveryCrashHook("committed")
 	// A retryable outcome releases the authorization so the canonical retry
 	// cycle (revoke -> re-authorize) may follow.

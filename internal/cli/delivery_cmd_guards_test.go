@@ -139,7 +139,7 @@ func installTerminalGhAxi(t *testing.T, state string, merged bool) string {
 case "$1" in
 api)
   if [ "$2" != "/repos/acme/widgets/pulls/42" ]; then exit 1; fi
-  printf 'state: %s\nheadSha: %s\nbaseRef: main\nmerged: %t\nmergedSha: merge123\n'
+  printf 'state: %s\nheadSha: %s\nbaseRef: main\nmerged: %t\nmergedSha: 0123456789abcdef0123456789abcdef01234567\n'
   ;;
 pr)
   touch %s
