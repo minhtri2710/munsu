@@ -3,7 +3,6 @@
 package testutil
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
