@@ -31,12 +31,32 @@ func TestTaskMetadataRejectsPathTraversal(t *testing.T) {
 func TestTaskMetadataDoesNotIncreaseExistingDirectoryPermissions(t *testing.T) {
 	tmp := t.TempDir()
 	state := filepath.Join(tmp, "state")
+	marker := filepath.Join(state, "marker")
 	if err := os.Mkdir(state, 0700); err != nil {
 		t.Fatal(err)
 	}
-	fsaccess.MakeReadOnly(t, state)
-	if err := WriteMeta(tmp, "restricted", map[string]string{"kind": "ship"}); err == nil {
-		t.Fatal("WriteMeta succeeded in read-only state directory")
+	if err := os.WriteFile(marker, []byte("marker"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if !t.Run("read-only", func(t *testing.T) {
+		fsaccess.MakeReadOnly(t, state)
+		if _, err := os.ReadDir(state); err != nil {
+			t.Fatalf("read-only state directory was not readable: %v", err)
+		}
+		if data, err := os.ReadFile(marker); err != nil || string(data) != "marker" {
+			t.Fatalf("read-only state marker read = %q, %v", data, err)
+		}
+		if err := WriteMeta(tmp, "restricted", map[string]string{"kind": "ship"}); err == nil {
+			t.Fatal("WriteMeta succeeded in read-only state directory")
+		}
+	}) {
+		t.Fatal("read-only regression failed")
+	}
+	if _, err := os.ReadDir(state); err != nil {
+		t.Fatalf("state directory was not readable after restoration: %v", err)
+	}
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "marker" {
+		t.Fatalf("restored state marker read = %q, %v", data, err)
 	}
 }
 

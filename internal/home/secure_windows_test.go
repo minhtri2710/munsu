@@ -72,15 +72,32 @@ func TestSecureDirOwnerOnlyWindows(t *testing.T) {
 
 func TestRestrictDirPreservesReadOnlyOwnerRightsWindows(t *testing.T) {
 	dir := t.TempDir()
-	fsaccess.MakeReadOnly(t, dir)
-	if err := restrictDir(dir); err != nil {
-		t.Fatalf("restrictDir: %v", err)
+	marker := filepath.Join(dir, "marker")
+	if err := os.WriteFile(marker, []byte("marker"), 0600); err != nil {
+		t.Fatal(err)
 	}
-	probe := filepath.Join(dir, "write-probe")
-	if f, err := os.Create(probe); err == nil {
-		f.Close()
-		_ = os.Remove(probe)
-		t.Fatal("restrictDir upgraded a read-only directory to writable")
+	if !t.Run("read-only", func(t *testing.T) {
+		fsaccess.MakeReadOnly(t, dir)
+		if data, err := os.ReadFile(marker); err != nil || string(data) != "marker" {
+			t.Fatalf("read-only marker read = %q, %v", data, err)
+		}
+		if err := restrictDir(dir); err != nil {
+			t.Fatalf("restrictDir: %v", err)
+		}
+		if data, err := os.ReadFile(marker); err != nil || string(data) != "marker" {
+			t.Fatalf("restricted marker read = %q, %v", data, err)
+		}
+		probe := filepath.Join(dir, "write-probe")
+		if f, err := os.Create(probe); err == nil {
+			f.Close()
+			_ = os.Remove(probe)
+			t.Fatal("restrictDir upgraded a read-only directory to writable")
+		}
+	}) {
+		t.Fatal("read-only restriction regression failed")
+	}
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "marker" {
+		t.Fatalf("restored marker read = %q, %v", data, err)
 	}
 }
 
