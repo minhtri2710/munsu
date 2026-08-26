@@ -81,6 +81,7 @@ func TestGuardBurnDownDeliveryOutcomeDigestRefusals(t *testing.T) {
 		journal.OutcomeStatus = taskauthority.DeliveryOutcomeCompleted
 		journal.OutcomeDetail = "merged"
 		journal.OutcomeHeadSHA = req.Identity.HeadSHA
+		journal.OutcomeMergedSHA = "590d6f6c114867fe47123fd940b920fdabcd1234"
 		journal.OutcomeOpID = "outcome-digest-mismatch"
 		journal.OutcomeDigest = "wrong-digest"
 		_, err = commitPinnedOutcome(nil, nil, c, journal)
