@@ -102,10 +102,7 @@ internal/fleet/registry_registry.go	validateBindingDoc	1	b.ProjectID == "" || b.
 internal/fleet/registry_registry.go	validateBindingDoc	1	exists	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/registry_registry.go	validateBindingDoc	2	exists	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/registry_registry.go	validateCaptainRegistry	1	c.ID == "" || c.Home == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/registry_registry.go	validateCaptainRegistry	1	c.SchemaVersion != FleetRegistrySchema	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/registry_registry.go	validateCaptainRegistry	1	exists	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/registry_registry.go	validateProjectRegistry	1	exists	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/registry_registry.go	validateProjectRegistry	1	p.ID == "" || p.Name == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/registry_registry.go	verifyPrecondition	1	!ok	growth(#614): burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/retirement_poll.go	ListPendingRetirements	1	rec.TaskID == "" || retirementRecordPath(homeDir, rec.TaskID) != filepath.Join(dir, entry.Name())	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/retirement_poll.go	requireCanonicalCompletedOutcome	1	auth == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
