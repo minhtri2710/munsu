@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -84,6 +85,21 @@ func assertShapes(t *testing.T, wantBlocked bool, checkPath, command, filePath s
 // TestShellWriteRefusedByAbsoluteTargetIntoBoundPrimary is the direction BEO-73
 // exists for: the session stands in its own valid worktree, so the cwd ladder
 // has nothing to refuse, and the target is the shared checkout.
+func TestShellWriteRefusedByVolumeLessRootedWindowsTargetIntoBoundPrimary(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("volume-less rooted paths are Windows-specific")
+	}
+	primary, worktree := boundTaskFixture(t, "ship-shell-volume-less-root")
+	target := filepath.Join(primary, "README.md")
+	rooted := strings.TrimPrefix(target, filepath.VolumeName(target))
+
+	assertShapes(t, true, worktree, "echo pwned > "+rooted, "")
+
+	unrelated := filepath.Join(t.TempDir(), "README.md")
+	unrelatedRooted := strings.TrimPrefix(unrelated, filepath.VolumeName(unrelated))
+	assertShapes(t, false, worktree, "echo ok > "+unrelatedRooted, "")
+}
+
 func TestShellWriteRefusedByAbsoluteTargetIntoBoundPrimary(t *testing.T) {
 	primary, worktree := boundTaskFixture(t, "ship-shell-target")
 

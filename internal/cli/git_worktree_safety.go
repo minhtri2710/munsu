@@ -382,6 +382,12 @@ func resolveSafetyPath(base, path string) string {
 	if filepath.IsAbs(path) {
 		return path
 	}
+	if volume := filepath.VolumeName(base); volume != "" && filepath.VolumeName(path) == "" {
+		rooted := volume + path
+		if filepath.IsAbs(rooted) {
+			return rooted
+		}
+	}
 	return filepath.Join(base, path)
 }
 
