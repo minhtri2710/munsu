@@ -951,36 +951,10 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		if cur.Generation != committed.Generation {
 			return cleanupPending(fmt.Errorf("teardown %s: task reopened to generation %s during cleanup; refusing to remove current projections", opts.ID, cur.Generation))
 		}
-		// 3. Remove task meta file
-		metaFilePath, err := taskMetaFilePath(opts.HomeDir, opts.ID)
-		if err == nil {
-			if err := os.Remove(metaFilePath); err != nil && !os.IsNotExist(err) {
-				result.Steps = append(result.Steps, fmt.Sprintf("remove meta: %v", err))
-			} else {
-				result.Steps = append(result.Steps, "task meta removed")
-			}
-		}
-
-		// 3.5. Terminal event: close any open keyed phases before removing the status file.
-		journalSteps, err := journals.FinalizeRetirementJournals(opts.HomeDir, opts.ID)
-		if err != nil {
-			return cleanupPending(fmt.Errorf("teardown %s: finalizing journals: %w", opts.ID, err))
-		}
-		result.Steps = append(result.Steps, journalSteps...)
-
-		// 4. Remove residual state artifacts.
-		residualPaths, err := cleanupResidualArtifactPaths(opts.HomeDir, opts.ID, meta)
-		if err != nil {
-			return cleanupPending(fmt.Errorf("teardown %s: resolving residual artifacts: %w", opts.ID, err))
-		}
-		for _, p := range residualPaths {
-			if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
-				result.Steps = append(result.Steps, fmt.Sprintf("remove residual %s: %v", filepath.Base(p), err))
-			} else {
-				result.Steps = append(result.Steps, fmt.Sprintf("residual %s removed", filepath.Base(p)))
-			}
-		}
-		// 5. Clean up data directory
+		// 3-5. Clean up journals, residual projections, and the task data
+		// directory through the cleanup reconciliation below. The .meta file is
+		// deliberately removed last: until every fallible cleanup step succeeds,
+		// it is the durable retry marker that lets a crash resume this generation.
 		// One retention policy for every teardown: --force skips safety
 		// checks and is not a destructive action of its own, so it never
 		// widens what teardown deletes.
@@ -1065,7 +1039,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 			result.Steps = append(result.Steps, "task meta removed")
 			return nil
 		}
-		journalSteps, err = journals.FinalizeRetirementJournals(opts.HomeDir, opts.ID)
+		journalSteps, err := journals.FinalizeRetirementJournals(opts.HomeDir, opts.ID)
 		if err != nil {
 			return cleanupPending(fmt.Errorf("teardown %s: finalizing journals: %w", opts.ID, err))
 		}
