@@ -199,11 +199,11 @@ func TestManifest_EntryForFile_UnsafePath(t *testing.T) {
 		want    string
 	}{
 		{relPath: "../etc/passwd", want: "parent traversal"},
-		{relPath: "/etc/passwd", want: "absolute or volume-qualified"},
+		{relPath: "/etc/passwd", want: "manifest entry with absolute path"},
 		{relPath: "./foo", want: "not canonical"},
 		{relPath: "dir\\file", want: "backslash"},
-		{relPath: "C:foo", want: "absolute or volume-qualified"},
-		{relPath: "C:/foo", want: "absolute or volume-qualified"},
+		{relPath: "C:foo", want: "manifest entry with volume-qualified path"},
+		{relPath: "C:/foo", want: "manifest entry with volume-qualified path"},
 	} {
 		_, err := ManifestEntryForFile(tmp, test.relPath, DisposalPolicyCleanable)
 		if err == nil || !strings.Contains(err.Error(), test.want) {

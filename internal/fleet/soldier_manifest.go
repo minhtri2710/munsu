@@ -79,8 +79,11 @@ func validateManifestPath(relPath string) error {
 	if strings.Contains(relPath, "\\") {
 		return fmt.Errorf("manifest entry path contains backslash: %q", relPath)
 	}
-	if path.IsAbs(relPath) || filepath.IsAbs(relPath) || (len(relPath) >= 2 && relPath[1] == ':') {
-		return fmt.Errorf("manifest entry with absolute or volume-qualified path: %q", relPath)
+	if len(relPath) >= 2 && relPath[1] == ':' {
+		return fmt.Errorf("manifest entry with volume-qualified path: %q", relPath)
+	}
+	if path.IsAbs(relPath) || filepath.IsAbs(relPath) {
+		return fmt.Errorf("manifest entry with absolute path: %q", relPath)
 	}
 	cleaned := path.Clean(relPath)
 	if cleaned != relPath {
