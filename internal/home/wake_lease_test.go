@@ -132,7 +132,13 @@ func TestClaimWakesRemovalErrorPropagated(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	fsaccess.MakeReadOnly(t, stateDir)
+	if err := fsaccess.MakeReadOnly(t, stateDir); err != nil {
+		if fsaccess.IsUnsupportedFixture(err) {
+			t.Errorf("access-control observation unavailable: %v", err)
+			return
+		}
+		t.Fatal(err)
+	}
 
 	_, err := ClaimWakes(home, "consumer", 60, 10)
 	if err == nil {

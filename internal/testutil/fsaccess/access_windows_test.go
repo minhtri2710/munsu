@@ -91,7 +91,9 @@ func TestMakeReadOnlyDeniesExistingChildDeletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !t.Run("read-only", func(t *testing.T) {
-		MakeReadOnly(t, dir)
+		if err := MakeReadOnly(t, dir); err != nil {
+			t.Fatal(err)
+		}
 		if err := os.Remove(file); err == nil {
 			t.Fatal("read-only directory allowed deleting child file")
 		}

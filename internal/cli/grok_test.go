@@ -539,7 +539,13 @@ func TestGrokGuardParentHomeUnreadableFailsClosed(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(parentReceipts, "task-1.uplink.receipt"), []byte("state=done\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	fsaccess.MakeUnreadable(t, parentReceipts)
+	if err := fsaccess.MakeUnreadable(t, parentReceipts); err != nil {
+		if fsaccess.IsUnsupportedFixture(err) {
+			t.Errorf("access-control observation unavailable: %v", err)
+			return
+		}
+		t.Fatal(err)
+	}
 
 	var exitCode int
 	oldExit := exitWithCode

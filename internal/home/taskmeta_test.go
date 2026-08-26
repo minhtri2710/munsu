@@ -46,7 +46,13 @@ func TestTaskMetadataDoesNotIncreaseExistingDirectoryPermissions(t *testing.T) {
 	}
 	lockPath := metaPath + ".lock"
 	if !t.Run("read-only", func(t *testing.T) {
-		fsaccess.MakeReadOnly(t, state)
+		if err := fsaccess.MakeReadOnly(t, state); err != nil {
+			if fsaccess.IsUnsupportedFixture(err) {
+				t.Errorf("access-control observation unavailable: %v", err)
+				return
+			}
+			t.Fatal(err)
+		}
 		if _, err := os.ReadDir(state); err != nil {
 			t.Fatalf("read-only state directory was not readable: %v", err)
 		}

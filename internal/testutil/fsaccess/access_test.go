@@ -12,7 +12,13 @@ func TestMakeUnreadableRestoresDirectoryAccess(t *testing.T) {
 	if err := os.Mkdir(child, 0700); err != nil {
 		t.Fatal(err)
 	}
-	MakeUnreadable(t, child)
+	if err := MakeUnreadable(t, child); err != nil {
+		if IsUnsupportedFixture(err) {
+			t.Errorf("access-control observation unavailable: %v", err)
+			return
+		}
+		t.Fatal(err)
+	}
 	if _, err := os.ReadDir(child); err == nil {
 		t.Fatal("unreadable directory remained readable")
 	}
@@ -24,7 +30,13 @@ func TestMakeUnreadableRestoresFileAccess(t *testing.T) {
 	if err := os.WriteFile(path, []byte("data"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	MakeUnreadable(t, path)
+	if err := MakeUnreadable(t, path); err != nil {
+		if IsUnsupportedFixture(err) {
+			t.Errorf("access-control observation unavailable: %v", err)
+			return
+		}
+		t.Fatal(err)
+	}
 	if _, err := os.Open(path); err == nil {
 		t.Fatal("unreadable file remained readable")
 	}
@@ -36,7 +48,13 @@ func TestMakeReadOnlyRefusesWrites(t *testing.T) {
 	if err := os.WriteFile(path, []byte("data"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	MakeReadOnly(t, path)
+	if err := MakeReadOnly(t, path); err != nil {
+		if IsUnsupportedFixture(err) {
+			t.Errorf("access-control observation unavailable: %v", err)
+			return
+		}
+		t.Fatal(err)
+	}
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
 	if err == nil {
 		f.Close()
@@ -46,7 +64,13 @@ func TestMakeReadOnlyRefusesWrites(t *testing.T) {
 
 func TestMakeReadOnlyRefusesDirectoryCreate(t *testing.T) {
 	dir := t.TempDir()
-	MakeReadOnly(t, dir)
+	if err := MakeReadOnly(t, dir); err != nil {
+		if IsUnsupportedFixture(err) {
+			t.Errorf("access-control observation unavailable: %v", err)
+			return
+		}
+		t.Fatal(err)
+	}
 	probe := filepath.Join(dir, "child")
 	if err := os.Mkdir(probe, 0700); err == nil {
 		t.Fatal("read-only directory remained writable")
@@ -60,7 +84,13 @@ func TestAccessRestoresAfterNestedTest(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !t.Run("unreadable file", func(t *testing.T) {
-		MakeUnreadable(t, file)
+		if err := MakeUnreadable(t, file); err != nil {
+			if IsUnsupportedFixture(err) {
+				t.Errorf("access-control observation unavailable: %v", err)
+				return
+			}
+			t.Fatal(err)
+		}
 		if _, err := os.Open(file); err == nil {
 			t.Fatal("file remained readable")
 		}
@@ -78,7 +108,13 @@ func TestAccessRestoresAfterNestedTest(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !t.Run("unreadable directory", func(t *testing.T) {
-		MakeUnreadable(t, dirPath)
+		if err := MakeUnreadable(t, dirPath); err != nil {
+			if IsUnsupportedFixture(err) {
+				t.Errorf("access-control observation unavailable: %v", err)
+				return
+			}
+			t.Fatal(err)
+		}
 		if _, err := os.ReadDir(dirPath); err == nil {
 			t.Fatal("directory remained readable")
 		}
@@ -90,7 +126,13 @@ func TestAccessRestoresAfterNestedTest(t *testing.T) {
 	}
 
 	if !t.Run("read-only file", func(t *testing.T) {
-		MakeReadOnly(t, file)
+		if err := MakeReadOnly(t, file); err != nil {
+			if IsUnsupportedFixture(err) {
+				t.Errorf("access-control observation unavailable: %v", err)
+				return
+			}
+			t.Fatal(err)
+		}
 		f, err := os.OpenFile(file, os.O_WRONLY|os.O_APPEND, 0)
 		if err == nil {
 			f.Close()
@@ -106,7 +148,13 @@ func TestAccessRestoresAfterNestedTest(t *testing.T) {
 	}
 
 	if !t.Run("read-only directory", func(t *testing.T) {
-		MakeReadOnly(t, dirPath)
+		if err := MakeReadOnly(t, dirPath); err != nil {
+			if IsUnsupportedFixture(err) {
+				t.Errorf("access-control observation unavailable: %v", err)
+				return
+			}
+			t.Fatal(err)
+		}
 		if err := os.Mkdir(filepath.Join(dirPath, "child"), 0700); err == nil {
 			t.Fatal("read-only directory remained writable")
 		}

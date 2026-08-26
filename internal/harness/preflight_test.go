@@ -321,7 +321,13 @@ func TestPreflight_PiCredentialStore_Unreadable(t *testing.T) {
 	if err := os.WriteFile(authPath, []byte(`{}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	fsaccess.MakeUnreadable(t, authPath)
+	if err := fsaccess.MakeUnreadable(t, authPath); err != nil {
+		if fsaccess.IsUnsupportedFixture(err) {
+			t.Errorf("access-control observation unavailable: %v", err)
+			return
+		}
+		t.Fatal(err)
+	}
 
 	restore := injectPiCredentialCheck(t, tmpDir)
 	defer restore()

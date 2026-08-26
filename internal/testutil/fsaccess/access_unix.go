@@ -11,17 +11,15 @@ import (
 
 const chmodRelevantMode = os.ModePerm | os.ModeSetuid | os.ModeSetgid | os.ModeSticky
 
-// MakeUnreadable removes read and search access for the current user and
-// verifies that the path can no longer be read. Access is restored at cleanup.
-func MakeUnreadable(t *testing.T, path string) {
+func MakeUnreadable(t *testing.T, path string) error {
 	t.Helper()
 	info, err := os.Stat(path)
 	if err != nil {
-		t.Fatalf("stat unreadable path %q: %v", path, err)
+		return fmt.Errorf("stat unreadable path %q: %w", path, err)
 	}
 	old := info.Mode() & chmodRelevantMode
 	if err := os.Chmod(path, old&^0o500); err != nil {
-		t.Fatalf("make path unreadable %q: %v", path, err)
+		return fmt.Errorf("make path unreadable %q: %w", path, err)
 	}
 	restore := registerRestore(t, func() error {
 		err := os.Chmod(path, old)
@@ -30,25 +28,27 @@ func MakeUnreadable(t *testing.T, path string) {
 		}
 		return err
 	})
-	if err := verifyUnreadable(path, info.IsDir()); err != nil {
+	if err := verifyUnreadableAccess(path, info.IsDir()); err != nil {
 		if restoreErr := restore(); restoreErr != nil {
-			t.Fatalf("unreadable path %q was still readable: %v; restore failed: %v", path, err, restoreErr)
+			return fmt.Errorf("%v; restore failed: %w", err, restoreErr)
 		}
-		t.Fatalf("unreadable path %q was still readable: %v", path, err)
+		if errors.Is(err, errAccessBypassed) {
+			return &UnsupportedFixtureError{Operation: "unreadable path"}
+		}
+		return err
 	}
+	return nil
 }
 
-// MakeReadOnly removes write access while preserving read/search access and
-// verifies that a write operation is refused by the filesystem.
-func MakeReadOnly(t *testing.T, path string) {
+func MakeReadOnly(t *testing.T, path string) error {
 	t.Helper()
 	info, err := os.Stat(path)
 	if err != nil {
-		t.Fatalf("stat read-only path %q: %v", path, err)
+		return fmt.Errorf("stat read-only path %q: %w", path, err)
 	}
 	old := info.Mode() & chmodRelevantMode
 	if err := os.Chmod(path, old&^0o222); err != nil {
-		t.Fatalf("make path read-only %q: %v", path, err)
+		return fmt.Errorf("make path read-only %q: %w", path, err)
 	}
 	restore := registerRestore(t, func() error {
 		err := os.Chmod(path, old)
@@ -57,41 +57,21 @@ func MakeReadOnly(t *testing.T, path string) {
 		}
 		return err
 	})
-	if info.IsDir() {
-		probe := path + "/.fsaccess-write-probe"
-		if f, err := os.Create(probe); err == nil {
-			f.Close()
-			_ = os.Remove(probe)
-			restoreErr := restore()
-			if restoreErr != nil {
-				t.Fatalf("read-only directory %q remained writable; restore failed: %v", path, restoreErr)
-			}
-			t.Fatalf("read-only directory %q remained writable", path)
-		} else if !errors.Is(err, os.ErrPermission) {
-			restoreErr := restore()
-			if restoreErr != nil {
-				t.Fatalf("read-only directory %q write failed without permission denial: %v; restore failed: %v", path, err, restoreErr)
-			}
-			t.Fatalf("read-only directory %q write failed without permission denial: %v", path, err)
+	if err := verifyReadOnlyAccess(path, info.IsDir()); err != nil {
+		if restoreErr := restore(); restoreErr != nil {
+			return fmt.Errorf("%v; restore failed: %w", err, restoreErr)
 		}
-	} else {
-		f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
-		if err == nil {
-			f.Close()
-			restoreErr := restore()
-			if restoreErr != nil {
-				t.Fatalf("read-only file %q remained writable; restore failed: %v", path, restoreErr)
-			}
-			t.Fatalf("read-only file %q remained writable", path)
-		} else if !errors.Is(err, os.ErrPermission) {
-			restoreErr := restore()
-			if restoreErr != nil {
-				t.Fatalf("read-only file %q write failed without permission denial: %v; restore failed: %v", path, err, restoreErr)
-			}
-			t.Fatalf("read-only file %q write failed without permission denial: %v", path, err)
+		if errors.Is(err, errAccessBypassed) {
+			return &UnsupportedFixtureError{Operation: "read-only path"}
 		}
+		return err
 	}
+	return nil
 }
+
+var errAccessBypassed = errors.New("access restriction bypassed")
+var verifyUnreadableAccess = verifyUnreadable
+var verifyReadOnlyAccess = verifyReadOnly
 
 func AssertPrivateFile(t *testing.T, path string) {
 	t.Helper()
@@ -125,7 +105,7 @@ func verifyUnreadable(path string, isDir bool) error {
 	if isDir {
 		_, err := os.ReadDir(path)
 		if err == nil {
-			return fmt.Errorf("directory listing succeeded")
+			return errAccessBypassed
 		}
 		if !errors.Is(err, os.ErrPermission) {
 			return fmt.Errorf("directory listing failed without permission denial: %w", err)
@@ -135,10 +115,34 @@ func verifyUnreadable(path string, isDir bool) error {
 	f, err := os.Open(path)
 	if err == nil {
 		f.Close()
-		return fmt.Errorf("file open succeeded")
+		return errAccessBypassed
 	}
 	if !errors.Is(err, os.ErrPermission) {
 		return fmt.Errorf("file open failed without permission denial: %w", err)
+	}
+	return nil
+}
+
+func verifyReadOnly(path string, isDir bool) error {
+	if isDir {
+		f, err := os.Create(path + "/.fsaccess-write-probe")
+		if err == nil {
+			f.Close()
+			_ = os.Remove(path + "/.fsaccess-write-probe")
+			return errAccessBypassed
+		}
+		if !errors.Is(err, os.ErrPermission) {
+			return fmt.Errorf("directory create failed without permission denial: %w", err)
+		}
+		return nil
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
+	if err == nil {
+		f.Close()
+		return errAccessBypassed
+	}
+	if !errors.Is(err, os.ErrPermission) {
+		return fmt.Errorf("file write failed without permission denial: %w", err)
 	}
 	return nil
 }

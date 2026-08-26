@@ -109,7 +109,13 @@ func TestIsHardRequiredByConfig_ReturnsReadErrors(t *testing.T) {
 			if err := os.WriteFile(path, []byte("{}"), 0644); err != nil {
 				t.Fatal(err)
 			}
-			fsaccess.MakeUnreadable(t, path)
+			if err := fsaccess.MakeUnreadable(t, path); err != nil {
+				if fsaccess.IsUnsupportedFixture(err) {
+					t.Errorf("access-control observation unavailable: %v", err)
+					return
+				}
+				t.Fatal(err)
+			}
 		}},
 	}
 

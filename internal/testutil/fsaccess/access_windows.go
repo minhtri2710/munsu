@@ -19,62 +19,64 @@ const readOnlyAccess = windows.FILE_WRITE_DATA | windows.FILE_APPEND_DATA | wind
 // MakeUnreadable adds an explicit deny ACE for the current user while retaining
 // WRITE_DAC, verifies that reading/listing is refused, and restores the exact
 // original DACL at test cleanup.
-func MakeUnreadable(t *testing.T, path string) {
+func MakeUnreadable(t *testing.T, path string) error {
 	t.Helper()
 	state := captureACL(t, path)
 	if err := applyDeniedAccess(path, unreadableAccess); err != nil {
-		t.Fatalf("make path unreadable %q: %v", path, err)
+		return fmt.Errorf("make path unreadable %q: %w", path, err)
 	}
 	restore := registerRestore(t, func() error { return state.restore(path) })
 	if err := verifyUnreadable(path, state.isDir); err != nil {
 		if restoreErr := restore(); restoreErr != nil {
-			t.Fatalf("unreadable path %q was still readable: %v; restore failed: %v", path, err, restoreErr)
+			return fmt.Errorf("unreadable path %q was still readable: %v; restore failed: %w", path, err, restoreErr)
 		}
-		t.Fatalf("unreadable path %q was still readable: %v", path, err)
+		return fmt.Errorf("unreadable path %q was still readable: %w", path, err)
 	}
+	return nil
 }
 
 // MakeReadOnly denies writes/deletes for the current user while retaining
 // WRITE_DAC, verifies that a write operation is refused, and restores the exact
 // original DACL at test cleanup.
-func MakeReadOnly(t *testing.T, path string) {
+func MakeReadOnly(t *testing.T, path string) error {
 	t.Helper()
 	state := captureACL(t, path)
 	if err := applyDeniedAccess(path, readOnlyAccess); err != nil {
-		t.Fatalf("make path read-only %q: %v", path, err)
+		return fmt.Errorf("make path read-only %q: %w", path, err)
 	}
 	restore := registerRestore(t, func() error { return state.restore(path) })
 	if state.isDir {
 		entries, err := os.ReadDir(path)
 		if err != nil {
 			if restoreErr := restore(); restoreErr != nil {
-				t.Fatalf("read children of read-only path %q: %v; restore failed: %v", path, err, restoreErr)
+				return fmt.Errorf("read children of read-only path %q: %v; restore failed: %w", path, err, restoreErr)
 			}
-			t.Fatalf("read children of read-only path %q: %v", path, err)
+			return fmt.Errorf("read children of read-only path %q: %w", path, err)
 		}
 		for _, entry := range entries {
 			child := path + `\\` + entry.Name()
 			childState := captureACL(t, child)
 			if err := applyDeniedAccess(child, windows.DELETE); err != nil {
-				t.Fatalf("deny child deletion %q: %v", child, err)
+				return fmt.Errorf("deny child deletion %q: %w", child, err)
 			}
 			childStateCopy := childState
 			childRestore := registerRestore(t, func() error { return childStateCopy.restore(child) })
 			if err := verifyDeleteDenied(child); err != nil {
 				restoreErr := childRestore()
 				if restoreErr != nil {
-					t.Fatalf("read-only child %q remained deletable: %v; restore failed: %v", child, err, restoreErr)
+					return fmt.Errorf("read-only child %q remained deletable: %v; restore failed: %w", child, err, restoreErr)
 				}
-				t.Fatalf("read-only child %q remained deletable: %v", child, err)
+				return fmt.Errorf("read-only child %q remained deletable: %w", child, err)
 			}
 		}
 	}
 	if err := verifyReadOnly(path, state.isDir); err != nil {
 		if restoreErr := restore(); restoreErr != nil {
-			t.Fatalf("read-only path %q was still writable: %v; restore failed: %v", path, err, restoreErr)
+			return fmt.Errorf("read-only path %q was still writable: %v; restore failed: %w", path, err, restoreErr)
 		}
-		t.Fatalf("read-only path %q was still writable: %v", path, err)
+		return fmt.Errorf("read-only path %q was still writable: %w", path, err)
 	}
+	return nil
 }
 
 func AssertPrivateFile(t *testing.T, path string) {

@@ -1,9 +1,24 @@
 package fsaccess
 
 import (
+	"errors"
+	"fmt"
 	"sync"
 	"testing"
 )
+
+type UnsupportedFixtureError struct {
+	Operation string
+}
+
+func (e *UnsupportedFixtureError) Error() string {
+	return fmt.Sprintf("access-control fixture unsupported for %s", e.Operation)
+}
+
+func IsUnsupportedFixture(err error) bool {
+	var unsupported *UnsupportedFixtureError
+	return errors.As(err, &unsupported)
+}
 
 // registerRestore registers a restoration callback and returns an idempotent
 // callback callers may invoke before test cleanup. Restoration errors are test

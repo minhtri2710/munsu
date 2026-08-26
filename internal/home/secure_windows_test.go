@@ -77,7 +77,9 @@ func TestRestrictDirPreservesReadOnlyOwnerRightsWindows(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !t.Run("read-only", func(t *testing.T) {
-		fsaccess.MakeReadOnly(t, dir)
+		if err := fsaccess.MakeReadOnly(t, dir); err != nil {
+			t.Fatal(err)
+		}
 		if data, err := os.ReadFile(marker); err != nil || string(data) != "marker" {
 			t.Fatalf("read-only marker read = %q, %v", data, err)
 		}
