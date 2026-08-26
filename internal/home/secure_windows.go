@@ -156,6 +156,9 @@ func effectiveRights(sd *windows.SECURITY_DESCRIPTOR) (uint32, error) {
 			if accessGranted == 0 {
 				return 0, fmt.Errorf("current token has no effective access")
 			}
+			if privilegeCount(privileges) != 0 {
+				return 0, fmt.Errorf("effective access depends on token privileges")
+			}
 			return granted, nil
 		}
 		if callErr != windows.ERROR_INSUFFICIENT_BUFFER || privilegeLength <= uint32(len(privileges)) {
@@ -170,6 +173,13 @@ type genericMapping struct {
 	GenericWrite   uint32
 	GenericExecute uint32
 	GenericAll     uint32
+}
+
+func privilegeCount(buffer []byte) uint32 {
+	if len(buffer) < 4 {
+		return 0
+	}
+	return *(*uint32)(unsafe.Pointer(&buffer[0]))
 }
 
 func verifyRestrictedProtection(path string, rights uint32, owner *windows.SID) error {

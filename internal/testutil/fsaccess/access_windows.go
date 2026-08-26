@@ -88,9 +88,10 @@ func AssertPrivateDir(t *testing.T, path string) {
 }
 
 type aclState struct {
-	sddl      string
-	protected bool
-	isDir     bool
+	sddl       string
+	protected  bool
+	isDir      bool
+	absentDACL bool
 }
 
 func captureACL(t *testing.T, path string) aclState {
@@ -106,23 +107,51 @@ func captureACL(t *testing.T, path string) aclState {
 	if sd == nil {
 		t.Fatalf("path %q has no security descriptor", path)
 	}
+	_, _, daclErr := sd.DACL()
+	if daclErr != nil && !errorsIsObjectNotFound(daclErr) {
+		t.Fatalf("read DACL state for %q: %v", path, daclErr)
+	}
 	control, _, err := sd.Control()
 	if err != nil {
 		t.Fatalf("read DACL control for %q: %v", path, err)
 	}
-	return aclState{sddl: sd.String(), protected: control&windows.SE_DACL_PROTECTED != 0, isDir: info.IsDir()}
+	return aclState{sddl: sd.String(), protected: control&windows.SE_DACL_PROTECTED != 0, isDir: info.IsDir(), absentDACL: errorsIsObjectNotFound(daclErr)}
 }
 
 func (s aclState) restore(path string) error {
+	securityInfo := windows.SECURITY_INFORMATION(windows.DACL_SECURITY_INFORMATION)
+	if s.protected {
+		securityInfo |= windows.PROTECTED_DACL_SECURITY_INFORMATION
+	} else {
+		securityInfo |= windows.UNPROTECTED_DACL_SECURITY_INFORMATION
+	}
+	if s.absentDACL {
+		name, nameErr := windows.UTF16PtrFromString(path)
+		if nameErr != nil {
+			return nameErr
+		}
+		h, openErr := windows.CreateFile(name, windows.READ_CONTROL|windows.WRITE_DAC, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING, windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
+		if openErr != nil {
+			return openErr
+		}
+		absolute, absoluteErr := windows.NewSecurityDescriptor()
+		if absoluteErr == nil {
+			absoluteErr = absolute.SetDACL(nil, false, false)
+		}
+		if absoluteErr == nil {
+			absoluteErr = windows.SetKernelObjectSecurity(h, securityInfo, absolute)
+		}
+		windows.CloseHandle(h)
+		return absoluteErr
+	}
 	sd, err := windows.SecurityDescriptorFromString(s.sddl)
 	if err != nil {
 		return fmt.Errorf("parse original DACL: %w", err)
 	}
 	dacl, _, err := sd.DACL()
-	if err != nil && !errorsIsObjectNotFound(err) {
+	if err != nil {
 		return fmt.Errorf("read original DACL: %w", err)
 	}
-	securityInfo := windows.SECURITY_INFORMATION(windows.DACL_SECURITY_INFORMATION)
 	if s.protected {
 		securityInfo |= windows.PROTECTED_DACL_SECURITY_INFORMATION
 	} else {
@@ -205,12 +234,18 @@ func verifyUnreadable(path string, isDir bool) error {
 		if err == nil {
 			return fmt.Errorf("directory listing succeeded")
 		}
+		if !errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+			return fmt.Errorf("directory listing failed without access denial: %w", err)
+		}
 		return nil
 	}
 	f, err := os.Open(path)
 	if err == nil {
 		f.Close()
 		return fmt.Errorf("file open succeeded")
+	}
+	if !errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+		return fmt.Errorf("file open failed without access denial: %w", err)
 	}
 	return nil
 }
@@ -227,6 +262,9 @@ func verifyReadOnly(path string, isDir bool) error {
 			_ = os.Remove(probe)
 			return fmt.Errorf("directory create succeeded")
 		}
+		if !errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+			return fmt.Errorf("directory create failed without access denial: %w", err)
+		}
 		return nil
 	}
 	if f, err := os.Open(path); err != nil {
@@ -238,6 +276,9 @@ func verifyReadOnly(path string, isDir bool) error {
 	if err == nil {
 		f.Close()
 		return fmt.Errorf("file open for write succeeded")
+	}
+	if !errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+		return fmt.Errorf("file open for write failed without access denial: %w", err)
 	}
 	return nil
 }

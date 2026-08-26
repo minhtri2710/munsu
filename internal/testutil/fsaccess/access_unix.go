@@ -3,6 +3,7 @@
 package fsaccess
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -30,7 +31,9 @@ func MakeUnreadable(t *testing.T, path string) {
 		return err
 	})
 	if err := verifyUnreadable(path, info.IsDir()); err != nil {
-		_ = restore()
+		if restoreErr := restore(); restoreErr != nil {
+			t.Fatalf("unreadable path %q was still readable: %v; restore failed: %v", path, err, restoreErr)
+		}
 		t.Fatalf("unreadable path %q was still readable: %v", path, err)
 	}
 }
@@ -59,15 +62,33 @@ func MakeReadOnly(t *testing.T, path string) {
 		if f, err := os.Create(probe); err == nil {
 			f.Close()
 			_ = os.Remove(probe)
-			_ = restore()
+			restoreErr := restore()
+			if restoreErr != nil {
+				t.Fatalf("read-only directory %q remained writable; restore failed: %v", path, restoreErr)
+			}
 			t.Fatalf("read-only directory %q remained writable", path)
+		} else if !errors.Is(err, os.ErrPermission) {
+			restoreErr := restore()
+			if restoreErr != nil {
+				t.Fatalf("read-only directory %q write failed without permission denial: %v; restore failed: %v", path, err, restoreErr)
+			}
+			t.Fatalf("read-only directory %q write failed without permission denial: %v", path, err)
 		}
 	} else {
 		f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
 		if err == nil {
 			f.Close()
-			_ = restore()
+			restoreErr := restore()
+			if restoreErr != nil {
+				t.Fatalf("read-only file %q remained writable; restore failed: %v", path, restoreErr)
+			}
 			t.Fatalf("read-only file %q remained writable", path)
+		} else if !errors.Is(err, os.ErrPermission) {
+			restoreErr := restore()
+			if restoreErr != nil {
+				t.Fatalf("read-only file %q write failed without permission denial: %v; restore failed: %v", path, err, restoreErr)
+			}
+			t.Fatalf("read-only file %q write failed without permission denial: %v", path, err)
 		}
 	}
 }
@@ -106,12 +127,18 @@ func verifyUnreadable(path string, isDir bool) error {
 		if err == nil {
 			return fmt.Errorf("directory listing succeeded")
 		}
+		if !errors.Is(err, os.ErrPermission) {
+			return fmt.Errorf("directory listing failed without permission denial: %w", err)
+		}
 		return nil
 	}
 	f, err := os.Open(path)
 	if err == nil {
 		f.Close()
 		return fmt.Errorf("file open succeeded")
+	}
+	if !errors.Is(err, os.ErrPermission) {
+		return fmt.Errorf("file open failed without permission denial: %w", err)
 	}
 	return nil
 }

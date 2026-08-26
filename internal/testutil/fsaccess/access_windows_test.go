@@ -3,12 +3,66 @@
 package fsaccess
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"golang.org/x/sys/windows"
 )
+
+func TestACLStateRestoresAbsentDACL(t *testing.T) {
+	dir := t.TempDir()
+	absolute, err := windows.NewSecurityDescriptor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := absolute.SetDACL(nil, false, false); err != nil {
+		t.Fatal(err)
+	}
+	name, err := windows.UTF16PtrFromString(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := windows.CreateFile(name, windows.WRITE_DAC, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING, windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := windows.SetKernelObjectSecurity(h, windows.DACL_SECURITY_INFORMATION, absolute); err != nil {
+		windows.CloseHandle(h)
+		t.Fatalf("remove DACL: %v", err)
+	}
+	windows.CloseHandle(h)
+	state := captureACL(t, dir)
+	if !state.absentDACL {
+		t.Fatal("captured DACL is not absent")
+	}
+	everyone, err := windows.StringToSid("S-1-1-0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := windows.EXPLICIT_ACCESS{AccessPermissions: windows.ACCESS_MASK(0x001F01FF), AccessMode: windows.GRANT_ACCESS, Inheritance: windows.NO_INHERITANCE}
+	entry.Trustee.TrusteeForm = windows.TRUSTEE_IS_SID
+	entry.Trustee.TrusteeType = windows.TRUSTEE_IS_WELL_KNOWN_GROUP
+	entry.Trustee.TrusteeValue = windows.TrusteeValueFromSID(everyone)
+	allow, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{entry}, nil)
+	if err != nil {
+		t.Fatalf("build temporary DACL: %v", err)
+	}
+	if err := windows.SetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION, nil, nil, allow, nil); err != nil {
+		t.Fatalf("set temporary DACL: %v", err)
+	}
+	if err := state.restore(dir); err != nil {
+		t.Fatalf("restore absent DACL: %v", err)
+	}
+	sd, err := windows.GetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := sd.DACL(); !errors.Is(err, windows.ERROR_OBJECT_NOT_FOUND) {
+		t.Fatalf("restored DACL error = %v, want ERROR_OBJECT_NOT_FOUND", err)
+	}
+}
 
 func TestApplyDeniedAccessRejectsNullDACL(t *testing.T) {
 	dir := t.TempDir()
