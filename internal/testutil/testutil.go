@@ -131,9 +131,9 @@ func (b *FakeSessionBackend) Teardown(windowID string) error {
 // so the two renderings are the same string and searching for the raw path
 // worked by coincidence.
 //
-// Exactly those two renderings are accepted. The path must still appear in
-// full, so this answers the same question as a raw substring search rather
-// than a weaker one.
+// The verbatim path, its %q rendering, and its JSON-escaped rendering are
+// accepted. The path must still appear in full, so this answers the same
+// question as a raw substring search rather than a weaker one.
 func PathInMessage(message, path string) bool {
 	if path == "" {
 		return false
