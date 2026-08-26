@@ -261,6 +261,13 @@ func verifyProtection(path string, isDir bool) error {
 	if sd == nil {
 		return fmt.Errorf("home: %s has no security descriptor", path)
 	}
+	control, _, err := sd.Control()
+	if err != nil {
+		return fmt.Errorf("home: read DACL control for %s: %w", path, err)
+	}
+	if control&windows.SE_DACL_PROTECTED == 0 {
+		return fmt.Errorf("home: %s DACL is inheritable", path)
+	}
 	sid, err := currentUserSID()
 	if err != nil {
 		return err
