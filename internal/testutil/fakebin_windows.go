@@ -155,5 +155,20 @@ func copyFile(src, dst string) error {
 
 func posixShellPath() (string, error) { return resolvePOSIXShell(bootPath) }
 
+func bashShellPath() (string, error) {
+	if p := findOnPath(bootPath, "bash.exe"); p != "" {
+		return p, nil
+	}
+	if git := findOnPath(bootPath, "git.exe"); git != "" {
+		root := filepath.Dir(filepath.Dir(git))
+		for _, rel := range [][]string{{"usr", "bin", "bash.exe"}, {"bin", "bash.exe"}} {
+			if p := filepath.Join(append([]string{root}, rel...)...); isFile(p) {
+				return p, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("no bash shell for launch fixtures on PATH=%s: %w", bootPath, os.ErrNotExist)
+}
+
 // userHomeEnv is the variable os.UserHomeDir reads on this platform.
 const userHomeEnv = "USERPROFILE"

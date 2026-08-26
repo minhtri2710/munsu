@@ -1643,10 +1643,10 @@ func TestBuildLaunchScript_ShellExecution(t *testing.T) {
 		t.Fatalf("buildLaunchScript error: %v", err)
 	}
 
-	// The returned command invokes bash by name; put the resolved POSIX shell's
-	// directory on PATH and execute it through that same shell.
-	testutil.PrependPath(t, testutil.POSIXShellDir(t))
-	cmd := exec.Command(testutil.POSIXShell(t), "-c", scriptCmd)
+	// The returned command invokes bash by name; put bash on PATH and execute it
+	// through that same shell.
+	testutil.PrependPath(t, testutil.BashShellDir(t))
+	cmd := exec.Command(testutil.BashShell(t), "-c", scriptCmd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("shell execution failed: %v\noutput: %s", err, string(out))

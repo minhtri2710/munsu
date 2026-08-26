@@ -29,5 +29,17 @@ func posixShellPath() (string, error) {
 	return "", fmt.Errorf("no POSIX shell on PATH=%s: %w", bootPath, errors.ErrUnsupported)
 }
 
+func bashShellPath() (string, error) {
+	for _, p := range []string{"/bin/bash", "/usr/bin/bash"} {
+		if isFile(p) {
+			return p, nil
+		}
+	}
+	if p := findOnPath(bootPath, "bash"); p != "" {
+		return p, nil
+	}
+	return "", fmt.Errorf("no bash shell on PATH=%s: %w", bootPath, errors.ErrUnsupported)
+}
+
 // userHomeEnv is the variable os.UserHomeDir reads on this platform.
 const userHomeEnv = "HOME"

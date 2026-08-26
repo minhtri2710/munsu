@@ -137,3 +137,17 @@ func POSIXShellDir(t *testing.T) string {
 	t.Helper()
 	return filepath.Dir(POSIXShell(t))
 }
+
+func BashShell(t *testing.T) string {
+	t.Helper()
+	shell, err := bashShellPath()
+	if err != nil {
+		t.Fatalf("resolve bash shell: %v", err)
+	}
+	return shell
+}
+
+func BashShellDir(t *testing.T) string {
+	t.Helper()
+	return filepath.Dir(BashShell(t))
+}

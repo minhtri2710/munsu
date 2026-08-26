@@ -1,24 +1,34 @@
 package home
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 func TestInitRefusesStatErrors(t *testing.T) {
-	// A NUL byte makes a root unusable everywhere, but not at the same stage:
-	// POSIX carries it as far as the stat and reports "home: stat root", while
-	// Windows rejects it during path resolution and reports "home: resolve
-	// root". Pinning either string asserts which branch happened to fire, not
-	// the contract. The contract is that an unusable root is refused and
-	// nothing is left behind for it, so that is what is asserted — on both
-	// platforms, and including the side-effect check the stage assertion never
-	// made.
 	parent := t.TempDir()
-	_, err := Init(filepath.Join(parent, "bad\x00root"))
+	root := filepath.Join(parent, "faulted-root")
+	sentinel := errors.New("injected lstat failure")
+	var statPath string
+	_, err := initWithLstat(root, func(path string) (os.FileInfo, error) {
+		statPath = path
+		return nil, sentinel
+	})
 	if err == nil {
-		t.Fatal("Init accepted a root containing a NUL byte")
+		t.Fatal("Init accepted an injected stat failure")
+	}
+	if !errors.Is(err, sentinel) || !strings.Contains(err.Error(), "home: stat root") {
+		t.Fatalf("Init error = %v, want stat-root error wrapping sentinel", err)
+	}
+	abs, absErr := filepath.Abs(root)
+	if absErr != nil {
+		t.Fatal(absErr)
+	}
+	if statPath != filepath.Clean(abs) {
+		t.Fatalf("stat path = %q, want %q", statPath, filepath.Clean(abs))
 	}
 	entries, readErr := os.ReadDir(parent)
 	if readErr != nil {

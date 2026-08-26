@@ -1,6 +1,7 @@
 package testutil
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -141,7 +142,14 @@ func PathInMessage(message, path string) bool {
 		return true
 	}
 	quoted := strconv.Quote(path)
-	return strings.Contains(message, quoted[1:len(quoted)-1])
+	if strings.Contains(message, quoted[1:len(quoted)-1]) {
+		return true
+	}
+	jsonPath, err := json.Marshal(path)
+	if err != nil {
+		return false
+	}
+	return strings.Contains(message, string(jsonPath[1:len(jsonPath)-1]))
 }
 
 // SetUserHome points os.UserHomeDir at dir for the duration of the test.
