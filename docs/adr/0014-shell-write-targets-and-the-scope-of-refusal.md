@@ -50,8 +50,8 @@ is what closes the `cd <shared> && echo pwned > README.md` variant that a pure
 absolute-path scan would miss. Shell lexical resolution is owned by
 `resolveShellWritePath`; final repository classification remains with
 `evaluateFileWriteSafety`. On Windows, a volume-less rooted path such as
-`\src\repo\README.md` inherits the base path's volume rather than being treated
-as a relative child of the worktree. A same-volume drive-relative path such as
+`\src\repo\README.md` or `/src/repo/README.md` inherits the base path's volume
+rather than being treated as a relative child of the worktree. A same-volume drive-relative path such as
 `C:src\repo\README.md` resolves against the base directory, using
 case-insensitive volume comparison. A different-volume drive-relative path such
 as `D:src\repo\README.md` is ambiguous because the other drive's current
@@ -72,12 +72,13 @@ real commands after the terminator — refusing writes that must go through. Rea
 redirections (`<`, `<<<`) drop their operand for the same reason: they name a source, never
 a target.
 
-The delimiter word is read under both backslash interpretations: `<<\EOF` ends at
-bare `EOF` in both passes. `readHeredocRedirect` removes the quoting backslash
-while reading the delimiter, so the Windows pass does not retain it as part of
-the delimiter. This keeps each pass from swallowing the remaining payload and
-missing later covered commands — while `python -c` only opens the one command
-that names it.
+The delimiter word is read once using POSIX backslash-quoting rules: `<<\EOF`
+ends at bare `EOF`, and both tokenization passes then use that same stripped
+body. `readHeredocRedirect` removes the quoting backslash while reading the
+delimiter, so the later literal-backslash tokenization pass does not retain it
+as part of the delimiter.
+This keeps either pass from swallowing the remaining payload and missing later
+covered commands — while `python -c` only opens the one command that names it.
 
 ### 2. The claim of coverage is narrow by construction, and everything outside it is open
 
@@ -106,7 +107,7 @@ Everything else is open, explicitly and by design:
 * **`$(...)` / backtick substitution is open** on this path: a target the shell computes is
   not knowable here. (The git ladder still refuses substitution for git mutations.)
 
-Because tokenization cannot fail — `splitSafetyWords` always returns a token list — this
+Because tokenization cannot fail — `tokenizeSegments` always returns a segment list — this
 channel has **no unparseable state**. It does, however, carry an explicit fail-closed state
 for ambiguous cross-volume drive-relative paths: when `resolveShellWritePath` cannot
 reconstruct the other drive's current directory, `runSafetyCheck` refuses before target
