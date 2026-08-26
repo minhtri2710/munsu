@@ -7,9 +7,11 @@ import (
 	"strings"
 )
 
-// joinContained returns the path for key within root, rejecting any key that
-// would escape root via "..", an absolute path, empty segments, or a leading
-// separator. The comparison is purely lexical and does not follow symlinks.
+// joinContained returns the native path for a logical key within root. Logical
+// keys use slash separators and reject traversal, empty/current components,
+// native backslashes, absolute aliases, and volume-qualified forms before
+// native-path conversion. The comparison is purely lexical and does not follow
+// symlinks.
 func joinContained(root, key string) (string, error) {
 	if key == "" {
 		return "", ErrEmptyKey

@@ -38,8 +38,8 @@ const (
 	DisposalPolicyCleanable DisposalPolicy = "cleanable"
 )
 
-// ManifestEntry binds one launch artifact's relative path, SHA-256 digest,
-// and disposal policy.
+// ManifestEntry binds one launch artifact's canonical slash-format relative
+// path, SHA-256 digest, and disposal policy.
 type ManifestEntry struct {
 	Path   string         `json:"path"`
 	SHA256 string         `json:"sha256"`
@@ -302,8 +302,10 @@ func BuildManifest(entries []ManifestEntry) *LaunchManifest {
 	}
 }
 
-// ManifestEntryForFile builds a ManifestEntry for a file at the given path
-// relative to worktreeRoot, computing its SHA-256 digest.
+// ManifestEntryForFile builds a ManifestEntry for a file at the given canonical
+// slash-format relative path, rejecting native separators, absolute aliases,
+// volume-qualified forms, and traversal before native-path conversion. It
+// computes the file's SHA-256 digest relative to worktreeRoot.
 func ManifestEntryForFile(worktreeRoot, relPath string, policy DisposalPolicy) (ManifestEntry, error) {
 	if err := validateManifestPath(relPath); err != nil {
 		return ManifestEntry{}, fmt.Errorf("unsafe manifest path: %w", err)
