@@ -136,6 +136,26 @@ func TestDeliverMergedInvalidSHAFailsClosedBeforeOutcome(t *testing.T) {
 	}
 }
 
+func TestVerifyProviderHeadRequiresHeadAndBaseEvidence(t *testing.T) {
+	journal := &deliveryJournal{Identity: deliveryTestIdentity()}
+
+	// A non-merged observation with no head evidence must reach the head
+	// refusal: the merged-SHA precondition does not shadow it here.
+	noHead := DeliveryProviderObservation{State: "OPEN", BaseRef: deliveryTestBase}
+	err := verifyProviderHead(journal, noHead)
+	if err == nil || !strings.Contains(err.Error(), "missing head evidence") {
+		t.Fatalf("verifyProviderHead = %v, want missing-head-evidence refusal", err)
+	}
+
+	// Head evidence present but base ref missing must reach the base
+	// refusal before any drift comparison can run.
+	noBase := DeliveryProviderObservation{State: "OPEN", HeadSHA: deliveryTestHead}
+	err = verifyProviderHead(journal, noBase)
+	if err == nil || !strings.Contains(err.Error(), "missing base ref evidence") {
+		t.Fatalf("verifyProviderHead = %v, want missing-base-ref-evidence refusal", err)
+	}
+}
+
 func TestDeliverProviderFenceAcceptsAndRejectsObservations(t *testing.T) {
 	journal := &deliveryJournal{Identity: deliveryTestIdentity()}
 	cases := []struct {
