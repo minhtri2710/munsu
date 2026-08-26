@@ -3,6 +3,7 @@
 package testutil
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -155,19 +156,14 @@ func copyFile(src, dst string) error {
 
 func posixShellPath() (string, error) { return resolvePOSIXShell(bootPath) }
 
-func bashShellPath() (string, error) {
-	if p := findOnPath(bootPath, "bash.exe"); p != "" {
-		return p, nil
+func resolveBashShell(searchPath string) (string, []string, error) {
+	if bash, dirs, ok := resolveGitBash(searchPath); ok {
+		return bash, dirs, nil
 	}
-	if git := findOnPath(bootPath, "git.exe"); git != "" {
-		root := filepath.Dir(filepath.Dir(git))
-		for _, rel := range [][]string{{"usr", "bin", "bash.exe"}, {"bin", "bash.exe"}} {
-			if p := filepath.Join(append([]string{root}, rel...)...); isFile(p) {
-				return p, nil
-			}
-		}
+	if p := findOnPath(searchPath, "bash.exe"); p != "" {
+		return p, []string{filepath.Dir(p)}, nil
 	}
-	return "", fmt.Errorf("no bash shell for launch fixtures on PATH=%s: %w", bootPath, os.ErrNotExist)
+	return "", nil, fmt.Errorf("no bash shell for launch fixtures on PATH=%s: %w", searchPath, errors.ErrUnsupported)
 }
 
 // userHomeEnv is the variable os.UserHomeDir reads on this platform.

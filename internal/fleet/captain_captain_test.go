@@ -1645,7 +1645,7 @@ func TestBuildLaunchScript_ShellExecution(t *testing.T) {
 
 	// The returned command invokes bash by name; put bash on PATH and execute it
 	// through that same shell.
-	testutil.PrependPath(t, testutil.BashShellDir(t))
+	testutil.PrependPath(t, testutil.BashShellDirs(t)...)
 	cmd := exec.Command(testutil.BashShell(t), "-c", scriptCmd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

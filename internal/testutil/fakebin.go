@@ -92,6 +92,23 @@ func resolvePOSIXShell(searchPath string) (string, error) {
 	return "", fmt.Errorf("no POSIX shell for the windows fake-binary shim on PATH=%s: %w", searchPath, errors.ErrUnsupported)
 }
 
+func resolveGitBash(searchPath string) (string, []string, bool) {
+	git := findOnPath(searchPath, "git.exe")
+	if git == "" {
+		return "", nil, false
+	}
+	root := filepath.Dir(filepath.Dir(git))
+	usrBin := filepath.Join(root, "usr", "bin")
+	bin := filepath.Join(root, "bin")
+	if bash := filepath.Join(usrBin, "bash.exe"); isFile(bash) {
+		return bash, existingDirs(usrBin, bin), true
+	}
+	if bash := filepath.Join(bin, "bash.exe"); isFile(bash) {
+		return bash, existingDirs(usrBin, bin), true
+	}
+	return "", nil, false
+}
+
 func findOnPath(searchPath string, names ...string) string {
 	for _, dir := range filepath.SplitList(searchPath) {
 		for _, name := range names {
@@ -106,6 +123,16 @@ func findOnPath(searchPath string, names ...string) string {
 func isFile(path string) bool {
 	st, err := os.Stat(path)
 	return err == nil && !st.IsDir()
+}
+
+func existingDirs(dirs ...string) []string {
+	out := make([]string, 0, len(dirs))
+	for _, dir := range dirs {
+		if st, err := os.Stat(dir); err == nil && st.IsDir() {
+			out = append(out, dir)
+		}
+	}
+	return out
 }
 
 // POSIXShell returns the absolute path of an interpreter for POSIX shell
@@ -140,14 +167,18 @@ func POSIXShellDir(t *testing.T) string {
 
 func BashShell(t *testing.T) string {
 	t.Helper()
-	shell, err := bashShellPath()
+	shell, _, err := resolveBashShell(bootPath)
 	if err != nil {
 		t.Fatalf("resolve bash shell: %v", err)
 	}
 	return shell
 }
 
-func BashShellDir(t *testing.T) string {
+func BashShellDirs(t *testing.T) []string {
 	t.Helper()
-	return filepath.Dir(BashShell(t))
+	_, dirs, err := resolveBashShell(bootPath)
+	if err != nil {
+		t.Fatalf("resolve bash shell: %v", err)
+	}
+	return dirs
 }

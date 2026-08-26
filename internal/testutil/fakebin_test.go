@@ -54,6 +54,55 @@ func TestResolvePOSIXShell(t *testing.T) {
 // TestWriteFakeExecutableAtWritesTheScriptVerbatim pins the property the whole
 // shim rests on: the shell script is the single source of the fake's behaviour
 // on both platforms, so it is never rewritten for the host.
+func TestResolveBashShellSupportPaths(t *testing.T) {
+	gitRoot := t.TempDir()
+	touch(t, filepath.Join(gitRoot, "cmd", "git.exe"))
+	touch(t, filepath.Join(gitRoot, "bin", "bash.exe"))
+	touch(t, filepath.Join(gitRoot, "usr", "bin", "bash.exe"))
+	touch(t, filepath.Join(gitRoot, "usr", "bin", "cat.exe"))
+	touch(t, filepath.Join(gitRoot, "usr", "bin", "mkdir.exe"))
+
+	shell, dirs, ok := resolveGitBash(filepath.Join(gitRoot, "cmd"))
+	if !ok {
+		t.Fatal("resolveGitBash did not find the Git bash layout")
+	}
+	var err error
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(gitRoot, "usr", "bin", "bash.exe"); shell != want {
+		t.Fatalf("shell = %q, want %q", shell, want)
+	}
+	if len(dirs) != 2 || dirs[0] != filepath.Join(gitRoot, "usr", "bin") || dirs[1] != filepath.Join(gitRoot, "bin") {
+		t.Fatalf("support dirs = %q, want usr/bin then bin", dirs)
+	}
+	path := strings.Join(dirs, string(os.PathListSeparator))
+	for _, name := range []string{"bash.exe", "cat.exe", "mkdir.exe"} {
+		if got := findOnPath(path, name); got == "" {
+			t.Fatalf("support PATH does not resolve %s", name)
+		}
+	}
+
+	withoutUsrBash := t.TempDir()
+	touch(t, filepath.Join(withoutUsrBash, "cmd", "git.exe"))
+	touch(t, filepath.Join(withoutUsrBash, "bin", "bash.exe"))
+	touch(t, filepath.Join(withoutUsrBash, "usr", "bin", "cat.exe"))
+	shell, dirs, ok = resolveGitBash(filepath.Join(withoutUsrBash, "cmd"))
+	if !ok {
+		t.Fatal("resolveGitBash did not find the Git bash fallback")
+	}
+	err = nil
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(withoutUsrBash, "bin", "bash.exe"); shell != want {
+		t.Fatalf("fallback shell = %q, want %q", shell, want)
+	}
+	if len(dirs) != 2 || dirs[0] != filepath.Join(withoutUsrBash, "usr", "bin") || dirs[1] != filepath.Join(withoutUsrBash, "bin") {
+		t.Fatalf("fallback support dirs = %q, want usr/bin then bin", dirs)
+	}
+}
+
 func TestWriteFakeExecutableAtWritesTheScriptVerbatim(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "herdr")
 	script := "#!/bin/sh\nprintf '%s\\n' hello\n"

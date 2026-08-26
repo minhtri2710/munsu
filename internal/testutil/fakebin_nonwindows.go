@@ -5,6 +5,7 @@ package testutil
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 )
 
 func installWindowsFake(string) error { return nil }
@@ -29,16 +30,16 @@ func posixShellPath() (string, error) {
 	return "", fmt.Errorf("no POSIX shell on PATH=%s: %w", bootPath, errors.ErrUnsupported)
 }
 
-func bashShellPath() (string, error) {
+func resolveBashShell(searchPath string) (string, []string, error) {
 	for _, p := range []string{"/bin/bash", "/usr/bin/bash"} {
 		if isFile(p) {
-			return p, nil
+			return p, []string{filepath.Dir(p)}, nil
 		}
 	}
-	if p := findOnPath(bootPath, "bash"); p != "" {
-		return p, nil
+	if p := findOnPath(searchPath, "bash"); p != "" {
+		return p, []string{filepath.Dir(p)}, nil
 	}
-	return "", fmt.Errorf("no bash shell on PATH=%s: %w", bootPath, errors.ErrUnsupported)
+	return "", nil, fmt.Errorf("no bash shell on PATH=%s: %w", searchPath, errors.ErrUnsupported)
 }
 
 // userHomeEnv is the variable os.UserHomeDir reads on this platform.
