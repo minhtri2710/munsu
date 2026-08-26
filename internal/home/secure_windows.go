@@ -19,6 +19,7 @@ import (
 const ownerAllAccess = 0x001F01FF
 
 var accessCheck = windows.NewLazySystemDLL("advapi32.dll").NewProc("AccessCheck")
+var tokenIsRestricted = func(token windows.Token) (bool, error) { return token.IsRestricted() }
 
 // secureFile establishes owner-private protection on an already-created file.
 // On Windows this replaces Unix mode-bit enforcement with an owner-only DACL
@@ -125,6 +126,13 @@ func ownerACL(sid *windows.SID, rights uint32) (*windows.ACL, error) {
 
 func effectiveRights(sd *windows.SECURITY_DESCRIPTOR) (uint32, error) {
 	processToken := windows.GetCurrentProcessToken()
+	restricted, err := tokenIsRestricted(processToken)
+	if err != nil {
+		return 0, fmt.Errorf("check restricted token: %w", err)
+	}
+	if restricted {
+		return 0, fmt.Errorf("restricted token access cannot be preserved")
+	}
 	var token windows.Token
 	if err := windows.DuplicateTokenEx(processToken, windows.TOKEN_QUERY, nil, windows.SecurityImpersonation, windows.TokenImpersonation, &token); err != nil {
 		return 0, fmt.Errorf("duplicate current token: %w", err)

@@ -1,6 +1,7 @@
 package home
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,6 +39,12 @@ func TestTaskMetadataDoesNotIncreaseExistingDirectoryPermissions(t *testing.T) {
 	if err := os.WriteFile(marker, []byte("marker"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	id := "restricted"
+	metaPath, err := MetaFilePath(tmp, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockPath := metaPath + ".lock"
 	if !t.Run("read-only", func(t *testing.T) {
 		fsaccess.MakeReadOnly(t, state)
 		if _, err := os.ReadDir(state); err != nil {
@@ -46,8 +53,14 @@ func TestTaskMetadataDoesNotIncreaseExistingDirectoryPermissions(t *testing.T) {
 		if data, err := os.ReadFile(marker); err != nil || string(data) != "marker" {
 			t.Fatalf("read-only state marker read = %q, %v", data, err)
 		}
-		if err := WriteMeta(tmp, "restricted", map[string]string{"kind": "ship"}); err == nil {
-			t.Fatal("WriteMeta succeeded in read-only state directory")
+		if err := WriteMeta(tmp, id, map[string]string{"kind": "ship"}); !errors.Is(err, os.ErrPermission) {
+			t.Fatalf("WriteMeta error = %v, want permission error", err)
+		}
+		if _, err := os.Stat(metaPath); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("metadata path after denied write = %v, want absent", err)
+		}
+		if _, err := os.Stat(lockPath); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("lock path after denied write = %v, want absent", err)
 		}
 	}) {
 		t.Fatal("read-only regression failed")
@@ -57,6 +70,12 @@ func TestTaskMetadataDoesNotIncreaseExistingDirectoryPermissions(t *testing.T) {
 	}
 	if data, err := os.ReadFile(marker); err != nil || string(data) != "marker" {
 		t.Fatalf("restored state marker read = %q, %v", data, err)
+	}
+	if err := WriteMeta(tmp, id, map[string]string{"kind": "ship"}); err != nil {
+		t.Fatalf("WriteMeta after restoration: %v", err)
+	}
+	if _, err := ReadMeta(tmp, id); err != nil {
+		t.Fatalf("ReadMeta after restoration: %v", err)
 	}
 }
 

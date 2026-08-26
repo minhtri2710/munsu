@@ -101,6 +101,35 @@ func TestRestrictDirPreservesReadOnlyOwnerRightsWindows(t *testing.T) {
 	}
 }
 
+func TestRestrictDirRejectsRestrictedTokenWindows(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "marker")
+	if err := os.WriteFile(marker, []byte("marker"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	originalSD, err := windows.GetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.GROUP_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalSDDL := originalSD.String()
+	original := tokenIsRestricted
+	t.Cleanup(func() { tokenIsRestricted = original })
+	tokenIsRestricted = func(windows.Token) (bool, error) { return true, nil }
+	if err := restrictDir(dir); err == nil {
+		t.Fatal("restrictDir accepted a restricted token")
+	}
+	if _, err := os.ReadFile(marker); err != nil {
+		t.Fatalf("restricted-token rejection changed read access: %v", err)
+	}
+	currentSD, err := windows.GetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.GROUP_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if currentSD.String() != originalSDDL {
+		t.Fatal("restricted-token rejection changed the security descriptor")
+	}
+}
+
 func TestRestrictDirPreservesGroupGrantedRightsWindows(t *testing.T) {
 	dir := t.TempDir()
 	grantEveryoneWindows(t, dir)
