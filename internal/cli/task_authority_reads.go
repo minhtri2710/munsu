@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
@@ -125,4 +126,14 @@ func taskAuthorityForRead(homeDir string) (*taskauthority.Canonical, error) {
 		return nil, fmt.Errorf("opening task authority home %s: %w", homeDir, err)
 	}
 	return taskauthority.NewCanonical(h)
+}
+
+func taskDataDirReclaimer(homeDir string) bootstrap.ReclaimTaskDataDir {
+	auth, err := taskAuthorityForRead(homeDir)
+	if err != nil {
+		return func(string, func() error) (bool, error) { return false, nil }
+	}
+	return func(id string, reclaim func() error) (bool, error) {
+		return auth.ReclaimReleasedTaskArtifactsByID(id, reclaim)
+	}
 }

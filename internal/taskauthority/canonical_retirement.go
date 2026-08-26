@@ -30,16 +30,22 @@ type CanonicalRetireRequest struct {
 	TaskID       domain.TaskID
 	Precondition domain.Precondition
 	Reason       string
+	// ArchiveNameOccupied records, at the instant the cleanup claim commits and
+	// before any archival can run, whether the generation-bound report archive
+	// name was already taken. A name free then and present later was written by
+	// this claim; a name already taken is foreign evidence.
+	ArchiveNameOccupied bool
 }
 
 func (r CanonicalRetireRequest) DigestBytes() ([]byte, error) {
 	return json.Marshal(struct {
-		HomeID     string `json:"home_id"`
-		TaskID     string `json:"task_id"`
-		Generation uint64 `json:"generation"`
-		Revision   uint64 `json:"revision"`
-		Reason     string `json:"reason,omitempty"`
-	}{r.HomeID.Value(), r.TaskID.Value(), r.Precondition.Generation, r.Precondition.Revision, r.Reason})
+		HomeID              string `json:"home_id"`
+		TaskID              string `json:"task_id"`
+		Generation          uint64 `json:"generation"`
+		Revision            uint64 `json:"revision"`
+		Reason              string `json:"reason,omitempty"`
+		ArchiveNameOccupied bool   `json:"archive_name_occupied,omitempty"`
+	}{r.HomeID.Value(), r.TaskID.Value(), r.Precondition.Generation, r.Precondition.Revision, r.Reason, r.ArchiveNameOccupied})
 }
 
 // Retire transitions the current task generation into the retired terminal
@@ -100,6 +106,8 @@ func (c *Canonical) Retire(op domain.Operation, req CanonicalRetireRequest) (Out
 			Generation:  cur.Generation,
 			Status:      CleanupActive,
 			ClaimedAt:   c.now().UnixNano(),
+
+			ArchiveNameOccupied: req.ArchiveNameOccupied,
 		}
 		next.Revision++
 		return next, nil

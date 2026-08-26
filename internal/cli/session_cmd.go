@@ -17,6 +17,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var recoverBriefHandoffs = fleet.RecoverTaskHandoffs
+var writeBriefArtifact = func(auth *taskauthority.Canonical, id string, write func() error) error {
+	return auth.WriteTaskDataArtifactByID(id, write)
+}
+
 func newBriefCmd() *cobra.Command {
 	var scout bool
 	var force bool
@@ -78,7 +83,14 @@ func newBriefCmd() *cobra.Command {
 				ScoutScope: scoutScope, ScoutRuntimeBudgetSecs: scoutBudget,
 			}
 
-			if err := fleet.Scaffold(opts); err != nil {
+			if err := recoverBriefHandoffs(ctx.Home); err != nil {
+				return err
+			}
+			auth, err := ctx.TaskAuthority()
+			if err != nil {
+				return err
+			}
+			if err := writeBriefArtifact(auth, id, func() error { return fleet.Scaffold(opts) }); err != nil {
 				return err
 			}
 
@@ -245,7 +257,7 @@ func newSessionStartCmd() *cobra.Command {
 				return bootstrap.WatchEnsureResult{State: r.Data.State}
 			}, func(home string, doRecover bool) bootstrap.CaptainLivenessResult {
 				return captainLivenessForSession(home, doRecover && wantRecover)
-			})
+			}, taskDataDirReclaimer(ctx.Home))
 			if err != nil {
 				return err
 			}
@@ -290,7 +302,7 @@ func newBootstrapCmd() *cobra.Command {
 			if len(args) > 1 && args[0] == "install" {
 				installTools = args[1:]
 			}
-			result, err := bootstrap.Run(ctx.Home, !locked, installTools)
+			result, err := bootstrap.Run(ctx.Home, !locked, installTools, taskDataDirReclaimer(ctx.Home))
 			if err != nil {
 				return err
 			}

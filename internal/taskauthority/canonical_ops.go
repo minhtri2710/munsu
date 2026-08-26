@@ -2,8 +2,12 @@ package taskauthority
 
 import (
 	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
@@ -120,6 +124,191 @@ func (c *Canonical) Get(taskID domain.TaskID) (Aggregate, error) {
 // or after it, never in between. It returns the same current-Task-truth
 // contract as Get: a superseded/non-current generation fails closed with
 // ErrNotFound.
+// ReconcileRetirementCleanup runs bounded local data-path work and commits the
+// terminal cleanup state under one task-scope lock. Handoff scope precedes task
+// scope; callbacks must not acquire another lock scope.
+func (c *Canonical) ReconcileRetirementCleanup(taskID domain.TaskID, generation Generation, terminal CleanupStatus, preflight func(bool) error, work func(bool) error, after ...func() error) error {
+	if preflight == nil || work == nil {
+		return fmt.Errorf("cleanup callbacks are required")
+	}
+	if terminal != CleanupCompleted && terminal != CleanupAborted {
+		return fmt.Errorf("invalid cleanup terminal status %q", terminal)
+	}
+	if err := taskID.Validate(); err != nil {
+		return err
+	}
+	if err := generation.Validate(); err != nil {
+		return err
+	}
+	lk, err := c.h.Lock(taskScope(taskID.Value()))
+	if err != nil {
+		return err
+	}
+	defer lk.Release()
+	doc, exists, err := c.readTaskDoc(taskID.Value())
+	if err != nil {
+		return err
+	}
+	if !exists || !doc.Aggregate.Current || doc.Aggregate.Phase != PhaseRetired || doc.Aggregate.CleanupClaim == nil || doc.Aggregate.CleanupClaim.Generation != generation || doc.Aggregate.CleanupClaim.Status != CleanupActive {
+		return conflictError(ErrConflict, "task %s generation %s cleanup claim is not active", taskID, generation)
+	}
+	claimID := doc.Aggregate.CleanupClaim.OperationID
+	// The claim's observation is the ownership proof: it was committed by
+	// BeginCleanup before any archival could run. Nothing commits a change-set
+	// between that claim and the terminal cleanup commit below, so a retry
+	// advances the revision exactly once.
+	occupied := doc.Aggregate.CleanupClaim.ArchiveNameOccupied
+	if err := preflight(occupied); err != nil {
+		return err
+	}
+	var req domain.Intent
+	if terminal == CleanupCompleted {
+		req = CanonicalCompleteCleanupRequest{HomeID: c.HomeID(), TaskID: taskID, Precondition: domain.Of(uint64(doc.Aggregate.Generation), uint64(doc.Aggregate.Revision)), ClaimOperationID: claimID, ClaimGeneration: generation, Reason: "retirement cleanup complete"}
+	} else {
+		req = CanonicalAbortCleanupRequest{HomeID: c.HomeID(), TaskID: taskID, Precondition: domain.Of(uint64(doc.Aggregate.Generation), uint64(doc.Aggregate.Revision)), ClaimOperationID: claimID, ClaimGeneration: generation, Reason: "retirement cleanup abort"}
+	}
+	opID, err := domain.NewOperationID(fmt.Sprintf("cleanup-%s-%s-%d", terminal, taskID.Value(), time.Now().UnixNano()))
+	if err != nil {
+		return err
+	}
+	op, err := domain.NewOperation(opID, req)
+	if err != nil {
+		return err
+	}
+	if err := work(occupied); err != nil {
+		return err
+	}
+	_, err = c.mutateTaskFencedLocked(lk, op, taskID, domain.Of(uint64(doc.Aggregate.Generation), uint64(doc.Aggregate.Revision)), func(cur Aggregate) (Aggregate, error) {
+		next := cur.clone()
+		next.CleanupClaim.Status = terminal
+		next.CleanupClaim.ReconciledAt = c.now().UnixNano()
+		next.Revision++
+		return next, nil
+	}, nil, &cleanupGate{operationID: claimID, generation: generation})
+	if err != nil {
+		return err
+	}
+	if len(after) > 0 && after[0] != nil {
+		return after[0]()
+	}
+	return nil
+}
+
+// WriteTaskDataArtifact serializes a bounded task-data write with
+// ReclaimReleasedTaskArtifacts so a brief writer cannot race reclamation.
+// Handoff scope precedes task scope; callbacks may perform only bounded local
+// filesystem work and must not acquire another lock scope.
+func (c *Canonical) WriteTaskDataArtifact(taskID domain.TaskID, write func() error) error {
+	return c.WriteTaskDataArtifactByID(taskID.Value(), write)
+}
+
+// WriteTaskDataArtifactByID provides synchronization only for a raw durable
+// task-data ID; it does not authorize the write.
+func (c *Canonical) WriteTaskDataArtifactByID(id string, write func() error) error {
+	if write == nil {
+		return fmt.Errorf("task-data callback is nil")
+	}
+	lk, err := c.h.Lock(taskScope(id))
+	if err != nil {
+		return err
+	}
+	defer lk.Release()
+	return write()
+}
+
+// CompletedCleanupResult describes whether completed-cleanup projection work ran.
+type CompletedCleanupResult string
+
+const (
+	CompletedCleanupRepaired   CompletedCleanupResult = "repaired"
+	CompletedCleanupSuperseded CompletedCleanupResult = "superseded"
+)
+
+// ReconcileCompletedCleanup runs only bounded local projection work while the
+// completed task remains fenced; callbacks must not acquire another lock scope.
+func (c *Canonical) ReconcileCompletedCleanup(taskID domain.TaskID, generation Generation, work func() error) (CompletedCleanupResult, error) {
+	if work == nil {
+		return "", fmt.Errorf("cleanup callback is nil")
+	}
+	lk, err := c.h.Lock(taskScope(taskID.Value()))
+	if err != nil {
+		return "", err
+	}
+	defer lk.Release()
+	doc, exists, err := c.readTaskDoc(taskID.Value())
+	if err != nil {
+		return "", err
+	}
+	if exists && doc.Aggregate.Current && doc.Aggregate.Generation > generation {
+		historical, historyErr := c.GetGeneration(taskID, generation)
+		if historyErr == nil && historical.CleanupClaim != nil && historical.CleanupClaim.Generation == generation && historical.CleanupClaim.Status == CleanupCompleted {
+			return CompletedCleanupSuperseded, nil
+		}
+		if historyErr != nil {
+			return "", historyErr
+		}
+		return "", conflictError(ErrConflict, "task %s generation %s cleanup is not completed", taskID, generation)
+	}
+	if !exists || !doc.Aggregate.Current || doc.Aggregate.Phase != PhaseRetired || doc.Aggregate.CleanupClaim == nil || doc.Aggregate.CleanupClaim.Status != CleanupCompleted || doc.Aggregate.CleanupClaim.Generation != generation {
+		return "", conflictError(ErrConflict, "task %s generation %s cleanup is not completed", taskID, generation)
+	}
+	if err := work(); err != nil {
+		return "", err
+	}
+	return CompletedCleanupRepaired, nil
+}
+
+// ReclaimReleasedTaskArtifacts holds the task scope through the bounded local
+// removal callback; callbacks must not acquire another lock scope. Authority-backed
+// released tasks may reclaim briefs, while unknown directories are reclaimable only
+// without a brief because no authority record can vouch for their contents.
+func (c *Canonical) ReclaimReleasedTaskArtifacts(taskID domain.TaskID, reclaim func() error) (bool, error) {
+	return c.ReclaimReleasedTaskArtifactsByID(taskID.Value(), reclaim)
+}
+
+func (c *Canonical) ReclaimReleasedTaskArtifactsByID(id string, reclaim func() error) (bool, error) {
+	if reclaim == nil {
+		return false, fmt.Errorf("reclaim callback is nil")
+	}
+	lk, err := c.h.Lock(taskScope(id))
+	if err != nil {
+		return false, err
+	}
+	defer lk.Release()
+	var taskID domain.TaskID
+	var doc taskDoc
+	var exists bool
+	if parsed, parseErr := domain.NewTaskID(id); parseErr == nil {
+		taskID = parsed
+		doc, exists, err = c.readTaskDoc(taskID.Value())
+		if err != nil {
+			return false, err
+		}
+	}
+	if exists && doc.Aggregate.Current {
+		agg := doc.Aggregate
+		if agg.Phase != PhaseRetired {
+			return false, nil
+		}
+		if claim := agg.CleanupClaim; claim != nil {
+			switch claim.Status {
+			case CleanupCompleted, CleanupAborted:
+			default:
+				return false, nil
+			}
+		}
+	} else if !exists {
+		briefPath := filepath.Join(c.h.Root(), "data", id, "brief.md")
+		if _, statErr := os.Lstat(briefPath); statErr == nil || !os.IsNotExist(statErr) {
+			return false, nil
+		}
+	}
+	if err := reclaim(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (c *Canonical) CurrentLocked(taskID domain.TaskID) (Aggregate, error) {
 	if err := taskID.Validate(); err != nil {
 		return Aggregate{}, err

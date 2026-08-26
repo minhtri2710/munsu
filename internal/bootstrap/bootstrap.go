@@ -2,6 +2,7 @@
 package bootstrap
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -73,16 +74,16 @@ type Result struct {
 
 // Run executes bootstrap diagnostics for the given munsu home.
 // If lockHeld is true, mutating sweeps (fleet-sync) may run.
-func Run(home string, lockHeld bool, installTools []string) (*Result, error) {
+func Run(home string, lockHeld bool, installTools []string, reclaim ReclaimTaskDataDir) (*Result, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		cwd = home
 	}
 	runtimeIdentity := CollectRuntimeIdentity(home, cwd, "")
-	return runWithRuntimeIdentity(home, lockHeld, installTools, &runtimeIdentity)
+	return runWithRuntimeIdentity(home, lockHeld, installTools, &runtimeIdentity, reclaim)
 }
 
-func runWithRuntimeIdentity(home string, lockHeld bool, installTools []string, runtimeIdentity *RuntimeIdentity) (*Result, error) {
+func runWithRuntimeIdentity(home string, lockHeld bool, installTools []string, runtimeIdentity *RuntimeIdentity, reclaim ReclaimTaskDataDir) (*Result, error) {
 	res := &Result{
 		LockAcquired:    lockHeld,
 		RuntimeIdentity: runtimeIdentity,
@@ -168,13 +169,19 @@ func runWithRuntimeIdentity(home string, lockHeld bool, installTools []string, r
 		}
 	}
 
-	// 7. GC orphan data dirs (only when lock held)
-	if lockHeld {
-		if cleaned := gcOrphanDataDirs(home); len(cleaned) > 0 {
+	// 7. GC orphan data dirs (only when lock held and a task ownership
+	// source was supplied). Without one the sweep cannot tell a brief that
+	// is still waiting for its soldier from one nobody will read again, so
+	// it removes nothing.
+	switch {
+	case !lockHeld:
+		res.GC = &GCDiagnostic{SkippedReason: "session lock not held"}
+	case reclaim == nil:
+		res.GC = &GCDiagnostic{SkippedReason: "no task ownership source"}
+	default:
+		if cleaned := gcOrphanDataDirs(home, reclaim); len(cleaned) > 0 {
 			res.GC = &GCDiagnostic{Removed: len(cleaned), Dirs: cleaned}
 		}
-	} else {
-		res.GC = &GCDiagnostic{SkippedReason: "session lock not held"}
 	}
 
 	return res, nil
@@ -208,10 +215,14 @@ func installTool(tool string) error {
 	}
 }
 
-// gcOrphanDataDirs scans data/<id>/ directories and removes orphan dirs
-// that have no meta, status, brief, or report AND are older than the grace
-// period (24h mtime). Returns the list of removed directory names.
-func gcOrphanDataDirs(homeDir string) []string {
+// ReclaimTaskDataDir reclaims a released task directory while its lifecycle
+// authority holds the task-scope fence.
+type ReclaimTaskDataDir func(id string, reclaim func() error) (bool, error)
+
+// gcOrphanDataDirs scans data/<id>/ directories and removes those no task
+// owns any more, that hold no report evidence, and whose mtime is older than
+// the grace period. Returns the list of removed directory names.
+func gcOrphanDataDirs(homeDir string, reclaim ReclaimTaskDataDir) []string {
 	dataDir := filepath.Join(homeDir, "data")
 
 	entries, err := os.ReadDir(dataDir)
@@ -230,47 +241,40 @@ func gcOrphanDataDirs(homeDir string) []string {
 
 		dirPath := filepath.Join(dataDir, id)
 
-		// Check directory mtime — skip if younger than grace period
-		info, err := os.Stat(dirPath)
-		if err != nil {
-			continue
-		}
-		if time.Since(info.ModTime()) < gracePeriod {
-			continue
-		}
-
-		// Skip if corresponding meta file exists
-		metaPath, err := home.MetaFilePath(homeDir, id)
-		if err != nil {
-			continue
-		}
-		if _, err := os.Stat(metaPath); err == nil {
-			continue
-		}
-
-		// Skip if corresponding status file exists
-		statusPath, err := home.StatusFilePath(homeDir, id)
-		if err != nil {
-			continue
-		}
-		if _, err := os.Stat(statusPath); err == nil {
-			continue
-		}
-
-		// Skip if brief.md exists in data dir
-		briefPath := filepath.Join(dirPath, "brief.md")
-		if _, err := os.Stat(briefPath); err == nil {
-			continue
-		}
-
-		// Skip if report.md exists in data dir
-		reportPath := filepath.Join(dirPath, "report.md")
-		if _, err := os.Stat(reportPath); err == nil {
-			continue
-		}
-
-		// Dir is truly orphan and past grace period — remove
-		if err := os.RemoveAll(dirPath); err == nil {
+		// The unlocked pass only discovers candidates. The writer fence means
+		// every mutable eligibility condition must be re-read inside the locked
+		// callback immediately before removal.
+		if reclaimed, err := reclaim(id, func() error {
+			info, err := os.Stat(dirPath)
+			if err != nil {
+				return err
+			}
+			if time.Since(info.ModTime()) < gracePeriod {
+				return errors.New("data directory is still within retention grace")
+			}
+			metaPath, err := home.MetaFilePath(homeDir, id)
+			if err != nil {
+				return err
+			}
+			if _, err := os.Stat(metaPath); err == nil {
+				return errors.New("task metadata still exists")
+			} else if !os.IsNotExist(err) {
+				return err
+			}
+			statusPath, err := home.StatusFilePath(homeDir, id)
+			if err != nil {
+				return err
+			}
+			if _, err := os.Stat(statusPath); err == nil {
+				return errors.New("task status still exists")
+			} else if !os.IsNotExist(err) {
+				return err
+			}
+			if fleet.HasReportEvidence(dirPath) {
+				return errors.New("report evidence exists")
+			}
+			return os.RemoveAll(dirPath)
+		}); err == nil && reclaimed {
 			cleaned = append(cleaned, id)
 		}
 	}

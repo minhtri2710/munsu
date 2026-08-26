@@ -21,18 +21,24 @@ type CanonicalBeginCleanupRequest struct {
 	ClaimOperationID string
 	ClaimGeneration  Generation
 	Reason           string
+	// ArchiveNameOccupied records, at claim creation and before any archival
+	// can run, whether the generation-bound report archive name was already
+	// taken. It is the durable ownership proof: a name free when the claim was
+	// created and present later was written by this claim.
+	ArchiveNameOccupied bool
 }
 
 func (r CanonicalBeginCleanupRequest) DigestBytes() ([]byte, error) {
 	return json.Marshal(struct {
-		HomeID           string     `json:"home_id"`
-		TaskID           string     `json:"task_id"`
-		Generation       uint64     `json:"generation"`
-		Revision         uint64     `json:"revision"`
-		ClaimOperationID string     `json:"claim_operation_id"`
-		ClaimGeneration  Generation `json:"claim_generation"`
-		Reason           string     `json:"reason,omitempty"`
-	}{r.HomeID.Value(), r.TaskID.Value(), r.Precondition.Generation, r.Precondition.Revision, r.ClaimOperationID, r.ClaimGeneration, r.Reason})
+		HomeID              string     `json:"home_id"`
+		TaskID              string     `json:"task_id"`
+		Generation          uint64     `json:"generation"`
+		Revision            uint64     `json:"revision"`
+		ClaimOperationID    string     `json:"claim_operation_id"`
+		ClaimGeneration     Generation `json:"claim_generation"`
+		Reason              string     `json:"reason,omitempty"`
+		ArchiveNameOccupied bool       `json:"archive_name_occupied,omitempty"`
+	}{r.HomeID.Value(), r.TaskID.Value(), r.Precondition.Generation, r.Precondition.Revision, r.ClaimOperationID, r.ClaimGeneration, r.Reason, r.ArchiveNameOccupied})
 }
 
 // BeginCleanup asserts the durable cleanup claim on the current Aggregate. It
@@ -98,6 +104,8 @@ func (c *Canonical) BeginCleanup(op domain.Operation, req CanonicalBeginCleanupR
 			Generation:  req.ClaimGeneration,
 			Status:      CleanupActive,
 			ClaimedAt:   c.now().UnixNano(),
+
+			ArchiveNameOccupied: req.ArchiveNameOccupied,
 		}
 		next.Revision++
 		return next, nil
@@ -158,11 +166,12 @@ func (c *Canonical) CompleteCleanup(op domain.Operation, req CanonicalCompleteCl
 		}
 		next := cur.clone()
 		next.CleanupClaim = &CleanupClaim{
-			OperationID:  claim.OperationID,
-			Generation:   claim.Generation,
-			Status:       CleanupCompleted,
-			ClaimedAt:    claim.ClaimedAt,
-			ReconciledAt: c.now().UnixNano(),
+			OperationID:         claim.OperationID,
+			Generation:          claim.Generation,
+			Status:              CleanupCompleted,
+			ClaimedAt:           claim.ClaimedAt,
+			ReconciledAt:        c.now().UnixNano(),
+			ArchiveNameOccupied: claim.ArchiveNameOccupied,
 		}
 		next.Revision++
 		return next, nil
@@ -226,11 +235,12 @@ func (c *Canonical) AbortCleanup(op domain.Operation, req CanonicalAbortCleanupR
 		}
 		next := cur.clone()
 		next.CleanupClaim = &CleanupClaim{
-			OperationID:  claim.OperationID,
-			Generation:   claim.Generation,
-			Status:       CleanupAborted,
-			ClaimedAt:    claim.ClaimedAt,
-			ReconciledAt: c.now().UnixNano(),
+			OperationID:         claim.OperationID,
+			Generation:          claim.Generation,
+			Status:              CleanupAborted,
+			ClaimedAt:           claim.ClaimedAt,
+			ReconciledAt:        c.now().UnixNano(),
+			ArchiveNameOccupied: claim.ArchiveNameOccupied,
 		}
 		next.Revision++
 		return next, nil

@@ -160,13 +160,35 @@ munsu delivery pr-merge <task-id> <pr-url>      # merge PR
 munsu task done <task-id>                       # close the task first: a retired
                                                 # task can no longer be completed
 munsu teardown <task-id>                        # safety-gated teardown
-munsu teardown <task-id> --force                # skip safety checks, removes data/<id>/
+munsu teardown <task-id> --force                # skip safety checks
 ```
 
 Without --force, scout teardown requires report.md and no unresolved decision
 holds. Ship teardown requires clean git state with a remote tracking branch.
-With --force, all safety checks are bypassed and the data/<id>/ directory
-(including report.md and brief.md) is removed.
+With --force, all safety checks are bypassed and nothing else changes: --force
+never deletes more than a plain teardown does.
+
+Either way the teardown first establishes authoritative endpoint absence, then
+archives the retired generation's report under a generation-bound name such as
+`report-g<generation>.md`. If a retry finds that archive after archival was
+already attempted for the active cleanup claim, a reappeared task report is
+preserved under the smallest unused suffix, such as
+`report-g<generation>-2.md`; all such archive names count as report evidence.
+The cleanup claim records whether that archive name was already occupied before
+the claim was created. A name free at claim creation and present on retry is
+therefore attributable to that claim; a pre-existing archive remains an
+unproved collision and teardown refuses rather than guessing. The archived
+entry remains available for inspection, while the fenced reconciliation
+vacates the unversioned report name for the next generation.
+
+The data directory is never removed by teardown, including with `--force`.
+Session-start reclamation runs after the 24h grace period under the task
+Authority's fence: an Authority-confirmed released task (retired with a
+terminal or absent cleanup claim, or superseded by transfer) may have its
+directory reclaimed, including a leftover brief, while any report evidence
+always keeps the directory. If no Authority record exists, the sweep reclaims the directory
+only when it has no brief; a brief is retained as the only evidence that an
+unknown directory may still be intended for a task.
 
 ## 5. Decision-hold scout gate
 
@@ -190,13 +212,13 @@ munsu task unblock <dependent-id>
 
 ### Scout teardown with open holds
 
-Teardown **warns but does not block** when the scout's meta contains
-a `needs-decision` state in its status log. The operator must explicitly
-decide to proceed:
+Teardown refuses when the scout's meta contains a `needs-decision` state
+in its status log. Use `--force` only when the operator has explicitly
+decided to skip the safety checks:
 
 ```sh
-munsu teardown <scout-id>          # warns about unresolved holds
-munsu teardown <scout-id> --force  # bypass hold warning
+munsu teardown <scout-id>          # refuses with unresolved holds
+munsu teardown <scout-id> --force  # skips the safety checks
 ```
 
 **Design principle:** The scout gathers evidence. The general decides.

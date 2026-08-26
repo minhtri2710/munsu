@@ -5,7 +5,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
+
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // ScaffoldOptions controls brief generation.
@@ -20,11 +24,12 @@ type ScaffoldOptions struct {
 	ScoutRuntimeBudgetSecs int64
 }
 
-// Scaffold writes a brief.md at $MUNSU_HOME/data/<id>/brief.md.
+// Scaffold writes a brief.md at $MUNSU_HOME/data/<id>/brief.md and refreshes
+// the directory timestamp so the retention grace period starts at the latest
+// brief write or cleanup-ownership release.
+// Scaffold writes only the local brief artifact. Callers that need handoff
+// recovery must complete it before entering the task-data fence.
 func Scaffold(opts ScaffoldOptions) error {
-	if err := RecoverTaskHandoffs(opts.HomeDir); err != nil {
-		return err
-	}
 	// Ensure data/<id> directory exists
 	dir := filepath.Join(opts.HomeDir, "data", opts.ID)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -33,7 +38,14 @@ func Scaffold(opts ScaffoldOptions) error {
 
 	content := buildBrief(opts)
 	path := filepath.Join(dir, "brief.md")
-	return os.WriteFile(path, []byte(content), 0644)
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		return err
+	}
+	now := time.Now()
+	if err := os.Chtimes(dir, now, now); err != nil {
+		return fmt.Errorf("refreshing brief directory: %w", err)
+	}
+	return nil
 }
 
 // buildBrief assembles the brief markdown template.
@@ -188,4 +200,111 @@ func ReportPath(homeDir, id string) string {
 func ReportExists(homeDir, id string) bool {
 	_, err := os.Stat(ReportPath(homeDir, id))
 	return err == nil
+}
+
+// archivedReportPrefix and archivedReportSuffix bracket the name a retired
+// generation's report takes. Teardown renames the report out of report.md so
+// that the next generation cannot inherit evidence it did not produce.
+const (
+	archivedReportPrefix = "report-g"
+	archivedReportSuffix = ".md"
+)
+
+// ArchivedReportName is the file name a retired generation's report takes.
+func ArchivedReportName(gen taskauthority.Generation) string {
+	return archivedReportPrefix + gen.String() + archivedReportSuffix
+}
+
+func archiveRetiredReport(homeDir, id string, gen taskauthority.Generation, recoverExisting bool) (string, bool, error) {
+	dataDir := filepath.Join(homeDir, "data", id)
+	dataInfo, err := os.Lstat(dataDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("checking data directory %s: %w", dataDir, err)
+	}
+	if !dataInfo.IsDir() {
+		return "", false, fmt.Errorf("data path %s is not a directory", dataDir)
+	}
+
+	reportPath := filepath.Join(dataDir, "report.md")
+	// The task-scope fence excludes munsu writers; foreign processes creating
+	// generation-named files between this check and Rename are outside this guarantee.
+	archived := ArchivedReportName(gen)
+	archivedPath := filepath.Join(dataDir, archived)
+	if _, err := os.Lstat(reportPath); err != nil {
+		if os.IsNotExist(err) {
+			return "", true, nil
+		}
+		return "", true, fmt.Errorf("checking report path %s: %w", reportPath, err)
+	}
+
+	if _, err := os.Lstat(archivedPath); err == nil {
+		if !recoverExisting {
+			return "", true, fmt.Errorf("report paths %s and %s conflict", reportPath, archivedPath)
+		}
+		for suffix := uint64(2); ; suffix++ {
+			candidate := archivedReportRecoveryName(gen, suffix)
+			candidatePath := filepath.Join(dataDir, candidate)
+			if _, candidateErr := os.Lstat(candidatePath); candidateErr == nil {
+				continue
+			} else if !os.IsNotExist(candidateErr) {
+				return "", true, fmt.Errorf("checking archive path %s: %w", candidatePath, candidateErr)
+			}
+			archived, archivedPath = candidate, candidatePath
+			break
+		}
+	} else if !os.IsNotExist(err) {
+		return "", true, fmt.Errorf("checking archive path %s: %w", archivedPath, err)
+	}
+	if err := os.Rename(reportPath, archivedPath); err != nil {
+		return "", true, fmt.Errorf("archiving report %s as %s: %w", reportPath, archivedPath, err)
+	}
+	return archived, true, nil
+}
+
+// HasReportEvidence reports whether a task data directory holds a report worth
+// keeping: the current generation's report.md, or any retired generation's
+// archived report. It is the one owner of that question — teardown asks it
+// before reclaiming a directory and the session-start sweep asks it before
+// collecting one. A directory it cannot read is reported as holding evidence,
+// so an unreadable directory is never reclaimed on the strength of a guess.
+func archivedReportRecoveryName(gen taskauthority.Generation, suffix uint64) string {
+	return archivedReportPrefix + gen.String() + "-" + strconv.FormatUint(suffix, 10) + archivedReportSuffix
+}
+
+func isArchivedReportName(name string) bool {
+	if !strings.HasPrefix(name, archivedReportPrefix) || !strings.HasSuffix(name, archivedReportSuffix) {
+		return false
+	}
+	body := strings.TrimSuffix(strings.TrimPrefix(name, archivedReportPrefix), archivedReportSuffix)
+	parts := strings.Split(body, "-")
+	if len(parts) == 1 {
+		parsed, err := strconv.ParseUint(parts[0], 10, 64)
+		return err == nil && strconv.FormatUint(parsed, 10) == parts[0]
+	}
+	if len(parts) != 2 {
+		return false
+	}
+	gen, genErr := strconv.ParseUint(parts[0], 10, 64)
+	suffix, suffixErr := strconv.ParseUint(parts[1], 10, 64)
+	return genErr == nil && suffixErr == nil && suffix >= 2 && strconv.FormatUint(gen, 10) == parts[0] && strconv.FormatUint(suffix, 10) == parts[1]
+}
+
+func HasReportEvidence(dataDir string) bool {
+	entries, err := os.ReadDir(dataDir)
+	if err != nil {
+		return true
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if name == "report.md" {
+			return true
+		}
+		if isArchivedReportName(name) {
+			return true
+		}
+	}
+	return false
 }

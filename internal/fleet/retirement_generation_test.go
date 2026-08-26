@@ -5,8 +5,10 @@ package fleet
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -294,6 +296,64 @@ func (r *recordingTeardown) ReturnWorktree(_ string, path string) error {
 	return r.returnErr
 }
 
+type countingRetirementJournals struct{ finalized int }
+
+func (j *countingRetirementJournals) VerifyRetirementContinuity(string, string) error { return nil }
+func (j *countingRetirementJournals) PrepareForcedRetirementEvidence(string, string) ([]string, error) {
+	return nil, nil
+}
+func (j *countingRetirementJournals) FinalizeRetirementJournals(string, string) ([]string, error) {
+	j.finalized++
+	return nil, nil
+}
+
+func TestCompletedCleanupRetryOnlyRemovesProjections(t *testing.T) {
+	homeDir := t.TempDir()
+	taskID := "completed-retry"
+	auth := canonicalMergeTestAuth(t, homeDir, taskID)
+	wtDir := filepath.Join(homeDir, "worktrees", taskID)
+	if err := os.MkdirAll(wtDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wtDir, "sentinel"), []byte("owned by new task"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt", "fence-wt")
+	writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
+	if _, err := RetireTask(Options{HomeDir: homeDir, ID: taskID, Force: true}, &recordingTeardown{alive: false}, fakeRetirementJournals{}, auth); err != nil {
+		t.Fatalf("initial teardown: %v", err)
+	}
+	// The initial run completed and removed projections; recreate only meta to model a projection crash.
+	writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
+	if err := os.WriteFile(filepath.Join(wtDir, "sentinel"), []byte("still owned"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	child := exec.Command("sh", "-c", "sleep 30")
+	child.Dir = wtDir
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = child.Process.Kill(); _ = child.Wait() })
+	journals := &countingRetirementJournals{}
+	rec := &recordingTeardown{alive: true, onProbe: func() { t.Fatal("completed retry probed endpoint") }}
+	if _, err := RetireTask(Options{HomeDir: homeDir, ID: taskID, Force: true}, rec, journals, auth); err != nil {
+		t.Fatalf("completed retry: %v", err)
+	}
+	if len(rec.disposed) != 0 || len(rec.returned) != 0 || journals.finalized != 0 {
+		t.Fatalf("completed retry released resources: disposed=%v returned=%v journals=%d", rec.disposed, rec.returned, journals.finalized)
+	}
+	if err := child.Process.Signal(syscall.Signal(0)); err != nil {
+		t.Fatalf("reallocated process was killed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(wtDir, "sentinel")); err != nil {
+		t.Fatalf("reallocated worktree changed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(homeDir, "state", taskID+".meta")); !os.IsNotExist(err) {
+		t.Fatalf("stale meta remains: %v", err)
+	}
+	assertClaimCompleted(t, auth, taskID, 1)
+}
+
 func TestRetirementDisposesAndReturnsOnlyEvidenceOwnedResources(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "exact-release"
@@ -477,9 +537,9 @@ func tryBindEndpointExpectClaimConflict(t *testing.T, auth *taskauthority.Canoni
 // abortCleanupFor releases the durable cleanup claim of the given generation
 // through the canonical AbortCleanup operation (the operator escape hatch),
 // asserting it reconciled to aborted.
-func abortCleanupFor(t *testing.T, auth *taskauthority.Canonical, taskID string, gen taskauthority.Generation) {
+func abortCleanupFor(t *testing.T, auth *taskauthority.Canonical, homeDir, taskID string, gen taskauthority.Generation) {
 	t.Helper()
-	if err := AbortRetirementCleanup(auth, mustTaskID(t, taskID), gen); err != nil {
+	if err := AbortRetirementCleanup(auth, homeDir, fakeTeardown{}, mustTaskID(t, taskID), gen); err != nil {
 		t.Fatalf("AbortRetirementCleanup: %v", err)
 	}
 	agg, err := auth.Get(mustTaskID(t, taskID))
@@ -910,7 +970,7 @@ func TestRetirementAbortTerminalOldRetryNeverReleasesReopenedOwnership(t *testin
 
 	// The operator aborts the generation-1 claim (escape hatch) and reopens:
 	// generation 2 re-acquires the SAME endpoint handle under a NEW lease.
-	abortCleanupFor(t, auth, taskID, taskauthority.Generation(1))
+	abortCleanupFor(t, auth, homeDir, taskID, taskauthority.Generation(1))
 	agg, err = auth.Get(mustTaskID(t, taskID))
 	if err != nil {
 		t.Fatal(err)
@@ -1028,7 +1088,7 @@ func TestRetirementAbortTerminalOldRetryReleasesOnlyReopenedResources(t *testing
 	// The durable cleanup claim rejects a direct reopen of the still-active
 	// claim; the operator aborts the claim first (escape hatch), then the
 	// task reopens to generation 2, which acquires DIFFERENT resources.
-	abortCleanupFor(t, auth, taskID, taskauthority.Generation(1))
+	abortCleanupFor(t, auth, homeDir, taskID, taskauthority.Generation(1))
 	agg, err := auth.Get(mustTaskID(t, taskID))
 	if err != nil {
 		t.Fatal(err)
@@ -1147,7 +1207,7 @@ func TestRetirementAbortTerminalOldRetryNeverClaimsPreBindAcquisition(t *testing
 	}
 
 	// Operator aborts (terminal) and reopens to generation 2.
-	abortCleanupFor(t, auth, taskID, taskauthority.Generation(1))
+	abortCleanupFor(t, auth, homeDir, taskID, taskauthority.Generation(1))
 	agg, err := auth.Get(mustTaskID(t, taskID))
 	if err != nil {
 		t.Fatal(err)
@@ -1335,7 +1395,7 @@ func TestRetirementAbortTerminalSameGenerationRetryNeverResumes(t *testing.T) {
 	}
 
 	// Operator aborts; the task stays on generation 1 with an aborted claim.
-	abortCleanupFor(t, auth, taskID, taskauthority.Generation(1))
+	abortCleanupFor(t, auth, homeDir, taskID, taskauthority.Generation(1))
 
 	// A teardown retry reports the terminal abort and releases nothing: the
 	// claim is never re-activated and the evidence-pinned endpoint/worktree
@@ -1585,7 +1645,7 @@ func TestRetirementExplicitTargetConflictWhenGenerationAdvanced(t *testing.T) {
 	if _, err := RetireTask(opts, first, fakeRetirementJournals{}, auth); err == nil {
 		t.Fatal("expected pending cleanup")
 	}
-	abortCleanupFor(t, auth, taskID, taskauthority.Generation(1))
+	abortCleanupFor(t, auth, homeDir, taskID, taskauthority.Generation(1))
 	agg, err := auth.Get(mustTaskID(t, taskID))
 	if err != nil {
 		t.Fatal(err)
