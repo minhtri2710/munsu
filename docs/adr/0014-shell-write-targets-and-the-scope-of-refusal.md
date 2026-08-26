@@ -47,11 +47,17 @@ stays the only one.
 
 `cd` inside the command line moves the base every relative target resolves against. This
 is what closes the `cd <shared> && echo pwned > README.md` variant that a pure
-absolute-path scan would miss.
+absolute-path scan would miss. Path resolution uses the shared safety resolver; on
+Windows, a volume-less rooted path such as `\src\repo\README.md` is resolved
+against the base path's volume rather than treated as a relative child of the
+worktree.
 
 Quoting survives tokenization here (`shellSegments`), because `echo "x > f"` writes
 nothing while `echo x > f` writes `f`, and the two are indistinguishable once quotes are
-dropped — the existing `splitSafetySegments` drops them.
+dropped — the existing `splitSafetySegments` drops them. A lone backslash is
+interpreted both as a POSIX escape and as a Windows path separator; the resulting
+write-target sets are unioned because the harness does not identify which shell
+will execute the command.
 
 **A heredoc body is content, not a command line** (`stripHeredocBodies`). This is the same
 "one payload, one channel" rule BEO-62 settled for apply-patch, applied to the shell
@@ -61,11 +67,12 @@ real commands after the terminator — refusing writes that must go through. Rea
 redirections (`<`, `<<<`) drop their operand for the same reason: they name a source, never
 a target.
 
-The delimiter word is read the way bash reads it, including `\` as a quoting form
-(`<<\EOF` ends at `EOF`). Getting that wrong is worse than the surface §2 leaves open: an
-unrecognized delimiter swallows the rest of the payload, so it blinds the guard to every
-later command, including the covered ones — while `python -c` only opens the one command
-that names it.
+The delimiter word is read under both backslash interpretations: `<<\EOF` ends at
+`EOF` under the POSIX reading, while the Windows reading treats the backslash as
+part of the delimiter. Each reading must recognize the delimiter form used under
+that interpretation; otherwise that pass can swallow the remaining payload and
+miss later covered commands — while `python -c` only opens the one command that
+names it.
 
 ### 2. The claim of coverage is narrow by construction, and everything outside it is open
 
