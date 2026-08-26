@@ -200,15 +200,16 @@ var (
 	osExecutable = os.Executable
 )
 
-// resolveMunsuPath finds the munsu binary using exec.LookPath("munsu") first
-// with EvalSymlinks, falling back to os.Executable only when the basename
-// or identity is munsu.
+// resolveMunsuPath finds munsu using exec.LookPath first, trusting its
+// platform-native executability decision, then resolves symlinks and requires
+// a regular file. It falls back to os.Executable only for a recognized munsu
+// production or test executable basename.
 func resolveMunsuPath() (string, error) {
 	// First try: exec.LookPath("munsu") — the intended production path.
 	// Once LookPath succeeds the platform has already confirmed the file is
 	// executable for the current OS, so we accept a regular, non-directory
-	// file without re-checking POSIX mode bits (which are meaningless on
-	// Windows, where os.Stat reports mode 0 for a normal binary).
+	// file without re-checking POSIX mode bits, whose semantics do not encode
+	// executability on Windows.
 	if munsu, err := lookPath("munsu"); err == nil {
 		if resolved, err := filepath.EvalSymlinks(munsu); err == nil {
 			if info, err := os.Stat(resolved); err == nil && !info.IsDir() && info.Mode().IsRegular() {
