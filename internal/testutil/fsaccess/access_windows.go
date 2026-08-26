@@ -16,9 +16,9 @@ import (
 const unreadableAccess = windows.FILE_READ_DATA | windows.FILE_LIST_DIRECTORY | windows.FILE_READ_EA | windows.FILE_READ_ATTRIBUTES
 const readOnlyAccess = windows.FILE_WRITE_DATA | windows.FILE_APPEND_DATA | windows.FILE_WRITE_EA | windows.FILE_WRITE_ATTRIBUTES | windows.DELETE | 0x40
 
-// MakeUnreadable adds an explicit deny ACE for the current user while retaining
-// WRITE_DAC, verifies that reading/listing is refused, and restores the exact
-// original DACL at test cleanup.
+// MakeUnreadable adds an explicit deny ACE for the current user without
+// denying WRITE_DAC, verifies that reading/listing is refused, and restores the
+// exact original DACL at test cleanup.
 func MakeUnreadable(t *testing.T, path string) error {
 	t.Helper()
 	state := captureACL(t, path)
@@ -35,7 +35,7 @@ func MakeUnreadable(t *testing.T, path string) error {
 	return nil
 }
 
-// MakeReadOnly denies writes/deletes for the current user while retaining
+// MakeReadOnly denies writes/deletes for the current user without denying
 // WRITE_DAC, verifies that a write operation is refused, and restores the exact
 // original DACL at test cleanup.
 func MakeReadOnly(t *testing.T, path string) error {

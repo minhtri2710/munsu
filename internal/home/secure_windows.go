@@ -249,10 +249,11 @@ func currentUserSID() (*windows.SID, error) {
 	return sid, nil
 }
 
-// verifyProtection confirms that path is owner-private by reading its DACL and
-// requiring exactly one ACCESS_ALLOWED ACE for the owner SID granting full
-// control, with no inherited ACE. It fails closed when the guarantee is not
-// established or cannot be verified.
+// verifyProtection confirms that path is owner-private by reading its security
+// descriptor and requiring the current user to be the descriptor owner, a
+// protected (non-inheriting) DACL, and exactly one non-inherited
+// ACCESS_ALLOWED ACE for that owner granting full control. It fails closed when
+// the guarantee is not established or cannot be verified.
 func verifyProtection(path string, isDir bool) error {
 	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
