@@ -193,25 +193,34 @@ func (defaultMunsuResolver) Resolve() (string, error) {
 
 var munsuResolver MunsuPathResolver = defaultMunsuResolver{}
 
+// lookPath and osExecutable are the platform primitives resolveMunsuPath
+// relies on. They are package-level variables so tests can override them.
+var (
+	lookPath     = exec.LookPath
+	osExecutable = os.Executable
+)
+
 // resolveMunsuPath finds the munsu binary using exec.LookPath("munsu") first
 // with EvalSymlinks, falling back to os.Executable only when the basename
 // or identity is munsu.
 func resolveMunsuPath() (string, error) {
 	// First try: exec.LookPath("munsu") — the intended production path.
-	if munsu, err := exec.LookPath("munsu"); err == nil {
+	// Once LookPath succeeds the platform has already confirmed the file is
+	// executable for the current OS, so we accept a regular, non-directory
+	// file without re-checking POSIX mode bits (which are meaningless on
+	// Windows, where os.Stat reports mode 0 for a normal binary).
+	if munsu, err := lookPath("munsu"); err == nil {
 		if resolved, err := filepath.EvalSymlinks(munsu); err == nil {
 			if info, err := os.Stat(resolved); err == nil && !info.IsDir() && info.Mode().IsRegular() {
-				if info.Mode()&0o111 != 0 {
-					return resolved, nil
-				}
+				return resolved, nil
 			}
 		}
 	}
 
 	// Fallback: os.Executable — only when the current binary is munsu.
-	if exe, err := os.Executable(); err == nil {
+	if exe, err := osExecutable(); err == nil {
 		base := filepath.Base(exe)
-		if base == "munsu" || base == "munsu.exe" || base == "munsu.test" {
+		if base == "munsu" || base == "munsu.exe" || base == "munsu.test" || base == "munsu.test.exe" {
 			if resolved, err := filepath.EvalSymlinks(exe); err == nil {
 				if info, err := os.Stat(resolved); err == nil && !info.IsDir() && info.Mode().IsRegular() {
 					return resolved, nil
