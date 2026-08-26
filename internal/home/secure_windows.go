@@ -50,8 +50,14 @@ func restrictDir(path string) error {
 		return fmt.Errorf("home: %s has no security descriptor", path)
 	}
 	dacl, _, err := sd.DACL()
+	if err == windows.ERROR_OBJECT_NOT_FOUND {
+		return fmt.Errorf("home: %s has no DACL", path)
+	}
 	if err != nil {
 		return fmt.Errorf("home: read DACL for %s: %w", path, err)
+	}
+	if dacl == nil {
+		return fmt.Errorf("home: %s has a NULL DACL", path)
 	}
 	currentOwner, _, err := sd.Owner()
 	if err != nil {

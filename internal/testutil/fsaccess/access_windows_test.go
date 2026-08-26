@@ -6,78 +6,52 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
 
-func TestMakeReadOnlyPreservesNullDACLAccess(t *testing.T) {
+func TestApplyDeniedAccessRejectsNullDACL(t *testing.T) {
 	dir := t.TempDir()
-	marker := filepath.Join(dir, "marker")
-	if err := os.WriteFile(marker, []byte("marker"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := windows.SetNamedSecurityInfo(
-		dir,
-		windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
-		nil, nil, nil, nil,
-	); err != nil {
+	if err := windows.SetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, nil, nil); err != nil {
 		t.Fatalf("set NULL DACL: %v", err)
 	}
 	assertNullDACL(t, dir)
+	if err := applyDeniedAccess(dir, windows.FILE_WRITE_DATA); err == nil {
+		t.Fatal("applyDeniedAccess accepted a NULL DACL")
+	}
+	assertNullDACL(t, dir)
+	probe := filepath.Join(dir, "probe")
+	if err := os.WriteFile(probe, []byte("probe"), 0600); err != nil {
+		t.Fatalf("NULL-DACL write access changed: %v", err)
+	}
+}
 
+func TestMakeReadOnlyDeniesExistingChildDeletion(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "file")
+	childDir := filepath.Join(dir, "child-dir")
+	if err := os.WriteFile(file, []byte("file"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(childDir, 0700); err != nil {
+		t.Fatal(err)
+	}
 	if !t.Run("read-only", func(t *testing.T) {
 		MakeReadOnly(t, dir)
-		assertEveryoneAllowACE(t, dir)
-		if _, err := os.ReadDir(dir); err != nil {
-			t.Fatalf("directory listing failed: %v", err)
+		if err := os.Remove(file); err == nil {
+			t.Fatal("read-only directory allowed deleting child file")
 		}
-		if err := os.WriteFile(filepath.Join(dir, "probe"), []byte("probe"), 0600); err == nil {
-			t.Fatal("read-only directory remained writable")
-		}
-		if err := os.Remove(marker); err == nil {
-			t.Fatal("read-only directory allowed deleting an existing child")
+		if err := os.Remove(childDir); err == nil {
+			t.Fatal("read-only directory allowed deleting child directory")
 		}
 	}) {
 		t.Fatal("MakeReadOnly failed")
 	}
-
-	assertNullDACL(t, dir)
-	if err := os.WriteFile(filepath.Join(dir, "restored"), []byte("restored"), 0600); err != nil {
-		t.Fatalf("NULL-DACL write access was not restored: %v", err)
+	if err := os.Remove(file); err != nil {
+		t.Fatalf("child file deletion was not restored: %v", err)
 	}
-	if err := os.Remove(marker); err != nil {
-		t.Fatalf("NULL-DACL child delete access was not restored: %v", err)
-	}
-}
-
-func assertEveryoneAllowACE(t *testing.T, path string) {
-	t.Helper()
-	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dacl, _, err := sd.DACL()
-	if err != nil || dacl == nil {
-		t.Fatalf("read applied DACL: %v", err)
-	}
-	everyone, err := windows.StringToSid("S-1-1-0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	found := false
-	for i := uint32(0); i < uint32(dacl.AceCount); i++ {
-		var ace *windows.ACCESS_ALLOWED_ACE
-		if err := windows.GetAce(dacl, i, &ace); err != nil {
-			t.Fatal(err)
-		}
-		if ace.Header.AceType == windows.ACCESS_ALLOWED_ACE_TYPE && windows.EqualSid((*windows.SID)(unsafe.Pointer(&ace.SidStart)), everyone) && ace.Mask == 0x001F01FF {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatal("applied DACL lacks Everyone full-access allow ACE")
+	if err := os.Remove(childDir); err != nil {
+		t.Fatalf("child directory deletion was not restored: %v", err)
 	}
 }
 

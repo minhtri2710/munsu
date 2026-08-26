@@ -3,6 +3,7 @@
 package fsaccess
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -21,10 +22,14 @@ const readOnlyAccess = windows.FILE_WRITE_DATA | windows.FILE_APPEND_DATA | wind
 func MakeUnreadable(t *testing.T, path string) {
 	t.Helper()
 	state := captureACL(t, path)
-	applyDeniedAccess(t, path, unreadableAccess)
+	if err := applyDeniedAccess(path, unreadableAccess); err != nil {
+		t.Fatalf("make path unreadable %q: %v", path, err)
+	}
 	restore := registerRestore(t, func() error { return state.restore(path) })
 	if err := verifyUnreadable(path, state.isDir); err != nil {
-		_ = restore()
+		if restoreErr := restore(); restoreErr != nil {
+			t.Fatalf("unreadable path %q was still readable: %v; restore failed: %v", path, err, restoreErr)
+		}
 		t.Fatalf("unreadable path %q was still readable: %v", path, err)
 	}
 }
@@ -35,28 +40,39 @@ func MakeUnreadable(t *testing.T, path string) {
 func MakeReadOnly(t *testing.T, path string) {
 	t.Helper()
 	state := captureACL(t, path)
-	applyDeniedAccess(t, path, readOnlyAccess)
+	if err := applyDeniedAccess(path, readOnlyAccess); err != nil {
+		t.Fatalf("make path read-only %q: %v", path, err)
+	}
 	restore := registerRestore(t, func() error { return state.restore(path) })
 	if state.isDir {
 		entries, err := os.ReadDir(path)
 		if err != nil {
-			_ = restore()
+			if restoreErr := restore(); restoreErr != nil {
+				t.Fatalf("read children of read-only path %q: %v; restore failed: %v", path, err, restoreErr)
+			}
 			t.Fatalf("read children of read-only path %q: %v", path, err)
 		}
 		for _, entry := range entries {
 			child := path + `\\` + entry.Name()
 			childState := captureACL(t, child)
-			applyDeniedAccess(t, child, windows.DELETE)
-			if err := verifyDeleteDenied(child); err != nil {
-				_ = childState.restore(child)
-				t.Fatalf("read-only child %q remained deletable: %v", child, err)
+			if err := applyDeniedAccess(child, windows.DELETE); err != nil {
+				t.Fatalf("deny child deletion %q: %v", child, err)
 			}
 			childStateCopy := childState
-			registerRestore(t, func() error { return childStateCopy.restore(child) })
+			childRestore := registerRestore(t, func() error { return childStateCopy.restore(child) })
+			if err := verifyDeleteDenied(child); err != nil {
+				restoreErr := childRestore()
+				if restoreErr != nil {
+					t.Fatalf("read-only child %q remained deletable: %v; restore failed: %v", child, err, restoreErr)
+				}
+				t.Fatalf("read-only child %q remained deletable: %v", child, err)
+			}
 		}
 	}
 	if err := verifyReadOnly(path, state.isDir); err != nil {
-		_ = restore()
+		if restoreErr := restore(); restoreErr != nil {
+			t.Fatalf("read-only path %q was still writable: %v; restore failed: %v", path, err, restoreErr)
+		}
 		t.Fatalf("read-only path %q was still writable: %v", path, err)
 	}
 }
@@ -119,48 +135,43 @@ func (s aclState) restore(path string) error {
 	return err
 }
 
-func applyDeniedAccess(t *testing.T, path string, access uint32) {
-	t.Helper()
+func applyDeniedAccess(path string, access uint32) error {
 	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
-		t.Fatalf("read DACL for %q: %v", path, err)
+		return fmt.Errorf("read DACL for %q: %w", path, err)
 	}
 	if sd == nil {
-		t.Fatalf("path %q has no security descriptor", path)
+		return fmt.Errorf("path %q has no security descriptor", path)
 	}
 	oldDACL, _, err := sd.DACL()
 	if errorsIsObjectNotFound(err) {
-		t.Fatalf("path %q has no DACL to restrict", path)
+		return fmt.Errorf("path %q has no DACL to restrict", path)
 	}
 	if err != nil {
-		t.Fatalf("read DACL for %q: %v", path, err)
+		return fmt.Errorf("read DACL for %q: %w", path, err)
 	}
 	if oldDACL == nil {
-		t.Fatalf("path %q has a NULL DACL or present empty DACL; selective access denial is unsupported", path)
+		return fmt.Errorf("path %q has a present NULL DACL; selective access denial is unsupported", path)
 	}
 	sid, err := currentUserSID()
 	if err != nil {
-		t.Fatalf("current user SID: %v", err)
+		return fmt.Errorf("current user SID: %w", err)
 	}
-	entry := windows.EXPLICIT_ACCESS{
-		AccessPermissions: windows.ACCESS_MASK(access),
-		AccessMode:        windows.DENY_ACCESS,
-		Inheritance:       windows.NO_INHERITANCE,
-	}
+	entry := windows.EXPLICIT_ACCESS{AccessPermissions: windows.ACCESS_MASK(access), AccessMode: windows.DENY_ACCESS, Inheritance: windows.NO_INHERITANCE}
 	entry.Trustee.TrusteeForm = windows.TRUSTEE_IS_SID
 	entry.Trustee.TrusteeType = windows.TRUSTEE_IS_USER
 	entry.Trustee.TrusteeValue = windows.TrusteeValueFromSID(sid)
-	entries := []windows.EXPLICIT_ACCESS{entry}
 	var pinner runtime.Pinner
 	pinner.Pin(sid)
-	newDACL, err := windows.ACLFromEntries(entries, oldDACL)
+	newDACL, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{entry}, oldDACL)
 	pinner.Unpin()
 	if err != nil {
-		t.Fatalf("build denied DACL for %q: %v", path, err)
+		return fmt.Errorf("build denied DACL for %q: %w", path, err)
 	}
 	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION, nil, nil, newDACL, nil); err != nil {
-		t.Fatalf("set denied DACL for %q: %v", path, err)
+		return fmt.Errorf("set denied DACL for %q: %w", path, err)
 	}
+	return nil
 }
 
 func verifyDeleteDenied(path string) error {
@@ -173,6 +184,9 @@ func verifyDeleteDenied(path string) error {
 	if err == nil {
 		windows.CloseHandle(h)
 		return fmt.Errorf("delete handle opened")
+	}
+	if !errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+		return fmt.Errorf("delete open failed without access denial: %w", err)
 	}
 	return nil
 }

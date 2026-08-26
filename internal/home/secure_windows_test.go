@@ -117,8 +117,25 @@ func TestRestrictDirPreservesNullDACLRightsWindows(t *testing.T) {
 	if err := restrictDir(dir); err == nil {
 		t.Fatal("restrictDir accepted a NULL DACL")
 	}
+	assertNullDACLWindows(t, dir)
 	if _, err := os.ReadDir(dir); err != nil {
 		t.Fatalf("NULL-DACL directory was changed after rejection: %v", err)
+	}
+	probe := filepath.Join(dir, "write-probe")
+	if err := os.WriteFile(probe, []byte("probe"), 0600); err != nil {
+		t.Fatalf("NULL-DACL write access changed after rejection: %v", err)
+	}
+}
+
+func assertNullDACLWindows(t *testing.T, path string) {
+	t.Helper()
+	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dacl, _, err := sd.DACL()
+	if err != nil || dacl != nil {
+		t.Fatalf("DACL after rejection = %v, want NULL DACL", dacl)
 	}
 }
 
