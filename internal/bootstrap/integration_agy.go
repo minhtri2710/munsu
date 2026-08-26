@@ -142,15 +142,6 @@ func AgyHooksTargetPath(scope Scope, cwd string) (string, error) {
 	return filepath.Join(dir, "hooks.json"), nil
 }
 
-// AgyHooksAllTargetPaths returns the single hooks.json path for the given scope+cwd.
-func AgyHooksAllTargetPaths(scope Scope, cwd string) ([]string, error) {
-	path, err := AgyHooksTargetPath(scope, cwd)
-	if err != nil {
-		return nil, err
-	}
-	return []string{path}, nil
-}
-
 // AgyHooksHasOwnedHooks checks whether the .agents/hooks.json file contains
 // all munsu-owned hook names with commands anchored to the given munsu binary path.
 // Returns true when all expected hooks are present, along with a descriptive message.

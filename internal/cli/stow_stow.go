@@ -23,11 +23,6 @@ type SweepResult struct {
 	BacklogNote   string // note written, or empty
 }
 
-// Run is shorthand for RunKinded with kind=learning.
-func Run(homeDir string, learnings []string) (*SweepResult, error) {
-	return RunKinded(homeDir, KindLearning, learnings)
-}
-
 // RunKinded stows items of the given kind (learning or general).
 // It reads the target file, merges each new item into existing entries
 // (replacing substring matches), then writes the file back.

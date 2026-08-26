@@ -44,21 +44,28 @@ answered against two different sources of truth, at two different moments.
 
 | Owner | Site | Truth it guards | Fails on |
 |---|---|---|---|
-| Canonical delivery fence | `internal/taskauthority/canonical_delivery.go:977` (issuance), `:1262` (currency) | **Local truth** — the bound worktree head recorded in the Task Aggregate | issuance: `preconditionError`; currency: `DeliveryCurrencyIdentityHead` |
-| `verifyProviderHead` | `internal/fleet/delivery_deliver.go:581`, called at `:460` | **Provider truth** — the head and base ref the provider reports moments before the mutation | typed fail-closed error, before `Merge` is called |
+| Canonical delivery fence | `internal/taskauthority/canonical_delivery.go` (issuance and currency) | **Local truth** — the bound worktree head recorded in the Task Aggregate | typed authorization/currency refusal |
+| Provider observation and mutation boundary | `internal/fleet/delivery_deliver.go` | **Provider truth** — exact head, base ref, and mergeability evidence for the authorized delivery | fail-closed refusal when evidence is missing or the adapter cannot enforce all constraints |
 
 The canonical fence refuses to *issue* a delivery authorization whose identity
 head differs from the bound worktree head, and the currency read
 (`authorizationCurrencyReasons`, `checkHead=true`) refuses to keep treating an
 authorization as current once the worktree head has advanced underneath it.
 
-`verifyProviderHead` answers the question the canonical fence structurally
+The provider boundary answers the question the canonical fence structurally
 cannot: local state says nothing about what happened on the provider between
-capture and merge. It runs immediately before the irreversible mutation, and it
-covers head **and** base ref — the base ref because `Merge` squashes into the
-PR's *current* base, not the authorized one, so a base changed inside the
-capture-to-merge window would land an unrevertible mutation on a branch that was
-never authorized.
+capture and delivery. Provider observations must carry exact head and base-ref
+evidence, plus mergeability evidence for an OPEN request. The irreversible
+provider operation must enforce mergeability, exact head, and exact base
+constraints together; an adapter that cannot guarantee that contract refuses
+before mutation. The current GitHub and GitLab adapters intentionally take that
+fail-closed path for OPEN mutation. MERGED and CLOSED observations are
+reconciled without mutation, but only when their consumed head and base evidence
+exactly match the journal identity. A MERGED observation must also carry a
+non-zero, full hexadecimal Git object ID for the merge commit (40 or 64
+characters); missing, null, malformed, or all-zero evidence fails closed. The
+same validation applies to pinned journal outcomes and outcomes read during
+commit-conflict replay, so recovery cannot bypass the provider fence.
 
 Neither owner is redundant with the other, and neither is defence in depth for
 the other. Deleting either one removes a refusal nothing else can make. Any
@@ -109,16 +116,16 @@ not dead-code cleanup, and it is not this ADR's decision to make.
 
 * The head invariant has a written map. A future guard for it either extends one
   of the two owners or states which third truth it guards.
-* Deleting `verifyAncestry` costs no refusal that was ever reachable, and the
-  base-ref refusal it *did* originate now lives on the execution path
-  (`delivery_deliver.go:588`, landed in BEO-70) rather than in an unreachable
-  function.
-* `verifyProviderHead` carries the mutation check BEO-64 found missing: before
-  BEO-70, replacing its body with `return nil` left every lane green. It is now
-  pinned in both directions, including that `Merge` is not called when it
-  refuses.
-* The `OPEN-BUG(BEO-64)` section of `.github/deadcode.allow` is gone, not
-  re-marked. The remaining entries there are the BEO-63 baseline burn-down.
+* Deleting `verifyAncestry` costs no refusal that was ever reachable; its
+  relevant provider-side head/base constraint now belongs to the shared
+  observation and mutation boundary rather than an unreachable function.
+* Provider adapters must fail closed when they cannot enforce mergeability plus
+  exact head and base constraints at the irreversible boundary. Terminal
+  reconciliation remains mutation-free and identity-fenced, with valid merge
+  object evidence required for completed outcomes on fresh, resumed, and
+  conflict-replay paths.
+* `.github/deadcode.allow` contains only current, reviewed exceptions; it is not
+  an imported BEO-63 baseline.
 * `internal/home`'s `ValidMetaFields` (`taskmeta.go:309-320`) still lists the
   retired amendment keys. Nothing writes them and nothing reads them; the list
   is `home`-owned validation vocabulary, and pruning it is a separate change

@@ -22,6 +22,12 @@ func TestValidateDeliverRequestRefusesUnsupportedMethod(t *testing.T) {
 	}
 }
 
+func TestVerifyProviderMergeabilityRefusesDeniedObservation(t *testing.T) {
+	if err := verifyProviderMergeability(DeliveryProviderObservation{Mergeability: DeliveryMergeabilityDenied}); err == nil || !strings.Contains(err.Error(), "not mergeable") {
+		t.Fatalf("verifyProviderMergeability error = %v, want denied-mergeability refusal", err)
+	}
+}
+
 func TestDeliveryProviderFor_UnknownProviderRefuses(t *testing.T) {
 	_, err := deliveryProviderFor(domain.DeliveryIdentity{Provider: "unknown"})
 	if err == nil || !strings.Contains(err.Error(), "unsupported delivery provider") {
@@ -188,8 +194,8 @@ func TestDeliverClassification(t *testing.T) {
 		obsErr error
 		want   taskauthority.DeliveryOutcomeStatus
 	}{
-		{"merged", DeliveryProviderObservation{State: "MERGED", HeadSHA: deliveryTestHead, MergedSHA: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"}, nil, taskauthority.DeliveryOutcomeCompleted},
-		{"open", DeliveryProviderObservation{State: "OPEN", HeadSHA: deliveryTestHead}, nil, taskauthority.DeliveryOutcomeRetryable},
+		{"merged", DeliveryProviderObservation{State: "MERGED", HeadSHA: deliveryTestHead, BaseRef: deliveryTestBase, MergedSHA: "0123456789abcdef0123456789abcdef01234567"}, nil, taskauthority.DeliveryOutcomeCompleted},
+		{"open", DeliveryProviderObservation{State: "OPEN", HeadSHA: deliveryTestHead, Mergeability: DeliveryMergeabilityAllowed}, nil, taskauthority.DeliveryOutcomeRetryable},
 		{"closed", DeliveryProviderObservation{State: "CLOSED", HeadSHA: deliveryTestHead}, nil, taskauthority.DeliveryOutcomePartial},
 		{"ambiguous", DeliveryProviderObservation{State: "UNKNOWN"}, nil, taskauthority.DeliveryOutcomeRemoteUnknown},
 		{"unreachable", DeliveryProviderObservation{}, errors.New("provider unreachable"), taskauthority.DeliveryOutcomeRemoteUnknown},
@@ -227,6 +233,25 @@ func TestDeliverMergedAndClosedRequireNoMutation(t *testing.T) {
 			}
 			if result.Status != want {
 				t.Fatalf("status = %q, want %q", result.Status, want)
+			}
+		})
+	}
+}
+
+func TestDeliverMergedIdentityMismatchFailsClosed(t *testing.T) {
+	for _, obs := range []DeliveryProviderObservation{
+		{State: "MERGED", HeadSHA: "different", BaseRef: deliveryTestBase},
+		{State: "MERGED", HeadSHA: deliveryTestHead, BaseRef: "release/1.0"},
+	} {
+		t.Run(obs.HeadSHA+obs.BaseRef, func(t *testing.T) {
+			c, homeDir := newFleetCanonical(t)
+			taskID := "t1"
+			mustWorkingDeliveryTask(t, c, taskID)
+			provider := newFakeDeliveryProvider().script(obs)
+			installDeliveryProviderFor(t, provider)
+			result, err := Deliver(homeDir, taskID, deliverRequest())
+			if err == nil || result != nil || provider.merges != 0 {
+				t.Fatalf("result=%+v err=%v merges=%d, want fail-closed refusal", result, err, provider.merges)
 			}
 		})
 	}

@@ -3,6 +3,7 @@ package fleet
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os/exec"
 	"strings"
 	"time"
@@ -85,13 +86,10 @@ type GitLabClient interface {
 	// ViewMRState returns the MR state (OPEN, MERGED, CLOSED) via glab.
 	ViewMRState(host, owner, project string, iid int) (string, error)
 
-	// ViewMRJSON fetches MR metadata as JSON via glab --output json.
+	// ViewMRJSON fetches MR metadata through the typed GitLab API.
 	ViewMRJSON(host, owner, project string, iid int) ([]byte, error)
-
-	// MergeMR merges a merge request via glab. It is the irreversible
-	// provider mutation of the delivery execution path, called at most once
-	// per delivery journal.
-	MergeMR(host, owner, project string, iid int, method string) error
+	// ApprovalState fetches authoritative approval evidence from GitLab.
+	ApprovalState(host, owner, project string, iid int) (bool, error)
 }
 
 // glabClient implements GitLabClient backed by glab CLI via GlabRunner.
@@ -121,9 +119,9 @@ func probeGlabCapability(runner GlabRunner) backend.State {
 		return backend.Failed
 	}
 
-	// Verify mr view subcommand is available
-	helpOut, err := runner.Run("mr", "view", "--help")
-	if err != nil || !strings.Contains(string(helpOut), "view") {
+	// Verify API subcommand is available
+	helpOut, err := runner.Run("api", "--help")
+	if err != nil || !strings.Contains(string(helpOut), "api") {
 		return backend.Unsupported
 	}
 
@@ -168,16 +166,17 @@ type gitlabDeliveryProvider struct {
 // compile-time check
 var _ DeliveryProvider = (*gitlabDeliveryProvider)(nil)
 
-// Merge executes the irreversible provider merge under the exact identity.
-func (p *gitlabDeliveryProvider) Merge(ident domain.DeliveryIdentity, method string) error {
-	if p.client == nil {
-		return fmt.Errorf("GitLab delivery capability is not composed")
+// ValidateMergeRequest verifies the pinned identity constraints. The current
+// glab capability cannot atomically enforce them for an irreversible merge.
+func (p *gitlabDeliveryProvider) ValidateMergeRequest(ident domain.DeliveryIdentity, request DeliveryMergeRequest) error {
+	if request.HeadSHA == "" || request.HeadSHA != ident.HeadSHA || request.BaseRef == "" || request.BaseRef != ident.BaseRef {
+		return fmt.Errorf("GitLab merge constraints do not match the delivery identity")
 	}
-	glURL, err := domain.ParseMRURL(ident.URL)
-	if err != nil {
-		return fmt.Errorf("invalid MR URL in identity: %w", err)
-	}
-	return p.client.MergeMR(glURL.Host, glURL.Owner, glURL.Project, glURL.IID, method)
+	return ErrDeliveryMergeConstraintsUnsupported
+}
+
+func (p *gitlabDeliveryProvider) Merge(ident domain.DeliveryIdentity, request DeliveryMergeRequest) error {
+	return p.ValidateMergeRequest(ident, request)
 }
 
 // Observe reads the current provider state under the exact identity.
@@ -201,12 +200,33 @@ func (p *gitlabDeliveryProvider) Observe(ident domain.DeliveryIdentity) (Deliver
 	if err != nil {
 		return DeliveryProviderObservation{}, err
 	}
-	return DeliveryProviderObservation{
+	obs := DeliveryProviderObservation{
 		State:     status.State,
 		HeadSHA:   status.HeadSHA,
 		MergedSHA: status.MergedSHA,
 		BaseRef:   baseRef,
-	}, nil
+	}
+	if status.State == "OPEN" {
+		approved, err := p.client.ApprovalState(glURL.Host, glURL.Owner, glURL.Project, glURL.IID)
+		if err != nil {
+			return DeliveryProviderObservation{}, err
+		}
+		mergeStatus, mergeStatusOK := parseGLDetailedMergeStatus(data)
+		if !mergeStatusOK || mergeStatus != "mergeable" {
+			obs.Mergeability = DeliveryMergeabilityDenied
+			return obs, nil
+		}
+		pipeline, pipelineOK := parseGLPipeline(data)
+		if !pipelineOK || pipeline.SHA != status.HeadSHA {
+			return DeliveryProviderObservation{}, fmt.Errorf("GitLab MR observation is missing pipeline SHA evidence for the current head")
+		}
+		if approved && mapCheckStatus(pipeline.Status) == domain.CheckPassed {
+			obs.Mergeability = DeliveryMergeabilityAllowed
+		} else {
+			obs.Mergeability = DeliveryMergeabilityDenied
+		}
+	}
+	return obs, nil
 }
 
 // parseGLTargetBranch reads the MR target branch (the GitLab name for the
@@ -221,32 +241,6 @@ func parseGLTargetBranch(data []byte) (string, error) {
 		return "", fmt.Errorf("parsing glab mr view JSON: %w", err)
 	}
 	return raw.TargetBranch, nil
-}
-
-// MergeMR merges a merge request via glab with the given method: squash,
-// merge (default merge commit), or rebase.
-func (c *glabClient) MergeMR(host, owner, project string, iid int, method string) error {
-	args := []string{
-		"mr", "merge",
-		fmt.Sprintf("%s/%s!%d", owner, project, iid),
-	}
-	if host != "" && host != "gitlab.com" {
-		args = append(args, "--hostname", host)
-	}
-	switch method {
-	case "squash":
-		args = append(args, "--squash")
-	case "rebase":
-		args = append(args, "--rebase")
-	case "merge":
-		// glab default: merge commit
-	default:
-		return fmt.Errorf("unsupported GitLab merge method %q", method)
-	}
-	if _, err := c.runner.Run(args...); err != nil {
-		return err
-	}
-	return nil
 }
 
 // ViewMRState returns the MR state (OPEN, MERGED, CLOSED) via glab.
@@ -284,17 +278,66 @@ func normalizeGlabState(s string) string {
 	}
 }
 
-// ViewMRJSON fetches MR metadata as JSON via glab CLI using --output json.
-func (c *glabClient) ViewMRJSON(host, owner, project string, iid int) ([]byte, error) {
-	args := []string{
-		"mr", "view",
-		fmt.Sprintf("%s/%s!%d", owner, project, iid),
-	}
+// ViewMRJSON fetches MR metadata through the typed GitLab API.
+func (c *glabClient) ApprovalState(host, owner, project string, iid int) (bool, error) {
+	path := fmt.Sprintf("/projects/%s/merge_requests/%d/approvals", url.PathEscape(owner+"/"+project), iid)
+	args := []string{"api", path}
 	if host != "" && host != "gitlab.com" {
 		args = append(args, "--hostname", host)
 	}
-	args = append(args, "-F", "json")
+	data, err := c.runner.Run(args...)
+	if err != nil {
+		return false, err
+	}
+	var raw struct {
+		Approved   *bool `json:"approved"`
+		ApprovedBy []struct {
+			User map[string]any `json:"user"`
+		} `json:"approved_by"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil || raw.Approved == nil {
+		return false, fmt.Errorf("parsing GitLab approval state: missing approved evidence")
+	}
+	if !*raw.Approved || len(raw.ApprovedBy) == 0 {
+		return false, nil
+	}
+	return true, nil
+}
 
+func parseGLDetailedMergeStatus(data []byte) (string, bool) {
+	var raw struct {
+		Status string `json:"detailed_merge_status"`
+	}
+	if json.Unmarshal(data, &raw) != nil || raw.Status == "" {
+		return "", false
+	}
+	return raw.Status, true
+}
+
+type glPipelineEvidence struct {
+	Status string
+	SHA    string
+}
+
+func parseGLPipeline(data []byte) (glPipelineEvidence, bool) {
+	var raw struct {
+		Pipeline *struct {
+			Status string `json:"status"`
+			SHA    string `json:"sha"`
+		} `json:"head_pipeline"`
+	}
+	if json.Unmarshal(data, &raw) != nil || raw.Pipeline == nil || raw.Pipeline.Status == "" || raw.Pipeline.SHA == "" {
+		return glPipelineEvidence{}, false
+	}
+	return glPipelineEvidence{Status: raw.Pipeline.Status, SHA: raw.Pipeline.SHA}, true
+}
+
+func (c *glabClient) ViewMRJSON(host, owner, project string, iid int) ([]byte, error) {
+	path := fmt.Sprintf("/projects/%s/merge_requests/%d", url.PathEscape(owner+"/"+project), iid)
+	args := []string{"api", path}
+	if host != "" && host != "gitlab.com" {
+		args = append(args, "--hostname", host)
+	}
 	return c.runner.Run(args...)
 }
 

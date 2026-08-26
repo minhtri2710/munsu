@@ -88,6 +88,15 @@ func buildDeliverRequest(auth *taskauthority.Canonical, taskID, prURL string, ex
 	if agg.Worktree == nil {
 		return fleet.DeliverRequest{}, fmt.Errorf("task %s has no bound worktree; spawn it before delivery", taskID)
 	}
+	switch strings.ToUpper(snap.State) {
+	case "OPEN":
+		if !snap.Mergeable() {
+			return fleet.DeliverRequest{}, fmt.Errorf("delivery provider state is not mergeable: open with passing checks and an approving review are required")
+		}
+	case "MERGED", "CLOSED":
+	default:
+		return fleet.DeliverRequest{}, fmt.Errorf("delivery provider state is unknown: %q", snap.State)
+	}
 	ident := &domain.DeliveryIdentity{
 		Provider:   provider,
 		Owner:      owner,

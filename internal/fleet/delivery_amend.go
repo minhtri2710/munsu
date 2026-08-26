@@ -2,8 +2,10 @@
 package fleet
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/domain"
@@ -39,18 +41,67 @@ const (
 // reads; the journaled delivery path uses the typed DeliveryProvider
 // observation instead.
 type ProviderSnapshot struct {
-	Provider   string `json:"provider"`
-	Owner      string `json:"owner"`
-	Repo       string `json:"repo"`
-	Number     int    `json:"number"`
-	URL        string `json:"url"`
-	BaseRef    string `json:"baseRef"`
-	HeadRef    string `json:"headRef"`
-	HeadSHA    string `json:"headSHA"`
-	State      string `json:"state"` // OPEN, MERGED, CLOSED
-	Merged     bool   `json:"merged"`
-	MergedSHA  string `json:"mergedSHA,omitempty"` // merge commit SHA (nonempty only when merged)
-	ObservedAt string `json:"observedAt"`          // ISO 8601
+	Provider   string            `json:"provider"`
+	Owner      string            `json:"owner"`
+	Repo       string            `json:"repo"`
+	Number     int               `json:"number"`
+	URL        string            `json:"url"`
+	BaseRef    string            `json:"baseRef"`
+	HeadRef    string            `json:"headRef"`
+	HeadSHA    string            `json:"headSHA"`
+	State      string            `json:"state"` // OPEN, MERGED, CLOSED
+	Checks     []domain.CheckRun `json:"checks,omitempty"`
+	Reviews    []domain.Review   `json:"reviews,omitempty"`
+	Merged     bool              `json:"merged"`
+	MergedSHA  string            `json:"mergedSHA,omitempty"` // merge commit SHA (nonempty only when merged)
+	ObservedAt string            `json:"observedAt"`          // ISO 8601
+}
+
+// Mergeable reports whether the provider snapshot satisfies the domain delivery
+// acceptance rule before a delivery request is journaled.
+func (s ProviderSnapshot) Mergeable() bool {
+	checks := make([]domain.CheckRun, len(s.Checks))
+	copy(checks, s.Checks)
+	return domain.PR{
+		Number:  s.Number,
+		Status:  domain.PRStatus(strings.ToLower(s.State)),
+		Checks:  checks,
+		Reviews: s.Reviews,
+	}.CanMerge()
+}
+
+func validGitObjectID(value string) bool {
+	if len(value) != 40 && len(value) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil && strings.Trim(value, "0") != ""
+}
+
+func normalizeGitHubReviewState(value string) domain.ReviewState {
+	switch strings.ToUpper(strings.ReplaceAll(value, "-", "_")) {
+	case "APPROVED":
+		return domain.ReviewApproved
+	case "CHANGES_REQUESTED":
+		return domain.ReviewChangesRequested
+	case "DISMISSED":
+		return domain.ReviewDismissed
+	default:
+		return domain.ReviewPending
+	}
+}
+
+func mapCheckStatus(value string) domain.CheckStatus {
+	switch strings.ToLower(value) {
+	case "success", "passed":
+		return domain.CheckPassed
+	case "failure", "failed", "error", "canceled", "cancelled":
+		return domain.CheckFailed
+	case "skipped":
+		return domain.CheckSkipped
+	default:
+		return domain.CheckPending
+	}
 }
 
 // MetaDeliveryState is the meta field key for the delivery lifecycle projection.
@@ -91,17 +142,23 @@ func fetchGitHubProviderSnapshot(prURL string) (*ProviderSnapshot, error) {
 		return nil, fmt.Errorf("GitHub provider not available: %w", err)
 	}
 
-	data, err := client.ViewPRJSON(ghURL.Owner, ghURL.Repo, ghURL.Num, "state,headRefOid,headRefName,baseRefName,mergeCommit")
+	data, err := client.ViewPRJSON(ghURL.Owner, ghURL.Repo, ghURL.Num, "state,headRefOid,headRefName,baseRefName,mergeCommit,statusCheckRollup,reviewDecision")
 	if err != nil {
 		return nil, err
 	}
 
 	var raw struct {
-		State       string `json:"state"`
-		HeadRefOid  string `json:"headRefOid"`
-		HeadRefName string `json:"headRefName"`
-		BaseRefName string `json:"baseRefName"`
-		MergeCommit *struct {
+		State             string `json:"state"`
+		HeadRefOid        string `json:"headRefOid"`
+		HeadRefName       string `json:"headRefName"`
+		BaseRefName       string `json:"baseRefName"`
+		StatusCheckRollup []struct {
+			State      string `json:"state"`
+			Conclusion string `json:"conclusion"`
+			Status     string `json:"status"`
+		} `json:"statusCheckRollup"`
+		ReviewDecision string `json:"reviewDecision"`
+		MergeCommit    *struct {
 			Oid string `json:"oid"`
 		} `json:"mergeCommit"`
 	}
@@ -129,16 +186,34 @@ func fetchGitHubProviderSnapshot(prURL string) (*ProviderSnapshot, error) {
 		BaseRef:    raw.BaseRefName,
 		HeadRef:    raw.HeadRefName,
 		HeadSHA:    raw.HeadRefOid,
-		State:      raw.State,
+		State:      strings.ToUpper(raw.State),
 		ObservedAt: time.Now().UTC().Format(time.RFC3339),
 	}
-
-	switch raw.State {
+	switch snap.State {
 	case "MERGED":
-		snap.Merged = true
-		if raw.MergeCommit != nil && raw.MergeCommit.Oid != "" {
-			snap.MergedSHA = raw.MergeCommit.Oid
+		if raw.MergeCommit == nil || !validGitObjectID(raw.MergeCommit.Oid) {
+			return nil, fmt.Errorf("gh pr view returned missing merge commit OID")
 		}
+		snap.Merged = true
+		snap.MergedSHA = raw.MergeCommit.Oid
+	case "CLOSED":
+	case "OPEN":
+		if len(raw.StatusCheckRollup) == 0 {
+			return nil, fmt.Errorf("gh pr view returned empty statusCheckRollup")
+		}
+		for _, check := range raw.StatusCheckRollup {
+			status := strings.ToLower(check.Conclusion)
+			if status == "" {
+				status = strings.ToLower(check.State)
+			}
+			snap.Checks = append(snap.Checks, domain.CheckRun{Status: mapCheckStatus(status)})
+		}
+		if raw.ReviewDecision == "" {
+			return nil, fmt.Errorf("gh pr view returned empty reviewDecision")
+		}
+		snap.Reviews = []domain.Review{{State: normalizeGitHubReviewState(raw.ReviewDecision)}}
+	default:
+		return nil, fmt.Errorf("gh pr view returned unrecognized state %q", raw.State)
 	}
 
 	return snap, nil
@@ -190,13 +265,35 @@ func fetchGitLabProviderSnapshot(mrURL string) (*ProviderSnapshot, error) {
 		State:      normalizedState,
 		ObservedAt: time.Now().UTC().Format(time.RFC3339),
 	}
-
 	switch normalizedState {
 	case "MERGED":
-		snap.Merged = true
-		if raw.MergeCommitSHA != "" {
-			snap.MergedSHA = raw.MergeCommitSHA
+		if !validGitObjectID(raw.MergeCommitSHA) {
+			return nil, fmt.Errorf("glab mr view returned missing merge commit SHA")
 		}
+		snap.Merged = true
+		snap.MergedSHA = raw.MergeCommitSHA
+	case "CLOSED":
+	case "OPEN":
+		pipeline, pipelineOK := parseGLPipeline(data)
+		if !pipelineOK || pipeline.SHA != raw.SHA {
+			return nil, fmt.Errorf("GitLab MR did not provide pipeline evidence for the current head; refusing to infer mergeability")
+		}
+		snap.Checks = []domain.CheckRun{{Status: mapCheckStatus(pipeline.Status)}}
+		approved, err := client.ApprovalState(glURL.Host, glURL.Owner, glURL.Project, glURL.IID)
+		if err != nil {
+			return nil, err
+		}
+		if approved {
+			snap.Reviews = []domain.Review{{State: domain.ReviewApproved}}
+		}
+		var mergeRaw struct {
+			Status string `json:"detailed_merge_status"`
+		}
+		if err := json.Unmarshal(data, &mergeRaw); err != nil || mergeRaw.Status != "mergeable" {
+			return nil, fmt.Errorf("GitLab MR is not mergeable")
+		}
+	default:
+		return nil, fmt.Errorf("glab mr view returned unrecognized state %q", raw.State)
 	}
 
 	return snap, nil

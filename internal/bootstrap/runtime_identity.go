@@ -104,14 +104,6 @@ type SkewFinding struct {
 	Remediation    string             `json:"remediation"`
 }
 
-func (f SkewFinding) String() string {
-	line := fmt.Sprintf("%s: %s", f.Classification, f.Component)
-	if f.Detail != "" {
-		line += " (" + f.Detail + ")"
-	}
-	return line
-}
-
 type runtimeIdentityProbe struct {
 	executable        func() (string, error)
 	lookPath          func(string) (string, error)

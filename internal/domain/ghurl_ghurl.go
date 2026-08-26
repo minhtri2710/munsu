@@ -57,11 +57,6 @@ func ParseGHURL(raw string) (GHURL, error) {
 	return GHURL{Owner: owner, Repo: repo, Num: num}, nil
 }
 
-// FormatPRRef returns the PR reference string like "owner/repo#123".
-func (g GHURL) FormatPRRef() string {
-	return fmt.Sprintf("%s/%s#%d", g.Owner, g.Repo, g.Num)
-}
-
 // FullURL reconstructs the full PR URL.
 func (g GHURL) FullURL() string {
 	return fmt.Sprintf("https://github.com/%s/%s/pull/%d", g.Owner, g.Repo, g.Num)

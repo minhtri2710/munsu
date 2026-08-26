@@ -7,6 +7,68 @@ import (
 	"testing"
 )
 
+// ResolveDispatch is a test helper wrapping ResolveDispatchSelection.
+func ResolveDispatch(cfg *DispatchConfig, taskDesc string) string {
+	return ResolveDispatchSelection(cfg, taskDesc).Harness
+}
+
+// SelectProfile is a test helper resolving the target harness using a strategy.
+func SelectProfile(profiles []DispatchProfile, strategy string) string {
+	if len(profiles) == 0 {
+		return ""
+	}
+
+	sel := newQuotaSelector(strategy)
+	cands := make([]DispatchCandidate, 0, len(profiles))
+	for _, p := range profiles {
+		cands = append(cands, DispatchCandidate{
+			Harness: p.Harness,
+			Model:   p.Model,
+			Effort:  p.Effort,
+		})
+	}
+	return sel.selectCandidate(cands).Harness
+}
+
+func (cfg *DispatchConfig) normalize() {
+	if cfg.Default != nil {
+		if cfg.DefaultHarness == "" {
+			cfg.DefaultHarness = cfg.Default.Harness
+		}
+		if cfg.DefaultModel == "" {
+			cfg.DefaultModel = cfg.Default.Model
+		}
+		if cfg.DefaultEffort == "" {
+			cfg.DefaultEffort = cfg.Default.Effort
+		}
+	}
+	if len(cfg.Profiles) == 0 && len(cfg.Rules) > 0 {
+		cfg.Profiles = append([]DispatchProfile(nil), cfg.Rules...)
+	}
+	for i := range cfg.Profiles {
+		normalizeDispatchProfile(&cfg.Profiles[i])
+	}
+}
+
+func normalizeDispatchProfile(p *DispatchProfile) {
+	if len(p.Match) == 0 && p.When != "" {
+		p.Match = []string{p.When}
+	}
+	if len(p.Use) == 0 {
+		return
+	}
+	if p.Harness == "" {
+		c := p.Use[0]
+		p.Harness = c.Harness
+		if p.Model == "" {
+			p.Model = c.Model
+		}
+		if p.Effort == "" {
+			p.Effort = c.Effort
+		}
+	}
+}
+
 func TestResolveDispatch(t *testing.T) {
 	cfg := &DispatchConfig{
 		DefaultHarness: "pi",

@@ -27,7 +27,7 @@ for harnesses with a verified adapter; unverified harnesses show "planned/unsupp
 | Task meta + status records (post-commit projections written after authoritative commits; `.status` append-only, ADR-0007 §7) | `munsu task add/show/status`; current via `soldier-state` | `internal/taskauthority` (authoritative source), `internal/home` (generic `.meta`/`.status` primitives), `internal/fleet`/`internal/cli` (projection writers) | **implemented** |
 | Dispatch control (holds/interpretation/decision) | `munsu decision-hold hold/complete/verify/resolve/list`, spawn and supervision flows | `internal/taskauthority` | **implemented** |
 | Worktree/endpoint binding + spawn confirmation | `munsu spawn` | `internal/taskauthority` (`BindWorktree`, launch operations), `internal/fleet` | **implemented** |
-| Delivery invariants (prepare/complete, merge attempt, issue-link reconcile, attestation, git authorization) | `munsu delivery pr-merge/merge-status` | `internal/taskauthority` (invariant ops), `internal/fleet` (orchestration) | **implemented** |
+| Delivery invariants (prepare/complete, merge attempt, attestation, git authorization) | `munsu delivery pr-merge/merge-status` | `internal/taskauthority` (invariant ops), `internal/fleet` (orchestration) | **implemented** |
 | Handoff receipt (`ReceiveTransfer`) | `munsu captain handoff` | `internal/fleet` (journaled saga), `internal/taskauthority` (`ReserveTransfer`/`CommitTransfer`/`ReceiveTransfer`/`ActivateTransfer`) | **implemented** |
 | Send message to soldier | `munsu send` | `internal/cli`, `internal/fleet`, `internal/home` (durable mailbox) | **implemented** (typed mailbox envelope/pending/ack; reconciliation through CLI-composed lifecycle ports) |
 | Spawn soldier | `munsu spawn` | `internal/cli`, `internal/fleet` | **implemented** |
@@ -53,7 +53,7 @@ for harnesses with a verified adapter; unverified harnesses show "planned/unsupp
 | Ensure AGENTS.md | `munsu ensure-agents-md` | `internal/cli` | **implemented** |
 | Project registry | `munsu project add/list/show/rm` | `internal/fleet` | **implemented** |
 | Review diff | `munsu delivery review-diff` | `internal/fleet` | **implemented** |
-| PR merge | `munsu delivery pr-merge` | `internal/fleet`, `internal/taskauthority` (invariants) | **implemented** |
+| PR merge and terminal reconciliation | `munsu delivery pr-merge` | `internal/fleet`, `internal/taskauthority` (invariants) | **implemented**: terminal reconciliation is mutation-free; current GitHub/GitLab adapters intentionally fail closed for OPEN mutation because they cannot atomically enforce mergeability plus the exact authorized head and base |
 | Worktree pool (treehouse) | `munsu worktree get/return/status` | `internal/backend`, `internal/cli` | **implemented** |
 | Config | `munsu config get/set` | `internal/config` | **implemented** |
 | Session backend (tmux + herdr + zellij + cmux + orca) | `--backend` flag | `internal/backend` | **implemented** (cmux/orca experimental, alongside zellij). Structured `munsu backend capabilities` currently exposes only `tmux` and `herdr`. |

@@ -31,9 +31,6 @@ var handshakeTimeout = 15 * time.Second
 // heartBeatPoll is the interval between polls while waiting for the watcher.
 var heartBeatPoll = 200 * time.Millisecond
 
-// doUpdate is an injectable seam for tests (legacy, binary-ancestry resolution).
-var doUpdate = Update
-
 // doUpdateIn is an injectable seam for tests with explicit install root.
 var doUpdateIn = UpdateIn
 
@@ -74,16 +71,6 @@ var resolveInstalledVersion = func(snap *WatcherSnapshot) {
 	resolveBuildIdentity(snap, commit)
 }
 
-// Update performs a fast-forward-only git pull on the munsu installation
-// using binary-ancestry resolution for backward compatibility.
-func Update() error {
-	installRoot, err := resolveBinaryForUpdate()
-	if err != nil {
-		return err
-	}
-	return UpdateIn(installRoot)
-}
-
 // UpdateIn performs a fast-forward-only git pull + rebuild on the given
 // install root. The root must be a verified munsu git repository.
 func UpdateIn(root string) error {
@@ -92,23 +79,6 @@ func UpdateIn(root string) error {
 		return err
 	}
 	return updateIn(root, realPath)
-}
-
-// resolveBinaryForUpdate resolves the install root from binary ancestry.
-func resolveBinaryForUpdate() (string, error) {
-	execPath, err := os.Executable()
-	if err != nil {
-		return "", fmt.Errorf("finding munsu binary: %w", err)
-	}
-	realPath, err := filepath.EvalSymlinks(execPath)
-	if err != nil {
-		return "", fmt.Errorf("resolving munsu path: %w", err)
-	}
-	installRoot, err := findGitRoot(filepath.Dir(realPath))
-	if err != nil {
-		return "", fmt.Errorf("finding munsu repository: %w", err)
-	}
-	return installRoot, nil
 }
 
 // execRealPath returns the real (symlink-resolved) path of the running binary.
@@ -298,23 +268,6 @@ func snapshotWatcher(homeDir string) *WatcherSnapshot {
 		OldPID:       id.PID,
 		OldCommitSHA: id.CommitSHA,
 	}
-}
-
-// UpdateWithHandshake performs an update using binary-ancestry resolution
-// and, if a watcher was active, restarts it and waits for the new build
-// identity to appear. Returns the snapshot with evidence.
-func UpdateWithHandshake(homeDir string) (*WatcherSnapshot, error) {
-	snap := snapshotWatcher(homeDir)
-
-	// Run the standard update (ff-only pull + rebuild + atomic install).
-	if err := doUpdate(); err != nil {
-		return snap, err
-	}
-
-	// Resolve the install root for evidence.
-	resolveInstalledVersion(snap)
-
-	return completeHandshake(homeDir, snap)
 }
 
 // UpdateWithHandshakeEx resolves the install root using the 6-step resolver,
@@ -559,20 +512,4 @@ func ShortHEAD(root string) (string, error) {
 // VersionString builds "0.1.0-dev+<short>" (pure).
 func VersionString(shortCommit string) string {
 	return fmt.Sprintf("0.1.0-dev+%s", shortCommit)
-}
-
-// setHandshakeTimeout overrides the handshake timeout for testing.
-// Returns a cleanup function that restores the previous value.
-func setHandshakeTimeout(d time.Duration) func() {
-	prev := handshakeTimeout
-	handshakeTimeout = d
-	return func() { handshakeTimeout = prev }
-}
-
-// setHeartBeatPoll overrides the heartbeat poll interval for testing.
-// Returns a cleanup function that restores the previous value.
-func setHeartBeatPoll(d time.Duration) func() {
-	prev := heartBeatPoll
-	heartBeatPoll = d
-	return func() { heartBeatPoll = prev }
 }

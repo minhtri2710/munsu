@@ -4,6 +4,7 @@ package fleet
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -60,6 +61,27 @@ func TestPRMergeStatus_JSONUnmarshal(t *testing.T) {
 	}
 }
 
+func TestPRMergeStatus_MergedRequiresValidMergeCommit(t *testing.T) {
+	valid := "0123456789abcdef0123456789abcdef01234567"
+	cases := []string{
+		`{"state":"MERGED","headRefOid":"head123"}`,
+		`{"state":"MERGED","headRefOid":"head123","mergeCommit":null}`,
+		`{"state":"MERGED","headRefOid":"head123","mergeCommit":{"oid":"not-a-git-object-id"}}`,
+		`{"state":"MERGED","headRefOid":"head123","mergeCommit":{"oid":"0000000000000000000000000000000000000000"}}`,
+	}
+	for _, input := range cases {
+		t.Run(input, func(t *testing.T) {
+			if _, err := parsePRMergeStatus([]byte(input)); err == nil {
+				t.Fatal("parsePRMergeStatus accepted invalid merged evidence")
+			}
+		})
+	}
+	status, err := parsePRMergeStatus([]byte(fmt.Sprintf(`{"state":"MERGED","headRefOid":"head123","mergeCommit":{"oid":"%s"}}`, valid)))
+	if err != nil || status.MergedSHA != valid || !status.Merged {
+		t.Fatalf("status = %+v, err = %v", status, err)
+	}
+}
+
 func TestPRMergeStatus_Closed(t *testing.T) {
 	input := `{"state":"CLOSED","merged":false,"headRefOid":"def456abc123","mergedSha":""}`
 	var status domain.PRMergeStatus
@@ -86,6 +108,284 @@ func TestPRMergeStatus_Open(t *testing.T) {
 	if status.Merged {
 		t.Error("expected merged=false")
 	}
+}
+
+func TestProviderSnapshotMergeableRequiresCompleteApprovalEvidence(t *testing.T) {
+	base := ProviderSnapshot{
+		State:   "OPEN",
+		Checks:  []domain.CheckRun{{Status: domain.CheckPassed}},
+		Reviews: []domain.Review{{State: domain.ReviewApproved}},
+	}
+	cases := []struct {
+		name   string
+		mutate func(*ProviderSnapshot)
+		want   bool
+	}{
+		{name: "open passed approved", want: true},
+		{name: "closed", mutate: func(s *ProviderSnapshot) { s.State = "CLOSED" }},
+		{name: "merged", mutate: func(s *ProviderSnapshot) { s.State = "MERGED" }},
+		{name: "pending check", mutate: func(s *ProviderSnapshot) { s.Checks[0].Status = domain.CheckPending }},
+		{name: "failed check", mutate: func(s *ProviderSnapshot) { s.Checks[0].Status = domain.CheckFailed }},
+		{name: "no approval", mutate: func(s *ProviderSnapshot) { s.Reviews = nil }},
+		{name: "changes requested", mutate: func(s *ProviderSnapshot) { s.Reviews[0].State = domain.ReviewChangesRequested }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			snapshot := base
+			snapshot.Checks = append([]domain.CheckRun(nil), base.Checks...)
+			snapshot.Reviews = append([]domain.Review(nil), base.Reviews...)
+			if tc.mutate != nil {
+				tc.mutate(&snapshot)
+			}
+			if got := snapshot.Mergeable(); got != tc.want {
+				t.Fatalf("Mergeable() = %t, want %t for %+v", got, tc.want, snapshot)
+			}
+		})
+	}
+}
+
+func TestNormalizeGitHubReviewState(t *testing.T) {
+	cases := map[string]domain.ReviewState{
+		"APPROVED":          domain.ReviewApproved,
+		"CHANGES_REQUESTED": domain.ReviewChangesRequested,
+		"changes-requested": domain.ReviewChangesRequested,
+		"DISMISSED":         domain.ReviewDismissed,
+		"COMMENTED":         domain.ReviewPending,
+	}
+	for input, want := range cases {
+		if got := normalizeGitHubReviewState(input); got != want {
+			t.Errorf("normalizeGitHubReviewState(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestGitHubProviderSnapshotRefusesIncompleteOpenEvidence(t *testing.T) {
+	old := DefaultGitHubClient
+	t.Cleanup(func() { DefaultGitHubClient = old })
+
+	for _, tc := range []struct {
+		name string
+		data string
+		want string
+	}{
+		{
+			name: "missing status checks",
+			data: `{"state":"OPEN","headRefOid":"head123","headRefName":"feature","baseRefName":"main","reviewDecision":"APPROVED"}`,
+			want: "empty statusCheckRollup",
+		},
+		{
+			name: "missing review decision",
+			data: `{"state":"OPEN","headRefOid":"head123","headRefName":"feature","baseRefName":"main","statusCheckRollup":[{"conclusion":"SUCCESS"}]}`,
+			want: "empty reviewDecision",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			DefaultGitHubClient = func() (GitHubClient, error) {
+				return terminalGitHubClient{data: tc.data}, nil
+			}
+			if _, err := fetchGitHubProviderSnapshot("https://github.com/owner/project/pull/42"); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("fetchGitHubProviderSnapshot error = %v, want %q refusal", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestGitHubProviderSnapshotRefusesUnknownState(t *testing.T) {
+	old := DefaultGitHubClient
+	DefaultGitHubClient = func() (GitHubClient, error) {
+		return terminalGitHubClient{data: `{"state":"DRAFT","headRefOid":"head123","headRefName":"feature","baseRefName":"main"}`}, nil
+	}
+	t.Cleanup(func() { DefaultGitHubClient = old })
+
+	if _, err := fetchGitHubProviderSnapshot("https://github.com/owner/project/pull/42"); err == nil || !strings.Contains(err.Error(), "unrecognized state") {
+		t.Fatalf("fetchGitHubProviderSnapshot error = %v, want unknown-state refusal", err)
+	}
+}
+
+func TestGitHubProviderSnapshotRefusesMissingMergeCommitEvidence(t *testing.T) {
+	old := DefaultGitHubClient
+	DefaultGitHubClient = func() (GitHubClient, error) {
+		return terminalGitHubClient{data: `{"state":"MERGED","headRefOid":"head123","headRefName":"feature","baseRefName":"main","mergeCommit":null}`}, nil
+	}
+	t.Cleanup(func() { DefaultGitHubClient = old })
+
+	if _, err := fetchGitHubProviderSnapshot("https://github.com/owner/project/pull/42"); err == nil || !strings.Contains(err.Error(), "missing merge commit OID") {
+		t.Fatalf("fetchGitHubProviderSnapshot error = %v, want missing-merge-commit refusal", err)
+	}
+}
+
+func TestGitHubProviderSnapshotTerminalStatesNeedNoMergeabilityEvidence(t *testing.T) {
+	old := DefaultGitHubClient
+	DefaultGitHubClient = func() (GitHubClient, error) {
+		return &terminalGitHubClient{}, nil
+	}
+	t.Cleanup(func() { DefaultGitHubClient = old })
+	for _, tc := range []struct {
+		state    string
+		merged   bool
+		mergeSHA string
+		data     string
+	}{
+		{"MERGED", true, "0123456789abcdef0123456789abcdef01234567", `{"state":"MERGED","headRefOid":"head123","headRefName":"feature","baseRefName":"main","mergeCommit":{"oid":"0123456789abcdef0123456789abcdef01234567"}}`},
+		{"CLOSED", false, "", `{"state":"CLOSED","headRefOid":"head123","headRefName":"feature","baseRefName":"main"}`},
+	} {
+		t.Run(tc.state, func(t *testing.T) {
+			DefaultGitHubClient = func() (GitHubClient, error) { return terminalGitHubClient{data: tc.data}, nil }
+			snapshot, err := fetchGitHubProviderSnapshot("https://github.com/owner/project/pull/42")
+			if err != nil {
+				t.Fatalf("fetchGitHubProviderSnapshot: %v", err)
+			}
+			if snapshot.State != tc.state || snapshot.Merged != tc.merged || snapshot.HeadSHA != "head123" || snapshot.MergedSHA != tc.mergeSHA {
+				t.Fatalf("snapshot = %+v", snapshot)
+			}
+		})
+	}
+}
+
+type terminalGitHubClient struct{ data string }
+
+func (c terminalGitHubClient) ViewPRJSON(string, string, int, string) ([]byte, error) {
+	return []byte(c.data), nil
+}
+func (terminalGitHubClient) ObservePR(string, string, int) (DeliveryProviderObservation, error) {
+	return DeliveryProviderObservation{}, nil
+}
+func (terminalGitHubClient) CaptureIdentity(string) (*domain.DeliveryIdentity, error) {
+	return nil, nil
+}
+
+func TestGitLabProviderSnapshotRefusesMissingMergeCommitEvidence(t *testing.T) {
+	old := defaultGlabRunner
+	defaultGlabRunner = &fakeGlabRunner{runFn: func(args ...string) ([]byte, error) {
+		if len(args) == 1 && args[0] == "--version" {
+			return []byte("glab version 1.45.0"), nil
+		}
+		if len(args) == 2 && args[0] == "api" && args[1] == "--help" {
+			return []byte("api access"), nil
+		}
+		if len(args) == 2 && args[0] == "auth" && args[1] == "status" {
+			return []byte("authenticated"), nil
+		}
+		return []byte(`{"state":"merged","sha":"head123","source_branch":"feature","target_branch":"main","merge_commit_sha":null}`), nil
+	}}
+	t.Cleanup(func() { defaultGlabRunner = old })
+
+	if _, err := fetchGitLabProviderSnapshot("https://gitlab.com/owner/project/-/merge_requests/42"); err == nil || !strings.Contains(err.Error(), "missing merge commit SHA") {
+		t.Fatalf("fetchGitLabProviderSnapshot error = %v, want missing-merge-commit refusal", err)
+	}
+}
+
+func TestGitLabProviderSnapshotTerminalStatesNeedNoMergeabilityEvidence(t *testing.T) {
+	old := defaultGlabRunner
+	defaultGlabRunner = &fakeGlabRunner{runFn: func(args ...string) ([]byte, error) {
+		if len(args) >= 1 && args[0] == "--version" {
+			return []byte("glab version 1.45.0"), nil
+		}
+		if len(args) >= 2 && args[0] == "api" && args[1] == "--help" {
+			return []byte("api access"), nil
+		}
+		if len(args) >= 2 && args[0] == "auth" {
+			return []byte("authenticated"), nil
+		}
+		return []byte(`{"state":"merged","sha":"head123","source_branch":"feature","target_branch":"main","merge_commit_sha":"0123456789abcdef0123456789abcdef01234567"}`), nil
+	}}
+	t.Cleanup(func() { defaultGlabRunner = old })
+	for _, state := range []string{"merged", "closed"} {
+		t.Run(state, func(t *testing.T) {
+			defaultGlabRunner = &fakeGlabRunner{runFn: func(args ...string) ([]byte, error) {
+				if len(args) >= 1 && args[0] == "--version" {
+					return []byte("glab version 1.45.0"), nil
+				}
+				if len(args) >= 2 && args[0] == "api" && args[1] == "--help" {
+					return []byte("api access"), nil
+				}
+				if len(args) >= 2 && args[0] == "auth" {
+					return []byte("authenticated"), nil
+				}
+				return []byte(fmt.Sprintf(`{"state":"%s","sha":"head123","source_branch":"feature","target_branch":"main","merge_commit_sha":"0123456789abcdef0123456789abcdef01234567"}`, state)), nil
+			}}
+			snapshot, err := fetchGitLabProviderSnapshot("https://gitlab.com/owner/project/-/merge_requests/42")
+			if err != nil {
+				t.Fatalf("fetchGitLabProviderSnapshot: %v", err)
+			}
+			if snapshot.State != strings.ToUpper(state) || snapshot.Merged != (state == "merged") {
+				t.Fatalf("snapshot = %+v", snapshot)
+			}
+		})
+	}
+}
+
+func TestGitLabProviderSnapshotRefusesUnknownState(t *testing.T) {
+	old := defaultGlabRunner
+	defaultGlabRunner = &fakeGlabRunner{runFn: func(args ...string) ([]byte, error) {
+		if len(args) == 1 && args[0] == "--version" {
+			return []byte("glab version 1.45.0"), nil
+		}
+		if len(args) == 2 && args[0] == "api" && args[1] == "--help" {
+			return []byte("api access"), nil
+		}
+		if len(args) == 2 && args[0] == "auth" && args[1] == "status" {
+			return []byte("authenticated"), nil
+		}
+		return []byte(`{"state":"draft","sha":"head123","source_branch":"feature","target_branch":"main"}`), nil
+	}}
+	t.Cleanup(func() { defaultGlabRunner = old })
+
+	if _, err := fetchGitLabProviderSnapshot("https://gitlab.com/owner/project/-/merge_requests/42"); err == nil || !strings.Contains(err.Error(), "unrecognized state") {
+		t.Fatalf("fetchGitLabProviderSnapshot error = %v, want unknown-state refusal", err)
+	}
+}
+
+func TestGitLabProviderSnapshotUsesNestedPipelineAndApprovalEvidence(t *testing.T) {
+	old := defaultGlabRunner
+	defaultGlabRunner = mergeabilityRunner(`{"state":"opened","sha":"abc123","source_branch":"feature","target_branch":"main","detailed_merge_status":"mergeable","head_pipeline":{"status":"success","sha":"abc123"}}`)
+	t.Cleanup(func() { defaultGlabRunner = old })
+
+	snapshot, err := fetchGitLabProviderSnapshot("https://gitlab.com/owner/project/-/merge_requests/42")
+	if err != nil {
+		t.Fatalf("fetchGitLabProviderSnapshot: %v", err)
+	}
+	if !snapshot.Mergeable() {
+		t.Fatalf("snapshot = %+v, want mergeable", snapshot)
+	}
+}
+
+func TestGitLabProviderSnapshotRefusesMissingMergeabilityEvidence(t *testing.T) {
+	old := defaultGlabRunner
+	defaultGlabRunner = mergeabilityRunner(`{"state":"opened","sha":"abc123","source_branch":"feature","target_branch":"main"}`)
+	t.Cleanup(func() { defaultGlabRunner = old })
+
+	if _, err := fetchGitLabProviderSnapshot("https://gitlab.com/owner/project/-/merge_requests/42"); err == nil || !strings.Contains(err.Error(), "pipeline evidence") {
+		t.Fatalf("fetchGitLabProviderSnapshot error = %v, want missing-evidence refusal", err)
+	}
+}
+
+func TestGitLabProviderSnapshotRefusesStalePipeline(t *testing.T) {
+	old := defaultGlabRunner
+	defaultGlabRunner = mergeabilityRunner(`{"state":"opened","sha":"abc123","source_branch":"feature","target_branch":"main","detailed_merge_status":"mergeable","head_pipeline":{"status":"success","sha":"old456"}}`)
+	t.Cleanup(func() { defaultGlabRunner = old })
+
+	if _, err := fetchGitLabProviderSnapshot("https://gitlab.com/owner/project/-/merge_requests/42"); err == nil || !strings.Contains(err.Error(), "pipeline evidence") {
+		t.Fatalf("fetchGitLabProviderSnapshot error = %v, want stale-pipeline refusal", err)
+	}
+}
+
+func mergeabilityRunner(json string) *fakeGlabRunner {
+	return &fakeGlabRunner{runFn: func(args ...string) ([]byte, error) {
+		if len(args) == 1 && args[0] == "--version" {
+			return []byte("glab version 1.45.0"), nil
+		}
+		if len(args) == 2 && args[0] == "api" && args[1] == "--help" {
+			return []byte("api access\n"), nil
+		}
+		if len(args) == 2 && args[0] == "auth" && args[1] == "status" {
+			return []byte("authenticated to gitlab.com\n"), nil
+		}
+		if len(args) >= 2 && args[0] == "api" && strings.HasSuffix(args[1], "/approvals") {
+			return []byte(`{"approved":true,"approved_by":[{"user":{"username":"reviewer"}}]}`), nil
+		}
+		return []byte(json), nil
+	}}
 }
 
 func TestPRMergeStatus_FieldTags(t *testing.T) {

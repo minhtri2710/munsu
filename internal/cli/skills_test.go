@@ -290,9 +290,9 @@ func TestAgentSkillReferencesMatchEmbeddedCanonical(t *testing.T) {
 
 func TestInstalledMunsuOpsReferencesResolve(t *testing.T) {
 	dest := filepath.Join(t.TempDir(), "skills")
-	installed, err := installAllSkills(dest, nil)
+	installed, err := installSkills(dest, "", nil)
 	if err != nil {
-		t.Fatalf("installAllSkills: %v", err)
+		t.Fatalf("installSkills: %v", err)
 	}
 	if len(installed) == 0 {
 		t.Fatal("expected embedded skills to install")

@@ -61,13 +61,6 @@ func TestParseGHURL_Invalid(t *testing.T) {
 	}
 }
 
-func TestGHURL_FormatPRRef(t *testing.T) {
-	gh := GHURL{Owner: "beowulf", Repo: "munsu", Num: 42}
-	if ref := gh.FormatPRRef(); ref != "beowulf/munsu#42" {
-		t.Errorf("FormatPRRef() = %q, want %q", ref, "beowulf/munsu#42")
-	}
-}
-
 func TestGHURL_FullURL(t *testing.T) {
 	gh := GHURL{Owner: "beowulf", Repo: "munsu", Num: 42}
 	want := "https://github.com/beowulf/munsu/pull/42"

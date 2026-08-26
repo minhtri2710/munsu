@@ -10,7 +10,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/minhtri2710/munsu/internal/harness"
 )
@@ -673,21 +672,3 @@ func canonicalizePossiblyMissingPath(path string) string {
 
 // bytesReader returns a reader for a byte slice.
 func reader(b []byte) *bytes.Reader { return bytes.NewReader(b) }
-
-// WriteManifestBackup writes the manifest to a backup path.
-func WriteManifestBackup(homeDir, harnessName string, scope Scope, manifest Manifest, cwd ...string) (string, error) {
-	artifactDir := homePathForScope(homeDir, harnessName, scope, cwd...)
-	if err := os.MkdirAll(artifactDir, 0755); err != nil {
-		return "", fmt.Errorf("create backup dir: %w", err)
-	}
-
-	backupPath := filepath.Join(artifactDir, "manifest."+time.Now().Format("20060102-150405")+".json")
-	data, err := json.MarshalIndent(manifest, "", "  ")
-	if err != nil {
-		return "", fmt.Errorf("marshal backup: %w", err)
-	}
-	if err := writeAtomic(backupPath, string(data), 0644); err != nil {
-		return "", fmt.Errorf("write backup: %w", err)
-	}
-	return backupPath, nil
-}

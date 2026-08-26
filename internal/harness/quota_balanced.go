@@ -230,9 +230,3 @@ func newQuotaSelector(strategy string) quotaSelector {
 		return &firstMatchSelector{}
 	}
 }
-
-// newQuotaSelectorWithProvider creates a quota-balanced selector with an
-// explicit provider (for testing or alternative data sources).
-func newQuotaSelectorWithProvider(provider QuotaAxiProvider) quotaSelector {
-	return &quotaBalancedSelector{provider: provider}
-}

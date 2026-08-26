@@ -4,6 +4,8 @@ package bootstrap
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -1191,6 +1193,20 @@ func TestGrokHooksContent(t *testing.T) {
 			}
 		})
 	}
+}
+
+func GrokHooksDigest(munsuBinPath string, hookName string) string {
+	content := GrokHooksContent(munsuBinPath, hookName)
+	sum := sha256.Sum256([]byte(content))
+	return hex.EncodeToString(sum[:])
+}
+
+func GrokHooksTargetPath(scope Scope, cwd string, hookName string) (string, error) {
+	dir, err := grokHooksDir(scope, cwd)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, hookName), nil
 }
 
 // TestGrokHooksDigest verifies SHA-256 digests are computed correctly.

@@ -118,12 +118,29 @@ func (r *DeliverResult) Render() string {
 // mutation. State is one of OPEN, MERGED, CLOSED. BaseRef carries the branch
 // the provider would merge into right now, so the pre-mutation fence can
 // reject a base changed since the identity was captured.
+type DeliveryMergeability string
+
+const (
+	DeliveryMergeabilityUnknown DeliveryMergeability = "unknown"
+	DeliveryMergeabilityAllowed DeliveryMergeability = "allowed"
+	DeliveryMergeabilityDenied  DeliveryMergeability = "denied"
+)
+
 type DeliveryProviderObservation struct {
-	State     string `json:"state"`
-	HeadSHA   string `json:"head_sha,omitempty"`
-	MergedSHA string `json:"merged_sha,omitempty"`
-	BaseRef   string `json:"base_ref,omitempty"`
+	State        string               `json:"state"`
+	HeadSHA      string               `json:"head_sha,omitempty"`
+	MergedSHA    string               `json:"merged_sha,omitempty"`
+	BaseRef      string               `json:"base_ref,omitempty"`
+	Mergeability DeliveryMergeability `json:"mergeability"`
 }
+
+type DeliveryMergeRequest struct {
+	Method  string
+	HeadSHA string
+	BaseRef string
+}
+
+var ErrDeliveryMergeConstraintsUnsupported = errors.New("provider cannot atomically enforce mergeability, head, and base constraints")
 
 // DeliveryProvider is the one narrow typed Fleet capability consumed by
 // Deliver, with separate observation and irreversible mutation methods.
@@ -132,9 +149,12 @@ type DeliveryProviderObservation struct {
 // journal mutation authorization; there is no default provider, raw CLI
 // fallback, shell script, or alternate execution route.
 type DeliveryProvider interface {
-	// Merge executes the irreversible provider merge under the exact
-	// identity. It is called at most once per journal.
-	Merge(ident domain.DeliveryIdentity, method string) error
+	// ValidateMergeRequest checks whether the provider can enforce every
+	// authorization constraint atomically before mutation.
+	ValidateMergeRequest(ident domain.DeliveryIdentity, request DeliveryMergeRequest) error
+	// Merge executes the irreversible provider merge only for the expected
+	// observed head and base. It is called at most once per journal.
+	Merge(ident domain.DeliveryIdentity, request DeliveryMergeRequest) error
 	// Observe reads the current provider state under the exact identity.
 	Observe(ident domain.DeliveryIdentity) (DeliveryProviderObservation, error)
 }
@@ -467,6 +487,13 @@ func resumeDeliveryJournal(h *home.Home, lk *home.Lock, c *taskauthority.Canonic
 		case "CLOSED":
 			return pinAndCommitOutcome(h, lk, c, journal, deriveDeliveryOutcome(journal, obs, nil, nil))
 		case "OPEN":
+			if err := verifyProviderMergeability(obs); err != nil {
+				return failClosedDelivery(h, lk, c, journal, err)
+			}
+			request := DeliveryMergeRequest{Method: journal.Method, HeadSHA: journal.Identity.HeadSHA, BaseRef: journal.Identity.BaseRef}
+			if err := provider.ValidateMergeRequest(journal.Identity, request); err != nil {
+				return failClosedDelivery(h, lk, c, journal, err)
+			}
 			// Persist the irreversible-mutation boundary, then execute the
 			// provider merge exactly once.
 			if err := transitionDeliveryJournal(h, lk, journal, "mutating", func(j *deliveryJournal) {
@@ -491,9 +518,17 @@ func resumeDeliveryJournal(h *home.Home, lk *home.Lock, c *taskauthority.Canonic
 		}
 		var mergeErr error
 		if !alreadyMutating {
-			mergeErr = provider.Merge(journal.Identity, journal.Method)
+			request := DeliveryMergeRequest{Method: journal.Method, HeadSHA: journal.Identity.HeadSHA, BaseRef: journal.Identity.BaseRef}
+			if err := provider.ValidateMergeRequest(journal.Identity, request); err != nil {
+				mergeErr = err
+			} else {
+				mergeErr = provider.Merge(journal.Identity, request)
+			}
 		}
 		obs, obsErr := provider.Observe(journal.Identity)
+		if obsErr == nil {
+			obsErr = verifyProviderHead(journal, obs)
+		}
 		return pinAndCommitOutcome(h, lk, c, journal, deriveDeliveryOutcome(journal, obs, obsErr, mergeErr))
 	}
 
@@ -575,17 +610,32 @@ func verifyDeliveryCurrency(c *taskauthority.Canonical, journal *deliveryJournal
 // change since capture). The base ref matters because the provider merge
 // lands in the PR's CURRENT base, not the authorized one: a base changed
 // inside the capture-to-merge window would land the irreversible mutation on
-// a branch that was never authorized. Merged observations carry consumed
-// evidence and are not re-checked; empty provider fields are unverifiable and
-// accepted (the classifier still fails closed on unknown states).
-func verifyProviderHead(journal *deliveryJournal, obs DeliveryProviderObservation) error {
-	if obs.State == "MERGED" {
+// a branch that was never authorized. Every terminal observation must carry
+// the consumed head and base evidence.
+func verifyProviderMergeability(obs DeliveryProviderObservation) error {
+	if obs.State == "MERGED" || obs.Mergeability == DeliveryMergeabilityAllowed {
 		return nil
 	}
-	if obs.HeadSHA != "" && obs.HeadSHA != journal.Identity.HeadSHA {
+	if obs.Mergeability == DeliveryMergeabilityDenied {
+		return fmt.Errorf("provider reports delivery is not mergeable")
+	}
+	return fmt.Errorf("provider mergeability evidence is missing or unknown")
+}
+
+func verifyProviderHead(journal *deliveryJournal, obs DeliveryProviderObservation) error {
+	if obs.State == "MERGED" && !validGitObjectID(obs.MergedSHA) {
+		return fmt.Errorf("provider observation is missing or has invalid merge commit evidence")
+	}
+	if obs.HeadSHA == "" {
+		return fmt.Errorf("provider observation is missing head evidence")
+	}
+	if obs.HeadSHA != journal.Identity.HeadSHA {
 		return fmt.Errorf("provider head changed since capture: provider reports %q but the delivery identity pins %q", obs.HeadSHA, journal.Identity.HeadSHA)
 	}
-	if obs.BaseRef != "" && obs.BaseRef != journal.Identity.BaseRef {
+	if obs.BaseRef == "" {
+		return fmt.Errorf("provider observation is missing base ref evidence")
+	}
+	if obs.BaseRef != journal.Identity.BaseRef {
 		return fmt.Errorf("provider base ref changed since capture: provider reports %q but the delivery identity pins %q", obs.BaseRef, journal.Identity.BaseRef)
 	}
 	return nil
@@ -684,6 +734,9 @@ func commitPinnedOutcome(h *home.Home, lk *home.Lock, c *taskauthority.Canonical
 	if journal.OutcomeStatus == "" {
 		return nil, fmt.Errorf("delivery journal %s has no pinned outcome", journal.ID)
 	}
+	if journal.OutcomeStatus == taskauthority.DeliveryOutcomeCompleted && !validGitObjectID(journal.OutcomeMergedSHA) {
+		return nil, fmt.Errorf("delivery journal %s has missing or invalid merge commit evidence", journal.ID)
+	}
 	tid, err := domain.NewTaskID(journal.TaskID)
 	if err != nil {
 		return nil, err
@@ -724,6 +777,9 @@ func commitPinnedOutcome(h *home.Home, lk *home.Lock, c *taskauthority.Canonical
 		}
 	}
 	out := res.Outcome
+	if out.Status == taskauthority.DeliveryOutcomeCompleted && !validGitObjectID(out.MergedSHA) {
+		return nil, fmt.Errorf("committed delivery outcome has missing or invalid merge commit evidence")
+	}
 	deliveryCrashHook("committed")
 	// A retryable outcome releases the authorization so the canonical retry
 	// cycle (revoke -> re-authorize) may follow.

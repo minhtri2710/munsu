@@ -36,8 +36,9 @@ restoring a guard; it would be building an unbuilt feature.
 
 **1. munsu does not own the invariant "a merged PR closes its issue."** That
 invariant has two owners, both outside munsu: the PR body author writes the closing
-keyword, and GitHub enforces it at merge. munsu never composes the merge commit
-message (`MergePR` passes neither `--body` nor `--subject`) and does not create PRs.
+keyword, and GitHub enforces it at merge. munsu's typed delivery request carries only
+the merge method and pinned head/base refs; it neither composes a merge commit message
+nor creates PRs.
 
 **2. The delivery invariant munsu does own is the canonical Delivery Authorization** —
 current generation, working phase, owner present, correct worktree/endpoint binding,

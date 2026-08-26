@@ -197,16 +197,16 @@ func (pr PR) CanMerge() bool {
 		return false
 	}
 	for _, check := range pr.Checks {
-		if check.Status == CheckFailed {
+		if check.Status != CheckPassed {
 			return false
 		}
 	}
 	hasApproval := false
 	for _, review := range pr.Reviews {
-		switch review.State {
-		case ReviewChangesRequested:
+		switch {
+		case review.State == ReviewChangesRequested:
 			return false
-		case ReviewApproved:
+		case review.IsApproving():
 			hasApproval = true
 		}
 	}

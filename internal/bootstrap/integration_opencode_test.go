@@ -1,12 +1,43 @@
 package bootstrap
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+
 	"github.com/minhtri2710/munsu/internal/testutil"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func OpencodePluginsContent(munsuBinPath, pluginName string) string {
+	return opencodePluginContent(munsuBinPath, pluginName)
+}
+
+func OpencodePluginsDigest(munsuBinPath, pluginName string) string {
+	content := OpencodePluginsContent(munsuBinPath, pluginName)
+	sum := sha256.Sum256([]byte(content))
+	return hex.EncodeToString(sum[:])
+}
+
+func OpencodePluginsContentDigest(munsuBinPath string) string {
+	var all []string
+	for _, name := range opencodePluginFileNames {
+		all = append(all, OpencodePluginsContent(munsuBinPath, name))
+	}
+	combined := strings.Join(all, "\x00")
+	sum := sha256.Sum256([]byte(combined))
+	return hex.EncodeToString(sum[:])
+}
+
+func OpencodePluginsTargetPath(scope Scope, cwd, pluginName string) (string, error) {
+	dir, err := opencodePluginsDir(scope, cwd)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, pluginName), nil
+}
 
 // TestOpencodePluginsContent verifies all 4 plugin files generate valid JS with munsu commands.
 func TestOpencodePluginsContent(t *testing.T) {

@@ -151,7 +151,7 @@ munsu watch-arm
 ### Deliver
 
 ```sh
-munsu delivery pr-merge <task-id> <pr-url>      # merge PR
+munsu delivery pr-merge <task-id> <pr-url>      # OPEN mutation currently fails closed for GitHub/GitLab; matching terminal states reconcile
 ```
 
 ### Teardown

@@ -49,12 +49,6 @@ func confirmOverwrite(name string) bool {
 	}
 }
 
-// installAllSkills writes every embedded skill under dest.
-// skipNames is the set of skill names (top-level dir) to leave untouched.
-func installAllSkills(dest string, skipNames map[string]bool) ([]string, error) {
-	return installSkills(dest, "", skipNames)
-}
-
 // installOneSkill writes a single embedded skill (by top-level dir name) under dest.
 // If the skill already exists and overwrite is false, it is skipped.
 func installOneSkill(dest, name string, overwrite bool) (bool, error) {

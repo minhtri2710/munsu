@@ -1046,6 +1046,8 @@ func TestGuardBuildDeliverRequestRefusesATaskWithNoBoundWorktree(t *testing.T) {
 		return &fleet.ProviderSnapshot{
 			Provider: "github", Owner: "o", Repo: "r", Number: 1, URL: prURL,
 			BaseRef: "main", HeadRef: "feature", HeadSHA: "abc", State: "OPEN",
+			Checks:     []domain.CheckRun{{Status: domain.CheckPassed}},
+			Reviews:    []domain.Review{{State: domain.ReviewApproved}},
 			ObservedAt: "2026-01-01T00:00:00Z",
 		}, nil
 	}

@@ -1,6 +1,6 @@
 # 0002. Complete the Deep-Module Clean Break and Durable Fleet Lifecycle
 
-* **Status:** Accepted and authorized for continuous implementation and full migration; no formal architecture gates
+* **Status:** Partially superseded by ADR-0004, ADR-0007, ADR-0008, and ADR-0015; sections 4–6 below are historical design decisions, not the current runtime contract
 * **Date:** 2026-07-26
 * **Supersedes:** ADR-0001 implementation details
 * **Reaffirms:** Four core modules plus five infrastructure leaf modules
@@ -82,7 +82,11 @@ Task operations are:
 
 Resilient Backend Fallback occurs only while resolving a new endpoint. Resolution returns a typed result including the resolved name and `IsFallback`. A task already bound to a backend fails closed if that backend cannot be resolved. Runtime operations never switch adapters implicitly.
 
-### 4. Uplink Report lifecycle
+### 4. Uplink Report lifecycle (historical, superseded)
+
+This section records an accepted design that was never given a production owner. It is retained to make the decision and its removal cost explicit, but it is not a live contract. The implementation instead owns report durability through `internal/orchestrator/uplink_uplink.go`, receiver envelopes and pending records, and terminal handoff closure through `internal/orchestrator/wakedelivery_deliver.go` (ADR-0015). Wiring the four-state model would require introducing a new authoritative journal, transition owner, and migration boundary; deleting the dormant validator removes that previously accepted contract rather than silently pretending it was implemented.
+
+The historical design began:
 
 The canonical Uplink journal lives in the receiver's durable home. An obligation is identified by:
 
@@ -112,13 +116,15 @@ The journal uses canonical versioned JSON with a checksum. Writes use the strong
 
 Only capability-verified local filesystems are supported. Unsupported filesystems and network shares fail preflight. Corrupt records quarantine only the affected obligation and fail closed.
 
-### 5. State machines
+### 5. State machines (historical, superseded)
 
-All transitions are compare-and-swap operations on the current generation. An edge not listed below returns typed `Conflict` with `RetryNever`.
+The following tables are historical design material from the superseded contract. They must not be implemented or treated as current runtime state. The live task phase contract is `queued | blocked | working | done | resolved | retired` in `internal/taskauthority`; attention and `Retiring` were never implemented as authoritative runtime dimensions.
+
+All transitions in the historical design were compare-and-swap operations on the current generation. An edge not listed below returned typed `Conflict` with `RetryNever`.
 
 Lifecycle phase and operator attention are separate durable dimensions. Attention is `None | NeedsOperator | Quarantined`. Failure is recorded as a typed cause/outcome; it is not encoded by combining phase and attention into one state name.
 
-#### Uplink Obligation
+#### Uplink Obligation (removed design; no current implementation)
 
 | From | To | Authority | Guard |
 |---|---|---|---|
@@ -221,7 +227,7 @@ Delivery adapters return normalized evidence rather than business verdicts. Evid
 
 `PrepareDelivery` validates the task/worktree generation, invokes the delivery adapter, captures immutable evidence, and records polling requirements. It does not merge or retire.
 
-`RetireTask` requires valid delivery evidence, closed Uplink and decision obligations, matching resource leases, and a journaled retire intent. It fences new mutation, releases the endpoint, releases the worktree, verifies no owned resources remain, marks the task Retired, then completes the backlog projection. Cleanup failure leaves phase `Retiring` with attention `NeedsOperator`; `Retired` is impossible until resource disposal is verified.
+`RetireTask` requires valid delivery evidence, closed report and decision obligations, matching resource leases, and a journaled retire intent. It fences new mutation, releases the endpoint, releases the worktree, verifies no owned resources remain, marks the task `retired`, then completes the backlog projection. The historical `Retiring + NeedsOperator` sentence was wrong for the shipped tree: neither that phase nor the `Attention` type had a runtime owner. Current cleanup failure remains an operation error or partial cleanup state owned by Fleet and Task Authority; it is not encoded as a deleted phase/attention pair.
 
 ### 7. Wake and watcher semantics
 
@@ -252,7 +258,7 @@ Errors have typed categories and wrapped causes:
 * `Unsafe`
 * `Internal`
 
-Each failure carries `RetryNever`, `RetryLater`, or `RetryAfter(duration)`. Partial successes such as `Queued`, `Fallback`, and `AlreadyAcked` are typed outcomes, not warning errors. Aggregate migration may succeed with a typed quarantine summary, but an operation targeting a corrupt obligation returns `CorruptState` and fails closed.
+Each failure carries a retry disposition whose current runtime forms are never, later, or an explicit after-duration value. Partial successes such as `Queued`, `Fallback`, and `AlreadyAcked` are typed outcomes, not warning errors. Aggregate migration may succeed with a typed quarantine summary, but an operation targeting a corrupt obligation returns `CorruptState` and fails closed.
 
 Durable mutations emit typed audit events containing identifiers, generation, Actor Rank, task/key, phase, outcome, timestamps, payload hash, and typed error evidence. Raw prompts and report payloads are not copied into the audit stream. Completed history is compacted into versioned checkpoints plus a bounded append-only tail. Quarantine and migration evidence remain until explicit operator acknowledgement.
 

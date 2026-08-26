@@ -65,11 +65,8 @@ internal/fleet/delivery_amend.go	fetchGitHubProviderSnapshot	1	raw.HeadRefName =
 internal/fleet/delivery_amend.go	fetchGitHubProviderSnapshot	1	raw.HeadRefOid == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_amend.go	fetchGitHubProviderSnapshot	1	raw.State == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_amend.go	fetchGitLabProviderSnapshot	1	raw.State == "" || raw.SHA == "" || raw.SourceBranch == "" || raw.TargetBranch == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/delivery_github.go	classifyGitHubObservation	1	obs.State == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_github.go	ghAxiClient.CaptureIdentity	1	values["headRefOid"] == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/delivery_github.go	githubDeliveryProvider.Merge	1	p.client == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_github.go	githubDeliveryProvider.Observe	1	p.client == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/delivery_gitlab.go	gitlabDeliveryProvider.Merge	1	p.client == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_gitlab.go	gitlabDeliveryProvider.Observe	1	p.client == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_gitlab.go	glabClient.CaptureIdentity	1	result.SHA == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_gitlab.go	glabClient.CaptureIdentity	1	result.SourceBranch == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged

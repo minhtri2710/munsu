@@ -39,7 +39,7 @@ Task resolution collects all candidate owners. It auto-selects only one proven c
 
 ### 3. Lifecycle phases and projections
 
-The canonical pre-merge phase is `delivered`: a PR/MR is open, its immutable identity and head SHA match the task, and required checks are terminal and green. Merge approval is not required for `delivered`.
+The canonical pre-merge phase is `delivered`: a PR/MR is open, its immutable identity and head SHA match the task, and the provider supplies effective approval and terminal green checks. Provider-boundary enforcement and terminal reconciliation follow ADR-0010; adapters fail closed when the exact authorized merge conditions cannot be enforced.
 
 A Ship Soldier cannot report `resolved` as a substitute for delivery. The Soldier supplies evidence; the assigned Captain or General runs idempotent `PrepareDelivery`, preserves the child Task ID with stable obligation key `delivery`, and transitions the aggregate. Scout completion uses `done`; its parent projects `ReportReady` where applicable.
 
