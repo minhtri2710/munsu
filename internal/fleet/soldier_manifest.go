@@ -69,6 +69,29 @@ func expectedManifestEntryPaths() map[string]bool {
 	}
 }
 
+func validateManifestPath(relPath string) error {
+	if relPath == "" {
+		return fmt.Errorf("manifest entry with empty path")
+	}
+	if strings.ContainsRune(relPath, 0) {
+		return fmt.Errorf("manifest entry path contains NUL byte")
+	}
+	if strings.Contains(relPath, "\\") {
+		return fmt.Errorf("manifest entry path contains backslash: %q", relPath)
+	}
+	if path.IsAbs(relPath) || filepath.IsAbs(relPath) || (len(relPath) >= 2 && relPath[1] == ':') {
+		return fmt.Errorf("manifest entry with absolute or volume-qualified path: %q", relPath)
+	}
+	cleaned := path.Clean(relPath)
+	if cleaned != relPath {
+		return fmt.Errorf("manifest entry path %q is not canonical (use %q)", relPath, cleaned)
+	}
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return fmt.Errorf("manifest entry path contains parent traversal: %q", relPath)
+	}
+	return nil
+}
+
 // ValidateManifest checks that the manifest is structurally valid and
 // contains exactly the expected runtime-owned artifact entries.
 // Callers should pass the manifest as read from disk (before any modification).
@@ -88,38 +111,8 @@ func ValidateManifest(manifest *LaunchManifest) error {
 	expectedFound := make(map[string]bool)
 
 	for _, entry := range manifest.Artifacts {
-		// Non-empty path.
-		if entry.Path == "" {
-			return fmt.Errorf("manifest entry with empty path")
-		}
-
-		// Reject NUL bytes.
-		if strings.ContainsRune(entry.Path, 0) {
-			return fmt.Errorf("manifest entry path contains NUL byte")
-		}
-
-		// Reject Windows backslashes.
-		if strings.Contains(entry.Path, "\\") {
-			return fmt.Errorf("manifest entry path contains backslash: %q", entry.Path)
-		}
-
-		// Reject absolute paths.
-		if path.IsAbs(entry.Path) || filepath.IsAbs(entry.Path) {
-			return fmt.Errorf("manifest entry with absolute path: %q", entry.Path)
-		}
-
-		// Reject volume-qualified paths (e.g., C:).
-		if len(entry.Path) >= 2 && entry.Path[1] == ':' {
-			return fmt.Errorf("manifest entry with volume-qualified path: %q", entry.Path)
-		}
-
-		// Reject "." and ".." and parent components.
-		cleaned := path.Clean(entry.Path)
-		if cleaned != entry.Path {
-			return fmt.Errorf("manifest entry path %q is not canonical (use %q)", entry.Path, cleaned)
-		}
-		if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "..") || strings.Contains(cleaned, "/..") || cleaned == ".." {
-			return fmt.Errorf("manifest entry path contains parent traversal: %q", entry.Path)
+		if err := validateManifestPath(entry.Path); err != nil {
+			return err
 		}
 
 		// Reject manifest self-entry.
@@ -309,16 +302,8 @@ func BuildManifest(entries []ManifestEntry) *LaunchManifest {
 // ManifestEntryForFile builds a ManifestEntry for a file at the given path
 // relative to worktreeRoot, computing its SHA-256 digest.
 func ManifestEntryForFile(worktreeRoot, relPath string, policy DisposalPolicy) (ManifestEntry, error) {
-	// Reject unsafe paths.
-	if path.IsAbs(relPath) || filepath.IsAbs(relPath) {
-		return ManifestEntry{}, fmt.Errorf("unsafe manifest path: %q is absolute", relPath)
-	}
-	cleaned := path.Clean(relPath)
-	if cleaned != relPath {
-		return ManifestEntry{}, fmt.Errorf("unsafe manifest path: %q is not canonical (use %q)", relPath, cleaned)
-	}
-	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "..") || strings.Contains(cleaned, "/..") {
-		return ManifestEntry{}, fmt.Errorf("unsafe manifest path: %q contains parent traversal", relPath)
+	if err := validateManifestPath(relPath); err != nil {
+		return ManifestEntry{}, fmt.Errorf("unsafe manifest path: %w", err)
 	}
 
 	fullPath := filepath.Join(worktreeRoot, relPath)

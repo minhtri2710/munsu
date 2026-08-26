@@ -194,17 +194,21 @@ func TestManifest_EntryForFile(t *testing.T) {
 
 func TestManifest_EntryForFile_UnsafePath(t *testing.T) {
 	tmp := t.TempDir()
-	_, err := ManifestEntryForFile(tmp, "../etc/passwd", DisposalPolicyCleanable)
-	if err == nil {
-		t.Error("expected error for unsafe path with ..")
-	}
-	_, err = ManifestEntryForFile(tmp, "/etc/passwd", DisposalPolicyCleanable)
-	if err == nil {
-		t.Error("expected error for absolute path")
-	}
-	_, err = ManifestEntryForFile(tmp, "./foo", DisposalPolicyCleanable)
-	if err == nil {
-		t.Error("expected error for non-canonical path ./foo")
+	for _, test := range []struct {
+		relPath string
+		want    string
+	}{
+		{relPath: "../etc/passwd", want: "parent traversal"},
+		{relPath: "/etc/passwd", want: "absolute or volume-qualified"},
+		{relPath: "./foo", want: "not canonical"},
+		{relPath: "dir\\file", want: "backslash"},
+		{relPath: "C:foo", want: "absolute or volume-qualified"},
+		{relPath: "C:/foo", want: "absolute or volume-qualified"},
+	} {
+		_, err := ManifestEntryForFile(tmp, test.relPath, DisposalPolicyCleanable)
+		if err == nil || !strings.Contains(err.Error(), test.want) {
+			t.Errorf("ManifestEntryForFile(%q) error = %v, want substring %q", test.relPath, err, test.want)
+		}
 	}
 }
 

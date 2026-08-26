@@ -14,7 +14,7 @@ func joinContained(root, key string) (string, error) {
 	if key == "" {
 		return "", ErrEmptyKey
 	}
-	if strings.HasPrefix(key, "/") || strings.HasPrefix(key, "\\") || path.IsAbs(key) || filepath.IsAbs(key) {
+	if strings.HasPrefix(key, "/") || strings.HasPrefix(key, "\\") || path.IsAbs(key) || filepath.IsAbs(key) || (len(key) >= 2 && key[1] == ':') {
 		return "", ErrAbsoluteKey
 	}
 	if strings.Contains(key, "\\") {

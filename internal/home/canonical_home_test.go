@@ -273,6 +273,8 @@ func TestJoinContainedLogicalKeys(t *testing.T) {
 		"/a/b/c",
 		"\\abs",
 		"\\a\\b",
+		"C:foo",
+		"C:/foo",
 	} {
 		if _, err := joinContained(root, key); !errors.Is(err, ErrAbsoluteKey) {
 			t.Errorf("joinContained(%q) = %v, want ErrAbsoluteKey", key, err)
