@@ -80,15 +80,62 @@ func shellWriteTargetsUnder(mode backslashMode, checkPath, command string) []str
 		}
 		if segment[0].text == "cd" && !segment[0].redirects {
 			if len(segment) > 1 && !segment[1].redirects {
-				currentPath = resolveSafetyPath(currentPath, segment[1].text)
+				currentPath = resolveShellWritePath(currentPath, segment[1].text)
 			}
 			continue
 		}
 		for _, target := range segmentWriteTargets(segment) {
-			targets = append(targets, resolveSafetyPath(currentPath, target))
+			if resolved := resolveShellWritePath(currentPath, target); resolved != "" {
+				targets = append(targets, resolved)
+			}
 		}
 	}
 	return targets
+}
+
+// resolveShellWritePath resolves a write target against the directory the
+// command runs in, under the Windows path spellings the shell channel must
+// classify (#664). It is shell-specific on purpose: the native write channel's
+// resolver (resolveSafetyPath, in git_worktree_safety.go) is the #668 owner and
+// must not grow this logic, so the dual-reading guard stays the single owner of
+// its own comparison (ADR-0014 §1).
+//
+// Three cases sit beyond the plain relative join:
+//
+//   - Volume-less rooted (\foo): rooted at the current volume's root, with no
+//     volume in the target. It is anchored to the volume of the base — the
+//     session's cwd — so \foo with a C: cwd becomes C:\foo.
+//   - Same-volume drive-relative (C:foo): relative to the current directory on
+//     that drive. The session's cwd is the base, so the relative part is joined
+//     to it.
+//   - Different-volume drive-relative (D:foo) when the base is on C:: the
+//     per-drive current directory of D cannot be reconstructed here, so the
+//     candidate is dropped rather than guessed. Dropping fails closed — a path
+//     on another volume can never name the bound primary, which lives on the
+//     base's volume, so nothing that must be refused is lost, and no malformed
+//     C:\base\D:foo candidate is emitted for the classifier to misread.
+func resolveShellWritePath(base, path string) string {
+	if filepath.IsAbs(path) {
+		return path
+	}
+	pathVolume := filepath.VolumeName(path)
+	baseVolume := filepath.VolumeName(base)
+	if pathVolume == "" && baseVolume != "" && strings.HasPrefix(path, string(filepath.Separator)) {
+		// Volume-less rooted: anchor to the base volume's root.
+		rooted := baseVolume + path
+		if filepath.IsAbs(rooted) {
+			return rooted
+		}
+	}
+	if pathVolume != "" {
+		if pathVolume != baseVolume {
+			// Different volume: the per-drive cwd is unknowable. Fail closed.
+			return ""
+		}
+		// Same volume: resolve the relative part against the base directory.
+		return filepath.Join(base, strings.TrimPrefix(path, pathVolume))
+	}
+	return filepath.Join(base, path)
 }
 
 // evaluateWriteTargets refuses the first target that lands in the shared

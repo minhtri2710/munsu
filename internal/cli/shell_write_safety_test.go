@@ -100,6 +100,80 @@ func TestShellWriteRefusedByVolumeLessRootedWindowsTargetIntoBoundPrimary(t *tes
 	assertShapes(t, false, worktree, "echo ok > "+unrelatedRooted, "")
 }
 
+// TestShellWriteRefusedByDriveRelativeSameVolumeWindowsTargetIntoBoundPrimary
+// covers the same-volume drive-relative spelling (C:foo): it is relative to the
+// current directory on that drive, which is the session's cwd (the base), so it
+// must reach the bound primary and be refused (#664 v2).
+func TestShellWriteRefusedByDriveRelativeSameVolumeWindowsTargetIntoBoundPrimary(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("drive-relative paths are Windows-specific")
+	}
+	primary, worktree := boundTaskFixture(t, "ship-shell-drv-same")
+	target := filepath.Join(primary, "README.md")
+	rel, err := filepath.Rel(worktree, target)
+	if err != nil {
+		t.Fatalf("Rel: %v", err)
+	}
+	// C: + the relative path from the cwd (worktree) to the target.
+	driveRelative := "C:" + rel
+
+	assertShapes(t, true, worktree, "echo pwned > "+driveRelative, "")
+}
+
+// TestShellWriteDriveRelativeDifferentVolumeFailClosedWindows pins the
+// fail-closed choice for a different-volume drive-relative path (D:foo while the
+// cwd is on C:): the per-drive current directory of D cannot be reconstructed,
+// so no guessed or malformed candidate (such as C:\\base\\D:foo) is emitted,
+// and the write is allowed because a path on another volume can never name the
+// bound primary (#664 v2).
+func TestShellWriteDriveRelativeDifferentVolumeFailClosedWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("drive-relative paths are Windows-specific")
+	}
+	_, worktree := boundTaskFixture(t, "ship-shell-drv-amb")
+	command := "echo pwned > D:shared\\README.md"
+
+	for _, candidate := range shellWriteTargets(worktree, command) {
+		if strings.Contains(candidate, "\\D:") {
+			t.Errorf("different-volume drive-relative emitted a malformed candidate: %q", candidate)
+		}
+	}
+	// The write is allowed: a different-volume path can never be the bound
+	// primary, so nothing that must be refused is lost by failing closed.
+	assertShapes(t, false, worktree, command, "")
+}
+
+// TestResolveShellWritePathWindows is the unit-level pin of the shell-specific
+// resolver across every Windows spelling it must classify: volume-less rooted,
+// same-volume drive-relative, different-volume drive-relative (fail closed),
+// absolute, UNC and plain relative (#664 v2).
+func TestResolveShellWritePathWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows path semantics required")
+	}
+	const base = `C:\worktree`
+	cases := []struct {
+		path string
+		want string
+	}{
+		{`\rooted`, `C:\rooted`},
+		{`C:rel`, `C:\worktree\rel`},
+		{`C:rel\sub`, `C:\worktree\rel\sub`},
+		{`C:\abs`, `C:\abs`},
+		{`\\server\share`, `\\server\share`},
+		{`rel`, `C:\worktree\rel`},
+	}
+	for _, tc := range cases {
+		if got := resolveShellWritePath(base, tc.path); got != tc.want {
+			t.Errorf("resolveShellWritePath(%q,%q) = %q, want %q", base, tc.path, got, tc.want)
+		}
+	}
+	// Different-volume drive-relative: fail closed, emit nothing.
+	if got := resolveShellWritePath(base, `D:ambiguous`); got != "" {
+		t.Errorf("resolveShellWritePath(%q,%q) = %q, want empty (fail closed)", base, `D:ambiguous`, got)
+	}
+}
+
 func TestShellWriteRefusedByAbsoluteTargetIntoBoundPrimary(t *testing.T) {
 	primary, worktree := boundTaskFixture(t, "ship-shell-target")
 
@@ -405,13 +479,16 @@ func TestShellWriteTargetExtraction(t *testing.T) {
 		// yielding one on a platform whose shell would not. Both appear here on
 		// every OS, which is the whole of the guarantee: whichever shell runs
 		// the command, the path it actually opens was classified.
+		// The Windows reading resolves a volume-less rooted target to the base
+		// volume's root; the POSIX reading dissolves the backslashes. Both are
+		// asserted through the resolver so the row holds on every OS (#664 v2).
 		{"echo x > " + `\shared\README.md`, []string{
 			filepath.Join(base, "sharedREADME.md"),
-			filepath.Join(base, `\shared\README.md`),
+			resolveShellWritePath(base, `\shared\README.md`),
 		}},
 		{"rm -rf " + `\shared\README.md`, []string{
 			filepath.Join(base, "sharedREADME.md"),
-			filepath.Join(base, `\shared\README.md`),
+			resolveShellWritePath(base, `\shared\README.md`),
 		}},
 		// The two readings collapse when there is no backslash to read, so a
 		// command that never mentions one produces exactly one target and no
