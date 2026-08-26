@@ -48,8 +48,16 @@ type shellToken struct {
 // named write verb's arguments are targets at all, so the candidate the second
 // reading adds can only ever be one more write path, never a read.
 func shellWriteTargets(checkPath, command string) ([]string, bool) {
-	targets, ambiguous := shellWriteTargetsUnder(backslashEscapes, checkPath, command)
-	literalTargets, literalAmbiguous := shellWriteTargetsUnder(backslashLiteral, checkPath, command)
+	// Heredoc syntax is POSIX grammar. Strip bodies once with POSIX delimiter
+	// rules, then tokenize the remaining command under both backslash readings,
+	// so the literal (Windows) reading differs from the POSIX reading only in how
+	// it reads path backslashes — never in where a heredoc ends. Stripping once
+	// keeps <<\EOF / <<-\END terminating at the bare delimiter on every OS and
+	// stops the literal reading from swallowing a write named after the
+	// terminator.
+	stripped := stripHeredocBodies(command)
+	targets, ambiguous := shellWriteTargetsUnder(backslashEscapes, checkPath, stripped)
+	literalTargets, literalAmbiguous := shellWriteTargetsUnder(backslashLiteral, checkPath, stripped)
 	ambiguous = ambiguous || literalAmbiguous
 	for _, target := range literalTargets {
 		if !slices.Contains(targets, target) {
@@ -153,17 +161,19 @@ func evaluateWriteTargets(targets []string) (bool, string) {
 	return false, ""
 }
 
-// shellSegments splits a command at unquoted `;`, `&`, `|` and newline, and
-// tokenizes each segment. It mirrors splitSafetySegments + splitSafetyWords,
-// but keeps the two facts those drop: whether a `>` was quoted, and whether a
-// word carries shell expansion.
+// shellSegments tokenizes command — already stripped of heredoc bodies — at
+// unquoted `;`, `&`, `|` and newline, into segments. It mirrors
+// splitSafetySegments + splitSafetyWords, but keeps the two facts those drop:
+// whether a `>` was quoted, and whether a word carries shell expansion.
 //
-// Heredoc bodies are removed before splitting: a heredoc body is content, not a
-// command line, and the same "one payload, one channel" rule BEO-62 settled
-// applies to it. Tokenizing it refused a legitimate write whenever the content
-// happened to look like a command — this file's own ADR is such a document.
+// Heredoc stripping is the caller's job and is done once, with POSIX delimiter
+// rules, before either backslash reading tokenizes: a heredoc body is content,
+// not a command line, and the same "one payload, one channel" rule BEO-62
+// settled applies to it. Tokenizing it refused a legitimate write whenever the
+// content happened to look like a command — this file's own ADR is such a
+// document.
 func shellSegments(mode backslashMode, command string) [][]shellToken {
-	return tokenizeSegments(mode, stripHeredocBodies(mode, command))
+	return tokenizeSegments(mode, command)
 }
 
 func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
@@ -246,14 +256,16 @@ type heredocSpec struct {
 }
 
 // stripHeredocBodies removes every heredoc body from a command line, leaving the
-// command words around it intact.
+// command words around it intact. Heredoc syntax is POSIX grammar, so this runs
+// once with POSIX delimiter rules; the dual backslash readings tokenize what
+// remains and only differ in how they read path backslashes.
 //
 // Without this, each body line was split at its newline and tokenized as a
 // command of its own: a `rm -rf <shared>/...` example inside a document became a
 // real write target, and a `cd <shared>` line inside a document moved the
 // resolution base for the genuine commands after the terminator. Both refused
 // writes that must go through, which is the one failure this guard cannot have.
-func stripHeredocBodies(mode backslashMode, command string) string {
+func stripHeredocBodies(command string) string {
 	runes := []rune(command)
 	var out strings.Builder
 	var pending []heredocSpec
@@ -267,7 +279,10 @@ func stripHeredocBodies(mode backslashMode, command string) string {
 			escaped = false
 			continue
 		}
-		if r == '\\' && mode == backslashEscapes {
+		if r == '\\' {
+			// POSIX heredoc scanning: a backslash quotes the next character. The
+			// surviving command text keeps the backslash so the dual path readings
+			// see it; stripping is POSIX-only and runs once before they tokenize.
 			out.WriteRune(r)
 			escaped = true
 			continue

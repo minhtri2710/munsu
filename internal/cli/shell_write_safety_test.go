@@ -530,8 +530,12 @@ func TestShellWriteHeredocBackslashDelimiterBothReadings(t *testing.T) {
 		"cat <<-\\END > notes.md\n\tharmless\n\tEND\necho pwned > " + target,
 	}
 	for _, command := range cases {
-		escapeTargets, escapeAmbiguous := shellWriteTargetsUnder(backslashEscapes, base, command)
-		literalTargets, literalAmbiguous := shellWriteTargetsUnder(backslashLiteral, base, command)
+		// Heredoc stripping is POSIX and runs once; the readings tokenize what
+		// remains, so this pins that the post-terminator write survives stripping
+		// and is classified under both readings (#664 v3).
+		stripped := stripHeredocBodies(command)
+		escapeTargets, escapeAmbiguous := shellWriteTargetsUnder(backslashEscapes, base, stripped)
+		literalTargets, literalAmbiguous := shellWriteTargetsUnder(backslashLiteral, base, stripped)
 		if escapeAmbiguous || literalAmbiguous {
 			t.Errorf("%q unexpectedly ambiguous", command)
 		}
@@ -544,6 +548,26 @@ func TestShellWriteHeredocBackslashDelimiterBothReadings(t *testing.T) {
 		if !slices.Contains(literalTargets, mustResolveShellWritePath(base, target)) {
 			t.Errorf("literal reading swallowed post-heredoc write: %q → %v", command, literalTargets)
 		}
+	}
+}
+
+// TestShellWriteHeredocBackslashDelimiterRefusesProtectedWindowsWrite exercises
+// the full decision flow: a protected Windows-path write named after a <<\EOF or
+// <<-\END terminator is refused on every harness shape, because heredoc bodies
+// are stripped once with POSIX rules before the dual readings tokenize (#664 v3).
+func TestShellWriteHeredocBackslashDelimiterRefusesProtectedWindowsWrite(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("protected Windows paths require Windows filepath semantics")
+	}
+	primary, worktree := boundTaskFixture(t, "ship-shell-heredoc-win")
+	target := filepath.Join(primary, "README.md") // C:\...\primary\README.md
+
+	cases := []string{
+		"cat <<\\EOF > notes.md\nharmless\nEOF\necho pwned > " + target,
+		"cat <<-\\END > notes.md\n\tharmless\n\tEND\necho pwned > " + target,
+	}
+	for _, command := range cases {
+		assertShapes(t, true, worktree, command, "")
 	}
 }
 
