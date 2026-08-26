@@ -156,7 +156,8 @@ func resolveBashCandidates(searchPath string, candidates []bashCandidate, names 
 }
 
 func completeBashDirs(searchPath, shell string, preferred []string, names ...string) ([]string, error) {
-	dirs := existingDirs(append([]string{filepath.Dir(shell)}, preferred...)...)
+	dirs := appendUnique(nil, existingDirs(preferred...)...)
+	dirs = appendUnique(dirs, filepath.Dir(shell))
 	lookupPath := strings.Join(append(append([]string{}, dirs...), filepath.SplitList(searchPath)...), string(os.PathListSeparator))
 	for _, name := range names {
 		path := findOnPath(lookupPath, name)

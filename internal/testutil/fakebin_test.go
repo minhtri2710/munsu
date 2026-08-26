@@ -95,32 +95,32 @@ func TestResolveBashShellSupportPaths(t *testing.T) {
 func TestResolveBashCandidatesSelectsCompleteEnvironment(t *testing.T) {
 	first := t.TempDir()
 	second := t.TempDir()
-	for _, name := range []string{"bash", "cat", "mkdir"} {
-		touch(t, filepath.Join(second, name))
-	}
 	firstShell := filepath.Join(first, "bash")
+	secondShell := WriteFakeExecutable(t, filepath.Join(second, "bash"), "#!/usr/bin/env sh\nexit 0\n")
+	cat := WriteFakeExecutable(t, filepath.Join(second, "cat"), "#!/usr/bin/env sh\nexit 0\n")
+	mkdir := WriteFakeExecutable(t, filepath.Join(second, "mkdir"), "#!/usr/bin/env sh\nexit 0\n")
 	if err := os.WriteFile(firstShell, nil, 0644); err != nil {
 		t.Fatal(err)
 	}
-	_, dirs, err := resolveBashCandidates(strings.Join([]string{first, second}, string(os.PathListSeparator)), []bashCandidate{{shell: firstShell}, {shell: filepath.Join(second, "bash")}}, "bash", "cat", "mkdir")
+	names := []string{filepath.Base(cat), filepath.Base(mkdir)}
+	shell, dirs, err := resolveBashCandidates(strings.Join([]string{first, second}, string(os.PathListSeparator)), []bashCandidate{{shell: firstShell}, {shell: secondShell}}, append([]string{filepath.Base(secondShell)}, names...)...)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(dirs) != 1 || dirs[0] != second {
-		t.Fatalf("support dirs = %q, want %q", dirs, []string{second})
+	if shell != secondShell || len(dirs) != 1 || dirs[0] != second {
+		t.Fatalf("shell=%q dirs=%q, want shell %q and dirs %q", shell, dirs, secondShell, []string{second})
 	}
 }
 
 func TestResolveBashCandidatesPreservesFirstError(t *testing.T) {
 	first := t.TempDir()
 	second := t.TempDir()
-	for _, dir := range []string{first, second} {
-		touch(t, filepath.Join(dir, "bash"))
-	}
-	_, _, err := resolveBashCandidates(strings.Join([]string{first, second}, string(os.PathListSeparator)), []bashCandidate{{shell: filepath.Join(first, "bash")}, {shell: filepath.Join(second, "bash")}}, "bash", "cat", "mkdir")
-	firstShell := filepath.Join(first, "bash")
-	secondShell := filepath.Join(second, "bash")
-	if !errors.Is(err, errors.ErrUnsupported) || !strings.Contains(err.Error(), "cat") || !strings.Contains(err.Error(), firstShell) || strings.Contains(err.Error(), secondShell) {
+	firstShell := WriteFakeExecutable(t, filepath.Join(first, "bash"), "#!/usr/bin/env sh\nexit 0\n")
+	secondShell := WriteFakeExecutable(t, filepath.Join(second, "bash"), "#!/usr/bin/env sh\nexit 0\n")
+	cat := filepath.Base(WriteFakeExecutable(t, filepath.Join(first, "cat"), "#!/usr/bin/env sh\nexit 0\n"))
+	mkdir := filepath.Base(filepath.Join(first, "mkdir"))
+	_, _, err := resolveBashCandidates(strings.Join([]string{first, second}, string(os.PathListSeparator)), []bashCandidate{{shell: firstShell}, {shell: secondShell}}, filepath.Base(firstShell), cat, mkdir)
+	if !errors.Is(err, errors.ErrUnsupported) || !strings.Contains(err.Error(), mkdir) || !strings.Contains(err.Error(), firstShell) || strings.Contains(err.Error(), secondShell) {
 		t.Fatalf("error = %v, want first actionable incomplete-layout error", err)
 	}
 }
@@ -144,18 +144,18 @@ func TestCompleteBashDirsRejectsMissingUtilities(t *testing.T) {
 
 	shellDir := t.TempDir()
 	utilityDir := t.TempDir()
-	touch(t, filepath.Join(shellDir, "bash.exe"))
-	touch(t, filepath.Join(utilityDir, "cat.exe"))
-	touch(t, filepath.Join(utilityDir, "mkdir.exe"))
+	shell := WriteFakeExecutable(t, filepath.Join(shellDir, "bash"), "#!/usr/bin/env sh\nexit 0\n")
+	cat := WriteFakeExecutable(t, filepath.Join(utilityDir, "cat"), "#!/usr/bin/env sh\nexit 0\n")
+	mkdir := WriteFakeExecutable(t, filepath.Join(utilityDir, "mkdir"), "#!/usr/bin/env sh\nexit 0\n")
 	searchPath := strings.Join([]string{shellDir, utilityDir}, string(os.PathListSeparator))
-	dirs, err = completeBashDirs(searchPath, filepath.Join(shellDir, "bash.exe"), nil, "bash.exe", "cat.exe", "mkdir.exe")
+	dirs, err = completeBashDirs(searchPath, shell, []string{utilityDir, shellDir, utilityDir}, filepath.Base(shell), filepath.Base(cat), filepath.Base(mkdir))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(dirs) != 2 || dirs[0] != shellDir || dirs[1] != utilityDir {
-		t.Fatalf("separated support dirs = %q, want shell then utilities", dirs)
+	if len(dirs) != 2 || dirs[0] != utilityDir || dirs[1] != shellDir {
+		t.Fatalf("separated support dirs = %q, want utilities then shell", dirs)
 	}
-	for _, name := range []string{"bash.exe", "cat.exe", "mkdir.exe"} {
+	for _, name := range []string{filepath.Base(shell), filepath.Base(cat), filepath.Base(mkdir)} {
 		if findOnPath(strings.Join(dirs, string(os.PathListSeparator)), name) == "" {
 			t.Fatalf("separated support PATH does not resolve %s", name)
 		}
