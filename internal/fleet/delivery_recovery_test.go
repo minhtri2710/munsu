@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
@@ -143,6 +144,50 @@ func TestDeliverCrashAtMutatingReconcilesObservationAndNeverMutates(t *testing.T
 	}
 	if active := listActiveDeliveryJournals(t, homeDir); len(active) != 0 {
 		t.Fatalf("active journals after recovery = %v, want none", active)
+	}
+}
+
+func TestDeliverRecoveryRejectsInvalidPinnedMergedSHA(t *testing.T) {
+	c, homeDir := newFleetCanonical(t)
+	taskID := "t1"
+	mustWorkingDeliveryTask(t, c, taskID)
+	installScriptedProviderFor(t, "open-then-merged")
+	runDeliveryCrashHelper(t, homeDir, taskID, "outcome", "open-then-merged")
+
+	active := listActiveDeliveryJournals(t, homeDir)
+	if len(active) != 1 {
+		t.Fatalf("active journals = %v, want exactly 1", active)
+	}
+	h, err := home.Open(homeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lk, err := h.Lock(deliveryLockScope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal, err := readDeliveryJournal(h, active[0])
+	if err != nil {
+		lk.Release()
+		t.Fatal(err)
+	}
+	if err := transitionDeliveryJournal(h, lk, journal, "tamper", func(j *deliveryJournal) {
+		j.OutcomeMergedSHA = "not-a-git-object-id"
+	}); err != nil {
+		lk.Release()
+		t.Fatal(err)
+	}
+	lk.Release()
+
+	provider := installScriptedProviderFor(t, "merged")
+	if err := RecoverDeliveryJournals(homeDir); err == nil {
+		t.Fatal("RecoverDeliveryJournals accepted invalid pinned merge SHA")
+	}
+	if _, err := c.DeliveryOutcome(mustFleetTaskID(t, taskID)); err == nil {
+		t.Fatal("recovery committed an outcome with invalid pinned merge SHA")
+	}
+	if provider.merges != 0 {
+		t.Fatalf("recovery mutated = %d, want 0", provider.merges)
 	}
 }
 

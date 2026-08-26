@@ -734,6 +734,9 @@ func commitPinnedOutcome(h *home.Home, lk *home.Lock, c *taskauthority.Canonical
 	if journal.OutcomeStatus == "" {
 		return nil, fmt.Errorf("delivery journal %s has no pinned outcome", journal.ID)
 	}
+	if journal.OutcomeStatus == taskauthority.DeliveryOutcomeCompleted && !validGitObjectID(journal.OutcomeMergedSHA) {
+		return nil, fmt.Errorf("delivery journal %s has missing or invalid merge commit evidence", journal.ID)
+	}
 	tid, err := domain.NewTaskID(journal.TaskID)
 	if err != nil {
 		return nil, err

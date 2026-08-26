@@ -101,6 +101,17 @@ func TestVerifyProviderHeadRejectsInvalidMergedSHA(t *testing.T) {
 	}
 }
 
+func TestCommitPinnedOutcomeRejectsInvalidMergedSHA(t *testing.T) {
+	journal := &deliveryJournal{
+		ID: "journal-1", TaskID: "t1", AuthorizeOpID: "authorize-1",
+		OutcomeStatus:  taskauthority.DeliveryOutcomeCompleted,
+		OutcomeHeadSHA: deliveryTestHead, OutcomeMergedSHA: "not-a-git-object-id",
+	}
+	if _, err := commitPinnedOutcome(nil, nil, nil, journal); err == nil {
+		t.Fatal("commitPinnedOutcome accepted invalid merged SHA")
+	}
+}
+
 func TestDeliverMergedInvalidSHAFailsClosedBeforeOutcome(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	taskID := "t1"
