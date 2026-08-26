@@ -67,18 +67,15 @@ At the time of this decision, there was no technical review gate and review-befo
 was owned only by the orchestrator. That remains the historical explanation for the
 incident, but it is no longer the live application delivery contract.
 
-The current delivery acceptance owner is `internal/domain/domain.go`, with provider
-observation and orchestration in `internal/fleet/delivery_*.go`: an OPEN delivery must
-have effective approving review and passing checks, and the provider mutation boundary
-must fail closed when those conditions and the exact authorized head/base cannot be
-enforced. MERGED and CLOSED observations may be reconciled without mutation when their
-identity evidence matches the authorization.
+The current delivery acceptance contract is owned by the provider boundary described in
+[ADR-0010](0010-delivery-head-invariant-two-owners.md). Its OPEN/MERGED/CLOSED acceptance
+rules and fail-closed evidence requirements are authoritative there; this ADR retains only
+the branch-protection and review-identity decision.
 
 ### 2. The application delivery constraint now has a shared owner
 
 The former orchestrator-only claim that review happened is superseded for application
-delivery by the live acceptance path described above. Provider adapters must still fail
-closed when effective review/check evidence or exact mutation constraints are unavailable.
+delivery by the live acceptance contract in [ADR-0010](0010-delivery-head-invariant-two-owners.md).
 
 ### 3. Do not enable `required_pull_request_reviews` in the current configuration
 

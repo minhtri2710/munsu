@@ -61,7 +61,11 @@ constraints together; an adapter that cannot guarantee that contract refuses
 before mutation. The current GitHub and GitLab adapters intentionally take that
 fail-closed path for OPEN mutation. MERGED and CLOSED observations are
 reconciled without mutation, but only when their consumed head and base evidence
-exactly match the journal identity.
+exactly match the journal identity. A MERGED observation must also carry a
+non-zero, full hexadecimal Git object ID for the merge commit (40 or 64
+characters); missing, null, malformed, or all-zero evidence fails closed. The
+same validation applies to pinned journal outcomes and outcomes read during
+commit-conflict replay, so recovery cannot bypass the provider fence.
 
 Neither owner is redundant with the other, and neither is defence in depth for
 the other. Deleting either one removes a refusal nothing else can make. Any
@@ -117,7 +121,9 @@ not dead-code cleanup, and it is not this ADR's decision to make.
   observation and mutation boundary rather than an unreachable function.
 * Provider adapters must fail closed when they cannot enforce mergeability plus
   exact head and base constraints at the irreversible boundary. Terminal
-  reconciliation remains mutation-free and identity-fenced.
+  reconciliation remains mutation-free and identity-fenced, with valid merge
+  object evidence required for completed outcomes on fresh, resumed, and
+  conflict-replay paths.
 * `.github/deadcode.allow` contains only current, reviewed exceptions; it is not
   an imported BEO-63 baseline.
 * `internal/home`'s `ValidMetaFields` (`taskmeta.go:309-320`) still lists the
