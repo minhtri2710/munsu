@@ -3,6 +3,7 @@
 package home
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -94,6 +95,8 @@ func TestRestrictDirPreservesReadOnlyOwnerRightsWindows(t *testing.T) {
 			f.Close()
 			_ = os.Remove(probe)
 			t.Fatal("restrictDir upgraded a read-only directory to writable")
+		} else if !errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+			t.Fatalf("write probe failed without access denial: %v", err)
 		}
 	}) {
 		t.Fatal("read-only restriction regression failed")
@@ -149,6 +152,8 @@ func TestRestrictDirPreservesGroupGrantedRightsWindows(t *testing.T) {
 		f.Close()
 		_ = os.Remove(probe)
 		t.Fatal("restrictDir upgraded group-granted read access to writable")
+	} else if !errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+		t.Fatalf("group write probe failed without access denial: %v", err)
 	}
 }
 
