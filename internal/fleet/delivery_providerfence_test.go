@@ -95,9 +95,11 @@ func TestDeliverProviderBaseRefMatchDeliversNormally(t *testing.T) {
 // identity fence accepts matching head and base evidence.
 func TestVerifyProviderHeadRejectsInvalidMergedSHA(t *testing.T) {
 	journal := &deliveryJournal{Identity: deliveryTestIdentity()}
-	obs := DeliveryProviderObservation{State: "MERGED", HeadSHA: deliveryTestHead, BaseRef: deliveryTestBase, MergedSHA: "not-a-git-object-id"}
-	if err := verifyProviderHead(journal, obs); err == nil {
-		t.Fatal("verifyProviderHead accepted invalid merged SHA")
+	for _, sha := range []string{"not-a-git-object-id", "0000000000000000000000000000000000000000"} {
+		obs := DeliveryProviderObservation{State: "MERGED", HeadSHA: deliveryTestHead, BaseRef: deliveryTestBase, MergedSHA: sha}
+		if err := verifyProviderHead(journal, obs); err == nil {
+			t.Fatalf("verifyProviderHead accepted invalid merged SHA %q", sha)
+		}
 	}
 }
 

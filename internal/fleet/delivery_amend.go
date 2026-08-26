@@ -75,7 +75,7 @@ func validGitObjectID(value string) bool {
 		return false
 	}
 	_, err := hex.DecodeString(value)
-	return err == nil
+	return err == nil && strings.Trim(value, "0") != ""
 }
 
 func normalizeGitHubReviewState(value string) domain.ReviewState {

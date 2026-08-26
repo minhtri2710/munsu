@@ -61,6 +61,27 @@ func TestPRMergeStatus_JSONUnmarshal(t *testing.T) {
 	}
 }
 
+func TestPRMergeStatus_MergedRequiresValidMergeCommit(t *testing.T) {
+	valid := "0123456789abcdef0123456789abcdef01234567"
+	cases := []string{
+		`{"state":"MERGED","headRefOid":"head123"}`,
+		`{"state":"MERGED","headRefOid":"head123","mergeCommit":null}`,
+		`{"state":"MERGED","headRefOid":"head123","mergeCommit":{"oid":"not-a-git-object-id"}}`,
+		`{"state":"MERGED","headRefOid":"head123","mergeCommit":{"oid":"0000000000000000000000000000000000000000"}}`,
+	}
+	for _, input := range cases {
+		t.Run(input, func(t *testing.T) {
+			if _, err := parsePRMergeStatus([]byte(input)); err == nil {
+				t.Fatal("parsePRMergeStatus accepted invalid merged evidence")
+			}
+		})
+	}
+	status, err := parsePRMergeStatus([]byte(fmt.Sprintf(`{"state":"MERGED","headRefOid":"head123","mergeCommit":{"oid":"%s"}}`, valid)))
+	if err != nil || status.MergedSHA != valid || !status.Merged {
+		t.Fatalf("status = %+v, err = %v", status, err)
+	}
+}
+
 func TestPRMergeStatus_Closed(t *testing.T) {
 	input := `{"state":"CLOSED","merged":false,"headRefOid":"def456abc123","mergedSha":""}`
 	var status domain.PRMergeStatus

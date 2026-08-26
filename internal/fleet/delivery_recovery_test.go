@@ -172,7 +172,7 @@ func TestDeliverRecoveryRejectsInvalidPinnedMergedSHA(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := transitionDeliveryJournal(h, lk, journal, "tamper", func(j *deliveryJournal) {
-		j.OutcomeMergedSHA = "not-a-git-object-id"
+		j.OutcomeMergedSHA = "0000000000000000000000000000000000000000"
 	}); err != nil {
 		lk.Release()
 		t.Fatal(err)

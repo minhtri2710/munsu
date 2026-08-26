@@ -204,7 +204,10 @@ func parsePRMergeStatus(data []byte) (*domain.PRMergeStatus, error) {
 		State:   raw.State,
 		HeadSHA: raw.HeadRefOid,
 	}
-	if raw.MergeCommit != nil {
+	if status.State == "MERGED" {
+		if raw.MergeCommit == nil || !validGitObjectID(raw.MergeCommit.Oid) {
+			return nil, fmt.Errorf("gh pr view returned missing or invalid merge commit OID")
+		}
 		status.MergedSHA = raw.MergeCommit.Oid
 	}
 	switch status.State {
