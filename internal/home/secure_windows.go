@@ -62,11 +62,11 @@ func restrictDir(path string) error {
 		return fmt.Errorf("home: build restricted ACL for %s: %w", path, err)
 	}
 	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
-		nil, nil, dacl, nil); err != nil {
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		sid, nil, dacl, nil); err != nil {
 		return fmt.Errorf("home: set restricted ACL for %s: %w", path, err)
 	}
-	return verifyRestrictedProtection(path, rights)
+	return verifyRestrictedProtection(path, rights, sid)
 }
 
 // securePath sets and verifies an owner-only DACL on path. The DACL contains a
@@ -159,7 +159,7 @@ type genericMapping struct {
 	GenericAll     uint32
 }
 
-func verifyRestrictedProtection(path string, rights uint32) error {
+func verifyRestrictedProtection(path string, rights uint32, owner *windows.SID) error {
 	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
 		return fmt.Errorf("home: read restricted DACL for %s: %w", path, err)
@@ -194,6 +194,13 @@ func verifyRestrictedProtection(path string, rights uint32) error {
 	}
 	if !windows.EqualSid((*windows.SID)(unsafe.Pointer(&ace.SidStart)), sid) {
 		return fmt.Errorf("home: %s restricted DACL grants another principal", path)
+	}
+	actualOwner, _, err := sd.Owner()
+	if err != nil {
+		return err
+	}
+	if actualOwner == nil || !windows.EqualSid(actualOwner, owner) {
+		return fmt.Errorf("home: %s restricted owner is not current user", path)
 	}
 	return nil
 }

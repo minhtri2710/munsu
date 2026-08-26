@@ -37,6 +37,23 @@ func MakeReadOnly(t *testing.T, path string) {
 	state := captureACL(t, path)
 	applyDeniedAccess(t, path, readOnlyAccess)
 	restore := registerRestore(t, func() error { return state.restore(path) })
+	if state.isDir {
+		entries, err := os.ReadDir(path)
+		if err != nil {
+			_ = restore()
+			t.Fatalf("read children of read-only path %q: %v", path, err)
+		}
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			child := path + `\\` + entry.Name()
+			childState := captureACL(t, child)
+			applyDeniedAccess(t, child, windows.DELETE)
+			childStateCopy := childState
+			registerRestore(t, func() error { return childStateCopy.restore(child) })
+		}
+	}
 	if err := verifyReadOnly(path, state.isDir); err != nil {
 		_ = restore()
 		t.Fatalf("read-only path %q was still writable: %v", path, err)
@@ -111,7 +128,8 @@ func applyDeniedAccess(t *testing.T, path string, access uint32) {
 		t.Fatalf("path %q has no security descriptor", path)
 	}
 	oldDACL, _, err := sd.DACL()
-	if err != nil && !errorsIsObjectNotFound(err) {
+	isNullDACL := errorsIsObjectNotFound(err)
+	if err != nil && !isNullDACL {
 		t.Fatalf("read DACL for %q: %v", path, err)
 	}
 	sid, err := currentUserSID()
@@ -128,7 +146,7 @@ func applyDeniedAccess(t *testing.T, path string, access uint32) {
 	entry.Trustee.TrusteeValue = windows.TrusteeValueFromSID(sid)
 	entries := []windows.EXPLICIT_ACCESS{entry}
 	var everyone *windows.SID
-	if oldDACL == nil {
+	if isNullDACL {
 		everyone, err = windows.StringToSid("S-1-1-0")
 		if err != nil {
 			t.Fatalf("Everyone SID: %v", err)

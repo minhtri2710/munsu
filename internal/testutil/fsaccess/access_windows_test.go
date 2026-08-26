@@ -36,6 +36,9 @@ func TestMakeReadOnlyPreservesNullDACLAccess(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "probe"), []byte("probe"), 0600); err == nil {
 			t.Fatal("read-only directory remained writable")
 		}
+		if err := os.Remove(marker); err == nil {
+			t.Fatal("read-only directory allowed deleting an existing child")
+		}
 	}) {
 		t.Fatal("MakeReadOnly failed")
 	}
@@ -43,6 +46,9 @@ func TestMakeReadOnlyPreservesNullDACLAccess(t *testing.T) {
 	assertNullDACL(t, dir)
 	if err := os.WriteFile(filepath.Join(dir, "restored"), []byte("restored"), 0600); err != nil {
 		t.Fatalf("NULL-DACL write access was not restored: %v", err)
+	}
+	if err := os.Remove(marker); err != nil {
+		t.Fatalf("NULL-DACL child delete access was not restored: %v", err)
 	}
 }
 
