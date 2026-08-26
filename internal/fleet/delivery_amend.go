@@ -69,6 +69,11 @@ func (s ProviderSnapshot) Mergeable() bool {
 	}.CanMerge()
 }
 
+func validMergeCommitSHA(value string) bool {
+	value = strings.TrimSpace(value)
+	return value != "" && !strings.EqualFold(value, "null")
+}
+
 func normalizeGitHubReviewState(value string) domain.ReviewState {
 	switch strings.ToUpper(strings.ReplaceAll(value, "-", "_")) {
 	case "APPROVED":
@@ -182,10 +187,11 @@ func fetchGitHubProviderSnapshot(prURL string) (*ProviderSnapshot, error) {
 	}
 	switch snap.State {
 	case "MERGED":
-		snap.Merged = true
-		if raw.MergeCommit != nil && raw.MergeCommit.Oid != "" {
-			snap.MergedSHA = raw.MergeCommit.Oid
+		if raw.MergeCommit == nil || !validMergeCommitSHA(raw.MergeCommit.Oid) {
+			return nil, fmt.Errorf("gh pr view returned missing merge commit OID")
 		}
+		snap.Merged = true
+		snap.MergedSHA = strings.TrimSpace(raw.MergeCommit.Oid)
 	case "CLOSED":
 	case "OPEN":
 		if len(raw.StatusCheckRollup) == 0 {
@@ -257,10 +263,11 @@ func fetchGitLabProviderSnapshot(mrURL string) (*ProviderSnapshot, error) {
 	}
 	switch normalizedState {
 	case "MERGED":
-		snap.Merged = true
-		if raw.MergeCommitSHA != "" {
-			snap.MergedSHA = raw.MergeCommitSHA
+		if !validMergeCommitSHA(raw.MergeCommitSHA) {
+			return nil, fmt.Errorf("glab mr view returned missing merge commit SHA")
 		}
+		snap.Merged = true
+		snap.MergedSHA = strings.TrimSpace(raw.MergeCommitSHA)
 	case "CLOSED":
 	case "OPEN":
 		pipeline, pipelineOK := parseGLPipeline(data)

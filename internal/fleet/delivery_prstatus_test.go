@@ -181,6 +181,18 @@ func TestGitHubProviderSnapshotRefusesUnknownState(t *testing.T) {
 	}
 }
 
+func TestGitHubProviderSnapshotRefusesMissingMergeCommitEvidence(t *testing.T) {
+	old := DefaultGitHubClient
+	DefaultGitHubClient = func() (GitHubClient, error) {
+		return terminalGitHubClient{data: `{"state":"MERGED","headRefOid":"head123","headRefName":"feature","baseRefName":"main","mergeCommit":null}`}, nil
+	}
+	t.Cleanup(func() { DefaultGitHubClient = old })
+
+	if _, err := fetchGitHubProviderSnapshot("https://github.com/owner/project/pull/42"); err == nil || !strings.Contains(err.Error(), "missing merge commit OID") {
+		t.Fatalf("fetchGitHubProviderSnapshot error = %v, want missing-merge-commit refusal", err)
+	}
+}
+
 func TestGitHubProviderSnapshotTerminalStatesNeedNoMergeabilityEvidence(t *testing.T) {
 	old := DefaultGitHubClient
 	DefaultGitHubClient = func() (GitHubClient, error) {
@@ -219,6 +231,27 @@ func (terminalGitHubClient) ObservePR(string, string, int) (DeliveryProviderObse
 }
 func (terminalGitHubClient) CaptureIdentity(string) (*domain.DeliveryIdentity, error) {
 	return nil, nil
+}
+
+func TestGitLabProviderSnapshotRefusesMissingMergeCommitEvidence(t *testing.T) {
+	old := defaultGlabRunner
+	defaultGlabRunner = &fakeGlabRunner{runFn: func(args ...string) ([]byte, error) {
+		if len(args) == 1 && args[0] == "--version" {
+			return []byte("glab version 1.45.0"), nil
+		}
+		if len(args) == 2 && args[0] == "api" && args[1] == "--help" {
+			return []byte("api access"), nil
+		}
+		if len(args) == 2 && args[0] == "auth" && args[1] == "status" {
+			return []byte("authenticated"), nil
+		}
+		return []byte(`{"state":"merged","sha":"head123","source_branch":"feature","target_branch":"main","merge_commit_sha":null}`), nil
+	}}
+	t.Cleanup(func() { defaultGlabRunner = old })
+
+	if _, err := fetchGitLabProviderSnapshot("https://gitlab.com/owner/project/-/merge_requests/42"); err == nil || !strings.Contains(err.Error(), "missing merge commit SHA") {
+		t.Fatalf("fetchGitLabProviderSnapshot error = %v, want missing-merge-commit refusal", err)
+	}
 }
 
 func TestGitLabProviderSnapshotTerminalStatesNeedNoMergeabilityEvidence(t *testing.T) {
