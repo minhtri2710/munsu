@@ -92,12 +92,46 @@ func TestResolveBashShellSupportPaths(t *testing.T) {
 	}
 }
 
+func TestResolveBashCandidatesSelectsCompleteEnvironment(t *testing.T) {
+	first := t.TempDir()
+	second := t.TempDir()
+	for _, name := range []string{"bash", "cat", "mkdir"} {
+		touch(t, filepath.Join(second, name))
+	}
+	firstShell := filepath.Join(first, "bash")
+	if err := os.WriteFile(firstShell, nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, dirs, err := resolveBashCandidates(strings.Join([]string{first, second}, string(os.PathListSeparator)), []bashCandidate{{shell: firstShell}, {shell: filepath.Join(second, "bash")}}, "bash", "cat", "mkdir")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dirs) != 1 || dirs[0] != second {
+		t.Fatalf("support dirs = %q, want %q", dirs, []string{second})
+	}
+}
+
+func TestResolveBashCandidatesPreservesFirstError(t *testing.T) {
+	first := t.TempDir()
+	second := t.TempDir()
+	for _, dir := range []string{first, second} {
+		touch(t, filepath.Join(dir, "bash"))
+	}
+	_, _, err := resolveBashCandidates(strings.Join([]string{first, second}, string(os.PathListSeparator)), []bashCandidate{{shell: filepath.Join(first, "bash")}, {shell: filepath.Join(second, "bash")}}, "bash", "cat", "mkdir")
+	firstShell := filepath.Join(first, "bash")
+	secondShell := filepath.Join(second, "bash")
+	if !errors.Is(err, errors.ErrUnsupported) || !strings.Contains(err.Error(), "cat") || !strings.Contains(err.Error(), firstShell) || strings.Contains(err.Error(), secondShell) {
+		t.Fatalf("error = %v, want first actionable incomplete-layout error", err)
+	}
+}
+
 func TestCompleteBashDirsRejectsMissingUtilities(t *testing.T) {
 	dir := t.TempDir()
 	touch(t, filepath.Join(dir, "bash.exe"))
-	if _, err := completeBashDirs(dir, filepath.Join(dir, "bash.exe"), nil, "bash.exe", "cat.exe", "mkdir.exe"); !errors.Is(err, errors.ErrUnsupported) {
-		t.Fatalf("completeBashDirs error = %v, want unsupported", err)
+	if _, err := completeBashDirs(dir, filepath.Join(dir, "bash.exe"), nil, "bash.exe", "cat.exe", "mkdir.exe"); !errors.Is(err, errors.ErrUnsupported) || !strings.Contains(err.Error(), "cat.exe") || !strings.Contains(err.Error(), dir) {
+		t.Fatalf("completeBashDirs error = %v, want actionable missing-cat error", err)
 	}
+
 	touch(t, filepath.Join(dir, "cat.exe"))
 	touch(t, filepath.Join(dir, "mkdir.exe"))
 	dirs, err := completeBashDirs(dir, filepath.Join(dir, "bash.exe"), nil, "bash.exe", "cat.exe", "mkdir.exe")

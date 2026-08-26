@@ -84,7 +84,7 @@ func resolvePOSIXShell(searchPath string) (string, error) {
 	if git := findOnPath(searchPath, "git.exe"); git != "" {
 		root := filepath.Dir(filepath.Dir(git)) // ...\Git\cmd or ...\Git\bin -> ...\Git
 		for _, rel := range [][]string{{"usr", "bin", "sh.exe"}, {"bin", "sh.exe"}, {"usr", "bin", "bash.exe"}, {"bin", "bash.exe"}} {
-			if p := filepath.Join(append([]string{root}, rel...)...); isFile(p) {
+			if p := filepath.Join(append([]string{root}, rel...)...); isExecutable(p) {
 				return p, nil
 			}
 		}
@@ -100,10 +100,10 @@ func resolveGitBash(searchPath string) (string, []string, bool) {
 	root := filepath.Dir(filepath.Dir(git))
 	usrBin := filepath.Join(root, "usr", "bin")
 	bin := filepath.Join(root, "bin")
-	if bash := filepath.Join(usrBin, "bash.exe"); isFile(bash) {
+	if bash := filepath.Join(usrBin, "bash.exe"); isExecutable(bash) {
 		return bash, existingDirs(usrBin, bin), true
 	}
-	if bash := filepath.Join(bin, "bash.exe"); isFile(bash) {
+	if bash := filepath.Join(bin, "bash.exe"); isExecutable(bash) {
 		return bash, existingDirs(usrBin, bin), true
 	}
 	return "", nil, false
@@ -112,17 +112,12 @@ func resolveGitBash(searchPath string) (string, []string, bool) {
 func findOnPath(searchPath string, names ...string) string {
 	for _, dir := range filepath.SplitList(searchPath) {
 		for _, name := range names {
-			if p := filepath.Join(dir, name); isFile(p) {
+			if p := filepath.Join(dir, name); isExecutable(p) {
 				return p
 			}
 		}
 	}
 	return ""
-}
-
-func isFile(path string) bool {
-	st, err := os.Stat(path)
-	return err == nil && !st.IsDir()
 }
 
 func existingDirs(dirs ...string) []string {
@@ -133,6 +128,31 @@ func existingDirs(dirs ...string) []string {
 		}
 	}
 	return out
+}
+
+type bashCandidate struct {
+	shell         string
+	preferredDirs []string
+}
+
+func resolveBashCandidates(searchPath string, candidates []bashCandidate, names ...string) (string, []string, error) {
+	var firstErr error
+	for _, candidate := range candidates {
+		if !isExecutable(candidate.shell) {
+			continue
+		}
+		dirs, err := completeBashDirs(searchPath, candidate.shell, candidate.preferredDirs, names...)
+		if err == nil {
+			return candidate.shell, dirs, nil
+		}
+		if firstErr == nil {
+			firstErr = fmt.Errorf("bash candidate %s: %w", candidate.shell, err)
+		}
+	}
+	if firstErr != nil {
+		return "", nil, firstErr
+	}
+	return "", nil, fmt.Errorf("no executable bash candidate on PATH=%s: %w", searchPath, errors.ErrUnsupported)
 }
 
 func completeBashDirs(searchPath, shell string, preferred []string, names ...string) ([]string, error) {

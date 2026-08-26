@@ -5,9 +5,15 @@ package testutil
 import (
 	"errors"
 	"fmt"
+	"os"
 )
 
 func installWindowsFake(string) error { return nil }
+
+func isExecutable(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && st.Mode().IsRegular() && st.Mode()&0111 != 0
+}
 
 func fakeExecutablePath(path string) string { return path }
 
@@ -19,7 +25,7 @@ func fakeExecutablePath(path string) string { return path }
 // The same reasoning picks Git for Windows' usr\bin on the other platform.
 func posixShellPath() (string, error) {
 	for _, p := range []string{"/bin/sh", "/usr/bin/sh", "/bin/bash"} {
-		if isFile(p) {
+		if isExecutable(p) {
 			return p, nil
 		}
 	}
@@ -30,22 +36,14 @@ func posixShellPath() (string, error) {
 }
 
 func resolveBashShell(searchPath string) (string, []string, error) {
-	for _, p := range []string{"/bin/bash", "/usr/bin/bash"} {
-		if isFile(p) {
-			dirs, err := completeBashDirs(searchPath, p, nil, "bash", "cat", "mkdir")
-			if err == nil {
-				return p, dirs, nil
-			}
-		}
+	candidates := []bashCandidate{
+		{shell: "/bin/bash"},
+		{shell: "/usr/bin/bash"},
 	}
 	if p := findOnPath(searchPath, "bash"); p != "" {
-		dirs, err := completeBashDirs(searchPath, p, nil, "bash", "cat", "mkdir")
-		if err == nil {
-			return p, dirs, nil
-		}
-		return "", nil, err
+		candidates = append(candidates, bashCandidate{shell: p})
 	}
-	return "", nil, fmt.Errorf("no bash shell on PATH=%s: %w", searchPath, errors.ErrUnsupported)
+	return resolveBashCandidates(searchPath, candidates, "bash", "cat", "mkdir")
 }
 
 // userHomeEnv is the variable os.UserHomeDir reads on this platform.
