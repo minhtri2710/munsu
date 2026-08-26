@@ -41,16 +41,21 @@ bound worktree is refused for standing in `/tmp`.
 `shellWriteTargets` (`internal/cli/shell_write_safety.go`) extracts the paths a command
 names as write targets; `runSafetyCheck` hands every target — shell, patch and native
 alike — to `evaluateFileWriteSafety`, the function the native channel already used, which
-asks `fleet.ClassifyIdentity` and then `bootstrap.IsBoundRepository`. No new path
-comparison is invented; the `commonDir` vs `binding.CommonDir` comparison BEO-50 settled
-stays the only one.
+asks `fleet.ClassifyIdentity` and then `bootstrap.IsBoundRepository`. No new repository
+identity comparison is invented; the `commonDir` vs `binding.CommonDir` comparison BEO-50
+settled stays the only one.
 
 `cd` inside the command line moves the base every relative target resolves against. This
 is what closes the `cd <shared> && echo pwned > README.md` variant that a pure
-absolute-path scan would miss. Path resolution uses the shared safety resolver; on
-Windows, a volume-less rooted path such as `\src\repo\README.md` is resolved
-against the base path's volume rather than treated as a relative child of the
-worktree.
+absolute-path scan would miss. Shell lexical resolution is owned by
+`resolveShellWritePath`; final repository classification remains with
+`evaluateFileWriteSafety`. On Windows, a volume-less rooted path such as
+`\src\repo\README.md` inherits the base path's volume rather than being treated
+as a relative child of the worktree. A same-volume drive-relative path such as
+`C:src\repo\README.md` resolves against the base directory, using
+case-insensitive volume comparison. A different-volume drive-relative path such
+as `D:src\repo\README.md` is ambiguous because the other drive's current
+directory cannot be reconstructed, so the shell command is refused.
 
 Quoting survives tokenization here (`shellSegments`), because `echo "x > f"` writes
 nothing while `echo x > f` writes `f`, and the two are indistinguishable once quotes are
@@ -68,11 +73,11 @@ redirections (`<`, `<<<`) drop their operand for the same reason: they name a so
 a target.
 
 The delimiter word is read under both backslash interpretations: `<<\EOF` ends at
-`EOF` under the POSIX reading, while the Windows reading treats the backslash as
-part of the delimiter. Each reading must recognize the delimiter form used under
-that interpretation; otherwise that pass can swallow the remaining payload and
-miss later covered commands — while `python -c` only opens the one command that
-names it.
+bare `EOF` in both passes. `readHeredocRedirect` removes the quoting backslash
+while reading the delimiter, so the Windows pass does not retain it as part of
+the delimiter. This keeps each pass from swallowing the remaining payload and
+missing later covered commands — while `python -c` only opens the one command
+that names it.
 
 ### 2. The claim of coverage is narrow by construction, and everything outside it is open
 
@@ -102,11 +107,14 @@ Everything else is open, explicitly and by design:
   not knowable here. (The git ladder still refuses substitution for git mutations.)
 
 Because tokenization cannot fail — `splitSafetyWords` always returns a token list — this
-channel has **no unparseable state**, and therefore inherits none of the fail-closed
-obligation `applyPatchTargets` carries. That obligation exists because a declared-covered
-tool must not pass unexamined on a broken payload; a claim this narrow never reaches that
-condition. Making the claim wider would drag the obligation with it, and "shell command
-that does not parse" is a far more common state than "malformed patch".
+channel has **no unparseable state**. It does, however, carry an explicit fail-closed state
+for ambiguous cross-volume drive-relative paths: when `resolveShellWritePath` cannot
+reconstruct the other drive's current directory, `runSafetyCheck` refuses before target
+classification. Apart from that path ambiguity, the narrow parser claim inherits none of
+the fail-closed obligation `applyPatchTargets` carries. That obligation exists because a
+declared-covered tool must not pass unexamined on a broken payload; a claim this narrow
+never reaches that condition. Making the claim wider would drag the obligation with it,
+and "shell command that does not parse" is a far more common state than "malformed patch".
 
 ### 3. The `Unrelated` refusal is scoped to what this guard protects
 
@@ -148,13 +156,16 @@ checkout identity. File writes are not.
 
 ## Fail direction, stated once
 
-`IsBoundRepository` and every target-classification path fail **open**: missing
-environment, unreadable authority, unclassifiable path → allowed. The git-mutation path
-fails **closed** in the same situations (`git mutation worktree binding unavailable`). The
-two paths agree on the *definition* of the protected repository and disagree on the
-*direction of failure*, deliberately: a refused git mutation costs a retry, a refused file
-write costs the run. This ADR does not change either direction — it is recorded so the
-next change to this area does not flip one of them silently.
+`IsBoundRepository` and target-classification failures fail **open**: missing
+environment, unreadable authority, unclassifiable path → allowed. Shell path ambiguity is
+the exception: a different-volume drive-relative target is refused before classification
+because its base cannot be reconstructed. The git-mutation path fails **closed** in the
+same situations (`git mutation worktree binding unavailable`). The two paths agree on the
+*definition* of the protected repository and disagree on the *direction of failure*,
+deliberately: a refused git mutation costs a retry, a refused file write costs the run.
+This change leaves those classification directions unchanged; the shell ambiguity refusal
+occurs before classification. The distinction is recorded so the next change to this area
+does not flip either behavior silently.
 
 ## Consequences
 
