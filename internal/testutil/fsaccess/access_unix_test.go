@@ -18,7 +18,7 @@ func TestAccessModifiersPreserveSpecialModeBits(t *testing.T) {
 	t.Run("read-only", func(t *testing.T) {
 		dir, before := newSpecialModeDir(t)
 		MakeReadOnly(t, dir)
-		assertMode(t, dir, before&^0o200)
+		assertMode(t, dir, before&^0o222)
 	})
 
 	t.Run("restored", func(t *testing.T) {

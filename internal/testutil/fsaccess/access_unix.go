@@ -47,7 +47,7 @@ func MakeReadOnly(t *testing.T, path string) {
 		t.Fatalf("stat read-only path %q: %v", path, err)
 	}
 	old := info.Mode() & chmodRelevantMode
-	if err := os.Chmod(path, old&^0o200); err != nil {
+	if err := os.Chmod(path, old&^0o222); err != nil {
 		t.Fatalf("make path read-only %q: %v", path, err)
 	}
 	restore := registerRestore(t, func() error {

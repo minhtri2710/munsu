@@ -13,7 +13,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-const unreadableAccess = windows.FILE_GENERIC_READ
+const unreadableAccess = windows.FILE_READ_DATA | windows.FILE_LIST_DIRECTORY | windows.FILE_READ_EA | windows.FILE_READ_ATTRIBUTES
 const readOnlyAccess = windows.FILE_WRITE_DATA | windows.FILE_APPEND_DATA | windows.FILE_WRITE_EA | windows.FILE_WRITE_ATTRIBUTES | windows.DELETE | 0x40
 
 // MakeUnreadable adds an explicit deny ACE for the current user while retaining
