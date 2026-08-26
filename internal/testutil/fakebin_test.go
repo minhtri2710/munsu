@@ -162,6 +162,23 @@ func TestCompleteBashDirsRejectsMissingUtilities(t *testing.T) {
 	}
 }
 
+func TestCompleteBashDirsRejectsUnresolvableSupportPath(t *testing.T) {
+	name := "fixture-tool"
+	findCalls := 0
+	find := func(_ string, names ...string) string {
+		findCalls++
+		if findCalls == 1 {
+			return filepath.Join(t.TempDir(), names[0])
+		}
+		return ""
+	}
+
+	_, err := completeBashDirsWithFind(t.TempDir(), filepath.Join(t.TempDir(), "shell"), nil, find, name)
+	if !errors.Is(err, errors.ErrUnsupported) || !strings.Contains(err.Error(), name) || !strings.Contains(err.Error(), "support PATH") {
+		t.Fatalf("completeBashDirsWithFind error = %v, want unsupported unresolved-support-path error", err)
+	}
+}
+
 func TestWriteFakeExecutableAtWritesTheScriptVerbatim(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "herdr")
 	script := "#!/bin/sh\nprintf '%s\\n' hello\n"

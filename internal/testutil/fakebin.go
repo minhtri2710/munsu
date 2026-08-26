@@ -156,18 +156,22 @@ func resolveBashCandidates(searchPath string, candidates []bashCandidate, names 
 }
 
 func completeBashDirs(searchPath, shell string, preferred []string, names ...string) ([]string, error) {
+	return completeBashDirsWithFind(searchPath, shell, preferred, findOnPath, names...)
+}
+
+func completeBashDirsWithFind(searchPath, shell string, preferred []string, find func(string, ...string) string, names ...string) ([]string, error) {
 	dirs := appendUnique(nil, existingDirs(preferred...)...)
 	dirs = appendUnique(dirs, filepath.Dir(shell))
 	lookupPath := strings.Join(append(append([]string{}, dirs...), filepath.SplitList(searchPath)...), string(os.PathListSeparator))
 	for _, name := range names {
-		path := findOnPath(lookupPath, name)
+		path := find(lookupPath, name)
 		if path == "" {
 			return nil, fmt.Errorf("bash fixture requires %s on PATH=%s: %w", name, searchPath, errors.ErrUnsupported)
 		}
 		dirs = appendUnique(dirs, filepath.Dir(path))
 	}
 	for _, name := range names {
-		if findOnPath(strings.Join(dirs, string(os.PathListSeparator)), name) == "" {
+		if find(strings.Join(dirs, string(os.PathListSeparator)), name) == "" {
 			return nil, fmt.Errorf("bash fixture cannot resolve %s from support PATH: %w", name, errors.ErrUnsupported)
 		}
 	}
