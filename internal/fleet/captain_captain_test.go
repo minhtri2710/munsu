@@ -564,9 +564,14 @@ func TestSeedWorktree_RollbackOnFailure(t *testing.T) {
 	id := "test-captain"
 	homePath := filepath.Join(parent, "captains", id)
 
-	// Seed with a non-existent parent home for the charter path (will fail).
-	// The worktree should be cleaned up.
-	err := seedFromWorktreeTest(id, homePath, repo, "/nonexistent/parent", "", false, "")
+	// A regular file used as the parent home fails after worktree creation on
+	// every platform, so the rollback path is exercised rather than relying on
+	// a POSIX-only nonexistent absolute path.
+	blocker := filepath.Join(t.TempDir(), "parent-file")
+	if err := os.WriteFile(blocker, []byte("not a directory\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	err := seedFromWorktreeTest(id, homePath, repo, filepath.Join(blocker, "missing-parent"), "", false, "")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -3633,10 +3638,16 @@ func TestMigrateRollbackSafety(t *testing.T) {
 	id := "test-captain"
 	homePath := filepath.Join(parent, "captains", id)
 
-	// Seed with a non-existent parent home for the charter path (will fail).
-	err := seedFromWorktreeTest(id, homePath, repo, "/nonexistent/parent", "", false, "")
+	// A regular file used as the parent home fails after worktree creation on
+	// every platform, so the rollback and stale-registration checks are real on
+	// Windows as well as POSIX.
+	blocker := filepath.Join(t.TempDir(), "parent-file")
+	if err := os.WriteFile(blocker, []byte("not a directory\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	err := seedFromWorktreeTest(id, homePath, repo, filepath.Join(blocker, "missing-parent"), "", false, "")
 	if err == nil {
-		t.Fatal("expected error for non-existent parent charter path")
+		t.Fatal("expected error for parent home below a regular file")
 	}
 
 	// The worktree should not exist (rolled back on failure).
