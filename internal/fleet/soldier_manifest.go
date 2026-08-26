@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -103,7 +104,7 @@ func ValidateManifest(manifest *LaunchManifest) error {
 		}
 
 		// Reject absolute paths.
-		if filepath.IsAbs(entry.Path) {
+		if path.IsAbs(entry.Path) || filepath.IsAbs(entry.Path) {
 			return fmt.Errorf("manifest entry with absolute path: %q", entry.Path)
 		}
 
@@ -113,7 +114,7 @@ func ValidateManifest(manifest *LaunchManifest) error {
 		}
 
 		// Reject "." and ".." and parent components.
-		cleaned := filepath.Clean(entry.Path)
+		cleaned := path.Clean(entry.Path)
 		if cleaned != entry.Path {
 			return fmt.Errorf("manifest entry path %q is not canonical (use %q)", entry.Path, cleaned)
 		}
@@ -309,10 +310,10 @@ func BuildManifest(entries []ManifestEntry) *LaunchManifest {
 // relative to worktreeRoot, computing its SHA-256 digest.
 func ManifestEntryForFile(worktreeRoot, relPath string, policy DisposalPolicy) (ManifestEntry, error) {
 	// Reject unsafe paths.
-	if filepath.IsAbs(relPath) {
+	if path.IsAbs(relPath) || filepath.IsAbs(relPath) {
 		return ManifestEntry{}, fmt.Errorf("unsafe manifest path: %q is absolute", relPath)
 	}
-	cleaned := filepath.Clean(relPath)
+	cleaned := path.Clean(relPath)
 	if cleaned != relPath {
 		return ManifestEntry{}, fmt.Errorf("unsafe manifest path: %q is not canonical (use %q)", relPath, cleaned)
 	}

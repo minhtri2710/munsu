@@ -2,6 +2,7 @@ package home
 
 import (
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -13,17 +14,20 @@ func joinContained(root, key string) (string, error) {
 	if key == "" {
 		return "", ErrEmptyKey
 	}
-	if filepath.IsAbs(key) {
+	if strings.HasPrefix(key, "/") || strings.HasPrefix(key, "\\") || path.IsAbs(key) || filepath.IsAbs(key) {
 		return "", ErrAbsoluteKey
+	}
+	if strings.Contains(key, "\\") {
+		return "", ErrKeyEscapes
 	}
 	// Reject escape/current/empty components in the raw key before any
 	// cleaning, so a key cannot smuggle ".." or absolute escapes.
-	for _, part := range strings.Split(key, string(filepath.Separator)) {
+	for _, part := range strings.Split(key, "/") {
 		if part == "" || part == "." || part == ".." {
 			return "", ErrKeyEscapes
 		}
 	}
-	clean := filepath.Clean(key)
+	clean := filepath.Clean(filepath.FromSlash(key))
 	joined := filepath.Join(root, clean)
 	rel, err := filepath.Rel(root, joined)
 	if err != nil {

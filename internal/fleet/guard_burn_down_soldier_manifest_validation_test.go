@@ -37,6 +37,30 @@ func TestGuardBurnDownValidateManifestRefusesInvalidInputs(t *testing.T) {
 			},
 			want: "contains NUL byte",
 		},
+		{
+			name: "absolute path",
+			m: &LaunchManifest{
+				ManifestVersion: ManifestVersion,
+				Artifacts:       []ManifestEntry{guardManifestEntry("/artifact")},
+			},
+			want: "manifest entry with absolute path",
+		},
+		{
+			name: "parent traversal",
+			m: &LaunchManifest{
+				ManifestVersion: ManifestVersion,
+				Artifacts:       []ManifestEntry{guardManifestEntry("artifact/../other")},
+			},
+			want: "is not canonical",
+		},
+		{
+			name: "parent dot-dot",
+			m: &LaunchManifest{
+				ManifestVersion: ManifestVersion,
+				Artifacts:       []ManifestEntry{guardManifestEntry("..")},
+			},
+			want: "contains parent traversal",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := ValidateManifest(tc.m)
