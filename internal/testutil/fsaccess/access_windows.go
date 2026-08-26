@@ -44,12 +44,13 @@ func MakeReadOnly(t *testing.T, path string) {
 			t.Fatalf("read children of read-only path %q: %v", path, err)
 		}
 		for _, entry := range entries {
-			if entry.IsDir() {
-				continue
-			}
 			child := path + `\\` + entry.Name()
 			childState := captureACL(t, child)
 			applyDeniedAccess(t, child, windows.DELETE)
+			if err := verifyDeleteDenied(child); err != nil {
+				_ = childState.restore(child)
+				t.Fatalf("read-only child %q remained deletable: %v", child, err)
+			}
 			childStateCopy := childState
 			registerRestore(t, func() error { return childStateCopy.restore(child) })
 		}
@@ -128,9 +129,14 @@ func applyDeniedAccess(t *testing.T, path string, access uint32) {
 		t.Fatalf("path %q has no security descriptor", path)
 	}
 	oldDACL, _, err := sd.DACL()
-	isNullDACL := errorsIsObjectNotFound(err)
-	if err != nil && !isNullDACL {
+	if errorsIsObjectNotFound(err) {
+		t.Fatalf("path %q has no DACL to restrict", path)
+	}
+	if err != nil {
 		t.Fatalf("read DACL for %q: %v", path, err)
+	}
+	if oldDACL == nil {
+		t.Fatalf("path %q has a NULL DACL or present empty DACL; selective access denial is unsupported", path)
 	}
 	sid, err := currentUserSID()
 	if err != nil {
@@ -145,27 +151,8 @@ func applyDeniedAccess(t *testing.T, path string, access uint32) {
 	entry.Trustee.TrusteeType = windows.TRUSTEE_IS_USER
 	entry.Trustee.TrusteeValue = windows.TrusteeValueFromSID(sid)
 	entries := []windows.EXPLICIT_ACCESS{entry}
-	var everyone *windows.SID
-	if isNullDACL {
-		everyone, err = windows.StringToSid("S-1-1-0")
-		if err != nil {
-			t.Fatalf("Everyone SID: %v", err)
-		}
-		allow := windows.EXPLICIT_ACCESS{
-			AccessPermissions: windows.ACCESS_MASK(0x001F01FF),
-			AccessMode:        windows.GRANT_ACCESS,
-			Inheritance:       windows.NO_INHERITANCE,
-		}
-		allow.Trustee.TrusteeForm = windows.TRUSTEE_IS_SID
-		allow.Trustee.TrusteeType = windows.TRUSTEE_IS_WELL_KNOWN_GROUP
-		allow.Trustee.TrusteeValue = windows.TrusteeValueFromSID(everyone)
-		entries = append(entries, allow)
-	}
 	var pinner runtime.Pinner
 	pinner.Pin(sid)
-	if everyone != nil {
-		pinner.Pin(everyone)
-	}
 	newDACL, err := windows.ACLFromEntries(entries, oldDACL)
 	pinner.Unpin()
 	if err != nil {
@@ -174,6 +161,20 @@ func applyDeniedAccess(t *testing.T, path string, access uint32) {
 	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION, nil, nil, newDACL, nil); err != nil {
 		t.Fatalf("set denied DACL for %q: %v", path, err)
 	}
+}
+
+func verifyDeleteDenied(path string) error {
+	access := uint32(windows.DELETE)
+	name, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return err
+	}
+	h, err := windows.CreateFile(name, access, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING, windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
+	if err == nil {
+		windows.CloseHandle(h)
+		return fmt.Errorf("delete handle opened")
+	}
+	return nil
 }
 
 func currentUserSID() (*windows.SID, error) {

@@ -114,18 +114,12 @@ func TestRestrictDirPreservesNullDACLRightsWindows(t *testing.T) {
 	); err != nil {
 		t.Fatalf("set NULL DACL: %v", err)
 	}
-	if err := restrictDir(dir); err != nil {
-		t.Fatalf("restrictDir: %v", err)
+	if err := restrictDir(dir); err == nil {
+		t.Fatal("restrictDir accepted a NULL DACL")
 	}
 	if _, err := os.ReadDir(dir); err != nil {
-		t.Fatalf("restricted NULL-DACL directory is not readable: %v", err)
+		t.Fatalf("NULL-DACL directory was changed after rejection: %v", err)
 	}
-	probe := filepath.Join(dir, "write-probe")
-	f, err := os.Create(probe)
-	if err != nil {
-		t.Fatalf("restricted NULL-DACL directory is not writable: %v", err)
-	}
-	f.Close()
 }
 
 // TestSecureRefusesMissingPath confirms that the contract fails closed when

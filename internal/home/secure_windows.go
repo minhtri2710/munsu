@@ -50,8 +50,15 @@ func restrictDir(path string) error {
 		return fmt.Errorf("home: %s has no security descriptor", path)
 	}
 	dacl, _, err := sd.DACL()
-	if err != nil && err != windows.ERROR_OBJECT_NOT_FOUND {
+	if err != nil {
 		return fmt.Errorf("home: read DACL for %s: %w", path, err)
+	}
+	currentOwner, _, err := sd.Owner()
+	if err != nil {
+		return fmt.Errorf("home: read owner for %s: %w", path, err)
+	}
+	if currentOwner == nil || !windows.EqualSid(currentOwner, sid) {
+		return fmt.Errorf("home: %s is not owned by current user", path)
 	}
 	rights, err := effectiveRights(sd)
 	if err != nil {
@@ -62,8 +69,8 @@ func restrictDir(path string) error {
 		return fmt.Errorf("home: build restricted ACL for %s: %w", path, err)
 	}
 	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
-		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
-		sid, nil, dacl, nil); err != nil {
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		nil, nil, dacl, nil); err != nil {
 		return fmt.Errorf("home: set restricted ACL for %s: %w", path, err)
 	}
 	return verifyRestrictedProtection(path, rights, sid)
@@ -160,7 +167,7 @@ type genericMapping struct {
 }
 
 func verifyRestrictedProtection(path string, rights uint32, owner *windows.SID) error {
-	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
 		return fmt.Errorf("home: read restricted DACL for %s: %w", path, err)
 	}
