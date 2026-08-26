@@ -3,6 +3,7 @@ package cli
 import (
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -230,10 +231,10 @@ func TestEmbeddedSkillParityCoverage(t *testing.T) {
 	repo := os.DirFS(filepath.Join("..", ".."))
 	for _, s := range embeddedOnlySkills {
 		t.Run(s.name, func(t *testing.T) {
-			if _, err := fs.Stat(repo, filepath.Join(".agents", "skills", s.name)); err == nil {
+			if _, err := fs.Stat(repo, path.Join(".agents", "skills", s.name)); err == nil {
 				t.Errorf("embedded-only skill %q has an .agents/skills mirror; move it to agentMirrorSkills or remove the mirror", s.name)
 			}
-			docPath := filepath.Join("docs", "skills", s.name+".md")
+			docPath := path.Join("docs", "skills", s.name+".md")
 			_, docErr := fs.Stat(repo, docPath)
 			if s.doc == "" {
 				if docErr == nil {
@@ -245,7 +246,7 @@ func TestEmbeddedSkillParityCoverage(t *testing.T) {
 				t.Errorf("declared secondary doc %s is missing: %v", docPath, docErr)
 				return
 			}
-			refPath := filepath.Join("internal", "cli", "skills", s.name, "REFERENCE.md")
+			refPath := path.Join("internal", "cli", "skills", s.name, "REFERENCE.md")
 			doc, docReadErr := fs.ReadFile(repo, docPath)
 			ref, refReadErr := fs.ReadFile(repo, refPath)
 			if docReadErr == nil && refReadErr == nil && string(doc) == string(ref) {
@@ -259,8 +260,8 @@ func TestAgentSkillMirrorsMatchCanonical(t *testing.T) {
 	repo := os.DirFS(filepath.Join("..", ".."))
 	for _, name := range agentMirrorSkills {
 		t.Run(name, func(t *testing.T) {
-			canonical := filepath.Join("internal", "cli", "skills", name)
-			mirror := filepath.Join(".agents", "skills", name)
+			canonical := path.Join("internal", "cli", "skills", name)
+			mirror := path.Join(".agents", "skills", name)
 			compareSkillDirectories(t, repo, canonical, mirror)
 		})
 	}
@@ -270,8 +271,8 @@ func TestAgentSkillReferencesMatchEmbeddedCanonical(t *testing.T) {
 	repo := os.DirFS(filepath.Join("..", ".."))
 	for _, name := range referenceDocSkills {
 		t.Run(name, func(t *testing.T) {
-			docPath := filepath.Join("docs", "skills", name+".md")
-			referencePath := filepath.Join("internal", "cli", "skills", name, "REFERENCE.md")
+			docPath := path.Join("docs", "skills", name+".md")
+			referencePath := path.Join("internal", "cli", "skills", name, "REFERENCE.md")
 			doc, err := fs.ReadFile(repo, docPath)
 			if err != nil {
 				t.Fatal(err)
@@ -379,11 +380,7 @@ func readSkillDirectory(t *testing.T, fsys fs.FS, root string) map[string][]byte
 		if err != nil {
 			return err
 		}
-		rel, err := filepath.Rel(root, filename)
-		if err != nil {
-			return err
-		}
-		files[filepath.ToSlash(rel)] = data
+		files[strings.TrimPrefix(filename, root+"/")] = data
 		return nil
 	})
 	if err != nil {

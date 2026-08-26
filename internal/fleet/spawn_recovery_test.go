@@ -103,13 +103,13 @@ func TestLaunchRecoveryPostSubmitPreRecordGuardProvesSingleProcess(t *testing.T)
 	if err != nil {
 		t.Fatalf("git on PATH: %v", err)
 	}
-	testutil.SetPath(t, harnessDir, filepath.Dir(gitBin), requiredSkillStubDir(t), "/bin")
+	testutil.SetPath(t, append([]string{harnessDir, filepath.Dir(gitBin), requiredSkillStubDir(t)}, testutil.BashShellDirs(t)...)...)
 	// The endpoint executes the production artifact in a real shell (the
 	// pane) and reports a crash (error) AFTER the first delivery — the
 	// post-Submit/pre-Record boundary. No LaunchEvidence is committed.
 	exec := &executingEndpointCapabilities{
 		inner:          f.endpoints,
-		runCommand:     scriptRunCommand(),
+		runCommand:     scriptRunCommand(t),
 		firstSubmitErr: true,
 	}
 	f.runner.endpoints = exec
@@ -155,11 +155,11 @@ func TestLaunchRecoverySubmitErrorBeforeExecutionRetryable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("git on PATH: %v", err)
 	}
-	testutil.SetPath(t, harnessDir, filepath.Dir(gitBin), requiredSkillStubDir(t), "/bin")
+	testutil.SetPath(t, append([]string{harnessDir, filepath.Dir(gitBin), requiredSkillStubDir(t)}, testutil.BashShellDirs(t)...)...)
 	// The first Submit fails BEFORE any script execution (delivery failure).
 	exec := &executingEndpointCapabilities{
 		inner:          f.endpoints,
-		runCommand:     scriptRunCommand(),
+		runCommand:     scriptRunCommand(t),
 		firstSubmitErr: true,
 		skipFirstRun:   true,
 	}
@@ -501,7 +501,7 @@ func TestLaunchArtifactGuardProvesSingleProcessLaunches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("git on PATH: %v", err)
 	}
-	testutil.SetPath(t, harnessDir, filepath.Dir(gitBin), requiredSkillStubDir(t), "/bin")
+	testutil.SetPath(t, append([]string{harnessDir, filepath.Dir(gitBin), requiredSkillStubDir(t)}, testutil.BashShellDirs(t)...)...)
 
 	agg := f.aggregate()
 	artifact, err := buildLaunchArtifact(LaunchArtifactInput{
@@ -527,14 +527,14 @@ func TestLaunchArtifactGuardProvesSingleProcessLaunches(t *testing.T) {
 		t.Fatalf("production artifact missing the persistent guard:\n%s", script)
 	}
 	// First submission: the guard is created and the harness execs exactly once.
-	if err := exec.Command("sh", "-c", artifact.Command).Run(); err != nil {
+	if err := exec.Command(testutil.BashShell(t), "-c", artifact.Command).Run(); err != nil {
 		t.Fatalf("first artifact run: %v", err)
 	}
 	if n := harnessLaunchCount(t, counter); n != 1 {
 		t.Fatalf("harness launches after first run = %d, want 1", n)
 	}
 	// Re-submission of the SAME launch: the guard no-ops, no second process.
-	if err := exec.Command("sh", "-c", artifact.Command).Run(); err != nil {
+	if err := exec.Command(testutil.BashShell(t), "-c", artifact.Command).Run(); err != nil {
 		t.Fatalf("guarded re-run: %v", err)
 	}
 	if n := harnessLaunchCount(t, counter); n != 1 {
@@ -549,7 +549,7 @@ func TestLaunchArtifactGuardProvesSingleProcessLaunches(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(guardPath, "identity"), []byte("launch-other|1|otherfence"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := exec.Command("sh", "-c", artifact.Command).Run(); err == nil {
+	if err := exec.Command(testutil.BashShell(t), "-c", artifact.Command).Run(); err == nil {
 		t.Fatal("different identity/fence on the guard must fail closed")
 	}
 	if n := harnessLaunchCount(t, counter); n != 1 {
@@ -582,7 +582,7 @@ func TestLaunchArtifactGuardExistsSkipsProcessOnReEntry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("git on PATH: %v", err)
 	}
-	testutil.SetPath(t, harnessDir, filepath.Dir(gitBin), requiredSkillStubDir(t), "/bin")
+	testutil.SetPath(t, append([]string{harnessDir, filepath.Dir(gitBin), requiredSkillStubDir(t)}, testutil.BashShellDirs(t)...)...)
 
 	agg := f.aggregate()
 	artifact, err := buildLaunchArtifact(LaunchArtifactInput{
@@ -608,7 +608,7 @@ func TestLaunchArtifactGuardExistsSkipsProcessOnReEntry(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(guardPath, "identity"), []byte(artifact.GuardIdentity), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := exec.Command("sh", "-c", artifact.Command).Run(); err != nil {
+	if err := exec.Command(testutil.BashShell(t), "-c", artifact.Command).Run(); err != nil {
 		t.Fatalf("guarded re-entry run: %v", err)
 	}
 	if n := harnessLaunchCount(t, counter); n != 0 {
@@ -641,7 +641,7 @@ func TestLaunchArtifactGuardConcurrentSubmissionsSingleProcess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("git on PATH: %v", err)
 	}
-	testutil.SetPath(t, harnessDir, filepath.Dir(gitBin), requiredSkillStubDir(t), "/bin")
+	testutil.SetPath(t, append([]string{harnessDir, filepath.Dir(gitBin), requiredSkillStubDir(t)}, testutil.BashShellDirs(t)...)...)
 	agg := f.aggregate()
 	artifact, err := buildLaunchArtifact(LaunchArtifactInput{
 		WorktreePath:   f.runner.wtPath,
@@ -657,12 +657,14 @@ func TestLaunchArtifactGuardConcurrentSubmissionsSingleProcess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildLaunchArtifact: %v", err)
 	}
+	// BashShell reports through t, which is only legal on the test goroutine.
+	shell := testutil.BashShell(t)
 	var wg sync.WaitGroup
 	for i := 0; i < 2; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_ = exec.Command("sh", "-c", artifact.Command).Run()
+			_ = exec.Command(shell, "-c", artifact.Command).Run()
 		}()
 	}
 	wg.Wait()
@@ -743,9 +745,11 @@ func (f *executingEndpointCapabilities) submitCount() int { return f.submits }
 
 // scriptRunCommand returns a pane executor that runs the submitted command
 // exactly as the pane shell would (sh -c "bash '<script>'").
-func scriptRunCommand() func(cmd string) error {
+func scriptRunCommand(t *testing.T) func(cmd string) error {
+	t.Helper()
+	shell := testutil.BashShell(t)
 	return func(cmd string) error {
-		return exec.Command("sh", "-c", cmd).Run()
+		return exec.Command(shell, "-c", cmd).Run()
 	}
 }
 

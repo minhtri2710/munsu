@@ -17,6 +17,7 @@ import (
 
 	fleetconfig "github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // storeFleetPublishedSnapshot writes a valid assigned-snapshot document (a
@@ -346,9 +347,13 @@ func TestDispatchPolicyErrorCarriesMatrixEvidence(t *testing.T) {
 	if !errors.As(err, &perr) {
 		t.Fatalf("err = %T %v, want *DispatchPolicyError", err, err)
 	}
-	for _, want := range []string{"dispatch policy", "general-parent-on-captain-home", "sm-1", homeDir} {
+	for _, want := range []string{"dispatch policy", "general-parent-on-captain-home", "sm-1"} {
 		if !strings.Contains(perr.Error(), want) {
 			t.Fatalf("error %q does not carry %q", perr.Error(), want)
 		}
+	}
+	// The home is rendered with %q, which escapes its separators.
+	if !testutil.PathInMessage(perr.Error(), homeDir) {
+		t.Fatalf("error %q does not carry home %q", perr.Error(), homeDir)
 	}
 }

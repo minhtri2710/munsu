@@ -1,6 +1,7 @@
 package home
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,9 +9,33 @@ import (
 )
 
 func TestInitRefusesStatErrors(t *testing.T) {
-	_, err := Init("bad\x00root")
-	if err == nil || !strings.Contains(err.Error(), "home: stat root") {
-		t.Fatalf("Init error = %v, want stat-root refusal", err)
+	parent := t.TempDir()
+	root := filepath.Join(parent, "faulted-root")
+	sentinel := errors.New("injected lstat failure")
+	var statPath string
+	_, err := initWithLstat(root, func(path string) (os.FileInfo, error) {
+		statPath = path
+		return nil, sentinel
+	})
+	if err == nil {
+		t.Fatal("Init accepted an injected stat failure")
+	}
+	if !errors.Is(err, sentinel) || !strings.Contains(err.Error(), "home: stat root") {
+		t.Fatalf("Init error = %v, want stat-root error wrapping sentinel", err)
+	}
+	abs, absErr := filepath.Abs(root)
+	if absErr != nil {
+		t.Fatal(absErr)
+	}
+	if statPath != filepath.Clean(abs) {
+		t.Fatalf("stat path = %q, want %q", statPath, filepath.Clean(abs))
+	}
+	entries, readErr := os.ReadDir(parent)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("refused Init created %d entries, want none", len(entries))
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // setHomeEnv sets MUNSU_HOME for the duration of a test.
@@ -99,7 +100,7 @@ func TestRead_MissingCanonicalFailsClosed(t *testing.T) {
 	if err == nil {
 		t.Fatal("ReadSoldierState over a missing canonical record = nil, want fail-closed error")
 	}
-	if !strings.Contains(err.Error(), "does-not-exist") || !strings.Contains(err.Error(), tmp) {
+	if !strings.Contains(err.Error(), "does-not-exist") || !testutil.PathInMessage(err.Error(), tmp) {
 		t.Errorf("error must carry task and home context, got: %v", err)
 	}
 }
@@ -123,7 +124,7 @@ func TestRead_MetaOnlyTaskFailsClosed(t *testing.T) {
 	if err == nil {
 		t.Fatal("meta-only task observation = nil, want fail-closed")
 	}
-	if !strings.Contains(err.Error(), "meta-only") || !strings.Contains(err.Error(), tmp) {
+	if !strings.Contains(err.Error(), "meta-only") || !testutil.PathInMessage(err.Error(), tmp) {
 		t.Errorf("error must carry task and home context, got: %v", err)
 	}
 }
@@ -235,7 +236,7 @@ func TestRead_CorruptCanonicalFailsClosed(t *testing.T) {
 	if err == nil {
 		t.Fatal("ReadSoldierState over a corrupt canonical record = nil, want fail-closed error")
 	}
-	if !strings.Contains(err.Error(), "corrupt") || !strings.Contains(err.Error(), tmp) {
+	if !strings.Contains(err.Error(), "corrupt") || !testutil.PathInMessage(err.Error(), tmp) {
 		t.Errorf("error must carry task and home context, got: %v", err)
 	}
 }

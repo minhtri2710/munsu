@@ -37,6 +37,11 @@ import (
 // distinct file, mapped only while the fake is actually executing, and
 // runFakeLauncher's cmd.Run plus JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE guarantee
 // the fake and its shell children have exited before cleanup runs.
+func isExecutable(path string) bool {
+	_, err := exec.LookPath(path)
+	return err == nil
+}
+
 func installWindowsFake(path string) error {
 	executable, err := os.Executable()
 	if err != nil {
@@ -152,3 +157,19 @@ func copyFile(src, dst string) error {
 	}
 	return out.Close()
 }
+
+func posixShellPath() (string, error) { return resolvePOSIXShell(bootPath) }
+
+func resolveBashShell(searchPath string) (string, []string, error) {
+	candidates := make([]bashCandidate, 0, 2)
+	if bash, dirs, ok := resolveGitBash(searchPath); ok {
+		candidates = append(candidates, bashCandidate{shell: bash, preferredDirs: dirs})
+	}
+	if p := findOnPath(searchPath, "bash.exe"); p != "" {
+		candidates = append(candidates, bashCandidate{shell: p})
+	}
+	return resolveBashCandidates(searchPath, candidates, "bash.exe", "cat.exe", "mkdir.exe")
+}
+
+// userHomeEnv is the variable os.UserHomeDir reads on this platform.
+const userHomeEnv = "USERPROFILE"
