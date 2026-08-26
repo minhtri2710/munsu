@@ -546,7 +546,12 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, c
 		// A shell command is decided on the targets it names, not on where the
 		// session happens to stand: an absolute path into the shared checkout
 		// used to pass unopposed from a valid worktree (ADR-0014 §1).
-		writeTargets = shellWriteTargets(checkPath, effectiveCommand)
+		var shellAmbiguous bool
+		writeTargets, shellAmbiguous = shellWriteTargets(checkPath, effectiveCommand)
+		if shellAmbiguous && !block {
+			block = true
+			reason = "Shell write target is ambiguous; refusing to proceed."
+		}
 
 		nmHome := os.Getenv("NM_HOME")
 		if nmHome == "" {

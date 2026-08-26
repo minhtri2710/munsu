@@ -47,14 +47,16 @@ type shellToken struct {
 // stays bounded by the narrow claim above: only a redirection target and a
 // named write verb's arguments are targets at all, so the candidate the second
 // reading adds can only ever be one more write path, never a read.
-func shellWriteTargets(checkPath, command string) []string {
-	targets := shellWriteTargetsUnder(backslashEscapes, checkPath, command)
-	for _, target := range shellWriteTargetsUnder(backslashLiteral, checkPath, command) {
+func shellWriteTargets(checkPath, command string) ([]string, bool) {
+	targets, ambiguous := shellWriteTargetsUnder(backslashEscapes, checkPath, command)
+	literalTargets, literalAmbiguous := shellWriteTargetsUnder(backslashLiteral, checkPath, command)
+	ambiguous = ambiguous || literalAmbiguous
+	for _, target := range literalTargets {
 		if !slices.Contains(targets, target) {
 			targets = append(targets, target)
 		}
 	}
-	return targets
+	return targets, ambiguous
 }
 
 // backslashMode is one reading of a lone backslash while tokenizing.
@@ -71,8 +73,9 @@ const (
 
 // shellWriteTargetsUnder extracts the write targets of command under one
 // reading of the backslash.
-func shellWriteTargetsUnder(mode backslashMode, checkPath, command string) []string {
+func shellWriteTargetsUnder(mode backslashMode, checkPath, command string) ([]string, bool) {
 	var targets []string
+	ambiguous := false
 	currentPath := checkPath
 	for _, segment := range shellSegments(mode, command) {
 		if len(segment) == 0 {
@@ -80,17 +83,21 @@ func shellWriteTargetsUnder(mode backslashMode, checkPath, command string) []str
 		}
 		if segment[0].text == "cd" && !segment[0].redirects {
 			if len(segment) > 1 && !segment[1].redirects {
-				currentPath = resolveShellWritePath(currentPath, segment[1].text)
+				var pathAmbiguous bool
+				currentPath, pathAmbiguous = resolveShellWritePath(currentPath, segment[1].text)
+				ambiguous = ambiguous || pathAmbiguous
 			}
 			continue
 		}
 		for _, target := range segmentWriteTargets(segment) {
-			if resolved := resolveShellWritePath(currentPath, target); resolved != "" {
+			resolved, targetAmbiguous := resolveShellWritePath(currentPath, target)
+			ambiguous = ambiguous || targetAmbiguous
+			if !targetAmbiguous {
 				targets = append(targets, resolved)
 			}
 		}
 	}
-	return targets
+	return targets, ambiguous
 }
 
 // resolveShellWritePath resolves a write target against the directory the
@@ -110,13 +117,10 @@ func shellWriteTargetsUnder(mode backslashMode, checkPath, command string) []str
 //     to it.
 //   - Different-volume drive-relative (D:foo) when the base is on C:: the
 //     per-drive current directory of D cannot be reconstructed here, so the
-//     candidate is dropped rather than guessed. Dropping fails closed — a path
-//     on another volume can never name the bound primary, which lives on the
-//     base's volume, so nothing that must be refused is lost, and no malformed
-//     C:\base\D:foo candidate is emitted for the classifier to misread.
-func resolveShellWritePath(base, path string) string {
+//     path is reported as ambiguous and the shell command is refused.
+func resolveShellWritePath(base, path string) (string, bool) {
 	if filepath.IsAbs(path) {
-		return path
+		return path, false
 	}
 	pathVolume := filepath.VolumeName(path)
 	baseVolume := filepath.VolumeName(base)
@@ -124,18 +128,18 @@ func resolveShellWritePath(base, path string) string {
 		// Volume-less rooted: anchor to the base volume's root.
 		rooted := baseVolume + path
 		if filepath.IsAbs(rooted) {
-			return rooted
+			return rooted, false
 		}
 	}
 	if pathVolume != "" {
-		if pathVolume != baseVolume {
-			// Different volume: the per-drive cwd is unknowable. Fail closed.
-			return ""
+		if !strings.EqualFold(pathVolume, baseVolume) {
+			// Different volume: the per-drive cwd is unknowable.
+			return "", true
 		}
 		// Same volume: resolve the relative part against the base directory.
-		return filepath.Join(base, strings.TrimPrefix(path, pathVolume))
+		return filepath.Join(base, strings.TrimPrefix(path, pathVolume)), false
 	}
-	return filepath.Join(base, path)
+	return filepath.Join(base, path), false
 }
 
 // evaluateWriteTargets refuses the first target that lands in the shared

@@ -116,32 +116,31 @@ func TestShellWriteRefusedByDriveRelativeSameVolumeWindowsTargetIntoBoundPrimary
 		t.Fatalf("Rel: %v", err)
 	}
 	// C: + the relative path from the cwd (worktree) to the target.
-	driveRelative := "C:" + rel
+	driveRelative := filepath.VolumeName(worktree) + rel
 
 	assertShapes(t, true, worktree, "echo pwned > "+driveRelative, "")
+	caseVariant := strings.ToLower(filepath.VolumeName(worktree)) + rel
+	if strings.ToLower(filepath.VolumeName(worktree)) == filepath.VolumeName(worktree) {
+		caseVariant = strings.ToUpper(filepath.VolumeName(worktree)) + rel
+	}
+	assertShapes(t, true, worktree, "echo pwned > "+caseVariant, "")
 }
 
-// TestShellWriteDriveRelativeDifferentVolumeFailClosedWindows pins the
-// fail-closed choice for a different-volume drive-relative path (D:foo while the
-// cwd is on C:): the per-drive current directory of D cannot be reconstructed,
-// so no guessed or malformed candidate (such as C:\\base\\D:foo) is emitted,
-// and the write is allowed because a path on another volume can never name the
-// bound primary (#664 v2).
+// TestShellWriteDriveRelativeDifferentVolumeFailClosedWindows pins refusal for
+// a drive-relative path whose volume differs from the cwd (#664 v2).
 func TestShellWriteDriveRelativeDifferentVolumeFailClosedWindows(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("drive-relative paths are Windows-specific")
 	}
 	_, worktree := boundTaskFixture(t, "ship-shell-drv-amb")
-	command := "echo pwned > D:shared\\README.md"
-
-	for _, candidate := range shellWriteTargets(worktree, command) {
-		if strings.Contains(candidate, "\\D:") {
-			t.Errorf("different-volume drive-relative emitted a malformed candidate: %q", candidate)
-		}
+	volume := filepath.VolumeName(worktree)
+	otherVolume := "D:"
+	if strings.EqualFold(volume, otherVolume) {
+		otherVolume = "E:"
 	}
-	// The write is allowed: a different-volume path can never be the bound
-	// primary, so nothing that must be refused is lost by failing closed.
-	assertShapes(t, false, worktree, command, "")
+	command := "echo pwned > " + otherVolume + "shared\\README.md"
+
+	assertShapes(t, true, worktree, command, "")
 }
 
 // TestResolveShellWritePathWindows is the unit-level pin of the shell-specific
@@ -154,24 +153,27 @@ func TestResolveShellWritePathWindows(t *testing.T) {
 	}
 	const base = `C:\worktree`
 	cases := []struct {
-		path string
-		want string
+		path      string
+		want      string
+		ambiguous bool
 	}{
-		{`\rooted`, `C:\rooted`},
-		{`C:rel`, `C:\worktree\rel`},
-		{`C:rel\sub`, `C:\worktree\rel\sub`},
-		{`C:\abs`, `C:\abs`},
-		{`\\server\share`, `\\server\share`},
-		{`rel`, `C:\worktree\rel`},
+		{`\rooted`, `C:\rooted`, false},
+		{`C:rel`, `C:\worktree\rel`, false},
+		{`C:rel\sub`, `C:\worktree\rel\sub`, false},
+		{`C:\abs`, `C:\abs`, false},
+		{`\\server\share`, `\\server\share`, false},
+		{`rel`, `C:\worktree\rel`, false},
 	}
 	for _, tc := range cases {
-		if got := resolveShellWritePath(base, tc.path); got != tc.want {
-			t.Errorf("resolveShellWritePath(%q,%q) = %q, want %q", base, tc.path, got, tc.want)
+		if got, ambiguous := resolveShellWritePath(base, tc.path); got != tc.want || ambiguous != tc.ambiguous {
+			t.Errorf("resolveShellWritePath(%q,%q) = %q, %v, want %q, %v", base, tc.path, got, ambiguous, tc.want, tc.ambiguous)
 		}
 	}
-	// Different-volume drive-relative: fail closed, emit nothing.
-	if got := resolveShellWritePath(base, `D:ambiguous`); got != "" {
-		t.Errorf("resolveShellWritePath(%q,%q) = %q, want empty (fail closed)", base, `D:ambiguous`, got)
+	if got, ambiguous := resolveShellWritePath(base, `D:ambiguous`); got != "" || !ambiguous {
+		t.Errorf("resolveShellWritePath(%q,%q) = %q, %v, want ambiguous", base, `D:ambiguous`, got, ambiguous)
+	}
+	if got, ambiguous := resolveShellWritePath(base, `c:rel`); got != `C:\worktree\rel` || ambiguous {
+		t.Errorf("case-insensitive same-volume resolution = %q, %v", got, ambiguous)
 	}
 }
 
@@ -485,18 +487,21 @@ func TestShellWriteTargetExtraction(t *testing.T) {
 		// asserted through the resolver so the row holds on every OS (#664 v2).
 		{"echo x > " + `\shared\README.md`, []string{
 			filepath.Join(base, "sharedREADME.md"),
-			resolveShellWritePath(base, `\shared\README.md`),
+			mustResolveShellWritePath(base, `\shared\README.md`),
 		}},
 		{"rm -rf " + `\shared\README.md`, []string{
 			filepath.Join(base, "sharedREADME.md"),
-			resolveShellWritePath(base, `\shared\README.md`),
+			mustResolveShellWritePath(base, `\shared\README.md`),
 		}},
 		// The two readings collapse when there is no backslash to read, so a
 		// command that never mentions one produces exactly one target and no
 		// duplicate survives the union.
 		{"echo x > plain.md", []string{filepath.Join(base, "plain.md")}},
 	} {
-		got := shellWriteTargets(base, tc.command)
+		got, ambiguous := shellWriteTargets(base, tc.command)
+		if ambiguous {
+			t.Errorf("%q unexpectedly ambiguous", tc.command)
+		}
 		if len(got) != len(tc.want) {
 			t.Errorf("%q → %v, want %v", tc.command, got, tc.want)
 			continue
@@ -525,15 +530,18 @@ func TestShellWriteHeredocBackslashDelimiterBothReadings(t *testing.T) {
 		"cat <<-\\END > notes.md\n\tharmless\n\tEND\necho pwned > " + target,
 	}
 	for _, command := range cases {
-		escapeTargets := shellWriteTargetsUnder(backslashEscapes, base, command)
-		literalTargets := shellWriteTargetsUnder(backslashLiteral, base, command)
+		escapeTargets, escapeAmbiguous := shellWriteTargetsUnder(backslashEscapes, base, command)
+		literalTargets, literalAmbiguous := shellWriteTargetsUnder(backslashLiteral, base, command)
+		if escapeAmbiguous || literalAmbiguous {
+			t.Errorf("%q unexpectedly ambiguous", command)
+		}
 		// The POSIX reading dissolves backslashes, so it sees the mangled target.
-		if !slices.Contains(escapeTargets, resolveShellWritePath(base, "sharedREADME.md")) {
+		if !slices.Contains(escapeTargets, mustResolveShellWritePath(base, "sharedREADME.md")) {
 			t.Errorf("escape reading dropped post-heredoc write: %q → %v", command, escapeTargets)
 		}
 		// The Windows reading keeps the backslash as a separator and must end
 		// the body at EOF/END, so it sees the real Windows path.
-		if !slices.Contains(literalTargets, resolveShellWritePath(base, target)) {
+		if !slices.Contains(literalTargets, mustResolveShellWritePath(base, target)) {
 			t.Errorf("literal reading swallowed post-heredoc write: %q → %v", command, literalTargets)
 		}
 	}
@@ -541,6 +549,14 @@ func TestShellWriteHeredocBackslashDelimiterBothReadings(t *testing.T) {
 
 // mustAbsTestPath returns name as an absolute path rooted at the filesystem
 // root on Unix and at the current volume's root on Windows.
+func mustResolveShellWritePath(base, path string) string {
+	resolved, ambiguous := resolveShellWritePath(base, path)
+	if ambiguous {
+		panic("unexpected ambiguous shell path")
+	}
+	return resolved
+}
+
 func mustAbsTestPath(t *testing.T, name string) string {
 	t.Helper()
 	abs, err := filepath.Abs(string(os.PathSeparator) + name)
