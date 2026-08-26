@@ -1629,15 +1629,12 @@ func TestBuildLaunchScript_ShellExecution(t *testing.T) {
 	recorder := filepath.Join(tmp, "recorded.txt")
 
 	// Create a small shell script that writes its cwd and argv to a file.
-	testBin := filepath.Join(tmp, "test-recorder")
 	// The script: write cwd, then write argv count, then write each arg.
 	binContent := "#!/bin/sh\n"
 	binContent += "pwd > '" + recorder + "'\n"
 	binContent += "echo \"argv $#\" >> '" + recorder + "'\n"
 	binContent += "for a in \"$@\"; do echo \"  [$a]\" >> '" + recorder + "'; done\n"
-	if err := os.WriteFile(testBin, []byte(binContent), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testBin := testutil.WriteFakeExecutable(t, filepath.Join(tmp, "test-recorder"), binContent)
 
 	// Build a launch script with special characters.
 	args := []string{"# charter with $HOME and `backticks` and $(whoami)"}
@@ -1646,7 +1643,9 @@ func TestBuildLaunchScript_ShellExecution(t *testing.T) {
 		t.Fatalf("buildLaunchScript error: %v", err)
 	}
 
-	// Execute via /bin/sh -c (the returned command is already bash <script>).
+	// The returned command invokes bash by name; put the resolved POSIX shell's
+	// directory on PATH and execute it through that same shell.
+	testutil.PrependPath(t, testutil.POSIXShellDir(t))
 	cmd := exec.Command(testutil.POSIXShell(t), "-c", scriptCmd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
