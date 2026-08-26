@@ -339,10 +339,7 @@ func verifyPrecondition(target domain.Scoped, prec domain.Precondition, actualRe
 	if prec.Generation == registryGeneration && prec.Revision == actualRev {
 		return nil
 	}
-	conflict, ok := domain.ConflictFrom(target, prec, home.ErrConflict, func(e error) bool { return errors.Is(e, home.ErrConflict) })
-	if !ok {
-		return conflictError(ErrConflict, "registry stale precondition for %s", target.Canonical())
-	}
+	conflict, _ := domain.ConflictFrom(target, prec, home.ErrConflict, func(e error) bool { return errors.Is(e, home.ErrConflict) })
 	return conflict.WithActual(registryGeneration, actualRev)
 }
 

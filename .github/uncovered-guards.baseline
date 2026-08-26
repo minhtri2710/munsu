@@ -89,27 +89,6 @@ internal/fleet/delivery_resolve.go	ResolveTaskHome	1	homeDir == ""	burn-down(BEO
 internal/fleet/delivery_resolve.go	ResolveTaskHome	1	id == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_reviewdiff.go	ReviewDiff	1	!ok || projectName == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_reviewdiff.go	ReviewDiff	1	!ok || worktreePath == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/fleetsync.go	syncOne	1	defaultBranch == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/fleetsync.go	syncOne	1	len(strings.TrimSpace(string(statusOut))) > 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/propagate_config.go	ensureOrHealRequirement	1	existingEnv.Key != ConfigRereadKey	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/registry_ops.go	Registry.BindCaptain	1	req.Precondition.Generation != registryGeneration	growth(#614): burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/registry_ops.go	Registry.RegisterCaptain	1	req.Precondition.Generation != registryGeneration	growth(#614): burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/registry_ops.go	Registry.RegisterProject	1	req.Precondition.Generation != registryGeneration	growth(#614): burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/registry_ops.go	Registry.RetireCaptain	1	idx < 0	growth(#614): burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/registry_ops.go	Registry.RetireCaptain	1	req.Precondition.Generation != registryGeneration	growth(#614): burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/registry_ops.go	Registry.RetireProject	1	req.Precondition.Generation != registryGeneration	growth(#614): burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/registry_registry.go	NewRegistry	1	h == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/registry_registry.go	Registry.prepare	1	op.Digest != want	growth(#614): burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/registry_registry.go	requireNonEmpty	1	strings.TrimSpace(value) == ""	growth(#614): burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/registry_registry.go	validateBindingDoc	1	b.ProjectID == "" || b.CaptainID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/registry_registry.go	validateBindingDoc	1	exists	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/registry_registry.go	validateBindingDoc	2	exists	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/registry_registry.go	validateCaptainRegistry	1	c.ID == "" || c.Home == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/registry_registry.go	validateCaptainRegistry	1	c.SchemaVersion != FleetRegistrySchema	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/registry_registry.go	validateCaptainRegistry	1	exists	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/registry_registry.go	validateProjectRegistry	1	exists	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/registry_registry.go	validateProjectRegistry	1	p.ID == "" || p.Name == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/registry_registry.go	verifyPrecondition	1	!ok	growth(#614): burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/retirement_poll.go	ListPendingRetirements	1	rec.TaskID == "" || retirementRecordPath(homeDir, rec.TaskID) != filepath.Join(dir, entry.Name())	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/retirement_poll.go	requireCanonicalCompletedOutcome	1	auth == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/retirement_poll.go	requireCanonicalCompletedOutcome	1	out.Status != taskauthority.DeliveryOutcomeCompleted	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
