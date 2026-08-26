@@ -190,20 +190,11 @@ func appendUnique(dirs []string, values ...string) []string {
 	return dirs
 }
 
-// POSIXShell returns the absolute path of an interpreter for POSIX shell
-// scripts, failing the test if the machine has none.
-//
-// Tests that prove a generated launch script actually executes have to run it
-// through a shell. Naming "sh" or "/bin/sh" directly asserts a filesystem
-// layout rather than the script's behaviour: windows has neither, so six such
-// fixtures died at `exec: "sh": executable file not found in %PATH%` without
-// ever reaching the thing they were written to check.
-//
-// This resolves the same interpreter the windows fake-binary shim hands its
-// scripts to, so a fixture and the fakes it puts on PATH agree about what runs
-// them. Finding none is a failure rather than a skip: a machine with no POSIX
-// shell cannot run the fixture at all, which is a fact about the machine and
-// not a behaviour the platform lacks.
+// POSIXShell returns the absolute path of a real POSIX interpreter for
+// portable fake executable and sidecar fixtures, failing the test if the
+// machine has none. Bash-dependent launch fixtures should use BashShell and
+// BashShellDirs instead, because those helpers also guarantee the required
+// support utilities are resolvable from the fixture PATH.
 func POSIXShell(t *testing.T) string {
 	t.Helper()
 	shell, err := posixShellPath()
@@ -220,6 +211,8 @@ func POSIXShellDir(t *testing.T) string {
 	return filepath.Dir(POSIXShell(t))
 }
 
+// BashShell returns a real executable bash from an environment that can also
+// resolve the external utilities required by generated launch scripts.
 func BashShell(t *testing.T) string {
 	t.Helper()
 	shell, _, err := resolveBashShell(bootPath)
@@ -229,6 +222,9 @@ func BashShell(t *testing.T) string {
 	return shell
 }
 
+// BashShellDirs returns ordered, deduplicated fixture PATH directories that
+// resolve bash, cat, and mkdir while preserving preferred support-directory
+// order.
 func BashShellDirs(t *testing.T) []string {
 	t.Helper()
 	_, dirs, err := resolveBashShell(bootPath)

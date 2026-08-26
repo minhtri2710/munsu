@@ -657,7 +657,7 @@ func TestLaunchArtifactGuardConcurrentSubmissionsSingleProcess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildLaunchArtifact: %v", err)
 	}
-	// POSIXShell reports through t, which is only legal on the test goroutine.
+	// BashShell reports through t, which is only legal on the test goroutine.
 	shell := testutil.BashShell(t)
 	var wg sync.WaitGroup
 	for i := 0; i < 2; i++ {

@@ -17,12 +17,9 @@ func isExecutable(path string) bool {
 
 func fakeExecutablePath(path string) string { return path }
 
-// posixShellPath prefers the well-known location over a PATH search, because
-// callers put this shell's directory on a fixture PATH and expect the standard
-// utilities a launch script uses to come with it. Resolving to a shell that
-// ships alone — a homebrew bash, say — would hand back a directory holding no
-// cat, no mkdir, and the script would fail for a reason unrelated to the test.
-// The same reasoning picks Git for Windows' usr\bin on the other platform.
+// posixShellPath resolves a generic POSIX interpreter for portable fixtures.
+// Complete support for bash-driven launch scripts belongs to resolveBashShell,
+// which separately verifies bash, cat, and mkdir availability.
 func posixShellPath() (string, error) {
 	for _, p := range []string{"/bin/sh", "/usr/bin/sh", "/bin/bash"} {
 		if isExecutable(p) {
