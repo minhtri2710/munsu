@@ -93,6 +93,36 @@ func TestDeliverProviderBaseRefMatchDeliversNormally(t *testing.T) {
 
 // TestDeliverProviderFenceAcceptsMatchingObservations proves the provider
 // identity fence accepts matching head and base evidence.
+func TestVerifyProviderHeadRejectsInvalidMergedSHA(t *testing.T) {
+	journal := &deliveryJournal{Identity: deliveryTestIdentity()}
+	obs := DeliveryProviderObservation{State: "MERGED", HeadSHA: deliveryTestHead, BaseRef: deliveryTestBase, MergedSHA: "not-a-git-object-id"}
+	if err := verifyProviderHead(journal, obs); err == nil {
+		t.Fatal("verifyProviderHead accepted invalid merged SHA")
+	}
+}
+
+func TestDeliverMergedInvalidSHAFailsClosedBeforeOutcome(t *testing.T) {
+	c, homeDir := newFleetCanonical(t)
+	taskID := "t1"
+	mustWorkingDeliveryTask(t, c, taskID)
+	provider := newFakeDeliveryProvider().script(DeliveryProviderObservation{
+		State: "MERGED", HeadSHA: deliveryTestHead, BaseRef: deliveryTestBase, MergedSHA: "not-a-git-object-id",
+	})
+	installDeliveryProviderFor(t, provider)
+
+	result, err := Deliver(homeDir, taskID, deliverRequest())
+	var failClosed *DeliveryFailClosedError
+	if !errors.As(err, &failClosed) || result != nil {
+		t.Fatalf("result=%+v err=%T %v, want fail-closed refusal", result, err, err)
+	}
+	if provider.merges != 0 {
+		t.Fatalf("merges = %d, want 0", provider.merges)
+	}
+	if out, outcomeErr := c.DeliveryOutcome(mustFleetTaskID(t, taskID)); outcomeErr == nil {
+		t.Fatalf("invalid merged SHA committed outcome: %+v", out)
+	}
+}
+
 func TestDeliverProviderFenceAcceptsAndRejectsObservations(t *testing.T) {
 	journal := &deliveryJournal{Identity: deliveryTestIdentity()}
 	cases := []struct {
@@ -100,7 +130,7 @@ func TestDeliverProviderFenceAcceptsAndRejectsObservations(t *testing.T) {
 		obs  DeliveryProviderObservation
 	}{
 		{"explicit-mergeability", DeliveryProviderObservation{State: "OPEN", HeadSHA: deliveryTestHead, BaseRef: deliveryTestBase, Mergeability: DeliveryMergeabilityAllowed}},
-		{"merged", DeliveryProviderObservation{State: "MERGED", HeadSHA: deliveryTestHead, BaseRef: deliveryTestBase}},
+		{"merged", DeliveryProviderObservation{State: "MERGED", HeadSHA: deliveryTestHead, BaseRef: deliveryTestBase, MergedSHA: "0123456789abcdef0123456789abcdef01234567"}},
 		{"merged-missing-head", DeliveryProviderObservation{State: "MERGED", BaseRef: deliveryTestBase}},
 		{"merged-drifted-head", DeliveryProviderObservation{State: "MERGED", HeadSHA: "9999888877776666555544443333222211110000", BaseRef: deliveryTestBase}},
 		{"merged-missing-base", DeliveryProviderObservation{State: "MERGED", HeadSHA: deliveryTestHead}},

@@ -623,6 +623,9 @@ func verifyProviderMergeability(obs DeliveryProviderObservation) error {
 }
 
 func verifyProviderHead(journal *deliveryJournal, obs DeliveryProviderObservation) error {
+	if obs.State == "MERGED" && !validGitObjectID(obs.MergedSHA) {
+		return fmt.Errorf("provider observation is missing or has invalid merge commit evidence")
+	}
 	if obs.HeadSHA == "" {
 		return fmt.Errorf("provider observation is missing head evidence")
 	}

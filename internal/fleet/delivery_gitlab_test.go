@@ -827,14 +827,14 @@ func TestGitlabDeliveryProvider_RefusesAtomicMergeConstraints(t *testing.T) {
 
 func TestGitlabDeliveryProvider_MergedObservationPreservesEvidence(t *testing.T) {
 	client := &glabClient{runner: &fakeGlabRunner{runFn: func(args ...string) ([]byte, error) {
-		return []byte(`{"sha":"head123","target_branch":"main","state":"merged","merge_commit_sha":"merge123"}`), nil
+		return []byte(`{"sha":"head123","target_branch":"main","state":"merged","merge_commit_sha":"0123456789abcdef0123456789abcdef01234567"}`), nil
 	}}}
 	provider := &gitlabDeliveryProvider{client: client}
 	obs, err := provider.Observe(domain.DeliveryIdentity{URL: "https://gitlab.com/owner/project/-/merge_requests/7"})
 	if err != nil {
 		t.Fatalf("Observe: %v", err)
 	}
-	if obs.State != "MERGED" || obs.HeadSHA != "head123" || obs.BaseRef != "main" || obs.MergedSHA != "merge123" {
+	if obs.State != "MERGED" || obs.HeadSHA != "head123" || obs.BaseRef != "main" || obs.MergedSHA != "0123456789abcdef0123456789abcdef01234567" {
 		t.Fatalf("observation = %+v", obs)
 	}
 }

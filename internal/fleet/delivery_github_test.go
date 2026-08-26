@@ -177,8 +177,8 @@ func TestClassifyGitHubRESTObservation(t *testing.T) {
 	if err != nil || obs.State != "OPEN" || obs.Mergeability != DeliveryMergeabilityUnknown {
 		t.Fatalf("open observation = %+v, %v", obs, err)
 	}
-	merged, err := classifyGitHubRESTObservation([]byte("state: closed\nheadSha: abc\nbaseRef: main\nmerged: true\nmergedSha: def\n"))
-	if err != nil || merged.State != "MERGED" || merged.MergedSHA != "def" {
+	merged, err := classifyGitHubRESTObservation([]byte("state: closed\nheadSha: abc\nbaseRef: main\nmerged: true\nmergedSha: 0123456789abcdef0123456789abcdef01234567\n"))
+	if err != nil || merged.State != "MERGED" || merged.MergedSHA != "0123456789abcdef0123456789abcdef01234567" {
 		t.Fatalf("merged observation = %+v, %v", merged, err)
 	}
 	closed, err := classifyGitHubRESTObservation([]byte("state: closed\nheadSha: abc\nbaseRef: main\nmerged: false\n"))

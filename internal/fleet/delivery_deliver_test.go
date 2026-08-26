@@ -194,7 +194,7 @@ func TestDeliverClassification(t *testing.T) {
 		obsErr error
 		want   taskauthority.DeliveryOutcomeStatus
 	}{
-		{"merged", DeliveryProviderObservation{State: "MERGED", HeadSHA: deliveryTestHead, BaseRef: deliveryTestBase, MergedSHA: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"}, nil, taskauthority.DeliveryOutcomeCompleted},
+		{"merged", DeliveryProviderObservation{State: "MERGED", HeadSHA: deliveryTestHead, BaseRef: deliveryTestBase, MergedSHA: "0123456789abcdef0123456789abcdef01234567"}, nil, taskauthority.DeliveryOutcomeCompleted},
 		{"open", DeliveryProviderObservation{State: "OPEN", HeadSHA: deliveryTestHead, Mergeability: DeliveryMergeabilityAllowed}, nil, taskauthority.DeliveryOutcomeRetryable},
 		{"closed", DeliveryProviderObservation{State: "CLOSED", HeadSHA: deliveryTestHead}, nil, taskauthority.DeliveryOutcomePartial},
 		{"ambiguous", DeliveryProviderObservation{State: "UNKNOWN"}, nil, taskauthority.DeliveryOutcomeRemoteUnknown},

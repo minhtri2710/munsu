@@ -137,14 +137,14 @@ func parseGLMergeStatus(data []byte) (*domain.PRMergeStatus, error) {
 	}
 
 	mergedSHA := strings.TrimSpace(raw.MergeCommitSHA)
-	if normalizedState == "MERGED" && (mergedSHA == "" || strings.EqualFold(mergedSHA, "null")) {
+	if normalizedState == "MERGED" && !validGitObjectID(mergedSHA) {
 		return nil, fmt.Errorf("glab mr view returned missing merge commit sha")
 	}
 	status := &domain.PRMergeStatus{
 		State:   normalizedState,
 		HeadSHA: raw.SHA,
 	}
-	if mergedSHA != "" && !strings.EqualFold(mergedSHA, "null") {
+	if validGitObjectID(mergedSHA) {
 		status.MergedSHA = mergedSHA
 	}
 

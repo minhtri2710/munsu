@@ -191,7 +191,7 @@ func classifyGitHubRESTObservation(data []byte) (DeliveryProviderObservation, er
 	}
 	if merged {
 		mergedSHA := strings.TrimSpace(values["mergedSha"])
-		if mergedSHA == "" || strings.EqualFold(mergedSHA, "null") {
+		if !validGitObjectID(mergedSHA) {
 			return DeliveryProviderObservation{}, fmt.Errorf("gh-axi api: merged pull request is missing merge commit evidence")
 		}
 		obs.State = "MERGED"

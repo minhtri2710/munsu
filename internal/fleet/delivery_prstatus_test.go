@@ -205,7 +205,7 @@ func TestGitHubProviderSnapshotTerminalStatesNeedNoMergeabilityEvidence(t *testi
 		mergeSHA string
 		data     string
 	}{
-		{"MERGED", true, "merge123", `{"state":"MERGED","headRefOid":"head123","headRefName":"feature","baseRefName":"main","mergeCommit":{"oid":"merge123"}}`},
+		{"MERGED", true, "0123456789abcdef0123456789abcdef01234567", `{"state":"MERGED","headRefOid":"head123","headRefName":"feature","baseRefName":"main","mergeCommit":{"oid":"0123456789abcdef0123456789abcdef01234567"}}`},
 		{"CLOSED", false, "", `{"state":"CLOSED","headRefOid":"head123","headRefName":"feature","baseRefName":"main"}`},
 	} {
 		t.Run(tc.state, func(t *testing.T) {
@@ -266,7 +266,7 @@ func TestGitLabProviderSnapshotTerminalStatesNeedNoMergeabilityEvidence(t *testi
 		if len(args) >= 2 && args[0] == "auth" {
 			return []byte("authenticated"), nil
 		}
-		return []byte(`{"state":"merged","sha":"head123","source_branch":"feature","target_branch":"main","merge_commit_sha":"merge123"}`), nil
+		return []byte(`{"state":"merged","sha":"head123","source_branch":"feature","target_branch":"main","merge_commit_sha":"0123456789abcdef0123456789abcdef01234567"}`), nil
 	}}
 	t.Cleanup(func() { defaultGlabRunner = old })
 	for _, state := range []string{"merged", "closed"} {
@@ -281,7 +281,7 @@ func TestGitLabProviderSnapshotTerminalStatesNeedNoMergeabilityEvidence(t *testi
 				if len(args) >= 2 && args[0] == "auth" {
 					return []byte("authenticated"), nil
 				}
-				return []byte(fmt.Sprintf(`{"state":"%s","sha":"head123","source_branch":"feature","target_branch":"main","merge_commit_sha":"merge123"}`, state)), nil
+				return []byte(fmt.Sprintf(`{"state":"%s","sha":"head123","source_branch":"feature","target_branch":"main","merge_commit_sha":"0123456789abcdef0123456789abcdef01234567"}`, state)), nil
 			}}
 			snapshot, err := fetchGitLabProviderSnapshot("https://gitlab.com/owner/project/-/merge_requests/42")
 			if err != nil {
