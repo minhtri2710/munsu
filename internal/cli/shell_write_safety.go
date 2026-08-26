@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -132,11 +133,11 @@ func resolveShellWritePath(base, path string) (string, bool) {
 	}
 	pathVolume := filepath.VolumeName(path)
 	baseVolume := filepath.VolumeName(base)
-	if pathVolume == "" && baseVolume != "" && strings.HasPrefix(path, string(filepath.Separator)) {
+	if pathVolume == "" && baseVolume != "" && len(path) > 0 && os.IsPathSeparator(path[0]) {
 		// Volume-less rooted: anchor to the base volume's root.
 		rooted := baseVolume + path
 		if filepath.IsAbs(rooted) {
-			return rooted, false
+			return filepath.Clean(rooted), false
 		}
 	}
 	if pathVolume != "" {

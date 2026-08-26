@@ -95,10 +95,14 @@ func TestShellWriteRefusedByVolumeLessRootedWindowsTargetIntoBoundPrimary(t *tes
 	rooted := strings.TrimPrefix(target, filepath.VolumeName(target))
 
 	assertShapes(t, true, worktree, "echo pwned > "+rooted, "")
+	forwardSlashRooted := strings.ReplaceAll(rooted, `\`, "/")
+	assertShapes(t, true, worktree, "echo pwned > "+forwardSlashRooted, "")
 
 	unrelated := filepath.Join(t.TempDir(), "README.md")
 	unrelatedRooted := strings.TrimPrefix(unrelated, filepath.VolumeName(unrelated))
 	assertShapes(t, false, worktree, "echo ok > "+unrelatedRooted, "")
+	forwardSlashUnrelatedRooted := strings.ReplaceAll(unrelatedRooted, `\`, "/")
+	assertShapes(t, false, worktree, "echo ok > "+forwardSlashUnrelatedRooted, "")
 }
 
 // TestShellWriteRefusedByDriveRelativeSameVolumeWindowsTargetIntoBoundPrimary
@@ -158,6 +162,7 @@ func TestResolveShellWritePathWindows(t *testing.T) {
 		ambiguous bool
 	}{
 		{`\rooted`, `C:\rooted`, false},
+		{`/rooted`, `C:\rooted`, false},
 		{`C:rel`, `C:\worktree\rel`, false},
 		{`C:rel\sub`, `C:\worktree\rel\sub`, false},
 		{`C:\abs`, `C:\abs`, false},
