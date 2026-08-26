@@ -51,9 +51,6 @@ func TestResolvePOSIXShell(t *testing.T) {
 	}
 }
 
-// TestWriteFakeExecutableAtWritesTheScriptVerbatim pins the property the whole
-// shim rests on: the shell script is the single source of the fake's behaviour
-// on both platforms, so it is never rewritten for the host.
 func TestResolveBashShellSupportPaths(t *testing.T) {
 	gitRoot := t.TempDir()
 	touch(t, filepath.Join(gitRoot, "cmd", "git.exe"))
@@ -65,10 +62,6 @@ func TestResolveBashShellSupportPaths(t *testing.T) {
 	shell, dirs, ok := resolveGitBash(filepath.Join(gitRoot, "cmd"))
 	if !ok {
 		t.Fatal("resolveGitBash did not find the Git bash layout")
-	}
-	var err error
-	if err != nil {
-		t.Fatal(err)
 	}
 	if want := filepath.Join(gitRoot, "usr", "bin", "bash.exe"); shell != want {
 		t.Fatalf("shell = %q, want %q", shell, want)
@@ -91,15 +84,47 @@ func TestResolveBashShellSupportPaths(t *testing.T) {
 	if !ok {
 		t.Fatal("resolveGitBash did not find the Git bash fallback")
 	}
-	err = nil
-	if err != nil {
-		t.Fatal(err)
-	}
 	if want := filepath.Join(withoutUsrBash, "bin", "bash.exe"); shell != want {
 		t.Fatalf("fallback shell = %q, want %q", shell, want)
 	}
 	if len(dirs) != 2 || dirs[0] != filepath.Join(withoutUsrBash, "usr", "bin") || dirs[1] != filepath.Join(withoutUsrBash, "bin") {
 		t.Fatalf("fallback support dirs = %q, want usr/bin then bin", dirs)
+	}
+}
+
+func TestCompleteBashDirsRejectsMissingUtilities(t *testing.T) {
+	dir := t.TempDir()
+	touch(t, filepath.Join(dir, "bash.exe"))
+	if _, err := completeBashDirs(dir, filepath.Join(dir, "bash.exe"), nil, "bash.exe", "cat.exe", "mkdir.exe"); !errors.Is(err, errors.ErrUnsupported) {
+		t.Fatalf("completeBashDirs error = %v, want unsupported", err)
+	}
+	touch(t, filepath.Join(dir, "cat.exe"))
+	touch(t, filepath.Join(dir, "mkdir.exe"))
+	dirs, err := completeBashDirs(dir, filepath.Join(dir, "bash.exe"), nil, "bash.exe", "cat.exe", "mkdir.exe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dirs) != 1 || dirs[0] != dir {
+		t.Fatalf("complete support dirs = %q, want %q", dirs, []string{dir})
+	}
+
+	shellDir := t.TempDir()
+	utilityDir := t.TempDir()
+	touch(t, filepath.Join(shellDir, "bash.exe"))
+	touch(t, filepath.Join(utilityDir, "cat.exe"))
+	touch(t, filepath.Join(utilityDir, "mkdir.exe"))
+	searchPath := strings.Join([]string{shellDir, utilityDir}, string(os.PathListSeparator))
+	dirs, err = completeBashDirs(searchPath, filepath.Join(shellDir, "bash.exe"), nil, "bash.exe", "cat.exe", "mkdir.exe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dirs) != 2 || dirs[0] != shellDir || dirs[1] != utilityDir {
+		t.Fatalf("separated support dirs = %q, want shell then utilities", dirs)
+	}
+	for _, name := range []string{"bash.exe", "cat.exe", "mkdir.exe"} {
+		if findOnPath(strings.Join(dirs, string(os.PathListSeparator)), name) == "" {
+			t.Fatalf("separated support PATH does not resolve %s", name)
+		}
 	}
 }
 

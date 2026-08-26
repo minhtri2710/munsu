@@ -158,10 +158,17 @@ func posixShellPath() (string, error) { return resolvePOSIXShell(bootPath) }
 
 func resolveBashShell(searchPath string) (string, []string, error) {
 	if bash, dirs, ok := resolveGitBash(searchPath); ok {
-		return bash, dirs, nil
+		complete, err := completeBashDirs(searchPath, bash, dirs, "bash.exe", "cat.exe", "mkdir.exe")
+		if err == nil {
+			return bash, complete, nil
+		}
 	}
 	if p := findOnPath(searchPath, "bash.exe"); p != "" {
-		return p, []string{filepath.Dir(p)}, nil
+		dirs, err := completeBashDirs(searchPath, p, nil, "bash.exe", "cat.exe", "mkdir.exe")
+		if err == nil {
+			return p, dirs, nil
+		}
+		return "", nil, err
 	}
 	return "", nil, fmt.Errorf("no bash shell for launch fixtures on PATH=%s: %w", searchPath, errors.ErrUnsupported)
 }

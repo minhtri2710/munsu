@@ -5,7 +5,6 @@ package testutil
 import (
 	"errors"
 	"fmt"
-	"path/filepath"
 )
 
 func installWindowsFake(string) error { return nil }
@@ -33,11 +32,18 @@ func posixShellPath() (string, error) {
 func resolveBashShell(searchPath string) (string, []string, error) {
 	for _, p := range []string{"/bin/bash", "/usr/bin/bash"} {
 		if isFile(p) {
-			return p, []string{filepath.Dir(p)}, nil
+			dirs, err := completeBashDirs(searchPath, p, nil, "bash", "cat", "mkdir")
+			if err == nil {
+				return p, dirs, nil
+			}
 		}
 	}
 	if p := findOnPath(searchPath, "bash"); p != "" {
-		return p, []string{filepath.Dir(p)}, nil
+		dirs, err := completeBashDirs(searchPath, p, nil, "bash", "cat", "mkdir")
+		if err == nil {
+			return p, dirs, nil
+		}
+		return "", nil, err
 	}
 	return "", nil, fmt.Errorf("no bash shell on PATH=%s: %w", searchPath, errors.ErrUnsupported)
 }

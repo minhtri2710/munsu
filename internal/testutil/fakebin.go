@@ -135,6 +135,40 @@ func existingDirs(dirs ...string) []string {
 	return out
 }
 
+func completeBashDirs(searchPath, shell string, preferred []string, names ...string) ([]string, error) {
+	dirs := existingDirs(append([]string{filepath.Dir(shell)}, preferred...)...)
+	lookupPath := strings.Join(append(append([]string{}, dirs...), filepath.SplitList(searchPath)...), string(os.PathListSeparator))
+	for _, name := range names {
+		path := findOnPath(lookupPath, name)
+		if path == "" {
+			return nil, fmt.Errorf("bash fixture requires %s on PATH=%s: %w", name, searchPath, errors.ErrUnsupported)
+		}
+		dirs = appendUnique(dirs, filepath.Dir(path))
+	}
+	for _, name := range names {
+		if findOnPath(strings.Join(dirs, string(os.PathListSeparator)), name) == "" {
+			return nil, fmt.Errorf("bash fixture cannot resolve %s from support PATH: %w", name, errors.ErrUnsupported)
+		}
+	}
+	return dirs, nil
+}
+
+func appendUnique(dirs []string, values ...string) []string {
+	for _, value := range values {
+		found := false
+		for _, dir := range dirs {
+			if dir == value {
+				found = true
+				break
+			}
+		}
+		if !found {
+			dirs = append(dirs, value)
+		}
+	}
+	return dirs
+}
+
 // POSIXShell returns the absolute path of an interpreter for POSIX shell
 // scripts, failing the test if the machine has none.
 //
