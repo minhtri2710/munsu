@@ -98,9 +98,6 @@ internal/fleet/registry_ops.go	Registry.RegisterProject	1	req.Precondition.Gener
 internal/fleet/registry_ops.go	Registry.RetireCaptain	1	idx < 0	growth(#614): burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/registry_ops.go	Registry.RetireCaptain	1	req.Precondition.Generation != registryGeneration	growth(#614): burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/registry_ops.go	Registry.RetireProject	1	req.Precondition.Generation != registryGeneration	growth(#614): burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/registry_registry.go	NewRegistry	1	h == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/registry_registry.go	Registry.prepare	1	op.Digest != want	growth(#614): burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/registry_registry.go	requireNonEmpty	1	strings.TrimSpace(value) == ""	growth(#614): burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/registry_registry.go	validateBindingDoc	1	b.ProjectID == "" || b.CaptainID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/registry_registry.go	validateBindingDoc	1	exists	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/registry_registry.go	validateBindingDoc	2	exists	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
