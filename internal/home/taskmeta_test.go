@@ -56,6 +56,12 @@ func TestTaskMetadataDoesNotIncreaseExistingDirectoryPermissions(t *testing.T) {
 		if err := WriteMeta(tmp, id, map[string]string{"kind": "ship"}); !errors.Is(err, os.ErrPermission) {
 			t.Fatalf("WriteMeta error = %v, want permission error", err)
 		}
+		if _, err := os.ReadDir(state); err != nil {
+			t.Fatalf("state directory became unreadable after denied WriteMeta: %v", err)
+		}
+		if data, err := os.ReadFile(marker); err != nil || string(data) != "marker" {
+			t.Fatalf("marker became unreadable after denied WriteMeta: %q, %v", data, err)
+		}
 		if _, err := os.Stat(metaPath); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("metadata path after denied write = %v, want absent", err)
 		}

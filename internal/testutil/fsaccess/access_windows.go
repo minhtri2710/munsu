@@ -292,7 +292,7 @@ func assertOwnerOnly(t *testing.T, path string, wantDir bool) {
 	if info.IsDir() != wantDir {
 		t.Fatalf("private path %q directory=%v, want %v", path, info.IsDir(), wantDir)
 	}
-	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
 		t.Fatalf("read private DACL for %q: %v", path, err)
 	}
@@ -330,6 +330,13 @@ func assertOwnerOnly(t *testing.T, path string, wantDir bool) {
 	sid, err := currentUserSID()
 	if err != nil {
 		t.Fatalf("current user SID: %v", err)
+	}
+	actualOwner, _, err := sd.Owner()
+	if err != nil {
+		t.Fatalf("read private owner for %q: %v", path, err)
+	}
+	if actualOwner == nil || !windows.EqualSid(actualOwner, sid) {
+		t.Fatalf("private path %q owner is not current user", path)
 	}
 	aceSID := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
 	if !windows.EqualSid(aceSID, sid) {

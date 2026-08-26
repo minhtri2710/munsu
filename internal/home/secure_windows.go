@@ -254,7 +254,7 @@ func currentUserSID() (*windows.SID, error) {
 // control, with no inherited ACE. It fails closed when the guarantee is not
 // established or cannot be verified.
 func verifyProtection(path string, isDir bool) error {
-	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
 		return fmt.Errorf("home: read DACL for %s: %w", path, err)
 	}
@@ -294,6 +294,13 @@ func verifyProtection(path string, isDir bool) error {
 	aceSid := (*windows.SID)(unsafe.Pointer(&pAce.SidStart))
 	if !windows.EqualSid(aceSid, sid) {
 		return fmt.Errorf("home: %s ACE grants a non-owner principal", path)
+	}
+	actualOwner, _, err := sd.Owner()
+	if err != nil {
+		return fmt.Errorf("home: read owner for %s: %w", path, err)
+	}
+	if actualOwner == nil || !windows.EqualSid(actualOwner, sid) {
+		return fmt.Errorf("home: %s owner is not current user", path)
 	}
 	return nil
 }
