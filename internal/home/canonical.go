@@ -175,10 +175,11 @@ func (h *Home) RootFor(name string) (string, error) {
 	return filepath.Join(h.root, rel), nil
 }
 
-// Path returns a contained, no-follow verified path for key within the logical
-// root. key must be relative and must not escape the root via "..", absolute
-// paths, or symlinks. The returned path is suitable for reading; durable state
-// is written through Commit.
+// Path returns a contained, no-follow verified native path for a logical key
+// within the logical root. Keys use canonical slash separators and must not
+// contain empty/current components, native backslashes, traversal, absolute
+// aliases, or volume-qualified forms. The returned path is suitable for
+// reading; durable state is written through Commit.
 func (h *Home) Path(root, key string) (string, error) {
 	rootPath, err := h.RootFor(root)
 	if err != nil {

@@ -71,6 +71,27 @@ func TestReadEmbeddedSkill(t *testing.T) {
 	}
 }
 
+func TestReadEmbeddedSkillAll(t *testing.T) {
+	names, err := embeddedSkillNames()
+	if err != nil {
+		t.Fatalf("embeddedSkillNames() error: %v", err)
+	}
+	if len(names) == 0 {
+		t.Fatal("expected at least one embedded skill")
+	}
+	for _, name := range names {
+		t.Run(name, func(t *testing.T) {
+			content, err := readEmbeddedSkill(name)
+			if err != nil {
+				t.Fatalf("readEmbeddedSkill(%q) error: %v", name, err)
+			}
+			if len(content) == 0 {
+				t.Fatalf("readEmbeddedSkill(%q) returned empty content", name)
+			}
+		})
+	}
+}
+
 func TestSkillExistsAt(t *testing.T) {
 	tmpDir := t.TempDir()
 

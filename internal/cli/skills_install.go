@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -112,11 +113,11 @@ func installSkills(dest, onlyName string, skipNames map[string]bool) ([]string, 
 // readEmbeddedSkill returns the concatenated contents of every file in the named
 // embedded skill directory, in lexical order. Returns an error if the skill does not exist.
 func readEmbeddedSkill(name string) (string, error) {
-	if _, err := fs.Stat(skillFiles, filepath.Join("skills", name)); err != nil {
+	if _, err := fs.Stat(skillFiles, path.Join("skills", name)); err != nil {
 		return "", fmt.Errorf("skill %q not found", name)
 	}
 	var b strings.Builder
-	files, err := fs.ReadDir(skillFiles, filepath.Join("skills", name))
+	files, err := fs.ReadDir(skillFiles, path.Join("skills", name))
 	if err != nil {
 		return "", fmt.Errorf("reading skill %s: %w", name, err)
 	}
@@ -124,7 +125,7 @@ func readEmbeddedSkill(name string) (string, error) {
 		if e.IsDir() {
 			continue
 		}
-		data, rerr := skillFiles.ReadFile(filepath.Join("skills", name, e.Name()))
+		data, rerr := skillFiles.ReadFile(path.Join("skills", name, e.Name()))
 		if rerr != nil {
 			return "", fmt.Errorf("reading %s/%s: %w", name, e.Name(), rerr)
 		}

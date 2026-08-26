@@ -2,28 +2,34 @@ package home
 
 import (
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 )
 
-// joinContained returns the path for key within root, rejecting any key that
-// would escape root via "..", an absolute path, empty segments, or a leading
-// separator. The comparison is purely lexical and does not follow symlinks.
+// joinContained returns the native path for a logical key within root. Logical
+// keys use slash separators and reject traversal, empty/current components,
+// native backslashes, absolute aliases, and volume-qualified forms before
+// native-path conversion. The comparison is purely lexical and does not follow
+// symlinks.
 func joinContained(root, key string) (string, error) {
 	if key == "" {
 		return "", ErrEmptyKey
 	}
-	if filepath.IsAbs(key) {
+	if strings.HasPrefix(key, "/") || strings.HasPrefix(key, "\\") || path.IsAbs(key) || filepath.IsAbs(key) || (len(key) >= 2 && key[1] == ':') {
 		return "", ErrAbsoluteKey
+	}
+	if strings.Contains(key, "\\") {
+		return "", ErrKeyEscapes
 	}
 	// Reject escape/current/empty components in the raw key before any
 	// cleaning, so a key cannot smuggle ".." or absolute escapes.
-	for _, part := range strings.Split(key, string(filepath.Separator)) {
+	for _, part := range strings.Split(key, "/") {
 		if part == "" || part == "." || part == ".." {
 			return "", ErrKeyEscapes
 		}
 	}
-	clean := filepath.Clean(key)
+	clean := filepath.Clean(filepath.FromSlash(key))
 	joined := filepath.Join(root, clean)
 	rel, err := filepath.Rel(root, joined)
 	if err != nil {

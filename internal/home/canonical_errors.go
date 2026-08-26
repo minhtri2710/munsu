@@ -46,11 +46,12 @@ var (
 	// ErrEmptyKey reports a blank logical key.
 	ErrEmptyKey = errors.New("home: empty key")
 
-	// ErrAbsoluteKey reports an absolute logical key.
+	// ErrAbsoluteKey reports an absolute, leading-separator, or
+	// volume-qualified logical key.
 	ErrAbsoluteKey = errors.New("home: absolute key")
 
-	// ErrKeyEscapes reports a logical key that escapes its root via ".." or a
-	// leading separator.
+	// ErrKeyEscapes reports a logical key that uses native backslashes or escapes
+	// its root via ".." or invalid slash-separated components.
 	ErrKeyEscapes = errors.New("home: key escapes root")
 
 	// ErrSymlinkEscapes reports a logical key whose parent path traverses a

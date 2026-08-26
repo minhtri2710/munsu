@@ -238,6 +238,69 @@ func TestPathContainment(t *testing.T) {
 	}
 }
 
+func TestJoinContainedLogicalKeys(t *testing.T) {
+	h := newTestHome(t)
+	root, err := h.RootFor(RootState)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, key := range []string{
+		"a/b/c",
+		"single",
+		"nested/sub/dir/file.txt",
+	} {
+		got, err := joinContained(root, key)
+		if err != nil {
+			t.Errorf("joinContained(%q) unexpected error: %v", key, err)
+		}
+		want := filepath.Join(root, filepath.FromSlash(key))
+		if got != want {
+			t.Errorf("joinContained(%q) = %q, want %q", key, got, want)
+		}
+	}
+
+	for _, key := range []string{
+		"",
+	} {
+		if _, err := joinContained(root, key); !errors.Is(err, ErrEmptyKey) {
+			t.Errorf("joinContained(%q) = %v, want ErrEmptyKey", key, err)
+		}
+	}
+
+	for _, key := range []string{
+		"/abs",
+		"/a/b/c",
+		"\\abs",
+		"\\a\\b",
+		"C:foo",
+		"C:/foo",
+	} {
+		if _, err := joinContained(root, key); !errors.Is(err, ErrAbsoluteKey) {
+			t.Errorf("joinContained(%q) = %v, want ErrAbsoluteKey", key, err)
+		}
+	}
+
+	for _, key := range []string{
+		"..",
+		"../x",
+		"../../etc",
+		"a/../../etc",
+		"./x",
+		"a/../b",
+		"a//b",
+		"a/b/.",
+		"a/b/..",
+		"a/b/",
+		"a\\b",
+		"a\\..\\b",
+	} {
+		if _, err := joinContained(root, key); !errors.Is(err, ErrKeyEscapes) {
+			t.Errorf("joinContained(%q) = %v, want ErrKeyEscapes", key, err)
+		}
+	}
+}
+
 func TestPathSymlinkEscapeFailsClosed(t *testing.T) {
 	h := newTestHome(t)
 	state, _ := h.RootFor(RootState)

@@ -108,7 +108,7 @@ The wrapper is an operational safeguard, not a security sandbox; absolute-path G
 
 ### 7. Runtime artifact ownership manifest
 
-The canonical Soldier brief artifact is `.soldier-brief.md`; spawn stops creating legacy `.soldier-md`. A versioned launch-envelope manifest lists every lifecycle-owned artifact with relative path, digest, and disposable policy. Teardown ignores/removes only untracked artifacts whose digest matches the manifest. Modified, tracked, or unlisted files remain genuine dirt and block retirement.
+The canonical Soldier brief artifact is `.soldier-brief.md`; spawn stops creating legacy `.soldier-md`. A versioned launch-envelope manifest lists every lifecycle-owned artifact with a canonical slash-format relative path, digest, and disposable policy. Teardown ignores/removes only untracked artifacts whose digest matches the manifest. Modified, tracked, or unlisted files remain genuine dirt and block retirement.
 
 The envelope itself is owned by canonical path plus valid schema and identity binding because it cannot hash itself. Harness adapters may contribute verified manifest entries; teardown does not grow an independent filename allowlist.
 
