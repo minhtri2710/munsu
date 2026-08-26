@@ -89,10 +89,7 @@ internal/fleet/delivery_resolve.go	ResolveTaskHome	1	homeDir == ""	burn-down(BEO
 internal/fleet/delivery_resolve.go	ResolveTaskHome	1	id == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_reviewdiff.go	ReviewDiff	1	!ok || projectName == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_reviewdiff.go	ReviewDiff	1	!ok || worktreePath == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/fleetsync.go	syncOne	1	defaultBranch == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/fleetsync.go	syncOne	1	len(strings.TrimSpace(string(statusOut))) > 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/propagate_config.go	ensureOrHealRequirement	1	existingEnv.Key != ConfigRereadKey	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/registry_ops.go	Registry.RetireProject	1	req.Precondition.Generation != registryGeneration	growth(#614): burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/retirement_poll.go	ListPendingRetirements	1	rec.TaskID == "" || retirementRecordPath(homeDir, rec.TaskID) != filepath.Join(dir, entry.Name())	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/retirement_poll.go	requireCanonicalCompletedOutcome	1	auth == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/retirement_poll.go	requireCanonicalCompletedOutcome	1	out.Status != taskauthority.DeliveryOutcomeCompleted	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
