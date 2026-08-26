@@ -288,7 +288,7 @@ func stripHeredocBodies(mode backslashMode, command string) string {
 				run++
 			}
 			if run-i == 2 {
-				if spec, next, ok := readHeredocRedirect(mode, runes, i); ok {
+				if spec, next, ok := readHeredocRedirect(runes, i); ok {
 					pending = append(pending, spec)
 					out.WriteRune(' ')
 					i = next - 1
@@ -341,7 +341,7 @@ func skipRedirectSource(runes []rune, j int) int {
 
 // readHeredocRedirect reads a `<<DELIM` / `<<-DELIM` operator starting at i and
 // returns the index just past the delimiter word.
-func readHeredocRedirect(mode backslashMode, runes []rune, i int) (heredocSpec, int, bool) {
+func readHeredocRedirect(runes []rune, i int) (heredocSpec, int, bool) {
 	j := i + 2
 	spec := heredocSpec{}
 	if j < len(runes) && runes[j] == '-' {
@@ -358,7 +358,12 @@ func readHeredocRedirect(mode backslashMode, runes []rune, i int) (heredocSpec, 
 		// that ends at `EOF`. Reading the backslash into the delimiter made it
 		// match nothing and swallowed the rest of the payload — every command
 		// after the terminator, including ones this guard claims to cover.
-		if r == '\\' && mode == backslashEscapes {
+		if r == '\\' {
+			// A backslash quotes the next character in the delimiter word, so
+			// `<<\EOF` opens a body that ends at `EOF`. Both backslash readings
+			// must agree on the delimiter, or the literal (Windows) reading would
+			// read the backslash into the delimiter, never match the bare
+			// terminator, and swallow every command named after it (#664 v2).
 			j++
 			if j < len(runes) {
 				delimiter.WriteRune(runes[j])

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -505,6 +506,35 @@ func TestShellWriteTargetExtraction(t *testing.T) {
 				t.Errorf("%q → %v, want %v", tc.command, got, tc.want)
 				break
 			}
+		}
+	}
+}
+
+// TestShellWriteHeredocBackslashDelimiterBothReadings pins the heredoc fix:
+// a backslash-quoted delimiter (<<\EOF, <<-\END) must end the body at the bare
+// delimiter in BOTH backslash readings, so a write named after the terminator —
+// including a Windows-path one — is classified by the literal (Windows) reading
+// instead of being swallowed (#664 v2). It calls the readings directly because
+// the dual union already masks a swallowed literal reading on a POSIX host.
+func TestShellWriteHeredocBackslashDelimiterBothReadings(t *testing.T) {
+	base := mustAbsTestPath(t, "base")
+	target := `\shared\README.md`
+
+	cases := []string{
+		"cat <<\\EOF > notes.md\nharmless\nEOF\necho pwned > " + target,
+		"cat <<-\\END > notes.md\n\tharmless\n\tEND\necho pwned > " + target,
+	}
+	for _, command := range cases {
+		escapeTargets := shellWriteTargetsUnder(backslashEscapes, base, command)
+		literalTargets := shellWriteTargetsUnder(backslashLiteral, base, command)
+		// The POSIX reading dissolves backslashes, so it sees the mangled target.
+		if !slices.Contains(escapeTargets, resolveShellWritePath(base, "sharedREADME.md")) {
+			t.Errorf("escape reading dropped post-heredoc write: %q → %v", command, escapeTargets)
+		}
+		// The Windows reading keeps the backslash as a separator and must end
+		// the body at EOF/END, so it sees the real Windows path.
+		if !slices.Contains(literalTargets, resolveShellWritePath(base, target)) {
+			t.Errorf("literal reading swallowed post-heredoc write: %q → %v", command, literalTargets)
 		}
 	}
 }
