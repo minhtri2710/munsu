@@ -417,7 +417,7 @@ func isWindowsAbsolutePath(path string) bool {
 	if len(path) >= 3 && path[1] == ':' && (path[2] == '\\' || path[2] == '/') {
 		return true
 	}
-	return strings.HasPrefix(path, `\\\\`)
+	return strings.HasPrefix(path, `\\`)
 }
 
 func canonicalSafetyPathRuntime(path string) string {

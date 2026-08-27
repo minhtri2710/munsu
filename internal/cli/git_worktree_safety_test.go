@@ -87,6 +87,11 @@ func TestSafetyCheckGitMutationRequiresExactWorktreeBindingAndAllowsAlternateTar
 
 	// Force the Windows-literal reading on Darwin so the exact Windows-shaped
 	// --git-dir reaches the binding comparison without requiring a Windows host.
+	for _, path := range []string{`C:\Users\soldier\repo`, `\\server\share\repo`} {
+		if got := resolveSafetyPathWithMode(worktree, path, backslashLiteral); got != path {
+			t.Fatalf("resolveSafetyPathWithMode(%q) = %q, want unchanged Windows absolute path", path, got)
+		}
+	}
 	const windowsGitDir = `C:\Users\soldier\.git\worktrees\wt`
 	auth := testAuthorityFor(t, homeDir)
 	agg, err := auth.Get(mustTaskIDFor(t, "ship-1"))
