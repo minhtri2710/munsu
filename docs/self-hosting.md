@@ -163,23 +163,22 @@ munsu teardown <task-id>                        # safety-gated teardown
 munsu teardown <task-id> --force                # skip safety checks
 ```
 
-Without --force, scout teardown requires report.md and no unresolved decision
-holds. Ship teardown requires clean git state with a remote tracking branch.
-With --force, all safety checks are bypassed and nothing else changes: --force
-never deletes more than a plain teardown does.
+Without --force, scout teardown requires the task's own generation's report
+(report-g<generation>.md) and no unresolved decision holds. Ship teardown
+requires clean git state with a remote tracking branch. With --force, all
+safety checks are bypassed and nothing else changes: --force never deletes
+more than a plain teardown does.
 
-Either way the teardown first establishes authoritative endpoint absence, then
-archives the retired generation's report under a generation-bound name such as
-`report-g<generation>.md`. If a retry finds that archive after archival was
-already attempted for the active cleanup claim, a reappeared task report is
-preserved under the smallest unused suffix, such as
-`report-g<generation>-2.md`; all such archive names count as report evidence.
-The cleanup claim records whether that archive name was already occupied before
-the claim was created. A name free at claim creation and present on retry is
-therefore attributable to that claim; a pre-existing archive remains an
-unproved collision and teardown refuses rather than guessing. The archived
-entry remains available for inspection, while the fenced reconciliation
-vacates the unversioned report name for the next generation.
+A scout report is generation-named AT CREATION: the brief instructs the
+soldier to write `report-g<generation>.md` for exactly the generation being
+launched, and only that file answers for that generation — the safety check
+resolves the report by generation, so a prior generation's report never
+satisfies a later generation's gate. Because the live report already carries
+its generation's name, teardown establishes authoritative endpoint absence
+and retains the report in place; no archival or rename step exists, and no
+later generation can inherit an earlier generation's report as its own
+evidence. Every generation-scoped report in a task's data directory counts
+as report evidence.
 
 The data directory is never removed by teardown, including with `--force`.
 Session-start reclamation runs after the 24h grace period under the task
