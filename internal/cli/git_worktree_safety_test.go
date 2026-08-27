@@ -493,3 +493,75 @@ func resolveGitPathForSafety(base, raw string) string {
 	}
 	return filepath.Join(base, raw)
 }
+
+// TestSafetyCheckGitWindowsBackslashReadingIsolatedFromPosix pins the two
+// required behaviors from the guard fix:
+//
+//  1. On Windows-shaped input (backslashLiteral reading) a valid Windows path in
+//     --git-dir must read literally, match the bound worktree, and be allowed
+//     (the false-positive refusal the fix removes).
+//  2. On POSIX (backslashEscapes reading) the guard must keep treating a lone
+//     backslash as a shell escape: the same Windows path is mangled and still
+//     fails the binding comparison (no weakening of POSIX refusals).
+func TestSafetyCheckGitWindowsBackslashReadingIsolatedFromPosix(t *testing.T) {
+	primary := initGitRepoForSafety(t, t.TempDir())
+	worktree := filepath.Join(t.TempDir(), "wt")
+	runGitForSafety(t, primary, "worktree", "add", "--detach", worktree)
+	homeDir := bindSafetyWorktree(t, "ship-win", primary, worktree)
+	t.Setenv("MUNSU_HOME", homeDir)
+	t.Setenv("MUNSU_TASK_ID", "ship-win")
+
+	// A Windows-machine worktree binding whose --git-dir uses backslashes.
+	const windowsGitDir = `C:\Users\soldier\.git\worktrees\wt`
+	auth := testAuthorityFor(t, homeDir)
+	agg, err := auth.Get(mustTaskIDFor(t, "ship-win"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.Worktree == nil {
+		t.Fatal("test task has no worktree binding")
+	}
+	windowsBinding := *agg.Worktree
+	windowsBinding.GitDir = windowsGitDir
+
+	const command = `git --work-tree . --git-dir ` + windowsGitDir + ` add file.txt`
+
+	// (1) Windows reading: backslashes literal -> bound path matches -> allowed.
+	winParsed, err := parseGitSafetyCommandWithMode(worktree, command, backslashLiteral)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if winParsed.gitDir != windowsGitDir {
+		t.Fatalf("Windows-literal --git-dir = %q, want %q", winParsed.gitDir, windowsGitDir)
+	}
+	if reason := validateCanonicalGitExplicitTargetBinding(winParsed.gitDir, "", &windowsBinding); reason != "" {
+		t.Fatalf("bound Windows --git-dir refused under Windows reading: %s", reason)
+	}
+
+	// (2) POSIX reading: backslash is an escape -> Windows path mangled -> still
+	// refused (guard keeps refusing on POSIX).
+	posixParsed, err := parseGitSafetyCommandWithMode(worktree, command, backslashEscapes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if posixParsed.gitDir == windowsGitDir {
+		t.Fatalf("POSIX reading kept backslashes literal: %q; POSIX must escape them", posixParsed.gitDir)
+	}
+	if reason := validateCanonicalGitExplicitTargetBinding(posixParsed.gitDir, "", &windowsBinding); reason == "" {
+		t.Fatalf("mangled Windows --git-dir %q unexpectedly matched binding under POSIX reading", posixParsed.gitDir)
+	}
+
+	// resolveSafetyPathWithMode must only short-circuit to the absolute Windows
+	// path under the Windows (literal) reading; under POSIX it must join to the
+	// base (treat the backslash path as relative), not weaken POSIX refusals.
+	if got := resolveSafetyPathWithMode(worktree, windowsGitDir, backslashLiteral); got != windowsGitDir {
+		t.Fatalf("Windows reading resolveSafetyPathWithMode(%q) = %q, want unchanged Windows absolute path", windowsGitDir, got)
+	}
+	posixResolved := resolveSafetyPathWithMode(worktree, windowsGitDir, backslashEscapes)
+	if posixResolved == windowsGitDir {
+		t.Fatalf("POSIX reading treat Windows path %q as absolute; must join under base", windowsGitDir)
+	}
+	if !strings.HasPrefix(posixResolved, worktree) {
+		t.Fatalf("POSIX resolved path %q not joined under base %q", posixResolved, worktree)
+	}
+}
