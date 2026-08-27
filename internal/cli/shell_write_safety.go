@@ -384,6 +384,7 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 			continue
 		}
 		if r == '\\' && mode == backslashEscapes {
+			touch(i)
 			escaped = true
 			continue
 		}

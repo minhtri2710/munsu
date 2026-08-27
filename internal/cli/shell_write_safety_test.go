@@ -210,6 +210,47 @@ func TestShellWriteTargetsAfterAmbiguousWindowsCd(t *testing.T) {
 	}
 }
 
+// TestShellWriteTrailingBackslashExtendsSpan pins the root-cause span fix (#664):
+// the POSIX backslash reading must touch the trailing backslash position so the
+// word span covers the whole `\foo\`. Without it the span ends one short and the
+// literal (Windows) reading never groups with the POSIX reading, defeating the
+// dual-reading classification for trailing-separator rooted targets.
+func TestShellWriteTrailingBackslashExtendsSpan(t *testing.T) {
+	const word = `\foo\`
+	segments := tokenizeSegments(backslashEscapes, word)
+	if len(segments) != 1 || len(segments[0]) != 1 {
+		t.Fatalf("unexpected tokenization: %#v", segments)
+	}
+	tok := segments[0][0]
+	if tok.text != "foo" {
+		t.Fatalf("word text = %q, want foo", tok.text)
+	}
+	if tok.start != 0 || tok.end != 5 {
+		t.Errorf("word span = {%d,%d}, want {0,5}", tok.start, tok.end)
+	}
+}
+
+// TestShellWriteTrailingBackslashRootedTargetAfterAmbiguousCd pins the span
+// alignment fix (#664): a volume-less rooted target with a trailing separator
+// such as `\foo\` must be classified as a resolvable D:\\foo write even after
+// an ambiguous drive-relative cd. The POSIX reading drops the trailing backslash
+// and would otherwise yield a short span that the literal candidate never joins,
+// defeating the dual-reading grouping and over-refusing a legitimate write.
+func TestShellWriteTrailingBackslashRootedTargetAfterAmbiguousCd(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows path semantics required")
+	}
+	const base = `C:\\worktree`
+
+	targets, ambiguous := shellWriteTargets(base, `cd D:docs && echo ok > \\foo\\`)
+	if ambiguous {
+		t.Fatalf("trailing-separator rooted target remained ambiguous: %v", targets)
+	}
+	if !slices.Contains(targets, `D:\\foo`) {
+		t.Errorf("trailing-separator rooted target = %v, want D volume candidate", targets)
+	}
+}
+
 func TestShellWriteRefusedByAbsoluteTargetIntoBoundPrimary(t *testing.T) {
 	primary, worktree := boundTaskFixture(t, "ship-shell-target")
 
