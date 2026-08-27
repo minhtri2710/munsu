@@ -381,23 +381,50 @@ func TestShipSafetyCheck_NoWorktreeInMeta(t *testing.T) {
 func TestScoutSafetyCheck_ReportExists(t *testing.T) {
 	tmp := t.TempDir()
 
-	// Create the report
+	// Create the generation's report, named as the write path emits it.
 	reportDir := filepath.Join(tmp, "data", "scout-1")
 	os.MkdirAll(reportDir, 0755)
-	os.WriteFile(filepath.Join(reportDir, "report.md"), []byte("findings"), 0644)
+	os.WriteFile(filepath.Join(reportDir, ReportName(1)), []byte("findings"), 0644)
 
-	err := scoutSafetyCheck(Options{ID: "scout-1", HomeDir: tmp}, nil)
+	err := scoutSafetyCheck(Options{ID: "scout-1", HomeDir: tmp}, nil, 1)
 	if err != nil {
-		t.Fatalf("should pass when report exists: %v", err)
+		t.Fatalf("should pass when the generation's report exists: %v", err)
 	}
 }
 
 func TestScoutSafetyCheck_NoReport(t *testing.T) {
 	tmp := t.TempDir()
 
-	err := scoutSafetyCheck(Options{ID: "scout-1", HomeDir: tmp}, nil)
+	err := scoutSafetyCheck(Options{ID: "scout-1", HomeDir: tmp}, nil, 1)
 	if err == nil {
-		t.Fatal("should fail when no report.md")
+		t.Fatal("should fail when the generation wrote no report")
+	}
+}
+
+// TestScoutSafetyCheckRejectsPriorGenerationReport is the lane claim: the
+// safety check resolves the report BY GENERATION. A report written by a prior
+// generation never satisfies a later generation's check, and a generation's
+// own report satisfies exactly its own check.
+func TestScoutSafetyCheckRejectsPriorGenerationReport(t *testing.T) {
+	tmp := t.TempDir()
+	reportDir := filepath.Join(tmp, "data", "scout-gen")
+	if err := os.MkdirAll(reportDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(reportDir, ReportName(1)), []byte("generation 1 findings"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	opts := Options{ID: "scout-gen", HomeDir: tmp}
+	if err := scoutSafetyCheck(opts, nil, 1); err != nil {
+		t.Fatalf("generation 1's own report must answer for generation 1: %v", err)
+	}
+	err := scoutSafetyCheck(opts, nil, 2)
+	if err == nil {
+		t.Fatal("a prior generation's report must not answer for generation 2")
+	}
+	if !strings.Contains(err.Error(), ReportName(2)) {
+		t.Fatalf("generation 2 refusal = %v, want it to resolve %s", err, ReportName(2))
 	}
 }
 
@@ -409,6 +436,49 @@ func TestRun_NoMeta(t *testing.T) {
 	_, err := RetireTask(Options{HomeDir: tmp, ID: "nonexistent"}, fakeTeardown{}, fakeRetirementJournals{}, canonicalMergeTestAuth(t, tmp, "nonexistent"))
 	if err == nil {
 		t.Fatal("should fail for nonexistent task")
+	}
+}
+
+func TestRun_SafetyCheckGenerationFailsClosedWithoutAuthority(t *testing.T) {
+	tmp := t.TempDir()
+	os.Setenv("MUNSU_HOME", tmp)
+	defer os.Unsetenv("MUNSU_HOME")
+
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+	os.WriteFile(filepath.Join(stateDir, "no-authority.meta"), []byte("kind=scout\nbackend=tmux\nwindow=@1\n"), 0644)
+
+	// The scout safety check answers for a canonical generation, so a nil
+	// authority fails closed before any report is resolved.
+	_, err := RetireTask(Options{HomeDir: tmp, ID: "no-authority"}, fakeTeardown{}, fakeRetirementJournals{}, nil)
+	if err == nil || !strings.Contains(err.Error(), "composed task authority") {
+		t.Fatalf("error = %v, want the composed-authority refusal", err)
+	}
+}
+
+// TestRun_PinnedTeardownConflictPreemptsReportCheck proves the generation
+// binding is validated BEFORE any report is resolved: a teardown pinned to a
+// generation the task has not reached fails closed with the typed conflict —
+// even with no report on disk at all — instead of certifying or refusing on
+// some other generation's report.
+func TestRun_PinnedTeardownConflictPreemptsReportCheck(t *testing.T) {
+	tmp := t.TempDir()
+	os.Setenv("MUNSU_HOME", tmp)
+	defer os.Unsetenv("MUNSU_HOME")
+
+	auth := canonicalMergeTestAuth(t, tmp, "pinned-conflict")
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+	os.WriteFile(filepath.Join(stateDir, "pinned-conflict.meta"), []byte("kind=scout\nbackend=tmux\nwindow=@1\n"), 0644)
+
+	target := taskauthority.Generation(2)
+	_, err := RetireTask(Options{HomeDir: tmp, ID: "pinned-conflict", ExpectedGeneration: &target}, fakeTeardown{}, fakeRetirementJournals{}, auth)
+	var conflict *RetirementTargetConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("error = %T %v, want typed RetirementTargetConflictError", err, err)
+	}
+	if conflict.Target != 2 || conflict.Current != 1 {
+		t.Fatalf("conflict = %+v, want target 2 vs current 1", conflict)
 	}
 }
 
@@ -478,35 +548,39 @@ func TestRun_ForcePreservesReport(t *testing.T) {
 
 	dataDir := filepath.Join(tmp, "data", "scout-report")
 	os.MkdirAll(dataDir, 0755)
-	reportPath := filepath.Join(dataDir, "report.md")
+	// The soldier writes the report generation-named, exactly as the brief
+	// instructs. There is no unversioned name, so teardown has nothing to
+	// move: the report is retained in place as generation 1's evidence.
+	reportPath := ReportPath(tmp, "scout-report", 1)
 	os.WriteFile(reportPath, []byte("# findings\npartial work worth reading\n"), 0644)
 
 	result, err := RetireTask(Options{HomeDir: tmp, ID: "scout-report", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth)
 	if err != nil {
 		t.Fatalf("forced teardown: %v", err)
 	}
-	archivedPath := filepath.Join(dataDir, "report-g1.md")
-	body, err := os.ReadFile(archivedPath)
+	body, err := os.ReadFile(reportPath)
 	if err != nil {
 		t.Fatalf("--force must not delete the report: %v", err)
 	}
 	if !strings.Contains(string(body), "partial work worth reading") {
-		t.Fatalf("archived report = %q, want the retired generation's findings", body)
+		t.Fatalf("retained report = %q, want the retired generation's findings", body)
 	}
-	if !hasStep(result.Steps, "report.md archived as report-g1.md") {
-		t.Fatalf("steps = %v, want the report-archived step", result.Steps)
+	for _, step := range result.Steps {
+		if strings.Contains(step, "archived") {
+			t.Fatalf("no archival step may exist, got %v", result.Steps)
+		}
 	}
 	if !hasStep(result.Steps, "data dir kept for relaunch or session-start sweep") {
 		t.Fatalf("steps = %v, want the data-dir-kept step", result.Steps)
 	}
 
 	// The report belongs to generation 1 and stops answering for any other:
-	// scoutSafetyCheck reads report.md, and only the generation that writes
-	// one has it there.
-	if _, err := os.Stat(reportPath); !os.IsNotExist(err) {
-		t.Fatalf("report.md must not survive under the name the next generation writes, stat err = %v", err)
+	// a later generation's check resolves only its own generation-named
+	// report, and its absence from that name is what refuses the check.
+	if err := scoutSafetyCheck(Options{HomeDir: tmp, ID: "scout-report"}, map[string]string{"kind": "scout"}, 1); err != nil {
+		t.Fatalf("generation 1's own report must answer for generation 1: %v", err)
 	}
-	if err := scoutSafetyCheck(Options{HomeDir: tmp, ID: "scout-report"}, map[string]string{"kind": "scout"}); err == nil {
+	if err := scoutSafetyCheck(Options{HomeDir: tmp, ID: "scout-report"}, map[string]string{"kind": "scout"}, 2); err == nil {
 		t.Fatal("scoutSafetyCheck must refuse a generation that wrote no report of its own")
 	}
 
@@ -678,10 +752,10 @@ func TestRun_BackwardCompatLegacyNames(t *testing.T) {
 func TestScoutSafetyCheck_UnresolvedHolds(t *testing.T) {
 	tmp := t.TempDir()
 
-	// Create the report so report.md check passes.
+	// Create the generation's report so the generation-scoped check passes.
 	reportDir := filepath.Join(tmp, "data", "scout-1")
 	os.MkdirAll(reportDir, 0755)
-	os.WriteFile(filepath.Join(reportDir, "report.md"), []byte("findings"), 0644)
+	os.WriteFile(filepath.Join(reportDir, ReportName(1)), []byte("findings"), 0644)
 
 	// Create unresolved decision holds by appending the needs-decision status
 	// projection the decision-hold lifecycle mirrors into.
@@ -693,7 +767,7 @@ func TestScoutSafetyCheck_UnresolvedHolds(t *testing.T) {
 	}
 
 	// scoutSafetyCheck should fail listing unresolved keys.
-	err := scoutSafetyCheck(Options{ID: "scout-1", HomeDir: tmp}, nil)
+	err := scoutSafetyCheck(Options{ID: "scout-1", HomeDir: tmp}, nil, 1)
 	if err == nil {
 		t.Fatal("should fail when unresolved decision holds exist")
 	}
@@ -708,10 +782,10 @@ func TestScoutSafetyCheck_UnresolvedHolds(t *testing.T) {
 func TestScoutSafetyCheck_NoUnresolvedHolds(t *testing.T) {
 	tmp := t.TempDir()
 
-	// Create the report so report.md check passes.
+	// Create the generation's report so the generation-scoped check passes.
 	reportDir := filepath.Join(tmp, "data", "scout-1")
 	os.MkdirAll(reportDir, 0755)
-	os.WriteFile(filepath.Join(reportDir, "report.md"), []byte("findings"), 0644)
+	os.WriteFile(filepath.Join(reportDir, ReportName(1)), []byte("findings"), 0644)
 
 	// Create a hold and resolve it through the status projection.
 	if err := mhome.AppendStatus(tmp, "scout-1", "needs-decision: Pick the UI framework [key=approach]"); err != nil {
@@ -722,7 +796,7 @@ func TestScoutSafetyCheck_NoUnresolvedHolds(t *testing.T) {
 	}
 
 	// scoutSafetyCheck should pass since all holds are resolved.
-	err := scoutSafetyCheck(Options{ID: "scout-1", HomeDir: tmp}, nil)
+	err := scoutSafetyCheck(Options{ID: "scout-1", HomeDir: tmp}, nil, 1)
 	if err != nil {
 		t.Fatalf("should pass when all holds resolved: %v", err)
 	}
@@ -741,10 +815,11 @@ func TestRun_ForceSkipsDecisionHoldCheck(t *testing.T) {
 	metaContent := "kind=scout\nbackend=tmux\nwindow=@1\n"
 	os.WriteFile(filepath.Join(stateDir, "scout-test.meta"), []byte(metaContent), 0644)
 
-	// Create report.md so report check passes before decision hold check.
+	// Create the generation's report so the report check passes before the
+	// decision hold check.
 	reportDir := filepath.Join(tmp, "data", "scout-test")
 	os.MkdirAll(reportDir, 0755)
-	os.WriteFile(filepath.Join(reportDir, "report.md"), []byte("findings"), 0644)
+	os.WriteFile(filepath.Join(reportDir, ReportName(1)), []byte("findings"), 0644)
 	// Create unresolved decision holds via the status projection.
 	if err := mhome.AppendStatus(tmp, "scout-test", "needs-decision: Pick the UI framework [key=approach]"); err != nil {
 		t.Fatal(err)
@@ -769,49 +844,6 @@ func TestRun_ForceSkipsDecisionHoldCheck(t *testing.T) {
 	}
 	if len(result.Steps) == 0 {
 		t.Error("expected teardown steps")
-	}
-}
-
-// TestRun_ArchivingTheReportFailsClosed proves the archive is not advisory.
-// Completing the cleanup claim is what makes a task reopenable, so a report
-// still sitting at the name the next generation writes must never reach that
-// commit: the retirement stops at the typed partial outcome instead.
-func TestRun_ReportStatFailsClosed(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Fatal("permission proof did not run: tests run as root, so a child stat refusal cannot be established")
-	}
-	tmp := t.TempDir()
-	auth := canonicalMergeTestAuth(t, tmp, "report-stat")
-	stateDir := filepath.Join(tmp, "state")
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(stateDir, "report-stat.meta"), []byte("kind=scout\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	dataDir := filepath.Join(tmp, "data", "report-stat")
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	reportPath := filepath.Join(dataDir, "report.md")
-	if err := os.WriteFile(reportPath, []byte("# findings\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(dataDir, 0600); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(dataDir, 0755) })
-
-	_, err := RetireTask(Options{HomeDir: tmp, ID: "report-stat", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth)
-	var pending *RetirementCleanupPendingError
-	if !errors.As(err, &pending) {
-		t.Fatalf("teardown error = %T %v, want typed RetirementCleanupPendingError", err, err)
-	}
-	if err := os.Chmod(dataDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(reportPath); err != nil {
-		t.Fatalf("a stat refusal must leave the report where it was: %v", err)
 	}
 }
 
@@ -862,7 +894,7 @@ func TestRun_DataParentStatFailsClosed(t *testing.T) {
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dataDir, "report.md"), []byte("findings"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dataDir, ReportName(1)), []byte("findings"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chmod(dataRoot, 0600); err != nil {
@@ -878,196 +910,8 @@ func TestRun_DataParentStatFailsClosed(t *testing.T) {
 	if err := os.Chmod(dataRoot, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(dataDir, "report.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(dataDir, ReportName(1))); err != nil {
 		t.Fatalf("report should remain after data-parent refusal: %v", err)
-	}
-}
-
-func TestRun_ArchiveConflictFailsClosed(t *testing.T) {
-	tmp := t.TempDir()
-	auth := canonicalMergeTestAuth(t, tmp, "archive-conflict")
-	stateDir := filepath.Join(tmp, "state")
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(stateDir, "archive-conflict.meta"), []byte("kind=scout\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	dataDir := filepath.Join(tmp, "data", "archive-conflict")
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	reportPath := filepath.Join(dataDir, "report.md")
-	archivePath := filepath.Join(dataDir, "report-g1.md")
-	if err := os.WriteFile(reportPath, []byte("new"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(archivePath, []byte("old"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	_, err := RetireTask(Options{HomeDir: tmp, ID: "archive-conflict", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth)
-	var pending *RetirementCleanupPendingError
-	if !errors.As(err, &pending) {
-		t.Fatalf("teardown error = %T %v, want typed RetirementCleanupPendingError", err, err)
-	}
-	if !strings.Contains(err.Error(), reportPath) || !strings.Contains(err.Error(), archivePath) {
-		t.Fatalf("conflict error = %v, want both report paths", err)
-	}
-	for path, want := range map[string]string{reportPath: "new", archivePath: "old"} {
-		body, readErr := os.ReadFile(path)
-		if readErr != nil || string(body) != want {
-			t.Fatalf("%s changed after conflict: body=%q err=%v", path, body, readErr)
-		}
-	}
-}
-
-func TestRun_DanglingReportIsArchived(t *testing.T) {
-	tmp := t.TempDir()
-	auth := canonicalMergeTestAuth(t, tmp, "dangling-report")
-	stateDir := filepath.Join(tmp, "state")
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(stateDir, "dangling-report.meta"), []byte("kind=scout\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	dataDir := filepath.Join(tmp, "data", "dangling-report")
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	reportPath := filepath.Join(dataDir, "report.md")
-	archivePath := filepath.Join(dataDir, "report-g1.md")
-	if err := os.Symlink("missing-target", reportPath); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := RetireTask(Options{HomeDir: tmp, ID: "dangling-report", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth); err != nil {
-		t.Fatalf("forced teardown: %v", err)
-	}
-	if _, err := os.Lstat(reportPath); !os.IsNotExist(err) {
-		t.Fatalf("report.md entry should be vacated, lstat err = %v", err)
-	}
-	if target, err := os.Readlink(archivePath); err != nil || target != "missing-target" {
-		t.Fatalf("archived symlink target = %q, err = %v", target, err)
-	}
-}
-
-func TestRun_DanglingReportRecoveryCompletes(t *testing.T) {
-	tmp := t.TempDir()
-	taskID := "dangling-recovery-complete"
-	auth := canonicalMergeTestAuth(t, tmp, taskID)
-	if err := os.WriteFile(filepath.Join(tmp, "state", taskID+".meta"), []byte("kind=scout\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	dataDir := filepath.Join(tmp, "data", taskID)
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink("first-target", filepath.Join(dataDir, "report.md")); err != nil {
-		t.Fatal(err)
-	}
-	oldHook := afterReportArchive
-	first := true
-	afterReportArchive = func(home, id string, _ taskauthority.Generation) error {
-		if !first {
-			return nil
-		}
-		first = false
-		return os.Symlink("second-target", filepath.Join(home, "data", id, "report.md"))
-	}
-	t.Cleanup(func() { afterReportArchive = oldHook })
-	if _, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth); err == nil {
-		t.Fatal("expected pending cleanup")
-	}
-	if _, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth); err != nil {
-		t.Fatalf("retry: %v", err)
-	}
-	for name, target := range map[string]string{"report-g1.md": "first-target", "report-g1-2.md": "second-target"} {
-		got, err := os.Readlink(filepath.Join(dataDir, name))
-		if err != nil || got != target {
-			t.Fatalf("%s = %q, %v", name, got, err)
-		}
-	}
-}
-
-func TestRun_DanglingReportRecoveryAborts(t *testing.T) {
-	tmp := t.TempDir()
-	taskID := "dangling-recovery-abort"
-	auth := canonicalMergeTestAuth(t, tmp, taskID)
-	if err := os.WriteFile(filepath.Join(tmp, "state", taskID+".meta"), []byte("kind=scout\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	dataDir := filepath.Join(tmp, "data", taskID)
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink("first-target", filepath.Join(dataDir, "report.md")); err != nil {
-		t.Fatal(err)
-	}
-	oldHook := afterReportArchive
-	first := true
-	afterReportArchive = func(home, id string, _ taskauthority.Generation) error {
-		if !first {
-			return nil
-		}
-		first = false
-		return os.Symlink("second-target", filepath.Join(home, "data", id, "report.md"))
-	}
-	t.Cleanup(func() { afterReportArchive = oldHook })
-	if _, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth); err == nil {
-		t.Fatal("expected pending cleanup")
-	}
-	if err := AbortRetirementCleanup(auth, tmp, fakeTeardown{}, mustTaskID(t, taskID), 1); err != nil {
-		t.Fatalf("abort retry: %v", err)
-	}
-	for name, target := range map[string]string{"report-g1.md": "first-target", "report-g1-2.md": "second-target"} {
-		got, err := os.Readlink(filepath.Join(dataDir, name))
-		if err != nil || got != target {
-			t.Fatalf("%s = %q, %v", name, got, err)
-		}
-	}
-	claim, err := auth.Get(mustTaskID(t, taskID))
-	if err != nil || claim.CleanupClaim == nil || claim.CleanupClaim.Status != taskauthority.CleanupAborted {
-		t.Fatalf("claim = %+v, %v", claim.CleanupClaim, err)
-	}
-}
-
-func TestRun_ArchiveConflictLeavesReportUntouched(t *testing.T) {
-	tmp := t.TempDir()
-	auth := canonicalMergeTestAuth(t, tmp, "rename-failure")
-	stateDir := filepath.Join(tmp, "state")
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(stateDir, "rename-failure.meta"), []byte("kind=scout\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	dataDir := filepath.Join(tmp, "data", "rename-failure")
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	reportPath := filepath.Join(dataDir, "report.md")
-	archivePath := filepath.Join(dataDir, "report-g1.md")
-	if err := os.WriteFile(reportPath, []byte("current"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(archivePath, []byte("existing"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	_, err := RetireTask(Options{HomeDir: tmp, ID: "rename-failure", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth)
-	var pending *RetirementCleanupPendingError
-	if !errors.As(err, &pending) {
-		t.Fatalf("teardown error = %T %v, want typed RetirementCleanupPendingError", err, err)
-	}
-	body, readErr := os.ReadFile(reportPath)
-	if readErr != nil || string(body) != "current" {
-		t.Fatalf("report changed: %q %v", body, readErr)
-	}
-	body, readErr = os.ReadFile(archivePath)
-	if readErr != nil || string(body) != "existing" {
-		t.Fatalf("archive changed: %q %v", body, readErr)
 	}
 }
 
@@ -1079,13 +923,6 @@ func TestRun_AbortRefusesLiveEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(stateDir, "abort-live.meta"), []byte("kind=ship\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	dataDir := filepath.Join(tmp, "data", "abort-live")
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dataDir, "report.md"), []byte("findings"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := RetireTask(Options{HomeDir: tmp, ID: "abort-live", Force: true}, fakeTeardown{alive: true, disposeErr: errors.New("stuck")}, fakeRetirementJournals{}, auth); err == nil {
@@ -1101,95 +938,6 @@ func TestRun_AbortRefusesLiveEndpoint(t *testing.T) {
 	}
 	if agg.CleanupClaim == nil || agg.CleanupClaim.Status != taskauthority.CleanupActive {
 		t.Fatalf("cleanup claim = %+v, want active", agg.CleanupClaim)
-	}
-}
-
-func TestRun_AbortRefusesReportReappearance(t *testing.T) {
-	tmp := t.TempDir()
-	auth := canonicalMergeTestAuth(t, tmp, "abort-reappears")
-	stateDir := filepath.Join(tmp, "state")
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	dataDir := filepath.Join(tmp, "data", "abort-reappears")
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dataDir, "report.md"), []byte("findings"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(stateDir, "abort-reappears.meta"), []byte("kind=scout\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(dataDir, 0555); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := RetireTask(Options{HomeDir: tmp, ID: "abort-reappears", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth); err == nil {
-		t.Fatal("expected cleanup to remain pending")
-	}
-	if err := os.Chmod(dataDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	claimID := mustTaskID(t, "abort-reappears")
-	called := false
-	err := abortRetirementCleanup(auth, tmp, fakeTeardown{}, claimID, 1, func() error {
-		called = true
-		return os.WriteFile(filepath.Join(dataDir, "report.md"), []byte("late"), 0644)
-	})
-	if err == nil || !strings.Contains(err.Error(), "reappeared") {
-		t.Fatalf("abort error = %v, want report reappearance refusal", err)
-	}
-	if !called {
-		t.Fatal("after-archive callback did not run")
-	}
-	agg, err := auth.Get(claimID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if agg.CleanupClaim == nil || agg.CleanupClaim.Status != taskauthority.CleanupActive {
-		t.Fatalf("cleanup claim = %+v, want active", agg.CleanupClaim)
-	}
-	if _, err := os.Stat(filepath.Join(dataDir, "report-g1.md")); err != nil {
-		t.Fatalf("archived evidence missing: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(dataDir, "report.md")); err != nil {
-		t.Fatalf("late report missing: %v", err)
-	}
-}
-
-func TestRun_ArchivingTheReportFailsClosed(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Fatal("permission proof did not run: tests run as root, so a directory that refuses a rename cannot be established")
-	}
-	tmp := t.TempDir()
-	os.Setenv("MUNSU_HOME", tmp)
-	defer os.Unsetenv("MUNSU_HOME")
-
-	auth := canonicalMergeTestAuth(t, tmp, "unarchivable")
-
-	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-	os.WriteFile(filepath.Join(stateDir, "unarchivable.meta"), []byte("kind=scout\nbackend=tmux\nwindow=@1\n"), 0644)
-
-	dataDir := filepath.Join(tmp, "data", "unarchivable")
-	os.MkdirAll(dataDir, 0755)
-	reportPath := filepath.Join(dataDir, "report.md")
-	os.WriteFile(reportPath, []byte("# findings\n"), 0644)
-	if err := os.Chmod(dataDir, 0555); err != nil {
-		t.Fatalf("permission proof did not run: %v", err)
-	}
-	t.Cleanup(func() { os.Chmod(dataDir, 0755) })
-
-	_, err := RetireTask(Options{HomeDir: tmp, ID: "unarchivable", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth)
-	var pending *RetirementCleanupPendingError
-	if !errors.As(err, &pending) {
-		t.Fatalf("teardown error = %T %v, want typed RetirementCleanupPendingError", err, err)
-	}
-	if _, err := os.Stat(reportPath); err != nil {
-		t.Fatalf("a refused archive must leave the report where it was: %v", err)
-	}
-	if _, err := os.Lstat(filepath.Join(dataDir, "report-g1.md")); !os.IsNotExist(err) {
-		t.Fatalf("a refused archive must not leave a reservation, lstat err = %v", err)
 	}
 }
 
@@ -1232,236 +980,6 @@ func TestRun_RetryAfterJournalFailureKeepsMeta(t *testing.T) {
 	}
 	if claim.CleanupClaim == nil || claim.CleanupClaim.Status != taskauthority.CleanupCompleted {
 		t.Fatalf("claim = %+v", claim.CleanupClaim)
-	}
-}
-
-func TestRun_ReportReappearsBeforeCleanupCommit(t *testing.T) {
-	tmp := t.TempDir()
-	taskID := "report-reappears"
-	auth := canonicalMergeTestAuth(t, tmp, taskID)
-	stateDir := filepath.Join(tmp, "state")
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(stateDir, taskID+".meta"), []byte("kind=scout\\nbackend=tmux\\nwindow=@1\\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	dataDir := filepath.Join(tmp, "data", taskID)
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dataDir, "report.md"), []byte("original"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	oldHook := afterReportArchive
-	afterReportArchive = func(home, id string, _ taskauthority.Generation) error {
-		return os.WriteFile(filepath.Join(home, "data", id, "report.md"), []byte("late"), 0644)
-	}
-	t.Cleanup(func() { afterReportArchive = oldHook })
-	_, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, &recordingTeardown{alive: true}, fakeRetirementJournals{}, auth)
-	var pending *RetirementCleanupPendingError
-	if !errors.As(err, &pending) {
-		t.Fatalf("error = %T %v, want pending cleanup", err, err)
-	}
-	body, readErr := os.ReadFile(filepath.Join(dataDir, "report-g1.md"))
-	if readErr != nil || string(body) != "original" {
-		t.Fatalf("archived report = %q, %v", body, readErr)
-	}
-	body, readErr = os.ReadFile(filepath.Join(dataDir, "report.md"))
-	if readErr != nil || string(body) != "late" {
-		t.Fatalf("recreated report = %q, %v", body, readErr)
-	}
-	claim, getErr := auth.Get(mustTaskID(t, taskID))
-	if getErr != nil {
-		t.Fatal(getErr)
-	}
-	if claim.CleanupClaim == nil || claim.CleanupClaim.Status != taskauthority.CleanupActive {
-		t.Fatalf("claim = %+v, want active", claim.CleanupClaim)
-	}
-}
-
-func TestRun_RetryAfterArchiveFailureKeepsMeta(t *testing.T) {
-	tmp := t.TempDir()
-	taskID := "retry-meta"
-	auth := canonicalMergeTestAuth(t, tmp, taskID)
-	stateDir := filepath.Join(tmp, "state")
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	metaPath := filepath.Join(stateDir, taskID+".meta")
-	if err := os.WriteFile(metaPath, []byte("kind=scout\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	dataDir := filepath.Join(tmp, "data", taskID)
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dataDir, "report.md"), []byte("findings"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dataDir, "report-g1.md"), []byte("existing"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	first := &recordingTeardown{alive: true}
-	if _, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, first, fakeRetirementJournals{}, auth); err == nil {
-		t.Fatal("expected cleanup failure")
-	} else {
-		var pending *RetirementCleanupPendingError
-		if !errors.As(err, &pending) {
-			t.Fatalf("error = %T %v, want pending cleanup", err, err)
-		}
-	}
-	if _, err := os.Stat(metaPath); err != nil {
-		t.Fatalf("meta removed after failed cleanup: %v", err)
-	}
-	claim, err := auth.Get(mustTaskID(t, taskID))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if claim.CleanupClaim == nil || claim.CleanupClaim.Status != taskauthority.CleanupActive {
-		t.Fatalf("claim = %+v, want active", claim.CleanupClaim)
-	}
-	if err := os.Remove(filepath.Join(dataDir, "report-g1.md")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, first, fakeRetirementJournals{}, auth); err != nil {
-		t.Fatalf("retry: %v", err)
-	}
-	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
-		t.Fatalf("meta remains after retry: %v", err)
-	}
-	claim, err = auth.Get(mustTaskID(t, taskID))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if claim.CleanupClaim == nil || claim.CleanupClaim.Status != taskauthority.CleanupCompleted {
-		t.Fatalf("claim after retry = %+v, want completed", claim.CleanupClaim)
-	}
-	body, err := os.ReadFile(filepath.Join(dataDir, "report-g1.md"))
-	if err != nil || string(body) != "findings" {
-		t.Fatalf("archived report = %q, err=%v", body, err)
-	}
-}
-
-func TestRun_RetryAfterUnknownArchiveStillRefuses(t *testing.T) {
-	tmp := t.TempDir()
-	taskID := "retry-unknown-archive"
-	auth := canonicalMergeTestAuth(t, tmp, taskID)
-	if err := os.WriteFile(filepath.Join(tmp, "state", taskID+".meta"), []byte("kind=ship\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	dataDir := filepath.Join(tmp, "data", taskID)
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dataDir, "report.md"), []byte("current"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dataDir, "report-g1.md"), []byte("foreign"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	for attempt := 0; attempt < 2; attempt++ {
-		if _, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, &recordingTeardown{alive: true}, fakeRetirementJournals{}, auth); err == nil {
-			t.Fatal("expected cleanup refusal")
-		}
-	}
-	for name, want := range map[string]string{"report.md": "current", "report-g1.md": "foreign"} {
-		body, err := os.ReadFile(filepath.Join(dataDir, name))
-		if err != nil || string(body) != want {
-			t.Fatalf("%s = %q, %v", name, body, err)
-		}
-	}
-	claim, err := auth.Get(mustTaskID(t, taskID))
-	if err != nil || claim.CleanupClaim == nil || claim.CleanupClaim.Status != taskauthority.CleanupActive {
-		t.Fatalf("claim = %+v, err=%v, want active", claim.CleanupClaim, err)
-	}
-}
-
-func TestRun_RetryAfterStragglerReportArchivesRecovery(t *testing.T) {
-	tmp := t.TempDir()
-	taskID := "retry-straggler"
-	auth := canonicalMergeTestAuth(t, tmp, taskID)
-	stateDir := filepath.Join(tmp, "state")
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(stateDir, taskID+".meta"), []byte("kind=ship\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	dataDir := filepath.Join(tmp, "data", taskID)
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dataDir, "report.md"), []byte("first"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	oldHook := afterReportArchive
-	firstArchive := true
-	afterReportArchive = func(home, id string, _ taskauthority.Generation) error {
-		if !firstArchive {
-			return nil
-		}
-		firstArchive = false
-		return os.WriteFile(filepath.Join(home, "data", id, "report.md"), []byte("straggler"), 0644)
-	}
-	t.Cleanup(func() { afterReportArchive = oldHook })
-	if _, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, &recordingTeardown{alive: true}, fakeRetirementJournals{}, auth); err == nil {
-		t.Fatal("expected pending cleanup")
-	}
-	if _, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, &recordingTeardown{alive: true}, fakeRetirementJournals{}, auth); err != nil {
-		t.Fatalf("retry: %v", err)
-	}
-	claim, err := auth.Get(mustTaskID(t, taskID))
-	if err != nil || claim.CleanupClaim == nil || claim.CleanupClaim.Status != taskauthority.CleanupCompleted {
-		t.Fatalf("claim = %+v, err=%v, want completed", claim.CleanupClaim, err)
-	}
-	for name, want := range map[string]string{"report-g1.md": "first", "report-g1-2.md": "straggler"} {
-		body, err := os.ReadFile(filepath.Join(dataDir, name))
-		if err != nil || string(body) != want {
-			t.Fatalf("%s = %q, %v", name, body, err)
-		}
-	}
-}
-
-func TestRun_AbortAfterStragglerReportArchivesRecovery(t *testing.T) {
-	tmp := t.TempDir()
-	taskID := "abort-straggler"
-	auth := canonicalMergeTestAuth(t, tmp, taskID)
-	if err := os.WriteFile(filepath.Join(tmp, "state", taskID+".meta"), []byte("kind=ship\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	dataDir := filepath.Join(tmp, "data", taskID)
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dataDir, "report.md"), []byte("first"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	oldHook := afterReportArchive
-	firstArchive := true
-	afterReportArchive = func(home, id string, _ taskauthority.Generation) error {
-		if !firstArchive {
-			return nil
-		}
-		firstArchive = false
-		return os.WriteFile(filepath.Join(home, "data", id, "report.md"), []byte("straggler"), 0644)
-	}
-	t.Cleanup(func() { afterReportArchive = oldHook })
-	if _, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, &recordingTeardown{alive: true}, fakeRetirementJournals{}, auth); err == nil {
-		t.Fatal("expected pending cleanup")
-	}
-	if err := AbortRetirementCleanup(auth, tmp, fakeTeardown{}, mustTaskID(t, taskID), 1); err != nil {
-		t.Fatalf("abort: %v", err)
-	}
-	for name, want := range map[string]string{"report-g1.md": "first", "report-g1-2.md": "straggler"} {
-		body, err := os.ReadFile(filepath.Join(dataDir, name))
-		if err != nil || string(body) != want {
-			t.Fatalf("%s = %q, %v", name, body, err)
-		}
-	}
-	claim, err := auth.Get(mustTaskID(t, taskID))
-	if err != nil || claim.CleanupClaim == nil || claim.CleanupClaim.Status != taskauthority.CleanupAborted {
-		t.Fatalf("claim = %+v, err=%v, want aborted", claim.CleanupClaim, err)
 	}
 }
 
@@ -1570,7 +1088,7 @@ func TestRun_ProjectionFailureThenReopenIsSuperseded(t *testing.T) {
 func TestRun_AbortRefreshesBriefOnlyDirectory(t *testing.T) {
 	tmp := t.TempDir()
 	taskID := "abort-brief-only"
-	auth := canonicalMergeTestAuth(t, tmp, taskID)
+	auth := mergeTestAuth(t, tmp, taskID)
 	if err := os.WriteFile(filepath.Join(tmp, "state", taskID+".meta"), []byte("kind=ship\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -1588,10 +1106,9 @@ func TestRun_AbortRefreshesBriefOnlyDirectory(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmp, "state", taskID+".status"), []byte("status"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	oldHook := afterReportArchive
-	afterReportArchive = func(string, string, taskauthority.Generation) error { return errors.New("blocked") }
-	t.Cleanup(func() { afterReportArchive = oldHook })
-	if _, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth); err == nil {
+	// Force cleanup to stay pending: the bound endpoint refuses disposal, so
+	// the claim is left active for the operator's abort.
+	if _, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, fakeTeardown{alive: true, disposeErr: errors.New("stuck")}, fakeRetirementJournals{}, auth); err == nil {
 		t.Fatal("expected pending cleanup")
 	}
 	if err := AbortRetirementCleanup(auth, tmp, fakeTeardown{}, mustTaskID(t, taskID), 1); err != nil {
@@ -1606,65 +1123,5 @@ func TestRun_AbortRefreshesBriefOnlyDirectory(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dataDir, "brief.md")); err != nil {
 		t.Fatalf("brief removed: %v", err)
-	}
-}
-
-func TestRun_AbortRefusesUnarchivedReport(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Fatal("permission proof did not run: tests run as root, so abort archival refusal cannot be established")
-	}
-	tmp := t.TempDir()
-	auth := canonicalMergeTestAuth(t, tmp, "abort-report")
-	stateDir := filepath.Join(tmp, "state")
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(stateDir, "abort-report.meta"), []byte("kind=scout\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	dataDir := filepath.Join(tmp, "data", "abort-report")
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	reportPath := filepath.Join(dataDir, "report.md")
-	if err := os.WriteFile(reportPath, []byte("findings"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(dataDir, 0555); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(dataDir, 0755) })
-	if _, err := RetireTask(Options{HomeDir: tmp, ID: "abort-report", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth); err == nil {
-		t.Fatal("expected teardown cleanup to remain pending")
-	}
-	if err := AbortRetirementCleanup(auth, tmp, fakeTeardown{}, mustTaskID(t, "abort-report"), 1); err == nil {
-		t.Fatal("abort should refuse while report evacuation is blocked")
-	}
-	agg, err := auth.Get(mustTaskID(t, "abort-report"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if agg.CleanupClaim == nil || agg.CleanupClaim.Status != taskauthority.CleanupActive {
-		t.Fatalf("cleanup claim = %+v, want active", agg.CleanupClaim)
-	}
-	if err := os.Chmod(dataDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := AbortRetirementCleanup(auth, tmp, fakeTeardown{}, mustTaskID(t, "abort-report"), 1); err != nil {
-		t.Fatalf("abort after restoring access: %v", err)
-	}
-	if _, err := os.Lstat(reportPath); !os.IsNotExist(err) {
-		t.Fatalf("report.md should be evacuated, lstat err = %v", err)
-	}
-	body, err := os.ReadFile(filepath.Join(dataDir, "report-g1.md"))
-	if err != nil || string(body) != "findings" {
-		t.Fatalf("archived report = %q, err = %v", body, err)
-	}
-	agg, err = auth.Get(mustTaskID(t, "abort-report"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if agg.CleanupClaim == nil || agg.CleanupClaim.Status != taskauthority.CleanupAborted {
-		t.Fatalf("cleanup claim = %+v, want aborted", agg.CleanupClaim)
 	}
 }

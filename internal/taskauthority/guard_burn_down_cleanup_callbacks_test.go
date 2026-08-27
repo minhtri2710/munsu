@@ -9,32 +9,30 @@ import "testing"
 // these functions refuse several ways with a bare error and `err != nil` would
 // stay green with the guard deleted.
 
-func TestReconcileRetirementCleanupRequiresBothCallbacks(t *testing.T) {
+func TestReconcileRetirementCleanupRequiresWork(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
 	id := mustTaskID(t, "cleanup-callbacks")
 	gen := mustCreate(t, c, id.Value()).Generation
-	ok := func(bool) error { return nil }
+	ok := func() error { return nil }
 
-	// Control: both callbacks present reaches the fence and refuses for state,
-	// not for the callbacks, so the refusals below are attributable.
-	err := c.ReconcileRetirementCleanup(id, gen, CleanupCompleted, ok, ok)
-	wantErrSubstring(t, err, "cleanup claim is not active", "both callbacks present on a task with no claim")
+	// Control: the callback present reaches the fence and refuses for state,
+	// not for the callback, so the refusal below is attributable.
+	err := c.ReconcileRetirementCleanup(id, gen, CleanupCompleted, ok)
+	wantErrSubstring(t, err, "cleanup claim is not active", "callback present on a task with no claim")
 
-	wantErrSubstring(t, c.ReconcileRetirementCleanup(id, gen, CleanupCompleted, nil, ok),
-		"cleanup callbacks are required", "nil preflight")
-	wantErrSubstring(t, c.ReconcileRetirementCleanup(id, gen, CleanupCompleted, ok, nil),
-		"cleanup callbacks are required", "nil work")
+	wantErrSubstring(t, c.ReconcileRetirementCleanup(id, gen, CleanupCompleted, nil),
+		"cleanup callback is required", "nil work")
 }
 
 func TestReconcileRetirementCleanupRejectsNonTerminalStatus(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
 	id := mustTaskID(t, "cleanup-terminal")
 	gen := mustCreate(t, c, id.Value()).Generation
-	ok := func(bool) error { return nil }
+	ok := func() error { return nil }
 
 	// CleanupActive is a real status, and the one a caller would reach for to
 	// mean "resume": reconciliation commits terminal state only.
-	wantErrSubstring(t, c.ReconcileRetirementCleanup(id, gen, CleanupActive, ok, ok),
+	wantErrSubstring(t, c.ReconcileRetirementCleanup(id, gen, CleanupActive, ok),
 		"invalid cleanup terminal status", "reconciling to an active claim")
 }
 

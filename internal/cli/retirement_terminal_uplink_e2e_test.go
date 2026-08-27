@@ -50,7 +50,10 @@ func TestLocalOnlyScoutReportAllowsNormalTeardown(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(homeDir, "data", taskID), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(homeDir, "data", taskID, "report.md"), []byte("# report\n"), 0644); err != nil {
+	if err := os.MkdirAll(filepath.Dir(fleet.ReportPath(homeDir, taskID, 1)), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fleet.ReportPath(homeDir, taskID, 1), []byte("# report\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	auth, err := taskauthority.NewCanonical(mustOpenHome(t, homeDir))
@@ -84,7 +87,7 @@ func TestLocalOnlyScoutReportAllowsNormalTeardown(t *testing.T) {
 
 	if _, err := orchestrator.DeliverWake(orchestrator.DeliverRequest{
 		HomeDir: homeDir, ParentHome: homeDir, TaskID: taskID,
-		State: "done", Message: "report.md", Key: "terminal", Role: "soldier",
+		State: "done", Message: "findings recorded", Key: "terminal", Role: "soldier",
 	}); err != nil {
 		t.Fatalf("local-only terminal report: %v", err)
 	}

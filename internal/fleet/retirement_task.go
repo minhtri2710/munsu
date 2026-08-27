@@ -35,8 +35,6 @@ type Options struct {
 	ExpectedGeneration *taskauthority.Generation
 }
 
-var afterReportArchive = func(string, string, taskauthority.Generation) error { return nil }
-
 // TeardownResult describes the outcome of each teardown step.
 type TeardownResult struct {
 	Steps  []string
@@ -134,15 +132,7 @@ func taskCleanupOperationID(kind, taskID string, generation taskauthority.Genera
 // advance), an aborted claim is re-activated under the same identity, and a
 // completed claim is left untouched (the caller skips completed claims before
 // calling this).
-// archiveNameOccupied reports whether the generation-bound report archive name
-// is already taken. Recorded on the claim so a later retry can tell its own
-// archive from foreign evidence without inspecting filesystem identity.
-func archiveNameOccupied(homeDir, id string, gen taskauthority.Generation) bool {
-	_, err := os.Lstat(filepath.Join(homeDir, "data", id, ArchivedReportName(gen)))
-	return err == nil
-}
-
-func beginRetirementCleanup(authority *taskauthority.Canonical, homeDir, id string, taskID domain.TaskID, claimGen taskauthority.Generation) error {
+func beginRetirementCleanup(authority *taskauthority.Canonical, taskID domain.TaskID, claimGen taskauthority.Generation) error {
 	cur, err := authority.Get(taskID)
 	if err != nil {
 		return fmt.Errorf("resolving current state for cleanup claim: %w", err)
@@ -154,8 +144,6 @@ func beginRetirementCleanup(authority *taskauthority.Canonical, homeDir, id stri
 		ClaimOperationID: taskRetireOperationID(taskID.Value(), claimGen),
 		ClaimGeneration:  claimGen,
 		Reason:           "retirement cleanup",
-		// Observed before the claim commits, so no archival can have run yet.
-		ArchiveNameOccupied: archiveNameOccupied(homeDir, id, claimGen),
 	}
 	opID, err := domain.NewOperationID(taskCleanupOperationID("begin", taskID.Value(), claimGen))
 	if err != nil {
@@ -173,17 +161,16 @@ func beginRetirementCleanup(authority *taskauthority.Canonical, homeDir, id stri
 
 // AbortRetirementCleanup releases the active cleanup claim of the given
 // retired generation WITHOUT completing cleanup. It refuses while a preserved
-// endpoint is live or ambiguously observed, archives only after authoritative
-// absence, and rechecks report.md before releasing the claim. The task becomes
-// reopenable only after those fences succeed; then preserved evidence remains a
-// historical record. Abort is TERMINAL: a later teardown retry does not
-// re-activate the claim and never resumes the aborted cleanup against a
-// reopened generation.
+// endpoint is live or ambiguously observed, and refreshes the data directory
+// before releasing the claim. The task becomes reopenable only after those
+// fences succeed; then preserved evidence remains a historical record. Abort
+// is TERMINAL: a later teardown retry does not re-activate the claim and
+// never resumes the aborted cleanup against a reopened generation.
 func AbortRetirementCleanup(authority *taskauthority.Canonical, homeDir string, backend BoundTeardown, taskID domain.TaskID, claimGen taskauthority.Generation) error {
-	return abortRetirementCleanup(authority, homeDir, backend, taskID, claimGen, nil)
+	return abortRetirementCleanup(authority, homeDir, backend, taskID, claimGen)
 }
 
-func abortRetirementCleanup(authority *taskauthority.Canonical, homeDir string, backend BoundTeardown, taskID domain.TaskID, claimGen taskauthority.Generation, afterArchive func() error) error {
+func abortRetirementCleanup(authority *taskauthority.Canonical, homeDir string, backend BoundTeardown, taskID domain.TaskID, claimGen taskauthority.Generation) error {
 	cur, err := authority.Get(taskID)
 	if err != nil {
 		return fmt.Errorf("resolving current state to abort cleanup claim: %w", err)
@@ -214,48 +201,14 @@ func abortRetirementCleanup(authority *taskauthority.Canonical, homeDir string, 
 			return fmt.Errorf("endpoint for %s generation %s is not authoritatively absent; refusing cleanup abort", taskID, claimGen)
 		}
 	}
-	preflight := func(occupied bool) error {
-		if !occupied {
-			return nil
-		}
-		if _, err := os.Lstat(filepath.Join(homeDir, "data", taskID.Value(), "report.md")); os.IsNotExist(err) {
-			return nil
-		} else if err != nil {
-			return err
-		}
-		_, err := os.Lstat(filepath.Join(homeDir, "data", taskID.Value(), ArchivedReportName(claimGen)))
-		if err == nil {
-			return fmt.Errorf("report paths %s and %s conflict", filepath.Join(homeDir, "data", taskID.Value(), "report.md"), filepath.Join(homeDir, "data", taskID.Value(), ArchivedReportName(claimGen)))
-		}
-		if !os.IsNotExist(err) {
-			return err
-		}
-		return nil
-	}
-	archive := func(occupied bool) error {
-		_, dataDirExists, err := archiveRetiredReport(homeDir, taskID.Value(), claimGen, !occupied)
-		if err != nil || !dataDirExists {
-			return err
-		}
-		if afterArchive != nil {
-			if err := afterArchive(); err != nil {
-				return err
-			}
-		}
-		if _, err := os.Lstat(filepath.Join(homeDir, "data", taskID.Value(), "report.md")); err == nil {
-			return fmt.Errorf("report.md reappeared while aborting cleanup for %s generation %s", taskID, claimGen)
-		} else if !os.IsNotExist(err) {
-			return fmt.Errorf("checking report after archiving for %s generation %s: %w", taskID, claimGen, err)
-		}
-		now := time.Now()
-		if err := os.Chtimes(filepath.Join(homeDir, "data", taskID.Value()), now, now); err != nil {
+	work := func() error {
+		if _, err := refreshDataDir(homeDir, taskID.Value()); err != nil {
 			return fmt.Errorf("refreshing data directory before aborting cleanup for %s generation %s: %w", taskID, claimGen, err)
 		}
-
 		return nil
 	}
-	if err := authority.ReconcileRetirementCleanup(taskID, claimGen, taskauthority.CleanupAborted, preflight, archive); err != nil {
-		return fmt.Errorf("archiving report before aborting cleanup for %s generation %s: %w", taskID, claimGen, err)
+	if err := authority.ReconcileRetirementCleanup(taskID, claimGen, taskauthority.CleanupAborted, work); err != nil {
+		return fmt.Errorf("aborting cleanup for %s generation %s: %w", taskID, claimGen, err)
 	}
 	return nil
 }
@@ -362,8 +315,6 @@ func retireTaskAuthoritatively(opts Options, meta map[string]string, authority *
 		TaskID:       taskID,
 		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
 		Reason:       "retirement",
-		// Observed before the claim commits, so no archival can have run yet.
-		ArchiveNameOccupied: archiveNameOccupied(opts.HomeDir, opts.ID, agg.Generation),
 	}
 	opID, err := domain.NewOperationID(taskRetireOperationID(opts.ID, agg.Generation))
 	if err != nil {
@@ -615,8 +566,19 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		kind = "ship" // default
 	}
 
+	// Resolve the task identity and the safety-check generation up front: the
+	// scout check answers for the exact generation this invocation retires.
+	taskID, err := domain.NewTaskID(opts.ID)
+	if err != nil {
+		return nil, fmt.Errorf("teardown %s: resolving task identity: %w", opts.ID, err)
+	}
+
 	if !opts.Force {
-		proofs, err := safetyCheck(opts, meta, kind, backend, authority)
+		safetyGen, err := safetyCheckGeneration(authority, taskID, opts)
+		if err != nil {
+			return nil, fmt.Errorf("teardown %s: safety check failed: %w", opts.ID, err)
+		}
+		proofs, err := safetyCheck(opts, meta, kind, backend, authority, safetyGen)
 		if err != nil {
 			return nil, fmt.Errorf("teardown %s: safety check failed: %w", opts.ID, err)
 		}
@@ -657,11 +619,6 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 	committed, err := retireTaskAuthoritatively(opts, meta, authority)
 	if err != nil {
 		return nil, fmt.Errorf("teardown %s: %w", opts.ID, err)
-	}
-
-	taskID, err := domain.NewTaskID(opts.ID)
-	if err != nil {
-		return nil, fmt.Errorf("teardown %s: resolving task identity: %w", opts.ID, err)
 	}
 
 	// cleanupPending wraps a saga-side cleanup failure after the durable
@@ -729,7 +686,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 	// (the claim is already active under the same stable retirement identity,
 	// so the assert is a no-op). An aborted or completed claim never reaches
 	// this point (handled above); BeginCleanup itself fails closed if it does.
-	if err := beginRetirementCleanup(authority, opts.HomeDir, opts.ID, taskID, claimGen); err != nil {
+	if err := beginRetirementCleanup(authority, taskID, claimGen); err != nil {
 		return cleanupPending(fmt.Errorf("teardown %s: asserting cleanup claim: %w", opts.ID, err))
 	}
 
@@ -959,61 +916,24 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		// checks and is not a destructive action of its own, so it never
 		// widens what teardown deletes.
 		//
-		// A report is evidence produced by the generation that just retired,
-		// so it is archived under that generation's number instead of being
-		// left at the name the next generation writes. The fenced recheck
-		// catches report recreation before terminal reconciliation; a process
-		// that writes after reconciliation remains exposed until soldiers
-		// write generation-named reports directly. A brief is operator input
-		// rather than evidence: it survives for a relaunch of the same task
-		// and is reclaimed by the session-start GC in internal/bootstrap once
-		// the task is retired.
-		dataDir := filepath.Join(opts.HomeDir, "data", opts.ID)
-		var archived string
-		var exists bool
-		preflight := func(occupied bool) error {
-			if !occupied {
-				return nil
-			}
-			// Nothing to rename means no collision is possible. Without this,
-			// a crash between a successful rename and the terminal commit
-			// would refuse forever on a claim whose archive name was occupied
-			// when it was created.
-			if _, err := os.Lstat(filepath.Join(dataDir, "report.md")); os.IsNotExist(err) {
-				return nil
-			} else if err != nil {
-				return err
-			}
-			_, err := os.Lstat(filepath.Join(dataDir, ArchivedReportName(claimGen)))
-			if err == nil {
-				return fmt.Errorf("report paths %s and %s conflict", filepath.Join(opts.HomeDir, "data", opts.ID, "report.md"), filepath.Join(opts.HomeDir, "data", opts.ID, ArchivedReportName(claimGen)))
-			}
-			if !os.IsNotExist(err) {
-				return err
-			}
-			return nil
-		}
-		work := func(occupied bool) error {
-			var err error
-			// A name free at claim creation and present now was written by this
-			// claim, so a reappeared report.md is this generation's straggler.
-			archived, exists, err = archiveRetiredReport(opts.HomeDir, opts.ID, claimGen, !occupied)
-			if err != nil || !exists {
-				return err
-			}
-			now := time.Now()
-			if err := os.Chtimes(dataDir, now, now); err != nil {
-				return err
-			}
-			if err := afterReportArchive(opts.HomeDir, opts.ID, claimGen); err != nil {
-				return err
-			}
-			if _, err := os.Lstat(filepath.Join(dataDir, "report.md")); err == nil {
-				return fmt.Errorf("report.md reappeared after generation %s archival", claimGen)
-			} else if !os.IsNotExist(err) {
-				return fmt.Errorf("checking report.md after archival: %w", err)
-			}
-			return nil
+		// A report is born generation-named (report-g<N>.md), so a retired
+		// generation's report can never sit at the name a later generation
+		// writes: nothing is renamed and no archival step exists to race. The
+		// report stays in place as its generation's evidence. A brief is
+		// operator input rather than evidence: it survives for a relaunch of
+		// the same task and is reclaimed by the session-start GC in
+		// internal/bootstrap once the task is retired.
+		//
+		// The data directory keeps its refreshed timestamp so the retention
+		// grace period restarts at cleanup-ownership release. Residual
+		// artifacts are removed first and metadata is always last so a failed
+		// projection cleanup leaves the retry identity intact. Failures are
+		// propagated because completed-claim retry repairs the projections.
+		dataDirKept := false
+		work := func() error {
+			kept, err := refreshDataDir(opts.HomeDir, opts.ID)
+			dataDirKept = kept
+			return err
 		}
 		// Residual artifacts are removed first and metadata is always last so a
 		// failed projection cleanup leaves the retry identity intact. Failures
@@ -1044,18 +964,14 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 			return cleanupPending(fmt.Errorf("teardown %s: finalizing journals: %w", opts.ID, err))
 		}
 		result.Steps = append(result.Steps, journalSteps...)
-		archiveErr := authority.ReconcileRetirementCleanup(taskID, claimGen, taskauthority.CleanupCompleted, preflight, work, projectionCleanup)
-		if archiveErr != nil {
+		if err := authority.ReconcileRetirementCleanup(taskID, claimGen, taskauthority.CleanupCompleted, work, projectionCleanup); err != nil {
 			var projectionErr *RetirementProjectionError
-			if errors.As(archiveErr, &projectionErr) {
+			if errors.As(err, &projectionErr) {
 				return result, projectionErr
 			}
-			return cleanupPending(fmt.Errorf("teardown %s: archiving report for generation %s: %w", opts.ID, claimGen, archiveErr))
+			return cleanupPending(fmt.Errorf("teardown %s: cleanup work for generation %s: %w", opts.ID, claimGen, err))
 		}
-		if exists && archived != "" {
-			result.Steps = append(result.Steps, fmt.Sprintf("report.md archived as %s", archived))
-		}
-		if exists {
+		if dataDirKept {
 			result.Steps = append(result.Steps, "data dir kept for relaunch or session-start sweep")
 		}
 	}
@@ -1087,12 +1003,35 @@ func finalizeCompletedProjectionCleanup(opts Options, meta map[string]string, re
 	return nil
 }
 
+// refreshDataDir refreshes the task data directory's mtime when it exists,
+// restarting the retention grace period at cleanup-ownership release. A
+// missing directory has nothing to refresh; a non-directory data path fails
+// closed. It reports whether a directory was refreshed.
+func refreshDataDir(homeDir, id string) (bool, error) {
+	dataDir := filepath.Join(homeDir, "data", id)
+	info, err := os.Stat(dataDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if !info.IsDir() {
+		return false, fmt.Errorf("data path %s is not a directory", dataDir)
+	}
+	now := time.Now()
+	if err := os.Chtimes(dataDir, now, now); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // safetyCheck verifies that work is landed before allowing
 // Returns proof strings alongside any error. Proofs are only populated on success.
-func safetyCheck(opts Options, meta map[string]string, kind string, backend BoundTeardown, authority *taskauthority.Canonical) ([]string, error) {
+func safetyCheck(opts Options, meta map[string]string, kind string, backend BoundTeardown, authority *taskauthority.Canonical, gen taskauthority.Generation) ([]string, error) {
 	switch kind {
 	case "scout":
-		if err := scoutSafetyCheck(opts, meta); err != nil {
+		if err := scoutSafetyCheck(opts, meta, gen); err != nil {
 			return nil, err
 		}
 		return nil, nil
@@ -1101,15 +1040,40 @@ func safetyCheck(opts Options, meta map[string]string, kind string, backend Boun
 	}
 }
 
-// scoutSafetyCheck verifies the report.md exists.
-// scoutSafetyCheck verifies the report.md exists and checks for unresolved decision holds.
-func scoutSafetyCheck(opts Options, meta map[string]string) error {
-	reportPath := filepath.Join(opts.HomeDir, "data", opts.ID, "report.md")
+// safetyCheckGeneration resolves the generation whose report a scout safety
+// check answers for: the pinned target when the invocation carries one, else
+// the current canonical generation. A pinned invocation observing the current
+// generation advanced past its target is a stale retry and fails closed with
+// the typed conflict BEFORE any safety check runs, so a stale generation is
+// never certified against another generation's report.
+func safetyCheckGeneration(authority *taskauthority.Canonical, taskID domain.TaskID, opts Options) (taskauthority.Generation, error) {
+	if authority == nil {
+		return 0, fmt.Errorf("retirement requires a composed task authority")
+	}
+	cur, err := authority.Get(taskID)
+	if err != nil {
+		return 0, err
+	}
+	if opts.ExpectedGeneration != nil {
+		if *opts.ExpectedGeneration != cur.Generation {
+			return 0, &RetirementTargetConflictError{TaskID: opts.ID, Target: *opts.ExpectedGeneration, Current: cur.Generation}
+		}
+		return *opts.ExpectedGeneration, nil
+	}
+	return cur.Generation, nil
+}
+
+// scoutSafetyCheck verifies the generation's generation-named report exists
+// and checks for unresolved decision holds. The report is resolved BY
+// GENERATION: only report-g<gen>.md answers for generation gen, so a prior
+// generation's report never satisfies a later generation's check.
+func scoutSafetyCheck(opts Options, meta map[string]string, gen taskauthority.Generation) error {
+	reportPath := ReportPath(opts.HomeDir, opts.ID, gen)
 	if _, err := os.Stat(reportPath); err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("scout task %s has no report.md at %s (use --force to override)", opts.ID, reportPath)
+			return fmt.Errorf("scout task %s has no generation %s report at %s (use --force to override)", opts.ID, gen, reportPath)
 		}
-		return fmt.Errorf("checking report.md: %w", err)
+		return fmt.Errorf("checking generation %s report: %w", gen, err)
 	}
 
 	// After report exists, check for unresolved decision holds. The decision

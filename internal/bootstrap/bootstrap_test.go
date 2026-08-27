@@ -639,23 +639,23 @@ func TestGCOrphanDataDirs_WithReportKept(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dataDir, "with-report"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	// Create report.md — should protect from GC
-	if err := os.WriteFile(filepath.Join(dataDir, "with-report", "report.md"), []byte("report"), 0644); err != nil {
+	// Create the generation's report — should protect from GC
+	if err := os.WriteFile(fleet.ReportPath(home, "with-report", 1), []byte("report"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	// Make it older than the grace period so only the report keeps it
 	setDirMtime(t, filepath.Join(dataDir, "with-report"), 48*time.Hour)
 
 	cleaned := gcOrphanDataDirs(home, reclaimNone)
-	// Should not remove dir with report.md
+	// Should not remove a dir holding a report
 	for _, id := range cleaned {
 		if id == "with-report" {
-			t.Errorf("expected dir with report.md to be kept, but it was removed")
+			t.Errorf("expected dir with a report to be kept, but it was removed")
 		}
 	}
 	// Verify dir still exists
 	if _, err := os.Stat(filepath.Join(dataDir, "with-report")); os.IsNotExist(err) {
-		t.Errorf("expected dir with report.md to still exist")
+		t.Errorf("expected dir with a report to still exist")
 	}
 }
 
@@ -714,7 +714,7 @@ func TestGCOrphanDataDirs_ArchivedReportKept(t *testing.T) {
 	}
 	// What a teardown leaves for the operator to read: the retired
 	// generation's report, under that generation's name.
-	if err := os.WriteFile(filepath.Join(dataDir, "retired-scout", "report-g1.md"), []byte("findings"), 0644); err != nil {
+	if err := os.WriteFile(fleet.ReportPath(home, "retired-scout", 1), []byte("findings"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	setDirMtime(t, filepath.Join(dataDir, "retired-scout"), 48*time.Hour)
@@ -725,7 +725,7 @@ func TestGCOrphanDataDirs_ArchivedReportKept(t *testing.T) {
 			t.Errorf("expected archived report to be kept, but the dir was removed")
 		}
 	}
-	if _, err := os.Stat(filepath.Join(dataDir, "retired-scout", "report-g1.md")); err != nil {
+	if _, err := os.Stat(fleet.ReportPath(home, "retired-scout", 1)); err != nil {
 		t.Errorf("expected archived report to survive the sweep: %v", err)
 	}
 }

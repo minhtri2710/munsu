@@ -34,7 +34,10 @@ func TestRetirementIntentEvidence(t *testing.T) {
 			if err := os.MkdirAll(dataDir, 0755); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(filepath.Join(dataDir, "report.md"), []byte("generation 1 findings\n"), 0644); err != nil {
+			// The soldier writes the report generation-named, exactly as the
+			// brief instructs; teardown retains it in place.
+			reportPath := ReportPath(homeDir, taskID, 1)
+			if err := os.WriteFile(reportPath, []byte("generation 1 findings\n"), 0644); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := RetireTask(Options{HomeDir: homeDir, ID: taskID, Force: tc.force}, fakeTeardown{}, fakeRetirementJournals{}, auth); err != nil {
@@ -42,15 +45,20 @@ func TestRetirementIntentEvidence(t *testing.T) {
 			}
 			entries := directoryEntries(t, dataDir)
 			t.Logf("%s teardown: data/%s entries=%v", tc.name, taskID, entries)
-			body, err := os.ReadFile(filepath.Join(dataDir, "report-g1.md"))
+			body, err := os.ReadFile(reportPath)
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Logf("%s teardown: report-g1.md=%q; report.md absent=%t", tc.name, strings.TrimSpace(string(body)), fileAbsent(filepath.Join(dataDir, "report.md")))
-			if string(body) != "generation 1 findings\n" || !fileAbsent(filepath.Join(dataDir, "report.md")) {
-				t.Fatal("retired report was not preserved under a generation-scoped name")
+			t.Logf("%s teardown: %s=%q", tc.name, ReportName(1), strings.TrimSpace(string(body)))
+			if string(body) != "generation 1 findings\n" {
+				t.Fatal("retired generation's report was not retained under its own name")
 			}
-			if err := scoutSafetyCheck(Options{HomeDir: homeDir, ID: taskID}, map[string]string{"kind": "scout"}); err == nil {
+			for _, entry := range entries {
+				if !isReportName(entry) && entry != "brief.md" {
+					t.Fatalf("entry %s is not a generation-scoped report; the write path must not produce unversioned report files", entry)
+				}
+			}
+			if err := scoutSafetyCheck(Options{HomeDir: homeDir, ID: taskID}, map[string]string{"kind": "scout"}, 2); err == nil {
 				t.Fatal("later generation unexpectedly accepted retired report evidence")
 			} else {
 				t.Logf("%s later-generation safety check refused retired report: %v", tc.name, err)
