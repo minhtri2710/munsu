@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -36,6 +37,11 @@ func runOrphanScan(out io.Writer, homeDir string) error {
 func runOrphanScanWith(out io.Writer, fence fleet.CompositeWriterFence, homeDir string) error {
 	report, err := fence.InspectOrphans(homeDir)
 	if err != nil {
+		if errors.Is(err, fleet.ErrProcessInventoryUnsupported) {
+			fmt.Fprintf(out, "Orphan scan (home: %s)\n  orphan detection is unavailable on this platform (%v)\n", homeDir, err)
+			return orphanError(orphanExitNeedsMember, "orphan_scan_failed",
+				"Orphan detection is unavailable on this platform", fmt.Sprintf("orphan scan: %v", err))
+		}
 		// A scan that failed resolved nothing, so it exits like an
 		// unresolved finding rather than like a leftover: a script must not
 		// read a broken scan as "garbage found".
