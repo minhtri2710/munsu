@@ -240,13 +240,13 @@ func TestShellWriteTrailingBackslashRootedTargetAfterAmbiguousCd(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows path semantics required")
 	}
-	const base = `C:\\worktree`
+	const base = `C:\worktree`
 
-	targets, ambiguous := shellWriteTargets(base, `cd D:docs && echo ok > \\foo\\`)
+	targets, ambiguous := shellWriteTargets(base, `cd D:docs && echo ok > \foo\`)
 	if ambiguous {
 		t.Fatalf("trailing-separator rooted target remained ambiguous: %v", targets)
 	}
-	if !slices.Contains(targets, `D:\\foo`) {
+	if !slices.Contains(targets, `D:\foo`) {
 		t.Errorf("trailing-separator rooted target = %v, want D volume candidate", targets)
 	}
 }
