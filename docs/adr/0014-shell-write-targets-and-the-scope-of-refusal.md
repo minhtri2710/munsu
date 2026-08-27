@@ -58,11 +58,14 @@ as `D:src\repo\README.md` is ambiguous because the other drive's current
 directory cannot be reconstructed. The command is refused when that target has
 no independently resolved candidate under the other backslash interpretation;
 ambiguity from one reading does not override a rooted or otherwise independent
-candidate for the same target span. The same unknown-directory state applies
-when `cd` uses an unresolved different-volume drive-relative path: it does not
-refuse a read-only command or an independent absolute/rooted or same-volume
-target, but a later relative write target that depends on that unknown base is
-refused.
+candidate for the same target span. An unresolved different-volume drive-relative
+`cd` records unknown state for that volume. Read-only commands and independent
+absolute or rooted targets remain classifiable, while relative writes are
+currently refused whenever the active volume is unknown; same-volume
+per-volume-cwd restoration is implemented for known volumes but does not yet
+narrow that active-volume refusal. An expandable `cd` operand has the same
+unknown-cwd effect: read-only commands and independent absolute or rooted writes
+remain classifiable, while dependent relative writes are refused.
 
 Quoting survives tokenization here (`shellSegments`), because `echo "x > f"` writes
 nothing while `echo x > f` writes `f`, and the two are indistinguishable once quotes are
@@ -72,7 +75,10 @@ Windows reading preserves the backslash as a path separator; inside single quote
 backslash is literal, and inside double quotes the POSIX reading only treats `$`, backtick,
 `"`, `\\`, and newline specially. Resolved candidates from both readings are unioned because the harness does not identify
 which shell will execute the command; ambiguity is decided independently for each target
-span, and a span remains ambiguous only when neither reading resolves it.
+span, and a span remains ambiguous only when neither reading resolves it. A `$` or backtick inside
+single quotes, or behind a POSIX-valid backslash escape, is literal and remains
+classifiable; genuinely expandable target tokens are omitted because their paths
+are not knowable to the guard.
 
 **A heredoc body is content, not a command line** (`stripHeredocBodies`). This is the same
 "one payload, one channel" rule BEO-62 settled for apply-patch, applied to the shell
