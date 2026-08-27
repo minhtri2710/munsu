@@ -157,6 +157,14 @@ func shellWriteTargetsUnderDetailed(mode backslashMode, checkPath, command strin
 						base = known
 					}
 				}
+				// A plain relative cd (no volume, not volume-less rooted) against a
+				// drive whose cwd is unknown cannot be resolved: the active drive's
+				// current directory is exactly what the prior drive-relative cd left
+				// unreconstructable. Keep the unknown state — do not resolve against
+				// the stale currentPath of the previous volume or clear unknownCwd.
+				if !activeVolumeKnown && filepath.VolumeName(operand.text) == "" && !(len(operand.text) > 0 && os.IsPathSeparator(operand.text[0])) {
+					continue
+				}
 				resolved, pathAmbiguous := resolveShellWritePath(base, activeVolume, operand.text)
 				if pathAmbiguous {
 					// Different-volume drive-relative cd (D:docs from a C: base): D
@@ -183,9 +191,6 @@ func shellWriteTargetsUnderDetailed(mode backslashMode, checkPath, command strin
 				}
 			}
 			resolved, targetAmbiguous := resolveShellWritePath(base, activeVolume, target.text)
-			if !targetAmbiguous && (!activeVolumeKnown && !filepath.IsAbs(target.text) && !(len(target.text) > 0 && os.IsPathSeparator(target.text[0]))) {
-				targetAmbiguous = true
-			}
 			if !targetAmbiguous && pathDependsOnUnknownCwd(activeVolume, unknownCwd, target.text) {
 				targetAmbiguous = true
 			}

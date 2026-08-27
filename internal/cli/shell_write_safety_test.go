@@ -290,8 +290,17 @@ func TestShellWriteAmbiguousCdOnlyBlocksDependentRelativeWrites(t *testing.T) {
 	assertShapes(t, false, worktree, cd+" && echo ok > "+known+"\\scratch\\out.txt", "")
 	// Same-volume drive-relative resolves against the known cwd, so it is allowed.
 	assertShapes(t, false, worktree, cd+" && echo ok > "+known+"logs\\out.txt", "")
+	// Volume-less rooted anchors to the active (unknown-cwd) volume's root, which
+	// is known independently of its cwd, so it is allowed (#664).
+	assertShapes(t, false, worktree, cd+" && echo ok > \\scratch\\out.txt", "")
 	// Dependent relative write resolves against the unknown cwd: refused.
 	assertShapes(t, true, worktree, cd+" && echo pwned > relative.txt", "")
+	// A dependent relative cd after the ambiguous drive-relative cd must keep
+	// the unknown active drive state: the plain relative write still resolves
+	// against the unknowable cwd and is refused (it must not be resolved against
+	// the stale cwd of the prior volume, nor may unknownCwd be cleared) (#664).
+	assertShapes(t, true, worktree, cd+" && cd .. && echo pwned > relative.txt", "")
+	assertShapes(t, true, worktree, "cd /d "+unknown+"docs && cd .. && echo pwned > relative.txt", "")
 	// Different-volume drive-relative also resolves against the unknown cwd: refused.
 	assertShapes(t, true, worktree, cd+" && echo pwned > "+unknown+"rel\\out.txt", "")
 }
