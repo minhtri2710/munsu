@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
@@ -411,7 +412,7 @@ func seedRetireAuthority(t *testing.T, homeDir, taskID string) {
 
 // TestTeardownCmd_UplinkAckInTempHome proves the CLI `munsu teardown` command
 // enforces the exact uplink ack in a non-default temp home. It:
-//  1. Creates a scout task with material status + report.md (passes scoutSafetyCheck)
+//  1. Creates a scout task with material status + the generation's report (passes scoutSafetyCheck)
 //  2. Sets up receipt + obligation (triggers uplinkCheck)
 //  3. Runs teardown without ack → must fail with uplink check error
 //  4. Writes ack, runs teardown → must fail on worktree safety, NOT uplink check
@@ -430,7 +431,7 @@ func TestTeardownCmd_UplinkAckInTempHome(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Create task meta (kind=scout so scoutSafetyCheck runs — just needs report.md)
+	// Create task meta (kind=scout so scoutSafetyCheck runs — just needs the generation's report)
 	metaContent := "kind=scout\nbackend=tmux\nwindow=@1\nworktree=/nonexistent\n"
 	writeRawTaskMeta(t, tmpDir, soldierID, metaContent)
 
@@ -439,12 +440,12 @@ func TestTeardownCmd_UplinkAckInTempHome(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Create report.md so scoutSafetyCheck passes
+	// Create the generation's report so scoutSafetyCheck passes
 	dataDir := filepath.Join(tmpDir, "data", soldierID)
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dataDir, "report.md"), []byte("# report"), 0644); err != nil {
+	if err := os.WriteFile(fleet.ReportPath(tmpDir, soldierID, 1), []byte("# report"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -477,7 +478,7 @@ func TestTeardownCmd_UplinkAckInTempHome(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Step 3: With ack, teardown must succeed for scout task (scoutSafetyCheck passes with report.md)
+	// Step 3: With ack, teardown must succeed for scout task (scoutSafetyCheck passes with the generation's report)
 	root = NewRootCommand()
 	root.SetArgs([]string{"teardown", soldierID})
 	err = root.Execute()
@@ -504,12 +505,12 @@ func TestTeardownCmd_ForceSkipsUplinkCheckInTempHome(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Create report.md so scoutSafetyCheck passes
+	// Create the generation's report so scoutSafetyCheck passes
 	dataDir := filepath.Join(tmpDir, "data", soldierID)
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dataDir, "report.md"), []byte("# report"), 0644); err != nil {
+	if err := os.WriteFile(fleet.ReportPath(tmpDir, soldierID, 1), []byte("# report"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -556,12 +557,12 @@ func TestTeardownCmd_WrongKeyAckDoesNotSatisfyGating(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Create report.md so scoutSafetyCheck passes
+	// Create the generation's report so scoutSafetyCheck passes
 	dataDir := filepath.Join(tmpDir, "data", soldierID)
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dataDir, "report.md"), []byte("# report"), 0644); err != nil {
+	if err := os.WriteFile(fleet.ReportPath(tmpDir, soldierID, 1), []byte("# report"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -622,8 +623,8 @@ func TestTeardownCmd_WrongKeyAckDoesNotSatisfyGating(t *testing.T) {
 }
 
 // seedDoneScoutForPromote seeds one done scout task through the canonical
-// Authority and writes the .meta projection + report.md the promote preflight
-// requires.
+// Authority and writes the .meta projection + the generation-named report the
+// promote preflight requires.
 func seedDoneScoutForPromote(t *testing.T, homeDir, taskID, project string) *taskauthority.Canonical {
 	t.Helper()
 	auth := testAuthorityFor(t, homeDir)
@@ -665,7 +666,7 @@ func seedDoneScoutForPromote(t *testing.T, homeDir, taskID, project string) *tas
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dataDir, "report.md"), []byte("# findings"), 0644); err != nil {
+	if err := os.WriteFile(fleet.ReportPath(homeDir, taskID, agg.Generation), []byte("# findings"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	return auth

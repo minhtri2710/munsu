@@ -51,13 +51,13 @@ func TestWriteTaskDataArtifactUsesTaskFence(t *testing.T) {
 	}
 }
 
-func TestArchiveRetiredReportRequiresExactActiveClaim(t *testing.T) {
+func TestReconcileRetirementCleanupRequiresExactActiveClaim(t *testing.T) {
 	c, h, _ := newTestCanonical(t)
 	id := "archive-task"
 	mustCreate(t, c, id)
 	retireWithClaim(t, c, id, preconditionOf(1, 1), "op-archive-retire")
 	called := false
-	if err := c.ReconcileRetirementCleanup(mustTaskID(t, id), 1, CleanupCompleted, func(bool) error { return nil }, func(bool) error {
+	if err := c.ReconcileRetirementCleanup(mustTaskID(t, id), 1, CleanupCompleted, func() error {
 		called = true
 		_, err := h.Lock(taskScope(id))
 		if !errors.Is(err, home.ErrLockTimeout) {
@@ -65,11 +65,11 @@ func TestArchiveRetiredReportRequiresExactActiveClaim(t *testing.T) {
 		}
 		return nil
 	}); err != nil || !called {
-		t.Fatalf("active archive = %v, called=%v", err, called)
+		t.Fatalf("active-claim reconcile = %v, called=%v", err, called)
 	}
 	called = false
-	if err := c.ReconcileRetirementCleanup(mustTaskID(t, id), 2, CleanupCompleted, func(bool) error { return nil }, func(bool) error { called = true; return nil }); err == nil || called {
-		t.Fatalf("wrong-generation archive = %v, called=%v", err, called)
+	if err := c.ReconcileRetirementCleanup(mustTaskID(t, id), 2, CleanupCompleted, func() error { called = true; return nil }); err == nil || called {
+		t.Fatalf("wrong-generation reconcile = %v, called=%v", err, called)
 	}
 	for _, status := range []CleanupStatus{CleanupCompleted, CleanupAborted} {
 		t.Run(string(status), func(t *testing.T) {
@@ -89,8 +89,8 @@ func TestArchiveRetiredReportRequiresExactActiveClaim(t *testing.T) {
 				}
 			}
 			called := false
-			if err := c.ReconcileRetirementCleanup(mustTaskID(t, id), 1, CleanupCompleted, func(bool) error { return nil }, func(bool) error { called = true; return nil }); err == nil || called {
-				t.Fatalf("archive = %v, called=%v", err, called)
+			if err := c.ReconcileRetirementCleanup(mustTaskID(t, id), 1, CleanupCompleted, func() error { called = true; return nil }); err == nil || called {
+				t.Fatalf("reconcile = %v, called=%v", err, called)
 			}
 		})
 	}
@@ -124,9 +124,9 @@ func TestReconcileCompletedCleanupReportsSupersededGeneration(t *testing.T) {
 	}
 }
 
-// TestReconcileRetirementCleanupCommitsExactlyOnce proves the ownership
-// observation rides the claim that Retire already commits, so reconciliation
-// advances the revision exactly once. A second change-set here would make
+// TestReconcileRetirementCleanupCommitsExactlyOnce proves reconciliation
+// advances the revision exactly once: the active claim that Retire committed
+// is reconciled in one change-set. A second change-set here would make
 // crash-resume receipt reuse non-idempotent.
 func TestReconcileRetirementCleanupCommitsExactlyOnce(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
@@ -137,17 +137,11 @@ func TestReconcileRetirementCleanupCommitsExactlyOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if before.CleanupClaim.ArchiveNameOccupied {
-		t.Fatal("claim observed an occupied archive name for a task with no data dir")
-	}
 	saw := false
-	if err := c.ReconcileRetirementCleanup(mustTaskID(t, id), 1, CleanupCompleted, func(occupied bool) error {
+	if err := c.ReconcileRetirementCleanup(mustTaskID(t, id), 1, CleanupCompleted, func() error {
 		saw = true
-		if occupied {
-			t.Fatal("work observed an occupied archive name")
-		}
 		return nil
-	}, func(bool) error { return nil }); err != nil {
+	}); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 	if !saw {
@@ -167,7 +161,7 @@ func TestReconcileCompletedCleanupPostCommitCallbackIsFenced(t *testing.T) {
 	id := "post-commit-fence"
 	mustCreate(t, c, id)
 	retireWithClaim(t, c, id, preconditionOf(1, 1), "op-post-commit-retire")
-	if err := c.ReconcileRetirementCleanup(mustTaskID(t, id), 1, CleanupCompleted, func(bool) error { return nil }, func(bool) error { return nil }, func() error {
+	if err := c.ReconcileRetirementCleanup(mustTaskID(t, id), 1, CleanupCompleted, func() error { return nil }, func() error {
 		_, err := h.Lock(taskScope(id))
 		if !errors.Is(err, home.ErrLockTimeout) {
 			t.Fatalf("lock error = %v", err)

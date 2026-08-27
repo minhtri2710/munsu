@@ -127,9 +127,9 @@ func (c *Canonical) Get(taskID domain.TaskID) (Aggregate, error) {
 // ReconcileRetirementCleanup runs bounded local data-path work and commits the
 // terminal cleanup state under one task-scope lock. Handoff scope precedes task
 // scope; callbacks must not acquire another lock scope.
-func (c *Canonical) ReconcileRetirementCleanup(taskID domain.TaskID, generation Generation, terminal CleanupStatus, preflight func(bool) error, work func(bool) error, after ...func() error) error {
-	if preflight == nil || work == nil {
-		return fmt.Errorf("cleanup callbacks are required")
+func (c *Canonical) ReconcileRetirementCleanup(taskID domain.TaskID, generation Generation, terminal CleanupStatus, work func() error, after ...func() error) error {
+	if work == nil {
+		return fmt.Errorf("cleanup callback is required")
 	}
 	if terminal != CleanupCompleted && terminal != CleanupAborted {
 		return fmt.Errorf("invalid cleanup terminal status %q", terminal)
@@ -153,14 +153,8 @@ func (c *Canonical) ReconcileRetirementCleanup(taskID domain.TaskID, generation 
 		return conflictError(ErrConflict, "task %s generation %s cleanup claim is not active", taskID, generation)
 	}
 	claimID := doc.Aggregate.CleanupClaim.OperationID
-	// The claim's observation is the ownership proof: it was committed by
-	// BeginCleanup before any archival could run. Nothing commits a change-set
-	// between that claim and the terminal cleanup commit below, so a retry
-	// advances the revision exactly once.
-	occupied := doc.Aggregate.CleanupClaim.ArchiveNameOccupied
-	if err := preflight(occupied); err != nil {
-		return err
-	}
+	// Nothing commits a change-set between the active claim and the terminal
+	// cleanup commit below, so a retry advances the revision exactly once.
 	var req domain.Intent
 	if terminal == CleanupCompleted {
 		req = CanonicalCompleteCleanupRequest{HomeID: c.HomeID(), TaskID: taskID, Precondition: domain.Of(uint64(doc.Aggregate.Generation), uint64(doc.Aggregate.Revision)), ClaimOperationID: claimID, ClaimGeneration: generation, Reason: "retirement cleanup complete"}
@@ -175,7 +169,7 @@ func (c *Canonical) ReconcileRetirementCleanup(taskID domain.TaskID, generation 
 	if err != nil {
 		return err
 	}
-	if err := work(occupied); err != nil {
+	if err := work(); err != nil {
 		return err
 	}
 	_, err = c.mutateTaskFencedLocked(lk, op, taskID, domain.Of(uint64(doc.Aggregate.Generation), uint64(doc.Aggregate.Revision)), func(cur Aggregate) (Aggregate, error) {

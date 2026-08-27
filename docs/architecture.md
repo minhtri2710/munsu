@@ -131,8 +131,7 @@ while the claim is active — so even though each revalidation fence
 claim keeps the task pinned across the external backend/filesystem actions
 (Dispose, worktree return, the projection multi-remove sequence) that follow
 it; a concurrent reopen/rebind between a fence and an action is rejected, not
-merely detected. `ReconcileRetirementCleanup` runs the bounded archival and
-cleanup work under the active claim, then commits the terminal cleanup state
+merely detected. `ReconcileRetirementCleanup` runs the bounded cleanup work under the active claim, then commits the terminal cleanup state
 exactly once before any remaining projection repair. `ReconcileCompletedCleanup`
 repairs leftover projections after a crash; if the task has reopened to a later
 generation it returns superseded and removes nothing. `fleet.AbortRetirementCleanup` is the terminal operator escape hatch; it
@@ -147,12 +146,13 @@ gated by the active claim too, so the revision snapshot cleanup revalidates
 against cannot move. The fences fail `cleanup-pending` without releasing
 anything when the claim is missing/foreign/reconciled, generation or revision
 advanced, a reopen owns an evidence-pinned identity, or preserved retirement
-evidence changed. Teardown archives the task report as a generation-bound report
-name while the cleanup claim is fenced; `--force` skips safety checks only and
-never broadens data deletion. The task data directory is retained by teardown,
-and session-start reclamation may remove it only after the grace period under
-the Task Authority's fence: an authority-confirmed released task may be
-reclaimed unless report evidence remains, while an unknown directory is
+evidence changed. A scout report is generation-named at creation
+(report-g<generation>.md), the teardown safety check resolves it by
+generation, and teardown retains it in place; `--force` skips safety checks
+only and never broadens data deletion. The task data directory is retained by
+teardown, and session-start reclamation may remove it only after the grace
+period under the Task Authority's fence: an authority-confirmed released task
+may be reclaimed unless report evidence remains, while an unknown directory is
 reclaimed only when it has no brief.
 `Backend.Alive` (the
 former boolean liveness surface) is fully removed, and the typed

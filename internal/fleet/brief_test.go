@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 func TestShipBriefTemplateNoMistakes(t *testing.T) {
@@ -85,12 +87,12 @@ func TestShipBriefTemplateLocalOnly(t *testing.T) {
 }
 
 func TestScoutBriefTemplate(t *testing.T) {
-	tmpl := scoutBriefTemplate("test-scout-1", "munsu", "security", false)
+	tmpl := scoutBriefTemplate("test-scout-1", "munsu", "security", false, "", 0, 1)
 
 	checks := []string{
 		"Scout brief: test-scout-1",
 		"SCOUT task",
-		"report.md",
+		ReportName(1),
 		"Never create branches",
 	}
 	for _, c := range checks {
@@ -170,10 +172,11 @@ func TestScaffoldScout(t *testing.T) {
 	tmp := t.TempDir()
 
 	opts := ScaffoldOptions{
-		HomeDir: tmp,
-		ID:      "test-scout",
-		Repo:    "munsu",
-		Scout:   true,
+		HomeDir:    tmp,
+		ID:         "test-scout",
+		Repo:       "munsu",
+		Scout:      true,
+		Generation: 1,
 	}
 
 	if err := Scaffold(opts); err != nil {
@@ -194,8 +197,8 @@ func TestScaffoldScout(t *testing.T) {
 	if !strings.Contains(content, "SCOUT task") {
 		t.Errorf("scout brief should contain scout indicator")
 	}
-	if !strings.Contains(content, "report.md") {
-		t.Errorf("scout brief should mention report.md")
+	if !strings.Contains(content, ReportName(1)) {
+		t.Errorf("scout brief should mention the generation-scoped report path")
 	}
 }
 
@@ -255,9 +258,40 @@ func TestExists(t *testing.T) {
 	}
 }
 
+func TestScaffoldScoutNamesReportByGeneration(t *testing.T) {
+	tmp := t.TempDir()
+
+	// The write path is generation-bound AT CREATION: the brief instructs the
+	// soldier to write exactly the launching generation's report name, at the
+	// same path the safety check resolves.
+	const gen = taskauthority.Generation(3)
+	if err := Scaffold(ScaffoldOptions{HomeDir: tmp, ID: "named-scout", Repo: "munsu", Scout: true, Generation: gen}); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(Path(tmp, "named-scout"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The brief instructs the soldier in $MUNSU_HOME-relative terms; the
+	// instructed file must be exactly the one the safety check resolves.
+	wantName := filepath.Join("data", "named-scout", ReportName(gen))
+	if !strings.Contains(string(content), wantName) {
+		t.Fatalf("scout brief = %q, want it to instruct writing %q", content, wantName)
+	}
+	if !strings.HasSuffix(ReportPath(tmp, "named-scout", gen), wantName) {
+		t.Fatalf("ReportPath = %q, want it to resolve the instructed %q", ReportPath(tmp, "named-scout", gen), wantName)
+	}
+
+	// A scout brief without the task generation fails closed: an unbound
+	// report name would be an unversioned one.
+	if err := Scaffold(ScaffoldOptions{HomeDir: tmp, ID: "unbound-scout", Repo: "munsu", Scout: true}); err == nil {
+		t.Fatal("scaffolding a scout brief without a generation must fail")
+	}
+}
+
 func TestReportPath(t *testing.T) {
-	p := ReportPath("/home/user/.munsu", "scout-1")
-	want := filepath.Join("/home/user/.munsu", "data", "scout-1", "report.md")
+	p := ReportPath("/home/user/.munsu", "scout-1", 1)
+	want := filepath.Join("/home/user/.munsu", "data", "scout-1", ReportName(1))
 	if p != want {
 		t.Errorf("ReportPath = %q, want %q", p, want)
 	}
@@ -266,15 +300,15 @@ func TestReportPath(t *testing.T) {
 func TestReportExists(t *testing.T) {
 	tmp := t.TempDir()
 
-	if ReportExists(tmp, "scout-nope") {
+	if ReportExists(tmp, "scout-nope", 1) {
 		t.Error("ReportExists should be false before creation")
 	}
 
 	dir := filepath.Join(tmp, "data", "scout-yes")
 	os.MkdirAll(dir, 0755)
-	os.WriteFile(filepath.Join(dir, "report.md"), []byte("findings"), 0644)
+	os.WriteFile(filepath.Join(dir, ReportName(1)), []byte("findings"), 0644)
 
-	if !ReportExists(tmp, "scout-yes") {
+	if !ReportExists(tmp, "scout-yes", 1) {
 		t.Error("ReportExists should be true after creation")
 	}
 }
@@ -313,13 +347,13 @@ func TestShipBriefContainsStatusReporting(t *testing.T) {
 }
 
 func TestScoutBriefHasReportContract(t *testing.T) {
-	tmpl := scoutBriefTemplate("scout-r", "repo", "", false)
+	tmpl := scoutBriefTemplate("scout-r", "repo", "", false, "", 0, 1)
 
 	if !strings.Contains(tmpl, "Write your findings") {
 		t.Error("scout brief should include report instructions")
 	}
-	if !strings.Contains(tmpl, "report.md") {
-		t.Errorf("scout brief should mention report.md path")
+	if !strings.Contains(tmpl, ReportName(1)) {
+		t.Errorf("scout brief should mention the generation-scoped report path")
 	}
 }
 
@@ -340,7 +374,7 @@ func TestShipBriefModeLinePresent(t *testing.T) {
 func TestBriefsDocumentIdempotentResolvedKey(t *testing.T) {
 	for name, tmpl := range map[string]string{
 		"ship":  shipBriefTemplate("t1", "repo", "", false),
-		"scout": scoutBriefTemplate("s1", "repo", "", false),
+		"scout": scoutBriefTemplate("s1", "repo", "", false, "", 0, 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if !strings.Contains(tmpl, "resolved [key=<slug>]: {summary}") {

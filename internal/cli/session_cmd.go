@@ -58,6 +58,7 @@ func newBriefCmd() *cobra.Command {
 				}
 			}
 			scoutScope, scoutBudget := "", int64(0)
+			var scoutGeneration taskauthority.Generation
 			if scout {
 				auth, err := ctx.TaskAuthority()
 				if err != nil {
@@ -76,11 +77,13 @@ func newBriefCmd() *cobra.Command {
 				}
 				scoutScope = agg.Definition.ScoutScope
 				scoutBudget = agg.Definition.ScoutRuntimeBudgetSecs
+				scoutGeneration = agg.Generation
 			}
 			opts := fleet.ScaffoldOptions{
 				HomeDir: ctx.Home, ID: id, Repo: repo, Scout: scout,
 				Mode: resolvedMode, Yolo: projYolo,
 				ScoutScope: scoutScope, ScoutRuntimeBudgetSecs: scoutBudget,
+				Generation: scoutGeneration,
 			}
 
 			if err := recoverBriefHandoffs(ctx.Home); err != nil {

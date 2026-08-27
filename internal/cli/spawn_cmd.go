@@ -335,9 +335,9 @@ func newPromoteCmd() *cobra.Command {
 				return fmt.Errorf("task %s has kind=%q, can only promote kind=scout", id, agg.Definition.Kind)
 			}
 
-			// Preflight: require report.md to exist
-			if !fleet.ReportExists(ctx.Home, id) {
-				return fmt.Errorf("no report found for scout task %s: write report at %s before promoting", id, fleet.ReportPath(ctx.Home, id))
+			// Preflight: require the current generation's report to exist
+			if !fleet.ReportExists(ctx.Home, id, agg.Generation) {
+				return fmt.Errorf("no report found for scout task %s: write the generation %s report at %s before promoting", id, agg.Generation, fleet.ReportPath(ctx.Home, id, agg.Generation))
 			}
 
 			// The promotion is a named canonical operation: it flips the
@@ -394,16 +394,17 @@ func newTeardownCmd() *cobra.Command {
 		Short: "Tear down a soldier",
 		Long: `Tear down a soldier by its task ID.
 
-Safety checks require a scout to have a report.md with no unresolved decision
-holds before teardown proceeds. Use --force to skip all safety checks.
+Safety checks require a scout to have its own generation's report
+(report-g<generation>.md) with no unresolved decision holds before teardown
+proceeds. Use --force to skip all safety checks.
 
 With --force:
-  - Skips report.md and decision-hold checks
+  - Skips report and decision-hold checks
   - Use when the scout completed without a formal report
   - data/<id>/ is treated exactly as it is without --force: --force never
-    deletes more than a plain teardown does. Every teardown archives the
-    retired generation's report as report-g<generation>.md so it stays
-    readable and no later generation inherits it as its own evidence.
+    deletes more than a plain teardown does. A scout report is born
+    generation-named, so teardown retains it in place and no later
+    generation inherits it as its own evidence.
 
 --generation binds this invocation to the exact generation it intends to
 retire (captured when the teardown request was issued). A delayed retry that

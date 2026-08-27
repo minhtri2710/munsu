@@ -413,13 +413,18 @@ func runLifecycleWorkflow(t *testing.T, tc workflowCase) {
 	// --- report (soldier terminal uplink) ---------------------------------
 	// The soldier's home and parent home are both the spawning home, exactly
 	// as the generated launch script exports them.
-	if err := os.WriteFile(filepath.Join(briefDir, "report.md"), []byte("# findings\n"), 0644); err != nil {
+	// The soldier writes the report generation-named, exactly as the brief
+	// instructs (fresh task: generation 1).
+	if err := os.MkdirAll(filepath.Dir(fleet.ReportPath(spawnHome, taskID, 1)), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fleet.ReportPath(spawnHome, taskID, 1), []byte("# findings\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	workflowRunCLI(t, spawnHome, map[string]string{
 		"MUNSU_ROLE": "soldier", "MUNSU_HOME": spawnHome,
 		"MUNSU_TASK_ID": taskID, "MUNSU_PARENT_STATUS": spawnHome,
-	}, "report", "done", "report.md", "--key", taskID, "--ring", "no-ring")
+	}, "report", "done", "findings recorded", "--key", taskID, "--ring", "no-ring")
 
 	tid, err := domain.NewTaskID(taskID)
 	if err != nil {

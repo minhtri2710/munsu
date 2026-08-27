@@ -36,7 +36,7 @@ func TestReportDoneCompletesScoutLifecycle(t *testing.T) {
 		t.Fatalf("task start: %v", err)
 	}
 	root = NewRootCommand()
-	root.SetArgs([]string{"report", "done", "report.md", "--key", "scout-report", "--ring", "no-ring"})
+	root.SetArgs([]string{"report", "done", "findings recorded", "--key", "scout-report", "--ring", "no-ring"})
 	if err := root.Execute(); err != nil {
 		t.Fatalf("report done: %v", err)
 	}

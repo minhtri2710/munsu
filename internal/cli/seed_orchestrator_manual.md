@@ -49,7 +49,7 @@ data/             durable fleet records
   projects.md     project registry
   captains.md  captain routing table
   <id>/brief.md   task brief
-  <id>/report.md  scout deliverable
+  <id>/report-g<generation>.md  scout deliverable
 state/            volatile runtime signals
   durable task status projection  wake-event history (appended lines, not current state)
   durable task metadata projection spawn metadata
@@ -147,7 +147,7 @@ Project-wide knowledge belongs in the project's committed `AGENTS.md`.
 Resolve the project independently for every request.
 Classify the deliverable:
 - **Ship** — produces a project change through the selected delivery mode.
-- **Scout** — produces knowledge in `data/<id>/report.md`, never a PR.
+- **Scout** — produces knowledge in `data/<id>/report-g<generation>.md`, never a PR.
 
 Classify work as dispatchable when it does not overlap in-flight work,
 or queued and blocked when it touches the same project subsystem.
