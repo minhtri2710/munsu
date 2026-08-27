@@ -200,17 +200,41 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 		}
 	}
 
-	for _, r := range command {
+	runes := []rune(command)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
 		if escaped {
 			word.WriteRune(r)
 			escaped = false
+			continue
+		}
+		if quote == '\'' {
+			if r == quote {
+				quote = 0
+			} else {
+				word.WriteRune(r)
+			}
+			continue
+		}
+		if quote == '"' && r == '\\' && mode == backslashEscapes {
+			if i+1 < len(runes) {
+				next := runes[i+1]
+				if next == '$' || next == '`' || next == '"' || next == '\\' || next == '\n' {
+					i++
+					if next != '\n' {
+						word.WriteRune(next)
+					}
+					continue
+				}
+			}
+			word.WriteRune(r)
 			continue
 		}
 		if r == '\\' && mode == backslashEscapes {
 			escaped = true
 			continue
 		}
-		if quote != 0 {
+		if quote == '"' {
 			if r == quote {
 				quote = 0
 			} else {

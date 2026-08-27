@@ -536,6 +536,10 @@ func TestShellWriteTargetExtraction(t *testing.T) {
 		// command that never mentions one produces exactly one target and no
 		// duplicate survives the union.
 		{"echo x > plain.md", []string{filepath.Join(base, "plain.md")}},
+		// POSIX quoting keeps backslashes literal in single quotes, and in double
+		// quotes unless they precede a POSIX-special character.
+		{"echo x > 'quoted\\out.txt'", []string{filepath.Join(base, `quoted\out.txt`)}},
+		{"echo x > \"quoted\\out.txt\"", []string{filepath.Join(base, `quoted\out.txt`)}},
 	} {
 		got, ambiguous := shellWriteTargets(base, tc.command)
 		if ambiguous {
