@@ -262,25 +262,38 @@ func TestShellWriteComputedCdDoesNotBecomeLiteralPath(t *testing.T) {
 	}
 }
 
+func windowsAmbiguousCdVolumes(t *testing.T, worktree string) (string, string) {
+	t.Helper()
+	known := filepath.VolumeName(worktree)
+	if known == "" {
+		t.Fatal("worktree has no Windows volume")
+	}
+	unknown := "D:"
+	if strings.EqualFold(known, unknown) {
+		unknown = "E:"
+	}
+	return known, unknown
+}
+
 func TestShellWriteAmbiguousCdOnlyBlocksDependentRelativeWrites(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("ambiguous drive-relative cwd is Windows-specific")
 	}
 	_, worktree := boundTaskFixture(t, "ship-shell-ambiguous-cd")
+	known, unknown := windowsAmbiguousCdVolumes(t, worktree)
+	cd := "cd " + unknown + "docs"
 
 	// Reads are never targets, so they are unaffected by the unknown cwd.
-	assertShapes(t, false, worktree, "cd D:docs && cat file", "")
-	// Absolute write to an unrelated path: does not resolve against the unknown
-	// D: cwd, so it is allowed (#664).
-	assertShapes(t, false, worktree, "cd D:docs && echo ok > C:\\scratch\\out.txt", "")
-	// Same-volume drive-relative (C:foo) resolves against C:'s known cwd, so it
-	// is allowed even though the active drive (D:) is the unknown one.
-	assertShapes(t, false, worktree, "cd D:docs && echo ok > C:logs\\out.txt", "")
-	// Dependent relative write resolves against the unknown D: cwd: refused.
-	assertShapes(t, true, worktree, "cd D:docs && echo pwned > relative.txt", "")
-	// Different-volume drive-relative after the cd also resolves against D:'s
-	// unknown cwd: refused.
-	assertShapes(t, true, worktree, "cd D:docs && echo pwned > D:rel\\out.txt", "")
+	assertShapes(t, false, worktree, cd+" && cat file", "")
+	// Absolute write to an unrelated path does not resolve against the unknown
+	// volume's cwd, so it is allowed (#664).
+	assertShapes(t, false, worktree, cd+" && echo ok > "+known+"\\scratch\\out.txt", "")
+	// Same-volume drive-relative resolves against the known cwd, so it is allowed.
+	assertShapes(t, false, worktree, cd+" && echo ok > "+known+"logs\\out.txt", "")
+	// Dependent relative write resolves against the unknown cwd: refused.
+	assertShapes(t, true, worktree, cd+" && echo pwned > relative.txt", "")
+	// Different-volume drive-relative also resolves against the unknown cwd: refused.
+	assertShapes(t, true, worktree, cd+" && echo pwned > "+unknown+"rel\\out.txt", "")
 }
 
 // TestShellWriteAmbiguousCdAllowsUnrelatedAbsoluteAndSameVolumeWrites pins the
@@ -295,18 +308,18 @@ func TestShellWriteAmbiguousCdAllowsUnrelatedAbsoluteAndSameVolumeWrites(t *test
 		t.Skip("ambiguous drive-relative cwd is Windows-specific")
 	}
 	_, worktree := boundTaskFixture(t, "ship-shell-ambiguous-rooted")
+	known, unknown := windowsAmbiguousCdVolumes(t, worktree)
+	cd := "cd " + unknown + "docs"
 
-	// Absolute write to an unrelated path: does not resolve against the unknown
-	// D: cwd, so it is allowed.
-	assertShapes(t, false, worktree, "cd D:docs && echo ok > C:\\scratch\\out.txt", "")
-	// Same-volume drive-relative (C:foo) resolves against C:'s known cwd, so it
-	// is allowed even though the active drive (D:) is the unknown one.
-	assertShapes(t, false, worktree, "cd D:docs && echo ok > C:logs\\out.txt", "")
-	// Dependent relative write resolves against the unknown D: cwd: refused.
-	assertShapes(t, true, worktree, "cd D:docs && echo pwned > relative.txt", "")
-	// Different-volume drive-relative after the cd also resolves against D:'s
-	// unknown cwd: refused.
-	assertShapes(t, true, worktree, "cd D:docs && echo pwned > D:rel\\out.txt", "")
+	// Absolute write to an unrelated path does not resolve against the unknown
+	// volume's cwd, so it is allowed.
+	assertShapes(t, false, worktree, cd+" && echo ok > "+known+"\\scratch\\out.txt", "")
+	// Same-volume drive-relative resolves against the known cwd, so it is allowed.
+	assertShapes(t, false, worktree, cd+" && echo ok > "+known+"logs\\out.txt", "")
+	// Dependent relative write resolves against the unknown cwd: refused.
+	assertShapes(t, true, worktree, cd+" && echo pwned > relative.txt", "")
+	// Different-volume drive-relative also resolves against the unknown cwd: refused.
+	assertShapes(t, true, worktree, cd+" && echo pwned > "+unknown+"rel\\out.txt", "")
 }
 
 // TestShellWriteHeredocDoubleQuotedDelimiterRefusesProtectedWrite pins the
