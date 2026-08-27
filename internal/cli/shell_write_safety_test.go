@@ -301,6 +301,11 @@ func TestShellWriteAmbiguousCdOnlyBlocksDependentRelativeWrites(t *testing.T) {
 	// the stale cwd of the prior volume, nor may unknownCwd be cleared) (#664).
 	assertShapes(t, true, worktree, cd+" && cd .. && echo pwned > relative.txt", "")
 	assertShapes(t, true, worktree, "cd /d "+unknown+"docs && cd .. && echo pwned > relative.txt", "")
+	// A dependent relative cd by a plain subdir after the ambiguous drive-relative
+	// cd keeps the unknown active drive state too: the dependent relative write
+	// still resolves against the unknowable cwd and is refused (#664 v8).
+	assertShapes(t, true, worktree, cd+" && cd subdir && echo pwned > relative.txt", "")
+	assertShapes(t, true, worktree, "cd /d "+unknown+"docs && cd subdir && echo pwned > relative.txt", "")
 	// Different-volume drive-relative also resolves against the unknown cwd: refused.
 	assertShapes(t, true, worktree, cd+" && echo pwned > "+unknown+"rel\\out.txt", "")
 }
@@ -363,15 +368,22 @@ func TestShellWriteHeredocDoubleQuotedDelimiterRefusesProtectedWrite(t *testing.
 // single-backslash terminator, so the body ends there and a protected write
 // after it is still classified instead of being swallowed (#664).
 func TestShellWriteHeredocDoubleQuotedDelimiterParsing(t *testing.T) {
-	command := "cat <<\"TAIL\\\\END\" > notes.md\nharmless\nTAIL\\END\necho pwned > /tmp/protected.md"
-	targets, ambiguous := shellWriteTargets("/worktree", command)
+	// Use a platform-native base and a relative post-terminator target so the
+	// expectation resolves under both POSIX and Windows path semantics instead of
+	// hard-coding Unix spellings the Windows resolver never produces (#664 v8).
+	// The relative target still proves the double-quoted delimiter collapses
+	// `TAIL\\END` to `TAIL\END`, ending the body there and leaving the second
+	// write classified rather than swallowed.
+	base := "/worktree"
+	command := "cat <<\"TAIL\\\\END\" > notes.md\nharmless\nTAIL\\END\necho pwned > protected.md"
+	targets, ambiguous := shellWriteTargets(base, command)
 	if ambiguous {
 		t.Fatalf("shellWriteTargets unexpectedly ambiguous: %q", command)
 	}
-	if !slices.Contains(targets, "/worktree/notes.md") {
-		t.Errorf("expected notes.md target, got %v", targets)
+	if !slices.Contains(targets, filepath.Join(base, "notes.md")) {
+		t.Errorf("expected %s target, got %v", filepath.Join(base, "notes.md"), targets)
 	}
-	if !slices.Contains(targets, "/tmp/protected.md") {
+	if !slices.Contains(targets, filepath.Join(base, "protected.md")) {
 		t.Errorf("protected write after terminator was swallowed: targets=%v", targets)
 	}
 }
@@ -1066,12 +1078,22 @@ func TestShellWriteRefusesLiteralBacktickInProtectedPath(t *testing.T) {
 		"rm -rf \"" + escapeShellChar(t, target, '`') + "\"",
 	} {
 		// The literal backtick is not a shell expansion, so the tokenizer must
-		// retain it as a candidate resolving to the bound primary checkout.
+		// retain it as a candidate resolving to the bound primary checkout. The
+		// candidate may be spelled with either separator set under the dual
+		// backslash readings ("C:\\..." vs "C:/..."), so compare by native path
+		// semantics rather than raw spelling (#664 v8).
 		targets, ambiguous := shellWriteTargets(worktree, command)
 		if ambiguous {
 			t.Fatalf("%q unexpectedly ambiguous", command)
 		}
-		if !slices.Contains(targets, target) {
+		targetFound := false
+		for _, got := range targets {
+			if filepath.Clean(got) == filepath.Clean(target) {
+				targetFound = true
+				break
+			}
+		}
+		if !targetFound {
 			t.Errorf("literal-backtick target dropped: %q -> %v", command, targets)
 		}
 		// End-to-end the write is refused (git-mutation gate blocks backticks).
