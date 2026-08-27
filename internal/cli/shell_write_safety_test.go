@@ -950,3 +950,96 @@ func mustAbsTestPath(t *testing.T, name string) string {
 	}
 	return abs
 }
+
+// bindPrimaryAtShellSpecialPath builds a primary checkout whose own path contains
+// a shell-special character (special), a detached worktree bound to it, and the
+// binding, then points the environment at that binding. The protected checkout
+// therefore lives at a path that literally contains special, so a command that
+// keeps special literal (single quotes, a POSIX backslash escape outside quotes,
+// or a POSIX backslash escape inside double quotes) resolves to the bound
+// primary and must be refused (#664).
+func bindPrimaryAtShellSpecialPath(t *testing.T, taskID string, special rune) (primary, worktree string) {
+	t.Helper()
+	base, err := os.MkdirTemp(t.TempDir(), "prim"+string(special)+"*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	primary = initGitRepoForSafety(t, base)
+	worktree = filepath.Join(t.TempDir(), "wt")
+	runGitForSafety(t, primary, "worktree", "add", "--detach", worktree)
+	homeDir := bindSafetyWorktree(t, taskID, primary, worktree)
+	t.Setenv("MUNSU_HOME", homeDir)
+	t.Setenv("MUNSU_TASK_ID", taskID)
+	return primary, worktree
+}
+
+// escapeShellChar quotes special with a POSIX backslash so it stays literal.
+func escapeShellChar(t *testing.T, path string, special rune) string {
+	t.Helper()
+	return strings.ReplaceAll(path, string(special), "\\"+string(special))
+}
+
+// TestShellWriteRefusesLiteralDollarInProtectedPath pins the context-aware
+// expansion fix (#664): a write target whose path contains a literal $ kept
+// literal by single quotes, a POSIX backslash escape outside quotes, or a POSIX
+// backslash escape inside double quotes names the bound primary checkout and
+// must be refused. The same $ unescaped and unquoted, or unescaped inside
+// double quotes, is a genuine shell expansion the guard cannot classify, so it
+// stays omitted and the write is not refused (the narrow claim of ADR-0014 §2 is
+// preserved, not relaxed). A bare $ does not trip the separate git-mutation
+// command-substitution gate (only $( and backticks do), so these assertions
+// exercise the write-target extractor directly.
+func TestShellWriteRefusesLiteralDollarInProtectedPath(t *testing.T) {
+	primary, worktree := bindPrimaryAtShellSpecialPath(t, "ship-shell-lit-dollar", '$')
+	target := filepath.Join(primary, "internal")
+
+	// Literal $: each quoting/escape form keeps special literal, so the target
+	// is the bound primary checkout and must be refused.
+	assertShapes(t, true, worktree, "rm -rf '"+target+"'", "")
+	assertShapes(t, true, worktree, "rm -rf "+escapeShellChar(t, target, '$'), "")
+	assertShapes(t, true, worktree, "rm -rf \""+escapeShellChar(t, target, '$')+"\"", "")
+
+	// Unescaped $ is a genuine expansion: omitted, so the write is not refused.
+	assertShapes(t, false, worktree, "rm -rf "+target, "")
+	assertShapes(t, false, worktree, "rm -rf \""+target+"\"", "")
+}
+
+// TestShellWriteRefusesLiteralBacktickInProtectedPath pins the same fix for a
+// literal backtick (command substitution when unescaped, literal otherwise): a
+// write target whose path contains a literal backtick kept literal by single
+// quotes, a POSIX backslash escape outside quotes, or a POSIX backslash escape
+// inside double quotes must be retained as a candidate that resolves to the
+// bound primary checkout (#664). The separate git-mutation gate blocks any
+// command containing a backtick regardless of quoting, so the end-to-end
+// refusal below is asserted and the retention below proves the fix
+// specifically: an unquoted/un-escaped backtick is still dropped (the narrow
+// contract of ADR-0014 §2 is preserved).
+func TestShellWriteRefusesLiteralBacktickInProtectedPath(t *testing.T) {
+	primary, worktree := bindPrimaryAtShellSpecialPath(t, "ship-shell-lit-backtick", '`')
+	target := filepath.Join(primary, "internal")
+
+	for _, command := range []string{
+		"rm -rf '" + target + "'",
+		"rm -rf " + escapeShellChar(t, target, '`'),
+		"rm -rf \"" + escapeShellChar(t, target, '`') + "\"",
+	} {
+		// The literal backtick is not a shell expansion, so the tokenizer must
+		// retain it as a candidate resolving to the bound primary checkout.
+		targets, ambiguous := shellWriteTargets(worktree, command)
+		if ambiguous {
+			t.Fatalf("%q unexpectedly ambiguous", command)
+		}
+		if !slices.Contains(targets, target) {
+			t.Errorf("literal-backtick target dropped: %q -> %v", command, targets)
+		}
+		// End-to-end the write is refused (git-mutation gate blocks backticks).
+		assertShapes(t, true, worktree, command, "")
+	}
+
+	// Unescaped backtick is a genuine command substitution the guard cannot
+	// classify, so it stays omitted (narrow contract preserved).
+	targets, ambiguous := shellWriteTargets(worktree, "rm -rf "+target)
+	if ambiguous || slices.Contains(targets, target) {
+		t.Errorf("unescaped-backtick target should be omitted: %v ambiguous=%v", targets, ambiguous)
+	}
+}

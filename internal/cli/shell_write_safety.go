@@ -299,12 +299,18 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 		}
 		rawEnd = i + 1
 	}
-	add := func(r rune, i int) {
+	add := func(r rune, i int, literal bool) {
 		if wordStart < 0 {
 			wordStart = i
 		}
 		word.WriteRune(r)
-		if r == '$' || r == '`' {
+		// A `$` or backtick names a shell expansion only when the shell would
+		// actually perform one here. Inside single quotes, and behind a POSIX
+		// backslash escape (outside quotes or inside double quotes), the
+		// character is literal: the path it sits in is one this guard can classify,
+		// and calling it expandable would drop a genuine protected-path target
+		// (#664).
+		if !literal && (r == '$' || r == '`') {
 			expandable = true
 		}
 	}
@@ -313,7 +319,7 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 		if escaped {
 			touch(i - 1)
 			touch(i)
-			add(r, i)
+			add(r, i, true)
 			escaped = false
 			continue
 		}
@@ -322,7 +328,7 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 			if r == quote {
 				quote = 0
 			} else {
-				add(r, i)
+				add(r, i, true)
 			}
 			continue
 		}
@@ -334,13 +340,13 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 					touch(i + 1)
 					i++
 					if next != '\n' {
-						add(next, i)
+						add(next, i, true)
 					}
 					continue
 				}
 			}
 			touch(i)
-			add(r, i)
+			add(r, i, false)
 			continue
 		}
 		if r == '\\' && mode == backslashEscapes {
@@ -352,7 +358,7 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 			if r == quote {
 				quote = 0
 			} else {
-				add(r, i)
+				add(r, i, false)
 			}
 			continue
 		}
@@ -373,7 +379,7 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 			segment = append(segment, shellToken{text: ">", redirects: true, start: i, end: i + 1})
 		default:
 			touch(i)
-			add(r, i)
+			add(r, i, false)
 		}
 	}
 	flushSegment()
