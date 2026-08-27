@@ -246,6 +246,22 @@ func TestShellWriteRefusedAfterCdIntoBoundPrimary(t *testing.T) {
 	}
 }
 
+func TestShellWriteComputedCdDoesNotBecomeLiteralPath(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("computed Windows cwd semantics are Windows-specific")
+	}
+	_, worktree := boundTaskFixture(t, "ship-shell-computed-cd")
+	targets, ambiguous := shellWriteTargets(worktree, `cd "$PRIMARY" && echo pwned > README.md`)
+	if !ambiguous {
+		t.Fatal("computed cd did not make dependent relative write ambiguous")
+	}
+	for _, target := range targets {
+		if strings.Contains(target, "$PRIMARY") {
+			t.Fatalf("computed cd produced a literal synthetic target: %v", targets)
+		}
+	}
+}
+
 func TestShellWriteAmbiguousCdOnlyBlocksDependentRelativeWrites(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("ambiguous drive-relative cwd is Windows-specific")
@@ -976,7 +992,7 @@ func bindPrimaryAtShellSpecialPath(t *testing.T, taskID string, special rune) (p
 // escapeShellChar quotes special with a POSIX backslash so it stays literal.
 func escapeShellChar(t *testing.T, path string, special rune) string {
 	t.Helper()
-	return strings.ReplaceAll(path, string(special), "\\"+string(special))
+	return strings.ReplaceAll(filepath.ToSlash(path), string(special), "\\"+string(special))
 }
 
 // TestShellWriteRefusesLiteralDollarInProtectedPath pins the context-aware
@@ -1000,8 +1016,12 @@ func TestShellWriteRefusesLiteralDollarInProtectedPath(t *testing.T) {
 	assertShapes(t, true, worktree, "rm -rf \""+escapeShellChar(t, target, '$')+"\"", "")
 
 	// Unescaped $ is a genuine expansion: omitted, so the write is not refused.
-	assertShapes(t, false, worktree, "rm -rf "+target, "")
-	assertShapes(t, false, worktree, "rm -rf \""+target+"\"", "")
+	for _, command := range []string{"rm -rf " + target, "rm -rf \"" + target + "\""} {
+		targets, ambiguous := shellWriteTargets(worktree, command)
+		if ambiguous || slices.Contains(targets, target) {
+			t.Errorf("unescaped-dollar target should be omitted: %v ambiguous=%v", targets, ambiguous)
+		}
+	}
 }
 
 // TestShellWriteRefusesLiteralBacktickInProtectedPath pins the same fix for a

@@ -127,6 +127,7 @@ func shellWriteTargetsUnderDetailed(mode backslashMode, checkPath, command strin
 	var targets []shellTargetResult
 	currentPath := checkPath
 	activeVolume := filepath.VolumeName(checkPath)
+	activeVolumeKnown := true
 	// activeVolume is the drive a plain relative path resolves against: the
 	// drive left active by the last `cd`. unknownCwd is the volume whose
 	// per-drive current directory this pass cannot reconstruct ("" if none).
@@ -134,29 +135,57 @@ func shellWriteTargetsUnderDetailed(mode backslashMode, checkPath, command strin
 	// D-volume targets stay ambiguous, but C-volume and absolute targets resolve
 	// against known state and must not be refused for it (ADR-0014 §1, #664).
 	unknownCwd := ""
+	cwdByVolume := map[string]string{strings.ToLower(activeVolume): currentPath}
 	for _, segment := range shellSegments(mode, command) {
 		if len(segment) == 0 {
 			continue
 		}
 		if strings.EqualFold(segment[0].text, "cd") && !segment[0].redirects {
 			if operand, ok := cdOperand(segment); ok {
-				resolved, pathAmbiguous := resolveShellWritePath(currentPath, activeVolume, operand.text)
+				if operand.expandable {
+					unknownCwd = filepath.VolumeName(operand.text)
+					if unknownCwd == "" {
+						unknownCwd = activeVolume
+					}
+					activeVolume = unknownCwd
+					activeVolumeKnown = false
+					continue
+				}
+				base := currentPath
+				if volume := filepath.VolumeName(operand.text); volume != "" {
+					if known, ok := cwdByVolume[strings.ToLower(volume)]; ok {
+						base = known
+					}
+				}
+				resolved, pathAmbiguous := resolveShellWritePath(base, activeVolume, operand.text)
 				if pathAmbiguous {
 					// Different-volume drive-relative cd (D:docs from a C: base): D
 					// becomes the active drive with an unknowable cwd. C stays known,
 					// so C-volume and absolute targets stay resolvable.
 					activeVolume = filepath.VolumeName(operand.text)
+					activeVolumeKnown = false
 					unknownCwd = activeVolume
 				} else {
 					currentPath = resolved
 					activeVolume = filepath.VolumeName(resolved)
+					activeVolumeKnown = true
+					cwdByVolume[strings.ToLower(activeVolume)] = resolved
 					unknownCwd = ""
 				}
 			}
 			continue
 		}
 		for _, target := range segmentWriteTargets(segment) {
-			resolved, targetAmbiguous := resolveShellWritePath(currentPath, activeVolume, target.text)
+			base := currentPath
+			if volume := filepath.VolumeName(target.text); volume != "" {
+				if known, ok := cwdByVolume[strings.ToLower(volume)]; ok {
+					base = known
+				}
+			}
+			resolved, targetAmbiguous := resolveShellWritePath(base, activeVolume, target.text)
+			if !targetAmbiguous && (!activeVolumeKnown && !filepath.IsAbs(target.text) && !(len(target.text) > 0 && os.IsPathSeparator(target.text[0]))) {
+				targetAmbiguous = true
+			}
 			if !targetAmbiguous && pathDependsOnUnknownCwd(activeVolume, unknownCwd, target.text) {
 				targetAmbiguous = true
 			}
