@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/domain"
@@ -140,12 +141,16 @@ func validateGitMutationAuthority(homeDir, taskID string, g gitCommandSafety, bi
 }
 
 func parseGitSafetyCommand(checkPath, command string) (gitCommandSafety, error) {
-	segments := splitSafetySegments(command)
+	return parseGitSafetyCommandWithMode(checkPath, command, gitSafetyBackslashMode())
+}
+
+func parseGitSafetyCommandWithMode(checkPath, command string, mode backslashMode) (gitCommandSafety, error) {
+	segments := splitSafetySegmentsWithMode(mode, command)
 	if len(segments) == 0 {
 		return gitCommandSafety{}, nil
 	}
 	for _, segment := range segments {
-		args := splitSafetyWords(segment)
+		args := splitSafetyWordsWithMode(mode, segment)
 		if len(args) == 0 {
 			continue
 		}
@@ -166,23 +171,23 @@ func parseGitSafetyCommand(checkPath, command string) (gitCommandSafety, error) 
 			arg := gitArgs[0]
 			switch {
 			case arg == "-C" && len(gitArgs) > 1:
-				g.targetPath = resolveSafetyPath(g.targetPath, gitArgs[1])
+				g.targetPath = resolveSafetyPathWithMode(g.targetPath, gitArgs[1], mode)
 				gitArgs = gitArgs[2:]
 			case strings.HasPrefix(arg, "-C") && len(arg) > 2:
-				g.targetPath = resolveSafetyPath(g.targetPath, arg[2:])
+				g.targetPath = resolveSafetyPathWithMode(g.targetPath, arg[2:], mode)
 				gitArgs = gitArgs[1:]
 			case arg == "--git-dir" && len(gitArgs) > 1:
-				g.gitDir = resolveSafetyPath(g.targetPath, gitArgs[1])
+				g.gitDir = resolveSafetyPathWithMode(g.targetPath, gitArgs[1], mode)
 				gitArgs = gitArgs[2:]
 			case strings.HasPrefix(arg, "--git-dir="):
-				g.gitDir = resolveSafetyPath(g.targetPath, strings.TrimPrefix(arg, "--git-dir="))
+				g.gitDir = resolveSafetyPathWithMode(g.targetPath, strings.TrimPrefix(arg, "--git-dir="), mode)
 				gitArgs = gitArgs[1:]
 			case arg == "--work-tree" && len(gitArgs) > 1:
-				g.workTree = resolveSafetyPath(g.targetPath, gitArgs[1])
+				g.workTree = resolveSafetyPathWithMode(g.targetPath, gitArgs[1], mode)
 				g.targetPath = g.workTree
 				gitArgs = gitArgs[2:]
 			case strings.HasPrefix(arg, "--work-tree="):
-				g.workTree = resolveSafetyPath(g.targetPath, strings.TrimPrefix(arg, "--work-tree="))
+				g.workTree = resolveSafetyPathWithMode(g.targetPath, strings.TrimPrefix(arg, "--work-tree="), mode)
 				g.targetPath = g.workTree
 				gitArgs = gitArgs[1:]
 			case strings.HasPrefix(arg, "-"):
@@ -198,7 +203,7 @@ func parseGitSafetyCommand(checkPath, command string) (gitCommandSafety, error) 
 	return gitCommandSafety{}, nil
 }
 
-func splitSafetyWords(segment string) []string {
+func splitSafetyWordsWithMode(mode backslashMode, segment string) []string {
 	var args []string
 	var b strings.Builder
 	quote := rune(0)
@@ -215,7 +220,7 @@ func splitSafetyWords(segment string) []string {
 			escaped = false
 			continue
 		}
-		if r == '\\' {
+		if r == '\\' && mode == backslashEscapes {
 			escaped = true
 			continue
 		}
@@ -274,6 +279,28 @@ func fillGitCommandDetails(g *gitCommandSafety) {
 	}
 }
 
+func validateGitExplicitTargetBinding(g gitCommandSafety, binding *taskauthority.WorktreeBinding) string {
+	gitDir := ""
+	if g.gitDir != "" {
+		gitDir = canonicalSafetyPathRuntime(g.gitDir)
+	}
+	workTree := ""
+	if g.workTree != "" {
+		workTree = canonicalSafetyPathRuntime(g.workTree)
+	}
+	return validateCanonicalGitExplicitTargetBinding(gitDir, workTree, binding)
+}
+
+func validateCanonicalGitExplicitTargetBinding(gitDir, workTree string, binding *taskauthority.WorktreeBinding) string {
+	if gitDir != "" && gitDir != binding.GitDir {
+		return "wrong repository: --git-dir does not match binding"
+	}
+	if workTree != "" && workTree != binding.Path {
+		return "git mutation --work-tree does not match bound worktree path"
+	}
+	return ""
+}
+
 func validateGitTargetBinding(g gitCommandSafety, binding *taskauthority.WorktreeBinding) string {
 	identity, gitDir, commonDir, err := gitSafetyIdentity(g.targetPath)
 	if err != nil {
@@ -299,11 +326,8 @@ func validateGitTargetBinding(g gitCommandSafety, binding *taskauthority.Worktre
 	if gitDir != binding.GitDir || commonDir != binding.CommonDir {
 		return "wrong repository: git mutation git-dir/common-dir do not match binding"
 	}
-	if g.gitDir != "" && canonicalSafetyPathRuntime(g.gitDir) != binding.GitDir {
-		return "wrong repository: --git-dir does not match binding"
-	}
-	if g.workTree != "" && canonicalSafetyPathRuntime(g.workTree) != binding.Path {
-		return "git mutation --work-tree does not match bound worktree path"
+	if reason := validateGitExplicitTargetBinding(g, binding); reason != "" {
+		return reason
 	}
 	if binding.RepositoryIdentity != binding.CommonDir {
 		return "wrong repository: repository identity does not match binding"
@@ -379,10 +403,21 @@ func gitSafetyOutput(dir string, args ...string) (string, error) {
 }
 
 func resolveSafetyPath(base, path string) string {
-	if filepath.IsAbs(path) {
+	return resolveSafetyPathWithMode(base, path, gitSafetyBackslashMode())
+}
+
+func resolveSafetyPathWithMode(base, path string, mode backslashMode) string {
+	if filepath.IsAbs(path) || (mode == backslashLiteral && isWindowsAbsolutePath(path)) {
 		return path
 	}
 	return filepath.Join(base, path)
+}
+
+func isWindowsAbsolutePath(path string) bool {
+	if len(path) >= 3 && path[1] == ':' && (path[2] == '\\' || path[2] == '/') {
+		return true
+	}
+	return strings.HasPrefix(path, `\\`)
 }
 
 func canonicalSafetyPathRuntime(path string) string {
@@ -397,7 +432,18 @@ func canonicalSafetyPathRuntime(path string) string {
 	return filepath.Clean(resolved)
 }
 
+func gitSafetyBackslashMode() backslashMode {
+	if runtime.GOOS == "windows" {
+		return backslashLiteral
+	}
+	return backslashEscapes
+}
+
 func splitSafetySegments(command string) []string {
+	return splitSafetySegmentsWithMode(gitSafetyBackslashMode(), command)
+}
+
+func splitSafetySegmentsWithMode(mode backslashMode, command string) []string {
 	segments := []string{}
 	var b strings.Builder
 	quote := rune(0)
@@ -414,7 +460,7 @@ func splitSafetySegments(command string) []string {
 			escaped = false
 			continue
 		}
-		if r == '\\' {
+		if r == '\\' && mode == backslashEscapes {
 			escaped = true
 			continue
 		}
@@ -444,7 +490,11 @@ func hasGitCommandSubstitution(command string) bool {
 }
 
 func cdSegmentPath(currentPath, segment string) (string, bool) {
-	fields := strings.Fields(segment)
+	return cdSegmentPathWithMode(gitSafetyBackslashMode(), currentPath, segment)
+}
+
+func cdSegmentPathWithMode(mode backslashMode, currentPath, segment string) (string, bool) {
+	fields := splitSafetyWordsWithMode(mode, segment)
 	if len(fields) == 0 || fields[0] != "cd" {
 		return "", false
 	}

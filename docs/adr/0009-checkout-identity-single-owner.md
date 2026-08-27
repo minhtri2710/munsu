@@ -93,9 +93,9 @@ the rule is a whitelist:
 * `buildTaskWorktreeBinding` (`spawn_runner.go:1051`) admits only `Worktree`.
 * `authorizeSpawn` (`spawn_runner.go:396`) refuses only `Worktree` callers —
   the opposite direction, same owner.
-* `validateGitTargetBinding` (`internal/cli/git_worktree_safety.go:277`) admits
+* `validateGitTargetBinding` (`internal/cli/git_worktree_safety.go:304`) admits
   only `Worktree` for a git mutation. It reaches the classification through
-  `gitSafetyIdentity` (`:354`), which is a rendering step — it calls
+  `gitSafetyIdentity` (`:384`), which is a rendering step — it calls
   `ClassifyIdentity` and maps the `Identity` to the string the gate compares —
   not a second derivation.
 
@@ -185,7 +185,7 @@ no-mistakes gate-agent refusal, mirroring firstmate's `fm-refuse-if-gate-agent`
   `TestClassifyIdentity_DeletedPathFailsClosed` and
   `TestClassifyIdentity_GitUnavailableFailsClosed`.
 * The git mutation gate stops carrying its own path canonicalization for
-  identity. `canonicalSafetyPathRuntime` (`git_worktree_safety.go:388`) falls
+  identity. `canonicalSafetyPathRuntime` (`git_worktree_safety.go:423`) falls
   back to the un-evaluated path when `EvalSymlinks` fails — the same weakness
   §4 cites against `resolveGitDir` — so routing identity through
   `ClassifyIdentity` removes it from the classification path. It still
