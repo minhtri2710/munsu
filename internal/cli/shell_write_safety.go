@@ -86,20 +86,28 @@ func shellWriteTargetsUnder(mode backslashMode, checkPath, command string) ([]st
 	var targets []string
 	ambiguous := false
 	currentPath := checkPath
+	currentPathKnown := true
 	for _, segment := range shellSegments(mode, command) {
 		if len(segment) == 0 {
 			continue
 		}
 		if segment[0].text == "cd" && !segment[0].redirects {
 			if len(segment) > 1 && !segment[1].redirects {
-				var pathAmbiguous bool
-				currentPath, pathAmbiguous = resolveShellWritePath(currentPath, segment[1].text)
-				ambiguous = ambiguous || pathAmbiguous
+				resolved, pathAmbiguous := resolveShellWritePath(currentPath, segment[1].text)
+				if pathAmbiguous {
+					currentPathKnown = false
+				} else {
+					currentPath = resolved
+					currentPathKnown = true
+				}
 			}
 			continue
 		}
 		for _, target := range segmentWriteTargets(segment) {
 			resolved, targetAmbiguous := resolveShellWritePath(currentPath, target)
+			if !targetAmbiguous && !currentPathKnown && !filepath.IsAbs(target) {
+				targetAmbiguous = true
+			}
 			ambiguous = ambiguous || targetAmbiguous
 			if !targetAmbiguous {
 				targets = append(targets, resolved)
@@ -304,10 +312,28 @@ func stripHeredocBodies(command string) string {
 			escaped = false
 			continue
 		}
-		if r == '\\' {
-			// POSIX heredoc scanning: a backslash quotes the next character. The
-			// surviving command text keeps the backslash so the dual path readings
-			// see it; stripping is POSIX-only and runs once before they tokenize.
+		if quote == '\'' {
+			out.WriteRune(r)
+			if r == quote {
+				quote = 0
+			}
+			continue
+		}
+		if quote == '"' && r == '\\' {
+			out.WriteRune(r)
+			if i+1 < len(runes) {
+				next := runes[i+1]
+				if next == '$' || next == '`' || next == '"' || next == '\\' || next == '\n' {
+					escaped = true
+				}
+			}
+			continue
+		}
+		if quote == 0 && r == '\\' {
+			// POSIX heredoc scanning: a backslash quotes the next character outside
+			// quotes. The surviving command text keeps the backslash so the dual
+			// path readings see it; stripping is POSIX-only and runs once before
+			// they tokenize.
 			out.WriteRune(r)
 			escaped = true
 			continue

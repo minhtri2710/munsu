@@ -218,6 +218,28 @@ func TestShellWriteRefusedAfterCdIntoBoundPrimary(t *testing.T) {
 	}
 }
 
+func TestShellWriteAmbiguousCdOnlyBlocksDependentRelativeWrites(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("ambiguous drive-relative cwd is Windows-specific")
+	}
+	_, worktree := boundTaskFixture(t, "ship-shell-ambiguous-cd")
+
+	assertShapes(t, false, worktree, "cd D:docs && cat file", "")
+	assertShapes(t, false, worktree, "cd D:docs && echo ok > C:\\scratch\\out.txt", "")
+	assertShapes(t, true, worktree, "cd D:docs && echo pwned > relative.txt", "")
+}
+
+func TestShellWriteHeredocQuoteAwareBackslashStripping(t *testing.T) {
+	primary, worktree := boundTaskFixture(t, "ship-shell-heredoc-quote")
+	command := "printf x 'foo\\' ; cat <<EOF > notes.md\ncd /tmp\nEOF\ncd " + primary + " && echo pwned > README.md"
+
+	stripped := stripHeredocBodies(command)
+	if strings.Contains(stripped, "cd /tmp") {
+		t.Fatalf("stripHeredocBodies retained heredoc body: %q", stripped)
+	}
+	assertShapes(t, true, worktree, command, "")
+}
+
 // TestShellReadsIntoBoundPrimaryAllowed is the false-positive direction that
 // decides whether this guard is usable at all: reading the shared checkout as a
 // reference is ordinary work, and refusing it would stall every run.
