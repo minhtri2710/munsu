@@ -84,6 +84,55 @@ func TestSafetyCheckGitMutationRequiresExactWorktreeBindingAndAllowsAlternateTar
 			t.Fatalf("%q blocked: %s", command, reason)
 		}
 	}
+
+	// Force the Windows-literal reading on Darwin so the exact Windows-shaped
+	// --git-dir reaches the binding comparison without requiring a Windows host.
+	const windowsGitDir = `C:\Users\soldier\.git\worktrees\wt`
+	resolveWindowsPath := func(base, path string) string {
+		if len(path) >= 3 && path[1] == ':' && (path[2] == '\\' || path[2] == '/') {
+			return path
+		}
+		return filepath.Join(base, path)
+	}
+	auth := testAuthorityFor(t, homeDir)
+	agg, err := auth.Get(mustTaskIDFor(t, "ship-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.Worktree == nil {
+		t.Fatal("test task has no worktree binding")
+	}
+	windowsBinding := *agg.Worktree
+	windowsBinding.GitDir = windowsGitDir
+	canonicalizeWindowsPath := func(path string) string {
+		if len(path) >= 3 && path[1] == ':' && (path[2] == '\\' || path[2] == '/') {
+			return path
+		}
+		return canonicalSafetyPath(t, path)
+	}
+	for _, tc := range []struct {
+		name    string
+		command string
+		gitDir  string
+		blocked bool
+	}{
+		{name: "bound git-dir", command: `git --work-tree . --git-dir ` + windowsGitDir + ` add file.txt`, gitDir: windowsGitDir},
+		{name: "wrong git-dir", command: `git --work-tree . --git-dir C:\Users\soldier\.git\worktrees\other add file.txt`, gitDir: `C:\Users\soldier\.git\worktrees\other`, blocked: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			parsedWindows, err := parseGitSafetyCommandWithMode(worktree, tc.command, backslashLiteral, resolveWindowsPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if parsedWindows.gitDir != tc.gitDir {
+				t.Fatalf("parsed Windows --git-dir = %q, want %q", parsedWindows.gitDir, tc.gitDir)
+			}
+			reason := validateGitExplicitTargetBinding(parsedWindows, &windowsBinding, canonicalizeWindowsPath)
+			if (reason != "") != tc.blocked {
+				t.Fatalf("git-dir=%q reason=%q blocked=%v, want blocked=%v", tc.gitDir, reason, reason != "", tc.blocked)
+			}
+		})
+	}
 }
 
 func TestSafetyCheckGitMutationRefusesPrimaryWrongRepoStaleGenerationAndHead(t *testing.T) {
