@@ -1,7 +1,6 @@
 package fleet
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -264,10 +263,6 @@ func (f CompositeWriterFence) appendWriterEvidence(scanHome string, entries map[
 	}
 	processes, err := f.Processes.List(scanHome)
 	if err != nil {
-		if errors.Is(err, ErrProcessInventoryUnsupported) {
-			report.Notes = append(report.Notes, "writer identity evidence skipped: OS process inventory is unsupported on this platform")
-			return nil
-		}
 		return err
 	}
 	artifacts, err := f.Artifacts.Scan(scanHome)

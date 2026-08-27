@@ -1,10 +1,17 @@
 package fleet
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+type fakeFailingProcessInventory struct{ err error }
+
+func (f fakeFailingProcessInventory) List(string) ([]WriterProcess, error) {
+	return nil, f.err
+}
 
 type fakeMarkerInventory struct {
 	scan MarkerScan
@@ -140,5 +147,19 @@ func TestRuntimeTmpdirOracleResolvesOnlyRunScopedDirectories(t *testing.T) {
 				t.Fatalf("expected %v, got %v (%s)", tc.want, got, reason)
 			}
 		})
+	}
+}
+
+func TestInspectOrphansFailsWhenProcessInventoryUnsupported(t *testing.T) {
+	fence := CompositeWriterFence{
+		Artifacts: &fakeArtifactScanner{snapshots: [][]WriterArtifact{nil}},
+		Processes: fakeFailingProcessInventory{err: ErrProcessInventoryUnsupported},
+		Verifier:  &fakeProcessVerifier{dead: true},
+		Marked:    fakeMarkerInventory{scan: MarkerScan{Total: 5}},
+		Oracle:    fakeRunOracle{},
+	}
+	_, err := fence.InspectOrphans(t.TempDir())
+	if err == nil || !errors.Is(err, ErrProcessInventoryUnsupported) {
+		t.Fatalf("expected ErrProcessInventoryUnsupported when process inventory fails, got %v", err)
 	}
 }
