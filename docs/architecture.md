@@ -131,8 +131,7 @@ while the claim is active — so even though each revalidation fence
 claim keeps the task pinned across the external backend/filesystem actions
 (Dispose, worktree return, the projection multi-remove sequence) that follow
 it; a concurrent reopen/rebind between a fence and an action is rejected, not
-merely detected. `ReconcileRetirementCleanup` runs the bounded archival and
-cleanup work under the active claim, then commits the terminal cleanup state
+merely detected. `ReconcileRetirementCleanup` runs the bounded cleanup work under the active claim, then commits the terminal cleanup state
 exactly once before any remaining projection repair. `ReconcileCompletedCleanup`
 repairs leftover projections after a crash; if the task has reopened to a later
 generation it returns superseded and removes nothing. `fleet.AbortRetirementCleanup` is the terminal operator escape hatch; it
