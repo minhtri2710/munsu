@@ -703,6 +703,19 @@ func TestShellWriteTargetExtraction(t *testing.T) {
 	}
 }
 
+func shellWriteTargetsUnderForTest(mode backslashMode, checkPath, command string) ([]string, bool) {
+	var targets []string
+	ambiguous := false
+	for _, result := range shellWriteTargetsUnderDetailed(mode, checkPath, command) {
+		if result.ambiguous {
+			ambiguous = true
+		} else {
+			targets = append(targets, result.path)
+		}
+	}
+	return targets, ambiguous
+}
+
 // TestShellWriteHeredocBackslashDelimiterBothReadings pins the heredoc fix:
 // a backslash-quoted delimiter (<<\EOF, <<-\END) must end the body at the bare
 // delimiter in BOTH backslash readings, so a write named after the terminator —
@@ -722,8 +735,8 @@ func TestShellWriteHeredocBackslashDelimiterBothReadings(t *testing.T) {
 		// remains, so this pins that the post-terminator write survives stripping
 		// and is classified under both readings (#664 v3).
 		stripped := stripHeredocBodies(command)
-		escapeTargets, escapeAmbiguous := shellWriteTargetsUnder(backslashEscapes, base, stripped)
-		literalTargets, literalAmbiguous := shellWriteTargetsUnder(backslashLiteral, base, stripped)
+		escapeTargets, escapeAmbiguous := shellWriteTargetsUnderForTest(backslashEscapes, base, stripped)
+		literalTargets, literalAmbiguous := shellWriteTargetsUnderForTest(backslashLiteral, base, stripped)
 		if escapeAmbiguous || literalAmbiguous {
 			t.Errorf("%q unexpectedly ambiguous", command)
 		}

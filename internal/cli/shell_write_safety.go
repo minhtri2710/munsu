@@ -123,21 +123,6 @@ const (
 	backslashLiteral
 )
 
-// shellWriteTargetsUnder extracts the write targets of command under one
-// reading of the backslash.
-func shellWriteTargetsUnder(mode backslashMode, checkPath, command string) ([]string, bool) {
-	var targets []string
-	ambiguous := false
-	for _, result := range shellWriteTargetsUnderDetailed(mode, checkPath, command) {
-		if result.ambiguous {
-			ambiguous = true
-		} else {
-			targets = append(targets, result.path)
-		}
-	}
-	return targets, ambiguous
-}
-
 func shellWriteTargetsUnderDetailed(mode backslashMode, checkPath, command string) []shellTargetResult {
 	var targets []shellTargetResult
 	currentPath := checkPath
