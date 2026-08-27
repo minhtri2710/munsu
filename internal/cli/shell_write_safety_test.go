@@ -426,21 +426,54 @@ func TestShellWriteTargetExtraction(t *testing.T) {
 	abs := filepath.Join(mustAbsTestPath(t, "shared"), "README.md")
 	elsewhere := mustAbsTestPath(t, "elsewhere")
 
+	// On Windows, absolute paths like D:\shared\README.md contain backslashes and
+	// are classified under both interpretations (#664):
+	// - POSIX-escape reading dissolves `\`, yielding D:\base\sharedREADME.md
+	// - Windows-literal reading treats `\` as path separator, yielding D:\shared\README.md
+	// On Unix, absolute paths use forward slashes and both readings produce the same path.
+	absTargets := func() []string {
+		if runtime.GOOS == "windows" {
+			return []string{filepath.Join(base, "sharedREADME.md"), abs}
+		}
+		return []string{abs}
+	}
+	absWithPrefix := func(prefix ...string) []string {
+		var out []string
+		out = append(out, prefix...)
+		if runtime.GOOS == "windows" {
+			out = append(out, filepath.Join(base, "sharedREADME.md"))
+		}
+		out = append(out, abs)
+		return out
+	}
+	dirTargets := func() []string {
+		if runtime.GOOS == "windows" {
+			return []string{filepath.Join(base, "shared"), filepath.Dir(abs)}
+		}
+		return []string{filepath.Dir(abs)}
+	}
+	cdElsewhereTargets := func() []string {
+		if runtime.GOOS == "windows" {
+			return []string{filepath.Join(base, "elsewhere", "out.txt"), filepath.Join(elsewhere, "out.txt")}
+		}
+		return []string{filepath.Join(elsewhere, "out.txt")}
+	}
+
 	for _, tc := range []struct {
 		command string
 		want    []string
 	}{
-		{"echo x > " + abs, []string{abs}},
-		{"echo x >> " + abs, []string{abs}},
-		{"echo x 2> " + abs, []string{abs}},
-		{"echo x | tee " + abs, []string{abs}},
-		{"rm -rf " + abs, []string{abs}},
-		{"cp a.txt " + abs, []string{abs}},
-		{"sed -i '' s/a/b/ " + abs, []string{filepath.Join(base, "s/a/b/"), abs}},
-		{"perl -pi -e s/a/b/ " + abs, []string{filepath.Join(base, "s/a/b/"), abs}},
-		{"dd if=/dev/zero of=" + abs, []string{abs}},
+		{"echo x > " + abs, absTargets()},
+		{"echo x >> " + abs, absTargets()},
+		{"echo x 2> " + abs, absTargets()},
+		{"echo x | tee " + abs, absTargets()},
+		{"rm -rf " + abs, absTargets()},
+		{"cp a.txt " + abs, absTargets()},
+		{"sed -i '' s/a/b/ " + abs, absWithPrefix(filepath.Join(base, "s/a/b/"))},
+		{"perl -pi -e s/a/b/ " + abs, absWithPrefix(filepath.Join(base, "s/a/b/"))},
+		{"dd if=/dev/zero of=" + abs, absTargets()},
 		{"echo x > out.txt", []string{filepath.Join(base, "out.txt")}},
-		{"cd " + elsewhere + " && echo x > out.txt", []string{filepath.Join(elsewhere, "out.txt")}},
+		{"cd " + elsewhere + " && echo x > out.txt", cdElsewhereTargets()},
 
 		// Deliberately not claimed.
 		{"cat " + abs, nil},
@@ -452,33 +485,34 @@ func TestShellWriteTargetExtraction(t *testing.T) {
 		{"python3 -c open('" + abs + "','w')", nil},
 
 		// `>|` is one clobber operator: splitting at the pipe dropped the target.
-		{"echo x >| " + abs, []string{abs}},
-		{"echo x >|" + abs, []string{abs}},
+		{"echo x >| " + abs, absTargets()},
+		{"echo x >|" + abs, absTargets()},
 
 		// `-t DIR` moves the destination out of the last position.
-		{"cp -t " + filepath.Dir(abs) + " ./x.md", []string{filepath.Dir(abs)}},
-		{"cp --target-directory=" + filepath.Dir(abs) + " ./x.md", []string{filepath.Dir(abs)}},
-		{"install -t" + filepath.Dir(abs) + " ./x.md", []string{filepath.Dir(abs)}},
+		{"cp -t " + filepath.Dir(abs) + " ./x.md", dirTargets()},
+		{"cp --target-directory=" + filepath.Dir(abs) + " ./x.md", dirTargets()},
+		{"install -t" + filepath.Dir(abs) + " ./x.md", dirTargets()},
 		// rsync's `-t` is `--times`: it takes no operand, so the destination is
 		// still the last one and the source stays a source.
 		{"rsync -t " + abs + " ./x.md", []string{filepath.Join(base, "x.md")}},
 		{"rsync -tv " + abs + " ./x.md", []string{filepath.Join(base, "x.md")}},
-		{"rsync -t /etc/hosts " + abs, []string{abs}},
+		{"rsync -t /etc/hosts " + abs, absTargets()},
+		{"rsync -tv /etc/hosts " + abs, absTargets()},
 
 		// A heredoc body is content, not a command line.
 		{"cat <<'EOF' > notes.md\nrm -rf " + abs + "\nEOF", []string{filepath.Join(base, "notes.md")}},
 		{"cat <<EOF > notes.md\ncd /elsewhere\nEOF\necho ok > out.txt",
 			[]string{filepath.Join(base, "notes.md"), filepath.Join(base, "out.txt")}},
-		{"cat <<-END > notes.md\n\tEND\nrm -rf " + abs, []string{filepath.Join(base, "notes.md"), abs}},
+		{"cat <<-END > notes.md\n\tEND\nrm -rf " + abs, absWithPrefix(filepath.Join(base, "notes.md"))},
 		{"cat <<A > one.md\nrm -rf " + abs + "\nA\ncat <<B > two.md\nrm -rf " + abs + "\nB",
 			[]string{filepath.Join(base, "one.md"), filepath.Join(base, "two.md")}},
 		// A here-string has no body; the words after it are still a command.
-		{"tee " + abs + " <<< text", []string{abs}},
+		{"tee " + abs + " <<< text", absTargets()},
 		// `\` quotes the delimiter word, so the body still ends at `EOF` and the
 		// command after the terminator is still read.
 		{"cat <<\\EOF > notes.md\nrm -rf " + abs + "\nEOF\nrm -rf " + abs,
-			[]string{filepath.Join(base, "notes.md"), abs}},
-		{"cat <<-\\END > notes.md\n\tEND\nrm -rf " + abs, []string{filepath.Join(base, "notes.md"), abs}},
+			absWithPrefix(filepath.Join(base, "notes.md"))},
+		{"cat <<-\\END > notes.md\n\tEND\nrm -rf " + abs, absWithPrefix(filepath.Join(base, "notes.md"))},
 
 		// A lone backslash is read both ways (#664). munsu does not know which
 		// shell will interpret the command, so the Windows reading — `\` is an
@@ -573,6 +607,166 @@ func TestShellWriteHeredocBackslashDelimiterRefusesProtectedWindowsWrite(t *test
 	}
 	for _, command := range cases {
 		assertShapes(t, true, worktree, command, "")
+	}
+}
+
+// TestShellWriteRefusedIfEitherCandidateIsProtected asserts that if either the
+// POSIX-escape or the Windows-literal candidate targets a protected checkout,
+// the command is refused even if the other candidate is safe (#664 v4).
+func TestShellWriteRefusedIfEitherCandidateIsProtected(t *testing.T) {
+	primary, worktree := boundTaskFixture(t, "ship-shell-either-protected")
+	primaryTarget := filepath.Join(primary, "README.md")
+	worktreeTarget := filepath.Join(worktree, "README.md")
+
+	// Direct evaluateWriteTargets evaluation:
+	// If first candidate is safe and second is protected -> refused.
+	if block, _ := evaluateWriteTargets([]string{worktreeTarget, primaryTarget}); !block {
+		t.Errorf("evaluateWriteTargets([safe, protected]) = false, want true")
+	}
+	// If first candidate is protected and second is safe -> refused.
+	if block, _ := evaluateWriteTargets([]string{primaryTarget, worktreeTarget}); !block {
+		t.Errorf("evaluateWriteTargets([protected, safe]) = false, want true")
+	}
+
+	// Behavioral assertShapes check from worktree:
+	assertShapes(t, true, worktree, "echo pwned > "+primaryTarget, "")
+
+	if runtime.GOOS == "windows" {
+		winCommand := "echo pwned > " + primaryTarget
+		targets, ambiguous := shellWriteTargets(worktree, winCommand)
+		if ambiguous {
+			t.Fatalf("shellWriteTargets(%q) unexpectedly ambiguous", winCommand)
+		}
+		if len(targets) != 2 {
+			t.Fatalf("shellWriteTargets(%q) returned %d candidates, want 2: %v", winCommand, len(targets), targets)
+		}
+		if targets[1] != primaryTarget {
+			t.Errorf("targets[1] = %q, want %q", targets[1], primaryTarget)
+		}
+		assertShapes(t, true, worktree, winCommand, "")
+	}
+}
+
+// TestShellWriteUnrelatedAllowedOnlyWhenBothCandidatesUnrelated asserts that a
+// session standing in an unrelated directory is allowed to write only when every
+// candidate target is safe/unrelated. If any candidate lands in the protected
+// primary checkout, the call is refused (#664 v4).
+func TestShellWriteUnrelatedAllowedOnlyWhenBothCandidatesUnrelated(t *testing.T) {
+	primary, worktree := boundTaskFixture(t, "ship-shell-unrelated-both")
+	outside := t.TempDir()
+
+	safeTarget := filepath.Join(outside, "notes.md")
+	worktreeTarget := filepath.Join(worktree, "notes.md")
+	primaryTarget := filepath.Join(primary, "README.md")
+
+	// Both candidates safe in outside temp dir -> allowed.
+	assertShapes(t, false, outside, "echo ok > "+safeTarget, "")
+	// Both candidates safe in worktree -> allowed.
+	assertShapes(t, false, outside, "echo ok > "+worktreeTarget, "")
+
+	// Target in primary checkout -> refused across all shapes.
+	assertShapes(t, true, outside, "echo pwned > "+primaryTarget, "")
+
+	// Direct evaluation of candidate lists:
+	// [safe, safe] -> allowed
+	if block, _ := evaluateWriteTargets([]string{safeTarget, worktreeTarget}); block {
+		t.Errorf("evaluateWriteTargets([safe, safe]) = true, want false")
+	}
+	// [safe, protected] -> refused
+	if block, _ := evaluateWriteTargets([]string{safeTarget, primaryTarget}); !block {
+		t.Errorf("evaluateWriteTargets([safe, protected]) = false, want true")
+	}
+	// [protected, safe] -> refused
+	if block, _ := evaluateWriteTargets([]string{primaryTarget, safeTarget}); !block {
+		t.Errorf("evaluateWriteTargets([protected, safe]) = false, want true")
+	}
+}
+
+// TestShellWriteNoMalformedEmbeddedVolumeCandidates verifies that resolving
+// drive-relative or volume-less paths never emits malformed embedded volume
+// prefixes like `\D:` or `C:\base\D:\...` (#664 v4).
+func TestShellWriteNoMalformedEmbeddedVolumeCandidates(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows volume resolution semantics required")
+	}
+	const base = `C:\worktree\base`
+	paths := []string{
+		`C:rel`,
+		`C:rel\sub`,
+		`c:rel\sub`,
+		`\rooted\path`,
+		`/rooted/path`,
+		`C:\abs\path`,
+		`\\server\share\file`,
+	}
+	for _, p := range paths {
+		resolved, _ := resolveShellWritePath(base, p)
+		if resolved == "" {
+			continue
+		}
+		if idx := strings.LastIndex(resolved, ":"); idx > 1 {
+			t.Errorf("resolveShellWritePath(%q, %q) produced malformed embedded volume: %q", base, p, resolved)
+		}
+		for _, invalid := range []string{`\C:`, `/C:`, `\c:`, `/c:`, `\D:`, `/D:`, `\d:`, `/d:`} {
+			if strings.Contains(resolved, invalid) {
+				t.Errorf("resolveShellWritePath(%q, %q) contained invalid substring %q: %q", base, p, invalid, resolved)
+			}
+		}
+	}
+
+	targets, ambiguous := shellWriteTargets(base, `echo x > C:rel\nested\file.txt`)
+	if ambiguous {
+		t.Errorf("unexpected ambiguous target for same-drive path")
+	}
+	for _, target := range targets {
+		if idx := strings.LastIndex(target, ":"); idx > 1 {
+			t.Errorf("shellWriteTargets produced malformed target: %q", target)
+		}
+		for _, invalid := range []string{`\C:`, `/C:`, `\c:`, `/c:`} {
+			if strings.Contains(target, invalid) {
+				t.Errorf("shellWriteTargets produced target with %q: %q", invalid, target)
+			}
+		}
+	}
+}
+
+// TestShellWriteTargetExactDeduplication verifies that targets produced by
+// dual readings are deduplicated across readings without losing ordering or
+// emitting duplicate entries (#664 v4).
+func TestShellWriteTargetExactDeduplication(t *testing.T) {
+	base := mustAbsTestPath(t, "base")
+
+	commands := []struct {
+		command string
+		want    []string
+	}{
+		// Path without backslashes produces identical target in both readings; must not duplicate across readings.
+		{"echo x > plain.md", []string{filepath.Join(base, "plain.md")}},
+		{"rm -rf dir/file.txt", []string{filepath.Join(base, "dir/file.txt")}},
+		{"cp a.txt b.txt", []string{filepath.Join(base, "b.txt")}},
+	}
+
+	for _, tc := range commands {
+		got, ambiguous := shellWriteTargets(base, tc.command)
+		if ambiguous {
+			t.Errorf("%q unexpectedly ambiguous", tc.command)
+		}
+		if len(got) != len(tc.want) {
+			t.Errorf("%q returned %d targets, want %d: %v vs %v", tc.command, len(got), len(tc.want), got, tc.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Errorf("%q target[%d] = %q, want %q", tc.command, i, got[i], tc.want[i])
+			}
+		}
+		seen := make(map[string]bool)
+		for _, target := range got {
+			if seen[target] {
+				t.Errorf("%q emitted duplicate target %q", tc.command, target)
+			}
+			seen[target] = true
+		}
 	}
 }
 
