@@ -55,14 +55,20 @@ rather than being treated as a relative child of the worktree. A same-volume dri
 `C:src\repo\README.md` resolves against the base directory, using
 case-insensitive volume comparison. A different-volume drive-relative path such
 as `D:src\repo\README.md` is ambiguous because the other drive's current
-directory cannot be reconstructed, so the shell command is refused.
+directory cannot be reconstructed, so the shell command is refused. The same
+unknown-directory state applies when `cd` uses an unresolved different-volume
+drive-relative path: it does not refuse a read-only command or an independent
+absolute target, but a later relative write target that depends on that unknown
+base is refused.
 
 Quoting survives tokenization here (`shellSegments`), because `echo "x > f"` writes
 nothing while `echo x > f` writes `f`, and the two are indistinguishable once quotes are
-dropped — the existing `splitSafetySegments` drops them. A lone backslash is
-interpreted both as a POSIX escape and as a Windows path separator; the resulting
-write-target sets are unioned because the harness does not identify which shell
-will execute the command.
+dropped — the existing `splitSafetySegments` drops them. Backslash interpretation is
+quote-aware: outside quotes the POSIX reading quotes the next character while the
+Windows reading preserves the backslash as a path separator; inside single quotes the
+backslash is literal, and inside double quotes the POSIX reading only treats `$`, backtick,
+`"`, `\\`, and newline specially. The resulting write-target sets are unioned because
+the harness does not identify which shell will execute the command.
 
 **A heredoc body is content, not a command line** (`stripHeredocBodies`). This is the same
 "one payload, one channel" rule BEO-62 settled for apply-patch, applied to the shell
