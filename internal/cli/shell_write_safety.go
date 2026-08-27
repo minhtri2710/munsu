@@ -86,7 +86,14 @@ func shellWriteTargetsUnder(mode backslashMode, checkPath, command string) ([]st
 	var targets []string
 	ambiguous := false
 	currentPath := checkPath
-	currentPathKnown := true
+	// activeVolume is the drive a plain relative path resolves against: the
+	// drive left active by the last `cd`. unknownCwd is the volume whose
+	// per-drive current directory this pass cannot reconstruct ("" if none).
+	// An ambiguous drive-relative `cd D:docs` only makes D:'s cwd unknowable:
+	// D-volume targets stay ambiguous, but C-volume and absolute targets resolve
+	// against known state and must not be refused for it (ADR-0014 §3, #664).
+	activeVolume := filepath.VolumeName(checkPath)
+	unknownCwd := ""
 	for _, segment := range shellSegments(mode, command) {
 		if len(segment) == 0 {
 			continue
@@ -95,17 +102,22 @@ func shellWriteTargetsUnder(mode backslashMode, checkPath, command string) ([]st
 			if len(segment) > 1 && !segment[1].redirects {
 				resolved, pathAmbiguous := resolveShellWritePath(currentPath, segment[1].text)
 				if pathAmbiguous {
-					currentPathKnown = false
+					// Different-volume drive-relative cd (D:docs from a C: base): D
+					// becomes the active drive with an unknowable cwd. C stays known,
+					// so C-volume and absolute targets stay resolvable.
+					activeVolume = filepath.VolumeName(segment[1].text)
+					unknownCwd = activeVolume
 				} else {
 					currentPath = resolved
-					currentPathKnown = true
+					activeVolume = filepath.VolumeName(resolved)
+					unknownCwd = ""
 				}
 			}
 			continue
 		}
 		for _, target := range segmentWriteTargets(segment) {
 			resolved, targetAmbiguous := resolveShellWritePath(currentPath, target)
-			if !targetAmbiguous && !currentPathKnown && !filepath.IsAbs(target) {
+			if !targetAmbiguous && pathDependsOnUnknownCwd(activeVolume, unknownCwd, target) {
 				targetAmbiguous = true
 			}
 			ambiguous = ambiguous || targetAmbiguous
@@ -115,6 +127,36 @@ func shellWriteTargetsUnder(mode backslashMode, checkPath, command string) ([]st
 		}
 	}
 	return targets, ambiguous
+}
+
+// pathDependsOnUnknownCwd reports whether resolving target against the session's
+// shell state depends on the current directory of the volume unknownCwd names —
+// the only path context a drive-relative `cd` can leave unknowable. Absolute
+// paths, volume-less rooted paths (\foo, anchored to the active volume's root
+// rather than its cwd) and same-volume drive-relative paths (C:foo, resolved
+// against that volume's known cwd) do not, so they stay classified instead of
+// being swept into the refusal. filepath.IsAbs disagrees on the volume-less
+// rooted case (it reports false on Windows for a separator-led path), and a
+// shell-aware check is required there (#664).
+func pathDependsOnUnknownCwd(activeVolume, unknownCwd, target string) bool {
+	if unknownCwd == "" {
+		return false
+	}
+	if filepath.IsAbs(target) {
+		return false
+	}
+	if vol := filepath.VolumeName(target); vol != "" {
+		// Drive-relative/drive-absolute on some volume. Only the volume whose cwd
+		// is unknown makes it ambiguous; resolveShellWritePath already reports any
+		// other unknown volume as ambiguous on its own.
+		return strings.EqualFold(vol, unknownCwd)
+	}
+	if len(target) > 0 && os.IsPathSeparator(target[0]) {
+		// Volume-less rooted: anchored to the active volume's root, not its cwd.
+		return false
+	}
+	// Plain relative: resolved against the active drive's cwd.
+	return strings.EqualFold(activeVolume, unknownCwd)
 }
 
 // resolveShellWritePath resolves a write target against the directory the
@@ -441,15 +483,48 @@ func readHeredocRedirect(runes []rune, i int) (heredocSpec, int, bool) {
 			}
 			continue
 		}
-		if r == '\'' || r == '"' {
-			quote := r
+		if r == '\'' {
+			// Single-quoted delimiter: literal until the closing quote,
+			// backslashes included. `<<'EOF'` opens a body ending at `EOF`.
 			j++
-			for j < len(runes) && runes[j] != quote {
+			for j < len(runes) && runes[j] != '\'' {
 				delimiter.WriteRune(runes[j])
 				j++
 			}
 			if j < len(runes) {
+				j++ // consume closing quote
+			}
+			continue
+		}
+		if r == '"' {
+			// Double-quoted delimiter: POSIX quote removal applies, so `\\`
+			// collapses to one backslash and `\"` to a literal quote. These change
+			// the delimiter: `<<'DOC\\X'` and `<<"DOC\\X"` are different
+			// terminators, and reading the doubled backslash literally would let
+			// the body run past the real terminator and hide a protected command
+			// after it (#664).
+			j++
+			for j < len(runes) && runes[j] != '"' {
+				c := runes[j]
+				if c == '\\' && j+1 < len(runes) {
+					switch runes[j+1] {
+					case '\\', '"', '$', '`':
+						delimiter.WriteRune(runes[j+1])
+						j += 2
+					case '\n':
+						j += 2 // line continuation: emit nothing
+					default:
+						// Backslash before a non-special char is kept literally.
+						delimiter.WriteRune('\\')
+						j++
+					}
+					continue
+				}
+				delimiter.WriteRune(c)
 				j++
+			}
+			if j < len(runes) {
+				j++ // consume closing quote
 			}
 			continue
 		}

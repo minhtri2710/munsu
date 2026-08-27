@@ -224,9 +224,90 @@ func TestShellWriteAmbiguousCdOnlyBlocksDependentRelativeWrites(t *testing.T) {
 	}
 	_, worktree := boundTaskFixture(t, "ship-shell-ambiguous-cd")
 
+	// Reads are never targets, so they are unaffected by the unknown cwd.
 	assertShapes(t, false, worktree, "cd D:docs && cat file", "")
+	// Absolute write to an unrelated path: does not resolve against the unknown
+	// D: cwd, so it is allowed (#664).
 	assertShapes(t, false, worktree, "cd D:docs && echo ok > C:\\scratch\\out.txt", "")
+	// Same-volume drive-relative (C:foo) resolves against C:'s known cwd, so it
+	// is allowed even though the active drive (D:) is the unknown one.
+	assertShapes(t, false, worktree, "cd D:docs && echo ok > C:logs\\out.txt", "")
+	// Dependent relative write resolves against the unknown D: cwd: refused.
 	assertShapes(t, true, worktree, "cd D:docs && echo pwned > relative.txt", "")
+	// Different-volume drive-relative after the cd also resolves against D:'s
+	// unknown cwd: refused.
+	assertShapes(t, true, worktree, "cd D:docs && echo pwned > D:rel\\out.txt", "")
+}
+
+// TestShellWriteAmbiguousCdAllowsUnrelatedAbsoluteAndSameVolumeWrites pins the
+// Windows shell-aware refusal boundary after an ambiguous drive-relative cd: an
+// absolute write (C:\\scratch\\out.txt) and a same-volume drive-relative write
+// (C:logs\\out.txt) must be classified because neither resolves against the
+// unknown D: cwd, while a dependent relative write and a different-volume
+// drive-relative write must be refused. The shell-aware check replaces the old
+// global "cwd unknown" flag, which over-refused the C: spellings (#664).
+func TestShellWriteAmbiguousCdAllowsUnrelatedAbsoluteAndSameVolumeWrites(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("ambiguous drive-relative cwd is Windows-specific")
+	}
+	_, worktree := boundTaskFixture(t, "ship-shell-ambiguous-rooted")
+
+	// Absolute write to an unrelated path: does not resolve against the unknown
+	// D: cwd, so it is allowed.
+	assertShapes(t, false, worktree, "cd D:docs && echo ok > C:\\scratch\\out.txt", "")
+	// Same-volume drive-relative (C:foo) resolves against C:'s known cwd, so it
+	// is allowed even though the active drive (D:) is the unknown one.
+	assertShapes(t, false, worktree, "cd D:docs && echo ok > C:logs\\out.txt", "")
+	// Dependent relative write resolves against the unknown D: cwd: refused.
+	assertShapes(t, true, worktree, "cd D:docs && echo pwned > relative.txt", "")
+	// Different-volume drive-relative after the cd also resolves against D:'s
+	// unknown cwd: refused.
+	assertShapes(t, true, worktree, "cd D:docs && echo pwned > D:rel\\out.txt", "")
+}
+
+// TestShellWriteHeredocDoubleQuotedDelimiterRefusesProtectedWrite pins the
+// quoted-delimiter fix: a double-quoted heredoc delimiter applies POSIX quote
+// removal, so `<<"TAIL\\END"` ends the body at `TAIL\END` (the doubled
+// backslash collapses to one). A protected command after that real terminator
+// must stay visible and be refused — reading the doubled backslash literally
+// would have let the body run past it and hidden the write (#664).
+func TestShellWriteHeredocDoubleQuotedDelimiterRefusesProtectedWrite(t *testing.T) {
+	primary, worktree := boundTaskFixture(t, "ship-shell-heredoc-dquote")
+	shared := filepath.Join(primary, "README.md")
+
+	// Double-quoted delimiter with a doubled backslash: the terminator the body
+	// must end at is `TAIL\END` (one backslash), not `TAIL\\END` (two).
+	command := "cat <<\"TAIL\\\\END\" > notes.md\nharmless\nTAIL\\END\necho pwned > " + shared
+	assertShapes(t, true, worktree, command, "")
+
+	// Single-quoted delimiter keeps both backslashes literally, so its
+	// terminator is `TAIL\\END` (two) — a different document that must still
+	// refuse the protected write after it.
+	quoted := "cat <<'TAIL\\\\END' > notes.md\nharmless\nTAIL\\\\END\necho pwned > " + shared
+	assertShapes(t, true, worktree, quoted, "")
+
+	// Double-quoted delimiter with an escaped quote: `<<"EOF\"X"` ends at
+	// `EOF"X`; a protected write after it is still refused.
+	quotedQuote := "cat <<\"EOF\\\"X\" > notes.md\nharmless\nEOF\"X\necho pwned > " + shared
+	assertShapes(t, true, worktree, quotedQuote, "")
+}
+
+// TestShellWriteHeredocDoubleQuotedDelimiterParsing checks the delimiter parsing
+// directly: a double-quoted delimiter with a doubled backslash collapses to the
+// single-backslash terminator, so the body ends there and a protected write
+// after it is still classified instead of being swallowed (#664).
+func TestShellWriteHeredocDoubleQuotedDelimiterParsing(t *testing.T) {
+	command := "cat <<\"TAIL\\\\END\" > notes.md\nharmless\nTAIL\\END\necho pwned > /tmp/protected.md"
+	targets, ambiguous := shellWriteTargets("/worktree", command)
+	if ambiguous {
+		t.Fatalf("shellWriteTargets unexpectedly ambiguous: %q", command)
+	}
+	if !slices.Contains(targets, "/worktree/notes.md") {
+		t.Errorf("expected notes.md target, got %v", targets)
+	}
+	if !slices.Contains(targets, "/tmp/protected.md") {
+		t.Errorf("protected write after terminator was swallowed: targets=%v", targets)
+	}
 }
 
 func TestShellWriteHeredocQuoteAwareBackslashStripping(t *testing.T) {
