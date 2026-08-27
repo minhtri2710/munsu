@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -13,6 +15,8 @@ type shellToken struct {
 	text       string
 	redirects  bool // an unquoted `>`
 	expandable bool // contains `$` or a backtick: the shell decides the value
+	start      int
+	end        int
 }
 
 // shellWriteTargets returns the paths a shell command names as write targets,
@@ -31,26 +35,246 @@ type shellToken struct {
 // shared checkout are legitimate work, and refusing them is the failure mode
 // this guard must not have.
 //
-// Tokenization cannot fail, so this channel has no unparseable state and
-// inherits none of the fail-closed obligation applyPatchTargets carries.
-func shellWriteTargets(checkPath, command string) []string {
+// A lone backslash has no single meaning here, so the command is resolved twice
+// (#664). munsu never runs this string: the only call site is the harness hook
+// in integrate_cmd.go, which inspects a command the harness proposes to run.
+// Which shell interprets it depends on the harness and the platform, and
+// neither is on the wire — so the guard cannot know whether `\` quotes the next
+// character and disappears, as POSIX shells read it, or is an ordinary path
+// separator, as Windows shells do. Reading it only as an escape deleted every
+// separator in a Windows absolute path: the target stopped naming the shared
+// checkout, and the write proceeded unopposed.
+//
+// Both readings are therefore extracted and their resolved candidates unioned;
+// ambiguity is decided independently for each target span. There is no platform
+// gate, because the platform is not what decides this. Over-refusal stays bounded
+// by the narrow claim above: only a redirection target and a named write verb's
+// arguments are targets at all, so the candidate the second reading adds can only
+// ever be one more write path, never a read.
+func shellWriteTargets(checkPath, command string) ([]string, bool) {
+	// Heredoc syntax is POSIX grammar. Strip bodies once with POSIX delimiter
+	// rules, then tokenize the remaining command under both backslash readings,
+	// so the literal (Windows) reading differs from the POSIX reading only in how
+	// it reads path backslashes — never in where a heredoc ends. Stripping once
+	// keeps <<\EOF / <<-\END terminating at the bare delimiter on every OS and
+	// stops the literal reading from swallowing a write named after the
+	// terminator.
+	stripped := stripHeredocBodies(command)
+	interpretations := []shellTargetResolution{
+		{mode: backslashEscapes},
+		{mode: backslashLiteral},
+	}
+	for i := range interpretations {
+		interpretations[i].targets = shellWriteTargetsUnderDetailed(interpretations[i].mode, checkPath, stripped)
+	}
+	bySpan := make(map[shellTargetSpan][]shellTargetResult)
+	for _, interpretation := range interpretations {
+		for _, result := range interpretation.targets {
+			bySpan[result.span] = append(bySpan[result.span], result)
+		}
+	}
 	var targets []string
+	ambiguous := false
+	for _, interpretation := range interpretations {
+		for _, result := range interpretation.targets {
+			if result.ambiguous {
+				continue
+			}
+			if !slices.Contains(targets, result.path) {
+				targets = append(targets, result.path)
+			}
+		}
+	}
+	for _, results := range bySpan {
+		resolved := false
+		for _, result := range results {
+			if !result.ambiguous {
+				resolved = true
+				break
+			}
+		}
+		if !resolved {
+			ambiguous = true
+		}
+	}
+	return targets, ambiguous
+}
+
+type shellTargetSpan struct{ start, end int }
+type shellTargetResult struct {
+	span      shellTargetSpan
+	path      string
+	ambiguous bool
+}
+type shellTargetResolution struct {
+	mode    backslashMode
+	targets []shellTargetResult
+}
+
+// backslashMode is one reading of a lone backslash while tokenizing.
+type backslashMode int
+
+const (
+	// backslashEscapes is the POSIX shell reading: `\` quotes the character
+	// after it and is itself removed.
+	backslashEscapes backslashMode = iota
+	// backslashLiteral is the Windows shell reading: `\` is an ordinary
+	// character that quotes nothing, and separates path components.
+	backslashLiteral
+)
+
+func shellWriteTargetsUnderDetailed(mode backslashMode, checkPath, command string) []shellTargetResult {
+	var targets []shellTargetResult
 	currentPath := checkPath
-	for _, segment := range shellSegments(command) {
+	activeVolume := filepath.VolumeName(checkPath)
+	activeVolumeKnown := true
+	// activeVolume is the drive a plain relative path resolves against: the
+	// drive left active by the last `cd`. unknownCwd is the volume whose
+	// per-drive current directory this pass cannot reconstruct ("" if none).
+	// An ambiguous drive-relative `cd D:docs` only makes D:'s cwd unknowable:
+	// D-volume targets stay ambiguous, but C-volume and absolute targets resolve
+	// against known state and must not be refused for it (ADR-0014 §1, #664).
+	unknownCwd := ""
+	cwdByVolume := map[string]string{strings.ToLower(activeVolume): currentPath}
+	for _, segment := range shellSegments(mode, command) {
 		if len(segment) == 0 {
 			continue
 		}
-		if segment[0].text == "cd" && !segment[0].redirects {
-			if len(segment) > 1 && !segment[1].redirects {
-				currentPath = resolveSafetyPath(currentPath, segment[1].text)
+		if strings.EqualFold(segment[0].text, "cd") && !segment[0].redirects {
+			if operand, ok := cdOperand(segment); ok {
+				if operand.expandable {
+					unknownCwd = filepath.VolumeName(operand.text)
+					if unknownCwd == "" {
+						unknownCwd = activeVolume
+					}
+					activeVolume = unknownCwd
+					activeVolumeKnown = false
+					continue
+				}
+				base := currentPath
+				if volume := filepath.VolumeName(operand.text); volume != "" {
+					if known, ok := cwdByVolume[strings.ToLower(volume)]; ok {
+						base = known
+					}
+				}
+				// A plain relative cd (no volume, not volume-less rooted) against a
+				// drive whose cwd is unknown cannot be resolved: the active drive's
+				// current directory is exactly what the prior drive-relative cd left
+				// unreconstructable. Keep the unknown state — do not resolve against
+				// the stale currentPath of the previous volume or clear unknownCwd.
+				if !activeVolumeKnown && filepath.VolumeName(operand.text) == "" && !(len(operand.text) > 0 && os.IsPathSeparator(operand.text[0])) {
+					continue
+				}
+				resolved, pathAmbiguous := resolveShellWritePath(base, activeVolume, operand.text)
+				if pathAmbiguous {
+					// Different-volume drive-relative cd (D:docs from a C: base): D
+					// becomes the active drive with an unknowable cwd. C stays known,
+					// so C-volume and absolute targets stay resolvable.
+					activeVolume = filepath.VolumeName(operand.text)
+					activeVolumeKnown = false
+					unknownCwd = activeVolume
+				} else {
+					currentPath = resolved
+					activeVolume = filepath.VolumeName(resolved)
+					activeVolumeKnown = true
+					cwdByVolume[strings.ToLower(activeVolume)] = resolved
+					unknownCwd = ""
+				}
 			}
 			continue
 		}
 		for _, target := range segmentWriteTargets(segment) {
-			targets = append(targets, resolveSafetyPath(currentPath, target))
+			base := currentPath
+			if volume := filepath.VolumeName(target.text); volume != "" {
+				if known, ok := cwdByVolume[strings.ToLower(volume)]; ok {
+					base = known
+				}
+			}
+			resolved, targetAmbiguous := resolveShellWritePath(base, activeVolume, target.text)
+			if !targetAmbiguous && pathDependsOnUnknownCwd(activeVolume, unknownCwd, target.text) {
+				targetAmbiguous = true
+			}
+			targets = append(targets, shellTargetResult{
+				span: shellTargetSpan{start: target.start, end: target.end},
+				path: resolved, ambiguous: targetAmbiguous,
+			})
 		}
 	}
 	return targets
+}
+
+// pathDependsOnUnknownCwd reports whether resolving target against the session's
+// shell state depends on the current directory of the volume unknownCwd names —
+// the only path context a drive-relative `cd` can leave unknowable. Absolute
+// paths, volume-less rooted paths (\foo, anchored to the active volume's root
+// rather than its cwd) and same-volume drive-relative paths (C:foo, resolved
+// against that volume's known cwd) do not, so they stay classified instead of
+// being swept into the refusal. filepath.IsAbs disagrees on the volume-less
+// rooted case (it reports false on Windows for a separator-led path), and a
+// shell-aware check is required there (#664).
+func pathDependsOnUnknownCwd(activeVolume, unknownCwd, target string) bool {
+	if unknownCwd == "" {
+		return false
+	}
+	if filepath.IsAbs(target) {
+		return false
+	}
+	if vol := filepath.VolumeName(target); vol != "" {
+		// Drive-relative/drive-absolute on some volume. Only the volume whose cwd
+		// is unknown makes it ambiguous; resolveShellWritePath already reports any
+		// other unknown volume as ambiguous on its own.
+		return strings.EqualFold(vol, unknownCwd)
+	}
+	if len(target) > 0 && os.IsPathSeparator(target[0]) {
+		// Volume-less rooted: anchored to the active volume's root, not its cwd.
+		return false
+	}
+	// Plain relative: resolved against the active drive's cwd.
+	return strings.EqualFold(activeVolume, unknownCwd)
+}
+
+// resolveShellWritePath resolves a write target against the directory the
+// command runs in, under the Windows path spellings the shell channel must
+// classify (#664). It is shell-specific on purpose: the native write channel's
+// resolver (resolveSafetyPath, in git_worktree_safety.go) is the #668 owner and
+// must not grow this logic, so the dual-reading guard stays the single owner of
+// its own comparison (ADR-0014 §1).
+//
+// Three cases sit beyond the plain relative join:
+//
+//   - Volume-less rooted (\foo): rooted at the current volume's root, with no
+//     volume in the target. It is anchored to the shell's active volume, so
+//     \foo with an active C: drive becomes C:\foo.
+//   - Same-volume drive-relative (C:foo): relative to the current directory on
+//     that drive. The session's cwd is the base, so the relative part is joined
+//     to it.
+//   - Different-volume drive-relative (D:foo) when the base is on C:: the
+//     per-drive current directory of D cannot be reconstructed here, so that
+//     candidate is reported as ambiguous. The enclosing shell command refuses
+//     only when no other backslash interpretation resolves the same target span;
+//     an independently resolved candidate is still classified.
+func resolveShellWritePath(base, activeVolume, path string) (string, bool) {
+	if filepath.IsAbs(path) {
+		return path, false
+	}
+	pathVolume := filepath.VolumeName(path)
+	baseVolume := filepath.VolumeName(base)
+	if pathVolume == "" && activeVolume != "" && len(path) > 0 && os.IsPathSeparator(path[0]) {
+		// Volume-less rooted: anchor to the active volume's root.
+		rooted := activeVolume + path
+		if filepath.IsAbs(rooted) {
+			return filepath.Clean(rooted), false
+		}
+	}
+	if pathVolume != "" {
+		if !strings.EqualFold(pathVolume, baseVolume) {
+			// Different volume: the per-drive cwd is unknowable.
+			return "", true
+		}
+		// Same volume: resolve the relative part against the base directory.
+		return filepath.Join(base, strings.TrimPrefix(path, pathVolume)), false
+	}
+	return filepath.Join(base, path), false
 }
 
 // evaluateWriteTargets refuses the first target that lands in the shared
@@ -64,33 +288,36 @@ func evaluateWriteTargets(targets []string) (bool, string) {
 	return false, ""
 }
 
-// shellSegments splits a command at unquoted `;`, `&`, `|` and newline, and
-// tokenizes each segment. It mirrors splitSafetySegments + splitSafetyWords,
-// but keeps the two facts those drop: whether a `>` was quoted, and whether a
-// word carries shell expansion.
+// shellSegments tokenizes command — already stripped of heredoc bodies — at
+// unquoted `;`, `&`, `|` and newline, into segments. It mirrors
+// splitSafetySegments + splitSafetyWords, but keeps the two facts those drop:
+// whether a `>` was quoted, and whether a word carries shell expansion.
 //
-// Heredoc bodies are removed before splitting: a heredoc body is content, not a
-// command line, and the same "one payload, one channel" rule BEO-62 settled
-// applies to it. Tokenizing it refused a legitimate write whenever the content
-// happened to look like a command — this file's own ADR is such a document.
-func shellSegments(command string) [][]shellToken {
-	return tokenizeSegments(stripHeredocBodies(command))
+// Heredoc stripping is the caller's job and is done once, with POSIX delimiter
+// rules, before either backslash reading tokenizes: a heredoc body is content,
+// not a command line, and the same "one payload, one channel" rule BEO-62
+// settled applies to it. Tokenizing it refused a legitimate write whenever the
+// content happened to look like a command — this file's own ADR is such a
+// document.
+func shellSegments(mode backslashMode, command string) [][]shellToken {
+	return tokenizeSegments(mode, command)
 }
 
-func tokenizeSegments(command string) [][]shellToken {
+func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 	var segments [][]shellToken
 	var segment []shellToken
 	var word strings.Builder
+	wordStart := -1
+	rawStart, rawEnd := -1, -1
 	expandable := false
 	quote := rune(0)
 	escaped := false
-
 	flushWord := func() {
 		if word.Len() > 0 {
-			segment = append(segment, shellToken{text: word.String(), expandable: expandable})
+			segment = append(segment, shellToken{text: word.String(), expandable: expandable, start: rawStart, end: rawEnd})
 			word.Reset()
 		}
-		expandable = false
+		wordStart, rawStart, rawEnd, expandable = -1, -1, -1, false
 	}
 	flushSegment := func() {
 		flushWord()
@@ -99,25 +326,74 @@ func tokenizeSegments(command string) [][]shellToken {
 			segment = nil
 		}
 	}
-
-	for _, r := range command {
+	runes := []rune(command)
+	touch := func(i int) {
+		if rawStart < 0 {
+			rawStart = i
+		}
+		rawEnd = i + 1
+	}
+	add := func(r rune, i int, literal bool) {
+		if wordStart < 0 {
+			wordStart = i
+		}
+		word.WriteRune(r)
+		// A `$` or backtick names a shell expansion only when the shell would
+		// actually perform one here. Inside single quotes, and behind a POSIX
+		// backslash escape (outside quotes or inside double quotes), the
+		// character is literal: the path it sits in is one this guard can classify,
+		// and calling it expandable would drop a genuine protected-path target
+		// (#664).
+		if !literal && (r == '$' || r == '`') {
+			expandable = true
+		}
+	}
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
 		if escaped {
-			word.WriteRune(r)
+			touch(i - 1)
+			touch(i)
+			add(r, i, true)
 			escaped = false
 			continue
 		}
-		if r == '\\' {
-			escaped = true
-			continue
-		}
-		if quote != 0 {
+		if quote == '\'' {
+			touch(i)
 			if r == quote {
 				quote = 0
 			} else {
-				word.WriteRune(r)
-				if r == '$' || r == '`' {
-					expandable = true
+				add(r, i, true)
+			}
+			continue
+		}
+		if quote == '"' && r == '\\' && mode == backslashEscapes {
+			if i+1 < len(runes) {
+				next := runes[i+1]
+				if next == '$' || next == '`' || next == '"' || next == '\\' || next == '\n' {
+					touch(i)
+					touch(i + 1)
+					i++
+					if next != '\n' {
+						add(next, i, true)
+					}
+					continue
 				}
+			}
+			touch(i)
+			add(r, i, false)
+			continue
+		}
+		if r == '\\' && mode == backslashEscapes {
+			touch(i)
+			escaped = true
+			continue
+		}
+		if quote == '"' {
+			touch(i)
+			if r == quote {
+				quote = 0
+			} else {
+				add(r, i, false)
 			}
 			continue
 		}
@@ -125,8 +401,6 @@ func tokenizeSegments(command string) [][]shellToken {
 		case '\'', '"':
 			quote = r
 		case '|':
-			// `>|` is one clobber operator, not a redirect followed by a pipe:
-			// splitting there dropped the target word entirely.
 			if word.Len() == 0 && len(segment) > 0 && segment[len(segment)-1].redirects {
 				continue
 			}
@@ -137,12 +411,10 @@ func tokenizeSegments(command string) [][]shellToken {
 			flushWord()
 		case '>':
 			flushWord()
-			segment = append(segment, shellToken{text: ">", redirects: true})
+			segment = append(segment, shellToken{text: ">", redirects: true, start: i, end: i + 1})
 		default:
-			word.WriteRune(r)
-			if r == '$' || r == '`' {
-				expandable = true
-			}
+			touch(i)
+			add(r, i, false)
 		}
 	}
 	flushSegment()
@@ -157,7 +429,9 @@ type heredocSpec struct {
 }
 
 // stripHeredocBodies removes every heredoc body from a command line, leaving the
-// command words around it intact.
+// command words around it intact. Heredoc syntax is POSIX grammar, so this runs
+// once with POSIX delimiter rules; the dual backslash readings tokenize what
+// remains and only differ in how they read path backslashes.
 //
 // Without this, each body line was split at its newline and tokenized as a
 // command of its own: a `rm -rf <shared>/...` example inside a document became a
@@ -178,7 +452,28 @@ func stripHeredocBodies(command string) string {
 			escaped = false
 			continue
 		}
-		if r == '\\' {
+		if quote == '\'' {
+			out.WriteRune(r)
+			if r == quote {
+				quote = 0
+			}
+			continue
+		}
+		if quote == '"' && r == '\\' {
+			out.WriteRune(r)
+			if i+1 < len(runes) {
+				next := runes[i+1]
+				if next == '$' || next == '`' || next == '"' || next == '\\' || next == '\n' {
+					escaped = true
+				}
+			}
+			continue
+		}
+		if quote == 0 && r == '\\' {
+			// POSIX heredoc scanning: a backslash quotes the next character outside
+			// quotes. The surviving command text keeps the backslash so the dual
+			// path readings see it; stripping is POSIX-only and runs once before
+			// they tokenize.
 			out.WriteRune(r)
 			escaped = true
 			continue
@@ -274,6 +569,11 @@ func readHeredocRedirect(runes []rune, i int) (heredocSpec, int, bool) {
 		// match nothing and swallowed the rest of the payload — every command
 		// after the terminator, including ones this guard claims to cover.
 		if r == '\\' {
+			// A backslash quotes the next character in the delimiter word, so
+			// `<<\EOF` opens a body that ends at `EOF`. Both backslash readings
+			// must agree on the delimiter, or the literal (Windows) reading would
+			// read the backslash into the delimiter, never match the bare
+			// terminator, and swallow every command named after it (#664 v2).
 			j++
 			if j < len(runes) {
 				delimiter.WriteRune(runes[j])
@@ -281,15 +581,48 @@ func readHeredocRedirect(runes []rune, i int) (heredocSpec, int, bool) {
 			}
 			continue
 		}
-		if r == '\'' || r == '"' {
-			quote := r
+		if r == '\'' {
+			// Single-quoted delimiter: literal until the closing quote,
+			// backslashes included. `<<'EOF'` opens a body ending at `EOF`.
 			j++
-			for j < len(runes) && runes[j] != quote {
+			for j < len(runes) && runes[j] != '\'' {
 				delimiter.WriteRune(runes[j])
 				j++
 			}
 			if j < len(runes) {
+				j++ // consume closing quote
+			}
+			continue
+		}
+		if r == '"' {
+			// Double-quoted delimiter: POSIX quote removal applies, so `\\`
+			// collapses to one backslash and `\"` to a literal quote. These change
+			// the delimiter: `<<'DOC\\X'` and `<<"DOC\\X"` are different
+			// terminators, and reading the doubled backslash literally would let
+			// the body run past the real terminator and hide a protected command
+			// after it (#664).
+			j++
+			for j < len(runes) && runes[j] != '"' {
+				c := runes[j]
+				if c == '\\' && j+1 < len(runes) {
+					switch runes[j+1] {
+					case '\\', '"', '$', '`':
+						delimiter.WriteRune(runes[j+1])
+						j += 2
+					case '\n':
+						j += 2 // line continuation: emit nothing
+					default:
+						// Backslash before a non-special char is kept literally.
+						delimiter.WriteRune('\\')
+						j++
+					}
+					continue
+				}
+				delimiter.WriteRune(c)
 				j++
+			}
+			if j < len(runes) {
+				j++ // consume closing quote
 			}
 			continue
 		}
@@ -333,10 +666,24 @@ func skipHeredocBodies(runes []rune, start int, pending []heredocSpec) int {
 	return i
 }
 
+func cdOperand(segment []shellToken) (shellToken, bool) {
+	if len(segment) < 2 || segment[1].redirects {
+		return shellToken{}, false
+	}
+	index := 1
+	if strings.EqualFold(segment[index].text, "/d") {
+		index++
+	}
+	if index >= len(segment) || segment[index].redirects {
+		return shellToken{}, false
+	}
+	return segment[index], true
+}
+
 // segmentWriteTargets splits one segment into its redirection targets and the
 // write targets of its verb.
-func segmentWriteTargets(segment []shellToken) []string {
-	var targets []string
+func segmentWriteTargets(segment []shellToken) []shellToken {
+	var targets []shellToken
 	var args []shellToken
 	for i := 0; i < len(segment); i++ {
 		if !segment[i].redirects {
@@ -365,11 +712,11 @@ func segmentWriteTargets(segment []shellToken) []string {
 // appendTarget drops a target whose value the shell computes: an unexpanded
 // word is not a path this guard can classify, and guessing would refuse a call
 // on evidence it does not have.
-func appendTarget(targets []string, token shellToken) []string {
+func appendTarget(targets []shellToken, token shellToken) []shellToken {
 	if token.expandable {
 		return targets
 	}
-	return append(targets, token.text)
+	return append(targets, token)
 }
 
 // verbWriteTargets returns the write targets of a named write verb, or nil for
