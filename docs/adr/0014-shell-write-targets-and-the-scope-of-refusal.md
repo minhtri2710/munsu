@@ -50,16 +50,19 @@ is what closes the `cd <shared> && echo pwned > README.md` variant that a pure
 absolute-path scan would miss. Shell lexical resolution is owned by
 `resolveShellWritePath`; final repository classification remains with
 `evaluateFileWriteSafety`. On Windows, a volume-less rooted path such as
-`\src\repo\README.md` or `/src/repo/README.md` inherits the base path's volume
-rather than being treated as a relative child of the worktree. A same-volume drive-relative path such as
+`\src\repo\README.md` or `/src/repo/README.md` inherits the shell's active
+volume rather than being treated as a relative child of the worktree. A same-volume drive-relative path such as
 `C:src\repo\README.md` resolves against the base directory, using
 case-insensitive volume comparison. A different-volume drive-relative path such
 as `D:src\repo\README.md` is ambiguous because the other drive's current
-directory cannot be reconstructed, so the shell command is refused. The same
-unknown-directory state applies when `cd` uses an unresolved different-volume
-drive-relative path: it does not refuse a read-only command or an independent
-absolute target, but a later relative write target that depends on that unknown
-base is refused.
+directory cannot be reconstructed. The command is refused when that target has
+no independently resolved candidate under the other backslash interpretation;
+ambiguity from one reading does not override a rooted or otherwise independent
+candidate for the same target span. The same unknown-directory state applies
+when `cd` uses an unresolved different-volume drive-relative path: it does not
+refuse a read-only command or an independent absolute/rooted or same-volume
+target, but a later relative write target that depends on that unknown base is
+refused.
 
 Quoting survives tokenization here (`shellSegments`), because `echo "x > f"` writes
 nothing while `echo x > f` writes `f`, and the two are indistinguishable once quotes are
@@ -67,8 +70,9 @@ dropped — the existing `splitSafetySegments` drops them. Backslash interpretat
 quote-aware: outside quotes the POSIX reading quotes the next character while the
 Windows reading preserves the backslash as a path separator; inside single quotes the
 backslash is literal, and inside double quotes the POSIX reading only treats `$`, backtick,
-`"`, `\\`, and newline specially. The resulting write-target sets are unioned because
-the harness does not identify which shell will execute the command.
+`"`, `\\`, and newline specially. Resolved candidates from both readings are unioned because the harness does not identify
+which shell will execute the command; ambiguity is decided independently for each target
+span, and a span remains ambiguous only when neither reading resolves it.
 
 **A heredoc body is content, not a command line** (`stripHeredocBodies`). This is the same
 "one payload, one channel" rule BEO-62 settled for apply-patch, applied to the shell
@@ -165,14 +169,15 @@ checkout identity. File writes are not.
 
 `IsBoundRepository` and target-classification failures fail **open**: missing
 environment, unreadable authority, unclassifiable path → allowed. Shell path ambiguity is
-the exception: a different-volume drive-relative target is refused before classification
-because its base cannot be reconstructed. The git-mutation path fails **closed** in the
-same situations (`git mutation worktree binding unavailable`). The two paths agree on the
-*definition* of the protected repository and disagree on the *direction of failure*,
-deliberately: a refused git mutation costs a retry, a refused file write costs the run.
-This change leaves those classification directions unchanged; the shell ambiguity refusal
-occurs before classification. The distinction is recorded so the next change to this area
-does not flip either behavior silently.
+the exception: a target span for which every backslash interpretation depends on an
+unreconstructable different-volume cwd is refused before classification. An independently
+resolved candidate for that span is still classified normally. The git-mutation path fails
+**closed** in the same situations (`git mutation worktree binding unavailable`). The two
+paths agree on the *definition* of the protected repository and disagree on the *direction
+of failure*, deliberately: a refused git mutation costs a retry, a refused file write
+costs the run. This change leaves those classification directions unchanged; the shell
+ambiguity refusal occurs before classification. The distinction is recorded so the next
+change to this area does not flip either behavior silently.
 
 ## Consequences
 

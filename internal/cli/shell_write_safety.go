@@ -45,11 +45,12 @@ type shellToken struct {
 // separator in a Windows absolute path: the target stopped naming the shared
 // checkout, and the write proceeded unopposed.
 //
-// Both readings are therefore extracted and the targets unioned. There is no
-// platform gate, because the platform is not what decides this. Over-refusal
-// stays bounded by the narrow claim above: only a redirection target and a
-// named write verb's arguments are targets at all, so the candidate the second
-// reading adds can only ever be one more write path, never a read.
+// Both readings are therefore extracted and their resolved candidates unioned;
+// ambiguity is decided independently for each target span. There is no platform
+// gate, because the platform is not what decides this. Over-refusal stays bounded
+// by the narrow claim above: only a redirection target and a named write verb's
+// arguments are targets at all, so the candidate the second reading adds can only
+// ever be one more write path, never a read.
 func shellWriteTargets(checkPath, command string) ([]string, bool) {
 	// Heredoc syntax is POSIX grammar. Strip bodies once with POSIX delimiter
 	// rules, then tokenize the remaining command under both backslash readings,
@@ -146,7 +147,7 @@ func shellWriteTargetsUnderDetailed(mode backslashMode, checkPath, command strin
 	// per-drive current directory this pass cannot reconstruct ("" if none).
 	// An ambiguous drive-relative `cd D:docs` only makes D:'s cwd unknowable:
 	// D-volume targets stay ambiguous, but C-volume and absolute targets resolve
-	// against known state and must not be refused for it (ADR-0014 §3, #664).
+	// against known state and must not be refused for it (ADR-0014 §1, #664).
 	unknownCwd := ""
 	for _, segment := range shellSegments(mode, command) {
 		if len(segment) == 0 {
@@ -223,14 +224,16 @@ func pathDependsOnUnknownCwd(activeVolume, unknownCwd, target string) bool {
 // Three cases sit beyond the plain relative join:
 //
 //   - Volume-less rooted (\foo): rooted at the current volume's root, with no
-//     volume in the target. It is anchored to the volume of the base — the
-//     session's cwd — so \foo with a C: cwd becomes C:\foo.
+//     volume in the target. It is anchored to the shell's active volume, so
+//     \foo with an active C: drive becomes C:\foo.
 //   - Same-volume drive-relative (C:foo): relative to the current directory on
 //     that drive. The session's cwd is the base, so the relative part is joined
 //     to it.
 //   - Different-volume drive-relative (D:foo) when the base is on C:: the
-//     per-drive current directory of D cannot be reconstructed here, so the
-//     path is reported as ambiguous and the shell command is refused.
+//     per-drive current directory of D cannot be reconstructed here, so that
+//     candidate is reported as ambiguous. The enclosing shell command refuses
+//     only when no other backslash interpretation resolves the same target span;
+//     an independently resolved candidate is still classified.
 func resolveShellWritePath(base, activeVolume, path string) (string, bool) {
 	if filepath.IsAbs(path) {
 		return path, false
