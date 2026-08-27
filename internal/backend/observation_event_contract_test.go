@@ -9,8 +9,8 @@ package backend
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -61,37 +61,43 @@ func eventSourceWithFake(t *testing.T, waitJSON string, waitExit int, logPath st
 	return &HerdrEventSource{Session: "test-s"}, tmp
 }
 
-// eventSourceWithFakeBlocking creates a fake herdr binary whose agent-wait
-// branch blocks until the invoking process is killed (context cancellation
-// via exec.CommandContext), then returns the path of the FIFO that fake blocks
-// on. Opening the write end of that FIFO is what proves the fake is blocked —
-// see awaitFakeBlocking. The external `mkfifo` command avoids a compile-time
-// dependency on a syscall unavailable on Windows, but remains a runtime PATH
-// dependency of this blocking fixture on every host where it executes. The
-// Windows fake launcher separately owns fake-shell descendant cleanup.
-func eventSourceWithFakeBlocking(t *testing.T, logPath string) (*HerdrEventSource, string) {
-	t.Helper()
-	tmp := t.TempDir()
-	blockedOn := filepath.Join(t.TempDir(), "blocked.fifo")
-	makeRendezvousFIFO(t, blockedOn)
-	writeFakeHerdrEventWaitBlocking(t, tmp, fakeHerdrSchemaReady, logPath, blockedOn)
-	testutil.PrependPath(t, tmp)
-	return &HerdrEventSource{Session: "test-s"}, blockedOn
+// rendezvous is the blocking point the fake herdr's agent-wait branch parks
+// on. The primitive differs by platform — a POSIX FIFO on unix, a loopback TCP
+// socket on windows (see rendezvous_unix_test.go / rendezvous_windows_test.go)
+// — but what does not differ is that opening it is what blocks, and that
+// completing the test's end of that open is the only proof the fake is already
+// blocked rather than merely about to be.
+type rendezvous struct {
+	// path is what the fake's script parks on, spelled for the shell it runs
+	// under rather than for this process. It appears only in failure messages.
+	path string
+	// blockCmd is the exact `exec cat ...` line the fake script runs to park
+	// on path. It differs by platform: on unix it opens path as an argument
+	// (cat opens the FIFO itself, after the exec); on windows it redirects
+	// path from a /dev/tcp socket, the only form the POSIX shell there can
+	// reach (see rendezvous_windows_test.go).
+	blockCmd string
+	// await returns once the test's end of the rendezvous has completed,
+	// proving the fake is blocked. The returned Closer holds the test's end
+	// open; closing it before cancellation would hand the fake EOF and let it
+	// exit, which is exactly what must not happen.
+	await func(ctx context.Context) (io.Closer, error)
 }
 
-// makeRendezvousFIFO creates the named pipe the blocking fake blocks on.
-//
-// The POSIX utility is used rather than syscall.Mkfifo because this file
-// carries no build constraint and must still type-check for GOOS=windows,
-// where syscall.Mkfifo does not exist. Requiring `mkfifo` at run time keeps
-// the fixture source portable at compile time, while making the command an
-// explicit runtime PATH dependency. On Windows, the fake launcher's job
-// object owns the fake shell and its descendants.
-func makeRendezvousFIFO(t *testing.T, path string) {
+// eventSourceWithFakeBlocking creates a fake herdr binary whose agent-wait
+// branch blocks until the invoking process is killed (context cancellation
+// via exec.CommandContext), then returns the rendezvous that fake blocks on.
+// Completing the test process's end of that rendezvous is what proves the fake
+// is blocked — see awaitFakeBlocking. The fake binaries in this file keep
+// routing through internal/testutil, which owns fake-shell descendant cleanup
+// on windows via a job object.
+func eventSourceWithFakeBlocking(t *testing.T, logPath string) (*HerdrEventSource, rendezvous) {
 	t.Helper()
-	if out, err := exec.Command("mkfifo", path).CombinedOutput(); err != nil {
-		t.Fatalf("mkfifo %s: %v (%s)", path, err, strings.TrimSpace(string(out)))
-	}
+	tmp := t.TempDir()
+	rv := newRendezvous(t)
+	writeFakeHerdrEventWaitBlocking(t, tmp, fakeHerdrSchemaReady, logPath, rv.blockCmd)
+	testutil.PrependPath(t, tmp)
+	return &HerdrEventSource{Session: "test-s"}, rv
 }
 
 // writeFakeHerdrEventWaitBlocking is like writeFakeHerdrEventWait but the
@@ -108,18 +114,15 @@ func makeRendezvousFIFO(t *testing.T, path string) {
 // closes that ownership boundary. The shell script remains the single source
 // of fake behavior on both platforms.
 //
-// What it execs is `cat` on a FIFO rather than `sleep`, because that makes
-// blocked-ness observable to the test without adding a grandchild (#577).
-// `cat` opens the FIFO ITSELF, after the exec — the path is an argument, not a
-// shell redirection, which the shell would have performed before the exec. A
-// FIFO open for reading completes only when a writer opens the same FIFO, so
-// the test's own open returning is proof that the exec has already happened
-// and that the surviving process is the blocked reader. It also removes the
-// `sleep 300` expiry: a blocked read has no duration to run out.
-//
-// The argv marker stays, but it is now only a breadcrumb for failure messages:
-// it is written before the exec, so it proves branch entry and nothing more.
-func writeFakeHerdrEventWaitBlocking(t *testing.T, dir, schemaJSON, logPath, blockedOn string) string {
+// What it execs is `cat` (parked on the rendezvous returned by newRendezvous)
+// rather than `sleep`, because that makes blocked-ness observable to the test
+// without adding a grandchild (#577): the rendezvous open completes only when
+// the test's own end of it does, so the test's end completing is proof the
+// exec has already happened and that the surviving process is the blocked
+// reader. It also removes the `sleep 300` expiry: a blocked read has no
+// duration to run out. The exact `exec cat` form (argument vs redirect, FIFO
+// vs /dev/tcp socket) is supplied per platform by newRendezvous.
+func writeFakeHerdrEventWaitBlocking(t *testing.T, dir, schemaJSON, logPath, blockCmd string) string {
 	t.Helper()
 	bin := filepath.Join(dir, "herdr")
 	script := "#!/usr/bin/env bash\n" +
@@ -135,7 +138,7 @@ func writeFakeHerdrEventWaitBlocking(t *testing.T, dir, schemaJSON, logPath, blo
 		"fi\n" +
 		`if [ "$3" = "agent" ] && [ "$4" = "wait" ]; then` + "\n" +
 		`  echo "$@" >> "` + logPath + `"` + "\n" +
-		`  exec cat "` + blockedOn + `"` + "\n" +
+		blockCmd + "\n" +
 		"fi\n" +
 		`echo '{"error":{"code":"unknown_command"}}'` + "\n" +
 		"exit 1\n"
@@ -305,10 +308,11 @@ func spawnBackstop(t *testing.T) <-chan time.Time {
 
 // awaitFakeBlocking returns only once the fake herdr is demonstrably blocked.
 //
-// The proof is a FIFO rendezvous, not a marker file. The fake's blocking
-// branch ends in `exec cat <fifo>`, so the process that opens that FIFO for
-// reading is the process image that reached the blocking call. Opening a FIFO
-// for reading completes only when a writer opens it and vice versa, so this
+// The proof is a rendezvous, not a marker file. The fake's blocking
+// branch ends in `exec cat` on the rendezvous (a FIFO on unix, a /dev/tcp
+// socket on windows), so the process that opens that rendezvous for reading is
+// the process image that reached the blocking call. Opening a rendezvous for
+// reading completes only when the test's end of it does, so this
 // open returning proves the exec has happened and that what remains is a
 // reader parked on a pipe nobody writes to. On POSIX, that process image is
 // the direct child exec.CommandContext kills; on Windows, the native launcher
@@ -343,27 +347,27 @@ func spawnBackstop(t *testing.T) <-chan time.Time {
 // On either failure path the opening goroutine stays parked in open(2) until
 // the test binary exits, because the test has already failed and no reader is
 // ever going to arrive.
-func awaitFakeBlocking(t *testing.T, blockedOn, logPath string, waitReturned <-chan error) {
+func awaitFakeBlocking(t *testing.T, ctx context.Context, rv rendezvous, logPath string, waitReturned <-chan error) {
 	t.Helper()
-	type rendezvous struct {
-		writer *os.File
-		err    error
+	type opened struct {
+		end io.Closer
+		err error
 	}
-	opened := make(chan rendezvous, 1)
+	completed := make(chan opened, 1)
 	go func() {
-		writer, err := os.OpenFile(blockedOn, os.O_WRONLY, 0)
-		opened <- rendezvous{writer: writer, err: err}
+		end, err := rv.await(ctx)
+		completed <- opened{end: end, err: err}
 	}()
 	select {
-	case r := <-opened:
+	case r := <-completed:
 		if r.err != nil {
-			t.Fatalf("opening the write end of the fake herdr's blocking FIFO %s: %v", blockedOn, r.err)
+			t.Fatalf("completing the test's end of the fake herdr's rendezvous %s: %v", rv.path, r.err)
 		}
-		t.Cleanup(func() { r.writer.Close() })
+		t.Cleanup(func() { r.end.Close() })
 	case err := <-waitReturned:
-		t.Fatalf("Wait exited (err = %v) before the fake herdr blocked on %s; %s", err, blockedOn, fakeBranchEvidence(logPath))
+		t.Fatalf("Wait exited (err = %v) before the fake herdr blocked on %s; %s", err, rv.path, fakeBranchEvidence(logPath))
 	case <-spawnBackstop(t):
-		t.Fatalf("Wait is still in flight but the fake herdr had not blocked on %s when the test-deadline-derived backstop elapsed; %s", blockedOn, fakeBranchEvidence(logPath))
+		t.Fatalf("Wait is still in flight but the fake herdr had not blocked on %s when the test-deadline-derived backstop elapsed; %s", rv.path, fakeBranchEvidence(logPath))
 	}
 }
 
@@ -381,7 +385,7 @@ func TestHerdrEventSource_Wait_ContextCancellation(t *testing.T) {
 	// Caller cancellation must surface as the caller's own ctx.Err() (the
 	// adapter never masks a cancelled bounded wait as anything else).
 	logPath := filepath.Join(t.TempDir(), "args.log")
-	src, blockedOn := eventSourceWithFakeBlocking(t, logPath)
+	src, rv := eventSourceWithFakeBlocking(t, logPath)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
@@ -391,7 +395,7 @@ func TestHerdrEventSource_Wait_ContextCancellation(t *testing.T) {
 	}()
 	// Synchronize on the fake actually being blocked, so the cancellation
 	// below can only be observed by killing a blocked process.
-	awaitFakeBlocking(t, blockedOn, logPath, done)
+	awaitFakeBlocking(t, ctx, rv, logPath, done)
 	// Guard the other half of the same property: Wait must still be in flight
 	// when cancel() fires. If it already returned, whatever error arrives says
 	// nothing about the cancellation path.
