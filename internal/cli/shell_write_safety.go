@@ -15,6 +15,8 @@ type shellToken struct {
 	text       string
 	redirects  bool // an unquoted `>`
 	expandable bool // contains `$` or a backtick: the shell decides the value
+	start      int
+	end        int
 }
 
 // shellWriteTargets returns the paths a shell command names as write targets,
@@ -57,15 +59,55 @@ func shellWriteTargets(checkPath, command string) ([]string, bool) {
 	// stops the literal reading from swallowing a write named after the
 	// terminator.
 	stripped := stripHeredocBodies(command)
-	targets, ambiguous := shellWriteTargetsUnder(backslashEscapes, checkPath, stripped)
-	literalTargets, literalAmbiguous := shellWriteTargetsUnder(backslashLiteral, checkPath, stripped)
-	ambiguous = ambiguous || literalAmbiguous
-	for _, target := range literalTargets {
-		if !slices.Contains(targets, target) {
-			targets = append(targets, target)
+	interpretations := []shellTargetResolution{
+		{mode: backslashEscapes},
+		{mode: backslashLiteral},
+	}
+	for i := range interpretations {
+		interpretations[i].targets = shellWriteTargetsUnderDetailed(interpretations[i].mode, checkPath, stripped)
+	}
+	bySpan := make(map[shellTargetSpan][]shellTargetResult)
+	for _, interpretation := range interpretations {
+		for _, result := range interpretation.targets {
+			bySpan[result.span] = append(bySpan[result.span], result)
+		}
+	}
+	var targets []string
+	ambiguous := false
+	for _, interpretation := range interpretations {
+		for _, result := range interpretation.targets {
+			if result.ambiguous {
+				continue
+			}
+			if !slices.Contains(targets, result.path) {
+				targets = append(targets, result.path)
+			}
+		}
+	}
+	for _, results := range bySpan {
+		resolved := false
+		for _, result := range results {
+			if !result.ambiguous {
+				resolved = true
+				break
+			}
+		}
+		if !resolved {
+			ambiguous = true
 		}
 	}
 	return targets, ambiguous
+}
+
+type shellTargetSpan struct{ start, end int }
+type shellTargetResult struct {
+	span      shellTargetSpan
+	path      string
+	ambiguous bool
+}
+type shellTargetResolution struct {
+	mode    backslashMode
+	targets []shellTargetResult
 }
 
 // backslashMode is one reading of a lone backslash while tokenizing.
@@ -85,27 +127,39 @@ const (
 func shellWriteTargetsUnder(mode backslashMode, checkPath, command string) ([]string, bool) {
 	var targets []string
 	ambiguous := false
+	for _, result := range shellWriteTargetsUnderDetailed(mode, checkPath, command) {
+		if result.ambiguous {
+			ambiguous = true
+		} else {
+			targets = append(targets, result.path)
+		}
+	}
+	return targets, ambiguous
+}
+
+func shellWriteTargetsUnderDetailed(mode backslashMode, checkPath, command string) []shellTargetResult {
+	var targets []shellTargetResult
 	currentPath := checkPath
+	activeVolume := filepath.VolumeName(checkPath)
 	// activeVolume is the drive a plain relative path resolves against: the
 	// drive left active by the last `cd`. unknownCwd is the volume whose
 	// per-drive current directory this pass cannot reconstruct ("" if none).
 	// An ambiguous drive-relative `cd D:docs` only makes D:'s cwd unknowable:
 	// D-volume targets stay ambiguous, but C-volume and absolute targets resolve
 	// against known state and must not be refused for it (ADR-0014 §3, #664).
-	activeVolume := filepath.VolumeName(checkPath)
 	unknownCwd := ""
 	for _, segment := range shellSegments(mode, command) {
 		if len(segment) == 0 {
 			continue
 		}
-		if segment[0].text == "cd" && !segment[0].redirects {
-			if len(segment) > 1 && !segment[1].redirects {
-				resolved, pathAmbiguous := resolveShellWritePath(currentPath, segment[1].text)
+		if strings.EqualFold(segment[0].text, "cd") && !segment[0].redirects {
+			if operand, ok := cdOperand(segment); ok {
+				resolved, pathAmbiguous := resolveShellWritePath(currentPath, activeVolume, operand.text)
 				if pathAmbiguous {
 					// Different-volume drive-relative cd (D:docs from a C: base): D
 					// becomes the active drive with an unknowable cwd. C stays known,
 					// so C-volume and absolute targets stay resolvable.
-					activeVolume = filepath.VolumeName(segment[1].text)
+					activeVolume = filepath.VolumeName(operand.text)
 					unknownCwd = activeVolume
 				} else {
 					currentPath = resolved
@@ -116,17 +170,17 @@ func shellWriteTargetsUnder(mode backslashMode, checkPath, command string) ([]st
 			continue
 		}
 		for _, target := range segmentWriteTargets(segment) {
-			resolved, targetAmbiguous := resolveShellWritePath(currentPath, target)
-			if !targetAmbiguous && pathDependsOnUnknownCwd(activeVolume, unknownCwd, target) {
+			resolved, targetAmbiguous := resolveShellWritePath(currentPath, activeVolume, target.text)
+			if !targetAmbiguous && pathDependsOnUnknownCwd(activeVolume, unknownCwd, target.text) {
 				targetAmbiguous = true
 			}
-			ambiguous = ambiguous || targetAmbiguous
-			if !targetAmbiguous {
-				targets = append(targets, resolved)
-			}
+			targets = append(targets, shellTargetResult{
+				span: shellTargetSpan{start: target.start, end: target.end},
+				path: resolved, ambiguous: targetAmbiguous,
+			})
 		}
 	}
-	return targets, ambiguous
+	return targets
 }
 
 // pathDependsOnUnknownCwd reports whether resolving target against the session's
@@ -177,15 +231,15 @@ func pathDependsOnUnknownCwd(activeVolume, unknownCwd, target string) bool {
 //   - Different-volume drive-relative (D:foo) when the base is on C:: the
 //     per-drive current directory of D cannot be reconstructed here, so the
 //     path is reported as ambiguous and the shell command is refused.
-func resolveShellWritePath(base, path string) (string, bool) {
+func resolveShellWritePath(base, activeVolume, path string) (string, bool) {
 	if filepath.IsAbs(path) {
 		return path, false
 	}
 	pathVolume := filepath.VolumeName(path)
 	baseVolume := filepath.VolumeName(base)
-	if pathVolume == "" && baseVolume != "" && len(path) > 0 && os.IsPathSeparator(path[0]) {
-		// Volume-less rooted: anchor to the base volume's root.
-		rooted := baseVolume + path
+	if pathVolume == "" && activeVolume != "" && len(path) > 0 && os.IsPathSeparator(path[0]) {
+		// Volume-less rooted: anchor to the active volume's root.
+		rooted := activeVolume + path
 		if filepath.IsAbs(rooted) {
 			return filepath.Clean(rooted), false
 		}
@@ -231,16 +285,17 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 	var segments [][]shellToken
 	var segment []shellToken
 	var word strings.Builder
+	wordStart := -1
+	rawStart, rawEnd := -1, -1
 	expandable := false
 	quote := rune(0)
 	escaped := false
-
 	flushWord := func() {
 		if word.Len() > 0 {
-			segment = append(segment, shellToken{text: word.String(), expandable: expandable})
+			segment = append(segment, shellToken{text: word.String(), expandable: expandable, start: rawStart, end: rawEnd})
 			word.Reset()
 		}
-		expandable = false
+		wordStart, rawStart, rawEnd, expandable = -1, -1, -1, false
 	}
 	flushSegment := func() {
 		flushWord()
@@ -249,20 +304,37 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 			segment = nil
 		}
 	}
-
 	runes := []rune(command)
+	touch := func(i int) {
+		if rawStart < 0 {
+			rawStart = i
+		}
+		rawEnd = i + 1
+	}
+	add := func(r rune, i int) {
+		if wordStart < 0 {
+			wordStart = i
+		}
+		word.WriteRune(r)
+		if r == '$' || r == '`' {
+			expandable = true
+		}
+	}
 	for i := 0; i < len(runes); i++ {
 		r := runes[i]
 		if escaped {
-			word.WriteRune(r)
+			touch(i - 1)
+			touch(i)
+			add(r, i)
 			escaped = false
 			continue
 		}
 		if quote == '\'' {
+			touch(i)
 			if r == quote {
 				quote = 0
 			} else {
-				word.WriteRune(r)
+				add(r, i)
 			}
 			continue
 		}
@@ -270,14 +342,17 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 			if i+1 < len(runes) {
 				next := runes[i+1]
 				if next == '$' || next == '`' || next == '"' || next == '\\' || next == '\n' {
+					touch(i)
+					touch(i + 1)
 					i++
 					if next != '\n' {
-						word.WriteRune(next)
+						add(next, i)
 					}
 					continue
 				}
 			}
-			word.WriteRune(r)
+			touch(i)
+			add(r, i)
 			continue
 		}
 		if r == '\\' && mode == backslashEscapes {
@@ -285,13 +360,11 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 			continue
 		}
 		if quote == '"' {
+			touch(i)
 			if r == quote {
 				quote = 0
 			} else {
-				word.WriteRune(r)
-				if r == '$' || r == '`' {
-					expandable = true
-				}
+				add(r, i)
 			}
 			continue
 		}
@@ -299,8 +372,6 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 		case '\'', '"':
 			quote = r
 		case '|':
-			// `>|` is one clobber operator, not a redirect followed by a pipe:
-			// splitting there dropped the target word entirely.
 			if word.Len() == 0 && len(segment) > 0 && segment[len(segment)-1].redirects {
 				continue
 			}
@@ -311,12 +382,10 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 			flushWord()
 		case '>':
 			flushWord()
-			segment = append(segment, shellToken{text: ">", redirects: true})
+			segment = append(segment, shellToken{text: ">", redirects: true, start: i, end: i + 1})
 		default:
-			word.WriteRune(r)
-			if r == '$' || r == '`' {
-				expandable = true
-			}
+			touch(i)
+			add(r, i)
 		}
 	}
 	flushSegment()
@@ -568,10 +637,24 @@ func skipHeredocBodies(runes []rune, start int, pending []heredocSpec) int {
 	return i
 }
 
+func cdOperand(segment []shellToken) (shellToken, bool) {
+	if len(segment) < 2 || segment[1].redirects {
+		return shellToken{}, false
+	}
+	index := 1
+	if strings.EqualFold(segment[index].text, "/d") {
+		index++
+	}
+	if index >= len(segment) || segment[index].redirects {
+		return shellToken{}, false
+	}
+	return segment[index], true
+}
+
 // segmentWriteTargets splits one segment into its redirection targets and the
 // write targets of its verb.
-func segmentWriteTargets(segment []shellToken) []string {
-	var targets []string
+func segmentWriteTargets(segment []shellToken) []shellToken {
+	var targets []shellToken
 	var args []shellToken
 	for i := 0; i < len(segment); i++ {
 		if !segment[i].redirects {
@@ -600,11 +683,11 @@ func segmentWriteTargets(segment []shellToken) []string {
 // appendTarget drops a target whose value the shell computes: an unexpanded
 // word is not a path this guard can classify, and guessing would refuse a call
 // on evidence it does not have.
-func appendTarget(targets []string, token shellToken) []string {
+func appendTarget(targets []shellToken, token shellToken) []shellToken {
 	if token.expandable {
 		return targets
 	}
-	return append(targets, token.text)
+	return append(targets, token)
 }
 
 // verbWriteTargets returns the write targets of a named write verb, or nil for

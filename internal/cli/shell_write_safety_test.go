@@ -170,15 +170,43 @@ func TestResolveShellWritePathWindows(t *testing.T) {
 		{`rel`, `C:\worktree\rel`, false},
 	}
 	for _, tc := range cases {
-		if got, ambiguous := resolveShellWritePath(base, tc.path); got != tc.want || ambiguous != tc.ambiguous {
+		if got, ambiguous := resolveShellWritePath(base, filepath.VolumeName(base), tc.path); got != tc.want || ambiguous != tc.ambiguous {
 			t.Errorf("resolveShellWritePath(%q,%q) = %q, %v, want %q, %v", base, tc.path, got, ambiguous, tc.want, tc.ambiguous)
 		}
 	}
-	if got, ambiguous := resolveShellWritePath(base, `D:ambiguous`); got != "" || !ambiguous {
+	if got, ambiguous := resolveShellWritePath(base, filepath.VolumeName(base), `D:ambiguous`); got != "" || !ambiguous {
 		t.Errorf("resolveShellWritePath(%q,%q) = %q, %v, want ambiguous", base, `D:ambiguous`, got, ambiguous)
 	}
-	if got, ambiguous := resolveShellWritePath(base, `c:rel`); got != `C:\worktree\rel` || ambiguous {
+	if got, ambiguous := resolveShellWritePath(base, filepath.VolumeName(base), `c:rel`); got != `C:\worktree\rel` || ambiguous {
 		t.Errorf("case-insensitive same-volume resolution = %q, %v", got, ambiguous)
+	}
+	if got, ambiguous := resolveShellWritePath(base, `D:`, `\shared`); got != `D:\shared` || ambiguous {
+		t.Errorf("active-volume rooted resolution = %q, %v", got, ambiguous)
+	}
+}
+
+func TestShellWriteTargetsAfterAmbiguousWindowsCd(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows path semantics required")
+	}
+	const base = `C:\worktree`
+
+	targets, ambiguous := shellWriteTargets(base, `cd D:docs && echo ok > \scratch\out.txt`)
+	if ambiguous {
+		t.Fatalf("rooted target remained ambiguous: %v", targets)
+	}
+	if !slices.Contains(targets, `D:\scratch\out.txt`) {
+		t.Errorf("rooted target = %v, want D volume candidate", targets)
+	}
+
+	if _, ambiguous := shellWriteTargets(base, `CD /D D:docs && echo pwned > relative.txt`); !ambiguous {
+		t.Error("/d drive-relative cd did not preserve ambiguous cwd")
+	}
+	if _, ambiguous := shellWriteTargets(base, `cd D:docs && echo x \> D:secret`); !ambiguous {
+		t.Error("escaped redirect ambiguity was cancelled by the other reading")
+	}
+	if targets, ambiguous := shellWriteTargets(base, `echo ok > "C:\\scratch\\out.txt"`); ambiguous || !slices.Contains(targets, `C:\\scratch\\out.txt`) {
+		t.Errorf("quoted Windows target = %v, ambiguous=%v", targets, ambiguous)
 	}
 }
 
@@ -821,7 +849,7 @@ func TestShellWriteNoMalformedEmbeddedVolumeCandidates(t *testing.T) {
 		`\\server\share\file`,
 	}
 	for _, p := range paths {
-		resolved, _ := resolveShellWritePath(base, p)
+		resolved, _ := resolveShellWritePath(base, filepath.VolumeName(base), p)
 		if resolved == "" {
 			continue
 		}
@@ -894,7 +922,7 @@ func TestShellWriteTargetExactDeduplication(t *testing.T) {
 // mustAbsTestPath returns name as an absolute path rooted at the filesystem
 // root on Unix and at the current volume's root on Windows.
 func mustResolveShellWritePath(base, path string) string {
-	resolved, ambiguous := resolveShellWritePath(base, path)
+	resolved, ambiguous := resolveShellWritePath(base, filepath.VolumeName(base), path)
 	if ambiguous {
 		panic("unexpected ambiguous shell path")
 	}
