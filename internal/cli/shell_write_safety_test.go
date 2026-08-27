@@ -231,13 +231,27 @@ func TestShellWriteAmbiguousCdOnlyBlocksDependentRelativeWrites(t *testing.T) {
 
 func TestShellWriteHeredocQuoteAwareBackslashStripping(t *testing.T) {
 	primary, worktree := boundTaskFixture(t, "ship-shell-heredoc-quote")
-	command := "printf x 'foo\\' ; cat <<EOF > notes.md\ncd /tmp\nEOF\ncd " + primary + " && echo pwned > README.md"
+	command := "printf x 'foo\\' ; cat <<EOF > notes.md\n" +
+		"rm -rf " + filepath.Join(primary, "internal") + "\n" +
+		"EOF\n" +
+		"echo ok > out.txt"
 
-	stripped := stripHeredocBodies(command)
-	if strings.Contains(stripped, "cd /tmp") {
-		t.Fatalf("stripHeredocBodies retained heredoc body: %q", stripped)
+	// Evaluate the parsed targets rather than searching the stripped command: the
+	// temporary checkout path can itself contain the old body's `/tmp` prefix.
+	targets, ambiguous := shellWriteTargets(worktree, command)
+	if ambiguous {
+		t.Fatalf("shellWriteTargets(%q) unexpectedly reported ambiguity", command)
 	}
-	assertShapes(t, true, worktree, command, "")
+	want := []string{
+		filepath.Join(worktree, "notes.md"),
+		filepath.Join(worktree, "out.txt"),
+	}
+	if !slices.Equal(targets, want) {
+		t.Fatalf("shellWriteTargets(%q) = %v, want %v", command, targets, want)
+	}
+	if blocked, reason := evaluateWriteTargets(targets); blocked {
+		t.Fatalf("shellWriteTargets(%q) included the heredoc body as a protected write: targets=%v reason=%q", command, targets, reason)
+	}
 }
 
 // TestShellReadsIntoBoundPrimaryAllowed is the false-positive direction that
