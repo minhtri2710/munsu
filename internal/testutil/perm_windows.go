@@ -3,6 +3,7 @@
 package testutil
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -252,6 +253,10 @@ func disableBypassPrivilegesWindows() (token windows.Token, prevPrivs []windows.
 			&retLen,
 		)
 		if err != nil {
+			if errors.Is(err, windows.ERROR_NOT_ALL_ASSIGNED) {
+				sb.WriteString(fmt.Sprintf("  Privilege %s: not held in token (ERROR_NOT_ALL_ASSIGNED)\n", name))
+				continue
+			}
 			token.Close()
 			return 0, nil, "", fmt.Errorf("AdjustTokenPrivileges(%s, 0): %w", name, err)
 		}
