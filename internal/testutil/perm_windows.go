@@ -193,6 +193,89 @@ func buildReadOnlyDACLWindows(sid *windows.SID, isDir bool) (*windows.ACL, error
 	return (*windows.ACL)(unsafe.Pointer(&buf[0])), nil
 }
 
+var (
+	modadvapi32              = windows.NewLazySystemDLL("advapi32.dll")
+	procLookupPrivilegeNameW = modadvapi32.NewProc("LookupPrivilegeNameW")
+)
+
+func lookupPrivilegeNameWindows(systemName *uint16, luid *windows.LUID, name *uint16, nameLen *uint32) error {
+	r1, _, err := procLookupPrivilegeNameW.Call(
+		uintptr(unsafe.Pointer(systemName)),
+		uintptr(unsafe.Pointer(luid)),
+		uintptr(unsafe.Pointer(name)),
+		uintptr(unsafe.Pointer(nameLen)),
+	)
+	if r1 == 0 {
+		return err
+	}
+	return nil
+}
+
+var bypassPrivilegeNames = []string{
+	"SeBackupPrivilege",
+	"SeRestorePrivilege",
+	"SeTakeOwnershipPrivilege",
+	"SeDebugPrivilege",
+}
+
+func disableBypassPrivilegesWindows() (token windows.Token, prevPrivs []windows.LUIDAndAttributes, log string, err error) {
+	var sb strings.Builder
+	err = windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_ADJUST_PRIVILEGES|windows.TOKEN_QUERY, &token)
+	if err != nil {
+		return 0, nil, "", fmt.Errorf("OpenProcessToken(TOKEN_ADJUST_PRIVILEGES|TOKEN_QUERY): %w", err)
+	}
+
+	for _, name := range bypassPrivilegeNames {
+		nameUTF16, err := windows.UTF16PtrFromString(name)
+		if err != nil {
+			continue
+		}
+		var luid windows.LUID
+		if err := windows.LookupPrivilegeValue(nil, nameUTF16, &luid); err != nil {
+			sb.WriteString(fmt.Sprintf("  LookupPrivilegeValue(%s): not found (%v)\n", name, err))
+			continue
+		}
+
+		var tp windows.Tokenprivileges
+		tp.PrivilegeCount = 1
+		tp.Privileges[0].Luid = luid
+		tp.Privileges[0].Attributes = 0 // Disable privilege
+
+		var oldTp windows.Tokenprivileges
+		var retLen uint32
+		err = windows.AdjustTokenPrivileges(
+			token,
+			false,
+			&tp,
+			uint32(unsafe.Sizeof(oldTp)),
+			&oldTp,
+			&retLen,
+		)
+		if err != nil {
+			token.Close()
+			return 0, nil, "", fmt.Errorf("AdjustTokenPrivileges(%s, 0): %w", name, err)
+		}
+		if oldTp.PrivilegeCount > 0 {
+			prevPrivs = append(prevPrivs, oldTp.Privileges[0])
+			wasEnabled := oldTp.Privileges[0].Attributes&windows.SE_PRIVILEGE_ENABLED != 0
+			sb.WriteString(fmt.Sprintf("  Privilege %s: was present (Attributes=0x%08x, Enabled=%v), disabled now\n",
+				name, oldTp.Privileges[0].Attributes, wasEnabled))
+		} else {
+			sb.WriteString(fmt.Sprintf("  Privilege %s: was not held in token\n", name))
+		}
+	}
+	return token, prevPrivs, sb.String(), nil
+}
+
+func restorePrivilegesWindows(token windows.Token, privs []windows.LUIDAndAttributes) {
+	for _, priv := range privs {
+		var tp windows.Tokenprivileges
+		tp.PrivilegeCount = 1
+		tp.Privileges[0] = priv
+		_ = windows.AdjustTokenPrivileges(token, false, &tp, 0, nil, nil)
+	}
+}
+
 func formatSecurityDiagnosticWindows(path string) string {
 	var sb strings.Builder
 	sid, err := currentUserSID()
@@ -202,6 +285,95 @@ func formatSecurityDiagnosticWindows(path string) string {
 		sb.WriteString(fmt.Sprintf("  currentUserSID: %s\n", sid.String()))
 	}
 
+	// 1. Process Token Inspection (Privileges, Elevation, Groups)
+	var token windows.Token
+	if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_QUERY, &token); err != nil {
+		sb.WriteString(fmt.Sprintf("  OpenProcessToken error: %v\n", err))
+	} else {
+		defer token.Close()
+
+		// Elevation & Elevation Type
+		var elevType uint32
+		var retLen uint32
+		if err := windows.GetTokenInformation(token, windows.TokenElevationType, (*byte)(unsafe.Pointer(&elevType)), uint32(unsafe.Sizeof(elevType)), &retLen); err == nil {
+			elevName := "Unknown"
+			switch elevType {
+			case 1:
+				elevName = "TokenElevationTypeDefault (1)"
+			case 2:
+				elevName = "TokenElevationTypeFull (2)"
+			case 3:
+				elevName = "TokenElevationTypeLimited (3)"
+			}
+			sb.WriteString(fmt.Sprintf("  TokenElevationType: %s\n", elevName))
+		} else {
+			sb.WriteString(fmt.Sprintf("  GetTokenInformation(TokenElevationType) error: %v\n", err))
+		}
+
+		var isElevated uint32
+		if err := windows.GetTokenInformation(token, windows.TokenElevation, (*byte)(unsafe.Pointer(&isElevated)), uint32(unsafe.Sizeof(isElevated)), &retLen); err == nil {
+			sb.WriteString(fmt.Sprintf("  TokenElevation: %v\n", isElevated != 0))
+		} else {
+			sb.WriteString(fmt.Sprintf("  GetTokenInformation(TokenElevation) error: %v\n", err))
+		}
+
+		// Groups (BUILTIN\Administrators check)
+		var groupBufLen uint32
+		_ = windows.GetTokenInformation(token, windows.TokenGroups, nil, 0, &groupBufLen)
+		if groupBufLen > 0 {
+			groupBuf := make([]byte, groupBufLen)
+			if err := windows.GetTokenInformation(token, windows.TokenGroups, &groupBuf[0], groupBufLen, &groupBufLen); err == nil {
+				tg := (*windows.Tokengroups)(unsafe.Pointer(&groupBuf[0]))
+				adminSid, _ := windows.StringToSid("S-1-5-32-544")
+				foundAdmin := false
+				groups := unsafe.Slice(&tg.Groups[0], tg.GroupCount)
+				for _, g := range groups {
+					if adminSid != nil && windows.EqualSid(g.Sid, adminSid) {
+						foundAdmin = true
+						enabled := g.Attributes&windows.SE_GROUP_ENABLED != 0
+						denyOnly := g.Attributes&windows.SE_GROUP_USE_FOR_DENY_ONLY != 0
+						sb.WriteString(fmt.Sprintf("  TokenGroup BUILTIN\\Administrators (S-1-5-32-544): present, Attributes: 0x%08x (Enabled: %v, DenyOnly: %v)\n",
+							g.Attributes, enabled, denyOnly))
+					}
+				}
+				if !foundAdmin {
+					sb.WriteString("  TokenGroup BUILTIN\\Administrators (S-1-5-32-544): not present\n")
+				}
+			} else {
+				sb.WriteString(fmt.Sprintf("  GetTokenInformation(TokenGroups) error: %v\n", err))
+			}
+		}
+
+		// Privileges
+		var privBufLen uint32
+		_ = windows.GetTokenInformation(token, windows.TokenPrivileges, nil, 0, &privBufLen)
+		if privBufLen > 0 {
+			privBuf := make([]byte, privBufLen)
+			if err := windows.GetTokenInformation(token, windows.TokenPrivileges, &privBuf[0], privBufLen, &privBufLen); err == nil {
+				tp := (*windows.Tokenprivileges)(unsafe.Pointer(&privBuf[0]))
+				sb.WriteString(fmt.Sprintf("  TokenPrivileges: count=%d\n", tp.PrivilegeCount))
+				privs := unsafe.Slice(&tp.Privileges[0], tp.PrivilegeCount)
+				for i, p := range privs {
+					var nameBuf [256]uint16
+					nameLen := uint32(len(nameBuf))
+					var privName string
+					if err := lookupPrivilegeNameWindows(nil, &p.Luid, &nameBuf[0], &nameLen); err == nil {
+						privName = windows.UTF16ToString(nameBuf[:nameLen])
+					} else {
+						privName = fmt.Sprintf("LUID{Low:0x%x, High:%d}", p.Luid.LowPart, p.Luid.HighPart)
+					}
+					enabled := p.Attributes&windows.SE_PRIVILEGE_ENABLED != 0
+					defaultEnabled := p.Attributes&windows.SE_PRIVILEGE_ENABLED_BY_DEFAULT != 0
+					sb.WriteString(fmt.Sprintf("    Privilege %d: %s, Attributes=0x%08x (Enabled: %v, DefaultEnabled: %v)\n",
+						i, privName, p.Attributes, enabled, defaultEnabled))
+				}
+			} else {
+				sb.WriteString(fmt.Sprintf("  GetTokenInformation(TokenPrivileges) error: %v\n", err))
+			}
+		}
+	}
+
+	// 2. Object Security Descriptor Inspection
 	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.OWNER_SECURITY_INFORMATION)
 	if err != nil {
 		sb.WriteString(fmt.Sprintf("  GetNamedSecurityInfo error: %v\n", err))
@@ -279,15 +451,27 @@ func makePathUnreadable(t *testing.T, path string) {
 		_ = restorePathAccessWindows(path)
 	})
 
+	// Disable read-bypass privileges in token (e.g. SeBackupPrivilege on elevated Administrator tokens)
+	token, prevPrivs, privLog, err := disableBypassPrivilegesWindows()
+	if err != nil {
+		t.Fatalf("MakePathUnreadable: disable bypass privileges: %v\nPrivilege Log:\n%s", err, privLog)
+	}
+	t.Cleanup(func() {
+		restorePrivilegesWindows(token, prevPrivs)
+		token.Close()
+	})
+
 	// Verify the path is genuinely unreadable.
 	if info.IsDir() {
 		if _, err := os.ReadDir(path); err == nil {
-			t.Fatalf("MakePathUnreadable: directory %s remains readable after applying deny-read ACL\nDiagnostic:\n%s", path, formatSecurityDiagnosticWindows(path))
+			t.Fatalf("MakePathUnreadable: directory %s remains readable after applying deny-read ACL\nPrivilege adjustment log:\n%s\nDiagnostic:\n%s",
+				path, privLog, formatSecurityDiagnosticWindows(path))
 		}
 	} else {
 		if f, err := os.Open(path); err == nil {
 			f.Close()
-			t.Fatalf("MakePathUnreadable: file %s remains readable after applying deny-read ACL\nDiagnostic:\n%s", path, formatSecurityDiagnosticWindows(path))
+			t.Fatalf("MakePathUnreadable: file %s remains readable after applying deny-read ACL\nPrivilege adjustment log:\n%s\nDiagnostic:\n%s",
+				path, privLog, formatSecurityDiagnosticWindows(path))
 		}
 	}
 }
