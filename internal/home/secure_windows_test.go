@@ -5,14 +5,17 @@ package home
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
 
 // grantEveryoneWindows replaces path's DACL with a single ACE granting the
-// Everyone principal read access. It is used to simulate a tampered (non
-// owner-only) ACL so the verification path can be exercised.
+// Everyone principal read access on a protected DACL. It is used to simulate
+// a tampered (non owner-only) ACL so the non-owner SID verification path
+// can be exercised.
 func grantEveryoneWindows(t *testing.T, path string) {
 	t.Helper()
 	everyone, err := windows.StringToSid("S-1-1-0")
@@ -34,7 +37,7 @@ func grantEveryoneWindows(t *testing.T, path string) {
 	if err := windows.SetNamedSecurityInfo(
 		path,
 		windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
 		nil, nil, dacl, nil,
 	); err != nil {
 		t.Fatalf("SetNamedSecurityInfo: %v", err)
@@ -130,5 +133,194 @@ func TestAtomicWriterPathsOwnerOnlyWindows(t *testing.T) {
 	}
 	if err := verifyProtection(atomicPath, false); err != nil {
 		t.Fatalf("canonicalAtomicWrite result not owner-only: %v", err)
+	}
+}
+
+// TestRestrictDirPreservesOwnerDenyWindows confirms that restrictDir strips
+// non-owner principals while preserving the owner's existing restrictions.
+func TestRestrictDirPreservesOwnerDenyWindows(t *testing.T) {
+	dir := t.TempDir()
+	sid, err := currentUserSID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	everyone, err := windows.StringToSid("S-1-1-0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// DACL: owner has deny-write and grant-read; Everyone has grant-read.
+	entries := []windows.EXPLICIT_ACCESS{
+		{
+			AccessPermissions: windows.FILE_GENERIC_WRITE,
+			AccessMode:        windows.DENY_ACCESS,
+			Inheritance:       windows.NO_INHERITANCE,
+			Trustee: windows.TRUSTEE{
+				TrusteeForm:  windows.TRUSTEE_IS_SID,
+				TrusteeType:  windows.TRUSTEE_IS_USER,
+				TrusteeValue: windows.TrusteeValueFromSID(sid),
+			},
+		},
+		{
+			AccessPermissions: windows.FILE_GENERIC_READ | windows.WRITE_DAC | windows.READ_CONTROL,
+			AccessMode:        windows.GRANT_ACCESS,
+			Inheritance:       windows.NO_INHERITANCE,
+			Trustee: windows.TRUSTEE{
+				TrusteeForm:  windows.TRUSTEE_IS_SID,
+				TrusteeType:  windows.TRUSTEE_IS_USER,
+				TrusteeValue: windows.TrusteeValueFromSID(sid),
+			},
+		},
+		{
+			AccessPermissions: windows.FILE_GENERIC_READ,
+			AccessMode:        windows.GRANT_ACCESS,
+			Inheritance:       windows.NO_INHERITANCE,
+			Trustee: windows.TRUSTEE{
+				TrusteeForm:  windows.TRUSTEE_IS_SID,
+				TrusteeType:  windows.TRUSTEE_IS_WELL_KNOWN_GROUP,
+				TrusteeValue: windows.TrusteeValueFromSID(everyone),
+			},
+		},
+	}
+	dacl, err := windows.ACLFromEntries(entries, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := windows.SetNamedSecurityInfo(
+		dir,
+		windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		nil, nil, dacl, nil,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	// restrictDir should succeed, strip Everyone, and preserve owner's deny-write.
+	if err := restrictDir(dir); err != nil {
+		t.Fatalf("restrictDir: %v", err)
+	}
+
+	// Verify Everyone is gone and only owner ACEs remain.
+	if err := verifyRestrictedProtection(dir, sid); err != nil {
+		t.Fatalf("verifyRestrictedProtection: %v", err)
+	}
+}
+
+// TestRestrictDirOwnerLessProtectedDACLBecomesEmptyDACLWindows confirms that
+// when no owner ACEs exist on a restricted directory, restrictDir installs a
+// protected empty DACL (AceCount == 0), denying all access rather than adding access.
+func TestRestrictDirOwnerLessProtectedDACLBecomesEmptyDACLWindows(t *testing.T) {
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "ownerless")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	sid, err := currentUserSID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	everyone, err := windows.StringToSid("S-1-1-0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Register cleanup before restrictDir runs to restore owner access for directory removal.
+	t.Cleanup(func() {
+		ea := windows.EXPLICIT_ACCESS{
+			AccessPermissions: ownerAllAccess,
+			AccessMode:        windows.GRANT_ACCESS,
+			Inheritance:       windows.NO_INHERITANCE,
+		}
+		ea.Trustee.TrusteeForm = windows.TRUSTEE_IS_SID
+		ea.Trustee.TrusteeType = windows.TRUSTEE_IS_USER
+		ea.Trustee.TrusteeValue = windows.TrusteeValueFromSID(sid)
+		var pinner runtime.Pinner
+		pinner.Pin(sid)
+		dacl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{ea}, nil)
+		pinner.Unpin()
+		if err == nil {
+			_ = windows.SetNamedSecurityInfo(
+				dir,
+				windows.SE_FILE_OBJECT,
+				windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+				nil, nil, dacl, nil,
+			)
+		}
+	})
+
+	// Protected DACL with only Everyone (owner-less).
+	entries := []windows.EXPLICIT_ACCESS{
+		{
+			AccessPermissions: windows.FILE_GENERIC_READ,
+			AccessMode:        windows.GRANT_ACCESS,
+			Inheritance:       windows.NO_INHERITANCE,
+			Trustee: windows.TRUSTEE{
+				TrusteeForm:  windows.TRUSTEE_IS_SID,
+				TrusteeType:  windows.TRUSTEE_IS_WELL_KNOWN_GROUP,
+				TrusteeValue: windows.TrusteeValueFromSID(everyone),
+			},
+		},
+	}
+	dacl, err := windows.ACLFromEntries(entries, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := windows.SetNamedSecurityInfo(
+		dir,
+		windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		nil, nil, dacl, nil,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := restrictDir(dir); err != nil {
+		t.Fatalf("restrictDir on owner-less directory: %v", err)
+	}
+
+	if err := verifyRestrictedProtection(dir, sid); err != nil {
+		t.Fatalf("verifyRestrictedProtection: %v", err)
+	}
+
+	// Read DACL back directly and assert it is genuinely empty (AceCount == 0) and protected.
+	sd, err := windows.GetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		t.Fatalf("GetNamedSecurityInfo: %v", err)
+	}
+	if sd == nil {
+		t.Fatal("security descriptor is nil")
+	}
+	sdPtr := unsafe.Pointer(sd)
+	control := *(*uint16)(unsafe.Pointer(uintptr(sdPtr) + 2))
+	if control&windows.SE_DACL_PROTECTED == 0 {
+		t.Fatalf("control word 0x%04x missing SE_DACL_PROTECTED", control)
+	}
+	daclOff := *(*uint32)(unsafe.Pointer(uintptr(sdPtr) + 16))
+	if daclOff == 0 {
+		t.Fatal("DACL offset is 0 (NULL DACL)")
+	}
+	resDacl := (*windows.ACL)(unsafe.Pointer(uintptr(sdPtr) + uintptr(daclOff)))
+	if resDacl.AceCount != 0 {
+		t.Fatalf("resulting DACL has %d ACEs, want 0 (empty protected DACL)", resDacl.AceCount)
+	}
+}
+
+// TestRestrictDirRefusesNullDACLWindows confirms that restrictDir fails closed
+// when encountering a NULL DACL (which grants full access to everyone).
+func TestRestrictDirRefusesNullDACLWindows(t *testing.T) {
+	dir := t.TempDir()
+	// Establish NULL DACL by passing nil DACL
+	if err := windows.SetNamedSecurityInfo(
+		dir,
+		windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION,
+		nil, nil, nil, nil,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := restrictDir(dir); err == nil {
+		t.Fatal("restrictDir on NULL DACL directory succeeded, want error")
 	}
 }

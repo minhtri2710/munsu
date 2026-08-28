@@ -3,8 +3,11 @@ package home
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 func TestClaimWakesEmptyQueueDoesNotCreateLease(t *testing.T) {
@@ -130,16 +133,27 @@ func TestClaimWakesRemovalErrorPropagated(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := os.Chmod(stateDir, 0o500); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chmod(stateDir, 0o700)
+	testutil.MakeDirectoryReadOnly(t, stateDir)
 
 	_, err := ClaimWakes(home, "consumer", 60, 10)
 	if err == nil {
 		t.Fatal("expected error from failed queue removal, got nil")
 	}
-	if !strings.Contains(err.Error(), "removing claimed wake queue") {
-		t.Fatalf("unexpected error: %v", err)
+	// On Windows, MakeDirectoryReadOnly sets a deny-write DACL on stateDir that denies
+	// FILE_ADD_FILE (0x2). ClaimWakes opens the lock with os.OpenFile(O_CREATE|O_RDWR),
+	// and O_CREATE maps to the Win32 OPEN_ALWAYS disposition, whose create-access check is
+	// performed against the parent stateDir. That parent-directory check is refused by the
+	// FILE_ADD_FILE denial before the lock's own DACL is consulted, so the failure surfaces
+	// at "opening wake claim lock". This is independent of ACE inheritance and of whether
+	// .wake-claim.lock already existed (it was written before MakeDirectoryReadOnly). It was
+	// empirically confirmed on windows-latest in GitHub Actions run 33141246285. On POSIX,
+	// chmod 0500 on stateDir permits opening the pre-created lock file, so the refusal instead
+	// surfaces at os.Remove(qPath) with "removing claimed wake queue".
+	wantSubstring := "removing claimed wake queue"
+	if runtime.GOOS == "windows" {
+		wantSubstring = "opening wake claim lock"
+	}
+	if !strings.Contains(err.Error(), wantSubstring) {
+		t.Fatalf("unexpected error: %v, want substring %q", err, wantSubstring)
 	}
 }

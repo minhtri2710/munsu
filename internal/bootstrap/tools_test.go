@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 func TestIsHardRequired(t *testing.T) {
@@ -85,9 +86,9 @@ func TestIsHardRequiredByConfig(t *testing.T) {
 func TestIsHardRequiredByConfig_ReturnsReadErrors(t *testing.T) {
 	tests := []struct {
 		name  string
-		setup func(string)
+		setup func(*testing.T, string)
 	}{
-		{name: "malformed base -> error propagates", setup: func(home string) {
+		{name: "malformed base -> error propagates", setup: func(t *testing.T, home string) {
 			if err := os.MkdirAll(filepath.Join(home, "config"), 0755); err != nil {
 				t.Fatal(err)
 			}
@@ -95,12 +96,12 @@ func TestIsHardRequiredByConfig_ReturnsReadErrors(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
-		{name: "base path is a directory (EISDIR) -> error propagates", setup: func(home string) {
+		{name: "base path is a directory (EISDIR) -> error propagates", setup: func(t *testing.T, home string) {
 			if err := os.MkdirAll(filepath.Join(home, "config", "base.json"), 0755); err != nil {
 				t.Fatal(err)
 			}
 		}},
-		{name: "unreadable base (permission) -> error propagates", setup: func(home string) {
+		{name: "unreadable base (permission) -> error propagates", setup: func(t *testing.T, home string) {
 			if err := os.MkdirAll(filepath.Join(home, "config"), 0755); err != nil {
 				t.Fatal(err)
 			}
@@ -108,26 +109,14 @@ func TestIsHardRequiredByConfig_ReturnsReadErrors(t *testing.T) {
 			if err := os.WriteFile(path, []byte("{}"), 0644); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.Chmod(path, 0000); err != nil {
-				t.Fatal(err)
-			}
-			// Under root/privileged environments the file remains readable and no
-			// read error is produced, so this subcase is not portable. Skip it
-			// rather than falsely failing; the malformed-JSON and EISDIR subcases
-			// already provide deterministic fail-closed read-error evidence and
-			// the permission subcase remains meaningful when running as a normal
-			// user.
-			if f, err := os.Open(path); err == nil {
-				f.Close()
-				t.Skip("environment can still read chmod 0000 file (privileged); skipping permission subcase")
-			}
+			testutil.MakePathUnreadable(t, path)
 		}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			home := t.TempDir()
-			tt.setup(home)
+			tt.setup(t, home)
 			got, err := IsHardRequiredByConfig(home, "no-mistakes")
 			if err == nil {
 				t.Fatalf("expected error for %s, got (false, nil)", tt.name)
