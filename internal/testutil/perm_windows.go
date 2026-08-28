@@ -3,12 +3,12 @@
 package testutil
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"unsafe"
 
@@ -212,6 +212,14 @@ func lookupPrivilegeNameWindows(systemName *uint16, luid *windows.LUID, name *ui
 	return nil
 }
 
+// tokenPrivilegesMu guards the process-wide privilege disable -> probe -> restore window.
+// AdjustTokenPrivileges mutates the primary token of the process; holding this mutex
+// across the fixture lifetime ensures concurrent tests cannot interleave privilege state.
+var tokenPrivilegesMu sync.Mutex
+
+// bypassPrivilegeNames lists the token privileges that bypass file system DACL checks
+// on Windows (e.g. for the built-in Administrator account RID 500).
+// The bypass mechanism was empirically confirmed by GitHub Actions run 33144040477.
 var bypassPrivilegeNames = []string{
 	"SeBackupPrivilege",
 	"SeRestorePrivilege",
@@ -219,6 +227,11 @@ var bypassPrivilegeNames = []string{
 	"SeDebugPrivilege",
 }
 
+// disableBypassPrivilegesWindows disables read/write/ownership bypass privileges in the
+// current process primary token. Because AdjustTokenPrivileges mutates process-wide state,
+// callers must hold tokenPrivilegesMu across the disable -> probe -> restore window so that
+// concurrent tests cannot interleave privilege state. The restore is registered in t.Cleanup
+// before any Fatal so it runs on every exit path.
 func disableBypassPrivilegesWindows() (token windows.Token, prevPrivs []windows.LUIDAndAttributes, log string, err error) {
 	var sb strings.Builder
 	err = windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_ADJUST_PRIVILEGES|windows.TOKEN_QUERY, &token)
@@ -253,10 +266,6 @@ func disableBypassPrivilegesWindows() (token windows.Token, prevPrivs []windows.
 			&retLen,
 		)
 		if err != nil {
-			if errors.Is(err, windows.ERROR_NOT_ALL_ASSIGNED) {
-				sb.WriteString(fmt.Sprintf("  Privilege %s: not held in token (ERROR_NOT_ALL_ASSIGNED)\n", name))
-				continue
-			}
 			token.Close()
 			return 0, nil, "", fmt.Errorf("AdjustTokenPrivileges(%s, 0): %w", name, err)
 		}
@@ -456,6 +465,11 @@ func makePathUnreadable(t *testing.T, path string) {
 		_ = restorePathAccessWindows(path)
 	})
 
+	tokenPrivilegesMu.Lock()
+	t.Cleanup(func() {
+		tokenPrivilegesMu.Unlock()
+	})
+
 	// Disable read-bypass privileges in token (e.g. SeBackupPrivilege on elevated Administrator tokens)
 	token, prevPrivs, privLog, err := disableBypassPrivilegesWindows()
 	if err != nil {
@@ -512,6 +526,21 @@ func makeDirectoryReadOnly(t *testing.T, path string) {
 
 	t.Cleanup(func() {
 		_ = restorePathAccessWindows(path)
+	})
+
+	tokenPrivilegesMu.Lock()
+	t.Cleanup(func() {
+		tokenPrivilegesMu.Unlock()
+	})
+
+	// Disable write-bypass privileges in token (e.g. SeRestorePrivilege on elevated Administrator tokens)
+	token, prevPrivs, privLog, err := disableBypassPrivilegesWindows()
+	if err != nil {
+		t.Fatalf("MakeDirectoryReadOnly: disable bypass privileges: %v\nPrivilege Log:\n%s", err, privLog)
+	}
+	t.Cleanup(func() {
+		restorePrivilegesWindows(token, prevPrivs)
+		token.Close()
 	})
 
 	// Verify the read-only ACL was established.
