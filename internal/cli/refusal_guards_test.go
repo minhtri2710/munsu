@@ -884,7 +884,11 @@ func TestSessionStartGCUsesRawIDOwnershipForForcedBriefs(t *testing.T) {
 
 	captainHome := t.TempDir()
 	initCLITestHome(t, captainHome)
-	captainDir := filepath.Join(captainHome, "data", "captain:c1")
+	captainStem, err := mhome.DurableKey("captain:c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	captainDir := filepath.Join(captainHome, "data", captainStem)
 	if err := os.MkdirAll(captainDir, 0755); err != nil {
 		t.Fatal(err)
 	}

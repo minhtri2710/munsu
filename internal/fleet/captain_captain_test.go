@@ -1664,8 +1664,8 @@ func TestBuildLaunchScript_ShellExecution(t *testing.T) {
 	}
 	recorded := string(data)
 
-	// Verify cwd is the general home.
-	if !strings.Contains(recorded, smHome) {
+	// Verify cwd is the general home (bash pwd emits forward slashes on all platforms).
+	if !strings.Contains(filepath.ToSlash(recorded), filepath.ToSlash(smHome)) {
 		t.Errorf("recorded output should contain smHome %q, got: %s", smHome, recorded)
 	}
 	// Verify special characters are preserved as literal strings in argv.

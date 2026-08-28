@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -273,13 +274,15 @@ func TestScaffoldScoutNamesReportByGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The brief instructs the soldier in $MUNSU_HOME-relative terms; the
-	// instructed file must be exactly the one the safety check resolves.
-	wantName := filepath.Join("data", "named-scout", ReportName(gen))
-	if !strings.Contains(string(content), wantName) {
-		t.Fatalf("scout brief = %q, want it to instruct writing %q", content, wantName)
+	// instructed markdown file must carry the standard forward-slash logical path,
+	// while ReportPath resolves the OS filesystem path.
+	wantLogical := path.Join("data", "named-scout", ReportName(gen))
+	if !strings.Contains(string(content), wantLogical) {
+		t.Fatalf("scout brief = %q, want it to instruct writing %q", content, wantLogical)
 	}
-	if !strings.HasSuffix(ReportPath(tmp, "named-scout", gen), wantName) {
-		t.Fatalf("ReportPath = %q, want it to resolve the instructed %q", ReportPath(tmp, "named-scout", gen), wantName)
+	wantPath := filepath.Join("data", "named-scout", ReportName(gen))
+	if !strings.HasSuffix(ReportPath(tmp, "named-scout", gen), wantPath) {
+		t.Fatalf("ReportPath = %q, want it to resolve the instructed %q", ReportPath(tmp, "named-scout", gen), wantPath)
 	}
 
 	// A scout brief without the task generation fails closed: an unbound

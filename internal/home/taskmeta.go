@@ -8,6 +8,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -43,7 +44,7 @@ func StatusFilePath(homeDir string, id string) (string, error) {
 }
 
 func validateTaskID(id string) error {
-	if id == "" || id == "." || id == ".." || filepath.Base(id) != id || strings.ContainsAny(id, `/\\`) {
+	if id == "" || id == "." || id == ".." || path.Base(id) != id || strings.ContainsAny(id, `/\\`) {
 		return fmt.Errorf("invalid task ID %q", id)
 	}
 	return nil

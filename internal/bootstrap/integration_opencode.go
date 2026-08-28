@@ -15,6 +15,7 @@ package bootstrap
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -56,9 +57,11 @@ var opencodePluginFileNames = []string{
 // opencodePluginCommand wraps a munsu binary path in JSON-quoted form for
 // embedding in a JS string literal.
 func opencodePluginCommand(munsuBin string) string {
-	// JSON-marshal the path to handle spaces/special chars, then strip quotes
-	// for JS string embedding.
-	return strings.ReplaceAll(fmt.Sprintf("%q", munsuBin), `"`, `\"`)
+	data, err := json.Marshal(munsuBin)
+	if err != nil {
+		return fmt.Sprintf("%q", munsuBin)
+	}
+	return string(data)
 }
 
 // opencodePluginContent generates the JS plugin content for the given plugin name,
@@ -92,7 +95,7 @@ func opencodePretoolCheckPlugin(munsuBin string) string {
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 
-const MUNSU_BIN = "%s";
+const MUNSU_BIN = %s;
 const MUNSU_WRITE_TOOLS = %s;
 
 function runProcess(command, args) {
@@ -169,7 +172,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const MUNSU_BIN = "%s";
+const MUNSU_BIN = %s;
 
 // Durable file path: next to this plugin file in .opencode/plugins/
 const DURABLE_FILE = (() => {
@@ -263,7 +266,7 @@ export const MunsuSessionstartNudge = async ({ client, directory, worktree }) =>
 func opencodeTurnendGuardPlugin(munsuBin string) string {
 	return fmt.Sprintf(`import { spawn } from "node:child_process";
 
-const MUNSU_BIN = "%s";
+const MUNSU_BIN = %s;
 const COORDINATOR_KEY = "__munsuOpenCodeWatchArm";
 let skipNextIdle = false;
 
@@ -315,7 +318,7 @@ export const MunsuTurnendGuard = async ({ client, directory, worktree }) => {
           body: {
             parts: [{
               type: "text",
-              text: "TURN WOULD END BLIND - supervision is off.\\n\\n" + result.stderr,
+              text: "TURN WOULD END BLIND - supervision is off.\n\n" + result.stderr,
             }],
           },
         });
@@ -339,7 +342,7 @@ export const MunsuTurnendGuard = async ({ client, directory, worktree }) => {
 func opencodeWatchArmPlugin(munsuBin string) string {
 	return fmt.Sprintf(`import { spawn } from "node:child_process";
 
-const MUNSU_BIN = "%s";
+const MUNSU_BIN = %s;
 const COORDINATOR_KEY = "__munsuOpenCodeWatchArm";
 const ARM_READY_TIMEOUT_MS = 12000;
 
@@ -499,8 +502,9 @@ func OpencodePluginsHasOwnedHooks(pluginsDir, munsuBin string) (bool, string, er
 		}
 
 		// Structural ownership: check that the file contains the munsu binary
-		// path and the expected exported function name.
-		if !strings.Contains(content, munsuBin) {
+		// path (either JSON-encoded or raw) and the expected exported function name.
+		expectedBin := opencodePluginCommand(munsuBin)
+		if !strings.Contains(content, expectedBin) && !strings.Contains(content, munsuBin) {
 			missing = append(missing, name+" (missing munsu binary path)")
 			continue
 		}

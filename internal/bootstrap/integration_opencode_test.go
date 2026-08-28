@@ -526,7 +526,7 @@ func TestOpencodeInstallWritesFiles(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(string(data), munsuBin) {
+		if !strings.Contains(string(data), munsuBin) && !strings.Contains(string(data), opencodePluginCommand(munsuBin)) {
 			t.Errorf("plugin %s must contain munsu binary path", name)
 		}
 	}

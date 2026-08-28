@@ -13,12 +13,12 @@ import (
 
 func TestGCOrphanDataDirsKeepsEncodedLiveTask(t *testing.T) {
 	homeDir := t.TempDir()
+	if _, err := home.Init(homeDir); err != nil {
+		t.Fatal(err)
+	}
 	id := "rel.1"
 	dataDir := filepath.Join(homeDir, "data", id)
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := home.Init(homeDir); err != nil {
 		t.Fatal(err)
 	}
 	if err := home.WriteMeta(homeDir, id, map[string]string{"kind": "ship"}); err != nil {

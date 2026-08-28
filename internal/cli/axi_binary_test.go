@@ -11,11 +11,11 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/orchestrator"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // axiBinaryPath caches the path to the built munsu binary for the test run.
@@ -42,7 +42,11 @@ func buildMunsuBinary(t *testing.T) string {
 		}
 	}
 
-	binPath := filepath.Join(axiBuildDir, "munsu")
+	binName := "munsu"
+	if runtime.GOOS == "windows" {
+		binName = "munsu.exe"
+	}
+	binPath := filepath.Join(axiBuildDir, binName)
 	cmd := exec.Command("go", "build", "-o", binPath, "./cmd/munsu/")
 	cmd.Dir = projectRoot
 	out, err := cmd.CombinedOutput()
@@ -74,12 +78,14 @@ func cleanupTestWatcher(t *testing.T, home string, launchedPID int) {
 	}
 
 	dead := func() bool {
-		proc, err := os.FindProcess(pid)
-		if err != nil || proc.Signal(syscall.Signal(0)) != nil {
+		if !testutil.IsProcessAlive(pid) {
 			return true
 		}
-		out, err := exec.Command("ps", "-o", "state=", "-p", strconv.Itoa(pid)).Output()
-		return err != nil || strings.HasPrefix(strings.TrimSpace(string(out)), "Z")
+		if runtime.GOOS != "windows" {
+			out, err := exec.Command("ps", "-o", "state=", "-p", strconv.Itoa(pid)).Output()
+			return err != nil || strings.HasPrefix(strings.TrimSpace(string(out)), "Z")
+		}
+		return false
 	}
 	deadline := time.Now().Add(2 * time.Second)
 	for !dead() && time.Now().Before(deadline) {
@@ -87,7 +93,7 @@ func cleanupTestWatcher(t *testing.T, home string, launchedPID int) {
 	}
 	if !dead() {
 		if proc, err := os.FindProcess(pid); err == nil {
-			_ = proc.Signal(syscall.SIGKILL)
+			_ = proc.Kill()
 		}
 		deadline = time.Now().Add(time.Second)
 		for !dead() && time.Now().Before(deadline) {
@@ -138,9 +144,6 @@ func findGoModRoot(t *testing.T) string {
 // Returns combined stdout+stderr and any execution error.
 func runMunsu(t *testing.T, homeDir string, args []string) (string, error) {
 	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("binary tests not supported on Windows")
-	}
 	binary := buildMunsuBinary(t)
 	cmdArgs := []string{"--home", homeDir}
 	cmdArgs = append(cmdArgs, args...)
@@ -150,11 +153,13 @@ func runMunsu(t *testing.T, homeDir string, args []string) (string, error) {
 }
 
 func TestCleanupTestWatcher_RecordedPIDWithoutBeacon(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("process signal test not supported on Windows")
-	}
 	home := t.TempDir()
-	cmd := exec.Command("sleep", "30")
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.Command("powershell", "-NoProfile", "-Command", "Start-Sleep -Seconds 30")
+	} else {
+		cmd = exec.Command("sleep", "30")
+	}
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start helper: %v", err)
 	}

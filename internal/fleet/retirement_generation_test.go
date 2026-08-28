@@ -8,13 +8,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // canonicalMergeTestAuth inits the home at homeDir, composes the canonical
@@ -342,8 +342,8 @@ func TestCompletedCleanupRetryOnlyRemovesProjections(t *testing.T) {
 	if len(rec.disposed) != 0 || len(rec.returned) != 0 || journals.finalized != 0 {
 		t.Fatalf("completed retry released resources: disposed=%v returned=%v journals=%d", rec.disposed, rec.returned, journals.finalized)
 	}
-	if err := child.Process.Signal(syscall.Signal(0)); err != nil {
-		t.Fatalf("reallocated process was killed: %v", err)
+	if !testutil.IsProcessAlive(child.Process.Pid) {
+		t.Fatal("reallocated process was killed")
 	}
 	if _, err := os.Stat(filepath.Join(wtDir, "sentinel")); err != nil {
 		t.Fatalf("reallocated worktree changed: %v", err)
