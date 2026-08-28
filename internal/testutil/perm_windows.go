@@ -232,8 +232,9 @@ var bypassPrivilegeNames = []string{
 	"SeChangeNotifyPrivilege",
 }
 
-// disableBypassPrivilegesWindows disables read/write/ownership bypass privileges in the
-// current process primary token. This mutates the process primary token, so every goroutine
+// disableBypassPrivilegesWindows disables the filesystem DACL-bypass privileges listed in
+// bypassPrivilegeNames (read/write/ownership and traversal, e.g. SeBackup/SeRestore/SeTakeOwnership
+// and SeChangeNotifyPrivilege) in the current process primary token. This mutates the process primary token, so every goroutine
 // in the test binary observes it. The restore is registered in t.Cleanup before any t.Fatalf
 // so it runs on every exit path including Goexit. Nesting is safe because cleanups run in LIFO
 // order (inner captured state restored first, original state last). Note: no caller may add
@@ -472,7 +473,8 @@ func makePathUnreadable(t *testing.T, path string) {
 		_ = restorePathAccessWindows(path)
 	})
 
-	// Disable read-bypass privileges in token (e.g. SeBackupPrivilege on elevated Administrator tokens)
+	// Disable DACL-bypass privileges in token (read/ownership plus traversal, e.g. SeBackupPrivilege
+	// on elevated Administrator tokens) so the deny-read ACL below binds.
 	token, prevPrivs, privLog, err := disableBypassPrivilegesWindows()
 	if err != nil {
 		t.Fatalf("MakePathUnreadable: disable bypass privileges: %v\nPrivilege Log:\n%s", err, privLog)
@@ -530,7 +532,8 @@ func makeDirectoryReadOnly(t *testing.T, path string) {
 		_ = restorePathAccessWindows(path)
 	})
 
-	// Disable write-bypass privileges in token (e.g. SeRestorePrivilege on elevated Administrator tokens)
+	// Disable DACL-bypass privileges in token (write/ownership plus traversal, e.g. SeRestorePrivilege
+	// on elevated Administrator tokens) so the read-only ACL below binds.
 	token, prevPrivs, privLog, err := disableBypassPrivilegesWindows()
 	if err != nil {
 		t.Fatalf("MakeDirectoryReadOnly: disable bypass privileges: %v\nPrivilege Log:\n%s", err, privLog)
