@@ -329,6 +329,9 @@ func TestDaemonSetsAndClearsFlag(t *testing.T) {
 	if err := waitForFile(child, flagPath, 5*time.Second); err != nil {
 		t.Fatal(err)
 	}
+	if err := waitForFile(child, lockPath, 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
 	stopAFKDaemonChild(t, child)
 
 	if stopProcessIsLossy() {
