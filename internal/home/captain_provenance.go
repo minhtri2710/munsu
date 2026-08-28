@@ -55,9 +55,6 @@ func ValidateCaptainProvenance(homePath string) (string, error) {
 		return "", fmt.Errorf("provenance marker %s has empty id", markerPath)
 	}
 	stored := strings.TrimSpace(lines[2])
-	if stored == "" {
-		return "", fmt.Errorf("provenance marker %s has empty canonical-home", markerPath)
-	}
 	actual, err := CanonicalCaptainHome(homePath)
 	if err != nil {
 		return "", fmt.Errorf("cannot verify canonical home for copied/move check: %w", err)

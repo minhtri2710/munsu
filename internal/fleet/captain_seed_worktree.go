@@ -648,9 +648,6 @@ func repairWorktreeAdminPath(finalHomePath, gitdirArg string) error {
 
 	// The worktree name is the last path component of the git dir.
 	worktreeName := filepath.Base(gitDir)
-	if worktreeName == "" {
-		return fmt.Errorf("cannot resolve worktree name from gitdir %q", gitDir)
-	}
 
 	// The git common dir is two levels up from the worktree git dir:
 	//   <common-dir>/worktrees/<name>/
