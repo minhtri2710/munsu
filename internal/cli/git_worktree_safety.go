@@ -407,7 +407,17 @@ func resolveSafetyPath(base, path string) string {
 }
 
 func resolveSafetyPathWithMode(base, path string, mode backslashMode) string {
-	if filepath.IsAbs(path) || (mode == backslashLiteral && isWindowsAbsolutePath(path)) {
+	if filepath.IsAbs(path) {
+		// Under the escape reading a Windows drive/UNC path must not be
+		// short-circuited to absolute on a Windows host: backslashes stay
+		// shell escapes, so the path is relative and joined under base. This
+		// keeps the function's result determined by mode, not by GOOS.
+		if mode == backslashEscapes && isWindowsAbsolutePath(path) {
+			return filepath.Join(base, path)
+		}
+		return path
+	}
+	if mode == backslashLiteral && isWindowsAbsolutePath(path) {
 		return path
 	}
 	return filepath.Join(base, path)

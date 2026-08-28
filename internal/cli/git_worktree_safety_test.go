@@ -565,3 +565,36 @@ func TestSafetyCheckGitWindowsBackslashReadingIsolatedFromPosix(t *testing.T) {
 		t.Fatalf("POSIX resolved path %q not joined under base %q", posixResolved, worktree)
 	}
 }
+
+// TestResolveSafetyPathModeDetermined pins resolveSafetyPathWithMode's
+// absoluteness decision to the backslash mode, not to the host's
+// filepath.IsAbs, which is the core of #686. It exercises the function
+// directly on the running host and confirms the two production readings are
+// internally consistent: under backslashLiteral a Windows-shaped --git-dir is
+// returned absolute (unchanged), and under backslashEscapes it is joined under
+// the base (treated as relative). The Windows-host cell of this property is
+// covered by TestResolveSafetyPathWindowsHostModeIsolation, which fails before
+// the fix and passes after it on a Windows runner.
+func TestResolveSafetyPathModeDetermined(t *testing.T) {
+	const base = "/repo/worktree"
+	type cell struct {
+		name string
+		path string
+		mode backslashMode
+		want string
+	}
+	cells := []cell{
+		{"windows-drive-literal", `C:\Users\soldier\.git\worktrees\wt`, backslashLiteral, `C:\Users\soldier\.git\worktrees\wt`},
+		{"windows-unc-literal", `\\server\share\.git\worktrees\wt`, backslashLiteral, `\\server\share\.git\worktrees\wt`},
+		{"windows-drive-escape", `C:\Users\soldier\.git\worktrees\wt`, backslashEscapes, filepath.Join(base, `C:\Users\soldier\.git\worktrees\wt`)},
+		{"windows-unc-escape", `\\server\share\.git\worktrees\wt`, backslashEscapes, filepath.Join(base, `\\server\share\.git\worktrees\wt`)},
+		{"relative-escape", "rel/path", backslashEscapes, filepath.Join(base, "rel/path")},
+		{"relative-literal", "rel/path", backslashLiteral, filepath.Join(base, "rel/path")},
+	}
+	for _, c := range cells {
+		got := resolveSafetyPathWithMode(base, c.path, c.mode)
+		if got != c.want {
+			t.Fatalf("resolveSafetyPathWithMode(%q, %q, %v) = %q, want %q", base, c.path, c.mode, got, c.want)
+		}
+	}
+}
