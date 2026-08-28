@@ -139,11 +139,16 @@ func TestClaimWakesRemovalErrorPropagated(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from failed queue removal, got nil")
 	}
-	// On Windows, MakeDirectoryReadOnly sets an inheritable deny-write DACL on stateDir
-	// that propagates into pre-existing child files (including .wake-claim.lock), causing
-	// os.OpenFile(..., O_RDWR) to fail earlier at "opening wake claim lock". On POSIX,
-	// chmod 0500 on stateDir allows opening the pre-created lock file but fails at
-	// os.Remove(qPath) with "removing claimed wake queue".
+	// On Windows, MakeDirectoryReadOnly sets a deny-write DACL on stateDir that denies
+	// FILE_ADD_FILE (0x2). ClaimWakes opens the lock with os.OpenFile(O_CREATE|O_RDWR),
+	// and O_CREATE maps to the Win32 OPEN_ALWAYS disposition, whose create-access check is
+	// performed against the parent stateDir. That parent-directory check is refused by the
+	// FILE_ADD_FILE denial before the lock's own DACL is consulted, so the failure surfaces
+	// at "opening wake claim lock". This is independent of ACE inheritance and of whether
+	// .wake-claim.lock already existed (it was written before MakeDirectoryReadOnly). It was
+	// empirically confirmed on windows-latest in GitHub Actions run 33141246285. On POSIX,
+	// chmod 0500 on stateDir permits opening the pre-created lock file, so the refusal instead
+	// surfaces at os.Remove(qPath) with "removing claimed wake queue".
 	wantSubstring := "removing claimed wake queue"
 	if runtime.GOOS == "windows" {
 		wantSubstring = "opening wake claim lock"
