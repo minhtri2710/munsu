@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 
@@ -381,19 +380,19 @@ Example:
 			auth, err := ctx.TaskAuthority()
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "error: verifying holds: %v\n", err)
-				os.Exit(2)
+				exitWithCode(2)
 				return nil
 			}
 			unresolvedKeys, err := verifyDecisionHolds(ctx, auth, originID, keys)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "error: verifying holds: %v\n", err)
-				os.Exit(2)
+				exitWithCode(2)
 				return nil
 			}
 
 			if len(unresolvedKeys) > 0 {
 				fmt.Fprintf(cmd.ErrOrStderr(), "unresolved decisions remain: %s\n", strings.Join(unresolvedKeys, ", "))
-				os.Exit(1)
+				exitWithCode(1)
 				return nil
 			}
 
