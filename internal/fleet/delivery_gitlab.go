@@ -90,6 +90,9 @@ type GitLabClient interface {
 	ViewMRJSON(host, owner, project string, iid int) ([]byte, error)
 	// ApprovalState fetches authoritative approval evidence from GitLab.
 	ApprovalState(host, owner, project string, iid int) (bool, error)
+
+	// MergeMR performs the typed GitLab merge mutation with the pinned request.
+	MergeMR(host, owner, project string, iid int, request DeliveryMergeRequest) error
 }
 
 // glabClient implements GitLabClient backed by glab CLI via GlabRunner.
@@ -166,17 +169,42 @@ type gitlabDeliveryProvider struct {
 // compile-time check
 var _ DeliveryProvider = (*gitlabDeliveryProvider)(nil)
 
-// ValidateMergeRequest verifies the pinned identity constraints. The current
-// glab capability cannot atomically enforce them for an irreversible merge.
+// gitlabMergeSquashValue maps the Fleet merge method to the GitLab merge API
+// parameter. GitLab's merge endpoint does not provide a rebase merge method.
+func gitlabMergeSquashValue(method string) (string, error) {
+	switch method {
+	case "merge":
+		return "false", nil
+	case "squash":
+		return "true", nil
+	default:
+		return "", fmt.Errorf("GitLab merge method %q is unsupported (merge, squash)", method)
+	}
+}
+
+// ValidateMergeRequest verifies the pinned identity constraints before the
+// irreversible API call. The base ref is checked here as the compensating
+// observation for the endpoint's lack of an expected-target parameter.
 func (p *gitlabDeliveryProvider) ValidateMergeRequest(ident domain.DeliveryIdentity, request DeliveryMergeRequest) error {
 	if request.HeadSHA == "" || request.HeadSHA != ident.HeadSHA || request.BaseRef == "" || request.BaseRef != ident.BaseRef {
 		return fmt.Errorf("GitLab merge constraints do not match the delivery identity")
 	}
-	return ErrDeliveryMergeConstraintsUnsupported
+	_, err := gitlabMergeSquashValue(request.Method)
+	return err
 }
 
 func (p *gitlabDeliveryProvider) Merge(ident domain.DeliveryIdentity, request DeliveryMergeRequest) error {
-	return p.ValidateMergeRequest(ident, request)
+	if err := p.ValidateMergeRequest(ident, request); err != nil {
+		return err
+	}
+	if p.client == nil {
+		return fmt.Errorf("GitLab delivery capability is not composed")
+	}
+	glURL, err := domain.ParseMRURL(ident.URL)
+	if err != nil {
+		return fmt.Errorf("invalid MR URL in identity: %w", err)
+	}
+	return p.client.MergeMR(glURL.Host, glURL.Owner, glURL.Project, glURL.IID, request)
 }
 
 // Observe reads the current provider state under the exact identity.
@@ -302,6 +330,32 @@ func (c *glabClient) ApprovalState(host, owner, project string, iid int) (bool, 
 		return false, nil
 	}
 	return true, nil
+}
+
+// MergeMR invokes the GitLab merge endpoint through the typed glab api path.
+// The source sha is an expected-head constraint evaluated by GitLab as part of
+// the irreversible mutation; the target branch is checked immediately before
+// this call by the delivery provider fence.
+func (c *glabClient) MergeMR(host, owner, project string, iid int, request DeliveryMergeRequest) error {
+	squash, err := gitlabMergeSquashValue(request.Method)
+	if err != nil {
+		return err
+	}
+	if request.HeadSHA == "" {
+		return fmt.Errorf("GitLab merge requires a pinned head SHA")
+	}
+	path := fmt.Sprintf("/projects/%s/merge_requests/%d/merge", url.PathEscape(owner+"/"+project), iid)
+	args := []string{
+		"api", path,
+		"--method", "PUT",
+		"--field", "sha=" + request.HeadSHA,
+		"--field", "squash=" + squash,
+	}
+	if host != "" && host != "gitlab.com" {
+		args = append(args, "--hostname", host)
+	}
+	_, err = c.runner.Run(args...)
+	return err
 }
 
 func parseGLDetailedMergeStatus(data []byte) (string, bool) {

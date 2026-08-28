@@ -10,6 +10,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 func TestGitLabClientForStateUnknownRefuses(t *testing.T) {
@@ -807,7 +808,7 @@ func TestExistingGitHubTestsStillPass(t *testing.T) {
 // --- CaptureIdentity provider routing (dispatcher removed with the legacy
 // delivery path; the typed clients own identity capture) ---
 
-func TestGitlabDeliveryProvider_RefusesAtomicMergeConstraints(t *testing.T) {
+func TestGitlabDeliveryProvider_RejectsInvalidMergeRequests(t *testing.T) {
 	called := false
 	client := &glabClient{runner: &fakeGlabRunner{runFn: func(args ...string) ([]byte, error) {
 		called = true
@@ -815,13 +816,35 @@ func TestGitlabDeliveryProvider_RefusesAtomicMergeConstraints(t *testing.T) {
 	}}}
 	provider := &gitlabDeliveryProvider{client: client}
 	ident := domain.DeliveryIdentity{URL: "https://gitlab.com/owner/project/-/merge_requests/7", HeadSHA: sampleSHA, BaseRef: "main"}
-	for _, request := range []DeliveryMergeRequest{{}, {HeadSHA: "other", BaseRef: "main"}, {HeadSHA: sampleSHA, BaseRef: "release"}, {HeadSHA: sampleSHA, BaseRef: "main"}} {
+	staleSHA := sampleSHA[:len(sampleSHA)-1] + "0"
+	for _, request := range []DeliveryMergeRequest{
+		{},
+		{Method: "merge", HeadSHA: staleSHA, BaseRef: "main"},
+		{Method: "merge", HeadSHA: sampleSHA, BaseRef: "release"},
+		{Method: "rebase", HeadSHA: sampleSHA, BaseRef: "main"},
+	} {
 		if err := provider.ValidateMergeRequest(ident, request); err == nil {
 			t.Fatalf("request %+v unexpectedly accepted", request)
 		}
 	}
 	if called {
 		t.Fatal("runner invoked during constraint validation")
+	}
+}
+
+func TestGitlabDeliveryProvider_MergeRefusesUncomposedOrInvalidIdentity(t *testing.T) {
+	request := DeliveryMergeRequest{Method: "merge", HeadSHA: sampleSHA, BaseRef: "main"}
+	ident := domain.DeliveryIdentity{URL: "https://gitlab.com/owner/project/-/merge_requests/7", HeadSHA: sampleSHA, BaseRef: "main"}
+	if err := (&gitlabDeliveryProvider{}).Merge(ident, request); err == nil || !strings.Contains(err.Error(), "not composed") {
+		t.Fatalf("Merge error = %v, want uncomposed capability refusal", err)
+	}
+	provider := &gitlabDeliveryProvider{client: &glabClient{runner: &fakeGlabRunner{runFn: func(args ...string) ([]byte, error) {
+		t.Fatal("runner invoked for invalid MR URL")
+		return nil, nil
+	}}}}
+	ident.URL = "not-a-gitlab-mr-url"
+	if err := provider.Merge(ident, request); err == nil || !strings.Contains(err.Error(), "invalid MR URL") {
+		t.Fatalf("Merge error = %v, want invalid-URL refusal", err)
 	}
 }
 
@@ -882,40 +905,204 @@ func TestGitlabDeliveryProvider_RejectsPipelineHeadMismatch(t *testing.T) {
 	}
 }
 
-// TestGitlabDeliveryProvider_UsesTypedCapabilityOnly proves the GitLab
-// delivery adapter routes the irreversible mutation and observation through
-// the typed GitLabClient methods only.
-func TestGitlabDeliveryProvider_UsesTypedCapabilityOnly(t *testing.T) {
-	client := &glabClient{runner: &fakeGlabRunner{
-		runFn: func(args ...string) ([]byte, error) {
-			if len(args) >= 2 && args[0] == "api" && strings.HasSuffix(args[1], "/approvals") {
-				return []byte(`{"approved":true,"approved_by":[{"user":{"username":"reviewer"}}]}`), nil
-			}
-			if len(args) >= 2 && args[0] == "api" {
-				return []byte(`{"sha":"abc123def456abc123def456abc123def456abc1","source_branch":"feature","target_branch":"main","state":"opened","detailed_merge_status":"mergeable","head_pipeline":{"status":"success","sha":"abc123def456abc123def456abc123def456abc1"}}`), nil
-			}
-			return []byte("merged"), nil
-		},
+// TestGitlabDeliveryProvider_MergesThroughTypedCapability proves an OPEN MR
+// with complete current-head evidence reaches only the typed glab api merge
+// endpoint and carries the authorized source SHA.
+func TestGitlabDeliveryProvider_MergesThroughTypedCapability(t *testing.T) {
+	var mergeArgs []string
+	mrJSON := fmt.Sprintf(`{"sha":"%s","source_branch":"feature","target_branch":"main","state":"opened","detailed_merge_status":"mergeable","head_pipeline":{"status":"success","sha":"%s"}}`, sampleSHA, sampleSHA)
+	runner := &fakeGlabRunner{runFn: func(args ...string) ([]byte, error) {
+		if len(args) >= 2 && args[0] == "api" && strings.HasSuffix(args[1], "/approvals") {
+			return []byte(`{"approved":true,"approved_by":[{"user":{"username":"reviewer"}}]}`), nil
+		}
+		if len(args) >= 4 && args[0] == "api" && args[2] == "--method" && args[3] == "PUT" {
+			mergeArgs = append([]string(nil), args...)
+			return []byte(`{"state":"merged"}`), nil
+		}
+		return []byte(mrJSON), nil
 	}}
-	provider := &gitlabDeliveryProvider{client: client}
+	provider := &gitlabDeliveryProvider{client: &glabClient{runner: runner}}
 	ident := domain.DeliveryIdentity{
-		Provider: "gitlab", Owner: "glowner", Repo: "glrepo", Number: 7,
-		URL:     "https://gitlab.com/glowner/glrepo/-/merge_requests/7",
-		BaseRef: "main", HeadRef: "feature", HeadSHA: "abc123def456abc123def456abc123def456abc1",
+		Provider: "gitlab", Owner: "owner", Repo: "project", Number: 7,
+		URL:     "https://gitlab.example.com/owner/project/-/merge_requests/7",
+		BaseRef: "main", HeadRef: "feature", HeadSHA: sampleSHA,
 	}
 	obs, err := provider.Observe(ident)
 	if err != nil {
 		t.Fatalf("Observe: %v", err)
 	}
-	if obs.State != "OPEN" || obs.HeadSHA != "abc123def456abc123def456abc123def456abc1" {
-		t.Fatalf("observation = %+v", obs)
+	if obs.State != "OPEN" || obs.HeadSHA != sampleSHA || obs.BaseRef != "main" || obs.Mergeability != DeliveryMergeabilityAllowed {
+		t.Fatalf("observation = %+v, want complete mergeable OPEN evidence", obs)
 	}
-	// The MR target branch feeds the pre-mutation base ref fence: an
-	// observation without it cannot reject a base changed since capture.
-	if obs.BaseRef != "main" {
-		t.Fatalf("observation base ref = %q, want the MR target_branch %q", obs.BaseRef, "main")
+	request := DeliveryMergeRequest{Method: "squash", HeadSHA: ident.HeadSHA, BaseRef: ident.BaseRef}
+	if err := provider.ValidateMergeRequest(ident, request); err != nil {
+		t.Fatalf("ValidateMergeRequest: %v", err)
 	}
-	if err := provider.Merge(ident, DeliveryMergeRequest{Method: "squash", HeadSHA: ident.HeadSHA, BaseRef: ident.BaseRef}); err == nil {
-		t.Fatal("expected unsupported atomic merge constraints")
+	if err := provider.Merge(ident, request); err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	expected := []string{
+		"api", "/projects/owner%2Fproject/merge_requests/7/merge",
+		"--method", "PUT", "--field", "sha=" + sampleSHA,
+		"--field", "squash=true", "--hostname", "gitlab.example.com",
+	}
+	if len(mergeArgs) != len(expected) {
+		t.Fatalf("merge args = %#v, want %#v", mergeArgs, expected)
+	}
+	for i := range expected {
+		if mergeArgs[i] != expected[i] {
+			t.Fatalf("merge arg %d = %q, want %q; args = %#v", i, mergeArgs[i], expected[i], mergeArgs)
+		}
+	}
+}
+
+func TestDeliverGitLabOpenMRMergesThroughPinnedAPI(t *testing.T) {
+	c, homeDir := newFleetCanonical(t)
+	taskID := "t-gitlab-open"
+	mustWorkingDeliveryTask(t, c, taskID)
+	request := deliverRequest()
+	request.Identity.Provider = "gitlab"
+	request.Identity.Owner = "owner"
+	request.Identity.Repo = "project"
+	request.Identity.URL = "https://gitlab.example.com/owner/project/-/merge_requests/7"
+	const mergedSHA = "0123456789abcdef0123456789abcdef01234567"
+	state := "opened"
+	var mergeArgs []string
+	var mergeAPICalls int
+	runner := &fakeGlabRunner{runFn: func(args ...string) ([]byte, error) {
+		if len(args) >= 2 && args[0] == "api" && strings.HasSuffix(args[1], "/approvals") {
+			return []byte(`{"approved":true,"approved_by":[{"user":{"username":"reviewer"}}]}`), nil
+		}
+		if len(args) >= 4 && args[0] == "api" && args[2] == "--method" && args[3] == "PUT" {
+			mergeAPICalls++
+			mergeArgs = append([]string(nil), args...)
+			state = "merged"
+			return []byte(`{"state":"merged"}`), nil
+		}
+		if state == "merged" {
+			return []byte(fmt.Sprintf(`{"sha":"%s","target_branch":"main","state":"merged","merge_commit_sha":"%s"}`, sampleSHA, mergedSHA)), nil
+		}
+		return []byte(fmt.Sprintf(`{"sha":"%s","source_branch":"feature","target_branch":"main","state":"opened","detailed_merge_status":"mergeable","head_pipeline":{"status":"success","sha":"%s"}}`, sampleSHA, sampleSHA)), nil
+	}}
+	provider := &gitlabDeliveryProvider{client: &glabClient{runner: runner}}
+	old := deliveryProviderFor
+	deliveryProviderFor = func(domain.DeliveryIdentity) (DeliveryProvider, error) { return provider, nil }
+	t.Cleanup(func() { deliveryProviderFor = old })
+
+	result, err := Deliver(homeDir, taskID, request)
+	if err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if result == nil || result.Status != taskauthority.DeliveryOutcomeCompleted {
+		t.Fatalf("result = %+v, want completed", result)
+	}
+	if mergeAPICalls != 1 {
+		t.Fatalf("API merge calls = %d, want exactly one", mergeAPICalls)
+	}
+	expected := []string{
+		"api", "/projects/owner%2Fproject/merge_requests/7/merge",
+		"--method", "PUT", "--field", "sha=" + sampleSHA,
+		"--field", "squash=true", "--hostname", "gitlab.example.com",
+	}
+	if len(mergeArgs) != len(expected) {
+		t.Fatalf("merge args = %#v, want %#v", mergeArgs, expected)
+	}
+	for i := range expected {
+		if mergeArgs[i] != expected[i] {
+			t.Fatalf("merge arg %d = %q, want %q; args = %#v", i, mergeArgs[i], expected[i], mergeArgs)
+		}
+	}
+}
+
+func TestGlabClient_MergeMR_RefusesMissingPinnedSHA(t *testing.T) {
+	called := false
+	client := &glabClient{runner: &fakeGlabRunner{runFn: func(args ...string) ([]byte, error) {
+		called = true
+		return nil, nil
+	}}}
+	if err := client.MergeMR("gitlab.com", "owner", "project", 7, DeliveryMergeRequest{Method: "merge"}); err == nil || !strings.Contains(err.Error(), "requires a pinned head SHA") {
+		t.Fatalf("MergeMR error = %v, want missing-head refusal", err)
+	}
+	if called {
+		t.Fatal("runner invoked without a pinned head SHA")
+	}
+}
+
+func TestGlabClient_MergeMR_PropagatesStaleSHARefusal(t *testing.T) {
+	staleSHA := sampleSHA[:len(sampleSHA)-1] + "0"
+	var mergeArgs []string
+	client := &glabClient{runner: &fakeGlabRunner{runFn: func(args ...string) ([]byte, error) {
+		mergeArgs = append([]string(nil), args...)
+		return nil, errors.New("GitLab API refused: sha does not match current head")
+	}}}
+	err := client.MergeMR("gitlab.com", "owner", "project", 7, DeliveryMergeRequest{Method: "merge", HeadSHA: staleSHA, BaseRef: "main"})
+	if err == nil || !strings.Contains(err.Error(), "sha does not match current head") {
+		t.Fatalf("MergeMR error = %v, want provider stale-SHA refusal", err)
+	}
+	expected := []string{
+		"api", "/projects/owner%2Fproject/merge_requests/7/merge",
+		"--method", "PUT", "--field", "sha=" + staleSHA,
+		"--field", "squash=false",
+	}
+	if len(mergeArgs) != len(expected) {
+		t.Fatalf("merge args = %#v, want %#v", mergeArgs, expected)
+	}
+	for i := range expected {
+		if mergeArgs[i] != expected[i] {
+			t.Fatalf("merge arg %d = %q, want %q; args = %#v", i, mergeArgs[i], expected[i], mergeArgs)
+		}
+	}
+}
+
+type recordingDeliveryProvider struct {
+	DeliveryProvider
+	validateCalls int
+	mergeCalls    int
+}
+
+func (p *recordingDeliveryProvider) ValidateMergeRequest(ident domain.DeliveryIdentity, request DeliveryMergeRequest) error {
+	p.validateCalls++
+	return p.DeliveryProvider.ValidateMergeRequest(ident, request)
+}
+
+func (p *recordingDeliveryProvider) Merge(ident domain.DeliveryIdentity, request DeliveryMergeRequest) error {
+	p.mergeCalls++
+	return p.DeliveryProvider.Merge(ident, request)
+}
+
+func TestDeliverGitLabRefusesStaleObservedHeadBeforeMerge(t *testing.T) {
+	c, homeDir := newFleetCanonical(t)
+	taskID := "t-gitlab-stale"
+	mustWorkingDeliveryTask(t, c, taskID)
+	staleSHA := sampleSHA[:len(sampleSHA)-1] + "0"
+	request := deliverRequest()
+	request.Identity.Provider = "gitlab"
+	request.Identity.Owner = "owner"
+	request.Identity.Repo = "project"
+	request.Identity.URL = "https://gitlab.com/owner/project/-/merge_requests/7"
+	var mergeAPICalls int
+	mrJSON := fmt.Sprintf(`{"sha":"%s","source_branch":"feature","target_branch":"main","state":"opened","detailed_merge_status":"mergeable","head_pipeline":{"status":"success","sha":"%s"}}`, staleSHA, staleSHA)
+	runner := &fakeGlabRunner{runFn: func(args ...string) ([]byte, error) {
+		if len(args) >= 2 && args[0] == "api" && strings.HasSuffix(args[1], "/approvals") {
+			return []byte(`{"approved":true,"approved_by":[{"user":{"username":"reviewer"}}]}`), nil
+		}
+		if len(args) >= 4 && args[0] == "api" && args[2] == "--method" && args[3] == "PUT" {
+			mergeAPICalls++
+			return []byte(`{"state":"merged"}`), nil
+		}
+		return []byte(mrJSON), nil
+	}}
+	inner := &gitlabDeliveryProvider{client: &glabClient{runner: runner}}
+	provider := &recordingDeliveryProvider{DeliveryProvider: inner}
+	old := deliveryProviderFor
+	deliveryProviderFor = func(domain.DeliveryIdentity) (DeliveryProvider, error) { return provider, nil }
+	t.Cleanup(func() { deliveryProviderFor = old })
+
+	result, err := Deliver(homeDir, taskID, request)
+	if err == nil || result != nil || !strings.Contains(err.Error(), "provider head changed since capture") {
+		t.Fatalf("result=%+v err=%v, want stale observed head refusal", result, err)
+	}
+	if provider.validateCalls != 0 || provider.mergeCalls != 0 || mergeAPICalls != 0 {
+		t.Fatalf("validate calls=%d, merge calls=%d, API merge calls=%d; want all zero", provider.validateCalls, provider.mergeCalls, mergeAPICalls)
 	}
 }
