@@ -16,7 +16,10 @@ import (
 
 const (
 	ownerAllAccessWindows      = 0x001F01FF
-	denyReadAccessWindows      = windows.FILE_GENERIC_READ | windows.FILE_GENERIC_EXECUTE
+	fileReadDataWindows        = 0x00000001 // FILE_READ_DATA / FILE_LIST_DIRECTORY
+	fileReadEAWindows          = 0x00000008 // FILE_READ_EA
+	fileExecuteWindows         = 0x00000020 // FILE_EXECUTE / FILE_TRAVERSE
+	fileReadAttributesWindows  = 0x00000080 // FILE_READ_ATTRIBUTES
 	fileWriteDataWindows       = 0x00000002 // FILE_WRITE_DATA / FILE_ADD_FILE
 	fileAppendDataWindows      = 0x00000004 // FILE_APPEND_DATA / FILE_ADD_SUBDIRECTORY
 	fileWriteEAWindows         = 0x00000010 // FILE_WRITE_EA
@@ -26,11 +29,18 @@ const (
 	genericWriteWindows        = 0x40000000 // GENERIC_WRITE
 	genericAllWindows          = 0x10000000 // GENERIC_ALL
 
-	allWriteRightsWindows = fileWriteDataWindows | fileAppendDataWindows | fileWriteEAWindows |
-		fileDeleteChildWindows | fileWriteAttributesWindows | deleteRightWindows |
-		genericWriteWindows | genericAllWindows
+	// denyReadAccessWindows defines specific read and execute rights mapped for file objects.
+	// Generic bits (GENERIC_READ, GENERIC_ALL) are explicitly excluded so that
+	// WRITE_DAC, WRITE_OWNER, and DELETE are not inadvertently denied.
+	denyReadAccessWindows = fileReadDataWindows | fileReadEAWindows | fileExecuteWindows | fileReadAttributesWindows
 
-	denyWriteAccessWindows = windows.FILE_GENERIC_WRITE | fileDeleteChildWindows | windows.DELETE
+	// denyWriteAccessWindows defines specific write and delete rights mapped for file objects.
+	// Generic bits (GENERIC_WRITE, GENERIC_ALL) are explicitly excluded so that
+	// WRITE_DAC, READ_CONTROL, and non-write rights are not denied.
+	denyWriteAccessWindows = fileWriteDataWindows | fileAppendDataWindows | fileWriteEAWindows |
+		fileDeleteChildWindows | fileWriteAttributesWindows | deleteRightWindows
+
+	allWriteRightsWindows = denyWriteAccessWindows | genericWriteWindows | genericAllWindows
 )
 
 func currentUserSID() (*windows.SID, error) {
@@ -86,10 +96,7 @@ func buildDenyReadDACLWindows(sid *windows.SID, isDir bool) (*windows.ACL, error
 	sidLen := int(windows.GetLengthSid(sid))
 	sidBytes := unsafe.Slice((*byte)(unsafe.Pointer(sid)), sidLen)
 
-	// Specific read and execute rights mapped for file system objects.
-	// Generic bits (GENERIC_READ, GENERIC_ALL) are explicitly excluded so that
-	// WRITE_DAC, WRITE_OWNER, and DELETE are not inadvertently denied.
-	denyMask := uint32(windows.FILE_READ_DATA | windows.FILE_READ_ATTRIBUTES | windows.FILE_READ_EA | windows.FILE_EXECUTE)
+	denyMask := uint32(denyReadAccessWindows)
 
 	grantMask := uint32(windows.WRITE_DAC | windows.WRITE_OWNER | windows.READ_CONTROL |
 		windows.FILE_GENERIC_WRITE | windows.DELETE)
@@ -141,16 +148,17 @@ func buildDenyReadDACLWindows(sid *windows.SID, isDir bool) (*windows.ACL, error
 	return (*windows.ACL)(unsafe.Pointer(&buf[0])), nil
 }
 
-func buildReadOnlyDACLWindows(sid *windows.SID) (*windows.ACL, error) {
+func buildReadOnlyDACLWindows(sid *windows.SID, isDir bool) (*windows.ACL, error) {
 	sidLen := int(windows.GetLengthSid(sid))
 	sidBytes := unsafe.Slice((*byte)(unsafe.Pointer(sid)), sidLen)
 
-	// Specific write and delete rights mapped for file system objects.
-	// Generic bits (GENERIC_WRITE, GENERIC_ALL) are explicitly excluded so that
-	// WRITE_DAC, READ_CONTROL, and non-write rights are not denied.
-	denyMask := uint32(fileWriteDataWindows | fileAppendDataWindows | fileWriteEAWindows |
-		fileDeleteChildWindows | fileWriteAttributesWindows | deleteRightWindows)
+	denyMask := uint32(denyWriteAccessWindows)
 	grantMask := uint32(windows.FILE_GENERIC_READ | windows.FILE_GENERIC_EXECUTE | windows.WRITE_DAC | windows.READ_CONTROL)
+
+	aceFlags := byte(0)
+	if isDir {
+		aceFlags = byte(windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE)
+	}
 
 	ace0Size := (8 + sidLen + 3) &^ 3
 	ace1Size := (8 + sidLen + 3) &^ 3
@@ -169,7 +177,7 @@ func buildReadOnlyDACLWindows(sid *windows.SID) (*windows.ACL, error) {
 
 	// ACE 0: ACCESS_DENIED_ACE for current user SID
 	buf[offset] = 1 // ACCESS_DENIED_ACE_TYPE
-	buf[offset+1] = 0
+	buf[offset+1] = aceFlags
 	*(*uint16)(unsafe.Pointer(&buf[offset+2])) = uint16(ace0Size)
 	*(*uint32)(unsafe.Pointer(&buf[offset+4])) = denyMask
 	copy(buf[offset+8:], sidBytes)
@@ -177,7 +185,7 @@ func buildReadOnlyDACLWindows(sid *windows.SID) (*windows.ACL, error) {
 
 	// ACE 1: ACCESS_ALLOWED_ACE for current user SID
 	buf[offset] = 0 // ACCESS_ALLOWED_ACE_TYPE
-	buf[offset+1] = 0
+	buf[offset+1] = aceFlags
 	*(*uint16)(unsafe.Pointer(&buf[offset+2])) = uint16(ace1Size)
 	*(*uint32)(unsafe.Pointer(&buf[offset+4])) = grantMask
 	copy(buf[offset+8:], sidBytes)
@@ -299,7 +307,7 @@ func makeDirectoryReadOnly(t *testing.T, path string) {
 		t.Fatalf("MakeDirectoryReadOnly: %v", err)
 	}
 
-	dacl, err := buildReadOnlyDACLWindows(sid)
+	dacl, err := buildReadOnlyDACLWindows(sid, true)
 	if err != nil {
 		t.Fatalf("MakeDirectoryReadOnly: build ACL for %s: %v", path, err)
 	}

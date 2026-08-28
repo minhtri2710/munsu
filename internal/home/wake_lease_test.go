@@ -139,9 +139,11 @@ func TestClaimWakesRemovalErrorPropagated(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from failed queue removal, got nil")
 	}
-	// On Windows, the read-only directory DACL denies opening/creating the lock file
-	// in stateDir earlier in ClaimWakes, whereas on POSIX chmod 0500 on stateDir
-	// allows opening the pre-created lock file but fails at removing qPath.
+	// On Windows, MakeDirectoryReadOnly sets an inheritable deny-write DACL on stateDir
+	// that propagates into pre-existing child files (including .wake-claim.lock), causing
+	// os.OpenFile(..., O_RDWR) to fail earlier at "opening wake claim lock". On POSIX,
+	// chmod 0500 on stateDir allows opening the pre-created lock file but fails at
+	// os.Remove(qPath) with "removing claimed wake queue".
 	wantSubstring := "removing claimed wake queue"
 	if runtime.GOOS == "windows" {
 		wantSubstring = "opening wake claim lock"
