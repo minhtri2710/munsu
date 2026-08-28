@@ -338,9 +338,10 @@ func TestClassifyIdentity_NotDirectory(t *testing.T) {
 
 func TestGateRefuseFromCWD_EnvPresent(t *testing.T) {
 	t.Setenv("NO_MISTAKES_GATE", "1")
+	t.Setenv("PATH", t.TempDir())
 	err := GateRefuseFromCWD()
-	if err == nil || !strings.Contains(err.Error(), "gate agent refused") {
-		t.Fatalf("GateRefuseFromCWD err = %v, want gate agent refused", err)
+	if err == nil || !strings.Contains(err.Error(), "classifying identity:") {
+		t.Fatalf("GateRefuseFromCWD err = %v, want classifying identity error", err)
 	}
 }
 
