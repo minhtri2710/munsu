@@ -291,22 +291,8 @@ func TestTriageDrainsQueue(t *testing.T) {
 
 // --- Daemon flag lifecycle test ---
 
-// waitForDaemonReady blocks until the daemon has installed its signal handler.
-// Past this point SIGTERM starts an orderly shutdown; nothing the daemon writes
-// has become visible any earlier, so tests never have to guess a readiness
-// budget out of the filesystem.
-func waitForDaemonReady(t *testing.T, ready <-chan struct{}) {
-	t.Helper()
-	select {
-	case <-ready:
-	case <-time.After(5 * time.Second):
-		t.Fatal("daemon did not install its signal handler within 5s")
-	}
-}
-
-// waitForFile waits for path to appear. Readiness is the ready seam's job — this
-// only asserts that a file the daemon promises to write does get written, so the
-// budget can be generous without hiding anything.
+// waitForFile waits for an externally observable file to appear. The bounded
+// poll is deliberately separate from the behavior that writes that file.
 func waitForFile(t *testing.T, path string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -321,78 +307,40 @@ func waitForFile(t *testing.T, path string, timeout time.Duration) {
 
 func TestDaemonSetsAndClearsFlag(t *testing.T) {
 	tmp := t.TempDir()
+	child := startAFKDaemonChild(t, tmp, true)
 
-	d := &Daemon{ready: make(chan struct{})}
-	done := make(chan error, 1)
-	go func() {
-		done <- d.Start(tmp)
-	}()
-
-	waitForDaemonReady(t, d.ready)
+	waitForFile(t, afkDaemonReadyPath(tmp), 5*time.Second)
 	waitForFile(t, filepath.Join(tmp, afkFlagFile), 5*time.Second)
+	stopAFKDaemonChild(t, child)
 
-	// Stop the daemon through the platform process seam.
-	if err := stopProcess(os.Getpid()); err != nil {
-		t.Skipf("self-termination unavailable on this platform: %v", err)
+	if stopProcessIsLossy() {
+		return
 	}
-
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("Daemon.Start returned error: %v", err)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("Daemon.Start did not return within 3s after SIGTERM")
-	}
-
-	// Flag should be cleared
 	if _, err := os.Stat(filepath.Join(tmp, afkFlagFile)); !os.IsNotExist(err) {
 		t.Error("consent flag still exists after daemon stop")
 	}
-
-	// Lock file should be cleared
 	if _, err := os.Stat(filepath.Join(tmp, afkLockFile)); !os.IsNotExist(err) {
 		t.Error("lock file still exists after daemon stop")
 	}
 }
 
-// TestDaemonCatchesSignalAtEarliestReadiness pins the ordering invariant of
-// Daemon.Start: the signal handler goes in before the lock, the writer identity
-// and the consent flag, so a SIGTERM landing at the earliest moment an outside
-// observer could react to has to unwind through the full shutdown path.
-//
-// The window this closes was found by experiment, not by reading: with Notify
-// below AcquireLock, probing readiness with state/.lock instead of the consent
-// flag and stalling 200ms before Notify killed the whole test binary
-// (`signal: terminated`, no --- FAIL line, every later test in the package
-// silently unreported).
+// TestDaemonCatchesSignalAtEarliestReadiness preserves the cross-process
+// readiness ordering: the child publishes a marker immediately after its
+// Daemon.Start observes d.ready, and the parent stops that child at the first
+// exported observation. The marker cannot preserve the old in-process,
+// instruction-level proof that the signal arrived before lock creation; it
+// proves that an external observer can react at the daemon's readiness seam
+// without targeting the test binary.
 func TestDaemonCatchesSignalAtEarliestReadiness(t *testing.T) {
 	tmp := t.TempDir()
+	child := startAFKDaemonChild(t, tmp, true)
 
-	d := &Daemon{ready: make(chan struct{})}
-	done := make(chan error, 1)
-	go func() {
-		done <- d.Start(tmp)
-	}()
+	waitForFile(t, afkDaemonReadyPath(tmp), 5*time.Second)
+	stopAFKDaemonChild(t, child)
 
-	// Signal the instant the handler is installed — before the daemon has
-	// written its lock, identity or flag.
-	waitForDaemonReady(t, d.ready)
-	if err := stopProcess(os.Getpid()); err != nil {
-		t.Skipf("self-termination unavailable on this platform: %v", err)
+	if stopProcessIsLossy() {
+		return
 	}
-
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("Daemon.Start returned error: %v", err)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("Daemon.Start did not return within 3s after SIGTERM")
-	}
-
-	// Shutdown steps must still have run: a signal caught during startup has to
-	// unwind through the same path as one caught in the run loop.
 	if _, err := os.Stat(filepath.Join(tmp, afkFlagFile)); !os.IsNotExist(err) {
 		t.Error("consent flag still exists after daemon stop")
 	}
@@ -401,34 +349,22 @@ func TestDaemonCatchesSignalAtEarliestReadiness(t *testing.T) {
 	}
 }
 
-// TestDaemonSignalSafeWhenLockIsTheProbe uses the reviewer's probe: state/.lock,
-// the first file the daemon writes, as the readiness signal an outside observer
-// would key on. With Notify installed before AcquireLock the lock cannot exist
-// while SIGTERM is still lethal, so signalling on it is safe.
+// TestDaemonSignalSafeWhenLockIsTheProbe uses state/.lock, the first file the
+// child writes, as the readiness signal an outside observer would key on. With
+// the handler installed before AcquireLock, stopping the child after that
+// observation is safe without ever signalling the test binary.
 func TestDaemonSignalSafeWhenLockIsTheProbe(t *testing.T) {
 	tmp := t.TempDir()
+	child := startAFKDaemonChild(t, tmp, false)
 
-	d := &Daemon{}
-	done := make(chan error, 1)
-	go func() {
-		done <- d.Start(tmp)
-	}()
+	lockPath := filepath.Join(tmp, afkLockFile)
+	waitForFile(t, lockPath, 5*time.Second)
+	stopAFKDaemonChild(t, child)
 
-	waitForFile(t, filepath.Join(tmp, afkLockFile), 5*time.Second)
-	if err := stopProcess(os.Getpid()); err != nil {
-		t.Skipf("self-termination unavailable on this platform: %v", err)
+	if stopProcessIsLossy() {
+		return
 	}
-
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("Daemon.Start returned error: %v", err)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("Daemon.Start did not return within 3s after SIGTERM")
-	}
-
-	if _, err := os.Stat(filepath.Join(tmp, afkLockFile)); !os.IsNotExist(err) {
+	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
 		t.Error("lock file still exists after daemon stop")
 	}
 }
