@@ -1106,3 +1106,77 @@ func TestDeliverGitLabRefusesStaleObservedHeadBeforeMerge(t *testing.T) {
 		t.Fatalf("validate calls=%d, merge calls=%d, API merge calls=%d; want all zero", provider.validateCalls, provider.mergeCalls, mergeAPICalls)
 	}
 }
+
+// TestDeliverGitLabOpenMRRefusesNonMergeable proves that after the OPEN merge
+// capability was restored, an OPEN MR whose current detailed_merge_status is not
+// mergeable still fails closed before any irreversible mutation.
+func TestDeliverGitLabOpenMRRefusesNonMergeable(t *testing.T) {
+	c, homeDir := newFleetCanonical(t)
+	taskID := "t-gitlab-blocked"
+	mustWorkingDeliveryTask(t, c, taskID)
+	request := deliverRequest()
+	request.Identity.Provider = "gitlab"
+	request.Identity.Owner = "owner"
+	request.Identity.Repo = "project"
+	request.Identity.URL = "https://gitlab.com/owner/project/-/merge_requests/7"
+	var mergeAPICalls int
+	runner := &fakeGlabRunner{runFn: func(args ...string) ([]byte, error) {
+		if len(args) >= 2 && args[0] == "api" && strings.HasSuffix(args[1], "/approvals") {
+			return []byte(`{"approved":true,"approved_by":[{"user":{"username":"reviewer"}}]}`), nil
+		}
+		if len(args) >= 4 && args[0] == "api" && args[2] == "--method" && args[3] == "PUT" {
+			mergeAPICalls++
+			return []byte(`{"state":"merged"}`), nil
+		}
+		return []byte(fmt.Sprintf(`{"sha":"%s","source_branch":"feature","target_branch":"main","state":"opened","detailed_merge_status":"blocked","head_pipeline":{"status":"success","sha":"%s"}}`, sampleSHA, sampleSHA)), nil
+	}}
+	provider := &gitlabDeliveryProvider{client: &glabClient{runner: runner}}
+	old := deliveryProviderFor
+	deliveryProviderFor = func(domain.DeliveryIdentity) (DeliveryProvider, error) { return provider, nil }
+	t.Cleanup(func() { deliveryProviderFor = old })
+
+	result, err := Deliver(homeDir, taskID, request)
+	if err == nil || result != nil || !strings.Contains(err.Error(), "not mergeable") {
+		t.Fatalf("result=%+v err=%v, want non-mergeable OPEN refusal", result, err)
+	}
+	if mergeAPICalls != 0 {
+		t.Fatalf("API merge calls = %d, want zero (no irreversible mutation)", mergeAPICalls)
+	}
+}
+
+// TestDeliverGitLabOpenMRRefusesEmptyApprovalSet proves that after the OPEN
+// merge capability was restored, an OPEN MR whose approval set is empty still
+// fails closed before any irreversible mutation.
+func TestDeliverGitLabOpenMRRefusesEmptyApprovalSet(t *testing.T) {
+	c, homeDir := newFleetCanonical(t)
+	taskID := "t-gitlab-noapprovers"
+	mustWorkingDeliveryTask(t, c, taskID)
+	request := deliverRequest()
+	request.Identity.Provider = "gitlab"
+	request.Identity.Owner = "owner"
+	request.Identity.Repo = "project"
+	request.Identity.URL = "https://gitlab.com/owner/project/-/merge_requests/7"
+	var mergeAPICalls int
+	runner := &fakeGlabRunner{runFn: func(args ...string) ([]byte, error) {
+		if len(args) >= 2 && args[0] == "api" && strings.HasSuffix(args[1], "/approvals") {
+			return []byte(`{"approved":false,"approved_by":[]}`), nil
+		}
+		if len(args) >= 4 && args[0] == "api" && args[2] == "--method" && args[3] == "PUT" {
+			mergeAPICalls++
+			return []byte(`{"state":"merged"}`), nil
+		}
+		return []byte(fmt.Sprintf(`{"sha":"%s","source_branch":"feature","target_branch":"main","state":"opened","detailed_merge_status":"mergeable","head_pipeline":{"status":"success","sha":"%s"}}`, sampleSHA, sampleSHA)), nil
+	}}
+	provider := &gitlabDeliveryProvider{client: &glabClient{runner: runner}}
+	old := deliveryProviderFor
+	deliveryProviderFor = func(domain.DeliveryIdentity) (DeliveryProvider, error) { return provider, nil }
+	t.Cleanup(func() { deliveryProviderFor = old })
+
+	result, err := Deliver(homeDir, taskID, request)
+	if err == nil || result != nil {
+		t.Fatalf("result=%+v err=%v, want empty-approval-set OPEN refusal", result, err)
+	}
+	if mergeAPICalls != 0 {
+		t.Fatalf("API merge calls = %d, want zero (no irreversible mutation)", mergeAPICalls)
+	}
+}
