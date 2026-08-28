@@ -123,3 +123,50 @@ func TestVerifyOwnerReadOnly_RejectsNarrowDenyWithBroadAllowWindows(t *testing.T
 		t.Fatal("verifyOwnerReadOnlyWindows accepted narrow-deny + broad-allow DACL, want error")
 	}
 }
+
+// TestMakePathUnreadable_CleanupRestoresAccess_Windows confirms that makePathUnreadable
+// genuinely denies read access to files and directories on Windows, and that
+// restorePathAccessWindows successfully restores read and delete access.
+func TestMakePathUnreadable_CleanupRestoresAccess_Windows(t *testing.T) {
+	temp := t.TempDir()
+	filePath := filepath.Join(temp, "secret.txt")
+	if err := os.WriteFile(filePath, []byte("content"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	dirPath := filepath.Join(temp, "secret_dir")
+	if err := os.MkdirAll(dirPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+	childPath := filepath.Join(dirPath, "child.txt")
+	if err := os.WriteFile(childPath, []byte("child"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Test unreadable file
+	makePathUnreadable(t, filePath)
+	if f, err := os.Open(filePath); err == nil {
+		f.Close()
+		t.Fatalf("file %s remains readable after makePathUnreadable", filePath)
+	}
+	if err := restorePathAccessWindows(filePath); err != nil {
+		t.Fatalf("restorePathAccessWindows on file: %v", err)
+	}
+	data, err := os.ReadFile(filePath)
+	if err != nil || string(data) != "content" {
+		t.Fatalf("os.ReadFile after restore failed: err=%v, data=%q", err, string(data))
+	}
+
+	// 2. Test unreadable directory
+	makePathUnreadable(t, dirPath)
+	if _, err := os.ReadDir(dirPath); err == nil {
+		t.Fatalf("directory %s remains readable after makePathUnreadable", dirPath)
+	}
+	if err := restorePathAccessWindows(dirPath); err != nil {
+		t.Fatalf("restorePathAccessWindows on directory: %v", err)
+	}
+	entries, err := os.ReadDir(dirPath)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("os.ReadDir after restore failed: err=%v, entries=%+v", err, entries)
+	}
+}

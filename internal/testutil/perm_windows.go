@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"unsafe"
 
@@ -73,6 +74,173 @@ func restorePathAccessWindows(path string) error {
 	)
 }
 
+func buildDenyReadDACLWindows(sid *windows.SID, isDir bool) (*windows.ACL, error) {
+	everyone, err := windows.StringToSid("S-1-1-0")
+	if err != nil {
+		return nil, fmt.Errorf("buildDenyReadDACL: StringToSid(Everyone): %w", err)
+	}
+
+	everyoneLen := int(windows.GetLengthSid(everyone))
+	everyoneBytes := unsafe.Slice((*byte)(unsafe.Pointer(everyone)), everyoneLen)
+
+	sidLen := int(windows.GetLengthSid(sid))
+	sidBytes := unsafe.Slice((*byte)(unsafe.Pointer(sid)), sidLen)
+
+	// Specific read and execute rights mapped for file system objects.
+	// Generic bits (GENERIC_READ, GENERIC_ALL) are explicitly excluded so that
+	// WRITE_DAC, WRITE_OWNER, and DELETE are not inadvertently denied.
+	denyMask := uint32(windows.FILE_READ_DATA | windows.FILE_READ_ATTRIBUTES | windows.FILE_READ_EA | windows.FILE_EXECUTE)
+
+	grantMask := uint32(windows.WRITE_DAC | windows.WRITE_OWNER | windows.READ_CONTROL |
+		windows.FILE_GENERIC_WRITE | windows.DELETE)
+
+	aceFlags := byte(0)
+	if isDir {
+		aceFlags = byte(windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE)
+	}
+
+	ace0Size := (8 + everyoneLen + 3) &^ 3
+	ace1Size := (8 + sidLen + 3) &^ 3
+	ace2Size := (8 + sidLen + 3) &^ 3
+
+	totalSize := 8 + ace0Size + ace1Size + ace2Size
+	buf := make([]byte, totalSize)
+
+	// ACL Header: AclRevision=2, Sbz1=0, AclSize, AceCount=3, Sbz2=0
+	buf[0] = 2
+	buf[1] = 0
+	*(*uint16)(unsafe.Pointer(&buf[2])) = uint16(totalSize)
+	*(*uint16)(unsafe.Pointer(&buf[4])) = 3
+	*(*uint16)(unsafe.Pointer(&buf[6])) = 0
+
+	offset := 8
+
+	// ACE 0: ACCESS_DENIED_ACE for Everyone (S-1-1-0)
+	buf[offset] = 1 // ACCESS_DENIED_ACE_TYPE
+	buf[offset+1] = aceFlags
+	*(*uint16)(unsafe.Pointer(&buf[offset+2])) = uint16(ace0Size)
+	*(*uint32)(unsafe.Pointer(&buf[offset+4])) = denyMask
+	copy(buf[offset+8:], everyoneBytes)
+	offset += ace0Size
+
+	// ACE 1: ACCESS_DENIED_ACE for current user SID
+	buf[offset] = 1 // ACCESS_DENIED_ACE_TYPE
+	buf[offset+1] = aceFlags
+	*(*uint16)(unsafe.Pointer(&buf[offset+2])) = uint16(ace1Size)
+	*(*uint32)(unsafe.Pointer(&buf[offset+4])) = denyMask
+	copy(buf[offset+8:], sidBytes)
+	offset += ace1Size
+
+	// ACE 2: ACCESS_ALLOWED_ACE for current user SID (preserves WRITE_DAC/WRITE_OWNER/DELETE for cleanup)
+	buf[offset] = 0 // ACCESS_ALLOWED_ACE_TYPE
+	buf[offset+1] = aceFlags
+	*(*uint16)(unsafe.Pointer(&buf[offset+2])) = uint16(ace2Size)
+	*(*uint32)(unsafe.Pointer(&buf[offset+4])) = grantMask
+	copy(buf[offset+8:], sidBytes)
+
+	return (*windows.ACL)(unsafe.Pointer(&buf[0])), nil
+}
+
+func buildReadOnlyDACLWindows(sid *windows.SID) (*windows.ACL, error) {
+	sidLen := int(windows.GetLengthSid(sid))
+	sidBytes := unsafe.Slice((*byte)(unsafe.Pointer(sid)), sidLen)
+
+	// Specific write and delete rights mapped for file system objects.
+	// Generic bits (GENERIC_WRITE, GENERIC_ALL) are explicitly excluded so that
+	// WRITE_DAC, READ_CONTROL, and non-write rights are not denied.
+	denyMask := uint32(fileWriteDataWindows | fileAppendDataWindows | fileWriteEAWindows |
+		fileDeleteChildWindows | fileWriteAttributesWindows | deleteRightWindows)
+	grantMask := uint32(windows.FILE_GENERIC_READ | windows.FILE_GENERIC_EXECUTE | windows.WRITE_DAC | windows.READ_CONTROL)
+
+	ace0Size := (8 + sidLen + 3) &^ 3
+	ace1Size := (8 + sidLen + 3) &^ 3
+
+	totalSize := 8 + ace0Size + ace1Size
+	buf := make([]byte, totalSize)
+
+	// ACL Header: AclRevision=2, Sbz1=0, AclSize, AceCount=2, Sbz2=0
+	buf[0] = 2
+	buf[1] = 0
+	*(*uint16)(unsafe.Pointer(&buf[2])) = uint16(totalSize)
+	*(*uint16)(unsafe.Pointer(&buf[4])) = 2
+	*(*uint16)(unsafe.Pointer(&buf[6])) = 0
+
+	offset := 8
+
+	// ACE 0: ACCESS_DENIED_ACE for current user SID
+	buf[offset] = 1 // ACCESS_DENIED_ACE_TYPE
+	buf[offset+1] = 0
+	*(*uint16)(unsafe.Pointer(&buf[offset+2])) = uint16(ace0Size)
+	*(*uint32)(unsafe.Pointer(&buf[offset+4])) = denyMask
+	copy(buf[offset+8:], sidBytes)
+	offset += ace0Size
+
+	// ACE 1: ACCESS_ALLOWED_ACE for current user SID
+	buf[offset] = 0 // ACCESS_ALLOWED_ACE_TYPE
+	buf[offset+1] = 0
+	*(*uint16)(unsafe.Pointer(&buf[offset+2])) = uint16(ace1Size)
+	*(*uint32)(unsafe.Pointer(&buf[offset+4])) = grantMask
+	copy(buf[offset+8:], sidBytes)
+
+	return (*windows.ACL)(unsafe.Pointer(&buf[0])), nil
+}
+
+func formatSecurityDiagnosticWindows(path string) string {
+	var sb strings.Builder
+	sid, err := currentUserSID()
+	if err != nil {
+		sb.WriteString(fmt.Sprintf("  currentUserSID error: %v\n", err))
+	} else {
+		sb.WriteString(fmt.Sprintf("  currentUserSID: %s\n", sid.String()))
+	}
+
+	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.OWNER_SECURITY_INFORMATION)
+	if err != nil {
+		sb.WriteString(fmt.Sprintf("  GetNamedSecurityInfo error: %v\n", err))
+		return sb.String()
+	}
+	if sd == nil {
+		sb.WriteString("  SecurityDescriptor: nil\n")
+		return sb.String()
+	}
+
+	sdPtr := unsafe.Pointer(sd)
+	control := *(*uint16)(unsafe.Pointer(uintptr(sdPtr) + 2))
+	sb.WriteString(fmt.Sprintf("  Control: 0x%04x (SE_DACL_PROTECTED: %v)\n", control, control&windows.SE_DACL_PROTECTED != 0))
+
+	ownerOff := *(*uint32)(unsafe.Pointer(uintptr(sdPtr) + 4))
+	if ownerOff != 0 {
+		ownerSid := (*windows.SID)(unsafe.Pointer(uintptr(sdPtr) + uintptr(ownerOff)))
+		sb.WriteString(fmt.Sprintf("  Owner SID: %s\n", ownerSid.String()))
+	}
+
+	daclOff := *(*uint32)(unsafe.Pointer(uintptr(sdPtr) + 16))
+	if daclOff == 0 {
+		sb.WriteString("  DACL: absent (NULL DACL)\n")
+		return sb.String()
+	}
+	dacl := (*windows.ACL)(unsafe.Pointer(uintptr(sdPtr) + uintptr(daclOff)))
+	sb.WriteString(fmt.Sprintf("  DACL: AceCount=%d\n", dacl.AceCount))
+	for i := uint16(0); i < dacl.AceCount; i++ {
+		var pAce *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(dacl, uint32(i), &pAce); err != nil {
+			sb.WriteString(fmt.Sprintf("    ACE %d: GetAce error: %v\n", i, err))
+			continue
+		}
+		typeName := "UNKNOWN"
+		switch pAce.Header.AceType {
+		case windows.ACCESS_ALLOWED_ACE_TYPE:
+			typeName = "ACCESS_ALLOWED"
+		case windows.ACCESS_DENIED_ACE_TYPE:
+			typeName = "ACCESS_DENIED"
+		}
+		aceSid := (*windows.SID)(unsafe.Pointer(&pAce.SidStart))
+		sb.WriteString(fmt.Sprintf("    ACE %d: Type=%s(%d) Flags=0x%02x Mask=0x%08x SID=%s\n",
+			i, typeName, pAce.Header.AceType, pAce.Header.AceFlags, pAce.Mask, aceSid.String()))
+	}
+	return sb.String()
+}
+
 func makePathUnreadable(t *testing.T, path string) {
 	t.Helper()
 	info, err := os.Stat(path)
@@ -85,33 +253,7 @@ func makePathUnreadable(t *testing.T, path string) {
 		t.Fatalf("MakePathUnreadable: %v", err)
 	}
 
-	entries := []windows.EXPLICIT_ACCESS{
-		{
-			AccessPermissions: denyReadAccessWindows,
-			AccessMode:        windows.DENY_ACCESS,
-			Inheritance:       windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE,
-			Trustee: windows.TRUSTEE{
-				TrusteeForm:  windows.TRUSTEE_IS_SID,
-				TrusteeType:  windows.TRUSTEE_IS_USER,
-				TrusteeValue: windows.TrusteeValueFromSID(sid),
-			},
-		},
-		{
-			AccessPermissions: windows.WRITE_DAC | windows.WRITE_OWNER | windows.READ_CONTROL | windows.FILE_GENERIC_WRITE | windows.DELETE,
-			AccessMode:        windows.GRANT_ACCESS,
-			Inheritance:       windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE,
-			Trustee: windows.TRUSTEE{
-				TrusteeForm:  windows.TRUSTEE_IS_SID,
-				TrusteeType:  windows.TRUSTEE_IS_USER,
-				TrusteeValue: windows.TrusteeValueFromSID(sid),
-			},
-		},
-	}
-
-	var pinner runtime.Pinner
-	pinner.Pin(sid)
-	dacl, err := windows.ACLFromEntries(entries, nil)
-	pinner.Unpin()
+	dacl, err := buildDenyReadDACLWindows(sid, info.IsDir())
 	if err != nil {
 		t.Fatalf("MakePathUnreadable: build ACL for %s: %v", path, err)
 	}
@@ -132,12 +274,12 @@ func makePathUnreadable(t *testing.T, path string) {
 	// Verify the path is genuinely unreadable.
 	if info.IsDir() {
 		if _, err := os.ReadDir(path); err == nil {
-			t.Fatalf("MakePathUnreadable: directory %s remains readable after applying deny-read ACL", path)
+			t.Fatalf("MakePathUnreadable: directory %s remains readable after applying deny-read ACL\nDiagnostic:\n%s", path, formatSecurityDiagnosticWindows(path))
 		}
 	} else {
 		if f, err := os.Open(path); err == nil {
 			f.Close()
-			t.Fatalf("MakePathUnreadable: file %s remains readable after applying deny-read ACL", path)
+			t.Fatalf("MakePathUnreadable: file %s remains readable after applying deny-read ACL\nDiagnostic:\n%s", path, formatSecurityDiagnosticWindows(path))
 		}
 	}
 }
@@ -157,33 +299,7 @@ func makeDirectoryReadOnly(t *testing.T, path string) {
 		t.Fatalf("MakeDirectoryReadOnly: %v", err)
 	}
 
-	entries := []windows.EXPLICIT_ACCESS{
-		{
-			AccessPermissions: denyWriteAccessWindows,
-			AccessMode:        windows.DENY_ACCESS,
-			Inheritance:       windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE,
-			Trustee: windows.TRUSTEE{
-				TrusteeForm:  windows.TRUSTEE_IS_SID,
-				TrusteeType:  windows.TRUSTEE_IS_USER,
-				TrusteeValue: windows.TrusteeValueFromSID(sid),
-			},
-		},
-		{
-			AccessPermissions: windows.FILE_GENERIC_READ | windows.FILE_GENERIC_EXECUTE | windows.WRITE_DAC | windows.READ_CONTROL,
-			AccessMode:        windows.GRANT_ACCESS,
-			Inheritance:       windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE,
-			Trustee: windows.TRUSTEE{
-				TrusteeForm:  windows.TRUSTEE_IS_SID,
-				TrusteeType:  windows.TRUSTEE_IS_USER,
-				TrusteeValue: windows.TrusteeValueFromSID(sid),
-			},
-		},
-	}
-
-	var pinner runtime.Pinner
-	pinner.Pin(sid)
-	dacl, err := windows.ACLFromEntries(entries, nil)
-	pinner.Unpin()
+	dacl, err := buildReadOnlyDACLWindows(sid)
 	if err != nil {
 		t.Fatalf("MakeDirectoryReadOnly: build ACL for %s: %v", path, err)
 	}

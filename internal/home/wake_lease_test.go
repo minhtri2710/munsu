@@ -3,6 +3,7 @@ package home
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -138,7 +139,14 @@ func TestClaimWakesRemovalErrorPropagated(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from failed queue removal, got nil")
 	}
-	if !strings.Contains(err.Error(), "removing claimed wake queue") {
-		t.Fatalf("unexpected error: %v", err)
+	// On Windows, the read-only directory DACL denies opening/creating the lock file
+	// in stateDir earlier in ClaimWakes, whereas on POSIX chmod 0500 on stateDir
+	// allows opening the pre-created lock file but fails at removing qPath.
+	wantSubstring := "removing claimed wake queue"
+	if runtime.GOOS == "windows" {
+		wantSubstring = "opening wake claim lock"
+	}
+	if !strings.Contains(err.Error(), wantSubstring) {
+		t.Fatalf("unexpected error: %v, want substring %q", err, wantSubstring)
 	}
 }
