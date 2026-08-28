@@ -55,3 +55,21 @@ func TestVerifyOwnerPrivate_Windows(t *testing.T) {
 		t.Fatal("verifyOwnerPrivateWindows accepted DACL granting Everyone")
 	}
 }
+
+func TestVerifyOwnerReadOnly_Windows(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "readonly")
+	if err := os.MkdirAll(sub, 0755); err != nil {
+		t.Fatal(err)
+	}
+	MakeDirectoryReadOnly(t, sub)
+	AssertOwnerReadOnly(t, sub)
+
+	// Tamper: restore owner all access
+	if err := restorePathAccessWindows(sub); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyOwnerReadOnlyWindows(sub, true); err == nil {
+		t.Fatal("verifyOwnerReadOnlyWindows accepted DACL granting full write access")
+	}
+}

@@ -4,8 +4,6 @@ package home
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"runtime"
 	"unsafe"
 
@@ -35,18 +33,121 @@ func secureDir(path string) error {
 }
 
 // restrictDir ensures path grants no access to other principals while
-// preserving existing owner write restrictions. It is used for pre-existing
+// preserving the owner's existing access bits. It is used for pre-existing
 // directories whose owner access must not be increased.
 func restrictDir(path string) error {
-	probe := filepath.Join(path, ".restrict_write_probe")
-	if f, err := os.OpenFile(probe, os.O_WRONLY|os.O_CREATE, 0600); err == nil {
-		f.Close()
-		_ = os.Remove(probe)
-	} else {
-		// Directory is already write-restricted; preserve existing restrictions.
-		return nil
+	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		return fmt.Errorf("home: read DACL for %s: %w", path, err)
 	}
-	return securePath(path, true)
+	if sd == nil {
+		return fmt.Errorf("home: %s has no security descriptor", path)
+	}
+	sid, err := currentUserSID()
+	if err != nil {
+		return err
+	}
+
+	sdPtr := unsafe.Pointer(sd)
+	daclOff := *(*uint32)(unsafe.Pointer(uintptr(sdPtr) + 16))
+	var ownerEntries []windows.EXPLICIT_ACCESS
+	if daclOff != 0 {
+		dacl := (*windows.ACL)(unsafe.Pointer(uintptr(sdPtr) + uintptr(daclOff)))
+		for i := uint16(0); i < dacl.AceCount; i++ {
+			var pAce *windows.ACCESS_ALLOWED_ACE
+			if err := windows.GetAce(dacl, uint32(i), &pAce); err != nil {
+				return fmt.Errorf("home: read ACE for %s: %w", path, err)
+			}
+			aceSid := (*windows.SID)(unsafe.Pointer(&pAce.SidStart))
+			if !windows.EqualSid(aceSid, sid) {
+				continue
+			}
+			var mode windows.ACCESS_MODE
+			switch pAce.Header.AceType {
+			case windows.ACCESS_ALLOWED_ACE_TYPE:
+				mode = windows.GRANT_ACCESS
+			case windows.ACCESS_DENIED_ACE_TYPE:
+				mode = windows.DENY_ACCESS
+			default:
+				continue
+			}
+			ea := windows.EXPLICIT_ACCESS{
+				AccessPermissions: pAce.Mask,
+				AccessMode:        mode,
+				Inheritance:       windows.NO_INHERITANCE,
+			}
+			ea.Trustee.TrusteeForm = windows.TRUSTEE_IS_SID
+			ea.Trustee.TrusteeType = windows.TRUSTEE_IS_USER
+			ea.Trustee.TrusteeValue = windows.TrusteeValueFromSID(sid)
+			ownerEntries = append(ownerEntries, ea)
+		}
+	}
+
+	if len(ownerEntries) == 0 {
+		ea := windows.EXPLICIT_ACCESS{
+			AccessPermissions: ownerAllAccess,
+			AccessMode:        windows.GRANT_ACCESS,
+			Inheritance:       windows.NO_INHERITANCE,
+		}
+		ea.Trustee.TrusteeForm = windows.TRUSTEE_IS_SID
+		ea.Trustee.TrusteeType = windows.TRUSTEE_IS_USER
+		ea.Trustee.TrusteeValue = windows.TrusteeValueFromSID(sid)
+		ownerEntries = append(ownerEntries, ea)
+	}
+
+	var pinner runtime.Pinner
+	pinner.Pin(sid)
+	newDacl, err := windows.ACLFromEntries(ownerEntries, nil)
+	pinner.Unpin()
+	if err != nil {
+		return fmt.Errorf("home: build restricted ACL for %s: %w", path, err)
+	}
+
+	if err := windows.SetNamedSecurityInfo(
+		path,
+		windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		nil, nil, newDacl, nil,
+	); err != nil {
+		return fmt.Errorf("home: set restricted ACL for %s: %w", path, err)
+	}
+
+	return verifyRestrictedProtection(path, sid)
+}
+
+// verifyRestrictedProtection confirms that path's DACL contains only ACEs
+// belonging to sid, with no inherited ACEs, ensuring no other principals have access.
+func verifyRestrictedProtection(path string, sid *windows.SID) error {
+	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		return fmt.Errorf("home: read DACL for %s: %w", path, err)
+	}
+	if sd == nil {
+		return fmt.Errorf("home: %s has no security descriptor", path)
+	}
+	sdPtr := unsafe.Pointer(sd)
+	daclOff := *(*uint32)(unsafe.Pointer(uintptr(sdPtr) + 16))
+	if daclOff == 0 {
+		return fmt.Errorf("home: %s has no DACL", path)
+	}
+	dacl := (*windows.ACL)(unsafe.Pointer(uintptr(sdPtr) + uintptr(daclOff)))
+	if dacl.AceCount == 0 {
+		return fmt.Errorf("home: %s DACL has 0 ACEs", path)
+	}
+	for i := uint16(0); i < dacl.AceCount; i++ {
+		var pAce *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(dacl, uint32(i), &pAce); err != nil {
+			return fmt.Errorf("home: read ACE for %s: %w", path, err)
+		}
+		if pAce.Header.AceFlags&windows.INHERITED_ACE != 0 {
+			return fmt.Errorf("home: %s ACE is inherited, protection is not owner-only", path)
+		}
+		aceSid := (*windows.SID)(unsafe.Pointer(&pAce.SidStart))
+		if !windows.EqualSid(aceSid, sid) {
+			return fmt.Errorf("home: %s ACE grants a non-owner principal", path)
+		}
+	}
+	return nil
 }
 
 // securePath sets and verifies an owner-only DACL on path. The DACL contains a

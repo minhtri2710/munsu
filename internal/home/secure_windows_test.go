@@ -132,3 +132,73 @@ func TestAtomicWriterPathsOwnerOnlyWindows(t *testing.T) {
 		t.Fatalf("canonicalAtomicWrite result not owner-only: %v", err)
 	}
 }
+
+// TestRestrictDirPreservesOwnerDenyWindows confirms that restrictDir strips
+// non-owner principals while preserving the owner's existing restrictions.
+func TestRestrictDirPreservesOwnerDenyWindows(t *testing.T) {
+	dir := t.TempDir()
+	sid, err := currentUserSID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	everyone, err := windows.StringToSid("S-1-1-0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// DACL: owner has deny-write and grant-read; Everyone has grant-read.
+	entries := []windows.EXPLICIT_ACCESS{
+		{
+			AccessPermissions: windows.FILE_GENERIC_WRITE,
+			AccessMode:        windows.DENY_ACCESS,
+			Inheritance:       windows.NO_INHERITANCE,
+			Trustee: windows.TRUSTEE{
+				TrusteeForm:  windows.TRUSTEE_IS_SID,
+				TrusteeType:  windows.TRUSTEE_IS_USER,
+				TrusteeValue: windows.TrusteeValueFromSID(sid),
+			},
+		},
+		{
+			AccessPermissions: windows.FILE_GENERIC_READ | windows.WRITE_DAC | windows.READ_CONTROL,
+			AccessMode:        windows.GRANT_ACCESS,
+			Inheritance:       windows.NO_INHERITANCE,
+			Trustee: windows.TRUSTEE{
+				TrusteeForm:  windows.TRUSTEE_IS_SID,
+				TrusteeType:  windows.TRUSTEE_IS_USER,
+				TrusteeValue: windows.TrusteeValueFromSID(sid),
+			},
+		},
+		{
+			AccessPermissions: windows.FILE_GENERIC_READ,
+			AccessMode:        windows.GRANT_ACCESS,
+			Inheritance:       windows.NO_INHERITANCE,
+			Trustee: windows.TRUSTEE{
+				TrusteeForm:  windows.TRUSTEE_IS_SID,
+				TrusteeType:  windows.TRUSTEE_IS_WELL_KNOWN_GROUP,
+				TrusteeValue: windows.TrusteeValueFromSID(everyone),
+			},
+		},
+	}
+	dacl, err := windows.ACLFromEntries(entries, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := windows.SetNamedSecurityInfo(
+		dir,
+		windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		nil, nil, dacl, nil,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	// restrictDir should succeed, strip Everyone, and preserve owner's deny-write.
+	if err := restrictDir(dir); err != nil {
+		t.Fatalf("restrictDir: %v", err)
+	}
+
+	// Verify Everyone is gone and only owner ACEs remain.
+	if err := verifyRestrictedProtection(dir, sid); err != nil {
+		t.Fatalf("verifyRestrictedProtection: %v", err)
+	}
+}

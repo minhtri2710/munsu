@@ -5,7 +5,6 @@ package testutil
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"runtime"
 	"testing"
 	"unsafe"
@@ -189,12 +188,9 @@ func makeDirectoryReadOnly(t *testing.T, path string) {
 		_ = restorePathAccessWindows(path)
 	})
 
-	// Verify write is refused.
-	probe := filepath.Join(path, ".test_write_probe")
-	if f, err := os.OpenFile(probe, os.O_WRONLY|os.O_CREATE, 0600); err == nil {
-		f.Close()
-		_ = os.Remove(probe)
-		t.Fatalf("MakeDirectoryReadOnly: directory %s remains writable after applying read-only ACL", path)
+	// Verify the read-only ACL was established.
+	if err := verifyOwnerReadOnlyWindows(path, true); err != nil {
+		t.Fatalf("MakeDirectoryReadOnly: %v", err)
 	}
 }
 
@@ -252,24 +248,59 @@ func assertOwnerPrivate(t *testing.T, path string) {
 	}
 }
 
+func verifyOwnerReadOnlyWindows(path string, isDir bool) error {
+	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		return fmt.Errorf("read DACL for %s: %w", path, err)
+	}
+	if sd == nil {
+		return fmt.Errorf("%s has no security descriptor", path)
+	}
+	sid, err := currentUserSID()
+	if err != nil {
+		return err
+	}
+
+	sdPtr := unsafe.Pointer(sd)
+	daclOff := *(*uint32)(unsafe.Pointer(uintptr(sdPtr) + 16))
+	if daclOff == 0 {
+		return fmt.Errorf("%s has no DACL", path)
+	}
+	dacl := (*windows.ACL)(unsafe.Pointer(uintptr(sdPtr) + uintptr(daclOff)))
+	if dacl.AceCount == 0 {
+		return fmt.Errorf("%s DACL has 0 ACEs", path)
+	}
+
+	hasWriteDeny := false
+	for i := uint16(0); i < dacl.AceCount; i++ {
+		var pAce *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(dacl, uint32(i), &pAce); err != nil {
+			return fmt.Errorf("read ACE for %s: %w", path, err)
+		}
+		if pAce.Header.AceFlags&windows.INHERITED_ACE != 0 {
+			return fmt.Errorf("%s ACE is inherited, protection is not owner-only", path)
+		}
+		aceSid := (*windows.SID)(unsafe.Pointer(&pAce.SidStart))
+		if !windows.EqualSid(aceSid, sid) {
+			return fmt.Errorf("%s ACE grants a non-owner principal", path)
+		}
+		if pAce.Header.AceType == windows.ACCESS_DENIED_ACE_TYPE && (pAce.Mask&windows.FILE_GENERIC_WRITE != 0 || pAce.Mask&windows.GENERIC_WRITE != 0) {
+			hasWriteDeny = true
+		}
+		if pAce.Header.AceType == windows.ACCESS_ALLOWED_ACE_TYPE && (pAce.Mask&windows.FILE_GENERIC_WRITE != 0 || pAce.Mask&windows.GENERIC_WRITE != 0) && !hasWriteDeny {
+			return fmt.Errorf("%s DACL grants write access to owner without preceding deny", path)
+		}
+	}
+	return nil
+}
+
 func assertOwnerReadOnly(t *testing.T, path string) {
 	t.Helper()
 	info, err := os.Stat(path)
 	if err != nil {
 		t.Fatalf("AssertOwnerReadOnly: stat %s: %v", path, err)
 	}
-	// Verify that write is refused
-	var probe string
-	if info.IsDir() {
-		probe = filepath.Join(path, ".test_write_probe")
-	} else {
-		probe = path
-	}
-	if f, err := os.OpenFile(probe, os.O_WRONLY|os.O_CREATE, 0600); err == nil {
-		f.Close()
-		if info.IsDir() {
-			_ = os.Remove(probe)
-		}
-		t.Fatalf("AssertOwnerReadOnly: %s remains writable", path)
+	if err := verifyOwnerReadOnlyWindows(path, info.IsDir()); err != nil {
+		t.Fatalf("AssertOwnerReadOnly: %v", err)
 	}
 }
