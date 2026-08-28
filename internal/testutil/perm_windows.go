@@ -211,14 +211,25 @@ func lookupPrivilegeNameWindows(systemName *uint16, luid *windows.LUID, name *ui
 	return nil
 }
 
-// bypassPrivilegeNames lists the token privileges that bypass file system DACL checks
-// on Windows (e.g. for the built-in Administrator account RID 500).
+// bypassPrivilegeNames lists the token privileges that bypass file system DACL
+// checks on Windows (e.g. for the built-in Administrator account RID 500).
 // The bypass mechanism was empirically confirmed by GitHub Actions run 33144040477.
+//
+// SeChangeNotifyPrivilege (Bypass Traverse Checking) deserves its own note: it
+// is enabled for every token by default, and while it is enabled a parent
+// directory's FILE_TRAVERSE denial never binds — which silently voids the
+// traversal bit the deny-read mask deliberately carries. It also decides
+// os.Stat: on Windows Stat consults GetFileAttributesExW first
+// (go/src/os/stat_windows.go), an attribute query that checks only parent
+// traversal and never the object's own DACL, so without disabling this
+// privilege a Stat of a denied directory's child always succeeds no matter
+// what the DACL says.
 var bypassPrivilegeNames = []string{
 	"SeBackupPrivilege",
 	"SeRestorePrivilege",
 	"SeTakeOwnershipPrivilege",
 	"SeDebugPrivilege",
+	"SeChangeNotifyPrivilege",
 }
 
 // disableBypassPrivilegesWindows disables read/write/ownership bypass privileges in the
