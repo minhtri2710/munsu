@@ -255,17 +255,6 @@ type workflowCase struct {
 }
 
 func TestFleetLifecycleWorkflowAcrossTopologyPolicies(t *testing.T) {
-	gateMarker, hadGateMarker := os.LookupEnv("NO_MISTAKES_GATE")
-	if err := os.Unsetenv("NO_MISTAKES_GATE"); err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		if hadGateMarker {
-			_ = os.Setenv("NO_MISTAKES_GATE", gateMarker)
-		} else {
-			_ = os.Unsetenv("NO_MISTAKES_GATE")
-		}
-	}()
 	cases := []workflowCase{
 		{
 			name:            "general-direct",

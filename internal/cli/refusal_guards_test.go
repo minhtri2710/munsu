@@ -691,11 +691,8 @@ func TestGuardSendRefusesACaptainWithNoHomeRecorded(t *testing.T) {
 	if err := mhome.WriteMeta(homeDir, "captain:c1", map[string]string{"kind": "captain"}); err != nil {
 		t.Fatal(err)
 	}
-	// send refuses gate agents before it reads meta, so this guard is only
-	// reachable from a non-gate working directory with the gate marker
-	// cleared. Run it from the temp home (not a git checkout) with
-	// NO_MISTAKES_GATE unset so the suite also passes when run inside a
-	// no-mistakes gate worktree.
+	// send refuses gate agents before it reads meta. Run it from the temp
+	// home (not a git checkout), so the metadata guard is the next refusal.
 	oldDir, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -704,17 +701,6 @@ func TestGuardSendRefusesACaptainWithNoHomeRecorded(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chdir(oldDir) })
-	gateMarker, hadMarker := os.LookupEnv("NO_MISTAKES_GATE")
-	if err := os.Unsetenv("NO_MISTAKES_GATE"); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if hadMarker {
-			_ = os.Setenv("NO_MISTAKES_GATE", gateMarker)
-		} else {
-			_ = os.Unsetenv("NO_MISTAKES_GATE")
-		}
-	})
 	_, err = runRoot(t, "send", "captain:c1", "do the thing", "--home", homeDir)
 	wantErrContains(t, err, "has no home in meta", "send to a captain whose meta records no home")
 }
@@ -849,15 +835,6 @@ func TestBriefWritesKnownLegacyAndForcedTasks(t *testing.T) {
 }
 
 func TestSessionStartGCUsesRawIDOwnershipForForcedBriefs(t *testing.T) {
-	oldGate, hadGate := os.LookupEnv("NO_MISTAKES_GATE")
-	_ = os.Unsetenv("NO_MISTAKES_GATE")
-	t.Cleanup(func() {
-		if hadGate {
-			_ = os.Setenv("NO_MISTAKES_GATE", oldGate)
-		} else {
-			_ = os.Unsetenv("NO_MISTAKES_GATE")
-		}
-	})
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
 	if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion, Config: config.ProjectOverlay{Backend: "tmux"}}); err != nil {
