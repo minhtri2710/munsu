@@ -4,6 +4,8 @@ package home
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
 	"unsafe"
 
@@ -32,10 +34,18 @@ func secureDir(path string) error {
 	return securePath(path, true)
 }
 
-// restrictDir ensures path grants no access to other principals. On Windows it
-// sets the same owner-only DACL as secureDir; the platform has no owner-bit
-// granularity to preserve, and owner-only only ever reduces exposure.
+// restrictDir ensures path grants no access to other principals while
+// preserving existing owner write restrictions. It is used for pre-existing
+// directories whose owner access must not be increased.
 func restrictDir(path string) error {
+	probe := filepath.Join(path, ".restrict_write_probe")
+	if f, err := os.OpenFile(probe, os.O_WRONLY|os.O_CREATE, 0600); err == nil {
+		f.Close()
+		_ = os.Remove(probe)
+	} else {
+		// Directory is already write-restricted; preserve existing restrictions.
+		return nil
+	}
 	return securePath(path, true)
 }
 

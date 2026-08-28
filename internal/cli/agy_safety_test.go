@@ -636,16 +636,19 @@ func TestAgyGuardParentHomeUnreadableFailsClosed(t *testing.T) {
 	t.Setenv("MUNSU_PARENT_STATUS", parentHome)
 
 	parentReceipts := filepath.Join(parentHome, "state", ".terminal-receipts")
-	os.MkdirAll(parentReceipts, 0755)
-	os.WriteFile(filepath.Join(parentReceipts, "task-1.uplink.receipt"), []byte("state=done\n"), 0644)
-	os.Chmod(parentReceipts, 0000)
+	if err := os.MkdirAll(parentReceipts, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(parentReceipts, "task-1.uplink.receipt"), []byte("state=done\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	testutil.MakePathUnreadable(t, parentReceipts)
 
 	var exitCode int
 	oldExit := exitWithCode
 	exitWithCode = func(code int) { exitCode = code }
 	defer func() {
 		exitWithCode = oldExit
-		os.Chmod(parentReceipts, 0755)
 	}()
 
 	var stdout string

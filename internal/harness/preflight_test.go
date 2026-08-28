@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 func TestPreflight_AdapterKnown(t *testing.T) {
@@ -319,10 +321,8 @@ func TestPreflight_PiCredentialStore_Unreadable(t *testing.T) {
 	if err := os.WriteFile(authPath, []byte(`{}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	// Remove read permission to make it unreadable
-	if err := os.Chmod(authPath, 0000); err != nil {
-		t.Fatal(err)
-	}
+	// Make auth.json unreadable
+	testutil.MakePathUnreadable(t, authPath)
 
 	restore := injectPiCredentialCheck(t, tmpDir)
 	defer restore()
