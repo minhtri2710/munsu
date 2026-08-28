@@ -132,9 +132,6 @@ func parseGLMergeStatus(data []byte) (*domain.PRMergeStatus, error) {
 	}
 
 	normalizedState := normalizeGlabState(raw.State)
-	if normalizedState == "" {
-		return nil, fmt.Errorf("glab mr view returned unrecognized state %q", raw.State)
-	}
 
 	mergedSHA := strings.TrimSpace(raw.MergeCommitSHA)
 	if normalizedState == "MERGED" && !validGitObjectID(mergedSHA) {
