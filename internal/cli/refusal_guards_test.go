@@ -878,13 +878,25 @@ func TestSessionStartGCUsesRawIDOwnershipForForcedBriefs(t *testing.T) {
 	if _, err := bootstrap.RunSessionStartWithWatcher(io.Discard, homeDir, nil, nil, taskDataDirReclaimer(homeDir)); err != nil {
 		t.Fatalf("session-start: %v", err)
 	}
+	// Session-start holds the session lock (state/.lock) for the process
+	// lifetime by design (internal/home/watcher_lock.go); on Windows the open
+	// handle pins the home directory and t.TempDir teardown cannot remove it
+	// (#549). This test process outlives the session, so release the lock on
+	// the path the test actually takes.
+	if err := mhome.ReleaseSessionLock(homeDir); err != nil {
+		t.Fatalf("release session lock: %v", err)
+	}
 	if _, err := os.Stat(filepath.Join(briefDir, "brief.md")); err != nil {
 		t.Fatalf("forced brief was reclaimed: %v", err)
 	}
 
 	captainHome := t.TempDir()
 	initCLITestHome(t, captainHome)
-	captainDir := filepath.Join(captainHome, "data", "captain:c1")
+	captainStem, err := mhome.DurableKey("captain:c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	captainDir := filepath.Join(captainHome, "data", captainStem)
 	if err := os.MkdirAll(captainDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -893,6 +905,9 @@ func TestSessionStartGCUsesRawIDOwnershipForForcedBriefs(t *testing.T) {
 	}
 	if _, err := bootstrap.RunSessionStartWithWatcher(io.Discard, captainHome, nil, nil, taskDataDirReclaimer(captainHome)); err != nil {
 		t.Fatalf("captain cleanup session-start: %v", err)
+	}
+	if err := mhome.ReleaseSessionLock(captainHome); err != nil {
+		t.Fatalf("release captain session lock: %v", err)
 	}
 	if _, err := os.Stat(captainDir); !os.IsNotExist(err) {
 		t.Fatalf("empty captain directory remains, stat err: %v", err)

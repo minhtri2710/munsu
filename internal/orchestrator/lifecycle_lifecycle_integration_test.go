@@ -44,6 +44,12 @@ func helperProc(t *testing.T, home string) (*exec.Cmd, string) {
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start helper: %v", err)
 	}
+	t.Cleanup(func() {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	})
 	scan := bufio.NewScanner(stdout)
 	if !scan.Scan() {
 		t.Fatalf("helper produced no output: %v", scan.Err())

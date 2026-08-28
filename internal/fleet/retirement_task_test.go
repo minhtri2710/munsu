@@ -15,6 +15,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/domain"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // setupGitRepo initializes a git repo in dir.
@@ -897,19 +898,16 @@ func TestRun_DataParentStatFailsClosed(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dataDir, ReportName(1)), []byte("findings"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(dataRoot, 0600); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(dataRoot, 0755) })
+	t.Run("stat refusal fails closed", func(t *testing.T) {
+		testutil.MakePathUnreadable(t, dataRoot)
 
-	_, err := RetireTask(Options{HomeDir: tmp, ID: "data-parent", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth)
-	var pending *RetirementCleanupPendingError
-	if !errors.As(err, &pending) {
-		t.Fatalf("teardown error = %T %v, want typed RetirementCleanupPendingError", err, err)
-	}
-	if err := os.Chmod(dataRoot, 0755); err != nil {
-		t.Fatal(err)
-	}
+		_, err := RetireTask(Options{HomeDir: tmp, ID: "data-parent", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth)
+		var pending *RetirementCleanupPendingError
+		if !errors.As(err, &pending) {
+			t.Fatalf("teardown error = %T %v, want typed RetirementCleanupPendingError", err, err)
+		}
+	})
+
 	if _, err := os.Stat(filepath.Join(dataDir, ReportName(1))); err != nil {
 		t.Fatalf("report should remain after data-parent refusal: %v", err)
 	}
