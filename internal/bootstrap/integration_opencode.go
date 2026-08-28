@@ -502,9 +502,9 @@ func OpencodePluginsHasOwnedHooks(pluginsDir, munsuBin string) (bool, string, er
 		}
 
 		// Structural ownership: check that the file contains the munsu binary
-		// path (either JSON-encoded or raw) and the expected exported function name.
+		// path in its canonical JSON-encoded representation and the expected exported function name.
 		expectedBin := opencodePluginCommand(munsuBin)
-		if !strings.Contains(content, expectedBin) && !strings.Contains(content, munsuBin) {
+		if !strings.Contains(content, expectedBin) {
 			missing = append(missing, name+" (missing munsu binary path)")
 			continue
 		}

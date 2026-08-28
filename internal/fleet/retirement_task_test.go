@@ -898,12 +898,18 @@ func TestRun_DataParentStatFailsClosed(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dataDir, ReportName(1)), []byte("findings"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	testutil.MakePathUnreadable(t, dataRoot)
+	t.Run("stat refusal fails closed", func(t *testing.T) {
+		testutil.MakePathUnreadable(t, dataRoot)
 
-	_, err := RetireTask(Options{HomeDir: tmp, ID: "data-parent", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth)
-	var pending *RetirementCleanupPendingError
-	if !errors.As(err, &pending) {
-		t.Fatalf("teardown error = %T %v, want typed RetirementCleanupPendingError", err, err)
+		_, err := RetireTask(Options{HomeDir: tmp, ID: "data-parent", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth)
+		var pending *RetirementCleanupPendingError
+		if !errors.As(err, &pending) {
+			t.Fatalf("teardown error = %T %v, want typed RetirementCleanupPendingError", err, err)
+		}
+	})
+
+	if _, err := os.Stat(filepath.Join(dataDir, ReportName(1))); err != nil {
+		t.Fatalf("report should remain after data-parent refusal: %v", err)
 	}
 }
 
