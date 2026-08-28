@@ -19,25 +19,26 @@ import (
 )
 
 // fakeBinDir is a temp directory with fake pi/munsu binaries prepended to PATH
-// by TestMain. Tests that need the real PATH can restore it.
+// by setupFleetTestFixtures. Tests that need the real PATH can restore it.
 var fakeBinDir string
 var origPath string
 
-// TestMain creates fake pi and munsu binaries in a temp PATH fixture so captain
-// unit tests never depend on the installed Pi binary. Tests that explicitly
-// validate an installed Pi (e.g., runtime integration tests) should restore
-// the original PATH via t.Setenv("PATH", origPath).
-func TestMain(m *testing.M) {
+// setupFleetTestFixtures creates fake pi and munsu binaries in a temp PATH
+// fixture so captain tests never depend on the installed Pi binary. Tests that
+// explicitly validate an installed Pi should restore the original PATH via
+// t.Setenv("PATH", origPath).
+func setupFleetTestFixtures() (func(), error) {
 	var cleanup func()
 	fakeBinDir, cleanup = setupFakeBins()
 	origPath = os.Getenv("PATH")
-	os.Setenv("PATH", fakeBinDir+string(filepath.ListSeparator)+origPath)
-
-	code := m.Run()
-
-	cleanup()
-	os.Setenv("PATH", origPath)
-	os.Exit(code)
+	if err := os.Setenv("PATH", fakeBinDir+string(filepath.ListSeparator)+origPath); err != nil {
+		cleanup()
+		return nil, err
+	}
+	return func() {
+		cleanup()
+		_ = os.Setenv("PATH", origPath)
+	}, nil
 }
 
 // setupFakeBins creates executable shims for pi and munsu in a temp directory

@@ -46,6 +46,7 @@ func initRepoWithRemote(t *testing.T, dir, originURL string) string {
 
 func initGateCheckout(t *testing.T) (string, string) {
 	t.Helper()
+	unsetFleetTestEnv(t, "NO_MISTAKES_GATE")
 	nmHome := filepath.Join(t.TempDir(), ".no-mistakes")
 	commonDir := filepath.Join(nmHome, "repos", "gate.git")
 	if err := os.MkdirAll(filepath.Dir(commonDir), 0755); err != nil {
@@ -164,6 +165,7 @@ func TestClassifyIdentity_SymlinkedRepo(t *testing.T) {
 // --- Gate capability tests ---
 
 func TestDetectGateCapability_EnvVar(t *testing.T) {
+	unsetFleetTestEnv(t, "NO_MISTAKES_GATE")
 	repo := initRepo(t, t.TempDir())
 
 	// NO_MISTAKES_GATE not set -> absent
