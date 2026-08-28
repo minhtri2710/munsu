@@ -5,6 +5,7 @@ package testutil
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"testing"
 	"unsafe"
@@ -204,6 +205,13 @@ func makeDirectoryReadOnly(t *testing.T, path string) {
 	if err := verifyOwnerReadOnlyWindows(path, true); err != nil {
 		t.Fatalf("MakeDirectoryReadOnly: %v", err)
 	}
+
+	probe := filepath.Join(path, ".test_write_probe")
+	if f, err := os.OpenFile(probe, os.O_WRONLY|os.O_CREATE, 0600); err == nil {
+		f.Close()
+		_ = os.Remove(probe)
+		t.Fatalf("MakeDirectoryReadOnly: directory %s remains writable after applying deny-write ACL", path)
+	}
 }
 
 func verifyOwnerPrivateWindows(path string, isDir bool) error {
@@ -305,10 +313,16 @@ func verifyOwnerReadOnlyWindows(path string, isDir bool) error {
 		if !windows.EqualSid(aceSid, sid) {
 			return fmt.Errorf("%s ACE grants a non-owner principal", path)
 		}
-		switch pAce.Header.AceType {
-		case windows.ACCESS_DENIED_ACE_TYPE:
+		if pAce.Header.AceType == windows.ACCESS_DENIED_ACE_TYPE {
 			deniedWriteRights |= (pAce.Mask & allWriteRightsWindows)
-		case windows.ACCESS_ALLOWED_ACE_TYPE:
+		}
+	}
+	for i := uint16(0); i < dacl.AceCount; i++ {
+		var pAce *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(dacl, uint32(i), &pAce); err != nil {
+			return fmt.Errorf("read ACE for %s: %w", path, err)
+		}
+		if pAce.Header.AceType == windows.ACCESS_ALLOWED_ACE_TYPE {
 			grantedWrite := pAce.Mask & allWriteRightsWindows
 			if grantedWrite&^deniedWriteRights != 0 {
 				return fmt.Errorf("%s DACL grants effective write access (granted: 0x%x, denied: 0x%x)", path, grantedWrite, deniedWriteRights)
