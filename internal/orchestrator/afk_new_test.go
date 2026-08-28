@@ -293,33 +293,53 @@ func TestTriageDrainsQueue(t *testing.T) {
 
 // waitForFile waits for an externally observable file to appear. The bounded
 // poll is deliberately separate from the behavior that writes that file.
-func waitForFile(t *testing.T, path string, timeout time.Duration) {
-	t.Helper()
+func waitForFile(child *afkDaemonChild, path string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if _, err := os.Stat(path); err == nil {
-			return
+			return nil
+		}
+		select {
+		case <-child.done:
+			return fmt.Errorf("%s was not created because the AFK daemon child exited: %v\n%s", path, child.waitErr, child.output())
+		default:
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatalf("%s was not created within %s", path, timeout)
+	child.cleanup()
+	return fmt.Errorf("%s was not created within %s\n%s", path, timeout, child.output())
+}
+
+func assertFileExists(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("%s does not exist after lossy daemon stop: %v", path, err)
+	}
 }
 
 func TestDaemonSetsAndClearsFlag(t *testing.T) {
 	tmp := t.TempDir()
 	child := startAFKDaemonChild(t, tmp, true)
+	flagPath := filepath.Join(tmp, afkFlagFile)
+	lockPath := filepath.Join(tmp, afkLockFile)
 
-	waitForFile(t, afkDaemonReadyPath(tmp), 5*time.Second)
-	waitForFile(t, filepath.Join(tmp, afkFlagFile), 5*time.Second)
+	if err := waitForFile(child, afkDaemonReadyPath(tmp), 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if err := waitForFile(child, flagPath, 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
 	stopAFKDaemonChild(t, child)
 
 	if stopProcessIsLossy() {
+		assertFileExists(t, flagPath)
+		assertFileExists(t, lockPath)
 		return
 	}
-	if _, err := os.Stat(filepath.Join(tmp, afkFlagFile)); !os.IsNotExist(err) {
+	if _, err := os.Stat(flagPath); !os.IsNotExist(err) {
 		t.Error("consent flag still exists after daemon stop")
 	}
-	if _, err := os.Stat(filepath.Join(tmp, afkLockFile)); !os.IsNotExist(err) {
+	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
 		t.Error("lock file still exists after daemon stop")
 	}
 }
@@ -335,10 +355,13 @@ func TestDaemonCatchesSignalAtEarliestReadiness(t *testing.T) {
 	tmp := t.TempDir()
 	child := startAFKDaemonChild(t, tmp, true)
 
-	waitForFile(t, afkDaemonReadyPath(tmp), 5*time.Second)
+	if err := waitForFile(child, afkDaemonReadyPath(tmp), 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
 	stopAFKDaemonChild(t, child)
 
 	if stopProcessIsLossy() {
+		// The child may be stopped before either startup artifact is written.
 		return
 	}
 	if _, err := os.Stat(filepath.Join(tmp, afkFlagFile)); !os.IsNotExist(err) {
@@ -358,10 +381,13 @@ func TestDaemonSignalSafeWhenLockIsTheProbe(t *testing.T) {
 	child := startAFKDaemonChild(t, tmp, false)
 
 	lockPath := filepath.Join(tmp, afkLockFile)
-	waitForFile(t, lockPath, 5*time.Second)
+	if err := waitForFile(child, lockPath, 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
 	stopAFKDaemonChild(t, child)
 
 	if stopProcessIsLossy() {
+		assertFileExists(t, lockPath)
 		return
 	}
 	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {

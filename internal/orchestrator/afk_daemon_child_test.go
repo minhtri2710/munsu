@@ -157,3 +157,28 @@ func stopAFKDaemonChild(t *testing.T, child *afkDaemonChild) {
 		t.Fatalf("AFK daemon child exited after graceful stop with error: %v\n%s", err, child.output())
 	}
 }
+
+func TestWaitForFileReportsExitedChild(t *testing.T) {
+	done := make(chan struct{})
+	close(done)
+	child := &afkDaemonChild{
+		stdout:  bytes.NewBufferString("child stdout"),
+		stderr:  bytes.NewBufferString("child stderr"),
+		done:    done,
+		waitErr: fmt.Errorf("child failed"),
+	}
+
+	started := time.Now()
+	err := waitForFile(child, filepath.Join(t.TempDir(), "missing"), time.Second)
+	if err == nil {
+		t.Fatal("waitForFile returned nil, want child-exit error")
+	}
+	if elapsed := time.Since(started); elapsed >= 500*time.Millisecond {
+		t.Fatalf("waitForFile took %s after child exit, want prompt return", elapsed)
+	}
+	for _, want := range []string{"child failed", "child stdout", "child stderr"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("waitForFile error = %q, want %q", err, want)
+		}
+	}
+}
