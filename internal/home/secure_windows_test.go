@@ -202,3 +202,71 @@ func TestRestrictDirPreservesOwnerDenyWindows(t *testing.T) {
 		t.Fatalf("verifyRestrictedProtection: %v", err)
 	}
 }
+
+// TestRestrictDirOwnerLessProtectedDACLBecomesEmptyDACLWindows confirms that
+// when no owner ACEs exist on a restricted directory, restrictDir installs a
+// protected empty DACL (AceCount == 0), denying all access rather than adding access.
+func TestRestrictDirOwnerLessProtectedDACLBecomesEmptyDACLWindows(t *testing.T) {
+	dir := t.TempDir()
+	sid, err := currentUserSID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	everyone, err := windows.StringToSid("S-1-1-0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Protected DACL with only Everyone (owner-less).
+	entries := []windows.EXPLICIT_ACCESS{
+		{
+			AccessPermissions: windows.FILE_GENERIC_READ,
+			AccessMode:        windows.GRANT_ACCESS,
+			Inheritance:       windows.NO_INHERITANCE,
+			Trustee: windows.TRUSTEE{
+				TrusteeForm:  windows.TRUSTEE_IS_SID,
+				TrusteeType:  windows.TRUSTEE_IS_WELL_KNOWN_GROUP,
+				TrusteeValue: windows.TrusteeValueFromSID(everyone),
+			},
+		},
+	}
+	dacl, err := windows.ACLFromEntries(entries, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := windows.SetNamedSecurityInfo(
+		dir,
+		windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		nil, nil, dacl, nil,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := restrictDir(dir); err != nil {
+		t.Fatalf("restrictDir on owner-less directory: %v", err)
+	}
+
+	if err := verifyRestrictedProtection(dir, sid); err != nil {
+		t.Fatalf("verifyRestrictedProtection: %v", err)
+	}
+}
+
+// TestRestrictDirRefusesNullDACLWindows confirms that restrictDir fails closed
+// when encountering a NULL DACL (which grants full access to everyone).
+func TestRestrictDirRefusesNullDACLWindows(t *testing.T) {
+	dir := t.TempDir()
+	// Establish NULL DACL by passing nil DACL
+	if err := windows.SetNamedSecurityInfo(
+		dir,
+		windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION,
+		nil, nil, nil, nil,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := restrictDir(dir); err == nil {
+		t.Fatal("restrictDir on NULL DACL directory succeeded, want error")
+	}
+}

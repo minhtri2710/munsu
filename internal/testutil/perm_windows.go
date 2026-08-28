@@ -13,9 +13,21 @@ import (
 )
 
 const (
-	ownerAllAccessWindows  = 0x001F01FF
-	denyReadAccessWindows  = windows.FILE_GENERIC_READ | windows.FILE_GENERIC_EXECUTE
-	fileDeleteChildWindows = 0x00000040
+	ownerAllAccessWindows      = 0x001F01FF
+	denyReadAccessWindows      = windows.FILE_GENERIC_READ | windows.FILE_GENERIC_EXECUTE
+	fileWriteDataWindows       = 0x00000002 // FILE_WRITE_DATA / FILE_ADD_FILE
+	fileAppendDataWindows      = 0x00000004 // FILE_APPEND_DATA / FILE_ADD_SUBDIRECTORY
+	fileWriteEAWindows         = 0x00000010 // FILE_WRITE_EA
+	fileDeleteChildWindows     = 0x00000040 // FILE_DELETE_CHILD
+	fileWriteAttributesWindows = 0x00000100 // FILE_WRITE_ATTRIBUTES
+	deleteRightWindows         = 0x00010000 // DELETE
+	genericWriteWindows        = 0x40000000 // GENERIC_WRITE
+	genericAllWindows          = 0x10000000 // GENERIC_ALL
+
+	allWriteRightsWindows = fileWriteDataWindows | fileAppendDataWindows | fileWriteEAWindows |
+		fileDeleteChildWindows | fileWriteAttributesWindows | deleteRightWindows |
+		genericWriteWindows | genericAllWindows
+
 	denyWriteAccessWindows = windows.FILE_GENERIC_WRITE | fileDeleteChildWindows | windows.DELETE
 )
 
@@ -208,6 +220,10 @@ func verifyOwnerPrivateWindows(path string, isDir bool) error {
 	}
 
 	sdPtr := unsafe.Pointer(sd)
+	control := *(*uint16)(unsafe.Pointer(uintptr(sdPtr) + 2))
+	if control&windows.SE_DACL_PROTECTED == 0 {
+		return fmt.Errorf("%s DACL is not protected (control: 0x%04x)", path, control)
+	}
 	daclOff := *(*uint32)(unsafe.Pointer(uintptr(sdPtr) + 16))
 	if daclOff == 0 {
 		return fmt.Errorf("%s has no DACL", path)
@@ -262,16 +278,21 @@ func verifyOwnerReadOnlyWindows(path string, isDir bool) error {
 	}
 
 	sdPtr := unsafe.Pointer(sd)
+	control := *(*uint16)(unsafe.Pointer(uintptr(sdPtr) + 2))
+	if control&windows.SE_DACL_PROTECTED == 0 {
+		return fmt.Errorf("%s DACL is not protected (control: 0x%04x)", path, control)
+	}
 	daclOff := *(*uint32)(unsafe.Pointer(uintptr(sdPtr) + 16))
 	if daclOff == 0 {
 		return fmt.Errorf("%s has no DACL", path)
 	}
 	dacl := (*windows.ACL)(unsafe.Pointer(uintptr(sdPtr) + uintptr(daclOff)))
 	if dacl.AceCount == 0 {
-		return fmt.Errorf("%s DACL has 0 ACEs", path)
+		// An empty protected DACL denies all access (including write), satisfying read-only / no-access.
+		return nil
 	}
 
-	hasWriteDeny := false
+	var deniedWriteRights windows.ACCESS_MASK
 	for i := uint16(0); i < dacl.AceCount; i++ {
 		var pAce *windows.ACCESS_ALLOWED_ACE
 		if err := windows.GetAce(dacl, uint32(i), &pAce); err != nil {
@@ -284,11 +305,14 @@ func verifyOwnerReadOnlyWindows(path string, isDir bool) error {
 		if !windows.EqualSid(aceSid, sid) {
 			return fmt.Errorf("%s ACE grants a non-owner principal", path)
 		}
-		if pAce.Header.AceType == windows.ACCESS_DENIED_ACE_TYPE && (pAce.Mask&windows.FILE_GENERIC_WRITE != 0 || pAce.Mask&windows.GENERIC_WRITE != 0) {
-			hasWriteDeny = true
-		}
-		if pAce.Header.AceType == windows.ACCESS_ALLOWED_ACE_TYPE && (pAce.Mask&windows.FILE_GENERIC_WRITE != 0 || pAce.Mask&windows.GENERIC_WRITE != 0) && !hasWriteDeny {
-			return fmt.Errorf("%s DACL grants write access to owner without preceding deny", path)
+		switch pAce.Header.AceType {
+		case windows.ACCESS_DENIED_ACE_TYPE:
+			deniedWriteRights |= (pAce.Mask & allWriteRightsWindows)
+		case windows.ACCESS_ALLOWED_ACE_TYPE:
+			grantedWrite := pAce.Mask & allWriteRightsWindows
+			if grantedWrite&^deniedWriteRights != 0 {
+				return fmt.Errorf("%s DACL grants effective write access (granted: 0x%x, denied: 0x%x)", path, grantedWrite, deniedWriteRights)
+			}
 		}
 	}
 	return nil
