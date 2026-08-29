@@ -3,25 +3,32 @@ package fleet
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
 )
 
-// backslashBearingLeaf returns a directory leaf that puts a backslash — the one
-// separator strconv.Quote escapes — into any path built from it, so a %q
-// regression breaks literal containment and not only the quote check.
+// quoteEscapedLeaf appends U+200B ZERO WIDTH SPACE to a directory leaf, so
+// every path built from it contains a rune strconv.Quote renders as an escape.
 //
-// windows already supplies that backslash as its path separator and rejects a
-// literal one inside a filename (a drive-letter "C:" is not a legal component),
-// so there the leaf stays plain; unix separates with '/', which Quote passes
-// through untouched, so on unix the leaf carries the backslashes itself.
-func backslashBearingLeaf(name string) string {
-	if runtime.GOOS == "windows" {
-		return name
-	}
-	return `C:\Users\alice\` + name
+// unicode.IsPrint reports false for U+200B (category Cf), and that is the
+// predicate strconv.Quote consults: it emits the six characters \u200b in place
+// of the rune. No filesystem rule stands in the way — MS-FSCC gives the Windows
+// filename exclusions as " \ / : | < > ? * and U+0000-U+001F, and U+200B is in
+// none of them — so unlike a literal backslash this leaf needs no platform
+// branch to be both creatable and escape-bearing.
+//
+// The two call sites below assert that a refusal message renders its home path
+// raw. That assertion has two clauses — the raw path is present, and the
+// strconv.Quote form is absent — and only an escape-bearing path makes a %q
+// regression fail the first clause as well as the second. A plain leaf would
+// silently reduce the test to the second clause alone.
+//
+// Creatability under U+200B is verified here on darwin only. Whether the
+// windows-latest image accepts it is pinned by the windows-observation run on
+// merged main, not by anything this tree executes.
+func quoteEscapedLeaf(name string) string {
+	return name + "\u200b"
 }
 
 func TestGuardBurnDownLaunchRefusesNilEndpoint(t *testing.T) {
@@ -59,14 +66,14 @@ func TestGuardBurnDownPreflightConfigPushRefusesParentHomeEscape(t *testing.T) {
 func TestGuardBurnDownPublishResolvedSnapshotRefusesRegisteredHomeMismatch(t *testing.T) {
 	parentHome := t.TempDir()
 	setupTypedParentHome(t, parentHome, "mismatch")
-	captainHome := filepath.Join(parentHome, "captains", backslashBearingLeaf("mismatch"))
+	captainHome := filepath.Join(parentHome, "captains", quoteEscapedLeaf("mismatch"))
 	if err := os.MkdirAll(captainHome, 0755); err != nil {
 		t.Fatal(err)
 	}
 	if err := SeedProvenance(captainHome, "mismatch"); err != nil {
 		t.Fatal(err)
 	}
-	registeredHome := filepath.Join(t.TempDir(), backslashBearingLeaf("registered"))
+	registeredHome := filepath.Join(t.TempDir(), quoteEscapedLeaf("registered"))
 	if err := os.MkdirAll(registeredHome, 0755); err != nil {
 		t.Fatal(err)
 	}

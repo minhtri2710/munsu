@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -354,6 +353,30 @@ func assertOneJSONWakeResponse(t *testing.T, output, wantKind string) {
 	}
 }
 
+// quoteEscapedLeaf appends U+200B ZERO WIDTH SPACE to a directory leaf, so
+// every path built from it contains a rune strconv.Quote renders as an escape.
+//
+// unicode.IsPrint reports false for U+200B (category Cf), and that is the
+// predicate strconv.Quote consults: it emits the six characters \u200b in place
+// of the rune. No filesystem rule stands in the way — MS-FSCC gives the Windows
+// filename exclusions as " \ / : | < > ? * and U+0000-U+001F, and U+200B is in
+// none of them — so unlike a literal backslash this leaf needs no platform
+// branch to be both creatable and escape-bearing.
+//
+// The three home fixtures below assert that a contract error renders MUNSU_HOME
+// raw: two by comparing the decoded message against a %s-formatted want string,
+// the third by requiring the raw path present and the strconv.Quote form absent.
+// Only an escape-bearing home makes a %q regression fail those checks, and
+// encoding/json passes U+200B through unescaped, so the raw rune survives the
+// contract encode/decode round trip that these tests read the message from.
+//
+// Creatability under U+200B is verified here on darwin only. Whether the
+// windows-latest image accepts it is pinned by the windows-observation run on
+// merged main, not by anything this tree executes.
+func quoteEscapedLeaf(name string) string {
+	return name + "\u200b"
+}
+
 func runContract(t *testing.T, args []string) (string, error) {
 	t.Helper()
 	root := NewRootCommand()
@@ -379,10 +402,7 @@ func TestContractErrorHomePathIsNotPreQuoted(t *testing.T) {
 	} {
 		for _, state := range []string{"meta-only", "missing", "corrupt"} {
 			t.Run(command.name+"/"+state, func(t *testing.T) {
-				homeDir := t.TempDir()
-				if runtime.GOOS != "windows" {
-					homeDir = filepath.Join(homeDir, `C:\Users\alice\.munsu`)
-				}
+				homeDir := filepath.Join(t.TempDir(), quoteEscapedLeaf(".munsu"))
 				initCLITestHome(t, homeDir)
 				t.Setenv("MUNSU_HOME", homeDir)
 				const taskID = "windows-path"
@@ -434,10 +454,7 @@ func TestContractErrorHomePathIsNotPreQuoted(t *testing.T) {
 }
 
 func TestFleetSnapshotErrorHomePathIsNotPreQuoted(t *testing.T) {
-	homeDir := t.TempDir()
-	if runtime.GOOS != "windows" {
-		homeDir = filepath.Join(homeDir, `C:\Users\alice\.munsu`)
-	}
+	homeDir := filepath.Join(t.TempDir(), quoteEscapedLeaf(".munsu"))
 	initCLITestHome(t, homeDir)
 	t.Setenv("MUNSU_HOME", homeDir)
 	const taskID = "windows-path"
@@ -463,10 +480,7 @@ func TestFleetSnapshotErrorHomePathIsNotPreQuoted(t *testing.T) {
 }
 
 func TestCaptainSpawnContractErrorPreservesProvenancePaths(t *testing.T) {
-	homeDir := t.TempDir()
-	if runtime.GOOS != "windows" {
-		homeDir = filepath.Join(homeDir, `C:\Users\alice\.munsu`)
-	}
+	homeDir := filepath.Join(t.TempDir(), quoteEscapedLeaf(".munsu"))
 	initCLITestHome(t, homeDir)
 	storedHome := homeDir + `-moved\captain`
 	marker := fmt.Sprintf("%s\ncaptain-1\n%s\n", mhome.CaptainProvenanceVersion, storedHome)
