@@ -3,10 +3,26 @@ package fleet
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
 )
+
+// backslashBearingLeaf returns a directory leaf that puts a backslash — the one
+// separator strconv.Quote escapes — into any path built from it, so a %q
+// regression breaks literal containment and not only the quote check.
+//
+// windows already supplies that backslash as its path separator and rejects a
+// literal one inside a filename (a drive-letter "C:" is not a legal component),
+// so there the leaf stays plain; unix separates with '/', which Quote passes
+// through untouched, so on unix the leaf carries the backslashes itself.
+func backslashBearingLeaf(name string) string {
+	if runtime.GOOS == "windows" {
+		return name
+	}
+	return `C:\Users\alice\` + name
+}
 
 func TestGuardBurnDownLaunchRefusesNilEndpoint(t *testing.T) {
 	oldLookPath := captainLookPath
@@ -43,14 +59,14 @@ func TestGuardBurnDownPreflightConfigPushRefusesParentHomeEscape(t *testing.T) {
 func TestGuardBurnDownPublishResolvedSnapshotRefusesRegisteredHomeMismatch(t *testing.T) {
 	parentHome := t.TempDir()
 	setupTypedParentHome(t, parentHome, "mismatch")
-	captainHome := filepath.Join(parentHome, "captains", `C:\Users\alice\mismatch`)
+	captainHome := filepath.Join(parentHome, "captains", backslashBearingLeaf("mismatch"))
 	if err := os.MkdirAll(captainHome, 0755); err != nil {
 		t.Fatal(err)
 	}
 	if err := SeedProvenance(captainHome, "mismatch"); err != nil {
 		t.Fatal(err)
 	}
-	registeredHome := filepath.Join(t.TempDir(), `C:\Users\alice\registered`)
+	registeredHome := filepath.Join(t.TempDir(), backslashBearingLeaf("registered"))
 	if err := os.MkdirAll(registeredHome, 0755); err != nil {
 		t.Fatal(err)
 	}

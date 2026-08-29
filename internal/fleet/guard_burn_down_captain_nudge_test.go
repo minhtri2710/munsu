@@ -73,7 +73,11 @@ func TestGuardBurnDownSendNudgeRefusesMetaHomeMismatch(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "meta home=") || !strings.Contains(err.Error(), "does not match canonical home") {
 		t.Fatalf("sendNudge error = %v, want home-mismatch refusal", err)
 	}
-	for _, path := range []string{mismatchedHome, captainHome} {
+	canonicalCaptain, canonicalErr := canonicalCaptainHome(captainHome)
+	if canonicalErr != nil {
+		t.Fatal(canonicalErr)
+	}
+	for _, path := range []string{mismatchedHome, canonicalCaptain} {
 		if !strings.Contains(err.Error(), path) || strings.Contains(err.Error(), strconv.Quote(path)) {
 			t.Errorf("sendNudge home path rendering for %q = %q", path, err)
 		}
@@ -97,7 +101,11 @@ func TestGuardBurnDownSendNudgeRefusesMarkerHomeMismatch(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "marker home=") || !strings.Contains(err.Error(), "does not match canonical home") {
 		t.Fatalf("sendNudge error = %v, want marker-home mismatch refusal", err)
 	}
-	for _, path := range []string{mismatchedHome, captainHome} {
+	canonicalCaptain, canonicalErr := canonicalCaptainHome(captainHome)
+	if canonicalErr != nil {
+		t.Fatal(canonicalErr)
+	}
+	for _, path := range []string{mismatchedHome, canonicalCaptain} {
 		if !strings.Contains(err.Error(), path) || strings.Contains(err.Error(), strconv.Quote(path)) {
 			t.Errorf("sendNudge marker home path rendering for %q = %q", path, err)
 		}
