@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -352,8 +353,11 @@ func TestDispatchPolicyErrorCarriesMatrixEvidence(t *testing.T) {
 			t.Fatalf("error %q does not carry %q", perr.Error(), want)
 		}
 	}
-	// The home is rendered with %q, which escapes its separators.
+	// The home path is emitted raw; contract encoders own all quoting.
 	if !testutil.PathInMessage(perr.Error(), homeDir) {
 		t.Fatalf("error %q does not carry home %q", perr.Error(), homeDir)
+	}
+	if strings.Contains(perr.Error(), strconv.Quote(homeDir)) {
+		t.Fatalf("error pre-quotes home %q: %s", homeDir, perr.Error())
 	}
 }

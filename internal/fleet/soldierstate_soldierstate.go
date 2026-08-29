@@ -56,9 +56,9 @@ func ReadWithProbe(homeDir string, id string, probe StateEndpointProbe) (*State,
 	agg, err := currentCanonical(homeDir, id)
 	if err != nil {
 		if errors.Is(err, tauth.ErrNotFound) {
-			return nil, fmt.Errorf("reading authoritative current state for task %q in home %q: %w", id, homeDir, tauth.ErrNotFound)
+			return nil, fmt.Errorf("reading authoritative current state for task %q in home %s: %w", id, homeDir, tauth.ErrNotFound)
 		}
-		return nil, fmt.Errorf("reading authoritative current state for task %q in home %q: %w", id, homeDir, err)
+		return nil, fmt.Errorf("reading authoritative current state for task %q in home %s: %w", id, homeDir, err)
 	}
 
 	// Canonical phase is state truth.

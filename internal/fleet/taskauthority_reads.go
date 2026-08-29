@@ -107,7 +107,7 @@ func (canonicalCurrentStateQ) Read(homeDir, taskID string) (*CurrentStateInfo, e
 		return nil, err
 	}
 	if !canonical {
-		return nil, fmt.Errorf("task %q in home %q has no canonical Task Authority record", taskID, homeDir)
+		return nil, fmt.Errorf("task %q in home %s has no canonical Task Authority record", taskID, homeDir)
 	}
 	info := &CurrentStateInfo{
 		State:               string(agg.Phase),

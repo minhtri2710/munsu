@@ -10,6 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -365,6 +367,140 @@ func runContract(t *testing.T, args []string) (string, error) {
 		return strings.TrimSpace(buffer.String()), err
 	}
 	return strings.TrimSpace(buffer.String()), err
+}
+
+func TestContractErrorHomePathIsNotPreQuoted(t *testing.T) {
+	for _, command := range []struct {
+		name string
+		args []string
+	}{
+		{name: "task observe", args: []string{"task", "observe"}},
+		{name: "soldier state", args: []string{"soldier-state"}},
+	} {
+		for _, state := range []string{"meta-only", "missing", "corrupt"} {
+			t.Run(command.name+"/"+state, func(t *testing.T) {
+				homeDir := t.TempDir()
+				if runtime.GOOS != "windows" {
+					homeDir = filepath.Join(homeDir, `C:\Users\alice\.munsu`)
+				}
+				initCLITestHome(t, homeDir)
+				t.Setenv("MUNSU_HOME", homeDir)
+				const taskID = "windows-path"
+
+				switch state {
+				case "meta-only":
+					if err := os.WriteFile(filepath.Join(homeDir, "state", taskID+".meta"), []byte("kind=ship\n"), 0644); err != nil {
+						t.Fatal(err)
+					}
+				case "corrupt":
+					cliSeedCanonicalTask(t, homeDir, taskID, "ship")
+					current := filepath.Join(homeDir, "state", "task-authority", "tasks", taskID, "current.json")
+					if err := os.WriteFile(current, []byte("{not-json"), 0644); err != nil {
+						t.Fatal(err)
+					}
+				}
+
+				args := append(append([]string{}, command.args...), taskID, "--output", "json")
+				out, err := runContract(t, args)
+				if err == nil {
+					t.Fatalf("%s %s unexpectedly succeeded: %s", command.name, state, out)
+				}
+				var response ErrorResponse
+				if err := json.Unmarshal([]byte(out), &response); err != nil {
+					t.Fatalf("decode %s %s output: %v\n%s", command.name, state, err, out)
+				}
+				var wantPrefix string
+				switch state {
+				case "meta-only":
+					wantPrefix = fmt.Sprintf("Task %q in home %s has no canonical Task Authority record; observation refuses the legacy projection", taskID, homeDir)
+				case "missing":
+					wantPrefix = fmt.Sprintf("Task %q was not found in home %s", taskID, homeDir)
+				case "corrupt":
+					wantPrefix = fmt.Sprintf("Unable to read authoritative Task truth for task %q in home %s:", taskID, homeDir)
+				}
+				if state == "corrupt" {
+					if !strings.HasPrefix(response.Error.Message, wantPrefix) {
+						t.Fatalf("decoded message = %q, want prefix %q", response.Error.Message, wantPrefix)
+					}
+					if strings.Contains(response.Error.Message, strconv.Quote(homeDir)) {
+						t.Fatalf("decoded message still contains pre-quoted home path: %q", response.Error.Message)
+					}
+				} else if response.Error.Message != wantPrefix {
+					t.Fatalf("decoded message = %q, want %q", response.Error.Message, wantPrefix)
+				}
+			})
+		}
+	}
+}
+
+func TestFleetSnapshotErrorHomePathIsNotPreQuoted(t *testing.T) {
+	homeDir := t.TempDir()
+	if runtime.GOOS != "windows" {
+		homeDir = filepath.Join(homeDir, `C:\Users\alice\.munsu`)
+	}
+	initCLITestHome(t, homeDir)
+	t.Setenv("MUNSU_HOME", homeDir)
+	const taskID = "windows-path"
+	if err := os.WriteFile(filepath.Join(homeDir, "state", taskID+".meta"), []byte("kind=ship\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runContract(t, []string{"fleet", "snapshot", "--output", "json"})
+	if err == nil {
+		t.Fatalf("fleet snapshot unexpectedly succeeded: %s", out)
+	}
+	var response ErrorResponse
+	if err := json.Unmarshal([]byte(out), &response); err != nil {
+		t.Fatalf("decode fleet snapshot output: %v\n%s", err, out)
+	}
+	want := fmt.Sprintf("reading authoritative current state for task %q in home %s: no canonical Task Authority record (legacy/meta-only tasks are not authoritative)", taskID, homeDir)
+	if response.Error.Message != want {
+		t.Fatalf("decoded message = %q, want %q", response.Error.Message, want)
+	}
+	if strings.Contains(response.Error.Message, strconv.Quote(homeDir)) {
+		t.Fatalf("decoded message still contains pre-quoted home path: %q", response.Error.Message)
+	}
+}
+
+func TestCaptainSpawnContractErrorPreservesProvenancePaths(t *testing.T) {
+	homeDir := t.TempDir()
+	if runtime.GOOS != "windows" {
+		homeDir = filepath.Join(homeDir, `C:\Users\alice\.munsu`)
+	}
+	initCLITestHome(t, homeDir)
+	storedHome := homeDir + `-moved\captain`
+	marker := fmt.Sprintf("%s\ncaptain-1\n%s\n", mhome.CaptainProvenanceVersion, storedHome)
+	if err := os.WriteFile(filepath.Join(homeDir, mhome.CaptainProvenanceMarkerName), []byte(marker), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MUNSU_HOME", homeDir)
+	t.Setenv("MUNSU_ROLE", "captain")
+	t.Setenv("MUNSU_GUARD_SKIP", "1")
+	t.Chdir(homeDir)
+
+	root := NewRootCommand()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"spawn", "windows-path", "project"})
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("spawn with mismatched captain provenance unexpectedly succeeded")
+	}
+	out.Reset()
+	WriteContractError(&out, err, []string{"spawn", "windows-path", "project", "--output", "json"})
+	var response ErrorResponse
+	if err := json.Unmarshal(out.Bytes(), &response); err != nil {
+		t.Fatalf("decode spawn output: %v\n%s", err, out.String())
+	}
+	if !strings.Contains(response.Error.Message, homeDir) || !strings.Contains(response.Error.Message, storedHome) {
+		t.Fatalf("decoded message = %q, want actual home %q and stored home %q", response.Error.Message, homeDir, storedHome)
+	}
+	for _, path := range []string{homeDir, storedHome} {
+		if strings.Contains(response.Error.Message, strconv.Quote(path)) {
+			t.Fatalf("decoded message pre-quotes provenance path %q: %q", path, response.Error.Message)
+		}
+	}
 }
 
 func TestContractCLIReadsOnlyFreshTempHome(t *testing.T) {

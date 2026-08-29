@@ -87,7 +87,7 @@ type DispatchPolicyError struct {
 }
 
 func (e *DispatchPolicyError) Error() string {
-	return fmt.Sprintf("dispatch policy: %s (parent=%q home=%q): %s",
+	return fmt.Sprintf("dispatch policy: %s (parent=%q home=%s): %s",
 		e.Problem, e.Parent, e.HomeDir, e.Detail)
 }
 

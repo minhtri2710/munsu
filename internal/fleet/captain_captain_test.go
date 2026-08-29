@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -2056,6 +2057,11 @@ func TestRetire_RefusesMismatchedHome(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "home=") {
 		t.Errorf("error should mention home mismatch, got: %v", err)
+	}
+	for _, path := range []string{"/some/other/path", smHome} {
+		if !strings.Contains(err.Error(), path) || strings.Contains(err.Error(), strconv.Quote(path)) {
+			t.Errorf("error home path rendering for %q = %q", path, err)
+		}
 	}
 }
 

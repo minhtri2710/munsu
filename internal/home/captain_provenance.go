@@ -60,7 +60,7 @@ func ValidateCaptainProvenance(homePath string) (string, error) {
 		return "", fmt.Errorf("cannot verify canonical home for copied/move check: %w", err)
 	}
 	if actual != stored {
-		return "", fmt.Errorf("provenance marker home %q does not match actual canonical home %q — captain may have been copied/moved", stored, actual)
+		return "", fmt.Errorf("provenance marker home %s does not match actual canonical home %s — captain may have been copied/moved", stored, actual)
 	}
 	return id, nil
 }

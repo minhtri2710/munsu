@@ -52,7 +52,7 @@ func SendMailboxToCaptain(sm Info, parentHome, line string, sender home.BoundSen
 		return result
 	}
 	if meta["home"] != canonSM {
-		result.Err = fmt.Errorf("meta home=%q does not match canonical captain home %q", meta["home"], canonSM)
+		result.Err = fmt.Errorf("meta home=%s does not match canonical captain home %s", meta["home"], canonSM)
 		return result
 	}
 	if _, err := ValidateProvenance(sm.Home); err != nil {

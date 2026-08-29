@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -426,5 +427,8 @@ func TestCanonicalCurrentStateQ_Read_MissingCanonical(t *testing.T) {
 	_, err = q.Read(h.Root(), "t-nonexistent")
 	if err == nil || !strings.Contains(err.Error(), "has no canonical Task Authority record") {
 		t.Fatalf("Read err = %v, want has no canonical Task Authority record", err)
+	}
+	if strings.Contains(err.Error(), strconv.Quote(h.Root())) {
+		t.Fatalf("Read error pre-quotes home path: %v", err)
 	}
 }

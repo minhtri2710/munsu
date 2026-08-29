@@ -182,7 +182,7 @@ func appendHomeTasks(snap *FleetSnapshot, taskHome, source, homeLabel string, de
 		if metaErr == nil && meta["kind"] == "captain" {
 			continue
 		}
-		return fmt.Errorf("reading authoritative current state for task %q in home %q: no canonical Task Authority record (legacy/meta-only tasks are not authoritative)", id, taskHome)
+		return fmt.Errorf("reading authoritative current state for task %q in home %s: no canonical Task Authority record (legacy/meta-only tasks are not authoritative)", id, taskHome)
 	}
 
 	canonicalIDs := make([]string, 0, len(canonical))
@@ -200,7 +200,7 @@ func appendHomeTasks(snap *FleetSnapshot, taskHome, source, homeLabel string, de
 		// Authoritative current state comes from the single canonical query.
 		info, err := deps.CurrentState.Read(taskHome, id)
 		if err != nil {
-			return fmt.Errorf("reading authoritative current state for task %q in home %q: %w", id, taskHome, err)
+			return fmt.Errorf("reading authoritative current state for task %q in home %s: %w", id, taskHome, err)
 		}
 
 		ts := TaskSnapshot{
