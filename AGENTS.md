@@ -91,8 +91,6 @@ installs `munsu-ops` to the chosen destination and points at embedded auxiliarie
 
 Rank hierarchy: General (fleet orchestrator) → Captain (`internal/fleet`, CLI `munsu captain`) → Soldier (task worker). Runtime: `MUNSU_ROLE=general|captain|soldier`. Labels: `captain-<id>-<hometag>`, windows `mu-captain-<id>`, marker `.munsu-captain-home`, registry `data/captains.md`. See `docs/architecture.md` "Rank hierarchy and identity".
 
-Go 1.26.5 (use `go 1.26` in `go.mod`).
-
 ## Delegation via herdr + agy
 
 When pi (root) needs a second agent for implementation, use agy as a dedicated thread:

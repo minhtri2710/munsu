@@ -545,7 +545,7 @@ func TestJournalRecoveryReplaysInterruptedCommit(t *testing.T) {
 		Scope:            "scope",
 		FenceToken:       uint64(lk.token),
 		ExpectedRevision: 0,
-		NewRevision:      5,
+		NewRevision:      1,
 		Items: []ChangeItem{
 			{Root: RootData, Key: "a", Data: []byte("A")},
 			{Root: RootData, Key: "b", Data: []byte("B")},
@@ -574,7 +574,7 @@ func TestJournalRecoveryReplaysInterruptedCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h2.Commit(lk2, "txn-next", 5, []ChangeItem{{Root: RootData, Key: "c", Data: []byte("C")}}); err != nil {
+	if _, err := h2.Commit(lk2, "txn-next", 1, []ChangeItem{{Root: RootData, Key: "c", Data: []byte("C")}}); err != nil {
 		t.Fatalf("commit after recovery: %v", err)
 	}
 	if err := lk2.Release(); err != nil {
@@ -589,6 +589,148 @@ func TestJournalRecoveryReplaysInterruptedCommit(t *testing.T) {
 		if strings.HasSuffix(e.Name(), ".json") {
 			t.Errorf("journal record not cleaned up: %s", e.Name())
 		}
+	}
+}
+
+func TestJournalRecoverySkipsSupersededRecord(t *testing.T) {
+	root := t.TempDir()
+	h, err := Init(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lk, err := h.Lock("scope")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Advance the scope to revision 2 with the current value.
+	if _, err := h.Commit(lk, "t1", 0, []ChangeItem{{Root: RootData, Key: "k", Data: []byte("V1")}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Commit(lk, "t2", 1, []ChangeItem{{Root: RootData, Key: "k", Data: []byte("NEW")}}); err != nil {
+		t.Fatal(err)
+	}
+	// Leave a superseded record on disk: a well-formed record for revision 1
+	// whose items carry the stale value. Recovery must not re-apply it.
+	stale := journalRecord{
+		TxnID:            "stale",
+		Scope:            "scope",
+		FenceToken:       uint64(lk.token),
+		ExpectedRevision: 0,
+		NewRevision:      1,
+		Items:            []ChangeItem{{Root: RootData, Key: "k", Data: []byte("OLD")}},
+	}
+	if err := h.writeJournalRecord(stale); err != nil {
+		t.Fatal(err)
+	}
+	if err := lk.Release(); err != nil {
+		t.Fatal(err)
+	}
+
+	h2, err := Open(root)
+	if err != nil {
+		t.Fatalf("Open with superseded record: %v", err)
+	}
+	if data, err := h2.Read(RootData, "k"); err != nil || string(data) != "NEW" {
+		t.Errorf("k = %q err=%v, want NEW (superseded record must not clobber)", data, err)
+	}
+	entries, err := os.ReadDir(filepath.Join(root, JournalDirName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".json") {
+			t.Errorf("superseded record not cleaned up: %s", e.Name())
+		}
+	}
+}
+
+func TestJournalRecoveryRejectsRevisionGap(t *testing.T) {
+	root := t.TempDir()
+	h, err := Init(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lk, err := h.Lock("scope")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// NewRevision is not one past ExpectedRevision: only corruption produces this.
+	rec := journalRecord{
+		TxnID:            "gap",
+		Scope:            "scope",
+		FenceToken:       uint64(lk.token),
+		ExpectedRevision: 0,
+		NewRevision:      5,
+		Items:            []ChangeItem{{Root: RootData, Key: "k", Data: []byte("X")}},
+	}
+	if err := h.writeJournalRecord(rec); err != nil {
+		t.Fatal(err)
+	}
+	if err := lk.Release(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(root); err == nil {
+		t.Fatal("Open must fail on a journal record with a revision gap")
+	}
+}
+
+func TestJournalRecoveryRejectsRegressedRevision(t *testing.T) {
+	root := t.TempDir()
+	h, err := Init(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lk, err := h.Lock("scope")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A well-formed record whose expected revision is ahead of the actual scope
+	// revision (0): the scope revision regressed, e.g. a lost .rev file.
+	rec := journalRecord{
+		TxnID:            "ahead",
+		Scope:            "scope",
+		FenceToken:       uint64(lk.token),
+		ExpectedRevision: 3,
+		NewRevision:      4,
+		Items:            []ChangeItem{{Root: RootData, Key: "k", Data: []byte("X")}},
+	}
+	if err := h.writeJournalRecord(rec); err != nil {
+		t.Fatal(err)
+	}
+	if err := lk.Release(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(root); err == nil {
+		t.Fatal("Open must fail when the scope revision is behind the record's expected revision")
+	}
+}
+
+func TestJournalRecoveryRejectsEmptyScope(t *testing.T) {
+	root := t.TempDir()
+	h, err := Init(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lk, err := h.Lock("scope")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := journalRecord{
+		TxnID:            "blank",
+		Scope:            "",
+		FenceToken:       uint64(lk.token),
+		ExpectedRevision: 0,
+		NewRevision:      1,
+		Items:            []ChangeItem{{Root: RootData, Key: "k", Data: []byte("X")}},
+	}
+	if err := h.writeJournalRecord(rec); err != nil {
+		t.Fatal(err)
+	}
+	if err := lk.Release(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(root); err == nil {
+		t.Fatal("Open must fail on a journal record with an empty scope")
 	}
 }
 
