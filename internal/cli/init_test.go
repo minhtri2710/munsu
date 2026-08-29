@@ -12,6 +12,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/harness"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 func TestInvalidClosedSetInputsRefuse(t *testing.T) {
@@ -133,8 +134,8 @@ func TestInitSkillGlobalFlag(t *testing.T) {
 	}
 	t.Cleanup(func() { os.RemoveAll(tmpHome) })
 
-	// Redirect $HOME so global install writes to our temp dir
-	t.Setenv("HOME", tmpHome)
+	// Redirect the user home so global install writes to our temp dir
+	testutil.SetUserHome(t, tmpHome)
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
 
