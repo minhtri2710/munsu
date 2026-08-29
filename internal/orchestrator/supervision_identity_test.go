@@ -9,6 +9,7 @@ import (
 	"time"
 
 	homepkg "github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // --- NewIdentity tests ---
@@ -159,13 +160,7 @@ func TestWriteIdentityUsesPrivatePermissions(t *testing.T) {
 	if err := WriteIdentity(home, NewIdentity(home)); err != nil {
 		t.Fatal(err)
 	}
-	info, err := os.Stat(homepkg.WriterIdentityPath(home, "watcher"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := info.Mode().Perm(); got != 0600 {
-		t.Fatalf("identity mode = %o, want 600", got)
-	}
+	testutil.AssertOwnerPrivate(t, homepkg.WriterIdentityPath(home, "watcher"))
 }
 
 // --- ClearIdentity tests ---
