@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -354,6 +353,39 @@ func assertOneJSONWakeResponse(t *testing.T, output, wantKind string) {
 	}
 }
 
+// quoteEscapedLeaf appends U+200B ZERO WIDTH SPACE to a directory leaf, so
+// every path built from it contains a rune strconv.Quote renders as an escape.
+//
+// U+200B is Unicode category Cf, and Go's printability predicate reports false
+// for it: strconv.Quote consults strconv.IsPrint, whose own doc defines it
+// identically to unicode.IsPrint, so Quote emits the six characters \u200b in
+// place of the rune. The documented MS-FSCC general filename exclusions
+// (" \ / : | < > ? * and U+0000-U+001F) do not list U+200B, so unlike a literal
+// backslash this leaf needs no platform branch to be written as well as escaped.
+// Acceptance on the target windows image is a windows-observation question, not
+// something the specification settles.
+//
+// The leaf is not what makes the three home fixtures below catch a %q
+// regression. Two compare the decoded message against a %s-formatted want
+// string, and the third requires the raw path present and the strconv.Quote form
+// absent; all three already fail for a plain path, because %q adds surrounding
+// quote delimiters that the want string lacks and that Quote's own output
+// carries. What the leaf gives is one explicit, platform-uniform statement of the
+// escape-bearing property these tests are about, in place of a runtime.GOOS
+// branch that left windows with no escapable character at all.
+//
+// encoding/json emits U+200B as raw UTF-8 rather than escaping it, unlike < > &
+// U+2028 U+2029. That is an observation about the encoder, not a requirement: an
+// escaped \u200b would decode back to the same rune, so the contract
+// encode/decode round trip these tests read the message through holds either way.
+//
+// Creatability under U+200B is verified here on darwin only. Whether the
+// windows-latest image accepts it through MkdirAll and home.Init is pinned by the
+// windows-observation run on merged main, not by anything this tree executes.
+func quoteEscapedLeaf(name string) string {
+	return name + "\u200b"
+}
+
 func runContract(t *testing.T, args []string) (string, error) {
 	t.Helper()
 	root := NewRootCommand()
@@ -379,10 +411,7 @@ func TestContractErrorHomePathIsNotPreQuoted(t *testing.T) {
 	} {
 		for _, state := range []string{"meta-only", "missing", "corrupt"} {
 			t.Run(command.name+"/"+state, func(t *testing.T) {
-				homeDir := t.TempDir()
-				if runtime.GOOS != "windows" {
-					homeDir = filepath.Join(homeDir, `C:\Users\alice\.munsu`)
-				}
+				homeDir := filepath.Join(t.TempDir(), quoteEscapedLeaf(".munsu"))
 				initCLITestHome(t, homeDir)
 				t.Setenv("MUNSU_HOME", homeDir)
 				const taskID = "windows-path"
@@ -434,10 +463,7 @@ func TestContractErrorHomePathIsNotPreQuoted(t *testing.T) {
 }
 
 func TestFleetSnapshotErrorHomePathIsNotPreQuoted(t *testing.T) {
-	homeDir := t.TempDir()
-	if runtime.GOOS != "windows" {
-		homeDir = filepath.Join(homeDir, `C:\Users\alice\.munsu`)
-	}
+	homeDir := filepath.Join(t.TempDir(), quoteEscapedLeaf(".munsu"))
 	initCLITestHome(t, homeDir)
 	t.Setenv("MUNSU_HOME", homeDir)
 	const taskID = "windows-path"
@@ -463,10 +489,7 @@ func TestFleetSnapshotErrorHomePathIsNotPreQuoted(t *testing.T) {
 }
 
 func TestCaptainSpawnContractErrorPreservesProvenancePaths(t *testing.T) {
-	homeDir := t.TempDir()
-	if runtime.GOOS != "windows" {
-		homeDir = filepath.Join(homeDir, `C:\Users\alice\.munsu`)
-	}
+	homeDir := filepath.Join(t.TempDir(), quoteEscapedLeaf(".munsu"))
 	initCLITestHome(t, homeDir)
 	storedHome := homeDir + `-moved\captain`
 	marker := fmt.Sprintf("%s\ncaptain-1\n%s\n", mhome.CaptainProvenanceVersion, storedHome)

@@ -245,7 +245,11 @@ func TestSendMailboxToCaptainRefusesMetaHomeMismatchWithoutPrequoting(t *testing
 	if result.Err == nil || !strings.Contains(result.Err.Error(), "does not match canonical captain home") {
 		t.Fatalf("SendMailboxToCaptain error = %v, want home mismatch", result.Err)
 	}
-	for _, path := range []string{mismatchedHome, captainHome} {
+	canonicalCaptain, canonicalErr := canonicalCaptainHome(captainHome)
+	if canonicalErr != nil {
+		t.Fatal(canonicalErr)
+	}
+	for _, path := range []string{mismatchedHome, canonicalCaptain} {
 		if !strings.Contains(result.Err.Error(), path) || strings.Contains(result.Err.Error(), strconv.Quote(path)) {
 			t.Errorf("SendMailboxToCaptain home path rendering for %q = %q", path, result.Err)
 		}
