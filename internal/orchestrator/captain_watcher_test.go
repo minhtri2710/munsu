@@ -98,7 +98,7 @@ func TestEnsureWatcher_StartsWhenChildWorkInFlight(t *testing.T) {
 	}
 
 	// With child work in flight and no watcher, EnsureWatcher should start one.
-	pidPath := armWatcherChild(t)
+	child := armWatcherChild(t)
 	if err := EnsureWatcher(tmp, true); err != nil {
 		t.Fatalf("EnsureWatcher(true): %v", err)
 	}
@@ -107,7 +107,7 @@ func TestEnsureWatcher_StartsWhenChildWorkInFlight(t *testing.T) {
 	// before the TempDir cleanup removes the directory it was launched in; that
 	// removal fails while a process is still there. Beat validation stays out of
 	// scope here -- integration tests cover the full path with a real binary.
-	reapWatcherChild(t, pidPath)
+	child.reap(t)
 }
 
 func TestEnsureWatcher_StopsWhenNoChildWork(t *testing.T) {
