@@ -356,23 +356,32 @@ func assertOneJSONWakeResponse(t *testing.T, output, wantKind string) {
 // quoteEscapedLeaf appends U+200B ZERO WIDTH SPACE to a directory leaf, so
 // every path built from it contains a rune strconv.Quote renders as an escape.
 //
-// unicode.IsPrint reports false for U+200B (category Cf), and that is the
-// predicate strconv.Quote consults: it emits the six characters \u200b in place
-// of the rune. No filesystem rule stands in the way — MS-FSCC gives the Windows
-// filename exclusions as " \ / : | < > ? * and U+0000-U+001F, and U+200B is in
-// none of them — so unlike a literal backslash this leaf needs no platform
-// branch to be both creatable and escape-bearing.
+// U+200B is Unicode category Cf, and Go's printability predicate reports false
+// for it: strconv.Quote consults strconv.IsPrint, whose own doc defines it
+// identically to unicode.IsPrint, so Quote emits the six characters \u200b in
+// place of the rune. The documented MS-FSCC general filename exclusions
+// (" \ / : | < > ? * and U+0000-U+001F) do not list U+200B, so unlike a literal
+// backslash this leaf needs no platform branch to be written as well as escaped.
+// Acceptance on the target windows image is a windows-observation question, not
+// something the specification settles.
 //
-// The three home fixtures below assert that a contract error renders MUNSU_HOME
-// raw: two by comparing the decoded message against a %s-formatted want string,
-// the third by requiring the raw path present and the strconv.Quote form absent.
-// Only an escape-bearing home makes a %q regression fail those checks, and
-// encoding/json passes U+200B through unescaped, so the raw rune survives the
-// contract encode/decode round trip that these tests read the message from.
+// The leaf is not what makes the three home fixtures below catch a %q
+// regression. Two compare the decoded message against a %s-formatted want
+// string, and the third requires the raw path present and the strconv.Quote form
+// absent; all three already fail for a plain path, because %q adds surrounding
+// quote delimiters that the want string lacks and that Quote's own output
+// carries. What the leaf gives is one explicit, platform-uniform statement of the
+// escape-bearing property these tests are about, in place of a runtime.GOOS
+// branch that left windows with no escapable character at all.
+//
+// encoding/json emits U+200B as raw UTF-8 rather than escaping it, unlike < > &
+// U+2028 U+2029. That is an observation about the encoder, not a requirement: an
+// escaped \u200b would decode back to the same rune, so the contract
+// encode/decode round trip these tests read the message through holds either way.
 //
 // Creatability under U+200B is verified here on darwin only. Whether the
-// windows-latest image accepts it is pinned by the windows-observation run on
-// merged main, not by anything this tree executes.
+// windows-latest image accepts it through MkdirAll and home.Init is pinned by the
+// windows-observation run on merged main, not by anything this tree executes.
 func quoteEscapedLeaf(name string) string {
 	return name + "\u200b"
 }

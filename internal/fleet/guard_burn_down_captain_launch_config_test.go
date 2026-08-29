@@ -11,22 +11,27 @@ import (
 // quoteEscapedLeaf appends U+200B ZERO WIDTH SPACE to a directory leaf, so
 // every path built from it contains a rune strconv.Quote renders as an escape.
 //
-// unicode.IsPrint reports false for U+200B (category Cf), and that is the
-// predicate strconv.Quote consults: it emits the six characters \u200b in place
-// of the rune. No filesystem rule stands in the way — MS-FSCC gives the Windows
-// filename exclusions as " \ / : | < > ? * and U+0000-U+001F, and U+200B is in
-// none of them — so unlike a literal backslash this leaf needs no platform
-// branch to be both creatable and escape-bearing.
+// U+200B is Unicode category Cf, and Go's printability predicate reports false
+// for it: strconv.Quote consults strconv.IsPrint, whose own doc defines it
+// identically to unicode.IsPrint, so Quote emits the six characters \u200b in
+// place of the rune. The documented MS-FSCC general filename exclusions
+// (" \ / : | < > ? * and U+0000-U+001F) do not list U+200B, so unlike a literal
+// backslash this leaf needs no platform branch to be written as well as escaped.
+// Acceptance on the target windows image is a windows-observation question, not
+// something the specification settles.
 //
 // The two call sites below assert that a refusal message renders its home path
-// raw. That assertion has two clauses — the raw path is present, and the
-// strconv.Quote form is absent — and only an escape-bearing path makes a %q
-// regression fail the first clause as well as the second. A plain leaf would
-// silently reduce the test to the second clause alone.
+// raw, in two clauses: the raw path is present, and the strconv.Quote form is
+// absent. What the leaf buys is that a %q regression fails the first clause as
+// well as the second on both platforms. A plain leaf already does that on
+// windows, where %q doubles the native \ separators; on unix, where Quote passes
+// / through untouched, a plain leaf leaves only the second clause. U+200B
+// removes the dependence on separator behaviour rather than supplying a
+// property windows lacked.
 //
 // Creatability under U+200B is verified here on darwin only. Whether the
-// windows-latest image accepts it is pinned by the windows-observation run on
-// merged main, not by anything this tree executes.
+// windows-latest image accepts it through MkdirAll and EvalSymlinks is pinned by
+// the windows-observation run on merged main, not by anything this tree executes.
 func quoteEscapedLeaf(name string) string {
 	return name + "\u200b"
 }
