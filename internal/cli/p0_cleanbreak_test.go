@@ -236,9 +236,24 @@ func decodeContractError(t *testing.T, out string) ErrorResponse {
 }
 
 // assertCarriesContext proves the error message names the task and the home it
-// was resolved against. Both are interpolated with %q
-// (contract_commands.go:138,141,146), which on windows escapes the separators
-// in the path, so the quoted form is what the message actually carries.
+// was resolved against, and that each is delimited rather than merely present.
+//
+// Today both operands are interpolated with %q (contract_commands.go:138,141,146),
+// which on windows escapes the separators in the path, so the quoted form is
+// what the message carries. The corrupt-canonical caller carries the home
+// twice: contract_commands.go:146 wraps the inner error with %v and that inner
+// error quotes the home again (soldierstate_soldierstate.go:59,61).
+//
+// #708 changes the home verb to %s and leaves the task ID quoted. When it
+// lands, exactly one expectation below changes -- strconv.Quote(homeDir)
+// becomes homeDir -- and strconv.Quote(taskID) and the strconv import both
+// stay. Dropping the taskID quote too would be silent, not loud: the bare word
+// is a substring of its own quoted form and of much else in the message, so the
+// assertion would stay green while no longer proving the ID is delimited. The
+// inner site is load-bearing for the same reason from the other side: if #708
+// changed only the three outer sites, this row would keep matching
+// strconv.Quote(homeDir) against the inner occurrence and pass while the two
+// others failed. Both halves of that were wrong in the #706 M8 commit message.
 func assertCarriesContext(t *testing.T, response ErrorResponse, taskID, homeDir string) {
 	t.Helper()
 	for _, want := range []string{strconv.Quote(taskID), strconv.Quote(homeDir)} {
