@@ -1,8 +1,8 @@
 package fleet
 
 import (
+	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -187,7 +187,19 @@ func TestRecoverPendingDeliveryJournal_TerminalPhase(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer lk.Release()
-	jData := []byte(fmt.Sprintf(`{"version":1,"id":"j1","phase":"completed","home":"%s"}`, h.Root()))
+	// Marshal the record rather than interpolating h.Root() into a JSON
+	// literal: on windows the path's backslashes would be read back as JSON
+	// escapes ("\U" of C:\Users), and the record would fail to decode before
+	// the terminal-phase guard under test is ever reached.
+	jData, err := json.Marshal(&deliveryJournal{
+		Version: 1,
+		ID:      "j1",
+		Phase:   "completed",
+		Home:    h.Root(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(filepath.Join(h.Root(), "state", deliveryJournalDirName), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -423,7 +435,17 @@ func TestRecoverPendingJournal_TerminalPhase(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer lk.Release()
-	jData := []byte(fmt.Sprintf(`{"version":1,"id":"h1","phase":"completed","source_home":"%s"}`, h.Root()))
+	// Marshal the record rather than interpolating h.Root() into a JSON
+	// literal -- see TestRecoverPendingDeliveryJournal_TerminalPhase.
+	jData, err := json.Marshal(&taskHandoffJournal{
+		Version:    1,
+		ID:         "h1",
+		Phase:      "completed",
+		SourceHome: h.Root(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(filepath.Join(h.Root(), "state", taskHandoffDirName), 0755); err != nil {
 		t.Fatal(err)
 	}
