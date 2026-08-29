@@ -39,6 +39,15 @@ func TestLockPathSingleSourceOfTruth(t *testing.T) {
 // in the same process is refused while the first holds the lock.
 func TestLockExclusivity(t *testing.T) {
 	home := freshHome(t)
+	// The session lock is held for the process lifetime by design, so nothing
+	// on the success path releases it -- but a test is not a process lifetime.
+	// acquireWatcherLock parks the *os.File in home.watcherLocks and only
+	// releaseWatcherLock closes it; on windows that open handle pins
+	// state\.lock, and t.TempDir's RemoveAll cannot delete a pinned file.
+	// Registered after freshHome so it runs BEFORE the TempDir removal
+	// (t.Cleanup is last-added-first-called). Same shape as
+	// internal/bootstrap/sessionstart_test.go:525.
+	t.Cleanup(func() { _ = ReleaseSession(home) })
 
 	acq1, err := AcquireSession(home)
 	if err != nil {

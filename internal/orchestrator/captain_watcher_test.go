@@ -98,12 +98,16 @@ func TestEnsureWatcher_StartsWhenChildWorkInFlight(t *testing.T) {
 	}
 
 	// With child work in flight and no watcher, EnsureWatcher should start one.
+	child := armWatcherChild(t)
 	if err := EnsureWatcher(tmp, true); err != nil {
 		t.Fatalf("EnsureWatcher(true): %v", err)
 	}
 
-	// Starting a watcher subprocess in test environment requires a real munsu binary.
-	// We skip the beat validation here; integration tests cover the full path.
+	// The started process is this test binary re-exec'd, running in tmp. Reap it
+	// before the TempDir cleanup removes the directory it was launched in; that
+	// removal fails while a process is still there. Beat validation stays out of
+	// scope here -- integration tests cover the full path with a real binary.
+	child.reap(t)
 }
 
 func TestEnsureWatcher_StopsWhenNoChildWork(t *testing.T) {

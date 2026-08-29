@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // captureExit swaps the package exit seam for a recorder, runs f, and returns
@@ -95,6 +98,55 @@ func TestDoctorReturnsZeroExitWhenNothingHardRequiredIsMissing(t *testing.T) {
 			t.Fatalf("healthy doctor asked for exit %d, want none non-zero (all codes: %v)", code, codes)
 		}
 	}
+}
+
+func TestDoctorSessionBackendUsesHerdrWhenTmuxIsMissing(t *testing.T) {
+	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
+	t.Setenv("MUNSU_HOME", homeDir)
+
+	binDir := t.TempDir()
+	testutil.WriteFakeExecutable(t, filepath.Join(binDir, "git"), "#!/bin/sh\nexit 0\n")
+	testutil.WriteFakeExecutable(t, filepath.Join(binDir, "zellij"), "#!/bin/sh\nexit 0\n")
+	testutil.SetPath(t, binDir)
+	if _, err := exec.LookPath("tmux"); err == nil {
+		t.Fatal("test PATH unexpectedly contains tmux")
+	}
+	if _, err := exec.LookPath("zellij"); err != nil {
+		t.Fatalf("test PATH should contain zellij: %v", err)
+	}
+
+	t.Run("herdr satisfies session backend", func(t *testing.T) {
+		t.Setenv("HERDR_ENV", "1")
+		codes := captureExit(t, func() {
+			captureProcessStderr(t, func() {
+				if got, err := runRoot(t, "doctor"); err != nil {
+					t.Errorf("doctor returned an error: %v\n%s", err, got)
+				}
+			})
+		})
+		if len(codes) != 0 {
+			t.Fatalf("doctor with herdr and no tmux asked for exit codes %v, want none", codes)
+		}
+	})
+
+	t.Run("no session backend remains required", func(t *testing.T) {
+		t.Setenv("HERDR_ENV", "")
+		var stderr string
+		codes := captureExit(t, func() {
+			stderr = captureProcessStderr(t, func() {
+				if got, err := runRoot(t, "doctor"); err != nil {
+					t.Errorf("doctor returned an error: %v\n%s", err, got)
+				}
+			})
+		})
+		if len(codes) != 1 || codes[0] != 1 {
+			t.Fatalf("doctor without tmux or herdr exit codes = %v, want [1]", codes)
+		}
+		if !strings.Contains(stderr, "Some required tools are missing.") {
+			t.Fatalf("doctor without tmux or herdr stderr = %q, want missing-tools report", stderr)
+		}
+	})
 }
 
 // TestDoctorCheckInstructionsReturnsOnMismatch proves the doc-code mismatch
