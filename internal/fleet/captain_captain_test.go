@@ -19,14 +19,13 @@ import (
 )
 
 // fakeBinDir is a temp directory with fake pi/munsu binaries prepended to PATH
-// by setupFleetTestFixtures. Tests that need the real PATH can restore it.
+// by setupFleetTestFixtures.
 var fakeBinDir string
 var origPath string
 
 // setupFleetTestFixtures creates fake pi and munsu binaries in a temp PATH
-// fixture so captain tests never depend on the installed Pi binary. Tests that
-// explicitly validate an installed Pi should restore the original PATH via
-// t.Setenv("PATH", origPath).
+// fixture so captain tests never depend on the installed Pi binary. Its cleanup
+// function restores the original PATH.
 func setupFleetTestFixtures() (func(), error) {
 	var cleanup func()
 	fakeBinDir, cleanup = setupFakeBins()

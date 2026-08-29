@@ -1,3 +1,5 @@
+//go:build integration
+
 package fleet
 
 import (
@@ -62,19 +64,4 @@ func cleanupFleetTestIsolation(nmHome string) error {
 		return nil
 	}
 	return os.RemoveAll(nmHome)
-}
-
-func unsetFleetTestEnv(t *testing.T, key string) {
-	t.Helper()
-	value, present := os.LookupEnv(key)
-	if err := os.Unsetenv(key); err != nil {
-		t.Fatalf("unset %s: %v", key, err)
-	}
-	t.Cleanup(func() {
-		if present {
-			_ = os.Setenv(key, value)
-		} else {
-			_ = os.Unsetenv(key)
-		}
-	})
 }
