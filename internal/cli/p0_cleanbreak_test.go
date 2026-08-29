@@ -3,8 +3,10 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -160,18 +162,17 @@ func TestTaskObserveMetaOnlyFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, err := runContract(t, []string{"task", "observe", "legacy-task"})
+	out, err := runContract(t, []string{"task", "observe", "legacy-task", "--output=json"})
 	if err == nil {
 		t.Fatalf("task observe over a meta-only task = nil error, want fail-closed; output:\n%s", out)
 	}
-	if !strings.Contains(out, "invalid_state") {
-		t.Errorf("meta-only task observe must return invalid_state, got:\n%s", out)
+	response := decodeContractError(t, out)
+	if response.Error.ErrorCode != "invalid_state" {
+		t.Errorf("meta-only task observe error_code = %q, want invalid_state; output:\n%s", response.Error.ErrorCode, out)
 	}
-	if !strings.Contains(out, "legacy-task") || !strings.Contains(out, homeDir) {
-		t.Errorf("error must carry task and home context, got:\n%s", out)
-	}
-	if strings.Contains(out, "kind: task.observe") {
-		t.Errorf("meta-only task observe must not emit a success envelope, got:\n%s", out)
+	assertCarriesContext(t, response, "legacy-task", homeDir)
+	if response.Kind != "error" {
+		t.Errorf("meta-only task observe must not emit a success envelope, got kind %q:\n%s", response.Kind, out)
 	}
 }
 
@@ -184,16 +185,15 @@ func TestTaskObserveMissingTaskNotFound(t *testing.T) {
 	}
 	t.Setenv("MUNSU_HOME", homeDir)
 
-	out, err := runContract(t, []string{"task", "observe", "does-not-exist"})
+	out, err := runContract(t, []string{"task", "observe", "does-not-exist", "--output=json"})
 	if err == nil {
 		t.Fatalf("task observe over a missing task = nil error, want not_found; output:\n%s", out)
 	}
-	if !strings.Contains(out, "not_found") {
-		t.Errorf("missing task observe must return not_found, got:\n%s", out)
+	response := decodeContractError(t, out)
+	if response.Error.ErrorCode != "not_found" {
+		t.Errorf("missing task observe error_code = %q, want not_found; output:\n%s", response.Error.ErrorCode, out)
 	}
-	if !strings.Contains(out, "does-not-exist") || !strings.Contains(out, homeDir) {
-		t.Errorf("error must carry task and home context, got:\n%s", out)
-	}
+	assertCarriesContext(t, response, "does-not-exist", homeDir)
 }
 
 // TestTaskObserveCorruptCanonicalFailsClosed proves a corrupt canonical record
@@ -210,15 +210,41 @@ func TestTaskObserveCorruptCanonicalFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, err := runContract(t, []string{"task", "observe", "corrupt"})
+	out, err := runContract(t, []string{"task", "observe", "corrupt", "--output=json"})
 	if err == nil {
 		t.Fatalf("task observe over a corrupt canonical record = nil error, want fail-closed; output:\n%s", out)
 	}
-	if !strings.Contains(out, "invalid_state") {
-		t.Errorf("corrupt canonical observe must return invalid_state, got:\n%s", out)
+	response := decodeContractError(t, out)
+	if response.Error.ErrorCode != "invalid_state" {
+		t.Errorf("corrupt canonical observe error_code = %q, want invalid_state; output:\n%s", response.Error.ErrorCode, out)
 	}
-	if !strings.Contains(out, "corrupt") || !strings.Contains(out, homeDir) {
-		t.Errorf("error must carry task and home context, got:\n%s", out)
+	assertCarriesContext(t, response, "corrupt", homeDir)
+}
+
+// decodeContractError decodes the structured error envelope so the assertions
+// below read fields instead of a rendering. The TOON encoder quotes any scalar
+// holding ":" or "\\" (toonString, contract_output.go:180), so a windows home
+// path is always escaped in the rendered text and no raw substring of it can
+// ever match; --output=json makes the same envelope machine-readable.
+func decodeContractError(t *testing.T, out string) ErrorResponse {
+	t.Helper()
+	var response ErrorResponse
+	if err := json.Unmarshal([]byte(out), &response); err != nil {
+		t.Fatalf("decoding contract error envelope: %v; output:\n%s", err, out)
+	}
+	return response
+}
+
+// assertCarriesContext proves the error message names the task and the home it
+// was resolved against. Both are interpolated with %q
+// (contract_commands.go:138,141,146), which on windows escapes the separators
+// in the path, so the quoted form is what the message actually carries.
+func assertCarriesContext(t *testing.T, response ErrorResponse, taskID, homeDir string) {
+	t.Helper()
+	for _, want := range []string{strconv.Quote(taskID), strconv.Quote(homeDir)} {
+		if !strings.Contains(response.Error.Message, want) {
+			t.Errorf("error message must carry %s, got:\n%s", want, response.Error.Message)
+		}
 	}
 }
 
