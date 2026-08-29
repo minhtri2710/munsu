@@ -11,6 +11,9 @@ func TestMain(m *testing.M) {
 	for _, key := range []string{"TMUX_PANE", "HERDR_ENV", "HERDR_SESSION", "HERDR_PANE_ID"} {
 		_ = os.Unsetenv(key)
 	}
+	if exitAsWatcherChild() {
+		os.Exit(0)
+	}
 	os.Exit(m.Run())
 }
 
