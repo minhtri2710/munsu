@@ -20,8 +20,10 @@ type ChangeItem struct {
 }
 
 // journalRecord is the durable write-ahead intent for one change-set commit.
-// apply is idempotent, so a record left in any state is recovered by redoing
-// its items and advancing the scope revision.
+// Recovery redoes a record only when the scope revision shows the commit was
+// interrupted before its revision advance; an already-applied or superseded
+// record is discarded without re-applying, so recovery never overwrites newer
+// committed data (see recoverRecord).
 type journalRecord struct {
 	TxnID            string       `json:"txn_id"`
 	Scope            string       `json:"scope"`
@@ -92,9 +94,9 @@ func (h *Home) Commit(lk *Lock, txnID string, expectedRevision uint64, items []C
 	return newRev, nil
 }
 
-// recover replays any incomplete write-ahead journal records by redoing their
-// items (idempotent) and advancing each scope's revision. This is the
-// mechanical crash recovery of an interrupted commit.
+// recover replays interrupted write-ahead journal records. Each leftover record
+// is recovered under its own scope lock so recovery never interleaves with a
+// live commit; see recoverRecord for the redo-versus-discard decision.
 func (h *Home) recover() error {
 	entries, err := os.ReadDir(h.journalDir())
 	if err != nil {
@@ -108,34 +110,88 @@ func (h *Home) recover() error {
 		if !strings.HasSuffix(name, ".json") {
 			continue
 		}
-		path := filepath.Join(h.journalDir(), name)
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return fmt.Errorf("home: read journal record: %w", err)
+		if err := h.recoverRecord(name); err != nil {
+			return err
 		}
-		var rec journalRecord
-		if err := json.Unmarshal(data, &rec); err != nil {
-			return fmt.Errorf("home: decode journal record %s: %w", name, err)
+	}
+	return nil
+}
+
+// recoverRecord recovers one journal record under its scope lock. It redoes the
+// commit only when the scope revision proves it was interrupted before the
+// revision advance (cur == ExpectedRevision); a record whose items are already
+// durable or have been superseded by a later commit (cur >= NewRevision) is
+// discarded without re-applying, so recovery cannot overwrite newer committed
+// data. A revision inconsistent with the record is corruption and fails Open.
+func (h *Home) recoverRecord(name string) error {
+	path := filepath.Join(h.journalDir(), name)
+	// Peek the record only to learn its scope; the authoritative read happens
+	// under the lock, since a concurrent recovery may remove it in between.
+	scope, err := h.peekRecordScope(path)
+	if err != nil {
+		return err
+	}
+	if scope == "" {
+		return nil
+	}
+	lk, err := h.Lock(scope)
+	if err != nil {
+		return err
+	}
+	defer lk.Release()
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
 		}
+		return fmt.Errorf("home: read journal record: %w", err)
+	}
+	var rec journalRecord
+	if err := json.Unmarshal(data, &rec); err != nil {
+		return fmt.Errorf("home: decode journal record %s: %w", name, err)
+	}
+	if rec.NewRevision != rec.ExpectedRevision+1 {
+		return fmt.Errorf("home: corrupt journal record %s: new revision %d not one past expected %d", name, rec.NewRevision, rec.ExpectedRevision)
+	}
+	cur, err := h.readRevision(rec.Scope)
+	if err != nil {
+		return err
+	}
+	if cur < rec.ExpectedRevision {
+		return fmt.Errorf("home: corrupt journal record %s: scope revision %d behind expected %d", name, cur, rec.ExpectedRevision)
+	}
+	if cur == rec.ExpectedRevision {
 		for _, it := range rec.Items {
 			if err := h.applyItem(it); err != nil {
 				return fmt.Errorf("home: recover item: %w", err)
 			}
 		}
-		cur, err := h.readRevision(rec.Scope)
-		if err != nil {
+		if err := h.writeRevision(rec.Scope, rec.NewRevision); err != nil {
 			return err
 		}
-		if rec.NewRevision > cur {
-			if err := h.writeRevision(rec.Scope, rec.NewRevision); err != nil {
-				return err
-			}
-		}
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("home: remove recovered journal record: %w", err)
-		}
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("home: remove recovered journal record: %w", err)
 	}
 	return nil
+}
+
+// peekRecordScope reads a journal record's scope. A record removed by a
+// concurrent recovery between the directory scan and this read yields "".
+func (h *Home) peekRecordScope(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("home: read journal record: %w", err)
+	}
+	var rec journalRecord
+	if err := json.Unmarshal(data, &rec); err != nil {
+		return "", fmt.Errorf("home: decode journal record %s: %w", filepath.Base(path), err)
+	}
+	return rec.Scope, nil
 }
 
 func (h *Home) applyItem(it ChangeItem) error {
