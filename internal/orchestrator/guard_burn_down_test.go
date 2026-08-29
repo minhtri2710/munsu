@@ -166,11 +166,14 @@ func TestGuardBurnDownResolveCaptainActivationTargetRejectsEmptyPane(t *testing.
 	if err := os.WriteFile(filepath.Join(captainHome, ProvenanceMarkerName), []byte("munsu-v2\ntest-captain\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	metaPath := filepath.Join(parentHome, "state", "captain:test-captain.meta")
-	if err := os.MkdirAll(filepath.Dir(metaPath), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(metaPath, []byte("kind=captain\nherdr_session=general\nherdr_pane_id=\n"), 0644); err != nil {
+	// Seed through the production writer: the persisted filename is the
+	// platform durable key for "captain:test-captain", never the logical id.
+	// The empty herdr_pane_id is the state the guard under test refuses.
+	if err := mhome.WriteMeta(parentHome, "captain:test-captain", map[string]string{
+		"kind":          "captain",
+		"herdr_session": "general",
+		"herdr_pane_id": "",
+	}); err != nil {
 		t.Fatal(err)
 	}
 

@@ -179,12 +179,23 @@ func TestRunCycle_CollidingLabelsReportSeparately(t *testing.T) {
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
 		t.Fatal(err)
 	}
+	// "a.b" and "a_b" are two distinct LOGICAL task ids. Both artifacts are
+	// named by the platform durable key, the same projection
+	// DiscoverPerTaskChecks reverse-decodes: identity on unix, and "a%2Eb" vs
+	// "a_b" on windows -- still two distinct stems, so the collision this test
+	// pins survives the encoding.
 	for _, name := range []string{"a.b", "a_b"} {
-		checkPath := filepath.Join(stateDir, name+".check")
+		checkPath, err := homepkg.DurableFilePath(stateDir, name, ".check")
+		if err != nil {
+			t.Fatal(err)
+		}
 		if err := os.WriteFile(checkPath, []byte("#!/bin/sh\necho ready\n"), 0755); err != nil {
 			t.Fatal(err)
 		}
-		metaPath := filepath.Join(stateDir, name+".meta")
+		metaPath, err := homepkg.MetaFilePath(home, name)
+		if err != nil {
+			t.Fatal(err)
+		}
 		if err := os.WriteFile(metaPath, []byte("kind=ship\n"), 0644); err != nil {
 			t.Fatal(err)
 		}

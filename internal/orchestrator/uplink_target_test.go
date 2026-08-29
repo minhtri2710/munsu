@@ -1,11 +1,10 @@
 package orchestrator
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/config"
+	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 func TestResolveReceiverTargetCaptainUsesParentMetaNotTaskID(t *testing.T) {
@@ -13,10 +12,12 @@ func TestResolveReceiverTargetCaptainUsesParentMetaNotTaskID(t *testing.T) {
 	if err := config.Set(captainHome, "parent-home", generalHome); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(generalHome, "state"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(generalHome, "state", "captain:captain-one.meta"), []byte("herdr_pane_id=p9\nherdr_session=fleet\n"), 0644); err != nil {
+	// Seed through the production writer: the persisted filename is the
+	// platform durable key for "captain:captain-one", never the logical id.
+	if err := mhome.WriteMeta(generalHome, "captain:captain-one", map[string]string{
+		"herdr_pane_id": "p9",
+		"herdr_session": "fleet",
+	}); err != nil {
 		t.Fatal(err)
 	}
 	env := &Envelope{Kind: "uplink-report", SenderRank: RankSoldier, SenderIdentity: "task_special", ReceiverRank: RankCaptain, ReceiverID: "captain-one", TaskID: "task:with/slash", Payload: "done"}

@@ -3,12 +3,12 @@
 package orchestrator
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/config"
+	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 type reproductionNotificationTransport struct {
@@ -30,10 +30,14 @@ func TestReproductionCaptainRelayMissingPane(t *testing.T) {
 	if err := config.Set(captainHome, "parent-home", parentHome); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(parentHome, "state"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(parentHome, "state", "captain:captain-reproduction.meta"), []byte("kind=captain\nbackend=tmux\n"), 0644); err != nil {
+	// Seed through the production writer: the persisted filename is the
+	// platform durable key for "captain:captain-reproduction", never the
+	// logical id. The meta deliberately omits herdr_pane_id -- that absence is
+	// the condition this reproduction pins.
+	if err := mhome.WriteMeta(parentHome, "captain:captain-reproduction", map[string]string{
+		"kind":    "captain",
+		"backend": "tmux",
+	}); err != nil {
 		t.Fatal(err)
 	}
 	env := &Envelope{
