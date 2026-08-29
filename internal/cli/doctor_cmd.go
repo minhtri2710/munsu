@@ -172,7 +172,7 @@ Use --role for role-specific integration matrix:
 			}
 
 			if exitCode != 0 {
-				os.Exit(exitCode)
+				exitWithCode(exitCode)
 			}
 			return nil
 		}),
@@ -241,7 +241,7 @@ func runCheckInstructions(homeDir string) error {
 
 	if mismatches > 0 {
 		fmt.Fprintf(os.Stderr, "\nFound %d doc-code mismatches. AGENTS.md references commands or flags that do not exist.\n", mismatches)
-		os.Exit(1)
+		exitWithCode(1)
 	} else {
 		fmt.Println("All command references in AGENTS.md match real commands.")
 	}
