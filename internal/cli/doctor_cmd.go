@@ -135,30 +135,28 @@ Use --role for role-specific integration matrix:
 				fmt.Println("  " + capResult.ScopeResult.String())
 			}
 
-			// Determine hard-required tools for exit code
-			// uses shared bootstrap.IsHardRequired from the ToolSpec registry
-			missingRequired := false
-			for _, tool := range result.MissingTools {
-				if bootstrap.IsHardRequired(tool) {
-					missingRequired = true
-					break
-				}
-				// Config-driven hard-required (e.g. require-no-mistakes)
-				requiredByConfig, err := bootstrap.IsHardRequiredByConfig(ctx.Home, tool)
-				if err != nil {
-					return fmt.Errorf("doctor: %w", err)
-				}
-				if requiredByConfig {
-					missingRequired = true
-					break
-				}
-			}
-
-			// Also check herdr as alternative session backend
-			if !missingRequired && isMissing(result.MissingTools, "tmux") {
-				herdrAvailable := os.Getenv("HERDR_ENV") != ""
-				if !herdrAvailable {
-					missingRequired = true
+			// The session backend is one hard requirement satisfied by either tmux
+			// or an active herdr environment. Resolve that alternative before the
+			// generic hard-required scan so a missing tmux does not short-circuit it.
+			missingRequired := isMissing(result.MissingTools, "tmux") && os.Getenv("HERDR_ENV") == ""
+			if !missingRequired {
+				for _, tool := range result.MissingTools {
+					if tool == "tmux" {
+						continue
+					}
+					if bootstrap.IsHardRequired(tool) {
+						missingRequired = true
+						break
+					}
+					// Config-driven hard-required (e.g. require-no-mistakes)
+					requiredByConfig, err := bootstrap.IsHardRequiredByConfig(ctx.Home, tool)
+					if err != nil {
+						return fmt.Errorf("doctor: %w", err)
+					}
+					if requiredByConfig {
+						missingRequired = true
+						break
+					}
 				}
 			}
 

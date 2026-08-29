@@ -1074,7 +1074,7 @@ func TestGuardDoctorExitsNonZeroWhenAHardRequiredToolIsMissing(t *testing.T) {
 	initCLITestHome(t, homeDir)
 	// An empty PATH makes every hard-required tool missing, which is the only
 	// state that sets the non-zero exit code.
-	code, output := runGuardChild(t, "TestGuardDoctorExitsNonZeroWhenAHardRequiredToolIsMissing", "doctor-exit", homeDir, "PATH=")
+	code, output := runGuardChild(t, "TestGuardDoctorExitsNonZeroWhenAHardRequiredToolIsMissing", "doctor-exit", homeDir, "PATH=", "HERDR_ENV=")
 	if code != 1 {
 		t.Fatalf("doctor with an empty PATH exited %d, want the 1 the refusal exits with\n%s", code, output)
 	}
