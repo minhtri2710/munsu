@@ -705,6 +705,35 @@ func TestJournalRecoveryRejectsRegressedRevision(t *testing.T) {
 	}
 }
 
+func TestJournalRecoveryRejectsEmptyScope(t *testing.T) {
+	root := t.TempDir()
+	h, err := Init(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lk, err := h.Lock("scope")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := journalRecord{
+		TxnID:            "blank",
+		Scope:            "",
+		FenceToken:       uint64(lk.token),
+		ExpectedRevision: 0,
+		NewRevision:      1,
+		Items:            []ChangeItem{{Root: RootData, Key: "k", Data: []byte("X")}},
+	}
+	if err := h.writeJournalRecord(rec); err != nil {
+		t.Fatal(err)
+	}
+	if err := lk.Release(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(root); err == nil {
+		t.Fatal("Open must fail on a journal record with an empty scope")
+	}
+}
+
 func TestCommitOverwritesAtomically(t *testing.T) {
 	h := newTestHome(t)
 	lk, err := h.Lock("scope")

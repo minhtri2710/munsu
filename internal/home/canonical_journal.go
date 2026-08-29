@@ -191,6 +191,9 @@ func (h *Home) peekRecordScope(path string) (string, error) {
 	if err := json.Unmarshal(data, &rec); err != nil {
 		return "", fmt.Errorf("home: decode journal record %s: %w", filepath.Base(path), err)
 	}
+	if rec.Scope == "" {
+		return "", fmt.Errorf("home: corrupt journal record %s: empty scope", filepath.Base(path))
+	}
 	return rec.Scope, nil
 }
 
