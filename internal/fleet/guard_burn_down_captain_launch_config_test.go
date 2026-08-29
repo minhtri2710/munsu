@@ -3,6 +3,7 @@ package fleet
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -42,14 +43,17 @@ func TestGuardBurnDownPreflightConfigPushRefusesParentHomeEscape(t *testing.T) {
 func TestGuardBurnDownPublishResolvedSnapshotRefusesRegisteredHomeMismatch(t *testing.T) {
 	parentHome := t.TempDir()
 	setupTypedParentHome(t, parentHome, "mismatch")
-	captainHome := filepath.Join(parentHome, "captains", "mismatch")
+	captainHome := filepath.Join(parentHome, "captains", `C:\Users\alice\mismatch`)
 	if err := os.MkdirAll(captainHome, 0755); err != nil {
 		t.Fatal(err)
 	}
 	if err := SeedProvenance(captainHome, "mismatch"); err != nil {
 		t.Fatal(err)
 	}
-	registeredHome := t.TempDir()
+	registeredHome := filepath.Join(t.TempDir(), `C:\Users\alice\registered`)
+	if err := os.MkdirAll(registeredHome, 0755); err != nil {
+		t.Fatal(err)
+	}
 	if err := Register(parentHome, "mismatch", registeredHome, "", ""); err != nil {
 		t.Fatal(err)
 	}
@@ -57,6 +61,19 @@ func TestGuardBurnDownPublishResolvedSnapshotRefusesRegisteredHomeMismatch(t *te
 	err := publishResolvedSnapshot(parentHome, captainHome)
 	if err == nil || !strings.Contains(err.Error(), "does not match") {
 		t.Fatalf("publishResolvedSnapshot error = %v, want registered-home mismatch refusal", err)
+	}
+	canonicalCaptain, canonicalErr := canonicalCaptainHome(captainHome)
+	if canonicalErr != nil {
+		t.Fatal(canonicalErr)
+	}
+	canonicalRegistered, canonicalErr := canonicalCaptainHome(registeredHome)
+	if canonicalErr != nil {
+		t.Fatal(canonicalErr)
+	}
+	for _, path := range []string{canonicalRegistered, canonicalCaptain} {
+		if !strings.Contains(err.Error(), path) || strings.Contains(err.Error(), strconv.Quote(path)) {
+			t.Errorf("publishResolvedSnapshot home path rendering for %q = %q", path, err)
+		}
 	}
 }
 

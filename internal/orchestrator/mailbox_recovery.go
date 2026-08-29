@@ -1,7 +1,9 @@
 package orchestrator
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -92,12 +94,41 @@ func RecoverInboxWithSender(sender BoundSender, receiverHome string, env *Envelo
 // from all senders and attempts recovery delivery for each.
 // This is the entry point for watcher startup recovery.
 func RecoverAllInboxesWithSender(sender BoundSender, receiverHome string) ([]*RecoveryAttempt, error) {
-	inboxRoot := filepath.Join(receiverHome, "state", InboxDir)
-	entries, err := os.ReadDir(inboxRoot)
+	return recoverAllInboxesWithFS(sender, receiverHome, os.Stat, os.ReadDir)
+}
+
+func recoverAllInboxesWithFS(sender BoundSender, receiverHome string, stat func(string) (os.FileInfo, error), readDir func(string) ([]os.DirEntry, error)) ([]*RecoveryAttempt, error) {
+	// Recovery validates state and inbox roots, then stops at state: the home
+	// itself is internal/home's contract to validate, where the guard at
+	// internal/home/canonical.go:346 is still gated on os.IsNotExist (#707's
+	// own predicate). os.Stat follows symlinks, so dangling links at either
+	// checked root are treated as genuine absence.
+	stateRoot := filepath.Join(receiverHome, "state")
+	stateInfo, err := stat(stateRoot)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil
 		}
+		return nil, fmt.Errorf("reading inbox root: %w", err)
+	}
+	if !stateInfo.IsDir() {
+		return nil, fmt.Errorf("reading inbox root: %s is not a directory", stateRoot)
+	}
+
+	inboxRoot := filepath.Join(stateRoot, InboxDir)
+	info, err := stat(inboxRoot)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("reading inbox root: %w", err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("reading inbox root: %s is not a directory", inboxRoot)
+	}
+
+	entries, err := readDir(inboxRoot)
+	if err != nil {
 		return nil, fmt.Errorf("reading inbox root: %w", err)
 	}
 

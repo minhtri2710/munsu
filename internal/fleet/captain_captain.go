@@ -1210,7 +1210,7 @@ func Retire(captainHome, parentHome string, removeHome, force bool, endpoint Ret
 			return fmt.Errorf("refusing to retire: task meta sm_id=%q does not match captain marker id %q", meta["sm_id"], markerID)
 		}
 		if meta["home"] != canonicalCaptainHome {
-			return fmt.Errorf("refusing to retire: task meta home=%q does not match canonical captain home %q", meta["home"], canonicalCaptainHome)
+			return fmt.Errorf("refusing to retire: task meta home=%s does not match canonical captain home %s", meta["home"], canonicalCaptainHome)
 		}
 
 		windowID := meta["window"]
@@ -1436,7 +1436,7 @@ func publishResolvedSnapshot(parentHome, captainHome string) error {
 		return canonErr
 	}
 	if canonRegistered != canonCaptain {
-		return fmt.Errorf("Captain %q home %q does not match %q", captainID, canonRegistered, canonCaptain)
+		return fmt.Errorf("Captain %q home %s does not match %s", captainID, canonRegistered, canonCaptain)
 	}
 	projectID, err := r.ProjectOf(id)
 	if err != nil {
@@ -2572,7 +2572,7 @@ func sendNudge(parentHome string, sm Info, endpoint NudgeEndpoint) error {
 		return fmt.Errorf("%s: cannot canonicalize home — marker remains: %v", sm.ID, err)
 	}
 	if meta["home"] != canonSM {
-		return fmt.Errorf("%s: meta home=%q does not match canonical home %q — marker remains", sm.ID, meta["home"], canonSM)
+		return fmt.Errorf("%s: meta home=%s does not match canonical home %s — marker remains", sm.ID, meta["home"], canonSM)
 	}
 
 	windowID := meta["window"]
@@ -2591,7 +2591,7 @@ func sendNudge(parentHome string, sm Info, endpoint NudgeEndpoint) error {
 	}
 	canonMarkerHome, err := canonicalCaptainHome(marker["home"])
 	if err != nil || canonMarkerHome != canonSM {
-		return fmt.Errorf("%s: marker home=%q does not match canonical home %q — marker remains", sm.ID, marker["home"], canonSM)
+		return fmt.Errorf("%s: marker home=%s does not match canonical home %s — marker remains", sm.ID, marker["home"], canonSM)
 	}
 	if marker["commit"] == "" {
 		return fmt.Errorf("%s: marker has empty commit — marker remains", sm.ID)

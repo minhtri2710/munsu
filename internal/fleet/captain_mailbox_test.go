@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -228,6 +229,26 @@ func TestSendMailboxToCaptain_InvalidMeta(t *testing.T) {
 	}
 	if !strings.Contains(result.Err.Error(), "kind") {
 		t.Errorf("expected kind error, got: %v", result.Err)
+	}
+}
+
+func TestSendMailboxToCaptainRefusesMetaHomeMismatchWithoutPrequoting(t *testing.T) {
+	parentHome, captainHome, captainID := setupTestHomes(t)
+	mismatchedHome := filepath.Join(t.TempDir(), `C:\Users\alice\.munsu`)
+	if err := home.WriteMeta(parentHome, taskIDForCaptain(captainID), map[string]string{
+		"kind": "captain", "sm_id": captainID, "home": mismatchedHome, "window": "test-window", "backend": "test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	result := SendMailboxToCaptain(Info{ID: captainID, Home: captainHome}, parentHome, "line", &captainTestMailboxSender{acknowledged: true})
+	if result.Err == nil || !strings.Contains(result.Err.Error(), "does not match canonical captain home") {
+		t.Fatalf("SendMailboxToCaptain error = %v, want home mismatch", result.Err)
+	}
+	for _, path := range []string{mismatchedHome, captainHome} {
+		if !strings.Contains(result.Err.Error(), path) || strings.Contains(result.Err.Error(), strconv.Quote(path)) {
+			t.Errorf("SendMailboxToCaptain home path rendering for %q = %q", path, result.Err)
+		}
 	}
 }
 

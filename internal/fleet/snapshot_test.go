@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -475,6 +476,9 @@ func TestSnapshot_ResolverErrorFailsClosedOverStaleStatus(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "t1") || !testutil.PathInMessage(err.Error(), tmp) {
 		t.Errorf("resolver error must carry task and home context, got: %v", err)
+	}
+	if strings.Contains(err.Error(), strconv.Quote(tmp)) {
+		t.Errorf("resolver error pre-quotes home path, got: %v", err)
 	}
 }
 

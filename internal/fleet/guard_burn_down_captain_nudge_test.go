@@ -3,6 +3,7 @@ package fleet
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -63,13 +64,43 @@ func TestGuardBurnDownSendNudgeRefusesWrongMetaID(t *testing.T) {
 func TestGuardBurnDownSendNudgeRefusesMetaHomeMismatch(t *testing.T) {
 	parentHome := t.TempDir()
 	captainHome := t.TempDir()
+	mismatchedHome := t.TempDir()
 	writeGuardNudgeMeta(t, parentHome, captainHome, "captain", func(meta map[string]string) {
-		meta["home"] = t.TempDir()
+		meta["home"] = mismatchedHome
 	})
 
 	err := sendNudge(parentHome, Info{ID: "captain", Home: captainHome}, &testNudgeEndpoint{})
 	if err == nil || !strings.Contains(err.Error(), "meta home=") || !strings.Contains(err.Error(), "does not match canonical home") {
 		t.Fatalf("sendNudge error = %v, want home-mismatch refusal", err)
+	}
+	for _, path := range []string{mismatchedHome, captainHome} {
+		if !strings.Contains(err.Error(), path) || strings.Contains(err.Error(), strconv.Quote(path)) {
+			t.Errorf("sendNudge home path rendering for %q = %q", path, err)
+		}
+	}
+}
+
+func TestGuardBurnDownSendNudgeRefusesMarkerHomeMismatch(t *testing.T) {
+	parentHome, captainHome, id, _ := newGuardNudgeValidFixture(t)
+	mismatchedHome := t.TempDir()
+	markerPath := nudgeMarkerPath(parentHome, id)
+	data, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = []byte(strings.Replace(string(data), "home="+captainHome, "home="+mismatchedHome, 1))
+	if err := os.WriteFile(markerPath, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err = sendNudge(parentHome, Info{ID: id, Home: captainHome}, &testNudgeEndpoint{})
+	if err == nil || !strings.Contains(err.Error(), "marker home=") || !strings.Contains(err.Error(), "does not match canonical home") {
+		t.Fatalf("sendNudge error = %v, want marker-home mismatch refusal", err)
+	}
+	for _, path := range []string{mismatchedHome, captainHome} {
+		if !strings.Contains(err.Error(), path) || strings.Contains(err.Error(), strconv.Quote(path)) {
+			t.Errorf("sendNudge marker home path rendering for %q = %q", path, err)
+		}
 	}
 }
 

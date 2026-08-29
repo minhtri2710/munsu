@@ -236,30 +236,31 @@ func decodeContractError(t *testing.T, out string) ErrorResponse {
 }
 
 // assertCarriesContext proves the error message names the task and the home it
-// was resolved against, and that each is delimited rather than merely present.
+// was resolved against, and that the task ID is delimited while the home is
+// present without pre-quoting.
 //
-// Today both operands are interpolated with %q (contract_commands.go:138,141,146),
-// which on windows escapes the separators in the path, so the quoted form is
-// what the message carries. The corrupt-canonical caller carries the home
-// twice: contract_commands.go:146 wraps the inner error with %v and that inner
-// error quotes the home again (soldierstate_soldierstate.go:59,61).
+// The three outer contract sites (contract_commands.go:138,141,146) render
+// the home with %s and keep the task ID at %q. The corresponding fleet sites
+// (soldierstate_soldierstate.go:59,61) also render the home with %s. These rows
+// exercise the corrupt-error path at soldierstate_soldierstate.go:61 through
+// contract_commands.go:146; they do not observe line 59 because the
+// not-found branch is recognized at contract_commands.go:135 and replaced by
+// the message from contract_commands.go:141.
 //
-// #708 changes the home verb to %s and leaves the task ID quoted. When it
-// lands, exactly one expectation below changes -- strconv.Quote(homeDir)
-// becomes homeDir -- and strconv.Quote(taskID) and the strconv import both
-// stay. Dropping the taskID quote too would be silent, not loud: the bare word
-// is a substring of its own quoted form and of much else in the message, so the
-// assertion would stay green while no longer proving the ID is delimited. The
-// inner site is load-bearing for the same reason from the other side: if #708
-// changed only the three outer sites, this row would keep matching
-// strconv.Quote(homeDir) against the inner occurrence and pass while the two
-// others failed. Both halves of that were wrong in the #706 M8 commit message.
+// The assertion checks the delimited task ID, raw home presence, and absence
+// of the pre-quoted home form. The negative check is necessary because the
+// corrupt message carries the home in both the outer contract error and the
+// inner fleet error, so raw home presence alone would not prove the inner
+// rendering is unquoted.
 func assertCarriesContext(t *testing.T, response ErrorResponse, taskID, homeDir string) {
 	t.Helper()
-	for _, want := range []string{strconv.Quote(taskID), strconv.Quote(homeDir)} {
+	for _, want := range []string{strconv.Quote(taskID), homeDir} {
 		if !strings.Contains(response.Error.Message, want) {
 			t.Errorf("error message must carry %s, got:\n%s", want, response.Error.Message)
 		}
+	}
+	if strings.Contains(response.Error.Message, strconv.Quote(homeDir)) {
+		t.Errorf("error message must not pre-quote the home path, got:\n%s", response.Error.Message)
 	}
 }
 
