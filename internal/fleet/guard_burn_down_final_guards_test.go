@@ -10,6 +10,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 type mockGitHubClient struct {
@@ -130,12 +131,8 @@ func TestFetchGitLabProviderSnapshot_EmptyRequiredFields(t *testing.T) {
 // ----------------------------------------------------------------------------
 
 func TestGHAxiClient_CaptureIdentity_EmptyHeadRefOid(t *testing.T) {
-	scriptDir := t.TempDir()
-	scriptPath := filepath.Join(scriptDir, "gh-axi")
 	scriptContent := "#!/bin/sh\necho 'headRefOid: \"\"'\necho 'headRefName: feat'\necho 'baseRefName: main'\n"
-	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0755); err != nil {
-		t.Fatal(err)
-	}
+	scriptPath := testutil.WriteFakeExecutable(t, filepath.Join(t.TempDir(), "gh-axi"), scriptContent)
 	old := ghAxiLookPath
 	t.Cleanup(func() { ghAxiLookPath = old })
 	ghAxiLookPath = func() (string, error) { return scriptPath, nil }
