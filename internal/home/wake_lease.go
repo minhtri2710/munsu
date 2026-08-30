@@ -207,6 +207,7 @@ func ackWakesLocked(homeDir, leaseID string, eventIDs []string) error {
 
 	var data strings.Builder
 	data.WriteString(header)
+	data.WriteByte('\n')
 	for _, line := range unacked {
 		data.WriteString(line)
 		data.WriteByte('\n')
