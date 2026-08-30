@@ -781,3 +781,16 @@ func TestCommitBetweenTwoHomesOnSameRoot(t *testing.T) {
 		t.Errorf("h2 read = %q, err=%v", data, err)
 	}
 }
+
+// TestContainedJoin exercises the isolated refusal decision that joinContained
+// delegates to, so the branch is entered directly rather than only implicitly
+// through withinRoot. A refusal returns the zero path and ErrKeyEscapes; an
+// acceptance returns the joined path unchanged with a nil error.
+func TestContainedJoin(t *testing.T) {
+	if p, err := containedJoin("/root/sub", false); err == nil || !errors.Is(err, ErrKeyEscapes) || p != "" {
+		t.Fatalf("containedJoin(joined, false) = %q, %v; want %q, ErrKeyEscapes", p, err, "")
+	}
+	if p, err := containedJoin("/root/sub", true); err != nil || p != "/root/sub" {
+		t.Fatalf("containedJoin(joined, true) = %q, %v; want %q, nil", p, err, "/root/sub")
+	}
+}

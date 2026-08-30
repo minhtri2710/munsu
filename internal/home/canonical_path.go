@@ -31,7 +31,16 @@ func joinContained(root, key string) (string, error) {
 	}
 	clean := filepath.Clean(filepath.FromSlash(key))
 	joined := filepath.Join(root, clean)
-	if !withinRoot(root, joined) {
+	return containedJoin(joined, withinRoot(root, joined))
+}
+
+// containedJoin returns the joined path when inside is true, otherwise it
+// refuses with ErrKeyEscapes. Isolating the refusal decision keeps the branch
+// reachable by a direct unit test even though joinContained's caller-facing
+// contract guarantees inside is always true for an accepted key (the component
+// loop above rejects every "", "." and ".." component before Clean/Join run).
+func containedJoin(joined string, inside bool) (string, error) {
+	if !inside {
 		return "", ErrKeyEscapes
 	}
 	return joined, nil
