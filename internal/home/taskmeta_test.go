@@ -1,9 +1,11 @@
 package home
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/testutil"
@@ -349,6 +351,75 @@ func TestReadStatus_Nonexistent(t *testing.T) {
 	}
 	if lines != nil {
 		t.Errorf("expected nil for nonexistent status, got %v", lines)
+	}
+}
+
+func TestAppendStatusConcurrentSameTaskPreservesAllLinesAndMeta(t *testing.T) {
+	home := t.TempDir()
+	const taskID = "concurrent-task"
+	initialMeta := map[string]string{"kind": "ship", "window": "window-initial"}
+	if err := WriteMeta(home, taskID, initialMeta); err != nil {
+		t.Fatalf("initial WriteMeta: %v", err)
+	}
+
+	const appenders = 16
+	const metaWriters = 4
+	start := make(chan struct{})
+	errs := make(chan error, appenders+metaWriters)
+	var wg sync.WaitGroup
+	for i := 0; i < appenders; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			line := fmt.Sprintf("working: concurrent update %02d %s", i, strings.Repeat("x", 128))
+			if err := AppendStatus(home, taskID, line); err != nil {
+				errs <- fmt.Errorf("AppendStatus %02d: %w", i, err)
+			}
+		}(i)
+	}
+	for i := 0; i < metaWriters; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			meta := map[string]string{"kind": "ship", "window": fmt.Sprintf("window-%02d", i)}
+			if err := WriteMeta(home, taskID, meta); err != nil {
+				errs <- fmt.Errorf("WriteMeta %02d: %w", i, err)
+			}
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+
+	lines, err := ReadStatus(home, taskID)
+	if err != nil {
+		t.Fatalf("ReadStatus: %v", err)
+	}
+	gotLines := make(map[string]int, len(lines))
+	for _, line := range lines {
+		gotLines[line]++
+	}
+	if len(gotLines) != appenders || len(lines) != appenders {
+		t.Fatalf("status lines = %d unique / %d total, want %d unique / %d total: %v", len(gotLines), len(lines), appenders, appenders, lines)
+	}
+	for i := 0; i < appenders; i++ {
+		want := fmt.Sprintf("working: concurrent update %02d %s", i, strings.Repeat("x", 128))
+		if gotLines[want] != 1 {
+			t.Errorf("status line %q count = %d, want 1", want, gotLines[want])
+		}
+	}
+
+	meta, err := ReadMeta(home, taskID)
+	if err != nil {
+		t.Fatalf("ReadMeta after concurrent writes: %v", err)
+	}
+	if meta["kind"] != "ship" || !strings.HasPrefix(meta["window"], "window-") {
+		t.Fatalf("meta after concurrent writes = %v, want a complete valid generation", meta)
 	}
 }
 

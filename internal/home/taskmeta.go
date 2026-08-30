@@ -196,11 +196,16 @@ func writeMetaLocked(homeDir string, id string, meta map[string]string) error {
 		os.Remove(tmpPath)
 		return fmt.Errorf("writing temp meta file: %w", err)
 	}
+	if err := tmpF.Sync(); err != nil {
+		tmpF.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("syncing temp meta file: %w", err)
+	}
 	if err := tmpF.Close(); err != nil {
 		os.Remove(tmpPath)
 		return fmt.Errorf("closing temp meta file: %w", err)
 	}
-	if err := os.Rename(tmpPath, p); err != nil {
+	if err := RenameDurable(tmpPath, p); err != nil {
 		os.Remove(tmpPath)
 		return fmt.Errorf("renaming temp meta file: %w", err)
 	}
@@ -244,6 +249,12 @@ func ReadMeta(homeDir string, id string) (map[string]string, error) {
 
 // AppendStatus appends a status line to $MUNSU_HOME/state/<durable-stem>.status.
 func AppendStatus(homeDir string, id, line string) error {
+	_, unlock, err := acquireMetaLock(homeDir, id)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
 	p, err := StatusFilePath(homeDir, id)
 	if err != nil {
 		return err
@@ -265,6 +276,9 @@ func AppendStatus(homeDir string, id, line string) error {
 	defer f.Close()
 	if _, err := f.WriteString(line + "\n"); err != nil {
 		return fmt.Errorf("writing status line: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("syncing status file: %w", err)
 	}
 	return nil
 }
