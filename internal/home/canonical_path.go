@@ -31,11 +31,7 @@ func joinContained(root, key string) (string, error) {
 	}
 	clean := filepath.Clean(filepath.FromSlash(key))
 	joined := filepath.Join(root, clean)
-	rel, err := filepath.Rel(root, joined)
-	if err != nil {
-		return "", ErrKeyEscapes
-	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if !withinRoot(root, joined) {
 		return "", ErrKeyEscapes
 	}
 	return joined, nil

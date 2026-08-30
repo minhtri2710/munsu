@@ -10,10 +10,7 @@ import (
 	"time"
 )
 
-const (
-	wakeLeaseDir      = "state/.wake-leases"
-	defaultLeaseGrace = 30 * time.Second // grace period before expired leases are reclaimable
-)
+const wakeLeaseDir = "state/.wake-leases"
 
 // LeasePath returns the directory for wake lease files.
 func LeaseDir(homeDir string) string {
@@ -174,13 +171,7 @@ func claimWakesAt(homeDir, consumer string, leaseSeconds, limit int, now func() 
 		if _, err := f.WriteString(line); err != nil {
 			return nil, fmt.Errorf("writing lease wake: %w", err)
 		}
-		resultWakes = append(resultWakes, ClaimedWakeRecord{
-			Epoch:   r.Epoch,
-			Seq:     r.Seq,
-			Kind:    r.Kind,
-			Key:     r.Key,
-			Payload: r.Payload,
-		})
+		resultWakes = append(resultWakes, ClaimedWakeRecord(r))
 		claimLatencies = append(claimLatencies, WakeAgeSinceEnqueue(r.Epoch, claimNow))
 	}
 
