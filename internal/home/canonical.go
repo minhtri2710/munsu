@@ -284,7 +284,8 @@ func createLayout(root string) error {
 }
 
 // verifyHomeProtection confirms that the home's owner boundary is still
-// owner-private: the root and each logical root directory must be accessible
+// owner-private: the root, each logical root directory (state, data, config,
+// projects), and the journal, lock and lease directories must be accessible
 // only by the owner. A home whose protection was weakened or tampered with
 // fails closed so durable records are never exposed to other principals.
 func verifyHomeProtection(root string) error {
