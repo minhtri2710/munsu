@@ -10,6 +10,84 @@ import (
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
+func TestWakeLeaseIDsRejectTraversalWithoutTouchingOutsideFiles(t *testing.T) {
+	t.Run("ack", func(t *testing.T) {
+		home := t.TempDir()
+		victim := filepath.Join(home, "victim")
+		original := []byte("untouched\n")
+		if err := os.WriteFile(victim, original, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := AckWakes(home, "../../victim", []string{"100:1"}); err == nil {
+			t.Fatal("AckWakes accepted a traversal lease ID")
+		}
+		data, err := os.ReadFile(victim)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(data) != string(original) {
+			t.Fatalf("outside victim changed: %q", data)
+		}
+	})
+
+	t.Run("resolve", func(t *testing.T) {
+		home := t.TempDir()
+		victim := filepath.Join(home, "victim")
+		original := []byte("../../victim\tconsumer\t9999999999\t0\n100\t1\tsignal\ttask\tpayload\n")
+		if err := os.WriteFile(victim, original, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := ResolveWake(home, "../../victim", "100:1", "done"); err == nil {
+			t.Fatal("ResolveWake accepted a traversal lease ID")
+		}
+		data, err := os.ReadFile(victim)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(data) != string(original) {
+			t.Fatalf("outside victim changed: %q", data)
+		}
+	})
+}
+
+func TestClaimWakesSurfacesQueueOpenError(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Dir(WakeQueuePath(home)), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(WakeQueuePath(home), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ClaimWakes(home, "consumer", 60, 1); err == nil {
+		t.Fatal("ClaimWakes swallowed an error opening the queue")
+	}
+}
+
+func TestReclaimExpiredLeasesRetainsLeaseWhenQueueCannotBeWritten(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(LeaseDir(home), 0755); err != nil {
+		t.Fatal(err)
+	}
+	leaseID := "lease-expired"
+	original := []byte(leaseID + "\tconsumer\t0\t0\n100\t1\tsignal\ttask\tpayload\n")
+	if err := os.WriteFile(LeaseFilePath(home, leaseID), original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(WakeQueuePath(home), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReclaimExpiredLeases(home); err == nil {
+		t.Fatal("ReclaimExpiredLeases swallowed the enqueue error")
+	}
+	data, err := os.ReadFile(LeaseFilePath(home, leaseID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != string(original) {
+		t.Fatalf("expired lease was not retained: %q", data)
+	}
+}
+
 func TestClaimWakesEmptyQueueDoesNotCreateLease(t *testing.T) {
 	home := t.TempDir()
 
