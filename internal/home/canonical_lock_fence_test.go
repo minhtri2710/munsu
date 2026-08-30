@@ -2,92 +2,67 @@ package home
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
-// readFenceHandle returns the bytes currently visible through h's own offset-0
-// read, i.e. it reads through the caller's open handle rather than opening a
-// second one. The point of the nextFence fix (#532) is precisely that the
-// fence must be readable through the single handle the caller already holds —
-// on windows, a byte-range lock on that handle denies access through any
-// second handle, so os.ReadFile(path) is not merely slow, it fails.
-func readFenceHandle(t *testing.T, h *os.File) string {
-	t.Helper()
-	if _, err := h.Seek(0, 0); err != nil {
-		t.Fatalf("seek: %v", err)
-	}
-	data, err := io.ReadAll(h)
-	if err != nil {
-		t.Fatalf("read through held handle: %v", err)
-	}
-	return string(data)
-}
-
-// TestNextFenceReadsAndAdvancesThroughHeldHandle pins nextFence's contracted
-// input/output behaviour: it reads the previous token through the SAME open
-// handle it is given (never a second handle), advances it by one, and persists
-// the new token through that same handle, so a subsequent call on the same
-// handle sees the persisted value. The empty-file case (a lock file about to
-// be used for the first time) must yield token 1, not stall or error.
-func TestNextFenceReadsAndAdvancesThroughHeldHandle(t *testing.T) {
+// TestNextFenceAdvancesInSiblingFile pins nextFence's contract: it reads the
+// previous token from the sibling .fence file, advances it by one, and persists
+// the new token atomically. A missing file (a scope locked for the first time)
+// yields token 1, and each subsequent call reads the persisted value and returns
+// one more.
+func TestNextFenceAdvancesInSiblingFile(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "scope.lock")
+	fence := filepath.Join(dir, "scope.fence")
 
-	// A fresh lock file, as created by Home.Lock on first use: empty, one open
-	// handle that calls nextFence. First token must be 1.
-	fresh, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tok, err := nextFence(fresh); err != nil {
-		t.Fatalf("nextFence on empty file: %v", err)
+	// No fence file yet, as on a scope's first lock. First token must be 1.
+	if tok, err := nextFence(fence); err != nil {
+		t.Fatalf("nextFence on missing file: %v", err)
 	} else if tok != 1 {
 		t.Fatalf("first nextFence = %d, want 1", tok)
 	}
-	if got := readFenceHandle(t, fresh); got != "1\n" {
+	if got := readFileString(t, fence); got != "1\n" {
 		t.Fatalf("fence file after first advance = %q, want %q", got, "1\n")
 	}
 
-	// A second advance through the same handle must read the persisted "1"
-	// through the handle and return 2.
-	if tok, err := nextFence(fresh); err != nil {
+	// A second advance must read the persisted "1" and return 2.
+	if tok, err := nextFence(fence); err != nil {
 		t.Fatalf("nextFence after seed: %v", err)
 	} else if tok != 2 {
 		t.Fatalf("second nextFence = %d, want 2", tok)
 	}
-	if got := readFenceHandle(t, fresh); got != "2\n" {
+	if got := readFileString(t, fence); got != "2\n" {
 		t.Fatalf("fence file after second advance = %q, want %q", got, "2\n")
 	}
-	if err := fresh.Close(); err != nil {
-		t.Fatal(err)
-	}
 
-	// A later holder reopens the persisted file (value 2) and advances it: the
-	// read must come from the handle's current contents, giving 3.
-	reopened, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer reopened.Close()
-	if tok, err := nextFence(reopened); err != nil {
+	// A later holder advances the persisted file (value 2), giving 3.
+	if tok, err := nextFence(fence); err != nil {
 		t.Fatalf("nextFence on persisted fence: %v", err)
 	} else if tok != 3 {
 		t.Fatalf("reopened nextFence = %d, want 3", tok)
 	}
-	if got := readFenceHandle(t, reopened); got != "3\n" {
-		t.Fatalf("fence file after reopen = %q, want %q", got, "3\n")
+	if got := readFileString(t, fence); got != "3\n" {
+		t.Fatalf("fence file after third advance = %q, want %q", got, "3\n")
 	}
 }
 
-// TestLockFenceRoundTripsThroughHeldHandle goes through the public Lock flow:
-// the fence written by a Release'd holder must be read and advanced by the
-// next holder (this was reading through a second os.ReadFile handle before
-// #532). Asserting on FenceToken values is behaviour, and the monotonic
-// advance is what the commit-conflict machinery depends on.
-func TestLockFenceRoundTripsThroughHeldHandle(t *testing.T) {
+func readFileString(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(data)
+}
+
+// TestLockFenceRoundTripsThroughSiblingFile goes through the public Lock flow:
+// the fence written by a Release'd holder must be read and advanced by the next
+// holder. The monotonic advance is what the commit-conflict machinery depends
+// on. The counter lives in the sibling .fence file; the .lock file stays
+// content-free so a crash mid-write can never truncate the fence to an empty or
+// short value.
+func TestLockFenceRoundTripsThroughSiblingFile(t *testing.T) {
 	h := newTestHome(t)
 	lk1, err := h.Lock("fence-rt")
 	if err != nil {
@@ -111,19 +86,17 @@ func TestLockFenceRoundTripsThroughHeldHandle(t *testing.T) {
 		t.Fatalf("second token = %d, want %d (fence value from prior holder)", second, first+1)
 	}
 
-	// The persisted value is exactly the second token. It must be readable
-	// through lk2's own handle while the exclusive lock is still held: on
-	// windows, opening a second handle (as os.ReadFile would) is denied access
-	// to the byte-range-locked region, and reading through the held handle is
-	// precisely what #532's nextFence fix guarantees.
-	if _, err := lk2.file.Seek(0, 0); err != nil {
-		t.Fatalf("seek locked handle: %v", err)
+	// The persisted fence value is exactly the second token.
+	if got, want := readFileString(t, h.fencePath("fence-rt")), fmt.Sprintf("%d\n", second); got != want {
+		t.Fatalf("persisted fence = %q, want %q", got, want)
 	}
-	data, err := io.ReadAll(lk2.file)
+
+	// The lock file itself carries no content: it is a pure flock target.
+	info, err := os.Stat(lk2.path)
 	if err != nil {
-		t.Fatalf("read fence through locked handle: %v", err)
+		t.Fatalf("stat lock file: %v", err)
 	}
-	if want := fmt.Sprintf("%d\n", second); string(data) != want {
-		t.Fatalf("persisted fence = %q, want %q", string(data), want)
+	if info.Size() != 0 {
+		t.Fatalf("lock file size = %d, want 0 (content-free)", info.Size())
 	}
 }

@@ -87,6 +87,10 @@ var (
 
 	// ErrInvalidTxnID reports a blank or unsafe transaction identity.
 	ErrInvalidTxnID = errors.New("home: invalid transaction id")
+
+	// ErrForeignLock reports a commit driven by a lock acquired from a different
+	// home than the receiver.
+	ErrForeignLock = errors.New("home: lock belongs to a different home")
 )
 
 // incompatibleError wraps a typed error for existing state that cannot be

@@ -3,7 +3,6 @@ package home
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -99,7 +98,7 @@ func (h *Home) Lock(scope string) (*Lock, error) {
 		}
 	}
 
-	token, err := nextFence(file)
+	token, err := nextFence(h.fencePath(scope))
 	if err != nil {
 		_ = unlockScopedFile(file)
 		_ = file.Close()
@@ -112,21 +111,19 @@ func (h *Home) lockPath(scope string) string {
 	return filepath.Join(h.root, LockDirName, scope+".lock")
 }
 
-// nextFence reads the current fencing token from a held lock file and advances
-// it by one, returning the new token. The caller holds the exclusive lock, so
-// read-modify-write is safe.
-func nextFence(file *os.File) (FenceToken, error) {
-	// Read through the already-open, already-locked handle: os.ReadFile(file.Name())
-	// opens a second handle, which Windows byte-range locks deny access through.
-	if _, err := file.Seek(0, 0); err != nil {
-		return 0, fmt.Errorf("home: read lock fence: %w", err)
-	}
-	// No os.IsNotExist tolerance: that was meaningful for os.ReadFile, which
-	// could be handed a path that had since vanished. Home.Lock opened this
-	// handle with O_CREATE and holds it, so a read through it cannot report a
-	// missing file -- tolerating one would describe a state that cannot occur.
-	data, err := io.ReadAll(file)
-	if err != nil {
+func (h *Home) fencePath(scope string) string {
+	return filepath.Join(h.root, LockDirName, scope+".fence")
+}
+
+// nextFence advances the fencing generation for a scope by one and returns the
+// new token. The counter lives in a sibling .fence file written atomically, so a
+// crash can never truncate it to an empty or short value and reset the
+// generation; the fence is monotonic across crashes. The caller holds the
+// scope's exclusive flock (on the .lock file), so the read-modify-write of the
+// sibling file is serialized across processes. The .lock file stays content-free.
+func nextFence(fencePath string) (FenceToken, error) {
+	data, err := os.ReadFile(fencePath)
+	if err != nil && !os.IsNotExist(err) {
 		return 0, fmt.Errorf("home: read lock fence: %w", err)
 	}
 	var cur uint64
@@ -136,17 +133,8 @@ func nextFence(file *os.File) (FenceToken, error) {
 		}
 	}
 	next := cur + 1
-	if err := file.Truncate(0); err != nil {
-		return 0, fmt.Errorf("home: truncate lock: %w", err)
-	}
-	if _, err := file.Seek(0, 0); err != nil {
-		return 0, fmt.Errorf("home: seek lock: %w", err)
-	}
-	if _, err := fmt.Fprintf(file, "%d\n", next); err != nil {
+	if err := canonicalAtomicWrite(fencePath, []byte(fmt.Sprintf("%d\n", next))); err != nil {
 		return 0, fmt.Errorf("home: write lock fence: %w", err)
-	}
-	if err := file.Sync(); err != nil {
-		return 0, fmt.Errorf("home: sync lock: %w", err)
 	}
 	return FenceToken(next), nil
 }

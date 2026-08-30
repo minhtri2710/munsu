@@ -27,6 +27,10 @@ func deliveryLockScopeName(t *testing.T, homeDir string) string {
 	}
 	var scopes []string
 	for _, e := range entries {
+		// Scopes are the .lock files; the sibling .fence counter is not a scope.
+		if !strings.HasSuffix(e.Name(), ".lock") {
+			continue
+		}
 		scopes = append(scopes, strings.TrimSuffix(e.Name(), ".lock"))
 	}
 	if len(scopes) != 1 {
