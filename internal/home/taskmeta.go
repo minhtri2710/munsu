@@ -29,12 +29,7 @@ func DurableFilePath(dir, id, suffix string) (string, error) {
 	if strings.ContainsAny(suffix, `/\\`) || strings.ContainsRune(suffix, 0) {
 		return "", fmt.Errorf("invalid durable file suffix %q", suffix)
 	}
-	result := filepath.Join(dir, stem+suffix)
-	cleanDir := filepath.Clean(dir)
-	if filepath.Dir(result) != cleanDir || !withinRoot(cleanDir, result) {
-		return "", fmt.Errorf("durable file path escapes directory %q", dir)
-	}
-	return result, nil
+	return filepath.Join(dir, stem+suffix), nil
 }
 
 // MetaFilePath returns the path to the meta file for the given task ID. The

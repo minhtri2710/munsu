@@ -125,10 +125,7 @@ func validatedLeasePath(homeDir, leaseID string) (string, error) {
 		return "", fmt.Errorf("lease %q path escapes state: %w", leaseID, err)
 	}
 	containmentRoot := filepath.Dir(leaseRoot)
-	if info, err := os.Stat(leaseRoot); err == nil {
-		if !info.IsDir() {
-			return "", fmt.Errorf("lease directory is not a directory")
-		}
+	if _, err := os.Stat(leaseRoot); err == nil {
 		containmentRoot = leaseRoot
 	} else if !os.IsNotExist(err) {
 		return "", fmt.Errorf("checking lease directory: %w", err)
