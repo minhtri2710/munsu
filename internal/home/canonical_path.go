@@ -19,19 +19,34 @@ func joinContained(root, key string) (string, error) {
 	if strings.HasPrefix(key, "/") || strings.HasPrefix(key, "\\") || path.IsAbs(key) || filepath.IsAbs(key) || (len(key) >= 2 && key[1] == ':') {
 		return "", ErrAbsoluteKey
 	}
-	if strings.Contains(key, "\\") {
+	if strings.Contains(key, "\\") || strings.Contains(key, ":") {
 		return "", ErrKeyEscapes
 	}
 	// Reject escape/current/empty components in the raw key before any
 	// cleaning, so a key cannot smuggle ".." or absolute escapes.
 	for _, part := range strings.Split(key, "/") {
-		if part == "" || part == "." || part == ".." {
+		if part == "" || part == "." || part == ".." || isWindowsDeviceName(part) {
 			return "", ErrKeyEscapes
 		}
 	}
 	clean := filepath.Clean(filepath.FromSlash(key))
 	joined := filepath.Join(root, clean)
 	return containedJoin(joined, withinRoot(root, joined))
+}
+
+func isWindowsDeviceName(component string) bool {
+	name := component
+	if dot := strings.IndexByte(name, '.'); dot >= 0 {
+		name = name[:dot]
+	}
+	name = strings.ToUpper(strings.TrimRight(name, " ."))
+	if name == "CON" || name == "PRN" || name == "AUX" || name == "NUL" {
+		return true
+	}
+	if len(name) == 4 && (strings.HasPrefix(name, "COM") || strings.HasPrefix(name, "LPT")) && name[3] >= '1' && name[3] <= '9' {
+		return true
+	}
+	return false
 }
 
 // containedJoin returns the joined path when inside is true, otherwise it

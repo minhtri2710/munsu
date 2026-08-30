@@ -236,6 +236,7 @@ func TestJoinContainedLogicalKeys(t *testing.T) {
 		"a/b/c",
 		"single",
 		"nested/sub/dir/file.txt",
+		"tasks/abc",
 	} {
 		got, err := joinContained(root, key)
 		if err != nil {
@@ -281,6 +282,13 @@ func TestJoinContainedLogicalKeys(t *testing.T) {
 		"a/b/",
 		"a\\b",
 		"a\\..\\b",
+		"tasks/foo:bar",
+		"CON",
+		"con.txt",
+		"CON .txt",
+		"COM1",
+		"LPT9.log",
+		"NUL...",
 	} {
 		if _, err := joinContained(root, key); !errors.Is(err, ErrKeyEscapes) {
 			t.Errorf("joinContained(%q) = %v, want ErrKeyEscapes", key, err)

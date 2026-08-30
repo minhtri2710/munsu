@@ -16,6 +16,99 @@ func setHomeEnv(t *testing.T, path string) {
 	t.Cleanup(func() { os.Unsetenv("MUNSU_HOME") })
 }
 
+func TestDurableFilePathValidatesSuffixWithoutRejectingDotExtensions(t *testing.T) {
+	dir := t.TempDir()
+	for _, suffix := range []string{".meta", ".receipt"} {
+		path, err := DurableFilePath(dir, "task-1", suffix)
+		if err != nil {
+			t.Fatalf("DurableFilePath suffix %q: %v", suffix, err)
+		}
+		if filepath.Dir(path) != filepath.Clean(dir) {
+			t.Fatalf("DurableFilePath suffix %q escaped dir: %q", suffix, path)
+		}
+	}
+	for _, suffix := range []string{"/escape", `\escape`, "/../escape", string([]byte{'x', 0, 'y'})} {
+		if _, err := DurableFilePath(dir, "task-1", suffix); err == nil {
+			t.Errorf("DurableFilePath suffix %q succeeded, want validation error", suffix)
+		}
+	}
+}
+
+func TestTaskMetadataRejectsStateSymlinkWithoutTouchingTarget(t *testing.T) {
+	home := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, StateDir(home)); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteMeta(home, "task-1", map[string]string{"kind": "ship"}); err == nil {
+		t.Fatal("WriteMeta followed a symlinked state directory")
+	}
+	if err := AppendStatus(home, "task-1", "working: test"); err == nil {
+		t.Fatal("AppendStatus followed a symlinked state directory")
+	}
+	if _, err := ReadMeta(home, "task-1"); err == nil {
+		t.Fatal("ReadMeta accepted a symlinked state directory")
+	}
+	if _, err := ReadStatus(home, "task-1"); err == nil {
+		t.Fatal("ReadStatus accepted a symlinked state directory")
+	}
+	if _, err := ListMeta(home); err == nil {
+		t.Fatal("ListMeta accepted a symlinked state directory")
+	}
+	entries, err := os.ReadDir(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("state symlink target was modified: %v", entries)
+	}
+}
+
+func TestWriteMetaRejectsControlCharactersWithoutPublishing(t *testing.T) {
+	cases := []struct {
+		name string
+		meta map[string]string
+	}{
+		{name: "empty key", meta: map[string]string{"": "value"}},
+		{name: "equals in key", meta: map[string]string{"bad=key": "value"}},
+		{name: "newline in key", meta: map[string]string{"bad\nkey": "value"}},
+		{name: "newline in value", meta: map[string]string{"kind": "ship\nforged=field"}},
+		{name: "carriage return in value", meta: map[string]string{"kind": "ship\rforged"}},
+		{name: "control in value", meta: map[string]string{"kind": "ship\x01forged"}},
+		{name: "control in key", meta: map[string]string{"bad\x01key": "value"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			if tc.name == "newline in value" {
+				if err := WriteMeta(home, "task-1", map[string]string{"kind": "ship"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := WriteMeta(home, "task-1", tc.meta); err == nil {
+				t.Fatal("WriteMeta accepted invalid metadata")
+			}
+			path, err := MetaFilePath(home, "task-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.name == "newline in value" {
+				meta, err := ReadMeta(home, "task-1")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if meta["kind"] != "ship" || meta["forged"] != "" {
+					t.Fatalf("valid metadata was corrupted: %v", meta)
+				}
+				return
+			}
+			if _, err := os.Stat(path); !os.IsNotExist(err) {
+				t.Fatalf("invalid metadata published a file: %v", err)
+			}
+		})
+	}
+}
+
 func TestTaskMetadataRejectsPathTraversal(t *testing.T) {
 	tmp := t.TempDir()
 	for _, id := range []string{"", ".", "..", "../escape", "nested/task"} {
