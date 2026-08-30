@@ -337,12 +337,7 @@ func ListMeta(homeDir string) ([]MetaEntry, error) {
 		if statusLines, err := ReadStatus(homeDir, id); err == nil && len(statusLines) > 0 {
 			lastLine := statusLines[len(statusLines)-1]
 			msg, _ := ParseStatusKey(lastLine)
-			// Extract state prefix
-			if idx := strings.Index(msg, ":"); idx >= 0 {
-				lastStatus = msg
-			} else {
-				lastStatus = msg
-			}
+			lastStatus = msg
 		}
 
 		// Lifecycle truth supersedes stale status projections.
