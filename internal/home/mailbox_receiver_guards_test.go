@@ -64,14 +64,22 @@ func deliverGuardEnvelope(t *testing.T, store *Store) (Envelope, NotificationRef
 // on-disk state where the two disagree.
 func writeEnvelopeUnder(t *testing.T, store *Store, senderDir string, env Envelope) {
 	t.Helper()
-	if err := os.MkdirAll(store.inboxDir(senderDir), 0755); err != nil {
+	dir, err := store.inboxDir(senderDir)
+	if err != nil {
+		t.Fatalf("inboxDir: %v", err)
+	}
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	data, err := json.Marshal(env)
 	if err != nil {
 		t.Fatalf("marshal envelope: %v", err)
 	}
-	if err := os.WriteFile(store.inboxPath(senderDir, env.MessageID), data, 0644); err != nil {
+	path, err := store.inboxPath(senderDir, env.MessageID)
+	if err != nil {
+		t.Fatalf("inboxPath: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0644); err != nil {
 		t.Fatalf("write envelope: %v", err)
 	}
 }

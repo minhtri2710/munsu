@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"os"
@@ -177,6 +178,38 @@ func TestRecoverAllInboxesWithSenderSkipsUplinkReport(t *testing.T) {
 	}
 	if len(sender.payloads) != 0 {
 		t.Fatalf("uplink report was sent: %v", sender.payloads)
+	}
+}
+
+func TestRecoverAllInboxesWithSenderDeliversOnlyValidatedInboxRecords(t *testing.T) {
+	home := t.TempDir()
+	valid := recoveryEnvelope("command")
+	valid.MessageID = "valid-recovery"
+	writeRecoveryEnvelope(t, home, valid)
+
+	forged := recoveryEnvelope("command")
+	forged.MessageID = "forged-recovery"
+	writeRecoveryEnvelope(t, home, forged)
+	forged.Payload = "forged payload"
+	data, err := json.MarshalIndent(forged, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal forged envelope: %v", err)
+	}
+	path := filepath.Join(home, "state", InboxDir, forged.SenderIdentity, forged.MessageID+".json")
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatalf("write forged envelope: %v", err)
+	}
+
+	sender := &recoverySender{alive: true, result: BoundSendResult{Status: "submitted", Acknowledged: true}}
+	attempts, err := RecoverAllInboxesWithSender(sender, home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(attempts) != 1 || !attempts[0].Delivered || attempts[0].MessageID != valid.MessageID {
+		t.Fatalf("attempts = %+v, want only valid envelope", attempts)
+	}
+	if len(sender.payloads) != 1 || sender.payloads[0] != valid.Payload {
+		t.Fatalf("recovery payloads = %v, want only %q", sender.payloads, valid.Payload)
 	}
 }
 

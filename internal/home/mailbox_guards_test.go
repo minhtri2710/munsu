@@ -283,7 +283,10 @@ func TestStoreReadEnvelopeRefusesPathMessageIDMismatch(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(dir)
 	env := validGuardEnvelope()
-	path := store.inboxPath(env.SenderIdentity, env.MessageID)
+	path, err := store.inboxPath(env.SenderIdentity, env.MessageID)
+	if err != nil {
+		t.Fatalf("inboxPath: %v", err)
+	}
 	data, err := json.MarshalIndent(env, "", "  ")
 	if err != nil {
 		t.Fatalf("marshal envelope: %v", err)
@@ -299,7 +302,10 @@ func TestStoreReadEnvelopeRefusesPathMessageIDMismatch(t *testing.T) {
 		t.Fatalf("read envelope fixture: %v", err)
 	}
 
-	otherPath := store.inboxPath(env.SenderIdentity, "other-message")
+	otherPath, err := store.inboxPath(env.SenderIdentity, "other-message")
+	if err != nil {
+		t.Fatalf("other inboxPath: %v", err)
+	}
 	if err := os.Rename(path, otherPath); err != nil {
 		t.Fatalf("rename envelope fixture: %v", err)
 	}
@@ -321,7 +327,10 @@ func TestStoreReadAckRefusesPathMessageIDMismatch(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(dir)
 	ack := validGuardAck()
-	path := store.ackPath(ack.SenderIdentity, "other-message")
+	path, err := store.ackPath(ack.SenderIdentity, "other-message")
+	if err != nil {
+		t.Fatalf("ackPath: %v", err)
+	}
 	data, err := json.MarshalIndent(ack, "", "  ")
 	if err != nil {
 		t.Fatalf("marshal ack: %v", err)
@@ -372,4 +381,229 @@ func TestStoreWriteEnvelopeRefusesConflictingContentUnderOneMessageID(t *testing
 	if !strings.Contains(err.Error(), "already exists with different content") {
 		t.Fatalf("error = %v, want the conflict refusal", err)
 	}
+}
+
+func TestStoreListInboxExcludesForgedRecordsButKeepsValidSibling(t *testing.T) {
+	home := t.TempDir()
+	store := NewStore(home)
+
+	valid := validGuardEnvelope()
+	valid.MessageID = "valid-message"
+	if err := store.WriteEnvelope(&valid); err != nil {
+		t.Fatalf("WriteEnvelope valid: %v", err)
+	}
+
+	tampered := validGuardEnvelope()
+	tampered.MessageID = "tampered-message"
+	if err := store.WriteEnvelope(&tampered); err != nil {
+		t.Fatalf("WriteEnvelope tampered: %v", err)
+	}
+	tampered.Payload = "forged payload"
+	data, err := json.MarshalIndent(tampered, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal tampered envelope: %v", err)
+	}
+	inboxDir := filepath.Join(home, "state", InboxDir, tampered.SenderIdentity)
+	if err := os.WriteFile(filepath.Join(inboxDir, tampered.MessageID+".json"), data, 0644); err != nil {
+		t.Fatalf("write tampered envelope: %v", err)
+	}
+
+	mismatched := validGuardEnvelope()
+	mismatched.MessageID = "declared-message"
+	data, err = json.MarshalIndent(mismatched, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal mismatched envelope: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(inboxDir, "wrong-name.json"), data, 0644); err != nil {
+		t.Fatalf("write mismatched envelope: %v", err)
+	}
+
+	got, err := store.ListInbox(valid.SenderIdentity)
+	if err != nil {
+		t.Fatalf("ListInbox: %v", err)
+	}
+	if len(got) != 1 || got[0].MessageID != valid.MessageID {
+		t.Fatalf("ListInbox = %+v, want only valid message %q", got, valid.MessageID)
+	}
+}
+
+func TestStoreListInboxExcludesSupersededRecords(t *testing.T) {
+	store := NewStore(t.TempDir())
+	env := validGuardEnvelope()
+	env.MessageID = "superseded-message"
+	if err := store.WriteEnvelope(&env); err != nil {
+		t.Fatalf("WriteEnvelope: %v", err)
+	}
+	if err := store.MarkSuperseded(env.SenderIdentity, env.MessageID); err != nil {
+		t.Fatalf("MarkSuperseded: %v", err)
+	}
+
+	got, err := store.ListInbox(env.SenderIdentity)
+	if err != nil {
+		t.Fatalf("ListInbox: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("ListInbox returned superseded records: %+v", got)
+	}
+}
+
+func TestStoreWritePendingRejectsInvalidIDsWithoutSentinelAliasing(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		env  func() Envelope
+	}{
+		{name: "invalid sender", env: func() Envelope {
+			env := validGuardEnvelope()
+			env.SenderIdentity = "sender/escape"
+			return env
+		}},
+		{name: "invalid message", env: func() Envelope {
+			env := validGuardEnvelope()
+			env.MessageID = "message/escape"
+			return env
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			store := NewStore(home)
+			env := tc.env()
+			if err := store.WritePending(&env); err == nil {
+				t.Fatal("WritePending accepted an invalid path component")
+			}
+			invalidDir := filepath.Join(home, "state", OutboxDir, "_invalid_")
+			if _, err := os.Stat(invalidDir); !os.IsNotExist(err) {
+				t.Fatalf("invalid input created sentinel directory: %v", err)
+			}
+		})
+	}
+}
+
+func TestStoreRemovePendingAfterAckRejectsInvalidProcessingAck(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		corrupt func(*ProcessingAck)
+	}{
+		{name: "missing processed timestamp", corrupt: func(ack *ProcessingAck) { ack.ProcessedAt = 0 }},
+		{name: "invalid outcome", corrupt: func(ack *ProcessingAck) { ack.Outcome = "finished" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := NewStore(t.TempDir())
+			env := validGuardEnvelope()
+			if err := store.WritePending(&env); err != nil {
+				t.Fatalf("WritePending: %v", err)
+			}
+			ack := validGuardAck()
+			tc.corrupt(&ack)
+			if err := store.RemovePendingAfterAck(env.SenderIdentity, env.MessageID, &ack); err == nil {
+				t.Fatal("RemovePendingAfterAck accepted an invalid processing ack")
+			}
+			pending, err := store.ReadPending(env.SenderIdentity, env.MessageID)
+			if err != nil {
+				t.Fatalf("ReadPending: %v", err)
+			}
+			if pending == nil {
+				t.Fatal("invalid processing ack removed pending evidence")
+			}
+		})
+	}
+}
+
+func TestStoreMarkSupersededRejectsTraversalMessageID(t *testing.T) {
+	home := t.TempDir()
+	store := NewStore(home)
+	const sender = "sender"
+	const messageID = "../../escaped"
+
+	if err := store.MarkSuperseded(sender, messageID); err == nil {
+		t.Fatal("MarkSuperseded accepted a traversal-capable message ID")
+	}
+	if _, err := os.Stat(filepath.Join(home, "state", "escaped.superseded")); !os.IsNotExist(err) {
+		t.Fatalf("traversal marker was written outside the sender inbox: %v", err)
+	}
+	if store.IsSuperseded(sender, messageID) {
+		t.Fatal("IsSuperseded treated an invalid message ID as superseded")
+	}
+}
+
+func TestStoreInboxOrderingUsesMessageIDForEqualCreatedAt(t *testing.T) {
+	home := t.TempDir()
+	store := NewStore(home)
+	sender := "general-home"
+	dir := filepath.Join(home, "state", InboxDir, sender)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	for _, messageID := range []string{"z-message", "a-message"} {
+		env := validGuardEnvelope()
+		env.SenderIdentity = sender
+		env.MessageID = messageID
+		env.CreatedAt = 42
+		data, err := json.Marshal(env)
+		if err != nil {
+			t.Fatalf("marshal inbox %s: %v", messageID, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, messageID+".json"), data, 0644); err != nil {
+			t.Fatalf("write inbox %s: %v", messageID, err)
+		}
+	}
+
+	inbox, err := store.ListInbox(sender)
+	if err != nil {
+		t.Fatalf("ListInbox: %v", err)
+	}
+	if len(inbox) != 2 || inbox[0].MessageID != "a-message" || inbox[1].MessageID != "z-message" {
+		t.Fatalf("ListInbox = %v, want [a-message z-message]", pendingIDs(inbox))
+	}
+}
+
+func TestStorePendingOrderingUsesMessageIDForEqualCreatedAt(t *testing.T) {
+	home := t.TempDir()
+	store := NewStore(home)
+	sender := "sender"
+	dir := filepath.Join(home, "state", OutboxDir, sender)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	for _, tc := range []struct {
+		file      string
+		messageID string
+	}{
+		{file: "a.pending", messageID: "z-message"},
+		{file: "z.pending", messageID: "a-message"},
+	} {
+		env := validGuardEnvelope()
+		env.SenderIdentity = sender
+		env.MessageID = tc.messageID
+		env.CreatedAt = 42
+		data, err := json.Marshal(env)
+		if err != nil {
+			t.Fatalf("marshal pending %s: %v", tc.messageID, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, tc.file), data, 0644); err != nil {
+			t.Fatalf("write pending %s: %v", tc.messageID, err)
+		}
+	}
+
+	pending, err := store.ListPending(sender)
+	if err != nil {
+		t.Fatalf("ListPending: %v", err)
+	}
+	if len(pending) != 2 || pending[0].MessageID != "a-message" || pending[1].MessageID != "z-message" {
+		t.Fatalf("ListPending = %v, want [a-message z-message]", pendingIDs(pending))
+	}
+	all, err := store.ListAllPending()
+	if err != nil {
+		t.Fatalf("ListAllPending: %v", err)
+	}
+	if len(all) != 2 || all[0].MessageID != "a-message" || all[1].MessageID != "z-message" {
+		t.Fatalf("ListAllPending = %v, want [a-message z-message]", pendingIDs(all))
+	}
+}
+
+func pendingIDs(envelopes []*Envelope) []string {
+	ids := make([]string, len(envelopes))
+	for i, env := range envelopes {
+		ids[i] = env.MessageID
+	}
+	return ids
 }
