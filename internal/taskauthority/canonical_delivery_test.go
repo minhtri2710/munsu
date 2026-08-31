@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
@@ -762,6 +763,65 @@ func TestCanonicalDeliveryCurrencyInvalidation(t *testing.T) {
 			t.Fatalf("other-task hold currency = %+v, want valid", cur)
 		}
 	})
+}
+
+func TestIndexedDeliveryQueriesWaitForTaskScopeLock(t *testing.T) {
+	queries := []struct {
+		name string
+		call func(*Canonical, domain.TaskID) error
+	}{
+		{name: "authorization", call: func(c *Canonical, id domain.TaskID) error {
+			_, err := c.DeliveryAuthorization(id)
+			return err
+		}},
+		{name: "outcome", call: func(c *Canonical, id domain.TaskID) error {
+			_, err := c.DeliveryOutcome(id)
+			return err
+		}},
+		{name: "currency", call: func(c *Canonical, id domain.TaskID) error {
+			_, err := c.DeliveryCurrency(id)
+			return err
+		}},
+	}
+	for _, query := range queries {
+		t.Run(query.name, func(t *testing.T) {
+			c, _, _ := newTestCanonical(t)
+			mustDeliveryTask(t, c, "t1")
+			mustAuthorize(t, c, "t1", 3, "op-auth-lock-"+query.name)
+			id := mustTaskID(t, "t1")
+			lk, err := c.h.Lock(taskScope(id.Value()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			started := make(chan struct{})
+			result := make(chan error, 1)
+			go func() {
+				close(started)
+				result <- query.call(c, id)
+			}()
+			<-started
+			select {
+			case err := <-result:
+				t.Fatalf("%s query returned while task scope was locked: %v", query.name, err)
+			case <-time.After(100 * time.Millisecond):
+			}
+			if err := lk.Release(); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case err := <-result:
+				if query.name == "outcome" {
+					if !errors.Is(err, ErrNotFound) {
+						t.Fatalf("outcome query after lock release: %v, want ErrNotFound", err)
+					}
+				} else if err != nil {
+					t.Fatalf("%s query after lock release: %v", query.name, err)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatalf("%s query did not complete after task scope unlock", query.name)
+			}
+		})
+	}
 }
 
 func hasCurrencyReason(cur DeliveryCurrency, reason DeliveryCurrencyReason) bool {

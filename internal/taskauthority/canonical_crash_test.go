@@ -357,8 +357,17 @@ func TestCanonicalDeliveryAuthorizationInterruptedCommitRecovers(t *testing.T) {
 		{Root: home.RootState, Key: receiptKey(op.ID.Value()), Data: receiptData},
 	})
 
-	c2 := reopenCanonical(t, root)
-	recovered, err := c2.DeliveryAuthorization(mustTaskID(t, "t1"))
+	// DeliveryCurrency is the first read after the interrupted journal is
+	// planted, so the query itself must recover the task, index, and evidence.
+	cur, err := c.DeliveryCurrency(mustTaskID(t, "t1"))
+	if err != nil {
+		t.Fatalf("read recovered currency: %v", err)
+	}
+	if !cur.Valid || cur.Revision != 4 || cur.Authorization == nil || cur.Authorization.OperationID != op.ID.Value() {
+		t.Fatalf("recovered currency = %+v", cur)
+	}
+
+	recovered, err := c.DeliveryAuthorization(mustTaskID(t, "t1"))
 	if err != nil {
 		t.Fatalf("read recovered authorization: %v", err)
 	}
@@ -366,18 +375,8 @@ func TestCanonicalDeliveryAuthorizationInterruptedCommitRecovers(t *testing.T) {
 		t.Fatalf("recovered authorization = %+v", recovered)
 	}
 
-	// The recovered authorization is current and the task revision advanced
-	// exactly once.
-	cur, err := c2.DeliveryCurrency(mustTaskID(t, "t1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !cur.Valid || cur.Revision != 4 {
-		t.Fatalf("recovered currency = %+v", cur)
-	}
-
 	// The recovered operation replays exactly once.
-	replayed, err := c2.AuthorizeDelivery(op, req)
+	replayed, err := c.AuthorizeDelivery(op, req)
 	if err != nil {
 		t.Fatalf("replay of recovered authorization: %v", err)
 	}
@@ -440,15 +439,14 @@ func TestCanonicalDeliveryOutcomeInterruptedCommitRecovers(t *testing.T) {
 		{Root: home.RootState, Key: receiptKey(op.ID.Value()), Data: receiptData},
 	})
 
-	c2 := reopenCanonical(t, root)
-	recovered, err := c2.DeliveryOutcome(mustTaskID(t, "t1"))
+	recovered, err := c.DeliveryOutcome(mustTaskID(t, "t1"))
 	if err != nil {
 		t.Fatalf("read recovered outcome: %v", err)
 	}
 	if recovered.OperationID != op.ID.Value() || recovered.Status != DeliveryOutcomeCompleted {
 		t.Fatalf("recovered outcome = %+v", recovered)
 	}
-	replayed, err := c2.CommitDeliveryOutcome(op, outReq)
+	replayed, err := c.CommitDeliveryOutcome(op, outReq)
 	if err != nil {
 		t.Fatalf("replay of recovered outcome: %v", err)
 	}
@@ -459,7 +457,7 @@ func TestCanonicalDeliveryOutcomeInterruptedCommitRecovers(t *testing.T) {
 	distinct := outReq
 	distinct.Precondition = preconditionOf(1, 5)
 	distinct.Status = DeliveryOutcomeRetryable
-	if _, err := c2.CommitDeliveryOutcome(mustOperation(t, "op-after-recovered", distinct), distinct); !errors.Is(err, ErrConflict) {
+	if _, err := c.CommitDeliveryOutcome(mustOperation(t, "op-after-recovered", distinct), distinct); !errors.Is(err, ErrConflict) {
 		t.Fatalf("distinct outcome after recovered terminal = %v, want ErrConflict", err)
 	}
 }

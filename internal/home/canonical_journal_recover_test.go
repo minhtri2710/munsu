@@ -78,6 +78,40 @@ func TestCommitSweepsInDoubtRecord(t *testing.T) {
 	}
 }
 
+func TestRecoverPendingAppliesInterruptedCommit(t *testing.T) {
+	h := newTestHome(t)
+	rec := journalRecord{
+		TxnID:            "pending-txn",
+		Scope:            "scope",
+		FenceToken:       1,
+		ExpectedRevision: 0,
+		NewRevision:      1,
+		Items:            []ChangeItem{{Root: RootData, Key: "pending-key", Data: []byte("pending")}},
+	}
+	if err := h.writeJournalRecord(rec); err != nil {
+		t.Fatalf("plant record: %v", err)
+	}
+
+	lk, err := h.Lock("scope")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lk.Release()
+	if err := h.RecoverPending(lk); err != nil {
+		t.Fatalf("RecoverPending: %v", err)
+	}
+	if data, err := h.Read(RootData, "pending-key"); err != nil {
+		t.Fatalf("Read recovered item: %v", err)
+	} else if string(data) != "pending" {
+		t.Fatalf("recovered item = %q, want %q", data, "pending")
+	}
+	if rev, err := h.readRevision("scope"); err != nil {
+		t.Fatalf("read recovered revision: %v", err)
+	} else if rev != 1 {
+		t.Fatalf("recovered revision = %d, want 1", rev)
+	}
+}
+
 // TestSweepRejectsRecordWithoutItems proves recovery fails closed on a
 // structurally invalid record (F008): a JSON-decodable record with no change
 // items must not silently advance the scope revision.
