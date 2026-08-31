@@ -58,7 +58,7 @@ func acquireWakeLock(homeDir string) (*os.File, error) {
 	return lock, nil
 }
 
-func releaseWakeLock(lock *os.File) error {
+var releaseWakeLock = func(lock *os.File) error {
 	var errs []error
 	if err := unlockWakeFile(lock); err != nil {
 		errs = append(errs, err)

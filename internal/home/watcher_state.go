@@ -86,7 +86,12 @@ func DrainWakes(h string) (records []WakeRecord, err error) {
 	if err != nil {
 		return nil, err
 	}
-	defer joinWakeLockError(&err, lock)
+	released := false
+	defer func() {
+		if !released {
+			joinWakeLockError(&err, lock)
+		}
+	}()
 	if err := recoverWakeMutationLocked(h); err != nil {
 		return nil, err
 	}
@@ -100,6 +105,8 @@ func DrainWakes(h string) (records []WakeRecord, err error) {
 		}
 		return nil, err
 	}
+	_ = releaseWakeLock(lock)
+	released = true
 	return records, nil
 }
 

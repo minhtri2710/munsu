@@ -56,6 +56,35 @@ func TestDrainWakesRemovalFailureRetainsQueueForRetry(t *testing.T) {
 	}
 }
 
+func TestDrainWakesReleaseErrorKeepsDrainedRecords(t *testing.T) {
+	home := t.TempDir()
+	stateDir := filepath.Join(home, "state")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	queuePath := WakeQueuePath(home)
+	original := []byte("100\tseq-1\tsignal\ttask-1\tpayload-1\n200\tseq-2\tsignal\ttask-2\tpayload-2\n")
+	if err := os.WriteFile(queuePath, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	releaseErr := errors.New("release wake lock: injected failure")
+	originalRelease := releaseWakeLock
+	releaseWakeLock = func(*os.File) error { return releaseErr }
+	t.Cleanup(func() { releaseWakeLock = originalRelease })
+
+	records, err := DrainWakes(home)
+	if err != nil {
+		t.Fatalf("DrainWakes with release error = %v, want nil", err)
+	}
+	if len(records) != 2 || records[0].Key != "task-1" || records[1].Key != "task-2" {
+		t.Fatalf("DrainWakes records with release error = %v, want both original records", records)
+	}
+	if _, err := os.Stat(queuePath); !os.IsNotExist(err) {
+		t.Fatalf("queue after drain with release error: %v, want absent", err)
+	}
+}
+
 func TestDrainWakesAbsentQueueReturnsEmpty(t *testing.T) {
 	records, err := DrainWakes(t.TempDir())
 	if err != nil {
