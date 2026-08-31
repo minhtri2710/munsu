@@ -18,7 +18,7 @@ type ScaffoldOptions struct {
 	ID                     string // task ID
 	Repo                   string // project/repo name
 	Scout                  bool   // generate scout brief instead of ship brief
-	Mode                   string // delivery mode (feat, fix, refactor, etc.)
+	Mode                   string // delivery mode (no-mistakes / direct-PR / local-only)
 	Yolo                   bool   // yolo mode
 	ScoutScope             string
 	ScoutRuntimeBudgetSecs int64

@@ -37,9 +37,13 @@ explicitly recorded transition rather than a silent re-resolution.
   only, not on the canonical aggregate.
 * `internal/fleet/delivery_preflight.go` `preflightNoMistakes` — the authorized
   no-mistakes → direct-PR fallback path.
-* `internal/fleet/brief.go:16` `ScaffoldOptions` — its `Mode` field means the
-  conventional-commit type (feat / fix / refactor), **not** delivery mode. A
-  per-task delivery contract must not collide with this name.
+* `internal/fleet/brief.go` `ScaffoldOptions.Mode` — the resolved **delivery
+  mode** (no-mistakes / direct-PR / local-only). `shipBriefTemplate` renders it as
+  `Delivery mode: %s` and `internal/cli/session_cmd.go` sets it from
+  `ResolveDeliveryMode`, so the field already carries delivery-mode semantics: the
+  mode is rendered into the brief and, separately, projected into home meta
+  (`meta["mode"]`) by the spawn path, but it is never stored on the canonical task
+  aggregate.
 * ADR-0008 §2 — durable task truth lives in `internal/taskauthority`, not in
   home meta projections.
 
@@ -74,9 +78,12 @@ without demoting the registry to advisory-only.
 
 ### Cleanup
 
-Rename or disambiguate so the durable delivery contract never shares the
-`ScaffoldOptions.Mode` identifier (which is the commit type). This is a naming
-hazard fixed as part of the change, not a separate task.
+`ScaffoldOptions.Mode` already carries delivery-mode semantics (its runtime value
+is the resolved mode and `shipBriefTemplate` renders `Delivery mode: %s`), so no
+rename or disambiguation is needed. The only genuine cleanup, folded into D1, is
+to correct the misleading `// delivery mode (feat, fix, refactor, etc.)` struct
+comment and the `brief_test.go` fixtures that pass `feat`/`fix` so they use real
+delivery-mode values (no-mistakes / direct-PR / local-only).
 
 ### Non-goals
 

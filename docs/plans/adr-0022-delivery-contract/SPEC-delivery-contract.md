@@ -42,7 +42,7 @@ gofmt -l .
 ```
 internal/fleet/spawn_config_snapshot.go  → ResolveDeliveryMode call site (first-spawn resolution)
 internal/fleet/delivery_preflight.go     → preflightNoMistakes (authorized fallback path)
-internal/fleet/brief.go                  → ScaffoldOptions.Mode = commit type (feat/fix/refactor) — NAME COLLISION to disambiguate
+internal/fleet/brief.go                  → ScaffoldOptions.Mode IS the delivery mode (shipBriefTemplate renders "Delivery mode: %s"); no rename needed — keep projecting the resolved mode into the brief
 internal/taskauthority/                   → canonical task aggregate: new durable delivery-contract field + a recorded-transition op
 ```
 
@@ -86,8 +86,7 @@ refusal and the recorded-fallback branch must each be entered by a test.
   conditions.
 - **Never:** adopt firstmate's registry-advisory-only / hard refuse-to-guess
   (munsu keeps auto-detect first-spawn default); let mode live only in ephemeral
-  meta; produce a divergent fresh resolution per spawn; reuse the
-  `ScaffoldOptions.Mode` identifier for the delivery contract.
+  meta; produce a divergent fresh resolution per spawn.
 
 ## Success Criteria
 
@@ -96,7 +95,7 @@ refusal and the recorded-fallback branch must each be entered by a test.
 2. Authorized fallback is recorded as a transition (from/to/reason/generation).
 3. Registry feeds only the first resolution; it cannot silently override a
    recorded contract.
-4. `ScaffoldOptions.Mode` collision disambiguated.
+4. Misleading `ScaffoldOptions.Mode` struct comment and `brief_test.go` fixtures corrected to real delivery-mode values (no rename needed).
 5. `go test ./...`, `go vet`, `gofmt -l .` clean; deadcode and guards green.
 
 ## Open Questions

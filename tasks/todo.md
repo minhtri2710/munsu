@@ -170,13 +170,14 @@ fired-marker; re-evaluation after firing is a no-op until cleared.
 **Description:** Record the resolved delivery mode on the canonical task
 (`internal/taskauthority`) at first spawn; later generations read the recorded
 contract; `meta["mode"]` becomes a projection. Registry feeds only the first
-resolution and cannot silently override a recorded contract. Disambiguate the
-`ScaffoldOptions.Mode` name collision (commit type, not delivery mode).
+resolution and cannot silently override a recorded contract. Correct the misleading
+`ScaffoldOptions.Mode` struct comment and `brief_test.go` fixtures to use real
+delivery-mode values (no rename needed).
 
 **Acceptance criteria:**
 - [ ] First spawn records the resolved mode via a `taskauthority` op; second generation reads it (registry change between spawns does not silently flip it).
 - [ ] `meta["mode"]` is a projection of the durable contract, not its source.
-- [ ] `ScaffoldOptions.Mode` collision disambiguated; `+yolo` still does not relax `RequireNoMistakes`.
+- [ ] Misleading `ScaffoldOptions.Mode` struct comment and `brief_test.go` fixtures corrected to real delivery-mode values; `+yolo` still does not relax `RequireNoMistakes`.
 
 **Verification:**
 - [ ] Tests: `go test ./internal/fleet/... ./internal/taskauthority/...`
