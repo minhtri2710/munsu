@@ -1,7 +1,6 @@
 package home
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,7 +25,7 @@ func WakeQueuePath(h string) string        { return filepath.Join(h, wakeQueueFi
 func WriteWatcherBeat(h string) {
 	p := WatcherBeatPath(h)
 	_ = os.MkdirAll(filepath.Dir(p), 0755)
-	_ = os.WriteFile(p, []byte(fmt.Sprintf("%d %d", time.Now().Unix(), os.Getpid())), 0644)
+	_ = canonicalAtomicWrite(p, []byte(fmt.Sprintf("%d %d", time.Now().Unix(), os.Getpid())))
 }
 func ReadWatcherBeat(h string) (ts int64, pid int, ok bool) {
 	b, e := os.ReadFile(WatcherBeatPath(h))
@@ -49,58 +48,85 @@ func ReadWatcherBeatStatus(h string, now time.Time) WatcherBeatStatus {
 	return WatcherBeatStatus{Exists: true, Stale: age > watcherStaleThreshold, Age: age}
 }
 
-var wakeSeq int64
-
 func EnqueueWake(h, kind, key, payload string) error {
 	return enqueueWakeAt(h, kind, key, payload, time.Now())
 }
 
-func enqueueWakeAt(h, kind, key, payload string, at time.Time) error {
-	p := WakeQueuePath(h)
-	if e := os.MkdirAll(filepath.Dir(p), 0755); e != nil {
-		return e
+func enqueueWakeAt(h, kind, key, payload string, at time.Time) (err error) {
+	lock, err := acquireWakeLock(h)
+	if err != nil {
+		return err
 	}
-	f, e := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if e != nil {
-		return e
+	defer joinWakeLockError(&err, lock)
+	if err := recoverWakeMutationLocked(h); err != nil {
+		return err
 	}
-	defer f.Close()
-	_, e = fmt.Fprintf(f, "%d\t%d-%d\t%s\t%s\t%s\n", at.Unix(), os.Getpid(), atomic.AddInt64(&wakeSeq, 1), kind, key, payload)
-	return e
+	return enqueueWakeLocked(h, kind, key, payload, at)
+}
+
+func enqueueWakeLocked(h, kind, key, payload string, at time.Time) error {
+	records, err := readWakeQueue(h)
+	if err != nil {
+		return err
+	}
+	records = append(records, newWakeRecord(kind, key, payload, at))
+	return applyWakeMutationLocked(h, wakeMutation{
+		queueSet:  true,
+		queueData: wakeQueueData(records),
+	})
 }
 
 // DrainWakes reads every wake record out of the queue and removes the queue
-// file. The handle must be closed before the os.Remove: Windows refuses to
-// unlink a file that is still open, so a deferred close would leave the
-// stale queue behind on every drain (the wake-queue half of #526).
-func DrainWakes(h string) ([]WakeRecord, error) {
-	p := WakeQueuePath(h)
-	f, e := os.Open(p)
-	if os.IsNotExist(e) {
+// file. The queue read and removal are one locked wake mutation, so a producer
+// cannot append between the read and removal.
+func DrainWakes(h string) (records []WakeRecord, err error) {
+	lock, err := acquireWakeLock(h)
+	if err != nil {
+		return nil, err
+	}
+	defer joinWakeLockError(&err, lock)
+	if err := recoverWakeMutationLocked(h); err != nil {
+		return nil, err
+	}
+	records, err = readWakeQueue(h)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := os.Stat(WakeQueuePath(h)); os.IsNotExist(err) {
 		return nil, nil
+	} else if err != nil {
+		return nil, err
 	}
-	if e != nil {
-		return nil, e
+	if err := applyWakeMutationLocked(h, wakeMutation{queueSet: true}); err != nil {
+		return nil, err
 	}
-	var out []WakeRecord
-	s := bufio.NewScanner(f)
-	for s.Scan() {
-		x := strings.SplitN(s.Text(), "\t", 5)
-		if len(x) == 5 {
-			out = append(out, WakeRecord{Epoch: x[0], Seq: x[1], Kind: x[2], Key: x[3], Payload: x[4]})
-		}
-	}
-	if e = s.Err(); e != nil {
-		f.Close()
-		return nil, e
-	}
-	_ = f.Close()
-	if e = os.Remove(p); e != nil && !os.IsNotExist(e) {
-		return nil, e
-	}
-	return out, nil
+	return records, nil
 }
+
+func newWakeRecord(kind, key, payload string, at time.Time) WakeRecord {
+	return WakeRecord{
+		Epoch:   fmt.Sprint(at.Unix()),
+		Seq:     fmt.Sprintf("%d-%d", os.Getpid(), atomic.AddInt64(&wakeSeq, 1)),
+		Kind:    kind,
+		Key:     key,
+		Payload: payload,
+	}
+}
+
 func HasQueuedWakes(h string) bool {
-	i, e := os.Stat(WakeQueuePath(h))
-	return e == nil && i.Size() > 0
+	journal, err := readWakeMutationJournal(h)
+	if err != nil {
+		return true
+	}
+	if journal != nil && journal.State == "pending" {
+		return true
+	}
+	i, err := os.Stat(WakeQueuePath(h))
+	if os.IsNotExist(err) {
+		return false
+	}
+	if err != nil || i.IsDir() {
+		return true
+	}
+	return i.Size() > 0
 }

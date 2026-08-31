@@ -32,55 +32,94 @@ func NewStore(homeDir string) *Store {
 
 // --- path helpers (unexported) ---
 
-func (s *Store) inboxDir(senderIdentity string) string {
+func (s *Store) inboxDir(senderIdentity string) (string, error) {
 	if err := ValidatePathComponent(senderIdentity, "sender identity"); err != nil {
-		return filepath.Join(s.homeDir, "state", InboxDir, "_invalid_")
+		return "", err
 	}
-	return filepath.Join(s.homeDir, "state", InboxDir, senderIdentity)
+	return filepath.Join(s.homeDir, "state", InboxDir, senderIdentity), nil
 }
 
-func (s *Store) inboxPath(senderIdentity, messageID string) string {
-	if err := ValidatePathComponent(messageID, "message ID"); err != nil {
-		return filepath.Join(s.inboxDir(senderIdentity), "_invalid_.json")
-	}
-	return filepath.Join(s.inboxDir(senderIdentity), messageID+".json")
-}
-
-func (s *Store) ackPath(senderIdentity, messageID string) string {
-	if err := ValidatePathComponent(messageID, "message ID"); err != nil {
-		return filepath.Join(s.inboxDir(senderIdentity), "_invalid_.ack")
-	}
-	return filepath.Join(s.inboxDir(senderIdentity), messageID+".ack")
-}
-
-func (s *Store) pendingDir(senderIdentity string) string {
+func (s *Store) inboxPath(senderIdentity, messageID string) (string, error) {
 	if err := ValidatePathComponent(senderIdentity, "sender identity"); err != nil {
-		return filepath.Join(s.homeDir, "state", OutboxDir, "_invalid_")
+		return "", err
 	}
-	return filepath.Join(s.homeDir, "state", OutboxDir, senderIdentity)
+	if err := ValidatePathComponent(messageID, "message ID"); err != nil {
+		return "", err
+	}
+	dir, err := s.inboxDir(senderIdentity)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, messageID+".json"), nil
 }
 
-func (s *Store) SupersededPath(senderIdentity, messageID string) string {
-	return filepath.Join(s.inboxDir(senderIdentity), messageID+".superseded")
+func (s *Store) ackPath(senderIdentity, messageID string) (string, error) {
+	if err := ValidatePathComponent(senderIdentity, "sender identity"); err != nil {
+		return "", err
+	}
+	if err := ValidatePathComponent(messageID, "message ID"); err != nil {
+		return "", err
+	}
+	dir, err := s.inboxDir(senderIdentity)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, messageID+".ack"), nil
+}
+
+func (s *Store) pendingDir(senderIdentity string) (string, error) {
+	if err := ValidatePathComponent(senderIdentity, "sender identity"); err != nil {
+		return "", err
+	}
+	return filepath.Join(s.homeDir, "state", OutboxDir, senderIdentity), nil
+}
+
+func (s *Store) SupersededPath(senderIdentity, messageID string) (string, error) {
+	if err := ValidatePathComponent(senderIdentity, "sender identity"); err != nil {
+		return "", err
+	}
+	if err := ValidatePathComponent(messageID, "message ID"); err != nil {
+		return "", err
+	}
+	dir, err := s.inboxDir(senderIdentity)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, messageID+".superseded"), nil
 }
 
 func (s *Store) MarkSuperseded(senderIdentity, messageID string) error {
-	if err := os.MkdirAll(s.inboxDir(senderIdentity), 0755); err != nil {
+	path, err := s.SupersededPath(senderIdentity, messageID)
+	if err != nil {
 		return err
 	}
-	return atomicWrite(s.SupersededPath(senderIdentity, messageID), []byte("superseded\n"))
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	return atomicWrite(path, []byte("superseded\n"))
 }
 
 func (s *Store) IsSuperseded(senderIdentity, messageID string) bool {
-	_, err := os.Stat(s.SupersededPath(senderIdentity, messageID))
+	path, err := s.SupersededPath(senderIdentity, messageID)
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(path)
 	return err == nil
 }
 
-func (s *Store) pendingPath(senderIdentity, messageID string) string {
-	if err := ValidatePathComponent(messageID, "message ID"); err != nil {
-		return filepath.Join(s.pendingDir(senderIdentity), "_invalid_.pending")
+func (s *Store) pendingPath(senderIdentity, messageID string) (string, error) {
+	if err := ValidatePathComponent(senderIdentity, "sender identity"); err != nil {
+		return "", err
 	}
-	return filepath.Join(s.pendingDir(senderIdentity), messageID+".pending")
+	if err := ValidatePathComponent(messageID, "message ID"); err != nil {
+		return "", err
+	}
+	dir, err := s.pendingDir(senderIdentity)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, messageID+".pending"), nil
 }
 
 // --- atomic write ---
@@ -100,11 +139,16 @@ func atomicWrite(path string, data []byte) error {
 		os.Remove(tmpName)
 		return fmt.Errorf("write temp: %w", err)
 	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return fmt.Errorf("sync temp: %w", err)
+	}
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmpName)
 		return fmt.Errorf("close temp: %w", err)
 	}
-	if err := os.Rename(tmpName, path); err != nil {
+	if err := RenameDurable(tmpName, path); err != nil {
 		os.Remove(tmpName)
 		return fmt.Errorf("rename temp: %w", err)
 	}
@@ -145,7 +189,10 @@ func (s *Store) WriteEnvelope(env *Envelope) error {
 	}
 
 	// Check for existing envelope with same message ID.
-	path := s.inboxPath(env.SenderIdentity, env.MessageID)
+	path, err := s.inboxPath(env.SenderIdentity, env.MessageID)
+	if err != nil {
+		return fmt.Errorf("write envelope: %w", err)
+	}
 	if existing, err := os.ReadFile(path); err == nil {
 		var old Envelope
 		if err := json.Unmarshal(existing, &old); err == nil {
@@ -165,7 +212,10 @@ func (s *Store) WriteEnvelope(env *Envelope) error {
 		// Existing file is corrupt; overwrite is allowed.
 	}
 
-	dir := s.inboxDir(env.SenderIdentity)
+	dir, err := s.inboxDir(env.SenderIdentity)
+	if err != nil {
+		return fmt.Errorf("write envelope: %w", err)
+	}
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("create inbox dir: %w", err)
 	}
@@ -179,7 +229,11 @@ func (s *Store) WriteEnvelope(env *Envelope) error {
 // ReadEnvelope reads an envelope from the receiver's inbox.
 // Returns nil, nil if not found. Reads both current and legacy v1 formats.
 func (s *Store) ReadEnvelope(senderIdentity, messageID string) (*Envelope, error) {
-	data, err := os.ReadFile(s.inboxPath(senderIdentity, messageID))
+	path, err := s.inboxPath(senderIdentity, messageID)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -190,17 +244,19 @@ func (s *Store) ReadEnvelope(senderIdentity, messageID string) (*Envelope, error
 	if err := json.Unmarshal(data, &env); err != nil {
 		return nil, fmt.Errorf("unmarshal envelope %s: %w", messageID, err)
 	}
-	path := s.inboxPath(senderIdentity, messageID)
 	if env.MessageID != messageID {
 		return nil, fmt.Errorf("read envelope %s: path message ID %q does not match decoded message ID %q", path, messageID, env.MessageID)
 	}
 	return &env, nil
 }
 
-// ListInbox returns all envelopes in the inbox for a given sender
-// that do not have a corresponding ack file.
+// ListInbox returns all valid, actionable envelopes in the inbox for a given
+// sender that have neither a corresponding ack nor a supersession marker.
 func (s *Store) ListInbox(senderIdentity string) ([]*Envelope, error) {
-	dir := s.inboxDir(senderIdentity)
+	dir, err := s.inboxDir(senderIdentity)
+	if err != nil {
+		return nil, err
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -214,8 +270,15 @@ func (s *Store) ListInbox(senderIdentity string) ([]*Envelope, error) {
 			continue
 		}
 		messageID := strings.TrimSuffix(e.Name(), ".json")
-		// Skip if ack exists.
-		if _, err := os.Stat(s.ackPath(senderIdentity, messageID)); err == nil {
+		if err := ValidatePathComponent(messageID, "message ID"); err != nil {
+			continue
+		}
+		// Skip if ack or supersession exists.
+		ackPath, err := s.ackPath(senderIdentity, messageID)
+		if err != nil {
+			continue
+		}
+		if _, err := os.Stat(ackPath); err == nil || s.IsSuperseded(senderIdentity, messageID) {
 			continue
 		}
 		data, readErr := os.ReadFile(filepath.Join(dir, e.Name()))
@@ -226,10 +289,16 @@ func (s *Store) ListInbox(senderIdentity string) ([]*Envelope, error) {
 		if unmarshalErr := json.Unmarshal(data, &env); unmarshalErr != nil {
 			continue
 		}
+		if env.MessageID != messageID || ValidateEnvelope(&env) != nil || PayloadHashHex(env.Payload) != env.PayloadHash {
+			continue
+		}
 		envelopes = append(envelopes, &env)
 	}
 	sort.Slice(envelopes, func(i, j int) bool {
-		return envelopes[i].CreatedAt < envelopes[j].CreatedAt
+		if envelopes[i].CreatedAt != envelopes[j].CreatedAt {
+			return envelopes[i].CreatedAt < envelopes[j].CreatedAt
+		}
+		return envelopes[i].MessageID < envelopes[j].MessageID
 	})
 	return envelopes, nil
 }
@@ -262,7 +331,10 @@ func (s *Store) WriteAck(ack *ProcessingAck) error {
 	ack.SchemaVersion = AckSchemaVersion
 
 	// Check for existing ack with same message ID.
-	path := s.ackPath(ack.SenderIdentity, ack.MessageID)
+	path, err := s.ackPath(ack.SenderIdentity, ack.MessageID)
+	if err != nil {
+		return fmt.Errorf("write ack: %w", err)
+	}
 	if existing, err := os.ReadFile(path); err == nil {
 		var old ProcessingAck
 		if err := json.Unmarshal(existing, &old); err == nil {
@@ -283,7 +355,10 @@ func (s *Store) WriteAck(ack *ProcessingAck) error {
 		// Existing file is corrupt; overwrite is allowed.
 	}
 
-	dir := s.inboxDir(ack.SenderIdentity)
+	dir, err := s.inboxDir(ack.SenderIdentity)
+	if err != nil {
+		return fmt.Errorf("write ack: %w", err)
+	}
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("create ack dir: %w", err)
 	}
@@ -297,7 +372,11 @@ func (s *Store) WriteAck(ack *ProcessingAck) error {
 // ReadAck reads a ProcessingAck from the receiver's inbox.
 // Returns nil, nil if not found.
 func (s *Store) ReadAck(senderIdentity, messageID string) (*ProcessingAck, error) {
-	data, err := os.ReadFile(s.ackPath(senderIdentity, messageID))
+	path, err := s.ackPath(senderIdentity, messageID)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -308,7 +387,6 @@ func (s *Store) ReadAck(senderIdentity, messageID string) (*ProcessingAck, error
 	if err := json.Unmarshal(data, &ack); err != nil {
 		return nil, fmt.Errorf("unmarshal ack %s: %w", messageID, err)
 	}
-	path := s.ackPath(senderIdentity, messageID)
 	if ack.MessageID != messageID {
 		return nil, fmt.Errorf("read ack %s: path message ID %q does not match decoded message ID %q", path, messageID, ack.MessageID)
 	}
@@ -317,7 +395,11 @@ func (s *Store) ReadAck(senderIdentity, messageID string) (*ProcessingAck, error
 
 // IsAcked returns true if an ack file exists for the given message.
 func (s *Store) IsAcked(senderIdentity, messageID string) bool {
-	_, err := os.Stat(s.ackPath(senderIdentity, messageID))
+	path, err := s.ackPath(senderIdentity, messageID)
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(path)
 	return err == nil
 }
 
@@ -326,7 +408,20 @@ func (s *Store) IsAcked(senderIdentity, messageID string) bool {
 // WritePending writes a sender pending record scoped by sender identity.
 // The record is written atomically.
 func (s *Store) WritePending(env *Envelope) error {
-	dir := s.pendingDir(env.SenderIdentity)
+	if err := ValidatePathComponent(env.SenderIdentity, "sender identity"); err != nil {
+		return fmt.Errorf("write pending: %w", err)
+	}
+	if err := ValidatePathComponent(env.MessageID, "message ID"); err != nil {
+		return fmt.Errorf("write pending: %w", err)
+	}
+	dir, err := s.pendingDir(env.SenderIdentity)
+	if err != nil {
+		return fmt.Errorf("write pending: %w", err)
+	}
+	path, err := s.pendingPath(env.SenderIdentity, env.MessageID)
+	if err != nil {
+		return fmt.Errorf("write pending: %w", err)
+	}
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("create pending dir: %w", err)
 	}
@@ -334,13 +429,17 @@ func (s *Store) WritePending(env *Envelope) error {
 	if err != nil {
 		return fmt.Errorf("marshal pending: %w", err)
 	}
-	return atomicWrite(s.pendingPath(env.SenderIdentity, env.MessageID), data)
+	return atomicWrite(path, data)
 }
 
 // ReadPending reads a pending record for the given sender identity and
 // message ID. Returns nil, nil if not found.
 func (s *Store) ReadPending(senderIdentity, messageID string) (*Envelope, error) {
-	data, err := os.ReadFile(s.pendingPath(senderIdentity, messageID))
+	path, err := s.pendingPath(senderIdentity, messageID)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -356,7 +455,10 @@ func (s *Store) ReadPending(senderIdentity, messageID string) (*Envelope, error)
 
 // ListPending returns all pending records for a given sender identity.
 func (s *Store) ListPending(senderIdentity string) ([]*Envelope, error) {
-	dir := s.pendingDir(senderIdentity)
+	dir, err := s.pendingDir(senderIdentity)
+	if err != nil {
+		return nil, err
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -380,7 +482,10 @@ func (s *Store) ListPending(senderIdentity string) ([]*Envelope, error) {
 		envelopes = append(envelopes, &env)
 	}
 	sort.Slice(envelopes, func(i, j int) bool {
-		return envelopes[i].CreatedAt < envelopes[j].CreatedAt
+		if envelopes[i].CreatedAt != envelopes[j].CreatedAt {
+			return envelopes[i].CreatedAt < envelopes[j].CreatedAt
+		}
+		return envelopes[i].MessageID < envelopes[j].MessageID
 	})
 	return envelopes, nil
 }
@@ -401,10 +506,17 @@ func (s *Store) RemovePendingAfterAck(senderIdentity, messageID string, ack *Pro
 	if pending == nil {
 		return nil // already removed
 	}
+	if err := ValidateProcessingAck(ack); err != nil {
+		return fmt.Errorf("remove pending: processing ack validation failed: %w", err)
+	}
 	if err := ValidateAck(pending, ack); err != nil {
 		return fmt.Errorf("remove pending: ack validation failed: %w", err)
 	}
-	if err := os.Remove(s.pendingPath(senderIdentity, messageID)); err != nil && !os.IsNotExist(err) {
+	path, err := s.pendingPath(senderIdentity, messageID)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return nil
@@ -433,7 +545,10 @@ func (s *Store) ListAllPending() ([]*Envelope, error) {
 		envelopes = append(envelopes, envs...)
 	}
 	sort.Slice(envelopes, func(i, j int) bool {
-		return envelopes[i].CreatedAt < envelopes[j].CreatedAt
+		if envelopes[i].CreatedAt != envelopes[j].CreatedAt {
+			return envelopes[i].CreatedAt < envelopes[j].CreatedAt
+		}
+		return envelopes[i].MessageID < envelopes[j].MessageID
 	})
 	return envelopes, nil
 }
@@ -453,7 +568,7 @@ func SaveSenderPending(senderHome string, env *Envelope) (string, error) {
 	if err := s.WritePending(env); err != nil {
 		return "", err
 	}
-	return s.pendingPath(env.SenderIdentity, env.MessageID), nil
+	return s.pendingPath(env.SenderIdentity, env.MessageID)
 }
 
 // RemoveSenderPending removes a pending record scoped by sender identity.
@@ -475,10 +590,7 @@ func RemoveSenderPending(senderHome, senderIdentity, messageID string) error {
 	if ack == nil {
 		return fmt.Errorf("remove pending: no ack found for message %q", messageID)
 	}
-	if err := ValidateAck(pending, ack); err != nil {
-		return fmt.Errorf("remove pending: ack validation failed: %w", err)
-	}
-	return os.Remove(store.pendingPath(senderIdentity, messageID))
+	return store.RemovePendingAfterAck(senderIdentity, messageID, ack)
 }
 
 // ListSenderPending returns all pending records for a sender identity.

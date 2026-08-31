@@ -1,9 +1,11 @@
 package home
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/testutil"
@@ -14,6 +16,99 @@ func setHomeEnv(t *testing.T, path string) {
 	t.Helper()
 	os.Setenv("MUNSU_HOME", path)
 	t.Cleanup(func() { os.Unsetenv("MUNSU_HOME") })
+}
+
+func TestDurableFilePathValidatesSuffixWithoutRejectingDotExtensions(t *testing.T) {
+	dir := t.TempDir()
+	for _, suffix := range []string{".meta", ".receipt"} {
+		path, err := DurableFilePath(dir, "task-1", suffix)
+		if err != nil {
+			t.Fatalf("DurableFilePath suffix %q: %v", suffix, err)
+		}
+		if filepath.Dir(path) != filepath.Clean(dir) {
+			t.Fatalf("DurableFilePath suffix %q escaped dir: %q", suffix, path)
+		}
+	}
+	for _, suffix := range []string{"/escape", `\escape`, "/../escape", string([]byte{'x', 0, 'y'})} {
+		if _, err := DurableFilePath(dir, "task-1", suffix); err == nil {
+			t.Errorf("DurableFilePath suffix %q succeeded, want validation error", suffix)
+		}
+	}
+}
+
+func TestTaskMetadataRejectsStateSymlinkWithoutTouchingTarget(t *testing.T) {
+	home := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, StateDir(home)); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteMeta(home, "task-1", map[string]string{"kind": "ship"}); err == nil {
+		t.Fatal("WriteMeta followed a symlinked state directory")
+	}
+	if err := AppendStatus(home, "task-1", "working: test"); err == nil {
+		t.Fatal("AppendStatus followed a symlinked state directory")
+	}
+	if _, err := ReadMeta(home, "task-1"); err == nil {
+		t.Fatal("ReadMeta accepted a symlinked state directory")
+	}
+	if _, err := ReadStatus(home, "task-1"); err == nil {
+		t.Fatal("ReadStatus accepted a symlinked state directory")
+	}
+	if _, err := ListMeta(home); err == nil {
+		t.Fatal("ListMeta accepted a symlinked state directory")
+	}
+	entries, err := os.ReadDir(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("state symlink target was modified: %v", entries)
+	}
+}
+
+func TestWriteMetaRejectsControlCharactersWithoutPublishing(t *testing.T) {
+	cases := []struct {
+		name string
+		meta map[string]string
+	}{
+		{name: "empty key", meta: map[string]string{"": "value"}},
+		{name: "equals in key", meta: map[string]string{"bad=key": "value"}},
+		{name: "newline in key", meta: map[string]string{"bad\nkey": "value"}},
+		{name: "newline in value", meta: map[string]string{"kind": "ship\nforged=field"}},
+		{name: "carriage return in value", meta: map[string]string{"kind": "ship\rforged"}},
+		{name: "control in value", meta: map[string]string{"kind": "ship\x01forged"}},
+		{name: "control in key", meta: map[string]string{"bad\x01key": "value"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			if tc.name == "newline in value" {
+				if err := WriteMeta(home, "task-1", map[string]string{"kind": "ship"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := WriteMeta(home, "task-1", tc.meta); err == nil {
+				t.Fatal("WriteMeta accepted invalid metadata")
+			}
+			path, err := MetaFilePath(home, "task-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.name == "newline in value" {
+				meta, err := ReadMeta(home, "task-1")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if meta["kind"] != "ship" || meta["forged"] != "" {
+					t.Fatalf("valid metadata was corrupted: %v", meta)
+				}
+				return
+			}
+			if _, err := os.Stat(path); !os.IsNotExist(err) {
+				t.Fatalf("invalid metadata published a file: %v", err)
+			}
+		})
+	}
 }
 
 func TestTaskMetadataRejectsPathTraversal(t *testing.T) {
@@ -256,6 +351,75 @@ func TestReadStatus_Nonexistent(t *testing.T) {
 	}
 	if lines != nil {
 		t.Errorf("expected nil for nonexistent status, got %v", lines)
+	}
+}
+
+func TestAppendStatusConcurrentSameTaskPreservesAllLinesAndMeta(t *testing.T) {
+	home := t.TempDir()
+	const taskID = "concurrent-task"
+	initialMeta := map[string]string{"kind": "ship", "window": "window-initial"}
+	if err := WriteMeta(home, taskID, initialMeta); err != nil {
+		t.Fatalf("initial WriteMeta: %v", err)
+	}
+
+	const appenders = 16
+	const metaWriters = 4
+	start := make(chan struct{})
+	errs := make(chan error, appenders+metaWriters)
+	var wg sync.WaitGroup
+	for i := 0; i < appenders; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			line := fmt.Sprintf("working: concurrent update %02d %s", i, strings.Repeat("x", 128))
+			if err := AppendStatus(home, taskID, line); err != nil {
+				errs <- fmt.Errorf("AppendStatus %02d: %w", i, err)
+			}
+		}(i)
+	}
+	for i := 0; i < metaWriters; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			meta := map[string]string{"kind": "ship", "window": fmt.Sprintf("window-%02d", i)}
+			if err := WriteMeta(home, taskID, meta); err != nil {
+				errs <- fmt.Errorf("WriteMeta %02d: %w", i, err)
+			}
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+
+	lines, err := ReadStatus(home, taskID)
+	if err != nil {
+		t.Fatalf("ReadStatus: %v", err)
+	}
+	gotLines := make(map[string]int, len(lines))
+	for _, line := range lines {
+		gotLines[line]++
+	}
+	if len(gotLines) != appenders || len(lines) != appenders {
+		t.Fatalf("status lines = %d unique / %d total, want %d unique / %d total: %v", len(gotLines), len(lines), appenders, appenders, lines)
+	}
+	for i := 0; i < appenders; i++ {
+		want := fmt.Sprintf("working: concurrent update %02d %s", i, strings.Repeat("x", 128))
+		if gotLines[want] != 1 {
+			t.Errorf("status line %q count = %d, want 1", want, gotLines[want])
+		}
+	}
+
+	meta, err := ReadMeta(home, taskID)
+	if err != nil {
+		t.Fatalf("ReadMeta after concurrent writes: %v", err)
+	}
+	if meta["kind"] != "ship" || !strings.HasPrefix(meta["window"], "window-") {
+		t.Fatalf("meta after concurrent writes = %v, want a complete valid generation", meta)
 	}
 }
 

@@ -116,9 +116,24 @@ func TestVerifyHomeProtectionRefusesTamperedRootWindows(t *testing.T) {
 		t.Fatalf("Open on an untouched home: %v", err)
 	}
 	// Tamper one logical root so it is no longer owner-only.
-	grantEveryoneWindows(t, filepath.Join(root, CanonicalLayout.State))
+	grantEveryoneWindows(t, filepath.Join(root, canonicalLayoutRoots.State))
 	if _, err := Open(root); err == nil {
 		t.Fatal("Open succeeded on a home with a tampered logical root")
+	}
+}
+
+func TestVerifyHomeProtectionRefusesTamperedDurableMechanicsWindows(t *testing.T) {
+	for _, name := range []string{JournalDirName, LockDirName, LeaseDirName} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			if _, err := Init(root); err != nil {
+				t.Fatal(err)
+			}
+			grantEveryoneWindows(t, filepath.Join(root, name))
+			if _, err := Open(root); err == nil {
+				t.Fatalf("Open accepted a tampered %s directory", name)
+			}
+		})
 	}
 }
 

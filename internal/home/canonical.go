@@ -40,18 +40,16 @@ const (
 	RootProjects = "projects"
 )
 
-// Layout describes the canonical v1 home layout. Each field is a home-relative
-// directory name for one logical root.
-type Layout struct {
+// canonicalLayout is the current v1 layout. It is package-private so callers
+// cannot repoint a home's logical roots by mutating shared package state.
+type canonicalLayout struct {
 	State    string
 	Data     string
 	Config   string
 	Projects string
 }
 
-// CanonicalLayout is the current v1 layout. Owner modules address durable
-// state through these logical roots; they never write to the home directly.
-var CanonicalLayout = Layout{
+var canonicalLayoutRoots = canonicalLayout{
 	State:    RootState,
 	Data:     RootData,
 	Config:   RootConfig,
@@ -253,13 +251,13 @@ func createHome(abs string) (*Home, error) {
 func canonicalLayoutRoot(name string) (string, bool) {
 	switch name {
 	case RootState:
-		return CanonicalLayout.State, true
+		return canonicalLayoutRoots.State, true
 	case RootData:
-		return CanonicalLayout.Data, true
+		return canonicalLayoutRoots.Data, true
 	case RootConfig:
-		return CanonicalLayout.Config, true
+		return canonicalLayoutRoots.Config, true
 	case RootProjects:
-		return CanonicalLayout.Projects, true
+		return canonicalLayoutRoots.Projects, true
 	}
 	return "", false
 }
@@ -267,10 +265,10 @@ func canonicalLayoutRoot(name string) (string, bool) {
 func createLayout(root string) error {
 	for _, dir := range []string{
 		root,
-		filepath.Join(root, CanonicalLayout.State),
-		filepath.Join(root, CanonicalLayout.Data),
-		filepath.Join(root, CanonicalLayout.Config),
-		filepath.Join(root, CanonicalLayout.Projects),
+		filepath.Join(root, canonicalLayoutRoots.State),
+		filepath.Join(root, canonicalLayoutRoots.Data),
+		filepath.Join(root, canonicalLayoutRoots.Config),
+		filepath.Join(root, canonicalLayoutRoots.Projects),
 		filepath.Join(root, JournalDirName),
 		filepath.Join(root, LockDirName),
 		filepath.Join(root, LeaseDirName),
@@ -286,16 +284,20 @@ func createLayout(root string) error {
 }
 
 // verifyHomeProtection confirms that the home's owner boundary is still
-// owner-private: the root and each logical root directory must be accessible
+// owner-private: the root, each logical root directory (state, data, config,
+// projects), and the journal, lock and lease directories must be accessible
 // only by the owner. A home whose protection was weakened or tampered with
 // fails closed so durable records are never exposed to other principals.
 func verifyHomeProtection(root string) error {
 	for _, name := range []string{
 		"", // the home root itself
-		CanonicalLayout.State,
-		CanonicalLayout.Data,
-		CanonicalLayout.Config,
-		CanonicalLayout.Projects,
+		canonicalLayoutRoots.State,
+		canonicalLayoutRoots.Data,
+		canonicalLayoutRoots.Config,
+		canonicalLayoutRoots.Projects,
+		JournalDirName,
+		LockDirName,
+		LeaseDirName,
 	} {
 		path := root
 		if name != "" {
@@ -311,10 +313,10 @@ func verifyHomeProtection(root string) error {
 func verifyLayout(root string) error {
 	for _, dir := range []string{
 		root,
-		filepath.Join(root, CanonicalLayout.State),
-		filepath.Join(root, CanonicalLayout.Data),
-		filepath.Join(root, CanonicalLayout.Config),
-		filepath.Join(root, CanonicalLayout.Projects),
+		filepath.Join(root, canonicalLayoutRoots.State),
+		filepath.Join(root, canonicalLayoutRoots.Data),
+		filepath.Join(root, canonicalLayoutRoots.Config),
+		filepath.Join(root, canonicalLayoutRoots.Projects),
 	} {
 		info, err := os.Stat(dir)
 		if err != nil {

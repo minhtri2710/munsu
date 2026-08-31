@@ -95,7 +95,7 @@ func PublishWriterIdentity(homeDir, kind string, identity WriterIdentity) error 
 	if err := file.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, path); err != nil {
+	if err := RenameDurable(tmp, path); err != nil {
 		return err
 	}
 	if err := secureFile(path); err != nil {

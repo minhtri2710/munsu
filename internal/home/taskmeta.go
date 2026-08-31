@@ -26,6 +26,9 @@ func DurableFilePath(dir, id, suffix string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if strings.ContainsAny(suffix, `/\\`) || strings.ContainsRune(suffix, 0) {
+		return "", fmt.Errorf("invalid durable file suffix %q", suffix)
+	}
 	return filepath.Join(dir, stem+suffix), nil
 }
 
@@ -76,14 +79,60 @@ func ensurePrivateStateDir(path string) error {
 	if err := os.MkdirAll(path, 0700); err != nil {
 		return err
 	}
-	info, err := os.Stat(path)
+	info, err := os.Lstat(path)
 	if err != nil {
 		return err
 	}
-	if !info.IsDir() {
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 		return fmt.Errorf("creating state directory: not a directory: %s", path)
 	}
 	return restrictDir(path)
+}
+
+func validateStatePath(homeDir, target string, create bool) error {
+	stateDir := StateDir(homeDir)
+	info, err := os.Lstat(stateDir)
+	if os.IsNotExist(err) {
+		if !create {
+			return nil
+		}
+		if err := ensurePrivateStateDir(stateDir); err != nil {
+			return err
+		}
+		info, err = os.Lstat(stateDir)
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("state path is not a directory: %s", stateDir)
+	}
+	canonicalState, err := filepath.EvalSymlinks(stateDir)
+	if err != nil {
+		return err
+	}
+	rel, err := filepath.Rel(stateDir, target)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return ErrKeyEscapes
+	}
+	canonicalTarget := filepath.Join(canonicalState, rel)
+	return verifyNoFollow(canonicalState, canonicalTarget)
+}
+
+func validateMetaFields(meta map[string]string) error {
+	for key, value := range meta {
+		if key == "" || strings.ContainsRune(key, '=') || strings.IndexFunc(key, isMetaControl) >= 0 {
+			return fmt.Errorf("invalid task meta key %q", key)
+		}
+		if strings.IndexFunc(value, isMetaControl) >= 0 {
+			return fmt.Errorf("invalid task meta value for %q", key)
+		}
+	}
+	return nil
+}
+
+func isMetaControl(r rune) bool {
+	return r < 0x20 || r == 0x7f
 }
 
 // WriteMeta writes a task meta file at $MUNSU_HOME/state/<durable-stem>.meta.
@@ -91,6 +140,9 @@ func ensurePrivateStateDir(path string) error {
 // Uses atomic write: unique temp file + rename to prevent partial writes.
 // Acquires the advisory lock to serialize concurrent writers.
 func WriteMeta(homeDir string, id string, meta map[string]string) error {
+	if err := validateMetaFields(meta); err != nil {
+		return err
+	}
 	_, unlock, err := acquireMetaLock(homeDir, id)
 	if err != nil {
 		return fmt.Errorf("write meta: %w", err)
@@ -103,12 +155,18 @@ func WriteMeta(homeDir string, id string, meta map[string]string) error {
 // writeMetaLocked writes a task meta file while the lock is already held.
 // Uses a unique temp file (os.CreateTemp) for safe atomic writes.
 func writeMetaLocked(homeDir string, id string, meta map[string]string) error {
+	if err := validateMetaFields(meta); err != nil {
+		return err
+	}
 	p, err := MetaFilePath(homeDir, id)
 	if err != nil {
 		return err
 	}
 	if err := ensurePrivateStateDir(filepath.Dir(p)); err != nil {
 		return fmt.Errorf("creating state directory: %w", err)
+	}
+	if err := validateStatePath(homeDir, p, true); err != nil {
+		return err
 	}
 	var b strings.Builder
 	for k, v := range meta {
@@ -133,11 +191,16 @@ func writeMetaLocked(homeDir string, id string, meta map[string]string) error {
 		os.Remove(tmpPath)
 		return fmt.Errorf("writing temp meta file: %w", err)
 	}
+	if err := tmpF.Sync(); err != nil {
+		tmpF.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("syncing temp meta file: %w", err)
+	}
 	if err := tmpF.Close(); err != nil {
 		os.Remove(tmpPath)
 		return fmt.Errorf("closing temp meta file: %w", err)
 	}
-	if err := os.Rename(tmpPath, p); err != nil {
+	if err := RenameDurable(tmpPath, p); err != nil {
 		os.Remove(tmpPath)
 		return fmt.Errorf("renaming temp meta file: %w", err)
 	}
@@ -150,6 +213,9 @@ func writeMetaLocked(homeDir string, id string, meta map[string]string) error {
 func ReadMeta(homeDir string, id string) (map[string]string, error) {
 	p, err := MetaFilePath(homeDir, id)
 	if err != nil {
+		return nil, err
+	}
+	if err := validateStatePath(homeDir, p, false); err != nil {
 		return nil, err
 	}
 	f, err := os.Open(p)
@@ -178,8 +244,17 @@ func ReadMeta(homeDir string, id string) (map[string]string, error) {
 
 // AppendStatus appends a status line to $MUNSU_HOME/state/<durable-stem>.status.
 func AppendStatus(homeDir string, id, line string) error {
+	_, unlock, err := acquireMetaLock(homeDir, id)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
 	p, err := StatusFilePath(homeDir, id)
 	if err != nil {
+		return err
+	}
+	if err := validateStatePath(homeDir, p, true); err != nil {
 		return err
 	}
 	if err := ensurePrivateStateDir(filepath.Dir(p)); err != nil {
@@ -197,6 +272,9 @@ func AppendStatus(homeDir string, id, line string) error {
 	if _, err := f.WriteString(line + "\n"); err != nil {
 		return fmt.Errorf("writing status line: %w", err)
 	}
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("syncing status file: %w", err)
+	}
 	return nil
 }
 
@@ -204,6 +282,9 @@ func AppendStatus(homeDir string, id, line string) error {
 func ReadStatus(homeDir string, id string) ([]string, error) {
 	p, err := StatusFilePath(homeDir, id)
 	if err != nil {
+		return nil, err
+	}
+	if err := validateStatePath(homeDir, p, false); err != nil {
 		return nil, err
 	}
 	f, err := os.Open(p)
@@ -291,6 +372,9 @@ type MetaEntry struct {
 // from the corresponding .status file for each task.
 func ListMeta(homeDir string) ([]MetaEntry, error) {
 	sd := StateDir(homeDir)
+	if err := validateStatePath(homeDir, sd, false); err != nil {
+		return nil, err
+	}
 	dir, err := os.Open(sd)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -387,6 +471,9 @@ func acquireMetaLock(homeDir, id string) (*os.File, func(), error) {
 	}
 	if err := ensurePrivateStateDir(filepath.Dir(lp)); err != nil {
 		return nil, nil, fmt.Errorf("creating state directory for lock: %w", err)
+	}
+	if err := validateStatePath(homeDir, lp, true); err != nil {
+		return nil, nil, err
 	}
 	f, err := os.OpenFile(lp, os.O_RDONLY|os.O_CREATE, 0600)
 	if err != nil {

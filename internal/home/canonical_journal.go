@@ -31,7 +31,6 @@ type journalRecord struct {
 	ExpectedRevision uint64       `json:"expected_revision"`
 	NewRevision      uint64       `json:"new_revision"`
 	Items            []ChangeItem `json:"items"`
-	Committed        bool         `json:"committed"`
 }
 
 // Commit durably applies a change-set atomically under the held scoped lock.
@@ -42,6 +41,9 @@ type journalRecord struct {
 func (h *Home) Commit(lk *Lock, txnID string, expectedRevision uint64, items []ChangeItem) (uint64, error) {
 	if lk == nil || lk.released {
 		return 0, ErrFenced
+	}
+	if lk.h.root != h.root {
+		return 0, ErrForeignLock
 	}
 	if err := validateTxnID(txnID); err != nil {
 		return 0, err
@@ -54,6 +56,13 @@ func (h *Home) Commit(lk *Lock, txnID string, expectedRevision uint64, items []C
 		if _, err := h.Path(it.Root, it.Key); err != nil {
 			return 0, err
 		}
+	}
+
+	// Resolve any in-doubt record for this scope before opening a new
+	// transaction, so at most one change-set is ever pending per scope. We
+	// already hold lk for this scope, so recover the leftover in place.
+	if err := h.sweepScopeJournal(lk.scope); err != nil {
+		return 0, err
 	}
 
 	cur, err := h.readRevision(lk.scope)
@@ -82,10 +91,6 @@ func (h *Home) Commit(lk *Lock, txnID string, expectedRevision uint64, items []C
 		}
 	}
 	if err := h.writeRevision(lk.scope, newRev); err != nil {
-		return 0, err
-	}
-	rec.Committed = true
-	if err := h.writeJournalRecord(rec); err != nil {
 		return 0, err
 	}
 	if err := os.Remove(h.journalPath(lk.scope, txnID)); err != nil && !os.IsNotExist(err) {
@@ -139,7 +144,41 @@ func (h *Home) recoverRecord(name string) error {
 		return err
 	}
 	defer lk.Release()
+	return h.recoverRecordLocked(scope, path)
+}
 
+// sweepScopeJournal recovers every leftover journal record for scope in place.
+// The caller must already hold the scope lock, so recovery runs without
+// re-locking (flock is not reentrant in-process).
+func (h *Home) sweepScopeJournal(scope string) error {
+	entries, err := os.ReadDir(h.journalDir())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("home: read journal: %w", err)
+	}
+	prefix := scope + "."
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasSuffix(name, ".json") || !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		if err := h.recoverRecordLocked(scope, filepath.Join(h.journalDir(), name)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// recoverRecordLocked recovers one journal record whose scope is already locked
+// by the caller. It redoes the commit only when the scope revision proves it was
+// interrupted before the revision advance (cur == ExpectedRevision); a record
+// whose items are already durable or superseded (cur >= NewRevision) is discarded
+// without re-applying, so recovery cannot overwrite newer committed data. A
+// structurally invalid or revision-inconsistent record is corruption and fails
+// closed.
+func (h *Home) recoverRecordLocked(scope, path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -149,17 +188,17 @@ func (h *Home) recoverRecord(name string) error {
 	}
 	var rec journalRecord
 	if err := json.Unmarshal(data, &rec); err != nil {
-		return fmt.Errorf("home: decode journal record %s: %w", name, err)
+		return fmt.Errorf("home: decode journal record %s: %w", filepath.Base(path), err)
 	}
-	if rec.NewRevision != rec.ExpectedRevision+1 {
-		return fmt.Errorf("home: corrupt journal record %s: new revision %d not one past expected %d", name, rec.NewRevision, rec.ExpectedRevision)
+	if err := h.validateRecord(scope, path, rec); err != nil {
+		return err
 	}
 	cur, err := h.readRevision(rec.Scope)
 	if err != nil {
 		return err
 	}
 	if cur < rec.ExpectedRevision {
-		return fmt.Errorf("home: corrupt journal record %s: scope revision %d behind expected %d", name, cur, rec.ExpectedRevision)
+		return fmt.Errorf("home: corrupt journal record %s: scope revision %d behind expected %d", filepath.Base(path), cur, rec.ExpectedRevision)
 	}
 	if cur == rec.ExpectedRevision {
 		for _, it := range rec.Items {
@@ -173,6 +212,36 @@ func (h *Home) recoverRecord(name string) error {
 	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("home: remove recovered journal record: %w", err)
+	}
+	return nil
+}
+
+// validateRecord fails closed on any journal record that is not exact,
+// current-writer output for the locked scope: the body scope must match both the
+// locked scope and the filename, the txn id must be valid, the change-set must be
+// non-empty with contained items, and the revision arithmetic must be
+// one-past-expected.
+func (h *Home) validateRecord(scope, path string, rec journalRecord) error {
+	name := filepath.Base(path)
+	if rec.Scope != scope {
+		return fmt.Errorf("home: journal record %s scope %q does not match locked scope %q", name, rec.Scope, scope)
+	}
+	if err := validateTxnID(rec.TxnID); err != nil {
+		return fmt.Errorf("home: journal record %s: %w", name, err)
+	}
+	if filepath.Base(h.journalPath(rec.Scope, rec.TxnID)) != name {
+		return fmt.Errorf("home: journal record %s does not match its scope/txn id", name)
+	}
+	if len(rec.Items) == 0 {
+		return fmt.Errorf("home: journal record %s has no items", name)
+	}
+	for _, it := range rec.Items {
+		if _, err := h.Path(it.Root, it.Key); err != nil {
+			return fmt.Errorf("home: journal record %s: %w", name, err)
+		}
+	}
+	if rec.NewRevision != rec.ExpectedRevision+1 {
+		return fmt.Errorf("home: corrupt journal record %s: new revision %d not one past expected %d", name, rec.NewRevision, rec.ExpectedRevision)
 	}
 	return nil
 }

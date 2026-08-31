@@ -74,7 +74,7 @@ func TestOpenRefusesLayoutDirectoryReplacedByAFile(t *testing.T) {
 		t.Fatalf("Open on an untouched home: %v", err)
 	}
 
-	state := filepath.Join(root, CanonicalLayout.State)
+	state := filepath.Join(root, canonicalLayoutRoots.State)
 	if err := os.RemoveAll(state); err != nil {
 		t.Fatalf("remove state dir: %v", err)
 	}

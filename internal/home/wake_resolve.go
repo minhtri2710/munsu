@@ -20,14 +20,32 @@ type wakeResolutionRecord struct {
 	UpdatedAt int64  `json:"updated_at"`
 }
 
-func ResolveWake(homeDir, leaseID, eventID, summary string) error {
+func ResolveWake(homeDir, leaseID, eventID, summary string) (err error) {
 	leaseID = strings.TrimSpace(leaseID)
 	eventID = strings.TrimSpace(eventID)
 	summary = strings.TrimSpace(summary)
 	if leaseID == "" || eventID == "" || summary == "" {
 		return fmt.Errorf("claim-id, event-id, and summary are required")
 	}
-	record, _ := readWakeResolution(homeDir, leaseID, eventID)
+	if err := validateLeaseID(leaseID); err != nil {
+		return err
+	}
+	lock, err := acquireWakeLock(homeDir)
+	if err != nil {
+		return err
+	}
+	defer joinWakeLockError(&err, lock)
+	if err := recoverWakeMutationLocked(homeDir); err != nil {
+		return err
+	}
+	return resolveWakeLocked(homeDir, leaseID, eventID, summary)
+}
+
+func resolveWakeLocked(homeDir, leaseID, eventID, summary string) error {
+	record, err := readWakeResolution(homeDir, leaseID, eventID)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	if record != nil && record.State == "completed" {
 		return nil
 	}
@@ -44,7 +62,7 @@ func ResolveWake(homeDir, leaseID, eventID, summary string) error {
 		}
 	}
 	found, err := leaseContainsEvent(homeDir, leaseID, eventID)
-	if err != nil && !strings.Contains(err.Error(), "not found or expired") {
+	if err != nil && !isLeaseAbsent(err) {
 		return err
 	}
 	if record != nil && record.State == "prepared" && !found {
@@ -53,13 +71,14 @@ func ResolveWake(homeDir, leaseID, eventID, summary string) error {
 			return findErr
 		}
 		if elsewhere {
-			_ = os.Remove(resolutionPath(homeDir, leaseID, eventID))
+			if err := os.Remove(resolutionPath(homeDir, leaseID, eventID)); err != nil && !os.IsNotExist(err) {
+				return err
+			}
 			return fmt.Errorf("event %q was reclaimed and remains pending", eventID)
 		}
 	}
 	if found {
-		if err := AckWakes(homeDir, leaseID, []string{eventID}); err != nil {
-			_ = os.Remove(resolutionPath(homeDir, leaseID, eventID))
+		if err := ackWakesLocked(homeDir, leaseID, []string{eventID}); err != nil {
 			return err
 		}
 	}
@@ -67,15 +86,21 @@ func ResolveWake(homeDir, leaseID, eventID, summary string) error {
 }
 
 func leaseContainsEvent(homeDir, leaseID, eventID string) (bool, error) {
-	f, err := os.Open(LeaseFilePath(homeDir, leaseID))
+	leasePath, err := validatedLeasePath(homeDir, leaseID)
+	if err != nil {
+		return false, err
+	}
+	data, err := os.ReadFile(leasePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return false, fmt.Errorf("lease %q not found or expired", leaseID)
+			return false, fmt.Errorf("lease %q not found or expired: %w", leaseID, os.ErrNotExist)
 		}
 		return false, err
 	}
-	defer f.Close()
-	scanner := bufio.NewScanner(f)
+	if string(data) == wakeLeaseTombstone+"\n" || string(data) == wakeLeaseTombstone {
+		return false, fmt.Errorf("lease %q not found or expired: %w", leaseID, os.ErrNotExist)
+	}
+	scanner := bufio.NewScanner(strings.NewReader(string(data)))
 	if !scanner.Scan() {
 		return false, fmt.Errorf("lease %q is empty", leaseID)
 	}
@@ -98,6 +123,9 @@ func resolutionFileName(leaseID, eventID string) string {
 }
 
 func readWakeResolution(homeDir, leaseID, eventID string) (*wakeResolutionRecord, error) {
+	if err := validateLeaseID(leaseID); err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(resolutionPath(homeDir, leaseID, eventID))
 	if err != nil {
 		return nil, err
@@ -110,6 +138,9 @@ func readWakeResolution(homeDir, leaseID, eventID string) (*wakeResolutionRecord
 }
 
 func writeWakeResolution(homeDir string, record wakeResolutionRecord) error {
+	if err := validateLeaseID(record.LeaseID); err != nil {
+		return err
+	}
 	path := resolutionPath(homeDir, record.LeaseID, record.EventID)
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
@@ -118,7 +149,7 @@ func writeWakeResolution(homeDir string, record wakeResolutionRecord) error {
 	if err != nil {
 		return err
 	}
-	return atomicWrite(path, data)
+	return canonicalAtomicWrite(path, data)
 }
 
 func wakeEventExists(homeDir, eventID string) (bool, error) {
@@ -133,14 +164,20 @@ func wakeEventExists(homeDir, eventID string) (bool, error) {
 		return false, err
 	}
 	entries, err := os.ReadDir(LeaseDir(homeDir))
+	if os.IsNotExist(err) {
+		return false, nil
+	}
 	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
 		return false, err
 	}
 	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
 		found, err := leaseContainsEvent(homeDir, entry.Name(), eventID)
+		if isLeaseAbsent(err) {
+			continue
+		}
 		if err != nil {
 			return false, err
 		}
