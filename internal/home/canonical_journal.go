@@ -45,6 +45,13 @@ func (h *Home) Commit(lk *Lock, txnID string, expectedRevision uint64, items []C
 	if lk.h.root != h.root {
 		return 0, ErrForeignLock
 	}
+	curFence, err := readFence(h.fencePath(lk.scope))
+	if err != nil {
+		return 0, err
+	}
+	if curFence != lk.token {
+		return 0, ErrFenced
+	}
 	if err := validateTxnID(txnID); err != nil {
 		return 0, err
 	}

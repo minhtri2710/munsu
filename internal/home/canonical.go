@@ -27,9 +27,6 @@ const (
 
 	// LockDirName is the home-relative scoped lock directory.
 	LockDirName = ".lock"
-
-	// LeaseDirName is the home-relative scoped lease directory.
-	LeaseDirName = ".lease"
 )
 
 // Logical root names exposed by the canonical layout.
@@ -69,7 +66,7 @@ type HomeIdentity struct {
 // Home is a canonical, domain-neutral durable-storage home. It is the
 // coarse-grained surface for the owner-clean mechanics: verified roots,
 // containment and no-follow safety, owner-private permissions, scoped fenced
-// locks/leases, and atomic journaled change-set commits. Durable state may not
+// locks, and atomic journaled change-set commits. Durable state may not
 // bypass Home through raw writes or private lock protocols.
 type Home struct {
 	root string
@@ -271,7 +268,6 @@ func createLayout(root string) error {
 		filepath.Join(root, canonicalLayoutRoots.Projects),
 		filepath.Join(root, JournalDirName),
 		filepath.Join(root, LockDirName),
-		filepath.Join(root, LeaseDirName),
 	} {
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			return fmt.Errorf("home: create layout %s: %w", dir, err)
@@ -285,7 +281,7 @@ func createLayout(root string) error {
 
 // verifyHomeProtection confirms that the home's owner boundary is still
 // owner-private: the root, each logical root directory (state, data, config,
-// projects), and the journal, lock and lease directories must be accessible
+// projects), and the journal and lock directories must be accessible
 // only by the owner. A home whose protection was weakened or tampered with
 // fails closed so durable records are never exposed to other principals.
 func verifyHomeProtection(root string) error {
@@ -297,7 +293,6 @@ func verifyHomeProtection(root string) error {
 		canonicalLayoutRoots.Projects,
 		JournalDirName,
 		LockDirName,
-		LeaseDirName,
 	} {
 		path := root
 		if name != "" {

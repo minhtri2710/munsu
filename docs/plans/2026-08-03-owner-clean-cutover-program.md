@@ -43,7 +43,7 @@ those criteria plus the ADR-0008 invariants.
 ## Progress
 
 - #403 (Home foundation) — ACCEPTED, integrated `edbee73e`. Canonical `internal/home`
-  durable mechanics (Init/Open/Identity/RootFor/Path/Read/Commit/Lock/AcquireLease,
+  durable mechanics (Init/Open/Identity/RootFor/Path/Read/Commit/Lock,
   typed errors, journal recovery).
 - #404 (scoped identity + operation preconditions) — ACCEPTED after REWORK, integrated.
   `internal/domain` now has typed nominal identities (TaskID, CaptainID, ProjectID,

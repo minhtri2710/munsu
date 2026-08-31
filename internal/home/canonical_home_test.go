@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
@@ -404,6 +403,43 @@ func TestCommitFenceRequired(t *testing.T) {
 	}
 }
 
+func TestCommitRejectsStaleFence(t *testing.T) {
+	h := newTestHome(t)
+	lk, err := h.Lock("scope")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lk.Release()
+
+	if rev, err := h.Commit(lk, "happy", 0, []ChangeItem{{Root: RootData, Key: "happy", Data: []byte("ok")}}); err != nil {
+		t.Fatalf("happy-path commit: %v", err)
+	} else if rev != 1 {
+		t.Fatalf("happy-path revision = %d, want 1", rev)
+	}
+	if err := canonicalAtomicWrite(h.fencePath("scope"), []byte("999\n")); err != nil {
+		t.Fatalf("write newer fence: %v", err)
+	}
+	if _, err := h.Commit(lk, "stale", 1, []ChangeItem{{Root: RootData, Key: "stale", Data: []byte("no")}}); !errors.Is(err, ErrFenced) {
+		t.Fatalf("stale-fence commit: got %v, want ErrFenced", err)
+	}
+}
+
+func TestCommitRejectsMalformedFence(t *testing.T) {
+	h := newTestHome(t)
+	lk, err := h.Lock("scope")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lk.Release()
+
+	if err := canonicalAtomicWrite(h.fencePath("scope"), []byte("not-a-fence\n")); err != nil {
+		t.Fatalf("write malformed fence: %v", err)
+	}
+	if _, err := h.Commit(lk, "txn", 0, []ChangeItem{{Root: RootData, Key: "k", Data: []byte("x")}}); err == nil || !strings.Contains(err.Error(), "home: parse lock fence") {
+		t.Fatalf("malformed-fence commit: got %v, want a parse lock fence error", err)
+	}
+}
+
 func TestCommitEmptyChangesetFails(t *testing.T) {
 	h := newTestHome(t)
 	lk, err := h.Lock("scope")
@@ -468,71 +504,6 @@ func TestCommitAtomicReadAndRevision(t *testing.T) {
 	data, _ := h.Read(RootData, "k")
 	if string(data) != "v2" {
 		t.Errorf("Read = %q, want v2", data)
-	}
-}
-
-func TestLeaseScopedFenced(t *testing.T) {
-	h := newTestHome(t)
-	l1, err := h.AcquireLease("scope", 1000*time.Second, "owner-a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if l1.FenceToken() == 0 {
-		t.Error("lease fence token is zero")
-	}
-	// A second owner cannot acquire while held.
-	if _, err := h.AcquireLease("scope", 1000*time.Second, "owner-b"); !errors.Is(err, ErrLeaseHeld) {
-		t.Fatalf("second acquire: got %v, want ErrLeaseHeld", err)
-	}
-	if err := l1.Renew(1000 * time.Second); err != nil {
-		t.Fatalf("Renew: %v", err)
-	}
-	if err := l1.Release(); err != nil {
-		t.Fatalf("Release: %v", err)
-	}
-	// After release, a new owner can acquire with an advanced token.
-	l2, err := h.AcquireLease("scope", 1000*time.Second, "owner-b")
-	if err != nil {
-		t.Fatalf("acquire after release: %v", err)
-	}
-	if l2.FenceToken() <= l1.FenceToken() {
-		t.Errorf("lease token did not advance: %d <= %d", l2.FenceToken(), l1.FenceToken())
-	}
-	if err := l2.Release(); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestLeaseExpiredReclaimable(t *testing.T) {
-	h := newTestHome(t)
-	// Invalid (non-positive) ttl is rejected.
-	if _, err := h.AcquireLease("scope", 0, "owner-a"); !errors.Is(err, ErrInvalidScope) {
-		t.Fatalf("zero ttl: got %v, want ErrInvalidScope", err)
-	}
-	l1, err := h.AcquireLease("scope", 1000*time.Second, "owner-a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Simulate expiry by rewriting the lease file's expiry into the past.
-	path := h.leasePath("scope")
-	rec, err := readLeaseRecord(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rec.ExpiresAtUnix = time.Now().Unix() - 5
-	if err := writeLeaseRecord(path, rec); err != nil {
-		t.Fatal(err)
-	}
-	// The first lease is now expired; a new owner reclaims it.
-	l2, err := h.AcquireLease("scope", 1000*time.Second, "owner-b")
-	if err != nil {
-		t.Fatalf("reclaim expired lease: %v", err)
-	}
-	if l2.FenceToken() <= l1.FenceToken() {
-		t.Errorf("reclaimed token did not advance: %d <= %d", l2.FenceToken(), l1.FenceToken())
-	}
-	if err := l2.Release(); err != nil {
-		t.Fatal(err)
 	}
 }
 

@@ -9,7 +9,7 @@ import (
 )
 
 func TestOpenRefusesWeakenedDurableMechanicsDirectories(t *testing.T) {
-	for _, name := range []string{JournalDirName, LockDirName, LeaseDirName} {
+	for _, name := range []string{JournalDirName, LockDirName} {
 		t.Run(name, func(t *testing.T) {
 			h := newTestHome(t)
 			path := filepath.Join(h.Root(), name)
