@@ -96,7 +96,21 @@ func (s *Store) MarkSuperseded(senderIdentity, messageID string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
-	return atomicWrite(path, []byte("superseded\n"))
+	if err := atomicWrite(path, []byte("superseded\n")); err != nil {
+		return err
+	}
+	s.removeInboxPayload(senderIdentity, messageID)
+	return nil
+}
+
+func (s *Store) removeInboxPayload(senderIdentity, messageID string) {
+	path, err := s.inboxPath(senderIdentity, messageID)
+	if err != nil {
+		return
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return
+	}
 }
 
 func (s *Store) IsSuperseded(senderIdentity, messageID string) bool {
@@ -273,12 +287,19 @@ func (s *Store) ListInbox(senderIdentity string) ([]*Envelope, error) {
 		if err := ValidatePathComponent(messageID, "message ID"); err != nil {
 			continue
 		}
-		// Skip if ack or supersession exists.
+		// Skip if ack or supersession exists. A tombstone is authoritative;
+		// opportunistically remove any payload left by a crash between the
+		// durable tombstone and the original unlink.
 		ackPath, err := s.ackPath(senderIdentity, messageID)
 		if err != nil {
 			continue
 		}
-		if _, err := os.Stat(ackPath); err == nil || s.IsSuperseded(senderIdentity, messageID) {
+		if _, err := os.Stat(ackPath); err == nil {
+			s.removeInboxPayload(senderIdentity, messageID)
+			continue
+		}
+		if s.IsSuperseded(senderIdentity, messageID) {
+			s.removeInboxPayload(senderIdentity, messageID)
 			continue
 		}
 		data, readErr := os.ReadFile(filepath.Join(dir, e.Name()))
@@ -559,62 +580,4 @@ func (s *Store) ListAllPending() ([]*Envelope, error) {
 // Deprecated: use Store.ReadEnvelope.
 func GetInboxEnvelope(receiverHome, senderIdentity, messageID string) (*Envelope, error) {
 	return NewStore(receiverHome).ReadEnvelope(senderIdentity, messageID)
-}
-
-// SaveSenderPending writes a pending record scoped by sender identity.
-// Deprecated: use Store.WritePending.
-func SaveSenderPending(senderHome string, env *Envelope) (string, error) {
-	s := NewStore(senderHome)
-	if err := s.WritePending(env); err != nil {
-		return "", err
-	}
-	return s.pendingPath(env.SenderIdentity, env.MessageID)
-}
-
-// RemoveSenderPending removes a pending record scoped by sender identity.
-// Deprecated: use Store.RemovePendingAfterAck.
-func RemoveSenderPending(senderHome, senderIdentity, messageID string) error {
-	// Legacy helper cannot call RemovePendingAfterAck since it doesn't have
-	// the ack. It reads the pending and ack from the receiver's inbox.
-	// The receiver home is the same as sender home (single-node case) —
-	// in the legacy path both are the same directory.
-	store := NewStore(senderHome)
-	pending, err := store.ReadPending(senderIdentity, messageID)
-	if err != nil || pending == nil {
-		return err
-	}
-	ack, err := store.ReadAck(senderIdentity, messageID)
-	if err != nil {
-		return err
-	}
-	if ack == nil {
-		return fmt.Errorf("remove pending: no ack found for message %q", messageID)
-	}
-	return store.RemovePendingAfterAck(senderIdentity, messageID, ack)
-}
-
-// ListSenderPending returns all pending records for a sender identity.
-// Deprecated: use Store.ListPending.
-func ListSenderPending(senderHome, senderIdentity string) ([]*Envelope, error) {
-	return NewStore(senderHome).ListPending(senderIdentity)
-}
-
-// NewEnvelope creates, validates, and atomically writes an envelope to the
-// receiver's inbox.
-// Deprecated: use Store.WriteEnvelope.
-func NewEnvelope(receiverHome string, env *Envelope) error {
-	return NewStore(receiverHome).WriteEnvelope(env)
-}
-
-// ListPendingInbox returns all envelopes in the inbox for a sender identity
-// that have not been acked.
-// Deprecated: use Store.ListInbox.
-func ListPendingInbox(receiverHome, senderIdentity string) ([]*Envelope, error) {
-	return NewStore(receiverHome).ListInbox(senderIdentity)
-}
-
-// IsAcked returns true if an ack file exists for the given message.
-// Deprecated: use Store.IsAcked.
-func IsAcked(receiverHome, senderIdentity, messageID string) bool {
-	return NewStore(receiverHome).IsAcked(senderIdentity, messageID)
 }

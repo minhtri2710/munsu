@@ -198,33 +198,6 @@ func TestRemovePendingAfterAckRefusesNilAck(t *testing.T) {
 	}
 }
 
-// The legacy single-home helper reads the ack itself instead of taking one, so
-// it has its own copy of the same rule: no ack on disk, no removal.
-func TestRemoveSenderPendingRefusesWhenNoAckExists(t *testing.T) {
-	dir := t.TempDir()
-	store := NewStore(dir)
-	env := validGuardEnvelope()
-	if err := store.WritePending(&env); err != nil {
-		t.Fatalf("WritePending: %v", err)
-	}
-
-	if err := RemoveSenderPending(dir, env.SenderIdentity, env.MessageID); err == nil {
-		t.Fatal("RemoveSenderPending removed a pending record with no ack on disk")
-	} else if !strings.Contains(err.Error(), "no ack found for message") {
-		t.Fatalf("error = %v, want the missing-ack refusal", err)
-	}
-
-	// Control: writing the matching ack is the only difference, and it makes
-	// the same call succeed.
-	ack := validGuardAck()
-	if err := store.WriteAck(&ack); err != nil {
-		t.Fatalf("WriteAck: %v", err)
-	}
-	if err := RemoveSenderPending(dir, env.SenderIdentity, env.MessageID); err != nil {
-		t.Fatalf("RemoveSenderPending with an ack on disk: %v", err)
-	}
-}
-
 // Rank is what makes the mailbox one-hop. An unrecognised rank has no place in
 // the hierarchy, and same-rank routes remain refused; recognized cross-rank
 // routes follow the explicit transition table. These branches were invisible
@@ -438,12 +411,85 @@ func TestStoreListInboxExcludesSupersededRecords(t *testing.T) {
 		t.Fatalf("MarkSuperseded: %v", err)
 	}
 
+	payload, err := store.ReadEnvelope(env.SenderIdentity, env.MessageID)
+	if err != nil {
+		t.Fatalf("ReadEnvelope after supersession: %v", err)
+	}
+	if payload != nil {
+		t.Fatal("superseded payload was not garbage-collected")
+	}
+	if !store.IsSuperseded(env.SenderIdentity, env.MessageID) {
+		t.Fatal("superseded tombstone was not retained")
+	}
 	got, err := store.ListInbox(env.SenderIdentity)
 	if err != nil {
 		t.Fatalf("ListInbox: %v", err)
 	}
 	if len(got) != 0 {
 		t.Fatalf("ListInbox returned superseded records: %+v", got)
+	}
+}
+
+func TestStoreListInboxGarbageCollectsTombstonedPayloadResidue(t *testing.T) {
+	store := NewStore(t.TempDir())
+	env := validGuardEnvelope()
+	if err := store.WriteEnvelope(&env); err != nil {
+		t.Fatalf("WriteEnvelope: %v", err)
+	}
+	ack := validGuardAck()
+	if err := store.WriteAck(&ack); err != nil {
+		t.Fatalf("WriteAck: %v", err)
+	}
+	if payload, err := store.ReadEnvelope(env.SenderIdentity, env.MessageID); err != nil || payload == nil {
+		t.Fatalf("payload before ListInbox cleanup = (%+v, %v), want present", payload, err)
+	}
+	if !store.IsAcked(env.SenderIdentity, env.MessageID) {
+		t.Fatal("ack tombstone was not retained")
+	}
+
+	got, err := store.ListInbox(env.SenderIdentity)
+	if err != nil {
+		t.Fatalf("ListInbox: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("ListInbox returned acked record: %+v", got)
+	}
+	payload, err := store.ReadEnvelope(env.SenderIdentity, env.MessageID)
+	if err != nil || payload != nil {
+		t.Fatalf("payload after ListInbox cleanup = (%+v, %v), want absent", payload, err)
+	}
+	readAck, err := store.ReadAck(env.SenderIdentity, env.MessageID)
+	if err != nil || readAck == nil {
+		t.Fatalf("ReadAck after payload GC = (%+v, %v)", readAck, err)
+	}
+}
+
+func TestStoreRemovePendingAfterAckWorksAfterReceiverPayloadGC(t *testing.T) {
+	r, receiver, _ := newGuardReceiver(t)
+	sender := NewStore(t.TempDir())
+	env, ref := deliverGuardEnvelope(t, receiver)
+	if err := sender.WritePending(&env); err != nil {
+		t.Fatalf("sender WritePending: %v", err)
+	}
+	if _, err := r.Ack(ref); err != nil {
+		t.Fatalf("receiver Ack: %v", err)
+	}
+	if payload, err := receiver.ReadEnvelope(env.SenderIdentity, env.MessageID); err != nil || payload != nil {
+		t.Fatalf("receiver payload after ack = (%+v, %v), want absent", payload, err)
+	}
+	readAck, err := receiver.ReadAck(env.SenderIdentity, env.MessageID)
+	if err != nil || readAck == nil {
+		t.Fatalf("receiver ReadAck = (%+v, %v)", readAck, err)
+	}
+	if err := sender.RemovePendingAfterAck(env.SenderIdentity, env.MessageID, readAck); err != nil {
+		t.Fatalf("sender RemovePendingAfterAck after receiver payload GC: %v", err)
+	}
+	pending, err := sender.ReadPending(env.SenderIdentity, env.MessageID)
+	if err != nil {
+		t.Fatalf("sender ReadPending: %v", err)
+	}
+	if pending != nil {
+		t.Fatal("pending record survived a matching ack after receiver payload GC")
 	}
 }
 

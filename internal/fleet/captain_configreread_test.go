@@ -554,6 +554,85 @@ func TestReconcileLegacy_SupersededByCurrentGen(t *testing.T) {
 	}
 }
 
+func TestRemoveStaleConfigRereadRecordsRetainsTombstonesWhileCollectingPayloads(t *testing.T) {
+	parentHome := t.TempDir()
+	captainHome := t.TempDir()
+	const senderIdentity = "general-home"
+	const receiverIdentity = "captain-1"
+
+	makeEnvelope := func(messageID string) *home.Envelope {
+		return &home.Envelope{
+			SchemaVersion:  home.SchemaVersion,
+			MessageID:      messageID,
+			SenderRank:     home.RankGeneral,
+			SenderIdentity: senderIdentity,
+			ReceiverRank:   home.RankCaptain,
+			ReceiverID:     receiverIdentity,
+			Key:            ConfigRereadKey,
+			Payload:        "CONFIG_REREAD: " + messageID,
+			PayloadHash:    home.PayloadHashHex("CONFIG_REREAD: " + messageID),
+			CreatedAt:      1,
+		}
+	}
+
+	receiverStore := home.NewStore(captainHome)
+	senderStore := home.NewStore(parentHome)
+	staleUnacked := makeEnvelope("stale-unacked")
+	staleAcked := makeEnvelope("stale-acked")
+	current := makeEnvelope("current")
+	for _, env := range []*home.Envelope{staleUnacked, staleAcked, current} {
+		if err := receiverStore.WriteEnvelope(env); err != nil {
+			t.Fatalf("WriteEnvelope %s: %v", env.MessageID, err)
+		}
+		if err := senderStore.WritePending(env); err != nil {
+			t.Fatalf("WritePending %s: %v", env.MessageID, err)
+		}
+	}
+	ack := &home.ProcessingAck{
+		SchemaVersion:  home.AckSchemaVersion,
+		MessageID:      staleAcked.MessageID,
+		SenderRank:     staleAcked.SenderRank,
+		SenderIdentity: staleAcked.SenderIdentity,
+		ReceiverRank:   staleAcked.ReceiverRank,
+		ReceiverID:     staleAcked.ReceiverID,
+		PayloadHash:    staleAcked.PayloadHash,
+		ProcessedAt:    2,
+		Outcome:        home.OutcomeAccepted,
+	}
+	if err := receiverStore.WriteAck(ack); err != nil {
+		t.Fatalf("WriteAck stale acked: %v", err)
+	}
+
+	if err := removeStaleConfigRereadRecords(captainHome, parentHome, senderIdentity, current); err != nil {
+		t.Fatalf("removeStaleConfigRereadRecords: %v", err)
+	}
+
+	if payload, err := receiverStore.ReadEnvelope(senderIdentity, staleUnacked.MessageID); err != nil || payload != nil {
+		t.Fatalf("stale unacked payload = (%+v, %v), want absent", payload, err)
+	}
+	if !receiverStore.IsSuperseded(senderIdentity, staleUnacked.MessageID) {
+		t.Fatal("stale unacked superseded tombstone was not retained")
+	}
+	if payload, err := receiverStore.ReadEnvelope(senderIdentity, staleAcked.MessageID); err != nil || payload != nil {
+		t.Fatalf("stale acked payload = (%+v, %v), want absent", payload, err)
+	}
+	if !receiverStore.IsAcked(senderIdentity, staleAcked.MessageID) {
+		t.Fatal("stale ack tombstone was removed")
+	}
+	if payload, err := receiverStore.ReadEnvelope(senderIdentity, current.MessageID); err != nil || payload == nil {
+		t.Fatalf("current payload = (%+v, %v), want present", payload, err)
+	}
+	if pending, err := senderStore.ReadPending(senderIdentity, staleUnacked.MessageID); err != nil || pending != nil {
+		t.Fatalf("stale unacked pending = (%+v, %v), want absent", pending, err)
+	}
+	if pending, err := senderStore.ReadPending(senderIdentity, staleAcked.MessageID); err != nil || pending != nil {
+		t.Fatalf("stale acked pending = (%+v, %v), want absent", pending, err)
+	}
+	if pending, err := senderStore.ReadPending(senderIdentity, current.MessageID); err != nil || pending == nil {
+		t.Fatalf("current pending = (%+v, %v), want present", pending, err)
+	}
+}
+
 // --- Full pipeline ---
 
 // TestConfigPushWithResult_GenerationAdvance verifies the full ConfigPushWithResult

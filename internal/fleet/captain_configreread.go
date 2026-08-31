@@ -242,41 +242,41 @@ func EnsureConfigRereadRequirement(parentHome, captainHome string, gen int, dige
 }
 
 // removeStaleConfigRereadRecords removes any existing config-reread inbox
-// envelopes and pending records for older generations, leaving only the
-// current one. This is best-effort: stale files that cannot be removed
+// envelopes and pending records for older generations, leaving replay
+// tombstones in place. This is best-effort: stale files that cannot be removed
 // (permissions, in-flight I/O) log a diagnostic and do not block.
 func removeStaleConfigRereadRecords(captainHome, parentHome, senderIdentity string, current *home.Envelope) error {
-	// Clean captain's inbox: remove any config-reread envelope with a
-	// different message ID (older generation).
+	// ListInbox reclaims payload residue for already-acked or superseded
+	// records. Older actionable requirements are durably superseded here before
+	// their payloads are removed; replay tombstones are never deleted.
 	receiverStore := home.NewStore(captainHome)
 	envelopes, err := receiverStore.ListInbox(senderIdentity)
 	if err == nil {
 		for _, env := range envelopes {
 			if env.Key == ConfigRereadKey && env.MessageID != current.MessageID {
-				inboxPath := filepath.Join(
-					captainHome, "state", home.InboxDir, senderIdentity, env.MessageID+".json",
-				)
-				os.Remove(inboxPath) // best-effort
-				ackPath := filepath.Join(
-					captainHome, "state", home.InboxDir, senderIdentity, env.MessageID+".ack",
-				)
-				os.Remove(ackPath)
+				if err := receiverStore.MarkSuperseded(senderIdentity, env.MessageID); err != nil {
+					continue
+				}
 			}
 		}
 	}
 
 	// Clean General's outbox: remove any config-reread pending record with
-	// a different message ID (older generation).
+	// a different message ID after the receiver has durable handled evidence.
 	senderStore := home.NewStore(parentHome)
 	pending, err := senderStore.ListPending(senderIdentity)
 	if err == nil {
 		for _, env := range pending {
-			if env.Key == ConfigRereadKey && env.MessageID != current.MessageID {
-				pendingPath := filepath.Join(
-					parentHome, "state", home.OutboxDir, senderIdentity, env.MessageID+".pending",
-				)
-				os.Remove(pendingPath) // best-effort
+			if env.Key != ConfigRereadKey || env.MessageID == current.MessageID {
+				continue
 			}
+			if !receiverStore.IsAcked(senderIdentity, env.MessageID) && !receiverStore.IsSuperseded(senderIdentity, env.MessageID) {
+				continue
+			}
+			pendingPath := filepath.Join(
+				parentHome, "state", home.OutboxDir, senderIdentity, env.MessageID+".pending",
+			)
+			os.Remove(pendingPath) // best-effort
 		}
 	}
 
