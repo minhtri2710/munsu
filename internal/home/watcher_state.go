@@ -81,6 +81,13 @@ func enqueueWakeLocked(h, kind, key, payload string, at time.Time) error {
 // DrainWakes reads every wake record out of the queue and removes the queue
 // file. The queue read and single atomic removal are held under the wake lock,
 // so a producer cannot append between the read and removal.
+//
+// The drain clears the queue with a single atomic os.Remove and writes no wake
+// journal. Once the removal succeeds the records are drained, so any lock-release
+// error on that path is logged but NOT joined onto the returned error: a failed
+// release must never re-expose already-removed wakes as a drain failure. If the
+// removal fails the queue file is left intact and the error is returned, so the
+// next drain re-delivers the records (at-least-once; only silent loss is a bug).
 func DrainWakes(h string) (records []WakeRecord, err error) {
 	lock, err := acquireWakeLock(h)
 	if err != nil {
