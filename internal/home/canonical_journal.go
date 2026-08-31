@@ -33,24 +33,41 @@ type journalRecord struct {
 	Items            []ChangeItem `json:"items"`
 }
 
+func (h *Home) requireLiveFencedHolder(lk *Lock) error {
+	if lk == nil || lk.released {
+		return ErrFenced
+	}
+	if lk.h.root != h.root {
+		return ErrForeignLock
+	}
+	curFence, err := readFence(h.fencePath(lk.scope))
+	if err != nil {
+		return err
+	}
+	if curFence != lk.token {
+		return ErrFenced
+	}
+	return nil
+}
+
+// RecoverPending applies any interrupted commit persisted for the holder's
+// scope, so a subsequent read observes a whole change-set rather than a torn
+// one. The caller must hold lk.
+func (h *Home) RecoverPending(lk *Lock) error {
+	if err := h.requireLiveFencedHolder(lk); err != nil {
+		return err
+	}
+	return h.sweepScopeJournal(lk.scope)
+}
+
 // Commit durably applies a change-set atomically under the held scoped lock.
 // It verifies optimistic concurrency (expectedRevision must match the current
 // scope revision) and fencing (lk must still be held). A write-ahead journal
 // record is fsynced before the items are applied, so an interrupted commit is
 // recovered mechanically on the next Open. It returns the new scope revision.
 func (h *Home) Commit(lk *Lock, txnID string, expectedRevision uint64, items []ChangeItem) (uint64, error) {
-	if lk == nil || lk.released {
-		return 0, ErrFenced
-	}
-	if lk.h.root != h.root {
-		return 0, ErrForeignLock
-	}
-	curFence, err := readFence(h.fencePath(lk.scope))
-	if err != nil {
+	if err := h.requireLiveFencedHolder(lk); err != nil {
 		return 0, err
-	}
-	if curFence != lk.token {
-		return 0, ErrFenced
 	}
 	if err := validateTxnID(txnID); err != nil {
 		return 0, err

@@ -1274,6 +1274,14 @@ func (c *Canonical) DeliveryAuthorization(taskID domain.TaskID) (DeliveryAuthori
 	if err := taskID.Validate(); err != nil {
 		return DeliveryAuthorization{}, err
 	}
+	lk, err := c.h.Lock(taskScope(taskID.Value()))
+	if err != nil {
+		return DeliveryAuthorization{}, err
+	}
+	defer lk.Release()
+	if err := c.h.RecoverPending(lk); err != nil {
+		return DeliveryAuthorization{}, err
+	}
 	index, _, err := c.readDeliveryIndex(taskID.Value())
 	if err != nil {
 		return DeliveryAuthorization{}, err
@@ -1338,6 +1346,14 @@ func (c *Canonical) DeliveryOutcome(taskID domain.TaskID) (DeliveryOutcome, erro
 	if err := taskID.Validate(); err != nil {
 		return DeliveryOutcome{}, err
 	}
+	lk, err := c.h.Lock(taskScope(taskID.Value()))
+	if err != nil {
+		return DeliveryOutcome{}, err
+	}
+	defer lk.Release()
+	if err := c.h.RecoverPending(lk); err != nil {
+		return DeliveryOutcome{}, err
+	}
 	index, _, err := c.readDeliveryIndex(taskID.Value())
 	if err != nil {
 		return DeliveryOutcome{}, err
@@ -1387,6 +1403,14 @@ func (c *Canonical) DeliveryOutcomeByOperation(taskID domain.TaskID, operationID
 // evidence fails closed.
 func (c *Canonical) DeliveryCurrency(taskID domain.TaskID) (DeliveryCurrency, error) {
 	if err := taskID.Validate(); err != nil {
+		return DeliveryCurrency{}, err
+	}
+	lk, err := c.h.Lock(taskScope(taskID.Value()))
+	if err != nil {
+		return DeliveryCurrency{}, err
+	}
+	defer lk.Release()
+	if err := c.h.RecoverPending(lk); err != nil {
 		return DeliveryCurrency{}, err
 	}
 	doc, exists, err := c.readTaskDoc(taskID.Value())
