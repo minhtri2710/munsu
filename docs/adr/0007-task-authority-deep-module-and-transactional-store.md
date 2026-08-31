@@ -1,6 +1,6 @@
 # 0007. Task Authority Deep Module and Transactional Store
 
-* **Status:** Accepted; implementation complete
+* **Status:** Accepted; implementation complete. §5's journal and read mechanics are refined by [ADR-0020](0020-internal-home-round-1-durable-store-hardening.md), which owns the shipped commit, recovery and read-atomicity contract.
 * **Date:** 2026-08-01
 * **Extends:** ADR-0002 §5 and §10, ADR-0004 §1–3 and §7–8, ADR-0005 supervision separation
 * **Triggered by:** Architecture review and design-it-twice analysis of task lifecycle and dispatch authority
@@ -74,7 +74,7 @@ The initial implementation retains the authority-wide dispatch lock. Finer lock 
 
 ### 5. Recoverable filesystem transactions
 
-A lock prevents concurrent mutation but does not make several file replacements crash-atomic. The filesystem adapter therefore uses a recoverable write-ahead transaction:
+A lock prevents concurrent mutation but does not make several file replacements crash-atomic. The filesystem adapter therefore uses a recoverable write-ahead transaction. The sequence below is the original design shape, not the live mechanics:
 
 1. Acquire the dispatch lock and applicable per-task lock.
 2. Recover any pending transaction covered by those locks.
@@ -84,7 +84,9 @@ A lock prevents concurrent mutation but does not make several file replacements 
 6. Persist the commit marker or move the manifest to committed state.
 7. Release locks.
 
-Canonical reads and writes recover pending transactions before exposing authoritative state. The manifest records the Task Operation identity, request digest, expected Task Generation, before digests, after payloads or digests, typed audit event, and commit state.
+The manifest records the Task Operation identity, request digest, expected Task Generation, before digests, after payloads or digests, and typed audit event.
+
+The shipped mechanics differ in two ways, both owned by [ADR-0020](0020-internal-home-round-1-durable-store-hardening.md): a commit sweeps at most one pending scope journal before opening its transaction, then applies items, advances the scope revision and removes the journal record — there is no separate commit marker or committed manifest state; and recovery on the read side is not universal, because only the three multi-key delivery queries take the task scope lock and recover pending work, while the single-key `*ByOperation` variants stay lock-free.
 
 This is a local recoverable transaction, not full event sourcing and not a claim that POSIX can atomically rename several unrelated files at once.
 
