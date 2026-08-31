@@ -44,6 +44,7 @@ internal/fleet/spawn_config_snapshot.go  → ResolveDeliveryMode call site (firs
 internal/fleet/delivery_preflight.go     → preflightNoMistakes (authorized fallback path)
 internal/fleet/brief.go                  → ScaffoldOptions.Mode IS the delivery mode (shipBriefTemplate renders "Delivery mode: %s"); no rename needed — keep projecting the resolved mode into the brief
 internal/taskauthority/                   → canonical task aggregate: new durable delivery-contract field + a recorded-transition op
+internal/fleet/delivery_attestation.go    → existing ephemeral CapabilityAttestation{RequestedMode,EffectiveMode,FallbackReason,FallbackPolicy} + HandleLateCapabilityLoss (fleet runtime record, NOT canonical; D1/D2 must relate, not parallel)
 ```
 
 ## Code Style
@@ -104,3 +105,6 @@ refusal and the recorded-fallback branch must each be entered by a test.
   `RecordDeliveryFallback` are illustrative) — settle in Plan against
   `taskauthority` naming.
 - Does `local-only` participate in the contract, or is it spawn-scoped only?
+- Does the durable canonical contract SUBSUME the existing
+  `CapabilityAttestation` mode fields (RequestedMode/EffectiveMode/FallbackReason)
+  or FEED FROM them — decide at D2 planning.

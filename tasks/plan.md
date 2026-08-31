@@ -97,6 +97,7 @@ delivery-contract: D1 ─→ D2       (independent of ADR-0021)
 - P1: process-event registry record schema (files under existing store).
 - C1: "stable-true" = single confirmed edge vs N-consecutive; auto-clear vs explicit.
 - D1: does `local-only` participate in the contract or stay spawn-scoped.
+- D2: does the durable canonical contract SUBSUME the existing `CapabilityAttestation` mode fields (RequestedMode/EffectiveMode/FallbackReason) or FEED FROM them; relate to it, never a parallel record.
 
 ## Task tracking
 

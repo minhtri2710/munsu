@@ -85,6 +85,19 @@ to correct the misleading `// delivery mode (feat, fix, refactor, etc.)` struct
 comment and the `brief_test.go` fixtures that pass `feat`/`fix` so they use real
 delivery-mode values (no-mistakes / direct-PR / local-only).
 
+### Existing machinery (no parallel record)
+
+An ephemeral fleet-runtime record already exists in
+`internal/fleet/delivery_attestation.go`: `CapabilityAttestation` carries
+`RequestedMode`, `EffectiveMode`, `FallbackReason`, and `FallbackPolicy`, and
+drives the authorized no-mistakes → direct-PR fallback via
+`HandleLateCapabilityLoss` at soldier-launch preflight. It is a 24h-expiry
+capability snapshot — not the canonical aggregate and not durable across
+re-spawns — so the D1/D2 durable contract is distinct. D1/D2 must relate to
+this existing machinery (one source of truth for the delivery-mode transition,
+per one-live-contract) and must never introduce a parallel from/to/reason
+record.
+
 ### Non-goals
 
 * No change to the no-mistakes gate itself (ADR-0016 stands).

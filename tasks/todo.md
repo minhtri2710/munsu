@@ -172,7 +172,9 @@ fired-marker; re-evaluation after firing is a no-op until cleared.
 contract; `meta["mode"]` becomes a projection. Registry feeds only the first
 resolution and cannot silently override a recorded contract. Correct the misleading
 `ScaffoldOptions.Mode` struct comment and `brief_test.go` fixtures to use real
-delivery-mode values (no rename needed).
+delivery-mode values (no rename needed). Relate the durable contract to the
+existing `CapabilityAttestation` machinery in `internal/fleet/delivery_attestation.go`
+— do not build a parallel record of the mode transition.
 
 **Acceptance criteria:**
 - [ ] First spawn records the resolved mode via a `taskauthority` op; second generation reads it (registry change between spawns does not silently flip it).
@@ -195,7 +197,9 @@ delivery-mode values (no rename needed).
 **Description:** Make the no-mistakes → direct-PR fallback
 (`fleet.preflightNoMistakes` + late capability loss) mutate the recorded contract
 through a `taskauthority` transition op (from/to/reason/generation) instead of a
-silent fresh re-resolution.
+silent fresh re-resolution. Relate the recorded transition to the existing
+`CapabilityAttestation` machinery in `internal/fleet/delivery_attestation.go`
+— do not build a parallel from/to/reason record.
 
 **Acceptance criteria:**
 - [ ] Authorized fallback records a transition (from-mode, to-mode, reason, generation) on the canonical task.
