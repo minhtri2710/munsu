@@ -1270,6 +1270,13 @@ func (c *Canonical) authorizationCurrencyReasons(agg Aggregate, auth DeliveryAut
 // evidence. It fails closed with ErrNotFound when the task has no
 // authorization, and fails closed on missing, substituted, or malformed
 // evidence.
+//
+// It reads under the task scope lock with pending-journal recovery so it
+// observes a whole change-set rather than a torn one; it therefore acquires
+// the scope lock (advancing the fence) and may replay an interrupted commit.
+// It can block behind an in-flight same-task commit and return
+// home.ErrLockTimeout or home.ErrFenced, and must not be called while already
+// holding the same task's scope (flock is non-reentrant).
 func (c *Canonical) DeliveryAuthorization(taskID domain.TaskID) (DeliveryAuthorization, error) {
 	if err := taskID.Validate(); err != nil {
 		return DeliveryAuthorization{}, err
@@ -1342,6 +1349,13 @@ func (c *Canonical) DeliveryRevocationByOperation(taskID domain.TaskID, operatio
 // by resolving the bounded index pointer to the immutable outcome evidence.
 // It fails closed with ErrNotFound when the task has no outcome, and fails
 // closed on missing, substituted, or malformed evidence.
+//
+// It reads under the task scope lock with pending-journal recovery so it
+// observes a whole change-set rather than a torn one; it therefore acquires
+// the scope lock (advancing the fence) and may replay an interrupted commit.
+// It can block behind an in-flight same-task commit and return
+// home.ErrLockTimeout or home.ErrFenced, and must not be called while already
+// holding the same task's scope (flock is non-reentrant).
 func (c *Canonical) DeliveryOutcome(taskID domain.TaskID) (DeliveryOutcome, error) {
 	if err := taskID.Validate(); err != nil {
 		return DeliveryOutcome{}, err
@@ -1394,13 +1408,19 @@ func (c *Canonical) DeliveryOutcomeByOperation(taskID domain.TaskID, operationID
 }
 
 // DeliveryCurrency evaluates the currency of the task's current delivery
-// authorization against current state. It is a narrow read-only method: it
-// resolves the bounded index pointers to the immutable evidence documents and
-// recomputes generation/revision/phase/currentness, transfer reservation,
-// delivery-holds digest, binding digest, authorization status, and
-// identity/head, returning typed valid/invalid reasons. It never mutates
-// state and never creates receipts. Missing, substituted, or malformed
-// evidence fails closed.
+// authorization against current state. It resolves the bounded index pointers
+// to the immutable evidence documents and recomputes
+// generation/revision/phase/currentness, transfer reservation, delivery-holds
+// digest, binding digest, authorization status, and identity/head, returning
+// typed valid/invalid reasons. It creates no receipts. Missing, substituted,
+// or malformed evidence fails closed.
+//
+// It reads under the task scope lock with pending-journal recovery so it
+// observes a whole change-set rather than a torn one; it therefore acquires
+// the scope lock (advancing the fence) and may replay an interrupted commit.
+// It can block behind an in-flight same-task commit and return
+// home.ErrLockTimeout or home.ErrFenced, and must not be called while already
+// holding the same task's scope (flock is non-reentrant).
 func (c *Canonical) DeliveryCurrency(taskID domain.TaskID) (DeliveryCurrency, error) {
 	if err := taskID.Validate(); err != nil {
 		return DeliveryCurrency{}, err
