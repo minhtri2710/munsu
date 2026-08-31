@@ -13,6 +13,8 @@ const watcherStaleThreshold = 300 * time.Second
 const wakeQueueFile = "state/.wake-queue"
 const watcherBeatFile = "state/.last-watcher-beat"
 
+var removeWakeQueueFile = os.Remove
+
 type WakeRecord struct{ Epoch, Seq, Kind, Key, Payload string }
 type WatcherBeatStatus struct {
 	Exists, Stale bool
@@ -77,8 +79,8 @@ func enqueueWakeLocked(h, kind, key, payload string, at time.Time) error {
 }
 
 // DrainWakes reads every wake record out of the queue and removes the queue
-// file. The queue read and removal are one locked wake mutation, so a producer
-// cannot append between the read and removal.
+// file. The queue read and single atomic removal are held under the wake lock,
+// so a producer cannot append between the read and removal.
 func DrainWakes(h string) (records []WakeRecord, err error) {
 	lock, err := acquireWakeLock(h)
 	if err != nil {
@@ -92,12 +94,10 @@ func DrainWakes(h string) (records []WakeRecord, err error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := os.Stat(WakeQueuePath(h)); os.IsNotExist(err) {
-		return nil, nil
-	} else if err != nil {
-		return nil, err
-	}
-	if err := applyWakeMutationLocked(h, wakeMutation{queueSet: true}); err != nil {
+	if err := removeWakeQueueFile(WakeQueuePath(h)); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	return records, nil
