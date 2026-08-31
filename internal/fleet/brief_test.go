@@ -141,7 +141,7 @@ func TestScaffoldShip(t *testing.T) {
 		ID:      "test-ship",
 		Repo:    "munsu",
 		Scout:   false,
-		Mode:    "feat",
+		Mode:    "no-mistakes",
 		Yolo:    false,
 	}
 
@@ -161,7 +161,7 @@ func TestScaffoldShip(t *testing.T) {
 	}
 	content := string(data)
 
-	if !strings.Contains(content, "Delivery mode: feat") {
+	if !strings.Contains(content, "Delivery mode: no-mistakes") {
 		t.Errorf("brief should contain delivery mode")
 	}
 	if strings.Contains(content, "+yolo") {
@@ -211,7 +211,7 @@ func TestScaffoldWithYolo(t *testing.T) {
 		ID:      "test-yolo",
 		Repo:    "munsu",
 		Scout:   false,
-		Mode:    "fix",
+		Mode:    "direct-PR",
 		Yolo:    true,
 	}
 
@@ -224,7 +224,7 @@ func TestScaffoldWithYolo(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(string(content), "Delivery mode: fix") {
+	if !strings.Contains(string(content), "Delivery mode: direct-PR") {
 		t.Errorf("brief should contain delivery mode")
 	}
 	if !strings.Contains(string(content), "+yolo") {
@@ -368,8 +368,8 @@ func TestShipBriefModeLine(t *testing.T) {
 }
 
 func TestShipBriefModeLinePresent(t *testing.T) {
-	tmpl := shipBriefTemplate("t1", "repo", "refactor", false)
-	if !strings.Contains(tmpl, "Delivery mode: refactor") {
+	tmpl := shipBriefTemplate("t1", "repo", "local-only", false)
+	if !strings.Contains(tmpl, "Delivery mode: local-only") {
 		t.Error("should emit delivery mode line when mode is set")
 	}
 }
