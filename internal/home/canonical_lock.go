@@ -115,15 +115,12 @@ func (h *Home) fencePath(scope string) string {
 	return filepath.Join(h.root, LockDirName, scope+".fence")
 }
 
-// nextFence advances the fencing generation for a scope by one and returns the
-// new token. The counter lives in a sibling .fence file written atomically, so a
-// crash can never truncate it to an empty or short value and reset the
-// generation; the fence is monotonic across crashes. The caller holds the
-// scope's exclusive flock (on the .lock file), so the read-modify-write of the
-// sibling file is serialized across processes. The .lock file stays content-free.
-func nextFence(fencePath string) (FenceToken, error) {
+func readFence(fencePath string) (FenceToken, error) {
 	data, err := os.ReadFile(fencePath)
-	if err != nil && !os.IsNotExist(err) {
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
 		return 0, fmt.Errorf("home: read lock fence: %w", err)
 	}
 	var cur uint64
@@ -132,7 +129,21 @@ func nextFence(fencePath string) (FenceToken, error) {
 			return 0, fmt.Errorf("home: parse lock fence: %w", err)
 		}
 	}
-	next := cur + 1
+	return FenceToken(cur), nil
+}
+
+// nextFence advances the fencing generation for a scope by one and returns the
+// new token. The counter lives in a sibling .fence file written atomically, so a
+// crash can never truncate it to an empty or short value and reset the
+// generation; the fence is monotonic across crashes. The caller holds the
+// scope's exclusive flock (on the .lock file), so the read-modify-write of the
+// sibling file is serialized across processes. The .lock file stays content-free.
+func nextFence(fencePath string) (FenceToken, error) {
+	cur, err := readFence(fencePath)
+	if err != nil {
+		return 0, err
+	}
+	next := uint64(cur) + 1
 	if err := canonicalAtomicWrite(fencePath, []byte(fmt.Sprintf("%d\n", next))); err != nil {
 		return 0, fmt.Errorf("home: write lock fence: %w", err)
 	}

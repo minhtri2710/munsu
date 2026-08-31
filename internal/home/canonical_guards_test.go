@@ -7,11 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 // The refusal branches of the canonical home mechanics: identity, layout,
-// scoped locks and leases, captain provenance, and writer identity.
+// scoped locks, captain provenance, and writer identity.
 //
 // Each test asserts the accepted state as a control — either before breaking
 // it or after repairing it — so a refusal is attributable to the one thing the
@@ -84,148 +83,6 @@ func TestOpenRefusesLayoutDirectoryReplacedByAFile(t *testing.T) {
 
 	if _, err := Open(root); !errors.Is(err, ErrMalformedLayout) {
 		t.Fatalf("Open with state/ as a file: got %v, want ErrMalformedLayout", err)
-	}
-}
-
-// A lease is owned by somebody, for a bounded time. An empty owner or a
-// non-positive ttl would produce a lease nothing could be attributed to or
-// that expires at acquisition.
-func TestAcquireLeaseRefusesUnusableOwnerOrTTL(t *testing.T) {
-	h := newTestHome(t)
-
-	// Control: the same call with an owner and a positive ttl succeeds.
-	lease, err := h.AcquireLease("delivery", time.Minute, "captain-1")
-	if err != nil {
-		t.Fatalf("AcquireLease: %v", err)
-	}
-	if err := lease.Release(); err != nil {
-		t.Fatalf("Release: %v", err)
-	}
-
-	if _, err := h.AcquireLease("delivery", time.Minute, ""); !errors.Is(err, ErrInvalidScope) {
-		t.Fatalf("AcquireLease with no owner = %v, want ErrInvalidScope", err)
-	}
-	if _, err := h.AcquireLease("delivery", 0, "captain-1"); !errors.Is(err, ErrInvalidScope) {
-		t.Fatalf("AcquireLease with a zero ttl = %v, want ErrInvalidScope", err)
-	}
-}
-
-// fenceLeaseRecord rewrites the durable lease record so it no longer matches
-// the fencing token the in-memory Lease holds — the state a reclaim by a newer
-// owner leaves behind.
-func fenceLeaseRecord(t *testing.T, l *Lease) {
-	t.Helper()
-	rec, err := readLeaseRecord(l.path)
-	if err != nil {
-		t.Fatalf("read lease record: %v", err)
-	}
-	rec.FenceToken = uint64(l.token) + 1
-	if err := writeLeaseRecord(l.path, rec); err != nil {
-		t.Fatalf("write lease record: %v", err)
-	}
-}
-
-// Renew is the point where a holder discovers it no longer owns the lease. A
-// stale fencing token, an expiry already in the past, a released lease, or a
-// non-positive ttl each mean the caller must not keep acting as owner.
-func TestRenewRefusesLeasesTheHolderNoLongerOwns(t *testing.T) {
-	acquire := func(t *testing.T, scope string) (*Home, *Lease) {
-		t.Helper()
-		h := newTestHome(t)
-		l, err := h.AcquireLease(scope, time.Minute, "captain-1")
-		if err != nil {
-			t.Fatalf("AcquireLease: %v", err)
-		}
-		// Control: the freshly acquired lease renews, so each refusal below is
-		// attributable to the single change that test makes.
-		if err := l.Renew(time.Minute); err != nil {
-			t.Fatalf("Renew on a fresh lease: %v", err)
-		}
-		return h, l
-	}
-
-	t.Run("a non-positive ttl", func(t *testing.T) {
-		_, l := acquire(t, "renew-ttl")
-		if err := l.Renew(0); !errors.Is(err, ErrInvalidScope) {
-			t.Fatalf("Renew(0) = %v, want ErrInvalidScope", err)
-		}
-	})
-
-	t.Run("a lease this holder already released", func(t *testing.T) {
-		h, l := acquire(t, "renew-released")
-		if err := l.Release(); err != nil {
-			t.Fatalf("Release: %v", err)
-		}
-		// A successor takes the scope before the released lease renews. Without
-		// that, the released lease and a durably-absent record are
-		// indistinguishable — both surface ErrLeaseExpired, and the assertion
-		// would hold even with this guard removed. With a successor's record on
-		// disk, only the released check produces ErrLeaseExpired; falling
-		// through would reach the fencing check and produce ErrFenced.
-		successor, err := h.AcquireLease("renew-released", time.Minute, "captain-2")
-		if err != nil {
-			t.Fatalf("successor AcquireLease: %v", err)
-		}
-		defer successor.Release()
-
-		if err := l.Renew(time.Minute); !errors.Is(err, ErrLeaseExpired) {
-			t.Fatalf("Renew after Release = %v, want ErrLeaseExpired", err)
-		}
-	})
-
-	t.Run("a lease fenced by a newer owner", func(t *testing.T) {
-		_, l := acquire(t, "renew-fenced")
-		fenceLeaseRecord(t, l)
-		if err := l.Renew(time.Minute); !errors.Is(err, ErrFenced) {
-			t.Fatalf("Renew on a fenced lease = %v, want ErrFenced", err)
-		}
-	})
-
-	t.Run("a lease whose durable expiry has passed", func(t *testing.T) {
-		_, l := acquire(t, "renew-expired")
-		rec, err := readLeaseRecord(l.path)
-		if err != nil {
-			t.Fatalf("read lease record: %v", err)
-		}
-		rec.ExpiresAtUnix = time.Now().Add(-time.Minute).Unix()
-		if err := writeLeaseRecord(l.path, rec); err != nil {
-			t.Fatalf("write lease record: %v", err)
-		}
-		if err := l.Renew(time.Minute); !errors.Is(err, ErrLeaseExpired) {
-			t.Fatalf("Renew on an expired lease = %v, want ErrLeaseExpired", err)
-		}
-	})
-}
-
-// Releasing is also a fenced operation: a holder that has been reclaimed must
-// not delete the lease record its successor now owns.
-func TestReleaseRefusesToDeleteALeaseFencedByANewerOwner(t *testing.T) {
-	h := newTestHome(t)
-	l, err := h.AcquireLease("release-fenced", time.Minute, "captain-1")
-	if err != nil {
-		t.Fatalf("AcquireLease: %v", err)
-	}
-	fenceLeaseRecord(t, l)
-
-	if err := l.Release(); !errors.Is(err, ErrFenced) {
-		t.Fatalf("Release on a fenced lease = %v, want ErrFenced", err)
-	}
-	// The successor's record survives: the refusal protected it.
-	if _, err := readLeaseRecord(l.path); err != nil {
-		t.Fatalf("lease record after a refused Release: %v", err)
-	}
-
-	// Control: a lease whose token still matches releases and removes the
-	// record.
-	own, err := h.AcquireLease("release-owned", time.Minute, "captain-1")
-	if err != nil {
-		t.Fatalf("AcquireLease: %v", err)
-	}
-	if err := own.Release(); err != nil {
-		t.Fatalf("Release on an owned lease: %v", err)
-	}
-	if _, err := readLeaseRecord(own.path); !os.IsNotExist(err) {
-		t.Fatalf("lease record after Release: %v, want it removed", err)
 	}
 }
 

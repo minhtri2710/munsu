@@ -123,7 +123,7 @@ func TestVerifyHomeProtectionRefusesTamperedRootWindows(t *testing.T) {
 }
 
 func TestVerifyHomeProtectionRefusesTamperedDurableMechanicsWindows(t *testing.T) {
-	for _, name := range []string{JournalDirName, LockDirName, LeaseDirName} {
+	for _, name := range []string{JournalDirName, LockDirName} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
 			if _, err := Init(root); err != nil {

@@ -76,12 +76,6 @@ var (
 	// current revision.
 	ErrConflict = errors.New("home: expected revision mismatch")
 
-	// ErrLeaseHeld reports a lease that is still held by another owner.
-	ErrLeaseHeld = errors.New("home: lease is held by another owner")
-
-	// ErrLeaseExpired reports an operation on a lease that has expired.
-	ErrLeaseExpired = errors.New("home: lease expired")
-
 	// ErrEmptyChangeset reports a commit with no change items.
 	ErrEmptyChangeset = errors.New("home: empty changeset")
 
