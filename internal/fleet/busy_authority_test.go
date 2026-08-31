@@ -53,6 +53,11 @@ func TestReadBusy_DerivesFromActivityAxis(t *testing.T) {
 			return o
 		}(), BusyReadingDead},
 		{"zero observation -> unknown", EndpointStatus{}, BusyReadingUnknown},
+		// A live-looking event observation yields only the Activity-derived
+		// hint: ReadBusy never consults lifecycle liveness, so the answer is
+		// neither dead nor a live-derived conclusion.
+		{"live-looking event busy -> held (hint only)", EndpointStatus{Lifecycle: LifecycleAlive, Responsiveness: Responsive, Freshness: FreshnessCurrent, Activity: ActivityBusy, Source: SourceEvent}, BusyReadingHeld},
+		{"live-looking event idle -> idle (hint only)", EndpointStatus{Lifecycle: LifecycleAlive, Responsiveness: Responsive, Freshness: FreshnessCurrent, Activity: ActivityIdle, Source: SourceEvent}, BusyReadingIdle},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
