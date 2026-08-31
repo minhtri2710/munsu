@@ -411,21 +411,23 @@ func (r *Receiver) Receive(ref NotificationRef) (*Envelope, error) {
 //
 // Validation order:
 //  1. ref.MessageID and ref.SenderIdentity are non-empty
-//  2. Envelope exists in the receiver's inbox
-//  3. Full ValidateEnvelope
-//  4. Envelope ReceiverID matches receiver identity
-//  5. Envelope ReceiverRank matches receiver rank
-//  6. Envelope SenderIdentity matches ref.SenderIdentity
-//  7. Payload hash verification
-//  8. Existing ack: a persisted "accepted" ack must pass both its own
+//  2. Existing ack is read before the payload so an ack-only record can replay
+//  3. Envelope is loaded when present; an absent payload requires matching
+//     accepted-ack evidence
+//  4. Full ValidateEnvelope
+//  5. Envelope ReceiverID matches receiver identity
+//  6. Envelope ReceiverRank matches receiver rank
+//  7. Envelope SenderIdentity matches ref.SenderIdentity
+//  8. Payload hash verification
+//  9. Existing ack: a persisted "accepted" ack must pass both its own
 //     validation and exact envelope matching before it can be replayed;
 //     different outcomes and corrupt or mismatched accepted acks fail closed.
 //     This narrow idempotent read does not require current sender provenance,
 //     but current provenance is required before writing a new ack.
-//  9. Envelope SenderRank is proven by the claim-directed durable provenance
+//  10. Envelope SenderRank is proven by the claim-directed durable provenance
 //     check (see verifySenderRank); current provenance is required before
 //     writing a new ack
-//  10. Write "accepted" ack
+//  11. Write "accepted" ack and garbage-collect its payload
 func (r *Receiver) Ack(ref NotificationRef) (*ProcessingAck, error) {
 	// 1. Validate ref.
 	if err := ref.Validate(); err != nil {
@@ -435,14 +437,44 @@ func (r *Receiver) Ack(ref NotificationRef) (*ProcessingAck, error) {
 		return nil, fmt.Errorf("ack envelope superseded: sender=%s msg=%s", ref.SenderIdentity, ref.MessageID)
 	}
 
-	// 2. Load envelope from own inbox.
+	// 2. Read the durable ack before the payload. A retained accepted ack is
+	// sufficient to replay a message whose payload was garbage-collected.
+	existing, err := r.store.ReadAck(ref.SenderIdentity, ref.MessageID)
+	if err != nil {
+		return nil, fmt.Errorf("ack read existing ack: %w", err)
+	}
+
+	// 3. Load the envelope when it still exists. A missing envelope is normal
+	// after ack GC, but only a matching accepted ack may establish that state.
 	env, err := r.store.ReadEnvelope(ref.SenderIdentity, ref.MessageID)
 	if err != nil {
 		return nil, fmt.Errorf("ack read envelope: %w", err)
 	}
 	if env == nil {
-		return nil, fmt.Errorf("ack envelope not found: sender=%s msg=%s",
-			ref.SenderIdentity, ref.MessageID)
+		if existing == nil {
+			return nil, fmt.Errorf("ack envelope not found: sender=%s msg=%s",
+				ref.SenderIdentity, ref.MessageID)
+		}
+		if err := ValidateProcessingAck(existing); err != nil {
+			return nil, fmt.Errorf("ack existing record invalid: %w", err)
+		}
+		if existing.Outcome != OutcomeAccepted {
+			return nil, fmt.Errorf("ack conflicting: existing outcome %q != %q",
+				existing.Outcome, OutcomeAccepted)
+		}
+		if existing.SenderIdentity != ref.SenderIdentity {
+			return nil, fmt.Errorf("ack existing record sender identity mismatch")
+		}
+		if existing.ReceiverID != r.identity {
+			return nil, fmt.Errorf("ack existing record receiver identity mismatch")
+		}
+		if existing.ReceiverRank != r.rank {
+			return nil, fmt.Errorf("ack existing record receiver rank mismatch")
+		}
+		if r.taskID != "" && existing.TaskID != r.taskID {
+			return nil, fmt.Errorf("ack existing record task ID mismatch")
+		}
+		return existing, nil
 	}
 
 	// 3. Call full ValidateEnvelope for rank transition, task/key, hash completeness.
@@ -478,11 +510,7 @@ func (r *Receiver) Ack(ref NotificationRef) (*ProcessingAck, error) {
 		return nil, fmt.Errorf("ack tampered payload: hash mismatch")
 	}
 
-	// 8. Check for existing ack before requiring current sender provenance.
-	existing, err := r.store.ReadAck(ref.SenderIdentity, ref.MessageID)
-	if err != nil {
-		return nil, fmt.Errorf("ack read existing ack: %w", err)
-	}
+	// 8. Check for an existing ack before requiring current sender provenance.
 	if existing != nil {
 		if existing.Outcome == OutcomeAccepted {
 			if err := ValidateProcessingAck(existing); err != nil {
@@ -493,7 +521,9 @@ func (r *Receiver) Ack(ref NotificationRef) (*ProcessingAck, error) {
 			}
 			// Idempotent: same outcome, return existing ack preserving
 			// the original ProcessedAt timestamp. This validated replay
-			// does not require current sender provenance.
+			// does not require current sender provenance. A payload left by
+			// a crash after tombstone publication is safe to remove now.
+			r.store.removeInboxPayload(env.SenderIdentity, env.MessageID)
 			return existing, nil
 		}
 		// Conflicting outcome: fail closed.
@@ -524,6 +554,7 @@ func (r *Receiver) Ack(ref NotificationRef) (*ProcessingAck, error) {
 	if err := r.store.WriteAck(ack); err != nil {
 		return nil, fmt.Errorf("ack write ack: %w", err)
 	}
+	r.store.removeInboxPayload(env.SenderIdentity, env.MessageID)
 	return ack, nil
 }
 

@@ -97,8 +97,8 @@ func TestReportLatestSupersedesSameTaskAndKey(t *testing.T) {
 	if len(pending) != 1 || pending[0].MessageID != second.MessageID {
 		t.Fatalf("pending = %+v, want only latest report", pending)
 	}
-	if env, _ := NewStore(receiverHome).ReadEnvelope("soldier-1", first.MessageID); env == nil {
-		t.Fatal("superseded receiver envelope should remain immutable history")
+	if env, _ := NewStore(receiverHome).ReadEnvelope("soldier-1", first.MessageID); env != nil {
+		t.Fatal("superseded receiver payload should be garbage-collected")
 	}
 	if !NewStore(receiverHome).IsSuperseded("soldier-1", first.MessageID) {
 		t.Fatal("superseded marker missing")

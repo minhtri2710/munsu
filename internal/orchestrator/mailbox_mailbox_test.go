@@ -1234,151 +1234,22 @@ func TestRecoverAllInboxes_EmptyDir(t *testing.T) {
 	}
 }
 
-// --- Legacy standalone helpers delegation ---
-
 func TestLegacyGetInboxEnvelope(t *testing.T) {
 	home := t.TempDir()
 	store := NewStore(home)
-
 	env := &Envelope{
 		SenderRank: RankSoldier, SenderIdentity: "soldier-1",
 		ReceiverRank: RankCaptain, ReceiverID: "captain-1",
 		Payload: "legacy test",
 	}
-	store.WriteEnvelope(env)
-
+	if err := store.WriteEnvelope(env); err != nil {
+		t.Fatal(err)
+	}
 	got, err := GetInboxEnvelope(home, "soldier-1", env.MessageID)
 	if err != nil {
 		t.Fatalf("GetInboxEnvelope: %v", err)
 	}
 	if got == nil || got.Payload != "legacy test" {
-		t.Error("GetInboxEnvelope delegation failed")
-	}
-}
-
-func TestLegacySaveSenderPending(t *testing.T) {
-	home := t.TempDir()
-	env := &Envelope{
-		MessageID: "legacy-pending", SenderRank: RankSoldier,
-		SenderIdentity: "soldier-1", ReceiverRank: RankCaptain,
-		ReceiverID: "captain-1", Payload: "test",
-		PayloadHash: PayloadHashHex("test"),
-	}
-	path, err := SaveSenderPending(home, env)
-	if err != nil {
-		t.Fatalf("SaveSenderPending: %v", err)
-	}
-	if path == "" {
-		t.Fatal("expected non-empty path")
-	}
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("pending file not created: %v", err)
-	}
-}
-
-func TestLegacyListSenderPending(t *testing.T) {
-	home := t.TempDir()
-	env := &Envelope{
-		MessageID: "list-test", SenderRank: RankSoldier,
-		SenderIdentity: "soldier-1", ReceiverRank: RankCaptain,
-		ReceiverID: "captain-1", Payload: "test",
-		PayloadHash: PayloadHashHex("test"),
-	}
-	NewStore(home).WritePending(env)
-
-	pending, err := ListSenderPending(home, "soldier-1")
-	if err != nil {
-		t.Fatalf("ListSenderPending: %v", err)
-	}
-	if len(pending) != 1 {
-		t.Fatalf("expected 1 pending, got %d", len(pending))
-	}
-}
-
-func TestLegacyRemoveSenderPending(t *testing.T) {
-	home := t.TempDir()
-	env := &Envelope{
-		MessageID: "remove-test", SenderRank: RankSoldier,
-		SenderIdentity: "soldier-1", ReceiverRank: RankCaptain,
-		ReceiverID: "captain-1", Payload: "test",
-		PayloadHash: PayloadHashHex("test"),
-	}
-	store := NewStore(home)
-	store.WritePending(env)
-	// Write matching ack so RemoveSenderPending (which delegates to
-	// RemovePendingAfterAck) can validate.
-	ack := &ProcessingAck{
-		MessageID: "remove-test", SenderRank: RankSoldier,
-		SenderIdentity: "soldier-1", ReceiverRank: RankCaptain,
-		ReceiverID: "captain-1", PayloadHash: PayloadHashHex("test"),
-		ProcessedAt: time.Now().UnixNano(), Outcome: "done",
-	}
-	store.WriteAck(ack)
-	if err := RemoveSenderPending(home, "soldier-1", "remove-test"); err != nil {
-		t.Fatalf("RemoveSenderPending: %v", err)
-	}
-	got, _ := store.ReadPending("soldier-1", "remove-test")
-	if got != nil {
-		t.Error("pending should be nil after remove")
-	}
-}
-
-func TestLegacyNewEnvelope(t *testing.T) {
-	home := t.TempDir()
-	env := &Envelope{
-		SenderRank: RankSoldier, SenderIdentity: "soldier-1",
-		ReceiverRank: RankCaptain, ReceiverID: "captain-1",
-		Payload: "legacy new",
-	}
-	if err := NewEnvelope(home, env); err != nil {
-		t.Fatalf("NewEnvelope: %v", err)
-	}
-	got, _ := NewStore(home).ReadEnvelope("soldier-1", env.MessageID)
-	if got == nil || got.Payload != "legacy new" {
-		t.Error("NewEnvelope delegation failed")
-	}
-}
-
-func TestLegacyListPendingInbox(t *testing.T) {
-	home := t.TempDir()
-	store := NewStore(home)
-	store.WriteEnvelope(&Envelope{
-		SenderRank: RankSoldier, SenderIdentity: "soldier-1",
-		ReceiverRank: RankCaptain, ReceiverID: "captain-1",
-		Payload: "inbox test",
-	})
-	pending, err := ListPendingInbox(home, "soldier-1")
-	if err != nil {
-		t.Fatalf("ListPendingInbox: %v", err)
-	}
-	if len(pending) != 1 {
-		t.Fatalf("expected 1 pending inbox, got %d", len(pending))
-	}
-}
-
-func TestLegacyIsAcked(t *testing.T) {
-	home := t.TempDir()
-	store := NewStore(home)
-
-	env := &Envelope{
-		SenderRank: RankSoldier, SenderIdentity: "soldier-1",
-		ReceiverRank: RankCaptain, ReceiverID: "captain-1",
-		Payload: "ack test",
-	}
-	store.WriteEnvelope(env)
-
-	if IsAcked(home, "soldier-1", env.MessageID) {
-		t.Error("should not be acked before WriteAck")
-	}
-
-	store.WriteAck(&ProcessingAck{
-		MessageID: env.MessageID, SenderRank: RankSoldier,
-		SenderIdentity: "soldier-1", ReceiverRank: RankCaptain,
-		ReceiverID: "captain-1", PayloadHash: env.PayloadHash,
-		ProcessedAt: time.Now().UnixNano(), Outcome: "done",
-	})
-
-	if !IsAcked(home, "soldier-1", env.MessageID) {
-		t.Error("should be acked after WriteAck")
+		t.Fatalf("GetInboxEnvelope = %+v, want legacy envelope", got)
 	}
 }

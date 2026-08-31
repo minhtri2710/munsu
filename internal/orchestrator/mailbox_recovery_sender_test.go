@@ -213,6 +213,46 @@ func TestRecoverAllInboxesWithSenderDeliversOnlyValidatedInboxRecords(t *testing
 	}
 }
 
+func TestRecoverAllInboxesWithSenderSkipsAckOnlyInboxRecord(t *testing.T) {
+	home := t.TempDir()
+	env := recoveryEnvelope("command")
+	writeRecoveryEnvelope(t, home, env)
+	store := NewStore(home)
+	ack := &ProcessingAck{
+		MessageID:      env.MessageID,
+		SenderRank:     env.SenderRank,
+		SenderIdentity: env.SenderIdentity,
+		ReceiverRank:   env.ReceiverRank,
+		ReceiverID:     env.ReceiverID,
+		TaskID:         env.TaskID,
+		PayloadHash:    env.PayloadHash,
+		ProcessedAt:    2,
+		Outcome:        OutcomeAccepted,
+	}
+	if err := store.WriteAck(ack); err != nil {
+		t.Fatalf("WriteAck: %v", err)
+	}
+	payloadPath := filepath.Join(home, "state", InboxDir, env.SenderIdentity, env.MessageID+".json")
+	if err := os.Remove(payloadPath); err != nil {
+		t.Fatalf("remove payload: %v", err)
+	}
+
+	sender := &recoverySender{alive: true, result: BoundSendResult{Status: "submitted", Acknowledged: true}}
+	attempts, err := RecoverAllInboxesWithSender(sender, home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(attempts) != 0 {
+		t.Fatalf("attempts = %+v, want no recovery for ack-only record", attempts)
+	}
+	if len(sender.payloads) != 0 {
+		t.Fatalf("ack-only record was redelivered: %v", sender.payloads)
+	}
+	if !store.IsAcked(env.SenderIdentity, env.MessageID) {
+		t.Fatal("ack tombstone was not retained")
+	}
+}
+
 func TestRecoverAllInboxesWithSenderFailureLeavesEnvelopeAndMarkerAbsent(t *testing.T) {
 	home := t.TempDir()
 	env := recoveryEnvelope("command")

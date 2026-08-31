@@ -197,6 +197,128 @@ func TestReceiveAndAckRefuseEnvelopesThatFailProvenance(t *testing.T) {
 // with the same outcome replays it; a different outcome on disk means somebody
 // else recorded a conflicting decision for this message, and that fails closed
 // rather than being overwritten.
+func TestReceiverTreatsGCdEnvelopeAsHandledNotFound(t *testing.T) {
+	r, store, _ := newGuardReceiver(t)
+	env, ref := deliverGuardEnvelope(t, store)
+	ack, err := r.Ack(ref)
+	if err != nil {
+		t.Fatalf("initial Ack: %v", err)
+	}
+	if ack == nil || !store.IsAcked(env.SenderIdentity, env.MessageID) {
+		t.Fatal("initial ack was not persisted")
+	}
+	if payload, err := store.ReadEnvelope(env.SenderIdentity, env.MessageID); err != nil || payload != nil {
+		t.Fatalf("payload after initial ack = (%+v, %v), want absent", payload, err)
+	}
+
+	if _, err := r.Receive(ref); err == nil || !strings.Contains(err.Error(), "envelope not found") {
+		t.Fatalf("Receive after payload GC error = %v, want envelope not found", err)
+	}
+	replayed, err := r.Ack(ref)
+	if err != nil {
+		t.Fatalf("Ack after payload GC: %v", err)
+	}
+	if replayed == nil || replayed.MessageID != ack.MessageID || replayed.ProcessedAt != ack.ProcessedAt {
+		t.Fatalf("replayed ack = %+v, want original %+v", replayed, ack)
+	}
+	if !store.IsAcked(env.SenderIdentity, env.MessageID) {
+		t.Fatal("ack tombstone disappeared after payload GC")
+	}
+}
+
+func TestAckRejectsMismatchedAckOnlyRecord(t *testing.T) {
+	cases := []struct {
+		name    string
+		corrupt func(*ProcessingAck)
+		want    string
+	}{
+		{name: "invalid processed timestamp", corrupt: func(ack *ProcessingAck) { ack.ProcessedAt = 0 }, want: "existing record invalid"},
+		{name: "invalid outcome", corrupt: func(ack *ProcessingAck) { ack.Outcome = "finished" }, want: "existing record invalid"},
+		{name: "conflicting outcome", corrupt: func(ack *ProcessingAck) { ack.Outcome = OutcomeFailed }, want: "ack conflicting"},
+		{name: "sender identity", corrupt: func(ack *ProcessingAck) { ack.SenderIdentity = "other-sender" }, want: "sender identity mismatch"},
+		{name: "receiver identity", corrupt: func(ack *ProcessingAck) { ack.ReceiverID = "captain-2" }, want: "receiver identity mismatch"},
+		{name: "receiver rank", corrupt: func(ack *ProcessingAck) { ack.ReceiverRank = RankGeneral }, want: "receiver rank mismatch"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r, store, _ := newGuardReceiver(t)
+			env, ref := deliverGuardEnvelope(t, store)
+			ack := validGuardAck()
+			ack.MessageID = env.MessageID
+			ack.SenderIdentity = env.SenderIdentity
+			ack.ReceiverID = env.ReceiverID
+			ack.PayloadHash = env.PayloadHash
+			if err := store.WriteAck(&ack); err != nil {
+				t.Fatalf("WriteAck: %v", err)
+			}
+			tc.corrupt(&ack)
+			data, err := json.Marshal(&ack)
+			if err != nil {
+				t.Fatalf("marshal forged ack: %v", err)
+			}
+			path, err := store.ackPath(env.SenderIdentity, env.MessageID)
+			if err != nil {
+				t.Fatalf("ackPath: %v", err)
+			}
+			if err := os.WriteFile(path, data, 0644); err != nil {
+				t.Fatalf("write forged ack: %v", err)
+			}
+			if err := removeEnvelopePayload(t, store, env); err != nil {
+				t.Fatalf("remove envelope payload: %v", err)
+			}
+			if _, err := r.Ack(ref); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Ack error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestSoldierAckRejectsMismatchedAckOnlyTask(t *testing.T) {
+	home := t.TempDir()
+	const taskID = "task:hosted"
+	if err := WriteMeta(home, taskID, map[string]string{"window": "w"}); err != nil {
+		t.Fatal(err)
+	}
+	r, err := NewSoldierReceiver(home, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := NewStore(home)
+	env := &Envelope{
+		SenderRank: RankCaptain, SenderIdentity: "captain-1",
+		ReceiverRank: RankSoldier, ReceiverID: ReceiverIDForTask(taskID),
+		TaskID: taskID, Payload: "command",
+	}
+	if err := store.WriteEnvelope(env); err != nil {
+		t.Fatal(err)
+	}
+	ref := NotificationRef{MessageID: env.MessageID, SenderIdentity: env.SenderIdentity}
+	ack := &ProcessingAck{
+		MessageID: env.MessageID, SenderRank: env.SenderRank,
+		SenderIdentity: env.SenderIdentity, ReceiverRank: env.ReceiverRank,
+		ReceiverID: env.ReceiverID, TaskID: "task:other", PayloadHash: env.PayloadHash,
+		ProcessedAt: 1, Outcome: OutcomeAccepted,
+	}
+	if err := store.WriteAck(ack); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeEnvelopePayload(t, store, *env); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Ack(ref); err == nil || !strings.Contains(err.Error(), "task ID mismatch") {
+		t.Fatalf("Ack error = %v, want task ID mismatch", err)
+	}
+}
+
+func removeEnvelopePayload(t *testing.T, store *Store, env Envelope) error {
+	t.Helper()
+	path, err := store.inboxPath(env.SenderIdentity, env.MessageID)
+	if err != nil {
+		return err
+	}
+	return os.Remove(path)
+}
+
 func TestAckRemainsIdempotentAfterSenderProvenanceTeardown(t *testing.T) {
 	generalHome := namedHome(t, senderRankGeneralID)
 	captainHome := namedHome(t, senderRankCaptainID)
