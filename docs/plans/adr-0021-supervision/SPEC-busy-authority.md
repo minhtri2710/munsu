@@ -42,7 +42,7 @@ gofmt -l .               # must be empty
 internal/backend/endpoint_observation.go   → typed axes (Activity, Lifecycle, …); the source of truth this module consumes
 internal/orchestrator/wake_dispatch.go      → DispatchWake + the duplicate coarse enum to retire
 internal/orchestrator/supervision_*.go      → watcher-side observation flow
-<new/renamed>                               → the single busy authority (fleet-side owner) — exact home decided in Plan phase
+internal/fleet/busy_authority.go              → the single busy authority (fleet-side owner); home decided in A1 as a fleet decision type over backend.EndpointObservation (aliased EndpointStatus), not in backend or orchestrator
 ```
 
 ## Code Style
@@ -94,8 +94,9 @@ Guard-coverage: the retired-duplicate path and the "unknown ≠ idle" refusal mu
 
 ## Open Questions
 
-- Home for the authority: extend `backend` observation, or a fleet-side
-  decision type in `orchestrator`? (Decide in Plan — must keep adapters as
-  producers only.)
+- Home for the authority: resolved in A1 as a fleet-side decision type at
+  `internal/fleet/busy_authority.go`, operating on `backend.EndpointObservation`
+  (aliased `EndpointStatus`); adapters remain producers only. The `orchestrator`
+  duplicate is retired later in A2, not moved here.
 - Does any current consumer other than `DispatchWake` read the coarse
   orchestrator enum today? (Grep at Plan start; each must be re-pointed.)
