@@ -164,6 +164,7 @@ func newLaunchFixture(t *testing.T, taskID string) *launchFixture {
 		effort:              "high",
 		effectiveMode:       "direct-PR",
 		requestedMode:       "direct-PR",
+		contractMode:        "direct-PR",
 		spawnRole:           "general",
 		dispatchPolicy:      DispatchPolicyGeneralDirect,
 		parentCaptainID:     "general", // the General-direct parent sentinel the boundary policy resolves
@@ -209,6 +210,7 @@ func runLaunchPhases(f *launchFixture, crashAfter string) error {
 		fn   func() error
 	}{
 		{"begin", r.beginLaunchIntent},
+		{"contract", r.recordDeliveryContract},
 		{"acquire", r.acquireWorktree},
 		{"bind-worktree", func() error {
 			var err error

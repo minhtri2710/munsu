@@ -9,6 +9,7 @@ import (
 
 	fleetconfig "github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/harness"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 type SpawnSoldierConfig struct {
@@ -34,7 +35,11 @@ type SpawnProjectConfig struct {
 // requested project from the typed fleet and project documents. The opposite
 // read — or any read without a resolved policy — fails closed with an empty
 // config.
-func ResolveSpawnProjectConfig(homeDir string, args Args, policy DispatchPolicy) (SpawnProjectConfig, error) {
+//
+// contract is the task's durable delivery contract, or nil for a task that has
+// none. When present it is the mode authority for the launch; every other
+// field of the snapshot resolves exactly as it does without one.
+func ResolveSpawnProjectConfig(homeDir string, args Args, policy DispatchPolicy, contract *taskauthority.DeliveryContract) (SpawnProjectConfig, error) {
 	var (
 		snapshot fleetconfig.ResolvedSnapshot
 		err      error
@@ -73,7 +78,7 @@ func ResolveSpawnProjectConfig(homeDir string, args Args, policy DispatchPolicy)
 	if err := validateSpawnIdentityAssertions(args, resolved.Backend, resolved.SoldierHarness, normalizeSnapshotDeliveryMode(resolved.DefaultMode)); err != nil {
 		return SpawnProjectConfig{}, err
 	}
-	mode, err := ResolveDeliveryMode(args.Mode, normalizeSnapshotDeliveryMode(resolved.DefaultMode), resolved.RequireNoMistakes)
+	mode, err := resolveContractedDeliveryMode(args, resolved, contract)
 	if err != nil {
 		return SpawnProjectConfig{}, err
 	}
@@ -109,6 +114,27 @@ func ResolveSpawnProjectConfig(homeDir string, args Args, policy DispatchPolicy)
 			Mode:    mode,
 		},
 	}, nil
+}
+
+// resolveContractedDeliveryMode answers the mode question for one launch. A
+// task carrying a durable delivery contract and no explicit --mode has already
+// answered it: the mode is READ from the contract and the snapshot mode
+// resolution is skipped entirely, so a drifted default mode — or one that is
+// momentarily unrunnable on this machine — can never block a task that is
+// already contracted. Runnability for the contracted mode stays with the
+// launch preflight, which owns the authorized fallback.
+//
+// The policy gate is not skipped with it: require-no-mistakes still applies,
+// now to the contract mode, and refuses loudly rather than delivering a
+// contracted task under a mode the project forbids.
+func resolveContractedDeliveryMode(args Args, resolved fleetconfig.ResolvedProjectConfig, contract *taskauthority.DeliveryContract) (string, error) {
+	if contract == nil || args.Mode != "" {
+		return ResolveDeliveryMode(args.Mode, normalizeSnapshotDeliveryMode(resolved.DefaultMode), resolved.RequireNoMistakes)
+	}
+	if resolved.RequireNoMistakes && contract.Mode != "no-mistakes" {
+		return "", fmt.Errorf("project %q sets require-no-mistakes but the task is contracted to deliver %q; re-scaffold the task (set the project default mode to no-mistakes, then spawn with --mode no-mistakes) or clear require-no-mistakes", resolved.Project, contract.Mode)
+	}
+	return contract.Mode, nil
 }
 
 func validateSpawnIdentityAssertions(args Args, backendName, harnessName, mode string) error {

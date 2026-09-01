@@ -12,7 +12,7 @@ import (
 )
 
 func TestShipBriefTemplateNoMistakes(t *testing.T) {
-	tmpl := shipBriefTemplate("test-task-1", "munsu", "no-mistakes", false)
+	tmpl := mustShipBrief(t, "test-task-1", "munsu", "no-mistakes", false)
 
 	checks := []string{
 		"Task brief: test-task-1",
@@ -45,7 +45,7 @@ func TestShipBriefTemplateNoMistakes(t *testing.T) {
 }
 
 func TestShipBriefTemplateDirectPR(t *testing.T) {
-	tmpl := shipBriefTemplate("test-task-1", "munsu", "direct-PR", false)
+	tmpl := mustShipBrief(t, "test-task-1", "munsu", "direct-PR", false)
 
 	checks := []string{
 		"Delivery mode: direct-PR",
@@ -67,7 +67,7 @@ func TestShipBriefTemplateDirectPR(t *testing.T) {
 }
 
 func TestShipBriefTemplateLocalOnly(t *testing.T) {
-	tmpl := shipBriefTemplate("test-task-1", "munsu", "local-only", false)
+	tmpl := mustShipBrief(t, "test-task-1", "munsu", "local-only", false)
 
 	checks := []string{
 		"Delivery mode: local-only",
@@ -88,7 +88,7 @@ func TestShipBriefTemplateLocalOnly(t *testing.T) {
 }
 
 func TestScoutBriefTemplate(t *testing.T) {
-	tmpl := scoutBriefTemplate("test-scout-1", "munsu", "security", false, "", 0, 1)
+	tmpl := mustScoutBrief(t, "test-scout-1", "munsu", "direct-PR", false, "security", 0, 1)
 
 	checks := []string{
 		"Scout brief: test-scout-1",
@@ -121,7 +121,7 @@ func TestScaffoldRefreshesDirectoryMtime(t *testing.T) {
 	if err := os.Chtimes(dir, old, old); err != nil {
 		t.Fatal(err)
 	}
-	if err := Scaffold(ScaffoldOptions{HomeDir: tmp, ID: "aged", Repo: "munsu"}); err != nil {
+	if err := Scaffold(ScaffoldOptions{HomeDir: tmp, ID: "aged", Repo: "munsu", Mode: "no-mistakes"}); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(dir)
@@ -177,6 +177,7 @@ func TestScaffoldScout(t *testing.T) {
 		ID:         "test-scout",
 		Repo:       "munsu",
 		Scout:      true,
+		Mode:       "direct-PR",
 		Generation: 1,
 	}
 
@@ -252,6 +253,7 @@ func TestExists(t *testing.T) {
 		HomeDir: tmp,
 		ID:      "test-exists",
 		Repo:    "munsu",
+		Mode:    "no-mistakes",
 	})
 
 	if !Exists(tmp, "test-exists") {
@@ -266,7 +268,7 @@ func TestScaffoldScoutNamesReportByGeneration(t *testing.T) {
 	// soldier to write exactly the launching generation's report name, at the
 	// same path the safety check resolves.
 	const gen = taskauthority.Generation(3)
-	if err := Scaffold(ScaffoldOptions{HomeDir: tmp, ID: "named-scout", Repo: "munsu", Scout: true, Generation: gen}); err != nil {
+	if err := Scaffold(ScaffoldOptions{HomeDir: tmp, ID: "named-scout", Repo: "munsu", Scout: true, Mode: "direct-PR", Generation: gen}); err != nil {
 		t.Fatal(err)
 	}
 	content, err := os.ReadFile(Path(tmp, "named-scout"))
@@ -287,7 +289,7 @@ func TestScaffoldScoutNamesReportByGeneration(t *testing.T) {
 
 	// A scout brief without the task generation fails closed: an unbound
 	// report name would be an unversioned one.
-	if err := Scaffold(ScaffoldOptions{HomeDir: tmp, ID: "unbound-scout", Repo: "munsu", Scout: true}); err == nil {
+	if err := Scaffold(ScaffoldOptions{HomeDir: tmp, ID: "unbound-scout", Repo: "munsu", Scout: true, Mode: "direct-PR"}); err == nil {
 		t.Fatal("scaffolding a scout brief without a generation must fail")
 	}
 }
@@ -323,6 +325,7 @@ func TestScaffoldCreatesDir(t *testing.T) {
 		HomeDir: tmp,
 		ID:      "dir-test",
 		Repo:    "munsu",
+		Mode:    "no-mistakes",
 	}
 
 	if err := Scaffold(opts); err != nil {
@@ -340,7 +343,7 @@ func TestScaffoldCreatesDir(t *testing.T) {
 }
 
 func TestShipBriefContainsStatusReporting(t *testing.T) {
-	tmpl := shipBriefTemplate("t1", "repo", "", false)
+	tmpl := mustShipBrief(t, "t1", "repo", "no-mistakes", false)
 	if !strings.Contains(tmpl, "munsu report") {
 		t.Error("ship brief should reference munsu report command")
 	}
@@ -350,7 +353,7 @@ func TestShipBriefContainsStatusReporting(t *testing.T) {
 }
 
 func TestScoutBriefHasReportContract(t *testing.T) {
-	tmpl := scoutBriefTemplate("scout-r", "repo", "", false, "", 0, 1)
+	tmpl := mustScoutBrief(t, "scout-r", "repo", "direct-PR", false, "", 0, 1)
 
 	if !strings.Contains(tmpl, "Write your findings") {
 		t.Error("scout brief should include report instructions")
@@ -360,15 +363,41 @@ func TestScoutBriefHasReportContract(t *testing.T) {
 	}
 }
 
-func TestShipBriefModeLine(t *testing.T) {
-	tmpl := shipBriefTemplate("t1", "repo", "", false)
-	if strings.Contains(tmpl, "Delivery mode:") {
-		t.Error("should not emit delivery mode line when mode is empty")
+// TestShipBriefUnknownModeFailsLoud pins the delivery-rules switch: an empty
+// or unrecognized delivery mode is a resolution failure, never a silent
+// fall-through to the no-mistakes rules.
+func TestShipBriefUnknownModeFailsLoud(t *testing.T) {
+	for _, mode := range []string{"", "direct-pr", "no-mistake", "yolo"} {
+		t.Run(mode, func(t *testing.T) {
+			tmpl, err := shipBriefTemplate("t1", "repo", mode, false)
+			if err == nil {
+				t.Fatalf("ship brief rendered for unknown delivery mode %q", mode)
+			}
+			if tmpl != "" {
+				t.Fatalf("ship brief returned content alongside the refusal for mode %q", mode)
+			}
+			if !strings.Contains(err.Error(), "unknown delivery mode") {
+				t.Fatalf("refusal does not name the unknown delivery mode: %v", err)
+			}
+		})
+	}
+}
+
+// TestScaffoldRefusesUnknownMode pins the refusal at the Scaffold boundary:
+// no brief.md is written for a mode the delivery rules cannot serve.
+func TestScaffoldRefusesUnknownMode(t *testing.T) {
+	home := t.TempDir()
+	err := Scaffold(ScaffoldOptions{HomeDir: home, ID: "t1", Repo: "repo", Mode: ""})
+	if err == nil {
+		t.Fatal("Scaffold wrote a brief for an unknown delivery mode")
+	}
+	if _, statErr := os.Stat(Path(home, "t1")); statErr == nil {
+		t.Fatal("Scaffold wrote brief.md despite the refusal")
 	}
 }
 
 func TestShipBriefModeLinePresent(t *testing.T) {
-	tmpl := shipBriefTemplate("t1", "repo", "local-only", false)
+	tmpl := mustShipBrief(t, "t1", "repo", "local-only", false)
 	if !strings.Contains(tmpl, "Delivery mode: local-only") {
 		t.Error("should emit delivery mode line when mode is set")
 	}
@@ -376,8 +405,8 @@ func TestShipBriefModeLinePresent(t *testing.T) {
 
 func TestBriefsDocumentIdempotentResolvedKey(t *testing.T) {
 	for name, tmpl := range map[string]string{
-		"ship":  shipBriefTemplate("t1", "repo", "", false),
-		"scout": scoutBriefTemplate("s1", "repo", "", false, "", 0, 1),
+		"ship":  mustShipBrief(t, "t1", "repo", "no-mistakes", false),
+		"scout": mustScoutBrief(t, "s1", "repo", "direct-PR", false, "", 0, 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if !strings.Contains(tmpl, "resolved [key=<slug>]: {summary}") {
@@ -388,4 +417,60 @@ func TestBriefsDocumentIdempotentResolvedKey(t *testing.T) {
 			}
 		})
 	}
+}
+
+// mustShipBrief renders a ship brief for a real delivery mode, failing the
+// test on the refusal path so every fixture below uses a mode the delivery
+// rules actually serve.
+// TestScoutBriefUnknownModeFailsLoud pins the scout path to the same
+// invariant as ship: after the durable delivery contract, an empty or
+// unrecognized delivery mode is a resolution failure upstream, never a line
+// the brief quietly omits.
+func TestScoutBriefUnknownModeFailsLoud(t *testing.T) {
+	for _, mode := range []string{"", "direct-pr", "no-mistake", "yolo"} {
+		t.Run(mode, func(t *testing.T) {
+			tmpl, err := scoutBriefTemplate("s1", "repo", mode, false, "", 0, 1)
+			if err == nil {
+				t.Fatalf("scout brief rendered for unknown delivery mode %q", mode)
+			}
+			if tmpl != "" {
+				t.Fatalf("scout brief returned content alongside the refusal for mode %q", mode)
+			}
+			if !strings.Contains(err.Error(), "unknown delivery mode") {
+				t.Fatalf("refusal does not name the unknown delivery mode: %v", err)
+			}
+		})
+	}
+}
+
+// TestScaffoldRefusesUnknownScoutMode pins the refusal at the Scaffold
+// boundary for scouts: no brief.md is written for a mode the brief cannot
+// name.
+func TestScaffoldRefusesUnknownScoutMode(t *testing.T) {
+	home := t.TempDir()
+	err := Scaffold(ScaffoldOptions{HomeDir: home, ID: "s1", Repo: "repo", Scout: true, Generation: 1})
+	if err == nil {
+		t.Fatal("Scaffold wrote a scout brief for an unknown delivery mode")
+	}
+	if _, statErr := os.Stat(Path(home, "s1")); statErr == nil {
+		t.Fatal("Scaffold wrote brief.md despite the refusal")
+	}
+}
+
+func mustScoutBrief(t *testing.T, id, repo, mode string, yolo bool, scope string, budget int64, gen taskauthority.Generation) string {
+	t.Helper()
+	tmpl, err := scoutBriefTemplate(id, repo, mode, yolo, scope, budget, gen)
+	if err != nil {
+		t.Fatalf("scoutBriefTemplate(%q): %v", mode, err)
+	}
+	return tmpl
+}
+
+func mustShipBrief(t *testing.T, id, repo, mode string, yolo bool) string {
+	t.Helper()
+	tmpl, err := shipBriefTemplate(id, repo, mode, yolo)
+	if err != nil {
+		t.Fatalf("shipBriefTemplate(%q): %v", mode, err)
+	}
+	return tmpl
 }

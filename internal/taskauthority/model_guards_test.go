@@ -343,3 +343,26 @@ func TestValidateLaunchEvidenceRefusesUnverifiableRecord(t *testing.T) {
 			{"digest is not a sha256", func(e *LaunchEvidence) { e.CommandDigest = "not-a-digest" }, "launch evidence command digest must be a 64-hex sha256 digest"},
 		})
 }
+
+// The delivery contract is the record every later generation reads instead of
+// re-resolving the mode. A contract carrying a mode no delivery path
+// implements would silently license the wrong delivery behaviour for the rest
+// of the task's life, so the record refuses to exist in that shape.
+func TestValidateDeliveryContractRefusesUnenforceableRecord(t *testing.T) {
+	runGuardCases(t,
+		func() DeliveryContract {
+			return DeliveryContract{
+				OperationID: "op-contract-1",
+				Mode:        "no-mistakes",
+				RecordedAt:  1700000000,
+			}
+		},
+		validateDeliveryContract,
+		[]guardCase[DeliveryContract]{
+			{"no operation id", func(d *DeliveryContract) { d.OperationID = "" }, "delivery contract missing operation id"},
+			{"path-separating operation id", func(d *DeliveryContract) { d.OperationID = "op/contract" }, "delivery contract missing operation id"},
+			{"empty mode", func(d *DeliveryContract) { d.Mode = "" }, "delivery contract carries invalid delivery mode"},
+			{"unknown mode", func(d *DeliveryContract) { d.Mode = "direct-pr" }, "delivery contract carries invalid delivery mode"},
+			{"no recorded timestamp", func(d *DeliveryContract) { d.RecordedAt = 0 }, "delivery contract missing recorded timestamp"},
+		})
+}

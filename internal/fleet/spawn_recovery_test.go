@@ -27,6 +27,7 @@ func TestLaunchRecoveryCrashBoundariesNoDuplicates(t *testing.T) {
 		wantErr    bool // re-acquisition at the pre-bind boundary re-calls the deterministic git-fallback provider
 	}{
 		{"begin", false},           // before acquisition
+		{"contract", false},        // after the durable delivery contract record
 		{"acquire", false},         // after worktree acquisition, before bind
 		{"bind-worktree", false},   // after worktree bind
 		{"create-session", false},  /* after endpoint create */
@@ -63,10 +64,15 @@ func TestLaunchRecoveryCrashBoundariesNoDuplicates(t *testing.T) {
 			if f.endpoints.submitCount() != 1 {
 				t.Fatalf("launch submits = %d, want 1 (no duplicate submission)", f.endpoints.submitCount())
 			}
-			// One queued -> working transition: revision 6 (create, begin,
-			// bind worktree, attach endpoint, record launch, bind endpoint).
-			if agg.Revision != 6 {
-				t.Fatalf("revision = %d, want 6 (one launch through working)", agg.Revision)
+			// One queued -> working transition: revision 7 (create, begin,
+			// record delivery contract, bind worktree, attach endpoint,
+			// record launch, bind endpoint). The contract is recorded exactly
+			// once no matter which boundary the first attempt crashed at.
+			if agg.Revision != 7 {
+				t.Fatalf("revision = %d, want 7 (one launch through working)", agg.Revision)
+			}
+			if agg.DeliveryContract == nil || agg.DeliveryContract.Mode != f.runner.contractMode {
+				t.Fatalf("delivery contract = %+v, want mode %q", agg.DeliveryContract, f.runner.contractMode)
 			}
 			// The re-adopted records are the FIRST attempt's records, never
 			// fresh ones (where the first attempt committed them).

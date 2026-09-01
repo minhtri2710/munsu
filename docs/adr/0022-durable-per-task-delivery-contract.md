@@ -32,9 +32,13 @@ explicitly recorded transition rather than a silent re-resolution.
 
 ## Evidence
 
-* `internal/fleet/spawn_config_snapshot.go:76` — `ResolveDeliveryMode(args.Mode,
-  …DefaultMode, …RequireNoMistakes)`, run per snapshot; result lands in home meta
-  only, not on the canonical aggregate.
+* `internal/fleet/spawn_config_snapshot.go:132` — `ResolveDeliveryMode(args.Mode,
+  …DefaultMode, …RequireNoMistakes)` is now invoked via `resolveContractedDeliveryMode`,
+  the per-snapshot mode resolver. When a delivery contract is present the mode is
+  READ from it and the snapshot resolver is skipped; otherwise the mode resolves as
+  before. The first-spawn resolution is recorded on the canonical aggregate as the
+  delivery contract (`internal/fleet/spawn_runner.go` `recordDeliveryContract`) and
+  read back on later spawns.
 * `internal/fleet/delivery_preflight.go` `preflightNoMistakes` — the authorized
   no-mistakes → direct-PR fallback path.
 * `internal/fleet/brief.go` `ScaffoldOptions.Mode` — the resolved **delivery
