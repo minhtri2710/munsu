@@ -33,7 +33,9 @@ func countRefusalLines(t *testing.T, home string, n int, validate func(string) e
 	os.Stderr = stderrW
 	for i := 0; i < n; i++ {
 		resetRecovery()
-		if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, &testRetirementPort{}, &testCheckValidationPort{validate: validate}, testTaskStatePort{}); err != nil {
+		// The PR is not merged: these cycles are about discovery refusals,
+		// and a resolved poll would be retired and removed instead.
+		if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, &testRetirementPort{observe: unmergedPoll}, &testCheckValidationPort{validate: validate}, testTaskStatePort{}); err != nil {
 			os.Stderr = original
 			_ = stderrW.Close()
 			t.Fatalf("cycle %d: %v", i+1, err)
@@ -107,11 +109,13 @@ func TestRunCycle_RetirementThenDiscoverySameRefusalReportsOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Cycle 1 resolves the merged poll and announces it; cycle 2 runs the
+	// action, which refuses; cycle 3 has discovery refuse for the same cause.
 	cause := errors.New("same validation refusal")
 	validationCalls := 0
 	validation := &testCheckValidationPort{validate: func(string) error {
 		validationCalls++
-		if validationCalls == 1 {
+		if validationCalls <= 2 {
 			return nil
 		}
 		return cause
@@ -131,7 +135,7 @@ func TestRunCycle_RetirementThenDiscoverySameRefusalReportsOnce(t *testing.T) {
 	}()
 	original := os.Stderr
 	os.Stderr = stderrW
-	for cycle := 0; cycle < 2; cycle++ {
+	for cycle := 0; cycle < 3; cycle++ {
 		resetRecovery()
 		if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, retirement, validation, testTaskStatePort{}); err != nil {
 			os.Stderr = original

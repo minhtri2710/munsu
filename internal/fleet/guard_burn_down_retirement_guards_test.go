@@ -91,34 +91,6 @@ func canonicalRetireTask(t *testing.T, auth *taskauthority.Canonical, taskID str
 // Group A: retirement_poll.go
 // ----------------------------------------------------------------------------
 
-func TestListPendingRetirements_InvalidTaskIdentity(t *testing.T) {
-	homeDir := t.TempDir()
-	recDir := retirementDirPath(homeDir)
-	if err := os.MkdirAll(recDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	rec := &PollRetirementRecord{
-		SchemaVersion: PollRetirementSchema,
-		TaskID:        "task-different",
-	}
-	data, err := json.Marshal(rec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Write record to a file whose name does not match sha256(task-different).
-	wrongFile := filepath.Join(recDir, "v1-0000000000000000000000000000000000000000000000000000000000000000.json")
-	if err := os.WriteFile(wrongFile, data, 0644); err != nil {
-		t.Fatal(err)
-	}
-	_, err = ListPendingRetirements(homeDir)
-	if err == nil {
-		t.Fatal("expected invalid task identity error, got nil")
-	}
-	if !strings.Contains(err.Error(), "has invalid task identity") {
-		t.Fatalf("ListPendingRetirements err = %v, want has invalid task identity", err)
-	}
-}
-
 func TestRequireCanonicalCompletedOutcome_NilAuthority(t *testing.T) {
 	err := requireCanonicalCompletedOutcome(nil, "some-task")
 	if err == nil {

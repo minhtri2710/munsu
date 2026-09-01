@@ -16,12 +16,8 @@ type fleetRetirementPort struct {
 	compose func(homeDir string) (*taskauthority.Canonical, error)
 }
 
-func (p fleetRetirementPort) RecoverPendingRetirements(homeDir string) (int, []error) {
-	auth, err := p.compose(homeDir)
-	if err != nil {
-		return 0, []error{fmt.Errorf("composing task authority for retirement recovery: %w", err)}
-	}
-	return fleet.RecoverAllPendingRetirements(homeDir, auth)
+func (fleetRetirementPort) ObserveMergedPoll(homeDir, taskID string) (bool, []byte, error) {
+	return fleet.ObserveMergedPoll(homeDir, taskID)
 }
 
 // fleetCheckValidationPort adapts the orchestrator CheckValidationPort to the
@@ -34,10 +30,10 @@ func (fleetCheckValidationPort) ValidateCheck(path string) error {
 	return fleet.ValidateCheckWithLstat(path)
 }
 
-func (p fleetRetirementPort) RetireMergedPoll(homeDir, taskID, checkPath string) error {
+func (p fleetRetirementPort) RetireMergedPoll(homeDir, taskID, checkPath string, result []byte) error {
 	auth, err := p.compose(homeDir)
 	if err != nil {
 		return fmt.Errorf("composing task authority for merged poll retirement: %w", err)
 	}
-	return fleet.RetireMergedPoll(homeDir, taskID, checkPath, auth)
+	return fleet.RetireMergedPoll(homeDir, taskID, checkPath, result, auth)
 }

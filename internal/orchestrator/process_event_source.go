@@ -50,7 +50,7 @@ const ProcessEventSchema = 1
 // ProcessEventWakeKind is the wake-queue kind under which a resolved event is
 // announced. The wake key is the event id and the payload is a JSON
 // ProcessEventWake carrying the generation the consumer must ack.
-const ProcessEventWakeKind = "process-event"
+const ProcessEventWakeKind = home.ProcessEventWakeKind
 
 // processEventDir is the private state directory holding one durable record
 // per registered event, relative to home.StateDir.

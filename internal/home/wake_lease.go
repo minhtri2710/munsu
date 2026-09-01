@@ -111,12 +111,17 @@ func claimWakesLocked(homeDir, consumer string, leaseSeconds, limit int, now fun
 		return nil, err
 	}
 
-	take := limit
-	if take > len(queueRecords) {
-		take = len(queueRecords)
+	// Process-event wakes are reserved for their in-process consumer
+	// (DrainWakesOfKind): they are never leased, and every other record keeps
+	// its queue order.
+	var claimed, remaining []WakeRecord
+	for _, record := range queueRecords {
+		if record.Kind != ProcessEventWakeKind && len(claimed) < limit {
+			claimed = append(claimed, record)
+			continue
+		}
+		remaining = append(remaining, record)
 	}
-	claimed := queueRecords[:take]
-	remaining := queueRecords[take:]
 	if len(claimed) == 0 {
 		return &ClaimResult{Consumer: consumer, Reclaimed: reclaimed}, nil
 	}

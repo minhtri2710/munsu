@@ -16,8 +16,10 @@ func (NoopTaskStatePort) ReadTaskState(string, string) (*ObservedTaskState, erro
 
 type NoopRetirementPort struct{}
 
-func (NoopRetirementPort) RecoverPendingRetirements(string) (int, []error) { return 0, nil }
-func (NoopRetirementPort) RetireMergedPoll(string, string, string) error {
+func (NoopRetirementPort) ObserveMergedPoll(string, string) (bool, []byte, error) {
+	return false, nil, fmt.Errorf("retirement capability unavailable")
+}
+func (NoopRetirementPort) RetireMergedPoll(string, string, string, []byte) error {
 	return fmt.Errorf("retirement capability unavailable")
 }
 

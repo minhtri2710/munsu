@@ -151,17 +151,23 @@ func pollContentDigest(path string) (string, error) {
 
 // durableAppendStatus appends a status line with fsync durability.
 // Scans existing lines first to avoid duplicate publication.
-func durableAppendStatus(homeDir, taskID, line string) (bool, error) {
-	// Scan existing lines for exact match.
+func statusHasLine(homeDir, taskID, line string) bool {
 	lines, err := home.ReadStatus(homeDir, taskID)
 	if err != nil {
-		// Status file may not exist yet; that's fine.
-		lines = nil
+		// Status file may not exist yet; then the line is absent.
+		return false
 	}
 	for _, existing := range lines {
 		if existing == line {
-			return false, nil // already present; no-op
+			return true
 		}
+	}
+	return false
+}
+
+func durableAppendStatus(homeDir, taskID, line string) (bool, error) {
+	if statusHasLine(homeDir, taskID, line) {
+		return false, nil // already present; no-op
 	}
 
 	// Open file for append with fsync.
@@ -275,38 +281,6 @@ func RemoveRetirementRecord(homeDir, taskID string) error {
 	return nil
 }
 
-// ListPendingRetirements returns all pending retirement record task IDs.
-func ListPendingRetirements(homeDir string) ([]string, error) {
-	dir := retirementDirPath(homeDir)
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("reading retirement dir: %w", err)
-	}
-
-	var ids []string
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
-		if err != nil {
-			return nil, fmt.Errorf("reading retirement record %s: %w", entry.Name(), err)
-		}
-		var rec PollRetirementRecord
-		if err := json.Unmarshal(data, &rec); err != nil {
-			return nil, fmt.Errorf("parsing retirement record %s: %w", entry.Name(), err)
-		}
-		if rec.TaskID == "" || retirementRecordPath(homeDir, rec.TaskID) != filepath.Join(dir, entry.Name()) {
-			return nil, fmt.Errorf("retirement record %s has invalid task identity", entry.Name())
-		}
-		ids = append(ids, rec.TaskID)
-	}
-	return ids, nil
-}
-
 // ValidateRetirementPath checks that the record path is safe and well-formed.
 // Returns an error for symlinks, non-regular files, or path escape attempts.
 func ValidateRetirementPath(homeDir, taskID string) error {
@@ -391,10 +365,18 @@ func ValidateCheckWithLstat(path string) error {
 // the poll, while post-publication invalidation preserves the durable outcome
 // and reports the artifact state.
 //
+// It is the action of the merged-poll process event: ObserveMergedPoll is
+// the resolver that captured result, and the action is re-entered until the
+// consumer acks, so it is journal-aware on entry and idempotent after
+// completion.
+//
 // Sequence:
-//  1. Validate task identity and poll digest against delivery meta.
-//  2. Query provider merge status via QueryDeliveryMergeStatus.
-//  3. Require Merged == true, nonempty provider head, provider-head == stored HeadSHA.
+//  0. A pending retirement record means an earlier attempt crashed after its
+//     first durable step: finish it through recoverPendingRetirement.
+//     Otherwise, an absent artifact with the publication line already durable
+//     is a completed retirement re-entered: domain.ErrAlreadyRetired.
+//  1. Validate the poll and acquire its digest, then require the task identity
+//     head to equal the captured head (domain.ErrStaleCapture otherwise).
 //  4. Persist the pending retirement record BEFORE publication.
 //  5. Derive merged truth from the canonical committed delivery outcome:
 //     a committed completed outcome is required; the .meta delivery_state
@@ -421,15 +403,81 @@ func ValidateCheckWithLstat(path string) error {
 // deterministic recorded publication evidence, confirmed publication, and the
 // recorded digest. Both sites quarantine the artifact before verification so
 // verification and removal operate on the same private pathname.
-func RetireMergedPoll(homeDir, taskID, checkPath string, auth *taskauthority.Canonical) error {
-	return retireMergedPoll(homeDir, taskID, checkPath, auth, pollContentDigest)
+func RetireMergedPoll(homeDir, taskID, checkPath string, result []byte, auth *taskauthority.Canonical) error {
+	return retireMergedPoll(homeDir, taskID, checkPath, result, auth, pollContentDigest)
 }
 
-func retireMergedPoll(homeDir, taskID, checkPath string, auth *taskauthority.Canonical, digestFn func(string) (string, error), renameFns ...func(string, string) error) error {
+// mergedPollResult is what ObserveMergedPoll captures and RetireMergedPoll
+// acts on; it travels as the process-event Result.
+type mergedPollResult struct {
+	HeadSHA   string `json:"headSHA"`
+	MergedSHA string `json:"mergedSHA"`
+}
+
+// ObserveMergedPoll is the process-event resolver for a per-task poll. It
+// reports resolved only when the provider says the PR merged at the head
+// recorded in the task's delivery identity, and then captures the head and
+// merged SHAs the action acts on. Not merged, an empty provider head and a
+// head that differs from the stored identity all read as unresolved; only an
+// unreadable identity or a provider failure is an error. Nothing is written.
+func ObserveMergedPoll(homeDir, taskID string) (bool, []byte, error) {
+	ident, err := requireRetirementIdentity(homeDir, taskID)
+	if err != nil {
+		return false, nil, fmt.Errorf("delivery identity: %w", err)
+	}
+	status, err := QueryDeliveryMergeStatus(ident)
+	if err != nil {
+		return false, nil, fmt.Errorf("merge status query (preserving poll): %w", err)
+	}
+	if !status.Merged || status.HeadSHA == "" || status.HeadSHA != ident.HeadSHA {
+		return false, nil, nil
+	}
+	mergedSHA := status.MergedSHA
+	if mergedSHA == "" {
+		mergedSHA = status.HeadSHA
+	}
+	result, err := json.Marshal(mergedPollResult{HeadSHA: status.HeadSHA, MergedSHA: mergedSHA})
+	if err != nil {
+		return false, nil, fmt.Errorf("encoding merge result: %w", err)
+	}
+	return true, result, nil
+}
+
+func retireMergedPoll(homeDir, taskID, checkPath string, result []byte, auth *taskauthority.Canonical, digestFn func(string) (string, error), renameFns ...func(string, string) error) error {
 	renameFn := home.RenameDurable
 	if len(renameFns) > 0 {
 		renameFn = renameFns[0]
 	}
+	// Journal-aware entry: a pending record is an earlier attempt that crashed
+	// after its first durable step, and finishing it is the only correct act.
+	pending, err := ReadRetirementRecord(homeDir, taskID)
+	if err != nil {
+		return fmt.Errorf("reading pending retirement record: %w", err)
+	}
+	if pending != nil {
+		if _, err := recoverPendingRetirement(homeDir, taskID, auth, digestFn, renameFn); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	var captured mergedPollResult
+	if err := json.Unmarshal(result, &captured); err != nil {
+		return fmt.Errorf("%w: captured merge result undecodable: %w", domain.ErrStaleCapture, err)
+	}
+	if captured.HeadSHA == "" || captured.MergedSHA == "" {
+		return fmt.Errorf("%w: captured merge result is missing a head or merged SHA", domain.ErrStaleCapture)
+	}
+
+	// Re-entry after completion (crash between the last durable step and the
+	// consumer's ack): the artifact is gone, no record is pending, and the
+	// publication line is already durable. All three are required.
+	if _, statErr := os.Lstat(checkPath); os.IsNotExist(statErr) {
+		if ident, identErr := requireRetirementIdentity(homeDir, taskID); identErr == nil && statusHasLine(homeDir, taskID, publicationLine(taskID, ident.URL, captured.MergedSHA)) {
+			return domain.ErrAlreadyRetired
+		}
+	}
+
 	// Step 0: Lstat validation on check path for crash safety.
 	if err := ValidateCheckWithLstat(checkPath); err != nil {
 		return fmt.Errorf("%w: poll validation failed: %w", domain.ErrCheckValidationRefused, err)
@@ -441,41 +489,17 @@ func retireMergedPoll(homeDir, taskID, checkPath string, auth *taskauthority.Can
 		return fmt.Errorf("%w: poll digest acquisition failed before publication: %w", domain.ErrCheckValidationRefused, err)
 	}
 
-	// Read task delivery identity.
+	// Read task delivery identity and require it to still be the identity the
+	// result was captured against: a re-captured head must not retire a poll
+	// that now tracks a different head.
 	ident, err := requireRetirementIdentity(homeDir, taskID)
 	if err != nil {
 		return fmt.Errorf("delivery identity: %w", err)
 	}
-
-	// Step 1: Query provider merge status.
-	status, err := QueryDeliveryMergeStatus(ident)
-	if err != nil {
-		// Provider unavailable / query error: preserve poll, do not fail fatal.
-		return fmt.Errorf("merge status query (preserving poll): %w", err)
+	if ident.HeadSHA != captured.HeadSHA {
+		return fmt.Errorf("%w: captured head %q, identity head %q (preserving poll)", domain.ErrStaleCapture, captured.HeadSHA, ident.HeadSHA)
 	}
-
-	// Step 2: Require merged with recognized state.
-	if !status.Merged {
-		if status.Closed {
-			return fmt.Errorf("PR #%d is closed but not merged (preserving poll)", ident.Number)
-		}
-		return fmt.Errorf("PR #%d is not merged (state=%s, preserving poll)", ident.Number, status.State)
-	}
-	if status.HeadSHA == "" {
-		return fmt.Errorf("provider returned empty head SHA for merged PR #%d (preserving poll)", ident.Number)
-	}
-
-	// Step 3: Verify provider head matches stored identity head.
-	// Exact match required for crash safety.
-	if ident.HeadSHA != "" && status.HeadSHA != ident.HeadSHA {
-		return fmt.Errorf("head SHA mismatch: stored=%q provider=%q (preserving poll)", ident.HeadSHA, status.HeadSHA)
-	}
-
-	// Resolve merged SHA.
-	mergedSHA := status.MergedSHA
-	if mergedSHA == "" {
-		mergedSHA = status.HeadSHA
-	}
+	mergedSHA := captured.MergedSHA
 
 	// Build publication evidence.
 	pubLine := publicationLine(taskID, ident.URL, mergedSHA)
@@ -634,7 +658,7 @@ func requireCanonicalCompletedOutcome(auth *taskauthority.Canonical, taskID stri
 	return nil
 }
 
-// RecoverPendingRetirement completes a crashed retirement sequence for one
+// recoverPendingRetirement completes a crashed retirement sequence for one
 // pending record. Returns true if the record was fully resolved (cleanup done
 // or nothing left to do). Returns an error for unresolvable corruption.
 //
@@ -656,10 +680,6 @@ func requireCanonicalCompletedOutcome(auth *taskauthority.Canonical, taskID stri
 // recovery instead requires durable retirement intent, valid quarantine
 // ownership, canonical completion, confirmed publication, and this exact
 // content identity. Current executable mode is not recovery identity.
-func RecoverPendingRetirement(homeDir, taskID string, auth *taskauthority.Canonical) (bool, error) {
-	return recoverPendingRetirement(homeDir, taskID, auth, pollContentDigest)
-}
-
 func recoverPendingRetirement(homeDir, taskID string, auth *taskauthority.Canonical, digestFn func(string) (string, error), renameFns ...func(string, string) error) (bool, error) {
 	renameFn := home.RenameDurable
 	if len(renameFns) > 0 {
@@ -823,25 +843,4 @@ func recoverPendingRetirement(homeDir, taskID string, auth *taskauthority.Canoni
 	}
 
 	return true, nil
-}
-
-// RecoverAllPendingRetirements scans all pending retirement records and
-// completes each. Returns the count of fully resolved records and any
-// non-fatal errors encountered. Records that fail recovery are preserved.
-func RecoverAllPendingRetirements(homeDir string, auth *taskauthority.Canonical) (int, []error) {
-	ids, err := ListPendingRetirements(homeDir)
-	if err != nil {
-		return 0, []error{fmt.Errorf("listing pending retirements: %w", err)}
-	}
-
-	var errors []error
-	resolved := 0
-	for _, id := range ids {
-		if _, recErr := RecoverPendingRetirement(homeDir, id, auth); recErr != nil {
-			errors = append(errors, fmt.Errorf("task %s: %w", id, recErr))
-		} else {
-			resolved++
-		}
-	}
-	return resolved, errors
 }

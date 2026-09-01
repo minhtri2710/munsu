@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // Digest holds the result of one wake triage cycle.
@@ -23,8 +24,10 @@ type WakeDigest struct {
 // Uses the existing classify package to determine captain-relevance.
 // Returns nil digest (not an error) when no wake queue exists or it is empty.
 // Consent-gating (state/.afk check) is the caller's responsibility.
+// Process-event wakes are left in the queue: they belong to the supervision
+// watcher's consumer, never to a digest.
 func OneCycle(homeDir string) (*Digest, error) {
-	records, err := DrainWakes(homeDir)
+	records, err := home.DrainWakesExcludingKind(homeDir, home.ProcessEventWakeKind)
 	if err != nil {
 		return nil, err
 	}
