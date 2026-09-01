@@ -81,7 +81,7 @@ type ProcessEventRecord struct {
 	// generation; it suppresses steady-state re-announcement only and is
 	// ignored by recovery.
 	Resolved  bool   `json:"resolved"`
-	Result    []byte `json:"result,omitempty"`
+	Result    []byte `json:"result"`
 	Announced bool   `json:"announced"`
 
 	RegisteredAt string `json:"registeredAt"`
