@@ -46,6 +46,17 @@ type Runner struct {
 	windowID              string
 	spawnRole             string
 
+	// contractMode is the delivery mode resolved (or read back from the
+	// durable contract) in resolveMode, BEFORE any preflight fallback mutates
+	// effectiveMode. It is the value recorded as the task's delivery
+	// contract; recording a post-fallback mode would let a transient missing
+	// binary permanently rewrite the contract.
+	contractMode string
+	// rescaffoldContract marks the one sanctioned contract change: an
+	// explicit --mode that differs from the recorded contract. Without it the
+	// recording op refuses to overwrite a committed contract.
+	rescaffoldContract bool
+
 	// dispatchPolicy is the explicit Fleet-boundary topology choice resolved
 	// once per Run (ResolveDispatchPolicy, issue #546 Slice 6): GeneralDirect
 	// dispatches the soldier from the General home; CaptainMediated dispatches
@@ -223,6 +234,13 @@ func (r *Runner) Run() (string, error) {
 	// endpoint Create/Submit. Recovery with the same Operation ID/generation
 	// re-adopts the committed intent and never mints a different one.
 	if err := r.beginLaunchIntent(); err != nil {
+		return "", err
+	}
+	// The delivery contract is recorded once the aggregate for this launch
+	// exists (BeginSpawn commits the generation's intent); resolveMode READS
+	// it before that. A contract already recorded under this mode is left
+	// alone, so recovery re-entry never double-records.
+	if err := r.recordDeliveryContract(); err != nil {
 		return "", err
 	}
 	success := false
@@ -561,12 +579,72 @@ func (r *Runner) taskAggregate() (taskauthority.Aggregate, error) {
 	return agg, nil
 }
 
-// Phase 2: resolveMode resolves the effective delivery mode.
+// Phase 2: resolveMode resolves the effective delivery mode for this launch.
+// The durable per-task delivery contract is authoritative when present: it is
+// read first and threaded into the configuration resolution, which still runs
+// (the typed snapshot it produces is mandatory for the launch intent) but no
+// longer answers the mode question. A task delivers under the mode it was
+// contracted with instead of re-resolving fresh on every spawn.
 func (r *Runner) resolveMode() error {
+	contract := r.deliveryContract()
+	if err := r.resolveConfiguredMode(contract); err != nil {
+		return err
+	}
+	r.applyDeliveryContract(contract)
+	r.contractMode = r.effectiveMode
+	return nil
+}
+
+// deliveryContract reads the task's durable delivery contract, or nil when the
+// task has none: a first spawn, or a task whose generations predate the
+// contract. An unreadable aggregate reads as no contract; beginLaunchIntent
+// fails closed on it later with the authoritative error.
+func (r *Runner) deliveryContract() *taskauthority.DeliveryContract {
+	if r.args.Authority == nil {
+		return nil
+	}
+	taskID, err := domain.NewTaskID(r.args.ID)
+	if err != nil {
+		return nil
+	}
+	agg, err := r.args.Authority.Get(taskID)
+	if err != nil {
+		return nil
+	}
+	return agg.DeliveryContract
+}
+
+// applyDeliveryContract settles the resolved mode against the task's durable
+// delivery contract. A task with no contract keeps the resolved mode and
+// records it after the launch intent is committed. Under typed config the
+// contract has already been honoured inside the snapshot resolution; this is
+// the untyped surface's override and the one place the re-scaffold intent is
+// raised: an explicit --mode that differs from the contract is a re-scaffold,
+// the explicit mode wins, and the op owns the no-silent-override refusal.
+func (r *Runner) applyDeliveryContract(contract *taskauthority.DeliveryContract) {
+	if contract == nil {
+		return
+	}
+	if r.args.Mode != "" && r.args.Mode != contract.Mode {
+		r.rescaffoldContract = true
+		return
+	}
+	r.effectiveMode = contract.Mode
+	r.requestedMode = contract.Mode
+	r.fallbackReason = ""
+}
+
+// resolveConfiguredMode resolves this launch's configuration surface: the
+// typed project snapshot, or the untyped home/registry surface. The typed
+// surface consumes the contract directly, so a contracted task never has its
+// mode re-resolved and can never be blocked by default-mode drift; the untyped
+// surface has no contract input and is corrected afterwards by
+// applyDeliveryContract.
+func (r *Runner) resolveConfiguredMode(contract *taskauthority.DeliveryContract) error {
 	if TypedConfigAvailable(r.homeDir) {
 		args := r.args
 		args.TaskDescription = r.taskDescription()
-		resolved, err := ResolveSpawnProjectConfig(r.homeDir, args, r.dispatchPolicy)
+		resolved, err := ResolveSpawnProjectConfig(r.homeDir, args, r.dispatchPolicy, contract)
 		if err != nil {
 			return err
 		}
@@ -971,6 +1049,49 @@ func (r *Runner) beginLaunchIntent() error {
 		return fmt.Errorf("launch intent: committed launch intent missing after BeginSpawn")
 	}
 	r.adoptLaunch(*fresh.Launch)
+	return nil
+}
+
+// recordDeliveryContract fixes the launch's delivery mode durably on the
+// canonical task so every later generation reads the contract instead of
+// re-resolving. It runs after beginLaunchIntent because the aggregate for
+// this launch must exist first. A contract already recorded under this mode
+// is a no-op (the RecordLaunch skip-before-op shape), so recovery re-entry
+// never re-records; a differing mode reaches the op, which refuses to
+// override a committed contract without the explicit re-scaffold intent.
+func (r *Runner) recordDeliveryContract() error {
+	if r.args.Authority == nil {
+		return fmt.Errorf("delivery contract: task authority is not composed for spawn")
+	}
+	if !taskauthority.DeliveryModes[r.contractMode] {
+		return fmt.Errorf("delivery contract: task %s resolved no valid delivery mode (%q); refusing to launch uncontracted", r.args.ID, r.contractMode)
+	}
+	taskID, err := domain.NewTaskID(r.args.ID)
+	if err != nil {
+		return fmt.Errorf("delivery contract: %w", err)
+	}
+	agg, err := r.args.Authority.Get(taskID)
+	if err != nil {
+		return fmt.Errorf("delivery contract: resolving task %s: %w", r.args.ID, err)
+	}
+	if agg.DeliveryContract != nil && agg.DeliveryContract.Mode == r.contractMode {
+		return nil
+	}
+	req := taskauthority.CanonicalRecordDeliveryContractRequest{
+		HomeID:       r.args.Authority.HomeID(),
+		TaskID:       taskID,
+		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+		Mode:         r.contractMode,
+		Rescaffold:   r.rescaffoldContract,
+		Reason:       "spawn",
+	}
+	op, err := r.spawnOperation("contract", agg.Generation, req)
+	if err != nil {
+		return fmt.Errorf("delivery contract: %w", err)
+	}
+	if _, err := r.args.Authority.RecordDeliveryContract(op, req); err != nil {
+		return fmt.Errorf("delivery contract: %w", err)
+	}
 	return nil
 }
 

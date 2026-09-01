@@ -317,6 +317,31 @@ type Aggregate struct {
 	Transfer         *TransferState      `json:"transfer,omitempty"`
 	Retirement       *RetirementEvidence `json:"retirement,omitempty"`
 	CleanupClaim     *CleanupClaim       `json:"cleanup_claim,omitempty"`
+	DeliveryContract *DeliveryContract   `json:"delivery_contract,omitempty"`
+}
+
+// DeliveryModes is the authoritative set of delivery modes a task's durable
+// delivery contract may carry. taskauthority owns the invariant for the
+// record it persists; Fleet's ValidDeliveryModes is the CLI-facing peer over
+// the same three values. A mode either package does not know fails closed
+// here rather than being persisted as an unenforceable contract.
+var DeliveryModes = map[string]bool{
+	"no-mistakes": true,
+	"direct-PR":   true,
+	"local-only":  true,
+}
+
+// DeliveryContract is the durable per-task delivery contract: the delivery
+// mode resolved once at the task's first spawn and thereafter READ, never
+// re-resolved. It is independently mutable evidence (unlike the immutable
+// TaskDefinition) so an authorized delivery transition can later be recorded
+// into it, and it survives Reopen so every generation of a task delivers
+// under the same contract. Task metadata's "mode" key is a display
+// projection of this record, never a mode source.
+type DeliveryContract struct {
+	OperationID string `json:"operation_id"`
+	Mode        string `json:"mode"`
+	RecordedAt  int64  `json:"recorded_at"`
 }
 
 // TaskAuthoritySchema is the deterministic schema identity for the canonical
@@ -425,6 +450,27 @@ func validateAggregate(agg Aggregate) error {
 		if err := validateLaunchEvidence(*agg.LaunchEvidence); err != nil {
 			return err
 		}
+	}
+	if agg.DeliveryContract != nil {
+		if err := validateDeliveryContract(*agg.DeliveryContract); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateDeliveryContract checks the durable delivery contract shape: the
+// recording Operation ID, a mode inside the authoritative delivery mode set,
+// and a recording timestamp.
+func validateDeliveryContract(dc DeliveryContract) error {
+	if dc.OperationID == "" || strings.ContainsAny(dc.OperationID, `/\\`) {
+		return validationError("delivery contract missing operation id")
+	}
+	if !DeliveryModes[dc.Mode] {
+		return validationError("delivery contract carries invalid delivery mode %q", dc.Mode)
+	}
+	if dc.RecordedAt <= 0 {
+		return validationError("delivery contract missing recorded timestamp")
 	}
 	return nil
 }
@@ -749,6 +795,10 @@ func (a Aggregate) clone() Aggregate {
 	if a.LaunchEvidence != nil {
 		e := *a.LaunchEvidence
 		out.LaunchEvidence = &e
+	}
+	if a.DeliveryContract != nil {
+		dc := *a.DeliveryContract
+		out.DeliveryContract = &dc
 	}
 	return out
 }

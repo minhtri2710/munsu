@@ -293,7 +293,7 @@ func TestResolveSpawnProjectConfig_AllowDirectPRFallback(t *testing.T) {
 			{Name: "alpha", Path: filepath.Join(home, "projects", "alpha")},
 		}, nil)
 
-		resolved, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, DispatchPolicyGeneralDirect)
+		resolved, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, DispatchPolicyGeneralDirect, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -314,7 +314,7 @@ func TestResolveSpawnProjectConfig_AllowDirectPRFallback(t *testing.T) {
 			{Name: "alpha", Path: filepath.Join(home, "projects", "alpha")},
 		}, nil)
 
-		resolved, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, DispatchPolicyGeneralDirect)
+		resolved, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, DispatchPolicyGeneralDirect, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -45,7 +45,10 @@ func Scaffold(opts ScaffoldOptions) error {
 		return fmt.Errorf("creating brief directory: %w", err)
 	}
 
-	content := buildBrief(opts)
+	content, err := buildBrief(opts)
+	if err != nil {
+		return err
+	}
 	path := filepath.Join(dir, "brief.md")
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		return err
@@ -58,27 +61,35 @@ func Scaffold(opts ScaffoldOptions) error {
 }
 
 // buildBrief assembles the brief markdown template.
-func buildBrief(opts ScaffoldOptions) string {
+func buildBrief(opts ScaffoldOptions) (string, error) {
 	id := opts.ID
 	repo := opts.Repo
 
 	var b strings.Builder
 
 	if opts.Scout {
-		b.WriteString(scoutBriefTemplate(id, repo, opts.Mode, opts.Yolo, opts.ScoutScope, opts.ScoutRuntimeBudgetSecs, opts.Generation))
-	} else {
-		b.WriteString(shipBriefTemplate(id, repo, opts.Mode, opts.Yolo))
+		tmpl, err := scoutBriefTemplate(id, repo, opts.Mode, opts.Yolo, opts.ScoutScope, opts.ScoutRuntimeBudgetSecs, opts.Generation)
+		if err != nil {
+			return "", err
+		}
+		b.WriteString(tmpl)
+		return b.String(), nil
 	}
+	tmpl, err := shipBriefTemplate(id, repo, opts.Mode, opts.Yolo)
+	if err != nil {
+		return "", err
+	}
+	b.WriteString(tmpl)
 
-	return b.String()
+	return b.String(), nil
 }
 
-// shipBriefTemplate returns the ship-mode brief template.
-func shipBriefTemplate(id, repo, mode string, yolo bool) string {
-	modeLine := ""
-	if mode != "" {
-		modeLine = fmt.Sprintf("Delivery mode: %s", mode)
-	}
+// shipBriefTemplate returns the ship-mode brief template. The delivery rules
+// are selected by the exact delivery mode: an empty or unknown mode is a
+// resolution failure, not a licence to render no-mistakes rules, so it fails
+// loud instead of silently briefing the soldier for the wrong contract.
+func shipBriefTemplate(id, repo, mode string, yolo bool) (string, error) {
+	modeLine := fmt.Sprintf("Delivery mode: %s", mode)
 	if yolo {
 		modeLine += " +yolo"
 	}
@@ -96,7 +107,7 @@ func shipBriefTemplate(id, repo, mode string, yolo bool) string {
 	Commit locally and stop for orchestrator merge.
 	Do not push, open a PR, run no-mistakes, or merge the change yourself.
 `
-	default:
+	case "no-mistakes":
 		setupStep = "2. Run `no-mistakes doctor`; if it reports the repo is not initialized here, run `no-mistakes init`.\n"
 		deliveryRules = `## Delivery
 	You drive no-mistakes by responding to its gates, not by implementing fixes.
@@ -105,6 +116,8 @@ func shipBriefTemplate(id, repo, mode string, yolo bool) string {
 	Escalate ask-user findings through the task status protocol and answer gates with ` + "`no-mistakes axi respond`" + `; avoid ` + "`--yes`" + `.
 	After no-mistakes reports CI green, append ` + "`done: PR {url} checks green`" + ` and stop.
 `
+	default:
+		return "", fmt.Errorf("ship brief for %s: unknown delivery mode %q", id, mode)
 	}
 
 	return fmt.Sprintf(`# Task brief: %s
@@ -141,21 +154,26 @@ Record only project knowledge useful to almost every future session.
 The task is complete only when committed on your branch.
 When delivery is complete, run `+"`"+`munsu report done "{summary}"`+"`"+` and stop.
 Before that, close every open keyed decision with `+"`"+`resolved [key=<slug>]: {summary}`+"`"+`.
-`, id, repo, id, setupStep, modeLine+"\n"+deliveryRules)
+`, id, repo, id, setupStep, modeLine+"\n"+deliveryRules), nil
 }
 
 // scoutBriefTemplate returns the scout-mode brief template. Scaffold
 // validates gen before calling this; the generation-bound report name in the
 // contract is the soldier's write instruction.
-func scoutBriefTemplate(id, repo, mode string, yolo bool, scope string, budget int64, gen taskauthority.Generation) string {
-	modeLine := ""
-	if mode != "" {
-		modeLine = fmt.Sprintf("Delivery mode: %s", mode)
-		if yolo {
-			modeLine += " +yolo"
-		}
-		modeLine += "\n"
+//
+// The delivery mode is validated on this path exactly as on the ship path: a
+// scout never delivers, but its brief still names the contract the task is
+// launched under, and an empty or unrecognized mode is a resolution failure
+// upstream rather than a line to omit.
+func scoutBriefTemplate(id, repo, mode string, yolo bool, scope string, budget int64, gen taskauthority.Generation) (string, error) {
+	if !ValidDeliveryModes[mode] {
+		return "", fmt.Errorf("scout brief for %s: unknown delivery mode %q", id, mode)
 	}
+	modeLine := fmt.Sprintf("Delivery mode: %s", mode)
+	if yolo {
+		modeLine += " +yolo"
+	}
+	modeLine += "\n"
 
 	return fmt.Sprintf(`# Scout brief: %s
 
@@ -184,7 +202,7 @@ that answers for this generation; never read or reuse another generation's.
 4. To close an open wake key, append `+"`"+`resolved [key=<slug>]: {summary}`+"`"+`. Repeating the same resolved key is safe.
 5. When done, run `+"`"+`munsu report done "{summary of findings location}"`+"`"+` and stop.
 6. Do not modify project files - only the report.
-`, id, scope, budget, repo, id, ReportName(gen), modeLine)
+`, id, scope, budget, repo, id, ReportName(gen), modeLine), nil
 }
 
 // Path returns the expected brief.md path for the given task ID.
