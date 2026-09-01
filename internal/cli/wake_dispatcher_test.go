@@ -98,6 +98,49 @@ func TestProbeAdapter_PlainBackendProducesUnknown(t *testing.T) {
 	}
 }
 
+// --- busyAdapter tests ---
+
+func TestBusyAdapter_MapsActivityThroughFleetBusyAuthority(t *testing.T) {
+	alive := func(a backend.Activity) backend.EndpointObservation {
+		return backend.EndpointObservation{
+			Lifecycle:      backend.LifecycleAlive,
+			Responsiveness: backend.Responsive,
+			Freshness:      backend.FreshnessUnknown,
+			Activity:       a,
+			Source:         backend.SourceProbe,
+		}
+	}
+	// Absent() requires dead + Fleet-authorized current freshness + a trusted source.
+	absent := backend.EndpointObservation{
+		Lifecycle:      backend.LifecycleDead,
+		Responsiveness: backend.Responsive,
+		Freshness:      backend.FreshnessCurrent,
+		Activity:       backend.ActivityUnknown,
+		Source:         backend.SourceProbe,
+	}
+	if !absent.Absent() {
+		t.Fatal("fixture must be Absent()")
+	}
+	tests := []struct {
+		name string
+		obs  backend.EndpointObservation
+		want string
+	}{
+		{"busy", alive(backend.ActivityBusy), "held"},
+		{"idle", alive(backend.ActivityIdle), "idle"},
+		{"blocked", alive(backend.ActivityBlocked), "blocked"},
+		{"unknown", alive(backend.ActivityUnknown), "unknown"},
+		{"absent", absent, "dead"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := (busyAdapter{}).Read(tt.obs); got != tt.want {
+				t.Errorf("Read = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // --- submitAdapter tests ---
 
 type testSubmitBackend struct {

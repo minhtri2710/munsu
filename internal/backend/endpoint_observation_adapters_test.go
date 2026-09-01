@@ -2,7 +2,9 @@ package backend
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/testutil"
@@ -78,6 +80,134 @@ func TestListAdapterObservationContract(t *testing.T) {
 			}
 			if obs.Absent() || obs.Live() {
 				t.Fatalf("raw adapter observation must not be Live/Absent: %+v", obs)
+			}
+		})
+	}
+}
+
+// activityFakeBackend is an in-memory agent-aware backend that also reports a
+// raw agent-status string, exercising the Activity enrichment arm of
+// ObserveEndpoint without shelling out.
+type activityFakeBackend struct {
+	paneAlive  bool
+	agentAlive bool
+	recognized bool
+	status     string
+}
+
+func (b *activityFakeBackend) NewWindow(string, string) (string, error) { return "", nil }
+func (b *activityFakeBackend) SendKeys(string, string) error            { return nil }
+func (b *activityFakeBackend) Capture(string, int) (string, error)      { return "", nil }
+func (b *activityFakeBackend) Teardown(string) error                    { return nil }
+func (b *activityFakeBackend) CheckAgentAlive(string) (bool, bool, error) {
+	return b.paneAlive, b.agentAlive, nil
+}
+func (b *activityFakeBackend) IsRecognizedAgent(string) (bool, string) {
+	return b.recognized, b.status
+}
+
+// agentAwareOnlyBackend is agent-aware but has no AgentActivityReader surface,
+// so its alive observation must keep Activity unknown.
+type agentAwareOnlyBackend struct{}
+
+func (agentAwareOnlyBackend) NewWindow(string, string) (string, error) { return "", nil }
+func (agentAwareOnlyBackend) SendKeys(string, string) error            { return nil }
+func (agentAwareOnlyBackend) Capture(string, int) (string, error)      { return "", nil }
+func (agentAwareOnlyBackend) Teardown(string) error                    { return nil }
+func (agentAwareOnlyBackend) CheckAgentAlive(string) (bool, bool, error) {
+	return true, true, nil
+}
+
+func TestObserveEndpoint_AliveAgentStatusPopulatesActivity(t *testing.T) {
+	cases := []struct {
+		status string
+		want   Activity
+	}{
+		{"working", ActivityBusy},
+		{"busy", ActivityBusy},
+		{"idle", ActivityIdle},
+		{"done", ActivityIdle},
+		{"blocked", ActivityBlocked},
+		{"unknown", ActivityUnknown},
+		{"", ActivityUnknown},
+		{"{malformed", ActivityUnknown},
+		{"Idle", ActivityIdle},
+		{" WORKING ", ActivityBusy},
+		{"  busy  ", ActivityBusy},
+		{"Blocked", ActivityBlocked},
+		{"DONE", ActivityIdle},
+	}
+	for _, tc := range cases {
+		t.Run("status="+tc.status, func(t *testing.T) {
+			bk := &activityFakeBackend{paneAlive: true, agentAlive: true, recognized: true, status: tc.status}
+			obs := ObserveEndpoint(bk, "pane-1")
+			if obs.Lifecycle != LifecycleAlive {
+				t.Fatalf("lifecycle = %v, want alive", obs.Lifecycle)
+			}
+			if obs.Activity != tc.want {
+				t.Fatalf("activity = %v, want %v", obs.Activity, tc.want)
+			}
+		})
+	}
+}
+
+func TestObserveEndpoint_HerdrSingleAgentGetEnrichesActivity(t *testing.T) {
+	logDir := t.TempDir()
+	logFile := filepath.Join(logDir, "agent_gets.log")
+	binDir := t.TempDir()
+	path := filepath.Join(binDir, "herdr")
+	script := fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "--session" ]; then shift 2; fi
+if [ "$1" = "pane" ] && [ "$2" = "get" ]; then
+  case "$3" in
+    alive) echo '{"result":{"pane_id":"alive"}}'; exit 0 ;;
+  esac
+fi
+if [ "$1" = "agent" ] && [ "$2" = "get" ]; then
+  echo "agent get" >> %q
+  echo '{"result":{"agent":{"agent_status":"Idle"}}}'; exit 0
+fi
+exit 1
+`, logFile)
+	testutil.WriteFakeExecutable(t, path, script)
+	testutil.PrependPath(t, binDir)
+
+	obs := ObserveEndpoint(NewHerdrBackend("test"), "alive")
+	if obs.Lifecycle != LifecycleAlive {
+		t.Fatalf("lifecycle = %v, want alive", obs.Lifecycle)
+	}
+	if obs.Activity != ActivityIdle {
+		t.Fatalf("activity = %v, want idle (normalized from \"Idle\")", obs.Activity)
+	}
+	data, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatalf("reading agent get log: %v", err)
+	}
+	got := strings.Count(string(data), "agent get\n")
+	if got != 1 {
+		t.Fatalf("ObserveEndpoint issued %d herdr agent get invocations, want 1 (log: %q)", got, string(data))
+	}
+}
+
+func TestObserveEndpoint_ActivityStaysUnknownWithoutEnrichment(t *testing.T) {
+	cases := []struct {
+		name string
+		bk   Backend
+		want LifecycleState
+	}{
+		{"alive without AgentActivityReader", agentAwareOnlyBackend{}, LifecycleAlive},
+		{"alive but agent unrecognized", &activityFakeBackend{paneAlive: true, agentAlive: true, recognized: false, status: "working"}, LifecycleAlive},
+		{"starting with reader present", &activityFakeBackend{paneAlive: true, agentAlive: false, recognized: true, status: "working"}, LifecycleStarting},
+		{"pane absent with reader present", &activityFakeBackend{paneAlive: false, agentAlive: false, recognized: true, status: "idle"}, LifecycleUnknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			obs := ObserveEndpoint(tc.bk, "pane-1")
+			if obs.Lifecycle != tc.want {
+				t.Fatalf("lifecycle = %v, want %v", obs.Lifecycle, tc.want)
+			}
+			if obs.Activity != ActivityUnknown {
+				t.Fatalf("activity = %v, want unknown", obs.Activity)
 			}
 		})
 	}

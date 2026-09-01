@@ -8,17 +8,17 @@ Give munsu **one** fleet-side owner of the "is this endpoint busy / idle /
 unknown / dead" question, and route every consumer through it.
 
 The typed `backend.Activity` axis (`busy`/`idle`/`blocked`/`unknown`) is carried
-on the canonical `backend.EndpointObservation` but is **not yet read by any
-dispatch decision** — Activity-aware gating is the A3 follow-up. Until A2, the
-orchestrator also re-declared a *second*, coarse `EndpointObservationState`
-enum plus an `EndpointObservation{State, Detail}` struct that `DispatchWake`
-gated on. A2 retired that duplicate: `DispatchWake` and `ProbePort.Probe` now
-consume `backend.EndpointObservation` directly and gate on its derived `State()`
-over the same seven coarse outcomes (alive / starting / unresponsive / dead /
-unknown / stale-identity / unresolved), so every per-state dispatch decision is
-unchanged. The remaining gap is the single authority itself (A1) and routing the
-gate through it (A3), not the observation representation — munsu's "one live
-contract" doctrine is restored at the representation level.
+on the canonical `backend.EndpointObservation` and is **read by the dispatch
+gate** — A3 routes `DispatchWake` through the busy authority so a busy endpoint
+is held and `unknown` is never dispatched as idle. A2 retired the orchestrator's
+second, coarse `EndpointObservationState` enum plus `EndpointObservation{State,
+Detail}` that `DispatchWake` once gated on; `DispatchWake` and `ProbePort.Probe`
+now consume `backend.EndpointObservation` directly and gate on its derived
+`State()` over the same seven coarse outcomes (alive / starting / unresponsive /
+dead / unknown / stale-identity / unresolved) before the busy gate. A1 delivered
+the authority and A3 routed the gate through it, so munsu's "one live contract"
+doctrine is restored at the representation level (A2) and the gate now consumes
+the single authority (A3).
 
 Success = the coarse orchestrator duplicate is gone, the dispatch gate consults
 the single authority, and the authority's answer is derived from the existing
@@ -106,4 +106,6 @@ Guard-coverage: the retired-duplicate path and the "unknown ≠ idle" refusal mu
   (aliased `EndpointStatus`); adapters remain producers only. The `orchestrator`
   duplicate was retired in A2 (it is gone, not moved here).
 - Does any current consumer other than `DispatchWake` read the coarse
-  orchestrator enum today? (Grep at Plan start; each must be re-pointed.)
+  orchestrator enum today? Resolved by A2: the duplicate `EndpointObservationState`
+  enum was retired (ADR-0021 Decision 1 / SPEC A2), so `DispatchWake` is the only
+  consumer and now routes through the authority (A3); no other reader exists to re-point.

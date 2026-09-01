@@ -92,6 +92,7 @@ func TestDispatchWake_ConsumesCanonicalBackendObservation(t *testing.T) {
 				// Real production adapter: the canonical backend observation flows in.
 				Probe:  &observeProbePort{bk: tc.bk},
 				Submit: &mockSubmitPort{acknowledged: true},
+				Busy:   &mockBusyPort{reading: "idle"},
 			}
 
 			result, err := DispatchWake(req)

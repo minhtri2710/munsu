@@ -31,11 +31,13 @@ On axis 2 munsu is further along than it looks, and this is the load-bearing
 detail. The typed observation model already exists:
 `internal/backend/endpoint_observation.go` defines orthogonal axes
 `LifecycleState`, `Responsiveness`, `Freshness`, and `Activity` on
-`EndpointObservation`. But `Activity` is **producer-only** — nothing in the
-dispatch path consumes it. Meanwhile a *second*, coarser
-`EndpointObservationState` enum lives in
-`internal/orchestrator/wake_dispatch.go` and gates dispatch on its own
-heuristic. Two overlapping representations of the same question violate munsu's
+`EndpointObservation`. But `Activity` was **producer-only** when this ADR was
+written — nothing in the dispatch path consumed it — though the fleet busy
+authority now derives its reading from `Activity` and `DispatchWake` routes
+through that authority, so it is consumed. Meanwhile a *second*, coarser
+`EndpointObservationState` enum lived in
+`internal/orchestrator/wake_dispatch.go` and gated dispatch on its own
+heuristic until it was retired. Two overlapping representations of the same question violated munsu's
 "one live contract" doctrine.
 
 ## Evidence
