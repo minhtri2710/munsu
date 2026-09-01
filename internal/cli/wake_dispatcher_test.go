@@ -41,31 +41,31 @@ func TestProbeAdapter_AgentAwareBackendProducesTypedStates(t *testing.T) {
 	tests := []struct {
 		name       string
 		checkAlive func(string) (bool, bool, error)
-		wantState  orchestrator.EndpointObservationState
+		wantState  backend.EndpointObservationState
 		wantAlive  bool // alive() should match
 	}{
 		{
 			name:       "alive",
 			checkAlive: func(string) (bool, bool, error) { return true, true, nil },
-			wantState:  orchestrator.EndpointAlive,
+			wantState:  backend.EndpointAlive,
 			wantAlive:  true,
 		},
 		{
 			name:       "starting",
 			checkAlive: func(string) (bool, bool, error) { return true, false, nil },
-			wantState:  orchestrator.EndpointStarting,
+			wantState:  backend.EndpointStarting,
 			wantAlive:  false,
 		},
 		{
 			name:       "dead",
 			checkAlive: func(string) (bool, bool, error) { return false, false, backend.ErrPaneNotFound },
-			wantState:  orchestrator.EndpointDead,
+			wantState:  backend.EndpointDead,
 			wantAlive:  false,
 		},
 		{
 			name:       "unresponsive",
 			checkAlive: func(string) (bool, bool, error) { return false, false, errors.New("timeout") },
-			wantState:  orchestrator.EndpointUnresponsive,
+			wantState:  backend.EndpointUnresponsive,
 			wantAlive:  false,
 		},
 	}
@@ -77,8 +77,8 @@ func TestProbeAdapter_AgentAwareBackendProducesTypedStates(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if got.State != tt.wantState {
-				t.Errorf("state = %v, want %v", got.State, tt.wantState)
+			if got.State() != tt.wantState {
+				t.Errorf("state = %v, want %v", got.State(), tt.wantState)
 			}
 		})
 	}
@@ -93,8 +93,8 @@ func TestProbeAdapter_PlainBackendProducesUnknown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got.State != orchestrator.EndpointUnknown {
-		t.Errorf("state = %v, want unknown", got.State)
+	if got.State() != backend.EndpointUnknown {
+		t.Errorf("state = %v, want unknown", got.State())
 	}
 }
 

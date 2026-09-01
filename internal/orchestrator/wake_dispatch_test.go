@@ -8,18 +8,71 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // --- Mock ports ---
 
 type mockProbePort struct {
-	obs EndpointObservation
+	obs backend.EndpointObservation
 	err error
 }
 
-func (m *mockProbePort) Probe(_ string) (EndpointObservation, error) {
+func (m *mockProbePort) Probe(_ string) (backend.EndpointObservation, error) {
 	return m.obs, m.err
+}
+
+// obsFor builds an all-axes-valid observation whose State() derives the
+// requested coarse state. It starts from the shape ObserveEndpoint reports
+// (lifecycle unknown, responsive, freshness unknown, activity unknown, probe
+// source) and overrides exactly one deciding axis per state.
+func obsFor(state backend.EndpointObservationState, detail string) backend.EndpointObservation {
+	obs := backend.EndpointObservation{
+		Lifecycle:      backend.LifecycleUnknown,
+		Responsiveness: backend.Responsive,
+		Freshness:      backend.FreshnessUnknown,
+		Activity:       backend.ActivityUnknown,
+		Source:         backend.SourceProbe,
+		Detail:         detail,
+	}
+	switch state {
+	case backend.EndpointAlive:
+		obs.Lifecycle = backend.LifecycleAlive
+	case backend.EndpointStarting:
+		obs.Lifecycle = backend.LifecycleStarting
+	case backend.EndpointDead:
+		obs.Lifecycle = backend.LifecycleDead
+	case backend.EndpointStaleIdentity:
+		obs.Freshness = backend.FreshnessStale
+	case backend.EndpointUnresponsive:
+		obs.Responsiveness = backend.Unresponsive
+	case backend.EndpointUnresolved:
+		obs.Source = backend.SourceDerived
+	case backend.EndpointUnknown:
+		// base shape already derives unknown
+	}
+	return obs
+}
+
+func TestObsFor_DerivesIntendedStates(t *testing.T) {
+	for _, s := range []backend.EndpointObservationState{
+		backend.EndpointAlive,
+		backend.EndpointStarting,
+		backend.EndpointUnresponsive,
+		backend.EndpointDead,
+		backend.EndpointUnknown,
+		backend.EndpointStaleIdentity,
+		backend.EndpointUnresolved,
+	} {
+		obs := obsFor(s, "")
+		if !obs.Valid() {
+			t.Errorf("obsFor(%v) is not Valid(): %s", s, obs)
+		}
+		if got := obs.State(); got != s {
+			t.Errorf("obsFor(%v).State() = %v, want %v", s, got, s)
+		}
+	}
 }
 
 type mockSubmitPort struct {
@@ -41,7 +94,7 @@ func (m *mockSubmitPort) Submit(_ string, prompt string) SubmitResult {
 }
 
 func aliveProbe() *mockProbePort {
-	return &mockProbePort{obs: EndpointObservation{State: EndpointAlive}}
+	return &mockProbePort{obs: obsFor(backend.EndpointAlive, "")}
 }
 
 func setupMockRequest(t *testing.T, mode WakeDeliveryMode, alive bool) (DispatchWakeRequest, string) {
@@ -53,9 +106,9 @@ func setupMockRequest(t *testing.T, mode WakeDeliveryMode, alive bool) (Dispatch
 		t.Fatalf("EnqueueWake: %v", err)
 	}
 
-	obs := EndpointObservation{State: EndpointAlive}
+	obs := obsFor(backend.EndpointAlive, "")
 	if !alive {
-		obs = EndpointObservation{State: EndpointUnresponsive, Detail: "mock not ready"}
+		obs = obsFor(backend.EndpointUnresponsive, "mock not ready")
 	}
 
 	target := TargetResult{
@@ -236,7 +289,7 @@ func TestDispatchWake_StartingSkipped(t *testing.T) {
 		HomeDir: home,
 		Mode:    WakeDeliveryHerdr,
 		Target:  TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
-		Probe:   &mockProbePort{obs: EndpointObservation{State: EndpointStarting, Detail: "pane exists, agent not ready"}},
+		Probe:   &mockProbePort{obs: obsFor(backend.EndpointStarting, "pane exists, agent not ready")},
 		Submit:  &mockSubmitPort{acknowledged: true},
 	}
 
@@ -259,7 +312,7 @@ func TestDispatchWake_UnresponsiveSkipped(t *testing.T) {
 		HomeDir: home,
 		Mode:    WakeDeliveryHerdr,
 		Target:  TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
-		Probe:   &mockProbePort{obs: EndpointObservation{State: EndpointUnresponsive, Detail: "timeout"}},
+		Probe:   &mockProbePort{obs: obsFor(backend.EndpointUnresponsive, "timeout")},
 		Submit:  &mockSubmitPort{acknowledged: true},
 	}
 
@@ -282,7 +335,7 @@ func TestDispatchWake_DeadSkipped(t *testing.T) {
 		HomeDir: home,
 		Mode:    WakeDeliveryHerdr,
 		Target:  TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
-		Probe:   &mockProbePort{obs: EndpointObservation{State: EndpointDead, Detail: "pane not found"}},
+		Probe:   &mockProbePort{obs: obsFor(backend.EndpointDead, "pane not found")},
 		Submit:  &mockSubmitPort{acknowledged: true},
 	}
 
@@ -305,7 +358,7 @@ func TestDispatchWake_UnknownSkippedWithoutClaim(t *testing.T) {
 		HomeDir: home,
 		Mode:    WakeDeliveryHerdr,
 		Target:  TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
-		Probe:   &mockProbePort{obs: EndpointObservation{State: EndpointUnknown, Detail: "no authoritative probe"}},
+		Probe:   &mockProbePort{obs: obsFor(backend.EndpointUnknown, "no authoritative probe")},
 		Submit:  &mockSubmitPort{acknowledged: true},
 	}
 
@@ -337,7 +390,7 @@ func TestDispatchWake_StaleIdentitySkippedWithoutClaim(t *testing.T) {
 		HomeDir: home,
 		Mode:    WakeDeliveryHerdr,
 		Target:  TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
-		Probe:   &mockProbePort{obs: EndpointObservation{State: EndpointStaleIdentity, Detail: "endpoint identity changed"}},
+		Probe:   &mockProbePort{obs: obsFor(backend.EndpointStaleIdentity, "endpoint identity changed")},
 		Submit:  &mockSubmitPort{acknowledged: true},
 	}
 
@@ -369,7 +422,7 @@ func TestDispatchWake_UnresolvedSkippedWithoutClaim(t *testing.T) {
 		HomeDir: home,
 		Mode:    WakeDeliveryHerdr,
 		Target:  TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
-		Probe:   &mockProbePort{obs: EndpointObservation{State: EndpointUnresolved, Detail: "cannot resolve bound backend"}},
+		Probe:   &mockProbePort{obs: obsFor(backend.EndpointUnresolved, "cannot resolve bound backend")},
 		Submit:  &mockSubmitPort{acknowledged: true},
 	}
 

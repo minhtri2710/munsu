@@ -2,7 +2,11 @@
 // for dispatching durable Wakes to backend agent targets.
 package orchestrator
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/minhtri2710/munsu/internal/backend"
+)
 
 // DispatchWakeOutcome enumerates the typed outcomes from a Wake dispatch attempt.
 type DispatchWakeOutcome string
@@ -37,52 +41,10 @@ func DeferredResult(reason, detail string) DispatchWakeResult {
 	return DispatchWakeResult{Outcome: WakeDeferred, Reason: reason, Detail: detail}
 }
 
-// EndpointObservationState enumerates typed Endpoint Observation states per ADR-0005.
-type EndpointObservationState uint8
-
-const (
-	EndpointObservationInvalid EndpointObservationState = iota
-	EndpointAlive
-	EndpointStarting
-	EndpointUnresponsive
-	EndpointDead
-	EndpointUnknown
-	EndpointStaleIdentity
-	EndpointUnresolved
-)
-
-// String returns a human-readable name for the observation state.
-func (s EndpointObservationState) String() string {
-	switch s {
-	case EndpointAlive:
-		return "alive"
-	case EndpointStarting:
-		return "starting"
-	case EndpointUnresponsive:
-		return "unresponsive"
-	case EndpointDead:
-		return "dead"
-	case EndpointUnknown:
-		return "unknown"
-	case EndpointStaleIdentity:
-		return "stale-identity"
-	case EndpointUnresolved:
-		return "unresolved"
-	default:
-		return "invalid"
-	}
-}
-
-// EndpointObservation carries the typed observation of a bound endpoint.
-type EndpointObservation struct {
-	State  EndpointObservationState
-	Detail string
-}
-
 // ProbePort is the Backend-facing probe adapter interface.
-// Implementations wrap backend.Backend and return a typed EndpointObservation.
+// Implementations wrap backend.Backend and return a typed backend.EndpointObservation.
 type ProbePort interface {
-	Probe(window string) (EndpointObservation, error)
+	Probe(window string) (backend.EndpointObservation, error)
 }
 
 // SubmitResult carries the typed outcome of a prompt submission attempt.
@@ -154,22 +116,22 @@ func DispatchWake(req DispatchWakeRequest) (DispatchWakeResult, error) {
 	if err != nil {
 		return SkippedResult("probe-error", err.Error()), nil
 	}
-	switch obs.State {
-	case EndpointAlive:
+	switch obs.State() {
+	case backend.EndpointAlive:
 		// Proceed to claim
-	case EndpointStarting:
+	case backend.EndpointStarting:
 		return SkippedResult("target-unready", "endpoint is starting"), nil
-	case EndpointUnresponsive:
+	case backend.EndpointUnresponsive:
 		return SkippedResult("target-unready", "endpoint is unresponsive"), nil
-	case EndpointDead:
+	case backend.EndpointDead:
 		return SkippedResult("endpoint-dead", obs.Detail), nil
-	case EndpointUnknown:
+	case backend.EndpointUnknown:
 		// NOT collapsed to dead — skip safely without claiming
 		return SkippedResult("endpoint-unknown", obs.Detail), nil
-	case EndpointStaleIdentity:
+	case backend.EndpointStaleIdentity:
 		// NOT collapsed to dead — skip safely without claiming
 		return SkippedResult("stale-identity", obs.Detail), nil
-	case EndpointUnresolved:
+	case backend.EndpointUnresolved:
 		// NOT collapsed to dead — skip safely without claiming
 		return SkippedResult("endpoint-unresolved", obs.Detail), nil
 	default:
