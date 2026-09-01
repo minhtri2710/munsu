@@ -1,6 +1,1 @@
-{
-  "findings": [],
-  "summary": "Resolve stale SPEC open question on process-event store home",
-  "tested": [],
-  "testing_summary": "Document-only phase: no executable behavior or tests changed. Verified the P1 implementation's in-code doc comment is the accurate authoritative owner of the process-event source contract, and that ADR-0021, SPEC-process-event-source, and CAPABILITY-MAP describe the feature consistently. Reduced the one stale fact (SPEC Open Question declaring the registry home/record schema undecided) to a pointer to the owner, internal/orchestrator/process_event_source.go."
-}
+{"findings":[],"summary":"No stale documentation found","tested":["Searched documentation and non-test code comments for removed retirement APIs and old control-flow references","Reviewed merged-poll retirement, process-event, watcher, and port documentation comments"],"testing_summary":"Documentation inspection only; no executable tests run."}
