@@ -5,13 +5,20 @@ Module id: `busy-authority` · Map: `CAPABILITY-MAP.md` · ADR: 0021 Decision 1
 ## Objective
 
 Give munsu **one** fleet-side owner of the "is this endpoint busy / idle /
-unknown / dead" question, and route every consumer through it. Today the typed
-`backend.Activity` axis (`busy`/`idle`/`blocked`/`unknown`) is carried on
-`backend.EndpointObservation` but **no dispatch decision reads it**; meanwhile
-`internal/orchestrator/wake_dispatch.go` re-declares a *second*, coarse
-`EndpointObservationState` enum and a lightweight `EndpointObservation{State,
-Detail}` that `DispatchWake` gates on. Two representations of the same question
-violate munsu's "one live contract" doctrine.
+unknown / dead" question, and route every consumer through it.
+
+The typed `backend.Activity` axis (`busy`/`idle`/`blocked`/`unknown`) is carried
+on the canonical `backend.EndpointObservation` but is **not yet read by any
+dispatch decision** — Activity-aware gating is the A3 follow-up. Until A2, the
+orchestrator also re-declared a *second*, coarse `EndpointObservationState`
+enum plus an `EndpointObservation{State, Detail}` struct that `DispatchWake`
+gated on. A2 retired that duplicate: `DispatchWake` and `ProbePort.Probe` now
+consume `backend.EndpointObservation` directly and gate on its derived `State()`
+over the same seven coarse outcomes (alive / starting / unresponsive / dead /
+unknown / stale-identity / unresolved), so every per-state dispatch decision is
+unchanged. The remaining gap is the single authority itself (A1) and routing the
+gate through it (A3), not the observation representation — munsu's "one live
+contract" doctrine is restored at the representation level.
 
 Success = the coarse orchestrator duplicate is gone, the dispatch gate consults
 the single authority, and the authority's answer is derived from the existing
@@ -40,7 +47,7 @@ gofmt -l .               # must be empty
 
 ```
 internal/backend/endpoint_observation.go   → typed axes (Activity, Lifecycle, …); the source of truth this module consumes
-internal/orchestrator/wake_dispatch.go      → DispatchWake + the duplicate coarse enum to retire
+internal/orchestrator/wake_dispatch.go      → DispatchWake; consumes backend.EndpointObservation directly (orchestrator-local duplicate retired in A2)
 internal/orchestrator/supervision_*.go      → watcher-side observation flow
 internal/fleet/busy_authority.go              → the single busy authority (fleet-side owner); home decided in A1 as a fleet decision type over backend.EndpointObservation (aliased EndpointStatus), not in backend or orchestrator
 ```
@@ -97,6 +104,6 @@ Guard-coverage: the retired-duplicate path and the "unknown ≠ idle" refusal mu
 - Home for the authority: resolved in A1 as a fleet-side decision type at
   `internal/fleet/busy_authority.go`, operating on `backend.EndpointObservation`
   (aliased `EndpointStatus`); adapters remain producers only. The `orchestrator`
-  duplicate is retired later in A2, not moved here.
+  duplicate was retired in A2 (it is gone, not moved here).
 - Does any current consumer other than `DispatchWake` read the coarse
   orchestrator enum today? (Grep at Plan start; each must be re-pointed.)
