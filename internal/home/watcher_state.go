@@ -13,6 +13,12 @@ const watcherStaleThreshold = 300 * time.Second
 const wakeQueueFile = "state/.wake-queue"
 const watcherBeatFile = "state/.last-watcher-beat"
 
+// ProcessEventWakeKind is the wake kind reserved for the durable process-event
+// source. Records of this kind are consumed only by DrainWakesOfKind: the
+// lease claim never hands them to an agent, the AFK drain never digests them,
+// and HasQueuedWakes does not count them.
+const ProcessEventWakeKind = "process-event"
+
 var removeWakeQueueFile = os.Remove
 
 type WakeRecord struct{ Epoch, Seq, Kind, Key, Payload string }
@@ -117,6 +123,50 @@ func DrainWakes(h string) (records []WakeRecord, err error) {
 	return records, nil
 }
 
+// DrainWakesOfKind removes and returns every queued record whose Kind equals
+// kind, leaving the rest of the queue in place through the wake journal (the
+// same mutation path the lease claim uses, so a crash mid-write is recovered
+// on the next lock acquisition).
+func DrainWakesOfKind(h, kind string) ([]WakeRecord, error) {
+	return drainWakesPartition(h, func(r WakeRecord) bool { return r.Kind == kind })
+}
+
+// DrainWakesExcludingKind is the complement of DrainWakesOfKind: it removes
+// and returns every queued record whose Kind differs from kind.
+func DrainWakesExcludingKind(h, kind string) ([]WakeRecord, error) {
+	return drainWakesPartition(h, func(r WakeRecord) bool { return r.Kind != kind })
+}
+
+func drainWakesPartition(h string, take func(WakeRecord) bool) (records []WakeRecord, err error) {
+	lock, err := acquireWakeLock(h)
+	if err != nil {
+		return nil, err
+	}
+	defer joinWakeLockError(&err, lock)
+	if err := recoverWakeMutationLocked(h); err != nil {
+		return nil, err
+	}
+	queue, err := readWakeQueue(h)
+	if err != nil {
+		return nil, err
+	}
+	var kept []WakeRecord
+	for _, r := range queue {
+		if take(r) {
+			records = append(records, r)
+		} else {
+			kept = append(kept, r)
+		}
+	}
+	if len(records) == 0 {
+		return nil, nil
+	}
+	if err := applyWakeMutationLocked(h, wakeMutation{queueSet: true, queueData: wakeQueueData(kept)}); err != nil {
+		return nil, err
+	}
+	return records, nil
+}
+
 func newWakeRecord(kind, key, payload string, at time.Time) WakeRecord {
 	return WakeRecord{
 		Epoch:   fmt.Sprint(at.Unix()),
@@ -142,5 +192,14 @@ func HasQueuedWakes(h string) bool {
 	if err != nil || i.IsDir() {
 		return true
 	}
-	return i.Size() > 0
+	records, err := readWakeQueue(h)
+	if err != nil {
+		return true
+	}
+	for _, r := range records {
+		if r.Kind != ProcessEventWakeKind {
+			return true
+		}
+	}
+	return false
 }

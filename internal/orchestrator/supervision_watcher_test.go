@@ -25,18 +25,36 @@ func (testTaskStatePort) ReadTaskState(string, string) (*ObservedTaskState, erro
 	return &ObservedTaskState{}, nil
 }
 
+// testMergedResult is the capture the default testRetirementPort resolver
+// hands to the action.
+var testMergedResult = []byte(`{"headSHA":"0000111122223333444455556666777788889999","mergedSHA":"aaaabbbbccccddddeeeeffff0000111122223333"}`)
+
+// testRetirementPort is the resolver/action double. A nil observe resolves
+// every task with testMergedResult; a nil retireErr completes the action and,
+// like the real action, removes the artifact.
 type testRetirementPort struct {
+	observe      func(homeDir, taskID string) (bool, []byte, error)
 	retireErr    error
+	observed     []string
 	retiredPaths []string
+	results      [][]byte
 }
 
-func (p *testRetirementPort) RecoverPendingRetirements(string) (int, []error) {
-	return 0, nil
+func (p *testRetirementPort) ObserveMergedPoll(homeDir, taskID string) (bool, []byte, error) {
+	p.observed = append(p.observed, taskID)
+	if p.observe != nil {
+		return p.observe(homeDir, taskID)
+	}
+	return true, testMergedResult, nil
 }
 
-func (p *testRetirementPort) RetireMergedPoll(_ string, _ string, checkPath string) error {
+func (p *testRetirementPort) RetireMergedPoll(_ string, _ string, checkPath string, result []byte) error {
 	p.retiredPaths = append(p.retiredPaths, checkPath)
-	return p.retireErr
+	p.results = append(p.results, result)
+	if p.retireErr != nil {
+		return p.retireErr
+	}
+	return os.Remove(checkPath)
 }
 
 type testCheckValidationPort struct {
@@ -182,7 +200,12 @@ func TestRunCycle_ClassifiedRetirementValidationRefusalReportsAndSuppressesWake(
 			originalStderr := os.Stderr
 			os.Stderr = stderrW
 			resetRecovery()
+			// Cycle 1 resolves and announces; cycle 2 consumes the wake, runs
+			// the action and reports its refusal.
 			_, cycleErr := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, retirement, validation, testTaskStatePort{})
+			if cycleErr == nil {
+				_, cycleErr = RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, retirement, validation, testTaskStatePort{})
+			}
 			_ = stderrW.Close()
 			os.Stderr = originalStderr
 			stderrOutput, readErr := io.ReadAll(stderrR)
@@ -202,12 +225,17 @@ func TestRunCycle_ClassifiedRetirementValidationRefusalReportsAndSuppressesWake(
 			if _, err := os.Stat(checkPath); err != nil {
 				t.Fatalf("refused check must remain on disk: %v", err)
 			}
+			if len(retirement.retiredPaths) != 1 || retirement.retiredPaths[0] != checkPath {
+				t.Fatalf("retired paths = %#v, want [%q]", retirement.retiredPaths, checkPath)
+			}
 			records, err := DrainWakes(home)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(records) != 0 {
-				t.Fatalf("wake records = %#v, want none", records)
+			// The refused action's wake is re-queued for the next cycle; no
+			// check wake is emitted.
+			if len(records) != 1 || records[0].Kind != ProcessEventWakeKind {
+				t.Fatalf("wake records = %#v, want only the re-queued process-event wake", records)
 			}
 		})
 	}
@@ -224,7 +252,9 @@ func TestRunCycle_RetirementRefusalStillEmitsCheckWake(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	retirement := &testRetirementPort{retireErr: fmt.Errorf("not merged")}
+	// An unresolved poll (PR not merged) emits the check wake and spends no
+	// process-event wake.
+	retirement := &testRetirementPort{observe: func(string, string) (bool, []byte, error) { return false, nil, nil }}
 	validation := &testCheckValidationPort{}
 	resetRecovery()
 	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, retirement, validation, testTaskStatePort{}); err != nil {
@@ -237,11 +267,16 @@ func TestRunCycle_RetirementRefusalStillEmitsCheckWake(t *testing.T) {
 	if len(records) != 1 || records[0].Kind != "check" || records[0].Key != "task-1" {
 		t.Fatalf("wake records = %#v, want one task check wake", records)
 	}
+	if len(retirement.retiredPaths) != 0 {
+		t.Fatalf("retired paths = %#v, want none while unresolved", retirement.retiredPaths)
+	}
 }
 
 // The validation port is consulted once per artifact, at discovery. Retirement
 // validates the path itself as its first action (fleet.RetireMergedPoll step 0),
 // so a second port call before it would only ever repeat that verdict.
+// Retirement is a process event: cycle 1 resolves and announces it, cycle 2
+// consumes the wake and runs the action.
 func TestRunCycle_RetirementIsAttemptedAfterOneValidation(t *testing.T) {
 	home := t.TempDir()
 	stateDir := filepath.Join(home, "state")
@@ -257,9 +292,22 @@ func TestRunCycle_RetirementIsAttemptedAfterOneValidation(t *testing.T) {
 	validation := &testCheckValidationPort{}
 	resetRecovery()
 	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, retirement, validation, testTaskStatePort{}); err != nil {
-		t.Fatalf("run cycle: %v", err)
+		t.Fatalf("cycle 1: %v", err)
+	}
+	if len(retirement.observed) != 1 || retirement.observed[0] != "task-1" {
+		t.Fatalf("observed = %#v, want [task-1] after cycle 1", retirement.observed)
+	}
+	if len(retirement.retiredPaths) != 0 {
+		t.Fatalf("retired paths = %#v, want none after cycle 1", retirement.retiredPaths)
+	}
+	queued := mustReadWakeQueue(t, home)
+	if len(queued) != 1 || queued[0].Kind != ProcessEventWakeKind || queued[0].Key != mergedPollEventID("task-1") {
+		t.Fatalf("wake records after cycle 1 = %#v, want one process-event wake and no check wake", queued)
 	}
 
+	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, retirement, validation, testTaskStatePort{}); err != nil {
+		t.Fatalf("cycle 2: %v", err)
+	}
 	records, err := DrainWakes(home)
 	if err != nil {
 		t.Fatalf("drain wakes: %v", err)
@@ -270,8 +318,15 @@ func TestRunCycle_RetirementIsAttemptedAfterOneValidation(t *testing.T) {
 	if len(retirement.retiredPaths) != 1 || retirement.retiredPaths[0] != checkPath {
 		t.Fatalf("retired paths = %#v, want [%q]", retirement.retiredPaths, checkPath)
 	}
+	if string(retirement.results[0]) != string(testMergedResult) {
+		t.Fatalf("action result = %s, want the capture %s", retirement.results[0], testMergedResult)
+	}
 	if len(validation.validated) != 1 || validation.validated[0] != checkPath {
 		t.Fatalf("validated paths = %#v, want the one discovery validation of %q", validation.validated, checkPath)
+	}
+	rec := mustReadProcessEvent(t, home, mergedPollEventID("task-1"))
+	if rec.Generation != 1 || rec.AckedGeneration != 1 {
+		t.Fatalf("record = %+v, want generation 1 acked", rec)
 	}
 }
 

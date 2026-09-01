@@ -235,3 +235,54 @@ func TestClaimWakesRemovalErrorPropagated(t *testing.T) {
 		t.Fatalf("unexpected error: %v, want substring %q", err, wantSubstring)
 	}
 }
+
+// TestClaimWakesNeverLeasesProcessEventWakes proves the reserved kind is left
+// in the queue, unleased, while every other record is claimed in its original
+// order, and that a later claim finds no claimable record behind it.
+func TestClaimWakesNeverLeasesProcessEventWakes(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, "state"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	queue := "100\t1\t" + ProcessEventWakeKind + "\tev-1\tpe1\n200\t2\tk\ta\tpa\n300\t3\t" + ProcessEventWakeKind + "\tev-2\tpe2\n400\t4\tk\tb\tpb\n"
+	if err := os.WriteFile(WakeQueuePath(home), []byte(queue), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := ClaimWakes(home, "consumer", 60, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Wakes) != 1 || res.Wakes[0].Key != "a" {
+		t.Fatalf("claimed %#v, want only wake a (the first claimable record)", res.Wakes)
+	}
+	rest, err := readWakeQueue(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rest) != 3 || rest[0].Key != "ev-1" || rest[1].Key != "ev-2" || rest[2].Key != "b" {
+		t.Fatalf("queue after claim = %#v, want ev-1, ev-2, b in order", rest)
+	}
+
+	res, err = ClaimWakes(home, "consumer", 60, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Wakes) != 1 || res.Wakes[0].Key != "b" {
+		t.Fatalf("second claim = %#v, want only wake b", res.Wakes)
+	}
+	res, err = ClaimWakes(home, "consumer", 60, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Wakes) != 0 || res.LeaseID != "" {
+		t.Fatalf("claim over a queue of only process-event wakes = %#v, want nothing leased", res)
+	}
+	rest, err = readWakeQueue(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rest) != 2 || rest[0].Kind != ProcessEventWakeKind || rest[1].Kind != ProcessEventWakeKind {
+		t.Fatalf("queue after exhausting claimable wakes = %#v, want both process-event wakes intact", rest)
+	}
+}
