@@ -116,7 +116,7 @@ func TestProcessEvent_EmptyResultSurvivesSerializationAndCapture(t *testing.T) {
 	emptyResolver := func(context.Context) (bool, []byte, error) {
 		calls++
 		return true, []byte{}, nil
-		}
+	}
 	if err := EvaluateProcessEvent(context.Background(), homeDir2, "ev-e2", emptyResolver); err != nil {
 		t.Fatal(err)
 	}
