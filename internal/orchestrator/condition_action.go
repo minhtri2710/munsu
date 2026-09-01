@@ -15,7 +15,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
-// Condition-action registration (ADR-0021 Decision 2, C1).
+// Condition-action registration (ADR-0021 Decision 3, C1).
 //
 // The ergonomic "when X becomes true, do Y once" surface over the P1
 // process-event source. A registration pairs a condition (a
