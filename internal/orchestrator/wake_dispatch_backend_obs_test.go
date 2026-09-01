@@ -47,33 +47,33 @@ func (b *fakeAgentAwareBackend) CheckAgentAlive(string) (bool, bool, error) {
 // reached on a confirmed-alive observation).
 func TestDispatchWake_ConsumesCanonicalBackendObservation(t *testing.T) {
 	cases := []struct {
-		name         string
-		bk           backend.Backend
+		name          string
+		bk            backend.Backend
 		wantSubmitted bool
-		wantReason   string
+		wantReason    string
 	}{
 		{
-			name:         "alive-proceeds-and-claims",
-			bk:           &fakeAgentAwareBackend{paneAlive: true, agentAlive: true},
+			name:          "alive-proceeds-and-claims",
+			bk:            &fakeAgentAwareBackend{paneAlive: true, agentAlive: true},
 			wantSubmitted: true,
 		},
 		{
-			name:         "starting-skipped",
-			bk:           &fakeAgentAwareBackend{paneAlive: true, agentAlive: false},
+			name:          "starting-skipped",
+			bk:            &fakeAgentAwareBackend{paneAlive: true, agentAlive: false},
 			wantSubmitted: false,
-			wantReason:   "target-unready",
+			wantReason:    "target-unready",
 		},
 		{
-			name:         "dead-skipped",
-			bk:           &fakeAgentAwareBackend{paneAlive: false, agentAlive: false, err: backend.ErrPaneNotFound},
+			name:          "dead-skipped",
+			bk:            &fakeAgentAwareBackend{paneAlive: false, agentAlive: false, err: backend.ErrPaneNotFound},
 			wantSubmitted: false,
-			wantReason:   "endpoint-dead",
+			wantReason:    "endpoint-dead",
 		},
 		{
-			name:         "unresponsive-skipped",
-			bk:           &fakeAgentAwareBackend{paneAlive: false, agentAlive: false, err: errors.New("timeout")},
+			name:          "unresponsive-skipped",
+			bk:            &fakeAgentAwareBackend{paneAlive: false, agentAlive: false, err: errors.New("timeout")},
 			wantSubmitted: false,
-			wantReason:   "target-unready",
+			wantReason:    "target-unready",
 		},
 	}
 
