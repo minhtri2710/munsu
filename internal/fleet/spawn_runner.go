@@ -865,7 +865,8 @@ func (r *Runner) preflightNoMistakes() error {
 	// The no-mistakes gate preflight reported an exact blocker. Fail closed
 	// with supported delivery-mode guidance unless the operator explicitly
 	// configured the direct-PR fallback policy; the fallback records the
-	// blocker as audit evidence (fallbackReason → attestation → task meta).
+	// blocker as audit evidence (fallbackReason → attestation → task meta, and
+	// → the durable contract transition reconcileDeliveryFallback commits).
 	var blocker *GateBlockerError
 	if r.allowDirectPRFallback && errors.As(err, &blocker) {
 		fmt.Fprintf(os.Stderr, "warning: no-mistakes delivery blocked (%s); falling back to direct-PR under the configured allow-direct-pr-fallback policy: %s\n", blocker.Category, blocker.Detail)

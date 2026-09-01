@@ -40,7 +40,16 @@ explicitly recorded transition rather than a silent re-resolution.
   delivery contract (`internal/fleet/spawn_runner.go` `recordDeliveryContract`) and
   read back on later spawns.
 * `internal/fleet/delivery_preflight.go` `preflightNoMistakes` — the authorized
-  no-mistakes → direct-PR fallback path.
+  no-mistakes → direct-PR fallback path; a late capability loss reaches the same
+  downgrade through `checkAttestation` / `HandleLateCapabilityLoss`. Both sites
+  only move the launch's effective mode. The durable transition is recorded once
+  behind them by `internal/fleet/spawn_runner.go` `reconcileDeliveryFallback`,
+  which commits `RecordDeliveryFallback` before anything launches: the contract's
+  `Mode` becomes the mode in force and a `DeliveryFallback` record states how it
+  got there (from, to, reason, generation, recording operation, timestamp). Only
+  the authorized no-mistakes → direct-PR direction is accepted, and a divergence
+  carrying no fallback reason — or a recording that fails — aborts the launch
+  rather than delivering under an unrecorded mode.
 * `internal/fleet/brief.go` `ScaffoldOptions.Mode` — the resolved **delivery
   mode** (no-mistakes / direct-PR / local-only). `shipBriefTemplate` renders it as
   `Delivery mode: %s` and `internal/cli/session_cmd.go` sets it from
@@ -97,10 +106,14 @@ An ephemeral fleet-runtime record already exists in
 drives the authorized no-mistakes → direct-PR fallback via
 `HandleLateCapabilityLoss` at soldier-launch preflight. It is a 24h-expiry
 capability snapshot — not the canonical aggregate and not durable across
-re-spawns — so the D1/D2 durable contract is distinct. D1/D2 must relate to
-this existing machinery (one source of truth for the delivery-mode transition,
-per one-live-contract) and must never introduce a parallel from/to/reason
-record.
+re-spawns — so the D1/D2 durable contract is distinct. The two relate by D2
+feeding from this machinery rather than duplicating it: the fallback *decision*
+stays in the fleet runtime (the preflight blocker, and this attestation's late
+capability loss), and the effective mode plus accumulated fallback reason they
+leave on the launch are exactly what `reconcileDeliveryFallback` reconciles into
+the canonical contract. `DeliveryFallback` is therefore the single durable
+statement of the delivery-mode transition (per one-live-contract), not a
+parallel from/to/reason record.
 
 ### Non-goals
 
