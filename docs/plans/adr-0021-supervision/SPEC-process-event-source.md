@@ -96,7 +96,7 @@ generation-mismatch branch must each be entered by a test.
 
 ## Open Questions
 
-- Registry home + record schema (files under the store) — decide in Plan;
-  must not introduce new storage tech.
+- Registry home + record schema: decided in `internal/orchestrator/process_event_source.go`
+  (flat `v1-*.json` records under `home.StateDir`/`.process-events`; no new storage tech, ADR-0019).
 - Does the generic source subsume `RetireMergedPoll` entirely, or wrap it?
   (Prefer subsume — one live contract — unless a bounded constraint blocks it.)

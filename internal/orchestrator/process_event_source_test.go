@@ -80,6 +80,59 @@ func mustReadProcessEvent(t *testing.T, homeDir, eventID string) *ProcessEventRe
 	return rec
 }
 
+func TestProcessEvent_EmptyResultSurvivesSerializationAndCapture(t *testing.T) {
+	homeDir := t.TempDir()
+	// An empty but meaningful captured result (e.g. []byte{}) must round-trip
+	// through the durable record and not collapse to nil, or the captured
+	// external outcome is silently lost (the old ,omitempty bug).
+	rec := &ProcessEventRecord{
+		SchemaVersion: ProcessEventSchema,
+		EventID:       "ev-empty",
+		Generation:    1,
+		Resolved:      true,
+		Result:        []byte{},
+	}
+	if err := writeProcessEventRecord(homeDir, rec, home.RenameDurable); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readProcessEventRecord(homeDir, "ev-empty")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Result == nil {
+		t.Fatal("empty result round-tripped to nil: captured outcome lost")
+	}
+	if len(got.Result) != 0 {
+		t.Fatalf("round-tripped result length = %d, want 0", len(got.Result))
+	}
+
+	// The full capture-before-wake cycle must also keep the empty result and
+	// still deliver exactly one wake for it (an empty result is a real outcome).
+	homeDir2 := t.TempDir()
+	if _, err := RegisterProcessEvent(homeDir2, "ev-e2", "p"); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	emptyResolver := func(context.Context) (bool, []byte, error) {
+		calls++
+		return true, []byte{}, nil
+		}
+	if err := EvaluateProcessEvent(context.Background(), homeDir2, "ev-e2", emptyResolver); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("resolver ran %d times, want 1", calls)
+	}
+	ronCycle := mustReadProcessEvent(t, homeDir2, "ev-e2")
+	if !ronCycle.Resolved || ronCycle.Result == nil || len(ronCycle.Result) != 0 || !ronCycle.Announced {
+		t.Fatalf("record = %+v, want resolved+announced with empty (non-nil) result", ronCycle)
+	}
+	wakes := drainProcessEventWakes(t, homeDir2)
+	if len(wakes) != 1 || wakes[0].EventID != "ev-e2" || wakes[0].Generation != 1 {
+		t.Fatalf("wakes = %+v, want one wake for ev-e2 generation 1", wakes)
+	}
+}
+
 func TestProcessEvent_ResolutionSpendsExactlyOneWakeCarryingGeneration(t *testing.T) {
 	homeDir := t.TempDir()
 	gen, err := RegisterProcessEvent(homeDir, "ev-1", "opaque\tpayload")
