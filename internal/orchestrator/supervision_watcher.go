@@ -168,7 +168,7 @@ func consumeProcessEventWakes(homeDir string, retirement RetirementPort) (map[st
 		case strings.HasPrefix(announced.EventID, mergedPollEventPrefix):
 			retireMergedPollWake(homeDir, retirement, wake, announced, rec, outcomes)
 		case strings.HasPrefix(announced.EventID, conditionActionEventPrefix):
-			consumeConditionActionWake(homeDir, announced, rec)
+			consumeConditionActionWake(homeDir, wake, announced, rec)
 		default:
 			fmt.Fprintf(os.Stderr, "process-event wake %q dropped: no owner for this event prefix\n", announced.EventID)
 		}

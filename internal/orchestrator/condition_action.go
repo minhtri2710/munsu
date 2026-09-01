@@ -270,9 +270,11 @@ func fireConditionAction(homeDir, eventID string, ca ConditionAction, result []b
 
 // consumeConditionActionWake is the dispatcher arm for a condition-action
 // wake. An already-fired registration is acked and does nothing; a fresh one
-// runs its action, records the marker and is acked. Any failure leaves the
-// event unacked so RecoverProcessEvents re-announces it at restart.
-func consumeConditionActionWake(homeDir string, announced ProcessEventWake, rec *ProcessEventRecord) {
+// runs its action, records the marker and is acked. A failing action or a
+// failing ack re-queues the same wake, so the run is retried on the next
+// cycle exactly as the merged-poll arm retries -- the unacked record and
+// restart recovery are the backstop, not the only retry.
+func consumeConditionActionWake(homeDir string, wake WakeRecord, announced ProcessEventWake, rec *ProcessEventRecord) {
 	entry, ok := conditionActionRegistrations.Load(conditionActionKey{homeDir, announced.EventID})
 	if !ok {
 		fmt.Fprintf(os.Stderr, "process-event wake %q dropped: no live condition-action registration\n", announced.EventID)
@@ -280,10 +282,21 @@ func consumeConditionActionWake(homeDir string, announced ProcessEventWake, rec 
 	}
 	err := fireConditionAction(homeDir, announced.EventID, entry.(ConditionAction), rec.Result, home.RenameDurable)
 	if err != nil && !errors.Is(err, errConditionActionAlreadyFired) {
-		fmt.Fprintf(os.Stderr, "condition-action %q failed (re-announced on restart): %v\n", announced.EventID, err)
+		fmt.Fprintf(os.Stderr, "condition-action %q failed (retrying next cycle): %v\n", announced.EventID, err)
+		requeueProcessEventWake(homeDir, wake, announced.EventID)
 		return
 	}
 	if err := AckProcessEvent(homeDir, announced.EventID, announced.Generation); err != nil {
-		fmt.Fprintf(os.Stderr, "process-event %q ack failed (re-announced on restart): %v\n", announced.EventID, err)
+		fmt.Fprintf(os.Stderr, "process-event %q ack failed (retrying next cycle): %v\n", announced.EventID, err)
+		requeueProcessEventWake(homeDir, wake, announced.EventID)
+	}
+}
+
+// requeueProcessEventWake puts the drained wake back so the next cycle
+// re-delivers it. A failed re-enqueue is not fatal: the record is still
+// unacked, so restart recovery re-announces it.
+func requeueProcessEventWake(homeDir string, wake WakeRecord, eventID string) {
+	if err := home.EnqueueWake(homeDir, wake.Kind, wake.Key, wake.Payload); err != nil {
+		fmt.Fprintf(os.Stderr, "process-event %q re-enqueue failed (re-announced on restart): %v\n", eventID, err)
 	}
 }

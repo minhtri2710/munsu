@@ -249,6 +249,57 @@ func TestConditionAction_RestartBeforeMarkerRefires(t *testing.T) {
 	}
 }
 
+// TestConditionAction_ActionFailureRetriesNextCycle proves a transient action
+// failure does not cost the run until the next process start: the drained wake
+// is re-queued, the event stays unacked, and the next cycle re-delivers it and
+// fires once.
+func TestConditionAction_ActionFailureRetriesNextCycle(t *testing.T) {
+	homeDir := t.TempDir()
+	p := &conditionActionProbe{settled: true, result: "ready", actionErr: errors.New("transient action failure")}
+	eventID := registerProbe(t, homeDir, "gate", p)
+	if err := tick(t, homeDir, eventID, p); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	dispatch(t, homeDir)
+	if p.actionCalls != 1 {
+		t.Fatalf("action calls after the failing dispatch = %d, want 1", p.actionCalls)
+	}
+	if markerExists(t, homeDir, eventID) {
+		t.Fatal("a failed action wrote a fired marker")
+	}
+	if rec := mustReadProcessEvent(t, homeDir, eventID); rec.AckedGeneration == rec.Generation {
+		t.Fatal("a failed action acked the event")
+	}
+	queued := 0
+	for _, wake := range mustReadWakeQueue(t, homeDir) {
+		if wake.Kind == ProcessEventWakeKind && wake.Key == eventID {
+			queued++
+		}
+	}
+	if queued != 1 {
+		t.Fatalf("queued wakes for %q after the failure = %d, want 1 (retried next cycle)", eventID, queued)
+	}
+
+	// Next cycle, with the transient failure gone: the same wake runs the
+	// action to completion without any restart.
+	p.actionErr = nil
+	dispatch(t, homeDir)
+	if p.actionCalls != 2 {
+		t.Fatalf("action calls after the retry = %d, want 2", p.actionCalls)
+	}
+	if !markerExists(t, homeDir, eventID) {
+		t.Fatal("the retry did not record the fired marker")
+	}
+	rec := mustReadProcessEvent(t, homeDir, eventID)
+	if rec.AckedGeneration != rec.Generation {
+		t.Fatalf("the retry left the wake unacked: generation %d, acked %d", rec.Generation, rec.AckedGeneration)
+	}
+	if wakes := drainProcessEventWakes(t, homeDir); len(wakes) != 0 {
+		t.Fatalf("a succeeding retry re-queued %d wakes, want 0", len(wakes))
+	}
+}
+
 // TestConditionAction_ClearReArmsAFreshFire proves re-arm is explicit and
 // complete: clearing removes both durable halves, and only then does a fresh
 // registration fire again.
