@@ -339,8 +339,25 @@ var DeliveryModes = map[string]bool{
 // under the same contract. Task metadata's "mode" key is a display
 // projection of this record, never a mode source.
 type DeliveryContract struct {
+	OperationID string            `json:"operation_id"`
+	Mode        string            `json:"mode"`
+	RecordedAt  int64             `json:"recorded_at"`
+	Fallback    *DeliveryFallback `json:"fallback,omitempty"`
+}
+
+// DeliveryFallback records the authorized delivery transition that moved the
+// contract off its recorded mode: the one direction an operator policy
+// sanctions (a no-mistakes blocker or a late capability loss falling back to
+// direct-PR). It is a single record, not a history: after it the contract's
+// Mode IS the mode in force and this states how it got there (ADR-0022
+// Decision #2). A later generation reads the transitioned mode and never
+// re-falls-back.
+type DeliveryFallback struct {
+	From        string `json:"from"`
+	To          string `json:"to"`
+	Reason      string `json:"reason"`
+	Generation  uint64 `json:"generation"`
 	OperationID string `json:"operation_id"`
-	Mode        string `json:"mode"`
 	RecordedAt  int64  `json:"recorded_at"`
 }
 
@@ -471,6 +488,81 @@ func validateDeliveryContract(dc DeliveryContract) error {
 	}
 	if dc.RecordedAt <= 0 {
 		return validationError("delivery contract missing recorded timestamp")
+	}
+	if dc.Fallback != nil {
+		if err := validateDeliveryFallback(*dc.Fallback); err != nil {
+			return err
+		}
+		// This is the only validator that sees BOTH halves. After a recorded
+		// fallback the contract's Mode IS the to-mode (ADR-0022 Decision #2),
+		// so a Mode disagreeing with Fallback.To is internally inconsistent
+		// on-disk state, not a contract stating the mode in force.
+		if dc.Mode != dc.Fallback.To {
+			return validationError("delivery contract mode %q disagrees with its recorded fallback to-mode %q", dc.Mode, dc.Fallback.To)
+		}
+	}
+	return nil
+}
+
+// authorizedFallbackFrom and authorizedFallbackTo are the sole delivery
+// transition ADR-0022 Decision #2 sanctions: "the authorized no-mistakes ->
+// direct-PR downgrade". They are expressed as the one ALLOWED pair rather than
+// a blacklist of forbidden ones, so a pair nobody anticipated fails closed.
+const (
+	authorizedFallbackFrom = "no-mistakes"
+	authorizedFallbackTo   = "direct-PR"
+)
+
+// validateDeliveryFallbackDirection checks the transition itself: both ends
+// named, the to-mode inside the authoritative delivery mode set, a real
+// transition rather than a mode recorded against itself, and the one direction
+// ADR-0022 Decision #2 authorizes. It is the single owner of the direction
+// rule, checked on the way in by the recording request AND again on every
+// canonical read, so a record written around the op cannot be read back as
+// valid.
+func validateDeliveryFallbackDirection(from, to string) error {
+	if strings.TrimSpace(from) == "" || strings.TrimSpace(to) == "" {
+		return validationError("delivery fallback missing transition endpoints")
+	}
+	if !DeliveryModes[to] {
+		return validationError("delivery fallback carries invalid to-mode %q", to)
+	}
+	if from == to {
+		return validationError("delivery fallback records no transition (from == to == %q)", from)
+	}
+	if from != authorizedFallbackFrom || to != authorizedFallbackTo {
+		return validationError("delivery fallback %q -> %q is not the authorized %q -> %q downgrade (ADR-0022 Decision #2)", from, to, authorizedFallbackFrom, authorizedFallbackTo)
+	}
+	return nil
+}
+
+// validateDeliveryFallback checks a PERSISTED transition record in full: the
+// authorized direction, plus the provenance every durable record carries. A
+// canonical read rejects a malformed record rather than serving it, the same
+// rigor validateDeliveryContract applies to the contract around it.
+//
+// The recording request does NOT come through here: a request carries no
+// operation id, generation or timestamp yet — those are stamped at commit — so
+// validateRecordDeliveryFallbackRequest checks the shared direction rule and
+// its own request shape instead.
+func validateDeliveryFallback(fb DeliveryFallback) error {
+	if err := validateDeliveryFallbackDirection(fb.From, fb.To); err != nil {
+		return err
+	}
+	if strings.TrimSpace(fb.Reason) == "" {
+		return validationError("delivery fallback missing reason")
+	}
+	// Generations are 1-based on this record: Generation.Validate rejects zero
+	// as "not a positive monotonic identity", and NewAggregate opens a task at
+	// generation one. A zero here is an unrecorded generation, not a valid one.
+	if err := Generation(fb.Generation).Validate(); err != nil {
+		return validationError("delivery fallback missing recording generation")
+	}
+	if fb.OperationID == "" || strings.ContainsAny(fb.OperationID, `/\\`) {
+		return validationError("delivery fallback missing operation id")
+	}
+	if fb.RecordedAt <= 0 {
+		return validationError("delivery fallback missing recorded timestamp")
 	}
 	return nil
 }
@@ -798,6 +890,10 @@ func (a Aggregate) clone() Aggregate {
 	}
 	if a.DeliveryContract != nil {
 		dc := *a.DeliveryContract
+		if dc.Fallback != nil {
+			fb := *dc.Fallback
+			dc.Fallback = &fb
+		}
 		out.DeliveryContract = &dc
 	}
 	return out

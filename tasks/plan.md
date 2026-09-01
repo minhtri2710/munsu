@@ -96,8 +96,8 @@ delivery-contract: D1 ─→ D2       (independent of ADR-0021)
 - A1/A2 home: resolved in A1 — fleet decision type at `internal/fleet/busy_authority.go` over `backend.EndpointObservation` (aliased `EndpointStatus`); A2 retires the `orchestrator` duplicate.
 - P1: process-event registry record schema (files under existing store).
 - C1: "stable-true" = single confirmed edge vs N-consecutive; auto-clear vs explicit.
-- D1: does `local-only` participate in the contract or stay spawn-scoped.
-- D2: does the durable canonical contract SUBSUME the existing `CapabilityAttestation` mode fields (RequestedMode/EffectiveMode/FallbackReason) or FEED FROM them; relate to it, never a parallel record.
+- D1: resolved — `local-only` participates in the contract like the other two modes.
+- D2: resolved — the durable contract FEEDS FROM the ephemeral `CapabilityAttestation` (the fleet runtime decides the fallback; the canonical record states it). See `docs/plans/adr-0022-delivery-contract/SPEC-delivery-contract.md` Resolved Questions.
 
 ## Task tracking
 

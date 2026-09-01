@@ -366,3 +366,84 @@ func TestValidateDeliveryContractRefusesUnenforceableRecord(t *testing.T) {
 			{"no recorded timestamp", func(d *DeliveryContract) { d.RecordedAt = 0 }, "delivery contract missing recorded timestamp"},
 		})
 }
+
+// The recorded fallback is how a contract states that the mode in force is no
+// longer the mode first resolved. A transition missing an end, naming a
+// to-mode no delivery path implements, or recording a mode against itself
+// would leave the contract unable to answer "how did it get here", so the
+// record refuses to exist in those shapes.
+func TestValidateDeliveryFallbackRefusesUnenforceableTransition(t *testing.T) {
+	runGuardCases(t,
+		func() DeliveryFallback {
+			return DeliveryFallback{
+				From:        "no-mistakes",
+				To:          "direct-PR",
+				Reason:      "gate unavailable",
+				Generation:  1,
+				OperationID: "op-fallback-1",
+				RecordedAt:  1700000000,
+			}
+		},
+		validateDeliveryFallback,
+		[]guardCase[DeliveryFallback]{
+			{"no from-mode", func(f *DeliveryFallback) { f.From = "" }, "delivery fallback missing transition endpoints"},
+			{"blank to-mode", func(f *DeliveryFallback) { f.To = "  " }, "delivery fallback missing transition endpoints"},
+			{"unknown to-mode", func(f *DeliveryFallback) { f.To = "direct-pr" }, "delivery fallback carries invalid to-mode"},
+			{"no transition", func(f *DeliveryFallback) { f.From = "direct-PR" }, "delivery fallback records no transition"},
+			{"unauthorized direction", func(f *DeliveryFallback) { f.From, f.To = "direct-PR", "local-only" }, "is not the authorized"},
+			{"unauthorized upgrade", func(f *DeliveryFallback) { f.From, f.To = "local-only", "no-mistakes" }, "is not the authorized"},
+			{"no reason", func(f *DeliveryFallback) { f.Reason = "  " }, "delivery fallback missing reason"},
+			{"unrecorded generation", func(f *DeliveryFallback) { f.Generation = 0 }, "delivery fallback missing recording generation"},
+			{"no operation id", func(f *DeliveryFallback) { f.OperationID = "" }, "delivery fallback missing operation id"},
+			{"path-shaped operation id", func(f *DeliveryFallback) { f.OperationID = "op/../fallback" }, "delivery fallback missing operation id"},
+			{"no recorded timestamp", func(f *DeliveryFallback) { f.RecordedAt = 0 }, "delivery fallback missing recorded timestamp"},
+			{"negative recorded timestamp", func(f *DeliveryFallback) { f.RecordedAt = -1 }, "delivery fallback missing recorded timestamp"},
+		})
+}
+
+// A contract that has fallen back states the to-mode as the mode in force
+// (ADR-0022 Decision #2). validateDeliveryContract is the only validator that
+// sees both halves, so a Mode disagreeing with Fallback.To is on-disk state no
+// read may serve.
+func TestValidateDeliveryContractRejectsModeDisagreeingWithFallback(t *testing.T) {
+	dc := DeliveryContract{
+		OperationID: "op-contract-1",
+		Mode:        "no-mistakes",
+		RecordedAt:  1700000000,
+		Fallback: &DeliveryFallback{
+			From:        "no-mistakes",
+			To:          "direct-PR",
+			Reason:      "gate unavailable",
+			Generation:  1,
+			OperationID: "op-fallback-1",
+			RecordedAt:  1700000000,
+		},
+	}
+	err := validateDeliveryContract(dc)
+	if err == nil || !strings.Contains(err.Error(), "disagrees with its recorded fallback to-mode") {
+		t.Fatalf("contract whose mode contradicts its fallback = %v", err)
+	}
+	dc.Mode = "direct-PR"
+	if err := validateDeliveryContract(dc); err != nil {
+		t.Fatalf("consistent post-fallback contract rejected: %v", err)
+	}
+}
+
+// A contract carrying an invalid fallback is an invalid contract: the
+// aggregate-level validator must reach through the pointer rather than
+// accepting the record because its own fields are well formed.
+func TestValidateDeliveryContractRejectsInvalidFallback(t *testing.T) {
+	dc := DeliveryContract{
+		OperationID: "op-contract-1",
+		Mode:        "direct-PR",
+		RecordedAt:  1700000000,
+		Fallback: &DeliveryFallback{
+			From: "no-mistakes", To: "yolo", Reason: "r",
+			Generation: 1, OperationID: "op-fallback-1", RecordedAt: 1700000000,
+		},
+	}
+	err := validateDeliveryContract(dc)
+	if err == nil || !strings.Contains(err.Error(), "delivery fallback carries invalid to-mode") {
+		t.Fatalf("contract with an invalid fallback = %v", err)
+	}
+}

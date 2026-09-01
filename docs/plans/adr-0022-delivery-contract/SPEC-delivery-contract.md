@@ -5,13 +5,14 @@ ADR: 0022 (Durable Per-Task Delivery Contract) · gap G5 · single capability (n
 ## Objective
 
 Fix a task's delivery mode (no-mistakes / direct-PR / local-only) to the task
-**durably**, so it cannot silently change across re-spawns. Today
-`fleet.ResolveDeliveryMode` (called at `spawn_config_snapshot.go:76`) re-resolves
-the mode fresh every generation from `--mode` + registry default + auto-detect,
-and projects the result only into ephemeral home meta (`meta["mode"]`) — never
-onto the canonical task. munsu also keeps an authorized mid-spawn fallback
-(no-mistakes → direct-PR via `fleet.preflightNoMistakes` and late capability
-loss).
+**durably**, so it cannot silently change across re-spawns. Before D1,
+`fleet.ResolveDeliveryMode` re-resolved the mode fresh every generation from
+`--mode` + registry default + auto-detect, and projected the result only into
+ephemeral home meta (`meta["mode"]`) — never onto the canonical task. D1 records
+the first-spawn resolution on the canonical task and reads it back on later
+spawns; D2 keeps munsu's authorized mid-spawn fallback (no-mistakes → direct-PR
+via `fleet.preflightNoMistakes` and late capability loss) but reconciles it into
+that contract as a recorded transition.
 
 Decision (Middle path): record the resolved mode on the canonical task the first
 time it is resolved; later generations read the recorded contract; keep the
@@ -55,12 +56,14 @@ fenced lock. The fallback is such an operation, recording from/to/reason/generat
 not a re-resolution:
 
 ```go
-// First spawn: resolve once, record on the canonical task.
-mode := ResolveDeliveryMode(args.Mode, defaultMode, requireNoMistakes)
-task.RecordDeliveryContract(mode)          // durable; later generations read this
+// First spawn: resolve once, record on the canonical task; later generations
+// read the contract instead of re-resolving.
+Canonical.RecordDeliveryContract(op, CanonicalRecordDeliveryContractRequest{…Mode})
 
-// Fallback is a recorded transition, not a silent re-resolve:
-task.RecordDeliveryFallback(from, to, reason, generation)
+// Fallback is a recorded transition, not a silent re-resolve: it moves the
+// contract's Mode to the mode in force and stamps DeliveryFallback with
+// from/to/reason/generation plus the recording operation and timestamp.
+Canonical.RecordDeliveryFallback(op, CanonicalRecordDeliveryFallbackRequest{…From, To, Reason})
 ```
 
 ## Testing Strategy
@@ -93,18 +96,28 @@ refusal and the recorded-fallback branch must each be entered by a test.
 
 1. Canonical task carries a durable delivery contract; second-generation spawns
    read it, not a fresh resolution.
-2. Authorized fallback is recorded as a transition (from/to/reason/generation).
+2. Authorized fallback is recorded as a transition (from/to/reason/generation)
+   in the same op that moves the contract's mode, so the contract never states a
+   mode without stating how it got there. Only the no-mistakes → direct-PR
+   direction is accepted; a divergence with no fallback reason, or a recording
+   that fails, aborts the launch instead of delivering under an unrecorded mode.
 3. Registry feeds only the first resolution; it cannot silently override a
    recorded contract.
 4. Misleading `ScaffoldOptions.Mode` struct comment and `brief_test.go` fixtures corrected to real delivery-mode values (no rename needed).
 5. `go test ./...`, `go vet`, `gofmt -l .` clean; deadcode and guards green.
 
-## Open Questions
+## Resolved Questions
 
-- Field home on the aggregate + exact op names (`RecordDeliveryContract` /
-  `RecordDeliveryFallback` are illustrative) — settle in Plan against
-  `taskauthority` naming.
-- Does `local-only` participate in the contract, or is it spawn-scoped only?
-- Does the durable canonical contract SUBSUME the existing
-  `CapabilityAttestation` mode fields (RequestedMode/EffectiveMode/FallbackReason)
-  or FEED FROM them — decide at D2 planning.
+- Field home + op names: resolved as `Aggregate.DeliveryContract` (a
+  `DeliveryContract` pointer carrying an optional `DeliveryFallback`), written by
+  `Canonical.RecordDeliveryContract` and `Canonical.RecordDeliveryFallback` —
+  the illustrative names held.
+- `local-only` participates in the contract like the other two modes (D1). It is
+  not a fallback *target*: only no-mistakes → direct-PR is an authorized
+  transition (D2).
+- Relationship to `CapabilityAttestation`: resolved as FEED FROM, not subsume.
+  The attestation stays the ephemeral capability snapshot behind the late
+  capability-loss fallback; the effective mode and accumulated fallback reason
+  the fleet runtime leaves on the launch are what `reconcileDeliveryFallback`
+  reconciles into the canonical contract, which is the single durable record of
+  the transition.
