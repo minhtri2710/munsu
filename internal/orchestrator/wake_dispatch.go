@@ -62,6 +62,12 @@ type SubmitPort interface {
 	Submit(window, prompt string) SubmitResult
 }
 
+// BusyPort reads the busy authority's reading for an observation. The reading
+// is the pinned fleet.BusyReading string: "held"/"idle"/"unknown"/"blocked"/"dead".
+type BusyPort interface {
+	Read(obs backend.EndpointObservation) string
+}
+
 // DispatchWakeRequest carries all inputs and adapter ports for a Wake dispatch.
 type DispatchWakeRequest struct {
 	HomeDir string
@@ -72,6 +78,7 @@ type DispatchWakeRequest struct {
 	// Must be non-nil for herdr delivery.
 	Probe  ProbePort
 	Submit SubmitPort
+	Busy   BusyPort
 }
 
 // DispatchWake owns the complete Wake dispatch workflow.
@@ -80,13 +87,15 @@ type DispatchWakeRequest struct {
 //  1. Delivery-mode gate: native/manual -> Skipped without claiming
 //  2. Target identity gate: missing/incomplete target -> Skipped
 //  3. Ownership validation: invalid target -> fail-closed error
-//  4. Endpoint probe gate: typed observation gates — alive proceeds;
-//     starting/unresponsive/dead defer; unknown/stale-identity/unresolved
-//     skip safely without claiming (NOT collapsed to dead)
-//  5. Wake claim: max 1 Wake, after all gates pass
-//  6. Empty queue after claim -> Skipped
-//  7. Prompt construction with exact claim_id, event_id, payload, resolve instruction
-//  8. Prompt submission -> Submitted or Deferred
+//  4. Endpoint probe gate: typed observation gates — alive proceeds to the
+//     busy gate; starting/unresponsive/dead defer; unknown/stale-identity/
+//     unresolved skip safely without claiming (NOT collapsed to dead)
+//  5. Busy gate (alive only): idle proceeds; held/blocked hold; unknown is
+//     refused (never dispatched as idle); dead skips; unrecognized fails closed
+//  6. Wake claim: max 1 Wake, after all gates pass
+//  7. Empty queue after claim -> Skipped
+//  8. Prompt construction with exact claim_id, event_id, payload, resolve instruction
+//  9. Prompt submission -> Submitted or Deferred
 //
 // Errors only for invalid invariants, unsafe ownership, corrupt state.
 func DispatchWake(req DispatchWakeRequest) (DispatchWakeResult, error) {
@@ -118,7 +127,23 @@ func DispatchWake(req DispatchWakeRequest) (DispatchWakeResult, error) {
 	}
 	switch obs.State() {
 	case backend.EndpointAlive:
-		// Proceed to claim
+		if req.Busy == nil {
+			return DispatchWakeResult{}, fmt.Errorf("busy port is nil")
+		}
+		switch req.Busy.Read(obs) {
+		case "idle":
+			// Proceed to claim
+		case "held":
+			return SkippedResult("endpoint-busy", "endpoint has an active turn"), nil
+		case "blocked":
+			return SkippedResult("endpoint-blocked", "endpoint is blocked awaiting input"), nil
+		case "unknown":
+			return SkippedResult("activity-unknown", "endpoint activity is unknown; not dispatched as idle"), nil
+		case "dead":
+			return SkippedResult("endpoint-absent", "endpoint activity reads absent"), nil
+		default:
+			return SkippedResult("invalid-busy-reading", "unrecognized busy reading"), nil
+		}
 	case backend.EndpointStarting:
 		return SkippedResult("target-unready", "endpoint is starting"), nil
 	case backend.EndpointUnresponsive:

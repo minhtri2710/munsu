@@ -357,7 +357,17 @@ func ObserveEndpoint(bk Backend, handle string) EndpointObservation {
 		if err != nil {
 			return reflectError(ref, err)
 		}
-		return reflectLiveness(ref, paneAlive, agentAlive)
+		obs := reflectLiveness(ref, paneAlive, agentAlive)
+		if obs.Lifecycle == LifecycleAlive {
+			// Activity is the hint axis only: a status read enriches an already
+			// confirmed-alive observation and never concludes liveness.
+			if r, ok := bk.(AgentActivityReader); ok {
+				if recognized, status := r.IsRecognizedAgent(handle); recognized {
+					obs.Activity = NormalizeActivityHint(status)
+				}
+			}
+		}
+		return obs
 	}
 	if prober, ok := bk.(endpointProber); ok {
 		alive, agentAlive, err := prober.probeEndpoint(handle)

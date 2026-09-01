@@ -39,6 +39,7 @@ func obsFor(state backend.EndpointObservationState, detail string) backend.Endpo
 	switch state {
 	case backend.EndpointAlive:
 		obs.Lifecycle = backend.LifecycleAlive
+		obs.Activity = backend.ActivityIdle
 	case backend.EndpointStarting:
 		obs.Lifecycle = backend.LifecycleStarting
 	case backend.EndpointDead:
@@ -93,9 +94,15 @@ func (m *mockSubmitPort) Submit(_ string, prompt string) SubmitResult {
 	}
 }
 
+type mockBusyPort struct{ reading string }
+
+func (m *mockBusyPort) Read(_ backend.EndpointObservation) string { return m.reading }
+
 func aliveProbe() *mockProbePort {
 	return &mockProbePort{obs: obsFor(backend.EndpointAlive, "")}
 }
+
+func idleBusy() *mockBusyPort { return &mockBusyPort{reading: "idle"} }
 
 func setupMockRequest(t *testing.T, mode WakeDeliveryMode, alive bool) (DispatchWakeRequest, string) {
 	t.Helper()
@@ -123,6 +130,7 @@ func setupMockRequest(t *testing.T, mode WakeDeliveryMode, alive bool) (Dispatch
 		Target:  target,
 		Probe:   &mockProbePort{obs: obs},
 		Submit:  &mockSubmitPort{acknowledged: true},
+		Busy:    idleBusy(),
 	}, home
 }
 
@@ -444,6 +452,89 @@ func TestDispatchWake_UnresolvedSkippedWithoutClaim(t *testing.T) {
 	}
 }
 
+// --- Test: busy gate (alive endpoint, Activity-derived reading) ---
+
+// busyGateRequest builds an alive-endpoint request whose busy port returns the
+// given reading, with one wake enqueued so a claim would be observable.
+func busyGateRequest(t *testing.T, reading string) (DispatchWakeRequest, string) {
+	t.Helper()
+	home := testutil.TempHome(t)
+	if err := EnqueueWake(home, "signal", "task-1", "payload"); err != nil {
+		t.Fatal(err)
+	}
+	return DispatchWakeRequest{
+		HomeDir: home,
+		Mode:    WakeDeliveryHerdr,
+		Target:  TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
+		Probe:   aliveProbe(),
+		Submit:  &mockSubmitPort{acknowledged: true},
+		Busy:    &mockBusyPort{reading: reading},
+	}, home
+}
+
+func assertBusyGateSkipped(t *testing.T, reading, wantReason string) {
+	t.Helper()
+	req, home := busyGateRequest(t, reading)
+
+	result, err := DispatchWake(req)
+	if err != nil || result.Outcome != WakeSkipped {
+		t.Fatalf("busy=%q: expected Skipped, got outcome=%q err=%v", reading, result.Outcome, err)
+	}
+	if result.Reason != wantReason {
+		t.Errorf("busy=%q: expected reason %s, got %q", reading, wantReason, result.Reason)
+	}
+
+	// Wake must NOT be claimed
+	claim, err := ClaimWakes(home, "munsu:herdr", 60, 10)
+	if err != nil {
+		t.Fatalf("ClaimWakes: %v", err)
+	}
+	if claim == nil || len(claim.Wakes) == 0 {
+		t.Fatalf("busy=%q endpoint must NOT trigger wake claim", reading)
+	}
+}
+
+func TestDispatchWake_BusyHeldNotDispatched(t *testing.T) {
+	assertBusyGateSkipped(t, "held", "endpoint-busy")
+}
+
+func TestDispatchWake_BlockedHeldNotDispatched(t *testing.T) {
+	assertBusyGateSkipped(t, "blocked", "endpoint-blocked")
+}
+
+func TestDispatchWake_ActivityUnknownRefusedNotIdle(t *testing.T) {
+	assertBusyGateSkipped(t, "unknown", "activity-unknown")
+}
+
+func TestDispatchWake_ActivityDeadSkipped(t *testing.T) {
+	assertBusyGateSkipped(t, "dead", "endpoint-absent")
+}
+
+func TestDispatchWake_InvalidBusyReadingRefused(t *testing.T) {
+	assertBusyGateSkipped(t, "garbage", "invalid-busy-reading")
+}
+
+func TestDispatchWake_NilBusyPortErrors(t *testing.T) {
+	req, home := busyGateRequest(t, "idle")
+	req.Busy = nil
+
+	_, err := DispatchWake(req)
+	if err == nil {
+		t.Fatal("expected error for nil busy port")
+	}
+	if !strings.Contains(err.Error(), "busy port is nil") {
+		t.Errorf("expected busy port error, got: %v", err)
+	}
+
+	claim, err := ClaimWakes(home, "munsu:herdr", 60, 10)
+	if err != nil {
+		t.Fatalf("ClaimWakes: %v", err)
+	}
+	if claim == nil || len(claim.Wakes) == 0 {
+		t.Fatal("nil busy port must NOT trigger wake claim")
+	}
+}
+
 // --- Test: empty queue ---
 
 func TestDispatchWake_EmptyQueueSkipped(t *testing.T) {
@@ -456,6 +547,7 @@ func TestDispatchWake_EmptyQueueSkipped(t *testing.T) {
 		Target:  TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
 		Probe:   aliveProbe(),
 		Submit:  &mockSubmitPort{acknowledged: true},
+		Busy:    idleBusy(),
 	}
 
 	result, err := DispatchWake(req)
@@ -575,6 +667,7 @@ func TestDispatchWake_ClaimBeforeSubmitOrdering(t *testing.T) {
 		Target:  TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
 		Probe:   aliveProbe(),
 		Submit:  submitPort,
+		Busy:    idleBusy(),
 	}
 
 	// First call: should claim one wake and submit
@@ -624,6 +717,7 @@ func TestDispatchWake_OneWakeMax(t *testing.T) {
 		Target:  TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
 		Probe:   aliveProbe(),
 		Submit:  &mockSubmitPort{acknowledged: true},
+		Busy:    idleBusy(),
 	}
 
 	// First dispatch: claims one wake, submits it
@@ -820,6 +914,7 @@ func TestDispatchWake_NilSubmitPortErrors(t *testing.T) {
 		Target:  TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
 		Probe:   aliveProbe(),
 		Submit:  nil,
+		Busy:    idleBusy(),
 	}
 
 	_, err := DispatchWake(req)
@@ -1084,6 +1179,7 @@ func TestDispatchWake_DeferredDoesNotPreventSubsequentDispatch(t *testing.T) {
 		Target:  TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
 		Probe:   aliveProbe(),
 		Submit:  submit1,
+		Busy:    idleBusy(),
 	}
 	result, err := DispatchWake(req1)
 	if err != nil || result.Outcome != WakeDeferred {
@@ -1098,6 +1194,7 @@ func TestDispatchWake_DeferredDoesNotPreventSubsequentDispatch(t *testing.T) {
 		Target:  TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
 		Probe:   aliveProbe(),
 		Submit:  submit2,
+		Busy:    idleBusy(),
 	}
 	result2, err2 := DispatchWake(req2)
 	if err2 != nil || result2.Outcome != WakeSubmitted {

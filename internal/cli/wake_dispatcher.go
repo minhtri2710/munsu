@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/minhtri2710/munsu/internal/backend"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
@@ -31,6 +32,14 @@ func (a *submitAdapter) Submit(window, prompt string) orchestrator.SubmitResult 
 		Detail:       result.Detail,
 		Err:          result.Err,
 	}
+}
+
+// busyAdapter routes an observation through the fleet busy authority into an
+// orchestrator.BusyPort.
+type busyAdapter struct{}
+
+func (busyAdapter) Read(obs backend.EndpointObservation) string {
+	return fleet.ReadBusy(obs).String()
 }
 
 type wakeDispatchHooks struct {
@@ -73,6 +82,7 @@ func dispatchHerdrWake(homeDir string) error {
 		Target:  target,
 		Probe:   &probeAdapter{bk: bk},
 		Submit:  &submitAdapter{bk: bk},
+		Busy:    busyAdapter{},
 	}
 
 	result, err := orchestrator.DispatchWake(req)

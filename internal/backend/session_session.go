@@ -47,6 +47,14 @@ type AgentAwareBackend interface {
 	CheckAgentAlive(windowID string) (alive bool, agentAlive bool, err error)
 }
 
+// AgentActivityReader is an optional interface a Backend may implement to
+// report the raw agent-status string for an endpoint, used to populate the
+// Activity hint axis. Backends that do not implement it leave Activity
+// unknown (fail closed).
+type AgentActivityReader interface {
+	IsRecognizedAgent(windowID string) (recognized bool, status string)
+}
+
 // BackendMetaExtras is an optional interface that a Backend can implement
 // to provide extra metadata fields to write into task meta after NewWindow.
 type BackendMetaExtras interface {
