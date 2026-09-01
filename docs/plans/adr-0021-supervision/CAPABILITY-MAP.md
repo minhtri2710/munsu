@@ -5,7 +5,7 @@ Source: `docs/adr/0021-durable-process-event-supervision-and-one-busy-authority.
 
 | Module id | Responsibility | Depends on |
 |---|---|---|
-| `busy-authority` | One fleet-side owner of the busy/idle/unknown/dead question that **consumes** the existing `backend.Activity` axis on `backend.EndpointObservation` (today producer-only). Retires the duplicate coarse `EndpointObservationState` + `EndpointObservation{State,Detail}` re-declared in `internal/orchestrator/wake_dispatch.go`, and re-expresses the `DispatchWake` probe gate against the single authority. | — |
+| `busy-authority` | One fleet-side owner of the busy/idle/unknown/dead question that **consumes** the existing `backend.Activity` axis on `backend.EndpointObservation` (previously producer-only; A3 routes `DispatchWake` through it). Retired the duplicate coarse `EndpointObservationState` + `EndpointObservation{State,Detail}` re-declared in `internal/orchestrator/wake_dispatch.go` (A2), and re-expressed the `DispatchWake` probe gate against the single authority (A3). | — |
 | `process-event-source` | Generalize the merged-PR poll lane (`orchestrator.DiscoverAllChecks` + `fleet.RetireMergedPoll`) into a domain-neutral, durable process-event source: capture the external result **before** enqueuing any wake; a generation-keyed acknowledgement is the only thing that stops re-announcement. Rides `home.EnqueueWake`/`DrainWakes`; no new storage tech (ADR-0019). | — |
 | `condition-action` | Register a (condition, action) pair; fire the action at most once on the first stably-true observation, recorded by a durable fired-marker; re-evaluation after firing is a no-op until the registration is cleared. | `process-event-source` |
 
