@@ -364,12 +364,15 @@ func TestRunCycle_ConsumerDropsUnusableWakes(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
-		{name: "not a merged-poll event", key: "other:task-1", payload: announcedWake(t, "other:task-1", 1, "task-1"), want: "not a merged-poll event", setup: func(homeDir string) {
-			if _, err := RegisterProcessEvent(homeDir, "other:task-1", "task-1"); err != nil {
+		{name: "not a merged-poll event", key: eventID, payload: announcedWake(t, eventID, 1, "task-1"), want: "not a merged-poll event", setup: func(homeDir string) {
+			// The id carries the merged-poll prefix but its record names a
+			// different task, so the id and the payload disagree about whose
+			// poll this is.
+			if _, err := RegisterProcessEvent(homeDir, eventID, "task-2"); err != nil {
 				t.Fatal(err)
 			}
 			calls := 0
-			if err := EvaluateProcessEvent(context.Background(), homeDir, "other:task-1", resolvedWith("{}", &calls)); err != nil {
+			if err := EvaluateProcessEvent(context.Background(), homeDir, eventID, resolvedWith("{}", &calls)); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := home.DrainWakesOfKind(homeDir, ProcessEventWakeKind); err != nil {
