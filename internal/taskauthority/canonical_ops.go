@@ -609,6 +609,10 @@ func (c *Canonical) Reopen(op domain.Operation, req CanonicalReopenRequest) (Out
 	// it. The record is copied, never aliased.
 	if cur.DeliveryContract != nil {
 		dc := *cur.DeliveryContract
+		if dc.Fallback != nil {
+			fb := *dc.Fallback
+			dc.Fallback = &fb
+		}
 		newGen.DeliveryContract = &dc
 	}
 	if err := validateAggregate(newGen); err != nil {

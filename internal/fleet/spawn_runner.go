@@ -276,6 +276,14 @@ func (r *Runner) Run() (string, error) {
 	if err := r.checkAttestation(); err != nil {
 		return "", err
 	}
+	// Both authorized fallback sites (preflightNoMistakes and the late
+	// capability loss handled by checkAttestation) are behind us, so this is
+	// the one place the mode actually in force can be reconciled against the
+	// durable contract. A divergence is recorded as an explicit transition
+	// before anything launches: nothing delivers under an unrecorded mode.
+	if err := r.reconcileDeliveryFallback(); err != nil {
+		return "", err
+	}
 	if err := r.createSession(); err != nil {
 		return "", err
 	}
@@ -1091,6 +1099,56 @@ func (r *Runner) recordDeliveryContract() error {
 	}
 	if _, err := r.args.Authority.RecordDeliveryContract(op, req); err != nil {
 		return fmt.Errorf("delivery contract: %w", err)
+	}
+	return nil
+}
+
+// reconcileDeliveryFallback records the authorized delivery fallback that put
+// a mode other than the contracted one in force. It runs once, after the last
+// fallback site, so both the no-mistakes preflight blocker and a late
+// capability loss reach the durable record through the same path: the
+// contract's Mode becomes the mode in force and its Fallback states how it
+// got there (ADR-0022 Decision #2).
+//
+// It fails closed twice over. A divergence carrying no fallback reason is
+// never recorded as a transition — an unexplained mode change aborts the
+// launch instead. And a recording that fails aborts the launch too, so a
+// soldier never delivers under a mode the contract does not state.
+func (r *Runner) reconcileDeliveryFallback() error {
+	if r.args.Authority == nil {
+		return fmt.Errorf("delivery fallback: task authority is not composed for spawn")
+	}
+	taskID, err := domain.NewTaskID(r.args.ID)
+	if err != nil {
+		return fmt.Errorf("delivery fallback: %w", err)
+	}
+	agg, err := r.args.Authority.Get(taskID)
+	if err != nil {
+		return fmt.Errorf("delivery fallback: resolving task %s: %w", r.args.ID, err)
+	}
+	if agg.DeliveryContract == nil {
+		return fmt.Errorf("delivery fallback: task %s carries no delivery contract at launch", r.args.ID)
+	}
+	if agg.DeliveryContract.Mode == r.effectiveMode {
+		return nil
+	}
+	if r.fallbackReason == "" {
+		return fmt.Errorf("delivery fallback: task %s launches as %q against a contract of %q with no recorded fallback; refusing to deliver under an unrecorded mode", r.args.ID, r.effectiveMode, agg.DeliveryContract.Mode)
+	}
+	req := taskauthority.CanonicalRecordDeliveryFallbackRequest{
+		HomeID:       r.args.Authority.HomeID(),
+		TaskID:       taskID,
+		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+		From:         agg.DeliveryContract.Mode,
+		To:           r.effectiveMode,
+		Reason:       r.fallbackReason,
+	}
+	op, err := r.spawnOperation("fallback", agg.Generation, req)
+	if err != nil {
+		return fmt.Errorf("delivery fallback: %w", err)
+	}
+	if _, err := r.args.Authority.RecordDeliveryFallback(op, req); err != nil {
+		return fmt.Errorf("delivery fallback: %w", err)
 	}
 	return nil
 }
