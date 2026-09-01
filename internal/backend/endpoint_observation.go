@@ -23,6 +23,7 @@ package backend
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -353,6 +354,19 @@ func ObserveEndpoint(bk Backend, handle string) EndpointObservation {
 	}
 
 	if aware, ok := bk.(AgentAwareBackend); ok {
+		if p, ok := bk.(AgentActivityProvider); ok {
+			paneAlive, agentAlive, recognized, status, err := p.ObserveAgent(handle)
+			if err != nil {
+				return reflectError(ref, err)
+			}
+			obs := reflectLiveness(ref, paneAlive, agentAlive)
+			if obs.Lifecycle == LifecycleAlive && recognized {
+				// Activity is the hint axis only: a status read enriches an
+				// already confirmed-alive observation and never concludes liveness.
+				obs.Activity = NormalizeActivityHint(strings.ToLower(strings.TrimSpace(status)))
+			}
+			return obs
+		}
 		paneAlive, agentAlive, err := aware.CheckAgentAlive(handle)
 		if err != nil {
 			return reflectError(ref, err)
@@ -363,7 +377,7 @@ func ObserveEndpoint(bk Backend, handle string) EndpointObservation {
 			// confirmed-alive observation and never concludes liveness.
 			if r, ok := bk.(AgentActivityReader); ok {
 				if recognized, status := r.IsRecognizedAgent(handle); recognized {
-					obs.Activity = NormalizeActivityHint(status)
+					obs.Activity = NormalizeActivityHint(strings.ToLower(strings.TrimSpace(status)))
 				}
 			}
 		}

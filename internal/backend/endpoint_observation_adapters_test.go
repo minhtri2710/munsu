@@ -2,7 +2,9 @@ package backend
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/testutil"
@@ -129,6 +131,11 @@ func TestObserveEndpoint_AliveAgentStatusPopulatesActivity(t *testing.T) {
 		{"unknown", ActivityUnknown},
 		{"", ActivityUnknown},
 		{"{malformed", ActivityUnknown},
+		{"Idle", ActivityIdle},
+		{" WORKING ", ActivityBusy},
+		{"  busy  ", ActivityBusy},
+		{"Blocked", ActivityBlocked},
+		{"DONE", ActivityIdle},
 	}
 	for _, tc := range cases {
 		t.Run("status="+tc.status, func(t *testing.T) {
@@ -141,6 +148,44 @@ func TestObserveEndpoint_AliveAgentStatusPopulatesActivity(t *testing.T) {
 				t.Fatalf("activity = %v, want %v", obs.Activity, tc.want)
 			}
 		})
+	}
+}
+
+func TestObserveEndpoint_HerdrSingleAgentGetEnrichesActivity(t *testing.T) {
+	logDir := t.TempDir()
+	logFile := filepath.Join(logDir, "agent_gets.log")
+	binDir := t.TempDir()
+	path := filepath.Join(binDir, "herdr")
+	script := fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "--session" ]; then shift 2; fi
+if [ "$1" = "pane" ] && [ "$2" = "get" ]; then
+  case "$3" in
+    alive) echo '{"result":{"pane_id":"alive"}}'; exit 0 ;;
+  esac
+fi
+if [ "$1" = "agent" ] && [ "$2" = "get" ]; then
+  echo "agent get" >> %q
+  echo '{"result":{"agent":{"agent_status":"Idle"}}}'; exit 0
+fi
+exit 1
+`, logFile)
+	testutil.WriteFakeExecutable(t, path, script)
+	testutil.PrependPath(t, binDir)
+
+	obs := ObserveEndpoint(NewHerdrBackend("test"), "alive")
+	if obs.Lifecycle != LifecycleAlive {
+		t.Fatalf("lifecycle = %v, want alive", obs.Lifecycle)
+	}
+	if obs.Activity != ActivityIdle {
+		t.Fatalf("activity = %v, want idle (normalized from \"Idle\")", obs.Activity)
+	}
+	data, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatalf("reading agent get log: %v", err)
+	}
+	got := strings.Count(string(data), "agent get\n")
+	if got != 1 {
+		t.Fatalf("ObserveEndpoint issued %d herdr agent get invocations, want 1 (log: %q)", got, string(data))
 	}
 }
 

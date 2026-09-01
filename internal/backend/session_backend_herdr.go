@@ -484,19 +484,23 @@ func (h *HerdrBackend) Capture(windowID string, lines int) (string, error) {
 	return h.herdrForWindow(windowID, "pane", "read", herdrPaneID(windowID), "--source", "recent", "--lines", fmt.Sprintf("%d", lines))
 }
 
-// CheckAgentAlive implements session.AgentAwareBackend.
-// Returns:
-//
-//	(true, true, nil)  — pane exists and agent is registered
-//	(true, false, nil) — pane exists but no agent (bare shell / dead agent;
-//	  NOT authoritative absence — recovery must fail closed, never auto-recover)
-//	(false, false, ErrPaneNotFound) — pane confirmed absent
-//	(false, false, err) — backend resolution failure (fail closed)
-func (h *HerdrBackend) CheckAgentAlive(windowID string) (bool, bool, error) {
+// herdrAgentObservation is the unified result of probing one pane for both
+// liveness and agent status.
+type herdrAgentObservation struct {
+	paneAlive  bool
+	agentAlive bool
+	recognized bool
+	status     string
+	err        error
+}
+
+// observeAgent probes a single pane once (pane get + agent get) and returns
+// both liveness and the raw agent status.
+func (h *HerdrBackend) observeAgent(windowID string) herdrAgentObservation {
 	// First verify pane exists.
 	_, err := h.CheckAlive(windowID)
 	if err != nil {
-		return false, false, err
+		return herdrAgentObservation{err: err}
 	}
 
 	// Pane exists; now check agent registration.
@@ -513,31 +517,60 @@ func (h *HerdrBackend) CheckAgentAlive(windowID string) (bool, bool, error) {
 			}
 			if jsonErr := json.Unmarshal([]byte(out), &errResp); jsonErr == nil && errResp.Error != nil {
 				if errResp.Error.Code == "agent_not_found" {
-					return true, false, nil
+					return herdrAgentObservation{paneAlive: true}
 				}
 			}
 		}
 		// Other agent get errors: fail closed.
-		return false, false, agentErr
+		return herdrAgentObservation{paneAlive: true, err: agentErr}
 	}
 
 	var resp herdrAgentGetResponse
 	if jsonErr := json.Unmarshal([]byte(out), &resp); jsonErr != nil {
-		return false, false, fmt.Errorf("parsing agent get response: %w", jsonErr)
+		return herdrAgentObservation{paneAlive: true, err: fmt.Errorf("parsing agent get response: %w", jsonErr)}
 	}
 
 	if resp.Error != nil && resp.Error.Code == "agent_not_found" {
-		return true, false, nil
+		return herdrAgentObservation{paneAlive: true}
 	}
 	if resp.Error != nil {
-		return false, false, fmt.Errorf("agent get error: %s", resp.Error.Message)
+		return herdrAgentObservation{paneAlive: true, err: fmt.Errorf("agent get error: %s", resp.Error.Message)}
 	}
 
-	if resp.Result == nil || !isAgentStatusAlive(resp.Result.Agent.AgentStatus) {
-		return true, false, nil
+	if resp.Result == nil || resp.Result.Agent.AgentStatus == "" {
+		return herdrAgentObservation{paneAlive: true}
 	}
 
-	return true, true, nil
+	status := resp.Result.Agent.AgentStatus
+	return herdrAgentObservation{
+		paneAlive:  true,
+		agentAlive: isAgentStatusAlive(status),
+		recognized: true,
+		status:     status,
+	}
+}
+
+// CheckAgentAlive reports whether the pane exists and a live agent is
+// registered, derived from the single unified probe observeAgent performs.
+//
+//	(true, true, nil)  — pane exists and agent is registered (recovery: alive)
+//	(true, false, nil) — pane exists but no agent (recovery: NOT dead; not
+//	  authoritative absence — recovery fails closed, never auto-recover)
+//	(false, false, ErrPaneNotFound) — pane confirmed absent (recovery: dead)
+//	(false, false, err) — backend resolution failure (recovery: fail closed)
+func (h *HerdrBackend) CheckAgentAlive(windowID string) (bool, bool, error) {
+	o := h.observeAgent(windowID)
+	if o.err != nil {
+		return false, false, o.err
+	}
+	return o.paneAlive, o.agentAlive, nil
+}
+
+// ObserveAgent reports pane liveness, agent liveness, agent recognition, and
+// the raw agent status from a single probe.
+func (h *HerdrBackend) ObserveAgent(windowID string) (paneAlive bool, agentAlive bool, recognized bool, status string, err error) {
+	o := h.observeAgent(windowID)
+	return o.paneAlive, o.agentAlive, o.recognized, o.status, o.err
 }
 
 func isAgentStatusAlive(status string) bool {
