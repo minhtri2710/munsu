@@ -113,33 +113,33 @@ func mergedPollInFlight(homeDir, eventID string) bool {
 	return err == nil && rec != nil && rec.Resolved && rec.Generation != rec.AckedGeneration
 }
 
-type mergedPollWakeKey struct {
+type processEventWakeKey struct {
 	eventID    string
 	generation uint64
 }
 
-// consumeMergedPollEvents drains this cycle's process-event wakes and runs the
-// merged-poll action for every resolved, unacked event they announce. The
-// drain is the claim: a crash between drain and ack leaves the record unacked
-// and RecoverProcessEvents re-announces it, and the action is idempotent on
-// re-entry. The event is acked only after the action reports completion; a
-// stale capture is neither acked nor re-queued (the plugin loop re-registers
-// it), and every other failure re-queues the same wake so the action runs
-// again next cycle. Outcomes are returned per task for that loop.
-func consumeMergedPollEvents(homeDir string, retirement RetirementPort) (map[string]error, error) {
+// consumeProcessEventWakes drains this cycle's process-event wakes and routes
+// each resolved, unacked event they announce to the owner of its event-id
+// prefix. The drain is the claim: a crash between drain and ack leaves the
+// record unacked and RecoverProcessEvents re-announces it, so every arm's
+// action must be idempotent on re-entry. A wake whose prefix has no owner is
+// logged and dropped and never re-queued -- a prefix nothing owns would
+// re-queue forever -- and its record stays resolved and unacked for restart
+// recovery. Merged-poll outcomes are returned per task for the plugin loop.
+func consumeProcessEventWakes(homeDir string, retirement RetirementPort) (map[string]error, error) {
 	wakes, err := home.DrainWakesOfKind(homeDir, home.ProcessEventWakeKind)
 	if err != nil {
 		return nil, err
 	}
 	outcomes := map[string]error{}
-	seen := map[mergedPollWakeKey]bool{}
+	seen := map[processEventWakeKey]bool{}
 	for _, wake := range wakes {
 		var announced ProcessEventWake
 		if err := json.Unmarshal([]byte(wake.Payload), &announced); err != nil || announced.EventID == "" {
 			fmt.Fprintf(os.Stderr, "process-event wake %q dropped: undecodable payload: %v\n", wake.Key, err)
 			continue
 		}
-		key := mergedPollWakeKey{announced.EventID, announced.Generation}
+		key := processEventWakeKey{announced.EventID, announced.Generation}
 		if seen[key] {
 			continue
 		}
@@ -164,36 +164,51 @@ func consumeMergedPollEvents(homeDir string, retirement RetirementPort) (map[str
 			fmt.Fprintf(os.Stderr, "process-event wake %q dropped: record is not resolved\n", announced.EventID)
 			continue
 		}
-		taskID := rec.Payload
-		if announced.EventID != mergedPollEventID(taskID) {
-			fmt.Fprintf(os.Stderr, "process-event wake %q dropped: not a merged-poll event\n", announced.EventID)
-			continue
-		}
-		checkPath, err := home.DurableFilePath(home.StateDir(homeDir), taskID, ".check")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "process-event wake %q dropped: %v\n", announced.EventID, err)
-			continue
-		}
-		actErr := retirement.RetireMergedPoll(homeDir, taskID, checkPath, rec.Result)
 		switch {
-		case actErr == nil || errors.Is(actErr, domain.ErrAlreadyRetired):
-			outcomes[taskID] = nil
-			if err := AckProcessEvent(homeDir, announced.EventID, announced.Generation); err != nil {
-				fmt.Fprintf(os.Stderr, "process-event %q ack failed (re-announced on restart): %v\n", announced.EventID, err)
-			}
-		case errors.Is(actErr, domain.ErrStaleCapture):
-			outcomes[taskID] = actErr
+		case strings.HasPrefix(announced.EventID, mergedPollEventPrefix):
+			retireMergedPollWake(homeDir, retirement, wake, announced, rec, outcomes)
+		case strings.HasPrefix(announced.EventID, conditionActionEventPrefix):
+			consumeConditionActionWake(homeDir, wake, announced, rec)
 		default:
-			outcomes[taskID] = actErr
-			if err := home.EnqueueWake(homeDir, wake.Kind, wake.Key, wake.Payload); err != nil {
-				fmt.Fprintf(os.Stderr, "process-event %q re-enqueue failed (re-announced on restart): %v\n", announced.EventID, err)
-			}
-			if errors.Is(actErr, domain.ErrCheckInvalidAfterPublication) || !errors.Is(actErr, domain.ErrCheckValidationRefused) {
-				fmt.Fprintf(os.Stderr, "merged poll retirement for task %s failed (retrying next cycle): %v\n", taskID, actErr)
-			}
+			fmt.Fprintf(os.Stderr, "process-event wake %q dropped: no owner for this event prefix\n", announced.EventID)
 		}
 	}
 	return outcomes, nil
+}
+
+// retireMergedPollWake is the merged-poll arm of the dispatcher. The event is
+// acked only after the action reports completion; a stale capture is neither
+// acked nor re-queued (the plugin loop re-registers it), and every other
+// failure re-queues the same wake so the action runs again next cycle.
+func retireMergedPollWake(homeDir string, retirement RetirementPort, wake WakeRecord, announced ProcessEventWake, rec *ProcessEventRecord, outcomes map[string]error) {
+	taskID := rec.Payload
+	if announced.EventID != mergedPollEventID(taskID) {
+		fmt.Fprintf(os.Stderr, "process-event wake %q dropped: not a merged-poll event\n", announced.EventID)
+		return
+	}
+	checkPath, err := home.DurableFilePath(home.StateDir(homeDir), taskID, ".check")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "process-event wake %q dropped: %v\n", announced.EventID, err)
+		return
+	}
+	actErr := retirement.RetireMergedPoll(homeDir, taskID, checkPath, rec.Result)
+	switch {
+	case actErr == nil || errors.Is(actErr, domain.ErrAlreadyRetired):
+		outcomes[taskID] = nil
+		if err := AckProcessEvent(homeDir, announced.EventID, announced.Generation); err != nil {
+			fmt.Fprintf(os.Stderr, "process-event %q ack failed (re-announced on restart): %v\n", announced.EventID, err)
+		}
+	case errors.Is(actErr, domain.ErrStaleCapture):
+		outcomes[taskID] = actErr
+	default:
+		outcomes[taskID] = actErr
+		if err := home.EnqueueWake(homeDir, wake.Kind, wake.Key, wake.Payload); err != nil {
+			fmt.Fprintf(os.Stderr, "process-event %q re-enqueue failed (re-announced on restart): %v\n", announced.EventID, err)
+		}
+		if errors.Is(actErr, domain.ErrCheckInvalidAfterPublication) || !errors.Is(actErr, domain.ErrCheckValidationRefused) {
+			fmt.Fprintf(os.Stderr, "merged poll retirement for task %s failed (retrying next cycle): %v\n", taskID, actErr)
+		}
+	}
 }
 
 // CheckValidationPort validates a check artifact before the watcher surfaces it.
@@ -713,10 +728,16 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 
 	// Consume this cycle's process-event wakes before discovery, so the plugin
 	// loop sees this cycle's action outcomes and a retired poll is not found.
-	outcomes, err := consumeMergedPollEvents(homeDir, retirement)
+	outcomes, err := consumeProcessEventWakes(homeDir, retirement)
 	if err != nil {
 		return emitted, err
 	}
+
+	// Evaluate this process's live condition-action registrations on the
+	// watcher's existing cadence. A settled condition captures and announces
+	// here; its action runs when the dispatcher above drains that wake next
+	// cycle, the same announce-now/consume-next cadence merged-poll uses.
+	evaluateConditionActions(context.Background(), homeDir)
 
 	// Discover and emit check plugin wakes (per-task .check files + global checks).
 	// These cover PR merge polls and custom checks registered under state/checks/.
