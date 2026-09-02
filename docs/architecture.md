@@ -114,7 +114,7 @@ and the two are separate authorities (`fleet.authorizeAbsence` vs
 `fleet.authorizeLive`): negative exact absence is granted only for a narrowly
 classified structured absence (dead + probe/derived source) of the exact bound
 handle revalidated under the current canonical generation/revision/fence;
-positive liveness is promoted to `Live()` only WITH explicit acquisition
+positive liveness is promoted to `Live()` only for a trusted probe/derived source and WITH explicit acquisition
 /creation evidence tying the exact handle to the incarnation (the in-process
 creation receipt, the durable `AcquiredEndpoint`, or the canonical
 `EndpointBinding` evidence) — P1a adapters cannot attest incarnation, so a
