@@ -69,7 +69,11 @@ On first spawn of a task, `ResolveDeliveryMode` runs as today, but the resolved
 mode is **recorded on the canonical task aggregate** in
 `internal/taskauthority` as the task's delivery contract. Subsequent generations
 read the recorded contract instead of re-resolving from live inputs. A task's
-mode therefore cannot silently change across re-spawns. The home
+mode therefore cannot silently change across re-spawns. The recorded contract
+also carries across task transfer: `Canonical.ReceiveTransfer` writes the
+received `DeliveryContract` onto the destination generation, so a transferred
+task delivers under the same contract rather than re-resolving the mode from
+the destination home's live inputs on its next spawn. The home
 `meta["mode"]` value becomes a projection of this durable truth, not its source.
 
 ### 2. Fallback is retained but recorded as an explicit transition
