@@ -59,6 +59,11 @@ type AgentActivityReader interface {
 // surface agent liveness and the raw agent-status hint from a single probe.
 // ObserveEndpoint prefers it over the separate CheckAgentAlive +
 // AgentActivityReader pair; backends without it fall back to those two.
+//
+// The probe must fail closed: when err is non-nil every observation result is
+// zero (paneAlive, agentAlive and recognized false, status empty), so an
+// errored probe can never imply pane or agent liveness to a caller that reads
+// a value before checking the error.
 type AgentActivityProvider interface {
 	ObserveAgent(windowID string) (paneAlive bool, agentAlive bool, recognized bool, status string, err error)
 }
