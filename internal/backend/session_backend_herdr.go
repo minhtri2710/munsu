@@ -522,19 +522,19 @@ func (h *HerdrBackend) observeAgent(windowID string) herdrAgentObservation {
 			}
 		}
 		// Other agent get errors: fail closed.
-		return herdrAgentObservation{paneAlive: true, err: agentErr}
+		return herdrAgentObservation{err: agentErr}
 	}
 
 	var resp herdrAgentGetResponse
 	if jsonErr := json.Unmarshal([]byte(out), &resp); jsonErr != nil {
-		return herdrAgentObservation{paneAlive: true, err: fmt.Errorf("parsing agent get response: %w", jsonErr)}
+		return herdrAgentObservation{err: fmt.Errorf("parsing agent get response: %w", jsonErr)}
 	}
 
 	if resp.Error != nil && resp.Error.Code == "agent_not_found" {
 		return herdrAgentObservation{paneAlive: true}
 	}
 	if resp.Error != nil {
-		return herdrAgentObservation{paneAlive: true, err: fmt.Errorf("agent get error: %s", resp.Error.Message)}
+		return herdrAgentObservation{err: fmt.Errorf("agent get error: %s", resp.Error.Message)}
 	}
 
 	if resp.Result == nil || resp.Result.Agent.AgentStatus == "" {

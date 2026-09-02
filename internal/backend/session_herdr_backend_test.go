@@ -737,6 +737,27 @@ func TestHerdrBackend_CheckAgentAliveFailsClosedOnStructuredAgentGetError(t *tes
 	}
 }
 
+// ObserveAgent is a second public accessor over the same probe. It must honor
+// the same fail-closed contract as CheckAgentAlive: when the probe returns an
+// error the pane liveness it reports must be false, or a future consumer that
+// reads paneAlive before checking err would treat an undetermined answer as a
+// live pane. CheckAgentAlive zeroes at the accessor, so testing through it
+// passes even with the source bug present; this asserts through ObserveAgent.
+func TestHerdrBackend_ObserveAgentFailsClosedOnStructuredAgentGetError(t *testing.T) {
+	tmp := t.TempDir()
+	writeFakeHerdrAgentGetError(t, tmp, "agent_subsystem_unavailable")
+	testutil.PrependPath(t, tmp)
+
+	h := NewHerdrBackend("test-s")
+	paneAlive, agentAlive, recognized, _, err := h.ObserveAgent("wTest:p1")
+	if err == nil {
+		t.Fatal("ObserveAgent accepted a structured agent get error")
+	}
+	if paneAlive || agentAlive || recognized {
+		t.Fatalf("observation = pane:%v agent:%v recognized:%v, want all false alongside err", paneAlive, agentAlive, recognized)
+	}
+}
+
 func TestHerdrBackendFindTabByLabelRefusesDuplicateTabs(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "herdr")
