@@ -216,6 +216,74 @@ func TestHandoffTransfersQueuedTaskToCaptain(t *testing.T) {
 	}
 }
 
+// TestHandoffCarriesDeliveryContractToDestination proves a transferred task
+// keeps its recorded delivery contract — including a recorded fallback — after
+// the full journal → request → receive handoff. A drop at any wiring point
+// (journal field, receive-loop request field) makes the destination read back
+// a nil or bare contract.
+func TestHandoffCarriesDeliveryContractToDestination(t *testing.T) {
+	parent, captain := seedHandoffPair(t)
+	src := mustAuthority(t, parent)
+	seedCanonicalQueuedTask(t, src, "TASK-1", "general")
+	seedSourceFallbackContract(t, src, "TASK-1")
+
+	if err := Handoff(parent, captain, []string{"TASK-1"}); err != nil {
+		t.Fatalf("Handoff: %v", err)
+	}
+
+	agg := mustTransferOwner(t, captain, "TASK-1")
+	if agg.DeliveryContract == nil {
+		t.Fatal("destination dropped the delivery contract on handoff")
+	}
+	if agg.DeliveryContract.Mode != "direct-PR" {
+		t.Fatalf("destination contract mode = %q, want direct-PR", agg.DeliveryContract.Mode)
+	}
+	fb := agg.DeliveryContract.Fallback
+	if fb == nil {
+		t.Fatal("destination dropped the fallback provenance on handoff")
+	}
+	if fb.From != "no-mistakes" || fb.To != "direct-PR" {
+		t.Fatalf("destination fallback = %+v, want no-mistakes -> direct-PR", fb)
+	}
+}
+
+// seedSourceFallbackContract records a no-mistakes contract on a queued task and
+// then the authorized no-mistakes -> direct-PR fallback, leaving the task's
+// canonical contract carrying full transition provenance.
+func seedSourceFallbackContract(t *testing.T, c *taskauthority.Canonical, taskID string) {
+	t.Helper()
+	tid := mustTransferTaskID(t, taskID)
+	agg, err := c.Get(tid)
+	if err != nil {
+		t.Fatalf("Get(%s): %v", taskID, err)
+	}
+	contractReq := taskauthority.CanonicalRecordDeliveryContractRequest{
+		HomeID:       c.HomeID(),
+		TaskID:       tid,
+		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+		Mode:         "no-mistakes",
+		Reason:       "test seed contract",
+	}
+	if _, err := c.RecordDeliveryContract(mustTransferOp(t, "seed-contract-"+taskID, contractReq), contractReq); err != nil {
+		t.Fatalf("RecordDeliveryContract(%s): %v", taskID, err)
+	}
+	agg, err = c.Get(tid)
+	if err != nil {
+		t.Fatalf("Get after contract(%s): %v", taskID, err)
+	}
+	fallbackReq := taskauthority.CanonicalRecordDeliveryFallbackRequest{
+		HomeID:       c.HomeID(),
+		TaskID:       tid,
+		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+		From:         "no-mistakes",
+		To:           "direct-PR",
+		Reason:       "test seed fallback",
+	}
+	if _, err := c.RecordDeliveryFallback(mustTransferOp(t, "seed-fallback-"+taskID, fallbackReq), fallbackReq); err != nil {
+		t.Fatalf("RecordDeliveryFallback(%s): %v", taskID, err)
+	}
+}
+
 func TestHandoffRefusesNonQueuedTask(t *testing.T) {
 	parent, captain := seedHandoffPair(t)
 	c := mustAuthority(t, parent)

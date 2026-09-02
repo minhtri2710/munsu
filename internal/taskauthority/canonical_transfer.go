@@ -203,19 +203,21 @@ type CanonicalReceiveTransferRequest struct {
 	SourceHome       domain.HomeID
 	SourceGeneration Generation
 	Definition       TaskDefinition
+	DeliveryContract *DeliveryContract
 	Reason           string
 }
 
 func (r CanonicalReceiveTransferRequest) DigestBytes() ([]byte, error) {
 	return json.Marshal(struct {
-		HomeID           string         `json:"home_id"`
-		TaskID           string         `json:"task_id"`
-		ReservationID    string         `json:"reservation_id"`
-		SourceHome       string         `json:"source_home"`
-		SourceGeneration uint64         `json:"source_generation"`
-		Definition       TaskDefinition `json:"definition"`
-		Reason           string         `json:"reason,omitempty"`
-	}{r.HomeID.Value(), r.TaskID.Value(), r.ReservationID, r.SourceHome.Value(), uint64(r.SourceGeneration), r.Definition, r.Reason})
+		HomeID           string            `json:"home_id"`
+		TaskID           string            `json:"task_id"`
+		ReservationID    string            `json:"reservation_id"`
+		SourceHome       string            `json:"source_home"`
+		SourceGeneration uint64            `json:"source_generation"`
+		Definition       TaskDefinition    `json:"definition"`
+		DeliveryContract *DeliveryContract `json:"delivery_contract,omitempty"`
+		Reason           string            `json:"reason,omitempty"`
+	}{r.HomeID.Value(), r.TaskID.Value(), r.ReservationID, r.SourceHome.Value(), uint64(r.SourceGeneration), r.Definition, r.DeliveryContract, r.Reason})
 }
 
 // ReceiveTransfer creates the destination generation record for a transferred
@@ -269,13 +271,14 @@ func (c *Canonical) ReceiveTransfer(op domain.Operation, req CanonicalReceiveTra
 	}
 
 	agg := Aggregate{
-		SchemaVersion: TaskAuthoritySchema,
-		TaskID:        req.TaskID.Value(),
-		Generation:    Generation(1),
-		Revision:      FirstRevision,
-		Current:       false,
-		Definition:    req.Definition,
-		Phase:         PhaseQueued,
+		SchemaVersion:    TaskAuthoritySchema,
+		TaskID:           req.TaskID.Value(),
+		Generation:       Generation(1),
+		Revision:         FirstRevision,
+		Current:          false,
+		Definition:       req.Definition,
+		DeliveryContract: req.DeliveryContract,
+		Phase:            PhaseQueued,
 		Transfer: &TransferState{
 			ReservationID:    req.ReservationID,
 			SourceHome:       req.SourceHome.Value(),
