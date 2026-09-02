@@ -336,8 +336,10 @@ var DeliveryModes = map[string]bool{
 // re-resolved. It is independently mutable evidence (unlike the immutable
 // TaskDefinition) so an authorized delivery transition can later be recorded
 // into it, and it survives Reopen so every generation of a task delivers
-// under the same contract. Task metadata's "mode" key is a display
-// projection of this record, never a mode source.
+// under the same contract. Task metadata's "mode" key carries the
+// effective delivery mode in force at spawn, which fallback
+// reconciliation keeps equal to this record's Mode; it is a display
+// value, never a mode source.
 type DeliveryContract struct {
 	OperationID string            `json:"operation_id"`
 	Mode        string            `json:"mode"`

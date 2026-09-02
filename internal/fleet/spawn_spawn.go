@@ -198,6 +198,20 @@ func ResolveDeliveryModeFromProject(homeDir, projectName, explicitMode string) (
 	return ResolveDeliveryMode(explicitMode, normalizeSnapshotDeliveryMode(resolved.DefaultMode), resolved.RequireNoMistakes)
 }
 
+// ValidateProjectSnapshot resolves and discards one project snapshot to prove
+// the project exists and its base/overlay are well-formed, returning the same
+// typed failure ResolveDeliveryModeFromProject would for an unknown project or
+// malformed configuration. It performs no delivery-mode resolution: a caller
+// that already owns the effective mode (e.g. a contracted munsu brief) uses
+// this to keep the project-existence gate without re-running mode selection,
+// the no-mistakes PATH probe, or the require-no-mistakes refusal.
+func ValidateProjectSnapshot(homeDir, projectName string) error {
+	if _, err := ResolveProjectSnapshot(homeDir, projectName, config.BoundaryOverrides{}); err != nil {
+		return classifySnapshotError(projectName, err)
+	}
+	return nil
+}
+
 // noMistakesConfig is the compatibility-relevant subset of global config.
 type noMistakesConfig struct {
 	Agents            []string

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -35,42 +36,76 @@ func newBriefCmd() *cobra.Command {
 			id := args[0]
 			repo := args[1]
 
-			// Resolve delivery mode from the typed project/base surface (yolo
-			// stays registry-owned; the flat default-mode authority is retired).
+			// One canonical aggregate read serves mode resolution, the
+			// existence gate, and the scout contract below. A canonical task
+			// that fails to read is fatal: brief never falls back to an
+			// alternate mode source on a failed read (fail closed).
+			auth, err := ctx.TaskAuthority()
+			if err != nil {
+				return err
+			}
+			taskIDValue, err := domain.NewTaskID(id)
+			if err != nil {
+				return err
+			}
+			var agg taskauthority.Aggregate
+			canonicalExists := false
+			if a, getErr := auth.Get(taskIDValue); getErr == nil {
+				agg = a
+				canonicalExists = true
+			} else if !errors.Is(getErr, taskauthority.ErrNotFound) {
+				return getErr
+			}
+
+			// yolo stays registry-owned.
 			projYolo := false
 			if _, y, err := fleet.Mode(ctx.Home, repo); err == nil {
 				projYolo = y
 			}
 
-			resolvedMode, err := fleet.ResolveDeliveryModeFromProject(ctx.Home, repo, modeFlag)
-			if err != nil {
-				return err
+			// Delivery mode is the canonical DeliveryContract's mode whenever
+			// this home's canonical record carries one (recorded once at first
+			// spawn, thereafter READ — taskauthority.DeliveryContract). Only
+			// when the owning home records no contract is the mode resolved
+			// from the typed project/base surface. An explicit --mode that
+			// contradicts a recorded contract fails closed rather than
+			// silently re-scaffolding under a different mode than the one the
+			// task delivers under. The contract owns the mode, but the project
+			// snapshot still gates existence and well-formedness (fail closed
+			// on an unknown project or malformed base/overlay).
+			var resolvedMode string
+			if canonicalExists && agg.DeliveryContract != nil {
+				if modeFlag != "" {
+					if err := fleet.ValidateDeliveryMode(modeFlag); err != nil {
+						return err
+					}
+				}
+				resolvedMode = agg.DeliveryContract.Mode
+				if modeFlag != "" && modeFlag != resolvedMode {
+					return fmt.Errorf("--mode %q contradicts task %q's recorded delivery contract (%q): brief reads the contract and never re-scaffolds it; re-record the mode with 'munsu spawn %s --mode %s'", modeFlag, id, resolvedMode, id, modeFlag)
+				}
+				if err := fleet.ValidateProjectSnapshot(ctx.Home, repo); err != nil {
+					return err
+				}
+			} else {
+				resolvedMode, err = fleet.ResolveDeliveryModeFromProject(ctx.Home, repo, modeFlag)
+				if err != nil {
+					return err
+				}
 			}
 
 			// Require existing canonical task or legacy task meta unless --force.
-			if !force {
-				if ok, err := currentTaskExists(ctx.Home, id); err != nil {
-					return err
-				} else if !ok {
-					if _, err := mhome.ReadMeta(ctx.Home, id); err != nil {
-						return fmt.Errorf("task %q not found: create it with 'munsu task add %s ...' or use --force", id, id)
-					}
+			if !force && !canonicalExists {
+				if _, err := mhome.ReadMeta(ctx.Home, id); err != nil {
+					return fmt.Errorf("task %q not found: create it with 'munsu task add %s ...' or use --force", id, id)
 				}
 			}
+
 			scoutScope, scoutBudget := "", int64(0)
 			var scoutGeneration taskauthority.Generation
 			if scout {
-				auth, err := ctx.TaskAuthority()
-				if err != nil {
-					return err
-				}
-				taskIDValue, err := domain.NewTaskID(id)
-				if err != nil {
-					return err
-				}
-				agg, err := auth.Get(taskIDValue)
-				if err != nil {
-					return fmt.Errorf("reading scout contract: %w", err)
+				if !canonicalExists {
+					return fmt.Errorf("reading scout contract: %w", taskauthority.ErrNotFound)
 				}
 				if agg.Definition.Kind != "scout" {
 					return fmt.Errorf("task %q is not a scout", id)
@@ -87,10 +122,6 @@ func newBriefCmd() *cobra.Command {
 			}
 
 			if err := recoverBriefHandoffs(ctx.Home); err != nil {
-				return err
-			}
-			auth, err := ctx.TaskAuthority()
-			if err != nil {
 				return err
 			}
 			if err := writeBriefArtifact(auth, id, func() error { return fleet.Scaffold(opts) }); err != nil {
