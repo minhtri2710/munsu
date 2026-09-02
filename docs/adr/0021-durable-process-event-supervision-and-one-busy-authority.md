@@ -1,6 +1,6 @@
 # 0021. Durable Process-Event Supervision and One Busy Authority
 
-* **Status:** Proposed
+* **Status:** Accepted
 * **Date:** 2026-08-31
 * **Extends:** ADR-0005 (mutation fencing / typed endpoint observation), ADR-0008 (task-authority owns lifecycle), ADR-0019 (single-binary hand-rolled store)
 * **Triggered by:** firstmate → munsu parity refresh (2026-07-21 baseline → 2026-08-31), gaps G1/G2/G3; port-mapping P1b row ("Herdr native busy/event transport")
