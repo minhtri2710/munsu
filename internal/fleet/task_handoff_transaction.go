@@ -166,13 +166,14 @@ type taskHandoffJournal struct {
 // deterministic from the transfer ID and task ID, so a restart replays the
 // exact same operations (idempotent by Operation ID + digest).
 type taskHandoffTask struct {
-	TaskID           string                       `json:"task_id"`
-	SourceGeneration uint64                       `json:"source_generation"`
-	SourceRevision   uint64                       `json:"source_revision"`
-	ReservationID    string                       `json:"reservation_id"`
-	FenceToken       string                       `json:"fence_token"`
-	Owner            string                       `json:"owner"`
-	Definition       taskauthority.TaskDefinition `json:"definition"`
+	TaskID           string                          `json:"task_id"`
+	SourceGeneration uint64                          `json:"source_generation"`
+	SourceRevision   uint64                          `json:"source_revision"`
+	ReservationID    string                          `json:"reservation_id"`
+	FenceToken       string                          `json:"fence_token"`
+	Owner            string                          `json:"owner"`
+	Definition       taskauthority.TaskDefinition    `json:"definition"`
+	DeliveryContract *taskauthority.DeliveryContract `json:"delivery_contract,omitempty"`
 }
 
 var handoffCrashHook = func(string) {}
@@ -518,6 +519,7 @@ func buildTransferJournal(source, destination, captainID string, sourceAuth, des
 				Project:      agg.Definition.Project,
 				ParentTaskID: agg.Definition.ParentTaskID,
 			},
+			DeliveryContract: agg.DeliveryContract,
 		})
 	}
 	return journal, nil
@@ -633,6 +635,7 @@ func resumeTransfer(h *mhome.Home, lk *mhome.Lock, journal *taskHandoffJournal) 
 			SourceHome:       sourceHomeID,
 			SourceGeneration: taskauthority.Generation(task.SourceGeneration),
 			Definition:       task.Definition,
+			DeliveryContract: task.DeliveryContract,
 			Reason:           "task transfer receive",
 		}
 		if _, err := destinationAuth.ReceiveTransfer(mustHandoffOperation(transferOpID(journal.ID, task.TaskID, "receive"), req), req); err != nil {

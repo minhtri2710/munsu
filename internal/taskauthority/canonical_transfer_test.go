@@ -195,6 +195,72 @@ func TestCanonicalReceiveTransfer(t *testing.T) {
 	}
 }
 
+// TestCanonicalReceiveTransferCarriesDeliveryContract proves a transferred
+// task keeps its recorded delivery contract — including a recorded fallback —
+// at the destination generation. A dropped contract at any wiring point (request
+// field, aggregate set) makes the destination read back nil. GetGeneration
+// reads the received-but-not-current generation directly.
+func TestCanonicalReceiveTransferCarriesDeliveryContract(t *testing.T) {
+	cDest, _, _ := newTestCanonical(t)
+
+	contract := &DeliveryContract{
+		OperationID: "op-contract-src",
+		Mode:        "direct-PR",
+		RecordedAt:  100,
+		Fallback: &DeliveryFallback{
+			From:        "no-mistakes",
+			To:          "direct-PR",
+			Reason:      "no-mistakes capability lost",
+			Generation:  2,
+			OperationID: "op-fallback-src",
+			RecordedAt:  90,
+		},
+	}
+	req := receiveTransferRequest(t, cDest, "t1", "res-t1", "source-home", 3)
+	req.DeliveryContract = contract
+	if _, err := cDest.ReceiveTransfer(mustOperation(t, "op-receive-1", req), req); err != nil {
+		t.Fatalf("ReceiveTransfer: %v", err)
+	}
+
+	agg, err := cDest.GetGeneration(mustTaskID(t, "t1"), Generation(1))
+	if err != nil {
+		t.Fatalf("GetGeneration: %v", err)
+	}
+	got := agg.DeliveryContract
+	if got == nil {
+		t.Fatal("received generation dropped the delivery contract")
+	}
+	if got.Mode != contract.Mode || got.OperationID != contract.OperationID || got.RecordedAt != contract.RecordedAt {
+		t.Fatalf("contract = %+v, want %+v", got, contract)
+	}
+	if got.Fallback == nil {
+		t.Fatal("received contract dropped its fallback provenance")
+	}
+	if *got.Fallback != *contract.Fallback {
+		t.Fatalf("fallback = %+v, want %+v", *got.Fallback, *contract.Fallback)
+	}
+}
+
+// TestCanonicalReceiveTransferWithoutContractIsNil pins the negative: a task
+// transferred with no recorded contract receives a nil contract, not a
+// fabricated one.
+func TestCanonicalReceiveTransferWithoutContractIsNil(t *testing.T) {
+	cDest, _, _ := newTestCanonical(t)
+
+	req := receiveTransferRequest(t, cDest, "t1", "res-t1", "source-home", 3)
+	if _, err := cDest.ReceiveTransfer(mustOperation(t, "op-receive-1", req), req); err != nil {
+		t.Fatalf("ReceiveTransfer: %v", err)
+	}
+
+	agg, err := cDest.GetGeneration(mustTaskID(t, "t1"), Generation(1))
+	if err != nil {
+		t.Fatalf("GetGeneration: %v", err)
+	}
+	if agg.DeliveryContract != nil {
+		t.Fatalf("received contract = %+v, want nil", agg.DeliveryContract)
+	}
+}
+
 func TestCanonicalReceiveTransferDestinationAlreadyOwnsFails(t *testing.T) {
 	cDest, _, _ := newTestCanonical(t)
 	mustCreate(t, cDest, "t1")
