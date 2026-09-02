@@ -120,12 +120,14 @@ func authorizeAbsence(raw EndpointStatus, proof exactEndpointProof) EndpointStat
 }
 
 // authorizeLive is Fleet's POSITIVE authorization authority (BEO-16/P1a). Raw
-// probe liveness is promoted to Live() ONLY with explicit acquisition/
-// creation evidence tied to the incarnation (proof.acquired): P1a adapters
-// cannot attest incarnation, so a probe of an expected handle with no
-// acquisition record is never promoted — a reused handle cannot become Live()
-// merely because it matches the expected strings (ABA fail-closed). The proof
-// must also be complete and revalidated under current generation/revision.
+// probe liveness is promoted to Live() ONLY for a trusted probe/derived source
+// and with explicit acquisition/creation evidence tied to the incarnation
+// (proof.acquired): P1a adapters cannot attest incarnation, so a probe of an
+// expected handle with no acquisition record is never promoted — a reused handle
+// cannot become Live() merely because it matches the expected strings (ABA
+// fail-closed). An event-derived SourceEvent reading is rejected outright because
+// event hints are never lifecycle truth, symmetric with authorizeAbsence. The
+// proof must also be complete and revalidated under current generation/revision.
 func authorizeLive(raw EndpointStatus, proof exactEndpointProof) EndpointStatus {
 	if !proof.authorized() || !proof.current() {
 		return demoteObservation(raw, "cannot authorize liveness: incomplete or stale canonical proof (backend/handle/incarnation/lease/fence/current-generation-revision required)")
@@ -135,6 +137,9 @@ func authorizeLive(raw EndpointStatus, proof exactEndpointProof) EndpointStatus 
 	}
 	if raw.Lifecycle != LifecycleAlive || raw.Responsiveness != Responsive {
 		return demoteObservation(raw, "raw probe is not alive/responsive")
+	}
+	if raw.Source != SourceProbe && raw.Source != SourceDerived {
+		return demoteObservation(raw, "raw liveness is not from a trusted probe/derived source")
 	}
 	raw.Freshness = FreshnessCurrent
 	raw.Incarnation = proof.incarnation

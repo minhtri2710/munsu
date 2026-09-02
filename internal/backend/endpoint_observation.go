@@ -277,11 +277,14 @@ func (o EndpointObservation) State() EndpointObservationState {
 }
 
 // Live reports a confirmed-alive, current, exact-binding reading and is the
-// only positive readiness condition. It is true only after Fleet authorized
-// freshness as current against the exact canonical binding and the explicit
-// acquisition evidence (BEO-16/P1a).
+// only positive readiness condition. It is true only for a trusted probe or
+// Fleet-derived source whose freshness Fleet authorized as current against the
+// exact canonical binding and the explicit acquisition evidence (BEO-16/P1a);
+// an event-derived SourceEvent observation is a wake/activity hint only and can
+// never be Live(), matching the SourceEvent contract and the Absent() siblings.
 func (o EndpointObservation) Live() bool {
-	return o.Lifecycle == LifecycleAlive && o.Freshness == FreshnessCurrent
+	return o.Lifecycle == LifecycleAlive && o.Freshness == FreshnessCurrent &&
+		(o.Source == SourceProbe || o.Source == SourceDerived)
 }
 
 // Absent reports structured authoritative absence: dead + current + a trusted
