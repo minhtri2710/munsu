@@ -737,6 +737,101 @@ func TestHerdrBackend_CheckAgentAliveFailsClosedOnStructuredAgentGetError(t *tes
 	}
 }
 
+// writeFakeHerdrAgentGetProcessError makes `agent get` exit non-zero with
+// output that is not a structured agent_not_found error; pane get still
+// succeeds. This is the process-level failure return in observeAgent.
+func writeFakeHerdrAgentGetProcessError(t *testing.T, dir string) string {
+	t.Helper()
+	bin := filepath.Join(dir, "herdr")
+	script := "#!/usr/bin/env bash\n" +
+		`if [ "$1" = "--session" ]; then` + "\n" +
+		`  shift 2` + "\n" +
+		`fi` + "\n" +
+		`case "$1" in` + "\n" +
+		"  agent)\n" +
+		`    if [ "$2" = "get" ]; then` + "\n" +
+		`      echo 'agent subsystem crashed' >&2` + "\n" +
+		"      exit 3\n" +
+		"    fi\n" +
+		"    ;;\n" +
+		"  pane)\n" +
+		`    if [ "$2" = "get" ]; then` + "\n" +
+		`      echo '{"id":"cli:pane:get","result":{"pane_id":"'"$3"'"}}'` + "\n" +
+		"      exit 0\n" +
+		"    fi\n" +
+		"    ;;\n" +
+		"esac\n" +
+		"exit 1\n"
+	testutil.WriteFakeExecutable(t, bin, script)
+	return dir
+}
+
+// writeFakeHerdrAgentGetMalformed makes `agent get` succeed (exit 0) with output
+// that is not valid JSON; pane get succeeds. This is the malformed-response
+// return in observeAgent.
+func writeFakeHerdrAgentGetMalformed(t *testing.T, dir string) string {
+	t.Helper()
+	bin := filepath.Join(dir, "herdr")
+	script := "#!/usr/bin/env bash\n" +
+		`if [ "$1" = "--session" ]; then` + "\n" +
+		`  shift 2` + "\n" +
+		`fi` + "\n" +
+		`case "$1" in` + "\n" +
+		"  agent)\n" +
+		`    if [ "$2" = "get" ]; then` + "\n" +
+		`      echo 'not a json response'` + "\n" +
+		"      exit 0\n" +
+		"    fi\n" +
+		"    ;;\n" +
+		"  pane)\n" +
+		`    if [ "$2" = "get" ]; then` + "\n" +
+		`      echo '{"id":"cli:pane:get","result":{"pane_id":"'"$3"'"}}'` + "\n" +
+		"      exit 0\n" +
+		"    fi\n" +
+		"    ;;\n" +
+		"esac\n" +
+		"exit 1\n"
+	testutil.WriteFakeExecutable(t, bin, script)
+	return dir
+}
+
+// ObserveAgent is a second public accessor over the same probe. It must honor
+// the same fail-closed contract as CheckAgentAlive: when the probe returns an
+// error the pane liveness it reports must be false, or a future consumer that
+// reads paneAlive before checking err would treat an undetermined answer as a
+// live pane. CheckAgentAlive zeroes at the accessor, so testing through it
+// passes even with the source bug present; this asserts through ObserveAgent.
+// Each case exercises one of observeAgent's three err!=nil return sites so
+// re-adding paneAlive:true at any of them fails this test.
+func TestHerdrBackend_ObserveAgentFailsClosedOnAgentGetError(t *testing.T) {
+	cases := []struct {
+		name string
+		fake func(*testing.T, string) string
+	}{
+		{"structured error", func(t *testing.T, dir string) string {
+			return writeFakeHerdrAgentGetError(t, dir, "agent_subsystem_unavailable")
+		}},
+		{"process error", writeFakeHerdrAgentGetProcessError},
+		{"malformed json", writeFakeHerdrAgentGetMalformed},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			tc.fake(t, tmp)
+			testutil.PrependPath(t, tmp)
+
+			h := NewHerdrBackend("test-s")
+			paneAlive, agentAlive, recognized, _, err := h.ObserveAgent("wTest:p1")
+			if err == nil {
+				t.Fatal("ObserveAgent accepted an agent-get error")
+			}
+			if paneAlive || agentAlive || recognized {
+				t.Fatalf("observation = pane:%v agent:%v recognized:%v, want all false alongside err", paneAlive, agentAlive, recognized)
+			}
+		})
+	}
+}
+
 func TestHerdrBackendFindTabByLabelRefusesDuplicateTabs(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "herdr")
