@@ -97,6 +97,18 @@ func TestAuthorizeLiveRequiresAcquisitionEvidence(t *testing.T) {
 			t.Fatalf("non-alive raw with evidence must not be Live: %+v", obs)
 		}
 	}
+	// An alive/responsive raw carried on an untrusted event source fails closed
+	// even with full acquisition evidence: event-derived hints are never
+	// lifecycle truth, symmetric with authorizeAbsence rejecting the same source.
+	eventRaw := backend.EndpointObservation{Lifecycle: LifecycleAlive, Responsiveness: Responsive, Freshness: FreshnessUnknown, Activity: ActivityBusy, Source: SourceEvent}
+	// Assert authorizeLive's own demotion, not merely !Live(): EndpointObservation.Live()
+	// independently rejects SourceEvent, so a !Live() check would pass even if this
+	// guard were deleted. Only demoteObservation produces unknown/stale from an alive
+	// raw, so these fields prove the Fleet source guard fired.
+	eventObs := authorizeLive(eventRaw, withEvidence)
+	if eventObs.Lifecycle != LifecycleUnknown || eventObs.Freshness != FreshnessStale {
+		t.Fatalf("event-sourced raw with evidence must be demoted to unknown/stale: %+v", eventObs)
+	}
 }
 
 // TestAuthorizeAbsenceRequiresNarrowExactAbsence asserts the NEGATIVE

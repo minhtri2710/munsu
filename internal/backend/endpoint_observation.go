@@ -281,7 +281,8 @@ func (o EndpointObservation) State() EndpointObservationState {
 // freshness as current against the exact canonical binding and the explicit
 // acquisition evidence (BEO-16/P1a).
 func (o EndpointObservation) Live() bool {
-	return o.Lifecycle == LifecycleAlive && o.Freshness == FreshnessCurrent
+	return o.Lifecycle == LifecycleAlive && o.Freshness == FreshnessCurrent &&
+		(o.Source == SourceProbe || o.Source == SourceDerived)
 }
 
 // Absent reports structured authoritative absence: dead + current + a trusted

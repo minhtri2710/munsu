@@ -136,6 +136,9 @@ func authorizeLive(raw EndpointStatus, proof exactEndpointProof) EndpointStatus 
 	if raw.Lifecycle != LifecycleAlive || raw.Responsiveness != Responsive {
 		return demoteObservation(raw, "raw probe is not alive/responsive")
 	}
+	if raw.Source != SourceProbe && raw.Source != SourceDerived {
+		return demoteObservation(raw, "raw liveness is not from a trusted probe/derived source")
+	}
 	raw.Freshness = FreshnessCurrent
 	raw.Incarnation = proof.incarnation
 	return raw

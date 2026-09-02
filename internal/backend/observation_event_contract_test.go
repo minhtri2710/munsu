@@ -519,6 +519,18 @@ func TestObservationSourceEventEnum(t *testing.T) {
 	if eventObs.Absent() {
 		t.Error("an event-derived observation must never be Absent()")
 	}
+	// Symmetrically, event source must never qualify as Live(): only probe/
+	// derived sources are readiness-capable, matching the SourceEvent contract.
+	liveEventObs := EndpointObservation{
+		Lifecycle:      LifecycleAlive,
+		Responsiveness: Responsive,
+		Freshness:      FreshnessCurrent,
+		Activity:       ActivityBusy,
+		Source:         SourceEvent,
+	}
+	if liveEventObs.Live() {
+		t.Error("an event-derived observation must never be Live()")
+	}
 }
 
 func TestHerdrEventSource_After(t *testing.T) {
