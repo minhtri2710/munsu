@@ -226,4 +226,4 @@ silent fresh re-resolution. Relate the recorded transition to the existing
 - [ ] One busy authority, no duplicate enum; retirement rides the generic source; P1a table green.
 
 ### Checkpoint: Complete (after C1, D1, D2)
-- [ ] Both ADRs implemented; flip ADR-0021/0022 Status Proposed→Accepted; deadcode + guards + citations green. Review with human.
+- [ ] Both ADRs implemented; ADR-0021/0022 flipped to Accepted; deadcode + guards + citations green. Review with human.
