@@ -94,29 +94,6 @@ func currentTaskOwnerHomes(homeDir, taskID string) ([]string, error) {
 	return owners, nil
 }
 
-// currentTaskExists reports whether one task has a current canonical record
-// in the home's authority. It re-expresses the legacy
-// home.ReadCurrentTaskAggregate presence check over the canonical authority;
-// uninitialized homes fail closed.
-func currentTaskExists(homeDir, taskID string) (bool, error) {
-	auth, err := taskAuthorityForRead(homeDir)
-	if err != nil {
-		return false, fmt.Errorf("composing task authority: %w", err)
-	}
-	tid, err := domain.NewTaskID(taskID)
-	if err != nil {
-		return false, err
-	}
-	_, err = auth.Get(tid)
-	if errors.Is(err, taskauthority.ErrNotFound) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
 // taskAuthorityForRead composes the canonical Task Authority over an opened
 // home for one read-only authority query. Ordinary reads fail closed for an
 // uninitialized Home rather than silently initializing state.
