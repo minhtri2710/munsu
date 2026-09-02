@@ -79,7 +79,7 @@ delivery-contract: D1 ─→ D2       (independent of ADR-0021)
 - [ ] D2: Authorized fallback recorded as a transition
 
 ### Checkpoint: Complete
-- [ ] Both ADRs implemented; ADR statuses flipped Proposed→Accepted; deadcode + guards + citations green
+- [ ] Both ADRs implemented; ADR statuses flipped to Accepted; deadcode + guards + citations green
 
 ## Risks and Mitigations
 

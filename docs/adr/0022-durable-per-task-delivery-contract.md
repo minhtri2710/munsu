@@ -1,6 +1,6 @@
 # 0022. Durable Per-Task Delivery Contract
 
-* **Status:** Proposed
+* **Status:** Accepted
 * **Date:** 2026-08-31
 * **Extends:** ADR-0008 (task-authority owns durable task truth), ADR-0016 (review-before-merge has no technical gate)
 * **Triggered by:** firstmate → munsu parity refresh, gap G5 (firstmate #1563, "explicit per-task delivery contract, refuses to guess")
@@ -52,11 +52,12 @@ explicitly recorded transition rather than a silent re-resolution.
   rather than delivering under an unrecorded mode.
 * `internal/fleet/brief.go` `ScaffoldOptions.Mode` — the resolved **delivery
   mode** (no-mistakes / direct-PR / local-only). `shipBriefTemplate` renders it as
-  `Delivery mode: %s` and `internal/cli/session_cmd.go` sets it from
-  `ResolveDeliveryMode`, so the field already carries delivery-mode semantics: the
-  mode is rendered into the brief and, separately, projected into home meta
-  (`meta["mode"]`) by the spawn path, but it is never stored on the canonical task
-  aggregate.
+  `Delivery mode: %s`, and `internal/cli/session_cmd.go` now READS this mode from
+  the canonical delivery contract (`taskauthority.DeliveryContract`) whenever the
+  owning home's canonical record carries one, resolving from the typed project
+  snapshot only when no contract is recorded (#733). The mode is durable task truth
+  on the canonical aggregate; the home `meta["mode"]` value is a projection of it,
+  not its source.
 * ADR-0008 §2 — durable task truth lives in `internal/taskauthority`, not in
   home meta projections.
 
