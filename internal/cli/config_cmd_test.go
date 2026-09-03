@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/fleet"
 )
 
 // TestConfigGetBackendReportsPersistedFleetBaseBackend verifies `config get
@@ -491,6 +493,134 @@ func TestConfigSetAllowDirectPRFallbackRoundTrips(t *testing.T) {
 			if got := extractConfigValueFromTOON(strings.TrimSpace(buf.String())); got != want {
 				t.Errorf("config get allow-direct-pr-fallback = %q, want %q", got, want)
 			}
+		})
+	}
+}
+
+// runMunsuCLI executes one munsu command through the real root command and
+// returns its contract output.
+func runMunsuCLI(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	root := NewRootCommand()
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs(args)
+	err := root.Execute()
+	return strings.TrimSpace(buf.String()), err
+}
+
+// configShowRows parses `config show --output json` into a key -> rendered
+// value map. The show table is the command's user-facing rendered output, so
+// the assertion is about what an operator reads, parsed semantically rather
+// than substring-matched.
+func configShowRows(t *testing.T, output string) map[string]string {
+	t.Helper()
+	var resp struct {
+		Data struct {
+			Message string `json:"message"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(output), &resp); err != nil {
+		t.Fatalf("parsing config show JSON: %v", err)
+	}
+	rows := map[string]string{}
+	for _, line := range strings.Split(resp.Data.Message, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "Additional config keys:") {
+			break
+		}
+		if len(line) < 31 || strings.HasPrefix(line, " ") {
+			continue
+		}
+		key := strings.TrimSpace(line[:30])
+		if key == "" || key == "KEY" || strings.HasPrefix(key, "-") {
+			continue
+		}
+		rows[key] = strings.TrimSpace(line[30:])
+	}
+	return rows
+}
+
+// TestConfigSetAllowDirectPRFallbackFeedsConfigSurfacesAndSpawnSnapshot walks
+// the whole operator path for the typed key: `config set
+// allow-direct-pr-fallback` authors the fleet base document, `config get` and
+// `config show` report the authored value, the flat file-per-key store is never
+// written, and the resolved spawn snapshot that the Runner consumes observes
+// the same value. An explicitly authored false is covered too, so the assertion
+// is about the authored value and not about a zero value that happens to match.
+func TestConfigSetAllowDirectPRFallbackFeedsConfigSurfacesAndSpawnSnapshot(t *testing.T) {
+	for _, want := range []bool{true, false} {
+		t.Run(strconv.FormatBool(want), func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("MUNSU_HOME", home)
+			projectPath := filepath.Join(t.TempDir(), "alpha")
+			if err := os.MkdirAll(projectPath, 0o755); err != nil {
+				t.Fatal(err)
+			}
+
+			// Deterministic operator setup through the CLI only: a registered
+			// project plus the typed identities the spawn resolver requires. No
+			// host probing, so the resolved snapshot depends solely on what these
+			// commands authored.
+			for _, args := range [][]string{
+				{"project", "add", "alpha", projectPath},
+				{"project", "config", "set", "alpha", "soldier-harness", "pi"},
+				{"config", "set", "backend", "tmux"},
+				{"config", "set", "allow-direct-pr-fallback", strconv.FormatBool(want)},
+			} {
+				if _, err := runMunsuCLI(t, args...); err != nil {
+					t.Fatalf("munsu %s: %v", strings.Join(args, " "), err)
+				}
+			}
+
+			// The fleet base document is the authored persisted state.
+			base, err := config.LoadFleetBase(home)
+			if err != nil {
+				t.Fatalf("loading fleet base after set: %v", err)
+			}
+			if base.Config.AllowDirectPRFallback == nil || *base.Config.AllowDirectPRFallback != want {
+				t.Fatalf("base allowDirectPRFallback = %v, want %v", base.Config.AllowDirectPRFallback, want)
+			}
+
+			// The flat file-per-key store is never written for this typed key.
+			flatPath := filepath.Join(home, "config", "allow-direct-pr-fallback")
+			if _, err := os.Stat(flatPath); !os.IsNotExist(err) {
+				t.Errorf("flat %s must not exist, stat err = %v", flatPath, err)
+			}
+			if _, err := config.Get(home, "allow-direct-pr-fallback"); err == nil {
+				t.Error("flat config/allow-direct-pr-fallback must not be readable")
+			}
+
+			getOut, err := runMunsuCLI(t, "config", "get", "allow-direct-pr-fallback")
+			if err != nil {
+				t.Fatalf("config get allow-direct-pr-fallback: %v", err)
+			}
+			gotGet := extractConfigValueFromTOON(getOut)
+			if gotGet != strconv.FormatBool(want) {
+				t.Errorf("config get allow-direct-pr-fallback = %q, want %q", gotGet, strconv.FormatBool(want))
+			}
+
+			showOut, err := runMunsuCLI(t, "config", "show", "--output", "json")
+			if err != nil {
+				t.Fatalf("config show: %v", err)
+			}
+			gotShow := configShowRows(t, showOut)["allow-direct-pr-fallback"]
+			wantShow := strconv.FormatBool(want) + " (typed config)"
+			if gotShow != wantShow {
+				t.Errorf("config show allow-direct-pr-fallback = %q, want %q", gotShow, wantShow)
+			}
+
+			// The real spawn consumer resolves the same authored value.
+			resolved, err := fleet.ResolveSpawnProjectConfig(home, fleet.Args{ProjectName: "alpha"}, fleet.DispatchPolicyGeneralDirect, nil)
+			if err != nil {
+				t.Fatalf("resolving spawn project config: %v", err)
+			}
+			if resolved.AllowDirectPRFallback != want {
+				t.Errorf("resolved spawn snapshot AllowDirectPRFallback = %v, want %v", resolved.AllowDirectPRFallback, want)
+			}
+
+			t.Logf("munsu config set allow-direct-pr-fallback %v -> base.json allowDirectPRFallback=%v, config get=%q, config show=%q, resolved spawn snapshot AllowDirectPRFallback=%v, flat config/allow-direct-pr-fallback written=false",
+				want, *base.Config.AllowDirectPRFallback, gotGet, gotShow, resolved.AllowDirectPRFallback)
 		})
 	}
 }
