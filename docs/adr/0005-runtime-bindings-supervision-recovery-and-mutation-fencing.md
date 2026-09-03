@@ -1,6 +1,6 @@
 # 0005. Runtime Bindings, Supervision, Recovery, and Mutation Fencing
 
-* **Status:** Accepted; partially implemented — immutable Endpoint/Worktree bindings, typed 7-state observation (ADR-0021), per-home watcher lease + degraded mode, `.soldier-brief.md`+manifest, and Captain-side recovery (relaunch/nudge/relaunch-guard) all landed. Remaining residual work (§4 recovery-series/circuit + LaunchDiagnostic, §3 soldier-endpoint coverage, §5 General→Captain relay, §6 Git-fencing tier decision) is tracked in the [owner-clean residual roadmap](../plans/2026-09-03-owner-clean-residual-roadmap.md).
+* **Status:** Accepted; partially implemented — immutable Endpoint/Worktree bindings, typed 7-state observation (ADR-0021), per-home watcher lease + degraded mode, `.soldier-brief.md`+manifest, and Captain-side recovery (relaunch/nudge/relaunch-guard) all landed. §3 (Captain-scoped recovery is the accepted boundary) and §4 (recovery-series/circuit + LaunchDiagnostic) are retired by ADR-0023. Remaining residual work (§5 General→Captain relay, §6 Git-fencing tier decision) is tracked in the [owner-clean residual roadmap](../plans/2026-09-03-owner-clean-residual-roadmap.md).
 * **Date:** 2026-07-30
 * **Extends:** ADR-0002 (Resource Lease, quarantine, durable lifecycle)
 * **Triggered by:** `munsu-workflow-incident-report-2026-07-30.md`
@@ -70,7 +70,7 @@ Recovery is bounded and state-specific:
 
 Probe, nudge, and mutation budgets are separate and durable. Concurrent recovery uses a lock/CAS. Teardown may dispose an exact unresponsive binding after retirement authorization, skips disposal for verified dead endpoints, and refuses stale-identity disposal.
 
-### 4. Durable recovery series and diagnostics
+### 4. Durable recovery series and diagnostics (retired — ADR-0023)
 
 Recovery attempts persist across watcher, converge, and manual invocations. A series is keyed by target/endpoint generation, launch-input digest, and normalized failure signature. The launch-input digest includes adapter/version, launch template, model/effort, integration and resolved-config digests, charter/prompt digest, executable identity, capability attestation, and backend.
 
