@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
@@ -32,9 +33,9 @@ func TestHarnessHookDirsRejectEmptyProjectCwd(t *testing.T) {
 }
 
 func TestAssertSupportedHarnessRejectsKnownHarnessWithoutCapabilities(t *testing.T) {
-	original := append([]string(nil), harness.KnownHarnesses...)
-	harness.KnownHarnesses = append(harness.KnownHarnesses, "future")
-	defer func() { harness.KnownHarnesses = original }()
+	original := append([]string(nil), config.KnownHarnesses...)
+	config.KnownHarnesses = append(config.KnownHarnesses, "future")
+	defer func() { config.KnownHarnesses = original }()
 
 	err := AssertSupportedHarness("future")
 	if err == nil || !strings.Contains(err.Error(), "has no integration capabilities yet") {
