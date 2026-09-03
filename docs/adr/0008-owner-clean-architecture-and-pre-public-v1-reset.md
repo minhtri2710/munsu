@@ -1,6 +1,6 @@
 # 0008. Owner-Clean Architecture and Pre-Public v1 Reset
 
-* **Status:** Accepted; implementation pending
+* **Status:** Accepted; substantially implemented — topology, `task` sole noun, render seam, contract repo, and activation gate landed (#402–#418). Remaining residual work (the §2 `.meta`/`.status` decision — §2 records these projections as removed, but the tree still writes them; retention is an owner decision) is tracked in the [owner-clean residual roadmap](../plans/2026-09-03-owner-clean-residual-roadmap.md).
 * **Date:** 2026-08-03
 * **Supersedes:** ADR-0001 through ADR-0007 where their topology, ownership, projections, migration, fallback, compatibility, schema, command, or test decisions conflict with this ADR
 * **Triggered by:** Whole-codebase architecture review and structured grilling
@@ -189,7 +189,7 @@ Tests and fixtures authored for migration, compatibility, fallback, projections,
 
 ### 13. Cutover
 
-Implementation occurs as one coherent cutover on one branch. Dependency-ordered work inside the branch does not create supported architecture phases. There are no feature flags, dual registrations, temporary compatibility adapters, or old/new runtime switches.
+Implementation is delivered incrementally as dependency-ordered gated increments, each on its own branch through the delivery gate (as issues #402–#418 and their successors were). The invariant is architectural, not single-branch: every landed increment leaves the tree owner-clean, and dependency-ordered work never creates *supported architecture phases* — no two runtimes coexist. There are no feature flags, dual registrations, temporary compatibility adapters, or old/new runtime switches at any increment boundary.
 
 The final activation requires:
 
