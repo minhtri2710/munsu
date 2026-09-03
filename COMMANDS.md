@@ -20,6 +20,8 @@ that output is the authority, not this file.
 | `munsu project show <name>` | Show project details. |
 | `munsu project rm <name>` | Remove a registered project. |
 | `munsu project mode <name>` | Resolve delivery mode for a project. |
+| `munsu project config get <name> <key>` | Read a project's overlay value (empty if unset, the project inherits the fleet base). |
+| `munsu project config set <name> <key> <value>` | Write a project's overlay value; an empty value clears it so the project inherits the base. Keys: default-mode, soldier-harness, model, backend, require-no-mistakes, allow-direct-pr-fallback. |
 | `munsu worktree get <repo-path> [--lease]` | Acquire a pooled worktree via treehouse. |
 | `munsu worktree return <path>` | Return a worktree to the pool. |
 | `munsu worktree status` | Show worktree pool status. |
