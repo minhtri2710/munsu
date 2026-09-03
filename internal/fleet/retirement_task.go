@@ -1204,13 +1204,6 @@ func shipSafetyCheck(opts Options, meta map[string]string, backend BoundTeardown
 				continue
 			}
 
-			// Check legacy .soldier-md migration.
-			if name == ".soldier-md" && manifest.LegacyBriefMigration != nil {
-				if err := CheckLegacyBriefMigration(wtPath, manifest); err == nil {
-					continue
-				}
-			}
-
 			remaining = append(remaining, line)
 		}
 	}

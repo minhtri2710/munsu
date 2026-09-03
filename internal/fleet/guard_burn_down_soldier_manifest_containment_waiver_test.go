@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func guardManifestFixture(t *testing.T, root string, legacyPolicy bool) *LaunchManifest {
+func guardManifestFixture(t *testing.T, root string) *LaunchManifest {
 	t.Helper()
 	setupGuardManifestFiles(t, root)
 	entries := make([]ManifestEntry, 0, 5)
@@ -18,12 +18,7 @@ func guardManifestFixture(t *testing.T, root string, legacyPolicy bool) *LaunchM
 		}
 		entries = append(entries, entry)
 	}
-	manifest := BuildManifest(entries)
-	if legacyPolicy {
-		policy := LegacyBriefMatchCanonicalV1
-		manifest.LegacyBriefMigration = &policy
-	}
-	return manifest
+	return BuildManifest(entries)
 }
 
 func setupGuardManifestFiles(t *testing.T, root string) {
@@ -59,15 +54,6 @@ func TestGuardBurnDownManifestContainmentWaiversPinned(t *testing.T) {
 		if err := verifyManifestFile(root); err == nil || !strings.Contains(err.Error(), "is a symlink") {
 			t.Fatalf("verifyManifestFile symlink error = %v", err)
 		}
-
-		legacyRoot := t.TempDir()
-		manifest := guardManifestFixture(t, legacyRoot, true)
-		if err := os.Symlink(outside, filepath.Join(legacyRoot, ".soldier-md")); err != nil {
-			t.Fatal(err)
-		}
-		if err := CheckLegacyBriefMigration(legacyRoot, manifest); err == nil || !strings.Contains(err.Error(), "is a symlink") {
-			t.Fatalf("CheckLegacyBriefMigration symlink error = %v", err)
-		}
 	})
 
 	t.Run("non-regular direct children are rejected before containment", func(t *testing.T) {
@@ -81,28 +67,12 @@ func TestGuardBurnDownManifestContainmentWaiversPinned(t *testing.T) {
 		if err := verifyManifestFile(root); err == nil || !strings.Contains(err.Error(), "not a regular file") {
 			t.Fatalf("verifyManifestFile directory error = %v", err)
 		}
-
-		legacyRoot := t.TempDir()
-		manifest := guardManifestFixture(t, legacyRoot, true)
-		if err := os.Mkdir(filepath.Join(legacyRoot, ".soldier-md"), 0755); err != nil {
-			t.Fatal(err)
-		}
-		if err := CheckLegacyBriefMigration(legacyRoot, manifest); err == nil || !strings.Contains(err.Error(), "not a regular file") {
-			t.Fatalf("CheckLegacyBriefMigration directory error = %v", err)
-		}
 	})
 
 	t.Run("symlinked root canonicalizes both sides", func(t *testing.T) {
 		actual := t.TempDir()
-		manifest := guardManifestFixture(t, actual, true)
+		manifest := guardManifestFixture(t, actual)
 		if _, err := WriteManifest(actual, manifest); err != nil {
-			t.Fatal(err)
-		}
-		brief, err := os.ReadFile(filepath.Join(actual, BriefName))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(actual, ".soldier-md"), brief, 0644); err != nil {
 			t.Fatal(err)
 		}
 		alias := filepath.Join(t.TempDir(), "alias")
@@ -114,9 +84,6 @@ func TestGuardBurnDownManifestContainmentWaiversPinned(t *testing.T) {
 		}
 		if err := verifyManifestFile(alias); err != nil {
 			t.Fatalf("verifyManifestFile through symlinked root: %v", err)
-		}
-		if err := CheckLegacyBriefMigration(alias, manifest); err != nil {
-			t.Fatalf("CheckLegacyBriefMigration through symlinked root: %v", err)
 		}
 	})
 
@@ -149,13 +116,6 @@ func TestGuardBurnDownManifestContainmentWaiversPinned(t *testing.T) {
 		}
 		if err := verifyManifestFile(root); err == nil || strings.Contains(err.Error(), "symlink escapes") {
 			t.Fatalf("verifyManifestFile unresolved root error = %v", err)
-		}
-		manifest := &LaunchManifest{LegacyBriefMigration: func() *LegacyBriefMigrationPolicy {
-			p := LegacyBriefMatchCanonicalV1
-			return &p
-		}(), Artifacts: []ManifestEntry{guardManifestEntry(BriefName)}}
-		if err := CheckLegacyBriefMigration(root, manifest); err == nil || strings.Contains(err.Error(), "symlink escapes") {
-			t.Fatalf("CheckLegacyBriefMigration unresolved root error = %v", err)
 		}
 	})
 }

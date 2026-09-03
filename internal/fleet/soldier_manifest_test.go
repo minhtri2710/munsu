@@ -11,7 +11,7 @@ import (
 
 // writeTestManifest writes a minimal valid manifest with all required entries
 // to the given directory. Returns the manifest digest.
-func writeTestManifest(t *testing.T, dir string, entries []ManifestEntry, policy *LegacyBriefMigrationPolicy) string {
+func writeTestManifest(t *testing.T, dir string, entries []ManifestEntry) string {
 	t.Helper()
 	if entries == nil {
 		// Create default entries from actual files.
@@ -25,7 +25,6 @@ func writeTestManifest(t *testing.T, dir string, entries []ManifestEntry, policy
 		}
 	}
 	manifest := BuildManifest(entries)
-	manifest.LegacyBriefMigration = policy
 	digest, err := WriteManifest(dir, manifest)
 	if err != nil {
 		t.Fatalf("writing manifest: %v", err)
@@ -58,7 +57,7 @@ func TestManifest_WriteAndRead(t *testing.T) {
 	tmp := t.TempDir()
 	setupTestLaunchFiles(t, tmp)
 
-	digest := writeTestManifest(t, tmp, nil, nil)
+	digest := writeTestManifest(t, tmp, nil)
 
 	got, err := ReadManifest(tmp)
 	if err != nil {
@@ -70,9 +69,6 @@ func TestManifest_WriteAndRead(t *testing.T) {
 	if len(got.Artifacts) != 5 {
 		t.Fatalf("expected 5 artifacts, got %d", len(got.Artifacts))
 	}
-	if got.LegacyBriefMigration != nil {
-		t.Error("expected no legacy brief migration policy")
-	}
 
 	// Verify WriteManifest returned a valid 64-char hex digest.
 	if len(digest) != 64 {
@@ -80,33 +76,14 @@ func TestManifest_WriteAndRead(t *testing.T) {
 	}
 }
 
-func TestManifest_WriteAndRead_WithLegacyPolicy(t *testing.T) {
-	tmp := t.TempDir()
-	setupTestLaunchFiles(t, tmp)
-
-	policy := LegacyBriefMatchCanonicalV1
-	writeTestManifest(t, tmp, nil, &policy)
-
-	got, err := ReadManifest(tmp)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.LegacyBriefMigration == nil {
-		t.Fatal("expected legacy brief migration policy")
-	}
-	if *got.LegacyBriefMigration != LegacyBriefMatchCanonicalV1 {
-		t.Errorf("policy = %q, want %q", *got.LegacyBriefMigration, LegacyBriefMatchCanonicalV1)
-	}
-}
-
 func TestManifest_WriteReturnsDigest(t *testing.T) {
 	tmp := t.TempDir()
 	setupTestLaunchFiles(t, tmp)
 
-	digest1 := writeTestManifest(t, tmp, nil, nil)
+	digest1 := writeTestManifest(t, tmp, nil)
 
 	// Write again with same content - digest should be the same.
-	digest2 := writeTestManifest(t, tmp, nil, nil)
+	digest2 := writeTestManifest(t, tmp, nil)
 
 	if digest1 != digest2 {
 		t.Errorf("deterministic write should produce same digest: %s != %s", digest1, digest2)
@@ -239,7 +216,7 @@ func TestManifest_IntegrityCheck(t *testing.T) {
 	tmp := t.TempDir()
 	setupTestLaunchFiles(t, tmp)
 
-	digest := writeTestManifest(t, tmp, nil, nil)
+	digest := writeTestManifest(t, tmp, nil)
 
 	// Verify the manifest file exists.
 	manifestPath := filepath.Join(tmp, ManifestName)
@@ -548,7 +525,7 @@ func TestManifest_NotInItsOwnEntries(t *testing.T) {
 	tmp := t.TempDir()
 	setupTestLaunchFiles(t, tmp)
 
-	digest := writeTestManifest(t, tmp, nil, nil)
+	digest := writeTestManifest(t, tmp, nil)
 
 	got, err := ReadManifest(tmp)
 	if err != nil {
@@ -572,7 +549,7 @@ func TestManifest_NotInItsOwnEntries(t *testing.T) {
 func TestVerifyLaunchArtifacts_Canonical(t *testing.T) {
 	tmp := t.TempDir()
 	setupTestLaunchFiles(t, tmp)
-	digest := writeTestManifest(t, tmp, nil, nil)
+	digest := writeTestManifest(t, tmp, nil)
 
 	err := VerifyLaunchArtifacts(tmp, digest)
 	if err != nil {
@@ -583,7 +560,7 @@ func TestVerifyLaunchArtifacts_Canonical(t *testing.T) {
 func TestVerifyLaunchArtifacts_EmptyExpectedSHA(t *testing.T) {
 	tmp := t.TempDir()
 	setupTestLaunchFiles(t, tmp)
-	writeTestManifest(t, tmp, nil, nil)
+	writeTestManifest(t, tmp, nil)
 
 	err := VerifyLaunchArtifacts(tmp, "")
 	if err == nil {
@@ -594,7 +571,7 @@ func TestVerifyLaunchArtifacts_EmptyExpectedSHA(t *testing.T) {
 func TestVerifyLaunchArtifacts_WrongExpectedSHA(t *testing.T) {
 	tmp := t.TempDir()
 	setupTestLaunchFiles(t, tmp)
-	writeTestManifest(t, tmp, nil, nil)
+	writeTestManifest(t, tmp, nil)
 
 	err := VerifyLaunchArtifacts(tmp, "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789")
 	if err == nil {
@@ -608,7 +585,7 @@ func TestVerifyLaunchArtifacts_WrongExpectedSHA(t *testing.T) {
 func TestVerifyLaunchArtifacts_MissingFile(t *testing.T) {
 	tmp := t.TempDir()
 	setupTestLaunchFiles(t, tmp)
-	digest := writeTestManifest(t, tmp, nil, nil)
+	digest := writeTestManifest(t, tmp, nil)
 
 	// Remove the brief file.
 	os.Remove(filepath.Join(tmp, BriefName))
@@ -616,97 +593,5 @@ func TestVerifyLaunchArtifacts_MissingFile(t *testing.T) {
 	err := VerifyLaunchArtifacts(tmp, digest)
 	if err == nil {
 		t.Error("expected error for missing brief file")
-	}
-}
-
-// =============================================================================
-// CheckLegacyBriefMigration tests
-// =============================================================================
-
-func TestCheckLegacyBriefMigration_Match(t *testing.T) {
-	tmp := t.TempDir()
-	setupTestLaunchFiles(t, tmp)
-
-	policy := LegacyBriefMatchCanonicalV1
-	digest := writeTestManifest(t, tmp, nil, &policy)
-
-	// Write legacy .soldier-md with the same content as the brief.
-	briefContent, _ := os.ReadFile(filepath.Join(tmp, BriefName))
-	os.WriteFile(filepath.Join(tmp, ".soldier-md"), briefContent, 0644)
-
-	manifest, err := ReadManifest(tmp)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Verify the manifest first.
-	if err := VerifyLaunchArtifacts(tmp, digest); err != nil {
-		t.Fatal(err)
-	}
-
-	err = CheckLegacyBriefMigration(tmp, manifest)
-	if err != nil {
-		t.Fatalf("legacy migration should pass: %v", err)
-	}
-}
-
-func TestCheckLegacyBriefMigration_Mismatch(t *testing.T) {
-	tmp := t.TempDir()
-	setupTestLaunchFiles(t, tmp)
-
-	policy := LegacyBriefMatchCanonicalV1
-	writeTestManifest(t, tmp, nil, &policy)
-
-	// Write legacy .soldier-md with DIFFERENT content.
-	os.WriteFile(filepath.Join(tmp, ".soldier-md"), []byte("different content"), 0644)
-
-	manifest, err := ReadManifest(tmp)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = CheckLegacyBriefMigration(tmp, manifest)
-	if err == nil {
-		t.Error("expected error for legacy content mismatch")
-	}
-	if !strings.Contains(err.Error(), "digest does not match") {
-		t.Errorf("unexpected error: %v", err)
-	}
-}
-
-func TestCheckLegacyBriefMigration_NoPolicy(t *testing.T) {
-	tmp := t.TempDir()
-	setupTestLaunchFiles(t, tmp)
-	writeTestManifest(t, tmp, nil, nil)
-
-	manifest, err := ReadManifest(tmp)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = CheckLegacyBriefMigration(tmp, manifest)
-	if err == nil {
-		t.Error("expected error when no legacy migration policy set")
-	}
-}
-
-func TestCheckLegacyBriefMigration_MissingBrief(t *testing.T) {
-	tmp := t.TempDir()
-	setupTestLaunchFiles(t, tmp)
-
-	policy := LegacyBriefMatchCanonicalV1
-	writeTestManifest(t, tmp, nil, &policy)
-
-	// Remove the canonical brief.
-	os.Remove(filepath.Join(tmp, BriefName))
-
-	manifest, err := ReadManifest(tmp)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = CheckLegacyBriefMigration(tmp, manifest)
-	if err == nil {
-		t.Error("expected error when canonical brief is missing")
 	}
 }

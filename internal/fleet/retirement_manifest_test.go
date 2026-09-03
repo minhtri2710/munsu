@@ -62,7 +62,7 @@ func setupWorktreeWithManifest(t *testing.T, wt, remote string, briefContent []b
 	}
 	WriteEnvelope(wt, env)
 
-	// Build manifest from actual file digests, with legacy migration policy.
+	// Build manifest from actual file digests.
 	entries := []ManifestEntry{}
 	for _, name := range []string{CharterName, BriefName, EnvelopeName, PromptName, LaunchScriptName} {
 		entry, err := ManifestEntryForFile(wt, name, DisposalPolicyCleanable)
@@ -72,8 +72,6 @@ func setupWorktreeWithManifest(t *testing.T, wt, remote string, briefContent []b
 		entries = append(entries, entry)
 	}
 	manifest := BuildManifest(entries)
-	policy := LegacyBriefMatchCanonicalV1
-	manifest.LegacyBriefMigration = &policy
 	digest, err := WriteManifest(wt, manifest)
 	if err != nil {
 		t.Fatalf("writing manifest: %v", err)
@@ -171,58 +169,6 @@ func TestShipSafetyCheck_UnlistedFileBlocks(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "uncommitted changes") {
 		t.Errorf("unexpected error: %v", err)
-	}
-}
-
-func TestShipSafetyCheck_LegacyMatchCleaned(t *testing.T) {
-	tmp := t.TempDir()
-	wt, md := setupWorktreeWithManifest(t, filepath.Join(tmp, "worktree"), filepath.Join(tmp, "remote.git"), nil)
-
-	// Write legacy .soldier-md with content matching the canonical brief.
-	briefContent, _ := os.ReadFile(filepath.Join(wt, BriefName))
-	os.WriteFile(filepath.Join(wt, ".soldier-md"), briefContent, 0644)
-
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt, md), fakeTeardown{}, nil)
-	if err != nil {
-		t.Fatalf("legacy .soldier-md matching brief digest should pass: %v", err)
-	}
-}
-
-func TestShipSafetyCheck_LegacyMismatchBlocks(t *testing.T) {
-	tmp := t.TempDir()
-	wt, md := setupWorktreeWithManifest(t, filepath.Join(tmp, "worktree"), filepath.Join(tmp, "remote.git"), nil)
-
-	// Write legacy .soldier-md with DIFFERENT content.
-	os.WriteFile(filepath.Join(wt, ".soldier-md"), []byte("# DIFFERENT brief\n\nNot matching.\n"), 0644)
-
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt, md), fakeTeardown{}, nil)
-	if err == nil {
-		t.Fatal("legacy .soldier-md not matching brief digest should block")
-	}
-	if !strings.Contains(err.Error(), "uncommitted changes") {
-		t.Errorf("unexpected error: %v", err)
-	}
-}
-
-func TestShipSafetyCheck_LegacyWithoutCanonicalBriefBlocks(t *testing.T) {
-	tmp := t.TempDir()
-	wt, md := setupWorktreeWithManifest(t, filepath.Join(tmp, "worktree"), filepath.Join(tmp, "remote.git"), nil)
-
-	// Remove the canonical brief so there's no evidence to compare against.
-	os.Remove(filepath.Join(wt, BriefName))
-
-	// Write legacy .soldier-md.
-	briefContent, _ := os.ReadFile(filepath.Join(tmp, "worktree", ".soldier-brief.md"))
-	// Note: briefContent was read from the canonical brief, but since we removed it,
-	// this will fail. Let me just read the brief content from the original source.
-	// Actually, the brief was removed, so we can't read it anymore. Let me recreate
-	// the brief content from the original.
-	briefContent = []byte("# Task: manifest-test\n\nCanonical brief.\n")
-	os.WriteFile(filepath.Join(wt, ".soldier-md"), briefContent, 0644)
-
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt, md), fakeTeardown{}, nil)
-	if err == nil {
-		t.Fatal("legacy .soldier-md without canonical brief evidence should block")
 	}
 }
 
@@ -423,8 +369,6 @@ func rewriteManifestFromWorktree(t *testing.T, wt string) string {
 		entries = append(entries, entry)
 	}
 	manifest := BuildManifest(entries)
-	policy := LegacyBriefMatchCanonicalV1
-	manifest.LegacyBriefMigration = &policy
 	digest, err := WriteManifest(wt, manifest)
 	if err != nil {
 		t.Fatalf("writing manifest: %v", err)
@@ -499,28 +443,6 @@ func TestShipSafetyCheck_CommittedSoldierWorkPasses(t *testing.T) {
 	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt, md), fakeTeardown{}, nil)
 	if err != nil {
 		t.Fatalf("committed Soldier work should not block: %v", err)
-	}
-}
-
-func TestShipSafetyCheck_ModifiedCanonicalBriefDuringLegacy(t *testing.T) {
-	tmp := t.TempDir()
-	wt, md := setupWorktreeWithManifest(t, filepath.Join(tmp, "worktree"), filepath.Join(tmp, "remote.git"), nil)
-
-	// Write legacy .soldier-md with the ORIGINAL brief content.
-	originalBrief, _ := os.ReadFile(filepath.Join(wt, BriefName))
-	os.WriteFile(filepath.Join(wt, ".soldier-md"), originalBrief, 0644)
-
-	// Now modify the canonical brief (digest no longer matches manifest).
-	os.WriteFile(filepath.Join(wt, BriefName), []byte("MODIFIED canonical brief"), 0644)
-
-	// The canonical brief modification should be caught by VerifyLaunchArtifacts
-	// before we even get to the legacy migration check.
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt, md), fakeTeardown{}, nil)
-	if err == nil {
-		t.Fatal("modified canonical brief should block even with matching legacy file")
-	}
-	if !strings.Contains(err.Error(), "launch artifact verification failed") {
-		t.Errorf("unexpected error: %v", err)
 	}
 }
 

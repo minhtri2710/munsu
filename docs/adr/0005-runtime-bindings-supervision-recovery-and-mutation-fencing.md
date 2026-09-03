@@ -112,8 +112,6 @@ The canonical Soldier brief artifact is `.soldier-brief.md`; spawn stops creatin
 
 The envelope itself is owned by canonical path plus valid schema and identity binding because it cannot hash itself. Harness adapters may contribute verified manifest entries; teardown does not grow an independent filename allowlist.
 
-Legacy `.soldier-md` is recognized only during migration cleanup and only when its digest equals the canonical brief digest. A differing legacy file fails closed. Temporary legacy recognition is removed after rollout.
-
 ## Consequences
 
 * Backend-specific liveness becomes accurate and diagnosable without leaking backend details to operators.
