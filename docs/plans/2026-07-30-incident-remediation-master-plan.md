@@ -1,7 +1,7 @@
 # Incident Remediation Master Implementation Plan
 
 * **Date:** 2026-07-30
-* **Status:** Superseded by the [owner-clean cutover program](2026-08-03-owner-clean-cutover-program.md) (ADR-0008); retained as history. Its ADR-0003–0006 migration/compatibility targets conflict with the pre-public v1 reset.
+* **Status:** Superseded by the [owner-clean cutover program](2026-08-03-owner-clean-cutover-program.md) (ADR-0008); retained as history. Its ADR-0003–0006 migration/compatibility targets conflict with the pre-public v1 reset. The ContextManifest clause (§3.5 / C18), the durable recovery-series/circuit + LaunchDiagnostic clauses (§5.2–5.3 / C10/C12), and the DispatchInterpretation clause (§3.4 / C17) listed below were later **retired or subsumed by [ADR-0023](../adr/0023-retire-unbuilt-lifecycle-and-recovery-machinery.md) (2026-09-03)**; the authoritative live status is the [owner-clean residual roadmap](2026-09-03-owner-clean-residual-roadmap.md).
 * **Sources:** incident report, [ADR-0003](../adr/0003-config-deepening-typed-documents-and-project-overlay.md), [ADR-0004](../adr/0004-authoritative-task-lifecycle-delivery-and-projections.md), [ADR-0005](../adr/0005-runtime-bindings-supervision-recovery-and-mutation-fencing.md), ADR-0006 (state migration, build provenance, and compatibility gates — deleted in #418 with the rest of the migration-era doctrine the ADR-0008 reset removed; the number stays unused, so this citation has no target)
 * **Delivery mode:** no-mistakes; dependency-first with immediate outage containment
 
