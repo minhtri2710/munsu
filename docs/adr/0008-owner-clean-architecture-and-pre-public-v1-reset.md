@@ -65,7 +65,7 @@ Topology is protected by ownership and dependency-direction rules, not a literal
 
 The implementation of `taskauthorityfs` is absorbed into `taskauthority`, not moved into `home`. There is one concrete filesystem implementation. No synthetic Store interface, in-memory fake, store-contract package, or persistence adapter is retained solely for testing. A storage seam is introduced only when a second real adapter exists.
 
-All runtime Task reads go through Task Authority. Durable `backlog.md`, `tasks-axi` runtime integration, and Task projections that act as a competing authority are removed. Backlog is only a query concept over Task state. (Refined by ADR-0022: a post-commit, display-only delivery-state projection over the canonical delivery contract is not a competing authority and is retained; `.meta`/`.status` survive only as such projections written after the canonical commit.)
+All runtime Task reads go through Task Authority. Durable `backlog.md`, `tasks-axi` runtime integration, `.meta`, `.status`, and other Task projections are removed. Backlog is only a query concept over Task state.
 
 ### 3. Fleet
 

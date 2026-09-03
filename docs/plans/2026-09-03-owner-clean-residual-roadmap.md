@@ -1,7 +1,7 @@
 # Owner-Clean Residual Roadmap (ADR-0003/0004/0005/0008)
 
 * **Date:** 2026-09-03
-* **Status:** proposed — pending Human decision on the decision gates below
+* **Status:** T0 landed; G5 resolved. Remaining slices T1–T3 gated by open decision gates G1–G4.
 * **Sources:** ADR-0003, ADR-0004, ADR-0005, ADR-0008; supersessions in ADR-0011/0013/0015/0020/0021/0022; prior [owner-clean cutover program](2026-08-03-owner-clean-cutover-program.md)
 * **Delivery mode:** no-mistakes (every slice = one issue on one branch through the gate; push/PR/merge are Human gates)
 
@@ -26,12 +26,12 @@ The genuinely-remaining engineering is concentrated in **ADR-0005 §4** — the 
 * **G2 — ADR-0004 §7 DispatchInterpretation:** mark subsumed by DispatchHold + head-bound DeliveryAuthorization (ADR-0008), or build the distinct interpretation record. Do not build blind.
 * **G3 — ADR-0005 §6 Git fencing:** the wrapper exists but as a *pretool-check hook* (unhooked harnesses are unfenced) and the §6 6-tier capability ladder was collapsed to a flat Ship allowlist by #414B. Ratify the flat allowlist as the owner-clean target (mark the ladder superseded), or treat the tier model / harness-agnostic enforcement as real work. Security-adjacent → hard gate.
 * **G4 — ADR-0003 §10 env-override boundary:** wire `MUNSU_*_OVERRIDE` → `BoundaryOverrides` at the CLI seam, or delete the dormant (always-empty) `BoundaryOverrides` plumbing as speculative machinery.
-* **G5 — ADR-0008 §13 delivery shape:** §13 mandates "one coherent cutover on one branch… no supported phases," yet the program was in fact delivered incrementally (gate-per-issue, #402–#418) and this roadmap proposes the same. Amend §13 to record incremental delivery as the accepted shape (T0 docs task), or justify the exception per run.
+* **G5 — ADR-0008 §13 delivery shape (RESOLVED in T0):** §13 previously mandated "one coherent cutover on one branch… no supported phases," but the program was delivered incrementally (gate-per-issue, #402–#418). Amended in T0 to record incremental delivery as the accepted shape; see ADR-0008 §13.
 
 ## Slices (dependency order)
 
-### T0 — Docs reconciliation (tiny, docs-only, one gated delivery)
-Flip stale `Status: Accepted; implementation pending` headers on ADR-0003/0004/0005 to reflect shipped state; flip ADR-0008 header (all of #402–#418 closed); reconcile ADR-0008 §2 vs ADR-0022's blessed display-only `.meta` delivery projection; note the §3/§5/§6 supersessions in 0004/0005; amend §13 per **G5**. Bundle removal of the completed ADR-0021 pipeline artifacts `tasks/plan.md` + `tasks/todo.md`, and land this roadmap. **Validation:** `citations.sh check` green; `go build/vet/test ./...` unaffected.
+### T0 — Docs reconciliation (landed)
+Flipped stale `Status: Accepted; implementation pending` headers on ADR-0003/0004/0005 to reflect shipped state; flipped ADR-0008 header (all of #402–#418 closed); noted the §3/§5/§6 supersessions in 0004/0005; amended ADR-0008 §13 to record incremental delivery as the accepted shape (resolving **G5**); removed the completed ADR-0021 pipeline artifacts `tasks/plan.md` + `tasks/todo.md`; and landed this roadmap. ADR-0008 §2 was left at its accepted constraint (`.meta`/`.status` removed) — retention of home projections is an owner decision and was not changed in T0. **Validation:** `citations.sh check` green; `go build/vet/test ./...` unaffected.
 
 ### T1 — Owner-clean removals (no deps, run in parallel)
 * **R1** — Delete legacy `.soldier-md` migration path: `soldier_manifest.go` (`LegacyBriefMigrationPolicy`/`CheckLegacyBriefMigration`), the two `spawn_runner.go` set-lines, the `retirement_task.go` branch, the `guard_burn_down_*legacy*` tests + `soldier_contract_e2e_test.go` case; then sweep dangling rows in `.github/{uncovered-guards.baseline,deadcode.allow,citations.allow}`. **Validation:** guards/deadcode/citations lanes green both ways; full suite green.
@@ -51,7 +51,7 @@ Prerequisite: a focused re-scope pass, since Captain recovery (`captain_recover.
 
 ## Critical path
 
-T0 (+G5) → then T1/T2 in parallel; T3 is the substantive stream and gates on nothing new (S1→S2, S3 parallel, S4 independent). G1/G2/G3/G4 gate their own slices only. R2 is the highest-risk single change (external consumer). The heaviest real engineering is T3.
+T0 (G5 resolved) → then T1/T2 in parallel; T3 is the substantive stream and gates on nothing new (S1→S2, S3 parallel, S4 independent). G1/G2/G3/G4 gate their own slices only. R2 is the highest-risk single change (external consumer). The heaviest real engineering is T3.
 
 ## Human gates
 
