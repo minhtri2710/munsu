@@ -1361,7 +1361,7 @@ func TestShipSafetyCheck_DeliveryStateMergedAcceptsWithoutForce(t *testing.T) {
 
 	meta := fixtureMeta(wt, true, md)
 	meta["pr_head_sha"] = headSHA
-	meta[domain.MetaDeliveryState] = string(domain.DeliveryStateMerged)
+	meta[MetaDeliveryState] = string(DeliveryStateMerged)
 
 	auth := seedCanonicalOutcome(t, tmp, "test", taskauthority.DeliveryOutcomeCompleted)
 
@@ -1401,7 +1401,7 @@ func TestShipSafetyCheck_DeliveryStateReviewReadyRejectsWithoutForce(t *testing.
 
 	meta := fixtureMeta(wt, true, md)
 	meta["pr_head_sha"] = headSHA
-	meta[domain.MetaDeliveryState] = string(domain.DeliveryStateReviewReady)
+	meta[MetaDeliveryState] = string(DeliveryStateReviewReady)
 
 	auth := seedCanonicalOutcome(t, tmp, "test", taskauthority.DeliveryOutcomeRetryable)
 
