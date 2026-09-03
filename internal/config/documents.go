@@ -5,10 +5,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const (
@@ -256,12 +258,87 @@ func resolvedOverlay(base ProjectOverlay, overlay ProjectOverlay, mode string) P
 	return effective
 }
 
+func LoadFleetBaseForUpdate(home string) (FleetBaseDocument, error) {
+	document, err := LoadFleetBase(home)
+	if err == nil {
+		return document, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return FleetBaseDocument{}, err
+	}
+	document = FleetBaseDocument{SchemaVersion: FleetBaseSchemaVersion}
+	return migrateLegacyLaunchProfile(home, document)
+}
+
 func LoadFleetBase(home string) (FleetBaseDocument, error) {
 	var document FleetBaseDocument
 	if err := loadDocument(filepath.Join(home, BaseDocumentPath), &document); err != nil {
 		return document, err
 	}
-	return document, document.Validate()
+	if err := document.Validate(); err != nil {
+		return document, err
+	}
+	return migrateLegacyLaunchProfile(home, document)
+}
+
+func migrateLegacyLaunchProfile(home string, document FleetBaseDocument) (FleetBaseDocument, error) {
+	legacy := map[string]string{}
+	for _, key := range []string{"soldier-harness", "model", "captain-harness"} {
+		value, err := os.ReadFile(filepath.Join(ConfigDir(home), key))
+		if err == nil {
+			legacy[key] = strings.TrimSpace(string(value))
+		} else if !os.IsNotExist(err) {
+			return document, fmt.Errorf("reading legacy config key %q: %w", key, err)
+		}
+	}
+	if len(legacy) == 0 {
+		return document, nil
+	}
+
+	if value, ok := legacy["soldier-harness"]; ok {
+		if value == "default" {
+			value = ""
+		}
+		if value != "" && !IsKnownHarness(value) {
+			return document, fmt.Errorf("legacy soldier-harness %q is unsupported", value)
+		}
+		document.Config.SoldierHarness = value
+	}
+	if value, ok := legacy["model"]; ok {
+		fields := strings.Fields(value)
+		if len(fields) == 0 || fields[0] == "default" {
+			document.Config.Model = ""
+		} else {
+			document.Config.Model = fields[0]
+		}
+	}
+	if value, ok := legacy["captain-harness"]; ok {
+		fields := strings.Fields(value)
+		profile := CaptainProfile{}
+		if len(fields) > 0 && fields[0] != "default" && !strings.HasPrefix(fields[0], "#") {
+			if !IsKnownHarness(fields[0]) {
+
+				return document, fmt.Errorf("legacy captain-harness %q is unsupported", fields[0])
+			}
+			profile.Harness = fields[0]
+			if len(fields) > 1 {
+				profile.Model = fields[1]
+			}
+			if len(fields) > 2 {
+				profile.Effort = fields[2]
+			}
+		}
+		document.CaptainProfile = profile
+	}
+	if err := StoreFleetBase(home, document); err != nil {
+		return document, fmt.Errorf("migrating legacy launch profile: %w", err)
+	}
+	for key := range legacy {
+		if err := os.Remove(filepath.Join(ConfigDir(home), key)); err != nil && !os.IsNotExist(err) {
+			return document, fmt.Errorf("removing migrated config key %q: %w", key, err)
+		}
+	}
+	return document, nil
 }
 
 func StoreFleetBase(home string, document FleetBaseDocument) error {

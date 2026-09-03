@@ -9,6 +9,68 @@ import (
 	"testing"
 )
 
+func TestLoadFleetBaseMigratesLegacyLaunchProfile(t *testing.T) {
+	home := t.TempDir()
+	base := validBase()
+	base.Config.SoldierHarness = "claude"
+	base.Config.Model = "old-model"
+	base.CaptainProfile = CaptainProfile{Harness: "codex"}
+	if err := StoreFleetBase(home, base); err != nil {
+		t.Fatal(err)
+	}
+	for key, value := range map[string]string{
+		"soldier-harness": "pi",
+		"model":           "new-model extra",
+		"captain-harness": "grok model effort",
+	} {
+		if err := Set(home, key, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := LoadFleetBase(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Config.SoldierHarness != "pi" || got.Config.Model != "new-model" || got.CaptainProfile != (CaptainProfile{Harness: "grok", Model: "model", Effort: "effort"}) {
+		t.Fatalf("migrated launch profile = %+v/%+v", got.Config, got.CaptainProfile)
+	}
+	for _, key := range []string{"soldier-harness", "model", "captain-harness"} {
+		if _, err := os.Stat(filepath.Join(ConfigDir(home), key)); !os.IsNotExist(err) {
+			t.Errorf("legacy %s still exists: %v", key, err)
+		}
+	}
+}
+
+func TestLoadFleetBaseMigrationRejectsInvalidLegacyWithoutChanges(t *testing.T) {
+	home := t.TempDir()
+	base := validBase()
+	if err := StoreFleetBase(home, base); err != nil {
+		t.Fatal(err)
+	}
+	if err := Set(home, "soldier-harness", "not-a-harness"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadFleetBase(home); err == nil {
+		t.Fatal("expected invalid legacy value error")
+	}
+	got, err := loadDocumentForTest(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Config, base.Config) {
+		t.Fatalf("base changed during failed migration: %+v", got.Config)
+	}
+	if _, err := os.Stat(filepath.Join(ConfigDir(home), "soldier-harness")); err != nil {
+		t.Fatalf("legacy file removed during failed migration: %v", err)
+	}
+}
+
+func loadDocumentForTest(home string) (FleetBaseDocument, error) {
+	var got FleetBaseDocument
+	err := loadDocument(filepath.Join(home, BaseDocumentPath), &got)
+	return got, err
+}
+
 func TestValidateBaseRejectsIndependentSchemaVersions(t *testing.T) {
 	base := validBase()
 	base.SchemaVersion = "future"

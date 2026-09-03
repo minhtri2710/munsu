@@ -29,6 +29,37 @@ func clearEnvMarkers(t *testing.T) {
 	}
 }
 
+func TestSoldierFailsClosedOnMalformedPublishedSnapshot(t *testing.T) {
+	home := t.TempDir()
+	if err := config.StoreFleetBase(home, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion, Config: config.ProjectOverlay{SoldierHarness: "pi"}}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(home, config.PublishedSnapshotPath)
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{malformed"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Soldier(home); err == nil {
+		t.Fatal("expected malformed published snapshot error")
+	}
+}
+
+func TestSoldierFailsClosedOnMalformedFleetBase(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, config.BaseDocumentPath)
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{malformed"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Soldier(home); err == nil {
+		t.Fatal("expected malformed fleet base error")
+	}
+}
+
 func TestDetectFromEnv_Claude(t *testing.T) {
 	// Unset all markers first to avoid interference from system-level vars
 	clearEnvMarkers(t)

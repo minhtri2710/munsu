@@ -10,6 +10,8 @@ import (
 // KnownKeys is the authoritative list of well-known config keys.
 // Used by both config show and config get to distinguish known-unset
 // from unknown keys.
+var KnownHarnesses = []string{"claude", "codex", "opencode", "pi", "grok", "agy"}
+
 var KnownKeys = []string{
 	"backend",
 	"parent-home",
@@ -29,6 +31,15 @@ var KnownKeys = []string{
 }
 
 // IsKnownKey returns true if key is a well-known config key.
+func IsKnownHarness(name string) bool {
+	for _, harness := range KnownHarnesses {
+		if harness == name {
+			return true
+		}
+	}
+	return false
+}
+
 func IsKnownKey(key string) bool {
 	for _, k := range KnownKeys {
 		if k == key {

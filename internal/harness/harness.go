@@ -26,16 +26,11 @@ const (
 )
 
 // KnownHarnesses lists all supported harness names.
-var KnownHarnesses = []string{Claude, Codex, Opencode, Pi, Grok, Agy}
+var KnownHarnesses = config.KnownHarnesses
 
 // IsKnownHarness reports whether name is a supported harness.
 func IsKnownHarness(name string) bool {
-	for _, h := range KnownHarnesses {
-		if h == name {
-			return true
-		}
-	}
-	return false
+	return config.IsKnownHarness(name)
 }
 
 // CanonicalHarness returns the canonical registry identifier for name,
@@ -233,10 +228,15 @@ func Soldier(homeDir string) (string, error) {
 			}
 			return cfg.SoldierHarness, nil
 		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
 	}
 
 	// 2. Try fleet base document (general context)
 	base, err := config.LoadFleetBase(homeDir)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
 	if err == nil && base.Config.SoldierHarness != "" {
 		if err := ValidateHarness(base.Config.SoldierHarness); err != nil {
 			return "", fmt.Errorf("fleet base soldier harness: %w", err)
