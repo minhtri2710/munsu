@@ -88,7 +88,7 @@ Implement:
 * `data/projects.json`
 * independent `schemaVersion` values;
 * one Captain per project, at most one owning Captain;
-* `resolve(base, projectOverlay, boundaryOverrides)`;
+* `resolve(base, projectOverlay)`;
 * `digest(base, projectOverlay)`;
 * frozen `LoadResolvedSnapshot(home, project)`.
 

@@ -85,8 +85,7 @@ compatibility promise and are discarded externally and initialized again
 
 Flat key files live under `config/`. `internal/config` owns typed settings,
 defaults, validation, Project Overlays and immutable resolved Config Snapshots
-(ADR-0008 §6); `internal/cli` translates process environment and flags into
-typed boundary overrides. Dispatch profiles live in `config/soldier-dispatch.json`
+(ADR-0008 §6). Resolution is the two typed layers `base ⨂ project overlay` with no environment-override tier (ADR-0003 §3/§4/§10). Dispatch profiles live in `config/soldier-dispatch.json`
 and are interpreted by `internal/harness` and the spawn orchestration in
 `internal/fleet`.
 

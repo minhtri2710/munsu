@@ -1543,7 +1543,8 @@ func (r *Runner) createSession() error {
 	}
 	// The backend identity is the launch intent's explicit snapshot Backend
 	// (fleet.ResolveProjectSnapshot → config.ResolveProject); the raw --backend
-	// flag enters ONLY via the boundary override and is never consumed here.
+	// flag is an assertion validated against the resolved snapshot, not a
+	// resolution input.
 	backendName := ""
 	if r.launch != nil {
 		backendName = r.launch.Backend
