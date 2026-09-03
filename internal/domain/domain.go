@@ -258,15 +258,4 @@ type PRMergeStatus struct {
 	HeadSHA   string `json:"headRefOid,omitempty"`
 }
 
-// DeliveryState represents the task delivery lifecycle state.
-type DeliveryState string
-
-const (
-	DeliveryStateReviewReady DeliveryState = "review-ready"
-	DeliveryStatePRCheck     DeliveryState = "pr-check"
-	DeliveryStateMerged      DeliveryState = "merged"
-)
-
-const MetaDeliveryState = "delivery_state"
-
 // MetaKeys returns the task meta keys used to persist this identity.

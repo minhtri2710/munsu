@@ -518,7 +518,7 @@ func TestDeliverNoMetaSubstitutionAuthorizesDelivery(t *testing.T) {
 	// The .meta projection claims merged truth that was never committed
 	// canonically.
 	if err := home.WriteMeta(homeDir, taskID, map[string]string{
-		"kind": "ship", "delivery_state": string(domain.DeliveryStateMerged),
+		"kind": "ship", "delivery_state": string(DeliveryStateMerged),
 		"pr_provider": "github", "pr_owner": "minhtri2710", "pr_repo": "munsu",
 		"pr_number": "42", "pr_url": "https://github.com/minhtri2710/munsu/pull/42",
 		"pr_base_ref": "main", "pr_head_ref": "feature/delivery", "pr_head_sha": deliveryTestHead,

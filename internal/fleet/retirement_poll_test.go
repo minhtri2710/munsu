@@ -2415,8 +2415,8 @@ func TestRetireMergedPoll_RequiresCanonicalCompletedOutcome(t *testing.T) {
 	if meta["kind"] != "ship" {
 		t.Fatal("meta kind should be preserved")
 	}
-	if meta[domain.MetaDeliveryState] != "" {
-		t.Fatalf("poll retirement must never write .meta delivery_state; got %q", meta[domain.MetaDeliveryState])
+	if meta[MetaDeliveryState] != "" {
+		t.Fatalf("poll retirement must never write .meta delivery_state; got %q", meta[MetaDeliveryState])
 	}
 }
 
@@ -2474,8 +2474,8 @@ func TestRecoverPendingRetirement_RequiresCanonicalCompletedOutcome(t *testing.T
 	if err != nil {
 		t.Fatalf("ReadMeta: %v", err)
 	}
-	if meta[domain.MetaDeliveryState] != "" {
-		t.Fatalf("recovery must never write .meta delivery_state; got %q", meta[domain.MetaDeliveryState])
+	if meta[MetaDeliveryState] != "" {
+		t.Fatalf("recovery must never write .meta delivery_state; got %q", meta[MetaDeliveryState])
 	}
 }
 

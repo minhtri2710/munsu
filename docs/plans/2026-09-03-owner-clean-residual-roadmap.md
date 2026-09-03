@@ -1,7 +1,7 @@
 # Owner-Clean Residual Roadmap (ADR-0003/0004/0005/0008)
 
 * **Date:** 2026-09-03
-* **Status:** T0 landed; G5 resolved. **T0 docs reconciliation, R1 (#737), R2 (#739), the project half of T2·C1 (#741), and R4 (#740) landed 2026-09-03 — see "Landed since T0" below. R3 is partly landed: its PR-meta aliasing half merged (#738), but the `DeliveryState` duplication it targeted is still open.** Remaining: T2·C1 `captain config`, T2·C2, the residual R3 `DeliveryState` consolidation, T3 (S1–S4), gates G1–G4, and the ADR-0008 §2 `.meta`/`.status` projection-retention owner decision.
+* **Status:** T0 landed; G5 resolved. **T0 docs reconciliation, R1 (#737), R2 (#739), the project half of T2·C1 (#741), and R4 (#740) landed 2026-09-03 — see "Landed since T0" below. R3 is fully landed: its PR-meta aliasing half merged (#738) and the `DeliveryState`/`MetaDeliveryState` duplicate consolidated onto the canonical `fleet.DeliveryState` (commit e954c4d).** Remaining: T2·C1 `captain config`, T2·C2, T3 (S1–S4), gates G1–G4, and the ADR-0008 §2 `.meta`/`.status` projection-retention owner decision.
 * **Sources:** ADR-0003, ADR-0004, ADR-0005, ADR-0008; supersessions in ADR-0011/0013/0015/0020/0021/0022; prior [owner-clean cutover program](2026-08-03-owner-clean-cutover-program.md)
 * **Delivery mode:** no-mistakes (every slice = one issue on one branch through the gate; push/PR/merge are Human gates)
 
@@ -10,25 +10,25 @@
 R1, R2, and the R3 PR-meta aliasing half (the T1 removals) plus the project half of the T2·C1 config slice shipped the same day this roadmap landed. The tables and slice descriptions below are the point-in-time plan of record; for the items listed here they are superseded by the merged work:
 
 * **R1** — legacy `.soldier-md` recognition removed — **#737** (merged)
-* **R3** — dual-key PR-meta aliasing dropped — **#738** (merged; the duplicate `DeliveryState` type is still pending)
+* **R3** — dual-key PR-meta aliasing dropped — **#738** (merged) — and the duplicate `DeliveryState`/`MetaDeliveryState` type consolidated onto the canonical `fleet.DeliveryState` (commit e954c4d)
 * **R2** — `munsu.orchestration/v2`→v1 reset — **#739** (merged; reset-to-v1 chosen, resolving the R2 caveat below)
 * **T2·C1 (project half)** — `munsu project config get/set` — **#741** (merged; `captain config` still pending)
 * **R4 (not in the original slice list)** — FleetSnapshot single-contract: dropped the `--version` selector so `munsu fleet snapshot` emits one shape — **#740** (merged)
 
-Still open: T2·C1 `captain config`, T2·C2 consolidation, the residual R3 `DeliveryState` duplication in `internal/domain`, T3 (S1–S4), gates G1–G4, and the ADR-0008 §2 `.meta`/`.status` projection-retention owner decision.
+Still open: T2·C1 `captain config`, T2·C2 consolidation, T3 (S1–S4), gates G1–G4, and the ADR-0008 §2 `.meta`/`.status` projection-retention owner decision.
 
 ## Finding
 
 The owner-clean target (ADR-0008, which supersedes 0003–0007 on conflict) is **substantially shipped**. The 11-package topology, `task` sole CLI noun, contract render seam (#416), contract repo (#417) and architecture-policy activation gate (#418) are all done and enforced by tests; the deleted packages (`configmigration`, `taskauthorityfs`, `taskauthority/storecontract`) are gone; ADR-0004 §5, §3, §6 and the migration consequences are retired/superseded, not open.
 
-The genuinely-remaining engineering is concentrated in **ADR-0005 §4** — the durable recovery-series/circuit and redacted launch-diagnostic machinery — plus a re-scope of **§3**. Note: §3 is *not* greenfield: Captain-side recovery already exists (`internal/fleet/captain_recover.go` `RecoverTransaction.stepRelaunch`/`stepNudgeRetry`, `relaunchGuard*` TTL guard, nudge markers). What is missing is (a) the durable recovery-series/circuit keyed by failure-signature and the redacted `LaunchDiagnostic` bundle (§4 — zero hits in tree), and (b) unified state-specific coverage extended to soldier endpoints, not only the Captain matrix (§3 — verify before building). The 0005 audit's "§3 absent" verdict was overstated (it cited `nudgeTracker`/`ResolveRecovery`, which do not exist in the tree). Everything else remaining is small: the `captain config` half of the config CLI wiring (the #741 project half landed), one residual one-live-contract cleanup (the R3 `DeliveryState` consolidation; its PR-meta aliasing half merged #738), and a set of retire-or-build decision gates (G1–G4 plus the ADR-0008 §2 `.meta`/`.status` projection-retention owner decision).
+The genuinely-remaining engineering is concentrated in **ADR-0005 §4** — the durable recovery-series/circuit and redacted launch-diagnostic machinery — plus a re-scope of **§3**. Note: §3 is *not* greenfield: Captain-side recovery already exists (`internal/fleet/captain_recover.go` `RecoverTransaction.stepRelaunch`/`stepNudgeRetry`, `relaunchGuard*` TTL guard, nudge markers). What is missing is (a) the durable recovery-series/circuit keyed by failure-signature and the redacted `LaunchDiagnostic` bundle (§4 — zero hits in tree), and (b) unified state-specific coverage extended to soldier endpoints, not only the Captain matrix (§3 — verify before building). The 0005 audit's "§3 absent" verdict was overstated (it cited `nudgeTracker`/`ResolveRecovery`, which do not exist in the tree). Everything else remaining is small: the `captain config` half of the config CLI wiring (the #741 project half landed), the R3 `DeliveryState` consolidation (its PR-meta aliasing half merged #738 and its `DeliveryState`/`MetaDeliveryState` type consolidated onto `fleet.DeliveryState`), and a set of retire-or-build decision gates (G1–G4 plus the ADR-0008 §2 `.meta`/`.status` projection-retention owner decision).
 
 ## Per-ADR status (audited against current tree)
 
 | ADR | Shipped | Remaining (build) | Remaining (removal) | Superseded / retired |
 |---|---|---|---|---|
 | 0003 Config | typed `base.json`, project overlay, 1:1 binding, pure resolve/digest, published-snapshot push, per-project digest+nudge, `project config get/set` (#741) | `captain config get/set` CLI; scalar file-per-key → `base.json` consolidation | — (`config migrate` already deleted) | §9 migration (0008) |
-| 0004 Task lifecycle | Task aggregate {ID,Gen,Owner,Def,Lifecycle}, atomic handoff, head-bound merge authorization, DispatchHold, `task` noun | §9 ContextManifest (only clean build gap) | duplicate `DeliveryState` type (dual-key aliasing removed #738) | §3 delivered→auth (0008), §5 IssueLink (0011), §6 (0022) |
+| 0004 Task lifecycle | Task aggregate {ID,Gen,Owner,Def,Lifecycle}, atomic handoff, head-bound merge authorization, DispatchHold, `task` noun | §9 ContextManifest (only clean build gap) | — (`DeliveryState`/`MetaDeliveryState` consolidated onto `fleet.DeliveryState`) | §3 delivered→auth (0008), §5 IssueLink (0011), §6 (0022) |
 | 0005 Runtime | immutable Endpoint/Worktree bindings, typed 7-state observation (0021), per-home watcher lease + degraded mode, `.soldier-brief.md`+manifest, **Captain recovery (relaunch/nudge/relaunch-guard)** | **§4 recovery series+circuit (failure-signature)**, **§4 LaunchDiagnostic bundle**; §3 unified/soldier-endpoint coverage (verify vs Captain matrix); §5 General→Captain relay (verify) | — (`.soldier-md` recognition removed #737) | — |
 | 0008 Owner-clean | topology, `task` noun, render seam, contract repo, arch-policy gate, package deletions, `orchestration/v2`→v1 reset (#739) | §2 `.meta`/`.status` projection retention (owner decision) | — (§11 reset shipped #739) | — |
 
@@ -48,7 +48,7 @@ Flipped stale `Status: Accepted; implementation pending` headers on ADR-0003/000
 ### T1 — Owner-clean removals (no deps, run in parallel)
 * **R1** — Delete legacy `.soldier-md` migration path: `soldier_manifest.go` (`LegacyBriefMigrationPolicy`/`CheckLegacyBriefMigration`), the two `spawn_runner.go` set-lines, the `retirement_task.go` branch, the `guard_burn_down_*legacy*` tests + `soldier_contract_e2e_test.go` case; then sweep dangling rows in `.github/{uncovered-guards.baseline,deadcode.allow,citations.allow}`. **Validation:** guards/deadcode/citations lanes green both ways; full suite green.
 * **R2** — Reset `munsu.orchestration/v2` → v1 (ADR-0008 §11): coordinated change across the CLI response envelope (`internal/cli/contract_model.go:9`) and the pi handshake parser (`internal/bootstrap/integration_pi.go:51,69`). Both ends are munsu-authored (the pi extension JS is seeded by munsu), so the cost is reseeding Captain integrations, not breaking a third party. Caveat: `/v2` was set deliberately by `1b0257b2 refactor(cli): absorb AXI response contracts` — confirm with the owner whether §11 wants a reset-to-v1 or a §11 note ratifying the response-contract version. **Validation:** pi handshake test green on the chosen id; no stale `orchestration/v2` survives a reset.
-* **R3** — One-live-contract cleanup in `internal/domain/domain.go`: drop the `pr_base`/`pr_base_ref` + `pr_head`/`pr_head_sha` dual-key aliasing and fallback reads; consolidate the duplicate `DeliveryState`/`MetaDeliveryState` type to the single live `fleet.DeliveryState`. **Validation:** full suite green; grep confirms one definition, no alias writes.
+* **R3** — One-live-contract cleanup in `internal/domain/domain.go`: drop the `pr_base`/`pr_base_ref` + `pr_head`/`pr_head_sha` dual-key aliasing and fallback reads; consolidate the duplicate `DeliveryState`/`MetaDeliveryState` type to the single live `fleet.DeliveryState`. **Validation:** full suite green; grep confirms one definition, no alias writes. **(landed — `DeliveryState`/`MetaDeliveryState` consolidated onto `fleet.DeliveryState` via commit e954c4d)**
 
 ### T2 — Config CLI completion (ADR-0003, small build; after T0)
 * **C1** — Wire `munsu project config get/set` and `munsu captain config get/set` to the existing (currently CLI-unreachable) `StoreProjectOverlay`/`LoadProjectOverlay` + captain profile store. **Validation:** round-trip test; overlay reflected in resolved snapshot.
@@ -63,7 +63,7 @@ Prerequisite: a focused re-scope pass, since Captain recovery (`captain_recover.
 
 ## Critical path
 
-T0 (G5 resolved) and T1 (R1/R2/R4 landed; R3 alias half landed, `DeliveryState` half open) landed 2026-09-03. The residual R3 `DeliveryState` consolidation, the remaining T2·C1 `captain config` half + T2·C2, and T3 can proceed independently (T3 gates on nothing new; within T3 S1→S2, S3 parallel, S4 independent). G1/G2/G3/G4 gate their own slices only; the ADR-0008 §2 projection-retention decision is a separate owner call. The heaviest real engineering is T3.
+T0 (G5 resolved) and T1 (R1/R2/R4 landed; R3 fully landed — PR-meta aliasing + `DeliveryState`/`MetaDeliveryState` consolidation — via commit e954c4d) landed 2026-09-03. The remaining T2·C1 `captain config` half + T2·C2, and T3 can proceed independently (T3 gates on nothing new; within T3 S1→S2, S3 parallel, S4 independent). G1/G2/G3/G4 gate their own slices only; the ADR-0008 §2 projection-retention decision is a separate owner call. The heaviest real engineering is T3.
 
 ## Human gates
 
