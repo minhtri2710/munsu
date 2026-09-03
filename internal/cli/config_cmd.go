@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -104,8 +105,12 @@ Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 			// durable config/parent-home pointer (written at provision time,
 			// before its first published snapshot); the General home has none.
 			if isLaunchProfileKey(key) {
-				if parent, err := config.Get(ctx.Home, "parent-home"); err == nil && parent != "" {
+				parentPath := filepath.Join(config.ConfigDir(ctx.Home), "parent-home")
+				if _, err := os.Lstat(parentPath); err == nil {
+					parent, _ := config.Get(ctx.Home, "parent-home")
 					return fmt.Errorf("cannot set %s from a Captain home; set it in parent General home %s", key, parent)
+				} else if !errors.Is(err, os.ErrNotExist) {
+					return fmt.Errorf("checking Captain home parent pointer %s: %w", parentPath, err)
 				}
 			}
 			// Validate harness pins. captain-harness accepts multi-token
@@ -313,11 +318,15 @@ read from flat files at $MUNSU_HOME/config/<key>. Values that are not set are
 shown as "<not set>".
 `,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			message, err := showConfig(ctx.Home)
+			if err != nil {
+				return err
+			}
 			return writeContract(cmd, Response[MessageResult]{
 				SchemaVersion: SchemaVersion,
 				Kind:          "config.show",
 				Status:        "success",
-				Data:          MessageResult{Message: showConfig(ctx.Home)},
+				Data:          MessageResult{Message: message},
 			})
 		}),
 	}
@@ -326,7 +335,7 @@ shown as "<not set>".
 }
 
 // showConfig returns all well-known configuration values with their source.
-func showConfig(homeDir string) string {
+func showConfig(homeDir string) (string, error) {
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("%-30s %s\n", "KEY", "VALUE"))
 	b.WriteString(strings.Repeat("-", 80) + "\n")
@@ -350,7 +359,10 @@ func showConfig(homeDir string) string {
 		case "default-mode", "require-no-mistakes", "allow-direct-pr-fallback",
 			"soldier-harness", "model", "captain-harness":
 			val, ok, err := readBaseConfigField(homeDir, key)
-			if err != nil || !ok {
+			if err != nil {
+				return "", err
+			}
+			if !ok {
 				b.WriteString(fmt.Sprintf("%-30s <not set>\n", key))
 			} else {
 				b.WriteString(fmt.Sprintf("%-30s %s (typed config)\n", key, val))
@@ -376,7 +388,7 @@ func showConfig(homeDir string) string {
 			}
 		}
 	}
-	return strings.TrimSpace(b.String())
+	return strings.TrimSpace(b.String()), nil
 }
 
 // findExtraConfigKeys lists config files that are not in the well-known list.

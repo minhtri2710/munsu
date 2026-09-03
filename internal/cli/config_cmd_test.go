@@ -347,6 +347,71 @@ func TestConfigSetLaunchProfileRejectsCaptainHome(t *testing.T) {
 	}
 }
 
+// TestConfigSetLaunchProfileRejectsEmptyOrUnreadableCaptainPointer verifies
+// launch-profile writes fail closed for present but unusable Captain pointers.
+func TestConfigSetLaunchProfileRejectsEmptyOrUnreadableCaptainPointer(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		write func(string) error
+	}{
+		{name: "empty", write: func(path string) error {
+			return os.WriteFile(path, []byte("\n"), 0600)
+		}},
+		{name: "dangling symlink", write: func(path string) error {
+			return os.Symlink(filepath.Join(filepath.Dir(path), "missing-parent"), path)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("MUNSU_HOME", home)
+			configDir := filepath.Join(home, "config")
+			if err := os.MkdirAll(configDir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := tc.write(filepath.Join(configDir, "parent-home")); err != nil {
+				t.Fatal(err)
+			}
+			if err := runConfigSet(t, "config", "set", "model", "pi"); err == nil {
+				t.Fatal("expected Captain-home launch-profile write to fail closed")
+			}
+			if _, err := os.Stat(filepath.Join(home, config.BaseDocumentPath)); !os.IsNotExist(err) {
+				t.Fatalf("base document must not be created: %v", err)
+			}
+		})
+	}
+}
+
+// TestConfigShowRejectsMalformedBaseAndShowsSparseBase verifies invalid base
+// documents fail closed while valid sparse documents preserve unset rendering.
+func TestConfigShowRejectsMalformedBaseAndShowsSparseBase(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MUNSU_HOME", home)
+	basePath := filepath.Join(home, config.BaseDocumentPath)
+	if err := os.MkdirAll(filepath.Dir(basePath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(basePath, []byte("{not json"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runMunsuCLI(t, "config", "show", "--output", "json"); err == nil {
+		t.Fatal("expected config show to reject malformed base.json")
+	}
+
+	if err := config.StoreFleetBase(home, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion}); err != nil {
+		t.Fatal(err)
+	}
+	output, err := runMunsuCLI(t, "config", "show", "--output", "json")
+	if err != nil {
+		t.Fatalf("config show sparse base: %v", err)
+	}
+	rows := configShowRows(t, output)
+	for _, key := range []string{"soldier-harness", "model", "captain-harness"} {
+		if got := rows[key]; got != "<not set>" {
+			t.Errorf("config show %s = %q, want <not set>", key, got)
+		}
+	}
+}
+
 // TestConfigSetModelRejectsMultiToken verifies `config set model` fails fast on
 // multi-token input rather than silently truncating to the first token.
 func TestConfigSetModelRejectsMultiToken(t *testing.T) {
