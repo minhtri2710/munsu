@@ -137,5 +137,6 @@ the repository is cloned into the projects directory first.`,
 	cmd.AddCommand(showCmd)
 	cmd.AddCommand(rmCmd)
 	cmd.AddCommand(modeCmd)
+	cmd.AddCommand(newProjectConfigCmd())
 	return cmd
 }
