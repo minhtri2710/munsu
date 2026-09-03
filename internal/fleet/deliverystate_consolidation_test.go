@@ -20,7 +20,7 @@ func TestDeliveryStateSingleVocabularyRoundTrip(t *testing.T) {
 	taskID := "t-roundtrip"
 
 	if err := mhome.WriteMeta(tmp, taskID, map[string]string{
-		"kind":           "ship",
+		"kind":            "ship",
 		MetaDeliveryState: string(DeliveryStateMerged),
 	}); err != nil {
 		t.Fatalf("WriteMeta: %v", err)

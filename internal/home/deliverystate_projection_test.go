@@ -14,7 +14,7 @@ func TestDeliveryStateProjectionReaderHonorsMerged(t *testing.T) {
 	tmp := t.TempDir()
 
 	if err := WriteMeta(tmp, "t-merged", map[string]string{
-		"kind":          "ship",
+		"kind":           "ship",
 		"delivery_state": "merged",
 	}); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
@@ -43,7 +43,7 @@ func TestDeliveryStateProjectionReaderHonorsDelivered(t *testing.T) {
 		t.Fatalf("AppendStatus: %v", err)
 	}
 	if err := WriteMeta(tmp, "t-delivered", map[string]string{
-		"kind":          "ship",
+		"kind":           "ship",
 		"delivery_state": "delivered",
 	}); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
@@ -71,7 +71,7 @@ func TestDeliveryStateProjectionReaderIgnoresNonTerminalStates(t *testing.T) {
 		t.Fatalf("AppendStatus: %v", err)
 	}
 	if err := WriteMeta(tmp, "t-review", map[string]string{
-		"kind":          "ship",
+		"kind":           "ship",
 		"delivery_state": "review-ready",
 	}); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
