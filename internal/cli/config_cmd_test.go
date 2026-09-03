@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -362,6 +363,7 @@ func TestConfigSetTypedKeysValidateInput(t *testing.T) {
 	}{
 		{"default-mode", "aggressive"},
 		{"require-no-mistakes", "maybe"},
+		{"allow-direct-pr-fallback", "maybe"},
 		{"backend", ""},
 	}
 	for _, tc := range cases {
@@ -396,7 +398,7 @@ func TestConfigSetTypedKeyMalformedBaseFailsClosed(t *testing.T) {
 // require-no-mistakes report empty success on a fresh home (known-unset),
 // matching the flat known-unset contract.
 func TestConfigGetTypedKeysKnownUnset(t *testing.T) {
-	for _, key := range []string{"default-mode", "require-no-mistakes"} {
+	for _, key := range []string{"default-mode", "require-no-mistakes", "allow-direct-pr-fallback"} {
 		t.Run(key, func(t *testing.T) {
 			tmpDir := t.TempDir()
 			t.Setenv("MUNSU_HOME", tmpDir)
@@ -447,6 +449,47 @@ func TestConfigGetRequireNoMistakesReportsTypedValue(t *testing.T) {
 			}
 			if got := extractConfigValueFromTOON(strings.TrimSpace(buf.String())); got != tc.want {
 				t.Errorf("config get require-no-mistakes = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestConfigSetAllowDirectPRFallbackRoundTrips is the regression test for the
+// round-trip bug: `config set allow-direct-pr-fallback` previously fell through
+// to the flat store while get/show read the fleet base document, so a set was
+// never observable. The setter now authors the typed base field, and get reports
+// it. Both an authored true and false round-trip with no flat file echo.
+func TestConfigSetAllowDirectPRFallbackRoundTrips(t *testing.T) {
+	for _, want := range []string{"true", "false"} {
+		t.Run(want, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			t.Setenv("MUNSU_HOME", tmpDir)
+
+			if err := runConfigSet(t, "config", "set", "allow-direct-pr-fallback", want); err != nil {
+				t.Fatalf("config set allow-direct-pr-fallback: %v", err)
+			}
+
+			base, err := config.LoadFleetBase(tmpDir)
+			if err != nil {
+				t.Fatalf("loading fleet base after set: %v", err)
+			}
+			if base.Config.AllowDirectPRFallback == nil || strconv.FormatBool(*base.Config.AllowDirectPRFallback) != want {
+				t.Fatalf("base allowDirectPRFallback = %v, want %s", base.Config.AllowDirectPRFallback, want)
+			}
+			if _, err := config.Get(tmpDir, "allow-direct-pr-fallback"); err == nil {
+				t.Fatal("flat config/allow-direct-pr-fallback must not be written")
+			}
+
+			root := NewRootCommand()
+			buf := new(bytes.Buffer)
+			root.SetOut(buf)
+			root.SetErr(buf)
+			root.SetArgs([]string{"config", "get", "allow-direct-pr-fallback"})
+			if err := root.Execute(); err != nil {
+				t.Fatalf("config get allow-direct-pr-fallback: %v", err)
+			}
+			if got := extractConfigValueFromTOON(strings.TrimSpace(buf.String())); got != want {
+				t.Errorf("config get allow-direct-pr-fallback = %q, want %q", got, want)
 			}
 		})
 	}

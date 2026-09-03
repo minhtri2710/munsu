@@ -144,6 +144,15 @@ Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 					v := parsed
 					b.Config.RequireNoMistakes = &v
 				})
+			case "allow-direct-pr-fallback":
+				parsed, err := strconv.ParseBool(strings.TrimSpace(value))
+				if err != nil {
+					return fmt.Errorf("config set allow-direct-pr-fallback: want true or false, got %q", value)
+				}
+				return setBaseConfigField(ctx.Home, func(b *config.FleetBaseDocument) {
+					v := parsed
+					b.Config.AllowDirectPRFallback = &v
+				})
 			case "backend":
 				if strings.TrimSpace(value) == "" {
 					return fmt.Errorf("config set backend: backend identity must not be empty")
@@ -224,6 +233,11 @@ func readBaseConfigField(homeDir, key string) (val string, ok bool, err error) {
 			return "", false, nil
 		}
 		return strconv.FormatBool(*base.Config.RequireNoMistakes), true, nil
+	case "allow-direct-pr-fallback":
+		if base.Config.AllowDirectPRFallback == nil {
+			return "", false, nil
+		}
+		return strconv.FormatBool(*base.Config.AllowDirectPRFallback), true, nil
 	case "backend":
 		return base.Config.Backend, base.Config.Backend != "", nil
 	}
