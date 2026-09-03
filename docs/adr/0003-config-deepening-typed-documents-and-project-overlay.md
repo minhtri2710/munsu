@@ -1,20 +1,20 @@
 # 0003. Config Deepening — Typed Documents, Per-Project Resolved Overlay, and 1:1 Captain–Project Binding
 
-* **Status:** Accepted; substantially implemented — typed `config/base.json`, per-project overlay, 1:1 Captain–Project binding, pure resolve/digest, published-snapshot push, and per-project digest+nudge all landed. The launch-profile scalar keys (`soldier-harness`, `model`, `captain-harness`) are now consolidated onto `config/base.json` — authored there by `config set`, read there by `Soldier`/`CaptainProfileFromHome`, and no flat file is written; the daemon/policy keys (`wake-delivery-mode`, `afk-*`, `model-allowlist`) plus the bootstrap-identity keys (`parent-home`, `install-root`) stay flat by explicit decision, since they are home-local and have no fleet-base semantics (a captain home carries no `config/base.json`). Remaining residual work (captain config CLI) is tracked in the [owner-clean residual roadmap](../plans/2026-09-03-owner-clean-residual-roadmap.md); the env-override boundary layer was retired (§10). §9 migration is superseded by ADR-0008.
+* **Status:** Accepted; substantially implemented — typed `config/base.json`, per-project overlay, 1:1 Captain–Project binding, pure resolve/digest, published-snapshot push, and per-project digest+nudge all landed. The launch-profile scalar keys (`soldier-harness`, `model`, `captain-harness`) are now consolidated onto `config/base.json` — authored there by `config set`; `CaptainProfileFromHome` reads the base directly, while Soldier consumes the published snapshot first and the fleet base in General context; no flat file is written; the daemon/policy keys (`wake-delivery-mode`, `afk-*`, `model-allowlist`) plus the bootstrap-identity keys (`parent-home`, `install-root`) stay flat by explicit decision, since they are home-local and have no fleet-base semantics (a captain home carries no `config/base.json`). Remaining residual work (captain config CLI) is tracked in the [owner-clean residual roadmap](../plans/2026-09-03-owner-clean-residual-roadmap.md); the env-override boundary layer was retired (§10). §9 migration is superseded by ADR-0008.
 * **Date:** 2026-07-30
 * **Extends:** ADR-0002 §8 (config), §11 (migration and activation), §12 (AXI and env)
 * **Triggered by:** `munsu-workflow-incident-report-2026-07-30` and the goal of one General supervising many Captains across many projects
 
 ## Context & Problem Statement
 
-ADR-0002 §8 assigned `internal/config` ownership of "typed settings, storage, parsing, precedence, defaults, and validation," with long-running modules receiving immutable versioned snapshots published at operation boundaries. The current implementation does not yet deliver that: configuration is one file per key under `config/`, plus two hand-parsed markdown registries (`data/captains.md`, `data/projects.md`), a shared `data/general-shared.md`, and a `soldier-dispatch.json`. The module interface is effectively "read a file by key"; the real complexity — the inheritable set, the multi-token `captain-harness` line, the inheritance digest, and the registry parsing — lives scattered across `internal/fleet`. The interface is not the test surface.
+ADR-0002 §8 assigned `internal/config` ownership of "typed settings, storage, parsing, precedence, defaults, and validation," with long-running modules receiving immutable versioned snapshots published at operation boundaries. The original implementation stored configuration one file per key under `config/`, plus two hand-parsed markdown registries (`data/captains.md`, `data/projects.md`), a shared `data/general-shared.md`, and a `soldier-dispatch.json`. The module interface was effectively "read a file by key"; the real complexity — the inheritable set, the multi-token `captain-harness` line, the inheritance digest, and the registry parsing — lived scattered across `internal/fleet`. The interface was not the test surface.
 
-This shape cannot express one General supervising many Captains across many projects:
+This shape could not express one General supervising many Captains across many projects:
 
-* A Captain launch resolves its profile from the General home (`harness.CaptainProfileFromHome(parentHome)`), so every Captain shares one `captain-harness`, one `model`, one `default-mode`, and one `require-no-mistakes`. There is no per-project knob.
-* Only `soldier-harness`, `soldier-dispatch.json`, and `backlog-backend` are pushed to Captains; the rest are read live from the General home by every Captain and Soldier.
-* `Register` is always called with empty scope and project, so `Info{Scope, Project, Added}` are parsed fields that nothing consumes — a shallow structure by the deletion test.
-* The inheritance digest covers the entire inherited surface, so any General-side change nudges every Captain.
+* A Captain launch resolved its profile from the General home (`harness.CaptainProfileFromHome(parentHome)`), so every Captain shared one `captain-harness`, one `model`, one `default-mode`, and one `require-no-mistakes`. There was no per-project knob.
+* Only `soldier-harness`, `soldier-dispatch.json`, and `backlog-backend` were pushed to Captains; the rest were read live from the General home by every Captain and Soldier.
+* `Register` was always called with empty scope and project, so `Info{Scope, Project, Added}` were parsed fields that nothing consumed — a shallow structure by the deletion test.
+* The inheritance digest covered the entire inherited surface, so any General-side change nudged every Captain.
 
 The incident exposed direct symptoms: the no-mistakes fallback ambiguity hit the whole fleet at once because `default-mode` is single-valued; unscoped task observation selected the wrong home because scope is informational, not authoritative; and the legacy `.wake-resolutions` file-to-directory mishap showed that state migrations must be idempotent and non-destructive.
 
@@ -23,7 +23,7 @@ The incident exposed direct symptoms: the no-mistakes fallback ambiguity hit the
 * Deliver multi-project supervision: different projects under different harness, model, delivery mode, and dispatch profile sets.
 * Make the Config Snapshot domain term mean *resolved* configuration, not a raw directory read.
 * Concentrate config authority, parsing, resolution, and inheritance behind one deep module, consistent with ADR-0002 §8 and the nine-package topology.
-* Preserve ADR-0002 §11 forward-only, no-dual-read migration semantics.
+* Preserve the pre-public-v1 hard cut: no dual-read, runtime upgrade, or compatibility path.
 * Keep the interface as the test surface (pure resolution and digest), addressing the incident's test-breakage finding.
 * Remain fail-closed and AXI-first.
 
@@ -37,7 +37,7 @@ Configuration is stored as three typed JSON documents, each with its own `schema
 2. `data/captains.json` — typed Captain registry (replaces `data/captains.md`).
 3. `data/projects.json` — typed project registry (replaces `data/projects.md`), each project carrying its Project Overlay.
 
-The load path reads JSON only. A document whose `schemaVersion` is not understood fails closed; the migration command is the only place a version is advanced.
+The load path reads JSON only. A document whose `schemaVersion` is not understood fails closed; runtime paths do not advance versions or upgrade state.
 
 ### 2. Captain–Project Binding (1:1)
 
@@ -61,7 +61,7 @@ The config-reread digest is computed per project as `hash(base ⨂ P.config)`. A
 
 ### 7. Module ownership
 
-`internal/config` deepens to own the three documents, resolution, the resolved snapshot, the per-project digest, and migration. `internal/fleet` keeps lifecycle operations (seed, retire, project add/remove, handoff) and mutates the registries through `config`'s write API rather than parsing files itself. `internal/harness` keeps dispatch *matching* (natural-language match on the brief body); `config` resolves the dispatch profile *list* per project, and `harness` matches a brief to a profile. `config` does not import `fleet`; there is no import cycle. The nine-package topology from ADR-0002 is unchanged.
+`internal/config` deepens to own the three documents, resolution, the resolved snapshot, and the per-project digest. `internal/fleet` keeps lifecycle operations (seed, retire, project add/remove, handoff) and mutates the registries through `config`'s write API rather than parsing files itself. `internal/harness` keeps dispatch *matching* (natural-language match on the brief body); `config` resolves the dispatch profile *list* per project, and `harness` matches a brief to a profile. `config` does not import `fleet`; there is no import cycle. The nine-package topology from ADR-0002 is unchanged.
 
 ### 8. CLI surface
 
@@ -74,9 +74,9 @@ The operator surface is noun-driven and AXI-first:
 
 Resolution is internal; operators address the three scopes through their nouns.
 
-### 9. Migration
+### 9. Pre-public hard cutover
 
-Migration is a hard cutover, consistent with ADR-0002 §11 (forward-only, no dual-read, no dual-write). `munsu config migrate --home <exact-home>` is a one-shot ingest of legacy file-per-key configuration and the markdown registries into the three JSON documents. After a verified ingest, legacy files are archived (renamed to `*.legacy-<timestamp>-<digest>`), never deleted — the wake-resolution lesson. The General-level `soldier-dispatch.json` is folded into `base.dispatch`. The load path fails closed with an actionable "config not migrated; run `munsu config migrate --home <exact-home>`" message when JSON is absent but legacy is present. `converge`, `session-start`, and doctor detect and report required migration but do not trigger it. Fleet-wide migration uses the explicit plan/apply orchestration defined by ADR-0006, keeping the load path pure and mutation scope auditable.
+The pre-public-v1 cutover permits no dual-read, migration, runtime upgrade, or backfill for legacy development homes; old homes are discarded externally and initialized again. In particular, legacy flat launch-profile files (`config/soldier-harness`, `config/model`, and `config/captain-harness`) are disposable development data: they are ignored, never migrated or read, and must be re-authored with `config set`.
 
 ### 10. Environment overrides at the boundary (retired)
 
@@ -88,7 +88,7 @@ Resolution and digest are pure functions over in-memory structs and are the prim
 
 1. `resolve(base, overlay)` — base-only, overlay-override, dispatch merge with base dispatch, `captainProfile` fallback.
 2. `digest(base, overlay)` — deterministic.
-3. Migration — idempotent ingest, archive-not-delete, fail-closed on partial or corrupt input.
+3. Launch-profile authority — flat legacy files are ignored without migration or backfill, and malformed `config/base.json` fails closed.
 4. `LoadResolvedSnapshot` — frozen per operation.
 5. Per-project nudge targeting — base change nudges all; single-project overlay change nudges only that project.
 6. Incident regressions — unscoped task/Captain IDs are scoped by project; multiple Captains resolve to different configuration; `captainProfile` does not enter the nudge digest.
@@ -105,7 +105,7 @@ Rejected. The General can spawn a Soldier directly for a project, which has no C
 
 ### Dual-read / lazy ingest on first load
 
-Rejected. It is a dual runtime path and violates ADR-0002 §11's forward-only, no-dual-read migration semantics. A discrete explicit migration operation keeps the load path pure and the mutation scope auditable.
+Rejected. It would create a compatibility runtime path and violate the pre-public-v1 hard cut. Legacy launch-profile files are disposable development data, not a migration or compatibility surface.
 
 ### A new `internal/fleetconfig` package
 
@@ -140,7 +140,7 @@ Rejected. The incident showed CLI seam tests break when orchestration moves behi
 
 ### Negative / Trade-offs
 
-* Hard cutover requires every existing home to migrate once; mitigated by explicit fleet plan/apply orchestration and by archiving rather than deleting legacy files.
+* Existing development homes are discarded externally and initialized again; any launch profile from a legacy flat file must be re-authored with `config set`.
 * Registry parsing moves from `internal/fleet` to `internal/config`, so fleet lifecycle code must mutate registries through the config write API — a surgical but real refactor across seed, retire, and project commands.
 * Resolution adds a layer; the leverage (multi-project scoping, targeted nudges, pure testability) justifies it.
 

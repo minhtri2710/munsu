@@ -14,7 +14,8 @@ that output is the authority, not this file.
 | `munsu init --reconfigure` | Re-run auto-detection and overwrite existing config files. |
 | `munsu doctor` | Run read-only diagnostics with fix commands for missing tools. |
 | `munsu doctor --orphans` | Report processes whose owning run has ended, grouped GARBAGE / UNKNOWN / OWNED. Never terminates anything; exit 1 leftovers found, 2 nothing conclusive but a member should look. |
-| `munsu config get <key>` | Read a configuration value. |
+| `munsu config get <key>` | Read a configuration value. Launch-profile keys resolve from `config/base.json`; home-local and policy keys remain flat. |
+| `munsu config set <key> <value>` | Set a configuration value. Launch-profile keys may be authored only from the General home and use `config/base.json`; `model` accepts one token. See `docs/architecture.md`. |
 | `munsu project add <name> <path-or-url>` | Register a project. Git URLs are cloned automatically. |
 | `munsu project list` | List registered projects. |
 | `munsu project show <name>` | Show project details. |

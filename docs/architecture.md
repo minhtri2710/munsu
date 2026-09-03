@@ -83,11 +83,17 @@ compatibility promise and are discarded externally and initialized again
 
 ### Configuration
 
-Flat key files live under `config/`. `internal/config` owns typed settings,
-defaults, validation, Project Overlays and immutable resolved Config Snapshots
-(ADR-0008 §6). Resolution is the two typed layers `base ⨂ project overlay` with no environment-override tier (ADR-0003 §3/§4/§10). Dispatch profiles live in `config/soldier-dispatch.json`
-and are interpreted by `internal/harness` and the spawn orchestration in
-`internal/fleet`.
+Home-local and policy key files live under `config/`; fleet-level launch-profile
+values (`soldier-harness`, `model`, and `captain-harness`) are authored by
+`munsu config set` in the typed fleet base document `config/base.json`.
+`CaptainProfileFromHome` reads the base document directly; Soldier runtime
+consumes the derived published snapshot first and the fleet base in General
+context. `internal/config` owns typed settings, defaults, validation, Project
+Overlays and immutable resolved Config Snapshots (ADR-0008 §6). Resolution is
+the two typed layers `base ⨂ project overlay` with no environment-override tier
+(ADR-0003 §3/§4/§10). Legacy flat launch-profile files are never read or
+migrated. Dispatch profiles are stored in the fleet base document and
+interpreted by `internal/harness` and the spawn orchestration in `internal/fleet`.
 
 ## Key interfaces and seams
 

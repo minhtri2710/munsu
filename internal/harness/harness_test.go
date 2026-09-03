@@ -270,6 +270,13 @@ func TestSoldier_HasSoldierHarnessInBase(t *testing.T) {
 		SchemaVersion: config.FleetBaseSchemaVersion,
 		Config:        config.ProjectOverlay{SoldierHarness: "opencode"},
 	})
+	// A stale legacy flat pin is ignored when the typed base document exists.
+	if err := os.MkdirAll(filepath.Join(tmp, "config"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "config", "soldier-harness"), []byte("pi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	h, err := Soldier(tmp)
 	if err != nil {
@@ -440,6 +447,18 @@ func TestCaptainProfileFromHome_MultiToken(t *testing.T) {
 		Config:         config.ProjectOverlay{Model: "ignored-model"},
 		CaptainProfile: config.CaptainProfile{Harness: "pi", Model: "cliproxyapi/grok-4.5", Effort: "low"},
 	})
+	// Conflicting legacy pins are disposable data and must not shadow the base.
+	if err := os.MkdirAll(filepath.Join(tmp, "config"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for key, value := range map[string]string{
+		"captain-harness": "grok ignored-model high\n",
+		"model":           "legacy-model\n",
+	} {
+		if err := os.WriteFile(filepath.Join(tmp, "config", key), []byte(value), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	prof, err := CaptainProfileFromHome(tmp)
 	if err != nil {

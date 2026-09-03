@@ -42,7 +42,9 @@ Your munsu home (`~/.munsu` by default) contains:
 
 ```
 AGENTS.md         this file (orchestrator operating manual)
-config/           key-value configuration (soldier-harness, backend)
+config/           home-local/policy key files (backend); launch-profile keys
+                  soldier-harness, model, and captain-harness live in
+                  config/base.json
 data/             durable fleet records
   captain.md      general preferences
   learnings.md    fleet-local knowledge
