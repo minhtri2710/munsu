@@ -93,7 +93,7 @@ Errors use this stdout envelope in both formats:
 | `error.action` | string | exact next command or correction |
 | `error.message` | string | concise, dependency-neutral explanation |
 
-Stable `error_code` values are `invalid_argument`, `unknown_flag`, `unsupported_input`, `not_found`, `invalid_state`, `dependency_unavailable`, `conflict`, and `internal`. New codes are additive only within v2. `action`, not a new exit-code class, carries next-step guidance.
+Stable `error_code` values are `invalid_argument`, `unknown_flag`, `unsupported_input`, `not_found`, `invalid_state`, `dependency_unavailable`, `conflict`, and `internal`. New codes are additive only within v1. `action`, not a new exit-code class, carries next-step guidance.
 
 | Exit code | Meaning | Examples |
 |---:|---|---|
@@ -137,7 +137,7 @@ The core contract does not encode harness-private arguments, process names, or l
 
 ## Compatibility policy
 
-| Change | v2 treatment | Required action |
+| Change | v1 treatment | Required action |
 |---|---|---|
 | Add optional response field or capability | compatible | document and add paired fixtures/tests |
 | Add command or output format | compatible | advertise via capabilities and fixture it |
