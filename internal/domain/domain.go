@@ -33,7 +33,7 @@ func (id *DeliveryIdentity) MetaKeys() []string {
 	return []string{
 		"pr_provider", "pr_owner", "pr_repo",
 		"pr_number", "pr_url",
-		"pr_base", "pr_base_ref", "pr_head_ref", "pr_head", "pr_head_sha",
+		"pr_base_ref", "pr_head_ref", "pr_head_sha",
 		"pr_timestamp",
 	}
 }
@@ -46,10 +46,8 @@ func (id *DeliveryIdentity) ToMeta() map[string]string {
 		"pr_repo":      id.Repo,
 		"pr_number":    fmt.Sprintf("%d", id.Number),
 		"pr_url":       id.URL,
-		"pr_base":      id.BaseRef,
 		"pr_base_ref":  id.BaseRef,
 		"pr_head_ref":  id.HeadRef,
-		"pr_head":      id.HeadSHA,
 		"pr_head_sha":  id.HeadSHA,
 		"pr_timestamp": id.CapturedAt,
 	}
@@ -77,9 +75,6 @@ func ParseProviderURL(rawURL string) (provider, owner, repo string, num int, hos
 // IdentityFromMeta reconstructs a DeliveryIdentity from task meta.
 func IdentityFromMeta(meta map[string]string) (*DeliveryIdentity, error) {
 	prURL := meta["pr_url"]
-	if prURL == "" {
-		prURL = meta["pr"]
-	}
 	if prURL == "" {
 		for _, key := range (&DeliveryIdentity{}).MetaKeys() {
 			if meta[key] != "" {
@@ -128,29 +123,15 @@ func IdentityFromMeta(meta map[string]string) (*DeliveryIdentity, error) {
 		num = parsedNum
 	}
 
-	headSHA := meta["pr_head_sha"]
-	if headSHA == "" {
-		headSHA = meta["pr_head"]
-	} else if other := meta["pr_head"]; other != "" && other != headSHA {
-		return nil, fmt.Errorf("pr_head_sha %q conflicts with pr_head %q", headSHA, other)
-	}
-
-	baseRef := meta["pr_base_ref"]
-	if baseRef == "" {
-		baseRef = meta["pr_base"]
-	} else if other := meta["pr_base"]; other != "" && other != baseRef {
-		return nil, fmt.Errorf("pr_base_ref %q conflicts with pr_base %q", baseRef, other)
-	}
-
 	id := &DeliveryIdentity{
 		Provider:   meta["pr_provider"],
 		Owner:      owner,
 		Repo:       repo,
 		Number:     num,
 		URL:        prURL,
-		BaseRef:    baseRef,
+		BaseRef:    meta["pr_base_ref"],
 		HeadRef:    meta["pr_head_ref"],
-		HeadSHA:    headSHA,
+		HeadSHA:    meta["pr_head_sha"],
 		CapturedAt: meta["pr_timestamp"],
 	}
 

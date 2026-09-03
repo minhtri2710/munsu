@@ -54,27 +54,17 @@ func ReviewDiff(homeDir string, id string) error {
 		}
 		base = fmt.Sprintf("refs/pull/%d/merge", ghURL.Num)
 	} else {
-		prURL, hasPR := meta["pr"]
-		if hasPR && prURL != "" {
-			// PR tasks: compare against PR's merge ref (legacy key)
-			ghURL, err := domain.ParseGHURL(prURL)
-			if err != nil {
-				return fmt.Errorf("parsing PR URL from meta: %w", err)
-			}
-			base = fmt.Sprintf("refs/pull/%d/merge", ghURL.Num)
-		} else {
-			// Use default branch
-			defaultBranch, derr := gitDefaultBranch(worktreePath)
-			if derr != nil {
-				return fmt.Errorf("cannot detect default branch: %w", derr)
-			}
-			base = defaultBranch
+		// Use default branch
+		defaultBranch, derr := gitDefaultBranch(worktreePath)
+		if derr != nil {
+			return fmt.Errorf("cannot detect default branch: %w", derr)
+		}
+		base = defaultBranch
 
-			// Warn if local default branch is stale vs origin
-			warn, werr := checkDefaultBranchStale(worktreePath, defaultBranch)
-			if werr == nil && warn != "" {
-				fmt.Fprintf(os.Stderr, "warning: %s\n", warn)
-			}
+		// Warn if local default branch is stale vs origin
+		warn, werr := checkDefaultBranchStale(worktreePath, defaultBranch)
+		if werr == nil && warn != "" {
+			fmt.Fprintf(os.Stderr, "warning: %s\n", warn)
 		}
 	}
 
