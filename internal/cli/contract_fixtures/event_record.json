@@ -1,1 +1,1 @@
-{"schema_version":"munsu.orchestration/v2","kind":"event.record","status":"success","data":{"event_id":1,"timestamp":1718000000,"type":"state_change","producer":"soldier-task-1","key":"status","payload":"working"}}
+{"schema_version":"munsu.orchestration/v1","kind":"event.record","status":"success","data":{"event_id":1,"timestamp":1718000000,"type":"state_change","producer":"soldier-task-1","key":"status","payload":"working"}}

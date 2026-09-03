@@ -48,7 +48,7 @@ function parseContract<T>(raw: string, expectKind: string): { ok: true; data: T 
     return { ok: false, reason: "malformed JSON" };
   }
   if (typeof parsed !== "object" || parsed === null) return { ok: false, reason: "not a JSON object" };
-  if (parsed.schema_version !== "munsu.orchestration/v2") return { ok: false, reason: "wrong schema_version: " + String(parsed.schema_version) };
+  if (parsed.schema_version !== "munsu.orchestration/v1") return { ok: false, reason: "wrong schema_version: " + String(parsed.schema_version) };
   if (parsed.kind !== expectKind) return { ok: false, reason: "wrong kind: " + String(parsed.kind) + " (expected " + expectKind + ")" };
   if (parsed.status !== "success") return { ok: false, reason: "status is not success: " + String(parsed.status) };
   if (!parsed.data || typeof parsed.data !== "object") return { ok: false, reason: "missing or non-object data" };
@@ -66,7 +66,7 @@ function parseSafetyCheck(raw: string): { ok: true; gate_refused: boolean; block
   }
   if (typeof parsed !== "object" || parsed === null) return { ok: false, reason: "not a JSON object" };
   // Only accept exact envelope: schema_version, kind, status, data.
-  if (parsed.schema_version !== "munsu.orchestration/v2") return { ok: false, reason: "wrong schema_version: " + String(parsed.schema_version) };
+  if (parsed.schema_version !== "munsu.orchestration/v1") return { ok: false, reason: "wrong schema_version: " + String(parsed.schema_version) };
   if (parsed.kind !== "integrate.safety-check") return { ok: false, reason: "wrong kind: " + String(parsed.kind) };
   if (parsed.status !== "success") return { ok: false, reason: "status is not success: " + String(parsed.status) };
   const data = parsed.data;

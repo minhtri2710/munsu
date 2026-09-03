@@ -1,9 +1,9 @@
 {
-  "schema_version": "munsu.orchestration/v2",
+  "schema_version": "munsu.orchestration/v1",
   "kind": "capabilities",
   "status": "success",
   "data": {
-    "contract_version": "munsu.orchestration/v2",
+    "contract_version": "munsu.orchestration/v1",
     "commands": [
       "capabilities",
       "task observe",

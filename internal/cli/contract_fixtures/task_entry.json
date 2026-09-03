@@ -1,1 +1,1 @@
-{"schema_version":"munsu.orchestration/v2","kind":"task.list","status":"success","data":[{"id":"task-01","kind":"ship","project":"munsu","status":"working"},{"id":"task-02","kind":"scout","project":"munsu","status":"done"}]}
+{"schema_version":"munsu.orchestration/v1","kind":"task.list","status":"success","data":[{"id":"task-01","kind":"ship","project":"munsu","status":"working"},{"id":"task-02","kind":"scout","project":"munsu","status":"done"}]}

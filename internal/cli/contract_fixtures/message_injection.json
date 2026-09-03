@@ -1,1 +1,1 @@
-{"schema_version":"munsu.orchestration/v2","kind":"message","status":"success","data":{"message":"Report sent to captain","noop":false,"injection":{"outcome":"injected","verdict":"safe","target":"@captain-pane","event_id":42}}}
+{"schema_version":"munsu.orchestration/v1","kind":"message","status":"success","data":{"message":"Report sent to captain","noop":false,"injection":{"outcome":"injected","verdict":"safe","target":"@captain-pane","event_id":42}}}

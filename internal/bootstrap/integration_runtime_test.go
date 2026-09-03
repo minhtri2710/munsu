@@ -182,7 +182,7 @@ class MockAPI {
       return Promise.resolve({
         code: 0,
         stdout: JSON.stringify({
-          schema_version: "munsu.orchestration/v2",
+          schema_version: "munsu.orchestration/v1",
           kind: "integrate.safety-check",
           status: "success",
           data: {
@@ -201,7 +201,7 @@ class MockAPI {
       return Promise.resolve({
         code: 0,
         stdout: JSON.stringify({
-          schema_version: "munsu.orchestration/v2",
+          schema_version: "munsu.orchestration/v1",
           kind: "session.start",
           status: "success",
           data: {
@@ -222,7 +222,7 @@ class MockAPI {
       return Promise.resolve({
         code: 0,
         stdout: JSON.stringify({
-          schema_version: "munsu.orchestration/v2",
+          schema_version: "munsu.orchestration/v1",
           kind: "wake.claim",
           status: "success",
           data: {
@@ -250,7 +250,7 @@ class MockAPI {
       return Promise.resolve({
         code: 0,
         stdout: JSON.stringify({
-          schema_version: "munsu.orchestration/v2",
+          schema_version: "munsu.orchestration/v1",
           kind: "wake.resolve",
           status: "success",
           data: { claim_id: "lease-123", state: "resolved" },
