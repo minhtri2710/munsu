@@ -14,7 +14,7 @@ func TestResolveProjectCarriesDispatchAutonomyThroughOverlay(t *testing.T) {
 		Path:    "/home/project",
 		Overlay: ProjectOverlay{DispatchAutonomy: "safe-reinterpretation"},
 	}
-	resolved, err := ResolveProject(base, facts, BoundaryOverrides{})
+	resolved, err := ResolveProject(base, facts)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -19,11 +19,11 @@ func TestValidateBaseRejectsIndependentSchemaVersions(t *testing.T) {
 
 func TestResolveProjectConfigDistinctProjectsAndCaptainFallback(t *testing.T) {
 	base := validBase()
-	alpha, err := ResolveProject(base, validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{SoldierHarness: "claude", DispatchProfiles: []DispatchProfile{{Name: "alpha", Harness: "claude"}}}, CaptainProfile{Harness: "pi"}), BoundaryOverrides{})
+	alpha, err := ResolveProject(base, validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{SoldierHarness: "claude", DispatchProfiles: []DispatchProfile{{Name: "alpha", Harness: "claude"}}}, CaptainProfile{Harness: "pi"}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	beta, err := ResolveProject(base, validFacts("beta", "/beta", "direct-pr", ProjectOverlay{SoldierHarness: "codex"}, CaptainProfile{}), BoundaryOverrides{})
+	beta, err := ResolveProject(base, validFacts("beta", "/beta", "direct-pr", ProjectOverlay{SoldierHarness: "codex"}, CaptainProfile{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func TestResolveProjectConfigDistinctProjectsAndCaptainFallback(t *testing.T) {
 func TestResolveProjectOverlayDefaultModeOverridesProjectModeAlias(t *testing.T) {
 	base := validBase()
 	facts := validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{DefaultMode: "no-mistakes"}, CaptainProfile{})
-	resolved, err := ResolveProject(base, facts, BoundaryOverrides{})
+	resolved, err := ResolveProject(base, facts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,11 +53,11 @@ func TestResolveProjectOverlayDefaultModeOverridesProjectModeAlias(t *testing.T)
 	}
 }
 
-func TestResolveProjectConfigBoundaryOverridesAndImmutability(t *testing.T) {
+func TestResolveProjectConfigOverlayAppliesAndResolverIsImmutable(t *testing.T) {
 	base := validBase()
-	facts := validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{DispatchProfiles: []DispatchProfile{{Name: "alpha", Harness: "claude"}}}, CaptainProfile{})
+	facts := validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{Model: "overlay-model", DispatchProfiles: []DispatchProfile{{Name: "alpha", Harness: "claude"}}}, CaptainProfile{})
 	before := facts.Overlay.DispatchProfiles[0].Harness
-	resolved, err := ResolveProject(base, facts, BoundaryOverrides{Model: "env-model", DefaultMode: "direct-pr"})
+	resolved, err := ResolveProject(base, facts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,8 +65,8 @@ func TestResolveProjectConfigBoundaryOverridesAndImmutability(t *testing.T) {
 	if facts.Overlay.DispatchProfiles[0].Harness != before {
 		t.Fatal("resolver mutated or shared dispatch profile storage")
 	}
-	if resolved.Model != "env-model" || resolved.DefaultMode != "direct-pr" {
-		t.Fatalf("boundary overrides not applied: %+v", resolved)
+	if resolved.Model != "overlay-model" || resolved.DefaultMode != "direct-pr" {
+		t.Fatalf("overlay values not applied: %+v", resolved)
 	}
 }
 
@@ -74,15 +74,15 @@ func TestProjectDigestIsDeterministicAndTargeted(t *testing.T) {
 	base := validBase()
 	alpha := validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{}, CaptainProfile{})
 	beta := validFacts("beta", "/beta", "direct-pr", ProjectOverlay{}, CaptainProfile{})
-	a1, _ := ProjectDigest(base, alpha, BoundaryOverrides{})
-	a2, _ := ProjectDigest(base, alpha, BoundaryOverrides{})
-	b1, _ := ProjectDigest(base, beta, BoundaryOverrides{})
+	a1, _ := ProjectDigest(base, alpha)
+	a2, _ := ProjectDigest(base, alpha)
+	b1, _ := ProjectDigest(base, beta)
 	if a1 != a2 {
 		t.Fatalf("digest is not deterministic: %s != %s", a1, a2)
 	}
 	alpha.Overlay.Model = "changed"
-	a3, _ := ProjectDigest(base, alpha, BoundaryOverrides{})
-	b2, _ := ProjectDigest(base, beta, BoundaryOverrides{})
+	a3, _ := ProjectDigest(base, alpha)
+	b2, _ := ProjectDigest(base, beta)
 	if a1 == a3 {
 		t.Fatal("alpha digest did not change")
 	}
@@ -91,62 +91,58 @@ func TestProjectDigestIsDeterministicAndTargeted(t *testing.T) {
 	}
 	alpha.Overlay.Model = ""
 	base.Config.Model = "new-base"
-	a4, _ := ProjectDigest(base, alpha, BoundaryOverrides{})
-	b3, _ := ProjectDigest(base, beta, BoundaryOverrides{})
+	a4, _ := ProjectDigest(base, alpha)
+	b3, _ := ProjectDigest(base, beta)
 	if a1 == a4 || b1 == b3 {
 		t.Fatal("base change must change every project digest")
 	}
 	withProfile := alpha
 	withProfile.CaptainProfile.Model = "captain-only"
-	resolvedCaptain, _ := ResolveProject(base, withProfile, BoundaryOverrides{})
+	resolvedCaptain, _ := ResolveProject(base, withProfile)
 	if resolvedCaptain.Digest != a4 {
 		t.Fatal("Captain profile entered project digest")
 	}
-	resolvedBoundary, _ := ResolveProject(base, alpha, BoundaryOverrides{Model: "boundary-only"})
-	if resolvedBoundary.Digest == a4 {
-		t.Fatal("typed boundary override did not enter project digest")
-	}
 	withOverlay := alpha
 	withOverlay.Overlay.DefaultMode = "no-mistakes"
-	withOverlayDigest, _ := ProjectDigest(base, withOverlay, BoundaryOverrides{})
+	withOverlayDigest, _ := ProjectDigest(base, withOverlay)
 	withMode := withOverlay
 	withMode.Mode = "direct-pr"
-	withModeDigest, _ := ProjectDigest(base, withMode, BoundaryOverrides{})
+	withModeDigest, _ := ProjectDigest(base, withMode)
 	if withOverlayDigest != withModeDigest {
 		t.Fatal("project mode overrode explicit overlay DefaultMode in digest")
 	}
 }
 
-func TestProjectDigestCoversFinalResolvedBackendAndOverrides(t *testing.T) {
+func TestProjectDigestCoversFinalResolvedBackend(t *testing.T) {
 	base := validBase() // Backend: "tmux" fleet default
 	facts := validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{}, CaptainProfile{})
-	baseDigest, _ := ProjectDigest(base, facts, BoundaryOverrides{})
+	baseDigest, _ := ProjectDigest(base, facts)
 
 	// A project overlay Backend that resolves to the same final value as the
 	// base Backend must not change the digest (identical final config).
-	sameFinal, _ := ProjectDigest(base, validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{Backend: "tmux"}, CaptainProfile{}), BoundaryOverrides{})
+	sameFinal, _ := ProjectDigest(base, validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{Backend: "tmux"}, CaptainProfile{}))
 	if baseDigest != sameFinal {
 		t.Fatal("identical final resolved Backend produced a different digest")
 	}
-	// A typed override changing the final Backend must change the digest.
-	overrideBackend, _ := ProjectDigest(base, facts, BoundaryOverrides{Backend: "herdr"})
-	if baseDigest == overrideBackend {
-		t.Fatal("typed Backend override did not change the digest")
+	// An overlay Backend changing the final value must change the digest.
+	overlayBackend, _ := ProjectDigest(base, validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{Backend: "herdr"}, CaptainProfile{}))
+	if baseDigest == overlayBackend {
+		t.Fatal("overlay Backend change did not change the digest")
 	}
-	// A typed override of another operation setting must also be bound.
-	overrideMode, _ := ProjectDigest(base, facts, BoundaryOverrides{DefaultMode: "local-only"})
-	if baseDigest == overrideMode {
-		t.Fatal("typed DefaultMode override did not change the digest")
+	// An overlay change to another operation setting must also be bound.
+	overlayMode, _ := ProjectDigest(base, validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{DefaultMode: "local-only"}, CaptainProfile{}))
+	if baseDigest == overlayMode {
+		t.Fatal("overlay DefaultMode change did not change the digest")
 	}
-	resolved, err := ResolveProject(base, facts, BoundaryOverrides{Backend: "herdr"})
+	resolved, err := ResolveProject(base, validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{Backend: "herdr"}, CaptainProfile{}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if resolved.Backend != "herdr" {
 		t.Fatalf("Backend = %q, want herdr", resolved.Backend)
 	}
-	if resolved.Digest != overrideBackend {
-		t.Fatalf("resolved digest %s does not match canonical digest payload %s", resolved.Digest, overrideBackend)
+	if resolved.Digest != overlayBackend {
+		t.Fatalf("resolved digest %s does not match canonical digest payload %s", resolved.Digest, overlayBackend)
 	}
 }
 
@@ -154,7 +150,7 @@ func TestResolveProjectBackendPrecedenceAndRequired(t *testing.T) {
 	base := validBase() // Backend: "tmux" fleet default
 	facts := validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{}, CaptainProfile{})
 
-	baseOnly, err := ResolveProject(base, facts, BoundaryOverrides{})
+	baseOnly, err := ResolveProject(base, facts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,20 +158,12 @@ func TestResolveProjectBackendPrecedenceAndRequired(t *testing.T) {
 		t.Fatalf("Backend = %q, want base default", baseOnly.Backend)
 	}
 
-	project, err := ResolveProject(base, validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{Backend: "herdr"}, CaptainProfile{}), BoundaryOverrides{})
+	project, err := ResolveProject(base, validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{Backend: "herdr"}, CaptainProfile{}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if project.Backend != "herdr" {
 		t.Fatalf("project overlay Backend = %q, want herdr", project.Backend)
-	}
-
-	override, err := ResolveProject(base, validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{Backend: "herdr"}, CaptainProfile{}), BoundaryOverrides{Backend: "zellij"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if override.Backend != "zellij" {
-		t.Fatalf("typed override Backend = %q, want zellij", override.Backend)
 	}
 
 	// No Backend anywhere after resolution is a typed validation failure,
@@ -184,7 +172,7 @@ func TestResolveProjectBackendPrecedenceAndRequired(t *testing.T) {
 		SchemaVersion: FleetBaseSchemaVersion,
 		Config:        ProjectOverlay{SoldierHarness: "pi"},
 	}
-	if _, err := ResolveProject(noBackendBase, facts, BoundaryOverrides{}); err == nil || !strings.Contains(err.Error(), "backend") {
+	if _, err := ResolveProject(noBackendBase, facts); err == nil || !strings.Contains(err.Error(), "backend") {
 		t.Fatalf("resolving with no Backend identity = %v, want typed validation failure", err)
 	}
 }
@@ -192,7 +180,7 @@ func TestResolveProjectBackendPrecedenceAndRequired(t *testing.T) {
 func TestResolvedSnapshotIsFrozenAndReturnsDeepCopies(t *testing.T) {
 	base := validBase()
 	facts := validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{DispatchProfiles: []DispatchProfile{{Name: "alpha", Harness: "claude", Match: []string{"alpha"}, Use: []DispatchCandidate{{Harness: "claude"}}}}}, CaptainProfile{})
-	snapshot, err := NewResolvedSnapshot(base, facts, BoundaryOverrides{})
+	snapshot, err := NewResolvedSnapshot(base, facts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +198,7 @@ func TestResolvedSnapshotIsFrozenAndReturnsDeepCopies(t *testing.T) {
 	if snapshot.Config().Model == "new-on-disk" || snapshot.Config().Backend == "herdr" {
 		t.Fatal("existing snapshot observed later facts mutation")
 	}
-	newSnapshot, err := NewResolvedSnapshot(base, facts, BoundaryOverrides{})
+	newSnapshot, err := NewResolvedSnapshot(base, facts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,19 +210,12 @@ func TestResolvedSnapshotIsFrozenAndReturnsDeepCopies(t *testing.T) {
 func TestResolveProjectDoesNotReadEnvironment(t *testing.T) {
 	t.Setenv("MUNSU_MODEL_OVERRIDE", "environment-model")
 	base := validBase()
-	resolved, err := ResolveProject(base, validFacts("alpha", "/alpha", "", ProjectOverlay{}, CaptainProfile{}), BoundaryOverrides{})
+	resolved, err := ResolveProject(base, validFacts("alpha", "/alpha", "", ProjectOverlay{}, CaptainProfile{}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if resolved.Model != "base-model" {
 		t.Fatalf("resolver read process environment: %q", resolved.Model)
-	}
-	overridden, err := ResolveProject(base, validFacts("alpha", "/alpha", "", ProjectOverlay{}, CaptainProfile{}), BoundaryOverrides{Model: "typed-boundary"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if overridden.Model != "typed-boundary" {
-		t.Fatalf("typed override = %q", overridden.Model)
 	}
 }
 
@@ -265,7 +246,7 @@ func TestFleetBaseRoundTripAndStrictDecode(t *testing.T) {
 func TestPublishedSnapshotRoundTripAndStrictValidation(t *testing.T) {
 	home := t.TempDir()
 	base := validBase()
-	resolved, err := ResolveProject(base, validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{}, CaptainProfile{}), BoundaryOverrides{})
+	resolved, err := ResolveProject(base, validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{}, CaptainProfile{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,7 +278,7 @@ func TestPublishedSnapshotRoundTripAndStrictValidation(t *testing.T) {
 func TestPublishedSnapshotStrictBackendRoundTripAndFailClosed(t *testing.T) {
 	home := t.TempDir()
 	base := validBase()
-	resolved, err := ResolveProject(base, validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{}, CaptainProfile{}), BoundaryOverrides{Backend: "herdr"})
+	resolved, err := ResolveProject(base, validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{Backend: "herdr"}, CaptainProfile{}))
 	if err != nil {
 		t.Fatal(err)
 	}

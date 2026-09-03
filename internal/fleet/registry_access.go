@@ -62,7 +62,7 @@ func opFor(intent domain.Intent) domain.Operation {
 // canonical Fleet Registry facts and the Config-owned base overlay. It is the
 // composition helper that maps Fleet's authoritative query facts into Config's
 // narrow input at call time.
-func ResolveProjectSnapshot(homeDir, projectName string, overrides config.BoundaryOverrides) (config.ResolvedSnapshot, error) {
+func ResolveProjectSnapshot(homeDir, projectName string) (config.ResolvedSnapshot, error) {
 	base, err := config.LoadFleetBase(homeDir)
 	if err != nil {
 		return config.ResolvedSnapshot{}, err
@@ -90,5 +90,5 @@ func ResolveProjectSnapshot(homeDir, projectName string, overrides config.Bounda
 		Overlay:        projectOverlay,
 		CaptainProfile: config.CaptainProfile{},
 	}
-	return config.NewResolvedSnapshot(base, facts, overrides)
+	return config.NewResolvedSnapshot(base, facts)
 }

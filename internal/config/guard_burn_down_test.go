@@ -13,14 +13,14 @@ func guardTestBase() FleetBaseDocument {
 }
 
 func TestGuardBurnDownFinalResolvedOverlayRejectsEmptyProjectFacts(t *testing.T) {
-	_, err := ResolveProject(guardTestBase(), ProjectFacts{Path: "/tmp/project"}, BoundaryOverrides{})
+	_, err := ResolveProject(guardTestBase(), ProjectFacts{Path: "/tmp/project"})
 	if err == nil || !strings.Contains(err.Error(), "project name is required") {
 		t.Fatalf("ResolveProject error = %v, want empty-project-name refusal", err)
 	}
 }
 
 func TestGuardBurnDownFinalResolvedOverlayRejectsEmptyProjectPath(t *testing.T) {
-	_, err := ResolveProject(guardTestBase(), ProjectFacts{Name: "project"}, BoundaryOverrides{})
+	_, err := ResolveProject(guardTestBase(), ProjectFacts{Name: "project"})
 	if err == nil || !strings.Contains(err.Error(), "path is required") {
 		t.Fatalf("ResolveProject error = %v, want empty-project-path refusal", err)
 	}

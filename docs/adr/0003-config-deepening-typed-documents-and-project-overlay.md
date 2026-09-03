@@ -1,6 +1,6 @@
 # 0003. Config Deepening — Typed Documents, Per-Project Resolved Overlay, and 1:1 Captain–Project Binding
 
-* **Status:** Accepted; substantially implemented — typed `config/base.json`, per-project overlay, 1:1 Captain–Project binding, pure resolve/digest, published-snapshot push, and per-project digest+nudge all landed. Remaining residual work (captain config CLI, scalar consolidation, env-override decision) is tracked in the [owner-clean residual roadmap](../plans/2026-09-03-owner-clean-residual-roadmap.md). §9 migration is superseded by ADR-0008.
+* **Status:** Accepted; substantially implemented — typed `config/base.json`, per-project overlay, 1:1 Captain–Project binding, pure resolve/digest, published-snapshot push, and per-project digest+nudge all landed. Remaining residual work (captain config CLI, scalar consolidation) is tracked in the [owner-clean residual roadmap](../plans/2026-09-03-owner-clean-residual-roadmap.md); the env-override boundary layer was retired (§10). §9 migration is superseded by ADR-0008.
 * **Date:** 2026-07-30
 * **Extends:** ADR-0002 §8 (config), §11 (migration and activation), §12 (AXI and env)
 * **Triggered by:** `munsu-workflow-incident-report-2026-07-30` and the goal of one General supervising many Captains across many projects
@@ -45,11 +45,11 @@ A Captain supervises exactly one project, and a project has at most one owning C
 
 ### 3. Per-project resolved overlay
 
-Soldier/spawn configuration is keyed by **project**, not by Captain, so that both a Captain and a direct General spawn resolve the same overlay. Resolution for a Soldier spawn under project P is `resolve = base ⨂ P.config` (project overlay overrides base; project dispatch profiles fall back to the base dispatch set). The Captain's own launch profile (`captainProfile`) is a separate field on the Captain record and resolves independently, falling back to base for unset fields. Environment overrides win over all layers.
+Soldier/spawn configuration is keyed by **project**, not by Captain, so that both a Captain and a direct General spawn resolve the same overlay. Resolution for a Soldier spawn under project P is `resolve = base ⨂ P.config` (project overlay overrides base; project dispatch profiles fall back to the base dispatch set). The Captain's own launch profile (`captainProfile`) is a separate field on the Captain record and resolves independently, falling back to base for unset fields. There are two typed layers only; the boundary environment-override tier was retired (§10).
 
 ### 4. Resolved Snapshot
 
-`LoadResolvedSnapshot(home, project)` freezes `base ⨂ project overlay ⨂ env` for the full duration of an operation, honoring the Config Snapshot domain term. A newer resolved snapshot takes effect only at an operation boundary; a mid-operation read does not observe a concurrent write. Captain launch and Soldier spawn both resolve against the snapshot of their project's scope.
+`LoadResolvedSnapshot(home, project)` freezes `base ⨂ project overlay` for the full duration of an operation, honoring the Config Snapshot domain term. A newer resolved snapshot takes effect only at an operation boundary; a mid-operation read does not observe a concurrent write. Captain launch and Soldier spawn both resolve against the snapshot of their project's scope.
 
 ### 5. Resolution authority and push model
 
@@ -78,15 +78,15 @@ Resolution is internal; operators address the three scopes through their nouns.
 
 Migration is a hard cutover, consistent with ADR-0002 §11 (forward-only, no dual-read, no dual-write). `munsu config migrate --home <exact-home>` is a one-shot ingest of legacy file-per-key configuration and the markdown registries into the three JSON documents. After a verified ingest, legacy files are archived (renamed to `*.legacy-<timestamp>-<digest>`), never deleted — the wake-resolution lesson. The General-level `soldier-dispatch.json` is folded into `base.dispatch`. The load path fails closed with an actionable "config not migrated; run `munsu config migrate --home <exact-home>`" message when JSON is absent but legacy is present. `converge`, `session-start`, and doctor detect and report required migration but do not trigger it. Fleet-wide migration uses the explicit plan/apply orchestration defined by ADR-0006, keeping the load path pure and mutation scope auditable.
 
-### 10. Environment overrides at the boundary
+### 10. Environment overrides at the boundary (retired)
 
-Per ADR-0002 §12, core modules do not read the process environment. Environment overrides (`MUNSU_<KEY>_OVERRIDE`) are translated into typed context at the config/CLI boundary and supplied to resolution explicitly. The current direct `os.LookupEnv` read inside `config.Get` is removed as part of this deepening.
+Per ADR-0002 §12, core modules do not read the process environment; the direct `os.LookupEnv` read inside `config.Get` was removed as part of this deepening. The typed boundary-override layer that would translate `MUNSU_<KEY>_OVERRIDE` into resolution input was never wired — every resolver call passed an empty override set. Under the [owner-clean residual roadmap](../plans/2026-09-03-owner-clean-residual-roadmap.md) (G4, 2026-09-03) that dormant plumbing was deleted; resolution is the two typed layers `base ⨂ project overlay` with no environment-override tier. Reintroducing environment overrides is a future decision, not current architecture.
 
 ### 11. Test surface
 
 Resolution and digest are pure functions over in-memory structs and are the primary test surface. Required tests:
 
-1. `resolve(base, overlay)` — base-only, overlay-override, dispatch merge with base dispatch, environment-override precedence, `captainProfile` fallback.
+1. `resolve(base, overlay)` — base-only, overlay-override, dispatch merge with base dispatch, `captainProfile` fallback.
 2. `digest(base, overlay)` — deterministic.
 3. Migration — idempotent ingest, archive-not-delete, fail-closed on partial or corrupt input.
 4. `LoadResolvedSnapshot` — frozen per operation.

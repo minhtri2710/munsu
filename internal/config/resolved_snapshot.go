@@ -8,8 +8,8 @@ type ResolvedSnapshot struct {
 // NewResolvedSnapshot resolves one Project's overlay from Fleet-owned scoped
 // facts and the base overlay, freezing the result for an operation. Config
 // owns no registry and cannot read or mutate Project/Captain lifecycle.
-func NewResolvedSnapshot(base FleetBaseDocument, facts ProjectFacts, overrides BoundaryOverrides) (ResolvedSnapshot, error) {
-	resolved, err := ResolveProject(base, facts, overrides)
+func NewResolvedSnapshot(base FleetBaseDocument, facts ProjectFacts) (ResolvedSnapshot, error) {
+	resolved, err := ResolveProject(base, facts)
 	if err != nil {
 		return ResolvedSnapshot{}, err
 	}

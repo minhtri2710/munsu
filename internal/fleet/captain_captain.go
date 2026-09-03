@@ -1460,7 +1460,7 @@ func publishResolvedSnapshot(parentHome, captainHome string) error {
 		return err
 	}
 	facts.Overlay = projectOverlay
-	resolved, err := config.ResolveProject(base, facts, config.BoundaryOverrides{})
+	resolved, err := config.ResolveProject(base, facts)
 	if err != nil {
 		return err
 	}

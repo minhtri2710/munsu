@@ -114,7 +114,7 @@ func TestPropagateConfig_TypedSnapshotDurableBeforeNotificationAndRetryIsIdempot
 	writeTypedPropagationDocuments(t, parent, alphaHome, betaHome)
 	writeCaptainMeta(t, parent, "alpha-captain", alphaHome, "alpha-window")
 
-	expectedSnapshot, err := ResolveProjectSnapshot(parent, "alpha", config.BoundaryOverrides{})
+	expectedSnapshot, err := ResolveProjectSnapshot(parent, "alpha")
 	if err != nil {
 		t.Fatal(err)
 	}
