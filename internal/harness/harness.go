@@ -26,11 +26,16 @@ const (
 )
 
 // KnownHarnesses lists all supported harness names.
-var KnownHarnesses = config.KnownHarnesses
+var KnownHarnesses = []string{Claude, Codex, Opencode, Pi, Grok, Agy}
 
 // IsKnownHarness reports whether name is a supported harness.
 func IsKnownHarness(name string) bool {
-	return config.IsKnownHarness(name)
+	for _, h := range KnownHarnesses {
+		if h == name {
+			return true
+		}
+	}
+	return false
 }
 
 // CanonicalHarness returns the canonical registry identifier for name,
@@ -352,8 +357,9 @@ func CaptainProfileFromHome(homeDir string) (CaptainProfile, error) {
 		Effort:  base.CaptainProfile.Effort,
 	}
 	if p.Harness == "" && base.Config.SoldierHarness != "" {
-		// Soldier-harness fallback supplies only the bare adapter name.
-		p = CaptainProfile{Harness: base.Config.SoldierHarness}
+		// Soldier-harness fallback supplies only the bare adapter name; a
+		// sparse profile's independently stored Model/Effort are preserved.
+		p.Harness = base.Config.SoldierHarness
 	}
 	if p.Harness != "" {
 		if err := ValidateHarness(p.Harness); err != nil {

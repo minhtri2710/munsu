@@ -474,6 +474,25 @@ func TestCaptainProfileFromHome_SoldierFallback(t *testing.T) {
 	}
 }
 
+func TestCaptainProfileFromHome_SparseProfilePreservesModelEffort(t *testing.T) {
+	tmp := t.TempDir()
+	// A sparse captain profile carries Model and Effort but no Harness; the
+	// soldier-harness fallback supplies the bare harness name without
+	// discarding the independently stored Model/Effort.
+	writeBase(t, tmp, config.FleetBaseDocument{
+		SchemaVersion:  config.FleetBaseSchemaVersion,
+		Config:         config.ProjectOverlay{SoldierHarness: "pi"},
+		CaptainProfile: config.CaptainProfile{Model: "opencode-go/deepseek-v4-flash", Effort: "high"},
+	})
+	prof, err := CaptainProfileFromHome(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prof.Harness != "pi" || prof.Model != "opencode-go/deepseek-v4-flash" || prof.Effort != "high" {
+		t.Errorf("profile = %+v, want harness pi, model preserved, effort high", prof)
+	}
+}
+
 func TestCaptainProfileFromHome_BaseModelFallback(t *testing.T) {
 	tmp := t.TempDir()
 	// Captain profile has a harness but no model; base Config.Model fills it in.

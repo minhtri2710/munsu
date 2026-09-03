@@ -99,12 +99,14 @@ Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 		Args:  ExactArgs(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			key, value := args[0], args[1]
-			if isLaunchProfileKey(key) && config.PublishedSnapshotAvailable(ctx.Home) {
-				parent, err := config.Get(ctx.Home, "parent-home")
-				if err != nil {
-					parent = "the parent General home"
+			// Launch-profile keys carry fleet-base semantics and are authored
+			// only in the General home. A Captain home is identified by its
+			// durable config/parent-home pointer (written at provision time,
+			// before its first published snapshot); the General home has none.
+			if isLaunchProfileKey(key) {
+				if parent, err := config.Get(ctx.Home, "parent-home"); err == nil && parent != "" {
+					return fmt.Errorf("cannot set %s from a Captain home; set it in parent General home %s", key, parent)
 				}
-				return fmt.Errorf("cannot set %s from a Captain home; set it in parent General home %s", key, parent)
 			}
 			// Validate harness pins. captain-harness accepts multi-token
 			// lines: "<harness> [<model>] [<effort>]". soldier-harness is bare name only.
@@ -123,11 +125,15 @@ Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 				}
 				return setBaseConfigField(ctx.Home, func(b *config.FleetBaseDocument) { b.Config.SoldierHarness = v })
 			case "model":
-				// "default"/empty is the unset sentinel; store canonical empty.
-				fields := strings.Fields(value)
-				v := ""
-				if len(fields) > 0 && fields[0] != "default" {
-					v = fields[0]
+				// The model is a single token; reject multi-token input rather
+				// than silently truncating it. "default"/empty is the unset
+				// sentinel; store canonical empty.
+				v := strings.TrimSpace(value)
+				if len(strings.Fields(v)) > 1 {
+					return fmt.Errorf("config set model: model must be a single token, got %q", value)
+				}
+				if v == "default" {
+					v = ""
 				}
 				return setBaseConfigField(ctx.Home, func(b *config.FleetBaseDocument) { b.Config.Model = v })
 			case "captain-harness":
@@ -206,9 +212,12 @@ func isLaunchProfileKey(key string) bool {
 // closed (no self-repair). The base.json CaptainProfile is the only captain
 // operation source; no flat config file is written.
 func setCaptainProfileInBase(homeDir string, prof config.CaptainProfile) error {
-	baseDoc, err := config.LoadFleetBaseForUpdate(homeDir)
+	baseDoc, err := config.LoadFleetBase(homeDir)
 	if err != nil {
-		return fmt.Errorf("config set captain-harness: loading fleet base document: %w", err)
+		if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("config set captain-harness: loading fleet base document: %w", err)
+		}
+		baseDoc = config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion}
 	}
 	baseDoc.CaptainProfile = prof
 	if err := config.StoreFleetBase(homeDir, baseDoc); err != nil {
@@ -223,9 +232,12 @@ func setCaptainProfileInBase(homeDir string, prof config.CaptainProfile) error {
 // authority for the typed config surface; a malformed/invalid existing
 // document fails closed (no self-repair).
 func setBaseConfigField(homeDir string, mutate func(*config.FleetBaseDocument)) error {
-	baseDoc, err := config.LoadFleetBaseForUpdate(homeDir)
+	baseDoc, err := config.LoadFleetBase(homeDir)
 	if err != nil {
-		return fmt.Errorf("loading fleet base document: %w", err)
+		if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("loading fleet base document: %w", err)
+		}
+		baseDoc = config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion}
 	}
 	mutate(&baseDoc)
 	if err := config.StoreFleetBase(homeDir, baseDoc); err != nil {

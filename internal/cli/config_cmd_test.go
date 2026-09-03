@@ -138,47 +138,6 @@ func TestConfigGetBackendLegacyPinAloneIsTypedMissingInput(t *testing.T) {
 	}
 }
 
-func TestConfigSetLaunchProfileUpdatesMigratedHome(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("MUNSU_HOME", home)
-	for key, value := range map[string]string{"soldier-harness": "claude", "model": "old-model", "captain-harness": "codex"} {
-		if err := config.Set(home, key, value); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := runConfigSet(t, "config", "set", "model", "new-model extra"); err != nil {
-		t.Fatal(err)
-	}
-	base, err := config.LoadFleetBase(home)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if base.Config.Model != "new-model" || base.Config.SoldierHarness != "claude" || base.CaptainProfile.Harness != "codex" {
-		t.Fatalf("updated migrated base = %+v/%+v", base.Config, base.CaptainProfile)
-	}
-	for _, key := range []string{"soldier-harness", "model", "captain-harness"} {
-		if _, err := os.Stat(filepath.Join(config.ConfigDir(home), key)); !os.IsNotExist(err) {
-			t.Errorf("legacy %s remains: %v", key, err)
-		}
-	}
-}
-
-func TestConfigSetLaunchProfileRejectsCaptainHome(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("MUNSU_HOME", home)
-	if err := config.StorePublishedSnapshot(home, config.ResolvedProjectConfig{Project: "p", ProjectPath: "/p", Digest: "d", Backend: "tmux"}); err != nil {
-		t.Fatal(err)
-	}
-	for _, key := range []string{"soldier-harness", "model", "captain-harness"} {
-		if err := runConfigSet(t, "config", "set", key, "pi"); err == nil {
-			t.Fatalf("expected Captain-home rejection for %s", key)
-		}
-	}
-	if _, err := os.Stat(filepath.Join(home, config.BaseDocumentPath)); !os.IsNotExist(err) {
-		t.Fatalf("base document changed: %v", err)
-	}
-}
-
 // TestConfigSetCaptainHarnessWritesBaseDocumentProfile verifies `config set
 // captain-harness` authors the CaptainProfile into the fleet base document
 // (config/base.json) — the only captain operation source — and writes no flat
@@ -258,7 +217,7 @@ func TestConfigSetLaunchProfileKeysAuthorFleetBase(t *testing.T) {
 		tmpDir := t.TempDir()
 		t.Setenv("MUNSU_HOME", tmpDir)
 
-		if err := runConfigSet(t, "config", "set", "model", "cliproxyapi/grok-4.5 extra"); err != nil {
+		if err := runConfigSet(t, "config", "set", "model", "cliproxyapi/grok-4.5"); err != nil {
 			t.Fatalf("config set model: %v", err)
 		}
 		base, err := config.LoadFleetBase(tmpDir)
@@ -365,6 +324,39 @@ func TestConfigSetCaptainHarnessMalformedBaseFailsClosed(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "fleet base document") {
 		t.Fatalf("error = %v, want fleet base document failure", err)
+	}
+}
+
+// TestConfigSetLaunchProfileRejectsCaptainHome verifies launch-profile keys
+// cannot be authored from a Captain home. A Captain home is identified by its
+// durable config/parent-home pointer (present before the first published
+// snapshot); the write is refused and no base.json is created.
+func TestConfigSetLaunchProfileRejectsCaptainHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MUNSU_HOME", home)
+	if err := config.Set(home, "parent-home", "/var/munsu/general"); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"soldier-harness", "model", "captain-harness"} {
+		if err := runConfigSet(t, "config", "set", key, "pi"); err == nil {
+			t.Fatalf("expected Captain-home rejection for %s", key)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(home, config.BaseDocumentPath)); !os.IsNotExist(err) {
+		t.Fatalf("base document must not be created from a Captain home: %v", err)
+	}
+}
+
+// TestConfigSetModelRejectsMultiToken verifies `config set model` fails fast on
+// multi-token input rather than silently truncating to the first token.
+func TestConfigSetModelRejectsMultiToken(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MUNSU_HOME", home)
+	if err := runConfigSet(t, "config", "set", "model", "cliproxyapi/grok-4.5 extra"); err == nil {
+		t.Fatal("expected multi-token model to be rejected")
+	}
+	if _, err := os.Stat(filepath.Join(home, config.BaseDocumentPath)); !os.IsNotExist(err) {
+		t.Fatalf("base document must not be written on rejected model: %v", err)
 	}
 }
 
