@@ -232,17 +232,13 @@ func TestSoldier_HasDispatchDefault(t *testing.T) {
 	}
 }
 
-func TestSoldier_HasSoldierHarnessFile(t *testing.T) {
+func TestSoldier_HasSoldierHarnessInBase(t *testing.T) {
 	tmp := t.TempDir()
 
-	configDir := filepath.Join(tmp, "config")
-	os.MkdirAll(configDir, 0755)
-
-	// Write soldier-harness file (no dispatch config)
-	harnessFile := filepath.Join(configDir, "soldier-harness")
-	if err := os.WriteFile(harnessFile, []byte("opencode\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeBase(t, tmp, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config:        config.ProjectOverlay{SoldierHarness: "opencode"},
+	})
 
 	h, err := Soldier(tmp)
 	if err != nil {
@@ -250,6 +246,14 @@ func TestSoldier_HasSoldierHarnessFile(t *testing.T) {
 	}
 	if h != "opencode" {
 		t.Errorf("Soldier() = %q, want %q", h, "opencode")
+	}
+}
+
+// writeBase persists a fleet base document (config/base.json) for a test home.
+func writeBase(t *testing.T, home string, doc config.FleetBaseDocument) {
+	t.Helper()
+	if err := config.StoreFleetBase(home, doc); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -270,13 +274,10 @@ func TestSoldier_NoConfig(t *testing.T) {
 func TestCaptain_HasCaptainHarness(t *testing.T) {
 	tmp := t.TempDir()
 
-	configDir := filepath.Join(tmp, "config")
-	os.MkdirAll(configDir, 0755)
-
-	harnessFile := filepath.Join(configDir, "captain-harness")
-	if err := os.WriteFile(harnessFile, []byte("grok\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeBase(t, tmp, config.FleetBaseDocument{
+		SchemaVersion:  config.FleetBaseSchemaVersion,
+		CaptainProfile: config.CaptainProfile{Harness: "grok"},
+	})
 
 	h, err := Captain(tmp)
 	if err != nil {
@@ -290,14 +291,11 @@ func TestCaptain_HasCaptainHarness(t *testing.T) {
 func TestCaptain_FallsBackToSoldierHarness(t *testing.T) {
 	tmp := t.TempDir()
 
-	configDir := filepath.Join(tmp, "config")
-	os.MkdirAll(configDir, 0755)
-
-	// Only soldier-harness, no captain-harness
-	harnessFile := filepath.Join(configDir, "soldier-harness")
-	if err := os.WriteFile(harnessFile, []byte("pi\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	// Only soldier-harness, no captain profile.
+	writeBase(t, tmp, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config:        config.ProjectOverlay{SoldierHarness: "pi"},
+	})
 
 	h, err := Captain(tmp)
 	if err != nil {
@@ -336,43 +334,12 @@ func TestDispatchDefaultHarness(t *testing.T) {
 	}
 }
 
-func TestSoldier_SoldierHarnessDefaultIgnored(t *testing.T) {
+func TestCaptain_UnsetProfileFallsToDetect(t *testing.T) {
 	tmp := t.TempDir()
 
-	configDir := filepath.Join(tmp, "config")
-	os.MkdirAll(configDir, 0755)
-
-	if err := os.WriteFile(filepath.Join(configDir, "soldier-harness"), []byte("default\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	t.Setenv("MUNSU_CREW-HARNESS_OVERRIDE", "")
-	for _, env := range []string{"CODECLIMB", "OPENCODE", "PI_CODING_AGENT_DIR", "PI_CODING_AGENT", "GROK_VM_ID", "GROK_AGENT", "AGY_CONVERSATION_ID", "ANTIGRAVITY_AGENT", "ANTIGRAVITY_CLI", "ANTIGRAVITY_LS_ADDRESS"} {
-		t.Setenv(env, "")
-	}
-	t.Setenv("CLAUDE_CODE", "1")
-
-	h, err := Soldier(tmp)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if h != Claude {
-		t.Errorf("Soldier() = %q, want %q (default sentinel should fall through to Detect)", h, Claude)
-	}
-}
-
-func TestCaptain_DefaultSentinelsIgnored(t *testing.T) {
-	tmp := t.TempDir()
-
-	configDir := filepath.Join(tmp, "config")
-	os.MkdirAll(configDir, 0755)
-
-	if err := os.WriteFile(filepath.Join(configDir, "captain-harness"), []byte("default\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(configDir, "soldier-harness"), []byte("default\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	// Empty captain profile and empty soldier harness — both unset, so the
+	// resolver falls through to Detect.
+	writeBase(t, tmp, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion})
 
 	t.Setenv("MUNSU_CAPTAIN-HARNESS_OVERRIDE", "")
 	t.Setenv("MUNSU_CREW-HARNESS_OVERRIDE", "")
@@ -386,22 +353,18 @@ func TestCaptain_DefaultSentinelsIgnored(t *testing.T) {
 		t.Fatal(err)
 	}
 	if h != Claude {
-		t.Errorf("Captain() = %q, want %q (default sentinels should fall through to Detect)", h, Claude)
+		t.Errorf("Captain() = %q, want %q (unset profile should fall through to Detect)", h, Claude)
 	}
 }
 
-func TestCaptain_DefaultCaptainHarnessFallsToSoldierHarness(t *testing.T) {
+func TestCaptain_EmptyCaptainHarnessFallsToSoldierHarness(t *testing.T) {
 	tmp := t.TempDir()
 
-	configDir := filepath.Join(tmp, "config")
-	os.MkdirAll(configDir, 0755)
-
-	if err := os.WriteFile(filepath.Join(configDir, "captain-harness"), []byte("default\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(configDir, "soldier-harness"), []byte("pi\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	// No captain-harness token; soldier-harness supplies the bare fallback name.
+	writeBase(t, tmp, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config:        config.ProjectOverlay{SoldierHarness: "pi"},
+	})
 
 	os.Unsetenv("MUNSU_CAPTAIN-HARNESS_OVERRIDE")
 	os.Unsetenv("MUNSU_CREW-HARNESS_OVERRIDE")
@@ -411,7 +374,7 @@ func TestCaptain_DefaultCaptainHarnessFallsToSoldierHarness(t *testing.T) {
 		t.Fatal(err)
 	}
 	if h != Pi {
-		t.Errorf("Captain() = %q, want %q (default captain sentinel should fall through to soldier-harness)", h, Pi)
+		t.Errorf("Captain() = %q, want %q (empty captain profile should fall through to soldier-harness)", h, Pi)
 	}
 }
 
@@ -440,16 +403,12 @@ func TestParseHarnessLine(t *testing.T) {
 
 func TestCaptainProfileFromHome_MultiToken(t *testing.T) {
 	tmp := t.TempDir()
-	configDir := filepath.Join(tmp, "config")
-	os.MkdirAll(configDir, 0755)
-	if err := os.WriteFile(filepath.Join(configDir, "captain-harness"),
-		[]byte("pi cliproxyapi/grok-4.5 low\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	// legacy model file should NOT override multi-token model
-	if err := os.WriteFile(filepath.Join(configDir, "model"), []byte("ignored-model\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	// Captain profile carries its own model; base Config.Model must NOT override it.
+	writeBase(t, tmp, config.FleetBaseDocument{
+		SchemaVersion:  config.FleetBaseSchemaVersion,
+		Config:         config.ProjectOverlay{Model: "ignored-model"},
+		CaptainProfile: config.CaptainProfile{Harness: "pi", Model: "cliproxyapi/grok-4.5", Effort: "low"},
+	})
 
 	prof, err := CaptainProfileFromHome(tmp)
 	if err != nil {
@@ -469,17 +428,12 @@ func TestCaptainProfileFromHome_MultiToken(t *testing.T) {
 
 func TestCaptainProfileFromHome_SoldierFallback(t *testing.T) {
 	tmp := t.TempDir()
-	configDir := filepath.Join(tmp, "config")
-	os.MkdirAll(configDir, 0755)
-	// no captain-harness; soldier-harness bare name only
-	if err := os.WriteFile(filepath.Join(configDir, "soldier-harness"),
-		[]byte("pi\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(configDir, "model"),
-		[]byte("opencode-go/deepseek-v4-flash\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	// No captain profile harness; soldier-harness supplies the bare name and
+	// base Config.Model supplies the model.
+	writeBase(t, tmp, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config:        config.ProjectOverlay{SoldierHarness: "pi", Model: "opencode-go/deepseek-v4-flash"},
+	})
 	prof, err := CaptainProfileFromHome(tmp)
 	if err != nil {
 		t.Fatal(err)
@@ -489,22 +443,49 @@ func TestCaptainProfileFromHome_SoldierFallback(t *testing.T) {
 	}
 }
 
-func TestCaptainProfileFromHome_ModelFileFallback(t *testing.T) {
+func TestCaptainProfileFromHome_BaseModelFallback(t *testing.T) {
 	tmp := t.TempDir()
-	configDir := filepath.Join(tmp, "config")
-	os.MkdirAll(configDir, 0755)
-	if err := os.WriteFile(filepath.Join(configDir, "captain-harness"), []byte("pi\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(configDir, "model"), []byte("opencode-go/deepseek-v4-flash\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	// Captain profile has a harness but no model; base Config.Model fills it in.
+	writeBase(t, tmp, config.FleetBaseDocument{
+		SchemaVersion:  config.FleetBaseSchemaVersion,
+		Config:         config.ProjectOverlay{Model: "opencode-go/deepseek-v4-flash"},
+		CaptainProfile: config.CaptainProfile{Harness: "pi"},
+	})
 	prof, err := CaptainProfileFromHome(tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if prof.Harness != "pi" || prof.Model != "opencode-go/deepseek-v4-flash" || prof.Effort != "" {
 		t.Errorf("profile = %+v", prof)
+	}
+}
+
+func TestCaptainProfileFromHome_MalformedBaseFailsClosed(t *testing.T) {
+	tmp := t.TempDir()
+	// A base.json that exists but does not parse must surface an error, never
+	// degrade to an empty profile (that path is reserved for a missing file).
+	basePath := filepath.Join(tmp, config.BaseDocumentPath)
+	if err := os.MkdirAll(filepath.Dir(basePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(basePath, []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CaptainProfileFromHome(tmp); err == nil {
+		t.Fatal("malformed base.json must fail closed, got nil error")
+	}
+}
+
+func TestCaptainProfileFromHome_UnknownHarnessRejected(t *testing.T) {
+	tmp := t.TempDir()
+	// A stored captain harness that no adapter recognizes must be rejected by
+	// ValidateHarness rather than returned as a launchable profile.
+	writeBase(t, tmp, config.FleetBaseDocument{
+		SchemaVersion:  config.FleetBaseSchemaVersion,
+		CaptainProfile: config.CaptainProfile{Harness: "bogus-harness"},
+	})
+	if _, err := CaptainProfileFromHome(tmp); err == nil {
+		t.Fatal("unknown captain harness must be rejected by ValidateHarness")
 	}
 }
 

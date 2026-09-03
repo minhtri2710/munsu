@@ -63,26 +63,6 @@ func TestAutoDetectConfig_Reconfigure(t *testing.T) {
 	}
 }
 
-// TestConfigFileExists verifies configFileExists works correctly.
-func TestConfigFileExists(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Should not exist initially
-	if configFileExists(tmpDir, "backend") {
-		t.Error("configFileExists should return false for nonexistent config")
-	}
-
-	// Create it
-	if err := config.Set(tmpDir, "backend", "tmux"); err != nil {
-		t.Fatal(err)
-	}
-
-	// Should now exist
-	if !configFileExists(tmpDir, "backend") {
-		t.Error("configFileExists should return true for existing config")
-	}
-}
-
 // TestAutoDetectConfig_InitHome verifies full init flow in a tmp home.
 // Backend is runtime context and must NOT be persisted at init time.
 func TestAutoDetectConfig_InitHome(t *testing.T) {
@@ -100,12 +80,12 @@ func TestAutoDetectConfig_InitHome(t *testing.T) {
 	}
 
 	// Backend is runtime context — init should NOT persist it
-	if configFileExists(tmpDir, "backend") {
+	if _, err := config.Get(tmpDir, "backend"); err == nil {
 		t.Error("autoDetectConfig should NOT write backend (runtime context, not init-time preference)")
 	}
 
-	// Should write soldier-harness only if harness.Detect() succeeds
-	// (may or may not detect in test env — that's OK)
+	// soldier-harness is persisted into config/base.json only when
+	// harness.Detect() succeeds (may or may not in the test env — that's OK).
 }
 
 // TestAutoDetectConfig_Idempotent verifies re-running without --reconfigure

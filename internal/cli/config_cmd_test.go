@@ -140,19 +140,14 @@ func TestConfigGetBackendLegacyPinAloneIsTypedMissingInput(t *testing.T) {
 
 // TestConfigSetCaptainHarnessWritesBaseDocumentProfile verifies `config set
 // captain-harness` authors the CaptainProfile into the fleet base document
-// (config/base.json) — the ONLY captain operation source — while keeping the
-// flat file as a diagnostics-only echo.
+// (config/base.json) — the only captain operation source — and writes no flat
+// config file. `config get captain-harness` reconstructs the pin line from the
+// stored profile.
 func TestConfigSetCaptainHarnessWritesBaseDocumentProfile(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
 
-	root := NewRootCommand()
-	buf := new(bytes.Buffer)
-	root.SetOut(buf)
-	root.SetErr(buf)
-
-	root.SetArgs([]string{"config", "set", "captain-harness", "pi cliproxyapi/grok-4.5 low"})
-	if err := root.Execute(); err != nil {
+	if err := runConfigSet(t, "config", "set", "captain-harness", "pi cliproxyapi/grok-4.5 low"); err != nil {
 		t.Fatalf("config set captain-harness: %v", err)
 	}
 
@@ -163,10 +158,112 @@ func TestConfigSetCaptainHarnessWritesBaseDocumentProfile(t *testing.T) {
 	if base.CaptainProfile.Harness != "pi" || base.CaptainProfile.Model != "cliproxyapi/grok-4.5" || base.CaptainProfile.Effort != "low" {
 		t.Fatalf("base captainProfile = %+v, want pi/cliproxyapi/grok-4.5/low", base.CaptainProfile)
 	}
-	// The flat file remains a diagnostics-only echo.
-	if got, err := config.Get(tmpDir, "captain-harness"); err != nil || got != "pi cliproxyapi/grok-4.5 low" {
-		t.Fatalf("flat captain-harness echo = %q, %v", got, err)
+	// No flat config/captain-harness file is written.
+	if _, err := config.Get(tmpDir, "captain-harness"); err == nil {
+		t.Fatal("flat config/captain-harness must not be written")
 	}
+
+	root := NewRootCommand()
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs([]string{"config", "get", "captain-harness"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("config get captain-harness: %v", err)
+	}
+	if got := extractConfigValueFromTOON(strings.TrimSpace(buf.String())); got != "pi cliproxyapi/grok-4.5 low" {
+		t.Errorf("config get captain-harness = %q, want %q", got, "pi cliproxyapi/grok-4.5 low")
+	}
+}
+
+// TestConfigSetLaunchProfileKeysAuthorFleetBase verifies `config set
+// soldier-harness` and `config set model` author the typed launch-profile
+// fields into the fleet base document (the single operational authority),
+// write no flat config file, and round-trip through get/show. The "default"
+// sentinel normalizes to unset at the write boundary.
+func TestConfigSetLaunchProfileKeysAuthorFleetBase(t *testing.T) {
+	t.Run("soldier-harness", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		t.Setenv("MUNSU_HOME", tmpDir)
+
+		if err := runConfigSet(t, "config", "set", "soldier-harness", "pi"); err != nil {
+			t.Fatalf("config set soldier-harness: %v", err)
+		}
+		base, err := config.LoadFleetBase(tmpDir)
+		if err != nil {
+			t.Fatalf("loading fleet base: %v", err)
+		}
+		if base.Config.SoldierHarness != "pi" {
+			t.Fatalf("base soldierHarness = %q, want pi", base.Config.SoldierHarness)
+		}
+		if _, err := config.Get(tmpDir, "soldier-harness"); err == nil {
+			t.Fatal("flat config/soldier-harness must not be written")
+		}
+		if got := configGetValue(t, "soldier-harness"); got != "pi" {
+			t.Errorf("config get soldier-harness = %q, want pi", got)
+		}
+
+		// "default" normalizes to unset (canonical empty).
+		if err := runConfigSet(t, "config", "set", "soldier-harness", "default"); err != nil {
+			t.Fatalf("config set soldier-harness default: %v", err)
+		}
+		base, _ = config.LoadFleetBase(tmpDir)
+		if base.Config.SoldierHarness != "" {
+			t.Errorf("soldierHarness = %q, want empty after default", base.Config.SoldierHarness)
+		}
+	})
+
+	t.Run("model", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		t.Setenv("MUNSU_HOME", tmpDir)
+
+		if err := runConfigSet(t, "config", "set", "model", "cliproxyapi/grok-4.5"); err != nil {
+			t.Fatalf("config set model: %v", err)
+		}
+		base, err := config.LoadFleetBase(tmpDir)
+		if err != nil {
+			t.Fatalf("loading fleet base: %v", err)
+		}
+		if base.Config.Model != "cliproxyapi/grok-4.5" {
+			t.Fatalf("base model = %q, want cliproxyapi/grok-4.5", base.Config.Model)
+		}
+		if _, err := config.Get(tmpDir, "model"); err == nil {
+			t.Fatal("flat config/model must not be written")
+		}
+		if got := configGetValue(t, "model"); got != "cliproxyapi/grok-4.5" {
+			t.Errorf("config get model = %q, want cliproxyapi/grok-4.5", got)
+		}
+
+		if err := runConfigSet(t, "config", "set", "model", "default"); err != nil {
+			t.Fatalf("config set model default: %v", err)
+		}
+		base, _ = config.LoadFleetBase(tmpDir)
+		if base.Config.Model != "" {
+			t.Errorf("model = %q, want empty after default", base.Config.Model)
+		}
+	})
+
+	t.Run("soldier-harness rejects unknown", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		t.Setenv("MUNSU_HOME", tmpDir)
+		if err := runConfigSet(t, "config", "set", "soldier-harness", "not-a-harness"); err == nil {
+			t.Fatal("expected validation error for unknown soldier harness")
+		}
+	})
+}
+
+// configGetValue runs `config get <key>` and returns the rendered value.
+func configGetValue(t *testing.T, key string) string {
+	t.Helper()
+	root := NewRootCommand()
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs([]string{"config", "get", key})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("config get %s: %v", key, err)
+	}
+	return extractConfigValueFromTOON(strings.TrimSpace(buf.String()))
 }
 
 // TestConfigSetCaptainHarnessPreservesExistingBaseDocument verifies authored
@@ -400,7 +497,7 @@ func TestConfigSetTypedKeyMalformedBaseFailsClosed(t *testing.T) {
 // require-no-mistakes report empty success on a fresh home (known-unset),
 // matching the flat known-unset contract.
 func TestConfigGetTypedKeysKnownUnset(t *testing.T) {
-	for _, key := range []string{"default-mode", "require-no-mistakes", "allow-direct-pr-fallback"} {
+	for _, key := range []string{"default-mode", "require-no-mistakes", "allow-direct-pr-fallback", "soldier-harness", "model", "captain-harness"} {
 		t.Run(key, func(t *testing.T) {
 			tmpDir := t.TempDir()
 			t.Setenv("MUNSU_HOME", tmpDir)

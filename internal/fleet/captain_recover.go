@@ -265,15 +265,15 @@ func (tx *RecoverTransaction) stepProvenance(sm Info) StepResult {
 }
 
 func (tx *RecoverTransaction) stepConfigValidation(parentHome string, sm Info) StepResult {
-	// Check key config files. Registry is checked from the parent (General) home, not the captain home.
-	// All items are optional — harness.Captain() handles the full fallback chain (captain-harness →
-	// soldier-harness → Detect()). Missing items produce diagnostics but don't block watcher/outbox.
+	// Check key config artifacts. The registry is checked from the parent
+	// (General) home, not the captain home. All items are optional — the captain
+	// resolves its harness from the published snapshot, and missing items produce
+	// diagnostics but don't block watcher/outbox.
 	checks := []struct {
 		path string
 		desc string
 	}{
-		{filepath.Join(sm.Home, "config", "captain-harness"), "captain-harness config"},
-		{filepath.Join(sm.Home, "config", "soldier-harness"), "soldier-harness config"},
+		{filepath.Join(sm.Home, config.PublishedSnapshotPath), "published config snapshot"},
 		{filepath.Join(parentHome, "state", "fleet-registry", "captains.json"), "fleet captain registry"},
 	}
 	var diags []ConfigDiagnostic

@@ -131,7 +131,11 @@ func TestConfigGetIgnoresEnvOverride(t *testing.T) {
 	t.Setenv("MUNSU_HOME", tmpDir)
 	t.Setenv("MUNSU_MODEL_OVERRIDE", "environment-model")
 
-	if err := config.Set(tmpDir, "model", "claude"); err != nil {
+	// model is a typed launch-profile key authored into the fleet base document.
+	if err := config.StoreFleetBase(tmpDir, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config:        config.ProjectOverlay{Model: "claude"},
+	}); err != nil {
 		t.Fatal(err)
 	}
 

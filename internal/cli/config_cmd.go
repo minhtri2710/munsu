@@ -23,11 +23,12 @@ func newConfigCmd() *cobra.Command {
 
 Configuration values are stored as files under $MUNSU_HOME/config/<key>,
 except the typed operational keys (backend, default-mode,
-require-no-mistakes, allow-direct-pr-fallback), which are authored in the fleet base document
+require-no-mistakes, allow-direct-pr-fallback, soldier-harness, model,
+captain-harness), which are authored in the fleet base document
 (config/base.json), the single operational authority. backend reports the
 persisted snapshot Backend (the published config snapshot or the fleet base
-document's typed Backend); the remaining keys report the persisted flat file
-value.
+document's typed Backend); the remaining flat keys report the persisted flat
+file value.
 
 Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 `,
@@ -54,9 +55,11 @@ Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 					Status:        "success",
 					Data:          MessageResult{Message: resolved},
 				})
-			case "default-mode", "require-no-mistakes", "allow-direct-pr-fallback":
+			case "default-mode", "require-no-mistakes", "allow-direct-pr-fallback",
+				"soldier-harness", "model", "captain-harness":
 				// The fleet base document is the single operational authority for
-				// the delivery-mode contract; report the persisted typed value.
+				// the delivery-mode and launch-profile contract; report the
+				// persisted typed value.
 				// A known-unset key reports empty success (the flat known-unset
 				// contract); a malformed document fails closed.
 				val, ok, err := readBaseConfigField(ctx.Home, key)
@@ -101,9 +104,25 @@ Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 			// lines: "<harness> [<model>] [<effort>]". soldier-harness is bare name only.
 			switch key {
 			case "soldier-harness":
-				if err := harness.ValidateHarness(value); err != nil {
-					return fmt.Errorf("config set %s: %w", key, err)
+				// "default"/empty is the unset sentinel; store canonical empty so
+				// runtime readers never special-case it.
+				v := strings.TrimSpace(value)
+				if v == "default" {
+					v = ""
 				}
+				if v != "" {
+					if err := harness.ValidateHarness(v); err != nil {
+						return fmt.Errorf("config set %s: %w", key, err)
+					}
+				}
+				return setBaseConfigField(ctx.Home, func(b *config.FleetBaseDocument) { b.Config.SoldierHarness = v })
+			case "model":
+				// "default"/empty is the unset sentinel; store canonical empty.
+				v := strings.TrimSpace(value)
+				if v == "default" {
+					v = ""
+				}
+				return setBaseConfigField(ctx.Home, func(b *config.FleetBaseDocument) { b.Config.Model = v })
 			case "captain-harness":
 				prof := harness.ParseHarnessLine(value)
 				if prof.Harness == "" && strings.TrimSpace(value) != "" && strings.TrimSpace(value) != "default" {
@@ -119,12 +138,9 @@ Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 				}
 				// Authoring boundary: write the captain launch profile into the
 				// fleet base document (config/base.json). The base.json
-				// CaptainProfile is the ONLY source consumed by captain
-				// operations; the flat file remains a diagnostics-only echo.
-				if err := setCaptainProfileInBase(ctx.Home, config.CaptainProfile{Harness: prof.Harness, Model: prof.Model, Effort: prof.Effort}); err != nil {
-					return err
-				}
-				return config.Set(ctx.Home, key, value)
+				// CaptainProfile is the only source consumed by captain
+				// operations; no flat file is written.
+				return setCaptainProfileInBase(ctx.Home, config.CaptainProfile{Harness: prof.Harness, Model: prof.Model, Effort: prof.Effort})
 			case "model-allowlist":
 				// One <harness>:<model> identity per line; empty (deny-all) is allowed.
 				if err := harness.ValidateModelAllowlist(value); err != nil {
@@ -171,9 +187,8 @@ Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 // setCaptainProfileInBase writes the captain launch profile into the fleet
 // base document (config/base.json), creating the document when absent and
 // preserving all other fields. A malformed/invalid existing document fails
-// closed (no self-repair). The base.json CaptainProfile is the ONLY captain
-// operation source; the flat config/captain-harness file is a
-// diagnostics-only echo.
+// closed (no self-repair). The base.json CaptainProfile is the only captain
+// operation source; no flat config file is written.
 func setCaptainProfileInBase(homeDir string, prof config.CaptainProfile) error {
 	baseDoc, err := config.LoadFleetBase(homeDir)
 	if err != nil {
@@ -240,8 +255,31 @@ func readBaseConfigField(homeDir, key string) (val string, ok bool, err error) {
 		return strconv.FormatBool(*base.Config.AllowDirectPRFallback), true, nil
 	case "backend":
 		return base.Config.Backend, base.Config.Backend != "", nil
+	case "soldier-harness":
+		return base.Config.SoldierHarness, base.Config.SoldierHarness != "", nil
+	case "model":
+		return base.Config.Model, base.Config.Model != "", nil
+	case "captain-harness":
+		line := captainHarnessLine(base.CaptainProfile)
+		return line, line != "", nil
 	}
 	return "", false, nil
+}
+
+// captainHarnessLine reconstructs the "<harness> [<model>] [<effort>]" pin line
+// from a stored captain profile. Empty when the profile has no harness.
+func captainHarnessLine(prof config.CaptainProfile) string {
+	if prof.Harness == "" {
+		return ""
+	}
+	parts := []string{prof.Harness}
+	if prof.Model != "" {
+		parts = append(parts, prof.Model)
+	}
+	if prof.Effort != "" {
+		parts = append(parts, prof.Effort)
+	}
+	return strings.Join(parts, " ")
 }
 
 func newConfigShowCmd() *cobra.Command {
@@ -289,7 +327,8 @@ func showConfig(homeDir string) string {
 				b.WriteString(fmt.Sprintf("%-30s %s (typed config)\n", key, val))
 			}
 			continue
-		case "default-mode", "require-no-mistakes", "allow-direct-pr-fallback":
+		case "default-mode", "require-no-mistakes", "allow-direct-pr-fallback",
+			"soldier-harness", "model", "captain-harness":
 			val, ok, err := readBaseConfigField(homeDir, key)
 			if err != nil || !ok {
 				b.WriteString(fmt.Sprintf("%-30s <not set>\n", key))
