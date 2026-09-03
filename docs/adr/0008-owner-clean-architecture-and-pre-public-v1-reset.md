@@ -121,7 +121,7 @@ Each authoritative home has one logical watcher owner with a renewable generatio
 
 `config` owns typed settings, defaults, validation, precedence, Project Overlays, Captain launch profiles, deterministic digests, and immutable resolved Config Snapshots. It does not own Project or Captain lifecycle.
 
-`cli` translates process environment and other ambient inputs into typed overrides. Core modules never read process environment or infer authority from the working directory. A Config Snapshot is resolved once at an operation boundary and remains immutable for that operation.
+`cli` is the boundary that turns flag and ambient inputs into typed config operations; there is no process-environment configuration override tier (the environment-override layer was retired — ADR-0003 §10). Core modules never read process environment or infer authority from the working directory. A Config Snapshot is resolved once at an operation boundary and remains immutable for that operation.
 
 General is the single resolution authority. Fleet distributes a resolved snapshot through a journaled Config Assignment over the canonical Uplink path. A Captain verifies and durably accepts the assigned identity, generation, and digest; it never re-resolves, reads General's files, falls back to local configuration, or uses terminal nudges as authority.
 

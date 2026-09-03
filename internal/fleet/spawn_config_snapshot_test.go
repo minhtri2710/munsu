@@ -235,7 +235,7 @@ func TestCaptainSpawnConsumesPublishedSnapshotWithoutLocalResolution(t *testing.
 	captain := seedCaptainForTest(t, parent, "alpha-captain")
 	writeSpawnSnapshotDocuments(t, parent)
 
-	resolved, err := ResolveProjectSnapshot(parent, "alpha", fleetconfig.BoundaryOverrides{})
+	resolved, err := ResolveProjectSnapshot(parent, "alpha")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -370,7 +370,7 @@ func TestYoloDoesNotRelaxRequireNoMistakes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	snap, err := ResolveProjectSnapshot(home, "alpha", fleetconfig.BoundaryOverrides{})
+	snap, err := ResolveProjectSnapshot(home, "alpha")
 	if err != nil {
 		t.Fatal(err)
 	}

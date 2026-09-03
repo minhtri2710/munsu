@@ -51,7 +51,7 @@ func ResolveSpawnProjectConfig(homeDir string, args Args, policy DispatchPolicy,
 		// Resolve the immutable project snapshot without substituting CLI
 		// identities. Explicit flags are assertions about the resolved snapshot,
 		// not a second configuration authority.
-		snapshot, err = ResolveProjectSnapshot(homeDir, args.ProjectName, fleetconfig.BoundaryOverrides{})
+		snapshot, err = ResolveProjectSnapshot(homeDir, args.ProjectName)
 	default:
 		return SpawnProjectConfig{}, fmt.Errorf("unresolved dispatch policy %q", policy)
 	}

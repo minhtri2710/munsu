@@ -143,7 +143,6 @@ func newLaunchFixture(t *testing.T, taskID string) *launchFixture {
 			Config:        config.ProjectOverlay{Backend: "tmux", SoldierHarness: "pi", Model: "gpt-5"},
 		},
 		config.ProjectFacts{Name: "test-proj", Path: repoPath},
-		config.BoundaryOverrides{},
 	)
 	if err != nil {
 		t.Fatalf("NewResolvedSnapshot: %v", err)

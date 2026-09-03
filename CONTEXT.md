@@ -72,7 +72,7 @@ A fail-closed state that isolates one corrupt or contradictory lifecycle from mu
 
 ## Config Snapshot
 
-An immutable, validated generation of resolved configuration used for the full duration of an operation. A newer snapshot takes effect only at an operation boundary. *Resolved* means the fleet base overlaid with the owning project's Project Overlay (plus boundary-translated environment overrides). The General is the single resolution authority; Captains and Soldiers consume the resolved snapshot for their project's scope.
+An immutable, validated generation of resolved configuration used for the full duration of an operation. A newer snapshot takes effect only at an operation boundary. *Resolved* means the fleet base overlaid with the owning project's Project Overlay — the two typed layers `base ⨂ project overlay`, with no environment-override tier (ADR-0003 §3/§4/§10). The General is the single resolution authority; Captains and Soldiers consume the resolved snapshot for their project's scope.
 
 ## Project Overlay
 

@@ -79,17 +79,6 @@ type ProjectFacts struct {
 	CaptainProfile CaptainProfile
 }
 
-type BoundaryOverrides struct {
-	SoldierHarness        string
-	Model                 string
-	DispatchAutonomy      string
-	DefaultMode           string
-	RequireNoMistakes     *bool
-	AllowDirectPRFallback *bool
-	Backend               string
-	DispatchProfiles      []DispatchProfile
-}
-
 type ResolvedProjectConfig struct {
 	Project               string            `json:"project"`
 	ProjectPath           string            `json:"projectPath"`
@@ -117,24 +106,23 @@ func validateSchema(name, got, want string) error {
 }
 
 // ResolveProject resolves one Project's overlay from the Fleet-owned scoped
-// facts, the base overlay, and the explicit typed boundary overrides. Config
-// owns the overlay resolution and the deterministic digest; it owns no
-// registry and cannot mutate Project/Captain lifecycle. After all three typed
-// layers resolve, the requested Backend identity must be non-empty: an empty
-// identity is a typed validation failure — Config never auto-detects a
-// Backend.
-func ResolveProject(base FleetBaseDocument, facts ProjectFacts, overrides BoundaryOverrides) (ResolvedProjectConfig, error) {
+// facts and the base overlay. Config owns the overlay resolution and the
+// deterministic digest; it owns no registry and cannot mutate Project/Captain
+// lifecycle. After both typed layers resolve, the requested Backend identity
+// must be non-empty: an empty identity is a typed validation failure — Config
+// never auto-detects a Backend.
+func ResolveProject(base FleetBaseDocument, facts ProjectFacts) (ResolvedProjectConfig, error) {
 	if err := base.Validate(); err != nil {
 		return ResolvedProjectConfig{}, err
 	}
-	effective, err := finalResolvedOverlay(base, facts, overrides)
+	effective, err := finalResolvedOverlay(base, facts)
 	if err != nil {
 		return ResolvedProjectConfig{}, err
 	}
 	if effective.Backend == "" {
-		return ResolvedProjectConfig{}, fmt.Errorf("project %q resolved no session backend identity: set backend in the fleet base config, the project overlay, or a typed override", facts.Name)
+		return ResolvedProjectConfig{}, fmt.Errorf("project %q resolved no session backend identity: set backend in the fleet base config or the project overlay", facts.Name)
 	}
-	digest, err := ProjectDigest(base, facts, overrides)
+	digest, err := ProjectDigest(base, facts)
 	if err != nil {
 		return ResolvedProjectConfig{}, err
 	}
@@ -185,10 +173,6 @@ func applyOverlay(dst *ProjectOverlay, src ProjectOverlay) {
 	}
 }
 
-func applyBoundaryOverrides(dst *ProjectOverlay, src BoundaryOverrides) {
-	applyOverlay(dst, ProjectOverlay{SoldierHarness: src.SoldierHarness, Model: src.Model, DispatchAutonomy: src.DispatchAutonomy, DefaultMode: src.DefaultMode, RequireNoMistakes: src.RequireNoMistakes, AllowDirectPRFallback: src.AllowDirectPRFallback, Backend: src.Backend, DispatchProfiles: src.DispatchProfiles})
-}
-
 func applyCaptainProfile(dst *CaptainProfile, src CaptainProfile) {
 	if src.Harness != "" {
 		dst.Harness = src.Harness
@@ -228,34 +212,30 @@ func cloneProfiles(src []DispatchProfile) []DispatchProfile {
 	return result
 }
 
-// finalResolvedOverlay applies the three typed layers — fleet base, project
-// overlay/facts, and explicit boundary overrides — producing the final
-// resolved overlay document. It is the single canonical payload for the
-// digest: it covers typed BoundaryOverrides (including Backend) and excludes
-// the digest itself and non-overlay projections (CaptainProfile, project
-// identity).
-func finalResolvedOverlay(base FleetBaseDocument, facts ProjectFacts, overrides BoundaryOverrides) (ProjectOverlay, error) {
+// finalResolvedOverlay applies the two typed layers — fleet base and project
+// overlay/facts — producing the final resolved overlay document. It is the
+// single canonical payload for the digest: it covers the resolved overlay
+// (including Backend) and excludes the digest itself and non-overlay
+// projections (CaptainProfile, project identity).
+func finalResolvedOverlay(base FleetBaseDocument, facts ProjectFacts) (ProjectOverlay, error) {
 	if facts.Name == "" {
 		return ProjectOverlay{}, fmt.Errorf("project name is required")
 	}
 	if facts.Path == "" {
 		return ProjectOverlay{}, fmt.Errorf("project %q path is required", facts.Name)
 	}
-	effective := resolvedOverlay(base.Config, facts.Overlay, facts.Mode)
-	applyBoundaryOverrides(&effective, overrides)
-	return effective, nil
+	return resolvedOverlay(base.Config, facts.Overlay, facts.Mode), nil
 }
 
 // ProjectDigest returns the deterministic persisted digest for the base plus
-// one Project's overlay facts plus the explicit typed boundary overrides. It
-// is Config-owned and independent of any registry: the ONE canonical digest
-// payload is the final resolved overlay after all three typed layers, so a
-// Backend or override change is digest bound.
-func ProjectDigest(base FleetBaseDocument, facts ProjectFacts, overrides BoundaryOverrides) (string, error) {
+// one Project's overlay facts. It is Config-owned and independent of any
+// registry: the ONE canonical digest payload is the final resolved overlay
+// after both typed layers, so a Backend or overlay change is digest bound.
+func ProjectDigest(base FleetBaseDocument, facts ProjectFacts) (string, error) {
 	if err := base.Validate(); err != nil {
 		return "", err
 	}
-	config, err := finalResolvedOverlay(base, facts, overrides)
+	config, err := finalResolvedOverlay(base, facts)
 	if err != nil {
 		return "", err
 	}

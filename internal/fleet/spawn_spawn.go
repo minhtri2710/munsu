@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/backend"
-	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"gopkg.in/yaml.v3"
 )
@@ -190,7 +189,7 @@ func ResolveDeliveryMode(explicitMode string, resolvedDefaultMode string, resolv
 // returns a typed failure; there is no fallback to the fleet base or to
 // auto-detection. Used by project-scoped callers (e.g. munsu brief).
 func ResolveDeliveryModeFromProject(homeDir, projectName, explicitMode string) (string, error) {
-	snap, err := ResolveProjectSnapshot(homeDir, projectName, config.BoundaryOverrides{})
+	snap, err := ResolveProjectSnapshot(homeDir, projectName)
 	if err != nil {
 		return "", classifySnapshotError(projectName, err)
 	}
@@ -206,7 +205,7 @@ func ResolveDeliveryModeFromProject(homeDir, projectName, explicitMode string) (
 // this to keep the project-existence gate without re-running mode selection,
 // the no-mistakes PATH probe, or the require-no-mistakes refusal.
 func ValidateProjectSnapshot(homeDir, projectName string) error {
-	if _, err := ResolveProjectSnapshot(homeDir, projectName, config.BoundaryOverrides{}); err != nil {
+	if _, err := ResolveProjectSnapshot(homeDir, projectName); err != nil {
 		return classifySnapshotError(projectName, err)
 	}
 	return nil
