@@ -3,6 +3,6 @@ kind: capabilities
 status: success
 data:
   contract_version: "munsu.orchestration/v1"
-  commands[11]: capabilities,task observe,fleet snapshot --version 2,guard,watch ensure,watch run,wake claim,wake ack,event append,backend capabilities,spawn
+  commands[11]: capabilities,task observe,fleet snapshot,guard,watch ensure,watch run,wake claim,wake ack,event append,backend capabilities,spawn
   output_formats[2]: toon,json
 help[1]: Run `munsu task observe <task-id>` to inspect a task

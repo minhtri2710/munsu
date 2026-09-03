@@ -426,7 +426,7 @@ func TestBinaryTaskObserve_DefinitiveEmpty(t *testing.T) {
 	}
 }
 
-// TestBinaryFleetSnapshot_DefinitiveEmpty verifies fleet snapshot v2 returns
+// TestBinaryFleetSnapshot_DefinitiveEmpty verifies fleet snapshot returns
 // count:0 and soldiers:[] for an empty home.
 func TestBinaryFleetSnapshot_DefinitiveEmpty(t *testing.T) {
 	if testing.Short() {
@@ -437,9 +437,9 @@ func TestBinaryFleetSnapshot_DefinitiveEmpty(t *testing.T) {
 	os.MkdirAll(filepath.Join(home, "state"), 0755)
 	os.MkdirAll(filepath.Join(home, "data"), 0755)
 
-	out, err := runMunsu(t, home, []string{"fleet", "snapshot", "--version", "2"})
+	out, err := runMunsu(t, home, []string{"fleet", "snapshot"})
 	if err != nil {
-		t.Fatalf("fleet snapshot v2: %v\n%s", err, out)
+		t.Fatalf("fleet snapshot: %v\n%s", err, out)
 	}
 	if !strings.Contains(out, "count: 0") {
 		t.Errorf("empty snapshot must have count: 0, got: %s", out)

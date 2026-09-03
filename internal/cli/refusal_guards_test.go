@@ -105,51 +105,11 @@ func TestGuardTaskObserveRefusesFullBecauseNoFieldIsTruncated(t *testing.T) {
 	wantErrContains(t, err, "--full is unavailable because task observation has no truncated fields", "task observe --full")
 }
 
-// fleetSnapshotCmd returns the registered `fleet snapshot` command so a test
-// can drive runFleetSnapshotV2 with the same flag set the CLI gives it.
-func fleetSnapshotCmd(t *testing.T) *cobra.Command {
-	t.Helper()
-	cmd, _, err := NewRootCommand().Find([]string{"fleet", "snapshot"})
-	if err != nil {
-		t.Fatalf("Find(fleet snapshot): %v", err)
-	}
-	return cmd
-}
-
-// The CLI dispatches into runFleetSnapshotV2 only under `version == 2`
-// (fleet_cmd.go), so its own version check is a callee-side precondition, not
-// a user-facing refusal: `munsu fleet snapshot --version 3` is refused one
-// level up with a different message. The test calls the function directly,
-// which is the only way to enter the branch, and pins both halves — the
-// precondition holds, and the caller in front of it still refuses first.
-func TestGuardFleetSnapshotV2RefusesAnyVersionOtherThanTwo(t *testing.T) {
-	homeDir := t.TempDir()
-	initCLITestHome(t, homeDir)
-
-	cmd := fleetSnapshotCmd(t)
-	if err := cmd.Flags().Set("version", "3"); err != nil {
-		t.Fatal(err)
-	}
-	err := runFleetSnapshotV2(cmd, Ctx{Home: homeDir})
-	wantErrContains(t, err, "Only fleet snapshot version 2 is supported by this command", "runFleetSnapshotV2 called with version 3")
-
-	out, err := runRoot(t, "fleet", "snapshot", "--version", "3", "--home", homeDir)
-	wantErrContains(t, err, "Only fleet snapshot versions 1 and 2 are supported", "fleet snapshot --version 3 through the CLI")
-	if strings.Contains(out, "supported by this command") {
-		t.Fatal("the CLI reached runFleetSnapshotV2's version check, so that check is no longer a callee-side precondition")
-	}
-}
-
 func TestGuardFleetSnapshotRefusesFullBecauseNoRowIsTruncated(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
-	_, err := runRoot(t, "fleet", "snapshot", "--version", "2", "--full", "--home", homeDir)
+	_, err := runRoot(t, "fleet", "snapshot", "--full", "--home", homeDir)
 	wantErrContains(t, err, "--full is unavailable because fleet snapshot rows have no truncated fields", "fleet snapshot --full")
-	// --version is checked first; a --full refusal that reads as the version
-	// refusal would mean this test never reached the guard it names.
-	if strings.Contains(err.Error(), "version 2 is supported") {
-		t.Fatalf("fleet snapshot --full = %v, which is the --version refusal standing in front of it", err)
-	}
 }
 
 // --- internal/cli/event_cmd.go ---------------------------------------------

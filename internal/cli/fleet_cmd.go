@@ -69,29 +69,12 @@ func newFleetSnapshotCmd() *cobra.Command {
 		Use:   "snapshot",
 		Short: "Emit fleet snapshot JSON",
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			version, _ := cmd.Flags().GetInt("version")
-			if version != 1 && version != 2 {
-				return usageError("unsupported_input", "Run `munsu fleet snapshot --version 2`", "Only fleet snapshot versions 1 and 2 are supported")
-			}
-			if version == 2 {
-				return runFleetSnapshotV2(cmd, ctx)
-			}
-			snap, err := fleet.Snapshot(ctx.Home, snapshotDeps())
-			if err != nil {
-				return err
-			}
-			return writeContract(cmd, Response[fleet.FleetSnapshot]{
-				SchemaVersion: SchemaVersion,
-				Kind:          "fleet.snapshot.v1",
-				Status:        "success",
-				Data:          *snap,
-			})
+			return runFleetSnapshot(cmd, ctx)
 		}),
 	}
-	cmd.Flags().Int("version", 1, "Snapshot schema version")
-	cmd.Flags().String("fields", "", "Optional row fields for version 2")
-	cmd.Flags().Bool("full", false, "Include full truncated content for version 2")
-	cmd.Flags().String("output", OutputTOON, "Output format for version 2 (toon|json)")
+	cmd.Flags().String("fields", "", "Optional row fields")
+	cmd.Flags().Bool("full", false, "Include full truncated content")
+	cmd.Flags().String("output", OutputTOON, "Output format (toon|json)")
 	return cmd
 }
 

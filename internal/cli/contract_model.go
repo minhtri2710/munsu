@@ -55,8 +55,8 @@ type TaskObserve struct {
 	StatusLogSuperseded bool   `json:"status_log_superseded,omitempty"`
 }
 
-// FleetSnapshotV2 is the version-two fleet state with cheap aggregate counts.
-type FleetSnapshotV2 struct {
+// FleetSnapshot is the fleet state with cheap aggregate counts.
+type FleetSnapshot struct {
 	Scope           string          `json:"scope"`
 	Count           int             `json:"count"`
 	Total           int             `json:"total"`

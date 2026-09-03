@@ -31,7 +31,7 @@ func newCapabilitiesCmd() *cobra.Command {
 				Data: Capabilities{
 					ContractVersion: SchemaVersion,
 					Commands: []string{
-						"capabilities", "task observe", "fleet snapshot --version 2", "guard", "watch ensure",
+						"capabilities", "task observe", "fleet snapshot", "guard", "watch ensure",
 						"watch run", "wake claim", "wake ack", "event append", "backend capabilities", "spawn",
 						"integrate install", "integrate repair", "integrate status", "afk drain",
 					},
@@ -269,15 +269,15 @@ func newContractGuardCmd() *cobra.Command {
 			case "unhealthy":
 				guardHelp = []string{
 					"Run `munsu watch ensure` to start or restart the watcher",
-					"Run `munsu fleet snapshot --version 2` to inspect fleet state",
+					"Run `munsu fleet snapshot` to inspect fleet state",
 				}
 			case "indeterminate":
 				guardHelp = []string{
 					"Review and resolve the listed violations above",
-					"Run `munsu fleet snapshot --version 2` to inspect fleet state",
+					"Run `munsu fleet snapshot` to inspect fleet state",
 				}
 			default:
-				guardHelp = []string{"Run `munsu fleet snapshot --version 2` to inspect fleet state"}
+				guardHelp = []string{"Run `munsu fleet snapshot` to inspect fleet state"}
 			}
 
 			// Merge condition messages for backward compat

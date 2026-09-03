@@ -34,7 +34,6 @@ internal/cli/doctor_cmd.go	TestGuardDoctorExitsNonZeroWhenAHardRequiredToolIsMis
 internal/cli/doctor_cmd.go	TestGuardCheckInstructionsExitsNonZeroOnADocCodeMismatch	\tif mismatches > 0 {
 internal/cli/event_cmd.go	TestGuardEventAppendRequiresAType	\t\t\tif eventType == "" {
 internal/cli/fleet_contract.go	TestGuardFleetSnapshotRefusesFullBecauseNoRowIsTruncated	\tif full {
-internal/cli/fleet_contract.go	TestGuardFleetSnapshotV2RefusesAnyVersionOtherThanTwo	\tif version != 2 {
 internal/cli/mailbox_sender.go	TestGuardMailboxSenderRefusesAnIncompleteBoundIdentity	\tif home == "" || meta["backend"] == "" || meta["window"] == "" {
 internal/cli/ready_cmd.go	TestGuardReadyRefusesOutsideAManagedTask	\t\t\tif homeDir == "" {
 internal/cli/ready_cmd.go	TestGuardReadyRefusesOutsideAManagedTask	\t\t\tif taskID == "" {

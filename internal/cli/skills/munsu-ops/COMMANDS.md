@@ -34,7 +34,7 @@ for the complete registered set.
 | Command | Description |
 |---------|-------------|
 | `munsu session-start` | Lock, bootstrap, ensure watcher for in-flight work, and print the session-start digest. |
-| `munsu fleet snapshot --version 2` | Compact fleet state snapshot with aggregate counts. |
+| `munsu fleet snapshot` | Compact fleet state snapshot with aggregate counts. |
 | `munsu fleet sync [<project>]` | Clone or pull project repos. |
 | `munsu fleet view` | See the full fleet. |
 | `munsu fleet bearings` | Compact resume report (snapshot + captain table). |
@@ -147,7 +147,7 @@ for the complete registered set.
 |---------|-------------|
 | `munsu capabilities` | Show agent-facing orchestration capabilities (contract). |
 | `munsu task observe <task-id>` | Observe one task using the orchestration contract. |
-| `munsu fleet snapshot --version 2` | Compact fleet state snapshot with aggregate counts. |
+| `munsu fleet snapshot` | Compact fleet state snapshot with aggregate counts. |
 | `munsu guard` | Report fleet guard conditions. |
 | `munsu event append` | Append a typed event to the event log. |
 | `munsu backend capabilities` | Show supported operations for one session backend. |
