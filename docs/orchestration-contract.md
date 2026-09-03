@@ -99,7 +99,7 @@ Stable `error_code` values are `invalid_argument`, `unknown_flag`, `unsupported_
 |---:|---|---|
 | 0 | success | data, definitive empty, quiet wake, idempotent no-op |
 | 1 | operation, state, or dependency failure | missing task, active claim conflict, unavailable backend |
-| 2 | usage or unsupported input | missing required flag, unknown flag, bad enum, unsupported field/version |
+| 2 | usage or unsupported input | missing required flag, unknown flag, bad enum, unsupported field or output format |
 
 The command must reject invalid input before dependencies. It must translate dependency errors without exposing dependency names, raw messages, credentials, paths that should remain private, or stack traces.
 

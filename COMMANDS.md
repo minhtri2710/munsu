@@ -88,7 +88,7 @@ The recommended workflow for running a soldier task end-to-end:
 | Command | Description |
 |---------|-------------|
 | `munsu fleet sync [<project>]` | Fast-forward refresh project clones. |
-| `munsu fleet snapshot` | Emit fleet snapshot as JSON. |
+| `munsu fleet snapshot` | Emit the compact fleet state snapshot with aggregate counts. |
 | `munsu fleet view` | Render fleet view from snapshot. |
 | `munsu fleet bearings [<project-dir>]` | Compact resume report. |
 | `munsu captain seed <id> <home-path>` | Seed a captain home with charter. |
