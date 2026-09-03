@@ -55,7 +55,7 @@ func TestCheckInstructions_ValidCommands(t *testing.T) {
 	content := `# Manual
 
 Run ` + "`" + `munsu doctor` + "`" + ` for diagnostics.
-Use ` + "`" + `munsu fleet snapshot --version 2` + "`" + ` for fleet state.
+Use ` + "`" + `munsu fleet snapshot` + "`" + ` for fleet state.
 Use ` + "`" + `munsu fleet bearings` + "`" + ` for a resume report.
 Spawn with ` + "`" + `munsu spawn` + "`" + `.
 `
@@ -145,7 +145,7 @@ func TestCheckInstructions_NonexistentSubcommand(t *testing.T) {
 func TestCheckInstructions_FlagAliasInRef(t *testing.T) {
 	tmpDir := t.TempDir()
 	agentsPath := filepath.Join(tmpDir, "AGENTS.md")
-	content := `Use ` + "`" + `munsu fleet snapshot --version 2` + "`" + ` for version 2 snapshot.
+	content := `Use ` + "`" + `munsu fleet snapshot --output json` + "`" + ` for fleet state.
 `
 
 	if err := os.WriteFile(agentsPath, []byte(content), 0644); err != nil {
@@ -160,7 +160,7 @@ func TestCheckInstructions_FlagAliasInRef(t *testing.T) {
 		t.Fatalf("checkFileInstructions error: %v", err)
 	}
 	if mismatches > 0 {
-		t.Errorf("expected 0 mismatches (fleet snapshot --version is a real flag), got %d", mismatches)
+		t.Errorf("expected 0 mismatches (fleet snapshot --output is a real flag), got %d", mismatches)
 	}
 }
 

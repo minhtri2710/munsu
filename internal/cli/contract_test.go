@@ -218,49 +218,17 @@ func TestContractRejectsInvalidInputBeforeStateLookup(t *testing.T) {
 	}
 }
 
-func TestFleetSnapshotV2DefinitiveEmptyAndCompatibilityV1(t *testing.T) {
+func TestFleetSnapshotDefinitiveEmpty(t *testing.T) {
 	home := t.TempDir()
 	initCLITestHome(t, home)
 	t.Setenv("MUNSU_HOME", home)
 
-	v2, err := runContract(t, []string{"fleet", "snapshot", "--version", "2"})
+	out, err := runContract(t, []string{"fleet", "snapshot"})
 	if err != nil {
-		t.Fatalf("fleet snapshot v2: %v", err)
+		t.Fatalf("fleet snapshot: %v", err)
 	}
-	if !strings.Contains(v2, "kind: fleet.snapshot") || !strings.Contains(v2, "count: 0") || !strings.Contains(v2, "soldiers: []") {
-		t.Errorf("fleet snapshot v2 empty output = %s", v2)
-	}
-
-	invalidVersion, err := runContract(t, []string{"fleet", "snapshot", "--version", "9"})
-	if err == nil || !strings.Contains(invalidVersion, "error_code: unsupported_input") {
-		t.Errorf("fleet snapshot invalid version = %q, err = %v", invalidVersion, err)
-	}
-
-	v1, err := runContract(t, []string{"fleet", "snapshot", "--output", "json"})
-	if err != nil {
-		t.Fatalf("fleet snapshot v1: %v", err)
-	}
-
-	var v1Resp struct {
-		SchemaVersion string `json:"schema_version"`
-		Kind          string `json:"kind"`
-		Data          struct {
-			Schema string `json:"schema"`
-			Time   string `json:"time"`
-			Tasks  []any  `json:"tasks"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal([]byte(v1), &v1Resp); err != nil {
-		t.Fatalf("v1 response is not valid JSON: %v", err)
-	}
-	if v1Resp.Kind != "fleet.snapshot.v1" {
-		t.Errorf("fleet snapshot v1 kind = %q, want fleet.snapshot.v1: %s", v1Resp.Kind, v1)
-	}
-	if v1Resp.Data.Schema != "munsu-fleet-snapshot.v1" {
-		t.Errorf("fleet snapshot v1 data.schema = %q, want munsu-fleet-snapshot.v1: %s", v1Resp.Data.Schema, v1)
-	}
-	if v1Resp.Data.Time == "" {
-		t.Errorf("fleet snapshot v1 data.time is empty: %s", v1)
+	if !strings.Contains(out, "kind: fleet.snapshot") || !strings.Contains(out, "count: 0") || !strings.Contains(out, "soldiers: []") {
+		t.Errorf("fleet snapshot empty output = %s", out)
 	}
 }
 
@@ -536,7 +504,7 @@ func TestContractCLIReadsOnlyFreshTempHome(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runContract(t, []string{"fleet", "snapshot", "--version", "2"}); err != nil {
+	if _, err := runContract(t, []string{"fleet", "snapshot"}); err != nil {
 		t.Fatal(err)
 	}
 	after, err := os.ReadDir(home)
@@ -616,11 +584,11 @@ func TestGuardHasContextualHelpHint(t *testing.T) {
 	}
 }
 
-// TestFleetSnapshotV2CanonicalPhaseBeatsStaleStatus proves the contract row
+// TestFleetSnapshotCanonicalPhaseBeatsStaleStatus proves the contract row
 // reports the resolved current-state projection, not the append-only .status
 // tail: a canonical done phase beats a stale `working` status line (P0 read-path
 // consolidation). See BEO-14.
-func TestFleetSnapshotV2CanonicalPhaseBeatsStaleStatus(t *testing.T) {
+func TestFleetSnapshotCanonicalPhaseBeatsStaleStatus(t *testing.T) {
 	home := t.TempDir()
 	initCLITestHome(t, home)
 	auth := testAuthorityFor(t, home)
@@ -687,9 +655,9 @@ func TestFleetSnapshotV2CanonicalPhaseBeatsStaleStatus(t *testing.T) {
 	}
 
 	t.Setenv("MUNSU_HOME", home)
-	out, err := runContract(t, []string{"fleet", "snapshot", "--version", "2", "--output", "json"})
+	out, err := runContract(t, []string{"fleet", "snapshot", "--output", "json"})
 	if err != nil {
-		t.Fatalf("fleet snapshot v2: %v", err)
+		t.Fatalf("fleet snapshot: %v", err)
 	}
 	var resp struct {
 		Data struct {
@@ -707,15 +675,15 @@ func TestFleetSnapshotV2CanonicalPhaseBeatsStaleStatus(t *testing.T) {
 	}
 }
 
-func TestFleetSnapshotV2HasHelpAndAggregates(t *testing.T) {
+func TestFleetSnapshotHasHelpAndAggregates(t *testing.T) {
 	home := t.TempDir()
 	initCLITestHome(t, home)
 	t.Setenv("MUNSU_HOME", home)
 
 	// Empty snapshot: count:0, total:0, no soldiers, should still have help
-	output, err := runContract(t, []string{"fleet", "snapshot", "--version", "2"})
+	output, err := runContract(t, []string{"fleet", "snapshot"})
 	if err != nil {
-		t.Fatalf("fleet snapshot v2: %v", err)
+		t.Fatalf("fleet snapshot: %v", err)
 	}
 	if !strings.Contains(output, "count: 0") || !strings.Contains(output, "total: 0") {
 		t.Errorf("empty snapshot should have count:0 and total:0\n%s", output)
@@ -735,9 +703,9 @@ func TestFleetSnapshotV2HasHelpAndAggregates(t *testing.T) {
 
 	// Non-empty snapshot: add a canonical task
 	cliSeedCanonicalTask(t, home, "alpha", "ship")
-	out2, err := runContract(t, []string{"fleet", "snapshot", "--version", "2"})
+	out2, err := runContract(t, []string{"fleet", "snapshot"})
 	if err != nil {
-		t.Fatalf("fleet snapshot v2 non-empty: %v", err)
+		t.Fatalf("fleet snapshot non-empty: %v", err)
 	}
 	if !strings.Contains(out2, "count: 1") || !strings.Contains(out2, "total: 1") {
 		t.Errorf("non-empty snapshot should have count:1 and total:1\n%s", out2)
@@ -753,14 +721,14 @@ func TestFleetSnapshotV2HasHelpAndAggregates(t *testing.T) {
 	}
 }
 
-func TestFleetSnapshotV2CaptainGuidanceJSON(t *testing.T) {
+func TestFleetSnapshotCaptainGuidanceJSON(t *testing.T) {
 	home := t.TempDir()
 	initCLITestHome(t, home)
 	t.Setenv("MUNSU_HOME", home)
 
-	out, err := runContract(t, []string{"fleet", "snapshot", "--version", "2", "--output", "json"})
+	out, err := runContract(t, []string{"fleet", "snapshot", "--output", "json"})
 	if err != nil {
-		t.Fatalf("fleet snapshot v2 json: %v", err)
+		t.Fatalf("fleet snapshot json: %v", err)
 	}
 	var resp struct {
 		Data struct {
@@ -794,7 +762,7 @@ func TestFleetSnapshotV2CaptainGuidanceJSON(t *testing.T) {
 	}
 }
 
-func TestFleetSnapshotV2ParentReconciliation(t *testing.T) {
+func TestFleetSnapshotParentReconciliation(t *testing.T) {
 	home := t.TempDir()
 	if _, err := mhome.Init(home); err != nil {
 		t.Fatal(err)
@@ -836,11 +804,11 @@ func TestFleetSnapshotV2ParentReconciliation(t *testing.T) {
 	}
 	t.Setenv("MUNSU_HOME", home)
 
-	out, err := runContract(t, []string{"fleet", "snapshot", "--version", "2", "--output", "json"})
+	out, err := runContract(t, []string{"fleet", "snapshot", "--output", "json"})
 	if err != nil {
-		t.Fatalf("fleet snapshot v2: %v", err)
+		t.Fatalf("fleet snapshot: %v", err)
 	}
-	var resp Response[FleetSnapshotV2]
+	var resp Response[FleetSnapshot]
 	if err := json.Unmarshal([]byte(out), &resp); err != nil {
 		t.Fatalf("unmarshal: %v\n%s", err, out)
 	}

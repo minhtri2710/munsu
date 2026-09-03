@@ -14,9 +14,8 @@ import (
 
 // FleetSnapshot represents the full fleet state.
 type FleetSnapshot struct {
-	Schema string         `json:"schema"`
-	Time   string         `json:"time"`
-	Tasks  []TaskSnapshot `json:"tasks"`
+	Time  string         `json:"time"`
+	Tasks []TaskSnapshot `json:"tasks"`
 }
 
 // TaskSnapshot represents one task's state.
@@ -112,8 +111,7 @@ func Snapshot(homeDir string, deps SnapshotDependencies) (*FleetSnapshot, error)
 		return nil, fmt.Errorf("reading authoritative current state: no current-state query provided (home %s)", homeDir)
 	}
 	snap := &FleetSnapshot{
-		Schema: "munsu-fleet-snapshot.v1",
-		Time:   time.Now().UTC().Format(time.RFC3339),
+		Time: time.Now().UTC().Format(time.RFC3339),
 	}
 
 	if err := appendHomeTasks(snap, homeDir, "primary", "", deps); err != nil {

@@ -120,25 +120,21 @@ func snapshotDeps() fleet.SnapshotDependencies {
 	}
 }
 
-func runFleetSnapshotV2(cmd *cobra.Command, ctx Ctx) error {
-	version, _ := cmd.Flags().GetInt("version")
-	if version != 2 {
-		return usageError("unsupported_input", "Run `munsu fleet snapshot --version 2`", "Only fleet snapshot version 2 is supported by this command")
-	}
+func runFleetSnapshot(cmd *cobra.Command, ctx Ctx) error {
 	fields, err := contractFields(cmd, []string{"branch"})
 	if err != nil {
 		return err
 	}
 	full, _ := cmd.Flags().GetBool("full")
 	if full {
-		return usageError("unsupported_input", "Run `munsu fleet snapshot --version 2`", "--full is unavailable because fleet snapshot rows have no truncated fields")
+		return usageError("unsupported_input", "Run `munsu fleet snapshot`", "--full is unavailable because fleet snapshot rows have no truncated fields")
 	}
 	if _, err := contractOutput(cmd); err != nil {
 		return err
 	}
 	snapshot, err := fleet.Snapshot(ctx.Home, snapshotDeps())
 	if err != nil {
-		return operationError("internal", "Run `munsu fleet snapshot --version 2` again", "Unable to read fleet state")
+		return err
 	}
 	soldiers := make([]Soldier, 0, len(snapshot.Tasks))
 	for _, entry := range snapshot.Tasks {
@@ -259,11 +255,11 @@ func runFleetSnapshotV2(cmd *cobra.Command, ctx Ctx) error {
 	}
 
 	sort.Slice(soldiers, func(i, j int) bool { return soldiers[i].TaskID < soldiers[j].TaskID })
-	return writeContract(cmd, Response[FleetSnapshotV2]{
+	return writeContract(cmd, Response[FleetSnapshot]{
 		SchemaVersion: SchemaVersion,
 		Kind:          "fleet.snapshot",
 		Status:        "success",
-		Data: FleetSnapshotV2{
+		Data: FleetSnapshot{
 			Scope:           ctx.Home,
 			Count:           len(soldiers),
 			Total:           len(soldiers),

@@ -7,7 +7,7 @@
     "commands": [
       "capabilities",
       "task observe",
-      "fleet snapshot --version 2",
+      "fleet snapshot",
       "guard",
       "watch ensure",
       "watch run",

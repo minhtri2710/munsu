@@ -18,7 +18,7 @@ A command family has one runtime owner: the package that emits its contract resu
 |---|---|---|---|---|---|
 | Discovery | `munsu capabilities` | `internal/cli` | root command registration | root command registration | implemented |
 | Task observation | `munsu task observe <task-id>` | `internal/cli` | `internal/fleet` soldier state | `internal/taskauthority` canonical record + `internal/fleet` (`ReadWithProbe`) + `internal/home` projection | implemented |
-| Fleet state | `munsu fleet snapshot --version 2` | `internal/cli` | `internal/fleet` | `internal/fleet` snapshot (canonical-aware) | implemented |
+| Fleet state | `munsu fleet snapshot` | `internal/cli` | `internal/fleet` | `internal/fleet` snapshot (canonical-aware) | implemented |
 | Guard | `munsu guard` | `internal/cli` | `internal/orchestrator` | `internal/orchestrator` guard evaluation + `internal/fleet` snapshot | implemented |
 | Watch | `munsu watch ensure`, `munsu watch run` | `internal/cli` | `internal/orchestrator` | `internal/orchestrator` watcher lifecycle | implemented |
 | Wake | `munsu wake claim --consumer <id>`, `munsu wake resolve --claim-id <lease-id> --event-id <event-id> --summary <text>`, `munsu wake ack <lease-id> <event-id...>` | `internal/cli` | `internal/orchestrator` | `internal/orchestrator` wake records and drain state | implemented |
@@ -37,7 +37,7 @@ Every contract command accepts `--output toon|json`; `toon` is the default and `
 | `munsu` | none | `--output toon|json` | cwd-scoped compact home view |
 | `munsu capabilities` | none | `--output toon|json` | capabilities |
 | `munsu task observe <task-id>` | task ID | `--fields`, `--full`, `--output` | task observation |
-| `munsu fleet snapshot --version 2` | version exactly `2` | `--fields`, `--full`, `--output` | fleet snapshot v2 |
+| `munsu fleet snapshot` | none | `--fields`, `--full`, `--output` | fleet snapshot |
 | `munsu guard` | none | `--output` | guard result |
 | `munsu watch ensure` | none | `--interval <duration>`, `--output` | ensure receipt |
 | `munsu watch run` | none | `--output` | one run receipt |
@@ -99,7 +99,7 @@ Stable `error_code` values are `invalid_argument`, `unknown_flag`, `unsupported_
 |---:|---|---|
 | 0 | success | data, definitive empty, quiet wake, idempotent no-op |
 | 1 | operation, state, or dependency failure | missing task, active claim conflict, unavailable backend |
-| 2 | usage or unsupported input | missing required flag, unknown flag, bad enum, unsupported field/version |
+| 2 | usage or unsupported input | missing required flag, unknown flag, bad enum, unsupported field or output format |
 
 The command must reject invalid input before dependencies. It must translate dependency errors without exposing dependency names, raw messages, credentials, paths that should remain private, or stack traces.
 
@@ -150,7 +150,7 @@ The core contract does not encode harness-private arguments, process names, or l
 
 The versioned model, TOON/JSON encoder, golden fixtures, fixture drift tests, and the command families below have landed under the `internal/cli` output boundary (see the owner table above). Residual phasing that requires future work before the remaining guarantees are exercised end-to-end:
 
-1. **Shipped:** versioned JSON-compatible models, paired TOON/JSON golden fixtures, fixture drift tests, and the registered contract command families (`capabilities`, `task observe`, `fleet snapshot --version 2`, `guard`, `watch`, `wake`, `backend capabilities`, `spawn`, `integrate`).
+1. **Shipped:** versioned JSON-compatible models, paired TOON/JSON golden fixtures, fixture drift tests, and the registered contract command families (`capabilities`, `task observe`, `fleet snapshot`, `guard`, `watch`, `wake`, `backend capabilities`, `spawn`, `integrate`).
 2. **Remaining:** the skill/home-view consistency check in CI (compare static command guidance generated for the `munsu-ops` skill with the no-args home view) and full adapter delivery modes; these are opt-in and not yet enabled.
 
 Each phase must keep the exit, stdout/stderr, no-prompt, idempotency, and TOON v3.3 guarantees defined here.

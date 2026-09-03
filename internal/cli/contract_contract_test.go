@@ -25,7 +25,7 @@ var fixtureNames = []string{
 	"error",
 	"event_append",
 	"event_record",
-	"fleet_snapshot_v2",
+	"fleet_snapshot",
 	"guard",
 	"message_injection",
 	"noop",
@@ -108,7 +108,7 @@ func TestSchemaVersionAndModelJSONTags(t *testing.T) {
 	}
 	for _, value := range []any{
 		ErrorResponse{}, ErrorEnvelope{}, Capabilities{}, TaskObserve{},
-		FleetSnapshotV2{}, Soldier{}, CaptainEntry{}, CaptainGuidance{},
+		FleetSnapshot{}, Soldier{}, CaptainEntry{}, CaptainGuidance{},
 		CaptainChildBrief{}, CaptainDecision{}, CaptainHold{}, CaptainQueued{},
 		CaptainLanded{}, CaptainOmitted{}, CaptainHomeCounts{},
 		WakeAck{}, BackendCapabilities{}, SpawnReceipt{}, MessageResult{}, InboxReceiveResult{}, EmptyResult{},
@@ -253,11 +253,11 @@ func TestAllDefinitiveEmpties(t *testing.T) {
 
 	t.Run("empty_collection", func(t *testing.T) {
 		t.Parallel()
-		resp := Response[FleetSnapshotV2]{
+		resp := Response[FleetSnapshot]{
 			SchemaVersion: SchemaVersion,
 			Kind:          "fleet.snapshot",
 			Status:        "success",
-			Data: FleetSnapshotV2{
+			Data: FleetSnapshot{
 				Scope:    "/",
 				Count:    0,
 				Total:    0,
