@@ -17,17 +17,6 @@ import (
 // ManifestVersion is the current manifest format version.
 const ManifestVersion = "soldier-manifest-v1"
 
-// LegacyBriefMigrationPolicy is a typed durable switch in the manifest that
-// controls whether legacy .soldier-md is recognized during retirement.
-// When the migration window closes, the field is omitted from the manifest.
-type LegacyBriefMigrationPolicy string
-
-const (
-	// LegacyBriefMatchCanonicalV1 accepts legacy .soldier-md only when its
-	// digest matches the canonical brief evidence during the V1 migration.
-	LegacyBriefMatchCanonicalV1 LegacyBriefMigrationPolicy = "match-canonical-v1"
-)
-
 // DisposalPolicy describes how a manifest artifact may be treated during
 // normal (non-force) retirement.
 type DisposalPolicy string
@@ -49,9 +38,8 @@ type ManifestEntry struct {
 // LaunchManifest is the versioned ownership manifest for Soldier launch
 // artifacts.
 type LaunchManifest struct {
-	ManifestVersion      string                      `json:"manifest_version"`
-	Artifacts            []ManifestEntry             `json:"artifacts"`
-	LegacyBriefMigration *LegacyBriefMigrationPolicy `json:"legacy_brief_migration,omitempty"`
+	ManifestVersion string          `json:"manifest_version"`
+	Artifacts       []ManifestEntry `json:"artifacts"`
 }
 
 // sha256Regex matches a valid lowercase hex SHA-256 string.
@@ -466,68 +454,6 @@ func VerifyLaunchArtifacts(worktreePath, expectedManifestSHA string) error {
 
 	if len(failures) > 0 {
 		return fmt.Errorf("launch artifact verification failed:\n  %s", strings.Join(failures, "\n  "))
-	}
-
-	return nil
-}
-
-// CheckLegacyBriefMigration checks whether the legacy .soldier-md file can
-// be accepted during the migration window. This is only called when the
-// manifest has a valid LegacyBriefMigration policy set.
-// Legacy migration requires:
-//   - canonical brief exists and matches its manifest digest
-//   - .soldier-md is untracked, regular, non-symlink, contained in worktree
-//   - .soldier-md bytes match the canonical brief digest
-func CheckLegacyBriefMigration(worktreePath string, manifest *LaunchManifest) error {
-	if manifest == nil || manifest.LegacyBriefMigration == nil {
-		return fmt.Errorf("legacy brief migration not enabled in manifest")
-	}
-	if *manifest.LegacyBriefMigration != LegacyBriefMatchCanonicalV1 {
-		return fmt.Errorf("unsupported legacy brief migration policy: %q", *manifest.LegacyBriefMigration)
-	}
-
-	// 1. Canonical brief must be a valid manifest entry.
-	briefEntry := manifest.Lookup(BriefName)
-	if briefEntry == nil {
-		return fmt.Errorf("canonical brief not in manifest")
-	}
-
-	// 2. Canonical brief must exist and match its manifest digest.
-	if err := verifyManifestEntry(worktreePath, briefEntry); err != nil {
-		return fmt.Errorf("canonical brief check failed: %w", err)
-	}
-
-	legacyPath := filepath.Join(worktreePath, ".soldier-md")
-
-	// 3. .soldier-md must be untracked, regular, non-symlink, contained.
-	fi, err := os.Lstat(legacyPath)
-	if err != nil {
-		return fmt.Errorf("legacy .soldier-md not found: %w", err)
-	}
-	if fi.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("legacy .soldier-md is a symlink")
-	}
-	if !fi.Mode().IsRegular() {
-		return fmt.Errorf("legacy .soldier-md is not a regular file")
-	}
-	realPath, err := filepath.EvalSymlinks(legacyPath)
-	if err != nil {
-		return fmt.Errorf("resolving legacy .soldier-md: %w", err)
-	}
-	if !isWithinWorktreeRoot(worktreePath, realPath) {
-		return fmt.Errorf("legacy .soldier-md symlink escapes worktree root")
-	}
-	if isTrackedByGit(worktreePath, ".soldier-md") {
-		return fmt.Errorf("legacy .soldier-md is tracked by git")
-	}
-
-	// 4. Legacy bytes must match the canonical brief digest.
-	legacyData, err := os.ReadFile(legacyPath)
-	if err != nil {
-		return fmt.Errorf("reading legacy .soldier-md: %w", err)
-	}
-	if sha256Content(legacyData) != briefEntry.SHA256 {
-		return fmt.Errorf("legacy .soldier-md digest does not match canonical brief")
 	}
 
 	return nil

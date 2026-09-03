@@ -35,21 +35,6 @@ func writeLaunchManifestForTest(t *testing.T, worktreePath string) string {
 	if err := r.writeLaunchManifest(); err != nil {
 		t.Fatalf("writing launch manifest: %v", err)
 	}
-
-	// The entry set the writer declares is already guarded: ValidateManifest
-	// holds the expected paths and WriteManifest refuses a manifest missing one,
-	// so a dropped entry fails the line above. The migration policy has no such
-	// guard -- it is optional in the schema, so a writer that stops declaring it
-	// still produces a valid manifest, and retirement then treats a leftover
-	// .soldier-md as unexplained. Assert it here, where every e2e caller sees it.
-	manifest, err := ReadManifest(worktreePath)
-	if err != nil {
-		t.Fatalf("reading back the written manifest: %v", err)
-	}
-	if manifest.LegacyBriefMigration == nil || *manifest.LegacyBriefMigration != LegacyBriefMatchCanonicalV1 {
-		t.Fatalf("production writer must declare legacy brief migration %q, got %v",
-			LegacyBriefMatchCanonicalV1, manifest.LegacyBriefMigration)
-	}
 	return r.manifestSHA256
 }
 

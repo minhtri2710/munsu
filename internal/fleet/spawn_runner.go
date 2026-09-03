@@ -1923,11 +1923,6 @@ func (r *Runner) writeLaunchManifest() error {
 	}
 	manifest := BuildManifest(entries)
 
-	// Include the legacy brief migration policy in the manifest so retirement
-	// can verify .soldier-md cleanup during the bounded migration window.
-	policy := LegacyBriefMatchCanonicalV1
-	manifest.LegacyBriefMigration = &policy
-
 	digest, err := WriteManifest(r.wtPath, manifest)
 	if err != nil {
 		return fmt.Errorf("writing launch manifest: %w", err)
