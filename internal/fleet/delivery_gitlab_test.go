@@ -691,25 +691,6 @@ func TestGitLabIdentity_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestGitLabIdentity_LegacyPRKey(t *testing.T) {
-	meta := map[string]string{
-		"pr": "https://gitlab.com/owner/project/-/merge_requests/42",
-	}
-	id, err := domain.IdentityFromMeta(meta)
-	if err != nil {
-		t.Fatalf("IdentityFromMeta with legacy pr key: %v", err)
-	}
-	if id == nil {
-		t.Fatal("expected non-nil identity from legacy key")
-	}
-	if id.URL != "https://gitlab.com/owner/project/-/merge_requests/42" {
-		t.Errorf("URL: got %q, want %q", id.URL, "https://gitlab.com/owner/project/-/merge_requests/42")
-	}
-	if id.Number != 42 {
-		t.Errorf("Number: got %d, want 42", id.Number)
-	}
-}
-
 // --- IdentityFromMeta provider/URL consistency ---
 
 func TestIdentityFromMeta_RejectsProviderURLMismatch(t *testing.T) {
@@ -719,9 +700,9 @@ func TestIdentityFromMeta_RejectsProviderURLMismatch(t *testing.T) {
 		"pr_number":    "42",
 		"pr_owner":     "owner",
 		"pr_repo":      "project",
-		"pr_base":      "main",
+		"pr_base_ref":  "main",
 		"pr_head_ref":  "feature/test",
-		"pr_head":      sampleSHA,
+		"pr_head_sha":  sampleSHA,
 		"pr_timestamp": "2026-07-18T12:00:00Z",
 	}
 	_, err := domain.IdentityFromMeta(meta)

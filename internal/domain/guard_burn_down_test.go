@@ -6,8 +6,8 @@ import (
 )
 
 func TestIdentityFromMetaRejectsIdentityFieldWithoutURL(t *testing.T) {
-	_, err := IdentityFromMeta(map[string]string{"pr_head": "abc123"})
-	if err == nil || !strings.Contains(err.Error(), "delivery identity has pr_head but no pr_url") {
+	_, err := IdentityFromMeta(map[string]string{"pr_head_sha": "abc123"})
+	if err == nil || !strings.Contains(err.Error(), "delivery identity has pr_head_sha but no pr_url") {
 		t.Fatalf("IdentityFromMeta error = %v, want missing-URL refusal", err)
 	}
 }
@@ -49,28 +49,6 @@ func TestIdentityFromMetaRejectsNumberURLMismatch(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "does not match pr_url number") {
 		t.Fatalf("IdentityFromMeta error = %v, want number-mismatch refusal", err)
-	}
-}
-
-func TestIdentityFromMetaRejectsHeadFieldConflict(t *testing.T) {
-	_, err := IdentityFromMeta(map[string]string{
-		"pr_url":      "https://github.com/owner/project/pull/42",
-		"pr_head_sha": "sha-one",
-		"pr_head":     "sha-two",
-	})
-	if err == nil || !strings.Contains(err.Error(), "conflicts with pr_head") {
-		t.Fatalf("IdentityFromMeta error = %v, want head-field conflict refusal", err)
-	}
-}
-
-func TestIdentityFromMetaRejectsBaseFieldConflict(t *testing.T) {
-	_, err := IdentityFromMeta(map[string]string{
-		"pr_url":      "https://github.com/owner/project/pull/42",
-		"pr_base_ref": "main",
-		"pr_base":     "develop",
-	})
-	if err == nil || !strings.Contains(err.Error(), "conflicts with pr_base") {
-		t.Fatalf("IdentityFromMeta error = %v, want base-field conflict refusal", err)
 	}
 }
 

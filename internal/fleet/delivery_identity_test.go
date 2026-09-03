@@ -3,12 +3,10 @@
 package fleet
 
 import (
-	"github.com/minhtri2710/munsu/internal/domain"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -240,51 +238,6 @@ func TestIdentityFromMeta_EmptyMeta(t *testing.T) {
 	}
 }
 
-func TestIdentityFromMeta_LegacyPRKey(t *testing.T) {
-	meta := map[string]string{
-		"pr": "https://github.com/minhtri2710/munsu/pull/42",
-	}
-	id, err := domain.IdentityFromMeta(meta)
-	if err != nil {
-		t.Fatalf("IdentityFromMeta with legacy pr key: %v", err)
-	}
-	if id == nil {
-		t.Fatal("expected non-nil identity from legacy key")
-	}
-	if id.URL != "https://github.com/minhtri2710/munsu/pull/42" {
-		t.Errorf("URL: got %q, want %q", id.URL, "https://github.com/minhtri2710/munsu/pull/42")
-	}
-	if id.Number != 42 {
-		t.Errorf("Number: got %d, want 42", id.Number)
-	}
-	// Legacy key should derive owner/repo from URL
-	if id.Owner == "" {
-		t.Error("expected Owner to be derived from URL")
-	}
-	if id.Repo == "" {
-		t.Error("expected Repo to be derived from URL")
-	}
-}
-
-func TestIdentityFromMeta_PartialWithLegacy(t *testing.T) {
-	// Mix of new-style and legacy keys
-	meta := map[string]string{
-		"pr":          "https://github.com/minhtri2710/munsu/pull/42",
-		"pr_head":     "abc123def456abc123def456abc123def456abc1",
-		"pr_provider": "github",
-	}
-	id, err := domain.IdentityFromMeta(meta)
-	if err != nil {
-		t.Fatalf("IdentityFromMeta: %v", err)
-	}
-	if id == nil {
-		t.Fatal("expected non-nil identity")
-	}
-	if id.HeadSHA != "abc123def456abc123def456abc123def456abc1" {
-		t.Errorf("HeadSHA: got %q", id.HeadSHA)
-	}
-}
-
 // --- RequireIdentity tests ---
 
 func TestRequireIdentity_Success(t *testing.T) {
@@ -356,8 +309,7 @@ func TestRequireIdentity_Incomplete(t *testing.T) {
 
 	meta := map[string]string{
 		"pr_url": "https://github.com/minhtri2710/munsu/pull/42",
-		"pr":     "https://github.com/minhtri2710/munsu/pull/42",
-		// Missing pr_head (headSHA), pr_base, pr_head_ref, etc.
+		// Missing pr_head_sha, pr_base_ref, pr_head_ref, etc.
 	}
 	if err := home.WriteMeta(homeDir, id, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
@@ -380,7 +332,7 @@ func TestIdentity_MetaKeys(t *testing.T) {
 	expected := []string{
 		"pr_provider", "pr_owner", "pr_repo",
 		"pr_number", "pr_url",
-		"pr_base", "pr_base_ref", "pr_head_ref", "pr_head", "pr_head_sha",
+		"pr_base_ref", "pr_head_ref", "pr_head_sha",
 		"pr_timestamp",
 	}
 	if len(keys) != len(expected) {
@@ -400,89 +352,6 @@ func TestIdentity_MetaKeys(t *testing.T) {
 	}
 }
 
-// --- Legacy backward compatibility: read-only migration refuses destructive action ---
-
-func TestRequireIdentity_LegacyPRKeyOnly(t *testing.T) {
-	homeDir := t.TempDir()
-	id := "legacy-task"
-
-	// Simulate an old meta file that only has "pr" and "pr_head" (no new-style keys)
-	meta := map[string]string{
-		"pr":      "https://github.com/minhtri2710/munsu/pull/42",
-		"pr_head": "abc123def456abc123def456abc123def456abc1",
-		"kind":    "ship",
-		"project": "munsu",
-	}
-	if err := home.WriteMeta(homeDir, id, meta); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
-	}
-
-	// The legacy key migration should succeed for read-only, but
-	// IdentityFromMeta will produce an identity missing pr_base, pr_head_ref,
-	// pr_timestamp, etc. So RequireIdentity should still fail because
-	// ValidateIdentity catches the missing required fields.
-	ident, err := domain.IdentityFromMeta(meta)
-	if err != nil {
-		t.Fatalf("IdentityFromMeta: %v", err)
-	}
-	if ident == nil {
-		t.Fatal("IdentityFromMeta should return identity from legacy keys")
-	}
-	if ident.URL != "https://github.com/minhtri2710/munsu/pull/42" {
-		t.Errorf("URL: got %q", ident.URL)
-	}
-	if ident.HeadSHA != "abc123def456abc123def456abc123def456abc1" {
-		t.Errorf("HeadSHA: got %q", ident.HeadSHA)
-	}
-	// The validation should fail because baseRef/headRef/capturedAt are missing
-	if err := domain.ValidateIdentity(ident); err == nil {
-		t.Error("expected ValidateIdentity to fail for legacy-only identity (missing baseRef, headRef, capturedAt)")
-	}
-}
-
-// --- ReviewDiff uses stored identity ---
-
-func TestReviewDiff_LegacyPRKeyRead(t *testing.T) {
-	// Test that ReviewDiff reads the legacy pr key from meta
-	// without requiring a full domain.DeliveryIdentity.
-	// The git diff error proves the legacy path was reached.
-	if testing.Short() {
-		t.Skip("skipping test in short mode")
-	}
-
-	homeDir := t.TempDir()
-
-	repoDir := filepath.Join(homeDir, "projects", "test-project")
-	if err := os.MkdirAll(repoDir, 0755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-
-	initGitRepo(t, repoDir, "")
-
-	id := "legacy-review-task"
-	meta := map[string]string{
-		"project":  "test-project",
-		"worktree": repoDir,
-		"pr":       "https://github.com/minhtri2710/munsu/pull/42",
-		"pr_head":  "abc123def456abc123def456abc123def456abc1",
-	}
-	if err := home.WriteMeta(homeDir, id, meta); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
-	}
-
-	// ReviewDiff should reach the legacy pr key path but fail at git diff
-	// because the PR ref doesn't exist in the repo. This proves the legacy
-	// path was activated before destructive actions are attempted.
-	err := ReviewDiff(homeDir, id)
-	if err == nil {
-		t.Fatal("expected git error from ReviewDiff with non-existent PR ref")
-	}
-	// Error should be about git, not about identity being missing
-	if strings.Contains(err.Error(), "delivery identity") {
-		t.Errorf("error should not be about missing identity, got: %v", err)
-	}
-}
-
 func TestIdentityFromMeta_RejectsMultipleFieldsWithoutURL(t *testing.T) {
 	// Multiple identity fields present but no pr_url — must fail closed.
 	// This regression catches the case where the teardown package incorrectly
@@ -492,9 +361,9 @@ func TestIdentityFromMeta_RejectsMultipleFieldsWithoutURL(t *testing.T) {
 		"pr_owner":     "minhtri2710",
 		"pr_repo":      "munsu",
 		"pr_number":    "42",
-		"pr_head":      "abc123def456abc123def456abc123def456abc1",
+		"pr_head_sha":  "abc123def456abc123def456abc123def456abc1",
 		"pr_head_ref":  "fm/feature-branch",
-		"pr_base":      "main",
+		"pr_base_ref":  "main",
 		"pr_timestamp": "2026-07-18T00:00:00Z",
 	}
 	_, err := domain.IdentityFromMeta(meta)

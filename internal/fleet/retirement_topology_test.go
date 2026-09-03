@@ -70,8 +70,8 @@ func fixtureMeta(wtPath string, withIdentity bool, manifestDigest string) map[st
 		meta["pr_repo"] = "munsu"
 		meta["pr_number"] = "42"
 		meta["pr_head_ref"] = "fm/feature-branch"
-		meta["pr_head"] = "abc123def456"
-		meta["pr_base"] = "main"
+		meta["pr_head_sha"] = "abc123def456"
+		meta["pr_base_ref"] = "main"
 		meta["pr_timestamp"] = "2026-07-18T00:00:00Z"
 	}
 	return meta
@@ -295,7 +295,7 @@ func TestShipSafetyCheck_Topology_MergedPRBranchExists(t *testing.T) {
 	headSHA := strings.TrimSpace(string(shaOut))
 
 	meta := fixtureMeta(wt, true, md)
-	meta["pr_head"] = headSHA // must match actual head
+	meta["pr_head_sha"] = headSHA // must match actual head
 
 	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
 		Merged:    true,
@@ -384,7 +384,7 @@ func TestShipSafetyCheck_Topology_WrongPRHead(t *testing.T) {
 
 	meta := fixtureMeta(wt, true, md)
 	// Stored head doesn't match provider-reported head
-	meta["pr_head"] = "oldsha0000000000000000000000000000000000"
+	meta["pr_head_sha"] = "oldsha0000000000000000000000000000000000"
 
 	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
 		Merged:    true,
@@ -466,8 +466,8 @@ func TestIdentityFromMeta_WithURL(t *testing.T) {
 	meta := map[string]string{
 		"pr_url":      "https://github.com/minhtri2710/munsu/pull/42",
 		"pr_number":   "42",
-		"pr_head":     "abc123",
-		"pr_base":     "main",
+		"pr_head_sha": "abc123",
+		"pr_base_ref": "main",
 		"pr_head_ref": "fm/feature",
 	}
 	ident, err := identityFromMeta(meta)
@@ -541,7 +541,7 @@ func TestShipSafetyCheck_Topology_PartialIdentityFailsClosed(t *testing.T) {
 		"kind":                   "ship",
 		"launch_manifest_sha256": md,
 		"pr_url":                 "https://github.com/minhtri2710/munsu/pull/42",
-		"pr_head":                "abc123def456",
+		"pr_head_sha":            "abc123def456",
 	}
 	_, err := shipSafetyCheck(Options{ID: "test"}, meta, fakeTeardown{}, nil)
 	if err == nil {
@@ -566,9 +566,9 @@ func TestShipSafetyCheck_Topology_MissingProviderFailsClosed(t *testing.T) {
 		"pr_owner":               "minhtri2710",
 		"pr_repo":                "munsu",
 		"pr_number":              "42",
-		"pr_head":                "abc123def456",
+		"pr_head_sha":            "abc123def456",
 		"pr_head_ref":            "fm/feature-branch",
-		"pr_base":                "main",
+		"pr_base_ref":            "main",
 		"pr_timestamp":           "2026-07-18T00:00:00Z",
 	}
 	_, err := shipSafetyCheck(Options{ID: "test"}, meta, fakeTeardown{}, nil)
@@ -636,7 +636,7 @@ func TestShipSafetyCheck_Topology_ProofReturnedOrdinaryMerge(t *testing.T) {
 	headSHA := strings.TrimSpace(string(shaOut))
 
 	meta := fixtureMeta(wt, true, md)
-	meta["pr_head"] = headSHA // must match actual head
+	meta["pr_head_sha"] = headSHA // must match actual head
 
 	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
 		Merged:    true,
@@ -713,7 +713,7 @@ func TestShipSafetyCheck_Topology_AncestryFails(t *testing.T) {
 	}
 
 	meta := fixtureMeta(wt, true, md)
-	meta["pr_head"] = orphanSHA // orphan SHA is NOT an ancestor of origin/main
+	meta["pr_head_sha"] = orphanSHA // orphan SHA is NOT an ancestor of origin/main
 
 	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
 		Merged:    true,
@@ -818,7 +818,7 @@ func TestShipSafetyCheck_Topology_SquashMerge(t *testing.T) {
 	// squashSHA IS an ancestor of origin/main.
 
 	meta := fixtureMeta(wt, true, md)
-	meta["pr_head"] = headSHA
+	meta["pr_head_sha"] = headSHA
 
 	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
 		Merged:    true,
@@ -913,7 +913,7 @@ func TestShipSafetyCheck_Topology_DeletedHeadWrongSHA(t *testing.T) {
 
 	meta := fixtureMeta(wt, true, md)
 	// Stored head SHA differs from provider-reported head SHA
-	meta["pr_head"] = "storedsha0000000000000000000000000000000000"
+	meta["pr_head_sha"] = "storedsha0000000000000000000000000000000000"
 
 	// Delete the remote branch to simulate squash+delete
 	gitEnv := topologyGitEnv(wt)
@@ -953,9 +953,9 @@ func TestShipSafetyCheck_Topology_PartialIdentityNoURL(t *testing.T) {
 		"pr_owner":               "minhtri2710",
 		"pr_repo":                "munsu",
 		"pr_number":              "42",
-		"pr_head":                "abc123def456abc123def456abc123def456abc1",
+		"pr_head_sha":            "abc123def456abc123def456abc123def456abc1",
 		"pr_head_ref":            "fm/feature-branch",
-		"pr_base":                "main",
+		"pr_base_ref":            "main",
 		// No pr_url
 	}
 	_, err := shipSafetyCheck(Options{ID: "test"}, meta, fakeTeardown{}, nil)
@@ -1019,9 +1019,7 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHeadCompleteIdentity(t *tes
 		"pr_repo":                "munsu",
 		"pr_number":              "42",
 		"pr_head_ref":            "fm/feature-branch",
-		"pr_head":                headSHA,
 		"pr_head_sha":            headSHA,
-		"pr_base":                "main",
 		"pr_base_ref":            "main",
 		"pr_timestamp":           "2026-07-18T00:00:00Z",
 	}
@@ -1087,9 +1085,7 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_ProviderEmptyHeadSHA(t
 		"pr_repo":                "munsu",
 		"pr_number":              "42",
 		"pr_head_ref":            "fm/feature-branch",
-		"pr_head":                headSHA,
 		"pr_head_sha":            headSHA,
-		"pr_base":                "main",
 		"pr_base_ref":            "main",
 		"pr_timestamp":           "2026-07-18T00:00:00Z",
 	}
@@ -1149,9 +1145,7 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_SHAMismatch(t *testing
 		"pr_repo":                "munsu",
 		"pr_number":              "42",
 		"pr_head_ref":            "fm/feature-branch",
-		"pr_head":                headSHA,
 		"pr_head_sha":            headSHA,
-		"pr_base":                "main",
 		"pr_base_ref":            "main",
 		"pr_timestamp":           "2026-07-18T00:00:00Z",
 	}
@@ -1209,9 +1203,7 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_OpenPR(t *testing.T) {
 		"pr_repo":                "munsu",
 		"pr_number":              "42",
 		"pr_head_ref":            "fm/feature-branch",
-		"pr_head":                headSHA,
 		"pr_head_sha":            headSHA,
-		"pr_base":                "main",
 		"pr_base_ref":            "main",
 		"pr_timestamp":           "2026-07-18T00:00:00Z",
 	}
@@ -1269,9 +1261,7 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_ClosedUnmerged(t *test
 		"pr_repo":                "munsu",
 		"pr_number":              "42",
 		"pr_head_ref":            "fm/feature-branch",
-		"pr_head":                headSHA,
 		"pr_head_sha":            headSHA,
-		"pr_base":                "main",
 		"pr_base_ref":            "main",
 		"pr_timestamp":           "2026-07-18T00:00:00Z",
 	}
@@ -1329,9 +1319,7 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_ProviderError(t *testi
 		"pr_repo":                "munsu",
 		"pr_number":              "42",
 		"pr_head_ref":            "fm/feature-branch",
-		"pr_head":                headSHA,
 		"pr_head_sha":            headSHA,
-		"pr_base":                "main",
 		"pr_base_ref":            "main",
 		"pr_timestamp":           "2026-07-18T00:00:00Z",
 	}
@@ -1372,7 +1360,6 @@ func TestShipSafetyCheck_DeliveryStateMergedAcceptsWithoutForce(t *testing.T) {
 	headSHA := strings.TrimSpace(string(shaOut))
 
 	meta := fixtureMeta(wt, true, md)
-	meta["pr_head"] = headSHA
 	meta["pr_head_sha"] = headSHA
 	meta[domain.MetaDeliveryState] = string(domain.DeliveryStateMerged)
 
@@ -1413,7 +1400,6 @@ func TestShipSafetyCheck_DeliveryStateReviewReadyRejectsWithoutForce(t *testing.
 	headSHA := strings.TrimSpace(string(shaOut))
 
 	meta := fixtureMeta(wt, true, md)
-	meta["pr_head"] = headSHA
 	meta["pr_head_sha"] = headSHA
 	meta[domain.MetaDeliveryState] = string(domain.DeliveryStateReviewReady)
 
