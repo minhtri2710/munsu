@@ -1768,23 +1768,40 @@ func TestLaunch_EmptySnapshotCaptainProfileFailsClosed(t *testing.T) {
 	}
 }
 
-func TestLaunch_FlatFileCaptainHarnessDoesNotRescueMissingSnapshotProfile(t *testing.T) {
+func TestLaunch_LegacyFlatCaptainHarnessMigratesBeforeLaunch(t *testing.T) {
 	oldLookPath := captainLookPath
 	captainLookPath = func(string) (string, error) { return "/test/bin/pi", nil }
 	t.Cleanup(func() { captainLookPath = oldLookPath })
 	parent := t.TempDir()
 	captainHome := seedCaptainForTest(t, parent, "flat-only")
 	writeCanonicalPiIntegration(t, captainHome)
-	// The snapshot profile is empty; a legacy flat config/captain-harness pin
-	// must NOT rescue resolution (hard cut: no flat-file read in captain
-	// operation resolution).
+	// A legacy flat launch-profile pin is promoted into the typed fleet base
+	// document when the base is loaded, then carried into the captain snapshot.
 	republishWithCaptainProfile(t, parent, captainHome, config.CaptainProfile{})
 	if err := config.Set(parent, "captain-harness", "pi"); err != nil {
 		t.Fatal(err)
 	}
-	err := Launch(captainHome, parent, testLaunchEndpoint{})
-	if !errors.Is(err, harness.ErrNoCaptainHarnessInSnapshot) {
-		t.Fatalf("Launch() error = %v, want ErrNoCaptainHarnessInSnapshot despite flat captain-harness pin", err)
+	if err := Launch(captainHome, parent, testLaunchEndpoint{}); err != nil {
+		t.Fatalf("Launch() error = %v, want successful launch after migration", err)
+	}
+
+	base, err := config.LoadFleetBase(parent)
+	if err != nil {
+		t.Fatalf("loading migrated fleet base: %v", err)
+	}
+	if base.CaptainProfile.Harness != "pi" {
+		t.Fatalf("migrated captain profile = %+v, want harness pi", base.CaptainProfile)
+	}
+	if _, err := config.Get(parent, "captain-harness"); err == nil {
+		t.Fatal("legacy captain-harness file remains after migration")
+	}
+
+	snapshot, err := config.LoadPublishedSnapshot(captainHome)
+	if err != nil {
+		t.Fatalf("loading published snapshot: %v", err)
+	}
+	if snapshot.Config().CaptainProfile.Harness != "pi" {
+		t.Fatalf("snapshot captain profile = %+v, want harness pi", snapshot.Config().CaptainProfile)
 	}
 }
 
