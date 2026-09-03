@@ -1,6 +1,6 @@
 # 0004. Authoritative Task Lifecycle, Delivery Transactions, and Projections
 
-* **Status:** Accepted; substantially implemented — the authoritative Task aggregate, atomic handoff, head-bound merge authorization, Dispatch Holds, and the `task` sole noun all landed. §3 (delivered phase) is superseded by ADR-0008, §5 (IssueLink) by ADR-0011, §6 (delivery transitions) by ADR-0022. Remaining residual work (§9 ContextManifest, §7 DispatchInterpretation decision, domain projection cleanup) is tracked in the [owner-clean residual roadmap](../plans/2026-09-03-owner-clean-residual-roadmap.md).
+* **Status:** Accepted; substantially implemented — the authoritative Task aggregate, atomic handoff, head-bound merge authorization, Dispatch Holds, and the `task` sole noun all landed. §3 (delivered phase) is superseded by ADR-0008, §5 (IssueLink) by ADR-0011, §6 (delivery transitions) by ADR-0022, §7 (DispatchInterpretation) subsumed and §9 (ContextManifest) retired by ADR-0023. The `DeliveryState`/`MetaDeliveryState` projection cleanup landed (#743). No residual work remains open on this ADR.
 * **Date:** 2026-07-30
 * **Extends:** ADR-0002 (durable lifecycle and clean breaks), ADR-0003 (project-scoped config)
 * **Triggered by:** `munsu-workflow-incident-report-2026-07-30.md`
@@ -68,7 +68,7 @@ A task has a revisioned `DeliveryPlan` with requested mode, effective mode, and 
 
 Mode readiness is proven by a context-scoped, typed capability attestation bound to project, execution home, harness, gate agent, executable identity, and resolved config. Cached attestations require unchanged input digest, matching context, and valid TTL. Irreversible mode-specific operations revalidate capability.
 
-### 7. Dependency interpretation and dispatch holds
+### 7. Dependency interpretation and dispatch holds (DispatchInterpretation subsumed — ADR-0023)
 
 When directive order differs from the dependency-ready set, the Captain writes a `DispatchInterpretation` containing the directive revision, dependency snapshot digest, selected tasks, divergence class, explanation, and evidence. Safe parent-spec-to-executable-child interpretation may report-and-proceed only under configured autonomy; ambiguous or material intent conflicts require a Decision.
 
@@ -85,7 +85,7 @@ The public vocabulary separates queries from mutations:
 
 `backlog add --start` and mutating `backlog ready <id>` are removed. Incorrect forms return typed, directly runnable corrections.
 
-### 9. Bounded Context Manifest
+### 9. Bounded Context Manifest (retired — ADR-0023)
 
 Complex tasks may carry a revision-bound `ContextManifest` combining author hints with bounded repository evidence. It provides paths, symbols, line ranges, tests, commands, invariants, reasons, confidence, and digests rather than embedding whole files. The default budget is at most ten entries, including no more than three implementation seams, three test/helper seams, and two architecture/convention references. Expansion is explicit and revisioned.
 

@@ -47,24 +47,19 @@ gated on the safety flag no live path set. This changes the `state/.afk-digest` 
 but both fields were `omitempty` and were never written in production, so no real data is
 lost. Documentation and the embedded skill drop every inject promise.
 
-`RedactSensitive` is removed with the cluster. **Red flag:** it was the only redactor in
-the tree, and ADR-0005 §4 (`LaunchDiagnostic` redaction) still has no implementation.
-Deleting it removes no live guard — it was dead at runtime as well — but whoever
-implements ADR-0005 §4 will have to write redaction at its proper owner rather than
-reusing AFK's.
+`RedactSensitive` is removed with the cluster. It was the only redactor in the tree, and ADR-0005 §4 (`LaunchDiagnostic` redaction) was its only planned consumer; §4 is now **retired (won't-build) by ADR-0023**, so no redaction bundle will be built and the red-flag concern is resolved. Deleting `RedactSensitive` removed no live guard — it was dead at runtime — and launch failures surface through the typed errors in `internal/harness`/`internal/fleet`.
 
 ADR-0005 §3 (bounded nudge for `unresponsive` endpoints) is **not** overruled by this ADR.
 It speaks the `EndpointObservation` vocabulary of soldier/captain endpoint recovery, while
 `ResolveRecovery` keyed off `InjectOutcome` — a third vocabulary nobody called.
-Implementing ADR-0005 §3 remains open, and does not belong to AFK.
+ADR-0005 §3 is **closed by ADR-0023** as the accepted Captain-scoped recovery boundary (the bounded nudge is the shipped `stepNudgeRetry`); it does not belong to AFK.
 
 ## Alternatives rejected
 
 **Wire the injector up at `session_cmd.go` before `d.Start`.** Rejected because (a) it
 would rebuild the only raw-`SendKeys` writer into a human's working session, on a seam the
 project deliberately left; (b) it would not be sufficient — `nudgeTracker` and
-`ResolveRecovery` would still have no caller, so the ADR-0005 §3 nudge contract still would
-not be enforced; (c) it would wake ~900 lines that have never run in production, all at
+`ResolveRecovery` would still have no caller, so the ADR-0005 §3 nudge contract (now closed by ADR-0023 as the accepted boundary) still would not be the enforcement path; (c) it would wake ~900 lines that have never run in production, all at
 once, pointed at a terminal a person is using.
 
 If the owner still wants AFK digests delivered automatically, that is a **new feature**,
