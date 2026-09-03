@@ -213,8 +213,8 @@ func TestBinaryGuardContract_JSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &resp); err != nil {
 		t.Fatalf("output is not valid JSON: %v\n%s", err, out)
 	}
-	if resp.SchemaVersion != "munsu.orchestration/v2" {
-		t.Errorf("schema_version = %q, want munsu.orchestration/v2", resp.SchemaVersion)
+	if resp.SchemaVersion != "munsu.orchestration/v1" {
+		t.Errorf("schema_version = %q, want munsu.orchestration/v1", resp.SchemaVersion)
 	}
 	if resp.Kind != "guard" {
 		t.Errorf("kind = %q, want guard", resp.Kind)
@@ -351,8 +351,8 @@ func TestBinaryWatchEnsure_JSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &resp); err != nil {
 		t.Fatalf("output is not valid JSON: %v\n%s", err, out)
 	}
-	if resp.SchemaVersion != "munsu.orchestration/v2" {
-		t.Errorf("schema_version = %q, want munsu.orchestration/v2", resp.SchemaVersion)
+	if resp.SchemaVersion != "munsu.orchestration/v1" {
+		t.Errorf("schema_version = %q, want munsu.orchestration/v1", resp.SchemaVersion)
 	}
 	if resp.Kind != "watch.ensure" {
 		t.Errorf("kind = %q, want watch.ensure", resp.Kind)

@@ -1,4 +1,4 @@
-schema_version: "munsu.orchestration/v2"
+schema_version: "munsu.orchestration/v1"
 kind: task.list
 status: success
 data[2]{id,kind,project,status}:

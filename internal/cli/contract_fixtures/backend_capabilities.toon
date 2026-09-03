@@ -1,4 +1,4 @@
-schema_version: "munsu.orchestration/v2"
+schema_version: "munsu.orchestration/v1"
 kind: backend.capabilities
 status: success
 data:

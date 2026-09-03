@@ -1,5 +1,5 @@
 {
-  "schema_version": "munsu.orchestration/v2",
+  "schema_version": "munsu.orchestration/v1",
   "kind": "message",
   "status": "success",
   "data": {

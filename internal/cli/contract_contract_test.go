@@ -103,7 +103,7 @@ func TestGoldenFixturePairs(t *testing.T) {
 
 func TestSchemaVersionAndModelJSONTags(t *testing.T) {
 	t.Parallel()
-	if SchemaVersion != "munsu.orchestration/v2" {
+	if SchemaVersion != "munsu.orchestration/v1" {
 		t.Fatalf("SchemaVersion = %q; update the compatibility table and fixtures before changing it", SchemaVersion)
 	}
 	for _, value := range []any{

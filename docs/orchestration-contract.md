@@ -8,7 +8,7 @@ This contract gives agent callers a small, versioned view of orchestration state
 
 The JSON-compatible Go model lives in package `internal/cli` under `internal/cli/contract_model.go` (response/error envelopes, schemas, `SchemaVersion`), the TOON/JSON encoder and output helpers under `internal/cli/contract_output.go`, and the command wiring under `internal/cli/contract_commands.go` / `internal/cli/fleet_contract.go`. Paired golden fixtures live under `internal/cli/contract_fixtures/` (embedded via `internal/cli/contract_fixtures_embed.go`) and are drift-checked by `internal/cli/contract_contract_test.go`. There is no package literally named `internal/contract`; the contract belongs to the `cli` output boundary and composes cleanly with the domain owners it names.
 
-`schema_version` is required in every response and is presently `munsu.orchestration/v2`. `kind` identifies the response schema. Both encodings have identical field names, values, and semantics.
+`schema_version` is required in every response and is presently `munsu.orchestration/v1`. `kind` identifies the response schema. Both encodings have identical field names, values, and semantics.
 
 ## Scope and single-owner boundaries
 
@@ -61,7 +61,7 @@ All successful responses have this envelope:
 
 | Field | Type | Required | Meaning |
 |---|---|---:|---|
-| `schema_version` | string | yes | `munsu.orchestration/v2` |
+| `schema_version` | string | yes | `munsu.orchestration/v1` |
 | `kind` | string | yes | stable response identity |
 | `status` | string | yes | `success` |
 | `data` | object | yes | one of the schema objects below |
@@ -93,7 +93,7 @@ Errors use this stdout envelope in both formats:
 | `error.action` | string | exact next command or correction |
 | `error.message` | string | concise, dependency-neutral explanation |
 
-Stable `error_code` values are `invalid_argument`, `unknown_flag`, `unsupported_input`, `not_found`, `invalid_state`, `dependency_unavailable`, `conflict`, and `internal`. New codes are additive only within v2. `action`, not a new exit-code class, carries next-step guidance.
+Stable `error_code` values are `invalid_argument`, `unknown_flag`, `unsupported_input`, `not_found`, `invalid_state`, `dependency_unavailable`, `conflict`, and `internal`. New codes are additive only within v1. `action`, not a new exit-code class, carries next-step guidance.
 
 | Exit code | Meaning | Examples |
 |---:|---|---|
@@ -137,7 +137,7 @@ The core contract does not encode harness-private arguments, process names, or l
 
 ## Compatibility policy
 
-| Change | v2 treatment | Required action |
+| Change | v1 treatment | Required action |
 |---|---|---|
 | Add optional response field or capability | compatible | document and add paired fixtures/tests |
 | Add command or output format | compatible | advertise via capabilities and fixture it |

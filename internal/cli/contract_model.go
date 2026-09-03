@@ -6,7 +6,7 @@ package cli
 
 const (
 	// SchemaVersion is the stable schema identifier shared by TOON and JSON.
-	SchemaVersion = "munsu.orchestration/v2"
+	SchemaVersion = "munsu.orchestration/v1"
 	OutputTOON    = "toon"
 	OutputJSON    = "json"
 )

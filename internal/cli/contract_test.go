@@ -41,7 +41,7 @@ func TestCapabilitiesContractOutputsTOONAndJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(jsonOutput), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.SchemaVersion != "munsu.orchestration/v2" || response.Kind != "capabilities" {
+	if response.SchemaVersion != "munsu.orchestration/v1" || response.Kind != "capabilities" {
 		t.Errorf("response = %+v", response)
 	}
 }
@@ -942,8 +942,8 @@ func TestSafetyCheckContractJSON(t *testing.T) {
 	}
 
 	// Verify envelope fields
-	if resp.SchemaVersion != "munsu.orchestration/v2" {
-		t.Errorf("schema_version = %q, want munsu.orchestration/v2", resp.SchemaVersion)
+	if resp.SchemaVersion != "munsu.orchestration/v1" {
+		t.Errorf("schema_version = %q, want munsu.orchestration/v1", resp.SchemaVersion)
 	}
 	if resp.Kind != "integrate.safety-check" {
 		t.Errorf("kind = %q, want integrate.safety-check", resp.Kind)
@@ -1010,7 +1010,7 @@ func TestSafetyCheckRegressionOldOmitemptyShape(t *testing.T) {
 	// the TS parser requires typeof data.block === "boolean", which fails
 	// when the key is absent from JSON.
 	oldJSON := `{
-	  "schema_version": "munsu.orchestration/v2",
+	  "schema_version": "munsu.orchestration/v1",
 	  "kind": "integrate.safety-check",
 	  "status": "success",
 	  "data": {
@@ -1084,7 +1084,7 @@ function parseSafetyCheck(raw: string):
   }
   if (typeof parsed !== "object" || parsed === null)
     return { ok: false, reason: "not a JSON object" };
-  if (parsed.schema_version !== "munsu.orchestration/v2")
+  if (parsed.schema_version !== "munsu.orchestration/v1")
     return { ok: false, reason: "wrong schema_version: " + String(parsed.schema_version) };
   if (parsed.kind !== "integrate.safety-check")
     return { ok: false, reason: "wrong kind: " + String(parsed.kind) };
