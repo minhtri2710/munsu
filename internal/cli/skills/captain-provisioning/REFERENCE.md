@@ -59,18 +59,20 @@ home with its AGENTS.md as the launch prompt.
 
 ### Harness resolution chain
 
-The harness is resolved through `harness.Captain()` (see `internal/harness/harness.go`):
+The harness is resolved through `harness.Captain()` (see `internal/harness/harness.go`) from the General home’s typed fleet base document (`config/base.json`):
 
-1. `config/captain-harness` file value (first-class captain harness pin)
-2. `config/soldier-harness` file value (fallback — shared with soldiers)
+1. `CaptainProfile.Harness` (the `captain-harness` profile)
+2. `Config.SoldierHarness` (fallback shared with soldiers)
 3. `Detect()` (auto-detect from environment markers)
 
-A value of `"default"` in either config file is treated as unset.
+The optional launch model comes from `CaptainProfile.Model`, falling back to
+`Config.Model` in the same typed document. Captain homes do not author these
+values locally; the published snapshot is the captain operation source.
 
 ### Launch mechanics
 
 - Currently **only the "pi" harness is supported** for captain launch.
-- Reads optional `model` from parent home config (`config/model`) for the `--model` flag.
+- Reads the resolved model from the typed parent-home base document for the `--model` flag.
 - Resolves `pi` on PATH.
 - Changes working directory to the general home.
 - Runs: `pi [--model <model>] -- <captain-home> "$(cat <captain-home>/AGENTS.md)"`
@@ -164,37 +166,26 @@ munsu captain handoff /var/munsu/captains/my-monitor task-001 task-002
 parent (General) home to the captain. Also used automatically on seed (with parent)
 and pre-launch.
 
-### Inheritable config list
+### Configuration propagation
 
-Default list (order matters):
+`munsu captain config-push <captain-home>` refreshes the captain’s durable
+`config/parent-home` reference, refreshes `.captain-charter.md`, and publishes
+the General’s resolved project configuration to
+`config/resolved-project.json`. The snapshot includes the typed launch-profile
+values needed by captain operations; no launch-profile value is copied as a
+flat `config/<key>` file. A missing parent `config/base.json` is tolerated
+only during initial setup, before a snapshot can be published.
 
-```
-soldier-harness
-soldier-dispatch.json
-```
-
-Override via `MUNSU_INHERITABLE_CONFIG` env (colon-separated).
-
-### Also pushed (always, not env-listed)
-
-| Path | Behavior |
-|------|----------|
-| `data/general-shared.md` | Copy read-only (`0444`); mirror-delete if absent on parent |
-| `data/projects.md` | Byte-copy of General project registry; absolute path descriptions stay valid without cloning into captain `projects/`; mirror-delete if absent on parent |
-
-### Operations
-
-1. **Mirror deletions**: for each inheritable file that exists in the captain's `config/` but is absent from the parent's `config/`, delete it from the captain.
-2. **Copy present files**: for each inheritable file in the parent, copy it to the captain's `config/`.
-3. **Push shared + projects registry**: `data/general-shared.md` and `data/projects.md` as above.
-4. **Safety**: refuses symlink escape outside the captain home; refuses writes to git-tracked destinations.
-5. **Logging**: all actions are appended to `<captain-home>/state/config-push.log` with UTC timestamps in the format `<ts>\t<action>\t<name>`.
+The operation validates provenance and destination safety before mutation,
+refuses symlink escapes and tracked snapshot destinations, and advances the
+config-reread generation only when a snapshot is published. The resulting
+snapshot is the Captain’s runtime configuration; Captain launch settings still
+come from the General-home base document described above.
 
 ```sh
 munsu captain config-push /var/munsu/captains/my-monitor
-#   pushed soldier-harness
-#   pushed soldier-dispatch.json
-#   pushed projects.md
+# refreshed config/parent-home and .captain-charter.md
+# published config/resolved-project.json
 ```
 
 ### Source references

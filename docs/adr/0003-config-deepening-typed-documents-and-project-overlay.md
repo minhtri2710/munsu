@@ -33,7 +33,7 @@ The incident exposed direct symptoms: the no-mistakes fallback ambiguity hit the
 
 Configuration is stored as three typed JSON documents, each with its own `schemaVersion`:
 
-1. `config/base.json` — fleet-wide defaults, including the fleet-default dispatch profile set.
+1. `config/base.json` — fleet-wide defaults, including launch-profile fields (`Config.SoldierHarness`, `Config.Model`, and `CaptainProfile`) and the fleet-default dispatch profile set.
 2. `data/captains.json` — typed Captain registry (replaces `data/captains.md`).
 3. `data/projects.json` — typed project registry (replaces `data/projects.md`), each project carrying its Project Overlay.
 
@@ -76,7 +76,7 @@ Resolution is internal; operators address the three scopes through their nouns.
 
 ### 9. Migration
 
-Migration is a hard cutover, consistent with ADR-0002 §11 (forward-only, no dual-read, no dual-write). `munsu config migrate --home <exact-home>` is a one-shot ingest of legacy file-per-key configuration and the markdown registries into the three JSON documents. After a verified ingest, legacy files are archived (renamed to `*.legacy-<timestamp>-<digest>`), never deleted — the wake-resolution lesson. The General-level `soldier-dispatch.json` is folded into `base.dispatch`. The load path fails closed with an actionable "config not migrated; run `munsu config migrate --home <exact-home>`" message when JSON is absent but legacy is present. `converge`, `session-start`, and doctor detect and report required migration but do not trigger it. Fleet-wide migration uses the explicit plan/apply orchestration defined by ADR-0006, keeping the load path pure and mutation scope auditable.
+The broader legacy migration described here is superseded by ADR-0008. The shared fleet-base load/update boundary performs the narrow launch-profile compatibility migration for legacy `config/soldier-harness`, `config/model`, and `config/captain-harness` when `config/base.json` is present or being authored. Legacy values take precedence over existing typed values so an already-diverged home is repaired; the boundary validates and persists the resulting `base.json`, then removes those three legacy files. Malformed or unsupported legacy values fail closed without changing the typed document. There is no live flat-file fallback for these keys; `soldier-dispatch.json` remains separate from the launch-profile migration.
 
 ### 10. Environment overrides at the boundary (retired)
 

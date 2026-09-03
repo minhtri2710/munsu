@@ -34,8 +34,8 @@ that output is the authority, not this file.
 |---------|-------------|
 | `munsu session-start` | Lock, bootstrap, and print session-start digest (Context, Fleet State, Supervision). |
 | `munsu harness detect` | Detect the running agent harness. |
-| `munsu harness soldier` | Resolve soldier harness (dispatch.json > config/soldier-harness > detected). |
-| `munsu harness captain` | Resolve captain harness (config/captain-harness > config/soldier-harness > detected). |
+| `munsu harness soldier` | Resolve soldier harness (published snapshot > fleet base `config/base.json` > detected). |
+| `munsu harness captain` | Resolve captain harness (base CaptainProfile > base soldier-harness > detected; all from `config/base.json`). |
 
 ## Soldier Lifecycle
 

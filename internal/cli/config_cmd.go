@@ -235,9 +235,9 @@ func setBaseConfigField(homeDir string, mutate func(*config.FleetBaseDocument)) 
 }
 
 // readBaseConfigField reads one typed fleet base config field (default-mode,
-// require-no-mistakes, allow-direct-pr-fallback, backend). ok is false when the
-// field is unset or the base document is absent (known-unset); a
-// malformed/invalid document fails closed.
+// require-no-mistakes, allow-direct-pr-fallback, backend, soldier-harness,
+// model, captain-harness). ok is false when the field is unset or the base
+// document is absent (known-unset); a malformed/invalid document fails closed.
 func readBaseConfigField(homeDir, key string) (val string, ok bool, err error) {
 	base, err := config.LoadFleetBase(homeDir)
 	if err != nil {
@@ -295,8 +295,10 @@ func newConfigShowCmd() *cobra.Command {
 		Args:  NoArgs,
 		Long: `Display all persisted configuration values and their source.
 
-Each value is read from the config file at $MUNSU_HOME/config/<key>.
-Values that are not set are shown as "<not set>".
+Typed operational and launch-profile values are read from the fleet base
+document at $MUNSU_HOME/config/base.json; home-local and policy values are
+read from flat files at $MUNSU_HOME/config/<key>. Values that are not set are
+shown as "<not set>".
 `,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			return writeContract(cmd, Response[MessageResult]{
