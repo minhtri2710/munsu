@@ -374,3 +374,33 @@ func TestIdentityFromMeta_RejectsMultipleFieldsWithoutURL(t *testing.T) {
 		t.Errorf("expected 'no pr_url' error, got: %v", err)
 	}
 }
+
+// TestRequireIdentity_RejectsLegacyOnlyMeta proves the end-user-facing hard cut:
+// a real on-disk .meta that only carries the removed legacy aliases (pr/pr_base/pr_head)
+// and no canonical key must no longer resolve to a delivery identity. RequireIdentity
+// reads the file via home.ReadMeta and resolves via domain.IdentityFromMeta; with the
+// legacy fallback/conflict-reconciliation branches deleted, the legacy-only file is now
+// treated as having no identity, so RequireIdentity fails closed.
+func TestRequireIdentity_RejectsLegacyOnlyMeta(t *testing.T) {
+	homeDir := t.TempDir()
+	id := "legacy-only-task"
+
+	meta := map[string]string{
+		"kind":    "ship",
+		"project": "munsu",
+		"pr":      "https://github.com/minhtri2710/munsu/pull/42",
+		"pr_base": "main",
+		"pr_head": "abc123def456abc123def456abc123def456abc1",
+	}
+	if err := home.WriteMeta(homeDir, id, meta); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+
+	_, err := RequireIdentity(homeDir, id)
+	if err == nil {
+		t.Fatal("expected error for legacy-only meta after legacy alias removal (hard cut)")
+	}
+	if !strings.Contains(err.Error(), "no delivery identity found") {
+		t.Errorf("expected 'no delivery identity found' error, got: %v", err)
+	}
+}
