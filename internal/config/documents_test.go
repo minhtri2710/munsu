@@ -65,6 +65,31 @@ func TestLoadFleetBaseMigrationRejectsInvalidLegacyWithoutChanges(t *testing.T) 
 	}
 }
 
+func TestLoadFleetBaseMigrationRejectsInvalidLegacyCaptainHarnessWithoutChanges(t *testing.T) {
+	home := t.TempDir()
+	base := validBase()
+	if err := StoreFleetBase(home, base); err != nil {
+		t.Fatal(err)
+	}
+	if err := Set(home, "captain-harness", "unsupported-captain-harness some-model high"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := LoadFleetBase(home); err == nil || !strings.Contains(err.Error(), "unsupported-captain-harness") {
+		t.Fatalf("LoadFleetBase() error = %v, want unsupported legacy captain harness refusal", err)
+	}
+	got, err := loadDocumentForTest(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Config, base.Config) || got.CaptainProfile != base.CaptainProfile {
+		t.Fatalf("base changed during failed migration: config=%+v captain=%+v", got.Config, got.CaptainProfile)
+	}
+	if _, err := os.Stat(filepath.Join(ConfigDir(home), "captain-harness")); err != nil {
+		t.Fatalf("legacy captain-harness file removed during failed migration: %v", err)
+	}
+}
+
 func loadDocumentForTest(home string) (FleetBaseDocument, error) {
 	var got FleetBaseDocument
 	err := loadDocument(filepath.Join(home, BaseDocumentPath), &got)
