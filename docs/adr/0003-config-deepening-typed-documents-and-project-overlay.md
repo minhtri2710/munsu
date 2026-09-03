@@ -1,6 +1,6 @@
 # 0003. Config Deepening — Typed Documents, Per-Project Resolved Overlay, and 1:1 Captain–Project Binding
 
-* **Status:** Accepted (design crystallized through structured grilling); implementation pending — sequenced in the [incident remediation master plan](../plans/2026-07-30-incident-remediation-master-plan.md)
+* **Status:** Accepted; substantially implemented — typed `config/base.json`, per-project overlay, 1:1 Captain–Project binding, pure resolve/digest, published-snapshot push, and per-project digest+nudge all landed. Remaining residual work (project/captain config CLI, scalar consolidation, env-override decision) is tracked in the [owner-clean residual roadmap](../plans/2026-09-03-owner-clean-residual-roadmap.md). §9 migration is superseded by ADR-0008.
 * **Date:** 2026-07-30
 * **Extends:** ADR-0002 §8 (config), §11 (migration and activation), §12 (AXI and env)
 * **Triggered by:** `munsu-workflow-incident-report-2026-07-30` and the goal of one General supervising many Captains across many projects

@@ -1,6 +1,6 @@
 # 0004. Authoritative Task Lifecycle, Delivery Transactions, and Projections
 
-* **Status:** Accepted; implementation pending
+* **Status:** Accepted; substantially implemented — the authoritative Task aggregate, atomic handoff, head-bound merge authorization, Dispatch Holds, and the `task` sole noun all landed. §3 (delivered phase) is superseded by ADR-0008, §5 (IssueLink) by ADR-0011, §6 (delivery transitions) by ADR-0022. Remaining residual work (§9 ContextManifest, §7 DispatchInterpretation decision, domain projection cleanup) is tracked in the [owner-clean residual roadmap](../plans/2026-09-03-owner-clean-residual-roadmap.md).
 * **Date:** 2026-07-30
 * **Extends:** ADR-0002 (durable lifecycle and clean breaks), ADR-0003 (project-scoped config)
 * **Triggered by:** `munsu-workflow-incident-report-2026-07-30.md`
