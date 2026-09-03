@@ -1,6 +1,6 @@
 # 0005. Runtime Bindings, Supervision, Recovery, and Mutation Fencing
 
-* **Status:** Accepted; partially implemented — immutable Endpoint/Worktree bindings, typed 7-state observation (ADR-0021), per-home watcher lease + degraded mode, `.soldier-brief.md`+manifest, and Captain-side recovery (relaunch/nudge/relaunch-guard) all landed. Remaining residual work (§4 recovery-series/circuit + LaunchDiagnostic, §3 soldier-endpoint coverage, §5 General→Captain relay, `.soldier-md` removal, §6 Git-fencing tier decision) is tracked in the [owner-clean residual roadmap](../plans/2026-09-03-owner-clean-residual-roadmap.md).
+* **Status:** Accepted; partially implemented — immutable Endpoint/Worktree bindings, typed 7-state observation (ADR-0021), per-home watcher lease + degraded mode, `.soldier-brief.md`+manifest, and Captain-side recovery (relaunch/nudge/relaunch-guard) all landed. Remaining residual work (§4 recovery-series/circuit + LaunchDiagnostic, §3 soldier-endpoint coverage, §5 General→Captain relay, §6 Git-fencing tier decision) is tracked in the [owner-clean residual roadmap](../plans/2026-09-03-owner-clean-residual-roadmap.md).
 * **Date:** 2026-07-30
 * **Extends:** ADR-0002 (Resource Lease, quarantine, durable lifecycle)
 * **Triggered by:** `munsu-workflow-incident-report-2026-07-30.md`

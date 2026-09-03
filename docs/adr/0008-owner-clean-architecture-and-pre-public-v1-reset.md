@@ -1,6 +1,6 @@
 # 0008. Owner-Clean Architecture and Pre-Public v1 Reset
 
-* **Status:** Accepted; substantially implemented — topology, `task` sole noun, render seam, contract repo, and activation gate landed (#402–#418). Remaining residual work (the §11 `orchestration/v2`→v1 reset) is tracked in the [owner-clean residual roadmap](../plans/2026-09-03-owner-clean-residual-roadmap.md).
+* **Status:** Accepted; substantially implemented — topology, `task` sole noun, render seam, contract repo, and activation gate landed (#402–#418). Remaining residual work (the §2 `.meta`/`.status` decision — §2 records these projections as removed, but the tree still writes them; retention is an owner decision) is tracked in the [owner-clean residual roadmap](../plans/2026-09-03-owner-clean-residual-roadmap.md).
 * **Date:** 2026-08-03
 * **Supersedes:** ADR-0001 through ADR-0007 where their topology, ownership, projections, migration, fallback, compatibility, schema, command, or test decisions conflict with this ADR
 * **Triggered by:** Whole-codebase architecture review and structured grilling

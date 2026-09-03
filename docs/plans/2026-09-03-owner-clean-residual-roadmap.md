@@ -1,9 +1,21 @@
 # Owner-Clean Residual Roadmap (ADR-0003/0004/0005/0008)
 
 * **Date:** 2026-09-03
-* **Status:** T0 landed; G5 resolved. Remaining slices T1–T3 gated by open decision gates G1–G4.
+* **Status:** T0 landed; G5 resolved. **T1 (R1/R2/R3), the project half of T2·C1, and a new R4 all landed 2026-09-03 — see "Landed since T0" below.** Remaining slices gated by open decision gates G1–G4.
 * **Sources:** ADR-0003, ADR-0004, ADR-0005, ADR-0008; supersessions in ADR-0011/0013/0015/0020/0021/0022; prior [owner-clean cutover program](2026-08-03-owner-clean-cutover-program.md)
 * **Delivery mode:** no-mistakes (every slice = one issue on one branch through the gate; push/PR/merge are Human gates)
+
+## Landed since T0 (2026-09-03)
+
+The T1 removals and the first T2 config slice shipped the same day this roadmap landed. The tables and slice descriptions below are the point-in-time plan of record; for the items listed here they are superseded by the merged work:
+
+* **R1** — legacy `.soldier-md` recognition removed — **#737** (merged)
+* **R3** — dual-key PR-meta aliasing dropped — **#738** (merged; the duplicate `DeliveryState` type is still pending)
+* **R2** — `munsu.orchestration/v2`→v1 reset — **#739** (merged; reset-to-v1 chosen, resolving the R2 caveat below)
+* **T2·C1 (project half)** — `munsu project config get/set` — **#741** (merged; `captain config` still pending)
+* **R4 (not in the original slice list)** — FleetSnapshot single-contract: dropped the `--version` selector so `munsu fleet snapshot` emits one shape — **#740** (merged)
+
+Still open: T2·C1 `captain config`, T2·C2 consolidation, T3 (S1–S4), gates G1–G4, and the ADR-0008 §2 `.meta`/`.status` projection-retention owner decision.
 
 ## Finding
 
@@ -15,10 +27,10 @@ The genuinely-remaining engineering is concentrated in **ADR-0005 §4** — the 
 
 | ADR | Shipped | Remaining (build) | Remaining (removal) | Superseded / retired |
 |---|---|---|---|---|
-| 0003 Config | typed `base.json`, project overlay, 1:1 binding, pure resolve/digest, published-snapshot push, per-project digest+nudge | `project/captain config get/set` CLI; scalar file-per-key → `base.json` consolidation | — (`config migrate` already deleted) | §9 migration (0008) |
-| 0004 Task lifecycle | Task aggregate {ID,Gen,Owner,Def,Lifecycle}, atomic handoff, head-bound merge authorization, DispatchHold, `task` noun | §9 ContextManifest (only clean build gap) | domain.go dual-key aliasing + duplicate `DeliveryState` type | §3 delivered→auth (0008), §5 IssueLink (0011), §6 (0022) |
-| 0005 Runtime | immutable Endpoint/Worktree bindings, typed 7-state observation (0021), per-home watcher lease + degraded mode, `.soldier-brief.md`+manifest, **Captain recovery (relaunch/nudge/relaunch-guard)** | **§4 recovery series+circuit (failure-signature)**, **§4 LaunchDiagnostic bundle**; §3 unified/soldier-endpoint coverage (verify vs Captain matrix); §5 General→Captain relay (verify) | legacy `.soldier-md` recognition path | — |
-| 0008 Owner-clean | topology, `task` noun, render seam, contract repo, arch-policy gate, package deletions | — | reset `munsu.orchestration/v2` → v1 (§11) | — |
+| 0003 Config | typed `base.json`, project overlay, 1:1 binding, pure resolve/digest, published-snapshot push, per-project digest+nudge, `project config get/set` (#741) | `captain config get/set` CLI; scalar file-per-key → `base.json` consolidation | — (`config migrate` already deleted) | §9 migration (0008) |
+| 0004 Task lifecycle | Task aggregate {ID,Gen,Owner,Def,Lifecycle}, atomic handoff, head-bound merge authorization, DispatchHold, `task` noun | §9 ContextManifest (only clean build gap) | duplicate `DeliveryState` type (dual-key aliasing removed #738) | §3 delivered→auth (0008), §5 IssueLink (0011), §6 (0022) |
+| 0005 Runtime | immutable Endpoint/Worktree bindings, typed 7-state observation (0021), per-home watcher lease + degraded mode, `.soldier-brief.md`+manifest, **Captain recovery (relaunch/nudge/relaunch-guard)** | **§4 recovery series+circuit (failure-signature)**, **§4 LaunchDiagnostic bundle**; §3 unified/soldier-endpoint coverage (verify vs Captain matrix); §5 General→Captain relay (verify) | — (`.soldier-md` recognition removed #737) | — |
+| 0008 Owner-clean | topology, `task` noun, render seam, contract repo, arch-policy gate, package deletions, `orchestration/v2`→v1 reset (#739) | §2 `.meta`/`.status` projection retention (owner decision) | — (§11 reset shipped #739) | — |
 
 ## Decision gates (Human — resolve before the dependent slice runs)
 
