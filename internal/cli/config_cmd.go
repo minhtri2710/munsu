@@ -23,7 +23,7 @@ func newConfigCmd() *cobra.Command {
 
 Configuration values are stored as files under $MUNSU_HOME/config/<key>,
 except the typed operational keys (backend, default-mode,
-require-no-mistakes), which are authored in the fleet base document
+require-no-mistakes, allow-direct-pr-fallback), which are authored in the fleet base document
 (config/base.json), the single operational authority. backend reports the
 persisted snapshot Backend (the published config snapshot or the fleet base
 document's typed Backend); the remaining keys report the persisted flat file
@@ -144,6 +144,15 @@ Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 					v := parsed
 					b.Config.RequireNoMistakes = &v
 				})
+			case "allow-direct-pr-fallback":
+				parsed, err := strconv.ParseBool(strings.TrimSpace(value))
+				if err != nil {
+					return fmt.Errorf("config set allow-direct-pr-fallback: want true or false, got %q", value)
+				}
+				return setBaseConfigField(ctx.Home, func(b *config.FleetBaseDocument) {
+					v := parsed
+					b.Config.AllowDirectPRFallback = &v
+				})
 			case "backend":
 				if strings.TrimSpace(value) == "" {
 					return fmt.Errorf("config set backend: backend identity must not be empty")
@@ -205,9 +214,9 @@ func setBaseConfigField(homeDir string, mutate func(*config.FleetBaseDocument)) 
 }
 
 // readBaseConfigField reads one typed fleet base config field (default-mode,
-// require-no-mistakes, backend). ok is false when the field is unset or the
-// base document is absent (known-unset); a malformed/invalid document fails
-// closed.
+// require-no-mistakes, allow-direct-pr-fallback, backend). ok is false when the
+// field is unset or the base document is absent (known-unset); a
+// malformed/invalid document fails closed.
 func readBaseConfigField(homeDir, key string) (val string, ok bool, err error) {
 	base, err := config.LoadFleetBase(homeDir)
 	if err != nil {
@@ -224,6 +233,11 @@ func readBaseConfigField(homeDir, key string) (val string, ok bool, err error) {
 			return "", false, nil
 		}
 		return strconv.FormatBool(*base.Config.RequireNoMistakes), true, nil
+	case "allow-direct-pr-fallback":
+		if base.Config.AllowDirectPRFallback == nil {
+			return "", false, nil
+		}
+		return strconv.FormatBool(*base.Config.AllowDirectPRFallback), true, nil
 	case "backend":
 		return base.Config.Backend, base.Config.Backend != "", nil
 	}
