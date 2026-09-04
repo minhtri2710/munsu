@@ -35,38 +35,23 @@ import (
 // conflicts. Missing, substituted, or malformed evidence fails closed.
 
 // DeliveryAuthorizationKind is the typed, closed set of irreversible delivery
-// operations the canonical foundation authorizes. Kinds cover the actual #414
-// operations (provider merge and repository mutation / local fast-forward);
-// speculative capability tiers are deliberately absent.
+// operations the canonical foundation authorizes. The sole #414 operation is
+// provider merge; speculative capability tiers are deliberately absent.
 type DeliveryAuthorizationKind string
 
 const (
 	// DeliveryAuthorizationProviderMerge authorizes merging the bound pull
 	// request on the provider under the exact delivery identity and head.
 	DeliveryAuthorizationProviderMerge DeliveryAuthorizationKind = "provider-merge"
-	// DeliveryAuthorizationRepositoryMutation authorizes a local repository
-	// mutation (e.g. amendment or local fast-forward) on the bound worktree
-	// repository under the exact expected repository state (old-SHA lease
-	// semantics).
-	DeliveryAuthorizationRepositoryMutation DeliveryAuthorizationKind = "repository-mutation"
 )
 
 // Valid reports whether the kind is a known delivery authorization kind.
 func (k DeliveryAuthorizationKind) Valid() bool {
 	switch k {
-	case DeliveryAuthorizationProviderMerge, DeliveryAuthorizationRepositoryMutation:
+	case DeliveryAuthorizationProviderMerge:
 		return true
 	}
 	return false
-}
-
-// DeliveryExpectedState is the operation-specific expected repository state a
-// repository-mutation authorization binds: the ref being mutated and the
-// exact SHA the ref is expected to hold before the mutation (force-with-lease
-// / lease semantics). Provider-merge authorizations carry no expected state.
-type DeliveryExpectedState struct {
-	Ref    string `json:"ref"`
-	OldSHA string `json:"old_sha"`
 }
 
 // DeliveryPrecondition is a typed, closed-set precondition the Fleet delivery
@@ -105,8 +90,7 @@ func (p DeliveryPrecondition) Valid() bool {
 //     phase;
 //   - current ownership and the typed domain.DeliveryIdentity including the
 //     exact provider head;
-//   - the operation kind and the operation-specific expected repository state
-//     (old SHA for lease semantics; none for provider merge);
+//   - the typed persisted operation kind discriminator (provider merge);
 //   - the exact Endpoint/Worktree binding digest (lease/fence and repository
 //     identity/path/head fields);
 //   - the relevant delivery-holds digest;
@@ -124,7 +108,6 @@ type DeliveryAuthorization struct {
 	Owner         string                    `json:"owner"`
 	Kind          DeliveryAuthorizationKind `json:"kind"`
 	Identity      domain.DeliveryIdentity   `json:"identity"`
-	ExpectedState *DeliveryExpectedState    `json:"expected_state,omitempty"`
 	BindingDigest string                    `json:"binding_digest"`
 	HoldsDigest   string                    `json:"holds_digest"`
 	Preconditions []DeliveryPrecondition    `json:"preconditions"`
@@ -136,10 +119,6 @@ type DeliveryAuthorization struct {
 // clone deep-copies the record so committed evidence is never aliased.
 func (a DeliveryAuthorization) clone() DeliveryAuthorization {
 	out := a
-	if a.ExpectedState != nil {
-		es := *a.ExpectedState
-		out.ExpectedState = &es
-	}
 	out.Preconditions = append([]DeliveryPrecondition(nil), a.Preconditions...)
 	return out
 }
@@ -193,7 +172,7 @@ func (s DeliveryOutcomeStatus) terminal() bool {
 // DeliveryOutcome is the immutable outcome evidence document for one delivery
 // execution, keyed by Task ID + outcome Operation ID. It binds the exact
 // journal operation, the authorization identity the delivery executed under,
-// the task generation, the provider/repository evidence (head/merged SHA as
+// the task generation, the provider delivery evidence (head/merged SHA as
 // applicable), the detail classification, and the commit time.
 type DeliveryOutcome struct {
 	SchemaVersion            string                `json:"schema_version"`
@@ -253,7 +232,6 @@ type CanonicalDeliveryAuthorizationRequest struct {
 	Precondition  domain.Precondition
 	Kind          DeliveryAuthorizationKind
 	Identity      domain.DeliveryIdentity
-	ExpectedState *DeliveryExpectedState
 	Preconditions []DeliveryPrecondition
 }
 
@@ -265,9 +243,8 @@ func (r CanonicalDeliveryAuthorizationRequest) DigestBytes() ([]byte, error) {
 		Revision      uint64                    `json:"revision"`
 		Kind          DeliveryAuthorizationKind `json:"kind"`
 		Identity      domain.DeliveryIdentity   `json:"identity"`
-		ExpectedState *DeliveryExpectedState    `json:"expected_state,omitempty"`
 		Preconditions []DeliveryPrecondition    `json:"preconditions"`
-	}{r.HomeID.Value(), r.TaskID.Value(), r.Precondition.Generation, r.Precondition.Revision, r.Kind, r.Identity, r.ExpectedState, uniqueDeliveryPreconditions(r.Preconditions)})
+	}{r.HomeID.Value(), r.TaskID.Value(), r.Precondition.Generation, r.Precondition.Revision, r.Kind, r.Identity, uniqueDeliveryPreconditions(r.Preconditions)})
 }
 
 // DeliveryAuthorizationResult is the committed outcome of an authorization
@@ -391,22 +368,9 @@ func safeIdentityValue(s string) bool {
 // safeSHAValue is safeIdentityValue for SHA evidence values.
 func safeSHAValue(s string) bool { return safeIdentityValue(s) }
 
-// validateDeliveryExpectedState checks the operation-specific expected
-// repository state: a safe ref (refs may legitimately contain slashes) and a
-// safe old SHA for lease semantics.
-func validateDeliveryExpectedState(es DeliveryExpectedState) error {
-	if es.Ref == "" || es.Ref != strings.TrimSpace(es.Ref) || strings.ContainsAny(es.Ref, `\\`) || strings.ContainsAny(es.Ref, " \t\n\r") || es.Ref == "." || es.Ref == ".." {
-		return validationError("delivery expected state requires a safe ref")
-	}
-	if !safeSHAValue(es.OldSHA) {
-		return validationError("delivery expected state requires a safe old SHA")
-	}
-	return nil
-}
-
 // validateDeliveryAuthorizationRequest checks the issuance intent: a known
-// kind, a valid typed domain delivery identity, kind-appropriate expected
-// repository state, and a non-empty unique closed-set of preconditions.
+// kind, a valid typed domain delivery identity, and a non-empty unique
+// closed-set of preconditions.
 func validateDeliveryAuthorizationRequest(req CanonicalDeliveryAuthorizationRequest) error {
 	if !req.Kind.Valid() {
 		return validationError("invalid delivery authorization kind %q", req.Kind)
@@ -416,19 +380,6 @@ func validateDeliveryAuthorizationRequest(req CanonicalDeliveryAuthorizationRequ
 	}
 	if !safeSHAValue(req.Identity.HeadSHA) {
 		return validationError("delivery identity head SHA must be a safe non-empty value")
-	}
-	switch req.Kind {
-	case DeliveryAuthorizationProviderMerge:
-		if req.ExpectedState != nil {
-			return validationError("provider-merge authorization carries no expected repository state")
-		}
-	case DeliveryAuthorizationRepositoryMutation:
-		if req.ExpectedState == nil {
-			return validationError("repository-mutation authorization requires the expected repository state")
-		}
-		if err := validateDeliveryExpectedState(*req.ExpectedState); err != nil {
-			return err
-		}
 	}
 	if len(req.Preconditions) == 0 {
 		return validationError("delivery authorization requires at least one typed precondition")
@@ -476,7 +427,7 @@ func validateDeliveryRevocation(r DeliveryRevocation) error {
 }
 
 // validateDeliveryAuthorization checks one committed issuance evidence
-// document shape and the kind-appropriate expected state.
+// document shape and its typed delivery fields.
 func validateDeliveryAuthorization(a DeliveryAuthorization) error {
 	if a.SchemaVersion != TaskAuthoritySchema {
 		return validationError("invalid delivery authorization schema %q", a.SchemaVersion)
@@ -504,19 +455,6 @@ func validateDeliveryAuthorization(a DeliveryAuthorization) error {
 	}
 	if !safeSHAValue(a.Identity.HeadSHA) {
 		return validationError("delivery authorization identity head SHA must be a safe non-empty value")
-	}
-	switch a.Kind {
-	case DeliveryAuthorizationProviderMerge:
-		if a.ExpectedState != nil {
-			return validationError("provider-merge authorization carries expected repository state")
-		}
-	case DeliveryAuthorizationRepositoryMutation:
-		if a.ExpectedState == nil {
-			return validationError("repository-mutation authorization missing expected repository state")
-		}
-		if err := validateDeliveryExpectedState(*a.ExpectedState); err != nil {
-			return err
-		}
 	}
 	if !domain.IsSHA256(a.BindingDigest) {
 		return validationError("delivery authorization binding digest must be a 64-hex sha256 digest")
@@ -950,8 +888,8 @@ func sha256Hex(data []byte) string {
 // #414 irreversible operation kind, committing an immutable issuance evidence
 // document keyed by Task ID + authorization Operation ID and updating the
 // bounded index pointer. Issuance requires a current working task with owner
-// and the exact bindings required by the kind, no matching active delivery
-// hold, no active transfer reservation, no terminal committed outcome, no
+// and the exact endpoint/worktree bindings, no matching active delivery hold,
+// no active transfer reservation, no terminal committed outcome, no
 // already-active authorization, a valid typed identity whose head matches the
 // bound worktree head, and valid preconditions; it fails closed otherwise.
 // Repeating the same Operation ID with the same digest replays the durable
@@ -1013,10 +951,6 @@ func (c *Canonical) AuthorizeDelivery(op domain.Operation, req CanonicalDelivery
 			OperationID:   op.ID.Value(),
 			Digest:        op.Digest,
 			IssuedAt:      c.now().UnixNano(),
-		}
-		if req.ExpectedState != nil {
-			es := *req.ExpectedState
-			auth.ExpectedState = &es
 		}
 		if err := validateDeliveryAuthorization(auth); err != nil {
 			return Aggregate{}, DeliveryIndex{}, nil, err

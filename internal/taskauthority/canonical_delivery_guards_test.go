@@ -82,48 +82,6 @@ func TestValidateDeliveryAuthorizationRefusesMalformedPreconditions(t *testing.T
 	})
 }
 
-// The expected repository state is kind-specific: a provider merge has none
-// (the provider owns the ref), a repository mutation must carry one (the old
-// SHA is its compare-and-swap lease).
-func TestValidateDeliveryAuthorizationRefusesKindMismatchedExpectedState(t *testing.T) {
-	runGuardCases(t, validAuthorization, validateDeliveryAuthorization, []guardCase[DeliveryAuthorization]{
-		{"provider merge carrying expected state", func(a *DeliveryAuthorization) {
-			a.ExpectedState = &DeliveryExpectedState{Ref: "refs/heads/main", OldSHA: deliveryHead}
-		}, "provider-merge authorization carries expected repository state"},
-	})
-
-	// The mirror case needs a repository-mutation fixture, which is accepted
-	// only WITH an expected state — so it gets its own accepted fixture.
-	mutation := func() DeliveryAuthorization {
-		a := validAuthorization()
-		a.Kind = DeliveryAuthorizationRepositoryMutation
-		a.ExpectedState = &DeliveryExpectedState{Ref: "refs/heads/main", OldSHA: deliveryHead}
-		return a
-	}
-	runGuardCases(t, mutation, validateDeliveryAuthorization, []guardCase[DeliveryAuthorization]{
-		{"repository mutation without expected state", func(a *DeliveryAuthorization) { a.ExpectedState = nil },
-			"repository-mutation authorization missing expected repository state"},
-	})
-}
-
-// The expected state's ref is a compare-and-swap target. A blank, padded,
-// backslash-carrying or dot ref would not name one.
-func TestValidateDeliveryExpectedStateRefusesUnsafeRef(t *testing.T) {
-	runGuardCases(t,
-		func() DeliveryExpectedState {
-			return DeliveryExpectedState{Ref: "refs/heads/main", OldSHA: deliveryHead}
-		},
-		validateDeliveryExpectedState,
-		[]guardCase[DeliveryExpectedState]{
-			{"empty ref", func(es *DeliveryExpectedState) { es.Ref = "" }, "delivery expected state requires a safe ref"},
-			{"padded ref", func(es *DeliveryExpectedState) { es.Ref = " refs/heads/main" }, "delivery expected state requires a safe ref"},
-			{"backslash ref", func(es *DeliveryExpectedState) { es.Ref = `refs\heads\main` }, "delivery expected state requires a safe ref"},
-			{"whitespace inside ref", func(es *DeliveryExpectedState) { es.Ref = "refs/heads/my branch" }, "delivery expected state requires a safe ref"},
-			{"dot ref", func(es *DeliveryExpectedState) { es.Ref = "." }, "delivery expected state requires a safe ref"},
-			{"dot-dot ref", func(es *DeliveryExpectedState) { es.Ref = ".." }, "delivery expected state requires a safe ref"},
-		})
-}
-
 // The issuance INTENT is validated before anything is committed, so the same
 // closed-set and safe-identity rules apply to the request shape.
 func TestValidateDeliveryAuthorizationRequestRefusesMalformedIntent(t *testing.T) {

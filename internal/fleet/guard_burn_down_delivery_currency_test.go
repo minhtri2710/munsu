@@ -59,7 +59,7 @@ func TestGuardBurnDownVerifyDeliveryCurrencyRefusesKindHeadAndPreconditions(t *t
 		want   string
 	}{
 		{name: "authorization kind", mutate: func(j *deliveryJournal) {
-			j.Kind = taskauthority.DeliveryAuthorizationRepositoryMutation
+			j.Kind = taskauthority.DeliveryAuthorizationKind("not-a-kind")
 		}, want: "authorization kind mismatch"},
 		{name: "authorization head", mutate: func(j *deliveryJournal) {
 			j.Identity.HeadSHA = "9999888877776666555544443333222211110000"

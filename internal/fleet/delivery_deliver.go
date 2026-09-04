@@ -32,8 +32,7 @@ import (
 type DeliverRequest struct {
 	// Kind is the irreversible delivery operation kind. Only
 	// DeliveryAuthorizationProviderMerge is supported by the Fleet delivery
-	// execution path; repository-mutation kinds fail closed before any
-	// journal intent (no typed repository capability exists).
+	// execution path; any other kind fails closed before any journal intent.
 	Kind taskauthority.DeliveryAuthorizationKind
 	// Identity is the exact typed delivery identity (provider, owner, repo,
 	// number, base/head ref, head SHA, URL) the delivery executes under. Its
