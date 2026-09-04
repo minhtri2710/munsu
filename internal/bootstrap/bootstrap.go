@@ -107,17 +107,17 @@ func runWithRuntimeIdentity(home string, lockHeld bool, installTools []string, r
 		res.Auth = &AuthDiagnostic{Status: AuthFailed}
 	}
 
-	// 3. Check soldier-harness override
-	harnessPath := filepath.Join(home, "config", "soldier-harness")
-	if data, err := os.ReadFile(harnessPath); err == nil {
-		harness := strings.TrimSpace(string(data))
-		if harness != "" && harness != "default" {
-			res.Configs = append(res.Configs, ConfigDiagnostic{Key: "SOLDIER_HARNESS", Value: harness})
-		}
+	// 3. Load the fleet base document (config/base.json), the single authority
+	// for the typed launch-profile and dispatch config.
+	base, baseErr := config.LoadFleetBase(home)
+
+	// 4. Check soldier-harness override (typed base config). The write boundary
+	// normalizes the "default" sentinel to empty, so an unset harness reads "".
+	if baseErr == nil && base.Config.SoldierHarness != "" {
+		res.Configs = append(res.Configs, ConfigDiagnostic{Key: "SOLDIER_HARNESS", Value: base.Config.SoldierHarness})
 	}
 
-	// 4. Check soldier-dispatch profiles from fleet base document
-	base, baseErr := config.LoadFleetBase(home)
+	// 5. Check soldier-dispatch profiles from fleet base document
 	if baseErr == nil && len(base.Config.DispatchProfiles) > 0 {
 		res.Configs = append(res.Configs, ConfigDiagnostic{Key: "SOLDIER_DISPATCH", Value: fmt.Sprintf("active (%d rules)", len(base.Config.DispatchProfiles))})
 	}

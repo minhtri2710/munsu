@@ -193,16 +193,6 @@ var Templates = map[string]Template{
 	},
 }
 
-// lookupConfig reports a config key's value when it is set to a concrete value.
-// Empty values and the "default" sentinel are treated as not set.
-func lookupConfig(homeDir, key string) (string, bool) {
-	v, err := config.Get(homeDir, key)
-	if err == nil && v != "" && v != "default" {
-		return v, true
-	}
-	return "", false
-}
-
 // ErrNoSoldierHarnessInSnapshot is returned by ResolveSoldierFromSnapshot when
 // the resolved project snapshot carries no soldier harness identity.
 var ErrNoSoldierHarnessInSnapshot = errors.New("no soldier harness identity resolved from snapshot")
@@ -228,10 +218,8 @@ func ResolveSoldierFromSnapshot(cfg config.ResolvedProjectConfig) (string, error
 //
 //  1. Published snapshot (captain context)
 //  2. Fleet base document (general context)
-//  3. config/soldier-harness file value
-//  4. Detected harness from Detect()
+//  3. Detected harness from Detect()
 //
-// The config/soldier-harness value "default" is treated as unset.
 // Operations resolve the soldier harness from the snapshot only via
 // ResolveSoldierFromSnapshot; Soldier remains for diagnostics.
 func Soldier(homeDir string) (string, error) {
@@ -245,10 +233,15 @@ func Soldier(homeDir string) (string, error) {
 			}
 			return cfg.SoldierHarness, nil
 		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
 	}
 
 	// 2. Try fleet base document (general context)
 	base, err := config.LoadFleetBase(homeDir)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
 	if err == nil && base.Config.SoldierHarness != "" {
 		if err := ValidateHarness(base.Config.SoldierHarness); err != nil {
 			return "", fmt.Errorf("fleet base soldier harness: %w", err)
@@ -256,15 +249,7 @@ func Soldier(homeDir string) (string, error) {
 		return base.Config.SoldierHarness, nil
 	}
 
-	// 3. Try config/soldier-harness
-	if v, ok := lookupConfig(homeDir, "soldier-harness"); ok {
-		if err := ValidateHarness(v); err != nil {
-			return "", err
-		}
-		return v, nil
-	}
-
-	// 4. Fall back to detected harness
+	// 3. Fall back to detected harness
 	return Detect()
 }
 
@@ -326,11 +311,10 @@ func ResolveCaptainFromSnapshot(cfg config.ResolvedProjectConfig) (string, error
 
 // Captain resolves the general harness following:
 //
-//  1. config/captain-harness file value (first token)
-//  2. config/soldier-harness file value
+//  1. base.CaptainProfile.Harness (config/base.json)
+//  2. base.Config.SoldierHarness (config/base.json)
 //  3. Detected harness from Detect()
 //
-// A value of "default" in any pin file is treated as unset.
 // For model/effort tokens use CaptainProfileFromHome.
 func Captain(homeDir string) (string, error) {
 	prof, err := CaptainProfileFromHome(homeDir)
@@ -343,61 +327,47 @@ func Captain(homeDir string) (string, error) {
 	return Detect()
 }
 
-// CaptainProfileFromHome resolves harness + optional model/effort for captain launch.
+// CaptainProfileFromHome resolves harness + optional model/effort for captain
+// launch from the fleet base document (config/base.json), the single authoring
+// authority. It runs in the General home; a captain home without a base
+// document degrades to an empty profile (caller falls back to Detect), and a
+// malformed/invalid document fails closed.
 //
-// Precedence for harness (first token):
-//  1. config/captain-harness (multi-token: "<harness> [<model>] [<effort>]")
-//  2. config/soldier-harness (bare harness only; model/effort ignored)
+// Precedence for harness:
+//  1. base.CaptainProfile.Harness (from `config set captain-harness`)
+//  2. base.Config.SoldierHarness (bare harness fallback; model/effort ignored)
 //
-// Model/effort tokens:
-//  1. Tokens 2–3 on the winning multi-token captain-harness pin
-//  2. Else config/model (single-key model pin; effort not available here)
+// Model:
+//  1. base.CaptainProfile.Model (token 2 of the captain pin)
+//  2. Else base.Config.Model
 //
-// Model/effort come only from the captain pin line, not from soldier-harness
-// (which stays a bare adapter name).
+// Effort comes only from the captain profile, never from the soldier harness.
 func CaptainProfileFromHome(homeDir string) (CaptainProfile, error) {
-	// 1. captain-harness multi-token
-	if raw, ok := lookupConfig(homeDir, "captain-harness"); ok {
-		p := ParseHarnessLine(raw)
-		if p.Harness != "" {
-			if err := ValidateHarness(p.Harness); err != nil {
-				return CaptainProfile{}, err
-			}
-			return fillCaptainModelFallback(homeDir, p), nil
+	base, err := config.LoadFleetBase(homeDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return CaptainProfile{}, nil
 		}
+		return CaptainProfile{}, err
 	}
 
-	// 2. soldier-harness bare name only
-	if v, ok := lookupConfig(homeDir, "soldier-harness"); ok {
-		// Only first token counts; ignore accidental model tokens on soldier pin.
-		p := ParseHarnessLine(v)
-		if p.Harness != "" {
-			if err := ValidateHarness(p.Harness); err != nil {
-				return CaptainProfile{}, err
-			}
-			// soldier pin never supplies model/effort — only config/model fallback.
-			return fillCaptainModelFallback(homeDir, CaptainProfile{Harness: p.Harness}), nil
+	p := CaptainProfile{
+		Harness: base.CaptainProfile.Harness,
+		Model:   base.CaptainProfile.Model,
+		Effort:  base.CaptainProfile.Effort,
+	}
+	if p.Harness == "" && base.Config.SoldierHarness != "" {
+		// Soldier-harness fallback supplies only the bare adapter name; a
+		// sparse profile's independently stored Model/Effort are preserved.
+		p.Harness = base.Config.SoldierHarness
+	}
+	if p.Harness != "" {
+		if err := ValidateHarness(p.Harness); err != nil {
+			return CaptainProfile{}, err
 		}
 	}
-
-	// No harness pin — still surface config/model for callers that only need model.
-	return fillCaptainModelFallback(homeDir, CaptainProfile{}), nil
-}
-
-// fillCaptainModelFallback applies config/model when the profile has no model token.
-func fillCaptainModelFallback(homeDir string, p CaptainProfile) CaptainProfile {
-	if p.Model != "" {
-		return p
+	if p.Model == "" {
+		p.Model = base.Config.Model
 	}
-	if m, err := config.Get(homeDir, "model"); err == nil {
-		m = strings.TrimSpace(m)
-		if m != "" && m != "default" {
-			// config/model may itself be multi-token historically; take first field only.
-			fields := strings.Fields(m)
-			if len(fields) > 0 {
-				p.Model = fields[0]
-			}
-		}
-	}
-	return p
+	return p, nil
 }

@@ -35,7 +35,7 @@ func newHarnessCmd() *cobra.Command {
 	soldierCmd := &cobra.Command{
 		Use:   "soldier",
 		Short: "Resolve soldier harness",
-		Long:  `Resolve the soldier harness. Fallback chain: soldier-dispatch.json default > config/soldier-harness > detected harness.`,
+		Long:  `Resolve the soldier harness. Fallback chain: published snapshot > fleet base document (config/base.json) > detected harness.`,
 		Args:  NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			h, err := harness.Soldier(ctx.Home)
@@ -56,7 +56,7 @@ func newHarnessCmd() *cobra.Command {
 	captainCmd := &cobra.Command{
 		Use:   "captain",
 		Short: "Resolve captain harness",
-		Long:  `Resolve the general harness. Fallback chain: config/captain-harness > config/soldier-harness > detected harness.`,
+		Long:  `Resolve the general harness. Fallback chain: fleet base captain profile > fleet base soldier-harness > detected harness (all from config/base.json).`,
 		Args:  NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			h, err := harness.Captain(ctx.Home)

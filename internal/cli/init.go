@@ -107,26 +107,18 @@ Use --reconfigure to re-run auto-detection and overwrite existing config files a
 func autoDetectConfig(homeDir string) error {
 	// Note: backend is runtime context and is NOT persisted at init time.
 
-	// 1. Auto-detect soldier harness
+	// Auto-detect the soldier harness; it is persisted only into the typed
+	// fleet base document (config/base.json), the single authoring authority.
 	detectedHarness := ""
-	if reconfigure || !configFileExists(homeDir, "soldier-harness") {
-		harnessName, err := harness.Detect()
-		if err == nil && harnessName != "" {
-			detectedHarness = harnessName
-			if err := config.Set(homeDir, "soldier-harness", harnessName); err != nil {
-				return fmt.Errorf("setting soldier-harness: %w", err)
-			}
-			fmt.Printf("Detected and persisted soldier-harness: %s\n", harnessName)
-		}
-	} else {
-		fmt.Println("config/soldier-harness already exists (skipped; use --reconfigure to overwrite)")
+	if harnessName, err := harness.Detect(); err == nil && harnessName != "" {
+		detectedHarness = harnessName
 	}
 
-	// 1b. Typed fleet base document (config/base.json). Init is an explicit
-	// authoring boundary: a created base.json mirrors SoldierHarness and seeds
-	// the fixed captain default so init'd homes resolve a captain harness
-	// (fail-closed-able). This never reads or translates legacy flat pins, and
-	// re-init on an existing authored base preserves its CaptainProfile.
+	// Typed fleet base document (config/base.json). Init is an explicit
+	// authoring boundary: a created base.json records the detected SoldierHarness
+	// and seeds the fixed captain default so init'd homes resolve a captain
+	// harness (fail-closed-able). Re-init on an existing authored base preserves
+	// its CaptainProfile; an existing base without --reconfigure stays untouched.
 	basePath := filepath.Join(homeDir, config.BaseDocumentPath)
 	_, statErr := os.Stat(basePath)
 	switch {
@@ -140,6 +132,9 @@ func autoDetectConfig(homeDir string) error {
 		baseDoc.CaptainProfile = config.CaptainProfile{Harness: harness.Pi}
 		if err := config.StoreFleetBase(homeDir, baseDoc); err != nil {
 			return fmt.Errorf("writing fleet base document: %w", err)
+		}
+		if detectedHarness != "" {
+			fmt.Printf("Detected and persisted soldier-harness: %s\n", detectedHarness)
 		}
 	case reconfigure:
 		baseDoc, err := config.LoadFleetBase(homeDir)
@@ -156,17 +151,14 @@ func autoDetectConfig(homeDir string) error {
 		if err := config.StoreFleetBase(homeDir, baseDoc); err != nil {
 			return fmt.Errorf("writing fleet base document: %w", err)
 		}
+		if detectedHarness != "" {
+			fmt.Printf("Detected and persisted soldier-harness: %s\n", detectedHarness)
+		}
+	default:
+		fmt.Println("config/base.json already exists (skipped; use --reconfigure to overwrite)")
 	}
-	// Existing base.json without --reconfigure stays untouched (idempotent).
 
 	return nil
-}
-
-// configFileExists returns true if the config/<key> file exists under homeDir.
-func configFileExists(homeDir, key string) bool {
-	p := filepath.Join(config.ConfigDir(homeDir), key)
-	_, err := os.Stat(p)
-	return err == nil
 }
 
 // runSkillInstall resolves the skill destination (flag, env, or interactive prompt)
