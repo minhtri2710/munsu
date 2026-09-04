@@ -78,16 +78,18 @@ The first attempt may run immediately, the second after backoff, and repeated id
 
 Each attempt references a bounded structured `LaunchDiagnostic`: redacted stdout/stderr tails, safe command descriptor, executable identity, timing, exit/signal, endpoint evidence, truncation marker, and failure signature. Raw environment and raw sensitive command values are not stored. Redaction occurs before owner-only atomic write; redaction failure stores metadata/signature only. Pane cleanup waits until evidence is durable or explicitly waived. Retention preserves evidence referenced by unresolved attention while bounding unreferenced history.
 
-### 5. Per-home watcher topology
+### 5. Per-home watcher topology (General→Captain relay superseded by the running status-signal model, 2026-09-04)
 
-There is one watcher per authoritative home. The General watcher mutates only General-owned lifecycle; each Captain watcher mutates that Captain's tasks, Soldier receipts, provider polling, and Captain-to-General relay obligations. The General observes typed Captain `WatcherLease` records and requests recovery through the Captain control plane rather than directly processing Captain task state.
+There is one watcher per authoritative home. The General watcher mutates only General-owned lifecycle; each Captain watcher mutates that Captain's tasks, Soldier receipts, provider polling, and Captain-to-General relay obligations.
 
-A Captain with active ownership is operationally ready only when its watcher lease is healthy. Handoff/start/spawn require watcher health. If the watcher is unhealthy, the Captain enters capability-specific degraded mode:
+The original "General observes typed Captain `WatcherLease` records and requests recovery through the Captain control plane" relay was never built and is superseded here (ADR-0023 retire-unbuilt / ratify-running pattern) by the status-signal model the code runs. The General does not read a Captain's `WatcherLease`: `WatcherLease` (`internal/home/watcher_lease.go`) is a purely intra-home single-writer lock, claimed and released by a home's own watcher and read only by that home's own dispatch gate (`IsWatcherLeaseHealthy`), never across homes. The General instead health-observes each Captain as typed status — `checkAliveWithProbe` (`internal/fleet/captain_captain.go`) reads the Captain's projection task-meta and probes the pane, and watcher liveness is the heartbeat beat, not a lease read — the concrete instance of ADR-0008 §4's "observes typed Captain health." The canonical control operation for Captain recovery is General-scoped `RecoverTransaction` (`internal/fleet/captain_recover.go`: relaunch / watcher-ensure / nudge-retry under the relaunch guard), not a Captain-control-plane request.
+
+Watcher-health readiness is a Captain's own intra-home self-gate, not a General observation: handoff/start/spawn are gated by the acting home on its own lease-and-beat health (`CheckWatcherHealthForDispatch`, `internal/home/dispatch_degraded.go`). If its own watcher is unhealthy the Captain enters capability-specific degraded dispatch:
 
 * Block new ownership, start/claim, spawn, and new mode transitions that require watcher obligations.
 * Allow diagnostics, watcher repair, durable receipt reconciliation, already-authorized delivery verification/merge, evidence-preserving teardown, pause/hold, and config/integration repair.
 
-Existing Soldiers continue running with `supervision=degraded`. After watcher recovery, pending receipts drain and projections converge before dispatch reopens. Watcher startup failure is an AXI error, never success with `state=failed` nested in data.
+Existing Soldiers continue running undisturbed; the gate blocks only new dispatch (there is no `supervision=degraded` Soldier state). After watcher recovery, pending receipts drain and projections converge before dispatch reopens. Watcher startup failure is an AXI error, never success with `state=failed` nested in data.
 
 ### 6. Task-bound Git mutation fencing
 

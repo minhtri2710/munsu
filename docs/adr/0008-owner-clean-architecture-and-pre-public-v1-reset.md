@@ -65,7 +65,7 @@ Topology is protected by ownership and dependency-direction rules, not a literal
 
 The implementation of `taskauthorityfs` is absorbed into `taskauthority`, not moved into `home`. There is one concrete filesystem implementation. No synthetic Store interface, in-memory fake, store-contract package, or persistence adapter is retained solely for testing. A storage seam is introduced only when a second real adapter exists.
 
-All runtime Task reads go through Task Authority. Durable `backlog.md`, `tasks-axi` runtime integration, `.meta`, `.status`, and other Task projections are removed. Backlog is only a query concept over Task state.
+All authoritative Task lifecycle reads — phase, dispatch eligibility, binding, delivery authorization, transfer — go through Task Authority; `taskauthority` reads no `.meta`/`.status` file. Durable `backlog.md` and `tasks-axi` runtime integration are removed, and backlog is only a query concept over Task state. `.meta`/`.status` are not the authoritative Task record and are retained as `home`-owned durable primitives (`internal/home/taskmeta.go`) serving home/backend/fleet/orchestrator/CLI mechanics — mailbox routing, prune, absorb classification, snapshot and task-summary display, supervision and recovery — never Task lifecycle authority. Their last-status line is a diagnostic display value, never state truth.
 
 ### 3. Fleet
 
