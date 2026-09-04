@@ -1450,10 +1450,9 @@ func publishResolvedSnapshot(parentHome, captainHome string) error {
 		return err
 	}
 	facts := config.ProjectFacts{
-		Name:           project.Name,
-		Path:           project.Path,
-		Mode:           project.Mode,
-		CaptainProfile: config.CaptainProfile{},
+		Name: project.Name,
+		Path: project.Path,
+		Mode: project.Mode,
 	}
 	projectOverlay, err := config.LoadProjectOverlay(parentHome, project.Name)
 	if err != nil {

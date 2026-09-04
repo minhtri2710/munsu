@@ -1,6 +1,6 @@
 # 0003. Config Deepening — Typed Documents, Per-Project Resolved Overlay, and 1:1 Captain–Project Binding
 
-* **Status:** Accepted; substantially implemented — typed `config/base.json`, per-project overlay, 1:1 Captain–Project binding, pure resolve/digest, published-snapshot push, and per-project digest+nudge all landed. The launch-profile scalar keys (`soldier-harness`, `model`, `captain-harness`) are now consolidated onto `config/base.json` — authored there by `config set`; `CaptainProfileFromHome` reads the base directly, while Soldier consumes the published snapshot first and the fleet base in General context; no flat file is written; the daemon/policy keys (`wake-delivery-mode`, `afk-*`, `model-allowlist`) plus the bootstrap-identity keys (`parent-home`, `install-root`) stay flat by explicit decision, since they are home-local and have no fleet-base semantics (a captain home carries no `config/base.json`). Remaining residual work (captain config CLI) is tracked in the [owner-clean residual roadmap](../plans/2026-09-03-owner-clean-residual-roadmap.md); the env-override boundary layer was retired (§10). §9 migration is superseded by ADR-0008.
+* **Status:** Accepted; substantially implemented — typed `config/base.json`, per-project overlay, 1:1 Captain–Project binding, pure resolve/digest, published-snapshot push, and per-project digest+nudge all landed. The launch-profile scalar keys (`soldier-harness`, `model`, `captain-harness`) are now consolidated onto `config/base.json` — authored there by `config set`; `CaptainProfileFromHome` reads the base directly, while Soldier consumes the published snapshot first and the fleet base in General context; no flat file is written; the daemon/policy keys (`wake-delivery-mode`, `afk-*`, `model-allowlist`) plus the bootstrap-identity keys (`parent-home`, `install-root`) stay flat by explicit decision, since they are home-local and have no fleet-base semantics (a captain home carries no `config/base.json`). The dormant per-Captain `captainProfile` override layer and its unbuilt `captain config` CLI were retired (§3, §8, C1 2026-09-04); the fleet-default `base.CaptainProfile` is the sole Captain profile. The env-override boundary layer was retired (§10). §9 migration is superseded by ADR-0008.
 * **Date:** 2026-07-30
 * **Extends:** ADR-0002 §8 (config), §11 (migration and activation), §12 (AXI and env)
 * **Triggered by:** `munsu-workflow-incident-report-2026-07-30` and the goal of one General supervising many Captains across many projects
@@ -41,11 +41,13 @@ The load path reads JSON only. A document whose `schemaVersion` is not understoo
 
 ### 2. Captain–Project Binding (1:1)
 
-A Captain supervises exactly one project, and a project has at most one owning Captain. A project may exist without a Captain (for General ad-hoc dispatch). The binding is the authoritative scope for task observation and config resolution. A Captain record carries `{ id, home, project, captainProfile }`; a project record carries `{ name, path, mode, config }`.
+A Captain supervises exactly one project, and a project has at most one owning Captain. A project may exist without a Captain (for General ad-hoc dispatch). The binding is the authoritative scope for task observation and config resolution. A Captain record carries `{ id, home, project }`; a project record carries `{ name, path, mode, config }`. The Captain launch profile is the single fleet-default `base.CaptainProfile` shared by every Captain; there is no per-Captain override field on the record (§3).
 
 ### 3. Per-project resolved overlay
 
-Soldier/spawn configuration is keyed by **project**, not by Captain, so that both a Captain and a direct General spawn resolve the same overlay. Resolution for a Soldier spawn under project P is `resolve = base ⨂ P.config` (project overlay overrides base; project dispatch profiles fall back to the base dispatch set). The Captain's own launch profile (`captainProfile`) is a separate field on the Captain record and resolves independently, falling back to base for unset fields. There are two typed layers only; the boundary environment-override tier was retired (§10).
+Soldier/spawn configuration is keyed by **project**, not by Captain, so that both a Captain and a direct General spawn resolve the same overlay. Resolution for a Soldier spawn under project P is `resolve = base ⨂ P.config` (project overlay overrides base; project dispatch profiles fall back to the base dispatch set). The Captain launch profile is the fleet-default `base.CaptainProfile`, applied verbatim to every Captain; there is no per-project or per-Captain override layer (retired 2026-09-04 — see below). There are two typed layers only; the boundary environment-override tier was retired (§10).
+
+The per-Captain captain-profile override — a scoped-facts field merged over base at resolve time — was never wired: both fleet resolvers passed it empty and no CLI authored it, so every Captain already resolved the fleet-default. Under the [owner-clean residual roadmap](../plans/2026-09-03-owner-clean-residual-roadmap.md) (C1, 2026-09-04) that dormant plumbing and its unbuilt `captain config` CLI (§8) were deleted; the fleet-default `base.CaptainProfile` from the launch-profile consolidation is the sole Captain profile. Reintroducing a per-project or per-Captain Captain profile is a future decision that must ship with a real backing store, redesigned then — not current architecture.
 
 ### 4. Resolved Snapshot
 
@@ -57,7 +59,7 @@ The General is the single resolution authority. It resolves a project's configur
 
 ### 6. Per-project digest and targeted nudge
 
-The config-reread digest is computed per project as `hash(base ⨂ P.config)`. A base change changes every project's digest and nudges every Captain; a change to only one project's overlay nudges only that project's Captain. The Captain's own `captainProfile` is checked at launch time and is excluded from the nudge digest, because it affects the next relaunch, not a running Captain's behavior.
+The config-reread digest is computed per project as `hash(base ⨂ P.config)`. A base change changes every project's digest and nudges every Captain; a change to only one project's overlay nudges only that project's Captain. The fleet-default `base.CaptainProfile` is checked at launch time and is excluded from the nudge digest, because it affects the next relaunch, not a running Captain's behavior.
 
 ### 7. Module ownership
 
@@ -67,10 +69,11 @@ The config-reread digest is computed per project as `hash(base ⨂ P.config)`. A
 
 The operator surface is noun-driven and AXI-first:
 
-* `munsu config get/set <key> <value>` — fleet base (backward compatible with the existing base-scoped commands).
+* `munsu config get/set <key> <value>` — fleet base, including the launch-profile keys `soldier-harness`, `model`, and `captain-harness`.
 * `munsu project config get/set <name> <key> [value]` — project overlay.
-* `munsu captain config get/set <id> <key> [value]` — Captain launch profile.
 * `munsu project mode <name>` remains as a thin alias for setting `defaultMode`.
+
+There is no `munsu captain config get/set <id>` command: the per-Captain launch profile it would have addressed is retired (§3). The Captain profile is the fleet-default `base.CaptainProfile`, set through `munsu config set`.
 
 Resolution is internal; operators address the three scopes through their nouns.
 
@@ -86,12 +89,12 @@ Per ADR-0002 §12, core modules do not read the process environment; the direct 
 
 Resolution and digest are pure functions over in-memory structs and are the primary test surface. Required tests:
 
-1. `resolve(base, overlay)` — base-only, overlay-override, dispatch merge with base dispatch, `captainProfile` fallback.
+1. `resolve(base, overlay)` — base-only, overlay-override, dispatch merge with base dispatch, fleet-default `base.CaptainProfile` reaches the resolved config for every project.
 2. `digest(base, overlay)` — deterministic.
 3. Launch-profile authority — flat legacy files are ignored without migration or backfill, and malformed `config/base.json` fails closed.
 4. `LoadResolvedSnapshot` — frozen per operation.
 5. Per-project nudge targeting — base change nudges all; single-project overlay change nudges only that project.
-6. Incident regressions — unscoped task/Captain IDs are scoped by project; multiple Captains resolve to different configuration; `captainProfile` does not enter the nudge digest.
+6. Incident regressions — unscoped task/Captain IDs are scoped by project; multiple Captains resolve to different configuration; the fleet-default `base.CaptainProfile` does not enter the nudge digest.
 
 ## Alternatives Rejected
 

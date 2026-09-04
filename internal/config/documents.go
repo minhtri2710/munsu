@@ -66,17 +66,16 @@ type FleetBaseDocument struct {
 }
 
 // ProjectFacts is the narrow, Fleet-owned scoped facts Config accepts to
-// resolve one Project's overlay. It carries the Project's identity and the
-// owning Captain's profile. Config never reads or stores a Project/Captain
-// registry; Fleet supplies these facts at composition time. Overlay/profile
-// values keyed by scoped identity are Config-owned but are supplied here so
-// Config has no registry persistence authority.
+// resolve one Project's overlay. It carries the Project's identity and its
+// per-project overlay. Config never reads or stores a Project/Captain
+// registry; Fleet supplies these facts at composition time. Overlay values
+// keyed by scoped identity are Config-owned but are supplied here so Config
+// has no registry persistence authority.
 type ProjectFacts struct {
-	Name           string
-	Path           string
-	Mode           string
-	Overlay        ProjectOverlay
-	CaptainProfile CaptainProfile
+	Name    string
+	Path    string
+	Mode    string
+	Overlay ProjectOverlay
 }
 
 type ResolvedProjectConfig struct {
@@ -127,9 +126,6 @@ func ResolveProject(base FleetBaseDocument, facts ProjectFacts) (ResolvedProject
 		return ResolvedProjectConfig{}, err
 	}
 
-	captainProfile := base.CaptainProfile
-	applyCaptainProfile(&captainProfile, facts.CaptainProfile)
-
 	require := effective.RequireNoMistakes != nil && *effective.RequireNoMistakes
 	allowDirectPR := effective.AllowDirectPRFallback != nil && *effective.AllowDirectPRFallback
 	return ResolvedProjectConfig{
@@ -140,7 +136,7 @@ func ResolveProject(base FleetBaseDocument, facts ProjectFacts) (ResolvedProject
 		AllowDirectPRFallback: allowDirectPR,
 		Backend:               effective.Backend,
 		DispatchProfiles:      cloneProfiles(effective.DispatchProfiles),
-		CaptainProfile:        captainProfile, Digest: digest,
+		CaptainProfile:        base.CaptainProfile, Digest: digest,
 	}, nil
 }
 
@@ -170,18 +166,6 @@ func applyOverlay(dst *ProjectOverlay, src ProjectOverlay) {
 	}
 	if len(src.DispatchProfiles) > 0 {
 		dst.DispatchProfiles = cloneProfiles(src.DispatchProfiles)
-	}
-}
-
-func applyCaptainProfile(dst *CaptainProfile, src CaptainProfile) {
-	if src.Harness != "" {
-		dst.Harness = src.Harness
-	}
-	if src.Model != "" {
-		dst.Model = src.Model
-	}
-	if src.Effort != "" {
-		dst.Effort = src.Effort
 	}
 }
 
