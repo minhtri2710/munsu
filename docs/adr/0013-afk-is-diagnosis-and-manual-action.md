@@ -52,7 +52,7 @@ lost. Documentation and the embedded skill drop every inject promise.
 ADR-0005 §3 (bounded nudge for `unresponsive` endpoints) is **not** overruled by this ADR.
 It speaks the `EndpointObservation` vocabulary of soldier/captain endpoint recovery, while
 `ResolveRecovery` keyed off `InjectOutcome` — a third vocabulary nobody called.
-ADR-0005 §3 is **closed by ADR-0023** as the accepted Captain-scoped recovery boundary (the bounded nudge is the shipped `stepNudgeRetry`); it does not belong to AFK.
+ADR-0005 §3 is **closed by ADR-0023**; recovery does not belong to AFK. The current per-home recovery contract is maintained in [ADR-0005 §5](0005-runtime-bindings-supervision-recovery-and-mutation-fencing.md).
 
 ## Alternatives rejected
 
