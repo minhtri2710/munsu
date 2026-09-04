@@ -315,11 +315,8 @@ func (tx *RecoverTransaction) stepIntegrationStatus(sm Info) StepResult {
 		return StepResult{Name: "integration-status", State: StepFailed,
 			Detail: fmt.Sprintf("cannot resolve harness: %v", err)}
 	}
-	if h != harness.Pi {
-		return StepResult{Name: "integration-status", State: StepSkipped, Detail: fmt.Sprintf("canonical Pi integration not required for %s", h)}
-	}
 	if tx.Capabilities.Integration == nil {
-		return StepResult{Name: "integration-status", State: StepFailed, Detail: "canonical Pi integration status capability is required"}
+		return StepResult{Name: "integration-status", State: StepFailed, Detail: "captain integration status capability is required"}
 	}
 	result, err := tx.Capabilities.Integration.Status(sm.Home, h)
 	if err != nil {

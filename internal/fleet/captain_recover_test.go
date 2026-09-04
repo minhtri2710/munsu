@@ -251,14 +251,14 @@ func captainHomeWithHarness(t *testing.T, name string) string {
 
 type staticIntegrationPort struct{ status IntegrationStatus }
 
-func (p staticIntegrationPort) EnsureCaptain(string) error { return nil }
+func (p staticIntegrationPort) EnsureCaptain(string, string) error { return nil }
 func (p staticIntegrationPort) Status(string, string) (IntegrationStatus, error) {
 	return p.status, nil
 }
 
 type countingStatusIntegrationPort struct{ calls int }
 
-func (p *countingStatusIntegrationPort) EnsureCaptain(string) error { return nil }
+func (p *countingStatusIntegrationPort) EnsureCaptain(string, string) error { return nil }
 func (p *countingStatusIntegrationPort) Status(string, string) (IntegrationStatus, error) {
 	p.calls++
 	return IntegrationStatus{State: "installed"}, nil

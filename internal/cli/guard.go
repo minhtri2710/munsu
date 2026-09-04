@@ -83,6 +83,17 @@ func guardInFlight(homeDir string) (int, error) {
 
 func guardWatcherPreRunE() func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, args []string) error {
+		// The fleet git-shim must never shadow the git the munsu binary itself
+		// resolves (the git-guard's own probes and real-git handoff included);
+		// strip it before any command runs.
+		stripShimDirFromPath()
+		// The git-guard runs on the agent's own git invocations: it must stay
+		// silent and unblockable. The watcher advisory below opens the home and
+		// reads task truth, which would leak warnings onto git's stderr and can
+		// fail the pre-run — aborting a git the fence meant to allow.
+		if cmd.Name() == "git-guard" {
+			return nil
+		}
 		if cmd == cmd.Root() && (len(args) == 0 || args[0] == "--help" || args[0] == "-h") {
 			return nil
 		}

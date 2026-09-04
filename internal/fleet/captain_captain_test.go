@@ -2689,7 +2689,7 @@ func TestEnsureCaptainPiExtensions_InstallsBeforeLaunchArgs(t *testing.T) {
 	}
 	if len(found) == 0 {
 		// Soft-skip host: still prove Ensure is idempotent and Launch wiring is safe.
-		if err := ensureCaptainIntegration(sm, fakeIntegrationPort{}); err != nil {
+		if err := ensureCaptainIntegration(sm, "pi", fakeIntegrationPort{}); err != nil {
 			t.Fatalf("EnsureCaptainPiExtensions: %v", err)
 		}
 		// Manually plant the canonical extension to assert buildLaunchArgs -e path still works.
@@ -2718,7 +2718,7 @@ func TestEnsureCaptainPiExtensions_InstallsBeforeLaunchArgs(t *testing.T) {
 }
 
 func TestEnsureCaptainPiExtensions_RefusesUnmarked(t *testing.T) {
-	err := ensureCaptainIntegration(t.TempDir(), fakeIntegrationPort{})
+	err := ensureCaptainIntegration(t.TempDir(), "pi", fakeIntegrationPort{})
 	if err == nil || !strings.Contains(err.Error(), "unmarked home") {
 		t.Fatalf("EnsureCaptainPiExtensions() error = %v, want unmarked refusal", err)
 	}

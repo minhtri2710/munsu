@@ -29,7 +29,7 @@ func (noopCaptainWatcher) Ensure(string, bool) error        { return nil }
 
 type fakeIntegrationPort struct{}
 
-func (fakeIntegrationPort) EnsureCaptain(string) error { return nil }
+func (fakeIntegrationPort) EnsureCaptain(string, string) error { return nil }
 func (fakeIntegrationPort) Status(string, string) (IntegrationStatus, error) {
 	return IntegrationStatus{State: "installed"}, nil
 }
@@ -52,7 +52,7 @@ type countingIntegrationPort struct {
 	err   error
 }
 
-func (p *countingIntegrationPort) EnsureCaptain(string) error { p.calls++; return p.err }
+func (p *countingIntegrationPort) EnsureCaptain(string, string) error { p.calls++; return p.err }
 func (p *countingIntegrationPort) Status(string, string) (IntegrationStatus, error) {
 	return IntegrationStatus{}, nil
 }

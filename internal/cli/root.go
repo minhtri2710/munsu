@@ -111,6 +111,7 @@ with no requirement to live inside a specific project checkout.`,
 
 	// All commands
 	root.AddCommand(newHomeCmd())
+	root.AddCommand(newGitGuardCmd())
 	root.AddCommand(newInitCmd())
 	root.AddCommand(newBootstrapCmd())
 	root.AddCommand(newSkillCmd())

@@ -120,14 +120,31 @@ func outcomeFromFFError(err error) UpdateOutcome {
 	}
 }
 
-func ensureCaptainIntegration(captainHome string, integration IntegrationPort) error {
+// resolveCaptainHarness returns the harness a captain runs, read from its
+// published snapshot (written by publishResolvedSnapshot during seed's
+// PropagateConfig). A home whose snapshot is not yet published or whose captain
+// profile names no harness resolves to the canonical default (pi); the
+// integration installed for the captain is that harness's.
+func resolveCaptainHarness(captainHome string) string {
+	snapshot, err := config.LoadPublishedSnapshot(captainHome)
+	if err != nil {
+		return harness.Pi
+	}
+	h, err := harness.ResolveCaptainFromSnapshot(snapshot.Config())
+	if err != nil || h == "" {
+		return harness.Pi
+	}
+	return h
+}
+
+func ensureCaptainIntegration(captainHome, harnessName string, integration IntegrationPort) error {
 	if _, err := ValidateProvenance(captainHome); err != nil {
-		return fmt.Errorf("refusing pi extensions on unmarked home %s: %w", captainHome, err)
+		return fmt.Errorf("refusing captain integration on unmarked home %s: %w", captainHome, err)
 	}
 	if integration == nil {
 		return fmt.Errorf("captain integration capability is required")
 	}
-	return integration.EnsureCaptain(captainHome)
+	return integration.EnsureCaptain(captainHome, harnessName)
 }
 
 type CaptainSeedOptions struct {
@@ -211,6 +228,18 @@ func buildLaunchScript(binPath string, args []string, cwd string, parentHome str
 	b.WriteString("export MUNSU_PARENT_STATUS=")
 	b.WriteString(shQuote(parentHome))
 	b.WriteString("\n")
+	// Git-mutation fence: the same shim soldiers get. A captain's MUNSU_TASK_ID
+	// ("captain:<id>") has no worktree binding, so the fence refuses
+	// harness-issued git mutations — consistent with the integration hook the
+	// captain already installs. munsu's own git (worktree seed/retirement)
+	// strips this path back off (git-guard). Provisioning failure fails closed.
+	shimDir, err := provisionGitShim(cwd)
+	if err != nil {
+		return "", fmt.Errorf("provisioning captain git shim: %w", err)
+	}
+	b.WriteString("export PATH=")
+	b.WriteString(shQuote(shimDir))
+	b.WriteString(":\"$PATH\"\n")
 	b.WriteString("exec ")
 	b.WriteString(shQuote(binPath))
 	for _, arg := range args {
@@ -573,9 +602,10 @@ func SeedCaptain(opts CaptainSeedOptions) error {
 		}
 	}
 
-	// Install project-scoped Pi captain extensions so Launch -e always has files.
-	if err := ensureCaptainIntegration(homePath, opts.Integration); err != nil {
-		return fmt.Errorf("installing captain pi extensions: %w", err)
+	// Install the resolved-harness project-scoped captain integration so Launch
+	// always has the files the captain's harness loads.
+	if err := ensureCaptainIntegration(homePath, resolveCaptainHarness(homePath), opts.Integration); err != nil {
+		return fmt.Errorf("installing captain integration: %w", err)
 	}
 
 	fmt.Printf("Seeded captain %s at %s\n", id, homePath)
@@ -2135,7 +2165,7 @@ func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (
 				continue
 			}
 			// Launched-but-dead: verify the canonical Pi integration before recovery.
-			if integrationErr := requireHealthyPiIntegration(sm.Home, caps.Integration); integrationErr != nil {
+			if integrationErr := RequireHealthyCaptainIntegration(sm.Home, caps.Integration); integrationErr != nil {
 				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: integrationErr.Error()})
 				errs = append(errs, fmt.Sprintf("%s: auto-recover blocked: %v", sm.ID, integrationErr))
 				continue
@@ -2273,7 +2303,13 @@ func (r *RecoverResult) StepsString() string {
 // recorded on the entry) and continues with the remaining captains. Seeded-but-never-
 // launched captains are reported but not launched. The sweep holds the converge lock so
 // it does not race with an in-flight converge.
-func requireHealthyPiIntegration(captainHome string, integration IntegrationPort) error {
+// RequireHealthyCaptainIntegration verifies a captain's resolved-harness
+// integration is installed before its endpoint is launched or recovered. It
+// resolves the harness from the captain's published snapshot and fails closed
+// when that harness's integration is not installed. It is the single check for
+// both the operator launch path (munsu captain launch) and orchestrator
+// recovery/converge.
+func RequireHealthyCaptainIntegration(captainHome string, integration IntegrationPort) error {
 	snapshot, err := config.LoadPublishedSnapshot(captainHome)
 	if err != nil {
 		return fmt.Errorf("loading captain published snapshot for integration check: %w", err)
@@ -2282,18 +2318,15 @@ func requireHealthyPiIntegration(captainHome string, integration IntegrationPort
 	if err != nil {
 		return fmt.Errorf("resolving captain harness: %w", err)
 	}
-	if h != harness.Pi {
-		return nil
-	}
 	if integration == nil {
-		return fmt.Errorf("canonical Pi integration status capability is required")
+		return fmt.Errorf("captain integration status capability is required")
 	}
 	status, err := integration.Status(captainHome, h)
 	if err != nil {
-		return fmt.Errorf("checking canonical Pi integration: %w", err)
+		return fmt.Errorf("checking captain %s integration: %w", h, err)
 	}
 	if status.State != "installed" {
-		return fmt.Errorf("canonical Pi integration is %s: %s; repair with: munsu integrate repair --harness pi --scope project", status.State, status.Message)
+		return fmt.Errorf("captain %s integration is %s: %s; repair with: munsu integrate repair --harness %s --scope project", h, status.State, status.Message, h)
 	}
 	return nil
 }
@@ -2405,7 +2438,7 @@ func Recover(parentHome string, registered []Info, capabilities RecoverCapabilit
 		}
 
 		// Launched-but-dead: verify the bound harness integration before relaunch.
-		if integrationErr := requireHealthyPiIntegration(sm.Home, capabilities.Integration); integrationErr != nil {
+		if integrationErr := RequireHealthyCaptainIntegration(sm.Home, capabilities.Integration); integrationErr != nil {
 			entry.Outcome = RecoverFailed
 			entry.Error = integrationErr.Error()
 			res.Failed++
