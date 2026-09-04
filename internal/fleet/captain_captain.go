@@ -120,21 +120,16 @@ func outcomeFromFFError(err error) UpdateOutcome {
 	}
 }
 
-// resolveCaptainHarness returns the harness a captain runs, read from its
-// published snapshot (written by publishResolvedSnapshot during seed's
-// PropagateConfig). A home whose snapshot is not yet published or whose captain
-// profile names no harness resolves to the canonical default (pi); the
-// integration installed for the captain is that harness's.
-func resolveCaptainHarness(captainHome string) string {
+func resolveCaptainHarness(captainHome string) (string, error) {
 	snapshot, err := config.LoadPublishedSnapshot(captainHome)
 	if err != nil {
-		return harness.Pi
+		return "", fmt.Errorf("loading captain published snapshot: %w", err)
 	}
 	h, err := harness.ResolveCaptainFromSnapshot(snapshot.Config())
-	if err != nil || h == "" {
-		return harness.Pi
+	if err != nil {
+		return "", fmt.Errorf("resolving captain harness: %w", err)
 	}
-	return h
+	return h, nil
 }
 
 func ensureCaptainIntegration(captainHome, harnessName string, integration IntegrationPort) error {
@@ -522,6 +517,7 @@ func ensureParentTypedConfig(parentHome, captainHome, captainID string) error {
 		Config: config.ProjectOverlay{
 			SoldierHarness: "pi",
 		},
+		CaptainProfile: config.CaptainProfile{Harness: harness.Pi},
 	}
 	if err := config.StoreFleetBase(parentHome, base); err != nil {
 		return fmt.Errorf("creating fleet base: %w", err)
@@ -604,7 +600,11 @@ func SeedCaptain(opts CaptainSeedOptions) error {
 
 	// Install the resolved-harness project-scoped captain integration so Launch
 	// always has the files the captain's harness loads.
-	if err := ensureCaptainIntegration(homePath, resolveCaptainHarness(homePath), opts.Integration); err != nil {
+	harnessName, err := resolveCaptainHarness(homePath)
+	if err != nil {
+		return fmt.Errorf("resolving captain integration harness: %w", err)
+	}
+	if err := ensureCaptainIntegration(homePath, harnessName, opts.Integration); err != nil {
 		return fmt.Errorf("installing captain integration: %w", err)
 	}
 
@@ -1064,7 +1064,7 @@ func refuseNestedCaptainLaunch(parentHome string) error {
 // It validates provenance, resolves the harness, creates a new window via
 // the session backend, sends a shell-safe launch script, then writes task
 // meta with kind=captain and endpoint metadata only after launch succeeds.
-func Launch(captainHome, parentHome string, endpoint LaunchEndpoint) error {
+func Launch(captainHome, parentHome string, endpoint LaunchEndpoint, integration IntegrationPort) error {
 	if err := refuseNestedCaptainLaunch(parentHome); err != nil {
 		return err
 	}
@@ -1102,6 +1102,9 @@ func Launch(captainHome, parentHome string, endpoint LaunchEndpoint) error {
 	h, err := harness.ResolveCaptainFromSnapshot(snapshot.Config())
 	if err != nil {
 		return fmt.Errorf("resolving captain harness: %w", err)
+	}
+	if err := requireHealthyCaptainIntegrationForHarness(captainHome, h, integration); err != nil {
+		return err
 	}
 
 	binName, args, err := buildLaunchArgs(captainHome, h, snapshot.Config().CaptainProfile, parentHome)
@@ -2164,13 +2167,7 @@ func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (
 				errs = append(errs, fmt.Sprintf("%s: duplicate relaunch refused (guard expires in %s)", sm.ID, remaining.Round(time.Second)))
 				continue
 			}
-			// Launched-but-dead: verify the canonical Pi integration before recovery.
-			if integrationErr := RequireHealthyCaptainIntegration(sm.Home, caps.Integration); integrationErr != nil {
-				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: integrationErr.Error()})
-				errs = append(errs, fmt.Sprintf("%s: auto-recover blocked: %v", sm.ID, integrationErr))
-				continue
-			}
-			if lErr := Launch(sm.Home, parentHome, caps.Launch); lErr != nil {
+			if lErr := Launch(sm.Home, parentHome, caps.Launch, caps.Integration); lErr != nil {
 				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: fmt.Sprintf("dead agent — auto-recover failed: %v", lErr)})
 				errs = append(errs, fmt.Sprintf("%s: auto-recover failed: %v", sm.ID, lErr))
 			} else {
@@ -2310,14 +2307,14 @@ func (r *RecoverResult) StepsString() string {
 // both the operator launch path (munsu captain launch) and orchestrator
 // recovery/converge.
 func RequireHealthyCaptainIntegration(captainHome string, integration IntegrationPort) error {
-	snapshot, err := config.LoadPublishedSnapshot(captainHome)
+	h, err := resolveCaptainHarness(captainHome)
 	if err != nil {
-		return fmt.Errorf("loading captain published snapshot for integration check: %w", err)
+		return err
 	}
-	h, err := harness.ResolveCaptainFromSnapshot(snapshot.Config())
-	if err != nil {
-		return fmt.Errorf("resolving captain harness: %w", err)
-	}
+	return requireHealthyCaptainIntegrationForHarness(captainHome, h, integration)
+}
+
+func requireHealthyCaptainIntegrationForHarness(captainHome, h string, integration IntegrationPort) error {
 	if integration == nil {
 		return fmt.Errorf("captain integration status capability is required")
 	}
@@ -2437,15 +2434,7 @@ func Recover(parentHome string, registered []Info, capabilities RecoverCapabilit
 			continue
 		}
 
-		// Launched-but-dead: verify the bound harness integration before relaunch.
-		if integrationErr := RequireHealthyCaptainIntegration(sm.Home, capabilities.Integration); integrationErr != nil {
-			entry.Outcome = RecoverFailed
-			entry.Error = integrationErr.Error()
-			res.Failed++
-			res.Entries = append(res.Entries, entry)
-			continue
-		}
-		if lErr := Launch(sm.Home, parentHome, capabilities.Launch); lErr != nil {
+		if lErr := Launch(sm.Home, parentHome, capabilities.Launch, capabilities.Integration); lErr != nil {
 			entry.Outcome = RecoverFailed
 			entry.Error = lErr.Error()
 			res.Failed++

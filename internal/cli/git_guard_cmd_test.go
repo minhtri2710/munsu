@@ -2,6 +2,7 @@ package cli
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -102,6 +103,12 @@ func TestRunGitGuardRefusesBlockedArgv(t *testing.T) {
 }
 
 func TestRunGitGuardExecsRealGitForAllowedRead(t *testing.T) {
+	if os.Getenv("MUNSU_GIT_GUARD_ALLOWED_HELPER") == "1" {
+		if err := runGitGuard([]string{"--version"}); err != nil {
+			os.Exit(2)
+		}
+		return
+	}
 	primary := initGitRepoForSafety(t, t.TempDir())
 	worktree := filepath.Join(t.TempDir(), "wt")
 	runGitForSafety(t, primary, "worktree", "add", "--detach", worktree)
@@ -116,11 +123,11 @@ func TestRunGitGuardExecsRealGitForAllowedRead(t *testing.T) {
 	exitWithCode = func(code int) { exitCode = code; called = true }
 	defer func() { exitWithCode = oldExit }()
 
-	if err := runGitGuard([]string{"status", "--short"}); err != nil {
-		t.Fatalf("runGitGuard(status) error = %v", err)
+	cmd := exec.Command(os.Args[0], "-test.run=^TestRunGitGuardExecsRealGitForAllowedRead$", "-test.v")
+	cmd.Env = append(os.Environ(), "MUNSU_GIT_GUARD_ALLOWED_HELPER=1")
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("helper process error = %v", err)
 	}
-	// A clean read execs the real git, which exits 0: the guard returns nil and
-	// never touches exitWithCode.
 	if called {
 		t.Fatalf("exitWithCode called (code=%d) for a passing read; real git handoff expected", exitCode)
 	}
@@ -200,25 +207,43 @@ func TestGuardDoesNotRecurseIntoShim(t *testing.T) {
 		t.Fatal(err)
 	}
 	marker := filepath.Join(home, "shim-was-hit")
-	writeExecutable(t, filepath.Join(shimDir, "git"), "#!/bin/sh\ntouch "+marker+"\nexit 0\n")
+	writeExecutable(t, filepath.Join(shimDir, "git"), "#!/bin/sh\nprintf x > "+marker+"\nexit 0\n")
 
 	realBin := t.TempDir()
-	writeExecutable(t, filepath.Join(realBin, "git"), "#!/bin/sh\nexit 0\n")
+	realMarker := filepath.Join(home, "real-git-was-hit")
+	writeExecutable(t, filepath.Join(realBin, "git"), "#!/bin/sh\nprintf x > "+realMarker+"\nexit 23\n")
 
 	t.Setenv("MUNSU_HOME", "")
 	t.Setenv("MUNSU_TASK_ID", "")
 	t.Setenv("PATH", shimDir+string(filepath.ListSeparator)+realBin)
 	t.Chdir(t.TempDir())
 
-	oldExit := exitWithCode
-	exitWithCode = func(int) {}
-	defer func() { exitWithCode = oldExit }()
+	if os.Getenv("MUNSU_GIT_GUARD_HELPER") == "1" {
+		marker = os.Getenv("MUNSU_GIT_GUARD_SHIM_MARKER")
+		realMarker = os.Getenv("MUNSU_GIT_GUARD_REAL_MARKER")
+		t.Setenv("PATH", os.Getenv("MUNSU_GIT_GUARD_TEST_PATH"))
+		t.Setenv("MUNSU_HOME", "")
+		t.Setenv("MUNSU_TASK_ID", "")
+		if err := os.Chdir(os.Getenv("MUNSU_GIT_GUARD_TEST_CWD")); err != nil {
+			t.Fatal(err)
+		}
+		stripShimDirFromPath()
+		if err := runGitGuard([]string{"--version"}); err != nil {
+			os.Exit(2)
+		}
+		return
+	}
 
-	// PersistentPreRunE runs the strip before any command body; simulate that,
-	// then run the guard on a read the fence allows.
-	stripShimDirFromPath()
-	_, _ = captureBoth(func() { _ = runGitGuard([]string{"--version"}) })
-
+	cmd := exec.Command(os.Args[0], "-test.run=^TestGuardDoesNotRecurseIntoShim$", "-test.v")
+	cmd.Env = append(os.Environ(), "MUNSU_GIT_GUARD_HELPER=1", "MUNSU_GIT_GUARD_TEST_PATH="+shimDir+string(filepath.ListSeparator)+realBin, "MUNSU_GIT_GUARD_TEST_CWD="+t.TempDir(), "MUNSU_GIT_GUARD_SHIM_MARKER="+marker, "MUNSU_GIT_GUARD_REAL_MARKER="+realMarker)
+	if err := cmd.Run(); err == nil {
+		t.Fatal("helper process unexpectedly succeeded")
+	} else if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 23 {
+		t.Fatalf("helper process error = %v, want exit 23", err)
+	}
+	if _, err := os.Stat(realMarker); err != nil {
+		t.Fatalf("real git marker missing: %v", err)
+	}
 	if _, err := os.Stat(marker); err == nil {
 		t.Fatal("shim was resolved a second time: the strip did not prevent recursion")
 	}

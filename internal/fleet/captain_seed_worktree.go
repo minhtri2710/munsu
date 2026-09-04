@@ -203,7 +203,11 @@ func seedFromWorktree(id, homePath, repoPath, parentHome, charter string, force 
 		}
 	}
 
-	if err = ensureCaptainIntegration(absHome, resolveCaptainHarness(absHome), integration); err != nil {
+	harnessName, resolveErr := resolveCaptainHarness(absHome)
+	if resolveErr != nil {
+		return fmt.Errorf("resolving captain integration harness: %w", resolveErr)
+	}
+	if err = ensureCaptainIntegration(absHome, harnessName, integration); err != nil {
 		return fmt.Errorf("installing captain integration: %w", err)
 	}
 	fmt.Printf("Seeded worktree captain %s at %s (from %s, %s)\n", id, absHome, absRepo, checkoutRef)
@@ -611,7 +615,11 @@ func migrateToWorktree(captainHome, repoPath, id, parentHome string, integration
 		}
 	}
 
-	if err = ensureCaptainIntegration(absHome, resolveCaptainHarness(absHome), integration); err != nil {
+	harnessName, resolveErr := resolveCaptainHarness(absHome)
+	if resolveErr != nil {
+		return fmt.Errorf("resolving captain integration harness: %w", resolveErr)
+	}
+	if err = ensureCaptainIntegration(absHome, harnessName, integration); err != nil {
 		return fmt.Errorf("installing captain integration: %w", err)
 	}
 	fmt.Printf("Migrated captain %s to managed worktree at %s (from %s, %s)\n", id, absHome, absRepo, checkoutRef)

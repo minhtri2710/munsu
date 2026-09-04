@@ -92,15 +92,7 @@ func runGitGuard(gitArgs []string) error {
 	if err != nil {
 		return gitGuardRefuse("real git not found on PATH after shim strip: " + err.Error())
 	}
-	real := exec.Command(gitPath, gitArgs...)
-	real.Stdin = os.Stdin
-	real.Stdout = os.Stdout
-	real.Stderr = os.Stderr
-	if err := real.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitWithCode(exitErr.ExitCode())
-			return nil
-		}
+	if err := execRealGit(gitPath, gitArgs); err != nil {
 		return gitGuardRefuse("git execution failed: " + err.Error())
 	}
 	return nil
