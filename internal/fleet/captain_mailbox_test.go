@@ -54,6 +54,7 @@ func setupTestHomes(t *testing.T) (parentHome, captainHome, captainID string) {
 			SoldierHarness: "pi",
 			Backend:        "tmux",
 		},
+		CaptainProfile: config.CaptainProfile{Harness: "pi"},
 	}
 	if err := config.StoreFleetBase(parentHome, base); err != nil {
 		t.Fatalf("StoreFleetBase: %v", err)

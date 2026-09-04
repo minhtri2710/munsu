@@ -75,7 +75,7 @@ func (e *seamLaunchEndpoint) Cleanup(string, fleet.LaunchResult) error { return 
 // the canonical integration file on disk.
 type seamStaticIntegrationPort struct{}
 
-func (seamStaticIntegrationPort) EnsureCaptain(string) error { return nil }
+func (seamStaticIntegrationPort) EnsureCaptain(string, string) error { return nil }
 func (seamStaticIntegrationPort) Status(string, string) (fleet.IntegrationStatus, error) {
 	return fleet.IntegrationStatus{Harness: "pi", Scope: "project", State: "installed"}, nil
 }

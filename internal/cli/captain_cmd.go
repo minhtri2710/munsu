@@ -7,7 +7,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/fleet"
-	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/spf13/cobra"
 )
 
@@ -86,14 +85,7 @@ Flags for worktree provisioning:
 		Short: "Launch a captain in its home (session-backed)",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			harnessName, err := harness.Captain(ctx.Home)
-			if err != nil {
-				return fmt.Errorf("resolving captain harness: %w", err)
-			}
-			if err := requireCaptainIntegration(args[0], harnessName); err != nil {
-				return err
-			}
-			return fleet.Launch(args[0], ctx.Home, newSessionLaunchEndpoint())
+			return fleet.Launch(args[0], ctx.Home, newSessionLaunchEndpoint(), captainIntegrationAdapter{})
 		}),
 	})
 

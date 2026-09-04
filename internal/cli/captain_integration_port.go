@@ -9,23 +9,10 @@ import (
 
 type captainIntegrationAdapter struct{}
 
-func (captainIntegrationAdapter) EnsureCaptain(h string) error {
-	_, err := bootstrap.Install(h, h, "pi", bootstrap.ScopeProject, false)
+func (captainIntegrationAdapter) EnsureCaptain(h, harnessName string) error {
+	_, err := bootstrap.Install(h, h, harnessName, bootstrap.ScopeProject, false)
 	if err != nil {
-		return fmt.Errorf("installing canonical Pi integration: %w", err)
-	}
-	return nil
-}
-func requireCaptainIntegration(home, harnessName string) error {
-	if harnessName != "pi" {
-		return nil
-	}
-	status, err := (captainIntegrationAdapter{}).Status(home, harnessName)
-	if err != nil {
-		return fmt.Errorf("checking canonical Pi integration: %w", err)
-	}
-	if status.State != "installed" {
-		return fmt.Errorf("canonical Pi integration is %s: %s; repair with: munsu integrate repair --harness pi --scope project", status.State, status.Message)
+		return fmt.Errorf("installing captain %s integration: %w", harnessName, err)
 	}
 	return nil
 }

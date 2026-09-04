@@ -195,9 +195,9 @@ func (tx *RecoverTransaction) Recover(parentHome string, sm Info) *RecoverResult
 	if res.Steps[0].State == StepFailed {
 		res.Steps = append(res.Steps,
 			StepResult{Name: "config-validation", State: StepSkipped, Detail: "skipped: provenance failed"},
-			StepResult{Name: "integration-status", State: StepSkipped, Detail: "skipped: provenance failed"},
 			StepResult{Name: "charter-refresh", State: StepSkipped, Detail: "skipped: provenance failed"},
 			StepResult{Name: "config-push", State: StepSkipped, Detail: "skipped: provenance failed"},
+			StepResult{Name: "integration-status", State: StepSkipped, Detail: "skipped: provenance failed"},
 			StepResult{Name: "launch-readiness", State: StepSkipped, Detail: "skipped: provenance failed"},
 			StepResult{Name: "relaunch-pane", State: StepSkipped, Detail: "skipped: provenance failed"},
 			StepResult{Name: "watcher-ensure", State: StepSkipped, Detail: "skipped: provenance failed"},
@@ -213,19 +213,19 @@ func (tx *RecoverTransaction) Recover(parentHome string, sm Info) *RecoverResult
 	res.Steps = append(res.Steps, b)
 	configOk := b.State == StepOk
 
-	// Step c: integration status
+	// Step c: charter refresh — re-generate .captain-charter.md idempotently
+	res.Steps = append(res.Steps, tx.stepCharterRefresh(parentHome, sm))
+
+	// Step c2: config inheritance push — ensures config/parent-home and other
+	// inheritable config are up to date from the authoritative General home.
+	// This must run before integration status, launch-readiness, and
+	// watcher-ensure so those steps see the latest parent-home contract.
+	res.Steps = append(res.Steps, tx.stepConfigPush(parentHome, sm, configOk))
+
+	// Step c3: integration status, after propagation publishes the snapshot.
 	integration := tx.stepIntegrationStatus(sm)
 	res.Steps = append(res.Steps, integration)
 	integrationAllowsRelaunch := integration.State != StepFailed
-
-	// Step c2: charter refresh — re-generate .captain-charter.md idempotently
-	res.Steps = append(res.Steps, tx.stepCharterRefresh(parentHome, sm))
-
-	// Step c3: config inheritance push — ensures config/parent-home and other
-	// inheritable config are up to date from the authoritative General home.
-	// This must run before launch-readiness and watcher-ensure so those steps
-	// see the latest parent-home contract.
-	res.Steps = append(res.Steps, tx.stepConfigPush(parentHome, sm, configOk))
 
 	// Step d: launch readiness
 	res.Steps = append(res.Steps, tx.stepLaunchReadiness(parentHome, sm))
@@ -315,11 +315,8 @@ func (tx *RecoverTransaction) stepIntegrationStatus(sm Info) StepResult {
 		return StepResult{Name: "integration-status", State: StepFailed,
 			Detail: fmt.Sprintf("cannot resolve harness: %v", err)}
 	}
-	if h != harness.Pi {
-		return StepResult{Name: "integration-status", State: StepSkipped, Detail: fmt.Sprintf("canonical Pi integration not required for %s", h)}
-	}
 	if tx.Capabilities.Integration == nil {
-		return StepResult{Name: "integration-status", State: StepFailed, Detail: "canonical Pi integration status capability is required"}
+		return StepResult{Name: "integration-status", State: StepFailed, Detail: "captain integration status capability is required"}
 	}
 	result, err := tx.Capabilities.Integration.Status(sm.Home, h)
 	if err != nil {
@@ -452,7 +449,7 @@ func (tx *RecoverTransaction) stepRelaunch(parentHome string, sm Info) StepResul
 	}
 
 	// Launched-but-dead: relaunch.
-	if lErr := Launch(sm.Home, parentHome, tx.Capabilities.Launch); lErr != nil {
+	if lErr := Launch(sm.Home, parentHome, tx.Capabilities.Launch, tx.Capabilities.Integration); lErr != nil {
 		return StepResult{Name: "relaunch-pane", State: StepFailed,
 			Detail: fmt.Sprintf("relaunch failed: %v", lErr)}
 	}

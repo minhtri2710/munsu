@@ -7,9 +7,9 @@ import (
 
 func TestGuardBurnDownRequireHealthyPiIntegrationRefusesNilCapability(t *testing.T) {
 	captainHome := captainHomeWithHarness(t, "pi")
-	err := requireHealthyPiIntegration(captainHome, nil)
-	if err == nil || err.Error() != "canonical Pi integration status capability is required" {
-		t.Fatalf("requireHealthyPiIntegration error = %v, want nil-capability refusal", err)
+	err := RequireHealthyCaptainIntegration(captainHome, nil)
+	if err == nil || err.Error() != "captain integration status capability is required" {
+		t.Fatalf("RequireHealthyCaptainIntegration error = %v, want nil-capability refusal", err)
 	}
 }
 

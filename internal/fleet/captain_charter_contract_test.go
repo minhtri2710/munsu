@@ -279,6 +279,17 @@ func TestManagedWorktree_CharterUntracked(t *testing.T) {
 		t.Fatal(err)
 	}
 	initTestRepo(t, parent, "https://github.com/test/repo.git")
+	setupTypedParentHome(t, parent, "test-wt-captain")
+	captainHome := filepath.Join(parent, "captains", "test-wt-captain")
+	if err := os.MkdirAll(captainHome, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := Register(parent, "test-wt-captain", captainHome, "", "test-wt-captain"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(captainHome); err != nil {
+		t.Fatal(err)
+	}
 
 	repo := t.TempDir()
 	initTestRepo(t, repo, "https://github.com/test/repo.git")

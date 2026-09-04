@@ -47,36 +47,65 @@ func evaluateGitMutationSafety(checkPath, command string) (bool, string) {
 		if !parsed.isGit || !parsed.mutating {
 			continue
 		}
-		if homeDir == "" || taskID == "" {
-			return true, "git mutation requires active munsu task worktree binding"
-		}
-		// The worktree binding is read from the canonical Task Authority
-		// (current-truth only): the v1 aggregate store is gone, and an
-		// uninitialized home fails closed. Current truth never carries a
-		// stale generation's binding, so a mutation target on a superseded
-		// generation is refused by the binding checks below.
-		auth, err := taskAuthorityForRead(homeDir)
-		if err != nil {
-			return true, "git mutation worktree binding unavailable: " + err.Error()
-		}
-		tid, err := domain.NewTaskID(taskID)
-		if err != nil {
-			return true, "git mutation worktree binding unavailable: " + err.Error()
-		}
-		agg, err := auth.Get(tid)
-		if err != nil {
-			return true, "git mutation worktree binding unavailable: " + err.Error()
-		}
-		if agg.Worktree == nil {
-			return true, "git mutation requires active worktree binding"
-		}
-		binding := agg.Worktree
-		if reason := validateGitTargetBinding(parsed, binding); reason != "" {
+		if blocked, reason := evaluateParsedGitMutation(homeDir, taskID, parsed); blocked {
 			return true, reason
 		}
-		if reason := validateGitMutationAuthority(homeDir, taskID, parsed, binding); reason != "" {
-			return true, reason
-		}
+	}
+	return false, ""
+}
+
+// evaluateGitArgvSafety is the argv entry to the same fence the string path
+// enforces, reached by the git shim on the soldier/captain launch PATH. The
+// shell has already expanded and word-split the command, so there is no shell
+// front-end here: the shim hands the git arguments (the tokens after the git
+// executable) straight to the token walk. This is the reason the shim closes
+// the shell-wrapper residual the hook path leaves open — `sh -c 'git push
+// --force'` reaches the real git through the shim's PATH entry, so its argv is
+// evaluated like any other. MUNSU_HOME/MUNSU_TASK_ID come from the environment
+// the launch script exported.
+func evaluateGitArgvSafety(checkPath string, gitArgs []string) (bool, string) {
+	homeDir := strings.TrimSpace(os.Getenv("MUNSU_HOME"))
+	taskID := strings.TrimSpace(os.Getenv("MUNSU_TASK_ID"))
+	parsed := walkGitArgs(checkPath, gitArgs, gitSafetyBackslashMode())
+	if !parsed.mutating {
+		return false, ""
+	}
+	return evaluateParsedGitMutation(homeDir, taskID, parsed)
+}
+
+// evaluateParsedGitMutation is the shared core reached once a mutating git
+// invocation has been parsed to a gitCommandSafety. Both entries reach it: the
+// string path (evaluateGitMutationSafety, after the shell front-end) and the
+// argv path (evaluateGitArgvSafety, from the git shim). The worktree binding is
+// read from the canonical Task Authority (current-truth only): the v1 aggregate
+// store is gone, and an uninitialized home fails closed. Current truth never
+// carries a stale generation's binding, so a mutation target on a superseded
+// generation is refused by the binding checks below.
+func evaluateParsedGitMutation(homeDir, taskID string, parsed gitCommandSafety) (bool, string) {
+	if homeDir == "" || taskID == "" {
+		return true, "git mutation requires active munsu task worktree binding"
+	}
+	auth, err := taskAuthorityForRead(homeDir)
+	if err != nil {
+		return true, "git mutation worktree binding unavailable: " + err.Error()
+	}
+	tid, err := domain.NewTaskID(taskID)
+	if err != nil {
+		return true, "git mutation worktree binding unavailable: " + err.Error()
+	}
+	agg, err := auth.Get(tid)
+	if err != nil {
+		return true, "git mutation worktree binding unavailable: " + err.Error()
+	}
+	if agg.Worktree == nil {
+		return true, "git mutation requires active worktree binding"
+	}
+	binding := agg.Worktree
+	if reason := validateGitTargetBinding(parsed, binding); reason != "" {
+		return true, reason
+	}
+	if reason := validateGitMutationAuthority(homeDir, taskID, parsed, binding); reason != "" {
+		return true, reason
 	}
 	return false, ""
 }
@@ -161,48 +190,63 @@ func parseGitSafetyCommandWithMode(checkPath, command string, mode backslashMode
 		if idx < 0 {
 			continue
 		}
-		g := gitCommandSafety{isGit: true, targetPath: checkPath}
-		gitArgs := args[idx+1:]
-		for len(gitArgs) > 0 {
-			arg := gitArgs[0]
-			switch {
-			case arg == "-C" && len(gitArgs) > 1:
-				g.targetPath = resolveSafetyPathWithMode(g.targetPath, gitArgs[1], mode)
-				gitArgs = gitArgs[2:]
-			case strings.HasPrefix(arg, "-C") && len(arg) > 2:
-				g.targetPath = resolveSafetyPathWithMode(g.targetPath, arg[2:], mode)
-				gitArgs = gitArgs[1:]
-			case arg == "--git-dir" && len(gitArgs) > 1:
-				g.gitDir = resolveSafetyPathWithMode(g.targetPath, gitArgs[1], mode)
-				gitArgs = gitArgs[2:]
-			case strings.HasPrefix(arg, "--git-dir="):
-				g.gitDir = resolveSafetyPathWithMode(g.targetPath, strings.TrimPrefix(arg, "--git-dir="), mode)
-				gitArgs = gitArgs[1:]
-			case arg == "--work-tree" && len(gitArgs) > 1:
-				g.workTree = resolveSafetyPathWithMode(g.targetPath, gitArgs[1], mode)
-				g.targetPath = g.workTree
-				gitArgs = gitArgs[2:]
-			case strings.HasPrefix(arg, "--work-tree="):
-				g.workTree = resolveSafetyPathWithMode(g.targetPath, strings.TrimPrefix(arg, "--work-tree="), mode)
-				g.targetPath = g.workTree
-				gitArgs = gitArgs[1:]
-			case (arg == "-c" || arg == "--config-env" || arg == "--namespace" || arg == "--super-prefix" || arg == "--attr-source") && len(gitArgs) > 1:
-				// These global options take a separate value argument. Consume
-				// both tokens so the value is not mis-read as the git verb:
-				// `git -c user.name=x push …` must not let `user.name=x` shadow
-				// `push` and slip the mutation through as an unknown verb.
-				gitArgs = gitArgs[2:]
-			case strings.HasPrefix(arg, "-"):
-				gitArgs = gitArgs[1:]
-			default:
-				g.verb = arg
-				g.args = gitArgs[1:]
-				fillGitCommandDetails(&g)
-				return g, nil
-			}
+		g := walkGitArgs(checkPath, args[idx+1:], mode)
+		if g.verb != "" {
+			return g, nil
 		}
 	}
 	return gitCommandSafety{}, nil
+}
+
+// walkGitArgs interprets the git arguments that follow the git executable (the
+// tokens after `git`) into a gitCommandSafety. It applies no shell semantics:
+// the tokens are final. The string path reaches it after the shell front-end
+// has split segments and words; the git shim reaches it with the argv the real
+// shell already expanded and split. It consumes the -C/--git-dir/--work-tree
+// target selectors and the leading global options that take a separate value,
+// so the value is not mis-read as the git verb, then records the verb and
+// whether it mutates.
+func walkGitArgs(checkPath string, gitArgs []string, mode backslashMode) gitCommandSafety {
+	g := gitCommandSafety{isGit: true, targetPath: checkPath}
+	for len(gitArgs) > 0 {
+		arg := gitArgs[0]
+		switch {
+		case arg == "-C" && len(gitArgs) > 1:
+			g.targetPath = resolveSafetyPathWithMode(g.targetPath, gitArgs[1], mode)
+			gitArgs = gitArgs[2:]
+		case strings.HasPrefix(arg, "-C") && len(arg) > 2:
+			g.targetPath = resolveSafetyPathWithMode(g.targetPath, arg[2:], mode)
+			gitArgs = gitArgs[1:]
+		case arg == "--git-dir" && len(gitArgs) > 1:
+			g.gitDir = resolveSafetyPathWithMode(g.targetPath, gitArgs[1], mode)
+			gitArgs = gitArgs[2:]
+		case strings.HasPrefix(arg, "--git-dir="):
+			g.gitDir = resolveSafetyPathWithMode(g.targetPath, strings.TrimPrefix(arg, "--git-dir="), mode)
+			gitArgs = gitArgs[1:]
+		case arg == "--work-tree" && len(gitArgs) > 1:
+			g.workTree = resolveSafetyPathWithMode(g.targetPath, gitArgs[1], mode)
+			g.targetPath = g.workTree
+			gitArgs = gitArgs[2:]
+		case strings.HasPrefix(arg, "--work-tree="):
+			g.workTree = resolveSafetyPathWithMode(g.targetPath, strings.TrimPrefix(arg, "--work-tree="), mode)
+			g.targetPath = g.workTree
+			gitArgs = gitArgs[1:]
+		case (arg == "-c" || arg == "--config-env" || arg == "--namespace" || arg == "--super-prefix" || arg == "--attr-source") && len(gitArgs) > 1:
+			// These global options take a separate value argument. Consume
+			// both tokens so the value is not mis-read as the git verb:
+			// `git -c user.name=x push …` must not let `user.name=x` shadow
+			// `push` and slip the mutation through as an unknown verb.
+			gitArgs = gitArgs[2:]
+		case strings.HasPrefix(arg, "-"):
+			gitArgs = gitArgs[1:]
+		default:
+			g.verb = arg
+			g.args = gitArgs[1:]
+			fillGitCommandDetails(&g)
+			return g
+		}
+	}
+	return g
 }
 
 func splitSafetyWordsWithMode(mode backslashMode, segment string) []string {

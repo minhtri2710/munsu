@@ -8,7 +8,7 @@ type IntegrationStatus struct {
 }
 
 type IntegrationPort interface {
-	EnsureCaptain(home string) error
+	EnsureCaptain(home, harness string) error
 	Status(home, harness string) (IntegrationStatus, error)
 }
 

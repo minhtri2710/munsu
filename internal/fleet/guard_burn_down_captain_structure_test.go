@@ -56,7 +56,7 @@ func TestGuardBurnDownEnsureCaptainIntegrationRefusesNilCapability(t *testing.T)
 		t.Fatal(err)
 	}
 
-	err := ensureCaptainIntegration(homePath, nil)
+	err := ensureCaptainIntegration(homePath, "pi", nil)
 	if err == nil || err.Error() != "captain integration capability is required" {
 		t.Fatalf("ensureCaptainIntegration error = %v, want nil-capability refusal", err)
 	}

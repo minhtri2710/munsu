@@ -186,8 +186,13 @@ func seedFromWorktree(id, homePath, repoPath, parentHome, charter string, force 
 		return
 	}
 
-	// Register with parent home.
+	// Ensure the parent has the typed base/config contract before registration;
+	// otherwise the initial propagation cannot publish the captain snapshot.
 	if parentHome != "" {
+		if err = ensureParentTypedConfig(parentHome, absHome, id); err != nil {
+			err = fmt.Errorf("ensuring parent typed config: %w", err)
+			return
+		}
 		if err = Register(parentHome, id, absHome, "", ""); err != nil {
 			err = fmt.Errorf("registering captain %s: %w", id, err)
 			return
@@ -203,7 +208,11 @@ func seedFromWorktree(id, homePath, repoPath, parentHome, charter string, force 
 		}
 	}
 
-	if err = ensureCaptainIntegration(absHome, integration); err != nil {
+	harnessName, resolveErr := resolveCaptainHarness(absHome)
+	if resolveErr != nil {
+		return fmt.Errorf("resolving captain integration harness: %w", resolveErr)
+	}
+	if err = ensureCaptainIntegration(absHome, harnessName, integration); err != nil {
 		return fmt.Errorf("installing captain integration: %w", err)
 	}
 	fmt.Printf("Seeded worktree captain %s at %s (from %s, %s)\n", id, absHome, absRepo, checkoutRef)
@@ -597,8 +606,13 @@ func migrateToWorktree(captainHome, repoPath, id, parentHome string, integration
 		return fmt.Errorf("re-seeding provenance marker after swap: %w", err)
 	}
 
-	// 15. Register with parent home.
+	// 15. Ensure the parent has the typed base/config contract before
+	// registration; otherwise the initial propagation cannot publish the
+	// captain snapshot.
 	if parentHome != "" {
+		if err = ensureParentTypedConfig(parentHome, absHome, id); err != nil {
+			return fmt.Errorf("ensuring parent typed config: %w", err)
+		}
 		if err = Register(parentHome, id, absHome, "", ""); err != nil {
 			return fmt.Errorf("registering captain after migration: %w", err)
 		}
@@ -611,7 +625,11 @@ func migrateToWorktree(captainHome, repoPath, id, parentHome string, integration
 		}
 	}
 
-	if err = ensureCaptainIntegration(absHome, integration); err != nil {
+	harnessName, resolveErr := resolveCaptainHarness(absHome)
+	if resolveErr != nil {
+		return fmt.Errorf("resolving captain integration harness: %w", resolveErr)
+	}
+	if err = ensureCaptainIntegration(absHome, harnessName, integration); err != nil {
 		return fmt.Errorf("installing captain integration: %w", err)
 	}
 	fmt.Printf("Migrated captain %s to managed worktree at %s (from %s, %s)\n", id, absHome, absRepo, checkoutRef)

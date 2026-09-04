@@ -15,9 +15,9 @@ func TestCaptainIntegrationEnsureMissingPiFailsClosed(t *testing.T) {
 	writeExecutable(t, filepath.Join(bin, "munsu"), "#!/bin/sh\nexit 0\n")
 	t.Setenv("PATH", bin)
 
-	err := (captainIntegrationAdapter{}).EnsureCaptain(home)
-	if err == nil || !strings.Contains(err.Error(), "installing canonical Pi integration") {
-		t.Fatalf("EnsureCaptain() error = %v, want fail-closed canonical integration error", err)
+	err := (captainIntegrationAdapter{}).EnsureCaptain(home, "pi")
+	if err == nil || !strings.Contains(err.Error(), "installing captain pi integration") {
+		t.Fatalf("EnsureCaptain() error = %v, want fail-closed integration error", err)
 	}
 }
 
@@ -38,10 +38,10 @@ func TestCaptainIntegrationEnsureWritesOnlyCanonicalPiExtension(t *testing.T) {
 	}
 
 	adapter := captainIntegrationAdapter{}
-	if err := adapter.EnsureCaptain(home); err != nil {
+	if err := adapter.EnsureCaptain(home, "pi"); err != nil {
 		t.Fatalf("EnsureCaptain() error: %v", err)
 	}
-	if err := adapter.EnsureCaptain(home); err != nil {
+	if err := adapter.EnsureCaptain(home, "pi"); err != nil {
 		t.Fatalf("second EnsureCaptain() error: %v", err)
 	}
 
@@ -77,7 +77,7 @@ func TestCaptainIntegrationEnsureRefusesUnownedCompatibilityAlias(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	err := (captainIntegrationAdapter{}).EnsureCaptain(home)
+	err := (captainIntegrationAdapter{}).EnsureCaptain(home, "pi")
 	if err == nil || !strings.Contains(err.Error(), aliasPath) || !strings.Contains(err.Error(), "not owned by munsu") {
 		t.Fatalf("EnsureCaptain() error = %v, want actionable unowned alias refusal", err)
 	}
@@ -86,13 +86,7 @@ func TestCaptainIntegrationEnsureRefusesUnownedCompatibilityAlias(t *testing.T) 
 	}
 }
 
-func TestRequireCaptainIntegrationIgnoresNonPiHarness(t *testing.T) {
-	if err := requireCaptainIntegration(t.TempDir(), "claude"); err != nil {
-		t.Fatalf("non-Pi integration check error: %v", err)
-	}
-}
-
-func TestRequireCaptainIntegrationRejectsDigestDrift(t *testing.T) {
+func TestCaptainIntegrationStatusDetectsDigestDrift(t *testing.T) {
 	home := t.TempDir()
 	bin := t.TempDir()
 	writeExecutable(t, filepath.Join(bin, "pi"), "#!/bin/sh\necho 0.79.0\n")
@@ -100,7 +94,7 @@ func TestRequireCaptainIntegrationRejectsDigestDrift(t *testing.T) {
 	writeExecutable(t, filepath.Join(bin, "munsu"), "#!/bin/sh\nexit 0\n")
 	t.Setenv("PATH", bin+string(filepath.ListSeparator)+os.Getenv("PATH"))
 	adapter := captainIntegrationAdapter{}
-	if err := adapter.EnsureCaptain(home); err != nil {
+	if err := adapter.EnsureCaptain(home, "pi"); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(home, ".pi", "extensions", "munsu-pi-integration.ts")
@@ -108,9 +102,12 @@ func TestRequireCaptainIntegrationRejectsDigestDrift(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := requireCaptainIntegration(home, "pi")
-	if err == nil || !strings.Contains(err.Error(), "drifted") || !strings.Contains(err.Error(), "integrate repair") {
-		t.Fatalf("requireCaptainIntegration() error = %v, want actionable drift refusal", err)
+	status, err := adapter.Status(home, "pi")
+	if err != nil {
+		t.Fatalf("Status() error: %v", err)
+	}
+	if status.State != "drifted" {
+		t.Fatalf("Status() = %+v, want drifted after modifying installed extension", status)
 	}
 }
 
