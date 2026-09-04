@@ -165,7 +165,7 @@ func TestBlocked_NestedCaptainLaunchIsRefused(t *testing.T) {
 		parent := t.TempDir()
 		smHome := filepath.Join(parent, "captains", "test-sm")
 		t.Setenv("MUNSU_ROLE", "captain")
-		err := Launch(smHome, parent, testLaunchEndpoint{})
+		err := Launch(smHome, parent, testLaunchEndpoint{}, fakeIntegrationPort{})
 		if err == nil {
 			t.Fatal("expected nested captain launch refusal")
 		}
@@ -181,7 +181,7 @@ func TestBlocked_NestedCaptainLaunchIsRefused(t *testing.T) {
 		}
 		smHome := filepath.Join(t.TempDir(), "child-sm")
 		t.Setenv("MUNSU_ROLE", "")
-		err := Launch(smHome, parent, testLaunchEndpoint{})
+		err := Launch(smHome, parent, testLaunchEndpoint{}, fakeIntegrationPort{})
 		if err == nil {
 			t.Fatal("expected launch refusal from captain parent")
 		}

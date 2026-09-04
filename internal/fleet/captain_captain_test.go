@@ -1714,7 +1714,7 @@ func TestLaunch_RefusesUnmarkedHome(t *testing.T) {
 	os.MkdirAll(smHome, 0755)
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# Test\n"), 0644)
 
-	err := Launch(smHome, tmp, testLaunchEndpoint{})
+	err := Launch(smHome, tmp, testLaunchEndpoint{}, fakeIntegrationPort{})
 	if err == nil {
 		t.Fatal("expected error for unmarked home")
 	}
@@ -1728,7 +1728,7 @@ func TestLaunch_RefusesCaptainRole(t *testing.T) {
 	smHome := filepath.Join(tmp, "captains", "test-sm")
 	seedTest("test-sm", smHome, "# charter")
 	t.Setenv("MUNSU_ROLE", "captain")
-	err := Launch(smHome, tmp, testLaunchEndpoint{})
+	err := Launch(smHome, tmp, testLaunchEndpoint{}, fakeIntegrationPort{})
 	if err == nil || !strings.Contains(err.Error(), "cannot launch other captains") {
 		t.Fatalf("Launch() error = %v, want nested-captain refusal", err)
 	}
@@ -1742,7 +1742,7 @@ func TestLaunch_RefusesFromCaptainParentHome(t *testing.T) {
 	smHome := filepath.Join(t.TempDir(), "child-sm")
 	seedTest("child-sm", smHome, "# charter")
 	t.Setenv("MUNSU_ROLE", "")
-	err := Launch(smHome, parent, testLaunchEndpoint{})
+	err := Launch(smHome, parent, testLaunchEndpoint{}, fakeIntegrationPort{})
 	if err == nil || !strings.Contains(err.Error(), "cannot launch another captain") {
 		t.Fatalf("Launch() error = %v, want parent-captain refusal", err)
 	}
@@ -1759,7 +1759,7 @@ func TestLaunch_EmptySnapshotCaptainProfileFailsClosed(t *testing.T) {
 	// base.json has SoldierHarness/Backend but the CaptainProfile is absent.
 	// Re-publishing keeps the snapshot profile empty.
 	republishWithCaptainProfile(t, parent, captainHome, config.CaptainProfile{})
-	err := Launch(captainHome, parent, testLaunchEndpoint{})
+	err := Launch(captainHome, parent, testLaunchEndpoint{}, fakeIntegrationPort{})
 	if !errors.Is(err, harness.ErrNoCaptainHarnessInSnapshot) {
 		t.Fatalf("Launch() error = %v, want ErrNoCaptainHarnessInSnapshot", err)
 	}
@@ -1782,7 +1782,7 @@ func TestLaunch_FlatFileCaptainHarnessDoesNotRescueMissingSnapshotProfile(t *tes
 	if err := config.Set(parent, "captain-harness", "pi"); err != nil {
 		t.Fatal(err)
 	}
-	err := Launch(captainHome, parent, testLaunchEndpoint{})
+	err := Launch(captainHome, parent, testLaunchEndpoint{}, fakeIntegrationPort{})
 	if !errors.Is(err, harness.ErrNoCaptainHarnessInSnapshot) {
 		t.Fatalf("Launch() error = %v, want ErrNoCaptainHarnessInSnapshot despite flat captain-harness pin", err)
 	}
@@ -2756,7 +2756,7 @@ func TestRecover_SeededCaptainNotLaunched(t *testing.T) {
 		t.Errorf("entry = %+v, want RecoverSeeded", res.Entries)
 	}
 }
-func TestRecover_NonPiHarnessDoesNotRequirePiIntegration(t *testing.T) {
+func TestRecover_NonPiHarnessUsesItsIntegration(t *testing.T) {
 	parent := t.TempDir()
 	home := seedCaptainForTest(t, parent, "claude-captain")
 	// Explicit authoring: the snapshot CaptainProfile pins claude; the flat
@@ -2768,11 +2768,14 @@ func TestRecover_NonPiHarnessDoesNotRequirePiIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if integration.calls != 0 {
-		t.Fatalf("Pi integration status calls = %d, want 0 for non-Pi harness", integration.calls)
+	if integration.calls != 1 {
+		t.Fatalf("integration status calls = %d, want 1 for non-Pi harness", integration.calls)
+	}
+	if integration.harness != harness.Claude {
+		t.Fatalf("integration status harness = %q, want %q", integration.harness, harness.Claude)
 	}
 	if result.Failed != 1 || !strings.Contains(result.Entries[0].Error, "verified captain launch contract") {
-		t.Fatalf("result=%+v, want unchanged non-Pi launch contract result", result)
+		t.Fatalf("result=%+v, want non-Pi launch contract result", result)
 	}
 }
 
@@ -3858,8 +3861,9 @@ func TestConfigPush_RefusesTrackedDestination(t *testing.T) {
 	// PropagateConfig publishes a resolved snapshot into the worktree.
 	// Explicit fixture Backend literal: ResolveProject fails closed on empty.
 	storeTestDocuments(t, parent, config.FleetBaseDocument{
-		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{SoldierHarness: "claude", Backend: "tmux"},
+		SchemaVersion:  config.FleetBaseSchemaVersion,
+		Config:         config.ProjectOverlay{SoldierHarness: "claude", Backend: "tmux"},
+		CaptainProfile: config.CaptainProfile{Harness: "pi"},
 	}, []testProjectRecord{
 		{Name: "test-captain", Path: project, Mode: "no-mistakes"},
 	}, []testCaptainRecord{
@@ -4059,8 +4063,9 @@ func TestManagedCleanState_AGENTSMD_PreservedAfterMultipleConfigPush(t *testing.
 	// publishes a resolved snapshot into the worktree.
 	// Explicit fixture Backend literal: ResolveProject fails closed on empty.
 	storeTestDocuments(t, parent, config.FleetBaseDocument{
-		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{SoldierHarness: "pi", Backend: "tmux"},
+		SchemaVersion:  config.FleetBaseSchemaVersion,
+		Config:         config.ProjectOverlay{SoldierHarness: "pi", Backend: "tmux"},
+		CaptainProfile: config.CaptainProfile{Harness: "pi"},
 	}, []testProjectRecord{
 		{Name: "test-captain", Path: project, Mode: "no-mistakes"},
 	}, []testCaptainRecord{

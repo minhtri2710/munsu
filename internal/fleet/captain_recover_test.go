@@ -256,11 +256,15 @@ func (p staticIntegrationPort) Status(string, string) (IntegrationStatus, error)
 	return p.status, nil
 }
 
-type countingStatusIntegrationPort struct{ calls int }
+type countingStatusIntegrationPort struct {
+	calls   int
+	harness string
+}
 
 func (p *countingStatusIntegrationPort) EnsureCaptain(string, string) error { return nil }
-func (p *countingStatusIntegrationPort) Status(string, string) (IntegrationStatus, error) {
+func (p *countingStatusIntegrationPort) Status(_, harnessName string) (IntegrationStatus, error) {
 	p.calls++
+	p.harness = harnessName
 	return IntegrationStatus{State: "installed"}, nil
 }
 

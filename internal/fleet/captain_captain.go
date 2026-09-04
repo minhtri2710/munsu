@@ -515,6 +515,7 @@ func ensureParentTypedConfig(parentHome, captainHome, captainID string) error {
 		SchemaVersion: config.FleetBaseSchemaVersion,
 		Config: config.ProjectOverlay{
 			SoldierHarness: "pi",
+			Backend:        "tmux",
 		},
 		CaptainProfile: config.CaptainProfile{Harness: harness.Pi},
 	}
@@ -597,8 +598,25 @@ func SeedCaptain(opts CaptainSeedOptions) error {
 		}
 	}
 
+	// Standalone seeds have no parent from which to inherit a resolved snapshot.
+	// Publish the same minimal typed contract locally before resolving the
+	// Captain harness; the published snapshot remains the sole identity source.
+	if parentHome == "" {
+		digest := sha256.Sum256([]byte("standalone-captain\x00" + id + "\x00" + homePath))
+		if err := config.StorePublishedSnapshot(homePath, config.ResolvedProjectConfig{
+			Project:        id,
+			ProjectPath:    homePath,
+			Backend:        "tmux",
+			CaptainProfile: config.CaptainProfile{Harness: harness.Pi},
+			Digest:         fmt.Sprintf("%x", digest),
+		}); err != nil {
+			return fmt.Errorf("publishing standalone captain snapshot: %w", err)
+		}
+	}
+
 	// Install the resolved-harness project-scoped captain integration so Launch
-	// always has the files the captain's harness loads.
+	// always has the files the captain's harness loads. The published snapshot
+	// is the sole source of the Captain harness identity.
 	harnessName, err := resolveCaptainHarness(homePath)
 	if err != nil {
 		return fmt.Errorf("resolving captain integration harness: %w", err)
@@ -1102,7 +1120,7 @@ func Launch(captainHome, parentHome string, endpoint LaunchEndpoint, integration
 	if err != nil {
 		return fmt.Errorf("resolving captain harness: %w", err)
 	}
-	if err := requireHealthyCaptainIntegrationForHarness(captainHome, h, integration); err != nil {
+	if err := RequireHealthyCaptainIntegration(captainHome, integration); err != nil {
 		return err
 	}
 
