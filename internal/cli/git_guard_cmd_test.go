@@ -97,8 +97,13 @@ func TestRunGitGuardRefusesBlockedArgv(t *testing.T) {
 	if exitCode != 1 {
 		t.Fatalf("exit code = %d, want 1 for blocked git mutation", exitCode)
 	}
-	if !strings.Contains(stderr, "[git-fence]") {
-		t.Fatalf("stderr = %q, want [git-fence] refusal marker", stderr)
+	// Assert the specific refusal reason, not just the marker: a bare
+	// "[git-fence]" check cannot tell a force-push denial apart from a
+	// no-binding denial, so it would still pass if the guard refused the
+	// force-push for the wrong reason (or refused any push whatsoever).
+	const wantReason = "default Ship authority permits only task-local branch, add, commit, and normal push"
+	if !strings.Contains(stderr, "[git-fence] "+wantReason) {
+		t.Fatalf("stderr = %q, want [git-fence] %q", stderr, wantReason)
 	}
 }
 
@@ -194,12 +199,16 @@ func TestStripShimDirFromPath(t *testing.T) {
 	})
 }
 
-// TestGuardDoesNotRecurseIntoShim composes the two halves of the fence: the root
-// PATH strip followed by the guard's real-git handoff. A fake `git` under the
-// shim dir writes a marker (standing in for "the shim was resolved again"); the
-// real git the guard should reach is a second fake `git` that does not. With
+// TestGuardDoesNotRecurseIntoShim drives the real root command
+// (NewRootCommand().Execute() with "git-guard --version") so the PATH strip runs
+// through the actual PersistentPreRunE wiring — before the git-guard
+// short-circuit — not a hand-composed strip+handoff. A fake `git` under the shim
+// dir writes a marker (standing in for "the shim was resolved again"); the real
+// git the guard should reach is a second fake `git` that does not. With
 // MUNSU_HOME unset — the case that used to defeat the strip and recurse — the
 // guard must resolve the real git, so the shim marker must never be written.
+// Moving the strip below the git-guard early-return in guardWatcherPreRunE makes
+// this fail: the shim survives on PATH and the handoff resolves it a second time.
 func TestGuardDoesNotRecurseIntoShim(t *testing.T) {
 	home := t.TempDir()
 	shimDir := filepath.Join(home, "state", "shim", "bin")
@@ -227,8 +236,13 @@ func TestGuardDoesNotRecurseIntoShim(t *testing.T) {
 		if err := os.Chdir(os.Getenv("MUNSU_GIT_GUARD_TEST_CWD")); err != nil {
 			t.Fatal(err)
 		}
-		stripShimDirFromPath()
-		if err := runGitGuard([]string{"--version"}); err != nil {
+		// Drive the real root command rather than calling stripShimDirFromPath
+		// and runGitGuard by hand: this exercises the actual PersistentPreRunE
+		// wiring (strip runs before the git-guard short-circuit), so a reorder
+		// that let the shim survive on PATH would be caught here.
+		root := NewRootCommand()
+		root.SetArgs([]string{"git-guard", "--version"})
+		if err := root.Execute(); err != nil {
 			os.Exit(2)
 		}
 		return
