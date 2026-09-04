@@ -59,7 +59,7 @@ The General is the single resolution authority. It resolves a project's configur
 
 ### 6. Per-project digest and targeted nudge
 
-The config-reread digest is computed per project as `hash(base ⨂ P.config)`. A base change changes every project's digest and nudges every Captain; a change to only one project's overlay nudges only that project's Captain. The fleet-default `base.CaptainProfile` is checked at launch time and is excluded from the nudge digest, because it affects the next relaunch, not a running Captain's behavior.
+The config-reread digest is computed per project as `hash(base.Config ⨂ P.config)`. A `base.Config` change changes every project's digest and nudges every Captain; a change to only one project's overlay nudges only that project's Captain. The fleet-default `base.CaptainProfile` is checked at launch time and is excluded from the nudge digest, because it affects the next relaunch, not a running Captain's behavior.
 
 ### 7. Module ownership
 
@@ -93,7 +93,7 @@ Resolution and digest are pure functions over in-memory structs and are the prim
 2. `digest(base, overlay)` — deterministic.
 3. Launch-profile authority — flat legacy files are ignored without migration or backfill, and malformed `config/base.json` fails closed.
 4. `LoadResolvedSnapshot` — frozen per operation.
-5. Per-project nudge targeting — base change nudges all; single-project overlay change nudges only that project.
+5. Per-project nudge targeting — `base.Config` change nudges all; single-project overlay change nudges only that project.
 6. Incident regressions — unscoped task/Captain IDs are scoped by project; multiple Captains resolve to different configuration; the fleet-default `base.CaptainProfile` does not enter the nudge digest.
 
 ## Alternatives Rejected
