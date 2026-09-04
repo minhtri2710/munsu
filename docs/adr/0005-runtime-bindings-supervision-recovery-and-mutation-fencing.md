@@ -1,6 +1,6 @@
 # 0005. Runtime Bindings, Supervision, Recovery, and Mutation Fencing
 
-* **Status:** Accepted; partially implemented — immutable Endpoint/Worktree bindings, typed 7-state observation (ADR-0021), per-home watcher lease + degraded mode, `.soldier-brief.md`+manifest, and Captain-side recovery (relaunch/nudge/relaunch-guard) all landed. §3 (Captain-scoped recovery is the accepted boundary) and §4 (recovery-series/circuit + LaunchDiagnostic) are retired by ADR-0023, and §5 (the General→Captain watcher-lease relay) is superseded by the running status-signal model (2026-09-04). Remaining residual work (§6 Git-fencing tier decision) is tracked in the [owner-clean residual roadmap](../plans/2026-09-03-owner-clean-residual-roadmap.md).
+* **Status:** Accepted; partially implemented — immutable Endpoint/Worktree bindings, typed 7-state observation (ADR-0021), per-home watcher lease + degraded mode, `.soldier-brief.md`+manifest, and Captain-side recovery (relaunch/nudge/relaunch-guard) all landed. §3 (Captain-scoped recovery is the accepted boundary) and §4 (recovery-series/circuit + LaunchDiagnostic) are retired by ADR-0023, and §5 (the General→Captain watcher-lease relay) is superseded by the running status-signal model (2026-09-04). §6 (Git-fencing) is ratified as the running flat allowlist — its six-tier ladder, CAS lease, and force-with-lease exception, none ever wired into the fence, are retired under ADR-0023 (2026-09-04); the best-effort-parse residual (shell-wrapped git and unlisted verbs pass) is a security boundary recorded in §6 itself, not tracked repair work. The [owner-clean residual roadmap](../plans/2026-09-03-owner-clean-residual-roadmap.md) carries the remaining spawn/provision auto-install work.
 * **Date:** 2026-07-30
 * **Extends:** ADR-0002 (Resource Lease, quarantine, durable lifecycle)
 * **Triggered by:** `munsu-workflow-incident-report-2026-07-30.md`
@@ -93,20 +93,17 @@ Existing Soldiers continue running undisturbed; the gate blocks only new dispatc
 
 ### 6. Task-bound Git mutation fencing
 
-Managed task sessions prepend a Git wrapper bound to the immutable Worktree Binding. Read-only operations remain available. Mutating operations verify target path (including `git -C`), Git directory, common repository identity, current task/lease generation, branch/ref pre-state, and non-primary-checkout status.
+Managed task sessions route every Git command through a harness PreToolUse safety-check hook bound to the immutable Worktree Binding. Read-only operations remain available. Mutating operations verify target path (including `git -C`, `--git-dir`, and `--work-tree`), Git directory, common repository identity, current task/lease generation, branch/ref pre-state, and non-primary-checkout status.
 
-Git authority is tiered:
+The default and only Ship authority is a flat allowlist, enforced in `internal/cli/git_worktree_safety.go`. On a mutating command the fence fails closed unless an active task worktree binding exists, the target resolves to exactly the bound worktree (the primary checkout, a different repository, and a mismatched `--git-dir`/`--work-tree`/common-dir are all refused — so an absolute path buys nothing), and the worktree is on the task-local branch `mu/<task>`. It then permits only:
 
-* `read`
-* `worktree-mutation`
-* `history-rewrite`
-* `destructive-clean`
-* `remote-push`
-* `force-push`
+* `add` and `commit` (any form — `commit --amend` is not separately restricted, since the six-tier `history-rewrite` gate was never built);
+* creating the task-local branch (`git branch mu/<task>`, or `checkout`/`switch` with `-b`/`-B`/`-c`/`-C mu/<task>`), with no delete/move/copy/force flag in any argument position;
+* a normal `push` to `origin` of the task ref (`mu/<task>`, `HEAD`, or the equivalent `HEAD:` refspec), with only benign flags and no `+`-prefixed (force) refspec.
 
-A default Ship Soldier may create/switch its task branch, add, commit, and perform a normal push only to the bound task ref when its Delivery Plan requires it. Reset-hard, clean, broad restore, branch/tag deletion, worktree mutation, repository/global config mutation, force push, and pushing another ref require stronger authority or remain forbidden. Elevated capability binds Task Generation, expected HEAD/ref SHA, exact remote/ref, and durable authorization; mutations use CAS. Plain `--force` is denied; narrowly bound `--force-with-lease` may be authorized.
+Every other operation — `reset`, `clean`, `restore`, `rm`, `merge`, `rebase`, `cherry-pick`, `revert`, `worktree`, `tag`, branch/ref deletion, rename or copy, force push, `push --delete`, and pushing any other ref — is unconditionally denied. There is no tiered authority ladder, no elevated capability, no compare-and-swap / expected-HEAD lease, and no `--force-with-lease` authorization: the earlier six-tier design (`read` / `worktree-mutation` / `history-rewrite` / `destructive-clean` / `remote-push` / `force-push`) and its narrowly-bound force-with-lease exception were never wired into the fence, and are retired here under ADR-0023 in favor of the running flat allowlist. Internal munsu Git mutation likewise uses explicit scoped paths rather than ambient cwd.
 
-The wrapper is an operational safeguard, not a security sandbox; absolute-path Git execution remains a possible bypass. Internal munsu Git mutation also uses explicit scoped capabilities rather than ambient cwd.
+The safety-check hook is an operational safeguard against accidental primary-checkout, wrong-worktree, and casual force/delete mutation — not a security sandbox. It parses the command with a best-effort shell tokenizer and recognizes a fixed set of mutating Git verbs, so a Git invocation wrapped in another program (`sh -c "git push --force …"`, a script, or an alias — anything whose first word is not `git`) and any verb outside that set (for example `stash`, `config`, `update-ref`, `symbolic-ref`) are not fenced and pass. Closing that residual class is out of scope for the ratified allowlist and would require argv interception below the shell.
 
 ### 7. Runtime artifact ownership manifest
 

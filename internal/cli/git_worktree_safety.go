@@ -13,15 +13,14 @@ import (
 )
 
 type gitCommandSafety struct {
-	isGit       bool
-	mutating    bool
-	verb        string
-	args        []string
-	targetPath  string
-	gitDir      string
-	workTree    string
-	branchName  string
-	pushRefspec string
+	isGit      bool
+	mutating   bool
+	verb       string
+	args       []string
+	targetPath string
+	gitDir     string
+	workTree   string
+	branchName string
 }
 
 func evaluateGitMutationSafety(checkPath, command string) (bool, string) {
@@ -128,10 +127,7 @@ func validateGitMutationAuthority(homeDir, taskID string, g gitCommandSafety, bi
 		}
 		return "default Ship authority permits only task-local branch, add, commit, and normal push"
 	case "push":
-		if len(g.args) == 0 || g.args[0] != "origin" {
-			return "default Ship authority permits only task-local branch, add, commit, and normal push"
-		}
-		if g.pushRefspec == taskBranch || g.pushRefspec == "HEAD:refs/heads/"+taskBranch || g.pushRefspec == "HEAD:"+taskBranch || g.pushRefspec == "HEAD" {
+		if pushAllowed(taskBranch, g.args) {
 			return ""
 		}
 		return "default Ship authority permits only task-local branch, add, commit, and normal push"
@@ -190,6 +186,12 @@ func parseGitSafetyCommandWithMode(checkPath, command string, mode backslashMode
 				g.workTree = resolveSafetyPathWithMode(g.targetPath, strings.TrimPrefix(arg, "--work-tree="), mode)
 				g.targetPath = g.workTree
 				gitArgs = gitArgs[1:]
+			case (arg == "-c" || arg == "--config-env" || arg == "--namespace" || arg == "--super-prefix" || arg == "--attr-source") && len(gitArgs) > 1:
+				// These global options take a separate value argument. Consume
+				// both tokens so the value is not mis-read as the git verb:
+				// `git -c user.name=x push …` must not let `user.name=x` shadow
+				// `push` and slip the mutation through as an unknown verb.
+				gitArgs = gitArgs[2:]
 			case strings.HasPrefix(arg, "-"):
 				gitArgs = gitArgs[1:]
 			default:
@@ -267,16 +269,6 @@ func fillGitCommandDetails(g *gitCommandSafety) {
 			}
 		}
 	}
-	if g.verb == "push" {
-		for i := len(g.args) - 1; i >= 0; i-- {
-			arg := g.args[i]
-			if strings.HasPrefix(arg, "-") || arg == "origin" {
-				continue
-			}
-			g.pushRefspec = arg
-			return
-		}
-	}
 }
 
 func validateGitExplicitTargetBinding(g gitCommandSafety, binding *taskauthority.WorktreeBinding) string {
@@ -335,12 +327,59 @@ func validateGitTargetBinding(g gitCommandSafety, binding *taskauthority.Worktre
 	return ""
 }
 
-func branchCommandWrites(args []string) bool {
-	if len(args) == 0 {
+// pushAllowed permits only a normal push of the task-local branch to origin.
+// Flags are an allowlist, scanned in every position: any flag outside the small
+// safe set fails closed, so a bundled short like -fq, a --force/-f/--delete in
+// any position, and every other force/rewrite form are all denied without the
+// gate having to enumerate them. A leading '+' on the refspec (force) is also
+// denied. Exactly one origin token and one task-local refspec are required.
+func pushAllowed(taskBranch string, args []string) bool {
+	sawOrigin := false
+	sawRefspec := false
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "-") {
+			if !pushFlagAllowed(arg) {
+				return false
+			}
+			continue
+		}
+		if !sawOrigin {
+			if arg != "origin" {
+				return false
+			}
+			sawOrigin = true
+			continue
+		}
+		if sawRefspec || !pushRefspecAllowed(taskBranch, arg) {
+			return false
+		}
+		sawRefspec = true
+	}
+	return sawOrigin && sawRefspec
+}
+
+func pushFlagAllowed(flag string) bool {
+	switch flag {
+	case "-u", "--set-upstream", "-q", "--quiet", "-v", "--verbose", "--porcelain":
+		return true
+	}
+	return false
+}
+
+func pushRefspecAllowed(taskBranch, refspec string) bool {
+	if strings.HasPrefix(refspec, "+") {
 		return false
 	}
+	switch refspec {
+	case taskBranch, "HEAD:refs/heads/" + taskBranch, "HEAD:" + taskBranch, "HEAD":
+		return true
+	}
+	return false
+}
+
+func branchCommandWrites(args []string) bool {
 	for _, arg := range args {
-		if arg == "-d" || arg == "-D" || arg == "-m" || arg == "-M" || arg == "-c" || arg == "-C" {
+		if isBranchMutatingFlag(arg) {
 			return true
 		}
 	}
@@ -352,12 +391,28 @@ func branchCommandWrites(args []string) bool {
 	return false
 }
 
-func branchOpAllowed(taskBranch string, args []string) bool {
-	if len(args) == 0 {
-		return false
+// isBranchMutatingFlag is the complete set of destructive `git branch` flags —
+// delete, rename/move, copy, and force — in both short and long spelling. The
+// running fence checked only short forms in the first argument position, so
+// `git branch <task> -D` and `git branch --delete <task>` slipped through; this
+// set is matched in every position by both branchCommandWrites and
+// branchOpAllowed.
+func isBranchMutatingFlag(arg string) bool {
+	switch arg {
+	case "-d", "-D", "--delete",
+		"-m", "-M", "--move",
+		"-c", "-C", "--copy",
+		"-f", "--force":
+		return true
 	}
-	if args[0] == "-d" || args[0] == "-D" || args[0] == "-m" || args[0] == "-M" {
-		return false
+	return false
+}
+
+func branchOpAllowed(taskBranch string, args []string) bool {
+	for _, arg := range args {
+		if isBranchMutatingFlag(arg) {
+			return false
+		}
 	}
 	for _, arg := range args {
 		if arg == taskBranch {
