@@ -3,6 +3,7 @@ package fleet
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -38,21 +39,29 @@ type ConfigPushResult struct {
 	NewDigest  string // SHA-256 manifest after push
 }
 
-// ComputeInheritedConfigDigest returns a deterministic SHA-256 digest of
-// the published config snapshot. The digest covers the complete resolved
-// config surface. Before migration, fails with a legacy config error.
+// ComputeInheritedConfigDigest returns the canonical project-overlay digest
+// from the published config snapshot. Before migration, fails with a legacy
+// config error.
 func ComputeInheritedConfigDigest(captainHome string) (string, error) {
-	h := sha256.New()
-	snapshotPath := filepath.Join(captainHome, config.PublishedSnapshotPath)
-	data, err := os.ReadFile(snapshotPath)
-	if err != nil {
+	if _, err := os.Stat(filepath.Join(captainHome, config.PublishedSnapshotPath)); err != nil {
 		if os.IsNotExist(err) {
 			return "", ErrNoPublishedSnapshot
 		}
 		return "", fmt.Errorf("reading published config snapshot for digest: %w", err)
 	}
-	fmt.Fprintf(h, "%s:%s\n", config.PublishedSnapshotPath, string(data))
-	return fmt.Sprintf("%x", h.Sum(nil)), nil
+
+	snapshot, err := config.LoadPublishedSnapshot(captainHome)
+	if err != nil {
+		return "", fmt.Errorf("decoding published config snapshot for digest: %w", err)
+	}
+	digest := snapshot.Config().Digest
+	if len(digest) != sha256.Size*2 || digest != strings.ToLower(digest) {
+		return "", fmt.Errorf("published config snapshot has invalid project digest")
+	}
+	if _, err := hex.DecodeString(digest); err != nil {
+		return "", fmt.Errorf("published config snapshot has invalid project digest: %w", err)
+	}
+	return digest, nil
 }
 
 // ReadConfigRereadGen reads the current generation tracking from the

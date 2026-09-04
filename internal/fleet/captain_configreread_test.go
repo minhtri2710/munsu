@@ -137,6 +137,54 @@ func TestComputeInheritedConfigDigest_Empty(t *testing.T) {
 	}
 }
 
+// TestAdvanceConfigRereadGen_CaptainProfileChangeDoesNotAdvance verifies
+// CaptainProfile-only changes do not advance the reread generation.
+func TestAdvanceConfigRereadGen_CaptainProfileChangeDoesNotAdvance(t *testing.T) {
+	home := t.TempDir()
+	first := config.ResolvedProjectConfig{
+		Project:        "test-project",
+		ProjectPath:    "/fixed/path",
+		Backend:        "tmux",
+		CaptainProfile: config.CaptainProfile{Harness: "pi"},
+		Digest:         "0000000000000000000000000000000000000000000000000000000000000000",
+	}
+	if err := config.StorePublishedSnapshot(home, first); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _, _, _, err := AdvanceConfigRereadGen(home); err != nil || !changed {
+		t.Fatalf("first push: changed=%v, err=%v", changed, err)
+	}
+
+	second := first
+	second.CaptainProfile = config.CaptainProfile{Harness: "codex", Model: "gpt-5"}
+	if err := config.StorePublishedSnapshot(home, second); err != nil {
+		t.Fatal(err)
+	}
+	changed, gen, _, digest, err := AdvanceConfigRereadGen(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed || gen != 1 || digest != first.Digest {
+		t.Errorf("CaptainProfile-only change advanced reread: changed=%v gen=%d digest=%q", changed, gen, digest)
+	}
+}
+
+func TestComputeInheritedConfigDigest_InvalidProjectDigest(t *testing.T) {
+	home := t.TempDir()
+	resolved := config.ResolvedProjectConfig{
+		Project:     "test-project",
+		ProjectPath: home,
+		Backend:     "tmux",
+		Digest:      "not-a-digest",
+	}
+	if err := config.StorePublishedSnapshot(home, resolved); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ComputeInheritedConfigDigest(home); err == nil {
+		t.Fatal("expected invalid project digest error")
+	}
+}
+
 // TestComputeInheritedConfigDigest_Deterministic verifies same content →
 // same digest.
 func TestComputeInheritedConfigDigest_Deterministic(t *testing.T) {
