@@ -378,48 +378,14 @@ func pushRefspecAllowed(taskBranch, refspec string) bool {
 }
 
 func branchCommandWrites(args []string) bool {
-	for _, arg := range args {
-		if isBranchMutatingFlag(arg) {
-			return true
-		}
+	if len(args) == 0 || (len(args) == 1 && args[0] == "--show-current") {
+		return false
 	}
-	for _, arg := range args {
-		if !strings.HasPrefix(arg, "-") {
-			return true
-		}
-	}
-	return false
-}
-
-// isBranchMutatingFlag is the complete set of destructive `git branch` flags —
-// delete, rename/move, copy, and force — in both short and long spelling. The
-// running fence checked only short forms in the first argument position, so
-// `git branch <task> -D` and `git branch --delete <task>` slipped through; this
-// set is matched in every position by both branchCommandWrites and
-// branchOpAllowed.
-func isBranchMutatingFlag(arg string) bool {
-	switch arg {
-	case "-d", "-D", "--delete",
-		"-m", "-M", "--move",
-		"-c", "-C", "--copy",
-		"-f", "--force":
-		return true
-	}
-	return false
+	return true
 }
 
 func branchOpAllowed(taskBranch string, args []string) bool {
-	for _, arg := range args {
-		if isBranchMutatingFlag(arg) {
-			return false
-		}
-	}
-	for _, arg := range args {
-		if arg == taskBranch {
-			return true
-		}
-	}
-	return false
+	return len(args) == 1 && args[0] == taskBranch
 }
 
 func createsBranch(args []string) bool {

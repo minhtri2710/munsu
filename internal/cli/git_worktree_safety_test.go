@@ -321,7 +321,13 @@ func TestSafetyCheckArgvLevelFenceEvasionDenied(t *testing.T) {
 		"git branch -m mu/ship-evade renamed",
 		"git branch --move mu/ship-evade renamed",
 		"git branch --copy mu/ship-evade copied",
+		"git branch -f mu/ship-evade",
+		"git branch --force mu/ship-evade",
+		"git branch -df mu/ship-evade",
 		"git branch other-branch",
+		"git branch other-branch mu/ship-evade",
+		"git branch --unset-upstream",
+		"git branch --set-upstream-to=origin/main",
 	} {
 		block, reason := runPiSafetyForGit(t, worktree, command)
 		if !block || reason == "" {
