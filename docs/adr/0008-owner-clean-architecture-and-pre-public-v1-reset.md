@@ -1,6 +1,6 @@
 # 0008. Owner-Clean Architecture and Pre-Public v1 Reset
 
-* **Status:** Accepted; substantially implemented — topology, `task` sole noun, render seam, contract repo, and activation gate landed (#402–#418). The §2 `.meta`/`.status` retention decision was resolved 2026-09-04: these files are retained as `home`-owned durable projections read by home/backend/fleet/orchestrator/CLI mechanics, with Task Authority the sole Task-lifecycle authority (§2). No residual work remains in this ADR; the remaining cross-ADR gate (ADR-0005 §6 Git fencing, G3) is tracked in the [owner-clean residual roadmap](../plans/2026-09-03-owner-clean-residual-roadmap.md).
+* **Status:** Accepted; substantially implemented — topology, `task` sole noun, render seam, contract repo, and activation gate landed (#402–#418). The §2 `.meta`/`.status` retention decision was resolved 2026-09-04: these files are retained as `home`-owned durable projections read by home/backend/fleet/orchestrator/CLI mechanics, with Task Authority the sole Task-lifecycle authority (§2). §4's unbuilt "requests recovery through the canonical control/Uplink interface" clause is superseded by the running multiple-entry-point recovery model (ADR-0005 §5, 2026-09-04); its "renewable generation and fencing token" lease-mechanism claim remains a pre-existing unbuilt-design mismatch (`WatcherLease` implements neither) flagged for a separate owner decision, not a tracked roadmap item. The remaining tracked cross-ADR gate (ADR-0005 §6 Git fencing, G3) is in the [owner-clean residual roadmap](../plans/2026-09-03-owner-clean-residual-roadmap.md).
 * **Date:** 2026-08-03
 * **Supersedes:** ADR-0001 through ADR-0007 where their topology, ownership, projections, migration, fallback, compatibility, schema, command, or test decisions conflict with this ADR
 * **Triggered by:** Whole-codebase architecture review and structured grilling
@@ -102,7 +102,7 @@ Terminal Receipt, Wake, Captain relay, turn-end, and drain lifecycles are not pu
 
 Adapters return typed observations. They never mutate lifecycle directly. Orchestrator interprets observations and requests typed operations from the owning module. `unknown` remains distinct from success, failure, absence, or death. Only evidence required to explain a decision or continue recovery is durable.
 
-Each authoritative home has one logical watcher owner with a renewable generation and fencing token. General does not inspect or mutate Captain filesystem state. It observes typed Captain health and requests recovery through the canonical control/Uplink interface. Process topology may host multiple watcher loops, but it does not alter ownership topology.
+Each authoritative home has one logical watcher owner with a renewable generation and fencing token. General does not inspect or mutate Captain filesystem state. It observes typed Captain health. The original "requests recovery through the canonical control/Uplink interface" clause was never built and is superseded by ADR-0005 §5's running multiple-entry-point recovery model (General-scoped `RecoverTransaction`, the `fleet.Recover` sweep, and converge's strict-dead-only relaunch path; none is a sole canonical boundary), 2026-09-04. Process topology may host multiple watcher loops, but it does not alter ownership topology.
 
 ### 5. Home
 
