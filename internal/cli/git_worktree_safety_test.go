@@ -290,6 +290,78 @@ func TestSafetyCheckForceDeniedWithoutAuthorization(t *testing.T) {
 	}
 }
 
+// TestSafetyCheckArgvLevelFenceEvasionDenied pins the ADR-0005 §6 hardening:
+// force/delete/rewrite must be denied regardless of flag position, bundled
+// short flags, long spellings, and a global-option value that would otherwise
+// shadow the verb. Each command exercises a distinct newly-closed evasion.
+func TestSafetyCheckArgvLevelFenceEvasionDenied(t *testing.T) {
+	primary := initGitRepoForSafety(t, t.TempDir())
+	worktree := filepath.Join(t.TempDir(), "wt")
+	runGitForSafety(t, primary, "worktree", "add", "--detach", worktree)
+	homeDir := bindSafetyWorktree(t, "ship-evade", primary, worktree)
+	t.Setenv("MUNSU_HOME", homeDir)
+	t.Setenv("MUNSU_TASK_ID", "ship-evade")
+	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-evade")
+
+	for _, command := range []string{
+		// push: force/delete after the refspec, bundled short, +refspec, and a
+		// -c value that would otherwise shadow the push verb.
+		"git push origin HEAD:refs/heads/mu/ship-evade --force",
+		"git push origin -fq HEAD:refs/heads/mu/ship-evade",
+		"git push origin --delete mu/ship-evade",
+		"git push origin +mu/ship-evade",
+		"git push origin main",
+		"git push notorigin mu/ship-evade",
+		"git push origin mu/ship-evade mu/ship-evade",
+		"git push origin",
+		"git -c user.email=x push origin HEAD:refs/heads/mu/ship-evade --force",
+		// branch: delete/move/copy in a trailing position and in long form.
+		"git branch mu/ship-evade -D",
+		"git branch --delete mu/ship-evade",
+		"git branch -m mu/ship-evade renamed",
+		"git branch --move mu/ship-evade renamed",
+		"git branch --copy mu/ship-evade copied",
+		"git branch -f mu/ship-evade",
+		"git branch --force mu/ship-evade",
+		"git branch -df mu/ship-evade",
+		"git branch other-branch",
+		"git branch other-branch mu/ship-evade",
+		"git branch --unset-upstream",
+		"git branch --set-upstream-to=origin/main",
+	} {
+		block, reason := runPiSafetyForGit(t, worktree, command)
+		if !block || reason == "" {
+			t.Fatalf("%q block=%v reason=%q, want deny", command, block, reason)
+		}
+	}
+}
+
+// TestSafetyCheckNormalPushAndBranchFormsAllowed proves the argv-level fence
+// hardening did not regress the permitted normal push and task-local branch
+// forms, including the allowed flags in either position.
+func TestSafetyCheckNormalPushAndBranchFormsAllowed(t *testing.T) {
+	primary := initGitRepoForSafety(t, t.TempDir())
+	worktree := filepath.Join(t.TempDir(), "wt")
+	runGitForSafety(t, primary, "worktree", "add", "--detach", worktree)
+	homeDir := bindSafetyWorktree(t, "ship-ok", primary, worktree)
+	t.Setenv("MUNSU_HOME", homeDir)
+	t.Setenv("MUNSU_TASK_ID", "ship-ok")
+	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-ok")
+
+	for _, command := range []string{
+		"git push origin mu/ship-ok",
+		"git push origin HEAD:refs/heads/mu/ship-ok",
+		"git push -q origin mu/ship-ok",
+		"git push origin mu/ship-ok -v",
+		"git branch mu/ship-ok",
+	} {
+		block, reason := runPiSafetyForGit(t, worktree, command)
+		if block {
+			t.Fatalf("%q blocked: %s", command, reason)
+		}
+	}
+}
+
 func bindSafetyWorktree(t *testing.T, taskID, primary, worktree string) string {
 	t.Helper()
 	homeDir := t.TempDir()
