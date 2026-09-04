@@ -84,11 +84,10 @@ func ResolveProjectSnapshot(homeDir, projectName string) (config.ResolvedSnapsho
 		return config.ResolvedSnapshot{}, err
 	}
 	facts := config.ProjectFacts{
-		Name:           project.Name,
-		Path:           project.Path,
-		Mode:           project.Mode,
-		Overlay:        projectOverlay,
-		CaptainProfile: config.CaptainProfile{},
+		Name:    project.Name,
+		Path:    project.Path,
+		Mode:    project.Mode,
+		Overlay: projectOverlay,
 	}
 	return config.NewResolvedSnapshot(base, facts)
 }
