@@ -218,9 +218,6 @@ func TestCanonicalDeliveryAuthorizationIssuancePinsPostIssuanceState(t *testing.
 	if auth.Identity != want {
 		t.Fatalf("authorization identity = %+v, want exact typed identity", auth.Identity)
 	}
-	if auth.ExpectedState != nil {
-		t.Fatalf("provider-merge authorization carries expected state: %+v", auth.ExpectedState)
-	}
 	if len(auth.Preconditions) != 2 {
 		t.Fatalf("preconditions = %+v, want 2", auth.Preconditions)
 	}
@@ -275,29 +272,6 @@ func TestCanonicalDeliveryAuthorizationIssuancePinsPostIssuanceState(t *testing.
 	}
 	if read.OperationID != auth.OperationID || read.Revision != auth.Revision || read.Identity != auth.Identity {
 		t.Fatalf("DeliveryAuthorization read = %+v, want %+v", read, auth)
-	}
-}
-
-// TestCanonicalDeliveryAuthorizationRepositoryMutationPinsExpectedState
-// proves the repository-mutation kind pins the operation-specific expected
-// repository state (ref + old SHA lease semantics).
-func TestCanonicalDeliveryAuthorizationRepositoryMutationPinsExpectedState(t *testing.T) {
-	c, _, _ := newTestCanonical(t)
-	mustDeliveryTask(t, c, "t1")
-
-	req := authorizeRequest(c, "t1", preconditionOf(1, 3))
-	req.Kind = DeliveryAuthorizationRepositoryMutation
-	req.Preconditions = []DeliveryPrecondition{DeliveryPreconditionWorktreeClean}
-	req.ExpectedState = &DeliveryExpectedState{Ref: "refs/heads/feature/delivery", OldSHA: "1111222233334444555566667777888899990000"}
-	res, err := c.AuthorizeDelivery(mustOperation(t, "op-auth-repo-t1", req), req)
-	if err != nil {
-		t.Fatalf("AuthorizeDelivery(repository-mutation): %v", err)
-	}
-	if res.Authorization.ExpectedState == nil {
-		t.Fatalf("repository-mutation authorization missing expected state")
-	}
-	if res.Authorization.ExpectedState.Ref != "refs/heads/feature/delivery" || res.Authorization.ExpectedState.OldSHA != "1111222233334444555566667777888899990000" {
-		t.Fatalf("expected state = %+v", res.Authorization.ExpectedState)
 	}
 }
 
@@ -468,23 +442,10 @@ func TestCanonicalDeliveryAuthorizationFailClosed(t *testing.T) {
 			t.Fatalf("duplicate preconditions = %v, want ErrInvalidInput", err)
 		}
 
-		mergeWithState := authorizeRequest(c, "t1", preconditionOf(1, 3))
-		mergeWithState.ExpectedState = &DeliveryExpectedState{Ref: "refs/heads/main", OldSHA: "1111222233334444555566667777888899990000"}
-		if _, err := c.AuthorizeDelivery(mustOperation(t, "op-auth-merge-state", mergeWithState), mergeWithState); !errors.Is(err, ErrInvalidInput) {
-			t.Fatalf("provider-merge with expected state = %v, want ErrInvalidInput", err)
-		}
-
-		mutationWithoutState := authorizeRequest(c, "t1", preconditionOf(1, 3))
-		mutationWithoutState.Kind = DeliveryAuthorizationRepositoryMutation
-		if _, err := c.AuthorizeDelivery(mustOperation(t, "op-auth-mutation-nostate", mutationWithoutState), mutationWithoutState); !errors.Is(err, ErrInvalidInput) {
-			t.Fatalf("repository-mutation without expected state = %v, want ErrInvalidInput", err)
-		}
-
-		badState := authorizeRequest(c, "t1", preconditionOf(1, 3))
-		badState.Kind = DeliveryAuthorizationRepositoryMutation
-		badState.ExpectedState = &DeliveryExpectedState{Ref: "refs/heads/main", OldSHA: "bad sha/with/separator"}
-		if _, err := c.AuthorizeDelivery(mustOperation(t, "op-auth-bad-state", badState), badState); !errors.Is(err, ErrInvalidInput) {
-			t.Fatalf("repository-mutation with unsafe old SHA = %v, want ErrInvalidInput", err)
+		unknownKind := authorizeRequest(c, "t1", preconditionOf(1, 3))
+		unknownKind.Kind = DeliveryAuthorizationKind("not-a-kind")
+		if _, err := c.AuthorizeDelivery(mustOperation(t, "op-auth-unknown-kind", unknownKind), unknownKind); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("unknown authorization kind = %v, want ErrInvalidInput", err)
 		}
 
 		// Nothing was committed by any invalid intent.
@@ -525,10 +486,8 @@ func TestCanonicalDeliveryAuthorizationReplayAndConflict(t *testing.T) {
 		t.Fatalf("replay record differs: %+v vs %+v", second.Authorization, first.Authorization)
 	}
 
-	// Same Operation ID with a different intent (repository-mutation kind).
+	// Same Operation ID with a different intent (different precondition set).
 	other := authorizeRequest(c, "t1", preconditionOf(1, 3))
-	other.Kind = DeliveryAuthorizationRepositoryMutation
-	other.ExpectedState = &DeliveryExpectedState{Ref: "refs/heads/main", OldSHA: "1111222233334444555566667777888899990000"}
 	other.Preconditions = []DeliveryPrecondition{DeliveryPreconditionWorktreeClean}
 	reused, err := domain.NewOperation(op.ID, other)
 	if err != nil {

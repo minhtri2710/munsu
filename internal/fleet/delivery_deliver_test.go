@@ -317,7 +317,7 @@ func TestDeliverUnsupportedCapabilityFailsBeforeMutation(t *testing.T) {
 func TestDeliverUnsupportedKindFailsBeforeJournal(t *testing.T) {
 	_, homeDir := newFleetCanonical(t)
 	req := deliverRequest()
-	req.Kind = taskauthority.DeliveryAuthorizationRepositoryMutation
+	req.Kind = taskauthority.DeliveryAuthorizationKind("not-a-kind")
 	if _, err := Deliver(homeDir, "t1", req); err == nil || !strings.Contains(err.Error(), "unsupported") {
 		t.Fatalf("Deliver err = %v, want unsupported kind fail-closed", err)
 	}
