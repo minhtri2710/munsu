@@ -90,8 +90,7 @@ func (p DeliveryPrecondition) Valid() bool {
 //     phase;
 //   - current ownership and the typed domain.DeliveryIdentity including the
 //     exact provider head;
-//   - the operation kind and the operation-specific expected repository state
-//     (old SHA for lease semantics; none for provider merge);
+//   - the typed persisted operation kind discriminator (provider merge);
 //   - the exact Endpoint/Worktree binding digest (lease/fence and repository
 //     identity/path/head fields);
 //   - the relevant delivery-holds digest;
@@ -173,7 +172,7 @@ func (s DeliveryOutcomeStatus) terminal() bool {
 // DeliveryOutcome is the immutable outcome evidence document for one delivery
 // execution, keyed by Task ID + outcome Operation ID. It binds the exact
 // journal operation, the authorization identity the delivery executed under,
-// the task generation, the provider/repository evidence (head/merged SHA as
+// the task generation, the provider delivery evidence (head/merged SHA as
 // applicable), the detail classification, and the commit time.
 type DeliveryOutcome struct {
 	SchemaVersion            string                `json:"schema_version"`
@@ -428,7 +427,7 @@ func validateDeliveryRevocation(r DeliveryRevocation) error {
 }
 
 // validateDeliveryAuthorization checks one committed issuance evidence
-// document shape and the kind-appropriate expected state.
+// document shape and its typed delivery fields.
 func validateDeliveryAuthorization(a DeliveryAuthorization) error {
 	if a.SchemaVersion != TaskAuthoritySchema {
 		return validationError("invalid delivery authorization schema %q", a.SchemaVersion)
@@ -889,8 +888,8 @@ func sha256Hex(data []byte) string {
 // #414 irreversible operation kind, committing an immutable issuance evidence
 // document keyed by Task ID + authorization Operation ID and updating the
 // bounded index pointer. Issuance requires a current working task with owner
-// and the exact bindings required by the kind, no matching active delivery
-// hold, no active transfer reservation, no terminal committed outcome, no
+// and the exact endpoint/worktree bindings, no matching active delivery hold,
+// no active transfer reservation, no terminal committed outcome, no
 // already-active authorization, a valid typed identity whose head matches the
 // bound worktree head, and valid preconditions; it fails closed otherwise.
 // Repeating the same Operation ID with the same digest replays the durable
