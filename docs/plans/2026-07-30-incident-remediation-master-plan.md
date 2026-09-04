@@ -234,7 +234,7 @@ Capture bounded stdout/stderr from process launch, redact before owner-only atom
 
 **Decisions:** C16.
 
-One watcher owns each home. General observes Captain Watcher Leases and requests recovery through control plane. Handoff/start/spawn require healthy watcher. Unhealthy watcher blocks new dispatch but allows repair, reconciliation, authorized delivery, holds, and evidence-preserving teardown.
+One watcher owns each home. The proposed General-to-Captain WatcherLease observation and control-plane recovery relay was never built and is superseded; see [ADR-0005 §5](../adr/0005-runtime-bindings-supervision-recovery-and-mutation-fencing.md) for the authoritative running per-home watcher and recovery contract. Handoff/start/spawn require healthy watcher. Unhealthy watcher blocks new dispatch but allows repair, reconciliation, authorized delivery, holds, and evidence-preserving teardown.
 
 **Primary seams:** `internal/cli/watch_cmd.go`, `internal/orchestrator/supervision_watcher.go`, Captain converge/recover composition.
 

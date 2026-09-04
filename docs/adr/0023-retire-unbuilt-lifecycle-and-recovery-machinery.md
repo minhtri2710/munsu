@@ -32,13 +32,13 @@ aggregate field, store, or CLI carries a context manifest.
 
 The failure-signature-keyed durable recovery series, the deterministic-failure
 circuit breaker, and the redacted launch-diagnostic bundle are not built and
-will not be. The accepted recovery contract is the existing Captain-side
-machinery in `internal/fleet/captain_recover.go`: relaunch on a verified-dead
-endpoint, bounded nudge-retry, and the TTL relaunch-guard that prevents
-duplicate panes after a deterministic startup failure. This machinery is
-Captain-scoped by design; §3's soldier-endpoint extension is not a gap but the
-accepted boundary — recovery acts on Captain endpoints, and soldier liveness
-reaches recovery through the Captain that owns the soldier.
+will not be. The running recovery contract is described authoritatively in
+[ADR-0005 §5](0005-runtime-bindings-supervision-recovery-and-mutation-fencing.md):
+multiple entry points act on Captain endpoints, with verified-dead-only
+relaunch, bounded nudge where applicable, and the shared TTL relaunch guard.
+§3's soldier-endpoint extension is not a gap but the accepted boundary;
+recovery acts on Captain endpoints, and soldier liveness reaches recovery
+through the Captain that owns the soldier.
 
 ### 3. ADR-0004 §7 DispatchInterpretation — subsumed
 
@@ -57,9 +57,9 @@ No separate interpretation struct is added.
 * ADR-0004 §7 and §9, and ADR-0005 §4, are closed. Their section bodies remain
   as the historical record; their headers carry the retirement; no tree work
   tracks them.
-* ADR-0005's remaining residual narrows to §5 (General→Captain watcher-lease
-  observation and recovery-request relay) and §6 (Git-fencing tier decision,
-  roadmap gate G3). §3 and §4 are closed by this ADR.
+* ADR-0005 §5 was superseded on 2026-09-04 by its running status-signal model;
+  ADR-0005 §6 (roadmap gate G3, the Git-fencing tier decision) is the only
+  remaining residual. §3 and §4 are closed by this ADR.
 * No code changes. The names ContextManifest, DispatchInterpretation, and
   LaunchDiagnostic never had a Go declaration; their citation-waiver rows in
   `.github/citations.allow` stand for the ADR-0004/0005/0013 bodies that still

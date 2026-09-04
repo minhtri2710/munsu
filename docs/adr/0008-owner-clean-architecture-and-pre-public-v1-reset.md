@@ -1,6 +1,6 @@
 # 0008. Owner-Clean Architecture and Pre-Public v1 Reset
 
-* **Status:** Accepted; substantially implemented — topology, `task` sole noun, render seam, contract repo, and activation gate landed (#402–#418). Remaining residual work (the §2 `.meta`/`.status` decision — §2 records these projections as removed, but the tree still writes them; retention is an owner decision) is tracked in the [owner-clean residual roadmap](../plans/2026-09-03-owner-clean-residual-roadmap.md).
+* **Status:** Accepted; substantially implemented — topology, `task` sole noun, render seam, contract repo, and activation gate landed (#402–#418). The §2 `.meta`/`.status` retention decision was resolved 2026-09-04: these files are retained as `home`-owned durable projections read by home/backend/fleet/orchestrator/CLI mechanics, with Task Authority the sole Task-lifecycle authority (§2). §4's unbuilt "requests recovery through the canonical control/Uplink interface" clause is superseded by the running multiple-entry-point recovery model (ADR-0005 §5, 2026-09-04); its "renewable generation and fencing token" lease-mechanism claim remains a pre-existing unbuilt-design mismatch (`WatcherLease` implements neither) flagged for a separate owner decision, not a tracked roadmap item. The remaining tracked cross-ADR gate (ADR-0005 §6 Git fencing, G3) is in the [owner-clean residual roadmap](../plans/2026-09-03-owner-clean-residual-roadmap.md).
 * **Date:** 2026-08-03
 * **Supersedes:** ADR-0001 through ADR-0007 where their topology, ownership, projections, migration, fallback, compatibility, schema, command, or test decisions conflict with this ADR
 * **Triggered by:** Whole-codebase architecture review and structured grilling
@@ -65,7 +65,7 @@ Topology is protected by ownership and dependency-direction rules, not a literal
 
 The implementation of `taskauthorityfs` is absorbed into `taskauthority`, not moved into `home`. There is one concrete filesystem implementation. No synthetic Store interface, in-memory fake, store-contract package, or persistence adapter is retained solely for testing. A storage seam is introduced only when a second real adapter exists.
 
-All runtime Task reads go through Task Authority. Durable `backlog.md`, `tasks-axi` runtime integration, `.meta`, `.status`, and other Task projections are removed. Backlog is only a query concept over Task state.
+All authoritative Task lifecycle reads — phase, dispatch eligibility, binding, delivery authorization, transfer — go through Task Authority; `taskauthority` reads no `.meta`/`.status` file. Durable `backlog.md` and `tasks-axi` runtime integration are removed, and backlog is only a query concept over Task state. `.meta`/`.status` are not the authoritative Task record and are retained as `home`-owned durable primitives (`internal/home/taskmeta.go`) serving home/backend/fleet/orchestrator/CLI mechanics — mailbox routing, prune, absorb classification, snapshot and task-summary display, supervision and recovery — never Task lifecycle authority. Their last-status line is a diagnostic display value, never state truth.
 
 ### 3. Fleet
 
@@ -102,7 +102,7 @@ Terminal Receipt, Wake, Captain relay, turn-end, and drain lifecycles are not pu
 
 Adapters return typed observations. They never mutate lifecycle directly. Orchestrator interprets observations and requests typed operations from the owning module. `unknown` remains distinct from success, failure, absence, or death. Only evidence required to explain a decision or continue recovery is durable.
 
-Each authoritative home has one logical watcher owner with a renewable generation and fencing token. General does not inspect or mutate Captain filesystem state. It observes typed Captain health and requests recovery through the canonical control/Uplink interface. Process topology may host multiple watcher loops, but it does not alter ownership topology.
+Each authoritative home has one logical watcher owner with a renewable generation and fencing token. Ownership here is role/authority ownership, not filesystem isolation. In its Captain-health observation path, General verifies Captain-home identity (canonical path via `filepath.EvalSymlinks` and the `.munsu-captain-home` provenance marker) and reads its own projection task-meta, but reads no Captain `WatcherLease` or Task-lifecycle state and mutates no Captain-home state; on that evidence it observes typed Captain health. Separately, the fleet-owned General-scoped `RecoverTransaction` is a recovery workflow that intentionally reads and mutates the target Captain home through its typed recovery steps, under Fleet authority regardless of which home's CLI invokes it. The original "requests recovery through the canonical control/Uplink interface" clause was never built and is superseded by ADR-0005 §5's running multiple-entry-point recovery model (General-scoped `RecoverTransaction`, the `fleet.Recover` sweep, and converge's strict-dead-only relaunch path; none is a sole canonical boundary), 2026-09-04. Process topology may host multiple watcher loops, but it does not alter ownership topology.
 
 ### 5. Home
 
