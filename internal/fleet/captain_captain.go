@@ -225,8 +225,7 @@ func buildLaunchScript(binPath string, args []string, cwd string, parentHome str
 	b.WriteString("\n")
 	// Git-mutation fence: the same shim soldiers get. A captain's MUNSU_TASK_ID
 	// ("captain:<id>") has no worktree binding, so the fence refuses
-	// harness-issued git mutations — consistent with the integration hook the
-	// captain already installs. munsu's own git (worktree seed/retirement)
+	// harness-issued mutating Git commands. munsu's own git (worktree seed/retirement)
 	// strips this path back off (git-guard). Provisioning failure fails closed.
 	shimDir, err := provisionGitShim(cwd)
 	if err != nil {

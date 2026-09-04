@@ -308,9 +308,9 @@ func buildLaunchArtifact(in LaunchArtifactInput) (LaunchArtifact, error) {
 		b.WriteString(spawnShQuote(in.SnapshotDigest))
 		b.WriteString("\n")
 	}
-	// Git-mutation fence: prepend the munsu-owned git shim so the harness's
-	// git (including any resolved through a shell wrapper) runs through the
-	// same worktree-binding fence the PreToolUse hook enforces. The shim lives
+	// Git-mutation fence: prepend the munsu-owned git shim so Git resolved by
+	// the harness (including through a shell wrapper) runs through the
+	// worktree-binding fence. The shim lives
 	// under the home's untracked state/ tree; provisioning failure fails the
 	// launch closed. munsu's own git strips this path back off (git-guard).
 	shimDir, err := provisionGitShim(in.HomeDir)
