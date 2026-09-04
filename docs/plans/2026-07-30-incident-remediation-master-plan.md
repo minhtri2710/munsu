@@ -96,7 +96,7 @@ Deepen `internal/config`; retain lifecycle mutation in `internal/fleet` and prof
 
 **Primary seams:** `internal/config/config.go`, `internal/config/snapshot.go`, `internal/cli/config_dispatch_cmd.go`, `internal/cli/project_cmd.go`, `internal/fleet/project_project.go`, `internal/fleet/captain_configreread.go`, `internal/harness/dispatch.go`.
 
-**Tests:** overlay precedence, environment-at-boundary precedence, distinct project/harness profiles, Captain profile fallback, deterministic digest, targeted nudge, frozen operation snapshot, registry uniqueness.
+**Tests:** overlay precedence, environment-at-boundary precedence, distinct project/harness profiles, fleet-default Captain profile propagation, deterministic digest, targeted nudge, frozen operation snapshot, registry uniqueness.
 
 ### 2.2 Explicit config hard cutover
 

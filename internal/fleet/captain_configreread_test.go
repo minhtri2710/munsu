@@ -761,6 +761,98 @@ func TestConfigPushWithResult_GenerationAdvance(t *testing.T) {
 	}
 }
 
+// TestCaptainProfileRetirementConfigPushEndToEnd verifies that config-push
+// publishes the fleet-default CaptainProfile to a bound Captain, while the
+// project-overlay digest and reread generation remain stable when only that
+// fleet-default profile changes.
+func TestCaptainProfileRetirementConfigPushEndToEnd(t *testing.T) {
+	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
+	captainHome := filepath.Join(parent, "captains", "alpha-captain")
+	if err := os.MkdirAll(captainHome, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := SeedProvenance(captainHome, "alpha-captain"); err != nil {
+		t.Fatal(err)
+	}
+
+	alphaPath := filepath.Join(parent, "projects", "alpha")
+	betaPath := filepath.Join(parent, "projects", "beta")
+	if err := os.MkdirAll(alphaPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(betaPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+	storeTestDocuments(t, parent, config.FleetBaseDocument{
+		SchemaVersion:  config.FleetBaseSchemaVersion,
+		Config:         config.ProjectOverlay{Backend: "tmux", Model: "fleet-model"},
+		CaptainProfile: config.CaptainProfile{Harness: "pi", Model: "base-model"},
+	}, []testProjectRecord{
+		{Name: "alpha", Path: alphaPath, Mode: "direct-pr", Config: config.ProjectOverlay{Model: "alpha-model"}},
+		{Name: "beta", Path: betaPath, Mode: "local-only", Config: config.ProjectOverlay{Model: "beta-model"}},
+	}, []testCaptainRecord{{ID: "alpha-captain", Home: captainHome, Project: "alpha"}})
+
+	firstPush, err := configPushWithResult(parent, captainHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !firstPush.Changed || firstPush.Generation != 1 {
+		t.Fatalf("first push: changed=%v generation=%d, want changed=true generation=1", firstPush.Changed, firstPush.Generation)
+	}
+	firstSnapshot, err := config.LoadPublishedSnapshot(captainHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstConfig := firstSnapshot.Config()
+	if firstConfig.CaptainProfile != (config.CaptainProfile{Harness: "pi", Model: "base-model"}) {
+		t.Fatalf("first published CaptainProfile = %+v", firstConfig.CaptainProfile)
+	}
+	firstGen, firstDigest, found, err := ReadConfigRereadGen(captainHome)
+	if err != nil || !found {
+		t.Fatalf("first reread state: gen=%d digest=%q found=%v err=%v", firstGen, firstDigest, found, err)
+	}
+
+	base, err := config.LoadFleetBase(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base.CaptainProfile = config.CaptainProfile{Harness: "codex", Model: "gpt-5", Effort: "low"}
+	if err := config.StoreFleetBase(parent, base); err != nil {
+		t.Fatal(err)
+	}
+	secondPush, err := configPushWithResult(parent, captainHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondSnapshot, err := config.LoadPublishedSnapshot(captainHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondConfig := secondSnapshot.Config()
+	secondGen, secondDigest, found, err := ReadConfigRereadGen(captainHome)
+	if err != nil || !found {
+		t.Fatalf("second reread state: gen=%d digest=%q found=%v err=%v", secondGen, secondDigest, found, err)
+	}
+	if secondConfig.CaptainProfile != base.CaptainProfile {
+		t.Fatalf("second published CaptainProfile = %+v, want %+v", secondConfig.CaptainProfile, base.CaptainProfile)
+	}
+	if secondConfig.Digest != firstConfig.Digest || secondDigest != firstDigest || secondPush.Changed || secondGen != firstGen {
+		t.Fatalf("CaptainProfile-only push changed overlay propagation: digest %q -> %q, reread %d/%q -> %d/%q, changed=%v", firstConfig.Digest, secondConfig.Digest, firstGen, firstDigest, secondGen, secondDigest, secondPush.Changed)
+	}
+
+	betaSnapshot, err := ResolveProjectSnapshot(parent, "beta")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if betaProfile := betaSnapshot.Config().CaptainProfile; betaProfile != base.CaptainProfile {
+		t.Fatalf("second project CaptainProfile = %+v, want fleet default %+v", betaProfile, base.CaptainProfile)
+	}
+	t.Logf("published alpha profile=%+v -> %+v; beta profile=%+v; digest=%s; generation=%d -> %d; second push changed=%v", firstConfig.CaptainProfile, secondConfig.CaptainProfile, betaSnapshot.Config().CaptainProfile, secondConfig.Digest, firstGen, secondGen, secondPush.Changed)
+}
+
 // TestConfigPushWithResult_NoCaptainHomeError verifies error on unmarked home.
 func TestConfigPushWithResult_NoCaptainHomeError(t *testing.T) {
 	parent := t.TempDir()
