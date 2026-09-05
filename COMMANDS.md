@@ -78,7 +78,7 @@ The recommended workflow for running a soldier task end-to-end:
 | Command | Description |
 |---------|-------------|
 | `munsu watch` | Run the persistent watcher daemon. Singleton-safe via home-scoped lock. Actionable conditions are durably queued while the watcher keeps polling until SIGTERM or SIGINT. |
-| `munsu watch-arm [--restart]` | Arm the watcher as a background process (deprecated: use `munsu watch ensure`). With `--restart`, signal existing watcher first. |
+| `munsu watch ensure [--restart]` | Ensure the persistent watcher is running; a healthy watcher is reused. With `--restart`, signal the existing watcher before starting one. |
 | `munsu wake claim --consumer <id> [--lease-seconds 60] [--limit 10]` | Claim a batch of pending wakes under a lease. Takes no positional argument; `--consumer` is required. |
 | `munsu wake ack <lease-id> <event-id...>` | Acknowledge one or more processed wakes. |
 | `munsu guard` | Warn on tangle (non-default branch in primary checkout) or stale watcher beat. |

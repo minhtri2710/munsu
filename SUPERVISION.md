@@ -66,10 +66,11 @@ Refusals are tracked per artifact, so separate checks are reported
 independently. A refusal still suppresses that check's wake and leaves the
 externally authored artifact in place for inspection.
 
-## Watch arm
+## Watch ensure
 
-`munsu watch-arm [--restart]` launches the watcher as a background child process
-(via `os/exec`). With `--restart`, it signals any existing watcher via the liveness
+`munsu watch ensure [--restart]` ensures the watcher is running as a background
+child process. If the watcher is healthy, the command reuses it without starting
+another process. With `--restart`, it signals the existing watcher via the liveness
 beat PID before starting a new one.
 
 ## Liveness beat
