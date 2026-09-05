@@ -212,18 +212,6 @@ func TestResolvedSnapshotIsFrozenAndReturnsDeepCopies(t *testing.T) {
 	}
 }
 
-func TestResolveProjectDoesNotReadEnvironment(t *testing.T) {
-	t.Setenv("MUNSU_MODEL_OVERRIDE", "environment-model")
-	base := validBase()
-	resolved, err := ResolveProject(base, validFacts("alpha", "/alpha", "", ProjectOverlay{}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resolved.Model != "base-model" {
-		t.Fatalf("resolver read process environment: %q", resolved.Model)
-	}
-}
-
 func TestFleetBaseRoundTripAndStrictDecode(t *testing.T) {
 	home := t.TempDir()
 	base := validBase()

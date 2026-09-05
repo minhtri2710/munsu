@@ -379,8 +379,6 @@ func TestCaptain_UnsetProfileFallsToDetect(t *testing.T) {
 	// resolver falls through to Detect.
 	writeBase(t, tmp, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion})
 
-	t.Setenv("MUNSU_CAPTAIN-HARNESS_OVERRIDE", "")
-	t.Setenv("MUNSU_CREW-HARNESS_OVERRIDE", "")
 	for _, env := range []string{"CODECLIMB", "OPENCODE", "PI_CODING_AGENT_DIR", "PI_CODING_AGENT", "GROK_VM_ID", "GROK_AGENT", "AGY_CONVERSATION_ID", "ANTIGRAVITY_AGENT", "ANTIGRAVITY_CLI", "ANTIGRAVITY_LS_ADDRESS"} {
 		t.Setenv(env, "")
 	}
@@ -403,9 +401,6 @@ func TestCaptain_EmptyCaptainHarnessFallsToSoldierHarness(t *testing.T) {
 		SchemaVersion: config.FleetBaseSchemaVersion,
 		Config:        config.ProjectOverlay{SoldierHarness: "pi"},
 	})
-
-	os.Unsetenv("MUNSU_CAPTAIN-HARNESS_OVERRIDE")
-	os.Unsetenv("MUNSU_CREW-HARNESS_OVERRIDE")
 
 	h, err := Captain(tmp)
 	if err != nil {

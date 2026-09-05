@@ -405,26 +405,6 @@ func newWatchCmd() *cobra.Command {
 	return cmd
 }
 
-func newWatchArmCmd() *cobra.Command {
-	var restart bool
-	cmd := &cobra.Command{
-		Use:   "watch-arm",
-		Short: "Arm the watcher (deprecated: use 'munsu watch ensure')",
-		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			result := ensureWatcher(ctx.Home, restart)
-			if result.Status != "success" {
-				return fmt.Errorf("watch-arm failed: %s", result.Data.State)
-			}
-			// Print deprecation warning to stderr
-			_, _ = fmt.Fprintf(os.Stderr, "WARNING: 'munsu watch-arm' is deprecated. Use 'munsu watch ensure' instead.\n")
-			fmt.Printf("Watcher armed (state=%s)\n", result.Data.State)
-			return nil
-		}),
-	}
-	cmd.Flags().BoolVar(&restart, "restart", false, "Restart existing watcher before arming")
-	return cmd
-}
-
 // runGuardClaude implements the Claude Stop hook guard.
 // It reads stdin JSON for stop_hook_active (true → exit 0 loop guard)
 // and checks fleet state + watcher health for blind-turn detection.

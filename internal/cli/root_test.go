@@ -40,7 +40,6 @@ var canonicalCommands = []struct {
 	{name: "herdr", use: "herdr"},
 	{name: "watch", use: "watch"},
 	{name: "event", use: "event"},
-	{name: "watch-arm", use: "watch-arm"},
 	{name: "wake", use: "wake"},
 	{name: "guard", use: "guard"},
 	{name: "doctor", use: "doctor"},

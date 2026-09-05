@@ -46,7 +46,7 @@ for harnesses with a verified adapter; unverified harnesses show "planned/unsupp
 | Self-update | `munsu update` | `internal/cli` | **implemented** |
 | Session start | `munsu session-start` | `internal/cli`, `internal/orchestrator` | **implemented** |
 | Watch soldier | `munsu watch` | `internal/orchestrator` | **implemented** |
-| Arm watcher | `munsu watch-arm` | `internal/cli` | **implemented** |
+| Arm watcher | `munsu watch ensure` | `internal/cli` | **implemented** |
 | Wake claim / resolve / ack | `munsu wake claim` / `munsu wake resolve` / `munsu wake ack` | `internal/orchestrator` | **implemented** |
 | Guard supervision | `munsu guard` | `internal/cli` | **implemented** |
 | Stow skill | `munsu stow` | `internal/cli` | **implemented** |

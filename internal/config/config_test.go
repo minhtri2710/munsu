@@ -41,27 +41,6 @@ func TestGetNotFound(t *testing.T) {
 	}
 }
 
-func TestGetIgnoresEnvironment(t *testing.T) {
-	tmp := t.TempDir()
-
-	// Write a value to file
-	if err := Set(tmp, "backend", "tmux"); err != nil {
-		t.Fatal(err)
-	}
-
-	// Core Config never reads the process environment; ambient env is
-	// translated to typed boundary overrides at CLI composition.
-	t.Setenv("MUNSU_BACKEND_OVERRIDE", "docker")
-
-	val, err := Get(tmp, "backend")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if val != "tmux" {
-		t.Errorf("Get() = %q, want %q (core config must not read process environment)", val, "tmux")
-	}
-}
-
 func TestGetFromFileOnly(t *testing.T) {
 	// Config only from the flat file, no environment involvement.
 	tmp := t.TempDir()

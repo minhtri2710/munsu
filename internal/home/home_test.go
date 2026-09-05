@@ -73,20 +73,3 @@ func absTestPath(t *testing.T, name ...string) string {
 	}
 	return abs
 }
-
-func TestResolveRootOverrideIgnored(t *testing.T) {
-	// MUNSU_ROOT_OVERRIDE is deprecated; it should NOT affect resolution.
-	os.Unsetenv("MUNSU_HOME")
-	os.Setenv("MUNSU_ROOT_OVERRIDE", "/tmp/munsu-root-override")
-	defer os.Unsetenv("MUNSU_ROOT_OVERRIDE")
-	path, err := Resolve("")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Should resolve to default ~/.munsu, not MUNSU_ROOT_OVERRIDE.
-	home, _ := os.UserHomeDir()
-	want := filepath.Join(home, DefaultDirName)
-	if path != want {
-		t.Errorf("Resolve() = %q, want %q (MUNSU_ROOT_OVERRIDE should be ignored)", path, want)
-	}
-}

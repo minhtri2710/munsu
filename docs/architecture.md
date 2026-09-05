@@ -252,7 +252,7 @@ and adjacent orchestrator lifecycle files.
 | Create / lifecycle | `munsu task add/start/done/block/unblock/reopen` | `internal/taskauthority`, `internal/fleet` |
 | Brief | `munsu brief` | `internal/fleet` |
 | Spawn | `munsu spawn` | `internal/fleet`, composed by `internal/cli` |
-| Supervise | `munsu watch`, `munsu watch-arm`, `munsu afk` | `internal/orchestrator` |
+| Supervise | `munsu watch`, `munsu watch ensure`, `munsu afk` | `internal/orchestrator` |
 | Interact | `munsu send`, `munsu peek`, `munsu soldier-state` | `internal/cli`, `internal/fleet`, `internal/home` |
 | Deliver | `munsu delivery ...` | `internal/fleet` (orchestration), `internal/taskauthority` (invariant ops), acceptance rules in `internal/domain` |
 | Teardown | `munsu teardown` | `internal/cli`, `internal/fleet`, `internal/orchestrator` |

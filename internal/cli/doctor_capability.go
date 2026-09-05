@@ -81,7 +81,7 @@ func (d *WatcherDiagnostic) Fix() string {
 		return "munsu watch ensure"
 	}
 	if !d.VersionMatched {
-		return "munsu watch-arm --restart"
+		return "munsu watch ensure --restart"
 	}
 	return ""
 }
