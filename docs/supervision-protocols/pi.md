@@ -7,20 +7,20 @@
 When this session owns supervision and away mode is not active:
 
 1. Claim first: `munsu wake claim --consumer <id>`.
-2. Confirm Pi has loaded the munsu watcher extension (`fm-watch-arm-pi` custom tool).  
-   If not, restart with both watcher and turn-end guard extensions loaded.
-3. Arm supervision using the `fm_watch_arm_pi` custom tool (or `/fm-watch-arm-pi` as human fallback).  
-   Do **not** run `munsu watch ensure` through Pi's bash tool — that can wedge the agent and bypasses extension-owned cleanup.
-4. The extension starts `munsu watch ensure --restart`, keeps the child attached, and sends a follow-up user message when the child exits with an actionable reason.
-5. If the extension says the watcher is already healthy, do not start another cycle.
-6. If the extension reports a watcher failure, drain, inspect, and restart Pi with extensions if needed.
+2. Confirm Pi has loaded the munsu integration extension (`munsu-pi-integration.ts`).  
+   If not, reinstall and restart: `munsu integrate install --harness pi`.
+3. The extension arms the watcher automatically on session start (it runs `munsu session-start`, which arms the watcher).  
+   Do **not** run `munsu watch ensure` through Pi's bash tool — let the extension manage the watcher.
+4. On `agent_settled` the extension claims queued wakes and sends a follow-up user message; resolve each with the `munsu_wake_resolve` tool (or the `/munsu:wake resolved [key=<slug>]: <summary>` command as human fallback).
+5. If no wake is pending, do not start another cycle.
+6. If the watcher is unhealthy, repair with `munsu watch ensure --restart` and restart Pi with the extension if needed.
 7. Never use shell `&` for watcher supervision.
 
 ## Key supervision commands
 
 - Use `munsu watch ensure` to arm the watcher.
 - Use `munsu wake claim` to claim queued wake records under a lease.
-- Pi extension tool `fm_watch_arm_pi` is the munsu-owned arm mechanism.
+- Resolve claimed wakes with the `munsu_wake_resolve` tool or the `/munsu:wake` command.
 - No PreToolUse seatbelt — munsu's pull-based watcher replaces turn-end hooks for soldiers.
 
 ## Harness-specific

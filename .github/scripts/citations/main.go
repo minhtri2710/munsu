@@ -954,7 +954,7 @@ func fileCitation(fi *files, tok string) bool {
 //     declared, not decided. It is #566's own defect class when the rename
 //     lands on the qualifier, and a reader has to be able to see that the lane
 //     did not check it.
-//   - `fm-primary-watch-arm.js`, `notes.rst`: a filename whose extension the
+//   - `munsu-watch-arm.js`, `notes.rst`: a filename whose extension the
 //     tree never uses, so the derived rule cannot tell it from prose.
 //   - `.gitignore`, `.go`: all extension, no stem. A real dotfile and a bare
 //     suffix are the same shape.
