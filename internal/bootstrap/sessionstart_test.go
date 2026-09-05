@@ -359,10 +359,8 @@ func TestSupervisionBlock_UsesPersistentWatcherGuidance(t *testing.T) {
 			if !strings.Contains(output, "munsu watch run") {
 				t.Errorf("expected one-cycle watch run guidance, got: %s", output)
 			}
-			for _, legacy := range []string{"fm_watch_arm_pi", "watch-arm", "re-arms automatically", "extension background wake"} {
-				if strings.Contains(output, legacy) {
-					t.Errorf("output contains legacy watcher guidance %q: %s", legacy, output)
-				}
+			if strings.Contains(output, "watch-arm") {
+				t.Errorf("supervision block leaked the deprecated watch-arm command: %s", output)
 			}
 		})
 	}

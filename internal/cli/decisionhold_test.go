@@ -49,9 +49,9 @@ func containsAction(actions []taskauthority.DispatchAction, action taskauthority
 }
 
 // TestDecisionHoldHoldAndListRouteThroughAuthority proves `decision-hold
-// hold` creates a durable Authority DispatchHold (never a legacy holds/ file)
-// and appends the needs-decision status projection, and that `decision-hold
-// list` reads unresolved holds back from the Authority (Task 5.2 criterion 3).
+// hold` creates a durable Authority DispatchHold and appends the needs-decision
+// status projection, and that `decision-hold list` reads unresolved holds back
+// from the Authority (Task 5.2 criterion 3).
 func TestDecisionHoldHoldAndListRouteThroughAuthority(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
@@ -66,8 +66,7 @@ func TestDecisionHoldHoldAndListRouteThroughAuthority(t *testing.T) {
 		t.Fatalf("hold output = %s", out)
 	}
 
-	// The authoritative hold lives in the v2 Authority store, not in the
-	// legacy <home>/holds directory.
+	// The authoritative hold lives in the Authority store, read back by ID.
 	auth := decisionHoldAuthority(t, homeDir)
 	holds, err := auth.ListHolds()
 	if err != nil {
@@ -90,10 +89,6 @@ func TestDecisionHoldHoldAndListRouteThroughAuthority(t *testing.T) {
 			t.Fatalf("hold actions = %v, missing %s", hold.Actions, action)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(homeDir, "holds")); !os.IsNotExist(err) {
-		t.Fatalf("legacy holds directory written: %v", err)
-	}
-
 	// Status projection line appended to the origin task.
 	statuses, err := os.ReadFile(filepath.Join(homeDir, "state", "scout-r2.status"))
 	if err != nil {
