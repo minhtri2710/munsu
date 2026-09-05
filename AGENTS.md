@@ -47,7 +47,7 @@ ways with `.github/citations.allow` (`.github/scripts/citations.sh check`).
 Classified file paths and Go identifiers in the covered set must resolve to an
 existing file or a declaration this tree makes; the parser recognizes funcs,
 methods, types, consts, vars and struct fields. The covered set is `docs/**`
-except `docs/plans/`, plus `AGENTS.md`, `CLAUDE.md` and `README.md` (the first
+except the plans subtree, plus `AGENTS.md`, `CLAUDE.md` and `README.md` (the first
 two are the same file here). Line numbers are ignored. The tool reports
 classified-but-unjudged shapes as `unchecked` and does not extract some fenced
 or malformed spans; the implementation comment at
@@ -104,7 +104,6 @@ When pi (root) needs a second agent for implementation, use agy as a dedicated t
 .agents/scripts/delegate-herdr.sh "<prompt>" [timeout-secs]
 ```
 
-For headless subprocess (no herdr): `antigravity-delegate` skill via delegate.sh.
 
 ## Maintaining this file
 

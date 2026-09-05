@@ -47,7 +47,7 @@ A Captain supervises exactly one project, and a project has at most one owning C
 
 Soldier/spawn configuration is keyed by **project**, not by Captain, so that both a Captain and a direct General spawn resolve the same overlay. Resolution for a Soldier spawn under project P is `resolve = base ⨂ P.config` (project overlay overrides base; project dispatch profiles fall back to the base dispatch set). The Captain launch profile is the fleet-default `base.CaptainProfile`, applied verbatim to every Captain; there is no per-project or per-Captain override layer (retired 2026-09-04 — see below). There are two typed layers only; the boundary environment-override tier was retired (§10).
 
-The per-Captain captain-profile override — a scoped-facts field merged over base at resolve time — was never wired: both fleet resolvers passed it empty and no CLI authored it, so every Captain already resolved the fleet-default. Under the [owner-clean residual roadmap](../plans/2026-09-03-owner-clean-residual-roadmap.md) (C1, 2026-09-04) that dormant plumbing and its unbuilt `captain config` CLI (§8) were deleted; the fleet-default `base.CaptainProfile` from the launch-profile consolidation is the sole Captain profile. Reintroducing a per-project or per-Captain Captain profile is a future decision that must ship with a real backing store, redesigned then — not current architecture.
+The per-Captain captain-profile override — a scoped-facts field merged over base at resolve time — was never wired: both fleet resolvers passed it empty and no CLI authored it, so every Captain already resolved the fleet-default. Under the PR #748 (C1, 2026-09-04) that dormant plumbing and its unbuilt `captain config` CLI (§8) were deleted; the fleet-default `base.CaptainProfile` from the launch-profile consolidation is the sole Captain profile. Reintroducing a per-project or per-Captain Captain profile is a future decision that must ship with a real backing store, redesigned then — not current architecture.
 
 ### 4. Resolved Snapshot
 
@@ -83,7 +83,7 @@ The pre-public-v1 cutover permits no dual-read, migration, runtime upgrade, or b
 
 ### 10. Environment overrides at the boundary (retired)
 
-Per ADR-0002 §12, core modules do not read the process environment; the direct `os.LookupEnv` read inside `config.Get` was removed as part of this deepening. The typed boundary-override layer that would translate `MUNSU_<KEY>_OVERRIDE` into resolution input was never wired — every resolver call passed an empty override set. Under the [owner-clean residual roadmap](../plans/2026-09-03-owner-clean-residual-roadmap.md) (G4, 2026-09-03) that dormant plumbing was deleted; resolution is the two typed layers `base ⨂ project overlay` with no environment-override tier. Reintroducing environment overrides is a future decision, not current architecture.
+Per ADR-0002 §12, core modules do not read the process environment; the direct `os.LookupEnv` read inside `config.Get` was removed as part of this deepening. The typed boundary-override layer that would translate `MUNSU_<KEY>_OVERRIDE` into resolution input was never wired — every resolver call passed an empty override set. Under the PR #744 (G4, 2026-09-03) that dormant plumbing was deleted; resolution is the two typed layers `base ⨂ project overlay` with no environment-override tier. Reintroducing environment overrides is a future decision, not current architecture.
 
 ### 11. Test surface
 

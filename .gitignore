@@ -33,3 +33,6 @@ __pycache__/
 .soldier-md
 .herdr-test/
 .soldier-md
+/.no-mistakes-document-result.json
+/.review-result.json
+/review_findings.json
