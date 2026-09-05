@@ -334,7 +334,7 @@ export const MunsuTurnendGuard = async ({ client, directory, worktree }) => {
 
 // opencodeWatchArmPlugin generates the watcher arm plugin JS.
 //
-// Mirrors the munsu watch-arm plugin contract:
+// Mirrors the OpenCode watcher-arm plugin contract:
 // - Registers a global coordinator for cross-plugin coordination
 // - On session.idle, spawns munsu watch ensure to arm the watcher
 // - Reports arm status via the coordinator for the turnend-guard to check
