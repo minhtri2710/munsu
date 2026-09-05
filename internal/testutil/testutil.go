@@ -34,9 +34,6 @@ func ClearEnv(t *testing.T) {
 	envVars := []string{
 		"MUNSU_HOME",
 		"MUNSU_ROLE",
-		"MUNSU_BACKEND_OVERRIDE",
-		"MUNSU_SOLDIER_HARNESS_OVERRIDE",
-		"MUNSU_CAPTAIN_HARNESS_OVERRIDE",
 		"HERDR_ENV",
 	}
 	for _, key := range envVars {

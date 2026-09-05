@@ -1057,21 +1057,6 @@ func TestGuardAfkDrainRequiresAConsumer(t *testing.T) {
 	}
 }
 
-func TestGuardWatchArmRefusesWhenTheWatcherStartFails(t *testing.T) {
-	homeDir := t.TempDir()
-	initCLITestHome(t, homeDir)
-
-	previous := startWatcherProcess
-	startWatcherProcess = func(string) (int, error) { return 0, errors.New("no watcher binary") }
-	t.Cleanup(func() { startWatcherProcess = previous })
-
-	out, err := runRoot(t, "watch-arm", "--home", homeDir)
-	wantErrContains(t, err, "watch-arm failed: failed", "watch-arm after a failed watcher start")
-	if strings.Contains(out, "Watcher armed") {
-		t.Fatalf("watch-arm output = %q, still prints the armed message for a watcher that never started", out)
-	}
-}
-
 // --- internal/cli/task_cmd.go: cleanup-abort -------------------------------
 
 func TestGuardTaskCleanupAbortRefusesATaskWithNoCleanupClaim(t *testing.T) {

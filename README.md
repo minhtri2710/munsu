@@ -129,7 +129,7 @@ munsu task done <task-id>
 
 ```sh
 munsu spawn <task-id> [<project>] [--kind ship|scout] [--mode no-mistakes|direct-PR|local-only]  (default: auto-detect, project inferred from cwd)
-munsu watch-arm [--restart]
+munsu watch ensure [--restart]
 munsu send <task-id> "<instruction>"
 munsu peek <task-id> [--lines N]
 munsu teardown <task-id>

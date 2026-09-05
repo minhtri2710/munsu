@@ -124,38 +124,6 @@ func TestConfigGetCaseSensitive(t *testing.T) {
 	}
 }
 
-// TestConfigGetIgnoresEnvOverride verifies the CLI reports the persisted file
-// value and does not honor the obsolete MUNSU_<KEY>_OVERRIDE ambient env.
-func TestConfigGetIgnoresEnvOverride(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("MUNSU_HOME", tmpDir)
-	t.Setenv("MUNSU_MODEL_OVERRIDE", "environment-model")
-
-	// model is a typed launch-profile key authored into the fleet base document.
-	if err := config.StoreFleetBase(tmpDir, config.FleetBaseDocument{
-		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{Model: "claude"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	root := NewRootCommand()
-	buf := new(bytes.Buffer)
-	root.SetOut(buf)
-	root.SetErr(buf)
-
-	root.SetArgs([]string{"config", "get", "model"})
-	err := root.Execute()
-	if err != nil {
-		t.Fatalf("config get model: unexpected error: %v", err)
-	}
-
-	got := extractConfigValueFromTOON(strings.TrimSpace(buf.String()))
-	if got != "claude" {
-		t.Errorf("config get model = %q, want %q (persisted file value; env override must be ignored)", got, "claude")
-	}
-}
-
 // TestConfigShowAndGetAgree verifies that config show and config get agree
 // on key recognition by checking that keys listed in show output are
 // accepted by get.

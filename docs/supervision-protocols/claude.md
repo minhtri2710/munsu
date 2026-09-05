@@ -7,28 +7,28 @@
 When this session owns supervision and away mode is not active:
 
 1. Claim first: `munsu wake claim --consumer <id>`.
-2. Arm the watcher as a background task: `munsu watch-arm`.  
+2. Arm the watcher as a background task: `munsu watch ensure`.  
    Do not bundle with other commands and do not use shell `&`.
 3. Treat `watcher: started ...` or `watcher: attached ...` as proof of a live cycle.
 4. On completion with `signal:`, `stale:`, `check:`, or `heartbeat`: drain, handle, re-arm.
 5. Treat `watcher: FAILED - no live watcher with a fresh beacon` as an alarm; repair before ending turn.
-6. For a forced restart: `munsu watch-arm --restart`.
+6. For a forced restart: `munsu watch ensure --restart`.
 7. Do not send idle progress while the watcher is parked.
 
 ## Key supervision commands
 
-- Use `munsu watch-arm` to arm the watcher.
+- Use `munsu watch ensure` to arm the watcher.
 - Use `munsu wake claim` to claim queued wake records under a lease.
 - No PreToolUse seatbelt — munsu's pull-based watcher replaces turn-end hooks for soldiers.
 - The primary session's own turn-end guard is the agent's responsibility per the seeded orchestrator manual.
 
 ## Harness-specific
 
-- The watcher itself is `munsu watch`; `munsu watch-arm` is the verified arm wrapper.
+- The watcher itself is `munsu watch`; `munsu watch ensure` arms and reuses it.
 - `munsu watch ensure` provides an idempotent alternative to check/arm the watcher.
 - On re-arm, an existing healthy cycle is reused; the background task stays live until it ends.
 
 ## See also
 
-- `munsu watch-arm --help`, `munsu wake claim --help`, `munsu guard --help`
+- `munsu watch ensure --help`, `munsu wake claim --help`, `munsu guard --help`
 - Seeded `AGENTS.md` (orchestrator operating manual) §4 (Harness dispatch) and §5 (Supervision protocol)

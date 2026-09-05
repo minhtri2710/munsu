@@ -139,7 +139,6 @@ with no requirement to live inside a specific project checkout.`,
 	root.AddCommand(newFleetCmd())
 	root.AddCommand(newHerdrCmd())
 	root.AddCommand(newWatchCmd())
-	root.AddCommand(newWatchArmCmd())
 	root.AddCommand(newWakeCmd())
 	root.AddCommand(newEventCmd())
 	root.AddCommand(newContractGuardCmd())

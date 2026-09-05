@@ -70,16 +70,13 @@ func TestModelAllowlistPresent(t *testing.T) {
 	})
 	t.Run("absent file is absent", func(t *testing.T) {
 		home := t.TempDir()
-		// No allowlist file: the policy must be absent. The ambient env
-		// override input was removed, so a stale override cannot activate it.
-		staleEnv := "MUNSU_" + "MODEL_ALLOWLIST" + "_OVERRIDE"
-		t.Setenv(staleEnv, "pi:sonnet")
+		// No allowlist file: the policy must be absent.
 		ok, err := ModelAllowlistPresent(home)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if ok {
-			t.Fatal("absent policy file must report absent; ambient env input was removed")
+			t.Fatal("absent policy file must report absent")
 		}
 	})
 	t.Run("captain home sees parent policy", func(t *testing.T) {

@@ -44,8 +44,7 @@ func ConfigDir(homeDir string) string {
 }
 
 // Get reads a config value from the flat config file at
-// $MUNSU_HOME/config/<key>. Core Config never reads the process environment;
-// ambient `MUNSU_*_OVERRIDE` env vars are ignored (see TestConfigGetIgnoresEnvOverride).
+// $MUNSU_HOME/config/<key>. Core Config never reads the process environment.
 func Get(homeDir, key string) (string, error) {
 	// Read from file
 	p := filepath.Join(ConfigDir(homeDir), key)
