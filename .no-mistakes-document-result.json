@@ -1,1 +1,0 @@
-{"findings":[],"summary":"No stale documentation found","tested":["Searched documentation and non-test code comments for removed retirement APIs and old control-flow references","Reviewed merged-poll retirement, process-event, watcher, and port documentation comments"],"testing_summary":"Documentation inspection only; no executable tests run."}

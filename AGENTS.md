@@ -104,7 +104,6 @@ When pi (root) needs a second agent for implementation, use agy as a dedicated t
 .agents/scripts/delegate-herdr.sh "<prompt>" [timeout-secs]
 ```
 
-For headless subprocess (no herdr): `antigravity-delegate` skill via delegate.sh.
 
 ## Maintaining this file
 

@@ -5,7 +5,7 @@
 * **Retires:** ADR-0004 §9 (Bounded Context Manifest); ADR-0005 §4 (durable recovery series, deterministic-failure circuit, and the redacted launch-diagnostic bundle)
 * **Records subsumed:** ADR-0004 §7 (the distinct dependency-interpretation record) — covered by `DispatchHold` plus head-bound `DeliveryAuthorization` (ADR-0008)
 * **Extends:** ADR-0004 (authoritative task lifecycle), ADR-0005 (runtime bindings, supervision, recovery), ADR-0008 (owner-clean single authority)
-* **Triggered by:** [owner-clean residual roadmap](../plans/2026-09-03-owner-clean-residual-roadmap.md) decision gates G1, G2, and T3
+* **Triggered by:** owner-clean residual roadmap decision gates G1, G2, and T3
 
 ## Context
 

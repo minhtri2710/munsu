@@ -33,13 +33,8 @@ mechanical identity ratchet with disclosed growth now enforced by the coverage l
 
 ### What is actually in the tree, and what is not
 
-Three factual corrections to the brief this ADR was written from, because they change
-enforcement addresses from *present* to *pending*:
+Two factual corrections to the brief this ADR was written from:
 
-* **`.github/scripts/mutation-check.py` is not on `main`.** It exists only on the branch
-  behind PR #511 (`agent/qa-test-engineer/4ea97665-ta`), together with the one case file
-  `.github/mutation-cases/beo-69-taskauthority.tsv`. Neither is referenced by
-  `.github/workflows/ci.yml` on `main` or on that branch.
 * **The waiver figure of 348 is the post-#511 count.** `.github/uncovered-guards.baseline`
   holds 404 entries at `22009ed`; #511 covers 56 and waives 9.
 * **Five in-tree citations of "ADR-0009" mean the layer-1 design, and ADR-0009 is
@@ -55,53 +50,9 @@ enforcement addresses from *present* to *pending*:
 
 ## Decision
 
-### 1. Layer 2 is declared, not derived. It fails open, and must never be sold otherwise.
-
-Layer 1 inverted the register deliberately: the guard set comes out of the tree and only
-waivers are listed, so a guard nobody registers still fails the lane. Layer 2 has no such
-inversion. `mutation-check.py` reads a hand-written TSV of `<go file> <test> <anchor>`
-rows. A refusal branch whose row nobody writes is not checked, is not reported, and shows
-up nowhere.
-
-That is acceptable for a batch tool and disqualifying for a gate. §2's rules are therefore
-properties of a script somebody chooses to run — not of a check that runs. Deriving the
-case list is the missing infrastructure, named in [Work this creates](#work-this-creates)
-and not attempted here.
-
 ### 2. Rules enforced mechanically
 
-**Address for §§2.1–2.4: `.github/scripts/mutation-check.py`, pending #511. Not a required
-check, not in `ci.yml`, run by hand on a case file per batch.**
-
-**2.1 — The operator is `(COND) && false`, never bare `false` and never `false && (COND)`.**
-Go short-circuits `&&`, so `false && (cond)` never evaluates `cond`. Where the condition
-has a side effect the mutant changes more than the guard: `internal/home/wake_lease.go:184`
-is `if !scanner.Scan()`, and under `false && (!scanner.Scan())` the scanner never advances,
-so the loop below reads different data and the test may fail for a reason unrelated to the
-guard. A kill that is not attributable is not a kill. `(COND) && false` evaluates the
-condition exactly as production does, keeps the side effect, and still makes the branch
-unreachable. Bare `false` is wrong in the other direction: it leaves every variable the
-condition names unused and the mutant BUILD-FAILs instead of running.
-
-**2.2 — BUILD-FAIL is its own class, scored before KILLED and SURVIVED.** A mutant that
-never compiled proves nothing in either direction. Folding it into KILLED is self-scoring:
-the run reports proof it did not obtain. `mutation-check.py` counts it separately and fails
-the run on it, exactly as it fails on a survivor.
-
-**2.3 — The harness passes `-timeout` to `go test`.** Without it a hung mutant sits on
-`go test`'s 10-minute default, then exits non-zero, and a plain returncode check scores
-that as a kill. A guard whose removal turns a bounded operation into an unbounded one is
-precisely the case where that matters. TIMEOUT is a fourth class, failing like the other
-two. The default is `--timeout 5m`.
-
-**2.4 — `-j` groups by package, not by file.** A Go package is one compilation unit, so
-two mutants in different files of the same package compile into one test binary and neither
-verdict is attributable to its own guard. The script groups cases by package and refuses
-`-j > 1` outright when every selected case lives in a single package. Grouping by file —
-what it did before the #511 fixup — is that mistake with extra steps.
-
-These four are the only mutation rules in this document that a machine already checks end to end,
-and only for the cases somebody listed.
+§§2.1–2.4 recorded four mutation-scoring rules enforced by `mutation-check.py`, a batch tool run by hand per burn-down batch. They and the tool were removed on 2026-09-05 under the [Removal condition](#removal-condition): the tool observed nothing on `main`, its batches had ended, and keeping it was the dormant machinery ADR-0008 forbids. §2.5 below is retained under its original number so cross-references to it hold.
 
 **2.5 — The uncovered-guards baseline is an identity ratchet with disclosed growth.** The
 authoritative implementation is `.github/scripts/uncovered-guards.sh check`, with its derived
@@ -146,11 +97,7 @@ rather than assuming `origin/main`, so stacked changes compare against their imm
 including one raised by a guard that runs *before* the one under test. The assertion must
 name what this guard refuses.
 
-This rule has a partial machine address and it is worth being exact about how partial: a
-test that only checks `err != nil` SURVIVES its mutant, so §2 catches it — but only for a
-branch somebody put in the case file, and only after somebody runs the script. Absent that,
-nothing sees it. §2 is the reason the rule is checkable at all and not a reason to call it
-checked.
+This rule had a partial machine address until 2026-09-05: a test that only checks `err != nil` SURVIVES its mutant, and the mutation-scoring rules formerly in §2 caught it — but only for a branch somebody put in the case file, and only after somebody ran the script. With those rules and their tool removed, nothing sees it, and 3.1 is enforced by a reader alone.
 
 **3.2 — Prove a tautology by removing the guard, not by reading the code.** A test that
 asserts a message an *earlier* guard also emits passes without ever entering the branch
@@ -341,14 +288,7 @@ the rule excludes the case it was written from.
 Split by what each part is attached to, because they do not expire together. The general
 claim that "these rules die when the burn-down finishes" is false for half of them.
 
-**Dies with the burn-down.** The *cadence* of §2 — one hand-written case file per batch,
-run once, reviewed, discarded. When `.github/uncovered-guards.baseline` holds no untriaged batch rows and
-`.github/deadcode.allow` holds no untriaged batch rows, there are no batches, and §2
- describes a script nobody has a reason to invoke. At that point
-there are exactly two honest outcomes and no third: the derived case list of
-[W2](#work-this-creates) exists and §2 becomes a real check, or `mutation-check.py` and this
-section are **deleted together**. A batch tool kept "just in case" after its batches end is
-the dormant machinery ADR-0008 forbids.
+**Died with the burn-down (2026-09-05).** The *cadence* of §§2.1–2.4 — one hand-written case file per batch, run once, reviewed, discarded. When `.github/uncovered-guards.baseline` held no untriaged batch rows and `.github/deadcode.allow` held no untriaged batch rows, there were no batches, and those rules described a script nobody had a reason to invoke. Of the two honest outcomes named here — the derived case list of [W2](#work-this-creates) exists and §2 becomes a real check, or `mutation-check.py` and those rules are **deleted together** — the second was taken: the tool, its case files, §1 and §§2.1–2.4 were deleted on 2026-09-05. A batch tool kept "just in case" after its batches end is the dormant machinery ADR-0008 forbids.
 
 **Dies when its register does.** §4 and §3.2 exist because waivers exist. If a lane ever
 reaches zero waivers and is switched to refusing new ones, both go with it. That is not
@@ -369,12 +309,8 @@ as coverage grows and is deleted when `uncovered-guards.sh` reports zero `unmeas
 
 Named, not done. None of it is in the PR that carries this ADR.
 
-* **W1 — land #511.** Until then §2 has no address at all: the script and its only case file
-  are on an unmerged branch.
-* **W2 — derive the mutation case list, or declare permanently that §2 is a batch tool.**
-  A hand-written TSV cannot become a gate (§1). The blocking piece is test attribution: a
-  merged coverage profile says a block was executed, not *which test* executed it, and §2
-  needs the pair. Per-test profiles are the obvious route and their cost is unmeasured.
+* **W1 — land #511. Closed unmet 2026-09-05:** #511 was not landed; §§2.1–2.4 and the script were deleted instead of gaining an address.
+* **W2 — derive the mutation case list, or declare permanently that §2 is a batch tool. Closed 2026-09-05:** the case list was not derived; the second removal-condition outcome was taken and §§2.1–2.4 were deleted, so the choice no longer stands open.
 * **W3 — check that `Premise pinned by <TestName>` names a test that exists.** Small: read
   the fifth column of the baseline, match the phrase, confirm `go test -list` finds each
   name. Closes the §4 gap where deleting a premise test leaves its waivers green.
@@ -399,31 +335,19 @@ delete §3 entirely — four rules, each of which caught a defect the lanes did 
 inverts the point: the rules with no address are exactly the ones that vanish when the
 person carrying them is not on the run, which is the entire reason this document exists.
 
-**Make the whole set a required check by adding a "layer 2" job to `ci.yml`.** Rejected as
-premature on §1's grounds: with a declared case list, the job would be green on a PR that
-adds a guard, adds a tautological test, and adds no row — a check that cannot fail is a
-false claim of protection, which is the ground ADR-0016 rejected
-`required_conversation_resolution` on. W2 first, then this.
+**Make the whole set a required check by adding a "layer 2" job to `ci.yml`.** Rejected as premature on the grounds the removed §1 recorded (§1 was deleted 2026-09-05): with a declared case list, the job would be green on a PR that adds a guard, adds a tautological test, and adds no row — a check that cannot fail is a false claim of protection, which is the ground ADR-0016 rejected `required_conversation_resolution` on.
 
 **State §6 strongly and forbid unmeasurable code.** Rejected in §6.1: it contradicts
 behaviour pinned by two fixtures and would make the baseline platform-dependent.
 
 ## Consequences
 
-* Ten rules carried in dispatch comments are now in the repository, each with the address
-  that enforces it or an explicit statement that nothing does.
-* The four mutation rules in §2 are mechanically enforced, by a script that is not yet on
-  `main` and is not a required check. The §2.5 coverage ratchet is mechanically enforced by a
-  required CI check, alongside the bidirectional coverage comparison. Five (§3, §4a-b) have
-  no address and are recorded as owned in the ADR-0016 sense. The rest are split, and the split
-  is written out rather than averaged.
+* Ten rules carried in dispatch comments were brought into the repository, each with the address that enforces it or an explicit statement that nothing does; the four mutation rules among them (§§2.1–2.4) were removed on 2026-09-05 with their tool.
+* The four mutation rules formerly in §§2.1–2.4 were mechanically scored by `mutation-check.py`, a script never on `main` and never a required check; they and the script were removed on 2026-09-05 and nothing now enforces them. The §2.5 coverage ratchet is mechanically enforced by a required CI check, alongside the bidirectional coverage comparison. Five (§3, §4a-b) have no address and are recorded as owned in the ADR-0016 sense. The rest are split, and the split is written out rather than averaged.
 * The rule set is now falsifiable: §4 says a waiver must declare how to invalidate itself,
   and §6.3, §5 and the removal conditions apply that standard to this document's own claims.
-* Three corrections stand against the brief this was written from — `mutation-check.py`'s
-  location, the 348 figure, and the waiver form that already exceeded its stated rule.
+* Two corrections stand against the brief this was written from — the 348 figure, and the waiver form that already exceeded its stated rule.
 * One defect is recorded and deliberately not fixed here: five citations of "ADR-0009" mean
   a document that was never committed, and the invariant that would normally catch a dead
   ADR reference reads path form only.
-* The gap is stated, not closed. Layer 2 fails open by construction, and until W2 exists a
-  PR can add a guard, a test that asserts nothing about it, and no case row, and every
-  required check stays green.
+* The gap is stated, not closed. Layer 2 — recorded in the former §1, removed 2026-09-05 — failed open by construction and was deleted rather than derived into a gate. A PR can still add a guard, a test that asserts nothing about it, and no case row, and every required check stays green: §2.5's ratchet catches an *uncovered* guard, not a guard covered by a tautological test.
