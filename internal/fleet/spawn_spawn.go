@@ -89,14 +89,6 @@ func noMistakesOnPath() bool {
 	return err == nil
 }
 
-// noMistakesAvailable checks both binary presence and version/compat readiness
-// using the full capability probe. Used by auto-detection paths where silent
-// fallback to direct-PR is acceptable (unlike explicit/project/config selection).
-func noMistakesAvailable() bool {
-	probe := NoMistakesProbe()
-	return probe.State == backend.Ready
-}
-
 // EnsureDeliveryModeRunnable validates that an explicit non-empty mode is runnable.
 // If mode is "no-mistakes" and the binary is not on PATH or version is incompatible,
 // returns a hard error with actionable guidance.
@@ -165,7 +157,8 @@ func ResolveDeliveryMode(explicitMode string, resolvedDefaultMode string, resolv
 	}
 
 	// 3. Auto: no-mistakes on PATH and compatible → no-mistakes, else → direct-PR
-	if noMistakesAvailable() {
+	probe := NoMistakesProbe()
+	if probe.State == backend.Ready {
 		return "no-mistakes", nil
 	}
 
@@ -173,7 +166,7 @@ func ResolveDeliveryMode(explicitMode string, resolvedDefaultMode string, resolv
 	// fallback branches because it covers both reasons it names: a binary absent
 	// from PATH and one present but incompatible.
 	if resolvedRequireNoMistakes {
-		return "", fmt.Errorf("require-no-mistakes is set: %w", ensureDeliveryModeRunnableForProbe(NoMistakesProbe()))
+		return "", fmt.Errorf("require-no-mistakes is set: %w", ensureDeliveryModeRunnableForProbe(probe))
 	}
 
 	// Binary on PATH but incompatible version: inform the user why.
