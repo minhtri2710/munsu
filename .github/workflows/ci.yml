@@ -438,32 +438,17 @@ jobs:
       # turn this job's gofmt step red instead. Hermetic and ~15s.
       - name: Citation rules must agree with their fixtures
         run: .github/scripts/citations.sh selftest
-      # The Go tools this job leans on sit outside every lane above, by two
-      # separate mechanisms that are each deliberate and each argued in the
-      # tools' own go.mod comments. `citations`, `guardsites` and `testnames`
-      # are their own modules, so the root `go build/vet/test ./...` cannot
-      # reach them; `flake-sweep-topology` is a root-module package that
-      # `./...` skips anyway, because the go tool ignores every path under a
-      # dot-directory. The selftests above do compile all four (`go run .`), so
-      # a tool that stopped building is caught today -- but citations/main_test.go
-      # and testnames/main_test.go, 542 lines between them, had never been
-      # executed by CI at all. That is the undead shape the guard-coverage lane
-      # exists to refuse, one level up: a test that can rot, or be deleted
-      # outright, while every lane in this file stays green.
+      # Go tools under .github/scripts are outside the root module graph: the
+      # go tool skips dot-directories, and nested modules are not traversed by
+      # root `./...`. The selftests above compile their tools, but compilation
+      # alone does not execute unit tests, so those tests could rot or be
+      # deleted while every existing lane stayed green.
       #
-      # The directory list is derived from the tracked tree rather than
-      # declared, like the guard set, the tag lanes and the citation covered
-      # set. A declared list goes stale, and this one already had: the debt was
-      # written down as "the three tool modules" and did not see
-      # flake-sweep-topology. Deriving it from `git ls-files` also keeps
-      # .github/testdata out, where a fixture go.mod exists that must never be
-      # built as part of this repo.
-      #
-      # `go vet` runs beside the tests for the same reason the step exists: it
-      # is the same unreached gap. The JSON test stream is checked semantically
-      # so a module with deleted tests cannot pass with Go's `[no test files]`.
-      # gofmt needs no help -- that step walks the filesystem, not the module
-      # graph, so it already covers this tree.
+      # This step derives its directories from tracked `.go` files rather than
+      # maintaining a declaration that can go stale. It vets every discovered
+      # directory and requires an executable test event, while excluding
+      # fixture trees outside `.github/scripts` by construction. `gofmt` needs
+      # no help: its filesystem walk already covers this tree.
       - name: Go tools under .github must vet and test
         run: |
           set -eu

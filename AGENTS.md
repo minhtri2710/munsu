@@ -6,10 +6,16 @@ This file is the conventions file for soldiers working on munsu.
 ## Build / test / lint
 
 ```sh
-go build ./...       # build all packages
+go build ./...       # build all root-module packages
 go vet ./...         # static analysis
 go test ./...        # default-tag suite (skips //go:build integration files)
 ```
+
+These root-module commands do not reach Go tools under `.github/scripts`;
+the `invariants` job dynamically discovers tracked tool directories there and
+runs `go vet` plus executable unit tests for each. Do not maintain a separate
+tool list; see the `Go tools under .github must vet and test` step in
+`.github/workflows/ci.yml`.
 
 CI (`.github/workflows/ci.yml`) also runs a `-race` lane and tag lanes for
 `integration`, `e2e` and `lifecycle_integration`. Lanes derive their package
