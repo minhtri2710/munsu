@@ -924,7 +924,6 @@ func refusalHasErrorChildren(r *resolver, file string, fset *token.FileSet, expr
 	default:
 		return true
 	}
-	return true
 }
 
 func isRefusalStatements(r *resolver, file string, fset *token.FileSet, statements []ast.Stmt) bool {

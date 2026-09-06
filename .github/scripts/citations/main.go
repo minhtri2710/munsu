@@ -1085,8 +1085,6 @@ func symbolName(idx *index, text string) (bool, bool) {
 			return false, false
 		}
 		return true, candidates[0].members[name]
-		// unjudged: unknown-qualifier
-		return false, false
 	}
 	if allCapsRe.MatchString(tok) {
 		return false, false

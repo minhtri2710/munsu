@@ -438,6 +438,54 @@ jobs:
       # turn this job's gofmt step red instead. Hermetic and ~15s.
       - name: Citation rules must agree with their fixtures
         run: .github/scripts/citations.sh selftest
+      # The Go tools this job leans on sit outside every lane above, by two
+      # separate mechanisms that are each deliberate and each argued in the
+      # tools' own go.mod comments. `citations`, `guardsites` and `testnames`
+      # are their own modules, so the root `go build/vet/test ./...` cannot
+      # reach them; `flake-sweep-topology` is a root-module package that
+      # `./...` skips anyway, because the go tool ignores every path under a
+      # dot-directory. The selftests above do compile all four (`go run .`), so
+      # a tool that stopped building is caught today -- but citations/main_test.go
+      # and testnames/main_test.go, 542 lines between them, had never been
+      # executed by CI at all. That is the undead shape the guard-coverage lane
+      # exists to refuse, one level up: a test that can rot, or be deleted
+      # outright, while every lane in this file stays green.
+      #
+      # The directory list is derived from the tracked tree rather than
+      # declared, like the guard set, the tag lanes and the citation covered
+      # set. A declared list goes stale, and this one already had: the debt was
+      # written down as "the three tool modules" and did not see
+      # flake-sweep-topology. Deriving it from `git ls-files` also keeps
+      # .github/testdata out, where a fixture go.mod exists that must never be
+      # built as part of this repo.
+      #
+      # `go vet` runs beside the tests for the same reason the step exists: it
+      # is the same unreached gap, and for guardsites and flake-sweep-topology,
+      # which have no tests, it is the only non-vacuous check available here.
+      # gofmt needs no help -- that step walks the filesystem, not the module
+      # graph, so it already covers this tree.
+      - name: Go tools under .github must vet and test
+        run: |
+          set -eu
+          dirs="$(mktemp)"
+          git ls-files -- '.github/scripts/**/*.go' | sed 's|/[^/]*$||' | sort -u >"$dirs"
+          if [ ! -s "$dirs" ]; then
+            echo "::error::no Go tool directory found under .github/scripts -- this step is measuring nothing" >&2
+            exit 1
+          fi
+          failed=0
+          # Redirected from a file rather than piped into: a `while` on the
+          # right of a pipe runs in a subshell, where the `failed=1` below is
+          # discarded and every failing tool reads as a pass.
+          while IFS= read -r dir; do
+            echo "--- $dir"
+            if ! (cd "$dir" && go vet ./... && go test -count=1 ./...); then
+              echo "::error::$dir does not vet and test clean" >&2
+              failed=1
+            fi
+          done <"$dirs"
+          [ "$failed" -eq 0 ] || exit 1
+          echo "go tools: vet and test clean in $(wc -l <"$dirs" | tr -d ' ') directories"
       - name: Flake ledger deadlines must not have passed
         run: .github/scripts/flake-ledger.sh check
       # munsu's documents cite the code as their primary evidence, and this step
