@@ -1029,7 +1029,8 @@ func buildLaunchArgs(captainHome, h string, prof config.CaptainProfile, allowlis
 		args = append(args, adapter.LaunchTemplate.EffortFlag, prof.Effort)
 	}
 	args = append(args, adapter.LaunchTemplate.ExtraArgs...)
-	// Pi captain homes load the canonical project-local integration via -e.
+	// Pi captain homes disable extension discovery and load only the canonical
+	// project-local integration explicitly via -e.
 	if adapter.Name == "pi" {
 		extDir := filepath.Join(captainHome, ".pi", "extensions")
 		path := filepath.Join(extDir, harness.CanonicalPiIntegrationName)
