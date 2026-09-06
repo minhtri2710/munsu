@@ -100,10 +100,11 @@ func TestBuildLaunchArgs_VerifiedCaptainHarness(t *testing.T) {
 	if binName != "pi" {
 		t.Fatalf("binName = %q, want pi", binName)
 	}
-	if len(args) != 4 || args[0] != "-e" || args[2] != "--append-system-prompt" {
+	canonical := filepath.Join(smHome, ".pi", "extensions", harness.CanonicalPiIntegrationName)
+	if len(args) != 5 || args[0] != "--no-extensions" || args[1] != "-e" || args[2] != canonical || args[3] != "--append-system-prompt" {
 		t.Fatalf("args = %#v, want canonical integration and system-context charter", args)
 	}
-	prompt := args[3]
+	prompt := args[4]
 	if !strings.Contains(prompt, "[mu-system:captain-bootstrap]") || !strings.Contains(prompt, "<captain-charter>") {
 		t.Fatalf("prompt missing bootstrap identity or charter wrapper: %q", prompt)
 	}
