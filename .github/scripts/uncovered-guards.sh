@@ -481,7 +481,15 @@ premise_citation_errors() {
 			if (NF >= 3) {
 				declared[$1] = 1
 				top = $1; sub(/\/.*$/, "", top)
-				pkg = $2; file_for[top, pkg] = $3; package_seen[top, pkg] = 1
+				pkg = $2
+				if (!(top SUBSEP pkg in package_seen)) {
+					package_seen[top, pkg] = 1
+					package_order[top, ++package_count[top]] = pkg
+				}
+				if (!(top SUBSEP pkg SUBSEP $3 in file_seen)) {
+					file_seen[top, pkg, $3] = 1
+					file_list[top, pkg] = file_list[top, pkg] (file_list[top, pkg] == "" ? "" : ", ") $3
+				}
 			}
 			next
 		}
@@ -492,19 +500,30 @@ premise_citation_errors() {
 			rest = $5
 			while ((at = index(rest, phrase)) > 0) {
 				rest = substr(rest, at + length(phrase))
-				if (match(rest, /^[ \t]+[A-Za-z_][A-Za-z0-9_]*(\/[A-Za-z0-9_]+)*([ \t.,;]|$)/) == 0) {
+				if (match(rest, /^[ \t]+[^ \t.,;]+/) > 0) {
+					candidate = substr(rest, 1, RLENGTH)
+					sub(/^[ \t]+/, "", candidate)
+					if (index(candidate, "/") > 0) {
+						printf "::error::%s:%d: %s: %s: premise citation %s names a subtest; cite the top-level test because subtests are registered at runtime and cannot be resolved from the tree\n", name, FNR, $1, $2, candidate
+						bad = 1; rest = substr(rest, RLENGTH + 1); continue
+					}
+				}
+				if (match(rest, /^[ \t]+[A-Za-z_][A-Za-z0-9_]*([ \t.,;]|$)/) == 0) {
 					printf "::error::%s:%d: %s: %s: \"Premise pinned by\" names no test\n", name, FNR, $1, $2
 					bad = 1; continue
 				}
 				cited = substr(rest, 1, RLENGTH)
 				sub(/[ \t.,;]$/, "", cited); sub(/^[ \t]+/, "", cited)
 				rest = substr(rest, RLENGTH + 1)
-				if (substr(rest, 1, 1) == "/") {
-					printf "::error::%s:%d: %s: %s: \"Premise pinned by\" has an empty test segment\n", name, FNR, $1, $2
+				if (index(cited, "/") > 0) {
+					printf "::error::%s:%d: %s: %s: premise citation %s names a subtest; cite the top-level test because subtests are registered at runtime and cannot be resolved from the tree\n", name, FNR, $1, $2, cited
 					bad = 1; continue
 				}
-				top = cited; sub(/\/.*$/, "", top); packages = 0; files = ""
-				for (key in package_seen) if (index(key, top SUBSEP) == 1) { packages++; files = files (files == "" ? "" : ", ") file_for[key] }
+				top = cited; packages = package_count[top]; files = ""
+				for (i = 1; i <= packages; i++) {
+					pkg = package_order[top, i]
+					files = files (files == "" ? "" : ", ") file_list[top, pkg]
+				}
 				if (packages > 1) {
 					printf "::error::%s:%d: %s: %s: premise test %s is ambiguous across packages (%s); rename the premise test so the citation is unambiguous\n", name, FNR, $1, $2, top, files
 					bad = 1

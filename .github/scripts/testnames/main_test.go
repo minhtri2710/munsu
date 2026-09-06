@@ -8,89 +8,57 @@ import (
 	"testing"
 )
 
-func identities(records []record) []string {
-	result := make([]string, len(records))
-	for i, item := range records {
-		result[i] = item.identity
-	}
-	return result
-}
-
-func TestCollectsSemanticTestIdentities(t *testing.T) {
+func TestCollectsTopLevelTestDeclarationsOnly(t *testing.T) {
 	root := t.TempDir()
 	src := `package fixture
-import ("testing"; tlib "testing")
-var _ = "func TestFake(" 
+var _ = "func TestFake("
 /* func TestComment( */
 func Test(t *testing.T) {}
-func TestValid(t *testing.T) {
-	t.Run("two  words", func(t *testing.T) { t.Run(` + "`raw name`" + `, func(t *testing.T) {}) })
-	func() { t.Run("unreachable", func(t *testing.T) {}) }
-}
-func Testlower(t *testing.T) {}
-func TestWrong(t testing.T) {}
-func (x fixture) TestMethod(t *testing.T) {}
-func TestAlias(t *tlib.T) {}
-func TestUnnamed(*testing.T) {}
+func Testlower(a, b int) int { return 0 }
+func TestWrong(*NotTesting) {}
 func TestBlank(_ *testing.T) {}
-func TestEmpty(t *testing.T) () {}
+func TestResult(t *testing.T) error { return nil }
+func (fixture) TestMethod(t *testing.T) {}
+func TestParent(t *testing.T) { t.Run("subtest", func(t *testing.T) {}) }
 `
 	path := filepath.Join(root, "fixture_test.go")
-	if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	if err := os.WriteFile(path, []byte(src), 0o600); err != nil { t.Fatal(err) }
 	git(t, root, "init")
 	git(t, root, "add", ".")
 	got, err := collect(root)
-	if err != nil {
-		t.Fatal(err)
+	if err != nil { t.Fatal(err) }
+	want := []record{
+		{identity: "Test", packageKey: "fixture", file: "fixture_test.go"},
+		{identity: "TestBlank", packageKey: "fixture", file: "fixture_test.go"},
+		{identity: "TestParent", packageKey: "fixture", file: "fixture_test.go"},
+		{identity: "TestResult", packageKey: "fixture", file: "fixture_test.go"},
+		{identity: "TestWrong", packageKey: "fixture", file: "fixture_test.go"},
+		{identity: "Testlower", packageKey: "fixture", file: "fixture_test.go"},
 	}
-	want := []string{"Test", "TestAlias", "TestBlank", "TestEmpty", "TestUnnamed", "TestValid", "TestValid/two__words", "TestValid/two__words/raw_name"}
-	if !reflect.DeepEqual(identities(got), want) {
-		t.Fatalf("identities = %#v, want %#v", identities(got), want)
-	}
+	if !reflect.DeepEqual(got, want) { t.Fatalf("records = %#v, want %#v", got, want) }
 }
 
-func TestCollectReflectsRemovedSubtestsAndDuplicatePackages(t *testing.T) {
+func TestRetainsDuplicateDeclarationsAndFiles(t *testing.T) {
 	root := t.TempDir()
-	first := filepath.Join(root, "one", "fixture_test.go")
-	second := filepath.Join(root, "two", "fixture_test.go")
-	if err := os.MkdirAll(filepath.Dir(first), 0o700); err != nil {
-		t.Fatal(err)
+	paths := []string{
+		filepath.Join(root, "one", "a_test.go"),
+		filepath.Join(root, "one", "b_test.go"),
+		filepath.Join(root, "two", "c_test.go"),
 	}
-	if err := os.MkdirAll(filepath.Dir(second), 0o700); err != nil {
-		t.Fatal(err)
+	for _, path := range paths {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil { t.Fatal(err) }
+		pkg := filepath.Base(filepath.Dir(path))
+		if err := os.WriteFile(path, []byte("package "+pkg+"\nfunc TestDuplicate() {}\n"), 0o600); err != nil { t.Fatal(err) }
 	}
-	write := func(path, pkg, body string) {
-		if err := os.WriteFile(path, []byte("package "+pkg+"\nimport \"testing\"\n"+body), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	write(first, "one", `func TestParent(t *testing.T) { t.Run("kept", func(t *testing.T) {}); t.Run("removed", func(t *testing.T) {}) }`)
-	write(second, "two", `func TestParent(t *testing.T) {}`)
 	git(t, root, "init")
 	git(t, root, "add", ".")
 	got, err := collect(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 4 || got[0].identity != "TestParent" || got[0].packageKey == got[1].packageKey {
-		t.Fatalf("records = %#v", got)
-	}
-	write(first, "one", `func TestParent(t *testing.T) { t.Run("kept", func(t *testing.T) {}) }`)
-	got, err = collect(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(identities(got), []string{"TestParent", "TestParent", "TestParent/kept"}) {
-		t.Fatal(identities(got))
-	}
+	if err != nil { t.Fatal(err) }
+	if len(got) != 3 || got[0].file != "one/a_test.go" || got[1].file != "one/b_test.go" || got[2].file != "two/c_test.go" { t.Fatalf("records = %#v", got) }
 }
 
 func git(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git %v: %v\n%s", args, err, out)
-	}
+	if out, err := cmd.CombinedOutput(); err != nil { t.Fatalf("git %v: %v\n%s", args, err, out) }
 }

@@ -1,2 +1,3 @@
-TestDuplicatePremise	one	one/fixture_test.go
-TestDuplicatePremise	two	two/fixture_test.go
+TestDuplicatePremise	one	one/b_test.go
+TestDuplicatePremise	one	one/a_test.go
+TestDuplicatePremise	two	two/c_test.go

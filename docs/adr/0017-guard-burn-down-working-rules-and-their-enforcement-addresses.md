@@ -133,11 +133,12 @@ definition and a caller and says nothing at all.
 
 ### 4. A waiver line has three parts, not two
 
-**Address for parts (a) and (b): none — the reason column is self-declared and both lane
-scripts check only that it is non-empty. Address for part (c): `go test ./...` in the
-"Build and test" required check for whether the named test passes, and
-`premise_citation_errors` in `.github/scripts/uncovered-guards.sh` for whether it still
-exists; the `premise-citation` fixture pins it.**
+**Address for parts (a) and (b): none — the reason column is self-declared and omission is
+caught by reading the diff. Address for part (c): `go test ./...` in the required Build and test check owns
+whether a cited declaration is valid and runnable, while `premise_citation_errors` in
+`.github/scripts/uncovered-guards.sh` checks that a top-level declaration still exists;
+the `premise-citation` fixture pins both paths. A citation containing a slash is rejected
+because subtests are registered at runtime and cannot be resolved from the tree.**
 
 Every line in `.github/uncovered-guards.baseline` and `.github/deadcode.allow` states:
 
@@ -158,14 +159,14 @@ The link between a line and its named test was prose until this check landed. De
 `TestPremiseNoAggregateWithABlankOwnerReachesApply` left three baseline lines citing it and
 every lane green — the fail-open shape this file exists to refuse, with the waiver keeping
 its authority and nothing holding its premise. `check` now resolves every
-`Premise pinned by <TestName>` in the fifth column against the test functions the tree
-declares, and a citation naming a test no `_test.go` declares is red. Two limits are
-deliberate and stay: no row is *required* to carry the phrase, because requiring it of all
-27 would be a policy change rather than an enforcement address; and the check reads
-`.github/uncovered-guards.baseline` only, because `.github/deadcode.allow` carries no
-citation today and is a different script. Existence is derived by reading the tree, not by
-`go test -list`: one premise test lives behind the `integration` build tag, which the
-default lane does not list.
+`Premise pinned by <TestName>` in the fifth column against top-level `Test`-prefixed
+declarations in tracked test files, and a citation naming no declaration is red. Three
+limits are deliberate and stay: no row is *required* to carry the phrase, because reading
+the diff catches an omission; the check does not judge whether a cited declaration is a
+valid or runnable test, because the required Build and test check owns that; and a citation
+containing a slash is rejected because subtests are registered at runtime and cannot be
+resolved from the tree. The check reads `.github/uncovered-guards.baseline` only, because
+`.github/deadcode.allow` carries no citation today and is a different script.
 
 Both lane scripts already state their own limit in their headers — *"the reason column is
 self-declared … reading the diff is what catches that, not the script"* — in the same words
