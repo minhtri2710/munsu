@@ -136,8 +136,9 @@ func ensureDeliveryModeRunnableForProbe(probe ProbeResult) error {
 //   - An explicit --mode=no-mistakes with missing binary is a hard error.
 //   - A typed default of no-mistakes with missing binary is a hard error.
 //   - An explicit direct-PR/local-only is OK even when no-mistakes binary exists.
-//   - Auto no-mistakes with missing binary falls through to direct-PR, unless
-//     resolvedRequireNoMistakes is set (refuse, do not silently fall back).
+//   - Auto no-mistakes with a binary that is absent or incompatible falls
+//     through to direct-PR, unless resolvedRequireNoMistakes is set (refuse,
+//     do not silently fall back).
 func ResolveDeliveryMode(explicitMode string, resolvedDefaultMode string, resolvedRequireNoMistakes bool) (string, error) {
 	// 1. Explicit --mode flag
 	if explicitMode != "" {
@@ -167,16 +168,19 @@ func ResolveDeliveryMode(explicitMode string, resolvedDefaultMode string, resolv
 	if noMistakesAvailable() {
 		return "no-mistakes", nil
 	}
+
+	// 4. Typed require-no-mistakes is set → refuse fallback. This sits above both
+	// fallback branches because it covers both reasons it names: a binary absent
+	// from PATH and one present but incompatible.
+	if resolvedRequireNoMistakes {
+		return "", fmt.Errorf("require-no-mistakes is set: %w", ensureDeliveryModeRunnableForProbe(NoMistakesProbe()))
+	}
+
 	// Binary on PATH but incompatible version: inform the user why.
 	if noMistakesOnPath() {
 		probe := NoMistakesProbe()
 		fmt.Fprintf(os.Stderr, "warning: no-mistakes found on PATH but not compatible: %s; defaulting to direct-PR. Upgrade no-mistakes or run 'munsu doctor'\n", probe.Detail)
 		return "direct-PR", nil
-	}
-
-	// 4. Typed require-no-mistakes is set → refuse fallback
-	if resolvedRequireNoMistakes {
-		return "", fmt.Errorf("require-no-mistakes is set but no-mistakes binary is absent or incompatible on this system")
 	}
 
 	fmt.Fprintln(os.Stderr, "warning: no-mistakes not found on PATH; defaulting to direct-PR delivery mode. Install with: go install github.com/kunchenguid/no-mistakes@latest, or run 'munsu doctor'")

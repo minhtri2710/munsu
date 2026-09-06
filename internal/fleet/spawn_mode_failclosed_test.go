@@ -4,9 +4,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	fleetconfig "github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // TestResolveDeliveryModeFromProject_MalformedBaseFailsClosed proves that a
@@ -78,6 +80,62 @@ func TestResolveDeliveryModeFromProject_ProjectErrorNoBaseFallback(t *testing.T)
 	if err == nil {
 		t.Fatal("unregistered project must fail closed, not fall back to base default")
 	}
+}
+
+// TestResolveDeliveryModeFromProject_RequireNoMistakesRefusesAutoFallback
+// proves that a project setting require-no-mistakes refuses the auto fallback
+// for both reasons the refusal names — an absent binary and one present on
+// PATH but incompatible — instead of silently delivering under direct-PR.
+func TestResolveDeliveryModeFromProject_RequireNoMistakesRefusesAutoFallback(t *testing.T) {
+	require := true
+	newHome := func(t *testing.T) string {
+		t.Helper()
+		home := t.TempDir()
+		// No default mode: the require gate is only reachable on the auto path.
+		storeTestDocuments(t, home, fleetconfig.FleetBaseDocument{
+			SchemaVersion: fleetconfig.FleetBaseSchemaVersion,
+			Config: fleetconfig.ProjectOverlay{
+				SoldierHarness:    "pi",
+				Model:             "base-model",
+				Backend:           "tmux",
+				RequireNoMistakes: &require,
+			},
+			CaptainProfile: fleetconfig.CaptainProfile{Harness: "pi", Model: "captain-model"},
+		}, []testProjectRecord{{Name: "alpha", Path: filepath.Join(home, "projects", "alpha")}}, nil)
+		return home
+	}
+
+	t.Run("absent binary", func(t *testing.T) {
+		home := newHome(t)
+		t.Setenv("PATH", t.TempDir())
+
+		mode, err := ResolveDeliveryModeFromProject(home, "alpha", "")
+		if err == nil {
+			t.Fatalf("require-no-mistakes with no binary must refuse, got mode=%q", mode)
+		}
+		if !strings.Contains(err.Error(), "require-no-mistakes is set") {
+			t.Fatalf("refusal must come from the require gate, got %v", err)
+		}
+		if mode != "" {
+			t.Errorf("mode must be empty on refusal, got %q", mode)
+		}
+	})
+
+	t.Run("incompatible binary on PATH", func(t *testing.T) {
+		home := newHome(t)
+		testutil.PrependPath(t, createFakeNoMistakesVersion(t, "0.5.0"))
+
+		mode, err := ResolveDeliveryModeFromProject(home, "alpha", "")
+		if err == nil {
+			t.Fatalf("require-no-mistakes with an incompatible binary must refuse, got mode=%q", mode)
+		}
+		if !strings.Contains(err.Error(), "require-no-mistakes is set") {
+			t.Fatalf("refusal must come from the require gate, got %v", err)
+		}
+		if mode != "" {
+			t.Errorf("mode must be empty on refusal, got %q", mode)
+		}
+	})
 }
 
 // TestResolveDeliveryModeFromProject_SuccessResolvesSnapshot proves the
