@@ -67,9 +67,12 @@ explicitly recorded transition rather than a silent re-resolution.
 
 On first spawn of a task, `ResolveDeliveryMode` runs as today, but the resolved
 mode is **recorded on the canonical task aggregate** in
-`internal/taskauthority` as the task's delivery contract. Subsequent generations
-read the recorded contract instead of re-resolving from live inputs. A task's
-mode therefore cannot silently change across re-spawns. The recorded contract
+`internal/taskauthority` as the task's delivery contract. With neither an
+explicit nor typed default mode, a Ready capability probe selects
+`no-mistakes`; any non-Ready probe result is refused when
+`require-no-mistakes` is set and otherwise selects `direct-PR`. Subsequent
+generations read the recorded contract instead of re-resolving from live
+inputs. A task's mode therefore cannot silently change across re-spawns. The recorded contract
 also carries across task transfer: `Canonical.ReceiveTransfer` writes the
 received `DeliveryContract` onto the destination generation, so a transferred
 task delivers under the same contract rather than re-resolving the mode from
@@ -122,7 +125,7 @@ parallel from/to/reason record.
 
 ### Non-goals
 
-* No change to the no-mistakes gate itself (ADR-0016 stands).
+* This decision does not alter the authorized mid-spawn or late-capability
+  no-mistakes → direct-PR fallback described in §2.
 * munsu does **not** adopt firstmate's registry-advisory-only model or its hard
-  refuse-to-guess on missing mode; auto-detection remains the first-spawn
-  default.
+  refuse-to-guess on missing mode.

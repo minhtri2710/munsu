@@ -118,7 +118,8 @@ func ensureDeliveryModeRunnableForProbe(probe ProbeResult) error {
 // precedence:
 //  1. explicitMode — non-empty --mode flag value
 //  2. resolvedDefaultMode — typed base/project/snapshot default mode (if non-empty)
-//  3. Auto — no-mistakes on PATH → no-mistakes, else → direct-PR (with message)
+//  3. Auto — a Ready no-mistakes probe selects no-mistakes; any other
+//     probe result selects direct-PR unless require-no-mistakes refuses it.
 //
 // Only validation and the runtime capability probe live here: config authority
 // comes exclusively from the resolved values passed in. The typed surface is
@@ -128,9 +129,9 @@ func ensureDeliveryModeRunnableForProbe(probe ProbeResult) error {
 //   - An explicit --mode=no-mistakes with missing binary is a hard error.
 //   - A typed default of no-mistakes with missing binary is a hard error.
 //   - An explicit direct-PR/local-only is OK even when no-mistakes binary exists.
-//   - Auto no-mistakes with a binary that is absent or incompatible falls
-//     through to direct-PR, unless resolvedRequireNoMistakes is set (refuse,
-//     do not silently fall back).
+//   - Auto no-mistakes with any non-Ready probe result falls through to
+//     direct-PR, unless resolvedRequireNoMistakes is set (refuse, do not
+//     silently fall back).
 func ResolveDeliveryMode(explicitMode string, resolvedDefaultMode string, resolvedRequireNoMistakes bool) (string, error) {
 	// 1. Explicit --mode flag
 	if explicitMode != "" {
@@ -163,8 +164,8 @@ func ResolveDeliveryMode(explicitMode string, resolvedDefaultMode string, resolv
 	}
 
 	// 4. Typed require-no-mistakes is set → refuse fallback. This sits above both
-	// fallback branches because it covers both reasons it names: a binary absent
-	// from PATH and one present but incompatible.
+	// fallback branches because it covers every non-Ready probe result, including
+	// a binary absent from PATH, incompatible, or otherwise unusable.
 	if resolvedRequireNoMistakes {
 		return "", fmt.Errorf("require-no-mistakes is set: %w", ensureDeliveryModeRunnableForProbe(probe))
 	}
