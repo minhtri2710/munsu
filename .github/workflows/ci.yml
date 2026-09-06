@@ -438,6 +438,61 @@ jobs:
       # turn this job's gofmt step red instead. Hermetic and ~15s.
       - name: Citation rules must agree with their fixtures
         run: .github/scripts/citations.sh selftest
+      # Go tools under .github/scripts are outside the root module graph: the
+      # go tool skips dot-directories, and `citations`, `guardsites` and
+      # `testnames` are their own modules, so a root `./...` reaches none of
+      # them. The selftests above compile their tools, but compilation alone
+      # does not execute unit tests, so those tests could rot or be deleted
+      # while every existing lane stayed green.
+      #
+      # The directory list is derived from tracked `.go` files, never
+      # declared: a declared list of "the three tool modules" was already
+      # stale before this step existed, missing the root-module
+      # `flake-sweep-topology` package, and deriving also keeps the
+      # `.github/testdata` fixture module out by construction. `go vet` is in
+      # the contract because these tools are the only Go in the repository no
+      # vet lane reaches. A directory with no running test is a failure, not
+      # a pass: `[no test files]` is what test rot looks like on its way out.
+      # `gofmt` needs no help; its filesystem walk already covers this tree.
+      - name: Go tools under .github must vet and test
+        run: |
+          set -eu
+          dirs="$(mktemp)"
+          out="$(mktemp)"
+          build_out="$(mktemp -d)"
+          trap 'rm -f "$dirs" "$out"; rm -rf "$build_out"' EXIT
+          git ls-files -- '.github/scripts/**/*.go' | sed 's|/[^/]*$||' | sort -u >"$dirs"
+          if [ ! -s "$dirs" ]; then
+            echo "::error::no Go tool directory found under .github/scripts -- this step is measuring nothing" >&2
+            exit 1
+          fi
+          failed=0
+          # Redirected from a file rather than piped into: a `while` on the
+          # right of a pipe runs in a subshell, where the `failed=1` below is
+          # discarded and every failing tool reads as a pass.
+          while IFS= read -r dir; do
+            echo "--- $dir"
+            rm -rf "$build_out"/*
+            # Compile package and test sources without running tests first, so
+            # syntax/type/build errors are reported as build failures rather
+            # than being misclassified as vet failures or missing tests.
+            if ! (cd "$dir" && go test -c -vet=off -o "$build_out/" ./...) >"$out" 2>&1; then
+              echo "::error::$dir build failed" >&2
+              failed=1
+            elif ! (cd "$dir" && go vet ./...) >"$out" 2>&1; then
+              echo "::error::$dir vet failed" >&2
+              failed=1
+            elif ! (cd "$dir" && go test -v -count=1 ./...) >"$out" 2>&1; then
+              echo "::error::$dir tests failed" >&2
+              failed=1
+            elif ! grep -q '^=== RUN ' "$out"; then
+              echo "::error::$dir declares no test that runs" >&2
+              failed=1
+            fi
+            cat "$out"
+          done <"$dirs"
+          [ "$failed" -eq 0 ] || exit 1
+          echo "go tools: vet and test clean in $(wc -l <"$dirs" | tr -d ' ') directories"
       - name: Flake ledger deadlines must not have passed
         run: .github/scripts/flake-ledger.sh check
       # munsu's documents cite the code as their primary evidence, and this step
