@@ -459,7 +459,8 @@ jobs:
           set -eu
           dirs="$(mktemp)"
           out="$(mktemp)"
-          trap 'rm -f "$dirs" "$out"' EXIT
+          build_out="$(mktemp -d)"
+          trap 'rm -f "$dirs" "$out"; rm -rf "$build_out"' EXIT
           git ls-files -- '.github/scripts/**/*.go' | sed 's|/[^/]*$||' | sort -u >"$dirs"
           if [ ! -s "$dirs" ]; then
             echo "::error::no Go tool directory found under .github/scripts -- this step is measuring nothing" >&2
@@ -471,7 +472,8 @@ jobs:
           # discarded and every failing tool reads as a pass.
           while IFS= read -r dir; do
             echo "--- $dir"
-            if ! (cd "$dir" && go build ./...) >"$out" 2>&1; then
+            rm -rf "$build_out"/*
+            if ! (cd "$dir" && go test -c -vet=off -o "$build_out/" ./...) >"$out" 2>&1; then
               echo "::error::$dir build failed" >&2
               failed=1
             elif ! (cd "$dir" && go vet ./...) >"$out" 2>&1; then
