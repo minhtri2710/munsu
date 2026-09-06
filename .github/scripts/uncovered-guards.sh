@@ -73,25 +73,17 @@ FIXTURES="$ROOT/.github/testdata/uncovered-guards"
 # time somebody deleted a dead function would be fixtures nobody trusts.
 ALLOW="${GUARDS_DEADCODE_ALLOW:-$ROOT/.github/deadcode.allow}"
 
-# Every test function this tree declares, one name per line. Derived from the
-# tree with grep rather than from `go test -list`: one premise test already
-# lives behind `//go:build integration`, which the default lane does not list,
-# and a citation check that silently misses a tagged test is the same fail-open
-# it exists to close. Overridable for the reason SITES is -- a fixture pins the
-# rule, not whatever this repository's test files happen to declare today.
+# Every test function this tree declares, including tests behind build tags.
+# The collector parses tracked Go declarations rather than asking the default
+# go test lane, so a tagged premise test cannot disappear from this contract.
 test_names() {
 	if [ -n "${GUARDS_TEST_NAMES:-}" ]; then
 		[ -f "$GUARDS_TEST_NAMES" ] || die "GUARDS_TEST_NAMES=$GUARDS_TEST_NAMES does not exist"
 		cat "$GUARDS_TEST_NAMES"
 		return
 	fi
-	# `|| true`: grep exits 1 on an xargs batch that happens to hold no match,
-	# and under `pipefail` that would read as a broken derivation rather than as
-	# the empty answer it is. An empty set is not silently accepted -- it makes
-	# every citation unresolvable, which is red, not green.
-	{ git -C "$ROOT" ls-files -z '*_test.go' |
-		xargs -0 grep -hoE '^func [A-Za-z_][A-Za-z0-9_]*\(' || true; } |
-		sed 's/^func //; s/($//'
+	(cd "$ROOT/.github/scripts/testnames" && go run . "$ROOT") ||
+		die "testnames could not derive premise citations from the tracked test tree"
 }
 
 # Every lane that must contribute a profile, by artifact filename. Derived from
@@ -476,31 +468,35 @@ premise_citation_errors() {
 	local file="$1"
 	local name="${file#"$ROOT"/}"
 	grep -q 'Premise pinned by' "$file" || return 0
-	# The declared set arrives as a first input file rather than through `-v`:
-	# the BSD awk on macOS refuses a newline inside a `-v` value, and the
-	# NR == FNR idiom is the one baseline_added_rows already uses here.
-	awk -F '\t' -v name="$name" '
-		NR == FNR { if ($0 != "") declared[$0] = 1; next }
+	local declared_file awk_status
+	declared_file="$(mktemp)"
+	if ! test_names | sort -u >"$declared_file"; then
+		rm -f "$declared_file"
+		return 1
+	fi
+	if awk -F '\t' -v name="$name" -v declared_file="$declared_file" '
+		FILENAME == declared_file { if ($0 != "") declared[$0] = 1; next }
 		/^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
-		# Malformed rows belong to baseline_format_errors, which already fails
-		# the run; reading $5 out of one would report a second, invented fault.
 		NF != 5 { next }
 		{
-			# The phrase is matched WITHOUT its trailing space. Matching
-			# "Premise pinned by " would make a row ending in the bare phrase
-			# invisible -- fail-open in the one case that most needs to be red.
 			phrase = "Premise pinned by"
 			rest = $5
 			while ((at = index(rest, phrase)) > 0) {
 				rest = substr(rest, at + length(phrase))
-				if (match(rest, /^[ \t]+[A-Za-z_][A-Za-z0-9_]*/) == 0) {
+				if (match(rest, /^[ \t]+[A-Za-z_][A-Za-z0-9_]*(\/[A-Za-z0-9_]+)*([ \t.,;]|$)/) == 0) {
 					printf "::error::%s:%d: %s: %s: \"Premise pinned by\" names no test\n", name, FNR, $1, $2
 					bad = 1
 					continue
 				}
 				cited = substr(rest, 1, RLENGTH)
+				sub(/[ \t.,;]$/, "", cited)
 				sub(/^[ \t]+/, "", cited)
 				rest = substr(rest, RLENGTH + 1)
+				if (substr(rest, 1, 1) == "/") {
+					printf "::error::%s:%d: %s: %s: \"Premise pinned by\" has an empty test segment\n", name, FNR, $1, $2
+					bad = 1
+					continue
+				}
 				if (!(cited in declared)) {
 					printf "::error::%s:%d: %s: %s: premise test %s is declared by no _test.go in this tree\n", name, FNR, $1, $2, cited
 					bad = 1
@@ -508,7 +504,13 @@ premise_citation_errors() {
 			}
 		}
 		END { exit bad }
-	' <(test_names | sort -u) "$file"
+	' "$declared_file" "$file"; then
+		awk_status=0
+	else
+		awk_status=$?
+	fi
+	rm -f "$declared_file"
+	return "$awk_status"
 }
 
 baseline_entries() {
