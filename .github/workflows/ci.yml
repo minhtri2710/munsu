@@ -460,14 +460,16 @@ jobs:
       # built as part of this repo.
       #
       # `go vet` runs beside the tests for the same reason the step exists: it
-      # is the same unreached gap, and for guardsites and flake-sweep-topology,
-      # which have no tests, it is the only non-vacuous check available here.
+      # is the same unreached gap. The JSON test stream is checked semantically
+      # so a module with deleted tests cannot pass with Go's `[no test files]`.
       # gofmt needs no help -- that step walks the filesystem, not the module
       # graph, so it already covers this tree.
       - name: Go tools under .github must vet and test
         run: |
           set -eu
           dirs="$(mktemp)"
+          test_output=
+          trap 'rm -f "$dirs" "$test_output"' EXIT
           git ls-files -- '.github/scripts/**/*.go' | sed 's|/[^/]*$||' | sort -u >"$dirs"
           if [ ! -s "$dirs" ]; then
             echo "::error::no Go tool directory found under .github/scripts -- this step is measuring nothing" >&2
@@ -479,10 +481,34 @@ jobs:
           # discarded and every failing tool reads as a pass.
           while IFS= read -r dir; do
             echo "--- $dir"
-            if ! (cd "$dir" && go vet ./... && go test -count=1 ./...); then
+            test_output="$(mktemp)"
+            vet_status=0
+            (cd "$dir" && go vet ./...) || vet_status=$?
+            test_status=0
+            (cd "$dir" && go test -json -count=1 ./...) >"$test_output" 2>&1 || test_status=$?
+            if ! python3 - "$test_output" <<'PY'
+          import json
+          import sys
+
+          ran = False
+          with open(sys.argv[1], encoding="utf-8") as stream:
+              for line in stream:
+                  event = json.loads(line)
+                  if event.get("Action") == "run" and event.get("Test"):
+                      ran = True
+          if not ran:
+              raise SystemExit("no executable Go test event was observed")
+          PY
+            then
+              echo "::error::$dir did not execute any Go tests" >&2
+              failed=1
+            fi
+            if [ "$vet_status" -ne 0 ] || [ "$test_status" -ne 0 ]; then
               echo "::error::$dir does not vet and test clean" >&2
               failed=1
             fi
+            rm -f "$test_output"
+            test_output=
           done <"$dirs"
           [ "$failed" -eq 0 ] || exit 1
           echo "go tools: vet and test clean in $(wc -l <"$dirs" | tr -d ' ') directories"
