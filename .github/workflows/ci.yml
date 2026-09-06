@@ -439,22 +439,27 @@ jobs:
       - name: Citation rules must agree with their fixtures
         run: .github/scripts/citations.sh selftest
       # Go tools under .github/scripts are outside the root module graph: the
-      # go tool skips dot-directories, and nested modules are not traversed by
-      # root `./...`. The selftests above compile their tools, but compilation
-      # alone does not execute unit tests, so those tests could rot or be
-      # deleted while every existing lane stayed green.
+      # go tool skips dot-directories, and `citations`, `guardsites` and
+      # `testnames` are their own modules, so a root `./...` reaches none of
+      # them. The selftests above compile their tools, but compilation alone
+      # does not execute unit tests, so those tests could rot or be deleted
+      # while every existing lane stayed green.
       #
-      # This step derives its directories from tracked `.go` files rather than
-      # maintaining a declaration that can go stale. It vets every discovered
-      # directory and requires an executable test event, while excluding
-      # fixture trees outside `.github/scripts` by construction. `gofmt` needs
-      # no help: its filesystem walk already covers this tree.
+      # The directory list is derived from tracked `.go` files, never
+      # declared: a declared list of "the three tool modules" was already
+      # stale before this step existed, missing the root-module
+      # `flake-sweep-topology` package, and deriving also keeps the
+      # `.github/testdata` fixture module out by construction. `go vet` is in
+      # the contract because these tools are the only Go in the repository no
+      # vet lane reaches. A directory with no running test is a failure, not
+      # a pass: `[no test files]` is what test rot looks like on its way out.
+      # `gofmt` needs no help; its filesystem walk already covers this tree.
       - name: Go tools under .github must vet and test
         run: |
           set -eu
           dirs="$(mktemp)"
-          test_output=
-          trap 'rm -f "$dirs" "$test_output"' EXIT
+          out="$(mktemp)"
+          trap 'rm -f "$dirs" "$out"' EXIT
           git ls-files -- '.github/scripts/**/*.go' | sed 's|/[^/]*$||' | sort -u >"$dirs"
           if [ ! -s "$dirs" ]; then
             echo "::error::no Go tool directory found under .github/scripts -- this step is measuring nothing" >&2
@@ -466,34 +471,16 @@ jobs:
           # discarded and every failing tool reads as a pass.
           while IFS= read -r dir; do
             echo "--- $dir"
-            test_output="$(mktemp)"
-            vet_status=0
-            (cd "$dir" && go vet ./...) || vet_status=$?
-            test_status=0
-            (cd "$dir" && go test -json -count=1 ./...) >"$test_output" 2>&1 || test_status=$?
-            if ! python3 - "$test_output" <<'PY'
-          import json
-          import sys
-
-          ran = False
-          with open(sys.argv[1], encoding="utf-8") as stream:
-              for line in stream:
-                  event = json.loads(line)
-                  if event.get("Action") == "run" and event.get("Test"):
-                      ran = True
-          if not ran:
-              raise SystemExit("no executable Go test event was observed")
-          PY
-            then
-              echo "::error::$dir did not execute any Go tests" >&2
-              failed=1
-            fi
-            if [ "$vet_status" -ne 0 ] || [ "$test_status" -ne 0 ]; then
+            if ! (cd "$dir" && go vet ./... && go test -v -count=1 ./...) >"$out" 2>&1; then
               echo "::error::$dir does not vet and test clean" >&2
               failed=1
+            # Asked only of a run that already succeeded, so a build break is
+            # reported as the build break it is and never as a missing test.
+            elif ! grep -q '^=== RUN ' "$out"; then
+              echo "::error::$dir declares no test that runs" >&2
+              failed=1
             fi
-            rm -f "$test_output"
-            test_output=
+            cat "$out"
           done <"$dirs"
           [ "$failed" -eq 0 ] || exit 1
           echo "go tools: vet and test clean in $(wc -l <"$dirs" | tr -d ' ') directories"
