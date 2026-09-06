@@ -471,11 +471,15 @@ jobs:
           # discarded and every failing tool reads as a pass.
           while IFS= read -r dir; do
             echo "--- $dir"
-            if ! (cd "$dir" && go vet ./... && go test -v -count=1 ./...) >"$out" 2>&1; then
-              echo "::error::$dir does not vet and test clean" >&2
+            if ! (cd "$dir" && go build ./...) >"$out" 2>&1; then
+              echo "::error::$dir build failed" >&2
               failed=1
-            # Asked only of a run that already succeeded, so a build break is
-            # reported as the build break it is and never as a missing test.
+            elif ! (cd "$dir" && go vet ./...) >"$out" 2>&1; then
+              echo "::error::$dir vet failed" >&2
+              failed=1
+            elif ! (cd "$dir" && go test -v -count=1 ./...) >"$out" 2>&1; then
+              echo "::error::$dir tests failed" >&2
+              failed=1
             elif ! grep -q '^=== RUN ' "$out"; then
               echo "::error::$dir declares no test that runs" >&2
               failed=1
