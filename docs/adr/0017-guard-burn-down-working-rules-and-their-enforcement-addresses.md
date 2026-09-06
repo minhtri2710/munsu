@@ -137,10 +137,10 @@ definition and a caller and says nothing at all.
 caught by reading the diff. Address for part (c): `go test ./...` in the required Build and test check owns
 whether a cited declaration is valid and runnable, while `premise_citation_errors` in
 `.github/scripts/uncovered-guards.sh` checks that a top-level declaration still exists;
-the `premise-citation` fixture pins both paths. A citation containing a slash is rejected
+the `premise-citation` and `ambiguous-premise` fixtures pin the guards-lane checks. A citation containing a slash is rejected
 because subtests are registered at runtime and cannot be resolved from the tree.**
 
-Every line in `.github/uncovered-guards.baseline` and `.github/deadcode.allow` states:
+A complete waiver argument states:
 
 * **(a) the premise** — not "this branch is unreachable" but "unreachable **because** X";
 * **(b) the invalidating condition** — "and this line is wrong the moment X stops holding";
@@ -148,12 +148,10 @@ Every line in `.github/uncovered-guards.baseline` and `.github/deadcode.allow` s
   *would* enter the waived branch and asserts the refusal carries the earlier guard's
   message.
 
-Part (c) is not in the rule set this ADR was asked to record, and it is the only part of a
-waiver anything executes. #511's waivers already carry it
-(`Premise pinned by TestPremiseCleanupFenceRejectsAForeignClaimBeforeApply`, and eight
-more): when the earlier guard moves or softens, the premise test goes red and the waiver
-has to be re-argued instead of quietly becoming wrong. Recording the two-part form would
-record a weaker rule than the one the batches actually earned.
+Part (c) is enforceable when present in `.github/uncovered-guards.baseline`:
+`go test ./...` owns whether the premise test still pins the behavior, while
+`premise_citation_errors` makes deletion, renaming, or cross-package ambiguity of its cited
+declaration red. `.github/deadcode.allow` remains out of scope for this check.
 
 The link between a line and its named test was prose until this check landed. Deleting
 `TestPremiseNoAggregateWithABlankOwnerReachesApply` left three baseline lines citing it and
