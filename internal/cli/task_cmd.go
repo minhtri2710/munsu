@@ -514,29 +514,22 @@ func runTaskLifecycleTransition(ctx Ctx, verb, projectionState string, args []st
 // values remove stale keys. It is the post-commit projection write (ADR-0007
 // §7): the authoritative Task Generation is never written here.
 func projectTaskMeta(homeDir string, agg taskauthority.Aggregate, runtime map[string]string) error {
-	existing, err := home.ReadMeta(homeDir, agg.TaskID)
-	if err != nil {
-		existing = map[string]string{}
-	}
-	derived := make(map[string]string, len(existing)+len(runtime)+6)
-	for k, v := range existing {
-		derived[k] = v
-	}
-	for k, v := range runtime {
-		derived[k] = v
-	}
-	put := func(k, v string) {
-		if v == "" {
-			delete(derived, k)
-			return
+	return home.UpdateMeta(homeDir, agg.TaskID, func(derived map[string]string) {
+		for k, v := range runtime {
+			derived[k] = v
 		}
-		derived[k] = v
-	}
-	put("owner", agg.Definition.Owner)
-	put("description", agg.Definition.Description)
-	put("kind", agg.Definition.Kind)
-	put("project", agg.Definition.Project)
-	put("generation", agg.Generation.String())
-	put("state", string(agg.Phase))
-	return home.WriteMeta(homeDir, agg.TaskID, derived)
+		put := func(k, v string) {
+			if v == "" {
+				delete(derived, k)
+				return
+			}
+			derived[k] = v
+		}
+		put("owner", agg.Definition.Owner)
+		put("description", agg.Definition.Description)
+		put("kind", agg.Definition.Kind)
+		put("project", agg.Definition.Project)
+		put("generation", agg.Generation.String())
+		put("state", string(agg.Phase))
+	})
 }

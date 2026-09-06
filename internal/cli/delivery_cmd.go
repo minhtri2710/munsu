@@ -136,14 +136,11 @@ func buildDeliverRequest(auth *taskauthority.Canonical, taskID, prURL string, ex
 // canonical delivery authorization/outcome remains the delivery truth and is
 // never derived from these keys.
 func projectDeliveryIdentity(homeDir, taskID string, ident domain.DeliveryIdentity) error {
-	meta, err := home.ReadMeta(homeDir, taskID)
-	if err != nil {
-		meta = map[string]string{}
-	}
-	for k, v := range ident.ToMeta() {
-		meta[k] = v
-	}
-	return home.WriteMeta(homeDir, taskID, meta)
+	return home.UpdateMeta(homeDir, taskID, func(meta map[string]string) {
+		for k, v := range ident.ToMeta() {
+			meta[k] = v
+		}
+	})
 }
 
 func newPRMergeCmd() *cobra.Command {
