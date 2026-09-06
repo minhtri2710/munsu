@@ -20,7 +20,6 @@ When this session owns supervision and away mode is not active:
 - Use `munsu watch ensure` to arm the watcher.
 - The extension uses `munsu wake claim` to claim queued wake records under a lease; do not claim them manually.
 - Resolve claimed wakes with the `munsu_wake_resolve` tool or the `/munsu:wake` command.
-- No PreToolUse seatbelt — munsu's pull-based watcher replaces turn-end hooks for soldiers.
 
 ## Harness-specific
 

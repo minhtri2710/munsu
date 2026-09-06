@@ -19,7 +19,6 @@ When this session owns supervision and away mode is not active:
 
 - Use `munsu watch ensure` to arm the watcher.
 - Use `munsu wake claim` to claim queued wake records under a lease.
-- No PreToolUse seatbelt — munsu's pull-based watcher replaces turn-end hooks for soldiers.
 - The primary session's own turn-end guard is the agent's responsibility per the seeded orchestrator manual.
 
 ## Harness-specific
