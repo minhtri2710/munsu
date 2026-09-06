@@ -475,7 +475,16 @@ premise_citation_errors() {
 		return 1
 	fi
 	if awk -F '\t' -v name="$name" -v declared_file="$declared_file" '
-		FILENAME == declared_file { if ($0 != "") declared[$0] = 1; next }
+		FILENAME == declared_file {
+			if ($0 == "") next
+			if (NF == 1) { declared[$1] = 1; next }
+			if (NF >= 3) {
+				declared[$1] = 1
+				top = $1; sub(/\/.*$/, "", top)
+				pkg = $2; file_for[top, pkg] = $3; package_seen[top, pkg] = 1
+			}
+			next
+		}
 		/^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
 		NF != 5 { next }
 		{
@@ -485,19 +494,21 @@ premise_citation_errors() {
 				rest = substr(rest, at + length(phrase))
 				if (match(rest, /^[ \t]+[A-Za-z_][A-Za-z0-9_]*(\/[A-Za-z0-9_]+)*([ \t.,;]|$)/) == 0) {
 					printf "::error::%s:%d: %s: %s: \"Premise pinned by\" names no test\n", name, FNR, $1, $2
-					bad = 1
-					continue
+					bad = 1; continue
 				}
 				cited = substr(rest, 1, RLENGTH)
-				sub(/[ \t.,;]$/, "", cited)
-				sub(/^[ \t]+/, "", cited)
+				sub(/[ \t.,;]$/, "", cited); sub(/^[ \t]+/, "", cited)
 				rest = substr(rest, RLENGTH + 1)
 				if (substr(rest, 1, 1) == "/") {
 					printf "::error::%s:%d: %s: %s: \"Premise pinned by\" has an empty test segment\n", name, FNR, $1, $2
-					bad = 1
-					continue
+					bad = 1; continue
 				}
-				if (!(cited in declared)) {
+				top = cited; sub(/\/.*$/, "", top); packages = 0; files = ""
+				for (key in package_seen) if (index(key, top SUBSEP) == 1) { packages++; files = files (files == "" ? "" : ", ") file_for[key] }
+				if (packages > 1) {
+					printf "::error::%s:%d: %s: %s: premise test %s is ambiguous across packages (%s); rename the premise test so the citation is unambiguous\n", name, FNR, $1, $2, top, files
+					bad = 1
+				} else if (!(cited in declared)) {
 					printf "::error::%s:%d: %s: %s: premise test %s is declared by no _test.go in this tree\n", name, FNR, $1, $2, cited
 					bad = 1
 				}

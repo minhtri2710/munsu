@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 func main() {
@@ -19,17 +20,23 @@ func main() {
 	if len(os.Args) > 1 {
 		root = os.Args[1]
 	}
-	ids, err := collect(root)
+	records, err := collect(root)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	for _, id := range ids {
-		fmt.Println(id)
+	for _, record := range records {
+		fmt.Printf("%s\t%s\t%s\n", record.identity, record.packageKey, record.file)
 	}
 }
 
-func collect(root string) ([]string, error) {
+type record struct {
+	identity   string
+	packageKey string
+	file       string
+}
+
+func collect(root string) ([]record, error) {
 	root, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
@@ -39,7 +46,7 @@ func collect(root string) ([]string, error) {
 		return nil, fmt.Errorf("git ls-files: %w", err)
 	}
 	fset := token.NewFileSet()
-	ids := map[string]bool{}
+	var records []record
 	for _, name := range strings.Split(string(out), "\x00") {
 		if name == "" {
 			continue
@@ -53,23 +60,38 @@ func collect(root string) ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("parse %s: %w", name, err)
 		}
+		packageKey := filepath.ToSlash(filepath.Join(filepath.Dir(name), file.Name.Name))
 		names := testingImportNames(file)
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok || !isTestDecl(fn, names) {
 				continue
 			}
-			ids[fn.Name.Name] = true
-			p := fn.Type.Params.List[0].Names[0]
-			collectSubtests(fn.Body, p.Obj, fn.Name.Name, names, ids)
+			addRecord(&records, record{fn.Name.Name, packageKey, filepath.ToSlash(name)})
+			if fn.Type.Params.List[0].Names != nil && len(fn.Type.Params.List[0].Names) == 1 && fn.Type.Params.List[0].Names[0].Name != "_" {
+				collectSubtests(fn.Body, fn.Type.Params.List[0].Names[0].Obj, fn.Name.Name, names, packageKey, filepath.ToSlash(name), &records)
+			}
 		}
 	}
-	result := make([]string, 0, len(ids))
-	for id := range ids {
-		result = append(result, id)
+	sort.Slice(records, func(i, j int) bool {
+		if records[i].identity != records[j].identity {
+			return records[i].identity < records[j].identity
+		}
+		if records[i].packageKey != records[j].packageKey {
+			return records[i].packageKey < records[j].packageKey
+		}
+		return records[i].file < records[j].file
+	})
+	return records, nil
+}
+
+func addRecord(records *[]record, value record) {
+	for _, existing := range *records {
+		if existing == value {
+			return
+		}
 	}
-	sort.Strings(result)
-	return result, nil
+	*records = append(*records, value)
 }
 
 func testingImportNames(file *ast.File) map[string]bool {
@@ -93,18 +115,24 @@ func testingImportNames(file *ast.File) map[string]bool {
 }
 
 func isTestDecl(fn *ast.FuncDecl, names map[string]bool) bool {
-	if fn.Recv != nil || fn.Name == nil || len(fn.Name.Name) <= 4 || !strings.HasPrefix(fn.Name.Name, "Test") || unicode.IsLower([]rune(fn.Name.Name[4:])[0]) || fn.Type.TypeParams != nil || fn.Type.Results != nil {
+	if fn.Recv != nil || fn.Name == nil || !isTestName(fn.Name.Name) || fn.Type.TypeParams != nil || fn.Type.Results != nil && len(fn.Type.Results.List) != 0 {
 		return false
 	}
-	if fn.Type.Params == nil || len(fn.Type.Params.List) != 1 {
-		return false
-	}
-	field := fn.Type.Params.List[0]
-	if len(field.Names) != 1 || field.Names[0].Name == "_" {
-		return false
-	}
-	return isTestingType(field.Type, names)
+	return len(fn.Type.Params.List) == 1 && isTestingType(fn.Type.Params.List[0].Type, names)
 }
+
+func isTestName(name string) bool {
+	if !strings.HasPrefix(name, "Test") {
+		return false
+	}
+	rest := name[len("Test"):]
+	if rest == "" {
+		return true
+	}
+	r, _ := utf8.DecodeRuneInString(rest)
+	return !unicode.IsLower(r)
+}
+
 func isTestingType(expr ast.Expr, names map[string]bool) bool {
 	star, ok := expr.(*ast.StarExpr)
 	if !ok {
@@ -121,11 +149,21 @@ func isTestingType(expr ast.Expr, names map[string]bool) bool {
 	return ok && names[pkg.Name]
 }
 
-func collectSubtests(block *ast.BlockStmt, paramObj *ast.Object, prefix string, names map[string]bool, ids map[string]bool) {
-	if block == nil {
+func isTestingCallback(fn *ast.FuncLit, names map[string]bool) bool {
+	if fn.Type.TypeParams != nil || fn.Type.Results != nil && len(fn.Type.Results.List) != 0 {
+		return false
+	}
+	return len(fn.Type.Params.List) == 1 && isTestingType(fn.Type.Params.List[0].Type, names)
+}
+
+func collectSubtests(block *ast.BlockStmt, paramObj *ast.Object, prefix string, names map[string]bool, packageKey, file string, records *[]record) {
+	if block == nil || paramObj == nil {
 		return
 	}
 	ast.Inspect(block, func(node ast.Node) bool {
+		if _, ok := node.(*ast.FuncLit); ok {
+			return false
+		}
 		call, ok := node.(*ast.CallExpr)
 		if !ok || len(call.Args) != 2 {
 			return true
@@ -150,19 +188,15 @@ func collectSubtests(block *ast.BlockStmt, paramObj *ast.Object, prefix string, 
 		if !ok || !isTestingCallback(fn, names) {
 			return true
 		}
-		child := prefix + "/" + normalize(name)
-		ids[child] = true
-		collectSubtests(fn.Body, fn.Type.Params.List[0].Names[0].Obj, child, names, ids)
+		identity := prefix + "/" + normalize(name)
+		addRecord(records, record{identity, packageKey, file})
+		if len(fn.Type.Params.List[0].Names) == 1 && fn.Type.Params.List[0].Names[0].Name != "_" {
+			collectSubtests(fn.Body, fn.Type.Params.List[0].Names[0].Obj, identity, names, packageKey, file, records)
+		}
 		return false
 	})
 }
-func isTestingCallback(fn *ast.FuncLit, names map[string]bool) bool {
-	if fn.Type.Params == nil || len(fn.Type.Params.List) != 1 {
-		return false
-	}
-	field := fn.Type.Params.List[0]
-	return len(field.Names) == 1 && isTestingType(field.Type, names)
-}
+
 func normalize(name string) string {
 	var b strings.Builder
 	for _, r := range name {
