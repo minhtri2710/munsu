@@ -20,7 +20,11 @@
 # `growth(#[1-9][0-9]*): <nonblank reason>`; undisclosed growth and every mixed
 # addition/removal fail. The reason column is self-declared, so a waiver nobody
 # would accept keeps this green -- reading the diff is what catches that, not the
-# script. Missing or malformed current or exact-base data fails closed.
+# script. One part of it is not self-declared: a reason that says
+# `Premise pinned by <TestName>` has to name a test some `_test.go` in this tree
+# declares, or the run is red (ADR-0017 section 4). Carrying the phrase is not
+# required; meaning it, once written, is. Missing or malformed current or
+# exact-base data fails closed.
 #
 # Data rows are exactly five tab-separated columns:
 # file <TAB> func <TAB> nth <TAB> predicate <TAB> reason. Every field is

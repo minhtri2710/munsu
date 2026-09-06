@@ -135,7 +135,9 @@ definition and a caller and says nothing at all.
 
 **Address for parts (a) and (b): none — the reason column is self-declared and both lane
 scripts check only that it is non-empty. Address for part (c): `go test ./...` in the
-"Build and test" required check.**
+"Build and test" required check for whether the named test passes, and
+`premise_citation_errors` in `.github/scripts/uncovered-guards.sh` for whether it still
+exists; the `premise-citation` fixture pins it.**
 
 Every line in `.github/uncovered-guards.baseline` and `.github/deadcode.allow` states:
 
@@ -152,9 +154,18 @@ more): when the earlier guard moves or softens, the premise test goes red and th
 has to be re-argued instead of quietly becoming wrong. Recording the two-part form would
 record a weaker rule than the one the batches actually earned.
 
-The link between a line and its named test is not checked. Deleting
-`TestPremiseNoAggregateWithABlankOwnerReachesApply` leaves three baseline lines citing it
-and every lane green. Closing that is small and named as work below.
+The link between a line and its named test was prose until this check landed. Deleting
+`TestPremiseNoAggregateWithABlankOwnerReachesApply` left three baseline lines citing it and
+every lane green — the fail-open shape this file exists to refuse, with the waiver keeping
+its authority and nothing holding its premise. `check` now resolves every
+`Premise pinned by <TestName>` in the fifth column against the test functions the tree
+declares, and a citation naming a test no `_test.go` declares is red. Two limits are
+deliberate and stay: no row is *required* to carry the phrase, because requiring it of all
+27 would be a policy change rather than an enforcement address; and the check reads
+`.github/uncovered-guards.baseline` only, because `.github/deadcode.allow` carries no
+citation today and is a different script. Existence is derived by reading the tree, not by
+`go test -list`: one premise test lives behind the `integration` build tag, which the
+default lane does not list.
 
 Both lane scripts already state their own limit in their headers — *"the reason column is
 self-declared … reading the diff is what catches that, not the script"* — in the same words
@@ -311,9 +322,6 @@ Named, not done. None of it is in the PR that carries this ADR.
 
 * **W1 — land #511. Closed unmet 2026-09-05:** #511 was not landed; §§2.1–2.4 and the script were deleted instead of gaining an address.
 * **W2 — derive the mutation case list, or declare permanently that §2 is a batch tool. Closed 2026-09-05:** the case list was not derived; the second removal-condition outcome was taken and §§2.1–2.4 were deleted, so the choice no longer stands open.
-* **W3 — check that `Premise pinned by <TestName>` names a test that exists.** Small: read
-  the fifth column of the baseline, match the phrase, confirm `go test -list` finds each
-  name. Closes the §4 gap where deleting a premise test leaves its waivers green.
 * **W5 — repoint the five `ADR-0009` citations and decide where layer 1's record lives.**
   This ADR does not do it: one of the five is in `.github/deadcode.allow`, which the PR
   carrying this document is scoped out of touching. Whether layer 1 gets its own ADR or the

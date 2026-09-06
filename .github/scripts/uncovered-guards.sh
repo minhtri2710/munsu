@@ -73,6 +73,27 @@ FIXTURES="$ROOT/.github/testdata/uncovered-guards"
 # time somebody deleted a dead function would be fixtures nobody trusts.
 ALLOW="${GUARDS_DEADCODE_ALLOW:-$ROOT/.github/deadcode.allow}"
 
+# Every test function this tree declares, one name per line. Derived from the
+# tree with grep rather than from `go test -list`: one premise test already
+# lives behind `//go:build integration`, which the default lane does not list,
+# and a citation check that silently misses a tagged test is the same fail-open
+# it exists to close. Overridable for the reason SITES is -- a fixture pins the
+# rule, not whatever this repository's test files happen to declare today.
+test_names() {
+	if [ -n "${GUARDS_TEST_NAMES:-}" ]; then
+		[ -f "$GUARDS_TEST_NAMES" ] || die "GUARDS_TEST_NAMES=$GUARDS_TEST_NAMES does not exist"
+		cat "$GUARDS_TEST_NAMES"
+		return
+	fi
+	# `|| true`: grep exits 1 on an xargs batch that happens to hold no match,
+	# and under `pipefail` that would read as a broken derivation rather than as
+	# the empty answer it is. An empty set is not silently accepted -- it makes
+	# every citation unresolvable, which is red, not green.
+	{ git -C "$ROOT" ls-files -z '*_test.go' |
+		xargs -0 grep -hoE '^func [A-Za-z_][A-Za-z0-9_]*\(' || true; } |
+		sed 's/^func //; s/($//'
+}
+
 # Every lane that must contribute a profile, by artifact filename. Derived from
 # the treatment column of .github/build-tags.manifest plus the default lane, so a
 # fifth tagged lane joins this list by being classified there -- the same
@@ -439,6 +460,57 @@ baseline_format_errors() {
 	' "$file"
 }
 
+# Part (c) of a waiver line (ADR-0017 section 4): the name of a test that pins
+# the premise. Until this check the link was prose -- deleting
+# TestPremiseNoAggregateWithABlankOwnerReachesApply left three rows citing it
+# and every lane green, which is the fail-open shape the whole file exists to
+# refuse: the waiver keeps its authority and nothing holds its premise.
+#
+# A row that does not carry the phrase is not an error here. Requiring the
+# phrase of every row is a policy change, not an enforcement address, and it is
+# deliberately not made: 14 of the 27 rows do not carry it. A row that DOES
+# carry it is held to it, and a phrase naming nothing fails closed rather than
+# being skipped, for the reason baseline_format_errors gives about malformed
+# lines.
+premise_citation_errors() {
+	local file="$1"
+	local name="${file#"$ROOT"/}"
+	grep -q 'Premise pinned by' "$file" || return 0
+	# The declared set arrives as a first input file rather than through `-v`:
+	# the BSD awk on macOS refuses a newline inside a `-v` value, and the
+	# NR == FNR idiom is the one baseline_added_rows already uses here.
+	awk -F '\t' -v name="$name" '
+		NR == FNR { if ($0 != "") declared[$0] = 1; next }
+		/^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+		# Malformed rows belong to baseline_format_errors, which already fails
+		# the run; reading $5 out of one would report a second, invented fault.
+		NF != 5 { next }
+		{
+			# The phrase is matched WITHOUT its trailing space. Matching
+			# "Premise pinned by " would make a row ending in the bare phrase
+			# invisible -- fail-open in the one case that most needs to be red.
+			phrase = "Premise pinned by"
+			rest = $5
+			while ((at = index(rest, phrase)) > 0) {
+				rest = substr(rest, at + length(phrase))
+				if (match(rest, /^[ \t]+[A-Za-z_][A-Za-z0-9_]*/) == 0) {
+					printf "::error::%s:%d: %s: %s: \"Premise pinned by\" names no test\n", name, FNR, $1, $2
+					bad = 1
+					continue
+				}
+				cited = substr(rest, 1, RLENGTH)
+				sub(/^[ \t]+/, "", cited)
+				rest = substr(rest, RLENGTH + 1)
+				if (!(cited in declared)) {
+					printf "::error::%s:%d: %s: %s: premise test %s is declared by no _test.go in this tree\n", name, FNR, $1, $2, cited
+					bad = 1
+				}
+			}
+		}
+		END { exit bad }
+	' <(test_names | sort -u) "$file"
+}
+
 baseline_entries() {
 	local file="$1"
 	{ grep -vE '^[[:space:]]*(#|$)' "$file" || true; } | cut -f1,2,3,4 | sort -u
@@ -563,6 +635,7 @@ check() {
 
 	[ -f "$BASELINE" ] || die "missing $BASELINE_REL"
 	baseline_format_errors "$BASELINE" >&2 || failed=1
+	premise_citation_errors "$BASELINE" >&2 || failed=1
 
 	verdicts="$(classify)" || exit 1
 
@@ -744,7 +817,7 @@ generate() {
 # their verdict because somebody added a guard to internal/fleet. The recognizer
 # is pinned separately, by the fixtures under .github/testdata/guardsites.
 selftest() {
-	local failed=0 dir name got rc
+	local failed=0 dir name got rc names
 	[ -d "$FIXTURES" ] || die "missing ${FIXTURES#"$ROOT"/}"
 	for dir in "$FIXTURES"/*/; do
 		dir="${dir%/}"
@@ -755,8 +828,18 @@ selftest() {
 		# stub for the reason given where GUARDS_DEADCODE_ALLOW is read.
 		base="$dir/baseline"
 		[ -f "$dir/base-baseline" ] && base="$dir/base-baseline"
+		# A fixture that cites a premise test pins the declared set too, or the
+		# citation check would read this repository's own test files and the
+		# fixture would turn red the day somebody renames an unrelated test.
+		names=""
+		if [ -f "$dir/test-names" ]; then
+			names="$dir/test-names"
+		elif grep -q 'Premise pinned by' "$dir/baseline"; then
+			die "fixture $name cites a premise test but has no test-names"
+		fi
 		if got="$(SITES="$dir/sites.tsv" BASELINE="$dir/baseline" PROFILES="$dir/profiles" \
 			GUARDS_BASELINE_BASE="$base" GUARDS_BASE_REF=__none__ GUARDS_DEADCODE_ALLOW="$FIXTURES/deadcode.allow" \
+			GUARDS_TEST_NAMES="$names" \
 			"$0" check 2>&1)"; then rc=0; else rc=$?; fi
 		got="$got
 exit $rc"
