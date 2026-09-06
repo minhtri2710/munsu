@@ -12,10 +12,12 @@ go test ./...        # default-tag suite (skips //go:build integration files)
 ```
 
 These root-module commands do not reach Go tools under `.github/scripts`;
-the `invariants` job dynamically discovers tracked tool directories there and
-runs `go vet` plus executable unit tests for each. Do not maintain a separate
-tool list; see the `Go tools under .github must vet and test` step in
-`.github/workflows/ci.yml`.
+the `invariants` job dynamically discovers every directory containing tracked
+Go files there and, for each one, compiles package and test sources, runs
+`go vet`, and runs its unit tests. It also requires at least one test to
+execute, so deleted or rotted tests fail the lane. Do not maintain a separate
+tool list; see the
+`Go tools under .github must vet and test` step in `.github/workflows/ci.yml`.
 
 CI (`.github/workflows/ci.yml`) also runs a `-race` lane and tag lanes for
 `integration`, `e2e` and `lifecycle_integration`. Lanes derive their package
