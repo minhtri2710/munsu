@@ -1032,14 +1032,6 @@ func buildLaunchArgs(captainHome, h string, prof config.CaptainProfile, allowlis
 	// Pi captain homes load the canonical project-local integration via -e.
 	if adapter.Name == "pi" {
 		extDir := filepath.Join(captainHome, ".pi", "extensions")
-		for _, name := range harness.PiIntegrationAliasNames() {
-			aliasPath := filepath.Join(extDir, name)
-			if _, err := os.Stat(aliasPath); err == nil {
-				return "", nil, fmt.Errorf("captain launch: compatibility Pi integration alias is present at %s; repair with: munsu integrate repair --harness pi --scope project", aliasPath)
-			} else if !os.IsNotExist(err) {
-				return "", nil, fmt.Errorf("captain launch: checking compatibility Pi integration alias %s: %w", aliasPath, err)
-			}
-		}
 		path := filepath.Join(extDir, harness.CanonicalPiIntegrationName)
 		if _, err := os.Stat(path); err != nil {
 			if os.IsNotExist(err) {

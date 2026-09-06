@@ -360,31 +360,6 @@ func Status(homeDir, cwd, harnessName string, scope Scope) (*IntegrationResult, 
 		Scope:   scope,
 	}
 
-	if harnessName == harness.Pi {
-		extDir := ProjectExtensionsDir(cwd)
-		if scope == ScopeUser {
-			extDir = UserExtensionsDir()
-		}
-		for _, name := range harness.PiIntegrationAliasNames() {
-			aliasPath := filepath.Join(extDir, name)
-			if _, statErr := os.Stat(aliasPath); statErr == nil {
-				result.State = "drifted"
-				result.Drifted = true
-				if FileContainsOwnershipMarker(aliasPath) {
-					result.Message = fmt.Sprintf("owned compatibility alias present at %s; repair removes it", aliasPath)
-				} else {
-					result.Message = fmt.Sprintf("compatibility alias present at %s and is not owned by munsu; move or remove it manually", aliasPath)
-				}
-				return result, nil
-			} else if !os.IsNotExist(statErr) {
-				result.State = "drifted"
-				result.Drifted = true
-				result.Message = fmt.Sprintf("cannot inspect compatibility alias %s: %v", aliasPath, statErr)
-				return result, nil
-			}
-		}
-	}
-
 	// Read manifest from per-harness per-scope path.
 	manifestPath := ManifestPath(homeDir, harnessName, scope, cwd)
 	manifestData, err := os.ReadFile(manifestPath)
