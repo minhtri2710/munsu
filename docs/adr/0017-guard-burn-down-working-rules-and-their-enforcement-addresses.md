@@ -133,11 +133,14 @@ definition and a caller and says nothing at all.
 
 ### 4. A waiver line has three parts, not two
 
-**Address for parts (a) and (b): none — the reason column is self-declared and both lane
-scripts check only that it is non-empty. Address for part (c): `go test ./...` in the
-"Build and test" required check.**
+**Address for parts (a) and (b): none — the reason column is self-declared and omission is
+caught by reading the diff. Address for part (c): `go test ./...` in the required Build and test check owns
+whether a cited declaration is valid and runnable, while `premise_citation_errors` in
+`.github/scripts/uncovered-guards.sh` checks that a top-level declaration still exists;
+the `premise-citation` and `ambiguous-premise` fixtures pin the guards-lane checks. A citation containing a slash is rejected
+because subtests are registered at runtime and cannot be resolved from the tree.**
 
-Every line in `.github/uncovered-guards.baseline` and `.github/deadcode.allow` states:
+A complete waiver argument states:
 
 * **(a) the premise** — not "this branch is unreachable" but "unreachable **because** X";
 * **(b) the invalidating condition** — "and this line is wrong the moment X stops holding";
@@ -145,16 +148,23 @@ Every line in `.github/uncovered-guards.baseline` and `.github/deadcode.allow` s
   *would* enter the waived branch and asserts the refusal carries the earlier guard's
   message.
 
-Part (c) is not in the rule set this ADR was asked to record, and it is the only part of a
-waiver anything executes. #511's waivers already carry it
-(`Premise pinned by TestPremiseCleanupFenceRejectsAForeignClaimBeforeApply`, and eight
-more): when the earlier guard moves or softens, the premise test goes red and the waiver
-has to be re-argued instead of quietly becoming wrong. Recording the two-part form would
-record a weaker rule than the one the batches actually earned.
+Part (c) is enforceable when present in `.github/uncovered-guards.baseline`:
+`go test ./...` owns whether the premise test still pins the behavior, while
+`premise_citation_errors` makes deletion, renaming, or cross-package ambiguity of its cited
+declaration red. `.github/deadcode.allow` remains out of scope for this check.
 
-The link between a line and its named test is not checked. Deleting
-`TestPremiseNoAggregateWithABlankOwnerReachesApply` leaves three baseline lines citing it
-and every lane green. Closing that is small and named as work below.
+The link between a line and its named test was prose until this check landed. Deleting
+`TestPremiseNoAggregateWithABlankOwnerReachesApply` left three baseline lines citing it and
+every lane green — the fail-open shape this file exists to refuse, with the waiver keeping
+its authority and nothing holding its premise. `check` now resolves every
+`Premise pinned by <TestName>` in the fifth column against top-level `Test`-prefixed
+declarations in tracked test files, and a citation naming no declaration is red. Three
+limits are deliberate and stay: no row is *required* to carry the phrase, because reading
+the diff catches an omission; the check does not judge whether a cited declaration is a
+valid or runnable test, because the required Build and test check owns that; and a citation
+containing a slash is rejected because subtests are registered at runtime and cannot be
+resolved from the tree. The check reads `.github/uncovered-guards.baseline` only, because
+`.github/deadcode.allow` carries no citation today and is a different script.
 
 Both lane scripts already state their own limit in their headers — *"the reason column is
 self-declared … reading the diff is what catches that, not the script"* — in the same words
@@ -311,9 +321,6 @@ Named, not done. None of it is in the PR that carries this ADR.
 
 * **W1 — land #511. Closed unmet 2026-09-05:** #511 was not landed; §§2.1–2.4 and the script were deleted instead of gaining an address.
 * **W2 — derive the mutation case list, or declare permanently that §2 is a batch tool. Closed 2026-09-05:** the case list was not derived; the second removal-condition outcome was taken and §§2.1–2.4 were deleted, so the choice no longer stands open.
-* **W3 — check that `Premise pinned by <TestName>` names a test that exists.** Small: read
-  the fifth column of the baseline, match the phrase, confirm `go test -list` finds each
-  name. Closes the §4 gap where deleting a premise test leaves its waivers green.
 * **W5 — repoint the five `ADR-0009` citations and decide where layer 1's record lives.**
   This ADR does not do it: one of the five is in `.github/deadcode.allow`, which the PR
   carrying this document is scoped out of touching. Whether layer 1 gets its own ADR or the

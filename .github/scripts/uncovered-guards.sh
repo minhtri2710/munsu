@@ -73,6 +73,19 @@ FIXTURES="$ROOT/.github/testdata/uncovered-guards"
 # time somebody deleted a dead function would be fixtures nobody trusts.
 ALLOW="${GUARDS_DEADCODE_ALLOW:-$ROOT/.github/deadcode.allow}"
 
+# Every test function this tree declares, including tests behind build tags.
+# The collector parses tracked Go declarations rather than asking the default
+# go test lane, so a tagged premise test cannot disappear from this contract.
+test_names() {
+	if [ -n "${GUARDS_TEST_NAMES:-}" ]; then
+		[ -f "$GUARDS_TEST_NAMES" ] || die "GUARDS_TEST_NAMES=$GUARDS_TEST_NAMES does not exist"
+		cat "$GUARDS_TEST_NAMES"
+		return
+	fi
+	(cd "$ROOT/.github/scripts/testnames" && go run . "$ROOT") ||
+		die "testnames could not derive premise citations from the tracked test tree"
+}
+
 # Every lane that must contribute a profile, by artifact filename. Derived from
 # the treatment column of .github/build-tags.manifest plus the default lane, so a
 # fifth tagged lane joins this list by being classified there -- the same
@@ -439,6 +452,97 @@ baseline_format_errors() {
 	' "$file"
 }
 
+# Part (c) of a waiver line (ADR-0017 section 4): the name of a test that pins
+# the premise. Until this check the link was prose -- deleting
+# TestPremiseNoAggregateWithABlankOwnerReachesApply left three rows citing it
+# and every lane green, which is the fail-open shape the whole file exists to
+# refuse: the waiver keeps its authority and nothing holds its premise.
+#
+# A row that does not carry the phrase is not an error here. Requiring the
+# phrase of every row is a policy change, not an enforcement address, and it is
+# deliberately not made: 14 of the 27 rows do not carry it. A row that DOES
+# carry it is held to it, and a phrase naming nothing fails closed rather than
+# being skipped, for the reason baseline_format_errors gives about malformed
+# lines.
+premise_citation_errors() {
+	local file="$1"
+	local name="${file#"$ROOT"/}"
+	grep -q 'Premise pinned by' "$file" || return 0
+	local declared_file awk_status
+	declared_file="$(mktemp)"
+	if ! test_names | sort -u >"$declared_file"; then
+		rm -f "$declared_file"
+		return 1
+	fi
+	if awk -F '\t' -v name="$name" -v declared_file="$declared_file" '
+		FILENAME == declared_file {
+			if ($0 == "") next
+			if (NF == 1) { declared[$1] = 1; next }
+			if (NF >= 3) {
+				declared[$1] = 1
+				top = $1; sub(/\/.*$/, "", top)
+				pkg = $2
+				if (!(top SUBSEP pkg in package_seen)) {
+					package_seen[top, pkg] = 1
+					package_order[top, ++package_count[top]] = pkg
+				}
+				if (!(top SUBSEP pkg SUBSEP $3 in file_seen)) {
+					file_seen[top, pkg, $3] = 1
+					file_list[top, pkg] = file_list[top, pkg] (file_list[top, pkg] == "" ? "" : ", ") $3
+				}
+			}
+			next
+		}
+		/^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+		NF != 5 { next }
+		{
+			phrase = "Premise pinned by"
+			rest = $5
+			while ((at = index(rest, phrase)) > 0) {
+				rest = substr(rest, at + length(phrase))
+				if (match(rest, /^[ \t]+[^ \t.,;]+/) > 0) {
+					candidate = substr(rest, 1, RLENGTH)
+					sub(/^[ \t]+/, "", candidate)
+					if (index(candidate, "/") > 0) {
+						printf "::error::%s:%d: %s: %s: premise citation %s names a subtest; cite the top-level test because subtests are registered at runtime and cannot be resolved from the tree\n", name, FNR, $1, $2, candidate
+						bad = 1; rest = substr(rest, RLENGTH + 1); continue
+					}
+				}
+				if (match(rest, /^[ \t]+[A-Za-z_][A-Za-z0-9_]*([ \t.,;]|$)/) == 0) {
+					printf "::error::%s:%d: %s: %s: \"Premise pinned by\" names no test\n", name, FNR, $1, $2
+					bad = 1; continue
+				}
+				cited = substr(rest, 1, RLENGTH)
+				sub(/[ \t.,;]$/, "", cited); sub(/^[ \t]+/, "", cited)
+				rest = substr(rest, RLENGTH + 1)
+				if (index(cited, "/") > 0) {
+					printf "::error::%s:%d: %s: %s: premise citation %s names a subtest; cite the top-level test because subtests are registered at runtime and cannot be resolved from the tree\n", name, FNR, $1, $2, cited
+					bad = 1; continue
+				}
+				top = cited; packages = package_count[top]; files = ""
+				for (i = 1; i <= packages; i++) {
+					pkg = package_order[top, i]
+					files = files (files == "" ? "" : ", ") file_list[top, pkg]
+				}
+				if (packages > 1) {
+					printf "::error::%s:%d: %s: %s: premise test %s is ambiguous across packages (%s); rename the premise test so the citation is unambiguous\n", name, FNR, $1, $2, top, files
+					bad = 1
+				} else if (!(cited in declared)) {
+					printf "::error::%s:%d: %s: %s: premise test %s is declared by no _test.go in this tree\n", name, FNR, $1, $2, cited
+					bad = 1
+				}
+			}
+		}
+		END { exit bad }
+	' "$declared_file" "$file"; then
+		awk_status=0
+	else
+		awk_status=$?
+	fi
+	rm -f "$declared_file"
+	return "$awk_status"
+}
+
 baseline_entries() {
 	local file="$1"
 	{ grep -vE '^[[:space:]]*(#|$)' "$file" || true; } | cut -f1,2,3,4 | sort -u
@@ -563,6 +667,7 @@ check() {
 
 	[ -f "$BASELINE" ] || die "missing $BASELINE_REL"
 	baseline_format_errors "$BASELINE" >&2 || failed=1
+	premise_citation_errors "$BASELINE" >&2 || failed=1
 
 	verdicts="$(classify)" || exit 1
 
@@ -744,7 +849,7 @@ generate() {
 # their verdict because somebody added a guard to internal/fleet. The recognizer
 # is pinned separately, by the fixtures under .github/testdata/guardsites.
 selftest() {
-	local failed=0 dir name got rc
+	local failed=0 dir name got rc names
 	[ -d "$FIXTURES" ] || die "missing ${FIXTURES#"$ROOT"/}"
 	for dir in "$FIXTURES"/*/; do
 		dir="${dir%/}"
@@ -755,8 +860,18 @@ selftest() {
 		# stub for the reason given where GUARDS_DEADCODE_ALLOW is read.
 		base="$dir/baseline"
 		[ -f "$dir/base-baseline" ] && base="$dir/base-baseline"
+		# A fixture that cites a premise test pins the declared set too, or the
+		# citation check would read this repository's own test files and the
+		# fixture would turn red the day somebody renames an unrelated test.
+		names=""
+		if [ -f "$dir/test-names" ]; then
+			names="$dir/test-names"
+		elif grep -q 'Premise pinned by' "$dir/baseline"; then
+			die "fixture $name cites a premise test but has no test-names"
+		fi
 		if got="$(SITES="$dir/sites.tsv" BASELINE="$dir/baseline" PROFILES="$dir/profiles" \
 			GUARDS_BASELINE_BASE="$base" GUARDS_BASE_REF=__none__ GUARDS_DEADCODE_ALLOW="$FIXTURES/deadcode.allow" \
+			GUARDS_TEST_NAMES="$names" \
 			"$0" check 2>&1)"; then rc=0; else rc=$?; fi
 		got="$got
 exit $rc"

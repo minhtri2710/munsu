@@ -1,0 +1,5 @@
+::error::.github/testdata/uncovered-guards/premise-citation/baseline:1: internal/fake/guard.go: Refuse: premise test TestPremiseRefuseWasRenamedAway is declared by no _test.go in this tree
+::error::.github/testdata/uncovered-guards/premise-citation/baseline:2: internal/fake/gated_linux.go: Gated: "Premise pinned by" names no test
+::error::.github/testdata/uncovered-guards/premise-citation/baseline:3: internal/fake/gated_linux.go: Gated: premise citation Parent/subtest names a subtest; cite the top-level test because subtests are registered at runtime and cannot be resolved from the tree
+::warning file=internal/fake/gated_linux.go::no lane compiles this file on this platform, so its refusal branches are outside the lane in both directions
+exit 1

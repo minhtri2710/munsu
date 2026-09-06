@@ -1,0 +1,3 @@
+::error::.github/testdata/uncovered-guards/ambiguous-premise/baseline:1: internal/fake/guard.go: Refuse: premise test TestDuplicatePremise is ambiguous across packages (one/a_test.go, one/b_test.go, two/c_test.go); rename the premise test so the citation is unambiguous
+::warning file=internal/fake/gated_linux.go::no lane compiles this file on this platform, so its refusal branches are outside the lane in both directions
+exit 1
