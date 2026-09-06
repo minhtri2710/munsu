@@ -72,9 +72,9 @@ func ResolveSpawnProjectConfig(homeDir string, args Args, policy DispatchPolicy,
 
 	// Compose the mode decision from the resolved snapshot: the typed default
 	// mode and the resolved require-no-mistakes are the single authority. When
-	// the default mode is unset, ResolveDeliveryMode auto-detects (no-mistakes
-	// on PATH, else direct-PR) and refuses fallback when require-no-mistakes is
-	// set — preserving the unset → direct-PR default semantics.
+	// the default mode is unset, ResolveDeliveryMode selects no-mistakes only
+	// for a Ready capability probe; otherwise it selects direct-PR unless
+	// require-no-mistakes refuses the fallback.
 	if err := validateSpawnIdentityAssertions(args, resolved.Backend, resolved.SoldierHarness, normalizeSnapshotDeliveryMode(resolved.DefaultMode)); err != nil {
 		return SpawnProjectConfig{}, err
 	}

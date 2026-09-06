@@ -89,14 +89,6 @@ func noMistakesOnPath() bool {
 	return err == nil
 }
 
-// noMistakesAvailable checks both binary presence and version/compat readiness
-// using the full capability probe. Used by auto-detection paths where silent
-// fallback to direct-PR is acceptable (unlike explicit/project/config selection).
-func noMistakesAvailable() bool {
-	probe := NoMistakesProbe()
-	return probe.State == backend.Ready
-}
-
 // EnsureDeliveryModeRunnable validates that an explicit non-empty mode is runnable.
 // If mode is "no-mistakes" and the binary is not on PATH or version is incompatible,
 // returns a hard error with actionable guidance.
@@ -126,7 +118,8 @@ func ensureDeliveryModeRunnableForProbe(probe ProbeResult) error {
 // precedence:
 //  1. explicitMode — non-empty --mode flag value
 //  2. resolvedDefaultMode — typed base/project/snapshot default mode (if non-empty)
-//  3. Auto — no-mistakes on PATH → no-mistakes, else → direct-PR (with message)
+//  3. Auto — a Ready no-mistakes probe selects no-mistakes; any other
+//     probe result selects direct-PR unless require-no-mistakes refuses it.
 //
 // Only validation and the runtime capability probe live here: config authority
 // comes exclusively from the resolved values passed in. The typed surface is
@@ -136,8 +129,9 @@ func ensureDeliveryModeRunnableForProbe(probe ProbeResult) error {
 //   - An explicit --mode=no-mistakes with missing binary is a hard error.
 //   - A typed default of no-mistakes with missing binary is a hard error.
 //   - An explicit direct-PR/local-only is OK even when no-mistakes binary exists.
-//   - Auto no-mistakes with missing binary falls through to direct-PR, unless
-//     resolvedRequireNoMistakes is set (refuse, do not silently fall back).
+//   - Auto no-mistakes with any non-Ready probe result falls through to
+//     direct-PR, unless resolvedRequireNoMistakes is set (refuse, do not
+//     silently fall back).
 func ResolveDeliveryMode(explicitMode string, resolvedDefaultMode string, resolvedRequireNoMistakes bool) (string, error) {
 	// 1. Explicit --mode flag
 	if explicitMode != "" {
@@ -164,19 +158,23 @@ func ResolveDeliveryMode(explicitMode string, resolvedDefaultMode string, resolv
 	}
 
 	// 3. Auto: no-mistakes on PATH and compatible → no-mistakes, else → direct-PR
-	if noMistakesAvailable() {
+	probe := NoMistakesProbe()
+	if probe.State == backend.Ready {
 		return "no-mistakes", nil
 	}
+
+	// 4. Typed require-no-mistakes is set → refuse fallback. This sits above both
+	// fallback branches because it covers every non-Ready probe result, including
+	// a binary absent from PATH, incompatible, or otherwise unusable.
+	if resolvedRequireNoMistakes {
+		return "", fmt.Errorf("require-no-mistakes is set: %w", ensureDeliveryModeRunnableForProbe(probe))
+	}
+
 	// Binary on PATH but incompatible version: inform the user why.
 	if noMistakesOnPath() {
 		probe := NoMistakesProbe()
 		fmt.Fprintf(os.Stderr, "warning: no-mistakes found on PATH but not compatible: %s; defaulting to direct-PR. Upgrade no-mistakes or run 'munsu doctor'\n", probe.Detail)
 		return "direct-PR", nil
-	}
-
-	// 4. Typed require-no-mistakes is set → refuse fallback
-	if resolvedRequireNoMistakes {
-		return "", fmt.Errorf("require-no-mistakes is set but no-mistakes binary is absent or incompatible on this system")
 	}
 
 	fmt.Fprintln(os.Stderr, "warning: no-mistakes not found on PATH; defaulting to direct-PR delivery mode. Install with: go install github.com/kunchenguid/no-mistakes@latest, or run 'munsu doctor'")
