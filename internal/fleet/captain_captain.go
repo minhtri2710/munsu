@@ -1039,7 +1039,7 @@ func buildLaunchArgs(captainHome, h string, prof config.CaptainProfile, allowlis
 			}
 			return "", nil, fmt.Errorf("captain launch: checking canonical Pi integration: %w", err)
 		}
-		args = append(args, "-e", path)
+		args = append(args, "--no-extensions", "-e", path)
 	}
 	if adapter.Name == "pi" {
 		args = append(args, "--append-system-prompt", captainBootstrapPrompt(charter))

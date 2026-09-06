@@ -128,8 +128,12 @@ func TestBuildLaunchArgs_PiLoadsCanonicalIntegrationExactlyOnce(t *testing.T) {
 	}
 	canonical := filepath.Join(home, ".pi", "extensions", harness.CanonicalPiIntegrationName)
 	loads := 0
+	discoveryDisabled := 0
 	for i := 0; i < len(args); i++ {
-		if args[i] == "-e" {
+		switch args[i] {
+		case "--no-extensions":
+			discoveryDisabled++
+		case "-e":
 			loads++
 			if i+1 >= len(args) || args[i+1] != canonical {
 				t.Fatalf("extension args = %v, want canonical path %s", args, canonical)
@@ -138,6 +142,9 @@ func TestBuildLaunchArgs_PiLoadsCanonicalIntegrationExactlyOnce(t *testing.T) {
 	}
 	if loads != 1 {
 		t.Fatalf("extension load count = %d, want 1; args=%v", loads, args)
+	}
+	if discoveryDisabled != 1 {
+		t.Fatalf("extension discovery disable count = %d, want 1; args=%v", discoveryDisabled, args)
 	}
 }
 
