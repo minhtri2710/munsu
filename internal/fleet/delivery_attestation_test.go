@@ -207,6 +207,30 @@ func TestCheckCapabilityAttestation_ZeroExpiryFailsClosed(t *testing.T) {
 	}
 }
 
+func TestHandleLateCapabilityLoss_ZeroExpiryBlocksLaunch(t *testing.T) {
+	att := CreateCapabilityAttestation(
+		"test-project", "/tmp/home", "pi", "pi",
+		"no-mistakes", "no-mistakes", "",
+		nil,
+	)
+	att.Expiry = time.Time{}
+
+	result := HandleLateCapabilityLoss(att)
+	t.Logf("zero expiry result: changed=%t canProceed=%t detail=%q blockReason=%q", result.Changed, result.CanProceed, result.Detail, result.BlockReason)
+	if !result.Changed {
+		t.Error("expected zero-expiry attestation to be treated as changed")
+	}
+	if result.CanProceed {
+		t.Error("expected zero-expiry attestation to block launch")
+	}
+	if !strings.Contains(result.Detail, "attestation expired") {
+		t.Errorf("detail should identify expiry, got: %q", result.Detail)
+	}
+	if !strings.Contains(result.BlockReason, "parent Decision") {
+		t.Errorf("block reason should require a parent Decision, got: %q", result.BlockReason)
+	}
+}
+
 func TestHandleLateCapabilityLoss_NoChange(t *testing.T) {
 	att := CreateCapabilityAttestation(
 		"test-project", "/tmp/home", "pi", "pi",
