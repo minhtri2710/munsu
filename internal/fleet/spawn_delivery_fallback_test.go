@@ -111,7 +111,7 @@ func TestReconcileDeliveryFallbackRecordsLateCapabilityLoss(t *testing.T) {
 	r.attestation = &CapabilityAttestation{
 		RequestedMode:  "no-mistakes",
 		EffectiveMode:  "no-mistakes",
-		Expiry:         time.Now().UTC().Add(-time.Hour).Format(time.RFC3339),
+		Expiry:         time.Now().UTC().Add(-time.Hour),
 		FallbackPolicy: &FallbackPolicy{AuthorizedMode: "direct-PR"},
 	}
 	if err := r.checkAttestation(); err != nil {

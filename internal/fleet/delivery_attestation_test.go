@@ -49,7 +49,7 @@ func TestCreateCapabilityAttestation_BindsFields(t *testing.T) {
 	if att.CreatedAt == "" {
 		t.Error("CreatedAt should be set")
 	}
-	if att.Expiry == "" {
+	if att.Expiry.IsZero() {
 		t.Error("Expiry should be set")
 	}
 }
@@ -165,7 +165,7 @@ func TestCheckCapabilityAttestation_ExpiredReturnsChanged(t *testing.T) {
 		nil,
 	)
 	// Force expiry.
-	att.Expiry = time.Now().UTC().Add(-1 * time.Hour).Format(time.RFC3339)
+	att.Expiry = time.Now().UTC().Add(-1 * time.Hour)
 
 	changed, _ := CheckCapabilityAttestation(att)
 	if !changed {
@@ -180,11 +180,54 @@ func TestCheckCapabilityAttestation_ValidExpiry(t *testing.T) {
 		nil,
 	)
 	// Force a future expiry.
-	att.Expiry = time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339)
+	att.Expiry = time.Now().UTC().Add(24 * time.Hour)
 
 	changed, _ := CheckCapabilityAttestation(att)
 	if changed {
 		t.Error("expected no change for valid attestation")
+	}
+}
+
+func TestCheckCapabilityAttestation_ZeroExpiryFailsClosed(t *testing.T) {
+	att := CreateCapabilityAttestation(
+		"test-project", "/tmp/home", "pi", "pi",
+		"no-mistakes", "no-mistakes", "",
+		nil,
+	)
+	// An attestation carrying no expiry at all must read as expired: the
+	// field exists to fail closed, so its absence cannot mean "never expires".
+	att.Expiry = time.Time{}
+
+	changed, detail := CheckCapabilityAttestation(att)
+	if !changed {
+		t.Error("expected changed for an attestation with no expiry recorded")
+	}
+	if detail == "" {
+		t.Error("expected a non-empty detail for an attestation with no expiry recorded")
+	}
+}
+
+func TestHandleLateCapabilityLoss_ZeroExpiryBlocksLaunch(t *testing.T) {
+	att := CreateCapabilityAttestation(
+		"test-project", "/tmp/home", "pi", "pi",
+		"no-mistakes", "no-mistakes", "",
+		nil,
+	)
+	att.Expiry = time.Time{}
+
+	result := HandleLateCapabilityLoss(att)
+	t.Logf("zero expiry result: changed=%t canProceed=%t detail=%q blockReason=%q", result.Changed, result.CanProceed, result.Detail, result.BlockReason)
+	if !result.Changed {
+		t.Error("expected zero-expiry attestation to be treated as changed")
+	}
+	if result.CanProceed {
+		t.Error("expected zero-expiry attestation to block launch")
+	}
+	if !strings.Contains(result.Detail, "attestation expired") {
+		t.Errorf("detail should identify expiry, got: %q", result.Detail)
+	}
+	if !strings.Contains(result.BlockReason, "parent Decision") {
+		t.Errorf("block reason should require a parent Decision, got: %q", result.BlockReason)
 	}
 }
 
@@ -194,7 +237,7 @@ func TestHandleLateCapabilityLoss_NoChange(t *testing.T) {
 		"no-mistakes", "no-mistakes", "",
 		nil,
 	)
-	att.Expiry = time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339)
+	att.Expiry = time.Now().UTC().Add(24 * time.Hour)
 
 	result := HandleLateCapabilityLoss(att)
 	if result.Changed {
@@ -213,7 +256,7 @@ func TestHandleLateCapabilityLoss_WithPreAuthorizedFallback(t *testing.T) {
 	)
 
 	// Force expiry.
-	att.Expiry = time.Now().UTC().Add(-1 * time.Hour).Format(time.RFC3339)
+	att.Expiry = time.Now().UTC().Add(-1 * time.Hour)
 
 	result := HandleLateCapabilityLoss(att)
 	if !result.Changed {
@@ -235,7 +278,7 @@ func TestHandleLateCapabilityLoss_WithoutPreAuthorization(t *testing.T) {
 	)
 
 	// Force expiry.
-	att.Expiry = time.Now().UTC().Add(-1 * time.Hour).Format(time.RFC3339)
+	att.Expiry = time.Now().UTC().Add(-1 * time.Hour)
 
 	result := HandleLateCapabilityLoss(att)
 	if !result.Changed {
@@ -257,7 +300,7 @@ func TestHandleLateCapabilityLoss_WithFallbackPolicy(t *testing.T) {
 	)
 
 	// Force expiry.
-	att.Expiry = time.Now().UTC().Add(-1 * time.Hour).Format(time.RFC3339)
+	att.Expiry = time.Now().UTC().Add(-1 * time.Hour)
 
 	result := HandleLateCapabilityLoss(att)
 	if !result.Changed {
