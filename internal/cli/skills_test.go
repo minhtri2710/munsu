@@ -272,8 +272,8 @@ func validateAgentMirrorCoverage(repo fs.FS, embeddedNames, declaredNames []stri
 
 func TestAgentMirrorCoverage(t *testing.T) {
 	repo := fstest.MapFS{
-		".agents/skills/embedded/SKILL.md": {Data: []byte("skill")},
-		".agents/skills/declared/SKILL.md": {Data: []byte("skill")},
+		".agents/skills/embedded/SKILL.md":  {Data: []byte("skill")},
+		".agents/skills/declared/SKILL.md":  {Data: []byte("skill")},
 		".agents/skills/unrelated/SKILL.md": {Data: []byte("skill")},
 	}
 
