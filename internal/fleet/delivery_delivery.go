@@ -1,3 +1,3 @@
-// Package delivery implements delivery operations: review-diff, pr-check,
-// pr-merge, merge-local, and no-mistakes pipeline integration.
+// Package fleet implements delivery operations including review-diff,
+// merge-status, pr-merge, and no-mistakes pipeline integration.
 package fleet
