@@ -566,27 +566,3 @@ type NotifyResult struct {
 	Detail       string
 	Err          error
 }
-
-// NotifyReceiverWithSender sends the canonical NotificationRef text through
-// the supplied task-bound sender. The receiver is expected to read their
-// own inbox using the ref to locate the envelope.
-//
-// Submission acknowledgment (Acknowledged=true) never removes the sender's
-// pending record. Pending records are managed separately through the ack
-// flow via the sender's RemovePendingAfterAck.
-func NotifyReceiverWithSender(sender BoundSender, receiverHome string, ref NotificationRef, meta map[string]string) *NotifyResult {
-	nr := &NotifyResult{Ref: ref}
-
-	if _, err := sender.Alive(receiverHome, meta); err != nil {
-		nr.Err = fmt.Errorf("resolve bound sender: %w", err)
-		return nr
-	}
-
-	// Build notification text from the ref using canonical Encode — no
-	// payload included. Raw payload is not routing authority.
-	text := ref.Encode()
-
-	sent := sender.Send(receiverHome, meta, text)
-	nr.Acknowledged, nr.Status, nr.Detail, nr.Err = sent.Acknowledged, sent.Status, sent.Detail, sent.Err
-	return nr
-}

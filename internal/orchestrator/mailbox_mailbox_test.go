@@ -1233,23 +1233,3 @@ func TestRecoverAllInboxes_EmptyDir(t *testing.T) {
 		t.Errorf("expected 0 attempts, got %d", len(attempts))
 	}
 }
-
-func TestLegacyGetInboxEnvelope(t *testing.T) {
-	home := t.TempDir()
-	store := NewStore(home)
-	env := &Envelope{
-		SenderRank: RankSoldier, SenderIdentity: "soldier-1",
-		ReceiverRank: RankCaptain, ReceiverID: "captain-1",
-		Payload: "legacy test",
-	}
-	if err := store.WriteEnvelope(env); err != nil {
-		t.Fatal(err)
-	}
-	got, err := GetInboxEnvelope(home, "soldier-1", env.MessageID)
-	if err != nil {
-		t.Fatalf("GetInboxEnvelope: %v", err)
-	}
-	if got == nil || got.Payload != "legacy test" {
-		t.Fatalf("GetInboxEnvelope = %+v, want legacy envelope", got)
-	}
-}
