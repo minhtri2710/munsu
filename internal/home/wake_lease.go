@@ -1,6 +1,7 @@
 package home
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -359,7 +360,7 @@ func readLease(homeDir, leaseID, leasePath string) (string, []string, error) {
 }
 
 func isLeaseAbsent(err error) bool {
-	return err != nil && (os.IsNotExist(err) || strings.Contains(err.Error(), "not found or expired"))
+	return err != nil && errors.Is(err, os.ErrNotExist)
 }
 
 var wakeSeq int64
