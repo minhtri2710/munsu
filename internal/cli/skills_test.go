@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path"
@@ -226,6 +228,65 @@ var embeddedOnlySkills = []struct {
 	{name: "diagnostic-reasoning"},
 }
 
+func validateAgentMirrorCoverage(repo fs.FS, embeddedNames, declaredNames []string) error {
+	declared := make(map[string]bool, len(declaredNames))
+	for _, name := range declaredNames {
+		declared[name] = true
+	}
+
+	var errs []error
+	for _, name := range embeddedNames {
+		mirror := path.Join(".agents", "skills", name)
+		info, err := fs.Stat(repo, mirror)
+		if err != nil {
+			if !errors.Is(err, fs.ErrNotExist) {
+				errs = append(errs, fmt.Errorf("stat mirror %s: %w", mirror, err))
+			}
+			continue
+		}
+		if !info.IsDir() {
+			continue
+		}
+		if !declared[name] {
+			errs = append(errs, fmt.Errorf("embedded skill %q has an .agents/skills mirror; add it to agentMirrorSkills or delete the mirror", name))
+		}
+	}
+
+	for _, name := range declaredNames {
+		mirror := path.Join(".agents", "skills", name)
+		info, err := fs.Stat(repo, mirror)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				errs = append(errs, fmt.Errorf("declared mirror %s is missing", mirror))
+			} else {
+				errs = append(errs, fmt.Errorf("stat declared mirror %s: %w", mirror, err))
+			}
+			continue
+		}
+		if !info.IsDir() {
+			errs = append(errs, fmt.Errorf("declared mirror %s is not a directory", mirror))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func TestAgentMirrorCoverage(t *testing.T) {
+	repo := fstest.MapFS{
+		".agents/skills/embedded/SKILL.md": {Data: []byte("skill")},
+		".agents/skills/declared/SKILL.md": {Data: []byte("skill")},
+	}
+
+	if err := validateAgentMirrorCoverage(repo, []string{"embedded", "declared"}, []string{"declared"}); err == nil || !strings.Contains(err.Error(), `embedded skill "embedded"`) {
+		t.Fatalf("expected undeclared mirror error, got %v", err)
+	}
+	if err := validateAgentMirrorCoverage(repo, nil, []string{"missing"}); err == nil || !strings.Contains(err.Error(), "declared mirror .agents/skills/missing is missing") {
+		t.Fatalf("expected missing declared mirror error, got %v", err)
+	}
+	if err := validateAgentMirrorCoverage(repo, []string{"declared"}, []string{"declared"}); err != nil {
+		t.Fatalf("expected declared mirror to pass: %v", err)
+	}
+}
+
 // TestEmbeddedSkillParityCoverage is the parity gate over every embedded skill
 // name. Each name must carry at least one disposition: a machine-compared
 // external surface (agentMirrorSkills pins .agents/skills/<name>,
@@ -268,6 +329,9 @@ func TestEmbeddedSkillParityCoverage(t *testing.T) {
 	}
 
 	repo := os.DirFS(filepath.Join("..", ".."))
+	if err := validateAgentMirrorCoverage(repo, names, agentMirrorSkills); err != nil {
+		t.Error(err)
+	}
 	for _, s := range embeddedOnlySkills {
 		t.Run(s.name, func(t *testing.T) {
 			if _, err := fs.Stat(repo, path.Join(".agents", "skills", s.name)); err == nil {
