@@ -2160,13 +2160,7 @@ func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (
 			// Launched-but-dead (binding already validated by checkAliveWithProbe):
 			// refuse a duplicate relaunch while the guard is armed, verify the
 			// canonical integration, then relaunch.
-			meta, mErr := mhome.ReadMeta(parentHome, taskID)
-			if mErr != nil {
-				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: fmt.Sprintf("re-reading task meta for relaunch guard: %v", mErr)})
-				errs = append(errs, fmt.Sprintf("%s: re-reading task meta for relaunch guard: %v", sm.ID, mErr))
-				continue
-			}
-			refused, remaining, gErr := consultRelaunchGuard(parentHome, taskID, meta, time.Now())
+			refused, remaining, gErr := consultRelaunchGuard(parentHome, taskID, time.Now())
 			if gErr != nil {
 				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: gErr.Error()})
 				errs = append(errs, fmt.Sprintf("%s: relaunch guard check failed: %v", sm.ID, gErr))
@@ -2419,16 +2413,8 @@ func Recover(parentHome string, registered []Info, capabilities RecoverCapabilit
 		// CaptainDead: launched-but-dead (binding already validated by
 		// checkAliveWithProbe). Refuse a duplicate relaunch while the guard is
 		// armed, verify the bound harness integration, then relaunch.
-		meta, mErr := mhome.ReadMeta(parentHome, taskID)
-		if mErr != nil {
-			entry.Outcome = RecoverFailed
-			entry.Error = fmt.Sprintf("re-reading task meta for relaunch guard: %v", mErr)
-			res.Failed++
-			res.Entries = append(res.Entries, entry)
-			continue
-		}
 		// Launched-but-dead: refuse a duplicate relaunch while the guard is armed.
-		refused, remaining, gErr := consultRelaunchGuard(parentHome, taskID, meta, time.Now())
+		refused, remaining, gErr := consultRelaunchGuard(parentHome, taskID, time.Now())
 		if gErr != nil {
 			entry.Outcome = RecoverFailed
 			entry.Error = gErr.Error()
@@ -2655,14 +2641,20 @@ func sendNudge(parentHome string, sm Info, endpoint NudgeEndpoint) error {
 	}
 
 	// After successful prompt submission, update durable meta with actual applied
-	// commit and deterministic digest BEFORE removing home.
-	meta["applied_commit"] = marker["commit"]
-	meta["applied_digest"] = marker["instructions"]
-	if metaErr := mhome.WriteMeta(parentHome, taskID, meta); metaErr != nil {
+	// commit and deterministic digest BEFORE removing home. The two fields are
+	// overlaid onto the meta as it stands now, not onto the snapshot validated
+	// above: the send is a network round-trip, and a concurrent writer that
+	// landed during it must not be erased. The lock covers only this overlay,
+	// never the send.
+	if metaErr := mhome.UpdateMeta(parentHome, taskID, func(current map[string]string) error {
+		current["applied_commit"] = marker["commit"]
+		current["applied_digest"] = marker["instructions"]
+		return nil
+	}); metaErr != nil {
 		return fmt.Errorf("%s: meta update failed after send (marker remains): %v", sm.ID, metaErr)
 	}
 
-	// Only remove marker after WriteMeta succeeded.
+	// Only remove marker after the meta update succeeded.
 	removeNudgeMarker(parentHome, sm.ID)
 
 	fmt.Printf("  %s: nudge sent (commit=%s, digest=%.12s...), marker cleared\n", sm.ID, marker["commit"][:8], marker["instructions"])

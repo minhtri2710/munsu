@@ -88,20 +88,20 @@ func relaunchGuardDeadline(meta map[string]string, ttl time.Duration, now time.T
 }
 
 // clearRelaunchGuard removes an armed relaunch guard from the captain task
-// meta when liveness has been proven by observation. A missing or unarmed
-// guard is a no-op. Meta read failures are ignored; write failures are
-// returned so callers can surface the persistence failure.
+// meta when liveness has been proven by observation. The read, the clear and
+// the write are one locked cycle, so a concurrent meta writer cannot restore
+// the guard from a stale snapshot. A missing meta or an unarmed guard writes
+// nothing; write failures are returned so callers can surface the persistence
+// failure.
 func clearRelaunchGuard(parentHome, taskID string) error {
-	meta, err := mhome.ReadMeta(parentHome, taskID)
-	if err != nil {
+	return mhome.UpdateMeta(parentHome, taskID, func(meta map[string]string) error {
+		if meta["relaunch_liveness"] != "unproven" {
+			return mhome.ErrMetaUnchanged
+		}
+		delete(meta, "relaunch_liveness")
+		delete(meta, relaunchGuardUntilField)
 		return nil
-	}
-	if meta["relaunch_liveness"] != "unproven" {
-		return nil
-	}
-	delete(meta, "relaunch_liveness")
-	delete(meta, relaunchGuardUntilField)
-	return mhome.WriteMeta(parentHome, taskID, meta)
+	})
 }
 
 // consultRelaunchGuard evaluates the persisted relaunch guard for a
@@ -109,28 +109,34 @@ func clearRelaunchGuard(parentHome, taskID string) error {
 // duplicate relaunch is refused because a prior relaunch's liveness is
 // still unproven within the guard window, along with the remaining window.
 // Malformed or implausibly distant deadlines are normalized and persisted;
-// an expired guard is cleared and persisted. meta is the caller's task-meta
-// snapshot and is written back through parentHome/taskID as needed.
-func consultRelaunchGuard(parentHome, taskID string, meta map[string]string, now time.Time) (refused bool, remaining time.Duration, err error) {
-	if meta["relaunch_liveness"] != "unproven" {
-		return false, 0, nil
-	}
-	until, normalized := relaunchGuardDeadline(meta, relaunchGuardTTL, now)
-	if normalized {
-		meta[relaunchGuardUntilField] = strconv.FormatInt(until.Unix(), 10)
-		if err := mhome.WriteMeta(parentHome, taskID, meta); err != nil {
-			return false, 0, fmt.Errorf("normalizing relaunch guard failed: %w", err)
+// an expired guard is cleared and persisted. It reads the meta itself under
+// the update lock rather than taking a caller's snapshot, so the deadline it
+// decides on is the one it persists. A meta without kind=captain carries no
+// trustworthy guard state and refuses the relaunch.
+func consultRelaunchGuard(parentHome, taskID string, now time.Time) (refused bool, remaining time.Duration, err error) {
+	if uErr := mhome.UpdateMeta(parentHome, taskID, func(meta map[string]string) error {
+		if meta["kind"] != "captain" {
+			return fmt.Errorf("task meta kind=%q, expected captain", meta["kind"])
 		}
+		if meta["relaunch_liveness"] != "unproven" {
+			return mhome.ErrMetaUnchanged
+		}
+		until, normalized := relaunchGuardDeadline(meta, relaunchGuardTTL, now)
+		if left := until.Sub(now); left > 0 {
+			refused, remaining = true, left
+			if !normalized {
+				return mhome.ErrMetaUnchanged
+			}
+			meta[relaunchGuardUntilField] = strconv.FormatInt(until.Unix(), 10)
+			return nil
+		}
+		delete(meta, "relaunch_liveness")
+		delete(meta, relaunchGuardUntilField)
+		return nil
+	}); uErr != nil {
+		return false, 0, fmt.Errorf("relaunch guard check failed: %w", uErr)
 	}
-	if remaining := until.Sub(now); remaining > 0 {
-		return true, remaining, nil
-	}
-	delete(meta, "relaunch_liveness")
-	delete(meta, relaunchGuardUntilField)
-	if err := mhome.WriteMeta(parentHome, taskID, meta); err != nil {
-		return false, 0, fmt.Errorf("clearing expired relaunch guard failed: %w", err)
-	}
-	return false, 0, nil
+	return refused, remaining, nil
 }
 
 // armRelaunchGuard records an unproven relaunch with a bounded deadline so
@@ -146,23 +152,29 @@ func armRelaunchGuard(meta map[string]string, now time.Time) {
 // refuses a duplicate relaunch until it expires. Probe errors are retried
 // within the window and reported only if the window elapses without proven
 // liveness. Returns proven=false when the window elapsed with the guard
-// armed. sleep is the pause between probes and now is the clock used to set
-// the armed guard deadline; both must be non-nil.
+// armed. Each outcome reads and writes the meta as one locked cycle at the
+// moment it is decided; no snapshot is held across the probe loop, whose
+// sleeps are far wider than any write window. A meta without kind=captain is
+// not this captain's meta and refuses the write on both paths. sleep is the
+// pause between probes and now is the clock used to set the armed guard
+// deadline; both must be non-nil.
 func proveRelaunch(parentHome string, sm Info, probe ProbeEndpoint, sleep func(time.Duration), now func() time.Time) (proven bool, err error) {
 	taskID := taskIDForCaptain(sm.ID)
-	meta, err := mhome.ReadMeta(parentHome, taskID)
-	if err != nil {
-		return false, fmt.Errorf("post-launch metadata read failed: %w", err)
-	}
 	var lastProbeErr error
 	for attempt := 0; attempt < relaunchProofAttempts; attempt++ {
 		state, stateErr := checkAliveWithProbe(parentHome, sm, probe)
 		if stateErr != nil {
 			lastProbeErr = stateErr
 		} else if state == CaptainAlive {
-			delete(meta, "relaunch_liveness")
-			delete(meta, relaunchGuardUntilField)
-			if err := mhome.WriteMeta(parentHome, taskID, meta); err != nil {
+			// No kind check here: checkAliveWithProbe returns CaptainAlive only
+			// for a meta it already read as kind=captain with a matching sm_id,
+			// home and window, so reaching this path is the proof the arm path
+			// below has to make for itself.
+			if err := mhome.UpdateMeta(parentHome, taskID, func(meta map[string]string) error {
+				delete(meta, "relaunch_liveness")
+				delete(meta, relaunchGuardUntilField)
+				return nil
+			}); err != nil {
 				return false, fmt.Errorf("clearing resolved relaunch guard failed: %w", err)
 			}
 			return true, nil
@@ -171,8 +183,13 @@ func proveRelaunch(parentHome string, sm Info, probe ProbeEndpoint, sleep func(t
 			sleep(relaunchProofInterval)
 		}
 	}
-	armRelaunchGuard(meta, now())
-	if err := mhome.WriteMeta(parentHome, taskID, meta); err != nil {
+	if err := mhome.UpdateMeta(parentHome, taskID, func(meta map[string]string) error {
+		if meta["kind"] != "captain" {
+			return fmt.Errorf("task meta kind=%q, expected captain", meta["kind"])
+		}
+		armRelaunchGuard(meta, now())
+		return nil
+	}); err != nil {
 		if lastProbeErr != nil {
 			return false, fmt.Errorf("post-launch liveness could not be proven: %w (recording recovery guard failed: %v)", lastProbeErr, err)
 		}
@@ -433,12 +450,7 @@ func (tx *RecoverTransaction) stepRelaunch(parentHome string, sm Info) StepResul
 	// CaptainDead: launched-but-dead (binding already validated by
 	// checkAliveWithProbe). Refuse a duplicate relaunch while the guard is
 	// armed, then relaunch and prove post-launch liveness.
-	meta, mErr := mhome.ReadMeta(parentHome, taskID)
-	if mErr != nil {
-		return StepResult{Name: "relaunch-pane", State: StepFailed,
-			Detail: fmt.Sprintf("re-reading task meta for relaunch guard: %v", mErr)}
-	}
-	refused, remaining, gErr := consultRelaunchGuard(parentHome, taskID, meta, tx.nowTime())
+	refused, remaining, gErr := consultRelaunchGuard(parentHome, taskID, tx.nowTime())
 	if gErr != nil {
 		return StepResult{Name: "relaunch-pane", State: StepFailed,
 			Detail: gErr.Error()}

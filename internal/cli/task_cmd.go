@@ -514,7 +514,7 @@ func runTaskLifecycleTransition(ctx Ctx, verb, projectionState string, args []st
 // values remove stale keys. It is the post-commit projection write (ADR-0007
 // §7): the authoritative Task Generation is never written here.
 func projectTaskMeta(homeDir string, agg taskauthority.Aggregate, runtime map[string]string) error {
-	return home.UpdateMeta(homeDir, agg.TaskID, func(derived map[string]string) {
+	return home.UpdateMeta(homeDir, agg.TaskID, func(derived map[string]string) error {
 		for k, v := range runtime {
 			derived[k] = v
 		}
@@ -531,5 +531,6 @@ func projectTaskMeta(homeDir string, agg taskauthority.Aggregate, runtime map[st
 		put("project", agg.Definition.Project)
 		put("generation", agg.Generation.String())
 		put("state", string(agg.Phase))
+		return nil
 	})
 }

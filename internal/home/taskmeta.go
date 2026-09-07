@@ -153,13 +153,25 @@ func WriteMeta(homeDir string, id string, meta map[string]string) error {
 	return writeMetaLocked(homeDir, id, meta)
 }
 
+// ErrMetaUnchanged is returned by an UpdateMeta callback that decided, from the
+// meta it observed under the lock, that nothing needs writing. UpdateMeta
+// abandons the update and reports no error. It is the only way a callback can
+// decline the write without also declaring a failure.
+var ErrMetaUnchanged = errors.New("task meta unchanged")
+
 // UpdateMeta applies mutate to the current task meta and persists the result as
 // one atomic cycle: the advisory lock is held across the read, the mutation and
 // the write, so a concurrent projection writer cannot interleave. An absent meta
 // file is an empty map, which is the first write for a task; every other read
 // failure refuses the write, because writeMetaLocked replaces the whole file and
 // a swallowed read error would erase every field it could not read.
-func UpdateMeta(homeDir string, id string, mutate func(map[string]string)) error {
+//
+// mutate observes the meta under the lock and decides the outcome: nil writes
+// the mutated map, ErrMetaUnchanged abandons the update without writing, and
+// any other error refuses the update and propagates the reason. A callback that
+// requires the meta to already exist checks the field that proves it rather
+// than the emptiness of the map.
+func UpdateMeta(homeDir string, id string, mutate func(map[string]string) error) error {
 	_, unlock, err := acquireMetaLock(homeDir, id)
 	if err != nil {
 		return fmt.Errorf("update meta: %w", err)
@@ -173,7 +185,12 @@ func UpdateMeta(homeDir string, id string, mutate func(map[string]string)) error
 	if meta == nil {
 		meta = make(map[string]string)
 	}
-	mutate(meta)
+	if err := mutate(meta); err != nil {
+		if errors.Is(err, ErrMetaUnchanged) {
+			return nil
+		}
+		return fmt.Errorf("update meta: %w", err)
+	}
 	return writeMetaLocked(homeDir, id, meta)
 }
 
