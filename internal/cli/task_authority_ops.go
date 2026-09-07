@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"fmt"
 	"path/filepath"
-	"time"
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
@@ -32,9 +31,9 @@ func resolveTaskOwner(homeDir string) string {
 // invocation.
 func newTaskAuthorityOperationID(verb string) string {
 	var buf [12]byte
-	if _, err := rand.Read(buf[:]); err != nil {
-		return fmt.Sprintf("%s-%d", verb, time.Now().UnixNano())
-	}
+	// crypto/rand.Read cannot return an error: since Go 1.24 it terminates the
+	// process instead of reporting failure, so there is no branch to take.
+	rand.Read(buf[:])
 	return fmt.Sprintf("%s-%x", verb, buf[:])
 }
 
