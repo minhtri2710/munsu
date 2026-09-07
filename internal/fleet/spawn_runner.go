@@ -2160,7 +2160,7 @@ func (r *Runner) writeTaskMeta() error {
 	if r.args.Yolo {
 		yoloVal = "on"
 	}
-	err := home.UpdateMeta(r.homeDir, r.args.ID, func(meta map[string]string) {
+	err := home.UpdateMeta(r.homeDir, r.args.ID, func(meta map[string]string) error {
 		put := func(k, v string) {
 			if v != "" {
 				meta[k] = v
@@ -2196,6 +2196,7 @@ func (r *Runner) writeTaskMeta() error {
 		// after ConfirmSpawn (Task 7.3); the .meta fields are a post-confirm
 		// runtime projection of that authoritative acceptance written by
 		// projectAttestationEvidence, never a writer of record.
+		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("writing task meta: %w", err)
@@ -2270,8 +2271,9 @@ func (e *AttestationProjectionError) Unwrap() error { return e.ProjectionErr }
 // rolls back the authoritative spawn; the projection is retryable without
 // replaying any canonical operation.
 func projectAttestationEvidence(homeDir, taskID string, generation taskauthority.Generation) error {
-	if err := home.UpdateMeta(homeDir, taskID, func(meta map[string]string) {
+	if err := home.UpdateMeta(homeDir, taskID, func(meta map[string]string) error {
 		meta["attestation_generation"] = generation.String()
+		return nil
 	}); err != nil {
 		return &AttestationProjectionError{TaskID: taskID, ProjectionErr: err}
 	}

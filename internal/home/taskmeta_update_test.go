@@ -2,6 +2,7 @@ package home
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -43,8 +44,9 @@ func TestUpdateMetaRefusesUnreadableMeta(t *testing.T) {
 		t.Fatalf("reading meta before update: %v", readErr)
 	}
 	beforeHash := sha256.Sum256(before)
-	err := UpdateMeta(homeDir, id, func(meta map[string]string) {
+	err := UpdateMeta(homeDir, id, func(meta map[string]string) error {
 		meta["attestation_generation"] = "1"
+		return nil
 	})
 	if err == nil {
 		t.Fatal("UpdateMeta returned nil for an unreadable meta")
@@ -77,8 +79,9 @@ func TestUpdateMetaAbsentMetaIsFirstWrite(t *testing.T) {
 	homeDir := t.TempDir()
 	id := "absent-first-write"
 
-	if err := UpdateMeta(homeDir, id, func(meta map[string]string) {
+	if err := UpdateMeta(homeDir, id, func(meta map[string]string) error {
 		meta["project"] = "munsu"
+		return nil
 	}); err != nil {
 		t.Fatalf("UpdateMeta: %v", err)
 	}
@@ -104,9 +107,10 @@ func TestUpdateMetaPreservesUnmutatedKeys(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
-	if err := UpdateMeta(homeDir, id, func(meta map[string]string) {
+	if err := UpdateMeta(homeDir, id, func(meta map[string]string) error {
 		meta["attestation_generation"] = "1"
 		delete(meta, "worktree")
+		return nil
 	}); err != nil {
 		t.Fatalf("UpdateMeta: %v", err)
 	}
@@ -142,9 +146,10 @@ func TestUpdateMetaSerializesConcurrentUpdates(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			err := UpdateMeta(homeDir, id, func(meta map[string]string) {
+			err := UpdateMeta(homeDir, id, func(meta map[string]string) error {
 				time.Sleep(2 * time.Millisecond)
 				meta[fmt.Sprintf("writer_%02d", i)] = "persisted"
+				return nil
 			})
 			if err != nil {
 				errs <- err
@@ -170,5 +175,96 @@ func TestUpdateMetaSerializesConcurrentUpdates(t *testing.T) {
 	t.Logf("final concurrent writer-key count: %d/%d", persisted, writers)
 	if persisted != writers {
 		t.Fatalf("persisted writer keys = %d, want %d; meta=%v", persisted, writers, meta)
+	}
+}
+
+// TestUpdateMetaUnchangedAbandonsWrite proves ErrMetaUnchanged abandons the
+// update without writing and without an error, so a callback that finds
+// nothing to do leaves an absent meta absent rather than creating one.
+func TestUpdateMetaUnchangedAbandonsWrite(t *testing.T) {
+	homeDir := t.TempDir()
+	id := "unchanged-abandons"
+	p, err := MetaFilePath(homeDir, id)
+	if err != nil {
+		t.Fatalf("MetaFilePath: %v", err)
+	}
+
+	if err := UpdateMeta(homeDir, id, func(meta map[string]string) error {
+		meta["project"] = "munsu"
+		return ErrMetaUnchanged
+	}); err != nil {
+		t.Fatalf("UpdateMeta returned %v for an abandoned update, want nil", err)
+	}
+	if _, statErr := os.Stat(p); !os.IsNotExist(statErr) {
+		t.Fatalf("os.Stat(%s) = %v, want not-exist: an abandoned update created a meta", p, statErr)
+	}
+	t.Logf("abandoned update wrote nothing: %s absent", p)
+}
+
+// TestUpdateMetaUnchangedLeavesExistingFileByte proves an abandoned update does
+// not rewrite an existing meta, so the mutations the callback made before
+// abandoning never reach the file.
+func TestUpdateMetaUnchangedLeavesExistingFileByte(t *testing.T) {
+	homeDir := t.TempDir()
+	id := "unchanged-existing"
+	if err := WriteMeta(homeDir, id, map[string]string{"project": "munsu"}); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+	p, err := MetaFilePath(homeDir, id)
+	if err != nil {
+		t.Fatalf("MetaFilePath: %v", err)
+	}
+	before, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("reading meta before update: %v", err)
+	}
+
+	if err := UpdateMeta(homeDir, id, func(meta map[string]string) error {
+		meta["attestation_generation"] = "1"
+		return ErrMetaUnchanged
+	}); err != nil {
+		t.Fatalf("UpdateMeta: %v", err)
+	}
+
+	after, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("reading meta back: %v", err)
+	}
+	if string(before) != string(after) {
+		t.Fatalf("abandoned update changed meta: before=%q after=%q", before, after)
+	}
+	if strings.Contains(string(after), "attestation_generation") {
+		t.Error("abandoned update persisted the key the callback set before abandoning")
+	}
+}
+
+// TestUpdateMetaCallbackErrorRefusesWrite proves a callback error other than
+// ErrMetaUnchanged refuses the write and propagates the reason, so a callback
+// that finds a precondition broken cannot have its partial mutation persisted.
+func TestUpdateMetaCallbackErrorRefusesWrite(t *testing.T) {
+	homeDir := t.TempDir()
+	id := "callback-refuses"
+	if err := WriteMeta(homeDir, id, map[string]string{"project": "munsu"}); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+
+	sentinel := errors.New("precondition not met")
+	err := UpdateMeta(homeDir, id, func(meta map[string]string) error {
+		meta["attestation_generation"] = "1"
+		return sentinel
+	})
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("UpdateMeta error = %v, want it to wrap %v", err, sentinel)
+	}
+
+	meta, readErr := ReadMeta(homeDir, id)
+	if readErr != nil {
+		t.Fatalf("ReadMeta: %v", readErr)
+	}
+	if _, ok := meta["attestation_generation"]; ok {
+		t.Error("a refused update persisted the key the callback set before refusing")
+	}
+	if meta["project"] != "munsu" {
+		t.Errorf("project = %q, want %q", meta["project"], "munsu")
 	}
 }
