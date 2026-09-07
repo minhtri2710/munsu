@@ -1,10 +1,13 @@
 package cli
 
 import (
+	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -195,11 +198,21 @@ func TestEmbeddedSkillReferencesResolve(t *testing.T) {
 }
 
 // agentMirrorSkills have .agents/skills/<name> machine-compared to the embedded
-// canonical by TestAgentSkillMirrorsMatchCanonical.
-var agentMirrorSkills = []string{"captain-provisioning", "munsu-ops", "munsu-update"}
+// canonical by TestAgentSkillMirrorsMatchCanonical. A skill belongs here whenever
+// the mirror exists at all: an unlisted mirror is a copy nothing compares, which
+// is how the three reference-doc skills below drifted a whole REFERENCE.md apart.
+var agentMirrorSkills = []string{
+	"bootstrap-diagnostics",
+	"captain-provisioning",
+	"harness-adapters",
+	"munsu-ops",
+	"munsu-update",
+	"stuck-soldier-recovery",
+}
 
 // referenceDocSkills have docs/skills/<name>.md machine-compared to the embedded
-// REFERENCE.md by TestAgentSkillReferencesMatchEmbeddedCanonical.
+// REFERENCE.md by TestAgentSkillReferencesMatchEmbeddedCanonical. This pins a
+// different external surface than agentMirrorSkills, so a skill may hold both.
 var referenceDocSkills = []string{"bootstrap-diagnostics", "harness-adapters", "stuck-soldier-recovery"}
 
 // embeddedOnlySkills are explicitly embedded-only: no .agents/skills mirror and
@@ -215,41 +228,113 @@ var embeddedOnlySkills = []struct {
 	{name: "diagnostic-reasoning"},
 }
 
+func validateAgentMirrorCoverage(repo fs.FS, embeddedNames, declaredNames []string) error {
+	declared := make(map[string]bool, len(declaredNames))
+	for _, name := range declaredNames {
+		declared[name] = true
+	}
+
+	var errs []error
+	for _, name := range embeddedNames {
+		mirror := path.Join(".agents", "skills", name)
+		info, err := fs.Stat(repo, mirror)
+		if err != nil {
+			if !errors.Is(err, fs.ErrNotExist) {
+				errs = append(errs, fmt.Errorf("stat mirror %s: %w", mirror, err))
+			}
+			continue
+		}
+		if !info.IsDir() {
+			continue
+		}
+		if !declared[name] {
+			errs = append(errs, fmt.Errorf("embedded skill %q has an .agents/skills mirror; add it to agentMirrorSkills or delete the mirror", name))
+		}
+	}
+
+	for _, name := range declaredNames {
+		mirror := path.Join(".agents", "skills", name)
+		info, err := fs.Stat(repo, mirror)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				errs = append(errs, fmt.Errorf("declared mirror %s is missing", mirror))
+			} else {
+				errs = append(errs, fmt.Errorf("stat declared mirror %s: %w", mirror, err))
+			}
+			continue
+		}
+		if !info.IsDir() {
+			errs = append(errs, fmt.Errorf("declared mirror %s is not a directory", mirror))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func TestAgentMirrorCoverage(t *testing.T) {
+	repo := fstest.MapFS{
+		".agents/skills/embedded/SKILL.md":  {Data: []byte("skill")},
+		".agents/skills/declared/SKILL.md":  {Data: []byte("skill")},
+		".agents/skills/unrelated/SKILL.md": {Data: []byte("skill")},
+	}
+
+	if err := validateAgentMirrorCoverage(repo, []string{"embedded", "declared"}, []string{"declared"}); err == nil || !strings.Contains(err.Error(), `embedded skill "embedded"`) {
+		t.Fatalf("expected undeclared mirror error, got %v", err)
+	}
+	if err := validateAgentMirrorCoverage(repo, nil, []string{"missing"}); err == nil || !strings.Contains(err.Error(), "declared mirror .agents/skills/missing is missing") {
+		t.Fatalf("expected missing declared mirror error, got %v", err)
+	}
+	// The fixture also contains an unrelated mirror; only embedded names are checked.
+	if err := validateAgentMirrorCoverage(repo, []string{"declared"}, []string{"declared"}); err != nil {
+		t.Fatalf("expected declared mirror to pass and unrelated mirror to be ignored: %v", err)
+	}
+}
+
 // TestEmbeddedSkillParityCoverage is the parity gate over every embedded skill
-// name: each name must carry exactly one disposition — a machine-compared
-// canonical mirror/reference (agentMirrorSkills, referenceDocSkills) or an
-// explicit embedded-only disposition (embeddedOnlySkills).
+// name. Each name must carry at least one disposition: a machine-compared
+// external surface (agentMirrorSkills pins .agents/skills/<name>,
+// referenceDocSkills pins docs/skills/<name>.md) or an explicit embedded-only
+// disposition. Those two pinned surfaces are independent and may co-hold, since
+// both are compared against the same canonical and cannot disagree.
+// For embedded names, on-disk mirrors must correspond exactly to agentMirrorSkills.
+// embedded-only is the exclusive one: it asserts the absence of the very copies
+// the other two pin, so holding it alongside either is a contradiction.
 func TestEmbeddedSkillParityCoverage(t *testing.T) {
 	names, err := embeddedSkillNames()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	classified := map[string]string{}
+	classified := map[string][]string{}
 	for _, n := range agentMirrorSkills {
-		classified[n] = "agent-mirror"
+		classified[n] = append(classified[n], "agent-mirror")
 	}
 	for _, n := range referenceDocSkills {
-		classified[n] = "reference-doc"
+		classified[n] = append(classified[n], "reference-doc")
 	}
 	for _, s := range embeddedOnlySkills {
-		classified[s.name] = "embedded-only"
+		classified[s.name] = append(classified[s.name], "embedded-only")
 	}
 
 	embedded := make(map[string]bool, len(names))
 	for _, n := range names {
 		embedded[n] = true
-		if _, ok := classified[n]; !ok {
+		if len(classified[n]) == 0 {
 			t.Errorf("embedded skill %q has no parity disposition; add it to agentMirrorSkills, referenceDocSkills, or embeddedOnlySkills", n)
 		}
 	}
-	for n := range classified {
+	for n, dispositions := range classified {
 		if !embedded[n] {
 			t.Errorf("parity disposition names %q, but no such embedded skill exists", n)
+		}
+		if len(dispositions) > 1 && slices.Contains(dispositions, "embedded-only") {
+			t.Errorf("skill %q is declared embedded-only and %v; embedded-only asserts the absence of the copies the others pin", n, dispositions)
 		}
 	}
 
 	repo := os.DirFS(filepath.Join("..", ".."))
+	if err := validateAgentMirrorCoverage(repo, names, agentMirrorSkills); err != nil {
+		t.Error(err)
+	}
 	for _, s := range embeddedOnlySkills {
 		t.Run(s.name, func(t *testing.T) {
 			if _, err := fs.Stat(repo, path.Join(".agents", "skills", s.name)); err == nil {
