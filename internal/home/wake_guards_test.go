@@ -2,6 +2,8 @@ package home
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -107,6 +109,74 @@ func TestLeaseContainsEventTreatsTombstoneAsAbsent(t *testing.T) {
 	found, err := leaseContainsEvent(home, "lease-1", "evt:1")
 	if found || !isLeaseAbsent(err) {
 		t.Fatalf("leaseContainsEvent over tombstone: found=%v err=%v, want found=false and a lease-absent error", found, err)
+	}
+}
+
+// TestIsLeaseAbsentIsTypedNotTextual proves lease absence is decided by the
+// os.ErrNotExist sentinel and not by the wording of the message. Every producer
+// builds its error as fmt.Errorf("... : %w", os.ErrNotExist), and os.IsNotExist
+// does not unwrap %w, so a check written on the message text alone would make
+// the prose load-bearing: rewording it would silently turn absent into present.
+func TestIsLeaseAbsentIsTypedNotTextual(t *testing.T) {
+	home := t.TempDir()
+	_, pathErr := os.ReadFile(filepath.Join(home, "no-such-lease"))
+	if pathErr == nil {
+		t.Fatal("reading a missing lease file returned no error")
+	}
+
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"wrapped sentinel, producer wording", fmt.Errorf("lease %q not found or expired: %w", "lease-1", os.ErrNotExist), true},
+		{"wrapped sentinel, reworded message", fmt.Errorf("lease %q is gone: %w", "lease-1", os.ErrNotExist), true},
+		{"unwrapped path error from the filesystem", pathErr, true},
+		{"producer wording without the sentinel", errors.New(`lease "lease-1" not found or expired`), false},
+		{"empty lease", fmt.Errorf("lease %q is empty", "lease-1"), false},
+		{"no error", nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isLeaseAbsent(tc.err); got != tc.want {
+				t.Fatalf("isLeaseAbsent(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestReadLeaseAbsenceSurvivesRewording proves the absence decision travels on
+// the sentinel readLease wraps, so the two real producer paths stay absent even
+// though neither error satisfies os.IsNotExist.
+func TestReadLeaseAbsenceSurvivesRewording(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(LeaseDir(home), 0700); err != nil {
+		t.Fatal(err)
+	}
+	missing := LeaseFilePath(home, "lease-missing")
+	_, _, missingErr := readLease(home, "lease-missing", missing)
+
+	tombstoned := LeaseFilePath(home, "lease-tombstoned")
+	if err := os.WriteFile(tombstoned, []byte(wakeLeaseTombstone+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, tombstoneErr := readLease(home, "lease-tombstoned", tombstoned)
+
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{{"lease file absent", missingErr}, {"lease tombstoned", tombstoneErr}} {
+		t.Run(tc.name, func(t *testing.T) {
+			if !errors.Is(tc.err, os.ErrNotExist) {
+				t.Fatalf("readLease %s: %v does not wrap os.ErrNotExist", tc.name, tc.err)
+			}
+			if os.IsNotExist(tc.err) {
+				t.Fatalf("readLease %s: os.IsNotExist unexpectedly true for %v; the sentinel is no longer reached through %%w only", tc.name, tc.err)
+			}
+			if !isLeaseAbsent(tc.err) {
+				t.Fatalf("readLease %s: got %v, want a lease-absent error", tc.name, tc.err)
+			}
+		})
 	}
 }
 
