@@ -21,7 +21,7 @@ type CapabilityAttestation struct {
 	ExecutableID   string            `json:"executableId"`
 	ResolvedConfig map[string]string `json:"resolvedConfig"`
 	Capabilities   []CapabilityEntry `json:"capabilities"`
-	Expiry         string            `json:"expiry"`
+	Expiry         time.Time         `json:"expiry"`
 	CreatedAt      string            `json:"createdAt"`
 	RequestedMode  string            `json:"requestedMode"`
 	EffectiveMode  string            `json:"effectiveMode"`
@@ -87,7 +87,7 @@ func CreateCapabilityAttestation(
 		ExecutableID:   execID,
 		ResolvedConfig: resolvedConfig,
 		Capabilities:   caps,
-		Expiry:         expiry.Format(time.RFC3339),
+		Expiry:         expiry,
 		CreatedAt:      now.Format(time.RFC3339),
 		RequestedMode:  requestedMode,
 		EffectiveMode:  effectiveMode,
@@ -186,12 +186,10 @@ func CheckCapabilityAttestation(att *CapabilityAttestation) (changed bool, detai
 		return true, "no attestation to check"
 	}
 
-	// Check expiry first.
-	if att.Expiry != "" {
-		expiry, err := time.Parse(time.RFC3339, att.Expiry)
-		if err == nil && time.Now().UTC().After(expiry) {
-			return true, fmt.Sprintf("attestation expired at %s", att.Expiry)
-		}
+	// Check expiry first. A zero Expiry means no expiry was recorded, and
+	// time.Now().After(zero) is true, so it reads as expired and fails closed.
+	if time.Now().UTC().After(att.Expiry) {
+		return true, fmt.Sprintf("attestation expired at %s", att.Expiry.Format(time.RFC3339))
 	}
 
 	// Re-probe and compare each attested capability.
