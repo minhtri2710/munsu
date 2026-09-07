@@ -128,8 +128,8 @@ not dead-code cleanup, and it is not this ADR's decision to make.
   conflict-replay paths.
 * `.github/deadcode.allow` contains only current, reviewed exceptions; it is not
   an imported BEO-63 baseline.
-* `internal/home`'s `ValidMetaFields` (`taskmeta.go:309-320`) still lists the
-  retired amendment keys. Nothing writes them and nothing reads them; the list
+* `internal/home`'s `ValidMetaFields` (`internal/home/taskmeta.go`) still lists
+  the retired amendment keys. Nothing writes them and nothing reads them; the list
   is `home`-owned validation vocabulary, and pruning it is a separate change
   with its own compatibility question about existing on-disk `.meta` files.
   Named here so it is not mistaken for an owner of anything.
