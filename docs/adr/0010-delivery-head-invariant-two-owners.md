@@ -81,10 +81,13 @@ Backlog is only a query concept over Task state") and §3 (Task Authority issues
 the immutable Delivery Authorization bound to the exact Task Generation and
 Operation ID; Fleet alone executes delivery against it).
 
-Concretely, after BEO-72 the only production reader of `delivery_state` is
-`home.ListMeta` (`internal/home/taskmeta.go:382`), which picks the string shown
-in a listing column. Nothing downstream of it grants, extends, or revalidates a
-delivery authorization.
+Concretely, after BEO-72 the only production reader of the `.meta`
+delivery-state key was `home.ListMeta` (`internal/home/taskmeta.go`), which
+picked the string shown in a listing column; nothing downstream of it granted,
+extended, or revalidated a delivery authorization. That reader had no writer
+anywhere in the tree, so it has since been deleted along with the key and its
+constant: `home.ListMeta` now surfaces the task's last status line and nothing
+else.
 
 ### 3. The four amendment orphans are removed
 

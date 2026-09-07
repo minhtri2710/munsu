@@ -2378,8 +2378,7 @@ func TestValidateCheck_LstatRejectsSymlink(t *testing.T) {
 func TestRetireMergedPoll_RequiresCanonicalCompletedOutcome(t *testing.T) {
 	// A bare task authority without a canonical completed outcome refuses
 	// poll retirement: the poll path derives merged truth from the canonical
-	// committed completed delivery outcome and never writes the .meta
-	// delivery_state projection.
+	// committed completed delivery outcome and writes no .meta projection.
 	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
 	defer cleanup()
 	restore := installMockMergeStatus(t, true, "0000111122223333444455556666777788889999", "aaaabbbbccccddddeeeeffff0000111122223333")
@@ -2407,16 +2406,13 @@ func TestRetireMergedPoll_RequiresCanonicalCompletedOutcome(t *testing.T) {
 		t.Fatalf("canonical delivery outcome = %q, want completed", outcome.Status)
 	}
 
-	// Verify other meta is preserved and no .meta delivery_state was written.
+	// Verify other meta is preserved.
 	meta, err := mhome.ReadMeta(home, taskID)
 	if err != nil {
 		t.Fatalf("ReadMeta: %v", err)
 	}
 	if meta["kind"] != "ship" {
 		t.Fatal("meta kind should be preserved")
-	}
-	if meta[MetaDeliveryState] != "" {
-		t.Fatalf("poll retirement must never write .meta delivery_state; got %q", meta[MetaDeliveryState])
 	}
 }
 
@@ -2456,8 +2452,7 @@ func TestRecoverPendingRetirement_RequiresCanonicalCompletedOutcome(t *testing.T
 		t.Fatalf("WriteRetirementRecord: %v", err)
 	}
 
-	// Recovery requires the canonical completed outcome; it never writes the
-	// .meta delivery_state projection.
+	// Recovery requires the canonical completed outcome.
 	auth := retirementPollAuthFor(t, home, taskID)
 	resolved, err := recoverPendingRetirement(home, taskID, auth, pollContentDigest)
 	if err != nil {
@@ -2469,13 +2464,6 @@ func TestRecoverPendingRetirement_RequiresCanonicalCompletedOutcome(t *testing.T
 	outcome, err := auth.DeliveryOutcome(mustTaskID(t, taskID))
 	if err != nil || outcome.Status != taskauthority.DeliveryOutcomeCompleted {
 		t.Fatalf("canonical delivery outcome = %v %+v, want completed", err, outcome)
-	}
-	meta, err := mhome.ReadMeta(home, taskID)
-	if err != nil {
-		t.Fatalf("ReadMeta: %v", err)
-	}
-	if meta[MetaDeliveryState] != "" {
-		t.Fatalf("recovery must never write .meta delivery_state; got %q", meta[MetaDeliveryState])
 	}
 }
 

@@ -379,8 +379,7 @@ func ValidateCheckWithLstat(path string) error {
 //     head to equal the captured head (domain.ErrStaleCapture otherwise).
 //  4. Persist the pending retirement record BEFORE publication.
 //  5. Derive merged truth from the canonical committed delivery outcome:
-//     a committed completed outcome is required; the .meta delivery_state
-//     projection never authorizes merged truth and no parallel delivery
+//     a committed completed outcome is required; the .meta projection never authorizes merged truth and no parallel delivery
 //     state is written here.
 //  6. Durably publish one deterministic keyed status line.
 //  7. Atomically quarantine the public poll, then validate, digest-check, and
@@ -540,7 +539,7 @@ func retireMergedPoll(homeDir, taskID, checkPath string, result []byte, auth *ta
 
 	// Step 5: Derive merged truth from the canonical committed delivery
 	// outcome. A committed completed outcome is required before publication
-	// and poll removal; the .meta delivery_state projection never authorizes
+	// and poll removal; the .meta projection never authorizes
 	// merged truth and no parallel delivery state is written here. Fail
 	// closed: if the canonical outcome is missing or not completed, the
 	// retirement record stays pending and the poll is preserved.
@@ -635,7 +634,7 @@ func requireRetirementIdentity(homeDir, id string) (*domain.DeliveryIdentity, er
 
 // requireCanonicalCompletedOutcome fails closed unless the task's canonical
 // committed delivery outcome is completed. It is the single merged-truth
-// derivation for poll retirement: no .meta delivery_state projection
+// derivation for poll retirement: no .meta projection
 // authorizes merged truth.
 func requireCanonicalCompletedOutcome(auth *taskauthority.Canonical, taskID string) error {
 	if auth == nil {
@@ -751,7 +750,7 @@ func recoverPendingRetirement(homeDir, taskID string, auth *taskauthority.Canoni
 
 	// Derive merged truth from the canonical committed delivery outcome:
 	// a committed completed outcome is required before any poll artifact
-	// is removed. The .meta delivery_state projection never authorizes
+	// is removed. The .meta projection never authorizes
 	// merged truth and no parallel delivery state is written here.
 	if err := requireCanonicalCompletedOutcome(auth, taskID); err != nil {
 		return false, fmt.Errorf("recovery: canonical merged truth required: %w", err)

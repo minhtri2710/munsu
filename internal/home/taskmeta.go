@@ -396,7 +396,7 @@ var ValidMetaFields = []string{
 	"backend", "herdr_session", "herdr_workspace_id", "herdr_tab_id", "herdr_pane_id",
 	"pr_provider", "pr_owner", "pr_repo", "pr_number", "pr_url",
 	"pr_base_ref", "pr_head_ref", "pr_head_sha", "pr_timestamp",
-	"delivery_state", "pr_identity_revision",
+	"pr_identity_revision",
 	"amend_expected_head", "amend_started_at",
 	"amendment_history",
 }
@@ -464,13 +464,6 @@ func ListMeta(homeDir string) ([]MetaEntry, error) {
 			lastLine := statusLines[len(statusLines)-1]
 			msg, _ := ParseStatusKey(lastLine)
 			lastStatus = msg
-		}
-
-		// Lifecycle truth supersedes stale status projections.
-		// If the delivery_state is merged or delivered, that is the
-		// authoritative status regardless of what the status file says.
-		if ds := meta["delivery_state"]; ds == "merged" || ds == "delivered" {
-			lastStatus = ds
 		}
 
 		kind := meta["kind"]

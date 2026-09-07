@@ -8,7 +8,7 @@ import (
 )
 
 // fleetRetirementPort adapts the orchestrator RetirementPort to the fleet
-// implementation. The merged delivery_state transition routes through the
+// implementation. The merged-delivery transition routes through the
 // composed canonical Task Authority: the compose function builds the
 // canonical authority over the exact home the watcher is servicing, mirroring
 // the delivery command composition root.
