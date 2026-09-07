@@ -48,6 +48,185 @@ func (e *finalBlockingProbeEndpoint) Probe(string, map[string]string) (CaptainPr
 	return CaptainProbeResult{Absent: true}, nil
 }
 
+func TestCaptainMetaAtomicitySuccessfulMutations(t *testing.T) {
+	t.Run("clear guard preserves concurrent metadata", func(t *testing.T) {
+		parent := t.TempDir()
+		home := seedCaptainForTest(t, parent, "clear-success")
+		writeCaptainMeta(t, parent, "clear-success", home, "w1")
+		writeRelaunchGuard(t, parent, "clear-success", strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10))
+		meta, err := mhome.ReadMeta(parent, taskIDForCaptain("clear-success"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		binding := captainBinding{kind: meta["kind"], smID: meta["sm_id"], home: meta["home"], window: meta["window"], backend: meta["backend"]}
+		if err := mhome.UpdateMeta(parent, taskIDForCaptain("clear-success"), func(meta map[string]string) error {
+			meta["sentinel"] = "preserved"
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := clearRelaunchGuard(parent, Info{ID: "clear-success", Home: home}, binding); err != nil {
+			t.Fatal(err)
+		}
+		meta, err = mhome.ReadMeta(parent, taskIDForCaptain("clear-success"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("clear persisted metadata: %v", meta)
+		if meta["sentinel"] != "preserved" {
+			t.Fatalf("sentinel = %q, want preserved", meta["sentinel"])
+		}
+		if _, ok := meta["relaunch_liveness"]; ok {
+			t.Fatal("clear left relaunch_liveness")
+		}
+		if _, ok := meta[relaunchGuardUntilField]; ok {
+			t.Fatal("clear left relaunch_guard_until")
+		}
+	})
+
+	t.Run("consult normalizes and expires guard", func(t *testing.T) {
+		parent := t.TempDir()
+		home := seedCaptainForTest(t, parent, "consult-success")
+		writeCaptainMeta(t, parent, "consult-success", home, "w1")
+		writeRelaunchGuard(t, parent, "consult-success", "not-a-deadline")
+		refused, remaining, err := consultRelaunchGuard(parent, taskIDForCaptain("consult-success"), time.Now())
+		if err != nil || !refused || remaining <= 0 {
+			t.Fatalf("consult normalization = refused=%v remaining=%s err=%v", refused, remaining, err)
+		}
+		meta, err := mhome.ReadMeta(parent, taskIDForCaptain("consult-success"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("consult normalized metadata: %v", meta)
+		if _, err := strconv.ParseInt(meta[relaunchGuardUntilField], 10, 64); err != nil {
+			t.Fatalf("normalized deadline = %q: %v", meta[relaunchGuardUntilField], err)
+		}
+		if err := mhome.UpdateMeta(parent, taskIDForCaptain("consult-success"), func(meta map[string]string) error {
+			meta["relaunch_guard_until"] = strconv.FormatInt(time.Now().Add(-time.Hour).Unix(), 10)
+			meta["sentinel"] = "preserved"
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		refused, remaining, err = consultRelaunchGuard(parent, taskIDForCaptain("consult-success"), time.Now())
+		if err != nil || refused || remaining != 0 {
+			t.Fatalf("consult expiry = refused=%v remaining=%s err=%v", refused, remaining, err)
+		}
+		meta, err = mhome.ReadMeta(parent, taskIDForCaptain("consult-success"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("consult expired metadata: %v", meta)
+		if meta["sentinel"] != "preserved" {
+			t.Fatalf("sentinel = %q, want preserved", meta["sentinel"])
+		}
+		if _, ok := meta["relaunch_liveness"]; ok {
+			t.Fatal("expired consult left relaunch_liveness")
+		}
+	})
+
+	t.Run("prove alive preserves concurrent metadata", func(t *testing.T) {
+		parent := t.TempDir()
+		home := seedCaptainForTest(t, parent, "prove-success")
+		writeCaptainMeta(t, parent, "prove-success", home, "w1")
+		writeRelaunchGuard(t, parent, "prove-success", strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10))
+		probe := &blockingProbeEndpoint{started: make(chan struct{}), release: make(chan struct{}), result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}}
+		result := make(chan struct{ proven bool; err error }, 1)
+		go func() {
+			proven, err := proveRelaunch(parent, Info{ID: "prove-success", Home: home}, probe, func(time.Duration) {}, time.Now)
+			result <- struct{ proven bool; err error }{proven, err}
+		}()
+		<-probe.started
+		if err := mhome.UpdateMeta(parent, taskIDForCaptain("prove-success"), func(meta map[string]string) error {
+			meta["sentinel"] = "preserved"
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		close(probe.release)
+		out := <-result
+		if !out.proven || out.err != nil {
+			t.Fatalf("prove result = proven=%v err=%v", out.proven, out.err)
+		}
+		meta, err := mhome.ReadMeta(parent, taskIDForCaptain("prove-success"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("prove-alive metadata: %v", meta)
+		if meta["sentinel"] != "preserved" {
+			t.Fatalf("sentinel = %q, want preserved", meta["sentinel"])
+		}
+		if _, ok := meta["relaunch_liveness"]; ok {
+			t.Fatal("prove alive left relaunch_liveness")
+		}
+	})
+
+	t.Run("prove failure arms guard and preserves concurrent metadata", func(t *testing.T) {
+		parent := t.TempDir()
+		home := seedCaptainForTest(t, parent, "prove-arm-success")
+		writeCaptainMeta(t, parent, "prove-arm-success", home, "w1")
+		probe := &finalBlockingProbeEndpoint{started: make(chan struct{}), release: make(chan struct{})}
+		result := make(chan struct{ proven bool; err error }, 1)
+		go func() {
+			proven, err := proveRelaunch(parent, Info{ID: "prove-arm-success", Home: home}, probe, func(time.Duration) {}, time.Now)
+			result <- struct{ proven bool; err error }{proven, err}
+		}()
+		<-probe.started
+		if err := mhome.UpdateMeta(parent, taskIDForCaptain("prove-arm-success"), func(meta map[string]string) error {
+			meta["sentinel"] = "preserved"
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		close(probe.release)
+		out := <-result
+		if out.proven || out.err != nil {
+			t.Fatalf("prove arm result = proven=%v err=%v", out.proven, out.err)
+		}
+		meta, err := mhome.ReadMeta(parent, taskIDForCaptain("prove-arm-success"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("prove-arm metadata: %v", meta)
+		if meta["sentinel"] != "preserved" || meta["relaunch_liveness"] != "unproven" {
+			t.Fatalf("armed metadata = %v, want sentinel and unproven guard", meta)
+		}
+	})
+
+	t.Run("send nudge stamps and preserves concurrent metadata", func(t *testing.T) {
+		parent, home, id, _ := newGuardNudgeValidFixture(t)
+		endpoint := &blockingNudgeEndpoint{started: make(chan struct{}), release: make(chan struct{})}
+		result := make(chan error, 1)
+		go func() { result <- sendNudge(parent, Info{ID: id, Home: home}, endpoint) }()
+		<-endpoint.started
+		if err := mhome.UpdateMeta(parent, taskIDForCaptain(id), func(meta map[string]string) error {
+			meta["sentinel"] = "preserved"
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		close(endpoint.release)
+		if err := <-result; err != nil {
+			t.Fatal(err)
+		}
+		meta, err := mhome.ReadMeta(parent, taskIDForCaptain(id))
+		if err != nil {
+			t.Fatal(err)
+		}
+		marker, err := readNudgeMarker(parent, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("send-nudge metadata: %v; marker after send: %v", meta, marker)
+		if meta["sentinel"] != "preserved" || meta["applied_commit"] == "" || meta["applied_digest"] == "" {
+			t.Fatalf("stamped metadata = %v", meta)
+		}
+		if marker != nil {
+			t.Fatalf("marker = %v, want cleared", marker)
+		}
+	})
+}
+
 func TestSendNudgeRefusesReplacementBinding(t *testing.T) {
 	parent, captainHome, id, _ := newGuardNudgeValidFixture(t)
 	endpoint := &blockingNudgeEndpoint{started: make(chan struct{}), release: make(chan struct{})}
