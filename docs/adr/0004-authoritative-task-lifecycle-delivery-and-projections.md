@@ -1,6 +1,6 @@
 # 0004. Authoritative Task Lifecycle, Delivery Transactions, and Projections
 
-* **Status:** Accepted; substantially implemented — the authoritative Task aggregate, atomic handoff, head-bound merge authorization, Dispatch Holds, and the `task` sole noun all landed. §3 (delivered phase) is superseded by ADR-0008, §5 (IssueLink) by ADR-0011, §6 (delivery transitions) by ADR-0022, §7 (DispatchInterpretation) subsumed and §9 (ContextManifest) retired by ADR-0023. The `DeliveryState`/`MetaDeliveryState` projection cleanup landed (#743). No residual work remains open on this ADR.
+* **Status:** Accepted; substantially implemented — the authoritative Task aggregate, atomic handoff, head-bound merge authorization, Dispatch Holds, and the `task` sole noun all landed. §3 (delivered phase) is superseded by ADR-0008, §5 (IssueLink) by ADR-0011, §6 (delivery transitions) by ADR-0022, §7 (DispatchInterpretation) subsumed and §9 (ContextManifest) retired by ADR-0023. The `DeliveryState` projection cleanup landed (#743), and the last of that residue — the `.meta` delivery-state key, its constant, and the `ListMeta` branch that let it override a task's status line — was deleted afterwards, so neither the key nor its constant exists in the tree any more. No residual work remains open on this ADR.
 * **Date:** 2026-07-30
 * **Extends:** ADR-0002 (durable lifecycle and clean breaks), ADR-0003 (project-scoped config)
 * **Triggered by:** `munsu-workflow-incident-report-2026-07-30.md`

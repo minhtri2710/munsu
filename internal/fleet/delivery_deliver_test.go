@@ -508,17 +508,17 @@ func TestDeliverFailClosedBeforeMutation(t *testing.T) {
 	}
 }
 
-// TestDeliverNoMetaSubstitutionAuthorizesDelivery proves a .meta
-// delivery_state=merged claim never authorizes a delivery: Deliver requires
-// the canonical journaled flow and commits the canonical outcome.
+// TestDeliverNoMetaSubstitutionAuthorizesDelivery proves .meta never
+// authorizes a delivery: Deliver requires the canonical journaled flow and
+// commits the canonical outcome.
 func TestDeliverNoMetaSubstitutionAuthorizesDelivery(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	taskID := "t1"
 	mustWorkingDeliveryTask(t, c, taskID)
-	// The .meta projection claims merged truth that was never committed
+	// A fully populated .meta claims a PR that was never committed
 	// canonically.
 	if err := home.WriteMeta(homeDir, taskID, map[string]string{
-		"kind": "ship", "delivery_state": string(DeliveryStateMerged),
+		"kind":        "ship",
 		"pr_provider": "github", "pr_owner": "minhtri2710", "pr_repo": "munsu",
 		"pr_number": "42", "pr_url": "https://github.com/minhtri2710/munsu/pull/42",
 		"pr_base_ref": "main", "pr_head_ref": "feature/delivery", "pr_head_sha": deliveryTestHead,

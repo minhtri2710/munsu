@@ -104,9 +104,6 @@ func mapCheckStatus(value string) domain.CheckStatus {
 	}
 }
 
-// MetaDeliveryState is the meta field key for the delivery lifecycle projection.
-const MetaDeliveryState = "delivery_state"
-
 // FetchProviderSnapshot queries the provider for a point-in-time snapshot of a
 // PR/MR through the typed provider clients. Read-only; fail-closed on
 // provider absence or ambiguous state.

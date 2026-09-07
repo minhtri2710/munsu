@@ -17,7 +17,7 @@ import (
 // fleet retirement path requires (#414 B hard cut): a canonical Task
 // Authority record with a committed completed delivery outcome (authorize +
 // outcome under the task's own identity) plus matching identity .meta. The
-// .meta delivery_state projection never authorizes merged truth. Returns the
+// .meta projection never authorizes merged truth. Returns the
 // canonical Authority that owns the task.
 func mergedShipFixture(t *testing.T, homeDir, taskID string) *taskauthority.Canonical {
 	t.Helper()

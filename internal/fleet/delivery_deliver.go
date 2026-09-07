@@ -21,8 +21,8 @@ import (
 // most once per journal; a crash after mutation recovers by provider
 // observation and classification (never a blind repeat); and the truthful
 // closed-set outcome (completed, partial, remote-unknown, retryable)
-// commits canonically and replays idempotently. No .meta/delivery_state
-// projection authorizes delivery or merged truth.
+// commits canonically and replays idempotently. No .meta projection
+// authorizes delivery or merged truth.
 
 // DeliverRequest is the typed intent of one journaled delivery execution.
 // The request pins the irreversible operation kind, the exact typed delivery

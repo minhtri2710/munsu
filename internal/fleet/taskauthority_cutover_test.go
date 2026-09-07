@@ -154,16 +154,16 @@ func TestReadWithProbeCanonicalPhaseOverridesStaleStatus(t *testing.T) {
 	}
 }
 
-// TestSnapshotFailsClosedOnLegacyMetaOnlyMerged proves the snapshot fails
-// closed on a meta-only delivery_state=merged claim without an authoritative
-// record (Task 7.8 legacy decision (a)): the legacy shape is never silently
-// projected, and the typed error names the heal path.
-func TestSnapshotFailsClosedOnLegacyMetaOnlyMerged(t *testing.T) {
+// TestSnapshotFailsClosedOnMetaOnlyTask proves the snapshot fails closed on a
+// task that exists in .meta alone, with no authoritative record (Task 7.8
+// legacy decision (a)): the legacy shape is never silently projected, and the
+// typed error names the heal path.
+func TestSnapshotFailsClosedOnMetaOnlyTask(t *testing.T) {
 	homeDir := t.TempDir()
 	if _, err := home.Init(homeDir); err != nil {
 		t.Fatal(err)
 	}
-	if err := home.WriteMeta(homeDir, "t1", map[string]string{"delivery_state": "merged", "kind": "ship", "window": "@1"}); err != nil {
+	if err := home.WriteMeta(homeDir, "t1", map[string]string{"kind": "ship", "window": "@1"}); err != nil {
 		t.Fatal(err)
 	}
 	_, err := Snapshot(homeDir, testSnapshotDeps(t))
@@ -175,14 +175,14 @@ func TestSnapshotFailsClosedOnLegacyMetaOnlyMerged(t *testing.T) {
 	}
 }
 
-// TestReadWithProbeFailsClosedOnLegacyMetaOnlyMerged proves observation fails
-// closed on the same legacy shape (clean break: no canonical record).
-func TestReadWithProbeFailsClosedOnLegacyMetaOnlyMerged(t *testing.T) {
+// TestReadWithProbeFailsClosedOnMetaOnlyTask proves observation fails closed
+// on the same legacy shape (clean break: no canonical record).
+func TestReadWithProbeFailsClosedOnMetaOnlyTask(t *testing.T) {
 	homeDir := t.TempDir()
 	if _, err := home.Init(homeDir); err != nil {
 		t.Fatal(err)
 	}
-	if err := home.WriteMeta(homeDir, "t1", map[string]string{"delivery_state": "merged", "kind": "ship"}); err != nil {
+	if err := home.WriteMeta(homeDir, "t1", map[string]string{"kind": "ship"}); err != nil {
 		t.Fatal(err)
 	}
 	_, err := ReadWithProbe(homeDir, "t1", nil)
@@ -219,8 +219,8 @@ func TestReadWithProbeFailsClosedOnLegacyMergeAuthorization(t *testing.T) {
 // TestRetireTaskForceFailsClosedWithoutAuthoritativeEvidence proves the
 // fleet-level --force derivation path fails closed: an identity-bearing task
 // under --force with no committed canonical completed delivery outcome is
-// refused and never retired (#414 B hard cut: the .meta delivery_state
-// projection never authorizes merged truth).
+// refused and never retired (#414 B hard cut: no .meta projection ever
+// authorizes merged truth).
 func TestRetireTaskForceFailsClosedWithoutAuthoritativeEvidence(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "force-no-evidence"

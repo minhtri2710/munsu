@@ -226,8 +226,8 @@ func abortRetirementCleanup(authority *taskauthority.Canonical, homeDir string, 
 // task meta's delivery identity: an identity-bearing task is only
 // retired-eligible with provider-verified merged evidence in its delivery
 // projection (the calling flow's safety checks verified the provider evidence
-// and recorded delivery_state=merged via the merge flow or the merged-poll
-// MarkMerged path); a task without a delivery identity retires under the
+// and committed the canonical completed delivery outcome via the merge flow
+// or the merged-poll MarkMerged path); a task without a delivery identity retires under the
 // baseline prerequisite (exact generation, not already retired). Production
 // callers always supply the canonical Authority; nil fails closed.
 func retireTaskAuthoritatively(opts Options, meta map[string]string, authority *taskauthority.Canonical) (taskauthority.Outcome, error) {
@@ -295,7 +295,7 @@ func retireTaskAuthoritatively(opts Options, meta map[string]string, authority *
 	}
 	// An identity-bearing task is only retired-eligible with a committed
 	// canonical completed delivery outcome; otherwise the operation fails
-	// closed (the .meta delivery_state projection never authorizes merged
+	// closed (the .meta projection never authorizes merged
 	// truth). A retry after a committed receipt observes the retired
 	// generation before this gate.
 	if ident, identErr := domain.IdentityFromMeta(meta); identErr == nil && ident != nil {
@@ -1263,8 +1263,7 @@ func identityFromMeta(meta map[string]string) (*domain.DeliveryIdentity, error) 
 func topologyAwareMergeCheck(opts Options, meta map[string]string, wtPath string, ident *domain.DeliveryIdentity, backend BoundTeardown, authority *taskauthority.Canonical) (string, error) {
 	// The merged prerequisite is derived from the canonical committed
 	// delivery outcome when one exists: a non-completed canonical outcome
-	// fails the safety check before any provider query. The .meta
-	// delivery_state projection never authorizes or blocks merged truth.
+	// fails the safety check before any provider query. The .meta projection never authorizes or blocks merged truth.
 	if authority != nil {
 		taskID, err := domain.NewTaskID(opts.ID)
 		if err == nil {

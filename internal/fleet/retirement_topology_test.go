@@ -1341,8 +1341,7 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_ProviderError(t *testi
 
 func TestShipSafetyCheck_DeliveryStateMergedAcceptsWithoutForce(t *testing.T) {
 	// A committed canonical completed delivery outcome plus a provider
-	// merged confirmation accepts without --force (the .meta delivery_state
-	// projection never authorizes merged truth).
+	// merged confirmation accepts without --force.
 	tmp := t.TempDir()
 	if _, err := mhome.Init(tmp); err != nil {
 		t.Fatalf("home.Init: %v", err)
@@ -1361,7 +1360,6 @@ func TestShipSafetyCheck_DeliveryStateMergedAcceptsWithoutForce(t *testing.T) {
 
 	meta := fixtureMeta(wt, true, md)
 	meta["pr_head_sha"] = headSHA
-	meta[MetaDeliveryState] = string(DeliveryStateMerged)
 
 	auth := seedCanonicalOutcome(t, tmp, "test", taskauthority.DeliveryOutcomeCompleted)
 
@@ -1382,7 +1380,7 @@ func TestShipSafetyCheck_DeliveryStateMergedAcceptsWithoutForce(t *testing.T) {
 func TestShipSafetyCheck_DeliveryStateReviewReadyRejectsWithoutForce(t *testing.T) {
 	// A committed canonical non-completed delivery outcome (retryable)
 	// rejects teardown without --force even when the provider says merged:
-	// canonical truth, never the .meta delivery_state projection.
+	// canonical truth decides.
 	tmp := t.TempDir()
 	if _, err := mhome.Init(tmp); err != nil {
 		t.Fatalf("home.Init: %v", err)
@@ -1401,7 +1399,6 @@ func TestShipSafetyCheck_DeliveryStateReviewReadyRejectsWithoutForce(t *testing.
 
 	meta := fixtureMeta(wt, true, md)
 	meta["pr_head_sha"] = headSHA
-	meta[MetaDeliveryState] = string(DeliveryStateReviewReady)
 
 	auth := seedCanonicalOutcome(t, tmp, "test", taskauthority.DeliveryOutcomeRetryable)
 

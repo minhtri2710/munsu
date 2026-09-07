@@ -47,7 +47,7 @@ func (r *MergeAndRetireResult) IsError() bool {
 // into one operation.
 //
 // Phase 1 - Delivery: merged truth is derived from the canonical committed
-// delivery outcome, never from the .meta delivery_state projection. A
+// delivery outcome, never from the .meta projection. A
 // committed completed outcome skips delivery entirely (idempotent resume); a
 // committed retryable outcome or no committed outcome runs the journaled
 // Deliver; a committed terminal partial/remote-unknown outcome cannot be

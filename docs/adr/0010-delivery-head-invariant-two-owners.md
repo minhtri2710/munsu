@@ -81,10 +81,13 @@ Backlog is only a query concept over Task state") and §3 (Task Authority issues
 the immutable Delivery Authorization bound to the exact Task Generation and
 Operation ID; Fleet alone executes delivery against it).
 
-Concretely, after BEO-72 the only production reader of `delivery_state` is
-`home.ListMeta` (`internal/home/taskmeta.go:382`), which picks the string shown
-in a listing column. Nothing downstream of it grants, extends, or revalidates a
-delivery authorization.
+Concretely, after BEO-72 the only production reader of the `.meta`
+delivery-state key was `home.ListMeta` (`internal/home/taskmeta.go`), which
+picked the string shown in a listing column; nothing downstream of it granted,
+extended, or revalidated a delivery authorization. That reader had no writer
+anywhere in the tree, so it has since been deleted along with the key and its
+constant: `home.ListMeta` now surfaces the task's last status line and nothing
+else.
 
 ### 3. The four amendment orphans are removed
 
@@ -125,8 +128,8 @@ not dead-code cleanup, and it is not this ADR's decision to make.
   conflict-replay paths.
 * `.github/deadcode.allow` contains only current, reviewed exceptions; it is not
   an imported BEO-63 baseline.
-* `internal/home`'s `ValidMetaFields` (`taskmeta.go:309-320`) still lists the
-  retired amendment keys. Nothing writes them and nothing reads them; the list
+* `internal/home`'s `ValidMetaFields` (`internal/home/taskmeta.go`) still lists
+  the retired amendment keys. Nothing writes them and nothing reads them; the list
   is `home`-owned validation vocabulary, and pruning it is a separate change
   with its own compatibility question about existing on-disk `.meta` files.
   Named here so it is not mistaken for an owner of anything.
