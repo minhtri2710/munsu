@@ -6,6 +6,7 @@ package home
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -149,6 +150,30 @@ func WriteMeta(homeDir string, id string, meta map[string]string) error {
 	}
 	defer unlock()
 
+	return writeMetaLocked(homeDir, id, meta)
+}
+
+// UpdateMeta applies mutate to the current task meta and persists the result as
+// one atomic cycle: the advisory lock is held across the read, the mutation and
+// the write, so a concurrent projection writer cannot interleave. An absent meta
+// file is an empty map, which is the first write for a task; every other read
+// failure refuses the write, because writeMetaLocked replaces the whole file and
+// a swallowed read error would erase every field it could not read.
+func UpdateMeta(homeDir string, id string, mutate func(map[string]string)) error {
+	_, unlock, err := acquireMetaLock(homeDir, id)
+	if err != nil {
+		return fmt.Errorf("update meta: %w", err)
+	}
+	defer unlock()
+
+	meta, err := ReadMeta(homeDir, id)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("update meta: %w", err)
+	}
+	if meta == nil {
+		meta = make(map[string]string)
+	}
+	mutate(meta)
 	return writeMetaLocked(homeDir, id, meta)
 }
 

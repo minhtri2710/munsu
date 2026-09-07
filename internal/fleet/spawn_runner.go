@@ -2160,47 +2160,44 @@ func (r *Runner) writeTaskMeta() error {
 	if r.args.Yolo {
 		yoloVal = "on"
 	}
-	meta, err := home.ReadMeta(r.homeDir, r.args.ID)
-	if err != nil {
-		meta = make(map[string]string)
-	}
-	put := func(k, v string) {
-		if v != "" {
-			meta[k] = v
+	err := home.UpdateMeta(r.homeDir, r.args.ID, func(meta map[string]string) {
+		put := func(k, v string) {
+			if v != "" {
+				meta[k] = v
+			}
 		}
-	}
-	put("window", r.windowID)
-	put("worktree", r.wtPath)
-	put("projpath", r.projPath)
-	put("harness", r.harness)
-	put("backend", r.endpoint.Backend)
-	put("mode", r.effectiveMode)
-	put("yolo", yoloVal)
-	if r.model != "" {
-		put("model", r.model)
-	}
-	if r.effort != "" {
-		put("effort", r.effort)
-	}
-	if r.projectConfigLoaded {
-		put("config_snapshot_digest", r.projectConfig.SnapshotDigest)
-	}
-	if r.manifestSHA256 != "" {
-		put("launch_manifest_sha256", r.manifestSHA256)
-	}
+		put("window", r.windowID)
+		put("worktree", r.wtPath)
+		put("projpath", r.projPath)
+		put("harness", r.harness)
+		put("backend", r.endpoint.Backend)
+		put("mode", r.effectiveMode)
+		put("yolo", yoloVal)
+		if r.model != "" {
+			put("model", r.model)
+		}
+		if r.effort != "" {
+			put("effort", r.effort)
+		}
+		if r.projectConfigLoaded {
+			put("config_snapshot_digest", r.projectConfig.SnapshotDigest)
+		}
+		if r.manifestSHA256 != "" {
+			put("launch_manifest_sha256", r.manifestSHA256)
+		}
 
-	for k, v := range r.endpoint.Metadata {
-		put(k, v)
-	}
+		for k, v := range r.endpoint.Metadata {
+			put(k, v)
+		}
 
-	// The attestation acceptance is NOT recorded here: this pre-transition
-	// side file is runtime observations only (Task 4.2). The accepted
-	// attestation becomes authoritative evidence through the Task Authority
-	// after ConfirmSpawn (Task 7.3); the .meta fields are a post-confirm
-	// runtime projection of that authoritative acceptance written by
-	// projectAttestationEvidence, never a writer of record.
-
-	if err := home.WriteMeta(r.homeDir, r.args.ID, meta); err != nil {
+		// The attestation acceptance is NOT recorded here: this pre-transition
+		// side file is runtime observations only (Task 4.2). The accepted
+		// attestation becomes authoritative evidence through the Task Authority
+		// after ConfirmSpawn (Task 7.3); the .meta fields are a post-confirm
+		// runtime projection of that authoritative acceptance written by
+		// projectAttestationEvidence, never a writer of record.
+	})
+	if err != nil {
 		return fmt.Errorf("writing task meta: %w", err)
 	}
 	return nil
@@ -2251,9 +2248,10 @@ func validateAttestationReference(att *CapabilityAttestation) error {
 }
 
 // AttestationProjectionError is the typed partial outcome of an attestation
-// acceptance whose .meta projection could not be written. The authoritative
-// state is never rolled back; the projection can be retried independently and
-// replays idempotently.
+// acceptance whose .meta projection could not be applied, whether the existing
+// meta could not be read or the write itself failed. The authoritative state is
+// never rolled back; the projection can be retried independently and replays
+// idempotently.
 type AttestationProjectionError struct {
 	TaskID        string
 	ProjectionErr error
@@ -2272,12 +2270,9 @@ func (e *AttestationProjectionError) Unwrap() error { return e.ProjectionErr }
 // rolls back the authoritative spawn; the projection is retryable without
 // replaying any canonical operation.
 func projectAttestationEvidence(homeDir, taskID string, generation taskauthority.Generation) error {
-	meta, err := home.ReadMeta(homeDir, taskID)
-	if err != nil {
-		meta = make(map[string]string)
-	}
-	meta["attestation_generation"] = generation.String()
-	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
+	if err := home.UpdateMeta(homeDir, taskID, func(meta map[string]string) {
+		meta["attestation_generation"] = generation.String()
+	}); err != nil {
 		return &AttestationProjectionError{TaskID: taskID, ProjectionErr: err}
 	}
 	return nil
