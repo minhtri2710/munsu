@@ -109,7 +109,7 @@ func Return(homeDir string) (*ReturnReport, error) {
 	// 1. Stop daemon via identity lock.
 	//
 	// Three exits below leave state/.lock and state/.afk in place, because
-	// os.Remove(lockPath) and Disable() are further down. That is the intended
+	// Disable() and os.Remove(lockPath) are further down. That is the intended
 	// residual state in all three: the daemon may still be running, so a Return
 	// that cleared consent and lock would hand the next AcquireLock a free lock
 	// while a live daemon still writes under it. The caller re-runs Return; a
@@ -190,11 +190,20 @@ func Return(homeDir string) (*ReturnReport, error) {
 		}
 	}
 	// Only a confirmed stopped daemon may have its lock and consent cleared.
+	//
+	// 2. Clear the consent flag first, then release the lock. The two are a
+	// pair and the order is load-bearing: the lock is what stops the next
+	// AcquireLock handing out a free lock, so it is the last thing released.
+	// Clearing it first and then failing to clear consent leaves the next
+	// `munsu afk` start with no lock and a flag that still says AFK is on,
+	// while this Return goes on to drain and report success. So a Disable
+	// failure aborts here, with the lock still in place, which is the same
+	// residual state the three exits above leave.
+	if err := Disable(homeDir); err != nil {
+		return report, err
+	}
 	lockPath := filepath.Join(homeDir, afkLockFile)
 	os.Remove(lockPath)
-
-	// 2. Clear consent flag idempotently.
-	Disable(homeDir)
 
 	// 3. Drain and summarize the digest queue.
 	be, err := drainDigest(homeDir)
