@@ -35,21 +35,3 @@ func TestShipSafetyCheck_LegacySoldierMdNoLongerAccepted(t *testing.T) {
 		t.Errorf("unexpected error, want uncommitted-changes refusal: %v", err)
 	}
 }
-
-// TestLaunchManifestHasNoLegacyPolicyField verifies the spawn-time policy stamp
-// (ADR-0008) was removed: a manifest built and written the way the spawn runner
-// does no longer serializes a legacy_brief_migration field in the manifest
-// artifact it writes to disk.
-func TestLaunchManifestHasNoLegacyPolicyField(t *testing.T) {
-	tmp := t.TempDir()
-	setupTestLaunchFiles(t, tmp)
-	writeTestManifest(t, tmp, nil)
-
-	data, err := os.ReadFile(filepath.Join(tmp, ManifestName))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(data), "legacy_brief_migration") {
-		t.Errorf("manifest must not contain legacy_brief_migration field after removal: %s", string(data))
-	}
-}

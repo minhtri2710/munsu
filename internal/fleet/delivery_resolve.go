@@ -17,7 +17,7 @@ import (
 //  1. primary homeDir (general or current MUNSU_HOME)
 //  2. each subdirectory of homeDir/captains/* (captain homes after handoff)
 //
-// This lets the general run delivery pr-check/pr-merge for soldiers that were
+// This lets the general run delivery pr-merge for soldiers that were
 // spawned only inside a captain home after task handoff (meta never
 // mirrored to the parent).
 func ResolveTaskHome(homeDir, id string) (taskHome string, meta map[string]string, err error) {
@@ -110,11 +110,11 @@ func RequireIdentity(homeDir, id string) (*domain.DeliveryIdentity, error) {
 		return nil, fmt.Errorf("parsing delivery identity: %w", err)
 	}
 	if ident == nil {
-		return nil, fmt.Errorf("no delivery identity found for task %s: PR URL not set in meta; use pr-check to capture identity before destructive actions", id)
+		return nil, fmt.Errorf("no delivery identity found for task %s: PR URL not set in meta; run `munsu delivery pr-merge <task-id> <pr-url>` to capture identity before destructive actions", id)
 	}
 
 	if err := domain.ValidateIdentity(ident); err != nil {
-		return nil, fmt.Errorf("incomplete delivery identity for task %s: %w; re-run pr-check to recapture", id, err)
+		return nil, fmt.Errorf("incomplete delivery identity for task %s: %w; re-run `munsu delivery pr-merge <task-id> <pr-url>` to recapture", id, err)
 	}
 
 	return ident, nil
