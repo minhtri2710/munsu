@@ -33,6 +33,10 @@ All three take `--home` / `MUNSU_HOME` to scope to a specific home.
       final digest flush (state/.afk-digest)
 ```
 
+`munsu afk return` clears consent before releasing the identity lock. If consent cannot be
+cleared, it returns an error with both the consent flag and lock still present and does not drain
+the digest. Resolve the consent-flag removal error, then rerun the command.
+
 The daemon is **foreground**: it holds the terminal. The operator starts it in a pane, sends it to
 the background with `^Z bg`, or launches it in a dedicated session. The daemon never daemonizes
 itself.
