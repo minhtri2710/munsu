@@ -344,3 +344,71 @@ func publishAfkIdentity(t *testing.T, homeDir string, pid int, executable, start
 		t.Fatalf("PublishWriterIdentity: %v", err)
 	}
 }
+
+// seedStoppedDaemonHome writes a home whose lock names no usable PID, so Return
+// skips the daemon-stop block entirely and reaches the consent/lock cleanup.
+// parseLockContent returns 0 for a non-numeric first field, and readDaemonPID
+// turns that into "no daemon", while the lock file itself still exists for the
+// assertions below.
+func seedStoppedDaemonHome(t *testing.T) string {
+	t.Helper()
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		t.Fatalf("mkdir state: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, ".lock"), []byte("no-pid-here\n"), 0644); err != nil {
+		t.Fatalf("write lock: %v", err)
+	}
+	return tmp
+}
+
+// TestReturnKeepsLockWhenConsentCannotBeCleared proves Return releases the AFK
+// lock only after the consent flag is actually gone. The lock is what stops the
+// next AcquireLock handing out a free lock, so clearing it while consent still
+// says AFK is on would strand the next `munsu afk` start with no lock and a live
+// flag, behind a Return that reported success.
+//
+// The failure is built by making state/.afk a non-empty directory: os.Remove
+// then fails with "directory not empty" for every user, including root, and that
+// error is not an IsNotExist, so Disable returns it. A read-only flag file would
+// not work -- os.Remove is governed by write permission on the parent directory,
+// not on the file, so chmod 0400 removes cleanly.
+func TestReturnKeepsLockWhenConsentCannotBeCleared(t *testing.T) {
+	home := seedStoppedDaemonHome(t)
+	flagPath := filepath.Join(home, "state", ".afk")
+	if err := os.MkdirAll(filepath.Join(flagPath, "child"), 0755); err != nil {
+		t.Fatalf("seeding an unremovable consent flag: %v", err)
+	}
+
+	_, err := Return(home)
+	if err == nil {
+		t.Fatal("Return over an unclearable consent flag: got nil error, want the Disable failure surfaced")
+	}
+	if !strings.Contains(err.Error(), "disabling afk") {
+		t.Fatalf("Return error = %v, want it to carry Disable's own message", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(home, "state", ".lock")); statErr != nil {
+		t.Fatalf("lock file after a failed consent clear: %v, want it still present", statErr)
+	}
+}
+
+// TestReturnClearsConsentThenLock proves the ordinary path still releases both,
+// so the guard above refuses a real failure rather than every call.
+func TestReturnClearsConsentThenLock(t *testing.T) {
+	home := seedStoppedDaemonHome(t)
+	flagPath := filepath.Join(home, "state", ".afk")
+	if err := os.WriteFile(flagPath, []byte(""), 0644); err != nil {
+		t.Fatalf("write consent flag: %v", err)
+	}
+
+	if _, err := Return(home); err != nil {
+		t.Fatalf("Return over a cleanly stopped daemon: %v", err)
+	}
+	if _, err := os.Stat(flagPath); !os.IsNotExist(err) {
+		t.Fatalf("consent flag after Return: err=%v, want it removed", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "state", ".lock")); !os.IsNotExist(err) {
+		t.Fatalf("lock file after Return: err=%v, want it removed", err)
+	}
+}
