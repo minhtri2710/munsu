@@ -274,6 +274,7 @@ func TestAgentMirrorCoverage(t *testing.T) {
 	repo := fstest.MapFS{
 		".agents/skills/embedded/SKILL.md": {Data: []byte("skill")},
 		".agents/skills/declared/SKILL.md": {Data: []byte("skill")},
+		".agents/skills/unrelated/SKILL.md": {Data: []byte("skill")},
 	}
 
 	if err := validateAgentMirrorCoverage(repo, []string{"embedded", "declared"}, []string{"declared"}); err == nil || !strings.Contains(err.Error(), `embedded skill "embedded"`) {
@@ -282,8 +283,9 @@ func TestAgentMirrorCoverage(t *testing.T) {
 	if err := validateAgentMirrorCoverage(repo, nil, []string{"missing"}); err == nil || !strings.Contains(err.Error(), "declared mirror .agents/skills/missing is missing") {
 		t.Fatalf("expected missing declared mirror error, got %v", err)
 	}
+	// The fixture also contains an unrelated mirror; only embedded names are checked.
 	if err := validateAgentMirrorCoverage(repo, []string{"declared"}, []string{"declared"}); err != nil {
-		t.Fatalf("expected declared mirror to pass: %v", err)
+		t.Fatalf("expected declared mirror to pass and unrelated mirror to be ignored: %v", err)
 	}
 }
 
@@ -293,6 +295,7 @@ func TestAgentMirrorCoverage(t *testing.T) {
 // referenceDocSkills pins docs/skills/<name>.md) or an explicit embedded-only
 // disposition. Those two pinned surfaces are independent and may co-hold, since
 // both are compared against the same canonical and cannot disagree.
+// For embedded names, on-disk mirrors must correspond exactly to agentMirrorSkills.
 // embedded-only is the exclusive one: it asserts the absence of the very copies
 // the other two pin, so holding it alongside either is a contradiction.
 func TestEmbeddedSkillParityCoverage(t *testing.T) {
