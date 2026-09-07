@@ -2131,7 +2131,7 @@ func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (
 		}
 
 		// f. Liveness check + strict-dead-only auto-recover.
-		state, stateErr := checkAliveWithProbe(parentHome, sm, caps.Probe)
+		state, binding, stateErr := checkAliveWithProbeBinding(parentHome, sm, caps.Probe)
 		if stateErr != nil {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: stateErr.Error()})
 			errs = append(errs, fmt.Sprintf("%s: alive check failed: %v", sm.ID, stateErr))
@@ -2141,7 +2141,7 @@ func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (
 		switch state {
 		case CaptainAlive:
 			// Liveness proven by observation: clear any armed relaunch guard.
-			if cErr := clearRelaunchGuard(parentHome, taskID); cErr != nil {
+			if cErr := clearRelaunchGuard(parentHome, sm, binding); cErr != nil {
 				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: fmt.Sprintf("clearing resolved relaunch guard failed: %v", cErr)})
 				errs = append(errs, fmt.Sprintf("%s: clearing resolved relaunch guard failed: %v", sm.ID, cErr))
 				continue
@@ -2370,7 +2370,7 @@ func Recover(parentHome string, registered []Info, capabilities RecoverCapabilit
 			continue
 		}
 
-		state, stateErr := checkAliveWithProbe(parentHome, sm, capabilities.Probe)
+		state, binding, stateErr := checkAliveWithProbeBinding(parentHome, sm, capabilities.Probe)
 		if stateErr != nil {
 			// Backend resolution failure or non-authoritative evidence (no-agent,
 			// generic errors, unproven Alive=false): cannot prove liveness and
@@ -2385,7 +2385,7 @@ func Recover(parentHome string, registered []Info, capabilities RecoverCapabilit
 		switch state {
 		case CaptainAlive:
 			// Liveness proven by observation: clear any armed relaunch guard.
-			if cErr := clearRelaunchGuard(parentHome, taskID); cErr != nil {
+			if cErr := clearRelaunchGuard(parentHome, sm, binding); cErr != nil {
 				entry.Outcome = RecoverFailed
 				entry.Error = fmt.Sprintf("clearing resolved relaunch guard failed: %v", cErr)
 				res.Failed++

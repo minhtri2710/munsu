@@ -24,12 +24,28 @@ func (e *blockingNudgeEndpoint) Nudge(string, map[string]string, string) (NudgeR
 type blockingProbeEndpoint struct {
 	started chan struct{}
 	release chan struct{}
+	result  CaptainProbeResult
 }
 
 func (e *blockingProbeEndpoint) Probe(string, map[string]string) (CaptainProbeResult, error) {
 	close(e.started)
 	<-e.release
-	return CaptainProbeResult{PaneAlive: true, AgentAlive: true}, nil
+	return e.result, nil
+}
+
+type finalBlockingProbeEndpoint struct {
+	calls   int
+	started chan struct{}
+	release chan struct{}
+}
+
+func (e *finalBlockingProbeEndpoint) Probe(string, map[string]string) (CaptainProbeResult, error) {
+	e.calls++
+	if e.calls == relaunchProofAttempts {
+		close(e.started)
+		<-e.release
+	}
+	return CaptainProbeResult{Absent: true}, nil
 }
 
 func TestSendNudgeRefusesReplacementBinding(t *testing.T) {
@@ -75,7 +91,7 @@ func TestProveRelaunchRefusesReplacementBinding(t *testing.T) {
 	captainHome := seedCaptainForTest(t, parent, "atomic-probe")
 	writeCaptainMeta(t, parent, "atomic-probe", captainHome, "w1")
 	writeRelaunchGuard(t, parent, "atomic-probe", strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10))
-	probe := &blockingProbeEndpoint{started: make(chan struct{}), release: make(chan struct{})}
+	probe := &blockingProbeEndpoint{started: make(chan struct{}), release: make(chan struct{}), result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}}
 	result := make(chan struct {
 		proven bool
 		err    error
@@ -105,6 +121,76 @@ func TestProveRelaunchRefusesReplacementBinding(t *testing.T) {
 	}
 	if meta["window"] != "replacement-window" || meta["backend"] != "replacement-backend" || meta["relaunch_liveness"] != "unproven" {
 		t.Fatalf("replacement recovery metadata changed: %v", meta)
+	}
+}
+
+func TestProveRelaunchRefusesReplacementBindingOnArm(t *testing.T) {
+	parent := t.TempDir()
+	captainHome := seedCaptainForTest(t, parent, "atomic-arm-replacement")
+	writeCaptainMeta(t, parent, "atomic-arm-replacement", captainHome, "w1")
+	probe := &finalBlockingProbeEndpoint{started: make(chan struct{}), release: make(chan struct{})}
+	result := make(chan struct {
+		proven bool
+		err    error
+	}, 1)
+	go func() {
+		proven, err := proveRelaunch(parent, Info{ID: "atomic-arm-replacement", Home: captainHome}, probe, func(time.Duration) {}, time.Now)
+		result <- struct {
+			proven bool
+			err    error
+		}{proven, err}
+	}()
+	<-probe.started
+	if err := mhome.UpdateMeta(parent, taskIDForCaptain("atomic-arm-replacement"), func(meta map[string]string) error {
+		meta["window"], meta["backend"] = "replacement-window", "replacement-backend"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	close(probe.release)
+	out := <-result
+	if out.proven || out.err == nil || !strings.Contains(out.err.Error(), "captain binding changed") {
+		t.Fatalf("proveRelaunch result = proven=%v err=%v, want binding-change refusal", out.proven, out.err)
+	}
+	meta, err := mhome.ReadMeta(parent, taskIDForCaptain("atomic-arm-replacement"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := meta["relaunch_liveness"]; ok {
+		t.Fatalf("replacement received relaunch_liveness: %v", meta)
+	}
+	if _, ok := meta[relaunchGuardUntilField]; ok {
+		t.Fatalf("replacement received %s: %v", relaunchGuardUntilField, meta)
+	}
+}
+
+func TestClearRelaunchGuardRefusesReplacementBinding(t *testing.T) {
+	parent := t.TempDir()
+	captainHome := seedCaptainForTest(t, parent, "atomic-clear-replacement")
+	writeCaptainMeta(t, parent, "atomic-clear-replacement", captainHome, "w1")
+	writeRelaunchGuard(t, parent, "atomic-clear-replacement", strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10))
+	probe := &blockingProbeEndpoint{started: make(chan struct{}), release: make(chan struct{}), result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}}
+	tx := &RecoverTransaction{Capabilities: RecoverCapabilities{Probe: probe}}
+	result := make(chan StepResult, 1)
+	go func() { result <- tx.stepRelaunch(parent, Info{ID: "atomic-clear-replacement", Home: captainHome}) }()
+	<-probe.started
+	if err := mhome.UpdateMeta(parent, taskIDForCaptain("atomic-clear-replacement"), func(meta map[string]string) error {
+		meta["window"], meta["backend"] = "replacement-window", "replacement-backend"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	close(probe.release)
+	step := <-result
+	if step.State != StepFailed || !strings.Contains(step.Detail, "captain binding changed") {
+		t.Fatalf("step = %+v, want binding-change refusal", step)
+	}
+	meta, err := mhome.ReadMeta(parent, taskIDForCaptain("atomic-clear-replacement"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta["relaunch_liveness"] != "unproven" {
+		t.Fatalf("replacement guard changed: %v", meta)
 	}
 }
 
@@ -174,7 +260,7 @@ func TestClearRelaunchGuardLeavesUnarmedMetaAlone(t *testing.T) {
 		t.Fatalf("reading meta: %v", err)
 	}
 
-	if err := clearRelaunchGuard(parent, taskIDForCaptain("unarmed-clear")); err != nil {
+	if err := clearRelaunchGuard(parent, Info{ID: "unarmed-clear"}, captainBinding{}); err != nil {
 		t.Fatalf("clearRelaunchGuard: %v", err)
 	}
 
@@ -205,7 +291,7 @@ func TestClearRelaunchGuardOnAbsentMetaWritesNothing(t *testing.T) {
 		t.Fatalf("MetaFilePath: %v", err)
 	}
 
-	if err := clearRelaunchGuard(parent, taskID); err != nil {
+	if err := clearRelaunchGuard(parent, Info{ID: "absent-clear"}, captainBinding{}); err != nil {
 		t.Fatalf("clearRelaunchGuard: %v", err)
 	}
 	if _, statErr := os.Stat(p); !os.IsNotExist(statErr) {

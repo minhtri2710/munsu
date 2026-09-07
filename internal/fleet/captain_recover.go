@@ -93,10 +93,13 @@ func relaunchGuardDeadline(meta map[string]string, ttl time.Duration, now time.T
 // the guard from a stale snapshot. A missing meta or an unarmed guard writes
 // nothing; write failures are returned so callers can surface the persistence
 // failure.
-func clearRelaunchGuard(parentHome, taskID string) error {
-	return mhome.UpdateMeta(parentHome, taskID, func(meta map[string]string) error {
+func clearRelaunchGuard(parentHome string, sm Info, binding captainBinding) error {
+	return mhome.UpdateMeta(parentHome, taskIDForCaptain(sm.ID), func(meta map[string]string) error {
 		if meta["relaunch_liveness"] != "unproven" {
 			return mhome.ErrMetaUnchanged
+		}
+		if err := validateCaptainBinding(meta, sm, binding); err != nil {
+			return err
 		}
 		delete(meta, "relaunch_liveness")
 		delete(meta, relaunchGuardUntilField)
@@ -161,8 +164,10 @@ func armRelaunchGuard(meta map[string]string, now time.Time) {
 func proveRelaunch(parentHome string, sm Info, probe ProbeEndpoint, sleep func(time.Duration), now func() time.Time) (proven bool, err error) {
 	taskID := taskIDForCaptain(sm.ID)
 	var lastProbeErr error
+	var finalBinding captainBinding
 	for attempt := 0; attempt < relaunchProofAttempts; attempt++ {
 		state, binding, stateErr := checkAliveWithProbeBinding(parentHome, sm, probe)
+		finalBinding = binding
 		if stateErr != nil {
 			lastProbeErr = stateErr
 		} else if state == CaptainAlive {
@@ -183,8 +188,11 @@ func proveRelaunch(parentHome string, sm Info, probe ProbeEndpoint, sleep func(t
 		}
 	}
 	if err := mhome.UpdateMeta(parentHome, taskID, func(meta map[string]string) error {
-		if meta["kind"] != "captain" {
+		if finalBinding.kind != "captain" {
 			return fmt.Errorf("task meta kind=%q, expected captain", meta["kind"])
+		}
+		if err := validateCaptainBinding(meta, sm, finalBinding); err != nil {
+			return err
 		}
 		armRelaunchGuard(meta, now())
 		return nil
@@ -425,7 +433,7 @@ func (tx *RecoverTransaction) stepLaunchReadiness(parentHome string, sm Info) St
 }
 
 func (tx *RecoverTransaction) stepRelaunch(parentHome string, sm Info) StepResult {
-	state, stateErr := checkAliveWithProbe(parentHome, sm, tx.Capabilities.Probe)
+	state, binding, stateErr := checkAliveWithProbeBinding(parentHome, sm, tx.Capabilities.Probe)
 	if stateErr != nil {
 		return StepResult{Name: "relaunch-pane", State: StepFailed,
 			Detail: fmt.Sprintf("alive check failed: %v", stateErr)}
@@ -433,7 +441,7 @@ func (tx *RecoverTransaction) stepRelaunch(parentHome string, sm Info) StepResul
 	taskID := taskIDForCaptain(sm.ID)
 	switch state {
 	case CaptainAlive:
-		if err := clearRelaunchGuard(parentHome, taskID); err != nil {
+		if err := clearRelaunchGuard(parentHome, sm, binding); err != nil {
 			return StepResult{Name: "relaunch-pane", State: StepFailed,
 				Detail: fmt.Sprintf("clearing resolved relaunch guard failed: %v", err)}
 		}
