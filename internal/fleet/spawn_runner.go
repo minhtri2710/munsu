@@ -2140,9 +2140,9 @@ func (r *Runner) epFenceToken() string {
 
 func newEndpointToken() string {
 	buf := make([]byte, 16)
-	if _, err := rand.Read(buf); err != nil {
-		return fmt.Sprintf("lease-%d", time.Now().UnixNano())
-	}
+	// crypto/rand.Read cannot return an error: since Go 1.24 it terminates the
+	// process instead of reporting failure, so there is no branch to take.
+	rand.Read(buf)
 	return fmt.Sprintf("%x", buf)
 }
 

@@ -387,10 +387,8 @@ func canonicalRoot(root string) (string, error) {
 
 func newIdentityID() string {
 	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		// crypto/rand failure is effectively unreachable; fall back to a
-		// time-based id so initialization can still produce a stable identity.
-		return fmt.Sprintf("home-%d", time.Now().UnixNano())
-	}
+	// crypto/rand.Read cannot return an error: since Go 1.24 it terminates the
+	// process instead of reporting failure, so there is no branch to take.
+	rand.Read(b)
 	return hex.EncodeToString(b)
 }
