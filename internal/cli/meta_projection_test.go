@@ -56,7 +56,7 @@ func TestProjectTaskMetaUnreadableMetaIsNotErased(t *testing.T) {
 	err := projectTaskMeta(homeDir, taskauthority.Aggregate{
 		TaskID: taskID, Generation: 1,
 		Definition: taskauthority.TaskDefinition{Owner: "owner", Kind: "ship", Project: "project"},
-		Phase: taskauthority.PhaseQueued,
+		Phase:      taskauthority.PhaseQueued,
 	}, nil)
 	assertUnchangedProjectionMeta(t, before, p, err, "owner")
 }
