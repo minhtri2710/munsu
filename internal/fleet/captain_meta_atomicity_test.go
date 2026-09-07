@@ -48,6 +48,41 @@ func (e *finalBlockingProbeEndpoint) Probe(string, map[string]string) (CaptainPr
 	return CaptainProbeResult{Absent: true}, nil
 }
 
+func TestValidateCaptainBindingRefusesMismatches(t *testing.T) {
+	home := t.TempDir()
+	sm := Info{ID: "binding-test", Home: home}
+	canonicalHome, err := canonicalCaptainHome(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := captainBinding{kind: "captain", smID: sm.ID, home: canonicalHome, window: "window-1", backend: "backend-1"}
+
+	tests := []struct {
+		name    string
+		mutate  func(map[string]string)
+		wantErr string
+	}{
+		{name: "identity", mutate: func(meta map[string]string) { meta["kind"] = "soldier" }, wantErr: "captain binding changed: kind"},
+		{name: "home", mutate: func(meta map[string]string) { meta["home"] = t.TempDir() }, wantErr: "captain binding changed: home"},
+		{name: "backend", mutate: func(meta map[string]string) { meta["backend"] = "backend-2" }, wantErr: "captain binding changed: backend"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			meta := map[string]string{
+				"kind":    expected.kind,
+				"sm_id":   expected.smID,
+				"home":    expected.home,
+				"window":  expected.window,
+				"backend": expected.backend,
+			}
+			tt.mutate(meta)
+			if err := validateCaptainBinding(meta, sm, expected); err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("validateCaptainBinding error = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestCaptainMetaAtomicitySuccessfulMutations(t *testing.T) {
 	t.Run("clear guard preserves concurrent metadata", func(t *testing.T) {
 		parent := t.TempDir()
@@ -131,10 +166,16 @@ func TestCaptainMetaAtomicitySuccessfulMutations(t *testing.T) {
 		writeCaptainMeta(t, parent, "prove-success", home, "w1")
 		writeRelaunchGuard(t, parent, "prove-success", strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10))
 		probe := &blockingProbeEndpoint{started: make(chan struct{}), release: make(chan struct{}), result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}}
-		result := make(chan struct{ proven bool; err error }, 1)
+		result := make(chan struct {
+			proven bool
+			err    error
+		}, 1)
 		go func() {
 			proven, err := proveRelaunch(parent, Info{ID: "prove-success", Home: home}, probe, func(time.Duration) {}, time.Now)
-			result <- struct{ proven bool; err error }{proven, err}
+			result <- struct {
+				proven bool
+				err    error
+			}{proven, err}
 		}()
 		<-probe.started
 		if err := mhome.UpdateMeta(parent, taskIDForCaptain("prove-success"), func(meta map[string]string) error {
@@ -166,10 +207,16 @@ func TestCaptainMetaAtomicitySuccessfulMutations(t *testing.T) {
 		home := seedCaptainForTest(t, parent, "prove-arm-success")
 		writeCaptainMeta(t, parent, "prove-arm-success", home, "w1")
 		probe := &finalBlockingProbeEndpoint{started: make(chan struct{}), release: make(chan struct{})}
-		result := make(chan struct{ proven bool; err error }, 1)
+		result := make(chan struct {
+			proven bool
+			err    error
+		}, 1)
 		go func() {
 			proven, err := proveRelaunch(parent, Info{ID: "prove-arm-success", Home: home}, probe, func(time.Duration) {}, time.Now)
-			result <- struct{ proven bool; err error }{proven, err}
+			result <- struct {
+				proven bool
+				err    error
+			}{proven, err}
 		}()
 		<-probe.started
 		if err := mhome.UpdateMeta(parent, taskIDForCaptain("prove-arm-success"), func(meta map[string]string) error {
