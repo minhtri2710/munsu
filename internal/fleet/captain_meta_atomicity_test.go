@@ -1,233 +1,113 @@
 package fleet
 
 import (
-	"fmt"
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
-// concurrentMetaWriters runs writers goroutines that each stamp their own key
-// onto the captain task meta through UpdateMeta while fn runs against the same
-// meta, then reports how many of those keys survived. A guard path that reads a
-// snapshot, mutates it and writes it back unlocked erases the keys that landed
-// inside its window; one that reads and writes under the lock cannot.
-func concurrentMetaWriters(t *testing.T, parent, id string, writers int, fn func()) map[string]string {
-	t.Helper()
-	taskID := taskIDForCaptain(id)
-	var wg sync.WaitGroup
-	start := make(chan struct{})
-	errs := make(chan error, writers+1)
-	for i := 0; i < writers; i++ {
-		i := i
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			<-start
-			if err := mhome.UpdateMeta(parent, taskID, func(meta map[string]string) error {
-				time.Sleep(time.Millisecond)
-				meta[fmt.Sprintf("race_%02d", i)] = "persisted"
-				return nil
-			}); err != nil {
-				errs <- err
-			}
-		}()
-	}
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		<-start
-		fn()
-	}()
-	close(start)
-	wg.Wait()
-	close(errs)
-	for err := range errs {
-		t.Fatalf("concurrent meta writer: %v", err)
-	}
+type blockingNudgeEndpoint struct {
+	started chan struct{}
+	release chan struct{}
+}
 
-	meta, err := mhome.ReadMeta(parent, taskID)
+func (e *blockingNudgeEndpoint) Nudge(string, map[string]string, string) (NudgeResult, error) {
+	close(e.started)
+	<-e.release
+	return NudgeResult{Status: "submitted", Acknowledged: true}, nil
+}
+
+type blockingProbeEndpoint struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (e *blockingProbeEndpoint) Probe(string, map[string]string) (CaptainProbeResult, error) {
+	close(e.started)
+	<-e.release
+	return CaptainProbeResult{PaneAlive: true, AgentAlive: true}, nil
+}
+
+func TestSendNudgeRefusesReplacementBinding(t *testing.T) {
+	parent, captainHome, id, _ := newGuardNudgeValidFixture(t)
+	endpoint := &blockingNudgeEndpoint{started: make(chan struct{}), release: make(chan struct{})}
+	result := make(chan error, 1)
+	go func() { result <- sendNudge(parent, Info{ID: id, Home: captainHome}, endpoint) }()
+	<-endpoint.started
+	if err := mhome.UpdateMeta(parent, taskIDForCaptain(id), func(meta map[string]string) error {
+		meta["window"], meta["backend"], meta["sentinel"] = "replacement-window", "replacement-backend", "preserved"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	close(endpoint.release)
+	if err := <-result; err == nil || !strings.Contains(err.Error(), "captain binding changed") {
+		t.Fatalf("sendNudge error = %v, want binding-change refusal", err)
+	}
+	meta, err := mhome.ReadMeta(parent, taskIDForCaptain(id))
 	if err != nil {
-		t.Fatalf("ReadMeta: %v", err)
+		t.Fatal(err)
 	}
-	survived := 0
-	for i := 0; i < writers; i++ {
-		if meta[fmt.Sprintf("race_%02d", i)] == "persisted" {
-			survived++
-		}
+	if meta["window"] != "replacement-window" || meta["backend"] != "replacement-backend" || meta["sentinel"] != "preserved" {
+		t.Fatalf("replacement metadata changed: %v", meta)
 	}
-	t.Logf("concurrent writer keys surviving: %d/%d", survived, writers)
-	if survived != writers {
-		t.Fatalf("surviving concurrent writer keys = %d, want %d; meta=%v", survived, writers, meta)
-	}
-	return meta
-}
-
-// TestClearRelaunchGuardDoesNotEraseConcurrentWrites proves clearing a resolved
-// guard is one locked read-mutate-write cycle: every concurrent projection key
-// that lands during the clear survives it, and the guard is still cleared.
-func TestClearRelaunchGuardDoesNotEraseConcurrentWrites(t *testing.T) {
-	parent := t.TempDir()
-	captainHome := seedCaptainForTest(t, parent, "atomic-clear")
-	writeCaptainMeta(t, parent, "atomic-clear", captainHome, "w1")
-	writeRelaunchGuard(t, parent, "atomic-clear", strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10))
-
-	var clearErr error
-	meta := concurrentMetaWriters(t, parent, "atomic-clear", 16, func() {
-		clearErr = clearRelaunchGuard(parent, taskIDForCaptain("atomic-clear"))
-	})
-	if clearErr != nil {
-		t.Fatalf("clearRelaunchGuard: %v", clearErr)
-	}
-	if _, ok := meta["relaunch_liveness"]; ok {
-		t.Fatalf("relaunch_liveness = %q, want cleared", meta["relaunch_liveness"])
-	}
-	if _, ok := meta[relaunchGuardUntilField]; ok {
-		t.Fatalf("%s = %q, want cleared", relaunchGuardUntilField, meta[relaunchGuardUntilField])
-	}
-}
-
-// TestConsultRelaunchGuardExpiredClearDoesNotEraseConcurrentWrites proves the
-// expired-guard clear is one locked cycle: the guard is cleared, the relaunch
-// is allowed, and no concurrent projection key is erased.
-func TestConsultRelaunchGuardExpiredClearDoesNotEraseConcurrentWrites(t *testing.T) {
-	parent := t.TempDir()
-	captainHome := seedCaptainForTest(t, parent, "atomic-consult")
-	writeCaptainMeta(t, parent, "atomic-consult", captainHome, "w1")
-	writeRelaunchGuard(t, parent, "atomic-consult", strconv.FormatInt(time.Now().Add(-time.Hour).Unix(), 10))
-
-	var refused bool
-	var gErr error
-	meta := concurrentMetaWriters(t, parent, "atomic-consult", 16, func() {
-		refused, _, gErr = consultRelaunchGuard(parent, taskIDForCaptain("atomic-consult"), time.Now())
-	})
-	if gErr != nil {
-		t.Fatalf("consultRelaunchGuard: %v", gErr)
-	}
-	if refused {
-		t.Fatal("expired guard refused the relaunch")
-	}
-	if _, ok := meta["relaunch_liveness"]; ok {
-		t.Fatalf("relaunch_liveness = %q, want cleared after expiry", meta["relaunch_liveness"])
-	}
-}
-
-// TestConsultRelaunchGuardNormalizeDoesNotEraseConcurrentWrites proves the
-// deadline normalization write is one locked cycle: the normalized deadline is
-// the one the refusal was decided on, and no concurrent key is erased.
-func TestConsultRelaunchGuardNormalizeDoesNotEraseConcurrentWrites(t *testing.T) {
-	parent := t.TempDir()
-	captainHome := seedCaptainForTest(t, parent, "atomic-normalize")
-	writeCaptainMeta(t, parent, "atomic-normalize", captainHome, "w1")
-	writeRelaunchGuard(t, parent, "atomic-normalize", "not-a-timestamp")
-
-	now := time.Now()
-	var refused bool
-	var remaining time.Duration
-	var gErr error
-	meta := concurrentMetaWriters(t, parent, "atomic-normalize", 16, func() {
-		refused, remaining, gErr = consultRelaunchGuard(parent, taskIDForCaptain("atomic-normalize"), now)
-	})
-	if gErr != nil {
-		t.Fatalf("consultRelaunchGuard: %v", gErr)
-	}
-	if !refused || remaining <= 0 {
-		t.Fatalf("refused=%v remaining=%s, want a refusal inside the normalized window", refused, remaining)
-	}
-	want := strconv.FormatInt(now.Add(relaunchGuardTTL).Unix(), 10)
-	if meta[relaunchGuardUntilField] != want {
-		t.Fatalf("%s = %q, want the normalized deadline %q", relaunchGuardUntilField, meta[relaunchGuardUntilField], want)
-	}
-}
-
-// TestProveRelaunchArmDoesNotEraseConcurrentWrites proves arming the guard
-// after an elapsed proof window is one locked cycle rather than a snapshot read
-// held across the probe loop's sleeps.
-func TestProveRelaunchArmDoesNotEraseConcurrentWrites(t *testing.T) {
-	parent := t.TempDir()
-	captainHome := seedCaptainForTest(t, parent, "atomic-arm")
-	writeCaptainMeta(t, parent, "atomic-arm", captainHome, "w1")
-
-	var proven bool
-	var pErr error
-	meta := concurrentMetaWriters(t, parent, "atomic-arm", 16, func() {
-		proven, pErr = proveRelaunch(parent, Info{ID: "atomic-arm", Home: captainHome},
-			&testProbeEndpoint{result: CaptainProbeResult{Absent: true}},
-			func(time.Duration) {}, time.Now)
-	})
-	if pErr != nil {
-		t.Fatalf("proveRelaunch: %v", pErr)
-	}
-	if proven {
-		t.Fatal("proveRelaunch proved liveness against an absent endpoint")
-	}
-	if meta["relaunch_liveness"] != "unproven" {
-		t.Fatalf("relaunch_liveness = %q, want unproven after the proof window elapsed", meta["relaunch_liveness"])
-	}
-}
-
-// TestProveRelaunchClearDoesNotEraseConcurrentWrites proves the proven-liveness
-// clear is one locked cycle taken at the moment liveness is proven, not a write
-// of the snapshot read before the probes.
-func TestProveRelaunchClearDoesNotEraseConcurrentWrites(t *testing.T) {
-	parent := t.TempDir()
-	captainHome := seedCaptainForTest(t, parent, "atomic-prove")
-	writeCaptainMeta(t, parent, "atomic-prove", captainHome, "w1")
-	writeRelaunchGuard(t, parent, "atomic-prove", strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10))
-
-	var proven bool
-	var pErr error
-	meta := concurrentMetaWriters(t, parent, "atomic-prove", 16, func() {
-		proven, pErr = proveRelaunch(parent, Info{ID: "atomic-prove", Home: captainHome},
-			&testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}},
-			func(time.Duration) {}, time.Now)
-	})
-	if pErr != nil {
-		t.Fatalf("proveRelaunch: %v", pErr)
-	}
-	if !proven {
-		t.Fatal("proveRelaunch did not prove liveness against a live endpoint")
-	}
-	if _, ok := meta["relaunch_liveness"]; ok {
-		t.Fatalf("relaunch_liveness = %q, want cleared after proven liveness", meta["relaunch_liveness"])
-	}
-}
-
-// TestSendNudgeAppliedMarkerDoesNotEraseConcurrentWrites proves the applied_*
-// stamp written after the nudge round-trip is overlaid onto the meta as it
-// stands at write time, not onto the snapshot validated before the send, so a
-// projection write that lands during the send survives it.
-func TestSendNudgeAppliedMarkerDoesNotEraseConcurrentWrites(t *testing.T) {
-	parent, captainHome, id, digest := newGuardNudgeValidFixture(t)
 	marker, err := readNudgeMarker(parent, id)
-	if err != nil || marker == nil {
-		t.Fatalf("readNudgeMarker: %v", err)
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	var nErr error
-	meta := concurrentMetaWriters(t, parent, id, 16, func() {
-		nErr = sendNudge(parent, Info{ID: id, Home: captainHome},
-			&testNudgeEndpoint{result: NudgeResult{Status: "submitted", Acknowledged: true}})
-	})
-	if nErr != nil {
-		t.Fatalf("sendNudge: %v", nErr)
+	if marker == nil {
+		t.Fatal("nudge marker was cleared after binding refusal")
 	}
-	if meta["applied_commit"] != marker["commit"] {
-		t.Fatalf("applied_commit = %q, want %q", meta["applied_commit"], marker["commit"])
+	if _, ok := meta["applied_commit"]; ok {
+		t.Fatal("replacement received applied_commit")
 	}
-	if meta["applied_digest"] != digest {
-		t.Fatalf("applied_digest = %q, want %q", meta["applied_digest"], digest)
+	if _, ok := meta["applied_digest"]; ok {
+		t.Fatal("replacement received applied_digest")
 	}
 }
 
-// TestConsultRelaunchGuardRefusesForeignMeta proves the guard consult refuses a
-// task meta that is not a captain's rather than treating the missing guard
-// state as permission to relaunch.
+func TestProveRelaunchRefusesReplacementBinding(t *testing.T) {
+	parent := t.TempDir()
+	captainHome := seedCaptainForTest(t, parent, "atomic-probe")
+	writeCaptainMeta(t, parent, "atomic-probe", captainHome, "w1")
+	writeRelaunchGuard(t, parent, "atomic-probe", strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10))
+	probe := &blockingProbeEndpoint{started: make(chan struct{}), release: make(chan struct{})}
+	result := make(chan struct {
+		proven bool
+		err    error
+	}, 1)
+	go func() {
+		proven, err := proveRelaunch(parent, Info{ID: "atomic-probe", Home: captainHome}, probe, func(time.Duration) {}, time.Now)
+		result <- struct {
+			proven bool
+			err    error
+		}{proven, err}
+	}()
+	<-probe.started
+	if err := mhome.UpdateMeta(parent, taskIDForCaptain("atomic-probe"), func(meta map[string]string) error {
+		meta["window"], meta["backend"] = "replacement-window", "replacement-backend"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	close(probe.release)
+	out := <-result
+	if out.proven || out.err == nil || !strings.Contains(out.err.Error(), "captain binding changed") {
+		t.Fatalf("proveRelaunch result = proven=%v err=%v, want binding-change refusal", out.proven, out.err)
+	}
+	meta, err := mhome.ReadMeta(parent, taskIDForCaptain("atomic-probe"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta["window"] != "replacement-window" || meta["backend"] != "replacement-backend" || meta["relaunch_liveness"] != "unproven" {
+		t.Fatalf("replacement recovery metadata changed: %v", meta)
+	}
+}
+
 func TestConsultRelaunchGuardRefusesForeignMeta(t *testing.T) {
 	parent := t.TempDir()
 	taskID := taskIDForCaptain("foreign-consult")

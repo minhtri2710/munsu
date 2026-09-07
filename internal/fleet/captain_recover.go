@@ -162,15 +162,14 @@ func proveRelaunch(parentHome string, sm Info, probe ProbeEndpoint, sleep func(t
 	taskID := taskIDForCaptain(sm.ID)
 	var lastProbeErr error
 	for attempt := 0; attempt < relaunchProofAttempts; attempt++ {
-		state, stateErr := checkAliveWithProbe(parentHome, sm, probe)
+		state, binding, stateErr := checkAliveWithProbeBinding(parentHome, sm, probe)
 		if stateErr != nil {
 			lastProbeErr = stateErr
 		} else if state == CaptainAlive {
-			// No kind check here: checkAliveWithProbe returns CaptainAlive only
-			// for a meta it already read as kind=captain with a matching sm_id,
-			// home and window, so reaching this path is the proof the arm path
-			// below has to make for itself.
 			if err := mhome.UpdateMeta(parentHome, taskID, func(meta map[string]string) error {
+				if err := validateCaptainBinding(meta, sm, binding); err != nil {
+					return err
+				}
 				delete(meta, "relaunch_liveness")
 				delete(meta, relaunchGuardUntilField)
 				return nil
