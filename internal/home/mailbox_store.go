@@ -573,11 +573,3 @@ func (s *Store) ListAllPending() ([]*Envelope, error) {
 	})
 	return envelopes, nil
 }
-
-// --- Legacy standalone helpers (delegate to Store) ---
-
-// GetInboxEnvelope reads an envelope from the receiver's inbox.
-// Deprecated: use Store.ReadEnvelope.
-func GetInboxEnvelope(receiverHome, senderIdentity, messageID string) (*Envelope, error) {
-	return NewStore(receiverHome).ReadEnvelope(senderIdentity, messageID)
-}

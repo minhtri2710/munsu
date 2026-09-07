@@ -44,5 +44,3 @@ var ValidatePathComponent = home.ValidatePathComponent
 var NewMessageID = home.NewMessageID
 var ValidRank = home.ValidRank
 var ValidOutcome = home.ValidOutcome
-var GetInboxEnvelope = home.GetInboxEnvelope
-var NotifyReceiverWithSender = home.NotifyReceiverWithSender
