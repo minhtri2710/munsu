@@ -22,10 +22,15 @@ rather than an assumed invariant.
 ## Decision
 
 `gitlabDeliveryProvider` accepts an OPEN merge request only after the existing
-observation has established mergeability, a current passing `head_pipeline`
-whose SHA equals the observed MR head, and authoritative approval evidence with a
-nonempty `approved_by`. Its validation also requires the request head and base to
-match the delivery identity and rejects GitLab's unsupported `rebase` method.
+observation has established `detailed_merge_status == "mergeable"` as a separate
+provider fence, a current passing `head_pipeline` whose SHA equals the observed
+MR head, and `domain.PR.CanMerge` accepts the observed reviews and checks.
+Approval-rule evidence with a nonempty `approved_by` remains the only approval
+authority; the complete paginated reviewer set is read so any `requested_changes`
+verdict reaches `CanMerge`, while a reviewer's own `approved` state does not
+satisfy approval authority. Its validation also requires the request head and
+base to match the delivery identity and rejects GitLab's unsupported `rebase`
+method.
 
 The irreversible mutation has one implementation path: `glab api` performs
 `PUT /projects/:id/merge_requests/:iid/merge` with the authorized `sha` and an

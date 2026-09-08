@@ -991,6 +991,65 @@ func TestGitlabDeliveryProvider_ReviewerRequestedChangesRefusesMerge(t *testing.
 	}
 }
 
+// TestGitlabDeliveryProvider_ReviewerRequestedChangesOnLaterPageRefusesMerge
+// proves a blocking reviewer returned after the first GitLab reviewers page is
+// still included in the observer's mergeability verdict.
+func TestGitlabDeliveryProvider_ReviewerRequestedChangesOnLaterPageRefusesMerge(t *testing.T) {
+	mrJSON := fmt.Sprintf(`{"sha":"%s","source_branch":"feature","target_branch":"main","state":"opened","detailed_merge_status":"mergeable","head_pipeline":{"status":"success","sha":"%s"}}`, sampleSHA, sampleSHA)
+	ident := domain.DeliveryIdentity{Provider: "gitlab", Owner: "owner", Repo: "project", Number: 7, URL: "https://gitlab.com/owner/project/-/merge_requests/7", BaseRef: "main", HeadRef: "feature", HeadSHA: sampleSHA}
+	runner := &fakeGlabRunner{runFn: func(args ...string) ([]byte, error) {
+		if len(args) >= 2 && args[0] == "api" && strings.HasSuffix(args[1], "/approvals") {
+			return []byte(`{"approved":true,"approved_by":[{"user":{"username":"reviewer"}}]}`), nil
+		}
+		if len(args) >= 2 && args[0] == "api" && strings.HasSuffix(args[1], "/reviewers") {
+			if !containsArg(args, "--paginate") {
+				return []byte(`[{"user":{"username":"first-page"},"state":"pending"}]`), nil
+			}
+			return []byte(`[{"user":{"username":"first-page"},"state":"pending"},{"user":{"username":"later-page"},"state":"requested_changes"}]`), nil
+		}
+		return []byte(mrJSON), nil
+	}}
+
+	obs, err := (&gitlabDeliveryProvider{client: &glabClient{runner: runner}}).Observe(ident)
+	if err != nil {
+		t.Fatalf("Observe (later-page requested_changes): %v", err)
+	}
+	if obs.Mergeability != DeliveryMergeabilityDenied {
+		t.Fatalf("Mergeability = %q, want denied for a later-page requested_changes reviewer", obs.Mergeability)
+	}
+}
+
+func TestGitlabDeliveryProvider_ReviewerApprovalCannotSatisfyApprovalRule(t *testing.T) {
+	mrJSON := fmt.Sprintf(`{"sha":"%s","source_branch":"feature","target_branch":"main","state":"opened","detailed_merge_status":"mergeable","head_pipeline":{"status":"success","sha":"%s"}}`, sampleSHA, sampleSHA)
+	ident := domain.DeliveryIdentity{Provider: "gitlab", Owner: "owner", Repo: "project", Number: 7, URL: "https://gitlab.com/owner/project/-/merge_requests/7", BaseRef: "main", HeadRef: "feature", HeadSHA: sampleSHA}
+	runner := &fakeGlabRunner{runFn: func(args ...string) ([]byte, error) {
+		if len(args) >= 2 && args[0] == "api" && strings.HasSuffix(args[1], "/approvals") {
+			return []byte(`{"approved":false,"approved_by":[]}`), nil
+		}
+		if len(args) >= 2 && args[0] == "api" && strings.HasSuffix(args[1], "/reviewers") {
+			return []byte(`[{"user":{"username":"reviewer"},"state":"approved"}]`), nil
+		}
+		return []byte(mrJSON), nil
+	}}
+
+	obs, err := (&gitlabDeliveryProvider{client: &glabClient{runner: runner}}).Observe(ident)
+	if err != nil {
+		t.Fatalf("Observe (reviewer approved without approval rule): %v", err)
+	}
+	if obs.Mergeability != DeliveryMergeabilityDenied {
+		t.Fatalf("Mergeability = %q, want denied without approval-rule approval", obs.Mergeability)
+	}
+}
+
+func containsArg(args []string, want string) bool {
+	for _, arg := range args {
+		if arg == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestDeliverGitLabOpenMRMergesThroughPinnedAPI(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	taskID := "t-gitlab-open"
