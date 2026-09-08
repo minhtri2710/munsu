@@ -246,7 +246,8 @@ func TestWatchStatus_WithMaterialWake(t *testing.T) {
 	oldEpoch := time.Now().Add(-10 * time.Minute).Unix()
 	queuePath := orchestrator.QueuePath(home)
 	os.MkdirAll(filepath.Dir(queuePath), 0755)
-	line := fmt.Sprintf("%d\t%d\tsignal\ttask-old\tdone: old material\n", oldEpoch, 1)
+	// Realistic signal-wake payload: "<taskID>: <state>: <msg> [event=N]".
+	line := fmt.Sprintf("%d\t%d\tsignal\ttask-old\ttask-old: done: old material [event=1]\n", oldEpoch, 1)
 	os.WriteFile(queuePath, []byte(line), 0644)
 
 	resp := evaluateWatcherStatus(home)
@@ -270,7 +271,7 @@ func TestOldestMaterialWakeAge(t *testing.T) {
 	oldEpoch := time.Now().Add(-10 * time.Minute).Unix()
 	queuePath := orchestrator.QueuePath(home)
 	os.MkdirAll(filepath.Dir(queuePath), 0755)
-	os.WriteFile(queuePath, []byte(fmt.Sprintf("%d\t%d\tsignal\ttask-old\tdone: old\n", oldEpoch, 1)), 0644)
+	os.WriteFile(queuePath, []byte(fmt.Sprintf("%d\t%d\tsignal\ttask-old\ttask-old: done: old [event=1]\n", oldEpoch, 1)), 0644)
 
 	age := oldestMaterialWakeAge(home)
 	// Age should be roughly 10 minutes.

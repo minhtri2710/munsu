@@ -86,14 +86,33 @@ func HasAgedMaterialWake(homeDir string, now time.Time) bool {
 		if len(parts) < 5 {
 			continue
 		}
-		// Check for material states in the payload.
-		payload := parts[4]
-		if strings.HasPrefix(payload, "done:") || strings.HasPrefix(payload, "failed:") ||
-			strings.HasPrefix(payload, "needs-decision:") || strings.HasPrefix(payload, "blocked:") {
+		// Check for material states in the payload. parts[3] is the wake key
+		// (the taskID for signal/uplink wakes); PayloadHasMaterialMarker uses
+		// it to check the signal marker at the anchored "<taskID>: " position.
+		if PayloadHasMaterialMarker(parts[3], parts[4]) {
 			var epoch int64
 			if _, err := fmt.Sscanf(parts[0], "%d", &epoch); err == nil && epoch > 0 && epoch < threshold {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// PayloadHasMaterialMarker reports whether a wake queue payload carries a
+// material-state marker (done:/failed:/needs-decision:/blocked:) at its
+// structural position. Material wakes take two producer shapes: a signal wake
+// payload is "<taskID>: <state>: <msg> [event=N]" (the marker follows the
+// "<key>: " prefix, where key is the taskID) and an uplink wake payload is
+// "<state>: <msg> [task=X key=Y]" (the marker is at the start). Checking both
+// anchored positions matches both shapes while rejecting a marker that merely
+// appears mid-message in a non-material payload. This is the single predicate
+// both the guard (HasAgedMaterialWake) and watch (oldestMaterialWakeAge) use.
+func PayloadHasMaterialMarker(key, payload string) bool {
+	for state := range wakeMaterialStates {
+		marker := state + ":"
+		if strings.HasPrefix(payload, marker) || strings.HasPrefix(payload, key+": "+marker) {
+			return true
 		}
 	}
 	return false

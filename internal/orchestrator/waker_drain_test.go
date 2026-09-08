@@ -123,7 +123,10 @@ func TestEvaluateGuard_AgedWakeProducesAgedWakeCondition(t *testing.T) {
 	oldEpoch := time.Now().Add(-MaterialWakeAgeThreshold - time.Minute).Unix()
 	queuePath := QueuePath(home)
 	os.MkdirAll(filepath.Dir(queuePath), 0755)
-	line := fmt.Sprintf("%d	%d\tsignal\ttask-1\tdone: PR merged\n", oldEpoch, 1)
+	// Realistic signal-wake payload: the DeliverWake producer emits
+	// "<taskID>: <state>: <msg> [event=N]", so the material marker is embedded
+	// after the "<taskID>: " prefix, not at payload start.
+	line := fmt.Sprintf("%d	%d\tsignal\ttask-1\ttask-1: done: PR merged [event=1]\n", oldEpoch, 1)
 	os.WriteFile(queuePath, []byte(line), 0644)
 
 	result := EvaluateGuard(home, 1, time.Now())
@@ -152,7 +155,7 @@ func TestEvaluateGuard_FreshWakeNoAgedCondition(t *testing.T) {
 	writeBeatFile(t, home, time.Now().Unix())
 
 	// Enqueue a fresh material wake.
-	EnqueueWake(home, "signal", "task-fresh", "done: just finished")
+	EnqueueWake(home, "signal", "task-fresh", "task-fresh: done: just finished [event=1]")
 
 	result := EvaluateGuard(home, 1, time.Now())
 
@@ -170,7 +173,7 @@ func TestHasAgedMaterialWake_Threshold(t *testing.T) {
 	oldEpoch := time.Now().Add(-MaterialWakeAgeThreshold - time.Minute).Unix()
 	queuePath := QueuePath(home)
 	os.MkdirAll(filepath.Dir(queuePath), 0755)
-	line := fmt.Sprintf("%d	%d\tsignal\ttask-old\tdone: very old\n", oldEpoch, 1)
+	line := fmt.Sprintf("%d	%d\tsignal\ttask-old\ttask-old: done: very old [event=1]\n", oldEpoch, 1)
 	os.WriteFile(queuePath, []byte(line), 0644)
 
 	if !HasAgedMaterialWake(home, time.Now()) {
@@ -180,7 +183,7 @@ func TestHasAgedMaterialWake_Threshold(t *testing.T) {
 
 func TestHasAgedMaterialWake_Fresh(t *testing.T) {
 	home := t.TempDir()
-	EnqueueWake(home, "signal", "task-fresh", "done: fresh")
+	EnqueueWake(home, "signal", "task-fresh", "task-fresh: done: fresh [event=1]")
 
 	if HasAgedMaterialWake(home, time.Now()) {
 		t.Fatal("HasAgedMaterialWake should be false for fresh wake")
@@ -216,7 +219,7 @@ func TestReclaimedAgedMaterialWakeTripsGuard(t *testing.T) {
 	// whose header expiresAt=1 is far in the past so reclaim re-enqueues it.
 	oldEpoch := time.Now().Add(-MaterialWakeAgeThreshold - time.Minute).Unix()
 	leaseID := "lease-expired"
-	content := fmt.Sprintf("%s\tconsumer\t1\t%d\n%d\t1\tsignal\ttask-old\tdone: PR merged\n", leaseID, oldEpoch, oldEpoch)
+	content := fmt.Sprintf("%s\tconsumer\t1\t%d\n%d\t1\tsignal\ttask-old\ttask-old: done: PR merged [event=1]\n", leaseID, oldEpoch, oldEpoch)
 	if err := os.WriteFile(mhome.LeaseFilePath(home, leaseID), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -246,5 +249,41 @@ func TestConditionAgedWakePending_Constant(t *testing.T) {
 func TestMaterialWakeAgeThreshold_Constant(t *testing.T) {
 	if MaterialWakeAgeThreshold != 5*time.Minute {
 		t.Errorf("MaterialWakeAgeThreshold = %v, want 5m0s", MaterialWakeAgeThreshold)
+	}
+}
+
+// TestPayloadHasMaterialMarker pins the single predicate both the guard and
+// watch use. It must match both producer payload shapes and reject a marker
+// that only appears mid-message in a non-material payload.
+func TestPayloadHasMaterialMarker(t *testing.T) {
+	cases := []struct {
+		name    string
+		key     string
+		payload string
+		want    bool
+	}{
+		// Signal wake: "<taskID>: <state>: <msg> [event=N]" (marker embedded
+		// after the taskID). The old HasPrefix-only guard MISSED this shape.
+		{"signal done embedded", "task-1", "task-1: done: PR merged [event=7]", true},
+		{"signal failed embedded", "t2", "t2: failed: build broke [event=9]", true},
+		{"signal needs-decision embedded", "t3", "t3: needs-decision: pick one [event=1]", true},
+		{"signal blocked embedded", "t4", "t4: blocked: waiting [event=2]", true},
+		// Uplink wake: "<state>: <msg> [task=X key=Y]" (marker at start).
+		{"uplink done prefix", "task-1", "done: report ready [task=task-1 key=default]", true},
+		{"uplink taskID equals state", "done", "done: finished [task=done key=default]", true},
+		// A non-material payload whose message merely contains a marker string
+		// must NOT match (this is the false positive pure Contains produced).
+		{"working with done in message", "task-1", "task-1: working: almost done: 90% [event=3]", false},
+		{"routine non-material", "task-r", "task-r: working: in progress [event=4]", false},
+		// Marker without its colon is not a marker.
+		{"bare word done", "task-1", "task-1: done finished [event=5]", false},
+		{"empty payload", "task-1", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := PayloadHasMaterialMarker(tc.key, tc.payload); got != tc.want {
+				t.Errorf("PayloadHasMaterialMarker(%q, %q) = %v, want %v", tc.key, tc.payload, got, tc.want)
+			}
+		})
 	}
 }
