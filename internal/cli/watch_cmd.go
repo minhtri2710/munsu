@@ -501,8 +501,8 @@ func oldestMaterialWakeAge(homeDir string) int64 {
 		}
 		// Check for material states: done, failed, needs-decision, blocked.
 		// parts[3] is the wake key (taskID for signal/uplink); the shared
-		// predicate strips the signal producer's "<taskID>: " prefix so an
-		// embedded marker is detected without matching a mid-message occurrence.
+		// predicate checks both payload start and the anchored "<taskID>: "
+		// position, avoiding mid-message marker matches.
 		if orchestrator.PayloadHasMaterialMarker(parts[3], parts[4]) {
 			var epoch int64
 			if _, err := fmt.Sscanf(parts[0], "%d", &epoch); err == nil && epoch > 0 {

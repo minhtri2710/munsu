@@ -88,7 +88,7 @@ func HasAgedMaterialWake(homeDir string, now time.Time) bool {
 		}
 		// Check for material states in the payload. parts[3] is the wake key
 		// (the taskID for signal/uplink wakes); PayloadHasMaterialMarker uses
-		// it to strip the signal producer's "<taskID>: " prefix before anchoring.
+		// it to check the signal marker at the anchored "<taskID>: " position.
 		if PayloadHasMaterialMarker(parts[3], parts[4]) {
 			var epoch int64
 			if _, err := fmt.Sscanf(parts[0], "%d", &epoch); err == nil && epoch > 0 && epoch < threshold {
