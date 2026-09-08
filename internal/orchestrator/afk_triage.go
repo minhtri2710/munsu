@@ -20,6 +20,39 @@ type WakeDigest struct {
 	IsGeneralRelevant bool
 }
 
+// RepresentativeWakeKey returns the wake key that best represents this cycle
+// for repetition detection: the most frequent key, preferring escalated
+// (general-relevant) wakes over routine ones. The bool is false when the cycle
+// held no wakes. Frequency — not queue position — is what the wedge detector's
+// repeat check needs, so a key that dominates the cycle is chosen even when it
+// is not the first entry.
+func (d *Digest) RepresentativeWakeKey() (string, bool) {
+	if k, ok := mostFrequentKey(d.Escalated); ok {
+		return k, true
+	}
+	return mostFrequentKey(d.Routines)
+}
+
+// mostFrequentKey returns the most frequent Key among entries. Ties resolve to
+// the earliest-seen key (the entries are in cycle order and the comparison is
+// strict), keeping the result deterministic. The bool is false when empty.
+func mostFrequentKey(entries []WakeDigest) (string, bool) {
+	if len(entries) == 0 {
+		return "", false
+	}
+	counts := make(map[string]int, len(entries))
+	for _, e := range entries {
+		counts[e.Key]++
+	}
+	best := entries[0].Key
+	for _, e := range entries {
+		if counts[e.Key] > counts[best] {
+			best = e.Key
+		}
+	}
+	return best, true
+}
+
 // OneCycle drains the wake queue and classifies each entry.
 // Uses the existing classify package to determine captain-relevance.
 // Returns nil digest (not an error) when no wake queue exists or it is empty.

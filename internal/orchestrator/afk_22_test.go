@@ -356,6 +356,42 @@ func TestWedgeDetectorResetWake(t *testing.T) {
 	}
 }
 
+func TestDigestRepresentativeWakeKey(t *testing.T) {
+	// The repeating key sits at slot 1-2, not slot 0: frequency, not position,
+	// must decide. Slot-0 selection would return "a".
+	d := &Digest{Escalated: []WakeDigest{{Key: "a"}, {Key: "b"}, {Key: "b"}}}
+	if got, ok := d.RepresentativeWakeKey(); !ok || got != "b" {
+		t.Errorf("RepresentativeWakeKey() = %q,%v; want \"b\",true", got, ok)
+	}
+
+	// Escalated wakes win over routine ones even when a routine key is more
+	// frequent.
+	d = &Digest{
+		Escalated: []WakeDigest{{Key: "esc"}},
+		Routines:  []WakeDigest{{Key: "rou"}, {Key: "rou"}},
+	}
+	if got, ok := d.RepresentativeWakeKey(); !ok || got != "esc" {
+		t.Errorf("RepresentativeWakeKey() escalated-first = %q,%v; want \"esc\",true", got, ok)
+	}
+
+	// Falls back to the most frequent routine key when nothing escalated.
+	d = &Digest{Routines: []WakeDigest{{Key: "x"}, {Key: "y"}, {Key: "y"}}}
+	if got, ok := d.RepresentativeWakeKey(); !ok || got != "y" {
+		t.Errorf("RepresentativeWakeKey() routine = %q,%v; want \"y\",true", got, ok)
+	}
+
+	// A tie resolves to the earliest-seen key, deterministically.
+	d = &Digest{Escalated: []WakeDigest{{Key: "first"}, {Key: "second"}}}
+	if got, ok := d.RepresentativeWakeKey(); !ok || got != "first" {
+		t.Errorf("RepresentativeWakeKey() tie = %q,%v; want \"first\",true", got, ok)
+	}
+
+	// An empty cycle reports no key.
+	if got, ok := (&Digest{}).RepresentativeWakeKey(); ok || got != "" {
+		t.Errorf("RepresentativeWakeKey() empty = %q,%v; want \"\",false", got, ok)
+	}
+}
+
 // --- Stale artifact clearing tests ---
 
 func TestClearStaleArtifacts_NoStateDir(t *testing.T) {

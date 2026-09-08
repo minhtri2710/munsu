@@ -124,8 +124,8 @@ func (w *WedgeDetector) CheckDigestStuck(firstAt time.Time, maxDefer time.Durati
 	return nil
 }
 
-// FeedWake tracks a wake key for repetition detection. Call once per triage
-// cycle with the most frequent or last wake key seen.
+// FeedWake tracks one representative wake key for repetition detection. Call
+// once per triage cycle with the key selected by Digest.RepresentativeWakeKey.
 func (w *WedgeDetector) FeedWake(key string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
