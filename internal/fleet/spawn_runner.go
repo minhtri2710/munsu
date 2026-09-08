@@ -1106,11 +1106,9 @@ func (r *Runner) recordDeliveryContract() error {
 }
 
 // reconcileDeliveryFallback records the authorized delivery fallback that put
-// a mode other than the contracted one in force. It runs once, after the last
-// fallback site, so both the no-mistakes preflight blocker and a late
-// capability loss reach the durable record through the same path: the
-// contract's Mode becomes the mode in force and its Fallback states how it
-// got there (ADR-0022 Decision #2).
+// a mode other than the contracted one in force. It runs once after the
+// no-mistakes preflight fallback site: the contract's Mode becomes the mode in
+// force and its Fallback states how it got there (ADR-0022 Decision #2).
 //
 // It fails closed twice over. A divergence carrying no fallback reason is
 // never recorded as a transition — an unexplained mode change aborts the
@@ -1861,9 +1859,10 @@ func (r *Runner) submitLaunch() error {
 		}
 		return nil
 	}
-	// Submit first. A submission error means the launch may not have started;
-	// NO evidence is recorded, so recovery re-submits the same command under
-	// the same identity (the artifact guard bounds the process count).
+	// On the fresh-submission path, re-check attestation immediately before
+	// endpoint delivery. Record launch evidence only after submission succeeds;
+	// recovery then reuses the same identity without this final recheck or
+	// resubmission when matching evidence already exists.
 	if err := r.checkAttestation(); err != nil {
 		return fmt.Errorf("submitting launch: %w", err)
 	}

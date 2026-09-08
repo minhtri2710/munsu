@@ -43,9 +43,11 @@ re-resolution.
   read back on later spawns.
 * `internal/fleet/delivery_preflight.go` `preflightNoMistakes` — the sole
   authorized no-mistakes → direct-PR fallback site; it moves the launch's
-  effective mode. A late capability loss no longer downgrades (F028): it blocks
-  the launch through `checkAttestation` / `HandleLateCapabilityLoss` for a parent
-  Decision. The durable transition is recorded once behind the preflight site by
+  effective mode. A late capability loss no longer downgrades (F028): any
+  attested `Ready` capability becoming non-`Ready`, including `Unsupported`,
+  or an expired attestation, blocks the launch through `checkAttestation` /
+  `HandleLateCapabilityLoss` for a parent Decision. The durable transition is
+  recorded once behind the preflight site by
   `internal/fleet/spawn_runner.go` `reconcileDeliveryFallback`,
   which commits `RecordDeliveryFallback` before anything launches: the contract's
   `Mode` becomes the mode in force and a `DeliveryFallback` record states how it
@@ -63,6 +65,10 @@ re-resolution.
   not its source.
 * ADR-0008 §2 — durable task truth lives in `internal/taskauthority`, not in
   home meta projections.
+* `internal/fleet/spawn_runner.go` `submitLaunch` — on a fresh submission, the
+  attestation is rechecked immediately before endpoint delivery; recovery with
+  matching durable `LaunchEvidence` returns through its fast path without the
+  final submission-boundary recheck or resubmission.
 
 ## Decision
 
@@ -120,17 +126,17 @@ capability loss via `HandleLateCapabilityLoss` at soldier-launch preflight —
 which, after F028, blocks the launch for a parent Decision rather than falling
 back. It is a 24h-expiry capability snapshot — not the canonical aggregate and
 not durable across re-spawns — so the D1/D2 durable contract is distinct. The two
-relate by D2 feeding from this machinery rather than duplicating it: the fallback
-*decision* stays in the fleet runtime (the preflight blocker), and the effective
-mode plus accumulated fallback reason it leaves on the launch are exactly what
-`reconcileDeliveryFallback` reconciles into the canonical contract. `DeliveryFallback` is therefore the single durable
-statement of the delivery-mode transition (per one-live-contract), not a
-parallel from/to/reason record.
+relate by D2 feeding from this machinery rather than duplicating it: the
+late-capability-loss blocker leaves the effective mode unchanged, while
+`reconcileDeliveryFallback` records only the authorized fallback performed by
+`preflightNoMistakes` in the canonical contract. `DeliveryFallback` is therefore
+the single durable statement of the delivery-mode transition (per
+one-live-contract), not a parallel from/to/reason record.
 
 ### Non-goals
 
 * This decision does not alter the authorized mid-spawn no-mistakes → direct-PR
-  fallback at `preflightNoMistakes` described in §2. (F028 later removed the
-  late-capability-loss fallback; that path now blocks for a parent Decision.)
+  fallback at `preflightNoMistakes` described in §2. Late capability loss is not
+  a fallback; it blocks the launch for a parent Decision.
 * munsu does **not** adopt firstmate's registry-advisory-only model or its hard
   refuse-to-guess on missing mode.
