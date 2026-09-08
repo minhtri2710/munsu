@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/backend"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/spf13/cobra"
 )
@@ -67,7 +68,11 @@ authoritative task worktree bindings. If task metadata or task authority
 cannot be read, the command aborts without reclaiming anything.
 
 Leases should always be returned via "worktree return <path>" when a
-soldier finishes. This command is a safety net for orphaned leases.`,
+soldier finishes. This command is a safety net for orphaned leases. The git
+worktree provider is protected against the spawn/reclaim reservation race; the
+treehouse provider is not, because it exposes no reservation-keyed or holder
+status query, so reclaim cannot distinguish a reserved-but-unbound treehouse
+worktree from an orphan.`,
 		Args: NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			// Get all active worktree paths from task meta. Enumerate the meta
@@ -104,6 +109,23 @@ soldier finishes. This command is a safety net for orphaned leases.`,
 				if agg.Worktree != nil && agg.Worktree.Path != "" {
 					active[agg.Worktree.Path] = true
 				}
+			}
+
+			// Only git can spare reserved-but-unbound paths: treehouse has no
+			// reservation-keyed or holder status query.
+			for _, agg := range aggs {
+				if agg.Launch == nil || agg.Launch.WorktreeReservationID == "" {
+					continue
+				}
+				repoPath, rerr := fleet.ResolveRepoPath(ctx.Home, agg.Launch.Project)
+				if rerr != nil || repoPath == "" {
+					continue
+				}
+				path, ok, perr := backend.ReservedWorktreePath(ctx.Home, repoPath, agg.Launch.WorktreeReservationID)
+				if perr != nil || !ok || path == "" {
+					continue
+				}
+				active[path] = true
 			}
 
 			// Get treehouse status and parse worktree list

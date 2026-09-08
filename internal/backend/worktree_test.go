@@ -96,6 +96,32 @@ func TestGitFallback_Status(t *testing.T) {
 	}
 }
 
+func TestReservedWorktreePath_GitFallback(t *testing.T) {
+	t.Setenv("PATH", "/dev/null")
+	homeDir := t.TempDir()
+	repoPath := filepath.Join(t.TempDir(), "repo")
+	reservationID := "reservation-1"
+
+	path, ok, err := ReservedWorktreePath(homeDir, repoPath, reservationID)
+	if err != nil {
+		t.Fatalf("ReservedWorktreePath: %v", err)
+	}
+	if !ok {
+		t.Fatal("ReservedWorktreePath returned ok=false for a non-empty reservation")
+	}
+	want := filepath.Join(homeDir, ".worktrees", stableHash(repoPath+"\x00"+reservationID))
+	if path != want {
+		t.Fatalf("ReservedWorktreePath = %q, want %q", path, want)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("ReservedWorktreePath created %q: stat error = %v", path, err)
+	}
+
+	if path, ok, err := ReservedWorktreePath(homeDir, repoPath, ""); err != nil || ok || path != "" {
+		t.Fatalf("ReservedWorktreePath with empty reservation = (%q, %v, %v), want (\"\", false, nil)", path, ok, err)
+	}
+}
+
 func TestProviderSelection(t *testing.T) {
 	// Without treehouse on PATH, selectProvider should return gitWorktreeProvider.
 	oldPath := os.Getenv("PATH")

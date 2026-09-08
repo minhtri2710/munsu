@@ -41,6 +41,7 @@ import (
 type Provider interface {
 	Get(repoPath string, lease bool) (string, error)
 	GetReserved(repoPath string, lease bool, reservationID string, recovery bool) (string, error)
+	ReservedPath(repoPath, reservationID string) (path string, ok bool)
 	Return(path string) error
 	Status() (string, error)
 }
@@ -117,6 +118,17 @@ func GetWorktreeReserved(homeDir, repoPath string, lease bool, reservationID str
 	return p.GetReserved(repoPath, lease, reservationID, recovery)
 }
 
+// ReservedWorktreePath returns the path reserved for a launch reservation when
+// the active provider can derive it without querying or creating anything.
+func ReservedWorktreePath(homeDir, repoPath, reservationID string) (path string, ok bool, err error) {
+	p, err := selectProvider(homeDir)
+	if err != nil {
+		return "", false, err
+	}
+	path, ok = p.ReservedPath(repoPath, reservationID)
+	return path, ok, nil
+}
+
 // Return returns a worktree path within the given munsu home.
 // When treehouse is active, --force is always passed to prevent interactive prompts.
 func ReturnWorktree(homeDir, path string) error {
@@ -141,6 +153,12 @@ func WorktreeStatus(homeDir string) (string, error) {
 // --- treehouse provider ---
 
 type treehouseProvider struct{}
+
+// ReservedPath cannot map a pooled worktree path back to a treehouse lease
+// holder because treehouse exposes no holder query.
+func (p *treehouseProvider) ReservedPath(repoPath, reservationID string) (string, bool) {
+	return "", false
+}
 
 // GetReserved acquires a worktree owned by one launch reservation. On the
 // FIRST acquisition the reservation is passed as the treehouse lease holder
@@ -266,6 +284,15 @@ type gitWorktreeProvider struct {
 // Always <homeDir>/.worktrees — no env fallback.
 func (p *gitWorktreeProvider) getWorktreeBase() string {
 	return filepath.Join(p.homeDir, ".worktrees")
+}
+
+// ReservedPath returns the deterministic path for a launch reservation without
+// creating directories or invoking git.
+func (p *gitWorktreeProvider) ReservedPath(repoPath, reservationID string) (string, bool) {
+	if reservationID == "" {
+		return "", false
+	}
+	return filepath.Join(p.getWorktreeBase(), stableHash(repoPath+"\x00"+reservationID)), true
 }
 
 // GetReserved acquires the worktree owned by one launch reservation. The
