@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -9,9 +10,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
+	"github.com/spf13/cobra"
 )
 
 // TestWorktreeReclaimRefusesUnreadableMeta is the F024 oracle. `worktree
@@ -97,6 +101,233 @@ func TestWorktreeReclaimRefusesUnreadableMeta(t *testing.T) {
 	}
 	if _, err := os.Stat(orphanGit); err != nil {
 		t.Fatalf("reclaim must leave the orphan worktree untouched: %v", err)
+	}
+}
+
+func TestWorktreeReclaimSparesReservedUnboundWorktree(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+	t.Setenv("PATH", "/dev/null")
+	initCLITestHome(t, tmpDir)
+	projectName := "reserved-project"
+	repoPath := filepath.Join(tmpDir, "repo")
+	if err := os.MkdirAll(repoPath, 0o755); err != nil {
+		t.Fatalf("creating registered repo: %v", err)
+	}
+	if err := fleet.Add(tmpDir, projectName, repoPath, "", true); err != nil {
+		t.Fatalf("registering project: %v", err)
+	}
+
+	auth := testAuthorityFor(t, tmpDir)
+	taskID := mustTaskIDFor(t, "reserved-unbound")
+	projectID, err := domain.NewProjectID(projectName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	createReq := taskauthority.CanonicalCreateRequest{
+		HomeID:      auth.HomeID(),
+		TaskID:      taskID,
+		Owner:       "general",
+		Description: "reserved worktree test",
+		Kind:        "ship",
+		Project:     projectID,
+		Reason:      "reclaim test",
+	}
+	if _, err := auth.Create(mustCanonicalOp(t, "reclaim-reserved-create", createReq), createReq); err != nil {
+		t.Fatalf("creating task authority record: %v", err)
+	}
+	agg, err := auth.Get(taskID)
+	if err != nil {
+		t.Fatalf("reading task authority record: %v", err)
+	}
+	const reservationID = "wt-reserved-unbound"
+	launchReq := taskauthority.CanonicalBeginSpawnRequest{
+		HomeID:                auth.HomeID(),
+		TaskID:                taskID,
+		Precondition:          domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+		SnapshotDigest:        strings.Repeat("a", 64),
+		Backend:               "tmux",
+		Harness:               "pi",
+		Model:                 "model",
+		Effort:                "high",
+		Mode:                  "direct-PR",
+		Kind:                  "ship",
+		Project:               projectName,
+		LaunchID:              "launch-reserved-unbound",
+		WindowLabel:           "window-reserved-unbound",
+		WorktreeReservationID: reservationID,
+		WorktreeFenceToken:    "wt-fence-reserved-unbound",
+		EndpointReservationID: "ep-reserved-unbound",
+		EndpointFenceToken:    "ep-fence-reserved-unbound",
+		EndpointIncarnation:   "ep-inc-reserved-unbound",
+		Reason:                "reclaim test",
+	}
+	var reservedPath, reservedGit string
+	status := func(homeDir string) (string, error) {
+		if _, err := auth.BeginSpawn(mustCanonicalOp(t, "reclaim-reserved-launch", launchReq), launchReq); err != nil {
+			return "", fmt.Errorf("committing launch intent: %w", err)
+		}
+		var ok bool
+		reservedPath, ok, err = backend.ReservedWorktreePath(homeDir, repoPath, reservationID)
+		if err != nil || !ok {
+			return "", fmt.Errorf("resolving reserved worktree path: path=%q ok=%v err=%v", reservedPath, ok, err)
+		}
+		reservedGit = filepath.Join(reservedPath, ".git")
+		if err := os.MkdirAll(reservedPath, 0o755); err != nil {
+			return "", fmt.Errorf("materializing reserved worktree: %w", err)
+		}
+		if err := os.WriteFile(reservedGit, []byte("gitdir: /nowhere"), 0o644); err != nil {
+			return "", fmt.Errorf("seeding reserved worktree: %w", err)
+		}
+		return backend.WorktreeStatus(homeDir)
+	}
+
+	root := &cobra.Command{Use: "test"}
+	root.AddCommand(newWorktreeCmdWithStatus(status))
+	root.SetOut(new(strings.Builder))
+	root.SetErr(new(strings.Builder))
+	root.SetArgs([]string{"worktree", "reclaim"})
+	stdout, stdoutWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("creating stdout pipe: %v", err)
+	}
+	oldStdout := os.Stdout
+	os.Stdout = stdoutWriter
+	outputDone := make(chan string, 1)
+	go func() {
+		output, readErr := io.ReadAll(stdout)
+		if readErr != nil {
+			outputDone <- "read stdout: " + readErr.Error()
+			return
+		}
+		outputDone <- string(output)
+	}()
+
+	err = root.Execute()
+	stdoutWriter.Close()
+	os.Stdout = oldStdout
+	output := <-outputDone
+	stdout.Close()
+	if err != nil {
+		t.Fatalf("reclaim: %v", err)
+	}
+	if strings.Contains(output, "returning orphaned worktree: "+reservedPath) {
+		t.Fatalf("reclaim must spare the reserved-but-unbound worktree, got stdout: %q", output)
+	}
+	if !strings.Contains(output, "Reclaimed 0 orphaned worktrees") {
+		t.Fatalf("reclaim must report no reclaimed worktrees, got stdout: %q", output)
+	}
+	if _, err := os.Stat(reservedGit); err != nil {
+		t.Fatalf("reclaim must leave the reserved worktree untouched: %v", err)
+	}
+}
+
+func TestWorktreeReclaimAllowsRetiredReservation(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+	t.Setenv("PATH", "/usr/bin:/bin")
+	initCLITestHome(t, tmpDir)
+	projectName := "retired-project"
+	repoPath := filepath.Join(tmpDir, "repo")
+	if err := os.MkdirAll(repoPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"init", "-q", repoPath},
+		{"-C", repoPath, "config", "user.email", "test@example.invalid"},
+		{"-C", repoPath, "config", "user.name", "test"},
+	} {
+		if out, err := exec.Command("/usr/bin/git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(repoPath, "README.md"), []byte("seed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"-C", repoPath, "add", "README.md"},
+		{"-C", repoPath, "commit", "-qm", "seed"},
+	} {
+		if out, err := exec.Command("/usr/bin/git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	if err := fleet.Add(tmpDir, projectName, repoPath, "", true); err != nil {
+		t.Fatal(err)
+	}
+	auth := testAuthorityFor(t, tmpDir)
+	taskID := mustTaskIDFor(t, "retired-reservation")
+	projectID, err := domain.NewProjectID(projectName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	create := taskauthority.CanonicalCreateRequest{HomeID: auth.HomeID(), TaskID: taskID, Owner: "general", Description: "retired reservation", Kind: "ship", Project: projectID, Reason: "reclaim test"}
+	if _, err := auth.Create(mustCanonicalOp(t, "retired-create", create), create); err != nil {
+		t.Fatal(err)
+	}
+	agg, err := auth.Get(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const reservationID = "wt-retired-reservation"
+	launch := taskauthority.CanonicalBeginSpawnRequest{HomeID: auth.HomeID(), TaskID: taskID, Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), SnapshotDigest: strings.Repeat("b", 64), Backend: "tmux", Harness: "pi", Model: "model", Effort: "high", Mode: "direct-PR", Kind: "ship", Project: projectName, LaunchID: "launch-retired", WindowLabel: "window-retired", WorktreeReservationID: reservationID, WorktreeFenceToken: "fence-retired", EndpointReservationID: "ep-retired", EndpointFenceToken: "ep-fence-retired", EndpointIncarnation: "ep-inc-retired", Reason: "reclaim test"}
+	if _, err := auth.BeginSpawn(mustCanonicalOp(t, "retired-launch", launch), launch); err != nil {
+		t.Fatal(err)
+	}
+	agg, err = auth.Get(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retire := taskauthority.CanonicalRetireRequest{HomeID: auth.HomeID(), TaskID: taskID, Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), Reason: "reclaim test"}
+	if _, err := auth.Retire(mustCanonicalOp(t, "retired-retire", retire), retire); err != nil {
+		t.Fatal(err)
+	}
+	agg, err = auth.Get(taskID)
+	if err != nil || agg.Phase != taskauthority.PhaseRetired || agg.Launch == nil || agg.Worktree != nil {
+		t.Fatalf("retired aggregate = %+v, err=%v", agg, err)
+	}
+	reservedPath, ok, err := backend.ReservedWorktreePath(tmpDir, repoPath, reservationID)
+	if err != nil || !ok {
+		t.Fatalf("reserved path = %q, ok=%v, err=%v", reservedPath, ok, err)
+	}
+	if out, err := exec.Command("/usr/bin/git", "-C", repoPath, "worktree", "add", "--detach", reservedPath, "HEAD").CombinedOutput(); err != nil {
+		t.Fatalf("git worktree add: %v\n%s", err, out)
+	}
+	root := NewRootCommand()
+	root.SetOut(new(strings.Builder))
+	root.SetErr(new(strings.Builder))
+	root.SetArgs([]string{"worktree", "reclaim"})
+	stdout, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	outputDone := make(chan string, 1)
+	go func() {
+		output, readErr := io.ReadAll(stdout)
+		if readErr != nil {
+			outputDone <- "read stdout: " + readErr.Error()
+			return
+		}
+		outputDone <- string(output)
+	}()
+	oldStdout := os.Stdout
+	os.Stdout = writer
+	err = root.Execute()
+	writer.Close()
+	os.Stdout = oldStdout
+	output := <-outputDone
+	stdout.Close()
+	if err != nil {
+		t.Fatalf("reclaim: %v", err)
+	}
+	if !strings.Contains(output, "returning orphaned worktree: "+reservedPath) {
+		t.Fatalf("retired reservation should be reclaimable, got stdout: %q", output)
+	}
+	if !strings.Contains(output, "Reclaimed 1 orphaned worktrees") {
+		t.Fatalf("retired reservation should report one reclaimed worktree, got stdout: %q", output)
+	}
+	if _, err := os.Stat(reservedPath); !os.IsNotExist(err) {
+		t.Fatalf("retired reservation worktree should be removed, stat err=%v", err)
 	}
 }
 
