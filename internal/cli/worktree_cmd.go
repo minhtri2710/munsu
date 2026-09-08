@@ -61,10 +61,10 @@ func newWorktreeCmd() *cobra.Command {
 
 	reclaimCmd := &cobra.Command{
 		Use:   "reclaim",
-		Short: "Reclaim orphaned worktrees not referenced by any task meta",
-		Long: `List all treehouse-visible worktrees and return those not
-referenced by any active task meta file. Use after crash recovery or
-manual cleanup to release stale leases.
+		Short: "Reclaim worktrees not claimed by active tasks",
+		Long: `Reclaim worktrees not referenced by active task metadata or
+authoritative task worktree bindings. If task metadata or task authority
+cannot be read, the command aborts without reclaiming anything.
 
 Leases should always be returned via "worktree return <path>" when a
 soldier finishes. This command is a safety net for orphaned leases.`,
