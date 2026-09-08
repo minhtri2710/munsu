@@ -25,7 +25,7 @@ for the complete registered set.
 | `munsu project add|list|show|rm` | Manage registered projects. |
 | `munsu project mode <name>` | Resolve delivery mode for a project. |
 | `munsu worktree get|return|status` | Acquire, return, or inspect pooled worktrees. |
-| `munsu worktree reclaim` | See `internal/cli/skills/munsu-ops/COMMANDS.md` for reclaim behavior. |
+| `munsu worktree reclaim` | Reclaim orphaned worktrees not claimed by task metadata or authoritative task bindings; refuses when either source cannot be read. |
 | `munsu harness detect` | Detect the running coding-agent harness. |
 | `munsu harness soldier|captain` | Resolve the configured harness for a rank. |
 
