@@ -90,7 +90,7 @@ the full record (`stopProcessIsLossy`, afk_process_windows.go; afk_return.go).
 ### Wedge alarm
 
 Detects three conditions:
-1. **Stale watcher beat** — watcher beat file older than 5m
+1. **Stale watcher beat** — watcher beat file older than the configured stale-beat threshold (5m by default; override with `afk-wedge-stale-beat`)
 2. **Missing watcher beat** — beat file never written
 3. **Repeated stale wake** — identical wake key arriving 3+ times in a row (within 2 poll intervals)
 
