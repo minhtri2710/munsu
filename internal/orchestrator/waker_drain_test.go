@@ -270,6 +270,7 @@ func TestPayloadHasMaterialMarker(t *testing.T) {
 		{"signal blocked embedded", "t4", "t4: blocked: waiting [event=2]", true},
 		// Uplink wake: "<state>: <msg> [task=X key=Y]" (marker at start).
 		{"uplink done prefix", "task-1", "done: report ready [task=task-1 key=default]", true},
+		{"uplink taskID equals state", "done", "done: finished [task=done key=default]", true},
 		// A non-material payload whose message merely contains a marker string
 		// must NOT match (this is the false positive pure Contains produced).
 		{"working with done in message", "task-1", "task-1: working: almost done: 90% [event=3]", false},

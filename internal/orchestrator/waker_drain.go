@@ -104,15 +104,14 @@ func HasAgedMaterialWake(homeDir string, now time.Time) bool {
 // structural position. Material wakes take two producer shapes: a signal wake
 // payload is "<taskID>: <state>: <msg> [event=N]" (the marker follows the
 // "<key>: " prefix, where key is the taskID) and an uplink wake payload is
-// "<state>: <msg> [task=X key=Y]" (the marker is at the start). Stripping an
-// optional leading "<key>: " and then anchoring with HasPrefix matches both
-// shapes while rejecting a marker that merely appears mid-message in a
-// non-material payload. This is the single predicate both the guard
-// (HasAgedMaterialWake) and watch (oldestMaterialWakeAge) use.
+// "<state>: <msg> [task=X key=Y]" (the marker is at the start). Checking both
+// anchored positions matches both shapes while rejecting a marker that merely
+// appears mid-message in a non-material payload. This is the single predicate
+// both the guard (HasAgedMaterialWake) and watch (oldestMaterialWakeAge) use.
 func PayloadHasMaterialMarker(key, payload string) bool {
-	rest := strings.TrimPrefix(payload, key+": ")
 	for state := range wakeMaterialStates {
-		if strings.HasPrefix(rest, state+":") {
+		marker := state + ":"
+		if strings.HasPrefix(payload, marker) || strings.HasPrefix(payload, key+": "+marker) {
 			return true
 		}
 	}
