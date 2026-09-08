@@ -1864,6 +1864,9 @@ func (r *Runner) submitLaunch() error {
 	// Submit first. A submission error means the launch may not have started;
 	// NO evidence is recorded, so recovery re-submits the same command under
 	// the same identity (the artifact guard bounds the process count).
+	if err := r.checkAttestation(); err != nil {
+		return fmt.Errorf("submitting launch: %w", err)
+	}
 	if err := r.endpoints.Submit(r.endpoint, artifact.Command); err != nil {
 		return fmt.Errorf("submitting launch: %w (no launch evidence recorded; recovery may re-submit the same command)", err)
 	}
