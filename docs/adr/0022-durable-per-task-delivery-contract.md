@@ -18,7 +18,7 @@ Two consequences follow. First, because resolution re-runs each generation
 against live inputs (registry, PATH, capability), **the same task can silently
 acquire a different delivery mode across re-spawns** — the contract is not
 fixed to the task. Second, there is one authorized mid-spawn *downgrade*:
-`preflightNoMistakes` (`internal/fleet/delivery_preflight.go`) can fall a task
+`Runner.preflightNoMistakes` (`internal/fleet/spawn_runner.go`) can fall a task
 back from no-mistakes to direct-PR when the no-mistakes capability is absent or
 lost. A capability loss detected after attestation and before soldier launch
 does not downgrade the mode; it blocks the launch and requires a parent Decision.
@@ -41,7 +41,7 @@ re-resolution.
   before. The first-spawn resolution is recorded on the canonical aggregate as the
   delivery contract (`internal/fleet/spawn_runner.go` `recordDeliveryContract`) and
   read back on later spawns.
-* `internal/fleet/delivery_preflight.go` `preflightNoMistakes` — the sole
+* `internal/fleet/spawn_runner.go` `Runner.preflightNoMistakes` — the sole
   authorized no-mistakes → direct-PR fallback site; it moves the launch's
   effective mode. A late capability loss no longer downgrades (F028): any
   attested `Ready` capability becoming non-`Ready`, including `Unsupported`,
@@ -90,7 +90,7 @@ the destination home's live inputs on its next spawn. The home
 
 ### 2. Fallback is retained but recorded as an explicit transition
 
-The authorized no-mistakes → direct-PR downgrade at `preflightNoMistakes` is
+The authorized no-mistakes → direct-PR downgrade at `Runner.preflightNoMistakes` is
 kept — munsu's fallback resilience is deliberate and not surrendered to
 firstmate's strict refuse-to-guess. (The late-capability-loss path is no longer
 a fallback: F028 makes it block the launch for a parent Decision.) But a
@@ -136,7 +136,7 @@ one-live-contract), not a parallel from/to/reason record.
 ### Non-goals
 
 * This decision does not alter the authorized mid-spawn no-mistakes → direct-PR
-  fallback at `preflightNoMistakes` described in §2. Late capability loss is not
+  fallback at `Runner.preflightNoMistakes` described in §2. Late capability loss is not
   a fallback; it blocks the launch for a parent Decision.
 * munsu does **not** adopt firstmate's registry-advisory-only model or its hard
   refuse-to-guess on missing mode.
