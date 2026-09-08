@@ -258,6 +258,62 @@ func AckPath(homeDir, taskID, termKey string) (string, error) {
 	return home.DurableFilePath(ReceiptDir(homeDir), taskID, "."+termKey+".ack")
 }
 
+// isTermKeySafe reports whether every byte of s is in the durable-safe
+// filename alphabet [A-Za-z0-9_-]. An empty string is not safe.
+func isTermKeySafe(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') ||
+			(c >= 'a' && c <= 'z') || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+// ValidateTermKey rejects a terminal key that is not a durable-safe slug. The
+// key becomes a filename segment in <stem>.<termKey>.<ext>; constraining it to
+// [A-Za-z0-9_-] keeps that encoding injective (the reader splits at the last
+// dot, and the stem alone may carry dots) and forbids the tab/newline bytes
+// that could otherwise forge a field or a whole record.
+func ValidateTermKey(termKey string) error {
+	if !isTermKeySafe(termKey) {
+		return fmt.Errorf("invalid terminal key %q: must be a non-empty slug of [A-Za-z0-9_-]", termKey)
+	}
+	return nil
+}
+
+// parseReceiptName recovers the logical (taskID, termKey) pair from a receipt
+// filename of the form <stem>.<termKey>.receipt. termKey is guaranteed
+// dot-free and durable-safe by ValidateTermKey at write time, so the LAST dot
+// before the extension is the stem/termKey separator; the stem itself may
+// contain dots (a Unix task ID such as "v1.2"). ok is false for a name that is
+// not a well-formed receipt (wrong extension, no separator, an empty
+// component, or a termKey that is not durable-safe); err is non-nil only when a
+// well-formed stem fails to decode.
+func parseReceiptName(name string) (taskID, termKey string, ok bool, err error) {
+	if !strings.HasSuffix(name, ".receipt") {
+		return "", "", false, nil
+	}
+	core := strings.TrimSuffix(name, ".receipt")
+	i := strings.LastIndex(core, ".")
+	if i <= 0 || i == len(core)-1 {
+		return "", "", false, nil
+	}
+	stem, termKey := core[:i], core[i+1:]
+	if !isTermKeySafe(termKey) {
+		return "", "", false, nil
+	}
+	taskID, err = home.ReverseDurableKey(stem)
+	if err != nil {
+		return "", "", false, fmt.Errorf("decoding receipt task stem %q: %w", stem, err)
+	}
+	return taskID, termKey, true, nil
+}
+
 // WriteReceipt writes a durable relay receipt for a terminal report.
 // The receipt is identified by taskID + termKey (terminal key).
 // If a receipt already exists for this taskID+termKey, it is overwritten
@@ -352,14 +408,12 @@ func ListPendingReceipts(homeDir string) ([]PendingReceipt, error) {
 		if !strings.HasSuffix(name, ".receipt") || e.IsDir() {
 			continue
 		}
-		core := strings.TrimSuffix(name, ".receipt")
-		stem, termKey, ok := strings.Cut(core, ".")
-		if !ok || stem == "" || termKey == "" {
-			continue
-		}
-		taskID, err := home.ReverseDurableKey(stem)
+		taskID, termKey, ok, err := parseReceiptName(name)
 		if err != nil {
-			return nil, fmt.Errorf("decoding receipt task stem %q: %w", stem, err)
+			return nil, err
+		}
+		if !ok {
+			continue
 		}
 		if IsReceiptAcked(homeDir, taskID, termKey) {
 			continue
