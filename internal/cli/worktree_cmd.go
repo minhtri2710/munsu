@@ -8,10 +8,15 @@ import (
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/spf13/cobra"
 )
 
 func newWorktreeCmd() *cobra.Command {
+	return newWorktreeCmdWithStatus(backend.WorktreeStatus)
+}
+
+func newWorktreeCmdWithStatus(status func(string) (string, error)) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "worktree",
 		Short: "Manage pooled git worktrees",
@@ -51,7 +56,7 @@ func newWorktreeCmd() *cobra.Command {
 		Short: "Show worktree pool status",
 		Args:  NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			out, err := backend.WorktreeStatus(ctx.Home)
+			out, err := status(ctx.Home)
 			if err != nil {
 				return err
 			}
@@ -72,16 +77,22 @@ soldier finishes. This command is a safety net for orphaned leases. The git
 worktree provider is protected against the spawn/reclaim reservation race; the
 treehouse provider is not, because it exposes no reservation-keyed or holder
 status query, so reclaim cannot distinguish a reserved-but-unbound treehouse
-worktree from an orphan.`,
+worktree from an orphan. Git protection assumes the registered project path
+remains stable for the launch lifetime; relocation or removal during a launch
+can leave its originally reserved path unprotected.`,
 		Args: NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			// Get all active worktree paths from task meta. Enumerate the meta
-			// ids directly rather than through ListMeta, whose display-tolerant
-			// read silently drops an unreadable projection: for a destructive
-			// command an unreadable .meta is not evidence that the task holds no
-			// worktree, so refuse rather than skip. Otherwise a live worktree
-			// behind an unreadable .meta would be classified orphaned and
-			// destroyed.
+			// Snapshot candidates before reading authority: a git launch commits
+			// its reservation before creating the worktree, so later authority
+			// reads see reservations for every candidate in this snapshot. Git
+			// protection assumes the registered project path remains stable for
+			// the launch lifetime; relocation or removal can leave the original
+			// reserved path unprotected.
+			out, err := status(ctx.Home)
+			if err != nil {
+				return fmt.Errorf("getting treehouse status: %w", err)
+			}
+
 			ids, err := home.ListMetaIDs(ctx.Home)
 			if err != nil {
 				return fmt.Errorf("listing task meta: %w", err)
@@ -114,7 +125,11 @@ worktree from an orphan.`,
 			// Only git can spare reserved-but-unbound paths: treehouse has no
 			// reservation-keyed or holder status query.
 			for _, agg := range aggs {
-				if agg.Launch == nil || agg.Launch.WorktreeReservationID == "" {
+				if agg.Worktree != nil || agg.Launch == nil || agg.Launch.WorktreeReservationID == "" {
+					continue
+				}
+				switch agg.Phase {
+				case taskauthority.PhaseDone, taskauthority.PhaseResolved, taskauthority.PhaseRetired:
 					continue
 				}
 				repoPath, rerr := fleet.ResolveRepoPath(ctx.Home, agg.Launch.Project)
@@ -126,12 +141,6 @@ worktree from an orphan.`,
 					continue
 				}
 				active[path] = true
-			}
-
-			// Get treehouse status and parse worktree list
-			out, err := backend.WorktreeStatus(ctx.Home)
-			if err != nil {
-				return fmt.Errorf("getting treehouse status: %w", err)
 			}
 
 			// Return worktrees not in active set

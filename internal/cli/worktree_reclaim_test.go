@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -14,6 +15,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
+	"github.com/spf13/cobra"
 )
 
 // TestWorktreeReclaimRefusesUnreadableMeta is the F024 oracle. `worktree
@@ -160,22 +162,28 @@ func TestWorktreeReclaimSparesReservedUnboundWorktree(t *testing.T) {
 		EndpointIncarnation:   "ep-inc-reserved-unbound",
 		Reason:                "reclaim test",
 	}
-	if _, err := auth.BeginSpawn(mustCanonicalOp(t, "reclaim-reserved-launch", launchReq), launchReq); err != nil {
-		t.Fatalf("committing launch intent: %v", err)
-	}
-	reservedPath, ok, err := backend.ReservedWorktreePath(tmpDir, repoPath, reservationID)
-	if err != nil || !ok {
-		t.Fatalf("resolving reserved worktree path: path=%q ok=%v err=%v", reservedPath, ok, err)
-	}
-	reservedGit := filepath.Join(reservedPath, ".git")
-	if err := os.MkdirAll(reservedPath, 0o755); err != nil {
-		t.Fatalf("materializing reserved worktree: %v", err)
-	}
-	if err := os.WriteFile(reservedGit, []byte("gitdir: /nowhere"), 0o644); err != nil {
-		t.Fatalf("seeding reserved worktree: %v", err)
+	var reservedPath, reservedGit string
+	status := func(homeDir string) (string, error) {
+		if _, err := auth.BeginSpawn(mustCanonicalOp(t, "reclaim-reserved-launch", launchReq), launchReq); err != nil {
+			return "", fmt.Errorf("committing launch intent: %w", err)
+		}
+		var ok bool
+		reservedPath, ok, err = backend.ReservedWorktreePath(homeDir, repoPath, reservationID)
+		if err != nil || !ok {
+			return "", fmt.Errorf("resolving reserved worktree path: path=%q ok=%v err=%v", reservedPath, ok, err)
+		}
+		reservedGit = filepath.Join(reservedPath, ".git")
+		if err := os.MkdirAll(reservedPath, 0o755); err != nil {
+			return "", fmt.Errorf("materializing reserved worktree: %w", err)
+		}
+		if err := os.WriteFile(reservedGit, []byte("gitdir: /nowhere"), 0o644); err != nil {
+			return "", fmt.Errorf("seeding reserved worktree: %w", err)
+		}
+		return backend.WorktreeStatus(homeDir)
 	}
 
-	root := NewRootCommand()
+	root := &cobra.Command{Use: "test"}
+	root.AddCommand(newWorktreeCmdWithStatus(status))
 	root.SetOut(new(strings.Builder))
 	root.SetErr(new(strings.Builder))
 	root.SetArgs([]string{"worktree", "reclaim"})
@@ -208,6 +216,92 @@ func TestWorktreeReclaimSparesReservedUnboundWorktree(t *testing.T) {
 	}
 	if _, err := os.Stat(reservedGit); err != nil {
 		t.Fatalf("reclaim must leave the reserved worktree untouched: %v", err)
+	}
+}
+
+func TestWorktreeReclaimAllowsRetiredReservation(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+	t.Setenv("PATH", "/dev/null")
+	initCLITestHome(t, tmpDir)
+	projectName := "retired-project"
+	repoPath := filepath.Join(tmpDir, "repo")
+	if err := os.MkdirAll(repoPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := fleet.Add(tmpDir, projectName, repoPath, "", true); err != nil {
+		t.Fatal(err)
+	}
+	auth := testAuthorityFor(t, tmpDir)
+	taskID := mustTaskIDFor(t, "retired-reservation")
+	projectID, err := domain.NewProjectID(projectName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	create := taskauthority.CanonicalCreateRequest{HomeID: auth.HomeID(), TaskID: taskID, Owner: "general", Description: "retired reservation", Kind: "ship", Project: projectID, Reason: "reclaim test"}
+	if _, err := auth.Create(mustCanonicalOp(t, "retired-create", create), create); err != nil {
+		t.Fatal(err)
+	}
+	agg, err := auth.Get(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const reservationID = "wt-retired-reservation"
+	launch := taskauthority.CanonicalBeginSpawnRequest{HomeID: auth.HomeID(), TaskID: taskID, Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), SnapshotDigest: strings.Repeat("b", 64), Backend: "tmux", Harness: "pi", Model: "model", Effort: "high", Mode: "direct-PR", Kind: "ship", Project: projectName, LaunchID: "launch-retired", WindowLabel: "window-retired", WorktreeReservationID: reservationID, WorktreeFenceToken: "fence-retired", EndpointReservationID: "ep-retired", EndpointFenceToken: "ep-fence-retired", EndpointIncarnation: "ep-inc-retired", Reason: "reclaim test"}
+	if _, err := auth.BeginSpawn(mustCanonicalOp(t, "retired-launch", launch), launch); err != nil {
+		t.Fatal(err)
+	}
+	agg, err = auth.Get(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retire := taskauthority.CanonicalRetireRequest{HomeID: auth.HomeID(), TaskID: taskID, Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), Reason: "reclaim test"}
+	if _, err := auth.Retire(mustCanonicalOp(t, "retired-retire", retire), retire); err != nil {
+		t.Fatal(err)
+	}
+	agg, err = auth.Get(taskID)
+	if err != nil || agg.Phase != taskauthority.PhaseRetired || agg.Launch == nil || agg.Worktree != nil {
+		t.Fatalf("retired aggregate = %+v, err=%v", agg, err)
+	}
+	reservedPath, ok, err := backend.ReservedWorktreePath(tmpDir, repoPath, reservationID)
+	if err != nil || !ok {
+		t.Fatalf("reserved path = %q, ok=%v, err=%v", reservedPath, ok, err)
+	}
+	if err := os.MkdirAll(reservedPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(reservedPath, ".git"), []byte("gitdir: /nowhere"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root := NewRootCommand()
+	root.SetOut(new(strings.Builder))
+	root.SetErr(new(strings.Builder))
+	root.SetArgs([]string{"worktree", "reclaim"})
+	stdout, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	outputDone := make(chan string, 1)
+	go func() {
+		output, readErr := io.ReadAll(stdout)
+		if readErr != nil {
+			outputDone <- "read stdout: " + readErr.Error()
+			return
+		}
+		outputDone <- string(output)
+	}()
+	oldStdout := os.Stdout
+	os.Stdout = writer
+	err = root.Execute()
+	writer.Close()
+	os.Stdout = oldStdout
+	output := <-outputDone
+	stdout.Close()
+	if err != nil {
+		t.Fatalf("reclaim: %v", err)
+	}
+	if !strings.Contains(output, "returning orphaned worktree: "+reservedPath) {
+		t.Fatalf("retired reservation should be reclaimable, got stdout: %q", output)
 	}
 }
 
