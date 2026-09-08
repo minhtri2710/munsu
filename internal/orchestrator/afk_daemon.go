@@ -190,11 +190,10 @@ func (d *Daemon) triageCycle(now time.Time) {
 
 	// 3. Feed wedge detector (for repeated wake detection).
 	if digest != nil {
-		// Track the most common wake key from the cycle.
-		if len(digest.Escalated) > 0 {
-			d.wedge.FeedWake(digest.Escalated[0].Key)
-		} else if len(digest.Routines) > 0 {
-			d.wedge.FeedWake(digest.Routines[0].Key)
+		// Track the most frequent wake key from the cycle (escalated first),
+		// so a genuinely repeating wake is counted regardless of its position.
+		if key, ok := digest.RepresentativeWakeKey(); ok {
+			d.wedge.FeedWake(key)
 		} else {
 			d.wedge.ResetWake()
 		}
