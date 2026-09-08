@@ -20,8 +20,8 @@ acquire a different delivery mode across re-spawns** — the contract is not
 fixed to the task. Second, there is one authorized mid-spawn *downgrade*:
 `preflightNoMistakes` (`internal/fleet/delivery_preflight.go`) can fall a task
 back from no-mistakes to direct-PR when the no-mistakes capability is absent or
-lost. A late capability loss does not downgrade after launch; it blocks the
-launch and requires a parent Decision.
+lost. A capability loss detected after attestation and before soldier launch
+does not downgrade the mode; it blocks the launch and requires a parent Decision.
 
 firstmate #1563 records mode as a machine-readable per-task brief line, re-checks
 brief ↔ spawn ↔ promote against it, and demotes the project registry to
