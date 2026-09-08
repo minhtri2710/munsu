@@ -61,28 +61,48 @@ func newWorktreeCmd() *cobra.Command {
 
 	reclaimCmd := &cobra.Command{
 		Use:   "reclaim",
-		Short: "Reclaim orphaned worktrees not referenced by any task meta",
-		Long: `List all treehouse-visible worktrees and return those not
-referenced by any active task meta file. Use after crash recovery or
-manual cleanup to release stale leases.
+		Short: "Reclaim worktrees not claimed by active tasks",
+		Long: `Reclaim worktrees not referenced by active task metadata or
+authoritative task worktree bindings. If task metadata or task authority
+cannot be read, the command aborts without reclaiming anything.
 
 Leases should always be returned via "worktree return <path>" when a
 soldier finishes. This command is a safety net for orphaned leases.`,
 		Args: NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			// Get all active worktree paths from task meta
-			entries, err := home.ListMeta(ctx.Home)
+			// Get all active worktree paths from task meta. Enumerate the meta
+			// ids directly rather than through ListMeta, whose display-tolerant
+			// read silently drops an unreadable projection: for a destructive
+			// command an unreadable .meta is not evidence that the task holds no
+			// worktree, so refuse rather than skip. Otherwise a live worktree
+			// behind an unreadable .meta would be classified orphaned and
+			// destroyed.
+			ids, err := home.ListMetaIDs(ctx.Home)
 			if err != nil {
 				return fmt.Errorf("listing task meta: %w", err)
 			}
 			active := make(map[string]bool)
-			for _, e := range entries {
-				meta, err := home.ReadMeta(ctx.Home, e.ID)
+			for _, id := range ids {
+				meta, err := home.ReadMeta(ctx.Home, id)
 				if err != nil {
-					continue
+					return fmt.Errorf("reading task meta %q: %w", id, err)
 				}
 				if wt := meta["worktree"]; wt != "" {
 					active[wt] = true
+				}
+			}
+
+			auth, err := taskAuthorityForRead(ctx.Home)
+			if err != nil {
+				return fmt.Errorf("reading task authority: %w", err)
+			}
+			aggs, err := auth.List()
+			if err != nil {
+				return fmt.Errorf("listing task authority: %w", err)
+			}
+			for _, agg := range aggs {
+				if agg.Worktree != nil && agg.Worktree.Path != "" {
+					active[agg.Worktree.Path] = true
 				}
 			}
 
