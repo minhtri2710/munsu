@@ -276,11 +276,12 @@ func (r *Runner) Run() (string, error) {
 	if err := r.checkAttestation(); err != nil {
 		return "", err
 	}
-	// Both authorized fallback sites (preflightNoMistakes and the late
-	// capability loss handled by checkAttestation) are behind us, so this is
-	// the one place the mode actually in force can be reconciled against the
-	// durable contract. A divergence is recorded as an explicit transition
-	// before anything launches: nothing delivers under an unrecorded mode.
+	// The one authorized fallback site (preflightNoMistakes) is behind us, so
+	// this is the one place the mode actually in force can be reconciled
+	// against the durable contract. A divergence is recorded as an explicit
+	// transition before anything launches: nothing delivers under an
+	// unrecorded mode. Late capability loss does not fall back — checkAttestation
+	// above blocks it for a parent Decision.
 	if err := r.reconcileDeliveryFallback(); err != nil {
 		return "", err
 	}
@@ -1105,11 +1106,9 @@ func (r *Runner) recordDeliveryContract() error {
 }
 
 // reconcileDeliveryFallback records the authorized delivery fallback that put
-// a mode other than the contracted one in force. It runs once, after the last
-// fallback site, so both the no-mistakes preflight blocker and a late
-// capability loss reach the durable record through the same path: the
-// contract's Mode becomes the mode in force and its Fallback states how it
-// got there (ADR-0022 Decision #2).
+// a mode other than the contracted one in force. It runs once after the
+// no-mistakes preflight fallback site: the contract's Mode becomes the mode in
+// force and its Fallback states how it got there (ADR-0022 Decision #2).
 //
 // It fails closed twice over. A divergence carrying no fallback reason is
 // never recorded as a transition — an unexplained mode change aborts the
@@ -1429,15 +1428,6 @@ func (r *Runner) createAttestation() error {
 		gateAgent = "unknown"
 	}
 
-	// Build a fallback policy when the effective mode differs from requested.
-	var fallbackPolicy *FallbackPolicy
-	if r.fallbackReason != "" && r.effectiveMode != r.requestedMode {
-		fallbackPolicy = &FallbackPolicy{
-			AuthorizedMode: r.effectiveMode,
-			Reason:         r.fallbackReason,
-		}
-	}
-
 	r.attestation = CreateCapabilityAttestation(
 		r.args.ProjectName,
 		r.homeDir,
@@ -1446,33 +1436,20 @@ func (r *Runner) createAttestation() error {
 		r.requestedMode,
 		r.effectiveMode,
 		r.fallbackReason,
-		fallbackPolicy,
 	)
 	return nil
 }
 
 // checkAttestation verifies that the capability attestation is still valid
-// before soldier launch. Late capability loss is handled by preserving work
-// and either proceeding with a pre-authorized fallback or blocking for a
-// parent Decision.
+// before soldier launch. Any late capability loss preserves work and blocks
+// for a parent Decision; a launch never proceeds in a mode whose capability
+// is gone.
 func (r *Runner) checkAttestation() error {
 	if r.attestation == nil {
 		return nil
 	}
 	result := HandleLateCapabilityLoss(r.attestation)
 	if !result.Changed {
-		return nil
-	}
-	if result.CanProceed {
-		if result.FallbackMode != "" {
-			fmt.Fprintf(os.Stderr, "warning: late capability loss, falling back to %s: %s\n", result.FallbackMode, result.Detail)
-			r.effectiveMode = result.FallbackMode
-			if r.fallbackReason == "" {
-				r.fallbackReason = result.Detail
-			} else {
-				r.fallbackReason += "; " + result.Detail
-			}
-		}
 		return nil
 	}
 	return fmt.Errorf("launch blocked: %s", result.BlockReason)
@@ -1882,9 +1859,13 @@ func (r *Runner) submitLaunch() error {
 		}
 		return nil
 	}
-	// Submit first. A submission error means the launch may not have started;
-	// NO evidence is recorded, so recovery re-submits the same command under
-	// the same identity (the artifact guard bounds the process count).
+	// On the fresh-submission path, re-check attestation immediately before
+	// endpoint delivery. Record launch evidence only after submission succeeds;
+	// recovery then reuses the same identity without this final recheck or
+	// resubmission when matching evidence already exists.
+	if err := r.checkAttestation(); err != nil {
+		return fmt.Errorf("submitting launch: %w", err)
+	}
 	if err := r.endpoints.Submit(r.endpoint, artifact.Command); err != nil {
 		return fmt.Errorf("submitting launch: %w (no launch evidence recorded; recovery may re-submit the same command)", err)
 	}

@@ -352,8 +352,8 @@ type DeliveryContract struct {
 
 // DeliveryFallback records the authorized delivery transition that moved the
 // contract off its recorded mode: the one direction an operator policy
-// sanctions (a no-mistakes blocker or a late capability loss falling back to
-// direct-PR). It is a single record, not a history: after it the contract's
+// sanctions (the authorized no-mistakes preflight fallback to direct-PR). It is
+// a single record, not a history: after it the contract's
 // Mode IS the mode in force and this states how it got there (ADR-0022
 // Decision #2). A later generation reads the transitioned mode and never
 // re-falls-back.

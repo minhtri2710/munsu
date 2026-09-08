@@ -93,8 +93,8 @@ func (c *Canonical) RecordDeliveryContract(op domain.Operation, req CanonicalRec
 // mode the contract currently states; the op refuses the transition unless it
 // matches, so a fallback can never silently overwrite a contract it did not
 // read. Reason is the operator-facing evidence for the transition (the
-// no-mistakes blocker, or the late capability loss detail) and is part of the
-// digest, so a replay can never acquire a reason the original did not carry.
+// no-mistakes blocker) and is part of the digest, so a replay can never acquire
+// a reason the original did not carry.
 type CanonicalRecordDeliveryFallbackRequest struct {
 	HomeID       domain.HomeID
 	TaskID       domain.TaskID

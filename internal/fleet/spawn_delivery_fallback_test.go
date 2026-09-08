@@ -1,12 +1,15 @@
 package fleet
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // contractedLaunch drives a fixture through the launch steps that commit the
@@ -99,40 +102,80 @@ func TestReconcileDeliveryFallbackRecordsPreflightFallback(t *testing.T) {
 	}
 }
 
-// TestReconcileDeliveryFallbackRecordsLateCapabilityLoss builds the second
-// fallback site's real state: an expired attestation carrying a pre-authorized
-// fallback mode. The same reconcile step must record it, so both sites reach
-// the durable record through one path.
-func TestReconcileDeliveryFallbackRecordsLateCapabilityLoss(t *testing.T) {
-	f := newLaunchFixture(t, "fallback-lateloss")
-	contractedLaunch(t, f, "no-mistakes")
+// TestCheckAttestationBlocksOnLateCapabilityLoss pins F028's contract: a late
+// capability loss aborts the launch for a parent Decision. There is no
+// pre-authorized fallback that lets the launch proceed in the mode whose
+// capability is gone, and a blocked launch never mutates the mode in force.
+func TestCheckAttestationBlocksOnLateCapabilityLoss(t *testing.T) {
+	r := &Runner{
+		effectiveMode: "no-mistakes",
+		requestedMode: "no-mistakes",
+		attestation: &CapabilityAttestation{
+			RequestedMode: "no-mistakes",
+			EffectiveMode: "no-mistakes",
+			Expiry:        time.Now().UTC().Add(-time.Hour),
+		},
+	}
+	err := r.checkAttestation()
+	if err == nil {
+		t.Fatal("late capability loss must block the launch")
+	}
+	if !strings.Contains(err.Error(), "launch blocked") || !strings.Contains(err.Error(), "parent Decision") {
+		t.Fatalf("block error does not name the gate: %v", err)
+	}
+	if r.effectiveMode != "no-mistakes" || r.fallbackReason != "" {
+		t.Fatalf("a blocked launch mutated the mode in force: mode=%q reason=%q", r.effectiveMode, r.fallbackReason)
+	}
+}
 
-	r := f.runner
-	r.attestation = &CapabilityAttestation{
-		RequestedMode:  "no-mistakes",
-		EffectiveMode:  "no-mistakes",
-		Expiry:         time.Now().UTC().Add(-time.Hour),
-		FallbackPolicy: &FallbackPolicy{AuthorizedMode: "direct-PR"},
-	}
-	if err := r.checkAttestation(); err != nil {
-		t.Fatalf("checkAttestation: %v", err)
-	}
-	if r.effectiveMode != "direct-PR" || r.fallbackReason == "" {
-		t.Fatalf("late loss did not fall back: mode=%q reason=%q", r.effectiveMode, r.fallbackReason)
+// TestCheckAttestationBlocksOnReadyToUnsupportedLoss pins the F028 detection
+// fix: a late loss is not only expiry. A capability attested Ready that the
+// live probe now reports as a non-Ready state (here Unsupported, an
+// on-PATH no-mistakes below the minimum version) is a Ready -> non-Ready
+// downgrade that must block the launch for a parent Decision without mutating
+// the mode in force. The attestation itself has not expired, so this exercises
+// the capability-state comparison branch, not the expiry branch.
+func TestCheckAttestationBlocksOnReadyToUnsupportedLoss(t *testing.T) {
+	tmpDir := t.TempDir()
+	script := `#!/bin/sh
+case "$1" in
+  --version)
+    echo "no-mistakes version v0.5.0 (ancient)"
+    exit 0
+    ;;
+esac
+exit 1
+`
+	testutil.WriteFakeExecutable(t, filepath.Join(tmpDir, "no-mistakes"), script)
+	testutil.PrependPath(t, tmpDir)
+
+	// Precondition: the live probe reports the capability as Unsupported, not
+	// Absent or Failed — the exact transition the old detector missed.
+	if got := NoMistakesProbe().State; got != backend.Unsupported {
+		t.Fatalf("probe precondition: no-mistakes state = %v, want Unsupported", got)
 	}
 
-	if err := r.reconcileDeliveryFallback(); err != nil {
-		t.Fatalf("reconcileDeliveryFallback: %v", err)
+	r := &Runner{
+		effectiveMode: "no-mistakes",
+		requestedMode: "no-mistakes",
+		attestation: &CapabilityAttestation{
+			RequestedMode: "no-mistakes",
+			EffectiveMode: "no-mistakes",
+			Expiry:        time.Now().UTC().Add(24 * time.Hour),
+			Capabilities: []CapabilityEntry{
+				{Name: "no-mistakes", State: backend.Ready, Path: "/usr/local/bin/no-mistakes"},
+			},
+		},
 	}
-	dc := contractOf(t, f)
-	if dc.Mode != "direct-PR" || dc.Fallback == nil {
-		t.Fatalf("late capability loss not recorded on the contract: %+v", dc)
+	err := r.checkAttestation()
+	if err == nil {
+		t.Fatal("a Ready -> Unsupported capability loss must block the launch")
 	}
-	if dc.Fallback.From != "no-mistakes" || dc.Fallback.To != "direct-PR" {
-		t.Fatalf("transition = %+v", *dc.Fallback)
+	if !strings.Contains(err.Error(), "launch blocked") || !strings.Contains(err.Error(), "parent Decision") {
+		t.Fatalf("block error does not name the gate: %v", err)
 	}
-	if !strings.Contains(dc.Fallback.Reason, "attestation expired") {
-		t.Fatalf("transition reason does not carry the loss detail: %q", dc.Fallback.Reason)
+	if r.effectiveMode != "no-mistakes" || r.fallbackReason != "" {
+		t.Fatalf("a blocked launch mutated the mode in force: mode=%q reason=%q", r.effectiveMode, r.fallbackReason)
 	}
 }
 

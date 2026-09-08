@@ -22,7 +22,6 @@ func TestCreateCapabilityAttestation_BindsFields(t *testing.T) {
 	att := CreateCapabilityAttestation(
 		"test-project", "/tmp/home", "pi", "pi",
 		"no-mistakes", "no-mistakes", "",
-		nil,
 	)
 
 	if att.Project != "test-project" {
@@ -46,9 +45,6 @@ func TestCreateCapabilityAttestation_BindsFields(t *testing.T) {
 	if att.FallbackReason != "" {
 		t.Errorf("FallbackReason = %q, want empty", att.FallbackReason)
 	}
-	if att.CreatedAt == "" {
-		t.Error("CreatedAt should be set")
-	}
 	if att.Expiry.IsZero() {
 		t.Error("Expiry should be set")
 	}
@@ -58,7 +54,6 @@ func TestCreateCapabilityAttestation_WithFallbackReason(t *testing.T) {
 	att := CreateCapabilityAttestation(
 		"test-project", "/tmp/home", "pi", "pi",
 		"no-mistakes", "direct-PR", "no-mistakes not on PATH",
-		nil,
 	)
 
 	if att.FallbackReason != "no-mistakes not on PATH" {
@@ -70,7 +65,6 @@ func TestCreateCapabilityAttestation_ProbesCapabilities(t *testing.T) {
 	att := CreateCapabilityAttestation(
 		"test-project", "/tmp/home", "pi", "pi",
 		"no-mistakes", "no-mistakes", "",
-		nil,
 	)
 
 	if len(att.Capabilities) == 0 {
@@ -88,22 +82,6 @@ func TestCreateCapabilityAttestation_ProbesCapabilities(t *testing.T) {
 	}
 }
 
-func TestCreateCapabilityAttestation_WithFallbackPolicy(t *testing.T) {
-	policy := &FallbackPolicy{AuthorizedMode: "direct-PR", Reason: "test fallback"}
-	att := CreateCapabilityAttestation(
-		"test-project", "/tmp/home", "pi", "pi",
-		"no-mistakes", "no-mistakes", "",
-		policy,
-	)
-
-	if att.FallbackPolicy == nil {
-		t.Fatal("FallbackPolicy should be set")
-	}
-	if att.FallbackPolicy.AuthorizedMode != "direct-PR" {
-		t.Errorf("AuthorizedMode = %q, want %q", att.FallbackPolicy.AuthorizedMode, "direct-PR")
-	}
-}
-
 func TestCapabilityEntry_StateValues(t *testing.T) {
 	entry := CapabilityEntry{
 		Name:    "test-cap",
@@ -114,37 +92,6 @@ func TestCapabilityEntry_StateValues(t *testing.T) {
 
 	if entry.State != backend.Ready {
 		t.Errorf("State = %v, want Ready", entry.State)
-	}
-}
-
-func TestCapabilityAttestation_JSONRoundTrip(t *testing.T) {
-	att := CreateCapabilityAttestation(
-		"test-project", "/tmp/home", "pi", "pi",
-		"no-mistakes", "direct-PR", "reason",
-		nil,
-	)
-
-	data, err := json.Marshal(att)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-
-	var restored CapabilityAttestation
-	if err := json.Unmarshal(data, &restored); err != nil {
-		t.Fatalf("Unmarshal: %v", err)
-	}
-
-	if restored.Project != att.Project || restored.Home != att.Home {
-		t.Errorf("round trip mismatch: %+v vs %+v", restored, att)
-	}
-	if restored.RequestedMode != att.RequestedMode || restored.EffectiveMode != att.EffectiveMode {
-		t.Errorf("mode mismatch: %+v vs %+v", restored, att)
-	}
-	if restored.FallbackReason != att.FallbackReason {
-		t.Errorf("fallback reason mismatch: %+v vs %+v", restored, att)
-	}
-	if len(restored.Capabilities) != len(att.Capabilities) {
-		t.Errorf("capabilities mismatch: %d vs %d", len(restored.Capabilities), len(att.Capabilities))
 	}
 }
 
@@ -162,7 +109,6 @@ func TestCheckCapabilityAttestation_ExpiredReturnsChanged(t *testing.T) {
 	att := CreateCapabilityAttestation(
 		"test-project", "/tmp/home", "pi", "pi",
 		"no-mistakes", "no-mistakes", "",
-		nil,
 	)
 	// Force expiry.
 	att.Expiry = time.Now().UTC().Add(-1 * time.Hour)
@@ -177,7 +123,6 @@ func TestCheckCapabilityAttestation_ValidExpiry(t *testing.T) {
 	att := CreateCapabilityAttestation(
 		"test-project", "/tmp/home", "pi", "pi",
 		"no-mistakes", "no-mistakes", "",
-		nil,
 	)
 	// Force a future expiry.
 	att.Expiry = time.Now().UTC().Add(24 * time.Hour)
@@ -192,7 +137,6 @@ func TestCheckCapabilityAttestation_ZeroExpiryFailsClosed(t *testing.T) {
 	att := CreateCapabilityAttestation(
 		"test-project", "/tmp/home", "pi", "pi",
 		"no-mistakes", "no-mistakes", "",
-		nil,
 	)
 	// An attestation carrying no expiry at all must read as expired: the
 	// field exists to fail closed, so its absence cannot mean "never expires".
@@ -211,7 +155,6 @@ func TestHandleLateCapabilityLoss_ZeroExpiryBlocksLaunch(t *testing.T) {
 	att := CreateCapabilityAttestation(
 		"test-project", "/tmp/home", "pi", "pi",
 		"no-mistakes", "no-mistakes", "",
-		nil,
 	)
 	att.Expiry = time.Time{}
 
@@ -235,7 +178,6 @@ func TestHandleLateCapabilityLoss_NoChange(t *testing.T) {
 	att := CreateCapabilityAttestation(
 		"test-project", "/tmp/home", "pi", "pi",
 		"no-mistakes", "no-mistakes", "",
-		nil,
 	)
 	att.Expiry = time.Now().UTC().Add(24 * time.Hour)
 
@@ -248,33 +190,10 @@ func TestHandleLateCapabilityLoss_NoChange(t *testing.T) {
 	}
 }
 
-func TestHandleLateCapabilityLoss_WithPreAuthorizedFallback(t *testing.T) {
+func TestHandleLateCapabilityLoss_LateLossBlocks(t *testing.T) {
 	att := CreateCapabilityAttestation(
 		"test-project", "/tmp/home", "pi", "pi",
 		"no-mistakes", "no-mistakes", "",
-		&FallbackPolicy{AuthorizedMode: "direct-PR", Reason: "test fallback"},
-	)
-
-	// Force expiry.
-	att.Expiry = time.Now().UTC().Add(-1 * time.Hour)
-
-	result := HandleLateCapabilityLoss(att)
-	if !result.Changed {
-		t.Error("expected changed")
-	}
-	if !result.CanProceed {
-		t.Error("expected can proceed with pre-authorized fallback")
-	}
-	if result.FallbackMode != "direct-PR" {
-		t.Errorf("FallbackMode = %q, want %q", result.FallbackMode, "direct-PR")
-	}
-}
-
-func TestHandleLateCapabilityLoss_WithoutPreAuthorization(t *testing.T) {
-	att := CreateCapabilityAttestation(
-		"test-project", "/tmp/home", "pi", "pi",
-		"no-mistakes", "no-mistakes", "",
-		nil,
 	)
 
 	// Force expiry.
@@ -285,32 +204,10 @@ func TestHandleLateCapabilityLoss_WithoutPreAuthorization(t *testing.T) {
 		t.Error("expected changed")
 	}
 	if result.CanProceed {
-		t.Error("expected cannot proceed without pre-authorization")
+		t.Error("late capability loss must block: there is no pre-authorized fallback")
 	}
 	if !strings.Contains(result.BlockReason, "parent Decision") {
 		t.Errorf("block reason should mention parent Decision, got: %s", result.BlockReason)
-	}
-}
-
-func TestHandleLateCapabilityLoss_WithFallbackPolicy(t *testing.T) {
-	att := CreateCapabilityAttestation(
-		"test", "/tmp/home", "pi", "pi",
-		"no-mistakes", "no-mistakes", "",
-		&FallbackPolicy{AuthorizedMode: "direct-PR", Reason: "test fallback"},
-	)
-
-	// Force expiry.
-	att.Expiry = time.Now().UTC().Add(-1 * time.Hour)
-
-	result := HandleLateCapabilityLoss(att)
-	if !result.Changed {
-		t.Error("expected changed")
-	}
-	if !result.CanProceed {
-		t.Error("expected can proceed with fallback policy")
-	}
-	if result.FallbackMode != "direct-PR" {
-		t.Errorf("FallbackMode = %q, want %q", result.FallbackMode, "direct-PR")
 	}
 }
 
@@ -410,11 +307,10 @@ func TestProbeDeliveryCapabilities_ContainsExpected(t *testing.T) {
 
 func TestLateCapabilityLossResult_JSON(t *testing.T) {
 	result := &LateCapabilityLossResult{
-		Changed:      true,
-		Detail:       "capability no-mistakes changed from ready to absent",
-		CanProceed:   false,
-		FallbackMode: "",
-		BlockReason:  "requires parent Decision",
+		Changed:     true,
+		Detail:      "capability no-mistakes changed from ready to absent",
+		CanProceed:  false,
+		BlockReason: "requires parent Decision",
 	}
 
 	data, err := json.Marshal(result)
