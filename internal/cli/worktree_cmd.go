@@ -92,6 +92,20 @@ soldier finishes. This command is a safety net for orphaned leases.`,
 				}
 			}
 
+			auth, err := taskAuthorityForRead(ctx.Home)
+			if err != nil {
+				return fmt.Errorf("reading task authority: %w", err)
+			}
+			aggs, err := auth.List()
+			if err != nil {
+				return fmt.Errorf("listing task authority: %w", err)
+			}
+			for _, agg := range aggs {
+				if agg.Worktree != nil && agg.Worktree.Path != "" {
+					active[agg.Worktree.Path] = true
+				}
+			}
+
 			// Get treehouse status and parse worktree list
 			out, err := backend.WorktreeStatus(ctx.Home)
 			if err != nil {
