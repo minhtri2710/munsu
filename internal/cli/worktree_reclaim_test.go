@@ -214,6 +214,9 @@ func TestWorktreeReclaimSparesReservedUnboundWorktree(t *testing.T) {
 	if strings.Contains(output, "returning orphaned worktree: "+reservedPath) {
 		t.Fatalf("reclaim must spare the reserved-but-unbound worktree, got stdout: %q", output)
 	}
+	if !strings.Contains(output, "Reclaimed 0 orphaned worktrees") {
+		t.Fatalf("reclaim must report no reclaimed worktrees, got stdout: %q", output)
+	}
 	if _, err := os.Stat(reservedGit); err != nil {
 		t.Fatalf("reclaim must leave the reserved worktree untouched: %v", err)
 	}
@@ -222,12 +225,32 @@ func TestWorktreeReclaimSparesReservedUnboundWorktree(t *testing.T) {
 func TestWorktreeReclaimAllowsRetiredReservation(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
-	t.Setenv("PATH", "/dev/null")
+	t.Setenv("PATH", "/usr/bin:/bin")
 	initCLITestHome(t, tmpDir)
 	projectName := "retired-project"
 	repoPath := filepath.Join(tmpDir, "repo")
 	if err := os.MkdirAll(repoPath, 0o755); err != nil {
 		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"init", "-q", repoPath},
+		{"-C", repoPath, "config", "user.email", "test@example.invalid"},
+		{"-C", repoPath, "config", "user.name", "test"},
+	} {
+		if out, err := exec.Command("/usr/bin/git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(repoPath, "README.md"), []byte("seed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"-C", repoPath, "add", "README.md"},
+		{"-C", repoPath, "commit", "-qm", "seed"},
+	} {
+		if out, err := exec.Command("/usr/bin/git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
 	}
 	if err := fleet.Add(tmpDir, projectName, repoPath, "", true); err != nil {
 		t.Fatal(err)
@@ -267,11 +290,8 @@ func TestWorktreeReclaimAllowsRetiredReservation(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("reserved path = %q, ok=%v, err=%v", reservedPath, ok, err)
 	}
-	if err := os.MkdirAll(reservedPath, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(reservedPath, ".git"), []byte("gitdir: /nowhere"), 0o644); err != nil {
-		t.Fatal(err)
+	if out, err := exec.Command("/usr/bin/git", "-C", repoPath, "worktree", "add", "--detach", reservedPath, "HEAD").CombinedOutput(); err != nil {
+		t.Fatalf("git worktree add: %v\n%s", err, out)
 	}
 	root := NewRootCommand()
 	root.SetOut(new(strings.Builder))
@@ -302,6 +322,12 @@ func TestWorktreeReclaimAllowsRetiredReservation(t *testing.T) {
 	}
 	if !strings.Contains(output, "returning orphaned worktree: "+reservedPath) {
 		t.Fatalf("retired reservation should be reclaimable, got stdout: %q", output)
+	}
+	if !strings.Contains(output, "Reclaimed 1 orphaned worktrees") {
+		t.Fatalf("retired reservation should report one reclaimed worktree, got stdout: %q", output)
+	}
+	if _, err := os.Stat(reservedPath); !os.IsNotExist(err) {
+		t.Fatalf("retired reservation worktree should be removed, stat err=%v", err)
 	}
 }
 
