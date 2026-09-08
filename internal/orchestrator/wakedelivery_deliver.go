@@ -88,6 +88,9 @@ func DeliverWake(req DeliverRequest) (*WakeReceipt, error) {
 	if req.Key == "" {
 		req.Key = "default"
 	}
+	if err := ValidateTermKey(req.Key); err != nil {
+		return nil, err
+	}
 
 	receipt := &WakeReceipt{}
 
@@ -294,14 +297,12 @@ func listAllReceipts(homeDir string) ([]PendingReceipt, error) {
 		if !strings.HasSuffix(name, ".receipt") || e.IsDir() {
 			continue
 		}
-		core := strings.TrimSuffix(name, ".receipt")
-		taskStem, termKey, ok := strings.Cut(core, ".")
-		if !ok || taskStem == "" || termKey == "" {
-			continue
-		}
-		taskID, err := mhome.ReverseDurableKey(taskStem)
+		taskID, termKey, ok, err := parseReceiptName(name)
 		if err != nil {
-			return nil, fmt.Errorf("decoding receipt task stem %q: %w", taskStem, err)
+			return nil, err
+		}
+		if !ok {
+			continue
 		}
 		key := taskID + "/" + termKey
 		if seen[key] {
