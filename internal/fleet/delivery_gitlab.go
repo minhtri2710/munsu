@@ -360,7 +360,7 @@ func (c *glabClient) ApprovalState(host, owner, project string, iid int) (bool, 
 // to the domain review vocabulary.
 func (c *glabClient) ReviewerStates(host, owner, project string, iid int) ([]domain.ReviewState, error) {
 	path := fmt.Sprintf("/projects/%s/merge_requests/%d/reviewers", url.PathEscape(owner+"/"+project), iid)
-	args := []string{"api", path}
+	args := []string{"api", path, "--paginate"}
 	if host != "" && host != "gitlab.com" {
 		args = append(args, "--hostname", host)
 	}
