@@ -276,11 +276,12 @@ func (r *Runner) Run() (string, error) {
 	if err := r.checkAttestation(); err != nil {
 		return "", err
 	}
-	// Both authorized fallback sites (preflightNoMistakes and the late
-	// capability loss handled by checkAttestation) are behind us, so this is
-	// the one place the mode actually in force can be reconciled against the
-	// durable contract. A divergence is recorded as an explicit transition
-	// before anything launches: nothing delivers under an unrecorded mode.
+	// The one authorized fallback site (preflightNoMistakes) is behind us, so
+	// this is the one place the mode actually in force can be reconciled
+	// against the durable contract. A divergence is recorded as an explicit
+	// transition before anything launches: nothing delivers under an
+	// unrecorded mode. Late capability loss does not fall back — checkAttestation
+	// above blocks it for a parent Decision.
 	if err := r.reconcileDeliveryFallback(); err != nil {
 		return "", err
 	}
@@ -1429,15 +1430,6 @@ func (r *Runner) createAttestation() error {
 		gateAgent = "unknown"
 	}
 
-	// Build a fallback policy when the effective mode differs from requested.
-	var fallbackPolicy *FallbackPolicy
-	if r.fallbackReason != "" && r.effectiveMode != r.requestedMode {
-		fallbackPolicy = &FallbackPolicy{
-			AuthorizedMode: r.effectiveMode,
-			Reason:         r.fallbackReason,
-		}
-	}
-
 	r.attestation = CreateCapabilityAttestation(
 		r.args.ProjectName,
 		r.homeDir,
@@ -1446,33 +1438,20 @@ func (r *Runner) createAttestation() error {
 		r.requestedMode,
 		r.effectiveMode,
 		r.fallbackReason,
-		fallbackPolicy,
 	)
 	return nil
 }
 
 // checkAttestation verifies that the capability attestation is still valid
-// before soldier launch. Late capability loss is handled by preserving work
-// and either proceeding with a pre-authorized fallback or blocking for a
-// parent Decision.
+// before soldier launch. Any late capability loss preserves work and blocks
+// for a parent Decision; a launch never proceeds in a mode whose capability
+// is gone.
 func (r *Runner) checkAttestation() error {
 	if r.attestation == nil {
 		return nil
 	}
 	result := HandleLateCapabilityLoss(r.attestation)
 	if !result.Changed {
-		return nil
-	}
-	if result.CanProceed {
-		if result.FallbackMode != "" {
-			fmt.Fprintf(os.Stderr, "warning: late capability loss, falling back to %s: %s\n", result.FallbackMode, result.Detail)
-			r.effectiveMode = result.FallbackMode
-			if r.fallbackReason == "" {
-				r.fallbackReason = result.Detail
-			} else {
-				r.fallbackReason += "; " + result.Detail
-			}
-		}
 		return nil
 	}
 	return fmt.Errorf("launch blocked: %s", result.BlockReason)

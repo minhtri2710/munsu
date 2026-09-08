@@ -99,40 +99,29 @@ func TestReconcileDeliveryFallbackRecordsPreflightFallback(t *testing.T) {
 	}
 }
 
-// TestReconcileDeliveryFallbackRecordsLateCapabilityLoss builds the second
-// fallback site's real state: an expired attestation carrying a pre-authorized
-// fallback mode. The same reconcile step must record it, so both sites reach
-// the durable record through one path.
-func TestReconcileDeliveryFallbackRecordsLateCapabilityLoss(t *testing.T) {
-	f := newLaunchFixture(t, "fallback-lateloss")
-	contractedLaunch(t, f, "no-mistakes")
-
-	r := f.runner
-	r.attestation = &CapabilityAttestation{
-		RequestedMode:  "no-mistakes",
-		EffectiveMode:  "no-mistakes",
-		Expiry:         time.Now().UTC().Add(-time.Hour),
-		FallbackPolicy: &FallbackPolicy{AuthorizedMode: "direct-PR"},
+// TestCheckAttestationBlocksOnLateCapabilityLoss pins F028's contract: a late
+// capability loss aborts the launch for a parent Decision. There is no
+// pre-authorized fallback that lets the launch proceed in the mode whose
+// capability is gone, and a blocked launch never mutates the mode in force.
+func TestCheckAttestationBlocksOnLateCapabilityLoss(t *testing.T) {
+	r := &Runner{
+		effectiveMode: "no-mistakes",
+		requestedMode: "no-mistakes",
+		attestation: &CapabilityAttestation{
+			RequestedMode: "no-mistakes",
+			EffectiveMode: "no-mistakes",
+			Expiry:        time.Now().UTC().Add(-time.Hour),
+		},
 	}
-	if err := r.checkAttestation(); err != nil {
-		t.Fatalf("checkAttestation: %v", err)
+	err := r.checkAttestation()
+	if err == nil {
+		t.Fatal("late capability loss must block the launch")
 	}
-	if r.effectiveMode != "direct-PR" || r.fallbackReason == "" {
-		t.Fatalf("late loss did not fall back: mode=%q reason=%q", r.effectiveMode, r.fallbackReason)
+	if !strings.Contains(err.Error(), "launch blocked") || !strings.Contains(err.Error(), "parent Decision") {
+		t.Fatalf("block error does not name the gate: %v", err)
 	}
-
-	if err := r.reconcileDeliveryFallback(); err != nil {
-		t.Fatalf("reconcileDeliveryFallback: %v", err)
-	}
-	dc := contractOf(t, f)
-	if dc.Mode != "direct-PR" || dc.Fallback == nil {
-		t.Fatalf("late capability loss not recorded on the contract: %+v", dc)
-	}
-	if dc.Fallback.From != "no-mistakes" || dc.Fallback.To != "direct-PR" {
-		t.Fatalf("transition = %+v", *dc.Fallback)
-	}
-	if !strings.Contains(dc.Fallback.Reason, "attestation expired") {
-		t.Fatalf("transition reason does not carry the loss detail: %q", dc.Fallback.Reason)
+	if r.effectiveMode != "no-mistakes" || r.fallbackReason != "" {
+		t.Fatalf("a blocked launch mutated the mode in force: mode=%q reason=%q", r.effectiveMode, r.fallbackReason)
 	}
 }
 

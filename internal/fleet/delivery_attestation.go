@@ -9,10 +9,11 @@ import (
 	"github.com/minhtri2710/munsu/internal/backend"
 )
 
-// CapabilityAttestation is a signed snapshot of the capabilities available at
-// mode resolution time. It binds project, home, harness, gate agent, executable
-// identity, resolved config, capabilities, and expiry into a single record that
-// is used to detect late capability loss before soldier launch.
+// CapabilityAttestation is a point-in-time snapshot of the capabilities
+// available at mode resolution time. It binds project, home, harness, gate
+// agent, executable identity, resolved config, capabilities, and expiry into a
+// single record that is used to detect late capability loss before soldier
+// launch.
 type CapabilityAttestation struct {
 	Project        string            `json:"project"`
 	Home           string            `json:"home"`
@@ -22,11 +23,9 @@ type CapabilityAttestation struct {
 	ResolvedConfig map[string]string `json:"resolvedConfig"`
 	Capabilities   []CapabilityEntry `json:"capabilities"`
 	Expiry         time.Time         `json:"expiry"`
-	CreatedAt      string            `json:"createdAt"`
 	RequestedMode  string            `json:"requestedMode"`
 	EffectiveMode  string            `json:"effectiveMode"`
 	FallbackReason string            `json:"fallbackReason,omitempty"`
-	FallbackPolicy *FallbackPolicy   `json:"fallbackPolicy,omitempty"`
 }
 
 // CapabilityEntry captures a single capability's state at attestation time.
@@ -36,14 +35,6 @@ type CapabilityEntry struct {
 	Version string        `json:"version,omitempty"`
 	Path    string        `json:"path,omitempty"`
 	Detail  string        `json:"detail,omitempty"`
-}
-
-// FallbackPolicy authorizes a specific fallback mode when the attested
-// capabilities are no longer available. This is the "exact pre-authorization"
-// that allows late capability loss to transition without a parent Decision.
-type FallbackPolicy struct {
-	AuthorizedMode string `json:"authorizedMode"`
-	Reason         string `json:"reason"`
 }
 
 // CreateCapabilityAttestation builds a point-in-time attestation snapshot
@@ -58,11 +49,9 @@ type FallbackPolicy struct {
 //   - requestedMode: what the user/registry/config asked for
 //   - effectiveMode: what was resolved (possibly after fallback)
 //   - fallbackReason: why the modes differ (empty if same)
-//   - fallbackPolicy: optional pre-authorized fallback; nil = no pre-auth
 func CreateCapabilityAttestation(
 	project, homeDir, harness, gateAgent string,
 	requestedMode, effectiveMode, fallbackReason string,
-	fallbackPolicy *FallbackPolicy,
 ) *CapabilityAttestation {
 	now := time.Now().UTC()
 	expiry := now.Add(24 * time.Hour)
@@ -88,11 +77,9 @@ func CreateCapabilityAttestation(
 		ResolvedConfig: resolvedConfig,
 		Capabilities:   caps,
 		Expiry:         expiry,
-		CreatedAt:      now.Format(time.RFC3339),
 		RequestedMode:  requestedMode,
 		EffectiveMode:  effectiveMode,
 		FallbackReason: fallbackReason,
-		FallbackPolicy: fallbackPolicy,
 	}
 }
 
@@ -217,28 +204,27 @@ func CheckCapabilityAttestation(att *CapabilityAttestation) (changed bool, detai
 
 // LateCapabilityLossResult captures the outcome of a late capability loss check.
 type LateCapabilityLossResult struct {
-	Changed      bool   `json:"changed"`
-	Detail       string `json:"detail"`
-	CanProceed   bool   `json:"canProceed"`
-	FallbackMode string `json:"fallbackMode,omitempty"`
-	BlockReason  string `json:"blockReason,omitempty"`
+	Changed     bool   `json:"changed"`
+	Detail      string `json:"detail"`
+	CanProceed  bool   `json:"canProceed"`
+	BlockReason string `json:"blockReason,omitempty"`
 }
 
 // HandleLateCapabilityLoss checks whether a late capability loss can be
-// tolerated. It preserves work and either:
-//   - Proceeds with the pre-authorized fallback mode (FallbackPolicy matches)
-//   - Blocks and requires a parent Decision to transition
+// tolerated. Any loss blocks and requires a parent Decision to transition;
+// there is no pre-authorized fallback that lets a launch proceed in a mode
+// whose capability is gone.
 //
 // Late capability loss occurs when capabilities change between attestation
 // creation (during mode resolution) and soldier launch. Work is preserved
-// (worktree, brief, etc.) and the caller decides whether to proceed or block.
+// (worktree, brief, etc.) and the caller blocks for the Decision.
 func HandleLateCapabilityLoss(att *CapabilityAttestation) *LateCapabilityLossResult {
 	if att == nil {
 		return &LateCapabilityLossResult{
 			Changed:     true,
 			Detail:      "no attestation to check",
 			CanProceed:  false,
-			BlockReason: "late capability loss: no attestation; requires pre-authorization or a parent Decision to transition",
+			BlockReason: "late capability loss: no attestation; requires a parent Decision to transition",
 		}
 	}
 
@@ -247,21 +233,11 @@ func HandleLateCapabilityLoss(att *CapabilityAttestation) *LateCapabilityLossRes
 		return &LateCapabilityLossResult{Changed: false, Detail: "", CanProceed: true}
 	}
 
-	// Capability lost. Check for pre-authorized fallback.
-	if att.FallbackPolicy != nil && att.FallbackPolicy.AuthorizedMode != "" {
-		return &LateCapabilityLossResult{
-			Changed:      true,
-			Detail:       detail,
-			CanProceed:   true,
-			FallbackMode: att.FallbackPolicy.AuthorizedMode,
-		}
-	}
-
-	// No pre-authorization. Block and require parent Decision.
+	// Capability lost. Block and require a parent Decision.
 	return &LateCapabilityLossResult{
 		Changed:     true,
 		Detail:      detail,
 		CanProceed:  false,
-		BlockReason: fmt.Sprintf("late capability loss: %s; requires pre-authorization or a parent Decision to transition", detail),
+		BlockReason: fmt.Sprintf("late capability loss: %s; requires a parent Decision to transition", detail),
 	}
 }

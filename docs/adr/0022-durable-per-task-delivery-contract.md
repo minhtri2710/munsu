@@ -39,11 +39,12 @@ explicitly recorded transition rather than a silent re-resolution.
   before. The first-spawn resolution is recorded on the canonical aggregate as the
   delivery contract (`internal/fleet/spawn_runner.go` `recordDeliveryContract`) and
   read back on later spawns.
-* `internal/fleet/delivery_preflight.go` `preflightNoMistakes` — the authorized
-  no-mistakes → direct-PR fallback path; a late capability loss reaches the same
-  downgrade through `checkAttestation` / `HandleLateCapabilityLoss`. Both sites
-  only move the launch's effective mode. The durable transition is recorded once
-  behind them by `internal/fleet/spawn_runner.go` `reconcileDeliveryFallback`,
+* `internal/fleet/delivery_preflight.go` `preflightNoMistakes` — the sole
+  authorized no-mistakes → direct-PR fallback site; it moves the launch's
+  effective mode. A late capability loss no longer downgrades (F028): it blocks
+  the launch through `checkAttestation` / `HandleLateCapabilityLoss` for a parent
+  Decision. The durable transition is recorded once behind the preflight site by
+  `internal/fleet/spawn_runner.go` `reconcileDeliveryFallback`,
   which commits `RecordDeliveryFallback` before anything launches: the contract's
   `Mode` becomes the mode in force and a `DeliveryFallback` record states how it
   got there (from, to, reason, generation, recording operation, timestamp). Only
@@ -81,10 +82,12 @@ the destination home's live inputs on its next spawn. The home
 
 ### 2. Fallback is retained but recorded as an explicit transition
 
-The authorized no-mistakes → direct-PR downgrade (`preflightNoMistakes` and the
-late-capability-loss path) is kept — munsu's fallback resilience is deliberate
-and not surrendered to firstmate's strict refuse-to-guess. But a fallback now
-**mutates the recorded contract through a task-authority operation** that
+The authorized no-mistakes → direct-PR downgrade at `preflightNoMistakes` is
+kept — munsu's fallback resilience is deliberate and not surrendered to
+firstmate's strict refuse-to-guess. (The late-capability-loss path is no longer
+a fallback: F028 makes it block the launch for a parent Decision.) But a
+fallback now **mutates the recorded contract through a task-authority operation**
+that
 records the transition (from-mode, to-mode, reason, generation), rather than
 producing a divergent fresh resolution each spawn. The contract always states
 the mode in force and how it got there.
@@ -110,22 +113,22 @@ delivery-mode values (no-mistakes / direct-PR / local-only).
 
 An ephemeral fleet-runtime record already exists in
 `internal/fleet/delivery_attestation.go`: `CapabilityAttestation` carries
-`RequestedMode`, `EffectiveMode`, `FallbackReason`, and `FallbackPolicy`, and
-drives the authorized no-mistakes → direct-PR fallback via
-`HandleLateCapabilityLoss` at soldier-launch preflight. It is a 24h-expiry
-capability snapshot — not the canonical aggregate and not durable across
-re-spawns — so the D1/D2 durable contract is distinct. The two relate by D2
-feeding from this machinery rather than duplicating it: the fallback *decision*
-stays in the fleet runtime (the preflight blocker, and this attestation's late
-capability loss), and the effective mode plus accumulated fallback reason they
-leave on the launch are exactly what `reconcileDeliveryFallback` reconciles into
-the canonical contract. `DeliveryFallback` is therefore the single durable
+`RequestedMode`, `EffectiveMode`, and `FallbackReason`, and detects late
+capability loss via `HandleLateCapabilityLoss` at soldier-launch preflight —
+which, after F028, blocks the launch for a parent Decision rather than falling
+back. It is a 24h-expiry capability snapshot — not the canonical aggregate and
+not durable across re-spawns — so the D1/D2 durable contract is distinct. The two
+relate by D2 feeding from this machinery rather than duplicating it: the fallback
+*decision* stays in the fleet runtime (the preflight blocker), and the effective
+mode plus accumulated fallback reason it leaves on the launch are exactly what
+`reconcileDeliveryFallback` reconciles into the canonical contract. `DeliveryFallback` is therefore the single durable
 statement of the delivery-mode transition (per one-live-contract), not a
 parallel from/to/reason record.
 
 ### Non-goals
 
-* This decision does not alter the authorized mid-spawn or late-capability
-  no-mistakes → direct-PR fallback described in §2.
+* This decision does not alter the authorized mid-spawn no-mistakes → direct-PR
+  fallback at `preflightNoMistakes` described in §2. (F028 later removed the
+  late-capability-loss fallback; that path now blocks for a parent Decision.)
 * munsu does **not** adopt firstmate's registry-advisory-only model or its hard
   refuse-to-guess on missing mode.
