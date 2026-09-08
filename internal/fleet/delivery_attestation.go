@@ -186,9 +186,8 @@ func CheckCapabilityAttestation(att *CapabilityAttestation) (changed bool, detai
 			if cur.Name != attested.Name {
 				continue
 			}
-			// A capability that was Ready but is now Absent or Failed
-			// is a significant loss.
-			if attested.State == backend.Ready && (cur.State == backend.Absent || cur.State == backend.Failed) {
+			// A capability that was Ready but is now non-Ready is a significant loss.
+			if attested.State == backend.Ready && cur.State != backend.Ready {
 				detail := fmt.Sprintf("capability %q changed from %s to %s", attested.Name, attested.State, cur.State)
 				if attested.Path != "" && cur.Path != attested.Path {
 					detail += fmt.Sprintf(" (path: %s -> %s)", attested.Path, cur.Path)

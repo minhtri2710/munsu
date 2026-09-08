@@ -17,18 +17,20 @@ result is projected only into the ephemeral home meta (`meta["mode"]`).
 Two consequences follow. First, because resolution re-runs each generation
 against live inputs (registry, PATH, capability), **the same task can silently
 acquire a different delivery mode across re-spawns** — the contract is not
-fixed to the task. Second, there is an authorized mid-spawn *downgrade*:
+fixed to the task. Second, there is one authorized mid-spawn *downgrade*:
 `preflightNoMistakes` (`internal/fleet/delivery_preflight.go`) can fall a task
 back from no-mistakes to direct-PR when the no-mistakes capability is absent or
-lost, and a late capability loss can do the same after launch.
+lost. A late capability loss does not downgrade after launch; it blocks the
+launch and requires a parent Decision.
 
 firstmate #1563 records mode as a machine-readable per-task brief line, re-checks
 brief ↔ spawn ↔ promote against it, and demotes the project registry to
 *advisory*. munsu's design instead treats the registry as an enforced default
-and prizes fallback resilience. The parity refresh asked which philosophy munsu
-should hold. The decision (recorded here) is the **middle path**: fix the
-contract to the task durably, but keep the authorized fallback — as an
-explicitly recorded transition rather than a silent re-resolution.
+and preserves the explicit preflight fallback. The parity refresh asked which
+philosophy munsu should hold. The decision (recorded here) is the **middle
+path**: fix the contract to the task durably, while retaining only the
+preflight fallback as an explicitly recorded transition rather than a silent
+re-resolution.
 
 ## Evidence
 
