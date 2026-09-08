@@ -499,12 +499,11 @@ func oldestMaterialWakeAge(homeDir string) int64 {
 		if len(parts) < 5 {
 			continue
 		}
-		payload := parts[4]
-		// Check for material states: done, failed, needs-decision, blocked
-		if strings.HasPrefix(payload, "done:") || strings.HasPrefix(payload, "failed:") ||
-			strings.HasPrefix(payload, "needs-decision:") || strings.HasPrefix(payload, "blocked:") ||
-			strings.Contains(payload, "done:") || strings.Contains(payload, "failed:") ||
-			strings.Contains(payload, "needs-decision:") || strings.Contains(payload, "blocked:") {
+		// Check for material states: done, failed, needs-decision, blocked.
+		// parts[3] is the wake key (taskID for signal/uplink); the shared
+		// predicate strips the signal producer's "<taskID>: " prefix so an
+		// embedded marker is detected without matching a mid-message occurrence.
+		if orchestrator.PayloadHasMaterialMarker(parts[3], parts[4]) {
 			var epoch int64
 			if _, err := fmt.Sscanf(parts[0], "%d", &epoch); err == nil && epoch > 0 {
 				age := now - epoch
