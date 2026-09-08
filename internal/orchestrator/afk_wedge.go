@@ -25,12 +25,6 @@ type WedgeAlarm struct {
 //   - Missing watcher beat entirely
 //   - Repeated identical stale wake (same wake key arriving back-to-back)
 //   - Digest stuck (entries accumulated beyond max-defer threshold)
-//
-// WedgeDetector monitors for wedge conditions:
-//   - Stale watcher beat (beat too old beyond threshold)
-//   - Missing watcher beat entirely
-//   - Repeated identical stale wake (same wake key arriving back-to-back)
-//   - Digest stuck (entries accumulated beyond max-defer threshold)
 type WedgeDetector struct {
 	mu                 sync.Mutex
 	lastWakeKey        string
@@ -72,9 +66,13 @@ func (w *WedgeDetector) Check(now time.Time) *WedgeAlarm {
 	wakeMax := w.wakeCountMax
 	w.mu.Unlock()
 
-	// 1. Check watcher beat staleness.
+	// 1. Check watcher beat staleness against the detector's configured
+	// threshold. ReadBeatStatus reports Age from the raw beat; the wedge owns
+	// the policy of what age is too stale (operator-tunable via
+	// SetStaleThreshold), so it compares Age here rather than trusting the
+	// package-default Stale verdict.
 	beatStatus := ReadBeatStatus(w.homeDir, now)
-	if beatStatus.Exists && beatStatus.Stale {
+	if beatStatus.Exists && beatStatus.Age > staleThreshold {
 		return &WedgeAlarm{
 			Reason:     fmt.Sprintf("watcher beat stale: age=%s threshold=%s", beatStatus.Age.Round(time.Second), staleThreshold.Round(time.Second)),
 			DetectedAt: now,

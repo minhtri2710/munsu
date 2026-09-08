@@ -242,6 +242,37 @@ func TestWedgeDetectorStaleBeat(t *testing.T) {
 	}
 }
 
+func TestWedgeDetectorHonorsConfiguredStaleThreshold(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+	// A beat 2s old: newer than the package-default staleness (5m), so the
+	// default verdict is "fresh". Only a configured threshold below 2s makes
+	// it stale.
+	now := time.Now()
+	old := now.Add(-2 * time.Second)
+	beatContent := fmt.Sprintf("%d %d", old.Unix(), os.Getpid())
+	os.WriteFile(filepath.Join(stateDir, ".last-watcher-beat"), []byte(beatContent), 0644)
+
+	// Default threshold: 2s beat is not stale, no alarm.
+	if alarm := NewWedgeDetector(tmp).Check(now); alarm != nil {
+		t.Fatalf("default threshold: Check on 2s-old beat = %+v, want nil", alarm)
+	}
+
+	// Configured 1s threshold: the same 2s-old beat is now stale. This fires
+	// only because SetStaleThreshold actually governs the verdict; against the
+	// package-default Stale it would stay silent.
+	w := NewWedgeDetector(tmp)
+	w.SetStaleThreshold(1 * time.Second)
+	alarm := w.Check(now)
+	if alarm == nil {
+		t.Fatal("configured 1s threshold: expected stale-beat alarm for 2s-old beat, got nil")
+	}
+	if !strings.Contains(alarm.Reason, "stale") {
+		t.Errorf("alarm reason = %q, want 'stale'", alarm.Reason)
+	}
+}
+
 func TestWedgeDetectorFreshBeat(t *testing.T) {
 	tmp := t.TempDir()
 	stateDir := filepath.Join(tmp, "state")
