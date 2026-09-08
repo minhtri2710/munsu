@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
@@ -337,6 +338,43 @@ func TestSubmitLaunchRefusesEvidenceForAnotherSubmission(t *testing.T) {
 				t.Fatalf("refused submit still delivered a command: %d", f.endpoints.submitCount())
 			}
 		})
+	}
+}
+
+// A capability lost between the earlier attestation check and the irreversible
+// submission must block the launch: submitLaunch re-checks the attestation on
+// the fresh-submission path and refuses for a parent Decision before delivering
+// any command. This closes the TOCTOU window in which createSession or
+// attachEndpoint could run while the capability was replaced. The recovery
+// replay path (recorded launch evidence) is unaffected because the re-check
+// sits after that early return.
+func TestSubmitLaunchBlocksOnAttestationLossBeforeSubmission(t *testing.T) {
+	f := newLaunchFixture(t, "submit-late-loss")
+	// Drive the fresh launch up to just before submission: the endpoint is
+	// attached but no launch evidence is recorded, so submitLaunch takes the
+	// fresh path, not the recovery replay.
+	if err := runLaunchPhases(f, "attach-endpoint"); err != errCrashSimulated {
+		t.Fatalf("runLaunchPhases through attach-endpoint: %v", err)
+	}
+	submitsBefore := f.endpoints.submitCount()
+
+	// The attestation has gone stale since the earlier check (modeled by an
+	// elapsed expiry, the deterministic late-loss signal).
+	f.runner.attestation = &CapabilityAttestation{
+		RequestedMode: "no-mistakes",
+		EffectiveMode: "no-mistakes",
+		Expiry:        time.Now().UTC().Add(-time.Hour),
+	}
+
+	err := f.runner.submitLaunch()
+	if err == nil {
+		t.Fatal("submitLaunch delivered a command under a lost capability")
+	}
+	if !strings.Contains(err.Error(), "launch blocked") || !strings.Contains(err.Error(), "parent Decision") {
+		t.Fatalf("error = %v, want the late-loss launch block", err)
+	}
+	if f.endpoints.submitCount() != submitsBefore {
+		t.Fatalf("a blocked submission still delivered a command: %d", f.endpoints.submitCount())
 	}
 }
 
