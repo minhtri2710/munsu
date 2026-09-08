@@ -412,7 +412,14 @@ type MetaEntry struct {
 // ListMeta reads all meta files from the state directory and returns them.
 // It reads *.meta files, extracts key fields, and reads the last status line
 // from the corresponding .status file for each task.
-func ListMeta(homeDir string) ([]MetaEntry, error) {
+// ListMetaIDs returns the logical task IDs of every .meta file in the state
+// directory, reversing the durable key so enumeration and the write path agree
+// on the logical id. Stems that are not a key this home persisted are skipped.
+// It reads no meta contents, so it fails only on a directory-level error; a
+// caller that must not miss a task can therefore ReadMeta each id and decide
+// for itself whether an unreadable projection is fatal. ListMeta layers the
+// display-tolerant read on top of this.
+func ListMetaIDs(homeDir string) ([]string, error) {
 	sd := StateDir(homeDir)
 	if err := validateStatePath(homeDir, sd, false); err != nil {
 		return nil, err
@@ -431,9 +438,6 @@ func ListMeta(homeDir string) ([]MetaEntry, error) {
 		return nil, fmt.Errorf("reading state dir: %w", err)
 	}
 
-	// Collect unique logical task IDs from .meta files, reversing the durable
-	// key so enumeration and the write path agree on the logical id. Stems that
-	// are not a key this home persisted are skipped.
 	var taskIDs []string
 	seen := make(map[string]bool)
 	for _, fi := range entries {
@@ -449,6 +453,14 @@ func ListMeta(homeDir string) ([]MetaEntry, error) {
 			seen[id] = true
 			taskIDs = append(taskIDs, id)
 		}
+	}
+	return taskIDs, nil
+}
+
+func ListMeta(homeDir string) ([]MetaEntry, error) {
+	taskIDs, err := ListMetaIDs(homeDir)
+	if err != nil {
+		return nil, err
 	}
 
 	var result []MetaEntry

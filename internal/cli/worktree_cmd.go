@@ -70,16 +70,22 @@ Leases should always be returned via "worktree return <path>" when a
 soldier finishes. This command is a safety net for orphaned leases.`,
 		Args: NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			// Get all active worktree paths from task meta
-			entries, err := home.ListMeta(ctx.Home)
+			// Get all active worktree paths from task meta. Enumerate the meta
+			// ids directly rather than through ListMeta, whose display-tolerant
+			// read silently drops an unreadable projection: for a destructive
+			// command an unreadable .meta is not evidence that the task holds no
+			// worktree, so refuse rather than skip. Otherwise a live worktree
+			// behind an unreadable .meta would be classified orphaned and
+			// destroyed.
+			ids, err := home.ListMetaIDs(ctx.Home)
 			if err != nil {
 				return fmt.Errorf("listing task meta: %w", err)
 			}
 			active := make(map[string]bool)
-			for _, e := range entries {
-				meta, err := home.ReadMeta(ctx.Home, e.ID)
+			for _, id := range ids {
+				meta, err := home.ReadMeta(ctx.Home, id)
 				if err != nil {
-					continue
+					return fmt.Errorf("reading task meta %q: %w", id, err)
 				}
 				if wt := meta["worktree"]; wt != "" {
 					active[wt] = true
