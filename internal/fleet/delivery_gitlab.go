@@ -90,6 +90,12 @@ type GitLabClient interface {
 	ViewMRJSON(host, owner, project string, iid int) ([]byte, error)
 	// ApprovalState fetches authoritative approval evidence from GitLab.
 	ApprovalState(host, owner, project string, iid int) (bool, error)
+	// ReviewerStates fetches each reviewer's verdict, normalized to the domain
+	// review vocabulary. GitLab tracks reviewer verdicts (notably
+	// "requested_changes") separately from approval-rule satisfaction, so the
+	// delivery observation must read them for domain.PR.CanMerge to honor its
+	// refusal on ReviewChangesRequested.
+	ReviewerStates(host, owner, project string, iid int) ([]domain.ReviewState, error)
 
 	// MergeMR performs the typed GitLab merge mutation with the pinned request.
 	MergeMR(host, owner, project string, iid int, request DeliveryMergeRequest) error
@@ -248,7 +254,25 @@ func (p *gitlabDeliveryProvider) Observe(ident domain.DeliveryIdentity) (Deliver
 		if !pipelineOK || pipeline.SHA != status.HeadSHA {
 			return DeliveryProviderObservation{}, fmt.Errorf("GitLab MR observation is missing pipeline SHA evidence for the current head")
 		}
-		if approved && mapCheckStatus(pipeline.Status) == domain.CheckPassed {
+		reviewStates, err := p.client.ReviewerStates(glURL.Host, glURL.Owner, glURL.Project, glURL.IID)
+		if err != nil {
+			return DeliveryProviderObservation{}, err
+		}
+		// The delivery acceptance rule has one owner: domain.PR.CanMerge. Build
+		// the observed PR and ask it, rather than re-deciding inline here. The
+		// detailed_merge_status "mergeable" fence above stays separate: it guards
+		// merge conflicts and blocked states that CanMerge does not model.
+		pr := domain.PR{
+			Status: domain.PROpen,
+			Checks: []domain.CheckRun{{Status: mapCheckStatus(pipeline.Status)}},
+		}
+		if approved {
+			pr.Reviews = append(pr.Reviews, domain.Review{State: domain.ReviewApproved})
+		}
+		for _, st := range reviewStates {
+			pr.Reviews = append(pr.Reviews, domain.Review{State: st})
+		}
+		if pr.CanMerge() {
 			obs.Mergeability = DeliveryMergeabilityAllowed
 		} else {
 			obs.Mergeability = DeliveryMergeabilityDenied
@@ -330,6 +354,45 @@ func (c *glabClient) ApprovalState(host, owner, project string, iid int) (bool, 
 		return false, nil
 	}
 	return true, nil
+}
+
+// ReviewerStates fetches each reviewer's verdict from GitLab and normalizes it
+// to the domain review vocabulary.
+func (c *glabClient) ReviewerStates(host, owner, project string, iid int) ([]domain.ReviewState, error) {
+	path := fmt.Sprintf("/projects/%s/merge_requests/%d/reviewers", url.PathEscape(owner+"/"+project), iid)
+	args := []string{"api", path}
+	if host != "" && host != "gitlab.com" {
+		args = append(args, "--hostname", host)
+	}
+	data, err := c.runner.Run(args...)
+	if err != nil {
+		return nil, err
+	}
+	var raw []struct {
+		State string `json:"state"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("parsing GitLab reviewer state: %w", err)
+	}
+	states := make([]domain.ReviewState, 0, len(raw))
+	for _, r := range raw {
+		states = append(states, normalizeGitLabReviewState(r.State))
+	}
+	return states, nil
+}
+
+// normalizeGitLabReviewState maps a GitLab merge-request reviewer state to the
+// domain review vocabulary. Only "requested_changes" is a merge-blocking
+// verdict; approval authority stays with the approval-rule endpoint
+// (ApprovalState), so a reviewer's own "approved" is deliberately not treated
+// as satisfying it here.
+func normalizeGitLabReviewState(state string) domain.ReviewState {
+	switch strings.ToLower(strings.TrimSpace(state)) {
+	case "requested_changes":
+		return domain.ReviewChangesRequested
+	default:
+		return domain.ReviewPending
+	}
 }
 
 // MergeMR invokes the GitLab merge endpoint through the typed glab api path.
