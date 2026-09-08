@@ -57,6 +57,67 @@ func TestPreparedResolutionDoesNotSuppressLeaseReclaim(t *testing.T) {
 	}
 }
 
+func TestReclaimPreservesWakeEventIdentity(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(LeaseDir(home), 0755); err != nil {
+		t.Fatal(err)
+	}
+	leaseID := "lease-expired"
+	// Header expiresAt=1 is far in the past, so the lease is reclaimable.
+	if err := os.WriteFile(LeaseFilePath(home, leaseID), []byte(leaseID+"\tconsumer\t1\t0\n100\t1\tsignal\ttask\tpayload\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReclaimExpiredLeases(home); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(WakeQueuePath(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The requeued record must keep its original Epoch and Seq (100 and 1);
+	// minting a fresh epoch:seq destroys the event identity the operator prompt,
+	// wakeEventExists and wakeResolutionCompleted all key on.
+	line := strings.TrimSpace(string(data))
+	if !strings.HasPrefix(line, "100\t1\t") {
+		t.Fatalf("reclaim reminted wake identity: got %q, want epoch:seq 100:1 preserved", line)
+	}
+}
+
+func TestPreparedResolutionRejectsReclaimedEventThroughRealReclaim(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(LeaseDir(home), 0755); err != nil {
+		t.Fatal(err)
+	}
+	leaseID := "lease-expired"
+	if err := os.WriteFile(LeaseFilePath(home, leaseID), []byte(leaseID+"\tconsumer\t1\t0\n100\t1\tsignal\ttask\tpayload\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeWakeResolution(home, wakeResolutionRecord{LeaseID: leaseID, EventID: "100:1", Summary: "pending", State: "prepared"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReclaimExpiredLeases(home); err != nil {
+		t.Fatal(err)
+	}
+	// After a real reclaim the lease is gone and the record is requeued under
+	// its ORIGINAL identity, so resolving the prepared resolution must fire the
+	// "reclaimed and remains pending" guard instead of silently completing.
+	err := ResolveWake(home, leaseID, "100:1", "retry")
+	if err == nil {
+		t.Fatal("resolve completed a reclaimed-and-requeued event; guard did not fire")
+	}
+	if !strings.Contains(err.Error(), "reclaimed and remains pending") {
+		t.Fatalf("wrong error: %v", err)
+	}
+	// The event stays deliverable in the queue under its preserved identity.
+	data, err := os.ReadFile(WakeQueuePath(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "100\t1\tsignal\ttask\tpayload") {
+		t.Fatalf("requeued event not deliverable: %q", data)
+	}
+}
+
 func TestPreparedResolutionRejectsReclaimedEvent(t *testing.T) {
 	home := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(home, "state"), 0755); err != nil {

@@ -1,7 +1,8 @@
 // Deterministic tests for the typed internal wake-to-claim latency observation
-// (issue #546): the latency is defined as time since the LATEST enqueue Epoch,
-// and reclaim re-enqueues wakes under a fresh Epoch rather than preserving the
-// original emission age.
+// (issue #546): the latency is defined as time since the record's Epoch, which
+// is stamped once at original emission and preserved across reclaim generations,
+// so a reclaimed wake reports its full age since emission rather than an age
+// reset by the reclaim.
 package home
 
 import (
@@ -97,9 +98,10 @@ func TestReclaimUsesOneEligibilitySnapshot(t *testing.T) {
 	}
 }
 
-// TestReclaimReStampsEpochForLatency constructs an already-expired lease with
-// a fixed old enqueue epoch and verifies reclaim writes a fresh enqueue epoch.
-func TestReclaimReStampsEpochForLatency(t *testing.T) {
+// TestReclaimPreservesEpochForLatency constructs an already-expired lease with
+// a fixed old enqueue epoch and verifies reclaim preserves it, so the reclaimed
+// wake reports its full age since original emission rather than a reset age.
+func TestReclaimPreservesEpochForLatency(t *testing.T) {
 	home := t.TempDir()
 	leaseDir := LeaseDir(home)
 	if err := os.MkdirAll(leaseDir, 0755); err != nil {
@@ -121,10 +123,13 @@ func TestReclaimReStampsEpochForLatency(t *testing.T) {
 	if result.Reclaimed != 1 || len(result.Wakes) != 1 {
 		t.Fatalf("reclaimed=%d wakes=%d, want one reclaimed wake", result.Reclaimed, len(result.Wakes))
 	}
-	if result.Wakes[0].Epoch != fmt.Sprint(claimAt.Unix()) {
-		t.Fatalf("reclaimed epoch %q, want %d; reclaim must restamp enqueue time", result.Wakes[0].Epoch, claimAt.Unix())
+	if result.Wakes[0].Epoch != oldEpoch {
+		t.Fatalf("reclaimed epoch %q, want %q preserved across reclaim", result.Wakes[0].Epoch, oldEpoch)
 	}
-	if result.WakeToClaimLatencies[0] != 0 {
-		t.Fatalf("reclaimed latency = %v, want 0", result.WakeToClaimLatencies[0])
+	if result.Wakes[0].Seq != "1" {
+		t.Fatalf("reclaimed seq %q, want \"1\" preserved across reclaim", result.Wakes[0].Seq)
+	}
+	if result.WakeToClaimLatencies[0] != 10*time.Second {
+		t.Fatalf("reclaimed latency = %v, want 10s (claim 1700000010 - emission 1700000000)", result.WakeToClaimLatencies[0])
 	}
 }

@@ -46,20 +46,21 @@ type ClaimResult struct {
 
 	// WakeToClaimLatencies is the typed internal wake-to-claim latency per
 	// claimed wake, aligned by index with Wakes. Each value is measured as time
-	// since the record's LATEST enqueue Epoch: ReclaimExpiredLeases re-enqueues
-	// reclaimed wakes under a fresh Epoch before they are claimed again, so a
-	// reclaimed wake reports the short time since its latest enqueue, never its
-	// original emission age. It is an internal observation and is never surfaced
+	// since the record's Epoch, which is stamped once at original emission and
+	// preserved across reclaim generations: ReclaimExpiredLeases keeps the
+	// original Epoch and Seq so the epoch:seq event identity stays stable, so a
+	// reclaimed wake reports its full age since emission, not a short age reset
+	// by the reclaim. It is an internal observation and is never surfaced
 	// through the CLI response contract.
 	WakeToClaimLatencies []time.Duration
 }
 
-// WakeAgeSinceEnqueue returns the latency between a wake record's latest
-// enqueue Epoch and now. Because a newly claimed record is read after
-// ReclaimExpiredLeases has re-enqueued reclaimed wakes, the Epoch on the
-// record IS the latest enqueue (reclaim creates a new Epoch), so this reports
-// time since the latest enqueue rather than original emission age. A malformed
-// Epoch measures as zero latency.
+// WakeAgeSinceEnqueue returns the latency between a wake record's Epoch and
+// now. The Epoch is stamped once when the wake is first enqueued and is
+// preserved across reclaim generations (ReclaimExpiredLeases keeps the original
+// Epoch and Seq), so this reports age since the original enqueue — for a
+// reclaimed wake, its full age rather than the time since its latest reclaim. A
+// malformed Epoch measures as zero latency.
 func WakeAgeSinceEnqueue(epoch string, now time.Time) time.Duration {
 	secs, err := strconv.ParseInt(epoch, 10, 64)
 	if err != nil {
@@ -309,7 +310,13 @@ func reclaimExpiredLeasesLocked(homeDir string, now func() time.Time) (int, erro
 			if wakeResolutionCompleted(homeDir, wakeParts[0]+":"+wakeParts[1]) {
 				continue
 			}
-			requeued = append(requeued, newWakeRecord(wakeParts[2], wakeParts[3], wakeParts[4], now()))
+			requeued = append(requeued, WakeRecord{
+				Epoch:   wakeParts[0],
+				Seq:     wakeParts[1],
+				Kind:    wakeParts[2],
+				Key:     wakeParts[3],
+				Payload: wakeParts[4],
+			})
 		}
 
 		if len(requeued) == 0 {
