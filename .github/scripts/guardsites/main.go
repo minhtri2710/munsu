@@ -540,10 +540,6 @@ func legacySentinel(name string) bool {
 	return false
 }
 
-func isRefusal(r *resolver, file string, fset *token.FileSet, body *ast.BlockStmt) bool {
-	return body != nil && isRefusalStatements(r, file, fset, body.List)
-}
-
 func isSelfOriginatingRefusal(r *resolver, file string, fset *token.FileSet, statements []ast.Stmt) bool {
 	if len(statements) == 0 {
 		return false
@@ -924,33 +920,6 @@ func refusalHasErrorChildren(r *resolver, file string, fset *token.FileSet, expr
 	default:
 		return true
 	}
-}
-
-func isRefusalStatements(r *resolver, file string, fset *token.FileSet, statements []ast.Stmt) bool {
-	if len(statements) == 0 {
-		return false
-	}
-	switch s := statements[len(statements)-1].(type) {
-	case *ast.ReturnStmt:
-		for _, result := range s.Results {
-			if constructsError(r, file, fset, result) {
-				return true
-			}
-		}
-	case *ast.ExprStmt:
-		call, ok := s.X.(*ast.CallExpr)
-		if !ok {
-			return false
-		}
-		switch fn := call.Fun.(type) {
-		case *ast.Ident:
-			return fn.Name == "panic"
-		case *ast.SelectorExpr:
-			pkg, ok := fn.X.(*ast.Ident)
-			return ok && pkg.Name == "os" && fn.Sel.Name == "Exit"
-		}
-	}
-	return false
 }
 
 // Whether an expression produces an error value that did not exist before this
