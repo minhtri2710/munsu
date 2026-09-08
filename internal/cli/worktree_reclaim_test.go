@@ -1,7 +1,10 @@
 package cli
 
 import (
+	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -18,9 +21,12 @@ import (
 // The .meta is made unreadable the way F003 proved destructive: a single line
 // larger than bufio's default 64KB token makes ReadMeta fail with
 // bufio.ErrTooLong while the file stays a readable regular file the reclaim
-// path could otherwise act on. The refusal returns before any backend call, so
-// the assertion does not depend on which worktree provider is selected.
+// path could otherwise act on.
 func TestWorktreeReclaimRefusesUnreadableMeta(t *testing.T) {
+	if _, err := exec.LookPath("treehouse"); err == nil {
+		t.Skip("requires the git worktree fallback provider")
+	}
+
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
 
@@ -37,6 +43,14 @@ func TestWorktreeReclaimRefusesUnreadableMeta(t *testing.T) {
 	if err := os.WriteFile(metaPath, []byte(oversized), 0o644); err != nil {
 		t.Fatalf("corrupting task meta: %v", err)
 	}
+	orphanDir := filepath.Join(tmpDir, ".worktrees", "orphan")
+	if err := os.MkdirAll(orphanDir, 0o755); err != nil {
+		t.Fatalf("creating orphan worktree: %v", err)
+	}
+	orphanGit := filepath.Join(orphanDir, ".git")
+	if err := os.WriteFile(orphanGit, []byte("gitdir: /nowhere"), 0o644); err != nil {
+		t.Fatalf("seeding orphan worktree: %v", err)
+	}
 	// Precondition: the corrupted file is a readable regular file whose read now
 	// fails; that is the state the reclaim path must refuse rather than skip.
 	if _, err := home.ReadMeta(tmpDir, id); err == nil {
@@ -48,11 +62,37 @@ func TestWorktreeReclaimRefusesUnreadableMeta(t *testing.T) {
 	root.SetErr(new(strings.Builder))
 	root.SetArgs([]string{"worktree", "reclaim"})
 
+	stdout, stdoutWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("creating stdout pipe: %v", err)
+	}
+	oldStdout := os.Stdout
+	os.Stdout = stdoutWriter
+	outputDone := make(chan string, 1)
+	go func() {
+		output, readErr := io.ReadAll(stdout)
+		if readErr != nil {
+			outputDone <- "read stdout: " + readErr.Error()
+			return
+		}
+		outputDone <- string(output)
+	}()
+
 	err = root.Execute()
+	stdoutWriter.Close()
+	os.Stdout = oldStdout
+	output := <-outputDone
+	stdout.Close()
 	if err == nil {
 		t.Fatal("reclaim must refuse when a listed task's meta is unreadable")
 	}
 	if !strings.Contains(err.Error(), "reading task meta") {
 		t.Fatalf("reclaim must fail closed on the unreadable projection, got: %v", err)
+	}
+	if strings.Contains(output, "returning orphaned worktree") || strings.Contains(output, "Reclaimed") {
+		t.Fatalf("reclaim must not act on an orphan after a meta read failure, got stdout: %q", output)
+	}
+	if _, err := os.Stat(orphanGit); err != nil {
+		t.Fatalf("reclaim must leave the orphan worktree untouched: %v", err)
 	}
 }
