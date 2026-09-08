@@ -201,6 +201,42 @@ func TestHasAgedMaterialWake_NonMaterialWakes(t *testing.T) {
 	}
 }
 
+// TestReclaimedAgedMaterialWakeTripsGuard proves the F011 behavior authorized
+// by the Human (option A): because reclaim preserves the original Epoch, a
+// material wake claimed long ago, expired, and reclaimed keeps its true age, so
+// the guard reports it as aged rather than resetting its age on reclaim. A
+// restamped Epoch would read as fresh and hide the aged material wake.
+func TestReclaimedAgedMaterialWakeTripsGuard(t *testing.T) {
+	home := t.TempDir()
+	writeBeatFile(t, home, time.Now().Unix())
+	if err := os.MkdirAll(mhome.LeaseDir(home), 0755); err != nil {
+		t.Fatal(err)
+	}
+	// A material wake emitted well before the threshold, claimed under a lease
+	// whose header expiresAt=1 is far in the past so reclaim re-enqueues it.
+	oldEpoch := time.Now().Add(-MaterialWakeAgeThreshold - time.Minute).Unix()
+	leaseID := "lease-expired"
+	content := fmt.Sprintf("%s\tconsumer\t1\t%d\n%d\t1\tsignal\ttask-old\tdone: PR merged\n", leaseID, oldEpoch, oldEpoch)
+	if err := os.WriteFile(mhome.LeaseFilePath(home, leaseID), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mhome.ReclaimExpiredLeases(home); err != nil {
+		t.Fatal(err)
+	}
+
+	result := EvaluateGuard(home, 1, time.Now())
+	for _, c := range result.Conditions {
+		if c.Code == ConditionAgedWakePending {
+			return
+		}
+	}
+	codes := make([]string, len(result.Conditions))
+	for i, c := range result.Conditions {
+		codes[i] = string(c.Code)
+	}
+	t.Fatalf("reclaimed aged material wake did not trip aged_wake_pending; codes: %v", codes)
+}
+
 func TestConditionAgedWakePending_Constant(t *testing.T) {
 	if string(ConditionAgedWakePending) != "aged_wake_pending" {
 		t.Errorf("ConditionAgedWakePending = %q, want 'aged_wake_pending'", ConditionAgedWakePending)

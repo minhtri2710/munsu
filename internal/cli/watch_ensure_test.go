@@ -250,8 +250,12 @@ func TestWatchStatus_WithMaterialWake(t *testing.T) {
 	os.WriteFile(queuePath, []byte(line), 0644)
 
 	resp := evaluateWatcherStatus(home)
-	if resp.Data.MaterialAge == "" {
-		t.Errorf("expected non-empty MaterialAge, got %q", resp.Data.MaterialAge)
+	age, err := time.ParseDuration(resp.Data.MaterialAge)
+	if err != nil || age < 10*time.Minute || age >= 10*time.Minute+5*time.Second {
+		t.Errorf("material_age=%q, want approximately 10m", resp.Data.MaterialAge)
+	}
+	if resp.Data.GuardState != "unhealthy" {
+		t.Errorf("guard_state=%q, want unhealthy", resp.Data.GuardState)
 	}
 	if resp.Data.QueuedWakes < 1 {
 		t.Errorf("queued_wakes=%d", resp.Data.QueuedWakes)

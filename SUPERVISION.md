@@ -117,14 +117,16 @@ Each record contains:
 
 | Field   | Description                    |
 |---------|--------------------------------|
-| Epoch   | Unix timestamp of enqueue      |
+| Epoch   | Unix timestamp of original emission; preserved across lease reclaim |
 | Seq     | PID of enqueuing process       |
 | Kind    | Wake kind (signal, stale, etc) |
 | Key     | Task or context identifier     |
 | Payload | Arbitrary message              |
 
 The lifecycle package provides `EnqueueWake` for producers and
-`ClaimWakes` / `DrainWakes` for consumers. The orchestrator `waker` wraps drain helpers.
+`ClaimWakes` / `DrainWakes` for consumers. The `Epoch:Seq` pair is the wake
+identity and remains unchanged when an expired lease is reclaimed. The
+orchestrator `waker` wraps drain helpers.
 
 ## Guard
 

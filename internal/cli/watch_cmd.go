@@ -437,9 +437,10 @@ func evaluateWatcherStatus(homeDir string) Response[WatchStatus] {
 	materialAge := ""
 	if queuedWakes > 0 {
 		if oldest := oldestMaterialWakeAge(homeDir); oldest > 0 {
-			materialAge = time.Duration(oldest).Round(time.Second).String()
+			oldestDuration := time.Duration(oldest) * time.Second
+			materialAge = oldestDuration.Round(time.Second).String()
 			// Aged material wakes make the guard unhealthy.
-			if oldest > int64(5*time.Minute) && guardState == "healthy" {
+			if oldestDuration > 5*time.Minute && guardState == "healthy" {
 				guardState = "unhealthy"
 			}
 		}
