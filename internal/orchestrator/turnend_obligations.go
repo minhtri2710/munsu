@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -567,41 +568,52 @@ func lineVerb(line string) string {
 	return strings.TrimSpace(before)
 }
 
+// obligationFields is the fixed column count of a serialized obligation line.
+const obligationFields = 6
+
 // parseObligations reads obligation entries from a file.
-// Format: kind\tstate\tkey\tdetail\tcreated_at\tclosed_at (new)
-//
-//	or: kind\tstate\tdetail\tcreated_at\tclosed_at (old backward-compat)
+// Format: kind\tstate\tkey\tdetail\tcreated_at\tclosed_at — exactly six
+// tab-separated fields, key empty when the obligation has no key. A line that
+// does not match (wrong field count, unknown kind or state, non-integer
+// timestamp) fails the whole load: obligation state is not something to guess.
 func parseObligations(f *os.File) ([]Obligation, error) {
 	var obligations []Obligation
 	scanner := bufio.NewScanner(f)
+	lineNo := 0
 	for scanner.Scan() {
+		lineNo++
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		parts := strings.SplitN(line, "\t", 6)
-		if len(parts) < 4 {
-			continue
+		parts := strings.Split(line, "\t")
+		if len(parts) != obligationFields {
+			return nil, fmt.Errorf("obligation line %d: got %d fields, want %d", lineNo, len(parts), obligationFields)
 		}
-		o := Obligation{
-			Kind:  ObligationKind(parts[0]),
-			State: State(parts[1]),
+		kind := ObligationKind(parts[0])
+		if kind != ReportRelay && kind != Cleanup {
+			return nil, fmt.Errorf("obligation line %d: unknown kind %q", lineNo, parts[0])
 		}
-		if !strings.Contains(parts[2], " ") && len(parts) >= 6 {
-			// New 6-field format: kind\tstate\tkey\tdetail\tcreated_at\tclosed_at
-			o.Key = parts[2]
-			o.Detail = parts[3]
-			o.CreatedAt = parseInt(parts[4])
-			o.ClosedAt = parseInt(parts[5])
-		} else {
-			// Old 4/5-field format: kind\tstate\tdetail\tcreated_at\tclosed_at
-			o.Detail = parts[2]
-			o.CreatedAt = parseInt(parts[3])
-			if len(parts) >= 5 {
-				o.ClosedAt = parseInt(parts[4])
-			}
+		state := State(parts[1])
+		if state != StateOpen && state != StateClosed {
+			return nil, fmt.Errorf("obligation line %d: unknown state %q", lineNo, parts[1])
 		}
-		obligations = append(obligations, o)
+		createdAt, err := strconv.ParseInt(parts[4], 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("obligation line %d: created_at %q: %w", lineNo, parts[4], err)
+		}
+		closedAt, err := strconv.ParseInt(parts[5], 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("obligation line %d: closed_at %q: %w", lineNo, parts[5], err)
+		}
+		obligations = append(obligations, Obligation{
+			Kind:      kind,
+			State:     state,
+			Key:       parts[2],
+			Detail:    parts[3],
+			CreatedAt: createdAt,
+			ClosedAt:  closedAt,
+		})
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err
@@ -609,7 +621,8 @@ func parseObligations(f *os.File) ([]Obligation, error) {
 	return obligations, nil
 }
 
-// writeObligationsFile serializes obligations to a file.
+// writeObligationsFile serializes obligations to a file, one six-field
+// tab-separated line each (key empty when the obligation has no key).
 func writeObligationsFile(p string, obligations []Obligation) error {
 	dir := filepath.Dir(p)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -617,13 +630,8 @@ func writeObligationsFile(p string, obligations []Obligation) error {
 	}
 	var b strings.Builder
 	for _, o := range obligations {
-		if o.Key != "" {
-			b.WriteString(fmt.Sprintf("%s\t%s\t%s\t%s\t%d\t%d\n",
-				o.Kind, o.State, o.Key, o.Detail, o.CreatedAt, o.ClosedAt))
-		} else {
-			b.WriteString(fmt.Sprintf("%s\t%s\t%s\t%d\t%d\n",
-				o.Kind, o.State, o.Detail, o.CreatedAt, o.ClosedAt))
-		}
+		b.WriteString(fmt.Sprintf("%s\t%s\t%s\t%s\t%d\t%d\n",
+			o.Kind, o.State, o.Key, o.Detail, o.CreatedAt, o.ClosedAt))
 	}
 	return os.WriteFile(p, []byte(b.String()), 0644)
 }
@@ -631,10 +639,3 @@ func writeObligationsFile(p string, obligations []Obligation) error {
 // ProvenanceMarkerName is the marker file written to a seeded captain home root.
 // Duplicated from captain package to avoid import cycle.
 const ProvenanceMarkerName = ".munsu-captain-home"
-
-// parseInt parses an int64 from a string; returns 0 on failure.
-func parseInt(s string) int64 {
-	var n int64
-	fmt.Sscanf(s, "%d", &n)
-	return n
-}
