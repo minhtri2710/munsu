@@ -38,6 +38,9 @@ func TestWorktreeReclaimRefusesUnreadableMeta(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
+	if _, err := home.Init(tmpDir); err != nil {
+		t.Fatalf("initializing home: %v", err)
+	}
 
 	const id = "task-live"
 	if err := home.WriteMeta(tmpDir, id, map[string]string{"worktree": "/pool/wt-live"}); err != nil {
