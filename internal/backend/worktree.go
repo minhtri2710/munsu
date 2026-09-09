@@ -26,6 +26,7 @@ package backend
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -44,6 +45,18 @@ type Provider interface {
 	ReservedPath(repoPath, reservationID string) (path string, ok bool)
 	Return(path string) error
 	Status() (string, error)
+	StatusWorktrees() ([]WorktreeEntry, error)
+}
+
+// WorktreeEntry is one pooled worktree, with the launch reservation that holds
+// it when one does. LeaseHolder is the treehouse lease holder — the
+// reservationID munsu passes on `get --lease --lease-holder` — and is empty for
+// the git fallback (which owns no holder record and derives paths from the
+// reservation instead). Path is absolute so reclaim can compare it against the
+// absolute paths in task meta and task authority bindings.
+type WorktreeEntry struct {
+	Path        string
+	LeaseHolder string
 }
 
 // ErrWorktreeReservationRecoveryUnsupported is the typed fail-closed outcome
@@ -102,11 +115,13 @@ func GetWorktree(homeDir, repoPath string, lease bool) (string, error) {
 //
 // treehouse: the first acquisition passes `get --lease --lease-holder
 // <reservationID>` (the reservation is recorded as the lease holder), but the
-// treehouse CLI cannot recover a worktree by holder (`get` always allocates
-// from the pool, `status` has no holder query, `return` is by path), so a
-// recovery fails closed instead of allocating a replacement (DEPENDENCY_REQUEST
-// evidence; owner-clean alternative is operator reconciliation of the orphan
-// lease before re-running the launch).
+// treehouse CLI cannot re-acquire a worktree by holder (`get` always allocates
+// from the pool, `return` is by path), so a recovery fails closed instead of
+// allocating a replacement (DEPENDENCY_REQUEST evidence; owner-clean
+// alternative is operator reconciliation of the orphan lease before re-running
+// the launch). The holder is readable the other direction via `status --json`
+// lease_holder, which `worktree reclaim` uses to spare a reserved-but-unbound
+// treehouse worktree.
 func GetWorktreeReserved(homeDir, repoPath string, lease bool, reservationID string, recovery bool) (string, error) {
 	if strings.TrimSpace(reservationID) == "" {
 		return "", fmt.Errorf("worktree: reservation-aware acquisition requires a reservation identity")
@@ -150,12 +165,27 @@ func WorktreeStatus(homeDir string) (string, error) {
 	return p.Status()
 }
 
+// StatusWorktrees returns the pooled worktrees with their lease holders, the
+// structured form `worktree reclaim` needs to compare absolute paths and to
+// spare a treehouse worktree still held by a live launch reservation.
+func StatusWorktrees(homeDir string) ([]WorktreeEntry, error) {
+	p, err := selectProvider(homeDir)
+	if err != nil {
+		return nil, err
+	}
+	return p.StatusWorktrees()
+}
+
 // --- treehouse provider ---
 
 type treehouseProvider struct{}
 
-// ReservedPath cannot map a pooled worktree path back to a treehouse lease
-// holder because treehouse exposes no holder query.
+// ReservedPath cannot derive a treehouse worktree path from a reservation
+// without I/O: treehouse allocates pool paths, they are not a pure function of
+// the reservation the way the git fallback's are. The reverse mapping —
+// worktree path to its lease holder — does exist, via StatusWorktrees
+// (`treehouse status --json` lease_holder), which is how reclaim spares a
+// reserved-but-unbound treehouse worktree.
 func (p *treehouseProvider) ReservedPath(repoPath, reservationID string) (string, bool) {
 	return "", false
 }
@@ -163,13 +193,16 @@ func (p *treehouseProvider) ReservedPath(repoPath, reservationID string) (string
 // GetReserved acquires a worktree owned by one launch reservation. On the
 // FIRST acquisition the reservation is passed as the treehouse lease holder
 // (--lease-holder <reservationID>) so the lease is durably labeled. The
-// treehouse CLI cannot recover a worktree by holder — `get` always allocates
-// from the pool, `status` exposes no holder query, and `return` is by path —
-// so a recovery fails closed with ErrWorktreeReservationRecoveryUnsupported
-// instead of allocating a replacement (DEPENDENCY_REQUEST evidence).
+// treehouse CLI cannot re-acquire a worktree by holder — `get` always allocates
+// from the pool (there is no get-by-holder) and `return` is by path — so a
+// recovery fails closed with ErrWorktreeReservationRecoveryUnsupported instead
+// of allocating a replacement (DEPENDENCY_REQUEST evidence). Reclaim reads the
+// holder the other direction, via `status --json` lease_holder (StatusWorktrees),
+// to spare a reserved-but-unbound worktree; re-adopting one on recovery is a
+// separate concern not built here.
 func (p *treehouseProvider) GetReserved(repoPath string, lease bool, reservationID string, recovery bool) (string, error) {
 	if recovery {
-		return "", fmt.Errorf("%w: treehouse CLI has no reservation-keyed get/recover (get allocates from the pool; status has no holder query; return is by path); the launch reservation %q cannot be recovered without allocating a replacement — owner-clean recovery requires operator reconciliation of the orphan lease", ErrWorktreeReservationRecoveryUnsupported, reservationID)
+		return "", fmt.Errorf("%w: treehouse CLI has no get-by-holder to re-acquire the reserved worktree (get allocates from the pool; return is by path); the launch reservation %q cannot be recovered without allocating a replacement — owner-clean recovery requires operator reconciliation of the orphan lease", ErrWorktreeReservationRecoveryUnsupported, reservationID)
 	}
 	bin, err := treehouseBin()
 	if err != nil {
@@ -263,6 +296,38 @@ func (p *treehouseProvider) Status() (string, error) {
 		return "", fmt.Errorf("treehouse status: %w", err)
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// StatusWorktrees lists the pool via `treehouse status --json`, which reports an
+// absolute path and the lease_holder (the --lease-holder reservationID) for each
+// worktree. The text `status` is unusable for reclaim: it abbreviates paths to
+// ~ and appends "(held by <holder>)" to leased lines, so a field-split lands on
+// the holder token rather than the path.
+func (p *treehouseProvider) StatusWorktrees() ([]WorktreeEntry, error) {
+	bin, err := treehouseBin()
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.Command(bin, "status", "--json")
+	out, err := cmd.Output()
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			return nil, fmt.Errorf("treehouse status --json: %s", strings.TrimSpace(string(ee.Stderr)))
+		}
+		return nil, fmt.Errorf("treehouse status --json: %w", err)
+	}
+	var raw []struct {
+		Path        string `json:"path"`
+		LeaseHolder string `json:"lease_holder"`
+	}
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return nil, fmt.Errorf("parsing treehouse status --json: %w", err)
+	}
+	entries := make([]WorktreeEntry, 0, len(raw))
+	for _, r := range raw {
+		entries = append(entries, WorktreeEntry{Path: r.Path, LeaseHolder: r.LeaseHolder})
+	}
+	return entries, nil
 }
 
 // treehouseBin returns the path to the treehouse binary, or an error if not found.
@@ -401,6 +466,31 @@ func (p *gitWorktreeProvider) Status() (string, error) {
 		}
 	}
 	return strings.Join(lines, "\n"), nil
+}
+
+// StatusWorktrees lists the fallback worktree directories. The git fallback owns
+// no lease holder record — it derives worktree paths from the reservation, so
+// reclaim spares reserved-but-unbound git worktrees via ReservedPath, not the
+// holder — so every entry's LeaseHolder is empty.
+func (p *gitWorktreeProvider) StatusWorktrees() ([]WorktreeEntry, error) {
+	base := p.getWorktreeBase()
+	dirents, err := os.ReadDir(base)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("reading %s: %w", base, err)
+	}
+	var out []WorktreeEntry
+	for _, e := range dirents {
+		if e.IsDir() {
+			wtDir := filepath.Join(base, e.Name())
+			if _, err := os.Stat(filepath.Join(wtDir, ".git")); err == nil {
+				out = append(out, WorktreeEntry{Path: wtDir})
+			}
+		}
+	}
+	return out, nil
 }
 
 // stableHash returns a deterministic short hex string from a path, used

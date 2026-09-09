@@ -163,27 +163,27 @@ func TestWorktreeReclaimSparesReservedUnboundWorktree(t *testing.T) {
 		Reason:                "reclaim test",
 	}
 	var reservedPath, reservedGit string
-	status := func(homeDir string) (string, error) {
+	statusWorktrees := func(homeDir string) ([]backend.WorktreeEntry, error) {
 		if _, err := auth.BeginSpawn(mustCanonicalOp(t, "reclaim-reserved-launch", launchReq), launchReq); err != nil {
-			return "", fmt.Errorf("committing launch intent: %w", err)
+			return nil, fmt.Errorf("committing launch intent: %w", err)
 		}
 		var ok bool
 		reservedPath, ok, err = backend.ReservedWorktreePath(homeDir, repoPath, reservationID)
 		if err != nil || !ok {
-			return "", fmt.Errorf("resolving reserved worktree path: path=%q ok=%v err=%v", reservedPath, ok, err)
+			return nil, fmt.Errorf("resolving reserved worktree path: path=%q ok=%v err=%v", reservedPath, ok, err)
 		}
 		reservedGit = filepath.Join(reservedPath, ".git")
 		if err := os.MkdirAll(reservedPath, 0o755); err != nil {
-			return "", fmt.Errorf("materializing reserved worktree: %w", err)
+			return nil, fmt.Errorf("materializing reserved worktree: %w", err)
 		}
 		if err := os.WriteFile(reservedGit, []byte("gitdir: /nowhere"), 0o644); err != nil {
-			return "", fmt.Errorf("seeding reserved worktree: %w", err)
+			return nil, fmt.Errorf("seeding reserved worktree: %w", err)
 		}
-		return backend.WorktreeStatus(homeDir)
+		return backend.StatusWorktrees(homeDir)
 	}
 
 	root := &cobra.Command{Use: "test"}
-	root.AddCommand(newWorktreeCmdWithStatus(status))
+	root.AddCommand(newWorktreeCmdWithStatus(statusWorktrees))
 	root.SetOut(new(strings.Builder))
 	root.SetErr(new(strings.Builder))
 	root.SetArgs([]string{"worktree", "reclaim"})
@@ -219,6 +219,92 @@ func TestWorktreeReclaimSparesReservedUnboundWorktree(t *testing.T) {
 	}
 	if _, err := os.Stat(reservedGit); err != nil {
 		t.Fatalf("reclaim must leave the reserved worktree untouched: %v", err)
+	}
+}
+
+// TestWorktreeReclaimSparesTreehouseLeaseHolderWorktree covers the treehouse
+// mechanism: a pooled worktree carries the reservation as its status --json
+// lease_holder, so reclaim spares any worktree held by a live launch
+// reservation and reclaims one held by a dead one. This is the reservation
+// keyed holder query the F024 treehouse residual (f024-treehouse-holder-status-dep)
+// closed. The status source is injected so the test needs no treehouse binary.
+func TestWorktreeReclaimSparesTreehouseLeaseHolderWorktree(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+	t.Setenv("PATH", "/dev/null")
+	initCLITestHome(t, tmpDir)
+	projectName := "treehouse-project"
+	repoPath := filepath.Join(tmpDir, "repo")
+	if err := os.MkdirAll(repoPath, 0o755); err != nil {
+		t.Fatalf("creating registered repo: %v", err)
+	}
+	if err := fleet.Add(tmpDir, projectName, repoPath, "", true); err != nil {
+		t.Fatalf("registering project: %v", err)
+	}
+
+	auth := testAuthorityFor(t, tmpDir)
+	taskID := mustTaskIDFor(t, "treehouse-holder")
+	projectID, err := domain.NewProjectID(projectName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	createReq := taskauthority.CanonicalCreateRequest{HomeID: auth.HomeID(), TaskID: taskID, Owner: "general", Description: "treehouse holder test", Kind: "ship", Project: projectID, Reason: "reclaim test"}
+	if _, err := auth.Create(mustCanonicalOp(t, "th-create", createReq), createReq); err != nil {
+		t.Fatalf("creating task authority record: %v", err)
+	}
+	agg, err := auth.Get(taskID)
+	if err != nil {
+		t.Fatalf("reading task authority record: %v", err)
+	}
+	const reservationID = "wt-treehouse-holder"
+	launchReq := taskauthority.CanonicalBeginSpawnRequest{HomeID: auth.HomeID(), TaskID: taskID, Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), SnapshotDigest: strings.Repeat("c", 64), Backend: "tmux", Harness: "pi", Model: "model", Effort: "high", Mode: "direct-PR", Kind: "ship", Project: projectName, LaunchID: "launch-treehouse-holder", WindowLabel: "window-treehouse-holder", WorktreeReservationID: reservationID, WorktreeFenceToken: "wt-fence-treehouse-holder", EndpointReservationID: "ep-treehouse-holder", EndpointFenceToken: "ep-fence-treehouse-holder", EndpointIncarnation: "ep-inc-treehouse-holder", Reason: "reclaim test"}
+	if _, err := auth.BeginSpawn(mustCanonicalOp(t, "th-launch", launchReq), launchReq); err != nil {
+		t.Fatalf("committing launch intent: %v", err)
+	}
+
+	const heldPath = "/pool/held-by-live-reservation"
+	const orphanPath = "/pool/orphan-lease"
+	statusWorktrees := func(homeDir string) ([]backend.WorktreeEntry, error) {
+		return []backend.WorktreeEntry{
+			{Path: heldPath, LeaseHolder: reservationID},
+			{Path: orphanPath, LeaseHolder: "some-dead-reservation"},
+		}, nil
+	}
+
+	root := &cobra.Command{Use: "test"}
+	root.AddCommand(newWorktreeCmdWithStatus(statusWorktrees))
+	root.SetOut(new(strings.Builder))
+	root.SetErr(new(strings.Builder))
+	root.SetArgs([]string{"worktree", "reclaim"})
+	stdout, stdoutWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("creating stdout pipe: %v", err)
+	}
+	oldStdout := os.Stdout
+	os.Stdout = stdoutWriter
+	outputDone := make(chan string, 1)
+	go func() {
+		output, readErr := io.ReadAll(stdout)
+		if readErr != nil {
+			outputDone <- "read stdout: " + readErr.Error()
+			return
+		}
+		outputDone <- string(output)
+	}()
+
+	err = root.Execute()
+	stdoutWriter.Close()
+	os.Stdout = oldStdout
+	output := <-outputDone
+	stdout.Close()
+	if err != nil {
+		t.Fatalf("reclaim: %v", err)
+	}
+	if strings.Contains(output, "returning orphaned worktree: "+heldPath) {
+		t.Fatalf("reclaim must spare the worktree held by a live reservation, got stdout: %q", output)
+	}
+	if !strings.Contains(output, "returning orphaned worktree: "+orphanPath) {
+		t.Fatalf("reclaim must reclaim the worktree held by a dead reservation, got stdout: %q", output)
 	}
 }
 
