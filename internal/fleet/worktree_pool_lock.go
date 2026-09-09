@@ -21,8 +21,9 @@ import (
 // are never held at once and there is no lock-ordering inversion.
 const worktreePoolScope = "worktree-pool"
 
-// LockWorktreePool acquires the home-level worktree-pool fence. The caller must
-// call Release on the returned lock exactly once (defer it).
+// LockWorktreePool acquires the home-level worktree-pool fence with Home.Lock's
+// bounded retry budget; a held fence fails closed with home.ErrLockTimeout. The
+// caller must call Release on the returned lock exactly once (defer it).
 func LockWorktreePool(homeDir string) (*home.Lock, error) {
 	h, err := home.Open(homeDir)
 	if err != nil {

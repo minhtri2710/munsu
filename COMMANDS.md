@@ -26,6 +26,7 @@ that output is the authority, not this file.
 | `munsu worktree get <repo-path> [--lease]` | Acquire a pooled worktree via treehouse. |
 | `munsu worktree return <path>` | Return a worktree to the pool. |
 | `munsu worktree status` | Show worktree pool status. |
+| `munsu worktree reclaim` | Reclaim orphaned worktrees; run `munsu worktree reclaim --help` for reservation-safety details. |
 | `munsu bootstrap [install <tools>...]` | Detect toolchain and run setup sweeps. |
 | `munsu ensure-agents-md <project>` | Create/update AGENTS.md and CLAUDE.md symlink for a project. |
 
