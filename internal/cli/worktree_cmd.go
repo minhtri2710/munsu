@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/fleet"
@@ -13,10 +12,10 @@ import (
 )
 
 func newWorktreeCmd() *cobra.Command {
-	return newWorktreeCmdWithStatus(backend.WorktreeStatus)
+	return newWorktreeCmdWithStatus(backend.StatusWorktrees)
 }
 
-func newWorktreeCmdWithStatus(status func(string) (string, error)) *cobra.Command {
+func newWorktreeCmdWithStatus(statusWorktrees func(string) ([]backend.WorktreeEntry, error)) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "worktree",
 		Short: "Manage pooled git worktrees",
@@ -56,7 +55,7 @@ func newWorktreeCmdWithStatus(status func(string) (string, error)) *cobra.Comman
 		Short: "Show worktree pool status",
 		Args:  NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			out, err := status(ctx.Home)
+			out, err := backend.WorktreeStatus(ctx.Home)
 			if err != nil {
 				return err
 			}
@@ -73,24 +72,36 @@ authoritative task worktree bindings. If task metadata or task authority
 cannot be read, the command aborts without reclaiming anything.
 
 Leases should always be returned via "worktree return <path>" when a
-soldier finishes. This command is a safety net for orphaned leases. The git
-worktree provider is protected against the spawn/reclaim reservation race; the
-treehouse provider is not, because it exposes no reservation-keyed or holder
-status query, so reclaim cannot distinguish a reserved-but-unbound treehouse
-worktree from an orphan. Git protection assumes the registered project path
-remains stable for the launch lifetime; relocation or removal during a launch
-can leave its originally reserved path unprotected.`,
+soldier finishes. This command is a safety net for orphaned leases. Both
+providers are protected against the spawn/reclaim reservation race: the whole
+snapshot-to-return pass runs under the home-level worktree-pool fence, which a
+launch's lease also takes, so no lease can interleave; and within that pass the
+git worktree provider spares a reserved-but-unbound worktree by its
+deterministic reservation path, while the treehouse provider spares one whose
+"status --json" lease_holder is a live launch reservation. Git protection
+assumes the registered project path remains stable for the launch lifetime;
+relocation or removal during a launch can leave its originally reserved path
+unprotected.`,
 		Args: NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			// Snapshot candidates before reading authority: a git launch commits
-			// its reservation before creating the worktree, so later authority
-			// reads see reservations for every candidate in this snapshot. Git
-			// protection assumes the registered project path remains stable for
-			// the launch lifetime; relocation or removal can leave the original
-			// reserved path unprotected.
-			out, err := status(ctx.Home)
+			// Hold the worktree-pool fence across the whole snapshot->return
+			// pass. A launch takes the same fence around its lease, so no lease
+			// can land between this snapshot and the return loop; a slot leased
+			// before the snapshot shows its holder here and is spared, and a slot
+			// leased after the pass was never a candidate. This closes the
+			// spawn/reclaim reservation race a status reread alone cannot.
+			poolLock, err := fleet.LockWorktreePool(ctx.Home)
 			if err != nil {
-				return fmt.Errorf("getting treehouse status: %w", err)
+				return err
+			}
+			defer poolLock.Release()
+
+			// Git protection assumes the registered project path remains stable
+			// for the launch lifetime; relocation or removal can leave the
+			// original reserved path unprotected.
+			entries, err := statusWorktrees(ctx.Home)
+			if err != nil {
+				return fmt.Errorf("getting worktree status: %w", err)
 			}
 
 			ids, err := home.ListMetaIDs(ctx.Home)
@@ -122,8 +133,10 @@ can leave its originally reserved path unprotected.`,
 				}
 			}
 
-			// Only git can spare reserved-but-unbound paths: treehouse has no
-			// reservation-keyed or holder status query.
+			// Spare a reserved-but-unbound worktree from reclaim. Collect the
+			// live launch reservations (committed, not yet bound, not terminal)
+			// once, then spare by each provider's mechanism.
+			reservedUnbound := make(map[string]bool)
 			for _, agg := range aggs {
 				if agg.Worktree != nil || agg.Launch == nil || agg.Launch.WorktreeReservationID == "" {
 					continue
@@ -132,6 +145,10 @@ can leave its originally reserved path unprotected.`,
 				case taskauthority.PhaseDone, taskauthority.PhaseResolved, taskauthority.PhaseRetired:
 					continue
 				}
+				reservedUnbound[agg.Launch.WorktreeReservationID] = true
+
+				// git fallback: the worktree path is a deterministic function of
+				// the reservation, so map reservation -> path and spare it.
 				repoPath, rerr := fleet.ResolveRepoPath(ctx.Home, agg.Launch.Project)
 				if rerr != nil || repoPath == "" {
 					continue
@@ -143,25 +160,26 @@ can leave its originally reserved path unprotected.`,
 				active[path] = true
 			}
 
-			// Return worktrees not in active set
+			// treehouse: the reservation is the worktree's lease_holder, so spare
+			// any candidate held by a live reservation (git entries carry no
+			// holder, so this is a no-op there).
+			for _, e := range entries {
+				if e.LeaseHolder != "" && reservedUnbound[e.LeaseHolder] {
+					active[e.Path] = true
+				}
+			}
+
+			// Return worktrees not in the active set.
 			count := 0
-			for _, line := range strings.Split(out, "\n") {
-				line = strings.TrimSpace(line)
-				if line == "" {
+			for _, e := range entries {
+				if e.Path == "" || active[e.Path] {
 					continue
 				}
-				parts := strings.Fields(line)
-				if len(parts) == 0 {
-					continue
-				}
-				wtPath := parts[len(parts)-1]
-				if !active[wtPath] {
-					fmt.Printf("returning orphaned worktree: %s\n", wtPath)
-					if err := backend.ReturnWorktree(ctx.Home, wtPath); err != nil {
-						fmt.Fprintf(os.Stderr, "  error: %v\n", err)
-					} else {
-						count++
-					}
+				fmt.Printf("returning orphaned worktree: %s\n", e.Path)
+				if err := backend.ReturnWorktree(ctx.Home, e.Path); err != nil {
+					fmt.Fprintf(os.Stderr, "  error: %v\n", err)
+				} else {
+					count++
 				}
 			}
 
