@@ -901,6 +901,16 @@ func (r *Runner) acquireWorktree() error {
 	if reservationID == "" {
 		return fmt.Errorf("acquiring worktree: no launch worktree reservation; reservation-aware acquisition is mandatory for canonical launches")
 	}
+	// Serialize the lease against `worktree reclaim` under the worktree-pool
+	// fence so reclaim cannot return this slot between its status snapshot and
+	// its return pass. Held across the lease only: BindWorktree (the per-task
+	// authority lock) runs after acquireWorktree returns, so the pool scope and
+	// a task scope are never held at once.
+	poolLock, err := LockWorktreePool(r.homeDir)
+	if err != nil {
+		return fmt.Errorf("acquiring worktree: %w", err)
+	}
+	defer poolLock.Release()
 	wtPath, err := backend.GetWorktreeReserved(r.homeDir, r.projPath, true, reservationID, r.launchReentry)
 	if err != nil {
 		if backend.IsWorktreeReservationRecoveryUnsupported(err) {

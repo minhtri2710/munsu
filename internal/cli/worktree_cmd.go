@@ -73,20 +73,32 @@ cannot be read, the command aborts without reclaiming anything.
 
 Leases should always be returned via "worktree return <path>" when a
 soldier finishes. This command is a safety net for orphaned leases. Both
-providers are protected against the spawn/reclaim reservation race: the git
-worktree provider spares a reserved-but-unbound worktree by its deterministic
-reservation path, and the treehouse provider spares one whose "status --json"
-lease_holder is a live launch reservation. Git protection assumes the
-registered project path remains stable for the launch lifetime; relocation or
-removal during a launch can leave its originally reserved path unprotected.`,
+providers are protected against the spawn/reclaim reservation race: the whole
+snapshot-to-return pass runs under the home-level worktree-pool fence, which a
+launch's lease also takes, so no lease can interleave; and within that pass the
+git worktree provider spares a reserved-but-unbound worktree by its
+deterministic reservation path, while the treehouse provider spares one whose
+"status --json" lease_holder is a live launch reservation. Git protection
+assumes the registered project path remains stable for the launch lifetime;
+relocation or removal during a launch can leave its originally reserved path
+unprotected.`,
 		Args: NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			// Snapshot candidates before reading authority: a launch commits its
-			// reservation before creating/leasing the worktree, so later
-			// authority reads see reservations for every candidate in this
-			// snapshot. Git protection assumes the registered project path
-			// remains stable for the launch lifetime; relocation or removal can
-			// leave the original reserved path unprotected.
+			// Hold the worktree-pool fence across the whole snapshot->return
+			// pass. A launch takes the same fence around its lease, so no lease
+			// can land between this snapshot and the return loop; a slot leased
+			// before the snapshot shows its holder here and is spared, and a slot
+			// leased after the pass was never a candidate. This closes the
+			// spawn/reclaim reservation race a status reread alone cannot.
+			poolLock, err := fleet.LockWorktreePool(ctx.Home)
+			if err != nil {
+				return err
+			}
+			defer poolLock.Release()
+
+			// Git protection assumes the registered project path remains stable
+			// for the launch lifetime; relocation or removal can leave the
+			// original reserved path unprotected.
 			entries, err := statusWorktrees(ctx.Home)
 			if err != nil {
 				return fmt.Errorf("getting worktree status: %w", err)

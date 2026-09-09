@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
+	"github.com/minhtri2710/munsu/internal/testutil"
 	"github.com/spf13/cobra"
 )
 
@@ -222,16 +224,18 @@ func TestWorktreeReclaimSparesReservedUnboundWorktree(t *testing.T) {
 	}
 }
 
-// TestWorktreeReclaimSparesTreehouseLeaseHolderWorktree covers the treehouse
-// mechanism: a pooled worktree carries the reservation as its status --json
-// lease_holder, so reclaim spares any worktree held by a live launch
-// reservation and reclaims one held by a dead one. This is the reservation
-// keyed holder query the F024 treehouse residual (f024-treehouse-holder-status-dep)
-// closed. The status source is injected so the test needs no treehouse binary.
+// TestWorktreeReclaimSparesTreehouseLeaseHolderWorktree drives the real
+// treehouse provider path end to end. A semantic fake `treehouse` on PATH emits
+// `status --json` with a live-holder and a dead-holder worktree and records each
+// `return`, so reclaim exercises backend.StatusWorktrees (the status --json
+// decode) and backend.ReturnWorktree (treehouse return) rather than an injected
+// status seam. Reclaim must spare the worktree whose lease_holder is a live
+// launch reservation and return the one held by a dead reservation — the
+// reservation-keyed holder query the F024 treehouse residual
+// (f024-treehouse-holder-status-dep) closed.
 func TestWorktreeReclaimSparesTreehouseLeaseHolderWorktree(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
-	t.Setenv("PATH", "/dev/null")
 	initCLITestHome(t, tmpDir)
 	projectName := "treehouse-project"
 	repoPath := filepath.Join(tmpDir, "repo")
@@ -264,15 +268,28 @@ func TestWorktreeReclaimSparesTreehouseLeaseHolderWorktree(t *testing.T) {
 
 	const heldPath = "/pool/held-by-live-reservation"
 	const orphanPath = "/pool/orphan-lease"
-	statusWorktrees := func(homeDir string) ([]backend.WorktreeEntry, error) {
-		return []backend.WorktreeEntry{
-			{Path: heldPath, LeaseHolder: reservationID},
-			{Path: orphanPath, LeaseHolder: "some-dead-reservation"},
-		}, nil
-	}
+	tracePath := filepath.Join(tmpDir, "treehouse-returns")
+	statusJSON := `[{"path":"` + heldPath + `","lease_holder":"` + reservationID + `"},` +
+		`{"path":"` + orphanPath + `","lease_holder":"some-dead-reservation"}]`
+	// Semantic fake treehouse: answer `status --json` with the two pooled
+	// worktrees and append every `return` target to the trace file, so the test
+	// observes a real provider-level return rather than only reclaim's stdout.
+	script := "#!/usr/bin/env bash\n" +
+		`if [ "$1" = "status" ] && [ "$2" = "--json" ]; then` + "\n" +
+		`  echo '` + statusJSON + `'` + "\n" +
+		`  exit 0` + "\n" +
+		`fi` + "\n" +
+		`if [ "$1" = "return" ]; then` + "\n" +
+		`  for a in "$@"; do last="$a"; done` + "\n" +
+		`  echo "$last" >> "` + tracePath + `"` + "\n" +
+		`  exit 0` + "\n" +
+		`fi` + "\n" +
+		`>&2 echo "fake treehouse: unexpected args: $*"` + "\n" +
+		`exit 1` + "\n"
+	testutil.FakeOnPath(t, "treehouse", script)
 
 	root := &cobra.Command{Use: "test"}
-	root.AddCommand(newWorktreeCmdWithStatus(statusWorktrees))
+	root.AddCommand(newWorktreeCmd())
 	root.SetOut(new(strings.Builder))
 	root.SetErr(new(strings.Builder))
 	root.SetArgs([]string{"worktree", "reclaim"})
@@ -305,6 +322,46 @@ func TestWorktreeReclaimSparesTreehouseLeaseHolderWorktree(t *testing.T) {
 	}
 	if !strings.Contains(output, "returning orphaned worktree: "+orphanPath) {
 		t.Fatalf("reclaim must reclaim the worktree held by a dead reservation, got stdout: %q", output)
+	}
+
+	// The provider actually ran `treehouse return` on the dead-holder worktree
+	// and never on the live-holder one.
+	trace, err := os.ReadFile(tracePath)
+	if err != nil {
+		t.Fatalf("reading treehouse return trace: %v", err)
+	}
+	traceStr := string(trace)
+	if !strings.Contains(traceStr, orphanPath) {
+		t.Fatalf("treehouse provider must return the dead-holder worktree, trace=%q", traceStr)
+	}
+	if strings.Contains(traceStr, heldPath) {
+		t.Fatalf("treehouse provider must not return the live-holder worktree, trace=%q", traceStr)
+	}
+}
+
+// TestWorktreeReclaimIsFencedAgainstTheWorktreePool proves reclaim runs its
+// snapshot->return pass under the worktree-pool fence: while the fence is held
+// (as a launch holds it around its lease), reclaim cannot proceed and fails
+// closed with a lock timeout instead of racing the lease. This is the fence that
+// closes the spawn/reclaim reservation race a status reread alone cannot.
+func TestWorktreeReclaimIsFencedAgainstTheWorktreePool(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+	initCLITestHome(t, tmpDir)
+
+	lk, err := fleet.LockWorktreePool(tmpDir)
+	if err != nil {
+		t.Fatalf("holding worktree-pool fence: %v", err)
+	}
+	defer lk.Release()
+
+	root := &cobra.Command{Use: "test"}
+	root.AddCommand(newWorktreeCmd())
+	root.SetOut(new(strings.Builder))
+	root.SetErr(new(strings.Builder))
+	root.SetArgs([]string{"worktree", "reclaim"})
+	if err := root.Execute(); !errors.Is(err, home.ErrLockTimeout) {
+		t.Fatalf("reclaim must fail closed on the held worktree-pool fence with ErrLockTimeout, got: %v", err)
 	}
 }
 
