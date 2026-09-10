@@ -86,8 +86,8 @@ type PromptSubmitter interface {
 	// AgentPrompt submits a prompt to the target agent and returns a
 	// typed result. The backend must distinguish between submitted,
 	// queued-while-busy, stalled, and endpoint-dead based on the
-	// underlying transport's response. Unsupported targets (non-agent
-	// panes, protocol-16 servers) should return PromptUnsupported.
+	// underlying transport's response. Unsupported targets (alive
+	// non-agent panes) should return PromptUnsupported.
 	AgentPrompt(windowID, text string) PromptResult
 }
 
@@ -108,8 +108,9 @@ type BusyChecker interface {
 type LegacyPrompt interface {
 	// LegacyPrompt sends text via SendKeys and returns a PromptResult.
 	// This is used only when the target does NOT support PromptSubmitter
-	// (e.g., protocol < 17) but the backend can still send via raw keys.
-	// The result may have limited diagnostic power compared to AgentPrompt.
+	// (e.g., an alive non-agent pane) but the backend can still send via
+	// raw keys. The result may have limited diagnostic power compared to
+	// AgentPrompt.
 	LegacyPrompt(windowID, text string) PromptResult
 }
 
@@ -119,9 +120,9 @@ type LegacyPrompt interface {
 //
 // Dispatch rules:
 //   - If the backend implements PromptSubmitter, AgentPrompt is used.
-//   - If AgentPrompt returns PromptUnsupported (e.g., protocol < 17,
-//     alive non-agent pane) AND the backend declares LegacyPrompt,
-//     the legacy SendKeys fallback is invoked.
+//   - If AgentPrompt returns PromptUnsupported (e.g., an alive non-agent
+//     pane) AND the backend declares LegacyPrompt, the legacy SendKeys
+//     fallback is invoked.
 //   - AgentPrompt results other than Unsupported (stalled, endpoint-dead,
 //     backend-failed) are NEVER subject to fallback.
 //   - If the backend has neither PromptSubmitter nor LegacyPrompt, the
@@ -131,7 +132,7 @@ func SubmitPrompt(bk Backend, windowID, text string) PromptResult {
 	if submitter, ok := bk.(PromptSubmitter); ok {
 		result := submitter.AgentPrompt(windowID, text)
 		// Only fall back to legacy if typed prompt returned Unsupported
-		// (e.g., protocol < 17, alive non-agent pane).
+		// (e.g., an alive non-agent pane).
 		if result.Status == PromptUnsupported {
 			if legacy, ok := bk.(LegacyPrompt); ok {
 				return legacy.LegacyPrompt(windowID, text)
