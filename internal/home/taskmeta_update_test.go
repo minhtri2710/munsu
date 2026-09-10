@@ -1,6 +1,7 @@
 package home
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -11,7 +12,11 @@ import (
 	"time"
 )
 
-func writeLargeMeta(t *testing.T, homeDir, id string) string {
+// writeUnreadableMeta writes a .meta file whose first lines are valid keys and
+// whose last line exceeds bufio.Scanner's token limit, so ReadMeta fails for a
+// reason that is not absence while the file stays a readable regular file an
+// atomic rename can replace.
+func writeUnreadableMeta(t *testing.T, homeDir, id string) string {
 	t.Helper()
 	p, err := MetaFilePath(homeDir, id)
 	if err != nil {
@@ -20,64 +25,73 @@ func writeLargeMeta(t *testing.T, homeDir, id string) string {
 	if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
 		t.Fatalf("creating state directory: %v", err)
 	}
-	body := "large=" + strings.Repeat("x", 128*1024) + "\nproject=existing-project\n"
+	body := "project=existing-project\nworktree=/tmp/wt\n" + strings.Repeat("x", 128*1024) + "\n"
 	if err := os.WriteFile(p, []byte(body), 0600); err != nil {
-		t.Fatalf("writing large meta: %v", err)
+		t.Fatalf("writing unreadable meta: %v", err)
 	}
 	return p
 }
 
-func TestReadMetaAcceptsLargeValues(t *testing.T) {
+// TestUpdateMetaRefusesUnreadableMeta proves an unreadable existing meta refuses
+// the write instead of replacing the file with the mutation's keys alone.
+func TestUpdateMetaRefusesUnreadableMeta(t *testing.T) {
 	homeDir := t.TempDir()
-	id := "large-value"
-	p, err := MetaFilePath(homeDir, id)
-	if err != nil {
-		t.Fatalf("MetaFilePath: %v", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
-		t.Fatalf("creating state directory: %v", err)
-	}
-	body := "large=" + strings.Repeat("x", 128*1024) + "\nproject=existing-project\n"
-	if err := os.WriteFile(p, []byte(body), 0600); err != nil {
-		t.Fatalf("writing large meta: %v", err)
-	}
+	id := "refuse-unreadable"
+	p := writeUnreadableMeta(t, homeDir, id)
 
-	meta, err := ReadMeta(homeDir, id)
-	if err != nil {
-		t.Fatalf("ReadMeta: %v", err)
+	before, readErr := os.ReadFile(p)
+	if readErr != nil {
+		t.Fatalf("reading meta before update: %v", readErr)
 	}
-	if len(meta["large"]) != 128*1024 {
-		t.Errorf("large value length = %d, want %d", len(meta["large"]), 128*1024)
-	}
-	if meta["project"] != "existing-project" {
-		t.Errorf("project = %q, want existing-project", meta["project"])
-	}
-}
-
-func TestUpdateMetaPreservesLargeValues(t *testing.T) {
-	homeDir := t.TempDir()
-	id := "large-update"
-	writeLargeMeta(t, homeDir, id)
-
-	if err := UpdateMeta(homeDir, id, func(meta map[string]string) error {
+	beforeHash := sha256.Sum256(before)
+	err := UpdateMeta(homeDir, id, func(meta map[string]string) error {
 		meta["attestation_generation"] = "1"
 		return nil
-	}); err != nil {
-		t.Fatalf("UpdateMeta: %v", err)
+	})
+	if err == nil {
+		t.Fatal("UpdateMeta returned nil for an unreadable meta")
 	}
 
-	meta, err := ReadMeta(homeDir, id)
+	raw, readErr := os.ReadFile(p)
+	if readErr != nil {
+		t.Fatalf("reading meta back: %v", readErr)
+	}
+	afterHash := sha256.Sum256(raw)
+	t.Logf("unreadable update error: %v; meta SHA-256 before=%x after=%x", err, beforeHash, afterHash)
+	if !strings.Contains(string(raw), "project=existing-project") {
+		t.Error("pre-existing project key was erased by a refused update")
+	}
+	if !strings.Contains(string(raw), "worktree=/tmp/wt") {
+		t.Error("pre-existing worktree key was erased by a refused update")
+	}
+	if strings.Contains(string(raw), "attestation_generation") {
+		t.Error("refused update wrote its own key anyway")
+	}
+	if string(before) != string(raw) || beforeHash != afterHash {
+		t.Fatalf("refused update changed meta: before=%x after=%x", beforeHash, afterHash)
+	}
+	t.Logf("attempted projection key absent: attestation_generation")
+}
+
+// TestReadMetaFileToleratesOversizedLine pins the deliberate contract split
+// between the two readers: the same file whose oversized line makes ReadMeta
+// (the read-modify-write reader) fail closed is read to completion by
+// ReadMetaFile (the read-only directory-scan reader), so prune's live-workspace
+// sweep never drops a still-referenced meta over a line it could not size.
+func TestReadMetaFileToleratesOversizedLine(t *testing.T) {
+	homeDir := t.TempDir()
+	p := writeUnreadableMeta(t, homeDir, "tolerant-scan")
+
+	if _, err := ReadMeta(homeDir, "tolerant-scan"); err == nil {
+		t.Fatal("ReadMeta accepted an oversized line; the fail-closed contract is gone")
+	}
+
+	meta, err := ReadMetaFile(p)
 	if err != nil {
-		t.Fatalf("ReadMeta: %v", err)
+		t.Fatalf("ReadMetaFile rejected an oversized line: %v", err)
 	}
-	if len(meta["large"]) != 128*1024 {
-		t.Errorf("large value length = %d, want %d", len(meta["large"]), 128*1024)
-	}
-	if meta["project"] != "existing-project" {
-		t.Errorf("project = %q, want existing-project", meta["project"])
-	}
-	if meta["attestation_generation"] != "1" {
-		t.Errorf("attestation_generation = %q, want 1", meta["attestation_generation"])
+	if meta["project"] != "existing-project" || meta["worktree"] != "/tmp/wt" {
+		t.Fatalf("ReadMetaFile lost keys around the oversized line: %v", meta)
 	}
 }
 
