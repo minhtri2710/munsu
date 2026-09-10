@@ -53,6 +53,11 @@ func Read(wtPath string) (*RunStatus, error) {
 	}
 	out, err := cmd.Output()
 	if err != nil {
+		if errors.Is(err, exec.ErrWaitDelay) {
+			if status, parseErr := Parse(string(out)); parseErr == nil {
+				return status, nil
+			}
+		}
 		return nil, err
 	}
 	return Parse(string(out))
