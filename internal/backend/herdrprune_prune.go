@@ -114,7 +114,7 @@ func liveWorkspaceIDsFromTaskMeta(homeDir string) (map[string]bool, error) {
 		if _, err := home.ReverseDurableKey(strings.TrimSuffix(e.Name(), ".meta")); err != nil {
 			continue
 		}
-		meta, err := readMetaFile(filepath.Join(stateDir, e.Name()))
+		meta, err := home.ReadMetaFile(filepath.Join(stateDir, e.Name()))
 		if err != nil {
 			continue // skip unreadable meta
 		}
@@ -123,26 +123,6 @@ func liveWorkspaceIDsFromTaskMeta(homeDir string) (map[string]bool, error) {
 		}
 	}
 	return ids, nil
-}
-
-// readMetaFile reads a key=value meta file.
-func readMetaFile(path string) (map[string]string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	meta := make(map[string]string)
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		k, v, ok := strings.Cut(line, "=")
-		if ok {
-			meta[strings.TrimSpace(k)] = strings.TrimSpace(v)
-		}
-	}
-	return meta, nil
 }
 
 // RunPrune executes the prune algorithm and returns the result.

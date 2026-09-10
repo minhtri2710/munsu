@@ -105,7 +105,7 @@ func scanBoundEndpoints(homeDir string) ([]boundEndpoint, error) {
 		if _, err := home.ReverseDurableKey(strings.TrimSuffix(entry.Name(), ".meta")); err != nil {
 			continue
 		}
-		meta, err := readMetaFile(filepath.Join(stateDir, entry.Name()))
+		meta, err := home.ReadMetaFile(filepath.Join(stateDir, entry.Name()))
 		if err != nil {
 			continue
 		}
@@ -126,22 +126,6 @@ func scanBoundEndpoints(homeDir string) ([]boundEndpoint, error) {
 			continue
 		}
 		out = append(out, boundEndpoint{backend: bk, handle: handle, meta: meta, home: homeDir})
-	}
-	return out, nil
-}
-
-// readMetaFile parses a flat key=value meta file.
-func readMetaFile(path string) (map[string]string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	out := map[string]string{}
-	for _, line := range strings.Split(string(data), "\n") {
-		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
-		if ok {
-			out[strings.TrimSpace(key)] = strings.TrimSpace(value)
-		}
 	}
 	return out, nil
 }

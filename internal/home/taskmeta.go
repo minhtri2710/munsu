@@ -260,9 +260,21 @@ func ReadMeta(homeDir string, id string) (map[string]string, error) {
 	if err := validateStatePath(homeDir, p, false); err != nil {
 		return nil, err
 	}
-	f, err := os.Open(p)
+	meta, err := ReadMetaFile(p)
 	if err != nil {
 		return nil, fmt.Errorf("reading task meta %s: %w", id, err)
+	}
+	return meta, nil
+}
+
+// ReadMetaFile parses a flat "key = value" meta file at path, skipping blank
+// lines and "#" comments. Callers that already hold a resolved state-file
+// path (e.g. a state-directory scan) use this; ReadMeta resolves and
+// validates a task id before calling it.
+func ReadMetaFile(path string) (map[string]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
 	}
 	defer f.Close()
 
@@ -279,7 +291,7 @@ func ReadMeta(homeDir string, id string) (map[string]string, error) {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scanning task meta %s: %w", id, err)
+		return nil, fmt.Errorf("scanning task meta %s: %w", path, err)
 	}
 	return meta, nil
 }
