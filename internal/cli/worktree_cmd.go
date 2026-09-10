@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/fleet"
@@ -58,7 +59,7 @@ func newWorktreeCmdWithStatus(statusWorktrees func(string) ([]backend.WorktreeEn
 			if err != nil {
 				return err
 			}
-			if active[args[0]] && !force {
+			if active[worktreeClaimKey(args[0])] && !force {
 				return fmt.Errorf("refusing to return claimed worktree %q; use --force to override", args[0])
 			}
 			return backend.ReturnWorktree(ctx.Home, args[0])
@@ -124,7 +125,7 @@ unprotected.`,
 			// Return worktrees not in the active set.
 			count := 0
 			for _, e := range entries {
-				if e.Path == "" || active[e.Path] {
+				if e.Path == "" || active[worktreeClaimKey(e.Path)] {
 					continue
 				}
 				fmt.Printf("returning orphaned worktree: %s\n", e.Path)
@@ -159,7 +160,7 @@ func activeWorktreeClaims(homeDir string, entries []backend.WorktreeEntry) (map[
 			return nil, fmt.Errorf("reading task meta %q: %w", id, err)
 		}
 		if wt := meta["worktree"]; wt != "" {
-			active[wt] = true
+			active[worktreeClaimKey(wt)] = true
 		}
 	}
 
@@ -173,7 +174,7 @@ func activeWorktreeClaims(homeDir string, entries []backend.WorktreeEntry) (map[
 	}
 	for _, agg := range aggs {
 		if agg.Worktree != nil && agg.Worktree.Path != "" {
-			active[agg.Worktree.Path] = true
+			active[worktreeClaimKey(agg.Worktree.Path)] = true
 		}
 	}
 
@@ -196,13 +197,24 @@ func activeWorktreeClaims(homeDir string, entries []backend.WorktreeEntry) (map[
 		if perr != nil || !ok || path == "" {
 			continue
 		}
-		active[path] = true
+		active[worktreeClaimKey(path)] = true
 	}
 
 	for _, e := range entries {
 		if e.LeaseHolder != "" && reservedUnbound[e.LeaseHolder] {
-			active[e.Path] = true
+			active[worktreeClaimKey(e.Path)] = true
 		}
 	}
 	return active, nil
+}
+
+func worktreeClaimKey(path string) string {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return filepath.Clean(path)
+	}
+	if resolved, err := filepath.EvalSymlinks(absolute); err == nil {
+		return resolved
+	}
+	return filepath.Clean(absolute)
 }

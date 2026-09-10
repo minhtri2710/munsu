@@ -1,6 +1,8 @@
 package fleet
 
 import (
+	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -9,7 +11,21 @@ import (
 )
 
 func TestReadTimesOut(t *testing.T) {
-	testutil.FakeOnPath(t, "no-mistakes", "#!/bin/sh\nexec sleep 10\n")
+	pidFile := t.TempDir() + "/descendant.pid"
+	testutil.FakeOnPath(t, "no-mistakes", "#!/bin/sh\n"+
+		"sleep 10 &\n"+
+		"echo $! > \"$PID_FILE\"\n"+
+		"wait\n")
+	t.Setenv("PID_FILE", pidFile)
+	t.Cleanup(func() {
+		if pid, readErr := os.ReadFile(pidFile); readErr == nil {
+			if n, parseErr := strconv.Atoi(strings.TrimSpace(string(pid))); parseErr == nil {
+				if process, findErr := os.FindProcess(n); findErr == nil {
+					_ = process.Kill()
+				}
+			}
+		}
+	})
 	started := time.Now()
 	_, err := Read(t.TempDir())
 	if err == nil {

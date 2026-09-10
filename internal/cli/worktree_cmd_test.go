@@ -2,6 +2,7 @@ package cli
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -9,19 +10,22 @@ import (
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
-func setupClaimedWorktreeReturn(t *testing.T) (tracePath string) {
+func setupClaimedWorktreeReturn(t *testing.T) (worktreePath, tracePath string) {
 	t.Helper()
 	homeDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", homeDir)
 	initCLITestHome(t, homeDir)
-	const worktreePath = "/pool/claimed-worktree"
+	worktreePath = filepath.Join(t.TempDir(), "claimed-worktree")
+	if err := os.Mkdir(worktreePath, 0o755); err != nil {
+		t.Fatalf("creating worktree: %v", err)
+	}
 	if err := home.WriteMeta(homeDir, "claimed-task", map[string]string{"worktree": worktreePath}); err != nil {
 		t.Fatalf("writing claimed task meta: %v", err)
 	}
-	tracePath = homeDir + "/treehouse-returns"
+	tracePath = filepath.Join(homeDir, "treehouse-returns")
 	testutil.FakeOnPath(t, "treehouse", "#!/bin/sh\n"+
 		"if [ \"$1\" = \"status\" ] && [ \"$2\" = \"--json\" ]; then\n"+
-		"  printf '[{\\\"path\\\":\\\"/pool/claimed-worktree\\\",\\\"lease_holder\\\":\\\"\\\"}]\\n'\n"+
+		"  printf '[{\"path\":\"%s\",\"lease_holder\":\"\"}]\\n' '"+worktreePath+"'\n"+
 		"  exit 0\n"+
 		"fi\n"+
 		"if [ \"$1\" = \"return\" ]; then\n"+
@@ -29,12 +33,11 @@ func setupClaimedWorktreeReturn(t *testing.T) (tracePath string) {
 		"  exit 0\n"+
 		"fi\n"+
 		"exit 1\n")
-	return tracePath
+	return worktreePath, tracePath
 }
 
 func TestWorktreeReturnRefusesClaimedWorktree(t *testing.T) {
-	tracePath := setupClaimedWorktreeReturn(t)
-	const worktreePath = "/pool/claimed-worktree"
+	worktreePath, tracePath := setupClaimedWorktreeReturn(t)
 	root := NewRootCommand()
 	root.SetOut(new(strings.Builder))
 	root.SetErr(new(strings.Builder))
@@ -49,9 +52,36 @@ func TestWorktreeReturnRefusesClaimedWorktree(t *testing.T) {
 	}
 }
 
+func TestWorktreeReturnRefusesAliases(t *testing.T) {
+	worktreePath, tracePath := setupClaimedWorktreeReturn(t)
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(worktreePath, alias); err != nil {
+		t.Fatalf("creating symlink: %v", err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getting cwd: %v", err)
+	}
+	relative, err := filepath.Rel(cwd, worktreePath)
+	if err != nil {
+		t.Fatalf("making relative path: %v", err)
+	}
+	for _, path := range []string{relative, alias} {
+		root := NewRootCommand()
+		root.SetOut(new(strings.Builder))
+		root.SetErr(new(strings.Builder))
+		root.SetArgs([]string{"worktree", "return", path})
+		if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "refusing to return claimed worktree") {
+			t.Fatalf("return %q error = %v, want refusal", path, err)
+		}
+	}
+	if _, err := os.Stat(tracePath); !os.IsNotExist(err) {
+		t.Fatalf("backend return should not run, trace stat error = %v", err)
+	}
+}
+
 func TestWorktreeReturnForceOverridesClaim(t *testing.T) {
-	tracePath := setupClaimedWorktreeReturn(t)
-	const worktreePath = "/pool/claimed-worktree"
+	worktreePath, tracePath := setupClaimedWorktreeReturn(t)
 	root := NewRootCommand()
 	root.SetOut(new(strings.Builder))
 	root.SetErr(new(strings.Builder))

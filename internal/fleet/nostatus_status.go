@@ -47,6 +47,7 @@ func Read(wtPath string) (*RunStatus, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), noMistakesStatusTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "no-mistakes", "axi", "status")
+	cmd.WaitDelay = 100 * time.Millisecond
 	if wtPath != "" {
 		cmd.Dir = wtPath
 	}
