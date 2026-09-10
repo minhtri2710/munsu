@@ -91,10 +91,10 @@ the full record (`stopProcessIsLossy`, afk_process_windows.go; afk_return.go).
 
 Detects three conditions:
 1. **Stale watcher beat** — watcher beat file older than the configured stale-beat threshold (5m by default; override with `afk-wedge-stale-beat`)
-2. **Missing watcher beat** — beat file never written
+2. **Missing watcher beat** — beat file never written; alarms only after the stale-beat threshold has elapsed since detector creation
 3. **Repeated stale wake** — identical wake key arriving 3+ times in a row (within 2 poll intervals)
 
-On detection the alarm is recorded in the digest and surfaced in the return report.
+The missing-beat startup grace does not suppress the independently evaluated repeated-stale-wake alarm. On detection the alarm is recorded in the digest and surfaced in the return report.
 
 ### Return catch-up gate
 

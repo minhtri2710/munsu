@@ -32,6 +32,7 @@ type WedgeDetector struct {
 	wakeCount          int
 	staleBeatThreshold time.Duration
 	wakeCountMax       int
+	createdAt          time.Time
 	homeDir            string
 }
 
@@ -39,6 +40,7 @@ type WedgeDetector struct {
 func NewWedgeDetector(homeDir string) *WedgeDetector {
 	return &WedgeDetector{
 		homeDir:            homeDir,
+		createdAt:          time.Now(),
 		staleBeatThreshold: defaultStaleBeatThreshold,
 		wakeCountMax:       defaultWakeCountMax,
 	}
@@ -82,9 +84,14 @@ func (w *WedgeDetector) Check(now time.Time) *WedgeAlarm {
 
 	// 2. Check if beat file is missing entirely.
 	if !beatStatus.Exists {
-		return &WedgeAlarm{
-			Reason:     "watcher beat never set",
-			DetectedAt: now,
+		w.mu.Lock()
+		createdAt := w.createdAt
+		w.mu.Unlock()
+		if now.Sub(createdAt) >= staleThreshold {
+			return &WedgeAlarm{
+				Reason:     "watcher beat never set",
+				DetectedAt: now,
+			}
 		}
 	}
 

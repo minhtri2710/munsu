@@ -1,9 +1,70 @@
 package fleet
 
 import (
+	"os"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
+
+func TestReadTimesOut(t *testing.T) {
+	pidFile := t.TempDir() + "/descendant.pid"
+	testutil.FakeOnPath(t, "no-mistakes", "#!/bin/sh\n"+
+		"sleep 10 &\n"+
+		"echo $! > \"$PID_FILE\"\n"+
+		"wait\n")
+	t.Setenv("PID_FILE", pidFile)
+	t.Cleanup(func() {
+		if pid, readErr := os.ReadFile(pidFile); readErr == nil {
+			if n, parseErr := strconv.Atoi(strings.TrimSpace(string(pid))); parseErr == nil {
+				if process, findErr := os.FindProcess(n); findErr == nil {
+					_ = process.Kill()
+				}
+			}
+		}
+	})
+	started := time.Now()
+	_, err := Read(t.TempDir())
+	if err == nil {
+		t.Fatal("Read() error = nil, want timeout error")
+	}
+	if elapsed := time.Since(started); elapsed > 8*time.Second {
+		t.Fatalf("Read() took %s, want bounded timeout", elapsed)
+	}
+}
+
+func TestReadAcceptsStatusAfterLingeringPipeClosure(t *testing.T) {
+	pidFile := t.TempDir() + "/descendant.pid"
+	testutil.FakeOnPath(t, "no-mistakes", "#!/bin/sh\n"+
+		"printf '%s\\n' 'run:' '  id: \"01JTEST\"' '  status: in_progress'\n"+
+		"sleep 10 &\n"+
+		"echo $! > \"$PID_FILE\"\n")
+	t.Setenv("PID_FILE", pidFile)
+	t.Cleanup(func() {
+		if pid, readErr := os.ReadFile(pidFile); readErr == nil {
+			if n, parseErr := strconv.Atoi(strings.TrimSpace(string(pid))); parseErr == nil {
+				if process, findErr := os.FindProcess(n); findErr == nil {
+					_ = process.Kill()
+				}
+			}
+		}
+	})
+
+	started := time.Now()
+	status, err := Read(t.TempDir())
+	if err != nil {
+		t.Fatalf("Read() error = %v, want valid status", err)
+	}
+	if status.ID != "01JTEST" || status.Status != "in_progress" {
+		t.Fatalf("Read() status = %+v, want expected run", status)
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("Read() took %s, want fast lingering-pipe handling", elapsed)
+	}
+}
 
 // --- TOON parser fixtures ---
 
