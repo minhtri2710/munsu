@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -280,12 +281,6 @@ func newContractGuardCmd() *cobra.Command {
 				guardHelp = []string{"Run `munsu fleet snapshot` to inspect fleet state"}
 			}
 
-			// Merge condition messages for backward compat
-			var backwardCompatConditions []string
-			for _, c := range allConditions {
-				backwardCompatConditions = append(backwardCompatConditions, c.Message)
-			}
-
 			return writeContract(cmd, Response[Guard]{
 				SchemaVersion: SchemaVersion,
 				Kind:          "guard",
@@ -293,7 +288,6 @@ func newContractGuardCmd() *cobra.Command {
 				Data: Guard{
 					State:      state,
 					Violations: violations,
-					Conditions: backwardCompatConditions,
 				},
 				Help: guardHelp,
 			})
@@ -315,21 +309,12 @@ func contractFields(cmd *cobra.Command, allowed []string) (map[string]bool, erro
 	}
 	for _, field := range strings.Split(requested, ",") {
 		field = strings.TrimSpace(field)
-		if field == "" || !contains(allowed, field) {
+		if field == "" || !slices.Contains(allowed, field) {
 			return nil, usageError("unsupported_input", fmt.Sprintf("Run `%s --help`", commandPath(cmd)), fmt.Sprintf("Unsupported field %q", field))
 		}
 		fields[field] = true
 	}
 	return fields, nil
-}
-
-func contains(values []string, value string) bool {
-	for _, candidate := range values {
-		if candidate == value {
-			return true
-		}
-	}
-	return false
 }
 
 func branchFor(meta map[string]string) string {

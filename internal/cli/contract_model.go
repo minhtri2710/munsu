@@ -192,7 +192,6 @@ type GuardViolation struct {
 type Guard struct {
 	State      string           `json:"state"` // healthy | unhealthy | indeterminate
 	Violations []GuardViolation `json:"violations,omitempty"`
-	Conditions []string         `json:"conditions,omitempty"` // kept for backward compat
 }
 
 // WatchLeaseInfo carries identity and heartbeat metadata for a watcher lease.

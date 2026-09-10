@@ -96,7 +96,7 @@ func (s *Store) MarkSuperseded(senderIdentity, messageID string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
-	if err := atomicWrite(path, []byte("superseded\n")); err != nil {
+	if err := canonicalAtomicWrite(path, []byte("superseded\n")); err != nil {
 		return err
 	}
 	s.removeInboxPayload(senderIdentity, messageID)
@@ -134,39 +134,6 @@ func (s *Store) pendingPath(senderIdentity, messageID string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, messageID+".pending"), nil
-}
-
-// --- atomic write ---
-
-// atomicWrite writes data to path using a temp file and rename.
-// This prevents partial writes from being observed.
-func atomicWrite(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".tmp-")
-	if err != nil {
-		return fmt.Errorf("create temp: %w", err)
-	}
-	tmpName := tmp.Name()
-
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return fmt.Errorf("write temp: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return fmt.Errorf("sync temp: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
-		return fmt.Errorf("close temp: %w", err)
-	}
-	if err := RenameDurable(tmpName, path); err != nil {
-		os.Remove(tmpName)
-		return fmt.Errorf("rename temp: %w", err)
-	}
-	return nil
 }
 
 // --- Envelope I/O ---
@@ -237,11 +204,11 @@ func (s *Store) WriteEnvelope(env *Envelope) error {
 	if err != nil {
 		return fmt.Errorf("marshal envelope: %w", err)
 	}
-	return atomicWrite(path, data)
+	return canonicalAtomicWrite(path, data)
 }
 
 // ReadEnvelope reads an envelope from the receiver's inbox.
-// Returns nil, nil if not found. Reads both current and legacy v1 formats.
+// Returns nil, nil if not found.
 func (s *Store) ReadEnvelope(senderIdentity, messageID string) (*Envelope, error) {
 	path, err := s.inboxPath(senderIdentity, messageID)
 	if err != nil {
@@ -387,7 +354,7 @@ func (s *Store) WriteAck(ack *ProcessingAck) error {
 	if err != nil {
 		return fmt.Errorf("marshal ack: %w", err)
 	}
-	return atomicWrite(path, data)
+	return canonicalAtomicWrite(path, data)
 }
 
 // ReadAck reads a ProcessingAck from the receiver's inbox.
@@ -450,7 +417,7 @@ func (s *Store) WritePending(env *Envelope) error {
 	if err != nil {
 		return fmt.Errorf("marshal pending: %w", err)
 	}
-	return atomicWrite(path, data)
+	return canonicalAtomicWrite(path, data)
 }
 
 // ReadPending reads a pending record for the given sender identity and

@@ -8,7 +8,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/spf13/cobra"
 )
@@ -241,10 +240,10 @@ func newTaskCmd() *cobra.Command {
 	statusCmd := &cobra.Command{
 		Use:   "status <id> <state> <message>",
 		Short: "Append an audit-only status line to a task",
-		Long: `Append a status line to the task .status projection and typed event
-log. This is audit input only: it never changes the authoritative task
-phase. Authoritative transitions are named operations owned by the parent
-rank (munsu task start|done|block|unblock|reopen).`,
+		Long: `Append a status line to the task .status projection. This is audit
+input only: it never changes the authoritative task phase. Authoritative
+transitions are named operations owned by the parent rank (munsu task
+start|done|block|unblock|reopen).`,
 		Args: ExactArgs(3),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			id := args[0]
@@ -257,10 +256,6 @@ rank (munsu task start|done|block|unblock|reopen).`,
 			if err := home.AppendStatus(ctx.Home, id, line); err != nil {
 				return fmt.Errorf("appending status line: %w", err)
 			}
-
-			// Compatibility translator: also write as typed event
-			rec, _ := orchestrator.FromTaskStatus(ctx.Home, id, line)
-			_ = orchestrator.AppendWithID(ctx.Home, rec.ID, rec.Type, rec.Producer, rec.Key, rec.Payload)
 
 			return writeContract(cmd, Response[MessageResult]{
 				SchemaVersion: SchemaVersion,

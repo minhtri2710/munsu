@@ -252,6 +252,13 @@ func writeMetaLocked(homeDir string, id string, meta map[string]string) error {
 // ReadMeta reads a task meta file at $MUNSU_HOME/state/<durable-stem>.meta.
 // Each key=value line is parsed into the returned map.
 // Returns an error if the file does not exist.
+//
+// This is the read half of the read-modify-write cycle in UpdateMeta, which
+// rewrites the whole file, so it fails closed on an oversized line rather than
+// silently dropping content: a line beyond bufio.Scanner's token limit surfaces
+// as a scan error instead of being skipped, and UpdateMeta then refuses the
+// write. This is a deliberately stricter contract than ReadMetaFile's tolerant
+// directory scan; the two must not be merged.
 func ReadMeta(homeDir string, id string) (map[string]string, error) {
 	p, err := MetaFilePath(homeDir, id)
 	if err != nil {
@@ -280,6 +287,34 @@ func ReadMeta(homeDir string, id string) (map[string]string, error) {
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("scanning task meta %s: %w", id, err)
+	}
+	return meta, nil
+}
+
+// ReadMetaFile parses a flat "key = value" meta file at path, skipping blank
+// lines and "#" comments. Read-only state-directory scanners that already hold
+// a resolved path use this (prune's live-workspace sweep, the observation event
+// port); it reads the whole file with no per-line size limit so an oversized
+// line never drops the file from the scan — the fail-open opposite of that
+// would let prune close a still-referenced workspace. Callers that write the
+// file back must use ReadMeta instead, whose stricter fail-closed contract
+// guards the read-modify-write cycle; do not collapse the two.
+func ReadMetaFile(path string) (map[string]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	meta := make(map[string]string)
+	for _, raw := range strings.Split(string(data), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if ok {
+			meta[strings.TrimSpace(k)] = strings.TrimSpace(v)
+		}
 	}
 	return meta, nil
 }

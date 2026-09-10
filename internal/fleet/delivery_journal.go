@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/domain"
@@ -261,7 +262,7 @@ func transitionDeliveryJournal(h *home.Home, lk *home.Lock, journal *deliveryJou
 	if err != nil {
 		return err
 	}
-	if !containsString(idx.Active, journal.ID) {
+	if !slices.Contains(idx.Active, journal.ID) {
 		return fmt.Errorf("delivery journal %s is not active", journal.ID)
 	}
 	if journal.Phase != deliveryPhasePrepared {
@@ -401,13 +402,3 @@ func RecoverDeliveryJournals(homeDir string) error {
 }
 
 var deliveryCrashHook = func(string) {}
-
-// containsString reports whether the value appears in the slice.
-func containsString(values []string, value string) bool {
-	for _, v := range values {
-		if v == value {
-			return true
-		}
-	}
-	return false
-}

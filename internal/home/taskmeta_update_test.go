@@ -73,6 +73,28 @@ func TestUpdateMetaRefusesUnreadableMeta(t *testing.T) {
 	t.Logf("attempted projection key absent: attestation_generation")
 }
 
+// TestReadMetaFileToleratesOversizedLine pins the deliberate contract split
+// between the two readers: the same file whose oversized line makes ReadMeta
+// (the read-modify-write reader) fail closed is read to completion by
+// ReadMetaFile (the read-only directory-scan reader), so prune's live-workspace
+// sweep never drops a still-referenced meta over a line it could not size.
+func TestReadMetaFileToleratesOversizedLine(t *testing.T) {
+	homeDir := t.TempDir()
+	p := writeUnreadableMeta(t, homeDir, "tolerant-scan")
+
+	if _, err := ReadMeta(homeDir, "tolerant-scan"); err == nil {
+		t.Fatal("ReadMeta accepted an oversized line; the fail-closed contract is gone")
+	}
+
+	meta, err := ReadMetaFile(p)
+	if err != nil {
+		t.Fatalf("ReadMetaFile rejected an oversized line: %v", err)
+	}
+	if meta["project"] != "existing-project" || meta["worktree"] != "/tmp/wt" {
+		t.Fatalf("ReadMetaFile lost keys around the oversized line: %v", meta)
+	}
+}
+
 // TestUpdateMetaAbsentMetaIsFirstWrite proves absence is the empty map, so the
 // first projection for a task creates the file.
 func TestUpdateMetaAbsentMetaIsFirstWrite(t *testing.T) {

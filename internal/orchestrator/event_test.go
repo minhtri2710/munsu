@@ -95,44 +95,6 @@ func TestSyntheticEventID(t *testing.T) {
 	}
 }
 
-func TestFromTaskStatus(t *testing.T) {
-	home := t.TempDir()
-
-	rec, err := FromTaskStatus(home, "task-abc", "done: completed successfully [key=ship-it]")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rec.Type != "task.status" {
-		t.Errorf("type = %q, want task.status", rec.Type)
-	}
-	if rec.Producer != "task-abc" {
-		t.Errorf("producer = %q, want task-abc", rec.Producer)
-	}
-	if rec.Key != "ship-it" {
-		t.Errorf("key = %q, want ship-it", rec.Key)
-	}
-	if rec.Payload != "done: completed successfully" {
-		t.Errorf("payload = %q, want 'done: completed successfully'", rec.Payload)
-	}
-	if rec.ID < (1 << 48) {
-		t.Error("synthetic ID should be above 1<<48")
-	}
-}
-
-func TestFromTaskStatusNoKey(t *testing.T) {
-	home := t.TempDir()
-	rec, err := FromTaskStatus(home, "task-xyz", "working: building")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rec.Key != "" {
-		t.Errorf("key = %q, want empty", rec.Key)
-	}
-	if rec.Payload != "working: building" {
-		t.Errorf("payload = %q, want 'working: building'", rec.Payload)
-	}
-}
-
 func TestAppendPersistence(t *testing.T) {
 	home := t.TempDir()
 
@@ -213,20 +175,5 @@ func TestAppendWithIDThenNextIsSequential(t *testing.T) {
 	}
 	if id != 201 {
 		t.Errorf("next ID = %d, want 201", id)
-	}
-}
-
-func TestFromTaskStatusOnlyKey(t *testing.T) {
-	home := t.TempDir()
-	// Edge case: line that is just [key=foo]
-	rec, err := FromTaskStatus(home, "t1", "[key=direct]")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rec.Key != "direct" {
-		t.Errorf("key = %q, want 'direct'", rec.Key)
-	}
-	if rec.Payload != "" {
-		t.Errorf("payload = %q, want empty", rec.Payload)
 	}
 }

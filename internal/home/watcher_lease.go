@@ -139,7 +139,7 @@ func writeLeaseFile(path string, lease *WatcherLease) (bool, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return false, fmt.Errorf("creating lease directory: %w", err)
 	}
-	if err := atomicWrite(path, data); err != nil {
+	if err := canonicalAtomicWrite(path, data); err != nil {
 		return false, fmt.Errorf("writing watcher lease: %w", err)
 	}
 	return true, nil

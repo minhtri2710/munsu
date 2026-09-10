@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"encoding/json"
+	"slices"
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
@@ -469,14 +470,14 @@ func (r *Registry) BindCaptain(op domain.Operation, req BindCaptainRequest) (Out
 	if err != nil {
 		return Outcome{}, err
 	}
-	if !containsProject(pdoc, req.ProjectID.Value()) {
+	if !slices.ContainsFunc(pdoc.Projects, func(p projectRecord) bool { return p.ID == req.ProjectID.Value() }) {
 		return Outcome{}, conflictError(ErrNotFound, "project %s not found", req.ProjectID.Value())
 	}
 	cdoc, err := r.readCaptainRegistry()
 	if err != nil {
 		return Outcome{}, err
 	}
-	if !containsCaptain(cdoc, req.CaptainID.Value()) {
+	if !slices.ContainsFunc(cdoc.Captains, func(c captainRecord) bool { return c.ID == req.CaptainID.Value() }) {
 		return Outcome{}, conflictError(ErrNotFound, "captain %s not found", req.CaptainID.Value())
 	}
 
@@ -566,24 +567,6 @@ func bindingDocumentItem(doc bindingDoc) (home.ChangeItem, error) {
 		return home.ChangeItem{}, err
 	}
 	return home.ChangeItem{Root: registryRoot, Key: bindingsKey, Data: data}, nil
-}
-
-func containsProject(doc projectRegistryDoc, id string) bool {
-	for _, p := range doc.Projects {
-		if p.ID == id {
-			return true
-		}
-	}
-	return false
-}
-
-func containsCaptain(doc captainRegistryDoc, id string) bool {
-	for _, c := range doc.Captains {
-		if c.ID == id {
-			return true
-		}
-	}
-	return false
 }
 
 // clearBinding removes the binding for captainID. It returns whether a

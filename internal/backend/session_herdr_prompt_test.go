@@ -67,6 +67,10 @@ func writeFakeHerdrPrompt(t *testing.T, dir, apiSchema string) string {
 		`      echo '{"result":{"pane_id":"'"$3"'"}}'` + "\n" +
 		`      exit ${FAKE_PANE_GET_EXIT:-0}` + "\n" +
 		`    fi` + "\n" +
+		`    if [ "$2" = "send-text" ] || [ "$2" = "send-keys" ]; then` + "\n" +
+		`      echo '{"result":{}}'` + "\n" +
+		`      exit ${FAKE_PANE_SEND_EXIT:-0}` + "\n" +
+		`    fi` + "\n" +
 		`    ;;` + "\n" +
 		`esac` + "\n" +
 		`>&2 echo "unknown command: $*"` + "\n" +
@@ -210,15 +214,21 @@ func TestAgentPrompt_BackendFailed(t *testing.T) {
 	}
 }
 
-func TestAgentPrompt_UnsupportedProtocol(t *testing.T) {
+func TestAgentPrompt_UnsupportedNonAgentPane(t *testing.T) {
 	tmp := t.TempDir()
-	writeFakeHerdrPrompt(t, tmp, "protocol: 16")
+	writeFakeHerdrPrompt(t, tmp, "protocol: 17")
 	testutil.PrependPath(t, tmp)
 
+	// Pane is alive but not a recognized agent: unsupported (routes to legacy).
+	setFakeEnv(t, tmp,
+		"AGENT_GET_ERRCODE=agent_not_found",
+		"AGENT_GET_EXIT=1",
+		"FAKE_PANE_GET_EXIT=0",
+	)
 	h := NewHerdrBackend("test-s")
 	result := h.AgentPrompt("test-s:w1:p1", "hello")
 	if result.Status != PromptUnsupported {
-		t.Errorf("protocol 16: status = %q, want %q (detail: %s)", result.Status, PromptUnsupported, result.Detail)
+		t.Errorf("non-agent pane: status = %q, want %q (detail: %s)", result.Status, PromptUnsupported, result.Detail)
 	}
 }
 
@@ -295,13 +305,20 @@ func TestSubmitPrompt_NoFallbackAfterTypedFailure(t *testing.T) {
 
 func TestSubmitPrompt_LegacyFallback(t *testing.T) {
 	tmp := t.TempDir()
-	writeFakeHerdrPrompt(t, tmp, "protocol: 16")
+	writeFakeHerdrPrompt(t, tmp, "protocol: 17")
 	testutil.PrependPath(t, tmp)
 
+	// Alive non-agent pane: AgentPrompt returns Unsupported, so SubmitPrompt
+	// must fall back to the legacy SendKeys path.
+	setFakeEnv(t, tmp,
+		"AGENT_GET_ERRCODE=agent_not_found",
+		"AGENT_GET_EXIT=1",
+		"FAKE_PANE_GET_EXIT=0",
+	)
 	h := NewHerdrBackend("test-s")
 	result := SubmitPrompt(h, "test-s:w1:p1", "hello")
-	if result.Status != PromptSubmitted && !result.Legacy {
-		t.Logf("protocol 16 SubmitPrompt: status=%q legacy=%v detail=%s", result.Status, result.Legacy, result.Detail)
+	if result.Status != PromptSubmitted || !result.Legacy {
+		t.Errorf("legacy fallback: status=%q legacy=%v want submitted+legacy (detail: %s)", result.Status, result.Legacy, result.Detail)
 	}
 }
 

@@ -858,8 +858,8 @@ func (h *HerdrBackend) IsRecognizedAgent(windowID string) (bool, string) {
 // without --wait, returning immediately on acceptance. Returns typed PromptResult.
 //
 // Preconditions checked before submission:
-//  1. Server protocol version >= 17 (otherwise returns PromptUnsupported).
-//     If the protocol probe itself fails (no server), returns PromptBackendFailed.
+//  1. Server reachable — the protocol probe succeeds (otherwise, e.g. no
+//     server, returns PromptBackendFailed).
 //  2. Target is a recognized live agent (otherwise returns PromptEndpointDead
 //     or PromptUnsupported if pane exists but is not an agent).
 //
@@ -873,19 +873,13 @@ func (h *HerdrBackend) IsRecognizedAgent(windowID string) (bool, string) {
 //   - agent_not_found → PromptEndpointDead (if pane absent) or PromptUnsupported
 //   - other errors → PromptBackendFailed
 func (h *HerdrBackend) AgentPrompt(windowID, text string) PromptResult {
-	// Precondition: probe protocol version.
-	pv, pErr := h.protocolVersion()
-	if pErr != nil {
+	// Precondition: server reachable. A probe failure (no server) is
+	// backend-failed, not unsupported.
+	if _, err := h.protocolVersion(); err != nil {
 		return PromptResult{
 			Status: PromptBackendFailed,
-			Detail: fmt.Sprintf("protocol probe failed: %v", pErr),
-			Err:    pErr,
-		}
-	}
-	if pv < 17 {
-		return PromptResult{
-			Status: PromptUnsupported,
-			Detail: fmt.Sprintf("herdr protocol v%d < 17", pv),
+			Detail: fmt.Sprintf("protocol probe failed: %v", err),
+			Err:    err,
 		}
 	}
 
@@ -1010,11 +1004,11 @@ func (h *HerdrBackend) AgentPrompt(windowID, text string) PromptResult {
 }
 
 // LegacyPrompt implements the LegacyPrompt interface for HerdrBackend.
-// This is used when the protocol is < 17 and the target does not support
-// AgentPrompt. It falls back to raw SendKeys (send-text + send-keys Enter)
-// without typed acknowledgment.
+// This is used when the target is not a recognized agent (an alive
+// non-agent pane) and AgentPrompt returns PromptUnsupported. It falls back
+// to raw SendKeys (send-text + send-keys Enter) without typed acknowledgment.
 func (h *HerdrBackend) LegacyPrompt(windowID, text string) PromptResult {
-	// Fallback: use raw pane send-text + send-keys Enter (legacy protocol 16 behavior).
+	// Fallback: use raw pane send-text + send-keys Enter.
 	if err := h.SendKeys(windowID, text); err != nil {
 		if isNotFoundErr(err) {
 			return PromptResult{
@@ -1030,7 +1024,7 @@ func (h *HerdrBackend) LegacyPrompt(windowID, text string) PromptResult {
 	}
 	return PromptResult{
 		Status: PromptSubmitted,
-		Detail: "legacy send-keys (protocol 16)",
+		Detail: "legacy send-keys",
 		Legacy: true,
 	}
 }

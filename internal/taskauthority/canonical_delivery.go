@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"slices"
 	"sort"
 	"strings"
 
@@ -755,14 +756,8 @@ func (c *Canonical) deliveryRevoked(taskID string, index DeliveryIndex) (bool, e
 // set so digests and records are deterministic.
 func uniqueDeliveryPreconditions(in []DeliveryPrecondition) []DeliveryPrecondition {
 	out := append([]DeliveryPrecondition(nil), in...)
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
-	result := out[:0]
-	for _, p := range out {
-		if len(result) == 0 || result[len(result)-1] != p {
-			result = append(result, p)
-		}
-	}
-	return result
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 // deliveryBindingDigest is the deterministic sha256 digest over the exact
@@ -856,7 +851,7 @@ func deliveryHoldsDigest(holds []DispatchHold, agg Aggregate) string {
 // matches the task. Release state is deliberately NOT considered — the
 // relevant set is stable across add/release so both invalidate the digest.
 func deliveryHoldRelevant(hold DispatchHold, agg Aggregate) bool {
-	if !containsAction(hold.Actions, DispatchActionDelivery) {
+	if !slices.Contains(hold.Actions, DispatchActionDelivery) {
 		return false
 	}
 	return holdScopeMatches(hold, agg)
@@ -864,16 +859,16 @@ func deliveryHoldRelevant(hold DispatchHold, agg Aggregate) bool {
 
 // holdScopeMatches checks the hold scope against the task identity fields.
 func holdScopeMatches(hold DispatchHold, agg Aggregate) bool {
-	if len(hold.Scope.TaskIDs) > 0 && !containsString(hold.Scope.TaskIDs, agg.TaskID) {
+	if len(hold.Scope.TaskIDs) > 0 && !slices.Contains(hold.Scope.TaskIDs, agg.TaskID) {
 		return false
 	}
-	if len(hold.Scope.ProjectIDs) > 0 && !containsString(hold.Scope.ProjectIDs, agg.Definition.Project) {
+	if len(hold.Scope.ProjectIDs) > 0 && !slices.Contains(hold.Scope.ProjectIDs, agg.Definition.Project) {
 		return false
 	}
-	if len(hold.Scope.Generations) > 0 && !containsString(hold.Scope.Generations, agg.Generation.String()) {
+	if len(hold.Scope.Generations) > 0 && !slices.Contains(hold.Scope.Generations, agg.Generation.String()) {
 		return false
 	}
-	if len(hold.Scope.ParentIDs) > 0 && !containsString(hold.Scope.ParentIDs, agg.Definition.ParentTaskID) {
+	if len(hold.Scope.ParentIDs) > 0 && !slices.Contains(hold.Scope.ParentIDs, agg.Definition.ParentTaskID) {
 		return false
 	}
 	return true
