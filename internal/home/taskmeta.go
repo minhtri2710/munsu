@@ -294,10 +294,10 @@ func ReadMeta(homeDir string, id string) (map[string]string, error) {
 // ReadMetaFile parses a flat "key = value" meta file at path, skipping blank
 // lines and "#" comments. Read-only state-directory scanners that already hold
 // a resolved path use this (prune's live-workspace sweep, the observation event
-// port); it reads the whole file with no per-line size limit so an oversized or
-// malformed line never drops the file from the scan — the fail-open opposite of
-// that would let prune close a still-referenced workspace. Callers that write
-// the file back must use ReadMeta instead, whose stricter fail-closed contract
+// port); it reads the whole file with no per-line size limit so an oversized
+// line never drops the file from the scan — the fail-open opposite of that
+// would let prune close a still-referenced workspace. Callers that write the
+// file back must use ReadMeta instead, whose stricter fail-closed contract
 // guards the read-modify-write cycle; do not collapse the two.
 func ReadMetaFile(path string) (map[string]string, error) {
 	data, err := os.ReadFile(path)
