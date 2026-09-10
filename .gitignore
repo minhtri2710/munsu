@@ -36,3 +36,12 @@ __pycache__/
 /.no-mistakes-document-result.json
 /.review-result.json
 /review_findings.json
+
+# Agent-skill mirror: munsu ships its own skills here (bootstrap-diagnostics,
+# captain-provisioning, harness-adapters, munsu-ops, munsu-update,
+# stuck-soldier-recovery), each mirrored from the //go:embed source and already
+# tracked. A generic engineering-skill library also gets installed here per
+# checkout; it is machine-local, not munsu-owned, and must stay out of the repo.
+# gitignore never untracks the six, so this ignores every skill subdir and the
+# tracked ones stay tracked; a new munsu skill is added with `git add -f`.
+/.agents/skills/*/
