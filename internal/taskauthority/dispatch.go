@@ -1,6 +1,7 @@
 package taskauthority
 
 import (
+	"slices"
 	"strings"
 )
 
@@ -91,38 +92,20 @@ func validateHold(h DispatchHold) error {
 
 // Matches reports whether the hold gates the given action for the task.
 func (h DispatchHold) Matches(action DispatchAction, taskID, projectID, generation, parentID string) bool {
-	if h.ReleasedAt != 0 || !containsAction(h.Actions, action) {
+	if h.ReleasedAt != 0 || !slices.Contains(h.Actions, action) {
 		return false
 	}
-	if len(h.Scope.TaskIDs) > 0 && !containsString(h.Scope.TaskIDs, taskID) {
+	if len(h.Scope.TaskIDs) > 0 && !slices.Contains(h.Scope.TaskIDs, taskID) {
 		return false
 	}
-	if len(h.Scope.ProjectIDs) > 0 && !containsString(h.Scope.ProjectIDs, projectID) {
+	if len(h.Scope.ProjectIDs) > 0 && !slices.Contains(h.Scope.ProjectIDs, projectID) {
 		return false
 	}
-	if len(h.Scope.Generations) > 0 && !containsString(h.Scope.Generations, generation) {
+	if len(h.Scope.Generations) > 0 && !slices.Contains(h.Scope.Generations, generation) {
 		return false
 	}
-	if len(h.Scope.ParentIDs) > 0 && !containsString(h.Scope.ParentIDs, parentID) {
+	if len(h.Scope.ParentIDs) > 0 && !slices.Contains(h.Scope.ParentIDs, parentID) {
 		return false
 	}
 	return true
-}
-
-func containsAction(actions []DispatchAction, action DispatchAction) bool {
-	for _, candidate := range actions {
-		if candidate == action {
-			return true
-		}
-	}
-	return false
-}
-
-func containsString(values []string, value string) bool {
-	for _, candidate := range values {
-		if candidate == value {
-			return true
-		}
-	}
-	return false
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -315,21 +316,12 @@ func contractFields(cmd *cobra.Command, allowed []string) (map[string]bool, erro
 	}
 	for _, field := range strings.Split(requested, ",") {
 		field = strings.TrimSpace(field)
-		if field == "" || !contains(allowed, field) {
+		if field == "" || !slices.Contains(allowed, field) {
 			return nil, usageError("unsupported_input", fmt.Sprintf("Run `%s --help`", commandPath(cmd)), fmt.Sprintf("Unsupported field %q", field))
 		}
 		fields[field] = true
 	}
 	return fields, nil
-}
-
-func contains(values []string, value string) bool {
-	for _, candidate := range values {
-		if candidate == value {
-			return true
-		}
-	}
-	return false
 }
 
 func branchFor(meta map[string]string) string {

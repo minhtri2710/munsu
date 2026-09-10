@@ -1,7 +1,7 @@
 package taskauthority
 
 import (
-	"sort"
+	"slices"
 )
 
 // HoldResult is the outcome of a dispatch-control operation.
@@ -21,26 +21,15 @@ func normalizeScope(scope DispatchHoldScope) DispatchHoldScope {
 
 func uniqueActions(actions []DispatchAction) []DispatchAction {
 	out := append([]DispatchAction(nil), actions...)
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
-	result := out[:0]
-	for _, action := range out {
-		if len(result) == 0 || result[len(result)-1] != action {
-			result = append(result, action)
-		}
-	}
-	return result
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 func uniqueSortedStrings(values []string) []string {
 	out := append([]string(nil), values...)
-	sort.Strings(out)
-	result := out[:0]
-	for _, value := range out {
-		if value != "" && (len(result) == 0 || result[len(result)-1] != value) {
-			result = append(result, value)
-		}
-	}
-	return result
+	slices.Sort(out)
+	out = slices.Compact(out)
+	return slices.DeleteFunc(out, func(v string) bool { return v == "" })
 }
 
 func scopesEqual(a, b DispatchHoldScope) bool {
