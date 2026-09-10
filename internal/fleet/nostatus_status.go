@@ -2,10 +2,12 @@
 package fleet
 
 import (
+	"context"
 	"errors"
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Step represents one step in a no-mistakes pipeline run.
@@ -33,10 +35,18 @@ type RunStatus struct {
 // ErrNoActiveRun is returned by Parse when the output contains no active or recent run.
 var ErrNoActiveRun = errors.New("no active run in output")
 
+// 5s, not shorter: a premature timeout reads as "not active" (checkNoMistakesRun
+// ok=false -> empty NoMistakesRunStep -> isNoMistakesActive false), which stops
+// stale-wake absorption and fires a spurious wake for a soldier busy in the gate.
+// A longer bound only relaxes the freeze cap, which is minutes-scale elsewhere.
+const noMistakesStatusTimeout = 5 * time.Second
+
 // Read calls no-mistakes axi status from the worktree path and parses the
 // TOON output into a structured RunStatus.
 func Read(wtPath string) (*RunStatus, error) {
-	cmd := exec.Command("no-mistakes", "axi", "status")
+	ctx, cancel := context.WithTimeout(context.Background(), noMistakesStatusTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "no-mistakes", "axi", "status")
 	if wtPath != "" {
 		cmd.Dir = wtPath
 	}

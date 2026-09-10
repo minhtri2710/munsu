@@ -43,12 +43,28 @@ func newWorktreeCmdWithStatus(statusWorktrees func(string) ([]backend.WorktreeEn
 		Short: "Return a worktree to the pool",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			if err := backend.ReturnWorktree(ctx.Home, args[0]); err != nil {
+			force, _ := cmd.Flags().GetBool("force")
+			poolLock, err := fleet.LockWorktreePool(ctx.Home)
+			if err != nil {
 				return err
 			}
-			return nil
+			defer poolLock.Release()
+
+			entries, err := statusWorktrees(ctx.Home)
+			if err != nil {
+				return fmt.Errorf("getting worktree status: %w", err)
+			}
+			active, err := activeWorktreeClaims(ctx.Home, entries)
+			if err != nil {
+				return err
+			}
+			if active[args[0]] && !force {
+				return fmt.Errorf("refusing to return claimed worktree %q; use --force to override", args[0])
+			}
+			return backend.ReturnWorktree(ctx.Home, args[0])
 		}),
 	}
+	returnCmd.Flags().Bool("force", false, "Return a claimed worktree")
 
 	statusCmd := &cobra.Command{
 		Use:   "status",
@@ -96,77 +112,13 @@ unprotected.`,
 			}
 			defer poolLock.Release()
 
-			// Git protection assumes the registered project path remains stable
-			// for the launch lifetime; relocation or removal can leave the
-			// original reserved path unprotected.
 			entries, err := statusWorktrees(ctx.Home)
 			if err != nil {
 				return fmt.Errorf("getting worktree status: %w", err)
 			}
-
-			ids, err := home.ListMetaIDs(ctx.Home)
+			active, err := activeWorktreeClaims(ctx.Home, entries)
 			if err != nil {
-				return fmt.Errorf("listing task meta: %w", err)
-			}
-			active := make(map[string]bool)
-			for _, id := range ids {
-				meta, err := home.ReadMeta(ctx.Home, id)
-				if err != nil {
-					return fmt.Errorf("reading task meta %q: %w", id, err)
-				}
-				if wt := meta["worktree"]; wt != "" {
-					active[wt] = true
-				}
-			}
-
-			auth, err := taskAuthorityForRead(ctx.Home)
-			if err != nil {
-				return fmt.Errorf("reading task authority: %w", err)
-			}
-			aggs, err := auth.List()
-			if err != nil {
-				return fmt.Errorf("listing task authority: %w", err)
-			}
-			for _, agg := range aggs {
-				if agg.Worktree != nil && agg.Worktree.Path != "" {
-					active[agg.Worktree.Path] = true
-				}
-			}
-
-			// Spare a reserved-but-unbound worktree from reclaim. Collect the
-			// live launch reservations (committed, not yet bound, not terminal)
-			// once, then spare by each provider's mechanism.
-			reservedUnbound := make(map[string]bool)
-			for _, agg := range aggs {
-				if agg.Worktree != nil || agg.Launch == nil || agg.Launch.WorktreeReservationID == "" {
-					continue
-				}
-				switch agg.Phase {
-				case taskauthority.PhaseDone, taskauthority.PhaseResolved, taskauthority.PhaseRetired:
-					continue
-				}
-				reservedUnbound[agg.Launch.WorktreeReservationID] = true
-
-				// git fallback: the worktree path is a deterministic function of
-				// the reservation, so map reservation -> path and spare it.
-				repoPath, rerr := fleet.ResolveRepoPath(ctx.Home, agg.Launch.Project)
-				if rerr != nil || repoPath == "" {
-					continue
-				}
-				path, ok, perr := backend.ReservedWorktreePath(ctx.Home, repoPath, agg.Launch.WorktreeReservationID)
-				if perr != nil || !ok || path == "" {
-					continue
-				}
-				active[path] = true
-			}
-
-			// treehouse: the reservation is the worktree's lease_holder, so spare
-			// any candidate held by a live reservation (git entries carry no
-			// holder, so this is a no-op there).
-			for _, e := range entries {
-				if e.LeaseHolder != "" && reservedUnbound[e.LeaseHolder] {
-					active[e.Path] = true
-				}
+				return err
 			}
 
 			// Return worktrees not in the active set.
@@ -193,4 +145,64 @@ unprotected.`,
 	cmd.AddCommand(statusCmd)
 	cmd.AddCommand(reclaimCmd)
 	return cmd
+}
+
+func activeWorktreeClaims(homeDir string, entries []backend.WorktreeEntry) (map[string]bool, error) {
+	ids, err := home.ListMetaIDs(homeDir)
+	if err != nil {
+		return nil, fmt.Errorf("listing task meta: %w", err)
+	}
+	active := make(map[string]bool)
+	for _, id := range ids {
+		meta, err := home.ReadMeta(homeDir, id)
+		if err != nil {
+			return nil, fmt.Errorf("reading task meta %q: %w", id, err)
+		}
+		if wt := meta["worktree"]; wt != "" {
+			active[wt] = true
+		}
+	}
+
+	auth, err := taskAuthorityForRead(homeDir)
+	if err != nil {
+		return nil, fmt.Errorf("reading task authority: %w", err)
+	}
+	aggs, err := auth.List()
+	if err != nil {
+		return nil, fmt.Errorf("listing task authority: %w", err)
+	}
+	for _, agg := range aggs {
+		if agg.Worktree != nil && agg.Worktree.Path != "" {
+			active[agg.Worktree.Path] = true
+		}
+	}
+
+	reservedUnbound := make(map[string]bool)
+	for _, agg := range aggs {
+		if agg.Worktree != nil || agg.Launch == nil || agg.Launch.WorktreeReservationID == "" {
+			continue
+		}
+		switch agg.Phase {
+		case taskauthority.PhaseDone, taskauthority.PhaseResolved, taskauthority.PhaseRetired:
+			continue
+		}
+		reservedUnbound[agg.Launch.WorktreeReservationID] = true
+
+		repoPath, rerr := fleet.ResolveRepoPath(homeDir, agg.Launch.Project)
+		if rerr != nil || repoPath == "" {
+			continue
+		}
+		path, ok, perr := backend.ReservedWorktreePath(homeDir, repoPath, agg.Launch.WorktreeReservationID)
+		if perr != nil || !ok || path == "" {
+			continue
+		}
+		active[path] = true
+	}
+
+	for _, e := range entries {
+		if e.LeaseHolder != "" && reservedUnbound[e.LeaseHolder] {
+			active[e.Path] = true
+		}
+	}
+	return active, nil
 }

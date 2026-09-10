@@ -3,7 +3,22 @@ package fleet
 import (
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
+
+func TestReadTimesOut(t *testing.T) {
+	testutil.FakeOnPath(t, "no-mistakes", "#!/bin/sh\nexec sleep 10\n")
+	started := time.Now()
+	_, err := Read(t.TempDir())
+	if err == nil {
+		t.Fatal("Read() error = nil, want timeout error")
+	}
+	if elapsed := time.Since(started); elapsed > 8*time.Second {
+		t.Fatalf("Read() took %s, want bounded timeout", elapsed)
+	}
+}
 
 // --- TOON parser fixtures ---
 
