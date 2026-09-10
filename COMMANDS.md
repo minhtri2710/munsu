@@ -24,7 +24,7 @@ that output is the authority, not this file.
 | `munsu project config get <name> <key>` | Read a project's overlay value (empty if unset, the project inherits the fleet base). |
 | `munsu project config set <name> <key> <value>` | Write a project's overlay value; an empty value clears it so the project inherits the base. Keys: default-mode, soldier-harness, model, backend, require-no-mistakes, allow-direct-pr-fallback. |
 | `munsu worktree get <repo-path> [--lease]` | Acquire a pooled worktree via treehouse. |
-| `munsu worktree return <path>` | Return a worktree to the pool. |
+| `munsu worktree return <path> [--force]` | Return a worktree to the pool; claimed worktrees, including equivalent relative or symlink paths, are refused unless `--force`, which bypasses claim inspection. |
 | `munsu worktree status` | Show worktree pool status. |
 | `munsu worktree reclaim` | Reclaim orphaned worktrees; run `munsu worktree reclaim --help` for reservation-safety details. |
 | `munsu bootstrap [install <tools>...]` | Detect toolchain and run setup sweeps. |
