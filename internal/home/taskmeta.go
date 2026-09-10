@@ -254,7 +254,7 @@ func writeMetaLocked(homeDir string, id string, meta map[string]string) error {
 // Returns an error if the file does not exist.
 //
 // This is the read half of the read-modify-write cycle in UpdateMeta, which
-// rewrites the whole file, so it fails closed on a malformed read rather than
+// rewrites the whole file, so it fails closed on an oversized line rather than
 // silently dropping content: a line beyond bufio.Scanner's token limit surfaces
 // as a scan error instead of being skipped, and UpdateMeta then refuses the
 // write. This is a deliberately stricter contract than ReadMetaFile's tolerant
