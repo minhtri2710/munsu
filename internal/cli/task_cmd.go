@@ -8,7 +8,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/spf13/cobra"
 )
@@ -257,10 +256,6 @@ rank (munsu task start|done|block|unblock|reopen).`,
 			if err := home.AppendStatus(ctx.Home, id, line); err != nil {
 				return fmt.Errorf("appending status line: %w", err)
 			}
-
-			// Compatibility translator: also write as typed event
-			rec, _ := orchestrator.FromTaskStatus(ctx.Home, id, line)
-			_ = orchestrator.AppendWithID(ctx.Home, rec.ID, rec.Type, rec.Producer, rec.Key, rec.Payload)
 
 			return writeContract(cmd, Response[MessageResult]{
 				SchemaVersion: SchemaVersion,

@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
@@ -41,8 +40,8 @@ func TestTaskStatusCannotMutateAuthoritativePhase(t *testing.T) {
 
 // TestTaskStatusAppendsAuditInputWithoutPhaseChange proves that on a task
 // created through the canonical Authority, `task status` appends the status
-// line to the .status projection and the typed event log but leaves the
-// authoritative Phase and Revision untouched (Task 3.4 criteria 1 and 2).
+// line to the .status projection but leaves the authoritative Phase and
+// Revision untouched (Task 3.4 criteria 1 and 2).
 func TestTaskStatusAppendsAuditInputWithoutPhaseChange(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
@@ -64,19 +63,6 @@ func TestTaskStatusAppendsAuditInputWithoutPhaseChange(t *testing.T) {
 	statusLines, err := home.ReadStatus(homeDir, "beta")
 	if err != nil || len(statusLines) != 2 || statusLines[1] != "working: building the thing [key=build-1]" {
 		t.Fatalf("status projection = %v err=%v", statusLines, err)
-	}
-
-	// Typed event translation stays deterministic: one status line produces
-	// one task.status event with the task as producer and the key preserved.
-	data, err := os.ReadFile(orchestrator.LogPath(homeDir))
-	if err != nil {
-		t.Fatalf("reading event log: %v", err)
-	}
-	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	fields := strings.SplitN(lines[0], "\t", 6)
-	if len(lines) != 1 || len(fields) != 6 || fields[2] != "task.status" || fields[3] != "beta" ||
-		fields[4] != "build-1" || fields[5] != "working: building the thing" {
-		t.Fatalf("event log = %q", string(data))
 	}
 }
 

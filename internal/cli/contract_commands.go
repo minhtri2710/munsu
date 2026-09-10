@@ -281,12 +281,6 @@ func newContractGuardCmd() *cobra.Command {
 				guardHelp = []string{"Run `munsu fleet snapshot` to inspect fleet state"}
 			}
 
-			// Merge condition messages for backward compat
-			var backwardCompatConditions []string
-			for _, c := range allConditions {
-				backwardCompatConditions = append(backwardCompatConditions, c.Message)
-			}
-
 			return writeContract(cmd, Response[Guard]{
 				SchemaVersion: SchemaVersion,
 				Kind:          "guard",
@@ -294,7 +288,6 @@ func newContractGuardCmd() *cobra.Command {
 				Data: Guard{
 					State:      state,
 					Violations: violations,
-					Conditions: backwardCompatConditions,
 				},
 				Help: guardHelp,
 			})
