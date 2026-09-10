@@ -272,16 +272,14 @@ func ReadMeta(homeDir string, id string) (map[string]string, error) {
 // path (e.g. a state-directory scan) use this; ReadMeta resolves and
 // validates a task id before calling it.
 func ReadMetaFile(path string) (map[string]string, error) {
-	f, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
 
 	meta := make(map[string]string)
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
+	for _, raw := range strings.Split(string(data), "\n") {
+		line := strings.TrimSpace(raw)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
@@ -289,9 +287,6 @@ func ReadMetaFile(path string) (map[string]string, error) {
 		if ok {
 			meta[strings.TrimSpace(k)] = strings.TrimSpace(v)
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scanning task meta %s: %w", path, err)
 	}
 	return meta, nil
 }
