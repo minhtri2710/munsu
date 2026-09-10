@@ -51,16 +51,18 @@ func newWorktreeCmdWithStatus(statusWorktrees func(string) ([]backend.WorktreeEn
 			}
 			defer poolLock.Release()
 
-			entries, err := statusWorktrees(ctx.Home)
-			if err != nil {
-				return fmt.Errorf("getting worktree status: %w", err)
-			}
-			active, err := activeWorktreeClaims(ctx.Home, entries)
-			if err != nil {
-				return err
-			}
-			if active[worktreeClaimKey(args[0])] && !force {
-				return fmt.Errorf("refusing to return claimed worktree %q; use --force to override", args[0])
+			if !force {
+				entries, err := statusWorktrees(ctx.Home)
+				if err != nil {
+					return fmt.Errorf("getting worktree status: %w", err)
+				}
+				active, err := activeWorktreeClaims(ctx.Home, entries)
+				if err != nil {
+					return err
+				}
+				if active[worktreeClaimKey(args[0])] {
+					return fmt.Errorf("refusing to return claimed worktree %q; use --force to override", args[0])
+				}
 			}
 			return backend.ReturnWorktree(ctx.Home, args[0])
 		}),

@@ -98,3 +98,31 @@ func TestWorktreeReturnForceOverridesClaim(t *testing.T) {
 		t.Fatalf("backend return trace = %q, want %q", trace, worktreePath)
 	}
 }
+
+func TestWorktreeReturnForceSkipsUnreadableClaims(t *testing.T) {
+	worktreePath, tracePath := setupClaimedWorktreeReturn(t)
+	homeDir := os.Getenv("MUNSU_HOME")
+	metaPath, err := home.MetaFilePath(homeDir, "claimed-task")
+	if err != nil {
+		t.Fatalf("finding task meta: %v", err)
+	}
+	if err := os.WriteFile(metaPath, []byte(strings.Repeat("x", 128*1024)), 0o600); err != nil {
+		t.Fatalf("corrupting task meta: %v", err)
+	}
+
+	root := NewRootCommand()
+	root.SetOut(new(strings.Builder))
+	root.SetErr(new(strings.Builder))
+	root.SetArgs([]string{"worktree", "return", "--force", worktreePath})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("forced return with unreadable claims: %v", err)
+	}
+	trace, err := os.ReadFile(tracePath)
+	if err != nil {
+		t.Fatalf("reading backend return trace: %v", err)
+	}
+	if !strings.Contains(string(trace), worktreePath) {
+		t.Fatalf("backend return trace = %q, want %q", trace, worktreePath)
+	}
+}
