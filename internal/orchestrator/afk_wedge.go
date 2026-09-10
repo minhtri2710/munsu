@@ -87,12 +87,11 @@ func (w *WedgeDetector) Check(now time.Time) *WedgeAlarm {
 		w.mu.Lock()
 		createdAt := w.createdAt
 		w.mu.Unlock()
-		if now.Sub(createdAt) < staleThreshold {
-			return nil
-		}
-		return &WedgeAlarm{
-			Reason:     "watcher beat never set",
-			DetectedAt: now,
+		if now.Sub(createdAt) >= staleThreshold {
+			return &WedgeAlarm{
+				Reason:     "watcher beat never set",
+				DetectedAt: now,
+			}
 		}
 	}
 
