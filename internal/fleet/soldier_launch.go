@@ -113,7 +113,6 @@ func BuildLaunchPrompt(input LaunchPromptInput) (string, *LaunchEnvelope, error)
 // its name alone.
 var skillInvocationNote = map[string]string{
 	"gh-axi":              "invoke for every GitHub operation (issues, pull requests, CI runs)",
-	"qmd":                 "invoke to search local markdown knowledge bases and docs",
 	"chrome-devtools-axi": "invoke to drive a real browser session",
 }
 
@@ -398,7 +397,7 @@ func PersistLaunchFiles(worktreePath string, charter string, briefContent []byte
 
 // missingRequiredSkillBinaries returns the names of applicable required skills
 // whose CLI binary is not on PATH. Catalog skill names are the binary names
-// (resolveSkills selects gh-axi, qmd, chrome-devtools-axi), so the name is
+// (resolveSkills selects gh-axi and chrome-devtools-axi), so the name is
 // looked up directly.
 //
 // ASSUMPTION: this probes the PATH of the LAUNCHER process, not the Soldier's

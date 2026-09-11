@@ -10,7 +10,7 @@ import (
 
 // SkillEntry records one selected skill in the launch envelope.
 //
-// A skill is a CLI tool the Soldier invokes natively (gh-axi, qmd,
+// A skill is a CLI tool the Soldier invokes natively (gh-axi,
 // chrome-devtools-axi); munsu neither owns nor ships its text. The envelope is
 // therefore a manifest of names, not a carrier of skill content.
 type SkillEntry struct {
