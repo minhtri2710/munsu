@@ -172,28 +172,24 @@ func TestE2E_SoldierReportIdentity(t *testing.T) {
 func TestE2E_SkillSelectionWithDenylist(t *testing.T) {
 	catalog := []SkillEntry{
 		{Name: "gh-axi", Role: "soldier"},
-		{Name: "qmd", Role: "soldier"},
 		{Name: "munsu-ops", Role: "soldier"}, // denied by denylist regardless of role
 		{Name: "captain-provisioning", Role: "captain"},
 		{Name: "bootstrap-diagnostics", Role: "general"},
 	}
 
 	required, optional, diags := CollectSkills(catalog,
-		[]string{"gh-axi", "qmd", "captain-provisioning", "munsu-ops"},
+		[]string{"gh-axi", "captain-provisioning", "munsu-ops"},
 		[]string{"bootstrap-diagnostics"})
 
-	// gh-axi and qmd must be applicable.
-	var foundGhAxi, foundQmd bool
+	// gh-axi must be applicable.
+	var foundGhAxi bool
 	for _, s := range required {
 		if s.Name == "gh-axi" && s.Applicable {
 			foundGhAxi = true
 		}
-		if s.Name == "qmd" && s.Applicable {
-			foundQmd = true
-		}
 	}
-	if !foundGhAxi || !foundQmd {
-		t.Error("gh-axi and qmd must be in required and applicable")
+	if !foundGhAxi {
+		t.Error("gh-axi must be in required and applicable")
 	}
 
 	// captain-provisioning must be non-applicable (captain role).
@@ -460,13 +456,12 @@ Task complete when committed. Run munsu report done "PR {url}" and stop.
 func TestRegression_SkillSelectionWithoutSrcwalk(t *testing.T) {
 	catalog := []SkillEntry{
 		{Name: "gh-axi", Role: "soldier"},
-		{Name: "qmd", Role: "soldier"},
 		{Name: "chrome-devtools-axi", Role: "soldier"},
 	}
 
 	required, optional, diags := CollectSkills(catalog,
 		[]string{"gh-axi"},
-		[]string{"qmd", "chrome-devtools-axi"})
+		[]string{"chrome-devtools-axi"})
 
 	if len(diags) > 0 {
 		t.Errorf("unexpected diagnostics without srcwalk: %v", diags)
@@ -487,14 +482,8 @@ func TestRegression_SkillSelectionWithoutSrcwalk(t *testing.T) {
 	}
 
 	// Verify optional skills are present.
-	var foundQmd, foundChrome bool
+	var foundChrome bool
 	for _, s := range optional {
-		if s.Name == "qmd" {
-			foundQmd = true
-			if !s.Applicable {
-				t.Error("qmd must be applicable")
-			}
-		}
 		if s.Name == "chrome-devtools-axi" {
 			foundChrome = true
 			if !s.Applicable {
@@ -505,9 +494,6 @@ func TestRegression_SkillSelectionWithoutSrcwalk(t *testing.T) {
 		if s.Name == "srcwalk" {
 			t.Error("srcwalk must NOT be in optional skills")
 		}
-	}
-	if !foundQmd {
-		t.Error("qmd must be in optional skills")
 	}
 	if !foundChrome {
 		t.Error("chrome-devtools-axi must be in optional skills")
@@ -535,7 +521,7 @@ func TestRegression_BuildLaunchPromptWithoutSrcwalk(t *testing.T) {
 			{Name: "gh-axi", Role: "soldier", Applicable: true},
 		},
 		OptionalSkills: []SkillEntry{
-			{Name: "qmd", Role: "soldier", Applicable: true},
+			{Name: "chrome-devtools-axi", Role: "soldier", Applicable: true},
 		},
 	}
 
@@ -559,8 +545,8 @@ func TestRegression_BuildLaunchPromptWithoutSrcwalk(t *testing.T) {
 	if !strings.Contains(prompt, "## Optional Skills") {
 		t.Error("prompt must contain ## Optional Skills section")
 	}
-	if !strings.Contains(prompt, "- qmd") {
-		t.Error("prompt must contain - qmd in optional skills")
+	if !strings.Contains(prompt, "- chrome-devtools-axi") {
+		t.Error("prompt must contain - chrome-devtools-axi in optional skills")
 	}
 
 	// Verify env does not reference srcwalk.

@@ -134,20 +134,16 @@ func TestLaunchEnvelope_WriteAndRead(t *testing.T) {
 func TestCollectSkills_RequiredSkillsSelected(t *testing.T) {
 	catalog := []SkillEntry{
 		{Name: "gh-axi", Role: "soldier"},
-		{Name: "qmd", Role: "soldier"},
 	}
-	required, _, diags := CollectSkills(catalog, []string{"gh-axi", "qmd"}, nil)
+	required, _, diags := CollectSkills(catalog, []string{"gh-axi"}, nil)
 	if len(diags) > 0 {
 		t.Errorf("unexpected diagnostics: %v", diags)
 	}
-	if len(required) != 2 {
-		t.Fatalf("expected 2 required skills, got %d", len(required))
+	if len(required) != 1 {
+		t.Fatalf("expected 1 required skill, got %d", len(required))
 	}
 	if !required[0].Applicable {
 		t.Errorf("gh-axi should be applicable")
-	}
-	if !required[1].Applicable {
-		t.Errorf("qmd should be applicable")
 	}
 }
 
@@ -219,17 +215,17 @@ func TestCollectSkills_Dedup(t *testing.T) {
 func TestCollectSkills_RequiredAndOptional(t *testing.T) {
 	catalog := []SkillEntry{
 		{Name: "gh-axi", Role: "soldier"},
-		{Name: "qmd", Role: "soldier"},
+		{Name: "chrome-devtools-axi", Role: "soldier"},
 	}
-	required, optional, diags := CollectSkills(catalog, []string{"gh-axi"}, []string{"qmd"})
+	required, optional, diags := CollectSkills(catalog, []string{"gh-axi"}, []string{"chrome-devtools-axi"})
 	if len(diags) > 0 {
 		t.Errorf("unexpected diagnostics: %v", diags)
 	}
 	if len(required) != 1 || required[0].Name != "gh-axi" {
 		t.Error("gh-axi should be in required skills")
 	}
-	if len(optional) != 1 || optional[0].Name != "qmd" {
-		t.Error("qmd should be in optional skills")
+	if len(optional) != 1 || optional[0].Name != "chrome-devtools-axi" {
+		t.Error("chrome-devtools-axi should be in optional skills")
 	}
 }
 
@@ -749,13 +745,13 @@ func TestBuildLaunchPrompt_RecoveryDeterminism(t *testing.T) {
 func TestBuildSkillInstructions_ManifestsNamesAndIntent(t *testing.T) {
 	result := buildSkillInstructions(
 		[]SkillEntry{{Name: shipRequiredSkill, Applicable: true}},
-		[]SkillEntry{{Name: "qmd", Applicable: true}},
+		[]SkillEntry{{Name: "chrome-devtools-axi", Applicable: true}},
 	)
 	if !strings.Contains(result, "## Required Skills") || !strings.Contains(result, shipRequiredSkill) {
 		t.Errorf("required section must name %q, got:\n%s", shipRequiredSkill, result)
 	}
-	if !strings.Contains(result, "## Optional Skills") || !strings.Contains(result, "qmd") {
-		t.Errorf("optional section must name qmd, got:\n%s", result)
+	if !strings.Contains(result, "## Optional Skills") || !strings.Contains(result, "chrome-devtools-axi") {
+		t.Errorf("optional section must name chrome-devtools-axi, got:\n%s", result)
 	}
 	// The section must carry invocation intent, not a bare noun.
 	if !strings.Contains(result, skillInvocationNote[shipRequiredSkill]) {

@@ -1500,13 +1500,14 @@ func TestSpawn_PostCreateVerificationFailure_NoMetaNoSpawnedStatus(t *testing.T)
 // guard for the remove-srcwalk-integration task.
 func TestRegression_ResolveSkillsWithoutSrcwalk(t *testing.T) {
 	tests := []struct {
-		name      string
-		kind      string
-		wantGhAxi bool
-		wantQmd   bool
+		name         string
+		kind         string
+		wantRequired int
+		wantGhAxi    bool
+		wantOptional []string
 	}{
-		{name: "ship", kind: "ship", wantGhAxi: true, wantQmd: false},
-		{name: "scout", kind: "scout", wantGhAxi: false, wantQmd: true},
+		{name: "ship", kind: "ship", wantRequired: 1, wantGhAxi: true, wantOptional: []string{"chrome-devtools-axi"}},
+		{name: "scout", kind: "scout", wantRequired: 0, wantGhAxi: false, wantOptional: []string{"gh-axi"}},
 	}
 
 	for _, tc := range tests {
@@ -1537,8 +1538,12 @@ func TestRegression_ResolveSkillsWithoutSrcwalk(t *testing.T) {
 				}
 			}
 
+			if len(required) != tc.wantRequired {
+				t.Fatalf("required skill count = %d, want %d", len(required), tc.wantRequired)
+			}
+
 			// Verify expected required skills.
-			var foundGhAxi, foundQmd bool
+			var foundGhAxi bool
 			for _, s := range required {
 				if s.Name == "gh-axi" {
 					foundGhAxi = true
@@ -1546,19 +1551,28 @@ func TestRegression_ResolveSkillsWithoutSrcwalk(t *testing.T) {
 						t.Error("gh-axi must be applicable")
 					}
 				}
-				if s.Name == "qmd" {
-					foundQmd = true
-					if !s.Applicable {
-						t.Error("qmd must be applicable")
-					}
-				}
 			}
 
 			if tc.wantGhAxi && !foundGhAxi {
 				t.Error("gh-axi must be in required skills")
 			}
-			if tc.wantQmd && !foundQmd {
-				t.Error("qmd must be in required skills")
+			if !tc.wantGhAxi && foundGhAxi {
+				t.Error("gh-axi must not be in required skills")
+			}
+
+			for _, want := range tc.wantOptional {
+				found := false
+				for _, s := range optional {
+					if s.Name == want {
+						found = true
+						if !s.Applicable {
+							t.Errorf("%s must be applicable", want)
+						}
+					}
+				}
+				if !found {
+					t.Errorf("%s must be in optional skills", want)
+				}
 			}
 		})
 	}
