@@ -99,20 +99,6 @@ installs `munsu-ops` to the chosen destination and points at embedded auxiliarie
 
 Rank hierarchy: General (fleet orchestrator) → Captain (`internal/fleet`, CLI `munsu captain`) → Soldier (task worker). Runtime: `MUNSU_ROLE=general|captain|soldier`. Labels: `captain-<id>-<hometag>`, windows `mu-captain-<id>`, marker `.munsu-captain-home`, registry `data/captains.md`. See `docs/architecture.md` "Rank hierarchy and identity".
 
-## Delegation via herdr + agy
-
-When pi (root) needs a second agent for implementation, use agy as a dedicated thread:
-
-1. **Context pack**: send goal + constraints + file list, not full history
-2. **Open question**: let agy explore independently -- no pre-solve
-3. **Ownership**: one task, one scope, one implementer at a time
-4. **agy does not know about herdr**: it should feel like a direct user request
-
-```sh
-.agents/scripts/delegate-herdr.sh "<prompt>" [timeout-secs]
-```
-
-
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.
