@@ -71,9 +71,11 @@ settled and shipped in BEO-56.
 
 `TaskEndpointScanner.ScanEndpoints` built its proof from five `.meta` keys:
 `endpoint_lease_id`, `endpoint_fence_token`, `endpoint_incarnation`, `task_generation`,
-`task_revision`. None is in `home.ValidMetaFields` (`internal/home/taskmeta.go`), and no
-production code writes them: `endpoint_fence_token` / `endpoint_incarnation` exist only
-as JSON tags of the canonical Task document (`internal/taskauthority/model.go`), and
+`task_revision`. None was ever a recognized `.meta` field — the amendment-key validation
+list in `internal/home/taskmeta.go` never carried them, and it has since been pruned
+outright — and no production code writes them: `endpoint_fence_token` /
+`endpoint_incarnation` exist only as JSON tags of the canonical Task document
+(`internal/taskauthority/model.go`), and
 `task_generation` / `task_revision` appeared nowhere but that one scanner line.
 
 So in production `proof.authorized()` and `proof.current()` were both false for **every**
