@@ -1,10 +1,13 @@
 BINDIR ?= $(if $(XDG_BIN_HOME),$(XDG_BIN_HOME),$(HOME)/.local/bin)
+COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+VERSION_LDFLAGS := -X github.com/minhtri2710/munsu/internal/cli.Version=0.1.0-dev+$(COMMIT) \
+	-X github.com/minhtri2710/munsu/internal/cli.CommitSHA=$(COMMIT)
 
 .PHONY: install uninstall test integration lint build cover all
 
 install:
 	@mkdir -p "$(BINDIR)"
-	GOBIN="$(BINDIR)" go install ./cmd/munsu
+	GOBIN="$(BINDIR)" go install -ldflags "$(VERSION_LDFLAGS)" ./cmd/munsu
 	@echo "installed munsu to $(BINDIR)/munsu"
 
 uninstall:
