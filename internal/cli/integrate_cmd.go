@@ -325,8 +325,10 @@ type toolPayload struct {
 // belongs to. Everything comes from the same JSON object and stdin is not
 // rewindable, so a single reader owns the extraction.
 //
-// Field names are tried per harness shape. A payload that carries nothing
+// Field names are tried per harness shape. A JSON payload that carries nothing
 // yields an empty toolPayload, which every caller treats as "nothing to check".
+// Trimmed-empty stdin is an error because stdin-based harnesses must provide a
+// PreToolUse payload for the safety decision.
 func readStdinForToolPayload() (toolPayload, error) {
 	data, err := io.ReadAll(os.Stdin)
 	if err != nil {
@@ -334,7 +336,7 @@ func readStdinForToolPayload() (toolPayload, error) {
 	}
 	trimmed := strings.TrimSpace(string(data))
 	if trimmed == "" {
-		return toolPayload{}, nil
+		return toolPayload{}, fmt.Errorf("stdin payload is empty")
 	}
 
 	var payload map[string]interface{}

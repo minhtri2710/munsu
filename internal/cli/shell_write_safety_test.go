@@ -24,6 +24,25 @@ var safetyShapes = []string{"claude", "codex", "grok", "opencode", "agy", "pi"}
 // JSON contract — reading the exit code for either would silently pass.
 func runSafetyShape(t *testing.T, harness, checkPath, command, filePath string) (bool, string) {
 	t.Helper()
+	if command == "" && filePath == "" && (harness == "claude" || harness == "grok" || harness == "codex" || harness == "agy") {
+		oldStdin := os.Stdin
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("create stdin pipe: %v", err)
+		}
+		if _, err := w.Write([]byte(`{}`)); err != nil {
+			t.Fatalf("write stdin payload: %v", err)
+		}
+		if err := w.Close(); err != nil {
+			t.Fatalf("close stdin payload: %v", err)
+		}
+		os.Stdin = r
+		defer func() {
+			os.Stdin = oldStdin
+			_ = r.Close()
+		}()
+	}
+
 	exitCode := 0
 	oldExit := exitWithCode
 	exitWithCode = func(code int) { exitCode = code }

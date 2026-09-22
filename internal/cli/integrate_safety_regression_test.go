@@ -30,6 +30,26 @@ func TestSafetyCheckDeniesStdinReadError(t *testing.T) {
 	}
 }
 
+func TestSafetyCheckDeniesEmptyStdinPayload(t *testing.T) {
+	code, stderr := runSafetyCheckWithStdin(t, []byte(" \n\t "), false)
+	if code != 2 {
+		t.Fatalf("empty stdin payload: exit=%d, want 2 (stderr=%q)", code, stderr)
+	}
+	if !strings.Contains(stderr, "safety-block") || !strings.Contains(stderr, "stdin payload is empty") {
+		t.Fatalf("empty stdin payload was not denied with an empty-payload reason: %q", stderr)
+	}
+}
+
+func TestSafetyCheckAllowsEmptyJSONStdinPayload(t *testing.T) {
+	code, stderr := runSafetyCheckWithStdin(t, []byte(`{}`), false)
+	if code != 0 {
+		t.Fatalf("empty JSON stdin payload: exit=%d, want 0 (stderr=%q)", code, stderr)
+	}
+	if stderr != "" {
+		t.Fatalf("empty JSON stdin payload produced a deny: %q", stderr)
+	}
+}
+
 func runSafetyCheckWithStdin(t *testing.T, payload []byte, closeBeforeRead bool) (int, string) {
 	t.Helper()
 	home := t.TempDir()
