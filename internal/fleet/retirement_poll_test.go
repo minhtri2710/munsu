@@ -848,6 +848,31 @@ func TestRecoverPendingRetirement_IncompleteSequence(t *testing.T) {
 	}
 }
 
+func TestRecoverPendingRetirement_ReadStatusScannerErrorReturnsError(t *testing.T) {
+	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+	defer cleanup()
+
+	rec := recoveryRecordForTest(t, home, taskID, checkPath)
+	if err := WriteRetirementRecord(home, rec); err != nil {
+		t.Fatalf("WriteRetirementRecord: %v", err)
+	}
+	statusPath, err := mhome.StatusFilePath(home, taskID)
+	if err != nil {
+		t.Fatalf("StatusFilePath: %v", err)
+	}
+	if err := os.WriteFile(statusPath, []byte(strings.Repeat("x", 70*1024)+"\n"), 0600); err != nil {
+		t.Fatalf("WriteFile status: %v", err)
+	}
+
+	resolved, err := recoverPendingRetirement(home, taskID, retirementPollAuth(t, home, taskID), pollContentDigest)
+	if err == nil || resolved {
+		t.Fatalf("recovery = %v, %v; want an error without a panic", resolved, err)
+	}
+	if !strings.Contains(err.Error(), "reading status") {
+		t.Fatalf("error = %v, want status read context", err)
+	}
+}
+
 func TestRecoverPendingRetirement_LegacyRecordPreservesReplacement(t *testing.T) {
 	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
 	defer cleanup()

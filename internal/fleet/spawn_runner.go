@@ -20,6 +20,9 @@ import (
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
+// returnWorktree is the pool-return seam used by failure cleanup.
+var returnWorktree = backend.ReturnWorktree
+
 // Runner orchestrates the full spawn sequence through private phase methods.
 // It encapsulates all intermediate state so the public Run function is a thin
 // delegate call.
@@ -161,7 +164,7 @@ func (r *Runner) canonicalGenerationRevision() (uint64, uint64) {
 }
 
 // Run executes the full spawn orchestration sequence.
-func (r *Runner) Run() (string, error) {
+func (r *Runner) Run() (windowID string, runErr error) {
 	if err := r.resolveHome(); err != nil {
 		return "", err
 	}
@@ -251,8 +254,10 @@ func (r *Runner) Run() (string, error) {
 	// durably owns (bound under the launch fence) is never returned to the
 	// pool; only unbound acquisitions are returned on failure.
 	defer func() {
-		if !success && r.wtPath != "" && r.worktreeReturnAllowed() {
-			_ = backend.ReturnWorktree(r.homeDir, r.wtPath)
+		if !success {
+			if returnErr := r.returnWorktreeOnFailure(); returnErr != nil {
+				runErr = errors.Join(runErr, returnErr)
+			}
 		}
 	}()
 	if err := r.acquireWorktree(); err != nil {
@@ -944,6 +949,16 @@ func (r *Runner) wtReservationID() string {
 // (bound under the launch fence) must never be returned; only unbound
 // acquisitions are returned. When no Authority is composed there is no
 // canonical ownership, so the legacy return-on-failure semantics apply.
+func (r *Runner) returnWorktreeOnFailure() error {
+	if r.wtPath == "" || !r.worktreeReturnAllowed() {
+		return nil
+	}
+	if err := returnWorktree(r.homeDir, r.wtPath); err != nil {
+		return fmt.Errorf("returning worktree %s: %w", r.wtPath, err)
+	}
+	return nil
+}
+
 func (r *Runner) worktreeReturnAllowed() bool {
 	if r.args.Authority == nil {
 		return true
@@ -953,7 +968,10 @@ func (r *Runner) worktreeReturnAllowed() bool {
 		return true
 	}
 	agg, err := r.args.Authority.Get(taskID)
-	if err != nil || agg.Worktree == nil {
+	if err != nil {
+		return false
+	}
+	if agg.Worktree == nil {
 		return true
 	}
 	// The aggregate owns a worktree binding: never return it (whether it is
@@ -1633,24 +1651,6 @@ func (r *Runner) attachEndpoint() error {
 	return nil
 }
 
-// endpointDurablyAttached reports whether the aggregate already records the
-// acquired endpoint (or the active endpoint binding) for the task's current
-// generation. When no Authority is composed nothing is durably recorded.
-func (r *Runner) endpointDurablyAttached() bool {
-	if r.args.Authority == nil {
-		return false
-	}
-	taskID, err := domain.NewTaskID(r.args.ID)
-	if err != nil {
-		return false
-	}
-	agg, err := r.args.Authority.Get(taskID)
-	if err != nil {
-		return false
-	}
-	return agg.AcquiredEndpoint != nil || agg.Endpoint != nil
-}
-
 // recordedAcquiredEndpoint returns the aggregate's recorded acquired endpoint
 // for the task's current generation, or nil.
 func (r *Runner) recordedAcquiredEndpoint() *taskauthority.AcquiredEndpoint {
@@ -1940,12 +1940,9 @@ func (r *Runner) waitAndInjectBrief() error {
 		_ = os.MkdirAll(dataDir, 0755)
 		failContent := fmt.Sprintf("harness=%s\nerror=%v\n\nlast capture:\n%s\n", r.harness, err, capture)
 		_ = os.WriteFile(filepath.Join(dataDir, "ready-fail.txt"), []byte(failContent), 0644)
-		// Phase-aware disposal: the endpoint is durably recorded by the time
-		// the readiness wait runs, so it is never disposed here; recovery
-		// reuses the recorded endpoint and fails closed instead of replacing it.
-		if !r.endpointDurablyAttached() {
-			_ = r.endpoints.Dispose(r.endpoint)
-		}
+		// The endpoint is durably recorded by the time the readiness wait runs,
+		// so it is never disposed here; recovery reuses the recorded endpoint
+		// and fails closed instead of replacing it.
 		return fmt.Errorf("harness %q handshake failed: %w", r.harness, err)
 	}
 	// No brief injection needed — the complete prompt was already provided

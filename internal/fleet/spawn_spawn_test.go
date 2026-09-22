@@ -1195,7 +1195,7 @@ func TestWaitForHarnessReady_Timeout(t *testing.T) {
 	}
 }
 
-func TestWaitAndInjectBrief_FailurePatternTearsDown(t *testing.T) {
+func TestWaitAndInjectBrief_FailurePatternPreservesAttachedEndpoint(t *testing.T) {
 	teardownCalled := false
 	homeDir := t.TempDir()
 	fake := &fakeBackend{
@@ -1221,8 +1221,8 @@ func TestWaitAndInjectBrief_FailurePatternTearsDown(t *testing.T) {
 	if !strings.Contains(err.Error(), "handshake failed") {
 		t.Errorf("expected handshake failure error, got: %v", err)
 	}
-	if !teardownCalled {
-		t.Error("teardown was not called after failure pattern detection")
+	if teardownCalled {
+		t.Error("attached endpoint was disposed after failure pattern detection")
 	}
 	// Verify failure evidence was persisted
 	failPath := filepath.Join(dataDir, "ready-fail.txt")

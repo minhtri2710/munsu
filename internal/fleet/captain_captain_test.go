@@ -1566,7 +1566,7 @@ func TestBuildLaunchScript(t *testing.T) {
 	args := []string{"--model", "gpt-5", "# charter"}
 	cwd := tmp
 
-	cmd, err := buildLaunchScript(binPath, args, cwd, tmp)
+	cmd, err := buildLaunchScript(binPath, args, cwd, tmp, filepath.Base(cwd))
 	if err != nil {
 		t.Fatalf("buildLaunchScript error: %v", err)
 	}
@@ -1605,6 +1605,28 @@ func TestBuildLaunchScript(t *testing.T) {
 	}
 }
 
+func TestBuildLaunchScript_UsesCaptainIDNotHomeBasename(t *testing.T) {
+	tmp := t.TempDir()
+	cwd := filepath.Join(tmp, "home-basename")
+	if err := os.MkdirAll(cwd, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := buildLaunchScript("/usr/local/bin/pi", nil, cwd, tmp, "registered-captain-id"); err != nil {
+		t.Fatalf("buildLaunchScript: %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(cwd, ".captain-launch.sh"))
+	if err != nil {
+		t.Fatalf("reading launch script: %v", err)
+	}
+	script := string(body)
+	if want := "export MUNSU_TASK_ID='captain:registered-captain-id'"; !strings.Contains(script, want) {
+		t.Fatalf("launch script missing captain ID task identity %q:\n%s", want, script)
+	}
+	if unwanted := "export MUNSU_TASK_ID='captain:home-basename'"; strings.Contains(script, unwanted) {
+		t.Fatalf("launch script derived task identity from home basename: %q", unwanted)
+	}
+}
+
 func TestBuildLaunchScript_SafeQuoting(t *testing.T) {
 	tmp := t.TempDir()
 	binPath := "/usr/local/bin/pi"
@@ -1612,7 +1634,7 @@ func TestBuildLaunchScript_SafeQuoting(t *testing.T) {
 	cwd := filepath.Join(tmp, "sm test")
 	os.MkdirAll(cwd, 0755)
 
-	cmd, err := buildLaunchScript(binPath, args, cwd, tmp)
+	cmd, err := buildLaunchScript(binPath, args, cwd, tmp, filepath.Base(cwd))
 	if err != nil {
 		t.Fatalf("buildLaunchScript error: %v", err)
 	}
@@ -1646,7 +1668,7 @@ func TestBuildLaunchScript_ShellExecution(t *testing.T) {
 
 	// Build a launch script with special characters.
 	args := []string{"# charter with $HOME and `backticks` and $(whoami)"}
-	scriptCmd, err := buildLaunchScript(testBin, args, smHome, smHome)
+	scriptCmd, err := buildLaunchScript(testBin, args, smHome, smHome, filepath.Base(smHome))
 	if err != nil {
 		t.Fatalf("buildLaunchScript error: %v", err)
 	}
@@ -1724,6 +1746,61 @@ func TestLaunch_RefusesUnmarkedHome(t *testing.T) {
 		t.Errorf("error should mention missing marker, got: %v", err)
 	}
 }
+
+func TestLaunch_UsesCaptainIDWhenHomeBasenameDiffers(t *testing.T) {
+	oldLookPath := captainLookPath
+	captainLookPath = func(string) (string, error) { return "/test/bin/pi", nil }
+	t.Cleanup(func() { captainLookPath = oldLookPath })
+	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
+	captainHome := filepath.Join(parent, "captains", "home-basename")
+	for _, dir := range []string{"state", "config", "data"} {
+		if err := os.MkdirAll(filepath.Join(captainHome, dir), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(captainHome, "AGENTS.md"), []byte("# registered-id\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := SeedProvenance(captainHome, "registered-id"); err != nil {
+		t.Fatal(err)
+	}
+	setupTypedParentHome(t, parent, "registered-id")
+	if err := Register(parent, "registered-id", captainHome, "captain", "registered-id"); err != nil {
+		t.Fatal(err)
+	}
+	if err := publishResolvedSnapshot(parent, captainHome); err != nil {
+		t.Fatal(err)
+	}
+	writeCanonicalPiIntegration(t, captainHome)
+
+	var request LaunchRequest
+	endpoint := launchCaptureEndpoint{launch: func(req LaunchRequest) { request = req }}
+	if err := Launch(captainHome, parent, endpoint, fakeIntegrationPort{}); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(captainHome, ".captain-launch.sh"))
+	if err != nil {
+		t.Fatalf("reading launch script: %v", err)
+	}
+	if want := "export MUNSU_TASK_ID='captain:registered-id'"; !strings.Contains(string(body), want) {
+		t.Fatalf("launch request %q missing %q", request.Command, want)
+	}
+}
+
+type launchCaptureEndpoint struct {
+	launch func(LaunchRequest)
+}
+
+func (e launchCaptureEndpoint) Launch(_ string, req LaunchRequest) (LaunchResult, error) {
+	if e.launch != nil {
+		e.launch(req)
+	}
+	return LaunchResult{Backend: "test", Window: "test-window"}, nil
+}
+func (launchCaptureEndpoint) Cleanup(string, LaunchResult) error { return nil }
 
 func TestLaunch_RefusesCaptainRole(t *testing.T) {
 	tmp := t.TempDir()

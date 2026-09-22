@@ -7,7 +7,57 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/harness"
+	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
+
+func TestReturnWorktreeOnFailure_PreservesBoundWorktreeOnAggregateReadError(t *testing.T) {
+	homeDir := t.TempDir()
+	h, err := home.Init(homeDir)
+	if err != nil {
+		t.Fatalf("home.Init: %v", err)
+	}
+	authority, err := taskauthority.NewCanonical(h)
+	if err != nil {
+		t.Fatalf("NewCanonical: %v", err)
+	}
+	taskDir := filepath.Join(h.Root(), "state", "task-authority", "tasks", "bound-task")
+	if err := os.MkdirAll(taskDir, 0755); err != nil {
+		t.Fatalf("MkdirAll task state: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(taskDir, "current.json"), []byte("{ malformed"), 0600); err != nil {
+		t.Fatalf("WriteFile task state: %v", err)
+	}
+
+	called := false
+	original := returnWorktree
+	t.Cleanup(func() { returnWorktree = original })
+	returnWorktree = func(string, string) error {
+		called = true
+		return nil
+	}
+
+	r := &Runner{args: Args{ID: "bound-task", Authority: authority}, homeDir: h.Root(), wtPath: filepath.Join(t.TempDir(), "bound")}
+	if err := r.returnWorktreeOnFailure(); err != nil {
+		t.Fatalf("returnWorktreeOnFailure: %v", err)
+	}
+	if called {
+		t.Fatal("worktree was returned after the aggregate read failed")
+	}
+}
+
+func TestReturnWorktreeOnFailureSurfacesReturnError(t *testing.T) {
+	want := errors.New("return failed")
+	original := returnWorktree
+	t.Cleanup(func() { returnWorktree = original })
+	returnWorktree = func(string, string) error { return want }
+
+	r := &Runner{homeDir: t.TempDir(), wtPath: filepath.Join(t.TempDir(), "bound")}
+	err := r.returnWorktreeOnFailure()
+	if !errors.Is(err, want) {
+		t.Fatalf("error = %v, want wrapped return error %v", err, want)
+	}
+}
 
 // TestResolveEffectiveIdentity_SnapshotOnlyFailClosed verifies the soldier
 // operation harness resolution consumes the snapshot via
