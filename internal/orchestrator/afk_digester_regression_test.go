@@ -44,6 +44,51 @@ func TestDigesterFlushAccumulatesAcrossWindowsAndDrains(t *testing.T) {
 	}
 }
 
+func TestDigesterFlushRejectsCorruptExistingDigestAndRetainsEntries(t *testing.T) {
+	home := t.TempDir()
+	stateDir := filepath.Join(home, "state")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	digestPath := filepath.Join(stateDir, ".afk-digest")
+	corrupt := []byte("not json")
+	if err := os.WriteFile(digestPath, corrupt, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	d := NewDigester(home)
+	d.Feed(&Digest{Routines: []WakeDigest{{Kind: "status", Key: "retained", Payload: "keep me"}}})
+	if err := d.Flush(time.Now().Add(defaultWindow + time.Second)); err == nil {
+		t.Fatal("Flush with corrupt existing digest succeeded")
+	}
+
+	data, err := os.ReadFile(digestPath)
+	if err != nil {
+		t.Fatalf("read corrupt digest after rejected flush: %v", err)
+	}
+	if string(data) != string(corrupt) {
+		t.Fatalf("corrupt digest was overwritten: got %q, want %q", data, corrupt)
+	}
+
+	if err := os.Remove(digestPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Flush(time.Now().Add(2*defaultWindow + time.Second)); err != nil {
+		t.Fatalf("Flush after corrupt digest removal: %v", err)
+	}
+	data, err = os.ReadFile(digestPath)
+	if err != nil {
+		t.Fatalf("read retained digest: %v", err)
+	}
+	var be BatchedEscalation
+	if err := json.Unmarshal(data, &be); err != nil {
+		t.Fatalf("unmarshal retained digest: %v", err)
+	}
+	if len(be.Entries) != 1 || be.Entries[0].Key != "retained" {
+		t.Fatalf("retained entries = %+v, want one entry with key retained", be.Entries)
+	}
+}
+
 func TestDigesterFlushRetainsEntriesAfterPersistenceFailure(t *testing.T) {
 	home := t.TempDir()
 	statePath := filepath.Join(home, "state")

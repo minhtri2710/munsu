@@ -400,9 +400,15 @@ func TestConfigShowRejectsMalformedBaseAndShowsSparseBase(t *testing.T) {
 	if err := config.StoreFleetBase(home, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion}); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(home, "config", "stray"), []byte("ignored"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	output, err := runMunsuCLI(t, "config", "show", "--output", "json")
 	if err != nil {
 		t.Fatalf("config show sparse base: %v", err)
+	}
+	if strings.Contains(output, "Additional config keys:") {
+		t.Fatalf("config show contains removed additional-keys header with stray file: %s", output)
 	}
 	rows := configShowRows(t, output)
 	for _, key := range []string{"soldier-harness", "model", "captain-harness"} {
@@ -721,9 +727,6 @@ func configShowRows(t *testing.T, output string) map[string]string {
 	}
 	rows := map[string]string{}
 	for _, line := range strings.Split(resp.Data.Message, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "Additional config keys:") {
-			break
-		}
 		if len(line) < 31 || strings.HasPrefix(line, " ") {
 			continue
 		}
