@@ -1,7 +1,6 @@
 package home
 
 import (
-	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -315,7 +314,7 @@ func applyWakeLeaseAction(homeDir string, mutation wakeMutation) error {
 }
 
 func readWakeQueue(homeDir string) ([]WakeRecord, error) {
-	file, err := os.Open(WakeQueuePath(homeDir))
+	data, err := os.ReadFile(WakeQueuePath(homeDir))
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
@@ -323,27 +322,76 @@ func readWakeQueue(homeDir string) ([]WakeRecord, error) {
 		return nil, fmt.Errorf("opening wake queue: %w", err)
 	}
 	var records []WakeRecord
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		parts := strings.SplitN(scanner.Text(), "\t", 5)
-		if len(parts) < 5 {
-			continue
+	for _, line := range strings.Split(string(data), "\n") {
+		if record, ok := decodeWakeRecordLine(line); ok {
+			records = append(records, record)
 		}
-		records = append(records, WakeRecord{Epoch: parts[0], Seq: parts[1], Kind: parts[2], Key: parts[3], Payload: parts[4]})
-	}
-	scanErr := scanner.Err()
-	closeErr := file.Close()
-	if scanErr != nil || closeErr != nil {
-		var errs []error
-		if scanErr != nil {
-			errs = append(errs, fmt.Errorf("reading wake queue: %w", scanErr))
-		}
-		if closeErr != nil {
-			errs = append(errs, fmt.Errorf("closing wake queue: %w", closeErr))
-		}
-		return nil, errors.Join(errs...)
 	}
 	return records, nil
+}
+
+func decodeWakeRecordLine(line string) (WakeRecord, bool) {
+	parts := strings.SplitN(line, "\t", 5)
+	if len(parts) < 5 {
+		return WakeRecord{}, false
+	}
+	return WakeRecord{
+		Epoch:   parts[0],
+		Seq:     parts[1],
+		Kind:    parts[2],
+		Key:     parts[3],
+		Payload: decodeWakePayload(parts[4]),
+	}, true
+}
+
+func encodeWakePayload(payload string) string {
+	var b strings.Builder
+	b.Grow(len(payload))
+	for i := 0; i < len(payload); i++ {
+		switch payload[i] {
+		case '\\':
+			b.WriteString("\\\\")
+		case '\t':
+			b.WriteString("\\t")
+		case '\n':
+			b.WriteString("\\n")
+		case '\r':
+			b.WriteString("\\r")
+		default:
+			b.WriteByte(payload[i])
+		}
+	}
+	return b.String()
+}
+
+func decodeWakePayload(encoded string) string {
+	var b strings.Builder
+	b.Grow(len(encoded))
+	for i := 0; i < len(encoded); i++ {
+		if encoded[i] != '\\' || i+1 == len(encoded) {
+			b.WriteByte(encoded[i])
+			continue
+		}
+		i++
+		switch encoded[i] {
+		case '\\':
+			b.WriteByte('\\')
+		case 't':
+			b.WriteByte('\t')
+		case 'n':
+			b.WriteByte('\n')
+		case 'r':
+			b.WriteByte('\r')
+		default:
+			b.WriteByte('\\')
+			b.WriteByte(encoded[i])
+		}
+	}
+	return b.String()
+}
+
+func writeWakeRecord(b *strings.Builder, record WakeRecord) {
+	fmt.Fprintf(b, "%s\t%s\t%s\t%s\t%s\n", record.Epoch, record.Seq, record.Kind, record.Key, encodeWakePayload(record.Payload))
 }
 
 func wakeQueueData(records []WakeRecord) []byte {
@@ -352,7 +400,7 @@ func wakeQueueData(records []WakeRecord) []byte {
 	}
 	var b strings.Builder
 	for _, record := range records {
-		fmt.Fprintf(&b, "%s\t%s\t%s\t%s\t%s\n", record.Epoch, record.Seq, record.Kind, record.Key, record.Payload)
+		writeWakeRecord(&b, record)
 	}
 	return []byte(b.String())
 }

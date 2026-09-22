@@ -1,7 +1,6 @@
 package home
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -100,17 +99,17 @@ func leaseContainsEvent(homeDir, leaseID, eventID string) (bool, error) {
 	if string(data) == wakeLeaseTombstone+"\n" || string(data) == wakeLeaseTombstone {
 		return false, fmt.Errorf("lease %q not found or expired: %w", leaseID, os.ErrNotExist)
 	}
-	scanner := bufio.NewScanner(strings.NewReader(string(data)))
-	if !scanner.Scan() {
+	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	if len(lines) == 0 || lines[0] == "" {
 		return false, fmt.Errorf("lease %q is empty", leaseID)
 	}
-	for scanner.Scan() {
-		parts := strings.SplitN(scanner.Text(), "\t", 3)
-		if len(parts) >= 2 && parts[0]+":"+parts[1] == eventID {
+	for _, line := range lines[1:] {
+		record, ok := decodeWakeRecordLine(line)
+		if ok && record.Epoch+":"+record.Seq == eventID {
 			return true, nil
 		}
 	}
-	return false, scanner.Err()
+	return false, nil
 }
 
 func resolutionPath(homeDir, leaseID, eventID string) string {
@@ -155,8 +154,8 @@ func writeWakeResolution(homeDir string, record wakeResolutionRecord) error {
 func wakeEventExists(homeDir, eventID string) (bool, error) {
 	if data, err := os.ReadFile(WakeQueuePath(homeDir)); err == nil {
 		for _, line := range strings.Split(string(data), "\n") {
-			parts := strings.SplitN(line, "\t", 3)
-			if len(parts) >= 2 && parts[0]+":"+parts[1] == eventID {
+			record, ok := decodeWakeRecordLine(line)
+			if ok && record.Epoch+":"+record.Seq == eventID {
 				return true, nil
 			}
 		}

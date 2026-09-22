@@ -1,6 +1,7 @@
 package home
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -33,33 +34,53 @@ func TestWatcherLockAcquireRelease(t *testing.T) {
 	}
 }
 
-func TestWatcherLockReclaimsStalePID(t *testing.T) {
+func TestWatcherLockDoesNotUnlinkHeldInode(t *testing.T) {
 	h := t.TempDir()
-	p := WatchLockPath(h)
+	p := SessionLockPath(h)
 	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(p, []byte("99999999\n"), 0644); err != nil {
+	holder, err := os.OpenFile(p, os.O_RDWR|os.O_CREATE, 0644)
+	if err != nil {
 		t.Fatal(err)
 	}
-	called := false
-	ok, err := AcquireWatchLock(h, WatcherLockPolicy{ProcessAlive: func(pid int) bool { called = true; return false }})
-	if err != nil || !ok || !called {
-		t.Fatalf("acquire = %v, %v; callback=%v", ok, err, called)
+	defer holder.Close()
+	if err := lockWatcherFile(holder, true); err != nil {
+		t.Fatal(err)
 	}
-	defer ReleaseWatchLock(h)
+	if _, err := fmt.Fprintf(holder, "%d\n", os.Getpid()); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ok, err := AcquireSessionLock(h, WatcherLockPolicy{ProcessAlive: func(int) bool { return false }, IsWatcher: func(int) bool { return true }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("second acquirer took a lock held through the original inode")
+	}
+	after, err := os.Stat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) {
+		t.Fatal("second acquirer replaced the held lock inode")
+	}
 }
 
-func TestWatcherPIDPolicyOnlyAppliesToSessionLock(t *testing.T) {
+func TestWatcherPIDPolicyIsIgnoredByFlockAcquisition(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		path    func(string) string
 		acquire func(string, WatcherLockPolicy) (bool, error)
 		release func(string) error
-		calls   int
 	}{
-		{"session", SessionLockPath, AcquireSessionLock, ReleaseSessionLock, 1},
-		{"watch", WatchLockPath, AcquireWatchLock, ReleaseWatchLock, 0},
+		{"session", SessionLockPath, AcquireSessionLock, ReleaseSessionLock},
+		{"watch", WatchLockPath, AcquireWatchLock, ReleaseWatchLock},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := t.TempDir()
@@ -70,16 +91,11 @@ func TestWatcherPIDPolicyOnlyAppliesToSessionLock(t *testing.T) {
 			if err := os.WriteFile(p, []byte("123\n"), 0644); err != nil {
 				t.Fatal(err)
 			}
-			calls := 0
-			policy := WatcherLockPolicy{ProcessAlive: func(int) bool { return true }, IsWatcher: func(int) bool { calls++; return true }}
-			ok, err := tc.acquire(h, policy)
+			ok, err := tc.acquire(h, WatcherLockPolicy{ProcessAlive: func(int) bool { return false }, IsWatcher: func(int) bool { return true }})
 			if err != nil || !ok {
 				t.Fatalf("acquire=%v,%v", ok, err)
 			}
 			defer tc.release(h)
-			if calls != tc.calls {
-				t.Fatalf("watcher policy calls=%d, want %d", calls, tc.calls)
-			}
 		})
 	}
 }

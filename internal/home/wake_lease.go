@@ -135,7 +135,7 @@ func claimWakesLocked(homeDir, consumer string, leaseSeconds, limit int, now fun
 	var resultWakes []ClaimedWakeRecord
 	var claimLatencies []time.Duration
 	for _, record := range claimed {
-		fmt.Fprintf(&lease, "%s\t%s\t%s\t%s\t%s\n", record.Epoch, record.Seq, record.Kind, record.Key, record.Payload)
+		writeWakeRecord(&lease, record)
 		resultWakes = append(resultWakes, ClaimedWakeRecord(record))
 		claimLatencies = append(claimLatencies, WakeAgeSinceEnqueue(record.Epoch, claimNow))
 	}
@@ -192,14 +192,14 @@ func ackWakesLocked(homeDir, leaseID string, eventIDs []string) error {
 	for _, id := range eventIDs {
 		ackSet[id] = true
 	}
-	var unacked []string
+	var unacked []WakeRecord
 	for _, line := range remainingLines {
-		parts := strings.SplitN(line, "\t", 5)
-		if len(parts) < 2 {
+		record, ok := decodeWakeRecordLine(line)
+		if !ok {
 			continue
 		}
-		if !ackSet[parts[0]+":"+parts[1]] {
-			unacked = append(unacked, line)
+		if !ackSet[record.Epoch+":"+record.Seq] {
+			unacked = append(unacked, record)
 		}
 	}
 
@@ -213,9 +213,8 @@ func ackWakesLocked(homeDir, leaseID string, eventIDs []string) error {
 	var data strings.Builder
 	data.WriteString(header)
 	data.WriteByte('\n')
-	for _, line := range unacked {
-		data.WriteString(line)
-		data.WriteByte('\n')
+	for _, record := range unacked {
+		writeWakeRecord(&data, record)
 	}
 	return applyWakeMutationLocked(homeDir, wakeMutation{
 		leaseAction: wakeLeaseActionWrite,
@@ -298,23 +297,14 @@ func reclaimExpiredLeasesLocked(homeDir string, now func() time.Time) (int, erro
 
 		var requeued []WakeRecord
 		for _, line := range lines {
-			if line == "" {
+			record, ok := decodeWakeRecordLine(line)
+			if !ok {
 				continue
 			}
-			wakeParts := strings.SplitN(line, "\t", 5)
-			if len(wakeParts) < 5 {
+			if wakeResolutionCompleted(homeDir, record.Epoch+":"+record.Seq) {
 				continue
 			}
-			if wakeResolutionCompleted(homeDir, wakeParts[0]+":"+wakeParts[1]) {
-				continue
-			}
-			requeued = append(requeued, WakeRecord{
-				Epoch:   wakeParts[0],
-				Seq:     wakeParts[1],
-				Kind:    wakeParts[2],
-				Key:     wakeParts[3],
-				Payload: wakeParts[4],
-			})
+			requeued = append(requeued, record)
 		}
 
 		if len(requeued) == 0 {
