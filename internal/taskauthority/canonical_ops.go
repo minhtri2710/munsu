@@ -404,7 +404,7 @@ func (c *Canonical) Start(op domain.Operation, req CanonicalStartRequest) (Outco
 	if err := c.prepare(op, req, req.HomeID); err != nil {
 		return Outcome{}, err
 	}
-	return c.mutateTask(op, req.TaskID, req.Precondition, func(cur Aggregate) (Aggregate, error) {
+	return c.mutateTaskWithDispatch(op, req.TaskID, req.Precondition, func(cur Aggregate) (Aggregate, error) {
 		if cur.Phase != PhaseQueued {
 			return Aggregate{}, preconditionError("start requires queued task")
 		}
@@ -702,6 +702,11 @@ func (c *Canonical) AddHold(op domain.Operation, req CanonicalAddHoldRequest) (H
 	if len(req.Actions) == 0 || strings.TrimSpace(req.Reason) == "" {
 		return HoldResult{}, validationError("dispatch hold requires actions and reason")
 	}
+	dispatch, err := c.h.Lock(dispatchScope)
+	if err != nil {
+		return HoldResult{}, err
+	}
+	defer dispatch.Release()
 	lk, err := c.h.Lock(holdScope(req.HoldID))
 	if err != nil {
 		return HoldResult{}, err
@@ -779,6 +784,11 @@ func (c *Canonical) ReleaseHold(op domain.Operation, req CanonicalReleaseHoldReq
 	if req.HoldID == "" || strings.ContainsAny(req.HoldID, `/\\.`) {
 		return HoldResult{}, validationError("dispatch hold ID must be a safe non-empty value")
 	}
+	dispatch, err := c.h.Lock(dispatchScope)
+	if err != nil {
+		return HoldResult{}, err
+	}
+	defer dispatch.Release()
 	lk, err := c.h.Lock(holdScope(req.HoldID))
 	if err != nil {
 		return HoldResult{}, err

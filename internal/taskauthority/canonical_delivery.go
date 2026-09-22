@@ -640,6 +640,18 @@ func (c *Canonical) readDeliveryOutcome(taskID, opID string) (DeliveryOutcome, b
 	return out, true, nil
 }
 
+// mutateDeliveryWithDispatch serializes a hold-checked delivery mutation with
+// hold changes. The dispatch scope is always acquired before the task scope
+// used by mutateDelivery.
+func (c *Canonical) mutateDeliveryWithDispatch(op domain.Operation, taskID domain.TaskID, prec domain.Precondition, apply func(Aggregate, DeliveryIndex) (Aggregate, DeliveryIndex, []home.ChangeItem, error)) (DeliveryIndex, bool, error) {
+	dispatch, err := c.h.Lock(dispatchScope)
+	if err != nil {
+		return DeliveryIndex{}, false, err
+	}
+	defer dispatch.Release()
+	return c.mutateDelivery(op, taskID, prec, apply)
+}
+
 // mutateDelivery runs one task-scoped delivery mutation: receipt idempotency
 // first (replay reconstructs the exact original result from the immutable
 // evidence), then the exact generation/revision precondition, currentness,
@@ -897,7 +909,7 @@ func (c *Canonical) AuthorizeDelivery(op domain.Operation, req CanonicalDelivery
 		return DeliveryAuthorizationResult{}, err
 	}
 	var committed DeliveryAuthorization
-	_, replayed, err := c.mutateDelivery(op, req.TaskID, req.Precondition, func(cur Aggregate, index DeliveryIndex) (Aggregate, DeliveryIndex, []home.ChangeItem, error) {
+	_, replayed, err := c.mutateDeliveryWithDispatch(op, req.TaskID, req.Precondition, func(cur Aggregate, index DeliveryIndex) (Aggregate, DeliveryIndex, []home.ChangeItem, error) {
 		if cur.Phase != PhaseWorking {
 			return Aggregate{}, DeliveryIndex{}, nil, preconditionError("delivery authorization requires a working task; task %s is %s", cur.TaskID, cur.Phase)
 		}
@@ -1079,7 +1091,7 @@ func (c *Canonical) CommitDeliveryOutcome(op domain.Operation, req CanonicalDeli
 		return DeliveryOutcomeResult{}, validationError("delivery outcome requires the exact authorization operation identity")
 	}
 	var committed DeliveryOutcome
-	_, replayed, err := c.mutateDelivery(op, req.TaskID, req.Precondition, func(cur Aggregate, index DeliveryIndex) (Aggregate, DeliveryIndex, []home.ChangeItem, error) {
+	_, replayed, err := c.mutateDeliveryWithDispatch(op, req.TaskID, req.Precondition, func(cur Aggregate, index DeliveryIndex) (Aggregate, DeliveryIndex, []home.ChangeItem, error) {
 		if index.AuthorizationOpID == "" {
 			return Aggregate{}, DeliveryIndex{}, nil, conflictError(ErrConflict, "task %s has no active delivery authorization to commit an outcome against", cur.TaskID)
 		}

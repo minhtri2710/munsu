@@ -106,7 +106,7 @@ func (c *Canonical) BindEndpoint(op domain.Operation, req CanonicalBindEndpointR
 	if err := validateEndpointBinding(req.Binding); err != nil {
 		return Outcome{}, err
 	}
-	return c.mutateTask(op, req.TaskID, req.Precondition, func(cur Aggregate) (Aggregate, error) {
+	return c.mutateTaskWithDispatch(op, req.TaskID, req.Precondition, func(cur Aggregate) (Aggregate, error) {
 		if cur.Worktree == nil {
 			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s has no worktree binding; bind endpoint requires a bound worktree", cur.TaskID, cur.Generation)
 		}
