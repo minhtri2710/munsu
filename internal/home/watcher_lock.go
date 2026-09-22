@@ -7,11 +7,6 @@ import (
 	"sync"
 )
 
-type WatcherLockPolicy struct {
-	ProcessAlive func(int) bool
-	IsWatcher    func(int) bool
-}
-
 func SessionLockPath(h string) string { return filepath.Join(h, "state/.lock") }
 func WatchLockPath(h string) string   { return filepath.Join(h, "state/.watch.lock") }
 
@@ -20,7 +15,7 @@ var watcherLocks = struct {
 	files map[string]*os.File
 }{files: make(map[string]*os.File)}
 
-func acquireWatcherLock(p string, _ WatcherLockPolicy, _ bool) (bool, error) {
+func acquireWatcherLock(p string) (bool, error) {
 	if e := os.MkdirAll(filepath.Dir(p), 0755); e != nil {
 		return false, fmt.Errorf("creating lock directory %s: %w", filepath.Dir(p), e)
 	}
@@ -37,11 +32,11 @@ func acquireWatcherLock(p string, _ WatcherLockPolicy, _ bool) (bool, error) {
 	watcherLocks.Unlock()
 	return true, nil
 }
-func AcquireSessionLock(h string, p WatcherLockPolicy) (bool, error) {
-	return acquireWatcherLock(SessionLockPath(h), p, true)
+func AcquireSessionLock(h string) (bool, error) {
+	return acquireWatcherLock(SessionLockPath(h))
 }
-func AcquireWatchLock(h string, p WatcherLockPolicy) (bool, error) {
-	return acquireWatcherLock(WatchLockPath(h), p, false)
+func AcquireWatchLock(h string) (bool, error) {
+	return acquireWatcherLock(WatchLockPath(h))
 }
 func releaseWatcherLock(p string) error {
 	watcherLocks.Lock()

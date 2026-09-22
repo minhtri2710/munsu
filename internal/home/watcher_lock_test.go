@@ -1,7 +1,6 @@
 package home
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -19,7 +18,7 @@ func TestWatcherLockPaths(t *testing.T) {
 
 func TestWatcherLockAcquireRelease(t *testing.T) {
 	h := t.TempDir()
-	ok, err := AcquireSessionLock(h, WatcherLockPolicy{})
+	ok, err := AcquireSessionLock(h)
 	if err != nil || !ok {
 		t.Fatalf("acquire = %v, %v", ok, err)
 	}
@@ -48,15 +47,12 @@ func TestWatcherLockDoesNotUnlinkHeldInode(t *testing.T) {
 	if err := lockWatcherFile(holder, true); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fmt.Fprintf(holder, "%d\n", os.Getpid()); err != nil {
-		t.Fatal(err)
-	}
 	before, err := os.Stat(p)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	ok, err := AcquireSessionLock(h, WatcherLockPolicy{ProcessAlive: func(int) bool { return false }, IsWatcher: func(int) bool { return true }})
+	ok, err := AcquireSessionLock(h)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,33 +65,5 @@ func TestWatcherLockDoesNotUnlinkHeldInode(t *testing.T) {
 	}
 	if !os.SameFile(before, after) {
 		t.Fatal("second acquirer replaced the held lock inode")
-	}
-}
-
-func TestWatcherPIDPolicyIsIgnoredByFlockAcquisition(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		path    func(string) string
-		acquire func(string, WatcherLockPolicy) (bool, error)
-		release func(string) error
-	}{
-		{"session", SessionLockPath, AcquireSessionLock, ReleaseSessionLock},
-		{"watch", WatchLockPath, AcquireWatchLock, ReleaseWatchLock},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			h := t.TempDir()
-			p := tc.path(h)
-			if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(p, []byte("123\n"), 0644); err != nil {
-				t.Fatal(err)
-			}
-			ok, err := tc.acquire(h, WatcherLockPolicy{ProcessAlive: func(int) bool { return false }, IsWatcher: func(int) bool { return true }})
-			if err != nil || !ok {
-				t.Fatalf("acquire=%v,%v", ok, err)
-			}
-			defer tc.release(h)
-		})
 	}
 }
