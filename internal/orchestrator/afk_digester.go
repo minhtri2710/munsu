@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // Durable digest constants.
@@ -192,46 +194,99 @@ func (d *Digester) ShouldFlush(now time.Time) bool {
 }
 
 // Flush writes the BatchedEscalation to state/.afk-digest and resets the
-// accumulator. Returns nil if the accumulator is empty.
+// accumulator only after the durable write succeeds. Returns nil if the
+// accumulator is empty.
 func (d *Digester) Flush(now time.Time) error {
 	d.mu.Lock()
-	entries := d.entries
-	routineCount := d.routineCount
-	escalatedCount := d.escalatedCount
-	firstAt := d.firstAt
+	defer d.mu.Unlock()
 
-	d.entries = nil
-	d.routineCount = 0
-	d.escalatedCount = 0
-	d.firstAt = time.Time{}
-	d.lastFlush = now
-	d.mu.Unlock()
-
-	if len(entries) == 0 {
+	if len(d.entries) == 0 {
 		return nil
 	}
 
 	be := BatchedEscalation{
-		Entries:        entries,
-		RoutineCount:   routineCount,
-		EscalatedCount: escalatedCount,
-		FirstAt:        firstAt,
+		Entries:        append([]BatchedEntry(nil), d.entries...),
+		RoutineCount:   d.routineCount,
+		EscalatedCount: d.escalatedCount,
+		FirstAt:        d.firstAt,
 		LastAt:         now,
+	}
+
+	path := filepath.Join(d.homeDir, digestFile)
+	if existing, err := readDigestFile(path); err != nil {
+		return fmt.Errorf("read existing digest: %w", err)
+	} else if existing != nil {
+		be.Entries = append(existing.Entries, be.Entries...)
+		be.RoutineCount += existing.RoutineCount
+		be.EscalatedCount += existing.EscalatedCount
+		if be.FirstAt.IsZero() || (!existing.FirstAt.IsZero() && existing.FirstAt.Before(be.FirstAt)) {
+			be.FirstAt = existing.FirstAt
+		}
+		if existing.WedgeAlarm != nil {
+			be.WedgeAlarm = existing.WedgeAlarm
+		}
 	}
 
 	data, err := json.MarshalIndent(be, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal batched escalation: %w", err)
 	}
+	if err := writeDigestFile(path, data); err != nil {
+		return err
+	}
 
-	path := filepath.Join(d.homeDir, digestFile)
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	d.entries = nil
+	d.routineCount = 0
+	d.escalatedCount = 0
+	d.firstAt = time.Time{}
+	d.lastFlush = now
+	return nil
+}
+
+func readDigestFile(path string) (*BatchedEscalation, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var be BatchedEscalation
+	if err := json.Unmarshal(data, &be); err != nil {
+		return nil, fmt.Errorf("unmarshal digest file: %w", err)
+	}
+	return &be, nil
+}
+
+func writeDigestFile(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("create digest directory: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		return fmt.Errorf("write digest file: %w", err)
+	tmp, err := os.CreateTemp(dir, ".afk-digest-*")
+	if err != nil {
+		return fmt.Errorf("create digest temp file: %w", err)
 	}
-
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if err := tmp.Chmod(0644); err != nil {
+		tmp.Close()
+		return fmt.Errorf("secure digest temp file: %w", err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("write digest temp file: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("sync digest temp file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close digest temp file: %w", err)
+	}
+	if err := home.RenameDurable(tmpPath, path); err != nil {
+		return fmt.Errorf("install digest file: %w", err)
+	}
 	return nil
 }
 

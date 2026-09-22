@@ -46,7 +46,9 @@ func ConfigDir(homeDir string) string {
 // Get reads a config value from the flat config file at
 // $MUNSU_HOME/config/<key>. Core Config never reads the process environment.
 func Get(homeDir, key string) (string, error) {
-	// Read from file
+	if !IsKnownKey(key) {
+		return "", fmt.Errorf("unknown config key %q", key)
+	}
 	p := filepath.Join(ConfigDir(homeDir), key)
 	data, err := os.ReadFile(p)
 	if err != nil {
@@ -60,18 +62,41 @@ func Get(homeDir, key string) (string, error) {
 
 // Set writes a config value to $MUNSU_HOME/config/<key>.
 func Set(homeDir, key, value string) error {
+	if !IsKnownKey(key) {
+		return fmt.Errorf("unknown config key %q", key)
+	}
 	p := filepath.Join(ConfigDir(homeDir), key)
-	if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
+	dir := filepath.Dir(p)
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("creating config directory: %w", err)
 	}
-	if err := os.Chmod(filepath.Dir(p), 0700); err != nil {
+	if err := os.Chmod(dir, 0700); err != nil {
 		return fmt.Errorf("securing config directory: %w", err)
 	}
-	if err := os.WriteFile(p, []byte(value+"\n"), 0600); err != nil {
-		return fmt.Errorf("writing config file %s: %w", p, err)
+
+	tmp, err := os.CreateTemp(dir, ".config-*")
+	if err != nil {
+		return fmt.Errorf("creating config temp file: %w", err)
 	}
-	if err := os.Chmod(p, 0600); err != nil {
-		return fmt.Errorf("securing config file %s: %w", p, err)
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if err := tmp.Chmod(0600); err != nil {
+		tmp.Close()
+		return fmt.Errorf("securing config temp file: %w", err)
+	}
+	if _, err := tmp.WriteString(value + "\n"); err != nil {
+		tmp.Close()
+		return fmt.Errorf("writing config temp file: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("syncing config temp file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("closing config temp file: %w", err)
+	}
+	if err := os.Rename(tmpPath, p); err != nil {
+		return fmt.Errorf("installing config file %s: %w", p, err)
 	}
 	return nil
 }

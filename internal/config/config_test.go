@@ -41,14 +41,39 @@ func TestGetNotFound(t *testing.T) {
 	}
 }
 
+func TestConfigRejectsUnknownKeysBeforeFilesystemAccess(t *testing.T) {
+	home := t.TempDir()
+	for _, key := range []string{"../../escaped", "base.json"} {
+		t.Run(key, func(t *testing.T) {
+			if err := Set(home, key, "pwned"); err == nil {
+				t.Errorf("Set(%q) succeeded; want unknown-key refusal", key)
+			}
+			if _, err := Get(home, key); err == nil {
+				t.Errorf("Get(%q) succeeded; want unknown-key refusal", key)
+			}
+		})
+	}
+
+	outside := filepath.Join(ConfigDir(home), "../../escaped")
+	if _, err := os.Stat(outside); !os.IsNotExist(err) {
+		t.Fatalf("unknown-key write escaped config directory at %s: %v", outside, err)
+	}
+	if _, err := os.Stat(filepath.Join(ConfigDir(home), "base.json")); !os.IsNotExist(err) {
+		t.Fatalf("unknown-key write created base.json: %v", err)
+	}
+	if _, err := os.Stat(ConfigDir(home)); !os.IsNotExist(err) {
+		t.Fatalf("unknown-key access created config directory: %v", err)
+	}
+}
+
 func TestGetFromFileOnly(t *testing.T) {
 	// Config only from the flat file, no environment involvement.
 	tmp := t.TempDir()
-	if err := Set(tmp, "foo", "bar"); err != nil {
+	if err := Set(tmp, "model-allowlist", "bar"); err != nil {
 		t.Fatal(err)
 	}
 
-	val, err := Get(tmp, "foo")
+	val, err := Get(tmp, "model-allowlist")
 	if err != nil {
 		t.Fatal(err)
 	}
