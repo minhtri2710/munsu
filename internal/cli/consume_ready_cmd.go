@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 
 	"github.com/minhtri2710/munsu/internal/fleet"
-	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
 )
@@ -41,12 +40,8 @@ Flags:
 				}
 			}
 
-			// Read generation from the authoritative aggregate, with legacy meta fallback.
-			fallbackGeneration := ""
-			if meta, err := home.ReadMeta(ctx.Home, taskID); err == nil {
-				fallbackGeneration = meta["generation"]
-			}
-			metaGeneration, err := currentTaskGeneration(ctx.Home, taskID, fallbackGeneration)
+			// Read generation from the authoritative aggregate.
+			metaGeneration, err := currentTaskGeneration(ctx.Home, taskID)
 			if err != nil {
 				return fmt.Errorf("consume-ready: reading aggregate for %s: %w", taskID, err)
 			}

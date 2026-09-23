@@ -14,6 +14,7 @@ import (
 func clearEnvMarkers(t *testing.T) {
 	t.Helper()
 	for _, env := range []string{
+		"CLAUDECODE",
 		"CLAUDE_CODE",
 		"CODECLIMB",
 		"OPENCODE",
@@ -61,14 +62,26 @@ func TestSoldierFailsClosedOnMalformedFleetBase(t *testing.T) {
 }
 
 func TestDetectFromEnv_Claude(t *testing.T) {
-	// Unset all markers first to avoid interference from system-level vars
 	clearEnvMarkers(t)
-	os.Setenv("CLAUDE_CODE", "1")
-	defer os.Unsetenv("CLAUDE_CODE")
+	t.Setenv("CLAUDECODE", "1")
 
 	h := detectFromEnv()
 	if h != Claude {
 		t.Errorf("detectFromEnv() = %q, want %q", h, Claude)
+	}
+}
+
+func TestDetectFromEnv_ClaudeUsesClaudeCodeMarker(t *testing.T) {
+	clearEnvMarkers(t)
+	t.Setenv("CLAUDECODE", "1")
+	if got := detectFromEnv(); got != Claude {
+		t.Fatalf("detectFromEnv() with CLAUDECODE set = %q, want %q", got, Claude)
+	}
+
+	clearEnvMarkers(t)
+	t.Setenv("CLAUDE_CODE", "1")
+	if got := detectFromEnv(); got != "" {
+		t.Fatalf("detectFromEnv() with obsolete CLAUDE_CODE set = %q, want empty", got)
 	}
 }
 
@@ -134,6 +147,27 @@ func TestDetectFromEnv_Empty(t *testing.T) {
 	h := detectFromEnv()
 	if h != "" {
 		t.Errorf("detectFromEnv() = %q, want empty", h)
+	}
+}
+
+func TestMatchProcessNameDeterministicWithOverlappingAdapters(t *testing.T) {
+	originalClaude := Adapters[Claude]
+	originalAgy := Adapters[Agy]
+	claude := originalClaude
+	agy := originalAgy
+	claude.ProcessMatchers = append(claude.ProcessMatchers, ProcessNameMatcher{Name: "shared-agent"})
+	agy.ProcessMatchers = append(agy.ProcessMatchers, ProcessNameMatcher{Name: "shared", Substr: true})
+	Adapters[Claude] = claude
+	Adapters[Agy] = agy
+	t.Cleanup(func() {
+		Adapters[Claude] = originalClaude
+		Adapters[Agy] = originalAgy
+	})
+
+	for i := 0; i < 1000; i++ {
+		if got := matchProcessName("shared-agent"); got != Claude {
+			t.Fatalf("matchProcessName iteration %d = %q, want %q", i, got, Claude)
+		}
 	}
 }
 
@@ -297,7 +331,7 @@ func writeBase(t *testing.T, home string, doc config.FleetBaseDocument) {
 
 func TestSoldier_NoConfig(t *testing.T) {
 	tmp := t.TempDir()
-	t.Setenv("CLAUDE_CODE", "1")
+	t.Setenv("CLAUDECODE", "1")
 
 	// No config files at all — falls back to detected harness
 	h, err := Soldier(tmp)
@@ -346,7 +380,7 @@ func TestCaptain_FallsBackToSoldierHarness(t *testing.T) {
 
 func TestCaptain_NoConfig(t *testing.T) {
 	tmp := t.TempDir()
-	t.Setenv("CLAUDE_CODE", "1")
+	t.Setenv("CLAUDECODE", "1")
 
 	h, err := Captain(tmp)
 	if err != nil {
@@ -382,7 +416,7 @@ func TestCaptain_UnsetProfileFallsToDetect(t *testing.T) {
 	for _, env := range []string{"CODECLIMB", "OPENCODE", "PI_CODING_AGENT_DIR", "PI_CODING_AGENT", "GROK_VM_ID", "GROK_AGENT", "AGY_CONVERSATION_ID", "ANTIGRAVITY_AGENT", "ANTIGRAVITY_CLI", "ANTIGRAVITY_LS_ADDRESS"} {
 		t.Setenv(env, "")
 	}
-	t.Setenv("CLAUDE_CODE", "1")
+	t.Setenv("CLAUDECODE", "1")
 
 	h, err := Captain(tmp)
 	if err != nil {

@@ -50,7 +50,7 @@ directly into the parent terminal pane when the composer is safe.
 
 Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 		Args: ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			state := args[0]
 			msg := args[1]
 
@@ -64,13 +64,8 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 			// Resolve role and identity from env
 			role := os.Getenv("MUNSU_ROLE")
 			taskID := os.Getenv("MUNSU_TASK_ID")
-			homeDir := os.Getenv("MUNSU_HOME")
+			homeDir := ctx.Home
 
-			if homeDir == "" {
-				return operationError("invalid_environment",
-					"Run inside a munsu-managed task (MUNSU_HOME must be set)",
-					"MUNSU_HOME is not set")
-			}
 			if taskID == "" {
 				return operationError("invalid_environment",
 					"Run inside a munsu-managed task (MUNSU_TASK_ID must be set)",
@@ -188,11 +183,7 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 			// 1.6. For soldier review-ready/idle states: emit a durable ready event
 			// and flush one pending command automatically.
 			if role == "soldier" && state == "review-ready" {
-				fallbackGeneration := ""
-				if meta, metaErr := home.ReadMeta(homeDir, taskID); metaErr == nil {
-					fallbackGeneration = meta["generation"]
-				}
-				metaGeneration, genErr := currentTaskGeneration(homeDir, taskID, fallbackGeneration)
+				metaGeneration, genErr := currentTaskGeneration(homeDir, taskID)
 				if genErr != nil {
 					return fmt.Errorf("report: reading task aggregate: %w", genErr)
 				}
@@ -236,7 +227,7 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 					WatcherIdentity:  watcherID,
 				},
 			})
-		},
+		}),
 	}
 
 	configureContractCommand(cmd)

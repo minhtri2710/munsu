@@ -28,8 +28,11 @@ const (
 	// EventWaitTimeout means the bounded wait elapsed without a signal — a
 	// normal outcome; the caller proceeds with its polling cadence.
 	EventWaitTimeout
-	// EventWaitUnsupported means the backend declares no native event surface.
+	// EventWaitUnsupported means an eligible backend declares no native event surface.
 	EventWaitUnsupported
+	// EventWaitNoSources means no endpoint is bound yet; the lane should retry
+	// because a native event source may appear later in the watcher run.
+	EventWaitNoSources
 	// EventWaitUnavailable means the event reader/transport is unavailable.
 	EventWaitUnavailable
 	// EventWaitProtocolMismatch means capability/version negotiation failed.
@@ -169,8 +172,9 @@ func (w *EventWaiter) WaitForSignal(ctx context.Context, homeDir string, timeout
 	}
 	if len(eligible) == 0 {
 		if len(sources) == 0 {
-			// No bound endpoint declares a native event surface: pure polling.
-			return backend.ObservationSignal{}, EventWaitUnsupported
+			// No endpoint is bound yet. The event lane must keep retrying because
+			// a watcher can start before the native endpoint is created.
+			return backend.ObservationSignal{}, EventWaitNoSources
 		}
 		// Sources exist but none is eligible (nil source / blank binding):
 		// nothing to wait on this cycle.
@@ -458,8 +462,8 @@ var eventWaitBudget = watcherPollInterval
 // channel; every other outcome is absorbed internally and the lane keeps
 // waiting, so the watcher's polling ticker remains the cadence authority and
 // a dead/absent reader never silences the watcher. The lane stops when stopCh
-// is closed (cancelling any in-flight bounded wait) or when the home has no
-// native event surface.
+// is closed (cancelling any in-flight bounded wait) or when the backend is
+// genuinely unsupported; an unbound home is retried until a source appears.
 func startEventLane(homeDir string, waiter *EventWaiter, stopCh <-chan struct{}) <-chan eventPulse {
 	if waiter == nil {
 		return nil
@@ -502,6 +506,14 @@ func startEventLane(homeDir string, waiter *EventWaiter, stopCh <-chan struct{})
 				// nothing to wait on. Stop the lane; the watcher keeps pure
 				// polling (never silent).
 				return
+			case EventWaitNoSources:
+				// The watcher may have started before its endpoint was bound.
+				// Retry with the same bounded backoff used for degraded readers.
+				select {
+				case <-stopCh:
+					return
+				case <-time.After(time.Second):
+				}
 			case EventWaitTimeout:
 				// Bounded wait elapsed normally; the ticker drives the next
 				// poll. Keep waiting for the next signal.

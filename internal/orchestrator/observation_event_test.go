@@ -957,8 +957,8 @@ func TestEventWaiter_WaitForSignal_Unsupported(t *testing.T) {
 func TestEventWaiter_WaitForSignal_NoSources(t *testing.T) {
 	w := NewEventWaiter(staticEventPort())
 	_, outcome := w.WaitForSignal(context.Background(), t.TempDir(), time.Second)
-	if outcome != EventWaitUnsupported {
-		t.Fatalf("outcome = %v, want unsupported", outcome)
+	if outcome != EventWaitNoSources {
+		t.Fatalf("outcome = %v, want no-sources retry", outcome)
 	}
 }
 
@@ -1089,22 +1089,35 @@ func TestEventLane_EventToReprobe(t *testing.T) {
 	}
 }
 
-// TestEventLane_DegradedKeepsPolling verifies the watcher never goes silent:
-// when the event lane degrades (no sources), the lane closes and the polling
-// ticker remains the cadence authority.
-func TestEventLane_DegradedKeepsPolling(t *testing.T) {
+// TestEventLane_RetriesUntilSourceAppears verifies a watcher that starts
+// before any endpoint is bound keeps its native-event lane alive and delivers
+// once the backend source becomes available.
+func TestEventLane_RetriesUntilSourceAppears(t *testing.T) {
 	homeDir := t.TempDir()
-	w := NewEventWaiter(staticEventPort()) // no sources → unsupported
+	sig := backend.ObservationSignal{
+		Endpoint: backend.EndpointRef{Backend: "herdr", Handle: "w:p"},
+		Activity: backend.ActivityIdle,
+		Source:   backend.SourceEvent,
+		Cursor:   "1",
+	}
+	src := &fakeEventSource{signals: []backend.ObservationSignal{sig}}
+	port := &sequenceEventPort{stages: [][]EndpointSource{
+		nil,
+		{{Endpoint: sig.Endpoint, Source: src}},
+	}}
 	stopLane := make(chan struct{})
-	pulses := startEventLane(homeDir, w, stopLane)
+	pulses := startEventLane(homeDir, NewEventWaiter(port), stopLane)
 
 	select {
-	case _, ok := <-pulses:
-		if ok {
-			t.Fatal("degraded lane must close, not emit")
+	case pulse, ok := <-pulses:
+		if !ok {
+			t.Fatal("event lane closed before source appeared")
 		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("degraded lane did not close within 2s")
+		if pulse.outcome != EventWaitSignal || pulse.signal != sig {
+			t.Fatalf("pulse = %+v, want signal %+v", pulse, sig)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("event lane did not deliver after source appeared")
 	}
 	close(stopLane)
 }
