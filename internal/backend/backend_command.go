@@ -32,6 +32,12 @@ const (
 
 const backendEventWaitMargin = time.Second
 
+// backendCommandWaitDelay bounds how long Wait may block after the direct
+// child exits (on its own or by timeout kill) while a descendant that escaped
+// the kill still holds the output pipes. The pipes are then closed and Wait
+// returns, so no backend call outlives its bound by more than this delay.
+const backendCommandWaitDelay = time.Second
+
 func backendCommandTimeoutFor(class backendCommandClass) time.Duration {
 	switch class {
 	case backendCommandWorktree:
@@ -98,6 +104,7 @@ func runBackendCommandWithTimeout(parent context.Context, timeout time.Duration,
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	cmd.WaitDelay = backendCommandWaitDelay
 	configureBackendCommand(cmd)
 
 	if err := cmd.Start(); err != nil {
