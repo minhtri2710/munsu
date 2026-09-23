@@ -99,3 +99,58 @@ func runSafetyCheckWithStdin(t *testing.T, payload []byte, closeBeforeRead bool)
 	})
 	return exitCode, stderr
 }
+
+// TestSafetyCheckWatchAndNoMistakesVerdictsParseTokens pins the command-token
+// verdicts: bounded watcher operations and help pass, bare `munsu watch` and
+// unknown subcommands are refused, and the guard/doctor exemption for
+// no-mistakes directories needs a real `munsu guard|doctor` command.
+func TestSafetyCheckWatchAndNoMistakesVerdictsParseTokens(t *testing.T) {
+	t.Setenv("MUNSU_HOME", t.TempDir())
+	gitDir := initGitRepoForSafety(t, t.TempDir())
+	oldExit := exitWithCode
+	defer func() { exitWithCode = oldExit }()
+	for _, tc := range []struct {
+		command string
+		block   bool
+	}{
+		{"munsu watch status", false},
+		{"munsu watch ensure", false},
+		{"munsu watch stop", false},
+		{"munsu watch run", false},
+		{"munsu watch --help", false},
+		{"munsu watch -h", false},
+		{"munsu watch ensure --help", false},
+		{"munsu --home /tmp/h watch run", false},
+		{"munsu watch", true},
+		{"munsu --home /tmp/h watch", true},
+		{"cd /tmp && munsu watch", true},
+		{`bash -c "munsu watch"`, true},
+		{"munsu watch bogus", true},
+		{"munsu watch bogus run", true},
+		{"munsu watch --running", true},
+		{"cd ~/.no-mistakes && munsu doctor", false},
+		{"rm -rf ~/.no-mistakes/repos/x # doctor", true},
+		{`rm -rf ~/.no-mistakes/repos/x "doctor"`, true},
+		{"rm -rf ~/.no-mistakes/repos/x guard", true},
+		{"munsu doctor; rm -rf ~/.no-mistakes/x", true},
+		{"munsu doctor && rm -rf ~/.no-mistakes/x", true},
+		{`bash -c "munsu guard; rm -rf ~/.no-mistakes/x"`, true},
+		{"munsu guard ~/.no-mistakes/repos/x", false},
+	} {
+		var exitCode int
+		exitWithCode = func(code int) { exitCode = code }
+		cmd := &cobra.Command{}
+		cmd.SetOut(io.Discard)
+		cmd.SetErr(io.Discard)
+		_, stderr := captureBoth(func() {
+			runSafetyCheck(cmd, gitDir, tc.command, "", "codex")
+		})
+		if blocked := exitCode == 2; blocked != tc.block {
+			t.Errorf("%q: blocked=%v, want %v (stderr=%q)", tc.command, blocked, tc.block, stderr)
+		}
+		if tc.block && strings.Contains(tc.command, "munsu watch") &&
+			(!strings.Contains(stderr, "'munsu watch ensure' for a persistent watcher") || !strings.Contains(stderr, "'munsu watch run' for one cycle")) {
+			t.Errorf("%q: refusal must recommend watch ensure and watch run, got %q", tc.command, stderr)
+		}
+	}
+}

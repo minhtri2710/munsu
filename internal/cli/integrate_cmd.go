@@ -477,6 +477,97 @@ func patchWriteTargets(checkPath, body string) ([]string, error) {
 	return resolved, nil
 }
 
+// munsuInvocations parses command with the safety tokenizer and returns, for
+// every `munsu` command word, the words after it starting at the subcommand
+// (the root --home flag is skipped). A word that is itself a command line, as
+// in `bash -c "munsu watch"`, is parsed too. An unquoted word opening with `#`
+// starts a shell comment and ends its segment.
+func munsuInvocations(command string) [][]string {
+	var invocations [][]string
+	for _, words := range commandWords(command) {
+		for _, word := range words {
+			if strings.ContainsAny(word, " \t\n;&|") {
+				invocations = append(invocations, munsuInvocations(word)...)
+			}
+		}
+		for i, word := range words {
+			if filepath.Base(word) != "munsu" {
+				continue
+			}
+			invocations = append(invocations, munsuSubcommandArgs(words[i+1:]))
+		}
+	}
+	return invocations
+}
+
+// commandWords returns the words of each segment of command, cut at an
+// unquoted `#` comment.
+func commandWords(command string) [][]string {
+	var segments [][]string
+	for _, segment := range shellSegments(gitSafetyBackslashMode(), command) {
+		var words []string
+		for _, token := range segment {
+			if strings.HasPrefix(token.text, "#") {
+				break
+			}
+			words = append(words, token.text)
+		}
+		segments = append(segments, words)
+	}
+	return segments
+}
+
+// munsuSubcommandArgs drops the root --home flag from the words after `munsu`.
+func munsuSubcommandArgs(args []string) []string {
+	for len(args) > 0 {
+		if args[0] == "--home" && len(args) > 1 {
+			args = args[2:]
+		} else if strings.HasPrefix(args[0], "--home=") {
+			args = args[1:]
+		} else {
+			break
+		}
+	}
+	return args
+}
+
+// onlyGuardOrDoctor reports whether every segment of command is a `munsu
+// guard` / `munsu doctor` invocation or a plain `cd <dir>`: the only shape
+// exempt from the no-mistakes directory rule. Any other segment, including a
+// `bash -c` wrapper, disqualifies the whole command.
+func onlyGuardOrDoctor(command string) bool {
+	found := false
+	for _, words := range commandWords(command) {
+		switch {
+		case len(words) == 0:
+		case words[0] == "cd" && len(words) <= 2:
+		case filepath.Base(words[0]) == "munsu":
+			args := munsuSubcommandArgs(words[1:])
+			if len(args) == 0 || (args[0] != "guard" && args[0] != "doctor") {
+				return false
+			}
+			found = true
+		default:
+			return false
+		}
+	}
+	return found
+}
+
+// watchInvocationAllowed reports whether the words after `munsu watch` name a
+// bounded watcher operation or ask for help; everything else, including bare
+// `munsu watch` (the daemon), is refused.
+func watchInvocationAllowed(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "status", "ensure", "stop", "run", "--help", "-h":
+		return true
+	}
+	return false
+}
+
 func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, checkFilePath string, harnessFlag string) error {
 	// Harnesses that deliver the tool payload on stdin: read it once and take
 	// whichever channel the tool call actually belongs to.
@@ -522,23 +613,18 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, c
 		}
 		writeTargets = targets
 	} else if effectiveCommand != "" {
-		if strings.Contains(effectiveCommand, "munsu watch arm") ||
-			strings.Contains(effectiveCommand, "munsu watch ensure") ||
-			strings.Contains(effectiveCommand, "munsu watch stop") {
-			block = true
-			reason = "Use 'munsu guard' or 'munsu watch run' for inspection; watcher lifecycle is managed automatically."
-		} else if strings.Contains(effectiveCommand, "munsu watch") &&
-			!strings.Contains(effectiveCommand, "run") &&
-			!strings.Contains(effectiveCommand, "--help") {
-			// Block bare `munsu watch` (daemon mode) but allow `munsu watch run` and --help.
-			block = true
-			reason = "Watcher lifecycle is managed automatically; use 'munsu watch run' for inspection."
+		invocations := munsuInvocations(effectiveCommand)
+		for _, args := range invocations {
+			if len(args) > 0 && args[0] == "watch" && !watchInvocationAllowed(args[1:]) {
+				block = true
+				reason = "Bare 'munsu watch' runs the watcher daemon in this session; use 'munsu watch ensure' for a persistent watcher or 'munsu watch run' for one cycle."
+			}
 		}
 
 		if strings.Contains(effectiveCommand, "cd .no-mistakes") ||
 			strings.Contains(effectiveCommand, "cd ~/.no-mistakes") ||
 			strings.Contains(effectiveCommand, "/.no-mistakes/") {
-			if !strings.Contains(effectiveCommand, "guard") && !strings.Contains(effectiveCommand, "doctor") {
+			if !onlyGuardOrDoctor(effectiveCommand) {
 				block = true
 				reason = "No-mistakes managed directories are not regular projects."
 			}

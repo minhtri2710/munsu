@@ -952,7 +952,7 @@ func TestSafetyCheckBlockTrue(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("MUNSU_HOME", t.TempDir())
 
-	out, err := runContract(t, []string{"integrate", "safety-check", dir, "--command", "munsu watch arm", "--output", "json"})
+	out, err := runContract(t, []string{"integrate", "safety-check", dir, "--command", "munsu watch", "--output", "json"})
 	if err != nil {
 		t.Fatalf("safety-check blocked: %v", err)
 	}
@@ -1018,7 +1018,7 @@ func TestSafetyCheckProductionJSONFeedsTSRuntime(t *testing.T) {
 		t.Fatalf("safe safety-check: %v", err)
 	}
 
-	blockedOut, err := runContract(t, []string{"integrate", "safety-check", dir, "--command", "munsu watch arm", "--output", "json"})
+	blockedOut, err := runContract(t, []string{"integrate", "safety-check", dir, "--command", "munsu watch", "--output", "json"})
 	if err != nil {
 		t.Fatalf("blocked safety-check: %v", err)
 	}

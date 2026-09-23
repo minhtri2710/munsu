@@ -74,7 +74,7 @@ func TestGrokSafetyCheckDeny(t *testing.T) {
 	cmd.SetErr(io.Discard)
 
 	stdout, stderr := captureBoth(func() {
-		runSafetyCheck(cmd, gitDir, "munsu watch arm", "", "grok")
+		runSafetyCheck(cmd, gitDir, "munsu watch", "", "grok")
 	})
 
 	if exitCode != 2 {
@@ -131,7 +131,7 @@ func TestGrokSafetyCheckDenyViaStdin(t *testing.T) {
 	cmd.SetErr(io.Discard)
 
 	// Mock stdin with Grok-shaped JSON (.toolInput.command camelCase)
-	stdinPayload := `{"hookEventName":"PreToolUse","toolInput":{"command":"munsu watch arm"}}`
+	stdinPayload := `{"hookEventName":"PreToolUse","toolInput":{"command":"munsu watch"}}`
 	oldStdin := os.Stdin
 	r, w, _ := os.Pipe()
 	w.Write([]byte(stdinPayload))
@@ -335,7 +335,7 @@ func TestGrokReadStdinToolInputCommand(t *testing.T) {
 	// Stdin with Grok's .toolInput.command
 	oldStdin := os.Stdin
 	r, w, _ := os.Pipe()
-	w.Write([]byte(`{"hookEventName":"PreToolUse","toolInput":{"command":"munsu watch arm"}}`))
+	w.Write([]byte(`{"hookEventName":"PreToolUse","toolInput":{"command":"munsu watch"}}`))
 	w.Close()
 	os.Stdin = r
 
@@ -345,8 +345,8 @@ func TestGrokReadStdinToolInputCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if payload.command != "munsu watch arm" {
-		t.Errorf("expected 'munsu watch arm', got %q", payload.command)
+	if payload.command != "munsu watch" {
+		t.Errorf("expected 'munsu watch', got %q", payload.command)
 	}
 }
 
@@ -355,7 +355,7 @@ func TestGrokReadStdinToolInputCommand(t *testing.T) {
 func TestGrokReadStdinClaudeShapeAlsoWorks(t *testing.T) {
 	oldStdin := os.Stdin
 	r, w, _ := os.Pipe()
-	w.Write([]byte(`{"hookEventName":"PreToolUse","tool_input":{"command":"munsu watch arm"}}`))
+	w.Write([]byte(`{"hookEventName":"PreToolUse","tool_input":{"command":"munsu watch"}}`))
 	w.Close()
 	os.Stdin = r
 
@@ -365,8 +365,8 @@ func TestGrokReadStdinClaudeShapeAlsoWorks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if payload.command != "munsu watch arm" {
-		t.Errorf("expected 'munsu watch arm', got %q", payload.command)
+	if payload.command != "munsu watch" {
+		t.Errorf("expected 'munsu watch', got %q", payload.command)
 	}
 }
 

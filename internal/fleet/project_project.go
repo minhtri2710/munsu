@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -11,6 +12,9 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/domain"
 )
+
+// cloneTimeout bounds `git clone` in Add; a var so tests can shorten it.
+var cloneTimeout = 10 * time.Minute
 
 // Project represents a registered or ad-hoc project entry.
 type Project struct {
@@ -54,10 +58,23 @@ func Add(homeDir, name, pathOrURL, mode string, yolo bool) error {
 		if err := os.MkdirAll(ProjectsDir(homeDir), 0755); err != nil {
 			return fmt.Errorf("creating projects directory: %w", err)
 		}
-		cmd := exec.Command("git", "clone", pathOrURL, projDir)
+		_, statErr := os.Lstat(projDir)
+		createdDir := errors.Is(statErr, os.ErrNotExist)
+		ctx, cancel := context.WithTimeout(context.Background(), cloneTimeout)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "git", "clone", pathOrURL, projDir)
 		cmd.Stdout = os.Stderr
 		cmd.Stderr = os.Stderr
+		cmd.WaitDelay = 5 * time.Second
 		if err := cmd.Run(); err != nil {
+			if createdDir {
+				if rmErr := os.RemoveAll(projDir); rmErr != nil {
+					err = errors.Join(err, fmt.Errorf("removing partial clone %s: %w", projDir, rmErr))
+				}
+			}
+			if ctx.Err() != nil {
+				return fmt.Errorf("cloning %s: timed out after %s: %w", pathOrURL, cloneTimeout, err)
+			}
 			return fmt.Errorf("cloning %s: %w", pathOrURL, err)
 		}
 	}

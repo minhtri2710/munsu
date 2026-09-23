@@ -76,7 +76,7 @@ func TestClaudeSafetyCheckDeny(t *testing.T) {
 	cmd.SetErr(io.Discard)
 
 	stdout, stderr := captureBoth(func() {
-		runSafetyCheck(cmd, gitDir, "munsu watch arm", "", "claude")
+		runSafetyCheck(cmd, gitDir, "munsu watch", "", "claude")
 	})
 
 	if exitCode != 2 {
@@ -134,7 +134,7 @@ func TestClaudeSafetyCheckDenyViaStdin(t *testing.T) {
 	cmd.SetErr(io.Discard)
 
 	// Mock stdin with Claude-shaped JSON
-	stdinPayload := `{"hookEventName":"PreToolUse","tool_input":{"command":"munsu watch arm"}}`
+	stdinPayload := `{"hookEventName":"PreToolUse","tool_input":{"command":"munsu watch"}}`
 	oldStdin := os.Stdin
 	r, w, _ := os.Pipe()
 	w.Write([]byte(stdinPayload))
