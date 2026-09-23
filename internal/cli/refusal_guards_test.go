@@ -191,7 +191,7 @@ func TestReportAndNotifyHonorHomeOverride(t *testing.T) {
 	t.Setenv("MUNSU_TASK_ID", "t1")
 	t.Setenv("MUNSU_ROLE", "general")
 	for _, command := range []string{"report", "notify"} {
-		if _, err := runRoot(t, command, "working", "hello", "--home", homeDir); err != nil {
+		if _, err := runRoot(t, command, "working", "hello from "+command, "--home", homeDir); err != nil {
 			t.Fatalf("%s with --home override = %v, want success", command, err)
 		}
 	}
