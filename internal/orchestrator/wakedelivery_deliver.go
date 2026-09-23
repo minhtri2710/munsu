@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -98,8 +99,18 @@ func DeliverWake(req DeliverRequest) (*WakeReceipt, error) {
 	if req.Key != "" {
 		statusLine += " [key=" + req.Key + "]"
 	}
-	if err := mhome.AppendStatus(req.HomeDir, req.TaskID, statusLine); err != nil {
-		return nil, fmt.Errorf("appending status: %w", err)
+	// A report identical to the tail status line (a consecutive identical
+	// report, which includes a retry after a failed step) is idempotent for the
+	// status history and the event log; its material wake is still enqueued.
+	lines, err := mhome.ReadStatus(req.HomeDir, req.TaskID)
+	if err != nil {
+		return nil, fmt.Errorf("reading status: %w", err)
+	}
+	replay := len(lines) > 0 && lines[len(lines)-1] == statusLine
+	if !replay {
+		if err := mhome.AppendStatus(req.HomeDir, req.TaskID, statusLine); err != nil {
+			return nil, fmt.Errorf("appending status: %w", err)
+		}
 	}
 
 	// Step 2: For material states with a parent home, write captain receipt
@@ -129,13 +140,23 @@ func DeliverWake(req DeliverRequest) (*WakeReceipt, error) {
 	}
 
 	// Step 3: Append to typed event log (best-effort)
-	syntheticID := SyntheticEventID()
-	receipt.EventID = syntheticID
-	if err := AppendWithID(req.HomeDir, syntheticID, "task.status", req.TaskID, req.Key, statusLine); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: event append: %v\n", err)
-	} else {
-		receipt.EventAppended = true
+	// A consecutive identical report whose event already landed reuses that
+	// event and its ID.
+	syntheticID, found := uint64(0), false
+	if replay {
+		syntheticID, found = lastTaskStatusEvent(req.HomeDir, req.TaskID, req.Key, statusLine)
 	}
+	if found {
+		receipt.EventAppended = true
+	} else {
+		syntheticID = SyntheticEventID()
+		if err := AppendWithID(req.HomeDir, syntheticID, "task.status", req.TaskID, req.Key, statusLine); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: event append: %v\n", err)
+		} else {
+			receipt.EventAppended = true
+		}
+	}
+	receipt.EventID = syntheticID
 
 	// Step 4: For material states, enqueue a wake
 	if isMaterial(req.State) {
@@ -148,6 +169,27 @@ func DeliverWake(req DeliverRequest) (*WakeReceipt, error) {
 	}
 
 	return receipt, nil
+}
+
+// lastTaskStatusEvent returns the ID of the latest task.status event for
+// taskID/key when its payload is statusLine, so a consecutive identical report
+// (including a retry) reuses it. An unreadable log reports no event.
+func lastTaskStatusEvent(homeDir, taskID, key, statusLine string) (uint64, bool) {
+	data, err := os.ReadFile(LogPath(homeDir))
+	if err != nil {
+		return 0, false
+	}
+	var id uint64
+	found := false
+	for _, line := range strings.Split(string(data), "\n") {
+		parts := strings.SplitN(line, "\t", 6)
+		if len(parts) < 6 || parts[2] != "task.status" || parts[3] != taskID || parts[4] != key {
+			continue
+		}
+		id, err = strconv.ParseUint(parts[0], 10, 64)
+		found = err == nil && parts[5] == statusLine
+	}
+	return id, found
 }
 
 // --- Activation on receipt (captain agent pane nudge) ---
