@@ -4,6 +4,7 @@ package fleet
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -763,9 +764,9 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 				if _, err := revalidateRetirementCleanup(authority, taskID, ev, claimGen, evidence.current); err != nil {
 					return cleanupPending(fmt.Errorf("teardown %s: dispose fence: %w", opts.ID, err))
 				}
-				request := DisposeRequest{Backend: ep.Backend, Handle: ep.Handle, SessionOwner: ep.SessionOwner, WorkspaceID: ep.WorkspaceID, TabID: ep.TabID, Home: opts.HomeDir, TaskID: opts.ID}
-				if request.WorkspaceID != "" && len(otherWorkspaceRefs(opts.HomeDir, opts.ID, request.WorkspaceID)) > 0 {
-					request.DenyWorkspaceClose = true
+				request, err := withWorkspaceCloseGuard(opts.HomeDir, opts.ID, DisposeRequest{Backend: ep.Backend, Handle: ep.Handle, SessionOwner: ep.SessionOwner, WorkspaceID: ep.WorkspaceID, TabID: ep.TabID, Home: opts.HomeDir, TaskID: opts.ID})
+				if err != nil {
+					return cleanupPending(fmt.Errorf("teardown %s: reading workspace references: %w", opts.ID, err))
 				}
 				if err := backend.Dispose(opts.HomeDir, meta, request); err != nil {
 					return cleanupPending(fmt.Errorf("teardown %s: disposing bound endpoint: %w", opts.ID, err))
@@ -829,9 +830,9 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 				if _, err := revalidateRetirementCleanup(authority, taskID, ev, claimGen, evidence.current); err != nil {
 					return cleanupPending(fmt.Errorf("teardown %s: acquired endpoint dispose fence: %w", opts.ID, err))
 				}
-				request := DisposeRequest{Backend: ae.Backend, Handle: ae.Handle, SessionOwner: ae.SessionOwner, WorkspaceID: ae.WorkspaceID, TabID: ae.TabID, Home: opts.HomeDir, TaskID: opts.ID}
-				if request.WorkspaceID != "" && len(otherWorkspaceRefs(opts.HomeDir, opts.ID, request.WorkspaceID)) > 0 {
-					request.DenyWorkspaceClose = true
+				request, err := withWorkspaceCloseGuard(opts.HomeDir, opts.ID, DisposeRequest{Backend: ae.Backend, Handle: ae.Handle, SessionOwner: ae.SessionOwner, WorkspaceID: ae.WorkspaceID, TabID: ae.TabID, Home: opts.HomeDir, TaskID: opts.ID})
+				if err != nil {
+					return cleanupPending(fmt.Errorf("teardown %s: reading workspace references: %w", opts.ID, err))
 				}
 				if err := backend.Dispose(opts.HomeDir, meta, request); err != nil {
 					return cleanupPending(fmt.Errorf("teardown %s: disposing acquired endpoint: %w", opts.ID, err))
@@ -1450,14 +1451,36 @@ func parsePorcelainFilename(line string) string {
 	return rest
 }
 
+// withWorkspaceCloseGuard marks a dispose request as unsafe for workspace close
+// when another task references the same shared workspace. A read error is
+// returned because the workspace ownership decision is unknowable.
+func withWorkspaceCloseGuard(homeDir, excludeID string, request DisposeRequest) (DisposeRequest, error) {
+	if request.WorkspaceID == "" {
+		return request, nil
+	}
+	refs, err := otherWorkspaceRefs(homeDir, excludeID, request.WorkspaceID)
+	if err != nil {
+		return DisposeRequest{}, err
+	}
+	if len(refs) > 0 {
+		request.DenyWorkspaceClose = true
+	}
+	return request, nil
+}
+
 // otherWorkspaceRefs scans all task meta files in homeDir for references to the given
 // workspace ID, excluding the task with the given ID. Returns a list of task IDs that
 // still reference the workspace. This prevents closing a workspace that another task is using.
-func otherWorkspaceRefs(homeDir, excludeID, workspaceID string) []string {
+// A missing state directory or a meta file that vanishes after enumeration means
+// there are no references from that absent record; every other read error fails closed.
+func otherWorkspaceRefs(homeDir, excludeID, workspaceID string) ([]string, error) {
 	stateDir := filepath.Join(homeDir, "state")
 	entries, err := os.ReadDir(stateDir)
 	if err != nil {
-		return nil
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
 	}
 
 	var refs []string
@@ -1475,11 +1498,14 @@ func otherWorkspaceRefs(homeDir, excludeID, workspaceID string) []string {
 
 		data, err := os.ReadFile(filepath.Join(stateDir, entry.Name()))
 		if err != nil {
-			continue
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			return nil, err
 		}
 		if strings.Contains(string(data), "herdr_workspace_id="+workspaceID) {
 			refs = append(refs, taskID)
 		}
 	}
-	return refs
+	return refs, nil
 }

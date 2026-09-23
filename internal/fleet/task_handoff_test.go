@@ -191,6 +191,26 @@ func completedJournalCount(t *testing.T, homeDir string) int {
 	return count
 }
 
+func TestRecoverTransferJournalsSkipsUninitializedHome(t *testing.T) {
+	if err := recoverTransferJournals(t.TempDir()); err != nil {
+		t.Fatalf("recoverTransferJournals on an uninitialized path: %v", err)
+	}
+}
+
+func TestRecoverTransferJournalsPropagatesCanonicalHomeOpenError(t *testing.T) {
+	homeDir := t.TempDir()
+	if _, err := mhome.Init(homeDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(homeDir, mhome.IdentityFileName), []byte("not json\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := recoverTransferJournals(homeDir); !errors.Is(err, mhome.ErrMalformedIdentity) {
+		t.Fatalf("recoverTransferJournals = %v, want ErrMalformedIdentity", err)
+	}
+}
+
 func TestHandoffTransfersQueuedTaskToCaptain(t *testing.T) {
 	parent, captain := seedHandoffPair(t)
 	seedCanonicalQueuedTask(t, mustAuthority(t, parent), "TASK-1", "general")

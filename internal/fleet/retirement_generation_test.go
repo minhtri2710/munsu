@@ -1434,6 +1434,128 @@ func TestRetirementAbortTerminalSameGenerationRetryNeverResumes(t *testing.T) {
 	}
 }
 
+func TestOtherWorkspaceRefsTreatMissingStateAsNoReferences(t *testing.T) {
+	homeDir := t.TempDir()
+	refs, err := otherWorkspaceRefs(homeDir, "task", "workspace")
+	if err != nil {
+		t.Fatalf("otherWorkspaceRefs on missing state: %v", err)
+	}
+	if len(refs) != 0 {
+		t.Fatalf("otherWorkspaceRefs on missing state = %v, want no references", refs)
+	}
+}
+
+func TestOtherWorkspaceRefsSkipsVanishedMetaFile(t *testing.T) {
+	homeDir := t.TempDir()
+	stateDir := filepath.Join(homeDir, "state")
+	if err := os.MkdirAll(stateDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	vanishedTarget := filepath.Join(stateDir, "aaa-vanished.meta.target")
+	metaPath := filepath.Join(stateDir, "aaa-vanished.meta")
+	if err := os.Symlink(vanishedTarget, metaPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := home.WriteMeta(homeDir, "zzz-valid", map[string]string{"herdr_workspace_id": "workspace"}); err != nil {
+		t.Fatal(err)
+	}
+
+	refs, err := otherWorkspaceRefs(homeDir, "task", "workspace")
+	if err != nil {
+		t.Fatalf("otherWorkspaceRefs with vanished meta file: %v", err)
+	}
+	if len(refs) != 1 || refs[0] != "zzz-valid" {
+		t.Fatalf("otherWorkspaceRefs with vanished meta file = %v, want [zzz-valid]", refs)
+	}
+}
+
+func TestRetirementWorkspaceReferenceReadErrorFailsClosed(t *testing.T) {
+	homeDir := t.TempDir()
+	taskID := "workspace-read-error"
+	auth := mergeTestAuth(t, homeDir, taskID)
+	writeRetireMeta(t, homeDir, taskID, "@1", filepath.Join(homeDir, "worktree"))
+
+	otherID := "other-workspace-user"
+	if err := home.WriteMeta(homeDir, otherID, map[string]string{"herdr_workspace_id": "ws-" + taskID}); err != nil {
+		t.Fatal(err)
+	}
+	otherMeta, err := home.MetaFilePath(homeDir, otherID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(otherMeta); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(otherMeta+"-target", 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(otherMeta+"-target", otherMeta); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := &recordingTeardown{alive: true}
+	_, err = RetireTask(Options{HomeDir: homeDir, ID: taskID, Force: true}, rec, fakeRetirementJournals{}, auth)
+	if err == nil || !strings.Contains(err.Error(), "reading workspace references") {
+		t.Fatalf("RetireTask error = %v, want workspace-reference read failure", err)
+	}
+	if len(rec.disposed) != 0 {
+		t.Fatalf("workspace close proceeded after reference read error: disposed=%v", rec.disposed)
+	}
+}
+
+func TestRetirementAcquiredWorkspaceReferenceReadErrorFailsClosed(t *testing.T) {
+	homeDir := t.TempDir()
+	taskID := "acquired-workspace-read-error"
+	auth := canonicalMergeTestAuth(t, homeDir, taskID)
+	writeRetireMeta(t, homeDir, taskID, "@1", "")
+
+	begin := taskauthority.CanonicalBeginSpawnRequest{
+		HomeID: auth.HomeID(), TaskID: mustTaskID(t, taskID), Precondition: domain.Of(1, 1),
+		SnapshotDigest: strings.Repeat("a", 64), Backend: "tmux", Harness: "pi", Model: "opus", Effort: "high",
+		Mode: "direct-PR", Kind: "ship", Project: "proj", ParentTaskID: "parent", LaunchID: "launch-" + taskID,
+		WindowLabel: "window-" + taskID, WorktreeReservationID: "wt-res-1", WorktreeFenceToken: "wt-fence-1",
+		EndpointReservationID: "ep-res-1", EndpointFenceToken: "ep-fence-1", EndpointIncarnation: "inc-" + taskID, Reason: "spawn",
+	}
+	if _, err := auth.BeginSpawn(mustFleetOperation(t, "op-begin-"+taskID, begin), begin); err != nil {
+		t.Fatalf("BeginSpawn: %v", err)
+	}
+	attach := taskauthority.CanonicalAttachEndpointRequest{
+		HomeID: auth.HomeID(), TaskID: mustTaskID(t, taskID), Precondition: domain.Of(1, 2), Backend: "tmux", Handle: "@1",
+		LeaseID: "ep-res-1", FenceToken: "ep-fence-1", SessionOwner: "session-" + taskID, WorkspaceID: "ws-" + taskID,
+		TabID: "tab-" + taskID, Incarnation: "inc-" + taskID, Reason: "attach",
+	}
+	if _, err := auth.AttachEndpoint(mustFleetOperation(t, "op-attach-"+taskID, attach), attach); err != nil {
+		t.Fatalf("AttachEndpoint: %v", err)
+	}
+
+	otherID := "other-acquired-workspace-user"
+	if err := home.WriteMeta(homeDir, otherID, map[string]string{"herdr_workspace_id": "ws-" + taskID}); err != nil {
+		t.Fatal(err)
+	}
+	otherMeta, err := home.MetaFilePath(homeDir, otherID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(otherMeta); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(otherMeta+"-target", 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(otherMeta+"-target", otherMeta); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := &recordingTeardown{alive: true}
+	_, err = RetireTask(Options{HomeDir: homeDir, ID: taskID, Force: true}, rec, fakeRetirementJournals{}, auth)
+	if err == nil || !strings.Contains(err.Error(), "reading workspace references") {
+		t.Fatalf("RetireTask error = %v, want workspace-reference read failure", err)
+	}
+	if len(rec.disposed) != 0 {
+		t.Fatalf("acquired workspace close proceeded after reference read error: disposed=%v", rec.disposed)
+	}
+}
+
 // TestRetirementAcquiredEndpointResolvedOnFreshTeardown proves High-2 closure
 // (BEO-16/P1a): a fresh teardown of a generation that acquired an endpoint
 // pre-bind (launch intent + AttachEndpoint, never bound) preserves the exact

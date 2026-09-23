@@ -71,6 +71,30 @@ func TestMergeAndRetireNilAuthorityFailsClosed(t *testing.T) {
 	}
 }
 
+func TestMergeAndRetireRefusesUnreadableTargetGeneration(t *testing.T) {
+	homeDir := t.TempDir()
+	taskID := "target-generation-read-error"
+	auth := mergedShipFixture(t, homeDir, taskID)
+	current := filepath.Join(homeDir, "state", "task-authority", "tasks", taskID, "current.json")
+	if err := os.Remove(current); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(current, 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	result := MergeAndRetire(homeDir, taskID, "https://github.com/owner/repo/pull/1", nil, fakeTeardown{alive: true}, fakeRetirementJournals{}, auth)
+	if result == nil || result.MergeOutcome != taskauthority.DeliveryOutcomeRetryable {
+		t.Fatalf("result = %+v, want retryable refusal", result)
+	}
+	if !strings.Contains(result.MergeDetail, "resolving target generation") {
+		t.Fatalf("detail = %q, want target-generation read failure", result.MergeDetail)
+	}
+	if result.TeardownResult != nil {
+		t.Fatal("retirement proceeded after target generation read failure")
+	}
+}
+
 func TestMergeAndRetireRetiresThroughAuthority(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-retire-through"

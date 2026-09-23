@@ -85,14 +85,14 @@ func MergeAndRetire(homeDir, id, prURL string, extraArgs []string, backend Bound
 	// newer generation after this capture, the delayed RetireTask fails
 	// closed with a typed conflict instead of implicitly retiring the newer
 	// generation.
-	targetGen := func() *taskauthority.Generation {
-		agg, gerr := authority.Get(taskID)
-		if gerr != nil {
-			return nil
+	agg, err := authority.Get(taskID)
+	if err != nil {
+		return &MergeAndRetireResult{
+			MergeOutcome: taskauthority.DeliveryOutcomeRetryable,
+			MergeDetail:  fmt.Sprintf("resolving target generation: %v", err),
 		}
-		g := agg.Generation
-		return &g
-	}()
+	}
+	targetGen := &agg.Generation
 
 	// Phase 1: canonical committed delivery outcome (no .meta truth).
 	alreadyMerged := false

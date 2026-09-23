@@ -531,7 +531,10 @@ func buildTransferJournal(source, destination, captainID string, sourceAuth, des
 func recoverTransferJournals(homeDir string) error {
 	h, err := mhome.Open(homeDir)
 	if err != nil {
-		return nil
+		if errors.Is(err, mhome.ErrNotInitialized) {
+			return nil
+		}
+		return err
 	}
 	lk, err := h.Lock(handoffLockScope)
 	if err != nil {

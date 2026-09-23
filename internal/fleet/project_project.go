@@ -43,6 +43,11 @@ func isURL(s string) bool {
 // URL, it is cloned first. If the name is already registered, the existing
 // entry is updated in-place.
 func Add(homeDir, name, pathOrURL, mode string, yolo bool) error {
+	projectID, err := domain.NewProjectID(name)
+	if err != nil {
+		return fmt.Errorf("register project %q: %w", name, err)
+	}
+
 	// Clone if URL
 	if isURL(pathOrURL) {
 		projDir := filepath.Join(ProjectsDir(homeDir), name)
@@ -60,10 +65,6 @@ func Add(homeDir, name, pathOrURL, mode string, yolo bool) error {
 	r, err := openRegistry(homeDir)
 	if err != nil {
 		return err
-	}
-	projectID, err := domain.NewProjectID(name)
-	if err != nil {
-		return fmt.Errorf("register project %q: %w", name, err)
 	}
 	_, gerr := r.GetProject(projectID)
 	if gerr == nil {

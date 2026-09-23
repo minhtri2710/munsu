@@ -186,6 +186,35 @@ func TestListEmpty(t *testing.T) {
 	}
 }
 
+func TestAddRejectsTraversalNameBeforeClone(t *testing.T) {
+	tmp := t.TempDir()
+	homeDir := filepath.Join(tmp, "munsu-home")
+	outside := filepath.Join(tmp, "x")
+	binDir := filepath.Join(tmp, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(tmp, "git-invoked")
+	gitShim := filepath.Join(binDir, "git")
+	if err := os.WriteFile(gitShim, []byte("#!/bin/sh\nprintf invoked > "+marker+"\nexit 0\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+
+	if err := Add(homeDir, "../../x", "https://example.invalid/repo.git", "", false); err == nil {
+		t.Fatal("Add accepted a traversal project name")
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("git clone was attempted: %v", err)
+	}
+	if _, err := os.Stat(outside); !os.IsNotExist(err) {
+		t.Fatalf("traversal clone target exists at %q: %v", outside, err)
+	}
+	if _, err := os.Stat(filepath.Join(homeDir, "projects")); !os.IsNotExist(err) {
+		t.Fatalf("projects directory was created before name validation: %v", err)
+	}
+}
+
 func TestListAndAdd(t *testing.T) {
 	tmp := t.TempDir()
 	homeDir := filepath.Join(tmp, ".munsu")
