@@ -131,6 +131,59 @@ func TestDeliverStaleRevisionOutcomeJournalCommits(t *testing.T) {
 	}
 }
 
+// TestDeliverOutcomeJournalCommitsAcrossPhaseChange proves a journal crashed
+// with a pinned but uncommitted outcome converges when the task changed phase
+// within the same generation after the merge: the outcome records the merged
+// truth, the journal completes, and a later Deliver is not refused by it.
+func TestDeliverOutcomeJournalCommitsAcrossPhaseChange(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(t *testing.T, c *taskauthority.Canonical, tid domain.TaskID, prec domain.Precondition)
+	}{
+		{"block", func(t *testing.T, c *taskauthority.Canonical, tid domain.TaskID, prec domain.Precondition) {
+			req := taskauthority.CanonicalBlockRequest{HomeID: c.HomeID(), TaskID: tid, Precondition: prec, Detail: "waiting", Reason: "blocked after merge"}
+			if _, err := c.Block(mustFleetOperation(t, "op-block-after-merge", req), req); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"complete", func(t *testing.T, c *taskauthority.Canonical, tid domain.TaskID, prec domain.Precondition) {
+			req := taskauthority.CanonicalCompleteRequest{HomeID: c.HomeID(), TaskID: tid, Precondition: prec, To: taskauthority.PhaseDone, Reason: "done after merge"}
+			if _, err := c.Complete(mustFleetOperation(t, "op-complete-after-merge", req), req); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, homeDir := newFleetCanonical(t)
+			taskID := "t1"
+			tid := mustFleetTaskID(t, taskID)
+			mustWorkingDeliveryTask(t, c, taskID)
+			installScriptedProviderFor(t, "open-then-merged")
+			runDeliveryCrashHelper(t, homeDir, taskID, "outcome", "open-then-merged")
+			agg, err := c.Get(tid)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tc.change(t, c, tid, domain.Of(uint64(agg.Generation), uint64(agg.Revision)))
+
+			installScriptedProviderFor(t, "merged")
+			if err := RecoverDeliveryJournals(homeDir); err != nil {
+				t.Fatalf("RecoverDeliveryJournals: %v", err)
+			}
+			out, err := c.DeliveryOutcome(tid)
+			if err != nil || out.Status != taskauthority.DeliveryOutcomeCompleted || out.MergedSHA != "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" {
+				t.Fatalf("outcome = %v %+v, want completed with the merged SHA", err, out)
+			}
+			if active := listActiveDeliveryJournals(t, homeDir); len(active) != 0 {
+				t.Fatalf("active journals = %v, want none", active)
+			}
+			if _, err := Deliver(homeDir, taskID, deliverRequest()); err != nil && (strings.Contains(err.Error(), "journal") || strings.Contains(err.Error(), "phase-mismatch")) {
+				t.Fatalf("Deliver after recovery = %v, want no journal recovery refusal", err)
+			}
+		})
+	}
+}
+
 // TestDeliverStaleRevisionAuthorizationGoneCompletesWithoutMutation proves a
 // stale journal whose authorization was revoked by another actor completes
 // as terminal truth with no canonical mutation, at either stage.

@@ -684,7 +684,11 @@ func pinAndCommitOutcome(h *home.Home, lk *home.Lock, c *taskauthority.Canonical
 // overridden and completed is never fabricated. Otherwise the commit runs
 // only while the journal's authorization is still the task's current one, at
 // the task's current revision; an authorization that was revoked, replaced,
-// reopened away or retired completes the journal with no canonical mutation.
+// reopened away (a new generation) or retired completes the journal with no
+// canonical mutation. Phase, owner and binding drift within the generation
+// (a Block or Complete after the merge) does not stop the commit; a matching
+// hold or an active transfer reservation refuses it and keeps the journal
+// active until they clear.
 func commitPinnedOutcome(h *home.Home, lk *home.Lock, c *taskauthority.Canonical, journal *deliveryJournal) (*DeliverResult, error) {
 	if journal.OutcomeStatus == "" {
 		return nil, fmt.Errorf("delivery journal %s has no pinned outcome", journal.ID)

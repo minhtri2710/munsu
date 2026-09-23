@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestGuardBurnDownDeliveryAuthorizationAndRevocationDigestRefusals(t *testing.T) {
+func TestGuardBurnDownDeliveryAuthorizationDigestRefusal(t *testing.T) {
 	t.Run("authorization digest mismatch", func(t *testing.T) {
 		c, _ := newFleetCanonical(t)
 		taskID := "t1"
@@ -29,7 +29,7 @@ func TestGuardBurnDownDeliveryAuthorizationAndRevocationDigestRefusals(t *testin
 	})
 }
 
-func TestGuardBurnDownDeliveryOutcomeDigestRefusals(t *testing.T) {
+func TestGuardBurnDownCommitPinnedOutcomeRefusesMissingStatus(t *testing.T) {
 	t.Run("missing outcome status", func(t *testing.T) {
 		c, _ := newFleetCanonical(t)
 		journal := &deliveryJournal{

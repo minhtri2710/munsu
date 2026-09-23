@@ -1174,20 +1174,21 @@ const (
 	// deliveryCurrencyRead is the currency read: every reason applies.
 	deliveryCurrencyRead deliveryCurrencyCheck = iota
 	// deliveryOutcomeCommit records the truth of an already-attempted
-	// provider mutation. The bound head and the task revision may have
-	// legitimately moved since issuance (the delivery itself advances the
-	// head; unrelated canonical mutations advance the revision), so neither
-	// makes a post-mutation outcome uncommittable. It observes active holds
-	// only: a hold matching at commit time refuses, drift in the
-	// authorization-time holds digest does not. The commit's own
+	// provider mutation, which task drift since issuance cannot undo. Beyond
+	// the authorization identity CommitDeliveryOutcome checks itself (index
+	// operation ID, not revoked, no terminal outcome), it refuses only on a
+	// generation change, a hold matching at commit time, or an active
+	// transfer reservation; the last two are transient, so recovery
+	// converges once they clear. Revision, phase, owner, binding, identity
+	// head and holds-digest drift do not refuse. The commit's own
 	// precondition still fences the revision optimistically.
 	deliveryOutcomeCommit
 )
 
 // authorizationCurrencyReasons re-derives the current validity of one issued
 // authorization against current task state for the given caller; the outcome
-// commit exempts the identity-head, revision and holds-digest reasons, the
-// currency read reports every reason.
+// commit keeps only the generation, reservation and matching-hold reasons,
+// the currency read reports every reason.
 func (c *Canonical) authorizationCurrencyReasons(agg Aggregate, auth DeliveryAuthorization, holds []DispatchHold, check deliveryCurrencyCheck) []DeliveryCurrencyReason {
 	var reasons []DeliveryCurrencyReason
 	if auth.Generation != agg.Generation {
@@ -1196,16 +1197,18 @@ func (c *Canonical) authorizationCurrencyReasons(agg Aggregate, auth DeliveryAut
 	if check == deliveryCurrencyRead && auth.Revision != agg.Revision {
 		reasons = append(reasons, DeliveryCurrencyRevision)
 	}
-	if auth.Phase != agg.Phase {
+	if check == deliveryCurrencyRead && auth.Phase != agg.Phase {
 		reasons = append(reasons, DeliveryCurrencyPhase)
 	}
-	if strings.TrimSpace(agg.Definition.Owner) == "" || agg.Definition.Owner != auth.Owner {
+	if check == deliveryCurrencyRead && (strings.TrimSpace(agg.Definition.Owner) == "" || agg.Definition.Owner != auth.Owner) {
 		reasons = append(reasons, DeliveryCurrencyMissingOwner)
 	}
-	if agg.Endpoint == nil || agg.Worktree == nil {
-		reasons = append(reasons, DeliveryCurrencyMissingBindings)
-	} else if deliveryBindingDigest(*agg.Endpoint, *agg.Worktree) != auth.BindingDigest {
-		reasons = append(reasons, DeliveryCurrencyBindingDigest)
+	if check == deliveryCurrencyRead {
+		if agg.Endpoint == nil || agg.Worktree == nil {
+			reasons = append(reasons, DeliveryCurrencyMissingBindings)
+		} else if deliveryBindingDigest(*agg.Endpoint, *agg.Worktree) != auth.BindingDigest {
+			reasons = append(reasons, DeliveryCurrencyBindingDigest)
+		}
 	}
 	if activeReservation(agg.Transfer) {
 		reasons = append(reasons, DeliveryCurrencyReservation)

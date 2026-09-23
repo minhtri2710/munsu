@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1107,18 +1108,30 @@ func TestCanonicalDeliveryOutcomeLifecycle(t *testing.T) {
 			t.Fatalf("outcome against revoked authorization = %v, want ErrConflict", err)
 		}
 
-		// Re-authorize, then a non-current authorization (an unrelated task
-		// mutation changed the phase) fails the commit prerequisite.
+		// Re-authorize, then a delivery hold matching at commit time fails the
+		// commit prerequisite even though phase drift (the Block) alone would
+		// not.
 		auth2 := mustAuthorize(t, c, "t1", 5, "op-auth-t1-2")
 		block := CanonicalBlockRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, 6), Detail: "d", Reason: "block"}
 		if _, err := c.Block(mustOperation(t, "op-block-currency", block), block); err != nil {
 			t.Fatal(err)
 		}
+		hold := CanonicalAddHoldRequest{
+			HomeID: c.HomeID(), HoldID: "hold-currency", Scope: DispatchHoldScope{TaskIDs: []string{"t1"}},
+			Actions: []DispatchAction{DispatchActionDelivery}, Reason: "freeze",
+		}
+		if _, err := c.AddHold(mustOperation(t, "op-hold-currency", hold), hold); err != nil {
+			t.Fatal(err)
+		}
 		stale := req
 		stale.Precondition = preconditionOf(1, 7)
 		stale.AuthorizationOperationID = auth2.OperationID
-		if _, err := c.CommitDeliveryOutcome(mustOperation(t, "op-outcome-stale-currency", stale), stale); !errors.Is(err, ErrPrecondition) {
-			t.Fatalf("outcome with non-current authorization = %v, want ErrPrecondition", err)
+		if _, err := c.CommitDeliveryOutcome(mustOperation(t, "op-outcome-stale-currency", stale), stale); !errors.Is(err, ErrPrecondition) || !strings.Contains(err.Error(), string(DeliveryCurrencyMatchingHold)) {
+			t.Fatalf("outcome under a matching hold = %v, want ErrPrecondition matching-hold", err)
+		}
+		release := CanonicalReleaseHoldRequest{HomeID: c.HomeID(), HoldID: "hold-currency", Reason: "thaw"}
+		if _, err := c.ReleaseHold(mustOperation(t, "op-release-currency", release), release); err != nil {
+			t.Fatal(err)
 		}
 
 		// Stale task precondition fails closed as a typed conflict.
@@ -1568,13 +1581,13 @@ func bumpRevisionForTest(t *testing.T, c *Canonical, taskID string, rev uint64) 
 	}
 }
 
-// TestCanonicalDeliveryOutcomeCommitExemptsRevisionAndHoldsDigest proves the
-// outcome commit records post-mutation truth after an unrelated revision bump
-// (fenced optimistically at the current revision) or after holds-digest drift
-// from a released hold, while the currency read still reports both,
-// and the outcome commit still refuses a phase change or a matching delivery
-// hold.
-func TestCanonicalDeliveryOutcomeCommitExemptsRevisionAndHoldsDigest(t *testing.T) {
+// TestCanonicalDeliveryOutcomeCommitRecordsTruthAcrossTaskDrift proves the
+// outcome commit records post-mutation truth after revision, holds-digest,
+// phase, owner and binding drift (fenced optimistically at the current
+// revision), while the currency read still reports that drift, and the
+// outcome commit still refuses a matching delivery hold or an active
+// transfer reservation.
+func TestCanonicalDeliveryOutcomeCommitRecordsTruthAcrossTaskDrift(t *testing.T) {
 	outcomeReq := func(c *Canonical, rev uint64) CanonicalDeliveryOutcomeRequest {
 		return CanonicalDeliveryOutcomeRequest{
 			HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, rev),
@@ -1653,7 +1666,7 @@ func TestCanonicalDeliveryOutcomeCommitExemptsRevisionAndHoldsDigest(t *testing.
 		}
 	})
 
-	t.Run("phase change still refuses", func(t *testing.T) {
+	t.Run("phase drift commits", func(t *testing.T) {
 		c := setup(t)
 		block := CanonicalBlockRequest{
 			HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, 5),
@@ -1662,10 +1675,60 @@ func TestCanonicalDeliveryOutcomeCommitExemptsRevisionAndHoldsDigest(t *testing.
 		if _, err := c.Block(mustOperation(t, "op-block", block), block); err != nil {
 			t.Fatalf("Block: %v", err)
 		}
+		cur, err := c.DeliveryCurrency(mustTaskID(t, "t1"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !hasCurrencyReason(cur, DeliveryCurrencyPhase) {
+			t.Fatalf("currency = %+v, want the read to keep phase-mismatch", cur.Reasons)
+		}
 		req := outcomeReq(c, 6)
-		_, err := c.CommitDeliveryOutcome(mustOperation(t, "op-outcome", req), req)
-		if !errors.Is(err, ErrPrecondition) || !strings.Contains(err.Error(), string(DeliveryCurrencyPhase)) {
-			t.Fatalf("outcome err = %v, want phase refusal", err)
+		res, err := c.CommitDeliveryOutcome(mustOperation(t, "op-outcome", req), req)
+		if err != nil || res.Outcome.Status != DeliveryOutcomeCompleted {
+			t.Fatalf("outcome after Block = %v %+v, want completed", err, res)
+		}
+	})
+
+	// No canonical op changes the owner or rebinds within a generation, so
+	// the drift is applied to the aggregate the commit check reads.
+	t.Run("owner and binding drift do not refuse the commit", func(t *testing.T) {
+		c := setup(t)
+		agg, err := c.Get(mustTaskID(t, "t1"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		auth, err := c.DeliveryAuthorization(mustTaskID(t, "t1"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		holds, err := c.ListHolds()
+		if err != nil {
+			t.Fatal(err)
+		}
+		agg.Definition.Owner = "someone-else"
+		endpoint := *agg.Endpoint
+		endpoint.LeaseID = "lease-changed"
+		agg.Endpoint = &endpoint
+		read := c.authorizationCurrencyReasons(agg, auth, holds, deliveryCurrencyRead)
+		if !slices.Contains(read, DeliveryCurrencyMissingOwner) || !slices.Contains(read, DeliveryCurrencyBindingDigest) {
+			t.Fatalf("read reasons = %v, want owner and binding drift", read)
+		}
+		if commit := c.authorizationCurrencyReasons(agg, auth, holds, deliveryOutcomeCommit); len(commit) != 0 {
+			t.Fatalf("commit reasons = %v, want none", commit)
+		}
+	})
+
+	t.Run("active reservation still refuses", func(t *testing.T) {
+		c := setup(t)
+		mustReserveTransfer(t, c, "t1", preconditionOf(1, 5), "dest-home")
+		agg, err := c.Get(mustTaskID(t, "t1"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := outcomeReq(c, uint64(agg.Revision))
+		_, err = c.CommitDeliveryOutcome(mustOperation(t, "op-outcome", req), req)
+		if !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), "reserved for transfer") {
+			t.Fatalf("outcome err = %v, want the transfer reservation refusal", err)
 		}
 	})
 }
