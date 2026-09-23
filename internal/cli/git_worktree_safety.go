@@ -561,7 +561,8 @@ func splitSafetySegmentsWithMode(mode backslashMode, command string) []string {
 }
 
 func hasGitCommandSubstitution(command string) bool {
-	return strings.Contains(command, "$(") || strings.Contains(command, "`")
+	return strings.Contains(command, "$(") || strings.Contains(command, "`") ||
+		strings.Contains(command, "<(") || strings.Contains(command, ">(")
 }
 
 func cdSegmentPath(currentPath, segment string) (string, bool) {

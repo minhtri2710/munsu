@@ -143,6 +143,14 @@ func TestSafetyCheckWatchAndNoMistakesVerdictsParseTokens(t *testing.T) {
 		{"cd .no-mistakes", true},
 		{"munsu doctor", false},
 		{"ls .no-mistakes-notes", false},
+		{"rm -rf ~/.No-Mistakes", true},
+		{"rm -rf ~/.no-mistake*", true},
+		{"rm -rf ~/.no-mis?akes", true},
+		{"rm -rf ~/.[n]o-mistakes", true},
+		{"rm -rf ~/.NO-MIS?AKES/x", true},
+		{"tar --directory=.no-mistakes -xf a.tar", true},
+		{"rsync --backup-dir=~/.no-mistakes/x a b", true},
+		{"ls *", false},
 	} {
 		var exitCode int
 		exitWithCode = func(code int) { exitCode = code }
@@ -164,13 +172,14 @@ func TestSafetyCheckWatchAndNoMistakesVerdictsParseTokens(t *testing.T) {
 
 // TestSafetyCheckRefusesWatchInCommandSubstitution pins a cross-rule
 // dependency: the watch rule does not parse $(...) or backtick substitution
-// into words, so only hasGitCommandSubstitution refuses these shapes.
+// or process substitution into words, so only hasGitCommandSubstitution
+// refuses these shapes.
 func TestSafetyCheckRefusesWatchInCommandSubstitution(t *testing.T) {
 	t.Setenv("MUNSU_HOME", t.TempDir())
 	gitDir := initGitRepoForSafety(t, t.TempDir())
 	oldExit := exitWithCode
 	defer func() { exitWithCode = oldExit }()
-	for _, command := range []string{"x=$(munsu watch)", "x=`munsu watch`", "echo $(munsu watch)"} {
+	for _, command := range []string{"x=$(munsu watch)", "x=`munsu watch`", "echo $(munsu watch)", "cat <(munsu watch)", "tee >(munsu watch)"} {
 		var exitCode int
 		exitWithCode = func(code int) { exitCode = code }
 		cmd := &cobra.Command{}

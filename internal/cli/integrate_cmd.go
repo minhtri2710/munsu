@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -519,15 +520,21 @@ func commandWords(command string) [][]string {
 
 // namesNoMistakesDir reports whether any command word, including a word that
 // is itself a command line, names a no-mistakes directory or a path inside
-// it: a path component exactly `.no-mistakes`.
+// it: a path component, or a path after `=` in a flag word, that equals
+// `.no-mistakes` ignoring case or is a glob that could match it. A glob only
+// reaches a dot-name through a literal leading dot, so `*` does not count.
 func namesNoMistakesDir(command string) bool {
 	for _, words := range commandWords(command) {
 		for _, word := range words {
 			if strings.ContainsAny(word, " \t\n;&|") && namesNoMistakesDir(word) {
 				return true
 			}
-			for _, component := range strings.Split(word, "/") {
-				if component == ".no-mistakes" {
+			components := strings.FieldsFunc(word, func(r rune) bool { return r == '/' || r == '=' })
+			for _, component := range components {
+				if !strings.HasPrefix(component, ".") {
+					continue
+				}
+				if ok, _ := path.Match(strings.ToLower(component), ".no-mistakes"); ok {
 					return true
 				}
 			}
@@ -633,7 +640,8 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, c
 		writeTargets = targets
 	} else if effectiveCommand != "" {
 		// The tokenizer does not parse $(...) or backtick substitution into
-		// words; those shapes are refused only by hasGitCommandSubstitution.
+		// words, nor <(...) / >(...) process substitution; those shapes are refused
+		// only by hasGitCommandSubstitution.
 		invocations := munsuInvocations(effectiveCommand)
 		for _, args := range invocations {
 			if len(args) > 0 && args[0] == "watch" && !watchInvocationAllowed(args[1:]) {
@@ -665,14 +673,6 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, c
 			block = true
 			reason = "Shell write target is ambiguous; refusing to proceed."
 		}
-
-		nmHome := os.Getenv("NM_HOME")
-		if nmHome == "" {
-			if h, err := os.UserHomeDir(); err == nil {
-				nmHome = filepath.Join(h, ".no-mistakes")
-			}
-		}
-		_ = nmHome
 	}
 
 	// Native file-write tools carry their target in the payload rather than in
