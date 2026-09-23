@@ -149,8 +149,7 @@ munsu captain list
 - `docs/port-mapping.md` — full command reference grouped by domain.
 - `CONTRIBUTING.md` — how to contribute.
 - `AGENTS.md` — conventions file for soldiers working on munsu.
-- `COMMANDS.md` — curated command map grouped by lifecycle phase; use `munsu --help` and per-command `--help` for the complete registered set.
-- `SUPERVISION.md` — watch/guard/afk loop details.
+- `internal/cli/skills/munsu-ops/` — canonical operator skill (`munsu skill show munsu-ops`): `COMMANDS.md` command map and `SUPERVISION.md` watch/wake/guard/AFK loop.
 
 ## License
 

@@ -10,6 +10,7 @@ The watcher is a singleton persistent event-driven daemon. It queues actionable 
 - **Run once:** `munsu watch run`
 - **Status:** `munsu watch status`
 - **Stop:** `munsu watch stop`
+- **Agent-run forms:** only `munsu watch status|ensure|stop|run` and `--help`/`-h`; the safety hook refuses bare `munsu watch` (the daemon `ensure` starts).
 - **Singleton:** Home-scoped lock prevents multiple concurrent watchers.
 
 ## Wake handling (`munsu wake`)

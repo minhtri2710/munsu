@@ -24,7 +24,7 @@ Fast-forward the munsu install root and registered Captain homes without disrupt
 - Fast-forward only: never force, stash, discard local work, or create merge commits.
 - Never replace `munsu captain update` with raw Git commands.
 - Touch only the munsu install root and registered Captain worktrees, never project worktrees.
-- Leave dirty, diverged, offline, wrong-remote, wrong-branch, invalid-provenance, and state-only homes unchanged.
+- Leave dirty, diverged, offline, wrong-remote, wrong-branch, invalid-provenance, and unsupported homes unchanged.
 - Do not interrupt, teardown, or relaunch Captains during an update.
 
 ## Detail

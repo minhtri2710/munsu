@@ -116,8 +116,7 @@ func containedPath(root, target string) (string, error) {
 // normative document and a stale citation in one a real defect.
 //
 // Also out of scope, stated here rather than left as an accident of the glob:
-// COMMANDS.md, CONTEXT.md, CONTRIBUTING.md and SUPERVISION.md at the root, and
-// Go doc comments. Doc comments carry the same class of defect -- a stale
+// CONTRIBUTING.md at the root, and Go doc comments. Doc comments carry the same class of defect -- a stale
 // `munsu delivery pr-check` citation sat in supervision_check.go's doc comment
 // (#573) -- but they are a different extractor over a different corpus, and
 // widening the set is a one-line change here once someone wants to pay the
