@@ -20,9 +20,11 @@
 #   build-tags.sh packages <tag>   packages holding a file guarded by <tag>
 #   build-tags.sh tags             every tag identifier used in the tree
 #   build-tags.sh check            manifest and lanes agree with the tree
+#   build-tags.sh selftest         every rule above against a tree that breaks it
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# Overridable so the selftest can drive every mode against a scratch tree.
+ROOT="${BUILD_TAGS_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 MANIFEST="$ROOT/.github/build-tags.manifest"
 WORKFLOW="$ROOT/.github/workflows/ci.yml"
 
@@ -97,11 +99,13 @@ tag_terms() {
 packages() {
 	local tag="$1" dirs
 	[ -n "$tag" ] || die "packages: missing tag"
-	dirs="$(grep -rlE "^[[:space:]]*//go:build\b.*\b${tag}\b" --include='*.go' "$ROOT" |
-		xargs -n1 dirname | sed "s|^${ROOT}|.|" |
+	# `|| true` on both greps: no match is exit 1, which pipefail and set -e
+	# would turn into a silent exit before the message below.
+	dirs="$( { grep -rlE "^[[:space:]]*//go:build\b.*\b${tag}\b" --include='*.go' "$ROOT" || true; } |
+		sed -e 's|/[^/]*$||' -e "s|^${ROOT}|.|" |
 		{ grep -vE '/(testdata|[_.][^/]*)(/|$)' || true; } | sort -u)"
 	[ -n "$dirs" ] || die "no package carries build tag '${tag}' -- stale lane or manifest entry"
-	echo $dirs
+	paste -sd " " - <<<"$dirs"
 }
 
 check() {
@@ -149,10 +153,7 @@ check() {
 		# two lines, and a path with a glob character would be expanded against
 		# the working directory, printing a name that is not the offending file.
 		# Quoting the whole list instead is not the fix -- it feeds the block to
-		# a single `%s`, so only the first path gets the indent. The two sibling
-		# loops below print tag identifiers, not paths, and a Go build tag holds
-		# neither spaces nor glob characters, so they carry no such exposure and
-		# are left alone.
+		# a single `%s`, so only the first path gets the indent.
 		printf '%s\n' "$legacy" | while IFS= read -r file; do
 			printf '  %s\n' "$file" >&2
 		done
@@ -170,7 +171,7 @@ check() {
 	unclassified="$(comm -23 <(echo "$repo_tags_list") <(echo "$manifest_tags"))"
 	if [ -n "$unclassified" ]; then
 		echo "::error::build tag(s) used in the tree but absent from .github/build-tags.manifest:" >&2
-		printf '  %s\n' $unclassified >&2
+		printf '%s\n' "$unclassified" | sed 's/^/  /' >&2
 		echo "  Add a CI lane (or a documented reason it cannot have one) and classify it there." >&2
 		failed=1
 	fi
@@ -180,7 +181,7 @@ check() {
 	stale="$(comm -13 <(echo "$repo_tags_list") <(echo "$manifest_tags"))"
 	if [ -n "$stale" ]; then
 		echo "::error::manifest entries no longer matching any file:" >&2
-		printf '  %s\n' $stale >&2
+		printf '%s\n' "$stale" | sed 's/^/  /' >&2
 		failed=1
 	fi
 
@@ -267,12 +268,83 @@ check_conjunctions() {
 	[ "$failed" -eq 0 ] || exit 1
 }
 
+# ---------------------------------------------------------------------------
+# selftest
+# ---------------------------------------------------------------------------
+#
+# `check` runs on every PR, so it is the half a PR can break, and deleting one
+# of its rules changes no happy path. Each case below is the clean tree plus one
+# change that exactly one rule must refuse; the case pins the exit status and
+# that rule's message, so a deleted or loosened rule turns one case red and
+# names it. The clean tree also pins the shapes that must NOT fail: a
+# `testdata/` or `_`-prefixed directory, a leading-tab `//go:build<TAB>`
+# constraint, and a test-lane tag paired with a negated or OR-ed GOOS term.
+#
+# The trees are written here rather than committed under .github/testdata so
+# each mutation reads next to the rule it answers.
+selftest_tree() {
+	local t="$1"
+	mkdir -p "$t/.github/workflows" "$t/pkg/a/testdata/x" "$t/pkg/b" "$t/pkg/w" "$t/_skip"
+	printf 'integration\ttest-lane\tr\nwindows\tgoos-vet\tr\nrace\trace-excluded\tr\n' >"$t/.github/build-tags.manifest"
+	printf '      - run: go test -tags integration ./pkg/a\n      - run: GOOS=windows go vet ./...\n' >"$t/.github/workflows/ci.yml"
+	printf '//go:build integration\n\npackage a\n' >"$t/pkg/a/a_test.go"
+	printf '//go:build integration\n\npackage x\n' >"$t/pkg/a/testdata/x/x.go"
+	printf '//go:build integration\n\npackage skip\n' >"$t/_skip/s.go"
+	printf '\t//go:build\tintegration && !windows\n\npackage b\n' >"$t/pkg/b/b_test.go"
+	printf '//go:build windows\n\npackage w\n' >"$t/pkg/w/w.go"
+	printf '//go:build integration || windows\n\npackage w\n' >"$t/pkg/w/or.go"
+	printf '//go:build !race\n\npackage w\n' >"$t/pkg/w/r_test.go"
+}
+
+selftest() {
+	local failed=0 scratch t name want_rc want mutation got rc
+	scratch="$(mktemp -d)"
+	trap 'rm -rf "$scratch"' RETURN
+
+	# name|expected exit|expected output line|mutation (shell, run inside the
+	# tree)|mode. Empty mutation is the clean tree. `|` rather than a tab: tab is
+	# IFS whitespace, so an empty field would collapse and shift the rest.
+	while IFS='|' read -r name want_rc want mutation mode; do
+		t="$scratch/$name"
+		selftest_tree "$t"
+		(cd "$t" && eval "$mutation")
+		# shellcheck disable=SC2086 # mode is "check" or "packages <tag>": two words on purpose
+		if got="$(BUILD_TAGS_ROOT="$t" "$0" $mode 2>&1)"; then rc=0; else rc=$?; fi
+		if [ "$rc" = "$want_rc" ] && printf '%s\n' "$got" | grep -Fq -- "$want"; then
+			echo "  ok   $name"
+		else
+			echo "::error::build-tags $mode disagrees with case $name (want exit $want_rc and '$want'):" >&2
+			printf '%s\nexit %s\n' "$got" "$rc" >&2
+			failed=1
+		fi
+	done <<'CASES'
+clean|0|build tags: 3 classified, lanes present||check
+packages|0|./pkg/a ./pkg/b ./pkg/w||packages integration
+packages-no-tag|1|missing tag||packages
+packages-stale|1|no package carries build tag 'e2e'||packages e2e
+unclassified|1|absent from .github/build-tags.manifest|printf '//go:build e2e\n\npackage a\n' >pkg/a/e.go|check
+stale|1|manifest entries no longer matching any file|printf 'darwin\tdefault\tr\n' >>.github/build-tags.manifest|check
+legacy|1|legacy '// +build' line with no '//go:build' line|printf '//\t+build linux\n\npackage a\n' >pkg/a/l.go|check
+lane-commented|1|no lane in ci.yml passes -tags integration|printf '#      - run: go test -tags integration ./pkg/a\n      - run: GOOS=windows go vet ./...\n' >.github/workflows/ci.yml|check
+negated|1|integration: negated somewhere|printf '//go:build !integration\n\npackage a\n' >pkg/a/n.go|check
+goos-vet-missing|1|no 'GOOS=windows go vet' step|printf '      - run: go test -tags integration ./pkg/a\n' >.github/workflows/ci.yml|check
+race-positive|1|classified race-excluded but used un-negated|printf '//go:build race\n\npackage w\n' >pkg/w/rp.go|check
+no-reason|1|integration: manifest entry needs a reason|printf 'integration\ttest-lane\nwindows\tgoos-vet\tr\nrace\trace-excluded\tr\n' >.github/build-tags.manifest|check
+unknown-treatment|1|windows: unknown treatment 'vet'|printf 'integration\ttest-lane\tr\nwindows\tvet\tr\nrace\trace-excluded\tr\n' >.github/build-tags.manifest|check
+conjunction|1|pairs test-lane tag 'integration' with positive GOOS term 'windows'|printf '//go:build integration && windows\n\npackage w\n' >pkg/w/c.go|check
+CASES
+
+	[ "$failed" -eq 0 ] || exit 1
+	echo "build-tags selftest: all cases agree"
+}
+
 case "${1:-}" in
 packages) packages "${2:-}" ;;
 tags) repo_tags ;;
 check) check ;;
+selftest) selftest ;;
 *)
-	echo "usage: build-tags.sh {packages <tag>|tags|check}" >&2
+	echo "usage: build-tags.sh {packages <tag>|tags|check|selftest}" >&2
 	exit 2
 	;;
 esac

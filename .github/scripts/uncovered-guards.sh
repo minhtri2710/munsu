@@ -640,12 +640,12 @@ deadcode_allowed() {
 # guessing, because a wrong delta is worse than an absent one. Nothing is judged
 # on it -- the two directions above are what fail the run.
 delta() {
-	local file="$1" base="${GUARDS_BASE_REF:-}" now="$2" then
+	local file="$1" base="${GUARDS_BASE_REF:-}" now="$2" before
 	[ -n "$base" ] || return 0
 	git -C "$ROOT" rev-parse --verify --quiet "$base" >/dev/null 2>&1 || return 0
-	then="$(git -C "$ROOT" show "$base:$file" 2>/dev/null | grep -cvE '^[[:space:]]*(#|$)' || true)"
-	[ -n "$then" ] || return 0
-	printf ' (%+d)' "$((now - then))"
+	before="$(git -C "$ROOT" show "$base:$file" 2>/dev/null | grep -cvE '^[[:space:]]*(#|$)' || true)"
+	[ -n "$before" ] || return 0
+	printf ' (%+d)' "$((now - before))"
 }
 
 # Entries whose reason marks them as a known-open bug rather than accepted debt,

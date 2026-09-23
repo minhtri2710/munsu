@@ -123,7 +123,7 @@ jobs:
       # `strict: true`, four required checks and `enforce_admins`. It is not
       # the same shape as ci.yml either: that one runs head *code* under
       # `contents: read`. Same trigger model, different blast radius.
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.base_ref || github.sha }}
       # The script exits 0 on every failure it anticipates; this is the

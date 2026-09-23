@@ -81,7 +81,7 @@ jobs:
       # fast path -- the route most verdicts come from.
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # The classifier is the part that can be wrong without anyone noticing,
       # so it is pinned by committed fixtures before it is trusted with live
@@ -189,6 +189,7 @@ jobs:
               printf '%s\n' "$sync_out"
             else
               printf '%s\n' "$sync_out" >&2
+              # shellcheck disable=SC2016 # Markdown for the step summary; its backticks are literal text
               {
                 echo '## Flake sweep: the `owner` this dispatch supplied was refused'
                 echo
@@ -234,6 +235,7 @@ jobs:
           # halves of flake-sweep.sh are reading the same records and reaching
           # opposite conclusions, and that is a bug in the script.
           if git diff --quiet -- .github/flake-ledger.md; then
+            # shellcheck disable=SC2016 # Markdown for the step summary; its backticks are literal text
             {
               echo '## Flake sweep: the two halves of `flake-sweep.sh` disagree'
               echo
@@ -255,6 +257,7 @@ jobs:
           fi
 
           git diff -- .github/flake-ledger.md >ledger.diff
+          # shellcheck disable=SC2016 # Markdown for the step summary; its backticks are literal text
           {
             echo '## Flake sweep: `.github/flake-ledger.md` is out of date'
             echo
@@ -310,7 +313,7 @@ jobs:
       - name: Upload the records and the synced ledger
         if: steps.compare.outcome == 'failure'
         continue-on-error: true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: flake-sweep
           path: |

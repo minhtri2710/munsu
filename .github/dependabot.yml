@@ -1,0 +1,9 @@
+version: 2
+updates:
+  # Every `uses:` in .github/workflows is pinned to a commit SHA with a
+  # trailing `# vX.Y.Z` comment; Dependabot bumps both together. A major bump
+  # still needs its release notes read against our usage before merging.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
