@@ -1,9 +1,11 @@
 package home
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -235,9 +237,9 @@ func (h *Home) recoverRecordLocked(scope, path string) error {
 		}
 		return fmt.Errorf("home: read journal record: %w", err)
 	}
-	var rec journalRecord
-	if err := json.Unmarshal(data, &rec); err != nil {
-		return fmt.Errorf("home: decode journal record %s: %w", filepath.Base(path), err)
+	rec, err := decodeJournalRecord(path, data)
+	if err != nil {
+		return err
 	}
 	if err := h.validateRecord(scope, path, rec); err != nil {
 		return err
@@ -305,14 +307,29 @@ func (h *Home) peekRecordScope(path string) (string, error) {
 		}
 		return "", fmt.Errorf("home: read journal record: %w", err)
 	}
-	var rec journalRecord
-	if err := json.Unmarshal(data, &rec); err != nil {
-		return "", fmt.Errorf("home: decode journal record %s: %w", filepath.Base(path), err)
+	rec, err := decodeJournalRecord(path, data)
+	if err != nil {
+		return "", err
 	}
 	if rec.Scope == "" {
 		return "", fmt.Errorf("home: corrupt journal record %s: empty scope", filepath.Base(path))
 	}
 	return rec.Scope, nil
+}
+
+// decodeJournalRecord decodes exactly one current-writer journal record: an
+// unknown field or trailing data is corruption, not a record to recover.
+func decodeJournalRecord(path string, data []byte) (journalRecord, error) {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	var rec journalRecord
+	if err := dec.Decode(&rec); err != nil {
+		return journalRecord{}, fmt.Errorf("home: decode journal record %s: %w", filepath.Base(path), err)
+	}
+	if err := dec.Decode(new(json.RawMessage)); err != io.EOF {
+		return journalRecord{}, fmt.Errorf("home: decode journal record %s: trailing data after record", filepath.Base(path))
+	}
+	return rec, nil
 }
 
 func (h *Home) applyItem(it ChangeItem) error {

@@ -63,7 +63,6 @@ func TestHandoffJournalCrashDuringCommitConverges(t *testing.T) {
 		"expected_revision": 0,
 		"new_revision":      1,
 		"items":             items,
-		"committed":         false,
 	}
 	recData, err := json.Marshal(rec)
 	if err != nil {
