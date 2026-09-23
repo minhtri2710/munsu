@@ -220,6 +220,7 @@ func TestReconcileDeliveryFallbackIsIdempotent(t *testing.T) {
 // task back to no-mistakes.
 func TestNextGenerationReadsFallenBackModeAndDoesNotReFallBack(t *testing.T) {
 	f := newLaunchFixture(t, "fallback-nextgen")
+	seedTypedDeliveryConfig(t, f, "", false)
 	contractedLaunch(t, f, "no-mistakes")
 	r := f.runner
 	r.effectiveMode = "direct-PR"
@@ -364,6 +365,7 @@ func TestReconcileDeliveryFallbackRefusesWithoutAuthority(t *testing.T) {
 // transition.
 func TestReScaffoldAfterFallbackClearsTransition(t *testing.T) {
 	f := newLaunchFixture(t, "fallback-rescaffold")
+	seedTypedDeliveryConfig(t, f, "", false)
 	contractedLaunch(t, f, "no-mistakes")
 	r := f.runner
 	r.effectiveMode = "direct-PR"

@@ -22,7 +22,6 @@ type Args struct {
 	ProjectName         string
 	Kind                string
 	Mode                string // --mode flag value; empty=auto-detect
-	ProjectMode         string // project registry mode (raw, not defaulted); empty = resolve from registry
 	Yolo                bool
 	Force               bool                 // --force flag; bypass captain task authority checks
 	Backend             string               // --backend flag value — optional assertion against the resolved project snapshot
@@ -33,7 +32,6 @@ type Args struct {
 	HomeDir             string               // if empty, resolved via home.Resolve
 	Endpoints           EndpointCapabilities // required endpoint lifecycle capability
 	Arm                 bool
-	Reopen              bool                       // allow spawning a done/blocked/already-live task
 	ArmFunc             func(homeDir string) error // injectable arm function; nil = no auto-arm
 	NoMistakesPreflight func(repoPath string) error
 	// Authority is the composed canonical Task Authority targeting the exact
@@ -381,18 +379,4 @@ func formatPreflightFailures(checks []Check) string {
 		}
 	}
 	return b.String()
-}
-
-// effectiveModeForSpawn resolves the effective delivery mode for a spawn
-// operation on the legacy (non-typed-config) path. The registry mode is the
-// only default authority here; no typed require-no-mistakes exists to refuse
-// fallback, so the flat competing authority is not consulted.
-func effectiveModeForSpawn(homeDir string, args Args) (string, error) {
-	projectMode := args.ProjectMode
-	if projectMode == "" {
-		if m, _, err := Mode(homeDir, args.ProjectName); err == nil {
-			projectMode = m
-		}
-	}
-	return ResolveDeliveryMode(args.Mode, projectMode, false)
 }

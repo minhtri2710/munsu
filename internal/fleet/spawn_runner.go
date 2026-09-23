@@ -630,11 +630,11 @@ func (r *Runner) deliveryContract() *taskauthority.DeliveryContract {
 
 // applyDeliveryContract settles the resolved mode against the task's durable
 // delivery contract. A task with no contract keeps the resolved mode and
-// records it after the launch intent is committed. Under typed config the
-// contract has already been honoured inside the snapshot resolution; this is
-// the untyped surface's override and the one place the re-scaffold intent is
-// raised: an explicit --mode that differs from the contract is a re-scaffold,
-// the explicit mode wins, and the op owns the no-silent-override refusal.
+// records it after the launch intent is committed. The contract has already
+// been honoured inside the snapshot resolution; this is the one place the
+// re-scaffold intent is raised: an explicit --mode that differs from the
+// contract is a re-scaffold, the explicit mode wins, and the op owns the
+// no-silent-override refusal.
 func (r *Runner) applyDeliveryContract(contract *taskauthority.DeliveryContract) {
 	if contract == nil {
 		return
@@ -648,45 +648,26 @@ func (r *Runner) applyDeliveryContract(contract *taskauthority.DeliveryContract)
 	r.fallbackReason = ""
 }
 
-// resolveConfiguredMode resolves this launch's configuration surface: the
-// typed project snapshot, or the untyped home/registry surface. The typed
-// surface consumes the contract directly, so a contracted task never has its
-// mode re-resolved and can never be blocked by default-mode drift; the untyped
-// surface has no contract input and is corrected afterwards by
-// applyDeliveryContract.
+// resolveConfiguredMode resolves this launch's typed project snapshot, the
+// only configuration surface a launch intent can bind (beginLaunchIntent
+// requires its digest). The snapshot consumes the contract directly, so a
+// contracted task never has its mode re-resolved and can never be blocked by
+// default-mode drift. Any resolution failure, including an unreadable project
+// registry, fails the spawn.
 func (r *Runner) resolveConfiguredMode(contract *taskauthority.DeliveryContract) error {
-	if TypedConfigAvailable(r.homeDir) {
-		args := r.args
-		args.TaskDescription = r.taskDescription()
-		resolved, err := ResolveSpawnProjectConfig(r.homeDir, args, r.dispatchPolicy, contract)
-		if err != nil {
-			return err
-		}
-		r.projectConfig = resolved
-		r.projectConfigLoaded = true
-		r.effectiveMode = resolved.Soldier.Mode
-		r.allowDirectPRFallback = resolved.AllowDirectPRFallback
-		r.requestedMode = r.args.Mode
-		if r.requestedMode == "" {
-			r.requestedMode = r.effectiveMode
-		}
-		return nil
-	}
-	// Determine requested mode (the first non-empty value in precedence).
-	r.requestedMode = r.args.Mode
-	if r.requestedMode == "" {
-		if pm, _, _ := Mode(r.homeDir, r.args.ProjectName); pm != "" {
-			r.requestedMode = pm
-		}
-	}
-	mode, err := effectiveModeForSpawn(r.homeDir, r.args)
+	args := r.args
+	args.TaskDescription = r.taskDescription()
+	resolved, err := ResolveSpawnProjectConfig(r.homeDir, args, r.dispatchPolicy, contract)
 	if err != nil {
 		return err
 	}
-	r.effectiveMode = mode
-	// Capture fallback reason when modes differ.
-	if r.requestedMode != "" && r.requestedMode != r.effectiveMode {
-		r.fallbackReason = fmt.Sprintf("requested mode %q resolved to %q", r.requestedMode, r.effectiveMode)
+	r.projectConfig = resolved
+	r.projectConfigLoaded = true
+	r.effectiveMode = resolved.Soldier.Mode
+	r.allowDirectPRFallback = resolved.AllowDirectPRFallback
+	r.requestedMode = r.args.Mode
+	if r.requestedMode == "" {
+		r.requestedMode = r.effectiveMode
 	}
 	return nil
 }
@@ -779,7 +760,7 @@ func (r *Runner) preflightBrief() error {
 
 // Phase 5: checkBacklogAuthority verifies the task is uniquely present in the
 // canonical Task Authority and dispatchable. Fail closed unless the task is
-// present and ready, or --reopen is used.
+// present and ready.
 func (r *Runner) checkBacklogAuthority() error {
 	if err := RecoverTaskHandoffs(r.homeDir); err != nil {
 		return err
@@ -796,23 +777,19 @@ func (r *Runner) checkBacklogAuthority() error {
 	// State-based checks. Working without live meta is start→spawn — allow.
 	switch agg.Phase {
 	case taskauthority.PhaseBlocked:
-		if !r.args.Reopen {
-			return fmt.Errorf("lifecycle guard: task %q is blocked; use --reopen to force dispatch or clear the blocker first", r.args.ID)
-		}
+		return fmt.Errorf("lifecycle guard: task %q is blocked; clear the blocker with 'munsu task unblock %s' before spawning", r.args.ID, r.args.ID)
 	case taskauthority.PhaseDone:
-		if !r.args.Reopen {
-			return fmt.Errorf("lifecycle guard: task %q is done; use --reopen to reopen", r.args.ID)
-		}
+		return fmt.Errorf("lifecycle guard: task %q is done; reopen it with 'munsu task reopen %s' before spawning", r.args.ID, r.args.ID)
 	case taskauthority.PhaseWorking:
 		// Allow when no live session; refuse only duplicate live execution.
-		if metaExists && !r.args.Reopen {
+		if metaExists {
 			return fmt.Errorf("lifecycle guard: task %q is already in-flight with a live session; refuse duplicate live execution", r.args.ID)
 		}
 		return nil
 	}
 
 	// Live session without matching state still refuses (stale meta after teardown failure).
-	if metaExists && !r.args.Reopen {
+	if metaExists {
 		return fmt.Errorf("lifecycle guard: task %q already has a live soldier session; refuse duplicate live execution", r.args.ID)
 	}
 

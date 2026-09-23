@@ -39,6 +39,7 @@ func recordContractForTask(t *testing.T, auth *taskauthority.Canonical, taskID, 
 // whatever a fresh resolution would pick this time.
 func TestResolveModeReadsRecordedContract(t *testing.T) {
 	f := newLaunchFixture(t, "contract-read")
+	seedTypedDeliveryConfig(t, f, "", false)
 	recordContractForTask(t, f.auth, f.taskID, "local-only")
 
 	r := f.runner
@@ -63,6 +64,7 @@ func TestResolveModeReadsRecordedContract(t *testing.T) {
 // mode to record.
 func TestResolveModeWithoutContractResolvesFresh(t *testing.T) {
 	f := newLaunchFixture(t, "contract-absent")
+	seedTypedDeliveryConfig(t, f, "", false)
 	r := f.runner
 	r.effectiveMode = ""
 	if err := r.resolveMode(); err != nil {
@@ -80,6 +82,7 @@ func TestResolveModeWithoutContractResolvesFresh(t *testing.T) {
 // wins and is marked for re-recording.
 func TestResolveModeExplicitModeReScaffoldsContract(t *testing.T) {
 	f := newLaunchFixture(t, "contract-rescaffold")
+	seedTypedDeliveryConfig(t, f, "", false)
 	recordContractForTask(t, f.auth, f.taskID, "local-only")
 
 	r := f.runner
@@ -113,6 +116,7 @@ func TestResolveModeExplicitModeReScaffoldsContract(t *testing.T) {
 // task carries the resolved mode durably after the launch intent commits.
 func TestRecordDeliveryContractOnFirstLaunch(t *testing.T) {
 	f := newLaunchFixture(t, "contract-record")
+	seedTypedDeliveryConfig(t, f, "", false)
 	r := f.runner
 	if err := r.resolveMode(); err != nil {
 		t.Fatalf("resolveMode: %v", err)
@@ -184,10 +188,9 @@ func TestRecordDeliveryContractRefusesWithoutAuthority(t *testing.T) {
 	}
 }
 
-// seedTypedDeliveryConfig makes typed config available on a launch fixture's
-// home with a chosen default mode and require-no-mistakes, so the contract
-// tests exercise the production typed path (ResolveSpawnProjectConfig) rather
-// than the untyped fallback.
+// seedTypedDeliveryConfig stores the typed config documents on a launch
+// fixture's home with a chosen default mode and require-no-mistakes, so the
+// contract tests resolve through ResolveSpawnProjectConfig.
 func seedTypedDeliveryConfig(t *testing.T, f *launchFixture, defaultMode string, requireNoMistakes bool) {
 	t.Helper()
 	require := requireNoMistakes
@@ -203,9 +206,6 @@ func seedTypedDeliveryConfig(t *testing.T, f *launchFixture, defaultMode string,
 	}, []testProjectRecord{
 		{Name: "test-proj", Path: f.runner.projPath},
 	}, nil)
-	if !TypedConfigAvailable(f.runner.homeDir) {
-		t.Fatal("fixture did not make typed config available")
-	}
 }
 
 // TestTypedConfigContractOutranksDriftedDefaultMode is repair case (a): under

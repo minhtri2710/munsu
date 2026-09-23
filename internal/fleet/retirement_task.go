@@ -171,6 +171,26 @@ func AbortRetirementCleanup(authority *taskauthority.Canonical, homeDir string, 
 	return abortRetirementCleanup(authority, homeDir, backend, taskID, claimGen)
 }
 
+// clearSessionMeta removes the backend session projection (window, backend
+// and the backend's herdr_* extras) from a task's .meta once its endpoint is
+// proven absent, keeping every other key. A reopened generation then does not
+// read the dead session as a live one.
+func clearSessionMeta(homeDir, taskID string) error {
+	return home.UpdateMeta(homeDir, taskID, func(meta map[string]string) error {
+		removed := false
+		for k := range meta {
+			if k == "window" || k == "backend" || strings.HasPrefix(k, "herdr_") {
+				delete(meta, k)
+				removed = true
+			}
+		}
+		if !removed {
+			return home.ErrMetaUnchanged
+		}
+		return nil
+	})
+}
+
 func abortRetirementCleanup(authority *taskauthority.Canonical, homeDir string, backend BoundTeardown, taskID domain.TaskID, claimGen taskauthority.Generation) error {
 	cur, err := authority.Get(taskID)
 	if err != nil {
@@ -205,6 +225,12 @@ func abortRetirementCleanup(authority *taskauthority.Canonical, homeDir string, 
 	work := func() error {
 		if _, err := refreshDataDir(homeDir, taskID.Value()); err != nil {
 			return fmt.Errorf("refreshing data directory before aborting cleanup for %s generation %s: %w", taskID, claimGen, err)
+		}
+		if endpointProof == nil {
+			return nil
+		}
+		if err := clearSessionMeta(homeDir, taskID.Value()); err != nil {
+			return fmt.Errorf("clearing session keys from task meta before aborting cleanup for %s generation %s: %w", taskID, claimGen, err)
 		}
 		return nil
 	}

@@ -3,8 +3,6 @@ package fleet
 import (
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	fleetconfig "github.com/minhtri2710/munsu/internal/config"
@@ -163,16 +161,6 @@ func normalizeSnapshotDeliveryMode(mode string) string {
 		return "direct-PR"
 	}
 	return mode
-}
-
-func TypedConfigAvailable(homeDir string) bool {
-	if fleetconfig.PublishedSnapshotAvailable(homeDir) {
-		return true
-	}
-	if _, err := os.Stat(filepath.Join(homeDir, fleetconfig.BaseDocumentPath)); err == nil {
-		return true
-	}
-	return false
 }
 
 // ResolveGeneralHomeBackend resolves the session backend identity for a home

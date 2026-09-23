@@ -59,7 +59,7 @@ func assertNoTaskSideEffects(t *testing.T, homeDir, id string) {
 }
 
 func TestSpawn_DeniedExplicitModelFailsClosedBeforeSideEffects(t *testing.T) {
-	homeDir := t.TempDir()
+	homeDir := seedTypedSpawnHome(t, "test-project")
 	// Policy allows only the fleet canonical model; the explicit request is denied.
 	writeModelAllowlist(t, homeDir, "pi:opencode-go/deepseek-v4-flash\n")
 	spawnContext(t, homeDir)
@@ -95,7 +95,7 @@ func TestSpawn_DeniedExplicitModelFailsClosedBeforeSideEffects(t *testing.T) {
 }
 
 func TestSpawn_AutoSelectedDeniedModelFailsClosed(t *testing.T) {
-	homeDir := t.TempDir()
+	homeDir := seedTypedSpawnHome(t, "test-project")
 	// The model is auto-selected (adapter template default for codex), not explicit.
 	writeModelAllowlist(t, homeDir, "pi:opencode-go/deepseek-v4-flash\n")
 	spawnContext(t, homeDir)
@@ -118,7 +118,7 @@ func TestSpawn_AutoSelectedDeniedModelFailsClosed(t *testing.T) {
 }
 
 func TestSpawn_AllowedModelPassesAllowlist(t *testing.T) {
-	homeDir := t.TempDir()
+	homeDir := seedTypedSpawnHome(t, "test-project")
 	writeModelAllowlist(t, homeDir, "pi:claude-sonnet-4-20250515\n")
 	spawnContext(t, homeDir)
 
@@ -144,8 +144,9 @@ func TestSpawn_AllowedModelPassesAllowlist(t *testing.T) {
 	}
 }
 
-func TestSpawn_AbsentPolicyPreservesCompatibility(t *testing.T) {
-	homeDir := t.TempDir()
+// An absent allowlist is an unset policy: any model passes to the next phase.
+func TestSpawn_AbsentPolicyAllowsAnyModel(t *testing.T) {
+	homeDir := seedTypedSpawnHome(t, "test-project")
 	spawnContext(t, homeDir)
 
 	_, err := Spawn(Args{
@@ -160,13 +161,13 @@ func TestSpawn_AbsentPolicyPreservesCompatibility(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected brief-exists failure")
 	}
-	if strings.Contains(err.Error(), "model allowlist") {
-		t.Fatalf("absent policy must preserve compatibility, got: %v", err)
+	if !strings.Contains(err.Error(), "no brief found") {
+		t.Fatalf("absent policy must not restrict the model; run should reach the brief check, got: %v", err)
 	}
 }
 
 func TestSpawn_EmptyPolicyFailsClosed(t *testing.T) {
-	homeDir := t.TempDir()
+	homeDir := seedTypedSpawnHome(t, "test-project")
 	writeModelAllowlist(t, homeDir, "# comments only\n\n")
 	spawnContext(t, homeDir)
 
@@ -189,7 +190,7 @@ func TestSpawn_EmptyPolicyFailsClosed(t *testing.T) {
 }
 
 func TestSpawn_MalformedPolicyFailsClosed(t *testing.T) {
-	homeDir := t.TempDir()
+	homeDir := seedTypedSpawnHome(t, "test-project")
 	writeModelAllowlist(t, homeDir, "not-an-identity\n")
 	spawnContext(t, homeDir)
 
@@ -328,7 +329,7 @@ func TestRecoverLaunchReadiness_AllowedModelPasses(t *testing.T) {
 // unresolved; the policy must deny it because the runtime default cannot be
 // verified against the allowlist.
 func TestSpawn_UnresolvedModelFailsClosed(t *testing.T) {
-	homeDir := t.TempDir()
+	homeDir := seedTypedSpawnHome(t, "test-project")
 	writeModelAllowlist(t, homeDir, "pi:opencode-go/deepseek-v4-flash\n")
 	spawnContext(t, homeDir)
 
