@@ -28,6 +28,37 @@ func TestHerdrPaneProbePreservesCommandExit(t *testing.T) {
 	}
 }
 
+const (
+	backendCommandTestStartupWatchdog = 10 * time.Second
+	backendCommandTestWatchdogMargin  = 5 * time.Second
+)
+
+func waitForBackendTestFile(path string, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return true
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return false
+}
+
+func stopBackendTestProcess(pidFile string) {
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		return
+	}
+	pid, err := strconv.Atoi(string(data))
+	if err != nil {
+		return
+	}
+	process, err := os.FindProcess(pid)
+	if err == nil {
+		_ = process.Kill()
+	}
+}
+
 func TestHerdrPromptTimeoutIsBackendFailedNotDead(t *testing.T) {
 	dir := t.TempDir()
 	pidFile := filepath.Join(dir, "herdr.pid")
@@ -36,6 +67,11 @@ func TestHerdrPromptTimeoutIsBackendFailedNotDead(t *testing.T) {
 
 	result := make(chan PromptResult, 1)
 	go func() { result <- NewHerdrBackend("test").AgentPrompt("test:pane", "hello") }()
+	if !waitForBackendTestFile(pidFile, backendCommandTestStartupWatchdog) {
+		stopBackendTestProcess(pidFile)
+		t.Fatal("hung herdr prompt did not reach its blocking command")
+	}
+	started := time.Now()
 	select {
 	case got := <-result:
 		if got.Status != PromptBackendFailed {
@@ -44,16 +80,12 @@ func TestHerdrPromptTimeoutIsBackendFailedNotDead(t *testing.T) {
 		if got.Status == PromptEndpointDead {
 			t.Fatal("timeout must not be classified as endpoint-dead")
 		}
-	case <-time.After(7 * time.Second):
-		data, readErr := os.ReadFile(pidFile)
-		if readErr == nil {
-			if pid, parseErr := strconv.Atoi(string(data)); parseErr == nil {
-				if process, findErr := os.FindProcess(pid); findErr == nil {
-					_ = process.Kill()
-				}
-			}
+		if got.Err == nil || !errors.Is(got.Err, context.DeadlineExceeded) {
+			t.Fatalf("error = %v, want context deadline exceeded from the command bound", got.Err)
 		}
-		t.Fatal("hung herdr backend did not return within timeout bound")
+	case <-time.After(backendCommandTimeout + backendCommandTestWatchdogMargin):
+		stopBackendTestProcess(pidFile)
+		t.Fatalf("hung herdr backend did not return within timeout bound after blocking command started (elapsed %s)", time.Since(started))
 	}
 }
 
@@ -91,11 +123,15 @@ func TestBackendCommandTimeoutIsUnknownNotDead(t *testing.T) {
 		err   error
 	}
 	result := make(chan probeResult, 1)
-	started := time.Now()
 	go func() {
 		alive, err := (&TmuxBackend{}).CheckAlive("@hung")
 		result <- probeResult{alive: alive, err: err}
 	}()
+	if !waitForBackendTestFile(pidFile, backendCommandTestStartupWatchdog) {
+		stopBackendTestProcess(pidFile)
+		t.Fatal("hung tmux probe did not reach its blocking command")
+	}
+	started := time.Now()
 
 	select {
 	case got := <-result:
@@ -112,8 +148,8 @@ func TestBackendCommandTimeoutIsUnknownNotDead(t *testing.T) {
 		if errors.Is(got.err, ErrPaneNotFound) {
 			t.Fatalf("timeout error = %v, must not authorize pane absence", got.err)
 		}
-		if elapsed >= 7*time.Second {
-			t.Fatalf("hung backend took %s, want completion within timeout bound", elapsed)
+		if elapsed > backendCommandTimeout+backendCommandTestWatchdogMargin {
+			t.Fatalf("hung backend took %s after blocking command started, want completion within test bound", elapsed)
 		}
 
 		obs := ObservationFromProbeError(got.err)
@@ -123,15 +159,8 @@ func TestBackendCommandTimeoutIsUnknownNotDead(t *testing.T) {
 		if obs.State() == EndpointDead || obs.Absent() {
 			t.Fatalf("timeout observation = %+v, must not be dead/absent", obs)
 		}
-	case <-time.After(7 * time.Second):
-		data, readErr := os.ReadFile(pidFile)
-		if readErr == nil {
-			if pid, parseErr := strconv.Atoi(string(data)); parseErr == nil {
-				if process, findErr := os.FindProcess(pid); findErr == nil {
-					_ = process.Kill()
-				}
-			}
-		}
-		t.Fatal("hung backend did not return within timeout bound")
+	case <-time.After(backendCommandTimeout + backendCommandTestWatchdogMargin):
+		stopBackendTestProcess(pidFile)
+		t.Fatalf("hung backend did not return within timeout bound after blocking command started (elapsed %s)", time.Since(started))
 	}
 }

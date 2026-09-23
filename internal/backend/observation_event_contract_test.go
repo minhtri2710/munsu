@@ -267,32 +267,61 @@ func TestHerdrEventSource_Wait_ExpiredDeadline(t *testing.T) {
 
 func TestHerdrEventSource_Wait_UsesRequestedWaitMargin(t *testing.T) {
 	tmp := t.TempDir()
+	releasePath := filepath.Join(tmp, "release")
+	startedPath := filepath.Join(tmp, "started")
 	bin := filepath.Join(tmp, "herdr")
-	testutil.WriteFakeExecutable(t, bin, "#!/usr/bin/env bash\n"+
-		"if [ \"$1\" = \"--version\" ]; then echo 'herdr 0.7.5'; exit 0; fi\n"+
-		"if [ \"$1\" = \"api\" ] && [ \"$2\" = \"schema\" ] && [ \"$3\" = \"--json\" ]; then\n"+
-		"  echo '"+fakeHerdrSchemaReady+"'\n"+
-		"  exit 0\n"+
-		"fi\n"+
-		"if [ \"$3\" = \"agent\" ] && [ \"$4\" = \"wait\" ]; then\n"+
-		"  sleep 0.8\n"+
-		"  echo '{\"agent_status\":\"working\",\"state_change_seq\":1}'\n"+
-		"  exit 0\n"+
-		"fi\n"+
-		"exit 1\n")
+	script := "#!/bin/sh\n" +
+		"if [ \"$1\" = \"--version\" ]; then echo 'herdr 0.7.5'; exit 0; fi\n" +
+		"if [ \"$1\" = \"api\" ] && [ \"$2\" = \"schema\" ] && [ \"$3\" = \"--json\" ]; then\n" +
+		"  echo '" + fakeHerdrSchemaReady + "'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"if [ \"$3\" = \"agent\" ] && [ \"$4\" = \"wait\" ]; then\n" +
+		"  : > " + strconv.Quote(startedPath) + "\n" +
+		"  while [ ! -f " + strconv.Quote(releasePath) + " ]; do sleep 0.01; done\n" +
+		"  echo '{\"agent_status\":\"working\",\"state_change_seq\":1}'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"exit 1\n"
+	testutil.WriteFakeExecutable(t, bin, script)
 	src := &HerdrEventSource{Session: "test-s", CLIPath: bin}
 	if err := src.negotiate(); err != nil {
 		t.Fatalf("negotiate: %v", err)
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	requested := time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), requested)
 	defer cancel()
-	sig, err := src.Wait(ctx, EndpointRef{Backend: "herdr", Handle: "w:p"}, "")
-	if err != nil {
-		t.Fatalf("Wait returned before the requested wait margin: %v", err)
+	result := make(chan struct {
+		sig ObservationSignal
+		err error
+	}, 1)
+	go func() {
+		sig, err := src.Wait(ctx, EndpointRef{Backend: "herdr", Handle: "w:p"}, "")
+		result <- struct {
+			sig ObservationSignal
+			err error
+		}{sig: sig, err: err}
+	}()
+	if !waitForBackendTestFile(startedPath, backendCommandTestStartupWatchdog) {
+		t.Fatal("event wait did not reach the blocking herdr command")
 	}
-	if sig.Activity != ActivityBusy {
-		t.Fatalf("Activity = %v, want busy", sig.Activity)
+	<-ctx.Done()
+	if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		t.Fatalf("caller context error = %v, want deadline exceeded", ctx.Err())
+	}
+	if err := os.WriteFile(releasePath, []byte("release\n"), 0600); err != nil {
+		t.Fatalf("release event wait: %v", err)
+	}
+	select {
+	case got := <-result:
+		if got.err != nil {
+			t.Fatalf("Wait after caller deadline returned error: %v", got.err)
+		}
+		if got.sig.Activity != ActivityBusy {
+			t.Fatalf("Activity = %v, want busy", got.sig.Activity)
+		}
+	case <-time.After(backendEventWaitTimeout(requested) + backendCommandTestWatchdogMargin):
+		t.Fatal("event wait did not return after release")
 	}
 }
 
