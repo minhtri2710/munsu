@@ -31,6 +31,3 @@ func (f fakeEndpointCapabilities) Capture(ep CreatedEndpoint, n int) (string, er
 func (f fakeEndpointCapabilities) Dispose(ep CreatedEndpoint) error {
 	return f.backend.Teardown(ep.Handle)
 }
-func runnerEndpoint(fake *fakeBackend) (EndpointCapabilities, CreatedEndpoint) {
-	return fakeEndpointCapabilities{backend: fake}, CreatedEndpoint{Backend: "test", Handle: "win-1"}
-}

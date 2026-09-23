@@ -80,7 +80,7 @@ func DeliverWake(req DeliverRequest) (*WakeReceipt, error) {
 		return nil, fmt.Errorf("TaskID is required")
 	}
 	if req.Message == "" {
-		return nil, fmt.Errorf("Message is required")
+		return nil, fmt.Errorf("message is required")
 	}
 	if !mhome.IsValidStatusState(req.State) {
 		return nil, fmt.Errorf("invalid status state %q", req.State)

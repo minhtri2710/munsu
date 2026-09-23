@@ -15,7 +15,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
-	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 // ProvenanceMarkerName is the marker file written to a seeded captain home root.
@@ -981,7 +980,7 @@ func Launch(captainHome, parentHome string, endpoint LaunchEndpoint, integration
 	}
 
 	taskID := taskIDForCaptain(markerID)
-	if err := mhome.WriteMeta(parentHome, taskID, meta); err != nil {
+	if err := home.WriteMeta(parentHome, taskID, meta); err != nil {
 		_ = endpoint.Cleanup(parentHome, launched)
 		return fmt.Errorf("writing captain task meta: %w", err)
 	}
@@ -1007,11 +1006,11 @@ func inFlightSoldierIDs(captainHome string) ([]string, error) {
 		if !strings.HasSuffix(name, ".meta") || strings.HasPrefix(name, ".") {
 			continue
 		}
-		id, err := mhome.ReverseDurableKey(strings.TrimSuffix(name, ".meta"))
+		id, err := home.ReverseDurableKey(strings.TrimSuffix(name, ".meta"))
 		if err != nil {
 			continue
 		}
-		meta, err := mhome.ReadMeta(captainHome, id)
+		meta, err := home.ReadMeta(captainHome, id)
 		if err != nil {
 			continue
 		}
@@ -1055,7 +1054,7 @@ func Retire(captainHome, parentHome string, removeHome, force bool, endpoint Ret
 	}
 
 	taskID := taskIDForCaptain(markerID)
-	meta, metaErr := mhome.ReadMeta(parentHome, taskID)
+	meta, metaErr := home.ReadMeta(parentHome, taskID)
 
 	if metaErr == nil {
 		// Validate meta fields before use.
@@ -1083,7 +1082,7 @@ func Retire(captainHome, parentHome string, removeHome, force bool, endpoint Ret
 
 		// Clear parent task meta so husk prune and fleet snapshot stop treating this
 		// captain as live. Status log is retained as historical return-channel evidence.
-		metaPath, mpErr := mhome.MetaFilePath(parentHome, taskID)
+		metaPath, mpErr := home.MetaFilePath(parentHome, taskID)
 		if mpErr != nil {
 			return fmt.Errorf("failed to resolve captain task meta path for %s: %w", taskID, mpErr)
 		}
@@ -1113,8 +1112,8 @@ func Retire(captainHome, parentHome string, removeHome, force bool, endpoint Ret
 	return nil
 }
 
-func HandoffAmbiguousTaskID(err error) (*mhome.AmbiguousTaskIDError, bool) {
-	var ambiguous *mhome.AmbiguousTaskIDError
+func HandoffAmbiguousTaskID(err error) (*home.AmbiguousTaskIDError, bool) {
+	var ambiguous *home.AmbiguousTaskIDError
 	if errors.As(err, &ambiguous) {
 		return ambiguous, true
 	}
@@ -1281,7 +1280,7 @@ func publishResolvedSnapshot(parentHome, captainHome string) error {
 	}
 	captain, err := r.GetCaptain(id)
 	if err != nil {
-		return fmt.Errorf("Captain %q is not registered in the Fleet registry", captainID)
+		return fmt.Errorf("captain %q is not registered in the Fleet registry", captainID)
 	}
 	canonCaptain, err := canonicalCaptainHome(captainHome)
 	if err != nil {
@@ -1292,14 +1291,14 @@ func publishResolvedSnapshot(parentHome, captainHome string) error {
 		return canonErr
 	}
 	if canonRegistered != canonCaptain {
-		return fmt.Errorf("Captain %q home %s does not match %s", captainID, canonRegistered, canonCaptain)
+		return fmt.Errorf("captain %q home %s does not match %s", captainID, canonRegistered, canonCaptain)
 	}
 	projectID, err := r.ProjectOf(id)
 	if err != nil {
 		return err
 	}
 	if projectID == (domain.ProjectID{}) {
-		return fmt.Errorf("Captain %q is not bound to a project in the Fleet registry", captainID)
+		return fmt.Errorf("captain %q is not bound to a project in the Fleet registry", captainID)
 	}
 	project, err := r.GetProject(projectID)
 	if err != nil {
@@ -2247,7 +2246,7 @@ type captainBinding struct {
 
 func checkAliveWithProbeBinding(parentHome string, sm Info, probe ProbeEndpoint) (CaptainEndpointState, captainBinding, error) {
 	taskID := taskIDForCaptain(sm.ID)
-	meta, err := mhome.ReadMeta(parentHome, taskID)
+	meta, err := home.ReadMeta(parentHome, taskID)
 	if err != nil {
 		return CaptainSeeded, captainBinding{}, nil
 	}
@@ -2326,7 +2325,7 @@ func hasSurfaceDiff(home, before, after string) bool {
 // On failure, the marker remains.
 func sendNudge(parentHome string, sm Info, endpoint NudgeEndpoint) error {
 	taskID := taskIDForCaptain(sm.ID)
-	meta, err := mhome.ReadMeta(parentHome, taskID)
+	meta, err := home.ReadMeta(parentHome, taskID)
 	if err != nil {
 		return fmt.Errorf("%s: no task meta — marker remains", sm.ID)
 	}
@@ -2401,7 +2400,7 @@ func sendNudge(parentHome string, sm Info, endpoint NudgeEndpoint) error {
 	// above: the send is a network round-trip, and a concurrent writer that
 	// landed during it must not be erased. The lock covers only this overlay,
 	// never the send.
-	if metaErr := mhome.UpdateMeta(parentHome, taskID, func(current map[string]string) error {
+	if metaErr := home.UpdateMeta(parentHome, taskID, func(current map[string]string) error {
 		if err := validateCaptainBinding(current, sm, binding); err != nil {
 			return err
 		}

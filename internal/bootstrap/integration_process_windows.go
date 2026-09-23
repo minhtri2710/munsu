@@ -2,12 +2,10 @@
 
 package bootstrap
 
-import (
-	"errors"
-	"os/exec"
-)
+import "os/exec"
 
 func setProcessIsolation(*exec.Cmd) {}
-func killProcessTree(int) error {
-	return errors.New("process-tree termination capability unavailable on Windows")
-}
+
+// killProcessTree is a no-op: Windows has no process group to signal here, so a
+// timeout reaps only the direct child that exec.CommandContext kills.
+func killProcessTree(int) {}

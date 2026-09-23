@@ -174,6 +174,14 @@ func TestConfigShowAndGetAgree(t *testing.T) {
 			wellKnownLines = append(wellKnownLines, key)
 		}
 	}
+	if len(wellKnownLines) == 0 {
+		t.Fatalf("config show listed no keys:\n%s", resp.Data.Message)
+	}
+	for _, key := range wellKnownLines {
+		if !config.IsKnownKey(key) {
+			t.Errorf("config show lists %q, which config get rejects as unknown", key)
+		}
+	}
 }
 func TestConfigGetAllKnownKeys(t *testing.T) {
 	tmpDir := t.TempDir()

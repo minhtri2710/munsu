@@ -28,10 +28,6 @@ const (
 	MarkerTmpdir      = "TMPDIR"
 )
 
-var orphanMarkerKeys = map[string]bool{
-	MarkerMulticaTask: true, MarkerMunsuTask: true, MarkerMunsuHome: true, MarkerTmpdir: true,
-}
-
 // runScopedTmpdirBasePrefix is the observed naming convention of the per-run
 // temporary directory the Multica runtime creates and removes with the run
 // (BEO-45 correlated it 6/6). It is a convention read off running processes,

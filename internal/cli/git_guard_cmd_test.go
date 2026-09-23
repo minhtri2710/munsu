@@ -228,8 +228,6 @@ func TestGuardDoesNotRecurseIntoShim(t *testing.T) {
 	t.Chdir(t.TempDir())
 
 	if os.Getenv("MUNSU_GIT_GUARD_HELPER") == "1" {
-		marker = os.Getenv("MUNSU_GIT_GUARD_SHIM_MARKER")
-		realMarker = os.Getenv("MUNSU_GIT_GUARD_REAL_MARKER")
 		t.Setenv("PATH", os.Getenv("MUNSU_GIT_GUARD_TEST_PATH"))
 		t.Setenv("MUNSU_HOME", "")
 		t.Setenv("MUNSU_TASK_ID", "")
@@ -249,7 +247,7 @@ func TestGuardDoesNotRecurseIntoShim(t *testing.T) {
 	}
 
 	cmd := exec.Command(os.Args[0], "-test.run=^TestGuardDoesNotRecurseIntoShim$", "-test.v")
-	cmd.Env = append(os.Environ(), "MUNSU_GIT_GUARD_HELPER=1", "MUNSU_GIT_GUARD_TEST_PATH="+shimDir+string(filepath.ListSeparator)+realBin, "MUNSU_GIT_GUARD_TEST_CWD="+t.TempDir(), "MUNSU_GIT_GUARD_SHIM_MARKER="+marker, "MUNSU_GIT_GUARD_REAL_MARKER="+realMarker)
+	cmd.Env = append(os.Environ(), "MUNSU_GIT_GUARD_HELPER=1", "MUNSU_GIT_GUARD_TEST_PATH="+shimDir+string(filepath.ListSeparator)+realBin, "MUNSU_GIT_GUARD_TEST_CWD="+t.TempDir())
 	if err := cmd.Run(); err == nil {
 		t.Fatal("helper process unexpectedly succeeded")
 	} else if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 23 {

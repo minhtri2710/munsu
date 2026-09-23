@@ -366,10 +366,10 @@ func setupMergedPollTest(t *testing.T, headSHA, baseRef string) (home, taskID, c
 
 	// Write check script.
 	checkPath = filepath.Join(stateDir, taskID+".check")
-	script := fmt.Sprintf(`#!/bin/bash
+	script := `#!/bin/bash
 echo "Polling PR merge status..."
 exit 0
-`)
+`
 	if err := os.WriteFile(checkPath, []byte(script), 0755); err != nil {
 		t.Fatalf("writing check: %v", err)
 	}

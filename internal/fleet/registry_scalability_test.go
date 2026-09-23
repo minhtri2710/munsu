@@ -113,13 +113,6 @@ func TestRegistryIndependentCaptainAndProjectOpsOverlap(t *testing.T) {
 
 // --- Competing binds/retires: deadlock-free, no contradictory ownership -----
 
-// registryMutator is one concurrent lifecycle worker that retries a mutation
-// on stale preconditions (truthful conflict/retry behavior).
-type registryMutator struct {
-	id  string
-	run func(*Registry, string) error
-}
-
 func runRegistryWorkers(t *testing.T, workers int, fn func(*Registry, int) error) error {
 	t.Helper()
 	r, _, _ := newTestRegistry(t)

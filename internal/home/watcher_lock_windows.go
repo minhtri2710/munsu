@@ -10,7 +10,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-var errWatcherLockUnavailable = errors.New("Windows file locking unavailable")
+var errWatcherLockUnavailable = errors.New("file locking unavailable on Windows")
 
 func lockWatcherFile(file *os.File, nonblock bool) error {
 	overlapped := new(windows.Overlapped)

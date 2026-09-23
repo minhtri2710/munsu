@@ -2,8 +2,6 @@ package orchestrator
 
 import "github.com/minhtri2710/munsu/internal/home"
 
-const captainMarkerName = home.CaptainProvenanceMarkerName
-
 type Envelope = home.Envelope
 type ProcessingAck = home.ProcessingAck
 type NotificationRef = home.NotificationRef

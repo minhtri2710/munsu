@@ -547,15 +547,12 @@ func retireMergedPoll(homeDir, taskID, checkPath string, result []byte, auth *ta
 		return fmt.Errorf("canonical merged truth required (pending record exists): %w", err)
 	}
 
-	// Step 6: Durable publication. Only appends if exact evidence is absent.
-	appended, err := durableAppendStatus(homeDir, taskID, pubLine)
-	if err != nil {
+	// Step 6: Durable publication. Only appends if exact evidence is absent;
+	// already-published evidence (recovery from crash-after-publication)
+	// continues to poll removal.
+	if _, err := durableAppendStatus(homeDir, taskID, pubLine); err != nil {
 		// Publication failed; record is pending for recovery.
 		return fmt.Errorf("publication failed (pending record exists): %w", err)
-	}
-	if !appended {
-		// Already published (recovery from crash-after-publication).
-		// Continue to poll removal.
 	}
 
 	// Step 7: Atomically quarantine, then verify and remove the quarantined file.

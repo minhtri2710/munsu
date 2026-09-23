@@ -1,18 +1,12 @@
 package fleet
 
 import (
-	"os"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
-
-func gitEnvForDir(dir string) []string { return append(os.Environ(), "GIT_CEILING_DIRECTORIES="+dir) }
-func validIdentity() *domain.DeliveryIdentity {
-	return &domain.DeliveryIdentity{Provider: "github", Owner: "minhtri2710", Repo: "munsu", Number: 42, URL: "https://github.com/minhtri2710/munsu/pull/42", BaseRef: "main", HeadRef: "feature/test", HeadSHA: "abc123def456abc123def456abc123def456abc1", CapturedAt: "2026-07-18T12:00:00Z"}
-}
 
 // newFleetCanonical builds a canonical Task Authority over a fresh real
 // temporary home and returns the canonical plus the home directory.

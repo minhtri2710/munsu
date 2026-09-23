@@ -11,21 +11,6 @@ import (
 	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
-type captainTestProbe struct{}
-
-func (captainTestProbe) Probe(string, map[string]string) (bool, error) { return false, nil }
-
-type captainTestSender struct{}
-
-func (captainTestSender) Alive(string, map[string]string) (bool, error) { return false, nil }
-func (captainTestSender) Send(string, map[string]string, string) BoundSendResult {
-	return BoundSendResult{}
-}
-
-func captainRunCycle(home string) (bool, error) {
-	return RunCycleWithProbeAndSender(home, captainTestProbe{}, captainTestSender{}, NewCaptainWatcherHooks(&captainNotificationTransport{acknowledged: true}, nil), NoopRetirementPort{}, acceptingCheckValidationPort{}, NoopTaskStatePort{})
-}
-
 // --- WatcherStatusSummary tests ---
 
 func TestWatcherStatusSummary_Absent(t *testing.T) {

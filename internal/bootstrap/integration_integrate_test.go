@@ -577,10 +577,9 @@ func TestSafetyCheck_UsesScopeClassify(t *testing.T) {
 
 // Test CheckPiCapability rejects malformed versions
 func TestCheckPiCapability_RejectsMalformedVersion(t *testing.T) {
-	previous := SetCapabilityCommandRunner(func(string, []string, string, time.Duration) (string, error) {
+	defer SetCapabilityCommandRunner(func(string, []string, string, time.Duration) (string, error) {
 		return "not-a-valid-semver\n", nil
-	})
-	defer SetCapabilityCommandRunner(previous)
+	})()
 	err := CheckPiCapability("/fake/pi")
 	if err == nil {
 		t.Fatal("CheckPiCapability must reject malformed non-semver version")
@@ -591,10 +590,9 @@ func TestCheckPiCapability_RejectsMalformedVersion(t *testing.T) {
 
 // Test CheckPiCapability rejects old 0.x versions
 func TestCheckPiCapability_RejectsOldVersion(t *testing.T) {
-	previous := SetCapabilityCommandRunner(func(string, []string, string, time.Duration) (string, error) {
+	defer SetCapabilityCommandRunner(func(string, []string, string, time.Duration) (string, error) {
 		return "0.1.0\n", nil
-	})
-	defer SetCapabilityCommandRunner(previous)
+	})()
 	err := CheckPiCapability("/fake/pi")
 	if err == nil {
 		t.Fatal("CheckPiCapability must reject old version 0.1.0 < minimum " + PiMinimumVersion)
@@ -765,11 +763,7 @@ func TestCapabilityCommandRunner_Reset(t *testing.T) {
 		called = true
 		return "", nil
 	}
-	prev := SetCapabilityCommandRunner(fn)
-	if prev == nil {
-		t.Fatal("expected non-nil previous runner")
-	}
-	defer SetCapabilityCommandRunner(prev)
+	defer SetCapabilityCommandRunner(fn)()
 
 	// Call via CheckPiCapability.
 	prevTimeout := SetProbeTimeout(1 * time.Second)

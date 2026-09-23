@@ -740,11 +740,6 @@ func (h *HerdrBackend) MetaExtras() map[string]string {
 
 // --- Typed prompt submission ---
 
-// herdrAPISchemaResponse represents the top-level herdr api schema response.
-type herdrAPISchemaResponse struct {
-	Protocol int `json:"protocol"`
-}
-
 // protocolVersion probes the herdr API protocol version once and caches it.
 // Returns (version, nil) on success. Returns (0, err) on probe failure
 // (no server, CLI not found, etc.) — caller should treat this as
@@ -795,24 +790,6 @@ type herdrAgentGetResult struct {
 	Agent struct {
 		AgentStatus string `json:"agent_status"`
 	} `json:"agent"`
-}
-
-// herdrAgentPromptResponse represents the JSON response from herdr agent prompt.
-type herdrAgentPromptResponse struct {
-	Result *herdrAgentPromptResult `json:"result,omitempty"`
-	Error  *struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
-	} `json:"error,omitempty"`
-}
-
-type herdrAgentPromptResult struct {
-	Type  string          `json:"type"`
-	Agent *herdrAgentInfo `json:"agent,omitempty"`
-}
-
-type herdrAgentInfo struct {
-	AgentStatus string `json:"agent_status"`
 }
 
 // IsRecognizedAgent checks whether the target pane ID is a recognized

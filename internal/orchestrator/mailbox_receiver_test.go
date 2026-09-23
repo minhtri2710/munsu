@@ -1106,7 +1106,7 @@ func TestWriteHomeIdentity_Captain(t *testing.T) {
 	if err := WriteHomeIdentity(home, "test-captain", RankCaptain); err != nil {
 		t.Fatalf("WriteHomeIdentity: %v", err)
 	}
-	path := filepath.Join(home, captainMarkerName)
+	path := filepath.Join(home, mhome.CaptainProvenanceMarkerName)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("reading marker: %v", err)
@@ -1125,7 +1125,7 @@ func TestWriteHomeIdentity_NonCaptain(t *testing.T) {
 	if err := WriteHomeIdentity(home, "general-main", RankGeneral); err != nil {
 		t.Fatalf("WriteHomeIdentity: %v", err)
 	}
-	path := filepath.Join(home, captainMarkerName)
+	path := filepath.Join(home, mhome.CaptainProvenanceMarkerName)
 	if _, err := os.Stat(path); err == nil {
 		t.Error("non-captain WriteHomeIdentity should not create marker file")
 	}

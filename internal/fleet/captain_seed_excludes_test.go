@@ -119,18 +119,6 @@ func TestWriteWorktreeExcludesRefusesReinterpretedCommonConfig(t *testing.T) {
 	}
 }
 
-// captainExcludeContent returns the excludes file the captain worktree's
-// worktree-scoped core.excludesFile names.
-func captainExcludeContent(t *testing.T, home string) string {
-	t.Helper()
-	path := strings.TrimSpace(gitTestRun(t, home, "config", "--worktree", "--get", "core.excludesFile"))
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("reading captain excludes file: %v", err)
-	}
-	return string(data)
-}
-
 func TestWriteWorktreeExcludesFailsClosedWhenWorktreeConfigCannotBeEnabled(t *testing.T) {
 	repo, home, userExclude := excludeFixture(t)
 	if err := os.WriteFile(filepath.Join(repo, ".git", "config.lock"), nil, 0644); err != nil {

@@ -98,12 +98,3 @@ func TestNewOperationDerivesDigestFromIntent(t *testing.T) {
 		t.Errorf("op.Digest = %q, want %q", op.Digest, want)
 	}
 }
-
-func mustOp(t *testing.T, v string) Operation {
-	t.Helper()
-	id, err := NewOperationID(v)
-	if err != nil {
-		t.Fatalf("NewOperationID(%q): %v", v, err)
-	}
-	return Operation{ID: id}
-}

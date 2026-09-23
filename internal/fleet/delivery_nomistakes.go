@@ -250,7 +250,7 @@ func (p ProbeResult) String() string {
 	case backend.Failed:
 		return fmt.Sprintf("no-mistakes: failed (%s)", p.Detail)
 	default:
-		return fmt.Sprintf("no-mistakes: unknown state")
+		return "no-mistakes: unknown state"
 	}
 }
 

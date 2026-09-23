@@ -751,3 +751,7 @@ func TestRunSkipsGCWithoutATaskOwnershipSource(t *testing.T) {
 		t.Fatalf("a sweep that cannot ask about ownership must remove nothing: %v", err)
 	}
 }
+
+// reclaimNone stands in for a composition-root reclaimer that performs every
+// reclaim it is asked for.
+func reclaimNone(_ string, reclaim func() error) (bool, error) { return true, reclaim() }

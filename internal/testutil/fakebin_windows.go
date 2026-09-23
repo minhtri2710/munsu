@@ -118,11 +118,7 @@ func runFakeLauncher() error {
 	if _, err := windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation, uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info))); err != nil {
 		return fmt.Errorf("fake launcher: configure job object: %w", err)
 	}
-	process, err := windows.GetCurrentProcess()
-	if err != nil {
-		return fmt.Errorf("fake launcher: get current process: %w", err)
-	}
-	if err := windows.AssignProcessToJobObject(job, process); err != nil {
+	if err := windows.AssignProcessToJobObject(job, windows.CurrentProcess()); err != nil {
 		return fmt.Errorf("fake launcher: assign process to job object: %w", err)
 	}
 	shell, err := os.ReadFile(executable + ".fake.shell")

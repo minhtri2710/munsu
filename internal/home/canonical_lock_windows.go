@@ -10,7 +10,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-var errScopedLockUnavailable = errors.New("Windows scoped file locking unavailable")
+var errScopedLockUnavailable = errors.New("scoped file locking unavailable on Windows")
 
 // lockScopedFile takes an exclusive byte-range lock on the whole file without
 // blocking. On Windows, flock is unavailable, so LockFileEx is used, matching

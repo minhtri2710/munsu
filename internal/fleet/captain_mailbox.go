@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/minhtri2710/munsu/internal/home"
-	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 // SendMailboxResult describes the outcome of a General→Captain mailbox send.
@@ -33,7 +32,7 @@ func SendMailboxToCaptain(sm Info, parentHome, line string, sender home.BoundSen
 
 	// 1. Validate task meta fully.
 	taskID := taskIDForCaptain(sm.ID)
-	meta, err := mhome.ReadMeta(parentHome, taskID)
+	meta, err := home.ReadMeta(parentHome, taskID)
 	if err != nil {
 		result.Err = fmt.Errorf("reading meta for %s: %w", sm.ID, err)
 		return result
@@ -202,7 +201,7 @@ func ReconcileMailboxPending(parentHome string, sm Info, sender home.BoundSender
 // for config-reread records.
 func resendNotification(parentHome string, sm Info, env *home.Envelope, sender home.BoundSender) error {
 	taskID := taskIDForCaptain(sm.ID)
-	meta, err := mhome.ReadMeta(parentHome, taskID)
+	meta, err := home.ReadMeta(parentHome, taskID)
 	if err != nil {
 		// A never-launched captain has no task meta — skip resend gracefully.
 		// The durable pending record persists for future reconciliation.

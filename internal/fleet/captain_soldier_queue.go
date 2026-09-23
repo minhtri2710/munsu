@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/home"
-	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 // SendToSoldierResult describes the outcome of sending a command to a soldier.
@@ -52,7 +51,7 @@ func SendToSoldier(senderHome, soldierTaskID, senderIdentity, line string, endpo
 	result := &SendToSoldierResult{}
 
 	// 1. Read soldier task meta for window and backend.
-	meta, err := mhome.ReadMeta(senderHome, soldierTaskID)
+	meta, err := home.ReadMeta(senderHome, soldierTaskID)
 	if err != nil {
 		result.Err = fmt.Errorf("reading soldier meta: %w", err)
 		return result
@@ -167,7 +166,7 @@ func FlushPendingSoldierCommands(senderHome, soldierTaskID, senderIdentity strin
 	}
 
 	// Read soldier meta for window/backend.
-	meta, err := mhome.ReadMeta(senderHome, soldierTaskID)
+	meta, err := home.ReadMeta(senderHome, soldierTaskID)
 	if err != nil {
 		result.Err = fmt.Errorf("reading soldier meta: %w", err)
 		return result
@@ -433,7 +432,7 @@ func ConsumeAllReadyEvents(senderHome, soldierTaskID, senderIdentity, metaGenera
 	}
 
 	// Read task meta for durable key validation.
-	meta, metaErr := mhome.ReadMeta(senderHome, soldierTaskID)
+	meta, metaErr := home.ReadMeta(senderHome, soldierTaskID)
 	if metaErr != nil {
 		// If meta doesn't exist (task never spawned), there's nothing to flush.
 		// Clean up any stale ready events and return.

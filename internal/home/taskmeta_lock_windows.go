@@ -10,7 +10,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-var errLockUnavailable = errors.New("Windows file locking unavailable")
+var errLockUnavailable = errors.New("file locking unavailable on Windows")
 
 func lockExclusive(file *os.File) error {
 	overlapped := new(windows.Overlapped)

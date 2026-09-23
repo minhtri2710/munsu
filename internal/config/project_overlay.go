@@ -72,7 +72,6 @@ func (d ProjectOverlayDocument) MarshalJSON() ([]byte, error) {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	type alias ProjectOverlayDocument
 	out := struct {
 		SchemaVersion string                    `json:"schemaVersion"`
 		Overlays      map[string]ProjectOverlay `json:"overlays,omitempty"`

@@ -35,20 +35,6 @@ func (OSProcessInventory) List(canonicalHome string) ([]WriterProcess, error) {
 
 type OSProcessVerifier struct{}
 
-func (OSProcessVerifier) VerifyDead(artifact WriterArtifact) (bool, error) {
-	current, err := inspectProcess(artifact.PID)
-	if isProcessMissing(err) {
-		return true, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	if current.StartToken != artifact.StartToken {
-		return true, nil
-	}
-	return false, nil
-}
-
 func NewRuntimeWriterFence() CompositeWriterFence {
 	return CompositeWriterFence{Artifacts: DurableArtifactScanner{Kinds: []string{"watcher", "afk"}}, Processes: OSProcessInventory{}, Verifier: OSProcessVerifier{}, Marked: OSMarkerInventory{}, Oracle: OSRunOracle{}}
 }

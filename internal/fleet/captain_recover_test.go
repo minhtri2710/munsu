@@ -257,21 +257,6 @@ func (p staticIntegrationPort) Status(string, string) (IntegrationStatus, error)
 	return p.status, nil
 }
 
-type countingStatusIntegrationPort struct {
-	calls   int
-	harness string
-}
-
-func (p *countingStatusIntegrationPort) EnsureCaptain(string, string) error { return nil }
-func (p *countingStatusIntegrationPort) CaptainPaths(string, string) ([]string, error) {
-	return nil, nil
-}
-func (p *countingStatusIntegrationPort) Status(_, harnessName string) (IntegrationStatus, error) {
-	p.calls++
-	p.harness = harnessName
-	return IntegrationStatus{State: "installed"}, nil
-}
-
 type countingLaunchEndpoint struct{ calls int }
 
 func (e *countingLaunchEndpoint) Launch(string, LaunchRequest) (LaunchResult, error) {

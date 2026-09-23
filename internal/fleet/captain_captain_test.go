@@ -3042,22 +3042,6 @@ func TestSeedWorktree_GitClean(t *testing.T) {
 	}
 }
 
-// gitListsPath reports whether `git worktree list` output names path.
-//
-// The raw comparison is tried first so this stays exactly as strict as it was.
-// The fallback is for windows, where git prints the long path with forward
-// slashes while t.TempDir() hands back a backslash path under the 8.3 short
-// name of the user profile (RUNNER~1) -- two spellings of one directory, which
-// a substring test reads as a missing worktree (#549 group 8).
-func gitListsPath(out, path string) bool {
-	hay := filepath.ToSlash(out)
-	if strings.Contains(hay, filepath.ToSlash(path)) {
-		return true
-	}
-	resolved, err := filepath.EvalSymlinks(path)
-	return err == nil && strings.Contains(hay, filepath.ToSlash(resolved))
-}
-
 // TestUpdate_ManagedWorktreeUsesProvenanceRepo proves that Update() works for
 // managed worktree captains even when parentHome (the General state home) is NOT
 // a git repo. This covers Defect 3: captain update must use the source-repo from
@@ -3854,4 +3838,91 @@ func TestSeedCaptain_InvokesIntegrationOnce(t *testing.T) {
 	if err != nil || port.calls != 1 {
 		t.Fatalf("error=%v calls=%d", err, port.calls)
 	}
+}
+
+func safeStr(s string) string {
+	if len(s) > 8 {
+		return s[:8]
+	}
+	return s
+}
+
+// seedWithParentTest seeds a managed-worktree captain home from a fresh
+// fixture project repo.
+func seedWithParentTest(t *testing.T, id, captainHome, parentHome, charter string) error {
+	t.Helper()
+	return SeedCaptain(CaptainSeedOptions{ID: id, Home: captainHome, Repo: newWorktreeFixture(t), ParentHome: parentHome, Charter: charter, Integration: fakeIntegrationPort{}})
+}
+
+// seedTest seeds a managed-worktree captain home under its own General home.
+func seedTest(t *testing.T, id, captainHome, charter string) error {
+	t.Helper()
+	parentHome := t.TempDir()
+	if _, err := home.Init(parentHome); err != nil {
+		t.Fatal(err)
+	}
+	return seedWithParentTest(t, id, captainHome, parentHome, charter)
+}
+
+type countingIntegrationPort struct {
+	calls int
+	err   error
+}
+
+func (p *countingIntegrationPort) EnsureCaptain(string, string) error { p.calls++; return p.err }
+
+func (p *countingIntegrationPort) CaptainPaths(string, string) ([]string, error) {
+	return nil, nil
+}
+
+func (p *countingIntegrationPort) Status(string, string) (IntegrationStatus, error) {
+	return IntegrationStatus{}, nil
+}
+
+type countingStatusIntegrationPort struct {
+	calls   int
+	harness string
+}
+
+func (p *countingStatusIntegrationPort) EnsureCaptain(string, string) error { return nil }
+
+func (p *countingStatusIntegrationPort) CaptainPaths(string, string) ([]string, error) {
+	return nil, nil
+}
+
+func (p *countingStatusIntegrationPort) Status(_, harnessName string) (IntegrationStatus, error) {
+	p.calls++
+	p.harness = harnessName
+	return IntegrationStatus{State: "installed"}, nil
+}
+
+// republishWithCaptainProfile re-stores the fleet base with the given
+// CaptainProfile (preserving the rest of the existing document) and republishes
+// the captain's snapshot, mirroring explicit authoring via
+// `munsu config set captain-harness`.
+func republishWithCaptainProfile(t *testing.T, parent, captainHome string, profile config.CaptainProfile) {
+	t.Helper()
+	base, err := config.LoadFleetBase(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base.CaptainProfile = profile
+	if err := config.StoreFleetBase(parent, base); err != nil {
+		t.Fatal(err)
+	}
+	if err := publishResolvedSnapshot(parent, captainHome); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// captainExcludeContent returns the excludes file the captain worktree's
+// worktree-scoped core.excludesFile names.
+func captainExcludeContent(t *testing.T, home string) string {
+	t.Helper()
+	path := strings.TrimSpace(gitTestRun(t, home, "config", "--worktree", "--get", "core.excludesFile"))
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading captain excludes file: %v", err)
+	}
+	return string(data)
 }

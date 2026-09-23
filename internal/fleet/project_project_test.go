@@ -379,11 +379,6 @@ func TestIsURL(t *testing.T) {
 	}
 }
 
-// boolPtr returns a pointer to v for typed config pointer fields.
-func boolPtr(v bool) *bool {
-	return &v
-}
-
 // TestRegistryFileFormat proves that List round-trips every registry field
 // from the canonical Fleet Registry, including the +yolo lifecycle flag.
 // Legacy projects.md parsing is covered by the ParseEntry/FormatEntry

@@ -158,11 +158,6 @@ func directoryEntries(t *testing.T, dir string) []string {
 	return result
 }
 
-func fileAbsent(path string) bool {
-	_, err := os.Stat(path)
-	return os.IsNotExist(err)
-}
-
 func cleanupStatus(claim *taskauthority.CleanupClaim) string {
 	if claim == nil {
 		return "none"

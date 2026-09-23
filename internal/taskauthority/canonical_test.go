@@ -245,7 +245,6 @@ func TestCanonicalOperationIDReusedWithDifferentIntent(t *testing.T) {
 
 	// Reuse the same Operation ID with a different intent (a start).
 	start := startWithRev(c, "t1", 1)
-	reused := domain.Operation{ID: op.ID, Digest: mustDigest(t, start)}
 	reused, err := domain.NewOperation(op.ID, start)
 	if err != nil {
 		t.Fatal(err)
@@ -253,15 +252,6 @@ func TestCanonicalOperationIDReusedWithDifferentIntent(t *testing.T) {
 	if _, err := c.Start(reused, start); !errors.Is(err, ErrOperationConflict) {
 		t.Fatalf("reused op id with different intent = %v, want ErrOperationConflict", err)
 	}
-}
-
-func mustDigest(t *testing.T, intent domain.Intent) string {
-	t.Helper()
-	d, err := domain.Digest(intent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return d
 }
 
 func TestCanonicalStalePreconditionConflict(t *testing.T) {

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/domain"
-	"github.com/minhtri2710/munsu/internal/home"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -1132,11 +1131,11 @@ func TestReturnChannelClosedLoop(t *testing.T) {
 	// 1) Marked send path (General → Captain). Pane inject is backend-specific;
 	// the greppable contract is the marker prefix used by munsu send for kind=captain.
 	req := "report progress on return-channel-e2e"
-	marked := home.MarkFromGeneral(req)
-	if !home.IsFromGeneral(marked) {
+	marked := mhome.MarkFromGeneral(req)
+	if !mhome.IsFromGeneral(marked) {
 		t.Fatal("expected FromGeneral marker on captain send line")
 	}
-	if !strings.HasPrefix(marked, home.FromGeneralLabel) {
+	if !strings.HasPrefix(marked, mhome.FromGeneralLabel) {
 		t.Fatalf("marker label missing: %q", marked)
 	}
 

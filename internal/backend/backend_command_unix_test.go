@@ -47,6 +47,33 @@ func killBackendTestPidFile(t *testing.T, pidFile string) {
 	_ = syscall.Kill(pid, syscall.SIGKILL)
 }
 
+// escapeeDeadline is a parent context that expires with DeadlineExceeded only
+// once armed. The escapee must leave the process group before the timeout kill
+// or it dies with the group, and interpreter startup under load can outlast any
+// fixed bound, so the timeout is measured from the escape rather than from the
+// command start.
+type escapeeDeadline struct {
+	context.Context
+	done chan struct{}
+}
+
+func newEscapeeDeadline() *escapeeDeadline {
+	return &escapeeDeadline{Context: context.Background(), done: make(chan struct{})}
+}
+
+func (d *escapeeDeadline) arm(timeout time.Duration) {
+	time.AfterFunc(timeout, func() { close(d.done) })
+}
+func (d *escapeeDeadline) Done() <-chan struct{} { return d.done }
+func (d *escapeeDeadline) Err() error {
+	select {
+	case <-d.done:
+		return context.DeadlineExceeded
+	default:
+		return nil
+	}
+}
+
 func TestBackendCommandTimeoutReturnsWhenEscapedDescendantHoldsPipes(t *testing.T) {
 	dir := t.TempDir()
 	pidFile := filepath.Join(dir, "escapee.pid")
@@ -55,16 +82,22 @@ func TestBackendCommandTimeoutReturnsWhenEscapedDescendantHoldsPipes(t *testing.
 	t.Cleanup(func() { killBackendTestPidFile(t, pidFile) })
 
 	const timeout = 2 * time.Second
+	deadline := newEscapeeDeadline()
 	type commandResult struct{ err error }
 	result := make(chan commandResult, 1)
 	go func() {
-		_, _, err := runBackendCommandWithTimeout(context.Background(), timeout, bin, nil, dir, nil)
+		// The command's own bound is out of reach; the deadline armed below
+		// is the timeout under test.
+		_, _, err := runBackendCommandWithTimeout(deadline, time.Hour, bin, nil, dir, nil)
 		result <- commandResult{err: err}
 	}()
+	// The escapee writes its pid file only after setpgrp/setsid, so from here
+	// the group kill cannot reach it.
 	if !waitForBackendTestFile(pidFile, backendCommandTestStartupWatchdog) {
 		t.Fatal("fake CLI did not start its process-group escapee")
 	}
 	started := time.Now()
+	deadline.arm(timeout)
 
 	select {
 	case got := <-result:

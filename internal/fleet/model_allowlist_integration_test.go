@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/config"
-	fleetconfig "github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/testutil"
@@ -501,14 +500,14 @@ func TestSpawn_DispatchSelectionResolvedOnce(t *testing.T) {
 		t.Skip("fake quota-axi executable is POSIX-only")
 	}
 	homeDir := t.TempDir()
-	base := fleetconfig.FleetBaseDocument{
-		SchemaVersion: fleetconfig.FleetBaseSchemaVersion,
-		Config: fleetconfig.ProjectOverlay{
+	base := config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config: config.ProjectOverlay{
 			DefaultMode: "direct-pr",
 			Backend:     "tmux",
-			DispatchProfiles: []fleetconfig.DispatchProfile{
+			DispatchProfiles: []config.DispatchProfile{
 				{Name: "quota", Match: []string{"*"}, SelectStrategy: "quota-balanced",
-					Use: []fleetconfig.DispatchCandidate{
+					Use: []config.DispatchCandidate{
 						{Harness: harness.Codex, Model: "q-model"},
 						{Harness: harness.Pi, Model: "q-pi"},
 					}},

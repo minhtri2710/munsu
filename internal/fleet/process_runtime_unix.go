@@ -23,4 +23,17 @@ func inspectProcess(pid int) (inspectedProcess, error) {
 	}
 	return inspectedProcess{StartToken: StartToken(start), ExecutablePath: executable}, nil
 }
+func (OSProcessVerifier) VerifyDead(artifact WriterArtifact) (bool, error) {
+	current, err := inspectProcess(artifact.PID)
+	if isProcessMissing(err) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if current.StartToken != artifact.StartToken {
+		return true, nil
+	}
+	return false, nil
+}
 func invalidProcessIdentity(pid int) error { return errors.New("invalid process identity") }

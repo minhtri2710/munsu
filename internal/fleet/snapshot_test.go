@@ -63,18 +63,6 @@ func testSnapshotDeps(t *testing.T, probes ...EndpointProbe) SnapshotDependencie
 	return deps
 }
 
-// stubCurrentState is a CurrentStateQuery that returns a fixed authoritative
-// projection (used to test snapshot construction independent of the canonical
-// reader in focused cases).
-type stubCurrentState struct {
-	info *CurrentStateInfo
-	err  error
-}
-
-func (s stubCurrentState) Read(homeDir, taskID string) (*CurrentStateInfo, error) {
-	return s.info, s.err
-}
-
 // failingCurrentState fails every read, simulating an unreadable canonical
 // Task Authority.
 type failingCurrentState struct {

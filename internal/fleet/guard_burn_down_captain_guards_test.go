@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/home"
-	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 // ----------------------------------------------------------------------------
@@ -20,7 +19,7 @@ func TestEnsureConfigRereadRequirement_NilSender(t *testing.T) {
 
 	// Write task meta for captain in parent home with window and backend.
 	taskID := taskIDForCaptain(captainID)
-	if err := mhome.WriteMeta(parentHome, taskID, map[string]string{
+	if err := home.WriteMeta(parentHome, taskID, map[string]string{
 		"kind":    "captain",
 		"window":  "win-1",
 		"sm_id":   captainID,
@@ -43,7 +42,7 @@ func TestResendNotification_NoWindowInMeta(t *testing.T) {
 	parentHome, _, captainID := setupTestHomes(t)
 	taskID := taskIDForCaptain(captainID)
 	// Write meta without window key
-	if err := mhome.WriteMeta(parentHome, taskID, map[string]string{
+	if err := home.WriteMeta(parentHome, taskID, map[string]string{
 		"backend": "tmux",
 	}); err != nil {
 		t.Fatal(err)
@@ -60,7 +59,7 @@ func TestResendNotification_NoWindowInMeta(t *testing.T) {
 func TestResendNotification_NilSender(t *testing.T) {
 	parentHome, _, captainID := setupTestHomes(t)
 	taskID := taskIDForCaptain(captainID)
-	if err := mhome.WriteMeta(parentHome, taskID, map[string]string{
+	if err := home.WriteMeta(parentHome, taskID, map[string]string{
 		"window":  "win-1",
 		"backend": "tmux",
 	}); err != nil {
@@ -78,7 +77,7 @@ func TestResendNotification_NilSender(t *testing.T) {
 func TestResendNotification_NotAcknowledged(t *testing.T) {
 	parentHome, _, captainID := setupTestHomes(t)
 	taskID := taskIDForCaptain(captainID)
-	if err := mhome.WriteMeta(parentHome, taskID, map[string]string{
+	if err := home.WriteMeta(parentHome, taskID, map[string]string{
 		"window":  "win-1",
 		"backend": "tmux",
 	}); err != nil {

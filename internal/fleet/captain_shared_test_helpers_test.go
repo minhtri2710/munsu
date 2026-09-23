@@ -188,25 +188,6 @@ func captainHomeWithSnapshot(t *testing.T, profile config.CaptainProfile) string
 	return home
 }
 
-// republishWithCaptainProfile re-stores the fleet base with the given
-// CaptainProfile (preserving the rest of the existing document) and republishes
-// the captain's snapshot, mirroring explicit authoring via
-// `munsu config set captain-harness`.
-func republishWithCaptainProfile(t *testing.T, parent, captainHome string, profile config.CaptainProfile) {
-	t.Helper()
-	base, err := config.LoadFleetBase(parent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	base.CaptainProfile = profile
-	if err := config.StoreFleetBase(parent, base); err != nil {
-		t.Fatal(err)
-	}
-	if err := publishResolvedSnapshot(parent, captainHome); err != nil {
-		t.Fatal(err)
-	}
-}
-
 // testProjectRecord carries the scoped Project facts a test fixture registers
 // through the canonical Fleet Registry (the sole lifecycle authority).
 type testProjectRecord struct {
@@ -214,18 +195,6 @@ type testProjectRecord struct {
 	Path   string
 	Mode   string
 	Config config.ProjectOverlay
-}
-
-// initTestHome creates a fresh canonical home so the Fleet Registry (the sole
-// lifecycle authority) can operate on it. The Fleet Registry is home-backed;
-// test fixtures must open a canonical home rather than a plain directory.
-func initTestHome(t *testing.T) string {
-	t.Helper()
-	homeDir := t.TempDir()
-	if _, err := home.Init(homeDir); err != nil {
-		t.Fatalf("home.Init: %v", err)
-	}
-	return homeDir
 }
 
 // testCaptainRecord carries the scoped Captain facts a test fixture registers
