@@ -434,7 +434,7 @@ func TestDeliverWake_EventAppendIsBestEffort(t *testing.T) {
 	}
 }
 
-func TestDeliverWake_EnqueueFailureRecorded(t *testing.T) {
+func TestDeliverWake_EnqueueFailureFailsClosed(t *testing.T) {
 	soldierHome := t.TempDir()
 	captainHome := t.TempDir()
 
@@ -452,16 +452,33 @@ func TestDeliverWake_EnqueueFailureRecorded(t *testing.T) {
 		Message:    "task complete",
 		Role:       "soldier",
 	})
+	// A material state with no queued wake must never read as delivered.
+	if err == nil || !strings.Contains(err.Error(), "enqueueing wake") {
+		t.Fatalf("DeliverWake err = %v (receipt %+v), want enqueueing wake error", err, receipt)
+	}
+	if receipt != nil {
+		t.Fatalf("receipt = %+v, want nil on enqueue failure", receipt)
+	}
+}
+
+func TestDeliverWake_NonMaterialIgnoresBrokenWakeQueue(t *testing.T) {
+	soldierHome := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(soldierHome, "state", ".wake-queue"), 0755); err != nil {
+		t.Fatalf("mkdir wake-queue-as-dir: %v", err)
+	}
+
+	receipt, err := DeliverWake(DeliverRequest{
+		HomeDir: soldierHome,
+		TaskID:  "test-nonmaterial-broken-queue",
+		State:   "working",
+		Message: "in progress",
+		Role:    "soldier",
+	})
 	if err != nil {
 		t.Fatalf("DeliverWake: %v", err)
 	}
-	// The failed enqueue must be explicit on the receipt (no timestamp, no
-	// wake flag) rather than silently indistinguishable from a delivered wake.
-	if receipt.WakeEnqueued || receipt.EnqueueUnix != 0 {
-		t.Fatalf("receipt = %+v, want WakeEnqueued=false and EnqueueUnix=0 when enqueue fails", receipt)
-	}
-	if !receipt.EventAppended {
-		t.Fatalf("receipt = %+v, want event still appended when enqueue fails", receipt)
+	if receipt.WakeEnqueued || !receipt.EventAppended {
+		t.Fatalf("receipt = %+v, want no wake and event appended", receipt)
 	}
 }
 

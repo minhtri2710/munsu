@@ -64,13 +64,12 @@ func isMaterial(state string) bool {
 //  3. Write captain receipt + init obligations (if parentHome set and material)
 //  4. Append typed event (best-effort)
 //  5. Enqueue wake (material states only)
-//  6. Complete best-effort wake bookkeeping
 //
-// Fail-closed: steps 1–3 must succeed; steps 4–6 are best-effort (return
-// non-fatal warnings via stderr).
+// Fail-closed: steps 1–3 and 5 must succeed; step 4 is best-effort (a
+// non-fatal warning via stderr).
 //
-// Event append and injection errors never fail the report — they are logged
-// to stderr and the receipt is returned without error.
+// Event append errors never fail the report — they are logged to stderr and
+// the receipt records EventAppended=false.
 func DeliverWake(req DeliverRequest) (*WakeReceipt, error) {
 	// Step 0: Validate inputs
 	if req.HomeDir == "" {
@@ -142,11 +141,10 @@ func DeliverWake(req DeliverRequest) (*WakeReceipt, error) {
 	if isMaterial(req.State) {
 		wakePayload := fmt.Sprintf("%s: %s [event=%d]", req.TaskID, statusLine, syntheticID)
 		if err := EnqueueWake(req.HomeDir, "signal", req.TaskID, wakePayload); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: wake enqueue: %v\n", err)
-		} else {
-			receipt.EnqueueUnix = time.Now().Unix()
-			receipt.WakeEnqueued = true
+			return nil, fmt.Errorf("enqueueing wake: %w", err)
 		}
+		receipt.EnqueueUnix = time.Now().Unix()
+		receipt.WakeEnqueued = true
 	}
 
 	return receipt, nil
