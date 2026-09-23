@@ -35,16 +35,29 @@ func TestDeliveryProviderFor_UnknownProviderRefuses(t *testing.T) {
 	}
 }
 
-func TestDeliveryProviderFor_GitHubCapabilityAbsentRefuses(t *testing.T) {
-	old := ghAxiLookPath
-	t.Cleanup(func() { ghAxiLookPath = old })
-	ghAxiLookPath = func() (string, error) {
-		return "", errors.New("gh-axi not found")
-	}
+// TestDeliverRefusesGitHubBeforeJournal proves a GitHub delivery identity is
+// refused as unsupported before any journal write or authorization, even
+// with a working provider capability installed.
+func TestDeliverRefusesGitHubBeforeJournal(t *testing.T) {
+	c, homeDir := newFleetCanonical(t)
+	taskID := "t1"
+	mustWorkingDeliveryTask(t, c, taskID)
+	provider := installScriptedProviderFor(t, "open-then-merged")
+	req := deliverRequest()
+	req.Identity.Provider = "github"
+	req.Identity.URL = "https://github.com/minhtri2710/munsu/pull/42"
 
-	_, err := deliveryProviderFor(domain.DeliveryIdentity{Provider: "github"})
-	if err == nil || !strings.Contains(err.Error(), "gh-axi must be Ready") {
-		t.Fatalf("deliveryProviderFor error = %v, want absent GitHub capability refusal", err)
+	if _, err := Deliver(homeDir, taskID, req); err == nil || !strings.Contains(err.Error(), "GitHub delivery is unsupported") {
+		t.Fatalf("Deliver err = %v, want GitHub delivery refused", err)
+	}
+	if files := listDeliveryJournalFiles(t, homeDir); len(files) != 0 {
+		t.Fatalf("journal records = %v, want none", files)
+	}
+	if _, err := c.DeliveryAuthorization(mustFleetTaskID(t, taskID)); !errors.Is(err, taskauthority.ErrNotFound) {
+		t.Fatalf("authorization err = %v, want none issued", err)
+	}
+	if provider.merges != 0 || len(provider.requests) != 0 {
+		t.Fatalf("provider touched: merges=%d requests=%d", provider.merges, len(provider.requests))
 	}
 }
 

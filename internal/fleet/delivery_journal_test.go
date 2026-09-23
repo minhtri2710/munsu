@@ -84,11 +84,11 @@ func (f *fakeDeliveryProvider) Observe(ident domain.DeliveryIdentity) (DeliveryP
 // execute under; its head equals the bound worktree head.
 func deliveryTestIdentity() domain.DeliveryIdentity {
 	return domain.DeliveryIdentity{
-		Provider:   "github",
+		Provider:   "gitlab",
 		Owner:      "minhtri2710",
 		Repo:       "munsu",
 		Number:     42,
-		URL:        "https://github.com/minhtri2710/munsu/pull/42",
+		URL:        "https://gitlab.com/minhtri2710/munsu/-/merge_requests/42",
 		BaseRef:    deliveryTestBase,
 		HeadRef:    "feature/delivery",
 		HeadSHA:    deliveryTestHead,

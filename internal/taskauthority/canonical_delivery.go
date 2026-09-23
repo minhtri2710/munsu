@@ -1119,7 +1119,7 @@ func (c *Canonical) CommitDeliveryOutcome(op domain.Operation, req CanonicalDeli
 		if err != nil {
 			return Aggregate{}, DeliveryIndex{}, nil, err
 		}
-		if reasons := c.authorizationCurrencyReasons(cur, auth, holds, false); len(reasons) > 0 {
+		if reasons := c.authorizationCurrencyReasons(cur, auth, holds, deliveryOutcomeCommit); len(reasons) > 0 {
 			return Aggregate{}, DeliveryIndex{}, nil, preconditionError("delivery authorization is not current for task %s: %v", cur.TaskID, reasons)
 		}
 		next := cur.clone()
@@ -1167,17 +1167,33 @@ func (c *Canonical) CommitDeliveryOutcome(op domain.Operation, req CanonicalDeli
 	return DeliveryOutcomeResult{Outcome: committed}, nil
 }
 
+// deliveryCurrencyCheck names the caller of authorizationCurrencyReasons.
+type deliveryCurrencyCheck int
+
+const (
+	// deliveryCurrencyRead is the currency read: every reason applies.
+	deliveryCurrencyRead deliveryCurrencyCheck = iota
+	// deliveryOutcomeCommit records the truth of an already-attempted
+	// provider mutation. The bound head and the task revision may have
+	// legitimately moved since issuance (the delivery itself advances the
+	// head; unrelated canonical mutations advance the revision), so neither
+	// makes a post-mutation outcome uncommittable. It observes active holds
+	// only: a hold matching at commit time refuses, drift in the
+	// authorization-time holds digest does not. The commit's own
+	// precondition still fences the revision optimistically.
+	deliveryOutcomeCommit
+)
+
 // authorizationCurrencyReasons re-derives the current validity of one issued
-// authorization against current task state. checkHead=false is used by the
-// outcome commit, where the delivery execution has legitimately moved the
-// bound repository head (a successful mutation is never uncommittable because
-// the head advanced); the currency read uses checkHead=true.
-func (c *Canonical) authorizationCurrencyReasons(agg Aggregate, auth DeliveryAuthorization, holds []DispatchHold, checkHead bool) []DeliveryCurrencyReason {
+// authorization against current task state for the given caller; the outcome
+// commit exempts the identity-head, revision and holds-digest reasons, the
+// currency read reports every reason.
+func (c *Canonical) authorizationCurrencyReasons(agg Aggregate, auth DeliveryAuthorization, holds []DispatchHold, check deliveryCurrencyCheck) []DeliveryCurrencyReason {
 	var reasons []DeliveryCurrencyReason
 	if auth.Generation != agg.Generation {
 		reasons = append(reasons, DeliveryCurrencyGeneration)
 	}
-	if auth.Revision != agg.Revision {
+	if check == deliveryCurrencyRead && auth.Revision != agg.Revision {
 		reasons = append(reasons, DeliveryCurrencyRevision)
 	}
 	if auth.Phase != agg.Phase {
@@ -1197,10 +1213,10 @@ func (c *Canonical) authorizationCurrencyReasons(agg Aggregate, auth DeliveryAut
 	if holdsBlockAction(holds, DispatchActionDelivery, agg) {
 		reasons = append(reasons, DeliveryCurrencyMatchingHold)
 	}
-	if deliveryHoldsDigest(holds, agg) != auth.HoldsDigest {
+	if check == deliveryCurrencyRead && deliveryHoldsDigest(holds, agg) != auth.HoldsDigest {
 		reasons = append(reasons, DeliveryCurrencyHoldsDigest)
 	}
-	if checkHead && agg.Worktree != nil && agg.Worktree.Head != auth.Identity.HeadSHA {
+	if check == deliveryCurrencyRead && agg.Worktree != nil && agg.Worktree.Head != auth.Identity.HeadSHA {
 		reasons = append(reasons, DeliveryCurrencyIdentityHead)
 	}
 	return reasons
@@ -1442,7 +1458,7 @@ func (c *Canonical) DeliveryCurrency(taskID domain.TaskID) (DeliveryCurrency, er
 		cur.Reasons = []DeliveryCurrencyReason{DeliveryCurrencyRevoked}
 		return cur, nil
 	}
-	cur.Reasons = c.authorizationCurrencyReasons(doc.Aggregate, a, holds, true)
+	cur.Reasons = c.authorizationCurrencyReasons(doc.Aggregate, a, holds, deliveryCurrencyRead)
 	cur.Valid = len(cur.Reasons) == 0
 	return cur, nil
 }

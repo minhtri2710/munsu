@@ -247,9 +247,6 @@ type terminalGitHubClient struct{ data string }
 func (c terminalGitHubClient) ViewPRJSON(string, string, int, string) ([]byte, error) {
 	return []byte(c.data), nil
 }
-func (terminalGitHubClient) ObservePR(string, string, int) (DeliveryProviderObservation, error) {
-	return DeliveryProviderObservation{}, nil
-}
 func (terminalGitHubClient) CaptureIdentity(string) (*domain.DeliveryIdentity, error) {
 	return nil, nil
 }

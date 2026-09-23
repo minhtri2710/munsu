@@ -160,13 +160,8 @@ func TestReadDeliveryJournal_InvalidVersionOrID(t *testing.T) {
 	})
 }
 
-func TestRecoverPendingDeliveryJournal_ProvenanceOrHomeMismatch(t *testing.T) {
+func TestReadActiveDeliveryJournal_ProvenanceOrHomeMismatch(t *testing.T) {
 	h, _ := setupTestHome(t)
-	lk, err := h.Lock(deliveryLockScope)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer lk.Release()
 	jData := []byte(`{"version":1,"id":"j1","phase":"prepared","home":"/other/home"}`)
 	if err := os.MkdirAll(filepath.Join(h.Root(), "state", deliveryJournalDirName), 0755); err != nil {
 		t.Fatal(err)
@@ -174,19 +169,14 @@ func TestRecoverPendingDeliveryJournal_ProvenanceOrHomeMismatch(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(h.Root(), "state", deliveryJournalKey("j1")), jData, 0644); err != nil {
 		t.Fatal(err)
 	}
-	err = recoverPendingDeliveryJournal(h, lk, "j1")
+	_, err := readActiveDeliveryJournal(h, "j1")
 	if err == nil || !strings.Contains(err.Error(), "invalid delivery journal entry") {
-		t.Fatalf("recoverPendingDeliveryJournal err = %v, want invalid delivery journal entry", err)
+		t.Fatalf("readActiveDeliveryJournal err = %v, want invalid delivery journal entry", err)
 	}
 }
 
-func TestRecoverPendingDeliveryJournal_TerminalPhase(t *testing.T) {
+func TestReadActiveDeliveryJournal_TerminalPhase(t *testing.T) {
 	h, _ := setupTestHome(t)
-	lk, err := h.Lock(deliveryLockScope)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer lk.Release()
 	// Marshal the record rather than interpolating h.Root() into a JSON
 	// literal: on windows the path's backslashes would be read back as JSON
 	// escapes ("\U" of C:\Users), and the record would fail to decode before
@@ -206,9 +196,9 @@ func TestRecoverPendingDeliveryJournal_TerminalPhase(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(h.Root(), "state", deliveryJournalKey("j1")), jData, 0644); err != nil {
 		t.Fatal(err)
 	}
-	err = recoverPendingDeliveryJournal(h, lk, "j1")
+	_, err = readActiveDeliveryJournal(h, "j1")
 	if err == nil || !strings.Contains(err.Error(), `is terminal ("completed") but still active`) {
-		t.Fatalf("recoverPendingDeliveryJournal err = %v, want is terminal but still active", err)
+		t.Fatalf("readActiveDeliveryJournal err = %v, want is terminal but still active", err)
 	}
 }
 

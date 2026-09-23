@@ -84,11 +84,12 @@ type deliveryJournalIndex struct {
 
 // deliveryJournal is the durable Fleet-owned intent of one delivery
 // execution. It pins every typed request field needed to resume the delivery
-// with the SAME Operation IDs: the task generation/revision precondition, the
+// with the SAME Operation IDs: the authorization's generation/revision
+// precondition (later operations fence the task's current revision), the
 // operation kind, the exact typed delivery identity/head, the provider merge
 // method, the asserted closed-set preconditions, the deterministic
-// authorization/revoke/outcome Operation identities, the exact request
-// digests, the provider action, and the durable resume stage. The outcome
+// authorization/revoke/outcome Operation identities, the authorization
+// request digest, the provider action, and the durable resume stage. The outcome
 // fields are pinned at the outcome stage so recovery replays the exact
 // committed intent instead of re-deriving a conflicting one.
 type deliveryJournal struct {
@@ -110,10 +111,7 @@ type deliveryJournal struct {
 	RevokeOpID    string `json:"revoke_op_id"`
 	OutcomeOpID   string `json:"outcome_op_id"`
 
-	AuthorizeDigest        string `json:"authorize_digest,omitempty"`
-	RevokeDigest           string `json:"revoke_digest,omitempty"`
-	RevokeFailClosedDigest string `json:"revoke_fail_closed_digest,omitempty"`
-	OutcomeDigest          string `json:"outcome_digest,omitempty"`
+	AuthorizeDigest string `json:"authorize_digest,omitempty"`
 
 	OutcomeStatus    taskauthority.DeliveryOutcomeStatus `json:"outcome_status,omitempty"`
 	OutcomeDetail    string                              `json:"outcome_detail,omitempty"`
@@ -343,44 +341,56 @@ func newDeliveryJournalID() (string, error) {
 
 // recoverPendingDeliveryJournals resumes every ACTIVE delivery journal of
 // one home through the bounded index (Home.Read — never a filesystem scan).
-// A failed resume fails closed and keeps the record active; a completed
-// record's terminal truth is never resumed. The index and each journal are
-// validated fail-closed: a malformed index, a missing or malformed
-// referenced journal, or a terminal record still listed as active is
-// contradictory state and recovery stops.
+// The index and every listed journal are validated before any resume: a
+// malformed index, a missing or malformed referenced journal, or a terminal
+// record still listed as active is contradictory state and recovery stops
+// without resuming anything. A failed resume fails closed and keeps that
+// record active without preventing the other journals from being attempted;
+// every resume failure is returned joined. A completed record's terminal
+// truth is never resumed.
 func recoverPendingDeliveryJournals(h *home.Home, lk *home.Lock) error {
 	idx, err := readDeliveryIndex(h)
 	if err != nil {
 		return err
 	}
-	for _, id := range idx.Active {
-		if err := recoverPendingDeliveryJournal(h, lk, id); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// recoverPendingDeliveryJournal resumes one active delivery journal record.
-func recoverPendingDeliveryJournal(h *home.Home, lk *home.Lock, id string) error {
-	journal, err := readDeliveryJournal(h, id)
-	if err != nil {
-		return err
-	}
-	if journal.ID != id || journal.Home != h.Root() {
-		return fmt.Errorf("invalid delivery journal entry %s", id)
-	}
-	if journal.Phase != deliveryPhasePrepared {
-		return fmt.Errorf("delivery journal %s is terminal (%q) but still active", id, journal.Phase)
+	if len(idx.Active) == 0 {
+		return nil
 	}
 	c, err := taskauthority.NewCanonical(h)
 	if err != nil {
-		return fmt.Errorf("delivery journal %s: composing task authority: %w", id, err)
+		return fmt.Errorf("delivery recovery: composing task authority: %w", err)
 	}
-	if _, err := resumeDeliveryJournal(h, lk, c, journal); err != nil {
-		return err
+	journals := make([]*deliveryJournal, 0, len(idx.Active))
+	for _, id := range idx.Active {
+		journal, err := readActiveDeliveryJournal(h, id)
+		if err != nil {
+			return err
+		}
+		journals = append(journals, journal)
 	}
-	return nil
+	var failures []error
+	for _, journal := range journals {
+		if _, err := resumeDeliveryJournal(h, lk, c, journal); err != nil {
+			failures = append(failures, fmt.Errorf("delivery journal %s: %w", journal.ID, err))
+		}
+	}
+	return errors.Join(failures...)
+}
+
+// readActiveDeliveryJournal reads one journal listed as active and fails
+// closed on contradictory state.
+func readActiveDeliveryJournal(h *home.Home, id string) (*deliveryJournal, error) {
+	journal, err := readDeliveryJournal(h, id)
+	if err != nil {
+		return nil, err
+	}
+	if journal.ID != id || journal.Home != h.Root() {
+		return nil, fmt.Errorf("invalid delivery journal entry %s", id)
+	}
+	if journal.Phase != deliveryPhasePrepared {
+		return nil, fmt.Errorf("delivery journal %s is terminal (%q) but still active", id, journal.Phase)
+	}
+	return journal, nil
 }
 
 // RecoverDeliveryJournals resumes every pending Fleet-owned delivery journal

@@ -1554,3 +1554,118 @@ func TestCanonicalDeliveryRejectedWhileCleanupClaimActive(t *testing.T) {
 		t.Fatalf("revision advanced %d -> %d despite claim rejection", rev, agg.Revision)
 	}
 }
+
+// bumpRevisionForTest commits one unrelated canonical mutation of the task
+// (a delivery contract record) at the given revision.
+func bumpRevisionForTest(t *testing.T, c *Canonical, taskID string, rev uint64) {
+	t.Helper()
+	req := CanonicalRecordDeliveryContractRequest{
+		HomeID: c.HomeID(), TaskID: mustTaskID(t, taskID), Precondition: preconditionOf(1, rev),
+		Mode: "no-mistakes", Reason: "unrelated mutation",
+	}
+	if _, err := c.RecordDeliveryContract(mustOperation(t, "op-bump-"+taskID, req), req); err != nil {
+		t.Fatalf("RecordDeliveryContract: %v", err)
+	}
+}
+
+// TestCanonicalDeliveryOutcomeCommitExemptsRevisionAndHoldsDigest proves the
+// outcome commit records post-mutation truth after an unrelated revision bump
+// (fenced optimistically at the current revision) or after holds-digest drift
+// from a released hold, while the currency read still reports both,
+// and the outcome commit still refuses a phase change or a matching delivery
+// hold.
+func TestCanonicalDeliveryOutcomeCommitExemptsRevisionAndHoldsDigest(t *testing.T) {
+	outcomeReq := func(c *Canonical, rev uint64) CanonicalDeliveryOutcomeRequest {
+		return CanonicalDeliveryOutcomeRequest{
+			HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, rev),
+			AuthorizationOperationID: "op-auth", Status: DeliveryOutcomeCompleted,
+			Detail: "provider confirms merged", HeadSHA: deliveryHead, MergedSHA: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+		}
+	}
+	setup := func(t *testing.T) *Canonical {
+		c, _, _ := newTestCanonical(t)
+		rev := mustDeliveryTask(t, c, "t1")
+		mustAuthorize(t, c, "t1", rev, "op-auth")
+		bumpRevisionForTest(t, c, "t1", rev+1)
+		return c
+	}
+
+	t.Run("revision bump commits at current revision", func(t *testing.T) {
+		c := setup(t)
+		cur, err := c.DeliveryCurrency(mustTaskID(t, "t1"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cur.Valid || !hasCurrencyReason(cur, DeliveryCurrencyRevision) {
+			t.Fatalf("currency = %+v, want the read to keep revision-mismatch", cur.Reasons)
+		}
+		stale := outcomeReq(c, 4)
+		if _, err := c.CommitDeliveryOutcome(mustOperation(t, "op-outcome-stale", stale), stale); !errors.Is(err, domain.ErrStalePrecondition) {
+			t.Fatalf("outcome at the recorded revision err = %v, want stale precondition", err)
+		}
+		req := outcomeReq(c, 5)
+		res, err := c.CommitDeliveryOutcome(mustOperation(t, "op-outcome", req), req)
+		if err != nil || res.Outcome.Status != DeliveryOutcomeCompleted {
+			t.Fatalf("outcome at the current revision = %v %+v, want completed", err, res)
+		}
+	})
+
+	t.Run("matching hold still refuses", func(t *testing.T) {
+		c := setup(t)
+		hold := CanonicalAddHoldRequest{
+			HomeID: c.HomeID(), HoldID: "hold-delivery", Scope: DispatchHoldScope{TaskIDs: []string{"t1"}},
+			Actions: []DispatchAction{DispatchActionDelivery}, Reason: "freeze",
+		}
+		if _, err := c.AddHold(mustOperation(t, "op-hold", hold), hold); err != nil {
+			t.Fatal(err)
+		}
+		req := outcomeReq(c, 5)
+		_, err := c.CommitDeliveryOutcome(mustOperation(t, "op-outcome", req), req)
+		if !errors.Is(err, ErrPrecondition) || !strings.Contains(err.Error(), string(DeliveryCurrencyMatchingHold)) {
+			t.Fatalf("outcome err = %v, want matching-hold refusal", err)
+		}
+	})
+
+	t.Run("released hold digest drift commits", func(t *testing.T) {
+		c := setup(t)
+		hold := CanonicalAddHoldRequest{
+			HomeID: c.HomeID(), HoldID: "hold-delivery", Scope: DispatchHoldScope{TaskIDs: []string{"t1"}},
+			Actions: []DispatchAction{DispatchActionDelivery}, Reason: "freeze",
+		}
+		if _, err := c.AddHold(mustOperation(t, "op-hold", hold), hold); err != nil {
+			t.Fatal(err)
+		}
+		release := CanonicalReleaseHoldRequest{HomeID: c.HomeID(), HoldID: "hold-delivery", Reason: "thaw"}
+		if _, err := c.ReleaseHold(mustOperation(t, "op-release", release), release); err != nil {
+			t.Fatal(err)
+		}
+		cur, err := c.DeliveryCurrency(mustTaskID(t, "t1"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !hasCurrencyReason(cur, DeliveryCurrencyHoldsDigest) || hasCurrencyReason(cur, DeliveryCurrencyMatchingHold) {
+			t.Fatalf("currency = %+v, want the read to keep holds-digest drift with no matching hold", cur.Reasons)
+		}
+		req := outcomeReq(c, uint64(cur.Revision))
+		res, err := c.CommitDeliveryOutcome(mustOperation(t, "op-outcome", req), req)
+		if err != nil || res.Outcome.Status != DeliveryOutcomeCompleted {
+			t.Fatalf("outcome after the hold released = %v %+v, want completed", err, res)
+		}
+	})
+
+	t.Run("phase change still refuses", func(t *testing.T) {
+		c := setup(t)
+		block := CanonicalBlockRequest{
+			HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, 5),
+			Detail: "waiting", Reason: "block",
+		}
+		if _, err := c.Block(mustOperation(t, "op-block", block), block); err != nil {
+			t.Fatalf("Block: %v", err)
+		}
+		req := outcomeReq(c, 6)
+		_, err := c.CommitDeliveryOutcome(mustOperation(t, "op-outcome", req), req)
+		if !errors.Is(err, ErrPrecondition) || !strings.Contains(err.Error(), string(DeliveryCurrencyPhase)) {
+			t.Fatalf("outcome err = %v, want phase refusal", err)
+		}
+	})
+}

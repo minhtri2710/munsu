@@ -19,10 +19,6 @@ type mockGitHubClient struct {
 	err  error
 }
 
-func (m *mockGitHubClient) ObservePR(owner, repo string, number int) (DeliveryProviderObservation, error) {
-	return DeliveryProviderObservation{}, m.err
-}
-
 func (m *mockGitHubClient) ViewPRJSON(owner, repo string, number int, fields string) ([]byte, error) {
 	if m.err != nil {
 		return nil, m.err
@@ -128,7 +124,7 @@ func TestFetchGitLabProviderSnapshot_EmptyRequiredFields(t *testing.T) {
 }
 
 // ----------------------------------------------------------------------------
-// Group B: delivery_github.go (2 guards)
+// Group B: delivery_github.go (1 guard)
 // ----------------------------------------------------------------------------
 
 func TestGHAxiClient_CaptureIdentity_EmptyHeadRefOid(t *testing.T) {
@@ -142,14 +138,6 @@ func TestGHAxiClient_CaptureIdentity_EmptyHeadRefOid(t *testing.T) {
 	_, err := c.CaptureIdentity("https://github.com/owner/repo/pull/1")
 	if err == nil || !strings.Contains(err.Error(), "gh-axi api returned empty headRefOid") {
 		t.Fatalf("CaptureIdentity err = %v, want empty headRefOid", err)
-	}
-}
-
-func TestGitHubDeliveryProvider_Observe_NilClient(t *testing.T) {
-	p := &githubDeliveryProvider{client: nil}
-	_, err := p.Observe(domain.DeliveryIdentity{})
-	if err == nil || !strings.Contains(err.Error(), "GitHub delivery capability is not composed") {
-		t.Fatalf("Observe err = %v, want not composed", err)
 	}
 }
 

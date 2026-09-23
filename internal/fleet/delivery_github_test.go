@@ -4,63 +4,12 @@ package fleet
 
 import (
 	"errors"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/domain"
-	"github.com/minhtri2710/munsu/internal/testutil"
 )
-
-func TestGitHubDeliveryProvider_RejectsMismatchedPinnedConstraints(t *testing.T) {
-	provider := &githubDeliveryProvider{client: &recordingGitHubClient{}}
-	ident := domain.DeliveryIdentity{HeadSHA: sampleSHA, BaseRef: "main"}
-
-	for _, tc := range []struct {
-		name    string
-		request DeliveryMergeRequest
-	}{
-		{name: "head mismatch", request: DeliveryMergeRequest{Method: "merge", HeadSHA: "different", BaseRef: "main"}},
-		{name: "base mismatch", request: DeliveryMergeRequest{Method: "merge", HeadSHA: sampleSHA, BaseRef: "release"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if err := provider.ValidateMergeRequest(ident, tc.request); err == nil || !strings.Contains(err.Error(), "do not match") {
-				t.Fatalf("ValidateMergeRequest error = %v, want identity-mismatch refusal", err)
-			}
-		})
-	}
-}
-
-func TestGitHubDeliveryProvider_RejectsUnenforceableConstraints(t *testing.T) {
-	called := false
-	client := &recordingGitHubClient{}
-	provider := &githubDeliveryProvider{client: client}
-	ident := domain.DeliveryIdentity{Owner: "owner", Repo: "repo", Number: 7, HeadSHA: sampleSHA, BaseRef: "main"}
-	request := DeliveryMergeRequest{Method: "merge", HeadSHA: sampleSHA, BaseRef: "main"}
-	if err := provider.ValidateMergeRequest(ident, request); err == nil {
-		t.Fatal("expected unsupported atomic constraints")
-	}
-	if err := provider.Merge(ident, request); err == nil {
-		t.Fatal("expected merge refusal")
-	}
-	if called {
-		t.Fatal("client invoked after unsupported-constraint refusal")
-	}
-}
-
-type recordingGitHubClient struct{}
-
-func (c *recordingGitHubClient) ObservePR(string, string, int) (DeliveryProviderObservation, error) {
-	return DeliveryProviderObservation{}, nil
-}
-func (c *recordingGitHubClient) ViewPRJSON(string, string, int, string) ([]byte, error) {
-	return nil, nil
-}
-func (c *recordingGitHubClient) CaptureIdentity(string) (*domain.DeliveryIdentity, error) {
-	return nil, nil
-}
 
 func TestGitHubClientForStateUnknownRefuses(t *testing.T) {
 	_, err := GitHubClientForState(backend.State(99))
@@ -148,7 +97,7 @@ func TestGhAxiClient_CaptureIdentity_NonGithubURL(t *testing.T) {
 	}
 }
 
-// --- ObservePR / gh-axi api observation tests ---
+// --- gh-axi output parsing ---
 
 func TestParseGhAxiKeyValues(t *testing.T) {
 	output := `state: closed
@@ -168,75 +117,6 @@ merged: true
 	}
 	if values["merged"] != "true" {
 		t.Errorf("merged = %q, want true", values["merged"])
-	}
-}
-
-func TestClassifyGitHubRESTObservation(t *testing.T) {
-	open := []byte("state: open\nheadSha: abc\nbaseRef: main\nmerged: false\n")
-	obs, err := classifyGitHubRESTObservation(open)
-	if err != nil || obs.State != "OPEN" || obs.Mergeability != DeliveryMergeabilityUnknown {
-		t.Fatalf("open observation = %+v, %v", obs, err)
-	}
-	merged, err := classifyGitHubRESTObservation([]byte("state: closed\nheadSha: abc\nbaseRef: main\nmerged: true\nmergedSha: 0123456789abcdef0123456789abcdef01234567\n"))
-	if err != nil || merged.State != "MERGED" || merged.MergedSHA != "0123456789abcdef0123456789abcdef01234567" {
-		t.Fatalf("merged observation = %+v, %v", merged, err)
-	}
-	closed, err := classifyGitHubRESTObservation([]byte("state: closed\nheadSha: abc\nbaseRef: main\nmerged: false\n"))
-	if err != nil || closed.State != "CLOSED" {
-		t.Fatalf("closed observation = %+v, %v", closed, err)
-	}
-	for _, tc := range []struct {
-		name string
-		data string
-	}{
-		{"missing identity", "state: open\nmerged: false\n"},
-		{"invalid state", "state: draft\nheadSha: abc\nbaseRef: main\nmerged: false\n"},
-		{"missing merged evidence", "state: open\nheadSha: abc\nbaseRef: main\n"},
-		{"invalid merged evidence", "state: open\nheadSha: abc\nbaseRef: main\nmerged: maybe\n"},
-		{"missing merged sha", "state: closed\nheadSha: abc\nbaseRef: main\nmerged: true\n"},
-		{"null merged sha", "state: closed\nheadSha: abc\nbaseRef: main\nmerged: true\nmergedSha: null\n"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if _, err := classifyGitHubRESTObservation([]byte(tc.data)); err == nil {
-				t.Fatal("expected incomplete observation to fail closed")
-			}
-		})
-	}
-}
-
-func TestGhAxiClient_ObservePR_UsesRESTContract(t *testing.T) {
-	dir := t.TempDir()
-	argsFile := filepath.Join(dir, "args capture")
-	argsTarget := shQuote(filepath.ToSlash(argsFile))
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsTarget + "\nprintf '%s\\n' 'state: open' 'headSha: abc' 'baseRef: main' 'merged: false'\n"
-	testutil.WriteFakeExecutable(t, filepath.Join(dir, "gh-axi"), script)
-	testutil.PrependPath(t, dir)
-
-	obs, err := (&ghAxiClient{}).ObservePR("owner", "repo", 7)
-	if err != nil {
-		t.Fatalf("ObservePR: %v", err)
-	}
-	if obs.State != "OPEN" || obs.HeadSHA != "abc" || obs.BaseRef != "main" {
-		t.Fatalf("observation = %+v", obs)
-	}
-	args, err := os.ReadFile(argsFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := strings.Split(strings.TrimSuffix(string(args), "\n"), "\n")
-	want := []string{
-		"api",
-		"/repos/owner/repo/pulls/7",
-		"--jq",
-		"{state: .state, headSha: .head.sha, baseRef: .base.ref, merged: .merged, mergedSha: .merge_commit_sha}",
-	}
-	if len(got) != len(want) {
-		t.Fatalf("gh-axi args = %#v, want %#v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("gh-axi arg %d = %q, want %q; args = %#v", i, got[i], want[i], got)
-		}
 	}
 }
 

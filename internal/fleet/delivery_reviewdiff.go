@@ -46,13 +46,10 @@ func ReviewDiff(homeDir string, id string) error {
 	base := ""
 
 	ident, _ := domain.IdentityFromMeta(meta)
-	if ident != nil && ident.URL != "" {
-		// Use the stored identity for the base reference
-		ghURL, err := domain.ParseGHURL(ident.URL)
-		if err != nil {
-			return fmt.Errorf("parsing PR URL from delivery identity: %w", err)
-		}
-		base = fmt.Sprintf("refs/pull/%d/merge", ghURL.Num)
+	if ident != nil && ident.BaseRef != "" {
+		// Diff against the stored identity's base branch as the worktree's
+		// origin remote knows it.
+		base = "origin/" + ident.BaseRef
 	} else {
 		// Use default branch
 		defaultBranch, derr := gitDefaultBranch(worktreePath)
@@ -140,14 +137,13 @@ func checkDefaultBranchStale(repoPath, branch string) (string, error) {
 
 // gitDiffSummary generates a Markdown diff summary between base and branch.
 func gitDiffSummary(repoPath, base, branch string) (string, error) {
-	// Get merge-base
-	mergeBase := base
 	mbCmd := exec.Command("git", "merge-base", base, branch)
 	mbCmd.Dir = repoPath
 	mbOut, err := mbCmd.Output()
-	if err == nil {
-		mergeBase = strings.TrimSpace(string(mbOut))
+	if err != nil {
+		return "", fmt.Errorf("git merge-base %s %s: %w", base, branch, err)
 	}
+	mergeBase := strings.TrimSpace(string(mbOut))
 
 	// Numstat for counts
 	numstatCmd := exec.Command("git", "diff", "--numstat", mergeBase+".."+branch)
