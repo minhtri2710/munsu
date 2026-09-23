@@ -111,8 +111,8 @@ var Adapters = map[string]Adapter{
 		SkillInvocation: `/`,
 		TurnEndHook:     `Stop hook (exit 2 + stderr); Primary-only global ~/.claude/hooks/`,
 		LaunchTemplate: Template{
-			ModelFlag:    "--model",
-			DefaultModel: "claude-sonnet-4-20250515",
+			ModelFlag: "--model",
+			// DefaultModel omitted — let Claude Code use its runtime default
 		},
 		TrustDialog:         `Trust or bypass-permissions confirmation on first launch per worktree`,
 		SupervisionProtocol: `claude`,
