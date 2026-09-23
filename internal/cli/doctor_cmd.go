@@ -94,6 +94,10 @@ Use --role for role-specific integration matrix:
 			for _, c := range result.Configs {
 				fmt.Println(c.String())
 			}
+			if result.BaseConfigErr != nil {
+				fmt.Printf("BASE_CONFIG_INVALID: %v\n", result.BaseConfigErr)
+				exitCode = 1
+			}
 			if result.GC != nil {
 				fmt.Println(result.GC.String())
 			}

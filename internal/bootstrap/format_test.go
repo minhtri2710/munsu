@@ -62,8 +62,8 @@ func TestConfigDiagnostic_String_WithSource(t *testing.T) {
 }
 
 func TestConfigDiagnostic_String_WithoutSource(t *testing.T) {
-	d := ConfigDiagnostic{Key: "BACKEND_CONFIG", Value: "auto"}
-	want := "BACKEND_CONFIG: auto"
+	d := ConfigDiagnostic{Key: "BACKEND_RESOLVED", Value: "none"}
+	want := "BACKEND_RESOLVED: none"
 	if got := d.String(); got != want {
 		t.Errorf("ConfigDiagnostic.String() = %q, want %q", got, want)
 	}

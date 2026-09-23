@@ -21,7 +21,7 @@ import (
 //   - Capture reads terminal scrollback.
 //   - SendKeys sends text + Enter to the terminal.
 //   - Teardown closes the terminal.
-//   - Never auto-detected by Default(); opt-in only via config/backend or --backend.
+//   - Never auto-detected by Default(); opt-in only via the fleet base config backend or --backend.
 type OrcaBackend struct{}
 
 // NewOrcaBackend creates an OrcaBackend.

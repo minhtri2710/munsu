@@ -4,10 +4,10 @@ package bootstrap
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/config"
@@ -70,6 +70,9 @@ type Result struct {
 	Configs         []ConfigDiagnostic
 	GC              *GCDiagnostic
 	MissingTools    []string
+	// BaseConfigErr is the load error of a present but unreadable or invalid
+	// fleet base document; a missing document leaves it nil.
+	BaseConfigErr error
 }
 
 // Run executes bootstrap diagnostics for the given munsu home.
@@ -110,6 +113,9 @@ func runWithRuntimeIdentity(home string, lockHeld bool, installTools []string, r
 	// 3. Load the fleet base document (config/base.json), the single authority
 	// for the typed launch-profile and dispatch config.
 	base, baseErr := config.LoadFleetBase(home)
+	if baseErr != nil && !errors.Is(baseErr, fs.ErrNotExist) {
+		res.BaseConfigErr = baseErr
+	}
 
 	// 4. Check soldier-harness override (typed base config). The write boundary
 	// normalizes the "default" sentinel to empty, so an unset harness reads "".
@@ -127,21 +133,6 @@ func runWithRuntimeIdentity(home string, lockHeld bool, installTools []string, r
 	if baseErr == nil && base.Config.RequireNoMistakes != nil && *base.Config.RequireNoMistakes {
 		res.Configs = append(res.Configs, ConfigDiagnostic{Key: "REQUIRE_NO_MISTAKES", Value: "strict"})
 	}
-
-	// 5. Check session backend preference — distinguish the legacy config file
-	// pin from the persisted typed snapshot identity.
-	configBackendPath := filepath.Join(home, "config", "backend")
-	var configuredPin string
-	if data, err := os.ReadFile(configBackendPath); err == nil {
-		configuredPin = strings.TrimSpace(string(data))
-	}
-
-	// BACKEND_CONFIG: shows the legacy config file pin (auto or explicit name).
-	configDisplay := "auto"
-	if configuredPin != "" && configuredPin != "auto" {
-		configDisplay = configuredPin
-	}
-	res.Configs = append(res.Configs, ConfigDiagnostic{Key: "BACKEND_CONFIG", Value: configDisplay})
 
 	// BACKEND_RESOLVED: reports the persisted typed snapshot Backend (the
 	// published config snapshot or the fleet base document's typed Backend) —

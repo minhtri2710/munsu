@@ -81,7 +81,6 @@ func TestRun_BackendDiagnostics_NoPersistedIdentityWithActiveTMUX(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	assertConfigContains(t, result.Configs, "BACKEND_CONFIG: auto")
 	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: none (source: no persisted backend identity (set backend in the fleet base config))")
 }
 
@@ -96,7 +95,6 @@ func TestRun_BackendDiagnostics_NoPersistedIdentityWithActiveHERDRENV(t *testing
 		t.Fatal(err)
 	}
 
-	assertConfigContains(t, result.Configs, "BACKEND_CONFIG: auto")
 	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: none (source: no persisted backend identity (set backend in the fleet base config))")
 }
 
@@ -116,29 +114,6 @@ func TestRun_BackendDiagnostics_NoPersistedIdentityWithTmuxOnPATH(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	assertConfigContains(t, result.Configs, "BACKEND_CONFIG: auto")
-	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: none (source: no persisted backend identity (set backend in the fleet base config))")
-}
-
-func TestRun_BackendDiagnostics_LegacyPinAloneIsNotAnIdentity(t *testing.T) {
-	// A legacy config file pin is not a typed snapshot identity: without a
-	// fleet base document or published snapshot, BACKEND_RESOLVED is typed
-	// missing-input rather than the pin value.
-	home := t.TempDir()
-	configDir := filepath.Join(home, "config")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(configDir, "backend"), []byte("herdr\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := Run(home, false, nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	assertConfigContains(t, result.Configs, "BACKEND_CONFIG: herdr")
 	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: none (source: no persisted backend identity (set backend in the fleet base config))")
 }
 
@@ -158,7 +133,6 @@ func TestRun_BackendDiagnostics_PersistedFleetBaseBackend(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assertConfigContains(t, result.Configs, "BACKEND_CONFIG: auto")
 	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: tmux (source: fleet base document)")
 }
 
@@ -186,7 +160,6 @@ func TestRun_BackendDiagnostics_PersistedPublishedSnapshotWins(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assertConfigContains(t, result.Configs, "BACKEND_CONFIG: auto")
 	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: herdr (source: published snapshot)")
 }
 
@@ -212,29 +185,37 @@ func TestRun_BackendDiagnostics_UnrelatedOutputStable(t *testing.T) {
 	}
 }
 
-func TestRun_BackendDiagnostics_AutoConfigFileWithNothingAvailable(t *testing.T) {
-	home := t.TempDir()
-	configDir := filepath.Join(home, "config")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	// Write "auto" explicitly
-	if err := os.WriteFile(filepath.Join(configDir, "backend"), []byte("auto\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("TMUX", "")
-	t.Setenv("HERDR_ENV", "")
-
-	// Scrub PATH so no tmux is findable
-	t.Setenv("PATH", "/dev/null")
-
-	result, err := Run(home, false, nil, nil)
+func TestRun_BaseConfigErr(t *testing.T) {
+	missing := t.TempDir()
+	result, err := Run(missing, false, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if result.BaseConfigErr != nil {
+		t.Fatalf("missing base document: BaseConfigErr = %v, want nil", result.BaseConfigErr)
+	}
 
-	assertConfigContains(t, result.Configs, "BACKEND_CONFIG: auto")
-	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: none (source: no persisted backend identity (set backend in the fleet base config))")
+	for name, body := range map[string]string{
+		"malformed": "{not-json",
+		"invalid":   `{"schemaVersion": "bogus"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(home, "config"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(home, config.BaseDocumentPath), []byte(body), 0644); err != nil {
+				t.Fatal(err)
+			}
+			result, err := Run(home, false, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.BaseConfigErr == nil {
+				t.Fatal("corrupt base document: BaseConfigErr = nil, want the load error")
+			}
+		})
+	}
 }
 
 func mustBootstrapOperationID(t *testing.T, value string) domain.OperationID {
