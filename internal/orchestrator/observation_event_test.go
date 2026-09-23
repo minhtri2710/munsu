@@ -1122,6 +1122,45 @@ func TestEventLane_RetriesUntilSourceAppears(t *testing.T) {
 	close(stopLane)
 }
 
+// TestEventLane_ClosesOnNoEventSurface verifies a genuine unsupported or
+// protocol-mismatch outcome closes the lane for good. A valid signal is queued
+// behind the terminal error, so a lane that retried would deliver it.
+func TestEventLane_ClosesOnNoEventSurface(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"unsupported", backend.ErrEventUnsupported},
+		{"protocol-mismatch", backend.ErrEventProtocolMismatch},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sig := backend.ObservationSignal{
+				Endpoint: backend.EndpointRef{Backend: "herdr", Handle: "w:p"},
+				Activity: backend.ActivityIdle,
+				Source:   backend.SourceEvent,
+				Cursor:   "1",
+			}
+			src := &fakeEventSource{errors: []error{tc.err}, signals: []backend.ObservationSignal{sig}}
+			port := staticEventPort(EndpointSource{Endpoint: sig.Endpoint, Source: src})
+			stopLane := make(chan struct{})
+			defer close(stopLane)
+			pulses := startEventLane(t.TempDir(), NewEventWaiter(port), stopLane)
+
+			select {
+			case p, ok := <-pulses:
+				if ok {
+					t.Fatalf("lane retried after %s and delivered %+v; want closed", tc.name, p)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatalf("lane did not close after %s", tc.name)
+			}
+			if got := src.waitCount(); got != 1 {
+				t.Fatalf("waits = %d, want 1", got)
+			}
+		})
+	}
+}
+
 // TestEventLane_ReaderFailureBackoff verifies the lane keeps retrying bounded
 // waits on transient reader failures instead of going silent or spinning.
 func TestEventLane_ReaderFailureBackoff(t *testing.T) {
