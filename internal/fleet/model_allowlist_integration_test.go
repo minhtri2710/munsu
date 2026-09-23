@@ -225,7 +225,7 @@ func TestCaptainLaunch_DeniedModelFailsClosed(t *testing.T) {
 	if err := os.MkdirAll(captainHome, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(captainHome, "AGENTS.md"), []byte("# alpha\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(captainHome, CaptainCharterName), []byte("# alpha\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	writeCanonicalPiIntegration(t, captainHome)
@@ -254,7 +254,7 @@ func TestCaptainLaunch_AllowedModelPasses(t *testing.T) {
 	if err := os.MkdirAll(captainHome, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(captainHome, "AGENTS.md"), []byte("# alpha\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(captainHome, CaptainCharterName), []byte("# alpha\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	writeCanonicalPiIntegration(t, captainHome)
@@ -364,7 +364,7 @@ func TestCaptainLaunch_NoModelWithPolicyFailsClosed(t *testing.T) {
 	if err := os.MkdirAll(captainHome, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(captainHome, "AGENTS.md"), []byte("# alpha\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(captainHome, CaptainCharterName), []byte("# alpha\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	writeCanonicalPiIntegration(t, captainHome)

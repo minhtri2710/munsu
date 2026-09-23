@@ -17,6 +17,10 @@ func (captainIntegrationAdapter) EnsureCaptain(h, harnessName string) error {
 	return nil
 }
 
+func (captainIntegrationAdapter) CaptainPaths(h, harnessName string) ([]string, error) {
+	return bootstrap.ProjectScopeInstallPaths(h, harnessName)
+}
+
 func (captainIntegrationAdapter) Status(h, n string) (fleet.IntegrationStatus, error) {
 	r, e := bootstrap.Status(h, h, n, bootstrap.ScopeProject)
 	if e != nil {

@@ -118,16 +118,9 @@ func PropagateConfig(req PropagateConfigRequest) (*PropagateConfigResult, error)
 		Generation: res.Generation,
 	}
 
-	// 4. Reconcile legacy config-reread evidence in both changed and
-	//    unchanged paths so incomplete state is healed.
 	recorder := &boundSenderRecorder{actual: req.Mailbox}
 
-	if legErr := ReconcileLegacyConfigReread(req.ParentHome, req.CaptainHome, recorder); legErr != nil {
-		// Legacy reconciliation failure is best-effort detail.
-		result.Detail = fmt.Sprintf("generation=%d, legacy reconciliation: %v", res.Generation, legErr)
-	}
-
-	// 5. Determine the digest to use for requirement identity.
+	// 4. Determine the digest to use for requirement identity.
 	//    On the unchanged path, OldDigest == NewDigest. On the changed path
 	//    NewDigest reflects the new content. On first push with unchanged
 	//    content (no prior gen), NewDigest is set.
@@ -136,7 +129,7 @@ func PropagateConfig(req PropagateConfigRequest) (*PropagateConfigResult, error)
 		digest = res.OldDigest
 	}
 
-	// 6. Ensure or heal the durable config-reread requirement.
+	// 5. Ensure or heal the durable config-reread requirement.
 	//    On the unchanged path, this detects a crash where the generation
 	//    was committed but the mailbox requirement was not materialized,
 	//    or a deferred notification that needs retry.

@@ -66,7 +66,7 @@ func setupTestHomes(t *testing.T) (parentHome, captainHome, captainID string) {
 	}
 
 	// Seed captain home.
-	if err := SeedCaptain(CaptainSeedOptions{ID: captainID, Home: captainHome, ParentHome: parentHome, Integration: fakeIntegrationPort{}}); err != nil {
+	if err := SeedCaptain(CaptainSeedOptions{ID: captainID, Home: captainHome, Repo: newWorktreeFixture(t), ParentHome: parentHome, Integration: fakeIntegrationPort{}}); err != nil {
 		t.Fatalf("SeedCaptain: %v", err)
 	}
 

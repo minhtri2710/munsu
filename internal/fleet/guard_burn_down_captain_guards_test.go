@@ -109,28 +109,14 @@ func TestIsManagedWorktree_NotDirectory(t *testing.T) {
 	}
 }
 
-func TestMigrateCaptainToWorktree_NilIntegration(t *testing.T) {
-	err := MigrateCaptainToWorktree(CaptainMigrationOptions{Integration: nil})
-	if err == nil || !strings.Contains(err.Error(), "captain integration capability is required") {
-		t.Fatalf("MigrateCaptainToWorktree err = %v, want integration capability required", err)
+func TestSeedCaptain_RefusesMissingRepoBeforeMutation(t *testing.T) {
+	h := filepath.Join(t.TempDir(), "captain")
+	err := SeedCaptain(CaptainSeedOptions{ID: "captain", Home: h, ParentHome: t.TempDir(), Integration: fakeIntegrationPort{}})
+	if err == nil || !strings.Contains(err.Error(), "a project repo is required") {
+		t.Fatalf("SeedCaptain err = %v, want project repo required", err)
 	}
-}
-
-func TestMigrateToWorktree_NilIntegration(t *testing.T) {
-	err := migrateToWorktree("capHome", "repoPath", "id", "parentHome", nil)
-	if err == nil || !strings.Contains(err.Error(), "captain integration capability is required") {
-		t.Fatalf("migrateToWorktree err = %v, want integration capability required", err)
-	}
-}
-
-func TestRepairWorktreeAdminPath_MalformedGitFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(tmpDir, ".git"), []byte("invalid gitdir format\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	err := repairWorktreeAdminPath(tmpDir, "")
-	if err == nil || !strings.Contains(err.Error(), "unexpected .git format") {
-		t.Fatalf("repairWorktreeAdminPath err = %v, want unexpected .git format", err)
+	if _, statErr := os.Stat(h); !os.IsNotExist(statErr) {
+		t.Fatalf("refused seed created %s (stat err = %v)", h, statErr)
 	}
 }
 

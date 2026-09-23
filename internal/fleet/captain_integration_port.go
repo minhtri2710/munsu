@@ -10,14 +10,7 @@ type IntegrationStatus struct {
 type IntegrationPort interface {
 	EnsureCaptain(home, harness string) error
 	Status(home, harness string) (IntegrationStatus, error)
-}
-
-type CaptainWorktreeSeedOptions struct {
-	ID, Home, Repo, ParentHome, Charter, Ref string
-	Force                                    bool
-	Integration                              IntegrationPort
-}
-type CaptainMigrationOptions struct {
-	CaptainHome, Repo, ID, ParentHome string
-	Integration                       IntegrationPort
+	// CaptainPaths returns the home-relative, slash-separated paths that
+	// EnsureCaptain writes for harness.
+	CaptainPaths(home, harness string) ([]string, error)
 }

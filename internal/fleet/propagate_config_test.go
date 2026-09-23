@@ -665,43 +665,6 @@ func TestPropagateConfig_NotificationDeferred(t *testing.T) {
 	}
 }
 
-func TestPropagateConfig_LegacyReconciliation(t *testing.T) {
-	parent := t.TempDir()
-	captainHome := seedCaptainForTest(t, parent, "test-sm")
-
-	// Write a legacy config-reread nudge marker.
-	os.MkdirAll(filepath.Join(captainHome, "state"), 0755)
-	legacyNudge := "gen=0\ndigest=legacy-digest-123456789012345678901234567890123456789012345678901234567890\n"
-	if err := os.WriteFile(filepath.Join(captainHome, "state", ".config-reread-nudge"), []byte(legacyNudge), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Set up parent config so propagation has content.
-	os.MkdirAll(filepath.Join(parent, "config"), 0755)
-	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644)
-
-	sender := &fakeBoundSender{acknowledged: true}
-	result, err := PropagateConfig(PropagateConfigRequest{
-		ParentHome:  parent,
-		CaptainHome: captainHome,
-		Mailbox:     sender,
-	})
-	if err != nil {
-		t.Fatalf("PropagateConfig error: %v", err)
-	}
-	if !result.Changed {
-		t.Error("expected changed=true")
-	}
-	if result.Generation != 1 {
-		t.Errorf("Generation = %d, want 1", result.Generation)
-	}
-
-	// Verify legacy nudge marker was removed.
-	if _, err := os.Stat(filepath.Join(captainHome, "state", ".config-reread-nudge")); !os.IsNotExist(err) {
-		t.Error("legacy nudge marker should have been removed")
-	}
-}
-
 func TestPropagateConfig_GenerationAndRequirementDurabilityBeforeNotify(t *testing.T) {
 	parent := t.TempDir()
 	captainHome := seedCaptainForTest(t, parent, "test-sm")
@@ -1419,69 +1382,6 @@ func TestPropagateConfig_AckedRequirementNotResent(t *testing.T) {
 	}
 	if secondCallCount != 0 {
 		t.Errorf("sender2.Send should NOT be called for acked requirement, got %d calls", secondCallCount)
-	}
-}
-
-// TestPropagateConfig_LegacyReconciledOnUnchanged verifies that legacy
-// config-reread evidence is reconciled during an unchanged propagation.
-func TestPropagateConfig_LegacyReconciledOnUnchanged(t *testing.T) {
-	parent := t.TempDir()
-	captainHome := seedCaptainForTest(t, parent, "test-sm")
-
-	// Set up parent config so propagation has content.
-	os.MkdirAll(filepath.Join(parent, "config"), 0755)
-	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644)
-
-	// First propagation to establish gen=1 with real digest.
-	sender0 := &fakeBoundSender{acknowledged: true}
-	_, err := PropagateConfig(PropagateConfigRequest{
-		ParentHome:  parent,
-		CaptainHome: captainHome,
-		Mailbox:     sender0,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Read the actual gen/digest so our legacy nudge matches.
-	_, actualDigest, found, err := ReadConfigRereadGen(captainHome)
-	if err != nil || !found {
-		t.Fatal("gen file not found")
-	}
-
-	// Write legacy nudge with the same gen/digest that will be superseded.
-	// (gen=1 is already written by the first propagation.)
-	nudgeDir := filepath.Join(captainHome, "state")
-	legacyNudge := fmt.Sprintf("gen=1\ndigest=%s\n", actualDigest)
-	if err := os.WriteFile(filepath.Join(nudgeDir, ".config-reread-nudge"),
-		[]byte(legacyNudge), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Second propagation with same content (unchanged).
-	sender := &fakeBoundSender{acknowledged: true}
-	result, err := PropagateConfig(PropagateConfigRequest{
-		ParentHome:  parent,
-		CaptainHome: captainHome,
-		Mailbox:     sender,
-	})
-	if err != nil {
-		t.Fatalf("PropagateConfig error: %v", err)
-	}
-
-	// Generation unchanged (digest matches existing gen).
-	if result.Changed {
-		t.Error("expected unchanged for matching digest")
-	}
-
-	// Legacy nudge must be gone.
-	if _, err := os.Stat(filepath.Join(nudgeDir, ".config-reread-nudge")); !os.IsNotExist(err) {
-		t.Error("legacy nudge marker should be removed on unchanged propagation")
-	}
-
-	// Requirement should be reused (envelope from first call exists).
-	if result.RequirementState != RequirementReused {
-		t.Errorf("requirement state = %q, want reused", result.RequirementState)
 	}
 }
 

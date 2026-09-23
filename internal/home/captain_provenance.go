@@ -36,7 +36,7 @@ func ValidateCaptainProvenance(homePath string) (string, error) {
 	data, err := os.ReadFile(markerPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", fmt.Errorf("captain home %s has no %s marker — run 'munsu captain seed' or 'munsu captain migrate'", homePath, CaptainProvenanceMarkerName)
+			return "", fmt.Errorf("captain home %s has no %s marker — run 'munsu captain seed'", homePath, CaptainProvenanceMarkerName)
 		}
 		return "", fmt.Errorf("reading provenance marker %s: %w", markerPath, err)
 	}

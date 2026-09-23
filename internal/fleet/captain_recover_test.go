@@ -41,8 +41,8 @@ func TestRecoverTransaction_ProvenanceFailureSkipsAll(t *testing.T) {
 	tx := &RecoverTransaction{Capabilities: RecoverCapabilities{Launch: testLaunchEndpoint{}, Nudge: &testNudgeEndpoint{result: NudgeResult{Status: "submitted", Acknowledged: true}}, Probe: &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}}}}
 	res := tx.Recover(parent, Info{ID: "sm-bad", Home: smHome})
 
-	if len(res.Steps) != 11 {
-		t.Fatalf("expected 11 steps, got %d", len(res.Steps))
+	if len(res.Steps) != 10 {
+		t.Fatalf("expected 10 steps, got %d", len(res.Steps))
 	}
 
 	// Provenance must fail.
@@ -62,7 +62,7 @@ func TestRecoverTransaction_EmptyHomeFailed(t *testing.T) {
 	tx := &RecoverTransaction{Capabilities: RecoverCapabilities{Launch: testLaunchEndpoint{}, Nudge: &testNudgeEndpoint{result: NudgeResult{Status: "submitted", Acknowledged: true}}, Probe: &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}}}}
 	res := tx.Recover(t.TempDir(), Info{ID: "empty", Home: ""})
 
-	if len(res.Steps) != 11 {
+	if len(res.Steps) != 10 {
 		t.Fatalf("expected 10 steps, got %d", len(res.Steps))
 	}
 
@@ -251,7 +251,8 @@ func captainHomeWithHarness(t *testing.T, name string) string {
 
 type staticIntegrationPort struct{ status IntegrationStatus }
 
-func (p staticIntegrationPort) EnsureCaptain(string, string) error { return nil }
+func (p staticIntegrationPort) EnsureCaptain(string, string) error            { return nil }
+func (p staticIntegrationPort) CaptainPaths(string, string) ([]string, error) { return nil, nil }
 func (p staticIntegrationPort) Status(string, string) (IntegrationStatus, error) {
 	return p.status, nil
 }
@@ -262,6 +263,9 @@ type countingStatusIntegrationPort struct {
 }
 
 func (p *countingStatusIntegrationPort) EnsureCaptain(string, string) error { return nil }
+func (p *countingStatusIntegrationPort) CaptainPaths(string, string) ([]string, error) {
+	return nil, nil
+}
 func (p *countingStatusIntegrationPort) Status(_, harnessName string) (IntegrationStatus, error) {
 	p.calls++
 	p.harness = harnessName

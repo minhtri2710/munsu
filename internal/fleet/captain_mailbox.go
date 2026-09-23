@@ -196,7 +196,7 @@ func ReconcileMailboxPending(parentHome string, sm Info, sender home.BoundSender
 // hasn't been acked yet. Duplicate notification is idempotent — the captain's
 // Receiver.Process returns the existing ack if already processed.
 //
-// When task meta cannot be read (state-only home, never launched), the resend
+// When task meta cannot be read (captain never launched), the resend
 // is silently skipped. The durable pending record remains and will be resolved
 // when the captain eventually comes online, or handled by ReconcileConfigRereadPending
 // for config-reread records.
@@ -204,7 +204,7 @@ func resendNotification(parentHome string, sm Info, env *home.Envelope, sender h
 	taskID := taskIDForCaptain(sm.ID)
 	meta, err := mhome.ReadMeta(parentHome, taskID)
 	if err != nil {
-		// State-only homes have no task meta — skip resend gracefully.
+		// A never-launched captain has no task meta — skip resend gracefully.
 		// The durable pending record persists for future reconciliation.
 		return nil
 	}

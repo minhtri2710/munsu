@@ -23,56 +23,6 @@ func defaultCaptainCharter(t *testing.T, id, parent string) string {
 // Charter contract tests: delivered by review as REQUIRED for PR #302
 // =============================================================================
 
-// TestExistingAGENTSMD_Preservation verifies that SeedWithParent NEVER overwrites
-// an existing AGENTS.md file with a pointer — user/project-owned content is preserved.
-func TestExistingAGENTSMD_Preservation(t *testing.T) {
-	parent := t.TempDir()
-	if _, err := home.Init(parent); err != nil {
-		t.Fatal(err)
-	}
-	// Typed parent base with explicit Backend so SeedCaptain's config inherit
-	// (ResolveProject) resolves a non-empty session backend identity. The
-	// registration mirrors ensureParentTypedConfig's default-project binding
-	// (which is skipped once the typed base exists).
-	setupTypedParentHome(t, parent, "test-captain")
-	homePath := filepath.Join(parent, "captains", "test-captain")
-	if err := os.MkdirAll(homePath, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := Register(parent, "test-captain", homePath, "", "test-captain"); err != nil {
-		t.Fatal(err)
-	}
-
-	// First seed creates both .captain-charter.md and AGENTS.md.
-	if err := SeedCaptain(CaptainSeedOptions{ID: "test-captain", Home: homePath, ParentHome: parent, Integration: fakeIntegrationPort{}}); err != nil {
-		t.Fatal(err)
-	}
-
-	// Write custom user content into AGENTS.md.
-	customContent := "# My Custom AGENTS.md\n\nThis content must be preserved.\n"
-	if err := os.WriteFile(filepath.Join(homePath, "AGENTS.md"), []byte(customContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Seed again — must NOT overwrite AGENTS.md.
-	if err := SeedCaptain(CaptainSeedOptions{ID: "test-captain", Home: homePath, ParentHome: parent, Integration: fakeIntegrationPort{}}); err != nil {
-		t.Fatal(err)
-	}
-
-	body, err := os.ReadFile(filepath.Join(homePath, "AGENTS.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(body) != customContent {
-		t.Fatalf("AGENTS.md was overwritten:\nwant: %q\ngot:  %q", customContent, string(body))
-	}
-
-	// .captain-charter.md should still be refreshed.
-	if _, err := os.Stat(filepath.Join(homePath, CaptainCharterName)); err != nil {
-		t.Errorf("%s missing after re-seed: %v", CaptainCharterName, err)
-	}
-}
-
 // TestCharter_CommandRecipesValid verifies all recipe commands use correct
 // authoritative syntax and no deprecated/removed commands appear.
 func TestCharter_CommandRecipesValid(t *testing.T) {
@@ -226,7 +176,7 @@ func TestCharter_ConfigPushRefresh(t *testing.T) {
 	}
 
 	// Seed a captain.
-	if err := SeedCaptain(CaptainSeedOptions{ID: "test-captain", Home: homePath, ParentHome: parent, Integration: fakeIntegrationPort{}}); err != nil {
+	if err := SeedCaptain(CaptainSeedOptions{ID: "test-captain", Home: homePath, Repo: newWorktreeFixture(t), ParentHome: parent, Integration: fakeIntegrationPort{}}); err != nil {
 		t.Fatal(err)
 	}
 

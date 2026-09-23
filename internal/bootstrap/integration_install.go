@@ -647,3 +647,51 @@ func canonicalizePossiblyMissingPath(path string) string {
 
 // bytesReader returns a reader for a byte slice.
 func reader(b []byte) *bytes.Reader { return bytes.NewReader(b) }
+
+// ProjectScopeInstallPaths returns the cwd-relative, slash-separated paths
+// that Install(cwd, cwd, harnessName, ScopeProject, false) writes: the
+// harness integration targets plus the munsu manifest. An unsupported
+// harness writes nothing and returns no paths.
+func ProjectScopeInstallPaths(cwd, harnessName string) ([]string, error) {
+	canonical, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		return nil, fmt.Errorf("resolving project cwd %s: %w", cwd, err)
+	}
+	var targets []string
+	switch harnessName {
+	case harness.Pi:
+		targets = []string{filepath.Join(ProjectExtensionsDir(canonical), harness.CanonicalPiIntegrationName)}
+	case harness.Claude:
+		targets, err = singleTarget(ClaudeSettingsTargetPath(ScopeProject, canonical))
+	case harness.Codex:
+		targets, err = singleTarget(CodexHooksTargetPath(ScopeProject, canonical))
+	case harness.Agy:
+		targets, err = singleTarget(AgyHooksTargetPath(ScopeProject, canonical))
+	case harness.Grok:
+		targets, err = GrokHooksAllTargetPaths(ScopeProject, canonical)
+	case harness.Opencode:
+		targets, err = OpencodePluginsAllTargetPaths(ScopeProject, canonical)
+	default:
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	targets = append(targets, ManifestPath(canonical, harnessName, ScopeProject, canonical))
+	rels := make([]string, 0, len(targets))
+	for _, target := range targets {
+		rel, err := filepath.Rel(canonical, target)
+		if err != nil {
+			return nil, err
+		}
+		rels = append(rels, filepath.ToSlash(rel))
+	}
+	return rels, nil
+}
+
+func singleTarget(path string, err error) ([]string, error) {
+	if err != nil {
+		return nil, err
+	}
+	return []string{path}, nil
+}

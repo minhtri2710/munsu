@@ -88,7 +88,7 @@ func TestBuildLaunchArgs_VerifiedCaptainHarness(t *testing.T) {
 		t.Fatal(err)
 	}
 	charter := []byte("# Test charter\n\nFollow this exactly.\n")
-	if err := os.WriteFile(filepath.Join(smHome, "AGENTS.md"), charter, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(smHome, CaptainCharterName), charter, 0644); err != nil {
 		t.Fatal(err)
 	}
 	writeCanonicalPiIntegration(t, smHome)
@@ -118,7 +118,7 @@ func TestBuildLaunchArgs_VerifiedCaptainHarness(t *testing.T) {
 
 func TestBuildLaunchArgs_PiLoadsCanonicalIntegrationExactlyOnce(t *testing.T) {
 	home := t.TempDir()
-	if err := os.WriteFile(filepath.Join(home, "AGENTS.md"), []byte("# charter\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(home, CaptainCharterName), []byte("# charter\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	writeCanonicalPiIntegration(t, home)
@@ -151,7 +151,7 @@ func TestBuildLaunchArgs_PiLoadsCanonicalIntegrationExactlyOnce(t *testing.T) {
 
 func TestBuildLaunchArgs_PiMissingCanonicalIntegrationFailsClosed(t *testing.T) {
 	home := t.TempDir()
-	if err := os.WriteFile(filepath.Join(home, "AGENTS.md"), []byte("# charter\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(home, CaptainCharterName), []byte("# charter\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -202,7 +202,7 @@ func TestBuildLaunchArgs_ConfigModelPropagation(t *testing.T) {
 	tmp := t.TempDir()
 	smHome := filepath.Join(tmp, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
-	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# Test\n"), 0644)
+	os.WriteFile(filepath.Join(smHome, CaptainCharterName), []byte("# Test\n"), 0644)
 	writeCanonicalPiIntegration(t, smHome)
 
 	configDir := filepath.Join(tmp, "config")
@@ -267,7 +267,7 @@ func TestSeedWithParent_WritesDefaultCaptainCharter(t *testing.T) {
 	if err := config.StoreProjectOverlay(parent, "api", config.ProjectOverlay{Backend: "tmux"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := seedWithParentTest("api", sm, parent, ""); err != nil {
+	if err := seedWithParentTest(t, "api", sm, parent, ""); err != nil {
 		t.Fatal(err)
 	}
 	// The canonical charter lives in .captain-charter.md.
@@ -282,68 +282,6 @@ func TestSeedWithParent_WritesDefaultCaptainCharter(t *testing.T) {
 	if !strings.Contains(string(body), filepath.Base(expectedStatusPath)) {
 		t.Fatalf("default charter missing status file path %q, got: %s", filepath.Base(expectedStatusPath), body)
 	}
-	// AGENTS.md should be a minimal pointer, not the full charter.
-	agentsBody, err := os.ReadFile(filepath.Join(sm, "AGENTS.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(agentsBody), ".captain-charter.md") {
-		t.Fatalf("AGENTS.md should point to .captain-charter.md, got: %s", agentsBody)
-	}
-}
-
-func TestSeed_CreatesDirectoryStructure(t *testing.T) {
-	tmp := t.TempDir()
-	homePath := filepath.Join(tmp, "captains", "test-sm")
-	charter := "# Captain charter\n\nPersistent domain supervisor.\n"
-
-	if err := seedTest("test-sm", homePath, charter); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := os.Stat(homePath); os.IsNotExist(err) {
-		t.Fatalf("home dir %s was not created", homePath)
-	}
-
-	for _, dir := range []string{"state", "data", "config", "projects"} {
-		p := filepath.Join(homePath, dir)
-		if fi, err := os.Stat(p); err != nil {
-			t.Errorf("subdirectory %s not created: %v", dir, err)
-		} else if !fi.IsDir() {
-			t.Errorf("%s exists but is not a directory", p)
-		}
-	}
-
-	// The canonical charter is written to .captain-charter.md.
-	charterPath := filepath.Join(homePath, CaptainCharterName)
-	data, err := os.ReadFile(charterPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != charter {
-		t.Errorf("%s content = %q, want %q", CaptainCharterName, string(data), charter)
-	}
-
-	// AGENTS.md should be a minimal pointer.
-	agentsPath := filepath.Join(homePath, "AGENTS.md")
-	agentsData, err := os.ReadFile(agentsPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(agentsData), ".captain-charter.md") {
-		t.Errorf("AGENTS.md should point to .captain-charter.md, got: %s", agentsData)
-	}
-
-	markerData, err := os.ReadFile(filepath.Join(homePath, ProvenanceMarkerName))
-	if err != nil {
-		t.Fatal("provenance marker was not created:", err)
-	}
-	if !strings.Contains(string(markerData), "test-sm") {
-		t.Errorf("provenance marker should contain id, got: %q", string(markerData))
-	}
-	if !strings.Contains(string(markerData), ProvenanceVersion) {
-		t.Errorf("provenance marker should contain version, got: %q", string(markerData))
-	}
 }
 
 func TestSeed_InvalidPath(t *testing.T) {
@@ -355,7 +293,7 @@ func TestSeed_InvalidPath(t *testing.T) {
 	if err := os.WriteFile(blocker, []byte("not a directory\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	err := seedTest("test-sm", filepath.Join(blocker, "sm"), "# charter")
+	err := seedTest(t, "test-sm", filepath.Join(blocker, "sm"), "# charter")
 	if err == nil {
 		t.Fatal("expected error for invalid path")
 	}
@@ -760,7 +698,7 @@ func TestProvenance_WrongVersion(t *testing.T) {
 func TestValidate_PassesForSeededHome(t *testing.T) {
 	tmp := t.TempDir()
 	smHome := filepath.Join(tmp, "captains", "test-sm")
-	seedTest("test-sm", smHome, "# charter")
+	seedTest(t, "test-sm", smHome, "# charter")
 
 	err := Validate(smHome, tmp)
 	if err != nil {
@@ -771,7 +709,7 @@ func TestValidate_PassesForSeededHome(t *testing.T) {
 func TestValidate_RefusesFakeName(t *testing.T) {
 	tmp := t.TempDir()
 	fakeHome := filepath.Join(tmp, "fake")
-	seedTest("fake-sm", fakeHome, "# charter")
+	seedTest(t, "fake-sm", fakeHome, "# charter")
 
 	err := Validate(fakeHome, tmp)
 	if err == nil {
@@ -785,7 +723,7 @@ func TestValidate_RefusesFakeName(t *testing.T) {
 func TestValidate_RefusesPrimaryName(t *testing.T) {
 	tmp := t.TempDir()
 	primaryHome := filepath.Join(tmp, "primary")
-	seedTest("primary-sm", primaryHome, "# charter")
+	seedTest(t, "primary-sm", primaryHome, "# charter")
 
 	err := Validate(primaryHome, tmp)
 	if err == nil {
@@ -795,7 +733,7 @@ func TestValidate_RefusesPrimaryName(t *testing.T) {
 
 func TestValidate_RefusesSelfParent(t *testing.T) {
 	tmp := t.TempDir()
-	seedTest("test-sm", tmp, "# charter")
+	seedTest(t, "test-sm", tmp, "# charter")
 
 	err := Validate(tmp, tmp)
 	if err == nil {
@@ -815,41 +753,6 @@ func TestValidate_RefusesMissingDirs(t *testing.T) {
 	err := Validate(smHome, tmp)
 	if err == nil {
 		t.Fatal("expected error for missing AGENTS.md")
-	}
-}
-
-func TestMigrate_WritesMarkerToSeededHome(t *testing.T) {
-	tmp := t.TempDir()
-	smHome := filepath.Join(tmp, "captains", "test-sm")
-
-	os.MkdirAll(filepath.Join(smHome, "state"), 0755)
-	os.MkdirAll(filepath.Join(smHome, "data"), 0755)
-	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
-	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# charter\n"), 0644)
-
-	if err := Migrate(smHome, "test-sm"); err != nil {
-		t.Fatal(err)
-	}
-
-	id, err := ValidateProvenance(smHome)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if id != "test-sm" {
-		t.Errorf("id = %q, want %q", id, "test-sm")
-	}
-}
-
-func TestMigrate_RefusesReservedName(t *testing.T) {
-	tmp := t.TempDir()
-	fakeHome := filepath.Join(tmp, "fake")
-	os.MkdirAll(fakeHome, 0755)
-	err := Migrate(fakeHome, "fake-sm")
-	if err == nil {
-		t.Fatal("expected error for reserved name")
-	}
-	if !strings.Contains(err.Error(), "reserved name") {
-		t.Errorf("error = %v", err)
 	}
 }
 
@@ -1332,7 +1235,7 @@ func TestSeedWithParent_InheritsProjectsAndConfig(t *testing.T) {
 	if err := config.StoreProjectOverlay(parent, "ops", config.ProjectOverlay{Backend: "tmux"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := seedWithParentTest("ops", sm, parent, ""); err != nil {
+	if err := seedWithParentTest(t, "ops", sm, parent, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1366,7 +1269,7 @@ func TestSeedWithParent_WritesParentHomeConfig(t *testing.T) {
 	if err := config.StoreProjectOverlay(parent, "ops", config.ProjectOverlay{Backend: "tmux"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := seedWithParentTest("ops", sm, parent, ""); err != nil {
+	if err := seedWithParentTest(t, "ops", sm, parent, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1418,49 +1321,6 @@ func TestConfigPush_RefreshesParentHome(t *testing.T) {
 	}
 }
 
-// TestUpdate_StateOnlyCaptainConfigPush verifies that Update on a state-only
-// captain (no git worktree) still runs ConfigPush to write config/parent-home.
-// This is requirement 1: existing state-only Captain update paths must atomically
-// write config/parent-home from the authoritative registered General home.
-func TestUpdate_StateOnlyCaptainConfigPush(t *testing.T) {
-	t.Parallel()
-	parent := t.TempDir()
-	os.MkdirAll(filepath.Join(parent, "config"), 0755)
-	os.MkdirAll(filepath.Join(parent, "data"), 0755)
-
-	captainHome := filepath.Join(parent, "captains", "test-sm")
-	os.MkdirAll(filepath.Join(captainHome, "config"), 0755)
-	os.MkdirAll(filepath.Join(captainHome, "state"), 0755)
-	os.MkdirAll(filepath.Join(captainHome, "data"), 0755)
-
-	// Seed captain with provenance but NO parent-home config (simulating
-	// an already-provisioned state-only captain from before parent-home was introduced).
-	if err := SeedProvenance(captainHome, "test-sm"); err != nil {
-		t.Fatal(err)
-	}
-	os.WriteFile(filepath.Join(captainHome, "AGENTS.md"), []byte("# Test Captain\n"), 0644)
-
-	// Verify parent-home does NOT exist yet
-	if _, err := os.Stat(filepath.Join(captainHome, "config", "parent-home")); err == nil {
-		t.Fatal("test setup: parent-home should NOT exist before Update")
-	}
-
-	// Run Update — should detect state-only home and still run ConfigPush
-	res := Update(captainHome, parent)
-	if res.Outcome != StateOnlySkipped {
-		t.Fatalf("Update outcome = %s, want %s", res.Outcome, StateOnlySkipped)
-	}
-
-	// Verify parent-home was written by ConfigPush
-	dat, err := os.ReadFile(filepath.Join(captainHome, "config", "parent-home"))
-	if err != nil {
-		t.Fatalf("config/parent-home should exist after Update on state-only captain: %v", err)
-	}
-	if strings.TrimSpace(string(dat)) != parent {
-		t.Errorf("parent-home = %q after Update, want %q", strings.TrimSpace(string(dat)), parent)
-	}
-}
-
 // TestRecoverTransaction_ConfigPushStep verifies that the RecoverTransaction
 // includes a config-push step that writes config/parent-home.
 func TestRecoverTransaction_ConfigPushStep(t *testing.T) {
@@ -1472,7 +1332,7 @@ func TestRecoverTransaction_ConfigPushStep(t *testing.T) {
 	os.MkdirAll(filepath.Join(parent, "config"), 0755)
 	os.MkdirAll(filepath.Join(parent, "data"), 0755)
 
-	captainHome := seedCaptainForTest(t, parent, "state-only-sm")
+	captainHome := seedCaptainForTest(t, parent, "cfgpush-sm")
 
 	// Verify parent-home does NOT exist yet
 	if _, err := os.Stat(filepath.Join(captainHome, "config", "parent-home")); err == nil {
@@ -1480,7 +1340,7 @@ func TestRecoverTransaction_ConfigPushStep(t *testing.T) {
 	}
 
 	tx := &RecoverTransaction{Capabilities: RecoverCapabilities{Launch: testLaunchEndpoint{}, Nudge: &testNudgeEndpoint{result: NudgeResult{Status: "submitted", Acknowledged: true}}, Probe: &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}}}}
-	sm := Info{ID: "state-only-sm", Home: captainHome}
+	sm := Info{ID: "cfgpush-sm", Home: captainHome}
 	res := tx.Recover(parent, sm)
 
 	// Find the config-push step
@@ -1756,17 +1616,7 @@ func TestLaunch_UsesCaptainIDWhenHomeBasenameDiffers(t *testing.T) {
 		t.Fatal(err)
 	}
 	captainHome := filepath.Join(parent, "captains", "home-basename")
-	for _, dir := range []string{"state", "config", "data"} {
-		if err := os.MkdirAll(filepath.Join(captainHome, dir), 0755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.WriteFile(filepath.Join(captainHome, "AGENTS.md"), []byte("# registered-id\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := SeedProvenance(captainHome, "registered-id"); err != nil {
-		t.Fatal(err)
-	}
+	worktreeCaptainHome(t, captainHome, "registered-id")
 	setupTypedParentHome(t, parent, "registered-id")
 	if err := Register(parent, "registered-id", captainHome, "captain", "registered-id"); err != nil {
 		t.Fatal(err)
@@ -1805,7 +1655,7 @@ func (launchCaptureEndpoint) Cleanup(string, LaunchResult) error { return nil }
 func TestLaunch_RefusesCaptainRole(t *testing.T) {
 	tmp := t.TempDir()
 	smHome := filepath.Join(tmp, "captains", "test-sm")
-	seedTest("test-sm", smHome, "# charter")
+	seedTest(t, "test-sm", smHome, "# charter")
 	t.Setenv("MUNSU_ROLE", "captain")
 	err := Launch(smHome, tmp, testLaunchEndpoint{}, fakeIntegrationPort{})
 	if err == nil || !strings.Contains(err.Error(), "cannot launch other captains") {
@@ -1819,7 +1669,7 @@ func TestLaunch_RefusesFromCaptainParentHome(t *testing.T) {
 		t.Fatal(err)
 	}
 	smHome := filepath.Join(t.TempDir(), "child-sm")
-	seedTest("child-sm", smHome, "# charter")
+	seedTest(t, "child-sm", smHome, "# charter")
 	t.Setenv("MUNSU_ROLE", "")
 	err := Launch(smHome, parent, testLaunchEndpoint{}, fakeIntegrationPort{})
 	if err == nil || !strings.Contains(err.Error(), "cannot launch another captain") {
@@ -2274,16 +2124,6 @@ type safeFFFixture struct {
 	after   string
 }
 
-func gitTestRun(t *testing.T, dir string, args ...string) string {
-	t.Helper()
-	cmdArgs := append([]string{"-C", dir}, args...)
-	out, err := exec.Command("git", cmdArgs...).CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %v: %v\n%s", args, err, out)
-	}
-	return strings.TrimSpace(string(out))
-}
-
 func newSafeFFFixture(t *testing.T) safeFFFixture {
 	t.Helper()
 	root := t.TempDir()
@@ -2438,20 +2278,12 @@ func TestConverge_ValidMarkersWithConfigPush(t *testing.T) {
 	// Typed parent config binds both captains to projects so converge's
 	// inheritance push publishes a resolved snapshot per captain.
 
-	// Create two captains with provenance markers.
+	// Create two managed-worktree captains.
 	sm1 := filepath.Join(parent, "captains", "sm-alpha")
-	os.MkdirAll(filepath.Join(sm1, "state"), 0755)
-	os.MkdirAll(filepath.Join(sm1, "config"), 0755)
-	os.MkdirAll(filepath.Join(sm1, "data"), 0755)
-	os.WriteFile(filepath.Join(sm1, "AGENTS.md"), []byte("# Alpha\n"), 0644)
-	SeedProvenance(sm1, "sm-alpha")
+	worktreeCaptainHome(t, sm1, "sm-alpha")
 
 	sm2 := filepath.Join(parent, "captains", "sm-beta")
-	os.MkdirAll(filepath.Join(sm2, "state"), 0755)
-	os.MkdirAll(filepath.Join(sm2, "config"), 0755)
-	os.MkdirAll(filepath.Join(sm2, "data"), 0755)
-	os.WriteFile(filepath.Join(sm2, "AGENTS.md"), []byte("# Beta\n"), 0644)
-	SeedProvenance(sm2, "sm-beta")
+	worktreeCaptainHome(t, sm2, "sm-beta")
 
 	storeTestDocuments(t, parent, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
@@ -2470,9 +2302,8 @@ func TestConverge_ValidMarkersWithConfigPush(t *testing.T) {
 		{ID: "sm-beta", Home: sm2},
 	}, ConvergeCapabilities{Continuity: noopCaptainContinuity{}, Messaging: noopCaptainMessaging{}, Watcher: noopCaptainWatcher{}, Notification: &captainNotificationTransport{acknowledged: true}, Mailbox: &captainTestMailboxSender{}})
 
-	// State-only homes skip safeFF gracefully; converge should succeed.
 	if err != nil {
-		t.Fatalf("converge should succeed for state-only homes: %v", err)
+		t.Fatalf("converge should succeed for current worktree homes: %v", err)
 	}
 
 	// Config push should have published a resolved snapshot for both.
@@ -2558,7 +2389,7 @@ func TestSeedWithParent_Registers(t *testing.T) {
 	if err := config.StoreProjectOverlay(parent, "ops", config.ProjectOverlay{Backend: "tmux"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := seedWithParentTest("ops", sm, parent, ""); err != nil {
+	if err := seedWithParentTest(t, "ops", sm, parent, ""); err != nil {
 		t.Fatal(err)
 	}
 	mates, err := ListCaptains(parent)
@@ -2732,7 +2563,7 @@ func TestEnsureCaptainPiExtensions_InstallsBeforeLaunchArgs(t *testing.T) {
 	if err := config.StoreProjectOverlay(parent, "ext-sm", config.ProjectOverlay{Backend: "tmux"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := seedWithParentTest("ext-sm", sm, parent, "# charter\n"); err != nil {
+	if err := seedWithParentTest(t, "ext-sm", sm, parent, "# charter\n"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2877,7 +2708,7 @@ func TestBuildLaunchArgs_CaptainHarnessMultiToken(t *testing.T) {
 	tmp := t.TempDir()
 	smHome := filepath.Join(tmp, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
-	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# Test\n"), 0644)
+	os.WriteFile(filepath.Join(smHome, CaptainCharterName), []byte("# Test\n"), 0644)
 	writeCanonicalPiIntegration(t, smHome)
 
 	configDir := filepath.Join(tmp, "config")
@@ -2913,40 +2744,6 @@ func TestBuildLaunchArgs_CaptainHarnessMultiToken(t *testing.T) {
 	if !foundThinking {
 		t.Errorf("expected --thinking low in args: %v", args)
 	}
-}
-
-// newWorktreeFixture creates a remote, a project clone on main with one
-// commit, pushes, sets origin/HEAD, and returns the project repo path.
-func newWorktreeFixture(t *testing.T) string {
-	t.Helper()
-	root := t.TempDir()
-	remote := filepath.Join(root, "remote.git")
-	if out, err := exec.Command("git", "init", "--bare", remote).CombinedOutput(); err != nil {
-		t.Fatalf("git init --bare: %v\n%s", err, out)
-	}
-	project := filepath.Join(root, "project")
-	if out, err := exec.Command("git", "clone", remote, project).CombinedOutput(); err != nil {
-		t.Fatalf("git clone: %v\n%s", err, out)
-	}
-	// See initTestRepo: a repo built in t.TempDir() inherits the host's
-	// core.autocrlf, and the managed-worktree tests compare checked-out bytes
-	// to the bytes they wrote. Set on the clone rather than the bare remote
-	// because the linked worktree SeedFromWorktree creates shares this config.
-	gitTestRun(t, project, "config", "core.autocrlf", "false")
-	gitTestRun(t, project, "config", "user.name", "Munsu Test")
-	gitTestRun(t, project, "config", "user.email", "munsu@example.invalid")
-	gitTestRun(t, project, "checkout", "-b", "main")
-	if err := os.WriteFile(filepath.Join(project, "README.md"), []byte("# Project\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	gitTestRun(t, project, "add", "README.md")
-	gitTestRun(t, project, "commit", "-m", "initial")
-	gitTestRun(t, project, "push", "-u", "origin", "main")
-	gitTestRun(t, remote, "symbolic-ref", "HEAD", "refs/heads/main")
-	gitTestRun(t, project, "remote", "set-head", "origin", "main")
-	// Re-fetch so origin/HEAD resolves.
-	gitTestRun(t, project, "fetch", "origin")
-	return project
 }
 
 func TestSeedFromWorktree_CreatesDetachedWorktree(t *testing.T) {
@@ -3082,27 +2879,22 @@ func TestSeedFromWorktree_Idempotent(t *testing.T) {
 	}
 }
 
-func TestSeedFromWorktree_RefusesStateOnlyHome(t *testing.T) {
+func TestSeedFromWorktree_RefusesUnmanagedCaptainHome(t *testing.T) {
 	parent := t.TempDir()
 	if _, err := home.Init(parent); err != nil {
 		t.Fatal(err)
 	}
-	homePath := filepath.Join(parent, "captains", "existing-sm")
-
-	// Create a state-only captain home first.
-	// Explicit fixture Backend overlay: ResolveProject fails closed on empty.
-	if err := config.StoreProjectOverlay(parent, "existing-sm", config.ProjectOverlay{Backend: "tmux"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := seedWithParentTest("existing-sm", homePath, parent, ""); err != nil {
-		t.Fatal(err)
-	}
-
+	homePath := unsupportedCaptainHomeFixture(t, parent, "existing-sm")
 	project := newWorktreeFixture(t)
 
-	// Worktree seed on an existing state-only home must fail.
-	if err := seedFromWorktreeTest("existing-sm", homePath, project, parent, "", false, ""); err == nil {
-		t.Fatal("expected error for state-only home, got nil")
+	for _, force := range []bool{false, true} {
+		err := seedFromWorktreeTest("existing-sm", homePath, project, parent, "", force, "")
+		if err == nil || !strings.Contains(err.Error(), "is not a managed worktree") {
+			t.Fatalf("force=%v: err = %v, want unmanaged-home refusal", force, err)
+		}
+		if _, statErr := os.Stat(filepath.Join(homePath, home.CaptainProvenanceMarkerName)); statErr != nil {
+			t.Fatalf("force=%v: unmanaged home was modified: %v", force, statErr)
+		}
 	}
 }
 
@@ -3247,208 +3039,6 @@ func TestDefaultBranch_FallbackToMain(t *testing.T) {
 
 // --- MigrateToWorktree tests ---
 
-// stateOnlyHomeFixture creates a state-only captain home in parent and returns its path.
-func stateOnlyHomeFixture(t *testing.T, parent, id string) string {
-	t.Helper()
-	smHome := filepath.Join(parent, "captains", id)
-	if err := seedTest(id, smHome, "# charter for "+id); err != nil {
-		t.Fatalf("seedTest(%s): %v", id, err)
-	}
-	return smHome
-}
-
-func TestMigrateToWorktree_SuccessPath(t *testing.T) {
-	project := newWorktreeFixture(t)
-	parent := t.TempDir()
-	if _, err := home.Init(parent); err != nil {
-		t.Fatal(err)
-	}
-	id := "test-captain"
-	smHome := stateOnlyHomeFixture(t, parent, id)
-
-	// Write some operational state.
-	os.MkdirAll(filepath.Join(smHome, "state", "sub"), 0755)
-	os.WriteFile(filepath.Join(smHome, "state", "sub", "data.txt"), []byte("runtime\n"), 0644)
-	os.WriteFile(filepath.Join(smHome, "config", "custom.cfg"), []byte("setting=1\n"), 0644)
-	os.WriteFile(filepath.Join(smHome, "data", "notes.md"), []byte("# notes\n"), 0644)
-
-	// Migrate to managed worktree.
-	if err := migrateToWorktreeTest(smHome, project, id, parent); err != nil {
-		t.Fatal(err)
-	}
-
-	// 1. Home is now a managed worktree.
-	managed, err := isManagedWorktree(smHome)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !managed {
-		t.Error("home should be a managed worktree after migration")
-	}
-
-	// 2. .munsu-captain-home marker exists.
-	if _, err := os.Stat(filepath.Join(smHome, ProvenanceMarkerName)); err != nil {
-		t.Errorf("provenance marker missing: %v", err)
-	}
-
-	// 3. .captain-provenance exists.
-	if _, err := os.Stat(filepath.Join(smHome, CaptainProvenanceName)); err != nil {
-		t.Errorf("captain provenance missing: %v", err)
-	}
-
-	// 4. Charter preserved as untracked .captain-charter.md (not dirtying tracked AGENTS.md).
-	if _, err := os.Stat(filepath.Join(smHome, CaptainCharterName)); err != nil {
-		t.Errorf("%s missing: %v", CaptainCharterName, err)
-	}
-
-	// 5. Worktree admin path points at final home (no temp path).
-	wtListCaptains := gitTestRun(t, project, "worktree", "list", "--porcelain")
-	if !strings.Contains(wtListCaptains, smHome) {
-		t.Errorf("git worktree list missing final home %s; got:\n%s", smHome, wtListCaptains)
-	}
-	if strings.Contains(wtListCaptains, ".worktree-") {
-		t.Errorf("git worktree list still has temp path; got:\n%s", wtListCaptains)
-	}
-
-	// 6. Operational dirs preserved with content.
-	data, err := os.ReadFile(filepath.Join(smHome, "state", "sub", "data.txt"))
-	if err != nil {
-		t.Errorf("state/sub/data.txt not preserved: %v", err)
-	} else if string(data) != "runtime\n" {
-		t.Errorf("state/sub/data.txt content = %q", string(data))
-	}
-
-	data, err = os.ReadFile(filepath.Join(smHome, "config", "custom.cfg"))
-	if err != nil {
-		t.Errorf("config/custom.cfg not preserved: %v", err)
-	} else if string(data) != "setting=1\n" {
-		t.Errorf("config/custom.cfg content = %q", string(data))
-	}
-
-	data, err = os.ReadFile(filepath.Join(smHome, "data", "notes.md"))
-	if err != nil {
-		t.Errorf("data/notes.md not preserved: %v", err)
-	} else if string(data) != "# notes\n" {
-		t.Errorf("data/notes.md content = %q", string(data))
-	}
-
-	// 7. Backup directory exists.
-	backupGlob, _ := filepath.Glob(smHome + ".backup-*")
-	if len(backupGlob) == 0 {
-		t.Error("backup directory not found")
-	}
-
-	// 8. Registered in parent.
-	found := false
-	mates, err := ListCaptains(parent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, m := range mates {
-		if m.ID == id {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("captain %s not registered in parent", id)
-	}
-
-	// 9. Git is detached (worktree state).
-	head := gitTestRun(t, smHome, "rev-parse", "HEAD")
-	if head == "" {
-		t.Error("empty HEAD in worktree")
-	}
-	gitFi, err := os.Stat(filepath.Join(smHome, ".git"))
-	if err != nil {
-		t.Fatal(".git marker missing:", err)
-	}
-	if gitFi.IsDir() {
-		t.Error(".git is a directory, expected worktree file marker")
-	}
-}
-
-func TestMigrateToWorktree_RefusesManagedWorktree(t *testing.T) {
-	parent := t.TempDir()
-	if _, err := home.Init(parent); err != nil {
-		t.Fatal(err)
-	}
-	project := newWorktreeFixture(t)
-
-	id := "test-captain"
-	homePath := filepath.Join(parent, "captains", id)
-	if err := seedFromWorktreeTest(id, homePath, project, parent, "", false, ""); err != nil {
-		t.Fatal(err)
-	}
-
-	// Attempt migration on already-managed worktree.
-	err := migrateToWorktreeTest(homePath, project, id, parent)
-	if err == nil {
-		t.Fatal("expected error for already-managed worktree")
-	}
-	if !strings.Contains(err.Error(), "already a managed worktree") {
-		t.Errorf("error = %v, want 'already a managed worktree'", err)
-	}
-}
-
-func TestMigrateToWorktree_RefusesNonStateOnly(t *testing.T) {
-	parent := t.TempDir()
-	project := newWorktreeFixture(t)
-
-	// Create a bare directory with no captain structure.
-	bareDir := filepath.Join(t.TempDir(), "bare")
-	os.MkdirAll(bareDir, 0755)
-
-	err := migrateToWorktreeTest(bareDir, project, "test", parent)
-	if err == nil {
-		t.Fatal("expected error for non-state-only path")
-	}
-	if !strings.Contains(err.Error(), "not a state-only home") {
-		t.Errorf("error = %v, want refusal of non-state-only", err)
-	}
-}
-
-func TestMigrateToWorktree_RollbackOnWorktreeFailure(t *testing.T) {
-	parent := t.TempDir()
-	id := "test-captain"
-	smHome := stateOnlyHomeFixture(t, parent, id)
-
-	// Use a non-existent repo path to cause worktree creation to fail.
-	nonExistentRepo := filepath.Join(t.TempDir(), "nonexistent")
-
-	err := migrateToWorktreeTest(smHome, nonExistentRepo, id, parent)
-	if err == nil {
-		t.Fatal("expected error for non-existent repo")
-	}
-
-	// Original home should still be intact.
-	if _, stErr := os.Stat(filepath.Join(smHome, "AGENTS.md")); stErr != nil {
-		t.Errorf("original home was damaged: AGENTS.md missing: %v", stErr)
-	}
-	if !isStateOnlyHome(smHome) {
-		t.Error("home should still be a state-only home after failed migration")
-	}
-}
-
-func TestMigrateToWorktree_RemoteMismatchRefused(t *testing.T) {
-	parent := t.TempDir()
-	initTestRepo(t, parent, "https://github.com/parent/repo.git")
-	id := "test-captain"
-	smHome := stateOnlyHomeFixture(t, parent, id)
-
-	// Repo with different remote.
-	repo := t.TempDir()
-	initTestRepo(t, repo, "https://github.com/different/repo.git")
-
-	err := migrateToWorktreeTest(smHome, repo, id, parent)
-	if err == nil {
-		t.Fatal("expected error for mismatched remote")
-	}
-	if !strings.Contains(err.Error(), "does not match parent remote") {
-		t.Errorf("error = %v, want remote mismatch", err)
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Regression tests for captain-migration-postconditions
 // ---------------------------------------------------------------------------
@@ -3507,58 +3097,6 @@ func gitListsPath(out, path string) bool {
 	}
 	resolved, err := filepath.EvalSymlinks(path)
 	return err == nil && strings.Contains(hay, filepath.ToSlash(resolved))
-}
-
-// TestRepairWorktreeAdminPath proves that after renaming a worktree directory,
-// repairWorktreeAdminPath updates git's worktree admin so that "git worktree list"
-// shows the final (renamed) path, not the old temp path.
-func TestRepairWorktreeAdminPath(t *testing.T) {
-	project := newWorktreeFixture(t)
-	parent := t.TempDir()
-	if _, err := home.Init(parent); err != nil {
-		t.Fatal(err)
-	}
-
-	// Create worktree at a temp path, then rename to final captain home.
-	tempPath := filepath.Join(parent, "captains", "temp-worktree")
-	if err := seedFromWorktreeTest("test-captain", tempPath, project, parent, "", false, ""); err != nil {
-		t.Fatal(err)
-	}
-
-	// Verify git worktree list shows temp path before rename.
-	worktreeOut := gitTestRun(t, project, "worktree", "list", "--porcelain")
-	if !gitListsPath(worktreeOut, tempPath) {
-		t.Fatalf("expected worktree list to contain %q before rename, got:\n%s", tempPath, worktreeOut)
-	}
-
-	// Atomic rename: move temp path to final captain home.
-	finalPath := filepath.Join(parent, "captains", "final-captain")
-	if err := os.Rename(tempPath, finalPath); err != nil {
-		t.Fatal(err)
-	}
-
-	// After rename, git worktree list still shows old temp path — stale.
-	staleOut := gitTestRun(t, project, "worktree", "list", "--porcelain")
-	if gitListsPath(staleOut, finalPath) {
-		t.Skip("rename already updated git worktree list — nothing to repair")
-	}
-
-	// Now repair the admin path.
-	if err := repairWorktreeAdminPath(finalPath, ""); err != nil {
-		t.Fatalf("repairWorktreeAdminPath failed: %v", err)
-	}
-
-	// Verify git worktree list now shows final path.
-	repairedOut := gitTestRun(t, project, "worktree", "list", "--porcelain")
-	if !gitListsPath(repairedOut, finalPath) {
-		t.Errorf("expected worktree list to contain %q after repair, got:\n%s", finalPath, repairedOut)
-	}
-
-	// Verify the worktree is still functional.
-	gitTestRun(t, finalPath, "rev-parse", "HEAD")
-	if _, err := os.Stat(filepath.Join(finalPath, CaptainCharterName)); err != nil {
-		t.Errorf("%s missing after rename and repair: %v", CaptainCharterName, err)
-	}
 }
 
 // TestUpdate_ManagedWorktreeUsesProvenanceRepo proves that Update() works for
@@ -4314,142 +3852,9 @@ func TestManagedCleanState_ConfigPushDoesNotTouchUntrackedFiles(t *testing.T) {
 	}
 }
 
-// TestMigrateToWorktree_HoldsPreservedClean proves that holds/*.hold files are
-// preserved during Managed migration and the new worktree remains git-clean.
-// This is the regression test for captain-migration-holds-clean: copied holds
-// survive the atomic swap and do not dirty the managed worktree's git status.
-func TestMigrateToWorktree_HoldsPreservedClean(t *testing.T) {
-	project := newWorktreeFixture(t)
-	parent := t.TempDir()
-	if _, err := home.Init(parent); err != nil {
-		t.Fatal(err)
-	}
-	id := "test-captain"
-	smHome := stateOnlyHomeFixture(t, parent, id)
-
-	// Create holds directory with multiple hold files — simulates in-flight
-	// soldier decision holds that must survive migration to managed worktree.
-	holdsDir := filepath.Join(smHome, "holds")
-	if err := os.MkdirAll(holdsDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	holdContents := map[string]string{
-		"nomistakes-pi-contract-decision-fix-location.hold": "origin-id=nomistakes-pi-contract\ndecision-key=fix-location\nreason=Should the permanent fix live in no-mistakes upstream (small PR to add pi neutralization) or in munsu's own no-mistakes adapter/fork?\n",
-		"nomistakes-pi-contract-decision-adm-priority.hold": "origin-id=nomistakes-pi-contract\ndecision-key=adm-priority\nreason=Should ADM priority be treated as blocking or advisory for no-mistakes gate?\n",
-		"TASK-42.hold": "hold: awaiting-general-decision\ncreated: 2026-07-23\n",
-		"TASK-99.hold": "hold: awaiting-review\ncreated: 2026-07-23\n",
-	}
-
-	var holdFilePaths []string
-	for name, content := range holdContents {
-		p := filepath.Join(holdsDir, name)
-		if err := os.WriteFile(p, []byte(content), 0644); err != nil {
-			t.Fatal(err)
-		}
-		holdFilePaths = append(holdFilePaths, p)
-	}
-
-	// Write some operational state for cross-check.
-	os.MkdirAll(filepath.Join(smHome, "state", "sub"), 0755)
-	os.WriteFile(filepath.Join(smHome, "state", "sub", "data.txt"), []byte("runtime\n"), 0644)
-	os.WriteFile(filepath.Join(smHome, "config", "custom.cfg"), []byte("setting=1\n"), 0644)
-
-	// Run migration.
-	if err := migrateToWorktreeTest(smHome, project, id, parent); err != nil {
-		t.Fatal(err)
-	}
-
-	// 1. Home is now a managed worktree.
-	managed, err := isManagedWorktree(smHome)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !managed {
-		t.Fatal("home should be a managed worktree after migration")
-	}
-
-	// 2. All hold files were copied and content is byte-for-byte identical.
-	for name, wantContent := range holdContents {
-		p := filepath.Join(smHome, "holds", name)
-		data, err := os.ReadFile(p)
-		if err != nil {
-			t.Errorf("hold %q not found in migrated worktree: %v", name, err)
-			continue
-		}
-		if string(data) != wantContent {
-			t.Errorf("hold %q content changed:\nwant: %q\ngot:  %q", name, wantContent, string(data))
-		}
-	}
-
-	// 3. Git status is clean — holds/ is excluded via info/exclude.
-	statusOut, err := exec.Command("git", "-C", smHome, "status", "--porcelain").CombinedOutput()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(strings.TrimSpace(string(statusOut))) > 0 {
-		t.Fatalf("worktree is not git-clean after migration:\n%s", string(statusOut))
-	}
-
-	// 4. Backup directory exists and contains the original holds (migration evidence).
-	backupGlob, err := filepath.Glob(smHome + ".backup-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(backupGlob) == 0 {
-		t.Error("backup directory not found after migration")
-	} else {
-		backupHolds := filepath.Join(backupGlob[0], "holds")
-		for name := range holdContents {
-			if _, err := os.Stat(filepath.Join(backupHolds, name)); os.IsNotExist(err) {
-				t.Errorf("hold %q missing from backup at %s", name, backupHolds)
-			}
-		}
-		// Also verify state/config survived in backup.
-		if _, err := os.Stat(filepath.Join(backupGlob[0], "state", "sub", "data.txt")); os.IsNotExist(err) {
-			t.Error("state/sub/data.txt missing from backup")
-		}
-		if _, err := os.Stat(filepath.Join(backupGlob[0], "config", "custom.cfg")); os.IsNotExist(err) {
-			t.Error("config/custom.cfg missing from backup")
-		}
-	}
-
-	// 5. Operational state was also preserved in the live worktree.
-	data, err := os.ReadFile(filepath.Join(smHome, "state", "sub", "data.txt"))
-	if err != nil {
-		t.Errorf("state/sub/data.txt not preserved: %v", err)
-	} else if string(data) != "runtime\n" {
-		t.Errorf("state/sub/data.txt content = %q", string(data))
-	}
-
-	data, err = os.ReadFile(filepath.Join(smHome, "config", "custom.cfg"))
-	if err != nil {
-		t.Errorf("config/custom.cfg not preserved: %v", err)
-	} else if string(data) != "setting=1\n" {
-		t.Errorf("config/custom.cfg content = %q", string(data))
-	}
-
-	// 6. Worktree admin path points at final home (no temp path).
-	wtListCaptains := gitTestRun(t, project, "worktree", "list", "--porcelain")
-	if !strings.Contains(wtListCaptains, smHome) {
-		t.Errorf("git worktree list missing final home %s", smHome)
-	}
-	if strings.Contains(wtListCaptains, ".worktree-") {
-		t.Errorf("git worktree list still has temp path; got:\n%s", wtListCaptains)
-	}
-
-	// 7. .captain-charter.md and provenance exist.
-	if _, err := os.Stat(filepath.Join(smHome, CaptainCharterName)); os.IsNotExist(err) {
-		t.Errorf("%s missing after migration", CaptainCharterName)
-	}
-	if _, err := os.Stat(filepath.Join(smHome, CaptainProvenanceName)); os.IsNotExist(err) {
-		t.Errorf("%s missing after migration", CaptainProvenanceName)
-	}
-}
-
-func TestSeedCaptainFromWorktree_RequiresIntegrationBeforeMutation(t *testing.T) {
+func TestSeedCaptain_RequiresIntegrationBeforeMutation(t *testing.T) {
 	h := filepath.Join(t.TempDir(), "captain")
-	err := SeedCaptainFromWorktree(CaptainWorktreeSeedOptions{ID: "test", Home: h, Repo: t.TempDir()})
+	err := SeedCaptain(CaptainSeedOptions{ID: "test", Home: h, Repo: t.TempDir()})
 	if err == nil || !strings.Contains(err.Error(), "integration capability") {
 		t.Fatalf("error=%v", err)
 	}
@@ -4458,7 +3863,7 @@ func TestSeedCaptainFromWorktree_RequiresIntegrationBeforeMutation(t *testing.T)
 	}
 }
 
-func TestSeedCaptainFromWorktree_IntegrationFailureRollsBack(t *testing.T) {
+func TestSeedCaptain_IntegrationFailureRollsBack(t *testing.T) {
 	parent := t.TempDir()
 	if _, err := home.Init(parent); err != nil {
 		t.Fatal(err)
@@ -4468,7 +3873,7 @@ func TestSeedCaptainFromWorktree_IntegrationFailureRollsBack(t *testing.T) {
 	initTestRepo(t, repo, "https://github.com/test/repo.git")
 	h := filepath.Join(t.TempDir(), "captain")
 	port := &countingIntegrationPort{err: fmt.Errorf("install failed")}
-	err := SeedCaptainFromWorktree(CaptainWorktreeSeedOptions{ID: "test-captain", Home: h, Repo: repo, ParentHome: parent, Integration: port})
+	err := SeedCaptain(CaptainSeedOptions{ID: "test-captain", Home: h, Repo: repo, ParentHome: parent, Integration: port})
 	if err == nil || port.calls != 1 {
 		t.Fatalf("error=%v calls=%d", err, port.calls)
 	}
@@ -4477,7 +3882,7 @@ func TestSeedCaptainFromWorktree_IntegrationFailureRollsBack(t *testing.T) {
 	}
 }
 
-func TestSeedCaptainFromWorktree_InvokesIntegrationOnce(t *testing.T) {
+func TestSeedCaptain_InvokesIntegrationOnce(t *testing.T) {
 	parent := t.TempDir()
 	if _, err := home.Init(parent); err != nil {
 		t.Fatal(err)
@@ -4486,51 +3891,8 @@ func TestSeedCaptainFromWorktree_InvokesIntegrationOnce(t *testing.T) {
 	repo := t.TempDir()
 	initTestRepo(t, repo, "https://github.com/test/repo.git")
 	port := &countingIntegrationPort{}
-	err := SeedCaptainFromWorktree(CaptainWorktreeSeedOptions{ID: "test-captain", Home: filepath.Join(parent, "captains/test-captain"), Repo: repo, ParentHome: parent, Integration: port})
+	err := SeedCaptain(CaptainSeedOptions{ID: "test-captain", Home: filepath.Join(parent, "captains/test-captain"), Repo: repo, ParentHome: parent, Integration: port})
 	if err != nil || port.calls != 1 {
 		t.Fatalf("error=%v calls=%d", err, port.calls)
-	}
-}
-
-func TestMigrateCaptainToWorktree_InvokesIntegrationOnce(t *testing.T) {
-	project := newWorktreeFixture(t)
-	parent := t.TempDir()
-	if _, err := home.Init(parent); err != nil {
-		t.Fatal(err)
-	}
-	id := "test-captain"
-	h := stateOnlyHomeFixture(t, parent, id)
-	port := &countingIntegrationPort{}
-	err := MigrateCaptainToWorktree(CaptainMigrationOptions{CaptainHome: h, Repo: project, ID: id, ParentHome: parent, Integration: port})
-	if err != nil || port.calls != 1 {
-		t.Fatalf("error=%v calls=%d", err, port.calls)
-	}
-}
-
-func TestMigrateCaptainToWorktree_IntegrationFailureRestoresHome(t *testing.T) {
-	project := newWorktreeFixture(t)
-	parent := t.TempDir()
-	if _, err := home.Init(parent); err != nil {
-		t.Fatal(err)
-	}
-	id := "test-captain"
-	h := stateOnlyHomeFixture(t, parent, id)
-	sentinel := filepath.Join(h, "state", "sentinel.txt")
-	if err := os.WriteFile(sentinel, []byte("preserve me"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	port := &countingIntegrationPort{err: fmt.Errorf("install failed")}
-	err := MigrateCaptainToWorktree(CaptainMigrationOptions{CaptainHome: h, Repo: project, ID: id, ParentHome: parent, Integration: port})
-	if err == nil || port.calls != 1 {
-		t.Fatalf("error=%v calls=%d", err, port.calls)
-	}
-	if got, readErr := os.ReadFile(sentinel); readErr != nil || string(got) != "preserve me" {
-		t.Fatalf("sentinel=%q error=%v", got, readErr)
-	}
-	if managed, _ := isManagedWorktree(h); managed {
-		t.Fatal("failed migration remained authoritative worktree")
-	}
-	if !isStateOnlyHome(h) {
-		t.Fatal("original state-only home was not restored")
 	}
 }
