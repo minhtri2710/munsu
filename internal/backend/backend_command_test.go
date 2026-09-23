@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -11,6 +12,21 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
+
+func TestHerdrPaneProbePreservesCommandExit(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFakeExecutable(t, filepath.Join(dir, "herdr"), "#!/bin/sh\nif [ \"$1\" = \"--session\" ]; then shift 2; fi\necho '{\"result\":{\"pane_id\":\"w1:p1\"}}'\nexit 1\n")
+	testutil.PrependPath(t, dir)
+
+	_, err := NewHerdrBackend("test").herdrForWindow("test:w1:p1", "pane", "get", "w1:p1")
+	if err == nil {
+		t.Fatal("pane probe returned nil error")
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("pane probe error = %T %v, want wrapped command exit", err, err)
+	}
+}
 
 func TestHerdrPromptTimeoutIsBackendFailedNotDead(t *testing.T) {
 	dir := t.TempDir()

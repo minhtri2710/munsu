@@ -117,7 +117,7 @@ func (h *HerdrBackend) herdr(args ...string) (string, error) {
 						Message: fmt.Sprintf("herdr %v: %s", fullArgs, combined),
 					}
 				}
-				return "", fmt.Errorf("herdr %v: %s", fullArgs, combined)
+				return "", fmt.Errorf("herdr %v: %s: %w", fullArgs, combined, err)
 			}
 		}
 		// Check for protocol_mismatch in the error message directly.
@@ -216,6 +216,18 @@ func isNotFoundErr(err error) bool {
 	// Legacy fallback: textual substring matching.
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "not found") || strings.Contains(msg, "not_found") || strings.Contains(msg, "pane_not_found")
+}
+
+// isHerdrCommandExit reports a completed herdr command that returned a
+// non-zero status. For the pane-get liveness probe, that status is the CLI's
+// authoritative dead/not-found result. Spawn failures and bounded timeouts do
+// not produce an ExitError and remain unknown to callers.
+func isHerdrCommandExit(err error) bool {
+	if err == nil || isBackendCommandTimeout(err) {
+		return false
+	}
+	var exitErr *exec.ExitError
+	return errors.As(err, &exitErr)
 }
 
 // herdrTabCreateResponse represents the JSON response from herdr tab create.
@@ -887,9 +899,10 @@ func (h *HerdrBackend) AgentPrompt(windowID, text string) PromptResult {
 		// agent_not_found: check if pane exists to distinguish dead from non-agent.
 		alive, aliveErr := h.CheckAlive(windowID)
 		if aliveErr != nil {
-			// Only authoritative pane absence means dead. A timeout or any
-			// other probe failure leaves endpoint state unknown.
-			if errors.Is(aliveErr, ErrPaneNotFound) {
+			// A completed pane probe that returns non-zero is the backend's
+			// authoritative dead/not-found result. Spawn failures and bounded
+			// timeouts are not ExitErrors and leave endpoint state unknown.
+			if errors.Is(aliveErr, ErrPaneNotFound) || isHerdrCommandExit(aliveErr) {
 				return PromptResult{
 					Status: PromptEndpointDead,
 					Detail: "pane not found",
