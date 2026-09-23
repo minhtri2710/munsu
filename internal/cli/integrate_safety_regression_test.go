@@ -136,6 +136,13 @@ func TestSafetyCheckWatchAndNoMistakesVerdictsParseTokens(t *testing.T) {
 		{"munsu doctor && rm -rf ~/.no-mistakes/x", true},
 		{`bash -c "munsu guard; rm -rf ~/.no-mistakes/x"`, true},
 		{"munsu guard ~/.no-mistakes/repos/x", false},
+		{"rm -rf ~/.no-mistakes", true},
+		{"rm -rf $HOME/.no-mistakes", true},
+		{"rm -rf ${HOME}/.no-mistakes/", true},
+		{"rm -rf /Users/x/.no-mistakes", true},
+		{"cd .no-mistakes", true},
+		{"munsu doctor", false},
+		{"ls .no-mistakes-notes", false},
 	} {
 		var exitCode int
 		exitWithCode = func(code int) { exitCode = code }
@@ -151,6 +158,29 @@ func TestSafetyCheckWatchAndNoMistakesVerdictsParseTokens(t *testing.T) {
 		if tc.block && strings.Contains(tc.command, "munsu watch") &&
 			(!strings.Contains(stderr, "'munsu watch ensure' for a persistent watcher") || !strings.Contains(stderr, "'munsu watch run' for one cycle")) {
 			t.Errorf("%q: refusal must recommend watch ensure and watch run, got %q", tc.command, stderr)
+		}
+	}
+}
+
+// TestSafetyCheckRefusesWatchInCommandSubstitution pins a cross-rule
+// dependency: the watch rule does not parse $(...) or backtick substitution
+// into words, so only hasGitCommandSubstitution refuses these shapes.
+func TestSafetyCheckRefusesWatchInCommandSubstitution(t *testing.T) {
+	t.Setenv("MUNSU_HOME", t.TempDir())
+	gitDir := initGitRepoForSafety(t, t.TempDir())
+	oldExit := exitWithCode
+	defer func() { exitWithCode = oldExit }()
+	for _, command := range []string{"x=$(munsu watch)", "x=`munsu watch`", "echo $(munsu watch)"} {
+		var exitCode int
+		exitWithCode = func(code int) { exitCode = code }
+		cmd := &cobra.Command{}
+		cmd.SetOut(io.Discard)
+		cmd.SetErr(io.Discard)
+		_, stderr := captureBoth(func() {
+			runSafetyCheck(cmd, gitDir, command, "", "codex")
+		})
+		if exitCode != 2 {
+			t.Errorf("%q: exit=%d, want 2 (refused) (stderr=%q)", command, exitCode, stderr)
 		}
 	}
 }

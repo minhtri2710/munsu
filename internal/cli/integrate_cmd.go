@@ -517,6 +517,25 @@ func commandWords(command string) [][]string {
 	return segments
 }
 
+// namesNoMistakesDir reports whether any command word, including a word that
+// is itself a command line, names a no-mistakes directory or a path inside
+// it: a path component exactly `.no-mistakes`.
+func namesNoMistakesDir(command string) bool {
+	for _, words := range commandWords(command) {
+		for _, word := range words {
+			if strings.ContainsAny(word, " \t\n;&|") && namesNoMistakesDir(word) {
+				return true
+			}
+			for _, component := range strings.Split(word, "/") {
+				if component == ".no-mistakes" {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 // munsuSubcommandArgs drops the root --home flag from the words after `munsu`.
 func munsuSubcommandArgs(args []string) []string {
 	for len(args) > 0 {
@@ -613,6 +632,8 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, c
 		}
 		writeTargets = targets
 	} else if effectiveCommand != "" {
+		// The tokenizer does not parse $(...) or backtick substitution into
+		// words; those shapes are refused only by hasGitCommandSubstitution.
 		invocations := munsuInvocations(effectiveCommand)
 		for _, args := range invocations {
 			if len(args) > 0 && args[0] == "watch" && !watchInvocationAllowed(args[1:]) {
@@ -621,9 +642,7 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, c
 			}
 		}
 
-		if strings.Contains(effectiveCommand, "cd .no-mistakes") ||
-			strings.Contains(effectiveCommand, "cd ~/.no-mistakes") ||
-			strings.Contains(effectiveCommand, "/.no-mistakes/") {
+		if namesNoMistakesDir(effectiveCommand) {
 			if !onlyGuardOrDoctor(effectiveCommand) {
 				block = true
 				reason = "No-mistakes managed directories are not regular projects."
