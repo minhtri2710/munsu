@@ -134,3 +134,30 @@ func TestAbortFailsWhenSessionMetaCannotBeCleared(t *testing.T) {
 		t.Fatalf("failed abort released the claim: %+v", agg.CleanupClaim)
 	}
 }
+
+// TestAbortWithoutSessionKeysDoesNotRewriteMeta proves a proven-absent abort
+// whose .meta carries no session key leaves the file byte-identical. The
+// comment line is dropped by any rewrite, so a rewrite cannot hide.
+func TestAbortWithoutSessionKeysDoesNotRewriteMeta(t *testing.T) {
+	taskID := "abort-no-session-keys"
+	homeDir, auth := retireWithPendingCleanup(t, taskID)
+	metaPath, err := home.MetaFilePath(homeDir, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(metaPath, []byte("# operator note\nkind=ship\nworktree=/wt\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	abortCleanupFor(t, auth, homeDir, taskID, taskauthority.Generation(1))
+	after, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("abort rewrote .meta without session keys:\nbefore=%q\nafter=%q", before, after)
+	}
+}
