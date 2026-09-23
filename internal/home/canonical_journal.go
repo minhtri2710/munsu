@@ -2,6 +2,7 @@ package home
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,6 +19,17 @@ type ChangeItem struct {
 	Data   []byte `json:"data"`
 	Digest string `json:"digest,omitempty"`
 }
+
+// ErrInDoubt reports a commit whose journal record is durable but whose
+// application failed and could not be rolled forward in place. The change is
+// committed: the next Commit or recovery of the same scope applies it, so a
+// caller must not treat it as "nothing happened" or retry from the same
+// expected revision.
+var ErrInDoubt = errors.New("home: commit durable but not yet applied")
+
+// commitApply applies one item on Commit's first pass; tests replace it to
+// inject a failure after the record is durable.
+var commitApply = (*Home).applyItem
 
 // journalRecord is the durable write-ahead intent for one change-set commit.
 // Recovery redoes a record only when the scope revision shows the commit was
@@ -64,7 +76,9 @@ func (h *Home) RecoverPending(lk *Lock) error {
 // It verifies optimistic concurrency (expectedRevision must match the current
 // scope revision) and fencing (lk must still be held). A write-ahead journal
 // record is fsynced before the items are applied, so an interrupted commit is
-// recovered mechanically on the next Open. It returns the new scope revision.
+// recovered mechanically on the next Open. Once that record is durable, a
+// failed application is rolled forward in place; if that also fails Commit
+// returns ErrInDoubt. It returns the new scope revision.
 func (h *Home) Commit(lk *Lock, txnID string, expectedRevision uint64, items []ChangeItem) (uint64, error) {
 	if err := h.requireLiveFencedHolder(lk); err != nil {
 		return 0, err
@@ -109,18 +123,29 @@ func (h *Home) Commit(lk *Lock, txnID string, expectedRevision uint64, items []C
 	if err := h.writeJournalRecord(rec); err != nil {
 		return 0, err
 	}
-	for _, it := range items {
-		if err := h.applyItem(it); err != nil {
-			return 0, err
+	// The record is the commit point: from here a failure rolls the record
+	// forward in place under lk instead of reporting a plain failure.
+	if err := h.applyRecord(rec); err != nil {
+		if rerr := h.recoverRecordLocked(lk.scope, h.journalPath(lk.scope, txnID)); rerr != nil {
+			return 0, fmt.Errorf("%w: txn %s: %w", ErrInDoubt, txnID, errors.Join(err, rerr))
 		}
 	}
-	if err := h.writeRevision(lk.scope, newRev); err != nil {
-		return 0, err
-	}
-	if err := os.Remove(h.journalPath(lk.scope, txnID)); err != nil && !os.IsNotExist(err) {
-		return 0, fmt.Errorf("home: remove journal record: %w", err)
-	}
 	return newRev, nil
+}
+
+func (h *Home) applyRecord(rec journalRecord) error {
+	for _, it := range rec.Items {
+		if err := commitApply(h, it); err != nil {
+			return err
+		}
+	}
+	if err := h.writeRevision(rec.Scope, rec.NewRevision); err != nil {
+		return err
+	}
+	if err := os.Remove(h.journalPath(rec.Scope, rec.TxnID)); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("home: remove journal record: %w", err)
+	}
+	return nil
 }
 
 // recover replays interrupted write-ahead journal records. Each leftover record
