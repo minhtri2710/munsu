@@ -38,6 +38,10 @@ func orcaBin() (string, error) {
 	return path, nil
 }
 
+func runOrcaCommand(bin string, args ...string) ([]byte, []byte, error) {
+	return runBackendCommand(bin, args, "", nil)
+}
+
 // orcaTerminalCreateResponse parses JSON from `orca terminal create --json`.
 type orcaTerminalCreateResponse struct {
 	ContainerID string `json:"container_id"`
@@ -60,13 +64,9 @@ func orcaOutput(args ...string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	cmd := exec.Command(bin, args...)
-	out, err := cmd.Output()
+	out, stderr, err := runOrcaCommand(bin, args...)
 	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("orca %v: %s", args, strings.TrimSpace(string(ee.Stderr)))
-		}
-		return "", fmt.Errorf("orca %v: %w", args, err)
+		return "", wrapBackendCommandError(fmt.Sprintf("orca %v", args), out, stderr, err)
 	}
 	return strings.TrimSpace(string(out)), nil
 }

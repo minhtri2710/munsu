@@ -42,6 +42,10 @@ func cmuxBin() (string, error) {
 	return path, nil
 }
 
+func runCmuxCommand(bin string, args ...string) ([]byte, []byte, error) {
+	return runBackendCommand(bin, args, "", nil)
+}
+
 // cmuxIdentifyResponse parses the JSON output from `cmux identify --json`.
 type cmuxIdentifyResponse struct {
 	Result cmuxIdentifyResult `json:"result"`
@@ -71,13 +75,9 @@ func cmuxOutput(args ...string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	cmd := exec.Command(bin, args...)
-	out, err := cmd.Output()
+	out, stderr, err := runCmuxCommand(bin, args...)
 	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("cmux %v: %s", args, strings.TrimSpace(string(ee.Stderr)))
-		}
-		return "", fmt.Errorf("cmux %v: %w", args, err)
+		return "", wrapBackendCommandError(fmt.Sprintf("cmux %v", args), out, stderr, err)
 	}
 	return strings.TrimSpace(string(out)), nil
 }

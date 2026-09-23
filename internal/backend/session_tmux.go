@@ -21,6 +21,10 @@ func tmuxBin() (string, error) {
 	return path, nil
 }
 
+func runTmuxCommand(bin string, args ...string) ([]byte, []byte, error) {
+	return runBackendCommand(bin, args, "", nil)
+}
+
 // windowName returns the complete caller-provided label.
 func (t *TmuxBackend) windowName(name string) string {
 	return name
@@ -33,14 +37,14 @@ func (t *TmuxBackend) ensureSession(session string) error {
 		return err
 	}
 	// Check if session exists
-	has := exec.Command(bin, "has-session", "-t", session)
-	if has.Run() == nil {
+	_, _, hasErr := runTmuxCommand(bin, "has-session", "-t", session)
+	if hasErr == nil {
 		return nil // session exists
 	}
 	// Create a detached session
-	out, err := exec.Command(bin, "new-session", "-d", "-s", session).CombinedOutput()
+	stdout, stderr, err := runTmuxCommand(bin, "new-session", "-d", "-s", session)
 	if err != nil {
-		return fmt.Errorf("tmux new-session %q: %s", session, strings.TrimSpace(string(out)))
+		return wrapBackendCommandError(fmt.Sprintf("tmux new-session %q", session), stdout, stderr, err)
 	}
 	return nil
 }
@@ -59,12 +63,9 @@ func (t *TmuxBackend) FindOrCreateWindow(session, name string) (string, error) {
 	if err := t.ensureSession(session); err != nil {
 		return "", err
 	}
-	out, err := exec.Command(bin, "list-windows", "-t", session, "-F", "#{window_name}\t#{window_id}").Output()
+	out, stderr, err := runTmuxCommand(bin, "list-windows", "-t", session, "-F", "#{window_name}\t#{window_id}")
 	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("tmux list-windows: %s", strings.TrimSpace(string(ee.Stderr)))
-		}
-		return "", fmt.Errorf("tmux list-windows: %w", err)
+		return "", wrapBackendCommandError("tmux list-windows", out, stderr, err)
 	}
 	var matches []string
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
@@ -101,13 +102,9 @@ func (t *TmuxBackend) NewWindow(session, name string) (string, error) {
 		return "", err
 	}
 	wName := t.windowName(name)
-	cmd := exec.Command(bin, "new-window", "-P", "-F", "#{window_id}", "-n", wName, "-t", session)
-	out, err := cmd.Output()
+	out, stderr, err := runTmuxCommand(bin, "new-window", "-P", "-F", "#{window_id}", "-n", wName, "-t", session)
 	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("tmux new-window: %s", strings.TrimSpace(string(ee.Stderr)))
-		}
-		return "", fmt.Errorf("tmux new-window: %w", err)
+		return "", wrapBackendCommandError("tmux new-window", out, stderr, err)
 	}
 	// Return qualified "<session>:<window_id>" for window handle.
 	return session + ":" + strings.TrimSpace(string(out)), nil
@@ -134,10 +131,9 @@ func (t *TmuxBackend) SendKeys(windowID, text string) error {
 		return err
 	}
 	target := normalizeTarget(windowID)
-	cmd := exec.Command(bin, "send-keys", "-t", target, text, "Enter")
-	out, err := cmd.CombinedOutput()
+	out, stderr, err := runTmuxCommand(bin, "send-keys", "-t", target, text, "Enter")
 	if err != nil {
-		return fmt.Errorf("tmux send-keys: %s", strings.TrimSpace(string(out)))
+		return wrapBackendCommandError("tmux send-keys", out, stderr, err)
 	}
 	return nil
 }
@@ -151,13 +147,9 @@ func (t *TmuxBackend) Capture(windowID string, lines int) (string, error) {
 	}
 	target := normalizeTarget(windowID)
 	start := fmt.Sprintf("-%d", lines)
-	cmd := exec.Command(bin, "capture-pane", "-t", target, "-p", "-S", start)
-	out, err := cmd.Output()
+	out, stderr, err := runTmuxCommand(bin, "capture-pane", "-t", target, "-p", "-S", start)
 	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("tmux capture-pane: %s", strings.TrimSpace(string(ee.Stderr)))
-		}
-		return "", fmt.Errorf("tmux capture-pane: %w", err)
+		return "", wrapBackendCommandError("tmux capture-pane", out, stderr, err)
 	}
 	return string(out), nil
 }
@@ -176,8 +168,7 @@ func (t *TmuxBackend) CheckAlive(windowID string) (bool, error) {
 		return false, err
 	}
 	target := normalizeTarget(windowID)
-	cmd := exec.Command(bin, "list-panes", "-t", target)
-	out, err := cmd.CombinedOutput()
+	out, stderr, err := runTmuxCommand(bin, "list-panes", "-t", target)
 	if err == nil {
 		// A successful list-panes must return non-empty target output; empty
 		// successful output is not authoritative presence.
@@ -186,11 +177,11 @@ func (t *TmuxBackend) CheckAlive(windowID string) (bool, error) {
 		}
 		return false, fmt.Errorf("tmux list-panes: empty output for target %q", target)
 	}
-	msg := strings.TrimSpace(string(out))
-	if isTmuxTargetAbsent(msg) {
+	msg := commandOutput(out, stderr)
+	if !isBackendCommandTimeout(err) && isTmuxTargetAbsent(msg) {
 		return false, ErrPaneNotFound
 	}
-	return false, fmt.Errorf("tmux list-panes: %s", msg)
+	return false, wrapBackendCommandError("tmux list-panes", out, stderr, err)
 }
 
 // Teardown kills the identified window via `tmux kill-window -t <windowID>`.
@@ -201,8 +192,7 @@ func (t *TmuxBackend) Teardown(windowID string) error {
 		return err
 	}
 	target := normalizeTarget(windowID)
-	cmd := exec.Command(bin, "kill-window", "-t", target)
-	_ = cmd.Run() // ignore errors — window may already be gone
+	_, _, _ = runTmuxCommand(bin, "kill-window", "-t", target) // ignore errors — window may already be gone
 	return nil
 }
 

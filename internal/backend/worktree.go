@@ -24,6 +24,7 @@
 package backend
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -180,6 +181,14 @@ func StatusWorktrees(homeDir string) ([]WorktreeEntry, error) {
 
 type treehouseProvider struct{}
 
+func runWorktreeCommand(bin, dir string, args ...string) ([]byte, []byte, error) {
+	return runBackendCommand(bin, args, dir, nil)
+}
+
+func runWorktreeMutationCommand(bin, dir string, args ...string) ([]byte, []byte, error) {
+	return runBackendCommandClass(context.Background(), backendCommandWorktree, bin, args, dir, nil)
+}
+
 // ReservedPath cannot derive a treehouse worktree path from a reservation
 // without I/O: treehouse allocates pool paths, they are not a pure function of
 // the reservation the way the git fallback's are. The reverse mapping —
@@ -217,14 +226,9 @@ func (p *treehouseProvider) GetReserved(repoPath string, lease bool, reservation
 		args = append(args, "--lease")
 	}
 	args = append(args, "--lease-holder", reservationID)
-	cmd := exec.Command(bin, args...)
-	cmd.Dir = absRepo
-	out, err := cmd.Output()
+	out, stderr, err := runWorktreeMutationCommand(bin, absRepo, args...)
 	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("treehouse get: %s", strings.TrimSpace(string(ee.Stderr)))
-		}
-		return "", fmt.Errorf("treehouse get: %w", err)
+		return "", wrapBackendCommandError("treehouse get", out, stderr, err)
 	}
 	wtPath := strings.TrimSpace(string(out))
 	if wtPath == "" {
@@ -246,14 +250,9 @@ func (p *treehouseProvider) Get(repoPath string, lease bool) (string, error) {
 	if lease {
 		args = append(args, "--lease")
 	}
-	cmd := exec.Command(bin, args...)
-	cmd.Dir = absRepo
-	out, err := cmd.Output()
+	out, stderr, err := runWorktreeMutationCommand(bin, absRepo, args...)
 	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("treehouse get: %s", strings.TrimSpace(string(ee.Stderr)))
-		}
-		return "", fmt.Errorf("treehouse get: %w", err)
+		return "", wrapBackendCommandError("treehouse get", out, stderr, err)
 	}
 	wtPath := strings.TrimSpace(string(out))
 	if wtPath == "" {
@@ -267,9 +266,8 @@ func (p *treehouseProvider) Return(path string) error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(bin, "return", "--force", path)
-	out, err := cmd.CombinedOutput()
-	output := strings.TrimSpace(string(out))
+	stdout, stderr, err := runWorktreeMutationCommand(bin, "", "return", "--force", path)
+	output := commandOutput(stdout, stderr)
 	// Even if exit code is 0, check for "Aborted" which means treehouse
 	// prompted interactively and was aborted (e.g. stdin closed).
 	// This produces a false "worktree returned to pool" without --force.
@@ -277,7 +275,7 @@ func (p *treehouseProvider) Return(path string) error {
 		return fmt.Errorf("treehouse return: %s", output)
 	}
 	if err != nil {
-		return fmt.Errorf("treehouse return: %s", output)
+		return wrapBackendCommandError("treehouse return", stdout, stderr, err)
 	}
 	return nil
 }
@@ -287,13 +285,9 @@ func (p *treehouseProvider) Status() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	cmd := exec.Command(bin, "status")
-	out, err := cmd.Output()
+	out, stderr, err := runBackendCommand(bin, []string{"status"}, "", nil)
 	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("treehouse status: %s", strings.TrimSpace(string(ee.Stderr)))
-		}
-		return "", fmt.Errorf("treehouse status: %w", err)
+		return "", wrapBackendCommandError("treehouse status", out, stderr, err)
 	}
 	return strings.TrimSpace(string(out)), nil
 }
@@ -308,13 +302,9 @@ func (p *treehouseProvider) StatusWorktrees() ([]WorktreeEntry, error) {
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.Command(bin, "status", "--json")
-	out, err := cmd.Output()
+	out, stderr, err := runBackendCommand(bin, []string{"status", "--json"}, "", nil)
 	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return nil, fmt.Errorf("treehouse status --json: %s", strings.TrimSpace(string(ee.Stderr)))
-		}
-		return nil, fmt.Errorf("treehouse status --json: %w", err)
+		return nil, wrapBackendCommandError("treehouse status --json", out, stderr, err)
 	}
 	var raw []struct {
 		Path        string `json:"path"`
@@ -383,11 +373,9 @@ func (p *gitWorktreeProvider) GetReserved(repoPath string, lease bool, reservati
 	}
 
 	// Create new worktree with --detach.
-	cmd := exec.Command("git", "worktree", "add", "--detach", wtDir)
-	cmd.Dir = repoPath
-	out, err := cmd.CombinedOutput()
+	out, stderr, err := runWorktreeMutationCommand("git", repoPath, "worktree", "add", "--detach", wtDir)
 	if err != nil {
-		return "", fmt.Errorf("git worktree add: %s", strings.TrimSpace(string(out)))
+		return "", wrapBackendCommandError("git worktree add", out, stderr, err)
 	}
 	return wtDir, nil
 }
@@ -408,11 +396,9 @@ func (p *gitWorktreeProvider) Get(repoPath string, lease bool) (string, error) {
 	}
 
 	// Create new worktree with --detach.
-	cmd := exec.Command("git", "worktree", "add", "--detach", wtDir)
-	cmd.Dir = repoPath
-	out, err := cmd.CombinedOutput()
+	out, stderr, err := runWorktreeMutationCommand("git", repoPath, "worktree", "add", "--detach", wtDir)
 	if err != nil {
-		return "", fmt.Errorf("git worktree add: %s", strings.TrimSpace(string(out)))
+		return "", wrapBackendCommandError("git worktree add", out, stderr, err)
 	}
 	return wtDir, nil
 }
@@ -437,11 +423,9 @@ func (p *gitWorktreeProvider) Return(path string) error {
 	// The repo root is three levels above .git/worktrees/<name>.
 	repoDir := filepath.Dir(filepath.Dir(filepath.Dir(repoGitDir)))
 
-	cmd := exec.Command("git", "worktree", "remove", "--force", path)
-	cmd.Dir = repoDir
-	out, err := cmd.CombinedOutput()
+	out, stderr, err := runWorktreeMutationCommand("git", repoDir, "worktree", "remove", "--force", path)
 	if err != nil {
-		return fmt.Errorf("git worktree remove: %s", strings.TrimSpace(string(out)))
+		return wrapBackendCommandError("git worktree remove", out, stderr, err)
 	}
 	return nil
 }
@@ -504,9 +488,7 @@ func stableHash(s string) string {
 // non-default branch. Returns nil if HEAD is detached or on the default branch.
 func AssertNotTangled(projectDir, projectName string) error {
 	// Check current HEAD state
-	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
-	cmd.Dir = projectDir
-	out, err := cmd.Output()
+	out, _, err := runWorktreeCommand("git", projectDir, "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {
 		// Can't determine branch state; skip tangle check
 		return nil
@@ -519,9 +501,7 @@ func AssertNotTangled(projectDir, projectName string) error {
 	}
 
 	// Get the default branch from origin/HEAD, with main/master fallback
-	cmd = exec.Command("git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
-	cmd.Dir = projectDir
-	out, err = cmd.Output()
+	out, _, err = runWorktreeCommand("git", projectDir, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
 	if err == nil {
 		defaultRef := strings.TrimSpace(string(out))
 		defaultBranch := strings.TrimPrefix(defaultRef, "origin/")
@@ -534,9 +514,8 @@ func AssertNotTangled(projectDir, projectName string) error {
 		// Fall back to common default branch names when origin/HEAD unavailable
 		foundDefault := false
 		for _, candidate := range []string{"main", "master"} {
-			chk := exec.Command("git", "rev-parse", "--verify", candidate)
-			chk.Dir = projectDir
-			if err := chk.Run(); err == nil {
+			_, _, err := runWorktreeCommand("git", projectDir, "rev-parse", "--verify", candidate)
+			if err == nil {
 				foundDefault = true
 				// On the default branch = no tangle
 				if branch == candidate {

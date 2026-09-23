@@ -3,6 +3,7 @@
 package backend
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -67,14 +68,9 @@ func herdrCLI(session string, args ...string) (string, error) {
 		return "", fmt.Errorf("herdr: not found on PATH: %w", err)
 	}
 	fullArgs := append([]string{"--session", session}, args...)
-	cmd := exec.Command(bin, fullArgs...)
-	cmd.Env = append(os.Environ(), "HERDR_SESSION="+session)
-	out, err := cmd.Output()
+	out, stderr, err := runBackendCommandClass(context.Background(), backendCommandWorktree, bin, fullArgs, "", []string{"HERDR_SESSION=" + session})
 	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("herdr %v: %s", fullArgs, strings.TrimSpace(string(ee.Stderr)))
-		}
-		return "", fmt.Errorf("herdr %v: %w", fullArgs, err)
+		return "", wrapBackendCommandError(fmt.Sprintf("herdr %v", fullArgs), out, stderr, err)
 	}
 	return strings.TrimSpace(string(out)), nil
 }

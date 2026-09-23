@@ -38,6 +38,10 @@ func zellijBin() (string, error) {
 	return path, nil
 }
 
+func runZellijCommand(bin string, args ...string) ([]byte, []byte, error) {
+	return runBackendCommand(bin, args, "", nil)
+}
+
 // zellijOutput runs a zellij action and returns stdout.
 func (z *ZellijBackend) zellijOutput(args ...string) (string, error) {
 	bin, err := zellijBin()
@@ -45,13 +49,9 @@ func (z *ZellijBackend) zellijOutput(args ...string) (string, error) {
 		return "", err
 	}
 	fullArgs := append([]string{"--session", z.Session, "action"}, args...)
-	cmd := exec.Command(bin, fullArgs...)
-	out, err := cmd.Output()
+	out, stderr, err := runZellijCommand(bin, fullArgs...)
 	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("zellij %v: %s", fullArgs, strings.TrimSpace(string(ee.Stderr)))
-		}
-		return "", fmt.Errorf("zellij %v: %w", fullArgs, err)
+		return "", wrapBackendCommandError(fmt.Sprintf("zellij %v", fullArgs), out, stderr, err)
 	}
 	return strings.TrimSpace(string(out)), nil
 }
@@ -63,10 +63,9 @@ func (z *ZellijBackend) zellijRun(args ...string) error {
 		return err
 	}
 	fullArgs := append([]string{"--session", z.Session, "action"}, args...)
-	cmd := exec.Command(bin, fullArgs...)
-	out, err := cmd.CombinedOutput()
+	out, stderr, err := runZellijCommand(bin, fullArgs...)
 	if err != nil {
-		return fmt.Errorf("zellij %v: %s", fullArgs, strings.TrimSpace(string(out)))
+		return wrapBackendCommandError(fmt.Sprintf("zellij %v", fullArgs), out, stderr, err)
 	}
 	return nil
 }
@@ -79,8 +78,7 @@ func (z *ZellijBackend) ensureSession() error {
 	}
 
 	// Check if session already exists via list-sessions.
-	listCmd := exec.Command(bin, "list-sessions", "--short")
-	listOut, listErr := listCmd.Output()
+	listOut, _, listErr := runZellijCommand(bin, "list-sessions", "--short")
 	if listErr == nil {
 		for _, s := range strings.Split(string(listOut), "\n") {
 			if strings.TrimSpace(s) == z.Session {
@@ -90,10 +88,9 @@ func (z *ZellijBackend) ensureSession() error {
 	}
 
 	// Create the background session.
-	cmd := exec.Command(bin, "attach", "--create-background", z.Session)
-	out, err := cmd.CombinedOutput()
+	out, stderr, err := runZellijCommand(bin, "attach", "--create-background", z.Session)
 	if err != nil {
-		return fmt.Errorf("zellij attach --create-background %q: %s", z.Session, strings.TrimSpace(string(out)))
+		return wrapBackendCommandError(fmt.Sprintf("zellij attach --create-background %q", z.Session), out, stderr, err)
 	}
 	return nil
 }
@@ -208,10 +205,9 @@ func (z *ZellijBackend) CheckAlive(windowID string) (bool, error) {
 		return false, err
 	}
 
-	cmd := exec.Command(bin, "--session", z.Session, "action", "list-panes", "--json")
-	out, err := cmd.Output()
+	out, stderr, err := runZellijCommand(bin, "--session", z.Session, "action", "list-panes", "--json")
 	if err != nil {
-		return false, fmt.Errorf("zellij: listing panes: %w", err)
+		return false, wrapBackendCommandError("zellij: listing panes", out, stderr, err)
 	}
 
 	var panes []zellijPaneEntry

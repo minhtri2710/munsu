@@ -102,12 +102,10 @@ func (h *HerdrBackend) herdr(args ...string) (string, error) {
 
 	// Prepend --session flags to every call.
 	fullArgs := append(h.sessionArgs(), args...)
-	cmd := exec.Command(bin, fullArgs...)
-	cmd.Env = append(os.Environ(), "HERDR_SESSION="+h.Session)
-	out, err := cmd.Output()
+	out, stderr, err := runBackendCommand(bin, fullArgs, "", []string{"HERDR_SESSION=" + h.Session})
 	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			combined := strings.TrimSpace(string(ee.Stderr))
+		if _, ok := err.(*exec.ExitError); ok {
+			combined := strings.TrimSpace(string(stderr))
 			if combined == "" {
 				combined = strings.TrimSpace(string(out))
 			}
@@ -145,10 +143,8 @@ func (h *HerdrBackend) herdrCaptureOutput(args ...string) (string, error) {
 	}
 
 	fullArgs := append(h.sessionArgs(), args...)
-	cmd := exec.Command(bin, fullArgs...)
-	cmd.Env = append(os.Environ(), "HERDR_SESSION="+h.Session)
-	out, err := cmd.CombinedOutput()
-	output := strings.TrimSpace(string(out))
+	stdout, stderr, err := runBackendCommand(bin, fullArgs, "", []string{"HERDR_SESSION=" + h.Session})
+	output := commandOutput(stdout, stderr)
 	if err != nil {
 		return output, err
 	}
@@ -195,7 +191,7 @@ func isHerdrWaitTimeout(err error) bool {
 // Prefers typed error code matching over textual substring for known codes;
 // falls back to textual matching for legacy/unknown error formats.
 func isNotFoundErr(err error) bool {
-	if err == nil {
+	if err == nil || isBackendCommandTimeout(err) {
 		return false
 	}
 	// Exec/transport failures (herdr binary missing from PATH, spawn errors)
@@ -891,16 +887,18 @@ func (h *HerdrBackend) AgentPrompt(windowID, text string) PromptResult {
 		// agent_not_found: check if pane exists to distinguish dead from non-agent.
 		alive, aliveErr := h.CheckAlive(windowID)
 		if aliveErr != nil {
-			// If CheckAlive itself fails, we don't know — backend-failed.
-			if aliveErr == ErrPaneNotFound {
+			// Only authoritative pane absence means dead. A timeout or any
+			// other probe failure leaves endpoint state unknown.
+			if errors.Is(aliveErr, ErrPaneNotFound) {
 				return PromptResult{
 					Status: PromptEndpointDead,
 					Detail: "pane not found",
 				}
 			}
 			return PromptResult{
-				Status: PromptEndpointDead,
+				Status: PromptBackendFailed,
 				Detail: fmt.Sprintf("pane liveness check failed: %v", aliveErr),
+				Err:    aliveErr,
 			}
 		}
 		if alive {
@@ -923,6 +921,15 @@ func (h *HerdrBackend) AgentPrompt(windowID, text string) PromptResult {
 	// (stalled returns exit 1 with JSON error in stdout).
 	out, err := h.herdrCaptureForWindow(windowID, "agent", "prompt", pid, text)
 	if err != nil {
+		// A bounded command failure leaves submission state unknown even if the
+		// CLI emitted partial output that resembles an agent_not_found error.
+		if isBackendCommandTimeout(err) {
+			return PromptResult{
+				Status: PromptBackendFailed,
+				Detail: "herdr agent prompt timed out; submission state is unknown",
+				Err:    err,
+			}
+		}
 		// If stdout is empty or unparseable, it's a true backend failure.
 		if out == "" {
 			return PromptResult{

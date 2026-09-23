@@ -265,6 +265,37 @@ func TestHerdrEventSource_Wait_ExpiredDeadline(t *testing.T) {
 	}
 }
 
+func TestHerdrEventSource_Wait_UsesRequestedWaitMargin(t *testing.T) {
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "herdr")
+	testutil.WriteFakeExecutable(t, bin, "#!/usr/bin/env bash\n"+
+		"if [ \"$1\" = \"--version\" ]; then echo 'herdr 0.7.5'; exit 0; fi\n"+
+		"if [ \"$1\" = \"api\" ] && [ \"$2\" = \"schema\" ] && [ \"$3\" = \"--json\" ]; then\n"+
+		"  echo '"+fakeHerdrSchemaReady+"'\n"+
+		"  exit 0\n"+
+		"fi\n"+
+		"if [ \"$3\" = \"agent\" ] && [ \"$4\" = \"wait\" ]; then\n"+
+		"  sleep 0.8\n"+
+		"  echo '{\"agent_status\":\"working\",\"state_change_seq\":1}'\n"+
+		"  exit 0\n"+
+		"fi\n"+
+		"exit 1\n")
+	src := &HerdrEventSource{Session: "test-s", CLIPath: bin}
+	if err := src.negotiate(); err != nil {
+		t.Fatalf("negotiate: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	sig, err := src.Wait(ctx, EndpointRef{Backend: "herdr", Handle: "w:p"}, "")
+	if err != nil {
+		t.Fatalf("Wait returned before the requested wait margin: %v", err)
+	}
+	if sig.Activity != ActivityBusy {
+		t.Fatalf("Activity = %v, want busy", sig.Activity)
+	}
+}
+
 func TestHerdrEventSource_Wait_Timeout(t *testing.T) {
 	// The fake exits non-zero with a STRUCTURED timeout error envelope. The
 	// adapter must map the herdr CLI's own bounded-wait timeout to

@@ -89,17 +89,21 @@ func ProbeHerdrCapability(cliPath string) CapabilityInfo {
 	info.CLIPath = bin
 
 	// Get version string.
-	if ver, err := exec.Command(bin, "--version").Output(); err == nil {
+	if ver, _, err := runBackendCommand(bin, []string{"--version"}, "", nil); err == nil {
 		info.CLIVersion = strings.TrimSpace(string(ver))
 	}
 
 	// Run herdr api schema --json.
 	// This command does not require an active session — it emits the bundled
 	// schema document the server uses.
-	out, err := exec.Command(bin, "api", "schema", "--json").Output()
+	out, stderr, err := runBackendCommand(bin, []string{"api", "schema", "--json"}, "", nil)
 	if err != nil {
 		info.State = HerdrFailed
-		info.Err = fmt.Sprintf("schema probe failed: %v", err)
+		detail := commandOutput(out, stderr)
+		if detail == "" {
+			detail = err.Error()
+		}
+		info.Err = fmt.Sprintf("schema probe failed: %s", detail)
 		return info
 	}
 
