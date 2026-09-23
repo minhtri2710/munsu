@@ -4,11 +4,14 @@ package fleet
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 func TestGitHubClientForStateUnknownRefuses(t *testing.T) {
@@ -123,42 +126,67 @@ merged: true
 // --- DefaultGitHubClient path routing ---
 
 func TestDefaultGitHubClient_RoutesToGhAxiWhenReady(t *testing.T) {
-	// Probe current environment
-	state := ProbeGitHubCapability()
-	if state != backend.Ready {
-		t.Skip("gh-axi not on PATH, skipping Ready-path test")
-	}
+	old := ghAxiLookPath
+	t.Cleanup(func() { ghAxiLookPath = old })
 
+	ghAxiLookPath = func() (string, error) { return "/fake/gh-axi", nil }
 	client, err := DefaultGitHubClient()
 	if err != nil {
-		t.Fatalf("DefaultGitHubClient: %v", err)
+		t.Fatalf("DefaultGitHubClient with gh-axi Ready: %v", err)
 	}
-	if client == nil {
-		t.Fatal("expected non-nil client")
+	if _, ok := client.(*ghAxiClient); !ok {
+		t.Fatalf("DefaultGitHubClient with gh-axi Ready = %T, want *ghAxiClient", client)
+	}
+
+	ghAxiLookPath = func() (string, error) { return "", errors.New("not found") }
+	client, err = DefaultGitHubClient()
+	if err == nil || !strings.Contains(err.Error(), "capability absent") {
+		t.Fatalf("DefaultGitHubClient with gh-axi Absent = %T, %v; want capability-absent refusal", client, err)
+	}
+	if client != nil {
+		t.Fatalf("DefaultGitHubClient with gh-axi Absent returned client %T, want nil", client)
 	}
 }
 
 // --- QueryPRMergeStatus routing ---
 
 func TestQueryPRMergeStatus_UsesGhAxiWhenReady(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
+	// gh-axi on PATH makes the capability Ready. The consolidated adapter reads
+	// status through the ghCLILookPath seam; that gh is off PATH, so the direct
+	// degraded path (exec "gh") cannot answer and only the Ready route can.
+	binDir := t.TempDir()
+	testutil.WriteFakeExecutable(t, filepath.Join(binDir, "gh-axi"), "#!/bin/sh\nexit 1\n")
+	testutil.SetPath(t, binDir)
 
-	state := ProbeGitHubCapability()
-	if state != backend.Ready {
-		t.Skip("gh-axi not on PATH, skipping Ready-path test")
-	}
+	ghDir := t.TempDir()
+	argsFile := filepath.Join(ghDir, "args")
+	gh := testutil.WriteFakeExecutable(t, filepath.Join(ghDir, "gh"), `#!/bin/sh
+printf '%s\n' "$@" > '`+filepath.ToSlash(argsFile)+`'
+echo '{"state":"MERGED","headRefOid":"6b52a27d68fdf6034cc2defc79420882440e87ef","mergeCommit":{"oid":"38a1a401bfa3b272ee4ee99e7cef7920461d9e10"}}'
+`)
+	oldGH := ghCLILookPath
+	t.Cleanup(func() { ghCLILookPath = oldGH })
+	ghCLILookPath = func() (string, error) { return gh, nil }
 
-	// Query a non-existent PR to verify routing reaches gh-axi/adapter
-	ghURL := domain.GHURL{Owner: "minhtri2710", Repo: "munsu", Num: 999999}
-	_, err := QueryPRMergeStatus(ghURL)
-	if err == nil {
-		t.Fatal("expected error for non-existent PR")
+	status, err := QueryPRMergeStatus(domain.GHURL{Owner: "owner", Repo: "repo", Num: 42})
+	if err != nil {
+		t.Fatalf("QueryPRMergeStatus: %v", err)
 	}
-	// Error should indicate gh-axi or gh pr view failure, not capability absence
-	if strings.Contains(err.Error(), "gh-axi not found") || strings.Contains(err.Error(), "capability absent") {
-		t.Errorf("error should be from gh-axi/gh PR view, not capability: %v", err)
+	want := domain.PRMergeStatus{
+		State:     "MERGED",
+		HeadSHA:   "6b52a27d68fdf6034cc2defc79420882440e87ef",
+		MergedSHA: "38a1a401bfa3b272ee4ee99e7cef7920461d9e10",
+		Merged:    true,
+	}
+	if *status != want {
+		t.Fatalf("status = %+v, want %+v", *status, want)
+	}
+	args, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("Ready path did not run the adapter gh: %v", err)
+	}
+	if got, wantArgs := string(args), "pr\nview\n42\n--repo\nowner/repo\n--json\nstate,headRefOid,mergeCommit\n"; got != wantArgs {
+		t.Fatalf("adapter gh args = %q, want %q", got, wantArgs)
 	}
 }
 

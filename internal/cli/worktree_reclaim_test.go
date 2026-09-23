@@ -32,9 +32,8 @@ import (
 // bufio.ErrTooLong while the file stays a readable regular file the reclaim
 // path could otherwise act on.
 func TestWorktreeReclaimRefusesUnreadableMeta(t *testing.T) {
-	if _, err := exec.LookPath("treehouse"); err == nil {
-		t.Skip("requires the git worktree fallback provider")
-	}
+	// Pin the git worktree fallback provider: no treehouse on PATH.
+	testutil.SetPath(t, t.TempDir())
 
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
@@ -478,9 +477,8 @@ func TestWorktreeReclaimAllowsRetiredReservation(t *testing.T) {
 }
 
 func TestWorktreeReclaimSparesAuthoritativelyBoundWorktree(t *testing.T) {
-	if _, err := exec.LookPath("treehouse"); err == nil {
-		t.Skip("requires the git worktree fallback provider")
-	}
+	// Pin the git worktree fallback provider: no treehouse on PATH.
+	testutil.SetPath(t, t.TempDir())
 
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)

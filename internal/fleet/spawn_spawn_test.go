@@ -454,9 +454,7 @@ func TestValidateDeliveryMode_Extended(t *testing.T) {
 }
 
 func TestEnsureDeliveryModeRunnable_NoMistakesOnPath(t *testing.T) {
-	if !noMistakesOnPath() {
-		t.Skip("no-mistakes not on PATH")
-	}
+	testutil.PrependPath(t, createFakeNoMistakes(t, true, true))
 	if err := EnsureDeliveryModeRunnable("no-mistakes"); err != nil {
 		t.Errorf("EnsureDeliveryModeRunnable(no-mistakes) = %v, want nil", err)
 	}
@@ -470,9 +468,13 @@ func TestEnsureDeliveryModeRunnable_DirectPR(t *testing.T) {
 }
 
 func TestNoMistakesOnPath(t *testing.T) {
-	// This test is informational only; skip if no-mistakes not available
+	testutil.SetPath(t, t.TempDir())
+	if noMistakesOnPath() {
+		t.Fatal("noMistakesOnPath() = true with no no-mistakes on PATH")
+	}
+	testutil.SetPath(t, createFakeNoMistakes(t, false, false))
 	if !noMistakesOnPath() {
-		t.Skip("no-mistakes not on PATH (CI environments typically don't have it)")
+		t.Fatal("noMistakesOnPath() = false with no-mistakes on PATH")
 	}
 }
 

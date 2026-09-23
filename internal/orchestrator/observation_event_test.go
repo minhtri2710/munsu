@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -226,6 +227,9 @@ type blockingEventSource struct {
 	// ran out) or nil when released externally. Buffered by the test; the
 	// send is non-blocking so an unread channel never stalls a fake.
 	exited chan error
+	// entered, when non-nil, receives once per Wait as it starts blocking.
+	// Buffered by the test; the send is non-blocking like exited.
+	entered chan struct{}
 }
 
 func (b *blockingEventSource) recordExit(reason error) {
@@ -239,6 +243,12 @@ func (b *blockingEventSource) recordExit(reason error) {
 }
 
 func (b *blockingEventSource) Wait(ctx context.Context, endpoint backend.EndpointRef, after backend.EventCursor) (backend.ObservationSignal, error) {
+	if b.entered != nil {
+		select {
+		case b.entered <- struct{}{}:
+		default:
+		}
+	}
 	select {
 	case <-ctx.Done():
 		b.recordExit(ctx.Err())
@@ -288,7 +298,7 @@ func (g *gatedEventSource) After(next, prev backend.EventCursor) bool { return n
 // Source.Wait).
 func TestEventWaiter_WaitForSignal_ConcurrentBoundedWait(t *testing.T) {
 	home := t.TempDir()
-	src := &blockingEventSource{release: make(chan struct{})}
+	src := &blockingEventSource{release: make(chan struct{}), entered: make(chan struct{}, 1)}
 	port := staticEventPort(EndpointSource{
 		Endpoint: backend.EndpointRef{Backend: "herdr", Handle: "w:p"},
 		Source:   src,
@@ -302,9 +312,13 @@ func TestEventWaiter_WaitForSignal_ConcurrentBoundedWait(t *testing.T) {
 		w.WaitForSignal(context.Background(), home, 2*time.Second)
 	}()
 
-	// Let A's wait start, then caller B with a short bound on the same
-	// endpoint must return within its own bound.
-	time.Sleep(20 * time.Millisecond)
+	// Once A is blocked inside Source.Wait, caller B with a short bound on the
+	// same endpoint must return within its own bound.
+	select {
+	case <-src.entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("caller A never entered Source.Wait")
+	}
 	start := time.Now()
 	_, outcome := w.WaitForSignal(context.Background(), home, 50*time.Millisecond)
 	elapsed := time.Since(start)
@@ -1171,8 +1185,21 @@ func TestEventLane_ReaderFailureBackoff(t *testing.T) {
 	pulses := startEventLane(homeDir, NewEventWaiter(port), stopLane)
 
 	// After a reader failure the lane backs off and retries; it must neither
-	// close nor emit. Give it a few hundred ms to attempt the retry.
-	time.Sleep(1500 * time.Millisecond)
+	// close nor emit. The retry's second Wait bounds that claim: the lane is
+	// blocked in it, so anything it emitted or a close is already observable.
+	deadline := time.After(5 * time.Second)
+	for src.waitCount() < 2 {
+		select {
+		case p, ok := <-pulses:
+			if ok {
+				t.Fatalf("unexpected pulse: %v", p.outcome)
+			}
+			t.Fatal("lane closed on transient reader failure; watcher must keep polling")
+		case <-deadline:
+			t.Fatalf("waits = %d, want a retry after reader failure", src.waitCount())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
 	select {
 	case p, ok := <-pulses:
 		if ok {
@@ -1182,9 +1209,6 @@ func TestEventLane_ReaderFailureBackoff(t *testing.T) {
 	default:
 	}
 	drainLane(t, pulses, stopLane)
-	if src.waitCount() < 2 {
-		t.Fatalf("waits = %d, want retries after reader failure", src.waitCount())
-	}
 }
 
 // TestEventLane_RaceWatcherAndRecovery is the race lane: an event reader
@@ -1211,6 +1235,7 @@ func TestEventLane_RaceWatcherAndRecovery(t *testing.T) {
 
 	var wg sync.WaitGroup
 	stop := make(chan struct{})
+	var pulseCount, cycleCount atomic.Int64
 
 	// Event reader lane.
 	wg.Add(1)
@@ -1218,11 +1243,9 @@ func TestEventLane_RaceWatcherAndRecovery(t *testing.T) {
 		defer wg.Done()
 		stopLane := make(chan struct{})
 		pulses := startEventLane(homeDir, NewEventWaiter(port), stopLane)
-		timer := time.NewTimer(500 * time.Millisecond)
-		defer timer.Stop()
 		for {
 			select {
-			case <-timer.C:
+			case <-stop:
 				close(stopLane)
 				return
 			case _, ok := <-pulses:
@@ -1230,6 +1253,7 @@ func TestEventLane_RaceWatcherAndRecovery(t *testing.T) {
 					close(stopLane)
 					return
 				}
+				pulseCount.Add(1)
 			}
 		}
 	}()
@@ -1248,11 +1272,22 @@ func TestEventLane_RaceWatcherAndRecovery(t *testing.T) {
 				if _, err := RunCycleWithProbeAndSender(homeDir, probe, sender, hooks, NoopRetirementPort{}, acceptingCheckValidationPort{}, states); err != nil {
 					return
 				}
+				cycleCount.Add(1)
 			}
 		}()
 	}
 
-	time.Sleep(600 * time.Millisecond)
+	// Stop once the lane and the cycles have demonstrably overlapped: neither
+	// side stops before stop closes, so both counts grew concurrently.
+	deadline := time.Now().Add(10 * time.Second)
+	for pulseCount.Load() < 20 || cycleCount.Load() < 50 {
+		if time.Now().After(deadline) {
+			close(stop)
+			wg.Wait()
+			t.Fatalf("no overlap: %d event pulses, %d cycles; want >= 20 and >= 50", pulseCount.Load(), cycleCount.Load())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 	close(stop)
 	wg.Wait()
 }
