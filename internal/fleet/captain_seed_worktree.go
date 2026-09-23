@@ -14,13 +14,14 @@ const (
 	CaptainProvenanceName = ".captain-provenance"
 
 	// CaptainCharterName is the untracked captain charter file written in a
-	// managed worktree captain home. It is excluded via git info/exclude so the
-	// worktree stays git-clean without modifying the tracked AGENTS.md.
+	// managed worktree captain home. It is excluded via the worktree-scoped excludes
+	// file so the worktree stays git-clean without modifying the tracked AGENTS.md.
 	CaptainCharterName = ".captain-charter.md"
 )
 
 // worktreeExcludeContent lists the operational dirs and files that are
-// excluded in a managed worktree captain home via git info/exclude so they
+// excluded in a managed worktree captain home via its worktree-scoped
+// excludes file (see writeWorktreeExcludes) so they
 // never pollute the host project's index without modifying tracked .gitignore.
 var worktreeExcludeContent = []string{
 	"state/",
@@ -38,7 +39,7 @@ var worktreeExcludeContent = []string{
 // seedFromWorktree provisions a managed git-worktree captain home.
 //
 // It creates a detached worktree at homePath from repoPath's default branch,
-// writes git info/exclude for operational dirs, writes provenance metadata, then
+// writes worktree-scoped git excludes for operational dirs, writes provenance metadata, then
 // runs the standard seed setup (charter via untracked .captain-charter.md,
 // state/data/config dirs, registration, config push, pi extensions).
 //
@@ -141,7 +142,7 @@ func seedFromWorktree(id, homePath, repoPath, parentHome, charter string, force 
 	}
 	worktreeCreated = true
 
-	// Write git info/exclude for operational dirs instead of tracked .gitignore.
+	// Write worktree-scoped git excludes for operational dirs instead of tracked .gitignore.
 	if err = writeWorktreeExcludes(absHome); err != nil {
 		err = fmt.Errorf("writing worktree excludes: %w", err)
 		return
@@ -283,21 +284,31 @@ func isUnmanagedCaptainHome(homePath string) bool {
 	return gitErr != nil || gitFi.IsDir()
 }
 
-// writeWorktreeExcludes writes operational dir excludes to the worktree's git
-// info/exclude (via git common dir) instead of the tracked .gitignore, keeping
-// the worktree git-clean without modifying source-tracked files.
-// Git uses the common dir's info/exclude for per-worktree excludes,
-// not the worktree-specific git dir.
-func writeWorktreeExcludes(homePath string, integrationPaths ...string) error {
-	commonDir, err := worktreeCommonDir(homePath)
-	if err != nil {
-		return fmt.Errorf("resolving worktree common dir: %w", err)
-	}
-	excludePath := filepath.Join(commonDir, "info", "exclude")
+// worktreeExcludeFileName is the excludes file munsu writes inside the
+// captain worktree's own git dir; it is bound to that worktree alone through
+// a worktree-scoped core.excludesFile.
+const worktreeExcludeFileName = "munsu-exclude"
 
-	// Ensure the info/ directory exists.
-	if err := os.MkdirAll(filepath.Dir(excludePath), 0755); err != nil {
-		return fmt.Errorf("creating info/ directory: %w", err)
+// writeWorktreeExcludes writes operational dir excludes to a file in the
+// captain worktree's own git dir and points the worktree-scoped
+// core.excludesFile at it, so the entries never reach the project repo's
+// other worktrees and the shared info/exclude is never touched. It enables
+// extensions.worktreeConfig on the project repo; a common config that sets
+// core.bare=true or core.worktree is refused, because worktreeConfig would
+// change how git reads it.
+func writeWorktreeExcludes(homePath string, integrationPaths ...string) error {
+	if out, err := gitRun("-C", homePath, "config", "--local", "--get", "core.bare"); err == nil && out == "true" {
+		return fmt.Errorf("project repo common config sets core.bare=true; refusing to enable extensions.worktreeConfig")
+	}
+	if out, err := gitRun("-C", homePath, "config", "--local", "--get", "core.worktree"); err == nil {
+		return fmt.Errorf("project repo common config sets core.worktree=%s; refusing to enable extensions.worktreeConfig", out)
+	}
+	if out, err := gitRun("-C", homePath, "config", "--local", "extensions.worktreeConfig", "true"); err != nil {
+		return fmt.Errorf("enabling extensions.worktreeConfig: %w: %s", err, out)
+	}
+	gitDir, err := gitRun("-C", homePath, "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return fmt.Errorf("resolving worktree git dir: %w: %s", err, gitDir)
 	}
 
 	content := "# Captain home operational dirs and runtime artifacts\n"
@@ -310,28 +321,14 @@ func writeWorktreeExcludes(homePath string, integrationPaths ...string) error {
 			content += "/" + path + "\n"
 		}
 	}
-	return os.WriteFile(excludePath, []byte(content), 0644)
-}
-
-// worktreeCommonDir resolves the git common directory for a worktree captain
-// home. For worktrees, the common dir is the parent repository's .git directory,
-// accessible via the .git worktree pointer file.
-func worktreeCommonDir(homePath string) (string, error) {
-	data, err := os.ReadFile(filepath.Join(homePath, ".git"))
-	if err != nil {
-		return "", fmt.Errorf("reading .git worktree pointer: %w", err)
+	excludePath := filepath.Join(gitDir, worktreeExcludeFileName)
+	if err := atomicWriteFile(excludePath, []byte(content), 0644); err != nil {
+		return fmt.Errorf("writing %s: %w", excludePath, err)
 	}
-	line := strings.TrimSpace(string(data))
-	if !strings.HasPrefix(line, "gitdir: ") {
-		return "", fmt.Errorf("unexpected .git format: %q", line)
+	if out, err := gitRun("-C", homePath, "config", "--worktree", "core.excludesFile", excludePath); err != nil {
+		return fmt.Errorf("setting worktree core.excludesFile: %w: %s", err, out)
 	}
-	gitDir := strings.TrimPrefix(line, "gitdir: ")
-	if !filepath.IsAbs(gitDir) {
-		return "", fmt.Errorf(".git gitdir is not absolute: %q", gitDir)
-	}
-	// The worktree git dir is at $GIT_COMMON_DIR/worktrees/<name>
-	// So the common dir is two levels up from the worktree git dir.
-	return filepath.Dir(filepath.Dir(gitDir)), nil
+	return nil
 }
 
 // writeCaptainProvenance writes the .captain-provenance metadata file

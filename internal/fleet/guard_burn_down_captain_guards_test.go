@@ -144,28 +144,6 @@ func TestSeedFromWorktree_NilIntegration(t *testing.T) {
 	}
 }
 
-func TestWorktreeCommonDir_RelativeGitDir(t *testing.T) {
-	tmpDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(tmpDir, ".git"), []byte("gitdir: relative/path/to/worktree\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	_, err := worktreeCommonDir(tmpDir)
-	if err == nil || !strings.Contains(err.Error(), ".git gitdir is not absolute") {
-		t.Fatalf("worktreeCommonDir err = %v, want gitdir is not absolute", err)
-	}
-}
-
-func TestWorktreeCommonDir_MalformedGitFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(tmpDir, ".git"), []byte("corrupt format\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	_, err := worktreeCommonDir(tmpDir)
-	if err == nil || !strings.Contains(err.Error(), "unexpected .git format") {
-		t.Fatalf("worktreeCommonDir err = %v, want unexpected .git format", err)
-	}
-}
-
 // ----------------------------------------------------------------------------
 // Group D: captain_soldier_queue.go (7 guards)
 // ----------------------------------------------------------------------------

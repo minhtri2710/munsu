@@ -27,7 +27,7 @@ default branch) and `--force` replaces an existing managed worktree.
 
 1. Verifies the repo, checks its remote matches the parent's, and resolves the ref.
 2. Creates a detached worktree at `<home-path>` (`git worktree add --detach`).
-3. Writes git `info/exclude` entries for operational dirs and provenance metadata.
+3. Writes a worktree-scoped excludes file (`<worktree gitdir>/munsu-exclude`, bound by `git config --worktree core.excludesFile`) for operational dirs, and writes provenance metadata.
 4. Creates subdirectories: `state/`, `data/`, `config/`, `projects/`.
 5. Writes the charter to untracked `.captain-charter.md` (never the tracked `AGENTS.md`).
 6. Writes the provenance marker (`.munsu-captain-home`), registers the captain and runs `ConfigPush`.

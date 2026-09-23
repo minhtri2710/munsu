@@ -347,19 +347,8 @@ func TestSeedWorktree_CreatesWorktreeAndStructure(t *testing.T) {
 		t.Errorf("provenance marker not created: %v", err)
 	}
 
-	// Verify excludes are in info/exclude (not tracked .gitignore).
-	gitPtrData, gErr := os.ReadFile(filepath.Join(homePath, ".git"))
-	if gErr != nil {
-		t.Fatal(gErr)
-	}
-	gitdirLine := strings.TrimSpace(string(gitPtrData))
-	if !strings.HasPrefix(gitdirLine, "gitdir: ") {
-		t.Fatalf(".git is not a gitdir pointer: %q", gitdirLine)
-	}
-	commonDir := filepath.Dir(filepath.Dir(strings.TrimPrefix(gitdirLine, "gitdir: ")))
-	if _, err := os.Stat(filepath.Join(commonDir, "info", "exclude")); err != nil {
-		t.Errorf("info/exclude not created: %v", err)
-	}
+	// Verify excludes are in the worktree-scoped excludes file (not tracked .gitignore).
+	captainExcludeContent(t, homePath)
 
 	// Verify registered in parent.
 	mates, err := ListCaptains(parent)
@@ -621,28 +610,12 @@ func TestSeedWorktree_GitignoreContent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Read the .git worktree pointer to find info/exclude.
-	gitPtrData, err := os.ReadFile(filepath.Join(homePath, ".git"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	gitdirLine := strings.TrimSpace(string(gitPtrData))
-	if !strings.HasPrefix(gitdirLine, "gitdir: ") {
-		t.Fatalf(".git is not a gitdir pointer: %q", gitdirLine)
-	}
-	// Use the common dir (two levels up from worktree git dir).
-	gitDir := strings.TrimPrefix(gitdirLine, "gitdir: ")
-	commonDir := filepath.Dir(filepath.Dir(gitDir))
-	excludeData, err := os.ReadFile(filepath.Join(commonDir, "info", "exclude"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	content := string(excludeData)
+	content := captainExcludeContent(t, homePath)
 	if !strings.Contains(content, "state/") {
-		t.Error("info/exclude missing state/ entry")
+		t.Error("captain excludes missing state/ entry")
 	}
 	if !strings.Contains(content, CaptainProvenanceName) {
-		t.Errorf("info/exclude missing %s entry", CaptainProvenanceName)
+		t.Errorf("captain excludes missing %s entry", CaptainProvenanceName)
 	}
 }
 
@@ -2801,25 +2774,11 @@ func TestSeedFromWorktree_CreatesDetachedWorktree(t *testing.T) {
 		t.Errorf("provenance missing created, got: %s", provData)
 	}
 
-	// Exclude file exists in worktree git info/exclude and covers operational dirs.
-	gitPtrData, err := os.ReadFile(filepath.Join(homePath, ".git"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	gitdirLine := strings.TrimSpace(string(gitPtrData))
-	if !strings.HasPrefix(gitdirLine, "gitdir: ") {
-		t.Fatalf(".git is not a gitdir pointer: %q", gitdirLine)
-	}
-	gitDir := strings.TrimPrefix(gitdirLine, "gitdir: ")
-	commonDir := filepath.Dir(filepath.Dir(gitDir))
-	excludePath := filepath.Join(commonDir, "info", "exclude")
-	excludeData, err := os.ReadFile(excludePath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Worktree-scoped excludes file covers operational dirs.
+	excludeData := captainExcludeContent(t, homePath)
 	for _, entry := range worktreeExcludeContent {
 		if !strings.Contains(string(excludeData), entry) {
-			t.Errorf("info/exclude missing entry %q, got: %s", entry, excludeData)
+			t.Errorf("captain excludes missing entry %q, got: %s", entry, excludeData)
 		}
 	}
 
@@ -2931,7 +2890,7 @@ func TestSeedFromWorktree_ManagedWorktreeClean(t *testing.T) {
 
 	// Verify the managed worktree has no unexpected tracked/untracked files.
 	// Allowed untracked files: state/, data/, config/, projects/, .captain-charter.md,
-	// .munsu-captain-home, .captain-launch.sh are excluded via info/exclude.
+	// .munsu-captain-home, .captain-launch.sh are excluded via the worktree-scoped excludes file.
 	// Anything else (e.g., .pi/) must not appear.
 	out, err := exec.Command("git", "-C", homePath, "status", "--porcelain").CombinedOutput()
 	if err != nil {
@@ -3045,7 +3004,7 @@ func TestDefaultBranch_FallbackToMain(t *testing.T) {
 
 // TestSeedWorktree_GitClean proves that after SeedFromWorktree, the managed
 // worktree is git-clean — no tracked modifications, and the only untracked
-// files are properly gitignored via info/exclude.
+// files are properly gitignored via the worktree-scoped excludes file.
 func TestSeedWorktree_GitClean(t *testing.T) {
 	project := newWorktreeFixture(t)
 	parent := t.TempDir()
