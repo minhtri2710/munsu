@@ -97,6 +97,16 @@ firing is a no-op until the registration is cleared. This is what lets the
 watcher wait on a blocking external process across many poll cycles while
 spending zero agent turns until the single wake.
 
+The generic condition→action registration built for this section was never
+registered: nothing in the binary called its registration entry point, so the
+watcher evaluated and the wake dispatcher routed an always-empty registry.
+Under the doc-truth change (2026-09-24) that dormant machinery, its fired-marker
+store and its watcher and dispatcher arms were deleted. Merged-PR retirement
+(§2's process-event instance) is the only condition→action lane, and it
+retires once per capture through its ack rather than a fired-marker. A
+generic registration surface is a future decision that must ship with a real
+registrant, not current architecture.
+
 ### Non-goals / boundaries
 
 * No new store, daemon, or transport — this rides the existing watcher loop,

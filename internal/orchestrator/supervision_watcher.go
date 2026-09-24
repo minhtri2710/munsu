@@ -167,8 +167,6 @@ func consumeProcessEventWakes(homeDir string, retirement RetirementPort) (map[st
 		switch {
 		case strings.HasPrefix(announced.EventID, mergedPollEventPrefix):
 			retireMergedPollWake(homeDir, retirement, wake, announced, rec, outcomes)
-		case strings.HasPrefix(announced.EventID, conditionActionEventPrefix):
-			consumeConditionActionWake(homeDir, wake, announced, rec)
 		default:
 			fmt.Fprintf(os.Stderr, "process-event wake %q dropped: no owner for this event prefix\n", announced.EventID)
 		}
@@ -732,12 +730,6 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 	if err != nil {
 		return emitted, err
 	}
-
-	// Evaluate this process's live condition-action registrations on the
-	// watcher's existing cadence. A settled condition captures and announces
-	// here; its action runs when the dispatcher above drains that wake next
-	// cycle, the same announce-now/consume-next cadence merged-poll uses.
-	evaluateConditionActions(context.Background(), homeDir)
 
 	// Discover and emit check plugin wakes (per-task .check files + global checks).
 	// These cover PR merge polls and custom checks registered under state/checks/.

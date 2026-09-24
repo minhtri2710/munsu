@@ -40,9 +40,8 @@ import (
 // re-delivers every captured-but-unacked event once per home per process, so
 // a crash anywhere before ack re-delivers and a crash after ack does not.
 //
-// P1 is additive: nothing in the binary evaluates or recovers these records
-// yet. P2 re-expresses merged-PR retirement as an instance and C1 builds
-// condition-action on top; the deadcode waivers name that condition.
+// Merged-PR retirement is the only instance: the watcher cycle recovers,
+// evaluates and consumes these records for its merged polls.
 
 // ProcessEventSchema is the schema version for ProcessEventRecord.
 const ProcessEventSchema = 1
