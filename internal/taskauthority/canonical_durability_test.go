@@ -312,10 +312,7 @@ func TestCanonicalDeliveryAuthorizationAndOutcomeSurviveReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	auth, err := c2.DeliveryAuthorization(mustTaskID(t, "t1"))
-	if err != nil {
-		t.Fatalf("DeliveryAuthorization after reopen: %v", err)
-	}
+	auth := currentAuthorizationForTest(t, c2, "t1")
 	if auth.OperationID != authRes.Authorization.OperationID || auth.Revision != 4 || auth.Identity != deliveryIdentity() {
 		t.Fatalf("reopened authorization = %+v, want the committed record", auth)
 	}
@@ -386,19 +383,13 @@ func TestCanonicalDeliveryRevocationEvidenceSurvivesReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prior, err := c2.DeliveryAuthorizationByOperation(mustTaskID(t, "t1"), auth1.OperationID)
-	if err != nil {
-		t.Fatalf("identified authorization after reopen: %v", err)
-	}
+	prior := authorizationByOperationForTest(t, c2, "t1", auth1.OperationID)
 	if prior.OperationID != auth1.OperationID || prior.Revision != 4 {
 		t.Fatalf("reopened issuance evidence = %+v", prior)
 	}
 	// The immutable revocation evidence survives and stays identified by its
 	// exact operation identity, bound to the revoked authorization.
-	revocation, err := c2.DeliveryRevocationByOperation(mustTaskID(t, "t1"), "op-revoke-persist")
-	if err != nil {
-		t.Fatalf("identified revocation after reopen: %v", err)
-	}
+	revocation := revocationByOperationForTest(t, c2, "t1", "op-revoke-persist")
 	if revocation.AuthorizationOperationID != auth1.OperationID || revocation.OperationID != "op-revoke-persist" || revocation.Reason != "abandoned before execution" {
 		t.Fatalf("reopened revocation evidence = %+v", revocation)
 	}

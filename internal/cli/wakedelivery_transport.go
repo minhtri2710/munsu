@@ -10,7 +10,7 @@ import (
 )
 
 type sessionActivationTransport struct {
-	resolve  func(string, string) (backend.Backend, string, error)
+	resolve  func(string) (backend.Backend, string, error)
 	identity func(string) (string, error)
 }
 
@@ -26,7 +26,7 @@ func (t sessionActivationTransport) Attempt(home string, target orchestrator.Tar
 	if err != nil {
 		return orchestrator.ActivationAttempt{SafetyError: err.Error()}
 	}
-	bk, _, err := t.resolve(home, backendName)
+	bk, _, err := t.resolve(backendName)
 	if err != nil {
 		return orchestrator.ActivationAttempt{SafetyError: err.Error()}
 	}

@@ -2,6 +2,7 @@ package taskauthority
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/home"
@@ -205,34 +206,48 @@ func TestCanonicalCommitTransferRejectsMissingEvidence(t *testing.T) {
 	}
 }
 
-// TestCanonicalReservedTaskReadinessNotReady proves a Current=true task with an
-// active transfer reservation returns not-ready with the reservation reason,
-// and that the behavior survives a home reopen/reread.
-func TestCanonicalReservedTaskReadinessNotReady(t *testing.T) {
-	c, _, root := newTestCanonical(t)
-	mustCreate(t, c, "t1")
+// wantStartRefusedAsReserved asserts Start refuses t1 because its generation
+// is actively reserved for transfer.
+func wantStartRefusedAsReserved(t *testing.T, c *Canonical, rev uint64, opID string) {
+	t.Helper()
+	start := startWithRev(c, "t1", rev)
+	_, err := c.Start(mustOperation(t, opID, start), start)
+	if !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), "is reserved for transfer") {
+		t.Fatalf("start reserved task = %v, want ErrConflict reserved for transfer", err)
+	}
+}
 
-	// Before reservation the task is ready.
-	r, err := c.Readiness(mustTaskID(t, "t1"))
+// wantStartRefusedAsSuperseded asserts Start refuses t1 at the exact latest
+// revision of its superseded generation.
+func wantStartRefusedAsSuperseded(t *testing.T, c *Canonical, opID string) {
+	t.Helper()
+	hist, err := c.GetGeneration(mustTaskID(t, "t1"), Generation(1))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !r.Ready {
-		t.Fatalf("pre-reservation readiness = %+v, want ready", r)
+	start := CanonicalStartRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(uint64(hist.Generation), uint64(hist.Revision)), Reason: "start"}
+	if _, err := c.Start(mustOperation(t, opID, start), start); !errors.Is(err, ErrConflict) {
+		t.Fatalf("start superseded task = %v, want ErrConflict", err)
 	}
+}
+
+// TestCanonicalReservedTaskStartRefused proves a Current=true task with an
+// active transfer reservation is refused by the start gate with the
+// reservation reason, and that the refusal survives a home reopen/reread.
+func TestCanonicalReservedTaskStartRefused(t *testing.T) {
+	c, _, root := newTestCanonical(t)
+	mustCreate(t, c, "t1")
+	mustCreate(t, c, "t2")
 
 	mustReserveTransfer(t, c, "t1", preconditionOf(1, 1), "dest-home")
 
-	r, err = c.Readiness(mustTaskID(t, "t1"))
-	if err != nil {
-		t.Fatal(err)
+	// Control: the same unreserved task shape starts.
+	start := startWithRev(c, "t2", 1)
+	if _, err := c.Start(mustOperation(t, "op-start-unreserved", start), start); err != nil {
+		t.Fatalf("start unreserved task: %v", err)
 	}
-	if r.Ready {
-		t.Fatalf("reserved task readiness = %+v, want not ready", r)
-	}
-	if len(r.BlockingReasons) != 1 || r.BlockingReasons[0] != ReadinessReservedForTransfer {
-		t.Fatalf("reserved task blocking reasons = %+v, want reserved-for-transfer", r.BlockingReasons)
-	}
+
+	wantStartRefusedAsReserved(t, c, 2, "op-start-reserved")
 
 	// Survives reopen/reread.
 	h2, err := home.Open(root)
@@ -243,19 +258,14 @@ func TestCanonicalReservedTaskReadinessNotReady(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err = c2.Readiness(mustTaskID(t, "t1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r.Ready || len(r.BlockingReasons) != 1 || r.BlockingReasons[0] != ReadinessReservedForTransfer {
-		t.Fatalf("reserved task readiness after reopen = %+v", r)
-	}
+	wantStartRefusedAsReserved(t, c2, 2, "op-start-reserved-reopen")
 }
 
-// TestCanonicalSupersededSourceReadinessNotCurrent proves a superseded source
-// (after CommitTransfer) is not ready and not current across reopen, and that
-// Get no longer exposes it as current truth while historical evidence remains.
-func TestCanonicalSupersededSourceReadinessNotCurrent(t *testing.T) {
+// TestCanonicalSupersededSourceNotCurrent proves a superseded source (after
+// CommitTransfer) is refused by the start gate and not current across reopen,
+// and that Get no longer exposes it as current truth while historical
+// evidence remains.
+func TestCanonicalSupersededSourceNotCurrent(t *testing.T) {
 	c, _, root := newTestCanonical(t)
 	mustCreate(t, c, "t1")
 	mustReserveTransfer(t, c, "t1", preconditionOf(1, 1), "dest-home")
@@ -265,17 +275,7 @@ func TestCanonicalSupersededSourceReadinessNotCurrent(t *testing.T) {
 		t.Fatalf("CommitTransfer: %v", err)
 	}
 
-	// Readiness is not-ready / not-current.
-	r, err := c.Readiness(mustTaskID(t, "t1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r.Ready {
-		t.Fatalf("superseded readiness = %+v, want not ready", r)
-	}
-	if len(r.BlockingReasons) != 1 || r.BlockingReasons[0] != ReadinessNotCurrent {
-		t.Fatalf("superseded blocking reasons = %+v, want not-current", r.BlockingReasons)
-	}
+	wantStartRefusedAsSuperseded(t, c, "op-start-superseded")
 
 	// Get fails closed; historical evidence still readable by generation.
 	if _, err := c.Get(mustTaskID(t, "t1")); !errors.Is(err, ErrNotFound) {
@@ -294,13 +294,7 @@ func TestCanonicalSupersededSourceReadinessNotCurrent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err = c2.Readiness(mustTaskID(t, "t1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r.Ready || len(r.BlockingReasons) != 1 || r.BlockingReasons[0] != ReadinessNotCurrent {
-		t.Fatalf("superseded readiness after reopen = %+v", r)
-	}
+	wantStartRefusedAsSuperseded(t, c2, "op-start-superseded-reopen")
 	if _, err := c2.Get(mustTaskID(t, "t1")); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Get after reopen = %v, want ErrNotFound", err)
 	}
@@ -378,72 +372,39 @@ func TestCanonicalSupersededSourceRejectsEveryMutationFamily(t *testing.T) {
 	}
 }
 
-// TestCanonicalHoldsCannotMakeReservedTaskReady proves a Dispatch Hold cannot
-// make a reserved or superseded task ready: reservation/supersession readiness
-// blockers are Task Authority owned and independent controls cannot override.
-func TestCanonicalHoldsCannotMakeReservedOrSupersededTaskReady(t *testing.T) {
+// TestCanonicalHoldsCannotMakeReservedOrSupersededTaskStartable proves a
+// Dispatch Hold cannot change why a reserved or superseded task is refused:
+// reservation/supersession refusals are Task Authority owned and independent
+// controls cannot override them.
+func TestCanonicalHoldsCannotMakeReservedOrSupersededTaskStartable(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
 	mustCreate(t, c, "t1")
 
-	// Release every hold (there are none) and add no holds; the reservation
-	// alone blocks readiness.
+	// No holds; the reservation alone refuses start.
 	mustReserveTransfer(t, c, "t1", preconditionOf(1, 1), "dest-home")
-	r, err := c.Readiness(mustTaskID(t, "t1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r.Ready || len(r.BlockingReasons) != 1 || r.BlockingReasons[0] != ReadinessReservedForTransfer {
-		t.Fatalf("reserved readiness = %+v", r)
-	}
+	wantStartRefusedAsReserved(t, c, 2, "op-start-no-hold")
 
-	// Adding a hold for start keeps it blocked by reservation (hold admin
-	// still works as an independent control).
+	// Adding a hold for start keeps the reservation refusal (hold admin still
+	// works as an independent control).
 	hold := CanonicalAddHoldRequest{HomeID: c.HomeID(), HoldID: "hold-x", Actions: []DispatchAction{DispatchActionStart}, Reason: "independent"}
 	if _, err := c.AddHold(mustOperation(t, "op-hold-x", hold), hold); err != nil {
 		t.Fatalf("AddHold: %v", err)
 	}
-	r, err = c.Readiness(mustTaskID(t, "t1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r.Ready {
-		t.Fatalf("reserved readiness with hold = %+v, want not ready", r)
-	}
-	foundReservation := false
-	for _, reason := range r.BlockingReasons {
-		if reason == ReadinessReservedForTransfer {
-			foundReservation = true
-		}
-	}
-	if !foundReservation {
-		t.Fatalf("reservation reason missing with hold present: %+v", r.BlockingReasons)
-	}
+	wantStartRefusedAsReserved(t, c, 2, "op-start-with-hold")
 
-	// Releasing the hold does not make the reserved task ready.
+	// Releasing the hold does not make the reserved task startable.
 	release := CanonicalReleaseHoldRequest{HomeID: c.HomeID(), HoldID: "hold-x", Reason: "release"}
 	if _, err := c.ReleaseHold(mustOperation(t, "op-release-x", release), release); err != nil {
 		t.Fatalf("ReleaseHold: %v", err)
 	}
-	r, err = c.Readiness(mustTaskID(t, "t1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r.Ready || len(r.BlockingReasons) != 1 || r.BlockingReasons[0] != ReadinessReservedForTransfer {
-		t.Fatalf("reserved readiness after hold release = %+v", r)
-	}
+	wantStartRefusedAsReserved(t, c, 2, "op-start-after-release")
 
-	// After supersession, holds cannot make it ready either.
+	// After supersession, holds cannot make it startable either.
 	commit := commitTransferRequest(t, c, "t1", preconditionOf(1, 2), "res-t1", "dest-home")
 	if _, err := c.CommitTransfer(mustOperation(t, "op-commit-hold", commit), commit); err != nil {
 		t.Fatalf("CommitTransfer: %v", err)
 	}
-	r, err = c.Readiness(mustTaskID(t, "t1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r.Ready || len(r.BlockingReasons) != 1 || r.BlockingReasons[0] != ReadinessNotCurrent {
-		t.Fatalf("superseded readiness with holds present = %+v", r)
-	}
+	wantStartRefusedAsSuperseded(t, c, "op-start-superseded-holds")
 }
 
 // TestCanonicalListExcludesSupersededSource proves List is a current-truth

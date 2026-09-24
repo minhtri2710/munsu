@@ -393,52 +393,15 @@ type PendingReceipt struct {
 
 // ListPendingReceipts returns all receipt files without corresponding ack.
 func ListPendingReceipts(homeDir string) ([]PendingReceipt, error) {
-	dir := ReceiptDir(homeDir)
-	entries, err := os.ReadDir(dir)
+	all, err := listAllReceipts(homeDir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("reading receipts dir: %w", err)
+		return nil, err
 	}
-
 	var pending []PendingReceipt
-	seen := make(map[string]bool)
-	for _, e := range entries {
-		name := e.Name()
-		if !strings.HasSuffix(name, ".receipt") || e.IsDir() {
-			continue
+	for _, r := range all {
+		if !IsReceiptAcked(homeDir, r.TaskID, r.TermKey) {
+			pending = append(pending, r)
 		}
-		taskID, termKey, ok, err := parseReceiptName(name)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			continue
-		}
-		if IsReceiptAcked(homeDir, taskID, termKey) {
-			continue
-		}
-		key := taskID + "." + termKey
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-
-		state := ""
-		if data, err := os.ReadFile(filepath.Join(dir, name)); err == nil {
-			for _, line := range strings.Split(string(data), "\n") {
-				if k, v, ok := strings.Cut(line, "="); ok && k == "state" {
-					state = strings.TrimSpace(v)
-				}
-			}
-		}
-
-		pending = append(pending, PendingReceipt{
-			TaskID:  taskID,
-			TermKey: termKey,
-			State:   state,
-		})
 	}
 	return pending, nil
 }

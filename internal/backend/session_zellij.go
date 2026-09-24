@@ -104,13 +104,6 @@ type zellijPaneEntry struct {
 	Exited   bool   `json:"exited"`
 }
 
-// ParseWindow splits a window handle ("session:pane_id") on the first colon.
-// Returns the session name and the pane ID. If no colon is found, returns "" and the full string.
-// Deprecated: use session.ParseWindow instead (defined in backend_herdr.go).
-func (z *ZellijBackend) ParseWindow(handle string) (session, paneID string) {
-	return ParseWindow(handle)
-}
-
 // paneID extracts the pane ID part from a window handle (session:pane or bare pane).
 func (z *ZellijBackend) paneID(windowID string) string {
 	_, p := ParseWindow(windowID)

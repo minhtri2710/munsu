@@ -64,7 +64,7 @@ func TestSessionActivationTransportMapsTypedOutcomes(t *testing.T) {
 		backend.PromptEndpointDead, backend.PromptBackendFailed, backend.PromptUnsupported,
 	} {
 		bk := &activationPromptBackend{capture: "❯\n", aware: true, status: "idle", result: backend.PromptResult{Status: status}}
-		transport := sessionActivationTransport{resolve: func(string, string) (backend.Backend, string, error) {
+		transport := sessionActivationTransport{resolve: func(string) (backend.Backend, string, error) {
 			return bk, "tmux", nil
 		}, identity: func(string) (string, error) { return "tmux", nil }}
 		got := transport.Attempt("home", orchestrator.TargetResult{Handle: "pane"}, "payload")
@@ -82,7 +82,7 @@ func TestSessionActivationTransportDefersWorkingAgent(t *testing.T) {
 		status:  "working",
 		result:  backend.PromptResult{Status: backend.PromptSubmitted},
 	}
-	transport := sessionActivationTransport{resolve: func(string, string) (backend.Backend, string, error) {
+	transport := sessionActivationTransport{resolve: func(string) (backend.Backend, string, error) {
 		return bk, "herdr", nil
 	}, identity: func(string) (string, error) { return "herdr", nil }}
 	got := transport.Attempt("home", orchestrator.TargetResult{Handle: "pane"}, "payload")
@@ -119,7 +119,7 @@ func TestSessionActivationTransportReadyNormalization(t *testing.T) {
 				status:  tt.status,
 				result:  backend.PromptResult{Status: backend.PromptSubmitted},
 			}
-			transport := sessionActivationTransport{resolve: func(string, string) (backend.Backend, string, error) {
+			transport := sessionActivationTransport{resolve: func(string) (backend.Backend, string, error) {
 				return bk, "herdr", nil
 			}, identity: func(string) (string, error) { return "herdr", nil }}
 			got := transport.Attempt("home", orchestrator.TargetResult{Handle: "pane"}, "payload")
@@ -141,7 +141,7 @@ func TestSessionActivationTransportUsesRecognizedAgentOverride(t *testing.T) {
 		status:  "idle",
 		result:  backend.PromptResult{Status: backend.PromptSubmitted},
 	}
-	transport := sessionActivationTransport{resolve: func(string, string) (backend.Backend, string, error) {
+	transport := sessionActivationTransport{resolve: func(string) (backend.Backend, string, error) {
 		return bk, "tmux", nil
 	}, identity: func(string) (string, error) { return "tmux", nil }}
 	got := transport.Attempt("home", orchestrator.TargetResult{Handle: "pane"}, "payload")
@@ -151,7 +151,7 @@ func TestSessionActivationTransportUsesRecognizedAgentOverride(t *testing.T) {
 }
 
 func TestSessionActivationTransportQueuesResolutionFailure(t *testing.T) {
-	transport := sessionActivationTransport{resolve: func(string, string) (backend.Backend, string, error) {
+	transport := sessionActivationTransport{resolve: func(string) (backend.Backend, string, error) {
 		return nil, "", errors.New("unavailable")
 	}, identity: func(string) (string, error) { return "tmux", nil }}
 	got := transport.Attempt("home", orchestrator.TargetResult{Handle: "pane"}, "payload")

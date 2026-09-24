@@ -209,7 +209,7 @@ func TestDeliverPrevalidateRejectsHeadNotMatchingBoundWorktree(t *testing.T) {
 	if files := listDeliveryJournalFiles(t, homeDir); len(files) != 0 {
 		t.Fatalf("journal records = %v, want none", files)
 	}
-	if _, err := c.DeliveryAuthorization(mustFleetTaskID(t, taskID)); err == nil {
-		t.Fatal("authorization issued for a head that does not match the bound worktree")
+	if cur, err := c.DeliveryCurrency(mustFleetTaskID(t, taskID)); err != nil || cur.Authorization != nil || len(cur.Reasons) != 1 || cur.Reasons[0] != taskauthority.DeliveryCurrencyNoAuthorization {
+		t.Fatalf("authorization currency = %+v, %v, want none issued for a head that does not match the bound worktree", cur, err)
 	}
 }

@@ -9,7 +9,7 @@ import (
 )
 
 type spawnSessionEndpoints struct {
-	resolve func(string, string) (backend.Backend, string, error)
+	resolve func(string) (backend.Backend, string, error)
 	bound   map[string]backend.Backend
 }
 
@@ -31,7 +31,7 @@ func (s *spawnSessionEndpoints) CreateReserved(req fleet.CreateRequest) (fleet.C
 	if strings.TrimSpace(req.ReservationID) == "" || strings.TrimSpace(req.FenceToken) == "" {
 		return fleet.CreatedEndpoint{}, fmt.Errorf("spawn endpoint create requires the exact launch reservation identity (reservation id + fence token); unreserved create is not allowed")
 	}
-	bk, name, err := s.resolve(req.Home, req.PreferredBackend)
+	bk, name, err := s.resolve(req.PreferredBackend)
 	if err != nil {
 		return fleet.CreatedEndpoint{}, err
 	}

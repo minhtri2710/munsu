@@ -62,7 +62,7 @@ func (*unsupportedSpawnBackend) Teardown(string) error                      { re
 func TestSpawnSessionEndpointsDerivesWorkspaceLabel(t *testing.T) {
 	bk := &spawnLabelBackend{window: "window-1"}
 	endpoints := &spawnSessionEndpoints{
-		resolve: func(string, string) (backend.Backend, string, error) { return bk, "tmux", nil },
+		resolve: func(string) (backend.Backend, string, error) { return bk, "tmux", nil },
 		bound:   map[string]backend.Backend{},
 	}
 	homeDir := t.TempDir()
@@ -84,7 +84,7 @@ func TestSpawnSessionEndpointsPreservesBackendIdentityAndMetadata(t *testing.T) 
 		"herdr_tab_id":       "tab-1",
 	}}
 	endpoints := &spawnSessionEndpoints{
-		resolve: func(string, string) (backend.Backend, string, error) { return bk, "herdr", nil },
+		resolve: func(string) (backend.Backend, string, error) { return bk, "herdr", nil },
 		bound:   map[string]backend.Backend{},
 	}
 	created, err := endpoints.CreateReserved(fleet.CreateRequest{ReservationID: "epres-x", FenceToken: "epfence-x"})
@@ -107,7 +107,7 @@ func TestSpawnSessionEndpointsKeepsCreatorBindingsSeparate(t *testing.T) {
 	second := &spawnEndpointBackend{window: "window-2"}
 	resolved := []backend.Backend{first, second}
 	endpoints := &spawnSessionEndpoints{
-		resolve: func(string, string) (backend.Backend, string, error) {
+		resolve: func(string) (backend.Backend, string, error) {
 			bk := resolved[0]
 			resolved = resolved[1:]
 			return bk, "tmux", nil
@@ -142,7 +142,7 @@ func TestSpawnSessionEndpointsKeepsCreatorBindingsSeparate(t *testing.T) {
 func TestSpawnSessionEndpointsRequiresReservationIdentity(t *testing.T) {
 	called := false
 	endpoints := &spawnSessionEndpoints{
-		resolve: func(string, string) (backend.Backend, string, error) {
+		resolve: func(string) (backend.Backend, string, error) {
 			called = true
 			return &spawnLabelBackend{window: "window-1"}, "tmux", nil
 		},
@@ -165,7 +165,7 @@ func TestSpawnSessionEndpointsRequiresReservationIdentity(t *testing.T) {
 func TestSpawnSessionEndpointsFindOrCreateSameReservationSameEndpoint(t *testing.T) {
 	bk := &spawnEndpointBackend{window: "window-1"}
 	endpoints := &spawnSessionEndpoints{
-		resolve: func(string, string) (backend.Backend, string, error) { return bk, "tmux", nil },
+		resolve: func(string) (backend.Backend, string, error) { return bk, "tmux", nil },
 		bound:   map[string]backend.Backend{},
 	}
 	req := fleet.CreateRequest{Home: t.TempDir(), TabName: "mu-proj-task-g1", ReservationID: "epres-x", FenceToken: "epfence-x"}
@@ -192,7 +192,7 @@ func TestSpawnSessionEndpointsFindOrCreateSameReservationSameEndpoint(t *testing
 func TestSpawnSessionEndpointsUnsupportedBackendFailsClosed(t *testing.T) {
 	bk := &unsupportedSpawnBackend{}
 	endpoints := &spawnSessionEndpoints{
-		resolve: func(string, string) (backend.Backend, string, error) { return bk, "orca", nil },
+		resolve: func(string) (backend.Backend, string, error) { return bk, "orca", nil },
 		bound:   map[string]backend.Backend{},
 	}
 	_, err := endpoints.CreateReserved(fleet.CreateRequest{ReservationID: "epres-x", FenceToken: "epfence-x"})

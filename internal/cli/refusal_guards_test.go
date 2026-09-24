@@ -498,7 +498,7 @@ func TestGuardDisposeRefusesWorkspaceClosePolicyOnAnAdapterThatCannotCarryIt(t *
 
 func TestGuardCaptainLaunchEndpointRequiresAnExplicitBackendIdentity(t *testing.T) {
 	resolved := 0
-	ep := sessionLaunchEndpoint{resolve: func(string, string) (backend.Backend, string, error) {
+	ep := sessionLaunchEndpoint{resolve: func(string) (backend.Backend, string, error) {
 		resolved++
 		return &guardBackend{}, "tmux", nil
 	}}
@@ -511,7 +511,7 @@ func TestGuardCaptainLaunchEndpointRequiresAnExplicitBackendIdentity(t *testing.
 
 func TestGuardCaptainCleanupRequiresTheBoundBackendIdentity(t *testing.T) {
 	resolved := 0
-	ep := sessionLaunchEndpoint{resolve: func(string, string) (backend.Backend, string, error) {
+	ep := sessionLaunchEndpoint{resolve: func(string) (backend.Backend, string, error) {
 		resolved++
 		return &guardBackend{}, "tmux", nil
 	}}
@@ -522,7 +522,7 @@ func TestGuardCaptainCleanupRequiresTheBoundBackendIdentity(t *testing.T) {
 	}
 
 	bk := &guardBackend{}
-	ok := sessionLaunchEndpoint{resolve: func(string, string) (backend.Backend, string, error) { return bk, "tmux", nil }}
+	ok := sessionLaunchEndpoint{resolve: func(string) (backend.Backend, string, error) { return bk, "tmux", nil }}
 	if err := ok.Cleanup("/home", fleet.LaunchResult{Backend: "tmux", Window: "w1"}); err != nil {
 		t.Fatalf("Cleanup with the bound identity = %v, want acceptance", err)
 	}

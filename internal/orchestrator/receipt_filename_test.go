@@ -64,3 +64,30 @@ func TestListPendingReceipts_DottedTaskID(t *testing.T) {
 		t.Errorf("ListPendingReceipts = (%q, %q), want (v1.2, k)", got[0].TaskID, got[0].TermKey)
 	}
 }
+
+// TestListPendingReceipts_ExcludesAcked pins the pending view over the single
+// receipt scanner: an acked receipt stays in listAllReceipts but is not
+// pending.
+func TestListPendingReceipts_ExcludesAcked(t *testing.T) {
+	captainHome := t.TempDir()
+	for _, id := range []string{"acked", "open"} {
+		if err := WriteReceipt(captainHome, id, "k", "done", "complete"); err != nil {
+			t.Fatalf("WriteReceipt(%s): %v", id, err)
+		}
+	}
+	if err := WriteAck(captainHome, "acked", "k"); err != nil {
+		t.Fatalf("WriteAck: %v", err)
+	}
+
+	all, err := listAllReceipts(captainHome)
+	if err != nil || len(all) != 2 {
+		t.Fatalf("listAllReceipts = %+v, %v, want both receipts", all, err)
+	}
+	got, err := ListPendingReceipts(captainHome)
+	if err != nil {
+		t.Fatalf("ListPendingReceipts: %v", err)
+	}
+	if len(got) != 1 || got[0].TaskID != "open" || got[0].TermKey != "k" || got[0].State != "done" {
+		t.Fatalf("ListPendingReceipts = %+v, want only (open, k, done)", got)
+	}
+}

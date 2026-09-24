@@ -316,8 +316,9 @@ func resolveCaptainActivationTarget(captainHome, parentHome string) (TargetResul
 }
 
 // listAllReceipts scans the receipts directory and returns ALL receipt files
-// (regardless of ack status). This is used by ActivateOnReceipt to find
-// receipts that may already be acked (relayed) but not yet activation-seen.
+// (regardless of ack status). It is the only receipt-directory scanner:
+// ActivateOnReceipt uses it to find receipts that may already be acked
+// (relayed) but not yet activation-seen, and ListPendingReceipts filters it.
 func listAllReceipts(homeDir string) ([]PendingReceipt, error) {
 	dir := ReceiptDir(homeDir)
 	entries, err := os.ReadDir(dir)

@@ -866,24 +866,7 @@ func deliveryHoldRelevant(hold DispatchHold, agg Aggregate) bool {
 	if !slices.Contains(hold.Actions, DispatchActionDelivery) {
 		return false
 	}
-	return holdScopeMatches(hold, agg)
-}
-
-// holdScopeMatches checks the hold scope against the task identity fields.
-func holdScopeMatches(hold DispatchHold, agg Aggregate) bool {
-	if len(hold.Scope.TaskIDs) > 0 && !slices.Contains(hold.Scope.TaskIDs, agg.TaskID) {
-		return false
-	}
-	if len(hold.Scope.ProjectIDs) > 0 && !slices.Contains(hold.Scope.ProjectIDs, agg.Definition.Project) {
-		return false
-	}
-	if len(hold.Scope.Generations) > 0 && !slices.Contains(hold.Scope.Generations, agg.Generation.String()) {
-		return false
-	}
-	if len(hold.Scope.ParentIDs) > 0 && !slices.Contains(hold.Scope.ParentIDs, agg.Definition.ParentTaskID) {
-		return false
-	}
-	return true
+	return hold.Scope.matches(agg.TaskID, agg.Definition.Project, agg.Generation.String(), agg.Definition.ParentTaskID)
 }
 
 func sha256Hex(data []byte) string {
@@ -1223,86 +1206,6 @@ func (c *Canonical) authorizationCurrencyReasons(agg Aggregate, auth DeliveryAut
 		reasons = append(reasons, DeliveryCurrencyIdentityHead)
 	}
 	return reasons
-}
-
-// DeliveryAuthorization returns the current delivery authorization of the
-// task by resolving the bounded index pointer to the immutable issuance
-// evidence. It fails closed with ErrNotFound when the task has no
-// authorization, and fails closed on missing, substituted, or malformed
-// evidence.
-//
-// It reads under the task scope lock with pending-journal recovery so it
-// observes a whole change-set rather than a torn one; it therefore acquires
-// the scope lock (advancing the fence) and may replay an interrupted commit.
-// It can block behind an in-flight same-task commit and return
-// home.ErrLockTimeout or home.ErrFenced, and must not be called while already
-// holding the same task's scope (flock is non-reentrant).
-func (c *Canonical) DeliveryAuthorization(taskID domain.TaskID) (DeliveryAuthorization, error) {
-	if err := taskID.Validate(); err != nil {
-		return DeliveryAuthorization{}, err
-	}
-	lk, err := c.h.Lock(taskScope(taskID.Value()))
-	if err != nil {
-		return DeliveryAuthorization{}, err
-	}
-	defer lk.Release()
-	if err := c.h.RecoverPending(lk); err != nil {
-		return DeliveryAuthorization{}, err
-	}
-	index, _, err := c.readDeliveryIndex(taskID.Value())
-	if err != nil {
-		return DeliveryAuthorization{}, err
-	}
-	if index.AuthorizationOpID == "" {
-		return DeliveryAuthorization{}, conflictError(ErrNotFound, "task %s has no delivery authorization", taskID.Value())
-	}
-	auth, ok, err := c.readDeliveryAuthorization(taskID.Value(), index.AuthorizationOpID)
-	if err != nil {
-		return DeliveryAuthorization{}, err
-	}
-	if !ok {
-		return DeliveryAuthorization{}, internalError("task %s delivery index points at missing authorization %s", taskID.Value(), index.AuthorizationOpID)
-	}
-	return auth.clone(), nil
-}
-
-// DeliveryAuthorizationByOperation returns the immutable issuance evidence
-// document identified by its exact operation identity (active or revoked),
-// preserving the auditable prior record across revoke/re-authorize flows.
-func (c *Canonical) DeliveryAuthorizationByOperation(taskID domain.TaskID, operationID string) (DeliveryAuthorization, error) {
-	if err := taskID.Validate(); err != nil {
-		return DeliveryAuthorization{}, err
-	}
-	if !safeIdentityValue(operationID) {
-		return DeliveryAuthorization{}, validationError("authorization operation identity must be a safe non-empty value")
-	}
-	auth, ok, err := c.readDeliveryAuthorization(taskID.Value(), operationID)
-	if err != nil {
-		return DeliveryAuthorization{}, err
-	}
-	if !ok {
-		return DeliveryAuthorization{}, conflictError(ErrNotFound, "task %s has no delivery authorization %s", taskID.Value(), operationID)
-	}
-	return auth.clone(), nil
-}
-
-// DeliveryRevocationByOperation returns the immutable revocation evidence
-// document identified by its exact operation identity.
-func (c *Canonical) DeliveryRevocationByOperation(taskID domain.TaskID, operationID string) (DeliveryRevocation, error) {
-	if err := taskID.Validate(); err != nil {
-		return DeliveryRevocation{}, err
-	}
-	if !safeIdentityValue(operationID) {
-		return DeliveryRevocation{}, validationError("revocation operation identity must be a safe non-empty value")
-	}
-	revocation, ok, err := c.readDeliveryRevocation(taskID.Value(), operationID)
-	if err != nil {
-		return DeliveryRevocation{}, err
-	}
-	if !ok {
-		return DeliveryRevocation{}, conflictError(ErrNotFound, "task %s has no delivery revocation %s", taskID.Value(), operationID)
-	}
-	return revocation.clone(), nil
 }
 
 // DeliveryOutcome returns the current committed delivery outcome of the task

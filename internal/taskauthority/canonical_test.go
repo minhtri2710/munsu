@@ -311,44 +311,15 @@ func TestCanonicalStartBlockedByDispatchHold(t *testing.T) {
 	}
 }
 
-func TestCanonicalReadiness(t *testing.T) {
+// TestCanonicalStartRefusesMissingTask proves the start gate reports an
+// unknown task as not found. The queued-and-ready and held cases are pinned by
+// TestCanonicalStartBlockedByDispatchHold.
+func TestCanonicalStartRefusesMissingTask(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
 
-	// Missing task reports not-found, not an error.
-	r, err := c.Readiness(mustTaskID(t, "missing"))
-	if err != nil {
-		t.Fatalf("Readiness(missing): %v", err)
-	}
-	if len(r.BlockingReasons) != 1 || r.BlockingReasons[0] != ReadinessNotFound {
-		t.Fatalf("missing readiness = %+v", r)
-	}
-
-	mustCreate(t, c, "t1")
-	r, err = c.Readiness(mustTaskID(t, "t1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !r.Ready || len(r.BlockingReasons) != 0 {
-		t.Fatalf("queued readiness = %+v", r)
-	}
-
-	// A matching dispatch hold blocks readiness even for a queued task.
-	hold := CanonicalAddHoldRequest{
-		HomeID:  c.HomeID(),
-		HoldID:  "hold-2",
-		Scope:   DispatchHoldScope{TaskIDs: []string{"t1"}},
-		Actions: []DispatchAction{DispatchActionStart},
-		Reason:  "freeze",
-	}
-	if _, err := c.AddHold(mustOperation(t, "op-hold-2", hold), hold); err != nil {
-		t.Fatalf("AddHold: %v", err)
-	}
-	r, err = c.Readiness(mustTaskID(t, "t1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r.Ready || len(r.BlockingReasons) != 1 || r.BlockingReasons[0] != ReadinessDispatchHold {
-		t.Fatalf("held readiness = %+v", r)
+	start := startWithRev(c, "missing", 1)
+	if _, err := c.Start(mustOperation(t, "op-start-missing", start), start); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("start missing = %v, want ErrNotFound", err)
 	}
 }
 
@@ -551,8 +522,9 @@ func TestCanonicalMalformedCurrentStateFailsClosed(t *testing.T) {
 	if _, err := c2.List(); err == nil {
 		t.Fatalf("List on malformed state = nil error, want failure")
 	}
-	if _, err := c2.Readiness(mustTaskID(t, "t1")); err == nil {
-		t.Fatalf("Readiness on malformed state = nil error, want failure")
+	start := startWithRev(c2, "t1", 1)
+	if _, err := c2.Start(mustOperation(t, "op-start-malformed", start), start); err == nil {
+		t.Fatalf("Start on malformed state = nil error, want failure")
 	}
 }
 
@@ -777,8 +749,9 @@ func TestCanonicalRejectsHistoricalV2Input(t *testing.T) {
 	if _, err := c.List(); err == nil {
 		t.Fatalf("List with legacy v2 document = nil error, want fail closed")
 	}
-	if _, err := c.Readiness(mustTaskID(t, "legacy")); err == nil {
-		t.Fatalf("Readiness on legacy v2 document = nil error, want fail closed")
+	start := startWithRev(c, "legacy", 1)
+	if _, err := c.Start(mustOperation(t, "op-start-legacy", start), start); err == nil {
+		t.Fatalf("Start on legacy v2 document = nil error, want fail closed")
 	}
 }
 

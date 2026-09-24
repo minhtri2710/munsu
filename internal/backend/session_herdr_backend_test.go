@@ -468,7 +468,7 @@ func TestResolve_HerdrUsesDefaultSessionNotHometag(t *testing.T) {
 	}
 
 	// Resolve for "herdr" — Session should be "default" (or HERDR_SESSION), not the hometag
-	bk, name, err := Resolve(homeDir, "herdr")
+	bk, name, err := Resolve("herdr")
 	if err != nil {
 		t.Fatal(err)
 	}

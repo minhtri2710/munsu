@@ -212,8 +212,7 @@ func TestOrcaBackend_NoAutoDetect(t *testing.T) {
 	t.Setenv("TMUX", "")
 	t.Setenv("HERDR_ENV", "")
 
-	homeDir := t.TempDir()
-	if _, _, err := Resolve(homeDir, ""); err == nil {
+	if _, _, err := Resolve(""); err == nil {
 		t.Fatal("Resolve('') must fail closed — no env/PATH auto-selection (orca never auto-detects)")
 	}
 }
@@ -241,8 +240,7 @@ func TestOrcaBackend_SelectOnly(t *testing.T) {
 	}
 
 	// Empty identity never resolves — even with orca on PATH.
-	homeDir := t.TempDir()
-	if _, _, err := Resolve(homeDir, ""); err == nil {
+	if _, _, err := Resolve(""); err == nil {
 		t.Error("Resolve('') must fail closed — no implicit orca selection")
 	}
 }

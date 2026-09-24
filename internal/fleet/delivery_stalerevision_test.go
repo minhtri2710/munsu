@@ -39,10 +39,11 @@ func bumpTaskRevisionCanonically(t *testing.T, c *taskauthority.Canonical, taskI
 func revokeCurrentAuthorization(t *testing.T, c *taskauthority.Canonical, taskID string) {
 	t.Helper()
 	tid := mustFleetTaskID(t, taskID)
-	auth, err := c.DeliveryAuthorization(tid)
-	if err != nil {
-		t.Fatal(err)
+	cur, err := c.DeliveryCurrency(tid)
+	if err != nil || cur.Authorization == nil {
+		t.Fatalf("DeliveryCurrency authorization = %+v, %v", cur, err)
 	}
+	auth := *cur.Authorization
 	agg, err := c.Get(tid)
 	if err != nil {
 		t.Fatal(err)
@@ -374,8 +375,8 @@ func TestDeliverRecoveryStopsBeforeResumingOnContradictoryEntry(t *testing.T) {
 	if err := RecoverDeliveryJournals(homeDir); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("RecoverDeliveryJournals err = %v, want the missing journal", err)
 	}
-	if _, err := c.DeliveryAuthorization(mustFleetTaskID(t, "t1")); !errors.Is(err, taskauthority.ErrNotFound) {
-		t.Fatalf("t1 authorization err = %v, want none (nothing resumed)", err)
+	if cur, err := c.DeliveryCurrency(mustFleetTaskID(t, "t1")); err != nil || cur.Authorization != nil || len(cur.Reasons) != 1 || cur.Reasons[0] != taskauthority.DeliveryCurrencyNoAuthorization {
+		t.Fatalf("t1 authorization currency = %+v, %v, want none (nothing resumed)", cur, err)
 	}
 	if provider.merges != 0 {
 		t.Fatalf("merges = %d, want 0", provider.merges)

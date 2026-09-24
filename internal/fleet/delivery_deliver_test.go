@@ -53,8 +53,8 @@ func TestDeliverRefusesGitHubBeforeJournal(t *testing.T) {
 	if files := listDeliveryJournalFiles(t, homeDir); len(files) != 0 {
 		t.Fatalf("journal records = %v, want none", files)
 	}
-	if _, err := c.DeliveryAuthorization(mustFleetTaskID(t, taskID)); !errors.Is(err, taskauthority.ErrNotFound) {
-		t.Fatalf("authorization err = %v, want none issued", err)
+	if cur, err := c.DeliveryCurrency(mustFleetTaskID(t, taskID)); err != nil || cur.Authorization != nil || len(cur.Reasons) != 1 || cur.Reasons[0] != taskauthority.DeliveryCurrencyNoAuthorization {
+		t.Fatalf("authorization currency = %+v, %v, want none issued", cur, err)
 	}
 	if provider.merges != 0 || len(provider.requests) != 0 {
 		t.Fatalf("provider touched: merges=%d requests=%d", provider.merges, len(provider.requests))
@@ -84,10 +84,11 @@ func TestDeliverJournalIntentPrecedesAuthorizationAndMutation(t *testing.T) {
 
 	// The canonical authorization evidence was issued under the exact
 	// identity/kind/preconditions.
-	auth, err := c.DeliveryAuthorization(mustFleetTaskID(t, taskID))
-	if err != nil {
-		t.Fatalf("DeliveryAuthorization: %v", err)
+	cur, err := c.DeliveryCurrency(mustFleetTaskID(t, taskID))
+	if err != nil || cur.Authorization == nil {
+		t.Fatalf("DeliveryCurrency authorization = %+v, %v", cur, err)
 	}
+	auth := *cur.Authorization
 	if auth.Kind != taskauthority.DeliveryAuthorizationProviderMerge {
 		t.Fatalf("authorization kind = %q, want provider-merge", auth.Kind)
 	}
@@ -320,8 +321,8 @@ func TestDeliverUnsupportedCapabilityFailsBeforeMutation(t *testing.T) {
 	if active := listActiveDeliveryJournals(t, homeDir); len(active) != 0 {
 		t.Fatalf("active journals = %v, want none (no journal for unsupported capability)", active)
 	}
-	if _, err := c.DeliveryAuthorization(mustFleetTaskID(t, taskID)); err == nil {
-		t.Fatal("authorization issued without a capability")
+	if cur, err := c.DeliveryCurrency(mustFleetTaskID(t, taskID)); err != nil || cur.Authorization != nil || len(cur.Reasons) != 1 || cur.Reasons[0] != taskauthority.DeliveryCurrencyNoAuthorization {
+		t.Fatalf("authorization currency = %+v, %v, want none issued without a capability", cur, err)
 	}
 }
 
@@ -441,10 +442,11 @@ func TestDeliverFailClosedBeforeMutation(t *testing.T) {
 			}
 		}, false},
 		{"revocation", func(t *testing.T, c *taskauthority.Canonical, homeDir, taskID string) {
-			auth, err := c.DeliveryAuthorization(mustFleetTaskID(t, taskID))
-			if err != nil {
-				t.Fatal(err)
+			cur, err := c.DeliveryCurrency(mustFleetTaskID(t, taskID))
+			if err != nil || cur.Authorization == nil {
+				t.Fatalf("DeliveryCurrency authorization = %+v, %v", cur, err)
 			}
+			auth := *cur.Authorization
 			agg, err := c.Get(mustFleetTaskID(t, taskID))
 			if err != nil {
 				t.Fatal(err)

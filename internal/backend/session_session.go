@@ -116,8 +116,7 @@ func constructBackend(name string) (Backend, error) {
 	}
 }
 
-// Resolve consumes ONE explicitly requested backend identity. The homeDir is
-// used ONLY for workspace labeling (e.g. tmux Hometag), NEVER for selection.
+// Resolve consumes ONE explicitly requested backend identity.
 // An empty requested identity is a typed failure — no config-file read, no
 // env marker, no PATH auto-detect. Capability health is verified through the
 // same construction path as BackendForTask uses: an absent binary FAILS CLOSED here
@@ -127,7 +126,7 @@ func constructBackend(name string) (Backend, error) {
 // Important: for the "herdr" backend, Session is set to "" (→ HERDR_SESSION or "default"),
 // NOT the home-derived hometag. The hometag is the workspace label, passed separately
 // by spawn to NewWindow. See BackendForTask for session binding from task metadata.
-func Resolve(homeDir string, name string) (Backend, string, error) {
+func Resolve(name string) (Backend, string, error) {
 	if name == "" || name == "auto" {
 		return nil, "", fmt.Errorf("no session backend identity: %q is not an explicit backend (tmux, herdr, zellij, cmux, orca); no auto-detection", name)
 	}
@@ -135,11 +134,6 @@ func Resolve(homeDir string, name string) (Backend, string, error) {
 	bk, err := constructBackend(name)
 	if err != nil {
 		return nil, "", err
-	}
-	// Workspace labeling is layered on AFTER verified construction: homeDir is
-	// a label source for tmux, never a selection input.
-	if tb, ok := bk.(*TmuxBackend); ok {
-		tb.Tag = Hometag(homeDir)
 	}
 	return bk, name, nil
 }

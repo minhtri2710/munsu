@@ -356,7 +356,7 @@ func TestGCOrphanDataDirs_AbortedCleanupKeepsBrief(t *testing.T) {
 		if err != nil {
 			return false, err
 		}
-		return auth.ReclaimReleasedTaskArtifacts(taskID, reclaim)
+		return auth.ReclaimReleasedTaskArtifactsByID(taskID.Value(), reclaim)
 	})
 	if len(cleaned) != 0 {
 		t.Fatalf("cleaned = %v, want none", cleaned)
@@ -422,12 +422,12 @@ func TestGCOrphanDataDirs_WriterInterleavingKeepsBrief(t *testing.T) {
 	}
 	setDirMtime(t, dataDir, 48*time.Hour)
 	wrapped := func(taskID string, reclaim func() error) (bool, error) {
-		if err := auth.WriteTaskDataArtifact(tid, func() error {
+		if err := auth.WriteTaskDataArtifactByID(tid.Value(), func() error {
 			return fleet.Scaffold(fleet.ScaffoldOptions{HomeDir: homeDir, ID: id, Repo: "munsu", Mode: "no-mistakes"})
 		}); err != nil {
 			return false, err
 		}
-		return auth.ReclaimReleasedTaskArtifacts(tid, reclaim)
+		return auth.ReclaimReleasedTaskArtifactsByID(tid.Value(), reclaim)
 	}
 	if cleaned := gcOrphanDataDirs(homeDir, wrapped); len(cleaned) != 0 {
 		t.Fatalf("cleaned = %v", cleaned)
@@ -496,7 +496,7 @@ func TestGCOrphanDataDirs_ScaffoldedBriefKeepsTerminalTask(t *testing.T) {
 		if err != nil {
 			return false, err
 		}
-		return auth.ReclaimReleasedTaskArtifacts(taskID, reclaim)
+		return auth.ReclaimReleasedTaskArtifactsByID(taskID.Value(), reclaim)
 	})
 	if len(cleaned) != 0 {
 		t.Fatalf("cleaned = %v", cleaned)
@@ -574,7 +574,7 @@ func TestGCOrphanDataDirs_ReclaimsSupersededSource(t *testing.T) {
 		if err != nil {
 			return false, err
 		}
-		return auth.ReclaimReleasedTaskArtifacts(taskID, reclaim)
+		return auth.ReclaimReleasedTaskArtifactsByID(taskID.Value(), reclaim)
 	})
 	if len(cleaned) != 1 || cleaned[0] != id {
 		t.Fatalf("cleaned = %v", cleaned)

@@ -32,8 +32,8 @@ func TestDeliverCrashBeforeMutationRetriesSafely(t *testing.T) {
 	if len(active) != 1 {
 		t.Fatalf("active journals = %v, want exactly 1", active)
 	}
-	if _, err := c.DeliveryAuthorization(mustFleetTaskID(t, taskID)); err != nil {
-		t.Fatalf("authorization not issued: %v", err)
+	if cur, err := c.DeliveryCurrency(mustFleetTaskID(t, taskID)); err != nil || cur.Authorization == nil {
+		t.Fatalf("authorization not issued: %+v, %v", cur, err)
 	}
 	if _, err := c.DeliveryOutcome(mustFleetTaskID(t, taskID)); err == nil {
 		t.Fatal("outcome committed before the mutation")

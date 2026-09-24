@@ -527,10 +527,7 @@ func TestCrashRecoveryDeliveryAuthorization(t *testing.T) {
 			if !cur.Valid || cur.Revision != 4 || cur.Authorization == nil || cur.Authorization.OperationID != "op-crash-auth" {
 				t.Fatalf("recovered currency = %+v", cur)
 			}
-			auth, err := c.DeliveryAuthorization(taskID(t, "t1"))
-			if err != nil {
-				t.Fatalf("read recovered authorization: %v", err)
-			}
+			auth := cur.Authorization
 			if auth.OperationID != "op-crash-auth" || auth.Revision != 4 || auth.Identity != deliveryIdentity() {
 				t.Fatalf("recovered authorization = %+v", auth)
 			}

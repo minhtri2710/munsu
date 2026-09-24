@@ -7,10 +7,7 @@ import (
 )
 
 // TmuxBackend implements Backend using the tmux CLI.
-type TmuxBackend struct {
-	// Tag is retained for compatibility with callers that scope sessions by home.
-	Tag string
-}
+type TmuxBackend struct{}
 
 // tmuxBin returns the path to the tmux binary.
 func tmuxBin() (string, error) {

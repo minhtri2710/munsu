@@ -14,7 +14,7 @@ func TestReclaimReleasedTaskArtifactsOwnershipAndFence(t *testing.T) {
 	c, h, _ := newTestCanonical(t)
 	id := mustTaskID(t, "fence-task")
 	called := false
-	reclaimed, err := c.ReclaimReleasedTaskArtifacts(id, func() error {
+	reclaimed, err := c.ReclaimReleasedTaskArtifactsByID(id.Value(), func() error {
 		called = true
 		_, lockErr := h.Lock(taskScope(id.Value()))
 		if !errors.Is(lockErr, home.ErrLockTimeout) {
@@ -32,21 +32,21 @@ func TestWriteTaskDataArtifactUsesTaskFence(t *testing.T) {
 	id := mustTaskID(t, "write-fence")
 	mustCreate(t, c, id.Value())
 	called := false
-	if err := c.WriteTaskDataArtifact(id, func() error {
+	if err := c.WriteTaskDataArtifactByID(id.Value(), func() error {
 		called = true
 		_, err := h.Lock(taskScope(id.Value()))
 		if !errors.Is(err, home.ErrLockTimeout) {
 			t.Fatalf("lock error = %v", err)
 		}
 		reclaimedCalled := false
-		if reclaimed, reclaimErr := c.ReclaimReleasedTaskArtifacts(id, func() error { reclaimedCalled = true; return nil }); reclaimed || !errors.Is(reclaimErr, home.ErrLockTimeout) || reclaimedCalled {
+		if reclaimed, reclaimErr := c.ReclaimReleasedTaskArtifactsByID(id.Value(), func() error { reclaimedCalled = true; return nil }); reclaimed || !errors.Is(reclaimErr, home.ErrLockTimeout) || reclaimedCalled {
 			t.Fatalf("nested reclaim = %v, %v, called=%v", reclaimed, reclaimErr, reclaimedCalled)
 		}
 		return nil
 	}); err != nil || !called {
 		t.Fatalf("write = %v, called=%v", err, called)
 	}
-	if err := c.WriteTaskDataArtifact(mustTaskID(t, "missing-write"), func() error { return nil }); err != nil {
+	if err := c.WriteTaskDataArtifactByID("missing-write", func() error { return nil }); err != nil {
 		t.Fatalf("unknown task write = %v", err)
 	}
 }
@@ -197,7 +197,7 @@ func TestReclaimReleasedTaskArtifactsAllowsSupersededTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	called := false
-	ok, err := c.ReclaimReleasedTaskArtifacts(mustTaskID(t, id), func() error { called = true; return nil })
+	ok, err := c.ReclaimReleasedTaskArtifactsByID(id, func() error { called = true; return nil })
 	if err != nil || !ok || !called {
 		t.Fatalf("reclaim superseded = %v, %v, called=%v", ok, err, called)
 	}
@@ -241,7 +241,7 @@ func TestReclaimReleasedTaskArtifactsLifecycleStates(t *testing.T) {
 			mustCreate(t, c, id)
 			tc.setup(t, c, id)
 			called := false
-			got, err := c.ReclaimReleasedTaskArtifacts(mustTaskID(t, id), func() error { called = true; return nil })
+			got, err := c.ReclaimReleasedTaskArtifactsByID(id, func() error { called = true; return nil })
 			if err != nil || got != tc.want || called != tc.want {
 				t.Fatalf("reclaim = %v, err=%v, called=%v, want=%v", got, err, called, tc.want)
 			}
@@ -266,7 +266,7 @@ func TestReclaimReleasedTaskArtifactsTerminalAndCallbackFailure(t *testing.T) {
 			t.Fatal(err)
 		}
 		called := false
-		got, err := c.ReclaimReleasedTaskArtifacts(mustTaskID(t, id), func() error { called = true; return nil })
+		got, err := c.ReclaimReleasedTaskArtifactsByID(id, func() error { called = true; return nil })
 		if !got || err != nil || !called {
 			t.Fatalf("status %s successful reclaim = %v, %v, called=%v", status, got, err, called)
 		}
@@ -279,7 +279,7 @@ func TestReclaimReleasedTaskArtifactsTerminalAndCallbackFailure(t *testing.T) {
 	if _, err := c.CompleteCleanup(mustOperation(t, "op-complete-callback-error", complete), complete); err != nil {
 		t.Fatal(err)
 	}
-	got, err := c.ReclaimReleasedTaskArtifacts(mustTaskID(t, "callback-error"), func() error { return errors.New("reclaim failed") })
+	got, err := c.ReclaimReleasedTaskArtifactsByID("callback-error", func() error { return errors.New("reclaim failed") })
 	if got || err == nil {
 		t.Fatalf("callback failure reclaim = %v, %v", got, err)
 	}
