@@ -1,6 +1,6 @@
 ---
 name: bootstrap-diagnostics
-description: Handle session-start bootstrap diagnostics — toolchain readiness lines (MISSING, NEEDS_GH_AUTH, TANGLE, SOLDIER_HARNESS, SOLDIER_DISPATCH, FLEET_SYNC, SECOND_SYNC, SECOND_LIVENESS, TASKS_AXI).
+description: Handle session-start bootstrap diagnostics — toolchain readiness lines (MISSING, NEEDS_GH_AUTH, SOLDIER_HARNESS, SOLDIER_DISPATCH, SECOND_LIVENESS).
 user-invocable: false
 metadata:
   internal: true
@@ -12,7 +12,7 @@ Agent-only wrapper for the bundled `REFERENCE.md`, which covers every diagnostic
 
 ## Diagnostic lines
 
-When the bootstrap diagnostics section prints lines like `MISSING: <tool>`, `NEEDS_GH_AUTH`, `TANGLE:`, `SOLDIER_HARNESS:`, `SOLDIER_DISPATCH:`, `FLEET_SYNC:`, `SECOND_SYNC:`, `SECOND_LIVENESS:`, or `TASKS_AXI:`, consult `REFERENCE.md` for the handling playbook.
+When the bootstrap diagnostics section prints lines like `MISSING: <tool>`, `NEEDS_GH_AUTH`, `SOLDIER_HARNESS:`, `SOLDIER_DISPATCH:`, or `SECOND_LIVENESS:`, consult `REFERENCE.md` for the handling playbook.
 
 ## Silent bootstrap
 

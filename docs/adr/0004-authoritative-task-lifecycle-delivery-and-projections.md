@@ -1,6 +1,6 @@
 # 0004. Authoritative Task Lifecycle, Delivery Transactions, and Projections
 
-* **Status:** Accepted; substantially implemented — the authoritative Task aggregate, atomic handoff, head-bound merge authorization, Dispatch Holds, and the `task` sole noun all landed. §3 (delivered phase) is superseded by ADR-0008, §5 (IssueLink) by ADR-0011, §6 (delivery transitions) by ADR-0022, §7 (DispatchInterpretation) subsumed and §9 (ContextManifest) retired by ADR-0023. The `DeliveryState` projection cleanup landed (#743), and the last of that residue — the `.meta` delivery-state key, its constant, and the `ListMeta` branch that let it override a task's status line — was deleted afterwards, so neither the key nor its constant exists in the tree any more. No residual work remains open on this ADR.
+* **Status:** Accepted; substantially implemented — the authoritative Task aggregate, atomic handoff, head-bound merge authorization, Dispatch Holds, and the `task` sole noun all landed. §3 (delivered phase) is superseded by ADR-0008, §5 (IssueLink) by ADR-0011, §6 (delivery transitions) by ADR-0022, §8 (backlog CLI) by ADR-0008, §7 (DispatchInterpretation) subsumed and §9 (ContextManifest) retired by ADR-0023. The `DeliveryState` projection cleanup landed (#743), and the last of that residue — the `.meta` delivery-state key, its constant, and the `ListMeta` branch that let it override a task's status line — was deleted afterwards, so neither the key nor its constant exists in the tree any more. No residual work remains open on this ADR.
 * **Date:** 2026-07-30
 * **Extends:** ADR-0002 (durable lifecycle and clean breaks), ADR-0003 (project-scoped config)
 * **Triggered by:** `munsu-workflow-incident-report-2026-07-30.md`
@@ -37,7 +37,9 @@ Backlog Markdown, `.meta`, `.status`, briefs, fleet snapshots, and inbox summari
 
 Task resolution collects all candidate owners. It auto-selects only one proven current owner. Multiple active owners are corrupt state and enter quarantine; a bare ID never returns the first match.
 
-### 3. Lifecycle phases and projections
+### 3. Lifecycle phases and projections (delivered phase superseded — ADR-0008)
+
+The `delivered` phase was never built. Task phases are `queued`, `blocked`, `working`, `done`, `resolved` and `retired` (`internal/taskauthority/model.go`), owned by Task Authority under ADR-0008; merge readiness is `PR.CanMerge` in `internal/domain/domain.go`.
 
 The canonical pre-merge phase is `delivered`: a PR/MR is open, its immutable identity and head SHA match the task, and the provider supplies effective approval and terminal green checks. Provider-boundary enforcement and terminal reconciliation follow ADR-0010; adapters fail closed when the exact authorized merge conditions cannot be enforced.
 
@@ -62,7 +64,9 @@ Merge mutation outcomes include `merge_failed`, `merged_verified`, `already_merg
 
 This section is retired. munsu does not own Issue closure on delivery: the PR body author writes the closing keyword and the provider enforces it at merge. The `IssueLink` model and its delivery guard were deleted; see ADR-0011 for the decision and for the front door a future auto-close guarantee must come through.
 
-### 6. Delivery-mode transitions
+### 6. Delivery-mode transitions (DeliveryPlan superseded — ADR-0022)
+
+The revisioned `DeliveryPlan` was never built. ADR-0022's durable per-task `DeliveryContract` records the mode and any authorized fallback. The capability attestation exists as a per-launch `CapabilityAttestation` (`internal/fleet/delivery_attestation.go`) checked for late capability loss before launch; it is not cached across launches.
 
 A task has a revisioned `DeliveryPlan` with requested mode, effective mode, and exact allowed fallbacks. A Soldier does not silently change mode. A parent-owned durable Decision changes mode, unless project policy pre-authorizes the exact transition and reason. Known capability failure before spawn selects the effective mode before launch; failure discovered later preserves work and evidence while transitioning the Delivery Plan.
 
@@ -74,7 +78,9 @@ When directive order differs from the dependency-ready set, the Captain writes a
 
 Pause is a durable scoped `DispatchHold`, not prose and not a task phase. Holds may target a Captain, project, task set, or dependency subgraph. Applicable holds block handoff/start/spawn while queued tasks remain queued. Releasing a hold does not automatically start work.
 
-### 8. Backlog CLI clean break
+### 8. Backlog CLI clean break (superseded — ADR-0008)
+
+The `backlog` command was deleted when ADR-0008 made `task` the only Task noun. `munsu task start`, `munsu task unblock` and `munsu task reopen` carry the mutations below; there is no separate readiness query (`munsu ready` is the Soldier turn-boundary signal).
 
 The public vocabulary separates queries from mutations:
 

@@ -16,11 +16,11 @@ Consult `REFERENCE.md` for the complete model and effort flag table.
 
 ## Harness detection
 
-The canonical doc covers env marker checks (CLAUDE_CODE, GITHUB_COPILOT, OPENCODE, PI_CODING_AGENT_DIR, GROK_VM_ID) and process tree fallback.
+Detection checks each adapter's env markers (CLAUDECODE, CODECLIMB, OPENCODE, PI_CODING_AGENT_DIR, PI_CODING_AGENT, GROK_VM_ID, GROK_AGENT, ANTIGRAVITY_LS_ADDRESS, ANTIGRAVITY_AGENT), then falls back to process ancestry.
 
 ## Turn-end hooks
 
-See `REFERENCE.md` for turn-end guard and dispatch details.
+Each adapter's turn-end hook is its `TurnEndHook` entry in `internal/harness/adapter.go`. See `REFERENCE.md` for dispatch precedence.
 
 ---
 
