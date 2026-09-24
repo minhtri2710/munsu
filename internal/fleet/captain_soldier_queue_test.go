@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -723,7 +724,7 @@ func TestSoldierLifecycleTransitions(t *testing.T) {
 
 	// Verify status states are all valid.
 	for _, step := range lifecycle {
-		if !home.IsValidStatusState(step.state) {
+		if !domain.IsValidStatusState(step.state) {
 			t.Errorf("status state %q should be valid", step.state)
 		}
 	}

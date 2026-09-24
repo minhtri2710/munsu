@@ -282,7 +282,7 @@ func TestStore_AtomicWrite_NoPartialJSON(t *testing.T) {
 		t.Fatalf("reading dir: %v", err)
 	}
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), ".tmp-") {
+		if strings.HasPrefix(e.Name(), ".home-write-") {
 			t.Errorf("stale temp file found: %s", e.Name())
 		}
 	}

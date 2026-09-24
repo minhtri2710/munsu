@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // KnownKeys is the authoritative list of well-known config keys.
@@ -74,28 +76,7 @@ func Set(homeDir, key, value string) error {
 		return fmt.Errorf("securing config directory: %w", err)
 	}
 
-	tmp, err := os.CreateTemp(dir, ".config-*")
-	if err != nil {
-		return fmt.Errorf("creating config temp file: %w", err)
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-	if err := tmp.Chmod(0600); err != nil {
-		tmp.Close()
-		return fmt.Errorf("securing config temp file: %w", err)
-	}
-	if _, err := tmp.WriteString(value + "\n"); err != nil {
-		tmp.Close()
-		return fmt.Errorf("writing config temp file: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return fmt.Errorf("syncing config temp file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("closing config temp file: %w", err)
-	}
-	if err := os.Rename(tmpPath, p); err != nil {
+	if err := home.AtomicWrite(p, []byte(value+"\n"), 0600); err != nil {
 		return fmt.Errorf("installing config file %s: %w", p, err)
 	}
 	return nil

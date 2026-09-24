@@ -52,7 +52,7 @@ func TestWriteWorktreeExcludesFailsWhenExcludesFileCannotBeWritten(t *testing.T)
 		t.Fatalf("err = %v, want excludes file write failure", err)
 	}
 	assertNoCaptainExcludesFile(t, home)
-	if leftovers, _ := filepath.Glob(filepath.Join(gitDir, ".munsu-inherit-*")); len(leftovers) != 0 {
+	if leftovers, _ := filepath.Glob(filepath.Join(gitDir, ".home-write-*")); len(leftovers) != 0 {
 		t.Errorf("failed seed left temp files: %v", leftovers)
 	}
 }

@@ -23,6 +23,26 @@ func TestCountQueuedWakes_UsesLifecycleQueuePath(t *testing.T) {
 	}
 }
 
+// TestCountQueuedWakes_CountsDecodedRecordsOnly pins the shared decoder: a
+// process-event wake counts (N5) and a line that is not a wake record does not.
+func TestCountQueuedWakes_CountsDecodedRecordsOnly(t *testing.T) {
+	home := t.TempDir()
+	if err := orchestrator.EnqueueWake(home, orchestrator.ProcessEventWakeKind, "ev-1", "{}"); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(orchestrator.QueuePath(home), os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("torn-line-without-fields\n"); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	if got := countQueuedWakes(home); got != 1 {
+		t.Fatalf("countQueuedWakes = %d, want 1 (process-event wake counted, malformed line skipped)", got)
+	}
+}
+
 func TestWatchRun_UsesRunCycleDedup(t *testing.T) {
 	home := t.TempDir()
 	if _, err := mhome.Init(home); err != nil {

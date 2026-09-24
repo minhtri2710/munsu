@@ -150,7 +150,7 @@ func pollContentDigest(path string) (string, error) {
 }
 
 // WriteRetirementRecord atomically writes a pending retirement record.
-// Uses temp file + Sync + rename + directory Sync for durability.
+// Uses home.AtomicWrite for durability.
 func WriteRetirementRecord(homeDir string, rec *PollRetirementRecord) error {
 	dir := retirementDirPath(homeDir)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -163,36 +163,8 @@ func WriteRetirementRecord(homeDir string, rec *PollRetirementRecord) error {
 	}
 
 	path := retirementRecordPath(homeDir, rec.TaskID)
-	tmpPath := path + ".tmp"
-
-	// Write and fsync the temp through a single write-capable handle.
-	// On Windows, FlushFileBuffers (os.File.Sync) requires a handle opened
-	// for write, so a read-only reopen would fail; writing and syncing one
-	// write handle preserves the durable-before-rename atomic contract on
-	// both platforms.
-	f, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
-	if err != nil {
-		return fmt.Errorf("writing retirement temp: %w", err)
-	}
-	if _, err := f.Write(data); err != nil {
-		f.Close()
-		os.Remove(tmpPath)
-		return fmt.Errorf("writing retirement temp: %w", err)
-	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		os.Remove(tmpPath)
-		return fmt.Errorf("fsync temp: %w", err)
-	}
-	if err := f.Close(); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("closing retirement temp: %w", err)
-	}
-
-	// Atomic rename with directory sync for crash safety.
-	if err := home.RenameDurable(tmpPath, path); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("renaming retirement record: %w", err)
+	if err := home.AtomicWrite(path, data, 0644); err != nil {
+		return fmt.Errorf("writing retirement record: %w", err)
 	}
 
 	return nil

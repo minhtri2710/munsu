@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -26,7 +27,7 @@ type DeliverRequest struct {
 	HomeDir    string // soldier's home (status, event log, wake queue)
 	ParentHome string // captain's home (receipt, obligations); empty if no parent
 	TaskID     string
-	State      string // one of mhome.ValidStatusStates
+	State      string // one of domain.ValidStatusStates
 	Message    string
 	Key        string // optional correlation/slug; empty defaults to "default"
 	Role       string // "soldier", "captain", "general"
@@ -40,19 +41,6 @@ type WakeReceipt struct {
 	WakeEnqueued    bool
 	ReceiptWritten  bool
 	ObligationsInit bool
-}
-
-// wakeMaterialStates is the set of states that warrant waking a parent supervisor.
-var wakeMaterialStates = map[string]bool{
-	"done":           true,
-	"failed":         true,
-	"needs-decision": true,
-	"blocked":        true,
-}
-
-// isMaterial returns true for states that warrant wake/receipt.
-func isMaterial(state string) bool {
-	return wakeMaterialStates[state]
 }
 
 // --- DeliverWake ---
@@ -82,7 +70,7 @@ func DeliverWake(req DeliverRequest) (*WakeReceipt, error) {
 	if req.Message == "" {
 		return nil, fmt.Errorf("message is required")
 	}
-	if !mhome.IsValidStatusState(req.State) {
+	if !domain.IsValidStatusState(req.State) {
 		return nil, fmt.Errorf("invalid status state %q", req.State)
 	}
 	if req.Key == "" {
@@ -115,7 +103,7 @@ func DeliverWake(req DeliverRequest) (*WakeReceipt, error) {
 
 	// Step 2: For material states with a parent home, write captain receipt
 	// and init obligations. Fail-closed: if either fails, no event/wake is produced.
-	if isMaterial(req.State) && req.ParentHome != "" && req.Role == "soldier" {
+	if domain.IsMaterialVerb(req.State) && req.ParentHome != "" && req.Role == "soldier" {
 		if err := WriteReceipt(req.ParentHome, req.TaskID, req.Key, req.State, req.Message); err != nil {
 			return nil, fmt.Errorf("writing captain receipt: %w", err)
 		}
@@ -157,7 +145,7 @@ func DeliverWake(req DeliverRequest) (*WakeReceipt, error) {
 	receipt.EventID = eventID
 
 	// Step 4: For material states, enqueue a wake
-	if isMaterial(req.State) {
+	if domain.IsMaterialVerb(req.State) {
 		wakePayload := fmt.Sprintf("%s: %s [event=%d]", req.TaskID, statusLine, eventID)
 		if err := EnqueueWake(req.HomeDir, "signal", req.TaskID, wakePayload); err != nil {
 			return nil, fmt.Errorf("enqueueing wake: %w", err)

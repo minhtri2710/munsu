@@ -28,7 +28,7 @@ func SeedCaptainProvenance(homePath, id string) error {
 		return fmt.Errorf("cannot determine canonical home for %s: %w", homePath, err)
 	}
 	content := fmt.Sprintf("%s\n%s\n%s\n", CaptainProvenanceVersion, id, canonical)
-	return os.WriteFile(filepath.Join(homePath, CaptainProvenanceMarkerName), []byte(content), 0600)
+	return AtomicWrite(filepath.Join(homePath, CaptainProvenanceMarkerName), []byte(content), 0600)
 }
 
 func ValidateCaptainProvenance(homePath string) (string, error) {

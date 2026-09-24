@@ -353,17 +353,6 @@ func TestTerminalPhases_StatusFileOverridesProse(t *testing.T) {
 			t.Errorf("expected key=bug-1, got %q", key)
 		}
 	})
-
-	t.Run("valid status states are recognized", func(t *testing.T) {
-		for _, s := range mhome.ValidStatusStates {
-			if !mhome.IsValidStatusState(s) {
-				t.Errorf("status state %q should be valid", s)
-			}
-		}
-		if mhome.IsValidStatusState("invalid-state") {
-			t.Error("invalid-status should not be recognized")
-		}
-	})
 }
 
 // TestTerminalPhases_ResolvedOverridesWorking proves that a resolved status

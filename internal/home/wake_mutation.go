@@ -313,6 +313,12 @@ func applyWakeLeaseAction(homeDir string, mutation wakeMutation) error {
 	return nil
 }
 
+// PeekWakes returns the decoded wake queue without claiming it. Lines that do
+// not decode as a wake record are skipped.
+func PeekWakes(homeDir string) ([]WakeRecord, error) {
+	return readWakeQueue(homeDir)
+}
+
 func readWakeQueue(homeDir string) ([]WakeRecord, error) {
 	data, err := os.ReadFile(WakeQueuePath(homeDir))
 	if os.IsNotExist(err) {

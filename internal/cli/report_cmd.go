@@ -16,14 +16,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// materialStates are the status states that warrant waking a parent supervisor.
-var materialStates = map[string]bool{
-	"done":           true,
-	"failed":         true,
-	"needs-decision": true,
-	"blocked":        true,
-}
-
 // newReportCmd creates the `munsu report` command for rank-aware uplink status reporting.
 func newReportCmd() *cobra.Command {
 	transport := newSessionUplinkTransport()
@@ -55,9 +47,9 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 			msg := args[1]
 
 			// Validate state
-			if !home.IsValidStatusState(state) {
+			if !domain.IsValidStatusState(state) {
 				return usageError("invalid_argument",
-					fmt.Sprintf("Valid states: %s", strings.Join(home.ValidStatusStates, ", ")),
+					fmt.Sprintf("Valid states: %s", strings.Join(domain.ValidStatusStates, ", ")),
 					fmt.Sprintf("Invalid status state %q", state))
 			}
 
@@ -127,7 +119,7 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 				if err != nil {
 					return fmt.Errorf("report: delivering scout terminal wake: %w", err)
 				}
-			} else if materialStates[state] && (role == "soldier" || role == "captain") {
+			} else if domain.IsMaterialVerb(state) && (role == "soldier" || role == "captain") {
 				// A soldier identifies itself as the task its home hosts, in
 				// exactly the form the receiver derives from the envelope's
 				// task ID; a captain identifies itself as its own home.

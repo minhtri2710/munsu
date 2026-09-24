@@ -150,7 +150,7 @@ func TestWriteIdentity_TempCleanup(t *testing.T) {
 		t.Fatalf("WriteIdentity: %v", err)
 	}
 	// Verify no temporary file is left behind.
-	tmpFiles, _ := filepath.Glob(filepath.Join(home, "state", ".watcher-identity.tmp-*"))
+	tmpFiles, _ := filepath.Glob(filepath.Join(home, "state", ".home-write-*"))
 	if len(tmpFiles) > 0 {
 		t.Error("temp file should not exist after successful write")
 	}

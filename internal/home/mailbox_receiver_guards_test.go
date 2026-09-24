@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/minhtri2710/munsu/internal/config"
 )
 
 // The refusal branches on the receiver side of the mailbox.
@@ -35,8 +33,11 @@ func newGuardReceiver(t *testing.T) (*Receiver, *Store, string) {
 	if err := os.MkdirAll(parent, 0755); err != nil {
 		t.Fatalf("MkdirAll parent: %v", err)
 	}
-	if err := config.Set(dir, "parent-home", parent); err != nil {
-		t.Fatalf("config.Set parent-home: %v", err)
+	if err := os.MkdirAll(filepath.Join(dir, "config"), 0700); err != nil {
+		t.Fatalf("MkdirAll config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config", "parent-home"), []byte(parent+"\n"), 0600); err != nil {
+		t.Fatalf("writing parent-home: %v", err)
 	}
 	r, err := NewReceiver(dir)
 	if err != nil {

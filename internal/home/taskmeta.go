@@ -194,8 +194,7 @@ func UpdateMeta(homeDir string, id string, mutate func(map[string]string) error)
 	return writeMetaLocked(homeDir, id, meta)
 }
 
-// writeMetaLocked writes a task meta file while the lock is already held.
-// Uses a unique temp file (os.CreateTemp) for safe atomic writes.
+// writeMetaLocked durably writes a task meta file while the lock is already held.
 func writeMetaLocked(homeDir string, id string, meta map[string]string) error {
 	if err := validateMetaFields(meta); err != nil {
 		return err
@@ -214,37 +213,8 @@ func writeMetaLocked(homeDir string, id string, meta map[string]string) error {
 	for k, v := range meta {
 		b.WriteString(fmt.Sprintf("%s=%s\n", k, v))
 	}
-	// Use os.CreateTemp for a unique temp file in the same directory. The temp
-	// name is derived from the persisted stem (the durable key), never the raw
-	// logical id, so it is a safe filename on every platform.
-	stem := strings.TrimSuffix(filepath.Base(p), ".meta")
-	tmpF, err := os.CreateTemp(filepath.Dir(p), stem+".meta.*.tmp")
-	if err != nil {
-		return fmt.Errorf("creating temp meta file: %w", err)
-	}
-	tmpPath := tmpF.Name()
-	if err := secureFile(tmpPath); err != nil {
-		tmpF.Close()
-		os.Remove(tmpPath)
-		return fmt.Errorf("securing temp meta file: %w", err)
-	}
-	if _, err := tmpF.WriteString(b.String()); err != nil {
-		tmpF.Close()
-		os.Remove(tmpPath)
-		return fmt.Errorf("writing temp meta file: %w", err)
-	}
-	if err := tmpF.Sync(); err != nil {
-		tmpF.Close()
-		os.Remove(tmpPath)
-		return fmt.Errorf("syncing temp meta file: %w", err)
-	}
-	if err := tmpF.Close(); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("closing temp meta file: %w", err)
-	}
-	if err := RenameDurable(tmpPath, p); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("renaming temp meta file: %w", err)
+	if err := atomicWrite(p, []byte(b.String()), secureFile); err != nil {
+		return fmt.Errorf("writing meta file: %w", err)
 	}
 	return nil
 }
@@ -412,22 +382,6 @@ func StatusHasLine(homeDir, id, line string) (bool, error) {
 		}
 	}
 	return false, nil
-}
-
-// ValidStatusStates lists the recognized status states.
-var ValidStatusStates = []string{
-	"working", "review-ready", "amending", "needs-decision", "blocked", "paused",
-	"awaiting_approval", "resolved", "done", "failed", "delivered",
-}
-
-// IsValidStatusState checks whether the given state is recognized.
-func IsValidStatusState(state string) bool {
-	for _, s := range ValidStatusStates {
-		if s == state {
-			return true
-		}
-	}
-	return false
 }
 
 // ParseStatusKey extracts an optional [key=<slug>] annotation from a status message.

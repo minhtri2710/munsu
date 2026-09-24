@@ -3,9 +3,11 @@ package orchestrator
 
 import (
 	"fmt"
-	"os"
 	"strings"
 	"time"
+
+	"github.com/minhtri2710/munsu/internal/domain"
+	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 // ConditionCode is a stable machine-readable code for a guard condition.
@@ -51,7 +53,7 @@ func EvaluateGuard(homeDir string, inFlight int, now time.Time) GuardResult {
 
 	if HasQueuedWakes(homeDir) {
 		msg := "QUEUED WAKES PENDING - claim with munsu wake claim"
-		if HasAgedMaterialWake(homeDir, now) {
+		if hasAgedMaterialWake(homeDir, now) {
 			msg = "QUEUED WAKES PENDING (aged) - material wake beyond threshold, guard unhealthy - claim with munsu wake claim"
 			result.Conditions = append(result.Conditions, ConditionInfo{
 				Code:    ConditionAgedWakePending,
@@ -68,48 +70,49 @@ func EvaluateGuard(homeDir string, inFlight int, now time.Time) GuardResult {
 	return result
 }
 
-// HasAgedMaterialWake returns true when the wake queue contains at least one
+// hasAgedMaterialWake returns true when the wake queue contains at least one
 // material wake (done/failed/needs-decision/blocked) older than
 // MaterialWakeAgeThreshold.
-func HasAgedMaterialWake(homeDir string, now time.Time) bool {
-	data, err := os.ReadFile(QueuePath(homeDir))
-	if err != nil {
-		return false
-	}
-	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(lines) == 0 || (len(lines) == 1 && lines[0] == "") {
-		return false
-	}
-	threshold := now.Add(-MaterialWakeAgeThreshold).Unix()
-	for _, line := range lines {
-		parts := strings.SplitN(line, "\t", 5)
-		if len(parts) < 5 {
-			continue
-		}
-		// Check for material states in the payload. parts[3] is the wake key
-		// (the taskID for signal/uplink wakes); PayloadHasMaterialMarker uses
-		// it to check the signal marker at the anchored "<taskID>: " position.
-		if PayloadHasMaterialMarker(parts[3], parts[4]) {
-			var epoch int64
-			if _, err := fmt.Sscanf(parts[0], "%d", &epoch); err == nil && epoch > 0 && epoch < threshold {
-				return true
-			}
-		}
-	}
-	return false
+func hasAgedMaterialWake(homeDir string, now time.Time) bool {
+	epoch, ok := OldestMaterialWake(homeDir)
+	return ok && epoch < now.Add(-MaterialWakeAgeThreshold).Unix()
 }
 
-// PayloadHasMaterialMarker reports whether a wake queue payload carries a
+// OldestMaterialWake returns the enqueue epoch of the oldest material wake in
+// the wake queue. ok is false when the queue holds none or cannot be read.
+func OldestMaterialWake(homeDir string) (epoch int64, ok bool) {
+	records, err := mhome.PeekWakes(homeDir)
+	if err != nil {
+		return 0, false
+	}
+	for _, r := range records {
+		// r.Key is the taskID for signal/uplink wakes; payloadHasMaterialMarker
+		// uses it to check the signal marker at the anchored "<taskID>: " position.
+		if !payloadHasMaterialMarker(r.Key, r.Payload) {
+			continue
+		}
+		var e int64
+		if _, err := fmt.Sscanf(r.Epoch, "%d", &e); err != nil || e <= 0 {
+			continue
+		}
+		if !ok || e < epoch {
+			epoch, ok = e, true
+		}
+	}
+	return epoch, ok
+}
+
+// payloadHasMaterialMarker reports whether a wake queue payload carries a
 // material-state marker (done:/failed:/needs-decision:/blocked:) at its
 // structural position. Material wakes take two producer shapes: a signal wake
 // payload is "<taskID>: <state>: <msg> [event=N]" (the marker follows the
 // "<key>: " prefix, where key is the taskID) and an uplink wake payload is
 // "<state>: <msg> [task=X key=Y]" (the marker is at the start). Checking both
 // anchored positions matches both shapes while rejecting a marker that merely
-// appears mid-message in a non-material payload. This is the single predicate
-// both the guard (HasAgedMaterialWake) and watch (oldestMaterialWakeAge) use.
-func PayloadHasMaterialMarker(key, payload string) bool {
-	for state := range wakeMaterialStates {
+// appears mid-message in a non-material payload. OldestMaterialWake
+// applies it for both the guard and watch.
+func payloadHasMaterialMarker(key, payload string) bool {
+	for _, state := range domain.MaterialVerbs {
 		marker := state + ":"
 		if strings.HasPrefix(payload, marker) || strings.HasPrefix(payload, key+": "+marker) {
 			return true

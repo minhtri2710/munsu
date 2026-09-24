@@ -176,8 +176,8 @@ func TestHasAgedMaterialWake_Threshold(t *testing.T) {
 	line := fmt.Sprintf("%d	%d\tsignal\ttask-old\ttask-old: done: very old [event=1]\n", oldEpoch, 1)
 	os.WriteFile(queuePath, []byte(line), 0644)
 
-	if !HasAgedMaterialWake(home, time.Now()) {
-		t.Fatal("HasAgedMaterialWake should be true for old material wake")
+	if !hasAgedMaterialWake(home, time.Now()) {
+		t.Fatal("hasAgedMaterialWake should be true for old material wake")
 	}
 }
 
@@ -185,8 +185,8 @@ func TestHasAgedMaterialWake_Fresh(t *testing.T) {
 	home := t.TempDir()
 	EnqueueWake(home, "signal", "task-fresh", "task-fresh: done: fresh [event=1]")
 
-	if HasAgedMaterialWake(home, time.Now()) {
-		t.Fatal("HasAgedMaterialWake should be false for fresh wake")
+	if hasAgedMaterialWake(home, time.Now()) {
+		t.Fatal("hasAgedMaterialWake should be false for fresh wake")
 	}
 }
 
@@ -199,8 +199,8 @@ func TestHasAgedMaterialWake_NonMaterialWakes(t *testing.T) {
 	line := fmt.Sprintf("%d	%d\tstale\ttask-routine\tworking: in progress\n", oldEpoch, 1)
 	os.WriteFile(queuePath, []byte(line), 0644)
 
-	if HasAgedMaterialWake(home, time.Now()) {
-		t.Fatal("HasAgedMaterialWake should be false for non-material (routine) wake")
+	if hasAgedMaterialWake(home, time.Now()) {
+		t.Fatal("hasAgedMaterialWake should be false for non-material (routine) wake")
 	}
 }
 
@@ -281,8 +281,8 @@ func TestPayloadHasMaterialMarker(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := PayloadHasMaterialMarker(tc.key, tc.payload); got != tc.want {
-				t.Errorf("PayloadHasMaterialMarker(%q, %q) = %v, want %v", tc.key, tc.payload, got, tc.want)
+			if got := payloadHasMaterialMarker(tc.key, tc.payload); got != tc.want {
+				t.Errorf("payloadHasMaterialMarker(%q, %q) = %v, want %v", tc.key, tc.payload, got, tc.want)
 			}
 		})
 	}

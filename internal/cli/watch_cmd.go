@@ -3,8 +3,6 @@ package cli
 import (
 	"errors"
 	"fmt"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/fleet"
@@ -252,17 +250,11 @@ func newWatchRunCmd() *cobra.Command {
 	return cmd
 }
 
-// countQueuedWakes returns the number of entries in the wake queue file.
+// countQueuedWakes returns the number of decodable wake records in the queue,
+// process-event wakes included.
 func countQueuedWakes(homeDir string) int {
-	data, err := os.ReadFile(orchestrator.QueuePath(homeDir))
-	if err != nil {
-		return 0
-	}
-	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(lines) == 1 && lines[0] == "" {
-		return 0
-	}
-	return len(lines)
+	records, _ := home.PeekWakes(homeDir)
+	return len(records)
 }
 
 // newWatchStopCmd creates the `munsu watch stop` command.
@@ -416,34 +408,9 @@ func evaluateWatcherStatus(homeDir string) Response[WatchStatus] {
 // (wake with done/failed/needs-decision/blocked payload). Returns 0 if no
 // material wakes are found.
 func oldestMaterialWakeAge(homeDir string) int64 {
-	data, err := os.ReadFile(orchestrator.QueuePath(homeDir))
-	if err != nil {
+	epoch, ok := orchestrator.OldestMaterialWake(homeDir)
+	if !ok {
 		return 0
 	}
-	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(lines) == 0 || (len(lines) == 1 && lines[0] == "") {
-		return 0
-	}
-	now := time.Now().Unix()
-	var oldest int64
-	for _, line := range lines {
-		parts := strings.SplitN(line, "\t", 5)
-		if len(parts) < 5 {
-			continue
-		}
-		// Check for material states: done, failed, needs-decision, blocked.
-		// parts[3] is the wake key (taskID for signal/uplink); the shared
-		// predicate checks both payload start and the anchored "<taskID>: "
-		// position, avoiding mid-message marker matches.
-		if orchestrator.PayloadHasMaterialMarker(parts[3], parts[4]) {
-			var epoch int64
-			if _, err := fmt.Sscanf(parts[0], "%d", &epoch); err == nil && epoch > 0 {
-				age := now - epoch
-				if age > oldest {
-					oldest = age
-				}
-			}
-		}
-	}
-	return oldest
+	return max(time.Now().Unix()-epoch, 0)
 }

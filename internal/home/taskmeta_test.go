@@ -483,37 +483,6 @@ func TestResolveIntegration(t *testing.T) {
 	}
 }
 
-func TestIsValidStatusState(t *testing.T) {
-	valid := []string{"working", "review-ready", "amending", "needs-decision", "blocked", "paused", "resolved", "done", "failed"}
-	for _, s := range valid {
-		if !IsValidStatusState(s) {
-			t.Errorf("%q should be a valid status state", s)
-		}
-	}
-
-	invalid := []string{"", "unknown", "pending", "in-progress", "started"}
-	for _, s := range invalid {
-		if IsValidStatusState(s) {
-			t.Errorf("%q should not be a valid status state", s)
-		}
-	}
-}
-
-func TestValidStatusStates(t *testing.T) {
-	expected := []string{
-		"working", "review-ready", "amending", "needs-decision", "blocked", "paused",
-		"awaiting_approval", "resolved", "done", "failed", "delivered",
-	}
-	if len(ValidStatusStates) != len(expected) {
-		t.Fatalf("ValidStatusStates length = %d, want %d", len(ValidStatusStates), len(expected))
-	}
-	for i, s := range expected {
-		if ValidStatusStates[i] != s {
-			t.Errorf("ValidStatusStates[%d] = %q, want %q", i, ValidStatusStates[i], s)
-		}
-	}
-}
-
 func TestParseStatusKey(t *testing.T) {
 	tests := []struct {
 		line    string

@@ -314,24 +314,8 @@ func EmitReadyEvent(homeDir, taskID, eventKey, metaGeneration string) (*ReadyEve
 		// Corrupt file: overwrite.
 	}
 
-	// Atomic write: temp file + rename.
-	tmp, tmpErr := os.CreateTemp(filepath.Dir(p), ".tmp-")
-	if tmpErr != nil {
-		return nil, fmt.Errorf("emit ready: create temp: %w", tmpErr)
-	}
-	tmpName := tmp.Name()
-	if _, writeErr := tmp.Write(data); writeErr != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return nil, fmt.Errorf("emit ready: write temp: %w", writeErr)
-	}
-	if closeErr := tmp.Close(); closeErr != nil {
-		os.Remove(tmpName)
-		return nil, fmt.Errorf("emit ready: close temp: %w", closeErr)
-	}
-	if renameErr := os.Rename(tmpName, p); renameErr != nil {
-		os.Remove(tmpName)
-		return nil, fmt.Errorf("emit ready: rename: %w", renameErr)
+	if err := home.AtomicWrite(p, data, 0600); err != nil {
+		return nil, fmt.Errorf("emit ready: %w", err)
 	}
 
 	return event, nil
@@ -522,30 +506,15 @@ func dispatchedPath(senderHome, taskID, messageID string) string {
 }
 
 // markDispatched writes a durable marker that a NotificationRef was sent.
-// Uses atomic write (temp-file + rename).
+// Uses home.AtomicWrite.
 func markDispatched(senderHome, taskID, messageID string) error {
 	p := dispatchedPath(senderHome, taskID, messageID)
 	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
 		return fmt.Errorf("mark dispatched: creating dir: %w", err)
 	}
 	content := fmt.Sprintf(`{"message_id":%q,"dispatched_at":%d}`, messageID, time.Now().UnixNano())
-	tmp, tmpErr := os.CreateTemp(filepath.Dir(p), ".tmp-")
-	if tmpErr != nil {
-		return fmt.Errorf("mark dispatched: create temp: %w", tmpErr)
-	}
-	tmpName := tmp.Name()
-	if _, err := tmp.Write([]byte(content)); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return fmt.Errorf("mark dispatched: write: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
-		return fmt.Errorf("mark dispatched: close: %w", err)
-	}
-	if err := os.Rename(tmpName, p); err != nil {
-		os.Remove(tmpName)
-		return fmt.Errorf("mark dispatched: rename: %w", err)
+	if err := home.AtomicWrite(p, []byte(content), 0600); err != nil {
+		return fmt.Errorf("mark dispatched: %w", err)
 	}
 	return nil
 }
