@@ -233,22 +233,23 @@ func fetchGitLabProviderSnapshot(mrURL string) (*ProviderSnapshot, error) {
 		return nil, err
 	}
 
+	status, err := parseGLMergeStatus(data)
+	if err != nil {
+		return nil, err
+	}
+	baseRef, err := parseGLTargetBranch(data)
+	if err != nil {
+		return nil, err
+	}
 	var raw struct {
-		State          string `json:"state"`
-		SHA            string `json:"sha"`
-		SourceBranch   string `json:"source_branch"`
-		TargetBranch   string `json:"target_branch"`
-		MergeCommitSHA string `json:"merge_commit_sha"`
+		SourceBranch string `json:"source_branch"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("parsing glab mr view JSON: %w", err)
 	}
-
-	if raw.State == "" || raw.SHA == "" || raw.SourceBranch == "" || raw.TargetBranch == "" {
-		return nil, fmt.Errorf("glab mr view returned empty state, sha, source_branch, or target_branch")
+	if raw.SourceBranch == "" || baseRef == "" {
+		return nil, fmt.Errorf("glab mr view returned empty source_branch or target_branch")
 	}
-
-	normalizedState := normalizeGlabState(raw.State)
 
 	snap := &ProviderSnapshot{
 		Provider:   "gitlab",
@@ -256,41 +257,29 @@ func fetchGitLabProviderSnapshot(mrURL string) (*ProviderSnapshot, error) {
 		Repo:       glURL.Project,
 		Number:     glURL.IID,
 		URL:        mrURL,
-		BaseRef:    raw.TargetBranch,
+		BaseRef:    baseRef,
 		HeadRef:    raw.SourceBranch,
-		HeadSHA:    raw.SHA,
-		State:      normalizedState,
+		HeadSHA:    status.HeadSHA,
+		State:      status.State,
 		ObservedAt: time.Now().UTC().Format(time.RFC3339),
 	}
-	switch normalizedState {
+	switch status.State {
 	case "MERGED":
-		if !validGitObjectID(raw.MergeCommitSHA) {
-			return nil, fmt.Errorf("glab mr view returned missing merge commit SHA")
-		}
 		snap.Merged = true
-		snap.MergedSHA = raw.MergeCommitSHA
+		snap.MergedSHA = status.MergedSHA
 	case "CLOSED":
 	case "OPEN":
-		pipeline, pipelineOK := parseGLPipeline(data)
-		if !pipelineOK || pipeline.SHA != raw.SHA {
-			return nil, fmt.Errorf("GitLab MR did not provide pipeline evidence for the current head; refusing to infer mergeability")
-		}
-		snap.Checks = []domain.CheckRun{{Status: mapCheckStatus(pipeline.Status)}}
-		approved, err := client.ApprovalState(glURL.Host, glURL.Owner, glURL.Project, glURL.IID)
+		pr, mergeStatusOK, err := readGitLabOpenMR(client, glURL, data, status.HeadSHA)
 		if err != nil {
 			return nil, err
 		}
-		if approved {
-			snap.Reviews = []domain.Review{{State: domain.ReviewApproved}}
-		}
-		var mergeRaw struct {
-			Status string `json:"detailed_merge_status"`
-		}
-		if err := json.Unmarshal(data, &mergeRaw); err != nil || mergeRaw.Status != "mergeable" {
+		if !mergeStatusOK {
 			return nil, fmt.Errorf("GitLab MR is not mergeable")
 		}
+		snap.Checks = pr.Checks
+		snap.Reviews = pr.Reviews
 	default:
-		return nil, fmt.Errorf("glab mr view returned unrecognized state %q", raw.State)
+		return nil, fmt.Errorf("glab mr view returned unrecognized state %q", status.State)
 	}
 
 	return snap, nil

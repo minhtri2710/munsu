@@ -267,7 +267,7 @@ func TestGitLabProviderSnapshotRefusesMissingMergeCommitEvidence(t *testing.T) {
 	}}
 	t.Cleanup(func() { defaultGlabRunner = old })
 
-	if _, err := fetchGitLabProviderSnapshot("https://gitlab.com/owner/project/-/merge_requests/42"); err == nil || !strings.Contains(err.Error(), "missing merge commit SHA") {
+	if _, err := fetchGitLabProviderSnapshot("https://gitlab.com/owner/project/-/merge_requests/42"); err == nil || !strings.Contains(err.Error(), "missing merge commit sha") {
 		t.Fatalf("fetchGitLabProviderSnapshot error = %v, want missing-merge-commit refusal", err)
 	}
 }
@@ -335,7 +335,7 @@ func TestGitLabProviderSnapshotRefusesUnknownState(t *testing.T) {
 
 func TestGitLabProviderSnapshotUsesNestedPipelineAndApprovalEvidence(t *testing.T) {
 	old := defaultGlabRunner
-	defaultGlabRunner = mergeabilityRunner(`{"state":"opened","sha":"abc123","source_branch":"feature","target_branch":"main","detailed_merge_status":"mergeable","head_pipeline":{"status":"success","sha":"abc123"}}`)
+	defaultGlabRunner = mergeabilityRunner(`{"state":"opened","sha":"abc123","source_branch":"feature","target_branch":"main","detailed_merge_status":"mergeable","head_pipeline":{"status":"success","sha":"abc123"}}`, `[]`)
 	t.Cleanup(func() { defaultGlabRunner = old })
 
 	snapshot, err := fetchGitLabProviderSnapshot("https://gitlab.com/owner/project/-/merge_requests/42")
@@ -347,27 +347,44 @@ func TestGitLabProviderSnapshotUsesNestedPipelineAndApprovalEvidence(t *testing.
 	}
 }
 
-func TestGitLabProviderSnapshotRefusesMissingMergeabilityEvidence(t *testing.T) {
+// TestGitLabProviderSnapshotRefusesRequestedChangesReviewer pins that the
+// snapshot reads the same acceptance inputs as the delivery observation: an
+// approved MR with a requested_changes reviewer is not mergeable.
+func TestGitLabProviderSnapshotRefusesRequestedChangesReviewer(t *testing.T) {
 	old := defaultGlabRunner
-	defaultGlabRunner = mergeabilityRunner(`{"state":"opened","sha":"abc123","source_branch":"feature","target_branch":"main"}`)
+	defaultGlabRunner = mergeabilityRunner(`{"state":"opened","sha":"abc123","source_branch":"feature","target_branch":"main","detailed_merge_status":"mergeable","head_pipeline":{"status":"success","sha":"abc123"}}`, `[{"state":"requested_changes"}]`)
 	t.Cleanup(func() { defaultGlabRunner = old })
 
-	if _, err := fetchGitLabProviderSnapshot("https://gitlab.com/owner/project/-/merge_requests/42"); err == nil || !strings.Contains(err.Error(), "pipeline evidence") {
+	snapshot, err := fetchGitLabProviderSnapshot("https://gitlab.com/owner/project/-/merge_requests/42")
+	if err != nil {
+		t.Fatalf("fetchGitLabProviderSnapshot: %v", err)
+	}
+	if snapshot.Mergeable() {
+		t.Fatalf("snapshot = %+v, want not mergeable with a requested_changes reviewer", snapshot)
+	}
+}
+
+func TestGitLabProviderSnapshotRefusesMissingMergeabilityEvidence(t *testing.T) {
+	old := defaultGlabRunner
+	defaultGlabRunner = mergeabilityRunner(`{"state":"opened","sha":"abc123","source_branch":"feature","target_branch":"main"}`, `[]`)
+	t.Cleanup(func() { defaultGlabRunner = old })
+
+	if _, err := fetchGitLabProviderSnapshot("https://gitlab.com/owner/project/-/merge_requests/42"); err == nil || !strings.Contains(err.Error(), "not mergeable") {
 		t.Fatalf("fetchGitLabProviderSnapshot error = %v, want missing-evidence refusal", err)
 	}
 }
 
 func TestGitLabProviderSnapshotRefusesStalePipeline(t *testing.T) {
 	old := defaultGlabRunner
-	defaultGlabRunner = mergeabilityRunner(`{"state":"opened","sha":"abc123","source_branch":"feature","target_branch":"main","detailed_merge_status":"mergeable","head_pipeline":{"status":"success","sha":"old456"}}`)
+	defaultGlabRunner = mergeabilityRunner(`{"state":"opened","sha":"abc123","source_branch":"feature","target_branch":"main","detailed_merge_status":"mergeable","head_pipeline":{"status":"success","sha":"old456"}}`, `[]`)
 	t.Cleanup(func() { defaultGlabRunner = old })
 
-	if _, err := fetchGitLabProviderSnapshot("https://gitlab.com/owner/project/-/merge_requests/42"); err == nil || !strings.Contains(err.Error(), "pipeline evidence") {
+	if _, err := fetchGitLabProviderSnapshot("https://gitlab.com/owner/project/-/merge_requests/42"); err == nil || !strings.Contains(err.Error(), "pipeline SHA evidence") {
 		t.Fatalf("fetchGitLabProviderSnapshot error = %v, want stale-pipeline refusal", err)
 	}
 }
 
-func mergeabilityRunner(json string) *fakeGlabRunner {
+func mergeabilityRunner(json, reviewers string) *fakeGlabRunner {
 	return &fakeGlabRunner{runFn: func(args ...string) ([]byte, error) {
 		if len(args) == 1 && args[0] == "--version" {
 			return []byte("glab version 1.45.0"), nil
@@ -380,6 +397,9 @@ func mergeabilityRunner(json string) *fakeGlabRunner {
 		}
 		if len(args) >= 2 && args[0] == "api" && strings.HasSuffix(args[1], "/approvals") {
 			return []byte(`{"approved":true,"approved_by":[{"user":{"username":"reviewer"}}]}`), nil
+		}
+		if len(args) >= 2 && args[0] == "api" && strings.HasSuffix(args[1], "/reviewers") {
+			return []byte(reviewers), nil
 		}
 		return []byte(json), nil
 	}}

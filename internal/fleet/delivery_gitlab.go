@@ -213,44 +213,55 @@ func (p *gitlabDeliveryProvider) Observe(ident domain.DeliveryIdentity) (Deliver
 		BaseRef:   baseRef,
 	}
 	if status.State == "OPEN" {
-		approved, err := p.client.ApprovalState(glURL.Host, glURL.Owner, glURL.Project, glURL.IID)
+		pr, mergeStatusOK, err := readGitLabOpenMR(p.client, glURL, data, status.HeadSHA)
 		if err != nil {
 			return DeliveryProviderObservation{}, err
 		}
-		mergeStatus, mergeStatusOK := parseGLDetailedMergeStatus(data)
-		if !mergeStatusOK || mergeStatus != "mergeable" {
-			obs.Mergeability = DeliveryMergeabilityDenied
-			return obs, nil
-		}
-		pipeline, pipelineOK := parseGLPipeline(data)
-		if !pipelineOK || pipeline.SHA != status.HeadSHA {
-			return DeliveryProviderObservation{}, fmt.Errorf("GitLab MR observation is missing pipeline SHA evidence for the current head")
-		}
-		reviewStates, err := p.client.ReviewerStates(glURL.Host, glURL.Owner, glURL.Project, glURL.IID)
-		if err != nil {
-			return DeliveryProviderObservation{}, err
-		}
-		// The delivery acceptance rule has one owner: domain.PR.CanMerge. Build
-		// the observed PR and ask it, rather than re-deciding inline here. The
-		// detailed_merge_status "mergeable" fence above stays separate: it guards
-		// merge conflicts and blocked states that CanMerge does not model.
-		pr := domain.PR{
-			Status: domain.PROpen,
-			Checks: []domain.CheckRun{{Status: mapCheckStatus(pipeline.Status)}},
-		}
-		if approved {
-			pr.Reviews = append(pr.Reviews, domain.Review{State: domain.ReviewApproved})
-		}
-		for _, st := range reviewStates {
-			pr.Reviews = append(pr.Reviews, domain.Review{State: st})
-		}
-		if pr.CanMerge() {
+		if mergeStatusOK && pr.CanMerge() {
 			obs.Mergeability = DeliveryMergeabilityAllowed
 		} else {
 			obs.Mergeability = DeliveryMergeabilityDenied
 		}
 	}
 	return obs, nil
+}
+
+// readGitLabOpenMR reads every acceptance input of an open MR at headSHA:
+// approval, reviewer verdicts and head pipeline, as the domain.PR that
+// domain.PR.CanMerge decides on. GitLab tracks reviewer verdicts (notably
+// "requested_changes") separately from approval-rule satisfaction, so both are
+// read. mergeStatusOK reports the separate detailed_merge_status "mergeable"
+// fence, which guards merge conflicts and blocked states CanMerge does not
+// model; when it is false the other inputs are not read.
+func readGitLabOpenMR(client GitLabClient, glURL domain.GLURL, data []byte, headSHA string) (pr domain.PR, mergeStatusOK bool, err error) {
+	mergeStatus, ok := parseGLDetailedMergeStatus(data)
+	if !ok || mergeStatus != "mergeable" {
+		return domain.PR{}, false, nil
+	}
+	pipeline, pipelineOK := parseGLPipeline(data)
+	if !pipelineOK || pipeline.SHA != headSHA {
+		return domain.PR{}, false, fmt.Errorf("GitLab MR observation is missing pipeline SHA evidence for the current head")
+	}
+	approved, err := client.ApprovalState(glURL.Host, glURL.Owner, glURL.Project, glURL.IID)
+	if err != nil {
+		return domain.PR{}, false, err
+	}
+	reviewStates, err := client.ReviewerStates(glURL.Host, glURL.Owner, glURL.Project, glURL.IID)
+	if err != nil {
+		return domain.PR{}, false, err
+	}
+	pr = domain.PR{
+		Number: glURL.IID,
+		Status: domain.PROpen,
+		Checks: []domain.CheckRun{{Status: mapCheckStatus(pipeline.Status)}},
+	}
+	if approved {
+		pr.Reviews = append(pr.Reviews, domain.Review{State: domain.ReviewApproved})
+	}
+	for _, st := range reviewStates {
+		pr.Reviews = append(pr.Reviews, domain.Review{State: st})
+	}
+	return pr, true, nil
 }
 
 // parseGLTargetBranch reads the MR target branch (the GitLab name for the

@@ -104,11 +104,12 @@ func TestFetchGitLabProviderSnapshot_EmptyRequiredFields(t *testing.T) {
 	cases := []struct {
 		name string
 		json string
+		want string
 	}{
-		{"empty state", `{"state":"","sha":"abc1234567890123456789012345678901234567","source_branch":"feat","target_branch":"main"}`},
-		{"empty sha", `{"state":"opened","sha":"","source_branch":"feat","target_branch":"main"}`},
-		{"empty source_branch", `{"state":"opened","sha":"abc1234567890123456789012345678901234567","source_branch":"","target_branch":"main"}`},
-		{"empty target_branch", `{"state":"opened","sha":"abc1234567890123456789012345678901234567","source_branch":"feat","target_branch":""}`},
+		{"empty state", `{"state":"","sha":"abc1234567890123456789012345678901234567","source_branch":"feat","target_branch":"main"}`, "glab mr view returned empty state"},
+		{"empty sha", `{"state":"opened","sha":"","source_branch":"feat","target_branch":"main"}`, "glab mr view returned empty sha"},
+		{"empty source_branch", `{"state":"opened","sha":"abc1234567890123456789012345678901234567","source_branch":"","target_branch":"main"}`, "glab mr view returned empty source_branch or target_branch"},
+		{"empty target_branch", `{"state":"opened","sha":"abc1234567890123456789012345678901234567","source_branch":"feat","target_branch":""}`, "glab mr view returned empty source_branch or target_branch"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -116,7 +117,7 @@ func TestFetchGitLabProviderSnapshot_EmptyRequiredFields(t *testing.T) {
 			t.Cleanup(func() { defaultGlabRunner = oldRunner })
 			defaultGlabRunner = &mockGlabRunner{data: []byte(tc.json)}
 			_, err := fetchGitLabProviderSnapshot("https://gitlab.com/owner/project/-/merge_requests/1")
-			if err == nil || !strings.Contains(err.Error(), "glab mr view returned empty state, sha, source_branch, or target_branch") {
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("fetchGitLabProviderSnapshot err = %v, want empty field error", err)
 			}
 		})
