@@ -41,8 +41,8 @@ DEADCODE_BIN="${DEADCODE_BIN:-deadcode}"
 die() { echo "::error::$*" >&2; exit 1; }
 
 # Every GOOS this repo builds for. One run per platform, unioned, because a
-# GOOS-gated file only exists in the build that selects it: `platformProcessIdentity`
-# lives in both process_identity_linux.go and process_identity_darwin.go, and a
+# GOOS-gated file only exists in the build that selects it: `home.ProcessIdentity`
+# lives in both internal/home/process_identity_{linux,darwin}.go, and a
 # single run sees exactly one of them. Analyzing only the runner's platform
 # would leave the other file permanently outside the lane -- the same shape of
 # hole that hid a compile break behind `//go:build e2e` for four months (BEO-25).
