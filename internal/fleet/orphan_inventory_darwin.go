@@ -54,6 +54,12 @@ func processEnvironment(pid int) (string, []string, error) {
 	if err != nil {
 		return "", nil, err
 	}
+	return parseProcArgs(raw)
+}
+
+// parseProcArgs splits a kern.procargs2 block into the executable path and the
+// environment strings, skipping the argc argument strings between them.
+func parseProcArgs(raw []byte) (string, []string, error) {
 	if len(raw) <= 4 {
 		return "", nil, errors.New("invalid process identity")
 	}
