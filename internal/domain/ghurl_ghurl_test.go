@@ -47,6 +47,22 @@ func TestParseGHURL_Invalid(t *testing.T) {
 		{"https://github.com/owner/repo/pull/abc", "invalid PR number"},
 		{"https://github.com/owner/repo/pull/0", "PR number must be positive"},
 		{"https://github.com/owner/repo/pull/-1", "PR number must be positive"},
+		{"http://github.com/owner/repo/pull/5", "must use https scheme"},
+		{"https://token@github.com/owner/repo/pull/5", "must not contain userinfo"},
+		{"https://u:p@github.com/o/r/pull/5/files?x#y", "must not contain userinfo"},
+		{"https://github.com/owner/repo/pull/5?foo=bar", "must not contain query string"},
+		{"https://github.com/owner/repo/pull/5#section", "must not contain fragment"},
+		{"https://github.com/owner/repo/pull/5/files", "URL path must be"},
+		{"https://github.com/owner/repo/pull/5/", "URL path must be"},
+		{"https://github.com/owner/repo/pull", "URL path must be"},
+		{"https://github.com//repo/pull/5", "owner and repo must not be empty"},
+		{"https://github.com/owner/../pull/5", "dot segments not allowed"},
+		{"https://github.com/owner/./pull/5", "dot segments not allowed"},
+		{"https://github.com/owner%2Fx/repo/pull/5", "percent-encoded path"},
+		{"https://github.com/owner/repo/pull/05", "must be the canonical"},
+		{"https://github.com/owner/repo/pull/+5", "must be the canonical"},
+		{"https://github.com/owner/repo/pull/5?", "must be the canonical"},
+		{"https://github.com/owner/repo/pull/5#", "must be the canonical"},
 	}
 
 	for _, tt := range tests {
