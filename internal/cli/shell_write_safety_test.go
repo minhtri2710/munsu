@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -1222,6 +1223,15 @@ func TestTokenizeSegmentsLineContinuationAndANSICQuoting(t *testing.T) {
 		{backslashEscapes, `${x:-a;b|c>d} ; y`, [][]string{{"${x:-a;b|c>d}"}, {"y"}}, false},
 		{backslashEscapes, `${x:-"}"} ${a:-${b:-c d}} e`, [][]string{{"${x:-}}", "${a:-${b:-c d}}", "e"}}, false},
 		{backslashEscapes, `${x y`, [][]string{{"${x", "y"}}, true},
+		// A parameter expansion the tokenizer cannot parse is undecodable.
+		{backslashEscapes, `${ x; }`, [][]string{{"${ x; }"}}, true},
+		{backslashEscapes, `${x[$i]}`, [][]string{{"${x[$i]}"}}, true},
+		{backslashEscapes, `${x&}`, [][]string{{"${x&}"}}, true},
+		{backslashEscapes, `${#x:-a}`, [][]string{{"${#x:-a}"}}, true},
+		{backslashEscapes, `${x[0]} ${!x} ${#x} ${x@Q} ${x[@]} ${!p*} ${x:1:2} ${#}`, [][]string{{"${x[0]}", "${!x}", "${#x}", "${x@Q}", "${x[@]}", "${!p*}", "${x:1:2}", "${#}"}}, false},
+		// Inside double quotes a `${...}` is one group too, whose quotes nest.
+		{backslashEscapes, `"${x:-"a b"}" c`, [][]string{{"${x:-a b}", "c"}}, false},
+		{backslashEscapes, `"${x:-"}"}" c`, [][]string{{"${x:-}}", "c"}}, false},
 	} {
 		segments := tokenizeSegments(tc.mode, tc.command)
 		var got [][]string
@@ -1249,18 +1259,26 @@ func TestTokenizeSegmentsLineContinuationAndANSICQuoting(t *testing.T) {
 		{"echo # $'\ngi\\t push'", []string{"", "", "\ngi\\t push"}},
 		{`$''`, []string{""}},
 		{`'\t'`, []string{""}},
-		{`${x:-git}`, []string{"git"}},
+		// An unquoted word made only of expansions may also be removed: its
+		// absent reading is the empty one after the `|`.
+		{`${x:-git}`, []string{"git|"}},
 		{`${x:-$'\x67it'}`, []string{`git|\x67it|${x:-\x67it}`}},
-		{`"${x:-$'\x67it'}"`, []string{`git|\x67it`}},
+		{`"${x:-$'\x67it'}"`, []string{`git|\x67it|${x:-\x67it}`}},
 		{`/usr/bin/${x-g}${y:+i}t`, []string{"/usr/bin/git"}},
-		{`${x=git} ${x:=git} ${x+git} ${x:+"g"'it'}`, []string{"git", "git", "git", "git"}},
-		{`${a:-${b:-git}}`, []string{`${b:-git}|git`}},
+		{`${x=git} ${x:=git} ${x+git} ${x:+"g"'it'}`, []string{"git|", "git|", "git|", "git"}},
+		{`${a:-${b:-git}}`, []string{`git|`}},
+		{`${x[0]:-git} ${!x-git} ${x[@]:+git}`, []string{"git|", "git|", "git|"}},
+		// In double quotes the word is read in its quoting context: its own
+		// quotes nest, `$"..."` is the quoted text and `'` is literal.
+		{`"${x:-$"git"}"`, []string{"git"}},
+		{`"${x:-$"g"it}"`, []string{"git"}},
+		{`"${x:-"a b"'c'}"`, []string{"a b'c'"}},
 		{`"${x:-git push}"`, []string{"git push"}},
 		// Unquoted, the substituted word is split into words, none of them
 		// an operator.
-		{`${x:-git push}`, []string{"git,push"}},
-		{`${x:-a > f}`, []string{"a,>,f"}},
-		{`${a:-git} ${b:-push}`, []string{"git", "push"}},
+		{`${x:-git push}`, []string{"git,push|"}},
+		{`${x:-a > f}`, []string{"a,>,f|"}},
+		{`${a:-git} ${b:-push}`, []string{"git|", "push|"}},
 		{`${x:?git} ${#x} ${x#git} ${x%git} ${x/a/git} ${x^} ${x,} ${x:1} ${x:-git`, []string{"", "", "", "", "", "", "", "", ""}},
 	} {
 		var got []string
@@ -1275,6 +1293,18 @@ func TestTokenizeSegmentsLineContinuationAndANSICQuoting(t *testing.T) {
 		}
 		if !slices.Equal(got, tc.want) {
 			t.Errorf("alternate readings of %q = %q, want %q", tc.command, got, tc.want)
+		}
+	}
+	// Only an unquoted word made only of parameter expansions may be
+	// removed; a quoted one is an empty word.
+	for command, want := range map[string]bool{
+		`$b`: true, `${b}`: true, `${b:+x}`: true, `$1$b`: true, "$b\\\n": true,
+		`x$b`: false, `"$b"`: false, `'$b'`: false, `$(b)`: false, `$`: false,
+	} {
+		token := tokenizeSegments(backslashEscapes, command)[0][0]
+		absent := slices.ContainsFunc(token.alternates, func(alternate []shellToken) bool { return len(alternate) == 0 })
+		if absent != want {
+			t.Errorf("%q has an absent reading = %v, want %v", command, absent, want)
 		}
 	}
 	// munsuInvocations reads every word holding a space as shell again; an
@@ -1373,10 +1403,17 @@ func TestShellWriteTargetsReadParameterExpansionWords(t *testing.T) {
 		command string
 		want    []string
 	}{
-		{`cp a ${x:-b c}`, []string{"c"}},
+		// The removed reading of an expansion that cannot be empty still
+		// names a target: fail closed.
+		{`cp a ${x:-b c}`, []string{"c", "a"}},
 		{`rm ${x:-b c}`, []string{"b", "c"}},
 		{`rm "${x:-b c}"`, []string{"b c"}},
 		{`echo ${x:-a > f}`, nil},
+		{`echo ${x#a > f}`, nil},
+		{`echo ${x#a; touch f #}`, nil},
+		// Every combination of candidates is read.
+		{`${a:-rm} ${b:-c}`, []string{"c"}},
+		{`cp ${a:--t} ${b:-d} e`, []string{"e", "d"}},
 		{`echo ${x:-a b}`, nil},
 		{`rm ${x:-$HOME/f}`, nil},
 		{`touch $'\x41'`, []string{"A"}},
@@ -1388,5 +1425,22 @@ func TestShellWriteTargetsReadParameterExpansionWords(t *testing.T) {
 		if targets, ambiguous := shellWriteTargets(dir, tc.command); ambiguous || !slices.Equal(targets, want) {
 			t.Errorf("shellWriteTargets(%q) = %q ambiguous=%v, want %q", tc.command, targets, ambiguous, want)
 		}
+	}
+}
+
+// TestShellWriteTargetsRefuseTooManyCandidateReadings pins the bound on the
+// write guard's candidate combinations: past it the targets are ambiguous.
+// A defaulted expansion has three readings: as written, substituted, absent.
+func TestShellWriteTargetsRefuseTooManyCandidateReadings(t *testing.T) {
+	dir := t.TempDir()
+	command := "rm"
+	for i := range 6 {
+		command += fmt.Sprintf(" ${x%d:-f%d}", i, i)
+	}
+	if _, ambiguous := shellWriteTargets(dir, command); !ambiguous {
+		t.Errorf("shellWriteTargets(%q): ambiguous=false, want true", command)
+	}
+	if _, ambiguous := shellWriteTargets(dir, strings.Replace(command, " ${x5:-f5}", "", 1)); ambiguous {
+		t.Errorf("shellWriteTargets with 5 expansions: ambiguous=true, want false")
 	}
 }

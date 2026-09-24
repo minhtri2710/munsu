@@ -664,12 +664,13 @@ func TestResolveSafetyPathModeDetermined(t *testing.T) {
 	}
 }
 
-// parseGitSafetyCommandForTest parses the first git command in command under
-// one backslash reading, the way evaluateGitMutationSafety reads each segment.
+// parseGitSafetyCommandForTest parses the first mutating git command in command
+// under one backslash reading, the way evaluateGitMutationSafety reads each
+// segment.
 func parseGitSafetyCommandForTest(checkPath, command string, mode backslashMode) gitCommandSafety {
 	for _, segment := range tokenizeSegments(mode, command) {
-		if g := parseGitSafetyWords(checkPath, segmentWords(segment), mode); g.verb != "" {
-			return g
+		if commands := segmentGitCommands(checkPath, segment, mode); len(commands) > 0 {
+			return commands[0].g
 		}
 	}
 	return gitCommandSafety{}
@@ -904,10 +905,22 @@ func TestMunsuCommandRulesReadParameterExpansionWords(t *testing.T) {
 		{`echo ${x:-a b}`, false, false},
 		{`${x:-munsu watch}`, true, false},
 		{`ls ${x:-.no-mistakes/x}`, false, true},
+		// Every candidate at each position the rule reads is read.
+		{`${a:-munsu} ${b:-watch}`, true, false},
+		{`${a:-${c:-munsu}} ${b:-watch}`, true, false},
+		{`munsu ${a:---home} ${b:-/h} watch`, true, false},
+		{`${a:-munsu} ${b:-watch} run`, false, false},
+		// A word that may be removed leaves the next word in its place.
+		{`${b:+x} munsu watch`, true, false},
+		{`munsu $b watch`, true, false},
+		{`munsu watch "$b"`, true, false},
 	} {
 		got, tooDeep := munsuInvocations(tc.command, 0)
-		if watch := len(got) > 0 && slices.Equal(got[0], []string{"watch"}); tooDeep || watch != tc.watch {
-			t.Errorf("munsuInvocations(%q) = %q tooDeep=%v, want watch=%v", tc.command, got, tooDeep, tc.watch)
+		watch := slices.ContainsFunc(got, func(args []string) bool {
+			return len(args) > 0 && args[0] == "watch" && !watchInvocationAllowed(args[1:])
+		})
+		if tooDeep || watch != tc.watch {
+			t.Errorf("munsuInvocations(%q) = %q tooDeep=%v, want a bare watch=%v", tc.command, got, tooDeep, tc.watch)
 		}
 		if names, tooDeep := namesNoMistakesDir(tc.command, 0); tooDeep || names != tc.names {
 			t.Errorf("namesNoMistakesDir(%q) = %v tooDeep=%v, want %v", tc.command, names, tooDeep, tc.names)
@@ -949,5 +962,105 @@ func TestMunsuInvocationsDepthBound(t *testing.T) {
 	const tooDeep = "shell payload nesting is too deep; munsu command rules cannot be checked"
 	if block, reason := runPiSafetyForGit(t, checkPath, bashC(inRun)); !block || reason != tooDeep {
 		t.Errorf("hook past depth %d: block=%v reason=%q, want %q", maxShellPayloadDepth, block, reason, tooDeep)
+	}
+}
+
+// TestSafetyCheckReadsFunctionSubstitutionExpansionsAndCandidates pins the
+// hook verdicts review-28489e659251 moved. Every refused row was allowed at
+// 28489e65:
+//   - bash 5.3 runs `${ cmd; }` and `${| cmd; }` as command substitution;
+//   - a subscripted or indirect parameter still substitutes its word, and a
+//     parameter expansion the tokenizer cannot parse is refused;
+//   - `$"..."` in a double-quoted default word is its double-quoted text;
+//   - every candidate word at each position the verb classifier reads is
+//     read, nested defaults included.
+//
+// The allowed rows run no git and write nothing in bash 3.2 or 5.3.
+func TestSafetyCheckReadsFunctionSubstitutionExpansionsAndCandidates(t *testing.T) {
+	primary := initGitRepoForSafety(t, t.TempDir())
+	worktree := filepath.Join(t.TempDir(), "wt")
+	runGitForSafety(t, primary, "worktree", "add", "--detach", worktree)
+	homeDir := bindSafetyWorktree(t, "ship-fs", primary, worktree)
+	t.Setenv("MUNSU_HOME", homeDir)
+	t.Setenv("MUNSU_TASK_ID", "ship-fs")
+	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-fs")
+	docs := filepath.Join(primary, "docs")
+	if err := os.MkdirAll(docs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	const refuse, allow = true, false
+	for _, tc := range []struct {
+		command string
+		want    bool
+	}{
+		{`${ git push --force; }`, refuse},
+		{`${| git push --force; }`, refuse},
+		{`bash -c '${ git push --force; }'`, refuse},
+		{`echo ${ git push --force;}`, refuse},
+		{`x=${ git push --force; }`, refuse},
+		{"${\tgit push --force; }", refuse},
+		{`${ munsu watch; }`, refuse},
+		{`${ ls .no-mistakes; }`, refuse},
+		{"cd " + docs + " && ${ echo hi > f; }", refuse},
+		{`${x[0]:-git} push --force`, refuse},
+		{`${x[1]-git} push --force`, refuse},
+		{`${x[@]:-git push --force}`, refuse},
+		{`${!x:-git} push --force`, refuse},
+		{`${!x-git} push --force`, refuse},
+		{`echo ${x[$i]}`, refuse},
+		{`echo ${x&}`, refuse},
+		{`echo ${x[0]}`, allow},
+		{`echo ${!x}`, allow},
+		{`echo ${#x}`, allow},
+		{`echo ${x@Q}`, allow},
+		{`echo ${x[@]}`, allow},
+		{`echo ${!prefix*}`, allow},
+		{`"${x:-$"git"}" push --force`, refuse},
+		{`"${x:-$"g"it}" push --force`, refuse},
+		{`${a:-${c:-git}} ${b:-push} --force`, refuse},
+		{`${a:-git} ${b:-${c:-push}} --force`, refuse},
+		{`${a:-git} ${b:-push} --force`, refuse},
+		{`${a:-munsu} ${b:-watch}`, refuse},
+		{"cd " + docs + " && ${a:-rm} ${b:-f}", refuse},
+		{"cd " + docs + " && cp ${a:--t} ${b:-.} ../README.md", refuse},
+		{"cd " + docs + " && echo ${x:-a > f}", allow},
+		{"cd " + docs + " && echo ${x#a > f}", allow},
+		{"cd " + docs + " && echo ${x#a; touch f #}", allow},
+		// An unquoted word made only of expansions may be removed.
+		{`${a:-git} ${b:+x} push --force`, refuse},
+		{`git ${b:+x} push --force`, refuse},
+		{`git $b push --force`, refuse},
+		{`git ${b} push --force`, refuse},
+		{`${a:-git} ${b-} push --force`, refuse},
+		{`bash -c '${a:-git} ${b:+x} push --force'`, refuse},
+		{`bash -c 'git $b push --force'`, refuse},
+		{`${b:+x} munsu watch`, refuse},
+		{`munsu $b watch`, refuse},
+		{"cd " + docs + " && cp -t $b f g", refuse},
+		{"cd " + docs + " && cp ../README.md $b .", refuse},
+		// A quoted expansion is an empty word, never absent.
+		{`git "$b" push`, allow},
+		// Fail-closed over-refusals: the removed reading is taken even where
+		// the word cannot be empty.
+		{`git ${x:-status} push --force`, refuse},
+		{"cd " + docs + " && echo $1 $2 $3 $4 $5 $6 $7 $8 $9", refuse},
+	} {
+		if block, reason := runPiSafetyForGit(t, worktree, tc.command); block != tc.want {
+			t.Errorf("%q block=%v reason=%q, want block=%v", tc.command, block, reason, tc.want)
+		}
+	}
+	// Function substitution is refused as command substitution, before the
+	// tokenizer reads the group as an undecodable parameter expansion.
+	const substitution = "compound shell command with command substitution is not allowed for git mutation"
+	for _, command := range []string{"${ git status; }", "${| git status; }", "${\tgit status; }", "${\ngit status; }"} {
+		if block, reason := runPiSafetyForGit(t, worktree, command); !block || reason != substitution {
+			t.Errorf("%q: block=%v reason=%q, want %q", command, block, reason, substitution)
+		}
+	}
+	// A value word with more than one candidate leaves the target unknown.
+	const unknownTarget = "git mutation target cannot be determined"
+	if block, reason := runPiSafetyForGit(t, worktree, "git -C ${x:-.} push origin mu/ship-fs"); !block || reason != unknownTarget {
+		t.Errorf("git -C ${x:-.} push: block=%v reason=%q, want %q", block, reason, unknownTarget)
 	}
 }

@@ -481,35 +481,68 @@ func patchWriteTargets(checkPath, body string) ([]string, error) {
 }
 
 // munsuInvocations parses command with the safety tokenizer and returns, for
-// every `munsu` command word in any reading of a segment, the words after it
-// starting at the subcommand (the root --home flag is skipped). A word that
-// reads as more than itself, as in `bash -c "munsu watch"`, is parsed too. An
-// unquoted word opening with `#` starts a shell comment and ends its segment.
-// Past maxShellPayloadDepth nested command lines it stops and reports the
-// command too deep to check.
+// every `munsu` command word among the candidates of a segment, the
+// subcommand after it and each word that can follow the subcommand (the root
+// --home flag is skipped). Every candidate at each position is read
+// (segmentCandidates). A word that reads as more than itself, as in
+// `bash -c "munsu watch"`, is parsed too. An unquoted word opening with `#`
+// starts a shell comment and ends its segment. Past maxShellPayloadDepth
+// nested command lines it stops and reports the command too deep to check.
 func munsuInvocations(command string, depth int) ([][]string, bool) {
 	var invocations [][]string
 	for _, segment := range commandSegments(command) {
-		for _, reading := range segmentReadings(segment) {
-			for _, token := range reading {
-				if !readsAsMoreThanItself(gitSafetyBackslashMode(), token) {
-					continue
-				}
-				if depth+1 > maxShellPayloadDepth {
-					return nil, true
-				}
-				nested, tooDeep := munsuInvocations(token.text, depth+1)
-				if tooDeep {
-					return nil, true
-				}
-				invocations = append(invocations, nested...)
+		for _, token := range candidateTokens(segment) {
+			if !readsAsMoreThanItself(gitSafetyBackslashMode(), token) {
+				continue
 			}
-			words := segmentWords(reading)
-			for i, word := range words {
-				if filepath.Base(word) != "munsu" {
+			if depth+1 > maxShellPayloadDepth {
+				return nil, true
+			}
+			nested, tooDeep := munsuInvocations(token.text, depth+1)
+			if tooDeep {
+				return nil, true
+			}
+			invocations = append(invocations, nested...)
+		}
+		const seek, subcommand, homeValue = 0, 1, 2
+		nodes, entry := segmentCandidates(segment)
+		states := make([][3]bool, len(nodes))
+		reach := func(next []int, state int) {
+			for _, n := range next {
+				states[n][state] = true
+			}
+		}
+		reach(entry, seek)
+		for n, node := range nodes {
+			for _, step := range node.steps {
+				word := step.token.text
+				if states[n][seek] {
+					reach(step.next, seek)
+					if filepath.Base(word) == "munsu" {
+						reach(step.next, subcommand)
+					}
+				}
+				if states[n][homeValue] {
+					reach(step.next, subcommand)
+				}
+				if !states[n][subcommand] {
 					continue
 				}
-				invocations = append(invocations, munsuSubcommandArgs(words[i+1:]))
+				switch munsuHomeWords(word, len(step.next) > 0) {
+				case 2:
+					reach(step.next, homeValue)
+				case 1:
+					reach(step.next, subcommand)
+				default:
+					if len(step.next) == 0 {
+						invocations = append(invocations, []string{word})
+					}
+					for _, next := range step.next {
+						for _, following := range nodes[next].steps {
+							invocations = append(invocations, []string{word, following.token.text})
+						}
+					}
+				}
 			}
 		}
 	}
@@ -549,24 +582,22 @@ func commandWords(command string) [][]string {
 // and reports the command too deep to check.
 func namesNoMistakesDir(command string, depth int) (bool, bool) {
 	for _, segment := range commandSegments(command) {
-		for _, reading := range segmentReadings(segment) {
-			for _, token := range reading {
-				if readsAsMoreThanItself(gitSafetyBackslashMode(), token) {
-					if depth+1 > maxShellPayloadDepth {
-						return false, true
-					}
-					if names, tooDeep := namesNoMistakesDir(token.text, depth+1); names || tooDeep {
-						return names, tooDeep
-					}
+		for _, token := range candidateTokens(segment) {
+			if readsAsMoreThanItself(gitSafetyBackslashMode(), token) {
+				if depth+1 > maxShellPayloadDepth {
+					return false, true
 				}
-				components := strings.FieldsFunc(token.text, func(r rune) bool { return r == '/' || r == '=' })
-				for _, component := range components {
-					if !strings.HasPrefix(component, ".") {
-						continue
-					}
-					if ok, _ := path.Match(strings.ToLower(component), ".no-mistakes"); ok {
-						return true, false
-					}
+				if names, tooDeep := namesNoMistakesDir(token.text, depth+1); names || tooDeep {
+					return names, tooDeep
+				}
+			}
+			components := strings.FieldsFunc(token.text, func(r rune) bool { return r == '/' || r == '=' })
+			for _, component := range components {
+				if !strings.HasPrefix(component, ".") {
+					continue
+				}
+				if ok, _ := path.Match(strings.ToLower(component), ".no-mistakes"); ok {
+					return true, false
 				}
 			}
 		}
@@ -577,15 +608,26 @@ func namesNoMistakesDir(command string, depth int) (bool, bool) {
 // munsuSubcommandArgs drops the root --home flag from the words after `munsu`.
 func munsuSubcommandArgs(args []string) []string {
 	for len(args) > 0 {
-		if args[0] == "--home" && len(args) > 1 {
-			args = args[2:]
-		} else if strings.HasPrefix(args[0], "--home=") {
-			args = args[1:]
-		} else {
+		n := munsuHomeWords(args[0], len(args) > 1)
+		if n == 0 {
 			break
 		}
+		args = args[n:]
 	}
 	return args
+}
+
+// munsuHomeWords returns how many words the root --home flag starting at
+// word takes: 2 for `--home DIR` (hasValue reports a next word), 1 for
+// `--home=DIR`, and 0 when word does not start it.
+func munsuHomeWords(word string, hasValue bool) int {
+	switch {
+	case word == "--home" && hasValue:
+		return 2
+	case strings.HasPrefix(word, "--home="):
+		return 1
+	}
+	return 0
 }
 
 // onlyGuardOrDoctor reports whether every segment of command is a `munsu
