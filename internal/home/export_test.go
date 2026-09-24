@@ -11,20 +11,21 @@ type simulatedCrash struct{}
 func (simulatedCrash) Error() string { return "home: simulated crash" }
 
 // CrashCommitAfter makes the next Commit panic with ErrSimulatedCrash once its
-// journal record is durable and k of its items are applied, so no roll-forward,
-// revision advance or record removal runs, as after a process crash. The hook
-// disarms itself when it fires and is restored at test cleanup.
+// journal record is durable and k of its n+2 apply steps have run (n item
+// applies, the revision write, the record removal), as after a process crash.
+// k = n+2 never fires. The hook disarms itself when it fires and is restored at
+// test cleanup.
 func CrashCommitAfter(t testing.TB, k int) {
-	orig := commitApply
-	t.Cleanup(func() { commitApply = orig })
-	applied := 0
-	commitApply = func(h *Home, it ChangeItem) error {
-		if applied == k {
-			commitApply = orig
+	orig := commitStep
+	t.Cleanup(func() { commitStep = orig })
+	steps := 0
+	commitStep = func() error {
+		if steps == k {
+			commitStep = orig
 			panic(ErrSimulatedCrash)
 		}
-		applied++
-		return orig(h, it)
+		steps++
+		return nil
 	}
 }
 

@@ -17,9 +17,10 @@ import (
 
 // These tests crash real taskauthority operations inside home.Commit: the
 // operation builds and journals its own change-set, the process "dies" after
-// the record is durable and k of its n items are applied, and the reopened
-// home must finish the commit exactly once. They live here because only home's
-// test binary can place the crash between two item writes.
+// the record is durable and k of its n+2 apply steps have run (n item writes,
+// the revision write, the record removal), and the reopened home must finish
+// the commit exactly once. They live here because only home's test binary can
+// place the crash between two of those steps.
 
 // crashCase is one real operation crashed at every cut point. setup commits
 // the operation's prerequisites normally; op runs the operation and reports
@@ -35,17 +36,17 @@ type crashCase struct {
 	readRecovers bool
 }
 
-// runCrashAtEveryItem crashes tc.op after k applied items for k = 0, 1, ...
-// until the operation commits without reaching the cut, and requires a
-// change-set of at least two items so at least one cut is a partial apply.
+// runCrashAtEveryStep crashes tc.op after k apply steps for k = 0, 1, ...
+// until the operation commits without reaching the cut (k = n+2), and requires
+// a change-set of at least two items so at least one cut is a partial apply.
 // After each crash it proves the record is recovered exactly once: the scope
 // revision advances once, the journal is empty, and replaying the operation
 // returns the recovered outcome without committing again.
-func runCrashAtEveryItem(t *testing.T, taskID string, tc crashCase) {
+func runCrashAtEveryStep(t *testing.T, taskID string, tc crashCase) {
 	t.Helper()
 	for k := 0; ; k++ {
 		crashed := false
-		t.Run(fmt.Sprintf("crash after %d items", k), func(t *testing.T) {
+		t.Run(fmt.Sprintf("crash after %d steps", k), func(t *testing.T) {
 			root := t.TempDir()
 			h, err := home.Init(root)
 			if err != nil {
@@ -91,8 +92,8 @@ func runCrashAtEveryItem(t *testing.T, taskID string, tc crashCase) {
 			}
 		})
 		if !crashed {
-			if k < 2 {
-				t.Fatalf("operation committed after %d items; want a change-set of at least two", k)
+			if n := k - 2; n < 2 {
+				t.Fatalf("operation committed with %d items; want a change-set of at least two", n)
 			}
 			return
 		}
@@ -274,7 +275,7 @@ func mustGet(t *testing.T, c *ta.Canonical) ta.Aggregate {
 }
 
 func TestCrashRecoveryCreate(t *testing.T) {
-	runCrashAtEveryItem(t, "t1", crashCase{
+	runCrashAtEveryStep(t, "t1", crashCase{
 		op: func(t *testing.T, c *ta.Canonical) (bool, error) {
 			req := createReq(t, c, "t1")
 			out, err := c.Create(mustOp(t, "op-crash-create", req), req)
@@ -295,7 +296,7 @@ func TestCrashRecoveryCreate(t *testing.T) {
 }
 
 func TestCrashRecoveryStart(t *testing.T) {
-	runCrashAtEveryItem(t, "t1", crashCase{
+	runCrashAtEveryStep(t, "t1", crashCase{
 		setup: func(t *testing.T, c *ta.Canonical) { mustCreate(t, c, "t1") },
 		op: func(t *testing.T, c *ta.Canonical) (bool, error) {
 			req := ta.CanonicalStartRequest{HomeID: c.HomeID(), TaskID: taskID(t, "t1"), Precondition: domain.Of(1, 1), Reason: "start"}
@@ -326,7 +327,7 @@ func TestCrashRecoveryBeginSpawn(t *testing.T) {
 			EndpointReservationID: "ep-res-t1", EndpointFenceToken: "ep-fence-t1", EndpointIncarnation: "inc-t1", Reason: "spawn",
 		}
 	}
-	runCrashAtEveryItem(t, "t1", crashCase{
+	runCrashAtEveryStep(t, "t1", crashCase{
 		setup: func(t *testing.T, c *ta.Canonical) { mustCreate(t, c, "t1") },
 		op: func(t *testing.T, c *ta.Canonical) (bool, error) {
 			req := launch(t, c)
@@ -355,7 +356,7 @@ func TestCrashRecoveryBeginSpawn(t *testing.T) {
 }
 
 func TestCrashRecoveryBindWorktree(t *testing.T) {
-	runCrashAtEveryItem(t, "t1", crashCase{
+	runCrashAtEveryStep(t, "t1", crashCase{
 		setup: func(t *testing.T, c *ta.Canonical) { mustCreate(t, c, "t1") },
 		op: func(t *testing.T, c *ta.Canonical) (bool, error) {
 			req := bindWorktreeReq(t, c, domain.Of(1, 1), worktreeBinding())
@@ -377,7 +378,7 @@ func TestCrashRecoveryBindWorktree(t *testing.T) {
 }
 
 func TestCrashRecoveryReserveTransfer(t *testing.T) {
-	runCrashAtEveryItem(t, "t1", crashCase{
+	runCrashAtEveryStep(t, "t1", crashCase{
 		setup: func(t *testing.T, c *ta.Canonical) { mustCreate(t, c, "t1") },
 		op: func(t *testing.T, c *ta.Canonical) (bool, error) {
 			req := reserveReq(t, c)
@@ -398,7 +399,7 @@ func TestCrashRecoveryReserveTransfer(t *testing.T) {
 }
 
 func TestCrashRecoveryReceiveTransfer(t *testing.T) {
-	runCrashAtEveryItem(t, "t1", crashCase{
+	runCrashAtEveryStep(t, "t1", crashCase{
 		op: func(t *testing.T, c *ta.Canonical) (bool, error) {
 			req := receiveReq(t, c)
 			out, err := c.ReceiveTransfer(mustOp(t, "op-crash-receive", req), req)
@@ -420,7 +421,7 @@ func TestCrashRecoveryActivateTransfer(t *testing.T) {
 	activate := func(t *testing.T, c *ta.Canonical) ta.CanonicalActivateTransferRequest {
 		return ta.CanonicalActivateTransferRequest{HomeID: c.HomeID(), TaskID: taskID(t, "t1"), Precondition: domain.Of(1, 1), ReservationID: "res-t1", Reason: "activate"}
 	}
-	runCrashAtEveryItem(t, "t1", crashCase{
+	runCrashAtEveryStep(t, "t1", crashCase{
 		setup: func(t *testing.T, c *ta.Canonical) {
 			req := receiveReq(t, c)
 			if _, err := c.ReceiveTransfer(mustOp(t, "op-receive-1", req), req); err != nil {
@@ -441,7 +442,7 @@ func TestCrashRecoveryActivateTransfer(t *testing.T) {
 }
 
 func TestCrashRecoveryCommitTransfer(t *testing.T) {
-	runCrashAtEveryItem(t, "t1", crashCase{
+	runCrashAtEveryStep(t, "t1", crashCase{
 		setup: func(t *testing.T, c *ta.Canonical) {
 			mustCreate(t, c, "t1")
 			req := reserveReq(t, c)
@@ -482,7 +483,7 @@ func TestCrashRecoveryCommitTransfer(t *testing.T) {
 }
 
 func TestCrashRecoveryRetire(t *testing.T) {
-	runCrashAtEveryItem(t, "t1", crashCase{
+	runCrashAtEveryStep(t, "t1", crashCase{
 		setup: func(t *testing.T, c *ta.Canonical) {
 			mustCreate(t, c, "t1")
 			req := bindWorktreeReq(t, c, domain.Of(1, 1), worktreeBinding())
@@ -508,7 +509,7 @@ func TestCrashRecoveryRetire(t *testing.T) {
 }
 
 func TestCrashRecoveryDeliveryAuthorization(t *testing.T) {
-	runCrashAtEveryItem(t, "t1", crashCase{
+	runCrashAtEveryStep(t, "t1", crashCase{
 		setup: func(t *testing.T, c *ta.Canonical) { mustDeliveryTask(t, c) },
 		op: func(t *testing.T, c *ta.Canonical) (bool, error) {
 			req := authorizeReq(t, c, 3)
@@ -545,7 +546,7 @@ func TestCrashRecoveryDeliveryOutcome(t *testing.T) {
 			MergedSHA: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
 		}
 	}
-	runCrashAtEveryItem(t, "t1", crashCase{
+	runCrashAtEveryStep(t, "t1", crashCase{
 		setup: func(t *testing.T, c *ta.Canonical) {
 			mustDeliveryTask(t, c)
 			req := authorizeReq(t, c, 3)

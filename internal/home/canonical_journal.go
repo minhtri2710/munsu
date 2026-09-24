@@ -29,9 +29,10 @@ type ChangeItem struct {
 // expected revision.
 var ErrInDoubt = errors.New("home: commit durable but not yet applied")
 
-// commitApply applies one item on Commit's first pass; tests replace it to
-// inject a failure after the record is durable.
-var commitApply = (*Home).applyItem
+// commitStep runs before each step of Commit's first pass (every item apply,
+// the revision write, the record removal); tests replace it to inject a
+// failure or crash at any cut after the record is durable.
+var commitStep = func() error { return nil }
 
 // journalRecord is the durable write-ahead intent for one change-set commit.
 // Recovery redoes a record only when the scope revision shows the commit was
@@ -137,11 +138,20 @@ func (h *Home) Commit(lk *Lock, txnID string, expectedRevision uint64, items []C
 
 func (h *Home) applyRecord(rec journalRecord) error {
 	for _, it := range rec.Items {
-		if err := commitApply(h, it); err != nil {
+		if err := commitStep(); err != nil {
+			return err
+		}
+		if err := h.applyItem(it); err != nil {
 			return err
 		}
 	}
+	if err := commitStep(); err != nil {
+		return err
+	}
 	if err := h.writeRevision(rec.Scope, rec.NewRevision); err != nil {
+		return err
+	}
+	if err := commitStep(); err != nil {
 		return err
 	}
 	if err := os.Remove(h.journalPath(rec.Scope, rec.TxnID)); err != nil && !os.IsNotExist(err) {

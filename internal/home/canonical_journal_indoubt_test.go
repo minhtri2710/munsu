@@ -12,9 +12,9 @@ import (
 // revision advances and the record is gone.
 func TestCommitRollsForwardAfterDurableApplyFailure(t *testing.T) {
 	h := newTestHome(t)
-	orig := commitApply
-	t.Cleanup(func() { commitApply = orig })
-	commitApply = func(*Home, ChangeItem) error { return errors.New("injected apply failure") }
+	orig := commitStep
+	t.Cleanup(func() { commitStep = orig })
+	commitStep = func() error { return errors.New("injected apply failure") }
 
 	lk, err := h.Lock("scope")
 	if err != nil {
