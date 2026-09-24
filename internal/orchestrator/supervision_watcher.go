@@ -23,7 +23,7 @@ import (
 const watcherPollInterval = 5 * time.Second
 
 const (
-	// watcherStopWait bounds how long stopRunningWatcher observes a signalled
+	// watcherStopWait bounds how long StopWatcher observes a signalled
 	// watcher, and watcherStopPoll is how often it looks. See waitForWatcherExit
 	// for why the bound expiring is not a failure.
 	watcherStopWait = 2 * time.Second
@@ -313,15 +313,19 @@ func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-cha
 	}
 }
 
-// startWatcherProcess is an unexported seam for tests. Production uses
-// defaultStartWatcher. Tests can substitute it to verify the identity
-// clearance contract without spawning a real daemon.
-var startWatcherProcess = defaultStartWatcher
+// startWatcherProcess and signalWatcher are unexported seams for tests.
+// Production uses defaultStartWatcher and signalWatcherProcess. Tests
+// substitute them to verify the identity clearance contract without spawning a
+// real daemon, and to make a live watcher refuse the stop signal.
+var (
+	startWatcherProcess = defaultStartWatcher
+	signalWatcher       = signalWatcherProcess
+)
 
-func defaultStartWatcher(homeDir string) error {
+func defaultStartWatcher(homeDir string) (int, error) {
 	execPath, err := os.Executable()
 	if err != nil {
-		return fmt.Errorf("finding munsu binary: %w", err)
+		return 0, fmt.Errorf("finding munsu binary: %w", err)
 	}
 
 	cmd := exec.Command(execPath, "watch", "--home", homeDir)
@@ -332,86 +336,111 @@ func defaultStartWatcher(homeDir string) error {
 	configureWatcherProcess(cmd)
 
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("starting watcher: %w", err)
+		return 0, fmt.Errorf("starting watcher: %w", err)
 	}
-
-	fmt.Printf("Watcher armed (pid %d)\n", cmd.Process.Pid)
-	return nil
+	return cmd.Process.Pid, nil
 }
 
-// ArmBackground launches the watcher as a background process.
-// If restart is true, signals any existing watcher first, using identity-based
-// PID ownership validation to avoid signaling an unrelated process.
-func ArmBackground(homeDir string, restart bool) error {
-	if restart {
-		if err := stopRunningWatcher(homeDir); err != nil {
-			return err
-		}
-	}
-
-	// Clear stale identity before launching the new watcher so that
-	// handshake polling never reads stale state (e.g. old CommitSHA)
-	// before the subprocess writes its own identity.
+// StartWatcher launches a detached watcher for homeDir and returns its PID.
+// It clears the stale identity first so that handshake polling never reads
+// stale state (e.g. old CommitSHA) before the subprocess writes its own.
+func StartWatcher(homeDir string) (int, error) {
 	ClearIdentity(homeDir)
-
 	return startWatcherProcess(homeDir)
 }
 
-// stopRunningWatcher signals the running watcher identified by beat + identity.
-// Uses identity-based PID ownership validation to avoid signaling unrelated processes.
-func stopRunningWatcher(homeDir string) error {
-	_, pid, ok := ReadBeat(homeDir)
-	if !ok || pid <= 0 {
-		return nil // no watcher running
+// ArmBackground launches the watcher as a background process.
+// If restart is true, stops any existing watcher first and refuses to launch
+// when that watcher's ownership cannot be proven or it cannot be signalled.
+func ArmBackground(homeDir string, restart bool) error {
+	if restart {
+		if _, err := StopWatcher(homeDir); err != nil {
+			return err
+		}
 	}
-
-	// Validate that this PID belongs to our watcher before signaling.
-	if !ValidatePIDOwnership(homeDir, pid) {
-		return fmt.Errorf("watcher pid %d ownership could not be verified; refusing to signal", pid)
-	}
-
-	proc, err := os.FindProcess(pid)
+	pid, err := StartWatcher(homeDir)
 	if err != nil {
-		ClearBeat(homeDir)
-		return nil
+		return err
 	}
-
-	if err := signalWatcherProcess(proc); err != nil {
-		return fmt.Errorf("signaling watcher pid %d: %w", pid, err)
-	}
-
-	waitForWatcherExit(pid)
+	fmt.Printf("Watcher armed (pid %d)\n", pid)
 	return nil
 }
 
-// waitForWatcherExit observes the signalled watcher until it is gone or the
-// bound expires. It exists for one reason: ArmBackground's restart path starts
-// a replacement whose own AcquireWatch takes the watch flock, and that flock is
-// still held while the old process runs.
+// WatcherStopState is what StopWatcher observed of the watcher it targeted.
+type WatcherStopState string
+
+const (
+	StopAlreadyStopped   WatcherStopState = "already-stopped"
+	StopIdentityMismatch WatcherStopState = "identity-mismatch"
+	StopExited           WatcherStopState = "stopped"
+	StopUnresponsive     WatcherStopState = "unresponsive"
+)
+
+// WatcherStop reports the PID StopWatcher targeted and what became of it.
+type WatcherStop struct {
+	PID   int
+	State WatcherStopState
+}
+
+// StopWatcher signals the running watcher identified by beat + identity and
+// observes it for a bounded time. Idempotent: no beat is StopAlreadyStopped.
 //
-// Expiry is not an error here because the one caller that restarts
-// (completeHandshake, the only caller of ArmBackground(restart=true)) proves
-// convergence itself via waitForNewWatcher; the other reachable caller, Stop,
-// starts no replacement. A caller without that handshake would lose the "no
-// watcher at all" signal entirely — that is the condition to re-read before
-// adding one. Nothing durable depends on the old watcher being gone by now
-// either: home.ReleaseWatcherLeaseIfMatches refuses to delete a successor's
-// lease, and a watcher inside a slow cycle can outlast any bound we pick.
-func waitForWatcherExit(pid int) {
+// Ownership must be proven from the identity file; beat-only state is
+// ambiguous and returns StopIdentityMismatch with an error. A signal the
+// kernel refuses returns StopUnresponsive with an error: EPERM means a
+// process exists that we could not stop. Only an observed exit reads as
+// StopExited, and only then are the beat and identity cleared -- a watcher
+// still alive keeps the evidence a later stop needs to target it. The watch
+// flock is never removed here; it releases when its holder exits.
+func StopWatcher(homeDir string) (WatcherStop, error) {
+	_, pid, ok := ReadBeat(homeDir)
+	if !ok || pid <= 0 {
+		return WatcherStop{State: StopAlreadyStopped}, nil
+	}
+	stop := WatcherStop{PID: pid, State: StopIdentityMismatch}
+	if !ValidatePIDOwnership(homeDir, pid) {
+		return stop, fmt.Errorf("watcher pid %d ownership could not be verified; refusing to signal", pid)
+	}
+
+	stop.State = StopUnresponsive
+	proc, err := os.FindProcess(pid)
+	if err == nil {
+		err = signalWatcher(proc)
+	}
+	if err != nil {
+		return stop, fmt.Errorf("signaling watcher pid %d: %w", pid, err)
+	}
+	if !waitForWatcherExit(pid) {
+		return stop, nil
+	}
+	ClearBeat(homeDir)
+	ClearIdentity(homeDir)
+	stop.State = StopExited
+	return stop, nil
+}
+
+// waitForWatcherExit observes the signalled watcher until it is gone or the
+// bound expires, and reports whether it saw the exit. It exists because
+// ArmBackground's restart path starts a replacement whose own AcquireWatch
+// takes the watch flock, and that flock is still held while the old process
+// runs.
+//
+// Expiry is not an error: StopWatcher reports it as StopUnresponsive. The
+// one caller that restarts (completeHandshake, the only caller of
+// ArmBackground(restart=true)) proves convergence itself via
+// waitForNewWatcher. Nothing durable depends on the old watcher being gone by
+// now either: home.ReleaseWatcherLeaseIfMatches refuses to delete a
+// successor's lease, and a watcher inside a slow cycle can outlast any bound
+// we pick.
+func waitForWatcherExit(pid int) bool {
 	deadline := time.Now().Add(watcherStopWait)
 	for time.Now().Before(deadline) {
 		if !isProcessAlive(pid) {
-			return
+			return true
 		}
 		time.Sleep(watcherStopPoll)
 	}
-}
-
-// Stop signals the running watcher for the given home and clears its beat.
-// Uses identity-based PID ownership validation to avoid signaling unrelated processes.
-// Idempotent: returns nil when no watcher is running.
-func Stop(homeDir string) error {
-	return stopRunningWatcher(homeDir)
+	return !isProcessAlive(pid)
 }
 
 var (

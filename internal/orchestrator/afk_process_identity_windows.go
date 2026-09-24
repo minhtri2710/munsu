@@ -16,13 +16,13 @@ import (
 // an identity artifact (publishDaemonIdentity) or terminate it (Return). A blind
 // half here means the daemon cannot start at all on windows, which is how this
 // half was found: an unconditional error made AcquireLock's only production call
-// site roll back its own lock, so state/.lock never named a live PID and Return's
-// stop branch was unreachable.
+// site roll back its own lock, so the home-owned AFK lock file never named a
+// live PID and Return's stop branch was unreachable.
 //
-// This follows the pattern already in the tree at
-// internal/cli/watch_process_windows.go: open a limited-information handle and
-// ask the kernel. QueryFullProcessImageName gives the path the unix halves read
-// from /proc/<pid>/exe (linux) or kern.procargs2 (darwin);
+// This follows the pattern of isProcessAlive in process_alive_windows.go: open
+// a limited-information handle and ask the kernel. QueryFullProcessImageName
+// gives the path the unix halves read from /proc/<pid>/exe (linux) or
+// kern.procargs2 (darwin);
 // GetProcessTimes' creation FILETIME gives what /proc/<pid>/stat field 22 and
 // kern.proc.pid's P_starttime give there. The token is the raw 100ns FILETIME as
 // a decimal string -- opaque, compared only against another token produced by

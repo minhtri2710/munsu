@@ -1866,7 +1866,7 @@ func TestArmBackground_ClearsStaleIdentity(t *testing.T) {
 	// Substitute the lower-level starter to capture when it would be invoked.
 	started := make(chan struct{}, 1)
 	savedStarter := startWatcherProcess
-	startWatcherProcess = func(dir string) error {
+	startWatcherProcess = func(dir string) (int, error) {
 		// Verify identity is already cleared before the starter runs.
 		if remaining := ReadIdentity(dir); remaining != nil {
 			if remaining.CommitSHA == "stalecommit" {
@@ -1874,7 +1874,7 @@ func TestArmBackground_ClearsStaleIdentity(t *testing.T) {
 			}
 		}
 		started <- struct{}{}
-		return nil // don't actually start a daemon
+		return 0, nil // don't actually start a daemon
 	}
 	defer func() { startWatcherProcess = savedStarter }()
 

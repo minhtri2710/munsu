@@ -86,10 +86,11 @@ func EnsureWatcher(captainHome string, hasChildWork bool) error {
 
 	// No child work — idle policy: stop watcher if running.
 	if status == WatcherRunning {
-		// Read the beat before stopping: it names the watcher Stop signals, and
-		// that PID is the only lease this cleanup is entitled to remove.
+		// Read the beat before stopping: it names the watcher StopWatcher
+		// signals, and that PID is the only lease this cleanup is entitled to
+		// remove.
 		_, stoppedPID, hadBeat := ReadBeat(captainHome)
-		if err := Stop(captainHome); err != nil {
+		if _, err := StopWatcher(captainHome); err != nil {
 			return fmt.Errorf("stopping watcher for captain home %s: %w", captainHome, err)
 		}
 		ClearBeat(captainHome)

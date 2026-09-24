@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -39,42 +38,19 @@ func newWatchEnsureCmd() *cobra.Command {
 }
 
 // startWatcherProcess is a test seam for the detached watcher launch.
-var startWatcherProcess = defaultStartWatcherProcess
+var startWatcherProcess = orchestrator.StartWatcher
 
 var watcherBeaconTimeout = 3 * time.Second
-
-func defaultStartWatcherProcess(homeDir string) (int, error) {
-	execPath, err := os.Executable()
-	if err != nil {
-		return 0, err
-	}
-
-	cmd := exec.Command(execPath, "watch", "--home", homeDir)
-	cmd.Dir = homeDir
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	cmd.Env = append(os.Environ(), "MUNSU_HOME="+homeDir)
-	configureWatchProcess(cmd)
-	if err := cmd.Start(); err != nil {
-		return 0, err
-	}
-	return cmd.Process.Pid, nil
-}
 
 // ensureWatcher checks the watcher state and starts one if needed.
 func ensureWatcher(homeDir string, restart bool) Response[WatchEnsure] {
 	beatStatus := orchestrator.ReadBeatStatus(homeDir, time.Now())
 
-	// If restart requested, signal existing watcher using identity validation
+	// A refused restart stop falls through: a watcher still alive keeps its
+	// beat and identity, so the ownership check below attaches to it, and one
+	// whose ownership is unproven is never signalled.
 	if restart && beatStatus.Exists {
-		_, pid, ok := orchestrator.ReadBeat(homeDir)
-		if ok && pid > 0 && orchestrator.ValidatePIDOwnership(homeDir, pid) {
-			proc, err := os.FindProcess(pid)
-			if err == nil {
-				_ = signalWatchProcess(proc)
-				time.Sleep(500 * time.Millisecond)
-			}
-		}
+		_, _ = orchestrator.StopWatcher(homeDir)
 		beatStatus = orchestrator.ReadBeatStatus(homeDir, time.Now())
 	}
 
@@ -290,7 +266,7 @@ func countQueuedWakes(homeDir string) int {
 }
 
 // newWatchStopCmd creates the `munsu watch stop` command.
-// It reads the watcher PID from the beat file, sends SIGTERM, and reports stopped.
+// It stops the watcher named by beat + identity and reports what it observed.
 func newWatchStopCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "stop",
@@ -309,74 +285,30 @@ func newWatchStopCmd() *cobra.Command {
 	return cmd
 }
 
-// stopWatcher reads the watcher PID from the beat file, validates ownership
-// when identity is available, sends SIGTERM, waits briefly, and reports the
-// result. Idempotent: no running watcher is a no-op success.
-//
-// Ownership must be proven from the identity file; beat-only state is ambiguous.
+// stopWatcher shapes orchestrator.StopWatcher as the watch.stop contract.
+// An ownership refusal is a successful no-op; a refused signal is an error.
 func stopWatcher(homeDir string) Response[WatchStop] {
-	_, pid, ok := orchestrator.ReadBeat(homeDir)
-
-	// No watcher running — report already-stopped
-	if !ok || pid <= 0 {
-		return Response[WatchStop]{
-			SchemaVersion: SchemaVersion,
-			Kind:          "watch.stop",
-			Status:        "success",
-			Data: WatchStop{
-				WatchID: "",
-				PID:     0,
-				State:   "already-stopped",
-			},
-		}
+	stop, err := orchestrator.StopWatcher(homeDir)
+	status := "success"
+	var help []string
+	if err != nil && stop.State != orchestrator.StopIdentityMismatch {
+		status = "error"
+		help = []string{err.Error()}
 	}
-
-	watchID := fmt.Sprintf("watch-%d", pid)
-
-	if !orchestrator.ValidatePIDOwnership(homeDir, pid) {
-		return Response[WatchStop]{
-			SchemaVersion: SchemaVersion,
-			Kind:          "watch.stop",
-			Status:        "success",
-			Data: WatchStop{
-				WatchID: watchID,
-				PID:     pid,
-				State:   "identity-mismatch",
-			},
-		}
+	watchID := ""
+	if stop.PID > 0 {
+		watchID = fmt.Sprintf("watch-%d", stop.PID)
 	}
-
-	// Find and signal the process
-	proc, err := os.FindProcess(pid)
-	if err == nil {
-		_ = signalWatchProcess(proc)
-		time.Sleep(500 * time.Millisecond)
-	}
-
-	// Check if process is still alive
-	alive := false
-	if proc != nil {
-		if processIsAlive(proc) {
-			alive = true
-		}
-	}
-
-	state := "stopped"
-	if alive {
-		state = "unresponsive"
-	}
-
-	orchestrator.ClearBeat(homeDir)
-	orchestrator.ClearIdentity(homeDir)
 	return Response[WatchStop]{
 		SchemaVersion: SchemaVersion,
 		Kind:          "watch.stop",
-		Status:        "success",
+		Status:        status,
 		Data: WatchStop{
 			WatchID: watchID,
-			PID:     pid,
-			State:   state,
+			PID:     stop.PID,
+			State:   string(stop.State),
 		},
+		Help: help,
 	}
 }
 

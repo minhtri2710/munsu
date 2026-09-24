@@ -11,7 +11,7 @@ import (
 // isProcessAlive checks whether a process with the given PID is running.
 //
 // Windows has no `kill`, so the unix half's signal probe cannot be used. This
-// follows the pattern already in the tree at internal/cli/watch_process_windows.go:
+// follows the OpenProcess/GetExitCodeProcess pattern of orchestrator.isProcessAlive:
 // open a handle, ask for the exit code, and treat STILL_ACTIVE (259) as alive.
 //
 // The answer is fail-closed on the same terms as the unix half (#580). Both

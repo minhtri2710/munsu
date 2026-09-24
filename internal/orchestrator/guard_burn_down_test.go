@@ -85,18 +85,18 @@ func TestWatcherRunPropagatesLiveLeaseConflict(t *testing.T) {
 	t.Logf("run live-lease conflict: %v", err)
 }
 
-func TestGuardBurnDownStopRunningWatcherRefusesUnownedPID(t *testing.T) {
+func TestGuardBurnDownStopWatcherRefusesUnownedPID(t *testing.T) {
 	home := t.TempDir()
 	WriteBeat(home)
 	if err := os.WriteFile(mhome.WriterIdentityPath(home, "watcher"), []byte("schema_version=1\nkind=watcher\npid=9999999\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	err := stopRunningWatcher(home)
-	if err == nil || !strings.Contains(err.Error(), "ownership could not be verified") {
-		t.Fatalf("stopRunningWatcher error = %v, want ownership refusal", err)
+	stop, err := StopWatcher(home)
+	if err == nil || !strings.Contains(err.Error(), "ownership could not be verified") || stop.State != StopIdentityMismatch {
+		t.Fatalf("StopWatcher = %+v, %v, want ownership refusal", stop, err)
 	}
-	t.Logf("stopRunningWatcher refusal: %v", err)
+	t.Logf("StopWatcher refusal: %v", err)
 }
 
 func TestGuardBurnDownRecoverRejectsNonAcceptedAck(t *testing.T) {
