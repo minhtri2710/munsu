@@ -675,10 +675,10 @@ func parseGitSafetyCommandForTest(checkPath, command string, mode backslashMode)
 
 // TestSafetyCheckGitVerdictsOnSharedTokenizer pins the hook verdict for every
 // command whose reading moved when the git guard switched from its own
-// dequote-then-split reader to tokenizeSegments. old is the verdict at
-// 8765440e; want is the verdict now. The rows that did not move pin the
-// substitution refusal, which still scans the raw command, heredoc bodies
-// included.
+// dequote-then-split reader to tokenizeSegments and began reading every
+// string payload as shell. old is the verdict at 8765440e; want is the verdict
+// now. The rows that did not move pin the substitution refusal, which still
+// scans the raw command, heredoc bodies included, and the payload reading.
 func TestSafetyCheckGitVerdictsOnSharedTokenizer(t *testing.T) {
 	primary := initGitRepoForSafety(t, t.TempDir())
 	worktree := filepath.Join(t.TempDir(), "wt")
@@ -705,10 +705,11 @@ func TestSafetyCheckGitVerdictsOnSharedTokenizer(t *testing.T) {
 		// cd resolves the whole quoted operand, so a bound push from a
 		// subdirectory with a space in its name is no longer refused.
 		{`cd "my dir" && git push origin mu/ship-vd`, refuse, allow},
-		// Quoted operators and heredoc bodies are data, not commands.
-		{`echo "x && git push --force"`, refuse, allow},
-		{"cat <<EOF\ngit push --force\nEOF", refuse, allow},
-		{"git commit -F- <<'EOF'\nmsg; git reset --hard\nEOF", refuse, allow},
+		// Every string payload is read as shell, whatever consumes it: a
+		// quoted or escaped word, a heredoc body, a here-string.
+		{`echo "x && git push --force"`, refuse, refuse},
+		{"cat <<EOF\ngit push --force\nEOF", refuse, refuse},
+		{"git commit -F- <<'EOF'\nmsg; git reset --hard\nEOF", refuse, refuse},
 		// Substitution is refused on the raw command, heredoc bodies included.
 		{"git $(printf add) file.txt", refuse, refuse},
 		{"git `printf add` file.txt", refuse, refuse},
@@ -725,9 +726,7 @@ func TestSafetyCheckGitVerdictsOnSharedTokenizer(t *testing.T) {
 		{`git reset --hard`, refuse, refuse},
 		{`git push --force`, refuse, refuse},
 		{`/usr/bin/git push --force`, refuse, refuse},
-		// Script text a shell interpreter or eval runs is a command, whether it
-		// arrives as a -c argument, eval's arguments, or a heredoc or
-		// here-string on the interpreter's stdin.
+		// Script text a shell runs is a payload like any other.
 		{"sh <<EOF\ngit push --force\nEOF", refuse, refuse},
 		{"bash <<'EOF'\ngit reset --hard\nEOF", refuse, refuse},
 		{"sh <<EOF\ngit reset --hard\nEOF", refuse, refuse},
@@ -743,31 +742,44 @@ func TestSafetyCheckGitVerdictsOnSharedTokenizer(t *testing.T) {
 		{`/bin/bash -xc "git push --force"`, refuse, refuse},
 		{`FOO=1 dash -c "git push --force"`, refuse, refuse},
 		{"echo ok; <<EOF ksh\ngit push --force\nEOF", refuse, refuse},
-		// An interpreter is found behind any wrapper; data naming one is read
-		// as one, which fails closed.
 		{`sudo bash -c "git push --force"`, refuse, refuse},
 		{`nohup sh -c 'git reset --hard'`, refuse, refuse},
 		{`timeout 5 bash -c "git push --force"`, refuse, refuse},
 		{`env bash -c "git reset --hard"`, refuse, refuse},
 		{`echo bash -c "git push --force"`, refuse, refuse},
-		// An interpreter reading its script from a pipe cannot be checked.
 		{`echo "git push --force" | sh`, refuse, refuse},
 		{"cat <<EOF | sh\ngit push --force\nEOF", refuse, refuse},
-		{`echo "git status" | bash -s`, allow, refuse},
 		{"echo \"git push --force\" | sudo sh", refuse, refuse},
 		{"echo \"git push --force\" | env sh", refuse, refuse},
-		// A pipeline that passes an interpreter name as data is not pipe-fed.
+		// No list of interpreters or script runners decides it.
+		{`echo "git push --force" | sh /dev/stdin`, refuse, refuse},
+		{`echo "git push --force" | bash /dev/fd/0`, refuse, refuse},
+		{". /dev/stdin <<EOF\ngit push --force\nEOF", refuse, refuse},
+		{`source /dev/stdin <<< "git push --force"`, refuse, refuse},
+		{`echo "git push --force" | source /dev/stdin`, refuse, refuse},
+		{`echo "git push --force" | . /dev/stdin`, refuse, refuse},
+		{`fish -c "git push --force"`, refuse, refuse},
+		{`echo "git push --force" | fish`, refuse, refuse},
+		{`echo "git push --force" | busybox sh`, refuse, refuse},
+		{`env -S "sh -c git\ push" x`, refuse, refuse},
+		{`printf 'git push --force' > x.sh && sh x.sh`, refuse, refuse},
+		// Payloads that read as no git mutation stay allowed.
 		{`ps aux | grep bash`, allow, allow},
 		{`ps aux | grep -c sh`, allow, allow},
-		{`git status || sh script.sh`, allow, allow},
-		{`cat script.sh | sh script.sh`, allow, allow},
-		// Readable script text is evaluated, not refused wholesale.
+		{`cd "my dir" && git status`, allow, allow},
 		{`bash -c "git status"`, allow, allow},
 		{"sh <<EOF\ngit status\nEOF", allow, allow},
 		{`eval eval git status`, allow, allow},
-		// Script text the guard cannot read is refused.
+		{"git commit -F- <<'EOF'\ndon't reset\nEOF", allow, allow},
+		// A script that never appears as a literal is not read (residual).
+		{`bash -c "$CMD"`, allow, allow},
+		{`xargs -I{} sh -c {}`, allow, allow},
+		// An unclosed quote's tail is one word, and that word is read too.
+		{"echo \"it's\ngit push --force", allow, refuse},
+		// A payload the guard cannot recover is refused.
 		{"bash <<EOF\ngit status", allow, refuse},
-		{`eval eval eval eval eval git status`, allow, refuse},
+		{"echo " + strings.Repeat(`\`, 32) + "x", allow, refuse},
+		{"echo " + strings.Repeat(`\`, 16) + "x", allow, allow},
 		// Commands that hand git its arguments stay refused.
 		{`echo --force | xargs git push`, refuse, refuse},
 		{`xargs git push`, refuse, refuse},

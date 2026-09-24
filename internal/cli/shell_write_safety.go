@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"unicode/utf8"
 )
 
 // shellToken is one word of a command segment, or the redirection operator
@@ -424,17 +423,13 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 type heredocSpec struct {
 	delimiter string
 	stripTabs bool
-	at        int
 }
 
-// stdinFeed is text a stripped `<<` body or `<<<` word feeds to the command
-// at rune offset at of the stripped command line. word is set for a here-string,
-// whose text is still shell-quoted. An unterminated heredoc runs to the end of
-// the payload and is reported as not terminated.
+// stdinFeed is text a stripped `<<` body or `<<<` word feeds to its command's
+// stdin. A here-string's text is still shell-quoted. An unterminated heredoc
+// runs to the end of the payload and is reported as not terminated.
 type stdinFeed struct {
-	at         int
 	text       string
-	word       bool
 	terminated bool
 }
 
@@ -454,9 +449,8 @@ func stripHeredocBodies(command string) string {
 }
 
 // splitHeredocBodies is stripHeredocBodies that also returns what it removed
-// from stdin: each heredoc body and here-string word, with the offset in the
-// stripped line where its operator stood. The git guard reads these when the
-// command receiving them is a shell interpreter.
+// from stdin: each heredoc body and here-string word. The git guard reads
+// each one as shell.
 func splitHeredocBodies(command string) (string, []stdinFeed) {
 	runes := []rune(command)
 	var feeds []stdinFeed
@@ -519,18 +513,16 @@ func splitHeredocBodies(command string) (string, []stdinFeed) {
 			}
 			if run-i == 2 {
 				if spec, next, ok := readHeredocRedirect(runes, i); ok {
-					spec.at = utf8.RuneCountInString(out.String())
 					pending = append(pending, spec)
 					out.WriteRune(' ')
 					i = next - 1
 					continue
 				}
 			}
-			at := utf8.RuneCountInString(out.String())
 			out.WriteRune(' ')
 			end := skipRedirectSource(runes, run)
 			if run-i == 3 {
-				feeds = append(feeds, stdinFeed{at: at, text: string(runes[run:end]), word: true, terminated: true})
+				feeds = append(feeds, stdinFeed{text: string(runes[run:end]), terminated: true})
 			}
 			i = end - 1
 		case '\n':
@@ -546,8 +538,8 @@ func splitHeredocBodies(command string) (string, []stdinFeed) {
 			out.WriteRune(r)
 		}
 	}
-	for _, spec := range pending {
-		feeds = append(feeds, stdinFeed{at: spec.at})
+	for range pending {
+		feeds = append(feeds, stdinFeed{})
 	}
 	return out.String(), feeds
 }
@@ -678,7 +670,7 @@ func skipHeredocBodies(runes []rune, start int, pending []heredocSpec) (int, []s
 	i := start
 	bodies := make([]stdinFeed, 0, len(pending))
 	for _, spec := range pending {
-		body := stdinFeed{at: spec.at}
+		body := stdinFeed{}
 		var lines []string
 		for i < len(runes) {
 			lineEnd := i
