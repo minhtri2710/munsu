@@ -98,11 +98,34 @@ jobs:
       # (captain_seed_excludes_test.go, captain_seed_worktree_test.go) are
       # platform code paths: a fake `git.bat` resolved through PATHEXT, a
       # timeout kill, and git's own path and lock-file handling. Only a windows
-      # run exercises them. The anchored pattern names every test in those
-      # three files and nothing else, so a new test there stays out of this
-      # gate until someone adds it on purpose.
+      # run exercises them. The names below are the gate's single source: they
+      # build the anchored -run pattern, and `go test -list` with that same
+      # pattern must return exactly these names before anything runs. A renamed
+      # or deleted test fails here instead of silently matching nothing, and a
+      # new test in those files stays out of the gate until it is added below.
+      # `shell: bash` (Git Bash on windows-latest) rather than the pwsh default
+      # so the guard is the same script that can be exercised on linux/darwin.
       - name: Windows clone-timeout and seed-excludes tests
-        run: go test -count=1 ./internal/fleet/ -run '^(TestAddCloneTimesOutAndCleansUp|TestWriteWorktreeExcludes(ScopedToCaptainWorktree|ReseedReplacesIntegrationPaths|RefusesReinterpretedCommonConfig|FailsClosedWhenWorktreeConfigCannotBeEnabled|FailsWhenWorktreeConfigCannotBeWritten|FailsWhenGitDirCannotBeResolved|FailsWhenExcludesFileCannotBeWritten))$' -v
+        shell: bash
+        run: |
+          set -euo pipefail
+          want='TestAddCloneTimesOutAndCleansUp
+          TestWriteWorktreeExcludesScopedToCaptainWorktree
+          TestWriteWorktreeExcludesReseedReplacesIntegrationPaths
+          TestWriteWorktreeExcludesRefusesReinterpretedCommonConfig
+          TestWriteWorktreeExcludesFailsClosedWhenWorktreeConfigCannotBeEnabled
+          TestWriteWorktreeExcludesFailsWhenWorktreeConfigCannotBeWritten
+          TestWriteWorktreeExcludesFailsWhenGitDirCannotBeResolved
+          TestWriteWorktreeExcludesFailsWhenExcludesFileCannotBeWritten'
+          want="$(printf '%s\n' "$want" | sed 's/^[[:space:]]*//' | sort)"
+          re="^($(printf '%s\n' "$want" | paste -sd '|' -))\$"
+          got="$(go test -list "$re" ./internal/fleet/ | tr -d '\r' | grep '^Test' | sort || true)"
+          if [ "$got" != "$want" ]; then
+            echo "::error::-run pattern does not select exactly the gated tests (renamed or deleted?)"
+            diff <(printf '%s\n' "$want") <(printf '%s\n' "$got") || true
+            exit 1
+          fi
+          go test -count=1 ./internal/fleet/ -run "$re" -v
 
   race:
     name: Race detector
@@ -534,6 +557,14 @@ jobs:
       # updates or refuses. Hermetic: the fake answers every call.
       - name: Auto-update rules must agree with their fixtures
         run: .github/scripts/update-auto-merge-prs.sh selftest
+      # Every `uses:` in every workflow must be a full 40-hex commit SHA or a
+      # ./ local action: a tag or branch ref can be moved by the action's owner.
+      # The selftest pins each accepted and refused form; `check` scans the
+      # workflows `git ls-files` finds. Hermetic, <1s.
+      - name: Action pin rules must agree with their fixtures
+        run: .github/scripts/action-pins.sh selftest
+      - name: Workflow actions must be pinned to a commit SHA
+        run: .github/scripts/action-pins.sh check
       # Go tools under .github/scripts are outside the root module graph: the
       # go tool skips dot-directories, and `citations`, `guardsites` and
       # `testnames` are their own modules, so a root `./...` reaches none of
