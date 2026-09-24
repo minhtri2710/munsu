@@ -532,3 +532,57 @@ func TestDenyListedLabelWithMatchingTag(t *testing.T) {
 		t.Error("denyListedLabel('some-other-label') = true")
 	}
 }
+
+// TestRunPrune_RefusesWhenTaskMetaScanFails pins fail-closed prune: when the
+// live-task scan cannot read state/ or a task meta file, nothing is closed.
+func TestRunPrune_RefusesWhenTaskMetaScanFails(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		unreadable func(stateDir string) string
+	}{
+		{"state dir", func(stateDir string) string { return stateDir }},
+		{"meta file", func(stateDir string) string { return filepath.Join(stateDir, "task-1.meta") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			homeDir := filepath.Join(tmp, "home")
+			stateDir := filepath.Join(homeDir, "state")
+			if err := os.MkdirAll(stateDir, 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(stateDir, "task-1.meta"), []byte("herdr_workspace_id=wLive\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			wsJSON := `[{"label":"` + Hometag(homeDir) + `","workspace_id":"wLive","tab_count":0,"agent_status":"none"}]`
+			testutil.PrependPath(t, writeFakeHerdrPrune(t, tmp, wsJSON))
+			testutil.MakePathUnreadable(t, tc.unreadable(stateDir))
+
+			result, err := RunPrune(PruneOptions{Session: "test-session", Apply: true, HomeDir: homeDir})
+			if err == nil || !strings.Contains(err.Error(), "refusing to prune") {
+				t.Fatalf("RunPrune = (%+v, %v), want refusing-to-prune error", result, err)
+			}
+			if _, statErr := os.Stat(filepath.Join(tmp, "closed-workspaces")); statErr == nil {
+				t.Fatal("workspace close was attempted despite the failed task meta scan")
+			}
+		})
+	}
+}
+
+// TestRunPrune_NoStateDirMeansNoLiveTasks pins that absence is not an error.
+func TestRunPrune_NoStateDirMeansNoLiveTasks(t *testing.T) {
+	tmp := t.TempDir()
+	homeDir := filepath.Join(tmp, "home")
+	if err := os.MkdirAll(homeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	wsJSON := `[{"label":"` + Hometag(homeDir) + `","workspace_id":"wIdle","tab_count":0,"agent_status":"none"}]`
+	testutil.PrependPath(t, writeFakeHerdrPrune(t, tmp, wsJSON))
+
+	result, err := RunPrune(PruneOptions{Session: "test-session", Apply: true, HomeDir: homeDir})
+	if err != nil {
+		t.Fatalf("RunPrune with no state dir: %v", err)
+	}
+	if result.Closed != 1 {
+		t.Fatalf("Closed = %d, want 1", result.Closed)
+	}
+}

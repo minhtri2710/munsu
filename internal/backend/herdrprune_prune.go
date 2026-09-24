@@ -112,7 +112,7 @@ func liveWorkspaceIDsFromTaskMeta(homeDir string) (map[string]bool, error) {
 		}
 		meta, err := home.ReadMetaFile(filepath.Join(stateDir, e.Name()))
 		if err != nil {
-			continue // skip unreadable meta
+			return nil, fmt.Errorf("reading task meta %s: %w", e.Name(), err)
 		}
 		if wsID := meta["herdr_workspace_id"]; wsID != "" {
 			ids[wsID] = true
@@ -153,7 +153,7 @@ func RunPrune(opts PruneOptions) (*PruneResult, error) {
 	// Step 3: Scan live task meta for referenced workspace IDs.
 	liveWSIDs, err := liveWorkspaceIDsFromTaskMeta(opts.HomeDir)
 	if err != nil {
-		liveWSIDs = nil // best-effort: treat as empty
+		return nil, fmt.Errorf("refusing to prune: scanning live task meta: %w", err)
 	}
 
 	result := &PruneResult{
