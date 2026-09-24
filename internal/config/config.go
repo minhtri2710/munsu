@@ -5,8 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // KnownKeys is the authoritative list of well-known config keys.
@@ -76,8 +74,35 @@ func Set(homeDir, key, value string) error {
 		return fmt.Errorf("securing config directory: %w", err)
 	}
 
-	if err := home.AtomicWrite(p, []byte(value+"\n"), 0600); err != nil {
+	if err := atomicWrite(p, []byte(value+"\n")); err != nil {
 		return fmt.Errorf("installing config file %s: %w", p, err)
 	}
 	return nil
+}
+
+// atomicWrite installs data at path with mode 0600 through a synced temp file
+// in the same directory, so readers never observe a partial file.
+func atomicWrite(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".config-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if err := tmp.Chmod(0600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }

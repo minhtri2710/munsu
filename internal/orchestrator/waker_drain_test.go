@@ -26,7 +26,7 @@ func writeBeatFile(t *testing.T, homeDir string, ts int64) {
 // writeWakeQueue writes tab-separated wake queue entries.
 func writeWakeQueue(t *testing.T, homeDir string, lines []string) {
 	t.Helper()
-	path := QueuePath(homeDir)
+	path := mhome.WakeQueuePath(homeDir)
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestEvaluateGuard_AgedWakeProducesAgedWakeCondition(t *testing.T) {
 	// Enqueue a material wake with an old timestamp by manipulating the queue file.
 	// Direct EnqueueWake adds current time, so write a TSV line manually.
 	oldEpoch := time.Now().Add(-MaterialWakeAgeThreshold - time.Minute).Unix()
-	queuePath := QueuePath(home)
+	queuePath := mhome.WakeQueuePath(home)
 	os.MkdirAll(filepath.Dir(queuePath), 0755)
 	// Realistic signal-wake payload: the DeliverWake producer emits
 	// "<taskID>: <state>: <msg> [event=N]", so the material marker is embedded
@@ -171,7 +171,7 @@ func TestHasAgedMaterialWake_Threshold(t *testing.T) {
 
 	// Old material wake
 	oldEpoch := time.Now().Add(-MaterialWakeAgeThreshold - time.Minute).Unix()
-	queuePath := QueuePath(home)
+	queuePath := mhome.WakeQueuePath(home)
 	os.MkdirAll(filepath.Dir(queuePath), 0755)
 	line := fmt.Sprintf("%d	%d\tsignal\ttask-old\ttask-old: done: very old [event=1]\n", oldEpoch, 1)
 	os.WriteFile(queuePath, []byte(line), 0644)
@@ -193,7 +193,7 @@ func TestHasAgedMaterialWake_Fresh(t *testing.T) {
 func TestHasAgedMaterialWake_NonMaterialWakes(t *testing.T) {
 	home := t.TempDir()
 	oldEpoch := time.Now().Add(-MaterialWakeAgeThreshold - time.Minute).Unix()
-	queuePath := QueuePath(home)
+	queuePath := mhome.WakeQueuePath(home)
 	os.MkdirAll(filepath.Dir(queuePath), 0755)
 	// Routine wake, not material.
 	line := fmt.Sprintf("%d	%d\tstale\ttask-routine\tworking: in progress\n", oldEpoch, 1)

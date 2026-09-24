@@ -19,7 +19,7 @@ func TestCountQueuedWakes_UsesLifecycleQueuePath(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := countQueuedWakes(home); got != 1 {
-		t.Fatalf("countQueuedWakes = %d, want 1 via orchestrator.QueuePath", got)
+		t.Fatalf("countQueuedWakes = %d, want 1 via mhome.WakeQueuePath", got)
 	}
 }
 
@@ -30,7 +30,7 @@ func TestCountQueuedWakes_CountsDecodedRecordsOnly(t *testing.T) {
 	if err := orchestrator.EnqueueWake(home, orchestrator.ProcessEventWakeKind, "ev-1", "{}"); err != nil {
 		t.Fatal(err)
 	}
-	f, err := os.OpenFile(orchestrator.QueuePath(home), os.O_APPEND|os.O_WRONLY, 0)
+	f, err := os.OpenFile(mhome.WakeQueuePath(home), os.O_APPEND|os.O_WRONLY, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

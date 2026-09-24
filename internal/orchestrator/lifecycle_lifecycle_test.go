@@ -30,9 +30,6 @@ func TestLockPathSingleSourceOfTruth(t *testing.T) {
 	if got := mhome.WatcherBeatPath(home); got != filepath.Join(home, "state/.last-watcher-beat") {
 		t.Fatalf("BeatPath = %q", got)
 	}
-	if got := QueuePath(home); got != filepath.Join(home, "state/.wake-queue") {
-		t.Fatalf("QueuePath = %q", got)
-	}
 }
 
 // TestLockExclusivity proves the flock exclusion mechanism: a second acquire

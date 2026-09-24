@@ -14,8 +14,7 @@ import (
 type WakeRecord = home.WakeRecord
 type BeatStatus = home.WatcherBeatStatus
 
-func StaleThreshold() time.Duration   { return home.WatcherStaleThreshold() }
-func QueuePath(homeDir string) string { return home.WakeQueuePath(homeDir) }
+func StaleThreshold() time.Duration { return home.WatcherStaleThreshold() }
 func AcquireSession(homeDir string) (bool, error) {
 	return home.AcquireSessionLock(homeDir)
 }
