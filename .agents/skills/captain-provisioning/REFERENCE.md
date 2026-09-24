@@ -97,16 +97,24 @@ munsu captain launch /var/munsu/captains/my-monitor
 
 ## Retire
 
-`munsu captain retire <captain-home> [--force]` tears down a running captain: kills
-the process, clears parent meta, and unregisters from `data/captains.md`. Home
-directory is retained.
+`munsu captain retire <captain-home> [--force]` tears down a running captain: tears
+down its session endpoint, clears parent meta, and unregisters from
+`data/captains.md`. Home directory is retained.
 
 ### Safety checks
 
+`fleet.Retire` (`internal/fleet/captain_captain.go`) runs these in order:
+
 1. Validates the captain home exists and has a valid provenance marker.
-2. Reads PID from `<captain-home>/state/.lock` file.
-3. If PID is valid (> 0), calls `os.FindProcess(pid)` then `proc.Kill()`.
-4. If no lock file or PID is 0, skips process kill.
+2. Without `--force`, refuses while the captain home has in-flight soldiers
+   (`inFlightSoldierIDs`: `state/*.meta` with kind ship or scout).
+3. Reads the parent task meta for `captain:<id>` and refuses unless kind is
+   `captain`, `sm_id` and `home` match the marker and canonical home, and a
+   window is recorded; then tears the endpoint down through the session backend
+   (`RetireEndpoint.Retire`). No PID is read: `<captain-home>/state/.lock` is
+   not used for captain liveness (`fleet.CaptainStatus`), and the AFK lock lives
+   at `state/.afk.lock`.
+4. If no parent meta exists (never launched), skips the endpoint teardown.
 5. Clears parent meta and unregisters from `data/captains.md`.
 
 ### Preflight requirements

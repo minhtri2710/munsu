@@ -181,7 +181,10 @@ func SummarizeCaptainHome(homeDir string) HomeSummary {
 
 	entries, err := home.ListMeta(homeDir)
 	if err != nil {
-		entries = nil
+		sum.Valid = false
+		sum.Reason = "task meta unreadable: " + err.Error()
+		sum.State = "unknown"
+		return sum
 	}
 	sum.Counts.Endpoints = len(entries)
 	metaByID := map[string]home.MetaEntry{}

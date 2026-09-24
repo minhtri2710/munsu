@@ -8,7 +8,7 @@ import (
 )
 
 func publishDaemonIdentity(homeDir string) (home.WriterIdentity, error) {
-	executable, startToken, err := processIdentity(os.Getpid())
+	executable, startToken, err := home.ProcessIdentity(os.Getpid())
 	if err != nil {
 		return home.WriterIdentity{}, fmt.Errorf("reading afk process identity: %w", err)
 	}
@@ -37,7 +37,7 @@ func clearDaemonIdentity(homeDir string, identity home.WriterIdentity) {
 //
 // It is not the AFK lock's second field. That field is time.Now() at the moment
 // home.AcquireAFKLock wrote the file, not a process start time, and it is
-// formatted RFC3339 while processIdentity returns an opaque per-GOOS token
+// formatted RFC3339 while home.ProcessIdentity returns an opaque per-GOOS token
 // (jiffies on linux, sec:usec on darwin, a FILETIME on windows). Comparing the
 // two is a category error on every platform, not only on windows -- the lock
 // timestamp can say a lock was taken at 10:00 while saying nothing about which
@@ -56,7 +56,7 @@ func daemonIdentityForPID(homeDir string, pid int) (home.WriterIdentity, error) 
 	if identity.PID != pid {
 		return home.WriterIdentity{}, fmt.Errorf("afk writer identity names PID %d, not %d", identity.PID, pid)
 	}
-	executable, startToken, err := processIdentity(pid)
+	executable, startToken, err := home.ProcessIdentity(pid)
 	if err != nil {
 		return home.WriterIdentity{}, fmt.Errorf("reading process identity of PID %d: %w", pid, err)
 	}

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // watcherChildCaseEnv selects which failure the re-exec'd harness body builds,
@@ -145,7 +147,7 @@ func TestWatcherChildReapedWhenTestFails(t *testing.T) {
 			if !ok {
 				t.Fatalf("harness recorded no watcher child PID at %s, so this case proves nothing:\n%s", pidPath, out)
 			}
-			if isProcessAlive(pid) {
+			if home.IsProcessAlive(pid) {
 				_ = killWatcherChild(pid)
 				t.Fatalf("watcher child PID %d outlived the failing harness run:\n%s", pid, out)
 			}

@@ -1,6 +1,6 @@
 //go:build windows
 
-package orchestrator
+package home
 
 import (
 	"fmt"
@@ -9,17 +9,18 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// processIdentity reports the executable path and an opaque start token for pid.
+// ProcessIdentity reports the executable path and an opaque start token for pid.
 //
 // The token exists to separate "this PID" from "this process": PIDs are reused,
-// and both callers treat a match as permission to act on the process -- publish
-// an identity artifact (publishDaemonIdentity) or terminate it (Return). A blind
+// and orchestrator's callers treat a match as permission to act on the process
+// -- publish an identity artifact (publishDaemonIdentity) or terminate it
+// (Return). A blind
 // half here means the daemon cannot start at all on windows, which is how this
 // half was found: an unconditional error made AcquireLock's only production call
 // site roll back its own lock, so the home-owned AFK lock file never named a
 // live PID and Return's stop branch was unreachable.
 //
-// This follows the pattern of isProcessAlive in process_alive_windows.go: open
+// This follows the pattern of IsProcessAlive in process_alive_windows.go: open
 // a limited-information handle and ask the kernel. QueryFullProcessImageName
 // gives the path the unix halves read from /proc/<pid>/exe (linux) or
 // kern.procargs2 (darwin);
@@ -34,7 +35,7 @@ import (
 // dispatched. Compile is not execution -- whether these two syscalls return
 // what this comment claims for a real windows process stays unproven in this
 // repository.
-func processIdentity(pid int) (string, string, error) {
+func ProcessIdentity(pid int) (string, string, error) {
 	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
 	if err != nil {
 		return "", "", fmt.Errorf("opening process %d: %w", pid, err)

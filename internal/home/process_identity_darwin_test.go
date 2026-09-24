@@ -1,6 +1,6 @@
 //go:build darwin
 
-package orchestrator
+package home
 
 import "testing"
 

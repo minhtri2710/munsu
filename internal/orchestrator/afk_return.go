@@ -128,8 +128,8 @@ func Return(homeDir string) (*ReturnReport, error) {
 		return report, fmt.Errorf("reading AFK daemon lock: %w", err)
 	}
 	if daemonPID > 0 {
-		if isProcessAlive(daemonPID) {
-			// Exit A -- PID is alive but unverifiable. isProcessAlive answers
+		if home.IsProcessAlive(daemonPID) {
+			// Exit A -- PID is alive but unverifiable. home.IsProcessAlive answers
 			// "some process holds this PID", not "our daemon does", and PIDs are
 			// reused. Terminating on that answer alone kills whatever the OS
 			// handed the number to, and on windows stopProcess is an uncatchable
@@ -249,7 +249,7 @@ func Return(homeDir string) (*ReturnReport, error) {
 // It replaces a flat 300ms sleep followed by a single check. That constant had
 // no measurement behind it on any platform, and on windows it is measured
 // against the wrong thing entirely: stopProcess is TerminateProcess, which
-// returns as soon as the kernel accepts the request, and isProcessAlive reads
+// returns as soon as the kernel accepts the request, and home.IsProcessAlive reads
 // GetExitCodeProcess == STILL_ACTIVE, which still holds while the process is
 // being torn down. A fixed sleep either loses to that teardown or pads every
 // fast exit.
@@ -263,7 +263,7 @@ func Return(homeDir string) (*ReturnReport, error) {
 func waitForDaemonExit(pid int) bool {
 	deadline := time.Now().Add(afkStopWait)
 	for {
-		if !isProcessAlive(pid) {
+		if !home.IsProcessAlive(pid) {
 			return true
 		}
 		if time.Now().After(deadline) {

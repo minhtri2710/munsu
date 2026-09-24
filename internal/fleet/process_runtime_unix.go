@@ -6,6 +6,8 @@ import (
 	"errors"
 	"os"
 	"syscall"
+
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 type inspectedProcess struct {
@@ -17,7 +19,7 @@ func isProcessMissing(err error) bool {
 	return errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH)
 }
 func inspectProcess(pid int) (inspectedProcess, error) {
-	executable, start, err := platformProcessIdentity(pid)
+	executable, start, err := home.ProcessIdentity(pid)
 	if err != nil {
 		return inspectedProcess{}, err
 	}

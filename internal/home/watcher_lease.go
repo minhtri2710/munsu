@@ -46,7 +46,7 @@ func ClaimWatcherLease(homeDir string, pid int) (bool, error) {
 			existing.UpdatedAt = now.UnixNano()
 			return writeLeaseFile(path, existing)
 		}
-		if isProcessAlive(existing.PID) {
+		if IsProcessAlive(existing.PID) {
 			return false, fmt.Errorf("watcher lease held by pid %d", existing.PID)
 		}
 		// The probe definitively reported that the PID is absent — reclaim the lease.
@@ -103,7 +103,7 @@ func ReadWatcherLease(homeDir string) (*WatcherLease, error) {
 //   - The watcher beat is fresh (not stale)
 //
 // The second condition reads the permissive direction of the #580 semantics,
-// and this is the only caller where it does: isProcessAlive answers false only
+// and this is the only caller where it does: IsProcessAlive answers false only
 // for a positively observed absence, so a holder the kernel will not classify
 // reads not-absent here, and CheckWatcherHealthForDispatch then permits a
 // dispatch that the older "unanswerable means dead" answer would have blocked.
@@ -123,7 +123,7 @@ func IsWatcherLeaseHealthy(homeDir string) bool {
 	if err != nil || lease == nil {
 		return false
 	}
-	if !isProcessAlive(lease.PID) {
+	if !IsProcessAlive(lease.PID) {
 		return false
 	}
 	status := ReadWatcherBeatStatus(homeDir, time.Now())

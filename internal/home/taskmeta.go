@@ -473,8 +473,8 @@ type MetaEntry struct {
 // on the logical id. Stems that are not a key this home persisted are skipped.
 // It reads no meta contents, so it fails only on a directory-level error; a
 // caller that must not miss a task can therefore ReadMeta each id and decide
-// for itself whether an unreadable projection is fatal. ListMeta layers the
-// display-tolerant read on top of this.
+// for itself whether an unreadable projection is fatal. ListMeta layers a
+// read of every entry on top of this and fails on the first unreadable one.
 func ListMetaIDs(homeDir string) ([]string, error) {
 	sd := StateDir(homeDir)
 	if err := validateStatePath(homeDir, sd, false); err != nil {
@@ -523,7 +523,7 @@ func ListMeta(homeDir string) ([]MetaEntry, error) {
 	for _, id := range taskIDs {
 		meta, err := ReadMeta(homeDir, id)
 		if err != nil {
-			continue // skip unreadable meta
+			return nil, err
 		}
 
 		// Read last status line

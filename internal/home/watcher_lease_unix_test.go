@@ -18,15 +18,15 @@ import (
 // singleton watcher guard granting itself away.
 func TestProcessAliveAnswersWithoutPATH(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
-	if !isProcessAlive(os.Getpid()) {
+	if !IsProcessAlive(os.Getpid()) {
 		t.Error("the calling process reads as dead when PATH cannot resolve `kill`")
 	}
 	// Control: the probe still says dead when the kernel says no such process,
 	// so the assertion above is not satisfied by a probe that answers true for
-	// everything. A control that defined "not running" as !isProcessAlive
+	// everything. A control that defined "not running" as !IsProcessAlive
 	// would agree with any answer the function under test gave.
 	if pid, ok := unusedPID(); ok {
-		if isProcessAlive(pid) {
+		if IsProcessAlive(pid) {
 			t.Errorf("PID %d is not running but reads as alive", pid)
 		}
 	} else {
@@ -35,7 +35,7 @@ func TestProcessAliveAnswersWithoutPATH(t *testing.T) {
 }
 
 // unusedPID returns a PID the kernel reports as not running, and whether one
-// was found. It asks the kernel rather than isProcessAlive so that it can
+// was found. It asks the kernel rather than IsProcessAlive so that it can
 // discriminate against the function under test, and it probes a few high
 // candidates rather than scanning, because there is no PID a test is entitled
 // to assume is free.
@@ -61,7 +61,7 @@ func TestProcessAliveTreatsAnUnsignallablePIDAsAlive(t *testing.T) {
 	if err := syscall.Kill(pid, 0); err != syscall.EPERM {
 		t.Fatalf("EPERM proof did not run: PID %d no longer returns EPERM from raw syscall.Kill(pid, 0): %v", pid, err)
 	}
-	if !isProcessAlive(pid) {
+	if !IsProcessAlive(pid) {
 		t.Errorf("PID %d is unsignallable but reads as dead", pid)
 	}
 }
@@ -216,7 +216,7 @@ func TestClaimWatcherLeaseRefusesALeaseHeldByALiveProcess(t *testing.T) {
 	// Control: the same call against a lease left by a PID the kernel reports
 	// as not running reclaims it, so the refusal above came from liveness and
 	// not from the mere presence of a lease file. The PID comes from the
-	// kernel and not from isProcessAlive, so the control discriminates against
+	// kernel and not from IsProcessAlive, so the control discriminates against
 	// the predicate the refusal is built on. A miss fails the test here, after
 	// the refusal assertions above have run.
 	dead, ok := unusedPID()

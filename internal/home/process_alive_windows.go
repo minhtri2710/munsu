@@ -1,6 +1,6 @@
 //go:build windows
 
-package orchestrator
+package home
 
 import (
 	"errors"
@@ -8,14 +8,17 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// isProcessAlive checks whether a process with the given PID is running.
+// IsProcessAlive checks whether a process with the given PID is running.
 //
-// Windows has no `kill`, so the unix half's signal probe cannot be used.
+// Windows has no `kill`, so the unix half's signal probe cannot be used: open a
+// handle, ask for the exit code, and treat STILL_ACTIVE (259) as alive.
 //
-// The answer is fail-closed on the same terms as the unix half (#580). The
-// exit waits conclude the process is gone, so only a positively observed
-// absence may answer false.
-// OpenProcess reports
+// The answer is fail-closed on the same terms as the unix half (#580). Every
+// caller reads false as permission to act -- ClaimWatcherLease reclaims the
+// lease, which makes the lease layer stop being a singleton guard while still
+// reading like one, IsWatcherLeaseHealthy declares the lease unhealthy, and
+// orchestrator's exit waits conclude the process is gone -- so only a
+// positively observed absence may answer false. OpenProcess reports
 // ERROR_INVALID_PARAMETER for a PID that does not exist; every other failure,
 // ERROR_ACCESS_DENIED above all, means a process we could not inspect rather
 // than one that is gone, and so does a GetExitCodeProcess that fails on a
@@ -36,11 +39,11 @@ import (
 // returns for an unopenable live PID.
 //
 // process_alive_windows_test.go is not what holds the signature: this function
-// has production call sites that compile in the same lane (afk_return.go,
-// supervision_watcher.go), so a drifting signature turns the lane
-// red at those before it reaches any test file. Do not read that test as
-// coverage for the behaviour above.
-func isProcessAlive(pid int) bool {
+// has production call sites that compile in the same lane (watcher_lease.go,
+// orchestrator's afk_return.go and supervision_watcher.go), so a drifting
+// signature turns the lane red there before it reaches any test file. Do not
+// read that test as coverage for the behaviour above.
+func IsProcessAlive(pid int) bool {
 	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
 	if err != nil {
 		return !errors.Is(err, windows.ERROR_INVALID_PARAMETER)

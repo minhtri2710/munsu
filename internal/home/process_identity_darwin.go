@@ -1,6 +1,6 @@
 //go:build darwin
 
-package orchestrator
+package home
 
 import (
 	"bytes"
@@ -11,7 +11,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func processIdentity(pid int) (string, string, error) {
+func ProcessIdentity(pid int) (string, string, error) {
 	raw, err := unix.SysctlRaw("kern.procargs2", pid)
 	if err != nil {
 		return "", "", err

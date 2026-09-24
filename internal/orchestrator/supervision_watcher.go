@@ -435,12 +435,12 @@ func StopWatcher(homeDir string) (WatcherStop, error) {
 func waitForWatcherExit(pid int) bool {
 	deadline := time.Now().Add(watcherStopWait)
 	for time.Now().Before(deadline) {
-		if !isProcessAlive(pid) {
+		if !home.IsProcessAlive(pid) {
 			return true
 		}
 		time.Sleep(watcherStopPoll)
 	}
-	return !isProcessAlive(pid)
+	return !home.IsProcessAlive(pid)
 }
 
 var (

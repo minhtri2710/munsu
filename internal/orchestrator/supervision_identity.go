@@ -101,7 +101,7 @@ func NewIdentity(homeDir string) WatcherIdentity {
 	}
 	info, _ := debug.ReadBuildInfo()
 	cs := BuildCommit(info)
-	executable, processStart, err := processIdentity(os.Getpid())
+	executable, processStart, err := home.ProcessIdentity(os.Getpid())
 	if err != nil {
 		executable = "unknown"
 		processStart = "unknown"
@@ -178,7 +178,7 @@ func ValidatePIDOwnership(homeDir string, pid int) bool {
 	if id.Executable == "" || id.Executable == "unknown" || id.ProcessStart == "" || id.ProcessStart == "unknown" {
 		return false
 	}
-	executable, processStart, err := processIdentity(pid)
+	executable, processStart, err := home.ProcessIdentity(pid)
 	if err != nil {
 		return false
 	}

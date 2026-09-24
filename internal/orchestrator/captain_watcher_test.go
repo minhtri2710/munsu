@@ -115,7 +115,7 @@ func TestEnsureWatcher_StopsWhenNoChildWork(t *testing.T) {
 		t.Fatalf("watcher child never recorded a PID at %s", child.pidPath)
 	}
 	id := NewIdentity(tmp)
-	executable, processStart, err := processIdentity(pid)
+	executable, processStart, err := mhome.ProcessIdentity(pid)
 	if err != nil {
 		t.Fatalf("reading watcher child identity: %v", err)
 	}
@@ -133,10 +133,15 @@ func TestEnsureWatcher_StopsWhenNoChildWork(t *testing.T) {
 		t.Fatalf("precondition: watcher status = %s, want running", status)
 	}
 
+	// Reap concurrently: this test process is the child's parent, so an exited
+	// but unwaited child is a zombie that still reads alive, and EnsureWatcher
+	// would rightly report it as a watcher that did not exit.
+	exited := make(chan bool, 1)
+	go func() { exited <- awaitProcessExit(pid, child.waits.exit) }()
 	if err := EnsureWatcher(tmp, false); err != nil {
 		t.Fatalf("EnsureWatcher(false) with a running watcher: %v", err)
 	}
-	if !awaitProcessExit(pid, child.waits.exit) {
+	if !<-exited {
 		t.Fatalf("EnsureWatcher(false) did not stop watcher PID %d", pid)
 	}
 	child.state = reapCompleted

@@ -55,7 +55,7 @@ func publishWatcherChild(t *testing.T, home string) int {
 	pid := cmd.Process.Pid
 
 	id := NewIdentity(home)
-	executable, processStart, err := processIdentity(pid)
+	executable, processStart, err := mhome.ProcessIdentity(pid)
 	if err != nil {
 		t.Fatalf("reading child identity: %v", err)
 	}

@@ -1,6 +1,6 @@
 //go:build linux
 
-package orchestrator
+package home
 
 import (
 	"fmt"
@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-func processIdentity(pid int) (string, string, error) {
+func ProcessIdentity(pid int) (string, string, error) {
 	executable, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
 	if err != nil {
 		return "", "", err

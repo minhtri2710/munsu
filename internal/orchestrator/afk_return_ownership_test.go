@@ -74,7 +74,7 @@ func assertRefusedToStop(t *testing.T, homeDir string, err error) {
 
 // TestReturn_RefusesPIDWithNoPublishedIdentity covers the reused-PID case with
 // no evidence at all: the lock names a live PID, but nothing in the home claims
-// that PID is the AFK daemon. isProcessAlive says "something holds this PID",
+// that PID is the AFK daemon. home.IsProcessAlive says "something holds this PID",
 // which is not the question, so Return must refuse rather than terminate.
 func TestReturn_RefusesPIDWithNoPublishedIdentity(t *testing.T) {
 	tmp := seedLiveDaemonLock(t)
@@ -101,9 +101,9 @@ func TestReturn_RefusesPIDNamedByADifferentIdentity(t *testing.T) {
 func TestReturn_RefusesPIDWhoseIdentityDoesNotMatch(t *testing.T) {
 	tmp := seedLiveDaemonLock(t)
 
-	executable, _, err := processIdentity(os.Getpid())
+	executable, _, err := home.ProcessIdentity(os.Getpid())
 	if err != nil {
-		t.Skipf("processIdentity unsupported on %s: %v", runtime.GOOS, err)
+		t.Skipf("home.ProcessIdentity unsupported on %s: %v", runtime.GOOS, err)
 	}
 	publishAfkIdentity(t, tmp, os.Getpid(), executable, "not-the-token-the-kernel-reports")
 
@@ -132,7 +132,7 @@ func TestReturn_StopsAVerifiedDaemon(t *testing.T) {
 	pid := child.Process.Pid
 	// Reap concurrently. Production never hits this: Return runs in its own CLI
 	// process and is not the daemon's parent. Here it is the parent, so without
-	// a waiter the killed child stays a zombie -- which the unix isProcessAlive
+	// a waiter the killed child stays a zombie -- which the unix home.IsProcessAlive
 	// (a signal-0 kill) reports as alive, and waitForDaemonExit would correctly
 	// time out on a state that cannot occur at the real call site.
 	reaped := make(chan struct{})
@@ -145,9 +145,9 @@ func TestReturn_StopsAVerifiedDaemon(t *testing.T) {
 		<-reaped
 	}()
 
-	executable, startToken, err := processIdentity(pid)
+	executable, startToken, err := home.ProcessIdentity(pid)
 	if err != nil {
-		t.Skipf("processIdentity unsupported on %s: %v", runtime.GOOS, err)
+		t.Skipf("home.ProcessIdentity unsupported on %s: %v", runtime.GOOS, err)
 	}
 	publishAfkIdentity(t, tmp, pid, executable, startToken)
 	holdAFKLockFor(t, tmp, pid)
@@ -168,7 +168,7 @@ func TestReturn_StopsAVerifiedDaemon(t *testing.T) {
 	if report.LossyStop != stopProcessIsLossy() {
 		t.Errorf("report.LossyStop = %v, want the predicate answer %v", report.LossyStop, stopProcessIsLossy())
 	}
-	if isProcessAlive(pid) {
+	if home.IsProcessAlive(pid) {
 		t.Error("child still alive after Return")
 	}
 	if IsActive(tmp) {
@@ -205,9 +205,9 @@ func TestReturn_RefusesWhenDaemonSurvivesStopRequest(t *testing.T) {
 
 	pid := startSIGTERMIgnoringDaemon(t)
 
-	executable, startToken, err := processIdentity(pid)
+	executable, startToken, err := home.ProcessIdentity(pid)
 	if err != nil {
-		t.Skipf("processIdentity unsupported on %s: %v", runtime.GOOS, err)
+		t.Skipf("home.ProcessIdentity unsupported on %s: %v", runtime.GOOS, err)
 	}
 	publishAfkIdentity(t, tmp, pid, executable, startToken)
 	holdAFKLockFor(t, tmp, pid)
@@ -239,7 +239,7 @@ func TestReturn_RefusesWhenDaemonSurvivesStopRequest(t *testing.T) {
 	if !IsActive(tmp) {
 		t.Error("consent flag cleared after a refused stop, want kept")
 	}
-	if !isProcessAlive(pid) {
+	if !home.IsProcessAlive(pid) {
 		t.Error("daemon no longer alive after a refused stop, want still running")
 	}
 }
@@ -253,7 +253,7 @@ const helperDaemonEnv = "MUNSU_TEST_HELPER_DAEMON"
 //
 // The child is this test binary re-executed, not a shell, and that is
 // load-bearing rather than stylistic. Return verifies ownership by reading
-// processIdentity twice -- once here to publish the artifact, once inside
+// home.ProcessIdentity twice -- once here to publish the artifact, once inside
 // daemonIdentityForPID -- and requires the executable path to match. On macOS
 // /bin/sh is bash, which re-execs itself during startup: kern.procargs2 reports
 // "/bin/sh" before that re-exec and "/bin/bash" after, so the two reads
@@ -262,9 +262,9 @@ const helperDaemonEnv = "MUNSU_TEST_HELPER_DAEMON"
 // across the window and only the executable path moves. A Go test binary never
 // re-execs, so its identity is stable from the moment it is spawned.
 //
-// This is a property of spawning a shell, not a defect in processIdentity: the
+// This is a property of spawning a shell, not a defect in home.ProcessIdentity: the
 // daemon publishes its own identity from inside itself (publishDaemonIdentity
-// -> processIdentity(os.Getpid())), by which point any re-exec is long past.
+// -> home.ProcessIdentity(os.Getpid())), by which point any re-exec is long past.
 //
 // The readiness pipe closes the second race: without it the parent could send
 // SIGTERM before the child installed SIG_IGN, and the child would die on a

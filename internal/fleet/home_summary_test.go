@@ -151,3 +151,25 @@ func TestLastParentStatus(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+// TestSummarizeCaptainHome_UnreadableMetaIsInvalid pins that a task meta the
+// summary cannot read makes the summary invalid instead of silently dropping
+// that task from its children and endpoint counts.
+func TestSummarizeCaptainHome_UnreadableMetaIsInvalid(t *testing.T) {
+	home := t.TempDir()
+	if _, err := mhome.Init(home); err != nil {
+		t.Fatal(err)
+	}
+	seedCanonicalPhase(t, home, "t1", taskauthority.PhaseQueued)
+	p, err := mhome.MetaFilePath(home, "t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("kind="+strings.Repeat("x", 1<<17)+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	sum := SummarizeCaptainHome(home)
+	if sum.Valid || sum.State != "unknown" || !strings.Contains(sum.Reason, "task meta unreadable") {
+		t.Fatalf("summary over an unreadable meta = valid=%v state=%q reason=%q; want invalid, unknown, task meta unreadable", sum.Valid, sum.State, sum.Reason)
+	}
+}

@@ -15,7 +15,7 @@ import "os"
 //   - AFK lock (home.AFKLockPath)     -- released by the kernel when the
 //     process dies; its stale pid is ignored because nobody holds the lock
 //   - consent flag state/.afk         -- compensated: Disable, afk_return.go
-//   - writer identity "afk"           -- compensated since the processIdentity
+//   - writer identity "afk"           -- compensated since the home.ProcessIdentity
 //     fix: the deferred clearDaemonIdentity (afk_daemon.go) still never runs, but
 //     Return calls it explicitly once the exit is confirmed, using the identity
 //     it already read to authorize the stop
@@ -29,9 +29,9 @@ import "os"
 //     (afk_return.go)
 //
 // So this is a lossy stop, not an equivalent of the unix half. It was inert
-// while processIdentity had no windows half -- Daemon.Start aborted before the
+// while home.ProcessIdentity had no windows half -- Daemon.Start aborted before the
 // lock survived, Return read no daemon pid, and its stop branch never ran.
-// afk_process_identity_windows.go removed that gate, so this path is now live
+// internal/home/process_identity_windows.go removed that gate, so this path is now live
 // on windows and the loss it causes is real. Closing it means giving windows a
 // soft stop the daemon can observe (a job object, a named event, or a control
 // message) so step 7's flush runs; #530 ruled that out in favor of surfacing
