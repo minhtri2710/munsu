@@ -38,4 +38,3 @@ func (OSProcessVerifier) VerifyDead(artifact WriterArtifact) (bool, error) {
 	}
 	return false, nil
 }
-func invalidProcessIdentity(pid int) error { return errors.New("invalid process identity") }

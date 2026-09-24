@@ -139,9 +139,6 @@ type DeliveryRevocation struct {
 	Reason                   string `json:"reason"`
 }
 
-// clone returns a deep copy of the revocation evidence.
-func (r DeliveryRevocation) clone() DeliveryRevocation { return r }
-
 // DeliveryOutcomeStatus is the typed, closed set of truthful delivery outcome
 // statuses. completed, partial, and remote-unknown are terminal: once
 // committed they bind the record and a distinct incompatible outcome
