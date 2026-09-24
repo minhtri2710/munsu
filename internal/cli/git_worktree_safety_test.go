@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -692,7 +693,7 @@ func TestSafetyCheckGitVerdictsOnSharedTokenizer(t *testing.T) {
 	}
 
 	const refuse, allow = true, false
-	for _, tc := range []struct {
+	rows := []struct {
 		command string
 		old     bool
 		want    bool
@@ -784,7 +785,37 @@ func TestSafetyCheckGitVerdictsOnSharedTokenizer(t *testing.T) {
 		{`echo --force | xargs git push`, refuse, refuse},
 		{`xargs git push`, refuse, refuse},
 		{`env git reset --hard`, refuse, refuse},
-	} {
+		// ANSI-C quoting is one quoted word whose escapes are decoded, and a
+		// word with an escape the guard does not decode is refused.
+		{`bash -c $'git push --force'`, allow, refuse},
+		{`$'git' push --force`, allow, refuse},
+		{`bash -c $'git\x20push --force'`, allow, refuse},
+		{`bash -c $'git\040push --force'`, allow, refuse},
+		{`$'\u0067it' push --force`, allow, refuse},
+		{`echo $'a\tb\n'`, allow, allow},
+		// Quoted text is itself read as shell, so ANSI-C text inside it is too.
+		{`echo "$'git push --force'"`, allow, refuse},
+	}
+	if runtime.GOOS != "windows" {
+		// A POSIX backslash-newline is a line continuation that joins the
+		// text around it; the Windows reading keeps the backslash literal.
+		rows = append(rows, []struct {
+			command string
+			old     bool
+			want    bool
+		}{
+			{"/usr/bin/git \\\npush --force", allow, refuse},
+			{"git \\\nreset --hard", allow, refuse},
+			{"echo hi && git \\\npush --force", allow, refuse},
+			{"git \\\n-C /tmp push", allow, refuse},
+			{"git pu\\\nsh --force", allow, refuse},
+			{"bash -c \"git pu\\\nsh --force\"", refuse, refuse},
+			// A single-quoted continuation is literal in the word, but the
+			// word is read as shell again, where it joins.
+			{"echo 'git \\\npush --force'", allow, refuse},
+		}...)
+	}
+	for _, tc := range rows {
 		block, reason := runPiSafetyForGit(t, worktree, tc.command)
 		if block != tc.want {
 			t.Errorf("%q block=%v reason=%q, want block=%v (was %v at 8765440e)", tc.command, block, reason, tc.want, tc.old)

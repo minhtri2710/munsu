@@ -65,6 +65,11 @@ func evaluateGitScriptSafety(homeDir, taskID, checkPath, command string, depth i
 	paths := []string{checkPath}
 	currentPath := checkPath
 	for _, segment := range tokenizeSegments(mode, stripped) {
+		for _, token := range segment {
+			if token.undecodable {
+				return true, "ANSI-C quoted word cannot be decoded; git mutation cannot be checked"
+			}
+		}
 		words := segmentWords(segment)
 		for _, word := range words {
 			if !readsAsMoreThanItself(mode, word) {

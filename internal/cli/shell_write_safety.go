@@ -4,7 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // shellToken is one word of a command segment, or the redirection operator
@@ -15,8 +17,11 @@ type shellToken struct {
 	text       string
 	redirects  bool // an unquoted `>`
 	expandable bool // contains `$` or a backtick: the shell decides the value
-	start      int
-	end        int
+	// undecodable is a `$'...'` word holding an escape the tokenizer does not
+	// decode, or one left unterminated; its text is the raw word without `$`.
+	undecodable bool
+	start       int
+	end         int
 }
 
 // shellWriteTargets returns the paths a shell command names as write targets,
@@ -307,14 +312,15 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 	wordStart := -1
 	rawStart, rawEnd := -1, -1
 	expandable := false
+	undecodable := false
 	quote := rune(0)
 	escaped := false
 	flushWord := func() {
 		if word.Len() > 0 {
-			segment = append(segment, shellToken{text: word.String(), expandable: expandable, start: rawStart, end: rawEnd})
+			segment = append(segment, shellToken{text: word.String(), expandable: expandable, undecodable: undecodable, start: rawStart, end: rawEnd})
 			word.Reset()
 		}
-		wordStart, rawStart, rawEnd, expandable = -1, -1, -1, false
+		wordStart, rawStart, rawEnd, expandable, undecodable = -1, -1, -1, false, false
 	}
 	flushSegment := func() {
 		flushWord()
@@ -350,7 +356,11 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 		if escaped {
 			touch(i - 1)
 			touch(i)
-			add(r, i, true)
+			// A backslash-newline is a line continuation: the shell removes
+			// both and joins the text around them.
+			if r != '\n' {
+				add(r, i, true)
+			}
 			escaped = false
 			continue
 		}
@@ -394,6 +404,22 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 			}
 			continue
 		}
+		if r == '$' && i+1 < len(runes) && runes[i+1] == '\'' {
+			text, end, ok := readANSICQuote(runes, i+2)
+			touch(i)
+			touch(end - 1)
+			if !ok {
+				// The shell's value is unknown, so the word fails closed. Its
+				// text is the raw word without the `$`, which is shorter than
+				// the raw word, so a caller that reads a word as shell again
+				// never gets the same word back.
+				text = string(runes[i+1 : end])
+				expandable, undecodable = true, true
+			}
+			word.WriteString(text)
+			i = end - 1
+			continue
+		}
 		switch r {
 		case '\'', '"':
 			quote = r
@@ -416,6 +442,80 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 	}
 	flushSegment()
 	return segments
+}
+
+// readANSICQuote reads a bash `$'...'` word whose body starts at runes[i]. It
+// returns the decoded text and the index just past the closing quote, or false
+// when the word is unterminated or holds an escape it does not decode. It
+// decodes \a \b \e \E \f \n \r \t \v \\ \' \" \?, octal \NNN (one to three
+// digits) and hex \xHH (one or two digits) as bash does, for byte values 1 to
+// 0377. Everything else, including \c, \u, \U, a NUL byte and an unknown
+// escape, is refused.
+func readANSICQuote(runes []rune, i int) (string, int, bool) {
+	end := i
+	for end < len(runes) && runes[end] != '\'' {
+		if runes[end] == '\\' {
+			end++
+		}
+		end++
+	}
+	if end >= len(runes) {
+		return "", len(runes), false
+	}
+	var out []byte
+	for j := i; j < end; j++ {
+		if runes[j] != '\\' {
+			out = utf8.AppendRune(out, runes[j])
+			continue
+		}
+		j++
+		var value, digits int
+		switch r := runes[j]; r {
+		case 'a':
+			value = '\a'
+		case 'b':
+			value = '\b'
+		case 'e', 'E':
+			value = 0x1b
+		case 'f':
+			value = '\f'
+		case 'n':
+			value = '\n'
+		case 'r':
+			value = '\r'
+		case 't':
+			value = '\t'
+		case 'v':
+			value = '\v'
+		case '\\', '\'', '"', '?':
+			value = int(r)
+		case 'x':
+			value, digits = escapeDigits(runes[j+1:end], 16, 2)
+			j += digits
+		default:
+			value, digits = escapeDigits(runes[j:end], 8, 3)
+			j += digits - 1
+		}
+		if value < 1 || value > 0377 {
+			return "", end + 1, false
+		}
+		out = append(out, byte(value))
+	}
+	return string(out), end + 1, true
+}
+
+// escapeDigits reads up to max leading digits of base from runes and returns
+// their value and count. No digit reads as value zero, which the caller refuses.
+func escapeDigits(runes []rune, base, max int) (int, int) {
+	value, n := 0, 0
+	for ; n < max && n < len(runes); n++ {
+		d, err := strconv.ParseUint(string(runes[n]), base, 8)
+		if err != nil {
+			break
+		}
+		value = value*base + int(d)
+	}
+	return value, n
 }
 
 // heredocSpec is one pending `<<DELIM` body: the word that ends it, and whether

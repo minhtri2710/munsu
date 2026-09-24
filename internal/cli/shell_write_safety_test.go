@@ -1167,3 +1167,77 @@ func TestShellWriteRefusesLiteralBacktickInProtectedPath(t *testing.T) {
 		t.Errorf("unescaped-backtick target should be omitted: %v ambiguous=%v", targets, ambiguous)
 	}
 }
+
+// TestTokenizeSegmentsLineContinuationAndANSICQuoting pins how the shared
+// tokenizer reads a backslash-newline and a bash `$'...'` word, the two literal
+// forms that let git text past both guards before. A POSIX backslash-newline
+// outside single quotes is removed and joins the text around it; the Windows
+// reading keeps the backslash. `$'...'` is one word in either reading, with its
+// escapes decoded, and a word holding an escape the tokenizer does not decode
+// is marked undecodable.
+func TestTokenizeSegmentsLineContinuationAndANSICQuoting(t *testing.T) {
+	for _, tc := range []struct {
+		mode        backslashMode
+		command     string
+		want        [][]string
+		undecodable bool
+	}{
+		{backslashEscapes, "/usr/bin/git \\\npush --force", [][]string{{"/usr/bin/git", "push", "--force"}}, false},
+		{backslashEscapes, "git pu\\\nsh --force", [][]string{{"git", "push", "--force"}}, false},
+		{backslashEscapes, "\"git pu\\\nsh\"", [][]string{{"git push"}}, false},
+		{backslashEscapes, "'a\\\nb'", [][]string{{"a\\\nb"}}, false},
+		{backslashLiteral, "git \\\npush", [][]string{{"git", `\`}, {"push"}}, false},
+		{backslashEscapes, `bash -c $'git push --force'`, [][]string{{"bash", "-c", "git push --force"}}, false},
+		{backslashEscapes, `$'git'x push`, [][]string{{"gitx", "push"}}, false},
+		{backslashEscapes, `$'a\tb\nc\\d\'e\"f\?\101\x41\e\E\a\b\f\r\v'`, [][]string{{"a\tb\nc\\d'e\"f?AA\x1b\x1b\a\b\f\r\v"}}, false},
+		{backslashLiteral, `$'git\x20push'`, [][]string{{"git push"}}, false},
+		{backslashEscapes, `"$'x'"`, [][]string{{"$'x'"}}, false},
+		{backslashEscapes, `$'\u0067it'`, [][]string{{`'\u0067it'`}}, true},
+		{backslashEscapes, `$'\cA'`, [][]string{{`'\cA'`}}, true},
+		{backslashEscapes, `$'\q'`, [][]string{{`'\q'`}}, true},
+		{backslashEscapes, `$'\x'`, [][]string{{`'\x'`}}, true},
+		{backslashEscapes, `$'\0'`, [][]string{{`'\0'`}}, true},
+		{backslashEscapes, `$'\400'`, [][]string{{`'\400'`}}, true},
+		{backslashEscapes, `$'git`, [][]string{{`'git`}}, true},
+	} {
+		segments := tokenizeSegments(tc.mode, tc.command)
+		var got [][]string
+		undecodable := false
+		for _, segment := range segments {
+			got = append(got, segmentWords(segment))
+			for _, token := range segment {
+				undecodable = undecodable || token.undecodable
+			}
+		}
+		if !slices.EqualFunc(got, tc.want, slices.Equal[[]string]) || undecodable != tc.undecodable {
+			t.Errorf("tokenizeSegments(%v, %q) = %q undecodable=%v, want %q undecodable=%v", tc.mode, tc.command, got, undecodable, tc.want, tc.undecodable)
+		}
+	}
+	// munsuInvocations reads every word holding a space as shell again; an
+	// undecodable word must not read back as itself, or the recursion never
+	// ends.
+	if got := munsuInvocations("bash -c $'munsu watch \\q'"); len(got) != 1 || len(got[0]) == 0 || got[0][0] != "watch" {
+		t.Errorf("munsuInvocations of an undecodable word = %q, want the watch invocation", got)
+	}
+}
+
+// TestShellWriteTargetsReadContinuationAndANSICQuoting pins the write-guard
+// verdicts the tokenizer change moved: a continued target names the joined
+// path, and a `$'...'` target names its decoded path instead of being dropped
+// as an expansion.
+func TestShellWriteTargetsReadContinuationAndANSICQuoting(t *testing.T) {
+	base := mustAbsTestPath(t, "base")
+	for _, tc := range []struct {
+		command string
+		want    []string
+	}{
+		{"echo x > f\\\noo", []string{filepath.Join(base, "foo")}},
+		{`echo x > $'f\x6fo'`, []string{filepath.Join(base, "foo")}},
+		{`echo x > $'\u0066'`, nil},
+	} {
+		got, ambiguous := shellWriteTargetsUnderForTest(backslashEscapes, base, tc.command)
+		if ambiguous || !slices.Equal(got, tc.want) {
+			t.Errorf("%q → %v ambiguous=%v, want %v", tc.command, got, ambiguous, tc.want)
+		}
+	}
+}
