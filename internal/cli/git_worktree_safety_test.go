@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1013,6 +1014,25 @@ func TestSafetyCheckReadsLongCommandInLinearTime(t *testing.T) {
 	if elapsed > 5*time.Second || allocated > 512<<20 {
 		t.Errorf("writeReadings of rm with 16000 words took %v and %d MiB, want under 5s and 512 MiB", elapsed, allocated>>20)
 	}
+	// So is the dedupe of its targets: sixteen times the targets cost about
+	// sixteen times as much, where a list scan per target cost about 256.
+	// Comparing two sizes under the same load keeps -race and a busy host
+	// from deciding the verdict.
+	targetsCost := func(n int) time.Duration {
+		command := "rm " + strings.Join(strings.Fields(words.String())[:n], " ")
+		best := time.Duration(math.MaxInt64)
+		for range 3 {
+			start := time.Now()
+			if targets, ambiguous := shellWriteTargets(worktree, command); len(targets) != n || ambiguous {
+				t.Errorf("shellWriteTargets of rm with %d words = %d targets ambiguous=%v, want %d", n, len(targets), ambiguous, n)
+			}
+			best = min(best, time.Since(start))
+		}
+		return best
+	}
+	if small, large := targetsCost(1000), targetsCost(16000); large > 64*small {
+		t.Errorf("shellWriteTargets of rm with 16000 words took %v, %.0f times 1000 words (%v), want under 64", large, float64(large)/float64(small), small)
+	}
 }
 
 // measureAllocation returns the bytes run allocates and how long it takes.
@@ -1114,6 +1134,20 @@ func TestSafetyCheckReadsFunctionSubstitutionExpansionsAndCandidates(t *testing.
 		{`munsu "$@" watch`, refuse},
 		{"cd " + docs + ` && cp -t "$@" f g`, refuse},
 		{`git ${b:+"x"} push --force`, refuse},
+		// `$"..."` is a double quote, and `$''` and `$""` are empty quoted
+		// parts.
+		{`git $"$@" push --force`, refuse},
+		{`git $"${e[@]}" push --force`, refuse},
+		{`git $"${@:+x}" push --force`, refuse},
+		{`git ""$"$@" push --force`, refuse},
+		{`git $"$@"$'' push --force`, refuse},
+		{`munsu $"$@" watch`, refuse},
+		{`bash -c 'git $"$@" push --force'`, refuse},
+		{`bash -c "git \$\"\$@\" push --force"`, refuse},
+		{"git -C $\"$@\" " + primary + " push origin mu/ship-fs", refuse},
+		{"cd " + docs + ` && cp -t $"$@" f g`, refuse},
+		{"cd " + docs + ` && $"$@" rm f`, refuse},
+		{`git $"$b" push`, allow},
 		{`git "$b" push`, allow},
 		{`git "$*" push --force`, allow},
 		{`git "${b[@]:-}" push --force`, allow},
@@ -1124,6 +1158,8 @@ func TestSafetyCheckReadsFunctionSubstitutionExpansionsAndCandidates(t *testing.
 		{`bash -c 'IFS=:; ${x:-git:push:--force}'`, refuse},
 		{`IFS=: read a b`, allow},
 		{`IFS=: read a b; echo "${x:-a:b}" $x`, allow},
+		// A name built from a variable's value is class (c).
+		{`n=I; declare ${n}FS=:; ${x:-git:push:--force}`, allow},
 		// Only a segment that can write is enumerated; one past the bound
 		// refuses.
 		{`echo $a $b $c $d $e $f $g $h $i`, allow},
@@ -1147,9 +1183,23 @@ func TestSafetyCheckReadsFunctionSubstitutionExpansionsAndCandidates(t *testing.
 			t.Errorf("%q: block=%v reason=%q, want %q", command, block, reason, substitution)
 		}
 	}
-	// The IFS rule refuses the word as undecodable, not as a push.
+	// The IFS rule refuses the word as undecodable, not as a push. Any
+	// decoded word of the command at any depth that names IFS sets it for
+	// every depth: eval and source run their payload in the same shell.
 	const undecodable = "shell word cannot be decoded; git mutation cannot be checked"
-	for _, command := range []string{`IFS=:; ${x:-git:push:--force}`, `IFS=:; echo ${x:-status}`} {
+	for _, command := range []string{
+		`IFS=:; ${x:-git:push:--force}`,
+		`IFS=:; echo ${x:-status}`,
+		`IFS=:; eval '${x:-git:push:--force}'`,
+		`IFS=:; eval "\${x:-git:push:--force}"`,
+		`IFS=: eval '${x:-git:push:--force}'`,
+		"IFS=:; . /dev/stdin <<'EOF'\n${x:-git:push:--force}\nEOF",
+		`declare IF""S=:; ${x:-git:push:--force}`,
+		`export IF\S=:; ${x:-git:push:--force}`,
+		`read IF''S <<< :; ${x:-git:push:--force}`,
+		`printf -v IF""S :; ${x:-git:push:--force}`,
+		`declare $'\x49FS'=:; ${x:-git:push:--force}`,
+	} {
 		if block, reason := runPiSafetyForGit(t, worktree, command); !block || reason != undecodable {
 			t.Errorf("%q: block=%v reason=%q, want %q", command, block, reason, undecodable)
 		}

@@ -1306,6 +1306,7 @@ func TestTokenizeSegmentsLineContinuationAndANSICQuoting(t *testing.T) {
 		`"$@"`: true, `"${@:+x}"`: true, `"${e[@]}"`: true, `"${e[@]:+x}"`: true, `"${e[@]+x}"`: true,
 		`"${!pre@}"`: true, `"${!e[@]}"`: true, `"$@""$@"`: true, `"$@"$b`: true, `"$@"""`: true,
 		`"$@"''`: true, `"$@"$''`: true, `"$@"$""`: true, `"$@$@"`: true,
+		`$"$@"`: true, `$"${e[@]}"`: true, `$"$@"$''`: true, `""$"$@"`: true, `$"$b"`: false, `$"x$@"`: false,
 		`"$*"`: false, `"${e[*]}"`: false, `"${!pre*}"`: false, `"${e[@]:-}"`: false, `"${e[@]-}"`: false,
 		`"${@:-}"`: false, `"${e[@]:=}"`: false, `"${#e[@]}"`: false, `x"$@"`: false, `"$@"x`: false,
 		`"x$@"`: false, `""`: false, `""$b`: false, `"$@"'x'`: false, `"$@`: false, `"${@`: false,

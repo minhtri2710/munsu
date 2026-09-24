@@ -41,14 +41,50 @@ type gitCommandSafety struct {
 func evaluateGitMutationSafety(checkPath, command string) (bool, string) {
 	homeDir := strings.TrimSpace(os.Getenv("MUNSU_HOME"))
 	taskID := strings.TrimSpace(os.Getenv("MUNSU_TASK_ID"))
-	return evaluateGitScriptSafety(homeDir, taskID, checkPath, command, 0)
+	mode := gitSafetyBackslashMode()
+	return evaluateGitScriptSafety(homeDir, taskID, checkPath, command, 0, namesIFS(mode, command, 0))
+}
+
+// namesIFS reports whether any decoded word of command names IFS, at every
+// payload depth the git guard reads: every candidate word of each token
+// (both readings of an ANSI-C word and each substituted word included), and
+// every heredoc body, here-string and word read again as shell. An IFS set
+// at one depth reaches a payload the same shell runs (eval, source), so the
+// guard reads it once for the whole command. A name built from a variable's
+// value is not read.
+func namesIFS(mode backslashMode, command string, depth int) bool {
+	stripped, feeds := splitHeredocBodies(command)
+	var payloads []string
+	for _, feed := range feeds {
+		payloads = append(payloads, feed.text)
+	}
+	for _, segment := range tokenizeSegments(mode, stripped) {
+		for _, token := range candidateTokens(segment) {
+			if strings.Contains(token.text, "IFS") {
+				return true
+			}
+			if readsAsMoreThanItself(mode, token) {
+				payloads = append(payloads, token.text)
+			}
+		}
+	}
+	if depth < maxShellPayloadDepth {
+		for _, payload := range payloads {
+			if namesIFS(mode, payload, depth+1) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // maxShellPayloadDepth bounds how many payload layers the git guard reads
 // through before it refuses.
 const maxShellPayloadDepth = 4
 
-func evaluateGitScriptSafety(homeDir, taskID, checkPath, command string, depth int) (bool, string) {
+// ifs reports that the whole command names IFS (namesIFS): bash then splits
+// an unquoted parameter expansion's word at an IFS the guard cannot know.
+func evaluateGitScriptSafety(homeDir, taskID, checkPath, command string, depth int, ifs bool) (bool, string) {
 	if hasGitCommandSubstitution(command) {
 		return true, "compound shell command with command substitution is not allowed for git mutation"
 	}
@@ -67,7 +103,7 @@ func evaluateGitScriptSafety(homeDir, taskID, checkPath, command string, depth i
 	currentPath := checkPath
 	for _, segment := range tokenizeSegments(mode, stripped) {
 		for _, token := range segment {
-			if token.undecodable {
+			if token.undecodable || (ifs && token.splitsAtIFS) {
 				return true, "shell word cannot be decoded; git mutation cannot be checked"
 			}
 		}
@@ -81,7 +117,7 @@ func evaluateGitScriptSafety(homeDir, taskID, checkPath, command string, depth i
 				continue
 			}
 			reread = append(reread, token.text)
-			if blocked, reason := evaluateGitPayloadSafety(homeDir, taskID, currentPath, token.text, depth); blocked {
+			if blocked, reason := evaluateGitPayloadSafety(homeDir, taskID, currentPath, token.text, depth, ifs); blocked {
 				return true, reason
 			}
 		}
@@ -100,7 +136,7 @@ func evaluateGitScriptSafety(homeDir, taskID, checkPath, command string, depth i
 	}
 	for _, payload := range payloads {
 		for _, path := range paths {
-			if blocked, reason := evaluateGitPayloadSafety(homeDir, taskID, path, payload, depth); blocked {
+			if blocked, reason := evaluateGitPayloadSafety(homeDir, taskID, path, payload, depth, ifs); blocked {
 				return true, reason
 			}
 		}
@@ -108,11 +144,11 @@ func evaluateGitScriptSafety(homeDir, taskID, checkPath, command string, depth i
 	return false, ""
 }
 
-func evaluateGitPayloadSafety(homeDir, taskID, checkPath, payload string, depth int) (bool, string) {
+func evaluateGitPayloadSafety(homeDir, taskID, checkPath, payload string, depth int, ifs bool) (bool, string) {
 	if depth+1 > maxShellPayloadDepth {
 		return true, "shell payload nesting is too deep; git mutation cannot be checked"
 	}
-	return evaluateGitScriptSafety(homeDir, taskID, checkPath, payload, depth+1)
+	return evaluateGitScriptSafety(homeDir, taskID, checkPath, payload, depth+1, ifs)
 }
 
 // readsAsMoreThanItself reports whether token, read again as shell, is
