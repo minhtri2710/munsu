@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -18,15 +19,19 @@ type shellToken struct {
 	redirects  bool // an unquoted `>`
 	expandable bool // contains `$` or a backtick: the shell decides the value
 	// undecodable is a `$'...'` word holding an escape the tokenizer does not
-	// decode, or one left unterminated; its text is the raw word without `$`.
+	// decode, or one left unterminated, whose text is the raw word without
+	// `$`; or a word holding an unterminated `${`.
 	undecodable bool
-	// raw is the word with each `$'...'` part read as the text between its
-	// quotes, undecoded. Where bash does not start ANSI-C quoting (a comment,
-	// say), the decoded text is not what runs, so the raw text is a second
-	// reading; it equals text for a word without ANSI-C quoting.
-	raw   string
-	start int
-	end   int
+	// alternates are the word's other literal readings, each distinct from
+	// text and each a run of words spanning this token. defaultWordReadings
+	// gives the first ones. The last is the word with each `$'...'` part read
+	// as the text between its quotes, undecoded: where bash does not start
+	// ANSI-C quoting (a comment, say), the decoded text is not what runs.
+	alternates [][]shellToken
+	// undecoded marks the token of that last, raw reading.
+	undecoded bool
+	start     int
+	end       int
 }
 
 // shellWriteTargets returns the paths a shell command names as write targets,
@@ -193,7 +198,16 @@ func shellWriteTargetsUnderDetailed(mode backslashMode, checkPath, command strin
 			}
 			continue
 		}
-		for _, target := range segmentWriteTargets(segment) {
+		// Every reading of the segment names targets: a parameter expansion's
+		// substituted words take its place, and their targets share its span.
+		// The raw reading of an ANSI-C word is not one: a target is decoded.
+		var segmentTargets []shellToken
+		for _, reading := range segmentReadings(segment) {
+			if !slices.ContainsFunc(reading, func(token shellToken) bool { return token.undecoded }) {
+				segmentTargets = append(segmentTargets, segmentWriteTargets(reading)...)
+			}
+		}
+		for _, target := range segmentTargets {
 			base := currentPath
 			if volume := filepath.VolumeName(target.text); volume != "" {
 				if known, ok := cwdByVolume[strings.ToLower(volume)]; ok {
@@ -313,6 +327,7 @@ func evaluateWriteTargets(targets []string) (bool, string) {
 func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 	var segments [][]shellToken
 	var segment []shellToken
+	runes := []rune(command)
 	var word, raw strings.Builder
 	wordStart := -1
 	rawStart, rawEnd := -1, -1
@@ -323,9 +338,32 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 	quoted := false
 	quote := rune(0)
 	escaped := false
+	// braceEnd is the index of the `}` closing an unquoted `${`: bash keeps
+	// the whole group in one word, whatever blanks or operators it holds.
+	braceEnd := -1
 	flushWord := func() {
 		if word.Len() > 0 || quoted {
-			segment = append(segment, shellToken{text: word.String(), expandable: expandable, undecodable: undecodable, raw: raw.String(), start: rawStart, end: rawEnd})
+			token := shellToken{text: word.String(), expandable: expandable, undecodable: undecodable, start: rawStart, end: rawEnd}
+			var readings [][]shellToken
+			if expandable && rawStart >= 0 {
+				readings = defaultWordReadings(mode, string(runes[rawStart:rawEnd]))
+			}
+			readings = append(readings, []shellToken{{text: raw.String(), expandable: expandable, undecoded: true}})
+			for _, reading := range readings {
+				if len(reading) == 1 && reading[0].text == token.text {
+					continue
+				}
+				if slices.ContainsFunc(token.alternates, func(seen []shellToken) bool {
+					return slices.Equal(segmentWords(seen), segmentWords(reading))
+				}) {
+					continue
+				}
+				for i := range reading {
+					reading[i].start, reading[i].end = rawStart, rawEnd
+				}
+				token.alternates = append(token.alternates, reading)
+			}
+			segment = append(segment, token)
 			word.Reset()
 			raw.Reset()
 		}
@@ -338,7 +376,6 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 			segment = nil
 		}
 	}
-	runes := []rune(command)
 	touch := func(i int) {
 		if rawStart < 0 {
 			rawStart = i
@@ -424,6 +461,11 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 			add(runes[i], i, false)
 			continue
 		}
+		// bash reads `$"..."` (locale translation) as the double-quoted text.
+		if r == '$' && i+1 < len(runes) && runes[i+1] == '"' {
+			touch(i)
+			continue
+		}
 		if r == '$' && i+1 < len(runes) && runes[i+1] == '\'' {
 			quoted = true
 			text, end, ok := readANSICQuote(runes, i+2)
@@ -444,8 +486,21 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 			i = end - 1
 			continue
 		}
+		if r == '$' && i+1 < len(runes) && runes[i+1] == '{' && i > braceEnd {
+			if end, ok := closingBrace(runes, i+2); ok {
+				braceEnd = end
+			} else {
+				undecodable = true
+			}
+		}
+		if i < braceEnd && strings.ContainsRune(" \t\n;&|>", r) {
+			touch(i)
+			add(r, i, false)
+			continue
+		}
 		switch r {
 		case '\'', '"':
+			touch(i)
 			quote = r
 			quoted = true
 		case '|':
@@ -459,7 +514,7 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 			flushWord()
 		case '>':
 			flushWord()
-			segment = append(segment, shellToken{text: ">", raw: ">", redirects: true, start: i, end: i + 1})
+			segment = append(segment, shellToken{text: ">", redirects: true, start: i, end: i + 1})
 		default:
 			touch(i)
 			add(r, i, false)
@@ -467,6 +522,187 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 	}
 	flushSegment()
 	return segments
+}
+
+// defaultWordReadings returns the readings of a word's source in which each
+// `${name<op>word}` whose operator substitutes word (`-`, `:-`, `=`, `:=`,
+// `+`, `:+`) is replaced by that word, decoded as shell: its words, then its
+// words with each alternate in turn. None when no expansion substitutes. An
+// unquoted word is split into words, and a quoted one stays one word; inside
+// double quotes each `$'...'` in the word is spliced outside them, so it
+// decodes, as bash's extquote does. The result of an expansion is never an
+// operator.
+func defaultWordReadings(mode backslashMode, source string) [][]shellToken {
+	runes := []rune(source)
+	var out strings.Builder
+	substituted := false
+	quote := rune(0)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		switch {
+		case quote == '\'':
+			if r == quote {
+				quote = 0
+			}
+		case r == '\\':
+			out.WriteRune(r)
+			if i+1 < len(runes) {
+				i++
+				r = runes[i]
+			}
+		case quote == 0 && r == '$' && i+1 < len(runes) && runes[i+1] == '\'':
+			_, end, _ := readANSICQuote(runes, i+2)
+			out.WriteString(string(runes[i:end]))
+			i = end - 1
+			continue
+		case r == '"' || (quote == 0 && r == '\''):
+			if quote == r {
+				quote = 0
+			} else {
+				quote = r
+			}
+		case r == '$' && i+1 < len(runes) && runes[i+1] == '{':
+			if start, end, ok := substitutedWord(runes, i+2); ok {
+				if quote != '"' {
+					out.WriteString(string(runes[start:end]))
+				}
+				for k := start; quote == '"' && k < end; k++ {
+					switch {
+					case runes[k] == '\\' && k+1 < end:
+						out.WriteString(string(runes[k : k+2]))
+						k++
+					case runes[k] == '$' && k+1 < end && runes[k+1] == '\'':
+						_, next, _ := readANSICQuote(runes, k+2)
+						next = min(next, end)
+						out.WriteString(`"` + string(runes[k:next]) + `"`)
+						k = next - 1
+					default:
+						out.WriteRune(runes[k])
+					}
+				}
+				substituted = true
+				i = end
+				continue
+			}
+		}
+		out.WriteRune(r)
+	}
+	if !substituted {
+		return nil
+	}
+	var tokens []shellToken
+	for _, segment := range tokenizeSegments(mode, out.String()) {
+		tokens = append(tokens, segment...)
+	}
+	for i := range tokens {
+		tokens[i].redirects = false
+	}
+	var readings [][]shellToken
+	for _, reading := range segmentReadings(tokens) {
+		reading = slices.Clone(reading)
+		for i := range reading {
+			reading[i].alternates = nil
+		}
+		readings = append(readings, reading)
+	}
+	return readings
+}
+
+// segmentReadings returns segment as written, then with alternate readings
+// in place of its tokens: each alternate of one token at a time, then every
+// token at once at the same alternate index. The count grows with tokens
+// times alternates, never with their product.
+func segmentReadings(segment []shellToken) [][]shellToken {
+	readings := [][]shellToken{segment}
+	most, withAlternates := 0, 0
+	for i, token := range segment {
+		if len(token.alternates) > 0 {
+			withAlternates++
+		}
+		most = max(most, len(token.alternates))
+		for _, alternate := range token.alternates {
+			readings = append(readings, slices.Concat(segment[:i], alternate, segment[i+1:]))
+		}
+	}
+	if withAlternates < 2 {
+		return readings
+	}
+	for j := range most {
+		var reading []shellToken
+		for _, token := range segment {
+			if j < len(token.alternates) {
+				reading = append(reading, token.alternates[j]...)
+			} else {
+				reading = append(reading, token)
+			}
+		}
+		readings = append(readings, reading)
+	}
+	return readings
+}
+
+// substitutedWord reads a parameter expansion whose body starts at runes[i],
+// just past `${`, and returns the span of its word and true when its operator
+// is one that substitutes the word; the word ends at runes[end] == '}'.
+func substitutedWord(runes []rune, i int) (int, int, bool) {
+	j := i
+	switch {
+	case j < len(runes) && (runes[j] == '_' || unicode.IsLetter(runes[j])):
+		for j < len(runes) && (runes[j] == '_' || unicode.IsLetter(runes[j]) || unicode.IsDigit(runes[j])) {
+			j++
+		}
+	case j < len(runes) && unicode.IsDigit(runes[j]):
+		for j < len(runes) && unicode.IsDigit(runes[j]) {
+			j++
+		}
+	case j < len(runes) && strings.ContainsRune("@*#?-$!", runes[j]):
+		j++
+	default:
+		return 0, 0, false
+	}
+	if j < len(runes) && runes[j] == ':' {
+		j++
+	}
+	if j >= len(runes) || !strings.ContainsRune("-=+", runes[j]) {
+		return 0, 0, false
+	}
+	end, ok := closingBrace(runes, j+1)
+	return j + 1, end, ok
+}
+
+// closingBrace returns the index of the `}` that closes a `${` whose body
+// starts at runes[i], reading quotes, escapes, `$'...'` and nested `${`.
+func closingBrace(runes []rune, i int) (int, bool) {
+	depth := 0
+	quote := rune(0)
+	for k := i; k < len(runes); k++ {
+		switch r := runes[k]; {
+		case quote == '\'':
+			if r == quote {
+				quote = 0
+			}
+		case r == '\\':
+			k++
+		case quote == 0 && r == '$' && k+1 < len(runes) && runes[k+1] == '\'':
+			_, end, _ := readANSICQuote(runes, k+2)
+			k = end - 1
+		case r == '"' || (quote == 0 && r == '\''):
+			if quote == r {
+				quote = 0
+			} else if quote == 0 {
+				quote = r
+			}
+		case quote == 0 && r == '$' && k+1 < len(runes) && runes[k+1] == '{':
+			depth++
+			k++
+		case quote == 0 && r == '}':
+			if depth == 0 {
+				return k, true
+			}
+			depth--
+		}
+	}
+	return 0, false
 }
 
 // readANSICQuote reads a bash `$'...'` word whose body starts at runes[i]. It

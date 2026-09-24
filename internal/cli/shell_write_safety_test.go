@@ -1211,6 +1211,17 @@ func TestTokenizeSegmentsLineContinuationAndANSICQuoting(t *testing.T) {
 		{backslashEscapes, `''"" x`, [][]string{{"", "x"}}, false},
 		{backslashLiteral, `a '' b`, [][]string{{"a", "", "b"}}, false},
 		{backslashEscapes, `x''`, [][]string{{"x"}}, false},
+		// bash reads `$"..."` as its double-quoted text; `$$` stays the PID.
+		{backslashEscapes, `bash -c $"git push --force"`, [][]string{{"bash", "-c", "git push --force"}}, false},
+		{backslashLiteral, `$"a $x"b`, [][]string{{"a $xb"}}, false},
+		{backslashEscapes, `$""`, [][]string{{""}}, false},
+		{backslashEscapes, `$$"x"`, [][]string{{"$$x"}}, false},
+		// An unquoted `${...}` is one word whatever it holds, and an
+		// unterminated one is undecodable.
+		{backslashEscapes, `echo ${x:-a b} c`, [][]string{{"echo", "${x:-a b}", "c"}}, false},
+		{backslashEscapes, `${x:-a;b|c>d} ; y`, [][]string{{"${x:-a;b|c>d}"}, {"y"}}, false},
+		{backslashEscapes, `${x:-"}"} ${a:-${b:-c d}} e`, [][]string{{"${x:-}}", "${a:-${b:-c d}}", "e"}}, false},
+		{backslashEscapes, `${x y`, [][]string{{"${x", "y"}}, true},
 	} {
 		segments := tokenizeSegments(tc.mode, tc.command)
 		var got [][]string
@@ -1225,37 +1236,56 @@ func TestTokenizeSegmentsLineContinuationAndANSICQuoting(t *testing.T) {
 			t.Errorf("tokenizeSegments(%v, %q) = %q undecodable=%v, want %q undecodable=%v", tc.mode, tc.command, got, undecodable, tc.want, tc.undecodable)
 		}
 	}
-	// An ANSI-C word also carries its raw reading: each `$'...'` part stays
-	// the text between its quotes, undecoded.
+	// A word also carries its other literal readings. Each `$'...'` part read
+	// as the text between its quotes, undecoded, is one. A parameter
+	// expansion whose operator substitutes its word is another: the token
+	// with that word, decoded as shell, in place of the expansion.
 	for _, tc := range []struct {
 		command string
 		want    []string
 	}{
 		{`$'gi\t'`, []string{`gi\t`}},
-		{`a$'\x67'b $'x'`, []string{`a\x67b`, "x"}},
-		{"echo # $'\ngi\\t push'", []string{"echo", "#", "\ngi\\t push"}},
+		{`a$'\x67'b $'x'`, []string{`a\x67b`, ""}},
+		{"echo # $'\ngi\\t push'", []string{"", "", "\ngi\\t push"}},
 		{`$''`, []string{""}},
-		{`'\t'`, []string{`\t`}},
+		{`'\t'`, []string{""}},
+		{`${x:-git}`, []string{"git"}},
+		{`${x:-$'\x67it'}`, []string{`git|\x67it|${x:-\x67it}`}},
+		{`"${x:-$'\x67it'}"`, []string{`git|\x67it`}},
+		{`/usr/bin/${x-g}${y:+i}t`, []string{"/usr/bin/git"}},
+		{`${x=git} ${x:=git} ${x+git} ${x:+"g"'it'}`, []string{"git", "git", "git", "git"}},
+		{`${a:-${b:-git}}`, []string{`${b:-git}|git`}},
+		{`"${x:-git push}"`, []string{"git push"}},
+		// Unquoted, the substituted word is split into words, none of them
+		// an operator.
+		{`${x:-git push}`, []string{"git,push"}},
+		{`${x:-a > f}`, []string{"a,>,f"}},
+		{`${a:-git} ${b:-push}`, []string{"git", "push"}},
+		{`${x:?git} ${#x} ${x#git} ${x%git} ${x/a/git} ${x^} ${x,} ${x:1} ${x:-git`, []string{"", "", "", "", "", "", "", "", ""}},
 	} {
 		var got []string
 		for _, segment := range tokenizeSegments(backslashEscapes, tc.command) {
 			for _, token := range segment {
-				got = append(got, token.raw)
+				var readings []string
+				for _, alternate := range token.alternates {
+					readings = append(readings, strings.Join(segmentWords(alternate), ","))
+				}
+				got = append(got, strings.Join(readings, "|"))
 			}
 		}
 		if !slices.Equal(got, tc.want) {
-			t.Errorf("raw readings of %q = %q, want %q", tc.command, got, tc.want)
+			t.Errorf("alternate readings of %q = %q, want %q", tc.command, got, tc.want)
 		}
 	}
 	// munsuInvocations reads every word holding a space as shell again; an
 	// undecodable word must not read back as itself, or the recursion never
 	// ends.
-	if got := munsuInvocations("bash -c $'munsu watch \\q'"); len(got) != 1 || len(got[0]) == 0 || got[0][0] != "watch" {
+	if got, _ := munsuInvocations("bash -c $'munsu watch \\q'", 0); len(got) != 1 || len(got[0]) == 0 || got[0][0] != "watch" {
 		t.Errorf("munsuInvocations of an undecodable word = %q, want the watch invocation", got)
 	}
 	// An empty quoted word is the --home value, so the bare watch after it
 	// is the invocation, and it is not a guard or doctor call.
-	if got := munsuInvocations("munsu --home '' watch"); len(got) != 1 || !slices.Equal(got[0], []string{"watch"}) {
+	if got, _ := munsuInvocations("munsu --home '' watch", 0); len(got) != 1 || !slices.Equal(got[0], []string{"watch"}) {
 		t.Errorf("munsuInvocations(munsu --home '' watch) = %q, want [[watch]]", got)
 	}
 	if onlyGuardOrDoctor("munsu '' guard .no-mistakes") {
@@ -1328,6 +1358,35 @@ func TestShellWriteTargetsReadContinuationAndANSICQuoting(t *testing.T) {
 		got, ambiguous := shellWriteTargetsUnderForTest(backslashEscapes, base, tc.command)
 		if ambiguous || !slices.Equal(got, tc.want) {
 			t.Errorf("%q → %v ambiguous=%v, want %v", tc.command, got, ambiguous, tc.want)
+		}
+	}
+}
+
+// TestShellWriteTargetsReadParameterExpansionWords pins the write targets of
+// a parameter expansion: the words bash substitutes when the parameter is
+// unset, split when unquoted, are targets at the expansion's position, and
+// the expansion as written is not one. The raw reading of an ANSI-C word is
+// not.
+func TestShellWriteTargetsReadParameterExpansionWords(t *testing.T) {
+	dir := t.TempDir()
+	for _, tc := range []struct {
+		command string
+		want    []string
+	}{
+		{`cp a ${x:-b c}`, []string{"c"}},
+		{`rm ${x:-b c}`, []string{"b", "c"}},
+		{`rm "${x:-b c}"`, []string{"b c"}},
+		{`echo ${x:-a > f}`, nil},
+		{`echo ${x:-a b}`, nil},
+		{`rm ${x:-$HOME/f}`, nil},
+		{`touch $'\x41'`, []string{"A"}},
+	} {
+		var want []string
+		for _, target := range tc.want {
+			want = append(want, filepath.Join(dir, target))
+		}
+		if targets, ambiguous := shellWriteTargets(dir, tc.command); ambiguous || !slices.Equal(targets, want) {
+			t.Errorf("shellWriteTargets(%q) = %q ambiguous=%v, want %q", tc.command, targets, ambiguous, want)
 		}
 	}
 }

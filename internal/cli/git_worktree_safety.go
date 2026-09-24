@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/domain"
@@ -67,24 +68,29 @@ func evaluateGitScriptSafety(homeDir, taskID, checkPath, command string, depth i
 	for _, segment := range tokenizeSegments(mode, stripped) {
 		for _, token := range segment {
 			if token.undecodable {
-				return true, "ANSI-C quoted word cannot be decoded; git mutation cannot be checked"
+				return true, "shell word cannot be decoded; git mutation cannot be checked"
 			}
 		}
-		// An ANSI-C word is read both decoded and raw, and a mutation in
-		// either refuses: the tokenizer cannot tell whether bash starts
-		// ANSI-C quoting at that `$'`.
-		for _, token := range segment {
-			readings := []string{token.text}
-			if token.raw != token.text {
-				readings = append(readings, token.raw)
-			}
-			for _, word := range readings {
-				if !readsAsMoreThanItself(mode, word) {
+		// A segment is read as written and with each alternate reading of its
+		// words in place, and a mutation in any reading refuses: the tokenizer
+		// cannot tell whether bash starts ANSI-C quoting at a `$'`, or which
+		// word a parameter expansion substitutes.
+		readings := segmentReadings(segment)
+		var reread []string
+		for _, reading := range readings {
+			for _, token := range reading {
+				if slices.Contains(reread, token.text) || !readsAsMoreThanItself(mode, token) {
 					continue
 				}
-				if blocked, reason := evaluateGitPayloadSafety(homeDir, taskID, currentPath, word, depth); blocked {
+				reread = append(reread, token.text)
+				if blocked, reason := evaluateGitPayloadSafety(homeDir, taskID, currentPath, token.text, depth); blocked {
 					return true, reason
 				}
+			}
+		}
+		for _, reading := range readings[1:] {
+			if blocked, reason := evaluateGitWordsSafety(homeDir, taskID, currentPath, segmentWords(reading), mode); blocked {
+				return true, reason
 			}
 		}
 		words := segmentWords(segment)
@@ -93,11 +99,7 @@ func evaluateGitScriptSafety(homeDir, taskID, checkPath, command string, depth i
 			paths = append(paths, currentPath)
 			continue
 		}
-		parsed := parseGitSafetyWords(currentPath, words, mode)
-		if !parsed.mutating {
-			continue
-		}
-		if blocked, reason := evaluateParsedGitMutation(homeDir, taskID, parsed); blocked {
+		if blocked, reason := evaluateGitWordsSafety(homeDir, taskID, currentPath, words, mode); blocked {
 			return true, reason
 		}
 	}
@@ -111,6 +113,16 @@ func evaluateGitScriptSafety(homeDir, taskID, checkPath, command string, depth i
 	return false, ""
 }
 
+// evaluateGitWordsSafety refuses one segment's words when they run a git
+// mutation the binding does not permit.
+func evaluateGitWordsSafety(homeDir, taskID, checkPath string, words []string, mode backslashMode) (bool, string) {
+	parsed := parseGitSafetyWords(checkPath, words, mode)
+	if !parsed.mutating {
+		return false, ""
+	}
+	return evaluateParsedGitMutation(homeDir, taskID, parsed)
+}
+
 func evaluateGitPayloadSafety(homeDir, taskID, checkPath, payload string, depth int) (bool, string) {
 	if depth+1 > maxShellPayloadDepth {
 		return true, "shell payload nesting is too deep; git mutation cannot be checked"
@@ -118,12 +130,18 @@ func evaluateGitPayloadSafety(homeDir, taskID, checkPath, payload string, depth 
 	return evaluateGitScriptSafety(homeDir, taskID, checkPath, payload, depth+1)
 }
 
-// readsAsMoreThanItself reports whether word, read again as shell, is anything
-// but the one plain word it is: quoting or escaping hid a space, an operator or
-// another quote inside it. A plain word ends the recursion.
-func readsAsMoreThanItself(mode backslashMode, word string) bool {
-	segments := tokenizeSegments(mode, word)
-	return len(segments) != 1 || len(segments[0]) != 1 || segments[0][0].text != word
+// readsAsMoreThanItself reports whether token, read again as shell, is
+// anything but the one plain word it is: quoting or escaping hid a space, an
+// operator or another quote inside it, or a literal word holds a parameter
+// expansion that substitutes a word. An expandable word is not read again for
+// its expansions, which are already its alternates. A plain word ends the
+// recursion.
+func readsAsMoreThanItself(mode backslashMode, token shellToken) bool {
+	segments := tokenizeSegments(mode, token.text)
+	if len(segments) != 1 || len(segments[0]) != 1 || segments[0][0].text != token.text {
+		return true
+	}
+	return !token.expandable && len(segments[0][0].alternates) > 0
 }
 
 // segmentWords returns the text of each token in a segment.

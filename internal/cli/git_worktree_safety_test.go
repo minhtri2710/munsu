@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -691,6 +692,9 @@ func TestSafetyCheckGitVerdictsOnSharedTokenizer(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(worktree, "my dir"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join(primary, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	const refuse, allow = true, false
 	rows := []struct {
@@ -803,6 +807,35 @@ func TestSafetyCheckGitVerdictsOnSharedTokenizer(t *testing.T) {
 		{`git -C ''"" push --force`, allow, refuse},
 		// An empty word in the verb position is the verb, which git rejects.
 		{`git '' push --force`, refuse, allow},
+		// bash reads `$"..."` as its double-quoted text.
+		{`$"git" push --force`, allow, refuse},
+		{`bash -c $"git push --force"`, allow, refuse},
+		{`bash -c 'bash -c $"git push --force"'`, allow, refuse},
+		{`bash -c $"git status"`, allow, allow},
+		// The word of a parameter expansion that bash can substitute is
+		// another reading of the token, and a mutation in any reading refuses.
+		{`${x:-git} push --force`, allow, refuse},
+		{`${x:-$'\x67it'} push --force`, allow, refuse},
+		{`${x:=git} push --force`, allow, refuse},
+		{`${x:+git} push --force`, allow, refuse},
+		{`bash -c '${x-git} push --force'`, allow, refuse},
+		{`"${x:-git push --force}"`, allow, refuse},
+		{`${x:-git} status`, allow, allow},
+		// The classifier finds git in any position, as for `echo git push`.
+		{`echo ${x:-git push}`, allow, refuse},
+		// An unquoted `${...}` is one word, and its substituted word is split.
+		{`${x:-git push --force}`, allow, refuse},
+		{`bash -c '${x:-git push --force}'`, allow, refuse},
+		{`echo ${x:-a b}`, allow, allow},
+		{`echo ${x`, allow, refuse},
+		// Every token at the same alternate index is one more reading.
+		{`${a:-git} ${b:-push} --force`, allow, refuse},
+		// A cd operand the shell computes names a directory the guard never
+		// resolves, so a mutation after it has no bound target.
+		{"cd ${x:-" + primary + "} && git push origin mu/ship-vd", refuse, refuse},
+		{"cd ${x:-" + worktree + "} && git push origin mu/ship-vd", refuse, refuse},
+		// A substituted word is a write target in the shared checkout.
+		{"cd " + primary + "/docs && cp ../README.md ${x:-b c}", refuse, refuse},
 	}
 	if runtime.GOOS != "windows" {
 		// A POSIX backslash-newline is a line continuation that joins the
@@ -855,5 +888,66 @@ func TestSafetyCheckGitVerdictsOnSharedTokenizer(t *testing.T) {
 		if block != tc.want {
 			t.Errorf("%q block=%v reason=%q, want block=%v (was %v at 8765440e)", tc.command, block, reason, tc.want, tc.old)
 		}
+	}
+}
+
+// TestMunsuCommandRulesReadParameterExpansionWords pins that the munsu watch
+// and no-mistakes rules read a parameter expansion's substituted words, and
+// never re-read an expansion that reads as itself, so a benign one does not
+// exhaust the depth bound.
+func TestMunsuCommandRulesReadParameterExpansionWords(t *testing.T) {
+	for _, tc := range []struct {
+		command string
+		watch   bool
+		names   bool
+	}{
+		{`echo ${x:-a b}`, false, false},
+		{`${x:-munsu watch}`, true, false},
+		{`ls ${x:-.no-mistakes/x}`, false, true},
+	} {
+		got, tooDeep := munsuInvocations(tc.command, 0)
+		if watch := len(got) > 0 && slices.Equal(got[0], []string{"watch"}); tooDeep || watch != tc.watch {
+			t.Errorf("munsuInvocations(%q) = %q tooDeep=%v, want watch=%v", tc.command, got, tooDeep, tc.watch)
+		}
+		if names, tooDeep := namesNoMistakesDir(tc.command, 0); tooDeep || names != tc.names {
+			t.Errorf("namesNoMistakesDir(%q) = %v tooDeep=%v, want %v", tc.command, names, tooDeep, tc.names)
+		}
+	}
+}
+
+// TestMunsuInvocationsDepthBound pins the payload depth the munsu watch check
+// reads through: the git guard's bound, past which the hook refuses rather
+// than reading on or stopping short.
+func TestMunsuInvocationsDepthBound(t *testing.T) {
+	bashC := func(script string) string {
+		return "bash -c '" + strings.ReplaceAll(script, "'", `'\''`) + "'"
+	}
+	inside, inRun := "munsu watch", "munsu watch run"
+	for range maxShellPayloadDepth {
+		inside, inRun = bashC(inside), bashC(inRun)
+	}
+	if got, tooDeep := munsuInvocations(inside, 0); tooDeep || len(got) != 1 || !slices.Equal(got[0], []string{"watch"}) {
+		t.Errorf("munsuInvocations at depth %d = %q tooDeep=%v, want [[watch]]", maxShellPayloadDepth, got, tooDeep)
+	}
+	if _, tooDeep := munsuInvocations(bashC(inside), 0); !tooDeep {
+		t.Errorf("munsuInvocations past depth %d: tooDeep=false, want true", maxShellPayloadDepth)
+	}
+	names := "ls .no-mistakes"
+	for range maxShellPayloadDepth {
+		names = bashC(names)
+	}
+	if got, tooDeep := namesNoMistakesDir(names, 0); !got || tooDeep {
+		t.Errorf("namesNoMistakesDir at depth %d = %v tooDeep=%v, want true", maxShellPayloadDepth, got, tooDeep)
+	}
+	if got, tooDeep := namesNoMistakesDir(bashC(names), 0); got || !tooDeep {
+		t.Errorf("namesNoMistakesDir past depth %d = %v tooDeep=%v, want tooDeep", maxShellPayloadDepth, got, tooDeep)
+	}
+	checkPath := t.TempDir()
+	if block, reason := runPiSafetyForGit(t, checkPath, inside); !block || !strings.Contains(reason, "Bare 'munsu watch'") {
+		t.Errorf("hook at depth %d: block=%v reason=%q, want the bare watch refusal", maxShellPayloadDepth, block, reason)
+	}
+	const tooDeep = "shell payload nesting is too deep; munsu command rules cannot be checked"
+	if block, reason := runPiSafetyForGit(t, checkPath, bashC(inRun)); !block || reason != tooDeep {
+		t.Errorf("hook past depth %d: block=%v reason=%q, want %q", maxShellPayloadDepth, block, reason, tooDeep)
 	}
 }

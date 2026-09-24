@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/bootstrap"
@@ -480,68 +481,97 @@ func patchWriteTargets(checkPath, body string) ([]string, error) {
 }
 
 // munsuInvocations parses command with the safety tokenizer and returns, for
-// every `munsu` command word, the words after it starting at the subcommand
-// (the root --home flag is skipped). A word that is itself a command line, as
-// in `bash -c "munsu watch"`, is parsed too. An unquoted word opening with `#`
-// starts a shell comment and ends its segment.
-func munsuInvocations(command string) [][]string {
+// every `munsu` command word in any reading of a segment, the words after it
+// starting at the subcommand (the root --home flag is skipped). A word that
+// reads as more than itself, as in `bash -c "munsu watch"`, is parsed too. An
+// unquoted word opening with `#` starts a shell comment and ends its segment.
+// Past maxShellPayloadDepth nested command lines it stops and reports the
+// command too deep to check.
+func munsuInvocations(command string, depth int) ([][]string, bool) {
 	var invocations [][]string
-	for _, words := range commandWords(command) {
-		for _, word := range words {
-			if strings.ContainsAny(word, " \t\n;&|") {
-				invocations = append(invocations, munsuInvocations(word)...)
+	for _, segment := range commandSegments(command) {
+		for _, reading := range segmentReadings(segment) {
+			for _, token := range reading {
+				if !readsAsMoreThanItself(gitSafetyBackslashMode(), token) {
+					continue
+				}
+				if depth+1 > maxShellPayloadDepth {
+					return nil, true
+				}
+				nested, tooDeep := munsuInvocations(token.text, depth+1)
+				if tooDeep {
+					return nil, true
+				}
+				invocations = append(invocations, nested...)
 			}
-		}
-		for i, word := range words {
-			if filepath.Base(word) != "munsu" {
-				continue
+			words := segmentWords(reading)
+			for i, word := range words {
+				if filepath.Base(word) != "munsu" {
+					continue
+				}
+				invocations = append(invocations, munsuSubcommandArgs(words[i+1:]))
 			}
-			invocations = append(invocations, munsuSubcommandArgs(words[i+1:]))
 		}
 	}
-	return invocations
+	return invocations, false
+}
+
+// commandSegments returns the tokens of each segment of command, cut at an
+// unquoted `#` comment.
+func commandSegments(command string) [][]shellToken {
+	var segments [][]shellToken
+	for _, segment := range tokenizeSegments(gitSafetyBackslashMode(), command) {
+		end := slices.IndexFunc(segment, func(token shellToken) bool { return strings.HasPrefix(token.text, "#") })
+		if end < 0 {
+			end = len(segment)
+		}
+		segments = append(segments, segment[:end])
+	}
+	return segments
 }
 
 // commandWords returns the words of each segment of command, cut at an
 // unquoted `#` comment.
 func commandWords(command string) [][]string {
 	var segments [][]string
-	for _, segment := range tokenizeSegments(gitSafetyBackslashMode(), command) {
-		var words []string
-		for _, token := range segment {
-			if strings.HasPrefix(token.text, "#") {
-				break
-			}
-			words = append(words, token.text)
-		}
-		segments = append(segments, words)
+	for _, segment := range commandSegments(command) {
+		segments = append(segments, segmentWords(segment))
 	}
 	return segments
 }
 
-// namesNoMistakesDir reports whether any command word, including a word that
-// is itself a command line, names a no-mistakes directory or a path inside
-// it: a path component, or a path after `=` in a flag word, that equals
-// `.no-mistakes` ignoring case or is a glob that could match it. A glob only
-// reaches a dot-name through a literal leading dot, so `*` does not count.
-func namesNoMistakesDir(command string) bool {
-	for _, words := range commandWords(command) {
-		for _, word := range words {
-			if strings.ContainsAny(word, " \t\n;&|") && namesNoMistakesDir(word) {
-				return true
-			}
-			components := strings.FieldsFunc(word, func(r rune) bool { return r == '/' || r == '=' })
-			for _, component := range components {
-				if !strings.HasPrefix(component, ".") {
-					continue
+// namesNoMistakesDir reports whether any word, in any reading of a segment
+// and in any word that reads as more than itself, names a no-mistakes
+// directory or a path inside it: a path component, or a path after `=` in a
+// flag word, that equals `.no-mistakes` ignoring case or is a glob that could
+// match it. A glob only reaches a dot-name through a literal leading dot, so
+// `*` does not count. Past maxShellPayloadDepth nested command lines it stops
+// and reports the command too deep to check.
+func namesNoMistakesDir(command string, depth int) (bool, bool) {
+	for _, segment := range commandSegments(command) {
+		for _, reading := range segmentReadings(segment) {
+			for _, token := range reading {
+				if readsAsMoreThanItself(gitSafetyBackslashMode(), token) {
+					if depth+1 > maxShellPayloadDepth {
+						return false, true
+					}
+					if names, tooDeep := namesNoMistakesDir(token.text, depth+1); names || tooDeep {
+						return names, tooDeep
+					}
 				}
-				if ok, _ := path.Match(strings.ToLower(component), ".no-mistakes"); ok {
-					return true
+				components := strings.FieldsFunc(token.text, func(r rune) bool { return r == '/' || r == '=' })
+				for _, component := range components {
+					if !strings.HasPrefix(component, ".") {
+						continue
+					}
+					if ok, _ := path.Match(strings.ToLower(component), ".no-mistakes"); ok {
+						return true, false
+					}
 				}
 			}
 		}
 	}
-	return false
+	return false, false
 }
 
 // munsuSubcommandArgs drops the root --home flag from the words after `munsu`.
@@ -643,7 +673,12 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, c
 		// The tokenizer does not parse $(...) or backtick substitution into
 		// words, nor <(...) / >(...) process substitution; those shapes are refused
 		// only by hasGitCommandSubstitution.
-		invocations := munsuInvocations(effectiveCommand)
+		const tooDeepReason = "shell payload nesting is too deep; munsu command rules cannot be checked"
+		invocations, tooDeep := munsuInvocations(effectiveCommand, 0)
+		if tooDeep {
+			block = true
+			reason = tooDeepReason
+		}
 		for _, args := range invocations {
 			if len(args) > 0 && args[0] == "watch" && !watchInvocationAllowed(args[1:]) {
 				block = true
@@ -651,7 +686,11 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, c
 			}
 		}
 
-		if namesNoMistakesDir(effectiveCommand) {
+		names, tooDeep := namesNoMistakesDir(effectiveCommand, 0)
+		if tooDeep {
+			block = true
+			reason = tooDeepReason
+		} else if names {
 			if !onlyGuardOrDoctor(effectiveCommand) {
 				block = true
 				reason = "No-mistakes managed directories are not regular projects."
