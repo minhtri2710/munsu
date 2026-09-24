@@ -136,7 +136,7 @@ func shellWriteTargetsUnderDetailed(mode backslashMode, checkPath, command strin
 	// against known state and must not be refused for it (ADR-0014 §1, #664).
 	unknownCwd := ""
 	cwdByVolume := map[string]string{strings.ToLower(activeVolume): currentPath}
-	for _, segment := range shellSegments(mode, command) {
+	for _, segment := range tokenizeSegments(mode, command) {
 		if len(segment) == 0 {
 			continue
 		}
@@ -236,7 +236,7 @@ func pathDependsOnUnknownCwd(activeVolume, unknownCwd, target string) bool {
 // resolveShellWritePath resolves a write target against the directory the
 // command runs in, under the Windows path spellings the shell channel must
 // classify (#664). It is shell-specific on purpose: the native write channel's
-// resolver (resolveSafetyPath, in git_worktree_safety.go) is the #668 owner and
+// resolver (resolveSafetyPathWithMode, in git_worktree_safety.go) is the #668 owner and
 // must not grow this logic, so the dual-reading guard stays the single owner of
 // its own comparison (ADR-0014 §1).
 //
@@ -288,10 +288,11 @@ func evaluateWriteTargets(targets []string) (bool, string) {
 	return false, ""
 }
 
-// shellSegments tokenizes command — already stripped of heredoc bodies — at
-// unquoted `;`, `&`, `|` and newline, into segments. It mirrors
-// splitSafetySegments + splitSafetyWords, but keeps the two facts those drop:
-// whether a `>` was quoted, and whether a word carries shell expansion.
+// tokenizeSegments splits command at unquoted `;`, `&`, `|` and newline into
+// segments of words. It is the one shell reader for both safety guards, and it
+// keeps what a dequote-then-split reader loses: whether a `>` was quoted,
+// whether a word carries shell expansion, and a quoted space or operator inside
+// one word.
 //
 // Heredoc stripping is the caller's job and is done once, with POSIX delimiter
 // rules, before either backslash reading tokenizes: a heredoc body is content,
@@ -299,10 +300,6 @@ func evaluateWriteTargets(targets []string) (bool, string) {
 // settled applies to it. Tokenizing it refused a legitimate write whenever the
 // content happened to look like a command — this file's own ADR is such a
 // document.
-func shellSegments(mode backslashMode, command string) [][]shellToken {
-	return tokenizeSegments(mode, command)
-}
-
 func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 	var segments [][]shellToken
 	var segment []shellToken

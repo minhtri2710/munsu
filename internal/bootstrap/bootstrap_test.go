@@ -30,8 +30,8 @@ func TestInvalidClosedSetInputsRefuse(t *testing.T) {
 		call func() error
 	}{
 		{"agy", func() error { _, err := agyHooksDir(Scope("invalid"), ""); return err }},
-		{"claude", func() error { _, err := claudeSettingsPath(Scope("invalid"), ""); return err }},
-		{"codex", func() error { _, err := codexHooksPath(Scope("invalid"), ""); return err }},
+		{"claude", func() error { _, err := claudeHooks.path(Scope("invalid"), ""); return err }},
+		{"codex", func() error { _, err := codexHooks.path(Scope("invalid"), ""); return err }},
 		{"grok", func() error { _, err := grokHooksDir(Scope("invalid"), ""); return err }},
 		{"opencode", func() error { _, err := opencodePluginsDir(Scope("invalid"), ""); return err }},
 		{"pi", func() error { _, err := ExpectedTargetPath(Scope("invalid"), ""); return err }},

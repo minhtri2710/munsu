@@ -20,7 +20,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 // opencodePluginsDir returns the path to .opencode/plugins/ for the given scope.
@@ -563,10 +562,9 @@ func OpencodePluginsAllTargetPaths(scope Scope, cwd string) ([]string, error) {
 
 // OpencodeAdapter implements plugin generation and installation for the OpenCode harness.
 type OpencodeAdapter struct {
-	HomeDir string
-	Cwd     string
-	Scope   string // "user" or "project"
-	DryRun  bool
+	Cwd    string
+	Scope  string // "user" or "project"
+	DryRun bool
 }
 
 // InstallOpencodePlugins generates and installs all 4 .opencode/plugins/*.js files.
@@ -613,22 +611,4 @@ func (a *OpencodeAdapter) InstallOpencodePlugins() (targetPaths []string, writte
 	combinedDigest = hex.EncodeToString(sum[:])
 
 	return allTargets, anyWritten, combinedDigest, nil
-}
-
-// generateOpencodeManifest creates the integration manifest for the OpenCode adapter.
-func generateOpencodeManifest(harnessName string, scope string, caps []Capability, combinedDigest string, targetPaths []string) Manifest {
-	capStrs := make([]string, len(caps))
-	for i, c := range caps {
-		capStrs[i] = string(c)
-	}
-	return Manifest{
-		SchemaVersion: "munsu.integrate/v1",
-		Harness:       harnessName,
-		Version:       "1.0.0",
-		Scope:         scope,
-		InstalledAt:   time.Now().UTC().Format(time.RFC3339),
-		TargetPaths:   targetPaths,
-		Capabilities:  capStrs,
-		ContentDigest: combinedDigest,
-	}
 }

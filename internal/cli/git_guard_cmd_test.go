@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // The argv fence is the shim's entry to the same worktree-binding core the
@@ -216,11 +218,11 @@ func TestGuardDoesNotRecurseIntoShim(t *testing.T) {
 		t.Fatal(err)
 	}
 	marker := filepath.Join(home, "shim-was-hit")
-	writeExecutable(t, filepath.Join(shimDir, "git"), "#!/bin/sh\nprintf x > "+marker+"\nexit 0\n")
+	testutil.WriteFakeExecutable(t, filepath.Join(shimDir, "git"), "#!/bin/sh\nprintf x > "+marker+"\nexit 0\n")
 
 	realBin := t.TempDir()
 	realMarker := filepath.Join(home, "real-git-was-hit")
-	writeExecutable(t, filepath.Join(realBin, "git"), "#!/bin/sh\nprintf x > "+realMarker+"\nexit 23\n")
+	testutil.WriteFakeExecutable(t, filepath.Join(realBin, "git"), "#!/bin/sh\nprintf x > "+realMarker+"\nexit 23\n")
 
 	t.Setenv("MUNSU_HOME", "")
 	t.Setenv("MUNSU_TASK_ID", "")

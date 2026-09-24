@@ -113,10 +113,7 @@ func TestSafetyCheckGitMutationRequiresExactWorktreeBindingAndAllowsAlternateTar
 		{name: "wrong git-dir", command: `git --work-tree . --git-dir C:\Users\soldier\.git\worktrees\other add file.txt`, gitDir: `C:\Users\soldier\.git\worktrees\other`, blocked: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			parsedWindows, err := parseGitSafetyCommandWithMode(worktree, tc.command, backslashLiteral)
-			if err != nil {
-				t.Fatal(err)
-			}
+			parsedWindows := parseGitSafetyCommandForTest(worktree, tc.command, backslashLiteral)
 			if parsedWindows.gitDir != tc.gitDir {
 				t.Fatalf("parsed Windows --git-dir = %q, want %q", parsedWindows.gitDir, tc.gitDir)
 			}
@@ -599,10 +596,7 @@ func TestSafetyCheckGitWindowsBackslashReadingIsolatedFromPosix(t *testing.T) {
 	const command = `git --work-tree . --git-dir ` + windowsGitDir + ` add file.txt`
 
 	// (1) Windows reading: backslashes literal -> bound path matches -> allowed.
-	winParsed, err := parseGitSafetyCommandWithMode(worktree, command, backslashLiteral)
-	if err != nil {
-		t.Fatal(err)
-	}
+	winParsed := parseGitSafetyCommandForTest(worktree, command, backslashLiteral)
 	if winParsed.gitDir != windowsGitDir {
 		t.Fatalf("Windows-literal --git-dir = %q, want %q", winParsed.gitDir, windowsGitDir)
 	}
@@ -612,10 +606,7 @@ func TestSafetyCheckGitWindowsBackslashReadingIsolatedFromPosix(t *testing.T) {
 
 	// (2) POSIX reading: backslash is an escape -> Windows path mangled -> still
 	// refused (guard keeps refusing on POSIX).
-	posixParsed, err := parseGitSafetyCommandWithMode(worktree, command, backslashEscapes)
-	if err != nil {
-		t.Fatal(err)
-	}
+	posixParsed := parseGitSafetyCommandForTest(worktree, command, backslashEscapes)
 	if posixParsed.gitDir == windowsGitDir {
 		t.Fatalf("POSIX reading kept backslashes literal: %q; POSIX must escape them", posixParsed.gitDir)
 	}
@@ -667,6 +658,74 @@ func TestResolveSafetyPathModeDetermined(t *testing.T) {
 		got := resolveSafetyPathWithMode(base, c.path, c.mode)
 		if got != c.want {
 			t.Fatalf("resolveSafetyPathWithMode(%q, %q, %v) = %q, want %q", base, c.path, c.mode, got, c.want)
+		}
+	}
+}
+
+// parseGitSafetyCommandForTest parses the first git command in command under
+// one backslash reading, the way evaluateGitMutationSafety reads each segment.
+func parseGitSafetyCommandForTest(checkPath, command string, mode backslashMode) gitCommandSafety {
+	for _, segment := range tokenizeSegments(mode, command) {
+		if g := parseGitSafetyWords(checkPath, segmentWords(segment), mode); g.verb != "" {
+			return g
+		}
+	}
+	return gitCommandSafety{}
+}
+
+// TestSafetyCheckGitVerdictsOnSharedTokenizer pins the hook verdict for every
+// command whose reading moved when the git guard switched from its own
+// dequote-then-split reader to tokenizeSegments. old is the verdict at
+// 8765440e; want is the verdict now. The rows that did not move pin the
+// substitution refusal, which still scans the raw command, heredoc bodies
+// included.
+func TestSafetyCheckGitVerdictsOnSharedTokenizer(t *testing.T) {
+	primary := initGitRepoForSafety(t, t.TempDir())
+	worktree := filepath.Join(t.TempDir(), "wt")
+	runGitForSafety(t, primary, "worktree", "add", "--detach", worktree)
+	homeDir := bindSafetyWorktree(t, "ship-vd", primary, worktree)
+	t.Setenv("MUNSU_HOME", homeDir)
+	t.Setenv("MUNSU_TASK_ID", "ship-vd")
+	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-vd")
+	if err := os.MkdirAll(filepath.Join(worktree, "my dir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	const refuse, allow = true, false
+	for _, tc := range []struct {
+		command string
+		old     bool
+		want    bool
+	}{
+		// A quoted path is one word: the old reader split it, read "dir" or
+		// "repo" as the verb, and let the push through.
+		{`git -C "my dir" push --force origin mu/ship-vd`, allow, refuse},
+		{`git -C "my dir" push`, allow, refuse},
+		{`git -C'/other repo' push`, allow, refuse},
+		// cd resolves the whole quoted operand, so a bound push from a
+		// subdirectory with a space in its name is no longer refused.
+		{`cd "my dir" && git push origin mu/ship-vd`, refuse, allow},
+		// Quoted operators and heredoc bodies are data, not commands.
+		{`echo "x && git push --force"`, refuse, allow},
+		{"cat <<EOF\ngit push --force\nEOF", refuse, allow},
+		{"git commit -F- <<'EOF'\nmsg; git reset --hard\nEOF", refuse, allow},
+		// Substitution is refused on the raw command, heredoc bodies included.
+		{"git $(printf add) file.txt", refuse, refuse},
+		{"git `printf add` file.txt", refuse, refuse},
+		{"cat <<EOF\n$(git push --force)\nEOF", refuse, refuse},
+		{"cat <<EOF\n`git push --force`\nEOF", refuse, refuse},
+		{"cat <<'EOF'\n$(git push --force)\nEOF", refuse, refuse},
+		// The same raw check is what refuses a substitution in a heredoc body
+		// for the write channel: shellWriteTargets strips bodies before it
+		// tokenizes, and both guards run on every hook call.
+		{"cat <<EOF\n$(touch ../escaped)\nEOF", refuse, refuse},
+		// Real segment separators still end a segment.
+		{"git status\ngit push --force origin mu/ship-vd", refuse, refuse},
+		{"git status && git reset --hard", refuse, refuse},
+	} {
+		block, reason := runPiSafetyForGit(t, worktree, tc.command)
+		if block != tc.want {
+			t.Errorf("%q block=%v reason=%q, want block=%v (was %v at 8765440e)", tc.command, block, reason, tc.want, tc.old)
 		}
 	}
 }

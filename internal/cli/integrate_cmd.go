@@ -506,7 +506,7 @@ func munsuInvocations(command string) [][]string {
 // unquoted `#` comment.
 func commandWords(command string) [][]string {
 	var segments [][]string
-	for _, segment := range shellSegments(gitSafetyBackslashMode(), command) {
+	for _, segment := range tokenizeSegments(gitSafetyBackslashMode(), command) {
 		var words []string
 		for _, token := range segment {
 			if strings.HasPrefix(token.text, "#") {

@@ -154,8 +154,6 @@ func copyFile(src, dst string) error {
 	return out.Close()
 }
 
-func posixShellPath() (string, error) { return resolvePOSIXShell(bootPath) }
-
 func resolveBashShell(searchPath string) (string, []string, error) {
 	candidates := make([]bashCandidate, 0, 2)
 	if bash, dirs, ok := resolveGitBash(searchPath); ok {

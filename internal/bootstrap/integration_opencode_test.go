@@ -426,37 +426,6 @@ func TestOpencodePluginsTargetPath(t *testing.T) {
 	}
 }
 
-// TestGenerateOpencodeManifest verifies OpenCode manifest generation.
-func TestGenerateOpencodeManifest(t *testing.T) {
-	caps := []Capability{CapSessionStart, CapWakeFollowUp, CapTurnEndGuard, CapPreToolCheck}
-	targets := []string{
-		"/home/user/.opencode/plugins/munsu-pretool-check.js",
-		"/home/user/.opencode/plugins/munsu-sessionstart-nudge.js",
-		"/home/user/.opencode/plugins/munsu-turnend-guard.js",
-		"/home/user/.opencode/plugins/munsu-watch-arm.js",
-	}
-	m := generateOpencodeManifest("opencode", "user", caps, "test-digest", targets)
-
-	if m.Harness != "opencode" {
-		t.Errorf("expected harness 'opencode', got %q", m.Harness)
-	}
-	if m.SchemaVersion != "munsu.integrate/v1" {
-		t.Errorf("expected schema version 'munsu.integrate/v1', got %q", m.SchemaVersion)
-	}
-	if len(m.TargetPaths) != 4 {
-		t.Errorf("expected 4 target paths, got %d", len(m.TargetPaths))
-	}
-	if m.ContentDigest != "test-digest" {
-		t.Errorf("expected digest 'test-digest', got %q", m.ContentDigest)
-	}
-	if len(m.Capabilities) != 4 {
-		t.Errorf("expected 4 capabilities, got %d", len(m.Capabilities))
-	}
-	if m.Version != "1.0.0" {
-		t.Errorf("expected version 1.0.0, got %q", m.Version)
-	}
-}
-
 // TestOpencodeEnabledCapabilities verifies opencode capabilities include wake-followup.
 func TestOpencodeEnabledCapabilities(t *testing.T) {
 	caps := EnabledCapabilities("opencode")

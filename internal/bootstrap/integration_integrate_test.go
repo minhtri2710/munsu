@@ -371,13 +371,19 @@ func TestWriteAtomic_NoopOnIdentical(t *testing.T) {
 	}
 }
 
-// Test GenerateManifest
-func TestGenerateManifest(t *testing.T) {
-	caps := []Capability{CapSessionStart, CapWakeFollowUp}
-	m := GenerateManifest("pi", "user", caps, "test-digest")
+// TestNewManifest verifies the one manifest builder every harness installs through.
+func TestNewManifest(t *testing.T) {
+	caps := []Capability{CapSessionStart, CapTurnEndGuard, CapPreToolCheck}
+	targets := []string{
+		"/home/user/.grok/hooks/fm-primary-sessionstart-nudge.json",
+		"/home/user/.grok/hooks/fm-primary-pretool-check.json",
+		"/home/user/.grok/hooks/fm-primary-cd-check.json",
+		"/home/user/.grok/hooks/fm-primary-turnend-guard.json",
+	}
+	m := newManifest("grok", ScopeUser, caps, "test-digest", targets)
 
-	if m.Harness != "pi" {
-		t.Errorf("expected harness 'pi', got %q", m.Harness)
+	if m.Harness != "grok" {
+		t.Errorf("expected harness 'grok', got %q", m.Harness)
 	}
 	if m.SchemaVersion != "munsu.integrate/v1" {
 		t.Errorf("expected schema version 'munsu.integrate/v1', got %q", m.SchemaVersion)
@@ -385,11 +391,20 @@ func TestGenerateManifest(t *testing.T) {
 	if m.Scope != "user" {
 		t.Errorf("expected scope 'user', got %q", m.Scope)
 	}
-	if len(m.Capabilities) != 2 {
-		t.Errorf("expected 2 capabilities, got %d", len(m.Capabilities))
+	if len(m.TargetPaths) != 4 {
+		t.Errorf("expected 4 target paths, got %d", len(m.TargetPaths))
 	}
-	if m.Capabilities[0] != "session-start" {
-		t.Errorf("expected first capability 'session-start', got %q", m.Capabilities[0])
+	if m.ContentDigest != "test-digest" {
+		t.Errorf("expected digest 'test-digest', got %q", m.ContentDigest)
+	}
+	if len(m.Capabilities) != 3 || m.Capabilities[0] != "session-start" {
+		t.Errorf("expected 3 capabilities starting with session-start, got %v", m.Capabilities)
+	}
+	if m.Version != "1.0.0" {
+		t.Errorf("expected version 1.0.0, got %q", m.Version)
+	}
+	if _, err := time.Parse(time.RFC3339, m.InstalledAt); err != nil {
+		t.Errorf("installed_at %q is not RFC3339: %v", m.InstalledAt, err)
 	}
 }
 
@@ -836,9 +851,9 @@ func TestPiExtensionTemplate_NumericLeaseExpiry(t *testing.T) {
 	}
 }
 
-// Test ClaudeSettingsContent contains required hook entries
+// Test Claude settings content contains required hook entries
 func TestClaudeSettingsContent_Hooks(t *testing.T) {
-	content := ClaudeSettingsContent("/usr/local/bin/munsu")
+	content := claudeHooks.content("/usr/local/bin/munsu")
 	if content == "" {
 		t.Fatal("expected non-empty settings content")
 	}
@@ -890,10 +905,10 @@ func TestClaudeSettingsContent_Hooks(t *testing.T) {
 	}
 }
 
-// Test ClaudeSettingsContent binary substitution
+// Test Claude settings content binary substitution
 func TestClaudeSettingsContent_BinarySubstitution(t *testing.T) {
 	binPath := "/custom/path/with spaces/munsu"
-	content := ClaudeSettingsContent(binPath)
+	content := claudeHooks.content(binPath)
 	if strings.Contains(content, "BINPATH") {
 		t.Errorf("BINPATH still present in settings output")
 	}
@@ -908,37 +923,41 @@ func TestClaudeSettingsContent_BinarySubstitution(t *testing.T) {
 	}
 }
 
-// Test ClaudeSettingsDigest determinism
-func TestClaudeSettingsDigest_Deterministic(t *testing.T) {
-	d1 := ClaudeSettingsDigest("/usr/local/bin/munsu")
-	d2 := ClaudeSettingsDigest("/usr/local/bin/munsu")
-	if d1 == "" || len(d1) != 64 {
-		t.Fatal("expected 64-char hex digest")
-	}
-	if d1 != d2 {
-		t.Fatal("digest must be deterministic")
+// Test Claude settings content determinism
+func TestClaudeSettingsContent_Deterministic(t *testing.T) {
+	c1 := claudeHooks.content("/usr/local/bin/munsu")
+	c2 := claudeHooks.content("/usr/local/bin/munsu")
+	if c1 != c2 {
+		t.Fatal("content must be deterministic")
 	}
 
-	d3 := ClaudeSettingsDigest("/opt/bin/munsu")
-	if d1 == d3 {
-		t.Fatal("digest must differ for different binary paths")
+	c3 := claudeHooks.content("/opt/bin/munsu")
+	if c1 == c3 {
+		t.Fatal("content must differ for different binary paths")
 	}
 }
 
-// Test ClaudeSettingsHasOwnedHooks verifies structural ownership detection
-// for Claude settings.json — install → status=installed; remove a hook → drifted.
-func TestClaudeSettingsHasOwnedHooks(t *testing.T) {
+// TestJSONHookHarnessHasOwnedHooks verifies structural ownership detection
+// for Claude settings.json and Codex hooks.json: generated content is owned;
+// remove a hook and it is not.
+func TestJSONHookHarnessHasOwnedHooks(t *testing.T) {
+	for _, h := range []jsonHookHarness{claudeHooks, codexHooks} {
+		t.Run(h.name, func(t *testing.T) { testJSONHookHarnessHasOwnedHooks(t, h) })
+	}
+}
+
+func testJSONHookHarnessHasOwnedHooks(t *testing.T, h jsonHookHarness) {
 	dir := t.TempDir()
-	settingsPath := filepath.Join(dir, "settings.json")
+	settingsPath := filepath.Join(dir, h.file)
 
 	// Write a valid settings.json with all hooks
-	content := ClaudeSettingsContent("/usr/local/bin/munsu")
+	content := h.content("/usr/local/bin/munsu")
 	if err := os.WriteFile(settingsPath, []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	// All hooks present → owned
-	present, msg, err := ClaudeSettingsHasOwnedHooks(settingsPath, "/usr/local/bin/munsu")
+	present, msg, err := h.hasOwnedHooks(settingsPath, "/usr/local/bin/munsu")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -961,7 +980,7 @@ func TestClaudeSettingsHasOwnedHooks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	present, msg, err = ClaudeSettingsHasOwnedHooks(settingsPath, "/usr/local/bin/munsu")
+	present, msg, err = h.hasOwnedHooks(settingsPath, "/usr/local/bin/munsu")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -973,7 +992,7 @@ func TestClaudeSettingsHasOwnedHooks(t *testing.T) {
 	}
 
 	// Missing file → error
-	_, _, err = ClaudeSettingsHasOwnedHooks(filepath.Join(dir, "nonexistent.json"), "/usr/local/bin/munsu")
+	_, _, err = h.hasOwnedHooks(filepath.Join(dir, "nonexistent.json"), "/usr/local/bin/munsu")
 	if err == nil {
 		t.Error("expected error for missing file")
 	}
@@ -982,7 +1001,7 @@ func TestClaudeSettingsHasOwnedHooks(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "bad.json"), []byte("not json"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = ClaudeSettingsHasOwnedHooks(filepath.Join(dir, "bad.json"), "/usr/local/bin/munsu")
+	_, _, err = h.hasOwnedHooks(filepath.Join(dir, "bad.json"), "/usr/local/bin/munsu")
 	if err == nil {
 		t.Error("expected error for invalid JSON")
 	}
@@ -1355,8 +1374,8 @@ func TestGrokHooksHasOwnedHooks_InvalidJSON(t *testing.T) {
 	}
 }
 
-// TestGrokMergeHookFile verifies read-merge preserves user hooks.
-func TestGrokMergeHookFile(t *testing.T) {
+// TestMergeHookEventArrays verifies read-merge preserves user hooks.
+func TestMergeHookEventArrays(t *testing.T) {
 	existing := `{
   "hooks": {
     "SessionStart": [
@@ -1389,7 +1408,7 @@ func TestGrokMergeHookFile(t *testing.T) {
   }
 }`
 
-	merged, err := mergeGrokHookFile(existing, generated)
+	merged, err := mergeHookEventArrays("hooks.json", existing, generated)
 	if err != nil {
 		t.Fatalf("merge failed: %v", err)
 	}
@@ -1438,44 +1457,13 @@ func TestGrokMergeHookFile(t *testing.T) {
 	}
 }
 
-// TestGenerateGrokManifest verifies Grok manifest generation.
-func TestGenerateGrokManifest(t *testing.T) {
-	caps := []Capability{CapSessionStart, CapTurnEndGuard, CapPreToolCheck}
-	targets := []string{
-		"/home/user/.grok/hooks/fm-primary-sessionstart-nudge.json",
-		"/home/user/.grok/hooks/fm-primary-pretool-check.json",
-		"/home/user/.grok/hooks/fm-primary-cd-check.json",
-		"/home/user/.grok/hooks/fm-primary-turnend-guard.json",
-	}
-	m := generateGrokManifest("grok", "user", caps, "test-digest", targets)
-
-	if m.Harness != "grok" {
-		t.Errorf("expected harness 'grok', got %q", m.Harness)
-	}
-	if m.SchemaVersion != "munsu.integrate/v1" {
-		t.Errorf("expected schema version 'munsu.integrate/v1', got %q", m.SchemaVersion)
-	}
-	if len(m.TargetPaths) != 4 {
-		t.Errorf("expected 4 target paths, got %d", len(m.TargetPaths))
-	}
-	if m.ContentDigest != "test-digest" {
-		t.Errorf("expected digest 'test-digest', got %q", m.ContentDigest)
-	}
-	if len(m.Capabilities) != 3 {
-		t.Errorf("expected 3 capabilities, got %d", len(m.Capabilities))
-	}
-	if m.Version != "1.0.0" {
-		t.Errorf("expected version 1.0.0, got %q", m.Version)
-	}
-}
-
 // --- CapSessionStart harness wiring tests ---
 
 // TestClaudeCapSessionStartWiring verifies that Claude settings.json has
 // SessionStart hook with startup|resume|clear matcher and sessionstart-nudge
 // command under CapSessionStart.
 func TestClaudeCapSessionStartWiring(t *testing.T) {
-	content := ClaudeSettingsContent("/usr/local/bin/munsu")
+	content := claudeHooks.content("/usr/local/bin/munsu")
 
 	// Must have SessionStart hook
 	if !strings.Contains(content, "SessionStart") {
@@ -1512,7 +1500,7 @@ func TestClaudeCapSessionStartWiring(t *testing.T) {
 // SessionStart hook with startup|resume|clear matcher and sessionstart-nudge
 // command under CapSessionStart.
 func TestCodexCapSessionStartWiring(t *testing.T) {
-	content := CodexHooksContent("/usr/local/bin/munsu")
+	content := codexHooks.content("/usr/local/bin/munsu")
 
 	// Must have SessionStart hook
 	if !strings.Contains(content, "SessionStart") {
@@ -1952,5 +1940,126 @@ func TestAgyStatusDriftDetection(t *testing.T) {
 	}
 	if status.State != "installed" {
 		t.Fatalf("expected installed after repair, got %q: %s", status.State, status.Message)
+	}
+}
+
+// hookFileTargets names, per merging harness, the hooks file a user may
+// already own at project scope.
+var hookFileTargets = map[string]string{
+	"claude": filepath.Join(".claude", "settings.json"),
+	"codex":  filepath.Join(".codex", "hooks.json"),
+	"grok":   filepath.Join(".grok", "hooks", "fm-primary-sessionstart-nudge.json"),
+	"agy":    filepath.Join(".agents", "hooks.json"),
+}
+
+// TestHookMergeReinstallKeepsOneMunsuEntry installs twice over a user-owned
+// hooks file: each event carries munsu's entries exactly once and the user's
+// entry survives.
+func TestHookMergeReinstallKeepsOneMunsuEntry(t *testing.T) {
+	for _, name := range []string{"claude", "codex", "grok"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			homeDir := filepath.Join(dir, "home")
+			projectDir := filepath.Join(dir, "project")
+			munsuBin := filepath.Join(dir, "munsu")
+			SetMunsuPathResolver(testMunsuResolver{path: munsuBin})
+			defer ResetMunsuPathResolver()
+
+			target := filepath.Join(projectDir, hookFileTargets[name])
+			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+				t.Fatal(err)
+			}
+			user := `{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"user-command"}]}]}}`
+			if err := os.WriteFile(target, []byte(user), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			for i := 0; i < 2; i++ {
+				if _, err := Install(homeDir, projectDir, name, ScopeProject, false); err != nil {
+					t.Fatalf("install %d: %v", i+1, err)
+				}
+			}
+
+			data, err := os.ReadFile(target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var parsed struct {
+				Hooks map[string][]struct {
+					Hooks []struct {
+						Command string `json:"command"`
+					} `json:"hooks"`
+				} `json:"hooks"`
+			}
+			if err := json.Unmarshal(data, &parsed); err != nil {
+				t.Fatal(err)
+			}
+			binJSON, _ := json.Marshal(munsuBin)
+			userEntries := 0
+			for event, matchers := range parsed.Hooks {
+				munsuEntries := 0
+				for _, m := range matchers {
+					for _, h := range m.Hooks {
+						switch {
+						case strings.Contains(h.Command, string(binJSON)):
+							munsuEntries++
+						case h.Command == "user-command":
+							userEntries++
+						}
+					}
+				}
+				// Claude and Codex register two PreToolUse matchers (Bash and
+				// the native write tools); every other event has one entry.
+				want := 1
+				if event == "PreToolUse" && name != "grok" {
+					want = 2
+				}
+				if munsuEntries != want {
+					t.Errorf("event %s: %d munsu entries after reinstall, want %d:\n%s", event, munsuEntries, want, data)
+				}
+			}
+			if userEntries != 1 {
+				t.Errorf("user entry count = %d, want 1:\n%s", userEntries, data)
+			}
+		})
+	}
+}
+
+// TestHookMergeRefusesInvalidExistingJSON leaves a hooks file that is not
+// valid JSON byte-identical and names it in the install error.
+func TestHookMergeRefusesInvalidExistingJSON(t *testing.T) {
+	for _, name := range []string{"claude", "codex", "grok", "agy"} {
+		for _, content := range []string{"{not json", "null"} {
+			t.Run(name+"/"+content, func(t *testing.T) {
+				dir := t.TempDir()
+				homeDir := filepath.Join(dir, "home")
+				projectDir := filepath.Join(dir, "project")
+				SetMunsuPathResolver(testMunsuResolver{path: filepath.Join(dir, "munsu")})
+				defer ResetMunsuPathResolver()
+
+				target := filepath.Join(projectDir, hookFileTargets[name])
+				if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(target, []byte(content), 0644); err != nil {
+					t.Fatal(err)
+				}
+
+				_, err := Install(homeDir, projectDir, name, ScopeProject, false)
+				if err == nil || !strings.Contains(err.Error(), filepath.Base(target)) {
+					t.Fatalf("Install error = %v, want a refusal naming %s", err, target)
+				}
+				data, readErr := os.ReadFile(target)
+				if readErr != nil {
+					t.Fatal(readErr)
+				}
+				if string(data) != content {
+					t.Fatalf("hooks file changed to %q, want it untouched", data)
+				}
+				if _, statErr := os.Stat(ManifestPath(homeDir, name, ScopeProject, projectDir)); !os.IsNotExist(statErr) {
+					t.Fatalf("manifest written after refusal: %v", statErr)
+				}
+			})
+		}
 	}
 }

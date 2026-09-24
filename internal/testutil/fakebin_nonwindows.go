@@ -3,8 +3,6 @@
 package testutil
 
 import (
-	"errors"
-	"fmt"
 	"os"
 )
 
@@ -16,21 +14,6 @@ func isExecutable(path string) bool {
 }
 
 func fakeExecutablePath(path string) string { return path }
-
-// posixShellPath resolves a generic POSIX interpreter for portable fixtures.
-// Complete support for bash-driven launch scripts belongs to resolveBashShell,
-// which separately verifies bash, cat, and mkdir availability.
-func posixShellPath() (string, error) {
-	for _, p := range []string{"/bin/sh", "/usr/bin/sh", "/bin/bash"} {
-		if isExecutable(p) {
-			return p, nil
-		}
-	}
-	if p := findOnPath(bootPath, "sh", "bash"); p != "" {
-		return p, nil
-	}
-	return "", fmt.Errorf("no POSIX shell on PATH=%s: %w", bootPath, errors.ErrUnsupported)
-}
 
 func resolveBashShell(searchPath string) (string, []string, error) {
 	candidates := []bashCandidate{

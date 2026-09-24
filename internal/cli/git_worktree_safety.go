@@ -23,28 +23,30 @@ type gitCommandSafety struct {
 	branchName string
 }
 
+// evaluateGitMutationSafety is the shell-string entry to the git fence. It
+// reads the command with the same tokenizer as the write guard: heredoc bodies
+// are stripped, then segments and words keep their quoting, so a quoted space
+// stays inside one word and a quoted `&&` never ends a segment.
+//
+// Command substitution is checked on the raw command, before stripping: a
+// heredoc with an unquoted delimiter still runs `$(...)` and backticks in its
+// body, and the tokenizer does not parse substitutions into words.
 func evaluateGitMutationSafety(checkPath, command string) (bool, string) {
 	homeDir := strings.TrimSpace(os.Getenv("MUNSU_HOME"))
 	taskID := strings.TrimSpace(os.Getenv("MUNSU_TASK_ID"))
-	segments := splitSafetySegments(command)
+	if hasGitCommandSubstitution(command) {
+		return true, "compound shell command with command substitution is not allowed for git mutation"
+	}
+	mode := gitSafetyBackslashMode()
 	currentPath := checkPath
-	for _, rawSegment := range segments {
-		segment := strings.TrimSpace(rawSegment)
-		if segment == "" {
-			continue
-		}
-		if hasGitCommandSubstitution(segment) {
-			return true, "compound shell command with command substitution is not allowed for git mutation"
-		}
-		if nextPath, ok := cdSegmentPath(currentPath, segment); ok {
+	for _, segment := range tokenizeSegments(mode, stripHeredocBodies(command)) {
+		words := segmentWords(segment)
+		if nextPath, ok := cdSegmentPath(mode, currentPath, words); ok {
 			currentPath = nextPath
 			continue
 		}
-		parsed, err := parseGitSafetyCommand(currentPath, segment)
-		if err != nil {
-			return true, err.Error()
-		}
-		if !parsed.isGit || !parsed.mutating {
+		parsed := parseGitSafetyWords(currentPath, words, mode)
+		if !parsed.mutating {
 			continue
 		}
 		if blocked, reason := evaluateParsedGitMutation(homeDir, taskID, parsed); blocked {
@@ -52,6 +54,15 @@ func evaluateGitMutationSafety(checkPath, command string) (bool, string) {
 		}
 	}
 	return false, ""
+}
+
+// segmentWords returns the text of each token in a segment.
+func segmentWords(segment []shellToken) []string {
+	words := make([]string, len(segment))
+	for i, token := range segment {
+		words[i] = token.text
+	}
+	return words
 }
 
 // evaluateGitArgvSafety is the argv entry to the same fence the string path
@@ -165,37 +176,16 @@ func validateGitMutationAuthority(homeDir, taskID string, g gitCommandSafety, bi
 	}
 }
 
-func parseGitSafetyCommand(checkPath, command string) (gitCommandSafety, error) {
-	return parseGitSafetyCommandWithMode(checkPath, command, gitSafetyBackslashMode())
-}
-
-func parseGitSafetyCommandWithMode(checkPath, command string, mode backslashMode) (gitCommandSafety, error) {
-	segments := splitSafetySegmentsWithMode(mode, command)
-	if len(segments) == 0 {
-		return gitCommandSafety{}, nil
-	}
-	for _, segment := range segments {
-		args := splitSafetyWordsWithMode(mode, segment)
-		if len(args) == 0 {
-			continue
-		}
-		idx := -1
-		for i, arg := range args {
-			base := filepath.Base(arg)
-			if base == "git" || strings.HasSuffix(base, "/git") {
-				idx = i
-				break
-			}
-		}
-		if idx < 0 {
-			continue
-		}
-		g := walkGitArgs(checkPath, args[idx+1:], mode)
-		if g.verb != "" {
-			return g, nil
+// parseGitSafetyWords finds the git executable among one segment's words and
+// walks the arguments after it.
+func parseGitSafetyWords(checkPath string, words []string, mode backslashMode) gitCommandSafety {
+	for i, word := range words {
+		base := filepath.Base(word)
+		if base == "git" || strings.HasSuffix(base, "/git") {
+			return walkGitArgs(checkPath, words[i+1:], mode)
 		}
 	}
-	return gitCommandSafety{}, nil
+	return gitCommandSafety{}
 }
 
 // walkGitArgs interprets the git arguments that follow the git executable (the
@@ -247,49 +237,6 @@ func walkGitArgs(checkPath string, gitArgs []string, mode backslashMode) gitComm
 		}
 	}
 	return g
-}
-
-func splitSafetyWordsWithMode(mode backslashMode, segment string) []string {
-	var args []string
-	var b strings.Builder
-	quote := rune(0)
-	escaped := false
-	flush := func() {
-		if b.Len() > 0 {
-			args = append(args, b.String())
-			b.Reset()
-		}
-	}
-	for _, r := range segment {
-		if escaped {
-			b.WriteRune(r)
-			escaped = false
-			continue
-		}
-		if r == '\\' && mode == backslashEscapes {
-			escaped = true
-			continue
-		}
-		if quote != 0 {
-			if r == quote {
-				quote = 0
-			} else {
-				b.WriteRune(r)
-			}
-			continue
-		}
-		if r == '\'' || r == '"' {
-			quote = r
-			continue
-		}
-		if r == ' ' || r == '\t' {
-			flush()
-			continue
-		}
-		b.WriteRune(r)
-	}
-	flush()
-	return args
 }
 
 func fillGitCommandDetails(g *gitCommandSafety) {
@@ -467,10 +414,6 @@ func gitSafetyOutput(dir string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-func resolveSafetyPath(base, path string) string {
-	return resolveSafetyPathWithMode(base, path, gitSafetyBackslashMode())
-}
-
 func resolveSafetyPathWithMode(base, path string, mode backslashMode) string {
 	if filepath.IsAbs(path) {
 		// Under the escape reading a Windows drive/UNC path must not be
@@ -514,68 +457,19 @@ func gitSafetyBackslashMode() backslashMode {
 	return backslashEscapes
 }
 
-func splitSafetySegments(command string) []string {
-	return splitSafetySegmentsWithMode(gitSafetyBackslashMode(), command)
-}
-
-func splitSafetySegmentsWithMode(mode backslashMode, command string) []string {
-	segments := []string{}
-	var b strings.Builder
-	quote := rune(0)
-	escaped := false
-	flush := func() {
-		if s := strings.TrimSpace(b.String()); s != "" {
-			segments = append(segments, s)
-		}
-		b.Reset()
-	}
-	for _, r := range command {
-		if escaped {
-			b.WriteRune(r)
-			escaped = false
-			continue
-		}
-		if r == '\\' && mode == backslashEscapes {
-			escaped = true
-			continue
-		}
-		if quote != 0 {
-			if r == quote {
-				quote = 0
-			} else {
-				b.WriteRune(r)
-			}
-			continue
-		}
-		switch r {
-		case '\'', '"':
-			quote = r
-		case ';', '&', '|', '\n':
-			flush()
-		default:
-			b.WriteRune(r)
-		}
-	}
-	flush()
-	return segments
-}
-
 func hasGitCommandSubstitution(command string) bool {
 	return strings.Contains(command, "$(") || strings.Contains(command, "`") ||
 		strings.Contains(command, "<(") || strings.Contains(command, ">(")
 }
 
-func cdSegmentPath(currentPath, segment string) (string, bool) {
-	return cdSegmentPathWithMode(gitSafetyBackslashMode(), currentPath, segment)
-}
-
-func cdSegmentPathWithMode(mode backslashMode, currentPath, segment string) (string, bool) {
-	fields := splitSafetyWordsWithMode(mode, segment)
-	if len(fields) == 0 || fields[0] != "cd" {
+// cdSegmentPath reports whether a segment is a `cd` and, if so, the directory
+// it moves to.
+func cdSegmentPath(mode backslashMode, currentPath string, words []string) (string, bool) {
+	if len(words) == 0 || words[0] != "cd" {
 		return "", false
 	}
-	if len(fields) < 2 {
+	if len(words) < 2 {
 		return currentPath, true
 	}
-	return resolveSafetyPath(currentPath, fields[1]), true
+	return resolveSafetyPathWithMode(currentPath, words[1], mode), true
 }

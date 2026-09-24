@@ -4,7 +4,7 @@
 // Each integration is scoped to one harness and one scope (user-global or
 // project-local). Ownership markers ensure we never overwrite unrelated user
 // content. All writes are atomic (write-to-temp, then rename with fsync).
-// Backups are taken before owned content is replaced.
+// Existing user hook files that cannot be parsed are refused, never replaced.
 package bootstrap
 
 import (
@@ -12,10 +12,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -60,7 +62,6 @@ type Manifest struct {
 	Scope         string   `json:"scope"`
 	InstalledAt   string   `json:"installed_at"`
 	TargetPaths   []string `json:"target_paths"`
-	BackupPaths   []string `json:"backup_paths,omitempty"`
 	Capabilities  []string `json:"capabilities"`
 	ContentDigest string   `json:"content_digest,omitempty"`
 }
@@ -692,4 +693,92 @@ func ValidateStrict(m Manifest, expectedHarness, expectedScope, expectedVersion 
 	// Store the manifest as JSON, re-ungeneral, and check no unexpected fields.
 	// This is done in Status via DisallowUnknownFields.
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Hook JSON merge — shared by the Claude, Codex, Grok and agy adapters
+// ---------------------------------------------------------------------------
+
+// readExistingHookFile returns the content of an existing hooks file, or ""
+// when there is none to merge into.
+func readExistingHookFile(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("reading existing %s: %w", path, err)
+	}
+	return string(data), nil
+}
+
+// parseExistingHookJSON decodes the user's existing hooks file. Content that
+// is not a JSON object is refused rather than overwritten: the file is the
+// user's, and munsu keeps no backup to restore it from.
+func parseExistingHookJSON(path, existing string) (map[string]interface{}, error) {
+	var existingJSON map[string]interface{}
+	if err := json.Unmarshal([]byte(existing), &existingJSON); err != nil {
+		return nil, fmt.Errorf("refusing to overwrite %s: existing content is not valid JSON: %w", path, err)
+	}
+	if existingJSON == nil {
+		return nil, fmt.Errorf("refusing to overwrite %s: existing content is not a JSON object", path)
+	}
+	return existingJSON, nil
+}
+
+// mergeHookEventArrays merges munsu's generated per-event hook arrays into the
+// existing hooks file at path. Munsu's entries run first; any earlier copy of
+// a munsu entry is dropped so a reinstall replaces it instead of adding a
+// duplicate, and every user-owned entry is kept in order.
+func mergeHookEventArrays(path, existing, generated string) (string, error) {
+	existingJSON, err := parseExistingHookJSON(path, existing)
+	if err != nil {
+		return "", err
+	}
+
+	var generatedJSON map[string]interface{}
+	if err := json.Unmarshal([]byte(generated), &generatedJSON); err != nil {
+		return "", fmt.Errorf("generated hooks for %s are invalid JSON: %w", path, err)
+	}
+	genHooks, _ := generatedJSON["hooks"].(map[string]interface{})
+
+	existingHooks, ok := existingJSON["hooks"].(map[string]interface{})
+	if !ok || existingHooks == nil {
+		existingJSON["hooks"] = genHooks
+		return marshalJSON(existingJSON)
+	}
+
+	for event, value := range genHooks {
+		genList, ok := value.([]interface{})
+		if !ok {
+			continue
+		}
+		existingList, _ := existingHooks[event].([]interface{})
+		merged := append([]interface{}{}, genList...)
+		for _, entry := range existingList {
+			if !containsHookEntry(genList, entry) {
+				merged = append(merged, entry)
+			}
+		}
+		existingHooks[event] = merged
+	}
+
+	return marshalJSON(existingJSON)
+}
+
+func containsHookEntry(list []interface{}, entry interface{}) bool {
+	for _, candidate := range list {
+		if reflect.DeepEqual(candidate, entry) {
+			return true
+		}
+	}
+	return false
+}
+
+func marshalJSON(v interface{}) (string, error) {
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }

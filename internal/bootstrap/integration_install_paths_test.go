@@ -2,7 +2,6 @@ package bootstrap
 
 import (
 	"io/fs"
-	"os"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -14,11 +13,7 @@ import (
 // TestProjectScopeInstallPathsMatchesInstalledFiles pins that the derived
 // paths are exactly the files a project-scope Install writes, per harness.
 func TestProjectScopeInstallPathsMatchesInstalledFiles(t *testing.T) {
-	bin := t.TempDir()
-	writeTestExecutable(t, filepath.Join(bin, "pi"), "#!/bin/sh\necho 0.79.0\n")
-	writeTestExecutable(t, filepath.Join(bin, "node"), "#!/bin/sh\necho 'API probe passed'\n")
-	writeTestExecutable(t, filepath.Join(bin, "munsu"), "#!/bin/sh\nexit 0\n")
-	t.Setenv("PATH", bin+string(filepath.ListSeparator)+os.Getenv("PATH"))
+	bin := fakePiToolchain(t)
 	SetMunsuPathResolver(testMunsuResolver{path: testutil.FakeExecutablePath(filepath.Join(bin, "munsu"))})
 	t.Cleanup(ResetMunsuPathResolver)
 
