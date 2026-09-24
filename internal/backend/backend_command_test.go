@@ -164,3 +164,38 @@ func TestBackendCommandTimeoutIsUnknownNotDead(t *testing.T) {
 		t.Fatalf("hung backend did not return within timeout bound after blocking command started (elapsed %s)", time.Since(started))
 	}
 }
+
+func TestLookBackendBin(t *testing.T) {
+	names := []string{"herdr", "tmux", "zellij", "cmux", "orca"}
+	testutil.SetPath(t, t.TempDir())
+	for _, name := range names {
+		if _, err := lookBackendBin(name); err == nil || err.Error() != name+": not found on PATH" {
+			t.Errorf("lookBackendBin(%q) absent error = %v, want %q", name, err, name+": not found on PATH")
+		}
+	}
+	fakeBin := fakeExecutables(t, names...)
+	testutil.SetPath(t, fakeBin)
+	for _, name := range names {
+		path, err := lookBackendBin(name)
+		if err != nil || filepath.Dir(path) != fakeBin {
+			t.Errorf("lookBackendBin(%q) = %q, %v; want a path in %s", name, path, err, fakeBin)
+		}
+	}
+}
+
+func TestParsePipeHandle(t *testing.T) {
+	tests := []struct{ handle, container, pane string }{
+		{"workspace:1|surface:1", "workspace:1", "surface:1"},
+		{"ctn_abc|term_def", "ctn_abc", "term_def"},
+		{"a|b|c", "a|b", "c"},
+		{"|surface:1", "", "surface:1"},
+		{"bare", "", "bare"},
+		{"", "", ""},
+	}
+	for _, tt := range tests {
+		container, pane := parsePipeHandle(tt.handle)
+		if container != tt.container || pane != tt.pane {
+			t.Errorf("parsePipeHandle(%q) = (%q, %q), want (%q, %q)", tt.handle, container, pane, tt.container, tt.pane)
+		}
+	}
+}

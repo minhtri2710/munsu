@@ -454,7 +454,7 @@ func TestValidateDeliveryMode_Extended(t *testing.T) {
 }
 
 func TestEnsureDeliveryModeRunnable_NoMistakesOnPath(t *testing.T) {
-	testutil.PrependPath(t, createFakeNoMistakes(t, true, true))
+	testutil.PrependPath(t, createFakeNoMistakesReady(t))
 	if err := EnsureDeliveryModeRunnable("no-mistakes"); err != nil {
 		t.Errorf("EnsureDeliveryModeRunnable(no-mistakes) = %v, want nil", err)
 	}
@@ -472,7 +472,9 @@ func TestNoMistakesOnPath(t *testing.T) {
 	if noMistakesOnPath() {
 		t.Fatal("noMistakesOnPath() = true with no no-mistakes on PATH")
 	}
-	testutil.SetPath(t, createFakeNoMistakes(t, false, false))
+	emptyDir := t.TempDir()
+	testutil.WriteFakeExecutable(t, filepath.Join(emptyDir, "no-mistakes"), "#!/bin/sh\nexit 0\n")
+	testutil.SetPath(t, emptyDir)
 	if !noMistakesOnPath() {
 		t.Fatal("noMistakesOnPath() = false with no-mistakes on PATH")
 	}
@@ -480,7 +482,7 @@ func TestNoMistakesOnPath(t *testing.T) {
 
 func TestResolveDeliveryMode_AutoNoMistakesPresent(t *testing.T) {
 	// Create a fake no-mistakes binary on PATH
-	tmpDir := createFakeNoMistakes(t, true, true)
+	tmpDir := createFakeNoMistakesReady(t)
 	testutil.PrependPath(t, tmpDir)
 
 	mode, err := ResolveDeliveryMode("", "", false)
@@ -507,7 +509,7 @@ func TestResolveDeliveryMode_AutoNoMistakesAbsent(t *testing.T) {
 
 func TestResolveDeliveryMode_ExplicitNoMistakesWithBinary(t *testing.T) {
 	// Fake no-mistakes on PATH, explicit flag
-	tmpDir := createFakeNoMistakes(t, true, true)
+	tmpDir := createFakeNoMistakesReady(t)
 	testutil.PrependPath(t, tmpDir)
 
 	mode, err := ResolveDeliveryMode("no-mistakes", "", false)
@@ -615,9 +617,6 @@ func TestResolveDeliveryMode_AutoFallbackOnIncompatible(t *testing.T) {
 		t.Errorf("auto should fallback to direct-PR for incompatible version, got %q", mode)
 	}
 }
-
-// createFakeNoMistakesVersion creates a fake no-mistakes binary that reports
-// the given semver version string.
 
 func TestRun_ValidatesModeFromArgsOnly(t *testing.T) {
 	// A bogus mode flag should still be rejected by Run
@@ -1288,47 +1287,6 @@ func TestCheckCaptainTaskAuthority_AllowsInFlightWithoutLiveMeta(t *testing.T) {
 	if err := r.checkCaptainBacklogAuthority(); err != nil {
 		t.Fatalf("in-flight without live meta must ALLOW spawn, got: %v", err)
 	}
-}
-
-func createFakeNoMistakes(t *testing.T, respondVersion, respondAxi bool) string {
-	t.Helper()
-	tmpDir := t.TempDir()
-	binPath := filepath.Join(tmpDir, "no-mistakes")
-
-	var script string
-	if respondVersion {
-		script += `case "--version" in
-  "$1")
-    echo "no-mistakes version v1.40.0 (test)"
-    exit 0
-    ;;
-esac
-`
-	}
-	if respondAxi {
-		script += `case "$1" in
-  axi)
-    case "$2" in
-      status)
-        case "$3" in
-          --help)
-            echo "Show the active run in detail"
-            echo "Usage:"
-            echo "  no-mistakes axi status [flags]"
-            exit 0
-            ;;
-        esac
-        ;;
-    esac
-    ;;
-esac
-`
-	}
-	script += "exit 0\n"
-
-	content := "#!/bin/sh\n" + script
-	testutil.WriteFakeExecutable(t, binPath, content)
-	return tmpDir
 }
 
 func TestSpawn_PostCreateVerificationFailure_NoMetaNoSpawnedStatus(t *testing.T) {

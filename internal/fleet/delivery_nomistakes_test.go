@@ -30,31 +30,12 @@ func TestNoMistakesProbe_Absent(t *testing.T) {
 
 // TestNoMistakesProbe_Unsupported verifies that an old version returns Unsupported.
 func TestNoMistakesProbe_Unsupported(t *testing.T) {
-	tmpDir := t.TempDir()
-	binPath := filepath.Join(tmpDir, "no-mistakes")
-	script := `#!/bin/sh
-case "$1" in
-  --version)
-    echo "no-mistakes version v0.5.0 (ancient)"
-    exit 0
-    ;;
-  axi)
-    echo "unknown command"
-    exit 1
-    ;;
-esac
-exit 1
-`
-	testutil.WriteFakeExecutable(t, binPath, script)
-	testutil.PrependPath(t, tmpDir)
+	testutil.PrependPath(t, createFakeNoMistakesVersion(t, "0.5.0"))
 
 	result := NoMistakesProbe()
 	// v0.5.0 is below MinNoMistakesVersion (1.20.0), should be Unsupported
 	if result.State != backend.Unsupported {
 		t.Errorf("expected Unsupported for old version, got %v (%s)", result.State, result.Detail)
-	}
-	if result.Version != "" && result.Version == "0.5.0" {
-		// OK
 	}
 }
 
@@ -123,34 +104,7 @@ func TestNoMistakesProbe_Ready(t *testing.T) {
 
 // TestNoMistakesProbe_Ready_FakeBinary verifies a properly constructed fake binary.
 func TestNoMistakesProbe_Ready_FakeBinary(t *testing.T) {
-	tmpDir := t.TempDir()
-	binPath := filepath.Join(tmpDir, "no-mistakes")
-	script := `#!/bin/sh
-case "$1" in
-  --version)
-    echo "no-mistakes version v1.40.0 (test)"
-    exit 0
-    ;;
-  axi)
-    case "$2" in
-      status)
-        case "$3" in
-          --help)
-            echo "Show the active run in detail"
-            echo "Usage:"
-            echo "  no-mistakes axi status [flags]"
-            exit 0
-            ;;
-        esac
-        ;;
-    esac
-    exit 1
-    ;;
-esac
-exit 1
-`
-	testutil.WriteFakeExecutable(t, binPath, script)
-	testutil.PrependPath(t, tmpDir)
+	testutil.PrependPath(t, createFakeNoMistakesReady(t))
 
 	result := NoMistakesProbe()
 	if result.State != backend.Ready {
@@ -166,14 +120,7 @@ exit 1
 
 // TestPreflight_NoMistakes_IncompatibleVersion verifies preflight rejects old version.
 func TestPreflight_NoMistakes_IncompatibleVersion(t *testing.T) {
-	tmpDir := t.TempDir()
-	binPath := filepath.Join(tmpDir, "no-mistakes")
-	script := `#!/bin/sh
-echo "no-mistakes version v0.5.0 (ancient)"
-exit 0
-`
-	testutil.WriteFakeExecutable(t, binPath, script)
-	testutil.PrependPath(t, tmpDir)
+	testutil.PrependPath(t, createFakeNoMistakesVersion(t, "0.5.0"))
 
 	result, err := Preflight("no-mistakes", "")
 	if err != nil {

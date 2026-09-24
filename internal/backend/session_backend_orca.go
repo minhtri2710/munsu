@@ -9,8 +9,6 @@ package backend
 import (
 	"encoding/json"
 	"fmt"
-	"os/exec"
-	"strings"
 )
 
 // OrcaBackend implements Backend using the orca CLI (experimental terminal app).
@@ -29,19 +27,6 @@ func NewOrcaBackend() *OrcaBackend {
 	return &OrcaBackend{}
 }
 
-// orcaBin returns the path to the orca binary.
-func orcaBin() (string, error) {
-	path, err := exec.LookPath("orca")
-	if err != nil {
-		return "", fmt.Errorf("orca: not found on PATH")
-	}
-	return path, nil
-}
-
-func runOrcaCommand(bin string, args ...string) ([]byte, []byte, error) {
-	return runBackendCommand(bin, args, "", nil)
-}
-
 // orcaTerminalCreateResponse parses JSON from `orca terminal create --json`.
 type orcaTerminalCreateResponse struct {
 	ContainerID string `json:"container_id"`
@@ -58,34 +43,12 @@ type orcaTerminalEntry struct {
 	TerminalID  string `json:"terminal_id"`
 }
 
-// orcaOutput runs orca with the given args and returns stdout as a trimmed string.
-func orcaOutput(args ...string) (string, error) {
-	bin, err := orcaBin()
-	if err != nil {
-		return "", err
-	}
-	out, stderr, err := runOrcaCommand(bin, args...)
-	if err != nil {
-		return "", wrapBackendCommandError(fmt.Sprintf("orca %v", args), out, stderr, err)
-	}
-	return strings.TrimSpace(string(out)), nil
-}
-
-// ParseOrcaWindow splits an orca window handle ("container_id|terminal_id").
-func ParseOrcaWindow(handle string) (containerID, terminalID string) {
-	idx := strings.LastIndex(handle, "|")
-	if idx < 0 {
-		return "", handle
-	}
-	return handle[:idx], handle[idx+1:]
-}
-
 // NewWindow creates a new orca terminal. The session parameter is reserved
 // for future use (container grouping). The name parameter is the terminal label.
 //
 // Returns the window handle in "<container_id>|<terminal_id>" format.
 func (o *OrcaBackend) NewWindow(session, name string) (string, error) {
-	if _, err := orcaBin(); err != nil {
+	if _, err := lookBackendBin("orca"); err != nil {
 		return "", err
 	}
 
@@ -94,7 +57,7 @@ func (o *OrcaBackend) NewWindow(session, name string) (string, error) {
 		args = append(args, "--name", name)
 	}
 
-	out, err := orcaOutput(args...)
+	out, err := backendOutput("orca", args...)
 	if err != nil {
 		return "", fmt.Errorf("orca terminal create: %w", err)
 	}
@@ -116,21 +79,21 @@ func (o *OrcaBackend) NewWindow(session, name string) (string, error) {
 
 // SendKeys sends text followed by Enter to the orca terminal identified by windowID.
 func (o *OrcaBackend) SendKeys(windowID, text string) error {
-	_, terminalID := ParseOrcaWindow(windowID)
+	_, terminalID := parsePipeHandle(windowID)
 	if terminalID == "" {
 		return fmt.Errorf("invalid orca window handle: %q", windowID)
 	}
 
-	if _, err := orcaBin(); err != nil {
+	if _, err := lookBackendBin("orca"); err != nil {
 		return err
 	}
 
-	if _, err := orcaOutput("terminal", "send", "--terminal", terminalID, text); err != nil {
+	if _, err := backendOutput("orca", "terminal", "send", "--terminal", terminalID, text); err != nil {
 		return err
 	}
 
 	// Send Enter key.
-	if _, err := orcaOutput("terminal", "send-key", "--terminal", terminalID, "Enter"); err != nil {
+	if _, err := backendOutput("orca", "terminal", "send-key", "--terminal", terminalID, "Enter"); err != nil {
 		return err
 	}
 	return nil
@@ -138,12 +101,12 @@ func (o *OrcaBackend) SendKeys(windowID, text string) error {
 
 // Capture reads the scrollback from the orca terminal identified by windowID.
 func (o *OrcaBackend) Capture(windowID string, lines int) (string, error) {
-	_, terminalID := ParseOrcaWindow(windowID)
+	_, terminalID := parsePipeHandle(windowID)
 	if terminalID == "" {
 		return "", fmt.Errorf("invalid orca window handle: %q", windowID)
 	}
 
-	if _, err := orcaBin(); err != nil {
+	if _, err := lookBackendBin("orca"); err != nil {
 		return "", err
 	}
 
@@ -152,7 +115,7 @@ func (o *OrcaBackend) Capture(windowID string, lines int) (string, error) {
 		args = append(args, "--lines", fmt.Sprintf("%d", lines))
 	}
 
-	out, err := orcaOutput(args...)
+	out, err := backendOutput("orca", args...)
 	if err != nil {
 		return "", fmt.Errorf("orca terminal capture: %w", err)
 	}
@@ -165,16 +128,16 @@ func (o *OrcaBackend) Capture(windowID string, lines int) (string, error) {
 // and an operational error for every other failure (command failure, malformed
 // JSON). An operational failure is never authoritative absence.
 func (o *OrcaBackend) CheckAlive(windowID string) (bool, error) {
-	_, terminalID := ParseOrcaWindow(windowID)
+	_, terminalID := parsePipeHandle(windowID)
 	if terminalID == "" {
 		return false, fmt.Errorf("orca: invalid window handle %q", windowID)
 	}
 
-	if _, err := orcaBin(); err != nil {
+	if _, err := lookBackendBin("orca"); err != nil {
 		return false, err
 	}
 
-	out, err := orcaOutput("terminal", "list", "--json")
+	out, err := backendOutput("orca", "terminal", "list", "--json")
 	if err != nil {
 		return false, fmt.Errorf("orca: listing terminals: %w", err)
 	}
@@ -196,15 +159,15 @@ func (o *OrcaBackend) CheckAlive(windowID string) (bool, error) {
 // Teardown closes the terminal identified by windowID.
 // Errors are silently ignored if the terminal is already gone.
 func (o *OrcaBackend) Teardown(windowID string) error {
-	_, terminalID := ParseOrcaWindow(windowID)
+	_, terminalID := parsePipeHandle(windowID)
 	if terminalID == "" {
 		return fmt.Errorf("invalid orca window handle: %q", windowID)
 	}
 
-	if _, err := orcaBin(); err != nil {
+	if _, err := lookBackendBin("orca"); err != nil {
 		return err
 	}
 
-	_, _ = orcaOutput("terminal", "close", "--terminal", terminalID)
+	_, _ = backendOutput("orca", "terminal", "close", "--terminal", terminalID)
 	return nil
 }

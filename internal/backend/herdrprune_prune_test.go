@@ -3,6 +3,7 @@
 package backend
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -584,5 +585,18 @@ func TestRunPrune_NoStateDirMeansNoLiveTasks(t *testing.T) {
 	}
 	if result.Closed != 1 {
 		t.Fatalf("Closed = %d, want 1", result.Closed)
+	}
+}
+
+func TestRunPrune_MapsProtocolMismatch(t *testing.T) {
+	tmp := t.TempDir()
+	testutil.WriteFakeExecutable(t, filepath.Join(tmp, "herdr"), "#!/bin/sh\n"+
+		`>&2 echo '{"error":{"code":"protocol_mismatch","message":"expected_protocol: 16"}}'`+"\nexit 1\n")
+	testutil.PrependPath(t, tmp)
+
+	_, err := RunPrune(PruneOptions{Session: "test", HomeDir: filepath.Join(tmp, "home")})
+	var herr *HerdrCLIError
+	if !errors.As(err, &herr) || herr.Code != HerdrErrProtocolMismatch {
+		t.Fatalf("RunPrune error = %v, want a typed %s HerdrCLIError", err, HerdrErrProtocolMismatch)
 	}
 }

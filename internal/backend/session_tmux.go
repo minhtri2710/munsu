@@ -2,25 +2,11 @@ package backend
 
 import (
 	"fmt"
-	"os/exec"
 	"strings"
 )
 
 // TmuxBackend implements Backend using the tmux CLI.
 type TmuxBackend struct{}
-
-// tmuxBin returns the path to the tmux binary.
-func tmuxBin() (string, error) {
-	path, err := exec.LookPath("tmux")
-	if err != nil {
-		return "", fmt.Errorf("tmux: not found on PATH")
-	}
-	return path, nil
-}
-
-func runTmuxCommand(bin string, args ...string) ([]byte, []byte, error) {
-	return runBackendCommand(bin, args, "", nil)
-}
 
 // windowName returns the complete caller-provided label.
 func (t *TmuxBackend) windowName(name string) string {
@@ -29,17 +15,17 @@ func (t *TmuxBackend) windowName(name string) string {
 
 // ensureSession checks whether session exists and creates it if missing.
 func (t *TmuxBackend) ensureSession(session string) error {
-	bin, err := tmuxBin()
+	bin, err := lookBackendBin("tmux")
 	if err != nil {
 		return err
 	}
 	// Check if session exists
-	_, _, hasErr := runTmuxCommand(bin, "has-session", "-t", session)
+	_, _, hasErr := runBackendCommand(bin, []string{"has-session", "-t", session}, "", nil)
 	if hasErr == nil {
 		return nil // session exists
 	}
 	// Create a detached session
-	stdout, stderr, err := runTmuxCommand(bin, "new-session", "-d", "-s", session)
+	stdout, stderr, err := runBackendCommand(bin, []string{"new-session", "-d", "-s", session}, "", nil)
 	if err != nil {
 		return wrapBackendCommandError(fmt.Sprintf("tmux new-session %q", session), stdout, stderr, err)
 	}
@@ -53,14 +39,14 @@ func (t *TmuxBackend) ensureSession(session string) error {
 // by an earlier attempt) and a different launch never reuses it. Multiple
 // windows with the same name fail closed as ambiguous.
 func (t *TmuxBackend) FindOrCreateWindow(session, name string) (string, error) {
-	bin, err := tmuxBin()
+	bin, err := lookBackendBin("tmux")
 	if err != nil {
 		return "", err
 	}
 	if err := t.ensureSession(session); err != nil {
 		return "", err
 	}
-	out, stderr, err := runTmuxCommand(bin, "list-windows", "-t", session, "-F", "#{window_name}\t#{window_id}")
+	out, stderr, err := runBackendCommand(bin, []string{"list-windows", "-t", session, "-F", "#{window_name}\t#{window_id}"}, "", nil)
 	if err != nil {
 		return "", wrapBackendCommandError("tmux list-windows", out, stderr, err)
 	}
@@ -90,7 +76,7 @@ func (t *TmuxBackend) FindOrCreateWindow(session, name string) (string, error) {
 // The session parameter can be a tmux session selector (e.g. "mysession" or "munsu").
 // Returns "<session>:<window_id>" for window handle.
 func (t *TmuxBackend) NewWindow(session, name string) (string, error) {
-	bin, err := tmuxBin()
+	bin, err := lookBackendBin("tmux")
 	if err != nil {
 		return "", err
 	}
@@ -99,7 +85,7 @@ func (t *TmuxBackend) NewWindow(session, name string) (string, error) {
 		return "", err
 	}
 	wName := t.windowName(name)
-	out, stderr, err := runTmuxCommand(bin, "new-window", "-P", "-F", "#{window_id}", "-n", wName, "-t", session)
+	out, stderr, err := runBackendCommand(bin, []string{"new-window", "-P", "-F", "#{window_id}", "-n", wName, "-t", session}, "", nil)
 	if err != nil {
 		return "", wrapBackendCommandError("tmux new-window", out, stderr, err)
 	}
@@ -126,16 +112,16 @@ func normalizeTarget(windowID string) string {
 // and because -l makes every argument after it literal, the submit is a second
 // `tmux send-keys -t <windowID> Enter`.
 func (t *TmuxBackend) SendKeys(windowID, text string) error {
-	bin, err := tmuxBin()
+	bin, err := lookBackendBin("tmux")
 	if err != nil {
 		return err
 	}
 	target := normalizeTarget(windowID)
-	out, stderr, err := runTmuxCommand(bin, "send-keys", "-t", target, "-l", "--", text)
+	out, stderr, err := runBackendCommand(bin, []string{"send-keys", "-t", target, "-l", "--", text}, "", nil)
 	if err != nil {
 		return wrapBackendCommandError("tmux send-keys", out, stderr, err)
 	}
-	out, stderr, err = runTmuxCommand(bin, "send-keys", "-t", target, "Enter")
+	out, stderr, err = runBackendCommand(bin, []string{"send-keys", "-t", target, "Enter"}, "", nil)
 	if err != nil {
 		return wrapBackendCommandError("tmux send-keys", out, stderr, err)
 	}
@@ -145,13 +131,13 @@ func (t *TmuxBackend) SendKeys(windowID, text string) error {
 // Capture captures the last N lines of output from the identified window/pane.
 // Uses `tmux capture-pane -t <windowID> -p -S -<lines>`.
 func (t *TmuxBackend) Capture(windowID string, lines int) (string, error) {
-	bin, err := tmuxBin()
+	bin, err := lookBackendBin("tmux")
 	if err != nil {
 		return "", err
 	}
 	target := normalizeTarget(windowID)
 	start := fmt.Sprintf("-%d", lines)
-	out, stderr, err := runTmuxCommand(bin, "capture-pane", "-t", target, "-p", "-S", start)
+	out, stderr, err := runBackendCommand(bin, []string{"capture-pane", "-t", target, "-p", "-S", start}, "", nil)
 	if err != nil {
 		return "", wrapBackendCommandError("tmux capture-pane", out, stderr, err)
 	}
@@ -167,12 +153,12 @@ func (t *TmuxBackend) Capture(windowID string, lines int) (string, error) {
 // permission, missing-binary and generic/broad "not found" failures are
 // operational errors and never authoritative absence.
 func (t *TmuxBackend) CheckAlive(windowID string) (bool, error) {
-	bin, err := tmuxBin()
+	bin, err := lookBackendBin("tmux")
 	if err != nil {
 		return false, err
 	}
 	target := normalizeTarget(windowID)
-	out, stderr, err := runTmuxCommand(bin, "list-panes", "-t", target)
+	out, stderr, err := runBackendCommand(bin, []string{"list-panes", "-t", target}, "", nil)
 	if err == nil {
 		// A successful list-panes must return non-empty target output; empty
 		// successful output is not authoritative presence.
@@ -191,12 +177,12 @@ func (t *TmuxBackend) CheckAlive(windowID string) (bool, error) {
 // Teardown kills the identified window via `tmux kill-window -t <windowID>`.
 // Errors are silently ignored if the window is already gone.
 func (t *TmuxBackend) Teardown(windowID string) error {
-	bin, err := tmuxBin()
+	bin, err := lookBackendBin("tmux")
 	if err != nil {
 		return err
 	}
 	target := normalizeTarget(windowID)
-	_, _, _ = runTmuxCommand(bin, "kill-window", "-t", target) // ignore errors — window may already be gone
+	_, _, _ = runBackendCommand(bin, []string{"kill-window", "-t", target}, "", nil) // ignore errors — window may already be gone
 	return nil
 }
 

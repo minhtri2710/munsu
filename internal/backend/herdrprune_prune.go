@@ -3,11 +3,9 @@
 package backend
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -45,34 +43,6 @@ type PruneResult struct {
 	ToClose    int              `json:"to_close"`
 	Closed     int              `json:"closed"`
 	Workspaces []PruneWorkspace `json:"workspaces"`
-}
-
-// pruneWorkspaceListResponse matches the herdr CLI JSON output for workspace list.
-type pruneWorkspaceListResponse struct {
-	Result struct {
-		Workspaces []pruneWorkspaceEntry `json:"workspaces"`
-	} `json:"result"`
-}
-
-type pruneWorkspaceEntry struct {
-	WorkspaceID string `json:"workspace_id"`
-	Label       string `json:"label"`
-	TabCount    int    `json:"tab_count"`
-	AgentStatus string `json:"agent_status"`
-}
-
-// herdrCLI runs a herdr CLI command with --session and returns stdout.
-func herdrCLI(session string, args ...string) (string, error) {
-	bin, err := exec.LookPath("herdr")
-	if err != nil {
-		return "", fmt.Errorf("herdr: not found on PATH: %w", err)
-	}
-	fullArgs := append([]string{"--session", session}, args...)
-	out, stderr, err := runBackendCommandClass(context.Background(), backendCommandWorktree, bin, fullArgs, "", []string{"HERDR_SESSION=" + session})
-	if err != nil {
-		return "", wrapBackendCommandError(fmt.Sprintf("herdr %v", fullArgs), out, stderr, err)
-	}
-	return strings.TrimSpace(string(out)), nil
 }
 
 // denyListedLabel returns true if the label must never be closed by prune.
@@ -141,11 +111,11 @@ func RunPrune(opts PruneOptions) (*PruneResult, error) {
 	}
 
 	// Step 2: List herdr workspaces.
-	out, err := herdrCLI(session, "workspace", "list")
+	out, err := runHerdr(backendCommandWorktree, session, []string{"workspace", "list"}, false)
 	if err != nil {
 		return nil, fmt.Errorf("listing workspaces: %w", err)
 	}
-	var resp pruneWorkspaceListResponse
+	var resp herdrWorkspaceListResponse
 	if err := json.Unmarshal([]byte(out), &resp); err != nil {
 		return nil, fmt.Errorf("parsing workspace list: %w", err)
 	}
@@ -209,7 +179,7 @@ func RunPrune(opts PruneOptions) (*PruneResult, error) {
 
 		// Prune candidate.
 		if opts.Apply {
-			_, closeErr := herdrCLI(session, "workspace", "close", ws.WorkspaceID)
+			_, closeErr := runHerdr(backendCommandWorktree, session, []string{"workspace", "close", ws.WorkspaceID}, false)
 			if closeErr != nil {
 				pw.Action = "skip"
 				pw.Reason = fmt.Sprintf("close failed: %v", closeErr)

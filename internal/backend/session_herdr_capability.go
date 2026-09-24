@@ -150,6 +150,12 @@ type HerdrCLIError struct {
 	Message string `json:"message"`
 }
 
+// herdrErrorEnvelope is the {"error":{"code","message"}} body herdr prints
+// when a CLI call fails.
+type herdrErrorEnvelope struct {
+	Error *HerdrCLIError `json:"error,omitempty"`
+}
+
 // Error implements the error interface.
 func (e *HerdrCLIError) Error() string {
 	if e.Message != "" {
@@ -211,16 +217,14 @@ found:
 		return nil
 	}
 
-	var envelope struct {
-		Error HerdrCLIError `json:"error"`
-	}
+	var envelope herdrErrorEnvelope
 	if err := json.Unmarshal([]byte(msg[start:end]), &envelope); err != nil {
 		return nil
 	}
-	if envelope.Error.Code == "" {
+	if envelope.Error == nil || envelope.Error.Code == "" {
 		return nil
 	}
-	return &envelope.Error
+	return envelope.Error
 }
 
 // isHerdrProtocolMismatch returns true if the error indicates a protocol_mismatch.

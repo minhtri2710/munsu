@@ -60,3 +60,29 @@ func createFakeNoMistakesVersion(t *testing.T, version string) string {
 	testutil.WriteFakeExecutable(t, binPath, script)
 	return tmpDir
 }
+
+// createFakeNoMistakesReady creates a fake no-mistakes binary that the
+// probe reports Ready: a compatible version and the axi status surface.
+func createFakeNoMistakesReady(t *testing.T) string {
+	t.Helper()
+	tmpDir := t.TempDir()
+	script := `#!/bin/sh
+case "$1" in
+  --version)
+    echo "no-mistakes version v1.40.0 (test)"
+    exit 0
+    ;;
+  axi)
+    if [ "$2" = "status" ] && [ "$3" = "--help" ]; then
+      echo "Show the active run in detail"
+      echo "Usage:"
+      echo "  no-mistakes axi status [flags]"
+      exit 0
+    fi
+    ;;
+esac
+exit 0
+`
+	testutil.WriteFakeExecutable(t, filepath.Join(tmpDir, "no-mistakes"), script)
+	return tmpDir
+}

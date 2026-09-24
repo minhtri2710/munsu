@@ -9,8 +9,6 @@ package backend
 import (
 	"encoding/json"
 	"fmt"
-	"os/exec"
-	"strings"
 	"sync"
 )
 
@@ -31,19 +29,6 @@ func newCmuxBackend() *CmuxBackend {
 	return &CmuxBackend{
 		sessions: make(map[string]string),
 	}
-}
-
-// cmuxBin returns the path to the cmux binary.
-func cmuxBin() (string, error) {
-	path, err := exec.LookPath("cmux")
-	if err != nil {
-		return "", fmt.Errorf("cmux: not found on PATH")
-	}
-	return path, nil
-}
-
-func runCmuxCommand(bin string, args ...string) ([]byte, []byte, error) {
-	return runBackendCommand(bin, args, "", nil)
 }
 
 // cmuxIdentifyResponse parses the JSON output from `cmux identify --json`.
@@ -69,19 +54,6 @@ type cmuxWorkspaceEntry struct {
 	WorkspaceID string `json:"workspace_id"`
 }
 
-// cmuxOutput runs cmux with the given args and returns stdout as a trimmed string.
-func cmuxOutput(args ...string) (string, error) {
-	bin, err := cmuxBin()
-	if err != nil {
-		return "", err
-	}
-	out, stderr, err := runCmuxCommand(bin, args...)
-	if err != nil {
-		return "", wrapBackendCommandError(fmt.Sprintf("cmux %v", args), out, stderr, err)
-	}
-	return strings.TrimSpace(string(out)), nil
-}
-
 // checkWorkspaceAlive returns (true, nil) when the exact workspace exists,
 // (false, ErrPaneNotFound) when the workspace is confirmed absent, and an
 // operational error for every other failure (command failure, malformed JSON).
@@ -91,10 +63,10 @@ func (c *CmuxBackend) checkWorkspaceAlive(workspaceID string) (bool, error) {
 	if workspaceID == "" {
 		return false, fmt.Errorf("cmux: empty workspace identity")
 	}
-	if _, err := cmuxBin(); err != nil {
+	if _, err := lookBackendBin("cmux"); err != nil {
 		return false, err
 	}
-	out, err := cmuxOutput("list-workspaces", "--json")
+	out, err := backendOutput("cmux", "list-workspaces", "--json")
 	if err != nil {
 		return false, fmt.Errorf("cmux: listing workspaces: %w", err)
 	}
@@ -113,7 +85,7 @@ func (c *CmuxBackend) checkWorkspaceAlive(workspaceID string) (bool, error) {
 
 // CheckAlive is the structured probe for the typed observation contract.
 func (c *CmuxBackend) CheckAlive(windowID string) (bool, error) {
-	wid, _ := ParseCmuxWindow(windowID)
+	wid, _ := parsePipeHandle(windowID)
 	if wid == "" {
 		return false, fmt.Errorf("cmux: invalid window handle %q", windowID)
 	}
@@ -129,7 +101,7 @@ func (c *CmuxBackend) NewWindow(session, name string) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if _, err := cmuxBin(); err != nil {
+	if _, err := lookBackendBin("cmux"); err != nil {
 		return "", err
 	}
 
@@ -137,14 +109,14 @@ func (c *CmuxBackend) NewWindow(session, name string) (string, error) {
 	if wid, ok := c.sessions[session]; ok {
 		// Workspace exists — create a new split surface in it.
 		// cmux must be on the correct workspace for new-split to work.
-		if _, err := cmuxOutput("select-workspace", "--workspace", wid); err != nil {
+		if _, err := backendOutput("cmux", "select-workspace", "--workspace", wid); err != nil {
 			// Workspace may have been closed externally; fall through to create new.
 			delete(c.sessions, session)
 		} else {
-			if _, err := cmuxOutput("new-split", "right"); err != nil {
+			if _, err := backendOutput("cmux", "new-split", "right"); err != nil {
 				return "", fmt.Errorf("cmux new-split in workspace %s: %w", wid, err)
 			}
-			ident, err := cmuxOutput("identify", "--json")
+			ident, err := backendOutput("cmux", "identify", "--json")
 			if err != nil {
 				return "", fmt.Errorf("cmux identify after split: %w", err)
 			}
@@ -161,12 +133,12 @@ func (c *CmuxBackend) NewWindow(session, name string) (string, error) {
 	}
 
 	// Create a new workspace.
-	if _, err := cmuxOutput("new-workspace"); err != nil {
+	if _, err := backendOutput("cmux", "new-workspace"); err != nil {
 		return "", fmt.Errorf("cmux new-workspace: %w", err)
 	}
 
 	// Get the new workspace and surface IDs.
-	ident, err := cmuxOutput("identify", "--json")
+	ident, err := backendOutput("cmux", "identify", "--json")
 	if err != nil {
 		return "", fmt.Errorf("cmux identify after new workspace: %w", err)
 	}
@@ -187,32 +159,23 @@ func (c *CmuxBackend) NewWindow(session, name string) (string, error) {
 	return wid + "|" + surfaceID, nil
 }
 
-// ParseCmuxWindow splits a cmux window handle ("workspace_id|surface_id").
-func ParseCmuxWindow(handle string) (workspaceID, surfaceID string) {
-	idx := strings.LastIndex(handle, "|")
-	if idx < 0 {
-		return "", handle
-	}
-	return handle[:idx], handle[idx+1:]
-}
-
 // SendKeys sends text followed by Enter to the cmux surface.
 func (c *CmuxBackend) SendKeys(windowID, text string) error {
-	_, surfaceID := ParseCmuxWindow(windowID)
+	_, surfaceID := parsePipeHandle(windowID)
 	if surfaceID == "" {
 		return fmt.Errorf("invalid cmux window handle: %q", windowID)
 	}
 
-	if _, err := cmuxBin(); err != nil {
+	if _, err := lookBackendBin("cmux"); err != nil {
 		return err
 	}
 
 	// Send text to the specific surface.
-	if _, err := cmuxOutput("send", "--surface", surfaceID, text); err != nil {
+	if _, err := backendOutput("cmux", "send", "--surface", surfaceID, text); err != nil {
 		return err
 	}
 	// Send Enter key.
-	if _, err := cmuxOutput("send-key", "--surface", surfaceID, "enter"); err != nil {
+	if _, err := backendOutput("cmux", "send-key", "--surface", surfaceID, "enter"); err != nil {
 		return err
 	}
 	return nil
@@ -226,12 +189,12 @@ func (c *CmuxBackend) Capture(windowID string, lines int) (string, error) {
 // Teardown closes the workspace associated with windowID.
 // Errors are silently ignored if the workspace is already gone.
 func (c *CmuxBackend) Teardown(windowID string) error {
-	wid, _ := ParseCmuxWindow(windowID)
+	wid, _ := parsePipeHandle(windowID)
 	if wid == "" {
 		return fmt.Errorf("invalid cmux window handle: %q", windowID)
 	}
 
-	if _, err := cmuxBin(); err != nil {
+	if _, err := lookBackendBin("cmux"); err != nil {
 		return err
 	}
 
@@ -245,6 +208,6 @@ func (c *CmuxBackend) Teardown(windowID string) error {
 	}
 	c.mu.Unlock()
 
-	cmuxOutput("close-workspace", "--workspace", wid) // ignore errors — may already be gone
+	backendOutput("cmux", "close-workspace", "--workspace", wid) // ignore errors — may already be gone
 	return nil
 }

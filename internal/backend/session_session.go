@@ -8,7 +8,6 @@ package backend
 import (
 	"errors"
 	"fmt"
-	"os/exec"
 )
 
 // ErrPaneNotFound is returned by session backends when a pane is confirmed not found or dead.
@@ -87,27 +86,27 @@ type BackendMetaExtras interface {
 func constructBackend(name string) (Backend, error) {
 	switch name {
 	case "herdr":
-		if _, err := exec.LookPath("herdr"); err != nil {
-			return nil, fmt.Errorf("herdr: not found on PATH")
+		if _, err := lookBackendBin("herdr"); err != nil {
+			return nil, err
 		}
 		return NewHerdrBackend(""), nil
 	case "tmux":
-		if _, err := tmuxBin(); err != nil {
+		if _, err := lookBackendBin("tmux"); err != nil {
 			return nil, err
 		}
 		return &TmuxBackend{}, nil
 	case "zellij":
-		if _, err := zellijBin(); err != nil {
+		if _, err := lookBackendBin("zellij"); err != nil {
 			return nil, err
 		}
 		return NewZellijBackend(""), nil
 	case "cmux":
-		if _, err := cmuxBin(); err != nil {
+		if _, err := lookBackendBin("cmux"); err != nil {
 			return nil, err
 		}
 		return newCmuxBackend(), nil
 	case "orca":
-		if _, err := orcaBin(); err != nil {
+		if _, err := lookBackendBin("orca"); err != nil {
 			return nil, err
 		}
 		return NewOrcaBackend(), nil

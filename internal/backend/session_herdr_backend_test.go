@@ -831,16 +831,3 @@ func TestHerdrBackend_ObserveAgentFailsClosedOnAgentGetError(t *testing.T) {
 		})
 	}
 }
-
-func TestHerdrBackendFindTabByLabelRefusesDuplicateTabs(t *testing.T) {
-	tmp := t.TempDir()
-	bin := filepath.Join(tmp, "herdr")
-	script := "#!/bin/sh\nif [ \"$1\" = \"--session\" ]; then shift 2; fi\ncat <<'JSON'\n{\"result\":{\"tabs\":[{\"label\":\"dup\",\"tab_id\":\"t1\"},{\"label\":\"dup\",\"tab_id\":\"t2\"}]}}\nJSON\n"
-	testutil.WriteFakeExecutable(t, bin, script)
-	testutil.PrependPath(t, tmp)
-	h := NewHerdrBackend("test")
-	_, err := h.findTabByLabel("w1", "dup")
-	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
-		t.Fatalf("findTabByLabel error = %v, want ambiguous", err)
-	}
-}

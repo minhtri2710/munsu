@@ -48,8 +48,8 @@ func TestHandoffJournalCrashDuringCommitConverges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	idx := handoffJournalIndex{Version: handoffIndexVersion, HomeRevision: 1, Active: []string{journal.ID}}
-	items, err := handoffJournalItems(idx, journal)
+	idx := journalIndex{Version: journalIndexVersion, HomeRevision: 1, Active: []string{journal.ID}}
+	items, err := handoffJournals.items(idx, journal)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestHandoffJournalCrashDuringCommitConverges(t *testing.T) {
 	// items applied (mirrors a crash after the write-ahead record is fsynced
 	// but before the change-set items are applied).
 	rec := map[string]any{
-		"txn_id":            handoffTxnID(journal.ID, "create"),
+		"txn_id":            handoffJournals.txnID(journal.ID, "create"),
 		"scope":             handoffLockScope,
 		"fence_token":       1,
 		"expected_revision": 0,
@@ -72,7 +72,7 @@ func TestHandoffJournalCrashDuringCommitConverges(t *testing.T) {
 	if err := os.MkdirAll(journalDir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	wantRecord := filepath.Join(journalDir, handoffLockScope+"."+handoffTxnID(journal.ID, "create")+".json")
+	wantRecord := filepath.Join(journalDir, handoffLockScope+"."+handoffJournals.txnID(journal.ID, "create")+".json")
 	if err := os.WriteFile(wantRecord, recData, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -144,13 +144,13 @@ func TestHandoffJournalRejectsMissingReferencedJournal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	idx := handoffJournalIndex{Version: handoffIndexVersion, HomeRevision: 1, Active: []string{"ghost-transfer"}}
+	idx := journalIndex{Version: journalIndexVersion, HomeRevision: 1, Active: []string{"ghost-transfer"}}
 	idxData, err := json.Marshal(idx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	items := []mhome.ChangeItem{
-		{Root: mhome.RootState, Key: handoffIndexKey, Data: append(idxData, '\n')},
+		{Root: mhome.RootState, Key: handoffJournals.indexKey(), Data: append(idxData, '\n')},
 	}
 	if _, err := h.Commit(lk, "ghost-index-create", 0, items); err != nil {
 		t.Fatal(err)
@@ -308,7 +308,7 @@ func TestHandoffJournalFencedStaleLock(t *testing.T) {
 	if err := lk.Release(); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeHandoffJournal(h, lk, journal); !errors.Is(err, mhome.ErrFenced) {
+	if err := handoffJournals.create(h, lk, journal); !errors.Is(err, mhome.ErrFenced) {
 		t.Fatalf("write with released lock = %v, want ErrFenced", err)
 	}
 
@@ -319,18 +319,18 @@ func TestHandoffJournalFencedStaleLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer lk2.Release()
-	idx := handoffJournalIndex{Version: handoffIndexVersion, HomeRevision: 1, Active: []string{journal.ID}}
-	items, err := handoffJournalItems(idx, journal)
+	idx := journalIndex{Version: journalIndexVersion, HomeRevision: 1, Active: []string{journal.ID}}
+	items, err := handoffJournals.items(idx, journal)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// First commit succeeds: HomeRevision 0 -> 1 in the handoff scope.
-	if _, err := h.Commit(lk2, handoffTxnID(journal.ID, "create"), 0, items); err != nil {
+	if _, err := h.Commit(lk2, handoffJournals.txnID(journal.ID, "create"), 0, items); err != nil {
 		t.Fatalf("first commit: %v", err)
 	}
 	// Replaying the same transition with the now-stale expected revision 0
 	// must conflict.
-	if _, err := h.Commit(lk2, handoffTxnID(journal.ID, "create"), 0, items); !errors.Is(err, mhome.ErrConflict) {
+	if _, err := h.Commit(lk2, handoffJournals.txnID(journal.ID, "create"), 0, items); !errors.Is(err, mhome.ErrConflict) {
 		t.Fatalf("stale-revision commit = %v, want ErrConflict", err)
 	}
 }

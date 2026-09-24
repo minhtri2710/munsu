@@ -214,7 +214,7 @@ func readDeliveryJournalRecord(t *testing.T, homeDir, journalID string) (*delive
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := h.Read(home.RootState, deliveryJournalKey(journalID))
+	data, err := h.Read(home.RootState, deliveryJournals.recordKey(journalID))
 	if err != nil {
 		return nil, err
 	}
@@ -232,7 +232,7 @@ func listActiveDeliveryJournals(t *testing.T, homeDir string) []string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	idx, err := readDeliveryIndex(h)
+	idx, err := deliveryJournals.readIndex(h)
 	if err != nil {
 		t.Fatal(err)
 	}

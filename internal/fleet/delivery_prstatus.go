@@ -3,7 +3,6 @@ package fleet
 import (
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/backend"
@@ -18,33 +17,25 @@ import (
 // When the provider is unreachable or ambiguous, it returns an error so callers
 // can fail closed.
 //
-// Uses gh-axi via the consolidated GitHubClient when the capability is Ready.
-// Falls through to gh CLI through the adapter path for fields that gh-axi
-// does not expose directly.
+// Reads through the consolidated GitHubClient; without a Ready gh-axi the
+// query fails closed and no raw gh runs.
 var QueryPRMergeStatus = func(ghURL domain.GHURL) (*domain.PRMergeStatus, error) {
-	// Check gh-axi capability first
 	client, err := DefaultGitHubClient()
-	if err == nil {
-		// gh-axi is Ready; use the consolidated adapter
-		data, err := client.ViewPRJSON(ghURL.Owner, ghURL.Repo, ghURL.Num, "state,headRefOid,mergeCommit")
-		if err != nil {
-			return nil, err
-		}
-		return parsePRMergeStatus(data)
+	if err != nil {
+		return nil, err
 	}
-
-	// If gh-axi is not available, try direct gh CLI as fallback for
-	// read-only status queries. The capability model controls mutation
-	// authority; status reads tolerate degraded paths.
-	return queryPRMergeStatusDirect(ghURL)
+	data, err := client.ViewPRJSON(ghURL.Owner, ghURL.Repo, ghURL.Num, "state,headRefOid,mergeCommit")
+	if err != nil {
+		return nil, err
+	}
+	return parsePRMergeStatus(data)
 }
 
 // QueryDeliveryMergeStatus fetches the merge status from the appropriate
 // provider based on the delivery identity. Routes to existing QueryPRMergeStatus
 // for GitHub PRs, and to the GitLab status path for GitLab MRs.
-// Fail-closed on unrecognized provider or when GitLab capability is Failed.
-// Falls back to read-only status queries when the provider is Absent or
-// Unsupported and the identity allows it.
+// Fail-closed on an unrecognized provider or a provider capability that is
+// not Ready.
 var QueryDeliveryMergeStatus = func(ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
 	if ident == nil {
 		return nil, fmt.Errorf("delivery identity is nil")
@@ -65,7 +56,7 @@ var QueryDeliveryMergeStatus = func(ident *domain.DeliveryIdentity) (*domain.PRM
 }
 
 // queryGLMergeStatus queries GitLab MR merge status via the typed GitLabClient.
-// Fail-closed on Failed; Absent/Unsupported may fall through.
+// Fail-closed on every state but Ready.
 // Returns a domain.PRMergeStatus normalized from GitLab's state model.
 func queryGLMergeStatus(ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
 	return queryGLMergeStatusForState(ProbeGitLabCapability(), ident)
@@ -158,29 +149,7 @@ func parseGLMergeStatus(data []byte) (*domain.PRMergeStatus, error) {
 	return status, nil
 }
 
-// queryPRMergeStatusDirect uses raw gh CLI to query PR merge status.
-// This is the degraded path when gh-axi is not available.
-// QueryPRMergeStatus prefers the consolidated gh-axi path first.
-func queryPRMergeStatusDirect(ghURL domain.GHURL) (*domain.PRMergeStatus, error) {
-	args := []string{
-		"pr", "view",
-		fmt.Sprintf("%d", ghURL.Num),
-		"--repo", fmt.Sprintf("%s/%s", ghURL.Owner, ghURL.Repo),
-		"--json", "state,headRefOid,mergeCommit",
-	}
-	cmd := exec.Command("gh", args...)
-	out, err := cmd.Output()
-	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return nil, fmt.Errorf("gh pr view: %s", strings.TrimSpace(string(ee.Stderr)))
-		}
-		return nil, fmt.Errorf("gh pr view: %w", err)
-	}
-	return parsePRMergeStatus(out)
-}
-
 // parsePRMergeStatus parses the PR merge status from gh CLI JSON output.
-// Shared between the consolidated gh-axi path and the degraded direct path.
 func parsePRMergeStatus(data []byte) (*domain.PRMergeStatus, error) {
 	var raw struct {
 		State       string `json:"state"`

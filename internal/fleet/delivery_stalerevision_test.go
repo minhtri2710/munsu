@@ -302,7 +302,7 @@ func writeAuthorizeStageJournal(t *testing.T, c *taskauthority.Canonical, homeDi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := writeDeliveryJournal(h, lk, journal); err != nil {
+	if err := deliveryJournals.create(h, lk, journal); err != nil {
 		t.Fatal(err)
 	}
 	return journal
@@ -367,7 +367,7 @@ func TestDeliverRecoveryStopsBeforeResumingOnContradictoryEntry(t *testing.T) {
 	mustWorkingDeliveryTask(t, c, "t2")
 	writeAuthorizeStageJournal(t, c, homeDir, "t1")
 	missing := writeAuthorizeStageJournal(t, c, homeDir, "t2")
-	if err := os.Remove(filepath.Join(homeDir, "state", deliveryJournalKey(missing.ID))); err != nil {
+	if err := os.Remove(filepath.Join(homeDir, "state", deliveryJournals.recordKey(missing.ID))); err != nil {
 		t.Fatal(err)
 	}
 

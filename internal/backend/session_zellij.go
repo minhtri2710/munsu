@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 )
 
@@ -29,27 +28,14 @@ func NewZellijBackend(session string) *ZellijBackend {
 	return &ZellijBackend{Session: session}
 }
 
-// zellijBin returns the path to the zellij binary.
-func zellijBin() (string, error) {
-	path, err := exec.LookPath("zellij")
-	if err != nil {
-		return "", fmt.Errorf("zellij: not found on PATH")
-	}
-	return path, nil
-}
-
-func runZellijCommand(bin string, args ...string) ([]byte, []byte, error) {
-	return runBackendCommand(bin, args, "", nil)
-}
-
 // zellijOutput runs a zellij action and returns stdout.
 func (z *ZellijBackend) zellijOutput(args ...string) (string, error) {
-	bin, err := zellijBin()
+	bin, err := lookBackendBin("zellij")
 	if err != nil {
 		return "", err
 	}
 	fullArgs := append([]string{"--session", z.Session, "action"}, args...)
-	out, stderr, err := runZellijCommand(bin, fullArgs...)
+	out, stderr, err := runBackendCommand(bin, fullArgs, "", nil)
 	if err != nil {
 		return "", wrapBackendCommandError(fmt.Sprintf("zellij %v", fullArgs), out, stderr, err)
 	}
@@ -58,12 +44,12 @@ func (z *ZellijBackend) zellijOutput(args ...string) (string, error) {
 
 // zellijNoOutput runs a zellij action and discards stdout, checking only for errors.
 func (z *ZellijBackend) zellijRun(args ...string) error {
-	bin, err := zellijBin()
+	bin, err := lookBackendBin("zellij")
 	if err != nil {
 		return err
 	}
 	fullArgs := append([]string{"--session", z.Session, "action"}, args...)
-	out, stderr, err := runZellijCommand(bin, fullArgs...)
+	out, stderr, err := runBackendCommand(bin, fullArgs, "", nil)
 	if err != nil {
 		return wrapBackendCommandError(fmt.Sprintf("zellij %v", fullArgs), out, stderr, err)
 	}
@@ -72,13 +58,13 @@ func (z *ZellijBackend) zellijRun(args ...string) error {
 
 // ensureSession creates the zellij background session if it does not exist.
 func (z *ZellijBackend) ensureSession() error {
-	bin, err := zellijBin()
+	bin, err := lookBackendBin("zellij")
 	if err != nil {
 		return err
 	}
 
 	// Check if session already exists via list-sessions.
-	listOut, _, listErr := runZellijCommand(bin, "list-sessions", "--short")
+	listOut, _, listErr := runBackendCommand(bin, []string{"list-sessions", "--short"}, "", nil)
 	if listErr == nil {
 		for _, s := range strings.Split(string(listOut), "\n") {
 			if strings.TrimSpace(s) == z.Session {
@@ -88,7 +74,7 @@ func (z *ZellijBackend) ensureSession() error {
 	}
 
 	// Create the background session.
-	out, stderr, err := runZellijCommand(bin, "attach", "--create-background", z.Session)
+	out, stderr, err := runBackendCommand(bin, []string{"attach", "--create-background", z.Session}, "", nil)
 	if err != nil {
 		return wrapBackendCommandError(fmt.Sprintf("zellij attach --create-background %q", z.Session), out, stderr, err)
 	}
@@ -193,12 +179,12 @@ func (z *ZellijBackend) Capture(windowID string, lines int) (string, error) {
 func (z *ZellijBackend) CheckAlive(windowID string) (bool, error) {
 	pid := z.paneID(windowID)
 
-	bin, err := zellijBin()
+	bin, err := lookBackendBin("zellij")
 	if err != nil {
 		return false, err
 	}
 
-	out, stderr, err := runZellijCommand(bin, "--session", z.Session, "action", "list-panes", "--json")
+	out, stderr, err := runBackendCommand(bin, []string{"--session", z.Session, "action", "list-panes", "--json"}, "", nil)
 	if err != nil {
 		return false, wrapBackendCommandError("zellij: listing panes", out, stderr, err)
 	}

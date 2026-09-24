@@ -251,7 +251,7 @@ func Deliver(homeDir, taskID string, req DeliverRequest) (*DeliverResult, error)
 		return nil, err
 	}
 	// Durable intent BEFORE the first side effect (authorization issuance).
-	if err := writeDeliveryJournal(h, lk, journal); err != nil {
+	if err := deliveryJournals.create(h, lk, journal); err != nil {
 		return nil, fmt.Errorf("deliver %s: writing delivery journal: %w", taskID, err)
 	}
 	deliveryCrashHook("journal")
@@ -363,10 +363,7 @@ func isRevokedCurrency(cur taskauthority.DeliveryCurrency) bool {
 // deterministic authorization/revoke/outcome operation identities plus the
 // exact authorization request digest.
 func buildDeliveryJournal(homeDir string, c *taskauthority.Canonical, agg taskauthority.Aggregate, req DeliverRequest, method string) (*deliveryJournal, error) {
-	id, err := newDeliveryJournalID()
-	if err != nil {
-		return nil, err
-	}
+	id := newJournalID()
 	tid, err := domain.NewTaskID(agg.TaskID)
 	if err != nil {
 		return nil, err
@@ -538,7 +535,7 @@ func issueDeliveryAuthorization(c *taskauthority.Canonical, journal *deliveryJou
 	if journal.AuthorizeDigest != "" && journal.AuthorizeDigest != digest {
 		return fmt.Errorf("delivery journal %s authorization digest mismatch", journal.ID)
 	}
-	op := mustDeliveryOperation(journal.AuthorizeOpID, req)
+	op := deliveryJournals.mustOperation(journal.AuthorizeOpID, req)
 	if _, err := c.AuthorizeDelivery(op, req); err != nil {
 		return fmt.Errorf("delivery authorization issuance: %w", err)
 	}
@@ -729,7 +726,7 @@ func commitPinnedOutcome(h *home.Home, lk *home.Lock, c *taskauthority.Canonical
 			HeadSHA:                  journal.OutcomeHeadSHA,
 			MergedSHA:                journal.OutcomeMergedSHA,
 		}
-		res, err = c.CommitDeliveryOutcome(mustDeliveryOperation(journal.OutcomeOpID, req), req)
+		res, err = c.CommitDeliveryOutcome(deliveryJournals.mustOperation(journal.OutcomeOpID, req), req)
 		if err != nil {
 			return nil, fmt.Errorf("committing delivery outcome: %w", err)
 		}
@@ -826,7 +823,7 @@ func releaseDeliveryAuthorization(c *taskauthority.Canonical, journal *deliveryJ
 		AuthorizationOperationID: journal.AuthorizeOpID,
 		Reason:                   reason,
 	}
-	if _, err := c.RevokeDeliveryAuthorization(mustDeliveryOperation(journal.RevokeOpID, req), req); err != nil {
+	if _, err := c.RevokeDeliveryAuthorization(deliveryJournals.mustOperation(journal.RevokeOpID, req), req); err != nil {
 		return fmt.Errorf("releasing delivery authorization: %w", err)
 	}
 	return nil

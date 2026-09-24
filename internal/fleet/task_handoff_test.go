@@ -151,7 +151,7 @@ func pendingJournalCount(t *testing.T, homeDir string) int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	idx, err := readHandoffIndex(h)
+	idx, err := handoffJournals.readIndex(h)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -518,14 +518,14 @@ func TestHandoffRecoveryRejectsCorruptJournal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	idx := handoffJournalIndex{Version: handoffIndexVersion, HomeRevision: 1, Active: []string{"bad-transfer"}}
+	idx := journalIndex{Version: journalIndexVersion, HomeRevision: 1, Active: []string{"bad-transfer"}}
 	idxData, err := json.Marshal(idx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	items := []mhome.ChangeItem{
-		{Root: mhome.RootState, Key: handoffIndexKey, Data: append(idxData, '\n')},
-		{Root: mhome.RootState, Key: handoffJournalKey("bad-transfer"), Data: []byte("not json")},
+		{Root: mhome.RootState, Key: handoffJournals.indexKey(), Data: append(idxData, '\n')},
+		{Root: mhome.RootState, Key: handoffJournals.recordKey("bad-transfer"), Data: []byte("not json")},
 	}
 	if _, err := h.Commit(lk, "bad-transfer-create", 0, items); err != nil {
 		t.Fatal(err)

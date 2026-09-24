@@ -30,36 +30,6 @@ func fakeExecutables(t *testing.T, names ...string) string {
 	return fakeBin
 }
 
-func TestTmuxBin_Found(t *testing.T) {
-	if !hasTmux() {
-		t.Skip("tmux not on PATH")
-	}
-	path, err := tmuxBin()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if path == "" {
-		t.Fatal("tmuxBin() returned empty path")
-	}
-	if !strings.Contains(path, "tmux") {
-		t.Errorf("tmuxBin() = %q, expected path containing 'tmux'", path)
-	}
-}
-
-func TestTmuxBin_NotFound(t *testing.T) {
-	oldPath := os.Getenv("PATH")
-	defer os.Setenv("PATH", oldPath)
-
-	os.Setenv("PATH", "/dev/null")
-	_, err := tmuxBin()
-	if err == nil {
-		t.Fatal("expected error when tmux is not on PATH")
-	}
-	if !strings.Contains(err.Error(), "not found on PATH") {
-		t.Errorf("unexpected error: %v", err)
-	}
-}
-
 func TestDefault_IsDeletedFromOperationPath(t *testing.T) {
 	// Default() is removed from the operation path — no auto-detection exists.
 	// Resolve with an empty requested identity must fail closed even when every

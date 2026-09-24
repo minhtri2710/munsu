@@ -152,8 +152,8 @@ func TestDefaultGitHubClient_RoutesToGhAxiWhenReady(t *testing.T) {
 
 func TestQueryPRMergeStatus_UsesGhAxiWhenReady(t *testing.T) {
 	// gh-axi on PATH makes the capability Ready. The consolidated adapter reads
-	// status through the ghCLILookPath seam; that gh is off PATH, so the direct
-	// degraded path (exec "gh") cannot answer and only the Ready route can.
+	// status through the ghCLILookPath seam; that gh is off PATH, so only the
+	// Ready route can answer.
 	binDir := t.TempDir()
 	testutil.WriteFakeExecutable(t, filepath.Join(binDir, "gh-axi"), "#!/bin/sh\nexit 1\n")
 	testutil.SetPath(t, binDir)
@@ -187,6 +187,29 @@ echo '{"state":"MERGED","headRefOid":"6b52a27d68fdf6034cc2defc79420882440e87ef",
 	}
 	if got, wantArgs := string(args), "pr\nview\n42\n--repo\nowner/repo\n--json\nstate,headRefOid,mergeCommit\n"; got != wantArgs {
 		t.Fatalf("adapter gh args = %q, want %q", got, wantArgs)
+	}
+}
+
+func TestQueryPRMergeStatus_FailsClosedWithoutGhAxi(t *testing.T) {
+	// gh-axi is absent and a gh that records any call is on PATH: the status
+	// read must refuse and gh must never run.
+	binDir := t.TempDir()
+	calledFile := filepath.Join(binDir, "called")
+	testutil.WriteFakeExecutable(t, filepath.Join(binDir, "gh"), `#!/bin/sh
+: > '`+filepath.ToSlash(calledFile)+`'
+echo '{"state":"OPEN","headRefOid":"6b52a27d68fdf6034cc2defc79420882440e87ef"}'
+`)
+	testutil.SetPath(t, binDir)
+	old := ghAxiLookPath
+	t.Cleanup(func() { ghAxiLookPath = old })
+	ghAxiLookPath = func() (string, error) { return "", errors.New("not found") }
+
+	status, err := QueryPRMergeStatus(domain.GHURL{Owner: "owner", Repo: "repo", Num: 42})
+	if err == nil || !strings.Contains(err.Error(), "capability absent") {
+		t.Fatalf("QueryPRMergeStatus without gh-axi = %+v, %v; want capability-absent refusal", status, err)
+	}
+	if _, statErr := os.Stat(calledFile); statErr == nil {
+		t.Fatal("QueryPRMergeStatus without gh-axi ran gh")
 	}
 }
 

@@ -89,20 +89,21 @@ func (h *HerdrBackend) effectiveSession(windowID string) string {
 	return h.Session
 }
 
-// sessionArgs returns the --session flag argument for a herdr CLI call.
-func (h *HerdrBackend) sessionArgs() []string {
-	return []string{"--session", h.Session}
-}
-
-func (h *HerdrBackend) herdr(args ...string) (string, error) {
+// runHerdr runs one herdr CLI call against session under the given timeout
+// class. With capture it returns the combined output and the raw error, so
+// callers can parse structured error envelopes herdr prints on a non-zero
+// exit. Otherwise it returns trimmed stdout and maps a protocol_mismatch
+// envelope to a typed HerdrCLIError.
+func runHerdr(class backendCommandClass, session string, args []string, capture bool) (string, error) {
 	bin, err := exec.LookPath("herdr")
 	if err != nil {
 		return "", fmt.Errorf("herdr: not found on PATH: %w", err)
 	}
-
-	// Prepend --session flags to every call.
-	fullArgs := append(h.sessionArgs(), args...)
-	out, stderr, err := runBackendCommand(bin, fullArgs, "", []string{"HERDR_SESSION=" + h.Session})
+	fullArgs := append([]string{"--session", session}, args...)
+	out, stderr, err := runBackendCommandClass(context.Background(), class, bin, fullArgs, "", []string{"HERDR_SESSION=" + session})
+	if capture {
+		return commandOutput(out, stderr), err
+	}
 	if err != nil {
 		if _, ok := err.(*exec.ExitError); ok {
 			combined := strings.TrimSpace(string(stderr))
@@ -132,43 +133,16 @@ func (h *HerdrBackend) herdr(args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// herdrCaptureOutput runs herdr and returns stdout/stderr combined output even
-// when the command exits non-zero. Needed for parsing structured JSON error
-// responses like agent_prompt_stalled or agent_not_found where stdout carries
-// the error payload while the exit code is non-zero.
-func (h *HerdrBackend) herdrCaptureOutput(args ...string) (string, error) {
-	bin, err := exec.LookPath("herdr")
-	if err != nil {
-		return "", fmt.Errorf("herdr: not found on PATH: %w", err)
-	}
-
-	fullArgs := append(h.sessionArgs(), args...)
-	stdout, stderr, err := runBackendCommand(bin, fullArgs, "", []string{"HERDR_SESSION=" + h.Session})
-	output := commandOutput(stdout, stderr)
-	if err != nil {
-		return output, err
-	}
-	return output, nil
-}
-
-func (h *HerdrBackend) herdrCaptureForWindow(windowID string, args ...string) (string, error) {
-	sess := h.effectiveSession(windowID)
-	if sess != h.Session {
-		tmp := *h
-		tmp.Session = sess
-		return tmp.herdrCaptureOutput(args...)
-	}
-	return h.herdrCaptureOutput(args...)
+func (h *HerdrBackend) herdr(args ...string) (string, error) {
+	return runHerdr(backendCommandShort, h.Session, args, false)
 }
 
 func (h *HerdrBackend) herdrForWindow(windowID string, args ...string) (string, error) {
-	sess := h.effectiveSession(windowID)
-	if sess != h.Session {
-		tmp := *h
-		tmp.Session = sess
-		return tmp.herdr(args...)
-	}
-	return h.herdr(args...)
+	return runHerdr(backendCommandShort, h.effectiveSession(windowID), args, false)
+}
+
+func (h *HerdrBackend) herdrCaptureForWindow(windowID string, args ...string) (string, error) {
+	return runHerdr(backendCommandShort, h.effectiveSession(windowID), args, true)
 }
 
 // isHerdrWaitTimeout returns true when the herdr CLI reported a structured
@@ -512,44 +486,14 @@ func (h *HerdrBackend) observeAgent(windowID string) herdrAgentObservation {
 	}
 
 	// Pane exists; now check agent registration.
-	pid := herdrPaneID(windowID)
-	out, agentErr := h.herdrCaptureForWindow(windowID, "agent", "get", pid)
-	if agentErr != nil {
-		// Try to parse JSON error from output.
-		if out != "" {
-			var errResp struct {
-				Error *struct {
-					Code    string `json:"code"`
-					Message string `json:"message"`
-				} `json:"error"`
-			}
-			if jsonErr := json.Unmarshal([]byte(out), &errResp); jsonErr == nil && errResp.Error != nil {
-				if errResp.Error.Code == "agent_not_found" {
-					return herdrAgentObservation{paneAlive: true}
-				}
-			}
-		}
-		// Other agent get errors: fail closed.
-		return herdrAgentObservation{err: agentErr}
+	status, err := h.agentGet(windowID)
+	if err != nil {
+		return herdrAgentObservation{err: err}
 	}
-
-	var resp herdrAgentGetResponse
-	if jsonErr := json.Unmarshal([]byte(out), &resp); jsonErr != nil {
-		return herdrAgentObservation{err: fmt.Errorf("parsing agent get response: %w", jsonErr)}
-	}
-
-	if resp.Error != nil && resp.Error.Code == "agent_not_found" {
-		return herdrAgentObservation{paneAlive: true}
-	}
-	if resp.Error != nil {
-		return herdrAgentObservation{err: fmt.Errorf("agent get error: %s", resp.Error.Message)}
-	}
-
-	if resp.Result == nil || resp.Result.Agent.AgentStatus == "" {
+	if status == "" {
 		return herdrAgentObservation{paneAlive: true}
 	}
 
-	status := resp.Result.Agent.AgentStatus
 	return herdrAgentObservation{
 		paneAlive:  true,
 		agentAlive: isAgentStatusAlive(status),
@@ -752,7 +696,7 @@ func (h *HerdrBackend) protocolVersion() (int, error) {
 		return h.protocolCache, nil
 	}
 
-	out, err := h.herdrCaptureOutput("api", "schema")
+	out, err := runHerdr(backendCommandShort, h.Session, []string{"api", "schema"}, true)
 	if err != nil {
 		h.protocolCache = -1
 		return 0, fmt.Errorf("protocol probe: %w", err)
@@ -780,10 +724,7 @@ func (h *HerdrBackend) protocolVersion() (int, error) {
 // herdrAgentGetResponse represents the JSON response from herdr agent get.
 type herdrAgentGetResponse struct {
 	Result *herdrAgentGetResult `json:"result,omitempty"`
-	Error  *struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
-	} `json:"error,omitempty"`
+	herdrErrorEnvelope
 }
 
 type herdrAgentGetResult struct {
@@ -801,42 +742,40 @@ type herdrAgentGetResult struct {
 // Callers should distinguish alive-non-agent from dead by calling CheckAlive
 // when IsRecognizedAgent returns (false, "").
 func (h *HerdrBackend) IsRecognizedAgent(windowID string) (bool, string) {
-	pid := herdrPaneID(windowID)
-	out, err := h.herdrCaptureForWindow(windowID, "agent", "get", pid)
-	if err != nil {
-		// Try to parse JSON error from output.
-		if out != "" {
-			var errResp struct {
-				Error *struct {
-					Code string `json:"code"`
-				} `json:"error"`
-			}
-			if jsonErr := json.Unmarshal([]byte(out), &errResp); jsonErr == nil && errResp.Error != nil {
-				if errResp.Error.Code == "agent_not_found" {
-					return false, ""
-				}
-			}
-		}
+	status, err := h.agentGet(windowID)
+	if err != nil || status == "" {
 		return false, ""
+	}
+	return true, status
+}
+
+// agentGet runs `herdr agent get` for the pane and returns its agent status.
+// An empty status with a nil error means the pane has no recognized agent
+// (agent_not_found or no status reported); any other failure is an error.
+func (h *HerdrBackend) agentGet(windowID string) (string, error) {
+	out, err := h.herdrCaptureForWindow(windowID, "agent", "get", herdrPaneID(windowID))
+	if err != nil {
+		var errResp herdrErrorEnvelope
+		if out != "" && json.Unmarshal([]byte(out), &errResp) == nil && errResp.Error != nil && errResp.Error.Code == "agent_not_found" {
+			return "", nil
+		}
+		return "", err
 	}
 
 	var resp herdrAgentGetResponse
-	if err := json.Unmarshal([]byte(out), &resp); err != nil {
-		return false, ""
+	if jsonErr := json.Unmarshal([]byte(out), &resp); jsonErr != nil {
+		return "", fmt.Errorf("parsing agent get response: %w", jsonErr)
 	}
-
 	if resp.Error != nil && resp.Error.Code == "agent_not_found" {
-		return false, ""
+		return "", nil
 	}
 	if resp.Error != nil {
-		return false, ""
+		return "", fmt.Errorf("agent get error: %s", resp.Error.Message)
 	}
-
-	if resp.Result == nil || resp.Result.Agent.AgentStatus == "" {
-		return false, ""
+	if resp.Result == nil {
+		return "", nil
 	}
-
-	return true, resp.Result.Agent.AgentStatus
+	return resp.Result.Agent.AgentStatus, nil
 }
 
 // AgentPrompt submits a prompt to the target agent using herdr agent prompt
@@ -930,12 +869,7 @@ func (h *HerdrBackend) AgentPrompt(windowID, text string) PromptResult {
 		}
 
 		// Try to parse structured JSON error.
-		var errResp struct {
-			Error *struct {
-				Code    string `json:"code"`
-				Message string `json:"message"`
-			} `json:"error"`
-		}
+		var errResp herdrErrorEnvelope
 		if jsonErr := json.Unmarshal([]byte(out), &errResp); jsonErr == nil && errResp.Error != nil {
 			switch errResp.Error.Code {
 			case "agent_prompt_stalled":

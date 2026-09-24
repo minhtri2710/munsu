@@ -3,12 +3,12 @@
 package fleet
 
 import (
-	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 func TestPreflight_UnknownMode(t *testing.T) {
@@ -173,19 +173,10 @@ func TestPreflight_DirectPR_SkipRemoteWhenNoRepoPath(t *testing.T) {
 // TestCheckGhAuth_GhAxiOnPathIsNotAuthEvidence proves gh-auth reports OK only
 // when gh auth status succeeds, not merely because gh-axi is on PATH.
 func TestCheckGhAuth_GhAxiOnPathIsNotAuthEvidence(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("shell-script fake binaries need a POSIX shell")
-	}
 	bin := t.TempDir()
-	for name, body := range map[string]string{
-		"gh-axi": "#!/bin/sh\nexit 0\n",
-		"gh":     "#!/bin/sh\necho 'You are not logged into any GitHub hosts.' >&2\nexit 1\n",
-	} {
-		if err := os.WriteFile(filepath.Join(bin, name), []byte(body), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	t.Setenv("PATH", bin)
+	testutil.WriteFakeExecutable(t, filepath.Join(bin, "gh-axi"), "#!/bin/sh\nexit 0\n")
+	testutil.WriteFakeExecutable(t, filepath.Join(bin, "gh"), "#!/bin/sh\necho 'You are not logged into any GitHub hosts.' >&2\nexit 1\n")
+	testutil.SetPath(t, bin)
 
 	check := checkGhAuth()
 	if check.OK || !strings.Contains(check.Detail, "not logged into") {

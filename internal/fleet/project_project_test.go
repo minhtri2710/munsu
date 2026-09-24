@@ -12,6 +12,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // --- Legacy project registry helpers ---
@@ -190,16 +191,10 @@ func TestAddRejectsTraversalNameBeforeClone(t *testing.T) {
 	tmp := t.TempDir()
 	homeDir := filepath.Join(tmp, "munsu-home")
 	outside := filepath.Join(tmp, "x")
-	binDir := filepath.Join(tmp, "bin")
-	if err := os.MkdirAll(binDir, 0755); err != nil {
-		t.Fatal(err)
-	}
+	binDir := t.TempDir()
 	marker := filepath.Join(tmp, "git-invoked")
-	gitShim := filepath.Join(binDir, "git")
-	if err := os.WriteFile(gitShim, []byte("#!/bin/sh\nprintf invoked > "+marker+"\nexit 0\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", binDir)
+	testutil.WriteFakeExecutable(t, filepath.Join(binDir, "git"), "#!/bin/sh\nprintf invoked > '"+filepath.ToSlash(marker)+"'\nexit 0\n")
+	testutil.SetPath(t, binDir)
 
 	if err := Add(homeDir, "../../x", "https://example.invalid/repo.git", "", false); err == nil {
 		t.Fatal("Add accepted a traversal project name")
