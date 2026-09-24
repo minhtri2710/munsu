@@ -70,15 +70,24 @@ func evaluateGitScriptSafety(homeDir, taskID, checkPath, command string, depth i
 				return true, "ANSI-C quoted word cannot be decoded; git mutation cannot be checked"
 			}
 		}
-		words := segmentWords(segment)
-		for _, word := range words {
-			if !readsAsMoreThanItself(mode, word) {
-				continue
+		// An ANSI-C word is read both decoded and raw, and a mutation in
+		// either refuses: the tokenizer cannot tell whether bash starts
+		// ANSI-C quoting at that `$'`.
+		for _, token := range segment {
+			readings := []string{token.text}
+			if token.raw != token.text {
+				readings = append(readings, token.raw)
 			}
-			if blocked, reason := evaluateGitPayloadSafety(homeDir, taskID, currentPath, word, depth); blocked {
-				return true, reason
+			for _, word := range readings {
+				if !readsAsMoreThanItself(mode, word) {
+					continue
+				}
+				if blocked, reason := evaluateGitPayloadSafety(homeDir, taskID, currentPath, word, depth); blocked {
+					return true, reason
+				}
 			}
 		}
+		words := segmentWords(segment)
 		if nextPath, ok := cdSegmentPath(mode, currentPath, words); ok {
 			currentPath = nextPath
 			paths = append(paths, currentPath)

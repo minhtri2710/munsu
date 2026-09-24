@@ -20,8 +20,13 @@ type shellToken struct {
 	// undecodable is a `$'...'` word holding an escape the tokenizer does not
 	// decode, or one left unterminated; its text is the raw word without `$`.
 	undecodable bool
-	start       int
-	end         int
+	// raw is the word with each `$'...'` part read as the text between its
+	// quotes, undecoded. Where bash does not start ANSI-C quoting (a comment,
+	// say), the decoded text is not what runs, so the raw text is a second
+	// reading; it equals text for a word without ANSI-C quoting.
+	raw   string
+	start int
+	end   int
 }
 
 // shellWriteTargets returns the paths a shell command names as write targets,
@@ -308,7 +313,7 @@ func evaluateWriteTargets(targets []string) (bool, string) {
 func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 	var segments [][]shellToken
 	var segment []shellToken
-	var word strings.Builder
+	var word, raw strings.Builder
 	wordStart := -1
 	rawStart, rawEnd := -1, -1
 	expandable := false
@@ -320,8 +325,9 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 	escaped := false
 	flushWord := func() {
 		if word.Len() > 0 || quoted {
-			segment = append(segment, shellToken{text: word.String(), expandable: expandable, undecodable: undecodable, start: rawStart, end: rawEnd})
+			segment = append(segment, shellToken{text: word.String(), expandable: expandable, undecodable: undecodable, raw: raw.String(), start: rawStart, end: rawEnd})
 			word.Reset()
+			raw.Reset()
 		}
 		wordStart, rawStart, rawEnd, expandable, undecodable, quoted = -1, -1, -1, false, false, false
 	}
@@ -344,6 +350,7 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 			wordStart = i
 		}
 		word.WriteRune(r)
+		raw.WriteRune(r)
 		// A `$` or backtick names a shell expansion only when the shell would
 		// actually perform one here. Inside single quotes, and behind a POSIX
 		// backslash escape (outside quotes or inside double quotes), the
@@ -429,6 +436,9 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 				// never gets the same word back.
 				text = string(runes[i+1 : end])
 				expandable, undecodable = true, true
+				raw.WriteString(text)
+			} else {
+				raw.WriteString(string(runes[i+2 : end-1]))
 			}
 			word.WriteString(text)
 			i = end - 1
@@ -449,7 +459,7 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 			flushWord()
 		case '>':
 			flushWord()
-			segment = append(segment, shellToken{text: ">", redirects: true, start: i, end: i + 1})
+			segment = append(segment, shellToken{text: ">", raw: ">", redirects: true, start: i, end: i + 1})
 		default:
 			touch(i)
 			add(r, i, false)

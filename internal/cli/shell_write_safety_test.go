@@ -1223,6 +1223,28 @@ func TestTokenizeSegmentsLineContinuationAndANSICQuoting(t *testing.T) {
 			t.Errorf("tokenizeSegments(%v, %q) = %q undecodable=%v, want %q undecodable=%v", tc.mode, tc.command, got, undecodable, tc.want, tc.undecodable)
 		}
 	}
+	// An ANSI-C word also carries its raw reading: each `$'...'` part stays
+	// the text between its quotes, undecoded.
+	for _, tc := range []struct {
+		command string
+		want    []string
+	}{
+		{`$'gi\t'`, []string{`gi\t`}},
+		{`a$'\x67'b $'x'`, []string{`a\x67b`, "x"}},
+		{"echo # $'\ngi\\t push'", []string{"echo", "#", "\ngi\\t push"}},
+		{`$''`, []string{""}},
+		{`'\t'`, []string{`\t`}},
+	} {
+		var got []string
+		for _, segment := range tokenizeSegments(backslashEscapes, tc.command) {
+			for _, token := range segment {
+				got = append(got, token.raw)
+			}
+		}
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("raw readings of %q = %q, want %q", tc.command, got, tc.want)
+		}
+	}
 	// munsuInvocations reads every word holding a space as shell again; an
 	// undecodable word must not read back as itself, or the recursion never
 	// ends.

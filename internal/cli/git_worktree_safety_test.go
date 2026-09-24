@@ -826,6 +826,29 @@ func TestSafetyCheckGitVerdictsOnSharedTokenizer(t *testing.T) {
 			{`$$'\' ; gi\t push --force #\''`, refuse, refuse},
 			{`echo $$'\' ; gi\t push --force #\''`, refuse, refuse},
 		}...)
+		// bash ends a comment at the newline and runs `gi\t` as git, but the
+		// tokenizer reads the `$'` in the comment as ANSI-C quoting and
+		// decodes `\t` to a TAB that splits the verb. The raw span, read as
+		// shell again, is what bash runs.
+		const commented = "echo hi # $'\ngi\\t push --force #'"
+		bashC := func(script string) string {
+			return "bash -c '" + strings.ReplaceAll(script, "'", `'\''`) + "'"
+		}
+		rows = append(rows, []struct {
+			command string
+			old     bool
+			want    bool
+		}{
+			{commented, refuse, refuse},
+			{bashC(commented), refuse, refuse},
+			{bashC(bashC(commented)), refuse, refuse},
+			{bashC(bashC(bashC(commented))), refuse, refuse},
+			{"x=1 # $'\ngi\\t push --force #'", refuse, refuse},
+			{"bash <<'EOF'\n" + commented + "\nEOF", refuse, refuse},
+			// The raw reading reaches ANSI-C text inside double quotes too,
+			// where bash decodes nothing and runs no git (ruling (e)).
+			{`echo "$'gi\\t push --force'"`, allow, refuse},
+		}...)
 	}
 	for _, tc := range rows {
 		block, reason := runPiSafetyForGit(t, worktree, tc.command)
