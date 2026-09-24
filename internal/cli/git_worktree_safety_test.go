@@ -722,6 +722,56 @@ func TestSafetyCheckGitVerdictsOnSharedTokenizer(t *testing.T) {
 		// Real segment separators still end a segment.
 		{"git status\ngit push --force origin mu/ship-vd", refuse, refuse},
 		{"git status && git reset --hard", refuse, refuse},
+		{`git reset --hard`, refuse, refuse},
+		{`git push --force`, refuse, refuse},
+		{`/usr/bin/git push --force`, refuse, refuse},
+		// Script text a shell interpreter or eval runs is a command, whether it
+		// arrives as a -c argument, eval's arguments, or a heredoc or
+		// here-string on the interpreter's stdin.
+		{"sh <<EOF\ngit push --force\nEOF", refuse, refuse},
+		{"bash <<'EOF'\ngit reset --hard\nEOF", refuse, refuse},
+		{"sh <<EOF\ngit reset --hard\nEOF", refuse, refuse},
+		{`bash -c "git push --force"`, refuse, refuse},
+		{`sh -c 'git reset --hard'`, refuse, refuse},
+		{`eval "git reset --hard"`, refuse, refuse},
+		{`sh <<< "git push --force"`, refuse, refuse},
+		{`bash <<< 'git reset --hard'`, refuse, refuse},
+		{`zsh -c "git reset --hard"`, refuse, refuse},
+		{`echo ok && bash -c "git reset --hard"`, refuse, refuse},
+		{`bash -c "/usr/bin/git push --force"`, refuse, refuse},
+		{`sh -c "cd /tmp && git reset --hard"`, refuse, refuse},
+		{`/bin/bash -xc "git push --force"`, refuse, refuse},
+		{`FOO=1 dash -c "git push --force"`, refuse, refuse},
+		{"echo ok; <<EOF ksh\ngit push --force\nEOF", refuse, refuse},
+		// An interpreter is found behind any wrapper; data naming one is read
+		// as one, which fails closed.
+		{`sudo bash -c "git push --force"`, refuse, refuse},
+		{`nohup sh -c 'git reset --hard'`, refuse, refuse},
+		{`timeout 5 bash -c "git push --force"`, refuse, refuse},
+		{`env bash -c "git reset --hard"`, refuse, refuse},
+		{`echo bash -c "git push --force"`, refuse, refuse},
+		// An interpreter reading its script from a pipe cannot be checked.
+		{`echo "git push --force" | sh`, refuse, refuse},
+		{"cat <<EOF | sh\ngit push --force\nEOF", refuse, refuse},
+		{`echo "git status" | bash -s`, allow, refuse},
+		{"echo \"git push --force\" | sudo sh", refuse, refuse},
+		{"echo \"git push --force\" | env sh", refuse, refuse},
+		// A pipeline that passes an interpreter name as data is not pipe-fed.
+		{`ps aux | grep bash`, allow, allow},
+		{`ps aux | grep -c sh`, allow, allow},
+		{`git status || sh script.sh`, allow, allow},
+		{`cat script.sh | sh script.sh`, allow, allow},
+		// Readable script text is evaluated, not refused wholesale.
+		{`bash -c "git status"`, allow, allow},
+		{"sh <<EOF\ngit status\nEOF", allow, allow},
+		{`eval eval git status`, allow, allow},
+		// Script text the guard cannot read is refused.
+		{"bash <<EOF\ngit status", allow, refuse},
+		{`eval eval eval eval eval git status`, allow, refuse},
+		// Commands that hand git its arguments stay refused.
+		{`echo --force | xargs git push`, refuse, refuse},
+		{`xargs git push`, refuse, refuse},
+		{`env git reset --hard`, refuse, refuse},
 	} {
 		block, reason := runPiSafetyForGit(t, worktree, tc.command)
 		if block != tc.want {

@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -2061,5 +2062,52 @@ func TestHookMergeRefusesInvalidExistingJSON(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestHookMergeRefusesUnreadableExistingFile builds an existing hooks file the
+// installer cannot read. Base overwrote it; the refusal must leave it and the
+// manifest alone. This file does not build on windows, where a POSIX mode
+// does not deny reads.
+func TestHookMergeRefusesUnreadableExistingFile(t *testing.T) {
+	for _, name := range []string{"claude", "codex", "grok", "agy"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			homeDir := filepath.Join(dir, "home")
+			projectDir := filepath.Join(dir, "project")
+			SetMunsuPathResolver(testMunsuResolver{path: filepath.Join(dir, "munsu")})
+			defer ResetMunsuPathResolver()
+
+			target := filepath.Join(projectDir, hookFileTargets[name])
+			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+				t.Fatal(err)
+			}
+			const content = `{"hooks":{}}`
+			if err := os.WriteFile(target, []byte(content), 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(target, 0); err != nil {
+				t.Fatal(err)
+			}
+			defer os.Chmod(target, 0644)
+
+			_, err := Install(homeDir, projectDir, name, ScopeProject, false)
+			if !errors.Is(err, os.ErrPermission) || !strings.Contains(err.Error(), "reading existing ") || !strings.Contains(err.Error(), filepath.Base(target)) {
+				t.Fatalf("Install error = %v, want a refusal reading %s", err, target)
+			}
+			if err := os.Chmod(target, 0644); err != nil {
+				t.Fatal(err)
+			}
+			data, readErr := os.ReadFile(target)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if string(data) != content {
+				t.Fatalf("hooks file changed to %q, want it untouched", data)
+			}
+			if _, statErr := os.Stat(ManifestPath(homeDir, name, ScopeProject, projectDir)); !os.IsNotExist(statErr) {
+				t.Fatalf("manifest written after refusal: %v", statErr)
+			}
+		})
 	}
 }

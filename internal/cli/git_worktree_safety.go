@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/domain"
@@ -31,19 +32,55 @@ type gitCommandSafety struct {
 // Command substitution is checked on the raw command, before stripping: a
 // heredoc with an unquoted delimiter still runs `$(...)` and backticks in its
 // body, and the tokenizer does not parse substitutions into words.
+//
+// Quoted text and heredoc bodies are data, except where a shell interpreter
+// runs them: the script of `sh -c`, the joined arguments of `eval`, and a
+// heredoc or here-string fed to an interpreter's stdin are evaluated as
+// commands by this same guard. Script text it cannot read is refused.
 func evaluateGitMutationSafety(checkPath, command string) (bool, string) {
 	homeDir := strings.TrimSpace(os.Getenv("MUNSU_HOME"))
 	taskID := strings.TrimSpace(os.Getenv("MUNSU_TASK_ID"))
+	return evaluateGitScriptSafety(homeDir, taskID, checkPath, command, 0)
+}
+
+// maxShellInterpreterDepth bounds how many interpreter layers the git guard
+// reads through before it refuses.
+const maxShellInterpreterDepth = 4
+
+var shellInterpreters = map[string]bool{"sh": true, "bash": true, "zsh": true, "dash": true, "ksh": true}
+
+// pipeWrappers are the command words that run their operand command with the
+// pipe still on its stdin.
+var pipeWrappers = map[string]bool{"sudo": true, "doas": true, "env": true, "nohup": true, "timeout": true, "nice": true, "stdbuf": true, "command": true, "exec": true, "time": true}
+
+func evaluateGitScriptSafety(homeDir, taskID, checkPath, command string, depth int) (bool, string) {
 	if hasGitCommandSubstitution(command) {
 		return true, "compound shell command with command substitution is not allowed for git mutation"
 	}
 	mode := gitSafetyBackslashMode()
 	currentPath := checkPath
-	for _, segment := range tokenizeSegments(mode, stripHeredocBodies(command)) {
+	stripped, feeds := splitHeredocBodies(command)
+	segments := tokenizeSegments(mode, stripped)
+	for n, segment := range segments {
 		words := segmentWords(segment)
 		if nextPath, ok := cdSegmentPath(mode, currentPath, words); ok {
 			currentPath = nextPath
 			continue
+		}
+		scripts, pipeFed := interpreterScripts(mode, stripped, segments, n, feeds)
+		if pipeFed {
+			return true, "shell interpreter reads its script from a pipe; git mutation cannot be checked"
+		}
+		for _, script := range scripts {
+			if !script.terminated {
+				return true, "shell interpreter script is unterminated; git mutation cannot be checked"
+			}
+			if depth+1 > maxShellInterpreterDepth {
+				return true, "shell interpreter nesting is too deep; git mutation cannot be checked"
+			}
+			if blocked, reason := evaluateGitScriptSafety(homeDir, taskID, currentPath, script.text, depth+1); blocked {
+				return true, reason
+			}
 		}
 		parsed := parseGitSafetyWords(currentPath, words, mode)
 		if !parsed.mutating {
@@ -54,6 +91,94 @@ func evaluateGitMutationSafety(checkPath, command string) (bool, string) {
 		}
 	}
 	return false, ""
+}
+
+// interpreterScripts returns, when segment n runs a shell interpreter or eval,
+// the script text it runs: every operand of an interpreter given -c (the script
+// and its positional words, read conservatively as scripts), eval's arguments
+// joined, and each stdin feed stripped from the segment. The interpreter is
+// found at any word position, so a wrapper such as sudo, nohup, timeout or env
+// needs no list; data that merely names an interpreter is read as one, which
+// fails closed. pipeFed reports an interpreter with no -c and no script file
+// that reads its script from a pipe: that text is not on the command line. It
+// holds only when the interpreter is the command word or follows one of
+// pipeWrappers, so a pipeline passing an interpreter name as data (grep bash)
+// is not refused.
+func interpreterScripts(mode backslashMode, stripped string, segments [][]shellToken, n int, feeds []stdinFeed) (scripts []stdinFeed, pipeFed bool) {
+	words := segmentWords(segments[n])
+	i := slices.IndexFunc(words, func(word string) bool {
+		base := filepath.Base(word)
+		return base == "eval" || shellInterpreters[base]
+	})
+	if i < 0 {
+		return nil, false
+	}
+	wrapped := i == 0 || pipeWrappers[filepath.Base(words[0])]
+	words = words[i:]
+	operands := slices.DeleteFunc(slices.Clone(words[1:]), func(word string) bool {
+		return strings.HasPrefix(word, "-") || strings.HasPrefix(word, "+")
+	})
+	switch {
+	case filepath.Base(words[0]) == "eval":
+		scripts = append(scripts, stdinFeed{text: strings.Join(words[1:], " "), terminated: true})
+	case slices.ContainsFunc(words[1:], isDashCOption):
+		for _, operand := range operands {
+			scripts = append(scripts, stdinFeed{text: operand, terminated: true})
+		}
+	case wrapped && len(operands) == 0 && n > 0 && pipesInto(stripped, segments[n-1], segments[n]):
+		pipeFed = true
+	}
+	for _, feed := range feeds {
+		if feedSegment(stripped, segments, feed.at) != n {
+			continue
+		}
+		if feed.word {
+			feed.text = strings.Join(segmentWords(slices.Concat(tokenizeSegments(mode, feed.text)...)), " ")
+		}
+		scripts = append(scripts, feed)
+	}
+	return scripts, pipeFed
+}
+
+// isDashCOption reports a short-option cluster carrying c, such as -c or -xc.
+func isDashCOption(word string) bool {
+	return strings.HasPrefix(word, "-") && !strings.HasPrefix(word, "--") && strings.Contains(word, "c")
+}
+
+// pipesInto reports whether the separator between two adjacent segments is a
+// pipe (`|` or `|&`), not `||` or a list separator.
+func pipesInto(stripped string, prev, next []shellToken) bool {
+	separator := strings.TrimSpace(string([]rune(stripped)[prev[len(prev)-1].end:next[0].start]))
+	return separator == "|" || separator == "|&"
+}
+
+// feedSegment returns the index of the segment a stdin feed at rune offset at
+// belongs to: the last segment starting at or before it, or the next one when a
+// separator stands between that segment's last word and the feed. It returns
+// -1 when no segment owns the feed.
+func feedSegment(stripped string, segments [][]shellToken, at int) int {
+	runes := []rune(stripped)
+	owner := -1
+	for i, segment := range segments {
+		if segment[0].start > at {
+			break
+		}
+		owner = i
+	}
+	if owner < 0 {
+		if len(segments) > 0 {
+			return 0
+		}
+		return -1
+	}
+	last := segments[owner][len(segments[owner])-1]
+	if last.end <= at && strings.ContainsAny(string(runes[last.end:at]), ";&|\n") {
+		if owner+1 < len(segments) {
+			return owner + 1
+		}
+		return -1
+	}
+	return owner
 }
 
 // segmentWords returns the text of each token in a segment.

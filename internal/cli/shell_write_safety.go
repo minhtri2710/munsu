@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"unicode/utf8"
 )
 
 // shellToken is one word of a command segment, or the redirection operator
@@ -423,6 +424,18 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 type heredocSpec struct {
 	delimiter string
 	stripTabs bool
+	at        int
+}
+
+// stdinFeed is text a stripped `<<` body or `<<<` word feeds to the command
+// at rune offset at of the stripped command line. word is set for a here-string,
+// whose text is still shell-quoted. An unterminated heredoc runs to the end of
+// the payload and is reported as not terminated.
+type stdinFeed struct {
+	at         int
+	text       string
+	word       bool
+	terminated bool
 }
 
 // stripHeredocBodies removes every heredoc body from a command line, leaving the
@@ -436,7 +449,17 @@ type heredocSpec struct {
 // resolution base for the genuine commands after the terminator. Both refused
 // writes that must go through, which is the one failure this guard cannot have.
 func stripHeredocBodies(command string) string {
+	stripped, _ := splitHeredocBodies(command)
+	return stripped
+}
+
+// splitHeredocBodies is stripHeredocBodies that also returns what it removed
+// from stdin: each heredoc body and here-string word, with the offset in the
+// stripped line where its operator stood. The git guard reads these when the
+// command receiving them is a shell interpreter.
+func splitHeredocBodies(command string) (string, []stdinFeed) {
 	runes := []rune(command)
+	var feeds []stdinFeed
 	var out strings.Builder
 	var pending []heredocSpec
 	quote := rune(0)
@@ -496,25 +519,37 @@ func stripHeredocBodies(command string) string {
 			}
 			if run-i == 2 {
 				if spec, next, ok := readHeredocRedirect(runes, i); ok {
+					spec.at = utf8.RuneCountInString(out.String())
 					pending = append(pending, spec)
 					out.WriteRune(' ')
 					i = next - 1
 					continue
 				}
 			}
+			at := utf8.RuneCountInString(out.String())
 			out.WriteRune(' ')
-			i = skipRedirectSource(runes, run) - 1
+			end := skipRedirectSource(runes, run)
+			if run-i == 3 {
+				feeds = append(feeds, stdinFeed{at: at, text: string(runes[run:end]), word: true, terminated: true})
+			}
+			i = end - 1
 		case '\n':
 			out.WriteRune(r)
 			if len(pending) > 0 {
-				i = skipHeredocBodies(runes, i+1, pending) - 1
+				var bodies []stdinFeed
+				i, bodies = skipHeredocBodies(runes, i+1, pending)
+				i--
+				feeds = append(feeds, bodies...)
 				pending = nil
 			}
 		default:
 			out.WriteRune(r)
 		}
 	}
-	return out.String()
+	for _, spec := range pending {
+		feeds = append(feeds, stdinFeed{at: spec.at})
+	}
+	return out.String(), feeds
 }
 
 // skipRedirectSource returns the index just past the word a read redirection
@@ -637,11 +672,14 @@ func readHeredocRedirect(runes []rune, i int) (heredocSpec, int, bool) {
 }
 
 // skipHeredocBodies consumes the bodies of every pending heredoc, in the order
-// they were opened, and returns the index where the command line resumes. A body
-// that is never terminated runs to the end of the payload.
-func skipHeredocBodies(runes []rune, start int, pending []heredocSpec) int {
+// they were opened, and returns the index where the command line resumes and
+// each body. A body that is never terminated runs to the end of the payload.
+func skipHeredocBodies(runes []rune, start int, pending []heredocSpec) (int, []stdinFeed) {
 	i := start
+	bodies := make([]stdinFeed, 0, len(pending))
 	for _, spec := range pending {
+		body := stdinFeed{at: spec.at}
+		var lines []string
 		for i < len(runes) {
 			lineEnd := i
 			for lineEnd < len(runes) && runes[lineEnd] != '\n' {
@@ -656,11 +694,15 @@ func skipHeredocBodies(runes []rune, start int, pending []heredocSpec) int {
 				line = strings.TrimLeft(line, "\t")
 			}
 			if strings.TrimRight(line, "\r") == spec.delimiter {
+				body.terminated = true
 				break
 			}
+			lines = append(lines, line)
 		}
+		body.text = strings.Join(lines, "\n")
+		bodies = append(bodies, body)
 	}
-	return i
+	return i, bodies
 }
 
 func cdOperand(segment []shellToken) (shellToken, bool) {
