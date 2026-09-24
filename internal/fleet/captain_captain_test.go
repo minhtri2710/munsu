@@ -624,7 +624,7 @@ func TestProvenance_SeedAndValidate(t *testing.T) {
 	tmp := t.TempDir()
 	os.MkdirAll(tmp, 0755)
 
-	_, err := ValidateProvenance(tmp)
+	_, err := home.ValidateCaptainProvenance(tmp)
 	if err == nil {
 		t.Fatal("expected error for missing marker")
 	}
@@ -632,11 +632,11 @@ func TestProvenance_SeedAndValidate(t *testing.T) {
 		t.Errorf("error = %v", err)
 	}
 
-	if err := SeedProvenance(tmp, "test-id"); err != nil {
+	if err := home.SeedCaptainProvenance(tmp, "test-id"); err != nil {
 		t.Fatal(err)
 	}
 
-	id, err := ValidateProvenance(tmp)
+	id, err := home.ValidateCaptainProvenance(tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -648,7 +648,7 @@ func TestProvenance_SeedAndValidate(t *testing.T) {
 func TestProvenance_InvalidFormat(t *testing.T) {
 	tmp := t.TempDir()
 	os.WriteFile(filepath.Join(tmp, ProvenanceMarkerName), []byte("only-id\n"), 0644)
-	_, err := ValidateProvenance(tmp)
+	_, err := home.ValidateCaptainProvenance(tmp)
 	if err == nil {
 		t.Fatal("expected error for malformed marker")
 	}
@@ -657,7 +657,7 @@ func TestProvenance_InvalidFormat(t *testing.T) {
 func TestProvenance_WrongVersion(t *testing.T) {
 	tmp := t.TempDir()
 	os.WriteFile(filepath.Join(tmp, ProvenanceMarkerName), []byte("old-v0\nsome-id\nsome/home\n"), 0644)
-	_, err := ValidateProvenance(tmp)
+	_, err := home.ValidateCaptainProvenance(tmp)
 	if err == nil {
 		t.Fatal("expected error for wrong version")
 	}
@@ -721,7 +721,7 @@ func TestValidate_RefusesMissingDirs(t *testing.T) {
 	tmp := t.TempDir()
 	smHome := filepath.Join(tmp, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
-	SeedProvenance(smHome, "test-sm")
+	home.SeedCaptainProvenance(smHome, "test-sm")
 
 	err := Validate(smHome, tmp)
 	if err == nil {
@@ -814,7 +814,7 @@ func TestConfigPush_Basic(t *testing.T) {
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
-	SeedProvenance(smHome, "test-sm")
+	home.SeedCaptainProvenance(smHome, "test-sm")
 
 	// Typed parent config: the inheritable surface is the resolved project
 	// config (soldier harness + dispatch profiles) published as a snapshot.
@@ -864,7 +864,7 @@ func TestConfigPush_MirrorDeletions(t *testing.T) {
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
-	SeedProvenance(smHome, "test-sm")
+	home.SeedCaptainProvenance(smHome, "test-sm")
 
 	// Explicit fixture Backend literal: ResolveProject fails closed on an
 	// empty backend identity.
@@ -926,7 +926,7 @@ func TestConfigPush_OnlyInheritableDeleted(t *testing.T) {
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
-	SeedProvenance(smHome, "test-sm")
+	home.SeedCaptainProvenance(smHome, "test-sm")
 
 	// Captain-local (non-inherited) config must survive config push.
 	os.WriteFile(filepath.Join(smHome, "config", "model"), []byte("some-model\n"), 0644)
@@ -972,7 +972,7 @@ func TestConfigPush_CaptainShared(t *testing.T) {
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
-	SeedProvenance(smHome, "test-sm")
+	home.SeedCaptainProvenance(smHome, "test-sm")
 
 	storeTestDocuments(t, parent, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
@@ -1012,7 +1012,7 @@ func TestConfigPush_CaptainSharedMirrorDeletion(t *testing.T) {
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
-	SeedProvenance(smHome, "test-sm")
+	home.SeedCaptainProvenance(smHome, "test-sm")
 
 	// Explicit fixture Backend literal: ResolveProject fails closed on an
 	// empty backend identity.
@@ -1072,7 +1072,7 @@ func TestConfigPush_RejectsSymlinkEscape(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(smHome, "config")); err != nil {
 		t.Fatal(err)
 	}
-	if err := SeedProvenance(smHome, "test-sm"); err != nil {
+	if err := home.SeedCaptainProvenance(smHome, "test-sm"); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(parent, "config"), 0755); err != nil {
@@ -1104,7 +1104,7 @@ func TestConfigPush_IdempotentPreservesMtime(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(smHome, "config"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := SeedProvenance(smHome, "test-sm"); err != nil {
+	if err := home.SeedCaptainProvenance(smHome, "test-sm"); err != nil {
 		t.Fatal(err)
 	}
 	// Explicit fixture Backend literal: ResolveProject fails closed on empty.
@@ -1146,7 +1146,7 @@ func TestConfigPush_ProjectsRegistry(t *testing.T) {
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
 	os.MkdirAll(filepath.Join(smHome, "data"), 0755)
-	SeedProvenance(smHome, "test-sm")
+	home.SeedCaptainProvenance(smHome, "test-sm")
 
 	// Typed project registry on the General home: configPush resolves and
 	// publishes the captain's project as the inherited config snapshot.
@@ -1268,7 +1268,7 @@ func TestConfigPush_RefreshesParentHome(t *testing.T) {
 	os.MkdirAll(filepath.Join(captainHome, "data"), 0755)
 
 	// Seed captain with provenance
-	if err := SeedProvenance(captainHome, "test-captain"); err != nil {
+	if err := home.SeedCaptainProvenance(captainHome, "test-captain"); err != nil {
 		t.Fatal(err)
 	}
 	os.WriteFile(filepath.Join(captainHome, "AGENTS.md"), []byte("# Test Captain\n"), 0644)
@@ -1542,23 +1542,23 @@ func TestBuildLaunchScript_ShellExecution(t *testing.T) {
 
 func TestSha256Content_Deterministic(t *testing.T) {
 	data := []byte("test content")
-	h1 := captainSHA256Content(data)
-	h2 := captainSHA256Content(data)
+	h1 := sha256Content(data)
+	h2 := sha256Content(data)
 	if h1 != h2 {
 		t.Errorf("sha256Content should be deterministic, got %q vs %q", h1, h2)
 	}
 }
 
 func TestSha256Content_Different(t *testing.T) {
-	h1 := captainSHA256Content([]byte("content A"))
-	h2 := captainSHA256Content([]byte("content B"))
+	h1 := sha256Content([]byte("content A"))
+	h2 := sha256Content([]byte("content B"))
 	if h1 == h2 {
 		t.Errorf("sha256Content should differ for different content")
 	}
 }
 
 func TestSha256Content_Empty(t *testing.T) {
-	h := captainSHA256Content([]byte(""))
+	h := sha256Content([]byte(""))
 	if h == "" {
 		t.Errorf("sha256Content should return non-empty for empty input")
 	}
@@ -1638,7 +1638,7 @@ func TestLaunch_RefusesCaptainRole(t *testing.T) {
 
 func TestLaunch_RefusesFromCaptainParentHome(t *testing.T) {
 	parent := t.TempDir()
-	if err := SeedProvenance(parent, "parent-sm"); err != nil {
+	if err := home.SeedCaptainProvenance(parent, "parent-sm"); err != nil {
 		t.Fatal(err)
 	}
 	smHome := filepath.Join(t.TempDir(), "child-sm")
@@ -1719,7 +1719,7 @@ func TestHandoff_TransfersToCaptainWithoutTasksAxi(t *testing.T) {
 	if _, err := home.Init(sm); err != nil {
 		t.Fatal(err)
 	}
-	if err := SeedProvenance(sm, "test-sm"); err != nil {
+	if err := home.SeedCaptainProvenance(sm, "test-sm"); err != nil {
 		t.Fatal(err)
 	}
 	seedCanonicalQueuedTask(t, mustAuthority(t, parent), "TASK-1", "general")
@@ -1739,7 +1739,7 @@ func TestHandoff_RefusesSelfParent(t *testing.T) {
 	if _, err := home.Init(parent); err != nil {
 		t.Fatal(err)
 	}
-	SeedProvenance(parent, "parent-sm")
+	home.SeedCaptainProvenance(parent, "parent-sm")
 
 	err := Handoff(parent, parent, []string{"TASK-1"})
 	if err == nil {
@@ -1763,7 +1763,7 @@ func TestHandoff_JournaledTransferOwnershipMovesToCaptain(t *testing.T) {
 	if _, err := home.Init(sm); err != nil {
 		t.Fatal(err)
 	}
-	if err := SeedProvenance(sm, "test-sm"); err != nil {
+	if err := home.SeedCaptainProvenance(sm, "test-sm"); err != nil {
 		t.Fatal(err)
 	}
 	seedCanonicalQueuedTask(t, mustAuthority(t, parent), "TASK-1", "general")
@@ -1791,7 +1791,7 @@ func TestHandoff_RefusesNonCanonicalDestination(t *testing.T) {
 	}
 	sm := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(sm, 0755)
-	SeedProvenance(sm, "test-sm")
+	home.SeedCaptainProvenance(sm, "test-sm")
 
 	err := Handoff(parent, sm, []string{"TASK-1"})
 	if err == nil {
@@ -1845,7 +1845,7 @@ func TestRetire_RemoveHome(t *testing.T) {
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# charter\n"), 0644)
-	SeedProvenance(smHome, "test-sm")
+	home.SeedCaptainProvenance(smHome, "test-sm")
 
 	if err := Retire(smHome, parent, true, false, &testRetireEndpoint{}); err != nil {
 		t.Fatal(err)
@@ -1864,7 +1864,7 @@ func TestRetire_KeepHome(t *testing.T) {
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# charter\n"), 0644)
-	SeedProvenance(smHome, "test-sm")
+	home.SeedCaptainProvenance(smHome, "test-sm")
 
 	if err := Retire(smHome, parent, false, false, &testRetireEndpoint{}); err != nil {
 		t.Fatal(err)
@@ -1892,7 +1892,7 @@ func TestRetire_RefusesWrongKindMeta(t *testing.T) {
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# charter\n"), 0644)
-	SeedProvenance(smHome, "test-sm")
+	home.SeedCaptainProvenance(smHome, "test-sm")
 
 	// Write bad meta through the logical task-ID accessor.
 	if err := home.WriteMeta(parent, taskIDForCaptain("test-sm"), map[string]string{
@@ -1918,7 +1918,7 @@ func TestRetire_RefusesMismatchedID(t *testing.T) {
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# charter\n"), 0644)
-	SeedProvenance(smHome, "test-sm")
+	home.SeedCaptainProvenance(smHome, "test-sm")
 
 	// Write meta with different sm_id through the logical task-ID accessor.
 	if err := home.WriteMeta(parent, taskIDForCaptain("test-sm"), map[string]string{
@@ -1944,7 +1944,7 @@ func TestRetire_RefusesMismatchedHome(t *testing.T) {
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# charter\n"), 0644)
-	SeedProvenance(smHome, "test-sm")
+	home.SeedCaptainProvenance(smHome, "test-sm")
 
 	// Write meta with different home through the logical task-ID accessor.
 	if err := home.WriteMeta(parent, taskIDForCaptain("test-sm"), map[string]string{
@@ -2304,7 +2304,7 @@ func TestConverge_RefusesRegistryIDMismatch(t *testing.T) {
 	os.MkdirAll(filepath.Join(smHome, "data"), 0755)
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# Test\n"), 0644)
 	// Seed with id "actual-id"
-	SeedProvenance(smHome, "actual-id")
+	home.SeedCaptainProvenance(smHome, "actual-id")
 
 	// But registry says "wrong-id".
 	_, err := Converge(parent, []Info{
@@ -2334,7 +2334,7 @@ func TestRegister_Idempotent(t *testing.T) {
 	}
 	sm := filepath.Join(parent, "captains", "api")
 	os.MkdirAll(sm, 0755)
-	if err := SeedProvenance(sm, "api"); err != nil {
+	if err := home.SeedCaptainProvenance(sm, "api"); err != nil {
 		t.Fatal(err)
 	}
 	if err := Register(parent, "api", sm, "scope", "proj"); err != nil {
@@ -2383,10 +2383,10 @@ func TestUnregister_RemovesEntry(t *testing.T) {
 	smB := filepath.Join(parent, "captains", "beta")
 	os.MkdirAll(smA, 0755)
 	os.MkdirAll(smB, 0755)
-	if err := SeedProvenance(smA, "alpha"); err != nil {
+	if err := home.SeedCaptainProvenance(smA, "alpha"); err != nil {
 		t.Fatal(err)
 	}
-	if err := SeedProvenance(smB, "beta"); err != nil {
+	if err := home.SeedCaptainProvenance(smB, "beta"); err != nil {
 		t.Fatal(err)
 	}
 	if err := Register(parent, "alpha", smA, "scope-a", "proj-a"); err != nil {
@@ -2446,7 +2446,7 @@ func TestRetire_UnregistersFromRegistry(t *testing.T) {
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# charter\n"), 0644)
-	if err := SeedProvenance(smHome, "test-sm"); err != nil {
+	if err := home.SeedCaptainProvenance(smHome, "test-sm"); err != nil {
 		t.Fatal(err)
 	}
 	if err := Register(parent, "test-sm", smHome, "scope", "proj"); err != nil {
@@ -2474,7 +2474,7 @@ func TestRetire_RefusesInFlightWithoutForce(t *testing.T) {
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(filepath.Join(smHome, "state"), 0755)
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# charter\n"), 0644)
-	if err := SeedProvenance(smHome, "test-sm"); err != nil {
+	if err := home.SeedCaptainProvenance(smHome, "test-sm"); err != nil {
 		t.Fatal(err)
 	}
 	if err := Register(parent, "test-sm", smHome, "scope", "proj"); err != nil {
@@ -2506,7 +2506,7 @@ func TestRetire_ForceAllowsInFlight(t *testing.T) {
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(filepath.Join(smHome, "state"), 0755)
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# charter\n"), 0644)
-	if err := SeedProvenance(smHome, "test-sm"); err != nil {
+	if err := home.SeedCaptainProvenance(smHome, "test-sm"); err != nil {
 		t.Fatal(err)
 	}
 	if err := Register(parent, "test-sm", smHome, "scope", "proj"); err != nil {
@@ -3061,7 +3061,7 @@ func TestUpdate_ManagedWorktreeUsesProvenanceRepo(t *testing.T) {
 	if _, err := home.Init(parent); err != nil {
 		t.Fatal(err)
 	}
-	// Write the parent provenance marker so ValidateProvenance passes.
+	// Write the parent provenance marker so home.ValidateCaptainProvenance passes.
 	if err := os.MkdirAll(filepath.Join(parent, "captains"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -3233,7 +3233,7 @@ func TestConfigPush_InheritsEnvOverriddenKeys(t *testing.T) {
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
-	SeedProvenance(smHome, "test-sm")
+	home.SeedCaptainProvenance(smHome, "test-sm")
 
 	// Explicit fixture Backend literal: ResolveProject fails closed on empty.
 	storeTestDocuments(t, parent, config.FleetBaseDocument{
@@ -3274,7 +3274,7 @@ func TestConfigPush_InheritsEnvMirrorDeletions(t *testing.T) {
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
-	SeedProvenance(smHome, "test-sm")
+	home.SeedCaptainProvenance(smHome, "test-sm")
 
 	// Captain-local (non-inherited) key must survive regardless of env.
 	os.WriteFile(filepath.Join(smHome, "config", "model"), []byte("some-model\n"), 0644)
@@ -3348,7 +3348,7 @@ func TestConfigPush_InheritsAllowsEmptyEnvListCaptains(t *testing.T) {
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
-	SeedProvenance(smHome, "test-sm")
+	home.SeedCaptainProvenance(smHome, "test-sm")
 
 	// Explicit fixture Backend literal: ResolveProject fails closed on empty.
 	storeTestDocuments(t, parent, config.FleetBaseDocument{

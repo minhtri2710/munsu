@@ -408,10 +408,11 @@ func newWatchCmd() *cobra.Command {
 	return cmd
 }
 
-// runGuardClaude implements the Claude Stop hook guard.
+// runGuardBlocking implements the Stop hook guard for harnesses whose Stop
+// hook blocks on exit 2 + stderr reason (Claude, Codex, OpenCode).
 // It reads stdin JSON for stop_hook_active (true → exit 0 loop guard)
 // and checks fleet state + watcher health for blind-turn detection.
-func runGuardClaude(homeDir string) error {
+func runGuardBlocking(homeDir string) error {
 	// Read stdin JSON for loop guard
 	stopHookActive := false
 	data, err := io.ReadAll(os.Stdin)
@@ -424,7 +425,7 @@ func runGuardClaude(homeDir string) error {
 		}
 	}
 
-	// Loop guard: stop_hook_active means Claude has already been forced
+	// Loop guard: stop_hook_active means the harness has already been forced
 	// to continue one turn. Allow the stop by exiting 0.
 	if stopHookActive {
 		if err := checkPendingRelayObligations(homeDir); err != nil {
@@ -486,93 +487,7 @@ func runGuardClaude(homeDir string) error {
 	}
 	reason += fmt.Sprintf(" with %d in-flight task(s)", inFlight)
 
-	// Claude Stop hook block: exit 2 + stderr reason
-	fmt.Fprintln(os.Stderr, reason)
-	exitWithCode(2)
-	return nil // unreachable
-}
-
-// runGuardGrok implements the Grok Stop hook guard.
-// Grok Stop hooks are passive: exit 2 does not block the turn, but we
-// still detect blind-turn conditions and warn.
-// runGuardCodexLike implements the Codex Stop hook guard.
-// Codex uses the same deny shape as Claude: exit 2 + stderr reason.
-func runGuardCodexLike(homeDir string) error {
-	// Read stdin JSON for loop guard
-	stopHookActive := false
-	data, err := io.ReadAll(os.Stdin)
-	if err == nil {
-		var payload map[string]interface{}
-		if json.Unmarshal([]byte(strings.TrimSpace(string(data))), &payload) == nil {
-			if active, ok := payload["stop_hook_active"].(bool); ok && active {
-				stopHookActive = true
-			}
-		}
-	}
-
-	// Loop guard: stop_hook_active means Codex has already been forced
-	// to continue one turn. Allow the stop by exiting 0.
-	if stopHookActive {
-		if err := checkPendingRelayObligations(homeDir); err != nil {
-			fmt.Fprintln(os.Stderr, err.Error())
-			exitWithCode(2)
-			return nil
-		}
-		return nil
-	}
-
-	// Check scope: only guard primary checkouts
-	cls := fleet.Classify(homeDir)
-	if cls.Err != nil || cls.Identity != fleet.Primary {
-		if err := checkPendingRelayObligations(homeDir); err != nil {
-			fmt.Fprintln(os.Stderr, err.Error())
-			exitWithCode(2)
-			return nil
-		}
-		return nil
-	}
-
-	// Check fleet state for in-flight tasks
-	inFlight, guardErr := guardInFlight(homeDir)
-	if guardErr != nil {
-		fmt.Fprintln(os.Stderr, "cannot read authoritative fleet state:", guardErr)
-		exitWithCode(2)
-		return nil
-	}
-
-	// No in-flight work → safe to end turn
-	if inFlight == 0 {
-		if err := checkPendingRelayObligations(homeDir); err != nil {
-			fmt.Fprintln(os.Stderr, err.Error())
-			exitWithCode(2)
-			return nil
-		}
-		return nil
-	}
-
-	// Check watcher liveness
-	status := orchestrator.ReadBeatStatus(homeDir, time.Now())
-
-	// If watcher is healthy and not stale, allow the stop
-	if status.Exists && !status.Stale {
-		if err := checkPendingRelayObligations(homeDir); err != nil {
-			fmt.Fprintln(os.Stderr, err.Error())
-			exitWithCode(2)
-			return nil
-		}
-		return nil
-	}
-
-	// Blind turn: in-flight work + unhealthy watcher → block the stop
-	reason := "TURN WOULD END BLIND: "
-	if !status.Exists {
-		reason += "watcher never started"
-	} else {
-		reason += fmt.Sprintf("watcher beat stale by %v", status.Age.Round(time.Second))
-	}
-	reason += fmt.Sprintf(" with %d in-flight task(s)", inFlight)
-
-	// Codex Stop hook block: exit 2 + stderr reason
+	// Stop hook block: exit 2 + stderr reason
 	fmt.Fprintln(os.Stderr, reason)
 	exitWithCode(2)
 	return nil // unreachable

@@ -664,7 +664,7 @@ func TestCaptainProfileRetirementConfigPushEndToEnd(t *testing.T) {
 	if err := os.MkdirAll(captainHome, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := SeedProvenance(captainHome, "alpha-captain"); err != nil {
+	if err := home.SeedCaptainProvenance(captainHome, "alpha-captain"); err != nil {
 		t.Fatal(err)
 	}
 

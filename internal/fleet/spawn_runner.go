@@ -1790,11 +1790,6 @@ func (r *Runner) resolveParentCaptainID() string {
 	return r.parentCaptainID
 }
 
-// shQuote wraps s in single quotes, escaping embedded single quotes.
-func spawnShQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
-}
-
 // Phase 12: submitLaunch builds the deterministic launch artifact, submits
 // the exact command, and ONLY AFTER the submission succeeds durably records
 // the launch evidence (RecordLaunch). A Submit error is NOT recorded as

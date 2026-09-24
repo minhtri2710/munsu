@@ -2,7 +2,6 @@
 package fleet
 
 import (
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -131,7 +130,7 @@ func resolveCaptainHarness(captainHome string) (string, error) {
 }
 
 func ensureCaptainIntegration(captainHome, harnessName string, integration IntegrationPort) error {
-	if _, err := ValidateProvenance(captainHome); err != nil {
+	if _, err := home.ValidateCaptainProvenance(captainHome); err != nil {
 		return fmt.Errorf("refusing captain integration on unmarked home %s: %w", captainHome, err)
 	}
 	if integration == nil {
@@ -245,12 +244,6 @@ func buildLaunchScript(binPath string, args []string, cwd string, parentHome str
 		return "", fmt.Errorf("writing captain launch script: %w", err)
 	}
 	return "bash " + shQuote(scriptPath), nil
-}
-
-// sha256Content returns the hex SHA-256 digest of data.
-func captainSHA256Content(data []byte) string {
-	h := sha256.Sum256(data)
-	return fmt.Sprintf("%x", h)
 }
 
 // taskIDForCaptain returns the task ID used in state metadata for a captain.
@@ -560,10 +553,6 @@ func rollbackWorktree(worktreeCreated bool, absHome, absRepo string, registered 
 func canonicalCaptainHome(homePath string) (string, error) {
 	return home.CanonicalCaptainHome(homePath)
 }
-func SeedProvenance(homePath, id string) error { return home.SeedCaptainProvenance(homePath, id) }
-func ValidateProvenance(homePath string) (string, error) {
-	return home.ValidateCaptainProvenance(homePath)
-}
 
 // Validate checks a captain home for full structural correctness:
 //   - provenance marker exists and is valid
@@ -572,7 +561,7 @@ func ValidateProvenance(homePath string) (string, error) {
 //   - home path is not a parent home, project home, or fake/system path
 //   - canonical home (abs, resolved) matches the expected parent containment
 func Validate(homePath, parentHome string) error {
-	if _, err := ValidateProvenance(homePath); err != nil {
+	if _, err := home.ValidateCaptainProvenance(homePath); err != nil {
 		return err
 	}
 
@@ -875,7 +864,7 @@ func refuseNestedCaptainLaunch(parentHome string) error {
 	}
 	markerPath := filepath.Join(parentHome, ProvenanceMarkerName)
 	if _, err := os.Stat(markerPath); err == nil {
-		if _, validateErr := ValidateProvenance(parentHome); validateErr != nil {
+		if _, validateErr := home.ValidateCaptainProvenance(parentHome); validateErr != nil {
 			return fmt.Errorf("active home has invalid captain provenance: %w", validateErr)
 		}
 		return fmt.Errorf("captain home %s cannot launch another captain", parentHome)
@@ -893,7 +882,7 @@ func Launch(captainHome, parentHome string, endpoint LaunchEndpoint, integration
 	if err := refuseNestedCaptainLaunch(parentHome); err != nil {
 		return err
 	}
-	if _, err := ValidateProvenance(captainHome); err != nil {
+	if _, err := home.ValidateCaptainProvenance(captainHome); err != nil {
 		return fmt.Errorf("provenance validation failed for %s: %w", captainHome, err)
 	}
 
@@ -938,7 +927,7 @@ func Launch(captainHome, parentHome string, endpoint LaunchEndpoint, integration
 		return fmt.Errorf("captain launch endpoint capability is required")
 	}
 
-	markerID, err := ValidateProvenance(captainHome)
+	markerID, err := home.ValidateCaptainProvenance(captainHome)
 	if err != nil {
 		return fmt.Errorf("revalidating captain provenance: %w", err)
 	}
@@ -1033,7 +1022,7 @@ func inFlightSoldierIDs(captainHome string) ([]string, error) {
 // removeHome=true removes the captain home directory after teardown.
 // On success, the captain is unregistered from parent data/captains.md.
 func Retire(captainHome, parentHome string, removeHome, force bool, endpoint RetireEndpoint) error {
-	markerID, err := ValidateProvenance(captainHome)
+	markerID, err := home.ValidateCaptainProvenance(captainHome)
 	if err != nil {
 		return fmt.Errorf("refusing to retire unowned home %s: %w", captainHome, err)
 	}
@@ -1110,14 +1099,6 @@ func Retire(captainHome, parentHome string, removeHome, force bool, endpoint Ret
 	}
 
 	return nil
-}
-
-func HandoffAmbiguousTaskID(err error) (*home.AmbiguousTaskIDError, bool) {
-	var ambiguous *home.AmbiguousTaskIDError
-	if errors.As(err, &ambiguous) {
-		return ambiguous, true
-	}
-	return nil, false
 }
 
 // --- Config inheritance ---
@@ -1234,11 +1215,6 @@ func isSafeConfigPath(dst, parentHome, captainHome string) bool {
 	return true
 }
 
-func isGitTracked(dir, name string) bool {
-	out, err := exec.Command("git", "-C", dir, "ls-files", "--error-unmatch", name).CombinedOutput()
-	return err == nil && len(out) > 0
-}
-
 // preflightConfigPushDestinations validates all destination paths before any
 // mutation or log write in configPushWithResult. Returns an error if any
 // destination escapes the captain container via symlink/.. or is git-tracked.
@@ -1248,7 +1224,7 @@ func preflightConfigPushDestinations(parentHome, captainHome string) error {
 	if !isSafeConfigPath(snapshotDst, parentHome, captainHome) {
 		return fmt.Errorf("published config snapshot destination escapes captain container — refuse")
 	}
-	if isGitTracked(filepath.Dir(snapshotDst), filepath.Base(snapshotDst)) {
+	if isTrackedByGit(filepath.Dir(snapshotDst), filepath.Base(snapshotDst)) {
 		return fmt.Errorf("published config snapshot is tracked in captain git — must be gitignored")
 	}
 
@@ -1262,7 +1238,7 @@ func preflightConfigPushDestinations(parentHome, captainHome string) error {
 }
 
 func publishResolvedSnapshot(parentHome, captainHome string) error {
-	captainID, err := ValidateProvenance(captainHome)
+	captainID, err := home.ValidateCaptainProvenance(captainHome)
 	if err != nil {
 		return err
 	}
@@ -1325,7 +1301,7 @@ func publishResolvedSnapshot(parentHome, captainHome string) error {
 // returns the ConfigPushResult with generation tracking. Returns nil result
 // on early failure (before generation tracking runs).
 func configPushWithResult(parentHome, captainHome string) (*ConfigPushResult, error) {
-	if _, err := ValidateProvenance(captainHome); err != nil {
+	if _, err := home.ValidateCaptainProvenance(captainHome); err != nil {
 		return nil, fmt.Errorf("refusing config-push to unmarked home %s: %w", captainHome, err)
 	}
 
@@ -1384,7 +1360,7 @@ func configPushWithResult(parentHome, captainHome string) (*ConfigPushResult, er
 // parentHome is the General home for return-channel path resolution.
 // Idempotent: safe to call on every converge, recover, and config-push cycle.
 func RefreshCharter(captainHome, parentHome string) error {
-	markerID, err := ValidateProvenance(captainHome)
+	markerID, err := home.ValidateCaptainProvenance(captainHome)
 	if err != nil {
 		return fmt.Errorf("refresh charter: %w", err)
 	}
@@ -1593,7 +1569,7 @@ func (cr *ConvergeResult) OverallStatus() string {
 // It validates provenance, refuses homes without a git worktree, runs safeFF, and maps
 // results to typed outcomes.
 func Update(captainHome, parentHome string) UpdateResponse {
-	if _, err := ValidateProvenance(captainHome); err != nil {
+	if _, err := home.ValidateCaptainProvenance(captainHome); err != nil {
 		return UpdateResponse{
 			Outcome: InvalidProvenance,
 			Err:     err,
@@ -1758,7 +1734,7 @@ func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (
 		}
 
 		// a. Registry validation.
-		markerID, valErr := ValidateProvenance(sm.Home)
+		markerID, valErr := home.ValidateCaptainProvenance(sm.Home)
 		if valErr != nil {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": registry validation", Status: ConvergeFailed, Detail: fmt.Sprintf("provenance validation failed: %v", valErr)})
 			errs = append(errs, fmt.Sprintf("%s: provenance validation failed: %v", sm.ID, valErr))
@@ -2077,7 +2053,7 @@ func Recover(parentHome string, registered []Info, capabilities RecoverCapabilit
 			continue
 		}
 
-		markerID, vErr := ValidateProvenance(sm.Home)
+		markerID, vErr := home.ValidateCaptainProvenance(sm.Home)
 		if vErr != nil {
 			entry.Outcome = RecoverFailed
 			entry.Error = fmt.Sprintf("provenance validation failed: %v", vErr)
@@ -2192,7 +2168,7 @@ func ProbeLiveness(parentHome string, registered []Info, probe ProbeEndpoint) []
 			probes = append(probes, p)
 			continue
 		}
-		if _, err := ValidateProvenance(sm.Home); err != nil {
+		if _, err := home.ValidateCaptainProvenance(sm.Home); err != nil {
 			p.Status = "unknown"
 			probes = append(probes, p)
 			continue
@@ -2305,7 +2281,7 @@ func instructionSurfaceDigest(home, commit string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return captainSHA256Content([]byte(tree)), nil
+	return sha256Content([]byte(tree)), nil
 }
 
 // hasSurfaceDiff reports whether the tracked instruction surface changed.

@@ -188,12 +188,10 @@ func newContractGuardCmd() *cobra.Command {
 			switch harnessFlag {
 			case "agy":
 				return runGuardAgy(ctx.Home)
-			case "claude":
-				return runGuardClaude(ctx.Home)
+			case "claude", "codex", "opencode":
+				return runGuardBlocking(ctx.Home)
 			case "grok":
 				return runGuardGrok(ctx.Home)
-			case "codex", "opencode":
-				return runGuardCodexLike(ctx.Home)
 			}
 			if _, err := contractOutput(cmd); err != nil {
 				return err

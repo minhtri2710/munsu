@@ -103,7 +103,7 @@ func PropagateConfig(req PropagateConfigRequest) (*PropagateConfigResult, error)
 	}
 
 	// 2. Validate provenance (before any mutation).
-	if _, err := ValidateProvenance(req.CaptainHome); err != nil {
+	if _, err := home.ValidateCaptainProvenance(req.CaptainHome); err != nil {
 		return nil, fmt.Errorf("propagate config: %w", err)
 	}
 
@@ -175,7 +175,7 @@ func ensureOrHealRequirement(
 	recorder *boundSenderRecorder,
 ) (RequirementState, NotificationState, string, error) {
 	// Derive identities for envelope lookup.
-	captainIdentity, err := ValidateProvenance(captainHome)
+	captainIdentity, err := home.ValidateCaptainProvenance(captainHome)
 	if err != nil {
 		return RequirementFailed, NotificationFailed, "",
 			fmt.Errorf("ensure requirement: %w", err)

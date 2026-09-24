@@ -135,7 +135,7 @@ func seedHandoffPair(t *testing.T) (parent, captain string) {
 	seedCanonicalTransferHome(t, parent)
 	captain = filepath.Join(parent, "captains", "test-sm")
 	seedCanonicalTransferHome(t, captain)
-	if err := SeedProvenance(captain, "test-sm"); err != nil {
+	if err := mhome.SeedCaptainProvenance(captain, "test-sm"); err != nil {
 		t.Fatal(err)
 	}
 	return parent, captain
@@ -408,7 +408,7 @@ func TestHandoffDestinationConflictFailsClosed(t *testing.T) {
 	// explicit destination-owner conflict fires.
 	captain := filepath.Join(t.TempDir(), "captain")
 	seedCanonicalTransferHome(t, captain)
-	if err := SeedProvenance(captain, "captain"); err != nil {
+	if err := mhome.SeedCaptainProvenance(captain, "captain"); err != nil {
 		t.Fatal(err)
 	}
 	seedCanonicalQueuedTask(t, mustAuthority(t, captain), "TASK-1", "captain:captain")

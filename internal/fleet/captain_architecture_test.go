@@ -176,7 +176,7 @@ func TestBlocked_NestedCaptainLaunchIsRefused(t *testing.T) {
 
 	t.Run("refuses from captain parent home", func(t *testing.T) {
 		parent := t.TempDir()
-		if err := SeedProvenance(parent, "parent-sm"); err != nil {
+		if err := mhome.SeedCaptainProvenance(parent, "parent-sm"); err != nil {
 			t.Fatal(err)
 		}
 		smHome := filepath.Join(t.TempDir(), "child-sm")
@@ -201,7 +201,7 @@ func TestBlocked_RetireRefusesInFlightSoldiers(t *testing.T) {
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(filepath.Join(smHome, "state"), 0755)
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# charter\n"), 0644)
-	SeedProvenance(smHome, "test-sm")
+	mhome.SeedCaptainProvenance(smHome, "test-sm")
 	Register(parent, "test-sm", smHome, "scope", "proj")
 
 	// Write in-flight soldier meta.
@@ -243,7 +243,7 @@ func TestBlocked_DuplicateRegistrationIsNoop(t *testing.T) {
 	}
 	sm := filepath.Join(parent, "captains", "api")
 	os.MkdirAll(sm, 0755)
-	SeedProvenance(sm, "api")
+	mhome.SeedCaptainProvenance(sm, "api")
 
 	// Register twice.
 	if err := Register(parent, "api", sm, "scope", "proj"); err != nil {
@@ -416,7 +416,7 @@ func unsupportedCaptainHomeFixture(t *testing.T, parent, id string) string {
 			t.Fatal(err)
 		}
 	}
-	if err := SeedProvenance(smHome, id); err != nil {
+	if err := mhome.SeedCaptainProvenance(smHome, id); err != nil {
 		t.Fatal(err)
 	}
 	return smHome
@@ -563,7 +563,7 @@ func TestUpdate_WorktreeHomeFastForwarded(t *testing.T) {
 	os.MkdirAll(filepath.Join(captain, "config"), 0755)
 	os.MkdirAll(filepath.Join(captain, "data"), 0755)
 	// No tracked file writes — state/, config/, data/ are gitignored.
-	SeedProvenance(captain, "test-sm")
+	mhome.SeedCaptainProvenance(captain, "test-sm")
 
 	// Update should fast-forward the captain home.
 	resp := Update(captain, parent)
@@ -623,7 +623,7 @@ func TestUpdate_WorktreeHomeAlreadyCurrent(t *testing.T) {
 	os.MkdirAll(filepath.Join(captain, "config"), 0755)
 	os.MkdirAll(filepath.Join(captain, "data"), 0755)
 	// No tracked file writes — state/, config/, data/ are gitignored.
-	SeedProvenance(captain, "test-sm")
+	mhome.SeedCaptainProvenance(captain, "test-sm")
 
 	// First Update: already current (nothing to ff).
 	resp := Update(captain, parent)
@@ -693,7 +693,7 @@ func TestConfigPush_DoesNotLeakOutsideCaptain(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(smHome, "config")); err != nil {
 		t.Fatal(err)
 	}
-	SeedProvenance(smHome, "test-sm")
+	mhome.SeedCaptainProvenance(smHome, "test-sm")
 
 	os.MkdirAll(filepath.Join(parent, "config"), 0755)
 	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644)
@@ -714,20 +714,20 @@ func TestConfigPush_DoesNotLeakOutsideCaptain(t *testing.T) {
 
 // TestProvenance_CopiedHomeIsRefused proves that a captain home that was
 // copied to a different path (canonical home mismatch) is rejected by
-// ValidateProvenance. This prevents two captains from claiming the same ID.
+// home.ValidateCaptainProvenance. This prevents two captains from claiming the same ID.
 func TestProvenance_CopiedHomeIsRefused(t *testing.T) {
 	tmp := t.TempDir()
 	original := filepath.Join(tmp, "original")
 	copied := filepath.Join(tmp, "copied")
 
 	os.MkdirAll(original, 0755)
-	SeedProvenance(original, "test-sm")
+	mhome.SeedCaptainProvenance(original, "test-sm")
 
 	// Copy the entire home (including provenance marker with canonical path).
 	copyDir(t, original, copied)
 
 	// Validation must fail because canonical home doesn't match.
-	_, err := ValidateProvenance(copied)
+	_, err := mhome.ValidateCaptainProvenance(copied)
 	if err == nil {
 		t.Fatal("expected error for copied home")
 	}

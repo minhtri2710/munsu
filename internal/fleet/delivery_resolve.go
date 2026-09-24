@@ -45,7 +45,7 @@ func ResolveTaskHome(homeDir, id string) (taskHome string, meta map[string]strin
 		}
 	}
 
-	if errors.Is(primaryErr, os.ErrNotExist) || isNotExist(primaryErr) {
+	if errors.Is(primaryErr, os.ErrNotExist) {
 		return "", nil, fmt.Errorf("task meta %s not found in primary home or captain homes (searched: %v)", id, searched)
 	}
 	return "", nil, fmt.Errorf("task meta %s not found in primary home or captain homes (searched: %v): %w", id, searched, primaryErr)
@@ -66,20 +66,6 @@ func captainHomes(homeDir string) []string {
 		out = append(out, filepath.Join(root, e.Name()))
 	}
 	return out
-}
-
-func isNotExist(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, os.ErrNotExist) {
-		return true
-	}
-	var pe *os.PathError
-	if errors.As(err, &pe) {
-		return errors.Is(pe.Err, os.ErrNotExist) || os.IsNotExist(pe)
-	}
-	return os.IsNotExist(err)
 }
 
 // RequireShipMeta resolves the task home and requires kind=ship.

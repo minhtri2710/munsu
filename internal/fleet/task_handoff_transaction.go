@@ -190,7 +190,7 @@ func durableTaskHandoff(parentHome, captainHome string, itemKeys []string) error
 	if source == destination {
 		return fmt.Errorf("refusing handoff: destination is parent home itself")
 	}
-	captainID, err := ValidateProvenance(destination)
+	captainID, err := mhome.ValidateCaptainProvenance(destination)
 	if err != nil {
 		return fmt.Errorf("refusing handoff to unmarked home %s: %w", destination, err)
 	}

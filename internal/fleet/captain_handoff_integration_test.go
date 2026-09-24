@@ -41,7 +41,7 @@ func TestHandoffOrderedInvariantAcrossEveryStage(t *testing.T) {
 			if _, err := home.Init(captain); err != nil {
 				t.Fatal(err)
 			}
-			if err := SeedProvenance(captain, "test-sm"); err != nil {
+			if err := home.SeedCaptainProvenance(captain, "test-sm"); err != nil {
 				t.Fatal(err)
 			}
 			parentAuth := mustAuthority(t, parent)

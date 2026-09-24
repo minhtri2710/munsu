@@ -139,7 +139,7 @@ func TestPropagateConfig_TypedSnapshotDurableBeforeNotificationAndRetryIsIdempot
 			t.Errorf("generation missing before notification: found=%v err=%v", found, err)
 			return
 		}
-		captainID, _ := ValidateProvenance(alphaHome)
+		captainID, _ := home.ValidateCaptainProvenance(alphaHome)
 		senderID := parentIdentity(t, parent)
 		expectedID := ConfigRereadEnvelopeID(senderID, captainID, gen, digest)
 		if ref.MessageID != expectedID {
@@ -174,7 +174,7 @@ func TestPropagateConfig_TypedSnapshotDurableBeforeNotificationAndRetryIsIdempot
 	if err != nil || ref.MessageID != firstMessageID {
 		t.Fatalf("retry reference = %+v err=%v, want message ID %q", ref, err, firstMessageID)
 	}
-	captainID, _ := ValidateProvenance(alphaHome)
+	captainID, _ := home.ValidateCaptainProvenance(alphaHome)
 	senderID, _, _ := home.ReadHomeIdentity(parent)
 	gen, digest, found, _ := ReadConfigRereadGen(alphaHome)
 	if !found {
@@ -240,7 +240,7 @@ func parentIdentity(t *testing.T, parent string) string {
 
 func ackConfigRequirement(t *testing.T, parent, captainHome string) {
 	t.Helper()
-	captainID, err := ValidateProvenance(captainHome)
+	captainID, err := home.ValidateCaptainProvenance(captainHome)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -333,7 +333,7 @@ func TestPropagateConfig_UnsafeSymlinkEscape(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(captainHome, "config")); err != nil {
 		t.Fatal(err)
 	}
-	if err := SeedProvenance(captainHome, "test-sm"); err != nil {
+	if err := home.SeedCaptainProvenance(captainHome, "test-sm"); err != nil {
 		t.Fatal(err)
 	}
 	os.MkdirAll(filepath.Join(parent, "config"), 0755)
@@ -992,7 +992,7 @@ func TestPropagateConfig_GenerationOnlyCrash_HealedWithoutAdvancing(t *testing.T
 		t.Fatal("gen file not found after first propagation")
 	}
 
-	captainIdentity, err := ValidateProvenance(captainHome)
+	captainIdentity, err := home.ValidateCaptainProvenance(captainHome)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1079,7 +1079,7 @@ func TestPropagateConfig_SameDigestSameEnvelopeID(t *testing.T) {
 	os.MkdirAll(filepath.Join(parent, "config"), 0755)
 	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644)
 
-	captainIdentity, err := ValidateProvenance(captainHome)
+	captainIdentity, err := home.ValidateCaptainProvenance(captainHome)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1174,7 +1174,7 @@ func TestPropagateConfig_RejectedNotificationRetriesOnUnchanged(t *testing.T) {
 		t.Fatal("gen file not found")
 	}
 
-	captainIdentity, err := ValidateProvenance(captainHome)
+	captainIdentity, err := home.ValidateCaptainProvenance(captainHome)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1262,7 +1262,7 @@ func TestPropagateConfig_EnvelopeOnlyCrash_Healed(t *testing.T) {
 		t.Fatal("gen file not found")
 	}
 
-	captainIdentity, _ := ValidateProvenance(captainHome)
+	captainIdentity, _ := home.ValidateCaptainProvenance(captainHome)
 	senderIdentity, _, _ := home.ReadHomeIdentity(parent)
 	envID := ConfigRereadEnvelopeID(senderIdentity, captainIdentity, gen, digest)
 	parentStore := home.NewStore(parent)
@@ -1335,7 +1335,7 @@ func TestPropagateConfig_AckedRequirementNotResent(t *testing.T) {
 	if err != nil || !found {
 		t.Fatal("gen file not found")
 	}
-	captainIdentity, _ := ValidateProvenance(captainHome)
+	captainIdentity, _ := home.ValidateCaptainProvenance(captainHome)
 	senderIdentity, _, _ := home.ReadHomeIdentity(parent)
 	envID := ConfigRereadEnvelopeID(senderIdentity, captainIdentity, gen, digest)
 
@@ -1410,7 +1410,7 @@ func TestPropagateConfig_ChangedAfterHealing_CreatesNextGeneration(t *testing.T)
 		t.Fatalf("generation = %d, want 1", result1.Generation)
 	}
 
-	captainIdentity, _ := ValidateProvenance(captainHome)
+	captainIdentity, _ := home.ValidateCaptainProvenance(captainHome)
 	senderIdentity, _, _ := home.ReadHomeIdentity(parent)
 	gen1, digest1, _, _ := ReadConfigRereadGen(captainHome)
 	envID1 := ConfigRereadEnvelopeID(senderIdentity, captainIdentity, gen1, digest1)
@@ -1589,7 +1589,7 @@ func TestEnsureOrHealRequirement_AckedNoop(t *testing.T) {
 		t.Fatal("gen file not found")
 	}
 
-	captainIdentity, _ := ValidateProvenance(captainHome)
+	captainIdentity, _ := home.ValidateCaptainProvenance(captainHome)
 	senderIdentity, _, _ := home.ReadHomeIdentity(parent)
 	envID := ConfigRereadEnvelopeID(senderIdentity, captainIdentity, gen, digest)
 

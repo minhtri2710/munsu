@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 const (
@@ -180,7 +182,7 @@ func seedFromWorktree(id, homePath, repoPath, parentHome, charter string, force 
 	}
 
 	// Write the .munsu-captain-home provenance marker (same as regular seed).
-	if err = SeedProvenance(absHome, id); err != nil {
+	if err = home.SeedCaptainProvenance(absHome, id); err != nil {
 		err = fmt.Errorf("seeding provenance marker: %w", err)
 		return
 	}

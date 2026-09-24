@@ -160,7 +160,7 @@ func ConfigRereadEnvelopeID(senderIdentity, captainIdentity string, generation i
 // and liveness; this function owns the mailbox write and notification.
 func EnsureConfigRereadRequirement(parentHome, captainHome string, gen int, digest string, sender home.BoundSender) error {
 	// Validate captain provenance and derive identity.
-	captainIdentity, err := ValidateProvenance(captainHome)
+	captainIdentity, err := home.ValidateCaptainProvenance(captainHome)
 	if err != nil {
 		return fmt.Errorf("config-reread requirement: %w", err)
 	}
@@ -300,7 +300,7 @@ func removeStaleConfigRereadRecords(captainHome, parentHome, senderIdentity stri
 // This is called from converge to ensure config-reread state is clean once
 // the captain has acknowledged the latest config.
 func ReconcileConfigRereadPending(parentHome string, captainHome string) error {
-	captainIdentity, err := ValidateProvenance(captainHome)
+	captainIdentity, err := home.ValidateCaptainProvenance(captainHome)
 	if err != nil {
 		return fmt.Errorf("reconcile config-reread: %w", err)
 	}

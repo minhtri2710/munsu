@@ -91,7 +91,7 @@ func TestHandoffFailsClosedOnDegradedSupervision(t *testing.T) {
 	if err := os.MkdirAll(captain, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := SeedProvenance(captain, "test-sm"); err != nil {
+	if err := mhome.SeedCaptainProvenance(captain, "test-sm"); err != nil {
 		t.Fatal(err)
 	}
 

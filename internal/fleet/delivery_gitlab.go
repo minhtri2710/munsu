@@ -55,9 +55,6 @@ type GitLabClient interface {
 	// CaptureIdentity captures a full domain.DeliveryIdentity from a GitLab MR URL.
 	CaptureIdentity(mrURL string) (*domain.DeliveryIdentity, error)
 
-	// ViewMRState returns the MR state (OPEN, MERGED, CLOSED) via glab.
-	ViewMRState(host, owner, project string, iid int) (string, error)
-
 	// ViewMRJSON fetches MR metadata through the typed GitLab API.
 	ViewMRJSON(host, owner, project string, iid int) ([]byte, error)
 	// ApprovalState fetches authoritative approval evidence from GitLab.
@@ -276,23 +273,6 @@ func parseGLTargetBranch(data []byte) (string, error) {
 		return "", fmt.Errorf("parsing glab mr view JSON: %w", err)
 	}
 	return raw.TargetBranch, nil
-}
-
-// ViewMRState returns the MR state (OPEN, MERGED, CLOSED) via glab.
-func (c *glabClient) ViewMRState(host, owner, project string, iid int) (string, error) {
-	data, err := c.ViewMRJSON(host, owner, project, iid)
-	if err != nil {
-		return "", err
-	}
-
-	var raw struct {
-		State string `json:"state"`
-	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return "", fmt.Errorf("parsing glab mr view JSON: %w", err)
-	}
-
-	return normalizeGlabState(raw.State), nil
 }
 
 // normalizeGlabState normalizes GitLab state strings to the domain convention.

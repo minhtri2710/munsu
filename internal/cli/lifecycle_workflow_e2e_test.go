@@ -571,7 +571,7 @@ func workflowSeedCaptainHome(t *testing.T, generalHome, repo, captainID string) 
 	if err := os.WriteFile(filepath.Join(captainHome, "AGENTS.md"), []byte("# captain\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := fleet.SeedProvenance(captainHome, captainID); err != nil {
+	if err := home.SeedCaptainProvenance(captainHome, captainID); err != nil {
 		t.Fatalf("seed captain provenance: %v", err)
 	}
 	if err := config.StorePublishedSnapshot(captainHome, config.ResolvedProjectConfig{

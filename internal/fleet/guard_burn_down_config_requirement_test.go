@@ -14,7 +14,7 @@ func TestGuardBurnDownEnsureOrHealRequirementRefusesUnexpectedEnvelopeKey(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	captainIdentity, err := ValidateProvenance(captainHome)
+	captainIdentity, err := home.ValidateCaptainProvenance(captainHome)
 	if err != nil {
 		t.Fatal(err)
 	}

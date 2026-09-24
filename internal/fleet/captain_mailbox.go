@@ -54,7 +54,7 @@ func SendMailboxToCaptain(sm Info, parentHome, line string, sender home.BoundSen
 		result.Err = fmt.Errorf("meta home=%s does not match canonical captain home %s", meta["home"], canonSM)
 		return result
 	}
-	if _, err := ValidateProvenance(sm.Home); err != nil {
+	if _, err := home.ValidateCaptainProvenance(sm.Home); err != nil {
 		result.Err = fmt.Errorf("captain provenance validation failed: %w", err)
 		return result
 	}
@@ -157,7 +157,7 @@ func ReconcileMailboxPending(parentHome string, sm Info, sender home.BoundSender
 	if err != nil {
 		return fmt.Errorf("%s: canonicalizing captain home: %w", sm.ID, err)
 	}
-	if _, err := ValidateProvenance(sm.Home); err != nil {
+	if _, err := home.ValidateCaptainProvenance(sm.Home); err != nil {
 		return fmt.Errorf("%s: provenance validation: %w", sm.ID, err)
 	}
 	captainStore := home.NewStore(canonSM)

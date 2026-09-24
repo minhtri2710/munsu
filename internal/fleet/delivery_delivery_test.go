@@ -13,39 +13,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
-func TestStrconvParseInt(t *testing.T) {
-	tests := []struct {
-		input string
-		want  int64
-	}{
-		{"42", 42},
-		{"0", 0},
-		{"100", 100},
-		{"abc", 0},
-		{"42extra", 42},
-		{"", 0},
-	}
-
-	for _, tt := range tests {
-		got, _ := strconvParseInt(tt.input)
-		if got != tt.want {
-			t.Errorf("strconvParseInt(%q) = %d, want %d", tt.input, got, tt.want)
-		}
-	}
-}
-
-func TestMinInt(t *testing.T) {
-	if got := minInt(5, 10); got != 5 {
-		t.Errorf("minInt(5, 10) = %d, want 5", got)
-	}
-	if got := minInt(10, 5); got != 5 {
-		t.Errorf("minInt(10, 5) = %d, want 5", got)
-	}
-	if got := minInt(5, 5); got != 5 {
-		t.Errorf("minInt(5, 5) = %d, want 5", got)
-	}
-}
-
 func TestGitBranch(t *testing.T) {
 	tmp := t.TempDir()
 	initGitRepo(t, tmp, "")
@@ -159,6 +126,47 @@ func TestGitDiffSummary_WithDiff(t *testing.T) {
 	}
 	if !strings.Contains(summary, "Insertions") {
 		t.Errorf("expected summary to mention Insertions, got: %s", summary)
+	}
+}
+
+// TestGitDiffSummary_BinaryNumstatCountsZero pins that a binary file, which
+// git numstat reports as "-\t-", counts as a changed file with zero
+// insertions and deletions.
+func TestGitDiffSummary_BinaryNumstatCountsZero(t *testing.T) {
+	tmp := t.TempDir()
+	initGitRepo(t, tmp, "")
+	gitEnv := gitEnvForDir(tmp)
+	defaultBranch, err := gitDefaultBranch(tmp)
+	if err != nil {
+		t.Fatalf("gitDefaultBranch: %v", err)
+	}
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = tmp
+		cmd.Env = gitEnv
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s", args, out)
+		}
+	}
+	run("checkout", "-b", "feature/binary")
+	if err := os.WriteFile(filepath.Join(tmp, "blob.bin"), []byte{0, 1, 2, 0, 3}, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "text.txt"), []byte("one\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "blob.bin", "text.txt")
+	run("commit", "-m", "binary and text")
+
+	summary, err := gitDiffSummary(tmp, defaultBranch, "feature/binary")
+	if err != nil {
+		t.Fatalf("gitDiffSummary: %v", err)
+	}
+	for _, want := range []string{"| Files changed | 2 |", "| Insertions | 1 |", "| Deletions | 0 |"} {
+		if !strings.Contains(summary, want) {
+			t.Errorf("summary missing %q:\n%s", want, summary)
+		}
 	}
 }
 

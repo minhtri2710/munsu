@@ -14,9 +14,9 @@ package fleet
 type BusyReading uint8
 
 const (
-	BusyReadingInvalid BusyReading = iota
 	// BusyReadingHeld: the endpoint is busy; hold, do not dispatch a competing turn.
-	BusyReadingHeld
+	// Readings start at 1 so the zero value is never a valid answer.
+	BusyReadingHeld BusyReading = iota + 1
 	BusyReadingIdle
 	// BusyReadingUnknown is its own answer and is never treated as idle.
 	BusyReadingUnknown
@@ -41,10 +41,6 @@ func (r BusyReading) String() string {
 	default:
 		return "invalid"
 	}
-}
-
-func (r BusyReading) Valid() bool {
-	return r >= BusyReadingHeld && r <= BusyReadingDead
 }
 
 // ReadBusy derives the busy reading of one exact bound endpoint from a

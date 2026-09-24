@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/fleet"
+	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/spf13/cobra"
 )
 
@@ -139,7 +141,8 @@ interruption.`,
 		Args: MinimumNArgs(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			if err := fleet.Handoff(ctx.Home, args[0], args[1:]); err != nil {
-				if ambiguous, ok := fleet.HandoffAmbiguousTaskID(err); ok {
+				var ambiguous *home.AmbiguousTaskIDError
+				if errors.As(err, &ambiguous) {
 					return operationError("ambiguous_task_id", strings.Join(handoffCorrectionCommands(args[0], ambiguous), "; "), fmt.Sprintf("Task ID %q is ambiguous", ambiguous.Requested))
 				}
 				return err

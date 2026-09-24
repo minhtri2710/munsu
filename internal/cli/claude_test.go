@@ -208,7 +208,7 @@ func TestClaudeGuardStopHookActive(t *testing.T) {
 	exitWithCode = func(code int) { exitCode = code }
 	defer func() { exitWithCode = oldExit }()
 
-	// Call runGuardClaude with stdin containing stop_hook_active=true
+	// Call runGuardBlocking with stdin containing stop_hook_active=true
 	stdinPayload := `{"hookEventName":"Stop","stop_hook_active":true}`
 	oldStdin := os.Stdin
 	r, w, _ := os.Pipe()
@@ -216,7 +216,7 @@ func TestClaudeGuardStopHookActive(t *testing.T) {
 	w.Close()
 	os.Stdin = r
 
-	err := runGuardClaude(tmpDir)
+	err := runGuardBlocking(tmpDir)
 
 	os.Stdin = oldStdin
 
@@ -271,7 +271,7 @@ func TestClaudeGuardBlindTurn(t *testing.T) {
 		w.Close()
 		os.Stdin = r
 
-		runGuardClaude(tmpDir)
+		runGuardBlocking(tmpDir)
 
 		os.Stdin = oldStdin
 	})
@@ -324,7 +324,7 @@ func TestClaudeGuardHealthyExit(t *testing.T) {
 	w.Close()
 	os.Stdin = r
 
-	err := runGuardClaude(tmpDir)
+	err := runGuardBlocking(tmpDir)
 
 	os.Stdin = oldStdin
 
@@ -536,7 +536,7 @@ func TestClaudeGuardPendingRelayBlocks(t *testing.T) {
 		os.Stdin = r
 
 		sout, serr := captureBoth(func() {
-			runGuardClaude(tmpDir)
+			runGuardBlocking(tmpDir)
 		})
 		stderr = serr
 		_ = sout
@@ -571,7 +571,7 @@ func TestClaudeGuardNoPendingRelayAllows(t *testing.T) {
 	w.Close()
 	os.Stdin = r
 
-	err := runGuardClaude(tmpDir)
+	err := runGuardBlocking(tmpDir)
 	os.Stdin = oldStdin
 
 	if err != nil {
@@ -611,7 +611,7 @@ func TestClaudeGuardParentHomeReceiptBlocks(t *testing.T) {
 		os.Stdin = r
 
 		_, serr := captureBoth(func() {
-			runGuardClaude(tmpDir)
+			runGuardBlocking(tmpDir)
 		})
 		stderr = serr
 		os.Stdin = oldStdin
@@ -654,7 +654,7 @@ func TestClaudeGuardParentHomeAckedAllows(t *testing.T) {
 	w.Close()
 	os.Stdin = r
 
-	err := runGuardClaude(tmpDir)
+	err := runGuardBlocking(tmpDir)
 	os.Stdin = oldStdin
 
 	if err != nil {
@@ -697,7 +697,7 @@ func TestClaudeGuardParentHomeUnreadableFailsClosed(t *testing.T) {
 		w.Close()
 		os.Stdin = r
 
-		runGuardClaude(tmpDir)
+		runGuardBlocking(tmpDir)
 		os.Stdin = oldStdin
 	})
 

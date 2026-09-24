@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/domain"
@@ -164,9 +165,9 @@ func gitDiffSummary(repoPath, base, branch string) (string, error) {
 		fields := strings.Fields(line)
 		if len(fields) >= 3 {
 			files++
-			ins, _ := strconvParseInt(fields[0])
+			ins, _ := strconv.ParseInt(fields[0], 10, 64)
 			insertions += ins
-			del, _ := strconvParseInt(fields[1])
+			del, _ := strconv.ParseInt(fields[1], 10, 64)
 			deletions += del
 		}
 	}
@@ -184,7 +185,7 @@ func gitDiffSummary(repoPath, base, branch string) (string, error) {
 
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("## Review Diff: `%s` -> `%s`\n\n", branch, base))
-	b.WriteString(fmt.Sprintf("- **Merge base:** `%s`\n", mergeBase[:minInt(len(mergeBase), 12)]))
+	b.WriteString(fmt.Sprintf("- **Merge base:** `%s`\n", mergeBase[:min(len(mergeBase), 12)]))
 	b.WriteString(fmt.Sprintf("- **Current branch:** `%s`\n", branch))
 	b.WriteString(fmt.Sprintf("- **Base:** `%s`\n\n", base))
 
@@ -216,25 +217,4 @@ func gitDiffSummary(repoPath, base, branch string) (string, error) {
 	b.WriteString("```\n")
 
 	return b.String(), nil
-}
-
-// strconvParseInt is a simplified atoi for int64, returning 0 on error.
-func strconvParseInt(s string) (int64, error) {
-	var n int64
-	for _, c := range s {
-		if c >= '0' && c <= '9' {
-			n = n*10 + int64(c-'0')
-		} else {
-			break
-		}
-	}
-	return n, nil
-}
-
-// minInt returns the smaller of two ints.
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

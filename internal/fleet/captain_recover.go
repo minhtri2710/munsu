@@ -273,7 +273,7 @@ func (tx *RecoverTransaction) stepProvenance(sm Info) StepResult {
 	if sm.Home == "" {
 		return StepResult{Name: "provenance", State: StepFailed, Detail: "missing home path"}
 	}
-	markerID, err := ValidateProvenance(sm.Home)
+	markerID, err := mhome.ValidateCaptainProvenance(sm.Home)
 	if err != nil {
 		return StepResult{Name: "provenance", State: StepFailed, Detail: err.Error()}
 	}

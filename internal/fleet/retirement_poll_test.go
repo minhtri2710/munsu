@@ -260,7 +260,7 @@ func TestValidateCheckWithLstat_MissingShebang(t *testing.T) {
 
 // --- AppendStatusOnce ---
 
-func TestDurableAppendStatus_NewFile(t *testing.T) {
+func TestAppendStatusOnce_NewFile(t *testing.T) {
 	home := t.TempDir()
 	stateDir := filepath.Join(home, "state")
 	os.MkdirAll(stateDir, 0755)
@@ -282,7 +282,7 @@ func TestDurableAppendStatus_NewFile(t *testing.T) {
 	}
 }
 
-func TestDurableAppendStatus_Deduplicate(t *testing.T) {
+func TestAppendStatusOnce_SkipsExistingLine(t *testing.T) {
 	home := t.TempDir()
 	stateDir := filepath.Join(home, "state")
 	os.MkdirAll(stateDir, 0755)

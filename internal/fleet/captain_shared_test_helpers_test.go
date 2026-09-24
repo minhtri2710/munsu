@@ -98,7 +98,7 @@ func worktreeCaptainHome(t *testing.T, captainHome, id string) {
 	if err := writeCaptainCharter(captainHome, "# "+id+"\n"); err != nil {
 		t.Fatal(err)
 	}
-	if err := SeedProvenance(captainHome, id); err != nil {
+	if err := home.SeedCaptainProvenance(captainHome, id); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 func TestGuardBurnDownValidateRefusesNonDirectoryState(t *testing.T) {
@@ -20,7 +22,7 @@ func TestGuardBurnDownValidateRefusesNonDirectoryState(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(homePath, "AGENTS.md"), []byte("# captain\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := SeedProvenance(homePath, "captain"); err != nil {
+	if err := home.SeedCaptainProvenance(homePath, "captain"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -32,7 +34,7 @@ func TestGuardBurnDownValidateRefusesNonDirectoryState(t *testing.T) {
 
 func TestGuardBurnDownEnsureCaptainIntegrationRefusesNilCapability(t *testing.T) {
 	homePath := t.TempDir()
-	if err := SeedProvenance(homePath, "captain"); err != nil {
+	if err := home.SeedCaptainProvenance(homePath, "captain"); err != nil {
 		t.Fatal(err)
 	}
 
