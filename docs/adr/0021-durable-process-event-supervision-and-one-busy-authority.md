@@ -1,6 +1,6 @@
 # 0021. Durable Process-Event Supervision and One Busy Authority
 
-* **Status:** Accepted
+* **Status:** Accepted; §3 fire-once condition→action registration superseded by the doc-truth amendment (§3, 2026-09-24): the dormant registry and its fired-marker store were deleted.
 * **Date:** 2026-08-31
 * **Extends:** ADR-0005 (mutation fencing / typed endpoint observation), ADR-0008 (task-authority owns lifecycle), ADR-0019 (single-binary hand-rolled store)
 * **Triggered by:** firstmate → munsu parity refresh (2026-07-21 baseline → 2026-08-31), gaps G1/G2/G3; port-mapping P1b row ("Herdr native busy/event transport")
@@ -87,11 +87,11 @@ process-event contract, is fixed here:
 
 This reuses the durable wake queue (`EnqueueWake` / `DrainWakes`) as the sole
 delivery substrate. It introduces no new storage technology (ADR-0019); the
-process-event registry and fired-markers are files under the same store.
+process-event records are files under the same store. (Original design: fired-markers lived there too; that store was deleted, superseded by the §3 amendment, 2026-09-24.)
 
-### 3. Fire-once semantics on stable-true
+### 3. Fire-once semantics on stable-true (superseded — doc-truth amendment, 2026-09-24)
 
-A registered condition→action fires exactly once per registration, on the first
+Original design, superseded by the amendment below: a registered condition→action fires exactly once per registration, on the first
 stably-true observation, recorded by a durable fired-marker. Re-evaluation after
 firing is a no-op until the registration is cleared. This is what lets the
 watcher wait on a blocking external process across many poll cycles while
