@@ -13,6 +13,7 @@
 # t.TempDir() inherit the host's git config instead, and set core.autocrlf
 # themselves -- see initTestRepo in internal/fleet.
 #
-# Nothing tracked here is binary (`git grep -I` reaches every non-empty file),
-# so text=auto has nothing to misdetect.
+# The one tracked binary is docs/images/munsu-mascot.png (`git grep -I` reaches
+# every other non-empty file); text=auto detects it as binary and never
+# converts it.
 * text=auto eol=lf

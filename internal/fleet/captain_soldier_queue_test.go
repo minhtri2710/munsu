@@ -50,8 +50,8 @@ func setupSoldierTestHomes(t *testing.T, agentStatus string) (captainHome, soldi
 		t.Fatalf("mkdir captain: %v", err)
 	}
 	senderIdentity = "captain-main"
-	if err := home.WriteHomeIdentity(captainHome, senderIdentity, home.RankCaptain); err != nil {
-		t.Fatalf("WriteHomeIdentity captain: %v", err)
+	if err := home.SeedCaptainProvenance(captainHome, senderIdentity); err != nil {
+		t.Fatalf("SeedCaptainProvenance captain: %v", err)
 	}
 
 	soldierTaskID = "task:test-1"

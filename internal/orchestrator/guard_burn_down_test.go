@@ -102,9 +102,6 @@ func TestGuardBurnDownStopRunningWatcherRefusesUnownedPID(t *testing.T) {
 func TestGuardBurnDownRecoverRejectsNonAcceptedAck(t *testing.T) {
 	senderHome := t.TempDir()
 	receiverHome := t.TempDir()
-	if err := WriteHomeIdentity(receiverHome, "general-1", RankGeneral); err != nil {
-		t.Fatal(err)
-	}
 	result, err := Report(ReportRequest{
 		SenderHome: senderHome, ReceiverHome: receiverHome,
 		SenderRank: RankCaptain, SenderIdentity: "captain-1",
@@ -136,7 +133,7 @@ func TestGuardBurnDownRecoverRejectsNonAcceptedAck(t *testing.T) {
 func TestGuardBurnDownReportRejectsNonMaterialState(t *testing.T) {
 	senderHome := t.TempDir()
 	receiverHome := t.TempDir()
-	if err := WriteHomeIdentity(receiverHome, "captain-1", RankCaptain); err != nil {
+	if err := mhome.SeedCaptainProvenance(receiverHome, "captain-1"); err != nil {
 		t.Fatal(err)
 	}
 

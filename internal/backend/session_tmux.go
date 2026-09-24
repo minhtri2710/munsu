@@ -124,14 +124,21 @@ func normalizeTarget(windowID string) string {
 }
 
 // SendKeys sends literal text followed by Enter to the identified window/pane.
-// Uses `tmux send-keys -t <windowID> <text> Enter`.
+// It takes two calls: `tmux send-keys -t <windowID> -l -- <text>` types text
+// literally (without -l, tmux reads words like "Enter" or "C-c" as key names),
+// and because -l makes every argument after it literal, the submit is a second
+// `tmux send-keys -t <windowID> Enter`.
 func (t *TmuxBackend) SendKeys(windowID, text string) error {
 	bin, err := tmuxBin()
 	if err != nil {
 		return err
 	}
 	target := normalizeTarget(windowID)
-	out, stderr, err := runTmuxCommand(bin, "send-keys", "-t", target, text, "Enter")
+	out, stderr, err := runTmuxCommand(bin, "send-keys", "-t", target, "-l", "--", text)
+	if err != nil {
+		return wrapBackendCommandError("tmux send-keys", out, stderr, err)
+	}
+	out, stderr, err = runTmuxCommand(bin, "send-keys", "-t", target, "Enter")
 	if err != nil {
 		return wrapBackendCommandError("tmux send-keys", out, stderr, err)
 	}

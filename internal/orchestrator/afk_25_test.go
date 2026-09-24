@@ -238,8 +238,8 @@ func TestReturnReport_StringCleanUnaffected(t *testing.T) {
 
 func TestIsClean_NoDigest(t *testing.T) {
 	tmp := t.TempDir()
-	if !IsClean(tmp) {
-		t.Error("IsClean() = false without digest, want true")
+	if clean, err := IsClean(tmp); err != nil || !clean {
+		t.Errorf("IsClean() = %v, %v without digest, want true, nil", clean, err)
 	}
 }
 
@@ -257,8 +257,8 @@ func TestIsClean_CleanDigest(t *testing.T) {
 	data, _ := json.Marshal(be)
 	os.WriteFile(filepath.Join(stateDir, ".afk-digest"), data, 0644)
 
-	if !IsClean(tmp) {
-		t.Error("IsClean() = false for routine-only digest, want true")
+	if clean, err := IsClean(tmp); err != nil || !clean {
+		t.Errorf("IsClean() = %v, %v for routine-only digest, want true, nil", clean, err)
 	}
 }
 
@@ -275,8 +275,8 @@ func TestIsClean_EscalatedDigest(t *testing.T) {
 	data, _ := json.Marshal(be)
 	os.WriteFile(filepath.Join(stateDir, ".afk-digest"), data, 0644)
 
-	if IsClean(tmp) {
-		t.Error("IsClean() = true for escalation digest, want false")
+	if clean, err := IsClean(tmp); err != nil || clean {
+		t.Errorf("IsClean() = %v, %v for escalation digest, want false, nil", clean, err)
 	}
 }
 
@@ -294,8 +294,8 @@ func TestIsClean_WedgeAlarm(t *testing.T) {
 	data, _ := json.Marshal(be)
 	os.WriteFile(filepath.Join(stateDir, ".afk-digest"), data, 0644)
 
-	if IsClean(tmp) {
-		t.Error("IsClean() = true with wedge alarm, want false")
+	if clean, err := IsClean(tmp); err != nil || clean {
+		t.Errorf("IsClean() = %v, %v with wedge alarm, want false, nil", clean, err)
 	}
 }
 
@@ -312,8 +312,31 @@ func TestIsClean_BlockedItem(t *testing.T) {
 	data, _ := json.Marshal(be)
 	os.WriteFile(filepath.Join(stateDir, ".afk-digest"), data, 0644)
 
-	if IsClean(tmp) {
-		t.Error("IsClean() = true with blocked item, want false")
+	if clean, err := IsClean(tmp); err != nil || clean {
+		t.Errorf("IsClean() = %v, %v with blocked item, want false, nil", clean, err)
+	}
+}
+
+// An unparseable or unreadable digest may hold escalations, so it must fail
+// closed rather than read as clean.
+func TestIsClean_UnparseableDigestFailsClosed(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+	os.WriteFile(filepath.Join(stateDir, ".afk-digest"), []byte("{not json"), 0644)
+
+	if clean, err := IsClean(tmp); err == nil || clean {
+		t.Errorf("IsClean() = %v, %v for unparseable digest, want false and an error", clean, err)
+	}
+}
+
+func TestIsClean_UnreadableDigestFailsClosed(t *testing.T) {
+	tmp := t.TempDir()
+	// A directory where the digest file belongs makes the read fail.
+	os.MkdirAll(filepath.Join(tmp, "state", ".afk-digest"), 0755)
+
+	if clean, err := IsClean(tmp); err == nil || clean {
+		t.Errorf("IsClean() = %v, %v for unreadable digest, want false and an error", clean, err)
 	}
 }
 

@@ -236,20 +236,6 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 	return cmd
 }
 
-// newNotifyCmd creates the `munsu notify` alias for `munsu report`.
-func newNotifyCmd() *cobra.Command {
-	reportCmd := newReportCmd()
-	notifyCmd := &cobra.Command{
-		Use:   "notify <state> <msg>",
-		Short: "Alias for 'munsu report'",
-		Long:  `'munsu notify' is an alias for 'munsu report'. See 'munsu report --help'.`,
-		Args:  ExactArgs(2),
-		RunE:  reportCmd.RunE,
-	}
-	notifyCmd.Flags().AddFlagSet(reportCmd.Flags())
-	return notifyCmd
-}
-
 func isScoutTask(homeDir, taskID string) bool {
 	h, err := home.Open(homeDir)
 	if err != nil {

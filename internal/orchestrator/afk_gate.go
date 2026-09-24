@@ -1,8 +1,6 @@
 package orchestrator
 
 import (
-	"encoding/json"
-	"os"
 	"path/filepath"
 	"strings"
 )
@@ -16,34 +14,32 @@ import (
 //   - Any wedge alarm
 //   - Any blocked item
 //
-// An absent or unparseable digest is treated as clean.
-func IsClean(homeDir string) bool {
-	path := filepath.Join(homeDir, digestFile)
-	data, err := os.ReadFile(path)
+// An absent digest is clean. An unreadable or unparseable digest is an
+// error: it may hold escalations, so it never reads as clean.
+func IsClean(homeDir string) (bool, error) {
+	be, err := readDigestFile(filepath.Join(homeDir, digestFile))
 	if err != nil {
-		return true // no digest = clean
+		return false, err
 	}
-
-	var be BatchedEscalation
-	if err := json.Unmarshal(data, &be); err != nil {
-		return true // unparseable = treat as clean
+	if be == nil {
+		return true, nil
 	}
 
 	// Check for wedge alarms.
 	if be.WedgeAlarm != nil {
-		return false
+		return false, nil
 	}
 
 	// Check for non-routine entries or blocked items.
 	for _, entry := range be.Entries {
 		if entry.Type != EscalationRoutine {
-			return false
+			return false, nil
 		}
 		lower := strings.ToLower(entry.Payload)
 		if strings.HasPrefix(lower, "blocked:") || strings.Contains(lower, "\nblocked:") {
-			return false
+			return false, nil
 		}
 	}
 
-	return true
+	return true, nil
 }

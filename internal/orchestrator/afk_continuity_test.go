@@ -69,9 +69,10 @@ func TestReliablePath_ExactTaskKeyRelay(t *testing.T) {
 // TestReliablePath_EventAppendRoundTrip proves event log round-trips.
 func TestReliablePath_EventAppendRoundTrip(t *testing.T) {
 	home := t.TempDir()
-	sid := orchestrator.SyntheticEventID()
-
-	orchestrator.AppendWithID(home, sid, "task.status", "producer", "key", "done: test")
+	sid, err := orchestrator.Append(home, "task.status", "producer", "key", "done: test")
+	if err != nil {
+		t.Fatalf("Append: %v", err)
+	}
 	data, err := os.ReadFile(orchestrator.LogPath(home))
 	if err != nil {
 		t.Fatalf("reading event log: %v", err)

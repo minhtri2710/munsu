@@ -110,7 +110,7 @@ func mapCheckStatus(value string) domain.CheckStatus {
 var FetchProviderSnapshot = fetchProviderSnapshotImpl
 
 func fetchProviderSnapshotImpl(prURL string) (*ProviderSnapshot, error) {
-	provider, _, _, _, _, err := ParseProviderURL(prURL)
+	provider, _, _, _, _, err := domain.ParseProviderURL(prURL)
 	if err != nil {
 		return nil, fmt.Errorf("unrecognized PR/MR URL: %w", err)
 	}

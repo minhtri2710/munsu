@@ -48,34 +48,6 @@ func (r *glabRunnerImpl) Run(args ...string) ([]byte, error) {
 // defaultGlabRunner is the production runner; replace for testing.
 var defaultGlabRunner GlabRunner = &glabRunnerImpl{}
 
-// GlabFallbackFn is an injectable read-only fallback for when glab is
-// Absent or Unsupported. When nil, the fallback returns an unavailable error.
-type GlabFallbackFn func(ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error)
-
-// defaultGlabFallback is the production fallback (no fallback available).
-var defaultGlabFallback GlabFallbackFn = nil
-
-// ParseProviderURL detects the provider from a PR/MR URL and parses it
-// into the provider-specific components. Returns the provider name and a
-// provider-agnostic (owner, repo, number) tuple.
-// Supports GitHub and GitLab URLs. Rejects unrecognized URLs fail closed.
-func ParseProviderURL(raw string) (provider string, owner string, repo string, number int, fullURL string, err error) {
-	// Try GitHub first (must not break existing behavior)
-	gh, ghErr := domain.ParseGHURL(raw)
-	if ghErr == nil {
-		return "github", gh.Owner, gh.Repo, gh.Num, gh.FullURL(), nil
-	}
-
-	// Try GitLab
-	gl, glErr := domain.ParseMRURL(raw)
-	if glErr == nil {
-		return "gitlab", gl.Owner, gl.Project, gl.IID, gl.FullURL(), nil
-	}
-
-	// Both failed — report both errors for diagnostic clarity
-	return "", "", "", 0, "", fmt.Errorf("unrecognized PR/MR URL: %q (github: %v; gitlab: %v)", raw, ghErr, glErr)
-}
-
 // GitLabClient defines the GitLab operations used by delivery surfaces.
 // All operations go through the consolidated authority path backed by glab.
 // When the GitLab capability is Absent or Failed, callers must fail closed.

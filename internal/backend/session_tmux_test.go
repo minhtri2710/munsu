@@ -374,6 +374,36 @@ func TestTmux_Alive_ServerFailureIsNotPaneNotFound(t *testing.T) {
 	}
 }
 
+// TestTmux_SendKeys_TextIsLiteralAndEnterIsAKey pins how SendKeys drives tmux:
+// text that tmux would otherwise read as a key name or a flag must arrive as
+// typed characters, and the submit must still arrive as the Enter key.
+func TestTmux_SendKeys_TextIsLiteralAndEnterIsAKey(t *testing.T) {
+	for _, text := range []string{"Enter", "C-c", "-x", "echo hi"} {
+		t.Run(text, func(t *testing.T) {
+			logPath := filepath.Join(t.TempDir(), "argv.log")
+			testutil.FakeOnPath(t, "tmux", fmt.Sprintf(
+				"#!/bin/sh\nfor a in \"$@\"; do printf '%%s\\n' \"$a\" >> %q; done\nprintf '%%s\\n' '---' >> %q\n", logPath, logPath))
+
+			if err := (&TmuxBackend{}).SendKeys("sess:@7", text); err != nil {
+				t.Fatalf("SendKeys: %v", err)
+			}
+
+			data, err := os.ReadFile(logPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := strings.Split(strings.TrimSuffix(string(data), "---\n"), "---\n")
+			want := []string{
+				strings.Join([]string{"send-keys", "-t", "@7", "-l", "--", text}, "\n") + "\n",
+				strings.Join([]string{"send-keys", "-t", "@7", "Enter"}, "\n") + "\n",
+			}
+			if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+				t.Fatalf("tmux invocations = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
 // TestTmux_Backend_NotFound tests every method returns an error when tmux is missing.
 func TestTmux_Backend_NotFound(t *testing.T) {
 	oldPath := os.Getenv("PATH")

@@ -142,25 +142,23 @@ func DeliverWake(req DeliverRequest) (*WakeReceipt, error) {
 	// Step 3: Append to typed event log (best-effort)
 	// A consecutive identical report whose event already landed reuses that
 	// event and its ID.
-	syntheticID, found := uint64(0), false
+	eventID, found := uint64(0), false
 	if replay {
-		syntheticID, found = lastTaskStatusEvent(req.HomeDir, req.TaskID, req.Key, statusLine)
+		eventID, found = lastTaskStatusEvent(req.HomeDir, req.TaskID, req.Key, statusLine)
 	}
 	if found {
 		receipt.EventAppended = true
+	} else if id, err := Append(req.HomeDir, "task.status", req.TaskID, req.Key, statusLine); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: event append: %v\n", err)
 	} else {
-		syntheticID = SyntheticEventID()
-		if err := AppendWithID(req.HomeDir, syntheticID, "task.status", req.TaskID, req.Key, statusLine); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: event append: %v\n", err)
-		} else {
-			receipt.EventAppended = true
-		}
+		eventID = id
+		receipt.EventAppended = true
 	}
-	receipt.EventID = syntheticID
+	receipt.EventID = eventID
 
 	// Step 4: For material states, enqueue a wake
 	if isMaterial(req.State) {
-		wakePayload := fmt.Sprintf("%s: %s [event=%d]", req.TaskID, statusLine, syntheticID)
+		wakePayload := fmt.Sprintf("%s: %s [event=%d]", req.TaskID, statusLine, eventID)
 		if err := EnqueueWake(req.HomeDir, "signal", req.TaskID, wakePayload); err != nil {
 			return nil, fmt.Errorf("enqueueing wake: %w", err)
 		}

@@ -164,11 +164,12 @@ func Return(homeDir string) (*ReturnReport, error) {
 			// Known and deliberate limit of (b): this refusal reaches the
 			// human-readable ReturnReport only. IsClean (afk_gate.go), which
 			// backs the machine-readable gate in session_cmd.go, re-reads the
-			// drained digest and cannot see a loss -- it reports clean for a
-			// missing or unparseable file, which is exactly the state a lossy
-			// stop produces when the unflushed window held the only
-			// escalations. So #530's "stop claiming All clear" is closed for
-			// the report and still open for the gate. Closing it for the gate
+			// drained digest and cannot see a loss. It reports clean for a
+			// missing file, which is exactly the state a lossy stop produces
+			// when the unflushed window held the only escalations; an
+			// unparseable or unreadable file is an error, never clean. So
+			// #530's "stop claiming All clear" is closed for the report and
+			// still open for the gate. Closing it for the gate
 			// too would mean persisting a durable loss marker at Return time:
 			// new machinery on a platform that cannot currently complete a
 			// single write (#524), which is the same objection that rules out

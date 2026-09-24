@@ -27,7 +27,7 @@
       "command": "go test -tags=integration ./... -count=1"
     },
     "test-authority-race": {
-      "command": "go test -race ./internal/taskauthority ./internal/taskauthorityfs"
+      "command": "go test -race ./internal/taskauthority"
     }
   }
 }

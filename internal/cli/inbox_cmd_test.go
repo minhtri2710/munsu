@@ -147,8 +147,8 @@ func TestInboxAck_SoldierIdentifiedByItsTask(t *testing.T) {
 	if err := os.MkdirAll(sharedHome, 0755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := home.WriteHomeIdentity(sharedHome, "captain-main", home.RankCaptain); err != nil {
-		t.Fatalf("WriteHomeIdentity: %v", err)
+	if err := home.SeedCaptainProvenance(sharedHome, "captain-main"); err != nil {
+		t.Fatalf("SeedCaptainProvenance: %v", err)
 	}
 	const taskID = "task:soldier-1"
 	if err := home.WriteMeta(sharedHome, taskID, map[string]string{"window": "w"}); err != nil {

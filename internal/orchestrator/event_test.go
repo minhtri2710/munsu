@@ -2,9 +2,11 @@ package orchestrator
 
 import (
 	"os"
+	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -69,32 +71,6 @@ func TestAppendAndRead(t *testing.T) {
 	}
 }
 
-func TestAppendWithID(t *testing.T) {
-	home := t.TempDir()
-
-	if err := AppendWithID(home, 42, "legacy.event", "migration", "", "migrated"); err != nil {
-		t.Fatalf("AppendWithID() error = %v", err)
-	}
-
-	records := readEventLog(t, home)
-	if len(records) != 1 || records[0].ID != 42 {
-		t.Errorf("got ID %d, want 42", records[0].ID)
-	}
-}
-
-func TestSyntheticEventID(t *testing.T) {
-	id1 := SyntheticEventID()
-	id2 := SyntheticEventID()
-	id3 := SyntheticEventID()
-
-	if id1 >= id2 || id2 >= id3 {
-		t.Error("synthetic IDs should be monotonic")
-	}
-	if id1 < (1<<48) || id2 < (1<<48) || id3 < (1<<48) {
-		t.Error("synthetic IDs should be above 1<<48")
-	}
-}
-
 func TestAppendPersistence(t *testing.T) {
 	home := t.TempDir()
 
@@ -105,23 +81,6 @@ func TestAppendPersistence(t *testing.T) {
 	records := readEventLog(t, home)
 	if len(records) != 2 {
 		t.Fatalf("got %d records, want 2", len(records))
-	}
-}
-
-func TestAppendConcurrentSafe(t *testing.T) {
-	home := t.TempDir()
-
-	// Sequential id generation is safe; just verify no crashes
-	for i := 0; i < 10; i++ {
-		_, err := Append(home, "concurrent", "test", "", "data")
-		if err != nil {
-			t.Fatalf("Append %d: %v", i, err)
-		}
-	}
-
-	records := readEventLog(t, home)
-	if len(records) != 10 {
-		t.Errorf("got %d records, want 10", len(records))
 	}
 }
 
@@ -161,19 +120,73 @@ func TestEventLogFormat(t *testing.T) {
 	}
 }
 
-func TestAppendWithIDThenNextIsSequential(t *testing.T) {
+// TestAppendConcurrentIDsAreUnique: concurrent writers (goroutines here, and
+// separate munsu processes in production) must never share an event ID.
+func TestAppendConcurrentIDsAreUnique(t *testing.T) {
 	home := t.TempDir()
+	const writers = 20
+	var wg sync.WaitGroup
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := Append(home, "concurrent", "test", "", "data"); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
 
-	// Write two events with explicit IDs
-	AppendWithID(home, 100, "legacy", "", "", "old1")
-	AppendWithID(home, 200, "legacy", "", "", "old2")
+	records := readEventLog(t, home)
+	if len(records) != writers {
+		t.Fatalf("got %d records, want %d", len(records), writers)
+	}
+	for i, r := range records {
+		if r.ID != uint64(i+1) {
+			t.Fatalf("record IDs = %v, want 1..%d each once", recordIDs(records), writers)
+		}
+	}
+}
 
-	// Next Append should pick up from 201
-	id, err := Append(home, "normal", "p", "", "new")
-	if err != nil {
+func recordIDs(records []Record) []uint64 {
+	ids := make([]uint64, len(records))
+	for i, r := range records {
+		ids[i] = r.ID
+	}
+	return ids
+}
+
+const deliverWakeHelperEnv = "MUNSU_TEST_DELIVER_WAKE_HOME"
+
+// TestHelperDeliverWakeProcess is the child for
+// TestDeliverWakeEventIDsUniqueAcrossProcesses: one munsu report per process.
+func TestHelperDeliverWakeProcess(t *testing.T) {
+	homeDir := os.Getenv(deliverWakeHelperEnv)
+	if homeDir == "" {
+		return
+	}
+	if _, err := DeliverWake(DeliverRequest{
+		HomeDir: homeDir, TaskID: os.Getenv(deliverWakeHelperEnv + "_TASK"),
+		State: "working", Message: "progress", Role: "soldier",
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if id != 201 {
-		t.Errorf("next ID = %d, want 201", id)
+}
+
+// TestDeliverWakeEventIDsUniqueAcrossProcesses: each munsu report is its own
+// process, so an in-process counter cannot make the IDs unique.
+func TestDeliverWakeEventIDsUniqueAcrossProcesses(t *testing.T) {
+	homeDir := t.TempDir()
+	for _, task := range []string{"t1", "t2"} {
+		child := exec.Command(os.Args[0], "-test.run=^TestHelperDeliverWakeProcess$")
+		child.Env = append(os.Environ(), deliverWakeHelperEnv+"="+homeDir, deliverWakeHelperEnv+"_TASK="+task)
+		if out, err := child.CombinedOutput(); err != nil {
+			t.Fatalf("report process for %s: %v\n%s", task, err, out)
+		}
+	}
+
+	records := readEventLog(t, homeDir)
+	if len(records) != 2 || records[0].ID == records[1].ID {
+		t.Fatalf("event records = %+v, want two task.status events with distinct IDs", records)
 	}
 }

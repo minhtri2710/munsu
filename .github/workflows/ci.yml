@@ -27,7 +27,7 @@ jobs:
       # single store per block. The profiles are what let that job tell "no test
       # reaches this refusal" from "this refusal is only reached by a lane that
       # is not this one" -- see .github/scripts/uncovered-guards.sh.
-      - run: go test -coverprofile=coverage/default.out ./...
+      - run: go test -count=1 -coverprofile=coverage/default.out ./...
       # GOOS-gated files never compile on a linux runner, so no test lane can
       # reach them -- three _test.go files had never been compiled by CI at
       # all. Cross-target vet is the only cover for the darwin-gated files; the

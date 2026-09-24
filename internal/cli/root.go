@@ -10,18 +10,10 @@ import (
 
 var Version = "0.1.0-dev"
 
-// CommitSHA holds the verified commit SHA, set via ldflags at build time.
-// It is propagated to orchestrator.CommitSHA for watcher identity comparison.
-var CommitSHA = ""
-
 func init() {
-	// Propagate version and commit SHA to supervision for watcher identity.
-	// Only propagate CommitSHA if the CLI explicitly provides one, to avoid
-	// clobbering the linker-injected orchestrator.CommitSHA with an empty value.
+	// Propagate the version to supervision for watcher identity. The commit
+	// SHA needs no propagation: ldflags set orchestrator.CommitSHA directly.
 	orchestrator.BuildVersion = Version
-	if CommitSHA != "" {
-		orchestrator.CommitSHA = CommitSHA
-	}
 }
 
 var (
@@ -129,7 +121,6 @@ with no requirement to live inside a specific project checkout.`,
 	root.AddCommand(newReportCmd())
 	root.AddCommand(newReadyCmd())
 	root.AddCommand(newConsumeReadyCmd())
-	root.AddCommand(newNotifyCmd())
 	root.AddCommand(newPeekCmd())
 	root.AddCommand(newSoldierStateCmd())
 	root.AddCommand(newPromoteCmd())

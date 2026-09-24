@@ -83,10 +83,6 @@ func queryGLMergeStatusForState(state backend.State, ident *domain.DeliveryIdent
 	case backend.Failed:
 		return nil, fmt.Errorf("GitLab capability failed: cannot query MR status (use --force to override)")
 	case backend.Absent, backend.Unsupported:
-		// Read-only status; permitted fallback if one is configured.
-		if defaultGlabFallback != nil {
-			return defaultGlabFallback(ident)
-		}
 		return nil, fmt.Errorf("GitLab provider not available for MR status query (use --force to override)")
 	default:
 		return nil, fmt.Errorf("GitLab capability in unknown state: %v", state)

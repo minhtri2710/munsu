@@ -335,10 +335,3 @@ func PropagateConfigCLI(req PropagateConfigRequest) (string, error) {
 
 // Ensure PropagateConfigCLI is usable from the CLI layer.
 var _ = PropagateConfigCLI
-
-// ConfigNotificationAdapter wraps a home.BoundSender into a notification
-// adapter suitable for use where the generic BoundSender is not directly
-// available but a simpler send interface is needed.
-type ConfigNotificationAdapter struct {
-	Sender func(parentHome, captainHome string, gen int, digest string) (bool, string)
-}

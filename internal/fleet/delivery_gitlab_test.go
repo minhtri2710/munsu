@@ -448,19 +448,25 @@ func TestQueryDeliveryMergeStatus_GitLab_Ready_Closed(t *testing.T) {
 
 // --- Fallback policy tests ---
 
-func TestQueryDeliveryMergeStatus_GitLab_Failed_FallackSpyUncalled(t *testing.T) {
+func TestQueryDeliveryMergeStatus_GitLab_FailedFailsClosed(t *testing.T) {
 	oldRunner := defaultGlabRunner
-	oldFallback := defaultGlabFallback
 	defaultGlabRunner = failedVersionRunner()
-	fallbackCalled := false
-	defaultGlabFallback = func(ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
-		fallbackCalled = true
-		return nil, fmt.Errorf("fallback should not be called when Failed")
+	defer func() { defaultGlabRunner = oldRunner }()
+
+	ident := &domain.DeliveryIdentity{
+		Provider: "gitlab",
+		URL:      "https://gitlab.com/owner/project/-/merge_requests/42",
 	}
-	defer func() {
-		defaultGlabRunner = oldRunner
-		defaultGlabFallback = oldFallback
-	}()
+	_, err := QueryDeliveryMergeStatus(ident)
+	if err == nil || !strings.Contains(err.Error(), "GitLab capability failed") {
+		t.Fatalf("err = %v, want the GitLab capability failed refusal", err)
+	}
+}
+
+func TestQueryDeliveryMergeStatus_GitLab_AbsentFailsClosed(t *testing.T) {
+	oldRunner := defaultGlabRunner
+	defaultGlabRunner = &fakeGlabRunner{lookPathErr: errors.New("not found")}
+	defer func() { defaultGlabRunner = oldRunner }()
 
 	ident := &domain.DeliveryIdentity{
 		Provider: "gitlab",
@@ -468,60 +474,7 @@ func TestQueryDeliveryMergeStatus_GitLab_Failed_FallackSpyUncalled(t *testing.T)
 	}
 	_, err := QueryDeliveryMergeStatus(ident)
 	if err == nil {
-		t.Fatal("expected error for Failed state")
-	}
-	if fallbackCalled {
-		t.Error("fallback should not be called for Failed state")
-	}
-}
-
-func TestQueryDeliveryMergeStatus_GitLab_Absent_FallackCalled(t *testing.T) {
-	oldRunner := defaultGlabRunner
-	oldFallback := defaultGlabFallback
-	defaultGlabRunner = &fakeGlabRunner{lookPathErr: errors.New("not found")}
-	fallbackCalled := false
-	defaultGlabFallback = func(ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
-		fallbackCalled = true
-		return &domain.PRMergeStatus{State: "OPEN", Merged: false, Closed: false, HeadSHA: "abc123"}, nil
-	}
-	defer func() {
-		defaultGlabRunner = oldRunner
-		defaultGlabFallback = oldFallback
-	}()
-
-	ident := &domain.DeliveryIdentity{
-		Provider: "gitlab",
-		URL:      "https://gitlab.com/owner/project/-/merge_requests/42",
-	}
-	status, err := QueryDeliveryMergeStatus(ident)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !fallbackCalled {
-		t.Error("fallback should be called for Absent state")
-	}
-	if status.State != "OPEN" {
-		t.Errorf("State: got %q, want OPEN", status.State)
-	}
-}
-
-func TestQueryDeliveryMergeStatus_GitLab_Absent_NoFallackError(t *testing.T) {
-	oldRunner := defaultGlabRunner
-	oldFallback := defaultGlabFallback
-	defaultGlabRunner = &fakeGlabRunner{lookPathErr: errors.New("not found")}
-	defaultGlabFallback = nil // no fallback configured
-	defer func() {
-		defaultGlabRunner = oldRunner
-		defaultGlabFallback = oldFallback
-	}()
-
-	ident := &domain.DeliveryIdentity{
-		Provider: "gitlab",
-		URL:      "https://gitlab.com/owner/project/-/merge_requests/42",
-	}
-	_, err := QueryDeliveryMergeStatus(ident)
-	if err == nil {
-		t.Fatal("expected error when no fallback configured")
+		t.Fatal("expected error when glab is absent")
 	}
 }
 
@@ -555,10 +508,10 @@ func TestQueryDeliveryMergeStatus_GitHub_Delegates(t *testing.T) {
 	}
 }
 
-// --- ParseProviderURL tests ---
+// --- domain.ParseProviderURL tests ---
 
 func TestParseProviderURL_GitHubURL(t *testing.T) {
-	provider, owner, repo, num, fullURL, err := ParseProviderURL("https://github.com/minhtri2710/munsu/pull/42")
+	provider, owner, repo, num, host, err := domain.ParseProviderURL("https://github.com/minhtri2710/munsu/pull/42")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -574,13 +527,13 @@ func TestParseProviderURL_GitHubURL(t *testing.T) {
 	if num != 42 {
 		t.Errorf("num: got %d, want 42", num)
 	}
-	if fullURL != "https://github.com/minhtri2710/munsu/pull/42" {
-		t.Errorf("fullURL: got %q", fullURL)
+	if host != "github.com" {
+		t.Errorf("host: got %q, want github.com", host)
 	}
 }
 
 func TestParseProviderURL_GitLabURL(t *testing.T) {
-	provider, owner, repo, num, fullURL, err := ParseProviderURL("https://gitlab.com/owner/project/-/merge_requests/42")
+	provider, owner, repo, num, host, err := domain.ParseProviderURL("https://gitlab.com/owner/project/-/merge_requests/42")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -596,13 +549,13 @@ func TestParseProviderURL_GitLabURL(t *testing.T) {
 	if num != 42 {
 		t.Errorf("num: got %d, want 42", num)
 	}
-	if fullURL != "https://gitlab.com/owner/project/-/merge_requests/42" {
-		t.Errorf("fullURL: got %q", fullURL)
+	if host != "gitlab.com" {
+		t.Errorf("host: got %q, want gitlab.com", host)
 	}
 }
 
 func TestParseProviderURL_NestedGitLabURL(t *testing.T) {
-	provider, owner, repo, num, _, err := ParseProviderURL("https://gitlab.com/group/subgroup/project/-/merge_requests/7")
+	provider, owner, repo, num, _, err := domain.ParseProviderURL("https://gitlab.com/group/subgroup/project/-/merge_requests/7")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -621,14 +574,14 @@ func TestParseProviderURL_NestedGitLabURL(t *testing.T) {
 }
 
 func TestParseProviderURL_UnrecognizedURL(t *testing.T) {
-	_, _, _, _, _, err := ParseProviderURL("https://example.com/foo/bar/42")
+	_, _, _, _, _, err := domain.ParseProviderURL("https://example.com/foo/bar/42")
 	if err == nil {
 		t.Fatal("expected error for unrecognized URL")
 	}
 }
 
 func TestParseProviderURL_SelfHostedGitLab(t *testing.T) {
-	provider, owner, repo, num, _, err := ParseProviderURL("https://gitlab.example.com/team/project/-/merge_requests/7")
+	provider, owner, repo, num, _, err := domain.ParseProviderURL("https://gitlab.example.com/team/project/-/merge_requests/7")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

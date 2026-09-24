@@ -928,7 +928,11 @@ no actionable AFK state remains.`,
 non-zero if actionable items remain.`,
 		Args: cobra.NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			if !orchestrator.IsClean(ctx.Home) {
+			clean, err := orchestrator.IsClean(ctx.Home)
+			if err != nil {
+				return fmt.Errorf("cannot read the AFK digest, so it may hold actionable state — inspect or remove state/.afk-digest, then run 'munsu afk return check' again: %w", err)
+			}
+			if !clean {
 				return fmt.Errorf("actionable AFK state remains — run 'munsu afk return' to reconcile")
 			}
 			return nil

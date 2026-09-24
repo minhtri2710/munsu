@@ -183,24 +183,22 @@ func TestGuardReportRefusesAnInvalidStatusState(t *testing.T) {
 	wantErrContains(t, err, `Invalid status state "not-a-state"`, "report with an unknown state")
 }
 
-func TestReportAndNotifyHonorHomeOverride(t *testing.T) {
+func TestReportHonorsHomeOverride(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
 
 	t.Setenv("MUNSU_HOME", t.TempDir())
 	t.Setenv("MUNSU_TASK_ID", "t1")
 	t.Setenv("MUNSU_ROLE", "general")
-	for _, command := range []string{"report", "notify"} {
-		if _, err := runRoot(t, command, "working", "hello from "+command, "--home", homeDir); err != nil {
-			t.Fatalf("%s with --home override = %v, want success", command, err)
-		}
+	if _, err := runRoot(t, "report", "working", "hello from report", "--home", homeDir); err != nil {
+		t.Fatalf("report with --home override = %v, want success", err)
 	}
 	status, err := mhome.ReadStatus(homeDir, "t1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(status) != 2 {
-		t.Fatalf("status lines under --home override = %d, want 2", len(status))
+	if len(status) != 1 {
+		t.Fatalf("status lines under --home override = %d, want 1", len(status))
 	}
 }
 
@@ -1079,6 +1077,21 @@ func TestGuardAfkCheckRefusesWhileActionableStateRemains(t *testing.T) {
 	wantErrContains(t, err, "actionable AFK state remains", "afk return check with an unresolved actionable wake")
 }
 
+func TestGuardAfkCheckRefusesUnparseableDigest(t *testing.T) {
+	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
+	path := filepath.Join(homeDir, "state", ".afk-digest")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := runRoot(t, "afk", "return", "check", "--home", homeDir)
+	wantErrContains(t, err, "cannot read the AFK digest", "afk return check with an unparseable digest")
+}
+
 func TestGuardAfkDrainRequiresAConsumer(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
@@ -1389,7 +1402,7 @@ func seedGuardActionableWake(t *testing.T, homeDir string) {
 	if err := os.WriteFile(path, encoded, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if orchestrator.IsClean(homeDir) {
-		t.Fatal("the digest fixture reads as clean, so the refusal under test would never be reached")
+	if clean, err := orchestrator.IsClean(homeDir); err != nil || clean {
+		t.Fatalf("IsClean = %v, %v; the digest fixture must read as not clean or the refusal under test is never reached", clean, err)
 	}
 }

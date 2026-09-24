@@ -28,8 +28,8 @@ const (
 func newGuardReceiver(t *testing.T) (*Receiver, *Store, string) {
 	t.Helper()
 	dir := t.TempDir()
-	if err := WriteHomeIdentity(dir, guardReceiverID, RankCaptain); err != nil {
-		t.Fatalf("WriteHomeIdentity: %v", err)
+	if err := SeedCaptainProvenance(dir, guardReceiverID); err != nil {
+		t.Fatalf("SeedCaptainProvenance: %v", err)
 	}
 	parent := filepath.Join(t.TempDir(), guardSenderID)
 	if err := os.MkdirAll(parent, 0755); err != nil {
@@ -322,8 +322,8 @@ func removeEnvelopePayload(t *testing.T, store *Store, env Envelope) error {
 func TestAckRemainsIdempotentAfterSenderProvenanceTeardown(t *testing.T) {
 	generalHome := namedHome(t, senderRankGeneralID)
 	captainHome := namedHome(t, senderRankCaptainID)
-	if err := WriteHomeIdentity(captainHome, senderRankCaptainID, RankCaptain); err != nil {
-		t.Fatalf("WriteHomeIdentity: %v", err)
+	if err := SeedCaptainProvenance(captainHome, senderRankCaptainID); err != nil {
+		t.Fatalf("SeedCaptainProvenance: %v", err)
 	}
 	hostCaptain(t, generalHome, senderRankCaptainID, captainHome)
 	r, err := NewReceiver(generalHome)
@@ -507,30 +507,6 @@ func TestReadHomeIdentityRefusesUnusableMarkers(t *testing.T) {
 			t.Fatalf("error = %v, want the underivable-identity refusal", err)
 		}
 	})
-}
-
-// WriteHomeIdentity is what provisioning uses to make a home addressable. A
-// marker with no identity or an unknown rank would make every later receive
-// unattributable, so it is refused at write time.
-func TestWriteHomeIdentityRefusesUnusableIdentities(t *testing.T) {
-	dir := t.TempDir()
-
-	// Control: the same call with a valid identity and rank writes the marker.
-	if err := WriteHomeIdentity(dir, guardReceiverID, RankCaptain); err != nil {
-		t.Fatalf("WriteHomeIdentity: %v", err)
-	}
-
-	if err := WriteHomeIdentity(dir, "", RankCaptain); err == nil {
-		t.Fatal("WriteHomeIdentity accepted an empty identity")
-	} else if !strings.Contains(err.Error(), "empty identity") {
-		t.Fatalf("error = %v, want the empty-identity refusal", err)
-	}
-
-	if err := WriteHomeIdentity(dir, guardReceiverID, Rank("admiral")); err == nil {
-		t.Fatal("WriteHomeIdentity accepted an unknown rank")
-	} else if !strings.Contains(err.Error(), "invalid rank") {
-		t.Fatalf("error = %v, want the invalid-rank refusal", err)
-	}
 }
 
 // A soldier's receiver identity is the task its hosting home holds a durable

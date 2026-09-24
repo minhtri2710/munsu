@@ -189,8 +189,7 @@ func collectWatcherDiagnostic(home, version string) *WatcherDiagnostic {
 	// Compare via CommitSHA first; fall back to display-version comparison
 	// for backward compatibility with watcher identity files that predate
 	// the CommitSHA field.
-	// Use orchestrator.CommitSHA (the linker-injected value) rather than the
-	// CLI-local CommitSHA, because ldflags set orchestrator.CommitSHA directly.
+	// orchestrator.CommitSHA is the linker-injected value.
 	if id.CommitSHA != "" && orchestrator.CommitSHA != "" {
 		d.VersionMatched = orchestrator.NewBuildIdentity(id.CommitSHA).Matches(orchestrator.NewBuildIdentity(orchestrator.CommitSHA))
 	} else if version != "" && id.BuildVersion != "" {

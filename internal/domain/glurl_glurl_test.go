@@ -225,45 +225,23 @@ func TestParseMRURL_PercentEncoded(t *testing.T) {
 	}
 }
 
-func TestFullURL(t *testing.T) {
-	gl := GLURL{Host: "gitlab.com", Owner: "owner", Project: "project", IID: 42}
-	url := gl.FullURL()
-	if url != "https://gitlab.com/owner/project/-/merge_requests/42" {
-		t.Errorf("FullURL: got %q, want %q", url, "https://gitlab.com/owner/project/-/merge_requests/42")
+func TestParseMRURL_AllFormatsSplitIntoFields(t *testing.T) {
+	cases := []struct {
+		url  string
+		want GLURL
+	}{
+		{"https://gitlab.com/owner/project/-/merge_requests/1", GLURL{Host: "gitlab.com", Owner: "owner", Project: "project", IID: 1}},
+		{"https://gitlab.example.com/team/project/-/merge_requests/42", GLURL{Host: "gitlab.example.com", Owner: "team", Project: "project", IID: 42}},
+		{"https://gitlab.com/group/subgroup/my-project/-/merge_requests/7", GLURL{Host: "gitlab.com", Owner: "group/subgroup", Project: "my-project", IID: 7}},
+		{"https://gitlab.com/a/b/c/d/e/proj/-/merge_requests/99", GLURL{Host: "gitlab.com", Owner: "a/b/c/d/e", Project: "proj", IID: 99}},
 	}
-}
-
-func TestFullURL_SelfHosted(t *testing.T) {
-	gl := GLURL{Host: "gitlab.example.com", Owner: "team", Project: "proj", IID: 7}
-	url := gl.FullURL()
-	if url != "https://gitlab.example.com/team/proj/-/merge_requests/7" {
-		t.Errorf("FullURL: got %q, want %q", url, "https://gitlab.example.com/team/proj/-/merge_requests/7")
-	}
-}
-
-func TestFullURL_NestedGroup(t *testing.T) {
-	gl := GLURL{Host: "gitlab.com", Owner: "group/subgroup", Project: "my-project", IID: 123}
-	url := gl.FullURL()
-	if url != "https://gitlab.com/group/subgroup/my-project/-/merge_requests/123" {
-		t.Errorf("FullURL: got %q, want %q", url, "https://gitlab.com/group/subgroup/my-project/-/merge_requests/123")
-	}
-}
-
-func TestParseMRURL_AllFormatsRoundTrip(t *testing.T) {
-	urls := []string{
-		"https://gitlab.com/owner/project/-/merge_requests/1",
-		"https://gitlab.example.com/team/project/-/merge_requests/42",
-		"https://gitlab.com/group/subgroup/my-project/-/merge_requests/7",
-		"https://gitlab.com/a/b/c/d/e/proj/-/merge_requests/99",
-	}
-	for _, url := range urls {
-		gl, err := ParseMRURL(url)
+	for _, tc := range cases {
+		gl, err := ParseMRURL(tc.url)
 		if err != nil {
-			t.Fatalf("ParseMRURL(%q): %v", url, err)
+			t.Fatalf("ParseMRURL(%q): %v", tc.url, err)
 		}
-		reconstructed := gl.FullURL()
-		if reconstructed != url {
-			t.Errorf("round-trip %q -> %q", url, reconstructed)
+		if gl.Host != tc.want.Host || gl.Owner != tc.want.Owner || gl.Project != tc.want.Project || gl.IID != tc.want.IID {
+			t.Errorf("ParseMRURL(%q) = %+v, want %+v", tc.url, gl, tc.want)
 		}
 	}
 }
