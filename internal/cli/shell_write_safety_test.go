@@ -724,7 +724,7 @@ func TestShellWriteTargetExtraction(t *testing.T) {
 		{"echo x | tee " + abs, absTargets()},
 		{"rm -rf " + abs, absTargets()},
 		{"cp a.txt " + abs, absTargets()},
-		{"sed -i '' s/a/b/ " + abs, absWithPrefix(filepath.Join(base, "s/a/b/"))},
+		{"sed -i '' s/a/b/ " + abs, absWithPrefix(base, filepath.Join(base, "s/a/b/"))},
 		{"perl -pi -e s/a/b/ " + abs, absWithPrefix(filepath.Join(base, "s/a/b/"))},
 		{"dd if=/dev/zero of=" + abs, absTargets()},
 		{"echo x > out.txt", []string{filepath.Join(base, "out.txt")}},
@@ -1198,6 +1198,8 @@ func TestTokenizeSegmentsLineContinuationAndANSICQuoting(t *testing.T) {
 		{backslashEscapes, `$'\x'`, [][]string{{`'\x'`}}, true},
 		{backslashEscapes, `$'\0'`, [][]string{{`'\0'`}}, true},
 		{backslashEscapes, `$'\400'`, [][]string{{`'\400'`}}, true},
+		{backslashEscapes, `$'\1014'`, [][]string{{"A4"}}, false},
+		{backslashEscapes, `$'\x414'`, [][]string{{"A4"}}, false},
 		{backslashEscapes, `$'git`, [][]string{{`'git`}}, true},
 		{backslashEscapes, `$$'x'`, [][]string{{"$$x"}}, false},
 		{backslashEscapes, `a$$'b'`, [][]string{{"a$$b"}}, false},
@@ -1263,24 +1265,48 @@ func TestTokenizeSegmentsLineContinuationAndANSICQuoting(t *testing.T) {
 
 // TestShellWriteTargetsReadEmptyQuotedWords pins the write-guard verdicts an
 // empty quoted word moved: it is a word, so it takes its operand position, and
-// it names no target because the shell's write to it fails.
+// as a target it names the directory the command runs in (darwin cp writes
+// there). Redirects and in-place sed with an empty suffix follow the same rule
+// and over-refuse.
 func TestShellWriteTargetsReadEmptyQuotedWords(t *testing.T) {
 	base := mustAbsTestPath(t, "base")
 	for _, tc := range []struct {
 		command string
 		want    []string
 	}{
-		{`echo x > ''`, nil},
-		{`echo x > ""`, nil},
-		{`echo x > $''`, nil},
-		{`cp a ''`, nil},
+		{`echo x > ''`, []string{base}},
+		{`echo x > ""`, []string{base}},
+		{`echo x > $''`, []string{base}},
+		{`cp a ''`, []string{base}},
+		{`cp a ""`, []string{base}},
+		{`cp -R a ''`, []string{base}},
 		{`cp a $'' b`, []string{filepath.Join(base, "b")}},
 		// `>''|` is a redirection and a pipe, not the `>|` clobber operator.
-		{`echo x >''| tee f`, []string{filepath.Join(base, "f")}},
+		{`echo x >''| tee f`, []string{base, filepath.Join(base, "f")}},
 	} {
 		got, ambiguous := shellWriteTargetsUnderForTest(backslashEscapes, base, tc.command)
 		if ambiguous || !slices.Equal(got, tc.want) {
 			t.Errorf("%q → %v ambiguous=%v, want %v", tc.command, got, ambiguous, tc.want)
+		}
+	}
+}
+
+// TestShellWriteEmptyCopyDestinationIntoBoundPrimaryRefused runs through the
+// real hook: darwin cp writes an empty destination into the cwd, so a copy to an
+// empty word from inside the shared primary checkout is a write into it.
+func TestShellWriteEmptyCopyDestinationIntoBoundPrimaryRefused(t *testing.T) {
+	primary, worktree := boundTaskFixture(t, "ship-shell-empty-dest")
+	docs := filepath.Join(primary, "docs")
+	if err := os.MkdirAll(docs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range []string{
+		"cd " + docs + " && cp ../README.md ''",
+		"cd " + docs + ` && cp ../README.md ""`,
+		"cd " + docs + " && cp -R ../README.md ''",
+	} {
+		if block, reason := runPiSafetyForGit(t, worktree, command); !block {
+			t.Errorf("%q: block=false (%s), want refused", command, reason)
 		}
 	}
 }

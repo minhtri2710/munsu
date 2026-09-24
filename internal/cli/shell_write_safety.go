@@ -867,10 +867,10 @@ func segmentWriteTargets(segment []shellToken) []shellToken {
 
 // appendTarget drops a target whose value the shell computes: an unexpanded
 // word is not a path this guard can classify, and guessing would refuse a call
-// on evidence it does not have. An empty word names no file: the shell's
-// write to it fails.
+// on evidence it does not have. An empty word stays a target: it resolves to
+// the directory the command runs in, where darwin cp writes it.
 func appendTarget(targets []shellToken, token shellToken) []shellToken {
-	if token.expandable || token.text == "" {
+	if token.expandable {
 		return targets
 	}
 	return append(targets, token)
