@@ -1199,6 +1199,16 @@ func TestTokenizeSegmentsLineContinuationAndANSICQuoting(t *testing.T) {
 		{backslashEscapes, `$'\0'`, [][]string{{`'\0'`}}, true},
 		{backslashEscapes, `$'\400'`, [][]string{{`'\400'`}}, true},
 		{backslashEscapes, `$'git`, [][]string{{`'git`}}, true},
+		{backslashEscapes, `$$'x'`, [][]string{{"$$x"}}, false},
+		{backslashEscapes, `a$$'b'`, [][]string{{"a$$b"}}, false},
+		{backslashEscapes, `$$'\' ; gi\t push`, [][]string{{`$$\`}, {"git", "push"}}, false},
+		{backslashEscapes, `$$$'\x41'`, [][]string{{"$$A"}}, false},
+		{backslashEscapes, `$''`, [][]string{{""}}, false},
+		{backslashEscapes, `''`, [][]string{{""}}, false},
+		{backslashEscapes, `""`, [][]string{{""}}, false},
+		{backslashEscapes, `''"" x`, [][]string{{"", "x"}}, false},
+		{backslashLiteral, `a '' b`, [][]string{{"a", "", "b"}}, false},
+		{backslashEscapes, `x''`, [][]string{{"x"}}, false},
 	} {
 		segments := tokenizeSegments(tc.mode, tc.command)
 		var got [][]string
@@ -1218,6 +1228,38 @@ func TestTokenizeSegmentsLineContinuationAndANSICQuoting(t *testing.T) {
 	// ends.
 	if got := munsuInvocations("bash -c $'munsu watch \\q'"); len(got) != 1 || len(got[0]) == 0 || got[0][0] != "watch" {
 		t.Errorf("munsuInvocations of an undecodable word = %q, want the watch invocation", got)
+	}
+	// An empty quoted word is the --home value, so the bare watch after it
+	// is the invocation, and it is not a guard or doctor call.
+	if got := munsuInvocations("munsu --home '' watch"); len(got) != 1 || !slices.Equal(got[0], []string{"watch"}) {
+		t.Errorf("munsuInvocations(munsu --home '' watch) = %q, want [[watch]]", got)
+	}
+	if onlyGuardOrDoctor("munsu '' guard .no-mistakes") {
+		t.Errorf("onlyGuardOrDoctor(munsu '' guard) = true, want false")
+	}
+}
+
+// TestShellWriteTargetsReadEmptyQuotedWords pins the write-guard verdicts an
+// empty quoted word moved: it is a word, so it takes its operand position, and
+// it names no target because the shell's write to it fails.
+func TestShellWriteTargetsReadEmptyQuotedWords(t *testing.T) {
+	base := mustAbsTestPath(t, "base")
+	for _, tc := range []struct {
+		command string
+		want    []string
+	}{
+		{`echo x > ''`, nil},
+		{`echo x > ""`, nil},
+		{`echo x > $''`, nil},
+		{`cp a ''`, nil},
+		{`cp a $'' b`, []string{filepath.Join(base, "b")}},
+		// `>''|` is a redirection and a pipe, not the `>|` clobber operator.
+		{`echo x >''| tee f`, []string{filepath.Join(base, "f")}},
+	} {
+		got, ambiguous := shellWriteTargetsUnderForTest(backslashEscapes, base, tc.command)
+		if ambiguous || !slices.Equal(got, tc.want) {
+			t.Errorf("%q → %v ambiguous=%v, want %v", tc.command, got, ambiguous, tc.want)
+		}
 	}
 }
 

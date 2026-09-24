@@ -313,14 +313,17 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 	rawStart, rawEnd := -1, -1
 	expandable := false
 	undecodable := false
+	// quoted records that the word held quoting, so an empty quoted word
+	// (`''`, `""`, `$''`) is still a word, as it is to the shell.
+	quoted := false
 	quote := rune(0)
 	escaped := false
 	flushWord := func() {
-		if word.Len() > 0 {
+		if word.Len() > 0 || quoted {
 			segment = append(segment, shellToken{text: word.String(), expandable: expandable, undecodable: undecodable, start: rawStart, end: rawEnd})
 			word.Reset()
 		}
-		wordStart, rawStart, rawEnd, expandable, undecodable = -1, -1, -1, false, false
+		wordStart, rawStart, rawEnd, expandable, undecodable, quoted = -1, -1, -1, false, false, false
 	}
 	flushSegment := func() {
 		flushWord()
@@ -404,7 +407,18 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 			}
 			continue
 		}
+		// `$` and a special-parameter character are one expansion (`$$` is
+		// the PID), so the `$` after them never starts ANSI-C quoting.
+		if r == '$' && i+1 < len(runes) && strings.ContainsRune("$?!#-@*0123456789", runes[i+1]) {
+			touch(i)
+			add(r, i, false)
+			i++
+			touch(i)
+			add(runes[i], i, false)
+			continue
+		}
 		if r == '$' && i+1 < len(runes) && runes[i+1] == '\'' {
+			quoted = true
 			text, end, ok := readANSICQuote(runes, i+2)
 			touch(i)
 			touch(end - 1)
@@ -423,8 +437,9 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 		switch r {
 		case '\'', '"':
 			quote = r
+			quoted = true
 		case '|':
-			if word.Len() == 0 && len(segment) > 0 && segment[len(segment)-1].redirects {
+			if word.Len() == 0 && !quoted && len(segment) > 0 && segment[len(segment)-1].redirects {
 				continue
 			}
 			flushSegment()
@@ -842,9 +857,10 @@ func segmentWriteTargets(segment []shellToken) []shellToken {
 
 // appendTarget drops a target whose value the shell computes: an unexpanded
 // word is not a path this guard can classify, and guessing would refuse a call
-// on evidence it does not have.
+// on evidence it does not have. An empty word names no file: the shell's
+// write to it fails.
 func appendTarget(targets []shellToken, token shellToken) []shellToken {
-	if token.expandable {
+	if token.expandable || token.text == "" {
 		return targets
 	}
 	return append(targets, token)

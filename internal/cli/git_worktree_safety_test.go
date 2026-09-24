@@ -795,6 +795,14 @@ func TestSafetyCheckGitVerdictsOnSharedTokenizer(t *testing.T) {
 		{`echo $'a\tb\n'`, allow, allow},
 		// Quoted text is itself read as shell, so ANSI-C text inside it is too.
 		{`echo "$'git push --force'"`, allow, refuse},
+		// An empty quoted word is still a word, so it is the -C operand and
+		// git runs the verb after it in the current directory.
+		{`git -C $'' push --force`, refuse, refuse},
+		{`git -C '' push --force`, allow, refuse},
+		{`git -C "" push --force`, allow, refuse},
+		{`git -C ''"" push --force`, allow, refuse},
+		// An empty word in the verb position is the verb, which git rejects.
+		{`git '' push --force`, refuse, allow},
 	}
 	if runtime.GOOS != "windows" {
 		// A POSIX backslash-newline is a line continuation that joins the
@@ -813,6 +821,10 @@ func TestSafetyCheckGitVerdictsOnSharedTokenizer(t *testing.T) {
 			// A single-quoted continuation is literal in the word, but the
 			// word is read as shell again, where it joins.
 			{"echo 'git \\\npush --force'", allow, refuse},
+			// `$$` is the PID, so the `'` after it opens an ordinary single
+			// quote that the first `\'` closes; bash then runs git.
+			{`$$'\' ; gi\t push --force #\''`, refuse, refuse},
+			{`echo $$'\' ; gi\t push --force #\''`, refuse, refuse},
 		}...)
 	}
 	for _, tc := range rows {
