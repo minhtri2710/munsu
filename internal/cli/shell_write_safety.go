@@ -20,7 +20,9 @@ type shellToken struct {
 	expandable bool // contains `$` or a backtick: the shell decides the value
 	// undecodable is a `$'...'` word holding an escape the tokenizer does not
 	// decode, or one left unterminated, whose text is the raw word without
-	// `$`; or a word holding an unterminated `${`.
+	// `$`; or a word holding an unterminated `${`, or, in a command that
+	// names `IFS`, an unquoted `${...}` whose word bash splits at an IFS it
+	// cannot know.
 	undecodable bool
 	// alternates are the word's other literal readings, each distinct from
 	// text and each a run of words spanning this token. The first ones are
@@ -201,8 +203,15 @@ func shellWriteTargetsUnderDetailed(mode backslashMode, checkPath, command strin
 			}
 			continue
 		}
-		// Every reading of the segment names targets: a parameter expansion's
-		// substituted words take its place, and their targets share its span.
+		// Every reading of a segment that can write names targets: a
+		// parameter expansion's substituted words take its place, and their
+		// targets share its span. A segment where no candidate is a write
+		// verb or a redirect names none.
+		if !slices.ContainsFunc(candidateTokens(segment), func(token shellToken) bool {
+			return token.redirects || slices.Contains(writeVerbs, filepath.Base(token.text))
+		}) {
+			continue
+		}
 		readings, ok := writeReadings(segment)
 		if !ok {
 			targets = append(targets, shellTargetResult{
@@ -253,6 +262,12 @@ func writeReadings(segment []shellToken) ([][]shellToken, bool) {
 		}
 		if len(readings)*len(options) > maxWriteReadings {
 			return nil, false
+		}
+		if len(options) == 1 {
+			for r := range readings {
+				readings[r] = append(readings[r], token)
+			}
+			continue
 		}
 		var next [][]shellToken
 		for _, reading := range readings {
@@ -366,6 +381,7 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 	var segments [][]shellToken
 	var segment []shellToken
 	runes := []rune(command)
+	ifs := strings.Contains(command, "IFS")
 	var word, raw strings.Builder
 	// sub and subRaw read the word with each parameter expansion that
 	// substitutes its word replaced by that word, split where bash splits
@@ -407,9 +423,9 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 				}
 				token.alternates = append(token.alternates, reading)
 			}
-			// An unquoted word made only of expansions can expand to nothing,
-			// and the shell then removes it: its absent reading is empty.
-			if !quoted && rawStart >= 0 && mayVanish(mode, runes[rawStart:rawEnd]) && !slices.ContainsFunc(token.alternates, func(seen []shellToken) bool { return len(seen) == 0 }) {
+			// A word made only of expansions can expand to nothing, and the
+			// shell then removes it: its absent reading is empty.
+			if rawStart >= 0 && mayVanish(mode, runes[rawStart:rawEnd]) && !slices.ContainsFunc(token.alternates, func(seen []shellToken) bool { return len(seen) == 0 }) {
 				token.alternates = append(token.alternates, []shellToken{})
 			}
 			segment = append(segment, token)
@@ -465,7 +481,7 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 			return i
 		}
 		body, substitutes, parsed := parameterExpansion(runes, i+2, end)
-		if !parsed {
+		if !parsed || (ifs && substitutes && quote != '"') {
 			undecodable = true
 		}
 		if !substitutes {
@@ -649,15 +665,36 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 	return segments
 }
 
-// mayVanish reports whether the unquoted word written as raw holds nothing
-// but expansions, any of which may expand to nothing. A command
-// substitution is not: the tokenizer does not find its end, so the words it
-// is split into are not the shell's.
+// mayVanish reports whether the word written as raw holds nothing but
+// expansions, any of which may expand to nothing: unquoted ones, and quoted
+// `@` forms (quotedAtForm), beside which an empty quoted part may stand. Any
+// other quoted part leaves an empty word. A command substitution is not: the
+// tokenizer does not find its end, so the words it is split into are not
+// the shell's.
 func mayVanish(mode backslashMode, raw []rune) bool {
+	quotedPart, atForm := false, false
 	for i := 0; i < len(raw); i++ {
 		switch {
 		case mode == backslashEscapes && raw[i] == '\\' && i+1 < len(raw) && raw[i+1] == '\n':
 			i++
+		case raw[i] == '"':
+			quotedPart = true
+			for i++; i < len(raw) && raw[i] != '"'; atForm = true {
+				end, ok := quotedAtForm(raw, i)
+				if !ok {
+					return false
+				}
+				i = end
+			}
+			if i == len(raw) {
+				return false
+			}
+		case raw[i] == '\'' && i+1 < len(raw) && raw[i+1] == '\'':
+			quotedPart = true
+			i++
+		case raw[i] == '$' && i+2 < len(raw) && (raw[i+1] == '\'' || raw[i+1] == '"') && raw[i+2] == raw[i+1]:
+			quotedPart = true
+			i += 2
 		case raw[i] != '$' || i+1 == len(raw) || raw[i+1] == '(':
 			return false
 		case raw[i+1] == '{':
@@ -676,7 +713,39 @@ func mayVanish(mode backslashMode, raw []rune) bool {
 			return false
 		}
 	}
-	return true
+	return !quotedPart || atForm
+}
+
+// quotedAtForm reads a `@` form at raw[i] inside double quotes, which bash
+// removes with the word when it has no elements: `$@`, or a `${...}` of `@`,
+// `name[@]` or `!prefix@` whose operator does not substitute a default
+// (`-`, `=`). It returns the index past the form.
+func quotedAtForm(raw []rune, i int) (int, bool) {
+	if i+1 < len(raw) && raw[i] == '$' && raw[i+1] == '@' {
+		return i + 2, true
+	}
+	if i+1 >= len(raw) || raw[i] != '$' || raw[i+1] != '{' {
+		return 0, false
+	}
+	end, ok := closingBrace(raw, i+2)
+	if !ok {
+		return 0, false
+	}
+	body := string(raw[i+2 : end])
+	var rest string
+	switch name := strings.TrimLeftFunc(strings.TrimPrefix(body, "!"), func(r rune) bool { return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r) }); {
+	case strings.HasPrefix(body, "@"):
+		rest = body[1:]
+	case strings.HasPrefix(name, "[@]"):
+		rest = name[3:]
+	case strings.HasPrefix(body, "!") && name == "@" && len(body) > 2:
+	default:
+		return 0, false
+	}
+	if strings.HasPrefix(strings.TrimPrefix(rest, ":"), "-") || strings.HasPrefix(strings.TrimPrefix(rest, ":"), "=") {
+		return 0, false
+	}
+	return end + 1, true
 }
 
 // braceGroup is one `${...}` group open while tokenizing: the index of its
@@ -726,10 +795,13 @@ func (s *substitutedReading) finish(undecoded bool) []shellToken {
 // segmentCandidates returns the positions a classifier reads in segment. A
 // position holds a candidate word from each reading of a token that is long
 // enough to reach it: the token as written and each alternate, nested
-// defaults already flattened. A step names the positions that can follow
-// its word, and entry names the first ones; a token with an empty reading
-// can be skipped. The graph grows with tokens times alternates.
-func segmentCandidates(segment []shellToken) ([]candidateNode, []int) {
+// defaults already flattened. A step names the position after its word,
+// len(nodes) past the last. A token with an empty reading can be skipped:
+// a classifier that reaches its first position reaches skip too (zero when
+// it cannot). The slices
+// the nodes and steps hold share backing arrays, so the graph grows with
+// tokens times alternates.
+func segmentCandidates(segment []shellToken) []candidateNode {
 	first := make([]int, len(segment)+1)
 	for i, token := range segment {
 		longest := 1
@@ -738,41 +810,71 @@ func segmentCandidates(segment []shellToken) ([]candidateNode, []int) {
 		}
 		first[i+1] = first[i] + longest
 	}
-	entries := make([][]int, len(segment)+1)
-	for i := len(segment) - 1; i >= 0; i-- {
-		entries[i] = []int{first[i]}
-		if slices.ContainsFunc(segment[i].alternates, func(alternate []shellToken) bool { return len(alternate) == 0 }) {
-			entries[i] = append(entries[i], entries[i+1]...)
-		}
-	}
 	nodes := make([]candidateNode, first[len(segment)])
 	for i, token := range segment {
+		if slices.ContainsFunc(token.alternates, func(alternate []shellToken) bool { return len(alternate) == 0 }) {
+			nodes[first[i]].skip = first[i+1]
+		}
 		for _, reading := range slices.Concat([][]shellToken{{token}}, token.alternates) {
 			for k, candidate := range reading {
-				next := entries[i+1]
+				next := first[i+1]
 				if k+1 < len(reading) {
-					next = []int{first[i] + k + 1}
+					next = first[i] + k + 1
 				}
-				nodes[first[i]+k].steps = append(nodes[first[i]+k].steps, candidateStep{
-					token: candidate,
-					tail:  slices.Concat(reading[k+1:], segment[i+1:]),
-					next:  next,
-				})
+				nodes[first[i]+k].steps = append(nodes[first[i]+k].steps, candidateStep{token: candidate, rest: reading[k+1:], from: i + 1, next: next})
 			}
 		}
 	}
-	return nodes, entries[0]
+	// A first position's words are followed in one array by those of each
+	// first position a skip reaches from it; any other position's words
+	// stand alone.
+	var firstWords, otherWords []string
+	firstEnd := make([]int, len(segment)+1)
+	for i := range segment {
+		for n := first[i]; n < first[i+1]; n++ {
+			for _, step := range nodes[n].steps {
+				if n == first[i] {
+					firstWords = append(firstWords, step.token.text)
+				} else {
+					otherWords = append(otherWords, step.token.text)
+				}
+			}
+		}
+	}
+	firstEnd[len(segment)] = len(firstWords)
+	for i, start := len(segment)-1, len(firstWords); i >= 0; i-- {
+		start -= len(nodes[first[i]].steps)
+		firstEnd[i] = start + len(nodes[first[i]].steps)
+		if nodes[first[i]].skip > 0 {
+			firstEnd[i] = firstEnd[i+1]
+		}
+		nodes[first[i]].following = firstWords[start:firstEnd[i]]
+	}
+	for n := len(nodes) - 1; n >= 0; n-- {
+		if nodes[n].following == nil {
+			otherWords, nodes[n].following = otherWords[:len(otherWords)-len(nodes[n].steps)], otherWords[len(otherWords)-len(nodes[n].steps):]
+		}
+	}
+	return nodes
 }
 
-// candidateNode is one position of segmentCandidates.
-type candidateNode struct{ steps []candidateStep }
+// candidateNode is one position of segmentCandidates. following is the words
+// that can stand at it, the next positions a skip reaches included.
+type candidateNode struct {
+	steps     []candidateStep
+	skip      int
+	following []string
+}
 
-// candidateStep is one candidate word at a position: tail is the words after
-// it as written, and next the positions that can follow it.
+// candidateStep is one candidate word at a position: rest is the words after
+// it in its reading and from the index of the token after that reading, so
+// the words after it as written are rest and then segment[from:]. next is the
+// position after it.
 type candidateStep struct {
 	token shellToken
-	tail  []shellToken
-	next  []int
+	rest  []shellToken
+	from  int
+	next  int
 }
 
 // candidateTokens returns every token of segment and every token of each of
@@ -793,8 +895,8 @@ func candidateTokens(segment []shellToken) []shellToken {
 // word of an operator that substitutes it starts, and false when the group
 // does not parse: bash either rejects it or reads it in a way this does not.
 // The parameter is a name, digits or a special character, after an optional
-// `!` (indirection) or `#` (length), with one optional `[subscript]` of
-// digits, a name, `@` or `*`.
+// `!` (indirection) or `#` (length), with one optional `[subscript]`
+// (subscriptEnd).
 func parameterExpansion(runes []rune, i, end int) (int, bool, bool) {
 	nameStart := func(r rune) bool { return r == '_' || unicode.IsLetter(r) }
 	j := i
@@ -822,11 +924,11 @@ func parameterExpansion(runes []rune, i, end int) (int, bool, bool) {
 		return 0, false, false
 	}
 	if j < end && runes[j] == '[' {
-		close := slices.Index(runes[j:end], ']')
-		if close < 0 || !validSubscript(string(runes[j+1:j+close])) {
+		close, ok := subscriptEnd(runes, j, end)
+		if !ok {
 			return 0, false, false
 		}
-		j += close + 1
+		j = close + 1
 	}
 	switch {
 	case j == end:
@@ -849,18 +951,25 @@ func parameterExpansion(runes []rune, i, end int) (int, bool, bool) {
 	return 0, false, false
 }
 
-// validSubscript reports whether s is a subscript this reads: digits, a
-// name, `@` or `*`.
-func validSubscript(s string) bool {
-	if s == "@" || s == "*" || isDigits(s) {
-		return true
-	}
-	for k, r := range s {
-		if !(r == '_' || unicode.IsLetter(r) || (k > 0 && unicode.IsDigit(r))) {
-			return false
+// subscriptEnd returns the index of the `]` that closes the `[` at
+// runes[j], before end. A subscript is bracket-balanced text with no quote
+// and no `}`.
+func subscriptEnd(runes []rune, j, end int) (int, bool) {
+	depth := 0
+	for k := j; k < end; k++ {
+		switch runes[k] {
+		case '\'', '"', '}':
+			return 0, false
+		case '[':
+			depth++
+		case ']':
+			depth--
+			if depth == 0 {
+				return k, true
+			}
 		}
 	}
-	return s != ""
+	return 0, false
 }
 
 // closingBrace returns the index of the `}` that closes a `${` whose body
@@ -1305,10 +1414,13 @@ func appendTarget(targets []shellToken, token shellToken) []shellToken {
 	return append(targets, token)
 }
 
+// writeVerbs are the verbs verbWriteTargets claims.
+var writeVerbs = []string{"rm", "rmdir", "unlink", "shred", "truncate", "touch", "mkdir", "tee", "mv", "cp", "install", "ln", "rsync", "chmod", "chown", "chgrp", "sed", "perl", "dd"}
+
 // verbWriteTargets returns the write targets of a named write verb, or nil for
 // every verb this guard does not claim.
 func verbWriteTargets(args []shellToken) []shellToken {
-	if len(args) == 0 {
+	if len(args) == 0 || !slices.Contains(writeVerbs, filepath.Base(args[0].text)) {
 		return nil
 	}
 	rest := nonFlagArgs(args[1:])

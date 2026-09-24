@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -916,8 +917,8 @@ func TestMunsuCommandRulesReadParameterExpansionWords(t *testing.T) {
 		{`munsu watch "$b"`, true, false},
 	} {
 		got, tooDeep := munsuInvocations(tc.command, 0)
-		watch := slices.ContainsFunc(got, func(args []string) bool {
-			return len(args) > 0 && args[0] == "watch" && !watchInvocationAllowed(args[1:])
+		watch := slices.ContainsFunc(got, func(invocation munsuInvocation) bool {
+			return invocation.subcommand == "watch" && !watchInvocationAllowed(invocation.following)
 		})
 		if tooDeep || watch != tc.watch {
 			t.Errorf("munsuInvocations(%q) = %q tooDeep=%v, want a bare watch=%v", tc.command, got, tooDeep, tc.watch)
@@ -939,8 +940,8 @@ func TestMunsuInvocationsDepthBound(t *testing.T) {
 	for range maxShellPayloadDepth {
 		inside, inRun = bashC(inside), bashC(inRun)
 	}
-	if got, tooDeep := munsuInvocations(inside, 0); tooDeep || len(got) != 1 || !slices.Equal(got[0], []string{"watch"}) {
-		t.Errorf("munsuInvocations at depth %d = %q tooDeep=%v, want [[watch]]", maxShellPayloadDepth, got, tooDeep)
+	if got, tooDeep := munsuInvocations(inside, 0); tooDeep || len(got) != 1 || got[0].subcommand != "watch" || len(got[0].following) != 0 {
+		t.Errorf("munsuInvocations at depth %d = %+v tooDeep=%v, want a bare watch", maxShellPayloadDepth, got, tooDeep)
 	}
 	if _, tooDeep := munsuInvocations(bashC(inside), 0); !tooDeep {
 		t.Errorf("munsuInvocations past depth %d: tooDeep=false, want true", maxShellPayloadDepth)
@@ -976,6 +977,55 @@ func TestMunsuInvocationsDepthBound(t *testing.T) {
 //     read, nested defaults included.
 //
 // The allowed rows run no git and write nothing in bash 3.2 or 5.3.
+// TestSafetyCheckReadsLongCommandInLinearTime pins that the hook's walk over
+// a segment grows linearly: a git add of 16000 words took 32.9s and gigabytes
+// when every position copied the words after it, and takes milliseconds and
+// under 100 MiB without.
+func TestSafetyCheckReadsLongCommandInLinearTime(t *testing.T) {
+	primary := initGitRepoForSafety(t, t.TempDir())
+	worktree := filepath.Join(t.TempDir(), "wt")
+	runGitForSafety(t, primary, "worktree", "add", "--detach", worktree)
+	homeDir := bindSafetyWorktree(t, "ship-fs", primary, worktree)
+	t.Setenv("MUNSU_HOME", homeDir)
+	t.Setenv("MUNSU_TASK_ID", "ship-fs")
+	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-fs")
+	var words strings.Builder
+	for i := range 16000 {
+		fmt.Fprintf(&words, " f%d", i)
+	}
+	command := "git add" + words.String()
+	allocated, elapsed := measureAllocation(func() {
+		if block, reason := runPiSafetyForGit(t, worktree, command); block {
+			t.Errorf("git add of 16000 words: block=true reason=%q, want allow", reason)
+		}
+	})
+	if elapsed > 5*time.Second || allocated > 512<<20 {
+		t.Errorf("git add of 16000 words took %v and %d MiB, want under 5s and 512 MiB", elapsed, allocated>>20)
+	}
+	// The write guard's enumeration of a write segment is linear too. Its
+	// per-target classification is not what this pins.
+	segment := tokenizeSegments(backslashEscapes, "rm"+words.String())[0]
+	allocated, elapsed = measureAllocation(func() {
+		if readings, ok := writeReadings(segment); !ok || len(readings) != 1 || len(readings[0]) != len(segment) {
+			t.Errorf("writeReadings of rm with 16000 words = %d readings ok=%v, want one", len(readings), ok)
+		}
+	})
+	if elapsed > 5*time.Second || allocated > 512<<20 {
+		t.Errorf("writeReadings of rm with 16000 words took %v and %d MiB, want under 5s and 512 MiB", elapsed, allocated>>20)
+	}
+}
+
+// measureAllocation returns the bytes run allocates and how long it takes.
+func measureAllocation(run func()) (uint64, time.Duration) {
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	start := time.Now()
+	run()
+	elapsed := time.Since(start)
+	runtime.ReadMemStats(&after)
+	return after.TotalAlloc - before.TotalAlloc, elapsed
+}
+
 func TestSafetyCheckReadsFunctionSubstitutionExpansionsAndCandidates(t *testing.T) {
 	primary := initGitRepoForSafety(t, t.TempDir())
 	worktree := filepath.Join(t.TempDir(), "wt")
@@ -1008,8 +1058,17 @@ func TestSafetyCheckReadsFunctionSubstitutionExpansionsAndCandidates(t *testing.
 		{`${x[@]:-git push --force}`, refuse},
 		{`${!x:-git} push --force`, refuse},
 		{`${!x-git} push --force`, refuse},
-		{`echo ${x[$i]}`, refuse},
 		{`echo ${x&}`, refuse},
+		{`echo ${x["0"]}`, refuse},
+		{`echo ${x[0}`, refuse},
+		{`echo ${x[a]b}`, refuse},
+		// A subscript is any bracket-balanced text with no quote and no `}`.
+		{`echo ${x[$i]}`, allow},
+		{`echo "${arr[$i]}"`, allow},
+		{`echo ${x[i+1]}`, allow},
+		{`echo ${arr[-1]}`, allow},
+		{`echo ${x[a[0]]}`, allow},
+		{`${x[i+1]:-git} push --force`, refuse},
 		{`echo ${x[0]}`, allow},
 		{`echo ${!x}`, allow},
 		{`echo ${#x}`, allow},
@@ -1039,12 +1098,42 @@ func TestSafetyCheckReadsFunctionSubstitutionExpansionsAndCandidates(t *testing.
 		{`munsu $b watch`, refuse},
 		{"cd " + docs + " && cp -t $b f g", refuse},
 		{"cd " + docs + " && cp ../README.md $b .", refuse},
-		// A quoted expansion is an empty word, never absent.
+		// A quoted `@` form is removed when it has no elements; any other
+		// quoted expansion is an empty word.
+		{`git "${b[@]:+x}" push --force`, refuse},
+		{`${a:-git} "${b[@]:+x}" push --force`, refuse},
+		{`git "${@:+x}" push --force`, refuse},
+		{`git "${b[@]}" push --force`, refuse},
+		{`git "$@" push --force`, refuse},
+		{`git "${!pre@}" push --force`, refuse},
+		{`git "$@""" push --force`, refuse},
+		{`git "$@"$b push --force`, refuse},
+		{`bash -c 'git "$@" push --force'`, refuse},
+		{`bash -c 'git "${b[@]:+x}" push --force'`, refuse},
+		{`bash -c 'git "${b[@]}" push --force'`, refuse},
+		{`munsu "$@" watch`, refuse},
+		{"cd " + docs + ` && cp -t "$@" f g`, refuse},
+		{`git ${b:+"x"} push --force`, refuse},
 		{`git "$b" push`, allow},
-		// Fail-closed over-refusals: the removed reading is taken even where
+		{`git "$*" push --force`, allow},
+		{`git "${b[@]:-}" push --force`, allow},
+		{`git "${e[*]}" push --force`, allow},
+		{`git "${!p*}" push --force`, allow},
+		// In a command that names IFS, an unquoted group's word is undecodable.
+		{`IFS=:; ${x:-git:push:--force}`, refuse},
+		{`bash -c 'IFS=:; ${x:-git:push:--force}'`, refuse},
+		{`IFS=: read a b`, allow},
+		{`IFS=: read a b; echo "${x:-a:b}" $x`, allow},
+		// Only a segment that can write is enumerated; one past the bound
+		// refuses.
+		{`echo $a $b $c $d $e $f $g $h $i`, allow},
+		{`echo ${a:-1} ${b:-2} ${c:-3} ${d:-4} ${e:-5} ${f:-6}`, allow},
+		{"cd " + docs + " && echo $1 $2 $3 $4 $5 $6 $7 $8 $9", allow},
+		{`rm $a $b $c $d $e $f $g $h $i`, refuse},
+		{"cd " + docs + " && rm $1 $2 $3 $4 $5 $6 $7 $8 $9", refuse},
+		// Fail-closed over-refusal: the removed reading is taken even where
 		// the word cannot be empty.
 		{`git ${x:-status} push --force`, refuse},
-		{"cd " + docs + " && echo $1 $2 $3 $4 $5 $6 $7 $8 $9", refuse},
 	} {
 		if block, reason := runPiSafetyForGit(t, worktree, tc.command); block != tc.want {
 			t.Errorf("%q block=%v reason=%q, want block=%v", tc.command, block, reason, tc.want)
@@ -1056,6 +1145,13 @@ func TestSafetyCheckReadsFunctionSubstitutionExpansionsAndCandidates(t *testing.
 	for _, command := range []string{"${ git status; }", "${| git status; }", "${\tgit status; }", "${\ngit status; }"} {
 		if block, reason := runPiSafetyForGit(t, worktree, command); !block || reason != substitution {
 			t.Errorf("%q: block=%v reason=%q, want %q", command, block, reason, substitution)
+		}
+	}
+	// The IFS rule refuses the word as undecodable, not as a push.
+	const undecodable = "shell word cannot be decoded; git mutation cannot be checked"
+	for _, command := range []string{`IFS=:; ${x:-git:push:--force}`, `IFS=:; echo ${x:-status}`} {
+		if block, reason := runPiSafetyForGit(t, worktree, command); !block || reason != undecodable {
+			t.Errorf("%q: block=%v reason=%q, want %q", command, block, reason, undecodable)
 		}
 	}
 	// A value word with more than one candidate leaves the target unknown.

@@ -480,16 +480,23 @@ func patchWriteTargets(checkPath, body string) ([]string, error) {
 	return resolved, nil
 }
 
+// munsuInvocation is a subcommand word read after `munsu` and the words that
+// can follow it.
+type munsuInvocation struct {
+	subcommand string
+	following  []string
+}
+
 // munsuInvocations parses command with the safety tokenizer and returns, for
 // every `munsu` command word among the candidates of a segment, the
-// subcommand after it and each word that can follow the subcommand (the root
+// subcommand after it and the words that can follow the subcommand (the root
 // --home flag is skipped). Every candidate at each position is read
 // (segmentCandidates). A word that reads as more than itself, as in
 // `bash -c "munsu watch"`, is parsed too. An unquoted word opening with `#`
 // starts a shell comment and ends its segment. Past maxShellPayloadDepth
 // nested command lines it stops and reports the command too deep to check.
-func munsuInvocations(command string, depth int) ([][]string, bool) {
-	var invocations [][]string
+func munsuInvocations(command string, depth int) ([]munsuInvocation, bool) {
+	var invocations []munsuInvocation
 	for _, segment := range commandSegments(command) {
 		for _, token := range candidateTokens(segment) {
 			if !readsAsMoreThanItself(gitSafetyBackslashMode(), token) {
@@ -505,15 +512,18 @@ func munsuInvocations(command string, depth int) ([][]string, bool) {
 			invocations = append(invocations, nested...)
 		}
 		const seek, subcommand, homeValue = 0, 1, 2
-		nodes, entry := segmentCandidates(segment)
-		states := make([][3]bool, len(nodes))
-		reach := func(next []int, state int) {
-			for _, n := range next {
-				states[n][state] = true
-			}
+		nodes := segmentCandidates(segment)
+		states := make([][3]bool, len(nodes)+1)
+		reach := func(n int, state int) {
+			states[n][state] = true
 		}
-		reach(entry, seek)
+		reach(0, seek)
 		for n, node := range nodes {
+			if node.skip > 0 {
+				for state, ok := range states[n] {
+					states[node.skip][state] = states[node.skip][state] || ok
+				}
+			}
 			for _, step := range node.steps {
 				word := step.token.text
 				if states[n][seek] {
@@ -528,20 +538,17 @@ func munsuInvocations(command string, depth int) ([][]string, bool) {
 				if !states[n][subcommand] {
 					continue
 				}
-				switch munsuHomeWords(word, len(step.next) > 0) {
+				switch munsuHomeWords(word, step.next < len(nodes)) {
 				case 2:
 					reach(step.next, homeValue)
 				case 1:
 					reach(step.next, subcommand)
 				default:
-					if len(step.next) == 0 {
-						invocations = append(invocations, []string{word})
+					invocation := munsuInvocation{subcommand: word}
+					if step.next < len(nodes) {
+						invocation.following = nodes[step.next].following
 					}
-					for _, next := range step.next {
-						for _, following := range nodes[next].steps {
-							invocations = append(invocations, []string{word, following.token.text})
-						}
-					}
+					invocations = append(invocations, invocation)
 				}
 			}
 		}
@@ -653,18 +660,21 @@ func onlyGuardOrDoctor(command string) bool {
 	return found
 }
 
-// watchInvocationAllowed reports whether the words after `munsu watch` name a
-// bounded watcher operation or ask for help; everything else, including bare
-// `munsu watch` (the daemon), is refused.
-func watchInvocationAllowed(args []string) bool {
-	if len(args) == 0 {
+// watchInvocationAllowed reports whether every word that can follow `munsu
+// watch` names a bounded watcher operation or asks for help; everything else,
+// including bare `munsu watch` (the daemon), is refused.
+func watchInvocationAllowed(following []string) bool {
+	if len(following) == 0 {
 		return false
 	}
-	switch args[0] {
-	case "status", "ensure", "stop", "run", "--help", "-h":
-		return true
+	for _, word := range following {
+		switch word {
+		case "status", "ensure", "stop", "run", "--help", "-h":
+		default:
+			return false
+		}
 	}
-	return false
+	return true
 }
 
 func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, checkFilePath string, harnessFlag string) error {
@@ -721,8 +731,8 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, c
 			block = true
 			reason = tooDeepReason
 		}
-		for _, args := range invocations {
-			if len(args) > 0 && args[0] == "watch" && !watchInvocationAllowed(args[1:]) {
+		for _, invocation := range invocations {
+			if invocation.subcommand == "watch" && !watchInvocationAllowed(invocation.following) {
 				block = true
 				reason = "Bare 'munsu watch' runs the watcher daemon in this session; use 'munsu watch ensure' for a persistent watcher or 'munsu watch run' for one cycle."
 			}

@@ -1225,7 +1225,9 @@ func TestTokenizeSegmentsLineContinuationAndANSICQuoting(t *testing.T) {
 		{backslashEscapes, `${x y`, [][]string{{"${x", "y"}}, true},
 		// A parameter expansion the tokenizer cannot parse is undecodable.
 		{backslashEscapes, `${ x; }`, [][]string{{"${ x; }"}}, true},
-		{backslashEscapes, `${x[$i]}`, [][]string{{"${x[$i]}"}}, true},
+		{backslashEscapes, `${x["0"]}`, [][]string{{"${x[0]}"}}, true},
+		{backslashEscapes, `${x[\}]}`, [][]string{{"${x[}]}"}}, true},
+		{backslashEscapes, `${x[$i]} ${x[i+1]} ${x[-1]}`, [][]string{{"${x[$i]}", "${x[i+1]}", "${x[-1]}"}}, false},
 		{backslashEscapes, `${x&}`, [][]string{{"${x&}"}}, true},
 		{backslashEscapes, `${#x:-a}`, [][]string{{"${#x:-a}"}}, true},
 		{backslashEscapes, `${x[0]} ${!x} ${#x} ${x@Q} ${x[@]} ${!p*} ${x:1:2} ${#}`, [][]string{{"${x[0]}", "${!x}", "${#x}", "${x@Q}", "${x[@]}", "${!p*}", "${x:1:2}", "${#}"}}, false},
@@ -1262,10 +1264,10 @@ func TestTokenizeSegmentsLineContinuationAndANSICQuoting(t *testing.T) {
 		// An unquoted word made only of expansions may also be removed: its
 		// absent reading is the empty one after the `|`.
 		{`${x:-git}`, []string{"git|"}},
-		{`${x:-$'\x67it'}`, []string{`git|\x67it|${x:-\x67it}`}},
+		{`${x:-$'\x67it'}`, []string{`git|\x67it|${x:-\x67it}|`}},
 		{`"${x:-$'\x67it'}"`, []string{`git|\x67it|${x:-\x67it}`}},
 		{`/usr/bin/${x-g}${y:+i}t`, []string{"/usr/bin/git"}},
-		{`${x=git} ${x:=git} ${x+git} ${x:+"g"'it'}`, []string{"git|", "git|", "git|", "git"}},
+		{`${x=git} ${x:=git} ${x+git} ${x:+"g"'it'}`, []string{"git|", "git|", "git|", "git|"}},
 		{`${a:-${b:-git}}`, []string{`git|`}},
 		{`${x[0]:-git} ${!x-git} ${x[@]:+git}`, []string{"git|", "git|", "git|"}},
 		// In double quotes the word is read in its quoting context: its own
@@ -1295,11 +1297,18 @@ func TestTokenizeSegmentsLineContinuationAndANSICQuoting(t *testing.T) {
 			t.Errorf("alternate readings of %q = %q, want %q", tc.command, got, tc.want)
 		}
 	}
-	// Only an unquoted word made only of parameter expansions may be
-	// removed; a quoted one is an empty word.
+	// Only a word made only of unquoted expansions and quoted `@` forms may
+	// be removed, an empty quoted part beside a `@` form included; any other
+	// quoted expansion is an empty word.
 	for command, want := range map[string]bool{
 		`$b`: true, `${b}`: true, `${b:+x}`: true, `$1$b`: true, "$b\\\n": true,
 		`x$b`: false, `"$b"`: false, `'$b'`: false, `$(b)`: false, `$`: false,
+		`"$@"`: true, `"${@:+x}"`: true, `"${e[@]}"`: true, `"${e[@]:+x}"`: true, `"${e[@]+x}"`: true,
+		`"${!pre@}"`: true, `"${!e[@]}"`: true, `"$@""$@"`: true, `"$@"$b`: true, `"$@"""`: true,
+		`"$@"''`: true, `"$@"$''`: true, `"$@"$""`: true, `"$@$@"`: true,
+		`"$*"`: false, `"${e[*]}"`: false, `"${!pre*}"`: false, `"${e[@]:-}"`: false, `"${e[@]-}"`: false,
+		`"${@:-}"`: false, `"${e[@]:=}"`: false, `"${#e[@]}"`: false, `x"$@"`: false, `"$@"x`: false,
+		`"x$@"`: false, `""`: false, `""$b`: false, `"$@"'x'`: false, `"$@`: false, `"${@`: false,
 	} {
 		token := tokenizeSegments(backslashEscapes, command)[0][0]
 		absent := slices.ContainsFunc(token.alternates, func(alternate []shellToken) bool { return len(alternate) == 0 })
@@ -1310,13 +1319,13 @@ func TestTokenizeSegmentsLineContinuationAndANSICQuoting(t *testing.T) {
 	// munsuInvocations reads every word holding a space as shell again; an
 	// undecodable word must not read back as itself, or the recursion never
 	// ends.
-	if got, _ := munsuInvocations("bash -c $'munsu watch \\q'", 0); len(got) != 1 || len(got[0]) == 0 || got[0][0] != "watch" {
-		t.Errorf("munsuInvocations of an undecodable word = %q, want the watch invocation", got)
+	if got, _ := munsuInvocations("bash -c $'munsu watch \\q'", 0); len(got) != 1 || got[0].subcommand != "watch" {
+		t.Errorf("munsuInvocations of an undecodable word = %+v, want the watch invocation", got)
 	}
 	// An empty quoted word is the --home value, so the bare watch after it
 	// is the invocation, and it is not a guard or doctor call.
-	if got, _ := munsuInvocations("munsu --home '' watch", 0); len(got) != 1 || !slices.Equal(got[0], []string{"watch"}) {
-		t.Errorf("munsuInvocations(munsu --home '' watch) = %q, want [[watch]]", got)
+	if got, _ := munsuInvocations("munsu --home '' watch", 0); len(got) != 1 || got[0].subcommand != "watch" || len(got[0].following) != 0 {
+		t.Errorf("munsuInvocations(munsu --home '' watch) = %+v, want a bare watch", got)
 	}
 	if onlyGuardOrDoctor("munsu '' guard .no-mistakes") {
 		t.Errorf("onlyGuardOrDoctor(munsu '' guard) = true, want false")
@@ -1442,5 +1451,21 @@ func TestShellWriteTargetsRefuseTooManyCandidateReadings(t *testing.T) {
 	}
 	if _, ambiguous := shellWriteTargets(dir, strings.Replace(command, " ${x5:-f5}", "", 1)); ambiguous {
 		t.Errorf("shellWriteTargets with 5 expansions: ambiguous=true, want false")
+	}
+	// Only a segment that can write is read: no candidate here is a write
+	// verb or a redirect.
+	for _, command := range []string{
+		strings.Replace(command, "rm", "echo", 1),
+		"echo $a $b $c $d $e $f $g $h $i",
+		"rm f; echo $a $b $c $d $e $f $g $h $i",
+	} {
+		if _, ambiguous := shellWriteTargets(dir, command); ambiguous {
+			t.Errorf("shellWriteTargets(%q): ambiguous=true, want false", command)
+		}
+	}
+	for _, command := range []string{"rm $a $b $c $d $e $f $g $h $i", "${v:-rm} $a $b $c $d $e $f $g $h", "echo $a $b $c $d $e $f $g $h > $i"} {
+		if _, ambiguous := shellWriteTargets(dir, command); !ambiguous {
+			t.Errorf("shellWriteTargets(%q): ambiguous=false, want true", command)
+		}
 	}
 }

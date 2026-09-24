@@ -278,36 +278,49 @@ const (
 // words after it as written and with every candidate after it, so a
 // mutation in any candidate refuses. Paths that reach a position in the
 // same state with different targets merge into one ambiguous path, so the
-// walk grows with positions, never with the paths through them.
+// walk grows with positions, never with the paths through them, and both
+// readings of the words after a verb are ranges of shared arrays.
 func segmentGitCommands(checkPath string, segment []shellToken, mode backslashMode) []gitCommandPath {
-	nodes, entry := segmentCandidates(segment)
+	nodes := segmentCandidates(segment)
+	written := segmentWords(segment)
+	// candidates[starts[n]:] is every candidate word at position n and after.
+	var candidates []string
+	starts := make([]int, len(nodes)+1)
+	for n, node := range nodes {
+		starts[n] = len(candidates)
+		for _, step := range node.steps {
+			candidates = append(candidates, step.token.text)
+		}
+	}
+	starts[len(nodes)] = len(candidates)
 	type reached struct {
 		state gitWalkState
 		path  gitCommandPath
 	}
 	states := make([][]reached, len(nodes))
-	reach := func(next []int, state gitWalkState, path gitCommandPath) {
-		for _, n := range next {
-			i := slices.IndexFunc(states[n], func(r reached) bool { return r.state == state })
-			if i < 0 {
-				states[n] = append(states[n], reached{state, path})
-				continue
-			}
-			seen := &states[n][i].path
-			if path.ambiguous || seen.g.targetPath != path.g.targetPath || seen.g.gitDir != path.g.gitDir || seen.g.workTree != path.g.workTree {
-				seen.ambiguous = true
-			}
+	reach := func(n int, state gitWalkState, path gitCommandPath) {
+		if n == len(nodes) {
+			return
+		}
+		i := slices.IndexFunc(states[n], func(r reached) bool { return r.state == state })
+		if i < 0 {
+			states[n] = append(states[n], reached{state, path})
+			return
+		}
+		seen := &states[n][i].path
+		if path.ambiguous || seen.g.targetPath != path.g.targetPath || seen.g.gitDir != path.g.gitDir || seen.g.workTree != path.g.workTree {
+			seen.ambiguous = true
 		}
 	}
-	reach(entry, gitWalkState{phase: gitSeekExecutable}, gitCommandPath{g: gitCommandSafety{isGit: true, targetPath: checkPath}})
+	reach(0, gitWalkState{phase: gitSeekExecutable}, gitCommandPath{g: gitCommandSafety{isGit: true, targetPath: checkPath}})
 	var commands []gitCommandPath
 	for n, node := range nodes {
-		var after []string
-		for _, later := range nodes[n+1:] {
-			for _, step := range later.steps {
-				after = append(after, step.token.text)
+		if node.skip > 0 {
+			for _, r := range states[n] {
+				reach(node.skip, r.state, r.path)
 			}
 		}
+		after := candidates[starts[n+1]:]
 		for _, r := range states[n] {
 			for _, step := range node.steps {
 				word := step.token.text
@@ -326,19 +339,19 @@ func segmentGitCommands(checkPath string, segment []shellToken, mode backslashMo
 					takesValue, isVerb := gitGlobalOption(&path.g, word, mode)
 					switch {
 					case isVerb:
-						readings := [][]string{segmentWords(step.tail)}
-						if !slices.Equal(readings[0], after) {
-							readings = append(readings, after)
+						tail := written[step.from:]
+						if len(step.rest) > 0 {
+							tail = slices.Concat(segmentWords(step.rest), tail)
 						}
-						for _, args := range readings {
+						for k, args := range [][]string{tail, after} {
 							command := path
 							command.g.verb, command.g.args = word, args
 							fillGitCommandDetails(&command.g)
-							if command.g.mutating {
+							if command.g.mutating && (k == 0 || !slices.Equal(tail, after)) {
 								commands = append(commands, command)
 							}
 						}
-					case takesValue && len(step.next) > 0:
+					case takesValue && step.next < len(nodes):
 						reach(step.next, gitWalkState{phase: gitOptionValue, option: word}, path)
 					default:
 						reach(step.next, r.state, path)
