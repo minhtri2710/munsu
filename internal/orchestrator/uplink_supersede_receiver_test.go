@@ -1,7 +1,6 @@
 package orchestrator
 
 import (
-	mhome "github.com/minhtri2710/munsu/internal/home"
 	"os"
 	"path/filepath"
 	"testing"
@@ -16,7 +15,7 @@ func TestSupersededRefCannotBeReceivedOrAcked(t *testing.T) {
 	if err := os.MkdirAll(receiverHome, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := mhome.SeedCaptainProvenance(receiverHome, "captain-one"); err != nil {
+	if err := home.SeedCaptainProvenance(receiverHome, "captain-one"); err != nil {
 		t.Fatal(err)
 	}
 	if err := home.WriteMeta(receiverHome, "task:1", map[string]string{"kind": "ship"}); err != nil {

@@ -93,7 +93,7 @@ func TestUplinkLifecycle_CrashReplay_ReportReplayAckRetire(t *testing.T) {
 	if err := os.MkdirAll(captainHome, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := home.SeedCaptainProvenance(captainHome, "captain-one"); err != nil {
+	if err := mhome.SeedCaptainProvenance(captainHome, "captain-one"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -184,7 +184,7 @@ func TestUplinkLifecycle_DuplicateDeliverySuppressedAfterRetire(t *testing.T) {
 	if err := os.MkdirAll(captainHome, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := home.SeedCaptainProvenance(captainHome, "captain-one"); err != nil {
+	if err := mhome.SeedCaptainProvenance(captainHome, "captain-one"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -228,7 +228,7 @@ func TestUplinkLifecycle_DirectVersusRelayDelivery(t *testing.T) {
 	if err := os.MkdirAll(captainHome, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := home.SeedCaptainProvenance(captainHome, "captain-one"); err != nil {
+	if err := mhome.SeedCaptainProvenance(captainHome, "captain-one"); err != nil {
 		t.Fatal(err)
 	}
 	directTask := "task:direct"
@@ -339,7 +339,7 @@ func TestUplinkLifecycle_NotificationThrottleSuppressesDuplicateDelivery(t *test
 	if err := os.MkdirAll(captainHome, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := home.SeedCaptainProvenance(captainHome, "captain-one"); err != nil {
+	if err := mhome.SeedCaptainProvenance(captainHome, "captain-one"); err != nil {
 		t.Fatal(err)
 	}
 
