@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"testing"
 	"time"
@@ -629,5 +630,23 @@ func TestIdentitySummary_CommitSHAMissing(t *testing.T) {
 	s := IdentitySummary(&id)
 	if !strings.Contains(s, "commit=-") {
 		t.Errorf("summary should show '-' for missing commit SHA, got: %s", s)
+	}
+}
+
+func TestBuildCommit_LinkerFlagThenVCSRevision(t *testing.T) {
+	orig := CommitSHA
+	defer func() { CommitSHA = orig }()
+	info := &debug.BuildInfo{Settings: []debug.BuildSetting{{Key: "vcs.revision", Value: "vcs1234"}}}
+
+	CommitSHA = "ldflag1234"
+	if got := BuildCommit(info); got != "ldflag1234" {
+		t.Errorf("BuildCommit with ldflag = %q, want ldflag1234", got)
+	}
+	CommitSHA = ""
+	if got := BuildCommit(info); got != "vcs1234" {
+		t.Errorf("BuildCommit without ldflag = %q, want vcs1234", got)
+	}
+	if got := BuildCommit(nil); got != "" {
+		t.Errorf("BuildCommit(nil) = %q, want empty", got)
 	}
 }

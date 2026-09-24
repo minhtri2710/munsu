@@ -71,25 +71,36 @@ var BuildVersion = "0.0.0-dev"
 // Empty means the commit is unknown — comparisons fail closed.
 var CommitSHA = ""
 
+// BuildCommit resolves the commit of the build described by info: the
+// CommitSHA ldflag, else the embedded vcs.revision. info may be nil.
+// Empty means the commit is unknown.
+func BuildCommit(info *debug.BuildInfo) string {
+	if CommitSHA != "" {
+		return CommitSHA
+	}
+	if info == nil {
+		return ""
+	}
+	for _, s := range info.Settings {
+		if s.Key == "vcs.revision" {
+			return s.Value
+		}
+	}
+	return ""
+}
+
 // NewIdentity builds a WatcherIdentity for the current process.
 // BuildVersion is read from the package-level variable, which is propagated
 // from cli.Version via ldflags. CommitSHA is read from the package-level
-// variable, also set via ldflags. Home is stored in canonical form so
+// variable, also set via ldflags, else from vcs.revision (BuildCommit). Home is stored in canonical form so
 // ownership checks compare equal across path aliases (symlink, relative, Abs).
 func NewIdentity(homeDir string) WatcherIdentity {
 	bv := BuildVersion
 	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
 		bv = info.Main.Version
 	}
-	cs := CommitSHA
-	if info, ok := debug.ReadBuildInfo(); ok && cs == "" && info.Settings != nil {
-		for _, s := range info.Settings {
-			if s.Key == "vcs.revision" {
-				cs = s.Value
-				break
-			}
-		}
-	}
+	info, _ := debug.ReadBuildInfo()
+	cs := BuildCommit(info)
 	executable, processStart, err := processIdentity(os.Getpid())
 	if err != nil {
 		executable = "unknown"
