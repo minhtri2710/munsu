@@ -35,8 +35,8 @@ func clearDaemonIdentity(homeDir string, identity home.WriterIdentity) {
 // artifact the daemon published about itself, then ask the kernel about the PID
 // and require both the executable path and the start token to match.
 //
-// It is not state/.lock's second field. That field is time.Now() at the moment
-// AcquireLock wrote the file (afk_lock.go), not a process start time, and it is
+// It is not the AFK lock's second field. That field is time.Now() at the moment
+// home.AcquireAFKLock wrote the file, not a process start time, and it is
 // formatted RFC3339 while processIdentity returns an opaque per-GOOS token
 // (jiffies on linux, sec:usec on darwin, a FILETIME on windows). Comparing the
 // two is a category error on every platform, not only on windows -- the lock

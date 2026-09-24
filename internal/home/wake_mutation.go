@@ -50,7 +50,7 @@ func acquireWakeLock(homeDir string) (*os.File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening wake claim lock: %w", err)
 	}
-	if err := lockWakeFile(lock); err != nil {
+	if err := lockFile(lock, false); err != nil {
 		_ = lock.Close()
 		return nil, fmt.Errorf("locking wake claims: %w", err)
 	}
@@ -59,7 +59,7 @@ func acquireWakeLock(homeDir string) (*os.File, error) {
 
 var releaseWakeLock = func(lock *os.File) error {
 	var errs []error
-	if err := unlockWakeFile(lock); err != nil {
+	if err := unlockFile(lock); err != nil {
 		errs = append(errs, err)
 	}
 	if err := lock.Close(); err != nil {

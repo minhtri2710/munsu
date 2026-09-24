@@ -15,7 +15,7 @@ func TestDurableAppendStatusEncodedIDRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := "rel.1"
-	appended, err := durableAppendStatus(tmp, id, "done: first")
+	appended, err := home.AppendStatusOnce(tmp, id, "done: first")
 	if err != nil || !appended {
 		t.Fatalf("first append = (%v, %v), want (true, nil)", appended, err)
 	}
@@ -23,7 +23,7 @@ func TestDurableAppendStatusEncodedIDRoundTrip(t *testing.T) {
 	if err != nil || len(lines) != 1 || lines[0] != "done: first" {
 		t.Fatalf("encoded read after append = %v (%v), want [done: first]", lines, err)
 	}
-	appended2, err := durableAppendStatus(tmp, id, "done: first")
+	appended2, err := home.AppendStatusOnce(tmp, id, "done: first")
 	if err != nil || appended2 {
 		t.Fatalf("duplicate append = (%v, %v), want (false, nil) dedup via encoded read", appended2, err)
 	}

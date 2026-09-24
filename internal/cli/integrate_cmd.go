@@ -11,6 +11,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/harness"
+	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/spf13/cobra"
 )
 
@@ -853,20 +854,11 @@ func runSessionStartNudge(cmd *cobra.Command, ctx Ctx) error {
 	return nil
 }
 
-// lockPIDInAncestry reads state/.lock and walks up to 8 parent PIDs
-// to check if the lock holder is in the current process ancestry.
+// lockPIDInAncestry reads the session lock holder's pid and walks up to 8
+// parent PIDs to check if the holder is in the current process ancestry.
 func lockPIDInAncestry(homeDir string) bool {
-	lockPath := filepath.Join(homeDir, "state", ".lock")
-	data, err := os.ReadFile(lockPath)
-	if err != nil {
-		return false
-	}
-
-	var lockPID int
-	if _, err := fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &lockPID); err != nil {
-		return false
-	}
-	if lockPID <= 1 {
+	lockPID, err := home.ReadSessionLockPID(homeDir)
+	if err != nil || lockPID <= 1 {
 		return false
 	}
 

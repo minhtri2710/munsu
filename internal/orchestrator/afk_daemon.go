@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // Daemon is the Go-native AFK sub-supervisor daemon.
@@ -21,7 +22,7 @@ import (
 // notice, and `munsu afk return` for reconciliation (ADR-0013).
 type Daemon struct {
 	homeDir  string
-	lock     *Lock
+	lock     *home.AFKLock
 	digester *Digester
 	wedge    *WedgeDetector
 
@@ -45,7 +46,7 @@ type Daemon struct {
 //  9. Release the identity lock.
 //
 // Step 1 comes first on purpose, and comes before the lock rather than merely
-// before the flag: state/.lock and the writer identity are side effects visible
+// before the flag: the AFK lock (home.AFKLockPath) and the writer identity are side effects visible
 // outside the process too, so any of them appearing while SIGTERM still carries
 // its default disposition would let an outside observer signal a daemon that
 // cannot yet catch it — killing it outright and skipping steps 7 through 9.
@@ -64,7 +65,7 @@ func (d *Daemon) Start(homeDir string) error {
 	}
 
 	// 2. Acquire identity lock (idempotent).
-	lock, acquired, err := AcquireLock(homeDir)
+	lock, acquired, err := home.AcquireAFKLock(homeDir)
 	if err != nil {
 		return fmt.Errorf("acquiring afk lock: %w", err)
 	}

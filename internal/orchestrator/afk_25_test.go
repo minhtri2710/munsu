@@ -2,11 +2,14 @@ package orchestrator
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 // --- Return tests ---
@@ -128,18 +131,16 @@ func TestReturn_DigestRoutineOnly(t *testing.T) {
 }
 
 func TestReturn_DaemonRunningStopsCleanly(t *testing.T) {
-	// This test verifies Return stops a daemon and clears state.
-	// We simulate a running daemon by writing a lock file and flag,
-	// then verify Return clears both.
+	// This test verifies Return clears consent after a daemon died without
+	// releasing: the flag is set and the AFK lock file still names a pid, but
+	// nobody holds its flock, so the pid is stale and ignored.
 	tmp := t.TempDir()
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 
-	// Write flag and lock as if daemon is running (PID = self for testing).
 	flagPath := filepath.Join(tmp, afkFlagFile)
 	os.WriteFile(flagPath, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0644)
-	lockPath := filepath.Join(tmp, afkLockFile)
-	os.WriteFile(lockPath, []byte("0\n"), 0644) // PID 0 = not alive
+	os.WriteFile(mhome.AFKLockPath(tmp), []byte(fmt.Sprintf("%d\t2024-01-01T00:00:00Z\n", os.Getpid())), 0600)
 
 	if !IsActive(tmp) {
 		t.Fatal("IsActive() should be true before Return")
@@ -153,9 +154,7 @@ func TestReturn_DaemonRunningStopsCleanly(t *testing.T) {
 	if IsActive(tmp) {
 		t.Error("IsActive() = true after Return, want false")
 	}
-	if _, err := os.Stat(lockPath); err == nil {
-		t.Error("lock file still exists after Return")
-	}
+	assertAFKLockFree(t, tmp)
 	if report.HasActionable() {
 		t.Fatal("Return on running daemon (no digest): HasActionable() = true, want false")
 	}
@@ -369,26 +368,6 @@ func TestDrainDigest_RemovesFile(t *testing.T) {
 	}
 	if _, err := os.Stat(digestPath); err == nil {
 		t.Error("digest file still exists after drain")
-	}
-}
-
-// --- readDaemonPID tests ---
-
-func TestReadDaemonPID_NoLock(t *testing.T) {
-	tmp := t.TempDir()
-	if pid := readDaemonPID(tmp); pid != 0 {
-		t.Errorf("readDaemonPID = %d, want 0", pid)
-	}
-}
-
-func TestReadDaemonPID_ValidLock(t *testing.T) {
-	tmp := t.TempDir()
-	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-	os.WriteFile(filepath.Join(stateDir, ".lock"), []byte("12345\t2024-01-01T00:00:00Z\n"), 0644)
-
-	if pid := readDaemonPID(tmp); pid != 12345 {
-		t.Errorf("readDaemonPID = %d, want 12345", pid)
 	}
 }
 

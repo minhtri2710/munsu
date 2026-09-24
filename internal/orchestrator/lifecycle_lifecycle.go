@@ -19,7 +19,7 @@ func QueuePath(homeDir string) string { return home.WakeQueuePath(homeDir) }
 func AcquireSession(homeDir string) (bool, error) {
 	return home.AcquireSessionLock(homeDir)
 }
-func IsSessionLocked(homeDir string) bool { return home.IsSessionLockHeld(homeDir) }
+func IsSessionLocked(homeDir string) (bool, error) { return home.IsSessionLockHeld(homeDir) }
 func AcquireWatch(homeDir string) (bool, error) {
 	return home.AcquireWatchLock(homeDir)
 }

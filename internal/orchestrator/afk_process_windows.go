@@ -9,10 +9,11 @@ import "os"
 // Windows has no SIGTERM, so the unix half's graceful signal has no equivalent
 // here: Kill is a hard terminate, and Daemon.Start's deferred and post-signal
 // shutdown steps (afk_daemon.go) never run. Four things the daemon holds are
-// skipped, and Return (afk_return.go) compensates for three of them and
-// surfaces the fourth:
+// affected; the lock needs nothing, Return (afk_return.go) compensates for two
+// and surfaces the fourth:
 //
-//   - identity lock state/.lock       -- compensated: afk_return.go removes it
+//   - AFK lock (home.AFKLockPath)     -- released by the kernel when the
+//     process dies; its stale pid is ignored because nobody holds the lock
 //   - consent flag state/.afk         -- compensated: Disable, afk_return.go
 //   - writer identity "afk"           -- compensated since the processIdentity
 //     fix: the deferred clearDaemonIdentity (afk_daemon.go) still never runs, but
@@ -29,7 +30,7 @@ import "os"
 //
 // So this is a lossy stop, not an equivalent of the unix half. It was inert
 // while processIdentity had no windows half -- Daemon.Start aborted before the
-// lock survived, readDaemonPID returned 0, and Return's stop branch never ran.
+// lock survived, Return read no daemon pid, and its stop branch never ran.
 // afk_process_identity_windows.go removed that gate, so this path is now live
 // on windows and the loss it causes is real. Closing it means giving windows a
 // soft stop the daemon can observe (a job object, a named event, or a control

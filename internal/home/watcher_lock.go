@@ -1,9 +1,12 @@
 package home
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -15,17 +18,38 @@ var watcherLocks = struct {
 	files map[string]*os.File
 }{files: make(map[string]*os.File)}
 
-func acquireWatcherLock(p string) (bool, error) {
+// openLockFile opens (creating if absent) a file this package locks. It is a
+// variable so tests can hand the lock calls a closed *os.File, the one
+// portable way to make lockFile fail with something other than busy.
+var openLockFile = func(p string, perm os.FileMode) (*os.File, error) {
+	return os.OpenFile(p, os.O_RDWR|os.O_CREATE, perm)
+}
+
+// acquireWatcherLock reports (false, nil) only when another owner holds p.
+// Any other failure is returned, so a broken lock is never read as "someone
+// else has it". With recordPID the holder's pid is written into the file after
+// the flock is taken, for ReadSessionLockPID.
+func acquireWatcherLock(p string, recordPID bool) (bool, error) {
 	if e := os.MkdirAll(filepath.Dir(p), 0755); e != nil {
 		return false, fmt.Errorf("creating lock directory %s: %w", filepath.Dir(p), e)
 	}
-	f, e := os.OpenFile(p, os.O_RDWR|os.O_CREATE, 0644)
+	f, e := openLockFile(p, 0644)
 	if e != nil {
 		return false, fmt.Errorf("opening lock file %s: %w", p, e)
 	}
-	if e = lockWatcherFile(f, true); e != nil {
+	if e = lockFile(f, true); e != nil {
 		_ = f.Close()
-		return false, nil
+		if errors.Is(e, errLockBusy) {
+			return false, nil
+		}
+		return false, fmt.Errorf("locking %s: %w", p, e)
+	}
+	if recordPID {
+		if e = writeLockPID(f, strconv.Itoa(os.Getpid())+"\n"); e != nil {
+			_ = unlockFile(f)
+			_ = f.Close()
+			return false, fmt.Errorf("recording holder pid in %s: %w", p, e)
+		}
 	}
 	watcherLocks.Lock()
 	watcherLocks.files[p] = f
@@ -33,10 +57,10 @@ func acquireWatcherLock(p string) (bool, error) {
 	return true, nil
 }
 func AcquireSessionLock(h string) (bool, error) {
-	return acquireWatcherLock(SessionLockPath(h))
+	return acquireWatcherLock(SessionLockPath(h), true)
 }
 func AcquireWatchLock(h string) (bool, error) {
-	return acquireWatcherLock(WatchLockPath(h))
+	return acquireWatcherLock(WatchLockPath(h), false)
 }
 func releaseWatcherLock(p string) error {
 	watcherLocks.Lock()
@@ -46,7 +70,7 @@ func releaseWatcherLock(p string) error {
 	if f == nil {
 		return nil
 	}
-	if err := unlockWatcherFile(f); err != nil {
+	if err := unlockFile(f); err != nil {
 		_ = f.Close()
 		return err
 	}
@@ -63,16 +87,49 @@ func ReleaseWatchLock(h string) error { return releaseWatcherLock(WatchLockPath(
 // so the home directory cannot be removed while this process lives (#549
 // group 10).
 func ReleaseSessionLock(h string) error { return releaseWatcherLock(SessionLockPath(h)) }
-func watcherLockHeld(p string) bool {
-	f, e := os.OpenFile(p, os.O_RDWR|os.O_CREATE, 0644)
+
+// watcherLockHeld probes p with a transient non-blocking lock. It fails
+// closed: an error opening or locking p is returned, never read as held or free.
+func watcherLockHeld(p string) (bool, error) {
+	f, e := openLockFile(p, 0644)
 	if e != nil {
-		return false
+		return false, fmt.Errorf("opening lock file %s: %w", p, e)
 	}
 	defer f.Close()
-	if e = lockWatcherFile(f, true); e != nil {
-		return true
+	if e = lockFile(f, true); e != nil {
+		if errors.Is(e, errLockBusy) {
+			return true, nil
+		}
+		return false, fmt.Errorf("probing lock %s: %w", p, e)
 	}
-	_ = unlockWatcherFile(f)
-	return false
+	return false, unlockFile(f)
 }
-func IsSessionLockHeld(h string) bool { return watcherLockHeld(SessionLockPath(h)) }
+func IsSessionLockHeld(h string) (bool, error) { return watcherLockHeld(SessionLockPath(h)) }
+
+// ReadSessionLockPID returns the pid of the session lock holder, or 0 when no
+// session holds the lock. The file outlives its holder, so a pid left by a dead
+// session is reported as 0; the flock, not the content, is the authority.
+func ReadSessionLockPID(h string) (int, error) { return readHeldLockPID(SessionLockPath(h)) }
+
+// writeLockPID replaces a held lock file's content with content. Only the
+// flock holder calls it, so the truncate cannot race another writer.
+func writeLockPID(f *os.File, content string) error {
+	if err := f.Truncate(0); err != nil {
+		return err
+	}
+	if _, err := f.WriteAt([]byte(content), 0); err != nil {
+		return err
+	}
+	return f.Sync()
+}
+
+// parseLockPID reads "<pid>[\t<rest>]" and returns the pid and the rest, or
+// 0 when the first field is not a positive integer.
+func parseLockPID(data []byte) (int, string) {
+	first, rest, _ := strings.Cut(strings.TrimSpace(string(data)), "\t")
+	pid, err := strconv.Atoi(strings.TrimSpace(first))
+	if err != nil || pid <= 0 {
+		return 0, ""
+	}
+	return pid, strings.TrimSpace(rest)
+}

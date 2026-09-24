@@ -149,50 +149,6 @@ func pollContentDigest(path string) (string, error) {
 	return hex.EncodeToString(h[:]), nil
 }
 
-// durableAppendStatus appends a status line with fsync durability.
-// Scans existing lines first to avoid duplicate publication.
-func statusHasLine(homeDir, taskID, line string) bool {
-	lines, err := home.ReadStatus(homeDir, taskID)
-	if err != nil {
-		// Status file may not exist yet; then the line is absent.
-		return false
-	}
-	for _, existing := range lines {
-		if existing == line {
-			return true
-		}
-	}
-	return false
-}
-
-func durableAppendStatus(homeDir, taskID, line string) (bool, error) {
-	if statusHasLine(homeDir, taskID, line) {
-		return false, nil // already present; no-op
-	}
-
-	// Open file for append with fsync.
-	statusPath, err := home.StatusFilePath(homeDir, taskID)
-	if err != nil {
-		return false, err
-	}
-	if err := os.MkdirAll(filepath.Dir(statusPath), 0755); err != nil {
-		return false, fmt.Errorf("creating state dir: %w", err)
-	}
-	f, err := os.OpenFile(statusPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return false, fmt.Errorf("opening status file: %w", err)
-	}
-	defer f.Close()
-
-	if _, err := f.WriteString(line + "\n"); err != nil {
-		return false, fmt.Errorf("writing status line: %w", err)
-	}
-	if err := f.Sync(); err != nil {
-		return false, fmt.Errorf("fsync status file: %w", err)
-	}
-	return true, nil
-}
-
 // WriteRetirementRecord atomically writes a pending retirement record.
 // Uses temp file + Sync + rename + directory Sync for durability.
 func WriteRetirementRecord(homeDir string, rec *PollRetirementRecord) error {
@@ -472,8 +428,14 @@ func retireMergedPoll(homeDir, taskID, checkPath string, result []byte, auth *ta
 	// consumer's ack): the artifact is gone, no record is pending, and the
 	// publication line is already durable. All three are required.
 	if _, statErr := os.Lstat(checkPath); os.IsNotExist(statErr) {
-		if ident, identErr := requireRetirementIdentity(homeDir, taskID); identErr == nil && statusHasLine(homeDir, taskID, publicationLine(taskID, ident.URL, captured.MergedSHA)) {
-			return domain.ErrAlreadyRetired
+		if ident, identErr := requireRetirementIdentity(homeDir, taskID); identErr == nil {
+			published, err := home.StatusHasLine(homeDir, taskID, publicationLine(taskID, ident.URL, captured.MergedSHA))
+			if err != nil {
+				return fmt.Errorf("reading status for re-entry check: %w", err)
+			}
+			if published {
+				return domain.ErrAlreadyRetired
+			}
 		}
 	}
 
@@ -550,7 +512,7 @@ func retireMergedPoll(homeDir, taskID, checkPath string, result []byte, auth *ta
 	// Step 6: Durable publication. Only appends if exact evidence is absent;
 	// already-published evidence (recovery from crash-after-publication)
 	// continues to poll removal.
-	if _, err := durableAppendStatus(homeDir, taskID, pubLine); err != nil {
+	if _, err := home.AppendStatusOnce(homeDir, taskID, pubLine); err != nil {
 		// Publication failed; record is pending for recovery.
 		return fmt.Errorf("publication failed (pending record exists): %w", err)
 	}
@@ -812,11 +774,11 @@ func recoverPendingRetirement(homeDir, taskID string, auth *taskauthority.Canoni
 
 	// Append publication if absent.
 	if !hasPublication {
-		if _, err := durableAppendStatus(homeDir, taskID, rec.PublicationLine); err != nil {
+		if _, err := home.AppendStatusOnce(homeDir, taskID, rec.PublicationLine); err != nil {
 			return false, fmt.Errorf("recovery: durable append failed: %w", err)
 		}
 		// A nil error means the exact line was either appended or was already
-		// present under durableAppendStatus's duplicate check.
+		// present under AppendStatusOnce's duplicate check.
 		hasPublication = true
 	}
 

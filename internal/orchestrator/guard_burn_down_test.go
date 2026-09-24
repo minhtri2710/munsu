@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,16 +13,14 @@ import (
 
 func TestGuardBurnDownDaemonStartRefusesHeldLock(t *testing.T) {
 	home := t.TempDir()
-	lockPath := filepath.Join(home, afkLockFile)
-	if err := os.MkdirAll(filepath.Dir(lockPath), 0755); err != nil {
-		t.Fatal(err)
+	held, acquired, err := mhome.AcquireAFKLock(home)
+	if err != nil || !acquired {
+		t.Fatalf("AcquireAFKLock = %v, %v; want held", acquired, err)
 	}
-	if err := os.WriteFile(lockPath, []byte(fmt.Sprintf("%d\t%s\n", os.Getpid(), time.Now().UTC().Format(time.RFC3339))), 0644); err != nil {
-		t.Fatal(err)
-	}
+	defer held.Release()
 
 	ready := make(chan struct{})
-	err := (&Daemon{ready: ready}).Start(home)
+	err = (&Daemon{ready: ready}).Start(home)
 	if err == nil || !strings.Contains(err.Error(), "already running") {
 		t.Fatalf("Daemon.Start error = %v, want held-lock refusal", err)
 	}

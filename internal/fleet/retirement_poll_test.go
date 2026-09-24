@@ -258,16 +258,16 @@ func TestValidateCheckWithLstat_MissingShebang(t *testing.T) {
 	}
 }
 
-// --- durableAppendStatus ---
+// --- AppendStatusOnce ---
 
 func TestDurableAppendStatus_NewFile(t *testing.T) {
 	home := t.TempDir()
 	stateDir := filepath.Join(home, "state")
 	os.MkdirAll(stateDir, 0755)
 
-	appended, err := durableAppendStatus(home, "task-1", "done: first")
+	appended, err := mhome.AppendStatusOnce(home, "task-1", "done: first")
 	if err != nil {
-		t.Fatalf("durableAppendStatus: %v", err)
+		t.Fatalf("AppendStatusOnce: %v", err)
 	}
 	if !appended {
 		t.Fatal("expected appended=true")
@@ -295,18 +295,18 @@ func TestDurableAppendStatus_Deduplicate(t *testing.T) {
 	}
 
 	// Appending an existing line should be a no-op.
-	appended, err := durableAppendStatus(home, "task-1", "done: existing")
+	appended, err := mhome.AppendStatusOnce(home, "task-1", "done: existing")
 	if err != nil {
-		t.Fatalf("durableAppendStatus: %v", err)
+		t.Fatalf("AppendStatusOnce: %v", err)
 	}
 	if appended {
 		t.Fatal("expected appended=false for duplicate")
 	}
 
 	// Appending a new line should work.
-	appended, err = durableAppendStatus(home, "task-1", "done: new")
+	appended, err = mhome.AppendStatusOnce(home, "task-1", "done: new")
 	if err != nil {
-		t.Fatalf("durableAppendStatus: %v", err)
+		t.Fatalf("AppendStatusOnce: %v", err)
 	}
 	if !appended {
 		t.Fatal("expected appended=true for new line")
@@ -711,9 +711,9 @@ func TestRetireMergedPoll_CrashAfterPublicationBeforePollRemoval(t *testing.T) {
 	}
 
 	// Append publication manually (simulating crash after publish, before poll removal).
-	appended, err := durableAppendStatus(home, taskID, rec.PublicationLine)
+	appended, err := mhome.AppendStatusOnce(home, taskID, rec.PublicationLine)
 	if err != nil {
-		t.Fatalf("durableAppendStatus: %v", err)
+		t.Fatalf("AppendStatusOnce: %v", err)
 	}
 	if !appended {
 		t.Fatal("expected append")
@@ -770,7 +770,7 @@ func TestRetireMergedPoll_CrashAfterPollRemovalBeforeRecordRemoval(t *testing.T)
 	if err := WriteRetirementRecord(home, rec); err != nil {
 		t.Fatalf("WriteRetirementRecord: %v", err)
 	}
-	durableAppendStatus(home, taskID, rec.PublicationLine)
+	mhome.AppendStatusOnce(home, taskID, rec.PublicationLine)
 	quarantinePath := filepath.Join(retirementDirPath(home), rec.QuarantinePath)
 	if err := os.MkdirAll(filepath.Dir(quarantinePath), 0755); err != nil {
 		t.Fatal(err)
@@ -1019,7 +1019,7 @@ func TestRecoverPendingRetirement_QuarantinePreservesReplacement(t *testing.T) {
 	if err := WriteRetirementRecord(home, rec); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := durableAppendStatus(home, taskID, rec.PublicationLine); err != nil {
+	if _, err := mhome.AppendStatusOnce(home, taskID, rec.PublicationLine); err != nil {
 		t.Fatal(err)
 	}
 	quarantinePath, err := quarantinePollPath(home, taskID)
@@ -1077,7 +1077,7 @@ func TestRecoverPendingRetirement_QuarantineRenameFailurePreservesRecord(t *test
 	if err := WriteRetirementRecord(home, rec); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := durableAppendStatus(home, taskID, rec.PublicationLine); err != nil {
+	if _, err := mhome.AppendStatusOnce(home, taskID, rec.PublicationLine); err != nil {
 		t.Fatal(err)
 	}
 	resolved, err := recoverPendingRetirement(home, taskID, retirementPollAuth(t, home, taskID), pollContentDigest, func(string, string) error {
@@ -1116,7 +1116,7 @@ func TestRecoverPendingRetirement_DoesNotTouchReplacementAfterQuarantine(t *test
 	if err := WriteRetirementRecord(home, rec); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := durableAppendStatus(home, taskID, rec.PublicationLine); err != nil {
+	if _, err := mhome.AppendStatusOnce(home, taskID, rec.PublicationLine); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1143,7 +1143,7 @@ func TestRecoverPendingRetirement_IgnoresStaleQuarantine(t *testing.T) {
 	if err := WriteRetirementRecord(home, rec); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := durableAppendStatus(home, taskID, rec.PublicationLine); err != nil {
+	if _, err := mhome.AppendStatusOnce(home, taskID, rec.PublicationLine); err != nil {
 		t.Fatal(err)
 	}
 	digest := sha256.Sum256([]byte(taskID))
@@ -1196,7 +1196,7 @@ func TestRecoverPendingRetirement_PublicationExists(t *testing.T) {
 	if err := WriteRetirementRecord(home, rec); err != nil {
 		t.Fatalf("WriteRetirementRecord: %v", err)
 	}
-	durableAppendStatus(home, taskID, pubLine)
+	mhome.AppendStatusOnce(home, taskID, pubLine)
 	if err := os.Chmod(checkPath, 0644); err != nil {
 		t.Fatalf("chmod check: %v", err)
 	}

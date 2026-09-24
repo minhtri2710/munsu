@@ -67,8 +67,8 @@ func TestLockExclusivity(t *testing.T) {
 	if acq2 {
 		t.Fatal("second AcquireSession succeeded; expected refusal while held")
 	}
-	if !IsSessionLocked(home) {
-		t.Fatal("IsSessionLocked false while held")
+	if held, err := IsSessionLocked(home); err != nil || !held {
+		t.Fatalf("IsSessionLocked = %v, %v while held", held, err)
 	}
 }
 

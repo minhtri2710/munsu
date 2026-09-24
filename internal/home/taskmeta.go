@@ -321,38 +321,56 @@ func ReadMetaFile(path string) (map[string]string, error) {
 
 // AppendStatus appends a status line to $MUNSU_HOME/state/<durable-stem>.status.
 func AppendStatus(homeDir string, id, line string) error {
+	_, err := appendStatus(homeDir, id, line, false)
+	return err
+}
+
+// AppendStatusOnce appends line unless the status file already holds it, and
+// reports whether it appended. The duplicate check and the append run under
+// the same meta lock, so two concurrent callers publish the line once.
+func AppendStatusOnce(homeDir string, id, line string) (bool, error) {
+	return appendStatus(homeDir, id, line, true)
+}
+
+func appendStatus(homeDir string, id, line string, once bool) (bool, error) {
 	_, unlock, err := acquireMetaLock(homeDir, id)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer unlock()
 
+	if once {
+		has, err := StatusHasLine(homeDir, id, line)
+		if err != nil || has {
+			return false, err
+		}
+	}
 	p, err := StatusFilePath(homeDir, id)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if err := validateStatePath(homeDir, p, true); err != nil {
-		return err
+		return false, err
 	}
 	if err := ensurePrivateStateDir(filepath.Dir(p)); err != nil {
-		return fmt.Errorf("creating state directory: %w", err)
+		return false, fmt.Errorf("creating state directory: %w", err)
 	}
 	f, err := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
-		return fmt.Errorf("opening status file: %w", err)
+		return false, fmt.Errorf("opening status file: %w", err)
 	}
 	if err := secureFile(p); err != nil {
 		f.Close()
-		return fmt.Errorf("securing status file: %w", err)
+		return false, fmt.Errorf("securing status file: %w", err)
 	}
 	defer f.Close()
 	if _, err := f.WriteString(line + "\n"); err != nil {
-		return fmt.Errorf("writing status line: %w", err)
+		return false, fmt.Errorf("writing status line: %w", err)
 	}
 	if err := f.Sync(); err != nil {
-		return fmt.Errorf("syncing status file: %w", err)
+		return false, fmt.Errorf("syncing status file: %w", err)
 	}
-	return nil
+	return true, nil
 }
 
 // ReadStatus reads all status lines from $MUNSU_HOME/state/<durable-stem>.status.
@@ -379,6 +397,21 @@ func ReadStatus(homeDir string, id string) ([]string, error) {
 		lines = append(lines, scanner.Text())
 	}
 	return lines, scanner.Err()
+}
+
+// StatusHasLine reports whether the task's status holds line. A status that
+// cannot be read is an error, never "absent".
+func StatusHasLine(homeDir, id, line string) (bool, error) {
+	lines, err := ReadStatus(homeDir, id)
+	if err != nil {
+		return false, err
+	}
+	for _, existing := range lines {
+		if existing == line {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // ValidStatusStates lists the recognized status states.
@@ -553,7 +586,7 @@ func acquireMetaLock(homeDir, id string) (*os.File, func(), error) {
 		f.Close()
 		return nil, nil, fmt.Errorf("securing lock file: %w", err)
 	}
-	if err := lockExclusive(f); err != nil {
+	if err := lockFile(f, false); err != nil {
 		f.Close()
 		return nil, nil, fmt.Errorf("acquiring flock: %w", err)
 	}

@@ -11,10 +11,9 @@ import (
 //
 // The probe is a signal-0 kill rather than a shell-out to `kill`, because
 // exec.Command depends on PATH and `kill` being unreachable failed exactly the
-// way "no such process" does. The AFK identity lock is reclaimed
-// (afk_lock.go), and the exit waits conclude the process is gone
+// way "no such process" does. The exit waits conclude the process is gone
 // (afk_return.go, supervision_watcher.go). Under a narrowed PATH that
-// collapse could incorrectly reclaim a live process (#580).
+// collapse could incorrectly treat a live process as exited (#580).
 //
 // False therefore means one thing: the kernel reported ESRCH, no such process.
 // EPERM -- the PID exists and is not ours to signal -- is alive, and so is any
