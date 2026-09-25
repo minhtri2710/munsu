@@ -1033,6 +1033,28 @@ func TestSafetyCheckReadsLongCommandInLinearTime(t *testing.T) {
 	if small, large := targetsCost(1000), targetsCost(16000); large > 64*small {
 		t.Errorf("shellWriteTargets of rm with 16000 words took %v, %.0f times 1000 words (%v), want under 64", large, float64(large)/float64(small), small)
 	}
+	// The git guard reads each distinct word that reads as more than itself
+	// once: sixteen times the quoted words cost about fourteen times as much,
+	// where a list scan per word cost about 75.
+	echoCost := func(n int) time.Duration {
+		var command strings.Builder
+		command.WriteString("echo")
+		for i := range n {
+			fmt.Fprintf(&command, " 'a %d'", i)
+		}
+		best := time.Duration(math.MaxInt64)
+		for range 3 {
+			start := time.Now()
+			if block, reason := runPiSafetyForGit(t, worktree, command.String()); block {
+				t.Errorf("echo of %d quoted words: block=true reason=%q, want allow", n, reason)
+			}
+			best = min(best, time.Since(start))
+		}
+		return best
+	}
+	if small, large := echoCost(4000), echoCost(64000); large > 32*small {
+		t.Errorf("echo of 64000 quoted words took %v, %.0f times 4000 words (%v), want under 32", large, float64(large)/float64(small), small)
+	}
 }
 
 // measureAllocation returns the bytes run allocates and how long it takes.
@@ -1106,6 +1128,7 @@ func TestSafetyCheckReadsFunctionSubstitutionExpansionsAndCandidates(t *testing.
 		{"cd " + docs + " && echo ${x:-a > f}", allow},
 		{"cd " + docs + " && echo ${x#a > f}", allow},
 		{"cd " + docs + " && echo ${x#a; touch f #}", allow},
+		{"cd " + docs + " && ${x:-echo hi > f}", allow},
 		// An unquoted word made only of expansions may be removed.
 		{`${a:-git} ${b:+x} push --force`, refuse},
 		{`git ${b:+x} push --force`, refuse},

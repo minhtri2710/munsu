@@ -1423,6 +1423,7 @@ func TestShellWriteTargetsReadParameterExpansionWords(t *testing.T) {
 		{`echo ${x:-a > f}`, nil},
 		{`echo ${x#a > f}`, nil},
 		{`echo ${x#a; touch f #}`, nil},
+		{`cd docs && ${x:-echo hi > f}`, nil},
 		// Every combination of candidates is read.
 		{`${a:-rm} ${b:-c}`, []string{"c"}},
 		{`cp ${a:--t} ${b:-d} e`, []string{"e", "d"}},

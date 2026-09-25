@@ -111,12 +111,12 @@ func evaluateGitScriptSafety(homeDir, taskID, checkPath, command string, depth i
 		// verb classifier reads every candidate at each position: the
 		// tokenizer cannot tell whether bash starts ANSI-C quoting at a `$'`,
 		// or which word a parameter expansion substitutes.
-		var reread []string
+		reread := make(map[string]bool)
 		for _, token := range candidateTokens(segment) {
-			if slices.Contains(reread, token.text) || !readsAsMoreThanItself(mode, token) {
+			if reread[token.text] || !readsAsMoreThanItself(mode, token) {
 				continue
 			}
-			reread = append(reread, token.text)
+			reread[token.text] = true
 			if blocked, reason := evaluateGitPayloadSafety(homeDir, taskID, currentPath, token.text, depth, ifs); blocked {
 				return true, reason
 			}
