@@ -23,6 +23,18 @@ type shellToken struct {
 	// or closes a subshell, and is a segment of its own.
 	subshell   bool
 	expandable bool // contains `$` or a backtick: the shell decides the value
+	// plain is a word with no quoting, escape or expansion, which bash may
+	// read as a reserved word or a function name.
+	plain bool
+	// detached, on a segment's first token, is a segment bash runs in a
+	// child: a pipeline's part or a command sent to the background.
+	detached bool
+	// body is a synthetic subshell operator around a function's or a
+	// coproc's body of a compound command other than a subshell.
+	body bool
+	// unfinished is the one token of a segment standing for a case the
+	// command line opens and never ends with `esac`, from `case` on.
+	unfinished bool
 	// undecodable is a `$'...'` word holding an escape the tokenizer does not
 	// decode, or one left unterminated, whose text is the raw word without
 	// `$`; or a word holding an unterminated `${`.
@@ -157,8 +169,9 @@ const (
 func shellWriteTargetsUnderDetailed(mode backslashMode, checkPath, command string) []shellTargetResult {
 	volume := filepath.VolumeName(checkPath)
 	walk := &shellWriteWalk{
-		mode:     mode,
-		payloads: new(int),
+		mode:      mode,
+		payloads:  new(int),
+		functions: map[string]bool{},
 		cwd: shellCwd{
 			path:              checkPath,
 			activeVolume:      volume,
@@ -178,6 +191,11 @@ type shellWriteWalk struct {
 	cwd      shellCwd
 	payloads *int
 	targets  []shellTargetResult
+	// moves counts the directory moves this walk read, and functions records
+	// each function the command defined so far, true when its body
+	// moves the directory: a foreground call leaves it where the body left it.
+	moves     int
+	functions map[string]bool
 }
 
 // shellCwd is the directory a command line runs in. activeVolume is the drive
@@ -188,7 +206,9 @@ type shellWriteWalk struct {
 // C-volume and absolute targets resolve against known state and must not be
 // refused for it (ADR-0014 §1, #664). lost is a directory a payload or a
 // wrapper moved to that this reading cannot know: every relative target is
-// ambiguous until an absolute `cd`.
+// ambiguous until an absolute `cd`. previous is the directory `cd -` returns
+// to, nil when this reading did not see the shell leave one; stack is the
+// directory stack pushd built, which a stack this does not follow empties.
 type shellCwd struct {
 	path              string
 	activeVolume      string
@@ -196,6 +216,8 @@ type shellCwd struct {
 	unknownCwd        string
 	byVolume          map[string]string
 	lost              bool
+	previous          *shellCwd
+	stack             []shellCwd
 }
 
 func (c shellCwd) clone() shellCwd {
@@ -206,6 +228,49 @@ func (c shellCwd) clone() shellCwd {
 func (c shellCwd) same(other shellCwd) bool {
 	return c.path == other.path && c.activeVolume == other.activeVolume && c.activeVolumeKnown == other.activeVolumeKnown &&
 		c.unknownCwd == other.unknownCwd && c.lost == other.lost
+}
+
+// move applies what a segment's cd, pushd or popd does (segmentDirMove). A
+// directory it cannot follow, `cd -` with no previous directory and popd with
+// an empty stack among them, leaves c lost.
+func (c *shellCwd) move(move dirMove, operand shellToken) {
+	old := c.clone()
+	old.previous, old.stack = nil, nil
+	restore := func(to shellCwd) {
+		stack := c.stack
+		*c = to.clone()
+		c.stack = stack
+	}
+	switch move {
+	case moveCd:
+		c.cd(operand)
+	case movePush:
+		c.stack = append(slices.Clone(c.stack), old)
+		c.cd(operand)
+	case movePrevious:
+		if c.previous == nil {
+			c.lost = true
+		} else {
+			restore(*c.previous)
+		}
+	case movePop:
+		if n := len(c.stack); n == 0 {
+			c.lost = true
+		} else {
+			top := c.stack[n-1]
+			c.stack = c.stack[:n-1]
+			restore(top)
+		}
+	case moveStack:
+		c.stack = nil
+		return
+	case moveUnknown:
+		c.lost, c.stack = true, nil
+	case moveCalled:
+		c.lost, c.stack, c.previous = true, nil, nil
+		return
+	}
+	c.previous = &old
 }
 
 // cd moves c to operand.
@@ -292,21 +357,52 @@ func (w *shellWriteWalk) walk(command string, depth int, within string) {
 	stripped, feeds := splitHeredocBodies(command)
 	segments := tokenizeSegments(w.mode, stripped)
 	fed := segmentFeeds([]rune(stripped), segments, feeds)
-	// subshells are the directories to return to at each open subshell's `)`.
-	var subshells []shellCwd
+	// subshells are the directories to return to at each open subshell's
+	// `)`, with the function whose body it scopes and the moves before it.
+	type subshell struct {
+		cwd      shellCwd
+		function string
+		moves    int
+	}
+	var subshells []subshell
 	for i, segment := range segments {
+		if segment[0].unfinished {
+			w.targets = append(w.targets, shellTargetResult{span: shellTargetSpan{start: segment[0].start, end: segment[0].end, within: within}, ambiguous: true})
+			continue
+		}
+		if i > 0 && definesFunction(segments[i-1]) && !segment[0].body {
+			// An unscoped body, `( )` or `[[ ]]`, runs in a subshell of its
+			// own or runs no command: a call leaves the directory.
+			w.functions[functionName(segments[i-1])] = false
+		}
 		if segment[0].subshell {
 			if segment[0].text == "(" {
-				subshells = append(subshells, w.cwd.clone())
+				opened := subshell{cwd: w.cwd.clone(), moves: w.moves}
+				if segment[0].body && i > 0 && definesFunction(segments[i-1]) {
+					opened.function = functionName(segments[i-1])
+				}
+				subshells = append(subshells, opened)
 			} else if n := len(subshells); n > 0 {
-				w.cwd, subshells = subshells[n-1], subshells[:n-1]
+				closed := subshells[n-1]
+				w.cwd, subshells = closed.cwd, subshells[:n-1]
+				if closed.function != "" {
+					w.functions[closed.function] = w.moves != closed.moves
+				}
 			}
 			continue
 		}
-		if args := builtinCommand(segment); len(args) > 0 && strings.EqualFold(args[0].text, "cd") {
-			if operand, ok := cdOperand(args); ok {
-				w.cwd.cd(operand)
+		move, operand := segmentDirMove(segment)
+		if move == moveNone && !segment[0].detached && w.functions[functionCall(segment)] {
+			move = moveCalled
+		}
+		if move != moveNone {
+			// bash opens the segment's redirections before it moves.
+			_, redirects := withoutRedirections(segment)
+			for _, target := range redirects {
+				w.target(w.cwd, target, within)
 			}
+			w.cwd.move(move, operand)
+			w.moves++
 			continue
 		}
 		// Every reading of a segment that can write names targets: a
@@ -396,11 +492,21 @@ func (w *shellWriteWalk) read(payloads []shellPayload, span shellTargetSpan, dep
 			w.targets = append(w.targets, shellTargetResult{span: span, ambiguous: true})
 			continue
 		}
-		child := &shellWriteWalk{mode: w.mode, cwd: cwd, payloads: w.payloads}
+		if !payload.inline {
+			// A shell starts with no directory stack and no previous
+			// directory this followed.
+			cwd.previous, cwd.stack = nil, nil
+		}
+		// A shell's functions are its own; eval defines them in this one.
+		child := &shellWriteWalk{mode: w.mode, cwd: cwd, payloads: w.payloads, functions: map[string]bool{}}
+		if payload.inline {
+			child.functions = w.functions
+		}
 		child.walk(payload.text, depth+1, within)
 		w.targets = append(w.targets, child.targets...)
-		if payload.inline && !child.cwd.same(w.cwd) {
+		if payload.inline && (child.moves > 0 || !child.cwd.same(w.cwd)) {
 			w.cwd.lost = true
+			w.moves++
 		}
 	}
 }
@@ -545,8 +651,8 @@ type shellCommand struct {
 }
 
 // reservedWords are the words bash reads before a command word, besides
-// assignments and `time`.
-var reservedWords = []string{"!", "{", "if", "then", "else", "elif", "while", "until", "do"}
+// assignments and `time`. A coproc runs its command in a child.
+var reservedWords = []string{"!", "{", "if", "then", "else", "elif", "while", "until", "do", "coproc"}
 
 // wrapperGrammar is how a wrapper reads its options: the short options
 // (letters) and long options that take a value, those of them that name the
@@ -662,15 +768,18 @@ func commandPosition(args []shellToken) shellCommand {
 	return command
 }
 
-// builtinCommand returns segment from the word bash runs as a command in this
-// shell on: past assignments, reserved words, `time -p`, and the `builtin`
-// and `command` prefixes, which still run a builtin such as cd here. It
-// returns nil when a redirect comes first or `command -v` or `-V` runs
-// nothing. Both guards read a segment's cd through it.
+// builtinCommand returns the words of segment, its redirections dropped, from
+// the word bash runs as a command in this shell on: past assignments,
+// reserved words, `time -p`, and the `builtin` and `command` prefixes, which
+// still run a builtin such as cd here. It returns nil when `command -v` or
+// `-V` runs nothing, or a coproc runs the command in a child.
 func builtinCommand(segment []shellToken) []shellToken {
-	for len(segment) > 0 && !segment[0].redirects {
+	segment, _ = withoutRedirections(segment)
+	for len(segment) > 0 {
 		word := segment[0].text
 		switch {
+		case word == "coproc":
+			return nil
 		case isAssignment(word) || slices.Contains(reservedWords, word) || word == "builtin":
 		case word == "time" || word == "command":
 			for len(segment) > 1 && strings.HasPrefix(segment[1].text, "-") && segment[1].text != "-" {
@@ -831,6 +940,19 @@ func evaluateWriteTargets(targets []string) (bool, string) {
 // whether a word carries shell expansion, and a quoted space or operator inside
 // one word.
 //
+// It reads the compound commands whose grammar decides what a paren or brace
+// is. A case's pattern list ends at `)`, may open with `(`, and returns after
+// `;;`, `;&` or `;;&`: neither pattern paren is a subshell, and `case WORD in`
+// and each pattern list are segments of their own. A case never ended with
+// `esac` leaves a last segment holding one unfinished token. The body of a
+// function definition (`name()`, `name ()`, `function name`, `function
+// name()`) and a coproc's brace group run apart from the commands around
+// them: such a `{ ... }`, or an if, while, until, for, select or case body, is
+// enclosed in a body subshell pair of its own, so both guards read it from the
+// directory the definition stands in and a `cd` in it does not return. A
+// segment a `|` feeds or ends, or a lone `&` ends, is detached; `>&N`, `>&-`
+// and `&>` are redirections, not that `&`.
+//
 // Heredoc stripping is the caller's job and is done once, with POSIX delimiter
 // rules, before either backslash reading tokenizes: a heredoc body is content,
 // not a command line, and the same "one payload, one channel" rule BEO-62
@@ -871,9 +993,22 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 	// wordParens counts the `(` read inside words and not yet closed; it
 	// spans words and segments, as a `$(...)` does.
 	wordParens := 0
+	// literal records a character the word took literally.
+	literal := false
+	// constructs are the compound commands open at the current rune,
+	// innermost last. headPending is a function definition's head just
+	// ended by a newline, whose body may follow.
+	var constructs []shellConstruct
+	headPending := false
+	// detach marks the segment being ended as detached, and piped the one
+	// after it, which a pipe feeds.
+	detach, piped := false, false
+	var readWord func(token shellToken)
 	flushWord := func() {
+		var token shellToken
+		appended := false
 		if word.Len() > 0 || quoted {
-			token := shellToken{text: word.String(), expandable: expandable, undecodable: undecodable, splitsAtIFS: splitsAtIFS, start: rawStart, end: rawEnd}
+			token = shellToken{text: word.String(), expandable: expandable, plain: !quoted && !expandable && !literal, undecodable: undecodable, splitsAtIFS: splitsAtIFS, start: rawStart, end: rawEnd}
 			var readings [][]shellToken
 			if substituted {
 				readings = append(readings, sub.finish(false), subRaw.finish(true))
@@ -899,18 +1034,90 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 				token.alternates = append(token.alternates, []shellToken{})
 			}
 			segment = append(segment, token)
+			appended = true
 		}
 		word.Reset()
 		raw.Reset()
 		sub, subRaw = substitutedReading{}, substitutedReading{}
 		vanish = vanishReading{}
-		wordStart, rawStart, rawEnd, expandable, undecodable, splitsAtIFS, quoted, substituted, afterDollar = -1, -1, -1, false, false, false, false, false, false
+		wordStart, rawStart, rawEnd, expandable, undecodable, splitsAtIFS, quoted, substituted, afterDollar, literal = -1, -1, -1, false, false, false, false, false, false, false
+		if appended {
+			readWord(token)
+		}
 	}
 	flushSegment := func() {
 		flushWord()
 		if len(segment) > 0 {
+			segment[0].detached = detach || piped
+			piped = false
+			headPending = definesFunction(segment)
 			segments = append(segments, segment)
 			segment = nil
+		}
+		detach = false
+	}
+	// scope ends the segment before token, the last word of segment, with a
+	// subshell operator of its own.
+	scope := func(token shellToken, operator string) {
+		segment = segment[:len(segment)-1]
+		flushSegment()
+		segments = append(segments, []shellToken{{text: operator, subshell: true, body: true, start: token.start, end: token.start}})
+		segment = []shellToken{token}
+	}
+	// closeConstruct ends the innermost construct at token, its last word.
+	closeConstruct := func(token shellToken) {
+		top := len(constructs) - 1
+		if constructs[top].scoped {
+			scope(token, ")")
+		}
+		constructs = constructs[:top]
+	}
+	readWord = func(token shellToken) {
+		prefix := segment[:len(segment)-1]
+		top := len(constructs) - 1
+		if top >= 0 && constructs[top].kind == constructCase {
+			switch c := &constructs[top]; c.phase {
+			case caseWord:
+				c.phase = caseIn
+				return
+			case caseIn:
+				if token.plain && token.text == "in" {
+					c.phase = casePattern
+					flushSegment()
+				} else {
+					constructs = constructs[:top]
+				}
+				return
+			case casePattern:
+				if token.plain && token.text == "esac" && len(prefix) == 0 {
+					closeConstruct(token)
+				}
+				return
+			}
+		}
+		if !token.plain {
+			return
+		}
+		command := atCommandWord(prefix)
+		kind, compound := compoundOpeners[token.text]
+		switch {
+		case compound && (command || opensScope(prefix, headPending)):
+			// A compound command a function or a coproc runs as its body is
+			// scoped as a brace body is.
+			scoped := opensScope(prefix, headPending)
+			constructs = append(constructs, shellConstruct{kind: kind, scoped: scoped, start: token.start})
+			if scoped {
+				scope(token, "(")
+			}
+		case command && top >= 0 && compoundClosers[constructs[top].kind] == token.text:
+			closeConstruct(token)
+		case token.text == "{" && opensScope(prefix, headPending):
+			constructs = append(constructs, shellConstruct{kind: constructBrace, scoped: true})
+			scope(token, "(")
+		case command && token.text == "{":
+			constructs = append(constructs, shellConstruct{kind: constructBrace})
+		case command && token.text == "}" && top >= 0 && constructs[top].kind == constructBrace:
+			closeConstruct(token)
 		}
 	}
 	touch := func(i int) {
@@ -923,21 +1130,22 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 		quoted = true
 		sub.open, subRaw.open = true, true
 	}
-	add := func(r rune, i int, literal bool) {
+	add := func(r rune, i int, isLiteral bool) {
 		if wordStart < 0 {
 			wordStart = i
 		}
+		literal = literal || isLiteral
 		// A `$` or backtick names a shell expansion only when the shell would
 		// actually perform one here. Inside single quotes, and behind a POSIX
 		// backslash escape (outside quotes or inside double quotes), the
 		// character is literal: the path it sits in is one this guard can classify,
 		// and calling it expandable would drop a genuine protected-path target
 		// (#664).
-		expands := !literal && (r == '$' || r == '`')
+		expands := !isLiteral && (r == '$' || r == '`')
 		expandable = expandable || expands
 		afterDollar = expands && r == '$'
 		if len(groups) == 0 {
-			vanish.add(r, literal, quote == '"')
+			vanish.add(r, isLiteral, quote == '"')
 		}
 		word.WriteRune(r)
 		raw.WriteRune(r)
@@ -1143,9 +1351,47 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 			if word.Len() == 0 && !quoted && len(segment) > 0 && segment[len(segment)-1].redirects {
 				continue
 			}
+			pipe := (i == 0 || runes[i-1] != '|') && (i+1 == len(runes) || runes[i+1] != '|')
+			detach = pipe
 			flushSegment()
-		case ';', '&', '\n':
+			piped = pipe
+		case '&':
+			if i+1 < len(runes) && runes[i+1] == '>' {
+				// `&>` and `&>>` redirect: the `>` that follows is the operator.
+				continue
+			}
+			if n := len(segment); i > 0 && runes[i-1] == '>' && n > 0 && segment[n-1].redirects {
+				// `>&` duplicates a descriptor: `>&2`, `>&-` and `>&2-` name
+				// no file, so the operator and the fd before it leave the
+				// segment; `>&word` writes word, which stays its target.
+				j := i + 1
+				for j < len(runes) && '0' <= runes[j] && runes[j] <= '9' {
+					j++
+				}
+				if j < len(runes) && runes[j] == '-' {
+					j++
+				}
+				if j > i+1 && (j == len(runes) || strings.ContainsRune(" \t\n;&|()<>", runes[j])) {
+					segment = segment[:n-1]
+					if m := len(segment); m > 0 && segment[m-1].end == i-1 && isRedirectPrefix(segment[m-1].text) {
+						segment = segment[:m-1]
+					}
+					i = j - 1
+				}
+				continue
+			}
+			detach = (i == 0 || !strings.ContainsRune("&<|", runes[i-1])) && (i+1 == len(runes) || runes[i+1] != '&')
 			flushSegment()
+		case ';', '\n':
+			flushSegment()
+			if n := len(constructs); r == ';' && n > 0 && constructs[n-1].kind == constructCase && constructs[n-1].phase == caseBody &&
+				i+1 < len(runes) && (runes[i+1] == ';' || runes[i+1] == '&') {
+				i++
+				if runes[i] == ';' && i+1 < len(runes) && runes[i+1] == '&' {
+					i++
+				}
+				constructs[n-1].phase = casePattern
+			}
 		case ' ', '\t':
 			flushWord()
 		case '>':
@@ -1164,7 +1410,40 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 				add(r, i, false)
 				continue
 			}
+			flushWord()
+			if r == '(' && len(segment) > 0 {
+				// `name ()` is a function definition's head, read as `name()`.
+				j := i + 1
+				for j < len(runes) && (runes[j] == ' ' || runes[j] == '\t') {
+					j++
+				}
+				head := slices.Clone(segment)
+				head[len(head)-1].text += "()"
+				if j < len(runes) && runes[j] == ')' && definesFunction(head) {
+					segment = head
+					i = j
+					continue
+				}
+			}
 			flushSegment()
+			n := len(constructs)
+			if r == '(' {
+				if n > 0 && constructs[n-1].kind == constructCase && constructs[n-1].phase == casePattern {
+					continue
+				}
+				constructs = append(constructs, shellConstruct{kind: constructSubshell})
+			} else if n > 0 && constructs[n-1].kind == constructCase {
+				if constructs[n-1].phase == casePattern {
+					constructs[n-1].phase = caseBody
+					continue
+				}
+				if constructs[n-1].phase != caseBody {
+					constructs, n = constructs[:n-1], n-1
+				}
+			}
+			if r == ')' && n > 0 && constructs[n-1].kind == constructSubshell {
+				constructs = constructs[:n-1]
+			}
 			segments = append(segments, []shellToken{{text: string(r), subshell: true, start: i, end: i + 1}})
 		default:
 			touch(i)
@@ -1172,7 +1451,85 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 		}
 	}
 	flushSegment()
+	for _, c := range constructs {
+		if c.kind == constructCase && c.phase >= casePattern {
+			segments = append(segments, []shellToken{{unfinished: true, start: c.start, end: len(runes)}})
+			break
+		}
+	}
 	return segments
+}
+
+// shellConstruct is a compound command open while tokenizing: a subshell, a
+// brace group, an if, a loop or a case in one of its phases, which started at
+// rune start; scoped when a function or a coproc runs it apart.
+type shellConstruct struct {
+	kind   int
+	phase  int
+	scoped bool
+	start  int
+}
+
+const (
+	constructSubshell = iota
+	constructBrace
+	constructCase
+	constructIf
+	constructLoop
+)
+
+// compoundOpeners are the reserved words that open a compound command ended
+// by a reserved word, and compoundClosers the word that ends each. `[[` holds
+// no command, so no body of it moves the directory.
+var (
+	compoundOpeners = map[string]int{"case": constructCase, "if": constructIf, "while": constructLoop, "until": constructLoop, "for": constructLoop, "select": constructLoop}
+	compoundClosers = map[int]string{constructCase: "esac", constructIf: "fi", constructLoop: "done"}
+)
+
+// The phases of a case: its word, `in`, a pattern list, and a body.
+const (
+	caseWord = iota
+	caseIn
+	casePattern
+	caseBody
+)
+
+// atCommandWord reports whether a word after prefix, the words of its segment
+// before it, stands where bash reads a reserved word.
+func atCommandWord(prefix []shellToken) bool {
+	for k, token := range prefix {
+		if !token.plain || !slices.Contains(reservedWords, token.text) && token.text != "time" && (token.text != "-p" || k == 0 || prefix[k-1].text != "time") {
+			return false
+		}
+	}
+	return true
+}
+
+// definesFunction reports whether segment is a function definition's head:
+// `name()`, `function name` or `function name()`.
+func definesFunction(segment []shellToken) bool {
+	switch len(segment) {
+	case 1:
+		name, ok := strings.CutSuffix(segment[0].text, "()")
+		return ok && name != "" && !strings.ContainsAny(name, "=()") && segment[0].plain
+	case 2:
+		return segment[0].plain && segment[0].text == "function" && segment[1].plain
+	}
+	return false
+}
+
+// opensScope reports whether a `{` after prefix opens a body bash runs apart
+// from the commands around it: a function's, prefix being its head or empty
+// after a head a newline ended (headPending), or a coproc's.
+func opensScope(prefix []shellToken, headPending bool) bool {
+	n := len(prefix)
+	switch {
+	case n == 0:
+		return headPending
+	case definesFunction(prefix):
+		return true
+	}
+	return prefix[n-1].plain && prefix[n-1].text == "coproc" || n >= 2 && prefix[n-2].plain && prefix[n-2].text == "coproc"
 }
 
 // vanishReading follows a word as the tokenizer decodes it, outside any
@@ -1697,8 +2054,16 @@ func splitHeredocBodies(command string) (string, []stdinFeed) {
 			out = append(out, r)
 		case '<':
 			// Every `<` form reads: `<` a file, `<<<` a string, `<<` a body.
-			// None of them names a write target, so the operator and the word
-			// it consumes both leave the command line here.
+			// None of them names a write target, so the operator, the fd
+			// number or `{name}` written before it and the word it consumes
+			// all leave the command line here.
+			prefix := len(out)
+			for prefix > 0 && !strings.ContainsRune(" \t\n;&|()", out[prefix-1]) {
+				prefix--
+			}
+			if isRedirectPrefix(string(out[prefix:])) {
+				out = out[:prefix]
+			}
 			run := i
 			for run < len(runes) && runes[run] == '<' {
 				run++
@@ -1890,25 +2255,125 @@ func skipHeredocBodies(runes []rune, start int, pending []heredocSpec) (int, []s
 	return i, bodies
 }
 
-func cdOperand(segment []shellToken) (shellToken, bool) {
-	if len(segment) < 2 || segment[1].redirects {
-		return shellToken{}, false
-	}
-	index := 1
-	if strings.EqualFold(segment[index].text, "/d") {
-		index++
-	}
-	if index >= len(segment) || segment[index].redirects {
-		return shellToken{}, false
-	}
-	return segment[index], true
+// dirMove is what a segment does to the directory the shell stands in.
+type dirMove int
+
+const (
+	moveNone dirMove = iota
+	// moveCd is a cd to its operand.
+	moveCd
+	// movePrevious is `cd -`: back to the directory the shell last left.
+	movePrevious
+	// movePush is `pushd DIR`: DIR, pushing the directory it leaves.
+	movePush
+	// movePop is popd: the directory on top of the stack, which it removes.
+	movePop
+	// moveStack is `pushd -n DIR`: the stack changes and the shell stays.
+	moveStack
+	// moveUnknown is a move this does not follow: cd with no directory or a
+	// `~` one, pushd with none, and either with `+N`, `-N` or popd's `-n`.
+	moveUnknown
+	// moveCalled is a foreground call to a function whose body moves
+	// the directory: where it leaves the shell is not followed.
+	moveCalled
+)
+
+// functionName is the name a definition head (definesFunction) defines.
+func functionName(head []shellToken) string {
+	return strings.TrimSuffix(head[len(head)-1].text, "()")
 }
 
-// segmentWriteTargets splits one segment into its redirection targets and
-// the command its words run.
-func segmentWriteTargets(segment []shellToken) ([]shellToken, shellCommand) {
-	var targets []shellToken
-	var args []shellToken
+// functionCall is the plain word segment runs as its command, past reserved
+// words, time and assignments, which may name a function; "" if none. After an
+// assignment bash reads no reserved word. builtin and command never call one.
+func functionCall(segment []shellToken) string {
+	args, _ := withoutRedirections(segment)
+	assigned := false
+	for k, token := range args {
+		switch {
+		case !token.plain:
+			return ""
+		case isAssignment(token.text):
+			assigned = true
+		case assigned || !atCommandWord(args[k:k+1]) && (token.text != "-p" || k == 0 || args[k-1].text != "time"):
+			return token.text
+		}
+	}
+	return ""
+}
+
+// segmentDirMove reads the cd, pushd or popd segment runs in this shell
+// (builtinCommand), and the directory it names. cd reads bash's options
+// (`-L`, `-P`, `-e`, `-@`) and `--` before its operand, and cmd's `/d`; a
+// cd with an option bash rejects is not read, and one with no operand or a
+// `~` operand moves where this does not follow. Both
+// guards read a segment's directory change through it.
+func segmentDirMove(segment []shellToken) (dirMove, shellToken) {
+	args := builtinCommand(segment)
+	if len(args) == 0 {
+		return moveNone, shellToken{}
+	}
+	verb, rest := strings.ToLower(args[0].text), args[1:]
+	switch verb {
+	case "cd":
+		for len(rest) > 0 {
+			word := rest[0].text
+			if word == "--" || strings.EqualFold(word, "/d") {
+				rest = rest[1:]
+				break
+			}
+			if len(word) < 2 || word[0] != '-' {
+				break
+			}
+			if strings.Trim(word[1:], "LPe@") != "" {
+				return moveNone, shellToken{}
+			}
+			rest = rest[1:]
+		}
+		switch {
+		case len(rest) == 0 || strings.HasPrefix(rest[0].text, "~"):
+			// cd alone goes to $HOME, and a tilde expands to a home.
+			return moveUnknown, shellToken{}
+		case rest[0].text == "-" && !rest[0].expandable:
+			return movePrevious, shellToken{}
+		}
+		return moveCd, rest[0]
+	case "pushd":
+		stays := false
+		for len(rest) > 0 && len(rest[0].text) > 1 && strings.ContainsRune("-+", rune(rest[0].text[0])) {
+			word := rest[0].text
+			rest = rest[1:]
+			if word == "--" {
+				break
+			}
+			if word != "-n" {
+				return moveUnknown, shellToken{}
+			}
+			stays = true
+		}
+		switch {
+		case len(rest) == 0 || rest[0].text == "-" || strings.HasPrefix(rest[0].text, "~"):
+			return moveUnknown, shellToken{}
+		case stays:
+			return moveStack, shellToken{}
+		}
+		return movePush, rest[0]
+	case "popd":
+		if len(rest) > 0 {
+			return moveUnknown, shellToken{}
+		}
+		return movePop, shellToken{}
+	}
+	return moveNone, shellToken{}
+}
+
+// withoutRedirections splits segment into the words bash passes as argv and
+// the targets of its `>` redirections. A redirection is its operator, the fd
+// number or `{name}` written before it, and the word after it; a `<` form
+// left the command line, prefix and word, in splitHeredocBodies. Every argv
+// reader reads the words it returns.
+func withoutRedirections(segment []shellToken) ([]shellToken, []shellToken) {
+	var args, targets []shellToken
 	for i := 0; i < len(segment); i++ {
 		if !segment[i].redirects {
 			args = append(args, segment[i])
@@ -1916,7 +2381,7 @@ func segmentWriteTargets(segment []shellToken) ([]shellToken, shellCommand) {
 		}
 		// `2> err` tokenizes as "2", ">", "err": the fd number belongs to the
 		// redirection, not to the verb.
-		if n := len(args); n > 0 && isDigits(args[n-1].text) {
+		if n := len(args); n > 0 && isRedirectPrefix(args[n-1].text) {
 			args = args[:n-1]
 		}
 		for i+1 < len(segment) && segment[i+1].redirects {
@@ -1927,6 +2392,23 @@ func segmentWriteTargets(segment []shellToken) ([]shellToken, shellCommand) {
 			i++
 		}
 	}
+	return args, targets
+}
+
+// isRedirectPrefix reports whether word is an fd number or a `{name}` a
+// redirection names its descriptor with.
+func isRedirectPrefix(word string) bool {
+	if name, ok := strings.CutPrefix(word, "{"); ok {
+		name, ok = strings.CutSuffix(name, "}")
+		return ok && isAssignment(name+"=")
+	}
+	return isDigits(word)
+}
+
+// segmentWriteTargets splits one segment into its redirection targets and
+// the command its words run.
+func segmentWriteTargets(segment []shellToken) ([]shellToken, shellCommand) {
+	args, targets := withoutRedirections(segment)
 	return targets, commandPosition(args)
 }
 

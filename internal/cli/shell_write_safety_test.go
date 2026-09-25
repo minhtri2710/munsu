@@ -1749,3 +1749,216 @@ func TestShellWriteReadsSubshellsAndBuiltinCd(t *testing.T) {
 		}
 	}
 }
+
+// TestShellWriteReadsCaseGrammar pins F1 of review-cdc998a32be1: a case
+// pattern's `)` is not a subshell close, so a `cd` inside a subshell stays in
+// force past a case, and a case the tokenizer cannot finish is ambiguous.
+func TestShellWriteReadsCaseGrammar(t *testing.T) {
+	primary, worktree := boundTaskFixture(t, "ship-shell-case")
+	target := filepath.Join(primary, "docs", "f")
+	for _, command := range []string{
+		"(true; cd " + primary + "; case $x in a) :;; esac; rm docs/f)",
+		"(cd " + primary + "; case $x in (a) :;; esac; rm docs/f)",
+		"(cd " + primary + "; case a in a) :;& b) :;; esac; rm docs/f)",
+		"(cd " + primary + "; case a in a) :;;& b) :;; esac; rm docs/f)",
+		"(cd " + primary + "; case a in a) case b in b) :;; esac;; esac; rm docs/f)",
+		"(cd " + primary + "; case a in a|b) :;;\nesac; rm docs/f)",
+		"cd " + primary + "; (case $x in a) :;; esac; cd " + worktree + "); rm docs/f",
+		"bash -c '(cd " + primary + "; case a in a) :;; esac; rm docs/f)'",
+		"case a in a) rm " + target + ";; esac",
+		"case x in a) :;; x) rm " + target + ";; esac",
+		"case a in a) echo hi",
+		"case a\nin a) echo hi",
+	} {
+		assertShapes(t, true, worktree, command, "")
+	}
+	for _, command := range []string{
+		"case $x in a) echo " + target + ";; esac",
+		"(case $x in a) cd " + primary + ";; esac); rm docs/f",
+		"case sensitivity fix",
+	} {
+		assertShapes(t, false, worktree, command, "")
+	}
+}
+
+// TestShellWriteDropsRedirectionsFromArgv pins F2: every argv reader drops a
+// redirection (its operator, an fd-number or `{name}` prefix and its word)
+// before it reads positions.
+func TestShellWriteDropsRedirectionsFromArgv(t *testing.T) {
+	primary, worktree := boundTaskFixture(t, "ship-shell-redirect-argv")
+	rm := "rm " + filepath.Join(primary, "docs", "f")
+	for _, command := range []string{
+		"bash 0<<EOF\n" + rm + "\nEOF",
+		"bash 0<<<" + shellQuote(rm),
+		"bash 2>/dev/null -c " + shellQuote(rm),
+		"bash -c 2>/dev/null " + shellQuote(rm),
+		"bash {fd}</dev/null -c " + shellQuote(rm),
+		"env 3<x " + rm,
+		"env 3</dev/null " + rm,
+		"{fd}</dev/null " + rm,
+		"{fd}>/dev/null " + rm,
+		"nice 2>/dev/null -n 1 " + rm,
+		"2>/dev/null cd " + primary + "; rm docs/f",
+		">/dev/null cd " + primary + "; rm docs/f",
+		"cd 2>/dev/null " + primary + "; rm docs/f",
+		"builtin 2>/dev/null cd " + primary + " && rm docs/f",
+		"cd " + worktree + " > " + filepath.Join(primary, "docs", "f"),
+		"pushd " + worktree + " > " + filepath.Join(primary, "docs", "f"),
+	} {
+		assertShapes(t, true, worktree, command, "")
+	}
+	assertShapes(t, false, worktree, "cd "+primary+" > docs/f", "")
+}
+
+// TestShellWriteReadsCoproc pins F3: coproc is read before the command word,
+// its compound command runs in a child, and its cd does not return.
+func TestShellWriteReadsCoproc(t *testing.T) {
+	primary, worktree := boundTaskFixture(t, "ship-shell-coproc")
+	target := filepath.Join(primary, "docs", "f")
+	for _, command := range []string{
+		"coproc rm " + target + "; wait",
+		"coproc bash -c " + shellQuote("rm "+target),
+		"coproc N { rm " + target + "; }",
+		"coproc { rm " + target + "; }",
+		"coproc N ( rm " + target + " )",
+		"coproc { cd " + primary + "; rm docs/f; }",
+	} {
+		assertShapes(t, true, worktree, command, "")
+	}
+	for _, command := range []string{
+		"coproc cd " + primary + "; wait; rm docs/f",
+		"coproc { cd " + primary + "; }; rm docs/f",
+		"coproc N { cd " + primary + "; }; rm docs/f",
+	} {
+		assertShapes(t, false, worktree, command, "")
+	}
+}
+
+// TestShellWriteReadsDirectoryStack pins F4 and the cd operand grammar:
+// pushd and popd move the cwd through a tracked stack, `cd -` returns to the
+// tracked previous directory, and a directory this cannot know leaves every
+// relative target ambiguous.
+func TestShellWriteReadsDirectoryStack(t *testing.T) {
+	primary, worktree := boundTaskFixture(t, "ship-shell-dirstack")
+	for _, command := range []string{
+		"pushd " + primary + " && rm docs/f",
+		"pushd " + primary + " >/dev/null && rm docs/f",
+		"pushd -- " + primary + " && rm docs/f",
+		"builtin pushd " + primary + "; rm docs/f",
+		"pushd " + primary + "; pushd " + worktree + "; popd; rm docs/f",
+		"pushd " + primary + "; bash -c 'popd; rm docs/f'",
+		"popd; rm docs/f",
+		"pushd; rm docs/f",
+		"pushd +1; rm docs/f",
+		"pushd -n " + primary + "; popd; rm docs/f",
+		"pushd " + worktree + "; popd +1; rm docs/f",
+		"cd " + primary + "; cd " + worktree + "; cd -; rm docs/f",
+		"cd -; rm docs/f",
+		"cd -- " + primary + " && rm docs/f",
+		"cd -P " + primary + " && rm docs/f",
+		"cd -L -- " + primary + " && rm docs/f",
+		"cd -e " + primary + " && rm docs/f",
+		"builtin cd -- " + primary + " && rm docs/f",
+	} {
+		assertShapes(t, true, worktree, command, "")
+	}
+	for _, command := range []string{
+		"pushd " + primary + "; popd; rm docs/f",
+		"pushd " + primary + "; cd " + worktree + "; popd; rm docs/f",
+		"(pushd " + primary + "); rm docs/f",
+		"pushd -n " + primary + "; rm docs/f",
+		"cd " + primary + "; cd -; rm docs/f",
+		"cd -x " + primary + "; rm docs/f",
+		"popd; rm " + filepath.Join(worktree, "f"),
+	} {
+		assertShapes(t, false, worktree, command, "")
+	}
+
+	dir, other := t.TempDir(), t.TempDir()
+	for _, tc := range []struct {
+		command string
+		want    []string
+	}{
+		{"pushd " + other + " && rm f", []string{filepath.Join(other, "f")}},
+		{"pushd " + other + "; popd; rm f", []string{filepath.Join(dir, "f")}},
+		{"cd -- " + other + " && rm f", []string{filepath.Join(other, "f")}},
+		{"cd " + other + "; cd -; rm f", []string{filepath.Join(dir, "f")}},
+	} {
+		if targets, ambiguous := shellWriteTargets(dir, tc.command); ambiguous || !slices.Equal(targets, tc.want) {
+			t.Errorf("shellWriteTargets(%q) = %q ambiguous=%v, want %q", tc.command, targets, ambiguous, tc.want)
+		}
+	}
+}
+
+// TestShellWriteReadsFunctionBodies pins the function definition forms: every
+// body is read from the cwd at its definition, a cd inside it does not move
+// the command after it, and a definition never called is still refused when
+// its body writes (an accepted over-refusal).
+func TestShellWriteReadsFunctionBodies(t *testing.T) {
+	primary, worktree := boundTaskFixture(t, "ship-shell-function")
+	target := filepath.Join(primary, "docs", "f")
+	for _, command := range []string{
+		"f() { rm " + target + "; }; f",
+		"f () { rm " + target + "; }; f",
+		"function f { rm " + target + "; }; f",
+		"function f() { rm " + target + "; }; f",
+		"function f () { rm " + target + "; }; f",
+		"f()\n{ rm " + target + "; }; f",
+		"f() ( rm " + target + " ); f",
+		"f() { cd " + primary + "; rm docs/f; }; f",
+		"f() { rm " + target + "; }",
+		"f () { rm " + target + "; }",
+		"f() { time { cd " + primary + "; }; rm docs/f; }",
+		"arr=(); { cd " + primary + "; }; rm docs/f",
+		"f() { cd " + primary + "; }; f; rm docs/f",
+		"f() { cd " + primary + "; }; f && rm docs/f",
+		"f() { cd " + primary + "; }; f 2>&1; rm docs/f",
+		"f() { cd " + primary + "; }; time f; rm docs/f",
+		"f() { pushd " + primary + "; }; f; rm docs/f",
+		"f() { (cd " + primary + "); }; f; rm docs/f",
+		"f() { eval 'cd " + primary + "'; }; f; rm docs/f",
+		"eval 'f() { cd " + primary + "; }'; f; rm docs/f",
+		"f() { cd " + primary + "; }; g() { f; }; g; rm docs/f",
+		"f() { cd " + primary + "; }; f; cd -; rm docs/f",
+		"f() if cd " + primary + "; then :; fi; f; rm docs/f",
+		"f() while cd " + primary + "; do break; done; f; rm docs/f",
+		"f() until cd " + primary + "; do :; done; f; rm docs/f",
+		"f() for x in 1; do cd " + primary + "; done; f; rm docs/f",
+		"function f case x in x) cd " + primary + ";; esac; f; rm docs/f",
+		"f()\nif cd " + primary + "; then if :; then :; fi; fi; f; rm docs/f",
+		"HOME=" + primary + " cd && rm docs/f",
+		"cd; rm docs/f",
+		"cd ~; rm docs/f",
+		"cd ~root; rm docs/f",
+		"pushd ~; rm docs/f",
+	} {
+		assertShapes(t, true, worktree, command, "")
+	}
+	for _, command := range []string{
+		"f() { cd " + primary + "; }; rm docs/f",
+		"function f { cd " + primary + "; }; rm docs/f",
+		"f() { { cd " + primary + "; }; }; rm docs/f",
+		"f() ( cd " + primary + " ); f; rm docs/f",
+		"f() { echo " + target + "; }; f",
+		"f() ( cd " + primary + "; ); f; rm docs/f",
+		"f() { cd " + primary + "; }; f & rm docs/f",
+		"f() { cd " + primary + "; }; f | cat; rm docs/f",
+		"f() { cd " + primary + "; }; cat | f; rm docs/f",
+		"f() { cd " + primary + "; }; (f); rm docs/f",
+		"f() { cd " + primary + "; }; f() { :; }; f; rm docs/f",
+		"f() { cd " + primary + "; }; command f; rm docs/f",
+		"f() { cd " + primary + "; }; X=1 time f; rm docs/f",
+		"bash -c 'f() { cd " + primary + "; }'; f; rm docs/f",
+		"f() if cd " + primary + "; then :; fi; rm docs/f",
+		"f() for x in 1; do cd " + primary + "; done; rm docs/f",
+		"function f case x in x) cd " + primary + ";; esac; rm docs/f",
+		"f() while cd " + primary + "; do break; done; rm docs/f",
+		"f() [[ -n x ]]; f; rm docs/f",
+		"f() if :; then :; fi; f; rm docs/f",
+		"if cd " + primary + "; then :; fi; cd " + worktree + "; rm docs/f",
+		"echo x >&2; rm docs/f",
+		"echo x 2>&1 | cat; rm docs/f",
+	} {
+		assertShapes(t, false, worktree, command, "")
+	}
+}

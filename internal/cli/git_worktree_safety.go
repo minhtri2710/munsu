@@ -42,7 +42,7 @@ func evaluateGitMutationSafety(checkPath, command string) (bool, string) {
 	homeDir := strings.TrimSpace(os.Getenv("MUNSU_HOME"))
 	taskID := strings.TrimSpace(os.Getenv("MUNSU_TASK_ID"))
 	mode := gitSafetyBackslashMode()
-	return evaluateGitScriptSafety(homeDir, taskID, checkPath, command, 0, namesIFS(mode, command, 0))
+	return evaluateGitScriptSafety(homeDir, taskID, checkPath, command, 0, namesIFS(mode, command, 0), &gitShell{functions: map[string]bool{}})
 }
 
 // namesIFS reports whether any decoded word of command names IFS, at every
@@ -84,7 +84,12 @@ const maxShellPayloadDepth = 4
 
 // ifs reports that the whole command names IFS (namesIFS): bash then splits
 // an unquoted parameter expansion's word at an IFS the guard cannot know.
-func evaluateGitScriptSafety(homeDir, taskID, checkPath, command string, depth int, ifs bool) (bool, string) {
+//
+// shell is shared by every payload the command reads: moves counts the
+// directory moves read at any depth, and functions records each function
+// defined so far, true when its body moves the directory. A foreground
+// call to one leaves the directory unknown.
+func evaluateGitScriptSafety(homeDir, taskID, checkPath, command string, depth int, ifs bool, shell *gitShell) (bool, string) {
 	if hasGitCommandSubstitution(command) {
 		return true, "compound shell command with command substitution is not allowed for git mutation"
 	}
@@ -98,17 +103,44 @@ func evaluateGitScriptSafety(homeDir, taskID, checkPath, command string, depth i
 		payloads = append(payloads, feed.text)
 	}
 	// A heredoc body runs wherever its command runs, so it is read from every
-	// directory the command line visits.
+	// directory the command line visits. A directory the guard cannot follow
+	// is "": a git mutation there, or in a payload read from it, is refused.
 	paths := []string{checkPath}
 	currentPath := checkPath
-	// subshells are the directories to return to at each open subshell's `)`.
-	var subshells []string
-	for _, segment := range tokenizeSegments(mode, stripped) {
+	// previous is the directory `cd -` returns to and stack the one pushd
+	// built, a shell's previous directory and stack being unknown. subshells
+	// are the states to return to at each open subshell's `)`.
+	previous := ""
+	var stack []string
+	type shellDir struct {
+		path, previous string
+		stack          []string
+		function       string
+		moves          int
+	}
+	var subshells []shellDir
+	segments := tokenizeSegments(mode, stripped)
+	for i, segment := range segments {
+		if segment[0].unfinished {
+			return true, "shell case is unfinished; git mutation cannot be checked"
+		}
+		if i > 0 && definesFunction(segments[i-1]) && !segment[0].body {
+			shell.functions[functionName(segments[i-1])] = false
+		}
 		if segment[0].subshell {
 			if segment[0].text == "(" {
-				subshells = append(subshells, currentPath)
+				opened := shellDir{currentPath, previous, slices.Clone(stack), "", shell.moves}
+				if segment[0].body && i > 0 && definesFunction(segments[i-1]) {
+					opened.function = functionName(segments[i-1])
+				}
+				subshells = append(subshells, opened)
 			} else if n := len(subshells); n > 0 {
-				currentPath, subshells = subshells[n-1], subshells[:n-1]
+				closed := subshells[n-1]
+				currentPath, previous, stack = closed.path, closed.previous, closed.stack
+				subshells = subshells[:n-1]
+				if closed.function != "" {
+					shell.functions[closed.function] = shell.moves != closed.moves
+				}
 			}
 			continue
 		}
@@ -127,11 +159,14 @@ func evaluateGitScriptSafety(homeDir, taskID, checkPath, command string, depth i
 				continue
 			}
 			reread[token.text] = true
-			if blocked, reason := evaluateGitPayloadSafety(homeDir, taskID, currentPath, token.text, depth, ifs); blocked {
+			if blocked, reason := evaluateGitPayloadSafety(homeDir, taskID, currentPath, token.text, depth, ifs, shell); blocked {
 				return true, reason
 			}
 		}
 		for _, command := range segmentGitCommands(currentPath, segment, mode) {
+			if currentPath == "" {
+				return true, "shell directory cannot be determined; git mutation cannot be checked"
+			}
 			if command.ambiguous {
 				return true, "git mutation target cannot be determined"
 			}
@@ -139,14 +174,42 @@ func evaluateGitScriptSafety(homeDir, taskID, checkPath, command string, depth i
 				return true, reason
 			}
 		}
-		if nextPath, ok := cdSegmentPath(mode, currentPath, segmentWords(builtinCommand(segment))); ok {
-			currentPath = nextPath
-			paths = append(paths, currentPath)
+		move, operand := segmentDirMove(segment)
+		if move == moveNone && !segment[0].detached && shell.functions[functionCall(segment)] {
+			move = moveCalled
 		}
+		if move != moveNone {
+			shell.moves++
+		}
+		switch move {
+		case moveNone:
+			continue
+		case moveCd, movePush:
+			if move == movePush {
+				stack = append(stack, currentPath)
+			}
+			previous, currentPath = currentPath, gitCdPath(mode, currentPath, operand.text)
+		case movePrevious:
+			previous, currentPath = currentPath, previous
+		case movePop:
+			next := ""
+			if n := len(stack); n > 0 {
+				next, stack = stack[n-1], stack[:n-1]
+			}
+			previous, currentPath = currentPath, next
+		case moveStack:
+			stack = nil
+			continue
+		case moveUnknown:
+			previous, currentPath, stack = currentPath, "", nil
+		case moveCalled:
+			previous, currentPath, stack = "", "", nil
+		}
+		paths = append(paths, currentPath)
 	}
 	for _, payload := range payloads {
 		for _, path := range paths {
-			if blocked, reason := evaluateGitPayloadSafety(homeDir, taskID, path, payload, depth, ifs); blocked {
+			if blocked, reason := evaluateGitPayloadSafety(homeDir, taskID, path, payload, depth, ifs, shell); blocked {
 				return true, reason
 			}
 		}
@@ -154,11 +217,17 @@ func evaluateGitScriptSafety(homeDir, taskID, checkPath, command string, depth i
 	return false, ""
 }
 
-func evaluateGitPayloadSafety(homeDir, taskID, checkPath, payload string, depth int, ifs bool) (bool, string) {
+// gitShell is the shell state evaluateGitScriptSafety shares across payloads.
+type gitShell struct {
+	moves     int
+	functions map[string]bool
+}
+
+func evaluateGitPayloadSafety(homeDir, taskID, checkPath, payload string, depth int, ifs bool, shell *gitShell) (bool, string) {
 	if depth+1 > maxShellPayloadDepth {
 		return true, "shell payload nesting is too deep; git mutation cannot be checked"
 	}
-	return evaluateGitScriptSafety(homeDir, taskID, checkPath, payload, depth+1, ifs)
+	return evaluateGitScriptSafety(homeDir, taskID, checkPath, payload, depth+1, ifs, shell)
 }
 
 // readsAsMoreThanItself reports whether token, read again as shell, is
@@ -327,6 +396,8 @@ const (
 // walk grows with positions, never with the paths through them, and both
 // readings of the words after a verb are ranges of shared arrays.
 func segmentGitCommands(checkPath string, segment []shellToken, mode backslashMode) []gitCommandPath {
+	// A redirection is no git argument, wherever it stands (`git 2>/dev/null push`).
+	segment, _ = withoutRedirections(segment)
 	nodes := segmentCandidates(segment)
 	written := segmentWords(segment)
 	// candidates[starts[n]:] is every candidate word at position n and after.
@@ -709,14 +780,11 @@ func hasGitCommandSubstitution(command string) bool {
 		strings.Contains(command, "${\n") || strings.Contains(command, "${|")
 }
 
-// cdSegmentPath reports whether words, from a segment's command word on
-// (builtinCommand), are a `cd` and, if so, the directory it moves to.
-func cdSegmentPath(mode backslashMode, currentPath string, words []string) (string, bool) {
-	if len(words) == 0 || words[0] != "cd" {
-		return "", false
+// gitCdPath returns the directory a cd to operand moves to from currentPath,
+// "" when currentPath is unknown and operand is relative to it.
+func gitCdPath(mode backslashMode, currentPath, operand string) string {
+	if currentPath == "" && !filepath.IsAbs(operand) {
+		return ""
 	}
-	if len(words) < 2 {
-		return currentPath, true
-	}
-	return resolveSafetyPathWithMode(currentPath, words[1], mode), true
+	return resolveSafetyPathWithMode(currentPath, operand, mode)
 }

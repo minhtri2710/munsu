@@ -85,8 +85,14 @@ are not knowable to the guard.
 channel. Splitting a body at its newlines and tokenizing each line turned document text
 into write targets and let a `cd` line inside a document move the resolution base for the
 real commands after the terminator — refusing writes that must go through. Read
-redirections (`<`, `<<<`) drop their operand for the same reason: they name a source, never
-a target.
+redirections (`<`, `<<<`, and their fd or `{name}` prefixed forms such as `0<<EOF` or
+`3</dev/null`) drop their operand for the same reason: they name a source, never a target.
+Every argv reader (the write verbs, `builtinCommand`, the directory movers) sees a segment
+through `withoutRedirections`, so a redirection in any position (`2>/dev/null cd <shared>`,
+`env 3</dev/null rm f`) never shifts the command word or an operand; the git guard's argv
+reader (`segmentGitCommands`) does the same, so `git 2>/dev/null push --force` is read as
+the push it is. A descriptor duplication (`>&2`, `2>&1`, `>&-`) names no file and leaves the
+segment with its fd; `&>` and `&>>` redirect; neither is a background `&`.
 
 The delimiter word is read once using POSIX backslash-quoting rules: `<<\EOF`
 ends at bare `EOF`, and both tokenization passes then use that same stripped
@@ -123,14 +129,44 @@ bash runs:
   against; one the shell computes makes relative targets ambiguous, and a changed root
   (`sudo -R`) makes every target ambiguous. `command -v`/`-V` and `type` run nothing and
   name nothing. The file `time -o`/`--output` writes is a target.
-* **Subshells and cd** (`tokenizeSegments`, `builtinCommand`): an unquoted `(` that starts
-  a word, and a `)` that closes none opened inside a word, are operators, as bash reads
-  them, so `(rm x)` and `((rm x))` reach the verb; `$(`, `<(`, `>(`, `$((` and quoted
-  parens are unchanged. A `cd` inside `( ... )` returns at its `)`. Both guards read a
-  segment's `cd` through `builtinCommand`, past assignments, reserved words, `time` and the
-  `builtin` and `command` prefixes that still run it in this shell (`builtin cd <shared>
-  && rm f`); a `cd` behind any other wrapper (`env cd`) runs outside the shell and moves
-  nothing.
+* **Subshells, groups and case** (`tokenizeSegments`): an unquoted `(` that starts a
+  word, and a `)` that closes none opened inside a word, are operators, so `(rm x)` and
+  `((rm x))` reach the verb; `$(`, `<(`, `>(`, `$((` and quoted parens are unchanged. The
+  tokenizer keeps a construct stack of subshells, brace groups and `case` statements: a
+  `case` pattern's `(` and `)` open and close no subshell, `;;`, `;&` and `;;&` return to
+  the patterns, and a directory move inside a case arm moves the segments after `esac`, as
+  bash runs it. A case still open at the end of the command yields an unfinished segment;
+  bash runs nothing of such a line, and both guards refuse it (the write guard reads it
+  ambiguous, the git guard refuses it outright), which also refuses a git commit message
+  text containing an unterminated `case x in` — an accepted over-refusal.
+* **Functions and coproc** (`definesFunction`, `opensScope`): every definition form
+  (`f()`, `f ()`, `function f`, `function f()`) and a `coproc` body are read in their own
+  scope, split by synthetic subshell tokens, so a directory move inside the body does not
+  move the segments after the definition. A write in a function body is a target even if
+  the function is never called: an accepted over-refusal, pinned by test. `coproc` is a
+  reserved word, and its body is read in a child scope. A body of any compound form a
+  reserved word ends (`if`, `while`, `until`, `for`, `select`, `case`) is scoped the same
+  way; a `[[ ]]` body runs no command. Both guards record each function the command
+  defines, in an `eval` payload too, and whether its body moves the directory: a `cd`, `pushd` or `popd` at any depth of the body, `eval` and a nested
+  subshell included (`functionCall`). A later foreground call at command position to such a
+  function leaves the directory unknown, as `popd` on an empty stack does. A `( )` body, a
+  call in the background (`&`), in a pipeline, in a subshell, or behind `command`, and a
+  function a `bash -c` payload defines, leave it unchanged.
+* **Directory moves** (`segmentDirMove`, `builtinCommand`): `cd`, `pushd` and `popd` move
+  the base relative targets resolve against, in both guards. `cd` skips `--` and options
+  made only of `L`, `P`, `e` and `@`; any other option moves nothing, as bash refuses it.
+  `pushd` pushes the old directory and `popd` restores it; `cd -` restores the previous
+  directory. A move the guard cannot follow (`popd` on an empty tracked stack, `pushd +N`,
+  `cd -` with no tracked previous directory, an expandable operand) makes the directory
+  unknown: relative targets after it are ambiguous for the write guard, and the git guard
+  refuses a mutation there. `cd` with no operand and a `~` operand of `cd` or `pushd` move
+  to a home this does not read, and leave the directory unknown the same way. `pushd -n`
+  changes only the stack. Both guards read the move
+  through `builtinCommand`, past assignments, reserved words, `time` and the `builtin` and
+  `command` prefixes that still run it in this shell; a move behind any other wrapper (`env
+  cd`) runs outside the shell and moves nothing. A redirection on a move segment opens
+  before the move, so its target resolves against the old directory. A move inside
+  `( ... )` returns at its `)`. `CDPATH` is not read and stays open.
 * **Named shell payloads** (`shellPayloads`): the `-c` operand of `bash`, `sh`, `zsh`,
   `dash` or `ksh` (`shellConsumers`), in any option form bash accepts (`-lc`, `-l -c`,
   `-o name -c`); the heredoc body or here-string such a shell reads as its script when it
@@ -165,11 +201,19 @@ Everything else is open, explicitly and by design:
   computed target, its text is not knowable here.
 * **Stdin given to a group is open**: a heredoc or here-string after a subshell's `)` or a
   brace group's `}` (`(bash) <<EOF`, `{ bash; } <<EOF`) is not read as the shell's payload.
+* **A brace group in a pipeline or in the background is over-refused**: `{ cd <shared>; } &`
+  runs in a child, but the walk reads the group's `cd` as moving the commands after it.
+* **Aliases are open**: an alias is not expanded, so an alias that runs a write verb or a
+  `cd` is read as the plain word it is.
+* **`>` inside `[[ ]]` is read as a redirection**: `[[ a > b ]]` names `b` as a write target,
+  an over-refusal when `b` is protected.
 * **`$(...)` / backtick substitution is open** on this path: a target the shell computes is
   not knowable here. (The git ladder still refuses substitution for git mutations.)
 
-Because tokenization cannot fail — `tokenizeSegments` always returns a segment list — this
-channel has **no unparseable state**. It does, however, carry explicit fail-closed states:
+Tokenization cannot fail — `tokenizeSegments` always returns a segment list, with an
+unfinished `case` as its own marked segment — so this channel has **no unparseable state**.
+It does, however, carry explicit fail-closed states: for an unfinished `case`, for an unknown
+directory,
 for ambiguous cross-volume drive-relative paths, when `resolveShellWritePath` cannot
 reconstruct the other drive's current directory, and for a payload too deep or too
 numerous to read, `runSafetyCheck` refuses before target classification. Apart from that

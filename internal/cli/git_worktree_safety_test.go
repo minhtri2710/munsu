@@ -1305,3 +1305,71 @@ func TestSafetyCheckReadsFunctionSubstitutionExpansionsAndCandidates(t *testing.
 		t.Errorf("git -C ${x:-.} push: block=%v reason=%q, want %q", block, reason, unknownTarget)
 	}
 }
+
+// TestSafetyCheckReadsCaseStackAndCdOptions pins the git guard's side of
+// review-cdc998a32be1: a case pattern's `)` does not return from a subshell,
+// pushd, popd and `cd -` move the cwd (an unknown one refuses), cd options
+// and redirections are read past, and a function body is read in its own
+// scope.
+func TestSafetyCheckReadsCaseStackAndCdOptions(t *testing.T) {
+	primary := initGitRepoForSafety(t, t.TempDir())
+	worktree := filepath.Join(t.TempDir(), "wt")
+	runGitForSafety(t, primary, "worktree", "add", "--detach", worktree)
+	homeDir := bindSafetyWorktree(t, "ship-case", primary, worktree)
+	t.Setenv("MUNSU_HOME", homeDir)
+	t.Setenv("MUNSU_TASK_ID", "ship-case")
+	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-case")
+
+	for _, command := range []string{
+		"(true; cd " + primary + "; case $x in a) :;; esac; git add f)",
+		"(true; cd " + primary + "; case $x in a) :;; esac; git push origin mu/ship-case)",
+		"cd " + primary + "; (case $x in a) :;; esac; cd " + worktree + "); git add f",
+		"case a in a) git status",
+		"pushd " + primary + " && git add f",
+		"pushd " + primary + "; pushd " + worktree + "; popd; git add f",
+		"popd; git add f",
+		"pushd; git add f",
+		"cd " + primary + "; cd " + worktree + "; cd -; git add f",
+		"cd -- " + primary + " && git add f",
+		"builtin cd -- " + primary + " && git add f",
+		"2>/dev/null cd " + primary + "; git add f",
+		"f() { cd " + primary + "; git add f; }",
+		"coproc { cd " + primary + "; git add f; }",
+		"f() { cd " + primary + "; }; f; git add f",
+		"f() { eval 'cd " + primary + "'; }; f; git add f",
+		"eval 'f() { cd " + primary + "; }'; f; git add f",
+		"f() if cd " + primary + "; then :; fi; f; git add f",
+		"cd; git add f",
+		"HOME=" + primary + " cd && git add f",
+		"cd ~; git add f",
+		"git 2>/dev/null push --force",
+		"git 2>&1 -C " + primary + " add f",
+		"git 2> /dev/null -C " + primary + " add f",
+		"git &>/dev/null -C " + primary + " add f",
+		"git push 2>/dev/null --force origin main",
+	} {
+		if block, _ := runPiSafetyForGit(t, worktree, command); !block {
+			t.Errorf("%q allowed, want refused", command)
+		}
+	}
+	for _, command := range []string{
+		"(case $x in a) cd " + primary + ";; esac); git add f",
+		"pushd " + primary + "; popd; git add f",
+		"pushd -n " + primary + "; git add f",
+		"popd; git status",
+		"coproc cd " + primary + "; git add f",
+		"f() { cd " + primary + "; }; git add f",
+		`git commit -m "case sensitivity fix"`,
+		"f() ( cd " + primary + "; ); f; git add f",
+		"f() { cd " + primary + "; }; f & git add f",
+		"f() { cd " + primary + "; }; f | cat; git add f",
+		"(f() { cd " + primary + "; }; f); git add f",
+		"f() if cd " + primary + "; then :; fi; git add f",
+		"git 2>/dev/null add f",
+		"git add f 2>&1 | cat",
+	} {
+		if block, reason := runPiSafetyForGit(t, worktree, command); block {
+			t.Errorf("%q refused: %s", command, reason)
+		}
+	}
+}
