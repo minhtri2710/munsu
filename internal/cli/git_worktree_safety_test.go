@@ -1097,6 +1097,34 @@ func TestSafetyCheckReadsLongCommandInLinearTime(t *testing.T) {
 	}
 }
 
+// TestSafetyCheckReadsNestedSubshellsInLinearTime pins F-E of
+// review-cf6153cd273e: a subshell shares the directory stack pushd built
+// instead of copying it, so n pushes under n nested subshells cost linear
+// time. The budget is eight times the cost of a quarter.
+func TestSafetyCheckReadsNestedSubshellsInLinearTime(t *testing.T) {
+	primary := initGitRepoForSafety(t, t.TempDir())
+	worktree := filepath.Join(t.TempDir(), "wt")
+	runGitForSafety(t, primary, "worktree", "add", "--detach", worktree)
+	homeDir := bindSafetyWorktree(t, "ship-stack", primary, worktree)
+	t.Setenv("MUNSU_HOME", homeDir)
+	t.Setenv("MUNSU_TASK_ID", "ship-stack")
+	cost := func(n int) time.Duration {
+		command := strings.Repeat("pushd "+worktree+"; ", n) + strings.Repeat("(", n) + "git status" + strings.Repeat(")", n)
+		best := time.Duration(math.MaxInt64)
+		for range 3 {
+			start := time.Now()
+			if block, reason := runPiSafetyForGit(t, worktree, command); block {
+				t.Fatalf("%d pushes under %d subshells: block=true reason=%q, want allow", n, n, reason)
+			}
+			best = min(best, time.Since(start))
+		}
+		return best
+	}
+	if small, large := cost(4000), cost(16000); large > 8*small {
+		t.Errorf("16000 pushes and subshells took %v, %.1f times 4000 (%v), want under 8", large, float64(large)/float64(small), small)
+	}
+}
+
 // measureAllocation returns the bytes run allocates and how long it takes.
 func measureAllocation(run func()) (uint64, time.Duration) {
 	var before, after runtime.MemStats
@@ -1361,8 +1389,6 @@ func TestSafetyCheckReadsCaseStackAndCdOptions(t *testing.T) {
 		"f() { cd " + primary + "; }; git add f",
 		`git commit -m "case sensitivity fix"`,
 		"f() ( cd " + primary + "; ); f; git add f",
-		"f() { cd " + primary + "; }; f & git add f",
-		"f() { cd " + primary + "; }; f | cat; git add f",
 		"(f() { cd " + primary + "; }; f); git add f",
 		"f() if cd " + primary + "; then :; fi; git add f",
 		"git 2>/dev/null add f",
@@ -1408,6 +1434,18 @@ func TestSafetyCheckReadsRedirectPrefixesExpansionsAndLateFunctions(t *testing.T
 		// bash 3.2 passes `{x}` to git as an argument.
 		"git push origin mu/ship-rv {x}>/dev/null",
 		"(cd " + primary + "; : # )\ngit add f)",
+		"f() { cd " + primary + "; }; ${x:-f}; git add f",
+		"eval cd " + primary + " && git add f",
+		"f() { cd " + primary + "; }; (f() { :; }); f; git add f",
+		"f() { g() { cd " + primary + "; }; }; g() { :; }; f; g; git add f",
+		"g() { cd " + primary + "; }; f() { g() { :; }; }; g; git add f",
+		"g() { cd " + primary + "; }; : | { g() { :; }; }; g; git add f",
+		"g() { cd " + primary + "; }; g() { :; } & g; git add f",
+		"g() { cd " + primary + "; }; : | { :; g() { :; }; }; g; git add f",
+		"f() { g() { cd " + primary + "; }; }; : | f; g; git add f",
+		"g() { cd " + primary + "; }; : | { :; unset -f g; }; g; git add f",
+		"f() { cd " + primary + "; }; : | f; git add f",
+		"g() { cd " + primary + "; }; f() { g() { :; }; }; false && f; g; git add f",
 	} {
 		if block, _ := runPiSafetyForGit(t, worktree, command); !block {
 			t.Errorf("%q allowed, want refused", command)
@@ -1422,9 +1460,16 @@ func TestSafetyCheckReadsRedirectPrefixesExpansionsAndLateFunctions(t *testing.T
 		"(cd " + primary + "; : ${x:-)}); git add f",
 		"g() { f; }; f() { cd " + primary + "; }; f() { :; }; g; git add f",
 		"g() { g; }; g; git add f",
+		"bash -c 'f() { cd " + primary + "; }'; f; git add f",
 	} {
 		if block, reason := runPiSafetyForGit(t, worktree, command); block {
 			t.Errorf("%q refused: %s", command, reason)
 		}
+	}
+	// At the hook the write guard refuses this too, so the git guard's own
+	// bound is asserted at its entry point.
+	budget := "eval" + strings.Repeat(" ${x:-a}", 9) + "; git add f"
+	if block, reason := evaluateGitMutationSafety(worktree, budget); !block || !strings.Contains(reason, "too many readings") {
+		t.Errorf("evaluateGitMutationSafety(%q) = %v %q, want refused for too many readings", budget, block, reason)
 	}
 }

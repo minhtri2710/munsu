@@ -173,14 +173,46 @@ bash runs:
   reserved word ends (`if`, `while`, `until`, `for`, `select`, `case`) is scoped the same
   way; a `[[ ]]` body runs no command. Both guards record each function the command
   defines, in an `eval` payload too, whether its body moves the directory (a `cd`, `pushd`
-  or `popd` at any depth of the body, `eval` and a nested subshell included), and the
-  foreground calls its body makes (`shellFunctions`, `functionCall`). A call resolves when
-  it runs, as bash's does: a later foreground call at command position leaves the directory
+  or `popd` at any depth of the body, `eval` and a nested subshell included, a nested
+  function's body excluded: it moves when that function runs), and the
+  calls its body makes (`shellFunctions`, `functionCalls`). A call resolves when
+  it runs, as bash's does: a later call at command position leaves the directory
   unknown, as `popd` on an empty stack does, when the function it names or any function its
-  body calls, as defined at that call, moves it. A body may so call a function defined
-  after it; a redefinition replaces the earlier body, and a recursive body is read once. A `( )` body, a
-  call in the background (`&`), in a pipeline, in a subshell, or behind `command`, and a
-  function a `bash -c` payload defines, leave it unchanged.
+  body calls, as defined at that call, moves it. The call reads its command word decoded
+  (`"f"`, `\f`, `$'f'`) and under every reading of an expansion (`${x:-f}`): any name it
+  may run that moves the directory leaves it unknown. A body may so call a function defined
+  after it; a redefinition replaces the earlier body, and a recursive body is read once.
+  What a name resolves to is kept until the next definition or `unset -f`, and all
+  resolutions in one command share one budget of `maxWriteReadings` steps, past which a
+  call leaves the directory unknown. A `( )` body, a call in a subshell, or behind
+  `command` leave it unchanged. A call in the background (`&`) or in a pipeline counts as
+  a `cd` there does: zsh and ksh run a pipeline's last command in this shell, so
+  `f() { cd P; }; : | f; rm` removes in P there. An `eval` payload
+  defines its functions in the shell that runs it; a payload of a named shell works on a
+  copy of the functions, so a function a `bash -c` payload defines is gone when it ends.
+  A subshell works on a copy too: at its `)` the walk drops the definitions and
+  `unset -f` made inside it, so `(f() { :; }); f` and `(unset -f f); f` run the outer
+  `f`, as bash 3.2 and 5.3 do. A definition head after reserved words (`{ g() {`,
+  `then function g`) starts a segment of its own, so a definition inside a body, a brace
+  group or an `if` arm is read as one. What a function body defines and unsets is dropped
+  at its close and kept on the function (`shellFunction.defines`): bash makes it when the
+  function runs, so `f() { g() { cd P; }; }; g() { :; }; f; g` runs the moving `g`. A
+  call replays it merged (`merge`), because whether a call runs (`false && f`, a
+  candidate name) is not known: a name already defined moves unless both definitions are
+  inert, and a replayed `unset -f` leaves the name as it is. Both are accepted
+  over-refusals: `g() { cd P; }; f() { g() { :; }; }; f; g` is refused though bash runs
+  the inert `g`, and `g() { cd P; }; f() { unset -f g; }; f; g` is refused though bash
+  finds no `g`. A coproc
+  body's definitions are dropped. A segment is apart when it runs in a child: a pipeline
+  member, a background command, or any segment of a compound command or a function
+  definition, head included, whose first or closing segment a pipeline or `&` detaches
+  (`g() { :; } &`, `: | { :; g() { :; }; }`). A definition made apart (`defineHead`), or
+  replayed by a call apart (`: | f`), is merged as a replay is, never overwriting or
+  dropping a name: bash and dash drop it, zsh and ksh keep a pipeline's last member. A
+  foreground `unset -f` whose names are plain words
+  removes those functions. Any other spelling (`unset f`, a quoted name, one apart)
+  removes nothing: an accepted over-refusal. As with `cd`, a conditional `unset -f`
+  (`false && unset -f f`) is read as run.
 * **Directory moves** (`segmentDirMove`, `builtinCommand`): `cd`, `pushd` and `popd` move
   the base relative targets resolve against, in both guards. `cd` skips `--` and options
   made only of `L`, `P`, `e` and `@`; any other option moves nothing, as bash refuses it.
@@ -197,19 +229,30 @@ bash runs:
   before the move, so its target resolves against the old directory. A move inside
   `( ... )` returns at its `)`. `CDPATH` is not read and stays open.
 * **Named shell payloads** (`shellPayloads`): the `-c` operand of `bash`, `sh`, `zsh`,
-  `dash` or `ksh` (`shellConsumers`), in any option form bash accepts (`-lc`, `-l -c`,
+  `dash` or `ksh` (`shellConsumers`), in any option form the shell accepts (`-lc`, `-l -c`,
   `-o name -c`, and `+c`, `+xc`, which each of them reads as `-c`); the heredoc body or
   here-string such a shell reads as its script when it has no `-c` and no script operand,
-  or has `-s` or `+s`; the words of `eval`, joined by single
-  spaces as bash joins them; and the string `env -S` splits. An `eval` payload runs in the
-  same shell, so its `cd` moves the segments after it; a shell's payload runs in a child
-  that starts in its parent segment's directory, and its `cd` does not leak out. A payload
+  or has `-s` or `+s`; and the words of `eval`, joined by single spaces as bash joins them.
+  Each shell's options are read by its own grammar (`shellGrammars`, `shellOptions`),
+  measured on bash 3.2 and 5.3, zsh 5.9, dash and ksh 93u+: the options taking the next
+  word are `-o`/`+o`, `-O`/`+O`, `--rcfile` and `--init-file` for bash and `sh`, `-o`/`+o`
+  and `--emulate` for zsh, `-o`/`+o` for dash, and `-o`/`+o`, `-R` and `-T` for ksh. An
+  option the grammar does not know (zsh's and ksh's `--NAME` option spellings among them)
+  is read both as a flag and as taking the next word, and a payload either reading finds
+  is read. `env -S` splits its string into words that stand in its place in the argv, each
+  argument after it staying one word (`commandPosition`), so `env -S 'bash -c' 'rm x'`
+  reads `rm x` as the `-c` payload. An `eval` payload runs in the same shell, so its `cd`,
+  in both guards, moves the segments after it; the git guard reads it in its own walk
+  (`evalPayloads`). A shell's payload runs in a child that starts in its parent segment's
+  directory, and its `cd` does not leak out. A payload
   nested past `maxShellPayloadDepth`, or past `maxWriteReadings` payloads in one command,
   is not read: its segment is ambiguous, and the hook refuses on the write guard's own
   verdict, not on the git guard's.
 
 Only a named consumer's payload is read. The git guard reads every word that reads as more
-than itself (`evaluateGitMutationSafety`); the write guard deliberately does not. A refused
+than itself (`evaluateGitMutationSafety`), each as a shell of its own on a copy of the
+directory and the functions (`evaluateGitPayloadSafety`), so nothing it does returns; the
+write guard deliberately does not. A refused
 git mutation costs a retry, a refused file write costs the run, and under the git guard's
 rule `git commit -m "rm <shared>/x"` and `grep "> <shared>/x"` would be refused. This
 asymmetry is a choice, not a gap.
@@ -231,8 +274,10 @@ Everything else is open, explicitly and by design:
   computed target, its text is not knowable here.
 * **Stdin given to a group is open**: a heredoc or here-string after a subshell's `)` or a
   brace group's `}` (`(bash) <<EOF`, `{ bash; } <<EOF`) is not read as the shell's payload.
-* **A brace group in a pipeline or in the background is over-refused**: `{ cd <shared>; } &`
-  runs in a child, but the walk reads the group's `cd` as moving the commands after it.
+* **A brace group, a `cd` or a function call in a pipeline or in the background is
+  over-refused**: `{ cd <shared>; } &` and `f &` with a moving `f` run in a child in bash,
+  but the walk reads them as moving the commands after them, as zsh and ksh do for a
+  pipeline's last member.
 * **Aliases are open**: an alias is not expanded, so an alias that runs a write verb or a
   `cd` is read as the plain word it is.
 * **`>` inside `[[ ]]` is read as a redirection**: `[[ a > b ]]` names `b` as a write target,
@@ -244,7 +289,8 @@ Everything else is open, explicitly and by design:
   (The git ladder still refuses substitution for git mutations.)
 * **`>(...)` is read as a redirection**: `diff a >(b)` names the file `(b)` in the current
   directory as a write target, an over-refusal when that directory is protected. A
-  `<(...)` or `>(...)` body is not read for writes, like a `$(...)` body.
+  `>(...)` body is not read for writes, like a `$(...)` body; a `<(...)` body is read as
+  the subshell it runs in.
 
 Tokenization cannot fail — `tokenizeSegments` always returns a segment list, with an
 unfinished `case` or substitution as its own marked segment — so this channel has **no

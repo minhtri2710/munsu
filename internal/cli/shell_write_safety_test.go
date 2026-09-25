@@ -1527,6 +1527,9 @@ func TestShellWriteReadsNamedShellPayloads(t *testing.T) {
 		"${x:-bash} -c " + shellQuote(rm),
 		"${x:-eval} " + shellQuote(rm),
 		"env -S " + shellQuote(rm),
+		"env -S 'bash -c' " + shellQuote(rm),
+		"zsh --emulate sh -c " + shellQuote(rm),
+		"zsh --unknown-option sh -c " + shellQuote(rm),
 		"eval 'cd " + primary + "' && rm docs/f",
 		"bash -c 'cd " + primary + "; rm docs/f'",
 		"eval 'cd " + primary + "; rm docs/f'",
@@ -1916,6 +1919,7 @@ func TestShellWriteReadsFunctionBodies(t *testing.T) {
 		"arr=(); { cd " + primary + "; }; rm docs/f",
 		"f() { cd " + primary + "; }; f; rm docs/f",
 		"f() { cd " + primary + "; }; f && rm docs/f",
+		"f() { cd " + primary + "; }; : | f; rm docs/f",
 		"f() { cd " + primary + "; }; f 2>&1; rm docs/f",
 		"f() { cd " + primary + "; }; time f; rm docs/f",
 		"f() { pushd " + primary + "; }; f; rm docs/f",
@@ -1945,9 +1949,6 @@ func TestShellWriteReadsFunctionBodies(t *testing.T) {
 		"f() ( cd " + primary + " ); f; rm docs/f",
 		"f() { echo " + target + "; }; f",
 		"f() ( cd " + primary + "; ); f; rm docs/f",
-		"f() { cd " + primary + "; }; f & rm docs/f",
-		"f() { cd " + primary + "; }; f | cat; rm docs/f",
-		"f() { cd " + primary + "; }; cat | f; rm docs/f",
 		"f() { cd " + primary + "; }; (f); rm docs/f",
 		"f() { cd " + primary + "; }; f() { :; }; f; rm docs/f",
 		"f() { cd " + primary + "; }; command f; rm docs/f",
@@ -2196,6 +2197,40 @@ func TestShellWriteReadsLongPrefixesInLinearTime(t *testing.T) {
 	}
 }
 
+// TestShellWriteResolvesFunctionChainsInLinearTime pins F-D of
+// review-cf6153cd273e: whether a call moves the directory is resolved once
+// per name until a definition changes it, within one budget per command, so
+// a chain of n functions none of which moves it, each read as its body calls
+// the one before, then called n times with another redefined before each
+// call, costs linear time. The budget is eight times the cost of a quarter.
+func TestShellWriteResolvesFunctionChainsInLinearTime(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "x")
+	cost := func(n int) time.Duration {
+		var command strings.Builder
+		command.WriteString("f0() { :; }; ")
+		for i := 1; i < n; i++ {
+			fmt.Fprintf(&command, "f%d() { f%d; }; ", i, i-1)
+		}
+		for range n {
+			fmt.Fprintf(&command, "h() { :; }; f%d; ", n-1)
+		}
+		command.WriteString("rm " + target)
+		best := time.Duration(math.MaxInt64)
+		for range 3 {
+			start := time.Now()
+			if targets, ambiguous := shellWriteTargets(dir, command.String()); ambiguous || !slices.Equal(targets, []string{target}) {
+				t.Fatalf("shellWriteTargets of a %d-function chain = %q ambiguous=%v, want %s", n, targets, ambiguous, target)
+			}
+			best = min(best, time.Since(start))
+		}
+		return best
+	}
+	if small, large := cost(500), cost(2000); large > 8*small {
+		t.Errorf("a 2000-function chain took %v, %.1f times 500 (%v), want under 8", large, float64(large)/float64(small), small)
+	}
+}
+
 // TestShellWriteResolvesFunctionCallsWhenTheyRun pins R6 of
 // review-80b12d4f0a2e: a call resolves the functions its body calls when it
 // runs, through every function defined by then, so a function defined after
@@ -2211,6 +2246,18 @@ func TestShellWriteResolvesFunctionCallsWhenTheyRun(t *testing.T) {
 		"g() { f; }; f() { :; }; f() { " + cd + "; }; g; rm docs/f",
 		"g() { eval f; }; f() { " + cd + "; }; g; rm docs/f",
 		"g() { f; }; eval 'f() { " + cd + "; }'; g; rm docs/f",
+		"f() { " + cd + "; }; \"f\"; rm docs/f",
+		"f() { g() { " + cd + "; }; }; g() { :; }; g; f; cd /; g; rm docs/f",
+		"f() { " + cd + "; }; (unset -f f); f; rm docs/f",
+		"f() { " + cd + "; }; (f() { :; }); f; rm docs/f",
+		"f() { g() { " + cd + "; }; }; g() { :; }; f; g; rm docs/f",
+		"g() { " + cd + "; }; f() { g() { :; }; }; g; rm docs/f",
+		"g() { " + cd + "; }; : | { g() { :; }; }; g; rm docs/f",
+		"g() { " + cd + "; }; g() { :; } & g; rm docs/f",
+		"g() { " + cd + "; }; : | { :; g() { :; }; }; g; rm docs/f",
+		"f() { g() { " + cd + "; }; }; : | f; g; rm docs/f",
+		"g() { " + cd + "; }; : | { :; unset -f g; }; g; rm docs/f",
+		"g() { " + cd + "; }; f() { g() { :; }; }; false && f; g; rm docs/f",
 	} {
 		assertShapes(t, true, worktree, command, "")
 	}
@@ -2219,9 +2266,8 @@ func TestShellWriteResolvesFunctionCallsWhenTheyRun(t *testing.T) {
 		"g() { g; }; g; rm docs/f",
 		"g() { f; }; f() { g; }; g; rm docs/f",
 		"g() { f; }; f() ( " + cd + "; ); g; rm docs/f",
-		"g() { f & }; f() { " + cd + "; }; g; rm docs/f",
-		"g() { f; }; f() { " + cd + "; }; g & rm docs/f",
 		"g() { f; }; g; f() { " + cd + "; }; rm docs/f",
+		"f() { " + cd + "; }; unset -f f; f; rm docs/f",
 	} {
 		assertShapes(t, false, worktree, command, "")
 	}
@@ -2272,8 +2318,9 @@ func TestShellWriteReadsTrailingANSICQuote(t *testing.T) {
 	}
 }
 
-// A `<(...)` process substitution is read whole, as bash reads it: a `)`
-// quoted in its body closes no subshell. A `<` word ends at a `)`.
+// A `<(...)` process substitution is read as bash reads it: a `)` quoted in
+// its body closes no subshell, and a write in it runs. A `<` word ends at a
+// `)`.
 func TestShellWriteReadsProcessSubstitutionWhole(t *testing.T) {
 	primary, worktree := boundTaskFixture(t, "ship-shell-procsub")
 	sub := "(cd " + primary + "; "
@@ -2283,6 +2330,7 @@ func TestShellWriteReadsProcessSubstitutionWhole(t *testing.T) {
 		sub + "cat <(echo ')'); rm docs/f)",
 		sub + "cat <(a; b); rm docs/f)",
 		sub + ": >(echo \")\"); rm docs/f)",
+		"cat <(rm " + protected + ")",
 	} {
 		if targets, ambiguous := shellWriteTargets(worktree, command); !ambiguous && !slices.Contains(targets, protected) {
 			t.Errorf("shellWriteTargets(%q) = %q, want %s", command, targets, protected)
