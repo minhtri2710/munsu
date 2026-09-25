@@ -1147,6 +1147,36 @@ func TestSafetyCheckReadsFunctionSubstitutionExpansionsAndCandidates(t *testing.
 		{"git -C $\"$@\" " + primary + " push origin mu/ship-fs", refuse},
 		{"cd " + docs + ` && cp -t $"$@" f g`, refuse},
 		{"cd " + docs + ` && $"$@" rm f`, refuse},
+		// A line continuation inside the quotes is removed before the `@`
+		// form is read.
+		{"git \"$@\\\n\" push --force", refuse},
+		{"git \"\\\n$@\" push --force", refuse},
+		{"git \"$\\\n@\" push --force", refuse},
+		{"git $\\\n@ push --force", refuse},
+		{"munsu \"$@\\\n\" watch", refuse},
+		{"git -C \"$@\\\n\" " + primary + " push origin mu/ship-fs", refuse},
+		{"cd " + docs + " && cp -t \"$@\\\n\" f g", refuse},
+		{"bash -c 'git \"$@\\\n\" push --force'", refuse},
+		{"git \"${e[@]:+x}\\\n\" push --force", refuse},
+		{"git \"\\\n${e[@]:+x}\" push --force", refuse},
+		{"munsu \"${e[@]:+x}\\\n\" watch", refuse},
+		{"cd " + docs + " && cp -t \"${e[@]:+x}\\\n\" f g", refuse},
+		{"git $\"$@\\\n\" push --force", refuse},
+		{"git $\"\\\n$@\" push --force", refuse},
+		{"munsu $\"$@\\\n\" watch", refuse},
+		{"cd " + docs + " && cp -t $\"$@\\\n\" f g", refuse},
+		{"git \"\\$@\" push --force", allow},
+		// A line continuation from a `$` to the end of its expansion makes the
+		// word undecodable; one outside any expansion keeps its verdict.
+		{"$\\\n{x:-git} push --force", refuse},
+		{"${x:\\\n-git} push --force", refuse},
+		{"${x:-g\\\nit} push --force", refuse},
+		{"\"$\\\n{x:-git}\" push --force", refuse},
+		{"$\\\n{\\\nx\\\n:-git} push --force", refuse},
+		{"$\\\nx push --force", refuse},
+		{"munsu $\\\n{x:-watch}", refuse},
+		{"git \\\nstatus", allow},
+		{"# c \\\ngit status", allow},
 		{`git $"$b" push`, allow},
 		{`git "$b" push`, allow},
 		{`git "$*" push --force`, allow},
@@ -1178,7 +1208,9 @@ func TestSafetyCheckReadsFunctionSubstitutionExpansionsAndCandidates(t *testing.
 	// Function substitution is refused as command substitution, before the
 	// tokenizer reads the group as an undecodable parameter expansion.
 	const substitution = "compound shell command with command substitution is not allowed for git mutation"
-	for _, command := range []string{"${ git status; }", "${| git status; }", "${\tgit status; }", "${\ngit status; }"} {
+	for _, command := range []string{"${ git status; }", "${| git status; }", "${\tgit status; }", "${\ngit status; }",
+		"echo $\\\n(git push --force)", "cat <\\\n(git push --force)", "echo >\\\n(git push --force)",
+		"$\\\n{ git status; }", "bash -c 'echo $\\\n(git push --force)'"} {
 		if block, reason := runPiSafetyForGit(t, worktree, command); !block || reason != substitution {
 			t.Errorf("%q: block=%v reason=%q, want %q", command, block, reason, substitution)
 		}

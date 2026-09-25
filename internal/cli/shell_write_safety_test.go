@@ -1309,7 +1309,9 @@ func TestTokenizeSegmentsLineContinuationAndANSICQuoting(t *testing.T) {
 		`$"$@"`: true, `$"${e[@]}"`: true, `$"$@"$''`: true, `""$"$@"`: true, `$"$b"`: false, `$"x$@"`: false,
 		`"$*"`: false, `"${e[*]}"`: false, `"${!pre*}"`: false, `"${e[@]:-}"`: false, `"${e[@]-}"`: false,
 		`"${@:-}"`: false, `"${e[@]:=}"`: false, `"${#e[@]}"`: false, `x"$@"`: false, `"$@"x`: false,
-		`"x$@"`: false, `""`: false, `""$b`: false, `"$@"'x'`: false, `"$@`: false, `"${@`: false,
+		"\"$@\\\n\"": true, "\"\\\n$@\"": true, "\"$\\\n@\"": true, "$\\\n@": true, "$\"$@\\\n\"": true,
+		"\"${e[@]:+x}\\\n\"": true, "\"\\$@\"": false, "\"$@\\x\"": false,
+		`"x$@"`: false, `""`: false, `""$b`: false, `"$@"'x'`: false, `"$@`: false, `"${@`: false, `${b`: true, `x${b`: false,
 	} {
 		token := tokenizeSegments(backslashEscapes, command)[0][0]
 		absent := slices.ContainsFunc(token.alternates, func(alternate []shellToken) bool { return len(alternate) == 0 })

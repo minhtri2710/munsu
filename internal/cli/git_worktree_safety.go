@@ -688,8 +688,11 @@ func gitSafetyBackslashMode() backslashMode {
 }
 
 // hasGitCommandSubstitution reports a command, process or bash 5.3
-// function substitution (`${ cmd; }`, `${| cmd; }`) anywhere in command.
+// function substitution (`${ cmd; }`, `${| cmd; }`) anywhere in command,
+// read with each line continuation removed, as bash joins `$\<newline>(`.
+// Removing one that bash keeps only finds more.
 func hasGitCommandSubstitution(command string) bool {
+	command = strings.ReplaceAll(command, "\\\n", "")
 	return strings.Contains(command, "$(") || strings.Contains(command, "`") ||
 		strings.Contains(command, "<(") || strings.Contains(command, ">(") ||
 		strings.Contains(command, "${ ") || strings.Contains(command, "${\t") ||

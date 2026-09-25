@@ -393,14 +393,16 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 	expandable := false
 	undecodable := false
 	splitsAtIFS := false
+	// afterDollar is an expanding `$` just read: bash removes a line
+	// continuation before it reads the expansion, which this does not, so a
+	// continuation there or inside a `${...}` group makes the word undecodable.
+	afterDollar := false
 	// quoted records that the word held quoting, so an empty quoted word
 	// (`''`, `""`, `$''`) is still a word, as it is to the shell.
 	quoted := false
-	// parts are the word's quoted parts, in order, as mayVanish reads
-	// them, and openPart the one quote is in; dollarQuote is the `$` of a
-	// `$"` just read.
-	var parts []quotedPart
-	openPart, dollarQuote := -1, -1
+	// vanish reads the word as it is decoded, line continuations and
+	// escapes already removed, for whether it may expand to nothing.
+	var vanish vanishReading
 	quote := rune(0)
 	escaped := false
 	// groups are the `${...}` groups open at the current rune, innermost
@@ -431,7 +433,7 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 			}
 			// A word made only of expansions can expand to nothing, and the
 			// shell then removes it: its absent reading is empty.
-			if rawStart >= 0 && mayVanish(mode, runes, rawStart, rawEnd, parts) && !slices.ContainsFunc(token.alternates, func(seen []shellToken) bool { return len(seen) == 0 }) {
+			if rawStart >= 0 && vanish.finish(quote) && !slices.ContainsFunc(token.alternates, func(seen []shellToken) bool { return len(seen) == 0 }) {
 				token.alternates = append(token.alternates, []shellToken{})
 			}
 			segment = append(segment, token)
@@ -439,8 +441,8 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 		word.Reset()
 		raw.Reset()
 		sub, subRaw = substitutedReading{}, substitutedReading{}
-		parts = nil
-		wordStart, rawStart, rawEnd, expandable, undecodable, splitsAtIFS, quoted, substituted = -1, -1, -1, false, false, false, false, false
+		vanish = vanishReading{}
+		wordStart, rawStart, rawEnd, expandable, undecodable, splitsAtIFS, quoted, substituted, afterDollar = -1, -1, -1, false, false, false, false, false, false
 	}
 	flushSegment := func() {
 		flushWord()
@@ -471,6 +473,10 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 		// (#664).
 		expands := !literal && (r == '$' || r == '`')
 		expandable = expandable || expands
+		afterDollar = expands && r == '$'
+		if len(groups) == 0 {
+			vanish.add(r, literal, quote == '"')
+		}
 		word.WriteRune(r)
 		raw.WriteRune(r)
 		sub.add(string(r), expands)
@@ -482,14 +488,20 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 	openGroup := func(i int) int {
 		end, ok := closingBrace(runes, i+2)
 		if !ok {
+			if len(groups) == 0 {
+				vanish.unterminated(quote == '"')
+			}
 			undecodable = true
 			touch(i)
 			add('$', i, false)
 			return i
 		}
-		body, substitutes, parsed := parameterExpansion(runes, i+2, end)
-		if !parsed {
+		body, substitutes, atForm, parsed := parameterExpansion(runes, i+2, end)
+		if !parsed || (mode == backslashEscapes && strings.Contains(string(runes[i:end]), "\\\n")) {
 			undecodable = true
+		}
+		if len(groups) == 0 {
+			vanish.group(quote == '"', atForm)
 		}
 		splitsAtIFS = splitsAtIFS || (substitutes && quote != '"')
 		if !substitutes {
@@ -529,6 +541,8 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 			// both and joins the text around them.
 			if r != '\n' {
 				add(r, i, true)
+			} else if afterDollar {
+				undecodable = true
 			}
 			escaped = false
 			continue
@@ -537,7 +551,6 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 			touch(i)
 			if r == quote {
 				quote = 0
-				parts[openPart].close = i
 			} else {
 				add(r, i, true)
 			}
@@ -552,6 +565,8 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 					i++
 					if next != '\n' {
 						add(next, i, true)
+					} else if afterDollar {
+						undecodable = true
 					}
 					continue
 				}
@@ -588,7 +603,9 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 			touch(i)
 			if r == quote {
 				quote = 0
-				parts[openPart].close = i
+				if len(groups) == 0 {
+					vanish.closeQuote()
+				}
 			} else {
 				add(r, i, false)
 			}
@@ -607,7 +624,6 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 		// bash reads `$"..."` (locale translation) as the double-quoted text.
 		if r == '$' && i+1 < len(runes) && runes[i+1] == '"' {
 			touch(i)
-			dollarQuote = i
 			continue
 		}
 		if r == '$' && i+1 < len(runes) && runes[i+1] == '\'' {
@@ -616,9 +632,10 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 			touch(i)
 			touch(end - 1)
 			rawText := string(runes[i+2 : end-1])
-			part := quotedPart{kind: '$', open: i, body: i + 2, close: end - 1}
+			if len(groups) == 0 {
+				vanish.ansiC(text, ok)
+			}
 			if !ok {
-				part.close = -1
 				// The shell's value is unknown, so the word fails closed. Its
 				// text is the raw word without the `$`, which is shorter than
 				// the raw word, so a caller that reads a word as shell again
@@ -627,7 +644,6 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 				rawText = text
 				expandable, undecodable = true, true
 			}
-			parts = append(parts, part)
 			word.WriteString(text)
 			raw.WriteString(rawText)
 			sub.add(text, false)
@@ -658,12 +674,9 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 			touch(i)
 			quote = r
 			markQuoted()
-			part := quotedPart{kind: r, open: i, body: i + 1, close: -1}
-			if i > 0 && dollarQuote == i-1 {
-				part.open = i - 1
+			if len(groups) == 0 {
+				vanish.openQuote()
 			}
-			openPart = len(parts)
-			parts = append(parts, part)
 		case '|':
 			if word.Len() == 0 && !quoted && len(segment) > 0 && segment[len(segment)-1].redirects {
 				continue
@@ -685,103 +698,101 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 	return segments
 }
 
-// mayVanish reports whether the word runes[start:end] holds nothing but
-// expansions, any of which may expand to nothing: unquoted ones, and quoted
-// `@` forms (quotedAtForm), beside which an empty quoted part may stand. Any
-// other quoted part leaves an empty word. parts are the word's quoted parts
-// as the tokenizer read them. A command substitution is not: the tokenizer
-// does not find its end, so the words it is split into are not the shell's.
-func mayVanish(mode backslashMode, runes []rune, start, end int, parts []quotedPart) bool {
-	quoted, atForm := false, false
-	for i := start; i < end; i++ {
-		for len(parts) > 0 && parts[0].open < i {
-			parts = parts[1:]
-		}
-		if len(parts) > 0 && parts[0].open == i {
-			part := parts[0]
-			if part.close < 0 {
-				return false
-			}
-			quoted = true
-			content := runes[part.body:part.close]
-			if part.kind != '"' && len(content) > 0 {
-				return false
-			}
-			for j := 0; j < len(content); atForm = true {
-				next, ok := quotedAtForm(content, j)
-				if !ok {
-					return false
-				}
-				j = next
-			}
-			i = part.close
-			continue
-		}
-		switch {
-		case mode == backslashEscapes && runes[i] == '\\' && i+1 < end && runes[i+1] == '\n':
-			i++
-		case runes[i] != '$' || i+1 == end || runes[i+1] == '(':
-			return false
-		case runes[i+1] == '{':
-			close, ok := closingBrace(runes, i+2)
-			if !ok {
-				return true
-			}
-			i = close
-		case strings.ContainsRune("$?!#-@*0123456789", runes[i+1]):
-			i++
-		case runes[i+1] == '_' || unicode.IsLetter(runes[i+1]):
-			for i+1 < end && (runes[i+1] == '_' || unicode.IsLetter(runes[i+1]) || unicode.IsDigit(runes[i+1])) {
-				i++
-			}
-		default:
-			return false
-		}
-	}
-	return !quoted || atForm
+// vanishReading follows a word as the tokenizer decodes it, outside any
+// `${...}` group, for whether it holds nothing but expansions any of which may
+// expand to nothing: unquoted ones, and quoted `@` forms, which bash removes
+// with the word when they have no elements, beside which an empty quoted part
+// may stand. Any other quoted part leaves an empty word. A command
+// substitution is not: the tokenizer does not find its end, so the words it
+// is split into are not the shell's.
+type vanishReading struct {
+	not    bool
+	quoted bool
+	atForm bool
+	partAt bool
+	open   bool
+	// dollar is 1 after an expanding `$` and 2 inside the name after it.
+	dollar int
 }
 
-// quotedPart is one quoted part of a word: a `'...'`, a `"..."` or `$"..."`
-// (kind `"`), or a `$'...'` (kind `$`). open is the index of its first rune,
-// body that of its first quoted rune and close that of its closing quote, -1
-// when it is unterminated.
-type quotedPart struct {
-	kind  rune
-	open  int
-	body  int
-	close int
-}
-
-// quotedAtForm reads a `@` form at raw[i] inside double quotes, which bash
-// removes with the word when it has no elements: `$@`, or a `${...}` of `@`,
-// `name[@]` or `!prefix@` whose operator does not substitute a default
-// (`-`, `=`). It returns the index past the form.
-func quotedAtForm(raw []rune, i int) (int, bool) {
-	if i+1 < len(raw) && raw[i] == '$' && raw[i+1] == '@' {
-		return i + 2, true
-	}
-	if i+1 >= len(raw) || raw[i] != '$' || raw[i+1] != '{' {
-		return 0, false
-	}
-	end, ok := closingBrace(raw, i+2)
-	if !ok {
-		return 0, false
-	}
-	body := string(raw[i+2 : end])
-	var rest string
-	switch name := strings.TrimLeftFunc(strings.TrimPrefix(body, "!"), func(r rune) bool { return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r) }); {
-	case strings.HasPrefix(body, "@"):
-		rest = body[1:]
-	case strings.HasPrefix(name, "[@]"):
-		rest = name[3:]
-	case strings.HasPrefix(body, "!") && name == "@" && len(body) > 2:
+// add reads a decoded rune, inside double quotes when dquoted.
+func (v *vanishReading) add(r rune, literal, dquoted bool) {
+	nameRune := r == '_' || unicode.IsLetter(r)
+	switch {
+	case v.open || v.not:
+	case literal:
+		v.not = true
+	case dquoted && v.dollar == 1 && r == '@':
+		v.dollar, v.partAt = 0, true
+	case dquoted && v.dollar == 0 && r == '$':
+		v.dollar = 1
+	case dquoted:
+		v.not = true
+	case v.dollar == 1 && strings.ContainsRune("$?!#-@*0123456789", r):
+		v.dollar = 0
+	case r == '$':
+		v.dollar = 1
+	case v.dollar == 1 && nameRune:
+		v.dollar = 2
+	case v.dollar == 2 && (nameRune || unicode.IsDigit(r)):
 	default:
-		return 0, false
+		v.not = true
 	}
-	if strings.HasPrefix(strings.TrimPrefix(rest, ":"), "-") || strings.HasPrefix(strings.TrimPrefix(rest, ":"), "=") {
-		return 0, false
+}
+
+// group reads a terminated `${...}` group; inside double quotes only a `@`
+// form may vanish.
+func (v *vanishReading) group(dquoted, atForm bool) {
+	switch {
+	case dquoted && !atForm:
+		v.not = true
+	case dquoted:
+		v.partAt = true
 	}
-	return end + 1, true
+	v.dollar = 0
+}
+
+// unterminated reads a `${` with no closing brace: unquoted, the word may
+// vanish whatever follows.
+func (v *vanishReading) unterminated(dquoted bool) {
+	if dquoted {
+		v.not = true
+	}
+	if !v.not {
+		v.open = true
+	}
+}
+
+func (v *vanishReading) openQuote() {
+	v.quoted, v.dollar = true, 0
+}
+
+func (v *vanishReading) closeQuote() {
+	if v.dollar == 1 {
+		v.not = true
+	}
+	v.atForm = v.atForm || v.partAt
+	v.partAt, v.dollar = false, 0
+}
+
+// ansiC reads a `$'...'` part decoded to text, ok false when it is not.
+func (v *vanishReading) ansiC(text string, ok bool) {
+	v.openQuote()
+	if !ok || text != "" {
+		v.not = true
+	}
+}
+
+// finish reports whether the word may vanish, quote being the quote left open
+// at its end.
+func (v *vanishReading) finish(quote rune) bool {
+	if v.open {
+		return true
+	}
+	if v.not || quote != 0 || v.dollar == 1 {
+		return false
+	}
+	return !v.quoted || v.atForm
 }
 
 // braceGroup is one `${...}` group open while tokenizing: the index of its
@@ -932,8 +943,10 @@ func candidateTokens(segment []shellToken) []shellToken {
 // does not parse: bash either rejects it or reads it in a way this does not.
 // The parameter is a name, digits or a special character, after an optional
 // `!` (indirection) or `#` (length), with one optional `[subscript]`
-// (subscriptEnd).
-func parameterExpansion(runes []rune, i, end int) (int, bool, bool) {
+// (subscriptEnd). It reports whether the group is a `@` form, which bash
+// removes inside double quotes when it has no elements: of `@`, `name[@]` or
+// `!prefix@`, whose operator does not substitute a default (`-`, `=`).
+func parameterExpansion(runes []rune, i, end int) (int, bool, bool, bool) {
 	nameStart := func(r rune) bool { return r == '_' || unicode.IsLetter(r) }
 	j := i
 	indirect, length := false, false
@@ -945,6 +958,7 @@ func parameterExpansion(runes []rune, i, end int) (int, bool, bool) {
 	if indirect || length {
 		j++
 	}
+	atForm := false
 	switch {
 	case j < end && nameStart(runes[j]):
 		for j < end && (nameStart(runes[j]) || unicode.IsDigit(runes[j])) {
@@ -955,36 +969,39 @@ func parameterExpansion(runes []rune, i, end int) (int, bool, bool) {
 			j++
 		}
 	case j < end && strings.ContainsRune("@*#?-$!", runes[j]):
+		atForm = runes[j] == '@'
 		j++
 	default:
-		return 0, false, false
+		return 0, false, false, false
 	}
 	if j < end && runes[j] == '[' {
 		close, ok := subscriptEnd(runes, j, end)
 		if !ok {
-			return 0, false, false
+			return 0, false, false, false
 		}
+		atForm = string(runes[j:close+1]) == "[@]"
 		j = close + 1
 	}
+	atForm = atForm && !length
 	switch {
 	case j == end:
-		return 0, false, true
+		return 0, false, atForm, true
 	case length:
-		return 0, false, false
+		return 0, false, false, false
 	case indirect && j+1 == end && (runes[j] == '*' || runes[j] == '@'):
-		return 0, false, true
+		return 0, false, runes[j] == '@', true
 	case runes[j] == ':' && j+1 < end && strings.ContainsRune("-=+", runes[j+1]):
-		return j + 2, true, true
+		return j + 2, true, atForm && runes[j+1] == '+', true
 	case runes[j] == ':' && j+1 < end:
-		return 0, false, true
+		return 0, false, atForm, true
 	case strings.ContainsRune("-=+", runes[j]):
-		return j + 1, true, true
+		return j + 1, true, atForm && runes[j] == '+', true
 	case strings.ContainsRune("?#%/^,", runes[j]):
-		return 0, false, true
+		return 0, false, atForm, true
 	case runes[j] == '@' && j+2 == end && strings.ContainsRune("QEPAKaUuLk", runes[j+1]):
-		return 0, false, true
+		return 0, false, atForm, true
 	}
-	return 0, false, false
+	return 0, false, false, false
 }
 
 // subscriptEnd returns the index of the `]` that closes the `[` at
