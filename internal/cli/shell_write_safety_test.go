@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -1161,10 +1163,11 @@ func TestShellWriteRefusesLiteralBacktickInProtectedPath(t *testing.T) {
 	}
 
 	// Unescaped backtick is a genuine command substitution the guard cannot
-	// classify, so it stays omitted (narrow contract preserved).
+	// classify, so it stays omitted; unterminated, it leaves the rest of the
+	// command unread, which is ambiguous.
 	targets, ambiguous := shellWriteTargets(worktree, "rm -rf "+target)
-	if ambiguous || slices.Contains(targets, target) {
-		t.Errorf("unescaped-backtick target should be omitted: %v ambiguous=%v", targets, ambiguous)
+	if !ambiguous || slices.Contains(targets, target) {
+		t.Errorf("unescaped-backtick target should be omitted and ambiguous: %v ambiguous=%v", targets, ambiguous)
 	}
 }
 
@@ -1257,7 +1260,8 @@ func TestTokenizeSegmentsLineContinuationAndANSICQuoting(t *testing.T) {
 	}{
 		{`$'gi\t'`, []string{`gi\t`}},
 		{`a$'\x67'b $'x'`, []string{`a\x67b`, ""}},
-		{"echo # $'\ngi\\t push'", []string{"", "", "\ngi\\t push"}},
+		// A comment is text up to the newline, so `$'` in it opens no quote.
+		{"echo # $'\ngi\\t push'", []string{"", "", "", "", ""}},
 		{`$''`, []string{""}},
 		{`'\t'`, []string{""}},
 		// An unquoted word made only of expansions may also be removed: its
@@ -1960,5 +1964,336 @@ func TestShellWriteReadsFunctionBodies(t *testing.T) {
 		"echo x 2>&1 | cat; rm docs/f",
 	} {
 		assertShapes(t, false, worktree, command, "")
+	}
+}
+
+// TestShellWriteReadsRedirectPrefixByAdjacency pins R1 of review-80b12d4f0a2e:
+// an fd number or `{name}` is a redirection's prefix only when it is written
+// unquoted against its operator; spaced or quoted, it is an argument.
+func TestShellWriteReadsRedirectPrefixByAdjacency(t *testing.T) {
+	dir := t.TempDir()
+	in := func(names ...string) []string {
+		var paths []string
+		for _, name := range names {
+			paths = append(paths, filepath.Join(dir, name))
+		}
+		return paths
+	}
+	for _, tc := range []struct {
+		command string
+		want    []string
+	}{
+		{"rm a 9 >b", in("b", "a", "9")},
+		{"rm a {x} >b", in("b", "a", "{x}")},
+		{"rm a 12 &>b", in("b", "a", "12")},
+		{"rm a 12&>b", in("b", "a", "12")},
+		{`rm a "9">b`, in("b", "a", "9")},
+		{"rm a 9 >>b", in("b", "a", "9")},
+		{"rm a 9 >&2", in("a", "9")},
+		{`rm a "9">&2`, in("a", "9")},
+		{"rm a {x} >&2", in("a", "{x}")},
+		{"rm a 9>b", in("b", "a")},
+		{"rm a {x}>b", in("b", "a", "{x}")},
+		{"rm a {x}>&2", in("a", "{x}")},
+		{"rm a 9>>b", in("b", "a")},
+		{"rm a 9>&2", in("a")},
+		{"rm a 2>&1", in("a")},
+	} {
+		if targets, ambiguous := shellWriteTargets(dir, tc.command); ambiguous || !slices.Equal(targets, tc.want) {
+			t.Errorf("shellWriteTargets(%q) = %q ambiguous=%v, want %q", tc.command, targets, ambiguous, tc.want)
+		}
+	}
+	// An escaped fd is an argument to the POSIX reading; the literal reading
+	// reads `\9` as a path of its own.
+	if targets, ambiguous := shellWriteTargets(dir, `rm a \9>b`); ambiguous || !slices.Contains(targets, filepath.Join(dir, "9")) {
+		t.Errorf("shellWriteTargets(`rm a \\9>b`) = %q ambiguous=%v, want %q among them", targets, ambiguous, filepath.Join(dir, "9"))
+	}
+}
+
+// TestShellWriteKeepsExpansionsOutOfTheGrammar pins R2 of
+// review-80b12d4f0a2e: no paren, `in`, `esac` or operator inside a `${...}`
+// group, a `$(...)` or `$((...))`, backticks or quotes is read as grammar, so a
+// `)` there never closes the subshell a `cd` stands in. A substitution whose
+// end this cannot find is ambiguous.
+func TestShellWriteKeepsExpansionsOutOfTheGrammar(t *testing.T) {
+	primary, worktree := boundTaskFixture(t, "ship-shell-opaque")
+	sub := "(cd " + primary + "; "
+	// The git guard refuses every `$(` and backtick, so the hook cannot tell
+	// these apart: the write guard's reading is asserted directly.
+	protected := filepath.Join(primary, "docs", "f")
+	refused := func(command string) bool {
+		targets, ambiguous := shellWriteTargets(worktree, command)
+		return ambiguous || slices.Contains(targets, protected)
+	}
+	for _, command := range []string{
+		sub + ": ${x:-)}; rm docs/f)",
+		sub + "echo ${x:-)} >/dev/null; rm docs/f)",
+		sub + `: "${x:-)}"; rm docs/f)`,
+		sub + `: "${x:-")"}"; rm docs/f)`,
+		sub + `: $(echo ")"); rm docs/f)`,
+		sub + `: "$(echo ")")"; rm docs/f)`,
+		sub + ": `echo \")\"`; rm docs/f)",
+		sub + ": \"`echo \")\"`\"; rm docs/f)",
+		sub + ": $((1+(2))); rm docs/f)",
+		sub + ": $((1<<2)); rm docs/f)",
+		sub + ": ${x:-$(echo })}; rm docs/f)",
+		sub + "x=$(wc -l </dev/null); rm docs/f)",
+		sub + "x=\"$(cat <<'EOF'\nit's ) \"q\"\nEOF\n)\"; rm docs/f)",
+		sub + ": $(cat <<'EOF'\n)\nEOF\n); rm docs/f)",
+		sub + "case y in y) ${x:-esac} ;; x) :;; esac; rm docs/f)",
+		sub + "case y in y) : ;; ${x:-esac}) :;; esac; rm docs/f)",
+		sub + "case y in y) : ${x:-;;} ;; x) :;; esac; rm docs/f)",
+		sub + "case ${x:-in} in y) : ;; x) :;; esac; rm docs/f)",
+		sub + "case y in y) : \"esac\" ')' ;; x) :;; esac; rm docs/f)",
+		sub + ": $(case x in (a) :;; esac); rm docs/f)",
+		sub + ": $(echo \\)); rm docs/f)",
+		sub + ": $(echo ')'); rm docs/f)",
+		sub + ": $(echo $'\\')'); rm docs/f)",
+		sub + `: $(echo "$(echo ")")"); rm docs/f)`,
+		sub + ": `echo \\)`; rm docs/f)",
+		": $(echo hi; rm " + primary + "/docs/f",
+	} {
+		if !refused(command) {
+			t.Errorf("shellWriteTargets(%q) names no ambiguity and not %s", command, protected)
+		}
+	}
+	for _, command := range []string{
+		sub + `: $(echo ")")); rm docs/f`,
+		sub + ": ${x:-)}); rm docs/f",
+		"n=$(wc -l <" + primary + "/docs/f); echo $n",
+		"git commit -m \"$(cat <<'EOF'\nfix: it's done (really) \"q\"\nEOF\n)\"",
+		"x=$(git log --grep case --oneline); echo \"$x\"",
+	} {
+		if refused(command) {
+			t.Errorf("shellWriteTargets(%q) is ambiguous or names %s", command, protected)
+		}
+	}
+	dir := t.TempDir()
+	for _, command := range []string{
+		": $(echo hi",
+		": \"$(echo \"hi)\"",
+		": $(echo 'hi)",
+		": `echo hi",
+		": $(case x in a) :;; esac)",
+		": $(if :; then case x in a) :;; esac; fi)",
+		": ${x:-$(echo}",
+		": $(echo ${x)",
+		": $(cat <<EOF\nx\n)",
+		": $(case<<x)",
+		": $(echo '",
+	} {
+		if _, ambiguous := shellWriteTargets(dir, command); !ambiguous {
+			t.Errorf("shellWriteTargets(%q): ambiguous=false, want true", command)
+		}
+	}
+	for _, tc := range []struct {
+		command string
+		want    []string
+	}{
+		{": $(echo a # )\n); rm f", []string{filepath.Join(dir, "f")}},
+		{": $(echo case; echo x) && rm f", []string{filepath.Join(dir, "f")}},
+		{"echo $(cd " + primary + "; pwd) && rm f", []string{filepath.Join(dir, "f")}},
+		{"echo `cd " + primary + "; pwd` && rm f", []string{filepath.Join(dir, "f")}},
+	} {
+		if targets, ambiguous := shellWriteTargets(dir, tc.command); ambiguous || !slices.Equal(targets, tc.want) {
+			t.Errorf("shellWriteTargets(%q) = %q ambiguous=%v, want %q", tc.command, targets, ambiguous, tc.want)
+		}
+	}
+}
+
+// TestShellWriteReadsPlusCOption pins R3 of review-80b12d4f0a2e: every named
+// shell reads `+c` in any option word as `-c`, and `+s` as `-s`.
+func TestShellWriteReadsPlusCOption(t *testing.T) {
+	primary, worktree := boundTaskFixture(t, "ship-shell-plus-c")
+	rm := shellQuote("rm " + filepath.Join(primary, "docs", "f"))
+	for _, command := range []string{
+		"bash +c " + rm,
+		"bash +xc " + rm,
+		"bash -x +c " + rm,
+		"bash +c -x " + rm,
+		"sh +c " + rm,
+		"zsh +c " + rm,
+		"zsh +xc " + rm,
+		"zsh -x +c " + rm,
+		"dash +c " + rm,
+		"dash +xc " + rm,
+		"ksh +c " + rm,
+		"ksh +xc " + rm,
+		"ksh -x +c " + rm,
+		"bash +s arg <<< " + rm,
+	} {
+		assertShapes(t, true, worktree, command, "")
+	}
+}
+
+// TestShellWriteReadsSubscriptAssignments pins R4 of review-80b12d4f0a2e: an
+// assignment prefix is a NAME or a NAME[subscript] before `=` or `+=`, a
+// subscript being read to its `]` blanks and parens included, and env reads
+// every word holding `=` before its command as an assignment.
+func TestShellWriteReadsSubscriptAssignments(t *testing.T) {
+	primary, worktree := boundTaskFixture(t, "ship-shell-subscript")
+	target := filepath.Join(primary, "docs", "f")
+	for _, command := range []string{
+		"a[1]=x rm " + target,
+		"a[x]=1 b[2]+=y rm " + target,
+		"a[]=x rm " + target,
+		"a[1 2]=x rm " + target,
+		"x=1 a[1 2]=x rm " + target,
+		"a[1;2]=x rm " + target,
+		`a["1 2"]=x rm ` + target,
+		"if a[1 2]=x rm " + target + "; then :; fi",
+		"a[1]=x cd " + primary + "; rm docs/f",
+		"(cd " + primary + "; a[)]=x rm docs/f)",
+		"env a[1]=x rm " + target,
+		"env A-B=1 rm " + target,
+		"env 'a b=1' rm " + target,
+		"sudo A-B=1 rm " + target,
+	} {
+		assertShapes(t, true, worktree, command, "")
+	}
+	for _, command := range []string{
+		"a[1]x=y rm " + target,
+		"1a=x rm " + target,
+		"a-b=1 rm " + target,
+		"env a[1 2]=x rm " + target,
+		"echo a[1 2]=x " + target,
+	} {
+		assertShapes(t, false, worktree, command, "")
+	}
+}
+
+// TestShellWriteReadsLongPrefixesInLinearTime pins R5 of review-80b12d4f0a2e:
+// a run of words before the command word, and a directory stack pushd
+// grows, cost linear time. Four times the words cost about four times as
+// much; the budget is eight. Comparing two sizes under the same load keeps
+// -race and a busy host from deciding the verdict.
+func TestShellWriteReadsLongPrefixesInLinearTime(t *testing.T) {
+	dir := t.TempDir()
+	cost := func(command string, want []string) time.Duration {
+		best := time.Duration(math.MaxInt64)
+		for range 3 {
+			start := time.Now()
+			if targets, ambiguous := shellWriteTargets(dir, command); ambiguous || !slices.Equal(targets, want) {
+				t.Fatalf("shellWriteTargets of %d runes = %q ambiguous=%v, want %q", len(command), targets, ambiguous, want)
+			}
+			best = min(best, time.Since(start))
+		}
+		return best
+	}
+	for _, shape := range []struct {
+		name, repeat, tail string
+	}{
+		{"time", "time ", "rm x"},
+		{"time -p", "time -p ", "rm x"},
+		{"pushd", "pushd " + dir + "; ", "rm x"},
+	} {
+		want := []string{filepath.Join(dir, "x")}
+		small := cost(strings.Repeat(shape.repeat, 5000)+shape.tail, want)
+		large := cost(strings.Repeat(shape.repeat, 20000)+shape.tail, want)
+		if large > 8*small {
+			t.Errorf("%s × 20000 took %v, %.1f times 5000 (%v), want under 8", shape.name, large, float64(large)/float64(small), small)
+		}
+	}
+}
+
+// TestShellWriteResolvesFunctionCallsWhenTheyRun pins R6 of
+// review-80b12d4f0a2e: a call resolves the functions its body calls when it
+// runs, through every function defined by then, so a function defined after
+// the body that calls it still moves the directory; redefinition and
+// recursion resolve as bash runs them.
+func TestShellWriteResolvesFunctionCallsWhenTheyRun(t *testing.T) {
+	primary, worktree := boundTaskFixture(t, "ship-shell-late-function")
+	cd := "cd " + primary
+	for _, command := range []string{
+		"g() { f; }; f() { " + cd + "; }; g; rm docs/f",
+		"g() { g2; }; g2() { f; }; f() { " + cd + "; }; g; rm docs/f",
+		"g() { g; f; }; f() { " + cd + "; }; g; rm docs/f",
+		"g() { f; }; f() { :; }; f() { " + cd + "; }; g; rm docs/f",
+		"g() { eval f; }; f() { " + cd + "; }; g; rm docs/f",
+		"g() { f; }; eval 'f() { " + cd + "; }'; g; rm docs/f",
+	} {
+		assertShapes(t, true, worktree, command, "")
+	}
+	for _, command := range []string{
+		"g() { f; }; f() { " + cd + "; }; f() { :; }; g; rm docs/f",
+		"g() { g; }; g; rm docs/f",
+		"g() { f; }; f() { g; }; g; rm docs/f",
+		"g() { f; }; f() ( " + cd + "; ); g; rm docs/f",
+		"g() { f & }; f() { " + cd + "; }; g; rm docs/f",
+		"g() { f; }; f() { " + cd + "; }; g & rm docs/f",
+		"g() { f; }; g; f() { " + cd + "; }; rm docs/f",
+	} {
+		assertShapes(t, false, worktree, command, "")
+	}
+}
+
+// review round 2: text inside a comment, an unquoted `#` at a word's start up
+// to its newline, has no grammar effect: no paren, quote, substitution,
+// heredoc, case word or `;;` in it opens or closes anything. bash 3.2 and 5.3
+// probed.
+func TestShellWriteReadsCommentsAsText(t *testing.T) {
+	primary, worktree := boundTaskFixture(t, "ship-shell-comment")
+	sub := "(cd " + primary + "; "
+	protected := filepath.Join(primary, "docs", "f")
+	refused := func(command string) bool {
+		targets, ambiguous := shellWriteTargets(worktree, command)
+		return ambiguous || slices.Contains(targets, protected)
+	}
+	for _, command := range []string{
+		sub + ": # )\nrm docs/f)",
+		sub + ": #)\nrm docs/f)",
+		sub + ": # it's\nrm docs/f)",
+		sub + ": # `\nrm docs/f)",
+		sub + ": # $(\nrm docs/f)",
+		sub + ": # <<EOF\nrm docs/f)",
+		sub + "case y in y) : # ;; esac )\n;; esac; rm docs/f)",
+	} {
+		if !refused(command) {
+			t.Errorf("shellWriteTargets(%q) names no ambiguity and not %s", command, protected)
+		}
+	}
+	for _, command := range []string{
+		sub + ": # (\n); rm docs/f",
+		sub + ": # )\n); rm docs/f",
+	} {
+		if refused(command) {
+			t.Errorf("shellWriteTargets(%q) is ambiguous or names %s", command, protected)
+		}
+	}
+}
+
+// An unterminated `$'` that ends the text is read without slicing past the
+// quote. 80b12d4f panicked on each of these.
+func TestShellWriteReadsTrailingANSICQuote(t *testing.T) {
+	for _, command := range []string{"$'", "echo $'", "x=$'", "rm a $'"} {
+		shellWriteTargets("/w", command)
+		tokenizeSegments(backslashEscapes, command)
+		tokenizeSegments(backslashLiteral, command)
+	}
+}
+
+// A `<(...)` process substitution is read whole, as bash reads it: a `)`
+// quoted in its body closes no subshell. A `<` word ends at a `)`.
+func TestShellWriteReadsProcessSubstitutionWhole(t *testing.T) {
+	primary, worktree := boundTaskFixture(t, "ship-shell-procsub")
+	sub := "(cd " + primary + "; "
+	protected := filepath.Join(primary, "docs", "f")
+	for _, command := range []string{
+		sub + "cat <(echo \")\"); rm docs/f)",
+		sub + "cat <(echo ')'); rm docs/f)",
+		sub + "cat <(a; b); rm docs/f)",
+		sub + ": >(echo \")\"); rm docs/f)",
+	} {
+		if targets, ambiguous := shellWriteTargets(worktree, command); !ambiguous && !slices.Contains(targets, protected) {
+			t.Errorf("shellWriteTargets(%q) = %q, want %s", command, targets, protected)
+		}
+	}
+	for _, command := range []string{
+		sub + "cat <x); rm docs/f",
+		sub + "cat <(a)); rm docs/f",
+	} {
+		if targets, ambiguous := shellWriteTargets(worktree, command); ambiguous || slices.Contains(targets, protected) {
+			t.Errorf("shellWriteTargets(%q) = %q, ambiguous %v", command, targets, ambiguous)
+		}
 	}
 }

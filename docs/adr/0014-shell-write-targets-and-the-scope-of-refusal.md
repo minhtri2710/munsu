@@ -85,16 +85,28 @@ are not knowable to the guard.
 channel. Splitting a body at its newlines and tokenizing each line turned document text
 into write targets and let a `cd` line inside a document move the resolution base for the
 real commands after the terminator — refusing writes that must go through. Read
-redirections (`<`, `<<<`, and their fd or `{name}` prefixed forms such as `0<<EOF` or
+redirections (`<`, `<<<`, `<(...)`, and their fd prefixed forms such as `0<<EOF` or
 `3</dev/null`) drop their operand for the same reason: they name a source, never a target.
+A `<(...)` is read whole to the `)` that balances it, as a `$(...)` is, and a `<` word ends
+at an unquoted `(` or `)`, so neither `cat <x)` nor a `)` quoted in a `<(...)` body moves a
+subshell's end.
 Every argv reader (the write verbs, `builtinCommand`, the directory movers) sees a segment
 through `withoutRedirections`, so a redirection in any position (`2>/dev/null cd <shared>`,
 `env 3</dev/null rm f`) never shifts the command word or an operand; the git guard's argv
 reader (`segmentGitCommands`) does the same, so `git 2>/dev/null push --force` is read as
-the push it is. A descriptor duplication (`>&2`, `2>&1`, `>&-`) names no file and leaves the
-segment with its fd; `&>` and `&>>` redirect; neither is a background `&`.
+the push it is. Only an fd number belongs to the redirection, and only when it is unquoted
+and touches the operator (`redirectPrefix`): `9 >x`, `"9">x`, `\9>x` and `12&>x` pass `9` or
+`12` as an argument, as bash does. A `{name}` word is never dropped: bash 3.2 passes
+`{x}>x`'s `{x}` as an argument, where 5.3 reads it as a descriptor name, so both guards read
+it both ways (`descriptorName`), and `git push origin mu/<task> {x}>/dev/null` is refused. A descriptor duplication
+(`>&2`, `2>&1`, `>&-`) names no file and leaves the segment with its fd; `&>` and `&>>`
+redirect; neither is a background `&`.
+
+A `<<` or `<` inside a substitution or a `${...}` group belongs to it, not to the command
+line: `splitHeredocBodies` keeps both whole.
 
 The delimiter word is read once using POSIX backslash-quoting rules: `<<\EOF`
+
 ends at bare `EOF`, and both tokenization passes then use that same stripped
 body. `readHeredocRedirect` removes the quoting backslash while reading the
 delimiter, so the later literal-backslash tokenization pass does not retain it
@@ -119,7 +131,9 @@ A named write verb is found where bash finds the command word, and inside the pa
 bash runs:
 
 * **Command position** (`commandPosition`): the command word is the first word after every
-  assignment (`X=1`), reserved word (`if`, `then`, `while`, `{`, …) and `!`, and after
+  assignment (`X=1`, `X+=1`, `a[i]=1`; at assignment position a subscript is read to its
+  balanced `]`, blanks and operators included, as bash reads it), reserved word (`if`,
+  `then`, `while`, `{`, …) and `!`, and after
   every wrapper with its options. The wrappers are a fixed list, `wrapperVerbs`, chosen by
   one principle — a command that runs the rest of its argv as a command: `command`,
   `builtin`, `exec`, `env`, `nohup`, `time`, `nice`, `timeout`, `sudo`, `setsid`,
@@ -128,10 +142,21 @@ bash runs:
   the command's directory (`env -C`, `sudo -D`) moves the base its targets resolve
   against; one the shell computes makes relative targets ambiguous, and a changed root
   (`sudo -R`) makes every target ambiguous. `command -v`/`-V` and `type` run nothing and
-  name nothing. The file `time -o`/`--output` writes is a target.
+  name nothing. The file `time -o`/`--output` writes is a target. `env` and `sudo` pass
+  every word holding a `=` before the command to its environment, whatever its name.
 * **Subshells, groups and case** (`tokenizeSegments`): an unquoted `(` that starts a
   word, and a `)` that closes none opened inside a word, are operators, so `(rm x)` and
-  `((rm x))` reach the verb; `$(`, `<(`, `>(`, `$((` and quoted parens are unchanged. The
+  `((rm x))` reach the verb; `>(` and quoted parens are unchanged. Text inside a comment
+  (an unquoted `#` that starts a word, up to the newline) is no grammar: no paren, quote,
+  substitution, heredoc, `case`, `esac`, `in` or `;;` in it has any effect, and its words
+  stay tokenized, as bash 3.2 and 5.3 read it. A `$(...)`,
+  `$((...))` or backtick substitution is one piece of its word, unquoted, inside double
+  quotes and inside a `${...}` group (`substitutionEnd`): no paren, operator, quote,
+  comment, heredoc or reserved word in it is grammar of the command around it, and a
+  `${...}` group keeps its parens, operators and blanks in its word, so neither a `)` nor
+  an `esac`, `in` or `;;` in one closes a subshell or a case. A substitution the POSIX
+  reading cannot end, or a `$(...)` with a `case` at a command word (whose pattern parens
+  bash 3.2 and 5.3 read apart), leaves the rest of the command an unfinished segment. The
   tokenizer keeps a construct stack of subshells, brace groups and `case` statements: a
   `case` pattern's `(` and `)` open and close no subshell, `;;`, `;&` and `;;&` return to
   the patterns, and a directory move inside a case arm moves the segments after `esac`, as
@@ -147,9 +172,13 @@ bash runs:
   reserved word, and its body is read in a child scope. A body of any compound form a
   reserved word ends (`if`, `while`, `until`, `for`, `select`, `case`) is scoped the same
   way; a `[[ ]]` body runs no command. Both guards record each function the command
-  defines, in an `eval` payload too, and whether its body moves the directory: a `cd`, `pushd` or `popd` at any depth of the body, `eval` and a nested
-  subshell included (`functionCall`). A later foreground call at command position to such a
-  function leaves the directory unknown, as `popd` on an empty stack does. A `( )` body, a
+  defines, in an `eval` payload too, whether its body moves the directory (a `cd`, `pushd`
+  or `popd` at any depth of the body, `eval` and a nested subshell included), and the
+  foreground calls its body makes (`shellFunctions`, `functionCall`). A call resolves when
+  it runs, as bash's does: a later foreground call at command position leaves the directory
+  unknown, as `popd` on an empty stack does, when the function it names or any function its
+  body calls, as defined at that call, moves it. A body may so call a function defined
+  after it; a redefinition replaces the earlier body, and a recursive body is read once. A `( )` body, a
   call in the background (`&`), in a pipeline, in a subshell, or behind `command`, and a
   function a `bash -c` payload defines, leave it unchanged.
 * **Directory moves** (`segmentDirMove`, `builtinCommand`): `cd`, `pushd` and `popd` move
@@ -169,8 +198,9 @@ bash runs:
   `( ... )` returns at its `)`. `CDPATH` is not read and stays open.
 * **Named shell payloads** (`shellPayloads`): the `-c` operand of `bash`, `sh`, `zsh`,
   `dash` or `ksh` (`shellConsumers`), in any option form bash accepts (`-lc`, `-l -c`,
-  `-o name -c`); the heredoc body or here-string such a shell reads as its script when it
-  has no `-c` and no script operand, or has `-s`; the words of `eval`, joined by single
+  `-o name -c`, and `+c`, `+xc`, which each of them reads as `-c`); the heredoc body or
+  here-string such a shell reads as its script when it has no `-c` and no script operand,
+  or has `-s` or `+s`; the words of `eval`, joined by single
   spaces as bash joins them; and the string `env -S` splits. An `eval` payload runs in the
   same shell, so its `cd` moves the segments after it; a shell's payload runs in a child
   that starts in its parent segment's directory, and its `cd` does not leak out. A payload
@@ -207,12 +237,20 @@ Everything else is open, explicitly and by design:
   `cd` is read as the plain word it is.
 * **`>` inside `[[ ]]` is read as a redirection**: `[[ a > b ]]` names `b` as a write target,
   an over-refusal when `b` is protected.
-* **`$(...)` / backtick substitution is open** on this path: a target the shell computes is
-  not knowable here. (The git ladder still refuses substitution for git mutations.)
+* **`$(...)` / backtick substitution is open** on this path: its extent is read, but a
+  target it computes, and anything it runs, is not knowable here. A word that is only a
+  substitution is not read as possibly absent, so in `$(true) rm <shared>/x`, where bash
+  runs `rm`, the write guard reads `$(true)` as the command word and the write is open.
+  (The git ladder still refuses substitution for git mutations.)
+* **`>(...)` is read as a redirection**: `diff a >(b)` names the file `(b)` in the current
+  directory as a write target, an over-refusal when that directory is protected. A
+  `<(...)` or `>(...)` body is not read for writes, like a `$(...)` body.
 
 Tokenization cannot fail — `tokenizeSegments` always returns a segment list, with an
-unfinished `case` as its own marked segment — so this channel has **no unparseable state**.
-It does, however, carry explicit fail-closed states: for an unfinished `case`, for an unknown
+unfinished `case` or substitution as its own marked segment — so this channel has **no
+unparseable state**. It does, however, carry explicit fail-closed states: for an unfinished
+`case` or substitution, for an unknown
+
 directory,
 for ambiguous cross-volume drive-relative paths, when `resolveShellWritePath` cannot
 reconstruct the other drive's current directory, and for a payload too deep or too

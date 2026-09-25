@@ -1373,3 +1373,58 @@ func TestSafetyCheckReadsCaseStackAndCdOptions(t *testing.T) {
 		}
 	}
 }
+
+// TestSafetyCheckReadsRedirectPrefixesExpansionsAndLateFunctions pins the git
+// verdicts of R1, R2, R4 and R6 of review-80b12d4f0a2e and of its round 2: a
+// spaced fd, and any `{name}` word, is a refspec, a `)` inside a `${...}`
+// group or a comment closes no subshell, a `<` word ends at a `)`, a subscripted assignment still lets
+// cd move the shell, and a function defined after the body that calls it
+// moves the directory.
+func TestSafetyCheckReadsRedirectPrefixesExpansionsAndLateFunctions(t *testing.T) {
+	primary := initGitRepoForSafety(t, t.TempDir())
+	worktree := filepath.Join(t.TempDir(), "wt")
+	runGitForSafety(t, primary, "worktree", "add", "--detach", worktree)
+	homeDir := bindSafetyWorktree(t, "ship-rv", primary, worktree)
+	t.Setenv("MUNSU_HOME", homeDir)
+	t.Setenv("MUNSU_TASK_ID", "ship-rv")
+	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-rv")
+
+	for _, command := range []string{
+		"git push origin mu/ship-rv 9 >/dev/null",
+		"git push origin mu/ship-rv {x} >/dev/null",
+		"git push origin mu/ship-rv 12 &>/dev/null",
+		`git push origin mu/ship-rv "9">/dev/null`,
+		`git push origin mu/ship-rv "9">&2`,
+		"git push origin mu/ship-rv 9 >&2",
+		"git push origin mu/ship-rv {a[1]}>/dev/null",
+		"(cd " + primary + "; : ${x:-)}; git push origin mu/ship-rv)",
+		"(cd " + primary + "; : ${x:-)}; git add f)",
+		"(cd " + primary + `; : "${x:-")"}"; git add f)`,
+		"(cd " + primary + "; case y in y) ${x:-esac} ;; x) :;; esac; git add f)",
+		"a[1]=x cd " + primary + "; git add f",
+		"a[1 2]=x cd " + primary + "; git add f",
+		"g() { f; }; f() { cd " + primary + "; }; g; git add f",
+		"g() { g2; }; g2() { f; }; f() { cd " + primary + "; }; g; git add f",
+		// bash 3.2 passes `{x}` to git as an argument.
+		"git push origin mu/ship-rv {x}>/dev/null",
+		"(cd " + primary + "; : # )\ngit add f)",
+	} {
+		if block, _ := runPiSafetyForGit(t, worktree, command); !block {
+			t.Errorf("%q allowed, want refused", command)
+		}
+	}
+	for _, command := range []string{
+		"git push origin mu/ship-rv 12>/dev/null",
+		"git push origin mu/ship-rv 9>/dev/null",
+		"git push origin mu/ship-rv 2>&1",
+		"(cd " + primary + "; : # (\n); git add f",
+		"(cd " + primary + "; cat <x); git add f",
+		"(cd " + primary + "; : ${x:-)}); git add f",
+		"g() { f; }; f() { cd " + primary + "; }; f() { :; }; g; git add f",
+		"g() { g; }; g; git add f",
+	} {
+		if block, reason := runPiSafetyForGit(t, worktree, command); block {
+			t.Errorf("%q refused: %s", command, reason)
+		}
+	}
+}

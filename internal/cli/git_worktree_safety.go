@@ -42,7 +42,7 @@ func evaluateGitMutationSafety(checkPath, command string) (bool, string) {
 	homeDir := strings.TrimSpace(os.Getenv("MUNSU_HOME"))
 	taskID := strings.TrimSpace(os.Getenv("MUNSU_TASK_ID"))
 	mode := gitSafetyBackslashMode()
-	return evaluateGitScriptSafety(homeDir, taskID, checkPath, command, 0, namesIFS(mode, command, 0), &gitShell{functions: map[string]bool{}})
+	return evaluateGitScriptSafety(homeDir, taskID, checkPath, command, 0, namesIFS(mode, command, 0), &gitShell{})
 }
 
 // namesIFS reports whether any decoded word of command names IFS, at every
@@ -86,9 +86,9 @@ const maxShellPayloadDepth = 4
 // an unquoted parameter expansion's word at an IFS the guard cannot know.
 //
 // shell is shared by every payload the command reads: moves counts the
-// directory moves read at any depth, and functions records each function
-// defined so far, true when its body moves the directory. A foreground
-// call to one leaves the directory unknown.
+// directory moves read at any depth, and functions the functions defined so
+// far (shellFunctions). A foreground call to one whose body moves the
+// directory leaves it unknown.
 func evaluateGitScriptSafety(homeDir, taskID, checkPath, command string, depth int, ifs bool, shell *gitShell) (bool, string) {
 	if hasGitCommandSubstitution(command) {
 		return true, "compound shell command with command substitution is not allowed for git mutation"
@@ -116,7 +116,7 @@ func evaluateGitScriptSafety(homeDir, taskID, checkPath, command string, depth i
 		path, previous string
 		stack          []string
 		function       string
-		moves          int
+		moves, calls   int
 	}
 	var subshells []shellDir
 	segments := tokenizeSegments(mode, stripped)
@@ -125,11 +125,11 @@ func evaluateGitScriptSafety(homeDir, taskID, checkPath, command string, depth i
 			return true, "shell case is unfinished; git mutation cannot be checked"
 		}
 		if i > 0 && definesFunction(segments[i-1]) && !segment[0].body {
-			shell.functions[functionName(segments[i-1])] = false
+			shell.functions.define(functionName(segments[i-1]), shellFunction{})
 		}
 		if segment[0].subshell {
 			if segment[0].text == "(" {
-				opened := shellDir{currentPath, previous, slices.Clone(stack), "", shell.moves}
+				opened := shellDir{currentPath, previous, slices.Clone(stack), "", shell.moves, len(shell.functions.calls)}
 				if segment[0].body && i > 0 && definesFunction(segments[i-1]) {
 					opened.function = functionName(segments[i-1])
 				}
@@ -139,7 +139,7 @@ func evaluateGitScriptSafety(homeDir, taskID, checkPath, command string, depth i
 				currentPath, previous, stack = closed.path, closed.previous, closed.stack
 				subshells = subshells[:n-1]
 				if closed.function != "" {
-					shell.functions[closed.function] = shell.moves != closed.moves
+					shell.functions.define(closed.function, shellFunction{moves: shell.moves != closed.moves, from: closed.calls, to: len(shell.functions.calls)})
 				}
 			}
 			continue
@@ -175,7 +175,7 @@ func evaluateGitScriptSafety(homeDir, taskID, checkPath, command string, depth i
 			}
 		}
 		move, operand := segmentDirMove(segment)
-		if move == moveNone && !segment[0].detached && shell.functions[functionCall(segment)] {
+		if shell.functions.call(segment) && move == moveNone {
 			move = moveCalled
 		}
 		if move != moveNone {
@@ -220,7 +220,7 @@ func evaluateGitScriptSafety(homeDir, taskID, checkPath, command string, depth i
 // gitShell is the shell state evaluateGitScriptSafety shares across payloads.
 type gitShell struct {
 	moves     int
-	functions map[string]bool
+	functions shellFunctions
 }
 
 func evaluateGitPayloadSafety(homeDir, taskID, checkPath, payload string, depth int, ifs bool, shell *gitShell) (bool, string) {
@@ -238,6 +238,11 @@ func evaluateGitPayloadSafety(homeDir, taskID, checkPath, payload string, depth 
 // recursion.
 func readsAsMoreThanItself(mode backslashMode, token shellToken) bool {
 	segments := tokenizeSegments(mode, token.text)
+	// A word holding a substitution that does not end reads again as itself
+	// and its unfinished rest.
+	if n := len(segments); n == 2 && segments[1][0].unfinished {
+		segments = segments[:1]
+	}
 	if len(segments) != 1 || len(segments[0]) != 1 || segments[0][0].text != token.text {
 		return true
 	}
