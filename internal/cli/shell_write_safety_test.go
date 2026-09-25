@@ -842,12 +842,11 @@ func TestShellWriteHeredocBackslashDelimiterBothReadings(t *testing.T) {
 		"cat <<-\\END > notes.md\n\tharmless\n\tEND\necho pwned > " + target,
 	}
 	for _, command := range cases {
-		// Heredoc stripping is POSIX and runs once; the readings tokenize what
-		// remains, so this pins that the post-terminator write survives stripping
-		// and is classified under both readings (#664 v3).
-		stripped := stripHeredocBodies(command)
-		escapeTargets, escapeAmbiguous := shellWriteTargetsUnderForTest(backslashEscapes, base, stripped)
-		literalTargets, literalAmbiguous := shellWriteTargetsUnderForTest(backslashLiteral, base, stripped)
+		// Heredoc stripping is POSIX in both readings; the readings tokenize
+		// what remains, so this pins that the post-terminator write survives
+		// stripping and is classified under both readings (#664 v3).
+		escapeTargets, escapeAmbiguous := shellWriteTargetsUnderForTest(backslashEscapes, base, command)
+		literalTargets, literalAmbiguous := shellWriteTargetsUnderForTest(backslashLiteral, base, command)
 		if escapeAmbiguous || literalAmbiguous {
 			t.Errorf("%q unexpectedly ambiguous", command)
 		}
@@ -1470,6 +1469,283 @@ func TestShellWriteTargetsRefuseTooManyCandidateReadings(t *testing.T) {
 	for _, command := range []string{"rm $a $b $c $d $e $f $g $h $i", "${v:-rm} $a $b $c $d $e $f $g $h", "echo $a $b $c $d $e $f $g $h > $i"} {
 		if _, ambiguous := shellWriteTargets(dir, command); !ambiguous {
 			t.Errorf("shellWriteTargets(%q): ambiguous=false, want true", command)
+		}
+	}
+}
+
+// shellQuote single-quotes s for a POSIX shell.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// nestShellPayload wraps command in depth layers of `bash -c`.
+func nestShellPayload(depth int, command string) string {
+	for range depth {
+		command = "bash -c " + shellQuote(command)
+	}
+	return command
+}
+
+// TestShellWriteReadsNamedShellPayloads pins wgp-01: a write inside a payload
+// a named shell runs (`-c`, stdin, eval) is a write of the command.
+func TestShellWriteReadsNamedShellPayloads(t *testing.T) {
+	primary, worktree := boundTaskFixture(t, "ship-shell-payload")
+	rm := "rm " + filepath.Join(primary, "docs", "f")
+	for _, command := range []string{
+		"bash -c " + shellQuote(rm),
+		"/bin/bash -c " + shellQuote(rm),
+		"sh -c " + shellQuote(rm),
+		"zsh -c " + shellQuote(rm),
+		"dash -c " + shellQuote(rm),
+		"ksh -c " + shellQuote(rm),
+		"bash -lc " + shellQuote(rm),
+		"bash -ec " + shellQuote(rm),
+		"bash -l -c " + shellQuote(rm),
+		"bash -c -e " + shellQuote(rm),
+		"bash -c -- " + shellQuote(rm),
+		"bash -o posix -c " + shellQuote(rm),
+		"bash +o posix -c " + shellQuote(rm),
+		"bash -euo pipefail -c " + shellQuote(rm),
+		"bash --norc --rcfile x -c " + shellQuote(rm),
+		"bash -c " + shellQuote(rm) + " name arg",
+		"eval " + shellQuote(rm),
+		"eval " + rm,
+		"eval -- " + shellQuote(rm),
+		"builtin eval " + shellQuote(rm),
+		"bash <<'EOF'\n" + rm + "\nEOF",
+		"bash -s <<'EOF'\n" + rm + "\nEOF",
+		"bash -s arg <<EOF\n" + rm + "\nEOF",
+		"sh <<< " + shellQuote(rm),
+		"bash -s <<< " + shellQuote(rm),
+		"echo ok; bash <<'EOF'\n" + rm + "\nEOF",
+		nestShellPayload(maxShellPayloadDepth, rm),
+		nestShellPayload(maxShellPayloadDepth+1, rm),
+		"${x:-bash} -c " + shellQuote(rm),
+		"${x:-eval} " + shellQuote(rm),
+		"env -S " + shellQuote(rm),
+		"eval 'cd " + primary + "' && rm docs/f",
+		"bash -c 'cd " + primary + "; rm docs/f'",
+		"eval 'cd " + primary + "; rm docs/f'",
+		"cd " + primary + " && bash -c 'rm docs/f'",
+		"cd " + primary + " && eval 'rm docs/f'",
+	} {
+		assertShapes(t, true, worktree, command, "")
+	}
+}
+
+// TestShellWriteReadsCommandPosition pins wgp-02: the command word is the
+// first word after assignments, reserved words, `!` and every wrapper with its
+// options.
+func TestShellWriteReadsCommandPosition(t *testing.T) {
+	primary, worktree := boundTaskFixture(t, "ship-shell-wrapper")
+	target := filepath.Join(primary, "docs", "f")
+	for _, command := range []string{
+		"command rm " + target,
+		"command -p rm " + target,
+		"command cp x " + target,
+		"exec rm " + target,
+		"exec -a NAME rm " + target,
+		"exec -l rm " + target,
+		"env rm " + target,
+		"env -i PATH=/bin rm " + target,
+		"env - PATH=/bin rm " + target,
+		"env -u HOME rm " + target,
+		"env -uHOME rm " + target,
+		"env --unset HOME rm " + target,
+		"env -P /bin rm " + target,
+		"env X=1 rm " + target,
+		"env -- rm " + target,
+		"env -C " + primary + " rm docs/f",
+		"env --chdir=" + primary + " rm docs/f",
+		"env --chdir " + primary + " cp x docs/f",
+		"nohup rm " + target,
+		"nohup -- rm " + target,
+		"time rm " + target,
+		"time -p rm " + target,
+		"nice rm " + target,
+		"nice -n 5 rm " + target,
+		"nice -n5 rm " + target,
+		"nice -5 rm " + target,
+		"nice --adjustment 5 rm " + target,
+		"timeout 5 rm " + target,
+		"timeout -k 1 5 rm " + target,
+		"timeout -s KILL 5 rm " + target,
+		"timeout --signal=KILL --foreground 5s rm " + target,
+		"sudo rm " + target,
+		"sudo -u root rm " + target,
+		"sudo -uroot rm " + target,
+		"sudo -E -g wheel rm " + target,
+		"sudo --user root rm " + target,
+		"sudo X=1 rm " + target,
+		"sudo -D " + primary + " rm docs/f",
+		"setsid rm " + target,
+		"setsid -w rm " + target,
+		"stdbuf -o0 rm " + target,
+		"stdbuf -o 0 rm " + target,
+		"stdbuf --output=0 rm " + target,
+		"env nohup rm " + target,
+		"command env rm " + target,
+		"nohup env -u HOME nice -n 1 rm " + target,
+		"sudo -u root env X=1 timeout 5 nice -n 1 cp x " + target,
+		"X=1 rm " + target,
+		"X=1 Y+=2 cp x " + target,
+		"! rm " + target,
+		"{ rm " + target + "; }",
+		"( rm " + target + " )",
+		"if rm " + target + "; then :; fi",
+		"if true; then rm " + target + "; fi",
+		"while rm " + target + "; do break; done",
+		"until rm " + target + "; do :; done",
+		`"${x:-env}" rm ` + target,
+		`"${x:-nohup}" "${y:-nice}" rm ` + target,
+	} {
+		assertShapes(t, true, worktree, command, "")
+	}
+}
+
+// TestShellWritePayloadAndWrapperTargets pins where payload and wrapper
+// targets resolve: an eval payload runs in the same shell, so its `cd` moves
+// later segments; a `bash -c` payload runs in a child that starts in its
+// parent segment's directory and whose `cd` does not leak out.
+func TestShellWritePayloadAndWrapperTargets(t *testing.T) {
+	dir, other := t.TempDir(), t.TempDir()
+	in := func(base string, names ...string) []string {
+		var paths []string
+		for _, name := range names {
+			paths = append(paths, filepath.Join(base, name))
+		}
+		return paths
+	}
+	for _, tc := range []struct {
+		command string
+		want    []string
+	}{
+		{"eval 'cd " + other + "' && rm f", in(other, "f")},
+		{"bash -c 'cd " + other + "' && rm f", in(dir, "f")},
+		{"bash -c 'cd " + other + "; rm f'", in(other, "f")},
+		{"eval 'cd " + other + "; rm f'", in(other, "f")},
+		{"cd " + other + " && bash -c 'rm f'", in(other, "f")},
+		{"cd " + other + " && eval 'rm f'", in(other, "f")},
+		{"cd " + other + " && bash <<'EOF'\nrm f\nEOF", in(other, "f")},
+		{"bash -c 'rm a' > b", slices.Concat(in(dir, "b"), in(dir, "a"))},
+		{"env -C " + other + " rm f > g", slices.Concat(in(dir, "g"), in(other, "f"))},
+		{"env --chdir=" + other + " bash -c 'rm f'", in(other, "f")},
+		{"sudo -D " + other + " rm f", in(other, "f")},
+		{"env -C \"$d\" rm " + filepath.Join(other, "f"), in(other, "f")},
+		{"bash -c 'rm $0' f", nil},
+		{`bash -c "$cmd"`, nil},
+		{"command -v rm " + filepath.Join(other, "f"), nil},
+		{"command -V rm " + filepath.Join(other, "f"), nil},
+		{"type rm " + filepath.Join(other, "f"), nil},
+		{"bash script.sh <<< 'rm f'", nil},
+		{"bash -c 'echo hi' <<< 'rm f'", nil},
+		{"cat <<'EOF' | bash\nrm f\nEOF", nil},
+		{`git commit -m "rm ` + filepath.Join(other, "x") + `"`, nil},
+		{`grep "> ` + filepath.Join(other, "x") + `" .`, nil},
+	} {
+		if targets, ambiguous := shellWriteTargets(dir, tc.command); ambiguous || !slices.Equal(targets, tc.want) {
+			t.Errorf("shellWriteTargets(%q) = %q ambiguous=%v, want %q", tc.command, targets, ambiguous, tc.want)
+		}
+	}
+	for _, command := range []string{
+		nestShellPayload(maxShellPayloadDepth+1, "echo hi"),
+		"eval " + shellQuote(nestShellPayload(maxShellPayloadDepth, "echo hi")),
+		"env -C \"$d\" rm f",
+		"env -C \"$d\" bash -c 'rm f'",
+		"sudo -R " + other + " rm " + filepath.Join(other, "f"),
+		"sudo -R " + other + " bash -c 'echo hi'",
+		`eval ${x:-"cd /"} && rm f`,
+		strings.Repeat("bash -c 'echo hi'; ", maxWriteReadings+1),
+	} {
+		if _, ambiguous := shellWriteTargets(dir, command); !ambiguous {
+			t.Errorf("shellWriteTargets(%q): ambiguous=false, want true", command)
+		}
+	}
+	if targets, ambiguous := shellWriteTargets(dir, nestShellPayload(maxShellPayloadDepth, "rm f")); ambiguous || !slices.Equal(targets, in(dir, "f")) {
+		t.Errorf("payload at depth %d = %q ambiguous=%v, want %q", maxShellPayloadDepth, targets, ambiguous, in(dir, "f"))
+	}
+	if _, ambiguous := shellWriteTargets(dir, strings.Repeat("bash -c 'echo hi'; ", maxWriteReadings)); ambiguous {
+		t.Errorf("%d payloads: ambiguous=true, want false", maxWriteReadings)
+	}
+}
+
+// TestShellWriteNamedConsumersOnlyAllowed is the benign side of the payload
+// and wrapper reading: only a named shell's payload is read, and a wrapper
+// that runs nothing names nothing.
+func TestShellWriteNamedConsumersOnlyAllowed(t *testing.T) {
+	primary, worktree := boundTaskFixture(t, "ship-shell-benign")
+	for _, command := range []string{
+		`echo "rm x"`,
+		`echo "rm ` + filepath.Join(primary, "docs", "f") + `"`,
+		`grep "> ` + filepath.Join(primary, "x") + `" .`,
+		"grep rm .",
+		"printf 'rm %s' f",
+		"time go test ./...",
+		"env GOFLAGS=-p=1 go build ./...",
+		"nohup go test",
+		"command -v rm",
+		"command -v rm " + filepath.Join(primary, "docs", "f"),
+		"bash -c 'go test ./...'",
+		"bash script.sh",
+		"bash -c 'cd " + primary + "' && rm f",
+		"bash -c 'rm f'",
+		"eval 'rm f'",
+		"env -C " + worktree + " rm f",
+	} {
+		assertShapes(t, false, worktree, command, "")
+	}
+}
+
+// TestShellWriteReadsSubshellsAndBuiltinCd pins an unquoted `( ... )` read as
+// bash reads it, a cd behind `builtin`, `command` or an assignment moving the
+// segments after it, a subshell's cd returning at its `)`, and the file
+// `time -o` writes.
+func TestShellWriteReadsSubshellsAndBuiltinCd(t *testing.T) {
+	primary, worktree := boundTaskFixture(t, "ship-shell-subshell")
+	target := filepath.Join(primary, "docs", "f")
+	for _, command := range []string{
+		"(rm " + target + ")",
+		"(X=1 rm " + target + ")",
+		"((rm " + target + "))",
+		"( (rm " + target + ") )",
+		"(rm " + target + ") && echo ok",
+		"builtin cd " + primary + " && rm docs/f",
+		"command cd " + primary + " && rm docs/f",
+		"X=1 cd " + primary + " && rm docs/f",
+		"(cd " + primary + "; rm docs/f)",
+		"time -o " + target + " true",
+		"time -o" + target + " true",
+		"/usr/bin/time -o " + target + " true",
+		"/usr/bin/time --output=" + target + " true",
+	} {
+		assertShapes(t, true, worktree, command, "")
+	}
+	for _, command := range []string{
+		"(cd " + primary + "; ls); rm f",
+		"command -v cd " + primary + " && rm f",
+		"env cd " + primary + " && rm f",
+		`echo "(rm ` + target + `)"`,
+		"time -p true",
+	} {
+		assertShapes(t, false, worktree, command, "")
+	}
+
+	dir, other := t.TempDir(), t.TempDir()
+	for _, tc := range []struct {
+		command string
+		want    []string
+	}{
+		{"(cd " + other + "; rm f); rm g", []string{filepath.Join(other, "f"), filepath.Join(dir, "g")}},
+		{"(cd " + other + ") && rm f", []string{filepath.Join(dir, "f")}},
+		{"builtin cd " + other + " && rm f", []string{filepath.Join(other, "f")}},
+		{"time -o out true", []string{filepath.Join(dir, "out")}},
+		{"echo $(cd " + other + ") && rm f", []string{filepath.Join(dir, "f")}},
+		{"diff <(ls) <(ls) && rm f", []string{filepath.Join(dir, "f")}},
+		{"echo $((1+2)) && rm f", []string{filepath.Join(dir, "f")}},
+		{"cat > >(cat) && rm f", []string{filepath.Join(dir, "(cat)"), filepath.Join(dir, "f")}},
+	} {
+		if targets, ambiguous := shellWriteTargets(dir, tc.command); ambiguous || !slices.Equal(targets, tc.want) {
+			t.Errorf("shellWriteTargets(%q) = %q ambiguous=%v, want %q", tc.command, targets, ambiguous, tc.want)
 		}
 	}
 }

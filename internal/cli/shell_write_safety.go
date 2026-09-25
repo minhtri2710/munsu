@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -15,8 +17,11 @@ import (
 // nothing, while `echo x > f` writes f, and the two are indistinguishable once
 // the quotes have been dropped.
 type shellToken struct {
-	text       string
-	redirects  bool // an unquoted `>`
+	text      string
+	redirects bool // an unquoted `>`
+	// subshell is an unquoted `(` or `)` bash reads as an operator: it opens
+	// or closes a subshell, and is a segment of its own.
+	subshell   bool
 	expandable bool // contains `$` or a backtick: the shell decides the value
 	// undecodable is a `$'...'` word holding an escape the tokenizer does not
 	// decode, or one left unterminated, whose text is the raw word without
@@ -50,11 +55,18 @@ type shellToken struct {
 // invented here (ADR-0014 §1).
 //
 // The claim of coverage is deliberately narrow (ADR-0014 §2): a `>` redirection
-// target, and the argument tokens of a named write verb. A verb that is not on
-// the list, an interpreter, a wrapper, or a target the shell computes are all
-// open. Reads are never targets: `cat`, `grep -r` and `go build` pointed at the
-// shared checkout are legitimate work, and refusing them is the failure mode
-// this guard must not have.
+// target, and the argument tokens of a named write verb at command position
+// (commandPosition), in the command line or in a payload a named shell runs
+// (shellPayloads). A verb that is not on the list, a runner outside
+// wrapperVerbs, an interpreter other than those shells, or a target the shell
+// computes are all open. Reads are never targets: `cat`, `grep -r` and
+// `go build` pointed at the shared checkout are legitimate work, and refusing
+// them is the failure mode this guard must not have.
+//
+// Only a named consumer's payload is read, unlike the git guard, which reads
+// every word that reads as more than itself. The asymmetry is deliberate: a
+// refused git mutation costs a retry, a refused file write costs the run, and
+// under the git guard's rule `git commit -m "rm <shared>/x"` would be refused.
 //
 // A lone backslash has no single meaning here, so the command is resolved twice
 // (#664). munsu never runs this string: the only call site is the harness hook
@@ -73,20 +85,12 @@ type shellToken struct {
 // arguments are targets at all, so the candidate the second reading adds can only
 // ever be one more write path, never a read.
 func shellWriteTargets(checkPath, command string) ([]string, bool) {
-	// Heredoc syntax is POSIX grammar. Strip bodies once with POSIX delimiter
-	// rules, then tokenize the remaining command under both backslash readings,
-	// so the literal (Windows) reading differs from the POSIX reading only in how
-	// it reads path backslashes — never in where a heredoc ends. Stripping once
-	// keeps <<\EOF / <<-\END terminating at the bare delimiter on every OS and
-	// stops the literal reading from swallowing a write named after the
-	// terminator.
-	stripped := stripHeredocBodies(command)
 	interpretations := []shellTargetResolution{
 		{mode: backslashEscapes},
 		{mode: backslashLiteral},
 	}
 	for i := range interpretations {
-		interpretations[i].targets = shellWriteTargetsUnderDetailed(interpretations[i].mode, checkPath, stripped)
+		interpretations[i].targets = shellWriteTargetsUnderDetailed(interpretations[i].mode, checkPath, command)
 	}
 	bySpan := make(map[shellTargetSpan][]shellTargetResult)
 	for _, interpretation := range interpretations {
@@ -121,7 +125,13 @@ func shellWriteTargets(checkPath, command string) ([]string, bool) {
 	return targets, ambiguous
 }
 
-type shellTargetSpan struct{ start, end int }
+// shellTargetSpan is where a target stands: its word's runes in the command
+// line, or in a payload, where within names the spans of the payloads around
+// it, outermost first.
+type shellTargetSpan struct {
+	start, end int
+	within     string
+}
 type shellTargetResult struct {
 	span      shellTargetSpan
 	path      string
@@ -145,104 +155,551 @@ const (
 )
 
 func shellWriteTargetsUnderDetailed(mode backslashMode, checkPath, command string) []shellTargetResult {
-	var targets []shellTargetResult
-	currentPath := checkPath
-	activeVolume := filepath.VolumeName(checkPath)
-	activeVolumeKnown := true
-	// activeVolume is the drive a plain relative path resolves against: the
-	// drive left active by the last `cd`. unknownCwd is the volume whose
-	// per-drive current directory this pass cannot reconstruct ("" if none).
-	// An ambiguous drive-relative `cd D:docs` only makes D:'s cwd unknowable:
-	// D-volume targets stay ambiguous, but C-volume and absolute targets resolve
-	// against known state and must not be refused for it (ADR-0014 §1, #664).
-	unknownCwd := ""
-	cwdByVolume := map[string]string{strings.ToLower(activeVolume): currentPath}
-	for _, segment := range tokenizeSegments(mode, command) {
-		if len(segment) == 0 {
+	volume := filepath.VolumeName(checkPath)
+	walk := &shellWriteWalk{
+		mode:     mode,
+		payloads: new(int),
+		cwd: shellCwd{
+			path:              checkPath,
+			activeVolume:      volume,
+			activeVolumeKnown: true,
+			byVolume:          map[string]string{strings.ToLower(volume): checkPath},
+		},
+	}
+	walk.walk(command, 0, "")
+	return walk.targets
+}
+
+// shellWriteWalk reads one command line under one backslash reading, and the
+// payloads it reaches. payloads counts the payloads read for the whole
+// command, by every walk it starts.
+type shellWriteWalk struct {
+	mode     backslashMode
+	cwd      shellCwd
+	payloads *int
+	targets  []shellTargetResult
+}
+
+// shellCwd is the directory a command line runs in. activeVolume is the drive
+// a plain relative path resolves against: the drive left active by the last
+// `cd`. unknownCwd is the volume whose per-drive current directory this pass
+// cannot reconstruct ("" if none). An ambiguous drive-relative `cd D:docs`
+// only makes D:'s cwd unknowable: D-volume targets stay ambiguous, but
+// C-volume and absolute targets resolve against known state and must not be
+// refused for it (ADR-0014 §1, #664). lost is a directory a payload or a
+// wrapper moved to that this reading cannot know: every relative target is
+// ambiguous until an absolute `cd`.
+type shellCwd struct {
+	path              string
+	activeVolume      string
+	activeVolumeKnown bool
+	unknownCwd        string
+	byVolume          map[string]string
+	lost              bool
+}
+
+func (c shellCwd) clone() shellCwd {
+	c.byVolume = maps.Clone(c.byVolume)
+	return c
+}
+
+func (c shellCwd) same(other shellCwd) bool {
+	return c.path == other.path && c.activeVolume == other.activeVolume && c.activeVolumeKnown == other.activeVolumeKnown &&
+		c.unknownCwd == other.unknownCwd && c.lost == other.lost
+}
+
+// cd moves c to operand.
+func (c *shellCwd) cd(operand shellToken) {
+	if operand.expandable {
+		c.unknownCwd = filepath.VolumeName(operand.text)
+		if c.unknownCwd == "" {
+			c.unknownCwd = c.activeVolume
+		}
+		c.activeVolume = c.unknownCwd
+		c.activeVolumeKnown = false
+		return
+	}
+	base := c.path
+	if volume := filepath.VolumeName(operand.text); volume != "" {
+		if known, ok := c.byVolume[strings.ToLower(volume)]; ok {
+			base = known
+		}
+	}
+	// A plain relative cd (no volume, not volume-less rooted) against a
+	// drive whose cwd is unknown cannot be resolved: the active drive's
+	// current directory is exactly what the prior drive-relative cd left
+	// unreconstructable. Keep the unknown state — do not resolve against
+	// the stale path of the previous volume or clear unknownCwd.
+	if !c.activeVolumeKnown && filepath.VolumeName(operand.text) == "" && !(len(operand.text) > 0 && os.IsPathSeparator(operand.text[0])) {
+		return
+	}
+	resolved, pathAmbiguous := resolveShellWritePath(base, c.activeVolume, operand.text)
+	if pathAmbiguous {
+		// Different-volume drive-relative cd (D:docs from a C: base): D
+		// becomes the active drive with an unknowable cwd. C stays known,
+		// so C-volume and absolute targets stay resolvable.
+		c.activeVolume = filepath.VolumeName(operand.text)
+		c.activeVolumeKnown = false
+		c.unknownCwd = c.activeVolume
+		return
+	}
+	c.path = resolved
+	c.activeVolume = filepath.VolumeName(resolved)
+	c.activeVolumeKnown = true
+	c.byVolume[strings.ToLower(c.activeVolume)] = resolved
+	c.unknownCwd = ""
+	c.lost = c.lost && !filepath.IsAbs(operand.text)
+}
+
+// resolve resolves target against c, and reports whether it is ambiguous.
+func (c shellCwd) resolve(target string) (string, bool) {
+	base := c.path
+	if volume := filepath.VolumeName(target); volume != "" {
+		if known, ok := c.byVolume[strings.ToLower(volume)]; ok {
+			base = known
+		}
+	}
+	resolved, ambiguous := resolveShellWritePath(base, c.activeVolume, target)
+	if !ambiguous && (pathDependsOnUnknownCwd(c.activeVolume, c.unknownCwd, target) || (c.lost && !filepath.IsAbs(target))) {
+		ambiguous = true
+	}
+	return resolved, ambiguous
+}
+
+// under returns c moved into each directory chdirs names, in order, or false
+// under a changed root, where no target is knowable. A directory the shell
+// computes leaves it lost.
+func (c shellCwd) under(chdirs []shellToken, chroot bool) (shellCwd, bool) {
+	c = c.clone()
+	for _, dir := range chdirs {
+		if dir.expandable {
+			c.lost = true
 			continue
 		}
-		if strings.EqualFold(segment[0].text, "cd") && !segment[0].redirects {
-			if operand, ok := cdOperand(segment); ok {
-				if operand.expandable {
-					unknownCwd = filepath.VolumeName(operand.text)
-					if unknownCwd == "" {
-						unknownCwd = activeVolume
-					}
-					activeVolume = unknownCwd
-					activeVolumeKnown = false
-					continue
-				}
-				base := currentPath
-				if volume := filepath.VolumeName(operand.text); volume != "" {
-					if known, ok := cwdByVolume[strings.ToLower(volume)]; ok {
-						base = known
-					}
-				}
-				// A plain relative cd (no volume, not volume-less rooted) against a
-				// drive whose cwd is unknown cannot be resolved: the active drive's
-				// current directory is exactly what the prior drive-relative cd left
-				// unreconstructable. Keep the unknown state — do not resolve against
-				// the stale currentPath of the previous volume or clear unknownCwd.
-				if !activeVolumeKnown && filepath.VolumeName(operand.text) == "" && !(len(operand.text) > 0 && os.IsPathSeparator(operand.text[0])) {
-					continue
-				}
-				resolved, pathAmbiguous := resolveShellWritePath(base, activeVolume, operand.text)
-				if pathAmbiguous {
-					// Different-volume drive-relative cd (D:docs from a C: base): D
-					// becomes the active drive with an unknowable cwd. C stays known,
-					// so C-volume and absolute targets stay resolvable.
-					activeVolume = filepath.VolumeName(operand.text)
-					activeVolumeKnown = false
-					unknownCwd = activeVolume
-				} else {
-					currentPath = resolved
-					activeVolume = filepath.VolumeName(resolved)
-					activeVolumeKnown = true
-					cwdByVolume[strings.ToLower(activeVolume)] = resolved
-					unknownCwd = ""
-				}
+		c.cd(dir)
+	}
+	return c, !chroot
+}
+
+// walk reads command, a payload depth layers deep whose span is within.
+func (w *shellWriteWalk) walk(command string, depth int, within string) {
+	// Heredoc syntax is POSIX grammar. Bodies are split off once with POSIX
+	// delimiter rules, before either backslash reading tokenizes, so the
+	// literal (Windows) reading differs from the POSIX reading only in how it
+	// reads path backslashes — never in where a heredoc ends. That keeps
+	// <<\EOF / <<-\END terminating at the bare delimiter on every OS and stops
+	// the literal reading from swallowing a write named after the terminator.
+	stripped, feeds := splitHeredocBodies(command)
+	segments := tokenizeSegments(w.mode, stripped)
+	fed := segmentFeeds([]rune(stripped), segments, feeds)
+	// subshells are the directories to return to at each open subshell's `)`.
+	var subshells []shellCwd
+	for i, segment := range segments {
+		if segment[0].subshell {
+			if segment[0].text == "(" {
+				subshells = append(subshells, w.cwd.clone())
+			} else if n := len(subshells); n > 0 {
+				w.cwd, subshells = subshells[n-1], subshells[:n-1]
+			}
+			continue
+		}
+		if args := builtinCommand(segment); len(args) > 0 && strings.EqualFold(args[0].text, "cd") {
+			if operand, ok := cdOperand(args); ok {
+				w.cwd.cd(operand)
 			}
 			continue
 		}
 		// Every reading of a segment that can write names targets: a
 		// parameter expansion's substituted words take its place, and their
 		// targets share its span. A segment where no candidate is a write
-		// verb or a redirect names none.
+		// verb, a redirect or a command that runs a payload names none.
 		if !slices.ContainsFunc(candidateTokens(segment), func(token shellToken) bool {
-			return token.redirects || slices.Contains(writeVerbs, filepath.Base(token.text))
+			base := filepath.Base(token.text)
+			return token.redirects || slices.Contains(writeVerbs, base) || slices.Contains(shellConsumers, base) || base == "eval" || base == "env" || base == "time"
 		}) {
 			continue
 		}
+		span := shellTargetSpan{start: segment[0].start, end: segment[len(segment)-1].end, within: within}
 		readings, ok := writeReadings(segment)
 		if !ok {
-			targets = append(targets, shellTargetResult{
-				span:      shellTargetSpan{start: segment[0].start, end: segment[len(segment)-1].end},
-				ambiguous: true,
-			})
+			w.targets = append(w.targets, shellTargetResult{span: span, ambiguous: true})
 			continue
 		}
-		var segmentTargets []shellToken
+		var payloads []shellPayload
 		for _, reading := range readings {
-			segmentTargets = append(segmentTargets, segmentWriteTargets(reading)...)
-		}
-		for _, target := range segmentTargets {
-			base := currentPath
-			if volume := filepath.VolumeName(target.text); volume != "" {
-				if known, ok := cwdByVolume[strings.ToLower(volume)]; ok {
-					base = known
+			redirects, command := segmentWriteTargets(reading)
+			for _, target := range redirects {
+				w.target(w.cwd, target, within)
+			}
+			cwd, known := w.cwd.under(command.chdirs, command.chroot)
+			for _, target := range slices.Concat(command.outputs, verbWriteTargets(command.args)) {
+				if !known {
+					w.targets = append(w.targets, shellTargetResult{span: shellTargetSpan{start: target.start, end: target.end, within: within}, ambiguous: true})
+					continue
+				}
+				w.target(cwd, target, within)
+			}
+			for _, payload := range shellPayloads(w.mode, command, fed[i]) {
+				if !slices.ContainsFunc(payloads, payload.same) {
+					payloads = append(payloads, payload)
 				}
 			}
-			resolved, targetAmbiguous := resolveShellWritePath(base, activeVolume, target.text)
-			if !targetAmbiguous && pathDependsOnUnknownCwd(activeVolume, unknownCwd, target.text) {
-				targetAmbiguous = true
-			}
-			targets = append(targets, shellTargetResult{
-				span: shellTargetSpan{start: target.start, end: target.end},
-				path: resolved, ambiguous: targetAmbiguous,
-			})
+		}
+		w.read(payloads, span, depth)
+	}
+}
+
+// target adds target, resolved against cwd. A word whose value the shell
+// computes is not a target: it is not a path this guard can classify, and
+// guessing would refuse a call on evidence it does not have. An empty word
+// stays a target: it resolves to the directory the command runs in, where
+// darwin cp writes it.
+func (w *shellWriteWalk) target(cwd shellCwd, target shellToken, within string) {
+	if target.expandable {
+		return
+	}
+	path, ambiguous := cwd.resolve(target.text)
+	w.targets = append(w.targets, shellTargetResult{
+		span: shellTargetSpan{start: target.start, end: target.end, within: within},
+		path: path, ambiguous: ambiguous,
+	})
+}
+
+// read reads the payloads of the segment at span. eval runs its payload in
+// this shell, so it is read as part of this walk and its `cd` moves the
+// segments after it; a shell runs its payload in a child that starts in the
+// directory its wrappers name and whose `cd` does not return. When the
+// segment's readings give eval more than one payload, each is read from here
+// and a `cd` in any leaves the directory lost. A payload past
+// maxShellPayloadDepth, or past maxWriteReadings payloads in the command, is
+// not read: its segment is ambiguous.
+func (w *shellWriteWalk) read(payloads []shellPayload, span shellTargetSpan, depth int) {
+	inline := 0
+	for _, payload := range payloads {
+		if payload.inline {
+			inline++
 		}
 	}
-	return targets
+	for _, payload := range payloads {
+		*w.payloads++
+		if depth+1 > maxShellPayloadDepth || *w.payloads > maxWriteReadings {
+			w.targets = append(w.targets, shellTargetResult{span: span, ambiguous: true})
+			continue
+		}
+		within := span.within + strconv.Itoa(payload.start) + "-" + strconv.Itoa(payload.end) + "/"
+		if payload.inline && inline == 1 {
+			w.walk(payload.text, depth+1, within)
+			continue
+		}
+		cwd, known := w.cwd.under(payload.chdirs, payload.chroot)
+		if !known {
+			w.targets = append(w.targets, shellTargetResult{span: span, ambiguous: true})
+			continue
+		}
+		child := &shellWriteWalk{mode: w.mode, cwd: cwd, payloads: w.payloads}
+		child.walk(payload.text, depth+1, within)
+		w.targets = append(w.targets, child.targets...)
+		if payload.inline && !child.cwd.same(w.cwd) {
+			w.cwd.lost = true
+		}
+	}
+}
+
+// shellConsumers are the shells whose `-c` operand, or stdin when they have
+// neither `-c` nor a script operand (or have `-s`), the write guard reads as
+// a command line. With eval they are the only payloads it reads (ADR-0014 §2).
+var shellConsumers = []string{"bash", "sh", "zsh", "dash", "ksh"}
+
+// shellPayload is a command line a command runs, at runes start to end of the
+// text around it: eval's, inline in this shell, or a shell's, in a child in
+// the directories its wrappers name.
+type shellPayload struct {
+	text       string
+	start, end int
+	inline     bool
+	chdirs     []shellToken
+	chroot     bool
+}
+
+func (p shellPayload) same(other shellPayload) bool {
+	return p.text == other.text && p.inline == other.inline && p.chroot == other.chroot &&
+		slices.EqualFunc(p.chdirs, other.chdirs, func(a, b shellToken) bool { return a.text == b.text && a.expandable == b.expandable })
+}
+
+// shellPayloads returns the payloads command runs, feeds being the stdin its
+// segment's heredocs and here-strings give it. eval runs its words joined by
+// single spaces, as bash does; `env -S` its string split into words before
+// its arguments, read here as shell. A payload the shell computes reads as an
+// expansion, which names no target.
+func shellPayloads(mode backslashMode, command shellCommand, feeds []stdinFeed) []shellPayload {
+	child := func(text string, start, end int) shellPayload {
+		return shellPayload{text: text, start: start, end: end, chdirs: command.chdirs, chroot: command.chroot}
+	}
+	if command.split != nil {
+		words := append([]string{command.split.text}, segmentWords(command.args)...)
+		return []shellPayload{child(strings.Join(words, " "), command.split.start, command.split.end)}
+	}
+	if len(command.args) == 0 {
+		return nil
+	}
+	args := command.args[1:]
+	switch base := filepath.Base(command.args[0].text); {
+	case base == "eval":
+		if len(args) > 0 && args[0].text == "--" {
+			args = args[1:]
+		}
+		if len(args) == 0 {
+			return nil
+		}
+		return []shellPayload{{text: strings.Join(segmentWords(args), " "), start: args[0].start, end: args[len(args)-1].end, inline: true}}
+	case slices.Contains(shellConsumers, base):
+		operand, dashC, dashS := shellOptions(args)
+		if dashC {
+			if operand == len(args) {
+				return nil
+			}
+			return []shellPayload{child(args[operand].text, args[operand].start, args[operand].end)}
+		}
+		if operand < len(args) && !dashS {
+			return nil
+		}
+		var payloads []shellPayload
+		for _, feed := range feeds {
+			text := feed.text
+			if feed.hereString {
+				text = strings.Join(segmentWords(slices.Concat(tokenizeSegments(mode, text)...)), " ")
+			}
+			payloads = append(payloads, child(text, feed.at, feed.at+1))
+		}
+		return payloads
+	}
+	return nil
+}
+
+// shellOptions reads a shell's options and returns the index of its first
+// operand (len(args) when it has none), and whether `-c` and `-s` were given.
+// Options combine (`-lc`) and continue past `-c` (`-c -e`); `-o`/`+o` and
+// `-O`/`+O` take the next word, as do `--rcfile` and `--init-file`; `--` and
+// `-` end them.
+func shellOptions(args []shellToken) (int, bool, bool) {
+	dashC, dashS := false, false
+	i := 0
+	for ; i < len(args); i++ {
+		word := args[i].text
+		if word == "--" || word == "-" {
+			i++
+			break
+		}
+		if strings.HasPrefix(word, "--") {
+			if word == "--rcfile" || word == "--init-file" {
+				i++
+			}
+			continue
+		}
+		if len(word) < 2 || (word[0] != '-' && word[0] != '+') {
+			break
+		}
+		for _, r := range word[1:] {
+			switch r {
+			case 'c':
+				dashC = dashC || word[0] == '-'
+			case 's':
+				dashS = dashS || word[0] == '-'
+			case 'o', 'O':
+				i++
+			}
+		}
+	}
+	return min(i, len(args)), dashC, dashS
+}
+
+// segmentFeeds returns the stdin feeds of each segment, by index: a feed
+// belongs to the segment its operator stood in, which a separator after the
+// segment's last word ends.
+func segmentFeeds(runes []rune, segments [][]shellToken, feeds []stdinFeed) map[int][]stdinFeed {
+	fed := make(map[int][]stdinFeed)
+	if len(segments) == 0 {
+		return fed
+	}
+	for _, feed := range feeds {
+		k := max(sort.Search(len(segments), func(k int) bool { return segments[k][0].start >= feed.at })-1, 0)
+		if last := segments[k][len(segments[k])-1].end; k+1 < len(segments) && last >= 0 && last < feed.at && strings.ContainsAny(string(runes[last:feed.at]), ";&|\n") {
+			k++
+		}
+		fed[k] = append(fed[k], feed)
+	}
+	return fed
+}
+
+// shellCommand is what the words of a segment run: args from the command
+// word on, in the directories wrappers name (chdirs, in order), under a root a
+// wrapper changed (chroot). split is the string `env -S` splits into the
+// command, args then following it.
+type shellCommand struct {
+	args   []shellToken
+	chdirs []shellToken
+	chroot bool
+	split  *shellToken
+	// outputs are the files a wrapper writes itself: `time -o FILE`.
+	outputs []shellToken
+}
+
+// reservedWords are the words bash reads before a command word, besides
+// assignments and `time`.
+var reservedWords = []string{"!", "{", "if", "then", "else", "elif", "while", "until", "do"}
+
+// wrapperGrammar is how a wrapper reads its options: the short options
+// (letters) and long options that take a value, those of them that name the
+// command's directory, root, split string or output file, and the letters after which it
+// runs nothing. assignments reports that NAME=value words may follow its
+// options; operands is how many words it reads before the command.
+type wrapperGrammar struct {
+	values      string
+	long        []string
+	chdir       []string
+	chroot      []string
+	split       []string
+	output      []string
+	none        string
+	assignments bool
+	operands    int
+}
+
+// wrapperVerbs are the commands that run the rest of their argv as a command,
+// with the option grammar a bash 3.2 and 5.3 probe on macOS measured, and
+// GNU's where macOS has no such command (timeout, setsid) or fewer options
+// (env, nice, stdbuf, time). The list is fixed: a runner outside it (arch,
+// caffeinate, xcrun, doas, ionice, chronic, xargs, find -exec, parallel,
+// watch) stays open (ADR-0014 §2).
+var wrapperVerbs = map[string]wrapperGrammar{
+	"command": {none: "vV"},
+	"builtin": {},
+	"exec":    {values: "a"},
+	"env": {
+		values: "uCPS", long: []string{"--unset", "--chdir", "--split-string"},
+		chdir: []string{"-C", "--chdir"}, split: []string{"-S", "--split-string"}, assignments: true,
+	},
+	"nohup":   {},
+	"time":    {values: "fo", long: []string{"--format", "--output"}, output: []string{"-o", "--output"}},
+	"nice":    {values: "n", long: []string{"--adjustment"}},
+	"timeout": {values: "ks", long: []string{"--kill-after", "--signal"}, operands: 1},
+	"sudo": {
+		values: "CDgpRTUurt",
+		long:   []string{"--close-from", "--chdir", "--group", "--host", "--prompt", "--chroot", "--command-timeout", "--other-user", "--user", "--role", "--type"},
+		chdir:  []string{"-D", "--chdir"}, chroot: []string{"-R", "--chroot"}, assignments: true,
+	},
+	"setsid": {},
+	"stdbuf": {values: "ioe", long: []string{"--input", "--output", "--error"}},
+}
+
+// commandPosition returns what args run: the command word is the first word
+// after every assignment and reserved word bash reads before it, and every
+// wrapper with its options. `command -v` and `-V` run nothing.
+func commandPosition(args []shellToken) shellCommand {
+	var command shellCommand
+	prefix := true
+	for len(args) > 0 {
+		if prefix && (isAssignment(args[0].text) || slices.Contains(reservedWords, args[0].text)) {
+			args = args[1:]
+			continue
+		}
+		grammar, ok := wrapperVerbs[filepath.Base(args[0].text)]
+		if !ok {
+			break
+		}
+		prefix = args[0].text == "time"
+		args = args[1:]
+		for len(args) > 0 && strings.HasPrefix(args[0].text, "-") {
+			option := args[0]
+			args = args[1:]
+			if option.text == "--" {
+				break
+			}
+			name, value, valued := option.text, option, false
+			if strings.HasPrefix(option.text, "--") {
+				name, value.text, valued = strings.Cut(option.text, "=")
+				if !valued && slices.Contains(grammar.long, name) && len(args) > 0 {
+					value, args, valued = args[0], args[1:], true
+				}
+			} else {
+				for k := 1; k < len(option.text); k++ {
+					if strings.IndexByte(grammar.none, option.text[k]) >= 0 {
+						return shellCommand{}
+					}
+					if strings.IndexByte(grammar.values, option.text[k]) < 0 {
+						continue
+					}
+					name = option.text[:1] + option.text[k:k+1]
+					if k+1 < len(option.text) {
+						value.text, valued = option.text[k+1:], true
+					} else if len(args) > 0 {
+						value, args, valued = args[0], args[1:], true
+					}
+					break
+				}
+			}
+			switch {
+			case !valued:
+			case slices.Contains(grammar.chdir, name):
+				command.chdirs = append(command.chdirs, value)
+			case slices.Contains(grammar.chroot, name):
+				command.chroot = true
+			case slices.Contains(grammar.output, name):
+				command.outputs = append(command.outputs, value)
+			case slices.Contains(grammar.split, name):
+				command.split, command.args = &value, args
+				return command
+			}
+		}
+		if grammar.assignments {
+			for len(args) > 0 && isAssignment(args[0].text) {
+				args = args[1:]
+			}
+		}
+		args = args[min(grammar.operands, len(args)):]
+	}
+	command.args = args
+	return command
+}
+
+// builtinCommand returns segment from the word bash runs as a command in this
+// shell on: past assignments, reserved words, `time -p`, and the `builtin`
+// and `command` prefixes, which still run a builtin such as cd here. It
+// returns nil when a redirect comes first or `command -v` or `-V` runs
+// nothing. Both guards read a segment's cd through it.
+func builtinCommand(segment []shellToken) []shellToken {
+	for len(segment) > 0 && !segment[0].redirects {
+		word := segment[0].text
+		switch {
+		case isAssignment(word) || slices.Contains(reservedWords, word) || word == "builtin":
+		case word == "time" || word == "command":
+			for len(segment) > 1 && strings.HasPrefix(segment[1].text, "-") && segment[1].text != "-" {
+				if word == "command" && strings.ContainsAny(segment[1].text, "vV") {
+					return nil
+				}
+				segment = segment[1:]
+			}
+		default:
+			return segment
+		}
+		segment = segment[1:]
+	}
+	return nil
+}
+
+// isAssignment reports whether word is a NAME=value or NAME+=value word.
+func isAssignment(word string) bool {
+	name, _, ok := strings.Cut(word, "=")
+	name = strings.TrimSuffix(name, "+")
+	if !ok || name == "" {
+		return false
+	}
+	for i, r := range name {
+		if r != '_' && !('a' <= r && r <= 'z') && !('A' <= r && r <= 'Z') && !(i > 0 && '0' <= r && r <= '9') {
+			return false
+		}
+	}
+	return true
 }
 
 // maxWriteReadings bounds the combinations writeReadings reads.
@@ -367,7 +824,9 @@ func evaluateWriteTargets(targets []string) (bool, string) {
 }
 
 // tokenizeSegments splits command at unquoted `;`, `&`, `|` and newline into
-// segments of words. It is the one shell reader for both safety guards, and it
+// segments of words. An unquoted `(` that starts a word, but not a `>(`,
+// opens a subshell, and an unquoted `)` that closes no `(` read inside a word
+// (`$(`, `<(`, `>(`, `$((`, `@(`) closes one: each is a segment of its own. It is the one shell reader for both safety guards, and it
 // keeps what a dequote-then-split reader loses: whether a `>` was quoted,
 // whether a word carries shell expansion, and a quoted space or operator inside
 // one word.
@@ -409,6 +868,9 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 	// last: bash keeps a group in one word whatever blanks, operators or
 	// quotes it holds, inside double quotes too.
 	var groups []braceGroup
+	// wordParens counts the `(` read inside words and not yet closed; it
+	// spans words and segments, as a `$(...)` does.
+	wordParens := 0
 	flushWord := func() {
 		if word.Len() > 0 || quoted {
 			token := shellToken{text: word.String(), expandable: expandable, undecodable: undecodable, splitsAtIFS: splitsAtIFS, start: rawStart, end: rawEnd}
@@ -689,6 +1151,21 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 		case '>':
 			flushWord()
 			segment = append(segment, shellToken{text: ">", redirects: true, start: i, end: i + 1})
+		case '(', ')':
+			if r == '(' && (word.Len() > 0 || quoted || (i > 0 && runes[i-1] == '>')) {
+				wordParens++
+				touch(i)
+				add(r, i, false)
+				continue
+			}
+			if r == ')' && wordParens > 0 {
+				wordParens--
+				touch(i)
+				add(r, i, false)
+				continue
+			}
+			flushSegment()
+			segments = append(segments, []shellToken{{text: string(r), subshell: true, start: i, end: i + 1}})
 		default:
 			touch(i)
 			add(r, i, false)
@@ -1134,43 +1611,42 @@ func escapeDigits(runes []rune, base, max int) (int, int) {
 	return value, n
 }
 
-// heredocSpec is one pending `<<DELIM` body: the word that ends it, and whether
-// `<<-` allows leading tabs on that terminator.
+// heredocSpec is one pending `<<DELIM` body: the word that ends it, whether
+// `<<-` allows leading tabs on that terminator, and where its operator stood.
 type heredocSpec struct {
 	delimiter string
 	stripTabs bool
+	at        int
 }
 
 // stdinFeed is text a stripped `<<` body or `<<<` word feeds to its command's
 // stdin. A here-string's text is still shell-quoted. An unterminated heredoc
-// runs to the end of the payload and is reported as not terminated.
+// runs to the end of the payload and is reported as not terminated. at is the
+// rune the operator left in the stripped command line.
 type stdinFeed struct {
 	text       string
 	terminated bool
+	hereString bool
+	at         int
 }
 
-// stripHeredocBodies removes every heredoc body from a command line, leaving the
-// command words around it intact. Heredoc syntax is POSIX grammar, so this runs
-// once with POSIX delimiter rules; the dual backslash readings tokenize what
-// remains and only differ in how they read path backslashes.
+// splitHeredocBodies removes every heredoc body and here-string word from a
+// command line, leaving the command words around it intact, and returns what
+// it removed from stdin. Heredoc syntax is POSIX grammar, so this runs once
+// with POSIX delimiter rules; the dual backslash readings tokenize what
+// remains and only differ in how they read path backslashes. The git guard
+// reads each feed as shell; the write guard reads only the ones a named shell
+// reads as its script.
 //
 // Without this, each body line was split at its newline and tokenized as a
 // command of its own: a `rm -rf <shared>/...` example inside a document became a
 // real write target, and a `cd <shared>` line inside a document moved the
 // resolution base for the genuine commands after the terminator. Both refused
 // writes that must go through, which is the one failure this guard cannot have.
-func stripHeredocBodies(command string) string {
-	stripped, _ := splitHeredocBodies(command)
-	return stripped
-}
-
-// splitHeredocBodies is stripHeredocBodies that also returns what it removed
-// from stdin: each heredoc body and here-string word. The git guard reads
-// each one as shell.
 func splitHeredocBodies(command string) (string, []stdinFeed) {
 	runes := []rune(command)
 	var feeds []stdinFeed
-	var out strings.Builder
+	var out []rune
 	var pending []heredocSpec
 	quote := rune(0)
 	escaped := false
@@ -1178,19 +1654,19 @@ func splitHeredocBodies(command string) (string, []stdinFeed) {
 	for i := 0; i < len(runes); i++ {
 		r := runes[i]
 		if escaped {
-			out.WriteRune(r)
+			out = append(out, r)
 			escaped = false
 			continue
 		}
 		if quote == '\'' {
-			out.WriteRune(r)
+			out = append(out, r)
 			if r == quote {
 				quote = 0
 			}
 			continue
 		}
 		if quote == '"' && r == '\\' {
-			out.WriteRune(r)
+			out = append(out, r)
 			if i+1 < len(runes) {
 				next := runes[i+1]
 				if next == '$' || next == '`' || next == '"' || next == '\\' || next == '\n' {
@@ -1204,12 +1680,12 @@ func splitHeredocBodies(command string) (string, []stdinFeed) {
 			// quotes. The surviving command text keeps the backslash so the dual
 			// path readings see it; stripping is POSIX-only and runs once before
 			// they tokenize.
-			out.WriteRune(r)
+			out = append(out, r)
 			escaped = true
 			continue
 		}
 		if quote != 0 {
-			out.WriteRune(r)
+			out = append(out, r)
 			if r == quote {
 				quote = 0
 			}
@@ -1218,7 +1694,7 @@ func splitHeredocBodies(command string) (string, []stdinFeed) {
 		switch r {
 		case '\'', '"':
 			quote = r
-			out.WriteRune(r)
+			out = append(out, r)
 		case '<':
 			// Every `<` form reads: `<` a file, `<<<` a string, `<<` a body.
 			// None of them names a write target, so the operator and the word
@@ -1229,20 +1705,21 @@ func splitHeredocBodies(command string) (string, []stdinFeed) {
 			}
 			if run-i == 2 {
 				if spec, next, ok := readHeredocRedirect(runes, i); ok {
+					spec.at = len(out)
 					pending = append(pending, spec)
-					out.WriteRune(' ')
+					out = append(out, ' ')
 					i = next - 1
 					continue
 				}
 			}
-			out.WriteRune(' ')
+			out = append(out, ' ')
 			end := skipRedirectSource(runes, run)
 			if run-i == 3 {
-				feeds = append(feeds, stdinFeed{text: string(runes[run:end]), terminated: true})
+				feeds = append(feeds, stdinFeed{text: string(runes[run:end]), terminated: true, hereString: true, at: len(out) - 1})
 			}
 			i = end - 1
 		case '\n':
-			out.WriteRune(r)
+			out = append(out, r)
 			if len(pending) > 0 {
 				var bodies []stdinFeed
 				i, bodies = skipHeredocBodies(runes, i+1, pending)
@@ -1251,13 +1728,13 @@ func splitHeredocBodies(command string) (string, []stdinFeed) {
 				pending = nil
 			}
 		default:
-			out.WriteRune(r)
+			out = append(out, r)
 		}
 	}
-	for range pending {
-		feeds = append(feeds, stdinFeed{})
+	for _, spec := range pending {
+		feeds = append(feeds, stdinFeed{at: spec.at})
 	}
-	return out.String(), feeds
+	return string(out), feeds
 }
 
 // skipRedirectSource returns the index just past the word a read redirection
@@ -1386,7 +1863,7 @@ func skipHeredocBodies(runes []rune, start int, pending []heredocSpec) (int, []s
 	i := start
 	bodies := make([]stdinFeed, 0, len(pending))
 	for _, spec := range pending {
-		body := stdinFeed{}
+		body := stdinFeed{at: spec.at}
 		var lines []string
 		for i < len(runes) {
 			lineEnd := i
@@ -1427,9 +1904,9 @@ func cdOperand(segment []shellToken) (shellToken, bool) {
 	return segment[index], true
 }
 
-// segmentWriteTargets splits one segment into its redirection targets and the
-// write targets of its verb.
-func segmentWriteTargets(segment []shellToken) []shellToken {
+// segmentWriteTargets splits one segment into its redirection targets and
+// the command its words run.
+func segmentWriteTargets(segment []shellToken) ([]shellToken, shellCommand) {
 	var targets []shellToken
 	var args []shellToken
 	for i := 0; i < len(segment); i++ {
@@ -1446,25 +1923,11 @@ func segmentWriteTargets(segment []shellToken) []shellToken {
 			i++
 		}
 		if i+1 < len(segment) {
-			targets = appendTarget(targets, segment[i+1])
+			targets = append(targets, segment[i+1])
 			i++
 		}
 	}
-	for _, target := range verbWriteTargets(args) {
-		targets = appendTarget(targets, target)
-	}
-	return targets
-}
-
-// appendTarget drops a target whose value the shell computes: an unexpanded
-// word is not a path this guard can classify, and guessing would refuse a call
-// on evidence it does not have. An empty word stays a target: it resolves to
-// the directory the command runs in, where darwin cp writes it.
-func appendTarget(targets []shellToken, token shellToken) []shellToken {
-	if token.expandable {
-		return targets
-	}
-	return append(targets, token)
+	return targets, commandPosition(args)
 }
 
 // writeVerbs are the verbs verbWriteTargets claims.

@@ -101,7 +101,17 @@ func evaluateGitScriptSafety(homeDir, taskID, checkPath, command string, depth i
 	// directory the command line visits.
 	paths := []string{checkPath}
 	currentPath := checkPath
+	// subshells are the directories to return to at each open subshell's `)`.
+	var subshells []string
 	for _, segment := range tokenizeSegments(mode, stripped) {
+		if segment[0].subshell {
+			if segment[0].text == "(" {
+				subshells = append(subshells, currentPath)
+			} else if n := len(subshells); n > 0 {
+				currentPath, subshells = subshells[n-1], subshells[:n-1]
+			}
+			continue
+		}
 		for _, token := range segment {
 			if token.undecodable || (ifs && token.splitsAtIFS) {
 				return true, "shell word cannot be decoded; git mutation cannot be checked"
@@ -129,7 +139,7 @@ func evaluateGitScriptSafety(homeDir, taskID, checkPath, command string, depth i
 				return true, reason
 			}
 		}
-		if nextPath, ok := cdSegmentPath(mode, currentPath, segmentWords(segment)); ok {
+		if nextPath, ok := cdSegmentPath(mode, currentPath, segmentWords(builtinCommand(segment))); ok {
 			currentPath = nextPath
 			paths = append(paths, currentPath)
 		}
@@ -699,8 +709,8 @@ func hasGitCommandSubstitution(command string) bool {
 		strings.Contains(command, "${\n") || strings.Contains(command, "${|")
 }
 
-// cdSegmentPath reports whether a segment is a `cd` and, if so, the directory
-// it moves to.
+// cdSegmentPath reports whether words, from a segment's command word on
+// (builtinCommand), are a `cd` and, if so, the directory it moves to.
 func cdSegmentPath(mode backslashMode, currentPath string, words []string) (string, bool) {
 	if len(words) == 0 || words[0] != "cd" {
 		return "", false

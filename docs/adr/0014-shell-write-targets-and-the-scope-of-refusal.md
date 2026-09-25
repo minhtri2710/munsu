@@ -80,7 +80,7 @@ single quotes, or behind a POSIX-valid backslash escape, is literal and remains
 classifiable; genuinely expandable target tokens are omitted because their paths
 are not knowable to the guard.
 
-**A heredoc body is content, not a command line** (`stripHeredocBodies`). This is the same
+**A heredoc body is content, not a command line** (`splitHeredocBodies`). This is the same
 "one payload, one channel" rule BEO-62 settled for apply-patch, applied to the shell
 channel. Splitting a body at its newlines and tokenizing each line turned document text
 into write targets and let a `cd` line inside a document move the resolution base for the
@@ -109,25 +109,71 @@ This is the constraint that keeps the guard from stalling runs. The claim is exa
   same question reads a *source* as a destination — a refusal on a legitimate run,
   which is the one outcome this section forbids.
 
+A named write verb is found where bash finds the command word, and inside the payloads
+bash runs:
+
+* **Command position** (`commandPosition`): the command word is the first word after every
+  assignment (`X=1`), reserved word (`if`, `then`, `while`, `{`, …) and `!`, and after
+  every wrapper with its options. The wrappers are a fixed list, `wrapperVerbs`, chosen by
+  one principle — a command that runs the rest of its argv as a command: `command`,
+  `builtin`, `exec`, `env`, `nohup`, `time`, `nice`, `timeout`, `sudo`, `setsid`,
+  `stdbuf`. Each option grammar was measured with a bash 3.2 and 5.3 probe on macOS, and
+  taken from GNU where macOS lacks the command or the option. A wrapper option that sets
+  the command's directory (`env -C`, `sudo -D`) moves the base its targets resolve
+  against; one the shell computes makes relative targets ambiguous, and a changed root
+  (`sudo -R`) makes every target ambiguous. `command -v`/`-V` and `type` run nothing and
+  name nothing. The file `time -o`/`--output` writes is a target.
+* **Subshells and cd** (`tokenizeSegments`, `builtinCommand`): an unquoted `(` that starts
+  a word, and a `)` that closes none opened inside a word, are operators, as bash reads
+  them, so `(rm x)` and `((rm x))` reach the verb; `$(`, `<(`, `>(`, `$((` and quoted
+  parens are unchanged. A `cd` inside `( ... )` returns at its `)`. Both guards read a
+  segment's `cd` through `builtinCommand`, past assignments, reserved words, `time` and the
+  `builtin` and `command` prefixes that still run it in this shell (`builtin cd <shared>
+  && rm f`); a `cd` behind any other wrapper (`env cd`) runs outside the shell and moves
+  nothing.
+* **Named shell payloads** (`shellPayloads`): the `-c` operand of `bash`, `sh`, `zsh`,
+  `dash` or `ksh` (`shellConsumers`), in any option form bash accepts (`-lc`, `-l -c`,
+  `-o name -c`); the heredoc body or here-string such a shell reads as its script when it
+  has no `-c` and no script operand, or has `-s`; the words of `eval`, joined by single
+  spaces as bash joins them; and the string `env -S` splits. An `eval` payload runs in the
+  same shell, so its `cd` moves the segments after it; a shell's payload runs in a child
+  that starts in its parent segment's directory, and its `cd` does not leak out. A payload
+  nested past `maxShellPayloadDepth`, or past `maxWriteReadings` payloads in one command,
+  is not read: its segment is ambiguous, and the hook refuses on the write guard's own
+  verdict, not on the git guard's.
+
+Only a named consumer's payload is read. The git guard reads every word that reads as more
+than itself (`evaluateGitMutationSafety`); the write guard deliberately does not. A refused
+git mutation costs a retry, a refused file write costs the run, and under the git guard's
+rule `git commit -m "rm <shared>/x"` and `grep "> <shared>/x"` would be refused. This
+asymmetry is a choice, not a gap.
+
 Everything else is open, explicitly and by design:
 
 * **Reads are never targets.** `cat`, `grep -r`, `go build`, `rg` pointed at the shared
   checkout stay allowed. Reading the shared checkout as a reference is ordinary, frequent,
   legitimate work; blocking it is the "every agent run freezes" failure mode this guard
   must not have. This is why the design is a write-verb allowlist and not a path scan.
-* **A verb not on the list is open** — including interpreters (`python -c`, or a script fed
-  through a heredoc) that write through absolute paths, and wrappers (`sudo`, `xargs`,
-  `env`). These are not claimed. The `cwd` ladder still covers them when the session sits in
-  the shared checkout; the absolute-target dimension for interpreters remains open and is
-  stated as such.
+* **A verb not on the list is open, and so is a runner not in `wrapperVerbs`.** The wrapper
+  list is fixed, not a class: `arch`, `caffeinate`, `xcrun`, `doas`, `ionice`, `chronic`,
+  `xargs`, `find -exec`/`-execdir`, `parallel` and `watch` stay open. So do `source`/`.`,
+  script files (a shell given a script operand), a pipe into a shell (`echo "rm x" | sh`, whose payload is
+  another command's output), and interpreters other than the named shells (`python -c`,
+  `perl -e` without `-i`, `node -e`), which write through absolute paths unclaimed. The
+  `cwd` ladder still covers them when the session sits in the shared checkout.
+* **A payload the shell computes is open** (`bash -c "$cmd"`, `eval "$cmd"`): like a
+  computed target, its text is not knowable here.
+* **Stdin given to a group is open**: a heredoc or here-string after a subshell's `)` or a
+  brace group's `}` (`(bash) <<EOF`, `{ bash; } <<EOF`) is not read as the shell's payload.
 * **`$(...)` / backtick substitution is open** on this path: a target the shell computes is
   not knowable here. (The git ladder still refuses substitution for git mutations.)
 
 Because tokenization cannot fail — `tokenizeSegments` always returns a segment list — this
-channel has **no unparseable state**. It does, however, carry an explicit fail-closed state
-for ambiguous cross-volume drive-relative paths: when `resolveShellWritePath` cannot
-reconstruct the other drive's current directory, `runSafetyCheck` refuses before target
-classification. Apart from that path ambiguity, the narrow parser claim inherits none of
+channel has **no unparseable state**. It does, however, carry explicit fail-closed states:
+for ambiguous cross-volume drive-relative paths, when `resolveShellWritePath` cannot
+reconstruct the other drive's current directory, and for a payload too deep or too
+numerous to read, `runSafetyCheck` refuses before target classification. Apart from that
+ambiguity, the narrow parser claim inherits none of
 the fail-closed obligation `applyPatchTargets` carries. That obligation exists because a
 declared-covered tool must not pass unexamined on a broken payload; a claim this narrow
 never reaches that condition. Making the claim wider would drag the obligation with it,
@@ -174,9 +220,10 @@ checkout identity. File writes are not.
 ## Fail direction, stated once
 
 `IsBoundRepository` and target-classification failures fail **open**: missing
-environment, unreadable authority, unclassifiable path → allowed. Shell path ambiguity is
-the exception: a target span for which every backslash interpretation depends on an
-unreconstructable different-volume cwd is refused before classification. An independently
+environment, unreadable authority, unclassifiable path → allowed. Shell ambiguity is the
+exception: a target span for which every backslash interpretation depends on an
+unreconstructable different-volume cwd, or a payload too deep or too numerous to read, is
+refused before classification. An independently
 resolved candidate for that span is still classified normally. The git-mutation path fails
 **closed** in the same situations (`git mutation worktree binding unavailable`). The two
 paths agree on the *definition* of the protected repository and disagree on the *direction
@@ -191,5 +238,9 @@ change to this area does not flip either behavior silently.
   `runSafetyCheck`.
 * An `Unrelated` cwd combined with a provably-safe target no longer refuses. Every other
   `Unrelated` refusal is unchanged.
-* The residual open surface is written down above rather than implied: interpreters,
-  wrappers, shell-computed targets, sibling worktrees.
+* The claim covers named write verbs reached through command-position prefixes, the fixed
+  `wrapperVerbs` list and named shell payloads. The residual open surface is written down
+  above rather than implied: runners outside `wrapperVerbs` (`arch`, `caffeinate`, `xcrun`,
+  `doas`, `ionice`, `chronic`, `xargs`, `find -exec`, `parallel`, `watch`), `source`,
+  script files, pipes into a shell, stdin given to a subshell or brace group, interpreters
+  other than the named shells, shell-computed payloads and targets, and sibling worktrees.

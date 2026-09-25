@@ -363,6 +363,46 @@ func TestSafetyCheckNormalPushAndBranchFormsAllowed(t *testing.T) {
 	}
 }
 
+// TestSafetyCheckReadsSubshellsAndBuiltinCd pins the hook refusing git and
+// munsu commands inside an unquoted `( ... )` subshell, and a git command after
+// a cd behind `builtin`, `command` or an assignment, which runs in the
+// directory the cd names. A subshell's cd does not move the words after its
+// `)`.
+func TestSafetyCheckReadsSubshellsAndBuiltinCd(t *testing.T) {
+	primary := initGitRepoForSafety(t, t.TempDir())
+	worktree := filepath.Join(t.TempDir(), "wt")
+	runGitForSafety(t, primary, "worktree", "add", "--detach", worktree)
+	homeDir := bindSafetyWorktree(t, "ship-sub", primary, worktree)
+	t.Setenv("MUNSU_HOME", homeDir)
+	t.Setenv("MUNSU_TASK_ID", "ship-sub")
+	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-sub")
+
+	for _, command := range []string{
+		"(git push --force)",
+		"(git push --force origin mu/ship-sub)",
+		"(cd " + primary + " && git add f)",
+		"(cd " + primary + "; git add f); git add g",
+		"builtin cd " + primary + " && git add f",
+		"command cd " + primary + " && git add f",
+		"X=1 cd " + primary + " && git add f",
+		"(munsu watch)",
+		"(ls .no-mistakes)",
+	} {
+		if block, _ := runPiSafetyForGit(t, worktree, command); !block {
+			t.Errorf("%q allowed, want refused", command)
+		}
+	}
+	for _, command := range []string{
+		"(cd " + primary + "); git add f",
+		"(cd " + primary + " && git status); git push origin mu/ship-sub",
+		"command -v cd " + primary + " && git add f",
+	} {
+		if block, reason := runPiSafetyForGit(t, worktree, command); block {
+			t.Errorf("%q refused: %s", command, reason)
+		}
+	}
+}
+
 func bindSafetyWorktree(t *testing.T, taskID, primary, worktree string) string {
 	t.Helper()
 	homeDir := t.TempDir()
