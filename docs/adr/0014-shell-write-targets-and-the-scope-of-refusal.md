@@ -243,9 +243,10 @@ bash runs:
   verdict, not on the git guard's.
 
 Only a named consumer's payload is read. The git guard reads every word that reads as more
-than itself (`evaluateGitMutationSafety`), each as a shell of its own on a copy of the
-directory and the functions (`evaluateGitPayloadSafety`), so nothing it does returns; the
-write guard deliberately does not. A refused
+than itself (`evaluateGitMutationSafety`), each as a shell of its own starting in the
+directory it stands in (`evaluateGitPayloadSafety`). Its directory moves do not return,
+but its definitions join the command-wide monotone function set; nothing removes them.
+The write guard deliberately does not read every word. A refused
 git mutation costs a retry, a refused file write costs the run, and under the git guard's
 rule `git commit -m "rm <shared>/x"` and `grep "> <shared>/x"` would be refused. This
 asymmetry is a choice, not a gap.

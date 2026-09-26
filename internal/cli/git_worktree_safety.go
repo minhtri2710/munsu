@@ -88,9 +88,9 @@ const maxShellPayloadDepth = 4
 // shell is the shell command runs in, from shell.path. eval runs its payload
 // in this shell, so the payload shares shell: its directory moves and its
 // definitions reach the segments after it. Every other payload, each word
-// read again as shell among them, runs as a shell of its own that starts
-// from the directory it stands in and works on a copy of the functions, so
-// nothing it does returns (evaluateGitPayloadSafety). A call to a
+// read again as shell among them, starts from the directory it stands in; its
+// directory moves do not return, but its definitions join the command-wide
+// function set (evaluateGitPayloadSafety). A call to a
 // function whose body moves the directory leaves it unknown.
 func evaluateGitScriptSafety(homeDir, taskID, command string, depth int, ifs bool, shell *gitShell) (bool, string) {
 	if hasGitCommandSubstitution(command) {
@@ -237,7 +237,7 @@ type gitShell struct {
 }
 
 // evaluateGitPayloadSafety reads payload as a shell of its own that starts in
-// path, with no previous directory or stack, on a copy of shell's functions.
+// path, with no previous directory or stack, sharing shell's command-wide function set.
 func evaluateGitPayloadSafety(homeDir, taskID, path, payload string, depth int, ifs bool, shell *gitShell) (bool, string) {
 	if depth+1 > maxShellPayloadDepth {
 		return true, "shell payload nesting is too deep; git mutation cannot be checked"
