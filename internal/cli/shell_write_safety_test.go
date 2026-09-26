@@ -2201,6 +2201,8 @@ func TestShellWriteReadsLongPrefixesInLinearTime(t *testing.T) {
 // a chain of n functions none of which moves it, each read as its body calls
 // the one before, then called n times with another redefined before each
 // call, costs linear time. The budget is eight times the cost of a quarter.
+// The final chain also owns the fail-closed verdict when an inert DFS exceeds
+// the command's work budget.
 func TestShellWriteResolvesFunctionChainsInLinearTime(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "x")
@@ -2227,6 +2229,20 @@ func TestShellWriteResolvesFunctionChainsInLinearTime(t *testing.T) {
 	if small, large := cost(500), cost(2000); large > 8*small {
 		t.Errorf("a 2000-function chain took %v, %.1f times 500 (%v), want under 8", large, float64(large)/float64(small), small)
 	}
+
+	n := maxWriteReadings + 144
+	var overBudget strings.Builder
+	for i := 0; i <= n; i++ {
+		if i == 0 {
+			fmt.Fprintf(&overBudget, "f%d() { :; }; ", i)
+		} else {
+			fmt.Fprintf(&overBudget, "f%d() { f%d; }; ", i, i-1)
+		}
+	}
+	fmt.Fprintf(&overBudget, "f%d; rm x", n)
+	if targets, ambiguous := shellWriteTargets(dir, overBudget.String()); !ambiguous || len(targets) != 0 {
+		t.Errorf("shellWriteTargets of an over-budget inert chain = %q ambiguous=%v, want no targets and ambiguous=true", targets, ambiguous)
+	}
 }
 
 // TestShellWriteResolvesFunctionCallsWhenTheyRun pins the command-wide
@@ -2244,10 +2260,10 @@ func TestShellWriteResolvesFunctionCallsWhenTheyRun(t *testing.T) {
 		"g() { f; }; f() { :; }; g; f() { " + cd + "; }; g; rm docs/f",
 		"f() { " + cd + "; }; \"f\"; rm docs/f",
 		"f() { " + cd + "; }; \\f; rm docs/f",
-		"f() { " + cd + "; }; unset -f f; f; rm docs/f",
-		"f() { " + cd + "; }; f() { :; }; f; rm docs/f",
-		"(f() { " + cd + "; }); f; rm docs/f",
-		"f() { g() { " + cd + "; }; }; g; rm docs/f",
+		"f() { cd " + primary + "; }; unset -f f; f; rm docs/x",
+		"f() { cd " + primary + "; }; f() { :; }; f; rm docs/x",
+		"(f() { cd " + primary + "; }); f; rm docs/x",
+		"f() { g() { cd " + primary + "; }; }; g; rm docs/x",
 	} {
 		assertShapes(t, true, worktree, command, "")
 	}

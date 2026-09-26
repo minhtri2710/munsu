@@ -1450,6 +1450,20 @@ func TestSafetyCheckReadsRedirectPrefixesExpansionsAndLateFunctions(t *testing.T
 			t.Errorf("%q allowed, want refused", command)
 		}
 	}
+	n := maxWriteReadings + 144
+	var overBudget strings.Builder
+	for i := 0; i <= n; i++ {
+		if i == 0 {
+			fmt.Fprintf(&overBudget, "f%d() { :; }; ", i)
+		} else {
+			fmt.Fprintf(&overBudget, "f%d() { f%d; }; ", i, i-1)
+		}
+	}
+	fmt.Fprintf(&overBudget, "f%d; git add f", n)
+	if block, reason := runPiSafetyForGit(t, worktree, overBudget.String()); !block || !strings.Contains(reason, "cannot be determined") {
+		t.Errorf("over-budget inert function chain = block %v, reason %q; want refusal for an unknown directory", block, reason)
+	}
+
 	for _, command := range []string{
 		"git push origin mu/ship-rv 12>/dev/null",
 		"git push origin mu/ship-rv 9>/dev/null",

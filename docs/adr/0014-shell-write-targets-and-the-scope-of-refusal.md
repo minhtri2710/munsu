@@ -192,9 +192,11 @@ bash runs:
   a definition inside a body, brace group or `if` arm is read as one. Nested definitions
   are registered when read rather than deferred until their outer function runs. The
   monotone table accepts these over-refusals: redefining a moving function as inert in the
-  same command; `unset -f` followed by a call; defining a moving function only in a subshell
-  or child and calling it in the parent; and calling an inner moving function whose outer
-  definition is never called. These cases fail closed. A coproc body's definitions are
+  same command (`f() { cd P; }; f() { :; }; f; rm docs/x`); `unset -f` followed by a call
+  (`f() { cd P; }; unset -f f; f; rm docs/x`); defining a moving function only in a subshell
+  or child and calling it in the parent (`(f() { cd P; }); f; rm docs/x`); and calling an
+  inner moving function whose outer definition is never called
+  (`f() { g() { cd P; }; }; g; rm docs/x`). These cases fail closed. A coproc body's definitions are
   retained in the same monotone set. A segment is apart when it
   runs in a child: a pipeline
   member, a background command, or any segment of a compound command or a function
