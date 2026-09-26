@@ -34,6 +34,11 @@ type shellToken struct {
 	// body is a synthetic subshell operator around a function's or a
 	// coproc's body of a compound command other than a subshell.
 	body bool
+	// simpleFunctionBody marks a parenthesized function head with a
+	// simple-command body, which some named shells accept and
+	// bash rejects. Both guards refuse it rather than treating the body as
+	// a command in the surrounding shell.
+	simpleFunctionBody bool
 	// unfinished is the one token of a segment standing for a case the
 	// command line opens and never ends with `esac`, from `case` on, or for
 	// a substitution substitutionEnd cannot end, from its start on.
@@ -489,6 +494,13 @@ func (w *shellWriteWalk) walk(command string, depth int, within string) {
 	}
 	var subshells []subshell
 	for i, segment := range segments {
+		if segment[0].simpleFunctionBody {
+			w.targets = append(w.targets, shellTargetResult{
+				span:      shellTargetSpan{start: segment[0].start, end: segment[0].end, within: within},
+				ambiguous: true,
+			})
+			continue
+		}
 		if segment[0].unfinished {
 			w.targets = append(w.targets, shellTargetResult{span: shellTargetSpan{start: segment[0].start, end: segment[0].end, within: within}, ambiguous: true})
 			continue
@@ -1800,6 +1812,21 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 			break
 		}
 	}
+	for i, segment := range segments {
+		if simpleFunctionBody(segment) {
+			segments[i][0].simpleFunctionBody = true
+		}
+		if i+1 < len(segments) && definesFunction(segment) &&
+			strings.HasSuffix(segment[len(segment)-1].text, "()") && simpleFunctionBody(slices.Concat(segment, segments[i+1])) {
+			start, end := segment[len(segment)-1].end, segments[i+1][0].start
+			if start >= 0 && end >= start && end <= len(runes) {
+				gap := string(runes[start:end])
+				if strings.ContainsRune(gap, '\n') && strings.TrimSpace(gap) == "" {
+					segments[i+1][0].simpleFunctionBody = true
+				}
+			}
+		}
+	}
 	return segments
 }
 
@@ -1856,6 +1883,36 @@ const (
 func readsBeforeCommand(words []shellToken, k int) bool {
 	token := words[k]
 	return token.plain && (slices.Contains(reservedWords, token.text) || token.text == "time" || token.text == "-p" && k > 0 && words[k-1].text == "time")
+}
+
+// simpleFunctionBody reports a parenthesized function head whose body does
+// not begin with a compound command bash accepts as a function body. The
+// guards refuse these bodies rather than interpreting them as commands in
+// the surrounding shell.
+func simpleFunctionBody(segment []shellToken) bool {
+	if len(segment) == 0 {
+		return false
+	}
+	headLen := 1
+	if len(segment) > 1 && segment[0].plain && segment[0].text == "function" {
+		headLen = 2
+	}
+	if len(segment) <= headLen || !definesFunction(segment[:headLen]) ||
+		!strings.HasSuffix(segment[headLen-1].text, "()") {
+		return false
+	}
+	body, _ := withoutRedirections(segment[headLen:])
+	if len(body) == 0 {
+		return false
+	}
+	first := body[0]
+	if first.body {
+		return false
+	}
+	if first.subshell && first.text == "(" {
+		return false
+	}
+	return !(first.plain && slices.Contains([]string{"{", "if", "while", "until", "for", "select", "case", "[["}, first.text))
 }
 
 // definesFunction reports whether segment is a function definition's head:

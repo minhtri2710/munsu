@@ -1348,6 +1348,25 @@ func TestSafetyCheckReadsCaseStackAndCdOptions(t *testing.T) {
 	t.Setenv("MUNSU_TASK_ID", "ship-case")
 	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-case")
 
+	simpleBodyCases := []struct {
+		name     string
+		commands []string
+	}{
+		{"top-level simple body", []string{`f() cd ` + primary + `; f; git add f`}},
+		{"non-compound reserved-word opener", []string{
+			`f() function g { cd ` + primary + `; }; f; g; git add f`,
+			`f() coproc cd ` + primary + `; f; git add f`,
+		}},
+		{"named-shell payload", []string{`zsh -c 'f() cd ` + primary + `; f; git add f'`}},
+	}
+	for _, tc := range simpleBodyCases {
+		for _, command := range tc.commands {
+			block, reason := runPiSafetyForGit(t, worktree, command)
+			if !block || !strings.Contains(reason, "simple-command function body") {
+				t.Errorf("%s: %q: block=%v reason=%q, want simple-command function body refusal", tc.name, command, block, reason)
+			}
+		}
+	}
 	for _, command := range []string{
 		"(true; cd " + primary + "; case $x in a) :;; esac; git add f)",
 		"(true; cd " + primary + "; case $x in a) :;; esac; git push origin mu/ship-case)",

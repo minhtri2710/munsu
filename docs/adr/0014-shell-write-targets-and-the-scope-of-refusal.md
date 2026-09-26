@@ -167,10 +167,18 @@ bash runs:
 * **Functions and coproc** (`definesFunction`, `opensScope`): every definition form
   (`f()`, `f ()`, `function f`, `function f()`) and a `coproc` body are read in their own
   scope, split by synthetic subshell tokens, so a directory move inside the body does not
-  move the segments after the definition. A write in a function body is a target even if
-  the function is never called: an accepted over-refusal, pinned by test. `coproc` is a
-  reserved word, and its body is read in a child scope. A body of any compound form a
-  reserved word ends (`if`, `while`, `until`, `for`, `select`, `case`) is scoped the same
+  move the segments after the definition. Simple-command bodies after parenthesized
+  heads, such as `f() cd P` and `f () cd P`, are defined by zsh, dash and ksh; the
+  `function f()` form is defined by zsh. Bash rejects these forms, and both guards refuse
+  them wherever they appear in a command, including inside a named-shell payload. The
+  guards also refuse a parenthesized function body unless its first token after
+  redirections opens a Bash-valid compound body (`{`, `(`, `((`, `if`, `while`, `until`,
+  `for`, `select`, `case` or `[[`); this excludes body-leading `function` and `coproc`.
+  The form `function f cd P` does not define a function. A write in a function body is a
+  target even if the function is never called: an accepted over-refusal, pinned by test;
+  `coproc` is a reserved word, and its body is read in a child scope. A body of any
+  compound form a reserved word ends (`if`, `while`, `until`, `for`, `select`, `case`)
+  is scoped the same
   way; a `[[ ]]` body runs no command. Both guards use the M1 function-table model:
   every definition read in the command, including one in `eval` and one nested in an outer
   function, is registered immediately as a possible move. A name enters the monotone moving

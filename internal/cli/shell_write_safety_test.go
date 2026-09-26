@@ -1904,6 +1904,38 @@ func TestShellWriteReadsDirectoryStack(t *testing.T) {
 func TestShellWriteReadsFunctionBodies(t *testing.T) {
 	primary, worktree := boundTaskFixture(t, "ship-shell-function")
 	target := filepath.Join(primary, "docs", "f")
+	simpleBodyCases := []struct {
+		name     string
+		commands []string
+	}{
+		{"compact function head", []string{"f() cd " + primary + "; f; rm docs/f"}},
+		{"function keyword head", []string{"function f() cd " + primary + "; f; rm docs/f"}},
+		{"non-compound reserved-word opener", []string{
+			"f() function g { cd " + primary + "; }; f; g; rm docs/f",
+			"f() coproc cd " + primary + "; f; rm docs/f",
+		}},
+		{"newline-separated body", []string{"f()\ncd " + primary + "; f; rm docs/f"}},
+		{"named-shell payload", []string{"zsh -c 'f() cd " + primary + "; f; rm docs/f'"}},
+	}
+	for _, tc := range simpleBodyCases {
+		for _, command := range tc.commands {
+			_, ambiguous := shellWriteTargets(worktree, command)
+			if !ambiguous {
+				t.Errorf("%s: shellWriteTargets(%q) ambiguous=false, want true", tc.name, command)
+			}
+			assertShapes(t, true, worktree, command, "")
+		}
+	}
+	redirectedCompound := "f() >out if cd " + primary + "; then :; fi; f; echo done"
+	if _, ambiguous := shellWriteTargets(worktree, redirectedCompound); ambiguous {
+		t.Errorf("shellWriteTargets(%q) ambiguous=true, want compound body handled by the existing walk", redirectedCompound)
+	}
+	assertShapes(t, false, worktree, redirectedCompound, "")
+	subshellBody := "f()\n( : ); f; echo done"
+	if _, ambiguous := shellWriteTargets(worktree, subshellBody); ambiguous {
+		t.Errorf("shellWriteTargets(%q) ambiguous=true, want subshell body handled by the existing walk", subshellBody)
+	}
+	assertShapes(t, false, worktree, subshellBody, "")
 	for _, command := range []string{
 		"f() { rm " + target + "; }; f",
 		"f () { rm " + target + "; }; f",
