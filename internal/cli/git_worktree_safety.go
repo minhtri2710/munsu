@@ -115,7 +115,7 @@ func evaluateGitScriptSafety(homeDir, taskID, command string, depth int, ifs boo
 		stack          *dirStack[string]
 		head           []shellToken
 		moves          int
-		functions      shellFunctionsMark
+		calls          int
 	}
 	var subshells []shellDir
 	segments := tokenizeSegments(mode, stripped)
@@ -124,11 +124,11 @@ func evaluateGitScriptSafety(homeDir, taskID, command string, depth int, ifs boo
 			return true, "shell case is unfinished; git mutation cannot be checked"
 		}
 		if i > 0 && definesFunction(segments[i-1]) && !segment[0].body {
-			shell.functions.defineHead(segments[i-1], shellFunction{})
+			shell.functions.finishDefinition(functionName(segments[i-1]), len(shell.functions.commandCall), shellFunction{})
 		}
 		if segment[0].subshell {
 			if segment[0].text == "(" {
-				opened := shellDir{shell.path, shell.previous, shell.stack, nil, shell.moves, shell.functions.mark()}
+				opened := shellDir{shell.path, shell.previous, shell.stack, nil, shell.moves, len(shell.functions.commandCall)}
 				if segment[0].body && i > 0 && definesFunction(segments[i-1]) {
 					opened.head = segments[i-1]
 				}
@@ -137,9 +137,8 @@ func evaluateGitScriptSafety(homeDir, taskID, command string, depth int, ifs boo
 				closed := subshells[n-1]
 				shell.path, shell.previous, shell.stack = closed.path, closed.previous, closed.stack
 				subshells = subshells[:n-1]
-				defines := shell.functions.leave(closed.functions)
 				if closed.head != nil {
-					shell.functions.defineHead(closed.head, shellFunction{moves: shell.moves != closed.moves, from: closed.functions.calls, to: len(shell.functions.calls), defines: defines})
+					shell.functions.finishDefinition(functionName(closed.head), closed.calls, shellFunction{moves: shell.moves != closed.moves})
 					shell.moves = closed.moves
 				}
 			}
@@ -186,7 +185,6 @@ func evaluateGitScriptSafety(homeDir, taskID, command string, depth int, ifs boo
 		if shell.functions.call(segment) && move == moveNone {
 			move = moveCalled
 		}
-		shell.functions.unset(segment)
 		if move != moveNone {
 			shell.moves++
 		}
@@ -244,8 +242,8 @@ func evaluateGitPayloadSafety(homeDir, taskID, path, payload string, depth int, 
 	if depth+1 > maxShellPayloadDepth {
 		return true, "shell payload nesting is too deep; git mutation cannot be checked"
 	}
-	mark := shell.functions.mark()
-	defer shell.functions.rollback(mark)
+	calls := len(shell.functions.commandCall)
+	defer func() { shell.functions.commandCall = shell.functions.commandCall[:calls] }()
 	return evaluateGitScriptSafety(homeDir, taskID, payload, depth+1, ifs, &gitShell{path: path, functions: shell.functions})
 }
 

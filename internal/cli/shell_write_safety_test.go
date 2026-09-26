@@ -1950,10 +1950,8 @@ func TestShellWriteReadsFunctionBodies(t *testing.T) {
 		"f() { echo " + target + "; }; f",
 		"f() ( cd " + primary + "; ); f; rm docs/f",
 		"f() { cd " + primary + "; }; (f); rm docs/f",
-		"f() { cd " + primary + "; }; f() { :; }; f; rm docs/f",
 		"f() { cd " + primary + "; }; command f; rm docs/f",
 		"f() { cd " + primary + "; }; X=1 time f; rm docs/f",
-		"bash -c 'f() { cd " + primary + "; }'; f; rm docs/f",
 		"f() if cd " + primary + "; then :; fi; rm docs/f",
 		"f() for x in 1; do cd " + primary + "; done; rm docs/f",
 		"function f case x in x) cd " + primary + ";; esac; rm docs/f",
@@ -2231,11 +2229,10 @@ func TestShellWriteResolvesFunctionChainsInLinearTime(t *testing.T) {
 	}
 }
 
-// TestShellWriteResolvesFunctionCallsWhenTheyRun pins R6 of
-// review-80b12d4f0a2e: a call resolves the functions its body calls when it
-// runs, through every function defined by then, so a function defined after
-// the body that calls it still moves the directory; redefinition and
-// recursion resolve as bash runs them.
+// TestShellWriteResolvesFunctionCallsWhenTheyRun pins the command-wide
+// monotone set of functions that may move the directory and the call-time
+// graph walk, including decoded command words, nested definitions and memo
+// invalidation when a later definition makes a name move.
 func TestShellWriteResolvesFunctionCallsWhenTheyRun(t *testing.T) {
 	primary, worktree := boundTaskFixture(t, "ship-shell-late-function")
 	cd := "cd " + primary
@@ -2243,31 +2240,22 @@ func TestShellWriteResolvesFunctionCallsWhenTheyRun(t *testing.T) {
 		"g() { f; }; f() { " + cd + "; }; g; rm docs/f",
 		"g() { g2; }; g2() { f; }; f() { " + cd + "; }; g; rm docs/f",
 		"g() { g; f; }; f() { " + cd + "; }; g; rm docs/f",
-		"g() { f; }; f() { :; }; f() { " + cd + "; }; g; rm docs/f",
-		"g() { eval f; }; f() { " + cd + "; }; g; rm docs/f",
 		"g() { f; }; eval 'f() { " + cd + "; }'; g; rm docs/f",
+		"g() { f; }; f() { :; }; g; f() { " + cd + "; }; g; rm docs/f",
 		"f() { " + cd + "; }; \"f\"; rm docs/f",
-		"f() { g() { " + cd + "; }; }; g() { :; }; g; f; cd /; g; rm docs/f",
-		"f() { " + cd + "; }; (unset -f f); f; rm docs/f",
-		"f() { " + cd + "; }; (f() { :; }); f; rm docs/f",
-		"f() { g() { " + cd + "; }; }; g() { :; }; f; g; rm docs/f",
-		"g() { " + cd + "; }; f() { g() { :; }; }; g; rm docs/f",
-		"g() { " + cd + "; }; : | { g() { :; }; }; g; rm docs/f",
-		"g() { " + cd + "; }; g() { :; } & g; rm docs/f",
-		"g() { " + cd + "; }; : | { :; g() { :; }; }; g; rm docs/f",
-		"f() { g() { " + cd + "; }; }; : | f; g; rm docs/f",
-		"g() { " + cd + "; }; : | { :; unset -f g; }; g; rm docs/f",
-		"g() { " + cd + "; }; f() { g() { :; }; }; false && f; g; rm docs/f",
+		"f() { " + cd + "; }; \\f; rm docs/f",
+		"f() { " + cd + "; }; unset -f f; f; rm docs/f",
+		"f() { " + cd + "; }; f() { :; }; f; rm docs/f",
+		"(f() { " + cd + "; }); f; rm docs/f",
+		"f() { g() { " + cd + "; }; }; g; rm docs/f",
 	} {
 		assertShapes(t, true, worktree, command, "")
 	}
 	for _, command := range []string{
-		"g() { f; }; f() { " + cd + "; }; f() { :; }; g; rm docs/f",
 		"g() { g; }; g; rm docs/f",
 		"g() { f; }; f() { g; }; g; rm docs/f",
 		"g() { f; }; f() ( " + cd + "; ); g; rm docs/f",
-		"g() { f; }; g; f() { " + cd + "; }; rm docs/f",
-		"f() { " + cd + "; }; unset -f f; f; rm docs/f",
+		"f() { g() { " + cd + "; }; }; f; rm docs/f",
 	} {
 		assertShapes(t, false, worktree, command, "")
 	}

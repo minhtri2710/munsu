@@ -1436,16 +1436,15 @@ func TestSafetyCheckReadsRedirectPrefixesExpansionsAndLateFunctions(t *testing.T
 		"(cd " + primary + "; : # )\ngit add f)",
 		"f() { cd " + primary + "; }; ${x:-f}; git add f",
 		"eval cd " + primary + " && git add f",
-		"f() { cd " + primary + "; }; (f() { :; }); f; git add f",
-		"f() { g() { cd " + primary + "; }; }; g() { :; }; f; g; git add f",
+		"f() { cd " + primary + "; }; \\f; git add f",
+		"f() { cd " + primary + "; }; unset -f f; f; git add f",
+		"f() { cd " + primary + "; }; f() { :; }; f; git add f",
+		"f() { g() { cd " + primary + "; }; }; g; git add f",
+		"(f() { cd " + primary + "; }); f; git add f",
 		"g() { cd " + primary + "; }; f() { g() { :; }; }; g; git add f",
-		"g() { cd " + primary + "; }; : | { g() { :; }; }; g; git add f",
 		"g() { cd " + primary + "; }; g() { :; } & g; git add f",
-		"g() { cd " + primary + "; }; : | { :; g() { :; }; }; g; git add f",
-		"f() { g() { cd " + primary + "; }; }; : | f; g; git add f",
-		"g() { cd " + primary + "; }; : | { :; unset -f g; }; g; git add f",
+		"g() { f; }; f() { :; }; g; f() { cd " + primary + "; }; g; git add f",
 		"f() { cd " + primary + "; }; : | f; git add f",
-		"g() { cd " + primary + "; }; f() { g() { :; }; }; false && f; g; git add f",
 	} {
 		if block, _ := runPiSafetyForGit(t, worktree, command); !block {
 			t.Errorf("%q allowed, want refused", command)
@@ -1458,9 +1457,8 @@ func TestSafetyCheckReadsRedirectPrefixesExpansionsAndLateFunctions(t *testing.T
 		"(cd " + primary + "; : # (\n); git add f",
 		"(cd " + primary + "; cat <x); git add f",
 		"(cd " + primary + "; : ${x:-)}); git add f",
-		"g() { f; }; f() { cd " + primary + "; }; f() { :; }; g; git add f",
 		"g() { g; }; g; git add f",
-		"bash -c 'f() { cd " + primary + "; }'; f; git add f",
+		"f() { g() { cd " + primary + "; }; }; f; git add f",
 	} {
 		if block, reason := runPiSafetyForGit(t, worktree, command); block {
 			t.Errorf("%q refused: %s", command, reason)

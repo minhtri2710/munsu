@@ -171,48 +171,39 @@ bash runs:
   the function is never called: an accepted over-refusal, pinned by test. `coproc` is a
   reserved word, and its body is read in a child scope. A body of any compound form a
   reserved word ends (`if`, `while`, `until`, `for`, `select`, `case`) is scoped the same
-  way; a `[[ ]]` body runs no command. Both guards record each function the command
-  defines, in an `eval` payload too, whether its body moves the directory (a `cd`, `pushd`
-  or `popd` at any depth of the body, `eval` and a nested subshell included, a nested
-  function's body excluded: it moves when that function runs), and the
-  calls its body makes (`shellFunctions`, `functionCalls`). A call resolves when
-  it runs, as bash's does: a later call at command position leaves the directory
-  unknown, as `popd` on an empty stack does, when the function it names or any function its
-  body calls, as defined at that call, moves it. The call reads its command word decoded
+  way; a `[[ ]]` body runs no command. Both guards use the M1 function-table model:
+  every definition read in the command, including one in `eval` and one nested in an outer
+  function, is registered immediately as a possible move. A name enters the monotone moving
+  set if its body moves directly or calls another name that may move (`shellFunctions`,
+  `functionCalls`). A call to any candidate name that may move leaves the directory unknown.
+  Call words are decoded, including `"f"`, `\\f` and `$'f'`, and expansion readings such as
   (`"f"`, `\f`, `$'f'`) and under every reading of an expansion (`${x:-f}`): any name it
-  may run that moves the directory leaves it unknown. A body may so call a function defined
-  after it; a redefinition replaces the earlier body, and a recursive body is read once.
-  What a name resolves to is kept until the next definition or `unset -f`, and all
-  resolutions in one command share one budget of `maxWriteReadings` steps, past which a
-  call leaves the directory unknown. A `( )` body, a call in a subshell, or behind
-  `command` leave it unchanged. A call in the background (`&`) or in a pipeline counts as
-  a `cd` there does: zsh and ksh run a pipeline's last command in this shell, so
-  `f() { cd P; }; : | f; rm` removes in P there. An `eval` payload
-  defines its functions in the shell that runs it; a payload of a named shell works on a
-  copy of the functions, so a function a `bash -c` payload defines is gone when it ends.
-  A subshell works on a copy too: at its `)` the walk drops the definitions and
-  `unset -f` made inside it, so `(f() { :; }); f` and `(unset -f f); f` run the outer
-  `f`, as bash 3.2 and 5.3 do. A definition head after reserved words (`{ g() {`,
-  `then function g`) starts a segment of its own, so a definition inside a body, a brace
-  group or an `if` arm is read as one. What a function body defines and unsets is dropped
-  at its close and kept on the function (`shellFunction.defines`): bash makes it when the
-  function runs, so `f() { g() { cd P; }; }; g() { :; }; f; g` runs the moving `g`. A
-  call replays it merged (`merge`), because whether a call runs (`false && f`, a
-  candidate name) is not known: a name already defined moves unless both definitions are
-  inert, and a replayed `unset -f` leaves the name as it is. Both are accepted
-  over-refusals: `g() { cd P; }; f() { g() { :; }; }; f; g` is refused though bash runs
-  the inert `g`, and `g() { cd P; }; f() { unset -f g; }; f; g` is refused though bash
-  finds no `g`. A coproc
-  body's definitions are dropped. A segment is apart when it runs in a child: a pipeline
+  may run that moves the directory leaves it unknown. The call graph is traversed once per
+  resolution within a shared `maxWriteReadings` budget; memoized results are invalidated
+  when the moving-name set grows. Recursive calls are visited once. The body-close `moves`
+  reset stays: a nested definition's direct `cd` does not make the enclosing function move
+  unless its own body moves. A function with a `( )` body or a call in a subshell does not
+  move the surrounding cwd. A call in the background (`&`) or in a pipeline counts as a `cd` there
+  does: zsh and ksh run a pipeline's last command in this shell, so
+  `f() { cd P; }; : | f; rm` removes in P there. An `eval` payload shares its shell's cwd.
+  A named shell payload has a child cwd walk, but its function-definition evidence remains
+  in the command-wide monotone set, which can over-refuse a later parent call. A definition
+  head after reserved words (`{ g() {`, `then function g`) starts a segment of its own, so
+  a definition inside a body, brace group or `if` arm is read as one. Nested definitions
+  are registered when read rather than deferred until their outer function runs. The
+  monotone table accepts these over-refusals: redefining a moving function as inert in the
+  same command; `unset -f` followed by a call; defining a moving function only in a subshell
+  or child and calling it in the parent; and calling an inner moving function whose outer
+  definition is never called. These cases fail closed. A coproc body's definitions are
+  retained in the same monotone set. A segment is apart when it
+  runs in a child: a pipeline
   member, a background command, or any segment of a compound command or a function
   definition, head included, whose first or closing segment a pipeline or `&` detaches
-  (`g() { :; } &`, `: | { :; g() { :; }; }`). A definition made apart (`defineHead`), or
-  replayed by a call apart (`: | f`), is merged as a replay is, never overwriting or
-  dropping a name: bash and dash drop it, zsh and ksh keep a pipeline's last member. A
-  foreground `unset -f` whose names are plain words
-  removes those functions. Any other spelling (`unset f`, a quoted name, one apart)
-  removes nothing: an accepted over-refusal. As with `cd`, a conditional `unset -f`
-  (`false && unset -f f`) is read as run.
+  (`g() { :; } &`, `: | { :; g() { :; }; }`). Definitions in background and pipeline
+  segments are retained too, an accepted over-refusal when bash runs them in a child (zsh
+  and ksh may retain the last pipeline member). Apart calls still count as a `cd` where the
+  existing cwd walk treats them as such. A write in a function body is a target even if it
+  is never called.
 * **Directory moves** (`segmentDirMove`, `builtinCommand`): `cd`, `pushd` and `popd` move
   the base relative targets resolve against, in both guards. `cd` skips `--` and options
   made only of `L`, `P`, `e` and `@`; any other option moves nothing, as bash refuses it.

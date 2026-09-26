@@ -203,134 +203,82 @@ type shellWriteWalk struct {
 	functions *shellFunctions
 }
 
-// shellFunctions are the functions a shell defined so far, by name, and the
-// function names its foreground commands called, in order. A body calls the
-// names logged while it was read. memo holds what moves resolved for each
-// name since the last definition; work counts the steps every resolution in
-// the command spent, and past maxWriteReadings a resolution is not followed.
-// undo holds the definitions to take back when a copy's command or a
-// subshell ends (mark).
+// shellFunctions records every function body read in this command. moving is
+// monotone: once a name may move the directory, no later definition, unset or
+// scope close removes it. calls keeps each name's accumulated call edges so a
+// function is resolved against names that may move when it is called.
 type shellFunctions struct {
-	defined map[string]shellFunction
-	calls   []string
-	memo    map[string]bool
-	work    int
-	undo    []shellDefinition
+	moving      map[string]bool
+	calls       map[string][]string
+	commandCall []string
+	memo        map[string]bool
+	work        int
 }
 
-// shellFunction is a definition: whether its body moves the directory itself,
-// the calls its body made, calls[from:to], and the definitions and `unset -f`
-// its body made, which bash applies when the function runs, not when it is
-// defined.
+// shellFunction is one definition body: whether it moves the directory
+// directly, and the function names its command positions call.
 type shellFunction struct {
-	moves    bool
-	from, to int
-	defines  []shellDefinition
+	moves bool
+	calls []string
 }
 
-// shellDefinition is what name stood for before a definition or `unset -f`
-// replaced it: function, or nothing when defined is false.
-type shellDefinition struct {
-	name     string
-	function shellFunction
-	defined  bool
-}
-
-// shellFunctionsMark is the state mark saves and rollback returns to.
-type shellFunctionsMark struct {
-	undo, calls int
-}
-
+// define adds a definition's call edges and marks its name if the body moves
+// directly or reaches a name that may move. Previous definitions remain in the
+// graph because this walk cannot prove every conditional definition ran.
 func (f *shellFunctions) define(name string, function shellFunction) {
-	f.replace(name, &function)
+	if f.calls == nil {
+		f.calls = map[string][]string{}
+	}
+	f.calls[name] = append(f.calls[name], function.calls...)
+	if function.moves || slices.ContainsFunc(function.calls, f.moves) {
+		f.addMoving(name)
+	}
 }
 
-// defineHead makes the function head (definesFunction) defines stand for
-// function. A definition apart defines it in a subshell in bash and dash, and
-// in this shell in zsh and ksh for a pipeline's last command: it is merged.
-func (f *shellFunctions) defineHead(head []shellToken, function shellFunction) {
-	if head[0].apart {
-		f.merge(shellDefinition{name: functionName(head), function: function, defined: true})
+func (f *shellFunctions) addMoving(name string) {
+	if f.moving == nil {
+		f.moving = map[string]bool{}
+	}
+	if f.moving[name] {
 		return
 	}
-	f.define(functionName(head), function)
-}
-
-// replace makes name stand for function, or for nothing when it is nil.
-func (f *shellFunctions) replace(name string, function *shellFunction) {
-	if f.defined == nil {
-		f.defined = map[string]shellFunction{}
-	}
-	previous, defined := f.defined[name]
-	f.undo = append(f.undo, shellDefinition{name: name, function: previous, defined: defined})
-	if function == nil {
-		delete(f.defined, name)
-	} else {
-		f.defined[name] = *function
-	}
+	f.moving[name] = true
 	f.memo = nil
 }
 
-// mark saves the state a shell working on a copy of this one returns to:
-// its definitions and calls do not reach this shell (rollback).
-func (f *shellFunctions) mark() shellFunctionsMark {
-	return shellFunctionsMark{undo: len(f.undo), calls: len(f.calls)}
+// finishDefinition saves the active body calls, removes them from the enclosing
+// body's call stream, and registers the function immediately. Nested function
+// bodies therefore do not become calls made by their enclosing body.
+func (f *shellFunctions) finishDefinition(name string, callsAt int, function shellFunction) {
+	function.calls = slices.Clone(f.commandCall[callsAt:])
+	f.commandCall = f.commandCall[:callsAt]
+	f.define(name, function)
 }
 
-func (f *shellFunctions) rollback(mark shellFunctionsMark) {
-	for len(f.undo) > mark.undo {
-		last := f.undo[len(f.undo)-1]
-		f.undo = f.undo[:len(f.undo)-1]
-		if last.defined {
-			f.defined[last.name] = last.function
-		} else {
-			delete(f.defined, last.name)
-		}
-	}
-	f.calls, f.memo = f.calls[:mark.calls], nil
-}
-
-// leave returns the table to mark at a subshell's or a body's `)`: the
-// definitions and `unset -f` made since are dropped, and returned as what each
-// name stood for last, while the calls stay for the body that made them.
-func (f *shellFunctions) leave(mark shellFunctionsMark) []shellDefinition {
-	var made []shellDefinition
-	for _, change := range f.undo[mark.undo:] {
-		if slices.ContainsFunc(made, func(seen shellDefinition) bool { return seen.name == change.name }) {
-			continue
-		}
-		function, defined := f.defined[change.name]
-		made = append(made, shellDefinition{name: change.name, function: function, defined: defined})
-	}
-	mark.calls = len(f.calls)
-	f.rollback(mark)
-	return made
-}
-
-// moves reports whether a call to name moves the directory: its body does, or
-// calls a function defined when the call runs that does. bash resolves a
-// name when the call runs, so a body may call a function defined after it.
-// A resolution past the command's budget moves it to where this does not
-// follow.
+// moves reports whether a call to name moves the directory by resolving its
+// accumulated calls against the monotone set. A resolution past the command's
+// budget fails closed. Memoized results are invalidated whenever that set grows.
 func (f *shellFunctions) moves(name string) bool {
+	if f.moving[name] {
+		return true
+	}
 	if moves, ok := f.memo[name]; ok {
 		return moves
 	}
 	seen := map[string]bool{}
 	var visit func(string) bool
 	visit = func(name string) bool {
+		if f.moving[name] {
+			return true
+		}
 		if moves, ok := f.memo[name]; ok {
 			return moves
 		}
-		function, ok := f.defined[name]
-		if !ok || seen[name] {
+		if seen[name] {
 			return false
 		}
 		seen[name] = true
-		if function.moves {
-			return true
-		}
-		for _, call := range f.calls[function.from:function.to] {
+		for _, call := range f.calls[name] {
 			if f.work++; f.work > maxWriteReadings || visit(call) {
 				return true
 			}
@@ -338,13 +286,15 @@ func (f *shellFunctions) moves(name string) bool {
 		return false
 	}
 	moves := visit(name)
+	if moves {
+		f.addMoving(name)
+	}
 	if f.memo == nil {
 		f.memo = map[string]bool{}
 	}
 	if moves {
 		f.memo[name] = true
 	} else {
-		// No name the walk reached reaches a function that moves.
 		for name := range seen {
 			f.memo[name] = false
 		}
@@ -352,57 +302,15 @@ func (f *shellFunctions) moves(name string) bool {
 	return moves
 }
 
-// call runs segment: a call is logged, under every name its command word may
-// read as, and reports whether any moves the directory. One apart counts as a
-// `cd` there does: zsh and ksh run a pipeline's last command in this shell. A function it may run makes its body's definitions
-// (shellFunction.defines), merged: whether the call runs, or runs in this
-// shell, is not known here.
+// call logs segment's command word and reports whether any decoded candidate
+// names a function that may move the directory.
 func (f *shellFunctions) call(segment []shellToken) bool {
+	if definesFunction(segment) {
+		return false
+	}
 	names := functionCalls(segment)
-	f.calls = append(f.calls, names...)
-	moves := slices.ContainsFunc(names, f.moves)
-	for _, name := range names {
-		if function, ok := f.defined[name]; ok {
-			for _, definition := range function.defines {
-				f.merge(definition)
-			}
-		}
-	}
-	return moves || slices.ContainsFunc(names, f.moves)
-}
-
-// merge makes a definition a call may run: a name may stand for what it
-// stood for or for the new definition, so one already defined moves unless
-// both do nothing (inert). An `unset -f` leaves the name as it is.
-func (f *shellFunctions) merge(definition shellDefinition) {
-	if !definition.defined {
-		return
-	}
-	if old, ok := f.defined[definition.name]; ok && !(old.inert() && definition.function.inert()) {
-		definition.function = shellFunction{moves: true}
-	}
-	f.define(definition.name, definition.function)
-}
-
-// inert reports whether a function's body neither moves the directory, calls
-// a function, nor defines one.
-func (function shellFunction) inert() bool {
-	return !function.moves && function.from == function.to && len(function.defines) == 0
-}
-
-// unset removes the functions a foreground `unset -f` in this shell names
-// with plain words. One in a subshell or apart removes nothing here; any
-// other spelling is not read, and the function stays.
-func (f *shellFunctions) unset(segment []shellToken) {
-	args := builtinCommand(segment)
-	if segment[0].apart || len(args) < 2 || !args[0].plain || args[0].text != "unset" || !args[1].plain || args[1].text != "-f" {
-		return
-	}
-	for _, name := range args[2:] {
-		if name.plain {
-			f.replace(name.text, nil)
-		}
-	}
+	f.commandCall = append(f.commandCall, names...)
+	return slices.ContainsFunc(names, f.moves)
 }
 
 // shellCwd is the directory a command line runs in. activeVolume is the drive
@@ -572,14 +480,12 @@ func (w *shellWriteWalk) walk(command string, depth int, within string) {
 	segments := tokenizeSegments(w.mode, stripped)
 	fed := segmentFeeds([]rune(stripped), segments, feeds)
 	// subshells are the directories to return to at each open subshell's
-	// `)`, with the head of the function whose body it scopes, the moves before it, and
-	// the function table it returns to: a subshell's definitions are dropped,
-	// and a function body's are made when the function runs.
+	// `)`, with the function-body head and the move/call marks at its start.
 	type subshell struct {
-		cwd       shellCwd
-		head      []shellToken
-		moves     int
-		functions shellFunctionsMark
+		cwd   shellCwd
+		head  []shellToken
+		moves int
+		calls int
 	}
 	var subshells []subshell
 	for i, segment := range segments {
@@ -588,13 +494,11 @@ func (w *shellWriteWalk) walk(command string, depth int, within string) {
 			continue
 		}
 		if i > 0 && definesFunction(segments[i-1]) && !segment[0].body {
-			// An unscoped body, `( )` or `[[ ]]`, runs in a subshell of its
-			// own or runs no command: a call leaves the directory.
-			w.functions.defineHead(segments[i-1], shellFunction{})
+			w.functions.finishDefinition(functionName(segments[i-1]), len(w.functions.commandCall), shellFunction{})
 		}
 		if segment[0].subshell {
 			if segment[0].text == "(" {
-				opened := subshell{cwd: w.cwd.clone(), moves: w.moves, functions: w.functions.mark()}
+				opened := subshell{cwd: w.cwd.clone(), moves: w.moves, calls: len(w.functions.commandCall)}
 				if segment[0].body && i > 0 && definesFunction(segments[i-1]) {
 					opened.head = segments[i-1]
 				}
@@ -602,9 +506,8 @@ func (w *shellWriteWalk) walk(command string, depth int, within string) {
 			} else if n := len(subshells); n > 0 {
 				closed := subshells[n-1]
 				w.cwd, subshells = closed.cwd, subshells[:n-1]
-				defines := w.functions.leave(closed.functions)
 				if closed.head != nil {
-					w.functions.defineHead(closed.head, shellFunction{moves: w.moves != closed.moves, from: closed.functions.calls, to: len(w.functions.calls), defines: defines})
+					w.functions.finishDefinition(functionName(closed.head), closed.calls, shellFunction{moves: w.moves != closed.moves})
 					w.moves = closed.moves
 				}
 			}
@@ -614,7 +517,6 @@ func (w *shellWriteWalk) walk(command string, depth int, within string) {
 		if w.functions.call(segment) && move == moveNone {
 			move = moveCalled
 		}
-		w.functions.unset(segment)
 		if move != moveNone {
 			// bash opens the segment's redirections before it moves.
 			_, redirects := withoutRedirections(segment)
@@ -713,17 +615,14 @@ func (w *shellWriteWalk) read(payloads []shellPayload, span shellTargetSpan, dep
 			continue
 		}
 		if !payload.inline {
-			// A shell starts with no directory stack and no previous
-			// directory this followed.
+			// A shell starts with no directory stack or previous directory.
 			cwd.previous, cwd.stack = nil, nil
 		}
-		// eval defines functions in this shell; a shell works on a copy of
-		// its functions, whose definitions do not return.
 		child := &shellWriteWalk{mode: w.mode, cwd: cwd, payloads: w.payloads, functions: w.functions}
-		mark := w.functions.mark()
+		calls := len(w.functions.commandCall)
 		child.walk(payload.text, depth+1, within)
 		if !payload.inline {
-			w.functions.rollback(mark)
+			w.functions.commandCall = w.functions.commandCall[:calls]
 		}
 		w.targets = append(w.targets, child.targets...)
 		if payload.inline && (child.moves > 0 || !child.cwd.same(w.cwd)) {
@@ -2962,6 +2861,14 @@ func functionCalls(segment []shellToken) []string {
 			continue
 		}
 		names = append(names, token.text)
+		if strings.ContainsRune(token.text, '\\') {
+			for _, candidate := range tokenizeSegments(backslashEscapes, token.text) {
+				if len(candidate) > 0 && !candidate[0].subshell {
+					names = append(names, candidate[0].text)
+					break
+				}
+			}
+		}
 		vanishes := false
 		for _, alternate := range token.alternates {
 			if len(alternate) == 0 {
