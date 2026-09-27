@@ -1409,9 +1409,14 @@ func TestSafetyCheckReadsCaseStackAndCdOptions(t *testing.T) {
 			}
 		}
 	}
-	quotedParenCommand := `'f()' cd ` + primary + `; f; git add f`
-	if block, reason := runPiSafetyForGit(t, worktree, quotedParenCommand); block {
-		t.Errorf("%q: block=%v reason=%q, want quoted-paren command word allowed", quotedParenCommand, block, reason)
+	for _, quotedParenCommand := range []string{
+		`'f()' cd ` + primary + `; f; git add f`,
+		`function 'f()' { cd ` + primary + `; }; f; git add f`,
+		`function f\(\) { cd ` + primary + `; }; f; git add f`,
+	} {
+		if block, reason := runPiSafetyForGit(t, worktree, quotedParenCommand); block {
+			t.Errorf("%q: block=%v reason=%q, want quoted-paren form allowed", quotedParenCommand, block, reason)
+		}
 	}
 	for _, command := range []string{
 		`coproc 'f'() cd ` + primary + `; f; git add f`,
@@ -1419,6 +1424,15 @@ func TestSafetyCheckReadsCaseStackAndCdOptions(t *testing.T) {
 	} {
 		if block, reason := runPiSafetyForGit(t, worktree, command); block {
 			t.Errorf("%q refused: %s; want coproc exclusion", command, reason)
+		}
+	}
+	for _, command := range []string{
+		"f() # c1\n# c2\n{ cd " + primary + "; }; f; git add f",
+		"f() # c1\n# c2\nif cd " + primary + "; then :; fi; f; git add f",
+		"f() # c1\n# c2\nwhile cd " + primary + "; do break; done; f; git add f",
+	} {
+		if block, reason := runPiSafetyForGit(t, worktree, command); !block {
+			t.Errorf("%q: block=%v reason=%q, want git mutation refusal", command, block, reason)
 		}
 	}
 	commentSubshell := "f() # c\n( cd " + primary + " ); f; git add f"

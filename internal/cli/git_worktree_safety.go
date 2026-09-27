@@ -119,7 +119,7 @@ func evaluateGitScriptSafety(homeDir, taskID, command string, depth int, ifs boo
 	}
 	var subshells []shellDir
 	segments := tokenizeSegments(mode, stripped)
-	for i, segment := range segments {
+	for _, segment := range segments {
 		if segment[0].quotedFunctionHead {
 			return true, "quoted function name is not valid bash syntax; git mutation cannot be checked"
 		}
@@ -129,14 +129,14 @@ func evaluateGitScriptSafety(homeDir, taskID, command string, depth int, ifs boo
 		if segment[0].unfinished {
 			return true, "shell case is unfinished; git mutation cannot be checked"
 		}
-		if i > 0 && definesFunction(segments[i-1]) && !segment[0].body {
-			shell.functions.finishDefinition(functionName(segments[i-1]), len(shell.functions.commandCall), shellFunction{})
+		if segment[0].functionFinishName != "" {
+			shell.functions.finishDefinition(segment[0].functionFinishName, len(shell.functions.commandCall), shellFunction{})
 		}
 		if segment[0].subshell {
 			if segment[0].text == "(" {
 				opened := shellDir{shell.path, shell.previous, shell.stack, nil, shell.moves, len(shell.functions.commandCall)}
-				if segment[0].body && i > 0 && definesFunction(segments[i-1]) {
-					opened.head = segments[i-1]
+				if segment[0].functionBodyHead != nil {
+					opened.head = segment[0].functionBodyHead
 				}
 				subshells = append(subshells, opened)
 			} else if n := len(subshells); n > 0 {

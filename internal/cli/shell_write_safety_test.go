@@ -1970,6 +1970,8 @@ func TestShellWriteReadsFunctionBodies(t *testing.T) {
 	}
 	for _, command := range []string{
 		"'f()' cd " + primary + "; f; rm docs/f",
+		"function 'f()' { cd " + primary + "; }; f; rm docs/f",
+		"function f\\(\\) { cd " + primary + "; }; f; rm docs/f",
 	} {
 		if _, ambiguous := shellWriteTargets(worktree, command); ambiguous {
 			t.Errorf("shellWriteTargets(%q) ambiguous=true, want quoted-paren command word allowed", command)
@@ -2000,6 +2002,17 @@ func TestShellWriteReadsFunctionBodies(t *testing.T) {
 		t.Errorf("shellWriteTargets(%q) ambiguous=true, want subshell body handled by the existing walk", subshellBody)
 	}
 	assertShapes(t, false, worktree, subshellBody, "")
+	for _, command := range []string{
+		"f() # c\n{ cd " + primary + "; }; f; rm docs/f",
+		"f() # c1\n# c2\n{ cd " + primary + "; }; f; rm docs/f",
+		"f() # c1\n# c2\nif cd " + primary + "; then :; fi; f; rm docs/f",
+		"f() # c1\n# c2\nwhile cd " + primary + "; do break; done; f; rm docs/f",
+	} {
+		if _, ambiguous := shellWriteTargets(worktree, command); !ambiguous {
+			t.Errorf("shellWriteTargets(%q) ambiguous=false, want fail-closed moved-function refusal", command)
+		}
+		assertShapes(t, true, worktree, command, "")
+	}
 	for _, command := range []string{
 		"f() { rm " + target + "; }; f",
 		"f () { rm " + target + "; }; f",

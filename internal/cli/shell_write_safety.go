@@ -34,6 +34,8 @@ type shellToken struct {
 	// body is a synthetic subshell operator around a function's or a
 	// coproc's body of a compound command other than a subshell.
 	body               bool
+	functionBodyHead   []shellToken // function whose scoped body this operator opens
+	functionFinishName string       // function whose unscoped definition ends before this segment
 	comment            bool
 	quotedFunctionHead bool
 	functionParens     bool // trailing `()` was read as unquoted function-head syntax
@@ -512,14 +514,14 @@ func (w *shellWriteWalk) walk(command string, depth int, within string) {
 			w.targets = append(w.targets, shellTargetResult{span: shellTargetSpan{start: segment[0].start, end: segment[0].end, within: within}, ambiguous: true})
 			continue
 		}
-		if i > 0 && definesFunction(segments[i-1]) && !segment[0].body {
-			w.functions.finishDefinition(functionName(segments[i-1]), len(w.functions.commandCall), shellFunction{})
+		if segment[0].functionFinishName != "" {
+			w.functions.finishDefinition(segment[0].functionFinishName, len(w.functions.commandCall), shellFunction{})
 		}
 		if segment[0].subshell {
 			if segment[0].text == "(" {
 				opened := subshell{cwd: w.cwd.clone(), moves: w.moves, calls: len(w.functions.commandCall)}
-				if segment[0].body && i > 0 && definesFunction(segments[i-1]) {
-					opened.head = segments[i-1]
+				if segment[0].functionBodyHead != nil {
+					opened.head = segment[0].functionBodyHead
 				}
 				subshells = append(subshells, opened)
 			} else if n := len(subshells); n > 0 {
@@ -1413,10 +1415,12 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 			// A compound command a function or a coproc runs as its body is
 			// scoped as a brace body is.
 			scoped := opensScope(prefix, headPending)
+			from := len(segments)
 			if scoped {
 				scope(token, "(")
+				from = constructFrom(segments, true)
 			}
-			constructs = append(constructs, shellConstruct{kind: kind, scoped: scoped, start: token.start, from: constructFrom(segments, scoped)})
+			constructs = append(constructs, shellConstruct{kind: kind, scoped: scoped, start: token.start, from: from})
 		case command && top >= 0 && compoundClosers[constructs[top].kind] == token.text:
 			closeConstruct(token)
 		case token.text == "{" && opensScope(prefix, headPending):
@@ -1806,8 +1810,8 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 					continue
 				}
 				from := len(segments)
-				if from > 0 && definesFunction(segments[from-1]) {
-					from--
+				if head := functionHeadBefore(segments, from); head >= 0 {
+					from = head
 				}
 				constructs = append(constructs, shellConstruct{kind: constructSubshell, from: from})
 			} else if n > 0 && constructs[n-1].kind == constructCase {
@@ -1840,7 +1844,23 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 			break
 		}
 	}
+	for i := range segments {
+		if segments[i][0].body && segments[i][0].text == "(" {
+			if head := functionHeadBefore(segments, i); head >= 0 {
+				segments[i][0].functionBodyHead = slices.Clone(segments[head])
+			}
+		}
+	}
 	for i, segment := range segments {
+		if definesFunction(segment) {
+			next := i + 1
+			for next < len(segments) && commentOnly(segments[next]) {
+				next++
+			}
+			if next < len(segments) && segments[next][0].functionBodyHead == nil {
+				segments[next][0].functionFinishName = functionName(segment)
+			}
+		}
 		headLen, isHead := functionHeadLen(segment)
 		if isHead {
 			name := segment[headLen-1]
@@ -1895,12 +1915,33 @@ type shellConstruct struct {
 }
 
 // constructFrom is the first segment of a construct opened at the end of
-// segments: the head before a scoped body's operator, or the next segment.
+// segments: the function head before a scoped body's operator, or the next segment.
 func constructFrom(segments [][]shellToken, scoped bool) int {
 	if scoped {
-		return len(segments) - 2
+		if head := functionHeadBefore(segments, len(segments)-1); head >= 0 {
+			return head
+		}
 	}
 	return len(segments)
+}
+
+// functionHeadBefore returns the function head before a body marker or
+// subshell opener, skipping transparent comment-only segments while keeping
+// the relation in the tokenizer.
+func functionHeadBefore(segments [][]shellToken, before int) int {
+	for i := before - 1; i >= 0; i-- {
+		if segments[i][0].apart {
+			return -1
+		}
+		if commentOnly(segments[i]) {
+			continue
+		}
+		if definesFunction(segments[i]) {
+			return i
+		}
+		return -1
+	}
+	return -1
 }
 
 const (
