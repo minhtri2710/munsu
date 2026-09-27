@@ -36,6 +36,7 @@ type shellToken struct {
 	body               bool
 	comment            bool
 	quotedFunctionHead bool
+	functionParens     bool // trailing `()` was read as unquoted function-head syntax
 	// simpleFunctionBody marks a parenthesized function head with a
 	// simple-command body, which some named shells accept and
 	// bash rejects. Both guards refuse it rather than treating the body as
@@ -1217,6 +1218,8 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 	substituted := false
 	wordStart := -1
 	rawStart, rawEnd := -1, -1
+	functionParenEnd := -1
+	functionParenPending := false
 	expandable := false
 	undecodable := false
 	splitsAtIFS := false
@@ -1267,7 +1270,7 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 		var token shellToken
 		appended := false
 		if word.Len() > 0 || quoted {
-			token = shellToken{text: word.String(), expandable: expandable, plain: !quoted && !expandable && !literal, comment: comment, undecodable: undecodable, splitsAtIFS: splitsAtIFS, start: rawStart, end: rawEnd}
+			token = shellToken{text: word.String(), expandable: expandable, plain: !quoted && !expandable && !literal, comment: comment, undecodable: undecodable, splitsAtIFS: splitsAtIFS, functionParens: functionParenEnd == utf8.RuneCountInString(word.String()) && strings.HasSuffix(word.String(), "()"), start: rawStart, end: rawEnd}
 			var readings [][]shellToken
 			if substituted {
 				readings = append(readings, sub.finish(false), subRaw.finish(true))
@@ -1300,6 +1303,7 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 		sub, subRaw = substitutedReading{}, substitutedReading{}
 		vanish = vanishReading{}
 		wordStart, rawStart, rawEnd, expandable, undecodable, splitsAtIFS, quoted, substituted, afterDollar, literal = -1, -1, -1, false, false, false, false, false, false, false
+		functionParenEnd, functionParenPending = -1, false
 		if appended {
 			readWord(token)
 		}
@@ -1346,6 +1350,16 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 		lead, assigned = 0, 0
 	}
 	// closeConstruct ends the innermost construct at token, its last word.
+	parenSyntax := func(i int) bool {
+		if mode == backslashLiteral {
+			return true
+		}
+		backslashes := 0
+		for j := i - 1; j >= 0 && runes[j] == '\\'; j-- {
+			backslashes++
+		}
+		return backslashes%2 == 0
+	}
 	closeConstruct := func(token shellToken) {
 		top := len(constructs) - 1
 		if constructs[top].scoped {
@@ -1751,6 +1765,7 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 		case '(', ')':
 			if r == '(' && (word.Len() > 0 || quoted || (i > 0 && runes[i-1] == '>')) {
 				wordParens++
+				functionParenPending = quote == 0 && i+1 < len(runes) && runes[i+1] == ')' && parenSyntax(i) && parenSyntax(i+1)
 				touch(i)
 				add(r, i, false)
 				continue
@@ -1759,6 +1774,10 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 				wordParens--
 				touch(i)
 				add(r, i, false)
+				if functionParenPending {
+					functionParenEnd = utf8.RuneCountInString(word.String())
+				}
+				functionParenPending = false
 				continue
 			}
 			flushWord()
@@ -1770,6 +1789,7 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 				}
 				head := slices.Clone(segment)
 				head[len(head)-1].text += "()"
+				head[len(head)-1].functionParens = true
 				if j < len(runes) && runes[j] == ')' && definesFunction(head) {
 					head[len(head)-1].end = j + 1
 					segment = head
@@ -1955,9 +1975,11 @@ func functionHeadLen(segment []shellToken) (int, bool) {
 	}
 	name := segment[nameIndex]
 	word := name.text
-	parenthesized := strings.HasSuffix(word, "()")
+	parenthesized := strings.HasSuffix(word, "()") && name.functionParens
 	if parenthesized {
 		word = strings.TrimSuffix(word, "()")
+	} else if nameIndex == 1 && strings.HasSuffix(word, "()") {
+		return 0, false
 	}
 	if nameIndex == 0 && !parenthesized || word == "" || name.expandable || name.undecodable {
 		return 0, false

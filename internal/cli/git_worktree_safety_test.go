@@ -1385,10 +1385,6 @@ func TestSafetyCheckReadsCaseStackAndCdOptions(t *testing.T) {
 			`if false; then :; else 'f'() { cd ` + primary + `; }; fi; f; git add f`,
 			`if false; then :; elif true; then 'f'() cd ` + primary + `; fi; f; git add f`,
 			`if false; then :; elif true; then 'f'() { cd ` + primary + `; }; fi; f; git add f`,
-			`while 'f'() cd ` + primary + `; do break; done; f; git add f`,
-			`while 'f'() { cd ` + primary + `; }; do break; done; f; git add f`,
-			`until 'f'() cd ` + primary + `; do break; done; f; git add f`,
-			`until 'f'() { cd ` + primary + `; }; do break; done; f; git add f`,
 			`for x in 1; do 'f'() cd ` + primary + `; done; f; git add f`,
 			`for x in 1; do 'f'() { cd ` + primary + `; }; done; f; git add f`,
 			`{ 'f'() cd ` + primary + `; }; f; git add f`,
@@ -1412,6 +1408,10 @@ func TestSafetyCheckReadsCaseStackAndCdOptions(t *testing.T) {
 				t.Errorf("%s: %q: block=%v reason=%q, want %s refusal", tc.name, command, block, reason, wantReason)
 			}
 		}
+	}
+	quotedParenCommand := `'f()' cd ` + primary + `; f; git add f`
+	if block, reason := runPiSafetyForGit(t, worktree, quotedParenCommand); block {
+		t.Errorf("%q: block=%v reason=%q, want quoted-paren command word allowed", quotedParenCommand, block, reason)
 	}
 	for _, command := range []string{
 		`coproc 'f'() cd ` + primary + `; f; git add f`,

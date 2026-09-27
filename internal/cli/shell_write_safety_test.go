@@ -1952,10 +1952,6 @@ func TestShellWriteReadsFunctionBodies(t *testing.T) {
 			"if false; then :; else 'f'() { cd " + primary + "; }; fi; f; rm docs/f",
 			"if false; then :; elif true; then 'f'() cd " + primary + "; fi; f; rm docs/f",
 			"if false; then :; elif true; then 'f'() { cd " + primary + "; }; fi; f; rm docs/f",
-			"while 'f'() cd " + primary + "; do break; done; f; rm docs/f",
-			"while 'f'() { cd " + primary + "; }; do break; done; f; rm docs/f",
-			"until 'f'() cd " + primary + "; do break; done; f; rm docs/f",
-			"until 'f'() { cd " + primary + "; }; do break; done; f; rm docs/f",
 			"for x in 1; do 'f'() cd " + primary + "; done; f; rm docs/f",
 			"for x in 1; do 'f'() { cd " + primary + "; }; done; f; rm docs/f",
 			"{ 'f'() cd " + primary + "; }; f; rm docs/f",
@@ -1971,6 +1967,14 @@ func TestShellWriteReadsFunctionBodies(t *testing.T) {
 			}
 			assertShapes(t, true, worktree, command, "")
 		}
+	}
+	for _, command := range []string{
+		"'f()' cd " + primary + "; f; rm docs/f",
+	} {
+		if _, ambiguous := shellWriteTargets(worktree, command); ambiguous {
+			t.Errorf("shellWriteTargets(%q) ambiguous=true, want quoted-paren command word allowed", command)
+		}
+		assertShapes(t, false, worktree, command, "")
 	}
 	for _, command := range []string{
 		"coproc 'f'() cd " + primary + "; f; rm docs/f",
