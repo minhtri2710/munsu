@@ -1366,12 +1366,40 @@ func TestSafetyCheckReadsCaseStackAndCdOptions(t *testing.T) {
 			`'f'() { :; }; git add f`,
 			`zsh -c "'f'() cd ` + primary + `; f; git add f"`,
 		}},
+		{"quoted function name after a command prefix", []string{
+			`! 'f'() cd ` + primary + `; f; git add f`,
+			`! 'f'() { cd ` + primary + `; }; f; git add f`,
+			`time 'f'() cd ` + primary + `; f; git add f`,
+			`time 'f'() { cd ` + primary + `; }; f; git add f`,
+			`time -p 'f'() cd ` + primary + `; f; git add f`,
+			`time -p 'f'() { cd ` + primary + `; }; f; git add f`,
+			`if true; then 'f'() cd ` + primary + `; fi; f; git add f`,
+			`if true; then 'f'() { cd ` + primary + `; }; fi; f; git add f`,
+			`if 'f'() cd ` + primary + `; then :; fi; f; git add f`,
+			`if 'f'() { cd ` + primary + `; }; then :; fi; f; git add f`,
+			`while 'f'() cd ` + primary + `; do break; done; f; git add f`,
+			`while 'f'() { cd ` + primary + `; }; do break; done; f; git add f`,
+			`until 'f'() cd ` + primary + `; do break; done; f; git add f`,
+			`until 'f'() { cd ` + primary + `; }; do break; done; f; git add f`,
+			`if false; then :; else 'f'() cd ` + primary + `; fi; f; git add f`,
+			`if false; then :; else 'f'() { cd ` + primary + `; }; fi; f; git add f`,
+			`if false; then :; elif true; then 'f'() cd ` + primary + `; fi; f; git add f`,
+			`if false; then :; elif true; then 'f'() { cd ` + primary + `; }; fi; f; git add f`,
+			`while 'f'() cd ` + primary + `; do break; done; f; git add f`,
+			`while 'f'() { cd ` + primary + `; }; do break; done; f; git add f`,
+			`until 'f'() cd ` + primary + `; do break; done; f; git add f`,
+			`until 'f'() { cd ` + primary + `; }; do break; done; f; git add f`,
+			`for x in 1; do 'f'() cd ` + primary + `; done; f; git add f`,
+			`for x in 1; do 'f'() { cd ` + primary + `; }; done; f; git add f`,
+			`{ 'f'() cd ` + primary + `; }; f; git add f`,
+			`{ 'f'() { cd ` + primary + `; }; }; f; git add f`,
+		}},
 	}
 	for _, tc := range simpleBodyCases {
 		for _, command := range tc.commands {
 			block, reason := runPiSafetyForGit(t, worktree, command)
 			wantReason := "simple-command function body"
-			if tc.name == "quoted function name" {
+			if tc.name == "quoted function name" || tc.name == "quoted function name after a command prefix" {
 				wantReason = "quoted function name"
 			}
 			if tc.name == "plain non-identifier function name" {
@@ -1383,6 +1411,14 @@ func TestSafetyCheckReadsCaseStackAndCdOptions(t *testing.T) {
 			if !block || !strings.Contains(reason, wantReason) {
 				t.Errorf("%s: %q: block=%v reason=%q, want %s refusal", tc.name, command, block, reason, wantReason)
 			}
+		}
+	}
+	for _, command := range []string{
+		`coproc 'f'() cd ` + primary + `; f; git add f`,
+		`coproc 'f'() { cd ` + primary + `; }; f; git add f`,
+	} {
+		if block, reason := runPiSafetyForGit(t, worktree, command); block {
+			t.Errorf("%q refused: %s; want coproc exclusion", command, reason)
 		}
 	}
 	commentSubshell := "f() # c\n( cd " + primary + " ); f; git add f"

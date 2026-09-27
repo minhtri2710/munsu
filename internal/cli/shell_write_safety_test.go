@@ -1933,6 +1933,34 @@ func TestShellWriteReadsFunctionBodies(t *testing.T) {
 			"f() # c\ncd " + primary + "; f; rm docs/f",
 			"f() \n  cd " + primary + "; f; rm docs/f",
 		}},
+		{"quoted function name after a command prefix", []string{
+			"! 'f'() cd " + primary + "; f; rm docs/f",
+			"! 'f'() { cd " + primary + "; }; f; rm docs/f",
+			"time 'f'() cd " + primary + "; f; rm docs/f",
+			"time 'f'() { cd " + primary + "; }; f; rm docs/f",
+			"time -p 'f'() cd " + primary + "; f; rm docs/f",
+			"time -p 'f'() { cd " + primary + "; }; f; rm docs/f",
+			"if true; then 'f'() cd " + primary + "; fi; f; rm docs/f",
+			"if true; then 'f'() { cd " + primary + "; }; fi; f; rm docs/f",
+			"if 'f'() cd " + primary + "; then :; fi; f; rm docs/f",
+			"if 'f'() { cd " + primary + "; }; then :; fi; f; rm docs/f",
+			"while 'f'() cd " + primary + "; do break; done; f; rm docs/f",
+			"while 'f'() { cd " + primary + "; }; do break; done; f; rm docs/f",
+			"until 'f'() cd " + primary + "; do break; done; f; rm docs/f",
+			"until 'f'() { cd " + primary + "; }; do break; done; f; rm docs/f",
+			"if false; then :; else 'f'() cd " + primary + "; fi; f; rm docs/f",
+			"if false; then :; else 'f'() { cd " + primary + "; }; fi; f; rm docs/f",
+			"if false; then :; elif true; then 'f'() cd " + primary + "; fi; f; rm docs/f",
+			"if false; then :; elif true; then 'f'() { cd " + primary + "; }; fi; f; rm docs/f",
+			"while 'f'() cd " + primary + "; do break; done; f; rm docs/f",
+			"while 'f'() { cd " + primary + "; }; do break; done; f; rm docs/f",
+			"until 'f'() cd " + primary + "; do break; done; f; rm docs/f",
+			"until 'f'() { cd " + primary + "; }; do break; done; f; rm docs/f",
+			"for x in 1; do 'f'() cd " + primary + "; done; f; rm docs/f",
+			"for x in 1; do 'f'() { cd " + primary + "; }; done; f; rm docs/f",
+			"{ 'f'() cd " + primary + "; }; f; rm docs/f",
+			"{ 'f'() { cd " + primary + "; }; }; f; rm docs/f",
+		}},
 		{"named-shell payload", []string{"zsh -c 'f() cd " + primary + "; f; rm docs/f'"}},
 	}
 	for _, tc := range simpleBodyCases {
@@ -1943,6 +1971,15 @@ func TestShellWriteReadsFunctionBodies(t *testing.T) {
 			}
 			assertShapes(t, true, worktree, command, "")
 		}
+	}
+	for _, command := range []string{
+		"coproc 'f'() cd " + primary + "; f; rm docs/f",
+		"coproc 'f'() { cd " + primary + "; }; f; rm docs/f",
+	} {
+		if _, ambiguous := shellWriteTargets(worktree, command); ambiguous {
+			t.Errorf("shellWriteTargets(%q) ambiguous=true, want coproc exclusion", command)
+		}
+		assertShapes(t, false, worktree, command, "")
 	}
 	commentSubshell := "f() # c\n( cd " + primary + " ); f; rm docs/f"
 	if _, ambiguous := shellWriteTargets(worktree, commentSubshell); ambiguous {

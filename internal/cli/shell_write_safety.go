@@ -1386,11 +1386,11 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 				return
 			}
 		}
-		if !token.plain || comment {
+		if command && n > 0 && !token.comment && !comment && (token.plain && token.text == "function" || definesFunction([]shellToken{token})) && !slices.ContainsFunc(prefix, func(word shellToken) bool { return word.text == "coproc" }) {
+			split(token)
 			return
 		}
-		if command && n > 0 && (token.text == "function" || definesFunction([]shellToken{token})) && !slices.ContainsFunc(prefix, func(word shellToken) bool { return word.text == "coproc" }) {
-			split(token)
+		if !token.plain || comment {
 			return
 		}
 		kind, compound := compoundOpeners[token.text]
@@ -1976,7 +1976,7 @@ func definesFunction(segment []shellToken) bool {
 }
 
 func commentOnly(tokens []shellToken) bool {
-	return slices.ContainsFunc(tokens, func(token shellToken) bool { return !token.comment }) == false
+	return !slices.ContainsFunc(tokens, func(token shellToken) bool { return !token.comment })
 }
 
 func transparentFunctionGap(runes []rune, start, end int, comments []shellToken) bool {
@@ -1984,11 +1984,7 @@ func transparentFunctionGap(runes []rune, start, end int, comments []shellToken)
 		return false
 	}
 	commentIndex := 0
-	newline := false
 	for i := start; i < end; i++ {
-		if runes[i] == '\n' {
-			newline = true
-		}
 		if unicode.IsSpace(runes[i]) {
 			continue
 		}
@@ -1999,7 +1995,7 @@ func transparentFunctionGap(runes []rune, start, end int, comments []shellToken)
 			return false
 		}
 	}
-	return newline
+	return true
 }
 
 // opensScope reports whether a `{` after prefix opens a body bash runs apart
