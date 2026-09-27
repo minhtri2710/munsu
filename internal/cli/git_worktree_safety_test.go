@@ -1394,7 +1394,7 @@ func TestSafetyCheckReadsCaseStackAndCdOptions(t *testing.T) {
 	for _, tc := range simpleBodyCases {
 		for _, command := range tc.commands {
 			block, reason := runPiSafetyForGit(t, worktree, command)
-			wantReason := "simple-command function body"
+			wantReason := "function head has no valid bash body"
 			if tc.name == "quoted function name" || tc.name == "quoted function name after a command prefix" {
 				wantReason = "quoted function name"
 			}
@@ -1427,6 +1427,11 @@ func TestSafetyCheckReadsCaseStackAndCdOptions(t *testing.T) {
 		}
 	}
 	for _, command := range []string{
+		"true | f() { cd " + primary + "; }; f; git add f",
+		"f(){ cd " + primary + "; }; f; rm x",
+		"f()cd " + primary + "; f; rm x",
+		"function f\n{ cd " + primary + "; }; git add f",
+		"f() { cd " + primary + "; } | cat; f; git add f",
 		"f() # c1\n# c2\n{ cd " + primary + "; }; f; git add f",
 		"f() # c1\n# c2\nif cd " + primary + "; then :; fi; f; git add f",
 		"f() # c1\n# c2\nwhile cd " + primary + "; do break; done; f; git add f",
@@ -1440,13 +1445,14 @@ func TestSafetyCheckReadsCaseStackAndCdOptions(t *testing.T) {
 		t.Errorf("%q: block=%v reason=%q, want comment-transparent subshell body allowed", commentSubshell, block, reason)
 	}
 	for _, command := range []string{
+		"f() | { cd " + primary + "; }; f; git add f",
 		"f ()\ncd " + primary + "; f; git add f",
 		"f() \n  cd " + primary + "; f; git add f",
 		"function f()\ncd " + primary + "; f; git add f",
 	} {
 		block, reason := runPiSafetyForGit(t, worktree, command)
-		if !block || !strings.Contains(reason, "simple-command function body") {
-			t.Errorf("%q: block=%v reason=%q, want simple-command function body refusal", command, block, reason)
+		if !block || !strings.Contains(reason, "function head has no valid bash body") {
+			t.Errorf("%q: block=%v reason=%q, want no-valid-function-body refusal", command, block, reason)
 		}
 	}
 	for _, command := range []string{

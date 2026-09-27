@@ -169,9 +169,15 @@ bash runs:
   scope, split by synthetic subshell tokens, so a directory move inside the body does not
   move the segments after the definition. Simple-command bodies after parenthesized
   heads, such as `f() cd P` and `f () cd P`, are defined by zsh, dash and ksh; the
-  `function f()` form is defined by zsh. Bash rejects these forms, and both guards refuse
-  them wherever they appear in a command, including inside a named-shell payload. Both
-  guards also refuse a function head with a quoted or escaped name, such as `'f'()`,
+  `function f()` form is defined by zsh. A word glued to a parenthesized head's closing `)`
+  is read as though separated by a blank; adjacent operators and redirections retain their
+  ordinary boundaries. Bash rejects these simple-body forms, and both guards refuse
+  them wherever they appear in a command, including inside a named-shell payload. A line
+  continuation between a function head and its body is refused in the literal backslash
+  reading, e.g. `f ()\` followed by a newline and `( : ); f; rm x`. Dash does not know
+  `function`, so both guards refuse a bare `function NAME` head whose body starts on a
+  later line; the subshell-body case is an accepted over-refusal, e.g. `function f\n( : ); rm x`.
+  Both guards also refuse a function head with a quoted or escaped name, such as `'f'()`,
   because zsh and ksh can define it while Bash rejects it. A trailing `()` is head
   syntax only when both parentheses are unquoted and unescaped; a word such as `'f()'`
   is a command word, not a function head. The accepted over-refusal is a Bash line that

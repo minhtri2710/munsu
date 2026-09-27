@@ -35,15 +35,12 @@ type shellToken struct {
 	// coproc's body of a compound command other than a subshell.
 	body               bool
 	functionBodyHead   []shellToken // function whose scoped body this operator opens
-	functionFinishName string       // function whose unscoped definition ends before this segment
 	comment            bool
 	quotedFunctionHead bool
 	functionParens     bool // trailing `()` was read as unquoted function-head syntax
-	// simpleFunctionBody marks a parenthesized function head with a
-	// simple-command body, which some named shells accept and
-	// bash rejects. Both guards refuse it rather than treating the body as
-	// a command in the surrounding shell.
-	simpleFunctionBody bool
+	// invalidFunctionBody marks a function head whose next grammar event is
+	// not a compound body opener bash accepts. Both guards refuse the head.
+	invalidFunctionBody bool
 	// unfinished is the one token of a segment standing for a case the
 	// command line opens and never ends with `esac`, from `case` on, or for
 	// a substitution substitutionEnd cannot end, from its start on.
@@ -503,7 +500,7 @@ func (w *shellWriteWalk) walk(command string, depth int, within string) {
 			w.targets = append(w.targets, shellTargetResult{span: shellTargetSpan{start: segment[0].start, end: segment[0].end, within: within}, ambiguous: true})
 			continue
 		}
-		if segment[0].simpleFunctionBody {
+		if segment[0].invalidFunctionBody {
 			w.targets = append(w.targets, shellTargetResult{
 				span:      shellTargetSpan{start: segment[0].start, end: segment[0].end, within: within},
 				ambiguous: true,
@@ -513,9 +510,6 @@ func (w *shellWriteWalk) walk(command string, depth int, within string) {
 		if segment[0].unfinished {
 			w.targets = append(w.targets, shellTargetResult{span: shellTargetSpan{start: segment[0].start, end: segment[0].end, within: within}, ambiguous: true})
 			continue
-		}
-		if segment[0].functionFinishName != "" {
-			w.functions.finishDefinition(segment[0].functionFinishName, len(w.functions.commandCall), shellFunction{})
 		}
 		if segment[0].subshell {
 			if segment[0].text == "(" {
@@ -1222,6 +1216,7 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 	rawStart, rawEnd := -1, -1
 	functionParenEnd := -1
 	functionParenPending := false
+	pendingCloseBoundary := false
 	expandable := false
 	undecodable := false
 	splitsAtIFS := false
@@ -1247,10 +1242,21 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 	// literal records a character the word took literally.
 	literal := false
 	// constructs are the compound commands open at the current rune,
-	// innermost last. headPending is a function definition's head just
-	// ended by a newline, whose body may follow.
+	// innermost last. pendingHead is the function head whose next grammar
+	// event determines whether it has a valid body.
 	var constructs []shellConstruct
-	headPending := false
+	type pendingFunctionHead struct {
+		segment   int
+		head      []shellToken
+		linebreak bool
+	}
+	var pendingHead *pendingFunctionHead
+	refusePendingFunctionHead := func() {
+		if pendingHead != nil && pendingHead.linebreak && bareFunctionNameHead(pendingHead.head) {
+			segments[pendingHead.segment][0].invalidFunctionBody = true
+			pendingHead = nil
+		}
+	}
 	// lead counts the leading words of segment bash reads before its command
 	// word (readsBeforeCommand), and assigned the assignments after them.
 	// Both count a prefix of segment, so a shorter segment clamps them.
@@ -1308,6 +1314,7 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 		functionParenEnd, functionParenPending = -1, false
 		if appended {
 			readWord(token)
+			pendingCloseBoundary = false
 		}
 	}
 	flushSegment := func() {
@@ -1316,8 +1323,19 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 			segment[0].apart = detach || piped
 			piped = false
 			headLen, isHead := functionHeadLen(segment)
-			headPending = isHead && commentOnly(segment[headLen:]) || headPending && commentOnly(segment)
-			segments = append(segments, segment)
+			if isHead && commentOnly(segment[headLen:]) {
+				segments = append(segments, segment)
+				pendingHead = &pendingFunctionHead{segment: len(segments) - 1, head: slices.Clone(segment[:headLen])}
+			} else {
+				if isHead && invalidFunctionBody(segment) {
+					segment[0].invalidFunctionBody = true
+				}
+				segments = append(segments, segment)
+				if pendingHead != nil && !commentOnly(segment) {
+					segments[pendingHead.segment][0].invalidFunctionBody = true
+					pendingHead = nil
+				}
+			}
 			segment = nil
 		}
 		if closing >= 0 && (detach || segments[closing][0].apart) {
@@ -1329,16 +1347,30 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 		detach = false
 	}
 	// scope ends the segment before token, the last word of segment, with a
-	// subshell operator of its own.
-	scope := func(token shellToken, operator string) {
+	// subshell operator of its own. A pending function head becomes the
+	// construct's from and is stamped on the synthetic opener here.
+	scope := func(token shellToken, operator string) int {
 		segment = segment[:len(segment)-1]
+		from := len(segments)
+		var head []shellToken
+		if pendingHead != nil {
+			from, head = pendingHead.segment, pendingHead.head
+			pendingHead = nil
+		} else if body, _ := withoutRedirections(segment); definesFunction(body) {
+			from, head = len(segments), slices.Clone(body)
+		}
 		flushSegment()
-		segments = append(segments, []shellToken{{text: operator, subshell: true, body: true, start: token.start, end: token.start}})
+		pendingHead = nil
+		segments = append(segments, []shellToken{{text: operator, subshell: true, body: true, functionBodyHead: head, start: token.start, end: token.start}})
+		if head == nil {
+			from = len(segments) - 1
+		}
 		segment = []shellToken{token}
 		lead, assigned = 0, 0
 		if readsBeforeCommand(segment, 0) {
 			lead = 1
 		}
+		return from
 	}
 	// split ends the segment before token, the last word of segment, so a
 	// definition head after reserved words (`{ g() {`, `then function g`)
@@ -1382,6 +1414,13 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 			assigned++
 		}
 		top := len(constructs) - 1
+		refusePendingFunctionHead()
+		if pendingHead != nil && !token.comment && !isFunctionBodyOpener(token) {
+			segments[pendingHead.segment][0].invalidFunctionBody = true
+			pendingHead = nil
+		} else if pendingHead != nil && token.text == "[[" {
+			pendingHead = nil
+		}
 		if top >= 0 && constructs[top].kind == constructCase {
 			switch c := &constructs[top]; c.phase {
 			case caseWord:
@@ -1411,21 +1450,20 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 		}
 		kind, compound := compoundOpeners[token.text]
 		switch {
-		case compound && (command || opensScope(prefix, headPending)):
+		case compound && (command || pendingHead != nil || opensScope(prefix, false)):
 			// A compound command a function or a coproc runs as its body is
 			// scoped as a brace body is.
-			scoped := opensScope(prefix, headPending)
+			scoped := pendingHead != nil || opensScope(prefix, false)
 			from := len(segments)
 			if scoped {
-				scope(token, "(")
-				from = constructFrom(segments, true)
+				from = scope(token, "(")
 			}
 			constructs = append(constructs, shellConstruct{kind: kind, scoped: scoped, start: token.start, from: from})
 		case command && top >= 0 && compoundClosers[constructs[top].kind] == token.text:
 			closeConstruct(token)
-		case token.text == "{" && opensScope(prefix, headPending):
-			scope(token, "(")
-			constructs = append(constructs, shellConstruct{kind: constructBrace, scoped: true, from: constructFrom(segments, true)})
+		case token.text == "{" && (pendingHead != nil || opensScope(prefix, false)):
+			from := scope(token, "(")
+			constructs = append(constructs, shellConstruct{kind: constructBrace, scoped: true, from: from})
 		case command && token.text == "{":
 			constructs = append(constructs, shellConstruct{kind: constructBrace, from: len(segments)})
 		case command && token.text == "}" && top >= 0 && constructs[top].kind == constructBrace:
@@ -1505,6 +1543,19 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 	}
 	for i := 0; i < len(runes); i++ {
 		r := runes[i]
+		if pendingCloseBoundary {
+			continuation := mode == backslashEscapes && r == '\\' && i+1 < len(runes) && runes[i+1] == '\n' || escaped && r == '\n'
+			if continuation {
+				// The POSIX reading removes the continuation before applying the
+				// same glued-word boundary on the next rune.
+			} else if functionHeadWordStartsAt(runes, i) {
+				flushWord()
+				flushSegment()
+				pendingCloseBoundary = false
+			} else if strings.ContainsRune(" \t\n;|&<>", r) {
+				pendingCloseBoundary = false
+			}
+		}
 		if n := len(groups); n > 0 && i == groups[n-1].end {
 			touch(i)
 			if groups[n-1].substitutes {
@@ -1688,9 +1739,17 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 			if word.Len() == 0 && !quoted && len(segment) > 0 && segment[len(segment)-1].redirects {
 				continue
 			}
+			if pendingHead != nil {
+				segments[pendingHead.segment][0].invalidFunctionBody = true
+				pendingHead = nil
+			}
 			pipe := (i == 0 || runes[i-1] != '|') && (i+1 == len(runes) || runes[i+1] != '|')
 			detach = pipe
 			flushSegment()
+			if pendingHead != nil && strings.ContainsAny(string(runes[max(i-1, 0):i+1]), "|&") {
+				segments[pendingHead.segment][0].invalidFunctionBody = true
+				pendingHead = nil
+			}
 			piped = pipe
 		case '&':
 			if i+1 < len(runes) && runes[i+1] == '>' {
@@ -1719,12 +1778,27 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 				}
 				continue
 			}
+			if pendingHead != nil {
+				segments[pendingHead.segment][0].invalidFunctionBody = true
+				pendingHead = nil
+			}
 			detach = (i == 0 || !strings.ContainsRune("&<|", runes[i-1])) && (i+1 == len(runes) || runes[i+1] != '&')
 			flushSegment()
+			if pendingHead != nil {
+				segments[pendingHead.segment][0].invalidFunctionBody = true
+				pendingHead = nil
+			}
 		case ';', '\n':
 			flushSegment()
+			if r == ';' && pendingHead != nil {
+				segments[pendingHead.segment][0].invalidFunctionBody = true
+				pendingHead = nil
+			}
 			if r == '\n' {
 				comment = false
+				if pendingHead != nil {
+					pendingHead.linebreak = true
+				}
 			}
 			if n := len(constructs); r == ';' && !comment && n > 0 &&
 				constructs[n-1].kind == constructCase && constructs[n-1].phase == caseBody &&
@@ -1780,6 +1854,8 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 				add(r, i, false)
 				if functionParenPending {
 					functionParenEnd = utf8.RuneCountInString(word.String())
+					name := shellToken{text: word.String(), plain: !quoted && !expandable && !literal, functionParens: true}
+					_, pendingCloseBoundary = functionHeadLen(append(slices.Clone(segment), name))
 				}
 				functionParenPending = false
 				continue
@@ -1799,10 +1875,12 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 					segment = head
 					lead = min(lead, len(segment)-1)
 					assigned = min(assigned, len(segment)-1-lead)
+					pendingCloseBoundary = true
 					i = j
 					continue
 				}
 			}
+			refusePendingFunctionHead()
 			flushSegment()
 			n := len(constructs)
 			if r == '(' {
@@ -1810,8 +1888,9 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 					continue
 				}
 				from := len(segments)
-				if head := functionHeadBefore(segments, from); head >= 0 {
-					from = head
+				if pendingHead != nil {
+					from = pendingHead.segment
+					pendingHead = nil
 				}
 				constructs = append(constructs, shellConstruct{kind: constructSubshell, from: from})
 			} else if n > 0 && constructs[n-1].kind == constructCase {
@@ -1844,58 +1923,13 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 			break
 		}
 	}
-	for i := range segments {
-		if segments[i][0].body && segments[i][0].text == "(" {
-			if head := functionHeadBefore(segments, i); head >= 0 {
-				segments[i][0].functionBodyHead = slices.Clone(segments[head])
-			}
-		}
-	}
 	for i, segment := range segments {
-		if definesFunction(segment) {
-			next := i + 1
-			for next < len(segments) && commentOnly(segments[next]) {
-				next++
-			}
-			if next < len(segments) && segments[next][0].functionBodyHead == nil {
-				segments[next][0].functionFinishName = functionName(segment)
-			}
-		}
 		headLen, isHead := functionHeadLen(segment)
 		if isHead {
 			name := segment[headLen-1]
 			if !name.plain && !name.expandable && !name.undecodable {
 				segments[i][0].quotedFunctionHead = true
 			}
-		}
-		if simpleFunctionBody(segment) {
-			segments[i][0].simpleFunctionBody = true
-		}
-		if !isHead || !commentOnly(segment[headLen:]) {
-			continue
-		}
-		bodyIndex := i + 1
-		for bodyIndex < len(segments) && commentOnly(segments[bodyIndex]) {
-			bodyIndex++
-		}
-		if bodyIndex >= len(segments) {
-			continue
-		}
-		joined := make([]shellToken, 0)
-		joined = append(joined, segment...)
-		var comments []shellToken
-		comments = append(comments, segment[headLen:]...)
-		for j := i + 1; j < bodyIndex; j++ {
-			joined = append(joined, segments[j]...)
-			comments = append(comments, segments[j]...)
-		}
-		joined = append(joined, segments[bodyIndex]...)
-		if !simpleFunctionBody(joined) {
-			continue
-		}
-		start, end := segment[headLen-1].end, segments[bodyIndex][0].start
-		if transparentFunctionGap(runes, start, end, comments) {
-			segments[bodyIndex][0].simpleFunctionBody = true
 		}
 	}
 	return segments
@@ -1912,36 +1946,6 @@ type shellConstruct struct {
 	// from is the construct's first segment: a scoped body's head, or the
 	// segment it opens.
 	from int
-}
-
-// constructFrom is the first segment of a construct opened at the end of
-// segments: the function head before a scoped body's operator, or the next segment.
-func constructFrom(segments [][]shellToken, scoped bool) int {
-	if scoped {
-		if head := functionHeadBefore(segments, len(segments)-1); head >= 0 {
-			return head
-		}
-	}
-	return len(segments)
-}
-
-// functionHeadBefore returns the function head before a body marker or
-// subshell opener, skipping transparent comment-only segments while keeping
-// the relation in the tokenizer.
-func functionHeadBefore(segments [][]shellToken, before int) int {
-	for i := before - 1; i >= 0; i-- {
-		if segments[i][0].apart {
-			return -1
-		}
-		if commentOnly(segments[i]) {
-			continue
-		}
-		if definesFunction(segments[i]) {
-			return i
-		}
-		return -1
-	}
-	return -1
 }
 
 const (
@@ -1977,11 +1981,10 @@ func readsBeforeCommand(words []shellToken, k int) bool {
 	return token.plain && (slices.Contains(reservedWords, token.text) || token.text == "time" || token.text == "-p" && k > 0 && words[k-1].text == "time")
 }
 
-// simpleFunctionBody reports a parenthesized function head whose body does
-// not begin with a compound command bash accepts as a function body. The
-// guards refuse these bodies rather than interpreting them as commands in
-// the surrounding shell.
-func simpleFunctionBody(segment []shellToken) bool {
+// invalidFunctionBody reports a function head whose same-segment body does
+// not begin with a compound command bash accepts. Cross-segment heads receive
+// this mark as the pending-head record is consumed in the tokenizer.
+func invalidFunctionBody(segment []shellToken) bool {
 	headLen, ok := functionHeadLen(segment)
 	if !ok || !strings.HasSuffix(segment[headLen-1].text, "()") {
 		return false
@@ -2038,37 +2041,46 @@ func definesFunction(segment []shellToken) bool {
 	return ok && commentOnly(segment[headLen:])
 }
 
+func bareFunctionNameHead(head []shellToken) bool {
+	return len(head) == 2 && head[0].plain && head[0].text == "function" && head[1].plain && !head[1].functionParens
+}
+
 func commentOnly(tokens []shellToken) bool {
 	return !slices.ContainsFunc(tokens, func(token shellToken) bool { return !token.comment })
 }
 
-func transparentFunctionGap(runes []rune, start, end int, comments []shellToken) bool {
-	if start < 0 || end < start || end > len(runes) {
+// functionHeadWordStartsAt reports whether rune i starts a shell word or a
+// grammar opener immediately after a function head's closing `)`. Operators
+// and redirections retain their ordinary adjacency; all word forms, including
+// simple commands and compound opener words, are split from the head.
+func functionHeadWordStartsAt(runes []rune, i int) bool {
+	if i >= len(runes) {
 		return false
 	}
-	commentIndex := 0
-	for i := start; i < end; i++ {
-		if unicode.IsSpace(runes[i]) {
-			continue
-		}
-		for commentIndex < len(comments) && comments[commentIndex].end <= i {
-			commentIndex++
-		}
-		if commentIndex >= len(comments) || !comments[commentIndex].comment || comments[commentIndex].start > i {
-			return false
-		}
+	return !strings.ContainsRune(" \t\n;|&<>", runes[i])
+}
+
+// isFunctionBodyOpener reports a grammar word that can begin a bash-valid
+// function body. A real `(` is handled separately by the pending-head record.
+func isFunctionBodyOpener(token shellToken) bool {
+	if !token.plain {
+		return false
 	}
-	return true
+	if token.text == "{" || token.text == "[[" {
+		return true
+	}
+	_, ok := compoundOpeners[token.text]
+	return ok
 }
 
 // opensScope reports whether a `{` after prefix opens a body bash runs apart
-// from the commands around it: a function's, prefix being its head or empty
-// after a head a newline ended (headPending), or a coproc's.
-func opensScope(prefix []shellToken, headPending bool) bool {
+// from the commands around it: a function's, prefix being its head, or a
+// coproc's. A cross-segment function head is handled by pendingHead directly.
+func opensScope(prefix []shellToken, pendingHead bool) bool {
 	n := len(prefix)
 	switch {
 	case n == 0:
-		return headPending
+		return pendingHead
 	case definesFunction(prefix):
 		return true
 	}

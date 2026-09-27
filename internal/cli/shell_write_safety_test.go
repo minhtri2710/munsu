@@ -2003,6 +2003,10 @@ func TestShellWriteReadsFunctionBodies(t *testing.T) {
 	}
 	assertShapes(t, false, worktree, subshellBody, "")
 	for _, command := range []string{
+		"true | f() { cd " + primary + "; }; f; rm docs/f",
+		"f(){ cd " + primary + "; }; f; rm x",
+		"f()cd " + primary + "; f; rm x",
+		"function f\n{ cd " + primary + "; }; rm x",
 		"f() # c\n{ cd " + primary + "; }; f; rm docs/f",
 		"f() # c1\n# c2\n{ cd " + primary + "; }; f; rm docs/f",
 		"f() # c1\n# c2\nif cd " + primary + "; then :; fi; f; rm docs/f",
@@ -2026,6 +2030,9 @@ func TestShellWriteReadsFunctionBodies(t *testing.T) {
 		"f () { rm " + target + "; }",
 		"f() { time { cd " + primary + "; }; rm docs/f; }",
 		"arr=(); { cd " + primary + "; }; rm docs/f",
+		"if true; then f(); fi; f; rm docs/f",
+		"case x in y) f();; esac; f; rm docs/f",
+		"f() | { :; }; f; rm docs/f",
 		"f() { cd " + primary + "; }; f; rm docs/f",
 		"f() { cd " + primary + "; }; f && rm docs/f",
 		"f() { cd " + primary + "; }; : | f; rm docs/f",
@@ -2052,6 +2059,7 @@ func TestShellWriteReadsFunctionBodies(t *testing.T) {
 		assertShapes(t, true, worktree, command, "")
 	}
 	for _, command := range []string{
+		"f(){ cd " + primary + "; }; rm x",
 		"f() { cd " + primary + "; }; rm docs/f",
 		"function f { cd " + primary + "; }; rm docs/f",
 		"f() { { cd " + primary + "; }; }; rm docs/f",

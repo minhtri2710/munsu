@@ -123,14 +123,11 @@ func evaluateGitScriptSafety(homeDir, taskID, command string, depth int, ifs boo
 		if segment[0].quotedFunctionHead {
 			return true, "quoted function name is not valid bash syntax; git mutation cannot be checked"
 		}
-		if segment[0].simpleFunctionBody {
-			return true, "simple-command function body is not valid bash syntax; git mutation cannot be checked"
+		if segment[0].invalidFunctionBody {
+			return true, "function head has no valid bash body; git mutation cannot be checked"
 		}
 		if segment[0].unfinished {
 			return true, "shell case is unfinished; git mutation cannot be checked"
-		}
-		if segment[0].functionFinishName != "" {
-			shell.functions.finishDefinition(segment[0].functionFinishName, len(shell.functions.commandCall), shellFunction{})
 		}
 		if segment[0].subshell {
 			if segment[0].text == "(" {
