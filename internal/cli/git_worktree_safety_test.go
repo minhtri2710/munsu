@@ -1353,18 +1353,50 @@ func TestSafetyCheckReadsCaseStackAndCdOptions(t *testing.T) {
 		commands []string
 	}{
 		{"top-level simple body", []string{`f() cd ` + primary + `; f; git add f`}},
+		{"plain non-identifier function name", []string{`foo-bar() { cd ` + primary + `; }; foo-bar; git add f`}},
 		{"non-compound reserved-word opener", []string{
 			`f() function g { cd ` + primary + `; }; f; g; git add f`,
 			`f() coproc cd ` + primary + `; f; git add f`,
 		}},
 		{"named-shell payload", []string{`zsh -c 'f() cd ` + primary + `; f; git add f'`}},
+		{"quoted function name", []string{
+			`'f'() cd ` + primary + `; f; git add f`,
+			`"f"() cd ` + primary + `; f; git add f`,
+			`'f'() { cd ` + primary + `; }; f; git add f`,
+			`'f'() { :; }; git add f`,
+			`zsh -c "'f'() cd ` + primary + `; f; git add f"`,
+		}},
 	}
 	for _, tc := range simpleBodyCases {
 		for _, command := range tc.commands {
 			block, reason := runPiSafetyForGit(t, worktree, command)
-			if !block || !strings.Contains(reason, "simple-command function body") {
-				t.Errorf("%s: %q: block=%v reason=%q, want simple-command function body refusal", tc.name, command, block, reason)
+			wantReason := "simple-command function body"
+			if tc.name == "quoted function name" {
+				wantReason = "quoted function name"
 			}
+			if tc.name == "plain non-identifier function name" {
+				if !block {
+					t.Errorf("%s: %q: block=%v reason=%q, want refusal", tc.name, command, block, reason)
+				}
+				continue
+			}
+			if !block || !strings.Contains(reason, wantReason) {
+				t.Errorf("%s: %q: block=%v reason=%q, want %s refusal", tc.name, command, block, reason, wantReason)
+			}
+		}
+	}
+	commentSubshell := "f() # c\n( cd " + primary + " ); f; git add f"
+	if block, reason := runPiSafetyForGit(t, worktree, commentSubshell); block {
+		t.Errorf("%q: block=%v reason=%q, want comment-transparent subshell body allowed", commentSubshell, block, reason)
+	}
+	for _, command := range []string{
+		"f ()\ncd " + primary + "; f; git add f",
+		"f() \n  cd " + primary + "; f; git add f",
+		"function f()\ncd " + primary + "; f; git add f",
+	} {
+		block, reason := runPiSafetyForGit(t, worktree, command)
+		if !block || !strings.Contains(reason, "simple-command function body") {
+			t.Errorf("%q: block=%v reason=%q, want simple-command function body refusal", command, block, reason)
 		}
 	}
 	for _, command := range []string{

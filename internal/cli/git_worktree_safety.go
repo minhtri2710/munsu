@@ -120,6 +120,9 @@ func evaluateGitScriptSafety(homeDir, taskID, command string, depth int, ifs boo
 	var subshells []shellDir
 	segments := tokenizeSegments(mode, stripped)
 	for i, segment := range segments {
+		if segment[0].quotedFunctionHead {
+			return true, "quoted function name is not valid bash syntax; git mutation cannot be checked"
+		}
 		if segment[0].simpleFunctionBody {
 			return true, "simple-command function body is not valid bash syntax; git mutation cannot be checked"
 		}

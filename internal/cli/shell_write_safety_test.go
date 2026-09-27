@@ -1909,12 +1909,30 @@ func TestShellWriteReadsFunctionBodies(t *testing.T) {
 		commands []string
 	}{
 		{"compact function head", []string{"f() cd " + primary + "; f; rm docs/f"}},
+		{"plain non-identifier function name", []string{"foo-bar() { cd " + primary + "; }; foo-bar; rm docs/f"}},
 		{"function keyword head", []string{"function f() cd " + primary + "; f; rm docs/f"}},
+		{"assignment-prefixed simple body", []string{"f() X=1; f; rm docs/f"}},
+		{"quoted function name", []string{
+			"'f'() cd " + primary + "; f; rm docs/f",
+			"'f'() { :; }; echo done",
+			`"f"() { cd ` + primary + `; }; f; rm docs/f`,
+			`\f() { cd ` + primary + `; }; f; rm docs/f`,
+			"f''() { cd " + primary + "; }; f; rm docs/f",
+			"$'f'() { cd " + primary + "; }; f; rm docs/f",
+			"function 'f' { cd " + primary + "; }; f; rm docs/f",
+			"function 'f'() { cd " + primary + "; }; f; rm docs/f",
+			"'f' () cd " + primary + "; f; rm docs/f",
+			"zsh -c \"'f'() cd " + primary + "; f; rm docs/f\"",
+		}},
 		{"non-compound reserved-word opener", []string{
 			"f() function g { cd " + primary + "; }; f; g; rm docs/f",
 			"f() coproc cd " + primary + "; f; rm docs/f",
 		}},
 		{"newline-separated body", []string{"f()\ncd " + primary + "; f; rm docs/f"}},
+		{"comment-transparent simple body", []string{
+			"f() # c\ncd " + primary + "; f; rm docs/f",
+			"f() \n  cd " + primary + "; f; rm docs/f",
+		}},
 		{"named-shell payload", []string{"zsh -c 'f() cd " + primary + "; f; rm docs/f'"}},
 	}
 	for _, tc := range simpleBodyCases {
@@ -1926,6 +1944,11 @@ func TestShellWriteReadsFunctionBodies(t *testing.T) {
 			assertShapes(t, true, worktree, command, "")
 		}
 	}
+	commentSubshell := "f() # c\n( cd " + primary + " ); f; rm docs/f"
+	if _, ambiguous := shellWriteTargets(worktree, commentSubshell); ambiguous {
+		t.Errorf("shellWriteTargets(%q) ambiguous=true, want comment-transparent compound subshell body", commentSubshell)
+	}
+	assertShapes(t, false, worktree, commentSubshell, "")
 	redirectedCompound := "f() >out if cd " + primary + "; then :; fi; f; echo done"
 	if _, ambiguous := shellWriteTargets(worktree, redirectedCompound); ambiguous {
 		t.Errorf("shellWriteTargets(%q) ambiguous=true, want compound body handled by the existing walk", redirectedCompound)
@@ -2260,6 +2283,22 @@ func TestShellWriteResolvesFunctionChainsInLinearTime(t *testing.T) {
 	}
 	if small, large := cost(500), cost(2000); large > 8*small {
 		t.Errorf("a 2000-function chain took %v, %.1f times 500 (%v), want under 8", large, float64(large)/float64(small), small)
+	}
+
+	commentGapCost := func(n int) time.Duration {
+		command := "f()\n" + strings.Repeat("# c\n", n) + "cd x; f; echo done"
+		best := time.Duration(math.MaxInt64)
+		for range 3 {
+			start := time.Now()
+			if _, ambiguous := shellWriteTargets(dir, command); !ambiguous {
+				t.Fatalf("shellWriteTargets of a %d-line function gap ambiguous=false, want true", n)
+			}
+			best = min(best, time.Since(start))
+		}
+		return best
+	}
+	if small, large := commentGapCost(1000), commentGapCost(4000); large > 8*small {
+		t.Errorf("a 4000-line comment gap took %v, %.1f times 1000 lines (%v), want under 8", large, float64(large)/float64(small), small)
 	}
 
 	n := maxWriteReadings + 144

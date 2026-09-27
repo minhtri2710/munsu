@@ -33,7 +33,9 @@ type shellToken struct {
 	apart bool
 	// body is a synthetic subshell operator around a function's or a
 	// coproc's body of a compound command other than a subshell.
-	body bool
+	body               bool
+	comment            bool
+	quotedFunctionHead bool
 	// simpleFunctionBody marks a parenthesized function head with a
 	// simple-command body, which some named shells accept and
 	// bash rejects. Both guards refuse it rather than treating the body as
@@ -494,6 +496,10 @@ func (w *shellWriteWalk) walk(command string, depth int, within string) {
 	}
 	var subshells []subshell
 	for i, segment := range segments {
+		if segment[0].quotedFunctionHead {
+			w.targets = append(w.targets, shellTargetResult{span: shellTargetSpan{start: segment[0].start, end: segment[0].end, within: within}, ambiguous: true})
+			continue
+		}
 		if segment[0].simpleFunctionBody {
 			w.targets = append(w.targets, shellTargetResult{
 				span:      shellTargetSpan{start: segment[0].start, end: segment[0].end, within: within},
@@ -1261,7 +1267,7 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 		var token shellToken
 		appended := false
 		if word.Len() > 0 || quoted {
-			token = shellToken{text: word.String(), expandable: expandable, plain: !quoted && !expandable && !literal, undecodable: undecodable, splitsAtIFS: splitsAtIFS, start: rawStart, end: rawEnd}
+			token = shellToken{text: word.String(), expandable: expandable, plain: !quoted && !expandable && !literal, comment: comment, undecodable: undecodable, splitsAtIFS: splitsAtIFS, start: rawStart, end: rawEnd}
 			var readings [][]shellToken
 			if substituted {
 				readings = append(readings, sub.finish(false), subRaw.finish(true))
@@ -1303,7 +1309,8 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 		if len(segment) > 0 {
 			segment[0].apart = detach || piped
 			piped = false
-			headPending = !comment && definesFunction(segment)
+			headLen, isHead := functionHeadLen(segment)
+			headPending = isHead && commentOnly(segment[headLen:]) || headPending && commentOnly(segment)
 			segments = append(segments, segment)
 			segment = nil
 		}
@@ -1764,6 +1771,7 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 				head := slices.Clone(segment)
 				head[len(head)-1].text += "()"
 				if j < len(runes) && runes[j] == ')' && definesFunction(head) {
+					head[len(head)-1].end = j + 1
 					segment = head
 					lead = min(lead, len(segment)-1)
 					assigned = min(assigned, len(segment)-1-lead)
@@ -1813,18 +1821,41 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 		}
 	}
 	for i, segment := range segments {
+		headLen, isHead := functionHeadLen(segment)
+		if isHead {
+			name := segment[headLen-1]
+			if !name.plain && !name.expandable && !name.undecodable {
+				segments[i][0].quotedFunctionHead = true
+			}
+		}
 		if simpleFunctionBody(segment) {
 			segments[i][0].simpleFunctionBody = true
 		}
-		if i+1 < len(segments) && definesFunction(segment) &&
-			strings.HasSuffix(segment[len(segment)-1].text, "()") && simpleFunctionBody(slices.Concat(segment, segments[i+1])) {
-			start, end := segment[len(segment)-1].end, segments[i+1][0].start
-			if start >= 0 && end >= start && end <= len(runes) {
-				gap := string(runes[start:end])
-				if strings.ContainsRune(gap, '\n') && strings.TrimSpace(gap) == "" {
-					segments[i+1][0].simpleFunctionBody = true
-				}
-			}
+		if !isHead || !commentOnly(segment[headLen:]) {
+			continue
+		}
+		bodyIndex := i + 1
+		for bodyIndex < len(segments) && commentOnly(segments[bodyIndex]) {
+			bodyIndex++
+		}
+		if bodyIndex >= len(segments) {
+			continue
+		}
+		joined := make([]shellToken, 0)
+		joined = append(joined, segment...)
+		var comments []shellToken
+		comments = append(comments, segment[headLen:]...)
+		for j := i + 1; j < bodyIndex; j++ {
+			joined = append(joined, segments[j]...)
+			comments = append(comments, segments[j]...)
+		}
+		joined = append(joined, segments[bodyIndex]...)
+		if !simpleFunctionBody(joined) {
+			continue
+		}
+		start, end := segment[headLen-1].end, segments[bodyIndex][0].start
+		if transparentFunctionGap(runes, start, end, comments) {
+			segments[bodyIndex][0].simpleFunctionBody = true
 		}
 	}
 	return segments
@@ -1890,18 +1921,12 @@ func readsBeforeCommand(words []shellToken, k int) bool {
 // guards refuse these bodies rather than interpreting them as commands in
 // the surrounding shell.
 func simpleFunctionBody(segment []shellToken) bool {
-	if len(segment) == 0 {
-		return false
-	}
-	headLen := 1
-	if len(segment) > 1 && segment[0].plain && segment[0].text == "function" {
-		headLen = 2
-	}
-	if len(segment) <= headLen || !definesFunction(segment[:headLen]) ||
-		!strings.HasSuffix(segment[headLen-1].text, "()") {
+	headLen, ok := functionHeadLen(segment)
+	if !ok || !strings.HasSuffix(segment[headLen-1].text, "()") {
 		return false
 	}
 	body, _ := withoutRedirections(segment[headLen:])
+	body = slices.DeleteFunc(body, func(token shellToken) bool { return token.comment })
 	if len(body) == 0 {
 		return false
 	}
@@ -1915,17 +1940,66 @@ func simpleFunctionBody(segment []shellToken) bool {
 	return !(first.plain && slices.Contains([]string{"{", "if", "while", "until", "for", "select", "case", "[["}, first.text))
 }
 
-// definesFunction reports whether segment is a function definition's head:
-// `name()`, `function name` or `function name()`.
-func definesFunction(segment []shellToken) bool {
-	switch len(segment) {
-	case 1:
-		name, ok := strings.CutSuffix(segment[0].text, "()")
-		return ok && name != "" && !strings.ContainsAny(name, "=()") && segment[0].plain
-	case 2:
-		return segment[0].plain && segment[0].text == "function" && segment[1].plain
+// functionHeadLen reports the name-word count of a function head at the start
+// of segment, including a name token whose text is quoted or escaped.
+func functionHeadLen(segment []shellToken) (int, bool) {
+	if len(segment) == 0 {
+		return 0, false
 	}
-	return false
+	nameIndex := 0
+	if segment[0].plain && segment[0].text == "function" {
+		nameIndex = 1
+		if len(segment) <= nameIndex {
+			return 0, false
+		}
+	}
+	name := segment[nameIndex]
+	word := name.text
+	parenthesized := strings.HasSuffix(word, "()")
+	if parenthesized {
+		word = strings.TrimSuffix(word, "()")
+	}
+	if nameIndex == 0 && !parenthesized || word == "" || name.expandable || name.undecodable {
+		return 0, false
+	}
+	if nameIndex == 0 && strings.ContainsAny(word, "=()") {
+		return 0, false
+	}
+	return nameIndex + 1, true
+}
+
+// definesFunction reports whether segment consists of a function head, with
+// optional trailing comment tokens.
+func definesFunction(segment []shellToken) bool {
+	headLen, ok := functionHeadLen(segment)
+	return ok && commentOnly(segment[headLen:])
+}
+
+func commentOnly(tokens []shellToken) bool {
+	return slices.ContainsFunc(tokens, func(token shellToken) bool { return !token.comment }) == false
+}
+
+func transparentFunctionGap(runes []rune, start, end int, comments []shellToken) bool {
+	if start < 0 || end < start || end > len(runes) {
+		return false
+	}
+	commentIndex := 0
+	newline := false
+	for i := start; i < end; i++ {
+		if runes[i] == '\n' {
+			newline = true
+		}
+		if unicode.IsSpace(runes[i]) {
+			continue
+		}
+		for commentIndex < len(comments) && comments[commentIndex].end <= i {
+			commentIndex++
+		}
+		if commentIndex >= len(comments) || !comments[commentIndex].comment || comments[commentIndex].start > i {
+			return false
+		}
+	}
+	return newline
 }
 
 // opensScope reports whether a `{` after prefix opens a body bash runs apart
@@ -2896,7 +2970,8 @@ const (
 
 // functionName is the name a definition head (definesFunction) defines.
 func functionName(head []shellToken) string {
-	return strings.TrimSuffix(head[len(head)-1].text, "()")
+	headLen, _ := functionHeadLen(head)
+	return strings.TrimSuffix(head[headLen-1].text, "()")
 }
 
 // functionCalls are the names segment's command word may run, past reserved

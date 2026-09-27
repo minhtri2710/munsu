@@ -170,7 +170,10 @@ bash runs:
   move the segments after the definition. Simple-command bodies after parenthesized
   heads, such as `f() cd P` and `f () cd P`, are defined by zsh, dash and ksh; the
   `function f()` form is defined by zsh. Bash rejects these forms, and both guards refuse
-  them wherever they appear in a command, including inside a named-shell payload. The
+  them wherever they appear in a command, including inside a named-shell payload. Both
+  guards also refuse a function head with a quoted or escaped name, such as `'f'()`,
+  because zsh and ksh can define it while Bash rejects it. This is an accepted
+  over-refusal for Bash lines that define a quote-named function. The
   guards also refuse a parenthesized function body unless its first token after
   redirections opens a Bash-valid compound body (`{`, `(`, `((`, `if`, `while`, `until`,
   `for`, `select`, `case` or `[[`); this excludes body-leading `function` and `coproc`.
