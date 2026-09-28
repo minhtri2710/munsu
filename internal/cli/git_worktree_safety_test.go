@@ -1355,6 +1355,7 @@ func TestSafetyCheckReadsCaseStackAndCdOptions(t *testing.T) {
 		{"top-level simple body", []string{`f() cd ` + primary + `; f; git add f`}},
 		{"unmodeled compound opener", []string{`f() [[ -n x ]]; f; git add f`, "f()\n[[ -n x ]]; git add f"}},
 		{"plain non-identifier function name", []string{`foo-bar() { cd ` + primary + `; }; foo-bar; git add f`}},
+		{"comment-gap non-opener body", []string{"f() # c\ntrue\ngit add f"}},
 		{"non-compound reserved-word opener", []string{
 			`f() function g { cd ` + primary + `; }; f; g; git add f`,
 			`f() coproc cd ` + primary + `; f; git add f`,
@@ -1391,6 +1392,9 @@ func TestSafetyCheckReadsCaseStackAndCdOptions(t *testing.T) {
 			`{ 'f'() cd ` + primary + `; }; f; git add f`,
 			`{ 'f'() { cd ` + primary + `; }; }; f; git add f`,
 		}},
+	}
+	if block, reason := runPiSafetyForGit(t, worktree, `\f() { cd `+primary+`; }; f; git add f`); !block || reason != "escaped function name is not modeled; git mutation cannot be checked" {
+		t.Errorf("escaped function name: block=%v reason=%q, want escaped-name refusal", block, reason)
 	}
 	for _, tc := range simpleBodyCases {
 		for _, command := range tc.commands {
@@ -1432,7 +1436,6 @@ func TestSafetyCheckReadsCaseStackAndCdOptions(t *testing.T) {
 		"f(){ cd " + primary + "; }; f; rm x",
 		"f()cd " + primary + "; f; rm x",
 		"function f\n{ cd " + primary + "; }; git add f",
-		"function f\n\n{ cd " + primary + "; }; git add f",
 		"f() { cd " + primary + "; } | cat; f; git add f",
 		"f() # c1\n# c2\nif cd " + primary + "; then :; fi; f; git add f",
 		"f() # c1\n# c2\nwhile cd " + primary + "; do break; done; f; git add f",

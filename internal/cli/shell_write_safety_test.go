@@ -1918,6 +1918,7 @@ func TestShellWriteReadsFunctionBodies(t *testing.T) {
 		{"function keyword head", []string{"function f() cd " + primary + "; f; rm docs/f"}},
 		{"assignment-prefixed simple body", []string{"f() X=1; f; rm docs/f"}},
 		{"quoted function name", []string{
+			`\f() { cd ` + primary + `; }; f; rm docs/f`,
 			"'f'() cd " + primary + "; f; rm docs/f",
 			`"f"() { cd ` + primary + `; }; f; rm docs/f`,
 			"f''() { cd " + primary + "; }; f; rm docs/f",
@@ -1927,6 +1928,7 @@ func TestShellWriteReadsFunctionBodies(t *testing.T) {
 			"'f' () cd " + primary + "; f; rm docs/f",
 			"zsh -c \"'f'() cd " + primary + "; f; rm docs/f\"",
 		}},
+		{"comment-gap non-opener body", []string{"f() # c\ntrue\nrm docs/f"}},
 		{"non-compound reserved-word opener", []string{
 			"f() function g { cd " + primary + "; }; f; g; rm docs/f",
 			"f() coproc cd " + primary + "; f; rm docs/f",

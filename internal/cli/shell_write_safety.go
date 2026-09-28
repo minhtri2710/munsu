@@ -1353,9 +1353,6 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 				if isHead && invalidFunctionBody(segment) {
 					markInvalidFunctionHead(len(segments) - 1)
 				}
-				if pendingHead != nil && !functionHeadGap(segment) {
-					invalidatePendingFunctionHead()
-				}
 			}
 			segment = nil
 		}
@@ -1674,7 +1671,6 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 		if quote == '"' && group != nil && r == '"' {
 			touch(i)
 			group.inner = !group.inner
-			markQuoted()
 			continue
 		}
 		if quote == '"' && !(nested && r == '$' && i+1 < len(runes) && (runes[i+1] == '"' || runes[i+1] == '\'')) {
@@ -1763,7 +1759,6 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 			if word.Len() == 0 && !quoted && len(segment) > 0 && segment[len(segment)-1].redirects {
 				continue
 			}
-			invalidatePendingFunctionHead()
 			pipe := (i == 0 || runes[i-1] != '|') && (i+1 == len(runes) || runes[i+1] != '|')
 			detach = pipe
 			flushSegment()
@@ -1796,7 +1791,6 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 				}
 				continue
 			}
-			invalidatePendingFunctionHead()
 			detach = (i == 0 || !strings.ContainsRune("&<|", runes[i-1])) && (i+1 == len(runes) || runes[i+1] != '&')
 			flushSegment()
 			invalidatePendingFunctionHead()
