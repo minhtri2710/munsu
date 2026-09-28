@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -377,36 +376,5 @@ func showConfig(homeDir string) (string, error) {
 		b.WriteString(fmt.Sprintf("%-30s %s (file: %s)\n", key, val, config.ConfigDir(homeDir)+"/"+key))
 	}
 
-	// Show additional keys that happen to exist.
-	additionalKeys := findExtraConfigKeys(homeDir)
-	if len(additionalKeys) > 0 {
-		b.WriteString("\nAdditional config keys:\n")
-		for _, key := range additionalKeys {
-			val, err := config.Get(homeDir, key)
-			if err == nil {
-				b.WriteString(fmt.Sprintf("  %-26s %s\n", key, val))
-			}
-		}
-	}
 	return strings.TrimSpace(b.String()), nil
-}
-
-// findExtraConfigKeys lists config files that are not in the well-known list.
-func findExtraConfigKeys(homeDir string) []string {
-	known := make(map[string]bool, len(config.KnownKeys))
-	for _, k := range config.KnownKeys {
-		known[k] = true
-	}
-	entries, err := os.ReadDir(config.ConfigDir(homeDir))
-	if err != nil {
-		return nil
-	}
-	var extra []string
-	for _, e := range entries {
-		if !e.IsDir() && !known[e.Name()] {
-			extra = append(extra, e.Name())
-		}
-	}
-	sort.Strings(extra)
-	return extra
 }

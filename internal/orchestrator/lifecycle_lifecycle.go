@@ -6,11 +6,6 @@
 package orchestrator
 
 import (
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/home"
@@ -21,43 +16,15 @@ type BeatStatus = home.WatcherBeatStatus
 
 func StaleThreshold() time.Duration   { return home.WatcherStaleThreshold() }
 func QueuePath(homeDir string) string { return home.WakeQueuePath(homeDir) }
-func lifecycleLockPolicy() home.WatcherLockPolicy {
-	return home.WatcherLockPolicy{ProcessAlive: isProcessAlive, IsWatcher: isWatchProcess}
-}
 func AcquireSession(homeDir string) (bool, error) {
-	return home.AcquireSessionLock(homeDir, lifecycleLockPolicy())
+	return home.AcquireSessionLock(homeDir)
 }
 func IsSessionLocked(homeDir string) bool { return home.IsSessionLockHeld(homeDir) }
 func AcquireWatch(homeDir string) (bool, error) {
-	return home.AcquireWatchLock(homeDir, lifecycleLockPolicy())
+	return home.AcquireWatchLock(homeDir)
 }
 func ReleaseWatch(homeDir string) error   { return home.ReleaseWatchLock(homeDir) }
 func ReleaseSession(homeDir string) error { return home.ReleaseSessionLock(homeDir) }
-
-// isWatchProcess checks whether the given PID is a munsu watch process.
-// Reads /proc/PID/cmdline on Linux (NUL-separated args) and falls back to
-// `ps -o command=` on macOS/BSD.
-func isWatchProcess(pid int) bool {
-	// Linux: read /proc/PID/cmdline (NUL-separated args)
-	data, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "cmdline"))
-	if err == nil {
-		args := strings.Split(strings.TrimRight(string(data), "\x00"), "\x00")
-		for _, arg := range args {
-			if arg == "watch" {
-				return true
-			}
-		}
-		return false
-	}
-
-	// macOS/BSD fallback: ps shows the full command
-	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=").Output()
-	if err != nil {
-		return false
-	}
-	line := strings.TrimSpace(string(out))
-	return strings.Contains(line, "munsu watch") || strings.HasSuffix(line, " watch")
-}
 
 // --- Durable beat and queue operations (owned by home) ---
 func WriteBeat(homeDir string)                   { home.WriteWatcherBeat(homeDir) }

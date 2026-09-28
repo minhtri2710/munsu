@@ -809,8 +809,8 @@ func recoverPendingRetirement(homeDir, taskID string, auth *taskauthority.Canoni
 				break
 			}
 		}
-	} else if !os.IsNotExist(statusErr.(*os.PathError).Err) && statusErr != nil {
-		// status file missing is fine
+	} else {
+		return false, fmt.Errorf("recovery: reading status: %w", statusErr)
 	}
 
 	// Append publication if absent.

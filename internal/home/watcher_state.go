@@ -57,7 +57,20 @@ func ReadWatcherBeatStatus(h string, now time.Time) WatcherBeatStatus {
 }
 
 func EnqueueWake(h, kind, key, payload string) error {
+	if err := validateWakeIdentifier("kind", kind); err != nil {
+		return err
+	}
+	if err := validateWakeIdentifier("key", key); err != nil {
+		return err
+	}
 	return enqueueWakeAt(h, kind, key, payload, time.Now())
+}
+
+func validateWakeIdentifier(name, value string) error {
+	if strings.ContainsAny(value, "\t\r\n") {
+		return fmt.Errorf("wake %s contains a separator character", name)
+	}
+	return nil
 }
 
 func enqueueWakeAt(h, kind, key, payload string, at time.Time) (err error) {

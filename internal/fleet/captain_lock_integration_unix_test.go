@@ -5,15 +5,11 @@ package fleet
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
-// These tests encode the all-platform removal contract, which is only true on
-// Unix. On Windows the release closure never reaches os.Remove (see
-// acquireExclusiveLock), so the lock file survives release, and the
-// os.Rename / os.ReadFile steps below would fail on Windows before they could
-// assert anything — they belong to the platform where the contract holds.
+// These tests pin the Unix flock contract: the lock pathname remains the
+// same flock domain across release and re-acquisition.
 
 func TestAcquireExclusiveLock(t *testing.T) {
 	tmp := t.TempDir()
@@ -32,35 +28,14 @@ func TestAcquireExclusiveLock(t *testing.T) {
 		t.Error("lock file was not created")
 	}
 
-	// Release.
-	release()
-
-	// Lock file should be removed.
-	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
-		t.Error("lock file was not removed after release")
-	}
-}
-
-func TestAcquireExclusiveLock_OldReleasePreservesReplacement(t *testing.T) {
-	tmp := t.TempDir()
-	lockPath := filepath.Join(tmp, "test.lock")
-	release, err := acquireExclusiveLock(lockPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Rename(lockPath, lockPath+".old"); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(lockPath, []byte(strings.Repeat("a", 64)+"\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	// Release leaves the permanent flock pathname in place.
 	release()
 	if _, err := os.Stat(lockPath); err != nil {
-		t.Fatalf("old generation release removed replacement lock: %v", err)
+		t.Fatalf("lock file disappeared after release: %v", err)
 	}
 }
 
-func TestAcquireExclusiveLock_TokenGeneration(t *testing.T) {
+func TestAcquireExclusiveLock_ReleasesWithoutUnlinking(t *testing.T) {
 	tmp := t.TempDir()
 	lockPath := filepath.Join(tmp, "test.lock")
 
@@ -69,24 +44,18 @@ func TestAcquireExclusiveLock_TokenGeneration(t *testing.T) {
 		t.Fatalf("acquireExclusiveLock error: %v", err)
 	}
 
-	// Lock file should exist with hex token content.
-	data, err := os.ReadFile(lockPath)
-	if err != nil {
+	// The lock file is a permanent flock domain and is reused across releases.
+	if _, err := os.Stat(lockPath); err != nil {
 		t.Fatal(err)
 	}
-	content := strings.TrimSpace(string(data))
-	if len(content) != 64 { // 32 bytes = 64 hex chars
-		t.Errorf("expected 64 hex chars, got %d: %q", len(content), content)
-	}
 
-	// Release should clean up.
 	release()
-	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
-		t.Error("lock file should be removed after release")
+	if _, err := os.Stat(lockPath); err != nil {
+		t.Fatalf("lock file should survive release: %v", err)
 	}
 }
 
-func TestAcquireExclusiveLock_NoRemoveOnFailure(t *testing.T) {
+func TestAcquireExclusiveLock_TwoHolderInterleaving(t *testing.T) {
 	tmp := t.TempDir()
 	lockPath := filepath.Join(tmp, "test.lock")
 
@@ -94,25 +63,53 @@ func TestAcquireExclusiveLock_NoRemoveOnFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first acquire: %v", err)
 	}
+	firstInfo, err := os.Stat(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release1()
 
-	// Create a file with lock-like content to simulate the file still existing.
-	// Write a marker so we can detect if it's removed.
-	os.WriteFile(lockPath, []byte("other-content\n"), 0644)
+	release2, err := acquireExclusiveLock(lockPath)
+	if err != nil {
+		t.Fatalf("second acquire after release: %v", err)
+	}
+	defer release2()
+	secondInfo, err := os.Stat(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(firstInfo, secondInfo) {
+		t.Fatal("second holder acquired a different lock file after the first holder released")
+	}
 
-	// Second acquire should fail (LOCK_NB) but NOT remove the file.
-	_, err = acquireExclusiveLock(lockPath)
-	if err == nil {
+	third, err := os.OpenFile(lockPath, os.O_RDWR, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer third.Close()
+	acquired, err := tryLockFile(third)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if acquired {
+		t.Fatal("third holder acquired the lock while second holder was active")
+	}
+}
+
+func TestAcquireExclusiveLock_RefusalPreservesLockFile(t *testing.T) {
+	tmp := t.TempDir()
+	lockPath := filepath.Join(tmp, "test.lock")
+
+	release1, err := acquireExclusiveLock(lockPath)
+	if err != nil {
+		t.Fatalf("first acquire: %v", err)
+	}
+	defer release1()
+
+	if _, err := acquireExclusiveLock(lockPath); err == nil {
 		t.Fatal("expected second acquire to fail")
 	}
-
-	// The file should still exist with its original content (not removed).
-	data, err := os.ReadFile(lockPath)
-	if err != nil {
-		t.Fatal("lock file was removed — bug: os.Remove on LOCK_NB failure")
+	if _, err := os.Stat(lockPath); err != nil {
+		t.Fatalf("failed acquisition removed the lock file: %v", err)
 	}
-	if string(data) != "other-content\n" {
-		t.Errorf("lock file content changed: %q", string(data))
-	}
-
-	release1()
 }

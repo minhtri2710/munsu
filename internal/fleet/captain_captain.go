@@ -2,7 +2,6 @@
 package fleet
 
 import (
-	"crypto/rand"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -189,8 +188,8 @@ var gitRun = func(args ...string) (string, error) {
 
 // launchCmd builds a shell-safe command string for sending via session backend.
 // Override in tests.
-var launchCmd = func(binPath string, args []string, captainHome string, parentHome string) (string, error) {
-	return buildLaunchScript(binPath, args, captainHome, parentHome)
+var launchCmd = func(binPath string, args []string, captainHome string, parentHome string, captainID string) (string, error) {
+	return buildLaunchScript(binPath, args, captainHome, parentHome, captainID)
 }
 
 // --- Helpers ---
@@ -204,7 +203,7 @@ func shQuote(s string) string {
 // buildLaunchScript writes a bash launch script into the general home and
 // returns a fish-safe command that runs it. Herdr panes may use fish, so the
 // bash-only identity/env plumbing must not be typed directly into the pane.
-func buildLaunchScript(binPath string, args []string, cwd string, parentHome string) (string, error) {
+func buildLaunchScript(binPath string, args []string, cwd string, parentHome string, captainID string) (string, error) {
 	var b strings.Builder
 	b.WriteString("#!/usr/bin/env bash\n")
 	b.WriteString("set -euo pipefail\n")
@@ -216,7 +215,7 @@ func buildLaunchScript(binPath string, args []string, cwd string, parentHome str
 	b.WriteString("\n")
 	b.WriteString("export MUNSU_ROLE=captain\n")
 	// Identity and parent routing for rank-aware uplink reporting.
-	taskID := "captain:" + filepath.Base(cwd)
+	taskID := taskIDForCaptain(captainID)
 	b.WriteString("export MUNSU_TASK_ID=")
 	b.WriteString(shQuote(taskID))
 	b.WriteString("\n")
@@ -1139,7 +1138,7 @@ func Launch(captainHome, parentHome string, endpoint LaunchEndpoint, integration
 	if err != nil {
 		return fmt.Errorf("%s harness not found on PATH: %w", binName, err)
 	}
-	cmdLine, err := launchCmd(binPath, args, canonicalCaptainHome, parentHome)
+	cmdLine, err := launchCmd(binPath, args, canonicalCaptainHome, parentHome, markerID)
 	if err != nil {
 		return fmt.Errorf("building launch script: %w", err)
 	}
@@ -1834,8 +1833,8 @@ func Update(captainHome, parentHome string) UpdateResponse {
 
 // acquireExclusiveLock creates and acquires an exclusive file lock using flock
 // with LOCK_NB (fail-fast). If another process holds the lock, it returns an
-// error immediately (never removes the lock file). Release verifies inode
-// identity (os.SameFile) AND random token match before unlinking.
+// error immediately. The lock file remains in place across release so the
+// pathname always identifies the same flock domain.
 func acquireExclusiveLock(lockPath string) (func(), error) {
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0755); err != nil {
 		return nil, err
@@ -1858,73 +1857,14 @@ func acquireExclusiveLock(lockPath string) (func(), error) {
 		return nil, fmt.Errorf("converge lock is held by another process — try again later")
 	}
 
-	// Generate a cryptographically random token for generation-safe release.
-	token := make([]byte, 32)
-	if _, err := rand.Read(token); err != nil {
-		_ = unlockFile(f)
-		f.Close()
-		return nil, fmt.Errorf("generating random token: %w", err)
-	}
-	tokenHex := fmt.Sprintf("%x", token)
-
-	if _, err := fmt.Fprintf(f, "%s\n", tokenHex); err != nil {
-		_ = unlockFile(f)
-		f.Close()
-		return nil, fmt.Errorf("writing token to lock: %w", err)
-	}
-	f.Sync()
-
 	released := false
 	return func() {
 		if released {
 			return
 		}
 		released = true
-		defer func() {
-			_ = unlockFile(f)
-			f.Close()
-		}()
-
-		// Verify inode identity: our fd must still point to the same file.
-		fdStat, err := f.Stat()
-		if err != nil {
-			return
-		}
-		pathStat, err := os.Stat(lockPath)
-		if err != nil {
-			return
-		}
-		if !os.SameFile(fdStat, pathStat) {
-			return // lock file was replaced by a different generation
-		}
-
-		// Verify token still matches — never remove a newer generation.
-		data, err := os.ReadFile(lockPath)
-		if err != nil {
-			return
-		}
-		if strings.TrimSpace(string(data)) != tokenHex {
-			return // token changed — different generation
-		}
-
-		// This remove is unreachable on Windows, and that is a property of
-		// the checks above rather than of Remove itself. Both generation
-		// checks reach back into the locked file: os.SameFile's file-ID
-		// lookup opens the path with no sharing, and the token comparison
-		// reads it through a fresh handle into a range the exclusive
-		// whole-file LockFileEx lock covers. Windows denies both; which
-		// denial returns first is Windows-internal, and either way the
-		// closure exits here and the remove never runs. The consequence
-		// that matters is that on Windows those checks never complete, so
-		// they are inoperative there: the file is permanent, and release
-		// is fail-closed — nothing is ever removed, so a newer generation
-		// can never be removed — but the SameFile/token safety net simply
-		// does not exist. FILE_SHARE_DELETE was considered and rejected:
-		// it would let a third party unlink a live lock file, and it would
-		// not fix the token read, which the byte-range lock denies
-		// regardless of share mode. The price is one fixed-name file per
-		// home, reused on every converge, never accumulated.
-		_ = os.Remove(lockPath)
+		_ = unlockFile(f)
+		_ = f.Close()
 	}, nil
 }
 

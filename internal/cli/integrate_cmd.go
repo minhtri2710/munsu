@@ -339,7 +339,7 @@ func readStdinForToolPayload() (toolPayload, error) {
 
 	var payload map[string]interface{}
 	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
-		return toolPayload{}, nil // not JSON, return empty
+		return toolPayload{}, fmt.Errorf("stdin payload is not valid JSON: %w", err)
 	}
 
 	// Containers, in the order harnesses nest their tool arguments:
@@ -481,10 +481,13 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, c
 	effectiveCommand := checkCommand
 	effectiveFilePath := checkFilePath
 	payload := toolPayload{}
+	var payloadErr error
 	if (harnessFlag == "claude" || harnessFlag == "grok" || harnessFlag == "codex" || harnessFlag == "agy") &&
 		effectiveCommand == "" && effectiveFilePath == "" {
 		stdinPayload, err := readStdinForToolPayload()
-		if err == nil {
+		if err != nil {
+			payloadErr = err
+		} else {
 			payload = stdinPayload
 			effectiveCommand = payload.command
 			effectiveFilePath = payload.filePath
@@ -495,8 +498,11 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, c
 	result := bootstrap.SafetyCheck(checkPath)
 
 	// Evaluate command blocking rules.
-	block := false
+	block := payloadErr != nil
 	reason := ""
+	if payloadErr != nil {
+		reason = "tool payload could not be read safely: " + payloadErr.Error()
+	}
 	// Every channel that names a write target contributes to one list: the
 	// refusal below and the narrowing further down must agree on what this call
 	// writes (ADR-0014).
