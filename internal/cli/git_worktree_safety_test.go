@@ -1353,6 +1353,7 @@ func TestSafetyCheckReadsCaseStackAndCdOptions(t *testing.T) {
 		commands []string
 	}{
 		{"top-level simple body", []string{`f() cd ` + primary + `; f; git add f`}},
+		{"unmodeled compound opener", []string{`f() [[ -n x ]]; f; git add f`, "f()\n[[ -n x ]]; git add f"}},
 		{"plain non-identifier function name", []string{`foo-bar() { cd ` + primary + `; }; foo-bar; git add f`}},
 		{"non-compound reserved-word opener", []string{
 			`f() function g { cd ` + primary + `; }; f; g; git add f`,
@@ -1360,10 +1361,10 @@ func TestSafetyCheckReadsCaseStackAndCdOptions(t *testing.T) {
 		}},
 		{"named-shell payload", []string{`zsh -c 'f() cd ` + primary + `; f; git add f'`}},
 		{"quoted function name", []string{
+			"'f'() >out { cd " + primary + "; }; f; git add f",
 			`'f'() cd ` + primary + `; f; git add f`,
 			`"f"() cd ` + primary + `; f; git add f`,
 			`'f'() { cd ` + primary + `; }; f; git add f`,
-			`'f'() { :; }; git add f`,
 			`zsh -c "'f'() cd ` + primary + `; f; git add f"`,
 		}},
 		{"quoted function name after a command prefix", []string{
@@ -1395,10 +1396,7 @@ func TestSafetyCheckReadsCaseStackAndCdOptions(t *testing.T) {
 		for _, command := range tc.commands {
 			block, reason := runPiSafetyForGit(t, worktree, command)
 			wantReason := "function head has no valid bash body"
-			if tc.name == "quoted function name" || tc.name == "quoted function name after a command prefix" {
-				wantReason = "quoted function name"
-			}
-			if tc.name == "plain non-identifier function name" {
+			if tc.name == "quoted function name" || tc.name == "quoted function name after a command prefix" || tc.name == "plain non-identifier function name" {
 				if !block {
 					t.Errorf("%s: %q: block=%v reason=%q, want refusal", tc.name, command, block, reason)
 				}
@@ -1408,6 +1406,9 @@ func TestSafetyCheckReadsCaseStackAndCdOptions(t *testing.T) {
 				t.Errorf("%s: %q: block=%v reason=%q, want %s refusal", tc.name, command, block, reason, wantReason)
 			}
 		}
+	}
+	if block, reason := runPiSafetyForGit(t, worktree, `'f'() { :; }; git add f`); block {
+		t.Errorf("harmless uncalled quoted-name function: block=%v reason=%q, want allowed", block, reason)
 	}
 	for _, quotedParenCommand := range []string{
 		`'f()' cd ` + primary + `; f; git add f`,
@@ -1431,10 +1432,25 @@ func TestSafetyCheckReadsCaseStackAndCdOptions(t *testing.T) {
 		"f(){ cd " + primary + "; }; f; rm x",
 		"f()cd " + primary + "; f; rm x",
 		"function f\n{ cd " + primary + "; }; git add f",
+		"function f\n\n{ cd " + primary + "; }; git add f",
 		"f() { cd " + primary + "; } | cat; f; git add f",
-		"f() # c1\n# c2\n{ cd " + primary + "; }; f; git add f",
 		"f() # c1\n# c2\nif cd " + primary + "; then :; fi; f; git add f",
 		"f() # c1\n# c2\nwhile cd " + primary + "; do break; done; f; git add f",
+		"f() >out { cd " + primary + "; }; f; git add f",
+		"f() >>out { cd " + primary + "; }; f; git add f",
+		"f() 2>out { cd " + primary + "; }; f; git add f",
+		"f() <in { cd " + primary + "; }; f; git add f",
+		"f() &>out { cd " + primary + "; }; f; git add f",
+		"f()>out { cd " + primary + "; }; f; git add f",
+		"f() >out >>more 2>&1 { cd " + primary + "; }; f; git add f",
+		"f() >out if cd " + primary + "; then :; fi; f; git add f",
+		"f() >out while cd " + primary + "; do break; done; f; git add f",
+		"f() >out\n{ cd " + primary + "; }; f; git add f",
+		"f() >out\n{ cd " + primary + "; }; git add f",
+		"f() <in\n{ cd " + primary + "; }; git add f",
+		"f () >out { cd " + primary + "; }; f; git add f",
+		"function f() >out { cd " + primary + "; }; f; git add f",
+		"function f >out { cd " + primary + "; }; f; git add f",
 	} {
 		if block, reason := runPiSafetyForGit(t, worktree, command); !block {
 			t.Errorf("%q: block=%v reason=%q, want git mutation refusal", command, block, reason)
@@ -1470,6 +1486,7 @@ func TestSafetyCheckReadsCaseStackAndCdOptions(t *testing.T) {
 		"2>/dev/null cd " + primary + "; git add f",
 		"f() { cd " + primary + "; git add f; }",
 		"coproc { cd " + primary + "; git add f; }",
+		"f() # c1\n# c2\n{ cd " + primary + "; }; f; git add f",
 		"f() { cd " + primary + "; }; f; git add f",
 		"f() { eval 'cd " + primary + "'; }; f; git add f",
 		"eval 'f() { cd " + primary + "; }'; f; git add f",
@@ -1493,6 +1510,7 @@ func TestSafetyCheckReadsCaseStackAndCdOptions(t *testing.T) {
 		"pushd -n " + primary + "; git add f",
 		"popd; git status",
 		"coproc cd " + primary + "; git add f",
+		"f() # c1\n# c2\n{ cd " + primary + "; }; git add f",
 		"f() { cd " + primary + "; }; git add f",
 		`git commit -m "case sensitivity fix"`,
 		"f() ( cd " + primary + "; ); f; git add f",

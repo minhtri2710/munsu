@@ -170,21 +170,27 @@ bash runs:
   move the segments after the definition. Simple-command bodies after parenthesized
   heads, such as `f() cd P` and `f () cd P`, are defined by zsh, dash and ksh; the
   `function f()` form is defined by zsh. A word glued to a parenthesized head's closing `)`
-  is read as though separated by a blank; adjacent operators and redirections retain their
-  ordinary boundaries. Bash rejects these simple-body forms, and both guards refuse
+  is read as though separated by a blank; operators retain their ordinary boundaries.
+  Redirections between a function head and its body are read as gaps: zsh accepts them and
+  bash rejects them, for example `f() >out { cd P; }; f; rm x`. Bash rejects these
+  simple-body forms, and both guards refuse
   them wherever they appear in a command, including inside a named-shell payload. A line
   continuation between a function head and its body is refused in the literal backslash
   reading, e.g. `f ()\` followed by a newline and `( : ); f; rm x`. Dash does not know
   `function`, so both guards refuse a bare `function NAME` head whose body starts on a
   later line; the subshell-body case is an accepted over-refusal, e.g. `function f\n( : ); rm x`.
-  Both guards also refuse a function head with a quoted or escaped name, such as `'f'()`,
-  because zsh and ksh can define it while Bash rejects it. A trailing `()` is head
-  syntax only when both parentheses are unquoted and unescaped; a word such as `'f()'`
-  is a command word, not a function head. The accepted over-refusal is a Bash line that
-  parses with a quoted head but defines nothing and runs on, such as `'f'() { cd P; }`.
-  The guards also refuse a parenthesized function body unless its first token after
-  redirections opens a Bash-valid compound body (`{`, `(`, `((`, `if`, `while`, `until`,
-  `for`, `select`, `case` or `[[`); this excludes body-leading `function` and `coproc`.
+  A quote-only function name is retained as a decoded function name when the head is
+  otherwise recognized; the guards then track its body and calls through the same
+  function-table path as an unquoted name. An escaped name remains refused because its
+  spelling is not modeled as a shell function name. A trailing `()` is head syntax only
+  when both parentheses are unquoted and unescaped; a word such as `'f()'` is a command
+  word, not a function head. Both guards refuse a parenthesized function body unless
+  the first token after
+  redirections opens one of the compound body forms the Bash reader accepts (`{`, `(`, `((`, `if`, `while`, `until`,
+  `for`, `select` or `case`); this excludes body-leading `function`, `coproc` and `[[`.
+  `[[` is not modeled as a compound-body opener in the frozen lexer (R-S17). A function
+  body beginning with `[[` is therefore refused as UO (unmodeled opener), an accepted
+  over-refusal even when a shell accepts the line and executes a later write in W.
   The form `function f cd P` does not define a function. A write in a function body is a
   target even if the function is never called: an accepted over-refusal, pinned by test;
   `coproc` is a reserved word, and its body is read in a child scope. A body of any

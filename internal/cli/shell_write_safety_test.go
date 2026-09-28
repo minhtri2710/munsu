@@ -1187,6 +1187,7 @@ func TestTokenizeSegmentsLineContinuationAndANSICQuoting(t *testing.T) {
 	}{
 		{backslashEscapes, "/usr/bin/git \\\npush --force", [][]string{{"/usr/bin/git", "push", "--force"}}, false},
 		{backslashEscapes, "git pu\\\nsh --force", [][]string{{"git", "push", "--force"}}, false},
+		{backslashEscapes, "f()\\\ncd P; f; rm x", [][]string{{"f()"}, {"cd", "P"}, {"f"}, {"rm", "x"}}, false},
 		{backslashEscapes, "\"git pu\\\nsh\"", [][]string{{"git push"}}, false},
 		{backslashEscapes, "'a\\\nb'", [][]string{{"a\\\nb"}}, false},
 		{backslashLiteral, "git \\\npush", [][]string{{"git", `\`}, {"push"}}, false},
@@ -1393,16 +1394,20 @@ func TestShellWriteEmptyCopyDestinationIntoBoundPrimaryRefused(t *testing.T) {
 func TestShellWriteTargetsReadContinuationAndANSICQuoting(t *testing.T) {
 	base := mustAbsTestPath(t, "base")
 	for _, tc := range []struct {
-		command string
-		want    []string
+		mode      backslashMode
+		command   string
+		want      []string
+		ambiguous bool
 	}{
-		{"echo x > f\\\noo", []string{filepath.Join(base, "foo")}},
-		{`echo x > $'f\x6fo'`, []string{filepath.Join(base, "foo")}},
-		{`echo x > $'\u0066'`, nil},
+		{backslashEscapes, "echo x > f\\\noo", []string{filepath.Join(base, "foo")}, false},
+		{backslashEscapes, `echo x > $'f\x6fo'`, []string{filepath.Join(base, "foo")}, false},
+		{backslashEscapes, `echo x > $'\u0066'`, nil, false},
+		{backslashEscapes, "f()\\\ncd " + filepath.Join(base, "primary") + "; f; rm x", []string{filepath.Join(base, "primary", "x")}, true},
+		{backslashEscapes, "f()\\\n{ cd " + filepath.Join(base, "primary") + "; }; f; rm x", nil, true},
 	} {
-		got, ambiguous := shellWriteTargetsUnderForTest(backslashEscapes, base, tc.command)
-		if ambiguous || !slices.Equal(got, tc.want) {
-			t.Errorf("%q → %v ambiguous=%v, want %v", tc.command, got, ambiguous, tc.want)
+		got, ambiguous := shellWriteTargetsUnderForTest(tc.mode, base, tc.command)
+		if ambiguous != tc.ambiguous || !slices.Equal(got, tc.want) {
+			t.Errorf("%q → %v ambiguous=%v, want %v ambiguous=%v", tc.command, got, ambiguous, tc.want, tc.ambiguous)
 		}
 	}
 }
@@ -1914,9 +1919,7 @@ func TestShellWriteReadsFunctionBodies(t *testing.T) {
 		{"assignment-prefixed simple body", []string{"f() X=1; f; rm docs/f"}},
 		{"quoted function name", []string{
 			"'f'() cd " + primary + "; f; rm docs/f",
-			"'f'() { :; }; echo done",
 			`"f"() { cd ` + primary + `; }; f; rm docs/f`,
-			`\f() { cd ` + primary + `; }; f; rm docs/f`,
 			"f''() { cd " + primary + "; }; f; rm docs/f",
 			"$'f'() { cd " + primary + "; }; f; rm docs/f",
 			"function 'f' { cd " + primary + "; }; f; rm docs/f",
@@ -1927,6 +1930,10 @@ func TestShellWriteReadsFunctionBodies(t *testing.T) {
 		{"non-compound reserved-word opener", []string{
 			"f() function g { cd " + primary + "; }; f; g; rm docs/f",
 			"f() coproc cd " + primary + "; f; rm docs/f",
+		}},
+		{"unmodeled compound opener", []string{
+			"f() [[ -n x ]]; f; rm docs/f",
+			"f()\n[[ -n x ]]; f; rm docs/f",
 		}},
 		{"newline-separated body", []string{"f()\ncd " + primary + "; f; rm docs/f"}},
 		{"comment-transparent simple body", []string{
@@ -1968,6 +1975,10 @@ func TestShellWriteReadsFunctionBodies(t *testing.T) {
 			assertShapes(t, true, worktree, command, "")
 		}
 	}
+	if _, ambiguous := shellWriteTargets(worktree, "'f'() { cd "+primary+"; }; rm docs/f"); ambiguous {
+		t.Errorf("no-call quoted-name function: ambiguous=true, want allowed")
+	}
+	assertShapes(t, false, worktree, "'f'() { cd "+primary+"; }; rm docs/f", "")
 	for _, command := range []string{
 		"'f()' cd " + primary + "; f; rm docs/f",
 		"function 'f()' { cd " + primary + "; }; f; rm docs/f",
@@ -1978,6 +1989,10 @@ func TestShellWriteReadsFunctionBodies(t *testing.T) {
 		}
 		assertShapes(t, false, worktree, command, "")
 	}
+	if _, ambiguous := shellWriteTargets(worktree, "'f'() { :; }; echo done"); ambiguous {
+		t.Errorf("shellWriteTargets of harmless uncalled quoted-name function is ambiguous, want safe")
+	}
+	assertShapes(t, false, worktree, "'f'() { :; }; echo done", "")
 	for _, command := range []string{
 		"coproc 'f'() cd " + primary + "; f; rm docs/f",
 		"coproc 'f'() { cd " + primary + "; }; f; rm docs/f",
@@ -1992,23 +2007,53 @@ func TestShellWriteReadsFunctionBodies(t *testing.T) {
 		t.Errorf("shellWriteTargets(%q) ambiguous=true, want comment-transparent compound subshell body", commentSubshell)
 	}
 	assertShapes(t, false, worktree, commentSubshell, "")
-	redirectedCompound := "f() >out if cd " + primary + "; then :; fi; f; echo done"
-	if _, ambiguous := shellWriteTargets(worktree, redirectedCompound); ambiguous {
-		t.Errorf("shellWriteTargets(%q) ambiguous=true, want compound body handled by the existing walk", redirectedCompound)
+	for _, tc := range []struct {
+		command string
+		twin    string
+	}{
+		{"f() >out { cd " + primary + "; }; f; rm x", "f() { cd " + primary + "; }; f; rm x"},
+		{"f() >>out { cd " + primary + "; }; f; rm x", "f() { cd " + primary + "; }; f; rm x"},
+		{"f() 2>out { cd " + primary + "; }; f; rm x", "f() { cd " + primary + "; }; f; rm x"},
+		{"f() <in { cd " + primary + "; }; f; rm x", "f() { cd " + primary + "; }; f; rm x"},
+		{"f() &>out { cd " + primary + "; }; f; rm x", "f() { cd " + primary + "; }; f; rm x"},
+		{"f()>out { cd " + primary + "; }; f; rm x", "f() { cd " + primary + "; }; f; rm x"},
+		{"f() >out >>more 2>&1 { cd " + primary + "; }; f; rm x", "f() { cd " + primary + "; }; f; rm x"},
+		{"f() >out if cd " + primary + "; then :; fi; f; rm x", "f() if cd " + primary + "; then :; fi; f; rm x"},
+		{"f() >out while cd " + primary + "; do break; done; f; rm x", "f() while cd " + primary + "; do break; done; f; rm x"},
+		{"f() >out\\n{ cd " + primary + "; }; f; rm x", "f()\\n{ cd " + primary + "; }; f; rm x"},
+		{"'f'() >out { cd " + primary + "; }; f; rm x", "'f'() { cd " + primary + "; }; f; rm x"},
+		{"f () >out { cd " + primary + "; }; f; rm x", "f () { cd " + primary + "; }; f; rm x"},
+		{"function f() >out { cd " + primary + "; }; f; rm x", "function f() { cd " + primary + "; }; f; rm x"},
+		{"function f >out { cd " + primary + "; }; f; rm x", "function f { cd " + primary + "; }; f; rm x"},
+		{"'f'() >out { cd " + primary + "; }; f; rm x", "'f'() { cd " + primary + "; }; f; rm x"},
+	} {
+		for _, mode := range []backslashMode{backslashEscapes, backslashLiteral} {
+			_, ambiguous := shellWriteTargetsUnderForTest(mode, worktree, tc.command)
+			_, twinAmbiguous := shellWriteTargetsUnderForTest(mode, worktree, tc.twin)
+			if !ambiguous || ambiguous != twinAmbiguous {
+				t.Errorf("mode=%v shellWriteTargets(%q) ambiguous=%v, redirect-free twin %q ambiguous=%v", mode, tc.command, ambiguous, tc.twin, twinAmbiguous)
+			}
+		}
+		assertShapes(t, true, worktree, tc.command, "")
 	}
-	assertShapes(t, false, worktree, redirectedCompound, "")
 	subshellBody := "f()\n( : ); f; echo done"
 	if _, ambiguous := shellWriteTargets(worktree, subshellBody); ambiguous {
 		t.Errorf("shellWriteTargets(%q) ambiguous=true, want subshell body handled by the existing walk", subshellBody)
 	}
 	assertShapes(t, false, worktree, subshellBody, "")
 	for _, command := range []string{
+		"f() & { cd " + primary + "; }; rm x",
+		"f(); { cd " + primary + "; }; rm x",
 		"true | f() { cd " + primary + "; }; f; rm docs/f",
 		"f(){ cd " + primary + "; }; f; rm x",
 		"f()cd " + primary + "; f; rm x",
 		"function f\n{ cd " + primary + "; }; rm x",
+		"function f\n\n{ cd " + primary + "; }; rm x",
 		"f() # c\n{ cd " + primary + "; }; f; rm docs/f",
-		"f() # c1\n# c2\n{ cd " + primary + "; }; f; rm docs/f",
+		"f() >out\n{ cd " + primary + "; }; f; rm docs/f",
+		"f() >out\n{ cd " + primary + "; }; rm x",
+		"f() <in\n{ cd " + primary + "; }; rm x",
+		"f() >out { cd " + primary + "; }; f; rm x",
 		"f() # c1\n# c2\nif cd " + primary + "; then :; fi; f; rm docs/f",
 		"f() # c1\n# c2\nwhile cd " + primary + "; do break; done; f; rm docs/f",
 	} {
@@ -2018,7 +2063,6 @@ func TestShellWriteReadsFunctionBodies(t *testing.T) {
 		assertShapes(t, true, worktree, command, "")
 	}
 	for _, command := range []string{
-		"f() { rm " + target + "; }; f",
 		"f () { rm " + target + "; }; f",
 		"function f { rm " + target + "; }; f",
 		"function f() { rm " + target + "; }; f",
@@ -2033,7 +2077,7 @@ func TestShellWriteReadsFunctionBodies(t *testing.T) {
 		"if true; then f(); fi; f; rm docs/f",
 		"case x in y) f();; esac; f; rm docs/f",
 		"f() | { :; }; f; rm docs/f",
-		"f() { cd " + primary + "; }; f; rm docs/f",
+		"'f'() { cd " + primary + "; }; f; rm docs/f",
 		"f() { cd " + primary + "; }; f && rm docs/f",
 		"f() { cd " + primary + "; }; : | f; rm docs/f",
 		"f() { cd " + primary + "; }; f 2>&1; rm docs/f",
@@ -2058,6 +2102,7 @@ func TestShellWriteReadsFunctionBodies(t *testing.T) {
 	} {
 		assertShapes(t, true, worktree, command, "")
 	}
+	assertShapes(t, false, worktree, "f() # c1\n# c2\n{ cd "+primary+"; }; rm x", "")
 	for _, command := range []string{
 		"f(){ cd " + primary + "; }; rm x",
 		"f() { cd " + primary + "; }; rm docs/f",
@@ -2073,7 +2118,6 @@ func TestShellWriteReadsFunctionBodies(t *testing.T) {
 		"f() for x in 1; do cd " + primary + "; done; rm docs/f",
 		"function f case x in x) cd " + primary + ";; esac; rm docs/f",
 		"f() while cd " + primary + "; do break; done; rm docs/f",
-		"f() [[ -n x ]]; f; rm docs/f",
 		"f() if :; then :; fi; f; rm docs/f",
 		"if cd " + primary + "; then :; fi; cd " + worktree + "; rm docs/f",
 		"echo x >&2; rm docs/f",
