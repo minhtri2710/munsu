@@ -171,9 +171,13 @@ bash runs:
   heads, such as `f() cd P` and `f () cd P`, are defined by zsh, dash and ksh; the
   `function f()` form is defined by zsh. A word glued to a parenthesized head's closing `)`
   is read as though separated by a blank; operators retain their ordinary boundaries.
-  Redirections between a function head and its body are read as gaps: zsh accepts them and
-  bash rejects them, for example `f() >out { cd P; }; f; rm x`. Bash rejects these
-  simple-body forms, and both guards refuse
+  Redirections between a function head and its body are read as gaps. On a same-line
+  redirected head such as `f() >out { cd P; }; f; rm x`, zsh accepts the definition and
+  bash 3.2, bash 5.3, ksh and dash reject it. Across a newline, `f() >out\n{ cd P; }; rm x`
+  makes zsh and dash run the next-line opener as top-level code, so the write lands in P;
+  bash 3.2, bash 5.3 and ksh reject the line. Both guards refuse that cross-line form.
+  The simple-command function-body forms listed above are rejected by bash, and both guards
+  refuse
   them wherever they appear in a command, including inside a named-shell payload. A line
   continuation between a function head and its body is refused in the literal backslash
   reading, e.g. `f ()\` followed by a newline and `( : ); f; rm x`. Dash does not know
@@ -181,8 +185,11 @@ bash runs:
   later line; the subshell-body case is an accepted over-refusal, e.g. `function f\n( : ); rm x`.
   A quote-only function name is retained as a decoded function name when the head is
   otherwise recognized; the guards then track its body and calls through the same
-  function-table path as an unquoted name. An escaped name remains refused because its
-  spelling is not modeled as a shell function name. A trailing `()` is head syntax only
+  function-table path as an unquoted name. Escaped and expansion-spelled function names
+  remain unmodeled and are refused by both guards; the guards do not evaluate parameter,
+  command, arithmetic or backtick expansions to determine a function name. This can refuse
+  a form that every accepting shell would otherwise run in W, or reject before running.
+  A trailing `()` is head syntax only
   when both parentheses are unquoted and unescaped; a word such as `'f()'` is a command
   word, not a function head. Both guards refuse a parenthesized function body unless
   the first token after

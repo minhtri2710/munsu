@@ -93,9 +93,6 @@ const maxShellPayloadDepth = 4
 // function set (evaluateGitPayloadSafety). A call to a
 // function whose body moves the directory leaves it unknown.
 func evaluateGitScriptSafety(homeDir, taskID, command string, depth int, ifs bool, shell *gitShell) (bool, string) {
-	if hasGitCommandSubstitution(command) {
-		return true, "compound shell command with command substitution is not allowed for git mutation"
-	}
 	mode := gitSafetyBackslashMode()
 	stripped, feeds := splitHeredocBodies(command)
 	var payloads []string
@@ -120,9 +117,14 @@ func evaluateGitScriptSafety(homeDir, taskID, command string, depth int, ifs boo
 	var subshells []shellDir
 	segments := tokenizeSegments(mode, stripped)
 	for _, segment := range segments {
-		if segment[0].quotedFunctionHead {
-			return true, "escaped function name is not modeled; git mutation cannot be checked"
+		if segment[0].unmodeledFunctionHead {
+			return true, "function name is not modeled; git mutation cannot be checked"
 		}
+	}
+	if hasGitCommandSubstitution(command) {
+		return true, "compound shell command with command substitution is not allowed for git mutation"
+	}
+	for _, segment := range segments {
 		if segment[0].invalidFunctionBody {
 			return true, "function head has no valid bash body; git mutation cannot be checked"
 		}

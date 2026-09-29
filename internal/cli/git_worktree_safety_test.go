@@ -1393,14 +1393,32 @@ func TestSafetyCheckReadsCaseStackAndCdOptions(t *testing.T) {
 			`{ 'f'() { cd ` + primary + `; }; }; f; git add f`,
 		}},
 	}
-	if block, reason := runPiSafetyForGit(t, worktree, `\f() { cd `+primary+`; }; f; git add f`); !block || reason != "escaped function name is not modeled; git mutation cannot be checked" {
-		t.Errorf("escaped function name: block=%v reason=%q, want escaped-name refusal", block, reason)
+	const unmodeledFunction = "function name is not modeled; git mutation cannot be checked"
+	for _, tc := range []struct {
+		name    string
+		command string
+	}{
+		{"escaped", `\f() { cd ` + primary + `; }; f; git add f`},
+		{"parameter expansion", `f$x() { cd ` + primary + `; }; f; git add f`},
+		{"braced parameter expansion", `f${x}() { cd ` + primary + `; }; f; git add f`},
+		{"leading parameter expansion", `$x() { cd ` + primary + `; }; x; git add f`},
+		{"set leading parameter expansion", `x=g; $x() { cd ` + primary + `; }; g; git add f`},
+		{"quoted parameter expansion", `f"$x"() { cd ` + primary + `; }; f; git add f`},
+		{"quoted braced parameter expansion", `f"${x}"() { cd ` + primary + `; }; f; git add f`},
+		{"quoted command substitution", `f"$(true)"() { cd ` + primary + `; }; f; git add f`},
+		{"command substitution", `f$(true)() { cd ` + primary + `; }; f; git add f`},
+		{"backtick substitution", "f`true`() { cd " + primary + "; }; f; git add f"},
+		{"arithmetic expansion", `f$((0))() { cd ` + primary + `; }; f0; git add f`},
+	} {
+		if block, reason := runPiSafetyForGit(t, worktree, tc.command); !block || reason != unmodeledFunction {
+			t.Errorf("%s function name: block=%v reason=%q, want %q", tc.name, block, reason, unmodeledFunction)
+		}
 	}
 	for _, tc := range simpleBodyCases {
 		for _, command := range tc.commands {
 			block, reason := runPiSafetyForGit(t, worktree, command)
 			wantReason := "function head has no valid bash body"
-			if tc.name == "quoted function name" || tc.name == "quoted function name after a command prefix" || tc.name == "plain non-identifier function name" {
+			if tc.name == "quoted function name" || tc.name == "quoted function name after a command prefix" || tc.name == "plain non-identifier function name" || tc.name == "expansion-spelled function name" {
 				if !block {
 					t.Errorf("%s: %q: block=%v reason=%q, want refusal", tc.name, command, block, reason)
 				}
@@ -1505,6 +1523,11 @@ func TestSafetyCheckReadsCaseStackAndCdOptions(t *testing.T) {
 	} {
 		if block, _ := runPiSafetyForGit(t, worktree, command); !block {
 			t.Errorf("%q allowed, want refused", command)
+		}
+	}
+	for _, command := range []string{`echo "$x"; git status`, `"$x" arg; git status`} {
+		if block, reason := runPiSafetyForGit(t, worktree, command); block {
+			t.Errorf("unrelated expandable command word %q: block=true reason=%q, want allowed", command, reason)
 		}
 	}
 	for _, command := range []string{

@@ -33,12 +33,12 @@ type shellToken struct {
 	apart bool
 	// body is a synthetic subshell operator around a function's or a
 	// coproc's body of a compound command other than a subshell.
-	body               bool
-	functionBodyHead   []shellToken // function whose scoped body this operator opens
-	comment            bool
-	quotedFunctionHead bool
-	functionParens     bool // trailing `()` was read as unquoted function-head syntax
-	readRedirect       bool // synthetic `<` marker retained only in a function-head gap
+	body                  bool
+	functionBodyHead      []shellToken // function whose scoped body this operator opens
+	comment               bool
+	unmodeledFunctionHead bool
+	functionParens        bool // trailing `()` was read as unquoted function-head syntax
+	readRedirect          bool // synthetic `<` marker retained only in a function-head gap
 	// invalidFunctionBody marks a function head whose next grammar event is
 	// not a compound body opener bash accepts. Both guards refuse the head.
 	invalidFunctionBody bool
@@ -497,7 +497,7 @@ func (w *shellWriteWalk) walk(command string, depth int, within string) {
 	}
 	var subshells []subshell
 	for i, segment := range segments {
-		if segment[0].quotedFunctionHead {
+		if segment[0].unmodeledFunctionHead {
 			w.targets = append(w.targets, shellTargetResult{span: shellTargetSpan{start: segment[0].start, end: segment[0].end, within: within}, ambiguous: true})
 			continue
 		}
@@ -1864,7 +1864,7 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 				add(r, i, false)
 				if functionParenPending {
 					functionParenEnd = utf8.RuneCountInString(word.String())
-					name := shellToken{text: word.String(), plain: !quoted && !expandable && !literal, functionParens: true}
+					name := shellToken{text: word.String(), expandable: expandable, plain: !quoted && !expandable && !literal, functionParens: true}
 					_, pendingCloseBoundary = functionHeadLen(append(slices.Clone(segment), name))
 				}
 				functionParenPending = false
@@ -1937,8 +1937,9 @@ func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 		headLen, isHead := functionHeadLen(segment)
 		if isHead {
 			name := segment[headLen-1]
-			if !name.plain && !name.expandable && !name.undecodable && strings.ContainsRune(string(runes[name.start:name.end]), '\\') {
-				segments[i][0].quotedFunctionHead = true
+			escaped := !name.plain && !name.expandable && !name.undecodable && strings.ContainsRune(string(runes[name.start:name.end]), '\\')
+			if name.expandable || escaped {
+				segments[i][0].unmodeledFunctionHead = true
 			}
 		}
 	}
@@ -2032,10 +2033,10 @@ func functionHeadLen(segment []shellToken) (int, bool) {
 	} else if nameIndex == 1 && strings.HasSuffix(word, "()") {
 		return 0, false
 	}
-	if nameIndex == 0 && !parenthesized || word == "" || name.expandable || name.undecodable {
+	if nameIndex == 0 && !parenthesized || word == "" || name.undecodable {
 		return 0, false
 	}
-	if nameIndex == 0 && strings.ContainsAny(word, "=()") {
+	if nameIndex == 0 && !name.expandable && strings.ContainsAny(word, "=()") {
 		return 0, false
 	}
 	return nameIndex + 1, true

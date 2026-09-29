@@ -1928,6 +1928,19 @@ func TestShellWriteReadsFunctionBodies(t *testing.T) {
 			"'f' () cd " + primary + "; f; rm docs/f",
 			"zsh -c \"'f'() cd " + primary + "; f; rm docs/f\"",
 		}},
+		{"expansion-spelled function name", []string{
+			`$x() { cd ` + primary + `; }; x; rm docs/f`,
+			`f$x() { cd ` + primary + `; }; f; rm docs/f`,
+			`f${x}() { cd ` + primary + `; }; f; rm docs/f`,
+			`f"$x"() { cd ` + primary + `; }; f; rm docs/f`,
+			`f"${x}"() { cd ` + primary + `; }; f; rm docs/f`,
+			`f$(true)() { cd ` + primary + `; }; f; rm docs/f`,
+			`f$(true)(){ cd ` + primary + `; }; f; rm docs/f`,
+			`f$((0))(){ cd ` + primary + `; }; f0; rm docs/f`,
+			`f"$(true)"() { cd ` + primary + `; }; f; rm docs/f`,
+			"f`true`() { cd " + primary + "; }; f; rm docs/f",
+			`f$((0))() { cd ` + primary + `; }; f0; rm docs/f`,
+		}},
 		{"comment-gap non-opener body", []string{"f() # c\ntrue\nrm docs/f"}},
 		{"non-compound reserved-word opener", []string{
 			"f() function g { cd " + primary + "; }; f; g; rm docs/f",
@@ -1995,6 +2008,20 @@ func TestShellWriteReadsFunctionBodies(t *testing.T) {
 		t.Errorf("shellWriteTargets of harmless uncalled quoted-name function is ambiguous, want safe")
 	}
 	assertShapes(t, false, worktree, "'f'() { :; }; echo done", "")
+	for _, command := range []string{`$(true)`, `$((1))`, `echo "$x"`, `$x arg`, `"$x" arg`} {
+		if targets, ambiguous := shellWriteTargets(worktree, command); ambiguous || len(targets) != 0 {
+			t.Errorf("unrelated expandable command word %q: targets=%q ambiguous=%v, want no target and no ambiguity", command, targets, ambiguous)
+		}
+	}
+	for _, command := range []string{`$(true); rm x`, `$((1)); rm x`, `echo "$x"; rm x`, `$x arg; rm x`, `"$x" arg; rm x`} {
+		targets, ambiguous := shellWriteTargets(worktree, command)
+		if ambiguous || !slices.Equal(targets, []string{filepath.Join(worktree, "x")}) {
+			t.Errorf("unrelated expandable command word %q: targets=%q ambiguous=%v, want only worktree/x", command, targets, ambiguous)
+		}
+	}
+	for _, command := range []string{`echo "$x"; rm x`, `$x arg; rm x`, `"$x" arg; rm x`} {
+		assertShapes(t, false, worktree, command, "")
+	}
 	for _, command := range []string{
 		"coproc 'f'() cd " + primary + "; f; rm docs/f",
 		"coproc 'f'() { cd " + primary + "; }; f; rm docs/f",
