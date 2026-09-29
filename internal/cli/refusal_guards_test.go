@@ -1360,15 +1360,7 @@ func seedGuardCompletedCleanupClaim(t *testing.T, auth *taskauthority.Canonical,
 	if err != nil {
 		t.Fatal(err)
 	}
-	complete := taskauthority.CanonicalCompleteCleanupRequest{
-		HomeID:           auth.HomeID(),
-		TaskID:           tid,
-		Precondition:     domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
-		ClaimOperationID: claimOp,
-		ClaimGeneration:  agg.Generation,
-		Reason:           "guard fixture",
-	}
-	if _, err := auth.CompleteCleanup(mustCanonicalOp(t, "op-guard-complete-cleanup-"+taskID, complete), complete); err != nil {
+	if err := auth.ReconcileRetirementCleanup(tid, agg.Generation, taskauthority.CleanupCompleted, func() error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 

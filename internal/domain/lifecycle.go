@@ -21,14 +21,7 @@ type RetryDisposition struct {
 	After time.Duration
 }
 
-var (
-	RetryNever = RetryDisposition{Kind: "never"}
-	RetryLater = RetryDisposition{Kind: "later"}
-)
-
-func (r RetryDisposition) ShouldRetry() bool {
-	return r.Kind == "later" || r.Kind == "after"
-}
+var RetryNever = RetryDisposition{Kind: "never"}
 
 type Error struct {
 	Category ErrorCategory

@@ -420,16 +420,8 @@ func TestCanonicalReopenPreservesHistoricalRetirementEvidence(t *testing.T) {
 
 	// Complete the cleanup claim (revision 5): the claim is reconciled and
 	// the retired task becomes reopenable.
-	complete := CanonicalCompleteCleanupRequest{
-		HomeID:           c.HomeID(),
-		TaskID:           mustTaskID(t, "t1"),
-		Precondition:     preconditionOf(1, 4),
-		ClaimOperationID: "op-reopen-hist-retire",
-		ClaimGeneration:  Generation(1),
-		Reason:           "cleanup complete",
-	}
-	if _, err := c.CompleteCleanup(mustOperation(t, "op-reopen-hist-complete", complete), complete); err != nil {
-		t.Fatalf("CompleteCleanup: %v", err)
+	if err := c.ReconcileRetirementCleanup(mustTaskID(t, "t1"), 1, CleanupCompleted, func() error { return nil }); err != nil {
+		t.Fatalf("ReconcileRetirementCleanup: %v", err)
 	}
 	agg, err = c.Get(mustTaskID(t, "t1"))
 	if err != nil {

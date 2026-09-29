@@ -76,17 +76,8 @@ func TestReconcileRetirementCleanupRequiresExactActiveClaim(t *testing.T) {
 			id := "archive-" + string(status)
 			mustCreate(t, c, id)
 			retireWithClaim(t, c, id, preconditionOf(1, 1), "op-"+id)
-			agg, _ := c.Get(mustTaskID(t, id))
-			if status == CleanupCompleted {
-				req := CanonicalCompleteCleanupRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, id), Precondition: preconditionOf(uint64(agg.Generation), uint64(agg.Revision)), ClaimOperationID: "op-" + id, ClaimGeneration: 1, Reason: "done"}
-				if _, err := c.CompleteCleanup(mustOperation(t, "complete-"+id, req), req); err != nil {
-					t.Fatal(err)
-				}
-			} else {
-				req := CanonicalAbortCleanupRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, id), Precondition: preconditionOf(uint64(agg.Generation), uint64(agg.Revision)), ClaimOperationID: "op-" + id, ClaimGeneration: 1, Reason: "abort"}
-				if _, err := c.AbortCleanup(mustOperation(t, "abort-"+id, req), req); err != nil {
-					t.Fatal(err)
-				}
+			if err := c.ReconcileRetirementCleanup(mustTaskID(t, id), 1, status, func() error { return nil }); err != nil {
+				t.Fatal(err)
 			}
 			called := false
 			if err := c.ReconcileRetirementCleanup(mustTaskID(t, id), 1, CleanupCompleted, func() error { called = true; return nil }); err == nil || called {
@@ -105,8 +96,7 @@ func TestReconcileCompletedCleanupReportsSupersededGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	complete := CanonicalCompleteCleanupRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, id), Precondition: preconditionOf(uint64(agg.Generation), uint64(agg.Revision)), ClaimOperationID: "op-superseded-retire", ClaimGeneration: 1, Reason: "done"}
-	if _, err := c.CompleteCleanup(mustOperation(t, "op-superseded-complete", complete), complete); err != nil {
+	if err := c.ReconcileRetirementCleanup(mustTaskID(t, id), 1, CleanupCompleted, func() error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	agg, err = c.Get(mustTaskID(t, id))
@@ -255,14 +245,7 @@ func TestReclaimReleasedTaskArtifactsTerminalAndCallbackFailure(t *testing.T) {
 		id := "terminal-" + string(status)
 		mustCreate(t, c, id)
 		retireWithClaim(t, c, id, preconditionOf(1, 1), "op-retire-"+id)
-		agg, _ := c.Get(mustTaskID(t, id))
-		req := CanonicalCompleteCleanupRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, id), Precondition: preconditionOf(uint64(agg.Generation), uint64(agg.Revision)), ClaimOperationID: "op-retire-" + id, ClaimGeneration: 1, Reason: "complete"}
-		if status == CleanupAborted {
-			abort := CanonicalAbortCleanupRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, id), Precondition: req.Precondition, ClaimOperationID: req.ClaimOperationID, ClaimGeneration: 1, Reason: "abort"}
-			if _, err := c.AbortCleanup(mustOperation(t, "op-abort-"+id, abort), abort); err != nil {
-				t.Fatal(err)
-			}
-		} else if _, err := c.CompleteCleanup(mustOperation(t, "op-complete-"+id, req), req); err != nil {
+		if err := c.ReconcileRetirementCleanup(mustTaskID(t, id), 1, status, func() error { return nil }); err != nil {
 			t.Fatal(err)
 		}
 		called := false
@@ -274,9 +257,7 @@ func TestReclaimReleasedTaskArtifactsTerminalAndCallbackFailure(t *testing.T) {
 
 	mustCreate(t, c, "callback-error")
 	retireWithClaim(t, c, "callback-error", preconditionOf(1, 1), "op-callback-error")
-	agg, _ := c.Get(mustTaskID(t, "callback-error"))
-	complete := CanonicalCompleteCleanupRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "callback-error"), Precondition: preconditionOf(uint64(agg.Generation), uint64(agg.Revision)), ClaimOperationID: "op-callback-error", ClaimGeneration: 1, Reason: "complete"}
-	if _, err := c.CompleteCleanup(mustOperation(t, "op-complete-callback-error", complete), complete); err != nil {
+	if err := c.ReconcileRetirementCleanup(mustTaskID(t, "callback-error"), 1, CleanupCompleted, func() error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	got, err := c.ReclaimReleasedTaskArtifactsByID("callback-error", func() error { return errors.New("reclaim failed") })

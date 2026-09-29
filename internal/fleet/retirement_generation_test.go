@@ -535,8 +535,7 @@ func tryBindEndpointExpectClaimConflict(t *testing.T, auth *taskauthority.Canoni
 }
 
 // abortCleanupFor releases the durable cleanup claim of the given generation
-// through the canonical AbortCleanup operation (the operator escape hatch),
-// asserting it reconciled to aborted.
+// through the fleet retirement cleanup path, asserting it reconciled to aborted.
 func abortCleanupFor(t *testing.T, auth *taskauthority.Canonical, homeDir, taskID string, gen taskauthority.Generation) {
 	t.Helper()
 	if err := AbortRetirementCleanup(auth, homeDir, fakeTeardown{}, mustTaskID(t, taskID), gen); err != nil {
