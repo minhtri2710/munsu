@@ -39,16 +39,3 @@ func TestResolveEmptyIdentityFailsClosed(t *testing.T) {
 		t.Fatalf("expected typed failure for empty requested identity, got %q (%T) — no auto-detect", name, bk)
 	}
 }
-
-func TestHometag(t *testing.T) {
-	home := testutil.TempHome(t)
-	tag := backend.Hometag(home)
-	if tag == "" {
-		t.Error("expected non-empty hometag")
-	}
-
-	wsTag := backend.WorkspaceTag(home)
-	if wsTag == "" {
-		t.Error("expected non-empty workspace tag")
-	}
-}

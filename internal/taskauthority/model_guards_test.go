@@ -80,6 +80,42 @@ func TestValidateAggregateRefusesMissingRevision(t *testing.T) {
 		})
 }
 
+func TestValidateAggregateRefusesUnsafeIdentityAndPhase(t *testing.T) {
+	runGuardCases(t,
+		func() Aggregate {
+			agg, err := NewAggregate("t1", "owner", "work", "ship", "", "")
+			if err != nil {
+				t.Fatalf("NewAggregate: %v", err)
+			}
+			return agg
+		},
+		validateAggregate,
+		[]guardCase[Aggregate]{
+			{"path-traversing task id", func(a *Aggregate) { a.TaskID = "../escape" }, "invalid task ID"},
+			{"invalid phase", func(a *Aggregate) { a.Phase = Phase("in-flight") }, "has invalid phase"},
+			{"blank owner", func(a *Aggregate) { a.Definition.Owner = "  " }, "missing owner"},
+		})
+}
+
+func TestValidateDispatchHoldRefusesMalformedScope(t *testing.T) {
+	runGuardCases(t,
+		func() DispatchHold {
+			return DispatchHold{
+				SchemaVersion: TaskAuthoritySchema,
+				ID:            "hold-1",
+				Scope:         DispatchHoldScope{},
+				Actions:       []DispatchAction{DispatchActionStart},
+				Reason:        "reason",
+				CreatedAt:     1,
+			}
+		},
+		validateHold,
+		[]guardCase[DispatchHold]{
+			{"malformed generation scope", func(h *DispatchHold) { h.Scope.Generations = []string{"not-a-generation"} }, "invalid task generation"},
+			{"unknown dispatch action", func(h *DispatchHold) { h.Actions = []DispatchAction{"fly"} }, "unknown action"},
+		})
+}
+
 // Retirement evidence pins which resources a retired generation released. A
 // record with no owning operation or no retirement time cannot be attributed.
 func TestValidateRetirementEvidenceRefusesUnattributableRecord(t *testing.T) {
@@ -282,6 +318,7 @@ func TestValidateWorktreeBindingRefusesIncompleteBinding(t *testing.T) {
 		},
 		validateWorktreeBinding,
 		[]guardCase[WorktreeBinding]{
+			{"incomplete worktree binding", func(b *WorktreeBinding) { b.LeaseID = "" }, "worktree binding missing lease id"},
 			{"no repository identity", func(b *WorktreeBinding) { b.RepositoryIdentity = "  " }, "worktree binding missing repository identity"},
 			{"no path", func(b *WorktreeBinding) { b.Path = "  " }, "worktree binding missing path"},
 			{"no git dir", func(b *WorktreeBinding) { b.GitDir = "  " }, "worktree binding missing git dir"},

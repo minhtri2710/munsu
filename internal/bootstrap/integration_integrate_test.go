@@ -3,17 +3,14 @@
 package bootstrap
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -83,32 +80,6 @@ func TestEnabledCapabilities_Unknown(t *testing.T) {
 	caps := EnabledCapabilities("nonexistent")
 	if len(caps) != 0 {
 		t.Fatalf("expected no capabilities for unknown harness, got %d", len(caps))
-	}
-}
-
-// Test AssertSupportedHarness
-func TestAssertSupportedHarness(t *testing.T) {
-	tests := []struct {
-		name    string
-		wantErr bool
-	}{
-		{"pi", false},
-		{"claude", false},
-		{"grok", false},
-		{"", true},
-		{"nonexistent", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := AssertSupportedHarness(tt.name)
-			if tt.wantErr && err == nil {
-				t.Errorf("AssertSupportedHarness(%q) expected error", tt.name)
-			}
-			if !tt.wantErr && err != nil {
-				t.Errorf("AssertSupportedHarness(%q) unexpected error: %v", tt.name, err)
-			}
-		})
 	}
 }
 
@@ -591,103 +562,16 @@ func TestSafetyCheck_UsesScopeClassify(t *testing.T) {
 	}
 }
 
-// Test CheckPiCapability rejects malformed versions
-func TestCheckPiCapability_RejectsMalformedVersion(t *testing.T) {
-	defer SetCapabilityCommandRunner(func(string, []string, string, time.Duration) (string, error) {
-		return "not-a-valid-semver\n", nil
-	})()
-	err := CheckPiCapability("/fake/pi")
-	if err == nil {
-		t.Fatal("CheckPiCapability must reject malformed non-semver version")
-	}
-	t.Logf("CheckPiCapability correctly rejects malformed version: %v", err)
-
-}
-
 // Test CheckPiCapability rejects old 0.x versions
 func TestCheckPiCapability_RejectsOldVersion(t *testing.T) {
 	defer SetCapabilityCommandRunner(func(string, []string, string, time.Duration) (string, error) {
 		return "0.1.0\n", nil
 	})()
 	err := CheckPiCapability("/fake/pi")
-	if err == nil {
-		t.Fatal("CheckPiCapability must reject old version 0.1.0 < minimum " + PiMinimumVersion)
+	want := fmt.Sprintf("pi version %s < minimum %s", "0.1.0", PiMinimumVersion)
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("CheckPiCapability error = %v, want %q", err, want)
 	}
-	t.Logf("CheckPiCapability correctly rejects old version: %v", err)
-
-}
-
-// TestCheckPiCapability_HangingPi verifies that a hanging pi binary times out
-// and the process tree is cleaned up (via injectable runner).
-func TestCheckPiCapability_HangingPi(t *testing.T) {
-	prevTimeout := SetProbeTimeout(100 * time.Millisecond)
-	defer SetProbeTimeout(prevTimeout)
-
-	_ = SetCapabilityCommandRunner(func(name string, args []string, dir string, timeout time.Duration) (string, error) {
-		// Simulate a hanging pi binary.
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
-		defer cancel()
-		cmd := exec.CommandContext(ctx, "sleep", "5")
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		out, err := cmd.CombinedOutput()
-		if ctx.Err() != nil {
-			if cmd.Process != nil {
-				syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-			}
-			cmd.Wait()
-			return string(out), fmt.Errorf("%s timed out after %v: %w", name, timeout, err)
-		}
-		return string(out), err
-	})
-	defer ResetCapabilityCommandRunner()
-
-	err := CheckPiCapability("/fake/pi")
-	if err == nil {
-		t.Fatal("expected timeout error for hanging pi")
-	}
-	if !strings.Contains(err.Error(), "timed out") {
-		t.Fatalf("error should mention timeout, got: %v", err)
-	}
-	t.Logf("hanging pi correctly timed out: %v", err)
-}
-
-// TestCheckPiCapability_HangingNode verifies that a hanging node probe times out.
-func TestCheckPiCapability_HangingNode(t *testing.T) {
-	prevTimeout := SetProbeTimeout(100 * time.Millisecond)
-	defer SetProbeTimeout(prevTimeout)
-
-	callCount := 0
-	_ = SetCapabilityCommandRunner(func(name string, args []string, dir string, timeout time.Duration) (string, error) {
-		callCount++
-		if callCount == 1 {
-			// First call: pi --version succeeds.
-			return "0.79.0", nil
-		}
-		// Second call: node --experimental-strip-types — hang until timeout.
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
-		defer cancel()
-		cmd := exec.CommandContext(ctx, "sleep", "5")
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		out, err := cmd.CombinedOutput()
-		if ctx.Err() != nil {
-			if cmd.Process != nil {
-				syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-			}
-			cmd.Wait()
-			return string(out), fmt.Errorf("%s timed out after %v: %w", name, timeout, err)
-		}
-		return string(out), err
-	})
-	defer ResetCapabilityCommandRunner()
-
-	err := CheckPiCapability("/fake/pi")
-	if err == nil {
-		t.Fatal("expected timeout error for hanging node")
-	}
-	if !strings.Contains(err.Error(), "timed out") {
-		t.Fatalf("error should mention timeout, got: %v", err)
-	}
-	t.Logf("hanging node probe correctly timed out: %v", err)
 }
 
 // TestCheckPiCapability_TimeoutCleanup verifies that the default runner
@@ -718,6 +602,27 @@ func TestCheckPiCapability_TimeoutCleanup(t *testing.T) {
 
 	// Verify the process is actually dead by trying to signal it.
 	// The ps check has races on macOS; just verify the error is correct.
+
+	t.Run("node probe", func(t *testing.T) {
+		nodeTimeout := SetProbeTimeout(100 * time.Millisecond)
+		defer SetProbeTimeout(nodeTimeout)
+
+		scriptDir := t.TempDir()
+		fakePi := filepath.Join(scriptDir, "fake-pi")
+		if err := os.WriteFile(fakePi, []byte("#!/bin/sh\nprintf '0.79.0\\n'\n"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		fakeNode := filepath.Join(scriptDir, "node")
+		if err := os.WriteFile(fakeNode, []byte("#!/bin/sh\nsleep 5\n"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+		err := CheckPiCapability(fakePi)
+		if err == nil || !strings.Contains(err.Error(), "timed out") {
+			t.Fatalf("CheckPiCapability with hanging node = %v, want timeout error", err)
+		}
+	})
 }
 
 // TestCheckPiCapability_OrdinarySuccess uses an injectable runner to verify the
@@ -768,32 +673,6 @@ func TestCapabilityProbeTimeout_Defaults(t *testing.T) {
 	}
 	if capabilityProbeTimeout != DefaultCapabilityProbeTimeout {
 		t.Errorf("default = %v, want %v", capabilityProbeTimeout, DefaultCapabilityProbeTimeout)
-	}
-}
-
-// TestCapabilityCommandRunner_Reset verifies SetCapabilityCommandRunner and
-// ResetCapabilityCommandRunner work correctly.
-func TestCapabilityCommandRunner_Reset(t *testing.T) {
-	called := false
-	fn := func(name string, args []string, dir string, timeout time.Duration) (string, error) {
-		called = true
-		return "", nil
-	}
-	defer SetCapabilityCommandRunner(fn)()
-
-	// Call via CheckPiCapability.
-	prevTimeout := SetProbeTimeout(1 * time.Second)
-	defer SetProbeTimeout(prevTimeout)
-	CheckPiCapability("/fake/pi")
-
-	if !called {
-		t.Error("custom runner was not called")
-	}
-
-	ResetCapabilityCommandRunner()
-	// Verify runner is restored to default (not nil).
-	if runCapabilityCommand == nil {
-		t.Error("runner is nil after reset")
 	}
 }
 

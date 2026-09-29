@@ -1,27 +1,6 @@
 package bootstrap
 
-import (
-	"fmt"
-	"time"
-
-	"github.com/minhtri2710/munsu/internal/harness"
-)
-
-// AssertSupportedHarness checks that name is a known harness with supported
-// integration capabilities (test helper).
-func AssertSupportedHarness(name string) error {
-	if name == "" {
-		return fmt.Errorf("no harness specified and automatic detection failed")
-	}
-	if !harness.IsKnownHarness(name) {
-		return fmt.Errorf("unknown harness %q: must be one of %v", name, harness.KnownHarnesses)
-	}
-	caps := EnabledCapabilities(name)
-	if len(caps) == 0 {
-		return fmt.Errorf("harness %q is recognised but has no integration capabilities yet", name)
-	}
-	return nil
-}
+import "time"
 
 // SetMunsuPathResolver sets a custom resolver (for testing).
 func SetMunsuPathResolver(r MunsuPathResolver) { munsuResolver = r }

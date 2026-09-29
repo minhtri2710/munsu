@@ -75,6 +75,22 @@ func TestAdapters_GetAdapterUnknown(t *testing.T) {
 	}
 }
 
+func TestAdapters_FailureAndReadyPatterns(t *testing.T) {
+	patterns := GetFailurePatterns(Pi)
+	if len(patterns) == 0 || patterns[0] != "OPENAI_API_KEY" {
+		t.Fatalf("GetFailurePatterns(pi) = %v, want OPENAI_API_KEY", patterns)
+	}
+	if got := HasFailurePattern("AuthenticationError: invalid key", Pi); !got {
+		t.Fatal("HasFailurePattern did not find the pi authentication failure")
+	}
+	if got := HasFailurePattern("working normally", Pi); got {
+		t.Fatal("HasFailurePattern matched unrelated capture")
+	}
+	if got := HasReadyPattern("Ready for your prompt", Agy); !got {
+		t.Fatal("HasReadyPattern did not find the agy ready marker")
+	}
+}
+
 func TestAdapters_DetectEnvMatchesAdapter(t *testing.T) {
 	// Verify that the env markers in the adapter registry are the same ones
 	// detectFromEnv() checks. For each verified harness, set its first env
