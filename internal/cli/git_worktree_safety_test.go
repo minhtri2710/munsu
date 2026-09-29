@@ -1418,7 +1418,7 @@ func TestSafetyCheckReadsCaseStackAndCdOptions(t *testing.T) {
 		for _, command := range tc.commands {
 			block, reason := runPiSafetyForGit(t, worktree, command)
 			wantReason := "function head has no valid bash body"
-			if tc.name == "quoted function name" || tc.name == "quoted function name after a command prefix" || tc.name == "plain non-identifier function name" || tc.name == "expansion-spelled function name" {
+			if tc.name == "quoted function name" || tc.name == "quoted function name after a command prefix" || tc.name == "plain non-identifier function name" {
 				if !block {
 					t.Errorf("%s: %q: block=%v reason=%q, want refusal", tc.name, command, block, reason)
 				}
