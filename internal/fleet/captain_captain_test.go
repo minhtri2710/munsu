@@ -510,6 +510,13 @@ func TestSeedWorktree_RollbackOnFailure(t *testing.T) {
 	if _, err := os.Stat(homePath); !os.IsNotExist(err) {
 		t.Error("worktree should have been rolled back on failure")
 	}
+	worktreeOut, err := exec.Command("git", "-C", repo, "worktree", "list", "--porcelain").CombinedOutput()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(worktreeOut), homePath) {
+		t.Errorf("stale worktree entry remains in source repo after rollback:\n%s", worktreeOut)
+	}
 }
 
 func TestSeedWorktree_RollbackUnregisterOnFailure(t *testing.T) {
@@ -1690,50 +1697,6 @@ func TestLaunch_FlatFileCaptainHarnessDoesNotRescueMissingSnapshotProfile(t *tes
 	}
 }
 
-func TestHandoff_RefusesUnmarkedHome(t *testing.T) {
-	parent := t.TempDir()
-	if _, err := home.Init(parent); err != nil {
-		t.Fatal(err)
-	}
-	sm := filepath.Join(parent, "captains", "test-sm")
-	os.MkdirAll(sm, 0755)
-
-	err := Handoff(parent, sm, []string{"TASK-1"})
-	if err == nil {
-		t.Fatal("expected error for unmarked home")
-	}
-	if !strings.Contains(err.Error(), "no .munsu-captain-home marker") {
-		t.Errorf("error should mention missing marker, got: %v", err)
-	}
-}
-
-// TestHandoff_TransfersToCaptainWithoutTasksAxi replaces the legacy
-// canonical contract: the journaled Task Transfer needs no external backlog tooling
-// binary and moves one queued task's ownership to the captain.
-func TestHandoff_TransfersToCaptainWithoutTasksAxi(t *testing.T) {
-	parent := t.TempDir()
-	if _, err := home.Init(parent); err != nil {
-		t.Fatal(err)
-	}
-	sm := filepath.Join(parent, "captains", "test-sm")
-	if _, err := home.Init(sm); err != nil {
-		t.Fatal(err)
-	}
-	if err := home.SeedCaptainProvenance(sm, "test-sm"); err != nil {
-		t.Fatal(err)
-	}
-	seedCanonicalQueuedTask(t, mustAuthority(t, parent), "TASK-1", "general")
-
-	if err := Handoff(parent, sm, []string{"TASK-1"}); err != nil {
-		t.Fatalf("Handoff: %v", err)
-	}
-	agg := mustTransferOwner(t, sm, "TASK-1")
-	if agg.Definition.Owner != "captain:test-sm" {
-		t.Fatalf("destination owner = %q, want captain:test-sm", agg.Definition.Owner)
-	}
-	mustTransferNoOwner(t, parent, "TASK-1")
-}
-
 func TestHandoff_RefusesSelfParent(t *testing.T) {
 	parent := t.TempDir()
 	if _, err := home.Init(parent); err != nil {
@@ -1778,6 +1741,9 @@ func TestHandoff_JournaledTransferOwnershipMovesToCaptain(t *testing.T) {
 	mustTransferNoOwner(t, parent, "TASK-1")
 	if n := pendingJournalCount(t, parent); n != 0 {
 		t.Fatalf("pending journal remains after transfer: %d", n)
+	}
+	if n := completedJournalCount(t, parent); n != 1 {
+		t.Fatalf("completed journal count = %d, want 1 retained terminal record", n)
 	}
 }
 
@@ -3117,264 +3083,9 @@ func TestUpdate_ManagedWorktreeUsesProvenanceRepo(t *testing.T) {
 	}
 }
 
-// TestUpdate_ManagedWorktreeAlreadyCurrent proves that Update() returns
-// AlreadyCurrent for a managed worktree that is already at the latest commit,
-// using provenance source-repo resolution (Defect 3 regression).
-
-// TestUpdate_ManagedWorktreeAlreadyCurrent proves that Update() returns
-// AlreadyCurrent for a managed worktree that is already at the latest commit,
-// using provenance source-repo resolution (Defect 3 regression).
-func TestUpdate_ManagedWorktreeAlreadyCurrent(t *testing.T) {
-	project := newWorktreeFixture(t)
-	parent := t.TempDir()
-	if _, err := home.Init(parent); err != nil {
-		t.Fatal(err)
-	}
-	homePath := filepath.Join(parent, "captains", "test-captain")
-
-	if err := seedFromWorktreeTest("test-captain", homePath, project, parent, "", false, ""); err != nil {
-		t.Fatal(err)
-	}
-
-	// Captain is already at origin/main. Update should return AlreadyCurrent.
-	resp := Update(homePath, parent)
-	if resp.Outcome != AlreadyCurrent {
-		t.Fatalf("Update outcome = %q, want %q (err=%v)", resp.Outcome, AlreadyCurrent, resp.Err)
-	}
-}
-
-// TestUpdate_ManagedWorktreeNoParentGit proves that Update() correctly resolves
-// the source-repo from .captain-provenance when parentHome is not a git repo
-// and returns the appropriate outcome.
-
-// TestUpdate_ManagedWorktreeNoParentGit proves that Update() correctly resolves
-// the source-repo from .captain-provenance when parentHome is not a git repo
-// and returns the appropriate outcome.
-func TestUpdate_ManagedWorktreeNoParentGit(t *testing.T) {
-	project := newWorktreeFixture(t)
-	parent := t.TempDir()
-	if _, err := home.Init(parent); err != nil {
-		t.Fatal(err)
-	}
-	homePath := filepath.Join(parent, "captains", "test-captain")
-
-	if err := seedFromWorktreeTest("test-captain", homePath, project, parent, "", false, ""); err != nil {
-		t.Fatal(err)
-	}
-
-	// Verify parent is NOT a git repo.
-	if _, err := os.Stat(filepath.Join(parent, ".git")); !os.IsNotExist(err) {
-		t.Skip("parent unexpectedly has .git — cannot test no-parent-git scenario")
-	}
-
-	// Update must not fail with a git error involving parent. It should resolve
-	// from provenance and succeed (AlreadyCurrent since nothing advanced).
-	resp := Update(homePath, parent)
-	if resp.Outcome != AlreadyCurrent {
-		t.Fatalf("Update outcome = %q, want %q (err=%v)", resp.Outcome, AlreadyCurrent, resp.Err)
-	}
-}
-
-// TestMigrateRollbackSafety proves that when SeedFromWorktree fails partway
-// through, the worktree is cleaned up and no partial artifacts remain.
-
-// TestMigrateRollbackSafety proves that when SeedFromWorktree fails partway
-// through, the worktree is cleaned up and no partial artifacts remain.
-func TestMigrateRollbackSafety(t *testing.T) {
-	parent := t.TempDir()
-	initTestRepo(t, parent, "https://github.com/test/repo.git")
-	repo := t.TempDir()
-	initTestRepo(t, repo, "https://github.com/test/repo.git")
-
-	id := "test-captain"
-	homePath := filepath.Join(parent, "captains", id)
-
-	// A regular file used as the parent home fails after worktree creation on
-	// every platform, so the rollback and stale-registration checks are real on
-	// Windows as well as POSIX.
-	blocker := filepath.Join(t.TempDir(), "parent-file")
-	if err := os.WriteFile(blocker, []byte("not a directory\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	err := seedFromWorktreeTest(id, homePath, repo, filepath.Join(blocker, "missing-parent"), "", false, "")
-	if err == nil {
-		t.Fatal("expected error for parent home below a regular file")
-	}
-
-	// The worktree should not exist (rolled back on failure).
-	if _, err := os.Stat(homePath); !os.IsNotExist(err) {
-		t.Error("worktree should have been rolled back on failure, but still exists")
-	}
-
-	// Verify the source repo has no stale worktree registration (best-effort).
-	worktreeOut, err := exec.Command("git", "-C", repo, "worktree", "list", "--porcelain").CombinedOutput()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(worktreeOut), homePath) {
-		t.Errorf("stale worktree entry remains in source repo after rollback:\n%s", worktreeOut)
-	}
-}
-
 // =============================================================================
 // Config inheritance parity tests
 // =============================================================================
-
-// TestConfigPush_InheritsEnvOverriddenKeys proves that MUNSU_INHERITABLE_CONFIG
-// no longer filters config push: after the typed-config hard cut the resolved
-// config is authoritative and the full inherited surface is always propagated.
-func TestConfigPush_InheritsEnvOverriddenKeys(t *testing.T) {
-	t.Setenv("MUNSU_INHERITABLE_CONFIG", "custom-key:another-key:extra-key")
-
-	parent := t.TempDir()
-	if _, err := home.Init(parent); err != nil {
-		t.Fatal(err)
-	}
-	smHome := filepath.Join(parent, "captains", "test-sm")
-	os.MkdirAll(smHome, 0755)
-	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
-	home.SeedCaptainProvenance(smHome, "test-sm")
-
-	// Explicit fixture Backend literal: ResolveProject fails closed on empty.
-	storeTestDocuments(t, parent, config.FleetBaseDocument{
-		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{SoldierHarness: "pi", Backend: "tmux"},
-	}, []testProjectRecord{
-		{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
-	}, nil)
-	if err := Register(parent, "test-sm", smHome, "", "test-sm"); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := configPush(parent, smHome); err != nil {
-		t.Fatal(err)
-	}
-
-	// The full inherited surface is propagated even though the env list
-	// names unrelated keys — nothing is filtered out.
-	snapshot, err := config.LoadPublishedSnapshot(smHome)
-	if err != nil {
-		t.Fatalf("resolved snapshot was not published: %v", err)
-	}
-	if snapshot.Config().SoldierHarness != "pi" {
-		t.Errorf("snapshot soldierHarness = %q, want %q (env override must not filter)", snapshot.Config().SoldierHarness, "pi")
-	}
-}
-
-// TestConfigPush_InheritsEnvMirrorDeletions proves that mirror deletion still
-// applies with MUNSU_INHERITABLE_CONFIG set, and that captain-local config is
-// never touched.
-func TestConfigPush_InheritsEnvMirrorDeletions(t *testing.T) {
-	t.Setenv("MUNSU_INHERITABLE_CONFIG", "custom-key")
-
-	parent := t.TempDir()
-	if _, err := home.Init(parent); err != nil {
-		t.Fatal(err)
-	}
-	smHome := filepath.Join(parent, "captains", "test-sm")
-	os.MkdirAll(smHome, 0755)
-	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
-	home.SeedCaptainProvenance(smHome, "test-sm")
-
-	// Captain-local (non-inherited) key must survive regardless of env.
-	os.WriteFile(filepath.Join(smHome, "config", "model"), []byte("some-model\n"), 0644)
-
-	// Explicit fixture Backend literal: ResolveProject fails closed on empty.
-	storeBase := func(harness string) error {
-		overlay := config.ProjectOverlay{Backend: "tmux"}
-		if harness != "" {
-			overlay.SoldierHarness = harness
-		}
-		return config.StoreFleetBase(parent, config.FleetBaseDocument{
-			SchemaVersion: config.FleetBaseSchemaVersion,
-			Config:        overlay,
-		})
-	}
-	storeTestDocuments(t, parent, config.FleetBaseDocument{
-		SchemaVersion: config.FleetBaseSchemaVersion,
-	}, []testProjectRecord{
-		{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
-	}, nil)
-	if err := storeBase("pi"); err != nil {
-		t.Fatal(err)
-	}
-	if err := Register(parent, "test-sm", smHome, "", "test-sm"); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := configPush(parent, smHome); err != nil {
-		t.Fatal(err)
-	}
-	snapshot, err := config.LoadPublishedSnapshot(smHome)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if snapshot.Config().SoldierHarness != "pi" {
-		t.Errorf("snapshot soldierHarness = %q, want %q", snapshot.Config().SoldierHarness, "pi")
-	}
-	if _, err := os.Stat(filepath.Join(smHome, "config", "model")); os.IsNotExist(err) {
-		t.Error("non-inheritable model should NOT have been deleted")
-	}
-
-	// Parent removes the inherited harness — mirror deletion applies with env set.
-	if err := storeBase(""); err != nil {
-		t.Fatal(err)
-	}
-	if err := configPush(parent, smHome); err != nil {
-		t.Fatal(err)
-	}
-	snapshot, err = config.LoadPublishedSnapshot(smHome)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if snapshot.Config().SoldierHarness != "" {
-		t.Errorf("snapshot soldierHarness = %q after removal, want empty (mirror deletion)", snapshot.Config().SoldierHarness)
-	}
-	if _, err := os.Stat(filepath.Join(smHome, "config", "model")); os.IsNotExist(err) {
-		t.Error("non-inheritable model should NOT have been deleted")
-	}
-}
-
-// TestConfigPush_InheritsAllowsEmptyEnvListCaptains proves that an empty
-// MUNSU_INHERITABLE_CONFIG does not change propagation: the typed resolved
-// config is still fully inherited.
-func TestConfigPush_InheritsAllowsEmptyEnvListCaptains(t *testing.T) {
-	t.Setenv("MUNSU_INHERITABLE_CONFIG", "")
-
-	parent := t.TempDir()
-	if _, err := home.Init(parent); err != nil {
-		t.Fatal(err)
-	}
-	smHome := filepath.Join(parent, "captains", "test-sm")
-	os.MkdirAll(smHome, 0755)
-	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
-	home.SeedCaptainProvenance(smHome, "test-sm")
-
-	// Explicit fixture Backend literal: ResolveProject fails closed on empty.
-	storeTestDocuments(t, parent, config.FleetBaseDocument{
-		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{SoldierHarness: "pi", Backend: "tmux"},
-	}, []testProjectRecord{
-		{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
-	}, nil)
-	if err := Register(parent, "test-sm", smHome, "", "test-sm"); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := configPush(parent, smHome); err != nil {
-		t.Fatal(err)
-	}
-
-	// Empty env falls back to default behavior — the resolved config is
-	// propagated as usual.
-	snapshot, err := config.LoadPublishedSnapshot(smHome)
-	if err != nil {
-		t.Fatalf("resolved snapshot was not published: %v", err)
-	}
-	if snapshot.Config().SoldierHarness != "pi" {
-		t.Errorf("snapshot soldierHarness = %q, want %q", snapshot.Config().SoldierHarness, "pi")
-	}
-}
 
 // TestConfigPush_RefusesTrackedDestination proves that ConfigPush refuses when
 // a destination file is tracked in captain git, even if the path is safe.

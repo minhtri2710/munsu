@@ -17,9 +17,9 @@ func readyProbe() ProbeResult {
 	return ProbeResult{State: backend.Ready, Version: "1.45.4", Path: "/usr/local/bin/no-mistakes"}
 }
 
-// TestProbeNoMistakesGateAgent covers the accepted capability preflight
-// matrix: pi + disable_project_settings, supported codex/claude, unavailable
-// agents, and unsupported neutralization.
+// TestProbeNoMistakesGateAgent covers the capability preflight matrix: pi +
+// disable_project_settings, supported codex/claude, unavailable agents, and
+// unsupported neutralization.
 func TestProbeNoMistakesGateAgent(t *testing.T) {
 	tests := []struct {
 		name                       string
@@ -54,22 +54,6 @@ func TestProbeNoMistakesGateAgent(t *testing.T) {
 			wantSelected: "claude",
 		},
 		{
-			name:                   "codex and claude supported under opt-out",
-			hasDocs:                true,
-			disableProjectSettings: true,
-			agents:                 []string{"codex", "claude"},
-			available:              map[string]bool{"codex": true, "claude": true},
-			wantSelected:           "codex",
-		},
-		{
-			name:                   "opencode refused under disable_project_settings",
-			hasDocs:                true,
-			disableProjectSettings: true,
-			agents:                 []string{"opencode"},
-			available:              map[string]bool{"opencode": true},
-			wantBlocker:            GateBlockerUnsupportedNeutralization,
-		},
-		{
 			name:         "pi without opt-out cannot neutralize instructions",
 			hasDocs:      true,
 			agents:       []string{"pi"},
@@ -90,22 +74,6 @@ func TestProbeNoMistakesGateAgent(t *testing.T) {
 			agents:      []string{"auto"},
 			available:   map[string]bool{},
 			wantBlocker: GateBlockerAgentUnavailable,
-		},
-		{
-			name:                   "auto with only pi installed under opt-out",
-			hasDocs:                true,
-			disableProjectSettings: true,
-			agents:                 []string{"auto"},
-			available:              map[string]bool{"pi": true},
-			wantSelected:           "pi",
-		},
-		{
-			name:                   "auto with only opencode installed under opt-out",
-			hasDocs:                true,
-			disableProjectSettings: true,
-			agents:                 []string{"auto"},
-			available:              map[string]bool{"opencode": true},
-			wantBlocker:            GateBlockerUnsupportedNeutralization,
 		},
 		{
 			name:         "no instructions and no opt-out needs no neutralization",

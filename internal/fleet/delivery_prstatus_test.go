@@ -41,7 +41,8 @@ func TestFetchProviderSnapshotForProviderRefusesUnknownProvider(t *testing.T) {
 }
 
 func TestPRMergeStatus_JSONUnmarshal(t *testing.T) {
-	// Test the domain.PRMergeStatus can be unmarshaled from gh CLI output
+	// Test the domain.PRMergeStatus can be unmarshaled from gh CLI output,
+	// including the headRefOid and mergedSha field tags.
 	input := `{"state":"MERGED","merged":true,"headRefOid":"abc123def456","mergedSha":"abc123def456"}`
 	var status domain.PRMergeStatus
 	if err := json.Unmarshal([]byte(input), &status); err != nil {
@@ -110,33 +111,21 @@ func TestPRMergeStatus_Open(t *testing.T) {
 	}
 }
 
-func TestProviderSnapshotMergeableRequiresCompleteApprovalEvidence(t *testing.T) {
-	base := ProviderSnapshot{
-		State:   "OPEN",
-		Checks:  []domain.CheckRun{{Status: domain.CheckPassed}},
-		Reviews: []domain.Review{{State: domain.ReviewApproved}},
-	}
+func TestProviderSnapshotMergeableDelegatesToDomain(t *testing.T) {
 	cases := []struct {
-		name   string
-		mutate func(*ProviderSnapshot)
-		want   bool
+		name    string
+		state   string
+		checks  []domain.CheckRun
+		reviews []domain.Review
+		want    bool
 	}{
-		{name: "open passed approved", want: true},
-		{name: "closed", mutate: func(s *ProviderSnapshot) { s.State = "CLOSED" }},
-		{name: "merged", mutate: func(s *ProviderSnapshot) { s.State = "MERGED" }},
-		{name: "pending check", mutate: func(s *ProviderSnapshot) { s.Checks[0].Status = domain.CheckPending }},
-		{name: "failed check", mutate: func(s *ProviderSnapshot) { s.Checks[0].Status = domain.CheckFailed }},
-		{name: "no approval", mutate: func(s *ProviderSnapshot) { s.Reviews = nil }},
-		{name: "changes requested", mutate: func(s *ProviderSnapshot) { s.Reviews[0].State = domain.ReviewChangesRequested }},
+		{name: "lowercases provider state", state: "OPEN", checks: []domain.CheckRun{{Status: domain.CheckPassed}}, reviews: []domain.Review{{State: domain.ReviewApproved}}, want: true},
+		{name: "passes check evidence through", state: "open", checks: []domain.CheckRun{{Status: domain.CheckFailed}}, reviews: []domain.Review{{State: domain.ReviewApproved}}},
+		{name: "passes review evidence through", state: "open", checks: []domain.CheckRun{{Status: domain.CheckPassed}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			snapshot := base
-			snapshot.Checks = append([]domain.CheckRun(nil), base.Checks...)
-			snapshot.Reviews = append([]domain.Review(nil), base.Reviews...)
-			if tc.mutate != nil {
-				tc.mutate(&snapshot)
-			}
+			snapshot := ProviderSnapshot{State: tc.state, Checks: tc.checks, Reviews: tc.reviews}
 			if got := snapshot.Mergeable(); got != tc.want {
 				t.Fatalf("Mergeable() = %t, want %t for %+v", got, tc.want, snapshot)
 			}
@@ -403,19 +392,4 @@ func mergeabilityRunner(json, reviewers string) *fakeGlabRunner {
 		}
 		return []byte(json), nil
 	}}
-}
-
-func TestPRMergeStatus_FieldTags(t *testing.T) {
-	// Verify the JSON field tags match gh CLI output format
-	var status domain.PRMergeStatus
-	input := `{"state":"MERGED","merged":true,"headRefOid":"abc","mergedSha":"def"}`
-	if err := json.Unmarshal([]byte(input), &status); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if status.HeadSHA != "abc" {
-		t.Errorf("expected headRefOid to map to HeadSHA, got %s", status.HeadSHA)
-	}
-	if status.MergedSHA != "def" {
-		t.Errorf("expected mergedSha to map to MergedSHA, got %s", status.MergedSHA)
-	}
 }

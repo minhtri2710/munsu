@@ -7,25 +7,31 @@ import (
 )
 
 func TestPRCanMerge(t *testing.T) {
-	pr := domain.PR{
-		Number:     101,
-		Title:      "Feature PR",
-		Status:     domain.PROpen,
-		BaseBranch: "main",
-		HeadBranch: "mu/feature-101",
-		Checks: []domain.CheckRun{
-			{Name: "test", Status: domain.CheckPassed},
-			{Name: "lint", Status: domain.CheckPassed},
-		},
-		Reviews: []domain.Review{{State: domain.ReviewApproved, Body: "LGTM"}},
+	approved := []domain.Review{{State: domain.ReviewApproved, Body: "LGTM"}}
+	passed := []domain.CheckRun{{Name: "test", Status: domain.CheckPassed}}
+	cases := []struct {
+		name    string
+		status  domain.PRStatus
+		checks  []domain.CheckRun
+		reviews []domain.Review
+		want    bool
+	}{
+		{name: "open passed approved", status: domain.PROpen, checks: passed, reviews: approved, want: true},
+		{name: "closed", status: domain.PRClosed, checks: passed, reviews: approved},
+		{name: "merged", status: domain.PRMerged, checks: passed, reviews: approved},
+		{name: "pending check", status: domain.PROpen, checks: []domain.CheckRun{{Status: domain.CheckPending}}, reviews: approved},
+		{name: "failed check", status: domain.PROpen, checks: []domain.CheckRun{{Status: domain.CheckFailed}}, reviews: approved},
+		{name: "no approval", status: domain.PROpen, checks: passed},
+		{name: "changes requested", status: domain.PROpen, checks: passed, reviews: []domain.Review{{State: domain.ReviewChangesRequested}}},
+		{name: "approval vetoed by changes requested", status: domain.PROpen, checks: passed, reviews: []domain.Review{{State: domain.ReviewApproved}, {State: domain.ReviewChangesRequested}}},
 	}
-
-	if !pr.CanMerge() {
-		t.Error("expected PR.CanMerge() to be true for open PR with green checks and approval")
-	}
-	pr.Checks = append(pr.Checks, domain.CheckRun{Name: "security", Status: domain.CheckFailed})
-	if pr.CanMerge() {
-		t.Error("expected PR.CanMerge() to be false when a check fails")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pr := domain.PR{Number: 101, Title: "Feature PR", Status: tc.status, BaseBranch: "main", HeadBranch: "mu/feature-101", Checks: tc.checks, Reviews: tc.reviews}
+			if got := pr.CanMerge(); got != tc.want {
+				t.Fatalf("CanMerge() = %t, want %t", got, tc.want)
+			}
+		})
 	}
 }
 

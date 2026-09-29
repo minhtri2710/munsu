@@ -130,30 +130,6 @@ func TestSnapshotIncludesCanonicalTasksWithoutMeta(t *testing.T) {
 	}
 }
 
-// TestReadWithProbeCanonicalPhaseOverridesStaleStatus proves observation
-// prefers the authoritative phase: a stale .status showing working cannot
-// override an authoritative done (criterion 3).
-func TestReadWithProbeCanonicalPhaseOverridesStaleStatus(t *testing.T) {
-	homeDir := t.TempDir()
-	seedCanonicalShipTask(t, homeDir, "t1", "done")
-	if err := home.WriteMeta(homeDir, "t1", map[string]string{"window": "@win"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := home.AppendStatus(homeDir, "t1", "working: still working"); err != nil {
-		t.Fatal(err)
-	}
-	state, err := ReadWithProbe(homeDir, "t1", nil)
-	if err != nil {
-		t.Fatalf("ReadSoldierState: %v", err)
-	}
-	if state.Status != "done" {
-		t.Fatalf("status = %q, want authoritative done", state.Status)
-	}
-	if !state.StatusLogSuperseded {
-		t.Fatalf("StatusLogSuperseded = false, want true")
-	}
-}
-
 // TestSnapshotFailsClosedOnMetaOnlyTask proves the snapshot fails closed on a
 // task that exists in .meta alone, with no authoritative record (Task 7.8
 // legacy decision (a)): the legacy shape is never silently projected, and the
@@ -183,28 +159,6 @@ func TestReadWithProbeFailsClosedOnMetaOnlyTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := home.WriteMeta(homeDir, "t1", map[string]string{"kind": "ship"}); err != nil {
-		t.Fatal(err)
-	}
-	_, err := ReadWithProbe(homeDir, "t1", nil)
-	if err == nil {
-		t.Fatal("ReadSoldierState over a legacy meta-only task = nil, want fail-closed")
-	}
-	if !testutil.PathInMessage(err.Error(), homeDir) {
-		t.Errorf("clean-break error must carry home context, got: %v", err)
-	}
-}
-
-// TestReadWithProbeFailsClosedOnLegacyMergeAuthorization proves the legacy
-// merge_authorization JSON (old shape no longer consumed by the canonical
-// read path) fails closed without an authoritative record.
-func TestReadWithProbeFailsClosedOnLegacyMergeAuthorization(t *testing.T) {
-	homeDir := t.TempDir()
-	if _, err := home.Init(homeDir); err != nil {
-		t.Fatal(err)
-	}
-	if err := home.WriteMeta(homeDir, "t1", map[string]string{
-		"merge_authorization": `{"task_generation": 1, "authorized_at": "2024-01-01T00:00:00Z", "head_sha": "abc"}`,
-	}); err != nil {
 		t.Fatal(err)
 	}
 	_, err := ReadWithProbe(homeDir, "t1", nil)

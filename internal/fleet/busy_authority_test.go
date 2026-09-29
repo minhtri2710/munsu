@@ -43,6 +43,10 @@ func TestReadBusy_DerivesFromActivityAxis(t *testing.T) {
 		{"blocked live -> blocked", liveObs(ActivityBlocked), BusyReadingBlocked},
 		{"invalid activity -> unknown", liveObs(ActivityInvalid), BusyReadingUnknown},
 		{"out-of-range activity -> unknown", liveObs(Activity(200)), BusyReadingUnknown},
+		{"lifecycle unknown with unknown activity", EndpointStatus{Lifecycle: LifecycleUnknown, Freshness: FreshnessUnknown, Activity: ActivityUnknown, Source: SourceProbe}, BusyReadingUnknown},
+		{"stale derived unknown", EndpointStatus{Lifecycle: LifecycleUnknown, Freshness: FreshnessStale, Activity: ActivityUnknown, Source: SourceDerived}, BusyReadingUnknown},
+		{"invalid activity never idle or dead", liveObs(ActivityInvalid), BusyReadingUnknown},
+		{"out-of-range activity never idle or dead", liveObs(Activity(200)), BusyReadingUnknown},
 		{"authorized absent overrides busy", authorizedAbsent(ActivityBusy), BusyReadingDead},
 		{"authorized absent overrides idle", authorizedAbsent(ActivityIdle), BusyReadingDead},
 		{"authorized absent overrides blocked", authorizedAbsent(ActivityBlocked), BusyReadingDead},
@@ -58,6 +62,12 @@ func TestReadBusy_DerivesFromActivityAxis(t *testing.T) {
 		// neither dead nor a live-derived conclusion.
 		{"live-looking event busy -> held (hint only)", EndpointStatus{Lifecycle: LifecycleAlive, Responsiveness: Responsive, Freshness: FreshnessCurrent, Activity: ActivityBusy, Source: SourceEvent}, BusyReadingHeld},
 		{"live-looking event idle -> idle (hint only)", EndpointStatus{Lifecycle: LifecycleAlive, Responsiveness: Responsive, Freshness: FreshnessCurrent, Activity: ActivityIdle, Source: SourceEvent}, BusyReadingIdle},
+		{"event busy hint without liveness", EndpointStatus{Lifecycle: LifecycleUnknown, Freshness: FreshnessUnknown, Activity: ActivityBusy, Source: SourceEvent}, BusyReadingHeld},
+		{"event idle hint without liveness", EndpointStatus{Lifecycle: LifecycleUnknown, Freshness: FreshnessUnknown, Activity: ActivityIdle, Source: SourceEvent}, BusyReadingIdle},
+		{"event blocked hint", EndpointStatus{Lifecycle: LifecycleUnknown, Freshness: FreshnessUnknown, Activity: ActivityBlocked, Source: SourceEvent}, BusyReadingBlocked},
+		{"event unknown hint", EndpointStatus{Lifecycle: LifecycleUnknown, Freshness: FreshnessUnknown, Activity: ActivityUnknown, Source: SourceEvent}, BusyReadingUnknown},
+		{"event claims dead and current but stays hint", EndpointStatus{Lifecycle: LifecycleDead, Responsiveness: Responsive, Freshness: FreshnessCurrent, Activity: ActivityBusy, Source: SourceEvent}, BusyReadingHeld},
+		{"event claims dead and current with unknown activity", EndpointStatus{Lifecycle: LifecycleDead, Responsiveness: Responsive, Freshness: FreshnessCurrent, Activity: ActivityUnknown, Source: SourceEvent}, BusyReadingUnknown},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -66,42 +76,6 @@ func TestReadBusy_DerivesFromActivityAxis(t *testing.T) {
 				t.Fatalf("ReadBusy(%s) = %s, want %s", tc.obs, got, tc.want)
 			}
 		})
-	}
-}
-
-// TestReadBusy_UnknownIsNeverIdleOrDead pins P1a: unknown != idle != dead.
-func TestReadBusy_UnknownIsNeverIdleOrDead(t *testing.T) {
-	for _, obs := range []EndpointStatus{
-		liveObs(ActivityUnknown),
-		liveObs(ActivityInvalid),
-		{Lifecycle: LifecycleUnknown, Freshness: FreshnessUnknown, Activity: ActivityUnknown, Source: SourceProbe},
-		{Lifecycle: LifecycleUnknown, Freshness: FreshnessStale, Activity: ActivityUnknown, Source: SourceDerived},
-	} {
-		got := ReadBusy(obs)
-		if got == BusyReadingIdle {
-			t.Fatalf("ReadBusy(%s) folded unknown into idle", obs)
-		}
-		if got == BusyReadingDead {
-			t.Fatalf("ReadBusy(%s) folded unknown into dead", obs)
-		}
-		if got != BusyReadingUnknown {
-			t.Fatalf("ReadBusy(%s) = %s, want unknown", obs, got)
-		}
-	}
-}
-
-// TestReadBusy_BlockedIsDistinctAttentionState pins P1a: blocked is never
-// folded into idle or busy and is not a lifecycle conclusion.
-func TestReadBusy_BlockedIsDistinctAttentionState(t *testing.T) {
-	got := ReadBusy(liveObs(ActivityBlocked))
-	if got == BusyReadingIdle || got == BusyReadingHeld {
-		t.Fatalf("blocked folded into %s", got)
-	}
-	if got == BusyReadingDead || got == BusyReadingUnknown {
-		t.Fatalf("blocked read as lifecycle/unknown conclusion %s", got)
-	}
-	if got != BusyReadingBlocked {
-		t.Fatalf("ReadBusy(blocked) = %s, want blocked", got)
 	}
 }
 
@@ -188,38 +162,6 @@ func TestReadBusy_ConsumesFleetAuthorization(t *testing.T) {
 	}
 	if got := ReadBusy(live); got != BusyReadingIdle {
 		t.Fatalf("authorized live idle = %s, want idle", got)
-	}
-}
-
-// TestReadBusy_EventSourceIsHintOnly pins P1a: a SourceEvent observation
-// contributes a busy/idle hint but never a Live()/Absent()-derived answer,
-// even when its axes claim dead+current.
-func TestReadBusy_EventSourceIsHintOnly(t *testing.T) {
-	cases := []struct {
-		name string
-		obs  EndpointStatus
-		want BusyReading
-	}{
-		{"event busy hint", EndpointStatus{Lifecycle: LifecycleUnknown, Freshness: FreshnessUnknown, Activity: ActivityBusy, Source: SourceEvent}, BusyReadingHeld},
-		{"event idle hint", EndpointStatus{Lifecycle: LifecycleUnknown, Freshness: FreshnessUnknown, Activity: ActivityIdle, Source: SourceEvent}, BusyReadingIdle},
-		{"event blocked hint", EndpointStatus{Lifecycle: LifecycleUnknown, Freshness: FreshnessUnknown, Activity: ActivityBlocked, Source: SourceEvent}, BusyReadingBlocked},
-		{"event unknown hint", EndpointStatus{Lifecycle: LifecycleUnknown, Freshness: FreshnessUnknown, Activity: ActivityUnknown, Source: SourceEvent}, BusyReadingUnknown},
-		{"event claiming dead+current stays a busy hint", EndpointStatus{Lifecycle: LifecycleDead, Responsiveness: Responsive, Freshness: FreshnessCurrent, Activity: ActivityBusy, Source: SourceEvent}, BusyReadingHeld},
-		{"event claiming dead+current with unknown activity", EndpointStatus{Lifecycle: LifecycleDead, Responsiveness: Responsive, Freshness: FreshnessCurrent, Activity: ActivityUnknown, Source: SourceEvent}, BusyReadingUnknown},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if tc.obs.Absent() || tc.obs.Live() {
-				t.Fatalf("event fixture must never be Live()/Absent(): %s", tc.obs)
-			}
-			got := ReadBusy(tc.obs)
-			if got == BusyReadingDead {
-				t.Fatalf("ReadBusy(%s) concluded dead from an event source", tc.obs)
-			}
-			if got != tc.want {
-				t.Fatalf("ReadBusy(%s) = %s, want %s", tc.obs, got, tc.want)
-			}
-		})
 	}
 }
 
