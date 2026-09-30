@@ -107,9 +107,14 @@ empty-proof refusals (section 2) ship under G297: grantor the Human, channel
 supervisor-relay:typed, quote "munsu: đồng ý apply hết".
 
 `delivery pr-merge` takes `--grantor`, `--channel` and `--quote` (required) and carries them
-into `DeliverRequest.Words`, the authorization and the gate record. `delivery record-verdict`
-records the reviewer's verdict through `Canonical.RecordReviewVerdict`; it refuses a reviewer
-that is the task's own endpoint (its incarnation or its handle).
+into `DeliverRequest.Words`, the authorization and the gate record. `delivery record-verdict
+--reviewer-task <id>` records the verdict file a review task wrote through
+`Canonical.RecordReviewVerdict`, the same record step the supervision watcher runs; it takes
+no reviewer, head or outcome from the caller, and a review task that is the reviewed task
+cannot approve (ADR-0025). The F1 residual applies: a soldier can write canonical documents
+under `state/`, so the reviewer barrier is the reviewer role's missing home root plus the
+OS fence, which is macOS only and absent on Linux and before n8w wires it; the aggregate
+checks are consistency checks, not authentication.
 
 ## Consequences
 

@@ -329,19 +329,23 @@ type CanonicalRecordLaunchRequest struct {
 	Precondition  domain.Precondition
 	LaunchID      string
 	CommandDigest string
-	Reason        string
+	// ReviewTree is the reviewed worktree observed before submit; required for a
+	// review task and refused for any other kind.
+	ReviewTree *domain.TreeState
+	Reason     string
 }
 
 func (r CanonicalRecordLaunchRequest) DigestBytes() ([]byte, error) {
 	return json.Marshal(struct {
-		HomeID        string `json:"home_id"`
-		TaskID        string `json:"task_id"`
-		Generation    uint64 `json:"generation"`
-		Revision      uint64 `json:"revision"`
-		LaunchID      string `json:"launch_id"`
-		CommandDigest string `json:"command_digest"`
-		Reason        string `json:"reason,omitempty"`
-	}{r.HomeID.Value(), r.TaskID.Value(), r.Precondition.Generation, r.Precondition.Revision, r.LaunchID, r.CommandDigest, r.Reason})
+		HomeID        string            `json:"home_id"`
+		TaskID        string            `json:"task_id"`
+		Generation    uint64            `json:"generation"`
+		Revision      uint64            `json:"revision"`
+		LaunchID      string            `json:"launch_id"`
+		CommandDigest string            `json:"command_digest"`
+		ReviewTree    *domain.TreeState `json:"review_tree,omitempty"`
+		Reason        string            `json:"reason,omitempty"`
+	}{r.HomeID.Value(), r.TaskID.Value(), r.Precondition.Generation, r.Precondition.Revision, r.LaunchID, r.CommandDigest, r.ReviewTree, r.Reason})
 }
 
 // validateRecordLaunchRequest checks the typed request shape: a valid task
@@ -359,6 +363,9 @@ func validateRecordLaunchRequest(req CanonicalRecordLaunchRequest) error {
 	}
 	if !domain.IsSHA256(req.CommandDigest) {
 		return validationError("launch evidence command digest must be a 64-hex sha256 digest")
+	}
+	if req.ReviewTree != nil && (strings.TrimSpace(req.ReviewTree.Head) == "" || strings.TrimSpace(req.ReviewTree.Porcelain) == "") {
+		return validationError("launch evidence review tree requires a head and a porcelain digest")
 	}
 	return nil
 }
@@ -392,8 +399,11 @@ func (c *Canonical) RecordLaunch(op domain.Operation, req CanonicalRecordLaunchR
 		if req.LaunchID != cur.Launch.LaunchID {
 			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s launch evidence identity %q does not match launch intent identity %q", cur.TaskID, cur.Generation, req.LaunchID, cur.Launch.LaunchID)
 		}
+		if isReview := cur.Definition.Kind == KindReview; isReview != (req.ReviewTree != nil) {
+			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s is a %s task; launch evidence carries the review tree exactly for a review task", cur.TaskID, cur.Generation, cur.Definition.Kind)
+		}
 		if cur.LaunchEvidence != nil {
-			if cur.LaunchEvidence.LaunchID == req.LaunchID && cur.LaunchEvidence.CommandDigest == req.CommandDigest {
+			if cur.LaunchEvidence.LaunchID == req.LaunchID && cur.LaunchEvidence.CommandDigest == req.CommandDigest && reviewTreeEqual(cur.LaunchEvidence.ReviewTree, req.ReviewTree) {
 				return cur.clone(), nil
 			}
 			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s already records different launch evidence", cur.TaskID, cur.Generation)
@@ -404,8 +414,16 @@ func (c *Canonical) RecordLaunch(op domain.Operation, req CanonicalRecordLaunchR
 			LaunchID:      req.LaunchID,
 			CommandDigest: req.CommandDigest,
 			SubmittedAt:   c.now().UnixNano(),
+			ReviewTree:    req.ReviewTree,
 		}
 		next.Revision++
 		return next, nil
 	})
+}
+
+func reviewTreeEqual(a, b *domain.TreeState) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }

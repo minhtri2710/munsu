@@ -104,7 +104,7 @@ func (h testWatcherHooks) Activate(home string) {
 var activeTestHooks WatcherHooks = NoopWatcherHooks{}
 
 func testRunCycle(home string) (bool, error) {
-	return RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, activeTestHooks, NoopRetirementPort{}, acceptingCheckValidationPort{}, testTaskStatePort{})
+	return RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, activeTestHooks, NoopRetirementPort{}, nil, acceptingCheckValidationPort{}, testTaskStatePort{})
 }
 
 func TestRunCycle_CheckValidationPortAllowsCheckWake(t *testing.T) {
@@ -121,7 +121,7 @@ func TestRunCycle_CheckValidationPortAllowsCheckWake(t *testing.T) {
 	retirement := &testRetirementPort{}
 	validation := &testCheckValidationPort{}
 	resetRecovery()
-	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, retirement, validation, testTaskStatePort{}); err != nil {
+	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, retirement, nil, validation, testTaskStatePort{}); err != nil {
 		t.Fatalf("run cycle: %v", err)
 	}
 
@@ -151,7 +151,7 @@ func TestRunCycle_CheckValidationPortRefusesCheck(t *testing.T) {
 	retirement := &testRetirementPort{}
 	validation := &testCheckValidationPort{validate: func(string) error { return fmt.Errorf("refused") }}
 	resetRecovery()
-	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, retirement, validation, testTaskStatePort{}); err != nil {
+	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, retirement, nil, validation, testTaskStatePort{}); err != nil {
 		t.Fatalf("run cycle: %v", err)
 	}
 
@@ -201,9 +201,9 @@ func TestRunCycle_ClassifiedRetirementValidationRefusalReportsAndSuppressesWake(
 			resetRecovery()
 			// Cycle 1 resolves and announces; cycle 2 consumes the wake, runs
 			// the action and reports its refusal.
-			_, cycleErr := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, retirement, validation, testTaskStatePort{})
+			_, cycleErr := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, retirement, nil, validation, testTaskStatePort{})
 			if cycleErr == nil {
-				_, cycleErr = RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, retirement, validation, testTaskStatePort{})
+				_, cycleErr = RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, retirement, nil, validation, testTaskStatePort{})
 			}
 			_ = stderrW.Close()
 			os.Stderr = originalStderr
@@ -256,7 +256,7 @@ func TestRunCycle_RetirementRefusalStillEmitsCheckWake(t *testing.T) {
 	retirement := &testRetirementPort{observe: func(string, string) (bool, []byte, error) { return false, nil, nil }}
 	validation := &testCheckValidationPort{}
 	resetRecovery()
-	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, retirement, validation, testTaskStatePort{}); err != nil {
+	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, retirement, nil, validation, testTaskStatePort{}); err != nil {
 		t.Fatalf("run cycle: %v", err)
 	}
 	records, err := DrainWakes(home)
@@ -290,7 +290,7 @@ func TestRunCycle_RetirementIsAttemptedAfterOneValidation(t *testing.T) {
 	retirement := &testRetirementPort{}
 	validation := &testCheckValidationPort{}
 	resetRecovery()
-	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, retirement, validation, testTaskStatePort{}); err != nil {
+	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, retirement, nil, validation, testTaskStatePort{}); err != nil {
 		t.Fatalf("cycle 1: %v", err)
 	}
 	if len(retirement.observed) != 1 || retirement.observed[0] != "task-1" {
@@ -304,7 +304,7 @@ func TestRunCycle_RetirementIsAttemptedAfterOneValidation(t *testing.T) {
 		t.Fatalf("wake records after cycle 1 = %#v, want one process-event wake and no check wake", queued)
 	}
 
-	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, retirement, validation, testTaskStatePort{}); err != nil {
+	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, retirement, nil, validation, testTaskStatePort{}); err != nil {
 		t.Fatalf("cycle 2: %v", err)
 	}
 	records, err := DrainWakes(home)
@@ -346,7 +346,7 @@ func runCycleOverCheck(t *testing.T, home, checkPath string, validate func(strin
 	t.Helper()
 	validation := &testCheckValidationPort{validate: validate}
 	resetRecovery()
-	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, &testRetirementPort{}, validation, testTaskStatePort{}); err != nil {
+	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, &testRetirementPort{}, nil, validation, testTaskStatePort{}); err != nil {
 		t.Fatalf("run cycle: %v", err)
 	}
 	if len(validation.validated) != 1 || validation.validated[0] != checkPath {
@@ -459,7 +459,7 @@ func TestRunCycle_MissingCheckValidationPortFailsTheCycle(t *testing.T) {
 	}
 
 	resetRecovery()
-	_, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, &testRetirementPort{}, nil, testTaskStatePort{})
+	_, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, &testRetirementPort{}, nil, nil, testTaskStatePort{})
 	if err == nil {
 		t.Fatal("expected the cycle to fail without a check validation capability")
 	}

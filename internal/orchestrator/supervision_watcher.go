@@ -126,7 +126,7 @@ type processEventWakeKey struct {
 // logged and dropped and never re-queued -- a prefix nothing owns would
 // re-queue forever -- and its record stays resolved and unacked for restart
 // recovery. Merged-poll outcomes are returned per task for the plugin loop.
-func consumeProcessEventWakes(homeDir string, retirement RetirementPort) (map[string]error, error) {
+func consumeProcessEventWakes(homeDir string, retirement RetirementPort, reviews ReviewVerdictPort) (map[string]error, error) {
 	wakes, err := home.DrainWakesOfKind(homeDir, home.ProcessEventWakeKind)
 	if err != nil {
 		return nil, err
@@ -167,6 +167,8 @@ func consumeProcessEventWakes(homeDir string, retirement RetirementPort) (map[st
 		switch {
 		case strings.HasPrefix(announced.EventID, mergedPollEventPrefix):
 			retireMergedPollWake(homeDir, retirement, wake, announced, rec, outcomes)
+		case strings.HasPrefix(announced.EventID, reviewVerdictEventPrefix):
+			recordReviewVerdictWake(homeDir, reviews, announced, rec)
 		default:
 			fmt.Fprintf(os.Stderr, "process-event wake %q dropped: no owner for this event prefix\n", announced.EventID)
 		}
@@ -227,8 +229,8 @@ type CheckValidationPort interface {
 // ticker as the cadence authority (the watcher is never silent). A nil observation
 // event port keeps the watcher on pure polling; a nil check-validation port is refused as a
 // fatal cycle capability error.
-func RunWithProbeSenderAndEvents(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, checks CheckValidationPort, states TaskStatePort, events ObservationEventPort) (*WakeReason, error) {
-	return run(homeDir, time.NewTicker, signalChannel(), probe, sender, hooks, retirement, checks, states, events)
+func RunWithProbeSenderAndEvents(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, reviews ReviewVerdictPort, checks CheckValidationPort, states TaskStatePort, events ObservationEventPort) (*WakeReason, error) {
+	return run(homeDir, time.NewTicker, signalChannel(), probe, sender, hooks, retirement, reviews, checks, states, events)
 }
 
 func signalChannel() <-chan os.Signal {
@@ -237,7 +239,7 @@ func signalChannel() <-chan os.Signal {
 	return sigCh
 }
 
-func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-chan os.Signal, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, checks CheckValidationPort, states TaskStatePort, events ObservationEventPort) (*WakeReason, error) {
+func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-chan os.Signal, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, reviews ReviewVerdictPort, checks CheckValidationPort, states TaskStatePort, events ObservationEventPort) (*WakeReason, error) {
 	acquired, err := AcquireWatch(homeDir)
 	if err != nil {
 		return nil, fmt.Errorf("watcher lock: %w", err)
@@ -289,7 +291,7 @@ func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-cha
 				return nil, fmt.Errorf("writing watcher beat: %w", err)
 			}
 			obs := newCycleObservation()
-			if _, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement, checks, states, obs); err != nil {
+			if _, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement, reviews, checks, states, obs); err != nil {
 				return nil, err
 			}
 			logCycleObservation(obs)
@@ -310,7 +312,7 @@ func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-cha
 					return nil, fmt.Errorf("writing watcher beat: %w", err)
 				}
 				obs := newCycleObservation()
-				if _, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement, checks, states, obs); err != nil {
+				if _, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement, reviews, checks, states, obs); err != nil {
 					return nil, err
 				}
 				logCycleObservation(obs)
@@ -626,9 +628,9 @@ var recoveryDone sync.Map
 // RunCycle performs one durable scan/enqueue cycle with condition dedupe.
 // It is the shared path used by the persistent daemon and `munsu watch run`;
 // both paths capture and log the cycle's internal observations.
-func RunCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, checks CheckValidationPort, states TaskStatePort) (bool, error) {
+func RunCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, reviews ReviewVerdictPort, checks CheckValidationPort, states TaskStatePort) (bool, error) {
 	obs := newCycleObservation()
-	emitted, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement, checks, states, obs)
+	emitted, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement, reviews, checks, states, obs)
 	if err == nil {
 		logCycleObservation(obs)
 	}
@@ -686,7 +688,7 @@ func staleAge(id string, now time.Time) time.Duration {
 	return now.Sub(first)
 }
 
-func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, checks CheckValidationPort, states TaskStatePort, obs *cycleObservation) (bool, error) {
+func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, reviews ReviewVerdictPort, checks CheckValidationPort, states TaskStatePort, obs *cycleObservation) (bool, error) {
 	// A watcher with no way to validate a check artifact cannot decide anything
 	// about one, and skipping every check would make that look like "no checks
 	// are ready". Fail the cycle instead: the capability is required, and its
@@ -767,7 +769,8 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 
 	// Consume this cycle's process-event wakes before discovery, so the plugin
 	// loop sees this cycle's action outcomes and a retired poll is not found.
-	outcomes, err := consumeProcessEventWakes(homeDir, retirement)
+	registerReviewVerdictEvents(homeDir, reviews)
+	outcomes, err := consumeProcessEventWakes(homeDir, retirement, reviews)
 	if err != nil {
 		return emitted, err
 	}

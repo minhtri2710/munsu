@@ -509,7 +509,7 @@ func seedWorktreeEvidenceAtHead(t *testing.T, auth *taskauthority.Canonical, tas
 			Path:               path,
 			GitDir:             filepath.Join(path, ".git"),
 			CommonDir:          filepath.Join(filepath.Dir(path), ".git"),
-			Head:               head,
+			BaseHead:           head,
 			LeaseID:            lease,
 			FenceToken:         fence,
 			BoundAtUnix:        time.Now().Unix(),

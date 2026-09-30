@@ -462,7 +462,7 @@ func safetyWorktreeBinding(t *testing.T, primary, worktree, leaseID, fenceToken 
 		Path:               absWorktree,
 		GitDir:             canonicalSafetyPath(t, resolveGitPathForSafety(worktree, gitDir)),
 		CommonDir:          canonicalSafetyPath(t, resolveGitPathForSafety(worktree, commonDir)),
-		Head:               head,
+		BaseHead:           head,
 		LeaseID:            leaseID,
 		FenceToken:         fenceToken,
 		BoundAtUnix:        time.Now().Unix(),
@@ -491,7 +491,7 @@ func setSafetyWorktreeHead(t *testing.T, homeDir, taskID, head string) {
 		t.Fatalf("task %s has no worktree binding", taskID)
 	}
 	w := *doc.Aggregate.Worktree
-	w.Head = head
+	w.BaseHead = head
 	doc.Aggregate.Worktree = &w
 	out, err := json.Marshal(doc)
 	if err != nil {

@@ -40,7 +40,7 @@ func deliveryIdentity() domain.DeliveryIdentity {
 // identity head, and deliveryEndpointBinding is the matching endpoint lease.
 func deliveryWorktreeBinding() WorktreeBinding {
 	b := worktreeBinding()
-	b.Head = deliveryHead
+	b.BaseHead = deliveryHead
 	return b
 }
 
@@ -656,14 +656,14 @@ func TestCanonicalDeliveryCurrencyInvalidation(t *testing.T) {
 	t.Run("identity-head", func(t *testing.T) {
 		c, taskID := setup(t)
 		rewriteTaskDocForTest(t, c, taskID, func(agg Aggregate) Aggregate {
-			agg.Worktree.Head = "9999888877776666555544443333222211110000"
+			agg.Worktree.BaseHead = "9999888877776666555544443333222211110000"
 			return agg
 		})
 		cur, err := c.DeliveryCurrency(mustTaskID(t, taskID))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if cur.Valid || !hasCurrencyReason(cur, DeliveryCurrencyIdentityHead) {
+		if cur.Valid || !hasCurrencyReason(cur, DeliveryCurrencyReason("identity-head")) {
 			t.Fatalf("identity/head currency = %+v, want identity-head", cur)
 		}
 	})

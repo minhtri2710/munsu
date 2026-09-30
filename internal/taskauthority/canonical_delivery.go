@@ -337,7 +337,6 @@ const (
 	DeliveryCurrencyMatchingHold    DeliveryCurrencyReason = "matching-hold"
 	DeliveryCurrencyReservation     DeliveryCurrencyReason = "transfer-reserved"
 	DeliveryCurrencyRevoked         DeliveryCurrencyReason = "revoked"
-	DeliveryCurrencyIdentityHead    DeliveryCurrencyReason = "identity-head"
 	DeliveryCurrencyNoAuthorization DeliveryCurrencyReason = "no-authorization"
 )
 
@@ -465,7 +464,7 @@ func validateDeliveryAuthorization(a DeliveryAuthorization) error {
 	if !safeSHAValue(a.Identity.HeadSHA) {
 		return validationError("delivery authorization identity head SHA must be a safe non-empty value")
 	}
-	if err := a.Verdict.Approves(a.Identity.HeadSHA, a.Verdict.Author); err != nil {
+	if err := a.Verdict.Approves(a.Identity.HeadSHA, a.Verdict.Author, a.TaskID); err != nil {
 		return validationError("delivery authorization verdict: %v", err)
 	}
 	if err := a.Words.Validate(); err != nil {
@@ -806,7 +805,6 @@ func deliveryBindingDigest(endpoint EndpointBinding, worktree WorktreeBinding) s
 			Path               string `json:"path"`
 			GitDir             string `json:"git_dir"`
 			CommonDir          string `json:"common_dir"`
-			Head               string `json:"head"`
 			LeaseID            string `json:"lease_id"`
 			FenceToken         string `json:"fence_token"`
 		} `json:"worktree"`
@@ -822,7 +820,6 @@ func deliveryBindingDigest(endpoint EndpointBinding, worktree WorktreeBinding) s
 	payload.Worktree.Path = worktree.Path
 	payload.Worktree.GitDir = worktree.GitDir
 	payload.Worktree.CommonDir = worktree.CommonDir
-	payload.Worktree.Head = worktree.Head
 	payload.Worktree.LeaseID = worktree.LeaseID
 	payload.Worktree.FenceToken = worktree.FenceToken
 	data, err := json.Marshal(payload)
@@ -894,9 +891,10 @@ func sha256Hex(data []byte) string {
 // bounded index pointer. Issuance requires a current working task with owner
 // and the exact endpoint/worktree bindings, no matching active delivery hold,
 // no active transfer reservation, no terminal committed outcome, no
-// already-active authorization, a valid typed identity whose head matches the
-// bound worktree head, a PASS review verdict bound to exactly that head from a
-// reviewer that is not the bound authoring soldier instance (ADR-0025), the
+// already-active authorization, a valid typed identity, a PASS review verdict
+// bound to exactly the identity head (ReviewVerdict.Approves) from a review task
+// that is not the reviewed task and a reviewer instance that is not the bound
+// authoring soldier instance (ADR-0025), the
 // Human's words, and valid preconditions; it fails closed otherwise.
 // Repeating the same Operation ID with the same digest replays the durable
 // prior record; reusing the Operation ID with a different intent conflicts.
@@ -918,13 +916,10 @@ func (c *Canonical) AuthorizeDelivery(op domain.Operation, req CanonicalDelivery
 		if cur.Worktree == nil || cur.Endpoint == nil {
 			return Aggregate{}, DeliveryIndex{}, nil, preconditionError("delivery authorization requires the bound worktree and endpoint of task %s", cur.TaskID)
 		}
-		if cur.Worktree.Head != req.Identity.HeadSHA {
-			return Aggregate{}, DeliveryIndex{}, nil, preconditionError("delivery authorization identity head %q does not match the bound worktree head %q", req.Identity.HeadSHA, cur.Worktree.Head)
-		}
 		if cur.ReviewVerdict == nil {
 			return Aggregate{}, DeliveryIndex{}, nil, preconditionError("delivery authorization requires a review verdict for head %q of task %s", req.Identity.HeadSHA, cur.TaskID)
 		}
-		if err := cur.ReviewVerdict.Verdict.Approves(req.Identity.HeadSHA, cur.Endpoint.Incarnation); err != nil {
+		if err := cur.ReviewVerdict.Verdict.Approves(req.Identity.HeadSHA, cur.Endpoint.Incarnation, cur.TaskID); err != nil {
 			return Aggregate{}, DeliveryIndex{}, nil, preconditionError("delivery authorization refused: %v", err)
 		}
 		holds, err := c.listHolds()
@@ -1073,9 +1068,9 @@ func (c *Canonical) RevokeDeliveryAuthorization(op domain.Operation, req Canonic
 // to the exact journal operation and the current authorization identity, and
 // updates the bounded index outcome pointer and terminal marker. The mutation
 // is exact-generation/revision fenced and verifies the authorization identity
-// and currency prerequisites appropriate at commit (the bound worktree head
-// may have legitimately moved during execution, so the identity-head check is
-// not part of the commit prerequisite). Same Operation ID + digest replays;
+// and currency prerequisites appropriate at commit (no head is compared at
+// commit: the head was fixed by the authorization's verdict and identity, and
+// Fleet observed git HEAD before execution). Same Operation ID + digest replays;
 // a distinct incompatible outcome conflicts; prior outcome evidence is
 // preserved.
 func (c *Canonical) CommitDeliveryOutcome(op domain.Operation, req CanonicalDeliveryOutcomeRequest) (DeliveryOutcomeResult, error) {
@@ -1225,9 +1220,6 @@ func (c *Canonical) authorizationCurrencyReasons(agg Aggregate, auth DeliveryAut
 	}
 	if check == deliveryCurrencyRead && deliveryHoldsDigest(holds, agg) != auth.HoldsDigest {
 		reasons = append(reasons, DeliveryCurrencyHoldsDigest)
-	}
-	if check == deliveryCurrencyRead && agg.Worktree != nil && agg.Worktree.Head != auth.Identity.HeadSHA {
-		reasons = append(reasons, DeliveryCurrencyIdentityHead)
 	}
 	return reasons
 }

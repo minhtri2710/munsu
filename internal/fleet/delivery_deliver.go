@@ -35,9 +35,10 @@ type DeliverRequest struct {
 	// execution path; any other kind fails closed before any journal intent.
 	Kind taskauthority.DeliveryAuthorizationKind
 	// Identity is the exact typed delivery identity (provider, owner, repo,
-	// number, base/head ref, head SHA, URL) the delivery executes under. Its
-	// head must equal the bound worktree head (the canonical authorization
-	// gates this).
+	// number, base/head ref, head SHA, URL) the delivery executes under. The
+	// approving verdict's head must equal its head (ReviewVerdict.Approves,
+	// enforced at authorization), and Fleet refuses delivery when git HEAD at
+	// the bound worktree differs from it.
 	Identity domain.DeliveryIdentity
 	// Method is the provider merge method: squash (default), merge, or
 	// rebase.
@@ -303,11 +304,13 @@ func validateDeliverRequest(req DeliverRequest, method string) error {
 
 // prevalidateDeliveryTask mirrors the canonical authorization gates so a
 // journal intent is never written for a task that cannot be authorized:
-// current working task with owner and the exact bindings, the identity head
-// matching the bound worktree head, no matching active delivery hold, no
-// terminal committed outcome, and no already-active (unrevoked) delivery
-// authorization. The canonical issuance re-fences every rule inside its
-// transaction; this pass only avoids writing intent that must abort.
+// current working task with owner and the exact bindings, no matching active
+// delivery hold, no terminal committed outcome, and no already-active
+// (unrevoked) delivery authorization. The canonical issuance re-fences each of
+// those inside its transaction; this pass only avoids writing intent that must
+// abort. The head refusal is Fleet-only and has no canonical twin: the identity
+// head must equal the head git reads at the bound worktree now. The verdict
+// head equals the identity head at authorization (ReviewVerdict.Approves).
 func prevalidateDeliveryTask(c *taskauthority.Canonical, agg taskauthority.Aggregate, req DeliverRequest) error {
 	if !agg.Current {
 		return fmt.Errorf("task %s is not the current generation", agg.TaskID)
@@ -321,8 +324,12 @@ func prevalidateDeliveryTask(c *taskauthority.Canonical, agg taskauthority.Aggre
 	if agg.Worktree == nil || agg.Endpoint == nil {
 		return fmt.Errorf("delivery requires the bound worktree and endpoint of task %s", agg.TaskID)
 	}
-	if agg.Worktree.Head != req.Identity.HeadSHA {
-		return fmt.Errorf("delivery identity head %q does not match the bound worktree head %q", req.Identity.HeadSHA, agg.Worktree.Head)
+	observed, err := observeTree(agg.Worktree.Path)
+	if err != nil {
+		return fmt.Errorf("delivery of task %s: %w", agg.TaskID, err)
+	}
+	if observed.Head != req.Identity.HeadSHA {
+		return fmt.Errorf("delivery identity head %q does not match the head %q the bound worktree holds now", req.Identity.HeadSHA, observed.Head)
 	}
 	holds, err := c.ListHolds()
 	if err != nil {

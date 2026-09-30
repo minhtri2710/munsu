@@ -26,13 +26,16 @@ answer, leaving no record of who gave the words or where.
 ### 1. A review verdict is a domain record bound to one head
 
 `domain.ReviewVerdict` records the outcome (`pass` or `fail`), the reviewed head SHA, the
-reviewed range base, the reviewer, the authoring soldier instance the reviewer must
-differ from, and the review-custody observations: the checkout's HEAD and a digest of its
-porcelain status before and after the review (`domain.TreeState`).
-`ReviewVerdict.Validate` refuses a verdict whose base equals its head, whose reviewer is
-the author, whose recorded HEAD is not the reviewed head, or whose tree moved during the
-review. `ReviewVerdict.Approves` is the one acceptance rule: valid, PASS, bound to
-exactly the head being delivered, and naming exactly the current authoring instance.
+reviewed range base, the reviewer (`ReviewerTask`, `ReviewerGeneration` and
+`ReviewerIncarnation`: the munsu review task generation and its endpoint instance), the
+authoring soldier instance the reviewer must differ from, and the review-custody
+observations: the checkout's HEAD and a digest of its porcelain status before and after
+the review (`domain.TreeState`). `ReviewVerdict.Validate` refuses a verdict whose base
+equals its head, whose reviewer task, generation or instance is missing, whose reviewer
+instance is the author, whose recorded HEAD is not the reviewed head, or whose tree moved
+during the review. `ReviewVerdict.Approves` is the one acceptance rule: valid, PASS, bound
+to exactly the head being delivered, naming exactly the current authoring instance, and
+from a review task other than the reviewed task.
 
 The authoring soldier instance is the bound endpoint's incarnation, the identity Fleet
 mints for one endpoint binding. A new soldier instance for the same task is a different
@@ -41,8 +44,15 @@ author; a reviewer must differ from whichever instance authored the head.
 ### 2. The task records at most one verdict, for its current head
 
 `Canonical.RecordReviewVerdict` is a taskauthority named operation. It requires a working
-task with bound worktree and endpoint, a verdict naming exactly the bound worktree head,
-and an author equal to the bound endpoint's incarnation. It stores one
+task with bound worktree and endpoint and an author equal to the bound endpoint's
+incarnation. The head is not compared with a stored head: the store holds none that
+moves. The verdict's reviewer must be the current generation of a review task that reads
+this task at exactly the verdict head, running as the recorded reviewer instance, and the
+verdict's `Before` tree must be the tree recorded on that review generation's launch
+evidence (`LaunchEvidence.ReviewTree`, observed by Fleet before the reviewer was
+submitted). A review generation with no recorded tree refuses. Fleet observes the reviewed
+worktree's HEAD and status at record time as `After`, and `Validate` requires both
+observations to equal the verdict head. It stores one
 `ReviewVerdictRecord` on the task aggregate and advances the revision. A later verdict
 replaces the earlier one. A repair head therefore has no verdict until it is reviewed on
 its own: no verdict carries over to another head, because the record names one head and
@@ -57,10 +67,17 @@ tree-moved verdict refuses; there is no fallback. The issued `DeliveryAuthorizat
 embeds the verdict it relied on, so the evidence is immutable, and
 `validateDeliveryAuthorization` re-checks it on every read.
 
-Reviewer and author identities are claims made by the caller of `RecordReviewVerdict`.
-munsu does not authenticate them. The independence guarantee is therefore exactly as
-strong as the seat that records the verdict; launching a reviewer seat that cannot write
-the checkout is a separate scope.
+The reviewer is a munsu review task. Its verdict file is read by the record step, which
+builds the verdict from the review task's definition and aggregate, never from identity
+fields in the file. F1 lets a soldier write the home's `state/` (fence/profile.go:71-74),
+which holds the canonical store (taskauthority canonical.go:67). So a soldier can write
+canonical documents directly, a verdict included. The barrier is the reviewer role having
+no home root plus the OS fence, which is macOS only (G356) and absent on Linux and before
+n8w wires it. The aggregate checks are consistency checks, not authentication.
+
+`RecordReviewVerdict` reads the review task's aggregate without that task's lock, as
+`Create` does for its review target. A respawn of the review task between that read and
+the write is a recorded residual; Fleet adds no second check.
 
 ### 4. The verdict is the only approval source; a provider review can only object
 
@@ -99,9 +116,15 @@ unchanged; the resolved and unblocked projections are a later classification que
 ## Consequences
 
 * Delivery cannot start until a non-author reviewer records a PASS on the exact head.
-  Nothing in the binary records a verdict yet: the reviewer seat and the delivery wiring
-  that call `RecordReviewVerdict` and fill `DeliverRequest.Words` are later scopes, so
-  until they land every delivery refuses. This is the intended fail-closed state.
+  The supervision watcher's `review-verdict:` process event records it: on each cycle
+  (herdr's agent-wait pulse triggers one at a turn end; on tmux the existing tick does)
+  the watcher registers one event per review task generation, id
+  `review-verdict:<task>:<generation>`, resolves it when the generation's verdict file
+  exists, and runs the record step, `delivery record-verdict --reviewer-task` being the
+  manual entry to the same step. A file the record step refuses is reported once to the
+  parent and acked. The arm completes no task, as the done path of `munsu report` completes
+  none for a review task. The OS wrapping of the reviewer launch is n8w; until it lands the
+  reviewer runs unfenced, so every delivery still refuses without a recorded verdict.
 * Any verdict, hold-release or delivery-authorization document written before this change
   no longer validates. The project is pre-launch; there is no migration.
 * Tests that pin the removed provider-approval requirement, or that release holds or
@@ -109,3 +132,17 @@ unchanged; the resolved and unblocked projections are a later classification que
   rewritten in the test phase.
 * ADR-0016 is superseded. Its incident record and its branch-protection guidance remain
   readable there.
+
+## Amendment: the local head checks and the ADR-0024 exemption
+
+The worktree binding carried a head recorded at bind time that nothing advanced. The checks that
+compared it (the record-verdict head, the authorization head, the currency read's
+`identity-head` reason) and the digest that hashed it refused every task whose soldier had
+committed, which is every task with something to deliver. Removing them is the fix of a
+refusal that misfires on an action it was never meant to refuse, the ADR-0024 D1
+exemption; it adds no authority and no new refusal without words. The exact-head rule of
+G297 item 3 is unchanged and stays in `ReviewVerdict.Approves` (verdict head equals
+identity head). Fleet's delivery refusal keeps its rule with a live source: git HEAD read at
+the bound worktree path. The field is renamed `BaseHead`. Authorizations issued before this
+change no longer validate; the project is pre-launch and there is no migration. The exemption
+is flagged for the Human's veto.

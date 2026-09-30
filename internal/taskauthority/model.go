@@ -135,7 +135,7 @@ type WorktreeBinding struct {
 	Path               string `json:"path"`
 	GitDir             string `json:"git_dir"`
 	CommonDir          string `json:"common_dir"`
-	Head               string `json:"head"`
+	BaseHead           string `json:"base_head"`
 	LeaseID            string `json:"lease_id"`
 	FenceToken         string `json:"fence_token"`
 	BoundAtUnix        int64  `json:"bound_at_unix"`
@@ -248,6 +248,9 @@ type LaunchEvidence struct {
 	LaunchID      string `json:"launch_id"`
 	CommandDigest string `json:"command_digest"`
 	SubmittedAt   int64  `json:"submitted_at"`
+	// ReviewTree is the reviewed worktree observed before the review harness
+	// was submitted (G2 Before). Only a review generation carries it.
+	ReviewTree *domain.TreeState `json:"review_tree,omitempty"`
 }
 
 // RetirementEvidence is the immutable, generation-bound record of the resource
@@ -782,6 +785,9 @@ func validateLaunchEvidence(e LaunchEvidence) error {
 	if e.SubmittedAt <= 0 {
 		return validationError("launch evidence missing submission timestamp")
 	}
+	if e.ReviewTree != nil && (strings.TrimSpace(e.ReviewTree.Head) == "" || strings.TrimSpace(e.ReviewTree.Porcelain) == "") {
+		return validationError("launch evidence review tree requires a head and a porcelain digest")
+	}
 	return nil
 }
 
@@ -869,8 +875,8 @@ func validateWorktreeBinding(binding WorktreeBinding) error {
 	if strings.TrimSpace(binding.CommonDir) == "" {
 		return validationError("worktree binding missing common dir")
 	}
-	if strings.TrimSpace(binding.Head) == "" {
-		return validationError("worktree binding missing head")
+	if strings.TrimSpace(binding.BaseHead) == "" {
+		return validationError("worktree binding missing base head")
 	}
 	if strings.TrimSpace(binding.LeaseID) == "" {
 		return validationError("worktree binding missing lease id")
@@ -942,6 +948,10 @@ func (a Aggregate) clone() Aggregate {
 	}
 	if a.LaunchEvidence != nil {
 		e := *a.LaunchEvidence
+		if e.ReviewTree != nil {
+			t := *e.ReviewTree
+			e.ReviewTree = &t
+		}
 		out.LaunchEvidence = &e
 	}
 	if a.DeliveryContract != nil {

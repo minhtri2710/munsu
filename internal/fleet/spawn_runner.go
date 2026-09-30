@@ -53,6 +53,7 @@ type Runner struct {
 	taskScoutBudget int64
 	reviewTask      string
 	reviewHead      string
+	review          *ReviewLaunch
 	launchCmd       string
 	endpoints       EndpointCapabilities
 	endpoint        CreatedEndpoint
@@ -1000,11 +1001,21 @@ func (r *Runner) adoptReviewedWorktree() (BoundWorktree, error) {
 	if head != r.reviewHead {
 		return BoundWorktree{}, fmt.Errorf("adopting reviewed worktree: reviewed task %s is at %s, not the reviewed head %s; add a new review for the new head", r.reviewTask, head, r.reviewHead)
 	}
-	launchDir := filepath.Join(reviewHomeDir(r.homeDir, r.args.ID), agg.Generation.String())
+	before, err := observeTree(bound.Path())
+	if err != nil {
+		return BoundWorktree{}, fmt.Errorf("adopting reviewed worktree: %w", err)
+	}
+	launchDir := reviewLaunchDir(r.homeDir, r.args.ID, agg.Generation.String())
 	if err := os.MkdirAll(launchDir, 0o755); err != nil {
 		return BoundWorktree{}, fmt.Errorf("adopting reviewed worktree: %w", err)
 	}
 	r.cwd, r.launchDir = bound.Path(), launchDir
+	r.review = &ReviewLaunch{
+		TaskID: r.args.ID, Generation: uint64(agg.Generation),
+		ReviewedTaskID: r.reviewTask, ReviewedWorktree: bound.Path(), ReviewHead: r.reviewHead,
+		LaunchDir: launchDir, VerdictFile: reviewVerdictFile(launchDir),
+		Before: before,
+	}
 	return bound, nil
 }
 
@@ -1463,7 +1474,7 @@ func buildTaskWorktreeBinding(primaryPath, worktreePath, leaseID, fenceToken str
 		Path:               canonicalWorktree,
 		GitDir:             gitDir,
 		CommonDir:          commonDir,
-		Head:               head,
+		BaseHead:           head,
 		LeaseID:            leaseID,
 		FenceToken:         fenceToken,
 		BoundAtUnix:        time.Now().Unix(),
@@ -1923,7 +1934,7 @@ func (r *Runner) submitLaunch() error {
 	artifact, err := buildLaunchArtifact(LaunchArtifactInput{
 		WorktreePath:   r.cwd,
 		LaunchDir:      r.launchDir,
-		Review:         r.kind == taskauthority.KindReview,
+		Review:         r.review,
 		HomeDir:        r.homeDir,
 		TaskID:         r.args.ID,
 		SnapshotDigest: snapshotDigest,
@@ -1966,6 +1977,9 @@ func (r *Runner) submitLaunch() error {
 		LaunchID:      r.launchID,
 		CommandDigest: r.launchCommandDigest,
 		Reason:        "spawn",
+	}
+	if r.review != nil {
+		req.ReviewTree = &r.review.Before
 	}
 	op, err := r.spawnOperation("record", agg.Generation, req)
 	if err != nil {
@@ -2396,4 +2410,14 @@ func (r *Runner) armWatcher() {
 // worktree.
 func reviewHomeDir(homeDir, id string) string {
 	return filepath.Join(homeDir, "review", id)
+}
+
+// reviewLaunchDir is the launch directory of one review generation, and
+// reviewVerdictFile the only file the reviewer is allowed to write in it.
+func reviewLaunchDir(homeDir, id, generation string) string {
+	return filepath.Join(reviewHomeDir(homeDir, id), generation)
+}
+
+func reviewVerdictFile(launchDir string) string {
+	return filepath.Join(launchDir, reviewVerdictFileName)
 }

@@ -53,7 +53,7 @@ func mergedPollHome(t *testing.T) (homeDir, checkPath string) {
 func runMergedPollCycle(t *testing.T, homeDir string, retirement *testRetirementPort) {
 	t.Helper()
 	resetRecovery()
-	if _, err := RunCycleWithProbeAndSender(homeDir, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, retirement, &testCheckValidationPort{}, testTaskStatePort{}); err != nil {
+	if _, err := RunCycleWithProbeAndSender(homeDir, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, retirement, nil, &testCheckValidationPort{}, testTaskStatePort{}); err != nil {
 		t.Fatalf("run cycle: %v", err)
 	}
 }

@@ -129,7 +129,7 @@ func mustWorkingDeliveryTask(t *testing.T, c *taskauthority.Canonical, taskID st
 			Path:               filepath.Join("/worktrees", taskID),
 			GitDir:             filepath.Join("/worktrees", taskID, ".git"),
 			CommonDir:          "/repo/.git",
-			Head:               deliveryTestHead,
+			BaseHead:           deliveryTestHead,
 			LeaseID:            "lease-wt-" + taskID,
 			FenceToken:         "fence-wt-" + taskID,
 			BoundAtUnix:        time.Now().Unix(),

@@ -17,7 +17,7 @@ func worktreeBinding() WorktreeBinding {
 		Path:               "/work/area",
 		GitDir:             "/work/area/.git",
 		CommonDir:          "/work/shared.git",
-		Head:               "abc123",
+		BaseHead:           "abc123",
 		LeaseID:            "lease-wt",
 		FenceToken:         "fence-wt",
 		BoundAtUnix:        1000,

@@ -514,7 +514,7 @@ func TestWorktreeReclaimSparesAuthoritativelyBoundWorktree(t *testing.T) {
 		Path:               orphanDir,
 		GitDir:             "git",
 		CommonDir:          "common",
-		Head:               "head",
+		BaseHead:           "head",
 		LeaseID:            "lease",
 		FenceToken:         "fence",
 		BoundAtUnix:        time.Now().Unix(),

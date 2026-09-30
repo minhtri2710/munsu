@@ -57,7 +57,7 @@ func deliveryGuardHome(t *testing.T, taskID string) string {
 			Path:               filepath.Join("/worktrees", taskID),
 			GitDir:             filepath.Join("/worktrees", taskID, ".git"),
 			CommonDir:          "/repo/.git",
-			Head:               deliveryGuardHead,
+			BaseHead:           deliveryGuardHead,
 			LeaseID:            "lease-wt-" + taskID,
 			FenceToken:         "fence-wt-" + taskID,
 			BoundAtUnix:        time.Now().Unix(),

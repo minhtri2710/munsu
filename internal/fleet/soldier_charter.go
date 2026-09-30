@@ -215,9 +215,14 @@ is reported as not run and never counts toward a PASS.
 
 ## Verdict
 
-Your verdict is %[4]sPASS%[4]s or %[4]sFAIL%[4]s for exactly the reviewed head. A PASS needs every
-required check run by you and cited as above. The verdict and its evidence are
-your whole output.
+Your verdict is %[4]spass%[4]s or %[4]sfail%[4]s for exactly the reviewed head. A PASS needs every
+required check run by you and cited as above. Write it to the verdict file
+%[4]s$MUNSU_VERDICT_FILE%[4]s as one JSON object with the fields %[5]s, to a
+temporary sibling name and then rename it over the verdict file, and stop. %[4]sschema_version%[4]s is 1,
+%[4]stask%[4]s is your task ID, %[4]sgeneration%[4]s your generation, %[4]sreviews%[4]s the reviewed task,
+%[4]shead_sha%[4]s the reviewed head, %[4]sbase_sha%[4]s the base of the range you reviewed and
+%[4]sevidence%[4]s your cited evidence. The file is your whole output: you cannot run
+%[4]smunsu report%[4]s or %[4]smunsu delivery record-verdict%[4]s, and munsu records the verdict.
 
 ## Identity
 
@@ -228,7 +233,7 @@ your whole output.
 
 The charter, brief and envelope are runtime-owned files outside the checkout.
 Do not modify them.
-`, CharterVersion, taskID, taskauthority.KindReview, bt)
+`, CharterVersion, taskID, taskauthority.KindReview, bt, verdictFileShape(bt))
 }
 
 // writeCharter writes the charter to .soldier-charter.md (runtime-owned, untracked).

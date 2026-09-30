@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
@@ -179,8 +180,8 @@ func terminalReportReminder(taskID, taskKind, parentCaptainID string) string {
 	if taskKind == taskauthority.KindReview {
 		return `## Verdict Requirement
 
-End your work with one line, ` + bt + `VERDICT: PASS` + bt + ` or ` + bt + `VERDICT: FAIL` + bt + `, for the reviewed head, then the evidence.
-You run no ` + bt + `munsu report` + bt + `; the verdict and its evidence are your whole output.`
+End your work by writing the verdict file ` + bt + `$MUNSU_VERDICT_FILE` + bt + ` (one JSON object with the fields ` + verdictFileShape(bt) + `) to a temporary sibling name and renaming it over the verdict file, then stop.
+You run no ` + bt + `munsu report` + bt + `; the verdict file is your whole output.`
 	}
 	doneMessage := "PR {url}"
 	doneDescription := "task complete, PR open (no merge)"
@@ -271,6 +272,22 @@ type LaunchArtifact struct {
 	Posture harness.LaunchPosture
 }
 
+// ReviewLaunch is the typed launch evidence of one review generation: what the
+// reviewer reads, the launch directory it is launched from, and the one file it
+// may write. It carries values only; wrapping the launch in the reviewer fence
+// is the launch wiring's job (F2). Before is the reviewed tree observed before
+// the harness is submitted; it becomes the verdict's Before (ADR-0025).
+type ReviewLaunch struct {
+	TaskID           string
+	Generation       uint64
+	ReviewedTaskID   string
+	ReviewedWorktree string
+	ReviewHead       string
+	LaunchDir        string
+	VerdictFile      string
+	Before           domain.TreeState
+}
+
 // LaunchArtifactInput carries the immutable launch identity for one artifact.
 // Every value is deterministic per launch, so the artifact (and its command
 // digest) is identical on every attempt of the same launch.
@@ -280,7 +297,7 @@ type LaunchArtifactInput struct {
 	// directory under the home for a reviewer, whose checkout is never written.
 	WorktreePath   string
 	LaunchDir      string
-	Review         bool
+	Review         *ReviewLaunch
 	HomeDir        string
 	TaskID         string
 	SnapshotDigest string
@@ -331,6 +348,11 @@ func buildLaunchArtifact(in LaunchArtifactInput) (LaunchArtifact, error) {
 	b.WriteString("export MUNSU_PARENT_STATUS=")
 	b.WriteString(shQuote(in.HomeDir))
 	b.WriteString("\n")
+	if in.Review != nil {
+		b.WriteString("export MUNSU_VERDICT_FILE=")
+		b.WriteString(shQuote(in.Review.VerdictFile))
+		b.WriteString("\n")
+	}
 	if in.SnapshotDigest != "" {
 		b.WriteString("export MUNSU_CONFIG_SNAPSHOT_DIGEST=")
 		b.WriteString(shQuote(in.SnapshotDigest))
@@ -347,7 +369,7 @@ func buildLaunchArtifact(in LaunchArtifactInput) (LaunchArtifact, error) {
 	}
 	posture := harness.PostureOf(in.LaunchBin, in.LaunchArgs)
 	if in.LaunchBin == harness.Pi {
-		piAgentDir, err := provisionPiSkillBlock(in.HomeDir, in.TaskID, in.WorktreePath, !in.Review)
+		piAgentDir, err := provisionPiSkillBlock(in.HomeDir, in.TaskID, in.WorktreePath, in.Review == nil)
 		if err != nil {
 			return LaunchArtifact{}, err
 		}
@@ -594,4 +616,11 @@ func FailClosedDuringLaunch(input LaunchPromptInput) error {
 		return fmt.Errorf("soldier launch fail-closed: %s", strings.Join(failures, "; "))
 	}
 	return nil
+}
+
+// verdictFileShape names the fields of the verdict file for the reviewer's
+// charter, brief and terminal reminder, so the three cannot drift apart.
+func verdictFileShape(bt string) string {
+	fields := []string{"schema_version", "task", "generation", "reviews", "outcome", "head_sha", "base_sha", "evidence"}
+	return bt + strings.Join(fields, bt+", "+bt) + bt
 }

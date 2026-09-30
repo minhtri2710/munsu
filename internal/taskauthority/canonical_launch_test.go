@@ -647,7 +647,7 @@ func TestCanonicalLaunchIncarnationPersistsAndFencesBinds(t *testing.T) {
 		HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, rev),
 		Binding: WorktreeBinding{
 			RepositoryIdentity: "repo", Path: "/wt", GitDir: "/wt/.git", CommonDir: "/wt/.git",
-			Head: "sha", LeaseID: req.WorktreeReservationID, FenceToken: req.WorktreeFenceToken, BoundAtUnix: 2000,
+			BaseHead: "sha", LeaseID: req.WorktreeReservationID, FenceToken: req.WorktreeFenceToken, BoundAtUnix: 2000,
 		},
 		Reason: "spawn",
 	}

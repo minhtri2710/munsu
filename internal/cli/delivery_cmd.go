@@ -22,76 +22,40 @@ and merge PRs through the journaled delivery execution.`,
 	cmd.AddCommand(newReviewDiffCmd())
 	cmd.AddCommand(newMergeStatusCmd())
 	cmd.AddCommand(newPRMergeCmd())
-	cmd.AddCommand(newReviewTreeCmd())
 	cmd.AddCommand(newRecordVerdictCmd())
 	return cmd
 }
 
-func newReviewTreeCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "review-tree <id>",
-		Short: "Print the bound worktree's HEAD and porcelain digest for a review",
-		Long: `Print the task's bound worktree state as <head>:<sha256 of git status --porcelain>.
-A reviewer runs it when the review begins and passes the output to
-record-verdict --tree-before; record-verdict observes the tree again and refuses
-a verdict whose tree moved during the review.`,
-		Args: ExactArgs(1),
-		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			taskHome, _, err := fleet.RequireShipMeta(ctx.Home, args[0])
-			if err != nil {
-				return fmt.Errorf("review-tree %s: %w", args[0], err)
-			}
-			tree, err := fleet.ObserveReviewTree(taskHome, args[0])
-			if err != nil {
-				return err
-			}
-			fmt.Printf("%s:%s\n", tree.Head, tree.Porcelain)
-			return nil
-		}),
-	}
-}
-
 func newRecordVerdictCmd() *cobra.Command {
-	var outcome, head, base, reviewer, before string
+	var reviewerTask string
 	cmd := &cobra.Command{
-		Use:   "record-verdict <id>",
-		Short: "Record a reviewer's verdict bound to the task's exact head",
-		Long: `Record one review verdict through the canonical task authority (ADR-0025).
-Delivery authorization requires a PASS verdict for exactly the head it delivers,
-from a reviewer that is not the task's own endpoint, over a tree that did not
-move during the review. A later verdict replaces the earlier one.`,
-		Args: ExactArgs(1),
+		Use:   "record-verdict --reviewer-task <review-task-id>",
+		Short: "Record the verdict file of a review task",
+		Long: `Record the verdict a review task wrote to its verdict file (ADR-0025).
+This is the manual entry to the record step the supervision watcher runs when
+the file appears: it reads the review task's current verdict file, refuses a
+file that is malformed or does not speak for that task, generation and reviewed
+head, observes the reviewed worktree, and records the verdict on the reviewed
+task through the canonical task authority. Delivery authorization requires a
+PASS verdict for exactly the head it delivers, from a review task other than the
+reviewed task, over a tree that did not move during the review. A later verdict
+replaces the earlier one.`,
+		Args: ExactArgs(0),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			beforeHead, beforeDigest, ok := strings.Cut(before, ":")
-			if !ok {
-				return fmt.Errorf("record-verdict %s: --tree-before must be <head>:<porcelain digest> from review-tree", args[0])
-			}
-			taskHome, _, err := fleet.RequireShipMeta(ctx.Home, args[0])
+			taskHome, _, err := fleet.ResolveTaskHome(ctx.Home, reviewerTask)
 			if err != nil {
-				return fmt.Errorf("record-verdict %s: %w", args[0], err)
+				return fmt.Errorf("record-verdict %s: %w", reviewerTask, err)
 			}
-			err = fleet.RecordReviewVerdict(taskHome, args[0], fleet.ReviewVerdictRequest{
-				Outcome:  domain.VerdictOutcome(outcome),
-				HeadSHA:  head,
-				BaseSHA:  base,
-				Reviewer: reviewer,
-				Before:   domain.TreeState{Head: beforeHead, Porcelain: beforeDigest},
-			})
+			summary, err := fleet.RecordReviewVerdict(taskHome, reviewerTask, 0, "")
 			if err != nil {
-				return fmt.Errorf("record-verdict %s: %w", args[0], err)
+				return fmt.Errorf("record-verdict %s: %w", reviewerTask, err)
 			}
-			fmt.Printf("Recorded %s verdict for %s at %s\n", outcome, args[0], head)
+			fmt.Println(summary)
 			return nil
 		}),
 	}
-	cmd.Flags().StringVar(&outcome, "outcome", "", "verdict outcome: pass or fail")
-	cmd.Flags().StringVar(&head, "head", "", "the exact reviewed head SHA")
-	cmd.Flags().StringVar(&base, "base", "", "the reviewed range base SHA")
-	cmd.Flags().StringVar(&reviewer, "reviewer", "", "the reviewing identity (never the task's own endpoint)")
-	cmd.Flags().StringVar(&before, "tree-before", "", "the review-tree output observed when the review began")
-	for _, name := range []string{"outcome", "head", "base", "reviewer", "tree-before"} {
-		_ = cmd.MarkFlagRequired(name)
-	}
+	cmd.Flags().StringVar(&reviewerTask, "reviewer-task", "", "the review task whose verdict file to record")
+	_ = cmd.MarkFlagRequired("reviewer-task")
 	return cmd
 }
 
@@ -135,9 +99,10 @@ Warns if local default branch is stale vs origin.`,
 // buildDeliverRequest builds the typed journaled delivery intent for one
 // `pr-merge` invocation from the explicit CLI args (PR/MR URL and merge
 // method) and the canonical task identity/bindings. The identity head comes
-// from the retained read-only provider snapshot seam; the canonical
-// authorization gates it against the bound worktree head, so a stale
-// identity fails closed before any mutation.
+// from the retained read-only provider snapshot seam; the verdict head must
+// equal it (ReviewVerdict.Approves) and Fleet refuses at delivery when git HEAD
+// at the bound worktree differs from it, so a stale identity fails closed
+// before any mutation.
 func buildDeliverRequest(auth *taskauthority.Canonical, taskID, prURL string, extra []string, words domain.Words) (fleet.DeliverRequest, error) {
 	if err := words.Validate(); err != nil {
 		return fleet.DeliverRequest{}, err
@@ -226,10 +191,11 @@ func newPRMergeCmd() *cobra.Command {
 		Short: "Merge a PR via the journaled delivery execution",
 		Long: `Merge a PR/MR through the journaled delivery execution (fleet.Deliver):
 durable journal intent precedes the irreversible provider mutation, the
-canonical delivery authorization gates the exact identity against the bound
-worktree head, and the truthful closed-set outcome commits canonically.
+canonical delivery authorization gates the exact identity against the verdict
+head and the head git reads at the bound worktree now, and the truthful closed-set outcome commits canonically.
 
-Delivery requires a PASS review verdict for the exact head (record-verdict) and
+Delivery requires a PASS review verdict for the exact head (recorded from a review
+task by record-verdict) and
 the Human's words (--grantor, --channel, --quote); each external write is preceded
 by a gate record carrying the head and those words.
 

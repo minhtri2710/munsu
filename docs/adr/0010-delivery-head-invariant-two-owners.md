@@ -44,13 +44,19 @@ answered against two different sources of truth, at two different moments.
 
 | Owner | Site | Truth it guards | Fails on |
 |---|---|---|---|
-| Canonical delivery fence | `internal/taskauthority/canonical_delivery.go` (issuance and currency) | **Local truth** — the bound worktree head recorded in the Task Aggregate | typed authorization/currency refusal |
+| Local owner: canonical delivery fence and Fleet's observation | `internal/taskauthority/canonical_delivery.go` (issuance, through `ReviewVerdict.Approves`) and `internal/fleet/delivery_deliver.go` (`prevalidateDeliveryTask`) | **Local truth** — the verdict head equals the identity head, and the head git reads at the bound worktree path at delivery equals the identity head | typed authorization refusal; delivery refusal |
 | Provider observation and mutation boundary | `internal/fleet/delivery_deliver.go` | **Provider truth** — exact head, base ref, and mergeability evidence for the authorized delivery | fail-closed refusal when evidence is missing or the adapter cannot enforce all constraints |
 
-The canonical fence refuses to *issue* a delivery authorization whose identity
-head differs from the bound worktree head, and the currency read
-(`authorizationCurrencyReasons`, `checkHead=true`) refuses to keep treating an
-authorization as current once the worktree head has advanced underneath it.
+The Task Aggregate holds no moving head. `WorktreeBinding.BaseHead` is the HEAD
+at bind time, immutable, read only by the git shim and by validation, and not
+part of the binding digest. The canonical fence refuses to *issue* a delivery
+authorization unless the approving verdict names exactly the identity head
+(`ReviewVerdict.Approves`, ADR-0025). Fleet refuses to deliver unless the head
+git reads at the bound worktree path at delivery equals the identity head, so a
+head that moved after authorization is caught by that observation and by the
+provider's exact-head pin. The currency read has no head reason: a stored head
+could only be the bind-time value, which a soldier's commit moves off at once,
+so comparing it refused every committed task.
 
 The provider boundary answers the question the canonical fence structurally
 cannot: local state says nothing about what happened on the provider between

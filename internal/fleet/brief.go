@@ -248,9 +248,9 @@ If it differs, STOP and say so: the work moved and this review no longer speaks 
 3. Do not run `+"`"+`munsu`+"`"+` commands.
 
 ## Verdict
-End with one line, `+"`"+`VERDICT: PASS`+"`"+` or `+"`"+`VERDICT: FAIL`+"`"+`, for the reviewed head, then the evidence from the review method.
+Write the verdict file `+"`"+`$MUNSU_VERDICT_FILE`+"`"+` (one JSON object with the fields %s) for the reviewed head, with `+"`"+`outcome`+"`"+` set to `+"`"+`pass`+"`"+` or `+"`"+`fail`+"`"+` and the evidence from the review method in `+"`"+`evidence`+"`"+`. Write it to a temporary sibling name, rename it over the verdict file, then stop.
 A PASS needs every required check run and cited.
-`, id, reviewTask, reviewHead, repo), nil
+`, id, reviewTask, reviewHead, repo, verdictFileShape("`")), nil
 }
 
 // requiredSections returns the "## " headings Scaffold writes for a brief of

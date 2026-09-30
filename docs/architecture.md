@@ -184,9 +184,14 @@ adapters it claimed to describe.
 merge: the PR is open, every check passed, and no review requests changes. It
 never approves. The only approval source is the head-bound `ReviewVerdict`
 (`internal/domain/review_verdict.go`, ADR-0025): `ReviewVerdict.Approves` holds
-for a valid PASS verdict bound to exactly the delivered head and to the current
-authoring soldier instance. `Canonical.RecordReviewVerdict`
+for a valid PASS verdict bound to exactly the delivered head, to the current
+authoring soldier instance and to a review task other than the reviewed task.
+`Canonical.RecordReviewVerdict`
 (`internal/taskauthority/canonical_verdict.go`) stores the task's one verdict,
+checking its reviewer against the review task's aggregate; the supervision
+watcher's `review-verdict:` process event (`internal/orchestrator/review_verdict_wake.go`)
+runs the Fleet record step (`fleet.RecordReviewVerdict`) when a review task
+writes its verdict file,
 and `Canonical.AuthorizeDelivery` (`internal/taskauthority/canonical_delivery.go`)
 refuses unless it approves, embedding the verdict in the issued
 `DeliveryAuthorization`. `fleet.Deliver` is the sole delivery executor;

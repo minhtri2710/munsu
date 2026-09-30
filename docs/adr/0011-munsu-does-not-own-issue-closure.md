@@ -42,7 +42,7 @@ nor creates PRs.
 
 **2. The delivery invariant munsu does own is the canonical Delivery Authorization** —
 current generation, working phase, owner present, correct worktree/endpoint binding,
-identity head matching the bound worktree head, no delivery hold, no committed
+a PASS verdict bound to the identity head, no delivery hold, no committed
 terminal outcome, no live authorization, and a currency check immediately before the
 irreversible mutation. Issue closure is not part of that contract.
 

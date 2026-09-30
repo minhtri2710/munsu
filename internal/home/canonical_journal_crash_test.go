@@ -204,7 +204,7 @@ const deliveryHead = "abc123def456abc123def456abc123def456abc1"
 func worktreeBinding() ta.WorktreeBinding {
 	return ta.WorktreeBinding{
 		RepositoryIdentity: "repo", Path: "/work/area", GitDir: "/work/area/.git", CommonDir: "/work/shared.git",
-		Head: "abc123", LeaseID: "lease-wt", FenceToken: "fence-wt", BoundAtUnix: 1000,
+		BaseHead: "abc123", LeaseID: "lease-wt", FenceToken: "fence-wt", BoundAtUnix: 1000,
 	}
 }
 
@@ -224,7 +224,7 @@ func mustDeliveryTask(t *testing.T, c *ta.Canonical) {
 	t.Helper()
 	mustCreate(t, c, "t1")
 	wt := worktreeBinding()
-	wt.Head = deliveryHead
+	wt.BaseHead = deliveryHead
 	bw := bindWorktreeReq(t, c, domain.Of(1, 1), wt)
 	if _, err := c.BindWorktree(mustOp(t, "op-delivery-bindwt", bw), bw); err != nil {
 		t.Fatalf("BindWorktree: %v", err)

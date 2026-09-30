@@ -377,13 +377,13 @@ func validateGitMutationAuthority(homeDir, taskID string, g gitCommandSafety, bi
 	currentBranch = strings.TrimSpace(currentBranch)
 	if currentBranch == "HEAD" {
 		if g.verb == "branch" && branchOpAllowed(taskBranch, g.args) {
-			if head, err := gitSafetyOutput(binding.Path, "rev-parse", "HEAD"); err != nil || head != binding.Head {
+			if head, err := gitSafetyOutput(binding.Path, "rev-parse", "HEAD"); err != nil || head != binding.BaseHead {
 				return "unexpected head: bound worktree is not at the recorded base HEAD"
 			}
 			return ""
 		}
 		if (g.verb == "checkout" || g.verb == "switch") && createsBranch(g.args) && g.branchName == taskBranch {
-			if head, err := gitSafetyOutput(binding.Path, "rev-parse", "HEAD"); err != nil || head != binding.Head {
+			if head, err := gitSafetyOutput(binding.Path, "rev-parse", "HEAD"); err != nil || head != binding.BaseHead {
 				return "unexpected head: bound worktree is not at the recorded base HEAD"
 			}
 			return ""

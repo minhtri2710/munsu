@@ -171,7 +171,7 @@ func MergeAndRetire(homeDir, id, prURL string, extraArgs []string, words domain.
 // mergeAndRetireDeliveryRequest builds the typed journaled delivery intent
 // from the stored delivery identity and the merge method arguments. The
 // identity is read from the .meta projection as the delivery target; the
-// canonical authorization gates it against the bound worktree head.
+// Fleet refuses delivery when git HEAD at the bound worktree differs from it.
 func mergeAndRetireDeliveryRequest(homeDir, id, prURL string, extraArgs []string) (DeliverRequest, error) {
 	meta, err := home.ReadMeta(homeDir, id)
 	if err != nil {
