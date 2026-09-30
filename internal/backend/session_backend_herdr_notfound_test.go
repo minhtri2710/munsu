@@ -23,11 +23,12 @@ func TestIsNotFoundErr_ExecTransportFailsClosed(t *testing.T) {
 		t.Error("isNotFoundErr matched *exec.Error spawn failure; must fail closed")
 	}
 
-	// Structured and legacy CLI not-found errors still classify as absence.
+	// Only a structured not-found code is absence; unstructured text that says
+	// "not found" is a backend failure.
 	if !isNotFoundErr(fmt.Errorf("herdr pane get s:p: {\"error\":{\"code\":\"pane_not_found\",\"message\":\"pane gone\"}}")) {
-		t.Error("structured pane_not_found must still classify as pane absence")
+		t.Error("structured pane_not_found must classify as pane absence")
 	}
-	if !isNotFoundErr(errors.New("pane not found: something")) {
-		t.Error("legacy textual pane absence must still classify as pane absence")
+	if isNotFoundErr(errors.New("pane not found: something")) {
+		t.Error("unstructured text must not classify as pane absence")
 	}
 }

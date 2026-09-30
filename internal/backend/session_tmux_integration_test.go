@@ -288,13 +288,13 @@ func TestTmux_Capture_NoWindow(t *testing.T) {
 	}
 }
 
-func TestTmux_Teardown_SuppressesErrors(t *testing.T) {
+func TestTmux_Teardown_AbsentTargetIsDone(t *testing.T) {
 	if !hasTmux() {
 		t.Skip("tmux not on PATH")
 	}
 
 	tk := &TmuxBackend{}
-	// Teardown on a window that doesn't exist should not error
+	// A window that is already gone settles as done (the owned server is up).
 	if err := tk.Teardown("@99999"); err != nil {
 		t.Errorf("Teardown on unknown window should not error: %v", err)
 	}

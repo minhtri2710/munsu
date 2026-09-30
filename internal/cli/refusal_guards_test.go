@@ -1203,7 +1203,7 @@ func TestGuardBuildDeliverRequestRefusesATaskWithNoBoundWorktree(t *testing.T) {
 	}
 	t.Cleanup(func() { fleet.FetchProviderSnapshot = previous })
 
-	_, err := buildDeliverRequest(auth, "t1", "https://github.com/o/r/pull/1", nil, domain.Words{})
+	_, err := buildDeliverRequest(auth, "t1", "https://github.com/o/r/pull/1", nil, deliveryGuardWords())
 	wantErrContains(t, err, "has no bound worktree; spawn it before delivery", "buildDeliverRequest for a task with no worktree binding")
 	// Three reads fail in front of this guard, each with its own wrapper.
 	for _, earlier := range []string{"capturing delivery identity", "resolving task"} {

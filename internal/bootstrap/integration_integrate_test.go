@@ -782,14 +782,10 @@ func TestClaudeSettingsContent_Hooks(t *testing.T) {
 		t.Error("settings must reference the munsu binary path")
 	}
 
-	// SessionStart matcher must exclude compact
-	if strings.Contains(content, "compact") {
-		t.Error("SessionStart matcher must not include compact")
-	}
-
-	// Verify structure matches expected: correct hook event keys
-	if !strings.Contains(content, `"matcher": "startup|resume|clear"`) {
-		t.Error("SessionStart matcher must match startup|resume|clear")
+	// Verify structure matches expected: correct hook event keys. compact
+	// re-primes: summarizing the conversation drops the session-start digest.
+	if !strings.Contains(content, `"matcher": "startup|resume|clear|compact"`) {
+		t.Error("SessionStart matcher must match startup|resume|clear|compact")
 	}
 	if !strings.Contains(content, `"matcher": "Bash"`) {
 		t.Error("PreToolUse matcher must be Bash")
@@ -1363,7 +1359,7 @@ func TestMergeHookEventArrays(t *testing.T) {
 // --- CapSessionStart harness wiring tests ---
 
 // TestClaudeCapSessionStartWiring verifies that Claude settings.json has
-// SessionStart hook with startup|resume|clear matcher and sessionstart-nudge
+// SessionStart hook with startup|resume|clear|compact matcher and sessionstart-nudge
 // command under CapSessionStart.
 func TestClaudeCapSessionStartWiring(t *testing.T) {
 	content := claudeHooks.content("/usr/local/bin/munsu")
@@ -1373,13 +1369,9 @@ func TestClaudeCapSessionStartWiring(t *testing.T) {
 		t.Fatal("Claude settings must have SessionStart hook")
 	}
 
-	// Must have correct matcher: startup|resume|clear
-	// The matcher must NOT include compact (exactly-once semantics)
-	if !strings.Contains(content, `"matcher": "startup|resume|clear"`) {
-		t.Error("SessionStart matcher must be startup|resume|clear")
-	}
-	if strings.Contains(content, "compact") {
-		t.Error("SessionStart matcher must NOT include compact (reserved for agent continuity)")
+	// Must have correct matcher: compact re-primes the General
+	if !strings.Contains(content, `"matcher": "startup|resume|clear|compact"`) {
+		t.Error("SessionStart matcher must be startup|resume|clear|compact")
 	}
 
 	// Must call sessionstart-nudge command
@@ -1400,7 +1392,7 @@ func TestClaudeCapSessionStartWiring(t *testing.T) {
 }
 
 // TestCodexCapSessionStartWiring verifies that Codex hooks.json has
-// SessionStart hook with startup|resume|clear matcher and sessionstart-nudge
+// SessionStart hook with startup|resume|clear|compact matcher and sessionstart-nudge
 // command under CapSessionStart.
 func TestCodexCapSessionStartWiring(t *testing.T) {
 	content := codexHooks.content("/usr/local/bin/munsu")
@@ -1411,11 +1403,8 @@ func TestCodexCapSessionStartWiring(t *testing.T) {
 	}
 
 	// Must have correct matcher
-	if !strings.Contains(content, `"matcher": "startup|resume|clear"`) {
-		t.Error("SessionStart matcher must be startup|resume|clear")
-	}
-	if strings.Contains(content, "compact") {
-		t.Error("SessionStart matcher must NOT include compact")
+	if !strings.Contains(content, `"matcher": "startup|resume|clear|compact"`) {
+		t.Error("SessionStart matcher must be startup|resume|clear|compact")
 	}
 
 	// Must call sessionstart-nudge command

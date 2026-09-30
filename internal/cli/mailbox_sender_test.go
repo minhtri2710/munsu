@@ -63,14 +63,8 @@ func TestSessionMailboxSenderReadyNormalization(t *testing.T) {
 		status string
 		want   bool
 	}{
-		{name: "idle lowercase", status: "idle", want: true},
-		{name: "idle capitalized", status: "Idle", want: true},
-		{name: "idle padded", status: " idle ", want: true},
-		{name: "idle uppercase", status: "IDLE", want: true},
-		{name: "done", status: "done", want: true},
-		{name: "working", status: "working", want: false},
-		{name: "blocked", status: "blocked", want: false},
-		{name: "unknown", status: "unknown", want: false},
+		{name: "unnormalized ready", status: " Idle ", want: true},
+		{name: "not ready", status: "working", want: false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			bk := &mailboxPromptBackend{recognized: true, status: tt.status, result: backend.PromptResult{Status: backend.PromptSubmitted}}

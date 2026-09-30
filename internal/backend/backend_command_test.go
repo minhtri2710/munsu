@@ -83,7 +83,7 @@ func TestHerdrPromptTimeoutIsBackendFailedNotDead(t *testing.T) {
 		if got.Err == nil || !errors.Is(got.Err, context.DeadlineExceeded) {
 			t.Fatalf("error = %v, want context deadline exceeded from the command bound", got.Err)
 		}
-	case <-time.After(backendCommandTimeout + backendCommandTestWatchdogMargin):
+	case <-time.After(backendCommandTimeoutFor(backendCommandPromptStart) + backendCommandTestWatchdogMargin):
 		stopBackendTestProcess(pidFile)
 		t.Fatalf("hung herdr backend did not return within timeout bound after blocking command started (elapsed %s)", time.Since(started))
 	}
@@ -95,6 +95,12 @@ func TestBackendCommandClasses(t *testing.T) {
 	}
 	if got := backendCommandTimeoutFor(backendCommandWorktree); got != backendWorktreeCommandTimeout {
 		t.Fatalf("worktree command timeout = %s, want %s", got, backendWorktreeCommandTimeout)
+	}
+	if got, want := backendCommandTimeoutFor(backendCommandPromptStart), backendEventWaitTimeout(backendPromptStartTimeout); got != want {
+		t.Fatalf("prompt-start command timeout = %s, want the start wait %s plus margin (%s)", got, backendPromptStartTimeout, want)
+	}
+	if backendPromptStartTimeout <= 5*time.Second {
+		t.Fatalf("prompt-start wait = %s, must sit above herdr's 5s stall window so herdr reports the stall", backendPromptStartTimeout)
 	}
 	if backendWorktreeCommandTimeout <= backendCommandTimeout {
 		t.Fatalf("worktree command timeout = %s, must exceed short timeout %s", backendWorktreeCommandTimeout, backendCommandTimeout)

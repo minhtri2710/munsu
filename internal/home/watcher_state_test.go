@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -193,5 +194,103 @@ func TestHasQueuedWakesFailsClosedOnUnreadableQueue(t *testing.T) {
 	}
 	if !HasQueuedWakes(home) {
 		t.Fatal("HasQueuedWakes false when the queue path is a directory")
+	}
+}
+
+func TestWriteWatcherBeatRefusesMissingStateDirWithoutCreatingIt(t *testing.T) {
+	home := t.TempDir()
+	if err := WriteWatcherBeat(home); err == nil {
+		t.Fatal("WriteWatcherBeat must fail when the state directory is gone")
+	}
+	if _, err := os.Stat(filepath.Join(home, "state")); !os.IsNotExist(err) {
+		t.Fatalf("WriteWatcherBeat resurrected the state directory: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, "state"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteWatcherBeat(home); err != nil {
+		t.Fatalf("WriteWatcherBeat under an existing state dir: %v", err)
+	}
+	if _, _, ok := ReadWatcherBeat(home); !ok {
+		t.Fatal("beat not readable after a successful write")
+	}
+}
+
+func TestPruneTaskWakesRemovesOnlyMatchingKindsAndKeyAndMarker(t *testing.T) {
+	home := t.TempDir()
+	writeWakeQueueForTest(t, home, strings.Join([]string{
+		"100\t1\tneeds-decision\tt1\tp",
+		"100\t2\tdone\tt1\tp",
+		"100\t3\tblocked\tt1\tp",
+		"100\t4\tneeds-decision\tt2\tp",
+	}, "\n")+"\n")
+	marker := WatcherSeenMarkerPath(home, "t1")
+	if err := os.WriteFile(marker, []byte("fp"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	other := WatcherSeenMarkerPath(home, "t2")
+	if err := os.WriteFile(other, []byte("fp"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := PruneTaskWakes(home, "t1", "needs-decision", "done"); err != nil {
+		t.Fatal(err)
+	}
+	queue, err := readWakeQueue(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, r := range queue {
+		got = append(got, r.Kind+"/"+r.Key)
+	}
+	if want := "blocked/t1,needs-decision/t2"; strings.Join(got, ",") != want {
+		t.Fatalf("queue after prune = %v, want %s", got, want)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("t1 marker survived prune: %v", err)
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Fatalf("t2 marker must survive: %v", err)
+	}
+}
+
+func TestPruneTaskWakesMissingMarkerAndQueueIsNotAnError(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, "state"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := PruneTaskWakes(home, "t1", "done"); err != nil {
+		t.Fatalf("prune with no queue and no marker: %v", err)
+	}
+}
+
+func TestWatcherSeenMarkerPathSanitizesSeparators(t *testing.T) {
+	got := WatcherSeenMarkerPath("/h", "check:a/b.c")
+	if want := filepath.Join("/h", "state", ".watcher-seen-check_a_b_c"); got != want {
+		t.Fatalf("marker path = %q, want %q", got, want)
+	}
+}
+
+func TestPruneTaskWakesRecoversAPendingWakeMutationFirst(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, "state"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeWakeMutationJournal(home, wakeMutationJournal{
+		State:     "pending",
+		QueueSet:  true,
+		QueueData: []byte("100\t1\tneeds-decision\tt1\tp\n100\t2\tblocked\tt1\tp\n"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := PruneTaskWakes(home, "t1", "needs-decision"); err != nil {
+		t.Fatal(err)
+	}
+	queue, err := readWakeQueue(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(queue) != 1 || queue[0].Kind != "blocked" || queue[0].Key != "t1" {
+		t.Fatalf("queue after prune = %#v, want only the journaled blocked/t1 record", queue)
 	}
 }

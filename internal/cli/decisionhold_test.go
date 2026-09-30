@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
@@ -153,6 +154,7 @@ func TestDecisionHoldResolveRoutesThroughAuthority(t *testing.T) {
 
 	out, err := runRoot(t, "decision-hold", "resolve", "approach",
 		"--answer", "Choose React", "--from", "scout-r2",
+		"--grantor", "human", "--channel", "herdr", "--quote", "go with it",
 		"--unblock", "dep-task-1", "--home", homeDir, "--output", "json")
 	if err != nil {
 		t.Fatalf("resolve: %v\n%s", err, out)
@@ -168,6 +170,9 @@ func TestDecisionHoldResolveRoutesThroughAuthority(t *testing.T) {
 	}
 	if len(holds) != 1 || holds[0].ReleasedAt == 0 {
 		t.Fatalf("authority holds after resolve = %+v, want one released hold", holds)
+	}
+	if w := holds[0].ReleaseWords; w == nil || *w != (domain.Words{Grantor: "human", Channel: "herdr", Quote: "go with it"}) {
+		t.Fatalf("hold release words = %+v, want the words given on the command line", w)
 	}
 
 	statuses, err := os.ReadFile(filepath.Join(homeDir, "state", "scout-r2.status"))
@@ -218,6 +223,7 @@ func TestDecisionHoldCompleteRoutesThroughAuthority(t *testing.T) {
 	}
 
 	out, err := runRoot(t, "decision-hold", "complete", "scout-r2", "approach", "db-schema",
+		"--grantor", "human", "--channel", "herdr", "--quote", "go with it",
 		"--home", homeDir, "--output", "json")
 	if err != nil {
 		t.Fatalf("complete: %v\n%s", err, out)
@@ -238,6 +244,9 @@ func TestDecisionHoldCompleteRoutesThroughAuthority(t *testing.T) {
 		if hold.ReleasedAt == 0 {
 			t.Fatalf("hold %s not released by complete: %+v", hold.ID, hold)
 		}
+		if w := hold.ReleaseWords; w == nil || *w != (domain.Words{Grantor: "human", Channel: "herdr", Quote: "go with it"}) {
+			t.Fatalf("hold %s release words = %+v, want the words given on the command line", hold.ID, w)
+		}
 	}
 }
 
@@ -253,6 +262,7 @@ func TestDecisionHoldVerifyClean(t *testing.T) {
 	}
 	if out, err := runRoot(t, "decision-hold", "resolve", "approach",
 		"--answer", "Choose React", "--from", "scout-r2",
+		"--grantor", "human", "--channel", "herdr", "--quote", "go with it",
 		"--home", homeDir, "--output", "json"); err != nil {
 		t.Fatalf("resolve: %v\n%s", err, out)
 	}
@@ -280,6 +290,7 @@ func TestDecisionHoldCompleteAppendsResolvedProjection(t *testing.T) {
 	}
 
 	out, err := runRoot(t, "decision-hold", "complete", "scout-r2", "approach",
+		"--grantor", "human", "--channel", "herdr", "--quote", "go with it",
 		"--home", homeDir, "--output", "json")
 	if err != nil {
 		t.Fatalf("complete: %v\n%s", err, out)

@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -15,10 +18,14 @@ import (
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
-// The bound worktree head the fixture pins. The delivery identity, the
-// canonical binding and the provider observation all have to agree on it or
-// the run fails closed before reaching the refusals under test.
-const deliveryGuardHead = "1111111111111111111111111111111111111111"
+// The head of the real git worktree the fixture binds: the one empty commit
+// deliveryGuardWorktree makes with pinned author, committer and dates. The
+// delivery identity, the PASS verdict and the provider observation all have
+// to agree with what git reads there or the run fails closed before reaching
+// the refusals under test.
+const deliveryGuardHead = "cb98b60d3e83165203ce66ab856d97a4c275c030"
+
+const deliveryGuardBase = "0000111122223333444455556666777788889999"
 
 const deliveryGuardPRURL = "https://github.com/acme/widgets/pull/42"
 
@@ -29,7 +36,124 @@ const deliveryGuardMRURL = "https://gitlab.com/acme/widgets/-/merge_requests/42"
 // owns both bindings, with the bound worktree head the identity will carry.
 // Anything less fails closed earlier, and the refusals under test sit after
 // the outcome is committed.
+func deliveryGuardWords() domain.Words {
+	return domain.Words{Grantor: "human", Channel: "herdr", Quote: "merge it"}
+}
+
+// deliveryGuardWorktree makes the git worktree whose HEAD is deliveryGuardHead
+// and whose status is clean.
+func deliveryGuardWorktree(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, args := range [][]string{{"init", "-q"}, {"-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "base"}} {
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
+			"GIT_AUTHOR_DATE=2026-01-01T00:00:00Z", "GIT_COMMITTER_DATE=2026-01-01T00:00:00Z")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "HEAD").Output()
+	if err != nil || strings.TrimSpace(string(out)) != deliveryGuardHead {
+		t.Fatalf("fixture worktree head = %q (%v), want %s", out, err, deliveryGuardHead)
+	}
+	return dir
+}
+
+func guardDigest(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
+
+// workingGuardReview drives the review task revID of the working ship taskID
+// to working over the clean deliveryGuardHead tree, and returns the review's
+// endpoint incarnation.
+func workingGuardReview(t *testing.T, auth *taskauthority.Canonical, taskID, revID string) string {
+	t.Helper()
+	rev, err := domain.NewTaskID(revID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit := func(id string, intent domain.Intent, run func(domain.Operation) error) {
+		t.Helper()
+		if err := run(mustCanonicalOp(t, id+"-"+revID, intent)); err != nil {
+			t.Fatalf("%s: %v", id, err)
+		}
+	}
+	create := taskauthority.CanonicalCreateRequest{HomeID: auth.HomeID(), TaskID: rev, Owner: "owner", Description: "review", Kind: taskauthority.KindReview, ReviewTaskID: taskID, ReviewHead: deliveryGuardHead, Reason: "create"}
+	commit("op-create", create, func(op domain.Operation) error { _, err := auth.Create(op, create); return err })
+	begin := taskauthority.CanonicalBeginSpawnRequest{
+		HomeID: auth.HomeID(), TaskID: rev, Precondition: domain.Of(1, 1), SnapshotDigest: guardDigest("snapshot:" + revID),
+		Backend: "claude", Harness: "pi", Model: "opus", Effort: "high", Mode: "direct-PR", Kind: taskauthority.KindReview,
+		Project: "proj", ParentTaskID: "parent", LaunchID: "launch-" + revID, WindowLabel: "window-" + revID,
+		EndpointReservationID: "ep-res-" + revID, EndpointFenceToken: "ep-fence-" + revID, EndpointIncarnation: "inc-" + revID, Reason: "spawn",
+	}
+	commit("op-begin", begin, func(op domain.Operation) error { _, err := auth.BeginSpawn(op, begin); return err })
+	attach := taskauthority.CanonicalAttachEndpointRequest{
+		HomeID: auth.HomeID(), TaskID: rev, Precondition: domain.Of(1, 2), Backend: begin.Backend, Handle: "handle-" + revID,
+		LeaseID: begin.EndpointReservationID, FenceToken: begin.EndpointFenceToken, SessionOwner: "owner",
+		WorkspaceID: "ws", TabID: "tab", Incarnation: begin.EndpointIncarnation, Reason: "attach",
+	}
+	commit("op-attach", attach, func(op domain.Operation) error { _, err := auth.AttachEndpoint(op, attach); return err })
+	tree := domain.TreeState{Head: deliveryGuardHead, Porcelain: guardDigest("")}
+	record := taskauthority.CanonicalRecordLaunchRequest{
+		HomeID: auth.HomeID(), TaskID: rev, Precondition: domain.Of(1, 3), LaunchID: begin.LaunchID,
+		CommandDigest: guardDigest("launch:" + revID), ReviewTree: &tree, Reason: "record",
+		Seat: taskauthority.LaunchSeat{Argv: []string{"pi", "--no-session"}, PromptDigest: guardDigest("prompt"), Fence: taskauthority.FenceRecord{Reason: "no fence on this host"}},
+	}
+	commit("op-record", record, func(op domain.Operation) error { _, err := auth.RecordLaunch(op, record); return err })
+	bind := taskauthority.CanonicalBindEndpointRequest{
+		HomeID: auth.HomeID(), TaskID: rev, Precondition: domain.Of(1, 4), Reason: "spawn",
+		Binding: taskauthority.EndpointBinding{
+			Backend: begin.Backend, Handle: "handle-" + revID, LeaseID: begin.EndpointReservationID, FenceToken: begin.EndpointFenceToken,
+			SessionOwner: "owner", WorkspaceID: "ws", TabID: "tab", Incarnation: begin.EndpointIncarnation, BoundAtUnix: time.Now().Unix(),
+		},
+	}
+	commit("op-bindep", bind, func(op domain.Operation) error { _, err := auth.BindEndpoint(op, bind); return err })
+	return begin.EndpointIncarnation
+}
+
+// recordGuardPassVerdict drives a review task of taskID to working and records
+// its PASS verdict for deliveryGuardHead on the reviewed task, which must be
+// the working task with both bindings.
+func recordGuardPassVerdict(t *testing.T, auth *taskauthority.Canonical, taskID string) {
+	t.Helper()
+	revID := "rev-" + taskID
+	incarnation := workingGuardReview(t, auth, taskID, revID)
+	ship, err := domain.NewTaskID(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree := domain.TreeState{Head: deliveryGuardHead, Porcelain: guardDigest("")}
+	agg, err := auth.Get(ship)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rv := taskauthority.CanonicalRecordReviewVerdictRequest{
+		HomeID: auth.HomeID(), TaskID: ship, Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+		Verdict: domain.ReviewVerdict{
+			Outcome: domain.VerdictPass, HeadSHA: deliveryGuardHead, BaseSHA: deliveryGuardBase,
+			ReviewerTask: revID, ReviewerGeneration: 1, ReviewerIncarnation: incarnation,
+			Author: agg.Endpoint.Incarnation, Before: tree, After: tree,
+		},
+	}
+	if _, err := auth.RecordReviewVerdict(mustCanonicalOp(t, "op-verdict-"+revID, rv), rv); err != nil {
+		t.Fatalf("RecordReviewVerdict: %v", err)
+	}
+}
+
+// deliveryGuardHome is deliveryGuardShip plus a recorded PASS verdict.
 func deliveryGuardHome(t *testing.T, taskID string) string {
+	t.Helper()
+	homeDir := deliveryGuardShip(t, taskID)
+	recordGuardPassVerdict(t, cliCanonicalForHome(t, homeDir), taskID)
+	return homeDir
+}
+
+// deliveryGuardShip is a working ship task that owns a real git worktree and
+// an endpoint, with no review yet.
+func deliveryGuardShip(t *testing.T, taskID string) string {
 	t.Helper()
 	homeDir := t.TempDir()
 	writeTaskMeta(t, homeDir, taskID, "ship")
@@ -48,14 +172,15 @@ func deliveryGuardHome(t *testing.T, taskID string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	worktree := deliveryGuardWorktree(t)
 	bw := taskauthority.CanonicalBindWorktreeRequest{
 		HomeID:       auth.HomeID(),
 		TaskID:       tid,
 		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
 		Binding: taskauthority.WorktreeBinding{
 			RepositoryIdentity: "repo-" + taskID,
-			Path:               filepath.Join("/worktrees", taskID),
-			GitDir:             filepath.Join("/worktrees", taskID, ".git"),
+			Path:               worktree,
+			GitDir:             filepath.Join(worktree, ".git"),
 			CommonDir:          "/repo/.git",
 			BaseHead:           deliveryGuardHead,
 			LeaseID:            "lease-wt-" + taskID,
@@ -133,16 +258,22 @@ func stubDeliverySnapshot(t *testing.T) {
 }
 
 func TestBuildDeliverRequestStateGuard(t *testing.T) {
+	failed := []domain.CheckRun{{Status: domain.CheckFailed}}
+	passed := []domain.CheckRun{{Status: domain.CheckPassed}}
+	changes := []domain.Review{{State: domain.ReviewChangesRequested}}
 	for _, tc := range []struct {
-		name      string
-		state     string
-		mergeable bool
-		wantErr   bool
+		name    string
+		state   string
+		checks  []domain.CheckRun
+		reviews []domain.Review
+		wantErr string
 	}{
-		{name: "open incomplete", state: "OPEN", mergeable: false, wantErr: true},
-		{name: "merged terminal", state: "MERGED", wantErr: false},
-		{name: "closed terminal", state: "CLOSED", wantErr: false},
-		{name: "unknown", state: "UNKNOWN", wantErr: true},
+		{name: "open failed check", state: "OPEN", checks: failed, wantErr: "delivery provider state is not mergeable"},
+		{name: "open changes requested", state: "OPEN", checks: passed, reviews: changes, wantErr: "delivery provider state is not mergeable"},
+		{name: "open passing without provider review", state: "OPEN", checks: passed},
+		{name: "merged terminal", state: "MERGED"},
+		{name: "closed terminal", state: "CLOSED"},
+		{name: "unknown", state: "UNKNOWN", wantErr: "delivery provider state is unknown"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			taskID := "t-state-" + strings.ReplaceAll(strings.ToLower(tc.name), " ", "-")
@@ -150,19 +281,35 @@ func TestBuildDeliverRequestStateGuard(t *testing.T) {
 			auth := cliCanonicalForHome(t, homeDir)
 			old := fleet.FetchProviderSnapshot
 			fleet.FetchProviderSnapshot = func(prURL string) (*fleet.ProviderSnapshot, error) {
-				snapshot := &fleet.ProviderSnapshot{Provider: "github", Owner: "acme", Repo: "widgets", Number: 42, URL: prURL, BaseRef: "main", HeadRef: "feature", HeadSHA: deliveryGuardHead, State: tc.state, ObservedAt: time.Now().UTC().Format(time.RFC3339)}
-				if tc.mergeable {
-					snapshot.Checks = []domain.CheckRun{{Status: domain.CheckPassed}}
-					snapshot.Reviews = []domain.Review{{State: domain.ReviewState("approved")}}
-				}
-				return snapshot, nil
+				return &fleet.ProviderSnapshot{Provider: "github", Owner: "acme", Repo: "widgets", Number: 42, URL: prURL, BaseRef: "main", HeadRef: "feature", HeadSHA: deliveryGuardHead, State: tc.state, Checks: tc.checks, Reviews: tc.reviews, ObservedAt: time.Now().UTC().Format(time.RFC3339)}, nil
 			}
 			t.Cleanup(func() { fleet.FetchProviderSnapshot = old })
-			_, err := buildDeliverRequest(auth, taskID, deliveryGuardPRURL, nil, domain.Words{})
-			if (err != nil) != tc.wantErr {
-				t.Fatalf("error = %v, wantErr %t", err, tc.wantErr)
+			_, err := buildDeliverRequest(auth, taskID, deliveryGuardPRURL, nil, deliveryGuardWords())
+			if tc.wantErr == "" && err != nil || tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
+				t.Fatalf("error = %v, want %q", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+// TestBuildDeliverRequestRefusesIncompleteWords: the words are checked before
+// any provider read or task lookup.
+func TestBuildDeliverRequestRefusesIncompleteWords(t *testing.T) {
+	old := fleet.FetchProviderSnapshot
+	fleet.FetchProviderSnapshot = func(string) (*fleet.ProviderSnapshot, error) {
+		t.Fatal("the provider was read before the words were checked")
+		return nil, nil
+	}
+	t.Cleanup(func() { fleet.FetchProviderSnapshot = old })
+	for _, words := range []domain.Words{
+		{Channel: "herdr", Quote: "merge it"},
+		{Grantor: "human", Quote: "merge it"},
+		{Grantor: "human", Channel: "herdr"},
+	} {
+		_, err := buildDeliverRequest(nil, "t1", deliveryGuardPRURL, nil, words)
+		if err == nil || !strings.Contains(err.Error(), "words:") {
+			t.Fatalf("words %+v: error = %v, want a words refusal", words, err)
+		}
 	}
 }
 
@@ -204,11 +351,21 @@ func stubGitLabTerminalSnapshot(t *testing.T, state string) {
 	t.Cleanup(func() { fleet.FetchProviderSnapshot = old })
 }
 
+// runPRMerge runs pr-merge with the delivery words flags the command requires.
+func runPRMerge(t *testing.T, flags []string, args ...string) error {
+	t.Helper()
+	words := deliveryGuardWords()
+	cmd := newPRMergeCmd()
+	cmd.SetArgs(append(append([]string{"--grantor", words.Grantor, "--channel", words.Channel, "--quote", words.Quote}, flags...), args...))
+	cmd.SilenceUsage, cmd.SilenceErrors = true, true
+	return cmd.Execute()
+}
+
 func TestPRMergeAllowsMergedTerminalReconciliation(t *testing.T) {
 	marker := installTerminalGlab(t, "merged")
 	stubGitLabTerminalSnapshot(t, "MERGED")
 	deliveryGuardHome(t, "t-prmerge-terminal-merged")
-	if err := newPRMergeCmd().RunE(nil, []string{"t-prmerge-terminal-merged", deliveryGuardMRURL}); err != nil {
+	if err := runPRMerge(t, nil, "t-prmerge-terminal-merged", deliveryGuardMRURL); err != nil {
 		t.Fatalf("pr-merge: %v", err)
 	}
 	if _, err := os.Stat(marker); err == nil {
@@ -220,7 +377,7 @@ func TestPRMergeReportsClosedTerminalReconciliation(t *testing.T) {
 	marker := installTerminalGlab(t, "closed")
 	stubGitLabTerminalSnapshot(t, "CLOSED")
 	deliveryGuardHome(t, "t-prmerge-terminal-closed")
-	err := newPRMergeCmd().RunE(nil, []string{"t-prmerge-terminal-closed", deliveryGuardMRURL})
+	err := runPRMerge(t, nil, "t-prmerge-terminal-closed", deliveryGuardMRURL)
 	if err == nil || !strings.Contains(err.Error(), "delivery did not complete") {
 		t.Fatalf("error = %v, want partial delivery refusal", err)
 	}
@@ -229,14 +386,16 @@ func TestPRMergeReportsClosedTerminalReconciliation(t *testing.T) {
 	}
 }
 
-// TestPRMergeRefusesGitHubDelivery proves pr-merge refuses a GitHub PR as
-// unsupported before any delivery journal is written.
-func TestPRMergeRefusesGitHubDelivery(t *testing.T) {
+// TestPRMergeRefusesGitHubWithoutCapability proves pr-merge on a GitHub PR
+// fails closed on the missing gh-axi/gh capability before any delivery journal
+// is written: there is no fallback execution route.
+func TestPRMergeRefusesGitHubWithoutCapability(t *testing.T) {
 	stubDeliverySnapshot(t)
 	homeDir := deliveryGuardHome(t, "t-prmerge-github")
-	err := newPRMergeCmd().RunE(nil, []string{"t-prmerge-github", deliveryGuardPRURL})
-	if err == nil || !strings.Contains(err.Error(), "GitHub delivery is unsupported") {
-		t.Fatalf("error = %v, want GitHub delivery refused", err)
+	t.Setenv("PATH", t.TempDir())
+	err := runPRMerge(t, nil, "t-prmerge-github", deliveryGuardPRURL)
+	if err == nil || !strings.Contains(err.Error(), "GitHub delivery capability is") {
+		t.Fatalf("error = %v, want the GitHub capability refusal", err)
 	}
 	if _, err := os.Stat(filepath.Join(homeDir, "state", ".delivery-journal")); !os.IsNotExist(err) {
 		t.Fatalf("delivery journal state stat err = %v, want no journal written", err)
@@ -252,13 +411,9 @@ func TestPRMergeTeardownReportsClosedWithoutRetiring(t *testing.T) {
 	taskID := "t-prmerge-teardown-closed"
 	homeDir := deliveryGuardHome(t, taskID)
 
-	cmd := newPRMergeCmd()
-	if err := cmd.Flags().Set("teardown", "true"); err != nil {
-		t.Fatal(err)
-	}
-	err := cmd.RunE(cmd, []string{taskID, deliveryGuardMRURL})
-	if err == nil || !strings.Contains(err.Error(), "merge-and-retire "+taskID+":") {
-		t.Fatalf("error = %v, want the merge-and-retire refusal", err)
+	err := runPRMerge(t, []string{"--teardown"}, taskID, deliveryGuardMRURL)
+	if err == nil || !strings.Contains(err.Error(), "merge-and-retire "+taskID+": partial provider reports closed but not merged") {
+		t.Fatalf("error = %v, want the provider closed-but-not-merged outcome (reached only when the words were carried into the delivery)", err)
 	}
 	if strings.Contains(err.Error(), "post-merge teardown") {
 		t.Fatalf("error = %v, want no teardown attempted", err)

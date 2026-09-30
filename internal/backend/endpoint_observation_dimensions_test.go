@@ -120,10 +120,11 @@ func TestObserveEndpointReturnsRawFreshnessUnknown(t *testing.T) {
 		t.Fatalf("raw observation must not be Live/Absent: %+v", obs)
 	}
 
-	// A non-agent-aware structured backend reports pane presence only.
+	// A non-agent-aware structured backend without process evidence reports
+	// pane presence only (starting).
 	sb := &contractEndChecker{alive: true}
 	sob := ObserveEndpoint(sb, "pane-1", "")
-	if sob.Lifecycle != LifecycleAlive || sob.Freshness != FreshnessUnknown {
+	if sob.Lifecycle != LifecycleStarting || sob.Freshness != FreshnessUnknown {
 		t.Fatalf("checker alive observation = %+v", sob)
 	}
 	if sob.Absent() || sob.Live() {

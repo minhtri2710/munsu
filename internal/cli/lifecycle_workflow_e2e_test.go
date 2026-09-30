@@ -324,12 +324,10 @@ func runLifecycleWorkflow(t *testing.T, tc workflowCase) {
 	// --- spawn ------------------------------------------------------------
 	auth := workflowCanonical(t, spawnHome)
 	workflowCreateTask(t, auth, taskID, "alpha")
-	briefDir := filepath.Join(spawnHome, "data", taskID)
-	if err := os.MkdirAll(briefDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(briefDir, "brief.md"), []byte("# walk the lifecycle\n"), 0644); err != nil {
-		t.Fatal(err)
+	// Spawn lints the brief against the scaffold's own sections, so the brief is
+	// the scaffolded scout brief of the task's own contract.
+	if err := fleet.Scaffold(fleet.ScaffoldOptions{HomeDir: spawnHome, ID: taskID, Repo: "alpha", Mode: "local-only", Scout: true, ScoutScope: "walk the full lifecycle for this dispatch policy", ScoutRuntimeBudgetSecs: 300, Generation: 1}); err != nil {
+		t.Fatalf("scaffold brief: %v", err)
 	}
 
 	endpoints := newWorkflowEndpoints()
@@ -469,25 +467,19 @@ func runLifecycleWorkflow(t *testing.T, tc workflowCase) {
 	// must stay pending. A cycle that retired it without an ack would lose
 	// the report.
 	supervisionEmitted := workflowSupervisionCycle(t, spawnHome, uplink, activation)
-	// "a wake was emitted" is the wrong claim: any wake source at all -- a
-	// planted check, an unrelated task -- satisfies it while every lifecycle
-	// wake source is dead. The claim is that the fleet scan read THIS task's
-	// done: status line and woke the supervisor for it, so assert the wake's
-	// kind and its key.
+	// A done report is audit-only: the fleet scan reads this task's done: status
+	// line and the supervisor is not woken for it (only needs-decision, blocked
+	// and failed reach the General). Any other wake source -- a probe check on
+	// a host without the backend -- is not the claim, so assert the kind and
+	// the key of the wake that must not exist.
 	wakes, err := orchestrator.DrainWakes(spawnHome)
 	if err != nil {
 		t.Fatalf("drain supervision wakes on %s: %v", spawnHome, err)
 	}
-	signalled := false
 	for _, wake := range wakes {
 		if wake.Kind == "signal" && wake.Key == taskID {
-			signalled = true
-			break
+			t.Fatalf("supervision cycle under %s woke the supervisor for the done task %s: %v", tc.policy, taskID, wake)
 		}
-	}
-	if !signalled {
-		t.Fatalf("supervision cycle under %s emitted no signal wake keyed to %s (emitted=%t, wakes=%v)",
-			tc.policy, taskID, supervisionEmitted, wakes)
 	}
 	pendingAfterReplay := len(workflowPendingUplinks(t, spawnHome))
 	if pendingAfterReplay != tc.relayed {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -294,5 +295,96 @@ func TestOldestMaterialWakeAge_RoutineOnly(t *testing.T) {
 	orchestrator.EnqueueWake(home, "stale", "task-routine", "working: in progress")
 	if age := oldestMaterialWakeAge(home); age != 0 {
 		t.Errorf("age = %d for routine wake, want 0", age)
+	}
+}
+
+// TestEnsureWatcherSleepHelper is the body of the stand-in watcher process the
+// eviction tests start from this test binary; it does nothing in a normal run.
+func TestEnsureWatcherSleepHelper(t *testing.T) {
+	if os.Getenv("MUNSU_TEST_WATCHER_SLEEP") != "1" {
+		return
+	}
+	time.Sleep(time.Minute)
+}
+
+// startStandInWatcher starts a child process this test owns, binds a watcher
+// identity and a beat of the given age to it under homeDir, and returns a
+// channel closed when the child has exited.
+func startStandInWatcher(t *testing.T, homeDir string, beatAge time.Duration) <-chan struct{} {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(homeDir, "state"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestEnsureWatcherSleepHelper$")
+	cmd.Env = append(os.Environ(), "MUNSU_TEST_WATCHER_SLEEP=1")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	exited := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(exited) }()
+	t.Cleanup(func() { _ = cmd.Process.Kill(); <-exited })
+
+	id := orchestrator.NewIdentity(homeDir)
+	id.PID = cmd.Process.Pid
+	id.Executable, id.ProcessStart, _ = mhome.ProcessIdentity(cmd.Process.Pid)
+	if err := orchestrator.WriteIdentity(homeDir, id); err != nil {
+		t.Fatal(err)
+	}
+	beat := fmt.Sprintf("%d %d\n", time.Now().Add(-beatAge).Unix(), cmd.Process.Pid)
+	if err := os.WriteFile(mhome.WatcherBeatPath(homeDir), []byte(beat), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return exited
+}
+
+func stubWatcherStart(t *testing.T) {
+	t.Helper()
+	savedStarter, savedTimeout := startWatcherProcess, watcherBeaconTimeout
+	startWatcherProcess = func(string) (int, error) { return os.Getpid(), nil }
+	watcherBeaconTimeout = 10 * time.Millisecond
+	t.Cleanup(func() { startWatcherProcess, watcherBeaconTimeout = savedStarter, savedTimeout })
+}
+
+// TestEnsureWatcherEvictsAHolderWhoseBeatStalledPastTheBound proves a holder
+// whose beat is older than watcherEvictAfter is signalled, and one whose beat
+// is merely stale (past the stale threshold, inside the bound) is left alone.
+func TestEnsureWatcherEvictsAHolderWhoseBeatStalledPastTheBound(t *testing.T) {
+	stubWatcherStart(t)
+	t.Run("past the bound", func(t *testing.T) {
+		homeDir := t.TempDir()
+		exited := startStandInWatcher(t, homeDir, watcherEvictAfter+time.Minute)
+		ensureWatcher(homeDir, false)
+		select {
+		case <-exited:
+		case <-time.After(10 * time.Second):
+			t.Fatal("stalled holder was not signalled")
+		}
+	})
+	t.Run("stale inside the bound", func(t *testing.T) {
+		homeDir := t.TempDir()
+		exited := startStandInWatcher(t, homeDir, orchestrator.StaleThreshold()+time.Minute)
+		ensureWatcher(homeDir, false)
+		select {
+		case <-exited:
+			t.Fatal("a holder inside the eviction bound was signalled")
+		case <-time.After(500 * time.Millisecond):
+		}
+	})
+}
+
+// TestEnsureWatcherFailsWhenTheStartedWatcherNeverProvesOwnership: a started
+// pid with no beat and identity is a failed ensure, never a healthy one.
+func TestEnsureWatcherFailsWhenTheStartedWatcherNeverProvesOwnership(t *testing.T) {
+	stubWatcherStart(t)
+	homeDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(homeDir, "state"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	resp := ensureWatcher(homeDir, false)
+	if resp.Status != "error" || resp.Data.State != "failed" {
+		t.Fatalf("status=%q state=%q, want error/failed", resp.Status, resp.Data.State)
+	}
+	if resp.Data.Lease != nil || resp.Data.WatchID != "" {
+		t.Fatalf("a failed ensure must not report a lease or watch id: %+v", resp.Data)
 	}
 }

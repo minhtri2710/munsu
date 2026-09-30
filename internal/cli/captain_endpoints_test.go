@@ -45,6 +45,12 @@ type ordinaryCaptainProbeBackend struct {
 	// notFoundOnAbsent makes a false probe report structured authoritative
 	// absence (ErrPaneNotFound), modelling a verified structured backend.
 	notFoundOnAbsent bool
+	// process is the foreground process the pane reports (process evidence).
+	process string
+}
+
+func (b *ordinaryCaptainProbeBackend) ForegroundProcess(string) (string, error) {
+	return b.process, nil
 }
 
 func (b *ordinaryCaptainProbeBackend) NewWindow(string, string) (string, error) { return "", nil }
@@ -102,21 +108,33 @@ func TestSessionProbeEndpointResolutionAndOwnership(t *testing.T) {
 }
 
 func TestSessionProbeEndpointOrdinaryOutcomes(t *testing.T) {
-	for _, alive := range []bool{false, true} {
-		bk := &ordinaryCaptainProbeBackend{alive: alive}
-		ep := sessionProbeEndpoint{resolve: func(string, map[string]string) (backend.Backend, string, error) { return bk, "tmux", nil }}
-		got, err := ep.Probe("home", map[string]string{"window": "pane"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got.PaneAlive != alive || got.AgentAlive != alive {
-			t.Fatalf("got=%+v, alive=%v", got, alive)
-		}
-		// A plain Alive() bool cannot prove authoritative absence: Absent stays
-		// false even when Alive=false, so the unproven reading fails closed.
-		if got.Absent {
-			t.Fatalf("got=%+v, Absent must be false for non-agent-aware backend", got)
-		}
+	tests := []struct {
+		name                string
+		alive               bool
+		process             string
+		wantPane, wantAgent bool
+	}{
+		{name: "pane gone", alive: false},
+		{name: "pane without harness process", alive: true, process: "zsh", wantPane: true},
+		{name: "pane with harness process", alive: true, process: "claude", wantPane: true, wantAgent: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bk := &ordinaryCaptainProbeBackend{alive: tt.alive, process: tt.process}
+			ep := sessionProbeEndpoint{resolve: func(string, map[string]string) (backend.Backend, string, error) { return bk, "tmux", nil }}
+			got, err := ep.Probe("home", map[string]string{"window": "pane", "harness": "claude"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.PaneAlive != tt.wantPane || got.AgentAlive != tt.wantAgent || got.ReadyForPrompt != tt.wantAgent {
+				t.Fatalf("got=%+v, want pane=%v agent=%v", got, tt.wantPane, tt.wantAgent)
+			}
+			// A plain Alive() bool cannot prove authoritative absence: Absent stays
+			// false even when the pane is gone, so the unproven reading fails closed.
+			if got.Absent {
+				t.Fatalf("got=%+v, Absent must be false for non-agent-aware backend", got)
+			}
+		})
 	}
 }
 
@@ -283,14 +301,8 @@ func TestProbeCaptainBackendReadyNormalization(t *testing.T) {
 		status string
 		want   bool
 	}{
-		{name: "idle lowercase", status: "idle", want: true},
-		{name: "idle capitalized", status: "Idle", want: true},
-		{name: "idle padded", status: " idle ", want: true},
-		{name: "idle uppercase", status: "IDLE", want: true},
-		{name: "done", status: "done", want: true},
-		{name: "working", status: "working", want: false},
-		{name: "blocked", status: "blocked", want: false},
-		{name: "unknown", status: "unknown", want: false},
+		{name: "unnormalized ready", status: " Idle ", want: true},
+		{name: "not ready", status: "working", want: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -69,24 +69,24 @@ func TestInboxCmd_CaptainStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Actionable captain status (done = general-relevant)
+	// Actionable captain status (blocked = general-relevant)
 	domainStatusPath, err := home.StatusFilePath(tmpDir, "captain:domain")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(domainStatusPath,
 		[]byte("working: processing\n"+
-			"done: phase-1 complete\n"), 0644); err != nil {
+			"blocked: phase-1 needs a decision\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	// Non-actionable captain status (working)
+	// Non-actionable captain status (done is audit-only, not general-relevant)
 	infraStatusPath, err := home.StatusFilePath(tmpDir, "captain:infra")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(infraStatusPath,
-		[]byte("working: healthy\n"), 0644); err != nil {
+		[]byte("done: healthy\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -108,11 +108,14 @@ func TestInboxCmd_CaptainStatus(t *testing.T) {
 	if !strings.Contains(output, "infra") {
 		t.Errorf("inbox should show captain:infra status, got:\n%s", output)
 	}
-	if !strings.Contains(output, "done: phase-1 complete") {
-		t.Errorf("inbox should show done status line, got:\n%s", output)
+	if !strings.Contains(output, "blocked: phase-1 needs a decision") {
+		t.Errorf("inbox should show blocked status line, got:\n%s", output)
 	}
-	if !strings.Contains(output, "!") {
-		t.Errorf("inbox should mark actionable captain with !, got:\n%s", output)
+	if !strings.Contains(output, "! domain: blocked:") {
+		t.Errorf("inbox should mark the blocked captain with !, got:\n%s", output)
+	}
+	if !strings.Contains(output, "  infra: done: healthy") {
+		t.Errorf("inbox must not mark a done captain (audit-only), got:\n%s", output)
 	}
 }
 

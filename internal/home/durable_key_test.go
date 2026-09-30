@@ -84,13 +84,13 @@ func TestScanGeneralRelevantReturnsLogicalIDs(t *testing.T) {
 	sd := StateDir(tmp)
 
 	for _, id := range []string{"captain:domain", "captain:infra"} {
-		if err := AppendStatus(tmp, id, "done: shipped "+id); err != nil {
+		if err := AppendStatus(tmp, id, "blocked: waiting on "+id); err != nil {
 			t.Fatalf("AppendStatus(%q): %v", id, err)
 		}
 	}
 
 	matches := ScanGeneralRelevant(sd)
-	// "done:" lines are general-relevant.
+	// "blocked:" lines are general-relevant.
 	found := map[string]bool{}
 	for _, m := range matches {
 		found[m.TaskID] = true
