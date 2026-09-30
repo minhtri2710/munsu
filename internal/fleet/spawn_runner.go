@@ -1881,7 +1881,7 @@ func (r *Runner) submitLaunch() error {
 // launch script, so all artifacts are present.
 func (r *Runner) writeLaunchManifest() error {
 	entries := []ManifestEntry{}
-	for _, name := range []string{CharterName, BriefName, EnvelopeName, PromptName, LaunchScriptName} {
+	for _, name := range LaunchArtifactNames {
 		entry, err := ManifestEntryForFile(r.wtPath, name, DisposalPolicyCleanable)
 		if err != nil {
 			return fmt.Errorf("building manifest entry for %s: %w", name, err)

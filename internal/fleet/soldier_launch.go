@@ -8,10 +8,16 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/harness"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // PromptName is the name of the prompt file persisted to the worktree.
 const PromptName = ".soldier-prompt.md"
+
+// PiSettingsName is the worktree project-settings file a pi soldier launch
+// writes to block the orchestration skill among project skills. It is a launch
+// artifact bound by the manifest.
+const PiSettingsName = harness.PiProjectSettingsRelPath
 
 // LaunchPromptInput is the canonical input for building a Soldier launch prompt.
 // All fields must be populated before BuildLaunchPrompt is called.
@@ -202,7 +208,8 @@ Summary of report states:
 // starts with charter + task content already in context.
 // model and effort may be empty strings; they are only appended when the
 // adapter's template defines a corresponding flag.
-// The harness must have PromptArg support (from CaptainLaunch contract);
+// The harness must have PromptArg support (from CaptainLaunch contract) and an
+// expressible question deny, which every soldier launch carries;
 // unsupported harnesses fail closed.
 func BuildLaunchArgs(soldierHome, harnessName, model, effort, prompt string) (string, []string, error) {
 	adapter, ok := harness.GetAdapter(harnessName)
@@ -211,6 +218,9 @@ func BuildLaunchArgs(soldierHome, harnessName, model, effort, prompt string) (st
 	}
 	if !adapter.CaptainLaunch.Supported || !adapter.CaptainLaunch.PromptArg {
 		return "", nil, fmt.Errorf("soldier launch: harness %q does not have a verified prompt-arg contract", harnessName)
+	}
+	if len(adapter.QuestionDeny) == 0 {
+		return "", nil, fmt.Errorf("soldier launch: harness %q cannot deny its ask-the-user tool; decision-hold is the only question path", harnessName)
 	}
 	tmpl := adapter.LaunchTemplate
 
@@ -226,6 +236,7 @@ func BuildLaunchArgs(soldierHome, harnessName, model, effort, prompt string) (st
 		args = append(args, tmpl.EffortFlag, tmpl.DefaultEffort)
 	}
 	args = append(args, tmpl.ExtraArgs...)
+	args = append(args, adapter.QuestionDeny...)
 
 	if adapter.CaptainLaunch.Separator != "" {
 		args = append(args, adapter.CaptainLaunch.Separator)
@@ -248,6 +259,9 @@ type LaunchArtifact struct {
 	CommandDigest string
 	GuardName     string
 	GuardIdentity string
+	// Posture is what the launch argv guarantees, read by the spawn caller
+	// without parsing argv.
+	Posture harness.LaunchPosture
 }
 
 // LaunchArtifactInput carries the immutable launch identity for one artifact.
@@ -316,6 +330,17 @@ func buildLaunchArtifact(in LaunchArtifactInput) (LaunchArtifact, error) {
 	if err != nil {
 		return LaunchArtifact{}, err
 	}
+	posture := harness.PostureOf(in.LaunchBin, in.LaunchArgs)
+	if in.LaunchBin == harness.Pi {
+		piAgentDir, err := provisionPiSkillBlock(in.HomeDir, in.TaskID, in.WorktreePath)
+		if err != nil {
+			return LaunchArtifact{}, err
+		}
+		b.WriteString("export PI_CODING_AGENT_DIR=")
+		b.WriteString(shQuote(piAgentDir))
+		b.WriteString("\n")
+		posture.SkillBlock = true
+	}
 	b.WriteString("export PATH=")
 	b.WriteString(shQuote(shimDir))
 	b.WriteString(":\"$PATH\"\n")
@@ -363,7 +388,70 @@ func buildLaunchArtifact(in LaunchArtifactInput) (LaunchArtifact, error) {
 		return LaunchArtifact{}, fmt.Errorf("writing launch script: %w", err)
 	}
 	command := "bash " + shQuote(scriptPath)
-	return LaunchArtifact{ScriptPath: scriptPath, Command: command, CommandDigest: sha256Content([]byte(command)), GuardName: guardName, GuardIdentity: guardIdentity}, nil
+	return LaunchArtifact{ScriptPath: scriptPath, Command: command, CommandDigest: sha256Content([]byte(command)), GuardName: guardName, GuardIdentity: guardIdentity, Posture: posture}, nil
+}
+
+// provisionPiSkillBlock blocks the orchestration skill for a pi soldier at both
+// levels pi filters skills: the per-task agent dir (user level, pointed at by
+// PI_CODING_AGENT_DIR) and the worktree .pi/settings.json (project level, which
+// alone filters the .agents/skills of the worktree's ancestors). It returns the
+// agent dir. A worktree that already has .pi/settings.json, tracked or present
+// with other content, is refused: the block cannot be expressed without
+// changing the project's file.
+func provisionPiSkillBlock(homeDir, taskID, worktreePath string) (string, error) {
+	stateDir := home.StateDir(homeDir)
+	dst, err := home.DurableFilePath(stateDir, taskID, "."+harness.PiAgentDirSuffix)
+	if err != nil {
+		return "", fmt.Errorf("soldier launch: %w", err)
+	}
+	src, err := harness.HumanPiAgentDir(stateDir)
+	if err != nil {
+		return "", fmt.Errorf("soldier launch: %w", err)
+	}
+	if err := writePiProjectSettings(worktreePath); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		return "", fmt.Errorf("soldier launch: %w", err)
+	}
+	if err := harness.BuildPiAgentDir(src, dst); err != nil {
+		return "", fmt.Errorf("soldier launch: %w", err)
+	}
+	return dst, nil
+}
+
+// writePiProjectSettings writes the worktree's .pi/settings.json skill block.
+// Re-entry of the same launch finds its own identical, untracked file and keeps it.
+func writePiProjectSettings(worktreePath string) error {
+	want := harness.PiProjectSettings()
+	path := filepath.Join(worktreePath, filepath.FromSlash(PiSettingsName))
+	refuse := fmt.Errorf("soldier launch: worktree has %s; the orchestration skill block cannot be expressed without changing the project's file", path)
+	if isTrackedByGit(worktreePath, PiSettingsName) {
+		return refuse
+	}
+	switch fi, err := os.Lstat(path); {
+	case err == nil:
+		if !fi.Mode().IsRegular() {
+			return refuse
+		}
+		existing, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("soldier launch: reading %s: %w", path, err)
+		}
+		if string(existing) != string(want) {
+			return refuse
+		}
+		return nil
+	case !os.IsNotExist(err):
+		return fmt.Errorf("soldier launch: checking %s: %w", path, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("soldier launch: %w", err)
+	}
+	if err := atomicWriteFile(path, want, 0o644); err != nil {
+		return fmt.Errorf("soldier launch: writing %s: %w", path, err)
+	}
+	return nil
 }
 
 // PersistLaunchFiles writes all durable launch files to the worktree:

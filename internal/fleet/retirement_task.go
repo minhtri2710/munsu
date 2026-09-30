@@ -982,7 +982,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 				return &RetirementProjectionError{TaskID: opts.ID, Err: err}
 			}
 			for _, p := range residualPaths {
-				if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+				if err := os.RemoveAll(p); err != nil && !os.IsNotExist(err) {
 					return &RetirementProjectionError{TaskID: opts.ID, Err: fmt.Errorf("remove residual %s: %w", filepath.Base(p), err)}
 				}
 				result.Steps = append(result.Steps, fmt.Sprintf("residual %s removed", filepath.Base(p)))
@@ -1030,7 +1030,7 @@ func finalizeCompletedProjectionCleanup(opts Options, meta map[string]string, re
 		return err
 	}
 	for _, p := range residualPaths {
-		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+		if err := os.RemoveAll(p); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 	}
@@ -1435,6 +1435,9 @@ func taskMetaFilePath(homeDir, id string) (string, error) {
 	return home.MetaFilePath(homeDir, id)
 }
 
+// cleanupResidualArtifactPaths lists the task's residual state paths: files and,
+// for a pi soldier, the per-task agent dir, which the callers remove with
+// os.RemoveAll (it unlinks the dir's symlinks and never follows them).
 func cleanupResidualArtifactPaths(homeDir, id string, meta map[string]string) ([]string, error) {
 	statusPath, err := home.StatusFilePath(homeDir, id)
 	if err != nil {

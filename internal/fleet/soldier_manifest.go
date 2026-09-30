@@ -47,16 +47,18 @@ type LaunchManifest struct {
 // sha256Regex matches a valid lowercase hex SHA-256 string.
 var sha256Regex = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
+// LaunchArtifactNames lists every runtime-owned launch artifact, relative to the
+// worktree, that the manifest must bind. The manifest itself is not included.
+var LaunchArtifactNames = []string{CharterName, BriefName, EnvelopeName, PromptName, LaunchScriptName, PiSettingsName}
+
 // expectedManifestEntryPaths returns the exact set of paths that must appear
-// in every valid manifest. The manifest itself is not included.
+// in every valid manifest.
 func expectedManifestEntryPaths() map[string]bool {
-	return map[string]bool{
-		CharterName:      true,
-		BriefName:        true,
-		EnvelopeName:     true,
-		PromptName:       true,
-		LaunchScriptName: true,
+	expected := make(map[string]bool, len(LaunchArtifactNames))
+	for _, name := range LaunchArtifactNames {
+		expected[name] = true
 	}
+	return expected
 }
 
 func validateManifestPath(relPath string) error {
