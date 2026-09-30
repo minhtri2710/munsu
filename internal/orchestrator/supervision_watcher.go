@@ -740,7 +740,7 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 		}
 		id := reason.TaskIDs[0]
 		fingerprint := wakeFingerprint(homeDir, reason)
-		marker := wakeMarkerPath(homeDir, id)
+		marker := home.WatcherSeenMarkerPath(homeDir, id)
 		if data, err := os.ReadFile(marker); err == nil && string(data) == fingerprint {
 			if obs != nil {
 				obs.suppressedDuplicates++
@@ -880,7 +880,7 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 		}
 
 		fingerprint := "check\n" + msg
-		marker := wakeMarkerPath(homeDir, "check:"+checkID)
+		marker := home.WatcherSeenMarkerPath(homeDir, "check:"+checkID)
 		if data, err := os.ReadFile(marker); err == nil && string(data) == fingerprint {
 			if obs != nil {
 				obs.suppressedDuplicates++
@@ -925,11 +925,6 @@ func wakeFingerprint(homeDir string, reason *WakeReason) string {
 		}
 	}
 	return reason.Kind + "\n" + message + "\n" + status
-}
-
-func wakeMarkerPath(homeDir, id string) string {
-	safeID := strings.NewReplacer("/", "_", ":", "_", ".", "_").Replace(id)
-	return filepath.Join(homeDir, "state", ".watcher-seen-"+safeID)
 }
 
 // checkRefusalMarkerPath records the refusal the loop last reported for one
@@ -1047,7 +1042,7 @@ func reconcileCheckRefusalMarkers(homeDir string, plugins []CheckPlugin) error {
 }
 
 func clearWakeMarker(homeDir, id string) {
-	_ = os.Remove(wakeMarkerPath(homeDir, id))
+	_ = os.Remove(home.WatcherSeenMarkerPath(homeDir, id))
 }
 
 // handleStale creates a stale WakeReason with idle-seconds tracking.

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -70,6 +71,48 @@ func EnqueueWake(h, kind, key, payload string) error {
 		return err
 	}
 	return enqueueWakeAt(h, kind, key, payload, time.Now())
+}
+
+// WatcherSeenMarkerPath is the dedup marker the watcher keeps for one wake
+// subject (a task ID, or "check:<id>"): the fingerprint it last enqueued.
+func WatcherSeenMarkerPath(h, id string) string {
+	safeID := strings.NewReplacer("/", "_", ":", "_", ".", "_").Replace(id)
+	return filepath.Join(h, "state", ".watcher-seen-"+safeID)
+}
+
+// PruneTaskWakes removes the queued wake records of the given kinds keyed by
+// key, and the watcher's dedup marker for key. It takes the wake lock and goes
+// through the wake journal like every other queue mutation. Records of other
+// kinds and other keys are untouched. A missing marker is not an error.
+func PruneTaskWakes(h, key string, kinds ...string) (err error) {
+	lock, err := acquireWakeLock(h)
+	if err != nil {
+		return err
+	}
+	defer joinWakeLockError(&err, lock)
+	if err := recoverWakeMutationLocked(h); err != nil {
+		return err
+	}
+	queue, err := readWakeQueue(h)
+	if err != nil {
+		return err
+	}
+	var kept []WakeRecord
+	for _, r := range queue {
+		if r.Key == key && slices.Contains(kinds, r.Kind) {
+			continue
+		}
+		kept = append(kept, r)
+	}
+	if len(kept) != len(queue) {
+		if err := applyWakeMutationLocked(h, wakeMutation{queueSet: true, queueData: wakeQueueData(kept)}); err != nil {
+			return err
+		}
+	}
+	if err := os.Remove(WatcherSeenMarkerPath(h, key)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 func validateWakeIdentifier(name, value string) error {
