@@ -7,7 +7,7 @@ import (
 )
 
 func TestPRCanMerge(t *testing.T) {
-	approved := []domain.Review{{State: domain.ReviewApproved, Body: "LGTM"}}
+	approved := []domain.Review{{State: domain.ReviewState("approved"), Body: "LGTM"}}
 	passed := []domain.CheckRun{{Name: "test", Status: domain.CheckPassed}, {Name: "lint", Status: domain.CheckPassed}}
 	cases := []struct {
 		name    string
@@ -24,7 +24,7 @@ func TestPRCanMerge(t *testing.T) {
 		{name: "failed check after passed checks", status: domain.PROpen, checks: append(append([]domain.CheckRun{}, passed...), domain.CheckRun{Name: "security", Status: domain.CheckFailed}), reviews: approved},
 		{name: "no approval", status: domain.PROpen, checks: passed},
 		{name: "changes requested", status: domain.PROpen, checks: passed, reviews: []domain.Review{{State: domain.ReviewChangesRequested}}},
-		{name: "approval vetoed by changes requested", status: domain.PROpen, checks: passed, reviews: []domain.Review{{State: domain.ReviewApproved}, {State: domain.ReviewChangesRequested}}},
+		{name: "approval vetoed by changes requested", status: domain.PROpen, checks: passed, reviews: []domain.Review{{State: domain.ReviewState("approved")}, {State: domain.ReviewChangesRequested}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

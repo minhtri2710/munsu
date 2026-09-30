@@ -14,9 +14,8 @@ import (
 )
 
 // GitHubClient defines the typed read-only GitHub capability behind the
-// provider-neutral status and identity seams. GitHub delivery execution is
-// unsupported (Deliver refuses a GitHub identity before any journal), so no
-// GitHub mutation or delivery observation exists.
+// provider-neutral status and identity seams. The delivery observation and the
+// merge mutation are the separate GitHubDeliveryClient (delivery_github_merge.go).
 type GitHubClient interface {
 	// ViewPRJSON fetches PR metadata as JSON bytes via gh CLI. It backs the
 	// retained provider-neutral read-only status seam.

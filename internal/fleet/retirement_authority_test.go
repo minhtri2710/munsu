@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
@@ -59,7 +60,7 @@ func TestMergeAndRetireNilAuthorityFailsClosed(t *testing.T) {
 
 	// A missing composed canonical Authority fails closed: no retirement
 	// transition ever commits without one.
-	result := MergeAndRetire(homeDir, taskID, "https://github.com/owner/repo/pull/1", nil, fakeTeardown{alive: true}, fakeRetirementJournals{}, nil)
+	result := MergeAndRetire(homeDir, taskID, "https://github.com/owner/repo/pull/1", nil, domain.Words{}, fakeTeardown{alive: true}, fakeRetirementJournals{}, nil)
 	if result == nil || !result.IsError() {
 		t.Fatal("expected an error result when the authority is nil")
 	}
@@ -83,7 +84,7 @@ func TestMergeAndRetireRefusesUnreadableTargetGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result := MergeAndRetire(homeDir, taskID, "https://github.com/owner/repo/pull/1", nil, fakeTeardown{alive: true}, fakeRetirementJournals{}, auth)
+	result := MergeAndRetire(homeDir, taskID, "https://github.com/owner/repo/pull/1", nil, domain.Words{}, fakeTeardown{alive: true}, fakeRetirementJournals{}, auth)
 	if result == nil || result.MergeOutcome != taskauthority.DeliveryOutcomeRetryable {
 		t.Fatalf("result = %+v, want retryable refusal", result)
 	}
@@ -100,7 +101,7 @@ func TestMergeAndRetireRetiresThroughAuthority(t *testing.T) {
 	taskID := "test-retire-through"
 	auth := mergedShipFixture(t, homeDir, taskID)
 
-	result := MergeAndRetire(homeDir, taskID, "https://github.com/owner/repo/pull/1", nil, fakeTeardown{alive: true}, fakeRetirementJournals{}, auth)
+	result := MergeAndRetire(homeDir, taskID, "https://github.com/owner/repo/pull/1", nil, domain.Words{}, fakeTeardown{alive: true}, fakeRetirementJournals{}, auth)
 	if result == nil {
 		t.Fatal("expected non-nil result")
 	}
@@ -151,7 +152,7 @@ func TestMergeAndRetireCleanupFailurePreservesCanonicalTruth(t *testing.T) {
 
 	// First attempt: the canonical Retire op commits (durable receipt) but the
 	// saga-side cleanup fails at the session dispose step.
-	first := MergeAndRetire(homeDir, taskID, "https://github.com/owner/repo/pull/1", nil, fakeTeardown{alive: true, disposeErr: errors.New("window busy")}, fakeRetirementJournals{}, auth)
+	first := MergeAndRetire(homeDir, taskID, "https://github.com/owner/repo/pull/1", nil, domain.Words{}, fakeTeardown{alive: true, disposeErr: errors.New("window busy")}, fakeRetirementJournals{}, auth)
 	if first == nil || first.TeardownError == nil {
 		t.Fatal("expected teardown error on cleanup failure")
 	}
@@ -201,7 +202,7 @@ func TestMergeAndRetireCleanupFailurePreservesCanonicalTruth(t *testing.T) {
 	// the retired phase is observed (no double transition, only the claim
 	// completion advances revision 6 -> 7), and the cleanup resumes to
 	// completion.
-	second := MergeAndRetire(homeDir, taskID, "https://github.com/owner/repo/pull/1", nil, fakeTeardown{alive: true}, fakeRetirementJournals{}, auth)
+	second := MergeAndRetire(homeDir, taskID, "https://github.com/owner/repo/pull/1", nil, domain.Words{}, fakeTeardown{alive: true}, fakeRetirementJournals{}, auth)
 	if second == nil {
 		t.Fatal("expected non-nil retry result")
 	}
@@ -235,7 +236,7 @@ func TestMergeAndRetireCrossHomeRetirement(t *testing.T) {
 	taskID := "test-cross-home"
 	auth := mergedShipFixture(t, capHome, taskID)
 
-	result := MergeAndRetire(capHome, taskID, "https://github.com/owner/repo/pull/1", nil, fakeTeardown{alive: true}, fakeRetirementJournals{}, auth)
+	result := MergeAndRetire(capHome, taskID, "https://github.com/owner/repo/pull/1", nil, domain.Words{}, fakeTeardown{alive: true}, fakeRetirementJournals{}, auth)
 	if result == nil || result.TeardownError != nil {
 		t.Fatalf("cross-home retirement failed: %+v", result)
 	}

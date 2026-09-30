@@ -145,7 +145,8 @@ type DeliveryMergeRequest struct {
 
 // DeliveryProvider is the one narrow typed Fleet capability consumed by
 // Deliver, with separate observation and irreversible mutation methods.
-// The GitLab (glab) adapter implements the supported provider merge path.
+// The GitHub (gh) and GitLab (glab) adapters implement the supported provider
+// merge paths.
 // Unsupported providers/kinds fail closed before any journal mutation
 // authorization; there is no default provider, raw CLI fallback, shell
 // script, or alternate execution route.
@@ -184,6 +185,11 @@ func (e *DeliveryFailClosedError) Error() string {
 // probes the real typed capabilities.
 var deliveryProviderFor = func(ident domain.DeliveryIdentity) (DeliveryProvider, error) {
 	switch ident.Provider {
+	case "github":
+		if st := ProbeGitHubDeliveryCapability(); st != backend.Ready {
+			return nil, fmt.Errorf("GitHub delivery capability is %s (gh-axi and gh must be Ready); no fallback execution route", st)
+		}
+		return &githubDeliveryProvider{client: &ghAxiClient{}}, nil
 	case "gitlab":
 		if st := ProbeGitLabCapability(); st != backend.Ready {
 			return nil, fmt.Errorf("GitLab delivery capability is %s (glab must be Ready); no fallback execution route", st)
@@ -266,17 +272,13 @@ func Deliver(homeDir, taskID string, req DeliverRequest) (*DeliverResult, error)
 // validateDeliverRequest checks the typed delivery intent: a supported
 // irreversible kind, a valid typed identity of a supported provider, a
 // supported merge method, and a non-empty unique closed-set of typed
-// preconditions. GitHub delivery is out of scope and is refused
-// here, before any recovery, journal write, or authorization.
+// preconditions. It runs before any recovery, journal write, or authorization.
 func validateDeliverRequest(req DeliverRequest, method string) error {
 	if req.Kind != taskauthority.DeliveryAuthorizationProviderMerge {
 		return fmt.Errorf("delivery kind %q is unsupported: only %q is supported by the Fleet delivery execution path", req.Kind, taskauthority.DeliveryAuthorizationProviderMerge)
 	}
 	if err := domain.ValidateIdentity(&req.Identity); err != nil {
 		return fmt.Errorf("delivery identity is invalid: %w", err)
-	}
-	if req.Identity.Provider == "github" {
-		return fmt.Errorf("GitHub delivery is unsupported: only GitLab merge requests are delivered by the Fleet delivery execution path")
 	}
 	switch method {
 	case "squash", "merge", "rebase":
@@ -401,6 +403,7 @@ func buildDeliveryJournal(homeDir string, c *taskauthority.Canonical, agg taskau
 		Preconditions:   preconditions,
 		Words:           req.Words,
 		AuthorizeOpID:   deliveryAuthorizeOpID(id, agg.TaskID),
+		GateOpID:        deliveryGateOpID(id, agg.TaskID),
 		RevokeOpID:      deliveryRevokeOpID(id, agg.TaskID),
 		OutcomeOpID:     deliveryOutcomeOpID(id, agg.TaskID),
 		AuthorizeDigest: authorizeDigest,
@@ -469,6 +472,11 @@ func resumeDeliveryJournal(h *home.Home, lk *home.Lock, c *taskauthority.Canonic
 			}
 			request := DeliveryMergeRequest{Method: journal.Method, HeadSHA: journal.Identity.HeadSHA, BaseRef: journal.Identity.BaseRef}
 			if err := provider.ValidateMergeRequest(journal.Identity, request); err != nil {
+				return failClosedDelivery(h, lk, c, journal, err)
+			}
+			// The gate record (G1) is appended before the boundary is persisted;
+			// a failed append refuses the merge.
+			if err := recordDeliveryGate(c, journal); err != nil {
 				return failClosedDelivery(h, lk, c, journal, err)
 			}
 			// Persist the irreversible-mutation boundary, then execute the
@@ -545,6 +553,41 @@ func issueDeliveryAuthorization(c *taskauthority.Canonical, journal *deliveryJou
 	op := deliveryJournals.mustOperation(journal.AuthorizeOpID, req)
 	if _, err := c.AuthorizeDelivery(op, req); err != nil {
 		return fmt.Errorf("delivery authorization issuance: %w", err)
+	}
+	return nil
+}
+
+// recordDeliveryGate appends the gate record (G1) of the journal's external
+// write under its deterministic Operation identity, fenced to the task's
+// current generation and revision while the journal's authorization is still
+// the current one. Same identity replays idempotently, so a crash between the
+// append and the merge never doubles the record.
+func recordDeliveryGate(c *taskauthority.Canonical, journal *deliveryJournal) error {
+	if journal.GateOpID == "" {
+		return fmt.Errorf("delivery journal %s has no gate operation identity", journal.ID)
+	}
+	cur, current, err := journalAuthorizationCurrency(c, journal)
+	if err != nil {
+		return err
+	}
+	if !current {
+		return fmt.Errorf("delivery authorization %s is no longer current; the gate record was not appended", journal.AuthorizeOpID)
+	}
+	tid, err := domain.NewTaskID(journal.TaskID)
+	if err != nil {
+		return err
+	}
+	req := taskauthority.CanonicalRecordGateRequest{
+		HomeID:                   c.HomeID(),
+		TaskID:                   tid,
+		Precondition:             domain.Of(uint64(cur.Generation), uint64(cur.Revision)),
+		AuthorizationOperationID: journal.AuthorizeOpID,
+		Operation:                journal.Kind,
+		HeadSHA:                  journal.Identity.HeadSHA,
+		Words:                    journal.Words,
+	}
+	if _, err := c.RecordGate(deliveryJournals.mustOperation(journal.GateOpID, req), req); err != nil {
+		return fmt.Errorf("appending the delivery gate record: %w", err)
 	}
 	return nil
 }

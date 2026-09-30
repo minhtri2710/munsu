@@ -157,12 +157,9 @@ const (
 
 type ReviewState string
 
-const (
-	ReviewApproved         ReviewState = "approved"
-	ReviewChangesRequested ReviewState = "changes-requested"
-	ReviewPending          ReviewState = "pending"
-	ReviewDismissed        ReviewState = "dismissed"
-)
+// ReviewChangesRequested is the only provider review state munsu reads: a
+// provider review can object to a merge but never approve one (ADR-0025).
+const ReviewChangesRequested ReviewState = "changes-requested"
 
 type CheckRun struct {
 	Name   string      `json:"name"`

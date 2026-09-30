@@ -1,6 +1,6 @@
 # 0010. The Delivery Head Invariant Has Two Owners, One Per Layer
 
-* **Status:** Accepted
+* **Status:** Accepted; the GitHub delivery refusal in §1 is replaced by ADR-0026
 * **Date:** 2026-08-14
 * **Extends:** ADR-0008 (one owner and one canonical implementation path per lifecycle), ADR-0009 (a classification has one owner)
 * **Triggered by:** BEO-64 (`verifySnapshotIdentity` / `verifyAncestry` unreachable on `main`) → BEO-70 (provider fence) → BEO-72

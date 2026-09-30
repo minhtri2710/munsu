@@ -125,7 +125,7 @@ func stubDeliverySnapshot(t *testing.T) {
 			HeadSHA:    deliveryGuardHead,
 			State:      "OPEN",
 			Checks:     []domain.CheckRun{{Status: domain.CheckPassed}},
-			Reviews:    []domain.Review{{State: domain.ReviewApproved}},
+			Reviews:    []domain.Review{{State: domain.ReviewState("approved")}},
 			ObservedAt: time.Now().UTC().Format(time.RFC3339),
 		}, nil
 	}
@@ -153,12 +153,12 @@ func TestBuildDeliverRequestStateGuard(t *testing.T) {
 				snapshot := &fleet.ProviderSnapshot{Provider: "github", Owner: "acme", Repo: "widgets", Number: 42, URL: prURL, BaseRef: "main", HeadRef: "feature", HeadSHA: deliveryGuardHead, State: tc.state, ObservedAt: time.Now().UTC().Format(time.RFC3339)}
 				if tc.mergeable {
 					snapshot.Checks = []domain.CheckRun{{Status: domain.CheckPassed}}
-					snapshot.Reviews = []domain.Review{{State: domain.ReviewApproved}}
+					snapshot.Reviews = []domain.Review{{State: domain.ReviewState("approved")}}
 				}
 				return snapshot, nil
 			}
 			t.Cleanup(func() { fleet.FetchProviderSnapshot = old })
-			_, err := buildDeliverRequest(auth, taskID, deliveryGuardPRURL, nil)
+			_, err := buildDeliverRequest(auth, taskID, deliveryGuardPRURL, nil, domain.Words{})
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("error = %v, wantErr %t", err, tc.wantErr)
 			}

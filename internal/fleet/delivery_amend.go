@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/domain"
 )
 
@@ -78,19 +79,6 @@ func validGitObjectID(value string) bool {
 	return err == nil && strings.Trim(value, "0") != ""
 }
 
-func normalizeGitHubReviewState(value string) domain.ReviewState {
-	switch strings.ToUpper(strings.ReplaceAll(value, "-", "_")) {
-	case "APPROVED":
-		return domain.ReviewApproved
-	case "CHANGES_REQUESTED":
-		return domain.ReviewChangesRequested
-	case "DISMISSED":
-		return domain.ReviewDismissed
-	default:
-		return domain.ReviewPending
-	}
-}
-
 func mapCheckStatus(value string) domain.CheckStatus {
 	switch strings.ToLower(value) {
 	case "success", "passed":
@@ -134,43 +122,23 @@ func fetchGitHubProviderSnapshot(prURL string) (*ProviderSnapshot, error) {
 		return nil, fmt.Errorf("invalid GitHub URL: %w", err)
 	}
 
-	client, err := DefaultGitHubClient()
-	if err != nil {
-		return nil, fmt.Errorf("GitHub provider not available: %w", err)
+	if st := ProbeGitHubDeliveryCapability(); st != backend.Ready {
+		return nil, fmt.Errorf("GitHub provider not available: delivery capability is %s", st)
 	}
-
-	data, err := client.ViewPRJSON(ghURL.Owner, ghURL.Repo, ghURL.Num, "state,headRefOid,headRefName,baseRefName,mergeCommit,statusCheckRollup,reviewDecision")
+	client := GitHubDeliveryClient(&ghAxiClient{})
+	view, err := readGitHubPRView(client, ghURL)
 	if err != nil {
 		return nil, err
 	}
 
-	var raw struct {
-		State             string `json:"state"`
-		HeadRefOid        string `json:"headRefOid"`
-		HeadRefName       string `json:"headRefName"`
-		BaseRefName       string `json:"baseRefName"`
-		StatusCheckRollup []struct {
-			State      string `json:"state"`
-			Conclusion string `json:"conclusion"`
-			Status     string `json:"status"`
-		} `json:"statusCheckRollup"`
-		ReviewDecision string `json:"reviewDecision"`
-		MergeCommit    *struct {
-			Oid string `json:"oid"`
-		} `json:"mergeCommit"`
-	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("parsing gh pr view output: %w", err)
-	}
-
 	// Fail closed on empty critical fields
-	if raw.State == "" {
+	if view.State == "" {
 		return nil, fmt.Errorf("gh pr view returned empty state")
 	}
-	if raw.HeadRefOid == "" {
+	if view.HeadRefOid == "" {
 		return nil, fmt.Errorf("gh pr view returned empty headRefOid")
 	}
-	if raw.HeadRefName == "" || raw.BaseRefName == "" {
+	if view.HeadRefName == "" || view.BaseRefName == "" {
 		return nil, fmt.Errorf("gh pr view returned empty headRefName or baseRefName")
 	}
 
@@ -180,37 +148,32 @@ func fetchGitHubProviderSnapshot(prURL string) (*ProviderSnapshot, error) {
 		Repo:       ghURL.Repo,
 		Number:     ghURL.Num,
 		URL:        ghURL.FullURL(),
-		BaseRef:    raw.BaseRefName,
-		HeadRef:    raw.HeadRefName,
-		HeadSHA:    raw.HeadRefOid,
-		State:      strings.ToUpper(raw.State),
+		BaseRef:    view.BaseRefName,
+		HeadRef:    view.HeadRefName,
+		HeadSHA:    view.HeadRefOid,
+		State:      view.State,
 		ObservedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 	switch snap.State {
 	case "MERGED":
-		if raw.MergeCommit == nil || !validGitObjectID(raw.MergeCommit.Oid) {
+		if view.MergeCommit == nil || !validGitObjectID(view.MergeCommit.Oid) {
 			return nil, fmt.Errorf("gh pr view returned missing merge commit OID")
 		}
 		snap.Merged = true
-		snap.MergedSHA = raw.MergeCommit.Oid
+		snap.MergedSHA = view.MergeCommit.Oid
 	case "CLOSED":
 	case "OPEN":
-		if len(raw.StatusCheckRollup) == 0 {
-			return nil, fmt.Errorf("gh pr view returned empty statusCheckRollup")
+		pr, mergeableOK, err := readGitHubOpenPR(client, ghURL, view)
+		if err != nil {
+			return nil, err
 		}
-		for _, check := range raw.StatusCheckRollup {
-			status := strings.ToLower(check.Conclusion)
-			if status == "" {
-				status = strings.ToLower(check.State)
-			}
-			snap.Checks = append(snap.Checks, domain.CheckRun{Status: mapCheckStatus(status)})
+		if !mergeableOK {
+			return nil, fmt.Errorf("GitHub PR is not mergeable")
 		}
-		if raw.ReviewDecision == "" {
-			return nil, fmt.Errorf("gh pr view returned empty reviewDecision")
-		}
-		snap.Reviews = []domain.Review{{State: normalizeGitHubReviewState(raw.ReviewDecision)}}
+		snap.Checks = pr.Checks
+		snap.Reviews = pr.Reviews
 	default:
-		return nil, fmt.Errorf("gh pr view returned unrecognized state %q", raw.State)
+		return nil, fmt.Errorf("gh pr view returned unrecognized state %q", view.State)
 	}
 
 	return snap, nil

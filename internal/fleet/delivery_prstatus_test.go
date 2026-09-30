@@ -115,7 +115,7 @@ func TestProviderSnapshotMergeableDelegatesToDomain(t *testing.T) {
 	base := ProviderSnapshot{
 		State:   "OPEN",
 		Checks:  []domain.CheckRun{{Status: domain.CheckPassed}},
-		Reviews: []domain.Review{{State: domain.ReviewApproved}},
+		Reviews: []domain.Review{{State: domain.ReviewState("approved")}},
 	}
 	cases := []struct {
 		name   string
@@ -142,21 +142,6 @@ func TestProviderSnapshotMergeableDelegatesToDomain(t *testing.T) {
 				t.Fatalf("Mergeable() = %t, want %t for %+v", got, tc.want, snapshot)
 			}
 		})
-	}
-}
-
-func TestNormalizeGitHubReviewState(t *testing.T) {
-	cases := map[string]domain.ReviewState{
-		"APPROVED":          domain.ReviewApproved,
-		"CHANGES_REQUESTED": domain.ReviewChangesRequested,
-		"changes-requested": domain.ReviewChangesRequested,
-		"DISMISSED":         domain.ReviewDismissed,
-		"COMMENTED":         domain.ReviewPending,
-	}
-	for input, want := range cases {
-		if got := normalizeGitHubReviewState(input); got != want {
-			t.Errorf("normalizeGitHubReviewState(%q) = %q, want %q", input, got, want)
-		}
 	}
 }
 
