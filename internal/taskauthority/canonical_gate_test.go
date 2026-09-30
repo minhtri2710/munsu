@@ -1,7 +1,9 @@
 package taskauthority
 
 import (
+	"encoding/json"
 	"errors"
+	"os"
 	"testing"
 )
 
@@ -18,8 +20,8 @@ func gateRequest(t *testing.T, c *Canonical, auth DeliveryAuthorization) Canonic
 	t.Helper()
 	return CanonicalRecordGateRequest{
 		HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, deliveryReadyRev+1),
-		AuthorizationOperationID: auth.OperationID, Operation: DeliveryAuthorizationProviderMerge,
-		HeadSHA: deliveryHead, Words: testWords(),
+		AuthorizationOperationID: auth.OperationID,
+		HeadSHA:                  deliveryHead, Words: testWords(),
 	}
 }
 
@@ -88,7 +90,6 @@ func TestCanonicalRecordGateRefusals(t *testing.T) {
 		mutate func(*CanonicalRecordGateRequest)
 		want   string
 	}{
-		{"unknown operation", func(r *CanonicalRecordGateRequest) { r.Operation = "force-push" }, `invalid gate operation "force-push"`},
 		{"unsafe authorization identity", func(r *CanonicalRecordGateRequest) { r.AuthorizationOperationID = "a/b" }, "gate record requires the exact authorization operation identity"},
 		{"no authorization identity", func(r *CanonicalRecordGateRequest) { r.AuthorizationOperationID = "" }, "gate record requires the exact authorization operation identity"},
 		{"unsafe head", func(r *CanonicalRecordGateRequest) { r.HeadSHA = " " }, "gate record head SHA must be a safe non-empty value"},
@@ -176,4 +177,76 @@ func TestCanonicalRecordGateRefusals(t *testing.T) {
 		}
 		wantErrSubstring(t, err, "gate record: words: quote is required", "RecordGate with empty words for an unknown task")
 	})
+}
+
+func TestCanonicalRecordGateRefusesATaskThatDoesNotExist(t *testing.T) {
+	c, auth := gateScene(t)
+	req := gateRequest(t, c, auth)
+	req.TaskID = mustTaskID(t, "no-such-task")
+	_, err := recordGate(t, c, "op-gate-refused", req)
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("RecordGate for an unknown task = %v, want ErrNotFound", err)
+	}
+	wantErrSubstring(t, err, "task no-such-task not found", "RecordGate for an unknown task")
+}
+
+func TestCanonicalRecordGateReplayFailsClosedWithoutTheCommittedRecord(t *testing.T) {
+	c, auth := gateScene(t)
+	req := gateRequest(t, c, auth)
+	if _, err := recordGate(t, c, "op-gate-1", req); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(mustPathForTest(t, c.h, gateKey("t1", "op-gate-1"))); err != nil {
+		t.Fatal(err)
+	}
+	_, err := recordGate(t, c, "op-gate-1", req)
+	wantErrSubstring(t, err, "cannot reconstruct the committed evidence", "RecordGate replay without its record")
+}
+
+func TestCanonicalRecordGateRefusesAnIndexWhoseAuthorizationIsMissing(t *testing.T) {
+	c, auth := gateScene(t)
+	if err := os.Remove(mustPathForTest(t, c.h, deliveryAuthorizationKey("t1", auth.OperationID))); err != nil {
+		t.Fatal(err)
+	}
+	_, err := recordGate(t, c, "op-gate-refused", gateRequest(t, c, auth))
+	wantErrSubstring(t, err, "delivery index points at missing authorization", "RecordGate with the authorization document removed")
+	assertNoGateRecord(t, c, "op-gate-refused")
+}
+
+func TestCanonicalReadGateRecordRejectsMalformedRecords(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*GateRecord)
+		want   string
+	}{
+		{"schema", func(g *GateRecord) { g.SchemaVersion = "munsu.task-authority/v9" }, `invalid gate record schema "munsu.task-authority/v9"`},
+		{"unsafe task id", func(g *GateRecord) { g.TaskID = "a/b" }, "gate record missing safe task id"},
+		{"operation identities", func(g *GateRecord) { g.OperationID = "a/b" }, "gate record missing safe operation identities"},
+		{"digest", func(g *GateRecord) { g.Digest = "not-a-digest" }, "gate record digest must be a 64-hex sha256 digest"},
+		{"operation", func(g *GateRecord) { g.Operation = "force-push" }, `gate record has invalid operation "force-push"`},
+		{"head", func(g *GateRecord) { g.HeadSHA = " " }, "gate record head SHA must be a safe non-empty value"},
+		{"recorded timestamp", func(g *GateRecord) { g.RecordedAt = 0 }, "gate record missing recorded timestamp"},
+		{"bound to another task", func(g *GateRecord) { g.TaskID = "t2" }, "is bound to a different task"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, auth := gateScene(t)
+			g, err := recordGate(t, c, "op-gate-1", gateRequest(t, c, auth))
+			if err != nil {
+				t.Fatal(err)
+			}
+			tc.mutate(&g)
+			data, err := json.Marshal(g)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := writePathForTest(t, c, gateKey("t1", "op-gate-1"), data); err != nil {
+				t.Fatal(err)
+			}
+			_, found, err := c.readGateRecord("t1", "op-gate-1")
+			if !found {
+				t.Fatal("stored gate record not found")
+			}
+			wantErrSubstring(t, err, tc.want, "readGateRecord")
+		})
+	}
 }

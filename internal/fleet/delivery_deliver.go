@@ -589,7 +589,6 @@ func recordDeliveryGate(c *taskauthority.Canonical, journal *deliveryJournal) er
 		TaskID:                   tid,
 		Precondition:             domain.Of(uint64(cur.Generation), uint64(cur.Revision)),
 		AuthorizationOperationID: journal.AuthorizeOpID,
-		Operation:                journal.Kind,
 		HeadSHA:                  journal.Identity.HeadSHA,
 		Words:                    journal.Words,
 	}

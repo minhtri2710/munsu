@@ -171,6 +171,18 @@ func TestRecordReviewVerdictRefusesWhatTheFileOrTaskCannotSupport(t *testing.T) 
 		{name: "digest of another file", prepare: doc(func(map[string]any) {}), digest: strings.Repeat("0", 64), want: "changed after it was observed"},
 		{name: "stale generation", prepare: doc(func(map[string]any) {}), generation: 2, want: "not the observed generation 2"},
 		{name: "ship task is not a review task", prepare: doc(func(map[string]any) {}), review: "ship-1", want: "not a review task"},
+		{name: "reviewed task reopened without its bindings", prepare: func(t *testing.T, f verdictFixture) {
+			f.writeDoc(t, f.goodDoc())
+			ship := f.ship(t)
+			complete := taskauthority.CanonicalCompleteRequest{HomeID: f.c.HomeID(), TaskID: mustFleetTaskID(t, ship.TaskID), Precondition: domain.Of(uint64(ship.Generation), uint64(ship.Revision)), To: taskauthority.PhaseDone, Reason: "done"}
+			if _, err := f.c.Complete(mustFleetOperation(t, "op-complete-ship", complete), complete); err != nil {
+				t.Fatal(err)
+			}
+			reopen := taskauthority.CanonicalReopenRequest{HomeID: f.c.HomeID(), TaskID: mustFleetTaskID(t, ship.TaskID), Precondition: domain.Of(uint64(ship.Generation), uint64(ship.Revision)+1), Reason: "reopen"}
+			if _, err := f.c.Reopen(mustFleetOperation(t, "op-reopen-ship", reopen), reopen); err != nil {
+				t.Fatal(err)
+			}
+		}, want: "review verdict requires the bound worktree and endpoint"},
 		{name: "unknown task", prepare: doc(func(map[string]any) {}), review: "missing-task", want: "resolving review task"},
 		{name: "invalid task id", prepare: doc(func(map[string]any) {}), review: "Not A Task!", want: "invalid typed identity"},
 	} {

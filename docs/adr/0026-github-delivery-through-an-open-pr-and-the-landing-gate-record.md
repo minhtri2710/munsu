@@ -86,8 +86,9 @@ record carries the operation (`provider-merge`), the exact head, the authorizati
 accompanies and the Human's `domain.Words` (ADR-0025).
 
 It refuses unless that authorization is the task's current, unrevoked, non-terminal one,
-still current (no hold, no reservation, no drift), for the same operation and exactly the
-gated head. The same Operation ID with the same digest replays; a record is never rewritten.
+still current (no hold, no reservation, no drift), and for exactly the gated head. The record's
+operation is the authorization's kind; the request does not restate it. The same Operation
+ID with the same digest replays; a record is never rewritten.
 It does not advance the Task revision, so the authorization stays current.
 
 `Deliver` appends the record after the provider validates the merge request and before it

@@ -46,22 +46,20 @@ type CanonicalRecordGateRequest struct {
 	TaskID                   domain.TaskID
 	Precondition             domain.Precondition
 	AuthorizationOperationID string
-	Operation                DeliveryAuthorizationKind
 	HeadSHA                  string
 	Words                    domain.Words
 }
 
 func (r CanonicalRecordGateRequest) DigestBytes() ([]byte, error) {
 	return json.Marshal(struct {
-		HomeID                   string                    `json:"home_id"`
-		TaskID                   string                    `json:"task_id"`
-		Generation               uint64                    `json:"generation"`
-		Revision                 uint64                    `json:"revision"`
-		AuthorizationOperationID string                    `json:"authorization_operation_id"`
-		Operation                DeliveryAuthorizationKind `json:"operation"`
-		HeadSHA                  string                    `json:"head_sha"`
-		Words                    domain.Words              `json:"words"`
-	}{r.HomeID.Value(), r.TaskID.Value(), r.Precondition.Generation, r.Precondition.Revision, r.AuthorizationOperationID, r.Operation, r.HeadSHA, r.Words})
+		HomeID                   string       `json:"home_id"`
+		TaskID                   string       `json:"task_id"`
+		Generation               uint64       `json:"generation"`
+		Revision                 uint64       `json:"revision"`
+		AuthorizationOperationID string       `json:"authorization_operation_id"`
+		HeadSHA                  string       `json:"head_sha"`
+		Words                    domain.Words `json:"words"`
+	}{r.HomeID.Value(), r.TaskID.Value(), r.Precondition.Generation, r.Precondition.Revision, r.AuthorizationOperationID, r.HeadSHA, r.Words})
 }
 
 // validateGateRecord checks the persisted record shape.
@@ -129,9 +127,6 @@ func (c *Canonical) RecordGate(op domain.Operation, req CanonicalRecordGateReque
 	}
 	if err := req.Precondition.Validate(); err != nil {
 		return GateRecord{}, err
-	}
-	if !req.Operation.Valid() {
-		return GateRecord{}, validationError("invalid gate operation %q", req.Operation)
 	}
 	if !safeIdentityValue(req.AuthorizationOperationID) {
 		return GateRecord{}, validationError("gate record requires the exact authorization operation identity")
@@ -208,9 +203,6 @@ func (c *Canonical) RecordGate(op domain.Operation, req CanonicalRecordGateReque
 	if !ok {
 		return GateRecord{}, internalError("task %s delivery index points at missing authorization %s", cur.TaskID, index.AuthorizationOpID)
 	}
-	if auth.Kind != req.Operation {
-		return GateRecord{}, preconditionError("gate operation %q is not the authorized operation %q", req.Operation, auth.Kind)
-	}
 	if auth.Identity.HeadSHA != req.HeadSHA {
 		return GateRecord{}, preconditionError("gate head %q is not the authorized head %q", req.HeadSHA, auth.Identity.HeadSHA)
 	}
@@ -229,7 +221,7 @@ func (c *Canonical) RecordGate(op domain.Operation, req CanonicalRecordGateReque
 		AuthorizationOperationID: auth.OperationID,
 		OperationID:              op.ID.Value(),
 		Digest:                   op.Digest,
-		Operation:                req.Operation,
+		Operation:                auth.Kind,
 		HeadSHA:                  req.HeadSHA,
 		Words:                    req.Words,
 		RecordedAt:               c.now().UnixNano(),
