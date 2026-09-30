@@ -267,6 +267,13 @@ func matchProcessNameFromAdapter(name string) string {
 	return ""
 }
 
+// ProcessMatches reports whether a running process name belongs to the named
+// harness. It defers to matchProcessNameFromAdapter so exact-before-substring
+// precedence has one owner; an empty or unknown harness never matches.
+func ProcessMatches(harnessName, process string) bool {
+	return harnessName != "" && matchProcessNameFromAdapter(strings.TrimSpace(process)) == harnessName
+}
+
 // GetAdapter returns the adapter for the given harness name, or false if not found.
 func GetAdapter(name string) (Adapter, bool) {
 	a, ok := Adapters[name]

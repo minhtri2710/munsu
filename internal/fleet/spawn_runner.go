@@ -1505,6 +1505,7 @@ func (r *Runner) createSession() error {
 			WorkspaceID:  acquired.WorkspaceID,
 			TabID:        acquired.TabID,
 			Incarnation:  acquired.Incarnation,
+			Harness:      r.harness,
 		}
 		r.incarnation = acquired.Incarnation
 		status, err := r.endpoints.Probe(ep)
@@ -1558,6 +1559,7 @@ func (r *Runner) createSession() error {
 	// before any acquisition; propagate it onto the created endpoint for the
 	// attach/bind records and freshness authorization.
 	ep.Incarnation = r.incarnation
+	ep.Harness = r.harness
 	status, err := r.endpoints.Probe(ep)
 	// A created endpoint is owned by this launch reservation. Alive/starting
 	// (raw lifecycle) may proceed to durable attach; readiness is confirmed

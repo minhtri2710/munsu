@@ -1082,7 +1082,7 @@ func resetStreak(id string) {
 
 // isNoMistakesActive checks whether the task has an active no-mistakes
 // run-step that indicates it is provably working. Tasks driving the
-// no-mistakes pipeline (running, fixing, ci, fix_review, awaiting_approval)
+// no-mistakes pipeline (running, fixing, ci, awaiting_approval)
 // should not trigger stale wakes.
 func isNoMistakesActive(homeDir, id string, states TaskStatePort) bool {
 	s, err := states.ReadTaskState(homeDir, id)
@@ -1099,7 +1099,7 @@ func absorbStaleSignal(s *ObservedTaskState) bool {
 		return false
 	}
 	switch s.NoMistakesRunStep {
-	case "running", "fixing", "ci", "fix_review", "awaiting_approval":
+	case "running", "fixing", "ci", "awaiting_approval":
 		return true
 	}
 	return false

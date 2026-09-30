@@ -47,7 +47,7 @@ func TestEndpointObservationContract(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ObserveEndpoint(tt.bk, "pane-1")
+			got := ObserveEndpoint(tt.bk, "pane-1", "")
 			if got.State() != tt.want {
 				t.Fatalf("ObserveEndpoint() = %+v, want state %v", got, tt.want)
 			}

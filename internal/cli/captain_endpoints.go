@@ -84,7 +84,8 @@ func ownedCaptainBackend(home string, meta map[string]string, resolve func(strin
 	return bk, nil
 }
 
-func probeCaptainBackend(bk backend.Backend, window string) (fleet.CaptainProbeResult, error) {
+func probeCaptainBackend(bk backend.Backend, meta map[string]string) (fleet.CaptainProbeResult, error) {
+	window := meta["window"]
 	if aware, ok := bk.(backend.AgentAwareBackend); ok {
 		pane, agent, err := aware.CheckAgentAlive(window)
 		if errors.Is(err, backend.ErrPaneNotFound) {
@@ -105,17 +106,19 @@ func probeCaptainBackend(bk backend.Backend, window string) (fleet.CaptainProbeR
 		}
 		return result, err
 	}
-	obs := backend.ObserveEndpoint(bk, window)
-	// A non-agent-aware structured backend reports raw pane presence via its
-	// lifecycle; it cannot conclude authoritative absence (absent requires
-	// Fleet freshness authorization, which this diagnostic-only path does not
-	// perform). Absent stays false for every ambiguous reading, so it never
-	// authorizes relaunch from an unproven probe.
+	obs := backend.ObserveEndpoint(bk, window, meta["harness"])
+	// A non-agent-aware structured backend reports pane presence (Starting) and
+	// agent liveness (Alive, on process evidence in ObserveEndpoint); it cannot
+	// conclude authoritative absence (absent requires Fleet freshness
+	// authorization, which this diagnostic-only path does not perform). Absent
+	// stays false for every ambiguous reading, so it never authorizes relaunch
+	// from an unproven probe.
 	present := obs.Lifecycle == backend.LifecycleAlive || obs.Lifecycle == backend.LifecycleStarting
+	agent := obs.Lifecycle == backend.LifecycleAlive
 	return fleet.CaptainProbeResult{
 		PaneAlive:      present,
-		AgentAlive:     present,
-		ReadyForPrompt: present,
+		AgentAlive:     agent,
+		ReadyForPrompt: agent,
 		Absent:         obs.Absent(),
 	}, nil
 }
@@ -125,7 +128,7 @@ func (e sessionProbeEndpoint) Probe(home string, meta map[string]string) (fleet.
 	if err != nil {
 		return fleet.CaptainProbeResult{}, err
 	}
-	return probeCaptainBackend(bk, meta["window"])
+	return probeCaptainBackend(bk, meta)
 }
 
 type sessionNudgeEndpoint struct {
@@ -141,7 +144,7 @@ func (e sessionNudgeEndpoint) Nudge(home string, meta map[string]string, payload
 	if err != nil {
 		return fleet.NudgeResult{}, err
 	}
-	result, err := probeCaptainBackend(bk, meta["window"])
+	result, err := probeCaptainBackend(bk, meta)
 	if err != nil {
 		return fleet.NudgeResult{}, err
 	}
@@ -177,7 +180,7 @@ func (e sessionRetireEndpoint) Retire(home string, meta map[string]string) error
 	// pane is present (alive/starting raw lifecycle) and, once the quit returns
 	// an exact dead lifecycle, the endpoint exited cleanly — nothing left to
 	// dispose. Every other outcome still disposes to release the lease.
-	obs := backend.ObserveEndpoint(bk, window)
+	obs := backend.ObserveEndpoint(bk, window, meta["harness"])
 	if obs.Lifecycle == backend.LifecycleAlive || obs.Lifecycle == backend.LifecycleStarting {
 		if err := bk.SendKeys(window, "/quit"); err != nil {
 			return err
@@ -185,7 +188,7 @@ func (e sessionRetireEndpoint) Retire(home string, meta map[string]string) error
 		if e.sleep != nil {
 			e.sleep(500 * time.Millisecond)
 		}
-		if re := backend.ObserveEndpoint(bk, window); re.Lifecycle == backend.LifecycleDead {
+		if re := backend.ObserveEndpoint(bk, window, meta["harness"]); re.Lifecycle == backend.LifecycleDead {
 			return nil
 		}
 	}

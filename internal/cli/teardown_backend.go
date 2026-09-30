@@ -43,7 +43,7 @@ func (s sessionBoundTeardown) Probe(home string, meta map[string]string) (fleet.
 	if err != nil {
 		return fleet.RetirementEndpointStatus{}, err
 	}
-	obs := backend.ObserveEndpoint(bk, meta["window"])
+	obs := backend.ObserveEndpoint(bk, meta["window"], meta["harness"])
 	return fleet.RetirementEndpointStatus{
 		Lifecycle:      fleet.LifecycleState(obs.Lifecycle),
 		Responsiveness: fleet.Responsiveness(obs.Responsiveness),
