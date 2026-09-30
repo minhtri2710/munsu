@@ -262,7 +262,9 @@ func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-cha
 	}
 	defer ClearIdentityIfMatches(homeDir, identity)
 
-	WriteBeat(homeDir)
+	if err := WriteBeat(homeDir); err != nil {
+		return nil, fmt.Errorf("writing watcher beat: %w", err)
+	}
 	ticker := newTicker(watcherPollInterval)
 	defer ticker.Stop()
 
@@ -283,7 +285,9 @@ func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-cha
 		case <-sigCh:
 			return &WakeReason{Kind: "signal", Message: "watcher interrupted"}, nil
 		case <-ticker.C:
-			WriteBeat(homeDir)
+			if err := WriteBeat(homeDir); err != nil {
+				return nil, fmt.Errorf("writing watcher beat: %w", err)
+			}
 			obs := newCycleObservation()
 			if _, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement, checks, states, obs); err != nil {
 				return nil, err
@@ -302,7 +306,9 @@ func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-cha
 				// exact binding before any recovery/relaunch/dispose decision.
 				// The hint itself is never lifecycle truth and never sets a
 				// Task phase.
-				WriteBeat(homeDir)
+				if err := WriteBeat(homeDir); err != nil {
+					return nil, fmt.Errorf("writing watcher beat: %w", err)
+				}
 				obs := newCycleObservation()
 				if _, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement, checks, states, obs); err != nil {
 					return nil, err

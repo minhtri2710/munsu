@@ -30,10 +30,16 @@ type WatcherBeatStatus struct {
 func WatcherStaleThreshold() time.Duration { return watcherStaleThreshold }
 func WatcherBeatPath(h string) string      { return filepath.Join(h, watcherBeatFile) }
 func WakeQueuePath(h string) string        { return filepath.Join(h, wakeQueueFile) }
-func WriteWatcherBeat(h string) {
+
+// WriteWatcherBeat records a beat under an existing state directory. It never
+// creates the directory: a watcher whose home was deleted gets an error instead
+// of resurrecting the home, and the caller must exit on it.
+func WriteWatcherBeat(h string) error {
 	p := WatcherBeatPath(h)
-	_ = os.MkdirAll(filepath.Dir(p), 0755)
-	_ = canonicalAtomicWrite(p, []byte(fmt.Sprintf("%d %d", time.Now().Unix(), os.Getpid())))
+	if err := secureDir(filepath.Dir(p)); err != nil {
+		return fmt.Errorf("watcher beat: %w", err)
+	}
+	return atomicWrite(p, []byte(fmt.Sprintf("%d %d", time.Now().Unix(), os.Getpid())), secureFile)
 }
 func ReadWatcherBeat(h string) (ts int64, pid int, ok bool) {
 	b, e := os.ReadFile(WatcherBeatPath(h))

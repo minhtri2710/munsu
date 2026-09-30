@@ -28,7 +28,7 @@ the repository is cloned into the projects directory first.`,
 			return fleet.Add(ctx.Home, args[0], args[1], mode, yolo)
 		}),
 	}
-	addCmd.Flags().String("mode", "", "Delivery mode (feat, fix, refactor, etc.)")
+	addCmd.Flags().String("mode", "", "Delivery mode: no-mistakes, direct-PR or local-only")
 	addCmd.Flags().Bool("yolo", false, "Skip pre-flight checks")
 
 	listCmd := &cobra.Command{

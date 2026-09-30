@@ -99,12 +99,7 @@ Run `munsu integrate status [harness]` to check integration state before relying
 Run `munsu backend capabilities` to inspect session backend support.
 Use `munsu spawn <id> <project> --harness <name>` to override soldier harness.
 
-For per-harness supervision protocols, see:
-- `docs/supervision-protocols/claude.md`
-- `docs/supervision-protocols/codex.md`
-- `docs/supervision-protocols/grok.md`
-- `docs/supervision-protocols/pi.md`
-- `docs/supervision-protocols/opencode.md`
+For each harness's turn-end hook and launch template, run `munsu skill show harness-adapters`. The supervision loop is in §8.
 
 ---
 
@@ -209,7 +204,7 @@ When implementation is separately authorized, promote: `munsu promote <id>`.
 ## 8. Supervision protocol
 
 Whenever work is in flight, keep exactly one live supervision cycle.
-Use the per-harness protocol from `docs/supervision-protocols/<harness>.md`.
+Arm the watcher as a background task of your harness; `munsu watch ensure` reports `FAILED` when no live watcher validates.
 
 Fundamental loop:
 

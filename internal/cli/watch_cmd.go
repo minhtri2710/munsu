@@ -13,7 +13,7 @@ import (
 )
 
 // newWatchEnsureCmd creates the `munsu watch ensure` command.
-// It returns started|attached|healthy|failed with identity, lease id, heartbeat age.
+// It returns attached|healthy|failed with identity, lease id, heartbeat age.
 func newWatchEnsureCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ensure",
@@ -40,14 +40,25 @@ var startWatcherProcess = orchestrator.StartWatcher
 
 var watcherBeaconTimeout = 3 * time.Second
 
+// watcherEvictAfter is the beat age past which a holder is treated as stalled
+// and sent TERM. It is twice the 300s stale threshold, and the stale threshold
+// already covers 60 poll intervals: a live watcher's beat lags by one cycle,
+// whose longest bounded step is the 5 minute worktree command timeout
+// (backendWorktreeCommandTimeout), so 10 minutes leaves a slow cycle on a
+// loaded host unevicted. No measured beat-lag record exists in the tree; the
+// bound is derived from those timeouts, not observed.
+var watcherEvictAfter = 2 * orchestrator.StaleThreshold()
+
 // ensureWatcher checks the watcher state and starts one if needed.
 func ensureWatcher(homeDir string, restart bool) Response[WatchEnsure] {
 	beatStatus := orchestrator.ReadBeatStatus(homeDir, time.Now())
 
-	// A refused restart stop falls through: a watcher still alive keeps its
-	// beat and identity, so the ownership check below attaches to it, and one
-	// whose ownership is unproven is never signalled.
-	if restart && beatStatus.Exists {
+	// A refused stop falls through: a watcher still alive keeps its beat and
+	// identity, so the ownership check below attaches to it, and one whose
+	// ownership is unproven is never signalled. StopWatcher targets only the
+	// pid the beat names, after the identity file proves it.
+	stalled := beatStatus.Exists && beatStatus.Age > watcherEvictAfter
+	if (restart && beatStatus.Exists) || stalled {
 		_, _ = orchestrator.StopWatcher(homeDir)
 		beatStatus = orchestrator.ReadBeatStatus(homeDir, time.Now())
 	}
@@ -90,9 +101,14 @@ func ensureWatcher(homeDir string, restart bool) Response[WatchEnsure] {
 	// races the child process and caused false "started"/NEVER STARTED reports.
 	afterStatus, validated := waitForWatcherBeacon(homeDir, pid, watcherBeaconTimeout)
 
-	state := "started"
-	if validated {
-		state = "healthy"
+	if !validated {
+		return Response[WatchEnsure]{
+			SchemaVersion: SchemaVersion,
+			Kind:          "watch.ensure",
+			Status:        "error",
+			Data:          WatchEnsure{State: "failed"},
+			Help:          []string{fmt.Sprintf("watcher pid %d never wrote a beat with proven ownership within %s; a stalled holder may still own the watch lock", pid, watcherBeaconTimeout)},
+		}
 	}
 
 	heartbeatAge := ""
@@ -110,7 +126,7 @@ func ensureWatcher(homeDir string, restart bool) Response[WatchEnsure] {
 	leaseInfo := &WatchLeaseInfo{
 		Identity:    identityStr,
 		Heartbeat:   heartbeatAge,
-		HeartbeatOK: validated && !afterStatus.Stale,
+		HeartbeatOK: true,
 	}
 
 	watchID := fmt.Sprintf("watch-%d", pid)
@@ -124,7 +140,7 @@ func ensureWatcher(homeDir string, restart bool) Response[WatchEnsure] {
 		Status:        "success",
 		Data: WatchEnsure{
 			WatchID:  watchID,
-			State:    state,
+			State:    "healthy",
 			Interval: "5s",
 			Lease:    leaseInfo,
 			Noop:     false,
@@ -144,7 +160,7 @@ func waitForWatcherBeacon(homeDir string, pid int, timeout time.Duration) (orche
 			return status, true
 		}
 		if time.Now().After(deadline) {
-			return status, status.Exists && orchestrator.ValidatePIDOwnership(homeDir, pid)
+			return status, false
 		}
 		time.Sleep(50 * time.Millisecond)
 	}

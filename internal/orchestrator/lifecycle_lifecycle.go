@@ -26,7 +26,7 @@ func ReleaseWatch(homeDir string) error   { return home.ReleaseWatchLock(homeDir
 func ReleaseSession(homeDir string) error { return home.ReleaseSessionLock(homeDir) }
 
 // --- Durable beat and queue operations (owned by home) ---
-func WriteBeat(homeDir string)                   { home.WriteWatcherBeat(homeDir) }
+func WriteBeat(homeDir string) error             { return home.WriteWatcherBeat(homeDir) }
 func ReadBeat(homeDir string) (int64, int, bool) { return home.ReadWatcherBeat(homeDir) }
 func ClearBeat(homeDir string)                   { home.ClearWatcherBeat(homeDir) }
 func ReadBeatStatus(homeDir string, now time.Time) BeatStatus {
