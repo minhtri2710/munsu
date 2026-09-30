@@ -184,6 +184,10 @@ type PR struct {
 	Reviews    []Review   `json:"reviews,omitempty"`
 }
 
+// CanMerge reports whether the provider state permits a merge: the PR is
+// open, every check passed, and no provider review requests changes. It never
+// approves: approval comes only from a ReviewVerdict (ADR-0025), so a provider
+// review can object but never authorize.
 func (pr PR) CanMerge() bool {
 	if pr.Status != PROpen {
 		return false
@@ -193,20 +197,12 @@ func (pr PR) CanMerge() bool {
 			return false
 		}
 	}
-	hasApproval := false
 	for _, review := range pr.Reviews {
-		switch {
-		case review.State == ReviewChangesRequested:
+		if review.State == ReviewChangesRequested {
 			return false
-		case review.IsApproving():
-			hasApproval = true
 		}
 	}
-	return hasApproval
-}
-
-func (r Review) IsApproving() bool {
-	return r.State == ReviewApproved
+	return true
 }
 
 type DeliveryIdentity struct {

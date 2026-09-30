@@ -300,23 +300,24 @@ type CleanupClaim struct {
 
 // Aggregate is the authoritative record of one Task Generation.
 type Aggregate struct {
-	SchemaVersion    string              `json:"schema_version"`
-	TaskID           string              `json:"task_id"`
-	Generation       Generation          `json:"generation"`
-	Revision         Revision            `json:"revision"`
-	Current          bool                `json:"current"`
-	Definition       TaskDefinition      `json:"definition"`
-	Phase            Phase               `json:"phase"`
-	PhaseDetail      string              `json:"phase_detail,omitempty"`
-	Endpoint         *EndpointBinding    `json:"endpoint,omitempty"`
-	Worktree         *WorktreeBinding    `json:"worktree,omitempty"`
-	Launch           *LaunchIntent       `json:"launch,omitempty"`
-	AcquiredEndpoint *AcquiredEndpoint   `json:"acquired_endpoint,omitempty"`
-	LaunchEvidence   *LaunchEvidence     `json:"launch_evidence,omitempty"`
-	Transfer         *TransferState      `json:"transfer,omitempty"`
-	Retirement       *RetirementEvidence `json:"retirement,omitempty"`
-	CleanupClaim     *CleanupClaim       `json:"cleanup_claim,omitempty"`
-	DeliveryContract *DeliveryContract   `json:"delivery_contract,omitempty"`
+	SchemaVersion    string               `json:"schema_version"`
+	TaskID           string               `json:"task_id"`
+	Generation       Generation           `json:"generation"`
+	Revision         Revision             `json:"revision"`
+	Current          bool                 `json:"current"`
+	Definition       TaskDefinition       `json:"definition"`
+	Phase            Phase                `json:"phase"`
+	PhaseDetail      string               `json:"phase_detail,omitempty"`
+	Endpoint         *EndpointBinding     `json:"endpoint,omitempty"`
+	Worktree         *WorktreeBinding     `json:"worktree,omitempty"`
+	Launch           *LaunchIntent        `json:"launch,omitempty"`
+	AcquiredEndpoint *AcquiredEndpoint    `json:"acquired_endpoint,omitempty"`
+	LaunchEvidence   *LaunchEvidence      `json:"launch_evidence,omitempty"`
+	Transfer         *TransferState       `json:"transfer,omitempty"`
+	Retirement       *RetirementEvidence  `json:"retirement,omitempty"`
+	CleanupClaim     *CleanupClaim        `json:"cleanup_claim,omitempty"`
+	DeliveryContract *DeliveryContract    `json:"delivery_contract,omitempty"`
+	ReviewVerdict    *ReviewVerdictRecord `json:"review_verdict,omitempty"`
 }
 
 // DeliveryModes is the authoritative set of delivery modes a task's durable
@@ -474,6 +475,11 @@ func validateAggregate(agg Aggregate) error {
 	}
 	if agg.DeliveryContract != nil {
 		if err := validateDeliveryContract(*agg.DeliveryContract); err != nil {
+			return err
+		}
+	}
+	if agg.ReviewVerdict != nil {
+		if err := validateReviewVerdictRecord(*agg.ReviewVerdict); err != nil {
 			return err
 		}
 	}
@@ -899,6 +905,10 @@ func (a Aggregate) clone() Aggregate {
 			dc.Fallback = &fb
 		}
 		out.DeliveryContract = &dc
+	}
+	if a.ReviewVerdict != nil {
+		rv := *a.ReviewVerdict
+		out.ReviewVerdict = &rv
 	}
 	return out
 }

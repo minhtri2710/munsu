@@ -732,29 +732,37 @@ func (c *Canonical) AddHold(op domain.Operation, req CanonicalAddHoldRequest) (H
 	return HoldResult{HoldID: req.HoldID}, nil
 }
 
-// ReleaseHoldRequest releases one durable dispatch hold.
+// ReleaseHoldRequest releases one durable dispatch hold under the Human's
+// words: the grantor, the channel and the verbatim quote.
 type CanonicalReleaseHoldRequest struct {
 	HomeID domain.HomeID
 	HoldID string
 	Reason string
+	Words  domain.Words
 }
 
 func (r CanonicalReleaseHoldRequest) DigestBytes() ([]byte, error) {
 	return json.Marshal(struct {
-		HomeID string `json:"home_id"`
-		HoldID string `json:"hold_id"`
-		Reason string `json:"reason"`
-	}{r.HomeID.Value(), r.HoldID, r.Reason})
+		HomeID string       `json:"home_id"`
+		HoldID string       `json:"hold_id"`
+		Reason string       `json:"reason"`
+		Words  domain.Words `json:"words"`
+	}{r.HomeID.Value(), r.HoldID, r.Reason, r.Words})
 }
 
-// ReleaseHold is the canonical operation that releases one dispatch hold.
-// Releasing an already-released hold is a successful no-op.
+// ReleaseHold is the canonical operation that releases one dispatch hold. It
+// refuses a request whose words record is incomplete, including an empty
+// quote, and records the words on the released hold. Releasing an
+// already-released hold is a successful no-op that keeps the original words.
 func (c *Canonical) ReleaseHold(op domain.Operation, req CanonicalReleaseHoldRequest) (HoldResult, error) {
 	if err := c.prepare(op, req, req.HomeID); err != nil {
 		return HoldResult{}, err
 	}
 	if req.HoldID == "" || strings.ContainsAny(req.HoldID, `/\\.`) {
 		return HoldResult{}, validationError("dispatch hold ID must be a safe non-empty value")
+	}
+	if err := req.Words.Validate(); err != nil {
+		return HoldResult{}, validationError("dispatch hold release: %v", err)
 	}
 	dispatch, err := c.h.Lock(dispatchScope)
 	if err != nil {
@@ -786,6 +794,7 @@ func (c *Canonical) ReleaseHold(op domain.Operation, req CanonicalReleaseHoldReq
 	} else {
 		updated := doc.Hold.clone()
 		updated.ReleasedAt = c.now().UnixNano()
+		updated.ReleaseWords = &req.Words
 		newDoc = holdDoc{HomeRevision: doc.HomeRevision + 1, Hold: updated}
 	}
 	rec := receipt{OperationID: op.ID.Value(), Digest: op.Digest, HoldID: req.HoldID}

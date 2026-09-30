@@ -3,6 +3,8 @@ package taskauthority
 import (
 	"slices"
 	"strings"
+
+	"github.com/minhtri2710/munsu/internal/domain"
 )
 
 // DispatchAction is a durable-control gate applied to one class of mutation.
@@ -45,6 +47,7 @@ func (s DispatchHoldScope) clone() DispatchHoldScope {
 
 // DispatchHold is a durable control that blocks matching actions until
 // released. It is a business decision record, not a runtime supervision flag.
+// A released hold carries the words that released it.
 type DispatchHold struct {
 	SchemaVersion string            `json:"schema_version"`
 	ID            string            `json:"id"`
@@ -53,6 +56,7 @@ type DispatchHold struct {
 	Reason        string            `json:"reason"`
 	CreatedAt     int64             `json:"created_at"`
 	ReleasedAt    int64             `json:"released_at,omitempty"`
+	ReleaseWords  *domain.Words     `json:"release_words,omitempty"`
 }
 
 // clone stale-copies hold slices and returns a validated copy.
@@ -60,6 +64,10 @@ func (h DispatchHold) clone() DispatchHold {
 	out := h
 	out.Scope = h.Scope.clone()
 	out.Actions = append([]DispatchAction(nil), h.Actions...)
+	if h.ReleaseWords != nil {
+		w := *h.ReleaseWords
+		out.ReleaseWords = &w
+	}
 	return out
 }
 
@@ -81,6 +89,16 @@ func validateHold(h DispatchHold) error {
 	}
 	if strings.TrimSpace(h.Reason) == "" {
 		return validationError("dispatch hold requires a reason")
+	}
+	switch {
+	case h.ReleasedAt == 0 && h.ReleaseWords != nil:
+		return validationError("dispatch hold %s carries release words but is not released", h.ID)
+	case h.ReleasedAt != 0 && h.ReleaseWords == nil:
+		return validationError("released dispatch hold %s carries no release words", h.ID)
+	case h.ReleaseWords != nil:
+		if err := h.ReleaseWords.Validate(); err != nil {
+			return validationError("dispatch hold %s release: %v", h.ID, err)
+		}
 	}
 	for _, g := range h.Scope.Generations {
 		if _, err := ParseGeneration(g); err != nil {

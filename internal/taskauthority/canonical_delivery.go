@@ -62,7 +62,9 @@ type DeliveryPrecondition string
 
 const (
 	// DeliveryPreconditionPRMergeable asserts the provider PR satisfies the
-	// domain merge rules (open, checks passing, approving review).
+	// domain merge rules (open, checks passing, no provider review
+	// requesting changes). Approval is the review verdict, never a provider
+	// review (ADR-0025).
 	DeliveryPreconditionPRMergeable DeliveryPrecondition = "pr-mergeable"
 	// DeliveryPreconditionPRHeadCurrent asserts the provider head equals the
 	// bound delivery identity head.
@@ -92,6 +94,8 @@ func (p DeliveryPrecondition) Valid() bool {
 //   - current ownership and the typed domain.DeliveryIdentity including the
 //     exact provider head;
 //   - the typed persisted operation kind discriminator (provider merge);
+//   - the PASS review verdict bound to the exact delivered head (ADR-0025) and
+//     the Human's words behind the authorization;
 //   - the exact Endpoint/Worktree binding digest (lease/fence and repository
 //     identity/path/head fields);
 //   - the relevant delivery-holds digest;
@@ -109,6 +113,8 @@ type DeliveryAuthorization struct {
 	Owner         string                    `json:"owner"`
 	Kind          DeliveryAuthorizationKind `json:"kind"`
 	Identity      domain.DeliveryIdentity   `json:"identity"`
+	Verdict       domain.ReviewVerdict      `json:"verdict"`
+	Words         domain.Words              `json:"words"`
 	BindingDigest string                    `json:"binding_digest"`
 	HoldsDigest   string                    `json:"holds_digest"`
 	Preconditions []DeliveryPrecondition    `json:"preconditions"`
@@ -231,6 +237,7 @@ type CanonicalDeliveryAuthorizationRequest struct {
 	Kind          DeliveryAuthorizationKind
 	Identity      domain.DeliveryIdentity
 	Preconditions []DeliveryPrecondition
+	Words         domain.Words
 }
 
 func (r CanonicalDeliveryAuthorizationRequest) DigestBytes() ([]byte, error) {
@@ -242,7 +249,8 @@ func (r CanonicalDeliveryAuthorizationRequest) DigestBytes() ([]byte, error) {
 		Kind          DeliveryAuthorizationKind `json:"kind"`
 		Identity      domain.DeliveryIdentity   `json:"identity"`
 		Preconditions []DeliveryPrecondition    `json:"preconditions"`
-	}{r.HomeID.Value(), r.TaskID.Value(), r.Precondition.Generation, r.Precondition.Revision, r.Kind, r.Identity, uniqueDeliveryPreconditions(r.Preconditions)})
+		Words         domain.Words              `json:"words"`
+	}{r.HomeID.Value(), r.TaskID.Value(), r.Precondition.Generation, r.Precondition.Revision, r.Kind, r.Identity, uniqueDeliveryPreconditions(r.Preconditions), r.Words})
 }
 
 // DeliveryAuthorizationResult is the committed outcome of an authorization
@@ -367,8 +375,8 @@ func safeIdentityValue(s string) bool {
 func safeSHAValue(s string) bool { return safeIdentityValue(s) }
 
 // validateDeliveryAuthorizationRequest checks the issuance intent: a known
-// kind, a valid typed domain delivery identity, and a non-empty unique
-// closed-set of preconditions.
+// kind, a valid typed domain delivery identity, a non-empty unique
+// closed-set of preconditions, and the Human's words.
 func validateDeliveryAuthorizationRequest(req CanonicalDeliveryAuthorizationRequest) error {
 	if !req.Kind.Valid() {
 		return validationError("invalid delivery authorization kind %q", req.Kind)
@@ -391,6 +399,9 @@ func validateDeliveryAuthorizationRequest(req CanonicalDeliveryAuthorizationRequ
 			return validationError("duplicate delivery precondition %q", p)
 		}
 		seen[p] = true
+	}
+	if err := req.Words.Validate(); err != nil {
+		return validationError("delivery authorization: %v", err)
 	}
 	return nil
 }
@@ -453,6 +464,12 @@ func validateDeliveryAuthorization(a DeliveryAuthorization) error {
 	}
 	if !safeSHAValue(a.Identity.HeadSHA) {
 		return validationError("delivery authorization identity head SHA must be a safe non-empty value")
+	}
+	if err := a.Verdict.Approves(a.Identity.HeadSHA, a.Verdict.Author); err != nil {
+		return validationError("delivery authorization verdict: %v", err)
+	}
+	if err := a.Words.Validate(); err != nil {
+		return validationError("delivery authorization: %v", err)
 	}
 	if !domain.IsSHA256(a.BindingDigest) {
 		return validationError("delivery authorization binding digest must be a 64-hex sha256 digest")
@@ -878,7 +895,9 @@ func sha256Hex(data []byte) string {
 // and the exact endpoint/worktree bindings, no matching active delivery hold,
 // no active transfer reservation, no terminal committed outcome, no
 // already-active authorization, a valid typed identity whose head matches the
-// bound worktree head, and valid preconditions; it fails closed otherwise.
+// bound worktree head, a PASS review verdict bound to exactly that head from a
+// reviewer that is not the bound authoring soldier instance (ADR-0025), the
+// Human's words, and valid preconditions; it fails closed otherwise.
 // Repeating the same Operation ID with the same digest replays the durable
 // prior record; reusing the Operation ID with a different intent conflicts.
 func (c *Canonical) AuthorizeDelivery(op domain.Operation, req CanonicalDeliveryAuthorizationRequest) (DeliveryAuthorizationResult, error) {
@@ -901,6 +920,12 @@ func (c *Canonical) AuthorizeDelivery(op domain.Operation, req CanonicalDelivery
 		}
 		if cur.Worktree.Head != req.Identity.HeadSHA {
 			return Aggregate{}, DeliveryIndex{}, nil, preconditionError("delivery authorization identity head %q does not match the bound worktree head %q", req.Identity.HeadSHA, cur.Worktree.Head)
+		}
+		if cur.ReviewVerdict == nil {
+			return Aggregate{}, DeliveryIndex{}, nil, preconditionError("delivery authorization requires a review verdict for head %q of task %s", req.Identity.HeadSHA, cur.TaskID)
+		}
+		if err := cur.ReviewVerdict.Verdict.Approves(req.Identity.HeadSHA, cur.Endpoint.Incarnation); err != nil {
+			return Aggregate{}, DeliveryIndex{}, nil, preconditionError("delivery authorization refused: %v", err)
 		}
 		holds, err := c.listHolds()
 		if err != nil {
@@ -932,6 +957,8 @@ func (c *Canonical) AuthorizeDelivery(op domain.Operation, req CanonicalDelivery
 			Owner:         cur.Definition.Owner,
 			Kind:          req.Kind,
 			Identity:      req.Identity,
+			Verdict:       cur.ReviewVerdict.Verdict,
+			Words:         req.Words,
 			BindingDigest: deliveryBindingDigest(*cur.Endpoint, *cur.Worktree),
 			HoldsDigest:   deliveryHoldsDigest(holds, cur),
 			Preconditions: uniqueDeliveryPreconditions(req.Preconditions),

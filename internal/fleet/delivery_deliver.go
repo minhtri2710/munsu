@@ -46,6 +46,10 @@ type DeliverRequest struct {
 	// preconditions Fleet asserts were verified before authorization
 	// (pr-mergeable, pr-head-current, worktree-clean).
 	Preconditions []taskauthority.DeliveryPrecondition
+	// Words is the Human's words behind the delivery authorization: the
+	// grantor, the channel and the verbatim quote. The canonical
+	// authorization refuses an empty quote.
+	Words domain.Words
 }
 
 // DeliverResult is the committed truthful outcome of one journaled delivery
@@ -375,6 +379,7 @@ func buildDeliveryJournal(homeDir string, c *taskauthority.Canonical, agg taskau
 		Kind:          req.Kind,
 		Identity:      req.Identity,
 		Preconditions: req.Preconditions,
+		Words:         req.Words,
 	}
 	authorizeDigest, err := domain.Digest(authorizeReq)
 	if err != nil {
@@ -394,6 +399,7 @@ func buildDeliveryJournal(homeDir string, c *taskauthority.Canonical, agg taskau
 		Identity:        req.Identity,
 		Method:          method,
 		Preconditions:   preconditions,
+		Words:           req.Words,
 		AuthorizeOpID:   deliveryAuthorizeOpID(id, agg.TaskID),
 		RevokeOpID:      deliveryRevokeOpID(id, agg.TaskID),
 		OutcomeOpID:     deliveryOutcomeOpID(id, agg.TaskID),
@@ -527,6 +533,7 @@ func issueDeliveryAuthorization(c *taskauthority.Canonical, journal *deliveryJou
 		Kind:          journal.Kind,
 		Identity:      journal.Identity,
 		Preconditions: journal.Preconditions,
+		Words:         journal.Words,
 	}
 	digest, err := domain.Digest(req)
 	if err != nil {
