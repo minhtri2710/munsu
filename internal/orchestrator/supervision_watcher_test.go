@@ -511,13 +511,6 @@ func TestAbsorbStaleSignal_CI(t *testing.T) {
 	}
 }
 
-func TestAbsorbStaleSignal_FixReview(t *testing.T) {
-	s := &ObservedTaskState{NoMistakesRunStep: "fix_review"}
-	if !absorbStaleSignal(s) {
-		t.Error("fix_review should absorb stale signal")
-	}
-}
-
 func TestAbsorbStaleSignal_AwaitingApproval(t *testing.T) {
 	s := &ObservedTaskState{NoMistakesRunStep: "awaiting_approval"}
 	if !absorbStaleSignal(s) {
@@ -814,7 +807,7 @@ func TestHandleStale_DemandDeepInspectionByIdleSeconds(t *testing.T) {
 }
 
 func TestAbsorbStaleSignal_AllAbsorbSteps(t *testing.T) {
-	absorbSteps := []string{"running", "fixing", "ci", "fix_review", "awaiting_approval"}
+	absorbSteps := []string{"running", "fixing", "ci", "awaiting_approval"}
 	for _, step := range absorbSteps {
 		s := &ObservedTaskState{NoMistakesRunStep: step}
 		if !absorbStaleSignal(s) {
@@ -824,7 +817,7 @@ func TestAbsorbStaleSignal_AllAbsorbSteps(t *testing.T) {
 }
 
 func TestAbsorbStaleSignal_AllNonAbsorbSteps(t *testing.T) {
-	nonAbsorbSteps := []string{"", "done", "failed", "checks-passed", "passed", "cancelled", "some-unknown-step"}
+	nonAbsorbSteps := []string{"", "done", "failed", "fix_review", "checks-passed", "passed", "cancelled", "some-unknown-step"}
 	for _, step := range nonAbsorbSteps {
 		s := &ObservedTaskState{NoMistakesRunStep: step}
 		if absorbStaleSignal(s) {
@@ -893,15 +886,17 @@ func TestScanFleet_NoMetaFiles(t *testing.T) {
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 
-	// Non-captain-relevant orphan status without meta stays quiet.
+	// Non-human-needed orphan status without meta stays quiet.
 	os.WriteFile(filepath.Join(stateDir, "orphan.status"), []byte("working: stray\n"), 0644)
-	// Captain-relevant status (including Captain return-channel files) must wake
+	// Completion is an audit projection: it stays quiet like working.
+	os.WriteFile(filepath.Join(stateDir, "finished.status"), []byte("done: finished\n"), 0644)
+	// Human-needed status (including Captain return-channel files) must wake
 	// even without a companion .meta — parent status is the return path.
-	os.WriteFile(filepath.Join(stateDir, "another.status"), []byte("done: finished\n"), 0644)
+	os.WriteFile(filepath.Join(stateDir, "another.status"), []byte("blocked: needs credentials\n"), 0644)
 
 	reason := testScanFleet(tmp)
 	if reason == nil {
-		t.Fatal("expected signal for captain-relevant status without meta")
+		t.Fatal("expected signal for human-needed status without meta")
 	}
 	if reason.Kind != "signal" || len(reason.TaskIDs) != 1 || reason.TaskIDs[0] != "another" {
 		t.Fatalf("unexpected reason: %+v", reason)
@@ -1096,7 +1091,7 @@ func TestRunCycle_StatusSignalFromParentStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(statusPath, []byte("done [key=x]: PR https://example/1\n"), 0644); err != nil {
+	if err := os.WriteFile(statusPath, []byte("needs-decision [key=x]: PR https://example/1 needs a call\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1105,7 +1100,7 @@ func TestRunCycle_StatusSignalFromParentStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !emitted {
-		t.Fatal("expected wake from captain-relevant parent status")
+		t.Fatal("expected wake from human-needed parent status")
 	}
 	// Second cycle with same status must not re-emit (fingerprint dedupe).
 	emitted2, err := testRunCycle(home)
@@ -1141,7 +1136,7 @@ func TestReturnChannelClosedLoop(t *testing.T) {
 
 	// 2) Captain answers on parent return channel (no pane required).
 	captainID := "captain:munsu"
-	statusLine := "done [key=return-channel-e2e]: closed-loop proof landed"
+	statusLine := "blocked [key=return-channel-e2e]: closed-loop proof needs a decision"
 	if err := mhome.AppendStatus(homeDir, captainID, statusLine); err != nil {
 		t.Fatal(err)
 	}
@@ -1160,13 +1155,13 @@ func TestReturnChannelClosedLoop(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 3) Watcher one-shot cycle enqueues captain-relevant signal.
+	// 3) Watcher one-shot cycle enqueues the human-needed signal.
 	emitted, err := testRunCycle(homeDir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !emitted {
-		t.Fatal("expected signal wake from captain-relevant parent status")
+		t.Fatal("expected signal wake from human-needed parent status")
 	}
 
 	// 4) General leases the wake via claim (not legacy drain).
@@ -1180,7 +1175,7 @@ func TestReturnChannelClosedLoop(t *testing.T) {
 
 	var found bool
 	for _, w := range claim.Wakes {
-		if w.Kind == "signal" && w.Key == captainID && strings.Contains(w.Payload, "done") {
+		if w.Kind == "signal" && w.Key == captainID && strings.Contains(w.Payload, "blocked") {
 			found = true
 			if w.Payload != statusLine {
 				t.Fatalf("payload = %q, want %q", w.Payload, statusLine)
@@ -1236,10 +1231,12 @@ func TestShouldAbsorbStale(t *testing.T) {
 		t.Error("paused should absorb even when pane is dead")
 	}
 
-	// Terminal done with no active run: do not absorb as stale (signal path surfaces).
+	// A reported completion is not a stale condition, whatever the pane state.
 	os.WriteFile(filepath.Join(stateDir, "done.status"), []byte("done: finished\n"), 0644)
-	if shouldAbsorbStale(tmp, "done", true, testTaskStatePort{}) {
-		t.Error("done should not absorb via shouldAbsorbStale")
+	for _, alive := range []bool{true, false} {
+		if !shouldAbsorbStale(tmp, "done", alive, testTaskStatePort{}) {
+			t.Errorf("done should absorb via shouldAbsorbStale (paneAlive=%v)", alive)
+		}
 	}
 }
 
@@ -1303,11 +1300,18 @@ func TestShouldAbsorbStale_PauseResurface(t *testing.T) {
 			wantAbsorb: true,
 		},
 		{
-			name:       "done status not paused — does not absorb",
+			name:       "done status reported completion — absorbs",
 			statusLine: "done: finished",
 			pauseAge:   time.Minute,
 			paneAlive:  true,
-			wantAbsorb: false,
+			wantAbsorb: true,
+		},
+		{
+			name:       "done status absorbs with a dead pane",
+			statusLine: "done: finished",
+			pauseAge:   time.Minute,
+			paneAlive:  false,
+			wantAbsorb: true,
 		},
 	}
 
@@ -1380,13 +1384,13 @@ func TestScanFleet_CaptainTerminalStillSignals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(statusPath, []byte("done: handoff complete\n"), 0644); err != nil {
+	if err := os.WriteFile(statusPath, []byte("failed: handoff broke\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	reason := testScanFleet(tmp)
 	if reason == nil {
-		t.Fatal("expected signal for terminal captain status")
+		t.Fatal("expected signal for human-needed captain status")
 	}
 	if reason.Kind != "signal" {
 		t.Fatalf("kind = %q, want signal", reason.Kind)
@@ -1892,5 +1896,25 @@ func TestArmBackground_ClearsStaleIdentity(t *testing.T) {
 	// After ArmBackground returns, identity must be gone.
 	if remaining := ReadIdentity(home); remaining != nil {
 		t.Errorf("identity should be nil after ArmBackground, got %+v", remaining)
+	}
+}
+
+// A watcher whose home is deleted under it exits on the failed beat instead of
+// resurrecting the state directory.
+func TestRunExitsOnABeatFailureAfterTheStateDirectoryIsRemoved(t *testing.T) {
+	homeDir := t.TempDir()
+	removeState := func(d time.Duration) *time.Ticker {
+		if err := os.RemoveAll(filepath.Join(homeDir, "state")); err != nil {
+			t.Fatal(err)
+		}
+		return time.NewTicker(time.Millisecond)
+	}
+
+	reason, err := run(homeDir, removeState, nil, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, NoopRetirementPort{}, nil, acceptingCheckValidationPort{}, testTaskStatePort{}, nil)
+	if err == nil || !strings.Contains(err.Error(), "writing watcher beat") || reason != nil {
+		t.Fatalf("run = %+v, %v, want a writing-watcher-beat error and no wake", reason, err)
+	}
+	if _, statErr := os.Stat(filepath.Join(homeDir, "state")); !os.IsNotExist(statErr) {
+		t.Fatalf("the state directory was recreated: %v", statErr)
 	}
 }

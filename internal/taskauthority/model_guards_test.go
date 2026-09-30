@@ -3,6 +3,8 @@ package taskauthority
 import (
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/domain"
 )
 
 // The refusal branches of the canonical record validators.
@@ -334,7 +336,7 @@ func TestValidateWorktreeBindingRefusesIncompleteBinding(t *testing.T) {
 			{"no path", func(b *WorktreeBinding) { b.Path = "  " }, "worktree binding missing path"},
 			{"no git dir", func(b *WorktreeBinding) { b.GitDir = "  " }, "worktree binding missing git dir"},
 			{"no common dir", func(b *WorktreeBinding) { b.CommonDir = "  " }, "worktree binding missing common dir"},
-			{"no head", func(b *WorktreeBinding) { b.BaseHead = "  " }, "worktree binding missing head"},
+			{"no base head", func(b *WorktreeBinding) { b.BaseHead = "  " }, "worktree binding missing base head"},
 			{"no fence token", func(b *WorktreeBinding) { b.FenceToken = "  " }, "worktree binding missing fence token"},
 			{"no bound timestamp", func(b *WorktreeBinding) { b.BoundAtUnix = 0 }, "worktree binding missing bound timestamp"},
 			{"negative bound timestamp", func(b *WorktreeBinding) { b.BoundAtUnix = -1 }, "worktree binding missing bound timestamp"},
@@ -380,6 +382,7 @@ func TestValidateLaunchEvidenceRefusesUnverifiableRecord(t *testing.T) {
 				LaunchID:      "launch-1",
 				CommandDigest: testSHA256Hex,
 				SubmittedAt:   1700000000,
+				Seat:          testSeat(),
 			}
 		},
 		validateLaunchEvidence,
@@ -389,6 +392,97 @@ func TestValidateLaunchEvidenceRefusesUnverifiableRecord(t *testing.T) {
 			{"no launch identity", func(e *LaunchEvidence) { e.LaunchID = "" }, "launch evidence missing launch identity"},
 			{"path-separating launch identity", func(e *LaunchEvidence) { e.LaunchID = "launch/1" }, "launch evidence missing launch identity"},
 			{"digest is not a sha256", func(e *LaunchEvidence) { e.CommandDigest = "not-a-digest" }, "launch evidence command digest must be a 64-hex sha256 digest"},
+			{"review tree without a head", func(e *LaunchEvidence) { e.ReviewTree = &domain.TreeState{Porcelain: testSHA256Hex} }, "launch evidence review tree requires a head and a porcelain digest"},
+			{"review tree without a porcelain digest", func(e *LaunchEvidence) { e.ReviewTree = &domain.TreeState{Head: "abc123"} }, "launch evidence review tree requires a head and a porcelain digest"},
+			{"no seat argv", func(e *LaunchEvidence) { e.Seat.Argv = nil }, "launch evidence seat requires the harness argv"},
+			{"empty seat argument", func(e *LaunchEvidence) { e.Seat.Argv = []string{"pi", ""} }, "launch evidence seat argv carries an empty argument"},
+			{"prompt digest is not a sha256", func(e *LaunchEvidence) { e.Seat.PromptDigest = "prompt" }, "launch evidence seat prompt digest must be a 64-hex sha256 digest"},
+			{"applied fence without a role", func(e *LaunchEvidence) { e.Seat.Fence = FenceRecord{Applied: true, ProfileDigest: testSHA256Hex} }, "launch evidence applied fence requires a role and a profile digest and no reason"},
+			{"applied fence without a profile digest", func(e *LaunchEvidence) { e.Seat.Fence = FenceRecord{Applied: true, Role: "ship"} }, "launch evidence applied fence requires a role and a profile digest and no reason"},
+			{"applied fence carrying a reason", func(e *LaunchEvidence) {
+				e.Seat.Fence = FenceRecord{Applied: true, Role: "ship", ProfileDigest: testSHA256Hex, Reason: "why"}
+			}, "launch evidence applied fence requires a role and a profile digest and no reason"},
+			{"unapplied fence without a reason", func(e *LaunchEvidence) { e.Seat.Fence = FenceRecord{} }, "launch evidence unapplied fence requires a reason and no role or profile digest"},
+			{"unapplied fence carrying a role", func(e *LaunchEvidence) { e.Seat.Fence = FenceRecord{Reason: "none", Role: "ship"} }, "launch evidence unapplied fence requires a reason and no role or profile digest"},
+			{"unapplied fence carrying a profile digest", func(e *LaunchEvidence) { e.Seat.Fence = FenceRecord{Reason: "none", ProfileDigest: testSHA256Hex} }, "launch evidence unapplied fence requires a reason and no role or profile digest"},
+		})
+}
+
+// A review task names the ship task it reads and the one head it reviews; no
+// other kind carries either field.
+func TestValidateReviewContractBindsReviewFieldsToTheReviewKind(t *testing.T) {
+	runGuardCases(t,
+		func() TaskDefinition {
+			return TaskDefinition{Owner: "owner", Kind: KindReview, Description: "review", ReviewTaskID: "ship1", ReviewHead: "abc123"}
+		},
+		validateReviewContract,
+		[]guardCase[TaskDefinition]{
+			{"review without the reviewed task", func(d *TaskDefinition) { d.ReviewTaskID = "" }, "review task requires the reviewed task id"},
+			{"review of an unsafe task id", func(d *TaskDefinition) { d.ReviewTaskID = "../ship1" }, "review task requires the reviewed task id"},
+			{"review without the reviewed head", func(d *TaskDefinition) { d.ReviewHead = "  " }, "review task requires the reviewed head"},
+			{"review task id on a ship task", func(d *TaskDefinition) { d.Kind, d.ReviewHead = KindShip, "" }, "review-only fields are not valid for ship tasks"},
+			{"review head on a scout task", func(d *TaskDefinition) { d.Kind, d.ReviewTaskID = KindScout, "" }, "review-only fields are not valid for scout tasks"},
+		})
+}
+
+func TestSoldierKindIsTheClosedSetOfLaunchableKinds(t *testing.T) {
+	for _, kind := range []string{KindShip, KindScout, KindReview} {
+		if !SoldierKind(kind) {
+			t.Errorf("SoldierKind(%q) = false, want true", kind)
+		}
+	}
+	for _, kind := range []string{"", "captain", "Ship"} {
+		if SoldierKind(kind) {
+			t.Errorf("SoldierKind(%q) = true, want false", kind)
+		}
+	}
+}
+
+// A review launch reserves no worktree, because it reads the reviewed task's;
+// every other kind must reserve one.
+func TestValidateLaunchIntentRefusesAWorktreeReservationOnAReviewLaunch(t *testing.T) {
+	review := func() LaunchIntent {
+		l := validLaunchIntent()
+		l.Kind, l.WorktreeReservationID, l.WorktreeFenceToken = KindReview, "", ""
+		return l
+	}
+	runGuardCases(t, review, validateLaunchIntent, []guardCase[LaunchIntent]{
+		{"review launch reserving a worktree", func(l *LaunchIntent) { l.WorktreeReservationID = "wt-res-1" }, "a review launch reserves no worktree"},
+		{"review launch carrying a worktree fence token", func(l *LaunchIntent) { l.WorktreeFenceToken = "wt-fence-1" }, "a review launch reserves no worktree"},
+	})
+}
+
+// A hold carries release words exactly when it was released, and only words
+// that name a grantor, a channel and a quote.
+func TestValidateDispatchHoldBindsReleaseWordsToRelease(t *testing.T) {
+	words := testWords()
+	runGuardCases(t,
+		func() DispatchHold {
+			return DispatchHold{
+				SchemaVersion: TaskAuthoritySchema, ID: "hold-1", Scope: DispatchHoldScope{},
+				Actions: []DispatchAction{DispatchActionStart}, Reason: "reason", CreatedAt: 1,
+				ReleasedAt: 2, ReleaseWords: &words,
+			}
+		},
+		validateHold,
+		[]guardCase[DispatchHold]{
+			{"words on an unreleased hold", func(h *DispatchHold) { h.ReleasedAt = 0 }, "carries release words but is not released"},
+			{"released hold with no words", func(h *DispatchHold) { h.ReleaseWords = nil }, "carries no release words"},
+			{"released hold with an empty quote", func(h *DispatchHold) { h.ReleaseWords = &domain.Words{Grantor: "g", Channel: "c"} }, "quote is required"},
+		})
+}
+
+func TestValidateReviewVerdictRecordRefusesUnattributableRecord(t *testing.T) {
+	runGuardCases(t,
+		func() ReviewVerdictRecord {
+			return ReviewVerdictRecord{OperationID: "op-verdict-1", Verdict: passVerdictFixture(), RecordedAt: 1700000000}
+		},
+		validateReviewVerdictRecord,
+		[]guardCase[ReviewVerdictRecord]{
+			{"no operation id", func(r *ReviewVerdictRecord) { r.OperationID = "" }, "review verdict record missing operation id"},
+			{"path-separating operation id", func(r *ReviewVerdictRecord) { r.OperationID = "op/verdict" }, "review verdict record missing operation id"},
+			{"invalid verdict", func(r *ReviewVerdictRecord) { r.Verdict.BaseSHA = "" }, "base SHA is required"},
+			{"no recorded timestamp", func(r *ReviewVerdictRecord) { r.RecordedAt = 0 }, "review verdict record missing recorded timestamp"},
 		})
 }
 

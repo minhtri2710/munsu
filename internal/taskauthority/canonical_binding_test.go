@@ -240,7 +240,7 @@ func TestCanonicalBindEndpointBlockedBySpawnHold(t *testing.T) {
 	}
 
 	// Releasing the hold allows the spawn.
-	release := CanonicalReleaseHoldRequest{HomeID: c.HomeID(), HoldID: "spawn-hold", Reason: "resume"}
+	release := CanonicalReleaseHoldRequest{HomeID: c.HomeID(), HoldID: "spawn-hold", Reason: "resume", Words: testWords()}
 	if _, err := c.ReleaseHold(mustOperation(t, "op-release-spawn", release), release); err != nil {
 		t.Fatalf("ReleaseHold: %v", err)
 	}

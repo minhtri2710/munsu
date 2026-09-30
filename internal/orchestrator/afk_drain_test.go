@@ -43,15 +43,18 @@ func TestDrainCycle_EmptyQueue(t *testing.T) {
 
 func TestDrainCycle_ClassifiesActionable(t *testing.T) {
 	home := t.TempDir()
-	// Actionable: general-relevant payloads.
-	if err := EnqueueWake(home, "signal", "task-1", "done: PR merged"); err != nil {
+	// Actionable: payloads that need the Human.
+	if err := EnqueueWake(home, "signal", "task-1", "failed: CI red"); err != nil {
 		t.Fatal(err)
 	}
 	if err := EnqueueWake(home, "signal", "task-2", "blocked: missing auth"); err != nil {
 		t.Fatal(err)
 	}
-	// Routine: not general-relevant.
+	// Routine: not general-relevant, including completion lines (audit only).
 	if err := EnqueueWake(home, "stale", "task-3", "still working on tests"); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnqueueWake(home, "signal", "task-4", "done: PR merged"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -67,8 +70,8 @@ func TestDrainCycle_ClassifiesActionable(t *testing.T) {
 	if len(report.Actionable) != 2 {
 		t.Fatalf("Actionable = %d, want 2: %+v", len(report.Actionable), report.Actionable)
 	}
-	if report.RoutineCount != 1 {
-		t.Errorf("RoutineCount = %d, want 1", report.RoutineCount)
+	if report.RoutineCount != 2 {
+		t.Errorf("RoutineCount = %d, want 2", report.RoutineCount)
 	}
 	if !report.HasActionable() {
 		t.Error("HasActionable() = false, want true")
@@ -80,7 +83,7 @@ func TestDrainCycle_ClassifiesActionable(t *testing.T) {
 
 func TestDrainCycle_DrainsQueue(t *testing.T) {
 	home := t.TempDir()
-	if err := EnqueueWake(home, "signal", "task-1", "done: shipped"); err != nil {
+	if err := EnqueueWake(home, "signal", "task-1", "needs-decision: pick a branch"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -145,5 +148,27 @@ func TestDrainCycle_PeekFleet(t *testing.T) {
 	// HasActionable is wake-gated, not fleet-gated.
 	if report.HasActionable() {
 		t.Error("HasActionable() = true without wakes, want false")
+	}
+}
+
+func TestDrainCycle_PeekFleetCountsReviewSoldiersOnly(t *testing.T) {
+	home := t.TempDir()
+	stateDir := filepath.Join(home, "state")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for id, kind := range map[string]string{"task-review": "review", "task-other": "captain"} {
+		meta := []byte("id = " + id + "\nproject = demo\nkind = " + kind + "\nwindow = @9999\n")
+		if err := os.WriteFile(filepath.Join(stateDir, id+".meta"), meta, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	report, err := DrainCycle(DrainCycleOptions{HomeDir: home, Consumer: "general", PeekFleet: true})
+	if err != nil {
+		t.Fatalf("DrainCycle: %v", err)
+	}
+	if report.FleetPeek == nil || report.FleetPeek.InFlight != 1 {
+		t.Fatalf("FleetPeek = %+v, want exactly the review soldier in flight", report.FleetPeek)
 	}
 }

@@ -302,7 +302,7 @@ func TestCanonicalStartBlockedByDispatchHold(t *testing.T) {
 	}
 
 	// Release the hold: start now succeeds.
-	release := CanonicalReleaseHoldRequest{HomeID: c.HomeID(), HoldID: "hold-1", Reason: "resume"}
+	release := CanonicalReleaseHoldRequest{HomeID: c.HomeID(), HoldID: "hold-1", Reason: "resume", Words: testWords()}
 	if _, err := c.ReleaseHold(mustOperation(t, "op-release-1", release), release); err != nil {
 		t.Fatalf("ReleaseHold: %v", err)
 	}
@@ -634,14 +634,14 @@ func TestCanonicalHoldsListAndRelease(t *testing.T) {
 	}
 
 	// Release and re-release no-op.
-	release := CanonicalReleaseHoldRequest{HomeID: c.HomeID(), HoldID: "hold-a", Reason: "done"}
+	release := CanonicalReleaseHoldRequest{HomeID: c.HomeID(), HoldID: "hold-a", Reason: "done", Words: testWords()}
 	if _, err := c.ReleaseHold(mustOperation(t, "op-release-a", release), release); err != nil {
 		t.Fatalf("ReleaseHold: %v", err)
 	}
 	if _, err := c.ReleaseHold(mustOperation(t, "op-release-a2", release), release); err != nil {
 		t.Fatalf("ReleaseHold again: %v", err)
 	}
-	if _, err := c.ReleaseHold(mustOperation(t, "op-release-missing", CanonicalReleaseHoldRequest{HomeID: c.HomeID(), HoldID: "nope", Reason: "x"}), CanonicalReleaseHoldRequest{HomeID: c.HomeID(), HoldID: "nope", Reason: "x"}); !errors.Is(err, ErrHoldNotFound) {
+	if _, err := c.ReleaseHold(mustOperation(t, "op-release-missing", CanonicalReleaseHoldRequest{HomeID: c.HomeID(), HoldID: "nope", Reason: "x", Words: testWords()}), CanonicalReleaseHoldRequest{HomeID: c.HomeID(), HoldID: "nope", Reason: "x", Words: testWords()}); !errors.Is(err, ErrHoldNotFound) {
 		t.Fatalf("release missing = %v, want ErrHoldNotFound", err)
 	}
 }
