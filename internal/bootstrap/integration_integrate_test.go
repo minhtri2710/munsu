@@ -3,14 +3,17 @@
 package bootstrap
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -574,6 +577,45 @@ func TestCheckPiCapability_RejectsOldVersion(t *testing.T) {
 	}
 }
 
+// TestCheckPiCapability_HangingNode verifies that a hanging node probe times out.
+func TestCheckPiCapability_HangingNode(t *testing.T) {
+	prevTimeout := SetProbeTimeout(100 * time.Millisecond)
+	defer SetProbeTimeout(prevTimeout)
+
+	callCount := 0
+	_ = SetCapabilityCommandRunner(func(name string, args []string, dir string, timeout time.Duration) (string, error) {
+		callCount++
+		if callCount == 1 {
+			// First call: pi --version succeeds.
+			return "0.79.0", nil
+		}
+		// Second call: node --experimental-strip-types — hang until timeout.
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "sleep", "5")
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		out, err := cmd.CombinedOutput()
+		if ctx.Err() != nil {
+			if cmd.Process != nil {
+				syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			}
+			cmd.Wait()
+			return string(out), fmt.Errorf("%s timed out after %v: %w", name, timeout, err)
+		}
+		return string(out), err
+	})
+	defer ResetCapabilityCommandRunner()
+
+	err := CheckPiCapability("/fake/pi")
+	if err == nil {
+		t.Fatal("expected timeout error for hanging node")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("error should mention timeout, got: %v", err)
+	}
+	t.Logf("hanging node probe correctly timed out: %v", err)
+}
+
 // TestCheckPiCapability_TimeoutCleanup verifies that the default runner
 // correctly kills a hanging command on timeout. Uses a real shell script
 // for the pi binary that hangs.
@@ -602,27 +644,6 @@ func TestCheckPiCapability_TimeoutCleanup(t *testing.T) {
 
 	// Verify the process is actually dead by trying to signal it.
 	// The ps check has races on macOS; just verify the error is correct.
-
-	t.Run("node probe", func(t *testing.T) {
-		nodeTimeout := SetProbeTimeout(100 * time.Millisecond)
-		defer SetProbeTimeout(nodeTimeout)
-
-		scriptDir := t.TempDir()
-		fakePi := filepath.Join(scriptDir, "fake-pi")
-		if err := os.WriteFile(fakePi, []byte("#!/bin/sh\nprintf '0.79.0\\n'\n"), 0755); err != nil {
-			t.Fatal(err)
-		}
-		fakeNode := filepath.Join(scriptDir, "node")
-		if err := os.WriteFile(fakeNode, []byte("#!/bin/sh\nsleep 5\n"), 0755); err != nil {
-			t.Fatal(err)
-		}
-		t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-		err := CheckPiCapability(fakePi)
-		if err == nil || !strings.Contains(err.Error(), "timed out") {
-			t.Fatalf("CheckPiCapability with hanging node = %v, want timeout error", err)
-		}
-	})
 }
 
 // TestCheckPiCapability_OrdinarySuccess uses an injectable runner to verify the
