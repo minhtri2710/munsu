@@ -185,6 +185,12 @@ func TestBuildLaunchArtifactRefusesWithoutPromptArgCommand(t *testing.T) {
 			wantSub: "no prompt-arg launch command",
 		},
 		{
+			name:    "no launch directory",
+			break_:  func(in *LaunchArtifactInput) { in.LaunchDir = "" },
+			repair:  func(in *LaunchArtifactInput) { in.LaunchDir = in.WorktreePath },
+			wantSub: "launch directory is required",
+		},
+		{
 			name:    "no launch args",
 			break_:  func(in *LaunchArtifactInput) { in.LaunchArgs = nil },
 			repair:  func(in *LaunchArtifactInput) { in.LaunchArgs = []string{"prompt text"} },

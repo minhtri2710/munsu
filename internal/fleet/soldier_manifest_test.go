@@ -16,7 +16,7 @@ func writeTestManifest(t *testing.T, dir string, entries []ManifestEntry) string
 	if entries == nil {
 		// Create default entries from actual files.
 		entries = []ManifestEntry{}
-		for _, name := range []string{CharterName, BriefName, EnvelopeName, PromptName, LaunchScriptName} {
+		for _, name := range LaunchArtifactNames {
 			entry, err := ManifestEntryForFile(dir, name, DisposalPolicyCleanable)
 			if err != nil {
 				t.Fatalf("creating entry for %s: %v", name, err)
@@ -51,6 +51,16 @@ func setupTestLaunchFiles(t *testing.T, dir string) {
 	os.WriteFile(filepath.Join(dir, EnvelopeName), []byte("{}"), 0644)
 	os.WriteFile(filepath.Join(dir, PromptName), []byte("prompt"), 0644)
 	os.WriteFile(filepath.Join(dir, LaunchScriptName), []byte("#!/bin/bash\necho hi\n"), 0644)
+	writePiSettingsFixture(t, dir)
+}
+
+// writePiSettingsFixture writes the worktree .pi/settings.json the way a pi
+// soldier launch does; the manifest binds it as its sixth entry.
+func writePiSettingsFixture(t *testing.T, dir string) {
+	t.Helper()
+	if err := writePiProjectSettings(dir, true); err != nil {
+		t.Fatalf("writing %s: %v", PiSettingsName, err)
+	}
 }
 
 func TestManifest_WriteAndRead(t *testing.T) {
@@ -66,8 +76,8 @@ func TestManifest_WriteAndRead(t *testing.T) {
 	if got.ManifestVersion != ManifestVersion {
 		t.Errorf("ManifestVersion = %q, want %q", got.ManifestVersion, ManifestVersion)
 	}
-	if len(got.Artifacts) != 5 {
-		t.Fatalf("expected 5 artifacts, got %d", len(got.Artifacts))
+	if len(got.Artifacts) != len(LaunchArtifactNames) {
+		t.Fatalf("expected %d artifacts, got %d", len(LaunchArtifactNames), len(got.Artifacts))
 	}
 
 	// Verify WriteManifest returned a valid 64-char hex digest.
@@ -229,8 +239,8 @@ func TestManifest_IntegrityCheck(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Artifacts) != 5 {
-		t.Fatalf("expected 5 artifacts, got %d", len(got.Artifacts))
+	if len(got.Artifacts) != len(LaunchArtifactNames) {
+		t.Fatalf("expected %d artifacts, got %d", len(LaunchArtifactNames), len(got.Artifacts))
 	}
 
 	// Verify each entry's digest matches the actual file.
@@ -262,7 +272,7 @@ func TestManifest_Validation_MissingEntries(t *testing.T) {
 	tmp := t.TempDir()
 	setupTestLaunchFiles(t, tmp)
 
-	// Manifest with only 4 of 5 required entries should fail.
+	// Manifest with only 4 of the required entries should fail.
 	entries := []ManifestEntry{}
 	for _, name := range []string{CharterName, BriefName, EnvelopeName, PromptName} {
 		entry, err := ManifestEntryForFile(tmp, name, DisposalPolicyCleanable)
@@ -286,7 +296,7 @@ func TestManifest_Validation_UnexpectedEntry(t *testing.T) {
 	setupTestLaunchFiles(t, tmp)
 
 	entries := []ManifestEntry{}
-	for _, name := range []string{CharterName, BriefName, EnvelopeName, PromptName, LaunchScriptName} {
+	for _, name := range LaunchArtifactNames {
 		entry, err := ManifestEntryForFile(tmp, name, DisposalPolicyCleanable)
 		if err != nil {
 			t.Fatal(err)
@@ -310,7 +320,7 @@ func TestManifest_Validation_DuplicateEntry(t *testing.T) {
 	setupTestLaunchFiles(t, tmp)
 
 	entries := []ManifestEntry{}
-	for _, name := range []string{CharterName, BriefName, EnvelopeName, PromptName, LaunchScriptName} {
+	for _, name := range LaunchArtifactNames {
 		entry, err := ManifestEntryForFile(tmp, name, DisposalPolicyCleanable)
 		if err != nil {
 			t.Fatal(err)
@@ -334,7 +344,7 @@ func TestManifest_Validation_SelfEntry(t *testing.T) {
 	setupTestLaunchFiles(t, tmp)
 
 	entries := []ManifestEntry{}
-	for _, name := range []string{CharterName, BriefName, EnvelopeName, PromptName, LaunchScriptName} {
+	for _, name := range LaunchArtifactNames {
 		entry, err := ManifestEntryForFile(tmp, name, DisposalPolicyCleanable)
 		if err != nil {
 			t.Fatal(err)
@@ -358,7 +368,7 @@ func TestManifest_Validation_InvalidDigest(t *testing.T) {
 	setupTestLaunchFiles(t, tmp)
 
 	entries := []ManifestEntry{}
-	for _, name := range []string{CharterName, BriefName, EnvelopeName, PromptName, LaunchScriptName} {
+	for _, name := range LaunchArtifactNames {
 		entry, err := ManifestEntryForFile(tmp, name, DisposalPolicyCleanable)
 		if err != nil {
 			t.Fatal(err)
@@ -382,7 +392,7 @@ func TestManifest_Validation_UnsupportedPolicy(t *testing.T) {
 	setupTestLaunchFiles(t, tmp)
 
 	entries := []ManifestEntry{}
-	for _, name := range []string{CharterName, BriefName, EnvelopeName, PromptName, LaunchScriptName} {
+	for _, name := range LaunchArtifactNames {
 		entry, err := ManifestEntryForFile(tmp, name, DisposalPolicyCleanable)
 		if err != nil {
 			t.Fatal(err)
@@ -405,7 +415,7 @@ func TestManifest_Validation_TraversalPath(t *testing.T) {
 	setupTestLaunchFiles(t, tmp)
 
 	entries := []ManifestEntry{}
-	for _, name := range []string{CharterName, BriefName, EnvelopeName, PromptName, LaunchScriptName} {
+	for _, name := range LaunchArtifactNames {
 		entry, err := ManifestEntryForFile(tmp, name, DisposalPolicyCleanable)
 		if err != nil {
 			t.Fatal(err)
@@ -428,7 +438,7 @@ func TestManifest_Validation_AbsolutePath(t *testing.T) {
 	setupTestLaunchFiles(t, tmp)
 
 	entries := []ManifestEntry{}
-	for _, name := range []string{CharterName, BriefName, EnvelopeName, PromptName, LaunchScriptName} {
+	for _, name := range LaunchArtifactNames {
 		entry, err := ManifestEntryForFile(tmp, name, DisposalPolicyCleanable)
 		if err != nil {
 			t.Fatal(err)

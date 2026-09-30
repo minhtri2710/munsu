@@ -80,11 +80,11 @@ func readyRunner() *fakeGlabRunner {
 }
 
 func mergedRunner() *fakeGlabRunner {
-	return fakeGitLabRunner(`{"sha":"abc123def456abc123def456abc123def456abc1","source_branch":"feature/test","target_branch":"main","state":"merged","merge_commit_sha":"def456abc123def456abc123def456abc123def4"}`, `{"approved":false,"approved_by":[]}`)
+	return fakeGitLabRunner(`{"sha":"6503e5e9852b028c95c8d1c9cd9178667506ac7b","source_branch":"feature/test","target_branch":"main","state":"merged","merge_commit_sha":"def456abc123def456abc123def456abc123def4"}`, `{"approved":false,"approved_by":[]}`)
 }
 
 func closedRunner() *fakeGlabRunner {
-	return fakeGitLabRunner(`{"sha":"abc123def456abc123def456abc123def456abc1","source_branch":"feature/test","target_branch":"main","state":"closed","merge_commit_sha":null}`, `{"approved":false,"approved_by":[]}`)
+	return fakeGitLabRunner(`{"sha":"6503e5e9852b028c95c8d1c9cd9178667506ac7b","source_branch":"feature/test","target_branch":"main","state":"closed","merge_commit_sha":null}`, `{"approved":false,"approved_by":[]}`)
 }
 
 func failedVersionRunner() *fakeGlabRunner {
@@ -129,7 +129,7 @@ func unsupportedRunner() *fakeGlabRunner {
 	}
 }
 
-const sampleSHA = "abc123def456abc123def456abc123def456abc1"
+const sampleSHA = "6503e5e9852b028c95c8d1c9cd9178667506ac7b"
 
 // --- Four-state probe tests ---
 
@@ -610,7 +610,7 @@ func TestGitLabIdentity_RoundTrip(t *testing.T) {
 		URL:        "https://gitlab.com/owner/project/-/merge_requests/42",
 		BaseRef:    "main",
 		HeadRef:    "feature/test",
-		HeadSHA:    "abc123def456abc123def456abc123def456abc1",
+		HeadSHA:    "6503e5e9852b028c95c8d1c9cd9178667506ac7b",
 		CapturedAt: "2026-07-18T12:00:00Z",
 	}
 
@@ -972,25 +972,42 @@ func TestGitlabDeliveryProvider_ReviewerRequestedChangesOnLaterPageRefusesMerge(
 	}
 }
 
-func TestGitlabDeliveryProvider_ReviewerApprovalCannotSatisfyApprovalRule(t *testing.T) {
+// TestGitlabDeliveryProvider_ObserveReadsObjectionsNeverApproval pins that the
+// GitLab observation reads only objections (ADR-0025): a reviewer requesting
+// changes denies the merge, a reviewer approving or an empty approval set
+// changes nothing, and the approvals endpoint is never asked.
+func TestGitlabDeliveryProvider_ObserveReadsObjectionsNeverApproval(t *testing.T) {
 	mrJSON := fmt.Sprintf(`{"sha":"%s","source_branch":"feature","target_branch":"main","state":"opened","detailed_merge_status":"mergeable","head_pipeline":{"status":"success","sha":"%s"}}`, sampleSHA, sampleSHA)
 	ident := domain.DeliveryIdentity{Provider: "gitlab", Owner: "owner", Repo: "project", Number: 7, URL: "https://gitlab.com/owner/project/-/merge_requests/7", BaseRef: "main", HeadRef: "feature", HeadSHA: sampleSHA}
-	runner := &fakeGlabRunner{runFn: func(args ...string) ([]byte, error) {
-		if len(args) >= 2 && args[0] == "api" && strings.HasSuffix(args[1], "/approvals") {
-			return []byte(`{"approved":false,"approved_by":[]}`), nil
-		}
-		if len(args) >= 2 && args[0] == "api" && strings.HasSuffix(args[1], "/reviewers") {
-			return []byte(`[{"user":{"username":"reviewer"},"state":"approved"}]`), nil
-		}
-		return []byte(mrJSON), nil
-	}}
-
-	obs, err := (&gitlabDeliveryProvider{client: &glabClient{runner: runner}}).Observe(ident)
-	if err != nil {
-		t.Fatalf("Observe (reviewer approved without approval rule): %v", err)
+	cases := []struct {
+		name      string
+		reviewers string
+		want      DeliveryMergeability
+	}{
+		{"no reviewers", `[]`, DeliveryMergeabilityAllowed},
+		{"reviewer approved", `[{"user":{"username":"reviewer"},"state":"approved"}]`, DeliveryMergeabilityAllowed},
+		{"reviewer requested changes", `[{"user":{"username":"reviewer"},"state":"requested_changes"}]`, DeliveryMergeabilityDenied},
 	}
-	if obs.Mergeability != DeliveryMergeabilityDenied {
-		t.Fatalf("Mergeability = %q, want denied without approval-rule approval", obs.Mergeability)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			runner := &fakeGlabRunner{runFn: func(args ...string) ([]byte, error) {
+				if len(args) >= 2 && args[0] == "api" && strings.HasSuffix(args[1], "/approvals") {
+					t.Errorf("approvals endpoint read: %v", args)
+					return []byte(`{"approved":true,"approved_by":[{"user":{}}]}`), nil
+				}
+				if len(args) >= 2 && args[0] == "api" && strings.HasSuffix(args[1], "/reviewers") {
+					return []byte(tc.reviewers), nil
+				}
+				return []byte(mrJSON), nil
+			}}
+			obs, err := (&gitlabDeliveryProvider{client: &glabClient{runner: runner}}).Observe(ident)
+			if err != nil {
+				t.Fatalf("Observe: %v", err)
+			}
+			if obs.Mergeability != tc.want {
+				t.Fatalf("Mergeability = %q, want %q", obs.Mergeability, tc.want)
+			}
+		})
 	}
 }
 
@@ -1197,12 +1214,11 @@ func TestDeliverGitLabOpenMRRefusesNonMergeable(t *testing.T) {
 	}
 }
 
-// TestDeliverGitLabOpenMRRefusesEmptyApprovalSet proves that after the OPEN
-// merge capability was restored, an OPEN MR whose approval set is empty still
-// fails closed before any irreversible mutation.
-func TestDeliverGitLabOpenMRRefusesEmptyApprovalSet(t *testing.T) {
+// TestDeliverGitLabOpenMRRefusesChangesRequested proves an OPEN MR a reviewer
+// requested changes on fails closed before any irreversible mutation.
+func TestDeliverGitLabOpenMRRefusesChangesRequested(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
-	taskID := "t-gitlab-noapprovers"
+	taskID := "t-gitlab-objection"
 	mustWorkingDeliveryTask(t, c, taskID)
 	request := deliverRequest()
 	request.Identity.Provider = "gitlab"
@@ -1211,11 +1227,8 @@ func TestDeliverGitLabOpenMRRefusesEmptyApprovalSet(t *testing.T) {
 	request.Identity.URL = "https://gitlab.com/owner/project/-/merge_requests/7"
 	var mergeAPICalls int
 	runner := &fakeGlabRunner{runFn: func(args ...string) ([]byte, error) {
-		if len(args) >= 2 && args[0] == "api" && strings.HasSuffix(args[1], "/approvals") {
-			return []byte(`{"approved":false,"approved_by":[]}`), nil
-		}
 		if len(args) >= 2 && args[0] == "api" && strings.HasSuffix(args[1], "/reviewers") {
-			return []byte("[]"), nil
+			return []byte(`[{"user":{"username":"reviewer"},"state":"requested_changes"}]`), nil
 		}
 		if len(args) >= 4 && args[0] == "api" && args[2] == "--method" && args[3] == "PUT" {
 			mergeAPICalls++
@@ -1229,8 +1242,8 @@ func TestDeliverGitLabOpenMRRefusesEmptyApprovalSet(t *testing.T) {
 	t.Cleanup(func() { deliveryProviderFor = old })
 
 	result, err := Deliver(homeDir, taskID, request)
-	if err == nil || result != nil {
-		t.Fatalf("result=%+v err=%v, want empty-approval-set OPEN refusal", result, err)
+	if err == nil || result != nil || !strings.Contains(err.Error(), "not mergeable") {
+		t.Fatalf("result=%+v err=%v, want changes-requested refusal", result, err)
 	}
 	if mergeAPICalls != 0 {
 		t.Fatalf("API merge calls = %d, want zero (no irreversible mutation)", mergeAPICalls)
@@ -1238,5 +1251,23 @@ func TestDeliverGitLabOpenMRRefusesEmptyApprovalSet(t *testing.T) {
 }
 
 func validIdentity() *domain.DeliveryIdentity {
-	return &domain.DeliveryIdentity{Provider: "github", Owner: "minhtri2710", Repo: "munsu", Number: 42, URL: "https://github.com/minhtri2710/munsu/pull/42", BaseRef: "main", HeadRef: "feature/test", HeadSHA: "abc123def456abc123def456abc123def456abc1", CapturedAt: "2026-07-18T12:00:00Z"}
+	return &domain.DeliveryIdentity{Provider: "github", Owner: "minhtri2710", Repo: "munsu", Number: 42, URL: "https://github.com/minhtri2710/munsu/pull/42", BaseRef: "main", HeadRef: "feature/test", HeadSHA: "6503e5e9852b028c95c8d1c9cd9178667506ac7b", CapturedAt: "2026-07-18T12:00:00Z"}
+}
+
+func TestGlabClientChangesRequestedRefusals(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(args ...string) ([]byte, error)
+		want string
+	}{
+		{"runner error", func(...string) ([]byte, error) { return nil, errors.New("glab exploded") }, "glab exploded"},
+		{"unparseable reviewers", func(...string) ([]byte, error) { return []byte("not json"), nil }, "parsing GitLab reviewer state"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &glabClient{runner: &fakeGlabRunner{runFn: tc.run}}
+			if got, err := client.ChangesRequested("gitlab.com", "owner", "project", 7); err == nil || got || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("ChangesRequested = %v, %v; want a refusal containing %q", got, err, tc.want)
+			}
+		})
+	}
 }

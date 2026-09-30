@@ -18,6 +18,7 @@ import (
 // seedDeliveryOutcome seeds a delivery outcome for taskID with the given status and mergedSHA.
 func seedDeliveryOutcome(t *testing.T, auth *taskauthority.Canonical, taskID string, status taskauthority.DeliveryOutcomeStatus, mergedSHA string) {
 	t.Helper()
+	mustRecordApprovingVerdict(t, auth, taskID, strings.Repeat("a", 40))
 	agg, err := auth.Get(mustTaskID(t, taskID))
 	if err != nil {
 		t.Fatal(err)
@@ -40,6 +41,7 @@ func seedDeliveryOutcome(t *testing.T, auth *taskauthority.Canonical, taskID str
 		Kind:          taskauthority.DeliveryAuthorizationProviderMerge,
 		Identity:      ident,
 		Preconditions: []taskauthority.DeliveryPrecondition{taskauthority.DeliveryPreconditionPRMergeable},
+		Words:         deliveryWords(),
 	}
 	authOp := mustOp(t, "op-auth-"+taskID, authReq)
 	authRes, err := auth.AuthorizeDelivery(authOp, authReq)

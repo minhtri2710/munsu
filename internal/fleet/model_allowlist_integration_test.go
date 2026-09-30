@@ -13,6 +13,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
@@ -125,6 +126,7 @@ func TestSpawn_AllowedModelPassesAllowlist(t *testing.T) {
 	// which is the first failure for a bare fixture home.
 	_, err := Spawn(Args{
 		ID:          "allowed-task",
+		Authority:   spawnAuthorityAt(t, homeDir, "allowed-task", "test-project"),
 		ProjectName: "test-project",
 		Mode:        "direct-PR",
 		HarnessFlag: harness.Pi,
@@ -150,6 +152,7 @@ func TestSpawn_AbsentPolicyAllowsAnyModel(t *testing.T) {
 
 	_, err := Spawn(Args{
 		ID:          "no-policy-task",
+		Authority:   spawnAuthorityAt(t, homeDir, "no-policy-task", "test-project"),
 		ProjectName: "test-project",
 		Mode:        "direct-PR",
 		HarnessFlag: harness.Pi,
@@ -473,6 +476,7 @@ func TestSpawn_ProjectConfigModelValidatedNotTemplateDefault(t *testing.T) {
 
 		_, err := Spawn(Args{
 			ID:          "beta-allowed",
+			Authority:   spawnAuthorityAt(t, homeDir, "beta-allowed", "beta"),
 			ProjectName: "beta",
 			Mode:        "direct-PR",
 			HomeDir:     homeDir,
@@ -571,4 +575,13 @@ func TestSpawn_DispatchSelectionResolvedOnce(t *testing.T) {
 	if got := len(data); got != 1 {
 		t.Fatalf("quota/dispatch selector invoked %d times, want exactly 1: the selection used for validation must be the same one used for launch", got)
 	}
+}
+
+// spawnAuthorityAt opens the canonical Authority at homeDir with one queued
+// ship task, the record spawn's backlog check requires before any brief check.
+func spawnAuthorityAt(t *testing.T, homeDir, taskID, project string) *taskauthority.Canonical {
+	t.Helper()
+	c := canonicalAtHome(t, homeDir)
+	canonicalCreateTask(t, c, taskID, taskauthority.KindShip, project)
+	return c
 }

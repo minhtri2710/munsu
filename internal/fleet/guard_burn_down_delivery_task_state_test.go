@@ -40,8 +40,8 @@ func TestGuardBurnDownPrevalidateDeliveryTaskRefusesHeldOrTerminalTask(t *testin
 		mustWorkingDeliveryTask(t, c, taskID)
 		authReq := taskauthority.CanonicalDeliveryAuthorizationRequest{
 			HomeID: c.HomeID(), TaskID: mustFleetTaskID(t, taskID),
-			Precondition: domain.Of(1, 3),
-			Kind:         deliverRequest().Kind, Identity: deliveryTestIdentity(),
+			Precondition: domain.Of(1, 4), Words: deliveryWords(),
+			Kind: deliverRequest().Kind, Identity: deliveryTestIdentity(),
 			Preconditions: deliverRequest().Preconditions,
 		}
 		if _, err := c.AuthorizeDelivery(mustFleetOperation(t, "op-terminal-auth", authReq), authReq); err != nil {
@@ -49,7 +49,7 @@ func TestGuardBurnDownPrevalidateDeliveryTaskRefusesHeldOrTerminalTask(t *testin
 		}
 		outReq := taskauthority.CanonicalDeliveryOutcomeRequest{
 			HomeID: c.HomeID(), TaskID: mustFleetTaskID(t, taskID),
-			Precondition: domain.Of(1, 4), AuthorizationOperationID: "op-terminal-auth",
+			Precondition: domain.Of(1, 5), AuthorizationOperationID: "op-terminal-auth",
 			Status: taskauthority.DeliveryOutcomeCompleted, Detail: "already merged",
 			HeadSHA: deliveryTestHead, MergedSHA: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
 		}

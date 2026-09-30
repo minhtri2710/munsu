@@ -788,8 +788,8 @@ func TestBuildLaunchArgs_PiArgvCapture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Expected argv: --model my-model --thinking max do the work
-	expectedParts := []string{"--model", "my-model", "--thinking", "max", "do the work"}
+	// Expected argv: --model my-model --thinking max --exclude-tools ask_user_question do the work
+	expectedParts := []string{"--model", "my-model", "--thinking", "max", "--exclude-tools", "ask_user_question", "do the work"}
 	if len(args) != len(expectedParts) {
 		t.Fatalf("expected %d args, got %d: %v", len(expectedParts), len(args), args)
 	}

@@ -96,6 +96,19 @@ func TestMergeAndRetireRefusesUnreadableTargetGeneration(t *testing.T) {
 	}
 }
 
+func TestMergeAndRetireRefusesATaskWithNoDeliveryRequest(t *testing.T) {
+	c, homeDir := newFleetCanonical(t)
+	mustWorkingShipTask(t, c, "t1")
+
+	result := MergeAndRetire(homeDir, "t1", "https://github.com/owner/repo/pull/1", nil, domain.Words{}, fakeTeardown{alive: true}, fakeRetirementJournals{}, c)
+	if result == nil || result.MergeOutcome != taskauthority.DeliveryOutcomeRetryable || !strings.Contains(result.MergeDetail, "merge-and-retire: reading task meta") {
+		t.Fatalf("result = %+v, want a retryable refusal naming the unreadable task meta", result)
+	}
+	if result.TeardownResult != nil {
+		t.Fatal("retirement proceeded without a delivery request")
+	}
+}
+
 func TestMergeAndRetireRetiresThroughAuthority(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-retire-through"
@@ -119,8 +132,8 @@ func TestMergeAndRetireRetiresThroughAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != 7 {
-		t.Fatalf("aggregate = phase %q revision %d, want retired revision 7", agg.Phase, agg.Revision)
+	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != 8 {
+		t.Fatalf("aggregate = phase %q revision %d, want retired revision 8", agg.Phase, agg.Revision)
 	}
 
 	// Saga-side cleanup removed the task meta.
@@ -169,15 +182,15 @@ func TestMergeAndRetireCleanupFailurePreservesCanonicalTruth(t *testing.T) {
 
 	// The committed retirement stands and the .meta projection is untouched
 	// (cleanup only removes it later); the canonical completed delivery
-	// outcome is preserved. Revision 6 = retire committed the durable claim;
+	// outcome is preserved. Revision 7 = retire committed the durable claim;
 	// the failed first attempt's BeginCleanup was a no-op (claim already
 	// active), so the aggregate carries exactly the retire bump.
 	agg, err := auth.Get(mustTaskID(t, taskID))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != 6 {
-		t.Fatalf("aggregate = phase %q revision %d, want retired revision 6", agg.Phase, agg.Revision)
+	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != 7 {
+		t.Fatalf("aggregate = phase %q revision %d, want retired revision 7", agg.Phase, agg.Revision)
 	}
 	// The exact ownership evidence is preserved durably.
 	if agg.Retirement == nil || agg.Retirement.Endpoint == nil || agg.Retirement.Worktree == nil {
@@ -200,7 +213,7 @@ func TestMergeAndRetireCleanupFailurePreservesCanonicalTruth(t *testing.T) {
 
 	// Retry: delivery is never rerun (canonical completed outcome skips),
 	// the retired phase is observed (no double transition, only the claim
-	// completion advances revision 6 -> 7), and the cleanup resumes to
+	// completion advances revision 7 -> 7), and the cleanup resumes to
 	// completion.
 	second := MergeAndRetire(homeDir, taskID, "https://github.com/owner/repo/pull/1", nil, domain.Words{}, fakeTeardown{alive: true}, fakeRetirementJournals{}, auth)
 	if second == nil {
@@ -216,8 +229,8 @@ func TestMergeAndRetireCleanupFailurePreservesCanonicalTruth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agg.Revision != 7 {
-		t.Fatalf("retry re-committed the retirement: revision = %d, want 7 (claim completion only)", agg.Revision)
+	if agg.Revision != 8 {
+		t.Fatalf("retry re-committed the retirement: revision = %d, want 8 (claim completion only)", agg.Revision)
 	}
 	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
 		t.Fatal("retry should complete the cleanup and remove meta")
@@ -290,7 +303,7 @@ func TestRetireTaskCleanupFailureReturnsResumableReceipt(t *testing.T) {
 		t.Fatalf("resume failed: %v", err)
 	}
 	agg, _ := auth.Get(mustTaskID(t, taskID))
-	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != 7 {
-		t.Fatalf("aggregate after resume = %+v, want retired revision 7", agg)
+	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != 8 {
+		t.Fatalf("aggregate after resume = %+v, want retired revision 8", agg)
 	}
 }

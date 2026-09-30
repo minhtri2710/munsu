@@ -35,29 +35,29 @@ func TestDeliveryProviderFor_UnknownProviderRefuses(t *testing.T) {
 	}
 }
 
-// TestDeliverRefusesGitHubBeforeJournal proves a GitHub delivery identity is
-// refused as unsupported before any journal write or authorization, even
-// with a working provider capability installed.
-func TestDeliverRefusesGitHubBeforeJournal(t *testing.T) {
+// TestDeliverRefusesGitHubWithoutDeliveryCapabilityBeforeJournal proves a
+// GitHub delivery is refused before any journal write or authorization when the
+// delivery capability (gh-axi and gh) is not Ready, through the production
+// provider resolver: there is no fallback execution route.
+func TestDeliverRefusesGitHubWithoutDeliveryCapabilityBeforeJournal(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	taskID := "t1"
 	mustWorkingDeliveryTask(t, c, taskID)
-	provider := installScriptedProviderFor(t, "open-then-merged")
+	oldAxi := ghAxiLookPath
+	t.Cleanup(func() { ghAxiLookPath = oldAxi })
+	ghAxiLookPath = func() (string, error) { return "", errors.New("gh-axi not installed") }
 	req := deliverRequest()
 	req.Identity.Provider = "github"
 	req.Identity.URL = "https://github.com/minhtri2710/munsu/pull/42"
 
-	if _, err := Deliver(homeDir, taskID, req); err == nil || !strings.Contains(err.Error(), "GitHub delivery is unsupported") {
-		t.Fatalf("Deliver err = %v, want GitHub delivery refused", err)
+	if _, err := Deliver(homeDir, taskID, req); err == nil || !strings.Contains(err.Error(), "GitHub delivery capability is") {
+		t.Fatalf("Deliver err = %v, want GitHub delivery capability refusal", err)
 	}
 	if files := listDeliveryJournalFiles(t, homeDir); len(files) != 0 {
 		t.Fatalf("journal records = %v, want none", files)
 	}
 	if cur, err := c.DeliveryCurrency(mustFleetTaskID(t, taskID)); err != nil || cur.Authorization != nil || len(cur.Reasons) != 1 || cur.Reasons[0] != taskauthority.DeliveryCurrencyNoAuthorization {
 		t.Fatalf("authorization currency = %+v, %v, want none issued", cur, err)
-	}
-	if provider.merges != 0 || len(provider.requests) != 0 {
-		t.Fatalf("provider touched: merges=%d requests=%d", provider.merges, len(provider.requests))
 	}
 }
 
@@ -156,6 +156,7 @@ func TestDeliverAuthorizationPinsExactRequestDigests(t *testing.T) {
 		Kind:          journal.Kind,
 		Identity:      journal.Identity,
 		Preconditions: journal.Preconditions,
+		Words:         journal.Words,
 	}
 	digest, err := domain.Digest(req)
 	if err != nil {
@@ -402,7 +403,7 @@ func TestDeliverFailClosedBeforeMutation(t *testing.T) {
 			if _, err := c.AddHold(mustFleetOperation(t, "op-hold-add-rel-"+taskID, hold), hold); err != nil {
 				t.Fatal(err)
 			}
-			release := taskauthority.CanonicalReleaseHoldRequest{HomeID: c.HomeID(), HoldID: "hold-delivery", Reason: "resume"}
+			release := taskauthority.CanonicalReleaseHoldRequest{HomeID: c.HomeID(), HoldID: "hold-delivery", Reason: "resume", Words: deliveryWords()}
 			if _, err := c.ReleaseHold(mustFleetOperation(t, "op-hold-rel-"+taskID, release), release); err != nil {
 				t.Fatal(err)
 			}

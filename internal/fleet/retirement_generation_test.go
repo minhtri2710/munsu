@@ -130,6 +130,7 @@ func seedMergedDelivery(t *testing.T, auth *taskauthority.Canonical, homeDir, ta
 	seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep-merged", "fence-ep-merged")
 
 	ident := deliveryFixtureIdentity()
+	mustRecordApprovingVerdict(t, auth, taskID, ident.HeadSHA)
 	agg, err := auth.Get(mustTaskID(t, taskID))
 	if err != nil {
 		t.Fatal(err)
@@ -144,6 +145,7 @@ func seedMergedDelivery(t *testing.T, auth *taskauthority.Canonical, homeDir, ta
 			taskauthority.DeliveryPreconditionPRMergeable,
 			taskauthority.DeliveryPreconditionPRHeadCurrent,
 		},
+		Words: deliveryWords(),
 	}
 	if _, err := auth.AuthorizeDelivery(mustFleetOperation(t, "op-del-auth-"+taskID, authReq), authReq); err != nil {
 		t.Fatalf("AuthorizeDelivery(%s): %v", taskID, err)
@@ -195,6 +197,7 @@ func seedCanonicalOutcome(t *testing.T, homeDir, taskID string, status taskautho
 	seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep-out", "fence-ep-out")
 
 	ident := deliveryFixtureIdentity()
+	mustRecordApprovingVerdict(t, auth, taskID, ident.HeadSHA)
 	agg, err := auth.Get(mustTaskID(t, taskID))
 	if err != nil {
 		t.Fatal(err)
@@ -209,6 +212,7 @@ func seedCanonicalOutcome(t *testing.T, homeDir, taskID string, status taskautho
 			taskauthority.DeliveryPreconditionPRMergeable,
 			taskauthority.DeliveryPreconditionPRHeadCurrent,
 		},
+		Words: deliveryWords(),
 	}
 	if _, err := auth.AuthorizeDelivery(mustFleetOperation(t, "op-del-auth-out-"+taskID, authReq), authReq); err != nil {
 		t.Fatalf("AuthorizeDelivery(%s): %v", taskID, err)

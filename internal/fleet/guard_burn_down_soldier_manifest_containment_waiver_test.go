@@ -10,8 +10,8 @@ import (
 func guardManifestFixture(t *testing.T, root string) *LaunchManifest {
 	t.Helper()
 	setupGuardManifestFiles(t, root)
-	entries := make([]ManifestEntry, 0, 5)
-	for _, name := range []string{CharterName, BriefName, EnvelopeName, PromptName, LaunchScriptName} {
+	entries := make([]ManifestEntry, 0, len(LaunchArtifactNames))
+	for _, name := range LaunchArtifactNames {
 		entry, err := ManifestEntryForFile(root, name, DisposalPolicyCleanable)
 		if err != nil {
 			t.Fatalf("ManifestEntryForFile(%q): %v", name, err)
@@ -29,7 +29,11 @@ func setupGuardManifestFiles(t *testing.T, root string) {
 		EnvelopeName:     "envelope\n",
 		PromptName:       "prompt\n",
 		LaunchScriptName: "launch\n",
+		PiSettingsName:   "{}\n",
 	} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, name)), 0755); err != nil {
+			t.Fatalf("mkdir for %q: %v", name, err)
+		}
 		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0644); err != nil {
 			t.Fatalf("write %q: %v", name, err)
 		}

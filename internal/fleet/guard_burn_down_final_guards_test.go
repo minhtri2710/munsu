@@ -64,39 +64,30 @@ func (m *mockGlabRunner) Run(args ...string) ([]byte, error) {
 // Group A: delivery_amend.go (4 guards)
 // ----------------------------------------------------------------------------
 
-func TestFetchGitHubProviderSnapshot_EmptyHeadOrBaseRef(t *testing.T) {
-	old := DefaultGitHubClient
-	t.Cleanup(func() { DefaultGitHubClient = old })
-	DefaultGitHubClient = func() (GitHubClient, error) {
-		return &mockGitHubClient{data: []byte(`{"state":"OPEN","headRefOid":"abc1234567890123456789012345678901234567","headRefName":"","baseRefName":"main"}`)}, nil
-	}
-	_, err := fetchGitHubProviderSnapshot("https://github.com/owner/repo/pull/1")
-	if err == nil || !strings.Contains(err.Error(), "gh pr view returned empty headRefName or baseRefName") {
-		t.Fatalf("fetchGitHubProviderSnapshot err = %v, want empty headRefName or baseRefName", err)
-	}
+// fakeGHPRView installs a gh that answers `gh pr view` with body.
+func fakeGHPRView(t *testing.T, body string) {
+	t.Helper()
+	installFakeGH(t, ghReply{match: "pr view", stdout: body})
 }
 
-func TestFetchGitHubProviderSnapshot_EmptyHeadRefOid(t *testing.T) {
-	old := DefaultGitHubClient
-	t.Cleanup(func() { DefaultGitHubClient = old })
-	DefaultGitHubClient = func() (GitHubClient, error) {
-		return &mockGitHubClient{data: []byte(`{"state":"OPEN","headRefOid":"","headRefName":"feat","baseRefName":"main"}`)}, nil
+func TestFetchGitHubProviderSnapshot_EmptyRequiredFields(t *testing.T) {
+	cases := []struct {
+		name string
+		json string
+		want string
+	}{
+		{"empty head or base ref", `{"state":"OPEN","headRefOid":"abc1234567890123456789012345678901234567","headRefName":"","baseRefName":"main"}`, "gh pr view returned empty headRefName or baseRefName"},
+		{"empty headRefOid", `{"state":"OPEN","headRefOid":"","headRefName":"feat","baseRefName":"main"}`, "gh pr view returned empty headRefOid"},
+		{"empty state", `{"state":"","headRefOid":"abc1234567890123456789012345678901234567","headRefName":"feat","baseRefName":"main"}`, "gh pr view returned empty state"},
 	}
-	_, err := fetchGitHubProviderSnapshot("https://github.com/owner/repo/pull/1")
-	if err == nil || !strings.Contains(err.Error(), "gh pr view returned empty headRefOid") {
-		t.Fatalf("fetchGitHubProviderSnapshot err = %v, want empty headRefOid", err)
-	}
-}
-
-func TestFetchGitHubProviderSnapshot_EmptyState(t *testing.T) {
-	old := DefaultGitHubClient
-	t.Cleanup(func() { DefaultGitHubClient = old })
-	DefaultGitHubClient = func() (GitHubClient, error) {
-		return &mockGitHubClient{data: []byte(`{"state":"","headRefOid":"abc1234567890123456789012345678901234567","headRefName":"feat","baseRefName":"main"}`)}, nil
-	}
-	_, err := fetchGitHubProviderSnapshot("https://github.com/owner/repo/pull/1")
-	if err == nil || !strings.Contains(err.Error(), "gh pr view returned empty state") {
-		t.Fatalf("fetchGitHubProviderSnapshot err = %v, want empty state", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeGHPRView(t, tc.json)
+			_, err := fetchGitHubProviderSnapshot("https://github.com/owner/repo/pull/1")
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("fetchGitHubProviderSnapshot err = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 

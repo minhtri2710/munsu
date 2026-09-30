@@ -31,6 +31,7 @@ func writeLaunchManifestForTest(t *testing.T, worktreePath string) string {
 	if err := os.WriteFile(filepath.Join(worktreePath, LaunchScriptName), []byte(script), 0755); err != nil {
 		t.Fatal(err)
 	}
+	writePiSettingsFixture(t, worktreePath)
 	r := &Runner{wtPath: worktreePath}
 	if err := r.writeLaunchManifest(); err != nil {
 		t.Fatalf("writing launch manifest: %v", err)

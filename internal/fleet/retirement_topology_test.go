@@ -29,9 +29,10 @@ func setupTopologyManifest(t *testing.T, wt string) string {
 	os.WriteFile(filepath.Join(wt, PromptName), []byte(prompt), 0644)
 	os.WriteFile(filepath.Join(wt, EnvelopeName), []byte("{}"), 0644)
 	os.WriteFile(filepath.Join(wt, LaunchScriptName), []byte("#!/bin/bash\n"), 0644)
+	writePiSettingsFixture(t, wt)
 
 	entries := []ManifestEntry{}
-	for _, name := range []string{CharterName, BriefName, EnvelopeName, PromptName, LaunchScriptName} {
+	for _, name := range LaunchArtifactNames {
 		entry, err := ManifestEntryForFile(wt, name, DisposalPolicyCleanable)
 		if err != nil {
 			t.Fatalf("manifest entry for %s: %v", name, err)

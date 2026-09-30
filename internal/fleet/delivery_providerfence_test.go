@@ -4,9 +4,11 @@ package fleet
 
 import (
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
@@ -183,10 +185,10 @@ func TestDeliverProviderFenceAcceptsAndRejectsObservations(t *testing.T) {
 	}
 }
 
-// TestDeliverPrevalidateRejectsHeadNotMatchingBoundWorktree is the canary of
-// the prevalidation mirror of the canonical head fence: an identity head that
-// does not match the bound worktree head never writes a journal intent and
-// never issues an authorization.
+// TestDeliverPrevalidateRejectsHeadNotMatchingBoundWorktree pins the Fleet-only
+// head refusal: an identity head that differs from the head git reads at the
+// bound worktree now never writes a journal intent and never issues an
+// authorization.
 func TestDeliverPrevalidateRejectsHeadNotMatchingBoundWorktree(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	taskID := "t1"
@@ -197,7 +199,7 @@ func TestDeliverPrevalidateRejectsHeadNotMatchingBoundWorktree(t *testing.T) {
 	req.Identity.HeadSHA = "9999888877776666555544443333222211110000"
 
 	_, err := Deliver(homeDir, taskID, req)
-	if err == nil || !strings.Contains(err.Error(), "does not match the bound worktree head") {
+	if err == nil || !strings.Contains(err.Error(), "the bound worktree holds now") {
 		t.Fatalf("Deliver err = %v, want the identity/head prevalidation to fail closed", err)
 	}
 	if provider.merges != 0 {
@@ -211,5 +213,37 @@ func TestDeliverPrevalidateRejectsHeadNotMatchingBoundWorktree(t *testing.T) {
 	}
 	if cur, err := c.DeliveryCurrency(mustFleetTaskID(t, taskID)); err != nil || cur.Authorization != nil || len(cur.Reasons) != 1 || cur.Reasons[0] != taskauthority.DeliveryCurrencyNoAuthorization {
 		t.Fatalf("authorization currency = %+v, %v, want none issued for a head that does not match the bound worktree", cur, err)
+	}
+}
+
+// TestDeliverPrevalidateRefusesAWorktreeGitCannotRead pins the refusal when the
+// bound worktree cannot be observed at all: there is no head to compare, so no
+// intent is written.
+func TestDeliverPrevalidateRefusesAWorktreeGitCannotRead(t *testing.T) {
+	c, homeDir := newFleetCanonical(t)
+	taskID := "t1"
+	wt := mustWorkingShipTask(t, c, taskID)
+	provider := installScriptedProviderFor(t, "open-then-merged")
+	if err := os.RemoveAll(wt); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Deliver(homeDir, taskID, deliverRequest())
+	if err == nil || !strings.Contains(err.Error(), "delivery of task t1: observing worktree HEAD") {
+		t.Fatalf("Deliver err = %v, want the unobservable-worktree refusal", err)
+	}
+	if provider.merges != 0 {
+		t.Fatalf("merges = %d, want 0", provider.merges)
+	}
+	if files := listDeliveryJournalFiles(t, homeDir); len(files) != 0 {
+		t.Fatalf("journal records = %v, want none", files)
+	}
+}
+
+func TestDeliveryProviderForRefusesAnUnreadyGitHubCapability(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	_, err := deliveryProviderFor(domain.DeliveryIdentity{Provider: "github"})
+	if err == nil || !strings.Contains(err.Error(), "GitHub delivery capability is") {
+		t.Fatalf("deliveryProviderFor error = %v, want the capability refusal", err)
 	}
 }
