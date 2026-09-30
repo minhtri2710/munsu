@@ -45,8 +45,6 @@ func TestReadBusy_DerivesFromActivityAxis(t *testing.T) {
 		{"out-of-range activity -> unknown", liveObs(Activity(200)), BusyReadingUnknown},
 		{"lifecycle unknown with unknown activity", EndpointStatus{Lifecycle: LifecycleUnknown, Freshness: FreshnessUnknown, Activity: ActivityUnknown, Source: SourceProbe}, BusyReadingUnknown},
 		{"stale derived unknown", EndpointStatus{Lifecycle: LifecycleUnknown, Freshness: FreshnessStale, Activity: ActivityUnknown, Source: SourceDerived}, BusyReadingUnknown},
-		{"invalid activity never idle or dead", liveObs(ActivityInvalid), BusyReadingUnknown},
-		{"out-of-range activity never idle or dead", liveObs(Activity(200)), BusyReadingUnknown},
 		{"authorized absent overrides busy", authorizedAbsent(ActivityBusy), BusyReadingDead},
 		{"authorized absent overrides idle", authorizedAbsent(ActivityIdle), BusyReadingDead},
 		{"authorized absent overrides blocked", authorizedAbsent(ActivityBlocked), BusyReadingDead},

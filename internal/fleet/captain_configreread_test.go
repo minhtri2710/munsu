@@ -395,17 +395,15 @@ func TestConfigPushWithResult_GenerationAdvance(t *testing.T) {
 	}
 	firstDigest := res.NewDigest
 
-	for _, name := range []string{"unchanged", "idempotent repeat"} {
-		t.Run(name, func(t *testing.T) {
-			res, err := configPushWithResult(parent, captainHome)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if res.Changed || res.Generation != 1 || res.OldDigest != firstDigest || res.NewDigest != firstDigest {
-				t.Fatalf("repeat push = %+v, want unchanged generation 1 and digest %q", res, firstDigest)
-			}
-		})
-	}
+	t.Run("unchanged", func(t *testing.T) {
+		res, err := configPushWithResult(parent, captainHome)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Changed || res.Generation != 1 || res.OldDigest != firstDigest || res.NewDigest != firstDigest {
+			t.Fatalf("repeat push = %+v, want unchanged generation 1 and digest %q", res, firstDigest)
+		}
+	})
 
 	base, err := config.LoadFleetBase(parent)
 	if err != nil {

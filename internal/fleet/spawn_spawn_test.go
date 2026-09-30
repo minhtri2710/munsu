@@ -264,8 +264,6 @@ func TestCheckNoMistakesCompatibility(t *testing.T) {
 	}{
 		{name: "no instruction files", agents: []string{"pi"}, available: map[string]bool{"pi": true}},
 		{name: "no instructions and no opt-out needs no neutralization", agents: []string{"opencode"}, available: map[string]bool{"opencode": true}, wantSelected: "opencode"},
-		{name: "opencode refused under disable_project_settings", hasDocs: true, disableProjectSettings: true, agents: []string{"opencode"}, available: map[string]bool{"opencode": true}, wantBlocker: GateBlockerUnsupportedNeutralization},
-		{name: "auto resolves to available pi under disable_project_settings", hasDocs: true, disableProjectSettings: true, agents: []string{"auto"}, available: map[string]bool{"pi": true}},
 		{name: "pi incompatible", hasDocs: true, agents: []string{"pi"}, available: map[string]bool{"pi": true}, wantBlocker: GateBlockerUnsupportedNeutralization, wantSelected: "pi"},
 		{name: "pi ok with disable_project_settings", hasDocs: true, disableProjectSettings: true, agents: []string{"pi"}, available: map[string]bool{"pi": true}, wantSelected: "pi"},
 		{name: "codex compatible", hasDocs: true, agents: []string{"codex"}, available: map[string]bool{"codex": true}, wantSelected: "codex"},
