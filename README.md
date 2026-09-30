@@ -146,6 +146,7 @@ munsu captain list
 
 - `docs/architecture.md` — architecture overview, module layout, key interfaces, design decisions.
 - `docs/port-mapping.md` — full command reference grouped by domain.
+- `docs/orchestration-contract.md` — the versioned agent-facing orchestration contract: `--output toon|json` schemas, errors and exit codes.
 - `CONTRIBUTING.md` — how to contribute.
 - `AGENTS.md` — conventions file for soldiers working on munsu.
 - `internal/cli/skills/munsu-ops/` — canonical operator skill (`munsu skill show munsu-ops`): `COMMANDS.md` command map and `SUPERVISION.md` watch/wake/guard/AFK loop.

@@ -35,7 +35,7 @@ in their authoritative module rather than in command wiring.
 | `home` | Resolve the munsu home and own domain-neutral durable mechanics: verified identity/roots, containment, scoped fenced locks and leases, atomic journaled change-set commits; retains generic `.meta`/`.status` primitives and the durable mailbox |
 | `taskauthority` | Own canonical Task documents — Aggregate, Generation/Revision, lifecycle, Dispatch Holds, delivery authorization/outcomes, transfer reservations, launch and retirement evidence — as named operations on one `Canonical` surface (ADR-0008 §2) |
 | `backend` | Provide tmux/herdr/zellij/cmux/orca adapters, endpoint observation, worktree and home-tag mechanics |
-| `domain` | Own pure business rules and value types such as `PR.CanMerge` and `Review.IsApproving` |
+| `domain` | Own pure business rules and value types such as `PR.CanMerge` and `ReviewVerdict.Approves` |
 | `harness` | Detect and verify harnesses; resolve launch templates and dispatch profiles |
 | `bootstrap` | Diagnose toolchain readiness and install, repair or inspect native harness integration |
 | `config` | Own typed settings, defaults, validation, Project Overlays and immutable resolved Config Snapshots (ADR-0008 §6) |
@@ -91,7 +91,9 @@ consumes the derived published snapshot first and the fleet base in General
 context. `internal/config` owns typed settings, defaults, validation, Project
 Overlays and immutable resolved Config Snapshots (ADR-0008 §6). Resolution is
 the two typed layers `base ⨂ project overlay` with no environment-override tier
-(ADR-0003 §3/§4/§10). Legacy flat launch-profile files are never read or
+(ADR-0003 §3/§4/§10). A published snapshot is schema- and field-validated (it
+requires a digest) when stored and loaded; it is not signed, and no signature is
+verified. Legacy flat launch-profile files are never read or
 migrated. Dispatch profiles are stored in the fleet base document and
 interpreted by `internal/harness` and the spawn orchestration in `internal/fleet`.
 
@@ -177,11 +179,23 @@ adapters it claimed to describe.
 
 ### Delivery acceptance (`internal/domain`)
 
-`internal/domain/domain.go` is the single owner of `PR`, `Review`, `CheckRun`,
-`PR.CanMerge`, and `Review.IsApproving`. `internal/fleet/delivery_*.go` owns
-provider interaction, identity capture and delivery orchestration;
-delivery-invariant and git-authorization operations execute as
-`internal/taskauthority` named operations.
+`internal/domain` owns the acceptance rules. `PR.CanMerge`
+(`internal/domain/domain.go`) reports only whether provider state permits a
+merge: the PR is open, every check passed, and no review requests changes. It
+never approves. The only approval source is the head-bound `ReviewVerdict`
+(`internal/domain/review_verdict.go`, ADR-0025): `ReviewVerdict.Approves` holds
+for a valid PASS verdict bound to exactly the delivered head and to the current
+authoring soldier instance. `Canonical.RecordReviewVerdict`
+(`internal/taskauthority/canonical_verdict.go`) stores the task's one verdict,
+and `Canonical.AuthorizeDelivery` (`internal/taskauthority/canonical_delivery.go`)
+refuses unless it approves, embedding the verdict in the issued
+`DeliveryAuthorization`. `fleet.Deliver` is the sole delivery executor;
+`internal/fleet/delivery_*.go` owns provider interaction, identity capture and
+delivery orchestration, and delivery-invariant and git-authorization operations
+execute as `internal/taskauthority` named operations. CLI helpers and the
+terminal report path are not parallel delivery implementations: terminal
+reports and retirement only consume canonical delivery authorization and
+outcome truth.
 
 ### Task Authority (`internal/taskauthority`)
 
@@ -256,6 +270,14 @@ and adjacent orchestrator lifecycle files.
 | Interact | `munsu send`, `munsu peek`, `munsu soldier-state` | `internal/cli`, `internal/fleet`, `internal/home` |
 | Deliver | `munsu delivery ...` | `internal/fleet` (orchestration), `internal/taskauthority` (invariant ops), acceptance rules in `internal/domain` |
 | Teardown | `munsu teardown` | `internal/cli`, `internal/fleet`, `internal/orchestrator` |
+
+Task commands run in the home that owns the task: the General home, or a Captain
+home for tasks handed off to it. Captain administration runs from the parent
+General home. `munsu task start` must not precede `munsu spawn`: endpoint
+binding requires a queued task and performs the queued-to-working transition.
+Before teardown, `orchestrator.VerifyRetirementContinuity` refuses without
+`--force` when a report is pending or open, or when an open report-relay
+obligation also has a material latest `.status`.
 
 ## Rank hierarchy and identity
 

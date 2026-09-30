@@ -1,6 +1,6 @@
 # 0012. Quiescence Before a Destructive Operation Has One Owner: Task Authority
 
-* **Status:** Accepted
+* **Status:** Accepted; amended by S7 (munsu-roadmap): teardown of a task's own worktree signals a holder only on launch-environment adoption evidence (see "Amendment: S7")
 * **Date:** 2026-08-17
 * **Extends:** ADR-0008 (one owner and one canonical implementation path per lifecycle)
 * **Upholds:** ADR-BEO-40-01 §5 (orphan scanning is report only)
@@ -129,7 +129,7 @@ The level of assurance this repo accepts for destructive operations:
 * **`captain retire`**: the `inFlightSoldierIDs` artifact scan. `--force` skips that
   level outright. It does not delete the home, so the exposure is limited to endpoint
   teardown.
-* **No OS-process-level enforcement anywhere**, deliberately, per ADR-BEO-40-01 §5.
+* **No OS-process-level enforcement anywhere**, deliberately, per ADR-BEO-40-01 §5. The one exception is the S7 teardown rule (see "Amendment: S7").
 
 ### What was removed
 
@@ -155,7 +155,7 @@ scope for BEO-102 and is handed to BEO-67.
   copy reading from a different source of truth.
 * `Known open bugs, NOT accepted debt` in `.github/deadcode.allow` is empty again; the
   header stays (BEO-96). No line moved to accepted debt, and no new line was added.
-* There is still no OS-process-level assurance. That is policy, not an oversight. If it
+* Outside the S7 teardown rule there is still no OS-process-level assurance. That is policy, not an oversight. If it
   is ever wanted, the path is the adoption registry of ADR-BEO-40-01 §5, not a revival
   of this cluster.
 
@@ -172,3 +172,22 @@ in-flight soldier check, no endpoint probe, no process check — weaker than `Re
 it never calls `inFlightSoldierIDs`. That belongs in `captain_seed_worktree.go` (BEO-67
 scope) and the right guard there is `inFlightSoldierIDs` plus the canonical endpoint
 authority the live retirement path already owns — not this cluster.
+
+## Amendment: S7 (munsu-roadmap, approved under Human decision G297)
+
+Teardown used to signal every holder of the retired task's worktree unconditionally. That
+is replaced by an adoption rule, which is the adoption evidence ADR-BEO-40-01 §5 asked
+for, scoped to teardown of the task's own worktree (`reapWorktreeHolders`,
+`internal/fleet/retirement_task.go`):
+
+* A holder of the retired task's worktree is signalled only when its launch environment
+  carries this task's `MUNSU_TASK_ID` and this home's `MUNSU_HOME`, which the soldier
+  launch script exports (`taskOwnedPIDs`). The environment carries no generation; the
+  durable cleanup claim, which blocks a reopen for the whole teardown, binds it.
+* Any other holder, a host that cannot enumerate holders (no `fuser`,
+  `worktreeHolderPIDs`) or cannot read process environments (Windows today), and holders
+  that outlive the wait all leave cleanup pending. `--force` is included: it skips safety
+  checks only and never widens this rule.
+
+Orphan scanning elsewhere stays report-only (ADR-BEO-40-01 §5). The rest of this ADR
+stands as written.

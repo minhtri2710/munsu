@@ -67,8 +67,8 @@ the checkout is a separate scope.
 Options: replace the provider review input, keep it beside the verdict, or make the
 verdict the only approval source. The verdict is the only approval source.
 `PR.CanMerge` keeps the provider facts that block a merge (open, checks passed, no review
-requesting changes) and no longer requires an approval. `Review.IsApproving` and the
-"has approval" branch are deleted.
+requesting changes) and no longer requires an approval. The provider-approval predicate
+on `Review` and the "has approval" branch of `PR.CanMerge` are deleted.
 
 Keeping the provider approval as a second requirement would make two approval contracts,
 one of which is unsatisfiable under a single account (Context). Deleting the provider
