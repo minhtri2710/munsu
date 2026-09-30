@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
@@ -35,7 +34,7 @@ func TestRuntimeAdapterObservationContract(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ObserveEndpoint(tt.bk, tt.handle, harness.Pi)
+			got := ObserveEndpoint(tt.bk, tt.handle, matchPi)
 			if got.State() != tt.want {
 				t.Fatalf("state=%v detail=%q want %v", got.State(), got.Detail, tt.want)
 			}
@@ -72,7 +71,7 @@ func TestListAdapterObservationContract(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			testutil.PrependPath(t, tc.binDir)
-			obs := ObserveEndpoint(tc.mk(), tc.handle, "")
+			obs := ObserveEndpoint(tc.mk(), tc.handle, nil)
 			if obs.Lifecycle != tc.want {
 				t.Fatalf("lifecycle = %v (state=%v) want %v (detail=%q)", obs.Lifecycle, obs.State(), tc.want, obs.Detail)
 			}
@@ -143,7 +142,7 @@ func TestObserveEndpoint_AliveAgentStatusPopulatesActivity(t *testing.T) {
 	for _, tc := range cases {
 		t.Run("status="+tc.status, func(t *testing.T) {
 			bk := &activityFakeBackend{paneAlive: true, agentAlive: true, recognized: true, status: tc.status}
-			obs := ObserveEndpoint(bk, "pane-1", "")
+			obs := ObserveEndpoint(bk, "pane-1", nil)
 			if obs.Lifecycle != LifecycleAlive {
 				t.Fatalf("lifecycle = %v, want alive", obs.Lifecycle)
 			}
@@ -175,7 +174,7 @@ exit 1
 	testutil.WriteFakeExecutable(t, path, script)
 	testutil.PrependPath(t, binDir)
 
-	obs := ObserveEndpoint(NewHerdrBackend("test"), "alive", "")
+	obs := ObserveEndpoint(NewHerdrBackend("test"), "alive", nil)
 	if obs.Lifecycle != LifecycleAlive {
 		t.Fatalf("lifecycle = %v, want alive", obs.Lifecycle)
 	}
@@ -205,7 +204,7 @@ func TestObserveEndpoint_ActivityStaysUnknownWithoutEnrichment(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			obs := ObserveEndpoint(tc.bk, "pane-1", "")
+			obs := ObserveEndpoint(tc.bk, "pane-1", nil)
 			if obs.Lifecycle != tc.want {
 				t.Fatalf("lifecycle = %v, want %v", obs.Lifecycle, tc.want)
 			}

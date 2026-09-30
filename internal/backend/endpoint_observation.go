@@ -25,8 +25,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"github.com/minhtri2710/munsu/internal/harness"
 )
 
 // LifecycleState is the authoritative endpoint-lifecycle axis. These are the
@@ -343,11 +341,12 @@ func ObservationFromProbeError(err error) EndpointObservation {
 // observation as diagnostic input and pass it to Fleet's freshness
 // authorization (authorizeAbsence/authorizeLive in internal/fleet) for a policy decision.
 //
-// harnessName is the task's harness. A backend that is not agent-aware has no
-// agent registration, so a present pane reads alive only on process evidence:
-// the backend must report the pane's foreground process and it must match the
-// harness. Otherwise the pane reads starting (pane without a live agent).
-func ObserveEndpoint(bk Backend, handle, harnessName string) EndpointObservation {
+// matches is the task harness's process knowledge, supplied by the caller (nil
+// when the task has no harness). A backend that is not agent-aware has no agent
+// registration, so a present pane reads alive only on process evidence: the
+// backend must report the pane's foreground process and matches must accept it.
+// Otherwise the pane reads starting (pane without a live agent).
+func ObserveEndpoint(bk Backend, handle string, matches ProcessMatcher) EndpointObservation {
 	ref := EndpointRef{Handle: handle}
 	obs := EndpointObservation{
 		Lifecycle:      LifecycleUnknown,
@@ -406,7 +405,7 @@ func ObserveEndpoint(bk Backend, handle, harnessName string) EndpointObservation
 			return reflectError(ref, err)
 		}
 		if paneAlive {
-			return reflectLiveness(ref, true, agentProcessRunning(bk, handle, harnessName))
+			return reflectLiveness(ref, true, agentProcessRunning(bk, handle, matches))
 		}
 		obs.Responsiveness = Responsive
 		obs.Detail = "pane absent without authoritative absence error"
@@ -463,15 +462,19 @@ type endpointAliveChecker interface {
 	CheckAlive(string) (bool, error)
 }
 
+// ProcessMatcher reports whether a foreground process name is the task
+// harness's agent process.
+type ProcessMatcher func(process string) bool
+
 // agentProcessRunning reports whether the pane's foreground process matches the
-// harness. Unreadable evidence, no reporter, or an unknown harness is false.
-func agentProcessRunning(bk Backend, handle, harnessName string) bool {
+// harness. Unreadable evidence, no reporter, or no matcher is false.
+func agentProcessRunning(bk Backend, handle string, matches ProcessMatcher) bool {
 	reporter, ok := bk.(ForegroundProcessReporter)
 	if !ok {
 		return false
 	}
 	process, err := reporter.ForegroundProcess(handle)
-	return err == nil && harness.ProcessMatches(harnessName, process)
+	return err == nil && matches != nil && matches(process)
 }
 
 // ForegroundProcessReporter is the optional observation surface of a backend

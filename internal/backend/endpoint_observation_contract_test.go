@@ -3,8 +3,6 @@ package backend
 import (
 	"errors"
 	"testing"
-
-	"github.com/minhtri2710/munsu/internal/harness"
 )
 
 type contractBackend struct {
@@ -44,32 +42,36 @@ func (b *contractProcessBackend) ForegroundProcess(string) (string, error) {
 	return b.process, b.processErr
 }
 
+func matchPi(process string) bool { return process == "pi" }
+
+func matchNothing(string) bool { return false }
+
 func TestEndpointObservationContract(t *testing.T) {
 	tests := []struct {
 		name    string
 		bk      Backend
-		harness string
+		matches ProcessMatcher
 		want    EndpointObservationState
 	}{
-		{"plain pane without a process reporter is starting", &contractBackend{alive: true}, harness.Pi, EndpointStarting},
-		{"plain authoritative absent", &contractBackend{checkErr: ErrPaneNotFound}, harness.Pi, EndpointDead},
-		{"plain probe failure", &contractBackend{checkErr: errors.New("timeout")}, harness.Pi, EndpointUnresponsive},
-		{"plain false without authority", &contractBackend{}, harness.Pi, EndpointUnknown},
-		{"process matching the harness is alive", &contractProcessBackend{contractBackend: contractBackend{alive: true}, process: "pi"}, harness.Pi, EndpointAlive},
-		{"process of another harness is starting", &contractProcessBackend{contractBackend: contractBackend{alive: true}, process: "claude"}, harness.Pi, EndpointStarting},
-		{"shell process is starting", &contractProcessBackend{contractBackend: contractBackend{alive: true}, process: "zsh"}, harness.Pi, EndpointStarting},
-		{"unreadable process evidence is starting", &contractProcessBackend{contractBackend: contractBackend{alive: true}, process: "pi", processErr: errors.New("display-message failed")}, harness.Pi, EndpointStarting},
-		{"unknown harness never matches", &contractProcessBackend{contractBackend: contractBackend{alive: true}, process: "pi"}, "no-such-harness", EndpointStarting},
-		{"empty harness never matches", &contractProcessBackend{contractBackend: contractBackend{alive: true}, process: "pi"}, "", EndpointStarting},
-		{"process evidence does not override authoritative absence", &contractProcessBackend{contractBackend: contractBackend{checkErr: ErrPaneNotFound}, process: "pi"}, harness.Pi, EndpointDead},
-		{"agent alive", contractAgentBackend{alive: true, agentAlive: true}, "", EndpointAlive},
-		{"agent starting", contractAgentBackend{alive: true, agentAlive: false}, "", EndpointStarting},
-		{"agent authoritative absent", contractAgentBackend{checkErr: ErrPaneNotFound}, "", EndpointDead},
-		{"agent probe failure", contractAgentBackend{checkErr: errors.New("permission denied")}, "", EndpointUnresponsive},
+		{"plain pane without a process reporter is starting", &contractBackend{alive: true}, matchPi, EndpointStarting},
+		{"plain authoritative absent", &contractBackend{checkErr: ErrPaneNotFound}, matchPi, EndpointDead},
+		{"plain probe failure", &contractBackend{checkErr: errors.New("timeout")}, matchPi, EndpointUnresponsive},
+		{"plain false without authority", &contractBackend{}, matchPi, EndpointUnknown},
+		{"process matching the harness is alive", &contractProcessBackend{contractBackend: contractBackend{alive: true}, process: "pi"}, matchPi, EndpointAlive},
+		{"process of another harness is starting", &contractProcessBackend{contractBackend: contractBackend{alive: true}, process: "claude"}, matchPi, EndpointStarting},
+		{"shell process is starting", &contractProcessBackend{contractBackend: contractBackend{alive: true}, process: "zsh"}, matchPi, EndpointStarting},
+		{"unreadable process evidence is starting", &contractProcessBackend{contractBackend: contractBackend{alive: true}, process: "pi", processErr: errors.New("display-message failed")}, matchPi, EndpointStarting},
+		{"matcher rejecting the process is starting", &contractProcessBackend{contractBackend: contractBackend{alive: true}, process: "pi"}, matchNothing, EndpointStarting},
+		{"no matcher never matches", &contractProcessBackend{contractBackend: contractBackend{alive: true}, process: "pi"}, nil, EndpointStarting},
+		{"process evidence does not override authoritative absence", &contractProcessBackend{contractBackend: contractBackend{checkErr: ErrPaneNotFound}, process: "pi"}, matchPi, EndpointDead},
+		{"agent alive", contractAgentBackend{alive: true, agentAlive: true}, nil, EndpointAlive},
+		{"agent starting", contractAgentBackend{alive: true, agentAlive: false}, nil, EndpointStarting},
+		{"agent authoritative absent", contractAgentBackend{checkErr: ErrPaneNotFound}, nil, EndpointDead},
+		{"agent probe failure", contractAgentBackend{checkErr: errors.New("permission denied")}, nil, EndpointUnresponsive},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ObserveEndpoint(tt.bk, "pane-1", tt.harness)
+			got := ObserveEndpoint(tt.bk, "pane-1", tt.matches)
 			if got.State() != tt.want {
 				t.Fatalf("ObserveEndpoint() = %+v, want state %v", got, tt.want)
 			}

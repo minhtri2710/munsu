@@ -107,7 +107,7 @@ func (p cliEndpointProbe) ProbeEndpoint(endpoint fleet.EndpointRef) (fleet.Endpo
 	// Produce the raw typed observation of the exact bound endpoint handle.
 	// Freshness is concluded by Fleet's authorizeAbsence/authorizeLive against
 	// the exact canonical binding; the CLI never fabricates incarnation/freshness.
-	return backend.ObserveEndpoint(bk, endpoint.Handle, endpoint.Harness), nil
+	return backend.ObserveEndpoint(bk, endpoint.Handle, harnessProcessMatcher(endpoint.Harness)), nil
 }
 
 // snapshotDeps builds the explicit read dependencies for fleet snapshot/guard
