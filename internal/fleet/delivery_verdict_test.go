@@ -83,6 +83,9 @@ func TestRecordReviewVerdictRecordsTheVerdictFromTheReviewTask(t *testing.T) {
 	if !strings.Contains(summary, "pass") || !strings.Contains(summary, deliveryTestHead) {
 		t.Fatalf("summary = %q, want the outcome and head", summary)
 	}
+	if !strings.Contains(summary, "for task "+f.shipID+" at") {
+		t.Fatalf("summary = %q, want the reviewed task's id", summary)
+	}
 	ship := f.ship(t)
 	if ship.ReviewVerdict == nil {
 		t.Fatal("no verdict recorded on the reviewed task")

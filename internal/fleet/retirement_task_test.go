@@ -1036,6 +1036,37 @@ func TestRun_ProjectionFailureRetriesWhileRetired(t *testing.T) {
 	}
 }
 
+func TestRun_WakePruneFailureKeepsMetaForTheRetry(t *testing.T) {
+	tmp := t.TempDir()
+	taskID := "prune-retry"
+	auth := canonicalMergeTestAuth(t, tmp, taskID)
+	metaPath := filepath.Join(tmp, "state", taskID+".meta")
+	if err := os.WriteFile(metaPath, []byte("kind=ship\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	marker := mhome.WatcherSeenMarkerPath(tmp, taskID)
+	if err := os.MkdirAll(filepath.Join(marker, "child"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, &recordingTeardown{alive: true}, fakeRetirementJournals{}, auth)
+	var projectionErr *RetirementProjectionError
+	if !errors.As(err, &projectionErr) {
+		t.Fatalf("error = %T %v, want projection error", err, err)
+	}
+	if _, err := os.Stat(metaPath); err != nil {
+		t.Fatalf("meta after the failed prune: %v, want it kept as the retry identity", err)
+	}
+	if err := os.RemoveAll(marker); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, &recordingTeardown{alive: true}, fakeRetirementJournals{}, auth); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
+		t.Fatalf("meta after the retry: %v, want removed", err)
+	}
+}
+
 func TestRun_ProjectionFailureThenReopenIsSuperseded(t *testing.T) {
 	tmp := t.TempDir()
 	taskID := "projection-superseded"

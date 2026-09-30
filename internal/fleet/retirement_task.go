@@ -973,9 +973,6 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 			dataDirKept = kept
 			return err
 		}
-		// Residual artifacts are removed first and metadata is always last so a
-		// failed projection cleanup leaves the retry identity intact. Failures
-		// are propagated because completed-claim retry repairs the projections.
 		projectionCleanup := func() error {
 			residualPaths, err := cleanupResidualArtifactPaths(opts.HomeDir, opts.ID, meta)
 			if err != nil {
@@ -987,6 +984,9 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 				}
 				result.Steps = append(result.Steps, fmt.Sprintf("residual %s removed", filepath.Base(p)))
 			}
+			if err := pruneRetiredWakeState(opts.HomeDir, opts.ID); err != nil {
+				return &RetirementProjectionError{TaskID: opts.ID, Err: err}
+			}
 			metaFilePath, err := taskMetaFilePath(opts.HomeDir, opts.ID)
 			if err != nil {
 				return &RetirementProjectionError{TaskID: opts.ID, Err: err}
@@ -995,9 +995,6 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 				return &RetirementProjectionError{TaskID: opts.ID, Err: fmt.Errorf("remove meta: %w", err)}
 			}
 			result.Steps = append(result.Steps, "task meta removed")
-			if err := pruneRetiredWakeState(opts.HomeDir, opts.ID); err != nil {
-				return &RetirementProjectionError{TaskID: opts.ID, Err: err}
-			}
 			return nil
 		}
 		journalSteps, err := journals.FinalizeRetirementJournals(opts.HomeDir, opts.ID)
