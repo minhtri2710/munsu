@@ -29,11 +29,15 @@ const (
 )
 
 // Launch carries the facts one fenced launch needs. Every path must be absolute
-// and exist (except Files, whose parent must exist); New resolves symlinks.
+// and exist (except Files and HarnessStateDir, whose parent must exist); New
+// resolves symlinks.
 type Launch struct {
 	Role    Role
 	Harness string // harness kind; selects the harness state directories
-	Home    string // soldier only: munsu home whose state/, data/, .journal/ and .lock/ stay writable; a reviewer must leave it empty
+	// Home is the munsu home. A soldier's state/, data/, .journal/ and .lock/
+	// stay writable. A reviewer's home is never writable: it is named only so
+	// HarnessStateDir can be validated against it, and may be empty without one.
+	Home    string
 	Primary string // primary checkout; never writable
 	// Worktree is the soldier's bound worktree (writable) or the reviewer's
 	// checkout under review (never writable).
@@ -42,6 +46,17 @@ type Launch struct {
 	CommonDir string   // the repository's common git dir
 	Branch    string   // soldier only: the task-local branch, e.g. mu/<task>
 	Files     []string // exact files also writable, with their atomic .tmp.<pid>.<hex> siblings
+	// HarnessStateDir is the per-launch harness state directory (for pi, the
+	// task's PI_CODING_AGENT_DIR). It is writable under both roles: a proper
+	// subdirectory of Home's state/, never a home root and never overlapping the
+	// primary checkout, worktree, git dir or common dir. Only the pi kind has one.
+	HarnessStateDir string
+	// GateRepo and GateState are the no-mistakes write set of a soldier that
+	// drives a gate run: this project's gate repository (writable subtree) and
+	// the gate's state database (writable with its -wal, -shm and -journal
+	// files). Both or neither; a reviewer has none.
+	GateRepo  string
+	GateState string
 }
 
 // UnsupportedError is returned by New on a GOOS with no fence implementation.

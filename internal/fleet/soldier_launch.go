@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/fence"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
@@ -180,7 +181,7 @@ func terminalReportReminder(taskID, taskKind, parentCaptainID string) string {
 	if taskKind == taskauthority.KindReview {
 		return `## Verdict Requirement
 
-End your work by writing the verdict file ` + bt + `$MUNSU_VERDICT_FILE` + bt + ` (one JSON object with the fields ` + verdictFileShape(bt) + `) to a temporary sibling name and renaming it over the verdict file, then stop.
+End your work by writing the verdict file ` + bt + `$MUNSU_VERDICT_FILE` + bt + ` (one JSON object with the fields ` + verdictFileShape(bt) + `) to a sibling named ` + bt + `$MUNSU_VERDICT_FILE.tmp.<pid>.<hex>` + bt + ` (a number, then lowercase hex digits) and renaming that over the verdict file, then stop.
 You run no ` + bt + `munsu report` + bt + `; the verdict file is your whole output.`
 	}
 	doneMessage := "PR {url}"
@@ -306,6 +307,10 @@ type LaunchArtifactInput struct {
 	LaunchID       string
 	Generation     string
 	EndpointFence  string
+	// Fence, when set, wraps the harness exec in the write fence; the script's
+	// own prelude (exports, shim, guard) runs before it, unfenced. Nil means no
+	// fence applies on this host.
+	Fence *fence.Fence
 }
 
 // buildLaunchArtifact writes the deterministic .soldier-launch.sh script into
@@ -381,6 +386,9 @@ func buildLaunchArtifact(in LaunchArtifactInput) (LaunchArtifact, error) {
 	b.WriteString("export PATH=")
 	b.WriteString(shQuote(shimDir))
 	b.WriteString(":\"$PATH\"\n")
+	// A fenced git cannot write the gc and maintenance state it would start in
+	// the background, so turn both off for every git the harness runs.
+	b.WriteString("export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=maintenance.auto GIT_CONFIG_VALUE_0=false GIT_CONFIG_KEY_1=gc.auto GIT_CONFIG_VALUE_1=0\n")
 	// Persistent re-entrant launch guard: created by the launched script
 	// BEFORE invoking the harness. The guard directory is created atomically
 	// (mkdir succeeds for exactly one submission), so even concurrent
@@ -404,9 +412,14 @@ func buildLaunchArtifact(in LaunchArtifactInput) (LaunchArtifact, error) {
 	b.WriteString("  exit 0\n")
 	b.WriteString("fi\n")
 	b.WriteString("printf '%s' \"$identity\" > \"$guard/identity\"\n")
-	b.WriteString("exec ")
-	b.WriteString(shQuote(in.LaunchBin))
-	for _, arg := range in.LaunchArgs {
+	argv := append([]string{in.LaunchBin}, in.LaunchArgs...)
+	if in.Fence != nil {
+		if argv, err = in.Fence.Wrap(argv); err != nil {
+			return LaunchArtifact{}, fmt.Errorf("soldier launch: %w", err)
+		}
+	}
+	b.WriteString("exec")
+	for _, arg := range argv {
 		b.WriteString(" ")
 		b.WriteString(shQuote(arg))
 	}
@@ -428,6 +441,16 @@ func buildLaunchArtifact(in LaunchArtifactInput) (LaunchArtifact, error) {
 	return LaunchArtifact{ScriptPath: scriptPath, Command: command, CommandDigest: sha256Content([]byte(command)), GuardName: guardName, GuardIdentity: guardIdentity, Posture: posture}, nil
 }
 
+// piAgentDirPath is the per-task pi agent dir under the home's state/: the
+// PI_CODING_AGENT_DIR of the launch and the fence's harness state dir.
+func piAgentDirPath(homeDir, taskID string) (string, error) {
+	dir, err := home.DurableFilePath(home.StateDir(homeDir), taskID, "."+harness.PiAgentDirSuffix)
+	if err != nil {
+		return "", fmt.Errorf("soldier launch: %w", err)
+	}
+	return dir, nil
+}
+
 // provisionPiSkillBlock blocks the orchestration skill for a pi soldier at both
 // levels pi filters skills: the per-task agent dir (user level, pointed at by
 // PI_CODING_AGENT_DIR) and the worktree .pi/settings.json (project level, which
@@ -438,9 +461,9 @@ func buildLaunchArtifact(in LaunchArtifactInput) (LaunchArtifact, error) {
 // (writeSettings false): its settings file must already be the identical block.
 func provisionPiSkillBlock(homeDir, taskID, worktreePath string, writeSettings bool) (string, error) {
 	stateDir := home.StateDir(homeDir)
-	dst, err := home.DurableFilePath(stateDir, taskID, "."+harness.PiAgentDirSuffix)
+	dst, err := piAgentDirPath(homeDir, taskID)
 	if err != nil {
-		return "", fmt.Errorf("soldier launch: %w", err)
+		return "", err
 	}
 	src, err := harness.HumanPiAgentDir(stateDir)
 	if err != nil {

@@ -251,6 +251,29 @@ type LaunchEvidence struct {
 	// ReviewTree is the reviewed worktree observed before the review harness
 	// was submitted (G2 Before). Only a review generation carries it.
 	ReviewTree *domain.TreeState `json:"review_tree,omitempty"`
+	// Seat is the record of the seat the harness was launched into: its argv,
+	// and the write fence it ran under.
+	Seat LaunchSeat `json:"seat"`
+}
+
+// LaunchSeat is the seat record of one launch (G4). Kind, harness, model and
+// effort are not repeated here: LaunchIntent already carries them.
+type LaunchSeat struct {
+	// Argv is the harness binary and its flags; the prompt, the last argument of
+	// the launched command, is pinned by PromptDigest instead of copied.
+	Argv         []string    `json:"argv"`
+	PromptDigest string      `json:"prompt_digest"`
+	Fence        FenceRecord `json:"fence"`
+}
+
+// FenceRecord is the write fence outcome of one launch. An applied fence
+// carries the role it ran under and the digest of its exact profile, proven by
+// the probe before submit; an unapplied one carries why there is none.
+type FenceRecord struct {
+	Applied       bool   `json:"applied"`
+	Role          string `json:"role,omitempty"`
+	ProfileDigest string `json:"profile_digest,omitempty"`
+	Reason        string `json:"reason,omitempty"`
 }
 
 // RetirementEvidence is the immutable, generation-bound record of the resource
@@ -788,6 +811,31 @@ func validateLaunchEvidence(e LaunchEvidence) error {
 	if e.ReviewTree != nil && (strings.TrimSpace(e.ReviewTree.Head) == "" || strings.TrimSpace(e.ReviewTree.Porcelain) == "") {
 		return validationError("launch evidence review tree requires a head and a porcelain digest")
 	}
+	return validateLaunchSeat(e.Seat)
+}
+
+// validateLaunchSeat checks the seat record shape: a non-empty argv, a prompt
+// digest, a fence record that is either applied (role and profile digest, no
+// reason) or unapplied (a reason, nothing else).
+func validateLaunchSeat(s LaunchSeat) error {
+	if len(s.Argv) == 0 {
+		return validationError("launch evidence seat requires the harness argv")
+	}
+	for _, a := range s.Argv {
+		if a == "" {
+			return validationError("launch evidence seat argv carries an empty argument")
+		}
+	}
+	if !domain.IsSHA256(s.PromptDigest) {
+		return validationError("launch evidence seat prompt digest must be a 64-hex sha256 digest")
+	}
+	f := s.Fence
+	if f.Applied && (f.Role == "" || !domain.IsSHA256(f.ProfileDigest) || f.Reason != "") {
+		return validationError("launch evidence applied fence requires a role and a profile digest and no reason")
+	}
+	if !f.Applied && (f.Reason == "" || f.Role != "" || f.ProfileDigest != "") {
+		return validationError("launch evidence unapplied fence requires a reason and no role or profile digest")
+	}
 	return nil
 }
 
@@ -952,6 +1000,7 @@ func (a Aggregate) clone() Aggregate {
 			t := *e.ReviewTree
 			e.ReviewTree = &t
 		}
+		e.Seat.Argv = append([]string(nil), e.Seat.Argv...)
 		out.LaunchEvidence = &e
 	}
 	if a.DeliveryContract != nil {

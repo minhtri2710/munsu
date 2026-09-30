@@ -110,7 +110,7 @@ func shipBriefTemplate(id, repo, mode string, yolo bool) (string, error) {
 	switch mode {
 	case "direct-PR":
 		deliveryRules = `## Delivery
-	Commit the completed change, push the feature branch, and open a PR directly against the default branch.
+	Commit the completed change, push the feature branch without -u (it writes git config, which is not yours to change), and open a PR directly against the default branch.
 	Never run no-mistakes for this task. Never merge the PR.
 `
 	case "local-only":
@@ -119,7 +119,7 @@ func shipBriefTemplate(id, repo, mode string, yolo bool) (string, error) {
 	Do not push, open a PR, run no-mistakes, or merge the change yourself.
 `
 	case "no-mistakes":
-		setupStep = "2. Run `no-mistakes doctor`; if it reports the repo is not initialized here, run `no-mistakes init`.\n"
+		setupStep = "2. Run `no-mistakes doctor`.\n"
 		deliveryRules = `## Delivery
 	You drive no-mistakes by responding to its gates, not by implementing fixes.
 	Follow ` + "`no-mistakes axi run --help`" + ` and the help lines in each AXI response.
@@ -248,7 +248,7 @@ If it differs, STOP and say so: the work moved and this review no longer speaks 
 3. Do not run `+"`"+`munsu`+"`"+` commands.
 
 ## Verdict
-Write the verdict file `+"`"+`$MUNSU_VERDICT_FILE`+"`"+` (one JSON object with the fields %s) for the reviewed head, with `+"`"+`outcome`+"`"+` set to `+"`"+`pass`+"`"+` or `+"`"+`fail`+"`"+` and the evidence from the review method in `+"`"+`evidence`+"`"+`. Write it to a temporary sibling name, rename it over the verdict file, then stop.
+Write the verdict file `+"`"+`$MUNSU_VERDICT_FILE`+"`"+` (one JSON object with the fields %s) for the reviewed head, with `+"`"+`outcome`+"`"+` set to `+"`"+`pass`+"`"+` or `+"`"+`fail`+"`"+` and the evidence from the review method in `+"`"+`evidence`+"`"+`. Write it to a sibling named `+"`"+`$MUNSU_VERDICT_FILE.tmp.<pid>.<hex>`+"`"+` (a number, then lowercase hex digits), rename that over the verdict file, then stop.
 A PASS needs every required check run and cited.
 `, id, reviewTask, reviewHead, repo, verdictFileShape("`")), nil
 }

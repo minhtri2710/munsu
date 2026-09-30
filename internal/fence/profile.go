@@ -21,17 +21,12 @@ type Fence struct {
 	refuse  []string // directories in which a write must be refused
 }
 
-// Profile returns the exact sandbox profile text the launch runs under.
-func (f *Fence) Profile() string { return f.profile }
-
-// ProfileDigest returns the sha256 hex digest of Profile.
-func (f *Fence) ProfileDigest() string { return f.digest }
-
 var branchPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$`)
 
 // launchPaths is a Launch with every path resolved and validated.
 type launchPaths struct {
 	home, primary, worktree, gitDir, commonDir string
+	stateDir, gateRepo, gateState              string
 	files                                      []string
 }
 
@@ -57,7 +52,7 @@ func New(l Launch) (*Fence, error) {
 	if err != nil {
 		return nil, fmt.Errorf("fence: user home: %w", err)
 	}
-	dirs, files, err := harnessState(l.Harness, userHome)
+	dirs, files, err := harnessState(l.Harness, userHome, p.stateDir)
 	if err != nil {
 		return nil, err
 	}
@@ -68,10 +63,7 @@ func New(l Launch) (*Fence, error) {
 	// task's documents or its ReviewVerdict.
 	var seat []string
 	if l.Role == RoleSoldier {
-		seat = []string{
-			filepath.Join(p.home, "state"), filepath.Join(p.home, "data"),
-			filepath.Join(p.home, ".journal"), filepath.Join(p.home, ".lock"),
-		}
+		seat = homeRoots(p.home)
 	}
 	protected := []string{p.primary, p.commonDir, p.gitDir}
 	if l.Role == RoleReviewer {
@@ -88,8 +80,20 @@ func New(l Launch) (*Fence, error) {
 	allow(&b, "subpath", append([]string{"/private/tmp", "/private/var/folders", "/dev"}, dirs...)...)
 	allowFiles(&b, files...)
 	deny(&b, "subpath", protected...)
+	if l.Role == RoleReviewer && p.home != "" {
+		// A reviewer's home roots stay refused even under a temp root; only its
+		// own harness state dir, inside state/, is carved back out.
+		deny(&b, "subpath", homeRoots(p.home)...)
+		if p.stateDir != "" {
+			allow(&b, "subpath", p.stateDir)
+		}
+	}
 	allow(&b, "subpath", seat...)
 	allowFiles(&b, p.files...)
+	if p.gateRepo != "" {
+		allow(&b, "subpath", p.gateRepo)
+		allowFiles(&b, p.gateState, p.gateState+"-wal", p.gateState+"-shm", p.gateState+"-journal")
+	}
 	if l.Role == RoleSoldier {
 		branch, err := soldierBranch(l.Branch)
 		if err != nil {
@@ -105,6 +109,9 @@ func New(l Launch) (*Fence, error) {
 	refuse := []string{p.primary, p.commonDir}
 	if l.Role == RoleReviewer {
 		refuse = append(refuse, p.worktree, p.gitDir)
+		if p.home != "" {
+			refuse = append(refuse, filepath.Join(p.home, "state"))
+		}
 	}
 	sum := sha256.Sum256([]byte(b.String()))
 	return &Fence{
@@ -133,7 +140,7 @@ func resolveLaunch(l Launch) (launchPaths, error) {
 		}
 		*f.out = r
 	}
-	if l.Role == RoleSoldier {
+	if l.Role == RoleSoldier || l.Home != "" {
 		r, err := resolvePath(l.Home, true)
 		if err != nil {
 			return p, fmt.Errorf("fence: home: %w", err)
@@ -142,8 +149,6 @@ func resolveLaunch(l Launch) (launchPaths, error) {
 			return p, fmt.Errorf("fence: home %s is not a directory", r)
 		}
 		p.home = r
-	} else if l.Home != "" {
-		return p, fmt.Errorf("fence: a reviewer launch has no writable home")
 	}
 	for _, f := range l.Files {
 		r, err := resolvePath(f, false)
@@ -151,6 +156,12 @@ func resolveLaunch(l Launch) (launchPaths, error) {
 			return p, fmt.Errorf("fence: file: %w", err)
 		}
 		p.files = append(p.files, r)
+	}
+	if err := resolveStateDir(l, &p); err != nil {
+		return p, err
+	}
+	if err := resolveGate(l, &p); err != nil {
+		return p, err
 	}
 	if l.Role == RoleSoldier {
 		if wts := filepath.Join(p.commonDir, "worktrees"); p.gitDir == wts || !within(p.gitDir, wts) {
@@ -163,6 +174,73 @@ func resolveLaunch(l Launch) (launchPaths, error) {
 		return p, fmt.Errorf("fence: a reviewer launch has no task branch")
 	}
 	return p, nil
+}
+
+// homeRoots are the munsu home directories a soldier writes and a reviewer must
+// not: its durable state, data, journal and lock roots.
+func homeRoots(home string) []string {
+	return []string{filepath.Join(home, "state"), filepath.Join(home, "data"), filepath.Join(home, ".journal"), filepath.Join(home, ".lock")}
+}
+
+// resolveStateDir validates the per-launch harness state directory: a proper
+// subdirectory of the home's state/ (so never a home root), clear of every
+// checkout and git path.
+func resolveStateDir(l Launch, p *launchPaths) error {
+	if l.HarnessStateDir == "" {
+		return nil
+	}
+	if p.home == "" {
+		return fmt.Errorf("fence: harness state dir %s needs the home it lives under", l.HarnessStateDir)
+	}
+	r, err := resolvePath(l.HarnessStateDir, false)
+	if err != nil {
+		return fmt.Errorf("fence: harness state dir: %w", err)
+	}
+	if state := filepath.Join(p.home, "state"); r == state || !within(r, state) {
+		return fmt.Errorf("fence: harness state dir %s is not a proper subdirectory of %s", r, state)
+	}
+	for _, o := range []string{p.primary, p.worktree, p.gitDir, p.commonDir} {
+		if overlaps(r, o) {
+			return fmt.Errorf("fence: harness state dir %s overlaps %s", r, o)
+		}
+	}
+	p.stateDir = r
+	return nil
+}
+
+// resolveGate validates a soldier's no-mistakes write set: both roots or
+// neither, clear of every checkout, git path and home root.
+func resolveGate(l Launch, p *launchPaths) error {
+	if l.GateRepo == "" && l.GateState == "" {
+		return nil
+	}
+	if l.Role != RoleSoldier {
+		return fmt.Errorf("fence: a reviewer launch has no gate write set")
+	}
+	if l.GateRepo == "" || l.GateState == "" {
+		return fmt.Errorf("fence: the gate repo and gate state are set together")
+	}
+	repo, err := resolvePath(l.GateRepo, true)
+	if err != nil {
+		return fmt.Errorf("fence: gate repo: %w", err)
+	}
+	if fi, err := os.Stat(repo); err != nil || !fi.IsDir() {
+		return fmt.Errorf("fence: gate repo %s is not a directory", repo)
+	}
+	state, err := resolvePath(l.GateState, false)
+	if err != nil {
+		return fmt.Errorf("fence: gate state: %w", err)
+	}
+	roots := append([]string{p.primary, p.worktree, p.gitDir, p.commonDir}, homeRoots(p.home)...)
+	for _, g := range []string{repo, state} {
+		for _, o := range roots {
+			if overlaps(g, o) {
+				return fmt.Errorf("fence: gate path %s overlaps %s", g, o)
+			}
+		}
+	}
+	p.gateRepo, p.gateState = repo, state
+	return nil
 }
 
 // checkSeatRoots refuses an explicit writable root (home state, Files) that
@@ -208,15 +286,23 @@ func gitBranchFiles(commonDir, branch string) []string {
 	return out
 }
 
-// harnessState returns the writable state of a harness kind: directories and
-// single files (with their atomic temp siblings). An unmodeled kind fails closed.
-func harnessState(kind, userHome string) (dirs, files []string, err error) {
+// harnessState returns the writable state of a harness kind, including the
+// launch's own state dir for a kind that has one: directories and single files
+// (with their atomic temp siblings). An unmodeled kind fails closed.
+func harnessState(kind, userHome, stateDir string) (dirs, files []string, err error) {
+	if stateDir != "" && kind != harness.Pi {
+		return nil, nil, fmt.Errorf("fence: harness %q has no per-launch state dir", kind)
+	}
 	switch kind {
 	case harness.Claude:
 		return []string{filepath.Join(userHome, ".claude"), filepath.Join(userHome, "Library", "Caches", "claude-cli-nodejs")},
 			[]string{filepath.Join(userHome, ".claude.json")}, nil
 	case harness.Pi:
-		return []string{filepath.Join(userHome, ".pi", "agent")}, nil, nil
+		dirs = []string{filepath.Join(userHome, ".pi", "agent")}
+		if stateDir != "" {
+			dirs = append(dirs, stateDir)
+		}
+		return dirs, nil, nil
 	}
 	return nil, nil, fmt.Errorf("fence: no state profile for harness %q", kind)
 }

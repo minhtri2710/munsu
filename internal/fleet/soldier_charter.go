@@ -66,7 +66,7 @@ Your authority is bounded by the task brief and this charter.
 2. Create, edit, and delete files under the worktree to complete the task.
 3. Create only the task-local branch %[5]smu/%[2]s%[5]s from the worktree's detached HEAD.
 4. Use %[5]sgit add%[5]s and %[5]sgit commit%[5]s only for task-local changes on that branch.
-5. Use only a normal (non-force) push of the task-local branch to %[5]sorigin%[5]s when policy requires push.
+5. Use only a normal (non-force) push of the task-local branch to %[5]sorigin%[5]s when policy requires push, without %[5]s-u%[5]s or %[5]s--set-upstream%[5]s (they write git config, which is not yours to change).
 6. Open a PR (only when delivery mode allows it).
 7. Use gh-axi for GitHub operations.
 8. Use %[5]smunsu report%[5]s for terminal state reporting.
@@ -218,7 +218,7 @@ is reported as not run and never counts toward a PASS.
 Your verdict is %[4]spass%[4]s or %[4]sfail%[4]s for exactly the reviewed head. A PASS needs every
 required check run by you and cited as above. Write it to the verdict file
 %[4]s$MUNSU_VERDICT_FILE%[4]s as one JSON object with the fields %[5]s, to a
-temporary sibling name and then rename it over the verdict file, and stop. %[4]sschema_version%[4]s is 1,
+sibling named %[4]s$MUNSU_VERDICT_FILE.tmp.<pid>.<hex>%[4]s (a number, then lowercase hex digits) and then rename it over the verdict file, and stop. %[4]sschema_version%[4]s is 1,
 %[4]stask%[4]s is your task ID, %[4]sgeneration%[4]s your generation, %[4]sreviews%[4]s the reviewed task,
 %[4]shead_sha%[4]s the reviewed head, %[4]sbase_sha%[4]s the base of the range you reviewed and
 %[4]sevidence%[4]s your cited evidence. The file is your whole output: you cannot run

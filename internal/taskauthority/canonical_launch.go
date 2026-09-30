@@ -2,6 +2,7 @@ package taskauthority
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/domain"
@@ -332,7 +333,10 @@ type CanonicalRecordLaunchRequest struct {
 	// ReviewTree is the reviewed worktree observed before submit; required for a
 	// review task and refused for any other kind.
 	ReviewTree *domain.TreeState
-	Reason     string
+	// Seat is the seat record of the launch: argv, fence outcome and prompt
+	// observation.
+	Seat   LaunchSeat
+	Reason string
 }
 
 func (r CanonicalRecordLaunchRequest) DigestBytes() ([]byte, error) {
@@ -344,8 +348,9 @@ func (r CanonicalRecordLaunchRequest) DigestBytes() ([]byte, error) {
 		LaunchID      string            `json:"launch_id"`
 		CommandDigest string            `json:"command_digest"`
 		ReviewTree    *domain.TreeState `json:"review_tree,omitempty"`
+		Seat          LaunchSeat        `json:"seat"`
 		Reason        string            `json:"reason,omitempty"`
-	}{r.HomeID.Value(), r.TaskID.Value(), r.Precondition.Generation, r.Precondition.Revision, r.LaunchID, r.CommandDigest, r.ReviewTree, r.Reason})
+	}{r.HomeID.Value(), r.TaskID.Value(), r.Precondition.Generation, r.Precondition.Revision, r.LaunchID, r.CommandDigest, r.ReviewTree, r.Seat, r.Reason})
 }
 
 // validateRecordLaunchRequest checks the typed request shape: a valid task
@@ -367,7 +372,7 @@ func validateRecordLaunchRequest(req CanonicalRecordLaunchRequest) error {
 	if req.ReviewTree != nil && (strings.TrimSpace(req.ReviewTree.Head) == "" || strings.TrimSpace(req.ReviewTree.Porcelain) == "") {
 		return validationError("launch evidence review tree requires a head and a porcelain digest")
 	}
-	return nil
+	return validateLaunchSeat(req.Seat)
 }
 
 // RecordLaunch records the successful launch submission evidence for the
@@ -403,7 +408,7 @@ func (c *Canonical) RecordLaunch(op domain.Operation, req CanonicalRecordLaunchR
 			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s is a %s task; launch evidence carries the review tree exactly for a review task", cur.TaskID, cur.Generation, cur.Definition.Kind)
 		}
 		if cur.LaunchEvidence != nil {
-			if cur.LaunchEvidence.LaunchID == req.LaunchID && cur.LaunchEvidence.CommandDigest == req.CommandDigest && reviewTreeEqual(cur.LaunchEvidence.ReviewTree, req.ReviewTree) {
+			if cur.LaunchEvidence.LaunchID == req.LaunchID && cur.LaunchEvidence.CommandDigest == req.CommandDigest && reviewTreeEqual(cur.LaunchEvidence.ReviewTree, req.ReviewTree) && reflect.DeepEqual(cur.LaunchEvidence.Seat, req.Seat) {
 				return cur.clone(), nil
 			}
 			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s already records different launch evidence", cur.TaskID, cur.Generation)
@@ -415,7 +420,9 @@ func (c *Canonical) RecordLaunch(op domain.Operation, req CanonicalRecordLaunchR
 			CommandDigest: req.CommandDigest,
 			SubmittedAt:   c.now().UnixNano(),
 			ReviewTree:    req.ReviewTree,
+			Seat:          req.Seat,
 		}
+		next.LaunchEvidence.Seat.Argv = append([]string(nil), req.Seat.Argv...)
 		next.Revision++
 		return next, nil
 	})

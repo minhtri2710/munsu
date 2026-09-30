@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/fence"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
@@ -109,6 +111,11 @@ type Runner struct {
 	// the launch and its sha256 digest, durably recorded before submission.
 	launchCommand       string
 	launchCommandDigest string
+
+	// fence is the probed write fence the harness is launched under, nil when
+	// the host has none; fenceRecord is its outcome for the seat record.
+	fence       *fence.Fence
+	fenceRecord taskauthority.FenceRecord
 
 	// manifestSHA256 is the SHA-256 digest of the written launch manifest,
 	// persisted to task metadata for external anchoring.
@@ -322,6 +329,9 @@ func (r *Runner) Run() (windowID string, runErr error) {
 		if err := r.reconcileDeliveryFallback(); err != nil {
 			return "", err
 		}
+	}
+	if err := r.probeFence(bound); err != nil {
+		return "", err
 	}
 	if err := r.createSession(); err != nil {
 		return "", err
@@ -1906,6 +1916,61 @@ func (r *Runner) resolveParentCaptainID() string {
 	return r.parentCaptainID
 }
 
+// fenceProbeTimeout bounds the fence probe's sandbox runs.
+const fenceProbeTimeout = 30 * time.Second
+
+// Phase 11b: probeFence builds the launch's write fence (F1 for a ship or
+// scout soldier, F2 for a reviewer) and proves, before any pane exists, that the
+// exact profile refuses the writes it must. A fence that cannot be built or whose
+// probe fails refuses the launch (G297 Q3 F1 and F2; G304 group 22); it never
+// falls back to a looser profile. A host with no fence implementation records
+// that with its reason and launches unfenced (G356).
+func (r *Runner) probeFence(bound BoundWorktree) error {
+	_, gitDir, commonDir, err := ClassifyIdentity(bound.Path())
+	if err != nil {
+		return fmt.Errorf("launch fence: %w", err)
+	}
+	primary, err := canonicalExistingPath(r.projPath)
+	if err != nil {
+		return fmt.Errorf("launch fence: resolving the primary checkout: %w", err)
+	}
+	launch := fence.Launch{
+		Role: fence.RoleSoldier, Harness: r.launchBin, Home: r.homeDir, Primary: primary,
+		Worktree: bound.Path(), GitDir: gitDir, CommonDir: commonDir, Branch: "mu/" + r.args.ID,
+	}
+	if r.launchBin == harness.Pi {
+		if launch.HarnessStateDir, err = piAgentDirPath(r.homeDir, r.args.ID); err != nil {
+			return err
+		}
+	}
+	switch {
+	case r.review != nil:
+		launch.Role, launch.Branch, launch.Files = fence.RoleReviewer, "", []string{r.review.VerdictFile}
+	case r.effectiveMode == "no-mistakes":
+		if launch.GateRepo, launch.GateState, err = projectGate(primary); err != nil {
+			return fmt.Errorf("launch fence: %w", err)
+		}
+	}
+	f, err := fence.New(launch)
+	var unsupported *fence.UnsupportedError
+	if errors.As(err, &unsupported) {
+		r.fenceRecord = taskauthority.FenceRecord{Reason: err.Error()}
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("launch fence: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), fenceProbeTimeout)
+	defer cancel()
+	ev, err := f.Probe(ctx)
+	if err != nil {
+		return fmt.Errorf("launch fence refused the launch: %w", err)
+	}
+	r.fence = f
+	r.fenceRecord = taskauthority.FenceRecord{Applied: true, Role: string(ev.Role), ProfileDigest: ev.ProfileDigest}
+	return nil
+}
+
 // Phase 12: submitLaunch builds the deterministic launch artifact, submits
 // the exact command, and ONLY AFTER the submission succeeds durably records
 // the launch evidence (RecordLaunch). A Submit error is NOT recorded as
@@ -1943,6 +2008,7 @@ func (r *Runner) submitLaunch() error {
 		LaunchID:       r.launchID,
 		Generation:     agg.Generation.String(),
 		EndpointFence:  r.epFenceToken(),
+		Fence:          r.fence,
 	})
 	if err != nil {
 		return fmt.Errorf("submitting launch: %w", err)
@@ -1976,7 +2042,12 @@ func (r *Runner) submitLaunch() error {
 		Precondition:  domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
 		LaunchID:      r.launchID,
 		CommandDigest: r.launchCommandDigest,
-		Reason:        "spawn",
+		Seat: taskauthority.LaunchSeat{
+			Argv:         append([]string{r.launchBin}, r.launchArgs[:len(r.launchArgs)-1]...),
+			PromptDigest: sha256Content([]byte(r.prompt)),
+			Fence:        r.fenceRecord,
+		},
+		Reason: "spawn",
 	}
 	if r.review != nil {
 		req.ReviewTree = &r.review.Before
