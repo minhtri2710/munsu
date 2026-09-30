@@ -43,7 +43,7 @@ func TestFetchProviderSnapshotForProviderRefusesUnknownProvider(t *testing.T) {
 func TestPRMergeStatus_JSONUnmarshal(t *testing.T) {
 	// Test the domain.PRMergeStatus can be unmarshaled from gh CLI output,
 	// including the headRefOid and mergedSha field tags.
-	input := `{"state":"MERGED","merged":true,"headRefOid":"abc123def456","mergedSha":"abc123def456"}`
+	input := `{"state":"MERGED","merged":true,"headRefOid":"abc123def456","mergedSha":"fedcba654321"}`
 	var status domain.PRMergeStatus
 	if err := json.Unmarshal([]byte(input), &status); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -57,8 +57,8 @@ func TestPRMergeStatus_JSONUnmarshal(t *testing.T) {
 	if status.HeadSHA != "abc123def456" {
 		t.Errorf("expected abc123def456, got %s", status.HeadSHA)
 	}
-	if status.MergedSHA != "abc123def456" {
-		t.Errorf("expected mergedSha abc123def456, got %s", status.MergedSHA)
+	if status.MergedSHA != "fedcba654321" {
+		t.Errorf("expected mergedSha fedcba654321, got %s", status.MergedSHA)
 	}
 }
 

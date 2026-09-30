@@ -94,6 +94,17 @@ func TestValidateAggregateRefusesUnsafeIdentityAndPhase(t *testing.T) {
 			{"path-traversing task id", func(a *Aggregate) { a.TaskID = "../escape" }, "invalid task ID"},
 			{"invalid phase", func(a *Aggregate) { a.Phase = Phase("in-flight") }, "has invalid phase"},
 			{"blank owner", func(a *Aggregate) { a.Definition.Owner = "  " }, "missing owner"},
+			{"incomplete worktree binding", func(a *Aggregate) {
+				a.Worktree = &WorktreeBinding{
+					RepositoryIdentity: "repo-1",
+					Path:               "/tmp/wt",
+					GitDir:             "/tmp/wt/.git",
+					CommonDir:          "/tmp/repo/.git",
+					Head:               "abc123",
+					FenceToken:         "wt-fence-1",
+					BoundAtUnix:        1700000000,
+				}
+			}, "worktree binding missing lease id"},
 		})
 }
 
