@@ -746,7 +746,8 @@ func (r *Runner) checkModelAllowlist() error {
 	return harness.CheckModelAllowed(r.homeDir, r.harness, r.model)
 }
 
-// Phase 4: preflightBrief checks that a brief exists before spawning.
+// Phase 4: preflightBrief checks that a brief exists and carries every section
+// the scaffold writes before spawning.
 func (r *Runner) preflightBrief() error {
 	if err := RecoverTaskHandoffs(r.homeDir); err != nil {
 		return err
@@ -755,7 +756,7 @@ func (r *Runner) preflightBrief() error {
 		return fmt.Errorf("no brief found for task %s: scaffold it with 'munsu brief %s %s' before spawning",
 			r.args.ID, r.args.ID, r.args.ProjectName)
 	}
-	return nil
+	return LintBrief(r.homeDir, r.args.ID, r.args.Kind == "scout")
 }
 
 // Phase 5: checkBacklogAuthority verifies the task is uniquely present in the

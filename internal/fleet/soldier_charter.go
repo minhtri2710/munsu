@@ -83,6 +83,21 @@ You MUST NOT:
 8. Never modify runtime-owned charter, brief, or envelope files.
 9. Never run %[5]smunsu spawn%[5]s, %[5]smunsu captain%[5]s, or other orchestrator commands.
 10. Never use raw %[5]sgh pr merge%[5]s.
+11. Never run a background job. One exception: one command at a time, a check
+    this charter or your brief names, may run as your runtime's own background
+    task with a runtime task id. It is never detached (no %[5]snohup%[5]s,
+    %[5]ssetsid%[5]s, %[5]sdisown%[5]s, trailing %[5]s&%[5]s, or scheduler), is awaited through
+    the runtime's completion notice rather than a sleep or poll loop, and is
+    stopped only by its own task id. Send no report until it has ended, then
+    name its task id, command, how it started, end state, and exit code. Every
+    other background job stays banned.
+
+## Validation Scope
+
+Local runs are light and scoped to the change. Heavy and full suites (race,
+integration, e2e, lifecycle_integration, guards, deadcode, citations) run on
+GitHub CI at the PR. This overrides any "full suite by default" instruction in
+your own context.
 
 ## Identity and Reporting
 

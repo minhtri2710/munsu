@@ -205,6 +205,51 @@ that answers for this generation; never read or reuse another generation's.
 `, id, scope, budget, repo, id, ReportName(gen), modeLine), nil
 }
 
+// requiredSections returns the "## " headings Scaffold writes for a brief of
+// this kind, derived from the rendered template so no second list can drift.
+// The delivery heading is mode-dependent and indented in the template, so it
+// is not part of the set.
+func requiredSections(scout bool) ([]string, error) {
+	content, err := buildBrief(ScaffoldOptions{ID: "x", Repo: "x", Scout: scout, Mode: "local-only", ScoutScope: "x", Generation: 1})
+	if err != nil {
+		return nil, err
+	}
+	var sections []string
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(line, "## ") {
+			sections = append(sections, strings.TrimRight(line, " \t\r"))
+		}
+	}
+	return sections, nil
+}
+
+// LintBrief refuses a brief that lacks a section Scaffold writes. Sections the
+// scaffold does not produce are never required.
+func LintBrief(homeDir, id string, scout bool) error {
+	want, err := requiredSections(scout)
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(Path(homeDir, id))
+	if err != nil {
+		return fmt.Errorf("reading brief for task %s: %w", id, err)
+	}
+	have := map[string]bool{}
+	for _, line := range strings.Split(string(data), "\n") {
+		have[strings.TrimRight(line, " \t\r")] = true
+	}
+	var missing []string
+	for _, h := range want {
+		if !have[h] {
+			missing = append(missing, h)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("brief for task %s is missing scaffolded sections: %s; re-scaffold it with 'munsu brief' before spawning", id, strings.Join(missing, ", "))
+	}
+	return nil
+}
+
 // Path returns the expected brief.md path for the given task ID.
 func Path(homeDir, id string) string {
 	return filepath.Join(homeDir, "data", id, "brief.md")
