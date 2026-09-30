@@ -75,9 +75,8 @@ func OneCycle(homeDir string) (*Digest, error) {
 			Key:     rec.Key,
 			Payload: rec.Payload,
 			// Use classify to evaluate captain-relevance based on the payload.
-			// Wake payloads from afk escalation are status-line notes
-			// ("PR merged", "build broken") and match the classify patterns
-			// for done/failed/needs-decision content.
+			// Wake payloads are status-line notes; only needs-decision,
+			// blocked and failed content escalates (G350).
 			IsGeneralRelevant: domain.GeneralRelevant(rec.Payload),
 		}
 

@@ -67,6 +67,14 @@ type AgentActivityProvider interface {
 	ObserveAgent(windowID string) (paneAlive bool, agentAlive bool, recognized bool, status string, err error)
 }
 
+// HumanNotifier is an optional Backend capability: show the Human a popup
+// message. A backend without it has no popup; that is not an error. The call
+// is bounded by the package command timeout and is never retried by the
+// backend.
+type HumanNotifier interface {
+	Notify(title, body string) error
+}
+
 // BackendMetaExtras is an optional interface that a Backend can implement
 // to provide extra metadata fields to write into task meta after NewWindow.
 type BackendMetaExtras interface {

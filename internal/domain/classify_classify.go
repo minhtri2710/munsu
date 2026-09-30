@@ -34,9 +34,17 @@ func IsMaterialVerb(verb string) bool {
 	return slices.Contains(MaterialVerbs, verb)
 }
 
-// captainReDefault matches general-relevant patterns in a status line.
+// humanNeededVerbs are the status verbs that put the Human's attention on a
+// task (G350): a Human gate opens or a product fork (needs-decision), a
+// blocker routed upward (blocked), and a failure such as red CI or a
+// turn-killing runtime error (failed). Completion, readiness and merge lines
+// are audit projections, not attention.
+var humanNeededVerbs = []string{"needs-decision", "blocked", "failed"}
+
+// humanNeededRe matches a human-needed verb that leads a status line or
+// follows other text in it, such as a wake payload that prefixes the task ID.
 // Compiled once at package init.
-var captainReDefault = regexp.MustCompile(`(?i)(?:^|\s)(?:done|needs-decision|blocked|failed):|PR ready|checks green|ready in branch|merged`)
+var humanNeededRe = regexp.MustCompile(`(?i)(?:^|\s)(?:needs-decision|blocked|failed):`)
 
 // AbsorbResult indicates why an idle soldier might be safely absorbed instead of surfaced.
 type AbsorbResult int
@@ -132,16 +140,13 @@ func removeByKey(decisions []Decision, key string) []Decision {
 
 // --- Public API ---
 
-// GeneralRelevant returns true if a status line contains a general-relevant verb
-// (done:, failed:, needs-decision:, blocked:, "PR ready", "checks green",
-// "ready in branch", "merged"). Paused lines are NOT general-relevant.
+// GeneralRelevant returns true if a status line needs the Human: it carries
+// needs-decision:, blocked: or failed: (G350). done:, "PR ready", "checks
+// green", "ready in branch" and "merged" lines are audit-only and do not match.
+// Paused lines are NOT general-relevant.
 // Verb-aware: nonterminal progress verbs (working, resolved) NEVER
 // match from free-text prose alone. A "working:" line cannot escalate merely
-// because its prose contains "PR ready", "checks green", "merged", etc. Only
-// the authoritative terminal verbs and bare legacy lines (no leading verb)
-// match free-text tokens.
-// Matches the munsu status_is_captain_relevant pattern with Firstmate ea3ac2e
-// verb-awareness parity.
+// because its prose contains "failed:" or "blocked:".
 func GeneralRelevant(line string) bool {
 	trimmed := strings.TrimSpace(line)
 	if trimmed == "" {
@@ -153,19 +158,17 @@ func GeneralRelevant(line string) bool {
 	}
 
 	// Verb-aware: nonterminal progress verbs are never general-relevant
-	// from free-text prose. Only the authoritative terminal verbs and
-	// bare non-verb legacy lines should match free-text tokens.
+	// from free-text prose.
 	verb := LineVerb(trimmed)
 	switch verb {
 	case "working", "resolved":
 		return false
 	}
 
-	if IsMaterialVerb(verb) {
+	if slices.Contains(humanNeededVerbs, verb) {
 		return true
 	}
-	// Check the regex pattern for composite patterns.
-	return captainReDefault.MatchString(trimmed)
+	return humanNeededRe.MatchString(trimmed)
 }
 
 // IsPaused returns true if a status line's leading verb is the pause verb.

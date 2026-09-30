@@ -472,8 +472,9 @@ func scanFleetWithProbe(homeDir string, clearResolved bool, probe TaskEndpointPr
 	}
 
 	var reasons []*WakeReason
-	// Status-signal path: captain-relevant last lines, including the Captain
-	// return-channel status projection, wake General even when the pane is alive.
+	// Status-signal path: Human-needed last lines (needs-decision, blocked,
+	// failed) wake General even when the pane is alive. Completion, readiness
+	// and merge lines are audit projections and wake nothing here.
 	seenStatus := map[string]bool{}
 	_, captainHomeErr := os.Stat(filepath.Join(homeDir, home.CaptainProvenanceMarkerName))
 	isCaptainHome := captainHomeErr == nil
@@ -734,6 +735,7 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 	}
 
 	emitted := false
+	var humanNeeded []humanNeededEvent
 	for _, reason := range scanFleetWithProbe(homeDir, true, probe, states, obs) {
 		if len(reason.TaskIDs) == 0 {
 			continue
@@ -757,7 +759,11 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 			return emitted, err
 		}
 		emitted = true
+		if reason.Kind == "signal" {
+			humanNeeded = append(humanNeeded, humanNeededEvent{TaskID: id, Line: reason.Message})
+		}
 	}
+	popupHumanNeeded(homeDir, humanNeeded)
 
 	// Consume this cycle's process-event wakes before discovery, so the plugin
 	// loop sees this cycle's action outcomes and a retired poll is not found.
@@ -816,8 +822,8 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 			// the top of this loop.
 			//
 			// On successful retirement, the poll is removed and a durable
-			// status line is published. The check wake is NOT emitted — the
-			// status scan will surface it as a signal wake on the next cycle.
+			// status line is published as an audit projection. The check wake
+			// is NOT emitted, and the merged line is not attention.
 			outcome, acted := outcomes[plugin.Label]
 			eventID := mergedPollEventID(plugin.Label)
 			evalErr := ensureMergedPollRegistered(homeDir, eventID, plugin.Label, acted && errors.Is(outcome, domain.ErrStaleCapture))
@@ -835,8 +841,8 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 				// can be tried again.
 			case acted && outcome == nil:
 				// Poll retired this cycle (or the retirement was re-entered
-				// after completion). Skip wake emission; the status signal
-				// path will surface the publication.
+				// after completion). Skip wake emission; the publication is an
+				// audit projection.
 				if err := clearCheckRefusalMarker(homeDir, plugin.Path); err != nil {
 					return emitted, err
 				}
@@ -1109,8 +1115,13 @@ func absorbStaleSignal(s *ObservedTaskState) bool {
 // paneAlive gates status-only "working" absorb: a dead pane with a leftover
 // working: line is still actionable; an alive idle pane with working: is healthy.
 // A paused task beyond the resurface threshold is NOT absorbed — it surfaces as stale.
+// A task whose last status is done has reported completion (an audit
+// projection, not attention), so its pane state is not a stale condition.
 func shouldAbsorbStale(homeDir, id string, paneAlive bool, states TaskStatePort) bool {
 	if isNoMistakesActive(homeDir, id, states) {
+		return true
+	}
+	if isStatusDone(homeDir, id) {
 		return true
 	}
 	// Check pause status: absorb only if within the resurface threshold.
@@ -1125,6 +1136,16 @@ func shouldAbsorbStale(homeDir, id string, paneAlive bool, states TaskStatePort)
 		return true
 	}
 	return false
+}
+
+// isStatusDone checks whether the task's last status line is a completion
+// report. Returns false if no status file exists.
+func isStatusDone(homeDir, id string) bool {
+	lines, err := home.ReadStatus(homeDir, id)
+	if err != nil || len(lines) == 0 {
+		return false
+	}
+	return domain.LineVerb(strings.TrimSpace(lines[len(lines)-1])) == "done"
 }
 
 // isStatusPaused checks whether the task's last status line is a declared
