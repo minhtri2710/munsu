@@ -66,6 +66,13 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 
 			parentHome := os.Getenv("MUNSU_PARENT_STATUS")
 
+			// A review soldier's outcome is its verdict file, never a status report.
+			if role == "soldier" && isTaskKind(parentHome, taskID, taskauthority.KindReview) {
+				return operationError("review_task",
+					"A review task reports through its verdict file, not munsu report",
+					fmt.Sprintf("report: task %s is a review task", taskID))
+			}
+
 			// Determine target home for identity capture based on role
 			targetHome := homeDir // default: local
 			switch role {
@@ -80,7 +87,7 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 			// Only "done" is the valid terminal delivery state for ship tasks.
 			if state == "resolved" {
 				meta, metaErr := home.ReadMeta(targetHome, taskID)
-				if metaErr == nil && meta["kind"] == "ship" {
+				if metaErr == nil && meta["kind"] == taskauthority.KindShip {
 					return fmt.Errorf("report: ship task %s cannot use 'resolved' as delivery completion; use 'done' instead", taskID)
 				}
 			}
@@ -90,7 +97,7 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 			// transition before sending the uplink so teardown can observe the
 			// canonical terminal phase without requiring --force.
 			if role == "soldier" && state == "done" {
-				if isScoutTask(parentHome, taskID) {
+				if isTaskKind(parentHome, taskID, taskauthority.KindScout) {
 					if err := enforceScoutReportBudget(parentHome, taskID, time.Now()); err != nil {
 						if budgetErr := new(orchestrator.ScoutBudgetError); errors.As(err, &budgetErr) {
 							_ = home.AppendStatus(parentHome, taskID, "failed: scout runtime deadline evidence: "+formatScoutBudgetEvidence(budgetErr.Evidence))
@@ -110,7 +117,7 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 
 			var receipt *orchestrator.WakeReceipt
 			var uplinkResult *orchestrator.ReportResult
-			if role == "soldier" && state == "done" && isScoutTask(parentHome, taskID) {
+			if role == "soldier" && state == "done" && isTaskKind(parentHome, taskID, taskauthority.KindScout) {
 				var err error
 				receipt, err = orchestrator.DeliverWake(orchestrator.DeliverRequest{
 					HomeDir: homeDir, ParentHome: parentHome, TaskID: taskID,
@@ -228,7 +235,7 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 	return cmd
 }
 
-func isScoutTask(homeDir, taskID string) bool {
+func isTaskKind(homeDir, taskID, kind string) bool {
 	h, err := home.Open(homeDir)
 	if err != nil {
 		return false
@@ -242,7 +249,7 @@ func isScoutTask(homeDir, taskID string) bool {
 		return false
 	}
 	agg, err := auth.Get(tid)
-	return err == nil && agg.Definition.Kind == "scout"
+	return err == nil && agg.Definition.Kind == kind
 }
 
 func formatScoutBudgetEvidence(e orchestrator.ScoutBudgetEvidence) string {
@@ -266,7 +273,7 @@ func enforceScoutReportBudget(homeDir, taskID string, now time.Time) error {
 	if err != nil {
 		return err
 	}
-	if agg.Definition.Kind != "scout" {
+	if agg.Definition.Kind != taskauthority.KindScout {
 		return nil
 	}
 	// Task-only/local report flows may not have a launch submission record; keep
@@ -305,7 +312,7 @@ func completeScoutReport(homeDir, taskID string) error {
 	if err != nil {
 		return err
 	}
-	if agg.Definition.Kind != "scout" || agg.Phase == taskauthority.PhaseDone || agg.Phase == taskauthority.PhaseResolved || agg.Phase == taskauthority.PhaseRetired {
+	if agg.Definition.Kind != taskauthority.KindScout || agg.Phase == taskauthority.PhaseDone || agg.Phase == taskauthority.PhaseResolved || agg.Phase == taskauthority.PhaseRetired {
 		return nil
 	}
 	req := taskauthority.CanonicalCompleteRequest{

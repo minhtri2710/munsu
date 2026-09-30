@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"fmt"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"os"
 	"path/filepath"
 	"strings"
@@ -216,7 +217,7 @@ func peekFleet(homeDir string, provider FleetSnapshotProvider) (*DrainFleetPeek,
 
 	peek := &DrainFleetPeek{}
 	for _, ts := range tasks {
-		if ts.Kind != "ship" && ts.Kind != "scout" {
+		if !taskauthority.SoldierKind(ts.Kind) {
 			continue
 		}
 		phase := "alive"

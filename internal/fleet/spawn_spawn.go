@@ -20,7 +20,6 @@ import (
 type Args struct {
 	ID                  string
 	ProjectName         string
-	Kind                string
 	Mode                string // --mode flag value; empty=auto-detect
 	Yolo                bool
 	Force               bool                 // --force flag; bypass captain task authority checks

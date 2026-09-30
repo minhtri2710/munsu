@@ -69,7 +69,7 @@ func TestSpawnPhasesRefuseWithoutComposedAuthority(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			r := &Runner{args: Args{ID: "no-authority", Kind: "ship"}}
+			r := &Runner{args: Args{ID: "no-authority"}}
 			err := tc.run(r)
 			if err == nil {
 				t.Fatal("phase proceeded with no composed task authority")
@@ -86,7 +86,7 @@ func TestSpawnPhasesRefuseWithoutComposedAuthority(t *testing.T) {
 // under, and an unreserved acquisition is refused rather than falling back to
 // a plain pool get.
 func TestAcquireWorktreeRefusesWithoutLaunchReservation(t *testing.T) {
-	r := &Runner{args: Args{ID: "no-reservation", Kind: "ship"}}
+	r := &Runner{args: Args{ID: "no-reservation"}}
 	if r.wtReservationID() != "" {
 		t.Fatal("fixture invalid: a reservation exists before any launch intent")
 	}
@@ -186,7 +186,7 @@ func TestCaptainBacklogAuthorityRefusesLivePaneSession(t *testing.T) {
 	}
 	r := &Runner{
 		homeDir:   homeDir,
-		args:      Args{ID: "live-pane", Kind: "ship", Authority: auth},
+		args:      Args{ID: "live-pane", Authority: auth},
 		spawnRole: "captain",
 	}
 
@@ -212,7 +212,7 @@ func TestCaptainBacklogAuthorityRefusesLivePaneSession(t *testing.T) {
 // capabilities there is nothing to create through, and the phase refuses
 // rather than proceeding endpoint-less.
 func TestCreateSessionRefusesWithoutEndpointCapabilities(t *testing.T) {
-	r := &Runner{args: Args{ID: "no-endpoints", Kind: "ship"}}
+	r := &Runner{args: Args{ID: "no-endpoints"}}
 	err := r.createSession()
 	if err == nil {
 		t.Fatal("createSession proceeded with no endpoint capabilities")
@@ -425,7 +425,7 @@ func TestPreflightHarnessRefusesUnconfiguredAuth(t *testing.T) {
 	t.Setenv("PATH", binDir)
 	t.Setenv("ANTHROPIC_API_KEY", "")
 
-	r := &Runner{args: Args{ID: "auth-absent", Kind: "ship"}, harness: "claude"}
+	r := &Runner{args: Args{ID: "auth-absent"}, harness: "claude"}
 	err := r.preflightHarness()
 	if err == nil {
 		t.Fatal("preflight passed a harness with no configured auth")
@@ -471,7 +471,7 @@ func TestWaitForHarnessReadyRefusesOnAuthorizedAbsence(t *testing.T) {
 func TestWaitForHarnessReadyRefusesUnreadableObservation(t *testing.T) {
 	eps := &probeStateEndpoints{state: EndpointUnresponsive}
 	r := &Runner{
-		args:      Args{ID: "ready-unreadable", Kind: "ship"},
+		args:      Args{ID: "ready-unreadable"},
 		harness:   "pi",
 		endpoints: eps,
 		endpoint:  CreatedEndpoint{Backend: "tmux", Handle: "pane-1"},

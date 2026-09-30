@@ -4,6 +4,7 @@ package bootstrap
 import (
 	"errors"
 	"fmt"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"io"
 	"os"
 	"path/filepath"
@@ -139,7 +140,7 @@ func ensureWatcherForSession(home string, acquired bool, ensure WatchEnsureFunc)
 	}
 	inFlight := false
 	for _, ts := range snap.Tasks {
-		if ts.Kind == "ship" || ts.Kind == "scout" {
+		if taskauthority.SoldierKind(ts.Kind) {
 			inFlight = true
 			break
 		}

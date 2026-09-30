@@ -3,6 +3,7 @@ package fleet
 import (
 	"errors"
 	"fmt"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"os"
 	"path/filepath"
 
@@ -74,7 +75,7 @@ func RequireShipMeta(homeDir, id string) (taskHome string, meta map[string]strin
 	if err != nil {
 		return "", nil, err
 	}
-	if meta["kind"] != "ship" {
+	if meta["kind"] != taskauthority.KindShip {
 		return "", nil, fmt.Errorf("task %s has kind=%q, delivery requires kind=ship (promote scout tasks first)", id, meta["kind"])
 	}
 	return taskHome, meta, nil

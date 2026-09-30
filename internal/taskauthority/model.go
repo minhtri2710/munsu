@@ -93,6 +93,24 @@ type TaskDefinition struct {
 	ParentTaskID           string `json:"parent_task_id,omitempty"`
 	ScoutScope             string `json:"scout_scope,omitempty"`
 	ScoutRuntimeBudgetSecs int64  `json:"scout_runtime_budget_secs,omitempty"`
+	// ReviewTaskID and ReviewHead bind a review task to the ship task it reads
+	// and to the one head it reviews. Create checks the reviewed task; munsu
+	// reads the head from git, never from the reviewer. Only kind review has them.
+	ReviewTaskID string `json:"review_task_id,omitempty"`
+	ReviewHead   string `json:"review_head,omitempty"`
+}
+
+// The task kinds. A review task is the read-only reviewer seat: it reads the
+// worktree of the ship task it reviews and owns no worktree or branch.
+const (
+	KindShip   = "ship"
+	KindScout  = "scout"
+	KindReview = "review"
+)
+
+// SoldierKind reports whether kind is a kind a soldier seat is launched for.
+func SoldierKind(kind string) bool {
+	return kind == KindShip || kind == KindScout || kind == KindReview
 }
 
 // EndpointBinding is a generation-bound runtime endpoint lease. Incarnation
@@ -372,8 +390,27 @@ type DeliveryFallback struct {
 // replaced in place by the first supported current v1 definition.
 const TaskAuthoritySchema = "munsu.task-authority/v1"
 
+// validateReviewContract checks the review fields against the kind: a review
+// task names the ship task it reads and the head it reviews; no other kind
+// carries them.
+func validateReviewContract(def TaskDefinition) error {
+	if def.Kind != KindReview {
+		if def.ReviewTaskID != "" || def.ReviewHead != "" {
+			return validationError("review-only fields are not valid for %s tasks", def.Kind)
+		}
+		return nil
+	}
+	if _, err := domain.NewTaskID(def.ReviewTaskID); err != nil {
+		return validationError("review task requires the reviewed task id: %v", err)
+	}
+	if strings.TrimSpace(def.ReviewHead) == "" {
+		return validationError("review task requires the reviewed head")
+	}
+	return nil
+}
+
 func validateScoutContract(def TaskDefinition) error {
-	if def.Kind != "scout" {
+	if def.Kind != KindScout {
 		if strings.TrimSpace(def.ScoutScope) != "" || def.ScoutRuntimeBudgetSecs != 0 {
 			return validationError("scout-only fields are not valid for ship tasks")
 		}
@@ -635,7 +672,8 @@ func validateCleanupClaim(claim CleanupClaim) error {
 // and the deterministic launch identity must be present and safe, every
 // optional identity must be safe when present, and the one-time worktree and
 // endpoint reservation fences (reservation ID + fence token) must be present
-// and safe. Validation is shape-only: no value is selected, detected,
+// and safe (a review launch reserves no worktree and carries neither worktree
+// value). Validation is shape-only: no value is selected, detected,
 // defaulted, probed, or fallen back.
 func validateLaunchIdentity(snapshotDigest, backend, harness, model, effort, mode, kind, project, parentTaskID, launchID, windowLabel, worktreeReservationID, worktreeFenceToken, endpointReservationID, endpointFenceToken, endpointIncarnation string) error {
 	if !domain.IsSHA256(snapshotDigest) {
@@ -655,11 +693,19 @@ func validateLaunchIdentity(snapshotDigest, backend, harness, model, effort, mod
 	if launchID == "" || strings.ContainsAny(launchID, `/\\`) {
 		return validationError("launch requires a deterministic launch identity")
 	}
-	if worktreeReservationID == "" || strings.ContainsAny(worktreeReservationID, `/\\`) {
-		return validationError("launch requires a worktree reservation id")
-	}
-	if worktreeFenceToken == "" || strings.ContainsAny(worktreeFenceToken, `/\\`) {
-		return validationError("launch requires a worktree fence token")
+	if kind == KindReview {
+		// A review task owns no worktree: it reads the reviewed task's, so a
+		// worktree reservation would be a lease the reviewer must never hold.
+		if worktreeReservationID != "" || worktreeFenceToken != "" {
+			return validationError("a review launch reserves no worktree")
+		}
+	} else {
+		if worktreeReservationID == "" || strings.ContainsAny(worktreeReservationID, `/\\`) {
+			return validationError("launch requires a worktree reservation id")
+		}
+		if worktreeFenceToken == "" || strings.ContainsAny(worktreeFenceToken, `/\\`) {
+			return validationError("launch requires a worktree fence token")
+		}
 	}
 	if endpointReservationID == "" || strings.ContainsAny(endpointReservationID, `/\\`) {
 		return validationError("launch requires an endpoint reservation id")

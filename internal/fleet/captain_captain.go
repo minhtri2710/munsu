@@ -4,6 +4,7 @@ package fleet
 import (
 	"errors"
 	"fmt"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -339,7 +340,7 @@ The canonical Task Authority is the authoritative task source:
 ## Soldier Lifecycle
 
 Spawn Soldiers to do work from this home. The dispatch ordering is:
-  %[6]smunsu task list%[6]s → %[6]smunsu task start <id>%[6]s → %[6]smunsu brief <id> <project>%[6]s → %[6]smunsu spawn <id> [<project>] --kind <kind> --mode <mode>%[6]s
+  %[6]smunsu task list%[6]s → %[6]smunsu task start <id>%[6]s → %[6]smunsu brief <id> <project>%[6]s → %[6]smunsu spawn <id> [<project>] --mode <mode>%[6]s
 - kind: ship (default) | scout — mode: no-mistakes | direct-PR | local-only (empty = auto-detect)
 - After spawning, monitor soldier progress through their task state.
 - When a soldier completes, receive and ack its Uplink Report, then report the domain result to General (see One-Hop Uplink Report).
@@ -425,7 +426,7 @@ You MUST NOT:
 |--------|---------|
 | Report state | %[6]smunsu report <state> "<msg>" [--key <slug>]%[6]s |
 | Brief soldier | %[6]smunsu brief <id> <project>%[6]s |
-| Spawn soldier | %[6]smunsu spawn <id> [<project>] --kind <kind> --mode <mode>%[6]s |
+| Spawn soldier | %[6]smunsu spawn <id> [<project>] --mode <mode>%[6]s |
 | Teardown soldier | %[6]smunsu teardown <id>%[6]s |
 | Send to soldier | %[6]smunsu send <id> <message>%[6]s |
 | Merge PR | %[6]smunsu delivery pr-merge <id> <url> [--teardown]%[6]s |
@@ -1004,7 +1005,7 @@ func inFlightSoldierIDs(captainHome string) ([]string, error) {
 			continue
 		}
 		kind := meta["kind"]
-		if kind == "ship" || kind == "scout" {
+		if taskauthority.SoldierKind(kind) {
 			ids = append(ids, id)
 		}
 	}

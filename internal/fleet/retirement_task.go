@@ -591,7 +591,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 
 	kind := meta["kind"]
 	if kind == "" {
-		kind = "ship" // default
+		kind = taskauthority.KindShip // default
 	}
 
 	// Resolve the task identity and the safety-check generation up front: the
@@ -1090,14 +1090,27 @@ func refreshDataDir(homeDir, id string) (bool, error) {
 // Returns proof strings alongside any error. Proofs are only populated on success.
 func safetyCheck(opts Options, meta map[string]string, kind string, backend BoundTeardown, authority *taskauthority.Canonical, gen taskauthority.Generation) ([]string, error) {
 	switch kind {
-	case "scout":
+	case taskauthority.KindScout:
 		if err := scoutSafetyCheck(opts, meta, gen); err != nil {
 			return nil, err
 		}
 		return nil, nil
+	case taskauthority.KindReview:
+		return reviewSafetyCheck(opts, meta)
 	default:
 		return shipSafetyCheck(opts, meta, backend, authority)
 	}
+}
+
+// reviewSafetyCheck answers for a review task: it owns no worktree, branch,
+// manifest or merge, so there is nothing to land and no proof to emit. The
+// reviewed worktree belongs to the reviewed ship task; retirement releases
+// only evidence.Worktree, which a review never has, so it cannot release it.
+func reviewSafetyCheck(opts Options, meta map[string]string) ([]string, error) {
+	if meta["worktree"] != "" || meta["branch"] != "" {
+		return nil, fmt.Errorf("review task %s meta names a worktree or branch; a review owns neither (use --force to override)", opts.ID)
+	}
+	return nil, nil
 }
 
 // safetyCheckGeneration resolves the generation whose report a scout safety
@@ -1444,6 +1457,9 @@ func cleanupResidualArtifactPaths(homeDir, id string, meta map[string]string) ([
 		return nil, err
 	}
 	paths := []string{statusPath}
+	if meta["kind"] == taskauthority.KindReview {
+		paths = append(paths, reviewHomeDir(homeDir, id))
+	}
 	stateDir := home.StateDir(homeDir)
 	for _, suffix := range []string{"check", "turnend"} {
 		p, err := home.DurableFilePath(stateDir, id, "."+suffix)

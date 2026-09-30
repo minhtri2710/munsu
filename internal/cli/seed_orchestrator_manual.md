@@ -153,10 +153,11 @@ or queued and blocked when it touches the same project subsystem.
 
 ```
 munsu task add <id> "<desc>" --kind ship --repo <name>
+munsu task add <id> "<desc>" --kind review --reviews <ship-id> [--repo <name>]
 munsu task start <id>
 munsu brief <id> <repo>
 # Fill in the {TASK} placeholder in data/<id>/brief.md
-munsu spawn <id> <project> [--kind ship|scout] [--mode no-mistakes|direct-PR|local-only]
+munsu spawn <id> <project> [--mode no-mistakes|direct-PR|local-only]
 ```
 
 Check the spawned soldier: `munsu soldier-state <id>`.
@@ -321,7 +322,7 @@ The canonical Task Authority owns task lifecycle. The `munsu task` command is th
 only Task noun:
 
 ```
-munsu task add <id> "<desc>" [--kind ship|scout] [--repo <name>]
+munsu task add <id> "<desc>" [--kind ship|scout|review] [--reviews <ship-id>] [--repo <name>]
 munsu task list
 munsu task show <id>
 munsu task start <id>
@@ -390,6 +391,7 @@ Run: `munsu skill show <name>` to read any skill.
 | Detect harness | `munsu harness detect` |
 | Backend capabilities | `munsu backend capabilities` |
 | Add a task | `munsu task add <id> "<desc>" --kind ship --repo <name>` |
+| Add a review task | `munsu task add <id> "<desc>" --kind review --reviews <ship-id> [--repo <name>]` |
 | Scaffold brief | `munsu brief <id> <repo>` |
 | Spawn soldier | `munsu spawn <id> <project>` |
 | Steer soldier | `munsu send <id> "<line>"` |

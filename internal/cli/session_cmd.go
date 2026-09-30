@@ -107,15 +107,17 @@ func newBriefCmd() *cobra.Command {
 				if !canonicalExists {
 					return fmt.Errorf("reading scout contract: %w", taskauthority.ErrNotFound)
 				}
-				if agg.Definition.Kind != "scout" {
+				if agg.Definition.Kind != taskauthority.KindScout {
 					return fmt.Errorf("task %q is not a scout", id)
 				}
 				scoutScope = agg.Definition.ScoutScope
 				scoutBudget = agg.Definition.ScoutRuntimeBudgetSecs
 				scoutGeneration = agg.Generation
 			}
+			review := canonicalExists && agg.Definition.Kind == taskauthority.KindReview
 			opts := fleet.ScaffoldOptions{
 				HomeDir: ctx.Home, ID: id, Repo: repo, Scout: scout,
+				Review: review, ReviewTask: agg.Definition.ReviewTaskID, ReviewHead: agg.Definition.ReviewHead,
 				Mode: resolvedMode, Yolo: projYolo,
 				ScoutScope: scoutScope, ScoutRuntimeBudgetSecs: scoutBudget,
 				Generation: scoutGeneration,
@@ -128,9 +130,12 @@ func newBriefCmd() *cobra.Command {
 				return err
 			}
 
-			kind := "ship"
+			kind := taskauthority.KindShip
 			if scout {
-				kind = "scout"
+				kind = taskauthority.KindScout
+			}
+			if review {
+				kind = taskauthority.KindReview
 			}
 
 			var b strings.Builder

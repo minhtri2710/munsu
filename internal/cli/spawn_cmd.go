@@ -17,7 +17,6 @@ import (
 
 func newSpawnCmd() *cobra.Command {
 	var (
-		kind        string
 		mode        string
 		yolo        bool
 		force       bool
@@ -68,7 +67,6 @@ When inference fails, pass the project name explicitly or run 'munsu project add
 			_, err = fleet.Spawn(fleet.Args{
 				ID:          id,
 				ProjectName: projectName,
-				Kind:        kind,
 				Mode:        mode, // raw flag value; resolution happens inside Run
 				Yolo:        yolo,
 				Force:       force,
@@ -91,7 +89,6 @@ When inference fails, pass the project name explicitly or run 'munsu project add
 			return nil
 		}),
 	}
-	cmd.Flags().StringVar(&kind, "kind", "ship", "Task kind (ship|scout)")
 	cmd.Flags().StringVar(&mode, "mode", "", "Delivery mode (no-mistakes|direct-PR|local-only; empty=auto-detect)")
 	cmd.Flags().BoolVar(&yolo, "yolo", false, "Skip pre-flight checks")
 	cmd.Flags().BoolVar(&force, "force", false, "Bypass captain task authority checks")
@@ -321,7 +318,7 @@ func newPromoteCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("promote %s: %w", id, err)
 			}
-			if agg.Definition.Kind != "scout" {
+			if agg.Definition.Kind != taskauthority.KindScout {
 				return fmt.Errorf("task %s has kind=%q, can only promote kind=scout", id, agg.Definition.Kind)
 			}
 
@@ -339,8 +336,8 @@ func newPromoteCmd() *cobra.Command {
 				HomeID:       auth.HomeID(),
 				TaskID:       tid,
 				Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
-				CurrentKind:  "scout",
-				TargetKind:   "ship",
+				CurrentKind:  taskauthority.KindScout,
+				TargetKind:   taskauthority.KindShip,
 				Reason:       "cli promote",
 			}
 			op, err := newCanonicalOperation("promote", req)

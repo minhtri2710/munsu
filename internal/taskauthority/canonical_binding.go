@@ -48,6 +48,9 @@ func (c *Canonical) BindWorktree(op domain.Operation, req CanonicalBindWorktreeR
 		return Outcome{}, err
 	}
 	return c.mutateTask(op, req.TaskID, req.Precondition, func(cur Aggregate) (Aggregate, error) {
+		if cur.Definition.Kind == KindReview {
+			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s is a review task; it reads the reviewed worktree and owns none", cur.TaskID, cur.Generation)
+		}
 		if cur.Worktree != nil {
 			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s already has a worktree binding", cur.TaskID, cur.Generation)
 		}
@@ -86,7 +89,8 @@ func (r CanonicalBindEndpointRequest) DigestBytes() ([]byte, error) {
 // BindEndpoint is the canonical operation that binds one generation-scoped
 // endpoint lease to a task and transitions the queued task into working. It
 // is generation-bound and fenced: the request carries the expected
-// Generation/Revision precondition. The mutation requires a bound worktree,
+// Generation/Revision precondition. The mutation requires a bound worktree (a
+// review task owns none and requires its committed launch intent instead),
 // a queued phase, an owner, and no existing endpoint binding, and it evaluates
 // durable Dispatch Holds for the spawn action before committing. When the
 // generation carries a committed launch intent (BeginSpawn), the operation
@@ -107,7 +111,11 @@ func (c *Canonical) BindEndpoint(op domain.Operation, req CanonicalBindEndpointR
 		return Outcome{}, err
 	}
 	return c.mutateTaskWithDispatch(op, req.TaskID, req.Precondition, func(cur Aggregate) (Aggregate, error) {
-		if cur.Worktree == nil {
+		if cur.Definition.Kind == KindReview {
+			if cur.Launch == nil {
+				return Aggregate{}, conflictError(ErrConflict, "task %s generation %s is a review task; bind endpoint requires its committed launch intent", cur.TaskID, cur.Generation)
+			}
+		} else if cur.Worktree == nil {
 			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s has no worktree binding; bind endpoint requires a bound worktree", cur.TaskID, cur.Generation)
 		}
 		if strings.TrimSpace(cur.Definition.Owner) == "" {

@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"fmt"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"os"
 	"path/filepath"
 	"sort"
@@ -334,7 +335,7 @@ func Bearings(homeDir string, projectDir string, deps SnapshotDependencies) erro
 
 	inFlight := 0
 	for _, ts := range snap.Tasks {
-		if ts.Kind != "ship" && ts.Kind != "scout" {
+		if !taskauthority.SoldierKind(ts.Kind) {
 			continue
 		}
 		inFlight++

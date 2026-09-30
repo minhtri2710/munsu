@@ -9,9 +9,10 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
-// PromptName is the name of the prompt file persisted to the worktree.
+// PromptName is the name of the prompt file persisted to the launch directory.
 const PromptName = ".soldier-prompt.md"
 
 // PiSettingsName is the worktree project-settings file a pi soldier launch
@@ -23,12 +24,12 @@ const PiSettingsName = harness.PiProjectSettingsRelPath
 // All fields must be populated before BuildLaunchPrompt is called.
 type LaunchPromptInput struct {
 	TaskID                 string
-	TaskKind               string // "ship" or "scout"
+	TaskKind               string // ship, scout or review
 	DeliveryMode           string
 	Repository             string // repo name for brief
 	ParentCaptainID        string
 	ParentHome             string
-	WorktreePath           string // absolute path to the disposable worktree
+	WorktreePath           string // absolute path to the checkout the harness runs in
 	HomeDir                string // munsu home (parent)
 	BriefContent           []byte // complete task brief content
 	RequiredSkills         []SkillEntry
@@ -60,12 +61,12 @@ func BuildLaunchPrompt(input LaunchPromptInput) (string, *LaunchEnvelope, error)
 		return "", nil, fmt.Errorf("soldier launch: brief content is required")
 	}
 	if input.TaskKind == "" {
-		input.TaskKind = "ship"
+		input.TaskKind = taskauthority.KindShip
 	}
-	if input.TaskKind == "scout" && (strings.TrimSpace(input.ScoutScope) == "" || input.ScoutRuntimeBudgetSecs <= 0) {
+	if input.TaskKind == taskauthority.KindScout && (strings.TrimSpace(input.ScoutScope) == "" || input.ScoutRuntimeBudgetSecs <= 0) {
 		return "", nil, fmt.Errorf("soldier launch: scout scope and positive runtime budget are required")
 	}
-	if input.TaskKind != "scout" && (strings.TrimSpace(input.ScoutScope) != "" || input.ScoutRuntimeBudgetSecs != 0) {
+	if input.TaskKind != taskauthority.KindScout && (strings.TrimSpace(input.ScoutScope) != "" || input.ScoutRuntimeBudgetSecs != 0) {
 		return "", nil, fmt.Errorf("soldier launch: scout contract is only valid for scout tasks")
 	}
 	if input.DeliveryMode == "" {
@@ -175,9 +176,15 @@ func buildSkillInstructions(required, optional []SkillEntry) string {
 // that the Soldier must use. The --key is required, not optional.
 func terminalReportReminder(taskID, taskKind, parentCaptainID string) string {
 	bt := "`"
+	if taskKind == taskauthority.KindReview {
+		return `## Verdict Requirement
+
+End your work with one line, ` + bt + `VERDICT: PASS` + bt + ` or ` + bt + `VERDICT: FAIL` + bt + `, for the reviewed head, then the evidence.
+You run no ` + bt + `munsu report` + bt + `; the verdict and its evidence are your whole output.`
+	}
 	doneMessage := "PR {url}"
 	doneDescription := "task complete, PR open (no merge)"
-	if taskKind == "scout" {
+	if taskKind == taskauthority.KindScout {
 		doneMessage = "summary of findings location"
 		doneDescription = "scout report complete"
 	}
@@ -268,7 +275,12 @@ type LaunchArtifact struct {
 // Every value is deterministic per launch, so the artifact (and its command
 // digest) is identical on every attempt of the same launch.
 type LaunchArtifactInput struct {
+	// WorktreePath is the checkout the harness runs in. LaunchDir is where the
+	// launch script and its guard live: the same directory for a soldier, and a
+	// directory under the home for a reviewer, whose checkout is never written.
 	WorktreePath   string
+	LaunchDir      string
+	Review         bool
 	HomeDir        string
 	TaskID         string
 	SnapshotDigest string
@@ -280,7 +292,7 @@ type LaunchArtifactInput struct {
 }
 
 // buildLaunchArtifact writes the deterministic .soldier-launch.sh script into
-// the worktree and returns the exact submission command with its sha256
+// the launch directory and returns the exact submission command with its sha256
 // digest. The script embeds the persistent re-entrant launch guard: BEFORE
 // invoking/execing the harness it writes a durable guard marker (keyed by
 // task+generation, carrying the exact launch identity) and exits/no-ops when
@@ -296,6 +308,9 @@ func buildLaunchArtifact(in LaunchArtifactInput) (LaunchArtifact, error) {
 	}
 	if in.LaunchID == "" || in.Generation == "" || in.EndpointFence == "" {
 		return LaunchArtifact{}, fmt.Errorf("soldier launch: re-entrant launch guard requires the exact launch identity (launch id, generation, fence)")
+	}
+	if in.LaunchDir == "" {
+		return LaunchArtifact{}, fmt.Errorf("soldier launch: launch directory is required")
 	}
 	guardName := fmt.Sprintf(".soldier-launch-guard-%s-%s", labelComponent(in.TaskID), in.Generation)
 	guardIdentity := in.LaunchID + "|" + in.Generation + "|" + in.EndpointFence
@@ -332,7 +347,7 @@ func buildLaunchArtifact(in LaunchArtifactInput) (LaunchArtifact, error) {
 	}
 	posture := harness.PostureOf(in.LaunchBin, in.LaunchArgs)
 	if in.LaunchBin == harness.Pi {
-		piAgentDir, err := provisionPiSkillBlock(in.HomeDir, in.TaskID, in.WorktreePath)
+		piAgentDir, err := provisionPiSkillBlock(in.HomeDir, in.TaskID, in.WorktreePath, !in.Review)
 		if err != nil {
 			return LaunchArtifact{}, err
 		}
@@ -352,7 +367,7 @@ func buildLaunchArtifact(in LaunchArtifactInput) (LaunchArtifact, error) {
 	// a different identity/fence fails closed; a guard with no provable
 	// readiness is never re-launched.
 	b.WriteString("guard=")
-	b.WriteString(shQuote(guardName))
+	b.WriteString(shQuote(filepath.Join(in.LaunchDir, guardName)))
 	b.WriteString("\n")
 	b.WriteString("identity=")
 	b.WriteString(shQuote(guardIdentity))
@@ -376,7 +391,7 @@ func buildLaunchArtifact(in LaunchArtifactInput) (LaunchArtifact, error) {
 	b.WriteString("\n")
 	content := b.String()
 
-	scriptPath := filepath.Join(in.WorktreePath, LaunchScriptName)
+	scriptPath := filepath.Join(in.LaunchDir, LaunchScriptName)
 	if existing, err := os.ReadFile(scriptPath); err == nil {
 		if string(existing) != content {
 			return LaunchArtifact{}, fmt.Errorf("launch artifact %s already exists with different content; identity mismatch, refuse to overwrite", scriptPath)
@@ -397,8 +412,9 @@ func buildLaunchArtifact(in LaunchArtifactInput) (LaunchArtifact, error) {
 // alone filters the .agents/skills of the worktree's ancestors). It returns the
 // agent dir. A worktree that already has .pi/settings.json, tracked or present
 // with other content, is refused: the block cannot be expressed without
-// changing the project's file.
-func provisionPiSkillBlock(homeDir, taskID, worktreePath string) (string, error) {
+// changing the project's file. A reviewer's checkout is never written
+// (writeSettings false): its settings file must already be the identical block.
+func provisionPiSkillBlock(homeDir, taskID, worktreePath string, writeSettings bool) (string, error) {
 	stateDir := home.StateDir(homeDir)
 	dst, err := home.DurableFilePath(stateDir, taskID, "."+harness.PiAgentDirSuffix)
 	if err != nil {
@@ -408,7 +424,7 @@ func provisionPiSkillBlock(homeDir, taskID, worktreePath string) (string, error)
 	if err != nil {
 		return "", fmt.Errorf("soldier launch: %w", err)
 	}
-	if err := writePiProjectSettings(worktreePath); err != nil {
+	if err := writePiProjectSettings(worktreePath, writeSettings); err != nil {
 		return "", err
 	}
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
@@ -421,8 +437,9 @@ func provisionPiSkillBlock(homeDir, taskID, worktreePath string) (string, error)
 }
 
 // writePiProjectSettings writes the worktree's .pi/settings.json skill block.
-// Re-entry of the same launch finds its own identical, untracked file and keeps it.
-func writePiProjectSettings(worktreePath string) error {
+// Re-entry of the same launch finds its own identical, untracked file and keeps
+// it. With create false it never writes: an absent file is refused.
+func writePiProjectSettings(worktreePath string, create bool) error {
 	want := harness.PiProjectSettings()
 	path := filepath.Join(worktreePath, filepath.FromSlash(PiSettingsName))
 	refuse := fmt.Errorf("soldier launch: worktree has %s; the orchestration skill block cannot be expressed without changing the project's file", path)
@@ -445,6 +462,9 @@ func writePiProjectSettings(worktreePath string) error {
 	case !os.IsNotExist(err):
 		return fmt.Errorf("soldier launch: checking %s: %w", path, err)
 	}
+	if !create {
+		return fmt.Errorf("soldier launch: the reviewed worktree has no %s; a reviewer never writes the checkout it reads", path)
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("soldier launch: %w", err)
 	}
@@ -454,7 +474,7 @@ func writePiProjectSettings(worktreePath string) error {
 	return nil
 }
 
-// PersistLaunchFiles writes all durable launch files to the worktree:
+// PersistLaunchFiles writes all durable launch files to the launch directory:
 // .soldier-charter.md, .soldier-brief.md, .soldier-envelope.json, and .soldier-prompt.md.
 // Returns an error if any write fails.
 func PersistLaunchFiles(worktreePath string, charter string, briefContent []byte, env *LaunchEnvelope, promptText string) error {
@@ -518,7 +538,7 @@ func missingRequiredSkillBinaries(required []SkillEntry) []string {
 // that classification. Soft at the bootstrap layer means "munsu runs without
 // it", not "a ship task runs without it".
 func requiredSkillsAreHardGate(taskKind, deliveryMode string) bool {
-	if taskKind == "scout" {
+	if taskKind == taskauthority.KindScout || taskKind == taskauthority.KindReview {
 		return false
 	}
 	return deliveryMode == "direct-PR" || deliveryMode == "no-mistakes"

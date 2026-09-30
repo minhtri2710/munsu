@@ -186,7 +186,7 @@ func TestEndpointBindingOrderingPersistsBindingMetadataThenWorking(t *testing.T)
 	bindWorktreeForSpawnFixture(t, auth, "bind-task")
 	r := &Runner{
 		homeDir:       homeDir,
-		args:          Args{ID: "bind-task", ProjectName: "test-proj", Kind: "ship", Authority: auth},
+		args:          Args{ID: "bind-task", ProjectName: "test-proj", Authority: auth},
 		windowID:      "session:pane-1",
 		wtPath:        filepath.Join(homeDir, "worktree"),
 		projPath:      filepath.Join(homeDir, "project"),

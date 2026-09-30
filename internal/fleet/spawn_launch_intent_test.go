@@ -155,9 +155,9 @@ func newLaunchFixture(t *testing.T, taskID string) *launchFixture {
 		args: Args{
 			ID:          taskID,
 			ProjectName: "test-proj",
-			Kind:        "ship",
 			Authority:   auth,
 		},
+		kind:                taskauthority.KindShip,
 		harness:             "pi",
 		model:               "gpt-5",
 		effort:              "high",
@@ -214,6 +214,7 @@ func runLaunchPhases(f *launchFixture, crashAfter string) error {
 		{"bind-worktree", func() error {
 			var err error
 			bound, err = r.bindWorktree()
+			r.cwd, r.launchDir = bound.Path(), bound.Path()
 			return err
 		}},
 		{"prompt", func() error { return r.buildSoldierPrompt(bound) }},

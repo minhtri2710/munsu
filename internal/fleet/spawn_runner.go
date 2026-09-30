@@ -36,18 +36,29 @@ type Runner struct {
 	fallbackReason        string // why effective mode differs from requested mode
 	allowDirectPRFallback bool   // explicit configured direct-PR policy; fallback only with it
 	projPath              string
-	wtPath                string
-	harness               string
-	model                 string
-	effort                string
-	taskScoutScope        string
-	taskScoutBudget       int64
-	launchCmd             string
-	endpoints             EndpointCapabilities
-	endpoint              CreatedEndpoint
-	briefData             []byte
-	windowID              string
-	spawnRole             string
+	// kind is the task's kind, read once from the canonical definition by
+	// resolveKind; nothing else names it. wtPath is the worktree this launch
+	// owns (empty for a review task, which owns none). cwd is the checkout the
+	// harness runs in and launchDir is where the launch files live: both are
+	// wtPath for a soldier; a reviewer runs in the reviewed task's worktree and
+	// keeps its launch files under the home, so its checkout is never written.
+	kind            string
+	wtPath          string
+	cwd             string
+	launchDir       string
+	harness         string
+	model           string
+	effort          string
+	taskScoutScope  string
+	taskScoutBudget int64
+	reviewTask      string
+	reviewHead      string
+	launchCmd       string
+	endpoints       EndpointCapabilities
+	endpoint        CreatedEndpoint
+	briefData       []byte
+	windowID        string
+	spawnRole       string
 
 	// contractMode is the delivery mode resolved (or read back from the
 	// durable contract) in resolveMode, BEFORE any preflight fallback mutates
@@ -202,6 +213,9 @@ func (r *Runner) Run() (windowID string, runErr error) {
 	if err := r.checkModelAllowlist(); err != nil {
 		return "", err
 	}
+	if err := r.resolveKind(); err != nil {
+		return "", err
+	}
 	if err := r.preflightBrief(); err != nil {
 		return "", err
 	}
@@ -217,11 +231,16 @@ func (r *Runner) Run() (windowID string, runErr error) {
 	if err := r.checkTangle(); err != nil {
 		return "", err
 	}
-	if err := r.preflightNoMistakes(); err != nil {
-		return "", err
-	}
-	if err := r.preflightDelivery(); err != nil {
-		return "", err
+	// A review task never delivers, so no delivery mode is preflighted or
+	// contracted for it.
+	reviewing := r.kind == taskauthority.KindReview
+	if !reviewing {
+		if err := r.preflightNoMistakes(); err != nil {
+			return "", err
+		}
+		if err := r.preflightDelivery(); err != nil {
+			return "", err
+		}
 	}
 	if err := r.checkScopeGate(); err != nil {
 		return "", err
@@ -243,8 +262,10 @@ func (r *Runner) Run() (windowID string, runErr error) {
 	// exists (BeginSpawn commits the generation's intent); resolveMode READS
 	// it before that. A contract already recorded under this mode is left
 	// alone, so recovery re-entry never double-records.
-	if err := r.recordDeliveryContract(); err != nil {
-		return "", err
+	if !reviewing {
+		if err := r.recordDeliveryContract(); err != nil {
+			return "", err
+		}
 	}
 	success := false
 	if err := r.checkSupervision(); err != nil {
@@ -260,12 +281,21 @@ func (r *Runner) Run() (windowID string, runErr error) {
 			}
 		}
 	}()
-	if err := r.acquireWorktree(); err != nil {
-		return "", err
-	}
-	bound, err := r.bindWorktree()
-	if err != nil {
-		return "", err
+	var bound BoundWorktree
+	if reviewing {
+		var err error
+		if bound, err = r.adoptReviewedWorktree(); err != nil {
+			return "", err
+		}
+	} else {
+		if err := r.acquireWorktree(); err != nil {
+			return "", err
+		}
+		var err error
+		if bound, err = r.bindWorktree(); err != nil {
+			return "", err
+		}
+		r.cwd, r.launchDir = bound.Path(), bound.Path()
 	}
 
 	if err := r.resolveHarness(); err != nil {
@@ -287,8 +317,10 @@ func (r *Runner) Run() (windowID string, runErr error) {
 	// transition before anything launches: nothing delivers under an
 	// unrecorded mode. Late capability loss does not fall back — checkAttestation
 	// above blocks it for a parent Decision.
-	if err := r.reconcileDeliveryFallback(); err != nil {
-		return "", err
+	if !reviewing {
+		if err := r.reconcileDeliveryFallback(); err != nil {
+			return "", err
+		}
 	}
 	if err := r.createSession(); err != nil {
 		return "", err
@@ -302,8 +334,10 @@ func (r *Runner) Run() (windowID string, runErr error) {
 	if err := r.submitLaunch(); err != nil {
 		return "", err
 	}
-	if err := r.writeLaunchManifest(); err != nil {
-		return "", err
+	if !reviewing {
+		if err := r.writeLaunchManifest(); err != nil {
+			return "", err
+		}
 	}
 	if err := r.waitAndInjectBrief(); err != nil {
 		return "", err
@@ -584,13 +618,29 @@ func (r *Runner) taskAggregate() (taskauthority.Aggregate, error) {
 	}
 	taskID, err := domain.NewTaskID(r.args.ID)
 	if err != nil {
-		return taskauthority.Aggregate{}, fmt.Errorf("task %q has no canonical Task Authority record; register it with 'task add %q \"<description>\" --kind %s' before spawning: %w", r.args.ID, r.args.ID, r.args.Kind, err)
+		return taskauthority.Aggregate{}, fmt.Errorf("task %q has no canonical Task Authority record; register it with 'task add %q \"<description>\"' before spawning: %w", r.args.ID, r.args.ID, err)
 	}
 	agg, err := r.args.Authority.Get(taskID)
 	if err != nil {
-		return taskauthority.Aggregate{}, fmt.Errorf("task %q has no canonical Task Authority record; register it with 'task add %q \"<description>\" --kind %s' before spawning: %w", r.args.ID, r.args.ID, r.args.Kind, err)
+		return taskauthority.Aggregate{}, fmt.Errorf("task %q has no canonical Task Authority record; register it with 'task add %q \"<description>\"' before spawning: %w", r.args.ID, r.args.ID, err)
 	}
 	return agg, nil
+}
+
+// resolveKind reads the task's kind from its canonical definition, the one
+// place the kind is named; a definition with no kind is a ship task. A review
+// task also carries the reviewed task and head its launch reads.
+func (r *Runner) resolveKind() error {
+	agg, err := r.taskAggregate()
+	if err != nil {
+		return err
+	}
+	r.kind = agg.Definition.Kind
+	if r.kind == "" {
+		r.kind = taskauthority.KindShip
+	}
+	r.reviewTask, r.reviewHead = agg.Definition.ReviewTaskID, agg.Definition.ReviewHead
+	return nil
 }
 
 // Phase 2: resolveMode resolves the effective delivery mode for this launch.
@@ -756,7 +806,7 @@ func (r *Runner) preflightBrief() error {
 		return fmt.Errorf("no brief found for task %s: scaffold it with 'munsu brief %s %s' before spawning",
 			r.args.ID, r.args.ID, r.args.ProjectName)
 	}
-	return LintBrief(r.homeDir, r.args.ID, r.args.Kind == "scout")
+	return LintBrief(r.homeDir, r.args.ID, r.kind)
 }
 
 // Phase 5: checkBacklogAuthority verifies the task is uniquely present in the
@@ -911,6 +961,51 @@ func (r *Runner) acquireWorktree() error {
 	}
 	r.wtPath = canonical
 	return nil
+}
+
+// adoptReviewedWorktree stands in for acquireWorktree and bindWorktree on a
+// review task. The reviewed task's worktree is read as evidence: the review
+// owns, reserves, binds and fences none of it. The reviewed task must still be
+// the working ship task the definition named, and its worktree must still be
+// at the head the review covers, both as the canonical binding records it and
+// as git reads it now. The launch files go to a per-generation directory under
+// the home, never into that checkout.
+func (r *Runner) adoptReviewedWorktree() (BoundWorktree, error) {
+	if r.args.Authority == nil {
+		return BoundWorktree{}, fmt.Errorf("adopting reviewed worktree: task authority is not composed for spawn")
+	}
+	agg, err := r.taskAggregate()
+	if err != nil {
+		return BoundWorktree{}, err
+	}
+	targetID, err := domain.NewTaskID(r.reviewTask)
+	if err != nil {
+		return BoundWorktree{}, fmt.Errorf("adopting reviewed worktree: %w", err)
+	}
+	target, err := r.args.Authority.Get(targetID)
+	if err != nil {
+		return BoundWorktree{}, fmt.Errorf("adopting reviewed worktree: resolving reviewed task %s: %w", r.reviewTask, err)
+	}
+	if target.Definition.Kind != taskauthority.KindShip || target.Phase != taskauthority.PhaseWorking || target.Worktree == nil || target.Endpoint == nil {
+		return BoundWorktree{}, fmt.Errorf("adopting reviewed worktree: reviewed task %s is no longer a working ship task with its worktree and endpoint bound", r.reviewTask)
+	}
+	bound, err := newBoundWorktree(target.Worktree.Path)
+	if err != nil {
+		return BoundWorktree{}, fmt.Errorf("adopting reviewed worktree: %w", err)
+	}
+	head, err := gitRevParseForBinding(bound.Path(), "HEAD")
+	if err != nil {
+		return BoundWorktree{}, fmt.Errorf("adopting reviewed worktree: reading head: %w", err)
+	}
+	if head != r.reviewHead {
+		return BoundWorktree{}, fmt.Errorf("adopting reviewed worktree: reviewed task %s is at %s, not the reviewed head %s; add a new review for the new head", r.reviewTask, head, r.reviewHead)
+	}
+	launchDir := filepath.Join(reviewHomeDir(r.homeDir, r.args.ID), agg.Generation.String())
+	if err := os.MkdirAll(launchDir, 0o755); err != nil {
+		return BoundWorktree{}, fmt.Errorf("adopting reviewed worktree: %w", err)
+	}
+	r.cwd, r.launchDir = bound.Path(), launchDir
+	return bound, nil
 }
 
 // wtReservationID returns the launch intent's one-time worktree reservation
@@ -1168,6 +1263,9 @@ func (r *Runner) reconcileDeliveryFallback() error {
 // caller because it is opaque and cannot be re-derived.
 func (r *Runner) buildBeginSpawnRequest(prec domain.Precondition, gen taskauthority.Generation, endpointIncarnation string) taskauthority.CanonicalBeginSpawnRequest {
 	wtRes, wtFence, epRes, epFence := spawnReservationIdentities(r.args.ID, uint64(gen))
+	if r.kind == taskauthority.KindReview {
+		wtRes, wtFence = "", "" // a review task reserves no worktree
+	}
 	return taskauthority.CanonicalBeginSpawnRequest{
 		HomeID:                r.args.Authority.HomeID(),
 		TaskID:                r.taskID,
@@ -1178,7 +1276,7 @@ func (r *Runner) buildBeginSpawnRequest(prec domain.Precondition, gen taskauthor
 		Model:                 r.model,
 		Effort:                r.effort,
 		Mode:                  r.effectiveMode,
-		Kind:                  r.args.Kind,
+		Kind:                  r.kind,
 		Project:               r.projectConfig.ProjectName,
 		ParentTaskID:          r.resolveParentCaptainID(),
 		LaunchID:              fmt.Sprintf("launch-%s-%d", r.args.ID, uint64(gen)),
@@ -1544,7 +1642,7 @@ func (r *Runner) createSession() error {
 		Home:             r.homeDir,
 		PreferredBackend: backendName,
 		TabName:          tabName,
-		Cwd:              r.wtPath,
+		Cwd:              r.cwd,
 		ReservationID:    r.epReservationID(),
 		FenceToken:       r.epFenceToken(),
 	}
@@ -1653,11 +1751,12 @@ func (r *Runner) recordedAcquiredEndpoint() *taskauthority.AcquiredEndpoint {
 }
 
 // Phase 11a: buildSoldierPrompt builds the complete Soldier launch prompt,
-// runs fail-closed validation, and persists durable files to the worktree.
-// Must be called BEFORE createSession so that fail-closed checks happen before
-// any session allocation. It writes into the BoundWorktree it is given, which
-// only bindWorktree can produce — running before that phase is a compile
-// error, not a lost check.
+// runs fail-closed validation, and persists durable files to the launch
+// directory. Must be called BEFORE createSession so that fail-closed checks
+// happen before any session allocation. It takes the BoundWorktree that
+// bindWorktree or adoptReviewedWorktree produced — running before those phases
+// is a compile error, not a lost check. The launch files go to r.launchDir:
+// the soldier's own worktree, or a reviewer's directory under the home.
 func (r *Runner) buildSoldierPrompt(bound BoundWorktree) error {
 	// Read brief content from the registered brief path.
 	briefPath := Path(r.homeDir, r.args.ID)
@@ -1680,7 +1779,7 @@ func (r *Runner) buildSoldierPrompt(bound BoundWorktree) error {
 	// Build the prompt input struct.
 	input := LaunchPromptInput{
 		TaskID:                 r.args.ID,
-		TaskKind:               r.args.Kind,
+		TaskKind:               r.kind,
 		DeliveryMode:           r.effectiveMode,
 		Repository:             r.args.ProjectName,
 		ParentCaptainID:        parentCaptainID,
@@ -1717,8 +1816,8 @@ func (r *Runner) buildSoldierPrompt(bound BoundWorktree) error {
 	r.promptEnv = env
 
 	// Persist durable files to the worktree.
-	charter := DefaultCharter(r.args.ID, r.args.Kind, r.effectiveMode)
-	if err := PersistLaunchFiles(bound.Path(), charter, briefData, env, promptText); err != nil {
+	charter := DefaultCharter(r.args.ID, r.kind, r.effectiveMode)
+	if err := PersistLaunchFiles(r.launchDir, charter, briefData, env, promptText); err != nil {
 		return fmt.Errorf("persisting soldier launch files: %w", err)
 	}
 
@@ -1764,11 +1863,14 @@ func (r *Runner) resolveSkills() (required, optional []SkillEntry, diags []strin
 	var requiredNames []string
 	var optionalNames []string
 
-	switch r.args.Kind {
-	case "scout":
+	switch r.kind {
+	case taskauthority.KindScout:
 		// Scout tasks have no required skills; GitHub remains optional.
 		requiredNames = nil
 		optionalNames = []string{"gh-axi"}
+	case taskauthority.KindReview:
+		// A reviewer reads a checkout and delivers nothing.
+		requiredNames, optionalNames = nil, nil
 	default:
 		// ship tasks: github required.
 		requiredNames = []string{shipRequiredSkill}
@@ -1776,7 +1878,7 @@ func (r *Runner) resolveSkills() (required, optional []SkillEntry, diags []strin
 	}
 
 	// Apply no-mistakes mode policy: no-mistakes requires shipRequiredSkill always.
-	if r.effectiveMode == "no-mistakes" {
+	if r.effectiveMode == "no-mistakes" && r.kind != taskauthority.KindReview {
 		requiredNames = append(requiredNames, shipRequiredSkill)
 	}
 
@@ -1819,7 +1921,9 @@ func (r *Runner) submitLaunch() error {
 		snapshotDigest = r.projectConfig.SnapshotDigest
 	}
 	artifact, err := buildLaunchArtifact(LaunchArtifactInput{
-		WorktreePath:   r.wtPath,
+		WorktreePath:   r.cwd,
+		LaunchDir:      r.launchDir,
+		Review:         r.kind == taskauthority.KindReview,
 		HomeDir:        r.homeDir,
 		TaskID:         r.args.ID,
 		SnapshotDigest: snapshotDigest,
@@ -2256,7 +2360,7 @@ func (r *Runner) printEndpointInfo() {
 	}
 	fmt.Printf("Spawned soldier %s\n", r.args.ID)
 	fmt.Printf("  window:   %s\n", r.windowID)
-	fmt.Printf("  worktree: %s\n", r.wtPath)
+	fmt.Printf("  worktree: %s\n", r.cwd)
 	fmt.Printf("  projpath: %s\n", r.projPath)
 	fmt.Printf("  project:  %s\n", r.args.ProjectName)
 	fmt.Printf("  harness:  %s\n", r.harness)
@@ -2266,7 +2370,7 @@ func (r *Runner) printEndpointInfo() {
 	if r.effort != "" {
 		fmt.Printf("  effort:   %s\n", r.effort)
 	}
-	fmt.Printf("  kind:     %s\n", r.args.Kind)
+	fmt.Printf("  kind:     %s\n", r.kind)
 	fmt.Printf("  mode:     %s\n", r.effectiveMode)
 	if r.requestedMode != "" && r.requestedMode != r.effectiveMode {
 		fmt.Printf("  requested: %s\n", r.requestedMode)
@@ -2285,4 +2389,11 @@ func (r *Runner) armWatcher() {
 	if armErr := r.args.ArmFunc(r.homeDir); armErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to ensure watcher: %v\n  Run 'munsu watch ensure' to repair supervision.\n", armErr)
 	}
+}
+
+// reviewHomeDir is the review task's launch-file root under the home. A review
+// launch writes its script, guard and brief here, never into the reviewed
+// worktree.
+func reviewHomeDir(homeDir, id string) string {
+	return filepath.Join(homeDir, "review", id)
 }

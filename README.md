@@ -120,6 +120,7 @@ munsu session-start
 
 ```sh
 munsu task add <task-id> "<description>" --kind ship --repo <name>
+munsu task add <task-id> "<description>" --kind review --reviews <ship-id> [--repo <name>]
 munsu task start <task-id>
 munsu task done <task-id>
 ```
@@ -127,7 +128,7 @@ munsu task done <task-id>
 ### Soldier lifecycle
 
 ```sh
-munsu spawn <task-id> [<project>] [--kind ship|scout] [--mode no-mistakes|direct-PR|local-only]  (default: auto-detect, project inferred from cwd)
+munsu spawn <task-id> [<project>] [--mode no-mistakes|direct-PR|local-only]  (default: auto-detect, project inferred from cwd)
 munsu watch ensure [--restart]
 munsu send <task-id> "<instruction>"
 munsu peek <task-id> [--lines N]

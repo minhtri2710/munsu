@@ -1338,9 +1338,9 @@ func TestRegression_ResolveSkillsWithoutSrcwalk(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			r := &Runner{
 				args: Args{
-					Kind: tc.kind,
 					Mode: "direct-PR",
 				},
+				kind:          tc.kind,
 				effectiveMode: "direct-PR",
 				spawnRole:     "soldier",
 			}
@@ -1415,7 +1415,7 @@ func TestWriteTaskMetaNeverWritesAuthoritativeFields(t *testing.T) {
 	canonicalCreateTask(t, auth, taskID, "ship", "test-proj")
 	r := &Runner{
 		homeDir:       homeDir,
-		args:          Args{ID: taskID, ProjectName: "test-proj", Kind: "scout", Authority: auth},
+		args:          Args{ID: taskID, ProjectName: "test-proj", Authority: auth},
 		windowID:      "session:pane-1",
 		wtPath:        "/tmp/wt",
 		projPath:      "/tmp/proj",

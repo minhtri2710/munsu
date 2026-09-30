@@ -338,7 +338,6 @@ func runLifecycleWorkflow(t *testing.T, tc workflowCase) {
 	if _, err := fleet.Spawn(fleet.Args{
 		ID:          taskID,
 		ProjectName: "alpha",
-		Kind:        "scout",
 		Mode:        "local-only",
 		HomeDir:     spawnHome,
 		Endpoints:   endpoints,

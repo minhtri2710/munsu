@@ -125,6 +125,9 @@ func (c *Canonical) BeginSpawn(op domain.Operation, req CanonicalBeginSpawnReque
 		if cur.Worktree != nil || cur.Endpoint != nil {
 			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s already holds acquired bindings; launch intent must precede resource acquisition", cur.TaskID, cur.Generation)
 		}
+		if (cur.Definition.Kind == KindReview) != (req.Kind == KindReview) {
+			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s is a %s task; its launch intent kind %q must agree (only a review launch reserves no worktree)", cur.TaskID, cur.Generation, cur.Definition.Kind, req.Kind)
+		}
 		if cur.Launch != nil {
 			if launchIntentSame(*cur.Launch, req) {
 				return cur.clone(), nil

@@ -158,7 +158,7 @@ func TestReentrantAuthorizeUsesCorrectIncarnation(t *testing.T) {
 func TestMintIncarnationFailAbortsLaunch(t *testing.T) {
 	auth := mustCanonical(t)
 	canonicalCreateTask(t, auth, "mint-fail", "ship", "proj")
-	r := &Runner{homeDir: t.TempDir(), args: Args{ID: "mint-fail", ProjectName: "proj", Kind: "ship", Authority: auth, IncarnationMint: func() (string, error) {
+	r := &Runner{homeDir: t.TempDir(), args: Args{ID: "mint-fail", ProjectName: "proj", Authority: auth, IncarnationMint: func() (string, error) {
 		return "", errors.New("entropy unavailable")
 	}}, projectConfigLoaded: true, projectConfig: SpawnProjectConfig{SnapshotDigest: strings.Repeat("a", 64)}}
 	r.taskID = mustTaskID(t, "mint-fail")

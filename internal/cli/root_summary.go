@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"io"
 	"time"
 
@@ -51,7 +52,7 @@ func loadRootSummary(homeDir string) (rootSummaryView, error) {
 	}
 	v.totalTasks = len(snap.Tasks)
 	for _, ts := range snap.Tasks {
-		if ts.Kind == "ship" || ts.Kind == "scout" {
+		if taskauthority.SoldierKind(ts.Kind) {
 			v.inFlight++
 		}
 		task := rootSummaryTask{

@@ -512,6 +512,7 @@ func TestLaunchArtifactGuardProvesSingleProcessLaunches(t *testing.T) {
 	agg := f.aggregate()
 	artifact, err := buildLaunchArtifact(LaunchArtifactInput{
 		WorktreePath:   f.runner.wtPath,
+		LaunchDir:      f.runner.wtPath,
 		HomeDir:        f.homeDir,
 		TaskID:         f.taskID,
 		SnapshotDigest: f.runner.projectConfig.SnapshotDigest,
@@ -593,6 +594,7 @@ func TestLaunchArtifactGuardExistsSkipsProcessOnReEntry(t *testing.T) {
 	agg := f.aggregate()
 	artifact, err := buildLaunchArtifact(LaunchArtifactInput{
 		WorktreePath:   f.runner.wtPath,
+		LaunchDir:      f.runner.wtPath,
 		HomeDir:        f.homeDir,
 		TaskID:         f.taskID,
 		SnapshotDigest: f.runner.projectConfig.SnapshotDigest,
@@ -651,6 +653,7 @@ func TestLaunchArtifactGuardConcurrentSubmissionsSingleProcess(t *testing.T) {
 	agg := f.aggregate()
 	artifact, err := buildLaunchArtifact(LaunchArtifactInput{
 		WorktreePath:   f.runner.wtPath,
+		LaunchDir:      f.runner.wtPath,
 		HomeDir:        f.homeDir,
 		TaskID:         f.taskID,
 		SnapshotDigest: f.runner.projectConfig.SnapshotDigest,
@@ -781,6 +784,7 @@ func TestLaunchArtifactReentrantGuardRealPath(t *testing.T) {
 	agg := f.aggregate()
 	in := LaunchArtifactInput{
 		WorktreePath:   f.runner.wtPath,
+		LaunchDir:      f.runner.wtPath,
 		HomeDir:        f.homeDir,
 		TaskID:         f.taskID,
 		SnapshotDigest: f.runner.projectConfig.SnapshotDigest,
