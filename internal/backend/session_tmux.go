@@ -175,14 +175,18 @@ func (t *TmuxBackend) CheckAlive(windowID string) (bool, error) {
 }
 
 // Teardown kills the identified window via `tmux kill-window -t <windowID>`.
-// Errors are silently ignored if the window is already gone.
+// A kill that fails because the target is already gone settles as done; any
+// other failure (server, socket, timeout, permission) is returned.
 func (t *TmuxBackend) Teardown(windowID string) error {
 	bin, err := lookBackendBin("tmux")
 	if err != nil {
 		return err
 	}
 	target := normalizeTarget(windowID)
-	_, _, _ = runBackendCommand(bin, []string{"kill-window", "-t", target}, "", nil) // ignore errors — window may already be gone
+	out, stderr, err := runBackendCommand(bin, []string{"kill-window", "-t", target}, "", nil)
+	if err != nil && (isBackendCommandTimeout(err) || !isTmuxTargetAbsent(commandOutput(out, stderr))) {
+		return wrapBackendCommandError("tmux kill-window", out, stderr, err)
+	}
 	return nil
 }
 

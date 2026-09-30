@@ -161,9 +161,9 @@ func isHerdrWaitTimeout(err error) bool {
 	return false
 }
 
-// isNotFoundErr returns true for structured 'not found' / 'pane_not_found' herdr errors.
-// Prefers typed error code matching over textual substring for known codes;
-// falls back to textual matching for legacy/unknown error formats.
+// isNotFoundErr returns true only for a structured herdr error whose code names
+// an absent pane, workspace or tab. An error without a structured code is not
+// absence: it fails closed to the caller as a backend failure.
 func isNotFoundErr(err error) bool {
 	if err == nil || isBackendCommandTimeout(err) {
 		return false
@@ -179,17 +179,15 @@ func isNotFoundErr(err error) bool {
 	if errors.As(err, &execErr) {
 		return false
 	}
-	// Try structured error code first.
-	if herr := parseHerdrError(err); herr != nil {
-		switch herr.Code {
-		case HerdrErrPaneNotFound, HerdrErrWorkspaceNotFound, HerdrErrTabNotFound:
-			return true
-		}
+	herr := parseHerdrError(err)
+	if herr == nil {
 		return false
 	}
-	// Legacy fallback: textual substring matching.
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "not found") || strings.Contains(msg, "not_found") || strings.Contains(msg, "pane_not_found")
+	switch herr.Code {
+	case HerdrErrPaneNotFound, HerdrErrWorkspaceNotFound, HerdrErrTabNotFound:
+		return true
+	}
+	return false
 }
 
 // isHerdrCommandExit reports a completed herdr command that returned a
