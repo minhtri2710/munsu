@@ -48,9 +48,6 @@ func mustFleetTaskID(t *testing.T, value string) domain.TaskID {
 	return id
 }
 
-// domainOf is domain.Of.
-func domainOf(gen, rev uint64) domain.Precondition { return domain.Of(gen, rev) }
-
 // mustFleetCreate creates a queued task through the canonical authority.
 func mustFleetCreate(t *testing.T, c *taskauthority.Canonical, taskID string) taskauthority.Outcome {
 	t.Helper()

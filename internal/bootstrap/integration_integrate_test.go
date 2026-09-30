@@ -649,20 +649,22 @@ func TestCheckPiCapability_OrdinarySuccess(t *testing.T) {
 	}
 }
 
-// TestCheckPiCapability_MalformedOutput verifies that malformed version output
-// is rejected, even via the injectable runner.
+// TestCheckPiCapability_MalformedRunnerOutput verifies that empty and malformed
+// version output is rejected, even via the injectable runner.
 func TestCheckPiCapability_MalformedRunnerOutput(t *testing.T) {
-	_ = SetCapabilityCommandRunner(func(name string, args []string, dir string, timeout time.Duration) (string, error) {
-		return "not-a-version\n", nil
-	})
-	defer ResetCapabilityCommandRunner()
-
-	err := CheckPiCapability("/fake/pi")
-	if err == nil {
-		t.Fatal("expected error for malformed version")
-	}
-	if !strings.Contains(err.Error(), "cannot parse pi version") {
-		t.Fatalf("error should mention parse failure, got: %v", err)
+	for _, tc := range []struct{ name, out, want string }{
+		{"empty", " \n", "pi --version returned empty output"},
+		{"malformed", "not-a-version\n", "cannot parse pi version"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			defer SetCapabilityCommandRunner(func(string, []string, string, time.Duration) (string, error) {
+				return tc.out, nil
+			})()
+			err := CheckPiCapability("/fake/pi")
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("CheckPiCapability error = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 
