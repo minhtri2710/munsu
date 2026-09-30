@@ -6,9 +6,43 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
+
+// TestStartTaskRespectsDispatchHoldWithoutChangingQueuedState proves the
+// canonical Start operation evaluates durable Dispatch Holds inside the same
+// home.Commit transaction: a matching hold leaves the queued phase unchanged.
+func TestStartTaskRespectsDispatchHoldWithoutChangingQueuedState(t *testing.T) {
+	c, _ := newFleetCanonical(t)
+	taskID := mustFleetTaskID(t, "task")
+	mustFleetCreate(t, c, "task")
+
+	createHold := taskauthority.CanonicalAddHoldRequest{
+		HomeID:  c.HomeID(),
+		HoldID:  "start-pause",
+		Scope:   taskauthority.DispatchHoldScope{TaskIDs: []string{"task"}},
+		Actions: []taskauthority.DispatchAction{taskauthority.DispatchActionStart},
+		Reason:  "pause",
+	}
+	if _, err := c.AddHold(mustFleetOperation(t, "hold-seed", createHold), createHold); err != nil {
+		t.Fatal(err)
+	}
+	start := taskauthority.CanonicalStartRequest{
+		HomeID:       c.HomeID(),
+		TaskID:       taskID,
+		Precondition: domain.Of(1, 1),
+		Reason:       "start",
+	}
+	if _, err := c.Start(mustFleetOperation(t, "start-1", start), start); !errors.Is(err, taskauthority.ErrDispatchHeld) {
+		t.Fatalf("start err = %v, want dispatch hold", err)
+	}
+	agg, err := c.Get(taskID)
+	if err != nil || agg.Phase != taskauthority.PhaseQueued {
+		t.Fatalf("current = %+v err=%v, want queued", agg, err)
+	}
+}
 
 // TestSpawnFailsClosedOnDegradedSupervision proves the supervision gate fires
 // before authority or store calls and leaves the queued task untouched.

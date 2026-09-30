@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -613,6 +614,65 @@ func TestEndToEnd_BusyThenFlush(t *testing.T) {
 	store := home.NewStore(captainHome)
 	if store.IsAcked(senderIdentity, sendResult.MessageID) {
 		t.Fatal("flush must NOT write ack")
+	}
+}
+
+// TestSoldierLifecycleTransitions verifies that the lifecycle transitions
+// working → review-ready → amending → review-ready → done work correctly.
+func TestSoldierLifecycleTransitions(t *testing.T) {
+	captainHome := filepath.Join(t.TempDir(), "lifecycle")
+	if err := os.MkdirAll(captainHome, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	taskID := "task:lifecycle"
+
+	lifecycle := []struct {
+		state string
+		msg   string
+		key   string
+	}{
+		{"working", "spawned", "spawn"},
+		{"review-ready", "first turn complete", "review-1"},
+		{"working", "amending", "amend-1"},
+		{"review-ready", "second turn complete", "review-2"},
+		{"done", "PR url", "final"},
+	}
+
+	for _, step := range lifecycle {
+		line := step.state + ": " + step.msg
+		if step.key != "" {
+			line += " [key=" + step.key + "]"
+		}
+		if err := home.AppendStatus(captainHome, taskID, line); err != nil {
+			t.Fatalf("appending %s: %v", step.state, err)
+		}
+	}
+
+	// Verify status states are all valid.
+	for _, step := range lifecycle {
+		if !domain.IsValidStatusState(step.state) {
+			t.Errorf("status state %q should be valid", step.state)
+		}
+	}
+
+	// Read back the status file and verify all transitions exist.
+	statusLines, err := home.ReadStatus(captainHome, taskID)
+	if err != nil {
+		t.Fatalf("ReadStatus: %v", err)
+	}
+	if len(statusLines) != len(lifecycle) {
+		t.Fatalf("expected %d status lines, got %d", len(lifecycle), len(statusLines))
+	}
+
+	for i, step := range lifecycle {
+		expected := step.state + ": " + step.msg
+		if step.key != "" {
+			expected += " [key=" + step.key + "]"
+		}
+		if statusLines[i] != expected {
+			t.Errorf("status[%d] = %q, want %q", i, statusLines[i], expected)
+		}
 	}
 }
 

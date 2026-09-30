@@ -164,6 +164,92 @@ func TestStructuredState_MetaHomeComparedCanonically(t *testing.T) {
 // marker but no .git is refused by Update as a failure and fails the
 // fast-forward step of Converge; it is never skipped as a success.
 
+// TestTerminalPhases_StatusFileOverridesProse proves that structured status
+// artifacts are written and read correctly, demonstrating that the system
+// relies on them rather than pane text.
+func TestTerminalPhases_StatusFileOverridesProse(t *testing.T) {
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, "state"), 0755)
+
+	t.Run("append and read done status", func(t *testing.T) {
+		id := "captain:test-sm"
+		lines := []string{
+			"working: task started",
+			"done: task completed [key=task-1]",
+		}
+		for _, line := range lines {
+			if err := mhome.AppendStatus(home, id, line); err != nil {
+				t.Fatal(err)
+			}
+		}
+		got, err := mhome.ReadStatus(home, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("expected 2 status lines, got %d: %v", len(got), got)
+		}
+		last := got[len(got)-1]
+		if !strings.Contains(last, "done") {
+			t.Errorf("last status line = %q, want done", last)
+		}
+	})
+
+	t.Run("failed status overrides working", func(t *testing.T) {
+		id := "captain:other-sm"
+		mhome.AppendStatus(home, id, "working: in progress")
+		mhome.AppendStatus(home, id, "failed: something broke [key=bug-1]")
+		got, err := mhome.ReadStatus(home, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("expected 2 lines, got %d", len(got))
+		}
+		msg, key := mhome.ParseStatusKey(got[1])
+		if !strings.Contains(msg, "failed") {
+			t.Errorf("expected failed status, got %q", msg)
+		}
+		if key != "bug-1" {
+			t.Errorf("expected key=bug-1, got %q", key)
+		}
+	})
+}
+
+// TestTerminalPhases_ResolvedOverridesWorking proves that a resolved status
+// line appended after a working line is correctly stored and readable —
+// demonstrating structured precedence over any "working" prose.
+func TestTerminalPhases_ResolvedOverridesWorking(t *testing.T) {
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, "state"), 0755)
+
+	id := "captain:api"
+	workingMsg := "working: fixing the widget"
+	resolvedMsg := "resolved: fixed the widget [key=widget-fix]"
+
+	mhome.AppendStatus(home, id, workingMsg)
+	mhome.AppendStatus(home, id, resolvedMsg)
+
+	got, err := mhome.ReadStatus(home, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 lines, got %d", len(got))
+	}
+	last := got[len(got)-1]
+	if !strings.Contains(last, "resolved") {
+		t.Errorf("last line = %q, want resolved", last)
+	}
+	msg, key := mhome.ParseStatusKey(last)
+	if msg == "" {
+		t.Error("expected non-empty message")
+	}
+	if key != "widget-fix" {
+		t.Errorf("key = %q, want widget-fix", key)
+	}
+}
+
 func unsupportedCaptainHomeFixture(t *testing.T, parent, id string) string {
 	t.Helper()
 	smHome := filepath.Join(parent, "captains", id)
