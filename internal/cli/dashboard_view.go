@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -101,8 +102,30 @@ func pad(s string, w int) string {
 	return s + strings.Repeat(" ", max(0, w-lipgloss.Width(s)))
 }
 
+// dashText makes text the dashboard did not write safe to draw: every
+// non-printable rune (control, format such as a bidi override, invalid UTF-8)
+// is shown as an escape, never emitted raw and never dropped. Apply it where
+// data enters a line, before any styling.
+func dashText(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		r, n := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == utf8.RuneError && n == 1:
+			fmt.Fprintf(&b, `\x%02x`, s[i])
+		case r != ' ' && !strconv.IsPrint(r):
+			q := strconv.QuoteToASCII(string(r))
+			b.WriteString(q[1 : len(q)-1])
+		default:
+			b.WriteRune(r)
+		}
+		i += n
+	}
+	return b.String()
+}
+
 func quoteArg(s string) string {
-	if s == "" || strings.ContainsAny(s, " \t\r\n\"'\\$`") {
+	if s == "" || strings.ContainsAny(s, " \t\r\n\"'\\$`") || dashText(s) != s {
 		return strconv.Quote(s)
 	}
 	return s
@@ -158,13 +181,13 @@ func (m dashboardModel) confirmFits() bool {
 }
 
 func (m dashboardModel) header() []string {
-	title := dashBold.Render("munsu dashboard") + " " + dashFaint.Render(m.home)
+	title := dashBold.Render("munsu dashboard") + " " + dashFaint.Render(dashText(m.home))
 	var badge, counts string
 	switch m.state() {
 	case stateLoading:
 		badge = dashYellow.Render("LOADING")
 	case stateFailed:
-		badge = dashRed.Render("FAILED " + fmt.Sprint(m.readErr))
+		badge = dashRed.Render("FAILED " + dashText(fmt.Sprint(m.readErr)))
 	case stateStale:
 		badge = dashRed.Render("STALE last good read " + m.age() + " ago")
 	case stateEmpty:
@@ -190,17 +213,17 @@ func (m dashboardModel) body(avail int) []string {
 	case stateLoading:
 		return []string{dashFaint.Render("Loading fleet...")}
 	case stateFailed:
-		return []string{dashRed.Render("Fleet read failed: " + fmt.Sprint(m.readErr))}
+		return []string{dashRed.Render("Fleet read failed: " + dashText(fmt.Sprint(m.readErr)))}
 	case stateEmpty:
 		return []string{dashFaint.Render("No tasks and no failed sources.")}
 	}
 	stale := m.state() == stateStale
 	if stale && m.readErr != nil {
-		out = append(out, dashRed.Render("Last read failed: "+m.readErr.Error()))
+		out = append(out, dashRed.Render("Last read failed: "+dashText(m.readErr.Error())))
 	}
 	for i := range m.failures {
 		f := m.failures[i]
-		line := m.mark(i) + "x " + f.Source + "  " + fmt.Sprint(f.Err)
+		line := m.mark(i) + "x " + dashText(f.Source) + "  " + dashText(fmt.Sprint(f.Err))
 		out = append(out, m.styleLine(i, line, dashRed))
 	}
 
@@ -217,28 +240,29 @@ func (m dashboardModel) body(avail int) []string {
 	out = append(out, dashBold.Render(title))
 	for j, ts := range shown {
 		i := len(m.failures) + start + j
-		phase := fleet.PhaseFromProjection(ts)
+		phase := dashText(fleet.PhaseFromProjection(ts))
 		if stale {
 			phase += " [stale]"
 		}
-		status := ts.CurrentDescription
+		status := dashText(ts.CurrentDescription)
 		if status == "" {
-			status = ts.LastStatus
+			status = dashText(ts.LastStatus)
 		}
 		hn := "  "
 		if fleet.HumanNeeded(ts) {
 			hn = "! "
 		}
-		src := ts.Source
+		src := dashText(ts.Source)
 		if src == "" {
 			src = "primary"
 		}
-		plain := m.mark(i) + hn + pad(ts.ID, 22) + " " + pad(phase, 16) + " " + pad(ts.Kind, 7) + " " + pad(src, 16) + " " + status
+		id, kind := dashText(ts.ID), dashText(ts.Kind)
+		plain := m.mark(i) + hn + pad(id, 22) + " " + pad(phase, 16) + " " + pad(kind, 7) + " " + pad(src, 16) + " " + status
 		if i == m.cur {
 			out = append(out, dashSelect.Render(plain))
 			continue
 		}
-		cells := m.mark(i) + hn + pad(ts.ID, 22) + " " + phaseStyle(phase).Render(pad(phase, 16)) + " " + pad(ts.Kind, 7) + " " + pad(src, 16) + " " + status
+		cells := m.mark(i) + hn + pad(id, 22) + " " + phaseStyle(phase).Render(pad(phase, 16)) + " " + pad(kind, 7) + " " + pad(src, 16) + " " + status
 		out = append(out, cells)
 	}
 	return out
@@ -262,7 +286,7 @@ func (m dashboardModel) feed(n int) []string {
 	shown := m.events[max(0, len(m.events)-(n-1)):]
 	var title string
 	if m.eventErr != nil {
-		title = dashRed.Render("Events - unreadable: " + m.eventErr.Error())
+		title = dashRed.Render("Events - unreadable: " + dashText(m.eventErr.Error()))
 	} else {
 		t := "Events"
 		if m.skipped > 0 {
@@ -288,7 +312,7 @@ func (m dashboardModel) feed(n int) []string {
 
 func eventLine(e orchestrator.Record) string {
 	at := time.Unix(0, e.Timestamp).UTC().Format("15:04:05")
-	return strings.TrimRight(fmt.Sprintf("%s %s %s %s %s", at, e.Type, e.Producer, e.Key, e.Payload), " ")
+	return strings.TrimRight(fmt.Sprintf("%s %s %s %s %s", at, dashText(e.Type), dashText(e.Producer), dashText(e.Key), dashText(e.Payload)), " ")
 }
 
 func (m dashboardModel) footer() []string {
@@ -306,7 +330,7 @@ func (m dashboardModel) footer() []string {
 			if f.required {
 				req = " (required)"
 			}
-			val := strings.NewReplacer("\r", "<CR>", "\n", "<LF>").Replace(p.values[i])
+			val := dashText(p.values[i])
 			if i == p.field {
 				val += "_"
 			}
@@ -327,16 +351,18 @@ func (m dashboardModel) footer() []string {
 				out = append(out, dashRed.Render(head))
 			}
 			if r.err != nil && r.exitCode() < 0 {
-				out = append(out, dashRed.Render(r.err.Error()))
+				out = append(out, dashRed.Render(dashText(r.err.Error())))
 			}
-			out = append(out, r.outputTail()...)
+			for _, l := range r.outputTail() {
+				out = append(out, dashText(l))
+			}
 		}
 		for _, l := range dashHelp {
 			out = append(out, dashFaint.Render(l))
 		}
 	}
 	if m.notice != "" {
-		out = append(out, dashRed.Render(m.notice))
+		out = append(out, dashRed.Render(dashText(m.notice)))
 	}
 	return out
 }

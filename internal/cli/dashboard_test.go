@@ -546,6 +546,193 @@ func TestDashboardConfirmTooSmallRefusesY(t *testing.T) {
 	}
 }
 
+// assertNoRaw fails when the frame carries a hostile character unescaped.
+// The dashboard's own styling never emits NUL, a bidi override or SGR 8.
+func assertNoRaw(t *testing.T, name, frame string) {
+	t.Helper()
+	for _, raw := range []string{"\x00", "\u202e", "\x1b[8m"} {
+		if strings.Contains(frame, raw) {
+			t.Errorf("%s: frame carries %q raw:\n%s", name, raw, frame)
+		}
+	}
+}
+
+func assertShown(t *testing.T, name, frame string, wants ...string) {
+	t.Helper()
+	for _, w := range wants {
+		if !strings.Contains(frame, w) {
+			t.Errorf("%s: frame lacks the escaped text %q:\n%s", name, w, frame)
+		}
+	}
+}
+
+// Text the dashboard did not write is shown escaped at every render site:
+// never raw, never dropped.
+func TestDashboardHostileTextIsEscaped(t *testing.T) {
+	hostileRow := fleet.TaskSnapshot{
+		ID: "i\x00\u202e", Kind: "k\x00", Source: "s\x00\u202e", CurrentState: "p\x00",
+		CurrentDescription: "d\x00\u202e\x1b[8m",
+	}
+	t.Run("rows failures events", func(t *testing.T) {
+		m := testDashModel()
+		m.home = "/h\x00"
+		m.width = 120
+		r := goodRead(dashNow, []fleet.TaskSnapshot{hostileRow},
+			[]fleet.SourceFailure{{Source: "fs\x00", Err: errors.New("fe\x00\u202e\x1b[8m")}},
+			[]orchestrator.Record{{ID: 1, Timestamp: dashNow.UnixNano(), Type: "et\x00", Producer: "ep\x00", Key: "ek\x00", Payload: "pl\x00\u202e\x1b[8m"}})
+		m = send(m, r)
+		f := m.frame()
+		assertNoRaw(t, "rows failures events", f)
+		assertShown(t, "rows failures events", f, `/h\x00`, `i\x00\u202e`, `k\x00`, `s\x00\u202e`, `p\x00`, `d\x00\u202e\x1b[8m`,
+			`fs\x00`, `fe\x00\u202e\x1b[8m`, `et\x00 ep\x00 ek\x00 pl\x00\u202e\x1b[8m`)
+	})
+	t.Run("event log error", func(t *testing.T) {
+		r := goodRead(dashNow, nil, nil, nil)
+		r.eventErr = errors.New("ee\x00\u202e\x1b[8m")
+		f := send(testDashModel(), r).frame()
+		assertNoRaw(t, "event log error", f)
+		assertShown(t, "event log error", f, `ee\x00\u202e\x1b[8m`)
+	})
+	t.Run("status falls back to last status", func(t *testing.T) {
+		hostileRow.CurrentDescription, hostileRow.LastStatus = "", "ls\x00"
+		f := send(testDashModel(), goodRead(dashNow, []fleet.TaskSnapshot{hostileRow}, nil, nil)).frame()
+		assertNoRaw(t, "last status", f)
+		assertShown(t, "last status", f, `ls\x00`)
+	})
+	t.Run("stale read error", func(t *testing.T) {
+		m := send(testDashModel(), goodRead(dashNow, []fleet.TaskSnapshot{row("t-1", "working", "x", "primary", "")}, nil, nil))
+		m = send(m, dashRead{at: dashNow, snapErr: errors.New("re\x00\u202e\x1b[8m")})
+		f := m.frame()
+		assertNoRaw(t, "stale read error", f)
+		assertShown(t, "stale read error", f, `re\x00\u202e\x1b[8m`)
+	})
+	t.Run("failed first read", func(t *testing.T) {
+		m := send(testDashModel(), dashRead{at: dashNow, snapErr: errors.New("fr\x00\u202e\x1b[8m")})
+		f := m.frame()
+		assertNoRaw(t, "failed first read", f)
+		assertShown(t, "failed first read", f, `FAILED fr\x00\u202e\x1b[8m`, `Fleet read failed: fr\x00\u202e\x1b[8m`)
+	})
+	t.Run("form value and confirm argv", func(t *testing.T) {
+		var calls []execCall
+		m := selectTask(t, actionFixture(&calls), "p-1")
+		m.exe = "/bin/mu\x00"
+		m = press(m, "s")
+		m = send(m, tea.PasteMsg{Content: "hi\x1b[8mSECRET\x00\u202e"})
+		f := m.frame()
+		assertNoRaw(t, "form", f)
+		assertShown(t, "form", f, `hi\x1b[8mSECRET\x00\u202e`)
+		m = press(m, "enter")
+		if m.mode != modeConfirm {
+			t.Fatalf("mode = %v, want confirm", m.mode)
+		}
+		f = m.frame()
+		assertNoRaw(t, "confirm", f)
+		assertShown(t, "confirm", f, `"hi\x1b[8mSECRET\x00\u202e"`, `"/bin/mu\x00"`)
+		if got := m.pending.argv[len(m.pending.argv)-1]; got != "hi\x1b[8mSECRET\x00\u202e" {
+			t.Fatalf("argv element changed to %q; display escaping must not alter what runs", got)
+		}
+	})
+	t.Run("result and notice", func(t *testing.T) {
+		m := testDashModel()
+		m.notice = "n\x00"
+		m.result = &dashExecDone{argv: []string{"/bin/mu\x00", "a\u202e"}, err: errors.New("er\x00"), output: "o\x1b[8m\nline\u202e"}
+		f := m.frame()
+		assertNoRaw(t, "result", f)
+		assertShown(t, "result", f, `n\x00`, `"/bin/mu\x00" "a\u202e"`, `er\x00`, `o\x1b[8m`, `line\u202e`)
+	})
+}
+
+// The confirm step runs only when the header and the whole confirm block fit
+// the terminal exactly; one row shorter it runs nothing, even though the
+// footer alone would still fit.
+func TestDashboardConfirmFitBoundary(t *testing.T) {
+	var calls []execCall
+	m, _ := prMergeConfirm(t, &calls, 60, 40)
+	lines := strings.Split(ansiSeq.ReplaceAllString(m.frame(), ""), "\n")
+	const header = 2
+	if !strings.HasPrefix(lines[0], "munsu dashboard") || !strings.HasPrefix(lines[1], "unresolved") {
+		t.Fatalf("header is not two lines:\n%s", strings.Join(lines, "\n"))
+	}
+	footer := 0
+	for i, l := range lines {
+		if strings.HasPrefix(l, "Run: ") {
+			footer = len(lines) - i
+			break
+		}
+	}
+	if footer == 0 {
+		t.Fatalf("no confirm block in the frame:\n%s", strings.Join(lines, "\n"))
+	}
+
+	exact := send(m, tea.WindowSizeMsg{Width: 60, Height: header + footer})
+	if n := len(strings.Split(exact.frame(), "\n")); n > exact.height {
+		t.Fatalf("frame has %d lines at height %d", n, exact.height)
+	}
+	press(exact, "y")
+	if len(calls) != 1 {
+		t.Fatalf("calls = %d at the exact fit height %d, want 1", len(calls), header+footer)
+	}
+	short := send(m, tea.WindowSizeMsg{Width: 60, Height: header + footer - 1})
+	press(short, "y")
+	if len(calls) != 1 {
+		t.Fatalf("calls = %d one row below the fit height, want no further exec", len(calls))
+	}
+}
+
+// wrap never makes a line wider than w, at the token boundaries w and w+1,
+// and loses no character.
+func TestDashboardWrapBoundaries(t *testing.T) {
+	const w = 8
+	for _, in := range []string{
+		strings.Repeat("x", w),
+		strings.Repeat("x", w+1),
+		"ab " + strings.Repeat("y", w),
+		"ab " + strings.Repeat("y", w+1),
+	} {
+		lines := wrap(in, w)
+		for _, l := range lines {
+			if lipgloss.Width(l) > w {
+				t.Errorf("wrap(%q, %d) has the %d-cell line %q", in, w, lipgloss.Width(l), l)
+			}
+		}
+		if got := strings.Join(lines, ""); got != in {
+			t.Errorf("wrap(%q, %d) lines join to %q", in, w, got)
+		}
+	}
+}
+
+// A fresh row whose pane state is unknown is never rendered green.
+func TestDashboardUnknownPhaseIsNeverGreen(t *testing.T) {
+	m := send(testDashModel(), goodRead(dashNow, []fleet.TaskSnapshot{
+		row("t-first", "working", "x", "primary", ""),
+		{ID: "t-unk", Kind: "ship", PaneAliveUnknown: true, Source: "primary"},
+	}, nil, nil))
+	green := strings.SplitN(dashGreen.Render("x"), "x", 2)[0]
+	found := false
+	for _, l := range strings.Split(m.frame(), "\n") {
+		if strings.Contains(l, "t-unk") {
+			found = true
+			if !strings.Contains(l, "unknown") || strings.Contains(l, green) {
+				t.Errorf("unknown-phase row is green or lacks its phase: %q", l)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("unknown-phase row not rendered")
+	}
+}
+
+// A retired task is finished: it is not counted as unresolved.
+func TestDashboardRetiredIsNotUnresolved(t *testing.T) {
+	m := send(testDashModel(), goodRead(dashNow, []fleet.TaskSnapshot{
+		row("t-ret", "retired", "x", "primary", ""),
+		row("t-work", "working", "x", "primary", ""),
+	}, nil, nil))
+	if n := m.unresolved(); n != 1 {
+		t.Fatalf("unresolved = %d, want 1 (the working row)", n)
+	}
+}
+
 // captain recover takes the registry ID, which need not equal the directory
 // name; a home no registered captain owns is not bindable.
 func TestDashboardRecoverResolvesRegistryID(t *testing.T) {
