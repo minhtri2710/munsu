@@ -202,12 +202,10 @@ func TestLaunchRecoveryCallCountsAfterAttach(t *testing.T) {
 		t.Fatalf("first run: %v", err)
 	}
 	// After the attach the worktree is durably bound: recovery must NOT call
-	// the worktree provider again. Prove it by breaking the repo so a second
-	// acquisition would fail — recovery must still succeed by adopting the
-	// bound worktree.
-	if err := breakWorktreeRepo(t, f); err != nil {
-		t.Fatal(err)
-	}
+	// the worktree provider again. Prove it by holding the pool lock so a
+	// second acquisition would fail — recovery must still succeed by adopting
+	// the bound worktree.
+	holdWorktreePool(t, f)
 	if err := runLaunchPhases(f, ""); err != nil {
 		t.Fatalf("recovery run failed (worktree must be adopted, not re-acquired): %v", err)
 	}
@@ -226,24 +224,18 @@ func TestLaunchRecoveryCallCountsAfterAttach(t *testing.T) {
 	}
 }
 
-// breakWorktreeRepo makes a second worktree acquisition fail (the repo is
-// removed) so recovery provably skips the provider when the worktree is
-// durably bound.
-func breakWorktreeRepo(t *testing.T, f *launchFixture) error {
+// holdWorktreePool makes a second worktree acquisition fail: acquireWorktree
+// takes the worktree-pool lock before it leases, so a held lock refuses it while
+// an adopted durable binding never reaches the lock. The primary repo stays
+// intact: launch fence resolves it on every re-entry, and the bound linked
+// worktree needs it to classify.
+func holdWorktreePool(t *testing.T, f *launchFixture) {
 	t.Helper()
-	// Point the launch at a repo path that does not exist: a re-acquisition
-	// through the git fallback would fail (git worktree add needs the repo),
-	// so a recovery that reaches the provider cannot succeed.
-	//
-	// The primary repo itself must survive. Deleting it would also break the
-	// bound worktree — a linked worktree whose common dir is gone no longer
-	// classifies as a worktree — and recovery re-classifies the path it
-	// adopts (bindWorktree), so the probe would fail on identity instead of
-	// on the acquisition it is meant to detect.
-	missing := filepath.Join(t.TempDir(), "removed-repo")
-	f.runner.projPath = missing
-	f.runner.projectConfig.ProjectPath = missing
-	return nil
+	lk, err := LockWorktreePool(f.homeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { lk.Release() })
 }
 
 // TestLaunchRecoveryAfterFinalBindReplaysIdempotently proves recovery after
@@ -512,6 +504,7 @@ func TestLaunchArtifactGuardProvesSingleProcessLaunches(t *testing.T) {
 	agg := f.aggregate()
 	artifact, err := buildLaunchArtifact(LaunchArtifactInput{
 		WorktreePath:   f.runner.wtPath,
+		LaunchDir:      f.runner.wtPath,
 		HomeDir:        f.homeDir,
 		TaskID:         f.taskID,
 		SnapshotDigest: f.runner.projectConfig.SnapshotDigest,
@@ -593,6 +586,7 @@ func TestLaunchArtifactGuardExistsSkipsProcessOnReEntry(t *testing.T) {
 	agg := f.aggregate()
 	artifact, err := buildLaunchArtifact(LaunchArtifactInput{
 		WorktreePath:   f.runner.wtPath,
+		LaunchDir:      f.runner.wtPath,
 		HomeDir:        f.homeDir,
 		TaskID:         f.taskID,
 		SnapshotDigest: f.runner.projectConfig.SnapshotDigest,
@@ -651,6 +645,7 @@ func TestLaunchArtifactGuardConcurrentSubmissionsSingleProcess(t *testing.T) {
 	agg := f.aggregate()
 	artifact, err := buildLaunchArtifact(LaunchArtifactInput{
 		WorktreePath:   f.runner.wtPath,
+		LaunchDir:      f.runner.wtPath,
 		HomeDir:        f.homeDir,
 		TaskID:         f.taskID,
 		SnapshotDigest: f.runner.projectConfig.SnapshotDigest,
@@ -781,6 +776,7 @@ func TestLaunchArtifactReentrantGuardRealPath(t *testing.T) {
 	agg := f.aggregate()
 	in := LaunchArtifactInput{
 		WorktreePath:   f.runner.wtPath,
+		LaunchDir:      f.runner.wtPath,
 		HomeDir:        f.homeDir,
 		TaskID:         f.taskID,
 		SnapshotDigest: f.runner.projectConfig.SnapshotDigest,

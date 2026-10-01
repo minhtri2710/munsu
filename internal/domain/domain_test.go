@@ -7,7 +7,7 @@ import (
 )
 
 func TestPRCanMerge(t *testing.T) {
-	approved := []domain.Review{{State: domain.ReviewApproved, Body: "LGTM"}}
+	commented := []domain.Review{{State: domain.ReviewState("commented"), Body: "LGTM"}}
 	passed := []domain.CheckRun{{Name: "test", Status: domain.CheckPassed}, {Name: "lint", Status: domain.CheckPassed}}
 	cases := []struct {
 		name    string
@@ -16,15 +16,15 @@ func TestPRCanMerge(t *testing.T) {
 		reviews []domain.Review
 		want    bool
 	}{
-		{name: "open passed approved", status: domain.PROpen, checks: passed, reviews: approved, want: true},
-		{name: "closed", status: domain.PRClosed, checks: passed, reviews: approved},
-		{name: "merged", status: domain.PRMerged, checks: passed, reviews: approved},
-		{name: "pending check", status: domain.PROpen, checks: []domain.CheckRun{{Status: domain.CheckPending}}, reviews: approved},
-		{name: "failed check", status: domain.PROpen, checks: []domain.CheckRun{{Status: domain.CheckFailed}}, reviews: approved},
-		{name: "failed check after passed checks", status: domain.PROpen, checks: append(append([]domain.CheckRun{}, passed...), domain.CheckRun{Name: "security", Status: domain.CheckFailed}), reviews: approved},
-		{name: "no approval", status: domain.PROpen, checks: passed},
+		{name: "open passed no reviews", status: domain.PROpen, checks: passed, want: true},
+		{name: "open passed non-objecting review", status: domain.PROpen, checks: passed, reviews: commented, want: true},
+		{name: "closed", status: domain.PRClosed, checks: passed, reviews: commented},
+		{name: "merged", status: domain.PRMerged, checks: passed, reviews: commented},
+		{name: "pending check", status: domain.PROpen, checks: []domain.CheckRun{{Status: domain.CheckPending}}, reviews: commented},
+		{name: "failed check", status: domain.PROpen, checks: []domain.CheckRun{{Status: domain.CheckFailed}}, reviews: commented},
+		{name: "failed check after passed checks", status: domain.PROpen, checks: append(append([]domain.CheckRun{}, passed...), domain.CheckRun{Name: "security", Status: domain.CheckFailed}), reviews: commented},
 		{name: "changes requested", status: domain.PROpen, checks: passed, reviews: []domain.Review{{State: domain.ReviewChangesRequested}}},
-		{name: "approval vetoed by changes requested", status: domain.PROpen, checks: passed, reviews: []domain.Review{{State: domain.ReviewApproved}, {State: domain.ReviewChangesRequested}}},
+		{name: "changes requested after another review", status: domain.PROpen, checks: passed, reviews: append(append([]domain.Review{}, commented...), domain.Review{State: domain.ReviewChangesRequested})},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

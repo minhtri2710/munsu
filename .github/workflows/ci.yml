@@ -537,7 +537,7 @@ jobs:
       # classifier rule does not fail: it just stops seeing a shape, silently,
       # with every lane green -- which is the same defect as the citation lane
       # not existing at all, one level up. Its own prototype is the evidence: a
-      # `^func`/`^type` grep over docs/workflow-topology-matrix.md reported four
+      # `^func`/`^type` grep over a hand-written workflow topology document reported four
       # unresolved identifiers of which two were real, and both false positives
       # were ordinary declaration forms the grep cannot see (a struct field and
       # a const). The harness discovers every citation fixture directory and

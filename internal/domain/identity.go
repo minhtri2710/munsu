@@ -72,6 +72,10 @@ func (s scoped) Value() string     { return s.value }
 func (s scoped) Canonical() string { return string(s.kind) + ":" + s.value }
 func (s scoped) Validate() error   { return validateScopedValue(s.value) }
 
+// String is the raw value, so %s and %v in a message read "task t-1" rather
+// than printing the struct.
+func (s scoped) String() string { return s.value }
+
 // The concrete typed identity types. Each is a distinct nominal type, so
 // taskID, captainID, projectID, homeID, operationID, and resourceID are never
 // interchangeable at a typed boundary.

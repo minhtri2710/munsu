@@ -107,15 +107,17 @@ func newBriefCmd() *cobra.Command {
 				if !canonicalExists {
 					return fmt.Errorf("reading scout contract: %w", taskauthority.ErrNotFound)
 				}
-				if agg.Definition.Kind != "scout" {
+				if agg.Definition.Kind != taskauthority.KindScout {
 					return fmt.Errorf("task %q is not a scout", id)
 				}
 				scoutScope = agg.Definition.ScoutScope
 				scoutBudget = agg.Definition.ScoutRuntimeBudgetSecs
 				scoutGeneration = agg.Generation
 			}
+			review := canonicalExists && agg.Definition.Kind == taskauthority.KindReview
 			opts := fleet.ScaffoldOptions{
 				HomeDir: ctx.Home, ID: id, Repo: repo, Scout: scout,
+				Review: review, ReviewTask: agg.Definition.ReviewTaskID, ReviewHead: agg.Definition.ReviewHead,
 				Mode: resolvedMode, Yolo: projYolo,
 				ScoutScope: scoutScope, ScoutRuntimeBudgetSecs: scoutBudget,
 				Generation: scoutGeneration,
@@ -128,9 +130,12 @@ func newBriefCmd() *cobra.Command {
 				return err
 			}
 
-			kind := "ship"
+			kind := taskauthority.KindShip
 			if scout {
-				kind = "scout"
+				kind = taskauthority.KindScout
+			}
+			if review {
+				kind = taskauthority.KindReview
 			}
 
 			var b strings.Builder
@@ -377,7 +382,7 @@ func newWatchCmd() *cobra.Command {
 		Long:  `Run the persistent watcher daemon. Actionable conditions are durably queued while the watcher keeps polling until SIGTERM or SIGINT. Use 'munsu watch run' for one diagnostic cycle. Singleton-safe (home-scoped lock).`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			retirementPort := fleetRetirementPort{compose: func(h string) (*taskauthority.Canonical, error) { return ctx.TaskAuthorityFor(h) }}
-			reason, err := orchestrator.RunWithProbeSenderAndEvents(ctx.Home, runtimeTaskEndpointProbe(), newSessionMailboxSender(), watcherHooks(), retirementPort, fleetCheckValidationPort{}, runtimeTaskStatePort{}, runtimeObservationEventPort())
+			reason, err := orchestrator.RunWithProbeSenderAndEvents(ctx.Home, runtimeTaskEndpointProbe(), newSessionMailboxSender(), watcherHooks(), retirementPort, fleetReviewVerdictPort{}, fleetCheckValidationPort{}, runtimeTaskStatePort{}, runtimeObservationEventPort())
 			if err != nil {
 				return err
 			}

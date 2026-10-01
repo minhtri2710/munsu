@@ -18,7 +18,7 @@ type observeProbePort struct {
 }
 
 func (p *observeProbePort) Probe(window string) (backend.EndpointObservation, error) {
-	return backend.ObserveEndpoint(p.bk, window), nil
+	return backend.ObserveEndpoint(p.bk, window, nil), nil
 }
 
 // fakeAgentAwareBackend is a minimal AgentAwareBackend whose CheckAgentAlive

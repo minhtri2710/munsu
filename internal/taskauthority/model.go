@@ -93,6 +93,24 @@ type TaskDefinition struct {
 	ParentTaskID           string `json:"parent_task_id,omitempty"`
 	ScoutScope             string `json:"scout_scope,omitempty"`
 	ScoutRuntimeBudgetSecs int64  `json:"scout_runtime_budget_secs,omitempty"`
+	// ReviewTaskID and ReviewHead bind a review task to the ship task it reads
+	// and to the one head it reviews. Create checks the reviewed task; munsu
+	// reads the head from git, never from the reviewer. Only kind review has them.
+	ReviewTaskID string `json:"review_task_id,omitempty"`
+	ReviewHead   string `json:"review_head,omitempty"`
+}
+
+// The task kinds. A review task is the read-only reviewer seat: it reads the
+// worktree of the ship task it reviews and owns no worktree or branch.
+const (
+	KindShip   = "ship"
+	KindScout  = "scout"
+	KindReview = "review"
+)
+
+// SoldierKind reports whether kind is a kind a soldier seat is launched for.
+func SoldierKind(kind string) bool {
+	return kind == KindShip || kind == KindScout || kind == KindReview
 }
 
 // EndpointBinding is a generation-bound runtime endpoint lease. Incarnation
@@ -117,7 +135,7 @@ type WorktreeBinding struct {
 	Path               string `json:"path"`
 	GitDir             string `json:"git_dir"`
 	CommonDir          string `json:"common_dir"`
-	Head               string `json:"head"`
+	BaseHead           string `json:"base_head"`
 	LeaseID            string `json:"lease_id"`
 	FenceToken         string `json:"fence_token"`
 	BoundAtUnix        int64  `json:"bound_at_unix"`
@@ -230,6 +248,32 @@ type LaunchEvidence struct {
 	LaunchID      string `json:"launch_id"`
 	CommandDigest string `json:"command_digest"`
 	SubmittedAt   int64  `json:"submitted_at"`
+	// ReviewTree is the reviewed worktree observed before the review harness
+	// was submitted (G2 Before). Only a review generation carries it.
+	ReviewTree *domain.TreeState `json:"review_tree,omitempty"`
+	// Seat is the record of the seat the harness was launched into: its argv,
+	// and the write fence it ran under.
+	Seat LaunchSeat `json:"seat"`
+}
+
+// LaunchSeat is the seat record of one launch (G4). Kind, harness, model and
+// effort are not repeated here: LaunchIntent already carries them.
+type LaunchSeat struct {
+	// Argv is the harness binary and its flags; the prompt, the last argument of
+	// the launched command, is pinned by PromptDigest instead of copied.
+	Argv         []string    `json:"argv"`
+	PromptDigest string      `json:"prompt_digest"`
+	Fence        FenceRecord `json:"fence"`
+}
+
+// FenceRecord is the write fence outcome of one launch. An applied fence
+// carries the role it ran under and the digest of its exact profile, proven by
+// the probe before submit; an unapplied one carries why there is none.
+type FenceRecord struct {
+	Applied       bool   `json:"applied"`
+	Role          string `json:"role,omitempty"`
+	ProfileDigest string `json:"profile_digest,omitempty"`
+	Reason        string `json:"reason,omitempty"`
 }
 
 // RetirementEvidence is the immutable, generation-bound record of the resource
@@ -300,23 +344,24 @@ type CleanupClaim struct {
 
 // Aggregate is the authoritative record of one Task Generation.
 type Aggregate struct {
-	SchemaVersion    string              `json:"schema_version"`
-	TaskID           string              `json:"task_id"`
-	Generation       Generation          `json:"generation"`
-	Revision         Revision            `json:"revision"`
-	Current          bool                `json:"current"`
-	Definition       TaskDefinition      `json:"definition"`
-	Phase            Phase               `json:"phase"`
-	PhaseDetail      string              `json:"phase_detail,omitempty"`
-	Endpoint         *EndpointBinding    `json:"endpoint,omitempty"`
-	Worktree         *WorktreeBinding    `json:"worktree,omitempty"`
-	Launch           *LaunchIntent       `json:"launch,omitempty"`
-	AcquiredEndpoint *AcquiredEndpoint   `json:"acquired_endpoint,omitempty"`
-	LaunchEvidence   *LaunchEvidence     `json:"launch_evidence,omitempty"`
-	Transfer         *TransferState      `json:"transfer,omitempty"`
-	Retirement       *RetirementEvidence `json:"retirement,omitempty"`
-	CleanupClaim     *CleanupClaim       `json:"cleanup_claim,omitempty"`
-	DeliveryContract *DeliveryContract   `json:"delivery_contract,omitempty"`
+	SchemaVersion    string               `json:"schema_version"`
+	TaskID           string               `json:"task_id"`
+	Generation       Generation           `json:"generation"`
+	Revision         Revision             `json:"revision"`
+	Current          bool                 `json:"current"`
+	Definition       TaskDefinition       `json:"definition"`
+	Phase            Phase                `json:"phase"`
+	PhaseDetail      string               `json:"phase_detail,omitempty"`
+	Endpoint         *EndpointBinding     `json:"endpoint,omitempty"`
+	Worktree         *WorktreeBinding     `json:"worktree,omitempty"`
+	Launch           *LaunchIntent        `json:"launch,omitempty"`
+	AcquiredEndpoint *AcquiredEndpoint    `json:"acquired_endpoint,omitempty"`
+	LaunchEvidence   *LaunchEvidence      `json:"launch_evidence,omitempty"`
+	Transfer         *TransferState       `json:"transfer,omitempty"`
+	Retirement       *RetirementEvidence  `json:"retirement,omitempty"`
+	CleanupClaim     *CleanupClaim        `json:"cleanup_claim,omitempty"`
+	DeliveryContract *DeliveryContract    `json:"delivery_contract,omitempty"`
+	ReviewVerdict    *ReviewVerdictRecord `json:"review_verdict,omitempty"`
 }
 
 // DeliveryModes is the authoritative set of delivery modes a task's durable
@@ -371,8 +416,27 @@ type DeliveryFallback struct {
 // replaced in place by the first supported current v1 definition.
 const TaskAuthoritySchema = "munsu.task-authority/v1"
 
+// validateReviewContract checks the review fields against the kind: a review
+// task names the ship task it reads and the head it reviews; no other kind
+// carries them.
+func validateReviewContract(def TaskDefinition) error {
+	if def.Kind != KindReview {
+		if def.ReviewTaskID != "" || def.ReviewHead != "" {
+			return validationError("review-only fields are not valid for %s tasks", def.Kind)
+		}
+		return nil
+	}
+	if _, err := domain.NewTaskID(def.ReviewTaskID); err != nil {
+		return validationError("review task requires the reviewed task id: %v", err)
+	}
+	if strings.TrimSpace(def.ReviewHead) == "" {
+		return validationError("review task requires the reviewed head")
+	}
+	return nil
+}
+
 func validateScoutContract(def TaskDefinition) error {
-	if def.Kind != "scout" {
+	if def.Kind != KindScout {
 		if strings.TrimSpace(def.ScoutScope) != "" || def.ScoutRuntimeBudgetSecs != 0 {
 			return validationError("scout-only fields are not valid for ship tasks")
 		}
@@ -474,6 +538,11 @@ func validateAggregate(agg Aggregate) error {
 	}
 	if agg.DeliveryContract != nil {
 		if err := validateDeliveryContract(*agg.DeliveryContract); err != nil {
+			return err
+		}
+	}
+	if agg.ReviewVerdict != nil {
+		if err := validateReviewVerdictRecord(*agg.ReviewVerdict); err != nil {
 			return err
 		}
 	}
@@ -629,7 +698,8 @@ func validateCleanupClaim(claim CleanupClaim) error {
 // and the deterministic launch identity must be present and safe, every
 // optional identity must be safe when present, and the one-time worktree and
 // endpoint reservation fences (reservation ID + fence token) must be present
-// and safe. Validation is shape-only: no value is selected, detected,
+// and safe (a review launch reserves no worktree and carries neither worktree
+// value). Validation is shape-only: no value is selected, detected,
 // defaulted, probed, or fallen back.
 func validateLaunchIdentity(snapshotDigest, backend, harness, model, effort, mode, kind, project, parentTaskID, launchID, windowLabel, worktreeReservationID, worktreeFenceToken, endpointReservationID, endpointFenceToken, endpointIncarnation string) error {
 	if !domain.IsSHA256(snapshotDigest) {
@@ -649,11 +719,19 @@ func validateLaunchIdentity(snapshotDigest, backend, harness, model, effort, mod
 	if launchID == "" || strings.ContainsAny(launchID, `/\\`) {
 		return validationError("launch requires a deterministic launch identity")
 	}
-	if worktreeReservationID == "" || strings.ContainsAny(worktreeReservationID, `/\\`) {
-		return validationError("launch requires a worktree reservation id")
-	}
-	if worktreeFenceToken == "" || strings.ContainsAny(worktreeFenceToken, `/\\`) {
-		return validationError("launch requires a worktree fence token")
+	if kind == KindReview {
+		// A review task owns no worktree: it reads the reviewed task's, so a
+		// worktree reservation would be a lease the reviewer must never hold.
+		if worktreeReservationID != "" || worktreeFenceToken != "" {
+			return validationError("a review launch reserves no worktree")
+		}
+	} else {
+		if worktreeReservationID == "" || strings.ContainsAny(worktreeReservationID, `/\\`) {
+			return validationError("launch requires a worktree reservation id")
+		}
+		if worktreeFenceToken == "" || strings.ContainsAny(worktreeFenceToken, `/\\`) {
+			return validationError("launch requires a worktree fence token")
+		}
 	}
 	if endpointReservationID == "" || strings.ContainsAny(endpointReservationID, `/\\`) {
 		return validationError("launch requires an endpoint reservation id")
@@ -729,6 +807,34 @@ func validateLaunchEvidence(e LaunchEvidence) error {
 	}
 	if e.SubmittedAt <= 0 {
 		return validationError("launch evidence missing submission timestamp")
+	}
+	if e.ReviewTree != nil && (strings.TrimSpace(e.ReviewTree.Head) == "" || strings.TrimSpace(e.ReviewTree.Porcelain) == "") {
+		return validationError("launch evidence review tree requires a head and a porcelain digest")
+	}
+	return validateLaunchSeat(e.Seat)
+}
+
+// validateLaunchSeat checks the seat record shape: a non-empty argv, a prompt
+// digest, a fence record that is either applied (role and profile digest, no
+// reason) or unapplied (a reason, nothing else).
+func validateLaunchSeat(s LaunchSeat) error {
+	if len(s.Argv) == 0 {
+		return validationError("launch evidence seat requires the harness argv")
+	}
+	for _, a := range s.Argv {
+		if a == "" {
+			return validationError("launch evidence seat argv carries an empty argument")
+		}
+	}
+	if !domain.IsSHA256(s.PromptDigest) {
+		return validationError("launch evidence seat prompt digest must be a 64-hex sha256 digest")
+	}
+	f := s.Fence
+	if f.Applied && (f.Role == "" || !domain.IsSHA256(f.ProfileDigest) || f.Reason != "") {
+		return validationError("launch evidence applied fence requires a role and a profile digest and no reason")
+	}
+	if !f.Applied && (f.Reason == "" || f.Role != "" || f.ProfileDigest != "") {
+		return validationError("launch evidence unapplied fence requires a reason and no role or profile digest")
 	}
 	return nil
 }
@@ -817,8 +923,8 @@ func validateWorktreeBinding(binding WorktreeBinding) error {
 	if strings.TrimSpace(binding.CommonDir) == "" {
 		return validationError("worktree binding missing common dir")
 	}
-	if strings.TrimSpace(binding.Head) == "" {
-		return validationError("worktree binding missing head")
+	if strings.TrimSpace(binding.BaseHead) == "" {
+		return validationError("worktree binding missing base head")
 	}
 	if strings.TrimSpace(binding.LeaseID) == "" {
 		return validationError("worktree binding missing lease id")
@@ -890,6 +996,11 @@ func (a Aggregate) clone() Aggregate {
 	}
 	if a.LaunchEvidence != nil {
 		e := *a.LaunchEvidence
+		if e.ReviewTree != nil {
+			t := *e.ReviewTree
+			e.ReviewTree = &t
+		}
+		e.Seat.Argv = append([]string(nil), e.Seat.Argv...)
 		out.LaunchEvidence = &e
 	}
 	if a.DeliveryContract != nil {
@@ -899,6 +1010,10 @@ func (a Aggregate) clone() Aggregate {
 			dc.Fallback = &fb
 		}
 		out.DeliveryContract = &dc
+	}
+	if a.ReviewVerdict != nil {
+		rv := *a.ReviewVerdict
+		out.ReviewVerdict = &rv
 	}
 	return out
 }

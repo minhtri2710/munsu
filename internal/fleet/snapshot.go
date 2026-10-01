@@ -10,6 +10,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	mhome "github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // FleetSnapshot represents the full fleet state.
@@ -334,7 +335,7 @@ func Bearings(homeDir string, projectDir string, deps SnapshotDependencies) erro
 
 	inFlight := 0
 	for _, ts := range snap.Tasks {
-		if ts.Kind != "ship" && ts.Kind != "scout" {
+		if !taskauthority.SoldierKind(ts.Kind) {
 			continue
 		}
 		inFlight++
@@ -425,6 +426,9 @@ type EndpointRef struct {
 	// Incarnation is the opaque generation-bound endpoint identity (when known)
 	// used to freshness cross-check observations of the exact binding.
 	Incarnation string
+	// Harness is the task's harness name; a backend without agent registration
+	// needs it to match the pane's foreground process.
+	Harness string
 }
 
 type EndpointProbe interface {
@@ -440,7 +444,7 @@ func observeProbe(probe EndpointProbe, parentHome string, meta map[string]string
 	if ownerHome == "" {
 		ownerHome = parentHome
 	}
-	return probe.ProbeEndpoint(EndpointRef{Backend: meta["backend"], Handle: meta["window"], SessionOwner: meta["herdr_session"], WorkspaceID: meta["herdr_workspace_id"], TabID: meta["herdr_tab_id"], Home: ownerHome})
+	return probe.ProbeEndpoint(EndpointRef{Backend: meta["backend"], Handle: meta["window"], SessionOwner: meta["herdr_session"], WorkspaceID: meta["herdr_workspace_id"], TabID: meta["herdr_tab_id"], Home: ownerHome, Harness: meta["harness"]})
 }
 
 // observeEndpointWith is the snapshot-local endpoint observation using the

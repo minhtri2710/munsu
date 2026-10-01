@@ -61,10 +61,12 @@ func (r *MergeAndRetireResult) IsError() bool {
 // sufficient proof. When delivery was performed by this call, Force=false so
 // the normal safety checks still run.
 //
+// words are the Human's words behind the delivery (DeliverRequest.Words).
+//
 // authority is the composed canonical Task Authority targeting the exact
 // resolved task home (cross-home delivery); it is threaded into RetireTask
 // and the canonical outcome reads (nil fails closed).
-func MergeAndRetire(homeDir, id, prURL string, extraArgs []string, backend BoundTeardown, journals RetirementJournalPort, authority *taskauthority.Canonical) *MergeAndRetireResult {
+func MergeAndRetire(homeDir, id, prURL string, extraArgs []string, words domain.Words, backend BoundTeardown, journals RetirementJournalPort, authority *taskauthority.Canonical) *MergeAndRetireResult {
 	if authority == nil {
 		return &MergeAndRetireResult{
 			MergeOutcome: taskauthority.DeliveryOutcomeRetryable,
@@ -130,6 +132,7 @@ func MergeAndRetire(homeDir, id, prURL string, extraArgs []string, backend Bound
 				MergeDetail:  rerr.Error(),
 			}
 		}
+		req.Words = words
 		result, derr := Deliver(homeDir, id, req)
 		if derr != nil {
 			return &MergeAndRetireResult{
@@ -168,7 +171,7 @@ func MergeAndRetire(homeDir, id, prURL string, extraArgs []string, backend Bound
 // mergeAndRetireDeliveryRequest builds the typed journaled delivery intent
 // from the stored delivery identity and the merge method arguments. The
 // identity is read from the .meta projection as the delivery target; the
-// canonical authorization gates it against the bound worktree head.
+// Fleet refuses delivery when git HEAD at the bound worktree differs from it.
 func mergeAndRetireDeliveryRequest(homeDir, id, prURL string, extraArgs []string) (DeliverRequest, error) {
 	meta, err := home.ReadMeta(homeDir, id)
 	if err != nil {

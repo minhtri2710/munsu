@@ -8,11 +8,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/harness"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/minhtri2710/munsu/internal/testutil"
@@ -108,9 +110,10 @@ func setupRetirementTestManifest(t *testing.T, wt string) string {
 	os.WriteFile(filepath.Join(wt, PromptName), []byte(prompt), 0644)
 	os.WriteFile(filepath.Join(wt, EnvelopeName), []byte("{}"), 0644)
 	os.WriteFile(filepath.Join(wt, LaunchScriptName), []byte("#!/bin/bash\n"), 0644)
+	writePiSettingsFixture(t, wt)
 
 	entries := []ManifestEntry{}
-	for _, name := range []string{CharterName, BriefName, EnvelopeName, PromptName, LaunchScriptName} {
+	for _, name := range LaunchArtifactNames {
 		entry, err := ManifestEntryForFile(wt, name, DisposalPolicyCleanable)
 		if err != nil {
 			t.Fatalf("manifest entry for %s: %v", name, err)
@@ -649,18 +652,24 @@ func TestRun_RemovesResidualArtifacts(t *testing.T) {
 	metaContent := "kind=scout\nbackend=tmux\nwindow=@1\nharness=pi\n"
 	os.WriteFile(filepath.Join(stateDir, "test-residual.meta"), []byte(metaContent), 0644)
 
-	// Create residual artifacts: munsu-native (both old and new names) + pi adapter artifacts
+	// Create residual artifacts: munsu-native + pi adapter artifacts, the
+	// per-task pi agent dir among them (a directory with content).
 	residuals := []string{
 		"test-residual.status",
-		"test-residual.check",      // new canonical name
-		"test-residual.check.sh",   // legacy name (dual-read)
-		"test-residual.turnend",    // new canonical name
-		"test-residual.turn-ended", // legacy name (dual-read)
+		"test-residual.check",
+		"test-residual.turnend",
 		"test-residual.pi-ext.ts",
+		"test-residual." + harness.PiAgentDirSuffix,
 	}
 	for _, name := range residuals {
 		os.WriteFile(filepath.Join(stateDir, name), []byte("stale"), 0644)
 	}
+	agentDir := filepath.Join(stateDir, "test-residual."+harness.PiAgentDirSuffix)
+	os.Remove(agentDir)
+	if err := os.MkdirAll(filepath.Join(agentDir, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(agentDir, "sub", "f"), []byte("stale"), 0o644)
 
 	// Run teardown with --force to skip safety
 	result, err := RetireTask(Options{HomeDir: tmp, ID: "test-residual", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth)
@@ -689,67 +698,66 @@ func TestRun_RemovesResidualArtifacts(t *testing.T) {
 	}
 }
 
-func TestRun_BackwardCompatLegacyNames(t *testing.T) {
+func TestCleanupResidualArtifactPaths(t *testing.T) {
 	tmp := t.TempDir()
-	os.Setenv("MUNSU_HOME", tmp)
-	defer os.Unsetenv("MUNSU_HOME")
-
-	auth := canonicalMergeTestAuth(t, tmp, "legacy-test")
-
-	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-
-	// Create meta file (harness=pi to include adapter artifacts)
-	metaContent := "kind=scout\nbackend=tmux\nwindow=@1\nharness=pi\n"
-	os.WriteFile(filepath.Join(stateDir, "legacy-test.meta"), []byte(metaContent), 0644)
-
-	// Munsu-native artifacts: new canonical names (post item-5 rename)
-	munsuNames := []string{
-		"legacy-test.status",
-		"legacy-test.check",   // new canonical name
-		"legacy-test.turnend", // new canonical name
+	stateDir := mhome.StateDir(tmp)
+	for _, tc := range []struct {
+		name string
+		meta map[string]string
+		want []string
+	}{
+		{"ship with pi", map[string]string{"kind": "ship", "harness": "pi"}, []string{
+			filepath.Join(stateDir, "T-1.status"), filepath.Join(stateDir, "T-1.check"), filepath.Join(stateDir, "T-1.turnend"),
+			filepath.Join(stateDir, "T-1.pi-ext.ts"), filepath.Join(stateDir, "T-1."+harness.PiAgentDirSuffix),
+		}},
+		{"review also removes its launch home", map[string]string{"kind": taskauthority.KindReview, "harness": "pi"}, []string{
+			filepath.Join(stateDir, "T-1.status"), reviewHomeDir(tmp, "T-1"), filepath.Join(stateDir, "T-1.check"), filepath.Join(stateDir, "T-1.turnend"),
+			filepath.Join(stateDir, "T-1.pi-ext.ts"), filepath.Join(stateDir, "T-1."+harness.PiAgentDirSuffix),
+		}},
+		{"unknown harness has only the native artifacts", map[string]string{"kind": "ship"}, []string{
+			filepath.Join(stateDir, "T-1.status"), filepath.Join(stateDir, "T-1.check"), filepath.Join(stateDir, "T-1.turnend"),
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := cleanupResidualArtifactPaths(tmp, "T-1", tc.meta)
+			if err != nil || !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("cleanupResidualArtifactPaths = %v, %v; want %v", got, err, tc.want)
+			}
+		})
 	}
-	// Legacy names still being cleaned up (dual-read window)
-	legacyNames := []string{
-		"legacy-test.check.sh",   // legacy name (deprecated)
-		"legacy-test.turn-ended", // legacy name (deprecated)
-	}
-	// Harness-specific artifact
-	harnessNames := []string{
-		"legacy-test.pi-ext.ts",
-	}
-
-	allResiduals := append(append(munsuNames, legacyNames...), harnessNames...)
-	for _, name := range allResiduals {
-		os.WriteFile(filepath.Join(stateDir, name), []byte("stale"), 0644)
-	}
-
-	// Run teardown with --force
-	result, err := RetireTask(Options{HomeDir: tmp, ID: "legacy-test", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth)
-	if err != nil {
-		t.Fatalf("teardown should not fail: %v", err)
-	}
-
-	// All residuals should be removed
-	for _, name := range allResiduals {
-		path := filepath.Join(stateDir, name)
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Errorf("residual %s should have been removed, but still exists", name)
-		}
-	}
-
-	// Verify steps mention residual removal
-	foundResidual := false
-	for _, step := range result.Steps {
-		if strings.Contains(step, "residual") {
-			foundResidual = true
-			break
-		}
-	}
-	if !foundResidual {
-		t.Errorf("expected teardown steps to mention residual removal, got: %v", result.Steps)
+	if _, err := cleanupResidualArtifactPaths(tmp, "../escape", map[string]string{}); err == nil {
+		t.Fatal("cleanupResidualArtifactPaths accepted an id that escapes the state dir")
 	}
 }
+
+func TestReviewSafetyCheckOwnsNothingToLand(t *testing.T) {
+	opts := Options{ID: "review-1"}
+	for _, tc := range []struct {
+		name    string
+		meta    map[string]string
+		wantErr string
+	}{
+		{"no worktree or branch", map[string]string{"kind": taskauthority.KindReview}, ""},
+		{"a worktree in the meta", map[string]string{"worktree": "/wt"}, "a review owns neither"},
+		{"a branch in the meta", map[string]string{"branch": "mu/x"}, "a review owns neither"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for name, call := range map[string]func() ([]string, error){
+				"reviewSafetyCheck": func() ([]string, error) { return reviewSafetyCheck(opts, tc.meta) },
+				"safetyCheck":       func() ([]string, error) { return safetyCheck(opts, tc.meta, taskauthority.KindReview, nil, nil, 1) },
+			} {
+				proofs, err := call()
+				if tc.wantErr == "" && (err != nil || len(proofs) != 0) {
+					t.Fatalf("%s = %v, %v; want no proof and no error", name, proofs, err)
+				}
+				if tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr) || len(proofs) != 0) {
+					t.Fatalf("%s = %v, %v; want the %q refusal", name, proofs, err, tc.wantErr)
+				}
+			}
+		})
+	}
+}
+
 func TestScoutSafetyCheck_UnresolvedHolds(t *testing.T) {
 	tmp := t.TempDir()
 
@@ -981,6 +989,30 @@ func TestRun_RetryAfterJournalFailureKeepsMeta(t *testing.T) {
 	}
 }
 
+// blockResidualRemoval leaves a residual the projection cleanup cannot remove: a
+// "<id>.check" directory whose own mode forbids unlinking its content. The
+// returned func lifts the block so the retry can succeed.
+func blockResidualRemoval(t *testing.T, stateDir, taskID string) (lift func()) {
+	t.Helper()
+	blocked := filepath.Join(stateDir, taskID+".check")
+	if err := os.MkdirAll(blocked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(blocked, "child"), []byte("blocked"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(blocked, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	lift = func() {
+		if err := os.Chmod(blocked, 0o755); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(lift)
+	return lift
+}
+
 func TestRun_ProjectionFailureRetriesWhileRetired(t *testing.T) {
 	tmp := t.TempDir()
 	taskID := "projection-retry"
@@ -988,13 +1020,7 @@ func TestRun_ProjectionFailureRetriesWhileRetired(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmp, "state", taskID+".meta"), []byte("kind=ship\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	statusPath := filepath.Join(tmp, "state", taskID+".status")
-	if err := os.Mkdir(statusPath, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(statusPath, "child"), []byte("blocked"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	lift := blockResidualRemoval(t, filepath.Join(tmp, "state"), taskID)
 	_, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, &recordingTeardown{alive: true}, fakeRetirementJournals{}, auth)
 	var projectionErr *RetirementProjectionError
 	if !errors.As(err, &projectionErr) {
@@ -1004,14 +1030,48 @@ func TestRun_ProjectionFailureRetriesWhileRetired(t *testing.T) {
 	if err != nil || claim.CleanupClaim == nil || claim.CleanupClaim.Status != taskauthority.CleanupCompleted {
 		t.Fatalf("claim = %+v, err=%v, want completed", claim.CleanupClaim, err)
 	}
-	if err := os.Remove(filepath.Join(statusPath, "child")); err != nil {
+	lift()
+	if _, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, &recordingTeardown{alive: true}, fakeRetirementJournals{}, auth); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+}
+
+func TestRun_WakePruneFailureKeepsMetaForTheRetry(t *testing.T) {
+	tmp := t.TempDir()
+	taskID := "prune-retry"
+	auth := canonicalMergeTestAuth(t, tmp, taskID)
+	metaPath := filepath.Join(tmp, "state", taskID+".meta")
+	if err := os.WriteFile(metaPath, []byte("kind=ship\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(statusPath); err != nil {
+	marker := mhome.WatcherSeenMarkerPath(tmp, taskID)
+	if err := os.MkdirAll(filepath.Join(marker, "child"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, &recordingTeardown{alive: true}, fakeRetirementJournals{}, auth)
+	var projectionErr *RetirementProjectionError
+	if !errors.As(err, &projectionErr) {
+		t.Fatalf("error = %T %v, want projection error", err, err)
+	}
+	if _, err := os.Stat(metaPath); err != nil {
+		t.Fatalf("meta after the failed prune: %v, want it kept as the retry identity", err)
+	}
+	// The claim is now completed, so this retry runs the completed-claim path.
+	_, err = RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, &recordingTeardown{alive: true}, fakeRetirementJournals{}, auth)
+	if !errors.As(err, &projectionErr) {
+		t.Fatalf("completed-claim retry error = %T %v, want projection error", err, err)
+	}
+	if _, err := os.Stat(metaPath); err != nil {
+		t.Fatalf("meta after the completed-claim retry's failed prune: %v, want it kept as the retry identity", err)
+	}
+	if err := os.RemoveAll(marker); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, &recordingTeardown{alive: true}, fakeRetirementJournals{}, auth); err != nil {
 		t.Fatalf("retry: %v", err)
+	}
+	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
+		t.Fatalf("meta after the retry: %v, want removed", err)
 	}
 }
 
@@ -1024,21 +1084,14 @@ func TestRun_ProjectionFailureThenReopenIsSuperseded(t *testing.T) {
 	if err := os.WriteFile(metaPath, []byte("kind=ship\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Mkdir(statusPath, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(statusPath, "child"), []byte("blocked"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	lift := blockResidualRemoval(t, filepath.Join(tmp, "state"), taskID)
 	_, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, &recordingTeardown{alive: true}, fakeRetirementJournals{}, auth)
 	var projectionErr *RetirementProjectionError
 	if !errors.As(err, &projectionErr) {
 		t.Fatalf("error = %T %v, want projection error", err, err)
 	}
-	if err := os.Remove(filepath.Join(statusPath, "child")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(statusPath); err != nil {
+	lift()
+	if err := os.RemoveAll(filepath.Join(tmp, "state", taskID+".check")); err != nil {
 		t.Fatal(err)
 	}
 	agg, err := auth.Get(mustTaskID(t, taskID))

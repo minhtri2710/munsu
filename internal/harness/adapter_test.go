@@ -256,7 +256,7 @@ func TestStateArtifactsForHarness(t *testing.T) {
 		harness  string
 		expected []string
 	}{
-		{"pi returns pi-ext.ts", Pi, []string{"pi-ext.ts"}},
+		{"pi returns pi-ext.ts and the per-task agent dir", Pi, []string{"pi-ext.ts", PiAgentDirSuffix}},
 		{"grok returns grok-turnend-token", Grok, []string{"grok-turnend-token"}},
 		{"claude has no artifacts", Claude, nil},
 		{"codex has no artifacts", Codex, nil},
@@ -291,5 +291,38 @@ func TestStateArtifactsForHarness_ReturnsCopy(t *testing.T) {
 	got2 := StateArtifactsForHarness(Pi)
 	if got2[0] != "pi-ext.ts" {
 		t.Errorf("modifying returned slice should not affect registry, got %q", got2[0])
+	}
+}
+
+func TestPiQuestionDenyIsTheExcludeToolsFlag(t *testing.T) {
+	got := Adapters[Pi].QuestionDeny
+	if strings.Join(got, " ") != "--exclude-tools ask_user_question" {
+		t.Fatalf("pi QuestionDeny = %v, want --exclude-tools ask_user_question", got)
+	}
+}
+
+func TestProcessMatches(t *testing.T) {
+	tests := []struct {
+		harness, process string
+		want             bool
+	}{
+		{Claude, "claude", true},
+		{Claude, "  claude \n", true},
+		{Claude, "Claude-Code", true},
+		{Pi, "pi", true},
+		{Pi, "claude", false},
+		{Claude, "pi", false},
+		{Grok, "grok-cli-1.2", true}, // substring matcher
+		{"", "claude", false},
+		{"", "", false},
+		{"", "bash", false},
+		{"nonexistent", "claude", false},
+		{Claude, "", false},
+		{Claude, "bash", false},
+	}
+	for _, tt := range tests {
+		if got := ProcessMatches(tt.harness, tt.process); got != tt.want {
+			t.Errorf("ProcessMatches(%q, %q) = %v, want %v", tt.harness, tt.process, got, tt.want)
+		}
 	}
 }

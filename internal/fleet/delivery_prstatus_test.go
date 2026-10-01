@@ -115,7 +115,7 @@ func TestProviderSnapshotMergeableDelegatesToDomain(t *testing.T) {
 	base := ProviderSnapshot{
 		State:   "OPEN",
 		Checks:  []domain.CheckRun{{Status: domain.CheckPassed}},
-		Reviews: []domain.Review{{State: domain.ReviewApproved}},
+		Reviews: []domain.Review{{State: domain.ReviewState("approved")}},
 	}
 	cases := []struct {
 		name   string
@@ -127,7 +127,7 @@ func TestProviderSnapshotMergeableDelegatesToDomain(t *testing.T) {
 		{name: "merged", mutate: func(s *ProviderSnapshot) { s.State = "MERGED" }},
 		{name: "pending check", mutate: func(s *ProviderSnapshot) { s.Checks[0].Status = domain.CheckPending }},
 		{name: "failed check", mutate: func(s *ProviderSnapshot) { s.Checks[0].Status = domain.CheckFailed }},
-		{name: "no approval", mutate: func(s *ProviderSnapshot) { s.Reviews = nil }},
+		{name: "no provider review needed", mutate: func(s *ProviderSnapshot) { s.Reviews = nil }, want: true},
 		{name: "changes requested", mutate: func(s *ProviderSnapshot) { s.Reviews[0].State = domain.ReviewChangesRequested }},
 	}
 	for _, tc := range cases {
@@ -145,82 +145,105 @@ func TestProviderSnapshotMergeableDelegatesToDomain(t *testing.T) {
 	}
 }
 
-func TestNormalizeGitHubReviewState(t *testing.T) {
-	cases := map[string]domain.ReviewState{
-		"APPROVED":          domain.ReviewApproved,
-		"CHANGES_REQUESTED": domain.ReviewChangesRequested,
-		"changes-requested": domain.ReviewChangesRequested,
-		"DISMISSED":         domain.ReviewDismissed,
-		"COMMENTED":         domain.ReviewPending,
-	}
-	for input, want := range cases {
-		if got := normalizeGitHubReviewState(input); got != want {
-			t.Errorf("normalizeGitHubReviewState(%q) = %q, want %q", input, got, want)
-		}
-	}
+const githubSnapshotPR = "https://github.com/owner/project/pull/42"
+
+// githubOpenView is an OPEN, mergeable PR view with the given review decision.
+func githubOpenView(reviewDecision string) string {
+	return `{"state":"OPEN","headRefOid":"head123","headRefName":"feature","baseRefName":"main","mergeable":"MERGEABLE","reviewDecision":"` + reviewDecision + `"}`
 }
 
 func TestGitHubProviderSnapshotRefusesIncompleteOpenEvidence(t *testing.T) {
-	old := DefaultGitHubClient
-	t.Cleanup(func() { DefaultGitHubClient = old })
-
+	noneRequired := []ghReply{
+		{match: "protection/required_status_checks", stderr: "Branch not protected", exit: 1},
+		{match: "rules/branches", stdout: `[]`},
+	}
+	requireCI := []ghReply{
+		{match: "protection/required_status_checks", stdout: `{"contexts":["ci"]}`},
+		{match: "rules/branches", stdout: `[]`},
+	}
 	for _, tc := range []struct {
-		name string
-		data string
-		want string
+		name    string
+		view    string
+		replies []ghReply
+		want    string
 	}{
 		{
-			name: "missing status checks",
-			data: `{"state":"OPEN","headRefOid":"head123","headRefName":"feature","baseRefName":"main","reviewDecision":"APPROVED"}`,
-			want: "empty statusCheckRollup",
+			name: "not mergeable",
+			view: `{"state":"OPEN","headRefOid":"head123","headRefName":"feature","baseRefName":"main","mergeable":"CONFLICTING"}`,
+			want: "GitHub PR is not mergeable",
 		},
 		{
-			name: "missing review decision",
-			data: `{"state":"OPEN","headRefOid":"head123","headRefName":"feature","baseRefName":"main","statusCheckRollup":[{"conclusion":"SUCCESS"}]}`,
-			want: "empty reviewDecision",
+			name: "no check reported for the head",
+			view: githubOpenView(""),
+			replies: append(append([]ghReply{}, noneRequired...),
+				ghReply{match: "check-runs", stdout: `[{"check_runs":[]}]`},
+				ghReply{match: "statuses", stdout: `[[]]`}),
+			want: "an empty CI proof is refused",
+		},
+		{
+			name: "required check never reported",
+			view: githubOpenView(""),
+			replies: append(append([]ghReply{}, requireCI...),
+				ghReply{match: "check-runs", stdout: `[{"check_runs":[{"id":1,"name":"lint","status":"completed","conclusion":"success"}]}]`},
+				ghReply{match: "statuses", stdout: `[[]]`}),
+			want: `required check "ci" never reported`,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			DefaultGitHubClient = func() (GitHubClient, error) {
-				return terminalGitHubClient{data: tc.data}, nil
-			}
-			if _, err := fetchGitHubProviderSnapshot("https://github.com/owner/project/pull/42"); err == nil || !strings.Contains(err.Error(), tc.want) {
+			installFakeGH(t, append([]ghReply{{match: "pr view", stdout: tc.view}}, tc.replies...)...)
+			if _, err := fetchGitHubProviderSnapshot(githubSnapshotPR); err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("fetchGitHubProviderSnapshot error = %v, want %q refusal", err, tc.want)
 			}
 		})
 	}
 }
 
-func TestGitHubProviderSnapshotRefusesUnknownState(t *testing.T) {
-	old := DefaultGitHubClient
-	DefaultGitHubClient = func() (GitHubClient, error) {
-		return terminalGitHubClient{data: `{"state":"DRAFT","headRefOid":"head123","headRefName":"feature","baseRefName":"main"}`}, nil
+func TestGitHubProviderSnapshotOpenReadsChecksAndObjections(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		reviewDecsion string
+		wantReviews   []domain.Review
+	}{
+		{"approved decision carries nothing", "APPROVED", nil},
+		{"changes requested is an objection", "CHANGES_REQUESTED", []domain.Review{{State: domain.ReviewChangesRequested}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			installFakeGH(t,
+				ghReply{match: "pr view", stdout: githubOpenView(tc.reviewDecsion)},
+				ghReply{match: "protection/required_status_checks", stdout: `{"contexts":["ci"]}`},
+				ghReply{match: "rules/branches", stdout: `[]`},
+				ghReply{match: "check-runs", stdout: `[{"check_runs":[{"id":1,"name":"ci","status":"completed","conclusion":"success"}]}]`},
+				ghReply{match: "statuses", stdout: `[[]]`},
+			)
+			snapshot, err := fetchGitHubProviderSnapshot(githubSnapshotPR)
+			if err != nil {
+				t.Fatalf("fetchGitHubProviderSnapshot: %v", err)
+			}
+			if len(snapshot.Checks) != 1 || snapshot.Checks[0].Name != "ci" || snapshot.Checks[0].Status != domain.CheckPassed {
+				t.Fatalf("checks = %+v, want the one passed ci check", snapshot.Checks)
+			}
+			if fmt.Sprint(snapshot.Reviews) != fmt.Sprint(tc.wantReviews) {
+				t.Fatalf("reviews = %+v, want %+v", snapshot.Reviews, tc.wantReviews)
+			}
+		})
 	}
-	t.Cleanup(func() { DefaultGitHubClient = old })
+}
 
-	if _, err := fetchGitHubProviderSnapshot("https://github.com/owner/project/pull/42"); err == nil || !strings.Contains(err.Error(), "unrecognized state") {
+func TestGitHubProviderSnapshotRefusesUnknownState(t *testing.T) {
+	installFakeGH(t, ghReply{match: "pr view", stdout: `{"state":"DRAFT","headRefOid":"head123","headRefName":"feature","baseRefName":"main"}`})
+	if _, err := fetchGitHubProviderSnapshot(githubSnapshotPR); err == nil || !strings.Contains(err.Error(), "unrecognized state") {
 		t.Fatalf("fetchGitHubProviderSnapshot error = %v, want unknown-state refusal", err)
 	}
 }
 
 func TestGitHubProviderSnapshotRefusesMissingMergeCommitEvidence(t *testing.T) {
-	old := DefaultGitHubClient
-	DefaultGitHubClient = func() (GitHubClient, error) {
-		return terminalGitHubClient{data: `{"state":"MERGED","headRefOid":"head123","headRefName":"feature","baseRefName":"main","mergeCommit":null}`}, nil
-	}
-	t.Cleanup(func() { DefaultGitHubClient = old })
-
-	if _, err := fetchGitHubProviderSnapshot("https://github.com/owner/project/pull/42"); err == nil || !strings.Contains(err.Error(), "missing merge commit OID") {
+	installFakeGH(t, ghReply{match: "pr view", stdout: `{"state":"MERGED","headRefOid":"head123","headRefName":"feature","baseRefName":"main","mergeCommit":null}`})
+	if _, err := fetchGitHubProviderSnapshot(githubSnapshotPR); err == nil || !strings.Contains(err.Error(), "missing merge commit OID") {
 		t.Fatalf("fetchGitHubProviderSnapshot error = %v, want missing-merge-commit refusal", err)
 	}
 }
 
 func TestGitHubProviderSnapshotTerminalStatesNeedNoMergeabilityEvidence(t *testing.T) {
-	old := DefaultGitHubClient
-	DefaultGitHubClient = func() (GitHubClient, error) {
-		return &terminalGitHubClient{}, nil
-	}
-	t.Cleanup(func() { DefaultGitHubClient = old })
 	for _, tc := range []struct {
 		state    string
 		merged   bool
@@ -231,25 +254,19 @@ func TestGitHubProviderSnapshotTerminalStatesNeedNoMergeabilityEvidence(t *testi
 		{"CLOSED", false, "", `{"state":"CLOSED","headRefOid":"head123","headRefName":"feature","baseRefName":"main"}`},
 	} {
 		t.Run(tc.state, func(t *testing.T) {
-			DefaultGitHubClient = func() (GitHubClient, error) { return terminalGitHubClient{data: tc.data}, nil }
-			snapshot, err := fetchGitHubProviderSnapshot("https://github.com/owner/project/pull/42")
+			gh := installFakeGH(t, ghReply{match: "pr view", stdout: tc.data})
+			snapshot, err := fetchGitHubProviderSnapshot(githubSnapshotPR)
 			if err != nil {
 				t.Fatalf("fetchGitHubProviderSnapshot: %v", err)
 			}
 			if snapshot.State != tc.state || snapshot.Merged != tc.merged || snapshot.HeadSHA != "head123" || snapshot.MergedSHA != tc.mergeSHA {
 				t.Fatalf("snapshot = %+v", snapshot)
 			}
+			if calls := gh.calls(t); len(calls) != 1 {
+				t.Fatalf("gh calls = %q, want only the PR view", calls)
+			}
 		})
 	}
-}
-
-type terminalGitHubClient struct{ data string }
-
-func (c terminalGitHubClient) ViewPRJSON(string, string, int, string) ([]byte, error) {
-	return []byte(c.data), nil
-}
-func (terminalGitHubClient) CaptureIdentity(string) (*domain.DeliveryIdentity, error) {
-	return nil, nil
 }
 
 func TestGitLabProviderSnapshotRefusesMissingMergeCommitEvidence(t *testing.T) {

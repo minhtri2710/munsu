@@ -18,10 +18,13 @@ type ScaffoldOptions struct {
 	ID                     string // task ID
 	Repo                   string // project/repo name
 	Scout                  bool   // generate scout brief instead of ship brief
+	Review                 bool   // generate the read-only reviewer brief; ReviewTask and ReviewHead are required
 	Mode                   string // delivery mode (no-mistakes / direct-PR / local-only)
 	Yolo                   bool   // yolo mode
 	ScoutScope             string
 	ScoutRuntimeBudgetSecs int64
+	ReviewTask             string // the ship task a reviewer reads
+	ReviewHead             string // the one head the reviewer judges
 	// Generation is the task generation the brief launches. A scout brief
 	// binds the report contract to it: the soldier writes report-g<N>.md for
 	// exactly the generation being launched. It must be positive for scouts.
@@ -67,6 +70,14 @@ func buildBrief(opts ScaffoldOptions) (string, error) {
 
 	var b strings.Builder
 
+	if opts.Review {
+		tmpl, err := reviewBriefTemplate(id, repo, opts.ReviewTask, opts.ReviewHead)
+		if err != nil {
+			return "", err
+		}
+		b.WriteString(tmpl)
+		return b.String(), nil
+	}
 	if opts.Scout {
 		tmpl, err := scoutBriefTemplate(id, repo, opts.Mode, opts.Yolo, opts.ScoutScope, opts.ScoutRuntimeBudgetSecs, opts.Generation)
 		if err != nil {
@@ -99,7 +110,7 @@ func shipBriefTemplate(id, repo, mode string, yolo bool) (string, error) {
 	switch mode {
 	case "direct-PR":
 		deliveryRules = `## Delivery
-	Commit the completed change, push the feature branch, and open a PR directly against the default branch.
+	Commit the completed change, push the feature branch without -u (it writes git config, which is not yours to change), and open a PR directly against the default branch.
 	Never run no-mistakes for this task. Never merge the PR.
 `
 	case "local-only":
@@ -108,7 +119,7 @@ func shipBriefTemplate(id, repo, mode string, yolo bool) (string, error) {
 	Do not push, open a PR, run no-mistakes, or merge the change yourself.
 `
 	case "no-mistakes":
-		setupStep = "2. Run `no-mistakes doctor`; if it reports the repo is not initialized here, run `no-mistakes init`.\n"
+		setupStep = "2. Run `no-mistakes doctor`.\n"
 		deliveryRules = `## Delivery
 	You drive no-mistakes by responding to its gates, not by implementing fixes.
 	Follow ` + "`no-mistakes axi run --help`" + ` and the help lines in each AXI response.
@@ -203,6 +214,88 @@ that answers for this generation; never read or reuse another generation's.
 5. When done, run `+"`"+`munsu report done "{summary of findings location}"`+"`"+` and stop.
 6. Do not modify project files - only the report.
 `, id, scope, budget, repo, id, ReportName(gen), modeLine), nil
+}
+
+// reviewBriefTemplate returns the reviewer brief. The contract names the one
+// task and head the reviewer judges; the review method carries lesson group 10
+// (reviewer-output-verification): every verdict cites the runs behind it.
+func reviewBriefTemplate(id, repo, reviewTask, reviewHead string) (string, error) {
+	if strings.TrimSpace(reviewTask) == "" || strings.TrimSpace(reviewHead) == "" {
+		return "", fmt.Errorf("review brief for %s requires the reviewed task and head", id)
+	}
+	return fmt.Sprintf(`# Review brief: %s
+
+## Contract
+Reviewed task: %s
+Reviewed head: %s
+
+## Setup
+You are in the worktree of the reviewed task in %s. It is not yours: you read it and never write it.
+
+Verify the head before anything else. Run `+"`"+`git rev-parse HEAD`+"`"+`; it must equal the reviewed head above.
+If it differs, STOP and say so: the work moved and this review no longer speaks for it.
+
+## Review method
+1. Read the task's brief and the diff from its base to the reviewed head. Open every file you will cite.
+2. Run every check the task's brief and the repository's contract require, yourself, in this checkout.
+3. For each check, record the run: the exact command, its exit code, and the output you read. A summary such as "tests pass" is not a record.
+4. For each brief, diff or document section you rely on, open it, read it, and name it.
+5. A check you did not run, or whose output you did not read, is listed as not run and never counts toward a PASS.
+
+## Rules
+1. Read only. Edit, create, delete or move nothing; create no branch or commit; never push or merge.
+2. Judge only the reviewed head. Do not review later work.
+3. Do not run `+"`"+`munsu`+"`"+` commands.
+
+## Verdict
+Write the verdict file `+"`"+`$MUNSU_VERDICT_FILE`+"`"+` (one JSON object with the fields %s) for the reviewed head, with `+"`"+`outcome`+"`"+` set to `+"`"+`pass`+"`"+` or `+"`"+`fail`+"`"+` and the evidence from the review method in `+"`"+`evidence`+"`"+`. Write it to a sibling named `+"`"+`$MUNSU_VERDICT_FILE.tmp.<pid>.<hex>`+"`"+` (a number, then lowercase hex digits), rename that over the verdict file, then stop.
+A PASS needs every required check run and cited.
+`, id, reviewTask, reviewHead, repo, verdictFileShape("`")), nil
+}
+
+// requiredSections returns the "## " headings Scaffold writes for a brief of
+// this kind, derived from the rendered template so no second list can drift.
+// The delivery heading is mode-dependent and indented in the template, so it
+// is not part of the set.
+func requiredSections(kind string) ([]string, error) {
+	content, err := buildBrief(ScaffoldOptions{ID: "x", Repo: "x", Scout: kind == taskauthority.KindScout, Review: kind == taskauthority.KindReview, Mode: "local-only", ScoutScope: "x", ReviewTask: "x", ReviewHead: "x", Generation: 1})
+	if err != nil {
+		return nil, err
+	}
+	var sections []string
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(line, "## ") {
+			sections = append(sections, strings.TrimRight(line, " \t\r"))
+		}
+	}
+	return sections, nil
+}
+
+// LintBrief refuses a brief that lacks a section Scaffold writes. Sections the
+// scaffold does not produce are never required.
+func LintBrief(homeDir, id, kind string) error {
+	want, err := requiredSections(kind)
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(Path(homeDir, id))
+	if err != nil {
+		return fmt.Errorf("reading brief for task %s: %w", id, err)
+	}
+	have := map[string]bool{}
+	for _, line := range strings.Split(string(data), "\n") {
+		have[strings.TrimRight(line, " \t\r")] = true
+	}
+	var missing []string
+	for _, h := range want {
+		if !have[h] {
+			missing = append(missing, h)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("brief for task %s is missing scaffolded sections: %s; re-scaffold it with 'munsu brief' before spawning", id, strings.Join(missing, ", "))
+	}
+	return nil
 }
 
 // Path returns the expected brief.md path for the given task ID.

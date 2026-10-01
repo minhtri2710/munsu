@@ -452,6 +452,7 @@ func seedPollCompletedOutcome(t *testing.T, auth *taskauthority.Canonical, homeD
 	seedWorktreeEvidenceAtHead(t, auth, taskID, wtDir, "lease-wt-poll", "fence-wt-poll", ident.HeadSHA)
 	seedEndpointEvidence(t, auth, taskID, "@test-window", "lease-ep-poll", "fence-ep-poll")
 
+	mustRecordApprovingVerdict(t, auth, taskID, ident.HeadSHA)
 	agg, err := auth.Get(mustTaskID(t, taskID))
 	if err != nil {
 		t.Fatal(err)
@@ -466,6 +467,7 @@ func seedPollCompletedOutcome(t *testing.T, auth *taskauthority.Canonical, homeD
 			taskauthority.DeliveryPreconditionPRMergeable,
 			taskauthority.DeliveryPreconditionPRHeadCurrent,
 		},
+		Words: deliveryWords(),
 	}
 	authOpID := "op-poll-auth-" + taskID + "-" + suffix
 	if _, err := auth.AuthorizeDelivery(mustFleetOperation(t, authOpID, authReq), authReq); err != nil {
@@ -509,7 +511,7 @@ func seedWorktreeEvidenceAtHead(t *testing.T, auth *taskauthority.Canonical, tas
 			Path:               path,
 			GitDir:             filepath.Join(path, ".git"),
 			CommonDir:          filepath.Join(filepath.Dir(path), ".git"),
-			Head:               head,
+			BaseHead:           head,
 			LeaseID:            lease,
 			FenceToken:         fence,
 			BoundAtUnix:        time.Now().Unix(),

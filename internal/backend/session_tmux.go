@@ -174,15 +174,39 @@ func (t *TmuxBackend) CheckAlive(windowID string) (bool, error) {
 	return false, wrapBackendCommandError("tmux list-panes", out, stderr, err)
 }
 
+// ForegroundProcess reports the pane's foreground command via
+// `tmux display-message -p -t <target> '#{pane_current_command}'`. Empty
+// output is unreadable evidence, not a process name.
+func (t *TmuxBackend) ForegroundProcess(windowID string) (string, error) {
+	bin, err := lookBackendBin("tmux")
+	if err != nil {
+		return "", err
+	}
+	target := normalizeTarget(windowID)
+	out, stderr, err := runBackendCommand(bin, []string{"display-message", "-p", "-t", target, "#{pane_current_command}"}, "", nil)
+	if err != nil {
+		return "", wrapBackendCommandError("tmux display-message", out, stderr, err)
+	}
+	name := strings.TrimSpace(string(out))
+	if name == "" {
+		return "", fmt.Errorf("tmux display-message: empty pane_current_command for target %q", target)
+	}
+	return name, nil
+}
+
 // Teardown kills the identified window via `tmux kill-window -t <windowID>`.
-// Errors are silently ignored if the window is already gone.
+// A kill that fails because the target is already gone settles as done; any
+// other failure (server, socket, timeout, permission) is returned.
 func (t *TmuxBackend) Teardown(windowID string) error {
 	bin, err := lookBackendBin("tmux")
 	if err != nil {
 		return err
 	}
 	target := normalizeTarget(windowID)
-	_, _, _ = runBackendCommand(bin, []string{"kill-window", "-t", target}, "", nil) // ignore errors — window may already be gone
+	out, stderr, err := runBackendCommand(bin, []string{"kill-window", "-t", target}, "", nil)
+	if err != nil && (isBackendCommandTimeout(err) || !isTmuxTargetAbsent(commandOutput(out, stderr))) {
+		return wrapBackendCommandError("tmux kill-window", out, stderr, err)
+	}
 	return nil
 }
 

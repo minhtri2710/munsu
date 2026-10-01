@@ -29,8 +29,8 @@ type State struct {
 
 	// NoMistakesRunStep is the current run-step from the no-mistakes pipeline,
 	// when the soldier's worktree has an active or recently-completed run.
-	// Values: running, fixing, ci, awaiting_approval, fix_review, checks-passed,
-	// passed, failed, cancelled.
+	// Values: running, fixing, ci, awaiting_approval, checks-passed, passed,
+	// passed-with-skips, failed, cancelled.
 	NoMistakesRunStep string
 
 	// StatusLogSuperseded is true when the last status log line has been

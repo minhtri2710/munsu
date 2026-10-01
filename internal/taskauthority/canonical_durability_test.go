@@ -282,7 +282,7 @@ func TestCanonicalDeliveryAuthorizationAndOutcomeSurviveReopen(t *testing.T) {
 	c, _, root := newTestCanonical(t)
 	mustDeliveryTask(t, c, "t1")
 
-	authReq := authorizeRequest(c, "t1", preconditionOf(1, 3))
+	authReq := authorizeRequest(c, "t1", preconditionOf(1, 4))
 	authOp := mustOperation(t, "op-auth-persist", authReq)
 	authRes, err := c.AuthorizeDelivery(authOp, authReq)
 	if err != nil {
@@ -290,7 +290,7 @@ func TestCanonicalDeliveryAuthorizationAndOutcomeSurviveReopen(t *testing.T) {
 	}
 
 	outReq := CanonicalDeliveryOutcomeRequest{
-		HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, 4),
+		HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, 5),
 		AuthorizationOperationID: authRes.Authorization.OperationID,
 		Status:                   DeliveryOutcomeCompleted,
 		Detail:                   "merged and verified",
@@ -313,7 +313,7 @@ func TestCanonicalDeliveryAuthorizationAndOutcomeSurviveReopen(t *testing.T) {
 	}
 
 	auth := currentAuthorizationForTest(t, c2, "t1")
-	if auth.OperationID != authRes.Authorization.OperationID || auth.Revision != 4 || auth.Identity != deliveryIdentity() {
+	if auth.OperationID != authRes.Authorization.OperationID || auth.Revision != 5 || auth.Identity != deliveryIdentity() {
 		t.Fatalf("reopened authorization = %+v, want the committed record", auth)
 	}
 	if auth.BindingDigest != authRes.Authorization.BindingDigest || auth.HoldsDigest != authRes.Authorization.HoldsDigest {
@@ -364,9 +364,9 @@ func TestCanonicalDeliveryRevocationEvidenceSurvivesReopen(t *testing.T) {
 	c, _, root := newTestCanonical(t)
 	mustDeliveryTask(t, c, "t1")
 
-	auth1 := mustAuthorize(t, c, "t1", 3, "op-auth-persist-revoke")
+	auth1 := mustAuthorize(t, c, "t1", 4, "op-auth-persist-revoke")
 	revokeReq := CanonicalRevokeDeliveryRequest{
-		HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, 4),
+		HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, 5),
 		AuthorizationOperationID: auth1.OperationID,
 		Reason:                   "abandoned before execution",
 	}
@@ -384,7 +384,7 @@ func TestCanonicalDeliveryRevocationEvidenceSurvivesReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	prior := authorizationByOperationForTest(t, c2, "t1", auth1.OperationID)
-	if prior.OperationID != auth1.OperationID || prior.Revision != 4 {
+	if prior.OperationID != auth1.OperationID || prior.Revision != 5 {
 		t.Fatalf("reopened issuance evidence = %+v", prior)
 	}
 	// The immutable revocation evidence survives and stays identified by its
@@ -408,7 +408,7 @@ func TestCanonicalDeliveryRevocationEvidenceSurvivesReopen(t *testing.T) {
 func TestCanonicalDeliveryCurrencyReadSurvivesReopen(t *testing.T) {
 	c, _, root := newTestCanonical(t)
 	mustDeliveryTask(t, c, "t1")
-	mustAuthorize(t, c, "t1", 3, "op-auth-currency-persist")
+	mustAuthorize(t, c, "t1", 4, "op-auth-currency-persist")
 
 	h2, err := home.Open(root)
 	if err != nil {
@@ -422,10 +422,10 @@ func TestCanonicalDeliveryCurrencyReadSurvivesReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cur.Valid || cur.Revision != 4 || cur.HoldsDigest == "" || cur.BindingDigest == "" {
+	if !cur.Valid || cur.Revision != 5 || cur.HoldsDigest == "" || cur.BindingDigest == "" {
 		t.Fatalf("reopened currency = %+v", cur)
 	}
-	if cur.Authorization == nil || cur.Authorization.Revision != 4 {
+	if cur.Authorization == nil || cur.Authorization.Revision != 5 {
 		t.Fatalf("reopened currency authorization = %+v", cur.Authorization)
 	}
 
@@ -455,7 +455,7 @@ func TestCanonicalDeliveryWrongHomeFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := authorizeRequest(c, "t1", preconditionOf(1, 3))
+	req := authorizeRequest(c, "t1", preconditionOf(1, 4))
 	req.HomeID = otherHome
 	if _, err := c.AuthorizeDelivery(mustOperation(t, "op-auth-wrong-home", req), req); !errors.Is(err, ErrConflict) {
 		t.Fatalf("authorize with wrong home = %v, want ErrConflict", err)

@@ -507,3 +507,23 @@ func TestParse_StepsList(t *testing.T) {
 		}
 	}
 }
+
+func TestConceptualStepIsNeverActiveForADeadOrUnknownRun(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  RunStatus
+		want string
+	}{
+		{"in-progress run that errored", RunStatus{Status: "in_progress", Error: "daemon lost", Steps: []Step{{Name: "ci", Status: "running"}}}, ""},
+		{"step with an unknown status", RunStatus{Status: "in_progress", Steps: []Step{{Name: "review", Status: "exploded"}, {Name: "ci", Status: "running"}}}, ""},
+		{"unknown run status", RunStatus{Status: "queued", Steps: []Step{{Name: "ci", Status: "running"}}}, ""},
+		{"completed with an unknown outcome", RunStatus{Status: "completed", Outcome: "weird"}, ""},
+		{"all steps settled is still running", RunStatus{Status: "in_progress", Steps: []Step{{Name: "a", Status: "completed"}, {Name: "b", Status: "pending"}, {Name: "c", Status: "skipped"}}}, "running"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if step, _ := tc.run.ConceptualStep(); step != tc.want {
+				t.Fatalf("ConceptualStep = %q, want %q", step, tc.want)
+			}
+		})
+	}
+}

@@ -331,14 +331,6 @@ func TestIsNotFoundErr_StructuredCodes(t *testing.T) {
 	}
 }
 
-func TestIsNotFoundErr_LegacyTextFallback(t *testing.T) {
-	// Non-JSON textual error should still match via legacy fallback.
-	err := execError("pane not found: something")
-	if !isNotFoundErr(err) {
-		t.Error("isNotFoundErr should match textual 'not found' as legacy fallback")
-	}
-}
-
 func TestIsNotFoundErr_Nil(t *testing.T) {
 	if isNotFoundErr(nil) {
 		t.Error("isNotFoundErr should return false for nil")

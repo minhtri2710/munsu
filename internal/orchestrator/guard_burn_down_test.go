@@ -49,7 +49,7 @@ func TestGuardBurnDownWatcherRunRefusesHeldWatchLock(t *testing.T) {
 	}
 	defer ReleaseWatch(home)
 
-	_, err = run(home, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	_, err = run(home, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "another watcher is already running") {
 		t.Fatalf("run error = %v, want held-watch-lock refusal", err)
 	}
@@ -75,7 +75,7 @@ func TestWatcherRunPropagatesLiveLeaseConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = run(home, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	_, err = run(home, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "claiming watcher lease: watcher lease held by pid") {
 		t.Fatalf("run error = %v, want live-lease conflict propagation", err)
 	}
@@ -84,7 +84,12 @@ func TestWatcherRunPropagatesLiveLeaseConflict(t *testing.T) {
 
 func TestGuardBurnDownStopWatcherRefusesUnownedPID(t *testing.T) {
 	home := t.TempDir()
-	WriteBeat(home)
+	if err := os.MkdirAll(filepath.Join(home, "state"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteBeat(home); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(mhome.WriterIdentityPath(home, "watcher"), []byte("schema_version=1\nkind=watcher\npid=9999999\n"), 0644); err != nil {
 		t.Fatal(err)
 	}

@@ -113,7 +113,7 @@ func bindWorktreeForSpawnFixture(t *testing.T, auth *taskauthority.Canonical, ta
 			Path:               "/tmp/wt",
 			GitDir:             "/repo/.git/worktrees/wt",
 			CommonDir:          "/repo/.git",
-			Head:               strings.Repeat("a", 40),
+			BaseHead:           strings.Repeat("a", 40),
 			LeaseID:            "wt-lease-" + taskID,
 			FenceToken:         "wt-fence-" + taskID,
 			BoundAtUnix:        time.Now().Unix(),
@@ -186,7 +186,7 @@ func TestEndpointBindingOrderingPersistsBindingMetadataThenWorking(t *testing.T)
 	bindWorktreeForSpawnFixture(t, auth, "bind-task")
 	r := &Runner{
 		homeDir:       homeDir,
-		args:          Args{ID: "bind-task", ProjectName: "test-proj", Kind: "ship", Authority: auth},
+		args:          Args{ID: "bind-task", ProjectName: "test-proj", Authority: auth},
 		windowID:      "session:pane-1",
 		wtPath:        filepath.Join(homeDir, "worktree"),
 		projPath:      filepath.Join(homeDir, "project"),
@@ -276,7 +276,7 @@ func TestSpawnBindWorktreePersistsExactRepositoryIdentityAndLease(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agg.Worktree == nil || agg.Worktree.RepositoryIdentity == "" || agg.Worktree.Path == "" || agg.Worktree.GitDir == "" || agg.Worktree.CommonDir == "" || agg.Worktree.GitDir == agg.Worktree.CommonDir || agg.Worktree.Head == "" || agg.Worktree.LeaseID == "" || agg.Worktree.FenceToken == "" {
+	if agg.Worktree == nil || agg.Worktree.RepositoryIdentity == "" || agg.Worktree.Path == "" || agg.Worktree.GitDir == "" || agg.Worktree.CommonDir == "" || agg.Worktree.GitDir == agg.Worktree.CommonDir || agg.Worktree.BaseHead == "" || agg.Worktree.LeaseID == "" || agg.Worktree.FenceToken == "" {
 		t.Fatalf("worktree binding=%+v", agg.Worktree)
 	}
 	if agg.Phase == taskauthority.PhaseWorking {

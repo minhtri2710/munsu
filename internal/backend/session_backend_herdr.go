@@ -161,9 +161,9 @@ func isHerdrWaitTimeout(err error) bool {
 	return false
 }
 
-// isNotFoundErr returns true for structured 'not found' / 'pane_not_found' herdr errors.
-// Prefers typed error code matching over textual substring for known codes;
-// falls back to textual matching for legacy/unknown error formats.
+// isNotFoundErr returns true only for a structured herdr error whose code names
+// an absent pane, workspace or tab. An error without a structured code is not
+// absence: it fails closed to the caller as a backend failure.
 func isNotFoundErr(err error) bool {
 	if err == nil || isBackendCommandTimeout(err) {
 		return false
@@ -179,17 +179,15 @@ func isNotFoundErr(err error) bool {
 	if errors.As(err, &execErr) {
 		return false
 	}
-	// Try structured error code first.
-	if herr := parseHerdrError(err); herr != nil {
-		switch herr.Code {
-		case HerdrErrPaneNotFound, HerdrErrWorkspaceNotFound, HerdrErrTabNotFound:
-			return true
-		}
+	herr := parseHerdrError(err)
+	if herr == nil {
 		return false
 	}
-	// Legacy fallback: textual substring matching.
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "not found") || strings.Contains(msg, "not_found") || strings.Contains(msg, "pane_not_found")
+	switch herr.Code {
+	case HerdrErrPaneNotFound, HerdrErrWorkspaceNotFound, HerdrErrTabNotFound:
+		return true
+	}
+	return false
 }
 
 // isHerdrCommandExit reports a completed herdr command that returned a
@@ -778,8 +776,14 @@ func (h *HerdrBackend) agentGet(windowID string) (string, error) {
 	return resp.Result.Agent.AgentStatus, nil
 }
 
-// AgentPrompt submits a prompt to the target agent using herdr agent prompt
-// without --wait, returning immediately on acceptance. Returns typed PromptResult.
+// AgentPrompt submits a prompt to the target agent and returns a typed
+// PromptResult. A submission counts as PromptSubmitted only on an observed
+// turn start: herdr's `agent prompt` acknowledges (agent_prompted) while the
+// text can still sit unsubmitted in the composer, so the call waits with
+// `--wait --until working --until blocked`, and herdr answers
+// agent_prompt_stalled when neither status is observed within its stall
+// window. An agent that is already working cannot show a new turn start, so
+// its prompt is sent without the wait and reported as PromptQueuedWhileBusy.
 //
 // Preconditions checked before submission:
 //  1. Server reachable — the protocol probe succeeds (otherwise, e.g. no
@@ -787,13 +791,9 @@ func (h *HerdrBackend) agentGet(windowID string) (string, error) {
 //  2. Target is a recognized live agent (otherwise returns PromptEndpointDead
 //     or PromptUnsupported if pane exists but is not an agent).
 //
-// On success, returns PromptSubmitted with the agent status in detail.
-// Submission acknowledgment means accepted/queued only, never processing
-// completion. Do not use AgentPrompt when settled agent lifecycle state is
-// needed — use a separate explicit wait operation for that.
-//
 // On stalled/error:
-//   - agent_prompt_stalled → PromptStalled (NO fallback)
+//   - agent_prompt_stalled or timeout → PromptStalled (NO fallback; the text
+//     may be pending in the composer)
 //   - agent_not_found → PromptEndpointDead (if pane absent) or PromptUnsupported
 //   - other errors → PromptBackendFailed
 func (h *HerdrBackend) AgentPrompt(windowID, text string) PromptResult {
@@ -810,7 +810,7 @@ func (h *HerdrBackend) AgentPrompt(windowID, text string) PromptResult {
 	pid := herdrPaneID(windowID)
 
 	// Precondition: target is a recognized live agent.
-	recognized, _ := h.IsRecognizedAgent(windowID)
+	recognized, agentStatus := h.IsRecognizedAgent(windowID)
 	if !recognized {
 		// agent_not_found: check if pane exists to distinguish dead from non-agent.
 		alive, aliveErr := h.CheckAlive(windowID)
@@ -844,11 +844,18 @@ func (h *HerdrBackend) AgentPrompt(windowID, text string) PromptResult {
 		}
 	}
 
-	// Submit prompt without --wait. Returns immediately on acceptance;
-	// the agent may be idle or still working on a previous prompt.
-	// Use herdrCaptureForWindow to preserve stdout even on non-zero exit
-	// (stalled returns exit 1 with JSON error in stdout).
-	out, err := h.herdrCaptureForWindow(windowID, "agent", "prompt", pid, text)
+	// Wait for the observed turn start unless the agent is already working
+	// (a working agent cannot show one). Capture preserves stdout even on
+	// non-zero exit (stalled returns exit 1 with JSON error in stdout).
+	queued := strings.EqualFold(strings.TrimSpace(agentStatus), "working")
+	args := []string{"agent", "prompt", pid, text}
+	class := backendCommandShort
+	if !queued {
+		args = append(args, "--wait", "--until", "working", "--until", "blocked",
+			"--timeout", strconv.FormatInt(backendPromptStartTimeout.Milliseconds(), 10))
+		class = backendCommandPromptStart
+	}
+	out, err := runHerdr(class, h.effectiveSession(windowID), args, true)
 	if err != nil {
 		// A bounded command failure leaves submission state unknown even if the
 		// CLI emitted partial output that resembles an agent_not_found error.
@@ -872,7 +879,7 @@ func (h *HerdrBackend) AgentPrompt(windowID, text string) PromptResult {
 		var errResp herdrErrorEnvelope
 		if jsonErr := json.Unmarshal([]byte(out), &errResp); jsonErr == nil && errResp.Error != nil {
 			switch errResp.Error.Code {
-			case "agent_prompt_stalled":
+			case "agent_prompt_stalled", HerdrErrTimeout:
 				return PromptResult{
 					Status: PromptStalled,
 					Detail: errResp.Error.Message,
@@ -917,21 +924,28 @@ func (h *HerdrBackend) AgentPrompt(windowID, text string) PromptResult {
 		}
 	}
 
-	// Return PromptSubmitted with agent status from response.
-	// Without --wait we do not infer queued-while-busy; the submission
-	// acknowledgment means accepted/queued only.
+	// herdr's --wait succeeded, so it observed the turn start (or the agent
+	// was already working and the prompt is queued behind the current turn).
+	status := PromptSubmitted
+	if queued {
+		status = PromptQueuedWhileBusy
+	}
 	if successResp.Result.Agent != nil {
 		return PromptResult{
-			Status: PromptSubmitted,
+			Status: status,
 			Detail: fmt.Sprintf("agent-status: %s", successResp.Result.Agent.AgentStatus),
 		}
 	}
-
-	// Success but no agent info — assume submitted.
 	return PromptResult{
-		Status: PromptSubmitted,
+		Status: status,
 		Detail: "no agent status in response",
 	}
+}
+
+// Notify shows a herdr notification popup. It implements HumanNotifier.
+func (h *HerdrBackend) Notify(title, body string) error {
+	_, err := h.herdr("notification", "show", title, "--body", body)
+	return err
 }
 
 // LegacyPrompt implements the LegacyPrompt interface for HerdrBackend.

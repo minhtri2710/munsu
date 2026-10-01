@@ -393,7 +393,7 @@ func TestCanonicalHoldsCannotMakeReservedOrSupersededTaskStartable(t *testing.T)
 	wantStartRefusedAsReserved(t, c, 2, "op-start-with-hold")
 
 	// Releasing the hold does not make the reserved task startable.
-	release := CanonicalReleaseHoldRequest{HomeID: c.HomeID(), HoldID: "hold-x", Reason: "release"}
+	release := CanonicalReleaseHoldRequest{HomeID: c.HomeID(), HoldID: "hold-x", Reason: "release", Words: testWords()}
 	if _, err := c.ReleaseHold(mustOperation(t, "op-release-x", release), release); err != nil {
 		t.Fatalf("ReleaseHold: %v", err)
 	}
@@ -650,7 +650,7 @@ func TestCanonicalLaunchOpsFencedByTransferInvariants(t *testing.T) {
 func TestCanonicalDeliveryOpsFencedByTransferReservation(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
 	mustDeliveryTask(t, c, "t1")
-	mustReserveTransfer(t, c, "t1", preconditionOf(1, 3), "dest-home")
+	mustReserveTransfer(t, c, "t1", preconditionOf(1, 4), "dest-home")
 
 	agg, err := c.Get(mustTaskID(t, "t1"))
 	if err != nil {
@@ -678,9 +678,9 @@ func TestCanonicalDeliveryOpsFencedByTransferReservation(t *testing.T) {
 func TestCanonicalDeliveryOpsFencedBySupersession(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
 	mustDeliveryTask(t, c, "t1")
-	mustReserveTransfer(t, c, "t1", preconditionOf(1, 3), "dest-home")
+	mustReserveTransfer(t, c, "t1", preconditionOf(1, 4), "dest-home")
 
-	commit := commitTransferRequest(t, c, "t1", preconditionOf(1, 4), "res-t1", "dest-home")
+	commit := commitTransferRequest(t, c, "t1", preconditionOf(1, 5), "res-t1", "dest-home")
 	if _, err := c.CommitTransfer(mustOperation(t, "op-commit-sup-delivery", commit), commit); err != nil {
 		t.Fatalf("CommitTransfer: %v", err)
 	}

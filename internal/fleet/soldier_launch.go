@@ -7,22 +7,31 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/fence"
 	"github.com/minhtri2710/munsu/internal/harness"
+	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
-// PromptName is the name of the prompt file persisted to the worktree.
+// PromptName is the name of the prompt file persisted to the launch directory.
 const PromptName = ".soldier-prompt.md"
+
+// PiSettingsName is the worktree project-settings file a pi soldier launch
+// writes to block the orchestration skill among project skills. It is a launch
+// artifact bound by the manifest.
+const PiSettingsName = harness.PiProjectSettingsRelPath
 
 // LaunchPromptInput is the canonical input for building a Soldier launch prompt.
 // All fields must be populated before BuildLaunchPrompt is called.
 type LaunchPromptInput struct {
 	TaskID                 string
-	TaskKind               string // "ship" or "scout"
+	TaskKind               string // ship, scout or review
 	DeliveryMode           string
 	Repository             string // repo name for brief
 	ParentCaptainID        string
 	ParentHome             string
-	WorktreePath           string // absolute path to the disposable worktree
+	WorktreePath           string // absolute path to the checkout the harness runs in
 	HomeDir                string // munsu home (parent)
 	BriefContent           []byte // complete task brief content
 	RequiredSkills         []SkillEntry
@@ -54,12 +63,12 @@ func BuildLaunchPrompt(input LaunchPromptInput) (string, *LaunchEnvelope, error)
 		return "", nil, fmt.Errorf("soldier launch: brief content is required")
 	}
 	if input.TaskKind == "" {
-		input.TaskKind = "ship"
+		input.TaskKind = taskauthority.KindShip
 	}
-	if input.TaskKind == "scout" && (strings.TrimSpace(input.ScoutScope) == "" || input.ScoutRuntimeBudgetSecs <= 0) {
+	if input.TaskKind == taskauthority.KindScout && (strings.TrimSpace(input.ScoutScope) == "" || input.ScoutRuntimeBudgetSecs <= 0) {
 		return "", nil, fmt.Errorf("soldier launch: scout scope and positive runtime budget are required")
 	}
-	if input.TaskKind != "scout" && (strings.TrimSpace(input.ScoutScope) != "" || input.ScoutRuntimeBudgetSecs != 0) {
+	if input.TaskKind != taskauthority.KindScout && (strings.TrimSpace(input.ScoutScope) != "" || input.ScoutRuntimeBudgetSecs != 0) {
 		return "", nil, fmt.Errorf("soldier launch: scout contract is only valid for scout tasks")
 	}
 	if input.DeliveryMode == "" {
@@ -169,9 +178,15 @@ func buildSkillInstructions(required, optional []SkillEntry) string {
 // that the Soldier must use. The --key is required, not optional.
 func terminalReportReminder(taskID, taskKind, parentCaptainID string) string {
 	bt := "`"
+	if taskKind == taskauthority.KindReview {
+		return `## Verdict Requirement
+
+End your work by writing the verdict file ` + bt + `$MUNSU_VERDICT_FILE` + bt + ` (one JSON object with the fields ` + verdictFileShape(bt) + `) to a sibling named ` + bt + `$MUNSU_VERDICT_FILE.tmp.<pid>.<hex>` + bt + ` (a number, then lowercase hex digits) and renaming that over the verdict file, then stop.
+You run no ` + bt + `munsu report` + bt + `; the verdict file is your whole output.`
+	}
 	doneMessage := "PR {url}"
 	doneDescription := "task complete, PR open (no merge)"
-	if taskKind == "scout" {
+	if taskKind == taskauthority.KindScout {
 		doneMessage = "summary of findings location"
 		doneDescription = "scout report complete"
 	}
@@ -202,7 +217,8 @@ Summary of report states:
 // starts with charter + task content already in context.
 // model and effort may be empty strings; they are only appended when the
 // adapter's template defines a corresponding flag.
-// The harness must have PromptArg support (from CaptainLaunch contract);
+// The harness must have PromptArg support (from CaptainLaunch contract) and an
+// expressible question deny, which every soldier launch carries;
 // unsupported harnesses fail closed.
 func BuildLaunchArgs(soldierHome, harnessName, model, effort, prompt string) (string, []string, error) {
 	adapter, ok := harness.GetAdapter(harnessName)
@@ -211,6 +227,9 @@ func BuildLaunchArgs(soldierHome, harnessName, model, effort, prompt string) (st
 	}
 	if !adapter.CaptainLaunch.Supported || !adapter.CaptainLaunch.PromptArg {
 		return "", nil, fmt.Errorf("soldier launch: harness %q does not have a verified prompt-arg contract", harnessName)
+	}
+	if len(adapter.QuestionDeny) == 0 {
+		return "", nil, fmt.Errorf("soldier launch: harness %q cannot deny its ask-the-user tool; decision-hold is the only question path", harnessName)
 	}
 	tmpl := adapter.LaunchTemplate
 
@@ -226,6 +245,7 @@ func BuildLaunchArgs(soldierHome, harnessName, model, effort, prompt string) (st
 		args = append(args, tmpl.EffortFlag, tmpl.DefaultEffort)
 	}
 	args = append(args, tmpl.ExtraArgs...)
+	args = append(args, adapter.QuestionDeny...)
 
 	if adapter.CaptainLaunch.Separator != "" {
 		args = append(args, adapter.CaptainLaunch.Separator)
@@ -248,13 +268,37 @@ type LaunchArtifact struct {
 	CommandDigest string
 	GuardName     string
 	GuardIdentity string
+	// Posture is what the launch argv guarantees, read by the spawn caller
+	// without parsing argv.
+	Posture harness.LaunchPosture
+}
+
+// ReviewLaunch is the typed launch evidence of one review generation: what the
+// reviewer reads, the launch directory it is launched from, and the one file it
+// may write. It carries values only; wrapping the launch in the reviewer fence
+// is the launch wiring's job (F2). Before is the reviewed tree observed before
+// the harness is submitted; it becomes the verdict's Before (ADR-0025).
+type ReviewLaunch struct {
+	TaskID           string
+	Generation       uint64
+	ReviewedTaskID   string
+	ReviewedWorktree string
+	ReviewHead       string
+	LaunchDir        string
+	VerdictFile      string
+	Before           domain.TreeState
 }
 
 // LaunchArtifactInput carries the immutable launch identity for one artifact.
 // Every value is deterministic per launch, so the artifact (and its command
 // digest) is identical on every attempt of the same launch.
 type LaunchArtifactInput struct {
+	// WorktreePath is the checkout the harness runs in. LaunchDir is where the
+	// launch script and its guard live: the same directory for a soldier, and a
+	// directory under the home for a reviewer, whose checkout is never written.
 	WorktreePath   string
+	LaunchDir      string
+	Review         *ReviewLaunch
 	HomeDir        string
 	TaskID         string
 	SnapshotDigest string
@@ -263,10 +307,14 @@ type LaunchArtifactInput struct {
 	LaunchID       string
 	Generation     string
 	EndpointFence  string
+	// Fence, when set, wraps the harness exec in the write fence; the script's
+	// own prelude (exports, shim, guard) runs before it, unfenced. Nil means no
+	// fence applies on this host.
+	Fence *fence.Fence
 }
 
 // buildLaunchArtifact writes the deterministic .soldier-launch.sh script into
-// the worktree and returns the exact submission command with its sha256
+// the launch directory and returns the exact submission command with its sha256
 // digest. The script embeds the persistent re-entrant launch guard: BEFORE
 // invoking/execing the harness it writes a durable guard marker (keyed by
 // task+generation, carrying the exact launch identity) and exits/no-ops when
@@ -282,6 +330,9 @@ func buildLaunchArtifact(in LaunchArtifactInput) (LaunchArtifact, error) {
 	}
 	if in.LaunchID == "" || in.Generation == "" || in.EndpointFence == "" {
 		return LaunchArtifact{}, fmt.Errorf("soldier launch: re-entrant launch guard requires the exact launch identity (launch id, generation, fence)")
+	}
+	if in.LaunchDir == "" {
+		return LaunchArtifact{}, fmt.Errorf("soldier launch: launch directory is required")
 	}
 	guardName := fmt.Sprintf(".soldier-launch-guard-%s-%s", labelComponent(in.TaskID), in.Generation)
 	guardIdentity := in.LaunchID + "|" + in.Generation + "|" + in.EndpointFence
@@ -302,6 +353,11 @@ func buildLaunchArtifact(in LaunchArtifactInput) (LaunchArtifact, error) {
 	b.WriteString("export MUNSU_PARENT_STATUS=")
 	b.WriteString(shQuote(in.HomeDir))
 	b.WriteString("\n")
+	if in.Review != nil {
+		b.WriteString("export MUNSU_VERDICT_FILE=")
+		b.WriteString(shQuote(in.Review.VerdictFile))
+		b.WriteString("\n")
+	}
 	if in.SnapshotDigest != "" {
 		b.WriteString("export MUNSU_CONFIG_SNAPSHOT_DIGEST=")
 		b.WriteString(shQuote(in.SnapshotDigest))
@@ -316,9 +372,23 @@ func buildLaunchArtifact(in LaunchArtifactInput) (LaunchArtifact, error) {
 	if err != nil {
 		return LaunchArtifact{}, err
 	}
+	posture := harness.PostureOf(in.LaunchBin, in.LaunchArgs)
+	if in.LaunchBin == harness.Pi {
+		piAgentDir, err := provisionPiSkillBlock(in.HomeDir, in.TaskID, in.WorktreePath, in.Review == nil)
+		if err != nil {
+			return LaunchArtifact{}, err
+		}
+		b.WriteString("export PI_CODING_AGENT_DIR=")
+		b.WriteString(shQuote(piAgentDir))
+		b.WriteString("\n")
+		posture.SkillBlock = true
+	}
 	b.WriteString("export PATH=")
 	b.WriteString(shQuote(shimDir))
 	b.WriteString(":\"$PATH\"\n")
+	// A fenced git cannot write the gc and maintenance state it would start in
+	// the background, so turn both off for every git the harness runs.
+	b.WriteString("export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=maintenance.auto GIT_CONFIG_VALUE_0=false GIT_CONFIG_KEY_1=gc.auto GIT_CONFIG_VALUE_1=0\n")
 	// Persistent re-entrant launch guard: created by the launched script
 	// BEFORE invoking the harness. The guard directory is created atomically
 	// (mkdir succeeds for exactly one submission), so even concurrent
@@ -327,7 +397,7 @@ func buildLaunchArtifact(in LaunchArtifactInput) (LaunchArtifact, error) {
 	// a different identity/fence fails closed; a guard with no provable
 	// readiness is never re-launched.
 	b.WriteString("guard=")
-	b.WriteString(shQuote(guardName))
+	b.WriteString(shQuote(filepath.Join(in.LaunchDir, guardName)))
 	b.WriteString("\n")
 	b.WriteString("identity=")
 	b.WriteString(shQuote(guardIdentity))
@@ -342,16 +412,21 @@ func buildLaunchArtifact(in LaunchArtifactInput) (LaunchArtifact, error) {
 	b.WriteString("  exit 0\n")
 	b.WriteString("fi\n")
 	b.WriteString("printf '%s' \"$identity\" > \"$guard/identity\"\n")
-	b.WriteString("exec ")
-	b.WriteString(shQuote(in.LaunchBin))
-	for _, arg := range in.LaunchArgs {
+	argv := append([]string{in.LaunchBin}, in.LaunchArgs...)
+	if in.Fence != nil {
+		if argv, err = in.Fence.Wrap(argv); err != nil {
+			return LaunchArtifact{}, fmt.Errorf("soldier launch: %w", err)
+		}
+	}
+	b.WriteString("exec")
+	for _, arg := range argv {
 		b.WriteString(" ")
 		b.WriteString(shQuote(arg))
 	}
 	b.WriteString("\n")
 	content := b.String()
 
-	scriptPath := filepath.Join(in.WorktreePath, LaunchScriptName)
+	scriptPath := filepath.Join(in.LaunchDir, LaunchScriptName)
 	if existing, err := os.ReadFile(scriptPath); err == nil {
 		if string(existing) != content {
 			return LaunchArtifact{}, fmt.Errorf("launch artifact %s already exists with different content; identity mismatch, refuse to overwrite", scriptPath)
@@ -363,10 +438,88 @@ func buildLaunchArtifact(in LaunchArtifactInput) (LaunchArtifact, error) {
 		return LaunchArtifact{}, fmt.Errorf("writing launch script: %w", err)
 	}
 	command := "bash " + shQuote(scriptPath)
-	return LaunchArtifact{ScriptPath: scriptPath, Command: command, CommandDigest: sha256Content([]byte(command)), GuardName: guardName, GuardIdentity: guardIdentity}, nil
+	return LaunchArtifact{ScriptPath: scriptPath, Command: command, CommandDigest: sha256Content([]byte(command)), GuardName: guardName, GuardIdentity: guardIdentity, Posture: posture}, nil
 }
 
-// PersistLaunchFiles writes all durable launch files to the worktree:
+// piAgentDirPath is the per-task pi agent dir under the home's state/: the
+// PI_CODING_AGENT_DIR of the launch and the fence's harness state dir.
+func piAgentDirPath(homeDir, taskID string) (string, error) {
+	dir, err := home.DurableFilePath(home.StateDir(homeDir), taskID, "."+harness.PiAgentDirSuffix)
+	if err != nil {
+		return "", fmt.Errorf("soldier launch: %w", err)
+	}
+	return dir, nil
+}
+
+// provisionPiSkillBlock blocks the orchestration skill for a pi soldier at both
+// levels pi filters skills: the per-task agent dir (user level, pointed at by
+// PI_CODING_AGENT_DIR) and the worktree .pi/settings.json (project level, which
+// alone filters the .agents/skills of the worktree's ancestors). It returns the
+// agent dir. A worktree that already has .pi/settings.json, tracked or present
+// with other content, is refused: the block cannot be expressed without
+// changing the project's file. A reviewer's checkout is never written
+// (writeSettings false): its settings file must already be the identical block.
+func provisionPiSkillBlock(homeDir, taskID, worktreePath string, writeSettings bool) (string, error) {
+	stateDir := home.StateDir(homeDir)
+	dst, err := piAgentDirPath(homeDir, taskID)
+	if err != nil {
+		return "", err
+	}
+	src, err := harness.HumanPiAgentDir(stateDir)
+	if err != nil {
+		return "", fmt.Errorf("soldier launch: %w", err)
+	}
+	if err := writePiProjectSettings(worktreePath, writeSettings); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		return "", fmt.Errorf("soldier launch: %w", err)
+	}
+	if err := harness.BuildPiAgentDir(src, dst); err != nil {
+		return "", fmt.Errorf("soldier launch: %w", err)
+	}
+	return dst, nil
+}
+
+// writePiProjectSettings writes the worktree's .pi/settings.json skill block.
+// Re-entry of the same launch finds its own identical, untracked file and keeps
+// it. With create false it never writes: an absent file is refused.
+func writePiProjectSettings(worktreePath string, create bool) error {
+	want := harness.PiProjectSettings()
+	path := filepath.Join(worktreePath, filepath.FromSlash(PiSettingsName))
+	refuse := fmt.Errorf("soldier launch: worktree has %s; the orchestration skill block cannot be expressed without changing the project's file", path)
+	if isTrackedByGit(worktreePath, PiSettingsName) {
+		return refuse
+	}
+	switch fi, err := os.Lstat(path); {
+	case err == nil:
+		if !fi.Mode().IsRegular() {
+			return refuse
+		}
+		existing, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("soldier launch: reading %s: %w", path, err)
+		}
+		if string(existing) != string(want) {
+			return refuse
+		}
+		return nil
+	case !os.IsNotExist(err):
+		return fmt.Errorf("soldier launch: checking %s: %w", path, err)
+	}
+	if !create {
+		return fmt.Errorf("soldier launch: the reviewed worktree has no %s; a reviewer never writes the checkout it reads", path)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("soldier launch: %w", err)
+	}
+	if err := atomicWriteFile(path, want, 0o644); err != nil {
+		return fmt.Errorf("soldier launch: writing %s: %w", path, err)
+	}
+	return nil
+}
+
+// PersistLaunchFiles writes all durable launch files to the launch directory:
 // .soldier-charter.md, .soldier-brief.md, .soldier-envelope.json, and .soldier-prompt.md.
 // Returns an error if any write fails.
 func PersistLaunchFiles(worktreePath string, charter string, briefContent []byte, env *LaunchEnvelope, promptText string) error {
@@ -430,7 +583,7 @@ func missingRequiredSkillBinaries(required []SkillEntry) []string {
 // that classification. Soft at the bootstrap layer means "munsu runs without
 // it", not "a ship task runs without it".
 func requiredSkillsAreHardGate(taskKind, deliveryMode string) bool {
-	if taskKind == "scout" {
+	if taskKind == taskauthority.KindScout || taskKind == taskauthority.KindReview {
 		return false
 	}
 	return deliveryMode == "direct-PR" || deliveryMode == "no-mistakes"
@@ -486,4 +639,11 @@ func FailClosedDuringLaunch(input LaunchPromptInput) error {
 		return fmt.Errorf("soldier launch fail-closed: %s", strings.Join(failures, "; "))
 	}
 	return nil
+}
+
+// verdictFileShape names the fields of the verdict file for the reviewer's
+// charter, brief and terminal reminder, so the three cannot drift apart.
+func verdictFileShape(bt string) string {
+	fields := []string{"schema_version", "task", "generation", "reviews", "outcome", "head_sha", "base_sha", "evidence"}
+	return bt + strings.Join(fields, bt+", "+bt) + bt
 }

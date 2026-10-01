@@ -50,7 +50,7 @@ func TestShipBriefTemplateDirectPR(t *testing.T) {
 	checks := []string{
 		"Delivery mode: direct-PR",
 		"commit",
-		"push",
+		"push the feature branch without -u",
 		"open a PR directly",
 		"Never merge",
 	}

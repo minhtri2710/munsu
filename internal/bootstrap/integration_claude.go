@@ -99,7 +99,9 @@ func (h jsonHookHarness) content(munsuBin string) string {
 		Hooks: map[string][]hookMatcher{
 			"SessionStart": {
 				{
-					Matcher: "startup|resume|clear",
+					// compact re-primes: summarizing the conversation drops the
+					// session-start digest the General was given.
+					Matcher: "startup|resume|clear|compact",
 					Hooks: []hookEntry{
 						{Type: "command", Command: h.sessionStartCommand(munsuBin)},
 					},

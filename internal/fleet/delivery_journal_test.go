@@ -19,7 +19,7 @@ import (
 
 // deliveryTestHead is the full 40-hex Git object ID carried by the delivery
 // identity and the bound worktree head in the delivery tests.
-const deliveryTestHead = "abc123def456abc123def456abc123def456abc1"
+const deliveryTestHead = "6503e5e9852b028c95c8d1c9cd9178667506ac7b"
 
 // deliveryTestBase is the base ref the delivery identity pins and the scripted
 // provider observations report, so the tests exercise the pre-mutation base
@@ -37,6 +37,7 @@ type fakeDeliveryProvider struct {
 	observations []DeliveryProviderObservation
 	observeErrs  []error
 	onMerge      func()
+	onValidate   func()
 }
 
 func newFakeDeliveryProvider() *fakeDeliveryProvider {
@@ -55,6 +56,9 @@ func (f *fakeDeliveryProvider) scriptErr(errs ...error) *fakeDeliveryProvider {
 
 func (f *fakeDeliveryProvider) ValidateMergeRequest(ident domain.DeliveryIdentity, request DeliveryMergeRequest) error {
 	f.requests = append(f.requests, request)
+	if f.onValidate != nil {
+		f.onValidate()
+	}
 	return f.validateErr
 }
 
@@ -106,13 +110,28 @@ func deliverRequest() DeliverRequest {
 			taskauthority.DeliveryPreconditionPRMergeable,
 			taskauthority.DeliveryPreconditionPRHeadCurrent,
 		},
+		Words: deliveryWords(),
 	}
 }
 
 // mustWorkingDeliveryTask creates a task and binds the worktree (at the
-// delivery identity head) and endpoint so it is working (revision 3) with
-// the exact delivery bindings.
+// delivery identity head) and endpoint so it is working with the exact delivery
+// bindings, then records the approving review verdict of that head (revision 4).
 func mustWorkingDeliveryTask(t *testing.T, c *taskauthority.Canonical, taskID string) {
+	t.Helper()
+	mustWorkingShipTask(t, c, taskID)
+	mustRecordApprovingVerdict(t, c, taskID, deliveryTestHead)
+}
+
+// mustWorkingShipTask creates a ship task working with a real worktree (whose
+// HEAD is deliveryTestHead) and endpoint bound, with no review verdict.
+func mustWorkingShipTask(t *testing.T, c *taskauthority.Canonical, taskID string) string {
+	t.Helper()
+	return mustWorkingShipTaskAt(t, c, taskID, newDeliveryWorktree(t))
+}
+
+// mustWorkingShipTaskAt is mustWorkingShipTask over a caller-made worktree.
+func mustWorkingShipTaskAt(t *testing.T, c *taskauthority.Canonical, taskID, wtPath string) string {
 	t.Helper()
 	mustFleetCreate(t, c, taskID)
 	tid := mustFleetTaskID(t, taskID)
@@ -126,10 +145,10 @@ func mustWorkingDeliveryTask(t *testing.T, c *taskauthority.Canonical, taskID st
 		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
 		Binding: taskauthority.WorktreeBinding{
 			RepositoryIdentity: "repo-" + taskID,
-			Path:               filepath.Join("/worktrees", taskID),
-			GitDir:             filepath.Join("/worktrees", taskID, ".git"),
+			Path:               wtPath,
+			GitDir:             filepath.Join(wtPath, ".git"),
 			CommonDir:          "/repo/.git",
-			Head:               deliveryTestHead,
+			BaseHead:           deliveryTestHead,
 			LeaseID:            "lease-wt-" + taskID,
 			FenceToken:         "fence-wt-" + taskID,
 			BoundAtUnix:        time.Now().Unix(),
@@ -161,6 +180,7 @@ func mustWorkingDeliveryTask(t *testing.T, c *taskauthority.Canonical, taskID st
 	if _, err := c.BindEndpoint(mustFleetOperation(t, "op-del-bindep-"+taskID, be), be); err != nil {
 		t.Fatalf("BindEndpoint(%s): %v", taskID, err)
 	}
+	return wtPath
 }
 
 // installDeliveryProviderFor swaps the production capability resolver with a

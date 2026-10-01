@@ -90,6 +90,7 @@ func recordLaunchRequest(c *Canonical, taskID string, prec domain.Precondition, 
 		Precondition:  prec,
 		LaunchID:      req.LaunchID,
 		CommandDigest: digestOf("launch:" + taskID),
+		Seat:          testSeat(),
 		Reason:        "record",
 	}
 }
@@ -320,7 +321,7 @@ func TestCanonicalBeginSpawnBlockedBySpawnHold(t *testing.T) {
 		t.Fatalf("BeginSpawn held = %v, want ErrDispatchHeld", err)
 	}
 
-	release := CanonicalReleaseHoldRequest{HomeID: c.HomeID(), HoldID: "spawn-hold", Reason: "resume"}
+	release := CanonicalReleaseHoldRequest{HomeID: c.HomeID(), HoldID: "spawn-hold", Reason: "resume", Words: testWords()}
 	if _, err := c.ReleaseHold(mustOperation(t, "op-release-spawn", release), release); err != nil {
 		t.Fatalf("ReleaseHold: %v", err)
 	}
@@ -647,7 +648,7 @@ func TestCanonicalLaunchIncarnationPersistsAndFencesBinds(t *testing.T) {
 		HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, rev),
 		Binding: WorktreeBinding{
 			RepositoryIdentity: "repo", Path: "/wt", GitDir: "/wt/.git", CommonDir: "/wt/.git",
-			Head: "sha", LeaseID: req.WorktreeReservationID, FenceToken: req.WorktreeFenceToken, BoundAtUnix: 2000,
+			BaseHead: "sha", LeaseID: req.WorktreeReservationID, FenceToken: req.WorktreeFenceToken, BoundAtUnix: 2000,
 		},
 		Reason: "spawn",
 	}

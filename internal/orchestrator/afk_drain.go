@@ -8,6 +8,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // FleetTaskSnapshot is the typed task reading for fleet peek.
@@ -216,7 +217,7 @@ func peekFleet(homeDir string, provider FleetSnapshotProvider) (*DrainFleetPeek,
 
 	peek := &DrainFleetPeek{}
 	for _, ts := range tasks {
-		if ts.Kind != "ship" && ts.Kind != "scout" {
+		if !taskauthority.SoldierKind(ts.Kind) {
 			continue
 		}
 		phase := "alive"

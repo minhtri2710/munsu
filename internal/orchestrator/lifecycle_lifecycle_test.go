@@ -79,7 +79,12 @@ func TestBeatWriteReadStatus(t *testing.T) {
 		t.Fatalf("missing beat should be !Exists && Stale, got %+v", st)
 	}
 
-	WriteBeat(home)
+	if err := os.MkdirAll(filepath.Join(home, "state"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteBeat(home); err != nil {
+		t.Fatalf("WriteBeat: %v", err)
+	}
 	ts, pid, ok := ReadBeat(home)
 	if !ok {
 		t.Fatal("ReadBeat ok=false after WriteBeat")
@@ -257,5 +262,18 @@ func TestReclaimPath_UniqueIDs(t *testing.T) {
 			t.Fatalf("duplicate event ID %q in reclaimed batch at index %d", key, i)
 		}
 		seen[key] = true
+	}
+}
+
+// A beat never creates the state directory: a watcher whose home was deleted
+// gets an error instead of resurrecting it.
+func TestWriteBeatRefusesAMissingStateDirectory(t *testing.T) {
+	home := freshHome(t)
+	err := WriteBeat(home)
+	if err == nil || !strings.Contains(err.Error(), "watcher beat") {
+		t.Fatalf("WriteBeat without a state dir = %v, want a watcher beat error", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(home, "state")); !os.IsNotExist(statErr) {
+		t.Fatalf("WriteBeat created the state directory: %v", statErr)
 	}
 }

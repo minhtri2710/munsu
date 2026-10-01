@@ -10,7 +10,10 @@ import (
 type probeBackend struct {
 	aliveHandle string
 	checkErr    error
+	process     string
 }
+
+func (p probeBackend) ForegroundProcess(string) (string, error) { return p.process, nil }
 
 func (p probeBackend) NewWindow(string, string) (string, error) { return "", nil }
 func (p probeBackend) SendKeys(string, string) error            { return nil }
@@ -74,9 +77,9 @@ func TestCLIEndpointProbePreservesBoundMetadata(t *testing.T) {
 	probe := cliEndpointProbe{resolve: func(home string, meta map[string]string) (backend.Backend, string, error) {
 		gotHome = home
 		got = meta
-		return probeBackend{aliveHandle: "session-1:pane-1"}, "herdr", nil
+		return probeBackend{aliveHandle: "session-1:pane-1", process: "claude"}, "herdr", nil
 	}}
-	status, err := probe.ProbeEndpoint(fleet.EndpointRef{Backend: "herdr", Handle: "session-1:pane-1", SessionOwner: "session-1", WorkspaceID: "workspace-1", TabID: "tab-1", Home: "/home"})
+	status, err := probe.ProbeEndpoint(fleet.EndpointRef{Backend: "herdr", Handle: "session-1:pane-1", SessionOwner: "session-1", WorkspaceID: "workspace-1", TabID: "tab-1", Home: "/home", Harness: "claude"})
 	if err != nil || status.Lifecycle != fleet.LifecycleAlive {
 		t.Fatalf("status=%+v err=%v", status, err)
 	}

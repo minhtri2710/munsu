@@ -66,6 +66,7 @@ func TestSoldierLaunchScriptPrependsGitShim(t *testing.T) {
 	wt := t.TempDir()
 	artifact, err := buildLaunchArtifact(LaunchArtifactInput{
 		WorktreePath:   wt,
+		LaunchDir:      wt,
 		HomeDir:        home,
 		TaskID:         "ship-shim",
 		SnapshotDigest: "digest",

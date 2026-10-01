@@ -1,6 +1,6 @@
 # 0016. Review Before Merge Has No Technical Gate; the Orchestrator Owns It Until a Second Review Identity Exists
 
-* **Status:** Partially superseded; the application delivery enforcement claim is superseded, while branch-protection guidance remains current
+* **Status:** Superseded by [ADR-0025](0025-head-bound-review-verdict-and-words-record.md); the branch-protection guidance in §3 is unchanged
 * **Date:** 2026-08-17
 * **Extends:** ADR-0008 (the least-painful patch is chosen only under a bounded constraint, and then the constraint and its removal condition are recorded in-repo)
 * **Triggered by:** BEO-111 (branch protection audit during the #502 review) ← BEO-101 verdict on #483

@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/spf13/cobra"
@@ -110,17 +111,34 @@ func unresolvedDecisionHolds(auth *taskauthority.Canonical, originID string) ([]
 	return unresolved, nil
 }
 
+// wordsFlags holds the Human's words behind a decision: the grantor, the
+// channel and the verbatim quote. The record is a claim the operator makes;
+// the Authority refuses it when the quote is empty and never verifies it.
+type wordsFlags struct {
+	grantor, channel, quote string
+}
+
+func (w *wordsFlags) bind(cmd *cobra.Command) {
+	cmd.Flags().StringVar(&w.grantor, "grantor", "", "Who gave the words behind the decision")
+	cmd.Flags().StringVar(&w.channel, "channel", "", "Channel the words were given on")
+	cmd.Flags().StringVar(&w.quote, "quote", "", "The words, verbatim")
+}
+
+func (w wordsFlags) words() domain.Words {
+	return domain.Words{Grantor: w.grantor, Channel: w.channel, Quote: w.quote}
+}
+
 // resolveDecisionHold releases one decision hold through the canonical
 // Authority: every hold this CLI creates is a durable DispatchHold released
-// by the idempotent ReleaseHold operation. The legacy decision record path
-// (ResolveDecision) was removed with the interpretation layer; there is no
-// decision store on the canonical surface.
-func resolveDecisionHold(ctx Ctx, auth *taskauthority.Canonical, originID, decisionKey, answer string) error {
+// by the idempotent ReleaseHold operation, which records the words behind the
+// release.
+func resolveDecisionHold(ctx Ctx, auth *taskauthority.Canonical, originID, decisionKey, answer string, words domain.Words) error {
 	hid := decisionHoldID(originID, decisionKey)
 	req := taskauthority.CanonicalReleaseHoldRequest{
 		HomeID: auth.HomeID(),
 		HoldID: hid,
 		Reason: "decision resolved: " + answer,
+		Words:  words,
 	}
 	op, err := newCanonicalOperation("decision-hold-release", req)
 	if err != nil {
@@ -218,6 +236,7 @@ Example:
 
 func newDecisionHoldCompleteCmd() *cobra.Command {
 	var none bool
+	var words wordsFlags
 
 	cmd := &cobra.Command{
 		Use:   "complete <origin-id> [<key>...]",
@@ -225,10 +244,12 @@ func newDecisionHoldCompleteCmd() *cobra.Command {
 		Long: `Mark decisions discovered during an investigation or review as complete.
 
 Accepts one or more decision keys. Use --none to attest that the reviewed
-surface has no unresolved general decisions.
+surface has no unresolved general decisions. Completing keys releases their
+holds, so it carries the words behind the decision: --grantor, --channel and
+a non-empty --quote.
 
 Examples:
-  munsu decision-hold complete scout-r2 approach db-schema
+  munsu decision-hold complete scout-r2 approach db-schema --grantor human --channel herdr --quote "go with approach"
   munsu decision-hold complete scout-r2 --none`,
 		Args: MinimumNArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
@@ -262,7 +283,7 @@ Examples:
 				return fmt.Errorf("decision holds require task authority: %w", err)
 			}
 			for _, key := range keys {
-				if err := resolveDecisionHold(ctx, auth, originID, key, "recorded (decision noted)"); err != nil {
+				if err := resolveDecisionHold(ctx, auth, originID, key, "recorded (decision noted)", words.words()); err != nil {
 					return fmt.Errorf("completing decision hold %s: %w", key, err)
 				}
 				// The status line is a post-commit projection (ADR-0007 §7),
@@ -283,6 +304,7 @@ Examples:
 	configureContractCommand(cmd)
 
 	cmd.Flags().BoolVar(&none, "none", false, "Attest that no unresolved decisions exist")
+	words.bind(cmd)
 
 	return cmd
 }
@@ -408,17 +430,21 @@ func newDecisionHoldResolveCmd() *cobra.Command {
 	var answer string
 	var unblock []string
 	var from string
+	var words wordsFlags
 	cmd := &cobra.Command{
-		Use:   "resolve <key> --answer <text> --from <origin-id> [--unblock <dep-id>...]",
+		Use:   "resolve <key> --answer <text> --from <origin-id> --grantor <who> --channel <channel> --quote <words> [--unblock <dep-id>...]",
 		Short: "Record the general's decision and unblock dependent work",
 		Long: `Record the general's decision for a hold and unblock any dependent tasks.
 
 The --from flag specifies the originating task ID (must match the hold's origin).
 The --unblock flag may be repeated to unblock multiple dependencies.
+The words behind the decision are required: --grantor (who gave them),
+--channel, and --quote (verbatim, non-empty). The record is a claim, not
+verified authority.
 
 Examples:
-  munsu decision-hold resolve approach --answer "Choose React" --from scout-r2
-  munsu decision-hold resolve approach --answer "Choose React" --from scout-r2 --unblock dep-task-1`,
+  munsu decision-hold resolve approach --answer "Choose React" --from scout-r2 --grantor human --channel herdr --quote "use React"
+  munsu decision-hold resolve approach --answer "Choose React" --from scout-r2 --grantor human --channel herdr --quote "use React" --unblock dep-task-1`,
 		Args: ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			key := args[0]
@@ -433,7 +459,7 @@ Examples:
 			if err != nil {
 				return fmt.Errorf("decision holds require task authority: %w", err)
 			}
-			if err := resolveDecisionHold(ctx, auth, from, key, answer); err != nil {
+			if err := resolveDecisionHold(ctx, auth, from, key, answer, words.words()); err != nil {
 				return fmt.Errorf("resolving hold: %w", err)
 			}
 
@@ -467,6 +493,7 @@ Examples:
 	cmd.Flags().StringVar(&answer, "answer", "", "The general's decision")
 	cmd.Flags().StringVar(&from, "from", "", "Originating task ID that owns this decision hold")
 	cmd.Flags().StringArrayVar(&unblock, "unblock", nil, "Dependent task to unblock (repeatable)")
+	words.bind(cmd)
 	return cmd
 }
 

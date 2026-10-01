@@ -9,6 +9,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // This file is the read-only A-01 seam for the root "fleet summary" output.
@@ -51,7 +52,7 @@ func loadRootSummary(homeDir string) (rootSummaryView, error) {
 	}
 	v.totalTasks = len(snap.Tasks)
 	for _, ts := range snap.Tasks {
-		if ts.Kind == "ship" || ts.Kind == "scout" {
+		if taskauthority.SoldierKind(ts.Kind) {
 			v.inFlight++
 		}
 		task := rootSummaryTask{

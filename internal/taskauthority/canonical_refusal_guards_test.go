@@ -318,7 +318,7 @@ func TestGuardAddHoldRefusesToReviveAReleasedHold(t *testing.T) {
 		t.Fatalf("AddHold of an identical active hold: %v", err)
 	}
 
-	release := CanonicalReleaseHoldRequest{HomeID: c.HomeID(), HoldID: "hold-1", Reason: "resolved"}
+	release := CanonicalReleaseHoldRequest{HomeID: c.HomeID(), HoldID: "hold-1", Reason: "resolved", Words: testWords()}
 	if _, err := c.ReleaseHold(mustOperation(t, "op-hold-release", release), release); err != nil {
 		t.Fatalf("ReleaseHold: %v", err)
 	}
@@ -336,12 +336,12 @@ func TestGuardReleaseHoldRefusesUnsafeHoldID(t *testing.T) {
 		t.Fatalf("AddHold: %v", err)
 	}
 	// Control: the safe ID releases.
-	ok := CanonicalReleaseHoldRequest{HomeID: c.HomeID(), HoldID: "hold-1", Reason: "resolved"}
+	ok := CanonicalReleaseHoldRequest{HomeID: c.HomeID(), HoldID: "hold-1", Reason: "resolved", Words: testWords()}
 	if _, err := c.ReleaseHold(mustOperation(t, "op-relhold-ok", ok), ok); err != nil {
 		t.Fatalf("ReleaseHold with a safe ID: %v", err)
 	}
 
-	unsafe := CanonicalReleaseHoldRequest{HomeID: c.HomeID(), HoldID: "holds/hold-1", Reason: "resolved"}
+	unsafe := CanonicalReleaseHoldRequest{HomeID: c.HomeID(), HoldID: "holds/hold-1", Reason: "resolved", Words: testWords()}
 	_, err := c.ReleaseHold(mustOperation(t, "op-relhold-unsafe", unsafe), unsafe)
 	wantErrSubstring(t, err, "dispatch hold ID must be a safe non-empty value", "ReleaseHold with a path-separating ID")
 }
@@ -509,7 +509,7 @@ func TestGuardRecordLaunchRequiresACommittedIntent(t *testing.T) {
 	req := CanonicalRecordLaunchRequest{
 		HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"),
 		Precondition: preconditionOf(1, 1), LaunchID: "launch-t1",
-		CommandDigest: digestOf("launch:t1"), Reason: "record",
+		CommandDigest: digestOf("launch:t1"), Seat: testSeat(), Reason: "record",
 	}
 	_, err := c.RecordLaunch(mustOperation(t, "op-record-no-intent", req), req)
 	wantErrSubstring(t, err, "has no launch intent", "RecordLaunch without an intent")

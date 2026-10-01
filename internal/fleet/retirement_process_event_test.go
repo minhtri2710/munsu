@@ -64,7 +64,7 @@ func (cycleStates) ReadTaskState(string, string) (*orchestrator.ObservedTaskStat
 
 func runSupervisionCycle(t *testing.T, home string, port *cycleRetirementPort) {
 	t.Helper()
-	if _, err := orchestrator.RunCycleWithProbeAndSender(home, cycleProbe{}, cycleSender{}, cycleHooks{}, port, cycleChecks{}, cycleStates{}); err != nil {
+	if _, err := orchestrator.RunCycleWithProbeAndSender(home, cycleProbe{}, cycleSender{}, cycleHooks{}, port, nil, cycleChecks{}, cycleStates{}); err != nil {
 		t.Fatalf("RunCycleWithProbeAndSender: %v", err)
 	}
 }

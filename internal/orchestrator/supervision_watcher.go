@@ -126,7 +126,7 @@ type processEventWakeKey struct {
 // logged and dropped and never re-queued -- a prefix nothing owns would
 // re-queue forever -- and its record stays resolved and unacked for restart
 // recovery. Merged-poll outcomes are returned per task for the plugin loop.
-func consumeProcessEventWakes(homeDir string, retirement RetirementPort) (map[string]error, error) {
+func consumeProcessEventWakes(homeDir string, retirement RetirementPort, reviews ReviewVerdictPort) (map[string]error, error) {
 	wakes, err := home.DrainWakesOfKind(homeDir, home.ProcessEventWakeKind)
 	if err != nil {
 		return nil, err
@@ -167,6 +167,8 @@ func consumeProcessEventWakes(homeDir string, retirement RetirementPort) (map[st
 		switch {
 		case strings.HasPrefix(announced.EventID, mergedPollEventPrefix):
 			retireMergedPollWake(homeDir, retirement, wake, announced, rec, outcomes)
+		case strings.HasPrefix(announced.EventID, reviewVerdictEventPrefix):
+			recordReviewVerdictWake(homeDir, reviews, announced, rec)
 		default:
 			fmt.Fprintf(os.Stderr, "process-event wake %q dropped: no owner for this event prefix\n", announced.EventID)
 		}
@@ -227,8 +229,8 @@ type CheckValidationPort interface {
 // ticker as the cadence authority (the watcher is never silent). A nil observation
 // event port keeps the watcher on pure polling; a nil check-validation port is refused as a
 // fatal cycle capability error.
-func RunWithProbeSenderAndEvents(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, checks CheckValidationPort, states TaskStatePort, events ObservationEventPort) (*WakeReason, error) {
-	return run(homeDir, time.NewTicker, signalChannel(), probe, sender, hooks, retirement, checks, states, events)
+func RunWithProbeSenderAndEvents(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, reviews ReviewVerdictPort, checks CheckValidationPort, states TaskStatePort, events ObservationEventPort) (*WakeReason, error) {
+	return run(homeDir, time.NewTicker, signalChannel(), probe, sender, hooks, retirement, reviews, checks, states, events)
 }
 
 func signalChannel() <-chan os.Signal {
@@ -237,7 +239,7 @@ func signalChannel() <-chan os.Signal {
 	return sigCh
 }
 
-func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-chan os.Signal, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, checks CheckValidationPort, states TaskStatePort, events ObservationEventPort) (*WakeReason, error) {
+func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-chan os.Signal, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, reviews ReviewVerdictPort, checks CheckValidationPort, states TaskStatePort, events ObservationEventPort) (*WakeReason, error) {
 	acquired, err := AcquireWatch(homeDir)
 	if err != nil {
 		return nil, fmt.Errorf("watcher lock: %w", err)
@@ -262,7 +264,9 @@ func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-cha
 	}
 	defer ClearIdentityIfMatches(homeDir, identity)
 
-	WriteBeat(homeDir)
+	if err := WriteBeat(homeDir); err != nil {
+		return nil, fmt.Errorf("writing watcher beat: %w", err)
+	}
 	ticker := newTicker(watcherPollInterval)
 	defer ticker.Stop()
 
@@ -283,9 +287,11 @@ func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-cha
 		case <-sigCh:
 			return &WakeReason{Kind: "signal", Message: "watcher interrupted"}, nil
 		case <-ticker.C:
-			WriteBeat(homeDir)
+			if err := WriteBeat(homeDir); err != nil {
+				return nil, fmt.Errorf("writing watcher beat: %w", err)
+			}
 			obs := newCycleObservation()
-			if _, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement, checks, states, obs); err != nil {
+			if _, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement, reviews, checks, states, obs); err != nil {
 				return nil, err
 			}
 			logCycleObservation(obs)
@@ -302,9 +308,11 @@ func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-cha
 				// exact binding before any recovery/relaunch/dispose decision.
 				// The hint itself is never lifecycle truth and never sets a
 				// Task phase.
-				WriteBeat(homeDir)
+				if err := WriteBeat(homeDir); err != nil {
+					return nil, fmt.Errorf("writing watcher beat: %w", err)
+				}
 				obs := newCycleObservation()
-				if _, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement, checks, states, obs); err != nil {
+				if _, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement, reviews, checks, states, obs); err != nil {
 					return nil, err
 				}
 				logCycleObservation(obs)
@@ -466,8 +474,9 @@ func scanFleetWithProbe(homeDir string, clearResolved bool, probe TaskEndpointPr
 	}
 
 	var reasons []*WakeReason
-	// Status-signal path: captain-relevant last lines, including the Captain
-	// return-channel status projection, wake General even when the pane is alive.
+	// Status-signal path: Human-needed last lines (needs-decision, blocked,
+	// failed) wake General even when the pane is alive. Completion, readiness
+	// and merge lines are audit projections and wake nothing here.
 	seenStatus := map[string]bool{}
 	_, captainHomeErr := os.Stat(filepath.Join(homeDir, home.CaptainProvenanceMarkerName))
 	isCaptainHome := captainHomeErr == nil
@@ -619,9 +628,9 @@ var recoveryDone sync.Map
 // RunCycle performs one durable scan/enqueue cycle with condition dedupe.
 // It is the shared path used by the persistent daemon and `munsu watch run`;
 // both paths capture and log the cycle's internal observations.
-func RunCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, checks CheckValidationPort, states TaskStatePort) (bool, error) {
+func RunCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, reviews ReviewVerdictPort, checks CheckValidationPort, states TaskStatePort) (bool, error) {
 	obs := newCycleObservation()
-	emitted, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement, checks, states, obs)
+	emitted, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement, reviews, checks, states, obs)
 	if err == nil {
 		logCycleObservation(obs)
 	}
@@ -679,7 +688,7 @@ func staleAge(id string, now time.Time) time.Duration {
 	return now.Sub(first)
 }
 
-func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, checks CheckValidationPort, states TaskStatePort, obs *cycleObservation) (bool, error) {
+func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, reviews ReviewVerdictPort, checks CheckValidationPort, states TaskStatePort, obs *cycleObservation) (bool, error) {
 	// A watcher with no way to validate a check artifact cannot decide anything
 	// about one, and skipping every check would make that look like "no checks
 	// are ready". Fail the cycle instead: the capability is required, and its
@@ -728,13 +737,14 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 	}
 
 	emitted := false
+	var humanNeeded []humanNeededEvent
 	for _, reason := range scanFleetWithProbe(homeDir, true, probe, states, obs) {
 		if len(reason.TaskIDs) == 0 {
 			continue
 		}
 		id := reason.TaskIDs[0]
 		fingerprint := wakeFingerprint(homeDir, reason)
-		marker := wakeMarkerPath(homeDir, id)
+		marker := home.WatcherSeenMarkerPath(homeDir, id)
 		if data, err := os.ReadFile(marker); err == nil && string(data) == fingerprint {
 			if obs != nil {
 				obs.suppressedDuplicates++
@@ -751,11 +761,16 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 			return emitted, err
 		}
 		emitted = true
+		if reason.Kind == "signal" {
+			humanNeeded = append(humanNeeded, humanNeededEvent{TaskID: id, Line: reason.Message})
+		}
 	}
+	popupHumanNeeded(homeDir, humanNeeded)
 
 	// Consume this cycle's process-event wakes before discovery, so the plugin
 	// loop sees this cycle's action outcomes and a retired poll is not found.
-	outcomes, err := consumeProcessEventWakes(homeDir, retirement)
+	registerReviewVerdictEvents(homeDir, reviews)
+	outcomes, err := consumeProcessEventWakes(homeDir, retirement, reviews)
 	if err != nil {
 		return emitted, err
 	}
@@ -810,8 +825,8 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 			// the top of this loop.
 			//
 			// On successful retirement, the poll is removed and a durable
-			// status line is published. The check wake is NOT emitted — the
-			// status scan will surface it as a signal wake on the next cycle.
+			// status line is published as an audit projection. The check wake
+			// is NOT emitted, and the merged line is not attention.
 			outcome, acted := outcomes[plugin.Label]
 			eventID := mergedPollEventID(plugin.Label)
 			evalErr := ensureMergedPollRegistered(homeDir, eventID, plugin.Label, acted && errors.Is(outcome, domain.ErrStaleCapture))
@@ -829,8 +844,8 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 				// can be tried again.
 			case acted && outcome == nil:
 				// Poll retired this cycle (or the retirement was re-entered
-				// after completion). Skip wake emission; the status signal
-				// path will surface the publication.
+				// after completion). Skip wake emission; the publication is an
+				// audit projection.
 				if err := clearCheckRefusalMarker(homeDir, plugin.Path); err != nil {
 					return emitted, err
 				}
@@ -874,7 +889,7 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 		}
 
 		fingerprint := "check\n" + msg
-		marker := wakeMarkerPath(homeDir, "check:"+checkID)
+		marker := home.WatcherSeenMarkerPath(homeDir, "check:"+checkID)
 		if data, err := os.ReadFile(marker); err == nil && string(data) == fingerprint {
 			if obs != nil {
 				obs.suppressedDuplicates++
@@ -919,11 +934,6 @@ func wakeFingerprint(homeDir string, reason *WakeReason) string {
 		}
 	}
 	return reason.Kind + "\n" + message + "\n" + status
-}
-
-func wakeMarkerPath(homeDir, id string) string {
-	safeID := strings.NewReplacer("/", "_", ":", "_", ".", "_").Replace(id)
-	return filepath.Join(homeDir, "state", ".watcher-seen-"+safeID)
 }
 
 // checkRefusalMarkerPath records the refusal the loop last reported for one
@@ -1041,7 +1051,7 @@ func reconcileCheckRefusalMarkers(homeDir string, plugins []CheckPlugin) error {
 }
 
 func clearWakeMarker(homeDir, id string) {
-	_ = os.Remove(wakeMarkerPath(homeDir, id))
+	_ = os.Remove(home.WatcherSeenMarkerPath(homeDir, id))
 }
 
 // handleStale creates a stale WakeReason with idle-seconds tracking.
@@ -1081,7 +1091,7 @@ func resetStreak(id string) {
 
 // isNoMistakesActive checks whether the task has an active no-mistakes
 // run-step that indicates it is provably working. Tasks driving the
-// no-mistakes pipeline (running, fixing, ci, fix_review, awaiting_approval)
+// no-mistakes pipeline (running, fixing, ci, awaiting_approval)
 // should not trigger stale wakes.
 func isNoMistakesActive(homeDir, id string, states TaskStatePort) bool {
 	s, err := states.ReadTaskState(homeDir, id)
@@ -1098,7 +1108,7 @@ func absorbStaleSignal(s *ObservedTaskState) bool {
 		return false
 	}
 	switch s.NoMistakesRunStep {
-	case "running", "fixing", "ci", "fix_review", "awaiting_approval":
+	case "running", "fixing", "ci", "awaiting_approval":
 		return true
 	}
 	return false
@@ -1108,8 +1118,13 @@ func absorbStaleSignal(s *ObservedTaskState) bool {
 // paneAlive gates status-only "working" absorb: a dead pane with a leftover
 // working: line is still actionable; an alive idle pane with working: is healthy.
 // A paused task beyond the resurface threshold is NOT absorbed — it surfaces as stale.
+// A task whose last status is done has reported completion (an audit
+// projection, not attention), so its pane state is not a stale condition.
 func shouldAbsorbStale(homeDir, id string, paneAlive bool, states TaskStatePort) bool {
 	if isNoMistakesActive(homeDir, id, states) {
+		return true
+	}
+	if isStatusDone(homeDir, id) {
 		return true
 	}
 	// Check pause status: absorb only if within the resurface threshold.
@@ -1124,6 +1139,16 @@ func shouldAbsorbStale(homeDir, id string, paneAlive bool, states TaskStatePort)
 		return true
 	}
 	return false
+}
+
+// isStatusDone checks whether the task's last status line is a completion
+// report. Returns false if no status file exists.
+func isStatusDone(homeDir, id string) bool {
+	lines, err := home.ReadStatus(homeDir, id)
+	if err != nil || len(lines) == 0 {
+		return false
+	}
+	return domain.LineVerb(strings.TrimSpace(lines[len(lines)-1])) == "done"
 }
 
 // isStatusPaused checks whether the task's last status line is a declared

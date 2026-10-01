@@ -52,6 +52,7 @@ __pycache__/
 .soldier-envelope.json
 .soldier-prompt.md
 .soldier-manifest.json
+.pi/settings.json
 .soldier-md
 .herdr-test/
 /.no-mistakes-document-result.json

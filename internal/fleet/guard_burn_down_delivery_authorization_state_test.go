@@ -38,8 +38,8 @@ func TestGuardBurnDownPrevalidateDeliveryTaskRefusesOwnerOrActiveAuthorization(t
 		req := deliverRequest()
 		authReq := taskauthority.CanonicalDeliveryAuthorizationRequest{
 			HomeID: c.HomeID(), TaskID: mustFleetTaskID(t, taskID),
-			Precondition: domain.Of(1, 3), Kind: req.Kind, Identity: req.Identity,
-			Preconditions: req.Preconditions,
+			Precondition: domain.Of(1, 4), Kind: req.Kind, Identity: req.Identity,
+			Preconditions: req.Preconditions, Words: deliveryWords(),
 		}
 		if _, err := c.AuthorizeDelivery(mustFleetOperation(t, "op-active-auth", authReq), authReq); err != nil {
 			t.Fatal(err)

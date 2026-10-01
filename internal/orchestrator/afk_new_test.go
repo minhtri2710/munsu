@@ -101,7 +101,7 @@ func TestTriageGeneralRelevantWake(t *testing.T) {
 	tmp := t.TempDir()
 	qPath := filepath.Join(tmp, "state", ".wake-queue")
 	os.MkdirAll(filepath.Dir(qPath), 0755)
-	line := fmt.Sprintf("%d\t%d\tafk\ttask-1\tPR merged\n", time.Now().Unix(), os.Getpid())
+	line := fmt.Sprintf("%d\t%d\tafk\ttask-1\tneeds-decision: pick a branch\n", time.Now().Unix(), os.Getpid())
 	os.WriteFile(qPath, []byte(line), 0644)
 
 	digest, err := OneCycle(tmp)
@@ -123,8 +123,8 @@ func TestTriageGeneralRelevantWake(t *testing.T) {
 	if digest.Escalated[0].Key != "task-1" {
 		t.Errorf("escalated key = %q, want %q", digest.Escalated[0].Key, "task-1")
 	}
-	if digest.Escalated[0].Payload != "PR merged" {
-		t.Errorf("escalated payload = %q, want %q", digest.Escalated[0].Payload, "PR merged")
+	if digest.Escalated[0].Payload != "needs-decision: pick a branch" {
+		t.Errorf("escalated payload = %q, want %q", digest.Escalated[0].Payload, "needs-decision: pick a branch")
 	}
 	if !digest.Escalated[0].IsGeneralRelevant {
 		t.Error("escalated IsGeneralRelevant = false, want true")
@@ -136,7 +136,7 @@ func TestTriageMixedWakes(t *testing.T) {
 	qPath := filepath.Join(tmp, "state", ".wake-queue")
 	os.MkdirAll(filepath.Dir(qPath), 0755)
 	now := time.Now().Unix()
-	lines := fmt.Sprintf("%d\t%d\tafk\ttask-1\tPR merged\n%d\t%d\tcheck\thealth\tall green\n",
+	lines := fmt.Sprintf("%d\t%d\tafk\ttask-1\tneeds-decision: pick a branch\n%d\t%d\tcheck\thealth\tall green\n",
 		now, os.Getpid(), now+1, os.Getpid())
 	os.WriteFile(qPath, []byte(lines), 0644)
 
@@ -159,7 +159,7 @@ func TestTriageDrainsQueue(t *testing.T) {
 	tmp := t.TempDir()
 	qPath := filepath.Join(tmp, "state", ".wake-queue")
 	os.MkdirAll(filepath.Dir(qPath), 0755)
-	line := fmt.Sprintf("%d\t%d\tafk\ttask-1\tdone: PR merged\n", time.Now().Unix(), os.Getpid())
+	line := fmt.Sprintf("%d\t%d\tafk\ttask-1\tfailed: CI red\n", time.Now().Unix(), os.Getpid())
 	os.WriteFile(qPath, []byte(line), 0644)
 
 	digest, err := OneCycle(tmp)

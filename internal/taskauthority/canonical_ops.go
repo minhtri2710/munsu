@@ -25,7 +25,12 @@ type CanonicalCreateRequest struct {
 	ParentTaskID           domain.TaskID
 	ScoutScope             string
 	ScoutRuntimeBudgetSecs int64
-	Reason                 string
+	// ReviewTaskID is the ship task a review task reads; ReviewHead is the head
+	// of that task's bound worktree, read by the caller from git (the bound
+	// worktree head is the launch-time head and does not follow commits).
+	ReviewTaskID string
+	ReviewHead   string
+	Reason       string
 }
 
 func (r CanonicalCreateRequest) DigestBytes() ([]byte, error) {
@@ -39,8 +44,10 @@ func (r CanonicalCreateRequest) DigestBytes() ([]byte, error) {
 		ParentTaskID           string `json:"parent_task_id"`
 		ScoutScope             string `json:"scout_scope,omitempty"`
 		ScoutRuntimeBudgetSecs int64  `json:"scout_runtime_budget_secs,omitempty"`
+		ReviewTaskID           string `json:"review_task_id,omitempty"`
+		ReviewHead             string `json:"review_head,omitempty"`
 		Reason                 string `json:"reason"`
-	}{r.HomeID.Value(), r.TaskID.Value(), r.Owner, r.Description, r.Kind, r.Project.Value(), r.ParentTaskID.Value(), r.ScoutScope, r.ScoutRuntimeBudgetSecs, r.Reason})
+	}{r.HomeID.Value(), r.TaskID.Value(), r.Owner, r.Description, r.Kind, r.Project.Value(), r.ParentTaskID.Value(), r.ScoutScope, r.ScoutRuntimeBudgetSecs, r.ReviewTaskID, r.ReviewHead, r.Reason})
 }
 
 // Create is the canonical operation that creates one queued Task Generation.
@@ -55,6 +62,9 @@ func (c *Canonical) Create(op domain.Operation, req CanonicalCreateRequest) (Out
 		return Outcome{}, validationError("create requires an owner")
 	}
 	if err := validateScoutContract(TaskDefinition{Kind: req.Kind, ScoutScope: req.ScoutScope, ScoutRuntimeBudgetSecs: req.ScoutRuntimeBudgetSecs}); err != nil {
+		return Outcome{}, err
+	}
+	if err := validateReviewContract(TaskDefinition{Kind: req.Kind, ReviewTaskID: req.ReviewTaskID, ReviewHead: req.ReviewHead}); err != nil {
 		return Outcome{}, err
 	}
 
@@ -76,11 +86,21 @@ func (c *Canonical) Create(op domain.Operation, req CanonicalCreateRequest) (Out
 		return Outcome{}, conflictError(ErrConflict, "task %s already exists", req.TaskID.Value())
 	}
 
+	if req.Kind == KindReview {
+		if err := c.checkReviewTarget(req.ReviewTaskID); err != nil {
+			return Outcome{}, err
+		}
+	}
 	agg, err := NewAggregate(req.TaskID.Value(), req.Owner, req.Description, req.Kind, req.Project.Value(), req.ParentTaskID.Value())
 	if err == nil {
 		agg.Definition.ScoutScope = strings.TrimSpace(req.ScoutScope)
 		agg.Definition.ScoutRuntimeBudgetSecs = req.ScoutRuntimeBudgetSecs
+		agg.Definition.ReviewTaskID = req.ReviewTaskID
+		agg.Definition.ReviewHead = req.ReviewHead
 		err = validateScoutContract(agg.Definition)
+		if err == nil {
+			err = validateReviewContract(agg.Definition)
+		}
 	}
 	if err != nil {
 		return Outcome{}, err
@@ -95,6 +115,27 @@ func (c *Canonical) Create(op domain.Operation, req CanonicalCreateRequest) (Out
 		return Outcome{}, commitError(req.TaskID, domain.Precondition{}, err)
 	}
 	return outcomeFor(op, agg, false), nil
+}
+
+// checkReviewTarget requires the reviewed task to be a working ship task that
+// holds both its worktree and its endpoint. Anything else fails closed, so a
+// review names a checkout that exists and an author that can be checked.
+func (c *Canonical) checkReviewTarget(reviewTaskID string) error {
+	id, err := domain.NewTaskID(reviewTaskID)
+	if err != nil {
+		return validationError("review task requires the reviewed task id: %v", err)
+	}
+	target, err := c.Get(id)
+	if err != nil {
+		return err
+	}
+	if target.Definition.Kind != KindShip {
+		return preconditionError("review target %s is a %s task; only a ship task is reviewed", target.TaskID, target.Definition.Kind)
+	}
+	if target.Phase != PhaseWorking || target.Worktree == nil || target.Endpoint == nil {
+		return preconditionError("review target %s must be working with its worktree and endpoint bound", target.TaskID)
+	}
+	return nil
 }
 
 // Get returns the current authoritative Task Aggregate for the task. It is a
@@ -732,29 +773,37 @@ func (c *Canonical) AddHold(op domain.Operation, req CanonicalAddHoldRequest) (H
 	return HoldResult{HoldID: req.HoldID}, nil
 }
 
-// ReleaseHoldRequest releases one durable dispatch hold.
+// ReleaseHoldRequest releases one durable dispatch hold under the Human's
+// words: the grantor, the channel and the verbatim quote.
 type CanonicalReleaseHoldRequest struct {
 	HomeID domain.HomeID
 	HoldID string
 	Reason string
+	Words  domain.Words
 }
 
 func (r CanonicalReleaseHoldRequest) DigestBytes() ([]byte, error) {
 	return json.Marshal(struct {
-		HomeID string `json:"home_id"`
-		HoldID string `json:"hold_id"`
-		Reason string `json:"reason"`
-	}{r.HomeID.Value(), r.HoldID, r.Reason})
+		HomeID string       `json:"home_id"`
+		HoldID string       `json:"hold_id"`
+		Reason string       `json:"reason"`
+		Words  domain.Words `json:"words"`
+	}{r.HomeID.Value(), r.HoldID, r.Reason, r.Words})
 }
 
-// ReleaseHold is the canonical operation that releases one dispatch hold.
-// Releasing an already-released hold is a successful no-op.
+// ReleaseHold is the canonical operation that releases one dispatch hold. It
+// refuses a request whose words record is incomplete, including an empty
+// quote, and records the words on the released hold. Releasing an
+// already-released hold is a successful no-op that keeps the original words.
 func (c *Canonical) ReleaseHold(op domain.Operation, req CanonicalReleaseHoldRequest) (HoldResult, error) {
 	if err := c.prepare(op, req, req.HomeID); err != nil {
 		return HoldResult{}, err
 	}
 	if req.HoldID == "" || strings.ContainsAny(req.HoldID, `/\\.`) {
 		return HoldResult{}, validationError("dispatch hold ID must be a safe non-empty value")
+	}
+	if err := req.Words.Validate(); err != nil {
+		return HoldResult{}, validationError("dispatch hold release: %v", err)
 	}
 	dispatch, err := c.h.Lock(dispatchScope)
 	if err != nil {
@@ -786,6 +835,7 @@ func (c *Canonical) ReleaseHold(op domain.Operation, req CanonicalReleaseHoldReq
 	} else {
 		updated := doc.Hold.clone()
 		updated.ReleasedAt = c.now().UnixNano()
+		updated.ReleaseWords = &req.Words
 		newDoc = holdDoc{HomeRevision: doc.HomeRevision + 1, Hold: updated}
 	}
 	rec := receipt{OperationID: op.ID.Value(), Digest: op.Digest, HoldID: req.HoldID}

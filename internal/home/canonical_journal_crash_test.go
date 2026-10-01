@@ -204,7 +204,7 @@ const deliveryHead = "abc123def456abc123def456abc123def456abc1"
 func worktreeBinding() ta.WorktreeBinding {
 	return ta.WorktreeBinding{
 		RepositoryIdentity: "repo", Path: "/work/area", GitDir: "/work/area/.git", CommonDir: "/work/shared.git",
-		Head: "abc123", LeaseID: "lease-wt", FenceToken: "fence-wt", BoundAtUnix: 1000,
+		BaseHead: "abc123", LeaseID: "lease-wt", FenceToken: "fence-wt", BoundAtUnix: 1000,
 	}
 }
 
@@ -219,12 +219,69 @@ func bindEndpointReq(t *testing.T, c *ta.Canonical, prec domain.Precondition) ta
 	}}
 }
 
-// mustDeliveryTask leaves t1 working at revision 3 with the delivery bindings.
+// reviewBaseSHA is the base commit the test verdict was reviewed against.
+const reviewBaseSHA = "0000111122223333444455556666777788889999"
+
+// deliveryWords are the Human's words every delivery authorization carries.
+func deliveryWords() domain.Words {
+	return domain.Words{Grantor: "beo", Channel: "supervisor-relay:typed", Quote: "munsu: dong y"}
+}
+
+// mustWorkingReview creates the review task rev1 reading t1 at deliveryHead and
+// drives its launch chain to working (create, intent, attach, record launch
+// with the observed tree, bind endpoint).
+func mustWorkingReview(t *testing.T, c *ta.Canonical) {
+	t.Helper()
+	commit := func(id string, intent domain.Intent, run func(domain.Operation) error) {
+		t.Helper()
+		if err := run(mustOp(t, id, intent)); err != nil {
+			t.Fatalf("%s: %v", id, err)
+		}
+	}
+	rev1 := taskID(t, "rev1")
+	create := ta.CanonicalCreateRequest{HomeID: c.HomeID(), TaskID: rev1, Owner: "owner", Description: "review", Kind: ta.KindReview, ReviewTaskID: "t1", ReviewHead: deliveryHead, Reason: "create"}
+	commit("op-create-rev1", create, func(op domain.Operation) error { _, err := c.Create(op, create); return err })
+	intent := ta.CanonicalBeginSpawnRequest{
+		HomeID: c.HomeID(), TaskID: rev1, Precondition: domain.Of(1, 1), SnapshotDigest: digestOf("snapshot:rev1"),
+		Backend: "claude", Harness: "pi", Model: "opus", Effort: "high", Mode: "direct-PR", Kind: ta.KindReview,
+		Project: "proj", ParentTaskID: "parent", LaunchID: "launch-rev1", WindowLabel: "window-rev1",
+		EndpointReservationID: "ep-res-rev1", EndpointFenceToken: "ep-fence-rev1", EndpointIncarnation: "inc-rev1", Reason: "spawn",
+	}
+	commit("op-begin-rev1", intent, func(op domain.Operation) error { _, err := c.BeginSpawn(op, intent); return err })
+	attach := ta.CanonicalAttachEndpointRequest{
+		HomeID: c.HomeID(), TaskID: rev1, Precondition: domain.Of(1, 2), Backend: intent.Backend, Handle: "handle-rev1",
+		LeaseID: intent.EndpointReservationID, FenceToken: intent.EndpointFenceToken, SessionOwner: "owner",
+		WorkspaceID: "ws", TabID: "tab", Incarnation: intent.EndpointIncarnation, Reason: "attach",
+	}
+	commit("op-attach-rev1", attach, func(op domain.Operation) error { _, err := c.AttachEndpoint(op, attach); return err })
+	tree := reviewTree()
+	record := ta.CanonicalRecordLaunchRequest{
+		HomeID: c.HomeID(), TaskID: rev1, Precondition: domain.Of(1, 3), LaunchID: intent.LaunchID,
+		CommandDigest: digestOf("launch:rev1"), ReviewTree: &tree, Reason: "record",
+		Seat: ta.LaunchSeat{Argv: []string{"pi", "--no-session"}, PromptDigest: digestOf("prompt"), Fence: ta.FenceRecord{Reason: "no fence on this host"}},
+	}
+	commit("op-record-rev1", record, func(op domain.Operation) error { _, err := c.RecordLaunch(op, record); return err })
+	bind := ta.CanonicalBindEndpointRequest{
+		HomeID: c.HomeID(), TaskID: rev1, Precondition: domain.Of(1, 4), Reason: "spawn",
+		Binding: ta.EndpointBinding{
+			Backend: intent.Backend, Handle: "handle-rev1", LeaseID: intent.EndpointReservationID, FenceToken: intent.EndpointFenceToken,
+			SessionOwner: "owner", WorkspaceID: "ws", TabID: "tab", Incarnation: intent.EndpointIncarnation, BoundAtUnix: 2000,
+		},
+	}
+	commit("op-bindep-rev1", bind, func(op domain.Operation) error { _, err := c.BindEndpoint(op, bind); return err })
+}
+
+func reviewTree() domain.TreeState {
+	return domain.TreeState{Head: deliveryHead, Porcelain: digestOf("porcelain:" + deliveryHead)}
+}
+
+// mustDeliveryTask leaves t1 working at revision 4 with the delivery bindings
+// and the PASS verdict of its working review task rev1 for deliveryHead.
 func mustDeliveryTask(t *testing.T, c *ta.Canonical) {
 	t.Helper()
 	mustCreate(t, c, "t1")
 	wt := worktreeBinding()
-	wt.Head = deliveryHead
+	wt.BaseHead = deliveryHead
 	bw := bindWorktreeReq(t, c, domain.Of(1, 1), wt)
 	if _, err := c.BindWorktree(mustOp(t, "op-delivery-bindwt", bw), bw); err != nil {
 		t.Fatalf("BindWorktree: %v", err)
@@ -232,6 +289,16 @@ func mustDeliveryTask(t *testing.T, c *ta.Canonical) {
 	be := bindEndpointReq(t, c, domain.Of(1, 2))
 	if _, err := c.BindEndpoint(mustOp(t, "op-delivery-bindep", be), be); err != nil {
 		t.Fatalf("BindEndpoint: %v", err)
+	}
+	mustWorkingReview(t, c)
+	verdict := domain.ReviewVerdict{
+		Outcome: domain.VerdictPass, HeadSHA: deliveryHead, BaseSHA: reviewBaseSHA,
+		ReviewerTask: "rev1", ReviewerGeneration: 1, ReviewerIncarnation: "inc-rev1",
+		Author: "inc-bind", Before: reviewTree(), After: reviewTree(),
+	}
+	rv := ta.CanonicalRecordReviewVerdictRequest{HomeID: c.HomeID(), TaskID: taskID(t, "t1"), Precondition: domain.Of(1, 3), Verdict: verdict}
+	if _, err := c.RecordReviewVerdict(mustOp(t, "op-delivery-verdict", rv), rv); err != nil {
+		t.Fatalf("RecordReviewVerdict: %v", err)
 	}
 }
 
@@ -248,6 +315,7 @@ func authorizeReq(t *testing.T, c *ta.Canonical, rev uint64) ta.CanonicalDeliver
 		HomeID: c.HomeID(), TaskID: taskID(t, "t1"), Precondition: domain.Of(1, rev),
 		Kind: ta.DeliveryAuthorizationProviderMerge, Identity: deliveryIdentity(),
 		Preconditions: []ta.DeliveryPrecondition{ta.DeliveryPreconditionPRMergeable, ta.DeliveryPreconditionPRHeadCurrent},
+		Words:         deliveryWords(),
 	}
 }
 
@@ -512,7 +580,7 @@ func TestCrashRecoveryDeliveryAuthorization(t *testing.T) {
 	runCrashAtEveryStep(t, "t1", crashCase{
 		setup: func(t *testing.T, c *ta.Canonical) { mustDeliveryTask(t, c) },
 		op: func(t *testing.T, c *ta.Canonical) (bool, error) {
-			req := authorizeReq(t, c, 3)
+			req := authorizeReq(t, c, 4)
 			out, err := c.AuthorizeDelivery(mustOp(t, "op-crash-auth", req), req)
 			return out.Replayed, err
 		},
@@ -524,11 +592,11 @@ func TestCrashRecoveryDeliveryAuthorization(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read recovered currency: %v", err)
 			}
-			if !cur.Valid || cur.Revision != 4 || cur.Authorization == nil || cur.Authorization.OperationID != "op-crash-auth" {
+			if !cur.Valid || cur.Revision != 5 || cur.Authorization == nil || cur.Authorization.OperationID != "op-crash-auth" {
 				t.Fatalf("recovered currency = %+v", cur)
 			}
 			auth := cur.Authorization
-			if auth.OperationID != "op-crash-auth" || auth.Revision != 4 || auth.Identity != deliveryIdentity() {
+			if auth.OperationID != "op-crash-auth" || auth.Revision != 5 || auth.Identity != deliveryIdentity() {
 				t.Fatalf("recovered authorization = %+v", auth)
 			}
 		},
@@ -538,7 +606,7 @@ func TestCrashRecoveryDeliveryAuthorization(t *testing.T) {
 func TestCrashRecoveryDeliveryOutcome(t *testing.T) {
 	outcome := func(t *testing.T, c *ta.Canonical) ta.CanonicalDeliveryOutcomeRequest {
 		return ta.CanonicalDeliveryOutcomeRequest{
-			HomeID: c.HomeID(), TaskID: taskID(t, "t1"), Precondition: domain.Of(1, 4),
+			HomeID: c.HomeID(), TaskID: taskID(t, "t1"), Precondition: domain.Of(1, 5),
 			AuthorizationOperationID: "op-auth", Status: ta.DeliveryOutcomeCompleted, Detail: "merge confirmed",
 			MergedSHA: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
 		}
@@ -546,7 +614,7 @@ func TestCrashRecoveryDeliveryOutcome(t *testing.T) {
 	runCrashAtEveryStep(t, "t1", crashCase{
 		setup: func(t *testing.T, c *ta.Canonical) {
 			mustDeliveryTask(t, c)
-			req := authorizeReq(t, c, 3)
+			req := authorizeReq(t, c, 4)
 			if _, err := c.AuthorizeDelivery(mustOp(t, "op-auth", req), req); err != nil {
 				t.Fatalf("AuthorizeDelivery: %v", err)
 			}
@@ -566,7 +634,7 @@ func TestCrashRecoveryDeliveryOutcome(t *testing.T) {
 			}
 			// A distinct incompatible outcome still conflicts after recovery.
 			distinct := outcome(t, c)
-			distinct.Precondition = domain.Of(1, 5)
+			distinct.Precondition = domain.Of(1, 6)
 			distinct.Status = ta.DeliveryOutcomeRetryable
 			if _, err := c.CommitDeliveryOutcome(mustOp(t, "op-after-recovered", distinct), distinct); !errors.Is(err, ta.ErrConflict) {
 				t.Fatalf("distinct outcome after recovered terminal = %v, want ErrConflict", err)

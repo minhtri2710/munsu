@@ -24,6 +24,7 @@ type listedPackage struct {
 //	home          — domain-neutral durable mechanics: imports domain only.
 //	backend       — terminal/worktree/repo/provider capabilities: imports home only.
 //	harness       — coding-agent runtime capabilities: imports config only.
+//	fence         — OS sandbox for a launched seat's process tree: imports harness only.
 //	taskauthority — Task truth and invariant operations: imports domain and home only.
 //	orchestrator  — supervision policy and Uplink lifecycle: never imports fleet.
 //	fleet         — workforce execution: never imports orchestrator.
@@ -115,6 +116,8 @@ func TestPackageTopology(t *testing.T) {
 			onlyImports(t, path, "home")
 		case "harness":
 			onlyImports(t, path, "config")
+		case "fence":
+			onlyImports(t, path, "harness")
 		case "taskauthority":
 			onlyImports(t, path, "domain", "home")
 		case "fleet":
@@ -143,7 +146,7 @@ func TestPackageTopology(t *testing.T) {
 
 	// The rules are anchored on named modules; fail loudly if a rule's module
 	// vanished from the graph so the policy cannot silently go stale.
-	for _, name := range []string{"domain", "config", "home", "backend", "harness", "taskauthority", "fleet", "orchestrator", "cli", "testutil"} {
+	for _, name := range []string{"domain", "config", "home", "backend", "harness", "fence", "taskauthority", "fleet", "orchestrator", "cli", "testutil"} {
 		if _, ok := packages[root+name]; !ok {
 			t.Errorf("missing required internal package %s", name)
 		}

@@ -57,14 +57,10 @@ type GitLabClient interface {
 
 	// ViewMRJSON fetches MR metadata through the typed GitLab API.
 	ViewMRJSON(host, owner, project string, iid int) ([]byte, error)
-	// ApprovalState fetches authoritative approval evidence from GitLab.
-	ApprovalState(host, owner, project string, iid int) (bool, error)
-	// ReviewerStates fetches each reviewer's verdict, normalized to the domain
-	// review vocabulary. GitLab tracks reviewer verdicts (notably
-	// "requested_changes") separately from approval-rule satisfaction, so the
-	// delivery observation must read them for domain.PR.CanMerge to honor its
-	// refusal on ReviewChangesRequested.
-	ReviewerStates(host, owner, project string, iid int) ([]domain.ReviewState, error)
+	// ChangesRequested reports whether any reviewer requested changes, so the
+	// delivery observation honors domain.PR.CanMerge's refusal on
+	// ReviewChangesRequested. Approval is never read from GitLab (ADR-0025).
+	ChangesRequested(host, owner, project string, iid int) (bool, error)
 
 	// MergeMR performs the typed GitLab merge mutation with the pinned request.
 	MergeMR(host, owner, project string, iid int, request DeliveryMergeRequest) error
@@ -224,10 +220,8 @@ func (p *gitlabDeliveryProvider) Observe(ident domain.DeliveryIdentity) (Deliver
 }
 
 // readGitLabOpenMR reads every acceptance input of an open MR at headSHA:
-// approval, reviewer verdicts and head pipeline, as the domain.PR that
-// domain.PR.CanMerge decides on. GitLab tracks reviewer verdicts (notably
-// "requested_changes") separately from approval-rule satisfaction, so both are
-// read. mergeStatusOK reports the separate detailed_merge_status "mergeable"
+// reviewer objections and head pipeline, as the domain.PR that
+// domain.PR.CanMerge decides on. mergeStatusOK reports the separate detailed_merge_status "mergeable"
 // fence, which guards merge conflicts and blocked states CanMerge does not
 // model; when it is false the other inputs are not read.
 func readGitLabOpenMR(client GitLabClient, glURL domain.GLURL, data []byte, headSHA string) (pr domain.PR, mergeStatusOK bool, err error) {
@@ -239,11 +233,7 @@ func readGitLabOpenMR(client GitLabClient, glURL domain.GLURL, data []byte, head
 	if !pipelineOK || pipeline.SHA != headSHA {
 		return domain.PR{}, false, fmt.Errorf("GitLab MR observation is missing pipeline SHA evidence for the current head")
 	}
-	approved, err := client.ApprovalState(glURL.Host, glURL.Owner, glURL.Project, glURL.IID)
-	if err != nil {
-		return domain.PR{}, false, err
-	}
-	reviewStates, err := client.ReviewerStates(glURL.Host, glURL.Owner, glURL.Project, glURL.IID)
+	changesRequested, err := client.ChangesRequested(glURL.Host, glURL.Owner, glURL.Project, glURL.IID)
 	if err != nil {
 		return domain.PR{}, false, err
 	}
@@ -252,11 +242,8 @@ func readGitLabOpenMR(client GitLabClient, glURL domain.GLURL, data []byte, head
 		Status: domain.PROpen,
 		Checks: []domain.CheckRun{{Status: mapCheckStatus(pipeline.Status)}},
 	}
-	if approved {
-		pr.Reviews = append(pr.Reviews, domain.Review{State: domain.ReviewApproved})
-	}
-	for _, st := range reviewStates {
-		pr.Reviews = append(pr.Reviews, domain.Review{State: st})
+	if changesRequested {
+		pr.Reviews = []domain.Review{{State: domain.ReviewChangesRequested}}
 	}
 	return pr, true, nil
 }
@@ -293,35 +280,10 @@ func normalizeGlabState(s string) string {
 	}
 }
 
-// ViewMRJSON fetches MR metadata through the typed GitLab API.
-func (c *glabClient) ApprovalState(host, owner, project string, iid int) (bool, error) {
-	path := fmt.Sprintf("/projects/%s/merge_requests/%d/approvals", url.PathEscape(owner+"/"+project), iid)
-	args := []string{"api", path}
-	if host != "" && host != "gitlab.com" {
-		args = append(args, "--hostname", host)
-	}
-	data, err := c.runner.Run(args...)
-	if err != nil {
-		return false, err
-	}
-	var raw struct {
-		Approved   *bool `json:"approved"`
-		ApprovedBy []struct {
-			User map[string]any `json:"user"`
-		} `json:"approved_by"`
-	}
-	if err := json.Unmarshal(data, &raw); err != nil || raw.Approved == nil {
-		return false, fmt.Errorf("parsing GitLab approval state: missing approved evidence")
-	}
-	if !*raw.Approved || len(raw.ApprovedBy) == 0 {
-		return false, nil
-	}
-	return true, nil
-}
-
-// ReviewerStates fetches each reviewer's verdict from GitLab and normalizes it
-// to the domain review vocabulary.
-func (c *glabClient) ReviewerStates(host, owner, project string, iid int) ([]domain.ReviewState, error) {
+// ChangesRequested fetches the merge request's reviewers (every page) and
+// reports whether any requested changes. Only "requested_changes" is a
+// merge-blocking verdict; a reviewer's "approved" carries no weight.
+func (c *glabClient) ChangesRequested(host, owner, project string, iid int) (bool, error) {
 	path := fmt.Sprintf("/projects/%s/merge_requests/%d/reviewers", url.PathEscape(owner+"/"+project), iid)
 	args := []string{"api", path, "--paginate"}
 	if host != "" && host != "gitlab.com" {
@@ -329,33 +291,20 @@ func (c *glabClient) ReviewerStates(host, owner, project string, iid int) ([]dom
 	}
 	data, err := c.runner.Run(args...)
 	if err != nil {
-		return nil, err
+		return false, err
 	}
 	var raw []struct {
 		State string `json:"state"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("parsing GitLab reviewer state: %w", err)
+		return false, fmt.Errorf("parsing GitLab reviewer state: %w", err)
 	}
-	states := make([]domain.ReviewState, 0, len(raw))
 	for _, r := range raw {
-		states = append(states, normalizeGitLabReviewState(r.State))
+		if strings.ToLower(strings.TrimSpace(r.State)) == "requested_changes" {
+			return true, nil
+		}
 	}
-	return states, nil
-}
-
-// normalizeGitLabReviewState maps a GitLab merge-request reviewer state to the
-// domain review vocabulary. Only "requested_changes" is a merge-blocking
-// verdict; approval authority stays with the approval-rule endpoint
-// (ApprovalState), so a reviewer's own "approved" is deliberately not treated
-// as satisfying it here.
-func normalizeGitLabReviewState(state string) domain.ReviewState {
-	switch strings.ToLower(strings.TrimSpace(state)) {
-	case "requested_changes":
-		return domain.ReviewChangesRequested
-	default:
-		return domain.ReviewPending
-	}
+	return false, nil
 }
 
 // MergeMR invokes the GitLab merge endpoint through the typed glab api path.

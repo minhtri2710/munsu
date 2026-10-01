@@ -24,6 +24,8 @@ func validAuthorization() DeliveryAuthorization {
 		Owner:         "captain-1",
 		Kind:          DeliveryAuthorizationProviderMerge,
 		Identity:      deliveryIdentity(),
+		Verdict:       reviewVerdict("rev1", deliveryHead),
+		Words:         testWords(),
 		BindingDigest: testSHA256Hex,
 		HoldsDigest:   testSHA256Hex,
 		Preconditions: []DeliveryPrecondition{DeliveryPreconditionPRMergeable, DeliveryPreconditionPRHeadCurrent},
@@ -47,6 +49,10 @@ func TestValidateDeliveryAuthorizationRefusesMalformedIdentity(t *testing.T) {
 		{"no owner", func(a *DeliveryAuthorization) { a.Owner = "  " }, "delivery authorization missing owner"},
 		{"unknown kind", func(a *DeliveryAuthorization) { a.Kind = DeliveryAuthorizationKind("force-push") }, "has invalid kind"},
 		{"unsafe head sha", func(a *DeliveryAuthorization) { a.Identity.HeadSHA = "refs/heads/main" }, "head SHA must be a safe non-empty value"},
+		{"verdict is not a pass", func(a *DeliveryAuthorization) { a.Verdict.Outcome = domain.VerdictFail }, "delivery authorization verdict: review verdict is"},
+		{"verdict is bound to another head", func(a *DeliveryAuthorization) { a.Identity.HeadSHA = reviewBaseSHA }, "delivery authorization verdict: review verdict is bound to head"},
+		{"verdict is the reviewed task's own", func(a *DeliveryAuthorization) { a.Verdict.ReviewerTask = a.TaskID }, "cannot review itself"},
+		{"words without a quote", func(a *DeliveryAuthorization) { a.Words.Quote = "" }, "delivery authorization: words: quote is required"},
 		{"no operation id", func(a *DeliveryAuthorization) { a.OperationID = "" }, "delivery authorization missing operation id"},
 		{"path-separating operation id", func(a *DeliveryAuthorization) { a.OperationID = "op/authorize" }, "delivery authorization missing operation id"},
 		{"no issued timestamp", func(a *DeliveryAuthorization) { a.IssuedAt = 0 }, "delivery authorization missing issued timestamp"},
@@ -97,6 +103,7 @@ func TestValidateDeliveryAuthorizationRequestRefusesMalformedIntent(t *testing.T
 				Kind:          DeliveryAuthorizationProviderMerge,
 				Identity:      deliveryIdentity(),
 				Preconditions: []DeliveryPrecondition{DeliveryPreconditionPRMergeable},
+				Words:         testWords(),
 			}
 		},
 		validateDeliveryAuthorizationRequest,
@@ -106,6 +113,9 @@ func TestValidateDeliveryAuthorizationRequestRefusesMalformedIntent(t *testing.T
 			{"unknown precondition", func(req *CanonicalDeliveryAuthorizationRequest) {
 				req.Preconditions = []DeliveryPrecondition{DeliveryPrecondition("ci-green")}
 			}, "invalid delivery precondition"},
+			{"no grantor", func(req *CanonicalDeliveryAuthorizationRequest) { req.Words.Grantor = "" }, "delivery authorization: words: grantor is required"},
+			{"no channel", func(req *CanonicalDeliveryAuthorizationRequest) { req.Words.Channel = " " }, "delivery authorization: words: channel is required"},
+			{"empty quote", func(req *CanonicalDeliveryAuthorizationRequest) { req.Words.Quote = "" }, "delivery authorization: words: quote is required"},
 		})
 }
 

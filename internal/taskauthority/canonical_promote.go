@@ -46,7 +46,7 @@ func (c *Canonical) Promote(op domain.Operation, req CanonicalPromoteRequest) (O
 	if err := c.prepare(op, req, req.HomeID); err != nil {
 		return Outcome{}, err
 	}
-	if req.CurrentKind != "scout" || req.TargetKind != "ship" {
+	if req.CurrentKind != KindScout || req.TargetKind != KindShip {
 		return Outcome{}, validationError("promotion requires scout -> ship kind promotion")
 	}
 	return c.mutateTask(op, req.TaskID, req.Precondition, func(cur Aggregate) (Aggregate, error) {

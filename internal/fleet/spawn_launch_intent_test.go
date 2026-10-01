@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -155,9 +157,9 @@ func newLaunchFixture(t *testing.T, taskID string) *launchFixture {
 		args: Args{
 			ID:          taskID,
 			ProjectName: "test-proj",
-			Kind:        "ship",
 			Authority:   auth,
 		},
+		kind:                taskauthority.KindShip,
 		harness:             "pi",
 		model:               "gpt-5",
 		effort:              "high",
@@ -214,9 +216,11 @@ func runLaunchPhases(f *launchFixture, crashAfter string) error {
 		{"bind-worktree", func() error {
 			var err error
 			bound, err = r.bindWorktree()
+			r.cwd, r.launchDir = bound.Path(), bound.Path()
 			return err
 		}},
 		{"prompt", func() error { return r.buildSoldierPrompt(bound) }},
+		{"probe-fence", func() error { return r.probeFence(bound) }},
 		{"create-session", r.createSession},
 		{"attach-endpoint", r.attachEndpoint},
 		{"submit", r.submitLaunch},
@@ -488,3 +492,60 @@ func TestLaunchIntentStaleGenerationFailsClosed(t *testing.T) {
 }
 
 // launchFixture helpers for JSON round-trips.
+
+// TestLaunchRecordsTheSeatOfTheLaunch proves the durable launch evidence
+// carries the seat: the harness argv without the prompt, the prompt's digest,
+// and the fence outcome the probe phase produced.
+func TestLaunchRecordsTheSeatOfTheLaunch(t *testing.T) {
+	isolateHuman(t)
+	f := newLaunchFixture(t, "seat-record")
+	if err := runLaunchPhases(f, ""); err != nil {
+		t.Fatal(err)
+	}
+	agg := f.aggregate()
+	if agg.LaunchEvidence == nil {
+		t.Fatal("no launch evidence")
+	}
+	seat := agg.LaunchEvidence.Seat
+	r := f.runner
+	wantArgv := append([]string{r.launchBin}, r.launchArgs[:len(r.launchArgs)-1]...)
+	if r.launchBin != "pi" || !reflect.DeepEqual(seat.Argv, wantArgv) {
+		t.Fatalf("seat argv = %q, want %q", seat.Argv, wantArgv)
+	}
+	for _, arg := range seat.Argv {
+		if arg == r.prompt {
+			t.Fatal("the seat argv carries the prompt; it is pinned by digest only")
+		}
+	}
+	if seat.PromptDigest != sha256Content([]byte(r.prompt)) || r.prompt == "" {
+		t.Fatalf("seat prompt digest = %q, want the digest of the launch prompt", seat.PromptDigest)
+	}
+	if !reflect.DeepEqual(seat.Fence, r.fenceRecord) {
+		t.Fatalf("seat fence = %+v, want the probe's record %+v", seat.Fence, r.fenceRecord)
+	}
+	if runtime.GOOS == "darwin" {
+		if !seat.Fence.Applied || seat.Fence.Role != "soldier" || seat.Fence.ProfileDigest == "" {
+			t.Fatalf("seat fence = %+v, want an applied soldier fence on darwin", seat.Fence)
+		}
+	} else if seat.Fence.Applied || seat.Fence.Reason == "" {
+		t.Fatalf("seat fence = %+v, want the no-fence reason off darwin", seat.Fence)
+	}
+}
+
+// TestRefusedFenceProbeLeavesNoPaneOrEndpoint proves a fence refusal stops the
+// launch before any pane or endpoint is allocated.
+func TestRefusedFenceProbeLeavesNoPaneOrEndpoint(t *testing.T) {
+	isolateHuman(t)
+	f := newLaunchFixture(t, "fence-refused")
+	f.runner.effectiveMode = "no-mistakes" // the primary has no gate remote, so the fence cannot name its gate
+	err := runLaunchPhases(f, "")
+	if err == nil || !strings.HasPrefix(err.Error(), "probe-fence: launch fence: ") {
+		t.Fatalf("err = %v, want the probe-fence refusal", err)
+	}
+	if f.endpoints.createCount() != 0 || f.endpoints.submitCount() != 0 {
+		t.Fatalf("endpoint creates=%d submits=%d, want none before the fence is proven", f.endpoints.createCount(), f.endpoints.submitCount())
+	}
+	if agg := f.aggregate(); agg.Endpoint != nil || agg.AcquiredEndpoint != nil || agg.LaunchEvidence != nil {
+		t.Fatalf("aggregate carries endpoint records after a refused fence: %+v", agg)
+	}
+}

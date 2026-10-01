@@ -154,8 +154,10 @@ func TestBuildLaunchPromptRefusesScoutContractOnShipTask(t *testing.T) {
 // guard test copies it and breaks one field.
 func launchArtifactInputForGuards(t *testing.T) LaunchArtifactInput {
 	t.Helper()
+	wtDir := t.TempDir()
 	return LaunchArtifactInput{
-		WorktreePath:   t.TempDir(),
+		WorktreePath:   wtDir,
+		LaunchDir:      wtDir,
 		HomeDir:        t.TempDir(),
 		TaskID:         "guard-task",
 		SnapshotDigest: "sha256:snapshot",
@@ -181,6 +183,12 @@ func TestBuildLaunchArtifactRefusesWithoutPromptArgCommand(t *testing.T) {
 			break_:  func(in *LaunchArtifactInput) { in.LaunchBin = "" },
 			repair:  func(in *LaunchArtifactInput) { in.LaunchBin = "pi" },
 			wantSub: "no prompt-arg launch command",
+		},
+		{
+			name:    "no launch directory",
+			break_:  func(in *LaunchArtifactInput) { in.LaunchDir = "" },
+			repair:  func(in *LaunchArtifactInput) { in.LaunchDir = in.WorktreePath },
+			wantSub: "launch directory is required",
 		},
 		{
 			name:    "no launch args",

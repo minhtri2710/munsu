@@ -2,6 +2,7 @@ package domain
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -107,6 +108,35 @@ func TestKindStringIsCanonical(t *testing.T) {
 	}
 	if strings.Contains(mustTask(t, "x").Canonical(), " ") {
 		t.Error("canonical form contains whitespace")
+	}
+}
+
+func TestTypedIdentityFormatsAsItsValue(t *testing.T) {
+	op, err := NewOperationID("op-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	home, err := NewHomeID("h-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := NewProjectID("p-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		id   any
+		want string
+	}{
+		{mustTask(t, "t-1"), "t-1"},
+		{mustCaptain(t, "c-1"), "c-1"},
+		{project, "p-1"},
+		{home, "h-1"},
+		{op, "op-1"},
+	} {
+		if got := fmt.Sprintf("%s|%v", tc.id, tc.id); got != tc.want+"|"+tc.want {
+			t.Errorf("formatted %T = %q, want its value %q", tc.id, got, tc.want)
+		}
 	}
 }
 

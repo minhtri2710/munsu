@@ -99,3 +99,30 @@ func TestLineVerb(t *testing.T) {
 		}
 	}
 }
+
+func TestGeneralRelevantIsOnlyWhatNeedsTheHuman(t *testing.T) {
+	cases := []struct {
+		line string
+		want bool
+	}{
+		{"needs-decision: pick a schema", true},
+		{"blocked: missing auth", true},
+		{"failed: CI red", true},
+		{"blocked[key=x]: waiting", true},
+		{"task-2 blocked: missing auth", true},
+		{"done: shipped", false},
+		{"done: PR ready, checks green, merged", false},
+		{"review-ready: PR ready", false},
+		{"ready in branch feature", false},
+		{"PR merged", false},
+		{"working: prose says failed: and blocked:", false},
+		{"resolved: was blocked: yesterday", false},
+		{"paused: blocked: waiting", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		if got := GeneralRelevant(tc.line); got != tc.want {
+			t.Errorf("GeneralRelevant(%q) = %v, want %v", tc.line, got, tc.want)
+		}
+	}
+}

@@ -26,7 +26,7 @@ type RunStatus struct {
 	Head          string `json:"head,omitempty"`     // commit SHA, present on completed runs
 	PR            string `json:"pr,omitempty"`       // PR URL, present on completed runs that pushed
 	Findings      string `json:"findings,omitempty"` // findings count or "none"
-	Outcome       string `json:"outcome,omitempty"`  // passed, failed, checks-passed, cancelled, etc.
+	Outcome       string `json:"outcome,omitempty"`  // checks-passed, passed, passed-with-skips, failed, cancelled
 	Error         string `json:"error,omitempty"`    // error message when the run errored
 	Steps         []Step `json:"steps,omitempty"`
 	AwaitingAgent string `json:"awaiting_agent,omitempty"` // non-empty when pipeline is parked at a gate
@@ -167,13 +167,21 @@ func extractValue(line, prefix string) string {
 
 // ConceptualStep resolves the run into a high-level step name and outcome,
 // matching the soldierstate domain contract.
+//
+// axi status reports no heartbeat or timestamp. A run is dead when the daemon
+// has reconciled it out of in_progress or when it carries an error; either way
+// it is never an active step. Only step statuses munsu knows are active; an
+// unknown status is not.
 func (r *RunStatus) ConceptualStep() (step, outcome string) {
 	switch r.Status {
 	case "in_progress":
+		if r.Error != "" {
+			return "", ""
+		}
 		return r.resolveActiveStep()
 	case "completed":
 		switch r.Outcome {
-		case "passed", "checks-passed":
+		case "passed", "checks-passed", "passed-with-skips":
 			return r.Outcome, r.Outcome
 		case "failed":
 			return "failed", "failed"
@@ -190,14 +198,17 @@ func (r *RunStatus) resolveActiveStep() (step, outcome string) {
 		return "awaiting_approval", ""
 	}
 	for _, s := range r.Steps {
-		if s.Status != "completed" && s.Status != "pending" {
-			if s.Name == "ci" && s.Status == "running" {
+		switch s.Status {
+		case "completed", "pending", "skipped":
+		case "running":
+			if s.Name == "ci" {
 				return "ci", ""
 			}
-			if s.Status == "fixing" {
-				return "fixing", ""
-			}
 			return "running", ""
+		case "fixing":
+			return "fixing", ""
+		default:
+			return "", ""
 		}
 	}
 	return "running", ""

@@ -9,9 +9,9 @@ import (
 type PromptStatus string
 
 const (
-	// PromptSubmitted means the agent accepted the prompt and a state change
-	// was observed. The text was submitted and the agent is processing it
-	// (or has already finished).
+	// PromptSubmitted means the agent accepted the prompt and a turn start
+	// (status working or blocked) was observed after the submit. A transport
+	// acknowledgment alone never yields this status.
 	PromptSubmitted PromptStatus = "submitted"
 
 	// PromptQueuedWhileBusy means the agent was already working and accepted
@@ -44,9 +44,10 @@ const (
 )
 
 // Acknowledged returns true when the prompt status means the submission
-// was confirmed delivered to the agent. Only submitted and queued-while-busy
-// count as acknowledged. All other statuses mean the submission either did
-// not happen or did not reach the agent.
+// was confirmed delivered to the agent: an observed turn start (submitted) or
+// a prompt queued behind an already-working agent's turn (queued-while-busy).
+// All other statuses mean the submission either did not happen or did not
+// reach the agent.
 func (s PromptStatus) Acknowledged() bool {
 	return s == PromptSubmitted || s == PromptQueuedWhileBusy
 }

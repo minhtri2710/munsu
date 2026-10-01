@@ -29,6 +29,7 @@ func newTaskCmd() *cobra.Command {
 			repo, _ := cmd.Flags().GetString("repo")
 			scope, _ := cmd.Flags().GetString("scope")
 			budget, _ := cmd.Flags().GetInt64("budget")
+			reviews, _ := cmd.Flags().GetString("reviews")
 
 			project := ""
 			if repo != "" {
@@ -52,7 +53,17 @@ func newTaskCmd() *cobra.Command {
 				Project:                domain.ProjectID{},
 				ScoutScope:             scope,
 				ScoutRuntimeBudgetSecs: budget,
+				ReviewTaskID:           reviews,
 				Reason:                 "cli task add",
+			}
+			if kind == taskauthority.KindReview {
+				// munsu reads the reviewed head from the reviewed worktree; the
+				// reviewer never names it.
+				tree, err := fleet.ObserveReviewTree(ctx.Home, reviews)
+				if err != nil {
+					return err
+				}
+				req.ReviewHead = tree.Head
 			}
 			if project != "" {
 				pid, err := domain.NewProjectID(project)
@@ -95,10 +106,11 @@ func newTaskCmd() *cobra.Command {
 		}),
 	}
 	configureContractCommand(addCmd)
-	addCmd.Flags().String("kind", "ship", "Task kind (ship|scout)")
+	addCmd.Flags().String("kind", "ship", "Task kind (ship|scout|review)")
 	addCmd.Flags().String("repo", "", "Project repository name")
 	addCmd.Flags().String("scope", "", "Scout investigation scope (required for scout tasks)")
 	addCmd.Flags().Int64("budget", 0, "Maximum scout runtime in seconds (required and positive for scout tasks)")
+	addCmd.Flags().String("reviews", "", "Ship task a review task reads (required for review tasks)")
 
 	listCmd := &cobra.Command{
 		Use:   "list",

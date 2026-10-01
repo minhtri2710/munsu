@@ -12,6 +12,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // snapshotDeps builds the explicit read dependencies for fleet snapshot callers
@@ -139,7 +140,7 @@ func ensureWatcherForSession(home string, acquired bool, ensure WatchEnsureFunc)
 	}
 	inFlight := false
 	for _, ts := range snap.Tasks {
-		if ts.Kind == "ship" || ts.Kind == "scout" {
+		if taskauthority.SoldierKind(ts.Kind) {
 			inFlight = true
 			break
 		}

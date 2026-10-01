@@ -178,53 +178,34 @@ const (
 	HerdrErrTimeout           = "timeout"
 )
 
-// parseHerdrError attempts to parse an exec error from herdr CLI as a typed
-// HerdrCLIError. Returns nil if no structured error is found (caller should
-// fall back to textual matching for legacy compatibility).
+// parseHerdrError extracts the typed HerdrCLIError from a herdr JSON error
+// envelope embedded in err's text, whatever the key order ({"error":...,"id":...}
+// and {"id":...,"error":...} both parse). It returns nil when no envelope with
+// a code is present; callers must treat that as an unknown failure, never as a
+// classified one.
 func parseHerdrError(err error) *HerdrCLIError {
 	if err == nil {
 		return nil
 	}
-	// Try to extract JSON from stderr (herdr CLI outputs JSON error envelopes).
-	// The typical format is: {"error":{"code":"pane_not_found","message":"..."}}
-	// Textual errors are also possible for non-JSON failures.
 	msg := err.Error()
-
-	// Look for a JSON error envelope in the error string.
-	// The exec.ExitError stderr is typically included in the message.
-	start := strings.Index(msg, `{"error":`)
-	if start < 0 {
-		return nil
-	}
-
-	// Find the enclosing JSON object. Walk braces to find the end.
-	braceCount := 0
-	end := -1
-	for i := start; i < len(msg); i++ {
-		switch msg[i] {
-		case '{':
-			braceCount++
-		case '}':
-			braceCount--
-			if braceCount == 0 {
-				end = i + 1
-				goto found
-			}
+	for i := 0; i < len(msg); {
+		j := strings.IndexByte(msg[i:], '{')
+		if j < 0 {
+			return nil
 		}
+		i += j
+		dec := json.NewDecoder(strings.NewReader(msg[i:]))
+		var envelope herdrErrorEnvelope
+		if dec.Decode(&envelope) != nil {
+			i++
+			continue
+		}
+		if envelope.Error != nil && envelope.Error.Code != "" {
+			return envelope.Error
+		}
+		i += int(dec.InputOffset())
 	}
-found:
-	if end <= start {
-		return nil
-	}
-
-	var envelope herdrErrorEnvelope
-	if err := json.Unmarshal([]byte(msg[start:end]), &envelope); err != nil {
-		return nil
-	}
-	if envelope.Error == nil || envelope.Error.Code == "" {
-		return nil
-	}
-	return envelope.Error
+	return nil
 }
 
 // isHerdrProtocolMismatch returns true if the error indicates a protocol_mismatch.
@@ -232,8 +213,6 @@ func isHerdrProtocolMismatch(err error) bool {
 	if err == nil {
 		return false
 	}
-	if herr := parseHerdrError(err); herr != nil {
-		return herr.Code == HerdrErrProtocolMismatch
-	}
-	return strings.Contains(err.Error(), HerdrErrProtocolMismatch)
+	herr := parseHerdrError(err)
+	return herr != nil && herr.Code == HerdrErrProtocolMismatch
 }

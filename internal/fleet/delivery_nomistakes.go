@@ -35,6 +35,9 @@ const (
 	// GateBlockerCommandFailure: the no-mistakes CLI itself failed to respond
 	// (absent binary, unsupported version, or broken command surface).
 	GateBlockerCommandFailure GateBlockerCategory = "command-failure"
+	// GateBlockerNotInitialized: the primary has no valid no-mistakes gate
+	// remote; a fenced soldier cannot initialize one.
+	GateBlockerNotInitialized GateBlockerCategory = "not-initialized"
 )
 
 // GateBlockerError is a typed no-mistakes gate blocker with an exact category

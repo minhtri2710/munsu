@@ -205,7 +205,7 @@ type WatchLeaseInfo struct {
 // WatchEnsure reports the idempotent watcher-ensure result.
 type WatchEnsure struct {
 	WatchID  string          `json:"watch_id"`
-	State    string          `json:"state"` // started | attached | healthy | failed
+	State    string          `json:"state"` // attached | healthy | failed
 	Interval string          `json:"interval,omitempty"`
 	Lease    *WatchLeaseInfo `json:"lease,omitempty"`
 	Noop     bool            `json:"noop"`

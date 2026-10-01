@@ -45,7 +45,7 @@ for the complete registered set.
 
 | Command | Description |
 |---------|-------------|
-| `munsu spawn <id> [<project>] [--kind ship\|scout] [--mode no-mistakes\|direct-PR\|local-only] [--backend tmux\|herdr] [--yolo]` | Launch a soldier agent in a worktree+tmux/herdr window. |
+| `munsu spawn <id> [<project>] [--mode no-mistakes\|direct-PR\|local-only] [--backend tmux\|herdr] [--yolo]` | Launch a soldier agent in a worktree+tmux/herdr window. |
 | `munsu send <id> "<line>"` | Send a mailbox command downlink to a Soldier or Captain endpoint; uplink to General is refused. |
 | `munsu report <state> "<msg>" [--key <slug>]` | Report status up the hierarchy (rank-aware uplink). |
 | `munsu peek <id> [--lines N]` | Read last N lines of soldier pane output (default 40). |
@@ -79,7 +79,7 @@ for the complete registered set.
 
 | Command | Description |
 |---------|-------------|
-| `munsu task add <id> "<desc>" [--kind ship\|scout] [--repo <name>]` | Register a queued task. |
+| `munsu task add <id> "<desc>" [--kind ship\|scout\|review] [--reviews <ship-id>] [--repo <name>]` | Register a queued task. |
 | `munsu task list` | List tasks from the canonical Task Authority. |
 | `munsu task show <id>` | Show a task. |
 | `munsu task start <id>` | Start a task (mark in-flight). |

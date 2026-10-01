@@ -99,12 +99,7 @@ Run `munsu integrate status [harness]` to check integration state before relying
 Run `munsu backend capabilities` to inspect session backend support.
 Use `munsu spawn <id> <project> --harness <name>` to override soldier harness.
 
-For per-harness supervision protocols, see:
-- `docs/supervision-protocols/claude.md`
-- `docs/supervision-protocols/codex.md`
-- `docs/supervision-protocols/grok.md`
-- `docs/supervision-protocols/pi.md`
-- `docs/supervision-protocols/opencode.md`
+For each harness's turn-end hook and launch template, run `munsu skill show harness-adapters`. The supervision loop is in §8.
 
 ---
 
@@ -158,10 +153,11 @@ or queued and blocked when it touches the same project subsystem.
 
 ```
 munsu task add <id> "<desc>" --kind ship --repo <name>
+munsu task add <id> "<desc>" --kind review --reviews <ship-id> [--repo <name>]
 munsu task start <id>
 munsu brief <id> <repo>
 # Fill in the {TASK} placeholder in data/<id>/brief.md
-munsu spawn <id> <project> [--kind ship|scout] [--mode no-mistakes|direct-PR|local-only]
+munsu spawn <id> <project> [--mode no-mistakes|direct-PR|local-only]
 ```
 
 Check the spawned soldier: `munsu soldier-state <id>`.
@@ -209,7 +205,7 @@ When implementation is separately authorized, promote: `munsu promote <id>`.
 ## 8. Supervision protocol
 
 Whenever work is in flight, keep exactly one live supervision cycle.
-Use the per-harness protocol from `docs/supervision-protocols/<harness>.md`.
+Arm the watcher as a background task of your harness; `munsu watch ensure` reports `FAILED` when no live watcher validates.
 
 Fundamental loop:
 
@@ -326,7 +322,7 @@ The canonical Task Authority owns task lifecycle. The `munsu task` command is th
 only Task noun:
 
 ```
-munsu task add <id> "<desc>" [--kind ship|scout] [--repo <name>]
+munsu task add <id> "<desc>" [--kind ship|scout|review] [--reviews <ship-id>] [--repo <name>]
 munsu task list
 munsu task show <id>
 munsu task start <id>
@@ -395,6 +391,7 @@ Run: `munsu skill show <name>` to read any skill.
 | Detect harness | `munsu harness detect` |
 | Backend capabilities | `munsu backend capabilities` |
 | Add a task | `munsu task add <id> "<desc>" --kind ship --repo <name>` |
+| Add a review task | `munsu task add <id> "<desc>" --kind review --reviews <ship-id> [--repo <name>]` |
 | Scaffold brief | `munsu brief <id> <repo>` |
 | Spawn soldier | `munsu spawn <id> <project>` |
 | Steer soldier | `munsu send <id> "<line>"` |

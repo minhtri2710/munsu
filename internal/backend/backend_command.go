@@ -28,9 +28,15 @@ type backendCommandClass uint8
 const (
 	backendCommandShort backendCommandClass = iota
 	backendCommandWorktree
+	backendCommandPromptStart
 )
 
 const backendEventWaitMargin = time.Second
+
+// backendPromptStartTimeout bounds how long a typed prompt waits for the
+// agent to leave idle after an accepted submission. It sits above herdr's own
+// 5s stall window, so a stall is reported by herdr and not by this bound.
+const backendPromptStartTimeout = 8 * time.Second
 
 // backendCommandWaitDelay bounds how long Wait may block after the direct
 // child exits (on its own or by timeout kill) while a descendant that escaped
@@ -42,6 +48,8 @@ func backendCommandTimeoutFor(class backendCommandClass) time.Duration {
 	switch class {
 	case backendCommandWorktree:
 		return backendWorktreeCommandTimeout
+	case backendCommandPromptStart:
+		return backendEventWaitTimeout(backendPromptStartTimeout)
 	default:
 		return backendCommandTimeout
 	}

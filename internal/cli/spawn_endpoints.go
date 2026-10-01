@@ -6,6 +6,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/fleet"
+	"github.com/minhtri2710/munsu/internal/harness"
 )
 
 type spawnSessionEndpoints struct {
@@ -94,7 +95,7 @@ func (s *spawnSessionEndpoints) Probe(ep fleet.CreatedEndpoint) (fleet.SpawnEndp
 	if err != nil {
 		return fleet.SpawnEndpointObservation{}, err
 	}
-	return backend.ObserveEndpoint(bk, ep.Handle), nil
+	return backend.ObserveEndpoint(bk, ep.Handle, harnessProcessMatcher(ep.Harness)), nil
 }
 
 func (s *spawnSessionEndpoints) Capture(ep fleet.CreatedEndpoint, lines int) (string, error) {
@@ -115,4 +116,10 @@ func (s *spawnSessionEndpoints) Dispose(ep fleet.CreatedEndpoint) error {
 	}
 	delete(s.bound, spawnEndpointKey(ep))
 	return nil
+}
+
+// harnessProcessMatcher resolves a task's harness into the process knowledge
+// backend.ObserveEndpoint takes; an empty or unknown harness matches nothing.
+func harnessProcessMatcher(name string) backend.ProcessMatcher {
+	return func(process string) bool { return harness.ProcessMatches(name, process) }
 }

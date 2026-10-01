@@ -443,7 +443,7 @@ func addDeliveryHold(t *testing.T, c *taskauthority.Canonical, taskID, holdID st
 
 func releaseDeliveryHold(t *testing.T, c *taskauthority.Canonical, holdID string) {
 	t.Helper()
-	req := taskauthority.CanonicalReleaseHoldRequest{HomeID: c.HomeID(), HoldID: holdID, Reason: "thaw"}
+	req := taskauthority.CanonicalReleaseHoldRequest{HomeID: c.HomeID(), HoldID: holdID, Reason: "thaw", Words: deliveryWords()}
 	if _, err := c.ReleaseHold(mustFleetOperation(t, "op-release-"+holdID, req), req); err != nil {
 		t.Fatalf("ReleaseHold: %v", err)
 	}

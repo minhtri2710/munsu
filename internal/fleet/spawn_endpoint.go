@@ -15,7 +15,10 @@ type CreateRequest struct {
 
 type CreatedEndpoint struct {
 	Backend, Handle, SessionOwner, WorkspaceID, TabID, Incarnation string
-	Metadata                                                       map[string]string
+	// Harness is the task's harness, which a non-herdr backend matches against
+	// the pane's foreground process to read Alive.
+	Harness  string
+	Metadata map[string]string
 }
 
 type SpawnEndpointObservation = EndpointStatus

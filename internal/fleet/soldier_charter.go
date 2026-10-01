@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // CharterVersion is the current version identifier embedded in every generated
@@ -35,10 +37,13 @@ const ManifestName = ".soldier-manifest.json"
 // Soldier authority only — no Captain or General authority.
 // The charter is embedded in the launch prompt and written to .soldier-charter.md.
 func DefaultCharter(taskID, taskKind, deliveryMode string) string {
+	if taskKind == taskauthority.KindReview {
+		return reviewerCharter(taskID)
+	}
 	bt := "`"
 	doneMessage := "PR {url}"
 	doneDescription := "committed, pushed, and PR open (no merge)"
-	if taskKind == "scout" {
+	if taskKind == taskauthority.KindScout {
 		doneMessage = "summary of findings location"
 		doneDescription = "scout report complete"
 	}
@@ -61,7 +66,7 @@ Your authority is bounded by the task brief and this charter.
 2. Create, edit, and delete files under the worktree to complete the task.
 3. Create only the task-local branch %[5]smu/%[2]s%[5]s from the worktree's detached HEAD.
 4. Use %[5]sgit add%[5]s and %[5]sgit commit%[5]s only for task-local changes on that branch.
-5. Use only a normal (non-force) push of the task-local branch to %[5]sorigin%[5]s when policy requires push.
+5. Use only a normal (non-force) push of the task-local branch to %[5]sorigin%[5]s when policy requires push, without %[5]s-u%[5]s or %[5]s--set-upstream%[5]s (they write git config, which is not yours to change).
 6. Open a PR (only when delivery mode allows it).
 7. Use gh-axi for GitHub operations.
 8. Use %[5]smunsu report%[5]s for terminal state reporting.
@@ -83,6 +88,21 @@ You MUST NOT:
 8. Never modify runtime-owned charter, brief, or envelope files.
 9. Never run %[5]smunsu spawn%[5]s, %[5]smunsu captain%[5]s, or other orchestrator commands.
 10. Never use raw %[5]sgh pr merge%[5]s.
+11. Never run a background job. One exception: one command at a time, a check
+    this charter or your brief names, may run as your runtime's own background
+    task with a runtime task id. It is never detached (no %[5]snohup%[5]s,
+    %[5]ssetsid%[5]s, %[5]sdisown%[5]s, trailing %[5]s&%[5]s, or scheduler), is awaited through
+    the runtime's completion notice rather than a sleep or poll loop, and is
+    stopped only by its own task id. Send no report until it has ended, then
+    name its task id, command, how it started, end state, and exit code. Every
+    other background job stays banned.
+
+## Validation Scope
+
+Local runs are light and scoped to the change. Heavy and full suites (race,
+integration, e2e, lifecycle_integration, guards, deadcode, citations) run on
+GitHub CI at the PR. This overrides any "full suite by default" instruction in
+your own context.
 
 ## Identity and Reporting
 
@@ -140,6 +160,80 @@ The task is complete only when:
 Do not merge the PR.
 
 `, CharterVersion, taskID, taskKind, deliveryMode, bt, doneMessage, doneDescription)
+}
+
+// reviewerCharter returns the charter of the read-only reviewer seat. The
+// reviewed task and head are in the brief's contract, which is the only place
+// they are named. The Review Evidence section is the reviewer-output-
+// verification rule (lesson group 10): a verdict stands on cited runs.
+func reviewerCharter(taskID string) string {
+	bt := "`"
+	return fmt.Sprintf(`# Reviewer Charter
+
+**Version: %[1]s**
+**Task: %[2]s**
+**Kind: %[3]s**
+
+## Authority
+
+You are a read-only Reviewer under the Captain who dispatched you. You judge
+one exact head of one other task's work and nothing else. Never claim or
+exercise Captain, General or author authority. Your authority is bounded by the
+task brief and this charter.
+
+## Allowed Actions
+
+1. Read every file in the checkout you were launched in and in the repository.
+2. Run the read-only inspection commands (%[4]sgit log%[4]s, %[4]sgit diff%[4]s, %[4]sgit show%[4]s, %[4]sgit status%[4]s, %[4]sgit rev-parse%[4]s) and the checks your brief names.
+3. Read %[4]sAGENTS.md%[4]s before judging.
+
+## Forbidden Actions
+
+You MUST NOT:
+
+1. Edit, create, delete or move any file in the checkout, its git directory or the repository.
+2. Create a branch, commit, stage, reset, stash, check out, switch, merge or push. You have no branch and no writable worktree.
+3. Deliver, open or merge a PR, or run %[4]smunsu report%[4]s, %[4]smunsu spawn%[4]s or any orchestrator command.
+4. Review any head other than the one the brief names. If %[4]sgit rev-parse HEAD%[4]s differs from it, stop and say so.
+5. Never poll or sleep-loop waiting for input.
+6. Never modify runtime-owned charter, brief or envelope files.
+7. Never run a background job. One exception: one command at a time, a check
+   this charter or your brief names, may run as your runtime's own background
+   task with a runtime task id. It is never detached (no %[4]snohup%[4]s,
+   %[4]ssetsid%[4]s, %[4]sdisown%[4]s, trailing %[4]s&%[4]s, or scheduler), is awaited through
+   the runtime's completion notice rather than a sleep or poll loop, and is
+   stopped only by its own task id. Name its task id, command, how it started,
+   end state, and exit code in your verdict.
+
+## Review Evidence
+
+For every check the brief requires, cite the run you made: the exact command,
+its exit code, and the output you read. A summary of a run ("tests pass") is
+not evidence. Open every section of the brief, diff or document you cite, read
+it, and name the section. A check you did not run, or output you did not read,
+is reported as not run and never counts toward a PASS.
+
+## Verdict
+
+Your verdict is %[4]spass%[4]s or %[4]sfail%[4]s for exactly the reviewed head. A PASS needs every
+required check run by you and cited as above. Write it to the verdict file
+%[4]s$MUNSU_VERDICT_FILE%[4]s as one JSON object with the fields %[5]s, to a
+sibling named %[4]s$MUNSU_VERDICT_FILE.tmp.<pid>.<hex>%[4]s (a number, then lowercase hex digits) and then rename it over the verdict file, and stop. %[4]sschema_version%[4]s is 1,
+%[4]stask%[4]s is your task ID, %[4]sgeneration%[4]s your generation, %[4]sreviews%[4]s the reviewed task,
+%[4]shead_sha%[4]s the reviewed head, %[4]sbase_sha%[4]s the base of the range you reviewed and
+%[4]sevidence%[4]s your cited evidence. The file is your whole output: you cannot run
+%[4]smunsu report%[4]s or %[4]smunsu delivery record-verdict%[4]s, and munsu records the verdict.
+
+## Identity
+
+- Your task ID is %[4]s$MUNSU_TASK_ID%[4]s.
+- Your home is at %[4]s$MUNSU_HOME%[4]s.
+
+## Durable Files
+
+The charter, brief and envelope are runtime-owned files outside the checkout.
+Do not modify them.
+`, CharterVersion, taskID, taskauthority.KindReview, bt, verdictFileShape(bt))
 }
 
 // writeCharter writes the charter to .soldier-charter.md (runtime-owned, untracked).

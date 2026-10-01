@@ -4,11 +4,10 @@
 # against the tree it cites, or be waived in .github/citations.allow.
 #
 # munsu's documents carry `file:line` and symbol citations as their primary
-# evidence -- docs/port-mapping.md, docs/architecture.md, the ADRs, CLAUDE.md
-# and docs/workflow-topology-matrix.md are all written to be checkable by
-# reading the cited code -- and until this lane nothing checked that any of them
-# resolved. docs/workflow-topology-matrix.md was written, reviewed, corrected
-# and reviewed again, and still shipped to its second review citing
+# evidence -- docs/port-mapping.md, docs/architecture.md, the ADRs and CLAUDE.md
+# are all written to be checkable by reading the cited code -- and until this
+# lane nothing checked that any of them resolved. A hand-written workflow
+# topology document was written, reviewed, corrected and reviewed again, and still shipped to its second review citing
 # `home.WriteMailboxEnvelope` and `home.ReadMailboxEnvelope`, two names that
 # appear nowhere in the Go tree, plus a path (`internal/cli/captain_recover.go`)
 # that does not exist. Two rounds of careful review caught them at a cost that

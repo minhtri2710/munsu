@@ -1225,7 +1225,11 @@ func TestCheckCaptainTaskAuthority_AllowsInFlightWithoutLiveMeta(t *testing.T) {
 	}
 }
 
-func TestSpawn_PostCreateVerificationFailure_NoMetaNoSpawnedStatus(t *testing.T) {
+// spawnRunFixture seeds a home, a registered git project and a scaffolded
+// brief for task reconcile-task, and returns the Args of a full Spawn over a
+// fake backend whose pane is never alive.
+func spawnRunFixture(t *testing.T, mode string, fakeBk *fakeBackend) (string, Args) {
+	t.Helper()
 	t.Setenv("MUNSU_ROLE", "general")
 	t.Chdir(t.TempDir())
 	homeDir := t.TempDir()
@@ -1256,29 +1260,16 @@ func TestSpawn_PostCreateVerificationFailure_NoMetaNoSpawnedStatus(t *testing.T)
 		t.Fatal(err)
 	}
 	// Typed project registry replaces the legacy projects.md: spawn resolves
-	// the project through the canonical Fleet Registry with a local-only mode.
+	// the project through the canonical Fleet Registry with the given mode.
 	storeTestDocuments(t, homeDir, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
 		Config:        config.ProjectOverlay{SoldierHarness: "pi", Backend: "tmux"},
 	}, []testProjectRecord{
-		{Name: "test-proj", Path: projectDir, Mode: "local-only"},
+		{Name: "test-proj", Path: projectDir, Mode: mode},
 	}, nil)
 
-	briefDir := filepath.Join(homeDir, "data", "reconcile-task")
-	if err := os.MkdirAll(briefDir, 0755); err != nil {
+	if err := Scaffold(ScaffoldOptions{HomeDir: homeDir, ID: "reconcile-task", Repo: "test-proj", Mode: mode}); err != nil {
 		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(briefDir, "brief.md"), []byte("# test brief"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	fakeBk := &fakeBackend{
-		newWindow: func(session, name string) (string, error) {
-			return "default:w6F:p3", nil
-		},
-		alive: func(windowID string) bool {
-			return false // pane failed verification immediately
-		},
 	}
 
 	// The spawn cutover (Task 4.1) routes the worktree binding through the
@@ -1288,15 +1279,27 @@ func TestSpawn_PostCreateVerificationFailure_NoMetaNoSpawnedStatus(t *testing.T)
 	auth := mustCanonical(t)
 	canonicalCreateTask(t, auth, "reconcile-task", "ship", "test-proj")
 
-	args := Args{
+	return homeDir, Args{
 		ID:          "reconcile-task",
 		ProjectName: "test-proj",
 		HarnessFlag: "pi",
 		HomeDir:     homeDir,
 		Endpoints:   fakeEndpointCapabilities{backend: fakeBk},
-		Mode:        "local-only",
+		Mode:        mode,
 		Authority:   auth,
 	}
+}
+
+func TestSpawn_PostCreateVerificationFailure_NoMetaNoSpawnedStatus(t *testing.T) {
+	fakeBk := &fakeBackend{
+		newWindow: func(session, name string) (string, error) {
+			return "default:w6F:p3", nil
+		},
+		alive: func(windowID string) bool {
+			return false // pane failed verification immediately
+		},
+	}
+	homeDir, args := spawnRunFixture(t, "local-only", fakeBk)
 
 	_, err := Spawn(args)
 	if err == nil {
@@ -1319,6 +1322,58 @@ func TestSpawn_PostCreateVerificationFailure_NoMetaNoSpawnedStatus(t *testing.T)
 	}
 }
 
+// A refused launch fence stops a full Spawn before any pane exists: the
+// no-mistakes primary here has no gate remote, so the fence cannot name the
+// gate it must allow.
+func TestSpawn_RefusedFenceAllocatesNoPane(t *testing.T) {
+	testutil.PrependPath(t, createFakeNoMistakesReady(t))
+	testutil.FakeOnPath(t, "gh-axi", "#!/bin/sh\nexit 0\n")
+	windows := 0
+	fakeBk := &fakeBackend{newWindow: func(session, name string) (string, error) {
+		windows++
+		return "default:w6F:p3", nil
+	}}
+	homeDir, args := spawnRunFixture(t, "no-mistakes", fakeBk)
+	args.NoMistakesPreflight = func(string) error { return nil }
+
+	_, err := Spawn(args)
+	if err == nil || !strings.Contains(err.Error(), "launch fence: ") {
+		t.Fatalf("Spawn err = %v, want the launch fence refusal", err)
+	}
+	requireGateBlocker(t, err, GateBlockerNotInitialized, "the primary has no no-mistakes remote")
+	if windows != 0 {
+		t.Fatalf("NewWindow calls = %d, want none before the fence is proven", windows)
+	}
+	if _, statErr := os.Stat(filepath.Join(homeDir, "state", "reconcile-task.meta")); !os.IsNotExist(statErr) {
+		t.Fatalf("a refused launch wrote task meta: %v", statErr)
+	}
+}
+
+// A failed no-mistakes preflight stops a full Spawn before the launch intent
+// is committed: no pane, no intent, no worktree.
+func TestSpawn_FailedNoMistakesPreflightCommitsNoLaunchIntent(t *testing.T) {
+	testutil.PrependPath(t, createFakeNoMistakesReady(t))
+	windows := 0
+	fakeBk := &fakeBackend{newWindow: func(session, name string) (string, error) {
+		windows++
+		return "default:w6F:p3", nil
+	}}
+	_, args := spawnRunFixture(t, "no-mistakes", fakeBk)
+	args.NoMistakesPreflight = func(string) error { return fmt.Errorf("incompatible no-mistakes gate agent") }
+
+	_, err := Spawn(args)
+	if err == nil || !strings.Contains(err.Error(), "incompatible no-mistakes gate agent") {
+		t.Fatalf("Spawn err = %v, want the preflight refusal", err)
+	}
+	agg, getErr := args.Authority.Get(mustTaskID(t, "reconcile-task"))
+	if getErr != nil {
+		t.Fatal(getErr)
+	}
+	if windows != 0 || agg.Launch != nil || agg.Worktree != nil || agg.Phase != taskauthority.PhaseQueued {
+		t.Fatalf("windows=%d launch=%+v worktree=%+v phase=%q, want an untouched queued task", windows, agg.Launch, agg.Worktree, agg.Phase)
+	}
+}
+
 // TestRegression_ResolveSkillsWithoutSrcwalk proves that resolveSkills produces
 // a valid skill catalog without requiring srcwalk. This is a focused regression
 // guard for the remove-srcwalk-integration task.
@@ -1338,9 +1393,9 @@ func TestRegression_ResolveSkillsWithoutSrcwalk(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			r := &Runner{
 				args: Args{
-					Kind: tc.kind,
 					Mode: "direct-PR",
 				},
+				kind:          tc.kind,
 				effectiveMode: "direct-PR",
 				spawnRole:     "soldier",
 			}
@@ -1415,7 +1470,7 @@ func TestWriteTaskMetaNeverWritesAuthoritativeFields(t *testing.T) {
 	canonicalCreateTask(t, auth, taskID, "ship", "test-proj")
 	r := &Runner{
 		homeDir:       homeDir,
-		args:          Args{ID: taskID, ProjectName: "test-proj", Kind: "scout", Authority: auth},
+		args:          Args{ID: taskID, ProjectName: "test-proj", Authority: auth},
 		windowID:      "session:pane-1",
 		wtPath:        "/tmp/wt",
 		projPath:      "/tmp/proj",

@@ -64,6 +64,12 @@ type Adapter struct {
 	// CaptainLaunch is populated only when the general CLI contract is verified.
 	CaptainLaunch CaptainLaunchContract
 
+	// QuestionDeny is the soldier launch argv that denies the harness's
+	// ask-the-user tool; decision-hold is the only question path. Empty means
+	// the deny cannot be expressed, so a soldier launch of this harness is
+	// refused.
+	QuestionDeny []string
+
 	// TrustDialog describes the trust/permission dialog behavior on first launch.
 	// ReadyPatterns is a list of substrings that indicate the agent is ready
 	// for input. When empty, DefaultReadyPatterns is used.
@@ -192,9 +198,13 @@ var Adapters = map[string]Adapter{
 			ProjectArg: false,
 			PromptArg:  true,
 		},
+		// pi's --exclude-tools disables tools by name after every other
+		// selection; ask_user_question is the tool of the installed
+		// rpiv-ask-user-question extension.
+		QuestionDeny:        []string{"--exclude-tools", "ask_user_question"},
 		SupervisionProtocol: `pi`,
 		TrustDialog:         `Project trust dialog on first run per path; accept with Enter`,
-		StateArtifacts:      []string{"pi-ext.ts"},
+		StateArtifacts:      []string{"pi-ext.ts", PiAgentDirSuffix},
 	},
 	Grok: {
 		Name:       Grok,
@@ -265,6 +275,13 @@ func matchProcessNameFromAdapter(name string) string {
 		}
 	}
 	return ""
+}
+
+// ProcessMatches reports whether a running process name belongs to the named
+// harness. It defers to matchProcessNameFromAdapter so exact-before-substring
+// precedence has one owner; an empty or unknown harness never matches.
+func ProcessMatches(harnessName, process string) bool {
+	return harnessName != "" && matchProcessNameFromAdapter(strings.TrimSpace(process)) == harnessName
 }
 
 // GetAdapter returns the adapter for the given harness name, or false if not found.

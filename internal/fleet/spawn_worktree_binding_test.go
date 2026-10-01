@@ -101,7 +101,7 @@ func TestBuildTaskWorktreeBinding_AdmitsLinkedWorktree(t *testing.T) {
 	if binding.Path != canonicalWorktree {
 		t.Errorf("Path = %q, want %q", binding.Path, canonicalWorktree)
 	}
-	if binding.Head == "" {
+	if binding.BaseHead == "" {
 		t.Error("Head is empty, want the worktree HEAD")
 	}
 	if binding.LeaseID != "lease-1" || binding.FenceToken != "fence-1" {

@@ -71,7 +71,7 @@ const deliveryLockScope = "delivery"
 // precondition (later operations fence the task's current revision), the
 // operation kind, the exact typed delivery identity/head, the provider merge
 // method, the asserted closed-set preconditions, the deterministic
-// authorization/revoke/outcome Operation identities, the authorization
+// authorization/gate/revoke/outcome Operation identities, the authorization
 // request digest, the provider action, and the durable resume stage. The outcome
 // fields are pinned at the outcome stage so recovery replays the exact
 // committed intent instead of re-deriving a conflicting one.
@@ -89,8 +89,10 @@ type deliveryJournal struct {
 	Identity      domain.DeliveryIdentity                 `json:"identity"`
 	Method        string                                  `json:"method,omitempty"`
 	Preconditions []taskauthority.DeliveryPrecondition    `json:"preconditions"`
+	Words         domain.Words                            `json:"words"`
 
 	AuthorizeOpID string `json:"authorize_op_id"`
+	GateOpID      string `json:"gate_op_id"`
 	RevokeOpID    string `json:"revoke_op_id"`
 	OutcomeOpID   string `json:"outcome_op_id"`
 
@@ -102,12 +104,16 @@ type deliveryJournal struct {
 	OutcomeMergedSHA string                              `json:"outcome_merged_sha,omitempty"`
 }
 
-// deliveryAuthorizeOpID / deliveryRevokeOpID / deliveryOutcomeOpID derive the
+// deliveryAuthorizeOpID / deliveryGateOpID / deliveryRevokeOpID /
+// deliveryOutcomeOpID derive the
 // deterministic canonical Operation identities of one delivery journal. The
 // same identities are reused across retries, so the canonical primitives
 // replay idempotently and recovery continues the same delivery.
 func deliveryAuthorizeOpID(journalID, taskID string) string {
 	return "delivery-" + journalID + "-" + taskID + "-authorize"
+}
+func deliveryGateOpID(journalID, taskID string) string {
+	return "delivery-" + journalID + "-" + taskID + "-gate"
 }
 func deliveryRevokeOpID(journalID, taskID string) string {
 	return "delivery-" + journalID + "-" + taskID + "-revoke"

@@ -22,7 +22,9 @@ func TestRuntimeAdapterObservationContract(t *testing.T) {
 		handle string
 		want   EndpointObservationState
 	}{
-		{"tmux alive", &TmuxBackend{}, "alive", EndpointAlive},
+		{"tmux pane running the harness is alive", &TmuxBackend{}, "alive", EndpointAlive},
+		{"tmux pane running a shell is starting", &TmuxBackend{}, "shell", EndpointStarting},
+		{"tmux pane with unreadable process is starting", &TmuxBackend{}, "noproc", EndpointStarting},
 		{"tmux authoritative absent", &TmuxBackend{}, "dead", EndpointDead},
 		{"tmux operational failure", &TmuxBackend{}, "fail", EndpointUnresponsive},
 		{"herdr alive agent", NewHerdrBackend("test"), "alive", EndpointAlive},
@@ -32,7 +34,7 @@ func TestRuntimeAdapterObservationContract(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ObserveEndpoint(tt.bk, tt.handle)
+			got := ObserveEndpoint(tt.bk, tt.handle, matchPi)
 			if got.State() != tt.want {
 				t.Fatalf("state=%v detail=%q want %v", got.State(), got.Detail, tt.want)
 			}
@@ -69,7 +71,7 @@ func TestListAdapterObservationContract(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			testutil.PrependPath(t, tc.binDir)
-			obs := ObserveEndpoint(tc.mk(), tc.handle)
+			obs := ObserveEndpoint(tc.mk(), tc.handle, nil)
 			if obs.Lifecycle != tc.want {
 				t.Fatalf("lifecycle = %v (state=%v) want %v (detail=%q)", obs.Lifecycle, obs.State(), tc.want, obs.Detail)
 			}
@@ -140,7 +142,7 @@ func TestObserveEndpoint_AliveAgentStatusPopulatesActivity(t *testing.T) {
 	for _, tc := range cases {
 		t.Run("status="+tc.status, func(t *testing.T) {
 			bk := &activityFakeBackend{paneAlive: true, agentAlive: true, recognized: true, status: tc.status}
-			obs := ObserveEndpoint(bk, "pane-1")
+			obs := ObserveEndpoint(bk, "pane-1", nil)
 			if obs.Lifecycle != LifecycleAlive {
 				t.Fatalf("lifecycle = %v, want alive", obs.Lifecycle)
 			}
@@ -172,7 +174,7 @@ exit 1
 	testutil.WriteFakeExecutable(t, path, script)
 	testutil.PrependPath(t, binDir)
 
-	obs := ObserveEndpoint(NewHerdrBackend("test"), "alive")
+	obs := ObserveEndpoint(NewHerdrBackend("test"), "alive", nil)
 	if obs.Lifecycle != LifecycleAlive {
 		t.Fatalf("lifecycle = %v, want alive", obs.Lifecycle)
 	}
@@ -202,7 +204,7 @@ func TestObserveEndpoint_ActivityStaysUnknownWithoutEnrichment(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			obs := ObserveEndpoint(tc.bk, "pane-1")
+			obs := ObserveEndpoint(tc.bk, "pane-1", nil)
 			if obs.Lifecycle != tc.want {
 				t.Fatalf("lifecycle = %v, want %v", obs.Lifecycle, tc.want)
 			}
@@ -241,14 +243,43 @@ func writeObservationFakeTmux(t *testing.T, dir string) {
 	script := `#!/bin/sh
 if [ "$1" = "list-panes" ]; then
   case "$3" in
-    alive) echo "$3: 1" ; exit 0 ;;
+    alive|shell|noproc) echo "$3: 1" ; exit 0 ;;
     dead) echo "can't find window: $3" >&2; exit 1 ;;
     fail) echo "permission denied" >&2; exit 1 ;;
   esac
 fi
+if [ "$1" = "display-message" ]; then
+  if [ "$2" != "-p" ] || [ "$3" != "-t" ] || [ "$5" != '#{pane_current_command}' ]; then
+    echo "unexpected display-message argv: $*" >&2; exit 2
+  fi
+  case "$4" in
+    alive) echo pi ;;
+    shell) echo zsh ;;
+    noproc) exit 0 ;;
+    procfail) echo "permission denied" >&2; exit 1 ;;
+  esac
+  exit 0
+fi
 exit 0
 `
 	testutil.WriteFakeExecutable(t, path, script)
+}
+
+func TestTmuxForegroundProcess(t *testing.T) {
+	fakeBin := t.TempDir()
+	writeObservationFakeTmux(t, fakeBin)
+	testutil.PrependPath(t, fakeBin)
+
+	got, err := (&TmuxBackend{}).ForegroundProcess("alive")
+	if err != nil || got != "pi" {
+		t.Fatalf("ForegroundProcess(alive) = %q, %v; want pi, nil", got, err)
+	}
+	if got, err := (&TmuxBackend{}).ForegroundProcess("noproc"); err == nil {
+		t.Fatalf("empty pane_current_command must be unreadable evidence, got %q", got)
+	}
+	if got, err := (&TmuxBackend{}).ForegroundProcess("procfail"); err == nil {
+		t.Fatalf("display-message failure must be unreadable evidence, got %q", got)
+	}
 }
 
 func writeObservationFakeHerdr(t *testing.T, dir string) {

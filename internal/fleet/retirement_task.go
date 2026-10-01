@@ -2,6 +2,7 @@
 package fleet
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -590,7 +591,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 
 	kind := meta["kind"]
 	if kind == "" {
-		kind = "ship" // default
+		kind = taskauthority.KindShip // default
 	}
 
 	// Resolve the task identity and the safety-check generation up front: the
@@ -874,9 +875,11 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		}
 	}
 
-	// 1.5. Kill any remaining processes on the worktree path
-	// (orphaned node/agy processes that survive window kill). The path comes
-	// from the committed evidence only.
+	// 1.5. Reap remaining holders of the worktree path (orphaned node/agy
+	// processes that survive window kill). The path comes from the committed
+	// evidence only, and only holders proven to carry this task's launch
+	// environment are signalled: any other holder, or a host that cannot
+	// enumerate or attribute holders, leaves cleanup pending, --force included.
 	// 2. Return worktree to pool — fail-closed: if return fails, abort
 	// teardown so the lease is not falsely claimed as released.
 	if ev != nil && ev.Worktree != nil {
@@ -884,12 +887,20 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 			return cleanupPending(err)
 		}
 		wtPath := ev.Worktree.Path
-		if killed := killProcessesOnPath(wtPath); killed > 0 {
-			result.Steps = append(result.Steps, fmt.Sprintf("killed %d residual process(es) on worktree", killed))
-		}
-		reapWorktreeHolders(wtPath)
-
 		if fi, err := os.Stat(wtPath); err == nil && fi.IsDir() {
+			// The cleanup claim blocks a reopen, and this re-read fails closed
+			// if the retired generation no longer owns the worktree, so a
+			// process is never signalled on behalf of a newer generation.
+			if _, err := revalidateRetirementCleanup(authority, taskID, ev, claimGen, evidence.current); err != nil {
+				return cleanupPending(fmt.Errorf("teardown %s: worktree holder fence: %w", opts.ID, err))
+			}
+			killed, err := reapWorktreeHolders(opts.HomeDir, opts.ID, wtPath)
+			if killed > 0 {
+				result.Steps = append(result.Steps, fmt.Sprintf("killed %d residual process(es) on worktree", killed))
+			}
+			if err != nil {
+				return cleanupPending(fmt.Errorf("teardown %s: worktree holders: %w", opts.ID, err))
+			}
 			// Recheck launch artifacts immediately before destructive cleanup,
 			// closing the mutation window between the initial safety check
 			// and ReturnWorktree.
@@ -962,28 +973,10 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 			dataDirKept = kept
 			return err
 		}
-		// Residual artifacts are removed first and metadata is always last so a
-		// failed projection cleanup leaves the retry identity intact. Failures
-		// are propagated because completed-claim retry repairs the projections.
 		projectionCleanup := func() error {
-			residualPaths, err := cleanupResidualArtifactPaths(opts.HomeDir, opts.ID, meta)
-			if err != nil {
+			if err := finalizeCompletedProjectionCleanup(opts, meta, result); err != nil {
 				return &RetirementProjectionError{TaskID: opts.ID, Err: err}
 			}
-			for _, p := range residualPaths {
-				if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
-					return &RetirementProjectionError{TaskID: opts.ID, Err: fmt.Errorf("remove residual %s: %w", filepath.Base(p), err)}
-				}
-				result.Steps = append(result.Steps, fmt.Sprintf("residual %s removed", filepath.Base(p)))
-			}
-			metaFilePath, err := taskMetaFilePath(opts.HomeDir, opts.ID)
-			if err != nil {
-				return &RetirementProjectionError{TaskID: opts.ID, Err: err}
-			}
-			if err := os.Remove(metaFilePath); err != nil && !os.IsNotExist(err) {
-				return &RetirementProjectionError{TaskID: opts.ID, Err: fmt.Errorf("remove meta: %w", err)}
-			}
-			result.Steps = append(result.Steps, "task meta removed")
 			return nil
 		}
 		journalSteps, err := journals.FinalizeRetirementJournals(opts.HomeDir, opts.ID)
@@ -1010,22 +1003,51 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 	return result, nil
 }
 
+// finalizeCompletedProjectionCleanup is the one projection cleanup of a
+// completed retirement claim, run by teardown and by the completed-claim
+// retry. Residual artifacts go first, then the retired wake state, and the
+// .meta last, so a failed step leaves the retry identity in place.
 func finalizeCompletedProjectionCleanup(opts Options, meta map[string]string, result *TeardownResult) error {
 	residualPaths, err := cleanupResidualArtifactPaths(opts.HomeDir, opts.ID, meta)
 	if err != nil {
 		return err
 	}
 	for _, p := range residualPaths {
-		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
-			return err
+		if err := os.RemoveAll(p); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove residual %s: %w", filepath.Base(p), err)
 		}
+		result.Steps = append(result.Steps, fmt.Sprintf("residual %s removed", filepath.Base(p)))
 	}
-	metaPath, err := taskMetaFilePath(opts.HomeDir, opts.ID)
+	if err := pruneRetiredWakeState(opts.HomeDir, opts.ID); err != nil {
+		return err
+	}
+	metaFilePath, err := taskMetaFilePath(opts.HomeDir, opts.ID)
 	if err != nil {
 		return err
 	}
-	if err := os.Remove(metaPath); err != nil && !os.IsNotExist(err) {
-		return err
+	if err := os.Remove(metaFilePath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove meta: %w", err)
+	}
+	result.Steps = append(result.Steps, "task meta removed")
+	return nil
+}
+
+// retiredTaskPrunedWakeKinds are the watcher-derived wake kinds that describe a
+// live task's health and mean nothing once it is retired. "signal" and
+// "uplink" carry the task's terminal news to a parent that may not have drained
+// them yet, so retirement never drops them.
+var retiredTaskPrunedWakeKinds = []string{"stale", "check"}
+
+// pruneRetiredWakeState removes a retired task's queued health wakes and its
+// watcher dedup marker. It runs before the .meta removal, so a failed prune
+// keeps the retry identity. It runs inside the terminal cleanup step the
+// CleanupClaim fences: only the retired generation's own cleanup reaches it (a
+// superseded generation returns before projection work), and the claim blocks
+// a reopen until it completes, so no row or marker of a later generation of
+// the same ID exists yet to be pruned.
+func pruneRetiredWakeState(homeDir, id string) error {
+	if err := home.PruneTaskWakes(homeDir, id, retiredTaskPrunedWakeKinds...); err != nil {
+		return fmt.Errorf("prune wake state: %w", err)
 	}
 	return nil
 }
@@ -1057,14 +1079,27 @@ func refreshDataDir(homeDir, id string) (bool, error) {
 // Returns proof strings alongside any error. Proofs are only populated on success.
 func safetyCheck(opts Options, meta map[string]string, kind string, backend BoundTeardown, authority *taskauthority.Canonical, gen taskauthority.Generation) ([]string, error) {
 	switch kind {
-	case "scout":
+	case taskauthority.KindScout:
 		if err := scoutSafetyCheck(opts, meta, gen); err != nil {
 			return nil, err
 		}
 		return nil, nil
+	case taskauthority.KindReview:
+		return reviewSafetyCheck(opts, meta)
 	default:
 		return shipSafetyCheck(opts, meta, backend, authority)
 	}
+}
+
+// reviewSafetyCheck answers for a review task: it owns no worktree, branch,
+// manifest or merge, so there is nothing to land and no proof to emit. The
+// reviewed worktree belongs to the reviewed ship task; retirement releases
+// only evidence.Worktree, which a review never has, so it cannot release it.
+func reviewSafetyCheck(opts Options, meta map[string]string) ([]string, error) {
+	if meta["worktree"] != "" || meta["branch"] != "" {
+		return nil, fmt.Errorf("review task %s meta names a worktree or branch; a review owns neither (use --force to override)", opts.ID)
+	}
+	return nil, nil
 }
 
 // safetyCheckGeneration resolves the generation whose report a scout safety
@@ -1402,14 +1437,20 @@ func taskMetaFilePath(homeDir, id string) (string, error) {
 	return home.MetaFilePath(homeDir, id)
 }
 
+// cleanupResidualArtifactPaths lists the task's residual state paths: files and,
+// for a pi soldier, the per-task agent dir, which the callers remove with
+// os.RemoveAll (it unlinks the dir's symlinks and never follows them).
 func cleanupResidualArtifactPaths(homeDir, id string, meta map[string]string) ([]string, error) {
 	statusPath, err := home.StatusFilePath(homeDir, id)
 	if err != nil {
 		return nil, err
 	}
 	paths := []string{statusPath}
+	if meta["kind"] == taskauthority.KindReview {
+		paths = append(paths, reviewHomeDir(homeDir, id))
+	}
 	stateDir := home.StateDir(homeDir)
-	for _, suffix := range []string{"check", "turnend", "check.sh", "turn-ended"} {
+	for _, suffix := range []string{"check", "turnend"} {
 		p, err := home.DurableFilePath(stateDir, id, "."+suffix)
 		if err != nil {
 			return nil, err
@@ -1426,32 +1467,97 @@ func cleanupResidualArtifactPaths(homeDir, id string, meta map[string]string) ([
 	return paths, nil
 }
 
-// killProcessesOnPath tries to kill any processes still accessing the given
-// path using fuser(1). Returns the number of processes killed (or 0 if fuser
-// is unavailable or the path is clear). Best-effort; errors are logged only.
-func killProcessesOnPath(path string) int {
-	cmd := exec.Command("fuser", "-k", path)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return 0
+// worktreeHolderPIDs lists the processes with wtPath open through fuser(1).
+// fuser exits 1 with no output when nothing holds the path; any other failure,
+// including fuser being absent, is an error and never reads as "clear".
+func worktreeHolderPIDs(wtPath string) ([]int, error) {
+	var stdout bytes.Buffer
+	cmd := exec.Command("fuser", wtPath)
+	cmd.Stdout = &stdout
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 && strings.TrimSpace(stdout.String()) == "" {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("enumerating holders of %s: %w", wtPath, err)
 	}
-	outStr := strings.TrimSpace(string(out))
-	if outStr == "" {
-		return 0
+	var pids []int
+	for _, field := range strings.Fields(stdout.String()) {
+		pid, err := strconv.Atoi(field)
+		if err != nil {
+			return nil, fmt.Errorf("enumerating holders of %s: unparseable pid %q", wtPath, field)
+		}
+		pids = append(pids, pid)
 	}
-	return strings.Count(outStr, " ") + 1
+	return pids, nil
 }
 
-// reapWorktreeHolders waits briefly for any remaining holder processes on
-// the worktree path to exit. Returns after timeout regardless.
-func reapWorktreeHolders(wtPath string) {
+// taskOwnedPIDs returns the pids whose launch environment names this task and
+// this home: the launch script exports MUNSU_TASK_ID and MUNSU_HOME before it
+// execs the harness (soldier_launch.go buildLaunchArtifact), and children
+// inherit them. The environment carries no generation; the generation is bound
+// by the cleanup claim, which blocks a reopen for the whole teardown. A host
+// with no readable process environments returns an error.
+func taskOwnedPIDs(homeDir, taskID string) (map[int]bool, error) {
+	canonical, err := canonicalHome(homeDir)
+	if err != nil {
+		return nil, err
+	}
+	scan, err := OSMarkerInventory{}.ListMarked()
+	if err != nil {
+		return nil, err
+	}
+	owned := make(map[int]bool)
+	for _, process := range scan.Marked {
+		if strings.TrimSpace(process.Markers[MarkerMunsuTask]) != taskID {
+			continue
+		}
+		declared, err := canonicalHome(strings.TrimSpace(process.Markers[MarkerMunsuHome]))
+		if err != nil || declared != canonical {
+			continue
+		}
+		owned[process.PID] = true
+	}
+	return owned, nil
+}
+
+// reapWorktreeHolders kills the processes holding wtPath that are proven to
+// belong to the task and waits for the path to clear. It returns the number of
+// distinct processes signalled. A holder that is not provably the task's, an
+// inventory or attribution failure, and holders that outlive the wait are all
+// errors: the caller keeps cleanup pending rather than kill or ignore them.
+func reapWorktreeHolders(homeDir, taskID, wtPath string) (int, error) {
+	killed := map[int]bool{}
 	for i := 0; i < 5; i++ {
-		cmd := exec.Command("fuser", wtPath)
-		if err := cmd.Run(); err != nil {
-			return
+		holders, err := worktreeHolderPIDs(wtPath)
+		if err != nil {
+			return len(killed), err
+		}
+		if len(holders) == 0 {
+			return len(killed), nil
+		}
+		owned, err := taskOwnedPIDs(homeDir, taskID)
+		if err != nil {
+			return len(killed), fmt.Errorf("attributing holders of %s: %w", wtPath, err)
+		}
+		for _, pid := range holders {
+			if !owned[pid] {
+				return len(killed), fmt.Errorf("process %d holds %s and is not provably task %s's; not signalled", pid, wtPath, taskID)
+			}
+		}
+		for _, pid := range holders {
+			proc, err := os.FindProcess(pid)
+			if err != nil {
+				return len(killed), fmt.Errorf("signalling holder %d: %w", pid, err)
+			}
+			if err := proc.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+				return len(killed), fmt.Errorf("signalling holder %d: %w", pid, err)
+			}
+			killed[pid] = true
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
+	return len(killed), fmt.Errorf("holders of %s outlived the reap wait", wtPath)
 }
 
 // parsePorcelainFilename extracts the filename from a git status --porcelain line.

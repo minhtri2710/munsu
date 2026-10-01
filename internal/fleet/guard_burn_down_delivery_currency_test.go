@@ -17,7 +17,7 @@ func TestGuardBurnDownVerifyDeliveryCurrencyRefusesAuthorizationIdentity(t *test
 		mustWorkingDeliveryTask(t, c, taskID)
 		req := deliverRequest()
 		journal := &deliveryJournal{
-			TaskID: taskID, Generation: 1, Revision: 3, Kind: req.Kind,
+			TaskID: taskID, Generation: 1, Revision: 4, Kind: req.Kind,
 			Identity: req.Identity, Preconditions: append([]taskauthority.DeliveryPrecondition(nil), req.Preconditions...),
 			AuthorizeOpID: "missing-authorization",
 		}
@@ -34,14 +34,14 @@ func TestGuardBurnDownVerifyDeliveryCurrencyRefusesAuthorizationIdentity(t *test
 		req := deliverRequest()
 		authReq := taskauthority.CanonicalDeliveryAuthorizationRequest{
 			HomeID: c.HomeID(), TaskID: mustFleetTaskID(t, taskID),
-			Precondition: domain.Of(1, 3), Kind: req.Kind, Identity: req.Identity,
-			Preconditions: req.Preconditions,
+			Precondition: domain.Of(1, 4), Kind: req.Kind, Identity: req.Identity,
+			Preconditions: req.Preconditions, Words: deliveryWords(),
 		}
 		if _, err := c.AuthorizeDelivery(mustFleetOperation(t, "op-currency-auth", authReq), authReq); err != nil {
 			t.Fatal(err)
 		}
 		journal := &deliveryJournal{
-			TaskID: taskID, Generation: 1, Revision: 3, Kind: req.Kind,
+			TaskID: taskID, Generation: 1, Revision: 4, Kind: req.Kind,
 			Identity: req.Identity, Preconditions: append([]taskauthority.DeliveryPrecondition(nil), req.Preconditions...),
 			AuthorizeOpID: "other-authorization",
 		}
@@ -75,14 +75,14 @@ func TestGuardBurnDownVerifyDeliveryCurrencyRefusesKindHeadAndPreconditions(t *t
 			req := deliverRequest()
 			authReq := taskauthority.CanonicalDeliveryAuthorizationRequest{
 				HomeID: c.HomeID(), TaskID: mustFleetTaskID(t, taskID),
-				Precondition: domain.Of(1, 3), Kind: req.Kind, Identity: req.Identity,
-				Preconditions: req.Preconditions,
+				Precondition: domain.Of(1, 4), Kind: req.Kind, Identity: req.Identity,
+				Preconditions: req.Preconditions, Words: deliveryWords(),
 			}
 			if _, err := c.AuthorizeDelivery(mustFleetOperation(t, "op-currency-auth", authReq), authReq); err != nil {
 				t.Fatal(err)
 			}
 			journal := &deliveryJournal{
-				TaskID: taskID, Generation: 1, Revision: 3, Kind: req.Kind,
+				TaskID: taskID, Generation: 1, Revision: 4, Kind: req.Kind,
 				Identity: req.Identity, Preconditions: append([]taskauthority.DeliveryPrecondition(nil), req.Preconditions...),
 				AuthorizeOpID: "op-currency-auth",
 			}

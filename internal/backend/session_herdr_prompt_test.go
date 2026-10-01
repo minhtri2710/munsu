@@ -6,11 +6,32 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
+
+// promptArgvFile is the file the fake herdr writes the `agent prompt` argv to,
+// one argument per line.
+const promptArgvFile = "prompt.argv"
+
+// readPromptArgv returns the argv the fake herdr saw for `agent prompt` (after
+// any --session), one element per argument; nil when it was never called.
+func readPromptArgv(t *testing.T, dir string) []string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, promptArgvFile))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+}
 
 // writeFakeHerdrPrompt creates a fake herdr tuned for agent prompt tests.
 // Behavior is controlled via env file lines read by the script.
@@ -51,13 +72,7 @@ func writeFakeHerdrPrompt(t *testing.T, dir, apiSchema string) string {
 		`      exit ${AGENT_GET_EXIT:-0}` + "\n" +
 		`    fi` + "\n" +
 		`    if [ "$2" = "prompt" ]; then` + "\n" +
-		`      # Assert --wait is NOT present` + "\n" +
-		`      for arg in "$@"; do` + "\n" +
-		`        if [ "$arg" = "--wait" ]; then` + "\n" +
-		`          >&2 echo "unexpected --wait flag"` + "\n" +
-		`          exit 99` + "\n" +
-		`        fi` + "\n" +
-		`      done` + "\n" +
+		`      printf '%s\n' "$@" > "` + filepath.Join(dir, promptArgvFile) + `"` + "\n" +
 		`      echo "$AGENT_PROMPT_STDOUT"` + "\n" +
 		`      exit ${AGENT_PROMPT_EXIT:-0}` + "\n" +
 		`    fi` + "\n" +
@@ -90,7 +105,10 @@ func setFakeEnv(t *testing.T, dir string, kv ...string) {
 	}
 }
 
-func TestAgentPrompt_NoWaitFlag(t *testing.T) {
+// TestAgentPrompt_WaitsForTurnStart pins the submission contract: an idle
+// agent's prompt waits for working or blocked, bounded by the start timeout,
+// and only that observation reads PromptSubmitted.
+func TestAgentPrompt_WaitsForTurnStart(t *testing.T) {
 	tmp := t.TempDir()
 	writeFakeHerdrPrompt(t, tmp, "protocol: 17")
 	testutil.PrependPath(t, tmp)
@@ -99,6 +117,11 @@ func TestAgentPrompt_NoWaitFlag(t *testing.T) {
 	result := h.AgentPrompt("test-s:w1:p1", "hello")
 	if result.Status != PromptSubmitted {
 		t.Errorf("AgentPrompt status = %q, want %q (detail: %s)", result.Status, PromptSubmitted, result.Detail)
+	}
+	want := []string{"agent", "prompt", "w1:p1", "hello", "--wait", "--until", "working", "--until", "blocked",
+		"--timeout", strconv.FormatInt(backendPromptStartTimeout.Milliseconds(), 10)}
+	if got := readPromptArgv(t, tmp); !slices.Equal(got, want) {
+		t.Errorf("agent prompt argv = %q, want %q", got, want)
 	}
 }
 
@@ -122,25 +145,24 @@ func TestAgentPrompt_IdleAgent(t *testing.T) {
 	}
 }
 
-func TestAgentPrompt_BusyAgentReturnsPromptly(t *testing.T) {
+// TestAgentPrompt_BusyAgentIsQueued: a working agent cannot show a new turn
+// start, so its prompt is sent without the wait and reported queued.
+func TestAgentPrompt_BusyAgentIsQueued(t *testing.T) {
 	tmp := t.TempDir()
 	writeFakeHerdrPrompt(t, tmp, "protocol: 17")
 	testutil.PrependPath(t, tmp)
 
-	// Agent is working before submission, prompt returns immediately.
 	setFakeEnv(t, tmp,
 		"AGENT_GET_STATUS=working",
 		"AGENT_PROMPT_STDOUT={\"result\":{\"type\":\"prompt_submitted\",\"agent\":{\"agent_status\":\"working\"}}}",
 	)
 	h := NewHerdrBackend("test-s")
 	result := h.AgentPrompt("test-s:w1:p1", "hello")
-
-	// Must NOT be queued-while-busy — without --wait we don't infer that.
-	if result.Status == PromptQueuedWhileBusy {
-		t.Errorf("busy: got queued-while-busy, should not infer from pre-submit status")
+	if result.Status != PromptQueuedWhileBusy {
+		t.Errorf("busy: status = %q, want %q (detail: %s)", result.Status, PromptQueuedWhileBusy, result.Detail)
 	}
-	if result.Status != PromptSubmitted {
-		t.Errorf("busy: status = %q, want %q (detail: %s)", result.Status, PromptSubmitted, result.Detail)
+	if got := readPromptArgv(t, tmp); slices.Contains(got, "--wait") {
+		t.Errorf("busy agent prompt must be sent without --wait, argv = %q", got)
 	}
 }
 
@@ -158,6 +180,25 @@ func TestAgentPrompt_Stalled(t *testing.T) {
 	result := h.AgentPrompt("test-s:w1:p1", "hello")
 	if result.Status != PromptStalled {
 		t.Errorf("stalled: status = %q, want %q (detail: %s)", result.Status, PromptStalled, result.Detail)
+	}
+}
+
+// TestAgentPrompt_WaitTimeoutIsStalled: herdr's own timeout error on the turn
+// start wait leaves the text possibly pending in the composer, so it is a
+// stall and never a submission.
+func TestAgentPrompt_WaitTimeoutIsStalled(t *testing.T) {
+	tmp := t.TempDir()
+	writeFakeHerdrPrompt(t, tmp, "protocol: 17")
+	testutil.PrependPath(t, tmp)
+
+	setFakeEnv(t, tmp,
+		"AGENT_GET_STATUS=idle",
+		"AGENT_PROMPT_STDOUT={\"error\":{\"code\":\"timeout\",\"message\":\"wait timed out\"}}",
+		"AGENT_PROMPT_EXIT=1",
+	)
+	result := NewHerdrBackend("test-s").AgentPrompt("test-s:w1:p1", "hello")
+	if result.Status != PromptStalled {
+		t.Errorf("timeout: status = %q, want %q (detail: %s)", result.Status, PromptStalled, result.Detail)
 	}
 }
 
@@ -322,25 +363,6 @@ func TestSubmitPrompt_LegacyFallback(t *testing.T) {
 	}
 }
 
-func TestAgentPrompt_NoWaitArgVerification(t *testing.T) {
-	tmp := t.TempDir()
-	_ = writeFakeHerdrPrompt(t, tmp, "protocol: 17")
-	testutil.PrependPath(t, tmp)
-
-	// If --wait leaks through, the fake herdr exits 99.
-	// This test verifies it doesn't.
-	setFakeEnv(t, tmp, "AGENT_GET_STATUS=idle")
-	h := NewHerdrBackend("test-s")
-	result := h.AgentPrompt("test-s:w1:p1", "hello")
-	if result.Status == PromptBackendFailed && strings.Contains(result.Detail, "exit status 99") {
-		t.Fatal("AgentPrompt passed --wait to herdr agent prompt")
-	}
-	if result.Status != PromptSubmitted {
-		// Could fail for other reasons; that's OK for this test.
-		t.Logf("no-wait check: status=%q detail=%s", result.Status, result.Detail)
-	}
-}
-
 // TestAgentPrompt_ProtocolProbeFailure verifies that when the protocol probe
 // fails entirely (no herdr server), we get backend-failed, not unsupported.
 func TestAgentPrompt_ProtocolProbeFailure(t *testing.T) {
@@ -373,14 +395,6 @@ func TestAgentPrompt_SystemOK(t *testing.T) {
 	t.Log("herdr 0.7.5 real smoke test: requires isolated herdr session")
 }
 
-func TestAgentPromptCommandArgs(t *testing.T) {
-	// Verify by reading the source: the command args must not contain --wait.
-	// We already validate this in the fake script, but also add a static check.
-	// The test above (TestAgentPrompt_NoWaitArgVerification) ensures the
-	// fake script catches --wait at runtime.
-	t.Log("--wait exclusion verified at runtime by fake herdr script")
-}
-
 // TestAgentPrompt_EmptyResponseOnSuccess ensures empty success output
 // (no JSON) is treated as backend-failed.
 func TestAgentPrompt_EmptyResponseOnSuccess(t *testing.T) {
@@ -399,6 +413,24 @@ func TestAgentPrompt_EmptyResponseOnSuccess(t *testing.T) {
 	// because json.Unmarshal of empty string leaves successResp.Result nil.
 	if result.Status != PromptBackendFailed {
 		t.Errorf("empty success: status = %q, want %q", result.Status, PromptBackendFailed)
+	}
+}
+
+// TestAgentPrompt_IdlePromptRunsUnderThePromptStartBound: the wait for a turn
+// start outlives the short command bound, so an answer that arrives after it is
+// still a submission. A busy agent's unwaited prompt stays on the short bound.
+func TestAgentPrompt_IdlePromptRunsUnderThePromptStartBound(t *testing.T) {
+	if backendCommandTimeoutFor(backendCommandPromptStart) <= backendCommandTimeout+time.Second {
+		t.Fatal("the prompt-start bound must sit above the short bound for this test to discriminate")
+	}
+	dir := t.TempDir()
+	reply := `{"result":{"type":"prompt_submitted","agent":{"agent_status":"working"}}}`
+	testutil.WriteFakeExecutable(t, filepath.Join(dir, "herdr"), "#!/bin/sh\nif [ \"$1\" = \"--session\" ]; then shift 2; fi\ncase \"$1 $2\" in\n  \"api schema\") echo 'protocol: 17'; exit 0 ;;\n  \"agent get\") echo '{\"result\":{\"agent\":{\"agent_status\":\"idle\"}}}'; exit 0 ;;\n  \"agent prompt\") sleep "+strconv.Itoa(int(backendCommandTimeout/time.Second)+1)+"; echo '"+reply+"'; exit 0 ;;\nesac\nexit 1\n")
+	testutil.PrependPath(t, dir)
+
+	result := NewHerdrBackend("test").AgentPrompt("test:pane", "hello")
+	if result.Status != PromptSubmitted {
+		t.Fatalf("status = %q, want %q (detail: %s)", result.Status, PromptSubmitted, result.Detail)
 	}
 }
 

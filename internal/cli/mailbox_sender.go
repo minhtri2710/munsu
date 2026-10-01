@@ -40,7 +40,7 @@ func (s sessionMailboxSender) Alive(home string, meta map[string]string) (bool, 
 	if err != nil {
 		return false, err
 	}
-	result, err := probeCaptainBackend(bk, meta["window"])
+	result, err := probeCaptainBackend(bk, meta)
 	if err != nil {
 		return false, err
 	}

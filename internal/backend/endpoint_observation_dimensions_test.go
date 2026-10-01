@@ -109,7 +109,7 @@ func TestObserveEndpointReturnsRawFreshnessUnknown(t *testing.T) {
 	// An agent-aware backend (pane + agent alive) still yields a raw unknown
 	// freshness observation that is not Live until Fleet authorizes it.
 	bk := &contractAgentBackendRaw{alive: true, agentAlive: true}
-	obs := ObserveEndpoint(bk, "pane-1")
+	obs := ObserveEndpoint(bk, "pane-1", nil)
 	if obs.Lifecycle != LifecycleAlive {
 		t.Fatalf("agent-aware alive lifecycle = %v, want alive", obs.Lifecycle)
 	}
@@ -120,10 +120,11 @@ func TestObserveEndpointReturnsRawFreshnessUnknown(t *testing.T) {
 		t.Fatalf("raw observation must not be Live/Absent: %+v", obs)
 	}
 
-	// A non-agent-aware structured backend reports pane presence only.
+	// A non-agent-aware structured backend without process evidence reports
+	// pane presence only (starting).
 	sb := &contractEndChecker{alive: true}
-	sob := ObserveEndpoint(sb, "pane-1")
-	if sob.Lifecycle != LifecycleAlive || sob.Freshness != FreshnessUnknown {
+	sob := ObserveEndpoint(sb, "pane-1", nil)
+	if sob.Lifecycle != LifecycleStarting || sob.Freshness != FreshnessUnknown {
 		t.Fatalf("checker alive observation = %+v", sob)
 	}
 	if sob.Absent() || sob.Live() {
@@ -133,7 +134,7 @@ func TestObserveEndpointReturnsRawFreshnessUnknown(t *testing.T) {
 	// A backend with no structured probe is unknown (a probe was attempted but
 	// no authoritative surface exists), and still never Live/Absent.
 	var nb Backend = &contractNoProbe{alive: true}
-	nob := ObserveEndpoint(nb, "pane-1")
+	nob := ObserveEndpoint(nb, "pane-1", nil)
 	if nob.Lifecycle != LifecycleUnknown || nob.Absent() || nob.Live() {
 		t.Fatalf("no-probe backend observation = %+v", nob)
 	}

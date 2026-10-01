@@ -120,6 +120,7 @@ munsu session-start
 
 ```sh
 munsu task add <task-id> "<description>" --kind ship --repo <name>
+munsu task add <task-id> "<description>" --kind review --reviews <ship-id> [--repo <name>]
 munsu task start <task-id>
 munsu task done <task-id>
 ```
@@ -127,7 +128,7 @@ munsu task done <task-id>
 ### Soldier lifecycle
 
 ```sh
-munsu spawn <task-id> [<project>] [--kind ship|scout] [--mode no-mistakes|direct-PR|local-only]  (default: auto-detect, project inferred from cwd)
+munsu spawn <task-id> [<project>] [--mode no-mistakes|direct-PR|local-only]  (default: auto-detect, project inferred from cwd)
 munsu watch ensure [--restart]
 munsu send <task-id> "<instruction>"
 munsu peek <task-id> [--lines N]
@@ -146,6 +147,7 @@ munsu captain list
 
 - `docs/architecture.md` — architecture overview, module layout, key interfaces, design decisions.
 - `docs/port-mapping.md` — full command reference grouped by domain.
+- `docs/orchestration-contract.md` — the versioned agent-facing orchestration contract: `--output toon|json` schemas, errors and exit codes.
 - `CONTRIBUTING.md` — how to contribute.
 - `AGENTS.md` — conventions file for soldiers working on munsu.
 - `internal/cli/skills/munsu-ops/` — canonical operator skill (`munsu skill show munsu-ops`): `COMMANDS.md` command map and `SUPERVISION.md` watch/wake/guard/AFK loop.
