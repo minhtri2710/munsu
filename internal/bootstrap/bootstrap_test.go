@@ -408,12 +408,7 @@ func TestGCOrphanDataDirs_WriterInterleavingKeepsBrief(t *testing.T) {
 	if _, err := auth.BeginCleanup(mustBootstrapOperation(t, "interleave-begin", begin), begin); err != nil {
 		t.Fatal(err)
 	}
-	cur, err = auth.Get(tid)
-	if err != nil {
-		t.Fatal(err)
-	}
-	complete := taskauthority.CanonicalCompleteCleanupRequest{HomeID: auth.HomeID(), TaskID: tid, Precondition: domain.Of(uint64(cur.Generation), uint64(cur.Revision)), ClaimOperationID: "interleave-retire", ClaimGeneration: cur.Generation, Reason: "test"}
-	if _, err := auth.CompleteCleanup(mustBootstrapOperation(t, "interleave-complete", complete), complete); err != nil {
+	if err := auth.ReconcileRetirementCleanup(tid, cur.Generation, taskauthority.CleanupCompleted, func() error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	dataDir := filepath.Join(homeDir, "data", id)
@@ -479,8 +474,7 @@ func TestGCOrphanDataDirs_ScaffoldedBriefKeepsTerminalTask(t *testing.T) {
 	if _, err := auth.BeginCleanup(mustBootstrapOperation(t, "terminal-begin", begin), begin); err != nil {
 		t.Fatal(err)
 	}
-	complete := taskauthority.CanonicalCompleteCleanupRequest{HomeID: auth.HomeID(), TaskID: tid, Precondition: domain.Of(uint64(cur.Generation), uint64(cur.Revision)), ClaimOperationID: "terminal-retire", ClaimGeneration: cur.Generation, Reason: "test"}
-	if _, err := auth.CompleteCleanup(mustBootstrapOperation(t, "terminal-complete", complete), complete); err != nil {
+	if err := auth.ReconcileRetirementCleanup(tid, cur.Generation, taskauthority.CleanupCompleted, func() error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	dataDir := filepath.Join(homeDir, "data", id)

@@ -377,11 +377,10 @@ func (c *Canonical) mutateTaskCleanup(op domain.Operation, taskID domain.TaskID,
 }
 
 // cleanupGate is the internal cleanup-continuation capability. It is built
-// only inside the cleanup boundary operations (BeginCleanup/CompleteCleanup/
-// AbortCleanup) from the request's claim identity (the stable retirement
-// Operation ID and the cleaned generation), never accepted from a caller as a
-// raw bypass boolean or string. The common cleanup fence verifies it matches
-// the current active claim before allowing a mutation on a claimed task.
+// only inside BeginCleanup and ReconcileRetirementCleanup, never accepted from
+// a caller as a raw bypass boolean or string. The common cleanup fence verifies
+// it matches the current active claim before allowing a mutation on a claimed
+// task.
 type cleanupGate struct {
 	operationID string
 	generation  Generation

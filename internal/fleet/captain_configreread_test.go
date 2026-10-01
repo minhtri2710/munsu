@@ -137,38 +137,6 @@ func TestComputeInheritedConfigDigest_Empty(t *testing.T) {
 	}
 }
 
-// TestAdvanceConfigRereadGen_CaptainProfileChangeDoesNotAdvance verifies
-// CaptainProfile-only changes do not advance the reread generation.
-func TestAdvanceConfigRereadGen_CaptainProfileChangeDoesNotAdvance(t *testing.T) {
-	home := t.TempDir()
-	first := config.ResolvedProjectConfig{
-		Project:        "test-project",
-		ProjectPath:    "/fixed/path",
-		Backend:        "tmux",
-		CaptainProfile: config.CaptainProfile{Harness: "pi"},
-		Digest:         "0000000000000000000000000000000000000000000000000000000000000000",
-	}
-	if err := config.StorePublishedSnapshot(home, first); err != nil {
-		t.Fatal(err)
-	}
-	if changed, _, _, _, err := AdvanceConfigRereadGen(home); err != nil || !changed {
-		t.Fatalf("first push: changed=%v, err=%v", changed, err)
-	}
-
-	second := first
-	second.CaptainProfile = config.CaptainProfile{Harness: "codex", Model: "gpt-5"}
-	if err := config.StorePublishedSnapshot(home, second); err != nil {
-		t.Fatal(err)
-	}
-	changed, gen, _, digest, err := AdvanceConfigRereadGen(home)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if changed || gen != 1 || digest != first.Digest {
-		t.Errorf("CaptainProfile-only change advanced reread: changed=%v gen=%d digest=%q", changed, gen, digest)
-	}
-}
-
 func TestComputeInheritedConfigDigest_InvalidProjectDigest(t *testing.T) {
 	home := t.TempDir()
 	resolved := config.ResolvedProjectConfig{
@@ -224,180 +192,6 @@ func TestComputeInheritedConfigDigest_Deterministic(t *testing.T) {
 }
 
 // --- Advance ---
-
-// TestAdvanceConfigRereadGen_FirstPush verifies first push always advances.
-func TestAdvanceConfigRereadGen_FirstPush(t *testing.T) {
-	home := t.TempDir()
-	os.MkdirAll(filepath.Join(home, "config"), 0755)
-	os.MkdirAll(filepath.Join(home, "data"), 0755)
-	createTestPublishedSnapshot(t, home)
-
-	changed, gen, oldDigest, newDigest, err := AdvanceConfigRereadGen(home)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !changed {
-		t.Error("expected changed=true on first push")
-	}
-	if gen != 1 {
-		t.Errorf("gen = %d, want 1", gen)
-	}
-	if oldDigest != "" {
-		t.Errorf("oldDigest = %q, want empty", oldDigest)
-	}
-	if newDigest == "" {
-		t.Error("newDigest should not be empty")
-	}
-}
-
-// TestAdvanceConfigRereadGen_NoChange verifies unchanged content skips advance.
-func TestAdvanceConfigRereadGen_NoChange(t *testing.T) {
-	home := t.TempDir()
-	os.MkdirAll(filepath.Join(home, "config"), 0755)
-	os.MkdirAll(filepath.Join(home, "data"), 0755)
-	createTestPublishedSnapshot(t, home)
-	changed, gen, _, _, err := AdvanceConfigRereadGen(home)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !changed {
-		t.Fatal("expected changed=true on first push")
-	}
-	firstGen := gen
-
-	// Second push with same content → unchanged
-	changed, gen, _, _, err = AdvanceConfigRereadGen(home)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if changed {
-		t.Errorf("expected changed=false on identical push, got gen=%d", gen)
-	}
-	if gen != firstGen {
-		t.Errorf("gen = %d, want %d (unchanged)", gen, firstGen)
-	}
-}
-
-// TestAdvanceConfigRereadGen_ContentChange verifies changed content advances.
-func TestAdvanceConfigRereadGen_ContentChange(t *testing.T) {
-	home := t.TempDir()
-	os.MkdirAll(filepath.Join(home, "config"), 0755)
-	os.MkdirAll(filepath.Join(home, "data"), 0755)
-	createTestPublishedSnapshot(t, home)
-
-	// First push → gen=1
-	changed, _, _, _, err := AdvanceConfigRereadGen(home)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !changed {
-		t.Fatal("expected changed=true on first push")
-	}
-
-	// Change the published snapshot → push → gen=2
-	resolved := config.ResolvedProjectConfig{
-		Project:           "test-project",
-		ProjectPath:       home,
-		SoldierHarness:    "codex",
-		Backend:           "tmux",
-		RequireNoMistakes: true,
-		Digest:            "1111111111111111111111111111111111111111111111111111111111111111",
-	}
-	if err := config.StorePublishedSnapshot(home, resolved); err != nil {
-		t.Fatal(err)
-	}
-	changed, gen, _, newDigest, err := AdvanceConfigRereadGen(home)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !changed {
-		t.Fatal("expected changed=true after config change")
-	}
-	if gen != 2 {
-		t.Errorf("gen = %d, want 2", gen)
-	}
-
-	// Change the published snapshot back → push → gen=3 (different content)
-	resolved2 := config.ResolvedProjectConfig{
-		Project:           "test-project",
-		ProjectPath:       home,
-		SoldierHarness:    "pi",
-		Backend:           "tmux",
-		RequireNoMistakes: false,
-		Digest:            "2222222222222222222222222222222222222222222222222222222222222222",
-	}
-	if err := config.StorePublishedSnapshot(home, resolved2); err != nil {
-		t.Fatal(err)
-	}
-	changed, gen, _, _, err = AdvanceConfigRereadGen(home)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !changed {
-		t.Fatal("expected changed=true after config change")
-	}
-	if gen != 3 {
-		t.Errorf("gen = %d, want 3", gen)
-	}
-
-	_ = newDigest
-}
-
-// TestAdvanceConfigRereadGen_IdempotentRepeat verifies repeated identical
-// content stays at same generation.
-func TestAdvanceConfigRereadGen_IdempotentRepeat(t *testing.T) {
-	home := t.TempDir()
-	os.MkdirAll(filepath.Join(home, "config"), 0755)
-	os.MkdirAll(filepath.Join(home, "data"), 0755)
-	createTestPublishedSnapshot(t, home)
-	AdvanceConfigRereadGen(home)
-
-	// Push 5 more times with same content
-	for i := 0; i < 5; i++ {
-		changed, gen, _, _, err := AdvanceConfigRereadGen(home)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if changed {
-			t.Errorf("iteration %d: expected unchanged, got gen=%d", i, gen)
-		}
-		if gen != 1 {
-			t.Errorf("iteration %d: gen = %d, want 1", i, gen)
-		}
-	}
-}
-
-// TestAdvanceConfigRereadGen_CrashRecovery verifies that generation tracking
-// persists across crashes (the file is written atomically and survives).
-func TestAdvanceConfigRereadGen_CrashRecovery(t *testing.T) {
-	home := t.TempDir()
-	os.MkdirAll(filepath.Join(home, "config"), 0755)
-	os.MkdirAll(filepath.Join(home, "data"), 0755)
-
-	// Advance to gen=1
-	AdvanceConfigRereadGen(home)
-
-	// Simulate crash: write gen=2 manually.
-	digestAfterCrash := "crash-recovery-digest"
-	if err := WriteConfigRereadGen(home, 2, digestAfterCrash); err != nil {
-		t.Fatal(err)
-	}
-
-	// "Restart": read back
-	gen, digest, found, err := ReadConfigRereadGen(home)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !found {
-		t.Fatal("generation should survive crash")
-	}
-	if gen != 2 {
-		t.Errorf("gen = %d, want 2", gen)
-	}
-	if digest != digestAfterCrash {
-		t.Errorf("digest = %q, want %q", digest, digestAfterCrash)
-	}
-}
 
 // --- ConfigRereadMessage ---
 
@@ -587,41 +381,33 @@ func TestConfigPushWithResult_GenerationAdvance(t *testing.T) {
 	os.MkdirAll(filepath.Join(captainHome, "data"), 0755)
 	os.MkdirAll(filepath.Join(captainHome, "projects"), 0755)
 
-	// Set up typed documents in parent home.
 	setupTypedParentHome(t, parent, "test-project")
-	// Register captain with project so publishResolvedSnapshot works.
 	if err := Register(parent, "test", captainHome, "", "test-project"); err != nil {
 		t.Fatal(err)
 	}
 
-	// First push → advances (no existing gen file)
 	res, err := configPushWithResult(parent, captainHome)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !res.Changed {
-		t.Error("expected changed=true on first push")
+	if !res.Changed || res.Generation != 1 || res.OldDigest != "" || res.NewDigest == "" {
+		t.Fatalf("first push = %+v, want changed generation 1 with only a new digest", res)
 	}
-	if res.Generation != 1 {
-		t.Errorf("generation = %d, want 1", res.Generation)
-	}
+	firstDigest := res.NewDigest
 
-	// Push with same content → unchanged
-	res, err = configPushWithResult(parent, captainHome)
+	t.Run("unchanged", func(t *testing.T) {
+		res, err := configPushWithResult(parent, captainHome)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Changed || res.Generation != 1 || res.OldDigest != firstDigest || res.NewDigest != firstDigest {
+			t.Fatalf("repeat push = %+v, want unchanged generation 1 and digest %q", res, firstDigest)
+		}
+	})
+
+	base, err := config.LoadFleetBase(parent)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if res.Changed {
-		t.Errorf("expected unchanged on identical push, got gen=%d", res.Generation)
-	}
-	if res.Generation != 1 {
-		t.Errorf("generation = %d, want 1", res.Generation)
-	}
-
-	// Change PARENT fleet base → push → changed
-	base, lErr := config.LoadFleetBase(parent)
-	if lErr != nil {
-		t.Fatal(lErr)
 	}
 	base.Config.SoldierHarness = "codex"
 	if err := config.StoreFleetBase(parent, base); err != nil {
@@ -631,23 +417,25 @@ func TestConfigPushWithResult_GenerationAdvance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !res.Changed {
-		t.Error("expected changed=true after parent config change")
-	}
-	if res.Generation != 2 {
-		t.Errorf("generation = %d, want 2", res.Generation)
+	if !res.Changed || res.Generation != 2 || res.OldDigest != firstDigest || res.NewDigest == "" || res.NewDigest == firstDigest {
+		t.Fatalf("content change = %+v, want changed generation 2 with a new digest", res)
 	}
 
-	// Push again with same content → unchanged
+	published, err := config.LoadPublishedSnapshot(captainHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profileOnly := published.Config()
+	profileOnly.CaptainProfile = config.CaptainProfile{Harness: "codex", Model: "gpt-5"}
+	if err := config.StorePublishedSnapshot(captainHome, profileOnly); err != nil {
+		t.Fatal(err)
+	}
 	res, err = configPushWithResult(parent, captainHome)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Changed {
-		t.Errorf("expected unchanged after same push, got generation=%d", res.Generation)
-	}
-	if res.Generation != 2 {
-		t.Errorf("generation = %d, want 2", res.Generation)
+	if res.Changed || res.Generation != 2 || res.NewDigest != res.OldDigest {
+		t.Fatalf("CaptainProfile-only push = %+v, want unchanged generation 2 digest", res)
 	}
 }
 
@@ -752,9 +540,8 @@ func TestConfigPushWithResult_NoCaptainHomeError(t *testing.T) {
 	}
 }
 
-// TestConfigPushWithResult_HealCrash verifies that after a crash between
-// generation write and mailbox creation, the next ConfigPushWithResult heals
-// by not failing (generation tracking is separate from mailbox write).
+// TestConfigPushWithResult_HealCrash verifies that a retry after the durable
+// generation write does not advance it again.
 func TestConfigPushWithResult_HealCrash(t *testing.T) {
 	parent := t.TempDir()
 	if _, err := home.Init(parent); err != nil {
@@ -772,17 +559,20 @@ func TestConfigPushWithResult_HealCrash(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Simulate crash: gen file was written at gen=1 but no mailbox envelope.
-	// Push with same content → unchanged (generation stays at 1).
+	// The first push persists generation before mailbox creation. A retry
+	// after that boundary is unchanged and retains the same digest.
+	first, err := configPushWithResult(parent, captainHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.Changed || first.Generation != 1 {
+		t.Fatalf("first push = %+v, want changed generation 1", first)
+	}
 	res, err := configPushWithResult(parent, captainHome)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// First push always advances.
-	if !res.Changed {
-		t.Error("expected changed=true on first push")
-	}
-	if res.Generation != 1 {
-		t.Errorf("generation = %d, want 1", res.Generation)
+	if res.Changed || res.Generation != 1 || res.NewDigest != first.NewDigest {
+		t.Fatalf("retry = %+v, want unchanged generation 1 digest %q", res, first.NewDigest)
 	}
 }

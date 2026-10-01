@@ -31,17 +31,6 @@ func TestHarnessHookDirsRejectEmptyProjectCwd(t *testing.T) {
 	}
 }
 
-func TestAssertSupportedHarnessRejectsKnownHarnessWithoutCapabilities(t *testing.T) {
-	original := append([]string(nil), harness.KnownHarnesses...)
-	harness.KnownHarnesses = append(harness.KnownHarnesses, "future")
-	defer func() { harness.KnownHarnesses = original }()
-
-	err := AssertSupportedHarness("future")
-	if err == nil || !strings.Contains(err.Error(), "has no integration capabilities yet") {
-		t.Fatalf("AssertSupportedHarness error = %v, want missing-capabilities refusal", err)
-	}
-}
-
 func TestExpectedTargetPathRejectsEmptyProjectCwd(t *testing.T) {
 	_, err := ExpectedTargetPath(ScopeProject, "")
 	if err == nil || !strings.Contains(err.Error(), "cwd is required for project scope") {

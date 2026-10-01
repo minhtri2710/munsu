@@ -17,9 +17,9 @@ func readyProbe() ProbeResult {
 	return ProbeResult{State: backend.Ready, Version: "1.45.4", Path: "/usr/local/bin/no-mistakes"}
 }
 
-// TestProbeNoMistakesGateAgent covers the accepted capability preflight
-// matrix: pi + disable_project_settings, supported codex/claude, unavailable
-// agents, and unsupported neutralization.
+// TestProbeNoMistakesGateAgent covers the capability preflight matrix: pi +
+// disable_project_settings, supported codex/claude, unavailable agents, and
+// unsupported neutralization.
 func TestProbeNoMistakesGateAgent(t *testing.T) {
 	tests := []struct {
 		name                       string

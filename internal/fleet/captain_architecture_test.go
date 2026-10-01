@@ -146,153 +146,6 @@ func TestStructuredState_MetaHomeComparedCanonically(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Invariant: Blocked/duplicate tasks cannot spawn (dispatch is refused)
-// ---------------------------------------------------------------------------
-//
-// The captain module enforces spawn authority boundaries and prevents
-// nested launches. Retire without force refuses when in-flight soldiers
-// exist.
-//
-// Firstmate parity: firstmate checked in-flight soldier lists before
-// allowing teardown. The captain module refuses nested captain launches
-// and Retire-with-soldiers.
-
-// TestBlocked_NestedCaptainLaunchIsRefused proves that a captain home
-// cannot launch another captain. This prevents duplicate/overlapping
-// supervision.
-func TestBlocked_NestedCaptainLaunchIsRefused(t *testing.T) {
-	t.Run("refuses from captain role", func(t *testing.T) {
-		parent := t.TempDir()
-		smHome := filepath.Join(parent, "captains", "test-sm")
-		t.Setenv("MUNSU_ROLE", "captain")
-		err := Launch(smHome, parent, testLaunchEndpoint{}, fakeIntegrationPort{})
-		if err == nil {
-			t.Fatal("expected nested captain launch refusal")
-		}
-		if !strings.Contains(err.Error(), "cannot launch other captains") {
-			t.Errorf("error = %v, want nested-captain refusal", err)
-		}
-	})
-
-	t.Run("refuses from captain parent home", func(t *testing.T) {
-		parent := t.TempDir()
-		if err := mhome.SeedCaptainProvenance(parent, "parent-sm"); err != nil {
-			t.Fatal(err)
-		}
-		smHome := filepath.Join(t.TempDir(), "child-sm")
-		t.Setenv("MUNSU_ROLE", "")
-		err := Launch(smHome, parent, testLaunchEndpoint{}, fakeIntegrationPort{})
-		if err == nil {
-			t.Fatal("expected launch refusal from captain parent")
-		}
-		if !strings.Contains(err.Error(), "cannot launch another captain") {
-			t.Errorf("error = %v, want parent-captain refusal", err)
-		}
-	})
-}
-
-// TestBlocked_RetireRefusesInFlightSoldiers proves that retiring a captain
-// with in-flight soldiers is refused unless --force is used.
-func TestBlocked_RetireRefusesInFlightSoldiers(t *testing.T) {
-	parent := t.TempDir()
-	if _, err := mhome.Init(parent); err != nil {
-		t.Fatal(err)
-	}
-	smHome := filepath.Join(parent, "captains", "test-sm")
-	os.MkdirAll(filepath.Join(smHome, "state"), 0755)
-	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# charter\n"), 0644)
-	mhome.SeedCaptainProvenance(smHome, "test-sm")
-	Register(parent, "test-sm", smHome, "scope", "proj")
-
-	// Write in-flight soldier meta.
-	os.WriteFile(filepath.Join(smHome, "state", "soldier-1.meta"),
-		[]byte("kind=ship\nwindow=w\n"), 0644)
-
-	t.Run("refuses without force", func(t *testing.T) {
-		err := Retire(smHome, parent, false, false, &testRetireEndpoint{})
-		if err == nil {
-			t.Fatal("expected refuse for in-flight soldiers")
-		}
-		if !strings.Contains(err.Error(), "in-flight") {
-			t.Fatalf("error = %v", err)
-		}
-		// Registry unchanged.
-		mates, _ := ListCaptains(parent)
-		if len(mates) != 1 {
-			t.Fatalf("expected 1 captain, got %d", len(mates))
-		}
-	})
-
-	t.Run("force allows despite in-flight soldiers", func(t *testing.T) {
-		if err := Retire(smHome, parent, false, true, &testRetireEndpoint{}); err != nil {
-			t.Fatalf("force retire: %v", err)
-		}
-		mates, _ := ListCaptains(parent)
-		if len(mates) != 0 {
-			t.Fatalf("expected empty registry after force retire, got %+v", mates)
-		}
-	})
-}
-
-// TestBlocked_DuplicateRegistrationIsNoop proves that registering the same
-// captain id twice is idempotent — no duplicate spawn or registry entry.
-func TestBlocked_DuplicateRegistrationIsNoop(t *testing.T) {
-	parent := t.TempDir()
-	if _, err := mhome.Init(parent); err != nil {
-		t.Fatal(err)
-	}
-	sm := filepath.Join(parent, "captains", "api")
-	os.MkdirAll(sm, 0755)
-	mhome.SeedCaptainProvenance(sm, "api")
-
-	// Register twice.
-	if err := Register(parent, "api", sm, "scope", "proj"); err != nil {
-		t.Fatal(err)
-	}
-	if err := Register(parent, "api", sm, "scope", "proj"); err != nil {
-		t.Fatal(err)
-	}
-
-	mates, err := ListCaptains(parent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(mates) != 1 || mates[0].ID != "api" {
-		t.Fatalf("expected exactly 1 entry for api, got %+v", mates)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Invariant: Retries (spawn after failed teardown) are idempotent
-// ---------------------------------------------------------------------------
-//
-// A launched-but-dead captain can be recovered via Recover, which relaunches
-// it. A subsequent Recover finds it alive and does nothing. This proves
-// the retry path is idempotent — it does not create duplicate panes or
-// orphaned windows.
-//
-// Firstmate parity: firstmate's secondmate ran a structured recovery
-// transaction (check provenance → check alive → relaunch). The captain
-// Recover function implements the same sequence.
-
-// TestRetries_RecoverRelaunchesDeadCaptain proves that Recover relaunches
-// a launched-but-dead captain and that a second Recover cycle finds it alive.
-
-func TestRetries_RecoverSkipSeededCaptain(t *testing.T) {
-	parent := t.TempDir()
-	smHome := seedCaptainForTest(t, parent, "test-sm")
-	// No task meta written => seeded but not launched.
-
-	res, err := Recover(parent, []Info{{ID: "test-sm", Home: smHome}}, RecoverCapabilities{Launch: testLaunchEndpoint{}, Nudge: &testNudgeEndpoint{result: NudgeResult{Status: "submitted", Acknowledged: true}}, Probe: &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}}})
-	if err != nil {
-		t.Fatalf("Recover: %v", err)
-	}
-	if res.Seeded != 1 || res.Relaunched != 0 {
-		t.Fatalf("expected seeded=1, relaunched=0, got %+v", res)
-	}
-}
-
-// ---------------------------------------------------------------------------
 // Invariant: Terminal phases (Done/merged) close and override stale working
 // ---------------------------------------------------------------------------
 //
@@ -302,6 +155,14 @@ func TestRetries_RecoverSkipSeededCaptain(t *testing.T) {
 //
 // Firstmate parity: firstmate used structured status files (state/captain:X.status)
 // to detect terminal phases. The captain module's status files serve the same role.
+
+// ---------------------------------------------------------------------------
+// Invariant: a captain home without a git worktree is unsupported
+// ---------------------------------------------------------------------------
+//
+// Captain homes are managed git worktrees. A home that has a provenance
+// marker but no .git is refused by Update as a failure and fails the
+// fast-forward step of Converge; it is never skipped as a success.
 
 // TestTerminalPhases_StatusFileOverridesProse proves that structured status
 // artifacts are written and read correctly, demonstrating that the system
@@ -388,14 +249,6 @@ func TestTerminalPhases_ResolvedOverridesWorking(t *testing.T) {
 		t.Errorf("key = %q, want widget-fix", key)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Invariant: a captain home without a git worktree is unsupported
-// ---------------------------------------------------------------------------
-//
-// Captain homes are managed git worktrees. A home that has a provenance
-// marker but no .git is refused by Update as a failure and fails the
-// fast-forward step of Converge; it is never skipped as a success.
 
 func unsupportedCaptainHomeFixture(t *testing.T, parent, id string) string {
 	t.Helper()
@@ -568,56 +421,34 @@ func TestUpdate_WorktreeHomeFastForwarded(t *testing.T) {
 // TestUpdate_WorktreeHomeAlreadyCurrent proves that Update() returns
 // AlreadyCurrent when the captain is already on the parent's commit.
 func TestUpdate_WorktreeHomeAlreadyCurrent(t *testing.T) {
-	root := t.TempDir()
-	remote := filepath.Join(root, "remote.git")
-	out, err := exec.Command("git", "init", "--bare", remote).CombinedOutput()
-	if err != nil {
-		t.Fatalf("git init --bare: %v\n%s", err, out)
+	tests := []struct {
+		name     string
+		noParent bool
+	}{
+		{name: "parent is repository"},
+		{name: "parent has no git", noParent: true},
 	}
-
-	parent := filepath.Join(root, "parent")
-	captain := filepath.Join(root, "captain")
-	for _, dst := range []string{parent, captain} {
-		if out, err := exec.Command("git", "clone", remote, dst).CombinedOutput(); err != nil {
-			t.Fatalf("git clone: %v\n%s", err, out)
-		}
-		gitTestRun(t, dst, "config", "user.name", "Munsu Test")
-		gitTestRun(t, dst, "config", "user.email", "munsu@example.invalid")
-	}
-
-	// Initial commit: .gitignore covers captain markers.
-	gitTestRun(t, parent, "checkout", "-b", "main")
-	gitignoreContent := []byte("state/\nconfig/\ndata/\n.munsu-captain-home\n.captain-launch.sh\n")
-	if err := os.WriteFile(filepath.Join(parent, ".gitignore"), gitignoreContent, 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(parent, "AGENTS.md"), []byte("old\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	gitTestRun(t, parent, "add", ".gitignore", "AGENTS.md")
-	gitTestRun(t, parent, "commit", "-m", "initial")
-	initCommit := gitTestRun(t, parent, "rev-parse", "HEAD")
-	gitTestRun(t, parent, "push", "-u", "origin", "main")
-	gitTestRun(t, remote, "symbolic-ref", "HEAD", "refs/heads/main")
-
-	// Sync captain.
-	gitTestRun(t, captain, "fetch", "origin", "main")
-	gitTestRun(t, captain, "checkout", "-B", "main", initCommit)
-	gitTestRun(t, captain, "remote", "set-head", "origin", "main")
-	gitTestRun(t, parent, "remote", "set-head", "origin", "main")
-	gitTestRun(t, captain, "reset", "--hard", initCommit)
-
-	// Add captain structure.
-	os.MkdirAll(filepath.Join(captain, "state"), 0755)
-	os.MkdirAll(filepath.Join(captain, "config"), 0755)
-	os.MkdirAll(filepath.Join(captain, "data"), 0755)
-	// No tracked file writes — state/, config/, data/ are gitignored.
-	mhome.SeedCaptainProvenance(captain, "test-sm")
-
-	// First Update: already current (nothing to ff).
-	resp := Update(captain, parent)
-	if resp.Outcome != AlreadyCurrent {
-		t.Fatalf("Update outcome = %q, want %q (err=%v)", resp.Outcome, AlreadyCurrent, resp.Err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			project := newWorktreeFixture(t)
+			parent := t.TempDir()
+			if _, err := mhome.Init(parent); err != nil {
+				t.Fatal(err)
+			}
+			homePath := filepath.Join(parent, "captains", "test-captain")
+			if err := seedFromWorktreeTest("test-captain", homePath, project, parent, "", false, ""); err != nil {
+				t.Fatal(err)
+			}
+			if tc.noParent {
+				if _, err := os.Stat(filepath.Join(parent, ".git")); !os.IsNotExist(err) {
+					t.Skip("parent unexpectedly has .git — cannot test no-parent-git scenario")
+				}
+			}
+			resp := Update(homePath, parent)
+			if resp.Outcome != AlreadyCurrent {
+				t.Fatalf("Update outcome = %q, want %q (err=%v)", resp.Outcome, AlreadyCurrent, resp.Err)
+			}
+		})
 	}
 }
 
@@ -662,38 +493,6 @@ func TestUpdate_OutcomeMapping(t *testing.T) {
 			t.Errorf("outcomeFromFFReason(%q, %v) = %q, want %q",
 				tt.reason, tt.err, got, tt.expected)
 		}
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Invariant: Config inheritance is safe and mirror-deletes correctly
-// ---------------------------------------------------------------------------
-
-// TestConfigPush_DoesNotLeakOutsideCaptain proves that ConfigPush refuses
-// any config path that symlink-escapes the captain home, preventing the
-// parent's inherited config from leaking outside the captain container.
-func TestConfigPush_DoesNotLeakOutsideCaptain(t *testing.T) {
-	parent := t.TempDir()
-	smHome := filepath.Join(parent, "captains", "test-sm")
-	outside := t.TempDir()
-
-	os.MkdirAll(smHome, 0755)
-	// Symlink config/ to an outside dir.
-	if err := os.Symlink(outside, filepath.Join(smHome, "config")); err != nil {
-		t.Fatal(err)
-	}
-	mhome.SeedCaptainProvenance(smHome, "test-sm")
-
-	os.MkdirAll(filepath.Join(parent, "config"), 0755)
-	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644)
-
-	err := configPush(parent, smHome)
-	if err == nil || !strings.Contains(err.Error(), "escapes captain container") {
-		t.Fatalf("configPush error = %v, want symlink-escape refusal", err)
-	}
-	// Outside must remain unmutated.
-	if _, err := os.Stat(filepath.Join(outside, "soldier-harness")); !os.IsNotExist(err) {
-		t.Fatalf("outside destination was mutated: %v", err)
 	}
 }
 

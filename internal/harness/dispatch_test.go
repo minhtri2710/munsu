@@ -84,6 +84,11 @@ func TestResolveDispatch(t *testing.T) {
 				Harness: "claude",
 			},
 			{
+				Name:    "data-pipeline",
+				Match:   []string{"data pipeline"},
+				Harness: "codex",
+			},
+			{
 				Name:    "default-catchall",
 				Match:   []string{"*"},
 				Harness: "pi",
@@ -101,6 +106,7 @@ func TestResolveDispatch(t *testing.T) {
 		{"research the topic", "claude"},
 		{"investigate the bug", "claude"},
 		{"search for occurrences", "claude"},
+		{"build data pipeline", "codex"},
 		{"implement the feature", "pi"},
 		{"", "pi"},
 	}
@@ -135,33 +141,6 @@ func TestResolveDispatch_EmptyConfig(t *testing.T) {
 	got := ResolveDispatch(cfg, "anything")
 	if got != "" {
 		t.Errorf("expected empty, got %q", got)
-	}
-}
-
-func TestMatchesProfile(t *testing.T) {
-	tests := []struct {
-		rules []string
-		desc  string
-		want  bool
-	}{
-		{[]string{"*"}, "anything", true},
-		{[]string{"review"}, "review this code", true},
-		{[]string{"review"}, "code review", true},
-		{[]string{"review"}, "deploy the feature", false},
-		{[]string{"audit", "review"}, "security audit", true},
-		{[]string{"audit", "review"}, "deploy", false},
-		{[]string{"data pipeline"}, "build data pipeline", true},
-		{[]string{"data pipeline"}, "deploy", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.desc, func(t *testing.T) {
-			taskLower := tt.desc
-			taskWords := splitWords(taskLower)
-			got := matchesProfile(tt.rules, taskLower, taskWords)
-			if got != tt.want {
-				t.Errorf("matchesProfile(%v, %q) = %v, want %v", tt.rules, tt.desc, got, tt.want)
-			}
-		})
 	}
 }
 
@@ -471,46 +450,6 @@ func selectQuotaBalancedWithFixture(profiles []DispatchProfile, fixtureJSON stri
 	}
 
 	return profiles[best.index].Harness
-}
-
-func splitWords(s string) []string {
-	if s == "" {
-		return nil
-	}
-	w := make([]string, 0)
-	start := 0
-	for i := 0; i <= len(s); i++ {
-		if i == len(s) || s[i] == ' ' {
-			if i > start {
-				w = append(w, s[start:i])
-			}
-			start = i + 1
-		}
-	}
-	return w
-}
-
-func TestSplitWords(t *testing.T) {
-	tests := []struct {
-		input string
-		want  []string
-	}{
-		{"hello", []string{"hello"}},
-		{"hello world", []string{"hello", "world"}},
-		{"  spaced  ", []string{"spaced"}},
-	}
-	for _, tt := range tests {
-		got := splitWords(tt.input)
-		if len(got) != len(tt.want) {
-			t.Errorf("splitWords(%q) length = %d, want %d", tt.input, len(got), len(tt.want))
-			continue
-		}
-		for i := range got {
-			if got[i] != tt.want[i] {
-				t.Errorf("splitWords(%q)[%d] = %q, want %q", tt.input, i, got[i], tt.want[i])
-			}
-		}
-	}
 }
 
 func TestResolveDispatchSelection_ModelEffort(t *testing.T) {

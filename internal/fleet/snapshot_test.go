@@ -228,81 +228,9 @@ func TestCaptainStatus_Seeded(t *testing.T) {
 	}
 }
 
-func TestCaptainStatus_Alive(t *testing.T) {
-	tmp := t.TempDir()
-	parent := filepath.Join(tmp, "parent")
-	smHome := filepath.Join(tmp, "captains", "test-sm")
-	os.MkdirAll(smHome, 0755)
-	os.MkdirAll(filepath.Join(parent, "state"), 0755)
-
-	if err := home.WriteMeta(parent, "captain:test-sm", map[string]string{
-		"kind":    "captain",
-		"sm_id":   "test-sm",
-		"home":    smHome,
-		"window":  "@cap",
-		"backend": "tmux",
-	}); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
-	}
-
-	// Stale/missing lock must not matter when pane is alive.
-	status := CaptainStatus(parent, "test-sm", smHome, snapshotProbe{status: endpointStatusFromState(EndpointAlive)})
-	if status != "alive" {
-		t.Errorf("CaptainStatus = %q, want %q", status, "alive")
-	}
-}
-
-func TestCaptainStatus_Dead(t *testing.T) {
-	tmp := t.TempDir()
-	parent := filepath.Join(tmp, "parent")
-	smHome := filepath.Join(tmp, "captains", "test-sm")
-	os.MkdirAll(smHome, 0755)
-	os.MkdirAll(filepath.Join(parent, "state"), 0755)
-	os.MkdirAll(filepath.Join(smHome, "state"), 0755)
-	os.WriteFile(filepath.Join(smHome, "state", ".lock"), []byte("999999\n"), 0644)
-
-	if err := home.WriteMeta(parent, "captain:test-sm", map[string]string{
-		"kind":    "captain",
-		"sm_id":   "test-sm",
-		"home":    smHome,
-		"window":  "@cap",
-		"backend": "tmux",
-	}); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
-	}
-
-	// Live lock must not override a non-alive pane: the diagnostic probe
-	// reports unknown, never a lifecycle decision.
-	status := CaptainStatus(parent, "test-sm", smHome, snapshotProbe{status: endpointStatusFromState(EndpointUnknown)})
-	if status != "unknown" {
-		t.Errorf("CaptainStatus = %q, want %q", status, "unknown")
-	}
-}
-
 func TestCaptainStatus_Unknown(t *testing.T) {
 	// Non-existent home should return unknown
 	status := CaptainStatus("/nonexistent/parent", "sm", "/nonexistent/sm", nil)
-	if status != "unknown" {
-		t.Errorf("CaptainStatus = %q, want %q", status, "unknown")
-	}
-}
-
-func TestCaptainStatus_BackendErrorIsUnknown(t *testing.T) {
-	tmp := t.TempDir()
-	parent := filepath.Join(tmp, "parent")
-	smHome := filepath.Join(tmp, "captains", "test-sm")
-	os.MkdirAll(smHome, 0755)
-	os.MkdirAll(filepath.Join(parent, "state"), 0755)
-
-	if err := home.WriteMeta(parent, "captain:test-sm", map[string]string{
-		"kind":   "captain",
-		"sm_id":  "test-sm",
-		"window": "@cap",
-	}); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
-	}
-
-	status := CaptainStatus(parent, "test-sm", smHome, snapshotProbe{err: fmt.Errorf("backend unavailable")})
 	if status != "unknown" {
 		t.Errorf("CaptainStatus = %q, want %q", status, "unknown")
 	}
@@ -317,19 +245,22 @@ func (p snapshotProbe) ProbeEndpoint(EndpointRef) (EndpointStatus, error) { retu
 
 func TestCaptainStatusTypedObservations(t *testing.T) {
 	tests := []struct {
+		name  string
 		state EndpointObservationState
+		err   error
 		want  string
 	}{
-		{EndpointAlive, "alive"},
-		{EndpointStarting, "starting"},
-		{EndpointDead, "dead"},
-		{EndpointUnresponsive, "unresponsive"},
-		{EndpointUnresolved, "unresolved"},
-		{EndpointStaleIdentity, "stale-identity"},
-		{EndpointUnknown, "unknown"},
+		{name: "alive", state: EndpointAlive, want: "alive"},
+		{name: "starting", state: EndpointStarting, want: "starting"},
+		{name: "dead", state: EndpointDead, want: "dead"},
+		{name: "unresponsive", state: EndpointUnresponsive, want: "unresponsive"},
+		{name: "unresolved", state: EndpointUnresolved, want: "unresolved"},
+		{name: "stale identity", state: EndpointStaleIdentity, want: "stale-identity"},
+		{name: "unknown", state: EndpointUnknown, want: "unknown"},
+		{name: "backend error remains unknown", err: fmt.Errorf("backend unavailable"), want: "unknown"},
 	}
 	for _, tt := range tests {
-		t.Run(tt.want, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			tmp := t.TempDir()
 			parent := filepath.Join(tmp, "parent")
 			smHome := filepath.Join(tmp, "captains", "test-sm")
@@ -338,7 +269,11 @@ func TestCaptainStatusTypedObservations(t *testing.T) {
 			if err := home.WriteMeta(parent, "captain:test-sm", map[string]string{"kind": "captain", "sm_id": "test-sm", "home": smHome, "window": "@cap", "backend": "tmux"}); err != nil {
 				t.Fatal(err)
 			}
-			if got := CaptainStatus(parent, "test-sm", smHome, snapshotProbe{status: endpointStatusFromState(tt.state)}); got != tt.want {
+			probe := snapshotProbe{err: tt.err}
+			if tt.err == nil {
+				probe.status = endpointStatusFromState(tt.state)
+			}
+			if got := CaptainStatus(parent, "test-sm", smHome, probe); got != tt.want {
 				t.Fatalf("CaptainStatus=%q want %q", got, tt.want)
 			}
 		})
@@ -416,30 +351,52 @@ func TestSnapshot_MetaOnlyCaptainMetadataAllowed(t *testing.T) {
 // TestSnapshot_CanonicalPhaseWinsOverStaleStatus proves the canonical current
 // state (working phase) is reported even when a stale .status tail disagrees.
 func TestSnapshot_CanonicalPhaseWinsOverStaleStatus(t *testing.T) {
-	tmp := t.TempDir()
-	if _, err := home.Init(tmp); err != nil {
-		t.Fatal(err)
+	cases := []struct {
+		name        string
+		phase       string
+		kind        string
+		project     string
+		staleStatus string
+	}{
+		{name: "working beats stale done", phase: "working", kind: "ship", project: "munsu", staleStatus: "done: stale build complete"},
+		{name: "done beats stale working and tampered metadata", phase: "done", kind: "scout", project: "hacked", staleStatus: "working: still working"},
 	}
-	auth := mustCreateFleetTask(t, tmp, "t1", "ship")
-	startFleetTask(t, auth, "t1")
-	// Stale status tail must never override the canonical working phase.
-	if err := home.AppendStatus(tmp, "t1", "done: stale build complete"); err != nil {
-		t.Fatal(err)
-	}
-
-	snap, err := Snapshot(tmp, testSnapshotDeps(t))
-	if err != nil {
-		t.Fatalf("Snapshot: %v", err)
-	}
-	if len(snap.Tasks) != 1 {
-		t.Fatalf("expected 1 task, got %d", len(snap.Tasks))
-	}
-	ts := snap.Tasks[0]
-	if ts.CurrentState != string(taskauthority.PhaseWorking) {
-		t.Errorf("CurrentState = %q, want %q (canonical working beats stale done status)", ts.CurrentState, taskauthority.PhaseWorking)
-	}
-	if !ts.StatusLogSuperseded {
-		t.Errorf("StatusLogSuperseded = false, want true (canonical supersedes status log)")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			if tc.phase == "working" {
+				if _, err := home.Init(tmp); err != nil {
+					t.Fatal(err)
+				}
+				auth := mustCreateFleetTask(t, tmp, "t1", "ship")
+				startFleetTask(t, auth, "t1")
+			} else {
+				seedCanonicalShipTask(t, tmp, "t1", "done")
+			}
+			if err := home.WriteMeta(tmp, "t1", map[string]string{"window": "@win", "worktree": "/tmp/wt", "kind": tc.kind, "project": tc.project}); err != nil {
+				t.Fatal(err)
+			}
+			if err := home.AppendStatus(tmp, "t1", tc.staleStatus); err != nil {
+				t.Fatal(err)
+			}
+			snap, err := Snapshot(tmp, testSnapshotDeps(t))
+			if err != nil {
+				t.Fatalf("Snapshot: %v", err)
+			}
+			if len(snap.Tasks) != 1 {
+				t.Fatalf("expected 1 task, got %d", len(snap.Tasks))
+			}
+			ts := snap.Tasks[0]
+			if ts.CurrentState != tc.phase {
+				t.Errorf("CurrentState = %q, want canonical %q", ts.CurrentState, tc.phase)
+			}
+			if !ts.StatusLogSuperseded {
+				t.Errorf("StatusLogSuperseded = false, want true")
+			}
+			if tc.phase == "done" && (ts.Kind != "ship" || ts.Project != "proj-x") {
+				t.Errorf("kind=%q project=%q, want canonical ship/proj-x", ts.Kind, ts.Project)
+			}
+		})
 	}
 }
 

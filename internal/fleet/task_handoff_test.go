@@ -499,7 +499,7 @@ func TestHandoffCrashRecoveryConvergesEveryStage(t *testing.T) {
 			// The terminal journal record is retained (truth, never deleted) and
 			// is never resumed again.
 			if completedJournalCount(t, parent) != 1 {
-				t.Fatalf("boundary %s: terminal journal record not retained after recovery", boundary)
+				t.Fatalf("boundary %s: terminal journal record count = %d, want 1", boundary, completedJournalCount(t, parent))
 			}
 		})
 	}

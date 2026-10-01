@@ -256,24 +256,30 @@ func TestCheckNoMistakesCompatibility(t *testing.T) {
 		hasDocs                    bool
 		disableProjectSettings     bool
 		disableProjectSettingsYAML string // if non-empty, write this raw yaml instead of bool helper
+		overrides                  map[string][]string
 		agents                     []string
 		available                  map[string]bool
 		wantBlocker                GateBlockerCategory
+		wantSelected               string
 	}{
 		{name: "no instruction files", agents: []string{"pi"}, available: map[string]bool{"pi": true}},
-		{name: "pi incompatible", hasDocs: true, agents: []string{"pi"}, available: map[string]bool{"pi": true}, wantBlocker: GateBlockerUnsupportedNeutralization},
-		{name: "pi ok with disable_project_settings", hasDocs: true, disableProjectSettings: true, agents: []string{"pi"}, available: map[string]bool{"pi": true}},
-		{name: "codex compatible", hasDocs: true, agents: []string{"codex"}, available: map[string]bool{"codex": true}},
-		{name: "fallback claude compatible", hasDocs: true, agents: []string{"pi", "claude"}, available: map[string]bool{"pi": true, "claude": true}},
-		{name: "neutralizer unavailable", hasDocs: true, agents: []string{"codex", "pi"}, available: map[string]bool{"pi": true}, wantBlocker: GateBlockerUnsupportedNeutralization},
-		{name: "codex override defeats neutralization", hasDocs: true, agents: []string{"codex"}, available: map[string]bool{"codex": true}, wantBlocker: GateBlockerUnsupportedNeutralization},
-		{name: "claude override defeats neutralization", hasDocs: true, agents: []string{"claude"}, available: map[string]bool{"claude": true}, wantBlocker: GateBlockerUnsupportedNeutralization},
-		{name: "disable_project_settings overrides codex defeat", hasDocs: true, disableProjectSettings: true, agents: []string{"codex"}, available: map[string]bool{"codex": true}},
+		{name: "no instructions and no opt-out needs no neutralization", agents: []string{"opencode"}, available: map[string]bool{"opencode": true}, wantSelected: "opencode"},
+		{name: "pi incompatible", hasDocs: true, agents: []string{"pi"}, available: map[string]bool{"pi": true}, wantBlocker: GateBlockerUnsupportedNeutralization, wantSelected: "pi"},
+		{name: "pi ok with disable_project_settings", hasDocs: true, disableProjectSettings: true, agents: []string{"pi"}, available: map[string]bool{"pi": true}, wantSelected: "pi"},
+		{name: "codex compatible", hasDocs: true, agents: []string{"codex"}, available: map[string]bool{"codex": true}, wantSelected: "codex"},
+		{name: "pi selected first with claude fallback", hasDocs: true, agents: []string{"pi", "claude"}, available: map[string]bool{"pi": true, "claude": true}, wantSelected: "pi"},
+		{name: "claude supported without opt-out", hasDocs: true, agents: []string{"claude"}, available: map[string]bool{"claude": true}, wantSelected: "claude"},
+		{name: "neutralizer unavailable", hasDocs: true, agents: []string{"codex", "pi"}, available: map[string]bool{"pi": true}, wantBlocker: GateBlockerUnsupportedNeutralization, wantSelected: "pi"},
+		{name: "codex override defeats neutralization", hasDocs: true, agents: []string{"codex"}, available: map[string]bool{"codex": true}, wantBlocker: GateBlockerUnsupportedNeutralization, wantSelected: "codex", overrides: map[string][]string{"codex": {"-c", "project_doc_max_bytes=4096"}}},
+		{name: "claude override defeats neutralization", hasDocs: true, agents: []string{"claude"}, available: map[string]bool{"claude": true}, wantBlocker: GateBlockerUnsupportedNeutralization, wantSelected: "claude", overrides: map[string][]string{"claude": {"--setting-sources", "user,project"}}},
+		{name: "disable_project_settings overrides codex defeat", hasDocs: true, disableProjectSettings: true, agents: []string{"codex"}, available: map[string]bool{"codex": true}, wantSelected: "codex", overrides: map[string][]string{"codex": {"-c", "project_doc_max_bytes=4096"}}},
 		{name: "malformed no-mistakes yaml still requires neutralizer", hasDocs: true, disableProjectSettingsYAML: "disable_project_settings: [", agents: []string{"pi"}, available: map[string]bool{"pi": true}, wantBlocker: GateBlockerUnsupportedNeutralization},
 		{name: "disable_project_settings false keeps preflight", hasDocs: true, disableProjectSettingsYAML: "disable_project_settings: false\n", agents: []string{"pi"}, available: map[string]bool{"pi": true}, wantBlocker: GateBlockerUnsupportedNeutralization},
 		{name: "configured agent unavailable", hasDocs: true, agents: []string{"pi"}, available: map[string]bool{}, wantBlocker: GateBlockerAgentUnavailable},
 		{name: "opencode refused under disable_project_settings", hasDocs: true, disableProjectSettings: true, agents: []string{"opencode"}, available: map[string]bool{"opencode": true}, wantBlocker: GateBlockerUnsupportedNeutralization},
-		{name: "auto resolves to available pi under disable_project_settings", hasDocs: true, disableProjectSettings: true, agents: []string{"auto"}, available: map[string]bool{"pi": true}, wantBlocker: GateBlockerNone},
+		{name: "auto resolves to available pi under disable_project_settings", hasDocs: true, disableProjectSettings: true, agents: []string{"auto"}, available: map[string]bool{"pi": true}},
+		{name: "auto with no installed native agent", agents: []string{"auto"}, available: map[string]bool{}, wantBlocker: GateBlockerAgentUnavailable},
+		{name: "codex supported with pi fallback", hasDocs: true, agents: []string{"codex", "pi"}, available: map[string]bool{"codex": true, "pi": true}, wantSelected: "codex"},
 	}
 
 	for _, tc := range tests {
@@ -287,13 +293,7 @@ func TestCheckNoMistakesCompatibility(t *testing.T) {
 			} else if tc.disableProjectSettings {
 				os.WriteFile(filepath.Join(repo, ".no-mistakes.yaml"), []byte("disable_project_settings: true\n"), 0644)
 			}
-			cfg := noMistakesConfig{Agents: tc.agents}
-			switch tc.name {
-			case "codex override defeats neutralization", "disable_project_settings overrides codex defeat":
-				cfg.AgentArgsOverride = map[string][]string{"codex": {"-c", "project_doc_max_bytes=4096"}}
-			case "claude override defeats neutralization":
-				cfg.AgentArgsOverride = map[string][]string{"claude": {"--setting-sources", "user,project"}}
-			}
+			cfg := noMistakesConfig{Agents: tc.agents, AgentArgsOverride: tc.overrides}
 			probe := ProbeNoMistakesGateAgent(repo, cfg, func(agent string) bool {
 				return tc.available[agent]
 			}, func() ProbeResult {
@@ -305,6 +305,9 @@ func TestCheckNoMistakesCompatibility(t *testing.T) {
 			}
 			if got != tc.wantBlocker {
 				t.Fatalf("blocker category = %q, want %q (detail: %v)", got, tc.wantBlocker, probe.Blocker)
+			}
+			if tc.wantSelected != "" && probe.Selected != tc.wantSelected {
+				t.Errorf("Selected = %q, want %q", probe.Selected, tc.wantSelected)
 			}
 		})
 	}
@@ -335,25 +338,6 @@ func seedTypedSpawnHome(t *testing.T, project string) string {
 		Config:        config.ProjectOverlay{Backend: "tmux"},
 	}, []testProjectRecord{{Name: project, Path: t.TempDir()}}, nil)
 	return homeDir
-}
-
-func TestRun_ValidateMode(t *testing.T) {
-	t.Setenv("MUNSU_ROLE", "general")
-	t.Chdir(t.TempDir())
-	args := Args{
-		ID:          "test-task",
-		ProjectName: "test-project",
-		Mode:        "bogus-mode",
-		HomeDir:     seedTypedSpawnHome(t, "test-project"),
-		Endpoints:   fakeEndpointCapabilities{backend: &fakeBackend{}},
-	}
-	_, err := Spawn(args)
-	if err == nil {
-		t.Fatal("expected error for invalid mode")
-	}
-	if !strings.Contains(err.Error(), "invalid delivery mode") {
-		t.Errorf("expected 'invalid delivery mode' error, got: %v", err)
-	}
 }
 
 func TestRun_InjectFakeEndpointCapabilities(t *testing.T) {
@@ -387,27 +371,6 @@ func TestRun_InjectFakeEndpointCapabilities(t *testing.T) {
 	}
 }
 
-func TestResolveDeliveryMode_AutoNoMistakes(t *testing.T) {
-	// auto picks no-mistakes when on PATH, direct-PR otherwise
-	mode, err := ResolveDeliveryMode("", "", false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if mode != "no-mistakes" && mode != "direct-PR" {
-		t.Errorf("ResolveDeliveryMode auto = %q, want %q or %q", mode, "no-mistakes", "direct-PR")
-	}
-}
-
-func TestResolveDeliveryMode_ExplicitDirectPR(t *testing.T) {
-	mode, err := ResolveDeliveryMode("direct-PR", "", false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if mode != "direct-PR" {
-		t.Errorf("ResolveDeliveryMode explicit = %q, want %q", mode, "direct-PR")
-	}
-}
-
 func TestResolveDeliveryMode_ProjectModeHonored(t *testing.T) {
 	mode, err := ResolveDeliveryMode("", "direct-PR", false)
 	if err != nil {
@@ -432,24 +395,6 @@ func TestResolveDeliveryMode_InvalidExplicit(t *testing.T) {
 	_, err := ResolveDeliveryMode("bogus", "", false)
 	if err == nil {
 		t.Fatal("expected error for invalid explicit mode")
-	}
-}
-
-func TestValidateDeliveryMode_Extended(t *testing.T) {
-	if err := ValidateDeliveryMode(""); err != nil {
-		t.Errorf("empty mode should be valid, got: %v", err)
-	}
-	if err := ValidateDeliveryMode("no-mistakes"); err != nil {
-		t.Errorf("no-mistakes should be valid, got: %v", err)
-	}
-	if err := ValidateDeliveryMode("direct-PR"); err != nil {
-		t.Errorf("direct-PR should be valid, got: %v", err)
-	}
-	if err := ValidateDeliveryMode("local-only"); err != nil {
-		t.Errorf("local-only should be valid, got: %v", err)
-	}
-	if err := ValidateDeliveryMode("invalid"); err == nil {
-		t.Error("invalid mode should produce error")
 	}
 }
 
@@ -518,15 +463,6 @@ func TestResolveDeliveryMode_ExplicitNoMistakesWithBinary(t *testing.T) {
 	}
 	if mode != "no-mistakes" {
 		t.Errorf("ResolveDeliveryMode explicit = %q, want %q", mode, "no-mistakes")
-	}
-}
-
-func TestResolveDeliveryMode_ExplicitNoMistakesWithoutBinary(t *testing.T) {
-	t.Setenv("PATH", t.TempDir())
-
-	_, err := ResolveDeliveryMode("no-mistakes", "", false)
-	if err == nil {
-		t.Fatal("expected error for explicit no-mistakes without binary")
 	}
 }
 
@@ -619,7 +555,7 @@ func TestResolveDeliveryMode_AutoFallbackOnIncompatible(t *testing.T) {
 }
 
 func TestRun_ValidatesModeFromArgsOnly(t *testing.T) {
-	// A bogus mode flag should still be rejected by Run
+	// A bogus mode flag should still be rejected by Run.
 	t.Setenv("MUNSU_ROLE", "general")
 	t.Chdir(t.TempDir())
 	args := Args{

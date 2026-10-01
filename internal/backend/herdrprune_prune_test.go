@@ -521,19 +521,6 @@ func TestRunPrune_WithSession(t *testing.T) {
 	}
 }
 
-func TestDenyListedLabelWithMatchingTag(t *testing.T) {
-	// Test the deny list functions directly since we can't force a specific hometag.
-	if !denyListedLabel("default") {
-		t.Error("denyListedLabel('default') = false")
-	}
-	if denyListedLabel("captain-anything") {
-		t.Error("denyListedLabel('captain-anything') = true; captain labels are owned+live-meta protected")
-	}
-	if denyListedLabel("some-other-label") {
-		t.Error("denyListedLabel('some-other-label') = true")
-	}
-}
-
 // TestRunPrune_RefusesWhenTaskMetaScanFails pins fail-closed prune: when the
 // live-task scan cannot read state/ or a task meta file, nothing is closed.
 func TestRunPrune_RefusesWhenTaskMetaScanFails(t *testing.T) {

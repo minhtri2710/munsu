@@ -94,7 +94,7 @@ func (c *Canonical) Retire(op domain.Operation, req CanonicalRetireRequest) (Out
 		// (BEO-16/P1a): the generation is pinned against Reopen/BindEndpoint/
 		// acquisition from the instant the retire commits, so no window exists
 		// between the retirement transition and the fleet cleanup claim. The
-		// claim is reconciled by CompleteCleanup/AbortCleanup.
+		// claim is reconciled by ReconcileRetirementCleanup.
 		next.CleanupClaim = &CleanupClaim{
 			OperationID: op.ID.Value(),
 			Generation:  cur.Generation,

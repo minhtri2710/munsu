@@ -573,48 +573,13 @@ func TestGuardRetireRefusesAnAlreadyRetiredGeneration(t *testing.T) {
 	// while it is active, so it is reconciled first: without this the second
 	// Retire below would be refused by the claim fence and never reach the
 	// already-retired guard.
-	complete := CanonicalCompleteCleanupRequest{
-		HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"),
-		Precondition: preconditionOf(1, 2), ClaimOperationID: "op-retire-1",
-		ClaimGeneration: Generation(1), Reason: "cleanup done",
-	}
-	if _, err := c.CompleteCleanup(mustOperation(t, "op-cleanup-complete", complete), complete); err != nil {
-		t.Fatalf("CompleteCleanup: %v", err)
+	if err := c.ReconcileRetirementCleanup(mustTaskID(t, "t1"), 1, CleanupCompleted, func() error { return nil }); err != nil {
+		t.Fatalf("ReconcileRetirementCleanup: %v", err)
 	}
 
 	req := retireRequest(t, c, "t1", preconditionOf(1, 3))
 	_, err := c.Retire(mustOperation(t, "op-retire-2", req), req)
 	wantErrSubstring(t, err, "is already retired", "Retire of a retired generation")
-}
-
-// --- canonical_cleanup.go ------------------------------------------------
-
-// The cleanup claim is what a fleet teardown reconciles. Aborting a claim that
-// was never asserted would report a reconciliation that never happened.
-func TestGuardAbortCleanupRequiresAClaim(t *testing.T) {
-	c, _, _ := newTestCanonical(t)
-	mustCreate(t, c, "t1")
-
-	req := CanonicalAbortCleanupRequest{
-		HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"),
-		Precondition: preconditionOf(1, 1), ClaimOperationID: "op-retire-1",
-		ClaimGeneration: Generation(1), Reason: "operator abort",
-	}
-	_, err := c.AbortCleanup(mustOperation(t, "op-abort-no-claim", req), req)
-	wantErrSubstring(t, err, "has no cleanup claim to abort", "AbortCleanup without a claim")
-
-	// Control: the same call against a task whose retirement DID assert a claim
-	// is accepted, so the refusal above is the absent claim and not the request.
-	mustCreate(t, c, "t2")
-	retireWithClaim(t, c, "t2", preconditionOf(1, 1), "op-retire-t2")
-	ok := CanonicalAbortCleanupRequest{
-		HomeID: c.HomeID(), TaskID: mustTaskID(t, "t2"),
-		Precondition: preconditionOf(1, 2), ClaimOperationID: "op-retire-t2",
-		ClaimGeneration: Generation(1), Reason: "operator abort",
-	}
-	if _, err := c.AbortCleanup(mustOperation(t, "op-abort-t2", ok), ok); err != nil {
-		t.Fatalf("AbortCleanup of an active claim: %v", err)
-	}
 }
 
 // --- canonical_transfer.go -----------------------------------------------

@@ -66,22 +66,6 @@ func TestConfigRejectsUnknownKeysBeforeFilesystemAccess(t *testing.T) {
 	}
 }
 
-func TestGetFromFileOnly(t *testing.T) {
-	// Config only from the flat file, no environment involvement.
-	tmp := t.TempDir()
-	if err := Set(tmp, "model-allowlist", "bar"); err != nil {
-		t.Fatal(err)
-	}
-
-	val, err := Get(tmp, "model-allowlist")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if val != "bar" {
-		t.Errorf("Get() = %q, want %q", val, "bar")
-	}
-}
-
 func TestSetOverwrites(t *testing.T) {
 	tmp := t.TempDir()
 

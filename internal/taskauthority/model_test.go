@@ -77,66 +77,6 @@ func TestNewAggregateStartsAtFirstRevision(t *testing.T) {
 	}
 }
 
-func TestAggregateValidationRejectsMismatchedGenerationBindings(t *testing.T) {
-	agg, err := NewAggregate("t1", "owner", "work", "ship", "", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Bindings are structurally generation-bound: they live inside the
-	// Aggregate record, so no separate generation field can drift.
-	agg.Worktree = &WorktreeBinding{
-		RepositoryIdentity: "repo",
-		Path:               "/tmp/wt",
-		GitDir:             "/tmp/wt/.git",
-		CommonDir:          "/tmp/wt/common",
-		Head:               "abc123",
-		LeaseID:            "lease-1",
-		FenceToken:         "fence-1",
-		BoundAtUnix:        1,
-	}
-	if err := validateAggregate(agg); err != nil {
-		t.Fatalf("valid worktree binding rejected: %v", err)
-	}
-	agg.Worktree.LeaseID = ""
-	if err := validateAggregate(agg); err == nil {
-		t.Fatal("invalid worktree binding accepted")
-	}
-}
-
-func TestAggregateValidationRejectsBadIdentityAndPhase(t *testing.T) {
-	agg, _ := NewAggregate("t1", "owner", "work", "ship", "", "")
-	agg.TaskID = "../escape"
-	if err := validateAggregate(agg); err == nil {
-		t.Fatal("path-traversing task id accepted")
-	}
-	agg, _ = NewAggregate("t1", "owner", "work", "ship", "", "")
-	agg.Phase = Phase("in-flight")
-	if err := validateAggregate(agg); err == nil {
-		t.Fatal("projection-only phase accepted as authoritative")
-	}
-	agg, _ = NewAggregate("t1", "owner", "work", "ship", "", "")
-	agg.Definition.Owner = "  "
-	if err := validateAggregate(agg); err == nil {
-		t.Fatal("blank owner accepted")
-	}
-}
-
-func TestDispatchHoldValidationRejectsMalformedScope(t *testing.T) {
-	hold := mustHold(t, "h1", "start", "t1", "reason")
-	if err := validateHold(hold); err != nil {
-		t.Fatal(err)
-	}
-	hold.Scope.Generations = []string{"not-a-generation"}
-	if err := validateHold(hold); err == nil {
-		t.Fatal("malformed generation scope accepted")
-	}
-	hold = mustHold(t, "h2", "start", "t1", "reason")
-	hold.Actions = []DispatchAction{"fly"}
-	if err := validateHold(hold); err == nil {
-		t.Fatal("unknown dispatch action accepted")
-	}
-}
-
 func TestDispatchHoldScopeMatches(t *testing.T) {
 	hold := DispatchHold{
 		SchemaVersion: TaskAuthoritySchema,

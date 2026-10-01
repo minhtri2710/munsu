@@ -41,8 +41,9 @@ func TestFetchProviderSnapshotForProviderRefusesUnknownProvider(t *testing.T) {
 }
 
 func TestPRMergeStatus_JSONUnmarshal(t *testing.T) {
-	// Test the domain.PRMergeStatus can be unmarshaled from gh CLI output
-	input := `{"state":"MERGED","merged":true,"headRefOid":"abc123def456","mergedSha":"abc123def456"}`
+	// Test the domain.PRMergeStatus can be unmarshaled from gh CLI output,
+	// including the headRefOid and mergedSha field tags.
+	input := `{"state":"MERGED","merged":true,"headRefOid":"abc123def456","mergedSha":"fedcba654321"}`
 	var status domain.PRMergeStatus
 	if err := json.Unmarshal([]byte(input), &status); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -56,8 +57,8 @@ func TestPRMergeStatus_JSONUnmarshal(t *testing.T) {
 	if status.HeadSHA != "abc123def456" {
 		t.Errorf("expected abc123def456, got %s", status.HeadSHA)
 	}
-	if status.MergedSHA != "abc123def456" {
-		t.Errorf("expected mergedSha abc123def456, got %s", status.MergedSHA)
+	if status.MergedSHA != "fedcba654321" {
+		t.Errorf("expected mergedSha fedcba654321, got %s", status.MergedSHA)
 	}
 }
 
@@ -110,7 +111,7 @@ func TestPRMergeStatus_Open(t *testing.T) {
 	}
 }
 
-func TestProviderSnapshotMergeableRequiresCompleteApprovalEvidence(t *testing.T) {
+func TestProviderSnapshotMergeableDelegatesToDomain(t *testing.T) {
 	base := ProviderSnapshot{
 		State:   "OPEN",
 		Checks:  []domain.CheckRun{{Status: domain.CheckPassed}},
@@ -403,19 +404,4 @@ func mergeabilityRunner(json, reviewers string) *fakeGlabRunner {
 		}
 		return []byte(json), nil
 	}}
-}
-
-func TestPRMergeStatus_FieldTags(t *testing.T) {
-	// Verify the JSON field tags match gh CLI output format
-	var status domain.PRMergeStatus
-	input := `{"state":"MERGED","merged":true,"headRefOid":"abc","mergedSha":"def"}`
-	if err := json.Unmarshal([]byte(input), &status); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if status.HeadSHA != "abc" {
-		t.Errorf("expected headRefOid to map to HeadSHA, got %s", status.HeadSHA)
-	}
-	if status.MergedSHA != "def" {
-		t.Errorf("expected mergedSha to map to MergedSHA, got %s", status.MergedSHA)
-	}
 }

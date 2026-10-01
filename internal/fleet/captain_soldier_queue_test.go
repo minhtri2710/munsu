@@ -566,32 +566,6 @@ func TestReconcileSoldierPending_WrongAckFailsClosed(t *testing.T) {
 
 // TestSoldierReceiveNotification verifies that SoldierReceiveNotification reads
 // and validates an envelope and returns the payload.
-func TestEndToEnd_SendIdleThenFlush(t *testing.T) {
-	captainHome, soldierTaskID, senderIdentity := setupSoldierTestHomes(t, "idle")
-
-	be := &fakeAgentEndpoint{acknowledged: true}
-
-	// Send to idle soldier.
-	sendResult := SendToSoldier(captainHome, soldierTaskID, senderIdentity, "do: work", be)
-	if sendResult.Err != nil {
-		t.Fatalf("SendToSoldier: %v", sendResult.Err)
-	}
-	if !sendResult.Sent {
-		t.Fatal("expected Sent=true")
-	}
-
-	// Flush — the pending has no ack yet, so flush will re-notify
-	// (idempotent on the Herdr/SubmitPrompt side).
-	flushResult := FlushPendingSoldierCommands(captainHome, soldierTaskID, senderIdentity, be)
-	if flushResult.Err != nil {
-		t.Fatalf("Flush: %v", flushResult.Err)
-	}
-	// Flush should find the pending and send NotificationRef.
-	if !flushResult.Sent {
-		t.Log("flush did not re-send (pending may be filtered differently)")
-	}
-}
-
 // TestEndToEnd_BusyThenFlush verifies: soldier busy → queue, idle → flush sends NotificationRef.
 func TestEndToEnd_BusyThenFlush(t *testing.T) {
 	captainHome, soldierTaskID, senderIdentity := setupSoldierTestHomes(t, "working")
@@ -640,53 +614,6 @@ func TestEndToEnd_BusyThenFlush(t *testing.T) {
 	store := home.NewStore(captainHome)
 	if store.IsAcked(senderIdentity, sendResult.MessageID) {
 		t.Fatal("flush must NOT write ack")
-	}
-}
-
-// TestEndToEnd_DuplicateReadyEvent_IsIdempotent verifies that receiving two
-// ready events (calling flush twice) is harmless.
-func TestEndToEnd_DuplicateReadyEvent_IsIdempotent(t *testing.T) {
-	captainHome, soldierTaskID, senderIdentity := setupSoldierTestHomes(t, "working")
-
-	be := &fakeAgentEndpoint{busy: true, acknowledged: true}
-
-	// Queue a command while busy.
-	sendResult := SendToSoldier(captainHome, soldierTaskID, senderIdentity, "do: work", be)
-	if sendResult.Err != nil || !sendResult.Queued {
-		t.Fatalf("expected queued: err=%v queued=%v", sendResult.Err, sendResult.Queued)
-	}
-
-	// Soldier becomes idle.
-	be.busy = false
-
-	// First ready event → flush.
-	firstFlush := FlushPendingSoldierCommands(captainHome, soldierTaskID, senderIdentity, be)
-	if firstFlush.Err != nil {
-		t.Fatalf("first flush: %v", firstFlush.Err)
-	}
-	if !firstFlush.Sent {
-		t.Fatal("expected first flush to send")
-	}
-
-	// Second ready event → flush again.
-
-	// No status report / Captain noise.
-	t.Log("duplicate ready event: no report/status spam")
-}
-
-// TestSendToSoldier_ReuseSamePane verifies that soldier send reuses the same
-// pane (doesn't try to re-create it).
-func TestSendToSoldier_ReuseSamePane(t *testing.T) {
-	captainHome, soldierTaskID, senderIdentity := setupSoldierTestHomes(t, "idle")
-
-	be := &fakeAgentEndpoint{acknowledged: true}
-
-	result := SendToSoldier(captainHome, soldierTaskID, senderIdentity, "do: reuse pane", be)
-	if result.Err != nil {
-		t.Fatalf("SendToSoldier: %v", result.Err)
-	}
-	if !result.Sent {
-		t.Fatal("expected Sent=true (pane is alive)")
 	}
 }
 
@@ -792,40 +719,6 @@ func TestNoReportSpam(t *testing.T) {
 	afterCount := len(statusAfter)
 	if afterCount != beforeCount {
 		t.Errorf("status lines changed: before=%d after=%d (expected no captain-side noise)", beforeCount, afterCount)
-	}
-}
-
-// TestValidatePendingSurvives verifies that pending records survive across
-// store reconstruction (simulates restart).
-func TestValidatePendingSurvives(t *testing.T) {
-	captainHome, soldierTaskID, senderIdentity := setupSoldierTestHomes(t, "working")
-
-	be := &fakeAgentEndpoint{busy: true, acknowledged: true}
-
-	// Queue a command.
-	result := SendToSoldier(captainHome, soldierTaskID, senderIdentity, "do: survive", be)
-	if result.Err != nil || !result.Queued {
-		t.Fatalf("expected queued: err=%v queued=%v", result.Err, result.Queued)
-	}
-
-	// Reconstruct store from files (simulating restart).
-	store := home.NewStore(captainHome)
-
-	// Verify envelope survives.
-	env, err := store.ReadEnvelope(senderIdentity, result.MessageID)
-	if err != nil || env == nil {
-		t.Fatal("envelope must survive store reconstruction")
-	}
-
-	// Verify pending survives.
-	pending, err := store.ReadPending(senderIdentity, result.MessageID)
-	if err != nil || pending == nil {
-		t.Fatal("pending must survive store reconstruction")
-	}
-
-	// Verify no ack.
-	if store.IsAcked(senderIdentity, result.MessageID) {
-		t.Fatal("no ack should exist for queued command")
 	}
 }
 

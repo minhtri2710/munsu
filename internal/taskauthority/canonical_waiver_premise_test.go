@@ -155,89 +155,39 @@ func TestPremiseBindEndpointRefusesOnPhaseBeforeItCanSeeABoundEndpoint(t *testin
 	}
 }
 
-// Premise for the three waived claim-identity branches — the
-// `claim.OperationID != req.ClaimOperationID || claim.Generation != req.ClaimGeneration`
-// check inside BeginCleanup, CompleteCleanup and AbortCleanup's apply.
-//
-// checkCleanupFence runs in the fenced mutation BEFORE apply and rejects any
-// gate whose identity differs from the stored claim, in both the active and the
-// reconciled branch. So a foreign identity never reaches apply, and the
-// apply-level checks are second readers of a question already answered.
-//
-// They are waived on unreachability alone, not on any tautology argument: the
-// two messages are in fact distinct ("cleanup claim fence mismatch" against
-// "stores a cleanup claim of a different identity ... refusing to overwrite |
-// complete | abort"), so an assertion on the apply-level wording would be
-// attributable if the state could be built. It cannot. Removing the fence lets
-// exactly those three apply-level messages through, which is what says the
-// fence is the only thing standing in front of them. Invalidated by a cleanup
-// path that reaches apply without going through checkCleanupFence.
+// Premise for the waived claim-identity branch in BeginCleanup's apply.
+// checkCleanupFence runs before apply and rejects a gate whose identity differs
+// from the stored active claim. The apply-level refusal remains a second check
+// of that identity. ReconcileRetirementCleanup derives its gate from the stored
+// claim, so it cannot express a foreign continuation identity. This premise is
+// invalidated if a cleanup path reaches apply without passing through checkCleanupFence.
 func TestPremiseCleanupFenceRejectsAForeignClaimBeforeApply(t *testing.T) {
-	// Each case is run on its own canonical: the control commits, so sharing
-	// one would leave the second call refused on the precondition instead.
-	for _, tc := range []struct {
-		name string
-		call func(t *testing.T, c *Canonical, claimOpID string) error
-	}{
-		{
-			"BeginCleanup",
-			func(t *testing.T, c *Canonical, claimOpID string) error {
-				req := CanonicalBeginCleanupRequest{
-					HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"),
-					Precondition: preconditionOf(1, 2), ClaimOperationID: claimOpID,
-					ClaimGeneration: Generation(1), Reason: "begin cleanup",
-				}
-				_, err := c.BeginCleanup(mustOperation(t, "op-premise-begin", req), req)
-				return err
-			},
-		},
-		{
-			"CompleteCleanup",
-			func(t *testing.T, c *Canonical, claimOpID string) error {
-				req := CanonicalCompleteCleanupRequest{
-					HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"),
-					Precondition: preconditionOf(1, 2), ClaimOperationID: claimOpID,
-					ClaimGeneration: Generation(1), Reason: "cleanup done",
-				}
-				_, err := c.CompleteCleanup(mustOperation(t, "op-premise-complete", req), req)
-				return err
-			},
-		},
-		{
-			"AbortCleanup",
-			func(t *testing.T, c *Canonical, claimOpID string) error {
-				req := CanonicalAbortCleanupRequest{
-					HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"),
-					Precondition: preconditionOf(1, 2), ClaimOperationID: claimOpID,
-					ClaimGeneration: Generation(1), Reason: "operator abort",
-				}
-				_, err := c.AbortCleanup(mustOperation(t, "op-premise-abort", req), req)
-				return err
-			},
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			retired := func() *Canonical {
-				c, _, _ := newTestCanonical(t)
-				mustCreate(t, c, "t1")
-				retireWithClaim(t, c, "t1", preconditionOf(1, 1), "op-retire-1")
-				return c
-			}
+	retired := func() *Canonical {
+		c, _, _ := newTestCanonical(t)
+		mustCreate(t, c, "t1")
+		retireWithClaim(t, c, "t1", preconditionOf(1, 1), "op-retire-1")
+		return c
+	}
 
-			// Control: the continuation carrying the stored claim identity is
-			// accepted, so the refusal below is the identity and nothing else.
-			if err := tc.call(t, retired(), "op-retire-1"); err != nil {
-				t.Fatalf("%s with the stored claim identity: %v", tc.name, err)
-			}
-
-			err := tc.call(t, retired(), "op-retire-foreign")
-			if err == nil {
-				t.Fatalf("%s accepted a foreign claim identity", tc.name)
-			}
-			if !strings.Contains(err.Error(), "cleanup claim fence mismatch") {
-				t.Fatalf("%s = %v, want the fence refusal that makes the apply-level identity check unreachable", tc.name, err)
-			}
-		})
+	// Control: the owning identity reaches BeginCleanup's active-claim no-op.
+	control := retired()
+	valid := CanonicalBeginCleanupRequest{
+		HomeID: control.HomeID(), TaskID: mustTaskID(t, "t1"),
+		Precondition: preconditionOf(1, 2), ClaimOperationID: "op-retire-1",
+		ClaimGeneration: Generation(1), Reason: "resume cleanup",
+	}
+	if _, err := control.BeginCleanup(mustOperation(t, "op-premise-begin-valid", valid), valid); err != nil {
+		t.Fatalf("BeginCleanup with stored claim identity: %v", err)
+	}
+	c := retired()
+	foreign := CanonicalBeginCleanupRequest{
+		HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"),
+		Precondition: preconditionOf(1, 2), ClaimOperationID: "op-retire-foreign",
+		ClaimGeneration: Generation(1), Reason: "foreign cleanup",
+	}
+	_, err := c.BeginCleanup(mustOperation(t, "op-premise-begin-foreign", foreign), foreign)
+	if err == nil || !strings.Contains(err.Error(), "cleanup claim fence mismatch") {
+		t.Fatalf("BeginCleanup with foreign identity = %v, want cleanup claim fence mismatch", err)
 	}
 }
 

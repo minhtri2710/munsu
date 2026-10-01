@@ -286,10 +286,9 @@ const (
 // reopen or acquisition between a fleet-side revalidation (which holds the
 // task lock only for the read) and the external backend/filesystem action that
 // follows it, because the durable claim keeps the task pinned even after the
-// lock is released. The claim is reconciled by the cleanup continuation
-// operations (BeginCleanup/CompleteCleanup/AbortCleanup), which carry the
-// claim's owning identity (the stable retirement Operation ID and the cleaned
-// generation) and are the only mutations allowed while the claim is active.
+// lock is released. The claim is continued by BeginCleanup and reconciled by
+// ReconcileRetirementCleanup, which derives its continuation identity from the
+// stored claim.
 // taskauthority persists the claim opaquely; Fleet owns the lifecycle.
 type CleanupClaim struct {
 	OperationID  string        `json:"operation_id"`

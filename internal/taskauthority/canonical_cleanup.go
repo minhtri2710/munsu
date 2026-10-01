@@ -104,9 +104,9 @@ func (c *Canonical) BeginCleanup(op domain.Operation, req CanonicalBeginCleanupR
 	})
 }
 
-// CanonicalCompleteCleanupRequest reconciles the active cleanup claim to
-// completed after all evidence-pinned releases and projection removal
-// succeeded. The request is the typed intent for the operation digest.
+// CanonicalCompleteCleanupRequest describes reconciliation of an active cleanup
+// claim to completed after evidence-pinned releases and projection removal
+// succeed. The request is the typed intent for the operation digest.
 type CanonicalCompleteCleanupRequest struct {
 	HomeID           domain.HomeID
 	TaskID           domain.TaskID
@@ -128,54 +128,8 @@ func (r CanonicalCompleteCleanupRequest) DigestBytes() ([]byte, error) {
 	}{r.HomeID.Value(), r.TaskID.Value(), r.Precondition.Generation, r.Precondition.Revision, r.ClaimOperationID, r.ClaimGeneration, r.Reason})
 }
 
-// CompleteCleanup marks the active cleanup claim completed, releasing the
-// task for reopen. It requires the exact continuation identity of the stored
-// claim in EVERY path: a nil/foreign claim fails closed, completing an
-// already-completed claim is a no-op ONLY under the exact stored identity, and
-// completing an aborted claim fails closed (abort is terminal).
-func (c *Canonical) CompleteCleanup(op domain.Operation, req CanonicalCompleteCleanupRequest) (Outcome, error) {
-	if err := c.prepare(op, req, req.HomeID); err != nil {
-		return Outcome{}, err
-	}
-	if err := validateClaimIdentity(req.ClaimOperationID, req.ClaimGeneration); err != nil {
-		return Outcome{}, err
-	}
-	return c.mutateTaskCleanup(op, req.TaskID, req.Precondition, cleanupGate{operationID: req.ClaimOperationID, generation: req.ClaimGeneration}, func(cur Aggregate) (Aggregate, error) {
-		claim := cur.CleanupClaim
-		if claim == nil {
-			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s has no cleanup claim to complete", cur.TaskID, cur.Generation)
-		}
-		// Every path is identity-fenced: a foreign identity is never accepted
-		// as a no-op and never reconciles the stored claim.
-		if claim.OperationID != req.ClaimOperationID || claim.Generation != req.ClaimGeneration {
-			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s stores a cleanup claim of a different identity (operation %q generation %s); refusing to complete", cur.TaskID, cur.Generation, claim.OperationID, claim.Generation)
-		}
-		if claim.Status == CleanupCompleted {
-			return cur, nil // idempotent under the exact identity: already reconciled
-		}
-		if claim.Status == CleanupAborted {
-			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s cleanup claim is aborted; abort is terminal and cleanup cannot be completed", cur.TaskID, cur.Generation)
-		}
-		next := cur.clone()
-		next.CleanupClaim = &CleanupClaim{
-			OperationID:  claim.OperationID,
-			Generation:   claim.Generation,
-			Status:       CleanupCompleted,
-			ClaimedAt:    claim.ClaimedAt,
-			ReconciledAt: c.now().UnixNano(),
-		}
-		next.Revision++
-		return next, nil
-	})
-}
-
-// CanonicalAbortCleanupRequest releases the active cleanup claim WITHOUT
-// completing cleanup (operator escape hatch for a stuck claim): the task
-// becomes reopenable and the retired generation's preserved evidence remains
-// as a historical record. Abort is TERMINAL: a later teardown retry does not
-// re-activate the claim, and the aborted cleanup is never resumed against a
-// reopened generation. The request is the typed intent for the operation
-// digest.
+// CanonicalAbortCleanupRequest describes reconciliation of an active cleanup
+// claim to aborted. The request is the typed intent for the operation digest.
 type CanonicalAbortCleanupRequest struct {
 	HomeID           domain.HomeID
 	TaskID           domain.TaskID
@@ -195,46 +149,6 @@ func (r CanonicalAbortCleanupRequest) DigestBytes() ([]byte, error) {
 		ClaimGeneration  Generation `json:"claim_generation"`
 		Reason           string     `json:"reason,omitempty"`
 	}{r.HomeID.Value(), r.TaskID.Value(), r.Precondition.Generation, r.Precondition.Revision, r.ClaimOperationID, r.ClaimGeneration, r.Reason})
-}
-
-// AbortCleanup marks the active cleanup claim aborted, releasing the task for
-// reopen without cleanup completing. Abort is terminal: aborting an
-// already-aborted claim is a no-op ONLY under the exact stored identity;
-// aborting a completed claim or any foreign identity fails closed.
-func (c *Canonical) AbortCleanup(op domain.Operation, req CanonicalAbortCleanupRequest) (Outcome, error) {
-	if err := c.prepare(op, req, req.HomeID); err != nil {
-		return Outcome{}, err
-	}
-	if err := validateClaimIdentity(req.ClaimOperationID, req.ClaimGeneration); err != nil {
-		return Outcome{}, err
-	}
-	return c.mutateTaskCleanup(op, req.TaskID, req.Precondition, cleanupGate{operationID: req.ClaimOperationID, generation: req.ClaimGeneration}, func(cur Aggregate) (Aggregate, error) {
-		claim := cur.CleanupClaim
-		if claim == nil {
-			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s has no cleanup claim to abort", cur.TaskID, cur.Generation)
-		}
-		// Every path is identity-fenced: a foreign identity is never accepted
-		// as a no-op and never reconciles the stored claim.
-		if claim.OperationID != req.ClaimOperationID || claim.Generation != req.ClaimGeneration {
-			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s stores a cleanup claim of a different identity (operation %q generation %s); refusing to abort", cur.TaskID, cur.Generation, claim.OperationID, claim.Generation)
-		}
-		if claim.Status == CleanupAborted {
-			return cur, nil // idempotent under the exact identity: already aborted
-		}
-		if claim.Status == CleanupCompleted {
-			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s cleanup claim is completed; a completed cleanup cannot be aborted", cur.TaskID, cur.Generation)
-		}
-		next := cur.clone()
-		next.CleanupClaim = &CleanupClaim{
-			OperationID:  claim.OperationID,
-			Generation:   claim.Generation,
-			Status:       CleanupAborted,
-			ClaimedAt:    claim.ClaimedAt,
-			ReconciledAt: c.now().UnixNano(),
-		}
-		next.Revision++
-		return next, nil
-	})
 }
 
 // validateClaimIdentity checks the continuation gate shape: a safe owning

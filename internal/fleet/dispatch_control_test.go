@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
@@ -31,7 +32,7 @@ func TestStartTaskRespectsDispatchHoldWithoutChangingQueuedState(t *testing.T) {
 	start := taskauthority.CanonicalStartRequest{
 		HomeID:       c.HomeID(),
 		TaskID:       taskID,
-		Precondition: domainOf(1, 1),
+		Precondition: domain.Of(1, 1),
 		Reason:       "start",
 	}
 	if _, err := c.Start(mustFleetOperation(t, "start-1", start), start); !errors.Is(err, taskauthority.ErrDispatchHeld) {
@@ -43,10 +44,8 @@ func TestStartTaskRespectsDispatchHoldWithoutChangingQueuedState(t *testing.T) {
 	}
 }
 
-// TestSpawnFailsClosedOnDegradedSupervision proves the spawn supervision
-// gate fires before any Authority or Store call: an unhealthy watcher lease
-// fails the Runner closed with ErrUnhealthyWatcher, leaves the task phase
-// untouched, and creates no Dispatch Hold or journal state.
+// TestSpawnFailsClosedOnDegradedSupervision proves the supervision gate fires
+// before authority or store calls and leaves the queued task untouched.
 func TestSpawnFailsClosedOnDegradedSupervision(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	mustFleetCreate(t, c, "task")
