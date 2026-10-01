@@ -584,3 +584,163 @@ func TestReadWithProbeCanonicalPhaseUnaffectedByProbe(t *testing.T) {
 type boolProbe struct{ v bool }
 
 func (p *boolProbe) Probe(homeDir string, meta map[string]string) (bool, error) { return p.v, nil }
+
+// TestSnapshotDisplay_FailedCaptainHomeIsNamedFailure proves a captain home
+// that cannot be read becomes one named failure with no rows, the healthy
+// sources keep their rows, and Snapshot still refuses the same input.
+func TestSnapshotDisplay_FailedCaptainHomeIsNamedFailure(t *testing.T) {
+	cases := []struct {
+		name string
+		bad  func(t *testing.T, capHome string)
+	}{
+		{"not a canonical home", func(t *testing.T, capHome string) {
+			if err := os.MkdirAll(capHome, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"task without canonical record", func(t *testing.T, capHome string) {
+			if _, err := home.Init(capHome); err != nil {
+				t.Fatal(err)
+			}
+			mustCreateFleetTask(t, capHome, "ok-task", "ship")
+			if err := home.WriteMeta(capHome, "legacy-task", map[string]string{"kind": "ship"}); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			parent := t.TempDir()
+			if _, err := home.Init(parent); err != nil {
+				t.Fatal(err)
+			}
+			mustCreateFleetTask(t, parent, "primary-task", "ship")
+			goodHome := filepath.Join(parent, "captains", "good")
+			if _, err := home.Init(goodHome); err != nil {
+				t.Fatal(err)
+			}
+			mustCreateFleetTask(t, goodHome, "good-task", "ship")
+			badHome := filepath.Join(parent, "captains", "bad")
+			tc.bad(t, badHome)
+
+			d, err := SnapshotDisplay(parent, testSnapshotDeps(t))
+			if err != nil {
+				t.Fatalf("SnapshotDisplay: %v", err)
+			}
+			if len(d.Failures) != 1 {
+				t.Fatalf("Failures = %v, want exactly one", d.Failures)
+			}
+			f := d.Failures[0]
+			if f.Source != "captain:bad" || f.Home != badHome || f.Err == nil {
+				t.Fatalf("failure = %+v, want source captain:bad home %s with an error", f, badHome)
+			}
+			var ids []string
+			for _, ts := range d.Tasks {
+				ids = append(ids, ts.ID)
+				if ts.Source == "captain:bad" {
+					t.Fatalf("failed source contributed row %q", ts.ID)
+				}
+			}
+			if strings.Join(ids, ",") != "primary-task,good-task" {
+				t.Fatalf("rows = %v, want primary-task,good-task", ids)
+			}
+
+			_, err = Snapshot(parent, testSnapshotDeps(t))
+			if want := "scanning captain home " + badHome + ": " + f.Err.Error(); err == nil || err.Error() != want {
+				t.Fatalf("Snapshot = %v, want %q", err, want)
+			}
+		})
+	}
+}
+
+// TestSnapshotDisplay_FailedPrimaryKeepsCaptainRows proves a failing primary
+// home is one named failure while captain rows survive, and Snapshot refuses
+// with the primary's raw error.
+func TestSnapshotDisplay_FailedPrimaryKeepsCaptainRows(t *testing.T) {
+	parent := t.TempDir()
+	goodHome := filepath.Join(parent, "captains", "good")
+	if _, err := home.Init(goodHome); err != nil {
+		t.Fatal(err)
+	}
+	mustCreateFleetTask(t, goodHome, "good-task", "ship")
+
+	d, err := SnapshotDisplay(parent, testSnapshotDeps(t))
+	if err != nil {
+		t.Fatalf("SnapshotDisplay: %v", err)
+	}
+	if len(d.Failures) != 1 || d.Failures[0].Source != "primary" || d.Failures[0].Home != parent {
+		t.Fatalf("Failures = %v, want one primary failure for %s", d.Failures, parent)
+	}
+	if len(d.Tasks) != 1 || d.Tasks[0].ID != "good-task" {
+		t.Fatalf("rows = %+v, want only good-task", d.Tasks)
+	}
+
+	_, err = Snapshot(parent, testSnapshotDeps(t))
+	if err == nil || err.Error() != d.Failures[0].Err.Error() {
+		t.Fatalf("Snapshot = %v, want the primary read error %v", err, d.Failures[0].Err)
+	}
+}
+
+// TestSnapshotDisplay_NilCurrentStateRefused proves the display read has no
+// per-source answer without a current-state query.
+func TestSnapshotDisplay_NilCurrentStateRefused(t *testing.T) {
+	if _, err := SnapshotDisplay(t.TempDir(), SnapshotDependencies{}); err == nil {
+		t.Fatal("SnapshotDisplay(nil CurrentState) = nil error")
+	}
+}
+
+// TestHumanNeeded pins the canonical phase over the last status line.
+func TestHumanNeeded(t *testing.T) {
+	tests := []struct {
+		name  string
+		state string
+		last  string
+		want  bool
+	}{
+		{"blocked without status line", "blocked", "", true},
+		{"blocked with working line", "blocked", "working: on it", true},
+		{"done with needs-decision line", "done", "needs-decision: which db?", false},
+		{"resolved with blocked line", "resolved", "blocked: waiting", false},
+		{"retired with failed line", "retired", "failed: build", false},
+		{"working with needs-decision line", "working", "needs-decision: which db?", true},
+		{"queued with failed line", "queued", "failed: build", true},
+		{"working with progress line", "working", "working: blocked: is prose", false},
+		{"working with done line", "working", "done: shipped", false},
+		{"working with no line", "working", "", false},
+		{"captain metadata row", "", "", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := HumanNeeded(TaskSnapshot{CurrentState: tc.state, LastStatus: tc.last}); got != tc.want {
+				t.Fatalf("HumanNeeded(state=%q, last=%q) = %v, want %v", tc.state, tc.last, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestHumanNeeded_CanonicalBlockedRow proves the phase value HumanNeeded
+// relies on is what Snapshot reports for a canonical blocked task.
+func TestHumanNeeded_CanonicalBlockedRow(t *testing.T) {
+	tmp := t.TempDir()
+	if _, err := home.Init(tmp); err != nil {
+		t.Fatal(err)
+	}
+	auth := mustCreateFleetTask(t, tmp, "t1", "ship")
+	req := taskauthority.CanonicalBlockRequest{
+		HomeID: auth.HomeID(), TaskID: mustTaskID(t, "t1"),
+		Precondition: taPrecondition(1, 1), Detail: "waiting on Human", Reason: "test",
+	}
+	if _, err := auth.Block(mustFleetOperation(t, "op-block-t1", req), req); err != nil {
+		t.Fatalf("Block: %v", err)
+	}
+	snap, err := Snapshot(tmp, testSnapshotDeps(t))
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if len(snap.Tasks) != 1 || snap.Tasks[0].LastStatus != "" {
+		t.Fatalf("rows = %+v, want one blocked row without a status line", snap.Tasks)
+	}
+	if !HumanNeeded(snap.Tasks[0]) {
+		t.Fatalf("HumanNeeded(%q row) = false, want true", snap.Tasks[0].CurrentState)
+	}
+}
