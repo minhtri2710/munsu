@@ -37,6 +37,7 @@ in their authoritative module rather than in command wiring.
 | `backend` | Provide tmux/herdr/zellij/cmux/orca adapters, endpoint observation, worktree and home-tag mechanics |
 | `domain` | Own pure business rules and value types such as `PR.CanMerge` and `ReviewVerdict.Approves` |
 | `harness` | Detect and verify harnesses; resolve launch templates and dispatch profiles |
+| `fence` | Confine a launched seat's whole process tree to a set of writable roots with a darwin OS sandbox (`sandbox-exec`) and prove the profile with a probe before the launch is trusted; imports `harness` only (ADR-0005 §6, ADR-0014) |
 | `bootstrap` | Diagnose toolchain readiness and install, repair or inspect native harness integration |
 | `config` | Own typed settings, defaults, validation, Project Overlays and immutable resolved Config Snapshots (ADR-0008 §6) |
 

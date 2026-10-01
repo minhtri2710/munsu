@@ -2,7 +2,6 @@ package fleet
 
 import (
 	"fmt"
-	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"os"
 	"path/filepath"
 	"sort"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	mhome "github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // FleetSnapshot represents the full fleet state.

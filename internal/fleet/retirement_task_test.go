@@ -1056,6 +1056,14 @@ func TestRun_WakePruneFailureKeepsMetaForTheRetry(t *testing.T) {
 	if _, err := os.Stat(metaPath); err != nil {
 		t.Fatalf("meta after the failed prune: %v, want it kept as the retry identity", err)
 	}
+	// The claim is now completed, so this retry runs the completed-claim path.
+	_, err = RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, &recordingTeardown{alive: true}, fakeRetirementJournals{}, auth)
+	if !errors.As(err, &projectionErr) {
+		t.Fatalf("completed-claim retry error = %T %v, want projection error", err, err)
+	}
+	if _, err := os.Stat(metaPath); err != nil {
+		t.Fatalf("meta after the completed-claim retry's failed prune: %v, want it kept as the retry identity", err)
+	}
 	if err := os.RemoveAll(marker); err != nil {
 		t.Fatal(err)
 	}

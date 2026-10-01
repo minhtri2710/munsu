@@ -974,27 +974,9 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 			return err
 		}
 		projectionCleanup := func() error {
-			residualPaths, err := cleanupResidualArtifactPaths(opts.HomeDir, opts.ID, meta)
-			if err != nil {
+			if err := finalizeCompletedProjectionCleanup(opts, meta, result); err != nil {
 				return &RetirementProjectionError{TaskID: opts.ID, Err: err}
 			}
-			for _, p := range residualPaths {
-				if err := os.RemoveAll(p); err != nil && !os.IsNotExist(err) {
-					return &RetirementProjectionError{TaskID: opts.ID, Err: fmt.Errorf("remove residual %s: %w", filepath.Base(p), err)}
-				}
-				result.Steps = append(result.Steps, fmt.Sprintf("residual %s removed", filepath.Base(p)))
-			}
-			if err := pruneRetiredWakeState(opts.HomeDir, opts.ID); err != nil {
-				return &RetirementProjectionError{TaskID: opts.ID, Err: err}
-			}
-			metaFilePath, err := taskMetaFilePath(opts.HomeDir, opts.ID)
-			if err != nil {
-				return &RetirementProjectionError{TaskID: opts.ID, Err: err}
-			}
-			if err := os.Remove(metaFilePath); err != nil && !os.IsNotExist(err) {
-				return &RetirementProjectionError{TaskID: opts.ID, Err: fmt.Errorf("remove meta: %w", err)}
-			}
-			result.Steps = append(result.Steps, "task meta removed")
 			return nil
 		}
 		journalSteps, err := journals.FinalizeRetirementJournals(opts.HomeDir, opts.ID)
@@ -1021,6 +1003,10 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 	return result, nil
 }
 
+// finalizeCompletedProjectionCleanup is the one projection cleanup of a
+// completed retirement claim, run by teardown and by the completed-claim
+// retry. Residual artifacts go first, then the retired wake state, and the
+// .meta last, so a failed step leaves the retry identity in place.
 func finalizeCompletedProjectionCleanup(opts Options, meta map[string]string, result *TeardownResult) error {
 	residualPaths, err := cleanupResidualArtifactPaths(opts.HomeDir, opts.ID, meta)
 	if err != nil {
@@ -1028,17 +1014,22 @@ func finalizeCompletedProjectionCleanup(opts Options, meta map[string]string, re
 	}
 	for _, p := range residualPaths {
 		if err := os.RemoveAll(p); err != nil && !os.IsNotExist(err) {
-			return err
+			return fmt.Errorf("remove residual %s: %w", filepath.Base(p), err)
 		}
+		result.Steps = append(result.Steps, fmt.Sprintf("residual %s removed", filepath.Base(p)))
 	}
-	metaPath, err := taskMetaFilePath(opts.HomeDir, opts.ID)
+	if err := pruneRetiredWakeState(opts.HomeDir, opts.ID); err != nil {
+		return err
+	}
+	metaFilePath, err := taskMetaFilePath(opts.HomeDir, opts.ID)
 	if err != nil {
 		return err
 	}
-	if err := os.Remove(metaPath); err != nil && !os.IsNotExist(err) {
-		return err
+	if err := os.Remove(metaFilePath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove meta: %w", err)
 	}
-	return pruneRetiredWakeState(opts.HomeDir, opts.ID)
+	result.Steps = append(result.Steps, "task meta removed")
+	return nil
 }
 
 // retiredTaskPrunedWakeKinds are the watcher-derived wake kinds that describe a
@@ -1048,11 +1039,12 @@ func finalizeCompletedProjectionCleanup(opts Options, meta map[string]string, re
 var retiredTaskPrunedWakeKinds = []string{"stale", "check"}
 
 // pruneRetiredWakeState removes a retired task's queued health wakes and its
-// watcher dedup marker. It runs after the .meta removal, inside the terminal
-// cleanup step the CleanupClaim fences: only the retired generation's own
-// cleanup reaches it (a superseded generation returns before projection work),
-// and the claim blocks a reopen until it completes, so no row or marker of a
-// later generation of the same ID exists yet to be pruned.
+// watcher dedup marker. It runs before the .meta removal, so a failed prune
+// keeps the retry identity. It runs inside the terminal cleanup step the
+// CleanupClaim fences: only the retired generation's own cleanup reaches it (a
+// superseded generation returns before projection work), and the claim blocks
+// a reopen until it completes, so no row or marker of a later generation of
+// the same ID exists yet to be pruned.
 func pruneRetiredWakeState(homeDir, id string) error {
 	if err := home.PruneTaskWakes(homeDir, id, retiredTaskPrunedWakeKinds...); err != nil {
 		return fmt.Errorf("prune wake state: %w", err)

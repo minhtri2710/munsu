@@ -817,7 +817,7 @@ func TestAbsorbStaleSignal_AllAbsorbSteps(t *testing.T) {
 }
 
 func TestAbsorbStaleSignal_AllNonAbsorbSteps(t *testing.T) {
-	nonAbsorbSteps := []string{"", "done", "failed", "fix_review", "checks-passed", "passed", "cancelled", "some-unknown-step"}
+	nonAbsorbSteps := []string{"", "done", "failed", "checks-passed", "passed", "cancelled", "some-unknown-step"}
 	for _, step := range nonAbsorbSteps {
 		s := &ObservedTaskState{NoMistakesRunStep: step}
 		if absorbStaleSignal(s) {

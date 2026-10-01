@@ -13,7 +13,10 @@ import (
 
 func TestEvaluateGitHubChecks(t *testing.T) {
 	done := func(id int64, name, conclusion string) GitHubCheck {
-		return GitHubCheck{ID: id, Name: name, Status: "completed", Conclusion: conclusion}
+		return GitHubCheck{Source: GitHubCheckRun, ID: id, Name: name, Status: "completed", Conclusion: conclusion}
+	}
+	status := func(id int64, name, state string) GitHubCheck {
+		return GitHubCheck{Source: GitHubCommitStatus, ID: id, Name: name, Status: "completed", Conclusion: state}
 	}
 	for _, tc := range []struct {
 		name     string
@@ -28,7 +31,7 @@ func TestEvaluateGitHubChecks(t *testing.T) {
 		{name: "only skipped optional checks", reported: []GitHubCheck{done(1, "docs", "skipped"), done(2, "fmt", "neutral")}, wantErr: "only skipped optional checks"},
 		{
 			name:     "each check reads its own conclusion and sorts by name",
-			reported: []GitHubCheck{done(3, "z-ci", "success"), done(1, "a-lint", "failure"), {ID: 2, Name: "m-e2e", Status: "in_progress"}, done(4, "b-err", "timed_out")},
+			reported: []GitHubCheck{done(3, "z-ci", "success"), done(1, "a-lint", "failure"), {Source: GitHubCheckRun, ID: 2, Name: "m-e2e", Status: "in_progress"}, done(4, "b-err", "timed_out")},
 			want: []domain.CheckRun{
 				{Name: "a-lint", Status: domain.CheckFailed}, {Name: "b-err", Status: domain.CheckFailed},
 				{Name: "m-e2e", Status: domain.CheckPending}, {Name: "z-ci", Status: domain.CheckPassed},
@@ -37,6 +40,11 @@ func TestEvaluateGitHubChecks(t *testing.T) {
 		{
 			name:     "the latest report per name by id wins",
 			reported: []GitHubCheck{done(5, "ci", "success"), done(9, "ci", "failure"), done(2, "ci", "failure")},
+			want:     []domain.CheckRun{{Name: "ci", Status: domain.CheckFailed}},
+		},
+		{
+			name:     "a passing check run with the larger id does not hide a failing commit status of the same name",
+			reported: []GitHubCheck{done(900, "ci", "success"), status(7, "ci", "failure")},
 			want:     []domain.CheckRun{{Name: "ci", Status: domain.CheckFailed}},
 		},
 		{
@@ -428,12 +436,12 @@ func TestGhAxiClientHeadChecks(t *testing.T) {
 			t.Fatal(err)
 		}
 		want := []GitHubCheck{
-			{ID: 11, Name: "ci", Status: "completed", Conclusion: "success"},
-			{ID: 12, Name: "e2e", Status: "in_progress"},
-			{ID: 21, Name: "legacy-ok", Status: "completed", Conclusion: "success"},
-			{ID: 22, Name: "legacy-bad", Status: "completed", Conclusion: "failure"},
-			{ID: 23, Name: "legacy-err", Status: "completed", Conclusion: "error"},
-			{ID: 24, Name: "legacy-wait", Status: "in_progress", Conclusion: "pending"},
+			{Source: GitHubCheckRun, ID: 11, Name: "ci", Status: "completed", Conclusion: "success"},
+			{Source: GitHubCheckRun, ID: 12, Name: "e2e", Status: "in_progress"},
+			{Source: GitHubCommitStatus, ID: 21, Name: "legacy-ok", Status: "completed", Conclusion: "success"},
+			{Source: GitHubCommitStatus, ID: 22, Name: "legacy-bad", Status: "completed", Conclusion: "failure"},
+			{Source: GitHubCommitStatus, ID: 23, Name: "legacy-err", Status: "completed", Conclusion: "error"},
+			{Source: GitHubCommitStatus, ID: 24, Name: "legacy-wait", Status: "in_progress", Conclusion: "pending"},
 		}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("checks = %+v, want %+v", got, want)

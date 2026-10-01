@@ -4,7 +4,6 @@ package fleet
 import (
 	"errors"
 	"fmt"
-	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +14,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // ProvenanceMarkerName is the marker file written to a seeded captain home root.

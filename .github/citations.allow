@@ -52,7 +52,7 @@
 # These do not resolve and are not defects. Each names something the document itself says is gone,
 # belongs to another tree or to a munsu home rather than to this repo, or is not a Go declaration at
 # all. They are the shape of citation this lane cannot distinguish from a stale one, and each line
-# says why a reader should not go looking. 40 lines.
+# says why a reader should not go looking. 39 lines.
 AGENTS.md	path	data/captains.md	a path inside a munsu HOME directory, not a file in this repository: it is the runtime layout `munsu init` creates. Wrong if the repo ever ships a file at that path.
 docs/adr/0001-four-core-domain-boundaries.md	path	captain_parity_test.go	the decision recorded on line 36 is `Remove legacy parity tests (captain_parity_test.go)` -- naming the file it deletes is the point of the line. Wrong if a file by that name is reintroduced.
 docs/adr/0003-config-deepening-typed-documents-and-project-overlay.md	path	config/base.json	a path inside a munsu HOME directory, not a file in this repository: it is the runtime layout `munsu init` creates. Wrong if the repo ever ships a file at that path.

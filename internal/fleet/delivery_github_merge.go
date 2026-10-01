@@ -19,10 +19,21 @@ import (
 // is read per check by id and conclusion, never from a watch command's exit
 // code.
 
+// GitHubCheckSource names the endpoint a check was reported through. Check
+// runs and commit statuses have separate id spaces, so an id orders reports
+// only within one source.
+type GitHubCheckSource string
+
+const (
+	GitHubCheckRun     GitHubCheckSource = "check-run"
+	GitHubCommitStatus GitHubCheckSource = "commit-status"
+)
+
 // GitHubCheck is one reported CI check of a head commit: a check run (by its
 // run id) or a legacy commit status (by its status id). Conclusion is the
 // check run's conclusion, or the commit status's state.
 type GitHubCheck struct {
+	Source     GitHubCheckSource
 	ID         int64
 	Name       string
 	Status     string
@@ -165,7 +176,7 @@ func (c *ghAxiClient) HeadChecks(owner, repo, headSHA string) ([]GitHubCheck, er
 	var checks []GitHubCheck
 	for _, page := range runPages {
 		for _, r := range page.CheckRuns {
-			checks = append(checks, GitHubCheck{ID: r.ID, Name: r.Name, Status: r.Status, Conclusion: r.Conclusion})
+			checks = append(checks, GitHubCheck{Source: GitHubCheckRun, ID: r.ID, Name: r.Name, Status: r.Status, Conclusion: r.Conclusion})
 		}
 	}
 
@@ -187,7 +198,7 @@ func (c *ghAxiClient) HeadChecks(owner, repo, headSHA string) ([]GitHubCheck, er
 			if s.State == "success" || s.State == "failure" || s.State == "error" {
 				status = "completed"
 			}
-			checks = append(checks, GitHubCheck{ID: s.ID, Name: s.Context, Status: status, Conclusion: s.State})
+			checks = append(checks, GitHubCheck{Source: GitHubCommitStatus, ID: s.ID, Name: s.Context, Status: status, Conclusion: s.State})
 		}
 	}
 	return checks, nil
@@ -349,36 +360,40 @@ func readGitHubOpenPR(client GitHubDeliveryClient, ghURL domain.GHURL, view gith
 }
 
 // evaluateGitHubChecks turns the head's reported checks into the domain check
-// runs, reading each check's own conclusion (the latest report per name by id).
-// It refuses when nothing reported, when a required check never reported, and
-// when nothing but skipped optional checks remains. A skipped or neutral
+// runs, reading each check's own conclusion. The latest report is chosen per
+// source and name by id within that source (check-run and commit-status ids are
+// separate spaces), and a name is passed only when every source's latest report
+// for it passes: failed if any failed, else pending if any is pending.
+// It refuses when nothing reported, when a required check no source reported,
+// and when nothing but skipped optional checks remains. A skipped or neutral
 // required check counts as passed, as GitHub's own requirement does; a skipped
 // optional check carries no proof and is left out.
 func evaluateGitHubChecks(required []string, reported []GitHubCheck) ([]domain.CheckRun, error) {
 	if len(reported) == 0 {
 		return nil, fmt.Errorf("GitHub reported no check for the head: an empty CI proof is refused")
 	}
-	latest := map[string]GitHubCheck{}
+	type key struct {
+		source GitHubCheckSource
+		name   string
+	}
+	latest := map[key]GitHubCheck{}
+	reportedNames := map[string]bool{}
 	for _, c := range reported {
-		if prev, ok := latest[c.Name]; !ok || c.ID > prev.ID {
-			latest[c.Name] = c
+		reportedNames[c.Name] = true
+		k := key{c.Source, c.Name}
+		if prev, ok := latest[k]; !ok || c.ID > prev.ID {
+			latest[k] = c
 		}
 	}
 	isRequired := map[string]bool{}
 	for _, name := range required {
-		if _, ok := latest[name]; !ok {
+		if !reportedNames[name] {
 			return nil, fmt.Errorf("required check %q never reported for the head", name)
 		}
 		isRequired[name] = true
 	}
-	names := make([]string, 0, len(latest))
-	for name := range latest {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	var checks []domain.CheckRun
-	for _, name := range names {
-		c := latest[name]
+	worst := map[string]domain.CheckStatus{}
+	for _, c := range latest {
 		var status domain.CheckStatus
 		switch {
 		case c.Status != "completed":
@@ -386,14 +401,26 @@ func evaluateGitHubChecks(required []string, reported []GitHubCheck) ([]domain.C
 		case c.Conclusion == "success":
 			status = domain.CheckPassed
 		case c.Conclusion == "skipped" || c.Conclusion == "neutral":
-			if !isRequired[name] {
+			if !isRequired[c.Name] {
 				continue
 			}
 			status = domain.CheckPassed
 		default:
 			status = domain.CheckFailed
 		}
-		checks = append(checks, domain.CheckRun{Name: name, Status: status})
+		prev, ok := worst[c.Name]
+		if !ok || status == domain.CheckFailed || (status == domain.CheckPending && prev == domain.CheckPassed) {
+			worst[c.Name] = status
+		}
+	}
+	names := make([]string, 0, len(worst))
+	for name := range worst {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var checks []domain.CheckRun
+	for _, name := range names {
+		checks = append(checks, domain.CheckRun{Name: name, Status: worst[name]})
 	}
 	if len(checks) == 0 {
 		return nil, fmt.Errorf("GitHub reported only skipped optional checks for the head: an empty CI proof is refused")

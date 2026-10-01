@@ -4,7 +4,6 @@ package bootstrap
 import (
 	"errors"
 	"fmt"
-	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,6 +12,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // snapshotDeps builds the explicit read dependencies for fleet snapshot callers

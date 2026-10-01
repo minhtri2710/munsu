@@ -42,9 +42,11 @@ blocks; a provider approval carries no weight (ADR-0025 §4).
 ### 2. CI proof is per check, by id and conclusion, and an empty proof refuses
 
 The proof is read from the head commit's check runs and commit statuses, never from a watch
-command's exit code (`gh run watch` and `gh pr checks --watch` are not used). For each check
-name the report with the highest id is the current one, and its own `conclusion` (or status
-`state`) decides:
+command's exit code (`gh run watch` and `gh pr checks --watch` are not used). Check runs and
+commit statuses have separate id spaces, so for each source and check name the report with the
+highest id within that source is the current one, and its own `conclusion` (or status `state`)
+decides. A name is passed only when every source's current report for it passes: failed if any
+failed, else pending if any is pending:
 
 * a check that is not completed is pending; `success` is passed; every other conclusion is
   failed, including ones this code does not know;

@@ -131,9 +131,7 @@ func (w wordsFlags) words() domain.Words {
 // resolveDecisionHold releases one decision hold through the canonical
 // Authority: every hold this CLI creates is a durable DispatchHold released
 // by the idempotent ReleaseHold operation, which records the words behind the
-// release. The legacy decision record path (ResolveDecision) was removed with
-// the interpretation layer; there is no decision store on the canonical
-// surface.
+// release.
 func resolveDecisionHold(ctx Ctx, auth *taskauthority.Canonical, originID, decisionKey, answer string, words domain.Words) error {
 	hid := decisionHoldID(originID, decisionKey)
 	req := taskauthority.CanonicalReleaseHoldRequest{

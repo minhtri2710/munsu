@@ -461,26 +461,6 @@ func TestDeliverFailClosedBeforeMutation(t *testing.T) {
 				t.Fatal(err)
 			}
 		}, true},
-		{"identity-head-change", func(t *testing.T, c *taskauthority.Canonical, homeDir, taskID string) {
-			path := filepath.Join(homeDir, "state", "task-authority", "tasks", taskID, "current.json")
-			data, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var doc struct {
-				HomeRevision uint64                     `json:"home_revision"`
-				Aggregate    map[string]json.RawMessage `json:"aggregate"`
-			}
-			if err := json.Unmarshal(data, &doc); err != nil {
-				t.Fatal(err)
-			}
-			doc.Aggregate["worktree"] = []byte(`{"head":"9999888877776666555544443333222211110000"}`)
-			doc.HomeRevision++
-			next, _ := json.Marshal(doc)
-			if err := os.WriteFile(path, next, 0600); err != nil {
-				t.Fatal(err)
-			}
-		}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

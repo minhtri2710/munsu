@@ -3,7 +3,6 @@ package cli
 import (
 	"errors"
 	"fmt"
-	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -13,6 +12,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/spf13/cobra"
 )
 
