@@ -10,7 +10,7 @@ import (
 
 func TestNewRefusesOffDarwinWithTheGOOS(t *testing.T) {
 	l := newLayout(t)
-	for _, launch := range []Launch{l.soldier(), l.reviewer(), {}} {
+	for _, launch := range []Launch{l.soldier(), l.reviewer()} {
 		f, err := New(launch)
 		var unsupported *UnsupportedError
 		if f != nil || !errors.As(err, &unsupported) || unsupported.GOOS != runtime.GOOS {

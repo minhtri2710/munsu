@@ -34,11 +34,11 @@ type launchPaths struct {
 // missing, or that would widen the writable set over the primary checkout or the
 // git common dir is refused; New never falls back to a looser profile.
 func New(l Launch) (*Fence, error) {
-	if err := platformCheck(); err != nil {
-		return nil, err
-	}
 	if l.Role != RoleSoldier && l.Role != RoleReviewer {
 		return nil, fmt.Errorf("fence: unknown role %q", l.Role)
+	}
+	if err := platformCheck(); err != nil {
+		return nil, err
 	}
 	p, err := resolveLaunch(l)
 	if err != nil {

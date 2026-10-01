@@ -1,6 +1,7 @@
 package fence
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -449,4 +450,34 @@ func TestGoCaches(t *testing.T) {
 			t.Fatalf("got %q, want the other three roots", got)
 		}
 	})
+}
+
+func TestNewRefusesAnUnknownRole(t *testing.T) {
+	l := newLayout(t)
+	for _, role := range []Role{"", "captain"} {
+		launch := l.soldier()
+		launch.Role = role
+		f, err := New(launch)
+		if f != nil || err == nil || err.Error() != fmt.Sprintf("fence: unknown role %q", role) {
+			t.Fatalf("New(role %q) = %v, %v; want the unknown role refusal", role, f, err)
+		}
+	}
+}
+
+func TestCheckSeatRootsRefusals(t *testing.T) {
+	protected := []string{"/p/primary", "/p/common"}
+	for _, tc := range []struct {
+		name  string
+		roots []string
+		want  string
+	}{
+		{"a root inside a protected path", []string{"/s/state", "/p/primary/v.json"}, "fence: writable root /p/primary/v.json overlaps protected path /p/primary"},
+		{"a root containing a protected path", []string{"/p"}, "fence: writable root /p overlaps protected path /p/primary"},
+		{"disjoint roots", []string{"/s/state", "/p/other"}, ""},
+	} {
+		err := checkSeatRoots(tc.roots, protected)
+		if tc.want == "" && err != nil || tc.want != "" && (err == nil || err.Error() != tc.want) {
+			t.Fatalf("%s: checkSeatRoots = %v; want %q", tc.name, err, tc.want)
+		}
+	}
 }
