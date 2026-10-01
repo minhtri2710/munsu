@@ -48,6 +48,12 @@ func TestEvaluateGitHubChecks(t *testing.T) {
 			want:     []domain.CheckRun{{Name: "ci", Status: domain.CheckFailed}},
 		},
 		{
+			name:     "a required check reported only as a commit status counts as reported",
+			required: []string{"legacy"},
+			reported: []GitHubCheck{done(1, "ci", "success"), status(2, "legacy", "success")},
+			want:     []domain.CheckRun{{Name: "ci", Status: domain.CheckPassed}, {Name: "legacy", Status: domain.CheckPassed}},
+		},
+		{
 			name:     "a later success supersedes an earlier failure",
 			reported: []GitHubCheck{done(1, "ci", "failure"), done(2, "ci", "success")},
 			want:     []domain.CheckRun{{Name: "ci", Status: domain.CheckPassed}},
