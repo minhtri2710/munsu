@@ -167,10 +167,42 @@ bash runs:
 * **Functions and coproc** (`definesFunction`, `opensScope`): every definition form
   (`f()`, `f ()`, `function f`, `function f()`) and a `coproc` body are read in their own
   scope, split by synthetic subshell tokens, so a directory move inside the body does not
-  move the segments after the definition. A write in a function body is a target even if
-  the function is never called: an accepted over-refusal, pinned by test. `coproc` is a
-  reserved word, and its body is read in a child scope. A body of any compound form a
-  reserved word ends (`if`, `while`, `until`, `for`, `select`, `case`) is scoped the same
+  move the segments after the definition. Simple-command bodies after parenthesized
+  heads, such as `f() cd P` and `f () cd P`, are defined by zsh, dash and ksh; the
+  `function f()` form is defined by zsh. A word glued to a parenthesized head's closing `)`
+  is read as though separated by a blank; operators retain their ordinary boundaries.
+  Redirections between a function head and its body are read as gaps. On a same-line
+  redirected head such as `f() >out { cd P; }; f; rm x`, zsh accepts the definition and
+  bash 3.2, bash 5.3, ksh and dash reject it. Across a newline, `f() >out\n{ cd P; }; rm x`
+  makes zsh and dash run the next-line opener as top-level code, so the write lands in P;
+  bash 3.2, bash 5.3 and ksh reject the line. Both guards refuse that cross-line form.
+  The simple-command function-body forms listed above are rejected by bash, and both guards
+  refuse
+  them wherever they appear in a command, including inside a named-shell payload. A line
+  continuation between a function head and its body is refused in the literal backslash
+  reading, e.g. `f ()\` followed by a newline and `( : ); f; rm x`. Dash does not know
+  `function`, so both guards refuse a bare `function NAME` head whose body starts on a
+  later line; the subshell-body case is an accepted over-refusal, e.g. `function f\n( : ); rm x`.
+  A quote-only function name is retained as a decoded function name when the head is
+  otherwise recognized; the guards then track its body and calls through the same
+  function-table path as an unquoted name. Escaped and expansion-spelled function names
+  remain unmodeled and are refused by both guards; the guards do not evaluate parameter,
+  command, arithmetic or backtick expansions to determine a function name. This can refuse
+  a form that every accepting shell would otherwise run in W, or reject before running.
+  A trailing `()` is head syntax only
+  when both parentheses are unquoted and unescaped; a word such as `'f()'` is a command
+  word, not a function head. Both guards refuse a parenthesized function body unless
+  the first token after
+  redirections opens one of the compound body forms the Bash reader accepts (`{`, `(`, `((`, `if`, `while`, `until`,
+  `for`, `select` or `case`); this excludes body-leading `function`, `coproc` and `[[`.
+  `[[` is not modeled as a compound-body opener in the frozen lexer (R-S17). A function
+  body beginning with `[[` is therefore refused as UO (unmodeled opener), an accepted
+  over-refusal even when a shell accepts the line and executes a later write in W.
+  The form `function f cd P` does not define a function. A write in a function body is a
+  target even if the function is never called: an accepted over-refusal, pinned by test;
+  `coproc` is a reserved word, and its body is read in a child scope. A body of any
+  compound form a reserved word ends (`if`, `while`, `until`, `for`, `select`, `case`)
+  is scoped the same
   way; a `[[ ]]` body runs no command. Both guards use the M1 function-table model:
   every definition read in the command, including one in `eval` and one nested in an outer
   function, is registered immediately as a possible move. A name enters the monotone moving

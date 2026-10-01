@@ -1348,6 +1348,150 @@ func TestSafetyCheckReadsCaseStackAndCdOptions(t *testing.T) {
 	t.Setenv("MUNSU_TASK_ID", "ship-case")
 	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-case")
 
+	simpleBodyCases := []struct {
+		name     string
+		commands []string
+	}{
+		{"top-level simple body", []string{`f() cd ` + primary + `; f; git add f`}},
+		{"unmodeled compound opener", []string{`f() [[ -n x ]]; f; git add f`, "f()\n[[ -n x ]]; git add f"}},
+		{"plain non-identifier function name", []string{`foo-bar() { cd ` + primary + `; }; foo-bar; git add f`}},
+		{"comment-gap non-opener body", []string{"f() # c\ntrue\ngit add f"}},
+		{"non-compound reserved-word opener", []string{
+			`f() function g { cd ` + primary + `; }; f; g; git add f`,
+			`f() coproc cd ` + primary + `; f; git add f`,
+		}},
+		{"named-shell payload", []string{`zsh -c 'f() cd ` + primary + `; f; git add f'`}},
+		{"quoted function name", []string{
+			"'f'() >out { cd " + primary + "; }; f; git add f",
+			`'f'() cd ` + primary + `; f; git add f`,
+			`"f"() cd ` + primary + `; f; git add f`,
+			`'f'() { cd ` + primary + `; }; f; git add f`,
+			`zsh -c "'f'() cd ` + primary + `; f; git add f"`,
+		}},
+		{"quoted function name after a command prefix", []string{
+			`! 'f'() cd ` + primary + `; f; git add f`,
+			`! 'f'() { cd ` + primary + `; }; f; git add f`,
+			`time 'f'() cd ` + primary + `; f; git add f`,
+			`time 'f'() { cd ` + primary + `; }; f; git add f`,
+			`time -p 'f'() cd ` + primary + `; f; git add f`,
+			`time -p 'f'() { cd ` + primary + `; }; f; git add f`,
+			`if true; then 'f'() cd ` + primary + `; fi; f; git add f`,
+			`if true; then 'f'() { cd ` + primary + `; }; fi; f; git add f`,
+			`if 'f'() cd ` + primary + `; then :; fi; f; git add f`,
+			`if 'f'() { cd ` + primary + `; }; then :; fi; f; git add f`,
+			`while 'f'() cd ` + primary + `; do break; done; f; git add f`,
+			`while 'f'() { cd ` + primary + `; }; do break; done; f; git add f`,
+			`until 'f'() cd ` + primary + `; do break; done; f; git add f`,
+			`until 'f'() { cd ` + primary + `; }; do break; done; f; git add f`,
+			`if false; then :; else 'f'() cd ` + primary + `; fi; f; git add f`,
+			`if false; then :; else 'f'() { cd ` + primary + `; }; fi; f; git add f`,
+			`if false; then :; elif true; then 'f'() cd ` + primary + `; fi; f; git add f`,
+			`if false; then :; elif true; then 'f'() { cd ` + primary + `; }; fi; f; git add f`,
+			`for x in 1; do 'f'() cd ` + primary + `; done; f; git add f`,
+			`for x in 1; do 'f'() { cd ` + primary + `; }; done; f; git add f`,
+			`{ 'f'() cd ` + primary + `; }; f; git add f`,
+			`{ 'f'() { cd ` + primary + `; }; }; f; git add f`,
+		}},
+	}
+	const unmodeledFunction = "function name is not modeled; git mutation cannot be checked"
+	for _, tc := range []struct {
+		name    string
+		command string
+	}{
+		{"escaped", `\f() { cd ` + primary + `; }; f; git add f`},
+		{"parameter expansion", `f$x() { cd ` + primary + `; }; f; git add f`},
+		{"braced parameter expansion", `f${x}() { cd ` + primary + `; }; f; git add f`},
+		{"leading parameter expansion", `$x() { cd ` + primary + `; }; x; git add f`},
+		{"set leading parameter expansion", `x=g; $x() { cd ` + primary + `; }; g; git add f`},
+		{"quoted parameter expansion", `f"$x"() { cd ` + primary + `; }; f; git add f`},
+		{"quoted braced parameter expansion", `f"${x}"() { cd ` + primary + `; }; f; git add f`},
+		{"quoted command substitution", `f"$(true)"() { cd ` + primary + `; }; f; git add f`},
+		{"command substitution", `f$(true)() { cd ` + primary + `; }; f; git add f`},
+		{"backtick substitution", "f`true`() { cd " + primary + "; }; f; git add f"},
+		{"arithmetic expansion", `f$((0))() { cd ` + primary + `; }; f0; git add f`},
+	} {
+		if block, reason := runPiSafetyForGit(t, worktree, tc.command); !block || reason != unmodeledFunction {
+			t.Errorf("%s function name: block=%v reason=%q, want %q", tc.name, block, reason, unmodeledFunction)
+		}
+	}
+	for _, tc := range simpleBodyCases {
+		for _, command := range tc.commands {
+			block, reason := runPiSafetyForGit(t, worktree, command)
+			wantReason := "function head has no valid bash body"
+			if tc.name == "quoted function name" || tc.name == "quoted function name after a command prefix" || tc.name == "plain non-identifier function name" {
+				if !block {
+					t.Errorf("%s: %q: block=%v reason=%q, want refusal", tc.name, command, block, reason)
+				}
+				continue
+			}
+			if !block || !strings.Contains(reason, wantReason) {
+				t.Errorf("%s: %q: block=%v reason=%q, want %s refusal", tc.name, command, block, reason, wantReason)
+			}
+		}
+	}
+	if block, reason := runPiSafetyForGit(t, worktree, `'f'() { :; }; git add f`); block {
+		t.Errorf("harmless uncalled quoted-name function: block=%v reason=%q, want allowed", block, reason)
+	}
+	for _, quotedParenCommand := range []string{
+		`'f()' cd ` + primary + `; f; git add f`,
+		`function 'f()' { cd ` + primary + `; }; f; git add f`,
+		`function f\(\) { cd ` + primary + `; }; f; git add f`,
+	} {
+		if block, reason := runPiSafetyForGit(t, worktree, quotedParenCommand); block {
+			t.Errorf("%q: block=%v reason=%q, want quoted-paren form allowed", quotedParenCommand, block, reason)
+		}
+	}
+	for _, command := range []string{
+		`coproc 'f'() cd ` + primary + `; f; git add f`,
+		`coproc 'f'() { cd ` + primary + `; }; f; git add f`,
+	} {
+		if block, reason := runPiSafetyForGit(t, worktree, command); block {
+			t.Errorf("%q refused: %s; want coproc exclusion", command, reason)
+		}
+	}
+	for _, command := range []string{
+		"true | f() { cd " + primary + "; }; f; git add f",
+		"f(){ cd " + primary + "; }; f; rm x",
+		"f()cd " + primary + "; f; rm x",
+		"function f\n{ cd " + primary + "; }; git add f",
+		"f() { cd " + primary + "; } | cat; f; git add f",
+		"f() # c1\n# c2\nif cd " + primary + "; then :; fi; f; git add f",
+		"f() # c1\n# c2\nwhile cd " + primary + "; do break; done; f; git add f",
+		"f() >out { cd " + primary + "; }; f; git add f",
+		"f() >>out { cd " + primary + "; }; f; git add f",
+		"f() 2>out { cd " + primary + "; }; f; git add f",
+		"f() <in { cd " + primary + "; }; f; git add f",
+		"f() &>out { cd " + primary + "; }; f; git add f",
+		"f()>out { cd " + primary + "; }; f; git add f",
+		"f() >out >>more 2>&1 { cd " + primary + "; }; f; git add f",
+		"f() >out if cd " + primary + "; then :; fi; f; git add f",
+		"f() >out while cd " + primary + "; do break; done; f; git add f",
+		"f() >out\n{ cd " + primary + "; }; f; git add f",
+		"f() >out\n{ cd " + primary + "; }; git add f",
+		"f() <in\n{ cd " + primary + "; }; git add f",
+		"f () >out { cd " + primary + "; }; f; git add f",
+		"function f() >out { cd " + primary + "; }; f; git add f",
+		"function f >out { cd " + primary + "; }; f; git add f",
+	} {
+		if block, reason := runPiSafetyForGit(t, worktree, command); !block {
+			t.Errorf("%q: block=%v reason=%q, want git mutation refusal", command, block, reason)
+		}
+	}
+	commentSubshell := "f() # c\n( cd " + primary + " ); f; git add f"
+	if block, reason := runPiSafetyForGit(t, worktree, commentSubshell); block {
+		t.Errorf("%q: block=%v reason=%q, want comment-transparent subshell body allowed", commentSubshell, block, reason)
+	}
+	for _, command := range []string{
+		"f() | { cd " + primary + "; }; f; git add f",
+		"f ()\ncd " + primary + "; f; git add f",
+		"f() \n  cd " + primary + "; f; git add f",
+		"function f()\ncd " + primary + "; f; git add f",
+	} {
+		block, reason := runPiSafetyForGit(t, worktree, command)
+		if !block || !strings.Contains(reason, "function head has no valid bash body") {
+			t.Errorf("%q: block=%v reason=%q, want no-valid-function-body refusal", command, block, reason)
+		}
+	}
 	for _, command := range []string{
 		"(true; cd " + primary + "; case $x in a) :;; esac; git add f)",
 		"(true; cd " + primary + "; case $x in a) :;; esac; git push origin mu/ship-case)",
@@ -1363,6 +1507,7 @@ func TestSafetyCheckReadsCaseStackAndCdOptions(t *testing.T) {
 		"2>/dev/null cd " + primary + "; git add f",
 		"f() { cd " + primary + "; git add f; }",
 		"coproc { cd " + primary + "; git add f; }",
+		"f() # c1\n# c2\n{ cd " + primary + "; }; f; git add f",
 		"f() { cd " + primary + "; }; f; git add f",
 		"f() { eval 'cd " + primary + "'; }; f; git add f",
 		"eval 'f() { cd " + primary + "; }'; f; git add f",
@@ -1380,12 +1525,18 @@ func TestSafetyCheckReadsCaseStackAndCdOptions(t *testing.T) {
 			t.Errorf("%q allowed, want refused", command)
 		}
 	}
+	for _, command := range []string{`echo "$x"; git status`, `"$x" arg; git status`} {
+		if block, reason := runPiSafetyForGit(t, worktree, command); block {
+			t.Errorf("unrelated expandable command word %q: block=true reason=%q, want allowed", command, reason)
+		}
+	}
 	for _, command := range []string{
 		"(case $x in a) cd " + primary + ";; esac); git add f",
 		"pushd " + primary + "; popd; git add f",
 		"pushd -n " + primary + "; git add f",
 		"popd; git status",
 		"coproc cd " + primary + "; git add f",
+		"f() # c1\n# c2\n{ cd " + primary + "; }; git add f",
 		"f() { cd " + primary + "; }; git add f",
 		`git commit -m "case sensitivity fix"`,
 		"f() ( cd " + primary + "; ); f; git add f",

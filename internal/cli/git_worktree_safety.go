@@ -93,9 +93,6 @@ const maxShellPayloadDepth = 4
 // function set (evaluateGitPayloadSafety). A call to a
 // function whose body moves the directory leaves it unknown.
 func evaluateGitScriptSafety(homeDir, taskID, command string, depth int, ifs bool, shell *gitShell) (bool, string) {
-	if hasGitCommandSubstitution(command) {
-		return true, "compound shell command with command substitution is not allowed for git mutation"
-	}
 	mode := gitSafetyBackslashMode()
 	stripped, feeds := splitHeredocBodies(command)
 	var payloads []string
@@ -119,18 +116,26 @@ func evaluateGitScriptSafety(homeDir, taskID, command string, depth int, ifs boo
 	}
 	var subshells []shellDir
 	segments := tokenizeSegments(mode, stripped)
-	for i, segment := range segments {
+	for _, segment := range segments {
+		if segment[0].unmodeledFunctionHead {
+			return true, "function name is not modeled; git mutation cannot be checked"
+		}
+	}
+	if hasGitCommandSubstitution(command) {
+		return true, "compound shell command with command substitution is not allowed for git mutation"
+	}
+	for _, segment := range segments {
+		if segment[0].invalidFunctionBody {
+			return true, "function head has no valid bash body; git mutation cannot be checked"
+		}
 		if segment[0].unfinished {
 			return true, "shell case is unfinished; git mutation cannot be checked"
-		}
-		if i > 0 && definesFunction(segments[i-1]) && !segment[0].body {
-			shell.functions.finishDefinition(functionName(segments[i-1]), len(shell.functions.commandCall), shellFunction{})
 		}
 		if segment[0].subshell {
 			if segment[0].text == "(" {
 				opened := shellDir{shell.path, shell.previous, shell.stack, nil, shell.moves, len(shell.functions.commandCall)}
-				if segment[0].body && i > 0 && definesFunction(segments[i-1]) {
-					opened.head = segments[i-1]
+				if segment[0].functionBodyHead != nil {
+					opened.head = segment[0].functionBodyHead
 				}
 				subshells = append(subshells, opened)
 			} else if n := len(subshells); n > 0 {
