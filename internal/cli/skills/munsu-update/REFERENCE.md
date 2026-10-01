@@ -35,9 +35,8 @@ Typed outcomes:
 
 - `already-current` — no update and no nudge.
 - `fast-forwarded` — advanced; nudge this Captain.
-- `state-only-skipped` — no Git worktree.
 - `dirty` / `diverged` — left untouched; report to the General.
-- `offline` / `wrong-remote` / `wrong-branch` / `invalid-provenance` — skipped; report the reason.
+- `offline` / `wrong-remote` / `wrong-branch` / `invalid-provenance` / `unsupported-home` — skipped; report the reason.
 
 Only `fast-forwarded` authorizes a re-read nudge:
 

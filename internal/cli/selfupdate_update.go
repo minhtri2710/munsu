@@ -38,37 +38,11 @@ var doUpdateIn = UpdateIn
 var doArmBackground = orchestrator.ArmBackground
 
 // resolveBuildIdentity sets InstalledVersion and InstalledCommitSHA on the
-// snapshot from the given commit SHA. Shared by UpdateWithHandshake and
-// UpdateWithHandshakeEx to keep version and commit identity in sync.
+// snapshot from the given commit SHA, keeping version and commit identity in
+// sync.
 func resolveBuildIdentity(snap *WatcherSnapshot, commit string) {
 	snap.InstalledCommitSHA = commit
 	snap.InstalledVersion = VersionString(commit)
-}
-
-// resolveInstalledVersion populates InstalledPath, InstalledVersion, and
-// InstalledCommitSHA on the snapshot by resolving the binary's real path
-// and inspecting the git HEAD.
-// Made injectable for tests so they can set known values without a real git repo.
-var resolveInstalledVersion = func(snap *WatcherSnapshot) {
-	execPath, err := os.Executable()
-	if err != nil {
-		return
-	}
-	realPath, err := filepath.EvalSymlinks(execPath)
-	if err != nil {
-		realPath = execPath
-	}
-	snap.InstalledPath = realPath
-
-	installRoot, err := findGitRoot(filepath.Dir(realPath))
-	if err != nil {
-		return
-	}
-	commit, err := ShortHEAD(installRoot)
-	if err != nil {
-		return
-	}
-	resolveBuildIdentity(snap, commit)
 }
 
 // UpdateIn performs a fast-forward-only git pull + rebuild on the given

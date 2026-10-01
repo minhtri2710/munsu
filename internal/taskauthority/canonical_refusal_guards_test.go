@@ -910,9 +910,9 @@ func TestGuardDeliveryReadsRefuseEvidenceBoundToAnotherTask(t *testing.T) {
 		mustAuthorize(t, c, "t1", rev, "op-auth-1")
 		mustRevoke(t, c, "t1", rev+1, "op-auth-1", "superseded", "op-revoke-1")
 
-		// Control: the committed revocation resolves by its operation identity.
-		if _, err := c.DeliveryRevocationByOperation(mustTaskID(t, "t1"), "op-revoke-1"); err != nil {
-			t.Fatalf("DeliveryRevocationByOperation with the committed record: %v", err)
+		// Control: the currency read resolves the committed revocation.
+		if _, err := c.DeliveryCurrency(mustTaskID(t, "t1")); err != nil {
+			t.Fatalf("DeliveryCurrency with the committed revocation: %v", err)
 		}
 
 		key := deliveryRevocationKey("t1", "op-revoke-1")
@@ -921,7 +921,7 @@ func TestGuardDeliveryReadsRefuseEvidenceBoundToAnotherTask(t *testing.T) {
 		rec.TaskID = "t2"
 		writeEvidenceForTest(t, c, key, rec)
 
-		_, err := c.DeliveryRevocationByOperation(mustTaskID(t, "t1"), "op-revoke-1")
+		_, err := c.DeliveryCurrency(mustTaskID(t, "t1"))
 		wantErrSubstring(t, err, "is bound to a different task", "revocation substituted from another task")
 	})
 
@@ -968,9 +968,8 @@ func writeEvidenceForTest(t *testing.T, c *Canonical, key string, rec any) {
 	}
 }
 
-// The by-operation reads take an operation identity straight into a document
-// key. An unsafe value would build a key outside the task's evidence
-// directory, and an identity nothing was ever committed under names no
+// The by-operation outcome read takes an operation identity straight into a
+// document key. An identity nothing was ever committed under names no
 // evidence at all.
 func TestGuardDeliveryByOperationReadsRefuseUnusableIdentities(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
@@ -981,32 +980,11 @@ func TestGuardDeliveryByOperationReadsRefuseUnusableIdentities(t *testing.T) {
 	mustCommitOutcome(t, c, "t1", rev+3, "op-auth-2", DeliveryOutcomeCompleted, "merged", "op-outcome-1")
 
 	taskID := mustTaskID(t, "t1")
-	// Control: each read resolves its committed record by identity.
-	if _, err := c.DeliveryAuthorizationByOperation(taskID, "op-auth-1"); err != nil {
-		t.Fatalf("DeliveryAuthorizationByOperation: %v", err)
-	}
-	if _, err := c.DeliveryRevocationByOperation(taskID, "op-revoke-1"); err != nil {
-		t.Fatalf("DeliveryRevocationByOperation: %v", err)
-	}
+	// Control: the read resolves its committed record by identity.
 	if _, err := c.DeliveryOutcomeByOperation(taskID, "op-outcome-1"); err != nil {
 		t.Fatalf("DeliveryOutcomeByOperation: %v", err)
 	}
 
-	t.Run("an unsafe authorization identity", func(t *testing.T) {
-		_, err := c.DeliveryAuthorizationByOperation(taskID, "../op-auth-1")
-		wantErrSubstring(t, err, "authorization operation identity must be a safe non-empty value", "DeliveryAuthorizationByOperation with a path-separating identity")
-	})
-	t.Run("an unsafe revocation identity", func(t *testing.T) {
-		_, err := c.DeliveryRevocationByOperation(taskID, "../op-revoke-1")
-		wantErrSubstring(t, err, "revocation operation identity must be a safe non-empty value", "DeliveryRevocationByOperation with a path-separating identity")
-	})
-	t.Run("a revocation identity nothing was committed under", func(t *testing.T) {
-		_, err := c.DeliveryRevocationByOperation(taskID, "op-revoke-never")
-		if !errors.Is(err, ErrNotFound) {
-			t.Fatalf("DeliveryRevocationByOperation(unknown) = %v, want ErrNotFound", err)
-		}
-		wantErrSubstring(t, err, "has no delivery revocation", "DeliveryRevocationByOperation with an unknown identity")
-	})
 	t.Run("an outcome identity nothing was committed under", func(t *testing.T) {
 		_, err := c.DeliveryOutcomeByOperation(taskID, "op-outcome-never")
 		if !errors.Is(err, ErrNotFound) {

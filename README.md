@@ -5,9 +5,9 @@
 </p>
 
 Standalone CLI port of firstmate soldier capabilities, usable from any project directory.
-provides the capability — spawning autonomous agents in visible session backends, supervising
-them with an event-driven zero-token watcher, and delivering finished PRs or
-investigation reports — without requiring a specific project checkout.
+It spawns autonomous agents in visible session backends, supervises them with an
+event-driven zero-token watcher, and delivers finished PRs or investigation reports,
+without requiring a specific project checkout.
 
 ## What it is
 
@@ -32,11 +32,6 @@ make install
 ```
 
 This installs `munsu` into `${XDG_BIN_HOME:-$HOME/.local/bin}`. Override the destination with `make install BINDIR=/custom/bin`.
-
-### Option 3: Download a release binary
-
-Pre-built binaries are published on the [GitHub releases page](https://github.com/minhtri2710/munsu/releases).
-Download the archive for your platform, extract it, and place the `munsu` binary on your `$PATH`.
 
 ### PATH setup
 
@@ -97,9 +92,13 @@ agent harnesses auto-discover at session start.
 | **munsu-ops** | Fleet orchestration — init home, session-start, spawn/supervise soldiers, task lifecycle, captains, watcher, delivery helpers. | Running munsu, spawning soldiers, claiming wakes, managing tasks. |
 | **captain-provisioning** | Full captain lifecycle — seed, launch, retire, handoff, config-push — following the idle-by-default charter contract. | Provisioning, inspecting, or retiring a persistent domain supervisor (captain). |
 | **munsu-update** | Self-update munsu and fast-forward captain homes. | Invoking `/munsu-update`, "update munsu", "pull the latest munsu". |
-| **bootstrap-diagnostics** | Handle session-start bootstrap diagnostics — toolchain readiness lines. | Session-start diagnostic output (MISSING, NEEDS_GH_AUTH, TANGLE, etc.). |
+| **bootstrap-diagnostics** | Handle session-start bootstrap diagnostics — toolchain readiness lines. | Session-start diagnostic output (MISSING, NEEDS_GH_AUTH, SOLDIER_HARNESS, SOLDIER_DISPATCH, SECOND_LIVENESS). |
 | **harness-adapters** | Verified adapter launch templates for spawning soldiers — model flags, effort flags, harness detection, and turn-end hooks. | Spawning soldiers with harness-specific flags. |
 | **stuck-soldier-recovery** | Escalation ladder for unresponsive or stuck soldiers — peek, steer, interrupt, relaunch, fail. | Unresponsive or stuck soldier. |
+| **diagnostic-reasoning** | Root-cause diagnostic reasoning for inter-task dependencies and stuck soldier recovery. | Diagnosing a blocked dependency or a stuck soldier. |
+| **afk** | Away-mode supervision — start, return from, and check the AFK sub-supervisor lifecycle. | Leaving the fleet unattended or returning to it. |
+| **decision-hold-lifecycle** | Complete investigations and visual reviews without losing unresolved General decisions. | An investigation or visual review that leaves a decision open. |
+| **ask-user-authority** | Boundary rules for autonomous execution versus asking the human for approval. | Deciding whether an action needs human approval. |
 
 ## Usage examples
 
@@ -149,8 +148,7 @@ munsu captain list
 - `docs/port-mapping.md` — full command reference grouped by domain.
 - `CONTRIBUTING.md` — how to contribute.
 - `AGENTS.md` — conventions file for soldiers working on munsu.
-- `COMMANDS.md` — curated command map grouped by lifecycle phase; use `munsu --help` and per-command `--help` for the complete registered set.
-- `SUPERVISION.md` — watch/guard/afk loop details.
+- `internal/cli/skills/munsu-ops/` — canonical operator skill (`munsu skill show munsu-ops`): `COMMANDS.md` command map and `SUPERVISION.md` watch/wake/guard/AFK loop.
 
 ## License
 

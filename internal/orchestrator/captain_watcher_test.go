@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -9,21 +10,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/config"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 )
-
-type captainTestProbe struct{}
-
-func (captainTestProbe) Probe(string, map[string]string) (bool, error) { return false, nil }
-
-type captainTestSender struct{}
-
-func (captainTestSender) Alive(string, map[string]string) (bool, error) { return false, nil }
-func (captainTestSender) Send(string, map[string]string, string) BoundSendResult {
-	return BoundSendResult{}
-}
-
-func captainRunCycle(home string) (bool, error) {
-	return RunCycleWithProbeAndSender(home, captainTestProbe{}, captainTestSender{}, NewCaptainWatcherHooks(&captainNotificationTransport{acknowledged: true}, nil), NoopRetirementPort{}, acceptingCheckValidationPort{}, NoopTaskStatePort{})
-}
 
 // --- WatcherStatusSummary tests ---
 
@@ -113,20 +99,56 @@ func TestEnsureWatcher_StartsWhenChildWorkInFlight(t *testing.T) {
 func TestEnsureWatcher_StopsWhenNoChildWork(t *testing.T) {
 	tmp := t.TempDir()
 	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-
-	// Simulate a watcher identity and beat.
-	id := NewIdentity(tmp)
-	WriteIdentity(tmp, id)
-	WriteBeat(tmp)
-
-	status := WatcherStatusSummary(tmp)
-	if status != WatcherStopped {
-		t.Skipf("watcher status is %s -- no actual watcher process to validate ownership; skip stop test", status)
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		t.Fatal(err)
 	}
-	// We can't actually stop a non-running watcher, but EnsureWatcher(false)
-	// should be idempotent.
+
+	// A real watcher child held alive, published as the running watcher: its
+	// identity, a fresh beat and the lease all name its PID.
+	t.Setenv(watcherChildHoldEnv, "1m")
+	child := armWatcherChild(t)
+	if err := EnsureWatcher(tmp, true); err != nil {
+		t.Fatalf("EnsureWatcher(true): %v", err)
+	}
+	pid, ok := readWatcherChildPID(child.pidPath, child.waits.pid)
+	if !ok {
+		t.Fatalf("watcher child never recorded a PID at %s", child.pidPath)
+	}
+	id := NewIdentity(tmp)
+	executable, processStart, err := mhome.ProcessIdentity(pid)
+	if err != nil {
+		t.Fatalf("reading watcher child identity: %v", err)
+	}
+	id.PID, id.Executable, id.ProcessStart = pid, executable, processStart
+	if err := WriteIdentity(tmp, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mhome.WatcherBeatPath(tmp), []byte(fmt.Sprintf("%d %d", time.Now().Unix(), pid)), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if claimed, err := mhome.ClaimWatcherLease(tmp, pid); err != nil || !claimed {
+		t.Fatalf("claiming watcher lease for child: claimed=%v err=%v", claimed, err)
+	}
+	if status := WatcherStatusSummary(tmp); status != WatcherRunning {
+		t.Fatalf("precondition: watcher status = %s, want running", status)
+	}
+
+	// Reap concurrently: this test process is the child's parent, so an exited
+	// but unwaited child is a zombie that still reads alive, and EnsureWatcher
+	// would rightly report it as a watcher that did not exit.
+	exited := make(chan bool, 1)
+	go func() { exited <- awaitProcessExit(pid, child.waits.exit) }()
 	if err := EnsureWatcher(tmp, false); err != nil {
-		t.Fatalf("EnsureWatcher(false) with orphan artifacts: %v", err)
+		t.Fatalf("EnsureWatcher(false) with a running watcher: %v", err)
+	}
+	if !<-exited {
+		t.Fatalf("EnsureWatcher(false) did not stop watcher PID %d", pid)
+	}
+	child.state = reapCompleted
+	if status := WatcherStatusSummary(tmp); status != WatcherAbsent {
+		t.Errorf("watcher status after stop = %s, want absent (beat and identity cleared)", status)
+	}
+	if lease, err := mhome.ReadWatcherLease(tmp); err != nil || lease != nil {
+		t.Errorf("watcher lease after stop = %+v, err=%v; want released", lease, err)
 	}
 }

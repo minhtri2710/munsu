@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -46,39 +45,6 @@ type PruneResult struct {
 	Workspaces []PruneWorkspace `json:"workspaces"`
 }
 
-// pruneWorkspaceListResponse matches the herdr CLI JSON output for workspace list.
-type pruneWorkspaceListResponse struct {
-	Result struct {
-		Workspaces []pruneWorkspaceEntry `json:"workspaces"`
-	} `json:"result"`
-}
-
-type pruneWorkspaceEntry struct {
-	WorkspaceID string `json:"workspace_id"`
-	Label       string `json:"label"`
-	TabCount    int    `json:"tab_count"`
-	AgentStatus string `json:"agent_status"`
-}
-
-// herdrCLI runs a herdr CLI command with --session and returns stdout.
-func herdrCLI(session string, args ...string) (string, error) {
-	bin, err := exec.LookPath("herdr")
-	if err != nil {
-		return "", fmt.Errorf("herdr: not found on PATH: %w", err)
-	}
-	fullArgs := append([]string{"--session", session}, args...)
-	cmd := exec.Command(bin, fullArgs...)
-	cmd.Env = append(os.Environ(), "HERDR_SESSION="+session)
-	out, err := cmd.Output()
-	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("herdr %v: %s", fullArgs, strings.TrimSpace(string(ee.Stderr)))
-		}
-		return "", fmt.Errorf("herdr %v: %w", fullArgs, err)
-	}
-	return strings.TrimSpace(string(out)), nil
-}
-
 // denyListedLabel returns true if the label must never be closed by prune.
 // Foreign orchestrators and non-munsu labels are out of scope. Live munsu
 // captain/primary workspaces are protected by live-agent and live-meta checks.
@@ -116,7 +82,7 @@ func liveWorkspaceIDsFromTaskMeta(homeDir string) (map[string]bool, error) {
 		}
 		meta, err := home.ReadMetaFile(filepath.Join(stateDir, e.Name()))
 		if err != nil {
-			continue // skip unreadable meta
+			return nil, fmt.Errorf("reading task meta %s: %w", e.Name(), err)
 		}
 		if wsID := meta["herdr_workspace_id"]; wsID != "" {
 			ids[wsID] = true
@@ -145,11 +111,11 @@ func RunPrune(opts PruneOptions) (*PruneResult, error) {
 	}
 
 	// Step 2: List herdr workspaces.
-	out, err := herdrCLI(session, "workspace", "list")
+	out, err := runHerdr(backendCommandWorktree, session, []string{"workspace", "list"}, false)
 	if err != nil {
 		return nil, fmt.Errorf("listing workspaces: %w", err)
 	}
-	var resp pruneWorkspaceListResponse
+	var resp herdrWorkspaceListResponse
 	if err := json.Unmarshal([]byte(out), &resp); err != nil {
 		return nil, fmt.Errorf("parsing workspace list: %w", err)
 	}
@@ -157,7 +123,7 @@ func RunPrune(opts PruneOptions) (*PruneResult, error) {
 	// Step 3: Scan live task meta for referenced workspace IDs.
 	liveWSIDs, err := liveWorkspaceIDsFromTaskMeta(opts.HomeDir)
 	if err != nil {
-		liveWSIDs = nil // best-effort: treat as empty
+		return nil, fmt.Errorf("refusing to prune: scanning live task meta: %w", err)
 	}
 
 	result := &PruneResult{
@@ -213,7 +179,7 @@ func RunPrune(opts PruneOptions) (*PruneResult, error) {
 
 		// Prune candidate.
 		if opts.Apply {
-			_, closeErr := herdrCLI(session, "workspace", "close", ws.WorkspaceID)
+			_, closeErr := runHerdr(backendCommandWorktree, session, []string{"workspace", "close", ws.WorkspaceID}, false)
 			if closeErr != nil {
 				pw.Action = "skip"
 				pw.Reason = fmt.Sprintf("close failed: %v", closeErr)

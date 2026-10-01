@@ -1,8 +1,11 @@
 package home
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +21,18 @@ type ChangeItem struct {
 	Data   []byte `json:"data"`
 	Digest string `json:"digest,omitempty"`
 }
+
+// ErrInDoubt reports a commit whose journal record is durable but whose
+// application failed and could not be rolled forward in place. The change is
+// committed: the next Commit or recovery of the same scope applies it, so a
+// caller must not treat it as "nothing happened" or retry from the same
+// expected revision.
+var ErrInDoubt = errors.New("home: commit durable but not yet applied")
+
+// commitStep runs before each step of Commit's first pass (every item apply,
+// the revision write, the record removal); tests replace it to inject a
+// failure or crash at any cut after the record is durable.
+var commitStep = func() error { return nil }
 
 // journalRecord is the durable write-ahead intent for one change-set commit.
 // Recovery redoes a record only when the scope revision shows the commit was
@@ -64,7 +79,9 @@ func (h *Home) RecoverPending(lk *Lock) error {
 // It verifies optimistic concurrency (expectedRevision must match the current
 // scope revision) and fencing (lk must still be held). A write-ahead journal
 // record is fsynced before the items are applied, so an interrupted commit is
-// recovered mechanically on the next Open. It returns the new scope revision.
+// recovered mechanically on the next Open. Once that record is durable, a
+// failed application is rolled forward in place; if that also fails Commit
+// returns ErrInDoubt. It returns the new scope revision.
 func (h *Home) Commit(lk *Lock, txnID string, expectedRevision uint64, items []ChangeItem) (uint64, error) {
 	if err := h.requireLiveFencedHolder(lk); err != nil {
 		return 0, err
@@ -109,18 +126,38 @@ func (h *Home) Commit(lk *Lock, txnID string, expectedRevision uint64, items []C
 	if err := h.writeJournalRecord(rec); err != nil {
 		return 0, err
 	}
-	for _, it := range items {
-		if err := h.applyItem(it); err != nil {
-			return 0, err
+	// The record is the commit point: from here a failure rolls the record
+	// forward in place under lk instead of reporting a plain failure.
+	if err := h.applyRecord(rec); err != nil {
+		if rerr := h.recoverRecordLocked(lk.scope, h.journalPath(lk.scope, txnID)); rerr != nil {
+			return 0, fmt.Errorf("%w: txn %s: %w", ErrInDoubt, txnID, errors.Join(err, rerr))
 		}
 	}
-	if err := h.writeRevision(lk.scope, newRev); err != nil {
-		return 0, err
-	}
-	if err := os.Remove(h.journalPath(lk.scope, txnID)); err != nil && !os.IsNotExist(err) {
-		return 0, fmt.Errorf("home: remove journal record: %w", err)
-	}
 	return newRev, nil
+}
+
+func (h *Home) applyRecord(rec journalRecord) error {
+	for _, it := range rec.Items {
+		if err := commitStep(); err != nil {
+			return err
+		}
+		if err := h.applyItem(it); err != nil {
+			return err
+		}
+	}
+	if err := commitStep(); err != nil {
+		return err
+	}
+	if err := h.writeRevision(rec.Scope, rec.NewRevision); err != nil {
+		return err
+	}
+	if err := commitStep(); err != nil {
+		return err
+	}
+	if err := os.Remove(h.journalPath(rec.Scope, rec.TxnID)); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("home: remove journal record: %w", err)
+	}
+	return nil
 }
 
 // recover replays interrupted write-ahead journal records. Each leftover record
@@ -210,9 +247,9 @@ func (h *Home) recoverRecordLocked(scope, path string) error {
 		}
 		return fmt.Errorf("home: read journal record: %w", err)
 	}
-	var rec journalRecord
-	if err := json.Unmarshal(data, &rec); err != nil {
-		return fmt.Errorf("home: decode journal record %s: %w", filepath.Base(path), err)
+	rec, err := decodeJournalRecord(path, data)
+	if err != nil {
+		return err
 	}
 	if err := h.validateRecord(scope, path, rec); err != nil {
 		return err
@@ -280,14 +317,29 @@ func (h *Home) peekRecordScope(path string) (string, error) {
 		}
 		return "", fmt.Errorf("home: read journal record: %w", err)
 	}
-	var rec journalRecord
-	if err := json.Unmarshal(data, &rec); err != nil {
-		return "", fmt.Errorf("home: decode journal record %s: %w", filepath.Base(path), err)
+	rec, err := decodeJournalRecord(path, data)
+	if err != nil {
+		return "", err
 	}
 	if rec.Scope == "" {
 		return "", fmt.Errorf("home: corrupt journal record %s: empty scope", filepath.Base(path))
 	}
 	return rec.Scope, nil
+}
+
+// decodeJournalRecord decodes exactly one current-writer journal record: an
+// unknown field or trailing data is corruption, not a record to recover.
+func decodeJournalRecord(path string, data []byte) (journalRecord, error) {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	var rec journalRecord
+	if err := dec.Decode(&rec); err != nil {
+		return journalRecord{}, fmt.Errorf("home: decode journal record %s: %w", filepath.Base(path), err)
+	}
+	if err := dec.Decode(new(json.RawMessage)); err != io.EOF {
+		return journalRecord{}, fmt.Errorf("home: decode journal record %s: trailing data after record", filepath.Base(path))
+	}
+	return rec, nil
 }
 
 func (h *Home) applyItem(it ChangeItem) error {

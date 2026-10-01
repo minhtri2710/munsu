@@ -36,7 +36,7 @@ func TestOpencodeSafetyCheckDeny(t *testing.T) {
 	cmd.SetErr(io.Discard)
 
 	stdout, stderr := captureBoth(func() {
-		runSafetyCheck(cmd, gitDir, "munsu watch arm", "", "opencode")
+		runSafetyCheck(cmd, gitDir, "munsu watch", "", "opencode")
 	})
 
 	if exitCode != 2 {

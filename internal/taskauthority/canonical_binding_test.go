@@ -327,91 +327,6 @@ func TestCanonicalBindingsSurviveHomeReopen(t *testing.T) {
 	}
 }
 
-// TestCanonicalBindWorktreeInterruptedCommitRecovers proves an interrupted
-// home.Commit of a worktree binding is recovered mechanically on the next
-// home.Open: the binding is present exactly once, the revision advances exactly
-// once, and no duplicate or contradictory Task state is left behind.
-func TestCanonicalBindWorktreeInterruptedCommitRecovers(t *testing.T) {
-	c, _, root := newTestCanonical(t)
-	mustCreate(t, c, "t1")
-
-	// Simulate an interrupted BindWorktree: plant a write-ahead journal record
-	// that would commit the worktree binding and receipt at scope revision 1,
-	// exactly as a real interrupted home.Commit would.
-	next := Aggregate{
-		SchemaVersion: TaskAuthoritySchema,
-		TaskID:        "t1",
-		Generation:    1,
-		Revision:      2,
-		Current:       true,
-		Definition:    TaskDefinition{Owner: "owner", Description: "work", Kind: "ship"},
-		Phase:         PhaseQueued,
-	}
-	wt := worktreeBinding()
-	next.Worktree = &wt
-
-	docData, err := json.Marshal(taskDoc{HomeRevision: 2, Aggregate: next})
-	if err != nil {
-		t.Fatal(err)
-	}
-	rec := receipt{OperationID: "op-interrupted-bind", Digest: "intent", TaskID: "t1", Generation: 1, Revision: 2, Phase: string(PhaseQueued)}
-	recData, err := json.Marshal(rec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	scope := taskScope("t1")
-	txnID := "op-interrupted-bind"
-	journalRec := struct {
-		TxnID            string            `json:"txn_id"`
-		Scope            string            `json:"scope"`
-		FenceToken       uint64            `json:"fence_token"`
-		ExpectedRevision uint64            `json:"expected_revision"`
-		NewRevision      uint64            `json:"new_revision"`
-		Items            []home.ChangeItem `json:"items"`
-		Committed        bool              `json:"committed"`
-	}{
-		TxnID: txnID, Scope: scope, FenceToken: 1,
-		ExpectedRevision: 1, NewRevision: 2, Committed: false,
-		Items: []home.ChangeItem{
-			{Root: home.RootState, Key: taskCurrentKey("t1"), Data: docData},
-			{Root: home.RootState, Key: receiptKey("op-interrupted-bind"), Data: recData},
-		},
-	}
-	data, err := json.Marshal(journalRec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	journalDir := filepath.Join(root, home.JournalDirName)
-	if err := os.WriteFile(filepath.Join(journalDir, scope+"."+txnID+".json"), append(data, '\n'), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	h2, err := home.Open(root)
-	if err != nil {
-		t.Fatalf("home.Open after interruption: %v", err)
-	}
-	c2, err := NewCanonical(h2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	agg, err := c2.Get(mustTaskID(t, "t1"))
-	if err != nil {
-		t.Fatalf("read recovered binding: %v", err)
-	}
-	if agg.Worktree == nil || agg.Worktree.LeaseID != "lease-wt" {
-		t.Fatalf("recovered aggregate worktree = %+v", agg.Worktree)
-	}
-	if agg.Revision != 2 {
-		t.Fatalf("recovered revision = %d, want 2 (advanced exactly once)", agg.Revision)
-	}
-
-	// The recovered scope revision is 2: a fresh mutation must use it.
-	ep := bindEndpointRequest(c2, "t1", preconditionOf(1, 2))
-	if _, err := c2.BindEndpoint(mustOperation(t, "op-bind-after-recovery", ep), ep); err != nil {
-		t.Fatalf("bind endpoint after recovery: %v", err)
-	}
-}
-
 // TestCanonicalMalformedInterruptedStateFailsClosed proves a journal record
 // that replays to a malformed current document fails closed on read rather
 // than serving contradictory state.
@@ -431,10 +346,9 @@ func TestCanonicalMalformedInterruptedStateFailsClosed(t *testing.T) {
 		ExpectedRevision uint64            `json:"expected_revision"`
 		NewRevision      uint64            `json:"new_revision"`
 		Items            []home.ChangeItem `json:"items"`
-		Committed        bool              `json:"committed"`
 	}{
 		TxnID: txnID, Scope: scope, FenceToken: 1,
-		ExpectedRevision: 1, NewRevision: 2, Committed: false,
+		ExpectedRevision: 1, NewRevision: 2,
 		Items: []home.ChangeItem{{Root: home.RootState, Key: taskCurrentKey("t1"), Data: []byte("{not json")}},
 	}
 	data, err := json.Marshal(journalRec)

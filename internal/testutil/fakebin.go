@@ -194,27 +194,6 @@ func appendUnique(dirs []string, values ...string) []string {
 	return dirs
 }
 
-// POSIXShell returns the absolute path of a real POSIX interpreter for
-// portable fake executable and sidecar fixtures, failing the test if the
-// machine has none. Bash-dependent launch fixtures should use BashShell and
-// BashShellDirs instead, because those helpers also guarantee the required
-// support utilities are resolvable from the fixture PATH.
-func POSIXShell(t *testing.T) string {
-	t.Helper()
-	shell, err := posixShellPath()
-	if err != nil {
-		t.Fatalf("resolve POSIX shell: %v", err)
-	}
-	return shell
-}
-
-// POSIXShellDir returns the directory to place on PATH so that a POSIX shell
-// resolves by name. It is the portable stand-in for "/bin" in a PATH fixture.
-func POSIXShellDir(t *testing.T) string {
-	t.Helper()
-	return filepath.Dir(POSIXShell(t))
-}
-
 // BashShell returns a real executable bash from an environment that can also
 // resolve the external utilities required by generated launch scripts.
 func BashShell(t *testing.T) string {

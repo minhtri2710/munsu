@@ -9,31 +9,8 @@ import (
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
-func TestFakeSessionBackend(t *testing.T) {
-	fake := testutil.NewFakeSessionBackend()
-	winID, err := fake.NewWindow("default", "test-worker")
-	if err != nil {
-		t.Fatalf("NewWindow failed: %v", err)
-	}
-
-	if alive, err := fake.CheckAlive(winID); !alive || err != nil {
-		t.Error("expected window to be alive")
-	}
-
-	if err := fake.SendKeys(winID, "ls -la\n"); err != nil {
-		t.Fatalf("SendKeys failed: %v", err)
-	}
-
-	if err := fake.Teardown(winID); err != nil {
-		t.Fatalf("Teardown failed: %v", err)
-	}
-	if alive, _ := fake.CheckAlive(winID); alive {
-		t.Error("expected window to be dead after teardown")
-	}
-}
-
 func TestResolveExplicitIdentity(t *testing.T) {
-	home := testutil.TempHome(t)
+	testutil.TempHome(t)
 	testutil.ClearEnv(t)
 
 	// Controlled PATH: the requested binary must be verifiably present, and
@@ -44,7 +21,7 @@ func TestResolveExplicitIdentity(t *testing.T) {
 	defer os.Setenv("PATH", oldPath)
 	os.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
 
-	bk, name, err := backend.Resolve(home, "tmux")
+	bk, name, err := backend.Resolve("tmux")
 	if err != nil {
 		t.Fatalf("Resolve tmux failed: %v", err)
 	}
@@ -54,10 +31,10 @@ func TestResolveExplicitIdentity(t *testing.T) {
 }
 
 func TestResolveEmptyIdentityFailsClosed(t *testing.T) {
-	home := testutil.TempHome(t)
+	testutil.TempHome(t)
 	testutil.ClearEnv(t)
 
-	bk, name, err := backend.Resolve(home, "")
+	bk, name, err := backend.Resolve("")
 	if err == nil {
 		t.Fatalf("expected typed failure for empty requested identity, got %q (%T) — no auto-detect", name, bk)
 	}

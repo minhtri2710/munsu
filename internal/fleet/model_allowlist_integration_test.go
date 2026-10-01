@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/config"
-	fleetconfig "github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/testutil"
@@ -59,7 +58,7 @@ func assertNoTaskSideEffects(t *testing.T, homeDir, id string) {
 }
 
 func TestSpawn_DeniedExplicitModelFailsClosedBeforeSideEffects(t *testing.T) {
-	homeDir := t.TempDir()
+	homeDir := seedTypedSpawnHome(t, "test-project")
 	// Policy allows only the fleet canonical model; the explicit request is denied.
 	writeModelAllowlist(t, homeDir, "pi:opencode-go/deepseek-v4-flash\n")
 	spawnContext(t, homeDir)
@@ -95,7 +94,7 @@ func TestSpawn_DeniedExplicitModelFailsClosedBeforeSideEffects(t *testing.T) {
 }
 
 func TestSpawn_AutoSelectedDeniedModelFailsClosed(t *testing.T) {
-	homeDir := t.TempDir()
+	homeDir := seedTypedSpawnHome(t, "test-project")
 	// The model is auto-selected (adapter template default for codex), not explicit.
 	writeModelAllowlist(t, homeDir, "pi:opencode-go/deepseek-v4-flash\n")
 	spawnContext(t, homeDir)
@@ -118,7 +117,7 @@ func TestSpawn_AutoSelectedDeniedModelFailsClosed(t *testing.T) {
 }
 
 func TestSpawn_AllowedModelPassesAllowlist(t *testing.T) {
-	homeDir := t.TempDir()
+	homeDir := seedTypedSpawnHome(t, "test-project")
 	writeModelAllowlist(t, homeDir, "pi:claude-sonnet-4-20250515\n")
 	spawnContext(t, homeDir)
 
@@ -144,8 +143,9 @@ func TestSpawn_AllowedModelPassesAllowlist(t *testing.T) {
 	}
 }
 
-func TestSpawn_AbsentPolicyPreservesCompatibility(t *testing.T) {
-	homeDir := t.TempDir()
+// An absent allowlist is an unset policy: any model passes to the next phase.
+func TestSpawn_AbsentPolicyAllowsAnyModel(t *testing.T) {
+	homeDir := seedTypedSpawnHome(t, "test-project")
 	spawnContext(t, homeDir)
 
 	_, err := Spawn(Args{
@@ -160,13 +160,13 @@ func TestSpawn_AbsentPolicyPreservesCompatibility(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected brief-exists failure")
 	}
-	if strings.Contains(err.Error(), "model allowlist") {
-		t.Fatalf("absent policy must preserve compatibility, got: %v", err)
+	if !strings.Contains(err.Error(), "no brief found") {
+		t.Fatalf("absent policy must not restrict the model; run should reach the brief check, got: %v", err)
 	}
 }
 
 func TestSpawn_EmptyPolicyFailsClosed(t *testing.T) {
-	homeDir := t.TempDir()
+	homeDir := seedTypedSpawnHome(t, "test-project")
 	writeModelAllowlist(t, homeDir, "# comments only\n\n")
 	spawnContext(t, homeDir)
 
@@ -189,7 +189,7 @@ func TestSpawn_EmptyPolicyFailsClosed(t *testing.T) {
 }
 
 func TestSpawn_MalformedPolicyFailsClosed(t *testing.T) {
-	homeDir := t.TempDir()
+	homeDir := seedTypedSpawnHome(t, "test-project")
 	writeModelAllowlist(t, homeDir, "not-an-identity\n")
 	spawnContext(t, homeDir)
 
@@ -225,7 +225,7 @@ func TestCaptainLaunch_DeniedModelFailsClosed(t *testing.T) {
 	if err := os.MkdirAll(captainHome, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(captainHome, "AGENTS.md"), []byte("# alpha\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(captainHome, CaptainCharterName), []byte("# alpha\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	writeCanonicalPiIntegration(t, captainHome)
@@ -254,7 +254,7 @@ func TestCaptainLaunch_AllowedModelPasses(t *testing.T) {
 	if err := os.MkdirAll(captainHome, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(captainHome, "AGENTS.md"), []byte("# alpha\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(captainHome, CaptainCharterName), []byte("# alpha\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	writeCanonicalPiIntegration(t, captainHome)
@@ -328,7 +328,7 @@ func TestRecoverLaunchReadiness_AllowedModelPasses(t *testing.T) {
 // unresolved; the policy must deny it because the runtime default cannot be
 // verified against the allowlist.
 func TestSpawn_UnresolvedModelFailsClosed(t *testing.T) {
-	homeDir := t.TempDir()
+	homeDir := seedTypedSpawnHome(t, "test-project")
 	writeModelAllowlist(t, homeDir, "pi:opencode-go/deepseek-v4-flash\n")
 	spawnContext(t, homeDir)
 
@@ -364,7 +364,7 @@ func TestCaptainLaunch_NoModelWithPolicyFailsClosed(t *testing.T) {
 	if err := os.MkdirAll(captainHome, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(captainHome, "AGENTS.md"), []byte("# alpha\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(captainHome, CaptainCharterName), []byte("# alpha\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	writeCanonicalPiIntegration(t, captainHome)
@@ -500,14 +500,14 @@ func TestSpawn_DispatchSelectionResolvedOnce(t *testing.T) {
 		t.Skip("fake quota-axi executable is POSIX-only")
 	}
 	homeDir := t.TempDir()
-	base := fleetconfig.FleetBaseDocument{
-		SchemaVersion: fleetconfig.FleetBaseSchemaVersion,
-		Config: fleetconfig.ProjectOverlay{
+	base := config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config: config.ProjectOverlay{
 			DefaultMode: "direct-pr",
 			Backend:     "tmux",
-			DispatchProfiles: []fleetconfig.DispatchProfile{
+			DispatchProfiles: []config.DispatchProfile{
 				{Name: "quota", Match: []string{"*"}, SelectStrategy: "quota-balanced",
-					Use: []fleetconfig.DispatchCandidate{
+					Use: []config.DispatchCandidate{
 						{Harness: harness.Codex, Model: "q-model"},
 						{Harness: harness.Pi, Model: "q-pi"},
 					}},

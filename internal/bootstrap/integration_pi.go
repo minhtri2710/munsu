@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/minhtri2710/munsu/internal/harness"
 )
@@ -15,10 +14,9 @@ import (
 // TypeScript file that hooks into Pi's extension API for session-start,
 // wake claim/follow-up (via agent_settled), turn-end guard, pre-tool checks, and scope gate.
 type PiAdapter struct {
-	HomeDir string
-	Cwd     string
-	Scope   string // "user" or "project"
-	DryRun  bool
+	Cwd    string
+	Scope  string // "user" or "project"
+	DryRun bool
 }
 
 // piExtensionSource is the TypeScript extension source. BINPATH is substituted
@@ -461,24 +459,6 @@ func PiExtensionTemplate(munsuBinPath string) string {
 		return strings.ReplaceAll(source, "BINPATH", encoded)
 	}
 	return strings.ReplaceAll(source, "BINPATH", string(data))
-}
-
-// GenerateManifest creates the integration manifest for the Pi adapter,
-// including a SHA-256 content digest and proper scope.
-func GenerateManifest(harnessName string, scope string, caps []Capability, contentDigest string) Manifest {
-	capStrs := make([]string, len(caps))
-	for i, c := range caps {
-		capStrs[i] = string(c)
-	}
-	return Manifest{
-		SchemaVersion: "munsu.integrate/v1",
-		Harness:       harnessName,
-		Version:       "1.0.0",
-		Scope:         scope,
-		InstalledAt:   time.Now().UTC().Format(time.RFC3339),
-		Capabilities:  capStrs,
-		ContentDigest: contentDigest,
-	}
 }
 
 // InstallPiExtension generates and installs the Pi extension file.

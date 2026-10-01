@@ -5,10 +5,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -47,13 +49,56 @@ func writeCaptainMeta(t *testing.T, parent, id, captainHome, window string) {
 	}
 }
 
+// piIntegrationPath is the home-relative file the pi captain integration installs.
+var piIntegrationPath = ".pi/extensions/" + harness.CanonicalPiIntegrationName
+
+// piInstallingIntegrationPort installs the canonical pi integration file and
+// reports it through CaptainPaths, as captainIntegrationAdapter does.
+type piInstallingIntegrationPort struct{ t *testing.T }
+
+func (p piInstallingIntegrationPort) EnsureCaptain(home, _ string) error {
+	writeCanonicalPiIntegration(p.t, home)
+	return nil
+}
+func (piInstallingIntegrationPort) Status(string, string) (IntegrationStatus, error) {
+	return IntegrationStatus{State: "installed"}, nil
+}
+func (piInstallingIntegrationPort) CaptainPaths(string, string) ([]string, error) {
+	return []string{piIntegrationPath}, nil
+}
+
 func writeCanonicalPiIntegration(t *testing.T, home string) {
 	t.Helper()
-	path := filepath.Join(home, ".pi", "extensions", "munsu-pi-integration.ts")
+	path := filepath.Join(home, filepath.FromSlash(piIntegrationPath))
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, []byte("// munsu-owned\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// worktreeCaptainHome builds an unregistered managed-worktree captain home
+// at captainHome, mirroring seed for the fixture's pi captain harness.
+func worktreeCaptainHome(t *testing.T, captainHome, id string) {
+	t.Helper()
+	repo := newWorktreeFixture(t)
+	gitTestRun(t, repo, "worktree", "add", "--detach", captainHome, "origin/main")
+	if err := writeWorktreeExcludes(captainHome, piIntegrationPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeCaptainProvenance(captainHome, repo); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{"state", "config", "data"} {
+		if err := os.MkdirAll(filepath.Join(captainHome, dir), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writeCaptainCharter(captainHome, "# "+id+"\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := home.SeedCaptainProvenance(captainHome, id); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -66,17 +111,7 @@ func seedCaptainForTest(t *testing.T, parent, id string) string {
 		t.Fatal(err)
 	}
 	captainHome := filepath.Join(parent, "captains", id)
-	for _, dir := range []string{"state", "config", "data"} {
-		if err := os.MkdirAll(filepath.Join(captainHome, dir), 0755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.WriteFile(filepath.Join(captainHome, "AGENTS.md"), []byte("# "+id+"\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := SeedProvenance(captainHome, id); err != nil {
-		t.Fatal(err)
-	}
+	worktreeCaptainHome(t, captainHome, id)
 	// Set up typed documents in parent home BEFORE registering captain.
 	setupTypedParentHome(t, parent, id)
 	// Register in typed captain registry with captain ID as project name.
@@ -153,25 +188,6 @@ func captainHomeWithSnapshot(t *testing.T, profile config.CaptainProfile) string
 	return home
 }
 
-// republishWithCaptainProfile re-stores the fleet base with the given
-// CaptainProfile (preserving the rest of the existing document) and republishes
-// the captain's snapshot, mirroring explicit authoring via
-// `munsu config set captain-harness`.
-func republishWithCaptainProfile(t *testing.T, parent, captainHome string, profile config.CaptainProfile) {
-	t.Helper()
-	base, err := config.LoadFleetBase(parent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	base.CaptainProfile = profile
-	if err := config.StoreFleetBase(parent, base); err != nil {
-		t.Fatal(err)
-	}
-	if err := publishResolvedSnapshot(parent, captainHome); err != nil {
-		t.Fatal(err)
-	}
-}
-
 // testProjectRecord carries the scoped Project facts a test fixture registers
 // through the canonical Fleet Registry (the sole lifecycle authority).
 type testProjectRecord struct {
@@ -179,18 +195,6 @@ type testProjectRecord struct {
 	Path   string
 	Mode   string
 	Config config.ProjectOverlay
-}
-
-// initTestHome creates a fresh canonical home so the Fleet Registry (the sole
-// lifecycle authority) can operate on it. The Fleet Registry is home-backed;
-// test fixtures must open a canonical home rather than a plain directory.
-func initTestHome(t *testing.T) string {
-	t.Helper()
-	homeDir := t.TempDir()
-	if _, err := home.Init(homeDir); err != nil {
-		t.Fatalf("home.Init: %v", err)
-	}
-	return homeDir
 }
 
 // testCaptainRecord carries the scoped Captain facts a test fixture registers
@@ -300,4 +304,48 @@ func storeTestDocuments(t *testing.T, homeDir string, base config.FleetBaseDocum
 			}
 		}
 	}
+}
+
+func gitTestRun(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmdArgs := append([]string{"-C", dir}, args...)
+	out, err := exec.Command("git", cmdArgs...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// newWorktreeFixture creates a remote, a project clone on main with one
+// commit, pushes, sets origin/HEAD, and returns the project repo path.
+func newWorktreeFixture(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	if out, err := exec.Command("git", "init", "--bare", remote).CombinedOutput(); err != nil {
+		t.Fatalf("git init --bare: %v\n%s", err, out)
+	}
+	project := filepath.Join(root, "project")
+	if out, err := exec.Command("git", "clone", remote, project).CombinedOutput(); err != nil {
+		t.Fatalf("git clone: %v\n%s", err, out)
+	}
+	// See initTestRepo: a repo built in t.TempDir() inherits the host's
+	// core.autocrlf, and the managed-worktree tests compare checked-out bytes
+	// to the bytes they wrote. Set on the clone rather than the bare remote
+	// because the linked worktree SeedFromWorktree creates shares this config.
+	gitTestRun(t, project, "config", "core.autocrlf", "false")
+	gitTestRun(t, project, "config", "user.name", "Munsu Test")
+	gitTestRun(t, project, "config", "user.email", "munsu@example.invalid")
+	gitTestRun(t, project, "checkout", "-b", "main")
+	if err := os.WriteFile(filepath.Join(project, "README.md"), []byte("# Project\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	gitTestRun(t, project, "add", "README.md")
+	gitTestRun(t, project, "commit", "-m", "initial")
+	gitTestRun(t, project, "push", "-u", "origin", "main")
+	gitTestRun(t, remote, "symbolic-ref", "HEAD", "refs/heads/main")
+	gitTestRun(t, project, "remote", "set-head", "origin", "main")
+	// Re-fetch so origin/HEAD resolves.
+	gitTestRun(t, project, "fetch", "origin")
+	return project
 }

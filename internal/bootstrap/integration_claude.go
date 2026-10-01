@@ -1,7 +1,8 @@
 // Package integrate manages opt-in harness integration.
 //
-// Claude adapter: generates .claude/settings.json with hooks anchored to
-// the munsu binary path, mirroring the munsu Claude hook contract.
+// JSON-hook adapter: generates one hooks JSON file (Claude's
+// .claude/settings.json, Codex's .codex/hooks.json) with hooks anchored to
+// the munsu binary path, merged into any user-owned hooks already there.
 
 package bootstrap
 
@@ -13,18 +14,33 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
+
+	"github.com/minhtri2710/munsu/internal/harness"
 )
 
-// claudeSettingsPath returns the path to .claude/settings.json for the given scope.
-func claudeSettingsPath(scope Scope, cwd string) (string, error) {
+// jsonHookHarness is a harness whose munsu hooks live in one JSON file under
+// a dot directory, shared with user-owned hooks.
+type jsonHookHarness struct {
+	name       string // harness name, also the --harness hook argument
+	dir        string // dot directory under the home or project root
+	file       string // hooks file name inside dir
+	writeTools []string
+}
+
+var (
+	claudeHooks = jsonHookHarness{name: harness.Claude, dir: ".claude", file: "settings.json", writeTools: claudeWriteToolNames}
+	codexHooks  = jsonHookHarness{name: harness.Codex, dir: ".codex", file: "hooks.json", writeTools: codexWriteToolNames}
+)
+
+// path returns the hooks file path for the given scope.
+func (h jsonHookHarness) path(scope Scope, cwd string) (string, error) {
 	switch scope {
 	case ScopeUser:
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return "", fmt.Errorf("cannot determine user home: %w", err)
 		}
-		return filepath.Join(home, ".claude", "settings.json"), nil
+		return filepath.Join(home, h.dir, h.file), nil
 	case ScopeProject:
 		if cwd == "" {
 			return "", fmt.Errorf("cwd is required for project scope")
@@ -33,16 +49,15 @@ func claudeSettingsPath(scope Scope, cwd string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("cannot resolve cwd %s: %w", cwd, err)
 		}
-		return filepath.Join(canonical, ".claude", "settings.json"), nil
+		return filepath.Join(canonical, h.dir, h.file), nil
 	default:
 		return "", fmt.Errorf("unsupported scope %q", scope)
 	}
 }
 
-// claudeHookCommand builds a JSON-marshaled command string for Claude hooks.
-func claudeHookCommand(munsuBin string, args ...string) string {
-	// Build the full quoted command string: "/path/to/munsu" arg1 arg2
-	// The path is JSON-marshaled to handle spaces/special chars.
+// jsonHookCommand builds a hook command string: the JSON-marshaled munsu
+// path (spaces and special characters survive) followed by the arguments.
+func jsonHookCommand(munsuBin string, args ...string) string {
 	binJSON, err := json.Marshal(munsuBin)
 	if err != nil {
 		binJSON = []byte(fmt.Sprintf("%q", munsuBin))
@@ -54,9 +69,20 @@ func claudeHookCommand(munsuBin string, args ...string) string {
 	return full
 }
 
-// claudeSettingsJSON builds the complete hooks JSON as a byte slice,
-// embedding the munsu binary path into each command.
-func claudeSettingsJSON(munsuBin string) ([]byte, error) {
+func (h jsonHookHarness) sessionStartCommand(munsuBin string) string {
+	return jsonHookCommand(munsuBin, "integrate", "sessionstart-nudge")
+}
+
+func (h jsonHookHarness) safetyCheckCommand(munsuBin string) string {
+	return jsonHookCommand(munsuBin, "integrate", "safety-check", "--harness", h.name)
+}
+
+func (h jsonHookHarness) guardCommand(munsuBin string) string {
+	return jsonHookCommand(munsuBin, "guard", "--harness", h.name)
+}
+
+// content returns the generated hooks JSON with the munsu binary path baked in.
+func (h jsonHookHarness) content(munsuBin string) string {
 	type hookEntry struct {
 		Type    string `json:"type"`
 		Command string `json:"command"`
@@ -66,11 +92,8 @@ func claudeSettingsJSON(munsuBin string) ([]byte, error) {
 		Hooks   []hookEntry `json:"hooks"`
 	}
 
-	sessionStartNudge := claudeHookCommand(munsuBin, "integrate", "sessionstart-nudge")
-	safetyCheck := claudeHookCommand(munsuBin, "integrate", "safety-check", "--harness", "claude")
-	guardCmd := claudeHookCommand(munsuBin, "guard", "--harness", "claude")
-
-	settings := struct {
+	safetyCheck := h.safetyCheckCommand(munsuBin)
+	hooks := struct {
 		Hooks map[string][]hookMatcher `json:"hooks"`
 	}{
 		Hooks: map[string][]hookMatcher{
@@ -78,7 +101,7 @@ func claudeSettingsJSON(munsuBin string) ([]byte, error) {
 				{
 					Matcher: "startup|resume|clear",
 					Hooks: []hookEntry{
-						{Type: "command", Command: sessionStartNudge},
+						{Type: "command", Command: h.sessionStartCommand(munsuBin)},
 					},
 				},
 			},
@@ -92,7 +115,7 @@ func claudeSettingsJSON(munsuBin string) ([]byte, error) {
 				{
 					// Native file-write tools bypass the shell entirely; without
 					// this matcher they reach the filesystem with no guard at all.
-					Matcher: writeToolMatcher(claudeWriteToolNames),
+					Matcher: writeToolMatcher(h.writeTools),
 					Hooks: []hookEntry{
 						{Type: "command", Command: safetyCheck},
 					},
@@ -101,41 +124,28 @@ func claudeSettingsJSON(munsuBin string) ([]byte, error) {
 			"Stop": {
 				{
 					Hooks: []hookEntry{
-						{Type: "command", Command: guardCmd},
+						{Type: "command", Command: h.guardCommand(munsuBin)},
 					},
 				},
 			},
 		},
 	}
 
-	return json.MarshalIndent(settings, "", "  ")
-}
-
-// ClaudeSettingsContent returns the settings JSON with the munsu binary path baked in.
-func ClaudeSettingsContent(munsuBinPath string) string {
-	data, err := claudeSettingsJSON(munsuBinPath)
+	data, err := json.MarshalIndent(hooks, "", "  ")
 	if err != nil {
-		// Fallback: shouldn't happen
 		return `{"hooks":{}}`
 	}
 	return string(data)
 }
 
-// ClaudeSettingsDigest returns the SHA-256 hex digest of the generated settings content.
-func ClaudeSettingsDigest(munsuBinPath string) string {
-	content := ClaudeSettingsContent(munsuBinPath)
-	sum := sha256.Sum256([]byte(content))
-	return hex.EncodeToString(sum[:])
-}
-
-// ClaudeSettingsHasOwnedHooks checks whether the settings.json at settingsPath contains
-// all expected munsu-owned hook commands anchored to the given munsu binary path.
-// Returns true when all expected hooks are present, along with a descriptive message.
-// The message lists which hooks are missing when the check fails.
-func ClaudeSettingsHasOwnedHooks(settingsPath, munsuBin string) (bool, string, error) {
-	data, err := os.ReadFile(settingsPath)
+// hasOwnedHooks checks whether the hooks file at path contains all expected
+// munsu-owned hook commands anchored to the given munsu binary path. The
+// message lists which hooks are missing when the check fails. Ownership is
+// structural because JSON cannot carry a first-line comment marker.
+func (h jsonHookHarness) hasOwnedHooks(path, munsuBin string) (bool, string, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return false, "", fmt.Errorf("reading claude settings: %w", err)
+		return false, "", fmt.Errorf("reading %s %s: %w", h.name, h.file, err)
 	}
 
 	var parsed struct {
@@ -148,83 +158,57 @@ func ClaudeSettingsHasOwnedHooks(settingsPath, munsuBin string) (bool, string, e
 		} `json:"hooks"`
 	}
 	if err := json.Unmarshal(data, &parsed); err != nil {
-		return false, "", fmt.Errorf("parsing claude settings JSON: %w", err)
+		return false, "", fmt.Errorf("parsing %s %s: %w", h.name, h.file, err)
 	}
-
-	sessionStartCmd := claudeHookCommand(munsuBin, "integrate", "sessionstart-nudge")
-	safetyCheckCmd := claudeHookCommand(munsuBin, "integrate", "safety-check", "--harness", "claude")
-	guardCmd := claudeHookCommand(munsuBin, "guard", "--harness", "claude")
 
 	hooksByEvent := parsed.Hooks
 	if hooksByEvent == nil {
-		return false, "no hooks section in settings", nil
+		return false, "no hooks section in " + h.file, nil
+	}
+
+	hasCommand := func(event, command string) bool {
+		for _, m := range hooksByEvent[event] {
+			for _, hook := range m.Hooks {
+				if hook.Type == "command" && hook.Command == command {
+					return true
+				}
+			}
+		}
+		return false
 	}
 
 	var missing []string
-
-	// Check SessionStart hook
-	foundSessionStart := false
-	if matchers, ok := hooksByEvent["SessionStart"]; ok {
-		for _, m := range matchers {
-			for _, h := range m.Hooks {
-				if h.Type == "command" && h.Command == sessionStartCmd {
-					foundSessionStart = true
-					break
-				}
-			}
-			if foundSessionStart {
-				break
-			}
-		}
-	}
-	if !foundSessionStart {
+	if !hasCommand("SessionStart", h.sessionStartCommand(munsuBin)) {
 		missing = append(missing, "SessionStart")
 	}
 
-	// Check PreToolUse hooks. Both matchers must be present: an install that
-	// predates the native-write matcher still has the Bash one, and reporting
-	// it as healthy would leave the file-write path unguarded forever.
-	foundBashPreToolUse := false
-	foundWritePreToolUse := false
-	writeMatcher := writeToolMatcher(claudeWriteToolNames)
-	if matchers, ok := hooksByEvent["PreToolUse"]; ok {
-		for _, m := range matchers {
-			for _, h := range m.Hooks {
-				if h.Type != "command" || h.Command != safetyCheckCmd {
-					continue
-				}
-				switch m.Matcher {
-				case "Bash":
-					foundBashPreToolUse = true
-				case writeMatcher:
-					foundWritePreToolUse = true
-				}
+	// Both PreToolUse matchers must be present: an install that predates the
+	// native-write matcher still has the Bash one, and reporting it as healthy
+	// would leave the file-write path unguarded forever.
+	safetyCheck := h.safetyCheckCommand(munsuBin)
+	writeMatcher := writeToolMatcher(h.writeTools)
+	foundBash, foundWrite := false, false
+	for _, m := range hooksByEvent["PreToolUse"] {
+		for _, hook := range m.Hooks {
+			if hook.Type != "command" || hook.Command != safetyCheck {
+				continue
+			}
+			switch m.Matcher {
+			case "Bash":
+				foundBash = true
+			case writeMatcher:
+				foundWrite = true
 			}
 		}
 	}
-	if !foundBashPreToolUse {
+	if !foundBash {
 		missing = append(missing, "PreToolUse(Bash)")
 	}
-	if !foundWritePreToolUse {
+	if !foundWrite {
 		missing = append(missing, "PreToolUse("+writeMatcher+")")
 	}
 
-	// Check Stop hook
-	foundStop := false
-	if matchers, ok := hooksByEvent["Stop"]; ok {
-		for _, m := range matchers {
-			for _, h := range m.Hooks {
-				if h.Type == "command" && h.Command == guardCmd {
-					foundStop = true
-					break
-				}
-			}
-			if foundStop {
-				break
-			}
-		}
-	}
-	if !foundStop {
+	if !hasCommand("Stop", h.guardCommand(munsuBin)) {
 		missing = append(missing, "Stop")
 	}
 
@@ -234,136 +218,41 @@ func ClaudeSettingsHasOwnedHooks(settingsPath, munsuBin string) (bool, string, e
 	return true, "all munsu-owned hooks present", nil
 }
 
-// ClaudeAdapter implements settings generation and installation for the Claude harness.
-type ClaudeAdapter struct {
-	HomeDir string
-	Cwd     string
-	Scope   string // "user" or "project"
-	DryRun  bool
-}
-
-// InstallClaudeSettings generates and installs the .claude/settings.json file.
-// Returns the target path, whether it was actually written, and the content digest.
-func (a *ClaudeAdapter) InstallClaudeSettings() (targetPath string, written bool, digest string, err error) {
+// install generates the hooks file and merges it into any existing one,
+// preserving user-owned hooks. It returns the target path, whether it was
+// written, and the digest of the content written.
+func (h jsonHookHarness) install(scope Scope, cwd string, dryRun bool) (targetPath string, written bool, digest string, err error) {
 	munsuBin, err := ResolveMunsuPathString()
 	if err != nil {
 		return "", false, "", fmt.Errorf("cannot resolve munsu binary path: %w", err)
 	}
 
-	targetPath, err = claudeSettingsPath(Scope(a.Scope), a.Cwd)
+	targetPath, err = h.path(scope, cwd)
 	if err != nil {
-		return "", false, "", fmt.Errorf("cannot determine claude settings path: %w", err)
+		return "", false, "", fmt.Errorf("cannot determine %s %s path: %w", h.name, h.file, err)
 	}
 
-	// Check existing file: if it exists, read-merge instead of overwrite
-	var existingContent string
-	if existing, statErr := os.Stat(targetPath); statErr == nil && existing.Size() > 0 {
-		data, readErr := os.ReadFile(targetPath)
-		if readErr == nil {
-			existingContent = string(data)
+	content := h.content(munsuBin)
+	existing, err := readExistingHookFile(targetPath)
+	if err != nil {
+		return "", false, "", err
+	}
+	if existing != "" {
+		content, err = mergeHookEventArrays(targetPath, existing, content)
+		if err != nil {
+			return "", false, "", err
 		}
 	}
+	sum := sha256.Sum256([]byte(content))
+	digest = hex.EncodeToString(sum[:])
 
-	content := ClaudeSettingsContent(munsuBin)
-	digest = ClaudeSettingsDigest(munsuBin)
-
-	if existingContent != "" {
-		// Read-merge: preserve user-owned hooks, replace munsu's hook entries
-		merged, mergeErr := mergeClaudeSettings(existingContent, content)
-		if mergeErr != nil {
-			return "", false, "", fmt.Errorf("merge claude settings: %w", mergeErr)
-		}
-		content = merged
-		// Recalculate digest for the merged content
-		sum := sha256.Sum256([]byte(content))
-		digest = hex.EncodeToString(sum[:])
-	}
-
-	if a.DryRun {
+	if dryRun {
 		return targetPath, false, digest, nil
 	}
 
 	if err := writeAtomic(targetPath, content, 0644); err != nil {
-		return "", false, "", fmt.Errorf("writing claude settings: %w", err)
+		return "", false, "", fmt.Errorf("writing %s %s: %w", h.name, h.file, err)
 	}
 
 	return targetPath, true, digest, nil
-}
-
-// mergeClaudeSettings merges munsu's generated hook entries into existing settings,
-// preserving any user-owned hooks. It takes the full existing file content and the
-// full munsu-generated content, then merges the hooks arrays.
-func mergeClaudeSettings(existing, generated string) (string, error) {
-	var existingJSON map[string]interface{}
-	if err := json.Unmarshal([]byte(existing), &existingJSON); err != nil {
-		// If existing content is not valid JSON, overwrite with backup
-		return generated, nil
-	}
-
-	var generatedJSON map[string]interface{}
-	if err := json.Unmarshal([]byte(generated), &generatedJSON); err != nil {
-		return "", fmt.Errorf("generated settings is invalid JSON: %w", err)
-	}
-
-	// Get munsu's hooks map
-	genHooks, _ := generatedJSON["hooks"].(map[string]interface{})
-
-	// Ensure hooks section exists in the merge target
-	existingHooks, hasExistingHooks := existingJSON["hooks"].(map[string]interface{})
-	if !hasExistingHooks || existingHooks == nil {
-		existingJSON["hooks"] = genHooks
-		return marshalJSON(existingJSON)
-	}
-
-	// For each hook event type, merge the arrays
-	for eventKey, genHookList := range genHooks {
-		genList, ok := genHookList.([]interface{})
-		if !ok {
-			continue
-		}
-
-		existingList, hasExisting := existingHooks[eventKey].([]interface{})
-		if !hasExisting || existingList == nil {
-			existingHooks[eventKey] = genList
-			continue
-		}
-
-		// Prepend munsu's hook entries to the existing list
-		// This ensures munsu's hooks run first
-		merged := append(genList, existingList...)
-		existingHooks[eventKey] = merged
-	}
-
-	return marshalJSON(existingJSON)
-}
-
-func marshalJSON(v interface{}) (string, error) {
-	data, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
-}
-
-// generateClaudeManifest creates the integration manifest for the Claude adapter.
-func generateClaudeManifest(harnessName string, scope string, caps []Capability, contentDigest string, targetPath string) Manifest {
-	capStrs := make([]string, len(caps))
-	for i, c := range caps {
-		capStrs[i] = string(c)
-	}
-	return Manifest{
-		SchemaVersion: "munsu.integrate/v1",
-		Harness:       harnessName,
-		Version:       "1.0.0",
-		Scope:         scope,
-		InstalledAt:   time.Now().UTC().Format(time.RFC3339),
-		TargetPaths:   []string{targetPath},
-		Capabilities:  capStrs,
-		ContentDigest: contentDigest,
-	}
-}
-
-// ClaudeSettingsTargetPath returns the expected target path for a given scope+cwd.
-func ClaudeSettingsTargetPath(scope Scope, cwd string) (string, error) {
-	return claudeSettingsPath(scope, cwd)
 }

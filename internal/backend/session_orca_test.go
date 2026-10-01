@@ -10,42 +10,6 @@ import (
 // OrcaBackend unit tests
 // ---------------------------------------------------------------------------
 
-// hasOrca reports whether orca is available on PATH.
-func hasOrca() bool {
-	_, err := orcaBin()
-	return err == nil
-}
-
-func TestOrcaBin_Found(t *testing.T) {
-	if !hasOrca() {
-		t.Skip("orca not on PATH")
-	}
-	path, err := orcaBin()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if path == "" {
-		t.Fatal("orcaBin() returned empty path")
-	}
-	if !strings.Contains(path, "orca") {
-		t.Errorf("orcaBin() = %q, expected path containing 'orca'", path)
-	}
-}
-
-func TestOrcaBin_NotFound(t *testing.T) {
-	oldPath := os.Getenv("PATH")
-	defer os.Setenv("PATH", oldPath)
-
-	os.Setenv("PATH", "/dev/null")
-	_, err := orcaBin()
-	if err == nil {
-		t.Fatal("expected error when orca is not on PATH")
-	}
-	if !strings.Contains(err.Error(), "not found on PATH") {
-		t.Errorf("unexpected error: %v", err)
-	}
-}
-
 func TestSelect_OrcaFailsClosedWhenAbsent(t *testing.T) {
 	oldPath := os.Getenv("PATH")
 	defer os.Setenv("PATH", oldPath)
@@ -72,27 +36,6 @@ func TestSelect_OrcaWhenRequestedBinaryPresent(t *testing.T) {
 	}
 	if _, ok := bk.(*OrcaBackend); !ok {
 		t.Errorf("constructBackend('orca') returned %T, want *OrcaBackend", bk)
-	}
-}
-
-func TestParseOrcaWindow(t *testing.T) {
-	tests := []struct {
-		handle          string
-		wantContainerID string
-		wantTerminalID  string
-	}{
-		{"container:1|terminal:1", "container:1", "terminal:1"},
-		{"ctn_abc|term_def", "ctn_abc", "term_def"},
-		{"|terminal:1", "", "terminal:1"},
-		{"bare", "", "bare"},
-		{"", "", ""},
-	}
-	for _, tt := range tests {
-		gotCtn, gotTerm := ParseOrcaWindow(tt.handle)
-		if gotCtn != tt.wantContainerID || gotTerm != tt.wantTerminalID {
-			t.Errorf("ParseOrcaWindow(%q) = (%q, %q), want (%q, %q)",
-				tt.handle, gotCtn, gotTerm, tt.wantContainerID, tt.wantTerminalID)
-		}
 	}
 }
 
@@ -212,8 +155,7 @@ func TestOrcaBackend_NoAutoDetect(t *testing.T) {
 	t.Setenv("TMUX", "")
 	t.Setenv("HERDR_ENV", "")
 
-	homeDir := t.TempDir()
-	if _, _, err := Resolve(homeDir, ""); err == nil {
+	if _, _, err := Resolve(""); err == nil {
 		t.Fatal("Resolve('') must fail closed — no env/PATH auto-selection (orca never auto-detects)")
 	}
 }
@@ -241,8 +183,7 @@ func TestOrcaBackend_SelectOnly(t *testing.T) {
 	}
 
 	// Empty identity never resolves — even with orca on PATH.
-	homeDir := t.TempDir()
-	if _, _, err := Resolve(homeDir, ""); err == nil {
+	if _, _, err := Resolve(""); err == nil {
 		t.Error("Resolve('') must fail closed — no implicit orca selection")
 	}
 }

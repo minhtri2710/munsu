@@ -44,11 +44,12 @@ func SetProbeTimeout(d time.Duration) time.Duration {
 	return prev
 }
 
-// SetCapabilityCommandRunner overrides the capability command runner (for tests).
-func SetCapabilityCommandRunner(fn func(name string, args []string, dir string, timeout time.Duration) (string, error)) func(name string, args []string, dir string, timeout time.Duration) (string, error) {
+// SetCapabilityCommandRunner overrides the capability command runner (for
+// tests) and returns a func that restores the previous one.
+func SetCapabilityCommandRunner(fn func(name string, args []string, dir string, timeout time.Duration) (string, error)) func() {
 	prev := runCapabilityCommand
 	runCapabilityCommand = fn
-	return prev
+	return func() { runCapabilityCommand = prev }
 }
 
 // ResetCapabilityCommandRunner restores the default runner (for tests).

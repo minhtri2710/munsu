@@ -5,6 +5,7 @@ package domain
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -13,6 +14,25 @@ const (
 	PausedVerbDefault  = "paused"
 	ResolveVerbDefault = "resolved"
 )
+
+// ValidStatusStates lists the recognized status verbs.
+var ValidStatusStates = []string{
+	"working", "review-ready", "amending", "needs-decision", "blocked", "paused",
+	"awaiting_approval", "resolved", "done", "failed", "delivered",
+}
+
+// IsValidStatusState reports whether state is a recognized status verb.
+func IsValidStatusState(state string) bool {
+	return slices.Contains(ValidStatusStates, state)
+}
+
+// MaterialVerbs are the status verbs that warrant waking a parent supervisor.
+var MaterialVerbs = []string{"done", "failed", "needs-decision", "blocked"}
+
+// IsMaterialVerb reports whether verb warrants waking a parent supervisor.
+func IsMaterialVerb(verb string) bool {
+	return slices.Contains(MaterialVerbs, verb)
+}
 
 // captainReDefault matches general-relevant patterns in a status line.
 // Compiled once at package init.
@@ -55,9 +75,9 @@ type StatusMatch struct {
 
 // --- Internal helpers matching fm-classify-lib.sh functions ---
 
-// lineVerb extracts the leading verb word from a status line.
+// LineVerb extracts the leading verb word from a status line.
 // Strips optional [key=<slug>] marker before the colon.
-func lineVerb(line string) string {
+func LineVerb(line string) string {
 	before, _, _ := strings.Cut(line, ":")
 	if idx := strings.Index(before, "[key="); idx >= 0 {
 		before = strings.TrimSpace(before[:idx])
@@ -115,7 +135,7 @@ func removeByKey(decisions []Decision, key string) []Decision {
 // GeneralRelevant returns true if a status line contains a general-relevant verb
 // (done:, failed:, needs-decision:, blocked:, "PR ready", "checks green",
 // "ready in branch", "merged"). Paused lines are NOT general-relevant.
-// Verb-aware: nonterminal progress verbs (working, resolved, captain-held) NEVER
+// Verb-aware: nonterminal progress verbs (working, resolved) NEVER
 // match from free-text prose alone. A "working:" line cannot escalate merely
 // because its prose contains "PR ready", "checks green", "merged", etc. Only
 // the authoritative terminal verbs and bare legacy lines (no leading verb)
@@ -135,15 +155,13 @@ func GeneralRelevant(line string) bool {
 	// Verb-aware: nonterminal progress verbs are never general-relevant
 	// from free-text prose. Only the authoritative terminal verbs and
 	// bare non-verb legacy lines should match free-text tokens.
-	verb := lineVerb(trimmed)
+	verb := LineVerb(trimmed)
 	switch verb {
-	case "working", "resolved", "captain-held":
+	case "working", "resolved":
 		return false
 	}
 
-	// Check exact verb match for core general-relevant verbs.
-	switch verb {
-	case "done", "needs-decision", "blocked", "failed":
+	if IsMaterialVerb(verb) {
 		return true
 	}
 	// Check the regex pattern for composite patterns.
@@ -157,12 +175,11 @@ func IsPaused(line string) bool {
 	if trimmed == "" {
 		return false
 	}
-	return lineVerb(trimmed) == PausedVerbDefault
+	return LineVerb(trimmed) == PausedVerbDefault
 }
 
 // OpenDecisions reads a status file and returns all still-open keyed decisions.
-// Keys must be explicitly closed by "resolved:" or "captain-held:" lines
-// referencing the same key. A bare "resolved:" closes the "default" key.
+// Keys must be explicitly closed by "resolved:" lines referencing the same key. A bare "resolved:" closes the "default" key.
 // Returns nil for missing/unreadable files or when no decisions are open.
 // Matches the munsu status_open_decisions pattern.
 func FoldOpenDecisions(lines []string) []Decision {
@@ -174,7 +191,7 @@ func FoldOpenDecisions(lines []string) []Decision {
 			continue
 		}
 
-		verb := lineVerb(line)
+		verb := LineVerb(line)
 		note := lineNote(line)
 		key := decisionKey(line)
 
@@ -184,7 +201,7 @@ func FoldOpenDecisions(lines []string) []Decision {
 			decisions = removeByKey(decisions, key)
 			decisions = append(decisions, Decision{Key: key, Verb: verb, Summary: note})
 
-		case ResolveVerbDefault, "captain-held":
+		case ResolveVerbDefault:
 			// Close this key's decision.
 			decisions = removeByKey(decisions, key)
 		}
@@ -195,7 +212,7 @@ func FoldOpenDecisions(lines []string) []Decision {
 
 // OpenActivities folds a status file into still-open keyed work phases.
 // working or paused opens/replaces a phase for its key; done, failed,
-// needs-decision, blocked, resolved, or captain-held with the same key closes it.
+// needs-decision, blocked or resolved with the same key closes it.
 // Bare legacy events use key "default". Matches the munsu status_open_activities pattern.
 // Not authoritative current state — use soldierstate / home summary for that.
 func FoldOpenActivities(lines []string) []Activity {
@@ -206,7 +223,7 @@ func FoldOpenActivities(lines []string) []Activity {
 			continue
 		}
 
-		verb := lineVerb(line)
+		verb := LineVerb(line)
 		note := lineNote(line)
 		key := decisionKey(line)
 
@@ -214,7 +231,7 @@ func FoldOpenActivities(lines []string) []Activity {
 		case "working", PausedVerbDefault:
 			activities = removeActivityByKey(activities, key)
 			activities = append(activities, Activity{Key: key, Verb: verb, Summary: note})
-		case "done", "failed", "needs-decision", "blocked", ResolveVerbDefault, "captain-held":
+		case "done", "failed", "needs-decision", "blocked", ResolveVerbDefault:
 			activities = removeActivityByKey(activities, key)
 		}
 	}
@@ -232,7 +249,7 @@ func removeActivityByKey(activities []Activity, key string) []Activity {
 }
 
 func ClassifyAbsorb(lastLine string) AbsorbResult {
-	switch lineVerb(strings.TrimSpace(lastLine)) {
+	switch LineVerb(strings.TrimSpace(lastLine)) {
 	case PausedVerbDefault:
 		return Paused
 	case "working":

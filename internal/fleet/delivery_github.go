@@ -13,22 +13,13 @@ import (
 	"github.com/minhtri2710/munsu/internal/domain"
 )
 
-// GitHubClient defines the typed GitHub capability used by the delivery
-// surfaces. Delivery execution (Deliver) observes provider state through
-// ObservePR and validates the typed delivery request through the gh-axi
-// capability; the capability must be Ready and no raw gh fallback or
-// alternate execution route exists on the delivery path. Read-only status
-// and identity helpers (ViewPRJSON, CaptureIdentity) back the retained
-// provider-neutral seams and route through gh-axi.
+// GitHubClient defines the typed read-only GitHub capability behind the
+// provider-neutral status and identity seams. GitHub delivery execution is
+// unsupported (Deliver refuses a GitHub identity before any journal), so no
+// GitHub mutation or delivery observation exists.
 type GitHubClient interface {
-	// ObservePR reads the current provider state of a pull request via
-	// gh-axi, returning the exact observation (OPEN/MERGED/CLOSED plus head
-	// and merged SHAs) needed to reconcile after a mutation.
-	ObservePR(owner, repo string, number int) (DeliveryProviderObservation, error)
-
 	// ViewPRJSON fetches PR metadata as JSON bytes via gh CLI. It backs the
-	// retained provider-neutral read-only status seam; the delivery
-	// execution path never uses it.
+	// retained provider-neutral read-only status seam.
 	ViewPRJSON(owner, repo string, number int, fields string) ([]byte, error)
 
 	// CaptureIdentity captures a full domain.DeliveryIdentity from a PR URL
@@ -91,38 +82,8 @@ func defaultGitHubClientImpl() (GitHubClient, error) {
 	return GitHubClientForState(ProbeGitHubCapability())
 }
 
-// githubDeliveryProvider adapts the typed GitHub capability (gh-axi only) to
-// the narrow delivery capability consumed by Deliver.
-type githubDeliveryProvider struct {
-	client GitHubClient
-}
-
-// compile-time check
-var _ DeliveryProvider = (*githubDeliveryProvider)(nil)
-
-// ValidateMergeRequest verifies the pinned identity constraints. The current
-// gh-axi capability cannot atomically enforce them for an irreversible merge.
-func (p *githubDeliveryProvider) ValidateMergeRequest(ident domain.DeliveryIdentity, request DeliveryMergeRequest) error {
-	if request.HeadSHA == "" || request.HeadSHA != ident.HeadSHA || request.BaseRef == "" || request.BaseRef != ident.BaseRef {
-		return fmt.Errorf("GitHub merge constraints do not match the delivery identity")
-	}
-	return ErrDeliveryMergeConstraintsUnsupported
-}
-
-func (p *githubDeliveryProvider) Merge(ident domain.DeliveryIdentity, request DeliveryMergeRequest) error {
-	return p.ValidateMergeRequest(ident, request)
-}
-
-// Observe reads the current provider state under the exact identity.
-func (p *githubDeliveryProvider) Observe(ident domain.DeliveryIdentity) (DeliveryProviderObservation, error) {
-	if p.client == nil {
-		return DeliveryProviderObservation{}, fmt.Errorf("GitHub delivery capability is not composed")
-	}
-	return p.client.ObservePR(ident.Owner, ident.Repo, ident.Number)
-}
-
-// ghAxiAPI runs one gh-axi api invocation and returns stdout. All typed
-// GitHub observation routes through gh-axi; there is no raw gh fallback.
+// ghAxiAPI runs one gh-axi api invocation and returns stdout. GitHub
+// identity capture routes through gh-axi; there is no raw gh fallback.
 func ghAxiAPI(args ...string) ([]byte, error) {
 	ghAxiPath, err := ghAxiLookPath()
 	if err != nil {
@@ -155,65 +116,8 @@ func parseGhAxiKeyValues(output string) map[string]string {
 	return values
 }
 
-// ObservePR reads the current pull request state via gh-axi api and returns
-// the exact observation needed to reconcile after a mutation. GitHub REST
-// reports merged PRs as state=closed with merged=true and a non-empty
-// merge_commit_sha, so the merged classification never trusts state alone.
-func (c *ghAxiClient) ObservePR(owner, repo string, number int) (DeliveryProviderObservation, error) {
-	out, err := ghAxiAPI(
-		fmt.Sprintf("/repos/%s/%s/pulls/%d", owner, repo, number),
-		"--jq", `{state: .state, headSha: .head.sha, baseRef: .base.ref, merged: .merged, mergedSha: .merge_commit_sha}`,
-	)
-	if err != nil {
-		return DeliveryProviderObservation{}, err
-	}
-	return classifyGitHubRESTObservation(out)
-}
-
-func classifyGitHubRESTObservation(data []byte) (DeliveryProviderObservation, error) {
-	values := parseGhAxiKeyValues(string(data))
-	state := strings.ToUpper(values["state"])
-	if state != "OPEN" && state != "CLOSED" {
-		return DeliveryProviderObservation{}, fmt.Errorf("gh-axi api: invalid pull request state")
-	}
-	if values["headSha"] == "" || values["baseRef"] == "" {
-		return DeliveryProviderObservation{}, fmt.Errorf("gh-axi api: incomplete pull request identity evidence")
-	}
-	merged, ok := parseBoolean(values["merged"])
-	if !ok {
-		return DeliveryProviderObservation{}, fmt.Errorf("gh-axi api: missing or invalid merged evidence")
-	}
-	obs := DeliveryProviderObservation{
-		State:        state,
-		HeadSHA:      values["headSha"],
-		BaseRef:      values["baseRef"],
-		Mergeability: DeliveryMergeabilityUnknown,
-	}
-	if merged {
-		mergedSHA := strings.TrimSpace(values["mergedSha"])
-		if !validGitObjectID(mergedSHA) {
-			return DeliveryProviderObservation{}, fmt.Errorf("gh-axi api: merged pull request is missing merge commit evidence")
-		}
-		obs.State = "MERGED"
-		obs.MergedSHA = mergedSHA
-	}
-	return obs, nil
-}
-
-func parseBoolean(value string) (bool, bool) {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "true":
-		return true, true
-	case "false":
-		return false, true
-	default:
-		return false, false
-	}
-}
-
 // ViewPRJSON fetches PR metadata as JSON via gh CLI. This backs the retained
-// provider-neutral read-only status seam (QueryPRMergeStatus); the delivery
-// execution path never uses it.
+// provider-neutral read-only status seam (QueryPRMergeStatus).
 func (c *ghAxiClient) ViewPRJSON(owner, repo string, number int, fields string) ([]byte, error) {
 	ghPath, err := ghCLILookPath()
 	if err != nil {

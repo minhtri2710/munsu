@@ -1,7 +1,6 @@
 package fleet
 
 import (
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -136,18 +135,7 @@ func TestCheckAttestationBlocksOnLateCapabilityLoss(t *testing.T) {
 // the mode in force. The attestation itself has not expired, so this exercises
 // the capability-state comparison branch, not the expiry branch.
 func TestCheckAttestationBlocksOnReadyToUnsupportedLoss(t *testing.T) {
-	tmpDir := t.TempDir()
-	script := `#!/bin/sh
-case "$1" in
-  --version)
-    echo "no-mistakes version v0.5.0 (ancient)"
-    exit 0
-    ;;
-esac
-exit 1
-`
-	testutil.WriteFakeExecutable(t, filepath.Join(tmpDir, "no-mistakes"), script)
-	testutil.PrependPath(t, tmpDir)
+	testutil.PrependPath(t, createFakeNoMistakesVersion(t, "0.5.0"))
 
 	// Precondition: the live probe reports the capability as Unsupported, not
 	// Absent or Failed — the exact transition the old detector missed.
@@ -220,6 +208,7 @@ func TestReconcileDeliveryFallbackIsIdempotent(t *testing.T) {
 // task back to no-mistakes.
 func TestNextGenerationReadsFallenBackModeAndDoesNotReFallBack(t *testing.T) {
 	f := newLaunchFixture(t, "fallback-nextgen")
+	seedTypedDeliveryConfig(t, f, "", false)
 	contractedLaunch(t, f, "no-mistakes")
 	r := f.runner
 	r.effectiveMode = "direct-PR"
@@ -364,6 +353,7 @@ func TestReconcileDeliveryFallbackRefusesWithoutAuthority(t *testing.T) {
 // transition.
 func TestReScaffoldAfterFallbackClearsTransition(t *testing.T) {
 	f := newLaunchFixture(t, "fallback-rescaffold")
+	seedTypedDeliveryConfig(t, f, "", false)
 	contractedLaunch(t, f, "no-mistakes")
 	r := f.runner
 	r.effectiveMode = "direct-PR"

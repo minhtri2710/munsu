@@ -113,7 +113,7 @@ func TestApplyPatchRelativeTargetResolvedAgainstCwd(t *testing.T) {
 
 // TestApplyPatchIntoWorktreeAllowedDespiteBlockedStringInBody is the regression
 // test for the measured bug. A patch that legitimately edits the guard's own
-// source — a file that contains the literal "munsu watch arm" — used to be
+// source — a file that contains the literal "munsu watch" — used to be
 // refused, because the patch body was scanned by the shell-blocking ladder. The
 // decision must come from the target, never from the content.
 func TestApplyPatchIntoWorktreeAllowedDespiteBlockedStringInBody(t *testing.T) {
@@ -121,7 +121,7 @@ func TestApplyPatchIntoWorktreeAllowedDespiteBlockedStringInBody(t *testing.T) {
 
 	target := filepath.Join(worktree, "internal", "cli", "integrate_cmd.go")
 	for _, body := range []string{
-		`if strings.Contains(effectiveCommand, "munsu watch arm") {`,
+		`if strings.Contains(effectiveCommand, "munsu watch") {`,
 		`cd .no-mistakes && munsu watch stop`,
 		`git push --force origin main`,
 	} {
@@ -157,7 +157,7 @@ func TestApplyPatchUnparseableRefused(t *testing.T) {
 // the patch text must land in the patch channel, leaving the command channel
 // empty, whatever the text happens to contain.
 func TestApplyPatchBodyNeverReachesCommandChannel(t *testing.T) {
-	body := patchTouching("a.go", "munsu watch arm")
+	body := patchTouching("a.go", "munsu watch")
 	encoded := mustJSON(t, map[string]any{
 		"tool_name":  "apply_patch",
 		"tool_input": map[string]any{"command": body},
@@ -197,12 +197,12 @@ func TestBashPayloadStillUsesCommandChannel(t *testing.T) {
 	code, stderr := runCodexPayload(t, gitDir, map[string]any{
 		"hookEventName": "PreToolUse",
 		"tool_name":     "Bash",
-		"tool_input":    map[string]any{"command": "munsu watch arm"},
+		"tool_input":    map[string]any{"command": "munsu watch"},
 	})
 	if code != 2 {
-		t.Fatalf("Bash munsu watch arm: exit=%d, want 2 (stderr=%q)", code, stderr)
+		t.Fatalf("Bash munsu watch: exit=%d, want 2 (stderr=%q)", code, stderr)
 	}
-	if !strings.Contains(stderr, "watcher lifecycle is managed automatically") {
+	if !strings.Contains(stderr, "munsu watch ensure' for a persistent watcher") {
 		t.Fatalf("unexpected deny reason for Bash: %q", stderr)
 	}
 }

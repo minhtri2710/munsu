@@ -4,14 +4,14 @@
 package orchestrator
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
+
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // Record is a single typed event log entry.
@@ -31,24 +31,19 @@ func LogPath(homeDir string) string {
 	return filepath.Join(homeDir, eventLogFile)
 }
 
-// nextID reads the event log and returns the next monotonic ID (1-based).
-// Scans the last line for the current max ID.
-func nextID(homeDir string) uint64 {
-	path := LogPath(homeDir)
-	f, err := os.Open(path)
+// nextID returns the next monotonic ID (1-based): one past the largest ID in
+// the log. The caller must hold the event log lock.
+func nextID(homeDir string) (uint64, error) {
+	data, err := os.ReadFile(LogPath(homeDir))
 	if err != nil {
-		return 1
-	}
-	defer f.Close()
-
-	var maxID uint64
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
+		if os.IsNotExist(err) {
+			return 1, nil
 		}
-		parts := strings.SplitN(line, "\t", 6)
+		return 0, fmt.Errorf("reading event log: %w", err)
+	}
+	var maxID uint64
+	for _, line := range strings.Split(string(data), "\n") {
+		parts := strings.SplitN(strings.TrimSpace(line), "\t", 6)
 		if len(parts) < 6 {
 			continue
 		}
@@ -57,64 +52,41 @@ func nextID(homeDir string) uint64 {
 			maxID = id
 		}
 	}
-	return maxID + 1
+	return maxID + 1, nil
 }
 
-// Append writes a typed event to the event log with a monotonic ID.
-// Returns the assigned event ID.
+// Append writes a typed event to the event log and returns its ID. The ID is
+// assigned and written under one exclusive lock, so concurrent writers in any
+// process never share an ID. The lock is a sibling file, not the log itself:
+// on Windows a LockFileEx lock is mandatory and would fail concurrent readers
+// of the log.
 func Append(homeDir, eventType, producer, key, payload string) (uint64, error) {
 	path := LogPath(homeDir)
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return 0, fmt.Errorf("creating event log directory: %w", err)
 	}
 
-	id := nextID(homeDir)
-	ts := time.Now().UnixNano()
+	var id uint64
+	err := home.WithExclusiveFileLock(path+".lock", func() error {
+		next, err := nextID(homeDir)
+		if err != nil {
+			return err
+		}
+		line := fmt.Sprintf("%d\t%d\t%s\t%s\t%s\t%s\n", next, time.Now().UnixNano(), eventType, producer, key, payload)
 
-	line := fmt.Sprintf("%d\t%d\t%s\t%s\t%s\t%s\n", id, ts, eventType, producer, key, payload)
-
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			return fmt.Errorf("opening event log: %w", err)
+		}
+		defer f.Close()
+		if _, err := f.WriteString(line); err != nil {
+			return fmt.Errorf("writing event: %w", err)
+		}
+		id = next
+		return nil
+	})
 	if err != nil {
-		return 0, fmt.Errorf("opening event log: %w", err)
-	}
-	defer f.Close()
-
-	if _, err := f.WriteString(line); err != nil {
-		return 0, fmt.Errorf("writing event: %w", err)
+		return 0, err
 	}
 	return id, nil
-}
-
-// AppendWithID writes a typed event with an explicit ID (for synthetic/replay events).
-func AppendWithID(homeDir string, id uint64, eventType, producer, key, payload string) error {
-	path := LogPath(homeDir)
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("creating event log directory: %w", err)
-	}
-
-	ts := time.Now().UnixNano()
-	line := fmt.Sprintf("%d\t%d\t%s\t%s\t%s\t%s\n", id, ts, eventType, producer, key, payload)
-
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("opening event log: %w", err)
-	}
-	defer f.Close()
-
-	if _, err := f.WriteString(line); err != nil {
-		return fmt.Errorf("writing event: %w", err)
-	}
-	return nil
-}
-
-var syntheticID atomic.Uint64
-
-// SyntheticEventID generates a synthetic event ID for events derived
-// from legacy task status lines. The ID is distinct from on-disk IDs
-// by using a high offset (1<<48).
-func SyntheticEventID() uint64 {
-	const syntheticBase uint64 = 1 << 48
-	return syntheticBase + syntheticID.Add(1)
 }

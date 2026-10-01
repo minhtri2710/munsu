@@ -167,7 +167,7 @@ The captain-home destruction path that genuinely has no guard is not `retire`, i
 (`captain_seed_worktree.go`) → `removeExistingWorktree` (`captain_captain.go`) →
 `git worktree remove --force` / `os.RemoveAll(absHome)`.
 
-Its guards are `isManagedWorktree`, `isStateOnlyHome`, `validateWorktreeRemote`. No
+Its guards are `isManagedWorktree`, `isUnmanagedCaptainHome`, `validateWorktreeRemote`. No
 in-flight soldier check, no endpoint probe, no process check — weaker than `Retire`, and
 it never calls `inFlightSoldierIDs`. That belongs in `captain_seed_worktree.go` (BEO-67
 scope) and the right guard there is `inFlightSoldierIDs` plus the canonical endpoint

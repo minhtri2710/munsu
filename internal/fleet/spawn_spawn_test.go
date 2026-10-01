@@ -325,6 +325,18 @@ func TestProjectSettingsDisabled(t *testing.T) {
 	}
 }
 
+// seedTypedSpawnHome returns a home carrying the typed fleet base and one
+// registered project, the configuration surface spawn resolves its mode from.
+func seedTypedSpawnHome(t *testing.T, project string) string {
+	t.Helper()
+	homeDir := t.TempDir()
+	storeTestDocuments(t, homeDir, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config:        config.ProjectOverlay{Backend: "tmux"},
+	}, []testProjectRecord{{Name: project, Path: t.TempDir()}}, nil)
+	return homeDir
+}
+
 func TestRun_ValidateMode(t *testing.T) {
 	t.Setenv("MUNSU_ROLE", "general")
 	t.Chdir(t.TempDir())
@@ -332,7 +344,7 @@ func TestRun_ValidateMode(t *testing.T) {
 		ID:          "test-task",
 		ProjectName: "test-project",
 		Mode:        "bogus-mode",
-		HomeDir:     t.TempDir(),
+		HomeDir:     seedTypedSpawnHome(t, "test-project"),
 		Endpoints:   fakeEndpointCapabilities{backend: &fakeBackend{}},
 	}
 	_, err := Spawn(args)
@@ -442,9 +454,7 @@ func TestValidateDeliveryMode_Extended(t *testing.T) {
 }
 
 func TestEnsureDeliveryModeRunnable_NoMistakesOnPath(t *testing.T) {
-	if !noMistakesOnPath() {
-		t.Skip("no-mistakes not on PATH")
-	}
+	testutil.PrependPath(t, createFakeNoMistakesReady(t))
 	if err := EnsureDeliveryModeRunnable("no-mistakes"); err != nil {
 		t.Errorf("EnsureDeliveryModeRunnable(no-mistakes) = %v, want nil", err)
 	}
@@ -458,68 +468,74 @@ func TestEnsureDeliveryModeRunnable_DirectPR(t *testing.T) {
 }
 
 func TestNoMistakesOnPath(t *testing.T) {
-	// This test is informational only; skip if no-mistakes not available
+	testutil.SetPath(t, t.TempDir())
+	if noMistakesOnPath() {
+		t.Fatal("noMistakesOnPath() = true with no no-mistakes on PATH")
+	}
+	emptyDir := t.TempDir()
+	testutil.WriteFakeExecutable(t, filepath.Join(emptyDir, "no-mistakes"), "#!/bin/sh\nexit 0\n")
+	testutil.SetPath(t, emptyDir)
 	if !noMistakesOnPath() {
-		t.Skip("no-mistakes not on PATH (CI environments typically don't have it)")
+		t.Fatal("noMistakesOnPath() = false with no-mistakes on PATH")
 	}
 }
 
-func TestEffectiveModeForSpawn_AutoNoMistakesPresent(t *testing.T) {
+func TestResolveDeliveryMode_AutoNoMistakesPresent(t *testing.T) {
 	// Create a fake no-mistakes binary on PATH
-	tmpDir := createFakeNoMistakes(t, true, true)
+	tmpDir := createFakeNoMistakesReady(t)
 	testutil.PrependPath(t, tmpDir)
 
-	mode, err := effectiveModeForSpawn(t.TempDir(), Args{})
+	mode, err := ResolveDeliveryMode("", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if mode != "no-mistakes" {
-		t.Errorf("effectiveModeForSpawn auto = %q, want %q", mode, "no-mistakes")
+		t.Errorf("ResolveDeliveryMode auto = %q, want %q", mode, "no-mistakes")
 	}
 }
 
-func TestEffectiveModeForSpawn_AutoNoMistakesAbsent(t *testing.T) {
+func TestResolveDeliveryMode_AutoNoMistakesAbsent(t *testing.T) {
 	// Use a PATH where no-mistakes is definitely not found
 	t.Setenv("PATH", t.TempDir())
 
-	mode, err := effectiveModeForSpawn(t.TempDir(), Args{})
+	mode, err := ResolveDeliveryMode("", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if mode != "direct-PR" {
-		t.Errorf("effectiveModeForSpawn auto without no-mistakes = %q, want %q", mode, "direct-PR")
+		t.Errorf("ResolveDeliveryMode auto without no-mistakes = %q, want %q", mode, "direct-PR")
 	}
 }
 
-func TestEffectiveModeForSpawn_ExplicitNoMistakesWithBinary(t *testing.T) {
+func TestResolveDeliveryMode_ExplicitNoMistakesWithBinary(t *testing.T) {
 	// Fake no-mistakes on PATH, explicit flag
-	tmpDir := createFakeNoMistakes(t, true, true)
+	tmpDir := createFakeNoMistakesReady(t)
 	testutil.PrependPath(t, tmpDir)
 
-	mode, err := effectiveModeForSpawn(t.TempDir(), Args{Mode: "no-mistakes"})
+	mode, err := ResolveDeliveryMode("no-mistakes", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if mode != "no-mistakes" {
-		t.Errorf("effectiveModeForSpawn explicit = %q, want %q", mode, "no-mistakes")
+		t.Errorf("ResolveDeliveryMode explicit = %q, want %q", mode, "no-mistakes")
 	}
 }
 
-func TestEffectiveModeForSpawn_ExplicitNoMistakesWithoutBinary(t *testing.T) {
+func TestResolveDeliveryMode_ExplicitNoMistakesWithoutBinary(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 
-	_, err := effectiveModeForSpawn(t.TempDir(), Args{Mode: "no-mistakes"})
+	_, err := ResolveDeliveryMode("no-mistakes", "", false)
 	if err == nil {
 		t.Fatal("expected error for explicit no-mistakes without binary")
 	}
 }
 
-// TestEffectiveModeForSpawn_ExplicitNoMistakesNeverFallsBackToDirectPR verifies
+// TestResolveDeliveryMode_ExplicitNoMistakesNeverFallsBackToDirectPR verifies
 // that explicit --mode=no-mistakes never returns "direct-PR" on failure.
-func TestEffectiveModeForSpawn_ExplicitNoMistakesNeverFallsBackToDirectPR(t *testing.T) {
+func TestResolveDeliveryMode_ExplicitNoMistakesNeverFallsBackToDirectPR(t *testing.T) {
 	t.Run("absent binary", func(t *testing.T) {
 		t.Setenv("PATH", t.TempDir())
-		mode, err := effectiveModeForSpawn(t.TempDir(), Args{Mode: "no-mistakes"})
+		mode, err := ResolveDeliveryMode("no-mistakes", "", false)
 		if err == nil {
 			t.Fatalf("expected error, got mode=%q", mode)
 		}
@@ -532,7 +548,7 @@ func TestEffectiveModeForSpawn_ExplicitNoMistakesNeverFallsBackToDirectPR(t *tes
 		tmpDir := createFakeNoMistakesVersion(t, "0.5.0")
 		testutil.PrependPath(t, tmpDir)
 
-		mode, err := effectiveModeForSpawn(t.TempDir(), Args{Mode: "no-mistakes"})
+		mode, err := ResolveDeliveryMode("no-mistakes", "", false)
 		if err == nil {
 			t.Fatalf("expected error for unsupported version, got mode=%q", mode)
 		}
@@ -547,37 +563,9 @@ func TestEffectiveModeForSpawn_ExplicitNoMistakesNeverFallsBackToDirectPR(t *tes
 		testutil.WriteFakeExecutable(t, binPath, "#!/bin/sh\nexit 1\n")
 		testutil.PrependPath(t, tmpDir)
 
-		mode, err := effectiveModeForSpawn(t.TempDir(), Args{Mode: "no-mistakes"})
+		mode, err := ResolveDeliveryMode("no-mistakes", "", false)
 		if err == nil {
 			t.Fatalf("expected error for failed probe, got mode=%q", mode)
-		}
-		if mode != "" {
-			t.Errorf("mode must be empty on error, got %q", mode)
-		}
-	})
-}
-
-// TestEffectiveModeForSpawn_ProjectNoMistakesNeverFallsBackToDirectPR verifies
-// that project-registry no-mistakes never returns "direct-PR" on failure.
-func TestEffectiveModeForSpawn_ProjectNoMistakesNeverFallsBackToDirectPR(t *testing.T) {
-	t.Run("absent binary", func(t *testing.T) {
-		t.Setenv("PATH", t.TempDir())
-		mode, err := effectiveModeForSpawn(t.TempDir(), Args{ProjectMode: "no-mistakes"})
-		if err == nil {
-			t.Fatalf("expected error, got mode=%q", mode)
-		}
-		if mode != "" {
-			t.Errorf("mode must be empty on error, got %q", mode)
-		}
-	})
-
-	t.Run("unsupported version", func(t *testing.T) {
-		tmpDir := createFakeNoMistakesVersion(t, "0.5.0")
-		testutil.PrependPath(t, tmpDir)
-
-		mode, err := effectiveModeForSpawn(t.TempDir(), Args{ProjectMode: "no-mistakes"})
-		if err == nil {
-			t.Fatalf("expected error for unsupported version, got mode=%q", mode)
 		}
 		if mode != "" {
 			t.Errorf("mode must be empty on error, got %q", mode)
@@ -630,58 +618,6 @@ func TestResolveDeliveryMode_AutoFallbackOnIncompatible(t *testing.T) {
 	}
 }
 
-// createFakeNoMistakesVersion creates a fake no-mistakes binary that reports
-// the given semver version string.
-
-func TestEffectiveModeForSpawn_ProjectModeHonored(t *testing.T) {
-	t.Setenv("PATH", t.TempDir()) // ensure auto doesn't pick no-mistakes
-
-	mode, err := effectiveModeForSpawn(t.TempDir(), Args{ProjectMode: "local-only"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if mode != "local-only" {
-		t.Errorf("effectiveModeForSpawn with project mode = %q, want %q", mode, "local-only")
-	}
-}
-
-func TestEffectiveModeForSpawn_ExplicitOverridesProject(t *testing.T) {
-	t.Setenv("PATH", t.TempDir())
-
-	// Explicit flag takes precedence over project mode
-	mode, err := effectiveModeForSpawn(t.TempDir(), Args{Mode: "direct-PR", ProjectMode: "no-mistakes"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if mode != "direct-PR" {
-		t.Errorf("effectiveModeForSpawn explicit override = %q, want %q", mode, "direct-PR")
-	}
-}
-
-func TestEffectiveModeForSpawn_IgnoresFlatConfigDefaultMode(t *testing.T) {
-	t.Setenv("PATH", t.TempDir()) // ensure auto doesn't pick no-mistakes
-
-	homeDir := t.TempDir()
-	// Legacy flat config/default-mode must no longer be consulted.
-	configDir := filepath.Join(homeDir, "config")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(configDir, "default-mode"), []byte("no-mistakes"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// No flag, no project mode — the flat default-mode authority is retired,
-	// so auto-detect applies and falls back to direct-PR without a hard error.
-	mode, err := effectiveModeForSpawn(homeDir, Args{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if mode != "direct-PR" {
-		t.Errorf("effectiveModeForSpawn must ignore flat config/default-mode, got %q", mode)
-	}
-}
-
 func TestRun_ValidatesModeFromArgsOnly(t *testing.T) {
 	// A bogus mode flag should still be rejected by Run
 	t.Setenv("MUNSU_ROLE", "general")
@@ -690,7 +626,7 @@ func TestRun_ValidatesModeFromArgsOnly(t *testing.T) {
 		ID:          "test-task",
 		ProjectName: "test-project",
 		Mode:        "bogus-mode",
-		HomeDir:     t.TempDir(),
+		HomeDir:     seedTypedSpawnHome(t, "test-project"),
 		Endpoints:   fakeEndpointCapabilities{backend: &fakeBackend{}},
 	}
 	_, err := Spawn(args)
@@ -804,8 +740,8 @@ func TestCheckBacklogAuthority_RefusesBlockedTask(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for blocked task, got nil")
 	}
-	if !strings.Contains(err.Error(), "blocked") {
-		t.Errorf("error should mention blocked state\n got: %v", err)
+	if !strings.Contains(err.Error(), "blocked") || !strings.Contains(err.Error(), "munsu task unblock lifecycle-e2e") {
+		t.Errorf("error should mention blocked state and name the unblock command\n got: %v", err)
 	}
 }
 
@@ -815,15 +751,8 @@ func TestCheckBacklogAuthority_RefusesDoneTask(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for done task, got nil")
 	}
-	if !strings.Contains(err.Error(), "done") {
-		t.Errorf("error should mention done state\n got: %v", err)
-	}
-}
-
-func TestCheckBacklogAuthority_ReopenBypassesDone(t *testing.T) {
-	r := &Runner{args: Args{ID: "done-task", Reopen: true, Authority: seedSpawnAuthorityPhase(t, "done-task", taskauthority.PhaseDone)}, homeDir: t.TempDir()}
-	if err := r.checkBacklogAuthority(); err != nil {
-		t.Fatalf("expected no error with --reopen for done task, got: %v", err)
+	if !strings.Contains(err.Error(), "done") || !strings.Contains(err.Error(), "munsu task reopen done-task") {
+		t.Errorf("error should mention done state and name the reopen command\n got: %v", err)
 	}
 }
 
@@ -1358,47 +1287,6 @@ func TestCheckCaptainTaskAuthority_AllowsInFlightWithoutLiveMeta(t *testing.T) {
 	if err := r.checkCaptainBacklogAuthority(); err != nil {
 		t.Fatalf("in-flight without live meta must ALLOW spawn, got: %v", err)
 	}
-}
-
-func createFakeNoMistakes(t *testing.T, respondVersion, respondAxi bool) string {
-	t.Helper()
-	tmpDir := t.TempDir()
-	binPath := filepath.Join(tmpDir, "no-mistakes")
-
-	var script string
-	if respondVersion {
-		script += `case "--version" in
-  "$1")
-    echo "no-mistakes version v1.40.0 (test)"
-    exit 0
-    ;;
-esac
-`
-	}
-	if respondAxi {
-		script += `case "$1" in
-  axi)
-    case "$2" in
-      status)
-        case "$3" in
-          --help)
-            echo "Show the active run in detail"
-            echo "Usage:"
-            echo "  no-mistakes axi status [flags]"
-            exit 0
-            ;;
-        esac
-        ;;
-    esac
-    ;;
-esac
-`
-	}
-	script += "exit 0\n"
-
-	content := "#!/bin/sh\n" + script
-	testutil.WriteFakeExecutable(t, binPath, content)
-	return tmpDir
 }
 
 func TestSpawn_PostCreateVerificationFailure_NoMetaNoSpawnedStatus(t *testing.T) {

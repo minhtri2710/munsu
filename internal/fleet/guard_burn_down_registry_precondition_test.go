@@ -52,4 +52,18 @@ func TestGuardBurnDownRegistryPreconditionRefusals(t *testing.T) {
 			t.Fatalf("RegisterCaptain error = %v, want generation refusal", err)
 		}
 	})
+
+	t.Run("generation zero is the registry generation refusal", func(t *testing.T) {
+		r, _, _ := newTestRegistry(t)
+		req := RetireProjectRequest{
+			HomeID:       r.HomeID(),
+			ProjectID:    mustProjectID(t, "zero-generation-project"),
+			Precondition: domain.Of(0, 0),
+			Reason:       "guard test",
+		}
+		_, err := r.RetireProject(mustOp(t, "op-project-generation-zero", req), req)
+		if !errors.Is(err, ErrInvalidInput) || !strings.Contains(err.Error(), "precondition generation must be 1") {
+			t.Fatalf("RetireProject error = %v, want the registry generation validation refusal", err)
+		}
+	})
 }

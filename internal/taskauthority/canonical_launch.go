@@ -121,7 +121,7 @@ func (c *Canonical) BeginSpawn(op domain.Operation, req CanonicalBeginSpawnReque
 	if err := validateBeginSpawnRequest(req); err != nil {
 		return Outcome{}, err
 	}
-	return c.mutateTask(op, req.TaskID, req.Precondition, func(cur Aggregate) (Aggregate, error) {
+	return c.mutateTaskWithDispatch(op, req.TaskID, req.Precondition, func(cur Aggregate) (Aggregate, error) {
 		if cur.Worktree != nil || cur.Endpoint != nil {
 			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s already holds acquired bindings; launch intent must precede resource acquisition", cur.TaskID, cur.Generation)
 		}

@@ -97,12 +97,3 @@ func TestReconcileParentStatus_Unavailable(t *testing.T) {
 		t.Fatalf("got %+v", r)
 	}
 }
-
-func TestStatusVerb(t *testing.T) {
-	if got := statusVerb("working [key=x]: note"); got != "working" {
-		t.Fatalf("got %q", got)
-	}
-	if got := statusVerb("needs-decision: choose"); got != "needs-decision" {
-		t.Fatalf("got %q", got)
-	}
-}

@@ -70,7 +70,7 @@ func cleanupTestWatcher(t *testing.T, home string, launchedPID int) {
 		}
 	}
 
-	if err := orchestrator.Stop(home); err != nil {
+	if _, err := orchestrator.StopWatcher(home); err != nil {
 		t.Errorf("stop test watcher: %v", err)
 	}
 	if pid <= 0 {

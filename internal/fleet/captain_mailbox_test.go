@@ -66,7 +66,7 @@ func setupTestHomes(t *testing.T) (parentHome, captainHome, captainID string) {
 	}
 
 	// Seed captain home.
-	if err := SeedCaptain(CaptainSeedOptions{ID: captainID, Home: captainHome, ParentHome: parentHome, Integration: fakeIntegrationPort{}}); err != nil {
+	if err := SeedCaptain(CaptainSeedOptions{ID: captainID, Home: captainHome, Repo: newWorktreeFixture(t), ParentHome: parentHome, Integration: fakeIntegrationPort{}}); err != nil {
 		t.Fatalf("SeedCaptain: %v", err)
 	}
 
@@ -418,8 +418,8 @@ func TestInboxAckCmd_AckRef(t *testing.T) {
 	}
 
 	// Set up captain home with identity home.
-	if err := home.WriteHomeIdentity(captainHome, "test-captain", home.RankCaptain); err != nil {
-		t.Fatalf("WriteHomeIdentity: %v", err)
+	if err := home.SeedCaptainProvenance(captainHome, "test-captain"); err != nil {
+		t.Fatalf("SeedCaptainProvenance: %v", err)
 	}
 	generalHome := filepath.Join(t.TempDir(), "general-main")
 	if err := os.MkdirAll(generalHome, 0755); err != nil {
@@ -495,8 +495,8 @@ func TestInboxAckCmd_InvalidRef(t *testing.T) {
 	if err := os.MkdirAll(captainHome, 0755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := home.WriteHomeIdentity(captainHome, "test-captain", home.RankCaptain); err != nil {
-		t.Fatalf("WriteHomeIdentity: %v", err)
+	if err := home.SeedCaptainProvenance(captainHome, "test-captain"); err != nil {
+		t.Fatalf("SeedCaptainProvenance: %v", err)
 	}
 
 	recv, err := home.NewReceiver(captainHome)

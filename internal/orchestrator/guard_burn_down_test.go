@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,16 +13,14 @@ import (
 
 func TestGuardBurnDownDaemonStartRefusesHeldLock(t *testing.T) {
 	home := t.TempDir()
-	lockPath := filepath.Join(home, afkLockFile)
-	if err := os.MkdirAll(filepath.Dir(lockPath), 0755); err != nil {
-		t.Fatal(err)
+	held, acquired, err := mhome.AcquireAFKLock(home)
+	if err != nil || !acquired {
+		t.Fatalf("AcquireAFKLock = %v, %v; want held", acquired, err)
 	}
-	if err := os.WriteFile(lockPath, []byte(fmt.Sprintf("%d\t%s\n", os.Getpid(), time.Now().UTC().Format(time.RFC3339))), 0644); err != nil {
-		t.Fatal(err)
-	}
+	defer held.Release()
 
 	ready := make(chan struct{})
-	err := (&Daemon{ready: ready}).Start(home)
+	err = (&Daemon{ready: ready}).Start(home)
 	if err == nil || !strings.Contains(err.Error(), "already running") {
 		t.Fatalf("Daemon.Start error = %v, want held-lock refusal", err)
 	}
@@ -85,26 +82,23 @@ func TestWatcherRunPropagatesLiveLeaseConflict(t *testing.T) {
 	t.Logf("run live-lease conflict: %v", err)
 }
 
-func TestGuardBurnDownStopRunningWatcherRefusesUnownedPID(t *testing.T) {
+func TestGuardBurnDownStopWatcherRefusesUnownedPID(t *testing.T) {
 	home := t.TempDir()
 	WriteBeat(home)
 	if err := os.WriteFile(mhome.WriterIdentityPath(home, "watcher"), []byte("schema_version=1\nkind=watcher\npid=9999999\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	err := stopRunningWatcher(home)
-	if err == nil || !strings.Contains(err.Error(), "ownership could not be verified") {
-		t.Fatalf("stopRunningWatcher error = %v, want ownership refusal", err)
+	stop, err := StopWatcher(home)
+	if err == nil || !strings.Contains(err.Error(), "ownership could not be verified") || stop.State != StopIdentityMismatch {
+		t.Fatalf("StopWatcher = %+v, %v, want ownership refusal", stop, err)
 	}
-	t.Logf("stopRunningWatcher refusal: %v", err)
+	t.Logf("StopWatcher refusal: %v", err)
 }
 
 func TestGuardBurnDownRecoverRejectsNonAcceptedAck(t *testing.T) {
 	senderHome := t.TempDir()
 	receiverHome := t.TempDir()
-	if err := WriteHomeIdentity(receiverHome, "general-1", RankGeneral); err != nil {
-		t.Fatal(err)
-	}
 	result, err := Report(ReportRequest{
 		SenderHome: senderHome, ReceiverHome: receiverHome,
 		SenderRank: RankCaptain, SenderIdentity: "captain-1",
@@ -136,7 +130,7 @@ func TestGuardBurnDownRecoverRejectsNonAcceptedAck(t *testing.T) {
 func TestGuardBurnDownReportRejectsNonMaterialState(t *testing.T) {
 	senderHome := t.TempDir()
 	receiverHome := t.TempDir()
-	if err := WriteHomeIdentity(receiverHome, "captain-1", RankCaptain); err != nil {
+	if err := mhome.SeedCaptainProvenance(receiverHome, "captain-1"); err != nil {
 		t.Fatal(err)
 	}
 

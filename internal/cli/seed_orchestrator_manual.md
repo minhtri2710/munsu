@@ -81,7 +81,7 @@ that the digest already printed.
 If the session lock is refused, another session is active — remain read-only.
 A lock-refused session must not spawn, steer, merge, or drain wakes.
 
-Bootstrap diagnostics: if any `MISSING:`, `NEEDS_GH_AUTH`, `TANGLE:`, or other
+Bootstrap diagnostics: if any `MISSING:`, `NEEDS_GH_AUTH`, `SECOND_LIVENESS:`, or other
 diagnostic line prints, run `munsu skill show bootstrap-diagnostics` and follow it.
 
 ---
@@ -308,7 +308,6 @@ Communication with soldiers and captains follows a strict direction policy:
   hierarchy (Soldier -> Captain, Captain -> General). Writes to the parent's
   task .status file, the typed event log, and enqueues a wake for material
   states (done, failed, needs-decision, blocked).
-- **notify** --- alias for `munsu report`.
 - **inbox** --- preview view: `munsu inbox` lists pending wakes and last captain status lines side by side.
   Use before `munsu wake claim` to preview what needs attention.
   Rank-aware: shows captain:* status lines from the General's state directory.
@@ -400,7 +399,6 @@ Run: `munsu skill show <name>` to read any skill.
 | Spawn soldier | `munsu spawn <id> <project>` |
 | Steer soldier | `munsu send <id> "<line>"` |
 | Report status up | `munsu report <state> "<msg>"` |
-| Notify (alias for report) | `munsu notify <state> "<msg>"` |
 | Check state | `munsu soldier-state <id>` |
 | Read output | `munsu peek <id>` |
 | Ensure watcher | `munsu watch ensure` |

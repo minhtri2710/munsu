@@ -4,7 +4,7 @@
 
 Policy owner: `internal/cli/skills/decision-hold-lifecycle/SKILL.md` (embedded in munsu binary).
 
-This doc records the mechanism and regression evidence.
+This doc records the mechanism.
 
 ## Mechanism
 
@@ -22,5 +22,5 @@ this reference intentionally does not duplicate that syntax.
 - Each decision gets one stable key. Retry with the same key is idempotent.
 - A completed investigation or ended visual review uses the same owner and completion command.
 - The hold remains open until the general's answer is recorded and any dependent work is unblocked.
-- Bearings reads resolved holds; it must not scrape historical reports or chat.
+- `munsu decision-hold list` reads the recorded holds; nothing scrapes historical reports or chat for decisions.
 - Resolved findings, recommendations needing no choice, and prose that merely sounds decision-like do not create holds.

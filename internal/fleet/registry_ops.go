@@ -8,16 +8,11 @@ import (
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
-// preconditionFields returns the canonical precondition fields for a request
+// preconditionDigest is the canonical precondition shape inside a request
 // digest.
-func preconditionFields(p domain.Precondition) struct {
+type preconditionDigest struct {
 	Generation uint64 `json:"generation"`
 	Revision   uint64 `json:"revision"`
-} {
-	return struct {
-		Generation uint64 `json:"generation"`
-		Revision   uint64 `json:"revision"`
-	}{p.Generation, p.Revision}
 }
 
 func preconditionOf(rev uint64) domain.Precondition {
@@ -38,18 +33,15 @@ type RegisterProjectRequest struct {
 
 func (r RegisterProjectRequest) DigestBytes() ([]byte, error) {
 	return json.Marshal(struct {
-		HomeID       string `json:"home_id"`
-		ProjectID    string `json:"project_id"`
-		Name         string `json:"name"`
-		Path         string `json:"path"`
-		Mode         string `json:"mode"`
-		Yolo         bool   `json:"yolo"`
-		Precondition struct {
-			Generation uint64 `json:"generation"`
-			Revision   uint64 `json:"revision"`
-		} `json:"precondition"`
-		Reason string `json:"reason"`
-	}{r.HomeID.Value(), r.ProjectID.Value(), r.Name, r.Path, r.Mode, r.Yolo, preconditionFields(r.Precondition), r.Reason})
+		HomeID       string             `json:"home_id"`
+		ProjectID    string             `json:"project_id"`
+		Name         string             `json:"name"`
+		Path         string             `json:"path"`
+		Mode         string             `json:"mode"`
+		Yolo         bool               `json:"yolo"`
+		Precondition preconditionDigest `json:"precondition"`
+		Reason       string             `json:"reason"`
+	}{r.HomeID.Value(), r.ProjectID.Value(), r.Name, r.Path, r.Mode, r.Yolo, preconditionDigest(r.Precondition), r.Reason})
 }
 
 // RegisterProject is the canonical operation that registers one Project.
@@ -62,26 +54,11 @@ func (r *Registry) RegisterProject(op domain.Operation, req RegisterProjectReque
 	if err := requireNonEmpty("project path", req.Path); err != nil {
 		return Outcome{}, err
 	}
-	if err := r.prepare(op, req, req.HomeID); err != nil {
-		return Outcome{}, err
-	}
-	if err := req.Precondition.Validate(); err != nil {
-		return Outcome{}, err
-	}
-	if req.Precondition.Generation != registryGeneration {
-		return Outcome{}, validationError("registry precondition generation must be %d", registryGeneration)
-	}
-	lk, err := r.h.Lock(projectRegistryScope)
-	if err != nil {
-		return Outcome{}, err
+	lk, replay, replayed, err := r.begin(op, req, req.HomeID, req.Precondition, projectRegistryScope)
+	if err != nil || replayed {
+		return replay, err
 	}
 	defer lk.Release()
-
-	if rec, ok, err := r.checkedReceipt(op); err != nil {
-		return Outcome{}, err
-	} else if ok {
-		return rec.outcome(), nil
-	}
 
 	doc, err := r.readProjectRegistry()
 	if err != nil {
@@ -111,7 +88,7 @@ func (r *Registry) RegisterProject(op domain.Operation, req RegisterProjectReque
 		RegisteredAt:  r.now().Unix(),
 	})
 	rec := receiptFor(op, Outcome{HomeID: req.HomeID, ProjectID: req.ProjectID})
-	items, err := projectRegistryItems(rec, next)
+	items, err := registryItems(rec, projectsKey, next)
 	if err != nil {
 		return Outcome{}, err
 	}
@@ -131,40 +108,22 @@ type RetireProjectRequest struct {
 
 func (r RetireProjectRequest) DigestBytes() ([]byte, error) {
 	return json.Marshal(struct {
-		HomeID       string `json:"home_id"`
-		ProjectID    string `json:"project_id"`
-		Precondition struct {
-			Generation uint64 `json:"generation"`
-			Revision   uint64 `json:"revision"`
-		} `json:"precondition"`
-		Reason string `json:"reason"`
-	}{r.HomeID.Value(), r.ProjectID.Value(), preconditionFields(r.Precondition), r.Reason})
+		HomeID       string             `json:"home_id"`
+		ProjectID    string             `json:"project_id"`
+		Precondition preconditionDigest `json:"precondition"`
+		Reason       string             `json:"reason"`
+	}{r.HomeID.Value(), r.ProjectID.Value(), preconditionDigest(r.Precondition), r.Reason})
 }
 
 // RetireProject is the canonical operation that retires one Project. A
 // Project that is still owned by a Captain cannot be retired (fail closed);
 // the Captain must be unbound or retired first.
 func (r *Registry) RetireProject(op domain.Operation, req RetireProjectRequest) (Outcome, error) {
-	if err := r.prepare(op, req, req.HomeID); err != nil {
-		return Outcome{}, err
-	}
-	if err := req.Precondition.Validate(); err != nil {
-		return Outcome{}, err
-	}
-	if req.Precondition.Generation != registryGeneration {
-		return Outcome{}, validationError("registry precondition generation must be %d", registryGeneration)
-	}
-	lk, err := r.h.Lock(projectRegistryScope)
-	if err != nil {
-		return Outcome{}, err
+	lk, replay, replayed, err := r.begin(op, req, req.HomeID, req.Precondition, projectRegistryScope)
+	if err != nil || replayed {
+		return replay, err
 	}
 	defer lk.Release()
-
-	if rec, ok, err := r.checkedReceipt(op); err != nil {
-		return Outcome{}, err
-	} else if ok {
-		return rec.outcome(), nil
-	}
 
 	doc, err := r.readProjectRegistry()
 	if err != nil {
@@ -203,7 +162,7 @@ func (r *Registry) RetireProject(op domain.Operation, req RetireProjectRequest) 
 	next.HomeRevision++
 	next.Projects = append(next.Projects[:idx], next.Projects[idx+1:]...)
 	rec := receiptFor(op, Outcome{HomeID: req.HomeID, ProjectID: req.ProjectID})
-	items, err := projectRegistryItems(rec, next)
+	items, err := registryItems(rec, projectsKey, next)
 	if err != nil {
 		return Outcome{}, err
 	}
@@ -225,16 +184,13 @@ type RegisterCaptainRequest struct {
 
 func (r RegisterCaptainRequest) DigestBytes() ([]byte, error) {
 	return json.Marshal(struct {
-		HomeID       string `json:"home_id"`
-		CaptainID    string `json:"captain_id"`
-		Home         string `json:"home"`
-		Scope        string `json:"scope"`
-		Precondition struct {
-			Generation uint64 `json:"generation"`
-			Revision   uint64 `json:"revision"`
-		} `json:"precondition"`
-		Reason string `json:"reason"`
-	}{r.HomeID.Value(), r.CaptainID.Value(), r.Home, r.Scope, preconditionFields(r.Precondition), r.Reason})
+		HomeID       string             `json:"home_id"`
+		CaptainID    string             `json:"captain_id"`
+		Home         string             `json:"home"`
+		Scope        string             `json:"scope"`
+		Precondition preconditionDigest `json:"precondition"`
+		Reason       string             `json:"reason"`
+	}{r.HomeID.Value(), r.CaptainID.Value(), r.Home, r.Scope, preconditionDigest(r.Precondition), r.Reason})
 }
 
 // RegisterCaptain is the canonical operation that registers one Captain.
@@ -244,26 +200,11 @@ func (r *Registry) RegisterCaptain(op domain.Operation, req RegisterCaptainReque
 	if err := requireNonEmpty("captain home", req.Home); err != nil {
 		return Outcome{}, err
 	}
-	if err := r.prepare(op, req, req.HomeID); err != nil {
-		return Outcome{}, err
-	}
-	if err := req.Precondition.Validate(); err != nil {
-		return Outcome{}, err
-	}
-	if req.Precondition.Generation != registryGeneration {
-		return Outcome{}, validationError("registry precondition generation must be %d", registryGeneration)
-	}
-	lk, err := r.h.Lock(captainRegistryScope)
-	if err != nil {
-		return Outcome{}, err
+	lk, replay, replayed, err := r.begin(op, req, req.HomeID, req.Precondition, captainRegistryScope)
+	if err != nil || replayed {
+		return replay, err
 	}
 	defer lk.Release()
-
-	if rec, ok, err := r.checkedReceipt(op); err != nil {
-		return Outcome{}, err
-	} else if ok {
-		return rec.outcome(), nil
-	}
 
 	doc, err := r.readCaptainRegistry()
 	if err != nil {
@@ -291,7 +232,7 @@ func (r *Registry) RegisterCaptain(op domain.Operation, req RegisterCaptainReque
 		RegisteredAt:  r.now().Unix(),
 	})
 	rec := receiptFor(op, Outcome{HomeID: req.HomeID, CaptainID: req.CaptainID})
-	items, err := captainRegistryItems(rec, next)
+	items, err := registryItems(rec, captainsKey, next)
 	if err != nil {
 		return Outcome{}, err
 	}
@@ -311,14 +252,11 @@ type RetireCaptainRequest struct {
 
 func (r RetireCaptainRequest) DigestBytes() ([]byte, error) {
 	return json.Marshal(struct {
-		HomeID       string `json:"home_id"`
-		CaptainID    string `json:"captain_id"`
-		Precondition struct {
-			Generation uint64 `json:"generation"`
-			Revision   uint64 `json:"revision"`
-		} `json:"precondition"`
-		Reason string `json:"reason"`
-	}{r.HomeID.Value(), r.CaptainID.Value(), preconditionFields(r.Precondition), r.Reason})
+		HomeID       string             `json:"home_id"`
+		CaptainID    string             `json:"captain_id"`
+		Precondition preconditionDigest `json:"precondition"`
+		Reason       string             `json:"reason"`
+	}{r.HomeID.Value(), r.CaptainID.Value(), preconditionDigest(r.Precondition), r.Reason})
 }
 
 // RetireCaptain is the canonical operation that retires one Captain. Retiring
@@ -327,26 +265,11 @@ func (r RetireCaptainRequest) DigestBytes() ([]byte, error) {
 // Captain is removed so an interrupted retirement leaves a valid unbound
 // Captain rather than a dangling binding.
 func (r *Registry) RetireCaptain(op domain.Operation, req RetireCaptainRequest) (Outcome, error) {
-	if err := r.prepare(op, req, req.HomeID); err != nil {
-		return Outcome{}, err
-	}
-	if err := req.Precondition.Validate(); err != nil {
-		return Outcome{}, err
-	}
-	if req.Precondition.Generation != registryGeneration {
-		return Outcome{}, validationError("registry precondition generation must be %d", registryGeneration)
-	}
-	lk, err := r.h.Lock(captainRegistryScope)
-	if err != nil {
-		return Outcome{}, err
+	lk, replay, replayed, err := r.begin(op, req, req.HomeID, req.Precondition, captainRegistryScope)
+	if err != nil || replayed {
+		return replay, err
 	}
 	defer lk.Release()
-
-	if rec, ok, err := r.checkedReceipt(op); err != nil {
-		return Outcome{}, err
-	} else if ok {
-		return rec.outcome(), nil
-	}
 
 	doc, err := r.readCaptainRegistry()
 	if err != nil {
@@ -398,7 +321,7 @@ func (r *Registry) RetireCaptain(op domain.Operation, req RetireCaptainRequest) 
 	next.HomeRevision++
 	next.Captains = append(next.Captains[:idx], next.Captains[idx+1:]...)
 	rec := receiptFor(op, Outcome{HomeID: req.HomeID, CaptainID: req.CaptainID})
-	items, err := captainRegistryItems(rec, next)
+	items, err := registryItems(rec, captainsKey, next)
 	if err != nil {
 		return Outcome{}, err
 	}
@@ -419,15 +342,12 @@ type BindCaptainRequest struct {
 
 func (r BindCaptainRequest) DigestBytes() ([]byte, error) {
 	return json.Marshal(struct {
-		HomeID       string `json:"home_id"`
-		CaptainID    string `json:"captain_id"`
-		ProjectID    string `json:"project_id"`
-		Precondition struct {
-			Generation uint64 `json:"generation"`
-			Revision   uint64 `json:"revision"`
-		} `json:"precondition"`
-		Reason string `json:"reason"`
-	}{r.HomeID.Value(), r.CaptainID.Value(), r.ProjectID.Value(), preconditionFields(r.Precondition), r.Reason})
+		HomeID       string             `json:"home_id"`
+		CaptainID    string             `json:"captain_id"`
+		ProjectID    string             `json:"project_id"`
+		Precondition preconditionDigest `json:"precondition"`
+		Reason       string             `json:"reason"`
+	}{r.HomeID.Value(), r.CaptainID.Value(), r.ProjectID.Value(), preconditionDigest(r.Precondition), r.Reason})
 }
 
 // BindCaptain is the canonical operation that binds one Captain to one
@@ -437,15 +357,6 @@ func (r BindCaptainRequest) DigestBytes() ([]byte, error) {
 // Captain conflicts. Rebinding a Captain from one Project to another is atomic
 // within the Binding aggregate.
 func (r *Registry) BindCaptain(op domain.Operation, req BindCaptainRequest) (Outcome, error) {
-	if err := r.prepare(op, req, req.HomeID); err != nil {
-		return Outcome{}, err
-	}
-	if err := req.Precondition.Validate(); err != nil {
-		return Outcome{}, err
-	}
-	if req.Precondition.Generation != registryGeneration {
-		return Outcome{}, validationError("registry precondition generation must be %d", registryGeneration)
-	}
 	// Serialize on the binding aggregate only. The project and captain
 	// existence checks are reads; the only operations that remove those
 	// entities (RetireProject, RetireCaptain) both take the binding lock in
@@ -454,17 +365,11 @@ func (r *Registry) BindCaptain(op domain.Operation, req BindCaptainRequest) (Out
 	// entities and never invalidate a bind. Taking all three aggregate locks
 	// would serialize unrelated Project/Captain registration while a bind
 	// executes; the binding scope alone is the smallest truthful scope.
-	blk, err := r.h.Lock(bindingScope)
-	if err != nil {
-		return Outcome{}, err
+	blk, replay, replayed, err := r.begin(op, req, req.HomeID, req.Precondition, bindingScope)
+	if err != nil || replayed {
+		return replay, err
 	}
 	defer blk.Release()
-
-	if rec, ok, err := r.checkedReceipt(op); err != nil {
-		return Outcome{}, err
-	} else if ok {
-		return rec.outcome(), nil
-	}
 
 	pdoc, err := r.readProjectRegistry()
 	if err != nil {
@@ -504,7 +409,7 @@ func (r *Registry) BindCaptain(op domain.Operation, req BindCaptainRequest) (Out
 	next.HomeRevision++
 	next.Bindings = upsertBinding(bind.Bindings, req.ProjectID.Value(), req.CaptainID.Value())
 	rec := receiptFor(op, Outcome{HomeID: req.HomeID, CaptainID: req.CaptainID, ProjectID: req.ProjectID})
-	items, err := bindingItems(rec, next)
+	items, err := registryItems(rec, bindingsKey, next)
 	if err != nil {
 		return Outcome{}, err
 	}
@@ -514,9 +419,39 @@ func (r *Registry) BindCaptain(op domain.Operation, req BindCaptainRequest) (Out
 	return Outcome{HomeID: req.HomeID, CaptainID: req.CaptainID, ProjectID: req.ProjectID}, nil
 }
 
+// begin runs the preamble every registry operation shares: it validates op
+// against its typed intent and home, refuses any precondition generation but
+// the registry's, takes the scope lock and replays a recorded receipt. When
+// replayed is true the caller returns out; otherwise the caller owns lk and
+// releases it.
+func (r *Registry) begin(op domain.Operation, intent domain.Intent, homeID domain.HomeID, prec domain.Precondition, scope string) (lk *home.Lock, out Outcome, replayed bool, err error) {
+	if err := r.prepare(op, intent, homeID); err != nil {
+		return nil, Outcome{}, false, err
+	}
+	if prec.Generation != registryGeneration {
+		return nil, Outcome{}, false, validationError("registry precondition generation must be %d", registryGeneration)
+	}
+	lk, err = r.h.Lock(scope)
+	if err != nil {
+		return nil, Outcome{}, false, err
+	}
+	rec, ok, err := r.checkedReceipt(op)
+	if err != nil {
+		lk.Release()
+		return nil, Outcome{}, false, err
+	}
+	if ok {
+		lk.Release()
+		return nil, rec.outcome(), true, nil
+	}
+	return lk, Outcome{}, false, nil
+}
+
 // --- Change items ----------------------------------------------------------
 
-func projectRegistryItems(rec receipt, doc projectRegistryDoc) ([]home.ChangeItem, error) {
+// registryItems encodes one registry document under key and the operation
+// receipt as the change-set of one Home.Commit.
+func registryItems(rec receipt, key string, doc any) ([]home.ChangeItem, error) {
 	docData, err := json.Marshal(doc)
 	if err != nil {
 		return nil, err
@@ -526,37 +461,7 @@ func projectRegistryItems(rec receipt, doc projectRegistryDoc) ([]home.ChangeIte
 		return nil, err
 	}
 	return []home.ChangeItem{
-		{Root: registryRoot, Key: projectsKey, Data: docData},
-		{Root: registryRoot, Key: receiptKey(rec.OperationID), Data: recData},
-	}, nil
-}
-
-func captainRegistryItems(rec receipt, doc captainRegistryDoc) ([]home.ChangeItem, error) {
-	docData, err := json.Marshal(doc)
-	if err != nil {
-		return nil, err
-	}
-	recData, err := json.Marshal(rec)
-	if err != nil {
-		return nil, err
-	}
-	return []home.ChangeItem{
-		{Root: registryRoot, Key: captainsKey, Data: docData},
-		{Root: registryRoot, Key: receiptKey(rec.OperationID), Data: recData},
-	}, nil
-}
-
-func bindingItems(rec receipt, doc bindingDoc) ([]home.ChangeItem, error) {
-	docData, err := json.Marshal(doc)
-	if err != nil {
-		return nil, err
-	}
-	recData, err := json.Marshal(rec)
-	if err != nil {
-		return nil, err
-	}
-	return []home.ChangeItem{
-		{Root: registryRoot, Key: bindingsKey, Data: docData},
+		{Root: registryRoot, Key: key, Data: docData},
 		{Root: registryRoot, Key: receiptKey(rec.OperationID), Data: recData},
 	}, nil
 }

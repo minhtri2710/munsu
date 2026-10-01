@@ -49,7 +49,7 @@ Use --reconfigure to re-run auto-detection and overwrite existing config files a
 
 			// Auto-detect and persist config (only if absent or --reconfigure)
 			if err := autoDetectConfig(ctx.Home); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: auto-detect config: %v\n", err)
+				return fmt.Errorf("auto-detect config: %w", err)
 			}
 
 			// Write orchestrator AGENTS.md (always on fresh install, or with --reconfigure)
@@ -85,6 +85,10 @@ Use --reconfigure to re-run auto-detection and overwrite existing config files a
 				}
 				for _, c := range result.Configs {
 					fmt.Println(c.String())
+				}
+				if result.BaseConfigErr != nil {
+					fmt.Printf("BASE_CONFIG_INVALID: %v\n", result.BaseConfigErr)
+					return fmt.Errorf("fleet base document: %w", result.BaseConfigErr)
 				}
 				if result.GC != nil {
 					fmt.Println(result.GC.String())

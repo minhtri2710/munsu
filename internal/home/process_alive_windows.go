@@ -1,0 +1,57 @@
+//go:build windows
+
+package home
+
+import (
+	"errors"
+
+	"golang.org/x/sys/windows"
+)
+
+// IsProcessAlive checks whether a process with the given PID is running.
+//
+// Windows has no `kill`, so the unix half's signal probe cannot be used: open a
+// handle, ask for the exit code, and treat STILL_ACTIVE (259) as alive.
+//
+// The answer is fail-closed on the same terms as the unix half (#580). Every
+// caller reads false as permission to act -- ClaimWatcherLease reclaims the
+// lease, which makes the lease layer stop being a singleton guard while still
+// reading like one, IsWatcherLeaseHealthy declares the lease unhealthy, and
+// orchestrator's exit waits conclude the process is gone -- so only a
+// positively observed absence may answer false. OpenProcess reports
+// ERROR_INVALID_PARAMETER for a PID that does not exist; every other failure,
+// ERROR_ACCESS_DENIED above all, means a process we could not inspect rather
+// than one that is gone, and so does a GetExitCodeProcess that fails on a
+// handle we did open.
+//
+// This is compiled and vetted natively on windows, but only where the change
+// meets main: ci.yml triggers on pull requests targeting main and on pushes to
+// main, so its `windows-build-vet` job runs `go build ./...` and `go vet ./...`
+// on windows-latest at those two points and nowhere else. A push to a feature
+// branch with no open PR runs it not at all, and a green branch is therefore no
+// evidence that windows compiles. `GOOS=windows go vet ./...` on ubuntu is in
+// the same workflow and inherits the same two triggers.
+//
+// Natively compiled is still not natively executed, and no required check runs
+// this either way -- the only lane that runs tests on windows is
+// windows-observation.yml, which is workflow_dispatch-only. So the repository
+// holds no windows runtime proof, including which error OpenProcess actually
+// returns for an unopenable live PID.
+//
+// process_alive_windows_test.go is not what holds the signature: this function
+// has production call sites that compile in the same lane (watcher_lease.go,
+// orchestrator's afk_return.go and supervision_watcher.go), so a drifting
+// signature turns the lane red there before it reaches any test file. Do not
+// read that test as coverage for the behaviour above.
+func IsProcessAlive(pid int) bool {
+	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
+	if err != nil {
+		return !errors.Is(err, windows.ERROR_INVALID_PARAMETER)
+	}
+	defer windows.CloseHandle(handle)
+	var code uint32
+	if err := windows.GetExitCodeProcess(handle, &code); err != nil {
+		return true
+	}
+	return code == 259
+}

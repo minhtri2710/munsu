@@ -48,43 +48,12 @@ func (r *glabRunnerImpl) Run(args ...string) ([]byte, error) {
 // defaultGlabRunner is the production runner; replace for testing.
 var defaultGlabRunner GlabRunner = &glabRunnerImpl{}
 
-// GlabFallbackFn is an injectable read-only fallback for when glab is
-// Absent or Unsupported. When nil, the fallback returns an unavailable error.
-type GlabFallbackFn func(ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error)
-
-// defaultGlabFallback is the production fallback (no fallback available).
-var defaultGlabFallback GlabFallbackFn = nil
-
-// ParseProviderURL detects the provider from a PR/MR URL and parses it
-// into the provider-specific components. Returns the provider name and a
-// provider-agnostic (owner, repo, number) tuple.
-// Supports GitHub and GitLab URLs. Rejects unrecognized URLs fail closed.
-func ParseProviderURL(raw string) (provider string, owner string, repo string, number int, fullURL string, err error) {
-	// Try GitHub first (must not break existing behavior)
-	gh, ghErr := domain.ParseGHURL(raw)
-	if ghErr == nil {
-		return "github", gh.Owner, gh.Repo, gh.Num, gh.FullURL(), nil
-	}
-
-	// Try GitLab
-	gl, glErr := domain.ParseMRURL(raw)
-	if glErr == nil {
-		return "gitlab", gl.Owner, gl.Project, gl.IID, gl.FullURL(), nil
-	}
-
-	// Both failed — report both errors for diagnostic clarity
-	return "", "", "", 0, "", fmt.Errorf("unrecognized PR/MR URL: %q (github: %v; gitlab: %v)", raw, ghErr, glErr)
-}
-
 // GitLabClient defines the GitLab operations used by delivery surfaces.
 // All operations go through the consolidated authority path backed by glab.
 // When the GitLab capability is Absent or Failed, callers must fail closed.
 type GitLabClient interface {
 	// CaptureIdentity captures a full domain.DeliveryIdentity from a GitLab MR URL.
 	CaptureIdentity(mrURL string) (*domain.DeliveryIdentity, error)
-
-	// ViewMRState returns the MR state (OPEN, MERGED, CLOSED) via glab.
-	ViewMRState(host, owner, project string, iid int) (string, error)
 
 	// ViewMRJSON fetches MR metadata through the typed GitLab API.
 	ViewMRJSON(host, owner, project string, iid int) ([]byte, error)
@@ -241,44 +210,55 @@ func (p *gitlabDeliveryProvider) Observe(ident domain.DeliveryIdentity) (Deliver
 		BaseRef:   baseRef,
 	}
 	if status.State == "OPEN" {
-		approved, err := p.client.ApprovalState(glURL.Host, glURL.Owner, glURL.Project, glURL.IID)
+		pr, mergeStatusOK, err := readGitLabOpenMR(p.client, glURL, data, status.HeadSHA)
 		if err != nil {
 			return DeliveryProviderObservation{}, err
 		}
-		mergeStatus, mergeStatusOK := parseGLDetailedMergeStatus(data)
-		if !mergeStatusOK || mergeStatus != "mergeable" {
-			obs.Mergeability = DeliveryMergeabilityDenied
-			return obs, nil
-		}
-		pipeline, pipelineOK := parseGLPipeline(data)
-		if !pipelineOK || pipeline.SHA != status.HeadSHA {
-			return DeliveryProviderObservation{}, fmt.Errorf("GitLab MR observation is missing pipeline SHA evidence for the current head")
-		}
-		reviewStates, err := p.client.ReviewerStates(glURL.Host, glURL.Owner, glURL.Project, glURL.IID)
-		if err != nil {
-			return DeliveryProviderObservation{}, err
-		}
-		// The delivery acceptance rule has one owner: domain.PR.CanMerge. Build
-		// the observed PR and ask it, rather than re-deciding inline here. The
-		// detailed_merge_status "mergeable" fence above stays separate: it guards
-		// merge conflicts and blocked states that CanMerge does not model.
-		pr := domain.PR{
-			Status: domain.PROpen,
-			Checks: []domain.CheckRun{{Status: mapCheckStatus(pipeline.Status)}},
-		}
-		if approved {
-			pr.Reviews = append(pr.Reviews, domain.Review{State: domain.ReviewApproved})
-		}
-		for _, st := range reviewStates {
-			pr.Reviews = append(pr.Reviews, domain.Review{State: st})
-		}
-		if pr.CanMerge() {
+		if mergeStatusOK && pr.CanMerge() {
 			obs.Mergeability = DeliveryMergeabilityAllowed
 		} else {
 			obs.Mergeability = DeliveryMergeabilityDenied
 		}
 	}
 	return obs, nil
+}
+
+// readGitLabOpenMR reads every acceptance input of an open MR at headSHA:
+// approval, reviewer verdicts and head pipeline, as the domain.PR that
+// domain.PR.CanMerge decides on. GitLab tracks reviewer verdicts (notably
+// "requested_changes") separately from approval-rule satisfaction, so both are
+// read. mergeStatusOK reports the separate detailed_merge_status "mergeable"
+// fence, which guards merge conflicts and blocked states CanMerge does not
+// model; when it is false the other inputs are not read.
+func readGitLabOpenMR(client GitLabClient, glURL domain.GLURL, data []byte, headSHA string) (pr domain.PR, mergeStatusOK bool, err error) {
+	mergeStatus, ok := parseGLDetailedMergeStatus(data)
+	if !ok || mergeStatus != "mergeable" {
+		return domain.PR{}, false, nil
+	}
+	pipeline, pipelineOK := parseGLPipeline(data)
+	if !pipelineOK || pipeline.SHA != headSHA {
+		return domain.PR{}, false, fmt.Errorf("GitLab MR observation is missing pipeline SHA evidence for the current head")
+	}
+	approved, err := client.ApprovalState(glURL.Host, glURL.Owner, glURL.Project, glURL.IID)
+	if err != nil {
+		return domain.PR{}, false, err
+	}
+	reviewStates, err := client.ReviewerStates(glURL.Host, glURL.Owner, glURL.Project, glURL.IID)
+	if err != nil {
+		return domain.PR{}, false, err
+	}
+	pr = domain.PR{
+		Number: glURL.IID,
+		Status: domain.PROpen,
+		Checks: []domain.CheckRun{{Status: mapCheckStatus(pipeline.Status)}},
+	}
+	if approved {
+		pr.Reviews = append(pr.Reviews, domain.Review{State: domain.ReviewApproved})
+	}
+	for _, st := range reviewStates {
+		pr.Reviews = append(pr.Reviews, domain.Review{State: st})
+	}
+	return pr, true, nil
 }
 
 // parseGLTargetBranch reads the MR target branch (the GitLab name for the
@@ -293,23 +273,6 @@ func parseGLTargetBranch(data []byte) (string, error) {
 		return "", fmt.Errorf("parsing glab mr view JSON: %w", err)
 	}
 	return raw.TargetBranch, nil
-}
-
-// ViewMRState returns the MR state (OPEN, MERGED, CLOSED) via glab.
-func (c *glabClient) ViewMRState(host, owner, project string, iid int) (string, error) {
-	data, err := c.ViewMRJSON(host, owner, project, iid)
-	if err != nil {
-		return "", err
-	}
-
-	var raw struct {
-		State string `json:"state"`
-	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return "", fmt.Errorf("parsing glab mr view JSON: %w", err)
-	}
-
-	return normalizeGlabState(raw.State), nil
 }
 
 // normalizeGlabState normalizes GitLab state strings to the domain convention.

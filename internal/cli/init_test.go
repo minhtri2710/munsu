@@ -238,3 +238,70 @@ func TestInitWritesFleetBaseDocument(t *testing.T) {
 		}
 	}
 }
+
+func TestInitReconfigureCorruptBaseFails(t *testing.T) {
+	savedChoice, savedReconfigure := skillChoice, reconfigure
+	t.Cleanup(func() { skillChoice, reconfigure = savedChoice, savedReconfigure })
+	skillChoice = ""
+	t.Setenv("MUNSU_INIT_SKILL", "skip")
+
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+
+	var err error
+	captureOutput(func() {
+		root := NewRootCommand()
+		root.SetArgs([]string{"init"})
+		err = root.Execute()
+	})
+	if err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, config.BaseDocumentPath), []byte("{not-json"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	captureOutput(func() {
+		root := NewRootCommand()
+		root.SetArgs([]string{"init", "--reconfigure"})
+		err = root.Execute()
+	})
+	if err == nil || !strings.Contains(err.Error(), "fleet base document") {
+		t.Fatalf("init --reconfigure over corrupt base: err = %v, want fleet base load failure", err)
+	}
+}
+
+func TestInitCorruptBaseFails(t *testing.T) {
+	savedChoice, savedReconfigure := skillChoice, reconfigure
+	t.Cleanup(func() { skillChoice, reconfigure = savedChoice, savedReconfigure })
+	skillChoice, reconfigure = "", false
+	t.Setenv("MUNSU_INIT_SKILL", "skip")
+
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+
+	var err error
+	captureOutput(func() {
+		root := NewRootCommand()
+		root.SetArgs([]string{"init"})
+		err = root.Execute()
+	})
+	if err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, config.BaseDocumentPath), []byte(`{"schemaVersion": "bogus"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, _ := captureOutput(func() {
+		root := NewRootCommand()
+		root.SetArgs([]string{"init"})
+		err = root.Execute()
+	})
+	if err == nil || !strings.Contains(err.Error(), "fleet base document") {
+		t.Fatalf("init over corrupt base: err = %v, want fleet base document failure", err)
+	}
+	if !strings.Contains(stdout, "BASE_CONFIG_INVALID") {
+		t.Fatalf("init over corrupt base did not print BASE_CONFIG_INVALID:\n%s", stdout)
+	}
+}

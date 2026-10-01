@@ -70,7 +70,10 @@ func TestOtherWorkspaceRefsRoundTrip(t *testing.T) {
 	if err := home.WriteMeta(tmp, "task-x", map[string]string{"herdr_workspace_id": "W1"}); err != nil {
 		t.Fatal(err)
 	}
-	refs := otherWorkspaceRefs(tmp, "task-x", "W1")
+	refs, err := otherWorkspaceRefs(tmp, "task-x", "W1")
+	if err != nil {
+		t.Fatalf("otherWorkspaceRefs: %v", err)
+	}
 	if !durableContainsID(refs, "captain:cap") {
 		t.Errorf("otherWorkspaceRefs missing logical id captain:cap (got %v)", refs)
 	}

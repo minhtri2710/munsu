@@ -86,16 +86,20 @@ func EnsureWatcher(captainHome string, hasChildWork bool) error {
 
 	// No child work — idle policy: stop watcher if running.
 	if status == WatcherRunning {
-		// Read the beat before stopping: it names the watcher Stop signals, and
-		// that PID is the only lease this cleanup is entitled to remove.
-		_, stoppedPID, hadBeat := ReadBeat(captainHome)
-		if err := Stop(captainHome); err != nil {
+		stop, err := StopWatcher(captainHome)
+		if err != nil {
 			return fmt.Errorf("stopping watcher for captain home %s: %w", captainHome, err)
+		}
+		// A watcher still alive after the bound keeps the beat, identity and
+		// lease that target it, as StopWatcher's own contract does.
+		if stop.State == StopUnresponsive {
+			return fmt.Errorf("watcher pid %d for captain home %s did not exit; keeping its beat, identity and lease", stop.PID, captainHome)
 		}
 		ClearBeat(captainHome)
 		ClearIdentity(captainHome)
-		if hadBeat && stoppedPID > 0 {
-			home.ReleaseWatcherLeaseIfMatches(captainHome, stoppedPID)
+		// The stopped PID is the only lease this cleanup is entitled to remove.
+		if stop.PID > 0 {
+			home.ReleaseWatcherLeaseIfMatches(captainHome, stop.PID)
 		}
 	}
 	return nil

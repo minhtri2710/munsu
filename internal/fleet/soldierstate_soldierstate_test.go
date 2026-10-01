@@ -76,11 +76,6 @@ func seedCanonicalPhase(t *testing.T, homeDir, taskID string, phase taskauthorit
 	}
 }
 
-// aliveProbe is a test endpoint probe that always reports the pane alive.
-type aliveProbe struct{}
-
-func (aliveProbe) Probe(string, map[string]string) (bool, error) { return true, nil }
-
 // deadProbe is a test endpoint probe that always reports the pane dead.
 type deadProbe struct{}
 

@@ -139,9 +139,6 @@ type DeliveryRevocation struct {
 	Reason                   string `json:"reason"`
 }
 
-// clone returns a deep copy of the revocation evidence.
-func (r DeliveryRevocation) clone() DeliveryRevocation { return r }
-
 // DeliveryOutcomeStatus is the typed, closed set of truthful delivery outcome
 // statuses. completed, partial, and remote-unknown are terminal: once
 // committed they bind the record and a distinct incompatible outcome
@@ -640,6 +637,18 @@ func (c *Canonical) readDeliveryOutcome(taskID, opID string) (DeliveryOutcome, b
 	return out, true, nil
 }
 
+// mutateDeliveryWithDispatch serializes a hold-checked delivery mutation with
+// hold changes. The dispatch scope is always acquired before the task scope
+// used by mutateDelivery.
+func (c *Canonical) mutateDeliveryWithDispatch(op domain.Operation, taskID domain.TaskID, prec domain.Precondition, apply func(Aggregate, DeliveryIndex) (Aggregate, DeliveryIndex, []home.ChangeItem, error)) (DeliveryIndex, bool, error) {
+	dispatch, err := c.h.Lock(dispatchScope)
+	if err != nil {
+		return DeliveryIndex{}, false, err
+	}
+	defer dispatch.Release()
+	return c.mutateDelivery(op, taskID, prec, apply)
+}
+
 // mutateDelivery runs one task-scoped delivery mutation: receipt idempotency
 // first (replay reconstructs the exact original result from the immutable
 // evidence), then the exact generation/revision precondition, currentness,
@@ -854,24 +863,7 @@ func deliveryHoldRelevant(hold DispatchHold, agg Aggregate) bool {
 	if !slices.Contains(hold.Actions, DispatchActionDelivery) {
 		return false
 	}
-	return holdScopeMatches(hold, agg)
-}
-
-// holdScopeMatches checks the hold scope against the task identity fields.
-func holdScopeMatches(hold DispatchHold, agg Aggregate) bool {
-	if len(hold.Scope.TaskIDs) > 0 && !slices.Contains(hold.Scope.TaskIDs, agg.TaskID) {
-		return false
-	}
-	if len(hold.Scope.ProjectIDs) > 0 && !slices.Contains(hold.Scope.ProjectIDs, agg.Definition.Project) {
-		return false
-	}
-	if len(hold.Scope.Generations) > 0 && !slices.Contains(hold.Scope.Generations, agg.Generation.String()) {
-		return false
-	}
-	if len(hold.Scope.ParentIDs) > 0 && !slices.Contains(hold.Scope.ParentIDs, agg.Definition.ParentTaskID) {
-		return false
-	}
-	return true
+	return hold.Scope.matches(agg.TaskID, agg.Definition.Project, agg.Generation.String(), agg.Definition.ParentTaskID)
 }
 
 func sha256Hex(data []byte) string {
@@ -897,7 +889,7 @@ func (c *Canonical) AuthorizeDelivery(op domain.Operation, req CanonicalDelivery
 		return DeliveryAuthorizationResult{}, err
 	}
 	var committed DeliveryAuthorization
-	_, replayed, err := c.mutateDelivery(op, req.TaskID, req.Precondition, func(cur Aggregate, index DeliveryIndex) (Aggregate, DeliveryIndex, []home.ChangeItem, error) {
+	_, replayed, err := c.mutateDeliveryWithDispatch(op, req.TaskID, req.Precondition, func(cur Aggregate, index DeliveryIndex) (Aggregate, DeliveryIndex, []home.ChangeItem, error) {
 		if cur.Phase != PhaseWorking {
 			return Aggregate{}, DeliveryIndex{}, nil, preconditionError("delivery authorization requires a working task; task %s is %s", cur.TaskID, cur.Phase)
 		}
@@ -1079,7 +1071,7 @@ func (c *Canonical) CommitDeliveryOutcome(op domain.Operation, req CanonicalDeli
 		return DeliveryOutcomeResult{}, validationError("delivery outcome requires the exact authorization operation identity")
 	}
 	var committed DeliveryOutcome
-	_, replayed, err := c.mutateDelivery(op, req.TaskID, req.Precondition, func(cur Aggregate, index DeliveryIndex) (Aggregate, DeliveryIndex, []home.ChangeItem, error) {
+	_, replayed, err := c.mutateDeliveryWithDispatch(op, req.TaskID, req.Precondition, func(cur Aggregate, index DeliveryIndex) (Aggregate, DeliveryIndex, []home.ChangeItem, error) {
 		if index.AuthorizationOpID == "" {
 			return Aggregate{}, DeliveryIndex{}, nil, conflictError(ErrConflict, "task %s has no active delivery authorization to commit an outcome against", cur.TaskID)
 		}
@@ -1107,7 +1099,7 @@ func (c *Canonical) CommitDeliveryOutcome(op domain.Operation, req CanonicalDeli
 		if err != nil {
 			return Aggregate{}, DeliveryIndex{}, nil, err
 		}
-		if reasons := c.authorizationCurrencyReasons(cur, auth, holds, false); len(reasons) > 0 {
+		if reasons := c.authorizationCurrencyReasons(cur, auth, holds, deliveryOutcomeCommit); len(reasons) > 0 {
 			return Aggregate{}, DeliveryIndex{}, nil, preconditionError("delivery authorization is not current for task %s: %v", cur.TaskID, reasons)
 		}
 		next := cur.clone()
@@ -1155,29 +1147,48 @@ func (c *Canonical) CommitDeliveryOutcome(op domain.Operation, req CanonicalDeli
 	return DeliveryOutcomeResult{Outcome: committed}, nil
 }
 
+// deliveryCurrencyCheck names the caller of authorizationCurrencyReasons.
+type deliveryCurrencyCheck int
+
+const (
+	// deliveryCurrencyRead is the currency read: every reason applies.
+	deliveryCurrencyRead deliveryCurrencyCheck = iota
+	// deliveryOutcomeCommit records the truth of an already-attempted
+	// provider mutation, which task drift since issuance cannot undo. Beyond
+	// the authorization identity CommitDeliveryOutcome checks itself (index
+	// operation ID, not revoked, no terminal outcome), it refuses only on a
+	// generation change, a hold matching at commit time, or an active
+	// transfer reservation; the last two are transient, so recovery
+	// converges once they clear. Revision, phase, owner, binding, identity
+	// head and holds-digest drift do not refuse. The commit's own
+	// precondition still fences the revision optimistically.
+	deliveryOutcomeCommit
+)
+
 // authorizationCurrencyReasons re-derives the current validity of one issued
-// authorization against current task state. checkHead=false is used by the
-// outcome commit, where the delivery execution has legitimately moved the
-// bound repository head (a successful mutation is never uncommittable because
-// the head advanced); the currency read uses checkHead=true.
-func (c *Canonical) authorizationCurrencyReasons(agg Aggregate, auth DeliveryAuthorization, holds []DispatchHold, checkHead bool) []DeliveryCurrencyReason {
+// authorization against current task state for the given caller; the outcome
+// commit keeps only the generation, reservation and matching-hold reasons,
+// the currency read reports every reason.
+func (c *Canonical) authorizationCurrencyReasons(agg Aggregate, auth DeliveryAuthorization, holds []DispatchHold, check deliveryCurrencyCheck) []DeliveryCurrencyReason {
 	var reasons []DeliveryCurrencyReason
 	if auth.Generation != agg.Generation {
 		reasons = append(reasons, DeliveryCurrencyGeneration)
 	}
-	if auth.Revision != agg.Revision {
+	if check == deliveryCurrencyRead && auth.Revision != agg.Revision {
 		reasons = append(reasons, DeliveryCurrencyRevision)
 	}
-	if auth.Phase != agg.Phase {
+	if check == deliveryCurrencyRead && auth.Phase != agg.Phase {
 		reasons = append(reasons, DeliveryCurrencyPhase)
 	}
-	if strings.TrimSpace(agg.Definition.Owner) == "" || agg.Definition.Owner != auth.Owner {
+	if check == deliveryCurrencyRead && (strings.TrimSpace(agg.Definition.Owner) == "" || agg.Definition.Owner != auth.Owner) {
 		reasons = append(reasons, DeliveryCurrencyMissingOwner)
 	}
-	if agg.Endpoint == nil || agg.Worktree == nil {
-		reasons = append(reasons, DeliveryCurrencyMissingBindings)
-	} else if deliveryBindingDigest(*agg.Endpoint, *agg.Worktree) != auth.BindingDigest {
-		reasons = append(reasons, DeliveryCurrencyBindingDigest)
+	if check == deliveryCurrencyRead {
+		if agg.Endpoint == nil || agg.Worktree == nil {
+			reasons = append(reasons, DeliveryCurrencyMissingBindings)
+		} else if deliveryBindingDigest(*agg.Endpoint, *agg.Worktree) != auth.BindingDigest {
+			reasons = append(reasons, DeliveryCurrencyBindingDigest)
+		}
 	}
 	if activeReservation(agg.Transfer) {
 		reasons = append(reasons, DeliveryCurrencyReservation)
@@ -1185,93 +1196,13 @@ func (c *Canonical) authorizationCurrencyReasons(agg Aggregate, auth DeliveryAut
 	if holdsBlockAction(holds, DispatchActionDelivery, agg) {
 		reasons = append(reasons, DeliveryCurrencyMatchingHold)
 	}
-	if deliveryHoldsDigest(holds, agg) != auth.HoldsDigest {
+	if check == deliveryCurrencyRead && deliveryHoldsDigest(holds, agg) != auth.HoldsDigest {
 		reasons = append(reasons, DeliveryCurrencyHoldsDigest)
 	}
-	if checkHead && agg.Worktree != nil && agg.Worktree.Head != auth.Identity.HeadSHA {
+	if check == deliveryCurrencyRead && agg.Worktree != nil && agg.Worktree.Head != auth.Identity.HeadSHA {
 		reasons = append(reasons, DeliveryCurrencyIdentityHead)
 	}
 	return reasons
-}
-
-// DeliveryAuthorization returns the current delivery authorization of the
-// task by resolving the bounded index pointer to the immutable issuance
-// evidence. It fails closed with ErrNotFound when the task has no
-// authorization, and fails closed on missing, substituted, or malformed
-// evidence.
-//
-// It reads under the task scope lock with pending-journal recovery so it
-// observes a whole change-set rather than a torn one; it therefore acquires
-// the scope lock (advancing the fence) and may replay an interrupted commit.
-// It can block behind an in-flight same-task commit and return
-// home.ErrLockTimeout or home.ErrFenced, and must not be called while already
-// holding the same task's scope (flock is non-reentrant).
-func (c *Canonical) DeliveryAuthorization(taskID domain.TaskID) (DeliveryAuthorization, error) {
-	if err := taskID.Validate(); err != nil {
-		return DeliveryAuthorization{}, err
-	}
-	lk, err := c.h.Lock(taskScope(taskID.Value()))
-	if err != nil {
-		return DeliveryAuthorization{}, err
-	}
-	defer lk.Release()
-	if err := c.h.RecoverPending(lk); err != nil {
-		return DeliveryAuthorization{}, err
-	}
-	index, _, err := c.readDeliveryIndex(taskID.Value())
-	if err != nil {
-		return DeliveryAuthorization{}, err
-	}
-	if index.AuthorizationOpID == "" {
-		return DeliveryAuthorization{}, conflictError(ErrNotFound, "task %s has no delivery authorization", taskID.Value())
-	}
-	auth, ok, err := c.readDeliveryAuthorization(taskID.Value(), index.AuthorizationOpID)
-	if err != nil {
-		return DeliveryAuthorization{}, err
-	}
-	if !ok {
-		return DeliveryAuthorization{}, internalError("task %s delivery index points at missing authorization %s", taskID.Value(), index.AuthorizationOpID)
-	}
-	return auth.clone(), nil
-}
-
-// DeliveryAuthorizationByOperation returns the immutable issuance evidence
-// document identified by its exact operation identity (active or revoked),
-// preserving the auditable prior record across revoke/re-authorize flows.
-func (c *Canonical) DeliveryAuthorizationByOperation(taskID domain.TaskID, operationID string) (DeliveryAuthorization, error) {
-	if err := taskID.Validate(); err != nil {
-		return DeliveryAuthorization{}, err
-	}
-	if !safeIdentityValue(operationID) {
-		return DeliveryAuthorization{}, validationError("authorization operation identity must be a safe non-empty value")
-	}
-	auth, ok, err := c.readDeliveryAuthorization(taskID.Value(), operationID)
-	if err != nil {
-		return DeliveryAuthorization{}, err
-	}
-	if !ok {
-		return DeliveryAuthorization{}, conflictError(ErrNotFound, "task %s has no delivery authorization %s", taskID.Value(), operationID)
-	}
-	return auth.clone(), nil
-}
-
-// DeliveryRevocationByOperation returns the immutable revocation evidence
-// document identified by its exact operation identity.
-func (c *Canonical) DeliveryRevocationByOperation(taskID domain.TaskID, operationID string) (DeliveryRevocation, error) {
-	if err := taskID.Validate(); err != nil {
-		return DeliveryRevocation{}, err
-	}
-	if !safeIdentityValue(operationID) {
-		return DeliveryRevocation{}, validationError("revocation operation identity must be a safe non-empty value")
-	}
-	revocation, ok, err := c.readDeliveryRevocation(taskID.Value(), operationID)
-	if err != nil {
-		return DeliveryRevocation{}, err
-	}
-	if !ok {
-		return DeliveryRevocation{}, conflictError(ErrNotFound, "task %s has no delivery revocation %s", taskID.Value(), operationID)
-	}
-	return revocation.clone(), nil
 }
 
 // DeliveryOutcome returns the current committed delivery outcome of the task
@@ -1430,7 +1361,7 @@ func (c *Canonical) DeliveryCurrency(taskID domain.TaskID) (DeliveryCurrency, er
 		cur.Reasons = []DeliveryCurrencyReason{DeliveryCurrencyRevoked}
 		return cur, nil
 	}
-	cur.Reasons = c.authorizationCurrencyReasons(doc.Aggregate, a, holds, true)
+	cur.Reasons = c.authorizationCurrencyReasons(doc.Aggregate, a, holds, deliveryCurrencyRead)
 	cur.Valid = len(cur.Reasons) == 0
 	return cur, nil
 }

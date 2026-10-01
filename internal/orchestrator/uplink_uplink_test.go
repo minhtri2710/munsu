@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"errors"
+	mhome "github.com/minhtri2710/munsu/internal/home"
 	"os"
 	"path/filepath"
 	"testing"
@@ -14,7 +15,7 @@ import (
 func captainReceiverHome(t *testing.T, identity string) string {
 	t.Helper()
 	dir := t.TempDir()
-	if err := WriteHomeIdentity(dir, identity, RankCaptain); err != nil {
+	if err := mhome.SeedCaptainProvenance(dir, identity); err != nil {
 		t.Fatal(err)
 	}
 	return dir

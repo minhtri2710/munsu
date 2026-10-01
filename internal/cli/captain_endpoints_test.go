@@ -202,7 +202,7 @@ func (c *labelCaptureBackend) Teardown(string) error               { return nil 
 
 func TestSessionLaunchEndpointDerivesContainerLabel(t *testing.T) {
 	makeEndpoint := func(c *labelCaptureBackend) sessionLaunchEndpoint {
-		return sessionLaunchEndpoint{resolve: func(string, string) (backend.Backend, string, error) {
+		return sessionLaunchEndpoint{resolve: func(string) (backend.Backend, string, error) {
 			return c, "tmux", nil
 		}}
 	}

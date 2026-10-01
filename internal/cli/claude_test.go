@@ -76,7 +76,7 @@ func TestClaudeSafetyCheckDeny(t *testing.T) {
 	cmd.SetErr(io.Discard)
 
 	stdout, stderr := captureBoth(func() {
-		runSafetyCheck(cmd, gitDir, "munsu watch arm", "", "claude")
+		runSafetyCheck(cmd, gitDir, "munsu watch", "", "claude")
 	})
 
 	if exitCode != 2 {
@@ -134,7 +134,7 @@ func TestClaudeSafetyCheckDenyViaStdin(t *testing.T) {
 	cmd.SetErr(io.Discard)
 
 	// Mock stdin with Claude-shaped JSON
-	stdinPayload := `{"hookEventName":"PreToolUse","tool_input":{"command":"munsu watch arm"}}`
+	stdinPayload := `{"hookEventName":"PreToolUse","tool_input":{"command":"munsu watch"}}`
 	oldStdin := os.Stdin
 	r, w, _ := os.Pipe()
 	w.Write([]byte(stdinPayload))
@@ -208,7 +208,7 @@ func TestClaudeGuardStopHookActive(t *testing.T) {
 	exitWithCode = func(code int) { exitCode = code }
 	defer func() { exitWithCode = oldExit }()
 
-	// Call runGuardClaude with stdin containing stop_hook_active=true
+	// Call runGuardBlocking with stdin containing stop_hook_active=true
 	stdinPayload := `{"hookEventName":"Stop","stop_hook_active":true}`
 	oldStdin := os.Stdin
 	r, w, _ := os.Pipe()
@@ -216,7 +216,7 @@ func TestClaudeGuardStopHookActive(t *testing.T) {
 	w.Close()
 	os.Stdin = r
 
-	err := runGuardClaude(tmpDir)
+	err := runGuardBlocking(tmpDir)
 
 	os.Stdin = oldStdin
 
@@ -271,7 +271,7 @@ func TestClaudeGuardBlindTurn(t *testing.T) {
 		w.Close()
 		os.Stdin = r
 
-		runGuardClaude(tmpDir)
+		runGuardBlocking(tmpDir)
 
 		os.Stdin = oldStdin
 	})
@@ -324,7 +324,7 @@ func TestClaudeGuardHealthyExit(t *testing.T) {
 	w.Close()
 	os.Stdin = r
 
-	err := runGuardClaude(tmpDir)
+	err := runGuardBlocking(tmpDir)
 
 	os.Stdin = oldStdin
 
@@ -443,13 +443,11 @@ func TestSessionStartNudgeSilentWhenLocked(t *testing.T) {
 	os.Chdir(tmpDir)
 	defer os.Chdir(oldCwd)
 
-	// Create a lock file with current PID (which is in our ancestry)
-	stateDir := filepath.Join(tmpDir, "state")
-	os.MkdirAll(stateDir, 0755)
-	lockContent := fmt.Sprintf("%d\n", os.Getpid())
-	if err := os.WriteFile(filepath.Join(stateDir, ".lock"), []byte(lockContent), 0644); err != nil {
-		t.Fatal(err)
+	// Hold the session lock from this process (which is in our ancestry)
+	if acquired, err := home.AcquireSessionLock(tmpDir); err != nil || !acquired {
+		t.Fatalf("AcquireSessionLock = %v, %v; want held", acquired, err)
 	}
+	t.Cleanup(func() { _ = home.ReleaseSessionLock(tmpDir) })
 
 	cmd := &cobra.Command{}
 	cmd.SetOut(io.Discard)
@@ -538,7 +536,7 @@ func TestClaudeGuardPendingRelayBlocks(t *testing.T) {
 		os.Stdin = r
 
 		sout, serr := captureBoth(func() {
-			runGuardClaude(tmpDir)
+			runGuardBlocking(tmpDir)
 		})
 		stderr = serr
 		_ = sout
@@ -573,7 +571,7 @@ func TestClaudeGuardNoPendingRelayAllows(t *testing.T) {
 	w.Close()
 	os.Stdin = r
 
-	err := runGuardClaude(tmpDir)
+	err := runGuardBlocking(tmpDir)
 	os.Stdin = oldStdin
 
 	if err != nil {
@@ -613,7 +611,7 @@ func TestClaudeGuardParentHomeReceiptBlocks(t *testing.T) {
 		os.Stdin = r
 
 		_, serr := captureBoth(func() {
-			runGuardClaude(tmpDir)
+			runGuardBlocking(tmpDir)
 		})
 		stderr = serr
 		os.Stdin = oldStdin
@@ -656,7 +654,7 @@ func TestClaudeGuardParentHomeAckedAllows(t *testing.T) {
 	w.Close()
 	os.Stdin = r
 
-	err := runGuardClaude(tmpDir)
+	err := runGuardBlocking(tmpDir)
 	os.Stdin = oldStdin
 
 	if err != nil {
@@ -699,7 +697,7 @@ func TestClaudeGuardParentHomeUnreadableFailsClosed(t *testing.T) {
 		w.Close()
 		os.Stdin = r
 
-		runGuardClaude(tmpDir)
+		runGuardBlocking(tmpDir)
 		os.Stdin = oldStdin
 	})
 
@@ -745,38 +743,40 @@ func TestReadParentPID(t *testing.T) {
 // session init.
 func TestSessionStartNudgeAlwaysExitsZero(t *testing.T) {
 	type testCase struct {
-		name  string
-		setup func(tmpDir string)
+		name   string
+		setup  func(t *testing.T, tmpDir string)
+		silent bool
 	}
 
 	tests := []testCase{
 		{
 			name: "gate agent silent exit 0",
-			setup: func(tmpDir string) {
+			setup: func(t *testing.T, tmpDir string) {
 				t.Setenv("NO_MISTAKES_GATE", "1")
 			},
 		},
 		{
 			name: "non-primary silent exit 0",
-			setup: func(tmpDir string) {
+			setup: func(t *testing.T, tmpDir string) {
 				// No git repo => non-primary
 			},
 		},
 		{
 			name: "lock held silent exit 0",
-			setup: func(tmpDir string) {
+			setup: func(t *testing.T, tmpDir string) {
 				// Create a git repo so scope is primary
 				runGit(t, tmpDir, "init")
-				// Create lock file with current PID
-				stateDir := filepath.Join(tmpDir, "state")
-				os.MkdirAll(stateDir, 0755)
-				lockContent := fmt.Sprintf("%d\n", os.Getpid())
-				os.WriteFile(filepath.Join(stateDir, ".lock"), []byte(lockContent), 0644)
+				// Hold the session lock from this process (in our ancestry)
+				if acquired, err := home.AcquireSessionLock(tmpDir); err != nil || !acquired {
+					t.Fatalf("AcquireSessionLock = %v, %v; want held", acquired, err)
+				}
+				t.Cleanup(func() { _ = home.ReleaseSessionLock(tmpDir) })
 			},
+			silent: true,
 		},
 		{
 			name: "primary unlocked prints nudge exit 0",
-			setup: func(tmpDir string) {
+			setup: func(t *testing.T, tmpDir string) {
 				// Create a git repo so scope is primary
 				runGit(t, tmpDir, "init")
 			},
@@ -787,7 +787,7 @@ func TestSessionStartNudgeAlwaysExitsZero(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			tmpDir := t.TempDir()
 			t.Setenv("MUNSU_HOME", tmpDir)
-			tt.setup(tmpDir)
+			tt.setup(t, tmpDir)
 
 			// runSessionStartNudge checks os.Getwd() for primary scope.
 			oldCwd, _ := os.Getwd()
@@ -803,12 +803,15 @@ func TestSessionStartNudgeAlwaysExitsZero(t *testing.T) {
 			cmd.SetOut(io.Discard)
 			cmd.SetErr(io.Discard)
 
-			captureBoth(func() {
+			stdout, _ := captureBoth(func() {
 				err := runSessionStartNudge(cmd, Ctx{Home: tmpDir})
 				if err != nil {
 					t.Errorf("runSessionStartNudge returned error: %v", err)
 				}
 			})
+			if tt.silent && strings.TrimSpace(stdout) != "" {
+				t.Errorf("expected silent output, got: %s", stdout)
+			}
 
 			// runSessionStartNudge never calls exitWithCode -- it returns nil.
 			// But we track exitCode to be safe.
@@ -886,11 +889,11 @@ func TestSessionStartNudgeIdempotentAfterLock(t *testing.T) {
 	os.Chdir(tmpDir)
 	defer os.Chdir(oldCwd)
 
-	// Create lock file with current PID to simulate lock held
-	stateDir := filepath.Join(tmpDir, "state")
-	os.MkdirAll(stateDir, 0755)
-	lockContent := fmt.Sprintf("%d\n", os.Getpid())
-	os.WriteFile(filepath.Join(stateDir, ".lock"), []byte(lockContent), 0644)
+	// Hold the session lock from this process (which is in our ancestry)
+	if acquired, err := home.AcquireSessionLock(tmpDir); err != nil || !acquired {
+		t.Fatalf("AcquireSessionLock = %v, %v; want held", acquired, err)
+	}
+	t.Cleanup(func() { _ = home.ReleaseSessionLock(tmpDir) })
 
 	cmd := &cobra.Command{}
 	cmd.SetOut(io.Discard)

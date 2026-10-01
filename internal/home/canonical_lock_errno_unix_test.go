@@ -24,17 +24,17 @@ func TestLockScopedFileClassifiesBusyApartFromBrokenLocking(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer held.Close()
-	if err := lockScopedFile(held); err != nil {
+	if err := lockFile(held, true); err != nil {
 		t.Fatalf("first lock on a free scope: %v", err)
 	}
-	defer unlockScopedFile(held)
+	defer unlockFile(held)
 
 	contender, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer contender.Close()
-	if err := lockScopedFile(contender); !errors.Is(err, errLockBusy) {
+	if err := lockFile(contender, true); !errors.Is(err, errLockBusy) {
 		t.Errorf("lock on a held scope: got %v, want errLockBusy", err)
 	}
 
@@ -52,7 +52,7 @@ func TestLockScopedFileClassifiesBusyApartFromBrokenLocking(t *testing.T) {
 	if err := closed.Close(); err != nil {
 		t.Fatal(err)
 	}
-	err = lockScopedFile(closed)
+	err = lockFile(closed, true)
 	if errors.Is(err, errLockBusy) {
 		t.Fatalf("lock on a closed descriptor reported busy, so the retry loop would spin the full budget: %v", err)
 	}

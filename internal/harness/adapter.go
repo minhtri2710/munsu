@@ -96,7 +96,7 @@ type Adapter struct {
 var Adapters = map[string]Adapter{
 	Claude: {
 		Name:       Claude,
-		EnvMarkers: []string{"CLAUDE_CODE"},
+		EnvMarkers: []string{"CLAUDECODE"},
 		ProcessMatchers: []ProcessNameMatcher{
 			{Name: "claude"},
 			{Name: "claude-code"},
@@ -111,8 +111,8 @@ var Adapters = map[string]Adapter{
 		SkillInvocation: `/`,
 		TurnEndHook:     `Stop hook (exit 2 + stderr); Primary-only global ~/.claude/hooks/`,
 		LaunchTemplate: Template{
-			ModelFlag:    "--model",
-			DefaultModel: "claude-sonnet-4-20250515",
+			ModelFlag: "--model",
+			// DefaultModel omitted — let Claude Code use its runtime default
 		},
 		TrustDialog:         `Trust or bypass-permissions confirmation on first launch per worktree`,
 		SupervisionProtocol: `claude`,
@@ -248,17 +248,19 @@ var Adapters = map[string]Adapter{
 // It first tries exact matches, then substring matches.
 func matchProcessNameFromAdapter(name string) string {
 	name = strings.ToLower(name)
-	for _, a := range Adapters {
+	for _, harnessName := range KnownHarnesses {
+		a := Adapters[harnessName]
 		for _, m := range a.ProcessMatchers {
-			matchName := strings.ToLower(m.Name)
-			if m.Substr {
-				if strings.Contains(name, matchName) {
-					return a.Name
-				}
-			} else {
-				if name == matchName {
-					return a.Name
-				}
+			if !m.Substr && name == strings.ToLower(m.Name) {
+				return a.Name
+			}
+		}
+	}
+	for _, harnessName := range KnownHarnesses {
+		a := Adapters[harnessName]
+		for _, m := range a.ProcessMatchers {
+			if m.Substr && strings.Contains(name, strings.ToLower(m.Name)) {
+				return a.Name
 			}
 		}
 	}
@@ -288,7 +290,8 @@ func StateArtifactsForHarness(name string) []string {
 // detectEnvFromAdapter checks well-known environment variable markers from the
 // adapter registry. Returns the harness name or empty string.
 func detectEnvFromAdapter() string {
-	for _, a := range Adapters {
+	for _, harnessName := range KnownHarnesses {
+		a := Adapters[harnessName]
 		for _, env := range a.EnvMarkers {
 			if os.Getenv(env) != "" {
 				return a.Name

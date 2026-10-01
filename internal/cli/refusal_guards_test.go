@@ -148,18 +148,28 @@ func TestGuardWakeAckRequiresALeaseAndAtLeastOneEventID(t *testing.T) {
 // --- internal/cli/ready_cmd.go, report_cmd.go: the environment identity
 // these commands run under -------------------------------------------------
 
-func TestGuardReadyRefusesOutsideAManagedTask(t *testing.T) {
+func TestReadyHonorsHomeOverride(t *testing.T) {
+	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
+	cliSeedCanonicalTask(t, homeDir, "t1", "ship")
+
+	t.Setenv("MUNSU_HOME", t.TempDir())
+	t.Setenv("MUNSU_TASK_ID", "t1")
+	_, err := runRoot(t, "ready", "--event-id", "e1", "--home", homeDir)
+	if err != nil {
+		t.Fatalf("ready with --home override = %v, want success", err)
+	}
+	if _, err := os.Stat(filepath.Join(homeDir, "state", ".ready")); err != nil {
+		t.Fatalf("ready marker was not written under --home override: %v", err)
+	}
+}
+
+func TestGuardReadyRefusesMissingTaskID(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
 
-	t.Setenv("MUNSU_HOME", "")
-	t.Setenv("MUNSU_TASK_ID", "t1")
-	_, err := runRoot(t, "ready", "--event-id", "e1", "--home", homeDir)
-	wantErrContains(t, err, "MUNSU_HOME is not set", "ready with no MUNSU_HOME")
-
-	t.Setenv("MUNSU_HOME", homeDir)
 	t.Setenv("MUNSU_TASK_ID", "")
-	_, err = runRoot(t, "ready", "--event-id", "e1", "--home", homeDir)
+	_, err := runRoot(t, "ready", "--event-id", "e1", "--home", homeDir)
 	wantErrContains(t, err, "MUNSU_TASK_ID is not set", "ready with no MUNSU_TASK_ID")
 }
 
@@ -173,19 +183,40 @@ func TestGuardReportRefusesAnInvalidStatusState(t *testing.T) {
 	wantErrContains(t, err, `Invalid status state "not-a-state"`, "report with an unknown state")
 }
 
-func TestGuardReportRefusesOutsideAManagedTask(t *testing.T) {
+func TestReportHonorsHomeOverride(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
 
+	t.Setenv("MUNSU_HOME", t.TempDir())
 	t.Setenv("MUNSU_TASK_ID", "t1")
-	t.Setenv("MUNSU_HOME", "")
-	_, err := runRoot(t, "report", "working", "hello", "--home", homeDir)
-	wantErrContains(t, err, "MUNSU_HOME is not set", "report with no MUNSU_HOME")
+	t.Setenv("MUNSU_ROLE", "general")
+	if _, err := runRoot(t, "report", "working", "hello from report", "--home", homeDir); err != nil {
+		t.Fatalf("report with --home override = %v, want success", err)
+	}
+	status, err := mhome.ReadStatus(homeDir, "t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(status) != 1 {
+		t.Fatalf("status lines under --home override = %d, want 1", len(status))
+	}
+}
 
-	t.Setenv("MUNSU_HOME", homeDir)
+func TestGuardReportRefusesMissingTaskID(t *testing.T) {
+	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
+
 	t.Setenv("MUNSU_TASK_ID", "")
-	_, err = runRoot(t, "report", "working", "hello", "--home", homeDir)
+	_, err := runRoot(t, "report", "working", "hello", "--home", homeDir)
 	wantErrContains(t, err, "MUNSU_TASK_ID is not set", "report with no MUNSU_TASK_ID")
+}
+
+func TestCurrentTaskGenerationRefusesMissingCanonicalTask(t *testing.T) {
+	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
+	if _, err := currentTaskGeneration(homeDir, "missing-task"); !errors.Is(err, taskauthority.ErrNotFound) {
+		t.Fatalf("currentTaskGeneration missing task = %v, want taskauthority.ErrNotFound", err)
+	}
 }
 
 func TestGuardReportRefusesACaptainWithNoParentStatusHome(t *testing.T) {
@@ -467,7 +498,7 @@ func TestGuardDisposeRefusesWorkspaceClosePolicyOnAnAdapterThatCannotCarryIt(t *
 
 func TestGuardCaptainLaunchEndpointRequiresAnExplicitBackendIdentity(t *testing.T) {
 	resolved := 0
-	ep := sessionLaunchEndpoint{resolve: func(string, string) (backend.Backend, string, error) {
+	ep := sessionLaunchEndpoint{resolve: func(string) (backend.Backend, string, error) {
 		resolved++
 		return &guardBackend{}, "tmux", nil
 	}}
@@ -480,7 +511,7 @@ func TestGuardCaptainLaunchEndpointRequiresAnExplicitBackendIdentity(t *testing.
 
 func TestGuardCaptainCleanupRequiresTheBoundBackendIdentity(t *testing.T) {
 	resolved := 0
-	ep := sessionLaunchEndpoint{resolve: func(string, string) (backend.Backend, string, error) {
+	ep := sessionLaunchEndpoint{resolve: func(string) (backend.Backend, string, error) {
 		resolved++
 		return &guardBackend{}, "tmux", nil
 	}}
@@ -491,7 +522,7 @@ func TestGuardCaptainCleanupRequiresTheBoundBackendIdentity(t *testing.T) {
 	}
 
 	bk := &guardBackend{}
-	ok := sessionLaunchEndpoint{resolve: func(string, string) (backend.Backend, string, error) { return bk, "tmux", nil }}
+	ok := sessionLaunchEndpoint{resolve: func(string) (backend.Backend, string, error) { return bk, "tmux", nil }}
 	if err := ok.Cleanup("/home", fleet.LaunchResult{Backend: "tmux", Window: "w1"}); err != nil {
 		t.Fatalf("Cleanup with the bound identity = %v, want acceptance", err)
 	}
@@ -1046,6 +1077,21 @@ func TestGuardAfkCheckRefusesWhileActionableStateRemains(t *testing.T) {
 	wantErrContains(t, err, "actionable AFK state remains", "afk return check with an unresolved actionable wake")
 }
 
+func TestGuardAfkCheckRefusesUnparseableDigest(t *testing.T) {
+	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
+	path := filepath.Join(homeDir, "state", ".afk-digest")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := runRoot(t, "afk", "return", "check", "--home", homeDir)
+	wantErrContains(t, err, "cannot read the AFK digest", "afk return check with an unparseable digest")
+}
+
 func TestGuardAfkDrainRequiresAConsumer(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
@@ -1356,7 +1402,7 @@ func seedGuardActionableWake(t *testing.T, homeDir string) {
 	if err := os.WriteFile(path, encoded, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if orchestrator.IsClean(homeDir) {
-		t.Fatal("the digest fixture reads as clean, so the refusal under test would never be reached")
+	if clean, err := orchestrator.IsClean(homeDir); err != nil || clean {
+		t.Fatalf("IsClean = %v, %v; the digest fixture must read as not clean or the refusal under test is never reached", clean, err)
 	}
 }

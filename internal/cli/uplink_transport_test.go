@@ -21,7 +21,7 @@ func (b uplinkPromptBackend) AgentPrompt(string, string) backend.PromptResult {
 
 func TestSessionUplinkTransportMapsTypedPromptOutcomes(t *testing.T) {
 	for _, status := range []backend.PromptStatus{backend.PromptSubmitted, backend.PromptQueuedWhileBusy, backend.PromptStalled, backend.PromptEndpointDead, backend.PromptBackendFailed} {
-		transport := sessionUplinkTransport{resolve: func(string, string) (backend.Backend, string, error) {
+		transport := sessionUplinkTransport{resolve: func(string) (backend.Backend, string, error) {
 			return uplinkPromptBackend{result: backend.PromptResult{Status: status}}, "tmux", nil
 		}, identity: func(string) (string, error) { return "tmux", nil }}
 		got := transport.Notify("home", orchestrator.TargetResult{Source: orchestrator.RuntimeSource, Handle: "pane"}, "payload")
@@ -36,7 +36,7 @@ func TestSessionUplinkTransportMapsTypedPromptOutcomes(t *testing.T) {
 
 func TestSessionUplinkTransportPreservesBackendFailure(t *testing.T) {
 	transportErr := errors.New("backend unavailable")
-	transport := sessionUplinkTransport{resolve: func(string, string) (backend.Backend, string, error) {
+	transport := sessionUplinkTransport{resolve: func(string) (backend.Backend, string, error) {
 		return uplinkPromptBackend{result: backend.PromptResult{Status: backend.PromptBackendFailed, Err: transportErr}}, "tmux", nil
 	}, identity: func(string) (string, error) { return "tmux", nil }}
 	got := transport.Notify("home", orchestrator.TargetResult{Source: orchestrator.RuntimeSource, Handle: "pane"}, "payload")
@@ -46,7 +46,7 @@ func TestSessionUplinkTransportPreservesBackendFailure(t *testing.T) {
 }
 
 func TestSessionUplinkTransportQueuesResolutionFailure(t *testing.T) {
-	transport := sessionUplinkTransport{resolve: func(string, string) (backend.Backend, string, error) {
+	transport := sessionUplinkTransport{resolve: func(string) (backend.Backend, string, error) {
 		return nil, "", errors.New("unavailable")
 	}, identity: func(string) (string, error) { return "tmux", nil }}
 	got := transport.Notify("home", orchestrator.TargetResult{Source: orchestrator.RuntimeSource, Handle: "pane"}, "payload")

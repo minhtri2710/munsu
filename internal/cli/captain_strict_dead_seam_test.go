@@ -70,12 +70,23 @@ func (e *seamLaunchEndpoint) Launch(string, fleet.LaunchRequest) (fleet.LaunchRe
 }
 func (e *seamLaunchEndpoint) Cleanup(string, fleet.LaunchResult) error { return nil }
 
-// seamStaticIntegrationPort reports an installed canonical Pi integration,
-// mirroring the fleet test fixture; the real Launch front-end still verifies
-// the canonical integration file on disk.
+// seamStaticIntegrationPort installs and reports the canonical Pi
+// integration, mirroring captainIntegrationAdapter; the real Launch
+// front-end still verifies the canonical integration file on disk.
 type seamStaticIntegrationPort struct{}
 
-func (seamStaticIntegrationPort) EnsureCaptain(string, string) error { return nil }
+var seamPiIntegrationPath = ".pi/extensions/" + harness.CanonicalPiIntegrationName
+
+func (seamStaticIntegrationPort) EnsureCaptain(h, _ string) error {
+	path := filepath.Join(h, filepath.FromSlash(seamPiIntegrationPath))
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte("// munsu-owned\n"), 0644)
+}
+func (seamStaticIntegrationPort) CaptainPaths(string, string) ([]string, error) {
+	return []string{seamPiIntegrationPath}, nil
+}
 func (seamStaticIntegrationPort) Status(string, string) (fleet.IntegrationStatus, error) {
 	return fleet.IntegrationStatus{Harness: "pi", Scope: "project", State: "installed"}, nil
 }
@@ -87,25 +98,36 @@ func seamProbeEndpoint(bk backend.Backend) sessionProbeEndpoint {
 	}}
 }
 
-// seedSeamCaptain seeds a canonical parent home, a provenance-marked captain
-// home with launch meta, a Pi harness published snapshot, and the canonical
-// Pi integration so fleet recovery reaches the probe/launch decision.
+// seedSeamCaptain seeds a canonical parent home and a managed-worktree
+// captain home through fleet.SeedCaptain (Pi harness, herdr backend, the
+// canonical Pi integration), then records launch meta so fleet recovery
+// reaches the probe/launch decision.
 func seedSeamCaptain(t *testing.T, id string) (parent, captainHome string) {
 	t.Helper()
+	putFakePiOnPath(t)
+	t.Setenv("MUNSU_ROLE", "")
 	parent = t.TempDir()
 	if _, err := home.Init(parent); err != nil {
 		t.Fatal(err)
 	}
-	captainHome = filepath.Join(parent, "captains", id)
-	for _, dir := range []string{"state", "config", "data"} {
-		if err := os.MkdirAll(filepath.Join(captainHome, dir), 0755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.WriteFile(filepath.Join(captainHome, "AGENTS.md"), []byte("# "+id+"\n"), 0644); err != nil {
+	if err := config.StoreFleetBase(parent, config.FleetBaseDocument{
+		SchemaVersion:  config.FleetBaseSchemaVersion,
+		Config:         config.ProjectOverlay{Backend: "herdr"},
+		CaptainProfile: config.CaptainProfile{Harness: harness.Pi},
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := fleet.SeedProvenance(captainHome, id); err != nil {
+	captainHome = filepath.Join(parent, "captains", id)
+	if err := os.MkdirAll(captainHome, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := fleet.Register(parent, id, captainHome, "", id); err != nil {
+		t.Fatal(err)
+	}
+	if err := fleet.SeedCaptain(fleet.CaptainSeedOptions{
+		ID: id, Home: captainHome, Repo: seamProjectRepo(t), ParentHome: parent,
+		Integration: seamStaticIntegrationPort{},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	canon, err := home.CanonicalCaptainHome(captainHome)
@@ -118,22 +140,31 @@ func seedSeamCaptain(t *testing.T, id string) (parent, captainHome string) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	resolved := config.ResolvedProjectConfig{
-		Project: "seam", ProjectPath: captainHome, Backend: "herdr",
-		CaptainProfile: config.CaptainProfile{Harness: harness.Pi},
-		Digest:         "0000000000000000000000000000000000000000000000000000000000000000",
-	}
-	if err := config.StorePublishedSnapshot(captainHome, resolved); err != nil {
-		t.Fatal(err)
-	}
-	extDir := filepath.Join(captainHome, ".pi", "extensions")
-	if err := os.MkdirAll(extDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(extDir, "munsu-pi-integration.ts"), []byte("// munsu-owned\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
 	return parent, captainHome
+}
+
+// seamProjectRepo creates a project clone with an origin/main upstream.
+func seamProjectRepo(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	project := filepath.Join(root, "project")
+	runGit(t, root, "init", "--bare", remote)
+	runGit(t, root, "clone", remote, project)
+	runGit(t, project, "config", "core.autocrlf", "false")
+	runGit(t, project, "config", "user.name", "Munsu Test")
+	runGit(t, project, "config", "user.email", "munsu@example.invalid")
+	runGit(t, project, "checkout", "-b", "main")
+	if err := os.WriteFile(filepath.Join(project, "README.md"), []byte("# Project\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, project, "add", "README.md")
+	runGit(t, project, "commit", "-m", "initial")
+	runGit(t, project, "push", "-u", "origin", "main")
+	runGit(t, remote, "symbolic-ref", "HEAD", "refs/heads/main")
+	runGit(t, project, "remote", "set-head", "origin", "main")
+	runGit(t, project, "fetch", "origin")
+	return project
 }
 
 // putFakePiOnPath makes exec.LookPath("pi") resolve to a fake binary so the
@@ -172,7 +203,6 @@ func TestProbeLivenessSeam_StrictDeadOnly(t *testing.T) {
 // TestRecoverSeam_AuthoritativeAbsenceRelaunches proves through the real CLI
 // probe endpoint that only ErrPaneNotFound authorizes Launch in fleet.Recover.
 func TestRecoverSeam_AuthoritativeAbsenceRelaunches(t *testing.T) {
-	putFakePiOnPath(t)
 	parent, captainHome := seedSeamCaptain(t, "seam-recover")
 	launch := &seamLaunchEndpoint{}
 

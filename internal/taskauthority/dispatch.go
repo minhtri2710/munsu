@@ -95,16 +95,22 @@ func (h DispatchHold) Matches(action DispatchAction, taskID, projectID, generati
 	if h.ReleasedAt != 0 || !slices.Contains(h.Actions, action) {
 		return false
 	}
-	if len(h.Scope.TaskIDs) > 0 && !slices.Contains(h.Scope.TaskIDs, taskID) {
+	return h.Scope.matches(taskID, projectID, generation, parentID)
+}
+
+// matches is the single scope predicate: every non-empty scope dimension must
+// contain the task's value.
+func (s DispatchHoldScope) matches(taskID, projectID, generation, parentID string) bool {
+	if len(s.TaskIDs) > 0 && !slices.Contains(s.TaskIDs, taskID) {
 		return false
 	}
-	if len(h.Scope.ProjectIDs) > 0 && !slices.Contains(h.Scope.ProjectIDs, projectID) {
+	if len(s.ProjectIDs) > 0 && !slices.Contains(s.ProjectIDs, projectID) {
 		return false
 	}
-	if len(h.Scope.Generations) > 0 && !slices.Contains(h.Scope.Generations, generation) {
+	if len(s.Generations) > 0 && !slices.Contains(s.Generations, generation) {
 		return false
 	}
-	if len(h.Scope.ParentIDs) > 0 && !slices.Contains(h.Scope.ParentIDs, parentID) {
+	if len(s.ParentIDs) > 0 && !slices.Contains(s.ParentIDs, parentID) {
 		return false
 	}
 	return true

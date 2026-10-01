@@ -194,8 +194,7 @@ func UpdateMeta(homeDir string, id string, mutate func(map[string]string) error)
 	return writeMetaLocked(homeDir, id, meta)
 }
 
-// writeMetaLocked writes a task meta file while the lock is already held.
-// Uses a unique temp file (os.CreateTemp) for safe atomic writes.
+// writeMetaLocked durably writes a task meta file while the lock is already held.
 func writeMetaLocked(homeDir string, id string, meta map[string]string) error {
 	if err := validateMetaFields(meta); err != nil {
 		return err
@@ -214,37 +213,8 @@ func writeMetaLocked(homeDir string, id string, meta map[string]string) error {
 	for k, v := range meta {
 		b.WriteString(fmt.Sprintf("%s=%s\n", k, v))
 	}
-	// Use os.CreateTemp for a unique temp file in the same directory. The temp
-	// name is derived from the persisted stem (the durable key), never the raw
-	// logical id, so it is a safe filename on every platform.
-	stem := strings.TrimSuffix(filepath.Base(p), ".meta")
-	tmpF, err := os.CreateTemp(filepath.Dir(p), stem+".meta.*.tmp")
-	if err != nil {
-		return fmt.Errorf("creating temp meta file: %w", err)
-	}
-	tmpPath := tmpF.Name()
-	if err := secureFile(tmpPath); err != nil {
-		tmpF.Close()
-		os.Remove(tmpPath)
-		return fmt.Errorf("securing temp meta file: %w", err)
-	}
-	if _, err := tmpF.WriteString(b.String()); err != nil {
-		tmpF.Close()
-		os.Remove(tmpPath)
-		return fmt.Errorf("writing temp meta file: %w", err)
-	}
-	if err := tmpF.Sync(); err != nil {
-		tmpF.Close()
-		os.Remove(tmpPath)
-		return fmt.Errorf("syncing temp meta file: %w", err)
-	}
-	if err := tmpF.Close(); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("closing temp meta file: %w", err)
-	}
-	if err := RenameDurable(tmpPath, p); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("renaming temp meta file: %w", err)
+	if err := atomicWrite(p, []byte(b.String()), secureFile); err != nil {
+		return fmt.Errorf("writing meta file: %w", err)
 	}
 	return nil
 }
@@ -321,38 +291,56 @@ func ReadMetaFile(path string) (map[string]string, error) {
 
 // AppendStatus appends a status line to $MUNSU_HOME/state/<durable-stem>.status.
 func AppendStatus(homeDir string, id, line string) error {
+	_, err := appendStatus(homeDir, id, line, false)
+	return err
+}
+
+// AppendStatusOnce appends line unless the status file already holds it, and
+// reports whether it appended. The duplicate check and the append run under
+// the same meta lock, so two concurrent callers publish the line once.
+func AppendStatusOnce(homeDir string, id, line string) (bool, error) {
+	return appendStatus(homeDir, id, line, true)
+}
+
+func appendStatus(homeDir string, id, line string, once bool) (bool, error) {
 	_, unlock, err := acquireMetaLock(homeDir, id)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer unlock()
 
+	if once {
+		has, err := StatusHasLine(homeDir, id, line)
+		if err != nil || has {
+			return false, err
+		}
+	}
 	p, err := StatusFilePath(homeDir, id)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if err := validateStatePath(homeDir, p, true); err != nil {
-		return err
+		return false, err
 	}
 	if err := ensurePrivateStateDir(filepath.Dir(p)); err != nil {
-		return fmt.Errorf("creating state directory: %w", err)
+		return false, fmt.Errorf("creating state directory: %w", err)
 	}
 	f, err := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
-		return fmt.Errorf("opening status file: %w", err)
+		return false, fmt.Errorf("opening status file: %w", err)
 	}
 	if err := secureFile(p); err != nil {
 		f.Close()
-		return fmt.Errorf("securing status file: %w", err)
+		return false, fmt.Errorf("securing status file: %w", err)
 	}
 	defer f.Close()
 	if _, err := f.WriteString(line + "\n"); err != nil {
-		return fmt.Errorf("writing status line: %w", err)
+		return false, fmt.Errorf("writing status line: %w", err)
 	}
 	if err := f.Sync(); err != nil {
-		return fmt.Errorf("syncing status file: %w", err)
+		return false, fmt.Errorf("syncing status file: %w", err)
 	}
-	return nil
+	return true, nil
 }
 
 // ReadStatus reads all status lines from $MUNSU_HOME/state/<durable-stem>.status.
@@ -381,20 +369,19 @@ func ReadStatus(homeDir string, id string) ([]string, error) {
 	return lines, scanner.Err()
 }
 
-// ValidStatusStates lists the recognized status states.
-var ValidStatusStates = []string{
-	"working", "review-ready", "amending", "needs-decision", "blocked", "paused",
-	"awaiting_approval", "resolved", "done", "failed", "delivered",
-}
-
-// IsValidStatusState checks whether the given state is recognized.
-func IsValidStatusState(state string) bool {
-	for _, s := range ValidStatusStates {
-		if s == state {
-			return true
+// StatusHasLine reports whether the task's status holds line. A status that
+// cannot be read is an error, never "absent".
+func StatusHasLine(homeDir, id, line string) (bool, error) {
+	lines, err := ReadStatus(homeDir, id)
+	if err != nil {
+		return false, err
+	}
+	for _, existing := range lines {
+		if existing == line {
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 // ParseStatusKey extracts an optional [key=<slug>] annotation from a status message.
@@ -440,8 +427,8 @@ type MetaEntry struct {
 // on the logical id. Stems that are not a key this home persisted are skipped.
 // It reads no meta contents, so it fails only on a directory-level error; a
 // caller that must not miss a task can therefore ReadMeta each id and decide
-// for itself whether an unreadable projection is fatal. ListMeta layers the
-// display-tolerant read on top of this.
+// for itself whether an unreadable projection is fatal. ListMeta layers a
+// read of every entry on top of this and fails on the first unreadable one.
 func ListMetaIDs(homeDir string) ([]string, error) {
 	sd := StateDir(homeDir)
 	if err := validateStatePath(homeDir, sd, false); err != nil {
@@ -490,7 +477,7 @@ func ListMeta(homeDir string) ([]MetaEntry, error) {
 	for _, id := range taskIDs {
 		meta, err := ReadMeta(homeDir, id)
 		if err != nil {
-			continue // skip unreadable meta
+			return nil, err
 		}
 
 		// Read last status line
@@ -553,7 +540,7 @@ func acquireMetaLock(homeDir, id string) (*os.File, func(), error) {
 		f.Close()
 		return nil, nil, fmt.Errorf("securing lock file: %w", err)
 	}
-	if err := lockExclusive(f); err != nil {
+	if err := lockFile(f, false); err != nil {
 		f.Close()
 		return nil, nil, fmt.Errorf("acquiring flock: %w", err)
 	}

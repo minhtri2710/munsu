@@ -2,6 +2,8 @@ package fleet
 
 import (
 	"strings"
+
+	"github.com/minhtri2710/munsu/internal/domain"
 )
 
 // ParentReconciliation is the result of comparing parent captain status
@@ -65,7 +67,7 @@ func ReconcileParentStatus(sum HomeSummary, lastParentStatus string) ParentRecon
 }
 
 func parentContradictsHome(sum HomeSummary, lastParentStatus string) (bool, string) {
-	verb := statusVerb(lastParentStatus)
+	verb := domain.LineVerb(lastParentStatus)
 	switch verb {
 	case "working", "parked":
 		if sum.Counts.ActiveChildren > 0 || sum.Counts.InFlight > 0 || sum.State == "active_child_work" {
@@ -95,13 +97,4 @@ func parentContradictsHome(sum HomeSummary, lastParentStatus string) (bool, stri
 		// events only; they do not force contradiction by themselves.
 		return false, ""
 	}
-}
-
-// statusVerb extracts the leading verb from a status line (optional [key=…] stripped).
-func statusVerb(line string) string {
-	before, _, _ := strings.Cut(strings.TrimSpace(line), ":")
-	if idx := strings.Index(before, "[key="); idx >= 0 {
-		before = strings.TrimSpace(before[:idx])
-	}
-	return strings.TrimSpace(before)
 }

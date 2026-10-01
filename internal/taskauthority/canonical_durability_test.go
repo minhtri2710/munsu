@@ -89,93 +89,6 @@ func TestCanonicalLifecycleOperationReceiptsSurviveReopen(t *testing.T) {
 	}
 }
 
-// TestCanonicalLifecycleInterruptedCommitRecovers proves an interrupted
-// home.Commit of a lifecycle operation (start) is recovered mechanically on
-// the next home.Open: the phase transition commits exactly once, the revision
-// advances exactly once, and no duplicate or contradictory Task state is left
-// behind.
-func TestCanonicalLifecycleInterruptedCommitRecovers(t *testing.T) {
-	c, _, root := newTestCanonical(t)
-	mustCreate(t, c, "t1")
-
-	// Simulate an interrupted Start: plant a write-ahead journal record that
-	// would commit the queued -> working transition and receipt at scope
-	// revision 1, exactly as a real interrupted home.Commit would.
-	next := Aggregate{
-		SchemaVersion: TaskAuthoritySchema,
-		TaskID:        "t1",
-		Generation:    1,
-		Revision:      2,
-		Current:       true,
-		Definition:    TaskDefinition{Owner: "owner", Description: "work", Kind: "ship"},
-		Phase:         PhaseWorking,
-		PhaseDetail:   "start",
-	}
-	docData, err := json.Marshal(taskDoc{HomeRevision: 2, Aggregate: next})
-	if err != nil {
-		t.Fatal(err)
-	}
-	rec := receipt{OperationID: "op-interrupted-start", Digest: "intent", TaskID: "t1", Generation: 1, Revision: 2, Phase: string(PhaseWorking)}
-	recData, err := json.Marshal(rec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	scope := taskScope("t1")
-	txnID := "op-interrupted-start"
-	journalRec := struct {
-		TxnID            string            `json:"txn_id"`
-		Scope            string            `json:"scope"`
-		FenceToken       uint64            `json:"fence_token"`
-		ExpectedRevision uint64            `json:"expected_revision"`
-		NewRevision      uint64            `json:"new_revision"`
-		Items            []home.ChangeItem `json:"items"`
-		Committed        bool              `json:"committed"`
-	}{
-		TxnID: txnID, Scope: scope, FenceToken: 1,
-		ExpectedRevision: 1, NewRevision: 2, Committed: false,
-		Items: []home.ChangeItem{
-			{Root: home.RootState, Key: taskCurrentKey("t1"), Data: docData},
-			{Root: home.RootState, Key: receiptKey("op-interrupted-start"), Data: recData},
-		},
-	}
-	data, err := json.Marshal(journalRec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	journalDir := filepath.Join(root, home.JournalDirName)
-	if err := os.WriteFile(filepath.Join(journalDir, scope+"."+txnID+".json"), append(data, '\n'), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	h2, err := home.Open(root)
-	if err != nil {
-		t.Fatalf("home.Open after interruption: %v", err)
-	}
-	c2, err := NewCanonical(h2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	agg, err := c2.Get(mustTaskID(t, "t1"))
-	if err != nil {
-		t.Fatalf("read recovered task: %v", err)
-	}
-	if agg.Phase != PhaseWorking || agg.Revision != 2 {
-		t.Fatalf("recovered aggregate = phase %s rev %d, want working/2", agg.Phase, agg.Revision)
-	}
-
-	// The recovered scope revision is 2: a fresh mutation must use it.
-	block := CanonicalBlockRequest{
-		HomeID:       c2.HomeID(),
-		TaskID:       mustTaskID(t, "t1"),
-		Precondition: preconditionOf(1, 2),
-		Detail:       "waiting",
-		Reason:       "block",
-	}
-	if _, err := c2.Block(mustOperation(t, "op-block-after-recovery", block), block); err != nil {
-		t.Fatalf("block after recovery: %v", err)
-	}
-}
-
 // TestCanonicalLifecycleInterruptedCompleteFailsClosed proves a journal record
 // that replays to a malformed lifecycle document fails closed on read rather
 // than serving contradictory Task state.
@@ -195,10 +108,9 @@ func TestCanonicalLifecycleInterruptedCompleteFailsClosed(t *testing.T) {
 		ExpectedRevision uint64            `json:"expected_revision"`
 		NewRevision      uint64            `json:"new_revision"`
 		Items            []home.ChangeItem `json:"items"`
-		Committed        bool              `json:"committed"`
 	}{
 		TxnID: txnID, Scope: scope, FenceToken: 1,
-		ExpectedRevision: 1, NewRevision: 2, Committed: false,
+		ExpectedRevision: 1, NewRevision: 2,
 		Items: []home.ChangeItem{{Root: home.RootState, Key: taskCurrentKey("t1"), Data: []byte("{not json")}},
 	}
 	data, err := json.Marshal(journalRec)
@@ -261,107 +173,6 @@ func TestCanonicalBlockOperationReusedConflict(t *testing.T) {
 
 func errorsIsOperationConflict(err error) bool {
 	return errors.Is(err, ErrOperationConflict)
-}
-
-// TestCanonicalBeginSpawnInterruptedCommitRecovers proves an interrupted
-// BeginSpawn commit is recovered mechanically on the next home.Open: the
-// launch intent commits exactly once, the revision advances exactly once, and
-// the recovered launch fence is active (the worktree binding must match the
-// recovered intent's reservation). Replaying the interrupted operation returns
-// the original committed outcome without re-committing.
-func TestCanonicalBeginSpawnInterruptedCommitRecovers(t *testing.T) {
-	c, _, root := newTestCanonical(t)
-	mustCreate(t, c, "t1")
-
-	// Build the real BeginSpawn operation so the planted receipt carries the
-	// true intent digest; the post-recovery replay uses the same identity.
-	req := launchRequest(c, "t1", preconditionOf(1, 1))
-	op := mustOperation(t, "op-interrupted-begin", req)
-
-	next := Aggregate{
-		SchemaVersion: TaskAuthoritySchema,
-		TaskID:        "t1",
-		Generation:    1,
-		Revision:      2,
-		Current:       true,
-		Definition:    TaskDefinition{Owner: "owner", Description: "work", Kind: "ship"},
-		Phase:         PhaseQueued,
-		Launch: &LaunchIntent{
-			OperationID:           op.ID.Value(),
-			SnapshotDigest:        req.SnapshotDigest,
-			Backend:               req.Backend,
-			Harness:               req.Harness,
-			Model:                 req.Model,
-			Effort:                req.Effort,
-			Mode:                  req.Mode,
-			Kind:                  req.Kind,
-			Project:               req.Project,
-			ParentTaskID:          req.ParentTaskID,
-			LaunchID:              req.LaunchID,
-			WindowLabel:           req.WindowLabel,
-			WorktreeReservationID: req.WorktreeReservationID,
-			WorktreeFenceToken:    req.WorktreeFenceToken,
-			EndpointReservationID: req.EndpointReservationID,
-			EndpointFenceToken:    req.EndpointFenceToken,
-			EndpointIncarnation:   req.EndpointIncarnation,
-			PlannedAt:             1000,
-		},
-	}
-	docData, err := json.Marshal(taskDoc{HomeRevision: 2, Aggregate: next})
-	if err != nil {
-		t.Fatal(err)
-	}
-	rec := receipt{OperationID: op.ID.Value(), Digest: op.Digest, TaskID: "t1", Generation: 1, Revision: 2, Phase: string(PhaseQueued)}
-	recData, err := json.Marshal(rec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	plantInterruptedJournal(t, root, taskScope("t1"), "op-interrupted-begin", 1, 2, []home.ChangeItem{
-		{Root: home.RootState, Key: taskCurrentKey("t1"), Data: docData},
-		{Root: home.RootState, Key: receiptKey("op-interrupted-begin"), Data: recData},
-	})
-
-	c2 := reopenCanonical(t, root)
-	agg, err := c2.Get(mustTaskID(t, "t1"))
-	if err != nil {
-		t.Fatalf("read recovered task: %v", err)
-	}
-	if agg.Revision != 2 || agg.Launch == nil || agg.Launch.LaunchID != "launch-t1" {
-		t.Fatalf("recovered aggregate = revision %d launch %+v, want rev 2 with committed intent", agg.Revision, agg.Launch)
-	}
-
-	// The recovered launch fence is active: a worktree binding that does not
-	// match the recovered reservation fails closed, and one that matches
-	// succeeds.
-	bwBad := CanonicalBindWorktreeRequest{
-		HomeID:       c2.HomeID(),
-		TaskID:       mustTaskID(t, "t1"),
-		Precondition: preconditionOf(1, 2),
-		Binding:      worktreeBinding(),
-		Reason:       "bind worktree",
-	}
-	if _, err := c2.BindWorktree(mustOperation(t, "op-recovered-bad-wt", bwBad), bwBad); !errors.Is(err, ErrConflict) {
-		t.Fatalf("worktree binding outside recovered fence = %v, want ErrConflict", err)
-	}
-	bwGood := CanonicalBindWorktreeRequest{
-		HomeID:       c2.HomeID(),
-		TaskID:       mustTaskID(t, "t1"),
-		Precondition: preconditionOf(1, 2),
-		Binding:      launchWorktreeBinding(req),
-		Reason:       "bind worktree",
-	}
-	if _, err := c2.BindWorktree(mustOperation(t, "op-recovered-good-wt", bwGood), bwGood); err != nil {
-		t.Fatalf("worktree binding under recovered fence: %v", err)
-	}
-
-	// Replaying the interrupted BeginSpawn returns the original outcome.
-	out, err := c2.BeginSpawn(op, req)
-	if err != nil {
-		t.Fatalf("BeginSpawn replay after recovery: %v", err)
-	}
-	if !out.Replayed || out.Revision != 2 {
-		t.Fatalf("BeginSpawn replay = %+v, want Replayed rev 2", out)
-	}
 }
 
 // TestCanonicalLaunchOperationReceiptsSurviveReopen proves the durable
@@ -501,10 +312,7 @@ func TestCanonicalDeliveryAuthorizationAndOutcomeSurviveReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	auth, err := c2.DeliveryAuthorization(mustTaskID(t, "t1"))
-	if err != nil {
-		t.Fatalf("DeliveryAuthorization after reopen: %v", err)
-	}
+	auth := currentAuthorizationForTest(t, c2, "t1")
 	if auth.OperationID != authRes.Authorization.OperationID || auth.Revision != 4 || auth.Identity != deliveryIdentity() {
 		t.Fatalf("reopened authorization = %+v, want the committed record", auth)
 	}
@@ -575,19 +383,13 @@ func TestCanonicalDeliveryRevocationEvidenceSurvivesReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prior, err := c2.DeliveryAuthorizationByOperation(mustTaskID(t, "t1"), auth1.OperationID)
-	if err != nil {
-		t.Fatalf("identified authorization after reopen: %v", err)
-	}
+	prior := authorizationByOperationForTest(t, c2, "t1", auth1.OperationID)
 	if prior.OperationID != auth1.OperationID || prior.Revision != 4 {
 		t.Fatalf("reopened issuance evidence = %+v", prior)
 	}
 	// The immutable revocation evidence survives and stays identified by its
 	// exact operation identity, bound to the revoked authorization.
-	revocation, err := c2.DeliveryRevocationByOperation(mustTaskID(t, "t1"), "op-revoke-persist")
-	if err != nil {
-		t.Fatalf("identified revocation after reopen: %v", err)
-	}
+	revocation := revocationByOperationForTest(t, c2, "t1", "op-revoke-persist")
 	if revocation.AuthorizationOperationID != auth1.OperationID || revocation.OperationID != "op-revoke-persist" || revocation.Reason != "abandoned before execution" {
 		t.Fatalf("reopened revocation evidence = %+v", revocation)
 	}
@@ -658,4 +460,19 @@ func TestCanonicalDeliveryWrongHomeFailsClosed(t *testing.T) {
 	if _, err := c.AuthorizeDelivery(mustOperation(t, "op-auth-wrong-home", req), req); !errors.Is(err, ErrConflict) {
 		t.Fatalf("authorize with wrong home = %v, want ErrConflict", err)
 	}
+}
+
+// reopenCanonical reopens the home and returns a fresh Canonical over the
+// recovered state.
+func reopenCanonical(t *testing.T, root string) *Canonical {
+	t.Helper()
+	h2, err := home.Open(root)
+	if err != nil {
+		t.Fatalf("home.Open: %v", err)
+	}
+	c2, err := NewCanonical(h2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c2
 }

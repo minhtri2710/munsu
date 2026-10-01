@@ -10,9 +10,156 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/minhtri2710/munsu/internal/harness"
 )
+
+// harnessIntegration is one harness's row in the integration table.
+type harnessIntegration struct {
+	label   string // artifact noun in messages, e.g. "claude settings"
+	files   int    // number of target files the manifest records
+	install func(scope Scope, cwd string, dryRun bool) (targets []string, written bool, digest string, err error)
+	targets func(scope Scope, cwd string) ([]string, error)
+	// owned reports whether an installed target still carries munsu's
+	// ownership: a first-line marker or, for JSON and JS files that cannot
+	// carry one, a structural check of the munsu-owned hooks.
+	owned func(target string) bool
+	// combinedDigest marks a manifest digest taken over all target files
+	// together. Status cannot check it file by file and relies on owned,
+	// which already verifies every file.
+	combinedDigest bool
+	// regeneratedDigest, when set, is the digest Status expects instead of
+	// the stored one. Only a wholly munsu-owned file sets it: the stored
+	// digest only proves the file still matches what the *installing* binary
+	// produced, and an installation that predates a change to the generated
+	// source would match it forever and never be repaired. Files merged with
+	// user-owned hooks keep the stored digest, since a freshly generated file
+	// is legitimately not byte-identical; owned covers them.
+	regeneratedDigest func(munsuBin string) string
+}
+
+// structuralOwner adapts a (path, munsuBin) ownership check to the Status loop.
+func structuralOwner(check func(path, munsuBin string) (bool, string, error)) func(string) bool {
+	return func(target string) bool {
+		munsuBin, err := ResolveMunsuPathString()
+		if err != nil {
+			return false
+		}
+		present, _, err := check(target, munsuBin)
+		return err == nil && present
+	}
+}
+
+// inDir runs a directory-level ownership check on the target's directory.
+func inDir(check func(dir, munsuBin string) (bool, string, error)) func(path, munsuBin string) (bool, string, error) {
+	return func(path, munsuBin string) (bool, string, error) {
+		return check(filepath.Dir(path), munsuBin)
+	}
+}
+
+func singleTargetInstall(install func(scope Scope, cwd string, dryRun bool) (string, bool, string, error)) func(Scope, string, bool) ([]string, bool, string, error) {
+	return func(scope Scope, cwd string, dryRun bool) ([]string, bool, string, error) {
+		target, written, digest, err := install(scope, cwd, dryRun)
+		if err != nil {
+			return nil, false, "", err
+		}
+		return []string{target}, written, digest, nil
+	}
+}
+
+func singleTargetPath(path func(scope Scope, cwd string) (string, error)) func(Scope, string) ([]string, error) {
+	return func(scope Scope, cwd string) ([]string, error) {
+		target, err := path(scope, cwd)
+		if err != nil {
+			return nil, err
+		}
+		return []string{target}, nil
+	}
+}
+
+var harnessIntegrations = map[string]harnessIntegration{
+	harness.Pi: {
+		label: "pi extension",
+		files: 1,
+		install: singleTargetInstall(func(scope Scope, cwd string, dryRun bool) (string, bool, string, error) {
+			return (&PiAdapter{Cwd: cwd, Scope: string(scope), DryRun: dryRun}).InstallPiExtension()
+		}),
+		targets:           singleTargetPath(ExpectedTargetPath),
+		owned:             FileContainsOwnershipMarker,
+		regeneratedDigest: PiExtensionContentDigest,
+	},
+	harness.Claude: {
+		label:   "claude settings",
+		files:   1,
+		install: singleTargetInstall(claudeHooks.install),
+		targets: singleTargetPath(claudeHooks.path),
+		owned:   structuralOwner(claudeHooks.hasOwnedHooks),
+	},
+	harness.Codex: {
+		label:   "codex hooks",
+		files:   1,
+		install: singleTargetInstall(codexHooks.install),
+		targets: singleTargetPath(codexHooks.path),
+		owned:   structuralOwner(codexHooks.hasOwnedHooks),
+	},
+	harness.Grok: {
+		label: "grok hooks",
+		files: len(grokHookFileNames),
+		install: func(scope Scope, cwd string, dryRun bool) ([]string, bool, string, error) {
+			return (&GrokAdapter{Cwd: cwd, Scope: string(scope), DryRun: dryRun}).InstallGrokHooks()
+		},
+		targets:        GrokHooksAllTargetPaths,
+		owned:          structuralOwner(inDir(GrokHooksHasOwnedHooks)),
+		combinedDigest: true,
+	},
+	harness.Opencode: {
+		label: "opencode plugins",
+		files: len(opencodePluginFileNames),
+		install: func(scope Scope, cwd string, dryRun bool) ([]string, bool, string, error) {
+			return (&OpencodeAdapter{Cwd: cwd, Scope: string(scope), DryRun: dryRun}).InstallOpencodePlugins()
+		},
+		targets:        OpencodePluginsAllTargetPaths,
+		owned:          structuralOwner(inDir(OpencodePluginsHasOwnedHooks)),
+		combinedDigest: true,
+	},
+	harness.Agy: {
+		label: "agy hooks",
+		files: 1,
+		install: func(scope Scope, cwd string, dryRun bool) ([]string, bool, string, error) {
+			return (&AgyAdapter{Cwd: cwd, Scope: string(scope), DryRun: dryRun}).InstallAgyHooks()
+		},
+		targets:        singleTargetPath(AgyHooksTargetPath),
+		owned:          structuralOwner(inDir(AgyHooksHasOwnedHooks)),
+		combinedDigest: true,
+	},
+}
+
+// describeTargets renders the installed targets for an install message.
+func describeTargets(targets []string) string {
+	if len(targets) == 1 {
+		return targets[0]
+	}
+	return fmt.Sprintf("%d files in %s", len(targets), filepath.Dir(targets[0]))
+}
+
+// newManifest builds the integration manifest recorded after an install.
+func newManifest(harnessName string, scope Scope, caps []Capability, contentDigest string, targetPaths []string) Manifest {
+	capStrs := make([]string, len(caps))
+	for i, c := range caps {
+		capStrs[i] = string(c)
+	}
+	return Manifest{
+		SchemaVersion: "munsu.integrate/v1",
+		Harness:       harnessName,
+		Version:       "1.0.0",
+		Scope:         string(scope),
+		InstalledAt:   time.Now().UTC().Format(time.RFC3339),
+		TargetPaths:   targetPaths,
+		Capabilities:  capStrs,
+		ContentDigest: contentDigest,
+	}
+}
 
 // Install installs integration artifacts for the given harness.
 // Returns an IntegrationResult describing what was done.
@@ -20,7 +167,8 @@ import (
 // Semantics:
 //   - Fresh install: creates all artifacts, writes manifest.
 //   - Re-install (idempotent): identical content is a no-op; changed content
-//     is a repair. User files without ownership markers are backed up.
+//     is a repair. A Pi extension without the ownership marker is a
+//     conflict; a hooks JSON file that is not valid JSON is refused.
 //   - Unknown harness: no filesystem mutation.
 //   - Dry-run: reports what would happen without writing.
 func Install(homeDir, cwd, harnessName string, scope Scope, dryRun bool) (*IntegrationResult, error) {
@@ -42,255 +190,52 @@ func Install(homeDir, cwd, harnessName string, scope Scope, dryRun bool) (*Integ
 		}, nil
 	}
 
+	row, ok := harnessIntegrations[harnessName]
+	if !ok {
+		return &IntegrationResult{
+			Harness: harnessName,
+			State:   "unsupported",
+			Message: fmt.Sprintf("harness %q integration not yet implemented", harnessName),
+		}, nil
+	}
+
 	result := &IntegrationResult{
 		Harness: adapter.Name,
 		Scope:   scope,
 		State:   "installed",
 	}
 
-	switch harnessName {
-	case harness.Pi:
-		piAdpt := &PiAdapter{
-			HomeDir: homeDir,
-			Cwd:     cwd,
-			Scope:   string(scope),
-			DryRun:  dryRun,
-		}
-		target, written, digest, err := piAdpt.InstallPiExtension()
-		if err != nil {
-			return nil, fmt.Errorf("pi extension install: %w", err)
-		}
-		result.Message = fmt.Sprintf("pi extension: %s", target)
+	targets, written, digest, err := row.install(scope, cwd, dryRun)
+	if err != nil {
+		return nil, fmt.Errorf("%s install: %w", row.label, err)
+	}
+	result.Message = fmt.Sprintf("%s: %s", row.label, describeTargets(targets))
 
-		if !dryRun && written {
-			// Write manifest to per-harness per-scope path.
-			manifest := GenerateManifest(harnessName, string(scope), caps, digest)
-			manifest.TargetPaths = []string{target}
-			artifactDir := homePathForScope(homeDir, harnessName, scope, cwd)
-			if err := os.MkdirAll(artifactDir, 0755); err != nil {
-				return nil, fmt.Errorf("create artifact dir: %w", err)
-			}
-
-			manifestPath := ManifestPath(homeDir, harnessName, scope, cwd)
-			manifestData, err := json.MarshalIndent(manifest, "", "  ")
-			if err != nil {
-				return nil, fmt.Errorf("marshal manifest: %w", err)
-			}
-			if err := writeAtomic(manifestPath, string(manifestData), 0644); err != nil {
-				return nil, fmt.Errorf("write manifest: %w", err)
-			}
-
-			result.Version = manifest.Version
-			result.InstalledAt = manifest.InstalledAt
-		} else if dryRun {
-			result.Message = fmt.Sprintf("[dry-run] would write: %s", target)
-			result.State = "fresh"
-		} else {
-			result.State = "fresh"
-			result.Message = "no changes needed"
-		}
-
-	case harness.Claude:
-		claudeAdpt := &ClaudeAdapter{
-			HomeDir: homeDir,
-			Cwd:     cwd,
-			Scope:   string(scope),
-			DryRun:  dryRun,
-		}
-		target, written, digest, err := claudeAdpt.InstallClaudeSettings()
-		if err != nil {
-			return nil, fmt.Errorf("claude settings install: %w", err)
-		}
-		result.Message = fmt.Sprintf("claude settings: %s", target)
-
-		if !dryRun && written {
-			manifest := generateClaudeManifest(harnessName, string(scope), caps, digest, target)
-			artifactDir := homePathForScope(homeDir, harnessName, scope, cwd)
-			if err := os.MkdirAll(artifactDir, 0755); err != nil {
-				return nil, fmt.Errorf("create artifact dir: %w", err)
-			}
-
-			manifestPath := ManifestPath(homeDir, harnessName, scope, cwd)
-			manifestData, err := json.MarshalIndent(manifest, "", "  ")
-			if err != nil {
-				return nil, fmt.Errorf("marshal manifest: %w", err)
-			}
-			if err := writeAtomic(manifestPath, string(manifestData), 0644); err != nil {
-				return nil, fmt.Errorf("write manifest: %w", err)
-			}
-
-			result.Version = manifest.Version
-			result.InstalledAt = manifest.InstalledAt
-		} else if dryRun {
-			result.Message = fmt.Sprintf("[dry-run] would write: %s", target)
-			result.State = "fresh"
-		} else {
-			result.State = "fresh"
-			result.Message = "no changes needed"
-		}
-
-	case harness.Grok:
-		grokAdpt := &GrokAdapter{
-			HomeDir: homeDir,
-			Cwd:     cwd,
-			Scope:   string(scope),
-			DryRun:  dryRun,
-		}
-		targets, written, digest, err := grokAdpt.InstallGrokHooks()
-		if err != nil {
-			return nil, fmt.Errorf("grok hooks install: %w", err)
-		}
-		result.Message = fmt.Sprintf("grok hooks: %d files in %s", len(targets), filepath.Dir(targets[0]))
-
-		if !dryRun && written {
-			manifest := generateGrokManifest(harnessName, string(scope), caps, digest, targets)
-			artifactDir := homePathForScope(homeDir, harnessName, scope, cwd)
-			if err := os.MkdirAll(artifactDir, 0755); err != nil {
-				return nil, fmt.Errorf("create artifact dir: %w", err)
-			}
-
-			manifestPath := ManifestPath(homeDir, harnessName, scope, cwd)
-			manifestData, err := json.MarshalIndent(manifest, "", "  ")
-			if err != nil {
-				return nil, fmt.Errorf("marshal manifest: %w", err)
-			}
-			if err := writeAtomic(manifestPath, string(manifestData), 0644); err != nil {
-				return nil, fmt.Errorf("write manifest: %w", err)
-			}
-
-			result.Version = manifest.Version
-			result.InstalledAt = manifest.InstalledAt
-		} else if dryRun {
-			result.Message = fmt.Sprintf("[dry-run] would write: %d files to %s", len(targets), filepath.Dir(targets[0]))
-			result.State = "fresh"
-		} else {
-			result.State = "fresh"
-			result.Message = "no changes needed"
-		}
-
-	case harness.Codex:
-		codexAdpt := &CodexAdapter{
-			HomeDir: homeDir,
-			Cwd:     cwd,
-			Scope:   string(scope),
-			DryRun:  dryRun,
-		}
-		target, written, digest, err := codexAdpt.InstallCodexHooks()
-		if err != nil {
-			return nil, fmt.Errorf("codex hooks install: %w", err)
-		}
-		result.Message = fmt.Sprintf("codex hooks: %s", target)
-
-		if !dryRun && written {
-			manifest := generateCodexManifest(harnessName, string(scope), caps, digest, target)
-			artifactDir := homePathForScope(homeDir, harnessName, scope, cwd)
-			if err := os.MkdirAll(artifactDir, 0755); err != nil {
-				return nil, fmt.Errorf("create artifact dir: %w", err)
-			}
-
-			manifestPath := ManifestPath(homeDir, harnessName, scope, cwd)
-			manifestData, err := json.MarshalIndent(manifest, "", "  ")
-			if err != nil {
-				return nil, fmt.Errorf("marshal manifest: %w", err)
-			}
-			if err := writeAtomic(manifestPath, string(manifestData), 0644); err != nil {
-				return nil, fmt.Errorf("write manifest: %w", err)
-			}
-
-			result.Version = manifest.Version
-			result.InstalledAt = manifest.InstalledAt
-		} else if dryRun {
-			result.Message = fmt.Sprintf("[dry-run] would write: %s", target)
-			result.State = "fresh"
-		} else {
-			result.State = "fresh"
-			result.Message = "no changes needed"
-		}
-
-	case harness.Opencode:
-		opencodeAdpt := &OpencodeAdapter{
-			HomeDir: homeDir,
-			Cwd:     cwd,
-			Scope:   string(scope),
-			DryRun:  dryRun,
-		}
-		targets, written, digest, err := opencodeAdpt.InstallOpencodePlugins()
-		if err != nil {
-			return nil, fmt.Errorf("opencode plugins install: %w", err)
-		}
-		result.Message = fmt.Sprintf("opencode plugins: %d files in %s", len(targets), filepath.Dir(targets[0]))
-
-		if !dryRun && written {
-			manifest := generateOpencodeManifest(harnessName, string(scope), caps, digest, targets)
-			artifactDir := homePathForScope(homeDir, harnessName, scope, cwd)
-			if err := os.MkdirAll(artifactDir, 0755); err != nil {
-				return nil, fmt.Errorf("create artifact dir: %w", err)
-			}
-
-			manifestPath := ManifestPath(homeDir, harnessName, scope, cwd)
-			manifestData, err := json.MarshalIndent(manifest, "", "  ")
-			if err != nil {
-				return nil, fmt.Errorf("marshal manifest: %w", err)
-			}
-			if err := writeAtomic(manifestPath, string(manifestData), 0644); err != nil {
-				return nil, fmt.Errorf("write manifest: %w", err)
-			}
-
-			result.Version = manifest.Version
-			result.InstalledAt = manifest.InstalledAt
-		} else if dryRun {
-			result.Message = fmt.Sprintf("[dry-run] would write: %d files to %s", len(targets), filepath.Dir(targets[0]))
-			result.State = "fresh"
-		} else {
-			result.State = "fresh"
-			result.Message = "no changes needed"
-		}
-
-	case harness.Agy:
-		agyAdpt := &AgyAdapter{
-			HomeDir: homeDir,
-			Cwd:     cwd,
-			Scope:   string(scope),
-			DryRun:  dryRun,
-		}
-		targets, written, digest, err := agyAdpt.InstallAgyHooks()
-		if err != nil {
-			return nil, fmt.Errorf("agy hooks install: %w", err)
-		}
-		result.Message = fmt.Sprintf("agy hooks: %s", targets[0])
-
-		if !dryRun && written {
-			manifest := generateAgyManifest(harnessName, string(scope), caps, digest, targets)
-			artifactDir := homePathForScope(homeDir, harnessName, scope, cwd)
-			if err := os.MkdirAll(artifactDir, 0755); err != nil {
-				return nil, fmt.Errorf("create artifact dir: %w", err)
-			}
-
-			manifestPath := ManifestPath(homeDir, harnessName, scope, cwd)
-			manifestData, err := json.MarshalIndent(manifest, "", "  ")
-			if err != nil {
-				return nil, fmt.Errorf("marshal manifest: %w", err)
-			}
-			if err := writeAtomic(manifestPath, string(manifestData), 0644); err != nil {
-				return nil, fmt.Errorf("write manifest: %w", err)
-			}
-
-			result.Version = manifest.Version
-			result.InstalledAt = manifest.InstalledAt
-		} else if dryRun {
+	switch {
+	case dryRun:
+		result.State = "fresh"
+		if len(targets) == 1 {
 			result.Message = fmt.Sprintf("[dry-run] would write: %s", targets[0])
-			result.State = "fresh"
 		} else {
-			result.State = "fresh"
-			result.Message = "no changes needed"
+			result.Message = fmt.Sprintf("[dry-run] would write: %d files to %s", len(targets), filepath.Dir(targets[0]))
 		}
-
+	case !written:
+		result.State = "fresh"
+		result.Message = "no changes needed"
 	default:
-		return &IntegrationResult{
-			Harness: harnessName,
-			State:   "unsupported",
-			Message: fmt.Sprintf("harness %q integration not yet implemented", harnessName),
-		}, nil
+		manifest := newManifest(harnessName, scope, caps, digest, targets)
+		if err := os.MkdirAll(homePathForScope(homeDir, harnessName, scope, cwd), 0755); err != nil {
+			return nil, fmt.Errorf("create artifact dir: %w", err)
+		}
+		manifestData, err := json.MarshalIndent(manifest, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("marshal manifest: %w", err)
+		}
+		if err := writeAtomic(ManifestPath(homeDir, harnessName, scope, cwd), string(manifestData), 0644); err != nil {
+			return nil, fmt.Errorf("write manifest: %w", err)
+		}
+		result.Version = manifest.Version
+		result.InstalledAt = manifest.InstalledAt
 	}
 
 	return result, nil
@@ -398,13 +343,16 @@ func Status(homeDir, cwd, harnessName string, scope Scope) (*IntegrationResult, 
 		return result, nil
 	}
 
-	// Strict validation against expected values.
-	expectedCaps := caps
-	expectedTargets := 1
-	if harnessName == harness.Grok || harnessName == harness.Opencode {
-		expectedTargets = 4
+	row, ok := harnessIntegrations[harnessName]
+	if !ok {
+		result.State = "unsupported"
+		result.Message = fmt.Sprintf("harness %q integration not yet implemented", harnessName)
+		return result, nil
 	}
-	if err := ValidateStrict(manifest, harnessName, string(scope), "1.0.0", expectedCaps, expectedTargets); err != nil {
+	expectedPaths, pathErr := row.targets(scope, cwd)
+
+	// Strict validation against expected values.
+	if err := ValidateStrict(manifest, harnessName, string(scope), "1.0.0", caps, row.files); err != nil {
 		result.State = "drifted"
 		result.Message = fmt.Sprintf("manifest validation: %v", err)
 		result.Drifted = true
@@ -412,15 +360,8 @@ func Status(homeDir, cwd, harnessName string, scope Scope) (*IntegrationResult, 
 	}
 
 	// Verify that TargetPaths contains the expected canonical targets for this scope+cwd.
-	if harnessName == harness.Grok || harnessName == harness.Opencode {
-		// For Grok and OpenCode, verify all 4 expected paths are present.
-		var expectedPaths []string
-		var pathErr error
-		if harnessName == harness.Grok {
-			expectedPaths, pathErr = GrokHooksAllTargetPaths(scope, cwd)
-		} else {
-			expectedPaths, pathErr = OpencodePluginsAllTargetPaths(scope, cwd)
-		}
+	if row.files > 1 {
+		// For multi-file harnesses, every expected path must be present and exist.
 		if pathErr != nil {
 			result.State = "drifted"
 			result.Message = fmt.Sprintf("cannot compute %s targets: %v", harnessName, pathErr)
@@ -452,22 +393,13 @@ func Status(homeDir, cwd, harnessName string, scope Scope) (*IntegrationResult, 
 			}
 		}
 	} else {
-		var expectedTarget string
-		if harnessName == harness.Claude {
-			expectedTarget, err = ClaudeSettingsTargetPath(scope, cwd)
-		} else if harnessName == harness.Codex {
-			expectedTarget, err = CodexHooksTargetPath(scope, cwd)
-		} else if harnessName == harness.Agy {
-			expectedTarget, err = AgyHooksTargetPath(scope, cwd)
-		} else {
-			expectedTarget, err = ExpectedTargetPath(scope, cwd)
-		}
-		if err != nil {
+		if pathErr != nil {
 			result.State = "drifted"
-			result.Message = fmt.Sprintf("cannot compute expected target: %v", err)
+			result.Message = fmt.Sprintf("cannot compute expected target: %v", pathErr)
 			result.Drifted = true
 			return result, nil
 		}
+		expectedTarget := expectedPaths[0]
 		targetFound := false
 		for _, tp := range manifest.TargetPaths {
 			canonicalTP := canonicalizePossiblyMissingPath(tp)
@@ -489,127 +421,38 @@ func Status(homeDir, cwd, harnessName string, scope Scope) (*IntegrationResult, 
 		}
 	}
 
-	// Verify the target file exists, has ownership marker, and digest matches.
+	// Verify each target exists, is still munsu-owned, and matches its digest.
 	allPresent := true
 	for _, tp := range manifest.TargetPaths {
 		if _, err := os.Stat(tp); err != nil {
 			allPresent = false
 			continue
 		}
-		if harnessName == harness.Claude {
-			// Structural ownership check for Claude settings.json —
-			// JSON cannot carry a first-line comment marker.
-			munsuBin, resolveErr := ResolveMunsuPathString()
-			if resolveErr != nil {
-				allPresent = false
-				continue
-			}
-			present, _, hookErr := ClaudeSettingsHasOwnedHooks(tp, munsuBin)
-			if hookErr != nil || !present {
-				allPresent = false
-				continue
-			}
-		} else if harnessName == harness.Codex {
-			// Structural ownership check for Codex hooks.json —
-			// JSON cannot carry a first-line comment marker.
-			munsuBin, resolveErr := ResolveMunsuPathString()
-			if resolveErr != nil {
-				allPresent = false
-				continue
-			}
-			present, _, hookErr := CodexHooksHasOwnedHooks(tp, munsuBin)
-			if hookErr != nil || !present {
-				allPresent = false
-				continue
-			}
-		} else if harnessName == harness.Grok {
-			// Structural ownership check for Grok hook files.
-			munsuBin, resolveErr := ResolveMunsuPathString()
-			if resolveErr != nil {
-				allPresent = false
-				continue
-			}
-			hooksDir := filepath.Dir(tp)
-			present, _, hookErr := GrokHooksHasOwnedHooks(hooksDir, munsuBin)
-			if hookErr != nil || !present {
-				allPresent = false
-				continue
-			}
-		} else if harnessName == harness.Agy {
-			// Structural ownership check for agy hooks.json —
-			// JSON cannot carry a first-line comment marker, so
-			// check for munsu-owned hook names with correct commands.
-			munsuBin, resolveErr := ResolveMunsuPathString()
-			if resolveErr != nil {
-				allPresent = false
-				continue
-			}
-			hooksDir := filepath.Dir(tp)
-			present, _, hookErr := AgyHooksHasOwnedHooks(hooksDir, munsuBin)
-			if hookErr != nil || !present {
-				allPresent = false
-				continue
-			}
-		} else if harnessName == harness.Opencode {
-			// Structural ownership check for OpenCode plugin files.
-			// JS files cannot carry a reliable first-line marker, so
-			// check content for the munsu binary path and expected
-			// export function names.
-			munsuBin, resolveErr := ResolveMunsuPathString()
-			if resolveErr != nil {
-				allPresent = false
-				continue
-			}
-			pluginsDir := filepath.Dir(tp)
-			present, _, hookErr := OpencodePluginsHasOwnedHooks(pluginsDir, munsuBin)
-			if hookErr != nil || !present {
-				allPresent = false
-				continue
-			}
-		} else if !FileContainsOwnershipMarker(tp) {
+		if !row.owned(tp) {
 			allPresent = false
 			continue
 		}
-
-		// Verify content digest if manifest has one.
-		// Skip for Grok and OpenCode: the content digest is a combined digest
-		// of all hook/plugin files, but the verification loop checks individual
-		// files. Structural ownership checks (GrokHooksHasOwnedHooks and
-		// OpencodePluginsHasOwnedHooks) already verify all files are correct.
-		// Also skip for Agy (structural ownership via AgyHooksHasOwnedHooks).
-		if manifest.ContentDigest != "" &&
-			harnessName != harness.Grok &&
-			harnessName != harness.Opencode &&
-			harnessName != harness.Agy {
-			currentData, readErr := os.ReadFile(tp)
-			if readErr != nil {
+		if manifest.ContentDigest == "" || row.combinedDigest {
+			continue
+		}
+		currentData, readErr := os.ReadFile(tp)
+		if readErr != nil {
+			allPresent = false
+			continue
+		}
+		sum := sha256.Sum256(currentData)
+		currentDigest := hex.EncodeToString(sum[:])
+		expectedDigest := manifest.ContentDigest
+		if row.regeneratedDigest != nil {
+			munsuBin, resolveErr := ResolveMunsuPathString()
+			if resolveErr != nil {
 				allPresent = false
 				continue
 			}
-			sum := sha256.Sum256(currentData)
-			currentDigest := hex.EncodeToString(sum[:])
-
-			// The Pi extension file is wholly munsu-owned, so the expectation
-			// is regenerated here rather than read from the manifest. The
-			// stored digest only proves the file still matches what the
-			// *installing* binary produced; an installation that predates a
-			// change to the extension source would match it forever and never
-			// be repaired. Claude and Codex keep the stored digest because
-			// their settings files are merged with user-owned hooks, so a
-			// freshly generated file is legitimately not byte-identical —
-			// their coverage comes from the structural checks above.
-			expectedDigest := manifest.ContentDigest
-			if harnessName == harness.Pi {
-				munsuBin, resolveErr := ResolveMunsuPathString()
-				if resolveErr != nil {
-					allPresent = false
-					continue
-				}
-				expectedDigest = PiExtensionContentDigest(munsuBin)
-			}
-			if currentDigest != expectedDigest {
-				allPresent = false
-			}
+			expectedDigest = row.regeneratedDigest(munsuBin)
+		}
+		if currentDigest != expectedDigest {
+			allPresent = false
 		}
 	}
 
@@ -647,3 +490,32 @@ func canonicalizePossiblyMissingPath(path string) string {
 
 // bytesReader returns a reader for a byte slice.
 func reader(b []byte) *bytes.Reader { return bytes.NewReader(b) }
+
+// ProjectScopeInstallPaths returns the cwd-relative, slash-separated paths
+// that Install(cwd, cwd, harnessName, ScopeProject, false) writes: the
+// harness integration targets plus the munsu manifest. An unsupported
+// harness writes nothing and returns no paths.
+func ProjectScopeInstallPaths(cwd, harnessName string) ([]string, error) {
+	canonical, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		return nil, fmt.Errorf("resolving project cwd %s: %w", cwd, err)
+	}
+	row, ok := harnessIntegrations[harnessName]
+	if !ok {
+		return nil, nil
+	}
+	targets, err := row.targets(ScopeProject, canonical)
+	if err != nil {
+		return nil, err
+	}
+	targets = append(targets, ManifestPath(canonical, harnessName, ScopeProject, canonical))
+	rels := make([]string, 0, len(targets))
+	for _, target := range targets {
+		rel, err := filepath.Rel(canonical, target)
+		if err != nil {
+			return nil, err
+		}
+		rels = append(rels, filepath.ToSlash(rel))
+	}
+	return rels, nil
+}

@@ -706,9 +706,7 @@ func TestPrintCaptainLiveness_RecoverSummaryPrinted(t *testing.T) {
 	}
 }
 
-// reclaimNone and reclaimEvery stand in for the composition root's
-// reclaimer. They live in this untagged file because the untagged and
-// windows tests use them too, and a helper defined only under the
-// integration tag is invisible to those builds.
-func reclaimNone(_ string, reclaim func() error) (bool, error) { return true, reclaim() }
-func reclaimEvery(string, func() error) (bool, error)          { return false, nil }
+// reclaimEvery stands in for the composition root's reclaimer. It lives in
+// this untagged file because the untagged tests use it too, and a helper
+// defined only under the integration tag is invisible to that build.
+func reclaimEvery(string, func() error) (bool, error) { return false, nil }

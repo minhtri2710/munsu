@@ -21,7 +21,6 @@ func newSpawnCmd() *cobra.Command {
 		mode        string
 		yolo        bool
 		force       bool
-		reopen      bool
 		backend     string
 		harnessFlag string
 		modelFlag   string
@@ -58,12 +57,6 @@ When inference fails, pass the project name explicitly or run 'munsu project add
 				fmt.Fprintf(os.Stderr, "info: inferred project %q from cwd\n", projectName)
 			}
 
-			// Resolve project mode from registry
-			projectMode, _, projErr := fleet.Mode(ctx.Home, projectName)
-			if projErr != nil {
-				projectMode = "" // registry not set or not found — will use other fallbacks
-			}
-
 			// Compose the Task Authority over the exact home the Runner will
 			// use: construction is side-effect free and the Authority is passed
 			// into fleet.Args for the worktree binding cutover (Task 4.1).
@@ -76,11 +69,9 @@ When inference fails, pass the project name explicitly or run 'munsu project add
 				ID:          id,
 				ProjectName: projectName,
 				Kind:        kind,
-				Mode:        mode,        // raw flag value; resolution happens inside Run
-				ProjectMode: projectMode, // raw project mode; resolution happens inside Run
+				Mode:        mode, // raw flag value; resolution happens inside Run
 				Yolo:        yolo,
 				Force:       force,
-				Reopen:      reopen,
 				Backend:     backend,
 				HarnessFlag: harnessFlag,
 				ModelFlag:   modelFlag,
@@ -104,7 +95,6 @@ When inference fails, pass the project name explicitly or run 'munsu project add
 	cmd.Flags().StringVar(&mode, "mode", "", "Delivery mode (no-mistakes|direct-PR|local-only; empty=auto-detect)")
 	cmd.Flags().BoolVar(&yolo, "yolo", false, "Skip pre-flight checks")
 	cmd.Flags().BoolVar(&force, "force", false, "Bypass captain task authority checks")
-	cmd.Flags().BoolVar(&reopen, "reopen", false, "Allow spawning a done/blocked task (reopen)")
 	cmd.Flags().StringVar(&backend, "backend", "", "Session backend (tmux|herdr)")
 	cmd.Flags().StringVar(&harnessFlag, "harness", "", "Override soldier harness (pi, agy, etc.)")
 	cmd.Flags().StringVar(&modelFlag, "model", "", "Override model for the soldier harness")

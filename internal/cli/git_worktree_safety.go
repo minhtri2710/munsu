@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/domain"
@@ -23,35 +24,281 @@ type gitCommandSafety struct {
 	branchName string
 }
 
+// evaluateGitMutationSafety is the shell-string entry to the git fence. It
+// reads the command with the same tokenizer as the write guard: heredoc bodies
+// are stripped, then segments and words keep their quoting, so a quoted space
+// stays inside one word and a quoted `&&` never ends a segment.
+//
+// Command substitution is checked on the raw command, before stripping: a
+// heredoc with an unquoted delimiter still runs `$(...)` and backticks in its
+// body, and the tokenizer does not parse substitutions into words.
+//
+// The guard does not guess which command consumes a string. Every string
+// payload — a quoted or escaped word, a heredoc body, a here-string — is read
+// as shell by this same guard, whatever receives it, so git text handed to
+// any interpreter, script runner or file is refused as if typed directly. A
+// payload it cannot recover is refused.
 func evaluateGitMutationSafety(checkPath, command string) (bool, string) {
 	homeDir := strings.TrimSpace(os.Getenv("MUNSU_HOME"))
 	taskID := strings.TrimSpace(os.Getenv("MUNSU_TASK_ID"))
-	segments := splitSafetySegments(command)
-	currentPath := checkPath
-	for _, rawSegment := range segments {
-		segment := strings.TrimSpace(rawSegment)
-		if segment == "" {
+	mode := gitSafetyBackslashMode()
+	return evaluateGitScriptSafety(homeDir, taskID, command, 0, namesIFS(mode, command, 0), &gitShell{path: checkPath, functions: &shellFunctions{}})
+}
+
+// namesIFS reports whether any decoded word of command names IFS, at every
+// payload depth the git guard reads: every candidate word of each token
+// (both readings of an ANSI-C word and each substituted word included), and
+// every heredoc body, here-string and word read again as shell. An IFS set
+// at one depth reaches a payload the same shell runs (eval, source), so the
+// guard reads it once for the whole command. A name built from a variable's
+// value is not read.
+func namesIFS(mode backslashMode, command string, depth int) bool {
+	stripped, feeds := splitHeredocBodies(command)
+	var payloads []string
+	for _, feed := range feeds {
+		payloads = append(payloads, feed.text)
+	}
+	for _, segment := range tokenizeSegments(mode, stripped) {
+		for _, token := range candidateTokens(segment) {
+			if strings.Contains(token.text, "IFS") {
+				return true
+			}
+			if readsAsMoreThanItself(mode, token) {
+				payloads = append(payloads, token.text)
+			}
+		}
+	}
+	if depth < maxShellPayloadDepth {
+		for _, payload := range payloads {
+			if namesIFS(mode, payload, depth+1) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// maxShellPayloadDepth bounds how many payload layers the git guard reads
+// through before it refuses.
+const maxShellPayloadDepth = 4
+
+// ifs reports that the whole command names IFS (namesIFS): bash then splits
+// an unquoted parameter expansion's word at an IFS the guard cannot know.
+//
+// shell is the shell command runs in, from shell.path. eval runs its payload
+// in this shell, so the payload shares shell: its directory moves and its
+// definitions reach the segments after it. Every other payload, each word
+// read again as shell among them, starts from the directory it stands in; its
+// directory moves do not return, but its definitions join the command-wide
+// function set (evaluateGitPayloadSafety). A call to a
+// function whose body moves the directory leaves it unknown.
+func evaluateGitScriptSafety(homeDir, taskID, command string, depth int, ifs bool, shell *gitShell) (bool, string) {
+	if hasGitCommandSubstitution(command) {
+		return true, "compound shell command with command substitution is not allowed for git mutation"
+	}
+	mode := gitSafetyBackslashMode()
+	stripped, feeds := splitHeredocBodies(command)
+	var payloads []string
+	for _, feed := range feeds {
+		if !feed.terminated {
+			return true, "heredoc body is unterminated; git mutation cannot be checked"
+		}
+		payloads = append(payloads, feed.text)
+	}
+	// A heredoc body runs wherever its command runs, so it is read from every
+	// directory the command line visits. A directory the guard cannot follow
+	// is "": a git mutation there, or in a payload read from it, is refused.
+	paths := []string{shell.path}
+	// subshells are the states to return to at each open subshell's `)`.
+	type shellDir struct {
+		path, previous string
+		stack          *dirStack[string]
+		head           []shellToken
+		moves          int
+		calls          int
+	}
+	var subshells []shellDir
+	segments := tokenizeSegments(mode, stripped)
+	for i, segment := range segments {
+		if segment[0].unfinished {
+			return true, "shell case is unfinished; git mutation cannot be checked"
+		}
+		if i > 0 && definesFunction(segments[i-1]) && !segment[0].body {
+			shell.functions.finishDefinition(functionName(segments[i-1]), len(shell.functions.commandCall), shellFunction{})
+		}
+		if segment[0].subshell {
+			if segment[0].text == "(" {
+				opened := shellDir{shell.path, shell.previous, shell.stack, nil, shell.moves, len(shell.functions.commandCall)}
+				if segment[0].body && i > 0 && definesFunction(segments[i-1]) {
+					opened.head = segments[i-1]
+				}
+				subshells = append(subshells, opened)
+			} else if n := len(subshells); n > 0 {
+				closed := subshells[n-1]
+				shell.path, shell.previous, shell.stack = closed.path, closed.previous, closed.stack
+				subshells = subshells[:n-1]
+				if closed.head != nil {
+					shell.functions.finishDefinition(functionName(closed.head), closed.calls, shellFunction{moves: shell.moves != closed.moves})
+					shell.moves = closed.moves
+				}
+			}
 			continue
 		}
-		if hasGitCommandSubstitution(segment) {
-			return true, "compound shell command with command substitution is not allowed for git mutation"
+		for _, token := range segment {
+			if token.undecodable || (ifs && token.splitsAtIFS) {
+				return true, "shell word cannot be decoded; git mutation cannot be checked"
+			}
 		}
-		if nextPath, ok := cdSegmentPath(currentPath, segment); ok {
-			currentPath = nextPath
-			continue
+		// Every candidate word of a token is read again as shell, and the
+		// verb classifier reads every candidate at each position: the
+		// tokenizer cannot tell whether bash starts ANSI-C quoting at a `$'`,
+		// or which word a parameter expansion substitutes.
+		reread := make(map[string]bool)
+		for _, token := range candidateTokens(segment) {
+			if reread[token.text] || !readsAsMoreThanItself(mode, token) {
+				continue
+			}
+			reread[token.text] = true
+			if blocked, reason := evaluateGitPayloadSafety(homeDir, taskID, shell.path, token.text, depth, ifs, shell); blocked {
+				return true, reason
+			}
 		}
-		parsed, err := parseGitSafetyCommand(currentPath, segment)
-		if err != nil {
-			return true, err.Error()
+		for _, command := range segmentGitCommands(shell.path, segment, mode) {
+			if shell.path == "" {
+				return true, "shell directory cannot be determined; git mutation cannot be checked"
+			}
+			if command.ambiguous {
+				return true, "git mutation target cannot be determined"
+			}
+			if blocked, reason := evaluateParsedGitMutation(homeDir, taskID, command.g); blocked {
+				return true, reason
+			}
 		}
-		if !parsed.isGit || !parsed.mutating {
-			continue
+		evals, ok := evalPayloads(mode, segment)
+		if !ok {
+			return true, "shell word has too many readings; git mutation cannot be checked"
 		}
-		if blocked, reason := evaluateParsedGitMutation(homeDir, taskID, parsed); blocked {
+		if blocked, reason := evaluateGitEvalSafety(homeDir, taskID, evals, depth, ifs, shell); blocked {
 			return true, reason
+		}
+		move, operand := segmentDirMove(segment)
+		if shell.functions.call(segment) && move == moveNone {
+			move = moveCalled
+		}
+		if move != moveNone {
+			shell.moves++
+		}
+		switch move {
+		case moveNone:
+			if len(evals) == 0 {
+				continue
+			}
+		case moveCd, movePush:
+			if move == movePush {
+				shell.stack = &dirStack[string]{top: shell.path, next: shell.stack}
+			}
+			shell.previous, shell.path = shell.path, gitCdPath(mode, shell.path, operand.text)
+		case movePrevious:
+			shell.previous, shell.path = shell.path, shell.previous
+		case movePop:
+			next := ""
+			if shell.stack != nil {
+				next, shell.stack = shell.stack.top, shell.stack.next
+			}
+			shell.previous, shell.path = shell.path, next
+		case moveStack:
+			shell.stack = nil
+			continue
+		case moveUnknown:
+			shell.previous, shell.path, shell.stack = shell.path, "", nil
+		case moveCalled:
+			shell.previous, shell.path, shell.stack = "", "", nil
+		}
+		paths = append(paths, shell.path)
+	}
+	for _, payload := range payloads {
+		for _, path := range paths {
+			if blocked, reason := evaluateGitPayloadSafety(homeDir, taskID, path, payload, depth, ifs, shell); blocked {
+				return true, reason
+			}
 		}
 	}
 	return false, ""
+}
+
+// gitShell is the shell state a git guard walk reads a command line in: the
+// directory it stands in ("" when unknown), the one `cd -` returns to and the
+// stack pushd built, the directory moves read, and the functions defined.
+type gitShell struct {
+	path, previous string
+	stack          *dirStack[string]
+	moves          int
+	functions      *shellFunctions
+}
+
+// evaluateGitPayloadSafety reads payload as a shell of its own that starts in
+// path, with no previous directory or stack, sharing shell's command-wide function set.
+func evaluateGitPayloadSafety(homeDir, taskID, path, payload string, depth int, ifs bool, shell *gitShell) (bool, string) {
+	if depth+1 > maxShellPayloadDepth {
+		return true, "shell payload nesting is too deep; git mutation cannot be checked"
+	}
+	calls := len(shell.functions.commandCall)
+	defer func() { shell.functions.commandCall = shell.functions.commandCall[:calls] }()
+	return evaluateGitScriptSafety(homeDir, taskID, payload, depth+1, ifs, &gitShell{path: path, functions: shell.functions})
+}
+
+// evaluateGitEvalSafety reads the payloads eval runs in shell. One payload
+// is read in shell itself. When the segment's readings give eval more than
+// one, each is read from a copy of the directory state, and one that moves
+// the directory leaves it unknown.
+func evaluateGitEvalSafety(homeDir, taskID string, evals []shellPayload, depth int, ifs bool, shell *gitShell) (bool, string) {
+	if len(evals) > 0 && depth+1 > maxShellPayloadDepth {
+		return true, "shell payload nesting is too deep; git mutation cannot be checked"
+	}
+	if len(evals) == 1 {
+		return evaluateGitScriptSafety(homeDir, taskID, evals[0].text, depth+1, ifs, shell)
+	}
+	moved := false
+	for _, eval := range evals {
+		copied := *shell
+		if blocked, reason := evaluateGitScriptSafety(homeDir, taskID, eval.text, depth+1, ifs, &copied); blocked {
+			return true, reason
+		}
+		moved = moved || copied.moves != shell.moves || copied.path != shell.path
+	}
+	if moved {
+		shell.previous, shell.path, shell.stack = "", "", nil
+		shell.moves++
+	}
+	return false, ""
+}
+
+// readsAsMoreThanItself reports whether token, read again as shell, is
+// anything but the one plain word it is: quoting or escaping hid a space, an
+// operator or another quote inside it, or a literal word holds a parameter
+// expansion that substitutes a word. An expandable word is not read again for
+// its expansions, which are already its alternates. A plain word ends the
+// recursion.
+func readsAsMoreThanItself(mode backslashMode, token shellToken) bool {
+	segments := tokenizeSegments(mode, token.text)
+	// A word holding a substitution that does not end reads again as itself
+	// and its unfinished rest.
+	if n := len(segments); n == 2 && segments[1][0].unfinished {
+		segments = segments[:1]
+	}
+	if len(segments) != 1 || len(segments[0]) != 1 || segments[0][0].text != token.text {
+		return true
+	}
+	return !token.expandable && len(segments[0][0].alternates) > 0
+}
+
+// segmentWords returns the text of each token in a segment.
+func segmentWords(segment []shellToken) []string {
+	words := make([]string, len(segment))
+	for i, token := range segment {
+		words[i] = token.text
+	}
+	return words
 }
 
 // evaluateGitArgvSafety is the argv entry to the same fence the string path
@@ -165,131 +412,190 @@ func validateGitMutationAuthority(homeDir, taskID string, g gitCommandSafety, bi
 	}
 }
 
-func parseGitSafetyCommand(checkPath, command string) (gitCommandSafety, error) {
-	return parseGitSafetyCommandWithMode(checkPath, command, gitSafetyBackslashMode())
+// gitCommandPath is a git command the classifier read on some path through
+// a segment's candidates. ambiguous reports that paths reaching it selected
+// different targets.
+type gitCommandPath struct {
+	g         gitCommandSafety
+	ambiguous bool
 }
 
-func parseGitSafetyCommandWithMode(checkPath, command string, mode backslashMode) (gitCommandSafety, error) {
-	segments := splitSafetySegmentsWithMode(mode, command)
-	if len(segments) == 0 {
-		return gitCommandSafety{}, nil
-	}
-	for _, segment := range segments {
-		args := splitSafetyWordsWithMode(mode, segment)
-		if len(args) == 0 {
-			continue
+// gitWalkState is where the classifier is at a position: looking for the
+// git executable, reading git's global options, or reading the value of
+// option.
+type gitWalkState struct {
+	phase  int
+	option string
+}
+
+const (
+	gitSeekExecutable = iota
+	gitGlobalOptions
+	gitOptionValue
+)
+
+// segmentGitCommands returns the mutating git commands the verb classifier
+// reads in segment when each position may hold any of its candidate words
+// (segmentCandidates). The first git executable on a path starts git's
+// arguments, as it does for the words as written. A verb is read with the
+// words after it as written and with every candidate after it, so a
+// mutation in any candidate refuses. Paths that reach a position in the
+// same state with different targets merge into one ambiguous path, so the
+// walk grows with positions, never with the paths through them, and both
+// readings of the words after a verb are ranges of shared arrays.
+func segmentGitCommands(checkPath string, segment []shellToken, mode backslashMode) []gitCommandPath {
+	// A redirection is no git argument, wherever it stands (`git 2>/dev/null push`).
+	segment, _ = withoutRedirections(segment)
+	nodes := segmentCandidates(segment)
+	written := segmentWords(segment)
+	// candidates[starts[n]:] is every candidate word at position n and after.
+	var candidates []string
+	starts := make([]int, len(nodes)+1)
+	for n, node := range nodes {
+		starts[n] = len(candidates)
+		for _, step := range node.steps {
+			candidates = append(candidates, step.token.text)
 		}
-		idx := -1
-		for i, arg := range args {
-			base := filepath.Base(arg)
-			if base == "git" || strings.HasSuffix(base, "/git") {
-				idx = i
-				break
+	}
+	starts[len(nodes)] = len(candidates)
+	type reached struct {
+		state gitWalkState
+		path  gitCommandPath
+	}
+	states := make([][]reached, len(nodes))
+	reach := func(n int, state gitWalkState, path gitCommandPath) {
+		if n == len(nodes) {
+			return
+		}
+		i := slices.IndexFunc(states[n], func(r reached) bool { return r.state == state })
+		if i < 0 {
+			states[n] = append(states[n], reached{state, path})
+			return
+		}
+		seen := &states[n][i].path
+		if path.ambiguous || seen.g.targetPath != path.g.targetPath || seen.g.gitDir != path.g.gitDir || seen.g.workTree != path.g.workTree {
+			seen.ambiguous = true
+		}
+	}
+	reach(0, gitWalkState{phase: gitSeekExecutable}, gitCommandPath{g: gitCommandSafety{isGit: true, targetPath: checkPath}})
+	var commands []gitCommandPath
+	for n, node := range nodes {
+		if node.skip > 0 {
+			for _, r := range states[n] {
+				reach(node.skip, r.state, r.path)
 			}
 		}
-		if idx < 0 {
-			continue
-		}
-		g := walkGitArgs(checkPath, args[idx+1:], mode)
-		if g.verb != "" {
-			return g, nil
+		after := candidates[starts[n+1]:]
+		for _, r := range states[n] {
+			for _, step := range node.steps {
+				word := step.token.text
+				path := r.path
+				switch r.state.phase {
+				case gitSeekExecutable:
+					if base := filepath.Base(word); base == "git" || strings.HasSuffix(base, "/git") {
+						reach(step.next, gitWalkState{phase: gitGlobalOptions}, path)
+					} else {
+						reach(step.next, r.state, path)
+					}
+				case gitOptionValue:
+					applyGitOptionValue(&path.g, r.state.option, word, mode)
+					reach(step.next, gitWalkState{phase: gitGlobalOptions}, path)
+				case gitGlobalOptions:
+					takesValue, isVerb := gitGlobalOption(&path.g, word, mode)
+					switch {
+					case isVerb:
+						tail := written[step.from:]
+						if len(step.rest) > 0 {
+							tail = slices.Concat(segmentWords(step.rest), tail)
+						}
+						for k, args := range [][]string{tail, after} {
+							command := path
+							command.g.verb, command.g.args = word, args
+							fillGitCommandDetails(&command.g)
+							if command.g.mutating && (k == 0 || !slices.Equal(tail, after)) {
+								commands = append(commands, command)
+							}
+						}
+					case takesValue && step.next < len(nodes):
+						reach(step.next, gitWalkState{phase: gitOptionValue, option: word}, path)
+					default:
+						reach(step.next, r.state, path)
+					}
+				}
+			}
 		}
 	}
-	return gitCommandSafety{}, nil
+	return commands
 }
 
 // walkGitArgs interprets the git arguments that follow the git executable (the
 // tokens after `git`) into a gitCommandSafety. It applies no shell semantics:
-// the tokens are final. The string path reaches it after the shell front-end
-// has split segments and words; the git shim reaches it with the argv the real
-// shell already expanded and split. It consumes the -C/--git-dir/--work-tree
-// target selectors and the leading global options that take a separate value,
-// so the value is not mis-read as the git verb, then records the verb and
-// whether it mutates.
+// the tokens are final. The git shim reaches it with the argv the real shell
+// already expanded and split; the string path reads the same options through
+// segmentGitCommands. It consumes the -C/--git-dir/--work-tree target
+// selectors and the leading global options that take a separate value, so the
+// value is not mis-read as the git verb, then records the verb and whether it
+// mutates.
 func walkGitArgs(checkPath string, gitArgs []string, mode backslashMode) gitCommandSafety {
 	g := gitCommandSafety{isGit: true, targetPath: checkPath}
 	for len(gitArgs) > 0 {
 		arg := gitArgs[0]
+		takesValue, isVerb := gitGlobalOption(&g, arg, mode)
 		switch {
-		case arg == "-C" && len(gitArgs) > 1:
-			g.targetPath = resolveSafetyPathWithMode(g.targetPath, gitArgs[1], mode)
-			gitArgs = gitArgs[2:]
-		case strings.HasPrefix(arg, "-C") && len(arg) > 2:
-			g.targetPath = resolveSafetyPathWithMode(g.targetPath, arg[2:], mode)
-			gitArgs = gitArgs[1:]
-		case arg == "--git-dir" && len(gitArgs) > 1:
-			g.gitDir = resolveSafetyPathWithMode(g.targetPath, gitArgs[1], mode)
-			gitArgs = gitArgs[2:]
-		case strings.HasPrefix(arg, "--git-dir="):
-			g.gitDir = resolveSafetyPathWithMode(g.targetPath, strings.TrimPrefix(arg, "--git-dir="), mode)
-			gitArgs = gitArgs[1:]
-		case arg == "--work-tree" && len(gitArgs) > 1:
-			g.workTree = resolveSafetyPathWithMode(g.targetPath, gitArgs[1], mode)
-			g.targetPath = g.workTree
-			gitArgs = gitArgs[2:]
-		case strings.HasPrefix(arg, "--work-tree="):
-			g.workTree = resolveSafetyPathWithMode(g.targetPath, strings.TrimPrefix(arg, "--work-tree="), mode)
-			g.targetPath = g.workTree
-			gitArgs = gitArgs[1:]
-		case (arg == "-c" || arg == "--config-env" || arg == "--namespace" || arg == "--super-prefix" || arg == "--attr-source") && len(gitArgs) > 1:
-			// These global options take a separate value argument. Consume
-			// both tokens so the value is not mis-read as the git verb:
-			// `git -c user.name=x push …` must not let `user.name=x` shadow
-			// `push` and slip the mutation through as an unknown verb.
-			gitArgs = gitArgs[2:]
-		case strings.HasPrefix(arg, "-"):
-			gitArgs = gitArgs[1:]
-		default:
+		case isVerb:
 			g.verb = arg
 			g.args = gitArgs[1:]
 			fillGitCommandDetails(&g)
 			return g
+		case takesValue && len(gitArgs) > 1:
+			applyGitOptionValue(&g, arg, gitArgs[1], mode)
+			gitArgs = gitArgs[2:]
+		default:
+			gitArgs = gitArgs[1:]
 		}
 	}
 	return g
 }
 
-func splitSafetyWordsWithMode(mode backslashMode, segment string) []string {
-	var args []string
-	var b strings.Builder
-	quote := rune(0)
-	escaped := false
-	flush := func() {
-		if b.Len() > 0 {
-			args = append(args, b.String())
-			b.Reset()
-		}
+// gitGlobalOption reads arg in git's global-option position. It applies an
+// option that carries its value in the same word, and reports whether arg
+// takes the next word as its value or is the verb.
+func gitGlobalOption(g *gitCommandSafety, arg string, mode backslashMode) (bool, bool) {
+	switch {
+	case arg == "-C" || arg == "--git-dir" || arg == "--work-tree":
+		return true, false
+	case arg == "-c" || arg == "--config-env" || arg == "--namespace" || arg == "--super-prefix" || arg == "--attr-source":
+		// These global options take a separate value argument. Consume
+		// both tokens so the value is not mis-read as the git verb:
+		// `git -c user.name=x push …` must not let `user.name=x` shadow
+		// `push` and slip the mutation through as an unknown verb.
+		return true, false
+	case strings.HasPrefix(arg, "-C") && len(arg) > 2:
+		g.targetPath = resolveSafetyPathWithMode(g.targetPath, arg[2:], mode)
+	case strings.HasPrefix(arg, "--git-dir="):
+		g.gitDir = resolveSafetyPathWithMode(g.targetPath, strings.TrimPrefix(arg, "--git-dir="), mode)
+	case strings.HasPrefix(arg, "--work-tree="):
+		g.workTree = resolveSafetyPathWithMode(g.targetPath, strings.TrimPrefix(arg, "--work-tree="), mode)
+		g.targetPath = g.workTree
+	case strings.HasPrefix(arg, "-"):
+	default:
+		return false, true
 	}
-	for _, r := range segment {
-		if escaped {
-			b.WriteRune(r)
-			escaped = false
-			continue
-		}
-		if r == '\\' && mode == backslashEscapes {
-			escaped = true
-			continue
-		}
-		if quote != 0 {
-			if r == quote {
-				quote = 0
-			} else {
-				b.WriteRune(r)
-			}
-			continue
-		}
-		if r == '\'' || r == '"' {
-			quote = r
-			continue
-		}
-		if r == ' ' || r == '\t' {
-			flush()
-			continue
-		}
-		b.WriteRune(r)
+	return false, false
+}
+
+// applyGitOptionValue applies value as the separate value of the global
+// option gitGlobalOption reported takes one.
+func applyGitOptionValue(g *gitCommandSafety, option, value string, mode backslashMode) {
+	switch option {
+	case "-C":
+		g.targetPath = resolveSafetyPathWithMode(g.targetPath, value, mode)
+	case "--git-dir":
+		g.gitDir = resolveSafetyPathWithMode(g.targetPath, value, mode)
+	case "--work-tree":
+		g.workTree = resolveSafetyPathWithMode(g.targetPath, value, mode)
+		g.targetPath = g.workTree
 	}
-	flush()
-	return args
 }
 
 func fillGitCommandDetails(g *gitCommandSafety) {
@@ -467,10 +773,6 @@ func gitSafetyOutput(dir string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-func resolveSafetyPath(base, path string) string {
-	return resolveSafetyPathWithMode(base, path, gitSafetyBackslashMode())
-}
-
 func resolveSafetyPathWithMode(base, path string, mode backslashMode) string {
 	if filepath.IsAbs(path) {
 		// Under the escape reading a Windows drive/UNC path must not be
@@ -514,67 +816,23 @@ func gitSafetyBackslashMode() backslashMode {
 	return backslashEscapes
 }
 
-func splitSafetySegments(command string) []string {
-	return splitSafetySegmentsWithMode(gitSafetyBackslashMode(), command)
-}
-
-func splitSafetySegmentsWithMode(mode backslashMode, command string) []string {
-	segments := []string{}
-	var b strings.Builder
-	quote := rune(0)
-	escaped := false
-	flush := func() {
-		if s := strings.TrimSpace(b.String()); s != "" {
-			segments = append(segments, s)
-		}
-		b.Reset()
-	}
-	for _, r := range command {
-		if escaped {
-			b.WriteRune(r)
-			escaped = false
-			continue
-		}
-		if r == '\\' && mode == backslashEscapes {
-			escaped = true
-			continue
-		}
-		if quote != 0 {
-			if r == quote {
-				quote = 0
-			} else {
-				b.WriteRune(r)
-			}
-			continue
-		}
-		switch r {
-		case '\'', '"':
-			quote = r
-		case ';', '&', '|', '\n':
-			flush()
-		default:
-			b.WriteRune(r)
-		}
-	}
-	flush()
-	return segments
-}
-
+// hasGitCommandSubstitution reports a command, process or bash 5.3
+// function substitution (`${ cmd; }`, `${| cmd; }`) anywhere in command,
+// read with each line continuation removed, as bash joins `$\<newline>(`.
+// Removing one that bash keeps only finds more.
 func hasGitCommandSubstitution(command string) bool {
-	return strings.Contains(command, "$(") || strings.Contains(command, "`")
+	command = strings.ReplaceAll(command, "\\\n", "")
+	return strings.Contains(command, "$(") || strings.Contains(command, "`") ||
+		strings.Contains(command, "<(") || strings.Contains(command, ">(") ||
+		strings.Contains(command, "${ ") || strings.Contains(command, "${\t") ||
+		strings.Contains(command, "${\n") || strings.Contains(command, "${|")
 }
 
-func cdSegmentPath(currentPath, segment string) (string, bool) {
-	return cdSegmentPathWithMode(gitSafetyBackslashMode(), currentPath, segment)
-}
-
-func cdSegmentPathWithMode(mode backslashMode, currentPath, segment string) (string, bool) {
-	fields := splitSafetyWordsWithMode(mode, segment)
-	if len(fields) == 0 || fields[0] != "cd" {
-		return "", false
+// gitCdPath returns the directory a cd to operand moves to from currentPath,
+// "" when currentPath is unknown and operand is relative to it.
+func gitCdPath(mode backslashMode, currentPath, operand string) string {
+	if currentPath == "" && !filepath.IsAbs(operand) {
+		return ""
 	}
-	if len(fields) < 2 {
-		return currentPath, true
-	}
-	return resolveSafetyPath(currentPath, fields[1]), true
+	return resolveSafetyPathWithMode(currentPath, operand, mode)
 }

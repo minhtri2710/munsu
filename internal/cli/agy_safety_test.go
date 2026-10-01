@@ -36,7 +36,7 @@ func TestAgySafetyCheckDeny(t *testing.T) {
 	cmd.SetErr(io.Discard)
 
 	stdout, stderr := captureBoth(func() {
-		runSafetyCheck(cmd, gitDir, "munsu watch arm", "", "agy")
+		runSafetyCheck(cmd, gitDir, "munsu watch", "", "agy")
 	})
 
 	if exitCode != 0 {
@@ -145,7 +145,7 @@ func TestAgySafetyCheckDenyViaStdin(t *testing.T) {
 	cmd.SetErr(io.Discard)
 
 	// Mock stdin with agy-shaped JSON (.toolCall.args.CommandLine PascalCase)
-	stdinPayload := `{"toolCall":{"name":"run_command","args":{"CommandLine":"munsu watch arm","Cwd":"/tmp"}},"conversationId":"test"}`
+	stdinPayload := `{"toolCall":{"name":"run_command","args":{"CommandLine":"munsu watch","Cwd":"/tmp"}},"conversationId":"test"}`
 	oldStdin := os.Stdin
 	r, w, _ := os.Pipe()
 	w.Write([]byte(stdinPayload))
@@ -222,7 +222,7 @@ func TestAgyReadStdinToolCallArgsCommandLine(t *testing.T) {
 	// Stdin with agy's .toolCall.args.CommandLine
 	oldStdin := os.Stdin
 	r, w, _ := os.Pipe()
-	w.Write([]byte(`{"toolCall":{"name":"run_command","args":{"CommandLine":"munsu watch arm"}}}`))
+	w.Write([]byte(`{"toolCall":{"name":"run_command","args":{"CommandLine":"munsu watch"}}}`))
 	w.Close()
 	os.Stdin = r
 
@@ -232,8 +232,8 @@ func TestAgyReadStdinToolCallArgsCommandLine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if payload.command != "munsu watch arm" {
-		t.Errorf("expected 'munsu watch arm', got %q", payload.command)
+	if payload.command != "munsu watch" {
+		t.Errorf("expected 'munsu watch', got %q", payload.command)
 	}
 }
 
@@ -242,7 +242,7 @@ func TestAgyReadStdinToolCallArgsCommandLine(t *testing.T) {
 func TestAgyReadStdinClaudeShapeAlsoWorks(t *testing.T) {
 	oldStdin := os.Stdin
 	r, w, _ := os.Pipe()
-	w.Write([]byte(`{"hookEventName":"PreToolUse","tool_input":{"command":"munsu watch arm"}}`))
+	w.Write([]byte(`{"hookEventName":"PreToolUse","tool_input":{"command":"munsu watch"}}`))
 	w.Close()
 	os.Stdin = r
 
@@ -252,8 +252,8 @@ func TestAgyReadStdinClaudeShapeAlsoWorks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if payload.command != "munsu watch arm" {
-		t.Errorf("expected 'munsu watch arm', got %q", payload.command)
+	if payload.command != "munsu watch" {
+		t.Errorf("expected 'munsu watch', got %q", payload.command)
 	}
 }
 

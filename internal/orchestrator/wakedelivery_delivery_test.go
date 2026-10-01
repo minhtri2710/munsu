@@ -434,7 +434,7 @@ func TestDeliverWake_EventAppendIsBestEffort(t *testing.T) {
 	}
 }
 
-func TestDeliverWake_EnqueueFailureRecorded(t *testing.T) {
+func TestDeliverWake_EnqueueFailureFailsClosed(t *testing.T) {
 	soldierHome := t.TempDir()
 	captainHome := t.TempDir()
 
@@ -452,16 +452,138 @@ func TestDeliverWake_EnqueueFailureRecorded(t *testing.T) {
 		Message:    "task complete",
 		Role:       "soldier",
 	})
+	// A material state with no queued wake must never read as delivered.
+	if err == nil || !strings.Contains(err.Error(), "enqueueing wake") {
+		t.Fatalf("DeliverWake err = %v (receipt %+v), want enqueueing wake error", err, receipt)
+	}
+	if receipt != nil {
+		t.Fatalf("receipt = %+v, want nil on enqueue failure", receipt)
+	}
+}
+
+// TestDeliverWake_RetryAfterEnqueueFailureDoesNotDuplicate re-runs a report
+// whose wake enqueue failed: the retry queues the wake without appending a
+// second status line or task.status event.
+func TestDeliverWake_RetryAfterEnqueueFailureDoesNotDuplicate(t *testing.T) {
+	soldierHome, captainHome := deliverEnv(t, true)
+	queueDir := filepath.Join(soldierHome, "state", ".wake-queue")
+	if err := os.MkdirAll(queueDir, 0755); err != nil {
+		t.Fatalf("mkdir wake-queue-as-dir: %v", err)
+	}
+	req := DeliverRequest{
+		HomeDir: soldierHome, ParentHome: captainHome, TaskID: "test-retry",
+		State: "done", Message: "task complete", Key: "terminal", Role: "soldier",
+	}
+	if _, err := DeliverWake(req); err == nil || !strings.Contains(err.Error(), "enqueueing wake") {
+		t.Fatalf("first DeliverWake err = %v, want enqueueing wake error", err)
+	}
+	if err := os.Remove(queueDir); err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := DeliverWake(req)
+	if err != nil {
+		t.Fatalf("retry DeliverWake: %v", err)
+	}
+	if !receipt.WakeEnqueued || !receipt.EventAppended {
+		t.Fatalf("receipt = %+v, want wake enqueued and event recorded", receipt)
+	}
+
+	lines, err := home.ReadStatus(soldierHome, "test-retry")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lines) != 1 {
+		t.Fatalf("status lines = %q, want exactly one", lines)
+	}
+	events := readEventLog(t, soldierHome)
+	if len(events) != 1 || events[0].ID != receipt.EventID {
+		t.Fatalf("events = %+v, want one task.status event with ID %d", events, receipt.EventID)
+	}
+	if !IsReceiptAcked(captainHome, "test-retry", "terminal") {
+		t.Fatal("terminal receipt was not acknowledged after retry")
+	}
+}
+
+// TestDeliverWake_IdenticalReportsShareHistoryButBothWake: a consecutive
+// identical material report adds no status line or event, but still wakes.
+func TestDeliverWake_IdenticalReportsShareHistoryButBothWake(t *testing.T) {
+	soldierHome, captainHome := deliverEnv(t, true)
+	req := DeliverRequest{
+		HomeDir: soldierHome, ParentHome: captainHome, TaskID: "test-identical",
+		State: "done", Message: "task complete", Key: "terminal", Role: "soldier",
+	}
+	first, err := DeliverWake(req)
+	if err != nil {
+		t.Fatalf("first DeliverWake: %v", err)
+	}
+	second, err := DeliverWake(req)
+	if err != nil {
+		t.Fatalf("second DeliverWake: %v", err)
+	}
+	if second.EventID != first.EventID {
+		t.Fatalf("second EventID = %d, want reused %d", second.EventID, first.EventID)
+	}
+
+	lines, err := home.ReadStatus(soldierHome, "test-identical")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lines) != 1 {
+		t.Fatalf("status lines = %q, want exactly one", lines)
+	}
+	if events := readEventLog(t, soldierHome); len(events) != 1 {
+		t.Fatalf("events = %+v, want exactly one", events)
+	}
+	wakes, err := DrainWakes(soldierHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wakes) != 2 {
+		t.Fatalf("wakes = %+v, want two queued records", wakes)
+	}
+}
+
+// TestDeliverWake_UnreadableStatusFailsClosed: without the status history a
+// retry cannot be told from a new report, so nothing is written.
+func TestDeliverWake_UnreadableStatusFailsClosed(t *testing.T) {
+	soldierHome := t.TempDir()
+	statusPath, err := home.StatusFilePath(soldierHome, "test-unreadable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(statusPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+	_, err = DeliverWake(DeliverRequest{
+		HomeDir: soldierHome, TaskID: "test-unreadable",
+		State: "done", Message: "task complete", Role: "soldier",
+	})
+	if err == nil || !strings.Contains(err.Error(), "reading status") {
+		t.Fatalf("DeliverWake err = %v, want reading status error", err)
+	}
+	if HasQueuedWakes(soldierHome) {
+		t.Fatal("wake queued after status read failure")
+	}
+}
+
+func TestDeliverWake_NonMaterialIgnoresBrokenWakeQueue(t *testing.T) {
+	soldierHome := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(soldierHome, "state", ".wake-queue"), 0755); err != nil {
+		t.Fatalf("mkdir wake-queue-as-dir: %v", err)
+	}
+
+	receipt, err := DeliverWake(DeliverRequest{
+		HomeDir: soldierHome,
+		TaskID:  "test-nonmaterial-broken-queue",
+		State:   "working",
+		Message: "in progress",
+		Role:    "soldier",
+	})
 	if err != nil {
 		t.Fatalf("DeliverWake: %v", err)
 	}
-	// The failed enqueue must be explicit on the receipt (no timestamp, no
-	// wake flag) rather than silently indistinguishable from a delivered wake.
-	if receipt.WakeEnqueued || receipt.EnqueueUnix != 0 {
-		t.Fatalf("receipt = %+v, want WakeEnqueued=false and EnqueueUnix=0 when enqueue fails", receipt)
-	}
-	if !receipt.EventAppended {
-		t.Fatalf("receipt = %+v, want event still appended when enqueue fails", receipt)
+	if receipt.WakeEnqueued || !receipt.EventAppended {
+		t.Fatalf("receipt = %+v, want no wake and event appended", receipt)
 	}
 }
 

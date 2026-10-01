@@ -379,6 +379,18 @@ func TestRunCycle_ConsumerDropsUnusableWakes(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
+		{name: "unowned prefix", key: "no-owner:gate", payload: announcedWake(t, "no-owner:gate", 1, "gate"), want: "no owner for this event prefix", setup: func(homeDir string) {
+			if _, err := RegisterProcessEvent(homeDir, "no-owner:gate", "gate"); err != nil {
+				t.Fatal(err)
+			}
+			calls := 0
+			if err := EvaluateProcessEvent(context.Background(), homeDir, "no-owner:gate", resolvedWith("x", &calls)); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := home.DrainWakesOfKind(homeDir, ProcessEventWakeKind); err != nil {
+				t.Fatal(err)
+			}
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			homeDir, checkPath := mergedPollHome(t)

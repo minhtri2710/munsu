@@ -6,6 +6,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
@@ -181,7 +182,10 @@ func SummarizeCaptainHome(homeDir string) HomeSummary {
 
 	entries, err := home.ListMeta(homeDir)
 	if err != nil {
-		entries = nil
+		sum.Valid = false
+		sum.Reason = "task meta unreadable: " + err.Error()
+		sum.State = "unknown"
+		return sum
 	}
 	sum.Counts.Endpoints = len(entries)
 	metaByID := map[string]home.MetaEntry{}
@@ -403,7 +407,7 @@ func SummarizeCaptainHome(homeDir string) HomeSummary {
 
 	captainDecision := false
 	for _, d := range decisionsAll {
-		if d.Verb == "needs-decision" || d.Verb == "captain-hold" {
+		if d.Verb == "needs-decision" {
 			captainDecision = true
 			break
 		}
@@ -438,15 +442,8 @@ func splitStatus(status string) (verb, detail string) {
 	if status == "" {
 		return "", ""
 	}
-	before, after, found := strings.Cut(status, ":")
-	if idx := strings.Index(before, "[key="); idx >= 0 {
-		before = strings.TrimSpace(before[:idx])
-	}
-	verb = strings.TrimSpace(before)
-	if found {
-		return verb, strings.TrimSpace(after)
-	}
-	return verb, ""
+	_, after, _ := strings.Cut(status, ":")
+	return domain.LineVerb(status), strings.TrimSpace(after)
 }
 
 func trunc(s string, n int) string {

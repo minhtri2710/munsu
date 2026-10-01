@@ -30,9 +30,6 @@ func TestLockPathSingleSourceOfTruth(t *testing.T) {
 	if got := mhome.WatcherBeatPath(home); got != filepath.Join(home, "state/.last-watcher-beat") {
 		t.Fatalf("BeatPath = %q", got)
 	}
-	if got := QueuePath(home); got != filepath.Join(home, "state/.wake-queue") {
-		t.Fatalf("QueuePath = %q", got)
-	}
 }
 
 // TestLockExclusivity proves the flock exclusion mechanism: a second acquire
@@ -67,8 +64,8 @@ func TestLockExclusivity(t *testing.T) {
 	if acq2 {
 		t.Fatal("second AcquireSession succeeded; expected refusal while held")
 	}
-	if !IsSessionLocked(home) {
-		t.Fatal("IsSessionLocked false while held")
+	if held, err := IsSessionLocked(home); err != nil || !held {
+		t.Fatalf("IsSessionLocked = %v, %v while held", held, err)
 	}
 }
 

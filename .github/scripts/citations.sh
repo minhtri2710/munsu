@@ -376,6 +376,7 @@ check() {
 #   short-row                 delete the NF < 3 check
 #   duplicate-row             delete the `key in seen` check
 #   open-bug                  delete announce_open_bugs
+# shellcheck disable=SC2016 # the scratch documents below are Markdown whose backticks are literal text, not expansions
 selftest() {
 	local failed=0 dir name got rc
 	[ -d "$FIXTURES" ] || die "missing ${FIXTURES#"$ROOT"/}"
@@ -405,7 +406,7 @@ exit $rc"
 		echo "  ok   unknown-qualifier-call"
 	else
 		echo "::error::citations did not disclose the complete unknown-qualifier call:" >&2
-		printf '%s\n' "${unknown_call:-$?}" >&2
+		printf '%s\n' "${unknown_call:-(no output)}" >&2
 		failed=1
 	fi
 
@@ -414,7 +415,7 @@ exit $rc"
 		echo "  ok   unknown-generic-reference"
 	else
 		echo "::error::citations did not disclose the complete unknown generic reference:" >&2
-		printf '%s\n' "${unknown_generic:-$?}" >&2
+		printf '%s\n' "${unknown_generic:-(no output)}" >&2
 		failed=1
 	fi
 
@@ -483,7 +484,7 @@ exit $rc"
 		echo "  ok   ignored-go-sources"
 	else
 		echo "::error::citations indexed Go-ignored basenames:" >&2
-		printf '%s\n' "${got:-$?}" >&2
+		printf '%s\n' "${got:-(no output)}" >&2
 		failed=1
 	fi
 
@@ -500,7 +501,7 @@ exit $rc"
 		echo "  ok   escaped-backtick"
 	else
 		echo "::error::citations treated an escaped backtick as an inline span:" >&2
-		printf '%s\n' "${got:-$?}" >&2
+		printf '%s\n' "${got:-(no output)}" >&2
 		failed=1
 	fi
 
@@ -628,7 +629,7 @@ exit $rc"
 		echo "  ok   excluded-go-symlink"
 	else
 		echo "::error::citations indexed a symlinked excluded fixture:" >&2
-		printf '%s\n' "${rows:-$?}" >&2
+		printf '%s\n' "${rows:-(no output)}" >&2
 		failed=1
 	fi
 
@@ -684,12 +685,12 @@ EOF
 			echo "  ok   call-result-selector"
 		else
 			echo "::error::citations failed to resolve ordinary or generic calls:" >&2
-			printf '%s\n' "${rows:-$?}" >&2
+			printf '%s\n' "${rows:-(no output)}" >&2
 			failed=1
 		fi
 	else
 		echo "::error::citations silently dropped a call-result selector or generic expression:" >&2
-		printf '%s\n' "${unchecked:-$?}" >&2
+		printf '%s\n' "${unchecked:-(no output)}" >&2
 		failed=1
 	fi
 
@@ -706,7 +707,7 @@ EOF
 		echo "  ok   control-character-citation"
 	else
 		echo "::error::citations emitted malformed TSV for a control-character citation:" >&2
-		printf '%s\n' "${rows:-$?}" >&2
+		printf '%s\n' "${rows:-(no output)}" >&2
 		failed=1
 	fi
 
@@ -723,7 +724,7 @@ EOF
 		echo "  ok   control-character-document-path"
 	else
 		echo "::error::citations emitted or accepted a control-character document path:" >&2
-		printf '%s\n' "${rows:-$?}" >&2
+		printf '%s\n' "${rows:-(no output)}" >&2
 		failed=1
 	fi
 
@@ -747,7 +748,7 @@ EOF
 		echo "  ok   nested-field"
 	else
 		echo "::error::citations failed to index a nested field:" >&2
-		printf '%s\n' "${rows:-$?}" >&2
+		printf '%s\n' "${rows:-(no output)}" >&2
 		failed=1
 	fi
 
@@ -765,7 +766,7 @@ EOF
 		echo "  ok   nested-plans-coverage"
 	else
 		echo "::error::citations excluded nested plans or scanned top-level plans:" >&2
-		printf '%s\n' "${listed:-$?}" >&2
+		printf '%s\n' "${listed:-(no output)}" >&2
 		failed=1
 	fi
 
@@ -773,7 +774,7 @@ EOF
 		echo "  ok   symlinked-plans-exclusion"
 	else
 		echo "::error::citations rejected or scanned excluded symlinked plans:" >&2
-		printf '%s\n' "${listed:-$?}" >&2
+		printf '%s\n' "${listed:-(no output)}" >&2
 		failed=1
 	fi
 
@@ -799,7 +800,7 @@ EOF
 		echo "  ok   invalid-backtick-fence"
 	else
 		echo "::error::citations treated an invalid backtick opener as a fence:" >&2
-		printf '%s\n' "${rows:-$?}" >&2
+		printf '%s\n' "${rows:-(no output)}" >&2
 		failed=1
 	fi
 
@@ -815,7 +816,7 @@ EOF
 		echo "  ok   top-level-fence-container"
 	else
 		echo "::error::citations let a list marker close a top-level fence:" >&2
-		printf '%s\n' "${rows:-$?}" >&2
+		printf '%s\n' "${rows:-(no output)}" >&2
 		failed=1
 	fi
 	printf '%s\n' '- - ```go' '- ```' '  A nested fenced citation is `NestedFenceCitation`.' '  ```' 'A citation after the nested fence is `AfterNestedFence`.' >"$container/docs/doc.md"
@@ -823,7 +824,7 @@ EOF
 		echo "  ok   nested-list-fence-container"
 	else
 		echo "::error::citations accepted a shallower list marker for a nested fence:" >&2
-		printf '%s\n' "${rows:-$?}" >&2
+		printf '%s\n' "${rows:-(no output)}" >&2
 		failed=1
 	fi
 	printf '%s\n' '- ```go' '      ```' '  ```' 'A citation after the fence is `AfterOverIndentedFence`.' >"$container/docs/doc.md"
@@ -831,7 +832,7 @@ EOF
 		echo "  ok   overindented-list-fence-closer"
 	else
 		echo "::error::citations accepted an over-indented list fence closer:" >&2
-		printf '%s\n' "${rows:-$?}" >&2
+		printf '%s\n' "${rows:-(no output)}" >&2
 		failed=1
 	fi
 
@@ -848,7 +849,7 @@ EOF
 		echo "  ok   explicit-root-relative-path"
 	else
 		echo "::error::citations weakened an explicit root-relative path:" >&2
-		printf '%s\n' "${rows:-$?}" >&2
+		printf '%s\n' "${rows:-(no output)}" >&2
 		failed=1
 	fi
 
@@ -864,7 +865,7 @@ EOF
 		echo "  ok   multiline-list-and-setext-boundary"
 	else
 		echo "::error::citations lost a list continuation or crossed a setext boundary:" >&2
-		printf '%s\n' "${rows:-$?}" >&2
+		printf '%s\n' "${rows:-(no output)}" >&2
 		failed=1
 	fi
 

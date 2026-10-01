@@ -68,6 +68,7 @@ const (
 	tasksDir      = "task-authority/tasks"
 	holdsDir      = "task-authority/holds"
 	receiptsDir   = "task-authority/receipts"
+	dispatchScope = "dispatch"
 )
 
 func taskCurrentKey(taskID string) string { return tasksDir + "/" + taskID + "/current.json" }
@@ -342,6 +343,17 @@ func commitError(taskID domain.TaskID, prec domain.Precondition, err error) erro
 // operation receipt together.
 func (c *Canonical) mutateTask(op domain.Operation, taskID domain.TaskID, prec domain.Precondition, apply func(Aggregate) (Aggregate, error)) (Outcome, error) {
 	return c.mutateTaskFenced(op, taskID, prec, apply, nil, nil)
+}
+
+// mutateTaskWithDispatch serializes a hold-checked task mutation with hold
+// changes. The dispatch scope is always acquired before the task scope.
+func (c *Canonical) mutateTaskWithDispatch(op domain.Operation, taskID domain.TaskID, prec domain.Precondition, apply func(Aggregate) (Aggregate, error)) (Outcome, error) {
+	dispatch, err := c.h.Lock(dispatchScope)
+	if err != nil {
+		return Outcome{}, err
+	}
+	defer dispatch.Release()
+	return c.mutateTask(op, taskID, prec, apply)
 }
 
 // mutateTaskTransfer runs one task-scoped mutation that is authorized to

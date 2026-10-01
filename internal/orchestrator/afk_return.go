@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 var (
@@ -108,17 +110,26 @@ func Return(homeDir string) (*ReturnReport, error) {
 
 	// 1. Stop daemon via identity lock.
 	//
-	// Three exits below leave state/.lock and state/.afk in place, because
-	// Disable() and os.Remove(lockPath) are further down. That is the intended
-	// residual state in all three: the daemon may still be running, so a Return
-	// that cleared consent and lock would hand the next AcquireLock a free lock
-	// while a live daemon still writes under it. The caller re-runs Return; a
-	// daemon that has since exited takes the isProcessAlive(false) path and the
-	// same run cleans both up.
-	daemonPID := readDaemonPID(homeDir)
+	// The daemon's pid comes from the AFK lock (home.ReadAFKLockPID), which
+	// reports 0 unless a daemon holds the lock's flock right now. Return never
+	// clears that lock: it is the daemon's flock, released only when the daemon
+	// exits, so Return cannot hand the next home.AcquireAFKLock a free lock
+	// while a live daemon still writes under it.
+	//
+	// Three exits below leave state/.afk in place, because Disable() is further
+	// down. That is the intended residual state in all three: the daemon may
+	// still be running, and clearing consent under it would tell the next
+	// `munsu afk` start that AFK is off while it is on. The caller re-runs
+	// Return; a daemon that has since exited no longer holds the lock, and the
+	// same run clears consent. A lock whose holder cannot be read is refused
+	// with the same residual state.
+	daemonPID, err := home.ReadAFKLockPID(homeDir)
+	if err != nil {
+		return report, fmt.Errorf("reading AFK daemon lock: %w", err)
+	}
 	if daemonPID > 0 {
-		if isProcessAlive(daemonPID) {
-			// Exit A -- PID is alive but unverifiable. isProcessAlive answers
+		if home.IsProcessAlive(daemonPID) {
+			// Exit A -- PID is alive but unverifiable. home.IsProcessAlive answers
 			// "some process holds this PID", not "our daemon does", and PIDs are
 			// reused. Terminating on that answer alone kills whatever the OS
 			// handed the number to, and on windows stopProcess is an uncatchable
@@ -164,11 +175,12 @@ func Return(homeDir string) (*ReturnReport, error) {
 			// Known and deliberate limit of (b): this refusal reaches the
 			// human-readable ReturnReport only. IsClean (afk_gate.go), which
 			// backs the machine-readable gate in session_cmd.go, re-reads the
-			// drained digest and cannot see a loss -- it reports clean for a
-			// missing or unparseable file, which is exactly the state a lossy
-			// stop produces when the unflushed window held the only
-			// escalations. So #530's "stop claiming All clear" is closed for
-			// the report and still open for the gate. Closing it for the gate
+			// drained digest and cannot see a loss. It reports clean for a
+			// missing file, which is exactly the state a lossy stop produces
+			// when the unflushed window held the only escalations; an
+			// unparseable or unreadable file is an error, never clean. So
+			// #530's "stop claiming All clear" is closed for the report and
+			// still open for the gate. Closing it for the gate
 			// too would mean persisting a durable loss marker at Return time:
 			// new machinery on a platform that cannot currently complete a
 			// single write (#524), which is the same objection that rules out
@@ -189,21 +201,14 @@ func Return(homeDir string) (*ReturnReport, error) {
 			clearDaemonIdentity(homeDir, identity)
 		}
 	}
-	// Only a confirmed stopped daemon may have its lock and consent cleared.
+	// Only a confirmed stopped daemon may have its consent cleared.
 	//
-	// 2. Clear the consent flag first, then release the lock. The two are a
-	// pair and the order is load-bearing: the lock is what stops the next
-	// AcquireLock handing out a free lock, so it is the last thing released.
-	// Clearing it first and then failing to clear consent leaves the next
-	// `munsu afk` start with no lock and a flag that still says AFK is on,
-	// while this Return goes on to drain and report success. So a Disable
-	// failure aborts here, with the lock still in place, which is the same
-	// residual state the three exits above leave.
+	// 2. Clear the consent flag. A Disable failure aborts here, before the
+	// drain, so this Return never reports success over a flag that still says
+	// AFK is on.
 	if err := Disable(homeDir); err != nil {
 		return report, err
 	}
-	lockPath := filepath.Join(homeDir, afkLockFile)
-	os.Remove(lockPath)
 
 	// 3. Drain and summarize the digest queue.
 	be, err := drainDigest(homeDir)
@@ -244,7 +249,7 @@ func Return(homeDir string) (*ReturnReport, error) {
 // It replaces a flat 300ms sleep followed by a single check. That constant had
 // no measurement behind it on any platform, and on windows it is measured
 // against the wrong thing entirely: stopProcess is TerminateProcess, which
-// returns as soon as the kernel accepts the request, and isProcessAlive reads
+// returns as soon as the kernel accepts the request, and home.IsProcessAlive reads
 // GetExitCodeProcess == STILL_ACTIVE, which still holds while the process is
 // being torn down. A fixed sleep either loses to that teardown or pads every
 // fast exit.
@@ -252,13 +257,13 @@ func Return(homeDir string) (*ReturnReport, error) {
 // Expiry is an error at the one call site, unlike waitForWatcherExit
 // (supervision_watcher.go), which treats it as tolerable. The difference is what
 // sits after the wait: there, nothing -- the restarting caller proves
-// convergence itself. Here, os.Remove(lockPath) and Disable() sit after it, so
-// treating expiry as success would clear the singleton lock and the consent flag
-// for a daemon that may still be running and still writing under both.
+// convergence itself. Here, Disable() sits after it, so treating expiry as
+// success would clear the consent flag for a daemon that may still be running
+// and still writing under it.
 func waitForDaemonExit(pid int) bool {
 	deadline := time.Now().Add(afkStopWait)
 	for {
-		if !isProcessAlive(pid) {
+		if !home.IsProcessAlive(pid) {
 			return true
 		}
 		if time.Now().After(deadline) {
@@ -266,22 +271,6 @@ func waitForDaemonExit(pid int) bool {
 		}
 		time.Sleep(afkStopPoll)
 	}
-}
-
-// readDaemonPID reads the PID from state/.lock.
-//
-// The second field of the lock stays discarded on purpose. It is time.Now() at
-// the moment AcquireLock wrote the file, not the PID's start time, so it cannot
-// tell a reused PID from the original -- see daemonIdentityForPID
-// (afk_identity.go), which is where that question is answered.
-func readDaemonPID(homeDir string) int {
-	lockPath := filepath.Join(homeDir, afkLockFile)
-	data, err := os.ReadFile(lockPath)
-	if err != nil {
-		return 0
-	}
-	pid, _ := parseLockContent(data)
-	return pid
 }
 
 // drainDigest reads and removes the durable digest file.

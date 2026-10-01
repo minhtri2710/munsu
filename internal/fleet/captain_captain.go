@@ -2,7 +2,6 @@
 package fleet
 
 import (
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -15,7 +14,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
-	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 // ProvenanceMarkerName is the marker file written to a seeded captain home root.
@@ -40,7 +38,7 @@ type UpdateOutcome string
 const (
 	AlreadyCurrent    UpdateOutcome = "already-current"
 	FastForwarded     UpdateOutcome = "fast-forwarded"
-	StateOnlySkipped  UpdateOutcome = "state-only-skipped"
+	UnsupportedHome   UpdateOutcome = "unsupported-home"
 	Dirty             UpdateOutcome = "dirty"
 	Diverged          UpdateOutcome = "diverged"
 	Offline           UpdateOutcome = "offline"
@@ -60,7 +58,7 @@ type UpdateResponse struct {
 // IsFailure returns true when the outcome is a failure state.
 func (u UpdateOutcome) IsFailure() bool {
 	switch u {
-	case AlreadyCurrent, FastForwarded, StateOnlySkipped:
+	case AlreadyCurrent, FastForwarded:
 		return false
 	default:
 		return true
@@ -132,7 +130,7 @@ func resolveCaptainHarness(captainHome string) (string, error) {
 }
 
 func ensureCaptainIntegration(captainHome, harnessName string, integration IntegrationPort) error {
-	if _, err := ValidateProvenance(captainHome); err != nil {
+	if _, err := home.ValidateCaptainProvenance(captainHome); err != nil {
 		return fmt.Errorf("refusing captain integration on unmarked home %s: %w", captainHome, err)
 	}
 	if integration == nil {
@@ -142,8 +140,9 @@ func ensureCaptainIntegration(captainHome, harnessName string, integration Integ
 }
 
 type CaptainSeedOptions struct {
-	ID, Home, ParentHome, Charter string
-	Integration                   IntegrationPort
+	ID, Home, Repo, ParentHome, Charter, Ref string
+	Force                                    bool
+	Integration                              IntegrationPort
 }
 
 type Info struct {
@@ -247,56 +246,9 @@ func buildLaunchScript(binPath string, args []string, cwd string, parentHome str
 	return "bash " + shQuote(scriptPath), nil
 }
 
-// sha256Content returns the hex SHA-256 digest of data.
-func captainSHA256Content(data []byte) string {
-	h := sha256.Sum256(data)
-	return fmt.Sprintf("%x", h)
-}
-
 // taskIDForCaptain returns the task ID used in state metadata for a captain.
 func taskIDForCaptain(smID string) string {
 	return "captain:" + smID
-}
-
-// checkStaleLegacyRecords is a read-only fail-closed guard that checks for
-// stale legacy command transport records that were never migrated.
-// The legacy .captain-send-outbox and .command-envelope transport is removed;
-// this function detects any remaining records and returns an actionable error
-// with exact paths. It never writes, migrates, marks, or deletes anything.
-func checkStaleLegacyRecords(parentHome, captainID string) error {
-	// Check .captain-send-outbox directory (legacy outbox).
-	outboxDir := filepath.Join(parentHome, "state", ".captain-send-outbox", captainID)
-	entries, err := os.ReadDir(outboxDir)
-	if err == nil {
-		var stale []string
-		for _, e := range entries {
-			if !e.IsDir() {
-				stale = append(stale, filepath.Join(outboxDir, e.Name()))
-			}
-		}
-		if len(stale) > 0 {
-			paths := strings.Join(stale, "\n  ")
-			return fmt.Errorf("stale legacy .captain-send-outbox records found:\n  %s\nUpgrade: run the last migration-capable release to migrate these records, then retry.", paths)
-		}
-	}
-
-	// Check .command-envelope directory (legacy envelopes).
-	envDir := filepath.Join(parentHome, "state", ".command-envelope")
-	envEntries, err := os.ReadDir(envDir)
-	if err == nil {
-		var stale []string
-		for _, e := range envEntries {
-			if !e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
-				stale = append(stale, filepath.Join(envDir, e.Name()))
-			}
-		}
-		if len(stale) > 0 {
-			paths := strings.Join(stale, "\n  ")
-			return fmt.Errorf("stale legacy .command-envelope records found:\n  %s\nUpgrade: run the last migration-capable release to migrate these records, then retry.", paths)
-		}
-	}
-
-	return nil
 }
 
 // --- Seed / Provenance ---
@@ -447,7 +399,6 @@ All commands must use AXI-compliant CLIs:
 - The General runs converge cycles to keep your home synchronized.
 - If your pane dies, the General relaunches you with the canonical system context.
 - On update (fast-forward), the General refreshes the runtime-owned charter.
-- The General handles migration (state-only → managed worktree); you don't need to act.
 
 ## Watcher / AFK Safety
 
@@ -530,104 +481,6 @@ func ensureParentTypedConfig(parentHome, captainHome, captainID string) error {
 	return nil
 }
 
-func SeedCaptain(opts CaptainSeedOptions) error {
-	id, homePath, parentHome, charter := opts.ID, opts.Home, opts.ParentHome, opts.Charter
-	if err := os.MkdirAll(homePath, 0755); err != nil {
-		return fmt.Errorf("creating captain home %s: %w", homePath, err)
-	}
-
-	for _, dir := range []string{"state", "data", "config", "projects"} {
-		if err := os.MkdirAll(filepath.Join(homePath, dir), 0755); err != nil {
-			return fmt.Errorf("creating %s/%s: %w", homePath, dir, err)
-		}
-	}
-
-	if strings.TrimSpace(charter) == "" {
-		if parentHome == "" {
-			return fmt.Errorf("seeding captain %s: empty charter requires parent home for return-channel path", id)
-		}
-		generated, err := DefaultCaptainCharter(id, parentHome)
-		if err != nil {
-			return fmt.Errorf("creating default charter: %w", err)
-		}
-		charter = generated
-	}
-
-	// Write the canonical runtime-owned charter to .captain-charter.md.
-	if err := writeCaptainCharter(homePath, charter); err != nil {
-		return err
-	}
-
-	// Write a minimal AGENTS.md pointer ONLY when the file does not already exist.
-	// Never overwrite or replace existing user/project-owned AGENTS.md.
-	agentsPath := filepath.Join(homePath, "AGENTS.md")
-	if _, err := os.Stat(agentsPath); os.IsNotExist(err) {
-		agentsContent := fmt.Sprintf("# Captain %s\n\nSee .captain-charter.md for the Captain charter.\n", id)
-		if err := os.WriteFile(agentsPath, []byte(agentsContent), 0644); err != nil {
-			return fmt.Errorf("writing AGENTS.md: %w", err)
-		}
-	}
-
-	if err := SeedProvenance(homePath, id); err != nil {
-		return fmt.Errorf("seeding provenance marker: %w", err)
-	}
-
-	if parentHome != "" {
-		// Ensure typed config documents exist in the parent home before
-		// registration and config push. Create minimal documents if absent.
-		if err := ensureParentTypedConfig(parentHome, homePath, id); err != nil {
-			return fmt.Errorf("ensuring parent typed config: %w", err)
-		}
-		if err := Register(parentHome, id, homePath, "", ""); err != nil {
-			return fmt.Errorf("registering captain %s: %w", id, err)
-		}
-		// Store the General parent home in captain config for durable parent resolution.
-		if err := config.Set(homePath, "parent-home", parentHome); err != nil {
-			return fmt.Errorf("writing parent-home config: %w", err)
-		}
-		// Inherit General config + project registry so soldiers need not re-add projects.
-		// Uses PropagateConfig with a noop sender (no running session yet).
-		// The durable requirement is written; notification is deferred until converge.
-		if _, err := PropagateConfig(PropagateConfigRequest{
-			ParentHome:  parentHome,
-			CaptainHome: homePath,
-			Mailbox:     &noopBoundSender{},
-		}); err != nil {
-			return fmt.Errorf("seed inherit: %w", err)
-		}
-	}
-
-	// Standalone seeds have no parent from which to inherit a resolved snapshot.
-	// Publish the same minimal typed contract locally before resolving the
-	// Captain harness; the published snapshot remains the sole identity source.
-	if parentHome == "" {
-		digest := sha256.Sum256([]byte("standalone-captain\x00" + id + "\x00" + homePath))
-		if err := config.StorePublishedSnapshot(homePath, config.ResolvedProjectConfig{
-			Project:        id,
-			ProjectPath:    homePath,
-			Backend:        "tmux",
-			CaptainProfile: config.CaptainProfile{Harness: harness.Pi},
-			Digest:         fmt.Sprintf("%x", digest),
-		}); err != nil {
-			return fmt.Errorf("publishing standalone captain snapshot: %w", err)
-		}
-	}
-
-	// Install the resolved-harness project-scoped captain integration so Launch
-	// always has the files the captain's harness loads. The published snapshot
-	// is the sole source of the Captain harness identity.
-	harnessName, err := resolveCaptainHarness(homePath)
-	if err != nil {
-		return fmt.Errorf("resolving captain integration harness: %w", err)
-	}
-	if err := ensureCaptainIntegration(homePath, harnessName, opts.Integration); err != nil {
-		return fmt.Errorf("installing captain integration: %w", err)
-	}
-
-	fmt.Printf("Seeded captain %s at %s\n", id, homePath)
-	return nil
-}
-
 // removeExistingWorktree removes a managed worktree at homePath if it exists.
 // Errors are logged but not returned — best-effort cleanup before replacement.
 func removeExistingWorktree(homePath, repoPath string) {
@@ -665,7 +518,7 @@ func removeExistingWorktree(homePath, repoPath string) {
 func validateWorktreeRemote(repoPath, parentHome string) error {
 	parentRemote, err := gitRun("-C", parentHome, "remote", "get-url", "origin")
 	if err != nil {
-		// Parent may not be a git repo (state-only home). Skip remote validation.
+		// The General home need not be a git repo. Skip remote validation.
 		return nil
 	}
 
@@ -700,19 +553,15 @@ func rollbackWorktree(worktreeCreated bool, absHome, absRepo string, registered 
 func canonicalCaptainHome(homePath string) (string, error) {
 	return home.CanonicalCaptainHome(homePath)
 }
-func SeedProvenance(homePath, id string) error { return home.SeedCaptainProvenance(homePath, id) }
-func ValidateProvenance(homePath string) (string, error) {
-	return home.ValidateCaptainProvenance(homePath)
-}
 
 // Validate checks a captain home for full structural correctness:
 //   - provenance marker exists and is valid
-//   - AGENTS.md exists
+//   - .captain-charter.md exists
 //   - state/data/config dirs exist
 //   - home path is not a parent home, project home, or fake/system path
 //   - canonical home (abs, resolved) matches the expected parent containment
 func Validate(homePath, parentHome string) error {
-	if _, err := ValidateProvenance(homePath); err != nil {
+	if _, err := home.ValidateCaptainProvenance(homePath); err != nil {
 		return err
 	}
 
@@ -726,9 +575,8 @@ func Validate(homePath, parentHome string) error {
 		}
 	}
 
-	agentsPath := filepath.Join(homePath, "AGENTS.md")
-	if _, err := os.Stat(agentsPath); err != nil {
-		return fmt.Errorf("missing AGENTS.md: %w", err)
+	if _, err := os.Stat(filepath.Join(homePath, CaptainCharterName)); err != nil {
+		return fmt.Errorf("missing %s: %w", CaptainCharterName, err)
 	}
 
 	// Refuse fake/project/primary homes using canonical path.
@@ -750,39 +598,6 @@ func Validate(homePath, parentHome string) error {
 	}
 
 	return nil
-}
-
-// validateStructure checks that a captain home has the expected directory
-// structure and AGENTS.md, WITHOUT requiring a provenance home.
-// Used by Migrate before it writes the home.
-func validateStructure(homePath string) error {
-	for _, dir := range []string{"state", "data", "config"} {
-		fi, err := os.Stat(filepath.Join(homePath, dir))
-		if err != nil {
-			return fmt.Errorf("missing %s/ directory: %w", dir, err)
-		}
-		if !fi.IsDir() {
-			return fmt.Errorf("%s/ exists but is not a directory", dir)
-		}
-	}
-	agentsPath := filepath.Join(homePath, "AGENTS.md")
-	if _, err := os.Stat(agentsPath); err != nil {
-		return fmt.Errorf("missing AGENTS.md: %w", err)
-	}
-	return nil
-}
-
-// Migrate writes a provenance marker into an existing seeded captain home.
-// It checks structural validity before writing and refuses fake/project/primary homes.
-func Migrate(homePath, id string) error {
-	refuted := filepath.Base(homePath)
-	if refuted == "fake" || refuted == "project" || refuted == "primary" {
-		return fmt.Errorf("refusing migrate: home %s uses reserved name %q", homePath, refuted)
-	}
-	if err := validateStructure(homePath); err != nil {
-		return fmt.Errorf("migrate pre-check failed: %w", err)
-	}
-	return SeedProvenance(homePath, id)
 }
 
 // --- Registry ---
@@ -997,19 +812,9 @@ func buildLaunchArgs(captainHome, h string, prof config.CaptainProfile, allowlis
 		return "", nil, fmt.Errorf("captain launch: harness %q must not pass a project path arg", h)
 	}
 
-	// Read charter: prefer untracked .captain-charter.md (worktree captains)
-	// over tracked AGENTS.md as fallback (state-only homes).
-	charterPath := filepath.Join(captainHome, CaptainCharterName)
-	charter, err := os.ReadFile(charterPath)
+	charter, err := os.ReadFile(filepath.Join(captainHome, CaptainCharterName))
 	if err != nil {
-		if !os.IsNotExist(err) {
-			return "", nil, fmt.Errorf("reading captain charter: %w", err)
-		}
-		// Fall back to tracked AGENTS.md (state-only homes).
-		charter, err = os.ReadFile(filepath.Join(captainHome, "AGENTS.md"))
-		if err != nil {
-			return "", nil, fmt.Errorf("reading captain charter: %w", err)
-		}
+		return "", nil, fmt.Errorf("reading captain charter: %w", err)
 	}
 
 	// Model/effort come only from the published-snapshot CaptainProfile. No
@@ -1059,7 +864,7 @@ func refuseNestedCaptainLaunch(parentHome string) error {
 	}
 	markerPath := filepath.Join(parentHome, ProvenanceMarkerName)
 	if _, err := os.Stat(markerPath); err == nil {
-		if _, validateErr := ValidateProvenance(parentHome); validateErr != nil {
+		if _, validateErr := home.ValidateCaptainProvenance(parentHome); validateErr != nil {
 			return fmt.Errorf("active home has invalid captain provenance: %w", validateErr)
 		}
 		return fmt.Errorf("captain home %s cannot launch another captain", parentHome)
@@ -1077,7 +882,7 @@ func Launch(captainHome, parentHome string, endpoint LaunchEndpoint, integration
 	if err := refuseNestedCaptainLaunch(parentHome); err != nil {
 		return err
 	}
-	if _, err := ValidateProvenance(captainHome); err != nil {
+	if _, err := home.ValidateCaptainProvenance(captainHome); err != nil {
 		return fmt.Errorf("provenance validation failed for %s: %w", captainHome, err)
 	}
 
@@ -1093,10 +898,7 @@ func Launch(captainHome, parentHome string, endpoint LaunchEndpoint, integration
 		return fmt.Errorf("pre-launch config-push: %w", err)
 	}
 	if _, _, _, err := safeFF(captainHome, parentHome); err != nil {
-		// Non-git captain homes proceed; only fail when the home is a real clone.
-		if _, stErr := os.Stat(filepath.Join(captainHome, ".git")); stErr == nil {
-			return fmt.Errorf("pre-launch fast-forward: %w", err)
-		}
+		return fmt.Errorf("pre-launch fast-forward: %w", err)
 	}
 
 	// The captain's harness identity and launch profile are bound from the
@@ -1125,7 +927,7 @@ func Launch(captainHome, parentHome string, endpoint LaunchEndpoint, integration
 		return fmt.Errorf("captain launch endpoint capability is required")
 	}
 
-	markerID, err := ValidateProvenance(captainHome)
+	markerID, err := home.ValidateCaptainProvenance(captainHome)
 	if err != nil {
 		return fmt.Errorf("revalidating captain provenance: %w", err)
 	}
@@ -1167,7 +969,7 @@ func Launch(captainHome, parentHome string, endpoint LaunchEndpoint, integration
 	}
 
 	taskID := taskIDForCaptain(markerID)
-	if err := mhome.WriteMeta(parentHome, taskID, meta); err != nil {
+	if err := home.WriteMeta(parentHome, taskID, meta); err != nil {
 		_ = endpoint.Cleanup(parentHome, launched)
 		return fmt.Errorf("writing captain task meta: %w", err)
 	}
@@ -1193,11 +995,11 @@ func inFlightSoldierIDs(captainHome string) ([]string, error) {
 		if !strings.HasSuffix(name, ".meta") || strings.HasPrefix(name, ".") {
 			continue
 		}
-		id, err := mhome.ReverseDurableKey(strings.TrimSuffix(name, ".meta"))
+		id, err := home.ReverseDurableKey(strings.TrimSuffix(name, ".meta"))
 		if err != nil {
 			continue
 		}
-		meta, err := mhome.ReadMeta(captainHome, id)
+		meta, err := home.ReadMeta(captainHome, id)
 		if err != nil {
 			continue
 		}
@@ -1220,7 +1022,7 @@ func inFlightSoldierIDs(captainHome string) ([]string, error) {
 // removeHome=true removes the captain home directory after teardown.
 // On success, the captain is unregistered from parent data/captains.md.
 func Retire(captainHome, parentHome string, removeHome, force bool, endpoint RetireEndpoint) error {
-	markerID, err := ValidateProvenance(captainHome)
+	markerID, err := home.ValidateCaptainProvenance(captainHome)
 	if err != nil {
 		return fmt.Errorf("refusing to retire unowned home %s: %w", captainHome, err)
 	}
@@ -1241,7 +1043,7 @@ func Retire(captainHome, parentHome string, removeHome, force bool, endpoint Ret
 	}
 
 	taskID := taskIDForCaptain(markerID)
-	meta, metaErr := mhome.ReadMeta(parentHome, taskID)
+	meta, metaErr := home.ReadMeta(parentHome, taskID)
 
 	if metaErr == nil {
 		// Validate meta fields before use.
@@ -1269,7 +1071,7 @@ func Retire(captainHome, parentHome string, removeHome, force bool, endpoint Ret
 
 		// Clear parent task meta so husk prune and fleet snapshot stop treating this
 		// captain as live. Status log is retained as historical return-channel evidence.
-		metaPath, mpErr := mhome.MetaFilePath(parentHome, taskID)
+		metaPath, mpErr := home.MetaFilePath(parentHome, taskID)
 		if mpErr != nil {
 			return fmt.Errorf("failed to resolve captain task meta path for %s: %w", taskID, mpErr)
 		}
@@ -1299,14 +1101,6 @@ func Retire(captainHome, parentHome string, removeHome, force bool, endpoint Ret
 	return nil
 }
 
-func HandoffAmbiguousTaskID(err error) (*mhome.AmbiguousTaskIDError, bool) {
-	var ambiguous *mhome.AmbiguousTaskIDError
-	if errors.As(err, &ambiguous) {
-		return ambiguous, true
-	}
-	return nil, false
-}
-
 // --- Config inheritance ---
 
 func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
@@ -1319,31 +1113,7 @@ func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, ".munsu-inherit-*")
-	if err != nil {
-		return fmt.Errorf("creating temp file: %w", err)
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-	if err := tmp.Chmod(mode); err != nil {
-		tmp.Close()
-		return fmt.Errorf("setting temp file mode: %w", err)
-	}
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return fmt.Errorf("writing temp file: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return fmt.Errorf("syncing temp file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("closing temp file: %w", err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("renaming temp file: %w", err)
-	}
-	return nil
+	return home.AtomicWrite(path, data, mode)
 }
 
 // resolveDeepestAncestor resolves symlinks on the deepest existing ancestor path,
@@ -1421,11 +1191,6 @@ func isSafeConfigPath(dst, parentHome, captainHome string) bool {
 	return true
 }
 
-func isGitTracked(dir, name string) bool {
-	out, err := exec.Command("git", "-C", dir, "ls-files", "--error-unmatch", name).CombinedOutput()
-	return err == nil && len(out) > 0
-}
-
 // preflightConfigPushDestinations validates all destination paths before any
 // mutation or log write in configPushWithResult. Returns an error if any
 // destination escapes the captain container via symlink/.. or is git-tracked.
@@ -1435,7 +1200,7 @@ func preflightConfigPushDestinations(parentHome, captainHome string) error {
 	if !isSafeConfigPath(snapshotDst, parentHome, captainHome) {
 		return fmt.Errorf("published config snapshot destination escapes captain container — refuse")
 	}
-	if isGitTracked(filepath.Dir(snapshotDst), filepath.Base(snapshotDst)) {
+	if isTrackedByGit(filepath.Dir(snapshotDst), filepath.Base(snapshotDst)) {
 		return fmt.Errorf("published config snapshot is tracked in captain git — must be gitignored")
 	}
 
@@ -1449,7 +1214,7 @@ func preflightConfigPushDestinations(parentHome, captainHome string) error {
 }
 
 func publishResolvedSnapshot(parentHome, captainHome string) error {
-	captainID, err := ValidateProvenance(captainHome)
+	captainID, err := home.ValidateCaptainProvenance(captainHome)
 	if err != nil {
 		return err
 	}
@@ -1467,7 +1232,7 @@ func publishResolvedSnapshot(parentHome, captainHome string) error {
 	}
 	captain, err := r.GetCaptain(id)
 	if err != nil {
-		return fmt.Errorf("Captain %q is not registered in the Fleet registry", captainID)
+		return fmt.Errorf("captain %q is not registered in the Fleet registry", captainID)
 	}
 	canonCaptain, err := canonicalCaptainHome(captainHome)
 	if err != nil {
@@ -1478,14 +1243,14 @@ func publishResolvedSnapshot(parentHome, captainHome string) error {
 		return canonErr
 	}
 	if canonRegistered != canonCaptain {
-		return fmt.Errorf("Captain %q home %s does not match %s", captainID, canonRegistered, canonCaptain)
+		return fmt.Errorf("captain %q home %s does not match %s", captainID, canonRegistered, canonCaptain)
 	}
 	projectID, err := r.ProjectOf(id)
 	if err != nil {
 		return err
 	}
 	if projectID == (domain.ProjectID{}) {
-		return fmt.Errorf("Captain %q is not bound to a project in the Fleet registry", captainID)
+		return fmt.Errorf("captain %q is not bound to a project in the Fleet registry", captainID)
 	}
 	project, err := r.GetProject(projectID)
 	if err != nil {
@@ -1512,7 +1277,7 @@ func publishResolvedSnapshot(parentHome, captainHome string) error {
 // returns the ConfigPushResult with generation tracking. Returns nil result
 // on early failure (before generation tracking runs).
 func configPushWithResult(parentHome, captainHome string) (*ConfigPushResult, error) {
-	if _, err := ValidateProvenance(captainHome); err != nil {
+	if _, err := home.ValidateCaptainProvenance(captainHome); err != nil {
 		return nil, fmt.Errorf("refusing config-push to unmarked home %s: %w", captainHome, err)
 	}
 
@@ -1571,7 +1336,7 @@ func configPushWithResult(parentHome, captainHome string) (*ConfigPushResult, er
 // parentHome is the General home for return-channel path resolution.
 // Idempotent: safe to call on every converge, recover, and config-push cycle.
 func RefreshCharter(captainHome, parentHome string) error {
-	markerID, err := ValidateProvenance(captainHome)
+	markerID, err := home.ValidateCaptainProvenance(captainHome)
 	if err != nil {
 		return fmt.Errorf("refresh charter: %w", err)
 	}
@@ -1680,7 +1445,7 @@ func safeFF(captainHome, parentHome string) (before, after string, reason SafeFF
 			}
 			// Any non-space character means tracked change (staged or unstaged).
 			if xy[0] != ' ' || xy[1] != ' ' {
-				return "", "", SafeFFChangesTracked, fmt.Errorf("captain home %s has tracked changes", captainHome)
+				return "", "", SafeFFChangesTracked, fmt.Errorf("captain home %s has tracked changes: %s", captainHome, strings.TrimSpace(line[2:]))
 			}
 		}
 	}
@@ -1777,33 +1542,20 @@ func (cr *ConvergeResult) OverallStatus() string {
 }
 
 // Update performs a single captain home update and returns a typed outcome.
-// It validates provenance, detects state-only homes, runs safeFF, and maps
+// It validates provenance, refuses homes without a git worktree, runs safeFF, and maps
 // results to typed outcomes.
 func Update(captainHome, parentHome string) UpdateResponse {
-	if _, err := ValidateProvenance(captainHome); err != nil {
+	if _, err := home.ValidateCaptainProvenance(captainHome); err != nil {
 		return UpdateResponse{
 			Outcome: InvalidProvenance,
 			Err:     err,
 		}
 	}
 
-	// Detect state-only homes (no git worktree).
 	if _, err := os.Stat(filepath.Join(captainHome, ".git")); os.IsNotExist(err) {
-		// Config-push for state-only homes: write config/parent-home from the
-		// authoritative registered General home so watcher relay works.
-		// Uses PropagateConfig with a noop sender (no running session).
-		if _, pErr := PropagateConfig(PropagateConfigRequest{
-			ParentHome:  parentHome,
-			CaptainHome: captainHome,
-			Mailbox:     &noopBoundSender{},
-		}); pErr != nil {
-			return UpdateResponse{
-				Outcome: StateOnlySkipped,
-				Err:     fmt.Errorf("config-push after state-only update: %w", pErr),
-			}
-		}
 		return UpdateResponse{
-			Outcome: StateOnlySkipped,
+			Outcome: UnsupportedHome,
+			Err:     fmt.Errorf("captain home %s has no git worktree; only managed-worktree captain homes are supported — reseed with 'munsu captain seed --repo'", captainHome),
 		}
 	}
 
@@ -1958,7 +1710,7 @@ func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (
 		}
 
 		// a. Registry validation.
-		markerID, valErr := ValidateProvenance(sm.Home)
+		markerID, valErr := home.ValidateCaptainProvenance(sm.Home)
 		if valErr != nil {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": registry validation", Status: ConvergeFailed, Detail: fmt.Sprintf("provenance validation failed: %v", valErr)})
 			errs = append(errs, fmt.Sprintf("%s: provenance validation failed: %v", sm.ID, valErr))
@@ -1971,17 +1723,6 @@ func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (
 		}
 		result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": registry validation", Status: ConvergeOK, Detail: "valid"})
 
-		// b. Stale legacy transport guard (read-only fail-closed).
-		// The legacy .captain-send-outbox and .command-envelope transport is removed.
-		// If any stale records remain, report the exact paths and fail with
-		// an actionable upgrade instruction. Never writes, migrates, or deletes.
-		if guardErr := checkStaleLegacyRecords(parentHome, sm.ID); guardErr != nil {
-			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": legacy transport guard", Status: ConvergeFailed, Detail: guardErr.Error()})
-			errs = append(errs, guardErr.Error())
-		} else {
-			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": legacy transport guard", Status: ConvergeOK, Detail: "ok"})
-		}
-
 		// c. Nudge retry.
 		if nudgeErr := retryNudge(parentHome, sm, caps.Nudge); nudgeErr != nil {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": nudge retry", Status: ConvergeFailed, Detail: nudgeErr.Error()})
@@ -1993,14 +1734,8 @@ func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (
 		// d. Safe local fast-forward.
 		before, after, ffReason, ffErr := safeFF(sm.Home, parentHome)
 		if ffErr != nil {
-			// State-only home (no git worktree): skip FF and log diagnostic.
-			if _, stErr := os.Stat(filepath.Join(sm.Home, ".git")); os.IsNotExist(stErr) {
-				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": safe fast-forward", Status: ConvergeSkipped, Detail: "state-only-home"})
-				fmt.Printf("  %s: git fast-forward skipped (state-only home)\n", sm.ID)
-			} else {
-				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": safe fast-forward", Status: ConvergeFailed, Detail: ffErr.Error()})
-				errs = append(errs, fmt.Sprintf("%s: safe ff failed: %v", sm.ID, ffErr))
-			}
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": safe fast-forward", Status: ConvergeFailed, Detail: ffErr.Error()})
+			errs = append(errs, fmt.Sprintf("%s: safe ff failed: %v", sm.ID, ffErr))
 		} else if ffReason == SafeFFAlreadyCurrent {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": safe fast-forward", Status: ConvergeSkipped, Detail: "already-current"})
 		} else if ffReason == SafeFFSuccess {
@@ -2294,7 +2029,7 @@ func Recover(parentHome string, registered []Info, capabilities RecoverCapabilit
 			continue
 		}
 
-		markerID, vErr := ValidateProvenance(sm.Home)
+		markerID, vErr := home.ValidateCaptainProvenance(sm.Home)
 		if vErr != nil {
 			entry.Outcome = RecoverFailed
 			entry.Error = fmt.Sprintf("provenance validation failed: %v", vErr)
@@ -2409,7 +2144,7 @@ func ProbeLiveness(parentHome string, registered []Info, probe ProbeEndpoint) []
 			probes = append(probes, p)
 			continue
 		}
-		if _, err := ValidateProvenance(sm.Home); err != nil {
+		if _, err := home.ValidateCaptainProvenance(sm.Home); err != nil {
 			p.Status = "unknown"
 			probes = append(probes, p)
 			continue
@@ -2463,7 +2198,7 @@ type captainBinding struct {
 
 func checkAliveWithProbeBinding(parentHome string, sm Info, probe ProbeEndpoint) (CaptainEndpointState, captainBinding, error) {
 	taskID := taskIDForCaptain(sm.ID)
-	meta, err := mhome.ReadMeta(parentHome, taskID)
+	meta, err := home.ReadMeta(parentHome, taskID)
 	if err != nil {
 		return CaptainSeeded, captainBinding{}, nil
 	}
@@ -2522,7 +2257,7 @@ func instructionSurfaceDigest(home, commit string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return captainSHA256Content([]byte(tree)), nil
+	return sha256Content([]byte(tree)), nil
 }
 
 // hasSurfaceDiff reports whether the tracked instruction surface changed.
@@ -2542,7 +2277,7 @@ func hasSurfaceDiff(home, before, after string) bool {
 // On failure, the marker remains.
 func sendNudge(parentHome string, sm Info, endpoint NudgeEndpoint) error {
 	taskID := taskIDForCaptain(sm.ID)
-	meta, err := mhome.ReadMeta(parentHome, taskID)
+	meta, err := home.ReadMeta(parentHome, taskID)
 	if err != nil {
 		return fmt.Errorf("%s: no task meta — marker remains", sm.ID)
 	}
@@ -2617,7 +2352,7 @@ func sendNudge(parentHome string, sm Info, endpoint NudgeEndpoint) error {
 	// above: the send is a network round-trip, and a concurrent writer that
 	// landed during it must not be erased. The lock covers only this overlay,
 	// never the send.
-	if metaErr := mhome.UpdateMeta(parentHome, taskID, func(current map[string]string) error {
+	if metaErr := home.UpdateMeta(parentHome, taskID, func(current map[string]string) error {
 		if err := validateCaptainBinding(current, sm, binding); err != nil {
 			return err
 		}

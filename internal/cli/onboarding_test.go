@@ -14,7 +14,7 @@ import (
 func TestAutoDetectConfig_OnlyWhenAbsent(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Pre-create a config/backend file with a specific value
+	// Pre-set the backend config key to a specific value
 	if err := config.Set(tmpDir, "backend", "my-custom-backend"); err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestAutoDetectConfig_OnlyWhenAbsent(t *testing.T) {
 func TestAutoDetectConfig_Reconfigure(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Pre-create a config/backend file with a specific value
+	// Pre-set the backend config key to a specific value
 	if err := config.Set(tmpDir, "backend", "my-custom-backend"); err != nil {
 		t.Fatal(err)
 	}

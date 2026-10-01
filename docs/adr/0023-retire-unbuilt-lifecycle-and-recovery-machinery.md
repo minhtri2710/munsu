@@ -58,8 +58,9 @@ No separate interpretation struct is added.
   as the historical record; their headers carry the retirement; no tree work
   tracks them.
 * ADR-0005 §5 was superseded on 2026-09-04 by its running status-signal model;
-  ADR-0005 §6 (roadmap gate G3, the Git-fencing tier decision) is the only
-  remaining residual. §3 and §4 are closed by this ADR.
+  ADR-0005 §6 (roadmap gate G3, the Git-fencing tier decision) was the last
+  residual when this ADR was accepted; it landed as #752 (fence) and #753
+  (fence-doc followup), so no residual remains. §3 and §4 are closed by this ADR.
 * No code changes. The names ContextManifest, DispatchInterpretation, and
   LaunchDiagnostic never had a Go declaration; their citation-waiver rows in
   `.github/citations.allow` stand for the ADR-0004/0005/0013 bodies that still

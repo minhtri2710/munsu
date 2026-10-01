@@ -17,8 +17,8 @@ func TestHarnessHookDirsRejectEmptyProjectCwd(t *testing.T) {
 		call func() error
 	}{
 		{"agy", func() error { _, err := agyHooksDir(ScopeProject, ""); return err }},
-		{"claude", func() error { _, err := claudeSettingsPath(ScopeProject, ""); return err }},
-		{"codex", func() error { _, err := codexHooksPath(ScopeProject, ""); return err }},
+		{"claude", func() error { _, err := claudeHooks.path(ScopeProject, ""); return err }},
+		{"codex", func() error { _, err := codexHooks.path(ScopeProject, ""); return err }},
 		{"grok", func() error { _, err := grokHooksDir(ScopeProject, ""); return err }},
 	}
 	for _, tc := range cases {
@@ -66,10 +66,9 @@ func TestProbePiAPIsRejectsEmptyBinaryPath(t *testing.T) {
 }
 
 func TestProbePiAPIsRejectsMissingSuccessMarker(t *testing.T) {
-	previous := SetCapabilityCommandRunner(func(string, []string, string, time.Duration) (string, error) {
+	defer SetCapabilityCommandRunner(func(string, []string, string, time.Duration) (string, error) {
 		return "API probe failed\n", nil
-	})
-	defer SetCapabilityCommandRunner(previous)
+	})()
 
 	err := probePiAPIs("/fake/pi")
 	if err == nil || !strings.Contains(err.Error(), "API probe did not complete") {
@@ -136,10 +135,7 @@ func TestPiInstallRejectsEmptyUserExtensionDirectory(t *testing.T) {
 	t.Setenv("USERPROFILE", "")
 	SetMunsuPathResolver(testMunsuResolver{path: "/fake/munsu"})
 	t.Cleanup(ResetMunsuPathResolver)
-	bin := t.TempDir()
-	writeTestExecutable(t, filepath.Join(bin, "pi"), "#!/bin/sh\necho 0.79.0\n")
-	writeTestExecutable(t, filepath.Join(bin, "node"), "#!/bin/sh\necho 'API probe passed'\n")
-	t.Setenv("PATH", bin+string(filepath.ListSeparator)+os.Getenv("PATH"))
+	fakePiToolchain(t)
 
 	_, _, _, err := (&PiAdapter{Scope: string(ScopeUser), DryRun: true}).InstallPiExtension()
 	if err == nil || !strings.Contains(err.Error(), "cannot determine extension directory") {
@@ -159,19 +155,18 @@ func TestPiInstallRejectsUnownedTarget(t *testing.T) {
 	}
 
 	bin := testutil.WriteFakeExecutable(t, filepath.Join(dir, "munsu"), "#!/bin/sh\n")
-	writeTestExecutable(t, filepath.Join(dir, "pi"), "#!/bin/sh\necho 0.79.0\n")
+	testutil.WriteFakeExecutable(t, filepath.Join(dir, "pi"), "#!/bin/sh\necho 0.79.0\n")
 	t.Setenv("PATH", dir+string(filepath.ListSeparator)+os.Getenv("PATH"))
 	SetMunsuPathResolver(testMunsuResolver{path: bin})
 	defer ResetMunsuPathResolver()
 	callCount := 0
-	previousRunner := SetCapabilityCommandRunner(func(_ string, _ []string, _ string, _ time.Duration) (string, error) {
+	defer SetCapabilityCommandRunner(func(_ string, _ []string, _ string, _ time.Duration) (string, error) {
 		callCount++
 		if callCount == 1 {
 			return "0.79.0\n", nil
 		}
 		return "API probe passed\n", nil
-	})
-	defer SetCapabilityCommandRunner(previousRunner)
+	})()
 
 	_, _, _, err := (&PiAdapter{Cwd: dir, Scope: string(ScopeProject), DryRun: true}).InstallPiExtension()
 	if err == nil || !strings.Contains(err.Error(), "exists and is not owned by munsu") {

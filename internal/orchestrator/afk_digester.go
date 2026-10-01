@@ -263,28 +263,7 @@ func writeDigestFile(path string, data []byte) error {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("create digest directory: %w", err)
 	}
-	tmp, err := os.CreateTemp(dir, ".afk-digest-*")
-	if err != nil {
-		return fmt.Errorf("create digest temp file: %w", err)
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-	if err := tmp.Chmod(0644); err != nil {
-		tmp.Close()
-		return fmt.Errorf("secure digest temp file: %w", err)
-	}
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return fmt.Errorf("write digest temp file: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return fmt.Errorf("sync digest temp file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close digest temp file: %w", err)
-	}
-	if err := home.RenameDurable(tmpPath, path); err != nil {
+	if err := home.AtomicWrite(path, data, 0644); err != nil {
 		return fmt.Errorf("install digest file: %w", err)
 	}
 	return nil

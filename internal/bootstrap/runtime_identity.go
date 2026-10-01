@@ -279,8 +279,6 @@ func collectBuildProvenance(cliVersion string, probe runtimeIdentityProbe) Build
 		bp.ModuleVersion = info.Main.Version
 		for _, setting := range info.Settings {
 			switch setting.Key {
-			case "vcs.revision":
-				bp.VCSRevision = setting.Value
 			case "vcs.time":
 				bp.VCSTime = setting.Value
 			case "vcs.modified":
@@ -288,9 +286,7 @@ func collectBuildProvenance(cliVersion string, probe runtimeIdentityProbe) Build
 			}
 		}
 	}
-	if bp.VCSRevision == "" {
-		bp.VCSRevision = orchestrator.CommitSHA
-	}
+	bp.VCSRevision = orchestrator.BuildCommit(info)
 	return bp
 }
 

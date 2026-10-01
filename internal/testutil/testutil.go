@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 )
 
@@ -42,81 +41,6 @@ func ClearEnv(t *testing.T) {
 			_ = val
 		}
 	}
-}
-
-// FakeSessionBackend is an in-memory session backend adapter for fast unit testing.
-type FakeSessionBackend struct {
-	mu      sync.Mutex
-	Windows map[string]*FakeWindow
-	NextID  int
-}
-
-type FakeWindow struct {
-	ID       string
-	Name     string
-	Session  string
-	Keys     []string
-	Captured string
-	IsAlive  bool
-}
-
-func NewFakeSessionBackend() *FakeSessionBackend {
-	return &FakeSessionBackend{
-		Windows: make(map[string]*FakeWindow),
-		NextID:  1,
-	}
-}
-
-func (b *FakeSessionBackend) NewWindow(session, name string) (string, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	winID := "@fake_" + name
-	b.Windows[winID] = &FakeWindow{
-		ID:      winID,
-		Name:    name,
-		Session: session,
-		IsAlive: true,
-	}
-	return winID, nil
-}
-
-func (b *FakeSessionBackend) SendKeys(windowID, text string) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	win, ok := b.Windows[windowID]
-	if !ok {
-		win = &FakeWindow{ID: windowID, IsAlive: true}
-		b.Windows[windowID] = win
-	}
-	win.Keys = append(win.Keys, text)
-	return nil
-}
-
-func (b *FakeSessionBackend) Capture(windowID string, lines int) (string, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if win, ok := b.Windows[windowID]; ok {
-		return win.Captured, nil
-	}
-	return "", nil
-}
-
-func (b *FakeSessionBackend) CheckAlive(windowID string) (bool, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if win, ok := b.Windows[windowID]; ok {
-		return win.IsAlive, nil
-	}
-	return false, nil
-}
-
-func (b *FakeSessionBackend) Teardown(windowID string) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if win, ok := b.Windows[windowID]; ok {
-		win.IsAlive = false
-	}
-	return nil
 }
 
 // PathInMessage reports whether message names path.

@@ -79,8 +79,8 @@ func TestSenderRankDerivesForEveryHopTheTopologiesProduce(t *testing.T) {
 			name: "general to captain",
 			build: func(t *testing.T) (*Receiver, string) {
 				dir := namedHome(t, senderRankCaptainID)
-				if err := WriteHomeIdentity(dir, senderRankCaptainID, RankCaptain); err != nil {
-					t.Fatalf("WriteHomeIdentity: %v", err)
+				if err := SeedCaptainProvenance(dir, senderRankCaptainID); err != nil {
+					t.Fatalf("SeedCaptainProvenance: %v", err)
 				}
 				configureParent(t, dir, namedHome(t, senderRankGeneralID))
 				r, err := NewReceiver(dir)
@@ -103,8 +103,8 @@ func TestSenderRankDerivesForEveryHopTheTopologiesProduce(t *testing.T) {
 			name: "general to captain carrying the captain task ID",
 			build: func(t *testing.T) (*Receiver, string) {
 				dir := namedHome(t, senderRankCaptainID)
-				if err := WriteHomeIdentity(dir, senderRankCaptainID, RankCaptain); err != nil {
-					t.Fatalf("WriteHomeIdentity: %v", err)
+				if err := SeedCaptainProvenance(dir, senderRankCaptainID); err != nil {
+					t.Fatalf("SeedCaptainProvenance: %v", err)
 				}
 				configureParent(t, dir, namedHome(t, senderRankGeneralID))
 				r, err := NewReceiver(dir)
@@ -130,8 +130,8 @@ func TestSenderRankDerivesForEveryHopTheTopologiesProduce(t *testing.T) {
 			build: func(t *testing.T) (*Receiver, string) {
 				dir := namedHome(t, senderRankGeneralID)
 				captainHome := namedHome(t, senderRankCaptainID)
-				if err := WriteHomeIdentity(captainHome, senderRankCaptainID, RankCaptain); err != nil {
-					t.Fatalf("WriteHomeIdentity: %v", err)
+				if err := SeedCaptainProvenance(captainHome, senderRankCaptainID); err != nil {
+					t.Fatalf("SeedCaptainProvenance: %v", err)
 				}
 				hostCaptain(t, dir, senderRankCaptainID, captainHome)
 				r, err := NewReceiver(dir)
@@ -153,8 +153,8 @@ func TestSenderRankDerivesForEveryHopTheTopologiesProduce(t *testing.T) {
 			name: "soldier to captain",
 			build: func(t *testing.T) (*Receiver, string) {
 				dir := namedHome(t, senderRankCaptainID)
-				if err := WriteHomeIdentity(dir, senderRankCaptainID, RankCaptain); err != nil {
-					t.Fatalf("WriteHomeIdentity: %v", err)
+				if err := SeedCaptainProvenance(dir, senderRankCaptainID); err != nil {
+					t.Fatalf("SeedCaptainProvenance: %v", err)
 				}
 				hostSoldier(t, dir, senderRankTaskID)
 				r, err := NewReceiver(dir)
@@ -198,8 +198,8 @@ func TestSenderRankDerivesForEveryHopTheTopologiesProduce(t *testing.T) {
 			name: "captain to soldier",
 			build: func(t *testing.T) (*Receiver, string) {
 				dir := namedHome(t, senderRankCaptainID)
-				if err := WriteHomeIdentity(dir, senderRankCaptainID, RankCaptain); err != nil {
-					t.Fatalf("WriteHomeIdentity: %v", err)
+				if err := SeedCaptainProvenance(dir, senderRankCaptainID); err != nil {
+					t.Fatalf("SeedCaptainProvenance: %v", err)
 				}
 				hostSoldier(t, dir, senderRankTaskID)
 				r, err := NewSoldierReceiver(dir, senderRankTaskID)
@@ -265,7 +265,7 @@ func TestSenderRankRefusesMissingOrInvalidHomeProvenance(t *testing.T) {
 			name: "captain missing parent home",
 			build: func(t *testing.T) (*Receiver, *Envelope) {
 				dir := namedHome(t, senderRankCaptainID)
-				if err := WriteHomeIdentity(dir, senderRankCaptainID, RankCaptain); err != nil {
+				if err := SeedCaptainProvenance(dir, senderRankCaptainID); err != nil {
 					t.Fatal(err)
 				}
 				r, err := NewReceiver(dir)
@@ -280,7 +280,7 @@ func TestSenderRankRefusesMissingOrInvalidHomeProvenance(t *testing.T) {
 			name: "captain empty parent home",
 			build: func(t *testing.T) (*Receiver, *Envelope) {
 				dir := namedHome(t, senderRankCaptainID)
-				if err := WriteHomeIdentity(dir, senderRankCaptainID, RankCaptain); err != nil {
+				if err := SeedCaptainProvenance(dir, senderRankCaptainID); err != nil {
 					t.Fatal(err)
 				}
 				configureParent(t, dir, "   ")
@@ -339,7 +339,7 @@ func TestSenderRankRefusesMissingOrInvalidHomeProvenance(t *testing.T) {
 			build: func(t *testing.T) (*Receiver, *Envelope) {
 				dir := namedHome(t, senderRankGeneralID)
 				captainHome := namedHome(t, "other-captain")
-				if err := WriteHomeIdentity(captainHome, "other-captain", RankCaptain); err != nil {
+				if err := SeedCaptainProvenance(captainHome, "other-captain"); err != nil {
 					t.Fatal(err)
 				}
 				hostCaptain(t, dir, senderRankCaptainID, captainHome)
@@ -355,7 +355,7 @@ func TestSenderRankRefusesMissingOrInvalidHomeProvenance(t *testing.T) {
 			name: "captain parent home malformed",
 			build: func(t *testing.T) (*Receiver, *Envelope) {
 				dir := namedHome(t, senderRankCaptainID)
-				if err := WriteHomeIdentity(dir, senderRankCaptainID, RankCaptain); err != nil {
+				if err := SeedCaptainProvenance(dir, senderRankCaptainID); err != nil {
 					t.Fatal(err)
 				}
 				parent := t.TempDir()
@@ -375,7 +375,7 @@ func TestSenderRankRefusesMissingOrInvalidHomeProvenance(t *testing.T) {
 			name: "captain parent home wrong identity",
 			build: func(t *testing.T) (*Receiver, *Envelope) {
 				dir := namedHome(t, senderRankCaptainID)
-				if err := WriteHomeIdentity(dir, senderRankCaptainID, RankCaptain); err != nil {
+				if err := SeedCaptainProvenance(dir, senderRankCaptainID); err != nil {
 					t.Fatal(err)
 				}
 				configureParent(t, dir, namedHome(t, "other-general"))
@@ -489,7 +489,7 @@ func TestSenderRankRefusesUnsupportedClaimCombinations(t *testing.T) {
 func TestSenderRankAcceptsCollidingCaptainAndSoldierClaims(t *testing.T) {
 	generalHome := namedHome(t, "general-collision")
 	captainHome := namedHome(t, "captain-collision")
-	if err := WriteHomeIdentity(captainHome, "task_relay", RankCaptain); err != nil {
+	if err := SeedCaptainProvenance(captainHome, "task_relay"); err != nil {
 		t.Fatal(err)
 	}
 	hostCaptain(t, generalHome, "task_relay", captainHome)
@@ -563,8 +563,8 @@ func TestSenderRankRefusesWhatProvenanceContradicts(t *testing.T) {
 			name: "a captain whose parent home does not exist",
 			build: func(t *testing.T) (*Receiver, string, *Envelope) {
 				dir := namedHome(t, senderRankCaptainID)
-				if err := WriteHomeIdentity(dir, senderRankCaptainID, RankCaptain); err != nil {
-					t.Fatalf("WriteHomeIdentity: %v", err)
+				if err := SeedCaptainProvenance(dir, senderRankCaptainID); err != nil {
+					t.Fatalf("SeedCaptainProvenance: %v", err)
 				}
 				configureParent(t, dir, filepath.Join(t.TempDir(), senderRankGeneralID))
 				r, err := NewReceiver(dir)
@@ -608,8 +608,8 @@ func TestSenderRankRefusesWhatProvenanceContradicts(t *testing.T) {
 			name: "a soldier claim under a task ID that names no record",
 			build: func(t *testing.T) (*Receiver, string, *Envelope) {
 				dir := namedHome(t, senderRankCaptainID)
-				if err := WriteHomeIdentity(dir, senderRankCaptainID, RankCaptain); err != nil {
-					t.Fatalf("WriteHomeIdentity: %v", err)
+				if err := SeedCaptainProvenance(dir, senderRankCaptainID); err != nil {
+					t.Fatalf("SeedCaptainProvenance: %v", err)
 				}
 				r, err := NewReceiver(dir)
 				if err != nil {

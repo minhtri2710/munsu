@@ -15,6 +15,7 @@ package backend
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -104,25 +105,21 @@ func (s *HerdrEventSource) Wait(ctx context.Context, endpoint EndpointRef, after
 
 	args := []string{"--session", s.Session, "agent", "wait", endpoint.Handle,
 		"--timeout", strconv.FormatInt(timeoutMS, 10)}
-	cmd := exec.CommandContext(ctx, bin, args...)
-	cmd.Env = append(cmd.Environ(), "HERDR_SESSION="+s.Session)
-	out, err := cmd.Output()
+	stdout, stderr, err := runBackendEventCommand(ctx, time.Duration(timeoutMS)*time.Millisecond, bin, args, "", []string{"HERDR_SESSION=" + s.Session})
 	if err != nil {
 		if ctx.Err() != nil {
-			// Bounded wait elapsed — normal; caller proceeds to poll.
+			// Caller cancellation takes precedence over the package bound.
 			return ObservationSignal{}, ctx.Err()
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			// Bounded wait elapsed — normal; caller proceeds to poll.
+			return ObservationSignal{}, context.DeadlineExceeded
 		}
 		// Reconstruct the CLI error message (exit envelope may carry a JSON
 		// error body on stderr) so typed classification below can see it.
 		werr := err
-		if ee, ok := err.(*exec.ExitError); ok {
-			combined := strings.TrimSpace(string(ee.Stderr))
-			if combined == "" {
-				combined = strings.TrimSpace(string(out))
-			}
-			if combined != "" {
-				werr = fmt.Errorf("%s", combined)
-			}
+		if combined := commandOutput(stdout, stderr); combined != "" {
+			werr = fmt.Errorf("%s", combined)
 		}
 		if isHerdrProtocolMismatch(werr) {
 			return ObservationSignal{}, fmt.Errorf("%w: %v", ErrEventProtocolMismatch, werr)
@@ -145,7 +142,7 @@ func (s *HerdrEventSource) Wait(ctx context.Context, endpoint EndpointRef, after
 		return ObservationSignal{}, fmt.Errorf("%w: %v", ErrEventReaderFailure, werr)
 	}
 
-	sig, perr := s.parseAgentWait(endpoint, out)
+	sig, perr := s.parseAgentWait(endpoint, stdout)
 	if perr != nil {
 		return ObservationSignal{}, fmt.Errorf("%w: %v", ErrEventReaderFailure, perr)
 	}

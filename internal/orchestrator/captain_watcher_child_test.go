@@ -70,13 +70,13 @@ func sleepEnvDuration(key string) {
 type reapState int
 
 const (
-	// reapNotAttempted: the body never called reap. The parent may well know a
+	// The zero value: the body never called reap. The parent may well know a
 	// child exists -- a nil return from EnsureWatcher means cmd.Start
 	// succeeded -- but this field does not record that, so the state alone
 	// cannot separate a failure before that call from one after it. The
 	// cleanup therefore treats the two alike, which is why it spends only
 	// grace here.
-	reapNotAttempted reapState = iota
+	_ reapState = iota
 	// reapAttempted: a reap was entered and did not finish waiting. A child was
 	// expected and has not been accounted for.
 	reapAttempted

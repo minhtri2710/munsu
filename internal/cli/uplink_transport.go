@@ -7,7 +7,7 @@ import (
 )
 
 type sessionUplinkTransport struct {
-	resolve  func(string, string) (backend.Backend, string, error)
+	resolve  func(string) (backend.Backend, string, error)
 	identity func(string) (string, error)
 }
 
@@ -23,7 +23,7 @@ func (t sessionUplinkTransport) Notify(senderHome string, target orchestrator.Ta
 	if err != nil {
 		return orchestrator.QueuedNotification()
 	}
-	bk, _, err := t.resolve(senderHome, backendName)
+	bk, _, err := t.resolve(backendName)
 	if err != nil {
 		return orchestrator.QueuedNotification()
 	}

@@ -45,7 +45,7 @@ func TestPayloadHashHex(t *testing.T) {
 	if len(hash) != 64 {
 		t.Errorf("hash length=%d, want 64", len(hash))
 	}
-	if PayloadHashHex("hello") != PayloadHashHex("hello") {
+	if PayloadHashHex("hello") != hash {
 		t.Error("hash not deterministic")
 	}
 	if PayloadHashHex("hello") == PayloadHashHex("world") {
@@ -282,7 +282,7 @@ func TestStore_AtomicWrite_NoPartialJSON(t *testing.T) {
 		t.Fatalf("reading dir: %v", err)
 	}
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), ".tmp-") {
+		if strings.HasPrefix(e.Name(), ".home-write-") {
 			t.Errorf("stale temp file found: %s", e.Name())
 		}
 	}

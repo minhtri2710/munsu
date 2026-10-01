@@ -2,6 +2,7 @@ package home
 
 import (
 	"errors"
+	"os"
 	"strings"
 	"testing"
 )
@@ -139,5 +140,52 @@ func TestSweepRejectsRecordWithoutItems(t *testing.T) {
 	_, err = h.Commit(lk, "txn", 0, []ChangeItem{{Root: RootData, Key: "k", Data: []byte("x")}})
 	if err == nil || !strings.Contains(err.Error(), "no items") {
 		t.Fatalf("Commit over invalid record: got %v, want a 'no items' error", err)
+	}
+}
+
+// TestJournalRecordDecodeFailsClosed proves a record that is valid except for an
+// unknown field or trailing data is corruption: Open recovery and the next
+// Commit on that scope both refuse it, and the record stays on disk unapplied.
+func TestJournalRecordDecodeFailsClosed(t *testing.T) {
+	for name, mutate := range map[string]func(string) string{
+		"unknown field": func(s string) string { return strings.Replace(s, "{", `{"committed":false,`, 1) },
+		"trailing data": func(s string) string { return s + "{}\n" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newTestHome(t)
+			rec := journalRecord{
+				TxnID: "txn", Scope: "scope", FenceToken: 1, ExpectedRevision: 0, NewRevision: 1,
+				Items: []ChangeItem{{Root: RootData, Key: "k", Data: []byte("v")}},
+			}
+			if err := h.writeJournalRecord(rec); err != nil {
+				t.Fatal(err)
+			}
+			path := h.journalPath("scope", "txn")
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(mutate(string(data))), 0600); err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := Open(h.root); err == nil || !strings.Contains(err.Error(), "decode journal record") {
+				t.Fatalf("Open = %v, want decode journal record error", err)
+			}
+			lk, err := h.Lock("scope")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer lk.Release()
+			if _, err := h.Commit(lk, "next", 0, []ChangeItem{{Root: RootData, Key: "n", Data: []byte("n")}}); err == nil || !strings.Contains(err.Error(), "decode journal record") {
+				t.Fatalf("Commit = %v, want decode journal record error", err)
+			}
+			if _, err := h.Read(RootData, "k"); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("refused record applied: Read k err = %v", err)
+			}
+			if _, err := os.Stat(path); err != nil {
+				t.Fatalf("refused record removed: %v", err)
+			}
+		})
 	}
 }

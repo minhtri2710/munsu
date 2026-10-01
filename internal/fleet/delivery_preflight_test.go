@@ -4,8 +4,11 @@ package fleet
 
 import (
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 func TestPreflight_UnknownMode(t *testing.T) {
@@ -164,5 +167,19 @@ func TestPreflight_DirectPR_SkipRemoteWhenNoRepoPath(t *testing.T) {
 	}
 	if len(result.Checks) != 1 {
 		t.Fatalf("expected 1 check without repoPath, got %d: %v", len(result.Checks), result.Checks)
+	}
+}
+
+// TestCheckGhAuth_GhAxiOnPathIsNotAuthEvidence proves gh-auth reports OK only
+// when gh auth status succeeds, not merely because gh-axi is on PATH.
+func TestCheckGhAuth_GhAxiOnPathIsNotAuthEvidence(t *testing.T) {
+	bin := t.TempDir()
+	testutil.WriteFakeExecutable(t, filepath.Join(bin, "gh-axi"), "#!/bin/sh\nexit 0\n")
+	testutil.WriteFakeExecutable(t, filepath.Join(bin, "gh"), "#!/bin/sh\necho 'You are not logged into any GitHub hosts.' >&2\nexit 1\n")
+	testutil.SetPath(t, bin)
+
+	check := checkGhAuth()
+	if check.OK || !strings.Contains(check.Detail, "not logged into") {
+		t.Fatalf("checkGhAuth = %+v, want failure from gh auth status", check)
 	}
 }

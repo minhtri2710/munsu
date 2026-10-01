@@ -7,7 +7,7 @@ import (
 
 func TestGuardBurnDownSeedCaptainRefusesEmptyParentHome(t *testing.T) {
 	homePath := t.TempDir() + "/captain"
-	err := SeedCaptain(CaptainSeedOptions{ID: "captain", Home: homePath, Integration: fakeIntegrationPort{}})
+	err := SeedCaptain(CaptainSeedOptions{ID: "captain", Home: homePath, Repo: newWorktreeFixture(t), Integration: fakeIntegrationPort{}})
 	if err == nil || !strings.Contains(err.Error(), "empty charter requires parent home") {
 		t.Fatalf("SeedCaptain error = %v, want empty-parent refusal", err)
 	}

@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/home"
-	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 // ----------------------------------------------------------------------------
@@ -20,7 +19,7 @@ func TestEnsureConfigRereadRequirement_NilSender(t *testing.T) {
 
 	// Write task meta for captain in parent home with window and backend.
 	taskID := taskIDForCaptain(captainID)
-	if err := mhome.WriteMeta(parentHome, taskID, map[string]string{
+	if err := home.WriteMeta(parentHome, taskID, map[string]string{
 		"kind":    "captain",
 		"window":  "win-1",
 		"sm_id":   captainID,
@@ -43,7 +42,7 @@ func TestResendNotification_NoWindowInMeta(t *testing.T) {
 	parentHome, _, captainID := setupTestHomes(t)
 	taskID := taskIDForCaptain(captainID)
 	// Write meta without window key
-	if err := mhome.WriteMeta(parentHome, taskID, map[string]string{
+	if err := home.WriteMeta(parentHome, taskID, map[string]string{
 		"backend": "tmux",
 	}); err != nil {
 		t.Fatal(err)
@@ -60,7 +59,7 @@ func TestResendNotification_NoWindowInMeta(t *testing.T) {
 func TestResendNotification_NilSender(t *testing.T) {
 	parentHome, _, captainID := setupTestHomes(t)
 	taskID := taskIDForCaptain(captainID)
-	if err := mhome.WriteMeta(parentHome, taskID, map[string]string{
+	if err := home.WriteMeta(parentHome, taskID, map[string]string{
 		"window":  "win-1",
 		"backend": "tmux",
 	}); err != nil {
@@ -78,7 +77,7 @@ func TestResendNotification_NilSender(t *testing.T) {
 func TestResendNotification_NotAcknowledged(t *testing.T) {
 	parentHome, _, captainID := setupTestHomes(t)
 	taskID := taskIDForCaptain(captainID)
-	if err := mhome.WriteMeta(parentHome, taskID, map[string]string{
+	if err := home.WriteMeta(parentHome, taskID, map[string]string{
 		"window":  "win-1",
 		"backend": "tmux",
 	}); err != nil {
@@ -109,28 +108,14 @@ func TestIsManagedWorktree_NotDirectory(t *testing.T) {
 	}
 }
 
-func TestMigrateCaptainToWorktree_NilIntegration(t *testing.T) {
-	err := MigrateCaptainToWorktree(CaptainMigrationOptions{Integration: nil})
-	if err == nil || !strings.Contains(err.Error(), "captain integration capability is required") {
-		t.Fatalf("MigrateCaptainToWorktree err = %v, want integration capability required", err)
+func TestSeedCaptain_RefusesMissingRepoBeforeMutation(t *testing.T) {
+	h := filepath.Join(t.TempDir(), "captain")
+	err := SeedCaptain(CaptainSeedOptions{ID: "captain", Home: h, ParentHome: t.TempDir(), Integration: fakeIntegrationPort{}})
+	if err == nil || !strings.Contains(err.Error(), "a project repo is required") {
+		t.Fatalf("SeedCaptain err = %v, want project repo required", err)
 	}
-}
-
-func TestMigrateToWorktree_NilIntegration(t *testing.T) {
-	err := migrateToWorktree("capHome", "repoPath", "id", "parentHome", nil)
-	if err == nil || !strings.Contains(err.Error(), "captain integration capability is required") {
-		t.Fatalf("migrateToWorktree err = %v, want integration capability required", err)
-	}
-}
-
-func TestRepairWorktreeAdminPath_MalformedGitFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(tmpDir, ".git"), []byte("invalid gitdir format\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	err := repairWorktreeAdminPath(tmpDir, "")
-	if err == nil || !strings.Contains(err.Error(), "unexpected .git format") {
-		t.Fatalf("repairWorktreeAdminPath err = %v, want unexpected .git format", err)
+	if _, statErr := os.Stat(h); !os.IsNotExist(statErr) {
+		t.Fatalf("refused seed created %s (stat err = %v)", h, statErr)
 	}
 }
 
@@ -155,28 +140,6 @@ func TestSeedFromWorktree_NilIntegration(t *testing.T) {
 	err := seedFromWorktree("id", "homePath", "repoPath", "parentHome", "charter", false, "", nil)
 	if err == nil || !strings.Contains(err.Error(), "captain integration capability is required") {
 		t.Fatalf("seedFromWorktree err = %v, want integration capability required", err)
-	}
-}
-
-func TestWorktreeCommonDir_RelativeGitDir(t *testing.T) {
-	tmpDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(tmpDir, ".git"), []byte("gitdir: relative/path/to/worktree\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	_, err := worktreeCommonDir(tmpDir)
-	if err == nil || !strings.Contains(err.Error(), ".git gitdir is not absolute") {
-		t.Fatalf("worktreeCommonDir err = %v, want gitdir is not absolute", err)
-	}
-}
-
-func TestWorktreeCommonDir_MalformedGitFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(tmpDir, ".git"), []byte("corrupt format\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	_, err := worktreeCommonDir(tmpDir)
-	if err == nil || !strings.Contains(err.Error(), "unexpected .git format") {
-		t.Fatalf("worktreeCommonDir err = %v, want unexpected .git format", err)
 	}
 }
 

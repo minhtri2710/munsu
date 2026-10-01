@@ -13,9 +13,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -25,7 +27,7 @@ type DeliverRequest struct {
 	HomeDir    string // soldier's home (status, event log, wake queue)
 	ParentHome string // captain's home (receipt, obligations); empty if no parent
 	TaskID     string
-	State      string // one of mhome.ValidStatusStates
+	State      string // one of domain.ValidStatusStates
 	Message    string
 	Key        string // optional correlation/slug; empty defaults to "default"
 	Role       string // "soldier", "captain", "general"
@@ -41,19 +43,6 @@ type WakeReceipt struct {
 	ObligationsInit bool
 }
 
-// wakeMaterialStates is the set of states that warrant waking a parent supervisor.
-var wakeMaterialStates = map[string]bool{
-	"done":           true,
-	"failed":         true,
-	"needs-decision": true,
-	"blocked":        true,
-}
-
-// isMaterial returns true for states that warrant wake/receipt.
-func isMaterial(state string) bool {
-	return wakeMaterialStates[state]
-}
-
 // --- DeliverWake ---
 
 // DeliverWake orchestrates the full wake delivery pipeline for a soldier
@@ -64,13 +53,12 @@ func isMaterial(state string) bool {
 //  3. Write captain receipt + init obligations (if parentHome set and material)
 //  4. Append typed event (best-effort)
 //  5. Enqueue wake (material states only)
-//  6. Complete best-effort wake bookkeeping
 //
-// Fail-closed: steps 1–3 must succeed; steps 4–6 are best-effort (return
-// non-fatal warnings via stderr).
+// Fail-closed: steps 1–3 and 5 must succeed; step 4 is best-effort (a
+// non-fatal warning via stderr).
 //
-// Event append and injection errors never fail the report — they are logged
-// to stderr and the receipt is returned without error.
+// Event append errors never fail the report — they are logged to stderr and
+// the receipt records EventAppended=false.
 func DeliverWake(req DeliverRequest) (*WakeReceipt, error) {
 	// Step 0: Validate inputs
 	if req.HomeDir == "" {
@@ -80,9 +68,9 @@ func DeliverWake(req DeliverRequest) (*WakeReceipt, error) {
 		return nil, fmt.Errorf("TaskID is required")
 	}
 	if req.Message == "" {
-		return nil, fmt.Errorf("Message is required")
+		return nil, fmt.Errorf("message is required")
 	}
-	if !mhome.IsValidStatusState(req.State) {
+	if !domain.IsValidStatusState(req.State) {
 		return nil, fmt.Errorf("invalid status state %q", req.State)
 	}
 	if req.Key == "" {
@@ -99,13 +87,23 @@ func DeliverWake(req DeliverRequest) (*WakeReceipt, error) {
 	if req.Key != "" {
 		statusLine += " [key=" + req.Key + "]"
 	}
-	if err := mhome.AppendStatus(req.HomeDir, req.TaskID, statusLine); err != nil {
-		return nil, fmt.Errorf("appending status: %w", err)
+	// A report identical to the tail status line (a consecutive identical
+	// report, which includes a retry after a failed step) is idempotent for the
+	// status history and the event log; its material wake is still enqueued.
+	lines, err := mhome.ReadStatus(req.HomeDir, req.TaskID)
+	if err != nil {
+		return nil, fmt.Errorf("reading status: %w", err)
+	}
+	replay := len(lines) > 0 && lines[len(lines)-1] == statusLine
+	if !replay {
+		if err := mhome.AppendStatus(req.HomeDir, req.TaskID, statusLine); err != nil {
+			return nil, fmt.Errorf("appending status: %w", err)
+		}
 	}
 
 	// Step 2: For material states with a parent home, write captain receipt
 	// and init obligations. Fail-closed: if either fails, no event/wake is produced.
-	if isMaterial(req.State) && req.ParentHome != "" && req.Role == "soldier" {
+	if domain.IsMaterialVerb(req.State) && req.ParentHome != "" && req.Role == "soldier" {
 		if err := WriteReceipt(req.ParentHome, req.TaskID, req.Key, req.State, req.Message); err != nil {
 			return nil, fmt.Errorf("writing captain receipt: %w", err)
 		}
@@ -130,26 +128,54 @@ func DeliverWake(req DeliverRequest) (*WakeReceipt, error) {
 	}
 
 	// Step 3: Append to typed event log (best-effort)
-	syntheticID := SyntheticEventID()
-	receipt.EventID = syntheticID
-	if err := AppendWithID(req.HomeDir, syntheticID, "task.status", req.TaskID, req.Key, statusLine); err != nil {
+	// A consecutive identical report whose event already landed reuses that
+	// event and its ID.
+	eventID, found := uint64(0), false
+	if replay {
+		eventID, found = lastTaskStatusEvent(req.HomeDir, req.TaskID, req.Key, statusLine)
+	}
+	if found {
+		receipt.EventAppended = true
+	} else if id, err := Append(req.HomeDir, "task.status", req.TaskID, req.Key, statusLine); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: event append: %v\n", err)
 	} else {
+		eventID = id
 		receipt.EventAppended = true
 	}
+	receipt.EventID = eventID
 
 	// Step 4: For material states, enqueue a wake
-	if isMaterial(req.State) {
-		wakePayload := fmt.Sprintf("%s: %s [event=%d]", req.TaskID, statusLine, syntheticID)
+	if domain.IsMaterialVerb(req.State) {
+		wakePayload := fmt.Sprintf("%s: %s [event=%d]", req.TaskID, statusLine, eventID)
 		if err := EnqueueWake(req.HomeDir, "signal", req.TaskID, wakePayload); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: wake enqueue: %v\n", err)
-		} else {
-			receipt.EnqueueUnix = time.Now().Unix()
-			receipt.WakeEnqueued = true
+			return nil, fmt.Errorf("enqueueing wake: %w", err)
 		}
+		receipt.EnqueueUnix = time.Now().Unix()
+		receipt.WakeEnqueued = true
 	}
 
 	return receipt, nil
+}
+
+// lastTaskStatusEvent returns the ID of the latest task.status event for
+// taskID/key when its payload is statusLine, so a consecutive identical report
+// (including a retry) reuses it. An unreadable log reports no event.
+func lastTaskStatusEvent(homeDir, taskID, key, statusLine string) (uint64, bool) {
+	data, err := os.ReadFile(LogPath(homeDir))
+	if err != nil {
+		return 0, false
+	}
+	var id uint64
+	found := false
+	for _, line := range strings.Split(string(data), "\n") {
+		parts := strings.SplitN(line, "\t", 6)
+		if len(parts) < 6 || parts[2] != "task.status" || parts[3] != taskID || parts[4] != key {
+			continue
+		}
+		id, err = strconv.ParseUint(parts[0], 10, 64)
+		found = err == nil && parts[5] == statusLine
+	}
+	return id, found
 }
 
 // --- Activation on receipt (captain agent pane nudge) ---
@@ -278,8 +304,9 @@ func resolveCaptainActivationTarget(captainHome, parentHome string) (TargetResul
 }
 
 // listAllReceipts scans the receipts directory and returns ALL receipt files
-// (regardless of ack status). This is used by ActivateOnReceipt to find
-// receipts that may already be acked (relayed) but not yet activation-seen.
+// (regardless of ack status). It is the only receipt-directory scanner:
+// ActivateOnReceipt uses it to find receipts that may already be acked
+// (relayed) but not yet activation-seen, and ListPendingReceipts filters it.
 func listAllReceipts(homeDir string) ([]PendingReceipt, error) {
 	dir := ReceiptDir(homeDir)
 	entries, err := os.ReadDir(dir)

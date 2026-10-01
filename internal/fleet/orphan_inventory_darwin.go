@@ -5,6 +5,7 @@ package fleet
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"os"
 
 	"golang.org/x/sys/unix"
@@ -53,14 +54,20 @@ func processEnvironment(pid int) (string, []string, error) {
 	if err != nil {
 		return "", nil, err
 	}
+	return parseProcArgs(raw)
+}
+
+// parseProcArgs splits a kern.procargs2 block into the executable path and the
+// environment strings, skipping the argc argument strings between them.
+func parseProcArgs(raw []byte) (string, []string, error) {
 	if len(raw) <= 4 {
-		return "", nil, invalidProcessIdentity(pid)
+		return "", nil, errors.New("invalid process identity")
 	}
 	argc := int(binary.LittleEndian.Uint32(raw[:4]))
 	rest := raw[4:]
 	end := bytes.IndexByte(rest, 0)
 	if end <= 0 {
-		return "", nil, invalidProcessIdentity(pid)
+		return "", nil, errors.New("invalid process identity")
 	}
 	executable := string(rest[:end])
 	rest = rest[end:]

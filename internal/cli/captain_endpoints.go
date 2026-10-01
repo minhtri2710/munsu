@@ -10,7 +10,7 @@ import (
 )
 
 type sessionLaunchEndpoint struct {
-	resolve func(string, string) (backend.Backend, string, error)
+	resolve func(string) (backend.Backend, string, error)
 }
 
 func newSessionLaunchEndpoint() sessionLaunchEndpoint {
@@ -23,7 +23,7 @@ func (e sessionLaunchEndpoint) Launch(home string, req fleet.LaunchRequest) (fle
 	if req.Backend == "" {
 		return fleet.LaunchResult{}, fmt.Errorf("captain launch requires an explicit backend identity (resolved snapshot Backend)")
 	}
-	bk, name, err := e.resolve(home, req.Backend)
+	bk, name, err := e.resolve(req.Backend)
 	if err != nil {
 		return fleet.LaunchResult{}, err
 	}
@@ -52,7 +52,7 @@ func (e sessionLaunchEndpoint) Cleanup(home string, result fleet.LaunchResult) e
 	if result.Backend == "" {
 		return fmt.Errorf("captain cleanup requires the bound backend identity (launch result Backend)")
 	}
-	bk, _, err := e.resolve(home, result.Backend)
+	bk, _, err := e.resolve(result.Backend)
 	if err != nil {
 		return err
 	}

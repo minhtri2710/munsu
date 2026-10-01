@@ -12,7 +12,7 @@ import (
 func TestCaptainIntegrationEnsureMissingPiFailsClosed(t *testing.T) {
 	home := t.TempDir()
 	bin := t.TempDir()
-	writeExecutable(t, filepath.Join(bin, "munsu"), "#!/bin/sh\nexit 0\n")
+	testutil.WriteFakeExecutable(t, filepath.Join(bin, "munsu"), "#!/bin/sh\nexit 0\n")
 	t.Setenv("PATH", bin)
 
 	err := (captainIntegrationAdapter{}).EnsureCaptain(home, "pi")
@@ -23,11 +23,7 @@ func TestCaptainIntegrationEnsureMissingPiFailsClosed(t *testing.T) {
 
 func TestCaptainIntegrationEnsureWritesOnlyCanonicalPiExtension(t *testing.T) {
 	home := t.TempDir()
-	bin := t.TempDir()
-	writeExecutable(t, filepath.Join(bin, "pi"), "#!/bin/sh\necho 0.79.0\n")
-	writeExecutable(t, filepath.Join(bin, "node"), "#!/bin/sh\necho 'API probe passed'\n")
-	writeExecutable(t, filepath.Join(bin, "munsu"), "#!/bin/sh\nexit 0\n")
-	t.Setenv("PATH", bin+string(filepath.ListSeparator)+os.Getenv("PATH"))
+	fakePiToolchain(t)
 
 	adapter := captainIntegrationAdapter{}
 	if err := adapter.EnsureCaptain(home, "pi"); err != nil {
@@ -55,11 +51,7 @@ func TestCaptainIntegrationEnsureWritesOnlyCanonicalPiExtension(t *testing.T) {
 
 func TestCaptainIntegrationStatusDetectsDigestDrift(t *testing.T) {
 	home := t.TempDir()
-	bin := t.TempDir()
-	writeExecutable(t, filepath.Join(bin, "pi"), "#!/bin/sh\necho 0.79.0\n")
-	writeExecutable(t, filepath.Join(bin, "node"), "#!/bin/sh\necho 'API probe passed'\n")
-	writeExecutable(t, filepath.Join(bin, "munsu"), "#!/bin/sh\nexit 0\n")
-	t.Setenv("PATH", bin+string(filepath.ListSeparator)+os.Getenv("PATH"))
+	fakePiToolchain(t)
 	adapter := captainIntegrationAdapter{}
 	if err := adapter.EnsureCaptain(home, "pi"); err != nil {
 		t.Fatal(err)
@@ -78,9 +70,15 @@ func TestCaptainIntegrationStatusDetectsDigestDrift(t *testing.T) {
 	}
 }
 
-func writeExecutable(t *testing.T, path, content string) {
+// fakePiToolchain puts fake pi, node and munsu executables that pass the Pi
+// capability probe at the front of PATH.
+func fakePiToolchain(t *testing.T) {
 	t.Helper()
-	testutil.WriteFakeExecutable(t, path, content)
+	bin := t.TempDir()
+	testutil.WriteFakeExecutable(t, filepath.Join(bin, "pi"), "#!/bin/sh\necho 0.79.0\n")
+	testutil.WriteFakeExecutable(t, filepath.Join(bin, "node"), "#!/bin/sh\necho 'API probe passed'\n")
+	testutil.WriteFakeExecutable(t, filepath.Join(bin, "munsu"), "#!/bin/sh\nexit 0\n")
+	t.Setenv("PATH", bin+string(filepath.ListSeparator)+os.Getenv("PATH"))
 }
 
 func entryNames(entries []os.DirEntry) []string {

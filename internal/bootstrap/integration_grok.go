@@ -12,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 // grokHooksDir returns the path to .grok/hooks/ for the given scope.
@@ -250,10 +249,9 @@ func GrokHooksHasOwnedHooks(hooksDir, munsuBin string) (bool, string, error) {
 
 // GrokAdapter implements hook generation and installation for the Grok harness.
 type GrokAdapter struct {
-	HomeDir string
-	Cwd     string
-	Scope   string // "user" or "project"
-	DryRun  bool
+	Cwd    string
+	Scope  string // "user" or "project"
+	DryRun bool
 }
 
 // InstallGrokHooks generates and installs all 4 .grok/hooks/*.json files.
@@ -279,24 +277,16 @@ func (a *GrokAdapter) InstallGrokHooks() (targetPaths []string, written bool, co
 		targetPath := filepath.Join(dir, name)
 		allTargets = append(allTargets, targetPath)
 
-		// Check existing file: read-merge if present
-		var existingContent string
-		if existing, statErr := os.Stat(targetPath); statErr == nil && existing.Size() > 0 {
-			data, readErr := os.ReadFile(targetPath)
-			if readErr == nil {
-				existingContent = string(data)
-			}
-		}
-
 		content := GrokHooksContent(munsuBin, name)
-
-		if existingContent != "" {
-			// Read-merge: preserve user-owned hooks, replace munsu's hook entries
-			merged, mergeErr := mergeGrokHookFile(existingContent, content)
-			if mergeErr != nil {
-				return nil, false, "", fmt.Errorf("merge grok hook %s: %w", name, mergeErr)
+		existing, err := readExistingHookFile(targetPath)
+		if err != nil {
+			return nil, false, "", err
+		}
+		if existing != "" {
+			content, err = mergeHookEventArrays(targetPath, existing, content)
+			if err != nil {
+				return nil, false, "", err
 			}
-			content = merged
 		}
 
 		allContents = append(allContents, content)
@@ -317,67 +307,4 @@ func (a *GrokAdapter) InstallGrokHooks() (targetPaths []string, written bool, co
 	combinedDigest = hex.EncodeToString(sum[:])
 
 	return allTargets, anyWritten, combinedDigest, nil
-}
-
-// mergeGrokHookFile merges munsu's generated hook entries into an existing file,
-// preserving user-owned hooks that differ from munsu's entries.
-func mergeGrokHookFile(existing, generated string) (string, error) {
-	var existingJSON map[string]interface{}
-	if err := json.Unmarshal([]byte(existing), &existingJSON); err != nil {
-		// If existing content is not valid JSON, overwrite with backup
-		return generated, nil
-	}
-
-	var generatedJSON map[string]interface{}
-	if err := json.Unmarshal([]byte(generated), &generatedJSON); err != nil {
-		return "", fmt.Errorf("generated hook is invalid JSON: %w", err)
-	}
-
-	// Get munsu's hooks map
-	genHooks, _ := generatedJSON["hooks"].(map[string]interface{})
-
-	// Ensure hooks section exists in the merge target
-	existingHooks, hasExistingHooks := existingJSON["hooks"].(map[string]interface{})
-	if !hasExistingHooks || existingHooks == nil {
-		existingJSON["hooks"] = genHooks
-		return marshalJSON(existingJSON)
-	}
-
-	// For each hook event type, merge the arrays
-	for eventKey, genHookList := range genHooks {
-		genList, ok := genHookList.([]interface{})
-		if !ok {
-			continue
-		}
-
-		existingList, hasExisting := existingHooks[eventKey].([]interface{})
-		if !hasExisting || existingList == nil {
-			existingHooks[eventKey] = genList
-			continue
-		}
-
-		// Prepend munsu's hook entries to the existing list
-		merged := append(genList, existingList...)
-		existingHooks[eventKey] = merged
-	}
-
-	return marshalJSON(existingJSON)
-}
-
-// generateGrokManifest creates the integration manifest for the Grok adapter.
-func generateGrokManifest(harnessName string, scope string, caps []Capability, combinedDigest string, targetPaths []string) Manifest {
-	capStrs := make([]string, len(caps))
-	for i, c := range caps {
-		capStrs[i] = string(c)
-	}
-	return Manifest{
-		SchemaVersion: "munsu.integrate/v1",
-		Harness:       harnessName,
-		Version:       "1.0.0",
-		Scope:         scope,
-		InstalledAt:   time.Now().UTC().Format(time.RFC3339),
-		TargetPaths:   targetPaths,
-		Capabilities:  capStrs,
-		ContentDigest: combinedDigest,
-	}
 }

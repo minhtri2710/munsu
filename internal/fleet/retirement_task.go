@@ -4,6 +4,7 @@ package fleet
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -170,6 +171,26 @@ func AbortRetirementCleanup(authority *taskauthority.Canonical, homeDir string, 
 	return abortRetirementCleanup(authority, homeDir, backend, taskID, claimGen)
 }
 
+// clearSessionMeta removes the backend session projection (window, backend
+// and the backend's herdr_* extras) from a task's .meta once its endpoint is
+// proven absent, keeping every other key. A reopened generation then does not
+// read the dead session as a live one.
+func clearSessionMeta(homeDir, taskID string) error {
+	return home.UpdateMeta(homeDir, taskID, func(meta map[string]string) error {
+		removed := false
+		for k := range meta {
+			if k == "window" || k == "backend" || strings.HasPrefix(k, "herdr_") {
+				delete(meta, k)
+				removed = true
+			}
+		}
+		if !removed {
+			return home.ErrMetaUnchanged
+		}
+		return nil
+	})
+}
+
 func abortRetirementCleanup(authority *taskauthority.Canonical, homeDir string, backend BoundTeardown, taskID domain.TaskID, claimGen taskauthority.Generation) error {
 	cur, err := authority.Get(taskID)
 	if err != nil {
@@ -204,6 +225,12 @@ func abortRetirementCleanup(authority *taskauthority.Canonical, homeDir string, 
 	work := func() error {
 		if _, err := refreshDataDir(homeDir, taskID.Value()); err != nil {
 			return fmt.Errorf("refreshing data directory before aborting cleanup for %s generation %s: %w", taskID, claimGen, err)
+		}
+		if endpointProof == nil {
+			return nil
+		}
+		if err := clearSessionMeta(homeDir, taskID.Value()); err != nil {
+			return fmt.Errorf("clearing session keys from task meta before aborting cleanup for %s generation %s: %w", taskID, claimGen, err)
 		}
 		return nil
 	}
@@ -763,9 +790,9 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 				if _, err := revalidateRetirementCleanup(authority, taskID, ev, claimGen, evidence.current); err != nil {
 					return cleanupPending(fmt.Errorf("teardown %s: dispose fence: %w", opts.ID, err))
 				}
-				request := DisposeRequest{Backend: ep.Backend, Handle: ep.Handle, SessionOwner: ep.SessionOwner, WorkspaceID: ep.WorkspaceID, TabID: ep.TabID, Home: opts.HomeDir, TaskID: opts.ID}
-				if request.WorkspaceID != "" && len(otherWorkspaceRefs(opts.HomeDir, opts.ID, request.WorkspaceID)) > 0 {
-					request.DenyWorkspaceClose = true
+				request, err := withWorkspaceCloseGuard(opts.HomeDir, opts.ID, DisposeRequest{Backend: ep.Backend, Handle: ep.Handle, SessionOwner: ep.SessionOwner, WorkspaceID: ep.WorkspaceID, TabID: ep.TabID, Home: opts.HomeDir, TaskID: opts.ID})
+				if err != nil {
+					return cleanupPending(fmt.Errorf("teardown %s: reading workspace references: %w", opts.ID, err))
 				}
 				if err := backend.Dispose(opts.HomeDir, meta, request); err != nil {
 					return cleanupPending(fmt.Errorf("teardown %s: disposing bound endpoint: %w", opts.ID, err))
@@ -829,9 +856,9 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 				if _, err := revalidateRetirementCleanup(authority, taskID, ev, claimGen, evidence.current); err != nil {
 					return cleanupPending(fmt.Errorf("teardown %s: acquired endpoint dispose fence: %w", opts.ID, err))
 				}
-				request := DisposeRequest{Backend: ae.Backend, Handle: ae.Handle, SessionOwner: ae.SessionOwner, WorkspaceID: ae.WorkspaceID, TabID: ae.TabID, Home: opts.HomeDir, TaskID: opts.ID}
-				if request.WorkspaceID != "" && len(otherWorkspaceRefs(opts.HomeDir, opts.ID, request.WorkspaceID)) > 0 {
-					request.DenyWorkspaceClose = true
+				request, err := withWorkspaceCloseGuard(opts.HomeDir, opts.ID, DisposeRequest{Backend: ae.Backend, Handle: ae.Handle, SessionOwner: ae.SessionOwner, WorkspaceID: ae.WorkspaceID, TabID: ae.TabID, Home: opts.HomeDir, TaskID: opts.ID})
+				if err != nil {
+					return cleanupPending(fmt.Errorf("teardown %s: reading workspace references: %w", opts.ID, err))
 				}
 				if err := backend.Dispose(opts.HomeDir, meta, request); err != nil {
 					return cleanupPending(fmt.Errorf("teardown %s: disposing acquired endpoint: %w", opts.ID, err))
@@ -1450,14 +1477,36 @@ func parsePorcelainFilename(line string) string {
 	return rest
 }
 
+// withWorkspaceCloseGuard marks a dispose request as unsafe for workspace close
+// when another task references the same shared workspace. A read error is
+// returned because the workspace ownership decision is unknowable.
+func withWorkspaceCloseGuard(homeDir, excludeID string, request DisposeRequest) (DisposeRequest, error) {
+	if request.WorkspaceID == "" {
+		return request, nil
+	}
+	refs, err := otherWorkspaceRefs(homeDir, excludeID, request.WorkspaceID)
+	if err != nil {
+		return DisposeRequest{}, err
+	}
+	if len(refs) > 0 {
+		request.DenyWorkspaceClose = true
+	}
+	return request, nil
+}
+
 // otherWorkspaceRefs scans all task meta files in homeDir for references to the given
 // workspace ID, excluding the task with the given ID. Returns a list of task IDs that
 // still reference the workspace. This prevents closing a workspace that another task is using.
-func otherWorkspaceRefs(homeDir, excludeID, workspaceID string) []string {
+// A missing state directory or a meta file that vanishes after enumeration means
+// there are no references from that absent record; every other read error fails closed.
+func otherWorkspaceRefs(homeDir, excludeID, workspaceID string) ([]string, error) {
 	stateDir := filepath.Join(homeDir, "state")
 	entries, err := os.ReadDir(stateDir)
 	if err != nil {
-		return nil
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
 	}
 
 	var refs []string
@@ -1475,11 +1524,14 @@ func otherWorkspaceRefs(homeDir, excludeID, workspaceID string) []string {
 
 		data, err := os.ReadFile(filepath.Join(stateDir, entry.Name()))
 		if err != nil {
-			continue
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			return nil, err
 		}
 		if strings.Contains(string(data), "herdr_workspace_id="+workspaceID) {
 			refs = append(refs, taskID)
 		}
 	}
-	return refs
+	return refs, nil
 }

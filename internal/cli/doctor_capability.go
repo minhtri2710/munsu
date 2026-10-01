@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os/exec"
+	"runtime/debug"
 
 	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/fleet"
@@ -186,16 +187,9 @@ func collectWatcherDiagnostic(home, version string) *WatcherDiagnostic {
 	d.Identity = id
 	d.Running = orchestrator.ValidatePIDOwnership(home, id.PID)
 
-	// Compare via CommitSHA first; fall back to display-version comparison
-	// for backward compatibility with watcher identity files that predate
-	// the CommitSHA field.
-	// Use orchestrator.CommitSHA (the linker-injected value) rather than the
-	// CLI-local CommitSHA, because ldflags set orchestrator.CommitSHA directly.
-	if id.CommitSHA != "" && orchestrator.CommitSHA != "" {
-		d.VersionMatched = orchestrator.NewBuildIdentity(id.CommitSHA).Matches(orchestrator.NewBuildIdentity(orchestrator.CommitSHA))
-	} else if version != "" && id.BuildVersion != "" {
-		d.VersionMatched = id.BuildVersion == version
-	}
+	// Fails closed: an unknown commit on either side is a mismatch.
+	info, _ := debug.ReadBuildInfo()
+	d.VersionMatched = orchestrator.NewBuildIdentity(id.CommitSHA).Matches(orchestrator.NewBuildIdentity(orchestrator.BuildCommit(info)))
 	return d
 }
 

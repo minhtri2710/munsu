@@ -1,13 +1,9 @@
 package fleet
 
 import (
-	"crypto/rand"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"slices"
-	"time"
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
@@ -27,13 +23,10 @@ import (
 // Fleet-owned delivery journals of one home.
 const deliveryJournalDirName = ".delivery-journal"
 
-// deliveryIndexKey is the bounded delivery journal index document key under
-// the home state root. It lists the ACTIVE journal IDs of one home;
-// recovery discovers journals only through this index.
-const deliveryIndexKey = deliveryJournalDirName + "/index.json"
-
-// deliveryIndexVersion is the schema version of the delivery journal index.
-const deliveryIndexVersion = 1
+// deliveryJournals is the bounded active index and record store of the
+// delivery journals of one home; recovery discovers journals only through
+// its index.
+var deliveryJournals = journalStore{dir: deliveryJournalDirName, noun: "delivery"}
 
 // Journal phases of one delivery record. Phase is Fleet-owned meaning: a
 // record is resumable only while "prepared"; the terminal "completed" record
@@ -72,23 +65,14 @@ const (
 // held.
 const deliveryLockScope = "delivery"
 
-// deliveryJournalIndex is the bounded Fleet-owned index of ACTIVE delivery
-// journals of one home. Only IDs in Active are ever discovered during
-// recovery, so completed deliveries cost nothing to skip; each completed
-// delivery leaves a terminal journal record that is never scanned.
-type deliveryJournalIndex struct {
-	Version      int      `json:"version"`
-	HomeRevision uint64   `json:"home_revision"`
-	Active       []string `json:"active"`
-}
-
 // deliveryJournal is the durable Fleet-owned intent of one delivery
 // execution. It pins every typed request field needed to resume the delivery
-// with the SAME Operation IDs: the task generation/revision precondition, the
+// with the SAME Operation IDs: the authorization's generation/revision
+// precondition (later operations fence the task's current revision), the
 // operation kind, the exact typed delivery identity/head, the provider merge
 // method, the asserted closed-set preconditions, the deterministic
-// authorization/revoke/outcome Operation identities, the exact request
-// digests, the provider action, and the durable resume stage. The outcome
+// authorization/revoke/outcome Operation identities, the authorization
+// request digest, the provider action, and the durable resume stage. The outcome
 // fields are pinned at the outcome stage so recovery replays the exact
 // committed intent instead of re-deriving a conflicting one.
 type deliveryJournal struct {
@@ -110,29 +94,12 @@ type deliveryJournal struct {
 	RevokeOpID    string `json:"revoke_op_id"`
 	OutcomeOpID   string `json:"outcome_op_id"`
 
-	AuthorizeDigest        string `json:"authorize_digest,omitempty"`
-	RevokeDigest           string `json:"revoke_digest,omitempty"`
-	RevokeFailClosedDigest string `json:"revoke_fail_closed_digest,omitempty"`
-	OutcomeDigest          string `json:"outcome_digest,omitempty"`
+	AuthorizeDigest string `json:"authorize_digest,omitempty"`
 
 	OutcomeStatus    taskauthority.DeliveryOutcomeStatus `json:"outcome_status,omitempty"`
 	OutcomeDetail    string                              `json:"outcome_detail,omitempty"`
 	OutcomeHeadSHA   string                              `json:"outcome_head_sha,omitempty"`
 	OutcomeMergedSHA string                              `json:"outcome_merged_sha,omitempty"`
-}
-
-// deliveryJournalKey returns the contained logical key of one delivery
-// journal record under the home state root.
-func deliveryJournalKey(id string) string {
-	return deliveryJournalDirName + "/" + id + ".json"
-}
-
-// deliveryTxnID derives the deterministic Home transaction identity of one
-// journal transition. Transitions are distinct (create, authorized,
-// mutating, outcome, complete, abort), so a txnID is never reused for
-// changed journal bytes and replay of the same transition is deterministic.
-func deliveryTxnID(journalID, transition string) string {
-	return "delivery-" + journalID + "-" + transition
 }
 
 // deliveryAuthorizeOpID / deliveryRevokeOpID / deliveryOutcomeOpID derive the
@@ -149,107 +116,19 @@ func deliveryOutcomeOpID(journalID, taskID string) string {
 	return "delivery-" + journalID + "-" + taskID + "-outcome"
 }
 
-// mustDeliveryOperation builds a validated Operation from a typed Operation
-// ID and intent, deriving the digest from the typed intent.
-func mustDeliveryOperation(id string, intent domain.Intent) domain.Operation {
-	opID, err := domain.NewOperationID(id)
-	if err != nil {
-		panic(fmt.Sprintf("delivery: invalid operation id %q: %v", id, err))
-	}
-	op, err := domain.NewOperation(opID, intent)
-	if err != nil {
-		panic(fmt.Sprintf("delivery: invalid operation for %q: %v", id, err))
-	}
-	return op
-}
+func (j *deliveryJournal) journalHead() (int, string) { return j.Version, j.ID }
 
-// deliveryJournalItems encodes the index document and one journal record as
-// the change-set of one Home.Commit transition. The index membership, the
-// home revision, and the journal intent always persist atomically.
-func deliveryJournalItems(idx deliveryJournalIndex, journal *deliveryJournal) ([]home.ChangeItem, error) {
-	idxData, err := json.Marshal(idx)
-	if err != nil {
-		return nil, err
-	}
-	journalData, err := json.MarshalIndent(journal, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-	return []home.ChangeItem{
-		{Root: home.RootState, Key: deliveryIndexKey, Data: append(idxData, '\n')},
-		{Root: home.RootState, Key: deliveryJournalKey(journal.ID), Data: append(journalData, '\n')},
-	}, nil
-}
-
-// readDeliveryIndex reads and validates the bounded delivery journal index
-// through Home.Read. An absent index means no pending deliveries; a malformed
-// index (bad JSON, wrong version, duplicate or empty active IDs) fails
-// closed.
-func readDeliveryIndex(h *home.Home) (deliveryJournalIndex, error) {
-	data, err := h.Read(home.RootState, deliveryIndexKey)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return deliveryJournalIndex{}, nil
-		}
-		return deliveryJournalIndex{}, fmt.Errorf("reading delivery journal index: %w", err)
-	}
-	var idx deliveryJournalIndex
-	if err := json.Unmarshal(data, &idx); err != nil {
-		return deliveryJournalIndex{}, fmt.Errorf("corrupt delivery journal index: %w", err)
-	}
-	if idx.Version != deliveryIndexVersion {
-		return deliveryJournalIndex{}, fmt.Errorf("unsupported delivery journal index version %d", idx.Version)
-	}
-	seen := make(map[string]bool, len(idx.Active))
-	for _, id := range idx.Active {
-		if id == "" || seen[id] {
-			return deliveryJournalIndex{}, fmt.Errorf("invalid delivery journal index: duplicate or empty active id %q", id)
-		}
-		seen[id] = true
-	}
-	return idx, nil
-}
-
-// readDeliveryJournal reads one delivery journal record through Home.Read.
+// readDeliveryJournal reads one delivery journal record through Home.Read
+// and refuses a phase it does not know.
 func readDeliveryJournal(h *home.Home, id string) (*deliveryJournal, error) {
-	data, err := h.Read(home.RootState, deliveryJournalKey(id))
+	journal, err := readJournalRecord[deliveryJournal](h, deliveryJournals, id)
 	if err != nil {
 		return nil, err
-	}
-	var journal deliveryJournal
-	if err := json.Unmarshal(data, &journal); err != nil {
-		return nil, fmt.Errorf("corrupt delivery journal %s: %w", id, err)
-	}
-	if journal.Version != 1 || journal.ID != id {
-		return nil, fmt.Errorf("invalid delivery journal %s", id)
 	}
 	if journal.Phase != deliveryPhasePrepared && journal.Phase != deliveryPhaseCompleted {
 		return nil, fmt.Errorf("delivery journal %s has unknown phase %q", id, journal.Phase)
 	}
-	return &journal, nil
-}
-
-// writeDeliveryJournal durably records the intent of one new delivery before
-// its first side effect: the index gains the journal ID and the journal
-// record is written (phase prepared, stage authorize) in ONE atomic
-// Home.Commit under the held fenced delivery lock.
-func writeDeliveryJournal(h *home.Home, lk *home.Lock, journal *deliveryJournal) error {
-	idx, err := readDeliveryIndex(h)
-	if err != nil {
-		return err
-	}
-	next := idx
-	next.Version = deliveryIndexVersion
-	next.HomeRevision++
-	next.Active = append(next.Active, journal.ID)
-	items, err := deliveryJournalItems(next, journal)
-	if err != nil {
-		return err
-	}
-	if _, err := h.Commit(lk, deliveryTxnID(journal.ID, "create"), idx.HomeRevision, items); err != nil {
-		return fmt.Errorf("writing delivery journal %s: %w", journal.ID, err)
-	}
-	return nil
+	return journal, nil
 }
 
 // transitionDeliveryJournal durably rewrites one active journal record with
@@ -258,7 +137,7 @@ func writeDeliveryJournal(h *home.Home, lk *home.Lock, journal *deliveryJournal)
 // accurate. The journal must still be listed as active; a terminal record is
 // never transitioned.
 func transitionDeliveryJournal(h *home.Home, lk *home.Lock, journal *deliveryJournal, transition string, mutate func(*deliveryJournal)) error {
-	idx, err := readDeliveryIndex(h)
+	idx, err := deliveryJournals.readIndex(h)
 	if err != nil {
 		return err
 	}
@@ -268,15 +147,8 @@ func transitionDeliveryJournal(h *home.Home, lk *home.Lock, journal *deliveryJou
 	if journal.Phase != deliveryPhasePrepared {
 		return fmt.Errorf("delivery journal %s is terminal (%q); cannot transition", journal.ID, journal.Phase)
 	}
-	next := idx
-	next.Version = deliveryIndexVersion
-	next.HomeRevision++
 	mutate(journal)
-	items, err := deliveryJournalItems(next, journal)
-	if err != nil {
-		return err
-	}
-	if _, err := h.Commit(lk, deliveryTxnID(journal.ID, transition), idx.HomeRevision, items); err != nil {
+	if err := deliveryJournals.commit(h, lk, idx, idx.Active, journal, transition); err != nil {
 		return fmt.Errorf("transitioning delivery journal %s (%s): %w", journal.ID, transition, err)
 	}
 	return nil
@@ -288,36 +160,10 @@ func transitionDeliveryJournal(h *home.Home, lk *home.Lock, journal *deliveryJou
 // atomic Home.Commit. The terminal record is retained as durable truth; no
 // file is deleted and a completed record is never resumed.
 func completeDeliveryJournal(h *home.Home, lk *home.Lock, journal *deliveryJournal, terminalStage string) error {
-	idx, err := readDeliveryIndex(h)
-	if err != nil {
-		return err
-	}
-	found := false
-	active := make([]string, 0, len(idx.Active))
-	for _, id := range idx.Active {
-		if id == journal.ID {
-			found = true
-			continue
-		}
-		active = append(active, id)
-	}
-	if !found {
-		return fmt.Errorf("completing delivery journal %s: not active", journal.ID)
-	}
-	next := idx
-	next.Version = deliveryIndexVersion
-	next.HomeRevision++
-	next.Active = active
-	journal.Phase = deliveryPhaseCompleted
-	journal.Stage = terminalStage
-	items, err := deliveryJournalItems(next, journal)
-	if err != nil {
-		return err
-	}
-	if _, err := h.Commit(lk, deliveryTxnID(journal.ID, "complete"), idx.HomeRevision, items); err != nil {
-		return fmt.Errorf("completing delivery journal %s: %w", journal.ID, err)
-	}
-	return nil
+	return deliveryJournals.complete(h, lk, journal, func() {
+		journal.Phase = deliveryPhaseCompleted
+		journal.Stage = terminalStage
+	})
 }
 
 // abortDeliveryJournal abandons a delivery intent whose authorization was
@@ -332,55 +178,58 @@ func abortDeliveryJournal(h *home.Home, lk *home.Lock, journal *deliveryJournal,
 	return completeDeliveryJournal(h, lk, journal, deliveryStageAborted)
 }
 
-// newDeliveryJournalID mints a collision-safe random journal identity.
-func newDeliveryJournalID() (string, error) {
-	buffer := make([]byte, 16)
-	if _, err := rand.Read(buffer); err != nil {
-		return "", fmt.Errorf("generating delivery journal ID: %w", err)
-	}
-	return fmt.Sprintf("%d-%x", time.Now().UnixNano(), buffer), nil
-}
-
 // recoverPendingDeliveryJournals resumes every ACTIVE delivery journal of
 // one home through the bounded index (Home.Read — never a filesystem scan).
-// A failed resume fails closed and keeps the record active; a completed
-// record's terminal truth is never resumed. The index and each journal are
-// validated fail-closed: a malformed index, a missing or malformed
-// referenced journal, or a terminal record still listed as active is
-// contradictory state and recovery stops.
+// The index and every listed journal are validated before any resume: a
+// malformed index, a missing or malformed referenced journal, or a terminal
+// record still listed as active is contradictory state and recovery stops
+// without resuming anything. A failed resume fails closed and keeps that
+// record active without preventing the other journals from being attempted;
+// every resume failure is returned joined. A completed record's terminal
+// truth is never resumed.
 func recoverPendingDeliveryJournals(h *home.Home, lk *home.Lock) error {
-	idx, err := readDeliveryIndex(h)
+	idx, err := deliveryJournals.readIndex(h)
 	if err != nil {
 		return err
 	}
-	for _, id := range idx.Active {
-		if err := recoverPendingDeliveryJournal(h, lk, id); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// recoverPendingDeliveryJournal resumes one active delivery journal record.
-func recoverPendingDeliveryJournal(h *home.Home, lk *home.Lock, id string) error {
-	journal, err := readDeliveryJournal(h, id)
-	if err != nil {
-		return err
-	}
-	if journal.ID != id || journal.Home != h.Root() {
-		return fmt.Errorf("invalid delivery journal entry %s", id)
-	}
-	if journal.Phase != deliveryPhasePrepared {
-		return fmt.Errorf("delivery journal %s is terminal (%q) but still active", id, journal.Phase)
+	if len(idx.Active) == 0 {
+		return nil
 	}
 	c, err := taskauthority.NewCanonical(h)
 	if err != nil {
-		return fmt.Errorf("delivery journal %s: composing task authority: %w", id, err)
+		return fmt.Errorf("delivery recovery: composing task authority: %w", err)
 	}
-	if _, err := resumeDeliveryJournal(h, lk, c, journal); err != nil {
-		return err
+	journals := make([]*deliveryJournal, 0, len(idx.Active))
+	for _, id := range idx.Active {
+		journal, err := readActiveDeliveryJournal(h, id)
+		if err != nil {
+			return err
+		}
+		journals = append(journals, journal)
 	}
-	return nil
+	var failures []error
+	for _, journal := range journals {
+		if _, err := resumeDeliveryJournal(h, lk, c, journal); err != nil {
+			failures = append(failures, fmt.Errorf("delivery journal %s: %w", journal.ID, err))
+		}
+	}
+	return errors.Join(failures...)
+}
+
+// readActiveDeliveryJournal reads one journal listed as active and fails
+// closed on contradictory state.
+func readActiveDeliveryJournal(h *home.Home, id string) (*deliveryJournal, error) {
+	journal, err := readDeliveryJournal(h, id)
+	if err != nil {
+		return nil, err
+	}
+	if journal.ID != id || journal.Home != h.Root() {
+		return nil, fmt.Errorf("invalid delivery journal entry %s", id)
+	}
+	if journal.Phase != deliveryPhasePrepared {
+		return nil, fmt.Errorf("delivery journal %s is terminal (%q) but still active", id, journal.Phase)
+	}
+	return journal, nil
 }
 
 // RecoverDeliveryJournals resumes every pending Fleet-owned delivery journal

@@ -26,7 +26,7 @@ func writeBeatFile(t *testing.T, homeDir string, ts int64) {
 // writeWakeQueue writes tab-separated wake queue entries.
 func writeWakeQueue(t *testing.T, homeDir string, lines []string) {
 	t.Helper()
-	path := QueuePath(homeDir)
+	path := mhome.WakeQueuePath(homeDir)
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestEvaluateGuard_AgedWakeProducesAgedWakeCondition(t *testing.T) {
 	// Enqueue a material wake with an old timestamp by manipulating the queue file.
 	// Direct EnqueueWake adds current time, so write a TSV line manually.
 	oldEpoch := time.Now().Add(-MaterialWakeAgeThreshold - time.Minute).Unix()
-	queuePath := QueuePath(home)
+	queuePath := mhome.WakeQueuePath(home)
 	os.MkdirAll(filepath.Dir(queuePath), 0755)
 	// Realistic signal-wake payload: the DeliverWake producer emits
 	// "<taskID>: <state>: <msg> [event=N]", so the material marker is embedded
@@ -171,13 +171,13 @@ func TestHasAgedMaterialWake_Threshold(t *testing.T) {
 
 	// Old material wake
 	oldEpoch := time.Now().Add(-MaterialWakeAgeThreshold - time.Minute).Unix()
-	queuePath := QueuePath(home)
+	queuePath := mhome.WakeQueuePath(home)
 	os.MkdirAll(filepath.Dir(queuePath), 0755)
 	line := fmt.Sprintf("%d	%d\tsignal\ttask-old\ttask-old: done: very old [event=1]\n", oldEpoch, 1)
 	os.WriteFile(queuePath, []byte(line), 0644)
 
-	if !HasAgedMaterialWake(home, time.Now()) {
-		t.Fatal("HasAgedMaterialWake should be true for old material wake")
+	if !hasAgedMaterialWake(home, time.Now()) {
+		t.Fatal("hasAgedMaterialWake should be true for old material wake")
 	}
 }
 
@@ -185,22 +185,22 @@ func TestHasAgedMaterialWake_Fresh(t *testing.T) {
 	home := t.TempDir()
 	EnqueueWake(home, "signal", "task-fresh", "task-fresh: done: fresh [event=1]")
 
-	if HasAgedMaterialWake(home, time.Now()) {
-		t.Fatal("HasAgedMaterialWake should be false for fresh wake")
+	if hasAgedMaterialWake(home, time.Now()) {
+		t.Fatal("hasAgedMaterialWake should be false for fresh wake")
 	}
 }
 
 func TestHasAgedMaterialWake_NonMaterialWakes(t *testing.T) {
 	home := t.TempDir()
 	oldEpoch := time.Now().Add(-MaterialWakeAgeThreshold - time.Minute).Unix()
-	queuePath := QueuePath(home)
+	queuePath := mhome.WakeQueuePath(home)
 	os.MkdirAll(filepath.Dir(queuePath), 0755)
 	// Routine wake, not material.
 	line := fmt.Sprintf("%d	%d\tstale\ttask-routine\tworking: in progress\n", oldEpoch, 1)
 	os.WriteFile(queuePath, []byte(line), 0644)
 
-	if HasAgedMaterialWake(home, time.Now()) {
-		t.Fatal("HasAgedMaterialWake should be false for non-material (routine) wake")
+	if hasAgedMaterialWake(home, time.Now()) {
+		t.Fatal("hasAgedMaterialWake should be false for non-material (routine) wake")
 	}
 }
 
@@ -281,8 +281,8 @@ func TestPayloadHasMaterialMarker(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := PayloadHasMaterialMarker(tc.key, tc.payload); got != tc.want {
-				t.Errorf("PayloadHasMaterialMarker(%q, %q) = %v, want %v", tc.key, tc.payload, got, tc.want)
+			if got := payloadHasMaterialMarker(tc.key, tc.payload); got != tc.want {
+				t.Errorf("payloadHasMaterialMarker(%q, %q) = %v, want %v", tc.key, tc.payload, got, tc.want)
 			}
 		})
 	}

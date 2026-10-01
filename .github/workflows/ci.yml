@@ -13,8 +13,8 @@ jobs:
     name: Build and test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.26"
           cache: true
@@ -27,7 +27,7 @@ jobs:
       # single store per block. The profiles are what let that job tell "no test
       # reaches this refusal" from "this refusal is only reached by a lane that
       # is not this one" -- see .github/scripts/uncovered-guards.sh.
-      - run: go test -coverprofile=coverage/default.out ./...
+      - run: go test -count=1 -coverprofile=coverage/default.out ./...
       # GOOS-gated files never compile on a linux runner, so no test lane can
       # reach them -- three _test.go files had never been compiled by CI at
       # all. Cross-target vet is the only cover for the darwin-gated files; the
@@ -47,9 +47,13 @@ jobs:
       # the tag is worth that over an enumerated -run filter that a new test
       # would silently fall outside of.
       - name: e2e-tagged tests
-        run: go test -count=1 -tags e2e -coverprofile=coverage/e2e.out $(.github/scripts/build-tags.sh packages e2e)
+        run: |
+          # shellcheck disable=SC2046 # word splitting is the point: one argument per package
+          go test -count=1 -tags e2e -coverprofile=coverage/e2e.out $(.github/scripts/build-tags.sh packages e2e)
       - name: lifecycle_integration-tagged tests
-        run: go test -count=1 -tags lifecycle_integration -coverprofile=coverage/lifecycle_integration.out $(.github/scripts/build-tags.sh packages lifecycle_integration)
+        run: |
+          # shellcheck disable=SC2046 # word splitting is the point: one argument per package
+          go test -count=1 -tags lifecycle_integration -coverprofile=coverage/lifecycle_integration.out $(.github/scripts/build-tags.sh packages lifecycle_integration)
       # Uploaded even when a step above failed, so a lane that got partway still
       # hands over what it measured. `warn` rather than `error` on an empty
       # upload, because `always()` also fires when `go build` broke and there is
@@ -62,7 +66,7 @@ jobs:
       # the `guards` job red with the lane named, instead of being read as zeros.
       - name: Upload coverage for the guards lane
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-build
           path: coverage/
@@ -73,33 +77,63 @@ jobs:
     name: Windows build and vet
     runs-on: windows-latest
     timeout-minutes: 30
-    # Gate for the two steps promoted out of the windows observation lane
-    # (windows-observation.yml): `go build ./...` and `go vet ./...` were green
-    # on windows before this landed, and this job runs them on pushes to `main`
-    # and pull requests targeting `main`, matching the workflow triggers above.
-    # Making it a required check -- by name, "Windows build
-    # and vet" -- is a branch-protection change owned by a human, and that
-    # change has not been made. The failing windows tests stay in the
-    # observation lane and are not gated here. If anything else is promoted out
-    # of that lane later, promotion has to invert the lane's exit-code capture
-    # -- a failure has to fail this job directly. Do not promote by adding
-    # continue-on-error.
+    # Gate for what has been promoted out of the windows observation lane
+    # (windows-observation.yml): `go build ./...`, `go vet ./...`, and the one
+    # `go test` step below. It runs on pushes to `main` and pull requests
+    # targeting `main`, matching the workflow triggers above. Making it a
+    # required check -- by name, "Windows build and vet" -- is a
+    # branch-protection change owned by a human, and that change has not been
+    # made. Every other windows test stays in the observation lane and is not
+    # gated here. Promotion means a failure fails this job directly, as the
+    # test step does: do not promote by adding continue-on-error.
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.26"
           cache: true
       - run: go build ./...
       - run: go vet ./...
+      # The clone timeout (project_clone_test.go) and the captain seed excludes
+      # (captain_seed_excludes_test.go, captain_seed_worktree_test.go) are
+      # platform code paths: a fake `git.bat` resolved through PATHEXT, a
+      # timeout kill, and git's own path and lock-file handling. Only a windows
+      # run exercises them. The names below are the gate's single source: they
+      # build the anchored -run pattern, and `go test -list` with that same
+      # pattern must return exactly these names before anything runs. A renamed
+      # or deleted test fails here instead of silently matching nothing, and a
+      # new test in those files stays out of the gate until it is added below.
+      # `shell: bash` (Git Bash on windows-latest) rather than the pwsh default
+      # so the guard is the same script that can be exercised on linux/darwin.
+      - name: Windows clone-timeout and seed-excludes tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          want='TestAddCloneTimesOutAndCleansUp
+          TestWriteWorktreeExcludesScopedToCaptainWorktree
+          TestWriteWorktreeExcludesReseedReplacesIntegrationPaths
+          TestWriteWorktreeExcludesRefusesReinterpretedCommonConfig
+          TestWriteWorktreeExcludesFailsClosedWhenWorktreeConfigCannotBeEnabled
+          TestWriteWorktreeExcludesFailsWhenWorktreeConfigCannotBeWritten
+          TestWriteWorktreeExcludesFailsWhenGitDirCannotBeResolved
+          TestWriteWorktreeExcludesFailsWhenExcludesFileCannotBeWritten'
+          want="$(printf '%s\n' "$want" | sed 's/^[[:space:]]*//' | sort)"
+          re="^($(printf '%s\n' "$want" | paste -sd '|' -))\$"
+          got="$(go test -list "$re" ./internal/fleet/ | tr -d '\r' | grep '^Test' | sort || true)"
+          if [ "$got" != "$want" ]; then
+            echo "::error::-run pattern does not select exactly the gated tests (renamed or deleted?)"
+            diff <(printf '%s\n' "$want") <(printf '%s\n' "$got") || true
+            exit 1
+          fi
+          go test -count=1 ./internal/fleet/ -run "$re" -v
 
   race:
     name: Race detector
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.26"
           cache: true
@@ -131,8 +165,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.26"
           cache: true
@@ -148,7 +182,9 @@ jobs:
       # on a live server), and without per-test output a skipped test is
       # indistinguishable from a passing one in the job log.
       - run: mkdir -p coverage
-      - run: go test -v -count=1 -timeout 35m -tags integration -coverprofile=coverage/integration.out $(.github/scripts/build-tags.sh packages integration)
+      - run: |
+          # shellcheck disable=SC2046 # word splitting is the point: one argument per package
+          go test -v -count=1 -timeout 35m -tags integration -coverprofile=coverage/integration.out $(.github/scripts/build-tags.sh packages integration)
       # This is the profile the merge cannot do without. soldier_soldier_test.go
       # is integration-tagged, so `soldier_launch.go:474.23` reads count 0 in the
       # default profile and count 1 here; without this artifact the guards lane
@@ -157,7 +193,7 @@ jobs:
       # `warn` on an empty upload for the reason given on the build lane's copy.
       - name: Upload coverage for the guards lane
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-integration
           path: coverage/
@@ -177,7 +213,7 @@ jobs:
       contents: read
       actions: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # gofmt's output is a function of the toolchain version, so the runner
       # image's preinstalled Go would let that lane drift against the 1.26
       # developers use -- pin it like every other job. The reachability lane
@@ -186,7 +222,7 @@ jobs:
       # `cache: true` since that lane arrived: this job now builds a tool and
       # loads every package, so the module and build caches are read, not just
       # written.
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.26"
           cache: true
@@ -275,6 +311,78 @@ jobs:
             exit 1
           fi
           echo "gofmt: clean"
+      # The scripts under .github/scripts are the gate itself, and no lane read
+      # them: a `${got:-$?}` fallback in citations.sh printed echo's status
+      # rather than the command's in 18 places. The file list is derived from
+      # git, so a new script joins by existing; git's `*` crosses `/`, so
+      # nested directories are covered too. The `run:` blocks of every workflow
+      # are shell too, and actionlint hands each one to the same shellcheck
+      # binary (it also checks the workflow syntax and expressions). Default
+      # severity, no waivers file: an intended construct carries a
+      # `# shellcheck disable=` with its reason at the site.
+      #
+      # ubuntu-latest preinstalls shellcheck from apt (0.9.0 on the 24.04
+      # image), and its version moves with the image. So the release binary is
+      # fetched at a pinned version and checked against the sha256 GitHub
+      # publishes as that asset's digest, for the reason deadcode is pinned
+      # below: a new rule should arrive in a diff someone reads.
+      - name: Shell scripts must be shellcheck-clean
+        run: |
+          set -eu
+          dir="$RUNNER_TEMP/shellcheck"
+          mkdir -p "$dir"
+          curl -sSfL -o "$dir/shellcheck.tar.xz" https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz
+          echo "8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198  $dir/shellcheck.tar.xz" | sha256sum -c -
+          tar -xJf "$dir/shellcheck.tar.xz" -C "$dir" --strip-components=1
+          "$dir/shellcheck" --version
+          scripts="$(git ls-files -- '.github/scripts/*.sh')"
+          if [ -z "$scripts" ]; then
+            echo "::error::no tracked shell script under .github/scripts -- this step is checking nothing" >&2
+            exit 1
+          fi
+          git ls-files -z -- '.github/scripts/*.sh' | xargs -0 "$dir/shellcheck"
+          echo "shellcheck: clean in $(printf '%s\n' "$scripts" | wc -l | tr -d ' ') scripts"
+          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -shellcheck "$dir/shellcheck"
+          echo "actionlint: clean"
+      # staticcheck at the check set chosen in staticcheck.conf, which is
+      # exactly v0.8.1's default. Pinned for the reason deadcode is: its result
+      # decides this job, so a new check has to arrive in a diff. v0.8.1 is
+      # also the floor, since v0.7.0 cannot read Go 1.26 export data.
+      #
+      # It runs once per build configuration a lane compiles, because a hit in
+      # a tagged or GOOS-gated file is invisible to a default-tag run: every
+      # test-lane tag and every goos-vet GOOS in .github/build-tags.manifest,
+      # derived rather than listed, so a new tag joins here as it joins its
+      # lane. The binary is installed for the host first and GOOS is set only
+      # for the analysed code; `GOOS=windows go run` would build a windows
+      # binary and fail to execute it here.
+      #
+      # No allowlist: any hit fails the step.
+      - name: staticcheck must report nothing
+        run: |
+          set -eu
+          GOBIN="$RUNNER_TEMP/staticcheck" go install honnef.co/go/tools/cmd/staticcheck@v0.8.1
+          sc="$RUNNER_TEMP/staticcheck/staticcheck"
+          "$sc" -version
+          tags="$(awk -F '\t' '$2 == "test-lane" { print $1 }' .github/build-tags.manifest)"
+          goos="$(awk -F '\t' '$2 == "goos-vet" { print $1 }' .github/build-tags.manifest)"
+          if [ -z "$tags" ] || [ -z "$goos" ]; then
+            echo "::error::no test-lane tag or goos-vet GOOS derived from .github/build-tags.manifest -- the extraction no longer matches" >&2
+            exit 1
+          fi
+          failed=0
+          echo "--- default tags"
+          "$sc" ./... || failed=1
+          while IFS= read -r tag; do
+            echo "--- -tags $tag"
+            "$sc" -tags "$tag" ./... || failed=1
+          done <<<"$tags"
+          while IFS= read -r os; do
+            echo "--- GOOS=$os"
+            GOOS="$os" "$sc" ./... || failed=1
+          done <<<"$goos"
+          [ "$failed" -eq 0 ] || exit 1
+          echo "staticcheck: clean"
       # Five times now, a guard was written correctly, placed correctly, and
       # called by nothing -- and every lane above stayed green, because deleting
       # a guard does not change the happy path by a single bit. That is
@@ -318,11 +426,11 @@ jobs:
       - name: ADR numbers must be unique
         run: |
           set -eu
-          dupes=$(ls docs/adr | sed -n 's/^\([0-9][0-9][0-9][0-9]\)-.*\.md$/\1/p' | sort | uniq -d)
+          dupes=$(find docs/adr -maxdepth 1 -type f -name '[0-9][0-9][0-9][0-9]-*.md' | sed 's|^docs/adr/||' | cut -c1-4 | sort | uniq -d)
           if [ -n "$dupes" ]; then
             echo "::error::Duplicate ADR numbers under docs/adr/ -- renumber the one that landed second:" >&2
             printf '%s\n' "$dupes" | while IFS= read -r n; do
-              ls docs/adr/"$n"-*.md | while IFS= read -r f; do printf '  %s\n' "$f" >&2; done
+              for f in docs/adr/"$n"-*.md; do printf '  %s\n' "$f" >&2; done
             done
             exit 1
           fi
@@ -438,6 +546,25 @@ jobs:
       # turn this job's gofmt step red instead. Hermetic and ~15s.
       - name: Citation rules must agree with their fixtures
         run: .github/scripts/citations.sh selftest
+      # The script that derives every tagged lane's package list and fails a
+      # tag no lane covers had no fixtures, so deleting one of its rules left
+      # every lane green. One scratch tree per rule, hermetic, ~1s.
+      - name: Build-tag rules must agree with their fixtures
+        run: .github/scripts/build-tags.sh selftest
+      # auto-update-branch.yml runs this script with `actions: write`, and it
+      # approves CI runs. The selftest replays one repository through a fake
+      # `gh` on PATH and pins exactly which runs it approves and which PRs it
+      # updates or refuses. Hermetic: the fake answers every call.
+      - name: Auto-update rules must agree with their fixtures
+        run: .github/scripts/update-auto-merge-prs.sh selftest
+      # Every `uses:` in every workflow must be a full 40-hex commit SHA or a
+      # ./ local action: a tag or branch ref can be moved by the action's owner.
+      # The selftest pins each accepted and refused form; `check` scans the
+      # workflows `git ls-files` finds. Hermetic, <1s.
+      - name: Action pin rules must agree with their fixtures
+        run: .github/scripts/action-pins.sh selftest
+      - name: Workflow actions must be pinned to a commit SHA
+        run: .github/scripts/action-pins.sh check
       # Go tools under .github/scripts are outside the root module graph: the
       # go tool skips dot-directories, and `citations`, `guardsites` and
       # `testnames` are their own modules, so a root `./...` reaches none of
@@ -472,7 +599,7 @@ jobs:
           # discarded and every failing tool reads as a pass.
           while IFS= read -r dir; do
             echo "--- $dir"
-            rm -rf "$build_out"/*
+            rm -rf "${build_out:?}"/*
             # Compile package and test sources without running tests first, so
             # syntax/type/build errors are reported as build failures rather
             # than being misclassified as vet failures or missing tests.
@@ -578,7 +705,7 @@ jobs:
     # fails closed on a missing profile rather than treating it as zeros.
     needs: [build, integration]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Derivation is a go/packages type-check of the whole tree once for each of
       # GOOS linux, darwin and windows (the union that covers every build-gated
       # file for the repository's targeted GOOS; a file gated to an untargeted
@@ -588,12 +715,12 @@ jobs:
       # dependencies; the whole run is roughly one to five seconds depending on
       # the build cache. Same toolchain as every other job so the type-check
       # agrees with the compiler that produced the profiles.
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.26"
           cache: true
       - name: Collect the coverage profiles
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: coverage-*
           merge-multiple: true

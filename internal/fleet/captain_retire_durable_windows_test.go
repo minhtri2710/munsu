@@ -19,7 +19,7 @@ func TestRetireClearsEncodedCaptainParentMeta(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(captainHome, "state"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := SeedProvenance(captainHome, "encoded"); err != nil {
+	if err := home.SeedCaptainProvenance(captainHome, "encoded"); err != nil {
 		t.Fatal(err)
 	}
 	writeCaptainMeta(t, parent, "encoded", captainHome, "window")

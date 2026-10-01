@@ -21,8 +21,10 @@ import (
 // durable home provenance rather than trusting caller strings.
 func setupReceiver(t *testing.T, homeDir, identity string, rank Rank) *Receiver {
 	t.Helper()
-	if err := WriteHomeIdentity(homeDir, identity, rank); err != nil {
-		t.Fatalf("WriteHomeIdentity: %v", err)
+	if rank == RankCaptain {
+		if err := mhome.SeedCaptainProvenance(homeDir, identity); err != nil {
+			t.Fatalf("SeedCaptainProvenance: %v", err)
+		}
 	}
 	recv, err := NewReceiver(homeDir)
 	if err != nil {
@@ -139,8 +141,8 @@ func TestParseNotificationRef_ExtraFieldsIgnored(t *testing.T) {
 
 func TestReadHomeIdentity_CaptainMarker(t *testing.T) {
 	home := t.TempDir()
-	if err := WriteHomeIdentity(home, "captain-test", RankCaptain); err != nil {
-		t.Fatalf("WriteHomeIdentity: %v", err)
+	if err := mhome.SeedCaptainProvenance(home, "captain-test"); err != nil {
+		t.Fatalf("SeedCaptainProvenance: %v", err)
 	}
 	ident, rank, err := ReadHomeIdentity(home)
 	if err != nil {
@@ -937,8 +939,8 @@ func TestReceiver_Ack_DifferentRankTransitions(t *testing.T) {
 				if err := os.MkdirAll(captainHome, 0755); err != nil {
 					t.Fatalf("MkdirAll captain home: %v", err)
 				}
-				if err := mhome.WriteHomeIdentity(captainHome, tt.senderID, RankCaptain); err != nil {
-					t.Fatalf("WriteHomeIdentity: %v", err)
+				if err := mhome.SeedCaptainProvenance(captainHome, tt.senderID); err != nil {
+					t.Fatalf("SeedCaptainProvenance: %v", err)
 				}
 				wireGeneralToCaptain(t, home, tt.senderID, captainHome)
 			}
@@ -1099,36 +1101,9 @@ func TestNotificationRef_JSONRoundTrip(t *testing.T) {
 	}
 }
 
-// --- WriteHomeIdentity ---
-
-func TestWriteHomeIdentity_Captain(t *testing.T) {
+// A home with no captain marker is a general home named by its basename.
+func TestReadHomeIdentity_MarkerlessHomeIsGeneral(t *testing.T) {
 	home := t.TempDir()
-	if err := WriteHomeIdentity(home, "test-captain", RankCaptain); err != nil {
-		t.Fatalf("WriteHomeIdentity: %v", err)
-	}
-	path := filepath.Join(home, captainMarkerName)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("reading marker: %v", err)
-	}
-	content := string(data)
-	if !strings.HasPrefix(content, "munsu-v2\n") {
-		t.Errorf("expected munsu-v2 version prefix, got: %s", content)
-	}
-	if !strings.Contains(content, "\ntest-captain\n") {
-		t.Errorf("expected identity test-captain, got: %s", content)
-	}
-}
-
-func TestWriteHomeIdentity_NonCaptain(t *testing.T) {
-	home := t.TempDir()
-	if err := WriteHomeIdentity(home, "general-main", RankGeneral); err != nil {
-		t.Fatalf("WriteHomeIdentity: %v", err)
-	}
-	path := filepath.Join(home, captainMarkerName)
-	if _, err := os.Stat(path); err == nil {
-		t.Error("non-captain WriteHomeIdentity should not create marker file")
-	}
 	ident, rank, err := ReadHomeIdentity(home)
 	if err != nil {
 		t.Fatalf("ReadHomeIdentity: %v", err)

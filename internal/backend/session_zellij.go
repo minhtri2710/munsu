@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 )
 
@@ -29,58 +28,43 @@ func NewZellijBackend(session string) *ZellijBackend {
 	return &ZellijBackend{Session: session}
 }
 
-// zellijBin returns the path to the zellij binary.
-func zellijBin() (string, error) {
-	path, err := exec.LookPath("zellij")
-	if err != nil {
-		return "", fmt.Errorf("zellij: not found on PATH")
-	}
-	return path, nil
-}
-
 // zellijOutput runs a zellij action and returns stdout.
 func (z *ZellijBackend) zellijOutput(args ...string) (string, error) {
-	bin, err := zellijBin()
+	bin, err := lookBackendBin("zellij")
 	if err != nil {
 		return "", err
 	}
 	fullArgs := append([]string{"--session", z.Session, "action"}, args...)
-	cmd := exec.Command(bin, fullArgs...)
-	out, err := cmd.Output()
+	out, stderr, err := runBackendCommand(bin, fullArgs, "", nil)
 	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("zellij %v: %s", fullArgs, strings.TrimSpace(string(ee.Stderr)))
-		}
-		return "", fmt.Errorf("zellij %v: %w", fullArgs, err)
+		return "", wrapBackendCommandError(fmt.Sprintf("zellij %v", fullArgs), out, stderr, err)
 	}
 	return strings.TrimSpace(string(out)), nil
 }
 
 // zellijNoOutput runs a zellij action and discards stdout, checking only for errors.
 func (z *ZellijBackend) zellijRun(args ...string) error {
-	bin, err := zellijBin()
+	bin, err := lookBackendBin("zellij")
 	if err != nil {
 		return err
 	}
 	fullArgs := append([]string{"--session", z.Session, "action"}, args...)
-	cmd := exec.Command(bin, fullArgs...)
-	out, err := cmd.CombinedOutput()
+	out, stderr, err := runBackendCommand(bin, fullArgs, "", nil)
 	if err != nil {
-		return fmt.Errorf("zellij %v: %s", fullArgs, strings.TrimSpace(string(out)))
+		return wrapBackendCommandError(fmt.Sprintf("zellij %v", fullArgs), out, stderr, err)
 	}
 	return nil
 }
 
 // ensureSession creates the zellij background session if it does not exist.
 func (z *ZellijBackend) ensureSession() error {
-	bin, err := zellijBin()
+	bin, err := lookBackendBin("zellij")
 	if err != nil {
 		return err
 	}
 
 	// Check if session already exists via list-sessions.
-	listCmd := exec.Command(bin, "list-sessions", "--short")
-	listOut, listErr := listCmd.Output()
+	listOut, _, listErr := runBackendCommand(bin, []string{"list-sessions", "--short"}, "", nil)
 	if listErr == nil {
 		for _, s := range strings.Split(string(listOut), "\n") {
 			if strings.TrimSpace(s) == z.Session {
@@ -90,10 +74,9 @@ func (z *ZellijBackend) ensureSession() error {
 	}
 
 	// Create the background session.
-	cmd := exec.Command(bin, "attach", "--create-background", z.Session)
-	out, err := cmd.CombinedOutput()
+	out, stderr, err := runBackendCommand(bin, []string{"attach", "--create-background", z.Session}, "", nil)
 	if err != nil {
-		return fmt.Errorf("zellij attach --create-background %q: %s", z.Session, strings.TrimSpace(string(out)))
+		return wrapBackendCommandError(fmt.Sprintf("zellij attach --create-background %q", z.Session), out, stderr, err)
 	}
 	return nil
 }
@@ -105,13 +88,6 @@ type zellijPaneEntry struct {
 	Title    string `json:"title"`
 	TabID    int    `json:"tab_id"`
 	Exited   bool   `json:"exited"`
-}
-
-// ParseWindow splits a window handle ("session:pane_id") on the first colon.
-// Returns the session name and the pane ID. If no colon is found, returns "" and the full string.
-// Deprecated: use session.ParseWindow instead (defined in backend_herdr.go).
-func (z *ZellijBackend) ParseWindow(handle string) (session, paneID string) {
-	return ParseWindow(handle)
 }
 
 // paneID extracts the pane ID part from a window handle (session:pane or bare pane).
@@ -203,15 +179,14 @@ func (z *ZellijBackend) Capture(windowID string, lines int) (string, error) {
 func (z *ZellijBackend) CheckAlive(windowID string) (bool, error) {
 	pid := z.paneID(windowID)
 
-	bin, err := zellijBin()
+	bin, err := lookBackendBin("zellij")
 	if err != nil {
 		return false, err
 	}
 
-	cmd := exec.Command(bin, "--session", z.Session, "action", "list-panes", "--json")
-	out, err := cmd.Output()
+	out, stderr, err := runBackendCommand(bin, []string{"--session", z.Session, "action", "list-panes", "--json"}, "", nil)
 	if err != nil {
-		return false, fmt.Errorf("zellij: listing panes: %w", err)
+		return false, wrapBackendCommandError("zellij: listing panes", out, stderr, err)
 	}
 
 	var panes []zellijPaneEntry

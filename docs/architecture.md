@@ -230,7 +230,7 @@ handoff mutations all go through `internal/taskauthority`; every remaining
 ### Captain lifecycle (`internal/fleet`)
 
 `internal/fleet/captain_captain.go` owns seed, launch, retire, handoff,
-config-push, update and worktree migration. `captain_recover.go` owns the recovery
+config-push and update. `captain_recover.go` owns the recovery
 transaction. CLI adapters in `internal/cli` compose verified harness, backend and
 integration capabilities into those operations.
 

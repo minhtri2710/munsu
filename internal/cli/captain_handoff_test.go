@@ -74,7 +74,7 @@ func TestTaskShowRecoversPendingTransferAndReadsCanonicalState(t *testing.T) {
 	if _, err := home.Init(captain); err != nil {
 		t.Fatal(err)
 	}
-	if err := fleet.SeedProvenance(captain, "api"); err != nil {
+	if err := home.SeedCaptainProvenance(captain, "api"); err != nil {
 		t.Fatal(err)
 	}
 	if err := config.Set(captain, "parent-home", parent); err != nil {

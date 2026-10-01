@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/domain"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -33,10 +34,6 @@ const retryInterval = 60 * time.Second
 // records -- with that record missing a re-report supersedes nothing and leaves
 // two live envelopes in the receiver's inbox, so the advice above would be false.
 var ErrReportDurable = errors.New("uplink report: durable")
-
-var materialStates = map[string]bool{
-	"done": true, "failed": true, "blocked": true, "needs-decision": true,
-}
 
 type uplinkNotifyKind uint8
 
@@ -112,7 +109,7 @@ func Report(req ReportRequest) (*ReportResult, error) {
 	if req.SenderHome == "" || req.ReceiverHome == "" || req.SenderIdentity == "" || req.ReceiverID == "" || req.TaskID == "" || req.Message == "" {
 		return nil, fmt.Errorf("uplink report: required identity, home, task, or message is empty")
 	}
-	if !materialStates[req.State] {
+	if !domain.IsMaterialVerb(req.State) {
 		return nil, fmt.Errorf("uplink report: state %q is not material", req.State)
 	}
 	if req.Key == "" {
@@ -309,20 +306,7 @@ func writeEvidence(path string, value evidence) error {
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".tmp-")
-	if err != nil {
-		return err
-	}
-	name := tmp.Name()
-	defer os.Remove(name)
-	if _, err = tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err = tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(name, path)
+	return mhome.AtomicWrite(path, data, 0600)
 }
 func markNotificationAttempt(home, messageID string) error {
 	path := notificationAttemptPath(home, messageID)

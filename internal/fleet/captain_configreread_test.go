@@ -473,8 +473,6 @@ func TestConfigRereadEnvelopeID_32CharHex(t *testing.T) {
 	}
 }
 
-// --- Legacy reconciliation ---
-
 // writeFakeCaptainMarker writes a minimal provenance marker for testing.
 func writeFakeCaptainMarker(t *testing.T, captainHome, id string) string {
 	t.Helper()
@@ -492,114 +490,6 @@ func writeFakeCaptainMarker(t *testing.T, captainHome, id string) string {
 		t.Fatal(err)
 	}
 	return canon
-}
-
-// TestReconcileLegacyNudgeMarker verifies migration of old .config-reread-nudge.
-func TestReconcileLegacyNudgeMarker(t *testing.T) {
-	parent := t.TempDir()
-	captainHome := filepath.Join(parent, "captains", "test-captain")
-	writeFakeCaptainMarker(t, captainHome, "test-captain")
-
-	// Write a legacy nudge marker.
-	nudgeDir := filepath.Join(captainHome, "state")
-	os.MkdirAll(nudgeDir, 0755)
-	nudgeContent := "gen=3\ndigest=legacy-nudge-digest-12345\n"
-	if err := os.WriteFile(filepath.Join(nudgeDir, ".config-reread-nudge"), []byte(nudgeContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Reconcile — should migrate to mailbox.
-	if err := ReconcileLegacyConfigReread(parent, captainHome, &captainTestMailboxSender{acknowledged: true}); err != nil {
-		t.Fatal(err)
-	}
-
-	// Nudge marker should be gone.
-	if _, err := os.Stat(filepath.Join(nudgeDir, ".config-reread-nudge")); err == nil {
-		t.Error("legacy nudge marker should be removed after reconciliation")
-	}
-}
-
-// TestReconcileLegacyQuarantine verifies migration of old quarantine artifacts.
-func TestReconcileLegacyQuarantine(t *testing.T) {
-	parent := t.TempDir()
-	captainHome := filepath.Join(parent, "captains", "test-captain")
-	writeFakeCaptainMarker(t, captainHome, "test-captain")
-
-	// Write quarantine artifacts.
-	qDir := filepath.Join(captainHome, "state", ".config-reread-quarantine")
-	os.MkdirAll(qDir, 0755)
-	qContent := "gen=5\ndigest=quarantine-digest-67890\n"
-	if err := os.WriteFile(filepath.Join(qDir, "pending-12345"), []byte(qContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Reconcile.
-	if err := ReconcileLegacyConfigReread(parent, captainHome, &captainTestMailboxSender{acknowledged: true}); err != nil {
-		t.Fatal(err)
-	}
-
-	// Quarantine dir should be gone.
-	if _, err := os.Stat(qDir); err == nil {
-		t.Error("quarantine directory should be removed after reconciliation")
-	}
-}
-
-// TestReconcileLegacyMalformedNudge verifies that a malformed nudge marker
-// fails closed and is NOT removed.
-func TestReconcileLegacyMalformedNudge(t *testing.T) {
-	parent := t.TempDir()
-	captainHome := filepath.Join(parent, "captains", "test-captain")
-	writeFakeCaptainMarker(t, captainHome, "test-captain")
-
-	// Write malformed nudge marker (missing digest).
-	nudgeDir := filepath.Join(captainHome, "state")
-	os.MkdirAll(nudgeDir, 0755)
-	if err := os.WriteFile(filepath.Join(nudgeDir, ".config-reread-nudge"), []byte("bad data\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Reconcile should fail.
-	err := ReconcileLegacyConfigReread(parent, captainHome, &captainTestMailboxSender{acknowledged: true})
-	if err == nil {
-		t.Error("expected error for malformed nudge marker")
-	}
-
-	// Marker should still exist.
-	if _, statErr := os.Stat(filepath.Join(nudgeDir, ".config-reread-nudge")); os.IsNotExist(statErr) {
-		t.Error("malformed nudge marker should NOT be removed on failure")
-	}
-}
-
-// TestReconcileLegacy_SupersededByCurrentGen verifies that if the current
-// generation already covers the legacy, the legacy artifacts are simply
-// removed without materializing a mailbox requirement.
-func TestReconcileLegacy_SupersededByCurrentGen(t *testing.T) {
-	parent := t.TempDir()
-	captainHome := filepath.Join(parent, "captains", "test-captain")
-	writeFakeCaptainMarker(t, captainHome, "test-captain")
-
-	// Write current gen=10.
-	if err := WriteConfigRereadGen(captainHome, 10, "current-digest"); err != nil {
-		t.Fatal(err)
-	}
-
-	// Write legacy nudge with gen=5 (older).
-	nudgeDir := filepath.Join(captainHome, "state")
-	os.MkdirAll(nudgeDir, 0755)
-	nudgeContent := "gen=5\ndigest=older-digest\n"
-	if err := os.WriteFile(filepath.Join(nudgeDir, ".config-reread-nudge"), []byte(nudgeContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Reconcile — should clean up without error since current gen supersedes.
-	if err := ReconcileLegacyConfigReread(parent, captainHome, &captainTestMailboxSender{acknowledged: true}); err != nil {
-		t.Fatal(err)
-	}
-
-	// Nudge marker should be gone.
-	if _, err := os.Stat(filepath.Join(nudgeDir, ".config-reread-nudge")); err == nil {
-		t.Error("superseded legacy nudge marker should be removed")
-	}
 }
 
 func TestRemoveStaleConfigRereadRecordsRetainsTombstonesWhileCollectingPayloads(t *testing.T) {
@@ -774,7 +664,7 @@ func TestCaptainProfileRetirementConfigPushEndToEnd(t *testing.T) {
 	if err := os.MkdirAll(captainHome, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := SeedProvenance(captainHome, "alpha-captain"); err != nil {
+	if err := home.SeedCaptainProvenance(captainHome, "alpha-captain"); err != nil {
 		t.Fatal(err)
 	}
 

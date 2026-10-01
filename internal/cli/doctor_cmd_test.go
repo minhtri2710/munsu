@@ -186,3 +186,39 @@ func TestBuildCommandIndex_ContainsExpected(t *testing.T) {
 		}
 	}
 }
+
+func TestDoctor_CorruptBaseConfigFails(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmp)
+
+	// Stub every checked tool so no missing-tool path decides the exit code.
+	bin := filepath.Join(tmp, "bin")
+	if err := os.MkdirAll(bin, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"git", "tmux", "zellij", "treehouse", "no-mistakes", "gh-axi", "gh"} {
+		testutil.WriteFakeExecutable(t, filepath.Join(bin, name), "#!/bin/sh\nexit 0\n")
+	}
+	t.Setenv("PATH", bin)
+
+	if err := os.MkdirAll(filepath.Join(tmp, "config"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "config", "base.json"), []byte(`{"schemaVersion": "bogus"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	exitCode := 0
+	oldExit := exitWithCode
+	exitWithCode = func(code int) { exitCode = code }
+	defer func() { exitWithCode = oldExit }()
+
+	root := NewRootCommand()
+	root.SetArgs([]string{"doctor"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("doctor: %v", err)
+	}
+	if exitCode == 0 {
+		t.Fatal("doctor exit code = 0 over an invalid base document, want non-zero")
+	}
+}

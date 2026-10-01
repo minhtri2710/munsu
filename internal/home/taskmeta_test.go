@@ -483,37 +483,6 @@ func TestResolveIntegration(t *testing.T) {
 	}
 }
 
-func TestIsValidStatusState(t *testing.T) {
-	valid := []string{"working", "review-ready", "amending", "needs-decision", "blocked", "paused", "resolved", "done", "failed"}
-	for _, s := range valid {
-		if !IsValidStatusState(s) {
-			t.Errorf("%q should be a valid status state", s)
-		}
-	}
-
-	invalid := []string{"", "unknown", "pending", "in-progress", "started"}
-	for _, s := range invalid {
-		if IsValidStatusState(s) {
-			t.Errorf("%q should not be a valid status state", s)
-		}
-	}
-}
-
-func TestValidStatusStates(t *testing.T) {
-	expected := []string{
-		"working", "review-ready", "amending", "needs-decision", "blocked", "paused",
-		"awaiting_approval", "resolved", "done", "failed", "delivered",
-	}
-	if len(ValidStatusStates) != len(expected) {
-		t.Fatalf("ValidStatusStates length = %d, want %d", len(ValidStatusStates), len(expected))
-	}
-	for i, s := range expected {
-		if ValidStatusStates[i] != s {
-			t.Errorf("ValidStatusStates[%d] = %q, want %q", i, ValidStatusStates[i], s)
-		}
-	}
-}
-
 func TestParseStatusKey(t *testing.T) {
 	tests := []struct {
 		line    string
@@ -538,5 +507,28 @@ func TestParseStatusKey(t *testing.T) {
 		if key != tt.key {
 			t.Errorf("ParseStatusKey(%q) key = %q, want %q", tt.line, key, tt.key)
 		}
+	}
+}
+
+// TestListMetaFailsOnUnreadableMeta pins that ListMeta never drops a task it
+// cannot read: an unreadable .meta beside a readable one is an error, not a
+// shorter listing that reads like fewer tasks.
+func TestListMetaFailsOnUnreadableMeta(t *testing.T) {
+	home := t.TempDir()
+	if err := WriteMeta(home, "readable", map[string]string{"kind": "ship"}); err != nil {
+		t.Fatal(err)
+	}
+	p, err := MetaFilePath(home, "unreadable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A line past bufio.Scanner's token limit makes ReadMeta fail on every
+	// platform without depending on file modes.
+	if err := os.WriteFile(p, []byte("kind="+strings.Repeat("x", 1<<17)+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := ListMeta(home)
+	if err == nil || !strings.Contains(err.Error(), "unreadable") {
+		t.Fatalf("ListMeta over an unreadable meta = %v, %v; want an error naming the task", entries, err)
 	}
 }

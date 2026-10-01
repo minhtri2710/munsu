@@ -163,8 +163,8 @@ type Template struct {
 // The adapter registry (Adapters) is the authoritative source; Templates is a
 var Templates = map[string]Template{
 	Claude: {
-		ModelFlag:    "--model",
-		DefaultModel: "claude-sonnet-4-20250515",
+		ModelFlag: "--model",
+		// DefaultModel omitted — let Claude Code use its runtime default
 	},
 	Codex: {
 		ModelFlag:     "--model",

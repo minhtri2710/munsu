@@ -89,17 +89,21 @@ func ProbeHerdrCapability(cliPath string) CapabilityInfo {
 	info.CLIPath = bin
 
 	// Get version string.
-	if ver, err := exec.Command(bin, "--version").Output(); err == nil {
+	if ver, _, err := runBackendCommand(bin, []string{"--version"}, "", nil); err == nil {
 		info.CLIVersion = strings.TrimSpace(string(ver))
 	}
 
 	// Run herdr api schema --json.
 	// This command does not require an active session — it emits the bundled
 	// schema document the server uses.
-	out, err := exec.Command(bin, "api", "schema", "--json").Output()
+	out, stderr, err := runBackendCommand(bin, []string{"api", "schema", "--json"}, "", nil)
 	if err != nil {
 		info.State = HerdrFailed
-		info.Err = fmt.Sprintf("schema probe failed: %v", err)
+		detail := commandOutput(out, stderr)
+		if detail == "" {
+			detail = err.Error()
+		}
+		info.Err = fmt.Sprintf("schema probe failed: %s", detail)
 		return info
 	}
 
@@ -144,6 +148,12 @@ func ProbeHerdrCapability(cliPath string) CapabilityInfo {
 type HerdrCLIError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+}
+
+// herdrErrorEnvelope is the {"error":{"code","message"}} body herdr prints
+// when a CLI call fails.
+type herdrErrorEnvelope struct {
+	Error *HerdrCLIError `json:"error,omitempty"`
 }
 
 // Error implements the error interface.
@@ -207,16 +217,14 @@ found:
 		return nil
 	}
 
-	var envelope struct {
-		Error HerdrCLIError `json:"error"`
-	}
+	var envelope herdrErrorEnvelope
 	if err := json.Unmarshal([]byte(msg[start:end]), &envelope); err != nil {
 		return nil
 	}
-	if envelope.Error.Code == "" {
+	if envelope.Error == nil || envelope.Error.Code == "" {
 		return nil
 	}
-	return &envelope.Error
+	return envelope.Error
 }
 
 // isHerdrProtocolMismatch returns true if the error indicates a protocol_mismatch.

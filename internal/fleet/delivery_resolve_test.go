@@ -3,6 +3,7 @@
 package fleet
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -71,12 +72,24 @@ func TestResolveTaskHome_NotFound(t *testing.T) {
 	os.MkdirAll(filepath.Join(parent, "data"), 0755)
 	os.WriteFile(filepath.Join(parent, "data", "captains.md"), []byte("# Captains\n"), 0644)
 
+	// ReadMeta wraps the open's *os.PathError; errors.Is must still see the
+	// not-exist cause so the clean not-found branch is taken, not the
+	// wrapping one.
+	_, readErr := mhome.ReadMeta(parent, "missing")
+	var pe *os.PathError
+	if !errors.As(readErr, &pe) || pe == readErr || !errors.Is(readErr, os.ErrNotExist) {
+		t.Fatalf("precondition: ReadMeta error = %#v, want a wrapped not-exist *os.PathError", readErr)
+	}
+
 	_, _, err := ResolveTaskHome(parent, "missing")
 	if err == nil {
 		t.Fatal("expected error")
 	}
 	if !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("error = %v", err)
+	}
+	if errors.Is(err, os.ErrNotExist) || strings.Contains(err.Error(), "reading task meta") {
+		t.Fatalf("not-exist took the wrapping branch: %v", err)
 	}
 }
 

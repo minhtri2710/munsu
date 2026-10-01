@@ -75,12 +75,12 @@ func TestReadDeliveryIndex_InvalidActiveIDs(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(h.Root(), "state", deliveryJournalDirName), 0755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(h.Root(), "state", deliveryIndexKey), idxData, 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(h.Root(), "state", deliveryJournals.indexKey()), idxData, 0644); err != nil {
 			t.Fatal(err)
 		}
-		_, err := readDeliveryIndex(h)
+		_, err := deliveryJournals.readIndex(h)
 		if err == nil || !strings.Contains(err.Error(), "duplicate or empty active id") {
-			t.Fatalf("readDeliveryIndex err = %v, want duplicate or empty active id", err)
+			t.Fatalf("deliveryJournals.readIndex err = %v, want duplicate or empty active id", err)
 		}
 	})
 	t.Run("duplicate active id", func(t *testing.T) {
@@ -89,12 +89,12 @@ func TestReadDeliveryIndex_InvalidActiveIDs(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(h.Root(), "state", deliveryJournalDirName), 0755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(h.Root(), "state", deliveryIndexKey), idxData, 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(h.Root(), "state", deliveryJournals.indexKey()), idxData, 0644); err != nil {
 			t.Fatal(err)
 		}
-		_, err := readDeliveryIndex(h)
+		_, err := deliveryJournals.readIndex(h)
 		if err == nil || !strings.Contains(err.Error(), "duplicate or empty active id") {
-			t.Fatalf("readDeliveryIndex err = %v, want duplicate or empty active id", err)
+			t.Fatalf("deliveryJournals.readIndex err = %v, want duplicate or empty active id", err)
 		}
 	})
 }
@@ -105,12 +105,12 @@ func TestReadDeliveryIndex_UnsupportedVersion(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(h.Root(), "state", deliveryJournalDirName), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(h.Root(), "state", deliveryIndexKey), idxData, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(h.Root(), "state", deliveryJournals.indexKey()), idxData, 0644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := readDeliveryIndex(h)
+	_, err := deliveryJournals.readIndex(h)
 	if err == nil || !strings.Contains(err.Error(), "unsupported delivery journal index version") {
-		t.Fatalf("readDeliveryIndex err = %v, want unsupported delivery journal index version", err)
+		t.Fatalf("deliveryJournals.readIndex err = %v, want unsupported delivery journal index version", err)
 	}
 }
 
@@ -120,7 +120,7 @@ func TestReadDeliveryJournal_UnknownPhase(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(h.Root(), "state", deliveryJournalDirName), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(h.Root(), "state", deliveryJournalKey("j1")), jData, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(h.Root(), "state", deliveryJournals.recordKey("j1")), jData, 0644); err != nil {
 		t.Fatal(err)
 	}
 	_, err := readDeliveryJournal(h, "j1")
@@ -136,7 +136,7 @@ func TestReadDeliveryJournal_InvalidVersionOrID(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(h.Root(), "state", deliveryJournalDirName), 0755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(h.Root(), "state", deliveryJournalKey("j1")), jData, 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(h.Root(), "state", deliveryJournals.recordKey("j1")), jData, 0644); err != nil {
 			t.Fatal(err)
 		}
 		_, err := readDeliveryJournal(h, "j1")
@@ -150,7 +150,7 @@ func TestReadDeliveryJournal_InvalidVersionOrID(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(h.Root(), "state", deliveryJournalDirName), 0755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(h.Root(), "state", deliveryJournalKey("j1")), jData, 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(h.Root(), "state", deliveryJournals.recordKey("j1")), jData, 0644); err != nil {
 			t.Fatal(err)
 		}
 		_, err := readDeliveryJournal(h, "j1")
@@ -160,33 +160,23 @@ func TestReadDeliveryJournal_InvalidVersionOrID(t *testing.T) {
 	})
 }
 
-func TestRecoverPendingDeliveryJournal_ProvenanceOrHomeMismatch(t *testing.T) {
+func TestReadActiveDeliveryJournal_ProvenanceOrHomeMismatch(t *testing.T) {
 	h, _ := setupTestHome(t)
-	lk, err := h.Lock(deliveryLockScope)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer lk.Release()
 	jData := []byte(`{"version":1,"id":"j1","phase":"prepared","home":"/other/home"}`)
 	if err := os.MkdirAll(filepath.Join(h.Root(), "state", deliveryJournalDirName), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(h.Root(), "state", deliveryJournalKey("j1")), jData, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(h.Root(), "state", deliveryJournals.recordKey("j1")), jData, 0644); err != nil {
 		t.Fatal(err)
 	}
-	err = recoverPendingDeliveryJournal(h, lk, "j1")
+	_, err := readActiveDeliveryJournal(h, "j1")
 	if err == nil || !strings.Contains(err.Error(), "invalid delivery journal entry") {
-		t.Fatalf("recoverPendingDeliveryJournal err = %v, want invalid delivery journal entry", err)
+		t.Fatalf("readActiveDeliveryJournal err = %v, want invalid delivery journal entry", err)
 	}
 }
 
-func TestRecoverPendingDeliveryJournal_TerminalPhase(t *testing.T) {
+func TestReadActiveDeliveryJournal_TerminalPhase(t *testing.T) {
 	h, _ := setupTestHome(t)
-	lk, err := h.Lock(deliveryLockScope)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer lk.Release()
 	// Marshal the record rather than interpolating h.Root() into a JSON
 	// literal: on windows the path's backslashes would be read back as JSON
 	// escapes ("\U" of C:\Users), and the record would fail to decode before
@@ -203,12 +193,12 @@ func TestRecoverPendingDeliveryJournal_TerminalPhase(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(h.Root(), "state", deliveryJournalDirName), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(h.Root(), "state", deliveryJournalKey("j1")), jData, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(h.Root(), "state", deliveryJournals.recordKey("j1")), jData, 0644); err != nil {
 		t.Fatal(err)
 	}
-	err = recoverPendingDeliveryJournal(h, lk, "j1")
+	_, err = readActiveDeliveryJournal(h, "j1")
 	if err == nil || !strings.Contains(err.Error(), `is terminal ("completed") but still active`) {
-		t.Fatalf("recoverPendingDeliveryJournal err = %v, want is terminal but still active", err)
+		t.Fatalf("readActiveDeliveryJournal err = %v, want is terminal but still active", err)
 	}
 }
 
@@ -242,7 +232,7 @@ func TestTransitionDeliveryJournal_TerminalPhase(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(h.Root(), "state", deliveryJournalDirName), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(h.Root(), "state", deliveryIndexKey), idxData, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(h.Root(), "state", deliveryJournals.indexKey()), idxData, 0644); err != nil {
 		t.Fatal(err)
 	}
 	journal := &deliveryJournal{
@@ -297,9 +287,9 @@ func TestCompleteHandoffJournal_NotActive(t *testing.T) {
 		SourceHome:      h.Root(),
 		DestinationHome: h.Root(),
 	}
-	err = completeHandoffJournal(h, lk, journal)
+	err = handoffJournals.complete(h, lk, journal, func() { journal.Phase = handoffPhaseCompleted })
 	if err == nil || !strings.Contains(err.Error(), "not active") {
-		t.Fatalf("completeHandoffJournal err = %v, want not active", err)
+		t.Fatalf("handoffJournals.complete err = %v, want not active", err)
 	}
 }
 
@@ -338,12 +328,12 @@ func TestReadHandoffIndex_InvalidActiveIDs(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(h.Root(), "state", taskHandoffDirName), 0755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(h.Root(), "state", handoffIndexKey), idxData, 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(h.Root(), "state", handoffJournals.indexKey()), idxData, 0644); err != nil {
 			t.Fatal(err)
 		}
-		_, err := readHandoffIndex(h)
+		_, err := handoffJournals.readIndex(h)
 		if err == nil || !strings.Contains(err.Error(), "duplicate or empty active id") {
-			t.Fatalf("readHandoffIndex err = %v, want duplicate or empty active id", err)
+			t.Fatalf("handoffJournals.readIndex err = %v, want duplicate or empty active id", err)
 		}
 	})
 	t.Run("duplicate active id", func(t *testing.T) {
@@ -352,12 +342,12 @@ func TestReadHandoffIndex_InvalidActiveIDs(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(h.Root(), "state", taskHandoffDirName), 0755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(h.Root(), "state", handoffIndexKey), idxData, 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(h.Root(), "state", handoffJournals.indexKey()), idxData, 0644); err != nil {
 			t.Fatal(err)
 		}
-		_, err := readHandoffIndex(h)
+		_, err := handoffJournals.readIndex(h)
 		if err == nil || !strings.Contains(err.Error(), "duplicate or empty active id") {
-			t.Fatalf("readHandoffIndex err = %v, want duplicate or empty active id", err)
+			t.Fatalf("handoffJournals.readIndex err = %v, want duplicate or empty active id", err)
 		}
 	})
 }
@@ -368,12 +358,12 @@ func TestReadHandoffIndex_UnsupportedVersion(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(h.Root(), "state", taskHandoffDirName), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(h.Root(), "state", handoffIndexKey), idxData, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(h.Root(), "state", handoffJournals.indexKey()), idxData, 0644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := readHandoffIndex(h)
+	_, err := handoffJournals.readIndex(h)
 	if err == nil || !strings.Contains(err.Error(), "unsupported handoff journal index version") {
-		t.Fatalf("readHandoffIndex err = %v, want unsupported handoff journal index version", err)
+		t.Fatalf("handoffJournals.readIndex err = %v, want unsupported handoff journal index version", err)
 	}
 }
 
@@ -384,12 +374,12 @@ func TestReadHandoffJournal_InvalidVersionOrID(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(h.Root(), "state", taskHandoffDirName), 0755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(h.Root(), "state", handoffJournalKey("h1")), jData, 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(h.Root(), "state", handoffJournals.recordKey("h1")), jData, 0644); err != nil {
 			t.Fatal(err)
 		}
-		_, err := readHandoffJournal(h, "h1")
+		_, err := readJournalRecord[taskHandoffJournal](h, handoffJournals, "h1")
 		if err == nil || !strings.Contains(err.Error(), "invalid handoff journal") {
-			t.Fatalf("readHandoffJournal err = %v, want invalid handoff journal", err)
+			t.Fatalf("readJournalRecord err = %v, want invalid handoff journal", err)
 		}
 	})
 	t.Run("id mismatch", func(t *testing.T) {
@@ -398,12 +388,12 @@ func TestReadHandoffJournal_InvalidVersionOrID(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(h.Root(), "state", taskHandoffDirName), 0755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(h.Root(), "state", handoffJournalKey("h1")), jData, 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(h.Root(), "state", handoffJournals.recordKey("h1")), jData, 0644); err != nil {
 			t.Fatal(err)
 		}
-		_, err := readHandoffJournal(h, "h1")
+		_, err := readJournalRecord[taskHandoffJournal](h, handoffJournals, "h1")
 		if err == nil || !strings.Contains(err.Error(), "invalid handoff journal") {
-			t.Fatalf("readHandoffJournal err = %v, want invalid handoff journal", err)
+			t.Fatalf("readJournalRecord err = %v, want invalid handoff journal", err)
 		}
 	})
 }
@@ -419,7 +409,7 @@ func TestRecoverPendingJournal_ProvenanceMismatch(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(h.Root(), "state", taskHandoffDirName), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(h.Root(), "state", handoffJournalKey("h1")), jData, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(h.Root(), "state", handoffJournals.recordKey("h1")), jData, 0644); err != nil {
 		t.Fatal(err)
 	}
 	err = recoverPendingJournal(h, lk, "h1")
@@ -449,7 +439,7 @@ func TestRecoverPendingJournal_TerminalPhase(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(h.Root(), "state", taskHandoffDirName), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(h.Root(), "state", handoffJournalKey("h1")), jData, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(h.Root(), "state", handoffJournals.recordKey("h1")), jData, 0644); err != nil {
 		t.Fatal(err)
 	}
 	err = recoverPendingJournal(h, lk, "h1")

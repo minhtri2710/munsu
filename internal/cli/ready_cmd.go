@@ -5,7 +5,6 @@ import (
 	"os"
 
 	"github.com/minhtri2710/munsu/internal/fleet"
-	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/spf13/cobra"
 )
 
@@ -35,25 +34,16 @@ The --event-id should be unique per turn boundary (e.g., a timestamp or turn cou
 		Args: cobra.NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, _ []string, ctx Ctx) error {
 			taskID := os.Getenv("MUNSU_TASK_ID")
-			homeDir := os.Getenv("MUNSU_HOME")
+			homeDir := ctx.Home
 
-			if homeDir == "" {
-				return operationError("invalid_environment",
-					"Run inside a munsu-managed task (MUNSU_HOME must be set)",
-					"MUNSU_HOME is not set")
-			}
 			if taskID == "" {
 				return operationError("invalid_environment",
 					"Run inside a munsu-managed task (MUNSU_TASK_ID must be set)",
 					"MUNSU_TASK_ID is not set")
 			}
 
-			// Resolve endpoint generation from the authoritative aggregate, with legacy meta fallback.
-			fallbackGeneration := ""
-			if meta, err := home.ReadMeta(homeDir, taskID); err == nil {
-				fallbackGeneration = meta["generation"]
-			}
-			metaGeneration, err := currentTaskGeneration(homeDir, taskID, fallbackGeneration)
+			// Resolve endpoint generation from the authoritative aggregate.
+			metaGeneration, err := currentTaskGeneration(homeDir, taskID)
 			if err != nil {
 				return fmt.Errorf("ready: reading task aggregate: %w", err)
 			}

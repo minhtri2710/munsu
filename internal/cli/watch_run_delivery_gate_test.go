@@ -56,15 +56,16 @@ func watchCycleHome(t *testing.T) string {
 	return homeDir
 }
 
-// runWatchCycle runs one `watch run` and returns its error and its output.
-func runWatchCycle(t *testing.T) (error, string) {
+// runWatchCycle runs one `watch run` and returns its output and its error.
+func runWatchCycle(t *testing.T) (string, error) {
 	t.Helper()
 	root := NewRootCommand()
 	var out strings.Builder
 	root.SetOut(&out)
 	root.SetErr(&out)
 	root.SetArgs([]string{"watch", "run", "--output", "toon"})
-	return root.Execute(), out.String()
+	err := root.Execute()
+	return out.String(), err
 }
 
 // TestWatchRun_ContinuesWhileDeliveryScopeIsHeld pins the cycle against the
@@ -90,7 +91,7 @@ func TestWatchRun_ContinuesWhileDeliveryScopeIsHeld(t *testing.T) {
 	}
 	defer held.Release()
 
-	err, out := runWatchCycle(t)
+	out, err := runWatchCycle(t)
 	if err != nil {
 		t.Fatalf("watch run while the delivery scope is held: %v\n%s", err, out)
 	}
@@ -128,7 +129,7 @@ func TestWatchRun_FailsWhenDeliveryGateFailsForAnyOtherReason(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err, out := runWatchCycle(t)
+	out, err := runWatchCycle(t)
 	if err == nil {
 		t.Fatalf("watch run returned success over a delivery recovery gate that failed:\n%s", out)
 	}

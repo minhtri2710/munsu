@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -106,6 +107,56 @@ func mustAuthorize(t *testing.T, c *Canonical, taskID string, rev uint64, opID s
 
 // mustRevoke revokes the current authorization of the task under the given
 // revocation operation identity and returns the immutable revocation evidence.
+// currentAuthorizationForTest reads the task's current delivery authorization
+// through DeliveryCurrency, the production read of the bounded index pointer.
+func currentAuthorizationForTest(t *testing.T, c *Canonical, taskID string) DeliveryAuthorization {
+	t.Helper()
+	cur, err := c.DeliveryCurrency(mustTaskID(t, taskID))
+	if err != nil {
+		t.Fatalf("DeliveryCurrency(%s): %v", taskID, err)
+	}
+	if cur.Authorization == nil {
+		t.Fatalf("DeliveryCurrency(%s) has no authorization: %+v", taskID, cur)
+	}
+	return *cur.Authorization
+}
+
+// assertNoAuthorizationForTest asserts the task has no delivery authorization:
+// DeliveryCurrency carries a nil Authorization and exactly the
+// no-authorization reason.
+func assertNoAuthorizationForTest(t *testing.T, c *Canonical, taskID string) {
+	t.Helper()
+	cur, err := c.DeliveryCurrency(mustTaskID(t, taskID))
+	if err != nil {
+		t.Fatalf("DeliveryCurrency(%s): %v", taskID, err)
+	}
+	if cur.Authorization != nil || !slices.Equal(cur.Reasons, []DeliveryCurrencyReason{DeliveryCurrencyNoAuthorization}) {
+		t.Fatalf("DeliveryCurrency(%s) = %+v, want nil authorization and %s", taskID, cur, DeliveryCurrencyNoAuthorization)
+	}
+}
+
+// authorizationByOperationForTest reads immutable issuance evidence by its
+// exact operation identity.
+func authorizationByOperationForTest(t *testing.T, c *Canonical, taskID, opID string) DeliveryAuthorization {
+	t.Helper()
+	auth, ok, err := c.readDeliveryAuthorization(taskID, opID)
+	if err != nil || !ok {
+		t.Fatalf("authorization %s for task %s: ok=%v err=%v", opID, taskID, ok, err)
+	}
+	return auth
+}
+
+// revocationByOperationForTest reads immutable revocation evidence by its
+// exact operation identity.
+func revocationByOperationForTest(t *testing.T, c *Canonical, taskID, opID string) DeliveryRevocation {
+	t.Helper()
+	rev, ok, err := c.readDeliveryRevocation(taskID, opID)
+	if err != nil || !ok {
+		t.Fatalf("revocation %s for task %s: ok=%v err=%v", opID, taskID, ok, err)
+	}
+	return rev
+}
+
 func mustRevoke(t *testing.T, c *Canonical, taskID string, rev uint64, authOpID, reason, opID string) DeliveryRevocation {
 	t.Helper()
 	req := CanonicalRevokeDeliveryRequest{
@@ -266,12 +317,9 @@ func TestCanonicalDeliveryAuthorizationIssuancePinsPostIssuanceState(t *testing.
 	}
 
 	// The narrow current read returns the same record.
-	read, err := c.DeliveryAuthorization(mustTaskID(t, "t1"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	read := currentAuthorizationForTest(t, c, "t1")
 	if read.OperationID != auth.OperationID || read.Revision != auth.Revision || read.Identity != auth.Identity {
-		t.Fatalf("DeliveryAuthorization read = %+v, want %+v", read, auth)
+		t.Fatalf("current authorization read = %+v, want %+v", read, auth)
 	}
 }
 
@@ -456,9 +504,7 @@ func TestCanonicalDeliveryAuthorizationFailClosed(t *testing.T) {
 		if agg.Revision != 3 {
 			t.Fatalf("invalid intents advanced revision to %d, want 3", agg.Revision)
 		}
-		if _, err := c.DeliveryAuthorization(mustTaskID(t, "t1")); !errors.Is(err, ErrNotFound) {
-			t.Fatalf("invalid intents created an authorization: %v", err)
-		}
+		assertNoAuthorizationForTest(t, c, "t1")
 	})
 }
 
@@ -729,10 +775,6 @@ func TestIndexedDeliveryQueriesWaitForTaskScopeLock(t *testing.T) {
 		name string
 		call func(*Canonical, domain.TaskID) error
 	}{
-		{name: "authorization", call: func(c *Canonical, id domain.TaskID) error {
-			_, err := c.DeliveryAuthorization(id)
-			return err
-		}},
 		{name: "outcome", call: func(c *Canonical, id domain.TaskID) error {
 			_, err := c.DeliveryOutcome(id)
 			return err
@@ -861,18 +903,12 @@ func TestCanonicalDeliveryRevokeReauthorizePreservesAudit(t *testing.T) {
 
 	// The issuance evidence document was NOT rewritten: it carries no
 	// revocation state and is byte-identical to what issuance committed.
-	auth1Again, err := c.DeliveryAuthorizationByOperation(mustTaskID(t, "t1"), auth1.OperationID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	auth1Again := authorizationByOperationForTest(t, c, "t1", auth1.OperationID)
 	if auth1Again.OperationID != auth1.OperationID || auth1Again.Revision != auth1.Revision {
 		t.Fatalf("issuance evidence mutated: %+v", auth1Again)
 	}
 	// The revocation evidence is directly readable by its operation identity.
-	revAgain, err := c.DeliveryRevocationByOperation(mustTaskID(t, "t1"), "op-revoke-t1")
-	if err != nil {
-		t.Fatal(err)
-	}
+	revAgain := revocationByOperationForTest(t, c, "t1", "op-revoke-t1")
 	if revAgain.AuthorizationOperationID != auth1.OperationID || revAgain.OperationID != "op-revoke-t1" {
 		t.Fatalf("revocation read = %+v", revAgain)
 	}
@@ -894,17 +930,11 @@ func TestCanonicalDeliveryRevokeReauthorizePreservesAudit(t *testing.T) {
 
 	// The current read returns the second authorization; the prior revoked
 	// authorization stays readable by its operation identity.
-	cur, err := c.DeliveryAuthorization(mustTaskID(t, "t1"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	cur := currentAuthorizationForTest(t, c, "t1")
 	if cur.OperationID != auth2.OperationID {
 		t.Fatalf("current authorization = %+v, want %s", cur, auth2.OperationID)
 	}
-	prior, err := c.DeliveryAuthorizationByOperation(mustTaskID(t, "t1"), auth1.OperationID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	prior := authorizationByOperationForTest(t, c, "t1", auth1.OperationID)
 	if prior.OperationID != auth1.OperationID || prior.Identity.Number != 42 {
 		t.Fatalf("prior authorization = %+v", prior)
 	}
@@ -1107,18 +1137,30 @@ func TestCanonicalDeliveryOutcomeLifecycle(t *testing.T) {
 			t.Fatalf("outcome against revoked authorization = %v, want ErrConflict", err)
 		}
 
-		// Re-authorize, then a non-current authorization (an unrelated task
-		// mutation changed the phase) fails the commit prerequisite.
+		// Re-authorize, then a delivery hold matching at commit time fails the
+		// commit prerequisite even though phase drift (the Block) alone would
+		// not.
 		auth2 := mustAuthorize(t, c, "t1", 5, "op-auth-t1-2")
 		block := CanonicalBlockRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, 6), Detail: "d", Reason: "block"}
 		if _, err := c.Block(mustOperation(t, "op-block-currency", block), block); err != nil {
 			t.Fatal(err)
 		}
+		hold := CanonicalAddHoldRequest{
+			HomeID: c.HomeID(), HoldID: "hold-currency", Scope: DispatchHoldScope{TaskIDs: []string{"t1"}},
+			Actions: []DispatchAction{DispatchActionDelivery}, Reason: "freeze",
+		}
+		if _, err := c.AddHold(mustOperation(t, "op-hold-currency", hold), hold); err != nil {
+			t.Fatal(err)
+		}
 		stale := req
 		stale.Precondition = preconditionOf(1, 7)
 		stale.AuthorizationOperationID = auth2.OperationID
-		if _, err := c.CommitDeliveryOutcome(mustOperation(t, "op-outcome-stale-currency", stale), stale); !errors.Is(err, ErrPrecondition) {
-			t.Fatalf("outcome with non-current authorization = %v, want ErrPrecondition", err)
+		if _, err := c.CommitDeliveryOutcome(mustOperation(t, "op-outcome-stale-currency", stale), stale); !errors.Is(err, ErrPrecondition) || !strings.Contains(err.Error(), string(DeliveryCurrencyMatchingHold)) {
+			t.Fatalf("outcome under a matching hold = %v, want ErrPrecondition matching-hold", err)
+		}
+		release := CanonicalReleaseHoldRequest{HomeID: c.HomeID(), HoldID: "hold-currency", Reason: "thaw"}
+		if _, err := c.ReleaseHold(mustOperation(t, "op-release-currency", release), release); err != nil {
+			t.Fatal(err)
 		}
 
 		// Stale task precondition fails closed as a typed conflict.
@@ -1251,10 +1293,7 @@ func TestCanonicalDeliveryIndexStaysBounded(t *testing.T) {
 	// Every prior authorization/outcome/revocation remains readable by its
 	// exact operation identity.
 	for i := 0; i < cycles; i++ {
-		auth, err := c.DeliveryAuthorizationByOperation(mustTaskID(t, "t1"), fmt.Sprintf("op-auth-%d", i))
-		if err != nil {
-			t.Fatalf("prior authorization %d lost: %v", i, err)
-		}
+		auth := authorizationByOperationForTest(t, c, "t1", fmt.Sprintf("op-auth-%d", i))
 		if uint64(auth.Revision) != uint64(4+i*3) {
 			t.Fatalf("prior authorization %d revision = %d, want %d", i, auth.Revision, 4+i*3)
 		}
@@ -1265,20 +1304,14 @@ func TestCanonicalDeliveryIndexStaysBounded(t *testing.T) {
 		if out.Status != DeliveryOutcomeRetryable || out.AuthorizationOperationID != fmt.Sprintf("op-auth-%d", i) {
 			t.Fatalf("prior outcome %d = %+v", i, out)
 		}
-		revocation, err := c.DeliveryRevocationByOperation(mustTaskID(t, "t1"), fmt.Sprintf("op-revoke-%d", i))
-		if err != nil {
-			t.Fatalf("prior revocation %d lost: %v", i, err)
-		}
+		revocation := revocationByOperationForTest(t, c, "t1", fmt.Sprintf("op-revoke-%d", i))
 		if revocation.AuthorizationOperationID != fmt.Sprintf("op-auth-%d", i) {
 			t.Fatalf("prior revocation %d = %+v", i, revocation)
 		}
 	}
 
 	// The current read follows the bounded pointer to the last authorization.
-	cur, err := c.DeliveryAuthorization(mustTaskID(t, "t1"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	cur := currentAuthorizationForTest(t, c, "t1")
 	if cur.OperationID != fmt.Sprintf("op-auth-%d", cycles-1) {
 		t.Fatalf("current authorization = %+v", cur)
 	}
@@ -1305,20 +1338,14 @@ func TestCanonicalDeliveryOperationKeyCollisionAndPathSafety(t *testing.T) {
 	// documents; each resolves its own.
 	auth1 := mustAuthorize(t, c, "t1", 3, "op-auth-t1")
 	auth2 := mustAuthorize(t, c, "t2", 3, "op-auth-t2")
-	a1, err := c.DeliveryAuthorizationByOperation(mustTaskID(t, "t1"), "op-auth-t1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	a2, err := c.DeliveryAuthorizationByOperation(mustTaskID(t, "t2"), "op-auth-t2")
-	if err != nil {
-		t.Fatal(err)
-	}
+	a1 := authorizationByOperationForTest(t, c, "t1", "op-auth-t1")
+	a2 := authorizationByOperationForTest(t, c, "t2", "op-auth-t2")
 	if a1.TaskID != "t1" || a2.TaskID != "t2" || a1.OperationID != auth1.OperationID || a2.OperationID != auth2.OperationID {
 		t.Fatalf("key collision: a1=%+v a2=%+v", a1, a2)
 	}
 	// A document under one task's key is never resolved for the other task.
-	if _, err := c.DeliveryAuthorizationByOperation(mustTaskID(t, "t2"), "op-auth-t1"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("cross-task authorization resolution = %v, want ErrNotFound", err)
+	if _, ok, err := c.readDeliveryAuthorization("t2", "op-auth-t1"); ok || err != nil {
+		t.Fatalf("cross-task authorization resolution: ok=%v err=%v, want absent", ok, err)
 	}
 
 	// Reusing an operation identity for a different task intent conflicts at
@@ -1367,10 +1394,7 @@ func TestCanonicalDeliveryGenerationReopenDoesNotMakeOldAuthorizationCurrent(t *
 	}
 
 	// The old authorization evidence remains readable by its operation.
-	prior, err := c.DeliveryAuthorizationByOperation(mustTaskID(t, "t1"), auth.OperationID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	prior := authorizationByOperationForTest(t, c, "t1", auth.OperationID)
 	if prior.Generation != 1 || prior.OperationID != auth.OperationID {
 		t.Fatalf("prior authorization = %+v", prior)
 	}
@@ -1398,9 +1422,6 @@ func TestCanonicalDeliverySchemaRejectsMalformedRecords(t *testing.T) {
 	}
 	readFails := func(t *testing.T, c *Canonical) {
 		t.Helper()
-		if _, err := c.DeliveryAuthorization(mustTaskID(t, "t1")); err == nil {
-			t.Fatal("DeliveryAuthorization accepted malformed record")
-		}
 		if _, err := c.DeliveryCurrency(mustTaskID(t, "t1")); err == nil {
 			t.Fatal("DeliveryCurrency accepted malformed record")
 		}
@@ -1553,4 +1574,166 @@ func TestCanonicalDeliveryRejectedWhileCleanupClaimActive(t *testing.T) {
 	if uint64(agg.Revision) != rev {
 		t.Fatalf("revision advanced %d -> %d despite claim rejection", rev, agg.Revision)
 	}
+}
+
+// bumpRevisionForTest commits one unrelated canonical mutation of the task
+// (a delivery contract record) at the given revision.
+func bumpRevisionForTest(t *testing.T, c *Canonical, taskID string, rev uint64) {
+	t.Helper()
+	req := CanonicalRecordDeliveryContractRequest{
+		HomeID: c.HomeID(), TaskID: mustTaskID(t, taskID), Precondition: preconditionOf(1, rev),
+		Mode: "no-mistakes", Reason: "unrelated mutation",
+	}
+	if _, err := c.RecordDeliveryContract(mustOperation(t, "op-bump-"+taskID, req), req); err != nil {
+		t.Fatalf("RecordDeliveryContract: %v", err)
+	}
+}
+
+// TestCanonicalDeliveryOutcomeCommitRecordsTruthAcrossTaskDrift proves the
+// outcome commit records post-mutation truth after revision, holds-digest,
+// phase, owner and binding drift (fenced optimistically at the current
+// revision), while the currency read still reports that drift, and the
+// outcome commit still refuses a matching delivery hold or an active
+// transfer reservation.
+func TestCanonicalDeliveryOutcomeCommitRecordsTruthAcrossTaskDrift(t *testing.T) {
+	outcomeReq := func(c *Canonical, rev uint64) CanonicalDeliveryOutcomeRequest {
+		return CanonicalDeliveryOutcomeRequest{
+			HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, rev),
+			AuthorizationOperationID: "op-auth", Status: DeliveryOutcomeCompleted,
+			Detail: "provider confirms merged", HeadSHA: deliveryHead, MergedSHA: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+		}
+	}
+	setup := func(t *testing.T) *Canonical {
+		c, _, _ := newTestCanonical(t)
+		rev := mustDeliveryTask(t, c, "t1")
+		mustAuthorize(t, c, "t1", rev, "op-auth")
+		bumpRevisionForTest(t, c, "t1", rev+1)
+		return c
+	}
+
+	t.Run("revision bump commits at current revision", func(t *testing.T) {
+		c := setup(t)
+		cur, err := c.DeliveryCurrency(mustTaskID(t, "t1"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cur.Valid || !hasCurrencyReason(cur, DeliveryCurrencyRevision) {
+			t.Fatalf("currency = %+v, want the read to keep revision-mismatch", cur.Reasons)
+		}
+		stale := outcomeReq(c, 4)
+		if _, err := c.CommitDeliveryOutcome(mustOperation(t, "op-outcome-stale", stale), stale); !errors.Is(err, domain.ErrStalePrecondition) {
+			t.Fatalf("outcome at the recorded revision err = %v, want stale precondition", err)
+		}
+		req := outcomeReq(c, 5)
+		res, err := c.CommitDeliveryOutcome(mustOperation(t, "op-outcome", req), req)
+		if err != nil || res.Outcome.Status != DeliveryOutcomeCompleted {
+			t.Fatalf("outcome at the current revision = %v %+v, want completed", err, res)
+		}
+	})
+
+	t.Run("matching hold still refuses", func(t *testing.T) {
+		c := setup(t)
+		hold := CanonicalAddHoldRequest{
+			HomeID: c.HomeID(), HoldID: "hold-delivery", Scope: DispatchHoldScope{TaskIDs: []string{"t1"}},
+			Actions: []DispatchAction{DispatchActionDelivery}, Reason: "freeze",
+		}
+		if _, err := c.AddHold(mustOperation(t, "op-hold", hold), hold); err != nil {
+			t.Fatal(err)
+		}
+		req := outcomeReq(c, 5)
+		_, err := c.CommitDeliveryOutcome(mustOperation(t, "op-outcome", req), req)
+		if !errors.Is(err, ErrPrecondition) || !strings.Contains(err.Error(), string(DeliveryCurrencyMatchingHold)) {
+			t.Fatalf("outcome err = %v, want matching-hold refusal", err)
+		}
+	})
+
+	t.Run("released hold digest drift commits", func(t *testing.T) {
+		c := setup(t)
+		hold := CanonicalAddHoldRequest{
+			HomeID: c.HomeID(), HoldID: "hold-delivery", Scope: DispatchHoldScope{TaskIDs: []string{"t1"}},
+			Actions: []DispatchAction{DispatchActionDelivery}, Reason: "freeze",
+		}
+		if _, err := c.AddHold(mustOperation(t, "op-hold", hold), hold); err != nil {
+			t.Fatal(err)
+		}
+		release := CanonicalReleaseHoldRequest{HomeID: c.HomeID(), HoldID: "hold-delivery", Reason: "thaw"}
+		if _, err := c.ReleaseHold(mustOperation(t, "op-release", release), release); err != nil {
+			t.Fatal(err)
+		}
+		cur, err := c.DeliveryCurrency(mustTaskID(t, "t1"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !hasCurrencyReason(cur, DeliveryCurrencyHoldsDigest) || hasCurrencyReason(cur, DeliveryCurrencyMatchingHold) {
+			t.Fatalf("currency = %+v, want the read to keep holds-digest drift with no matching hold", cur.Reasons)
+		}
+		req := outcomeReq(c, uint64(cur.Revision))
+		res, err := c.CommitDeliveryOutcome(mustOperation(t, "op-outcome", req), req)
+		if err != nil || res.Outcome.Status != DeliveryOutcomeCompleted {
+			t.Fatalf("outcome after the hold released = %v %+v, want completed", err, res)
+		}
+	})
+
+	t.Run("phase drift commits", func(t *testing.T) {
+		c := setup(t)
+		block := CanonicalBlockRequest{
+			HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, 5),
+			Detail: "waiting", Reason: "block",
+		}
+		if _, err := c.Block(mustOperation(t, "op-block", block), block); err != nil {
+			t.Fatalf("Block: %v", err)
+		}
+		cur, err := c.DeliveryCurrency(mustTaskID(t, "t1"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !hasCurrencyReason(cur, DeliveryCurrencyPhase) {
+			t.Fatalf("currency = %+v, want the read to keep phase-mismatch", cur.Reasons)
+		}
+		req := outcomeReq(c, 6)
+		res, err := c.CommitDeliveryOutcome(mustOperation(t, "op-outcome", req), req)
+		if err != nil || res.Outcome.Status != DeliveryOutcomeCompleted {
+			t.Fatalf("outcome after Block = %v %+v, want completed", err, res)
+		}
+	})
+
+	// No canonical op changes the owner or rebinds within a generation, so
+	// the drift is applied to the aggregate the commit check reads.
+	t.Run("owner and binding drift do not refuse the commit", func(t *testing.T) {
+		c := setup(t)
+		agg, err := c.Get(mustTaskID(t, "t1"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		auth := currentAuthorizationForTest(t, c, "t1")
+		holds, err := c.ListHolds()
+		if err != nil {
+			t.Fatal(err)
+		}
+		agg.Definition.Owner = "someone-else"
+		endpoint := *agg.Endpoint
+		endpoint.LeaseID = "lease-changed"
+		agg.Endpoint = &endpoint
+		read := c.authorizationCurrencyReasons(agg, auth, holds, deliveryCurrencyRead)
+		if !slices.Contains(read, DeliveryCurrencyMissingOwner) || !slices.Contains(read, DeliveryCurrencyBindingDigest) {
+			t.Fatalf("read reasons = %v, want owner and binding drift", read)
+		}
+		if commit := c.authorizationCurrencyReasons(agg, auth, holds, deliveryOutcomeCommit); len(commit) != 0 {
+			t.Fatalf("commit reasons = %v, want none", commit)
+		}
+	})
+
+	t.Run("active reservation still refuses", func(t *testing.T) {
+		c := setup(t)
+		mustReserveTransfer(t, c, "t1", preconditionOf(1, 5), "dest-home")
+		agg, err := c.Get(mustTaskID(t, "t1"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := outcomeReq(c, uint64(agg.Revision))
+		_, err = c.CommitDeliveryOutcome(mustOperation(t, "op-outcome", req), req)
+		if !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), "reserved for transfer") {
+			t.Fatalf("outcome err = %v, want the transfer reservation refusal", err)
+		}
+	})
 }

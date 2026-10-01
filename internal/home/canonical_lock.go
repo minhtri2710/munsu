@@ -11,7 +11,7 @@ import (
 
 // errLockBusy is the one condition the retry loop is allowed to retry on:
 // somebody else holds the scope right now. Every other failure from
-// lockScopedFile -- a bad descriptor, a filesystem with no lock support, a
+// lockFile -- a bad descriptor, a filesystem with no lock support, a
 // Windows LockFileEx that could not be called at all -- means retrying will
 // never succeed, and reporting it as ErrLockTimeout after spinning the full
 // budget would name the wrong cause. Each GOOS file maps its own busy errno
@@ -50,7 +50,7 @@ func (l *Lock) Release() error {
 		return nil
 	}
 	l.released = true
-	if err := unlockScopedFile(l.file); err != nil {
+	if err := unlockFile(l.file); err != nil {
 		_ = l.file.Close()
 		return err
 	}
@@ -81,7 +81,7 @@ func (h *Home) Lock(scope string) (*Lock, error) {
 			_ = file.Close()
 			return nil, fmt.Errorf("home: secure lock: %w", err)
 		}
-		lockErr := lockScopedFile(file)
+		lockErr := lockFile(file, true)
 		if lockErr == nil {
 			break
 		}
@@ -100,7 +100,7 @@ func (h *Home) Lock(scope string) (*Lock, error) {
 
 	token, err := nextFence(h.fencePath(scope))
 	if err != nil {
-		_ = unlockScopedFile(file)
+		_ = unlockFile(file)
 		_ = file.Close()
 		return nil, err
 	}

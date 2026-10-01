@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 // --- Sentinel tests ---
@@ -32,109 +34,6 @@ func TestSentinelRoundTrip(t *testing.T) {
 		if got != p {
 			t.Errorf("Mark/Marked round-trip failed: input=%q, got=%q", p, got)
 		}
-	}
-}
-
-// --- Lock tests ---
-
-func TestLockAcquireRelease(t *testing.T) {
-	tmp := t.TempDir()
-	lock, acquired, err := AcquireLock(tmp)
-	if err != nil {
-		t.Fatalf("AcquireLock: %v", err)
-	}
-	if !acquired {
-		t.Fatal("AcquireLock returned not acquired, want acquired")
-	}
-	if lock.pid == 0 {
-		t.Error("Lock.pid = 0, want non-zero")
-	}
-	if lock.startAt.IsZero() {
-		t.Error("Lock.startAt is zero, want non-zero")
-	}
-	if err := lock.Release(); err != nil {
-		t.Fatalf("Lock.Release: %v", err)
-	}
-	// Lock file should be gone
-	if _, err := os.Stat(lock.path); !os.IsNotExist(err) {
-		t.Errorf("lock file still exists after Release, stat err: %v", err)
-	}
-}
-
-func TestLockIdempotentSameProcess(t *testing.T) {
-	tmp := t.TempDir()
-	lock1, acquired1, err := AcquireLock(tmp)
-	if err != nil {
-		t.Fatalf("AcquireLock #1: %v", err)
-	}
-	if !acquired1 {
-		t.Fatal("AcquireLock #1: not acquired, want acquired")
-	}
-	defer lock1.Release()
-
-	// Second acquire should be no-op (lock held by same process or
-	// more precisely, by the PID we wrote — which is ourselves).
-	// The lock file exists and names our PID (which is alive), so
-	// it should return (nil, false, nil).
-	lock2, acquired2, err := AcquireLock(tmp)
-	if err != nil {
-		t.Fatalf("AcquireLock #2: %v", err)
-	}
-	if acquired2 {
-		t.Fatal("AcquireLock #2: acquired, want no-op (already held)")
-	}
-	if lock2 != nil {
-		t.Fatalf("AcquireLock #2: lock != nil, want nil for no-op")
-	}
-}
-
-func TestLockStaleRecovery(t *testing.T) {
-	tmp := t.TempDir()
-
-	// Write a lock file with a non-existent PID
-	lockPath := filepath.Join(tmp, afkLockFile)
-	os.MkdirAll(filepath.Dir(lockPath), 0755)
-	content := fmt.Sprintf("%d\t%s\n", 99999999, time.Now().UTC().Format(time.RFC3339))
-	if err := os.WriteFile(lockPath, []byte(content), 0644); err != nil {
-		t.Fatalf("writing stale lock: %v", err)
-	}
-
-	// Acquire should reclaim the stale lock
-	lock, acquired, err := AcquireLock(tmp)
-	if err != nil {
-		t.Fatalf("AcquireLock after stale: %v", err)
-	}
-	if !acquired {
-		t.Fatal("AcquireLock after stale: not acquired, want acquired (reclaim)")
-	}
-	defer lock.Release()
-
-	if lock.pid != os.Getpid() {
-		t.Errorf("Lock.pid = %d, want %d", lock.pid, os.Getpid())
-	}
-}
-
-func TestLockFileContents(t *testing.T) {
-	tmp := t.TempDir()
-	lock, acquired, err := AcquireLock(tmp)
-	if err != nil {
-		t.Fatalf("AcquireLock: %v", err)
-	}
-	if !acquired {
-		t.Fatal("AcquireLock: not acquired")
-	}
-	defer lock.Release()
-
-	data, err := os.ReadFile(filepath.Join(tmp, afkLockFile))
-	if err != nil {
-		t.Fatalf("reading lock file: %v", err)
-	}
-	pid, startStr := parseLockContent(data)
-	if pid != os.Getpid() {
-		t.Errorf("lock pid = %d, want %d", pid, os.Getpid())
-	}
-	if startStr == "" {
-		t.Error("lock start time is empty")
 	}
 }
 
@@ -321,7 +220,7 @@ func TestDaemonSetsAndClearsFlag(t *testing.T) {
 	tmp := t.TempDir()
 	child := startAFKDaemonChild(t, tmp, true)
 	flagPath := filepath.Join(tmp, afkFlagFile)
-	lockPath := filepath.Join(tmp, afkLockFile)
+	lockPath := mhome.AFKLockPath(tmp)
 
 	if err := waitForFile(child, afkDaemonReadyPath(tmp), 5*time.Second); err != nil {
 		t.Fatal(err)
@@ -342,9 +241,7 @@ func TestDaemonSetsAndClearsFlag(t *testing.T) {
 	if _, err := os.Stat(flagPath); !os.IsNotExist(err) {
 		t.Error("consent flag still exists after daemon stop")
 	}
-	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
-		t.Error("lock file still exists after daemon stop")
-	}
+	assertAFKLockFree(t, tmp)
 }
 
 // TestDaemonCatchesSignalAtEarliestReadiness preserves the cross-process
@@ -370,20 +267,18 @@ func TestDaemonCatchesSignalAtEarliestReadiness(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(tmp, afkFlagFile)); !os.IsNotExist(err) {
 		t.Error("consent flag still exists after daemon stop")
 	}
-	if _, err := os.Stat(filepath.Join(tmp, afkLockFile)); !os.IsNotExist(err) {
-		t.Error("lock file still exists after daemon stop")
-	}
+	assertAFKLockFree(t, tmp)
 }
 
-// TestDaemonSignalSafeWhenLockIsTheProbe uses state/.lock, the first file the
-// child writes, as the readiness signal an outside observer would key on. With
-// the handler installed before AcquireLock, stopping the child after that
+// TestDaemonSignalSafeWhenLockIsTheProbe uses the AFK lock file, the first file
+// the child writes, as the readiness signal an outside observer would key on.
+// With the handler installed before home.AcquireAFKLock, stopping the child after that
 // observation is safe without ever signalling the test binary.
 func TestDaemonSignalSafeWhenLockIsTheProbe(t *testing.T) {
 	tmp := t.TempDir()
 	child := startAFKDaemonChild(t, tmp, false)
 
-	lockPath := filepath.Join(tmp, afkLockFile)
+	lockPath := mhome.AFKLockPath(tmp)
 	if err := waitForFile(child, lockPath, 5*time.Second); err != nil {
 		t.Fatal(err)
 	}
@@ -393,7 +288,21 @@ func TestDaemonSignalSafeWhenLockIsTheProbe(t *testing.T) {
 		assertFileExists(t, lockPath)
 		return
 	}
-	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
-		t.Error("lock file still exists after daemon stop")
+	assertAFKLockFree(t, tmp)
+}
+
+// assertAFKLockFree checks a stopped daemon let go of the AFK lock: no pid is
+// read through it and a new acquirer wins it. The file itself stays.
+func assertAFKLockFree(t *testing.T, homeDir string) {
+	t.Helper()
+	if pid, err := mhome.ReadAFKLockPID(homeDir); err != nil || pid != 0 {
+		t.Errorf("AFK lock pid after daemon stop = %d, %v; want 0", pid, err)
+	}
+	lock, acquired, err := mhome.AcquireAFKLock(homeDir)
+	if err != nil || !acquired {
+		t.Fatalf("AFK lock after daemon stop: acquired=%v err=%v; want free", acquired, err)
+	}
+	if err := lock.Release(); err != nil {
+		t.Fatal(err)
 	}
 }

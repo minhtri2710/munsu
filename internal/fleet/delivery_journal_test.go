@@ -84,11 +84,11 @@ func (f *fakeDeliveryProvider) Observe(ident domain.DeliveryIdentity) (DeliveryP
 // execute under; its head equals the bound worktree head.
 func deliveryTestIdentity() domain.DeliveryIdentity {
 	return domain.DeliveryIdentity{
-		Provider:   "github",
+		Provider:   "gitlab",
 		Owner:      "minhtri2710",
 		Repo:       "munsu",
 		Number:     42,
-		URL:        "https://github.com/minhtri2710/munsu/pull/42",
+		URL:        "https://gitlab.com/minhtri2710/munsu/-/merge_requests/42",
 		BaseRef:    deliveryTestBase,
 		HeadRef:    "feature/delivery",
 		HeadSHA:    deliveryTestHead,
@@ -214,7 +214,7 @@ func readDeliveryJournalRecord(t *testing.T, homeDir, journalID string) (*delive
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := h.Read(home.RootState, deliveryJournalKey(journalID))
+	data, err := h.Read(home.RootState, deliveryJournals.recordKey(journalID))
 	if err != nil {
 		return nil, err
 	}
@@ -232,7 +232,7 @@ func listActiveDeliveryJournals(t *testing.T, homeDir string) []string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	idx, err := readDeliveryIndex(h)
+	idx, err := deliveryJournals.readIndex(h)
 	if err != nil {
 		t.Fatal(err)
 	}

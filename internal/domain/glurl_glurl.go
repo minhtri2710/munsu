@@ -131,8 +131,3 @@ func ParseMRURL(raw string) (GLURL, error) {
 		IID:     iid,
 	}, nil
 }
-
-// FullURL reconstructs the full MR URL.
-func (g GLURL) FullURL() string {
-	return fmt.Sprintf("https://%s/%s/%s/-/merge_requests/%d", g.Host, g.Owner, g.Project, g.IID)
-}

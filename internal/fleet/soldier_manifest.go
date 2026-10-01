@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // ManifestVersion is the current manifest format version.
@@ -173,18 +175,9 @@ func WriteManifest(worktreePath string, manifest *LaunchManifest) (string, error
 
 	digest := sha256Content(data)
 	manifestPath := filepath.Join(worktreePath, ManifestName)
-	tmpPath := manifestPath + ".tmp"
 
-	// Atomic write: write to temp, sync, close, rename.
-	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
-		os.Remove(tmpPath)
+	if err := home.AtomicWrite(manifestPath, data, 0644); err != nil {
 		return "", fmt.Errorf("writing %s: %w", ManifestName, err)
-	}
-
-	// Rename atomically.
-	if err := os.Rename(tmpPath, manifestPath); err != nil {
-		os.Remove(tmpPath)
-		return "", fmt.Errorf("renaming %s: %w", ManifestName, err)
 	}
 
 	return digest, nil

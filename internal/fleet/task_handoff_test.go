@@ -135,7 +135,7 @@ func seedHandoffPair(t *testing.T) (parent, captain string) {
 	seedCanonicalTransferHome(t, parent)
 	captain = filepath.Join(parent, "captains", "test-sm")
 	seedCanonicalTransferHome(t, captain)
-	if err := SeedProvenance(captain, "test-sm"); err != nil {
+	if err := mhome.SeedCaptainProvenance(captain, "test-sm"); err != nil {
 		t.Fatal(err)
 	}
 	return parent, captain
@@ -151,7 +151,7 @@ func pendingJournalCount(t *testing.T, homeDir string) int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	idx, err := readHandoffIndex(h)
+	idx, err := handoffJournals.readIndex(h)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,6 +189,26 @@ func completedJournalCount(t *testing.T, homeDir string) int {
 		}
 	}
 	return count
+}
+
+func TestRecoverTransferJournalsSkipsUninitializedHome(t *testing.T) {
+	if err := recoverTransferJournals(t.TempDir()); err != nil {
+		t.Fatalf("recoverTransferJournals on an uninitialized path: %v", err)
+	}
+}
+
+func TestRecoverTransferJournalsPropagatesCanonicalHomeOpenError(t *testing.T) {
+	homeDir := t.TempDir()
+	if _, err := mhome.Init(homeDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(homeDir, mhome.IdentityFileName), []byte("not json\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := recoverTransferJournals(homeDir); !errors.Is(err, mhome.ErrMalformedIdentity) {
+		t.Fatalf("recoverTransferJournals = %v, want ErrMalformedIdentity", err)
+	}
 }
 
 func TestHandoffTransfersQueuedTaskToCaptain(t *testing.T) {
@@ -388,7 +408,7 @@ func TestHandoffDestinationConflictFailsClosed(t *testing.T) {
 	// explicit destination-owner conflict fires.
 	captain := filepath.Join(t.TempDir(), "captain")
 	seedCanonicalTransferHome(t, captain)
-	if err := SeedProvenance(captain, "captain"); err != nil {
+	if err := mhome.SeedCaptainProvenance(captain, "captain"); err != nil {
 		t.Fatal(err)
 	}
 	seedCanonicalQueuedTask(t, mustAuthority(t, captain), "TASK-1", "captain:captain")
@@ -498,14 +518,14 @@ func TestHandoffRecoveryRejectsCorruptJournal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	idx := handoffJournalIndex{Version: handoffIndexVersion, HomeRevision: 1, Active: []string{"bad-transfer"}}
+	idx := journalIndex{Version: journalIndexVersion, HomeRevision: 1, Active: []string{"bad-transfer"}}
 	idxData, err := json.Marshal(idx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	items := []mhome.ChangeItem{
-		{Root: mhome.RootState, Key: handoffIndexKey, Data: append(idxData, '\n')},
-		{Root: mhome.RootState, Key: handoffJournalKey("bad-transfer"), Data: []byte("not json")},
+		{Root: mhome.RootState, Key: handoffJournals.indexKey(), Data: append(idxData, '\n')},
+		{Root: mhome.RootState, Key: handoffJournals.recordKey("bad-transfer"), Data: []byte("not json")},
 	}
 	if _, err := h.Commit(lk, "bad-transfer-create", 0, items); err != nil {
 		t.Fatal(err)

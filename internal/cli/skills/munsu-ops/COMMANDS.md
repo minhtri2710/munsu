@@ -48,7 +48,6 @@ for the complete registered set.
 | `munsu spawn <id> [<project>] [--kind ship\|scout] [--mode no-mistakes\|direct-PR\|local-only] [--backend tmux\|herdr] [--yolo]` | Launch a soldier agent in a worktree+tmux/herdr window. |
 | `munsu send <id> "<line>"` | Send a mailbox command downlink to a Soldier or Captain endpoint; uplink to General is refused. |
 | `munsu report <state> "<msg>" [--key <slug>]` | Report status up the hierarchy (rank-aware uplink). |
-| `munsu notify <state> "<msg>"` | Alias for 'munsu report'. |
 | `munsu peek <id> [--lines N]` | Read last N lines of soldier pane output (default 40). |
 | `munsu soldier-state <id>` | Read soldier current state (meta + pane liveness + status log). |
 
@@ -56,7 +55,7 @@ for the complete registered set.
 
 | Command | Description |
 |---------|-------------|
-| `munsu watch` | Run the persistent watcher daemon. |
+| `munsu watch` | Persistent watcher daemon; started by `munsu watch ensure`, never run directly by agents. |
 | `munsu watch ensure [--restart]` | Start or restart the persistent watcher. |
 | `munsu watch run` | Run one diagnostic cycle. |
 | `munsu watch status` | Show bounded watcher health without entering daemon mode. |
@@ -74,7 +73,7 @@ for the complete registered set.
 | `munsu captain seed|launch|retire|list` | Manage the core Captain lifecycle. |
 | `munsu captain converge` | Reconcile mailbox pending records, terminal receipts, nudges, and inherited config. |
 | `munsu captain handoff|config-push` | Hand off queued tasks or push inherited config. |
-| `munsu captain migrate|recover|update|validate` | Migrate, recover, fast-forward, or validate Captain homes. |
+| `munsu captain recover|update|validate` | Recover, fast-forward, or validate Captain homes. |
 
 ## Task / Brief / Backlog
 

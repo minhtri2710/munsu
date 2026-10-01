@@ -12,7 +12,7 @@ import (
 // writeWakeQueueLines writes tab-separated wake queue entries for testing.
 func writeWakeQueueLines(t *testing.T, homeDir string, lines []string) {
 	t.Helper()
-	path := QueuePath(homeDir)
+	path := mhome.WakeQueuePath(homeDir)
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}

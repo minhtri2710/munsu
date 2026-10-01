@@ -74,7 +74,7 @@ func TestCodexSafetyCheckDeny(t *testing.T) {
 	cmd.SetErr(io.Discard)
 
 	stdout, stderr := captureBoth(func() {
-		runSafetyCheck(cmd, gitDir, "munsu watch arm", "", "codex")
+		runSafetyCheck(cmd, gitDir, "munsu watch", "", "codex")
 	})
 
 	if exitCode != 2 {
@@ -121,7 +121,7 @@ func TestCodexSafetyCheckDenyViaStdin(t *testing.T) {
 	cmd.SetErr(io.Discard)
 
 	// Mock stdin with Codex-shaped JSON
-	stdinPayload := `{"hookEventName":"PreToolUse","tool_input":{"command":"munsu watch arm"}}`
+	stdinPayload := `{"hookEventName":"PreToolUse","tool_input":{"command":"munsu watch"}}`
 	oldStdin := os.Stdin
 	r, w, _ := os.Pipe()
 	w.Write([]byte(stdinPayload))
@@ -193,7 +193,7 @@ func TestCodexGuardStopHookActive(t *testing.T) {
 	exitWithCode = func(code int) { exitCode = code }
 	defer func() { exitWithCode = oldExit }()
 
-	// Call runGuardCodexLike with stdin containing stop_hook_active=true
+	// Call runGuardBlocking with stdin containing stop_hook_active=true
 	stdinPayload := `{"hookEventName":"Stop","stop_hook_active":true}`
 	oldStdin := os.Stdin
 	r, w, _ := os.Pipe()
@@ -201,7 +201,7 @@ func TestCodexGuardStopHookActive(t *testing.T) {
 	w.Close()
 	os.Stdin = r
 
-	err := runGuardCodexLike(tmpDir)
+	err := runGuardBlocking(tmpDir)
 
 	os.Stdin = oldStdin
 
@@ -256,7 +256,7 @@ func TestCodexGuardBlindTurn(t *testing.T) {
 		w.Close()
 		os.Stdin = r
 
-		runGuardCodexLike(tmpDir)
+		runGuardBlocking(tmpDir)
 
 		os.Stdin = oldStdin
 	})
@@ -309,7 +309,7 @@ func TestCodexGuardHealthyExit(t *testing.T) {
 	w.Close()
 	os.Stdin = r
 
-	err := runGuardCodexLike(tmpDir)
+	err := runGuardBlocking(tmpDir)
 
 	os.Stdin = oldStdin
 
@@ -350,7 +350,7 @@ func TestCodexGuardPendingRelayBlocks(t *testing.T) {
 		os.Stdin = r
 
 		sout, serr := captureBoth(func() {
-			runGuardCodexLike(tmpDir)
+			runGuardBlocking(tmpDir)
 		})
 		stderr = serr
 		_ = sout
@@ -384,7 +384,7 @@ func TestCodexGuardNoPendingRelayAllows(t *testing.T) {
 	w.Close()
 	os.Stdin = r
 
-	err := runGuardCodexLike(tmpDir)
+	err := runGuardBlocking(tmpDir)
 	os.Stdin = oldStdin
 
 	if err != nil {
@@ -423,7 +423,7 @@ func TestCodexGuardParentHomeReceiptBlocks(t *testing.T) {
 		os.Stdin = r
 
 		_, serr := captureBoth(func() {
-			runGuardCodexLike(tmpDir)
+			runGuardBlocking(tmpDir)
 		})
 		stderr = serr
 		os.Stdin = oldStdin
@@ -464,7 +464,7 @@ func TestCodexGuardParentHomeAckedAllows(t *testing.T) {
 	w.Close()
 	os.Stdin = r
 
-	err := runGuardCodexLike(tmpDir)
+	err := runGuardBlocking(tmpDir)
 	os.Stdin = oldStdin
 
 	if err != nil {
@@ -506,7 +506,7 @@ func TestCodexGuardParentHomeUnreadableFailsClosed(t *testing.T) {
 		w.Close()
 		os.Stdin = r
 
-		runGuardCodexLike(tmpDir)
+		runGuardBlocking(tmpDir)
 		os.Stdin = oldStdin
 	})
 

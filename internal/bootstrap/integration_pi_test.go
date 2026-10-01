@@ -41,11 +41,7 @@ func TestPiStatusDistinguishesMissingAndInvalidCanonicalIntegration(t *testing.T
 func installTestPiIntegration(t *testing.T) (string, string) {
 	t.Helper()
 	home := t.TempDir()
-	bin := t.TempDir()
-	writeTestExecutable(t, filepath.Join(bin, "pi"), "#!/bin/sh\necho 0.79.0\n")
-	writeTestExecutable(t, filepath.Join(bin, "node"), "#!/bin/sh\necho 'API probe passed'\n")
-	writeTestExecutable(t, filepath.Join(bin, "munsu"), "#!/bin/sh\nexit 0\n")
-	t.Setenv("PATH", bin+string(filepath.ListSeparator)+os.Getenv("PATH"))
+	bin := fakePiToolchain(t)
 	SetMunsuPathResolver(testMunsuResolver{path: testutil.FakeExecutablePath(filepath.Join(bin, "munsu"))})
 	t.Cleanup(ResetMunsuPathResolver)
 	if _, err := Install(home, home, harness.Pi, ScopeProject, false); err != nil {
@@ -54,7 +50,14 @@ func installTestPiIntegration(t *testing.T) (string, string) {
 	return home, filepath.Join(ProjectExtensionsDir(home), harness.CanonicalPiIntegrationName)
 }
 
-func writeTestExecutable(t *testing.T, path, content string) {
+// fakePiToolchain puts fake pi, node and munsu executables that pass the Pi
+// capability probe at the front of PATH and returns their directory.
+func fakePiToolchain(t *testing.T) string {
 	t.Helper()
-	testutil.WriteFakeExecutable(t, path, content)
+	bin := t.TempDir()
+	testutil.WriteFakeExecutable(t, filepath.Join(bin, "pi"), "#!/bin/sh\necho 0.79.0\n")
+	testutil.WriteFakeExecutable(t, filepath.Join(bin, "node"), "#!/bin/sh\necho 'API probe passed'\n")
+	testutil.WriteFakeExecutable(t, filepath.Join(bin, "munsu"), "#!/bin/sh\nexit 0\n")
+	t.Setenv("PATH", bin+string(filepath.ListSeparator)+os.Getenv("PATH"))
+	return bin
 }

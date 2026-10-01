@@ -1,8 +1,7 @@
 # captain-provisioning reference — per-verb operation details
 
 Companion to `SKILL.md` (router). Load this file when you need the exact steps,
-safety checks, or source references for a specific lifecycle verb. For the full
-migration runbook see [MIGRATION.md](MIGRATION.md).
+safety checks, or source references for a specific lifecycle verb.
 
 ## Contents
 
@@ -14,23 +13,27 @@ migration runbook see [MIGRATION.md](MIGRATION.md).
 - [Idle-by-default charter](#idle-by-default-charter) — mandatory contract
 - [Recover](#recover) — recovery steps and launch behavior
 - [Update](#update) — typed outcomes
-- [Migrate](#migrate) — transactional worktree migration
 
 ---
 
 ## Seed
 
-`munsu captain seed <id> <home-path>` creates a new captain home with the standard
-directory tree and writes a charter (AGENTS.md).
+`munsu captain seed <id> <home-path> --repo <path>` creates a captain home as a managed
+git worktree of the project repo and writes a charter. `--repo` is required; captain
+homes are always managed worktrees. `--ref` picks an explicit ref (default: the repo's
+default branch) and `--force` replaces an existing managed worktree.
 
 ### Actions
 
-1. Creates the home directory at `<home-path>`.
-2. Creates subdirectories: `state/`, `data/`, `config/`, `projects/`.
-3. Writes `AGENTS.md` (default charter when empty, requiring parent home for return-channel path).
-4. Writes the provenance marker (`.munsu-captain-home`).
-5. When a parent home is known (CLI always passes General home): registers the captain and runs `ConfigPush` so inheritable config + `data/projects.md` are present immediately.
-6. Prints confirmation: `Seeded captain <id> at <home-path>`.
+1. Verifies the repo, checks its remote matches the parent's, and resolves the ref.
+2. Creates a detached worktree at `<home-path>` (`git worktree add --detach`).
+3. Writes a worktree-scoped excludes file (`<worktree gitdir>/munsu-exclude`, bound by `git config --worktree core.excludesFile`) for operational dirs, and writes provenance metadata.
+4. Creates subdirectories: `state/`, `data/`, `config/`, `projects/`.
+5. Writes the charter to untracked `.captain-charter.md` (never the tracked `AGENTS.md`).
+6. Writes the provenance marker (`.munsu-captain-home`), registers the captain and runs `ConfigPush`.
+
+Reseeding a matching managed worktree is a no-op. An existing captain home that is not a
+managed worktree is refused, even with `--force`.
 
 ### Directories
 
@@ -46,8 +49,8 @@ directory tree and writes a charter (AGENTS.md).
 The `AGENTS.md` charter **is** the lease: it defines what the general may do autonomously. The current seed writes a minimal placeholder. In production, the charter should encode the idle-by-default contract (see below).
 
 ```sh
-munsu captain seed my-monitor /var/munsu/captains/my-monitor
-# Seeded captain my-monitor at /var/munsu/captains/my-monitor
+munsu captain seed my-monitor /var/munsu/captains/my-monitor --repo /path/to/repo
+# Seeded worktree captain my-monitor at /var/munsu/captains/my-monitor (from /path/to/repo, <ref>)
 ```
 
 ---
@@ -94,16 +97,24 @@ munsu captain launch /var/munsu/captains/my-monitor
 
 ## Retire
 
-`munsu captain retire <captain-home> [--force]` tears down a running captain: kills
-the process, clears parent meta, and unregisters from `data/captains.md`. Home
-directory is retained.
+`munsu captain retire <captain-home> [--force]` tears down a running captain: tears
+down its session endpoint, clears parent meta, and unregisters from
+`data/captains.md`. Home directory is retained.
 
 ### Safety checks
 
+`fleet.Retire` (`internal/fleet/captain_captain.go`) runs these in order:
+
 1. Validates the captain home exists and has a valid provenance marker.
-2. Reads PID from `<captain-home>/state/.lock` file.
-3. If PID is valid (> 0), calls `os.FindProcess(pid)` then `proc.Kill()`.
-4. If no lock file or PID is 0, skips process kill.
+2. Without `--force`, refuses while the captain home has in-flight soldiers
+   (`inFlightSoldierIDs`: `state/*.meta` with kind ship or scout).
+3. Reads the parent task meta for `captain:<id>` and refuses unless kind is
+   `captain`, `sm_id` and `home` match the marker and canonical home, and a
+   window is recorded; then tears the endpoint down through the session backend
+   (`RetireEndpoint.Retire`). No PID is read: `<captain-home>/state/.lock` is
+   not used for captain liveness (`fleet.CaptainStatus`), and the AFK lock lives
+   at `state/.afk.lock`.
+4. If no parent meta exists (never launched), skips the endpoint teardown.
 5. Clears parent meta and unregisters from `data/captains.md`.
 
 ### Preflight requirements
@@ -280,45 +291,15 @@ captain clone, returning a typed outcome:
 
 - `already-current` — already at the latest default-branch commit.
 - `fast-forwarded` — successfully advanced.
-- `state-only-skipped` — state-only home (no git worktree) skipped.
 - `dirty` — uncommitted changes exist; cannot advance.
 - `diverged` — local branch has diverged from remote; cannot advance.
 - `offline` — worktree path is not reachable.
 - `wrong-remote` — remote does not match the parent's remote.
 - `wrong-branch` — not on the default branch.
 - `invalid-provenance` — home does not have a valid provenance marker.
+- `unsupported-home` — home has no git worktree; reseed it with `--repo`.
 
 ```sh
 munsu captain update /var/munsu/captains/my-monitor
 # outcome: fast-forwarded
-```
-
----
-
-## Migrate
-
-`munsu captain migrate <captain-home> <id> [--repo <path>]` migrates a captain home
-to a managed git worktree.
-
-### Without --repo
-
-Writes a provenance marker to a legacy state-only home (simple).
-
-### With --repo
-
-Performs a transactional migration from state-only home to a managed git
-worktree, preserving operational dirs (`state/`, `config/`, `data/`, `projects/`).
-
-- **Atomic:** on failure the original home is restored and a rollback marker
-  (`.migration-rollback`) is written.
-- **On success:** the old home is backed up at `<home-path>.backup-<timestamp>`.
-- **Does NOT retire or relaunch:** `migrate --repo` only creates the worktree
-  and migrates operational directories. The captain process is untouched.
-  Retire the live captain before migrating, then launch from the new worktree.
-
-```sh
-munsu captain migrate /var/munsu/captains/my-monitor my-captain --repo /path/to/repo
-# Migrated captain my-captain to managed worktree at /path/to/repo/.treehouse/...
-# Old home backed up at /var/munsu/captains/my-monitor.backup-<ts>
-# Captain was not retired. Run retire before migrate if the captain is live.
 ```

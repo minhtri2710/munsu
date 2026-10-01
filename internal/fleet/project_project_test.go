@@ -12,6 +12,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // --- Legacy project registry helpers ---
@@ -186,6 +187,29 @@ func TestListEmpty(t *testing.T) {
 	}
 }
 
+func TestAddRejectsTraversalNameBeforeClone(t *testing.T) {
+	tmp := t.TempDir()
+	homeDir := filepath.Join(tmp, "munsu-home")
+	outside := filepath.Join(tmp, "x")
+	binDir := t.TempDir()
+	marker := filepath.Join(tmp, "git-invoked")
+	testutil.WriteFakeExecutable(t, filepath.Join(binDir, "git"), "#!/bin/sh\nprintf invoked > '"+filepath.ToSlash(marker)+"'\nexit 0\n")
+	testutil.SetPath(t, binDir)
+
+	if err := Add(homeDir, "../../x", "https://example.invalid/repo.git", "", false); err == nil {
+		t.Fatal("Add accepted a traversal project name")
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("git clone was attempted: %v", err)
+	}
+	if _, err := os.Stat(outside); !os.IsNotExist(err) {
+		t.Fatalf("traversal clone target exists at %q: %v", outside, err)
+	}
+	if _, err := os.Stat(filepath.Join(homeDir, "projects")); !os.IsNotExist(err) {
+		t.Fatalf("projects directory was created before name validation: %v", err)
+	}
+}
+
 func TestListAndAdd(t *testing.T) {
 	tmp := t.TempDir()
 	homeDir := filepath.Join(tmp, ".munsu")
@@ -348,11 +372,6 @@ func TestIsURL(t *testing.T) {
 			t.Errorf("isURL(%q) = %v, want %v", tc.s, got, tc.want)
 		}
 	}
-}
-
-// boolPtr returns a pointer to v for typed config pointer fields.
-func boolPtr(v bool) *bool {
-	return &v
 }
 
 // TestRegistryFileFormat proves that List round-trips every registry field

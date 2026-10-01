@@ -290,21 +290,21 @@ func buildLaunchArtifact(in LaunchArtifactInput) (LaunchArtifact, error) {
 	b.WriteString("#!/usr/bin/env bash\n")
 	b.WriteString("set -euo pipefail\n")
 	b.WriteString("cd ")
-	b.WriteString(spawnShQuote(in.WorktreePath))
+	b.WriteString(shQuote(in.WorktreePath))
 	b.WriteString("\n")
 	b.WriteString("export MUNSU_HOME=")
-	b.WriteString(spawnShQuote(in.HomeDir))
+	b.WriteString(shQuote(in.HomeDir))
 	b.WriteString("\n")
 	b.WriteString("export MUNSU_ROLE=soldier\n")
 	b.WriteString("export MUNSU_TASK_ID=")
-	b.WriteString(spawnShQuote(in.TaskID))
+	b.WriteString(shQuote(in.TaskID))
 	b.WriteString("\n")
 	b.WriteString("export MUNSU_PARENT_STATUS=")
-	b.WriteString(spawnShQuote(in.HomeDir))
+	b.WriteString(shQuote(in.HomeDir))
 	b.WriteString("\n")
 	if in.SnapshotDigest != "" {
 		b.WriteString("export MUNSU_CONFIG_SNAPSHOT_DIGEST=")
-		b.WriteString(spawnShQuote(in.SnapshotDigest))
+		b.WriteString(shQuote(in.SnapshotDigest))
 		b.WriteString("\n")
 	}
 	// Git-mutation fence: prepend the munsu-owned git shim so Git resolved by
@@ -317,7 +317,7 @@ func buildLaunchArtifact(in LaunchArtifactInput) (LaunchArtifact, error) {
 		return LaunchArtifact{}, err
 	}
 	b.WriteString("export PATH=")
-	b.WriteString(spawnShQuote(shimDir))
+	b.WriteString(shQuote(shimDir))
 	b.WriteString(":\"$PATH\"\n")
 	// Persistent re-entrant launch guard: created by the launched script
 	// BEFORE invoking the harness. The guard directory is created atomically
@@ -327,10 +327,10 @@ func buildLaunchArtifact(in LaunchArtifactInput) (LaunchArtifact, error) {
 	// a different identity/fence fails closed; a guard with no provable
 	// readiness is never re-launched.
 	b.WriteString("guard=")
-	b.WriteString(spawnShQuote(guardName))
+	b.WriteString(shQuote(guardName))
 	b.WriteString("\n")
 	b.WriteString("identity=")
-	b.WriteString(spawnShQuote(guardIdentity))
+	b.WriteString(shQuote(guardIdentity))
 	b.WriteString("\n")
 	b.WriteString("if ! mkdir \"$guard\" 2>/dev/null; then\n")
 	b.WriteString("  existing=\"$(cat \"$guard/identity\" 2>/dev/null || true)\"\n")
@@ -343,10 +343,10 @@ func buildLaunchArtifact(in LaunchArtifactInput) (LaunchArtifact, error) {
 	b.WriteString("fi\n")
 	b.WriteString("printf '%s' \"$identity\" > \"$guard/identity\"\n")
 	b.WriteString("exec ")
-	b.WriteString(spawnShQuote(in.LaunchBin))
+	b.WriteString(shQuote(in.LaunchBin))
 	for _, arg := range in.LaunchArgs {
 		b.WriteString(" ")
-		b.WriteString(spawnShQuote(arg))
+		b.WriteString(shQuote(arg))
 	}
 	b.WriteString("\n")
 	content := b.String()
@@ -362,7 +362,7 @@ func buildLaunchArtifact(in LaunchArtifactInput) (LaunchArtifact, error) {
 	if err := os.WriteFile(scriptPath, []byte(content), 0755); err != nil {
 		return LaunchArtifact{}, fmt.Errorf("writing launch script: %w", err)
 	}
-	command := "bash " + spawnShQuote(scriptPath)
+	command := "bash " + shQuote(scriptPath)
 	return LaunchArtifact{ScriptPath: scriptPath, Command: command, CommandDigest: sha256Content([]byte(command)), GuardName: guardName, GuardIdentity: guardIdentity}, nil
 }
 

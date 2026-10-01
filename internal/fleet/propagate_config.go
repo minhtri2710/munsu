@@ -103,7 +103,7 @@ func PropagateConfig(req PropagateConfigRequest) (*PropagateConfigResult, error)
 	}
 
 	// 2. Validate provenance (before any mutation).
-	if _, err := ValidateProvenance(req.CaptainHome); err != nil {
+	if _, err := home.ValidateCaptainProvenance(req.CaptainHome); err != nil {
 		return nil, fmt.Errorf("propagate config: %w", err)
 	}
 
@@ -118,16 +118,9 @@ func PropagateConfig(req PropagateConfigRequest) (*PropagateConfigResult, error)
 		Generation: res.Generation,
 	}
 
-	// 4. Reconcile legacy config-reread evidence in both changed and
-	//    unchanged paths so incomplete state is healed.
 	recorder := &boundSenderRecorder{actual: req.Mailbox}
 
-	if legErr := ReconcileLegacyConfigReread(req.ParentHome, req.CaptainHome, recorder); legErr != nil {
-		// Legacy reconciliation failure is best-effort detail.
-		result.Detail = fmt.Sprintf("generation=%d, legacy reconciliation: %v", res.Generation, legErr)
-	}
-
-	// 5. Determine the digest to use for requirement identity.
+	// 4. Determine the digest to use for requirement identity.
 	//    On the unchanged path, OldDigest == NewDigest. On the changed path
 	//    NewDigest reflects the new content. On first push with unchanged
 	//    content (no prior gen), NewDigest is set.
@@ -136,7 +129,7 @@ func PropagateConfig(req PropagateConfigRequest) (*PropagateConfigResult, error)
 		digest = res.OldDigest
 	}
 
-	// 6. Ensure or heal the durable config-reread requirement.
+	// 5. Ensure or heal the durable config-reread requirement.
 	//    On the unchanged path, this detects a crash where the generation
 	//    was committed but the mailbox requirement was not materialized,
 	//    or a deferred notification that needs retry.
@@ -182,7 +175,7 @@ func ensureOrHealRequirement(
 	recorder *boundSenderRecorder,
 ) (RequirementState, NotificationState, string, error) {
 	// Derive identities for envelope lookup.
-	captainIdentity, err := ValidateProvenance(captainHome)
+	captainIdentity, err := home.ValidateCaptainProvenance(captainHome)
 	if err != nil {
 		return RequirementFailed, NotificationFailed, "",
 			fmt.Errorf("ensure requirement: %w", err)
@@ -342,10 +335,3 @@ func PropagateConfigCLI(req PropagateConfigRequest) (string, error) {
 
 // Ensure PropagateConfigCLI is usable from the CLI layer.
 var _ = PropagateConfigCLI
-
-// ConfigNotificationAdapter wraps a home.BoundSender into a notification
-// adapter suitable for use where the generic BoundSender is not directly
-// available but a simpler send interface is needed.
-type ConfigNotificationAdapter struct {
-	Sender func(parentHome, captainHome string, gen int, digest string) (bool, string)
-}

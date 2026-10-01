@@ -1,14 +1,11 @@
 package fleet
 
 import (
-	"crypto/rand"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/domain"
@@ -25,15 +22,12 @@ import (
 // Home's journaled change-set commit; Home owns the durable mechanics.
 const taskHandoffDirName = ".task-handoff"
 
-// handoffIndexKey is the bounded handoff index document key under the home
-// state root. It lists the ACTIVE Transfer IDs of one home; recovery
-// discovers journals only through this index (never by scanning the
-// filesystem). Completed transfers are removed from the index while their
-// terminal journal record is retained.
-const handoffIndexKey = taskHandoffDirName + "/index.json"
-
-// handoffIndexVersion is the schema version of the handoff index document.
-const handoffIndexVersion = 1
+// handoffJournals is the bounded active index and record store of the
+// transfer journals of one home (ADR-0008 §5: one bounded aggregate under a
+// logical key in the handoff lock scope); recovery discovers journals only
+// through its index, and a completed transfer leaves it while its terminal
+// record is retained.
+var handoffJournals = journalStore{dir: taskHandoffDirName, noun: "handoff"}
 
 // Journal phases of one transfer record. Phase is Fleet-owned meaning: a
 // record is resumable only while "prepared"; the terminal "completed" record
@@ -42,31 +36,6 @@ const (
 	handoffPhasePrepared  = "prepared"
 	handoffPhaseCompleted = "completed"
 )
-
-// handoffJournalKey returns the contained logical key of one transfer
-// journal record under the home state root.
-func handoffJournalKey(id string) string {
-	return taskHandoffDirName + "/" + id + ".json"
-}
-
-// handoffTxnID derives the deterministic Home transaction identity of one
-// journal transition. Transitions are distinct (create vs complete), so a
-// txnID is never reused for changed journal bytes and replay of the same
-// transition is deterministic.
-func handoffTxnID(transferID, transition string) string {
-	return "handoff-" + transferID + "-" + transition
-}
-
-// handoffJournalIndex is the bounded Fleet-owned index of ACTIVE transfer
-// journals of one home (ADR-0008 §5: one bounded aggregate under a logical
-// key in the handoff lock scope). Only IDs in Active are ever discovered
-// during recovery, so completed transfers cost nothing to skip; each
-// completed transfer leaves a terminal journal record that is never scanned.
-type handoffJournalIndex struct {
-	Version      int      `json:"version"`
-	HomeRevision uint64   `json:"home_revision"`
-	Active       []string `json:"active"`
-}
 
 // handoffLockScope is the fleet-level fenced lock scope on the source home
 // serializing journal creation and recovery. The canonical transfer
@@ -162,6 +131,8 @@ type taskHandoffJournal struct {
 	Tasks           []taskHandoffTask `json:"tasks"`
 }
 
+func (j *taskHandoffJournal) journalHead() (int, string) { return j.Version, j.ID }
+
 // taskHandoffTask pins one task's transfer intent. The four Operation IDs are
 // deterministic from the transfer ID and task ID, so a restart replays the
 // exact same operations (idempotent by Operation ID + digest).
@@ -190,7 +161,7 @@ func durableTaskHandoff(parentHome, captainHome string, itemKeys []string) error
 	if source == destination {
 		return fmt.Errorf("refusing handoff: destination is parent home itself")
 	}
-	captainID, err := ValidateProvenance(destination)
+	captainID, err := mhome.ValidateCaptainProvenance(destination)
 	if err != nil {
 		return fmt.Errorf("refusing handoff to unmarked home %s: %w", destination, err)
 	}
@@ -287,7 +258,7 @@ func durableTaskHandoff(parentHome, captainHome string, itemKeys []string) error
 		return err
 	}
 	// Durable intent BEFORE the first side effect (Reserve).
-	if err := writeHandoffJournal(sourceHome, lk, journal); err != nil {
+	if err := handoffJournals.create(sourceHome, lk, journal); err != nil {
 		return err
 	}
 	handoffCrashHook("journal")
@@ -317,20 +288,6 @@ func handoffCanonical(homeDir string) (*taskauthority.Canonical, error) {
 // idempotently and recovery continues the same Transfer.
 func transferOpID(transferID, taskID, step string) string {
 	return "transfer-" + transferID + "-" + taskID + "-" + step
-}
-
-// mustHandoffOperation builds a validated Operation from a typed Operation ID
-// and intent, deriving the digest from the typed intent.
-func mustHandoffOperation(id string, intent domain.Intent) domain.Operation {
-	opID, err := domain.NewOperationID(id)
-	if err != nil {
-		panic(fmt.Sprintf("handoff: invalid operation id %q: %v", id, err))
-	}
-	op, err := domain.NewOperation(opID, intent)
-	if err != nil {
-		panic(fmt.Sprintf("handoff: invalid operation for %q: %v", id, err))
-	}
-	return op
 }
 
 // checkHandoffHolds is the fleet-owned dispatch-hold gate for the handoff
@@ -479,10 +436,7 @@ func handoffDestinationConflict(taskID string, generation taskauthority.Generati
 // the destination owner, and the typed TaskDefinition. The destination's
 // ownership is proven absent before intent.
 func buildTransferJournal(source, destination, captainID string, sourceAuth, destinationAuth *taskauthority.Canonical, keys []string) (*taskHandoffJournal, error) {
-	id, err := newTaskHandoffID()
-	if err != nil {
-		return nil, err
-	}
+	id := newJournalID()
 	journal := &taskHandoffJournal{
 		Version:         1,
 		ID:              id,
@@ -531,7 +485,10 @@ func buildTransferJournal(source, destination, captainID string, sourceAuth, des
 func recoverTransferJournals(homeDir string) error {
 	h, err := mhome.Open(homeDir)
 	if err != nil {
-		return nil
+		if errors.Is(err, mhome.ErrNotInitialized) {
+			return nil
+		}
+		return err
 	}
 	lk, err := h.Lock(handoffLockScope)
 	if err != nil {
@@ -549,7 +506,7 @@ func recoverTransferJournals(homeDir string) error {
 // malformed index, a missing or malformed referenced journal, or a terminal
 // record still listed as active is contradictory state and recovery stops.
 func recoverPendingJournals(h *mhome.Home, lk *mhome.Lock) error {
-	idx, err := readHandoffIndex(h)
+	idx, err := handoffJournals.readIndex(h)
 	if err != nil {
 		return err
 	}
@@ -562,7 +519,7 @@ func recoverPendingJournals(h *mhome.Home, lk *mhome.Lock) error {
 }
 
 func recoverPendingJournal(h *mhome.Home, lk *mhome.Lock, id string) error {
-	journal, err := readHandoffJournal(h, id)
+	journal, err := readJournalRecord[taskHandoffJournal](h, handoffJournals, id)
 	if err != nil {
 		return err
 	}
@@ -614,7 +571,7 @@ func resumeTransfer(h *mhome.Home, lk *mhome.Lock, journal *taskHandoffJournal) 
 			FenceToken:    task.FenceToken,
 			Reason:        "task transfer to " + destHomeID.Value(),
 		}
-		if _, err := sourceAuth.ReserveTransfer(mustHandoffOperation(transferOpID(journal.ID, task.TaskID, "reserve"), req), req); err != nil {
+		if _, err := sourceAuth.ReserveTransfer(handoffJournals.mustOperation(transferOpID(journal.ID, task.TaskID, "reserve"), req), req); err != nil {
 			return fmt.Errorf("transfer %s: reserving source task %s: %w", journal.ID, task.TaskID, err)
 		}
 	}
@@ -638,7 +595,7 @@ func resumeTransfer(h *mhome.Home, lk *mhome.Lock, journal *taskHandoffJournal) 
 			DeliveryContract: task.DeliveryContract,
 			Reason:           "task transfer receive",
 		}
-		if _, err := destinationAuth.ReceiveTransfer(mustHandoffOperation(transferOpID(journal.ID, task.TaskID, "receive"), req), req); err != nil {
+		if _, err := destinationAuth.ReceiveTransfer(handoffJournals.mustOperation(transferOpID(journal.ID, task.TaskID, "receive"), req), req); err != nil {
 			return fmt.Errorf("transfer %s: receiving task %s at destination: %w", journal.ID, task.TaskID, err)
 		}
 	}
@@ -662,7 +619,7 @@ func resumeTransfer(h *mhome.Home, lk *mhome.Lock, journal *taskHandoffJournal) 
 			ReservationID: task.ReservationID,
 			Reason:        "task transfer activate",
 		}
-		activateOp := mustHandoffOperation(transferOpID(journal.ID, task.TaskID, "activate"), activateReq)
+		activateOp := handoffJournals.mustOperation(transferOpID(journal.ID, task.TaskID, "activate"), activateReq)
 		evidence[i], err = verifyTransferReceived(destinationAuth, sourceHomeID, activateOp, journal, task)
 		if err != nil {
 			return err
@@ -686,7 +643,7 @@ func resumeTransfer(h *mhome.Home, lk *mhome.Lock, journal *taskHandoffJournal) 
 			Evidence:      evidence[i],
 			Reason:        "task transfer commit",
 		}
-		if _, err := sourceAuth.CommitTransfer(mustHandoffOperation(transferOpID(journal.ID, task.TaskID, "commit"), req), req); err != nil {
+		if _, err := sourceAuth.CommitTransfer(handoffJournals.mustOperation(transferOpID(journal.ID, task.TaskID, "commit"), req), req); err != nil {
 			return fmt.Errorf("transfer %s: superseding source task %s: %w", journal.ID, task.TaskID, err)
 		}
 	}
@@ -707,13 +664,13 @@ func resumeTransfer(h *mhome.Home, lk *mhome.Lock, journal *taskHandoffJournal) 
 			ReservationID: task.ReservationID,
 			Reason:        "task transfer activate",
 		}
-		if _, err := destinationAuth.ActivateTransfer(mustHandoffOperation(transferOpID(journal.ID, task.TaskID, "activate"), activateReq), activateReq); err != nil {
+		if _, err := destinationAuth.ActivateTransfer(handoffJournals.mustOperation(transferOpID(journal.ID, task.TaskID, "activate"), activateReq), activateReq); err != nil {
 			return fmt.Errorf("transfer %s: activating task %s at destination: %w", journal.ID, task.TaskID, err)
 		}
 	}
 	handoffCrashHook("activated")
 
-	if err := completeHandoffJournal(h, lk, journal); err != nil {
+	if err := handoffJournals.complete(h, lk, journal, func() { journal.Phase = handoffPhaseCompleted }); err != nil {
 		return err
 	}
 	handoffCrashHook("completed")
@@ -753,137 +710,4 @@ func verifyTransferReceived(destinationAuth *taskauthority.Canonical, sourceHome
 		ActivationOperationID: activateOp.ID.Value(),
 		ActivationDigest:      activateOp.Digest,
 	}, nil
-}
-
-// --- Journal persistence ---
-
-func newTaskHandoffID() (string, error) {
-	buffer := make([]byte, 16)
-	if _, err := rand.Read(buffer); err != nil {
-		return "", fmt.Errorf("generating handoff transaction ID: %w", err)
-	}
-	return fmt.Sprintf("%d-%x", time.Now().UnixNano(), buffer), nil
-}
-
-// readHandoffIndex reads and validates the bounded handoff index through
-// Home.Read. An absent index means no pending transfers; a malformed index
-// (bad JSON, wrong version, duplicate or empty active IDs) fails closed.
-func readHandoffIndex(h *mhome.Home) (handoffJournalIndex, error) {
-	data, err := h.Read(mhome.RootState, handoffIndexKey)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return handoffJournalIndex{}, nil
-		}
-		return handoffJournalIndex{}, fmt.Errorf("reading handoff journal index: %w", err)
-	}
-	var idx handoffJournalIndex
-	if err := json.Unmarshal(data, &idx); err != nil {
-		return handoffJournalIndex{}, fmt.Errorf("corrupt handoff journal index: %w", err)
-	}
-	if idx.Version != handoffIndexVersion {
-		return handoffJournalIndex{}, fmt.Errorf("unsupported handoff journal index version %d", idx.Version)
-	}
-	seen := make(map[string]bool, len(idx.Active))
-	for _, id := range idx.Active {
-		if id == "" || seen[id] {
-			return handoffJournalIndex{}, fmt.Errorf("invalid handoff journal index: duplicate or empty active id %q", id)
-		}
-		seen[id] = true
-	}
-	return idx, nil
-}
-
-// handoffJournalItems encodes the index document and one journal record as
-// the change-set of one Home.Commit transition. The index membership and the
-// journal intent always persist atomically.
-func handoffJournalItems(idx handoffJournalIndex, journal *taskHandoffJournal) ([]mhome.ChangeItem, error) {
-	idxData, err := json.Marshal(idx)
-	if err != nil {
-		return nil, err
-	}
-	journalData, err := json.MarshalIndent(journal, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-	return []mhome.ChangeItem{
-		{Root: mhome.RootState, Key: handoffIndexKey, Data: append(idxData, '\n')},
-		{Root: mhome.RootState, Key: handoffJournalKey(journal.ID), Data: append(journalData, '\n')},
-	}, nil
-}
-
-// writeHandoffJournal durably records the intent of one new Transfer before
-// its first side effect: the index gains the Transfer ID and the journal
-// record is written (phase prepared) in ONE atomic Home.Commit under the held
-// fenced handoff lock. expectedRevision is the index's current HomeRevision,
-// which tracks the handoff scope revision read under the same lock.
-func writeHandoffJournal(h *mhome.Home, lk *mhome.Lock, journal *taskHandoffJournal) error {
-	idx, err := readHandoffIndex(h)
-	if err != nil {
-		return err
-	}
-	next := idx
-	next.Version = handoffIndexVersion
-	next.HomeRevision++
-	next.Active = append(next.Active, journal.ID)
-	items, err := handoffJournalItems(next, journal)
-	if err != nil {
-		return err
-	}
-	if _, err := h.Commit(lk, handoffTxnID(journal.ID, "create"), idx.HomeRevision, items); err != nil {
-		return fmt.Errorf("writing handoff journal %s: %w", journal.ID, err)
-	}
-	return nil
-}
-
-// readHandoffJournal reads one transfer journal record through Home.Read.
-func readHandoffJournal(h *mhome.Home, id string) (*taskHandoffJournal, error) {
-	data, err := h.Read(mhome.RootState, handoffJournalKey(id))
-	if err != nil {
-		return nil, err
-	}
-	var journal taskHandoffJournal
-	if err := json.Unmarshal(data, &journal); err != nil {
-		return nil, fmt.Errorf("corrupt handoff journal %s: %w", id, err)
-	}
-	if journal.Version != 1 || journal.ID != id {
-		return nil, fmt.Errorf("invalid handoff journal %s", id)
-	}
-	return &journal, nil
-}
-
-// completeHandoffJournal commits the terminal truth of one completed
-// Transfer: the index drops the Transfer ID (bounding the active set) and the
-// journal record is rewritten phase=completed in ONE atomic Home.Commit. The
-// terminal record is retained as durable truth; no file is deleted and a
-// completed record is never resumed.
-func completeHandoffJournal(h *mhome.Home, lk *mhome.Lock, journal *taskHandoffJournal) error {
-	idx, err := readHandoffIndex(h)
-	if err != nil {
-		return err
-	}
-	found := false
-	active := make([]string, 0, len(idx.Active))
-	for _, id := range idx.Active {
-		if id == journal.ID {
-			found = true
-			continue
-		}
-		active = append(active, id)
-	}
-	if !found {
-		return fmt.Errorf("completing handoff journal %s: not active", journal.ID)
-	}
-	next := idx
-	next.Version = handoffIndexVersion
-	next.HomeRevision++
-	next.Active = active
-	journal.Phase = handoffPhaseCompleted
-	items, err := handoffJournalItems(next, journal)
-	if err != nil {
-		return err
-	}
-	if _, err := h.Commit(lk, handoffTxnID(journal.ID, "complete"), idx.HomeRevision, items); err != nil {
-		return fmt.Errorf("completing handoff journal %s: %w", journal.ID, err)
-	}
-	return nil
 }

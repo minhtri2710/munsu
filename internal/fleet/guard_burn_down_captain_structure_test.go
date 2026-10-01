@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 func TestGuardBurnDownValidateRefusesNonDirectoryState(t *testing.T) {
@@ -20,7 +22,7 @@ func TestGuardBurnDownValidateRefusesNonDirectoryState(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(homePath, "AGENTS.md"), []byte("# captain\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := SeedProvenance(homePath, "captain"); err != nil {
+	if err := home.SeedCaptainProvenance(homePath, "captain"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -30,29 +32,9 @@ func TestGuardBurnDownValidateRefusesNonDirectoryState(t *testing.T) {
 	}
 }
 
-func TestGuardBurnDownValidateStructureRefusesNonDirectoryState(t *testing.T) {
-	homePath := t.TempDir()
-	if err := os.WriteFile(filepath.Join(homePath, "state"), []byte("not a directory\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	for _, dir := range []string{"data", "config"} {
-		if err := os.Mkdir(filepath.Join(homePath, dir), 0755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.WriteFile(filepath.Join(homePath, "AGENTS.md"), []byte("# captain\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	err := validateStructure(homePath)
-	if err == nil || !strings.Contains(err.Error(), "state/ exists but is not a directory") {
-		t.Fatalf("validateStructure error = %v, want non-directory state refusal", err)
-	}
-}
-
 func TestGuardBurnDownEnsureCaptainIntegrationRefusesNilCapability(t *testing.T) {
 	homePath := t.TempDir()
-	if err := SeedProvenance(homePath, "captain"); err != nil {
+	if err := home.SeedCaptainProvenance(homePath, "captain"); err != nil {
 		t.Fatal(err)
 	}
 

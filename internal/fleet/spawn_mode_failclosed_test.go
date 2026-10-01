@@ -162,3 +162,25 @@ func TestResolveDeliveryModeFromProject_SuccessResolvesSnapshot(t *testing.T) {
 		t.Errorf("explicit mode = %q, want local-only", mode)
 	}
 }
+
+// TestRunnerResolveModeFailsOnUnreadableRegistry proves spawn mode resolution
+// fails the launch when the home's project registry cannot be read, instead
+// of dropping the registry mode and auto-detecting a delivery mode.
+func TestRunnerResolveModeFailsOnUnreadableRegistry(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	// A symlinked root is a home the registry refuses to open.
+	homeDir := filepath.Join(t.TempDir(), "home")
+	if err := os.Symlink(t.TempDir(), homeDir); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Mode(homeDir, "alpha"); err == nil {
+		t.Fatal("fixture: registry read must fail")
+	}
+	r := &Runner{args: Args{ID: "task", ProjectName: "alpha"}, homeDir: homeDir, dispatchPolicy: DispatchPolicyGeneralDirect}
+	if err := r.resolveMode(); err == nil {
+		t.Fatalf("unreadable registry must fail spawn mode resolution, resolved %q", r.effectiveMode)
+	}
+	if r.effectiveMode != "" {
+		t.Errorf("effective mode = %q after failed resolution, want empty", r.effectiveMode)
+	}
+}

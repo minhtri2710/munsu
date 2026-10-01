@@ -6,6 +6,8 @@ import (
 	"errors"
 	"os"
 	"syscall"
+
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 type inspectedProcess struct {
@@ -17,10 +19,22 @@ func isProcessMissing(err error) bool {
 	return errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH)
 }
 func inspectProcess(pid int) (inspectedProcess, error) {
-	executable, start, err := platformProcessIdentity(pid)
+	executable, start, err := home.ProcessIdentity(pid)
 	if err != nil {
 		return inspectedProcess{}, err
 	}
 	return inspectedProcess{StartToken: StartToken(start), ExecutablePath: executable}, nil
 }
-func invalidProcessIdentity(pid int) error { return errors.New("invalid process identity") }
+func (OSProcessVerifier) VerifyDead(artifact WriterArtifact) (bool, error) {
+	current, err := inspectProcess(artifact.PID)
+	if isProcessMissing(err) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if current.StartToken != artifact.StartToken {
+		return true, nil
+	}
+	return false, nil
+}

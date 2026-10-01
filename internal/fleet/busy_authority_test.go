@@ -65,9 +65,6 @@ func TestReadBusy_DerivesFromActivityAxis(t *testing.T) {
 			if got != tc.want {
 				t.Fatalf("ReadBusy(%s) = %s, want %s", tc.obs, got, tc.want)
 			}
-			if !got.Valid() {
-				t.Fatalf("ReadBusy(%s) = %s is not a valid reading", tc.obs, got)
-			}
 		})
 	}
 }
@@ -226,28 +223,24 @@ func TestReadBusy_EventSourceIsHintOnly(t *testing.T) {
 	}
 }
 
-// TestBusyReading_StringAndValid enters every String() arm and both Valid()
-// outcomes, including the invalid zero value and an out-of-range value.
-func TestBusyReading_StringAndValid(t *testing.T) {
+// TestBusyReading_String enters every String() arm, including the zero value
+// and an out-of-range value.
+func TestBusyReading_String(t *testing.T) {
 	cases := []struct {
-		r     BusyReading
-		str   string
-		valid bool
+		r   BusyReading
+		str string
 	}{
-		{BusyReadingInvalid, "invalid", false},
-		{BusyReadingHeld, "held", true},
-		{BusyReadingIdle, "idle", true},
-		{BusyReadingUnknown, "unknown", true},
-		{BusyReadingBlocked, "blocked", true},
-		{BusyReadingDead, "dead", true},
-		{BusyReading(200), "invalid", false},
+		{BusyReading(0), "invalid"},
+		{BusyReadingHeld, "held"},
+		{BusyReadingIdle, "idle"},
+		{BusyReadingUnknown, "unknown"},
+		{BusyReadingBlocked, "blocked"},
+		{BusyReadingDead, "dead"},
+		{BusyReading(200), "invalid"},
 	}
 	for _, tc := range cases {
 		if got := tc.r.String(); got != tc.str {
 			t.Errorf("BusyReading(%d).String() = %q, want %q", uint8(tc.r), got, tc.str)
-		}
-		if got := tc.r.Valid(); got != tc.valid {
-			t.Errorf("BusyReading(%d).Valid() = %v, want %v", uint8(tc.r), got, tc.valid)
 		}
 	}
 }

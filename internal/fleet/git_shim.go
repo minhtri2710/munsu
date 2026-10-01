@@ -36,7 +36,7 @@ func provisionGitShim(homeDir string) (string, error) {
 	if resolved, rerr := filepath.EvalSymlinks(self); rerr == nil {
 		self = resolved
 	}
-	script := "#!/usr/bin/env bash\nexec " + spawnShQuote(self) + " git-guard \"$@\"\n"
+	script := "#!/usr/bin/env bash\nexec " + shQuote(self) + " git-guard \"$@\"\n"
 	shimPath := filepath.Join(shimDir, "git")
 	if err := atomicWriteFile(shimPath, []byte(script), 0o755); err != nil {
 		return "", fmt.Errorf("provisioning git shim: %w", err)

@@ -21,7 +21,7 @@ func TestConfigureWatcherProcessCreatesIndependentGroup(t *testing.T) {
 // TestSignalWatcherProcessMatchesStopContract pins the windows half of the
 // signal split at the only level this repo measures it: the goos-vet lane
 // compiles this file, so the binding proves signalWatcherProcess exists on
-// windows with the shape stopRunningWatcher calls. No lane runs it — the stop's
+// windows with the shape StopWatcher calls. No lane runs it — the stop's
 // runtime effect on a live watcher stays unproven here.
 func TestSignalWatcherProcessMatchesStopContract(t *testing.T) {
 	var _ func(*os.Process) error = signalWatcherProcess

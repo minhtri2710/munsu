@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // The argv fence is the shim's entry to the same worktree-binding core the
@@ -216,11 +218,11 @@ func TestGuardDoesNotRecurseIntoShim(t *testing.T) {
 		t.Fatal(err)
 	}
 	marker := filepath.Join(home, "shim-was-hit")
-	writeExecutable(t, filepath.Join(shimDir, "git"), "#!/bin/sh\nprintf x > "+marker+"\nexit 0\n")
+	testutil.WriteFakeExecutable(t, filepath.Join(shimDir, "git"), "#!/bin/sh\nprintf x > "+marker+"\nexit 0\n")
 
 	realBin := t.TempDir()
 	realMarker := filepath.Join(home, "real-git-was-hit")
-	writeExecutable(t, filepath.Join(realBin, "git"), "#!/bin/sh\nprintf x > "+realMarker+"\nexit 23\n")
+	testutil.WriteFakeExecutable(t, filepath.Join(realBin, "git"), "#!/bin/sh\nprintf x > "+realMarker+"\nexit 23\n")
 
 	t.Setenv("MUNSU_HOME", "")
 	t.Setenv("MUNSU_TASK_ID", "")
@@ -228,8 +230,6 @@ func TestGuardDoesNotRecurseIntoShim(t *testing.T) {
 	t.Chdir(t.TempDir())
 
 	if os.Getenv("MUNSU_GIT_GUARD_HELPER") == "1" {
-		marker = os.Getenv("MUNSU_GIT_GUARD_SHIM_MARKER")
-		realMarker = os.Getenv("MUNSU_GIT_GUARD_REAL_MARKER")
 		t.Setenv("PATH", os.Getenv("MUNSU_GIT_GUARD_TEST_PATH"))
 		t.Setenv("MUNSU_HOME", "")
 		t.Setenv("MUNSU_TASK_ID", "")
@@ -249,7 +249,7 @@ func TestGuardDoesNotRecurseIntoShim(t *testing.T) {
 	}
 
 	cmd := exec.Command(os.Args[0], "-test.run=^TestGuardDoesNotRecurseIntoShim$", "-test.v")
-	cmd.Env = append(os.Environ(), "MUNSU_GIT_GUARD_HELPER=1", "MUNSU_GIT_GUARD_TEST_PATH="+shimDir+string(filepath.ListSeparator)+realBin, "MUNSU_GIT_GUARD_TEST_CWD="+t.TempDir(), "MUNSU_GIT_GUARD_SHIM_MARKER="+marker, "MUNSU_GIT_GUARD_REAL_MARKER="+realMarker)
+	cmd.Env = append(os.Environ(), "MUNSU_GIT_GUARD_HELPER=1", "MUNSU_GIT_GUARD_TEST_PATH="+shimDir+string(filepath.ListSeparator)+realBin, "MUNSU_GIT_GUARD_TEST_CWD="+t.TempDir())
 	if err := cmd.Run(); err == nil {
 		t.Fatal("helper process unexpectedly succeeded")
 	} else if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 23 {

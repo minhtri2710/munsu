@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/home"
-	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 // SendToSoldierResult describes the outcome of sending a command to a soldier.
@@ -52,7 +51,7 @@ func SendToSoldier(senderHome, soldierTaskID, senderIdentity, line string, endpo
 	result := &SendToSoldierResult{}
 
 	// 1. Read soldier task meta for window and backend.
-	meta, err := mhome.ReadMeta(senderHome, soldierTaskID)
+	meta, err := home.ReadMeta(senderHome, soldierTaskID)
 	if err != nil {
 		result.Err = fmt.Errorf("reading soldier meta: %w", err)
 		return result
@@ -167,7 +166,7 @@ func FlushPendingSoldierCommands(senderHome, soldierTaskID, senderIdentity strin
 	}
 
 	// Read soldier meta for window/backend.
-	meta, err := mhome.ReadMeta(senderHome, soldierTaskID)
+	meta, err := home.ReadMeta(senderHome, soldierTaskID)
 	if err != nil {
 		result.Err = fmt.Errorf("reading soldier meta: %w", err)
 		return result
@@ -315,24 +314,8 @@ func EmitReadyEvent(homeDir, taskID, eventKey, metaGeneration string) (*ReadyEve
 		// Corrupt file: overwrite.
 	}
 
-	// Atomic write: temp file + rename.
-	tmp, tmpErr := os.CreateTemp(filepath.Dir(p), ".tmp-")
-	if tmpErr != nil {
-		return nil, fmt.Errorf("emit ready: create temp: %w", tmpErr)
-	}
-	tmpName := tmp.Name()
-	if _, writeErr := tmp.Write(data); writeErr != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return nil, fmt.Errorf("emit ready: write temp: %w", writeErr)
-	}
-	if closeErr := tmp.Close(); closeErr != nil {
-		os.Remove(tmpName)
-		return nil, fmt.Errorf("emit ready: close temp: %w", closeErr)
-	}
-	if renameErr := os.Rename(tmpName, p); renameErr != nil {
-		os.Remove(tmpName)
-		return nil, fmt.Errorf("emit ready: rename: %w", renameErr)
+	if err := home.AtomicWrite(p, data, 0600); err != nil {
+		return nil, fmt.Errorf("emit ready: %w", err)
 	}
 
 	return event, nil
@@ -433,7 +416,7 @@ func ConsumeAllReadyEvents(senderHome, soldierTaskID, senderIdentity, metaGenera
 	}
 
 	// Read task meta for durable key validation.
-	meta, metaErr := mhome.ReadMeta(senderHome, soldierTaskID)
+	meta, metaErr := home.ReadMeta(senderHome, soldierTaskID)
 	if metaErr != nil {
 		// If meta doesn't exist (task never spawned), there's nothing to flush.
 		// Clean up any stale ready events and return.
@@ -523,30 +506,15 @@ func dispatchedPath(senderHome, taskID, messageID string) string {
 }
 
 // markDispatched writes a durable marker that a NotificationRef was sent.
-// Uses atomic write (temp-file + rename).
+// Uses home.AtomicWrite.
 func markDispatched(senderHome, taskID, messageID string) error {
 	p := dispatchedPath(senderHome, taskID, messageID)
 	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
 		return fmt.Errorf("mark dispatched: creating dir: %w", err)
 	}
 	content := fmt.Sprintf(`{"message_id":%q,"dispatched_at":%d}`, messageID, time.Now().UnixNano())
-	tmp, tmpErr := os.CreateTemp(filepath.Dir(p), ".tmp-")
-	if tmpErr != nil {
-		return fmt.Errorf("mark dispatched: create temp: %w", tmpErr)
-	}
-	tmpName := tmp.Name()
-	if _, err := tmp.Write([]byte(content)); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return fmt.Errorf("mark dispatched: write: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
-		return fmt.Errorf("mark dispatched: close: %w", err)
-	}
-	if err := os.Rename(tmpName, p); err != nil {
-		os.Remove(tmpName)
-		return fmt.Errorf("mark dispatched: rename: %w", err)
+	if err := home.AtomicWrite(p, []byte(content), 0600); err != nil {
+		return fmt.Errorf("mark dispatched: %w", err)
 	}
 	return nil
 }

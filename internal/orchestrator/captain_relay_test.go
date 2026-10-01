@@ -361,7 +361,7 @@ func TestReconcileHook_RejectsUnreadableHomeIdentityBeforeRecovery(t *testing.T)
 	tmp := t.TempDir()
 	parentHome := t.TempDir()
 	t.Setenv("MUNSU_PARENT_STATUS", parentHome)
-	if err := os.WriteFile(filepath.Join(tmp, captainMarkerName), []byte("malformed"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(tmp, home.CaptainProvenanceMarkerName), []byte("malformed"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	transport := &captainNotificationTransport{acknowledged: true}
@@ -384,4 +384,17 @@ func TestReconcileHook_RequiresNotificationTransport(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "uplink notification transport capability is required") {
 		t.Fatalf("error = %v, want missing transport capability", err)
 	}
+}
+
+type captainNotificationTransport struct {
+	acknowledged bool
+	calls        int
+}
+
+func (t *captainNotificationTransport) Notify(string, TargetResult, string) UplinkNotifyResult {
+	t.calls++
+	if t.acknowledged {
+		return AcknowledgedNotification()
+	}
+	return QueuedNotification()
 }

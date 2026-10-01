@@ -2,13 +2,16 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -24,6 +27,25 @@ var safetyShapes = []string{"claude", "codex", "grok", "opencode", "agy", "pi"}
 // JSON contract — reading the exit code for either would silently pass.
 func runSafetyShape(t *testing.T, harness, checkPath, command, filePath string) (bool, string) {
 	t.Helper()
+	if command == "" && filePath == "" && (harness == "claude" || harness == "grok" || harness == "codex" || harness == "agy") {
+		oldStdin := os.Stdin
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("create stdin pipe: %v", err)
+		}
+		if _, err := w.Write([]byte(`{}`)); err != nil {
+			t.Fatalf("write stdin payload: %v", err)
+		}
+		if err := w.Close(); err != nil {
+			t.Fatalf("close stdin payload: %v", err)
+		}
+		os.Stdin = r
+		defer func() {
+			os.Stdin = oldStdin
+			_ = r.Close()
+		}()
+	}
+
 	exitCode := 0
 	oldExit := exitWithCode
 	exitWithCode = func(code int) { exitCode = code }
@@ -705,7 +727,7 @@ func TestShellWriteTargetExtraction(t *testing.T) {
 		{"echo x | tee " + abs, absTargets()},
 		{"rm -rf " + abs, absTargets()},
 		{"cp a.txt " + abs, absTargets()},
-		{"sed -i '' s/a/b/ " + abs, absWithPrefix(filepath.Join(base, "s/a/b/"))},
+		{"sed -i '' s/a/b/ " + abs, absWithPrefix(base, filepath.Join(base, "s/a/b/"))},
 		{"perl -pi -e s/a/b/ " + abs, absWithPrefix(filepath.Join(base, "s/a/b/"))},
 		{"dd if=/dev/zero of=" + abs, absTargets()},
 		{"echo x > out.txt", []string{filepath.Join(base, "out.txt")}},
@@ -822,12 +844,11 @@ func TestShellWriteHeredocBackslashDelimiterBothReadings(t *testing.T) {
 		"cat <<-\\END > notes.md\n\tharmless\n\tEND\necho pwned > " + target,
 	}
 	for _, command := range cases {
-		// Heredoc stripping is POSIX and runs once; the readings tokenize what
-		// remains, so this pins that the post-terminator write survives stripping
-		// and is classified under both readings (#664 v3).
-		stripped := stripHeredocBodies(command)
-		escapeTargets, escapeAmbiguous := shellWriteTargetsUnderForTest(backslashEscapes, base, stripped)
-		literalTargets, literalAmbiguous := shellWriteTargetsUnderForTest(backslashLiteral, base, stripped)
+		// Heredoc stripping is POSIX in both readings; the readings tokenize
+		// what remains, so this pins that the post-terminator write survives
+		// stripping and is classified under both readings (#664 v3).
+		escapeTargets, escapeAmbiguous := shellWriteTargetsUnderForTest(backslashEscapes, base, command)
+		literalTargets, literalAmbiguous := shellWriteTargetsUnderForTest(backslashLiteral, base, command)
 		if escapeAmbiguous || literalAmbiguous {
 			t.Errorf("%q unexpectedly ambiguous", command)
 		}
@@ -1142,9 +1163,1189 @@ func TestShellWriteRefusesLiteralBacktickInProtectedPath(t *testing.T) {
 	}
 
 	// Unescaped backtick is a genuine command substitution the guard cannot
-	// classify, so it stays omitted (narrow contract preserved).
+	// classify, so it stays omitted; unterminated, it leaves the rest of the
+	// command unread, which is ambiguous.
 	targets, ambiguous := shellWriteTargets(worktree, "rm -rf "+target)
-	if ambiguous || slices.Contains(targets, target) {
-		t.Errorf("unescaped-backtick target should be omitted: %v ambiguous=%v", targets, ambiguous)
+	if !ambiguous || slices.Contains(targets, target) {
+		t.Errorf("unescaped-backtick target should be omitted and ambiguous: %v ambiguous=%v", targets, ambiguous)
+	}
+}
+
+// TestTokenizeSegmentsLineContinuationAndANSICQuoting pins how the shared
+// tokenizer reads a backslash-newline and a bash `$'...'` word, the two literal
+// forms that let git text past both guards before. A POSIX backslash-newline
+// outside single quotes is removed and joins the text around it; the Windows
+// reading keeps the backslash. `$'...'` is one word in either reading, with its
+// escapes decoded, and a word holding an escape the tokenizer does not decode
+// is marked undecodable.
+func TestTokenizeSegmentsLineContinuationAndANSICQuoting(t *testing.T) {
+	for _, tc := range []struct {
+		mode        backslashMode
+		command     string
+		want        [][]string
+		undecodable bool
+	}{
+		{backslashEscapes, "/usr/bin/git \\\npush --force", [][]string{{"/usr/bin/git", "push", "--force"}}, false},
+		{backslashEscapes, "git pu\\\nsh --force", [][]string{{"git", "push", "--force"}}, false},
+		{backslashEscapes, "\"git pu\\\nsh\"", [][]string{{"git push"}}, false},
+		{backslashEscapes, "'a\\\nb'", [][]string{{"a\\\nb"}}, false},
+		{backslashLiteral, "git \\\npush", [][]string{{"git", `\`}, {"push"}}, false},
+		{backslashEscapes, `bash -c $'git push --force'`, [][]string{{"bash", "-c", "git push --force"}}, false},
+		{backslashEscapes, `$'git'x push`, [][]string{{"gitx", "push"}}, false},
+		{backslashEscapes, `$'a\tb\nc\\d\'e\"f\?\101\x41\e\E\a\b\f\r\v'`, [][]string{{"a\tb\nc\\d'e\"f?AA\x1b\x1b\a\b\f\r\v"}}, false},
+		{backslashLiteral, `$'git\x20push'`, [][]string{{"git push"}}, false},
+		{backslashEscapes, `"$'x'"`, [][]string{{"$'x'"}}, false},
+		{backslashEscapes, `$'\u0067it'`, [][]string{{`'\u0067it'`}}, true},
+		{backslashEscapes, `$'\cA'`, [][]string{{`'\cA'`}}, true},
+		{backslashEscapes, `$'\q'`, [][]string{{`'\q'`}}, true},
+		{backslashEscapes, `$'\x'`, [][]string{{`'\x'`}}, true},
+		{backslashEscapes, `$'\0'`, [][]string{{`'\0'`}}, true},
+		{backslashEscapes, `$'\400'`, [][]string{{`'\400'`}}, true},
+		{backslashEscapes, `$'\1014'`, [][]string{{"A4"}}, false},
+		{backslashEscapes, `$'\x414'`, [][]string{{"A4"}}, false},
+		{backslashEscapes, `$'git`, [][]string{{`'git`}}, true},
+		{backslashEscapes, `$$'x'`, [][]string{{"$$x"}}, false},
+		{backslashEscapes, `a$$'b'`, [][]string{{"a$$b"}}, false},
+		{backslashEscapes, `$$'\' ; gi\t push`, [][]string{{`$$\`}, {"git", "push"}}, false},
+		{backslashEscapes, `$$$'\x41'`, [][]string{{"$$A"}}, false},
+		{backslashEscapes, `$''`, [][]string{{""}}, false},
+		{backslashEscapes, `''`, [][]string{{""}}, false},
+		{backslashEscapes, `""`, [][]string{{""}}, false},
+		{backslashEscapes, `''"" x`, [][]string{{"", "x"}}, false},
+		{backslashLiteral, `a '' b`, [][]string{{"a", "", "b"}}, false},
+		{backslashEscapes, `x''`, [][]string{{"x"}}, false},
+		// bash reads `$"..."` as its double-quoted text; `$$` stays the PID.
+		{backslashEscapes, `bash -c $"git push --force"`, [][]string{{"bash", "-c", "git push --force"}}, false},
+		{backslashLiteral, `$"a $x"b`, [][]string{{"a $xb"}}, false},
+		{backslashEscapes, `$""`, [][]string{{""}}, false},
+		{backslashEscapes, `$$"x"`, [][]string{{"$$x"}}, false},
+		// An unquoted `${...}` is one word whatever it holds, and an
+		// unterminated one is undecodable.
+		{backslashEscapes, `echo ${x:-a b} c`, [][]string{{"echo", "${x:-a b}", "c"}}, false},
+		{backslashEscapes, `${x:-a;b|c>d} ; y`, [][]string{{"${x:-a;b|c>d}"}, {"y"}}, false},
+		{backslashEscapes, `${x:-"}"} ${a:-${b:-c d}} e`, [][]string{{"${x:-}}", "${a:-${b:-c d}}", "e"}}, false},
+		{backslashEscapes, `${x y`, [][]string{{"${x", "y"}}, true},
+		// A parameter expansion the tokenizer cannot parse is undecodable.
+		{backslashEscapes, `${ x; }`, [][]string{{"${ x; }"}}, true},
+		{backslashEscapes, `${x["0"]}`, [][]string{{"${x[0]}"}}, true},
+		{backslashEscapes, `${x[\}]}`, [][]string{{"${x[}]}"}}, true},
+		{backslashEscapes, `${x[$i]} ${x[i+1]} ${x[-1]}`, [][]string{{"${x[$i]}", "${x[i+1]}", "${x[-1]}"}}, false},
+		{backslashEscapes, `${x&}`, [][]string{{"${x&}"}}, true},
+		{backslashEscapes, `${#x:-a}`, [][]string{{"${#x:-a}"}}, true},
+		{backslashEscapes, `${x[0]} ${!x} ${#x} ${x@Q} ${x[@]} ${!p*} ${x:1:2} ${#}`, [][]string{{"${x[0]}", "${!x}", "${#x}", "${x@Q}", "${x[@]}", "${!p*}", "${x:1:2}", "${#}"}}, false},
+		// Inside double quotes a `${...}` is one group too, whose quotes nest.
+		{backslashEscapes, `"${x:-"a b"}" c`, [][]string{{"${x:-a b}", "c"}}, false},
+		{backslashEscapes, `"${x:-"}"}" c`, [][]string{{"${x:-}}", "c"}}, false},
+	} {
+		segments := tokenizeSegments(tc.mode, tc.command)
+		var got [][]string
+		undecodable := false
+		for _, segment := range segments {
+			got = append(got, segmentWords(segment))
+			for _, token := range segment {
+				undecodable = undecodable || token.undecodable
+			}
+		}
+		if !slices.EqualFunc(got, tc.want, slices.Equal[[]string]) || undecodable != tc.undecodable {
+			t.Errorf("tokenizeSegments(%v, %q) = %q undecodable=%v, want %q undecodable=%v", tc.mode, tc.command, got, undecodable, tc.want, tc.undecodable)
+		}
+	}
+	// A word also carries its other literal readings. Each `$'...'` part read
+	// as the text between its quotes, undecoded, is one. A parameter
+	// expansion whose operator substitutes its word is another: the token
+	// with that word, decoded as shell, in place of the expansion.
+	for _, tc := range []struct {
+		command string
+		want    []string
+	}{
+		{`$'gi\t'`, []string{`gi\t`}},
+		{`a$'\x67'b $'x'`, []string{`a\x67b`, ""}},
+		// A comment is text up to the newline, so `$'` in it opens no quote.
+		{"echo # $'\ngi\\t push'", []string{"", "", "", "", ""}},
+		{`$''`, []string{""}},
+		{`'\t'`, []string{""}},
+		// An unquoted word made only of expansions may also be removed: its
+		// absent reading is the empty one after the `|`.
+		{`${x:-git}`, []string{"git|"}},
+		{`${x:-$'\x67it'}`, []string{`git|\x67it|${x:-\x67it}|`}},
+		{`"${x:-$'\x67it'}"`, []string{`git|\x67it|${x:-\x67it}`}},
+		{`/usr/bin/${x-g}${y:+i}t`, []string{"/usr/bin/git"}},
+		{`${x=git} ${x:=git} ${x+git} ${x:+"g"'it'}`, []string{"git|", "git|", "git|", "git|"}},
+		{`${a:-${b:-git}}`, []string{`git|`}},
+		{`${x[0]:-git} ${!x-git} ${x[@]:+git}`, []string{"git|", "git|", "git|"}},
+		// In double quotes the word is read in its quoting context: its own
+		// quotes nest, `$"..."` is the quoted text and `'` is literal.
+		{`"${x:-$"git"}"`, []string{"git"}},
+		{`"${x:-$"g"it}"`, []string{"git"}},
+		{`"${x:-"a b"'c'}"`, []string{"a b'c'"}},
+		{`"${x:-git push}"`, []string{"git push"}},
+		// Unquoted, the substituted word is split into words, none of them
+		// an operator.
+		{`${x:-git push}`, []string{"git,push|"}},
+		{`${x:-a > f}`, []string{"a,>,f|"}},
+		{`${a:-git} ${b:-push}`, []string{"git|", "push|"}},
+		{`${x:?git} ${#x} ${x#git} ${x%git} ${x/a/git} ${x^} ${x,} ${x:1} ${x:-git`, []string{"", "", "", "", "", "", "", "", ""}},
+	} {
+		var got []string
+		for _, segment := range tokenizeSegments(backslashEscapes, tc.command) {
+			for _, token := range segment {
+				var readings []string
+				for _, alternate := range token.alternates {
+					readings = append(readings, strings.Join(segmentWords(alternate), ","))
+				}
+				got = append(got, strings.Join(readings, "|"))
+			}
+		}
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("alternate readings of %q = %q, want %q", tc.command, got, tc.want)
+		}
+	}
+	// Only a word made only of unquoted expansions and quoted `@` forms may
+	// be removed, an empty quoted part beside a `@` form included; any other
+	// quoted expansion is an empty word.
+	for command, want := range map[string]bool{
+		`$b`: true, `${b}`: true, `${b:+x}`: true, `$1$b`: true, "$b\\\n": true,
+		`x$b`: false, `"$b"`: false, `'$b'`: false, `$(b)`: false, `$`: false,
+		`"$@"`: true, `"${@:+x}"`: true, `"${e[@]}"`: true, `"${e[@]:+x}"`: true, `"${e[@]+x}"`: true,
+		`"${!pre@}"`: true, `"${!e[@]}"`: true, `"$@""$@"`: true, `"$@"$b`: true, `"$@"""`: true,
+		`"$@"''`: true, `"$@"$''`: true, `"$@"$""`: true, `"$@$@"`: true,
+		`$"$@"`: true, `$"${e[@]}"`: true, `$"$@"$''`: true, `""$"$@"`: true, `$"$b"`: false, `$"x$@"`: false,
+		`"$*"`: false, `"${e[*]}"`: false, `"${!pre*}"`: false, `"${e[@]:-}"`: false, `"${e[@]-}"`: false,
+		`"${@:-}"`: false, `"${e[@]:=}"`: false, `"${#e[@]}"`: false, `x"$@"`: false, `"$@"x`: false,
+		"\"$@\\\n\"": true, "\"\\\n$@\"": true, "\"$\\\n@\"": true, "$\\\n@": true, "$\"$@\\\n\"": true,
+		"\"${e[@]:+x}\\\n\"": true, "\"\\$@\"": false, "\"$@\\x\"": false,
+		`"x$@"`: false, `""`: false, `""$b`: false, `"$@"'x'`: false, `"$@`: false, `"${@`: false, `${b`: true, `x${b`: false,
+	} {
+		token := tokenizeSegments(backslashEscapes, command)[0][0]
+		absent := slices.ContainsFunc(token.alternates, func(alternate []shellToken) bool { return len(alternate) == 0 })
+		if absent != want {
+			t.Errorf("%q has an absent reading = %v, want %v", command, absent, want)
+		}
+	}
+	// munsuInvocations reads every word holding a space as shell again; an
+	// undecodable word must not read back as itself, or the recursion never
+	// ends.
+	if got, _ := munsuInvocations("bash -c $'munsu watch \\q'", 0); len(got) != 1 || got[0].subcommand != "watch" {
+		t.Errorf("munsuInvocations of an undecodable word = %+v, want the watch invocation", got)
+	}
+	// An empty quoted word is the --home value, so the bare watch after it
+	// is the invocation, and it is not a guard or doctor call.
+	if got, _ := munsuInvocations("munsu --home '' watch", 0); len(got) != 1 || got[0].subcommand != "watch" || len(got[0].following) != 0 {
+		t.Errorf("munsuInvocations(munsu --home '' watch) = %+v, want a bare watch", got)
+	}
+	if onlyGuardOrDoctor("munsu '' guard .no-mistakes") {
+		t.Errorf("onlyGuardOrDoctor(munsu '' guard) = true, want false")
+	}
+}
+
+// TestShellWriteTargetsReadEmptyQuotedWords pins the write-guard verdicts an
+// empty quoted word moved: it is a word, so it takes its operand position, and
+// as a target it names the directory the command runs in (darwin cp writes
+// there). Redirects and in-place sed with an empty suffix follow the same rule
+// and over-refuse.
+func TestShellWriteTargetsReadEmptyQuotedWords(t *testing.T) {
+	base := mustAbsTestPath(t, "base")
+	for _, tc := range []struct {
+		command string
+		want    []string
+	}{
+		{`echo x > ''`, []string{base}},
+		{`echo x > ""`, []string{base}},
+		{`echo x > $''`, []string{base}},
+		{`cp a ''`, []string{base}},
+		{`cp a ""`, []string{base}},
+		{`cp -R a ''`, []string{base}},
+		{`cp a $'' b`, []string{filepath.Join(base, "b")}},
+		// `>''|` is a redirection and a pipe, not the `>|` clobber operator.
+		{`echo x >''| tee f`, []string{base, filepath.Join(base, "f")}},
+	} {
+		got, ambiguous := shellWriteTargetsUnderForTest(backslashEscapes, base, tc.command)
+		if ambiguous || !slices.Equal(got, tc.want) {
+			t.Errorf("%q → %v ambiguous=%v, want %v", tc.command, got, ambiguous, tc.want)
+		}
+	}
+}
+
+// TestShellWriteEmptyCopyDestinationIntoBoundPrimaryRefused runs through the
+// real hook: darwin cp writes an empty destination into the cwd, so a copy to an
+// empty word from inside the shared primary checkout is a write into it.
+func TestShellWriteEmptyCopyDestinationIntoBoundPrimaryRefused(t *testing.T) {
+	primary, worktree := boundTaskFixture(t, "ship-shell-empty-dest")
+	docs := filepath.Join(primary, "docs")
+	if err := os.MkdirAll(docs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range []string{
+		"cd " + docs + " && cp ../README.md ''",
+		"cd " + docs + ` && cp ../README.md ""`,
+		"cd " + docs + " && cp -R ../README.md ''",
+	} {
+		if block, reason := runPiSafetyForGit(t, worktree, command); !block {
+			t.Errorf("%q: block=false (%s), want refused", command, reason)
+		}
+	}
+}
+
+// TestShellWriteTargetsReadContinuationAndANSICQuoting pins the write-guard
+// verdicts the tokenizer change moved: a continued target names the joined
+// path, and a `$'...'` target names its decoded path instead of being dropped
+// as an expansion.
+func TestShellWriteTargetsReadContinuationAndANSICQuoting(t *testing.T) {
+	base := mustAbsTestPath(t, "base")
+	for _, tc := range []struct {
+		command string
+		want    []string
+	}{
+		{"echo x > f\\\noo", []string{filepath.Join(base, "foo")}},
+		{`echo x > $'f\x6fo'`, []string{filepath.Join(base, "foo")}},
+		{`echo x > $'\u0066'`, nil},
+	} {
+		got, ambiguous := shellWriteTargetsUnderForTest(backslashEscapes, base, tc.command)
+		if ambiguous || !slices.Equal(got, tc.want) {
+			t.Errorf("%q → %v ambiguous=%v, want %v", tc.command, got, ambiguous, tc.want)
+		}
+	}
+}
+
+// TestShellWriteTargetsReadParameterExpansionWords pins the write targets of
+// a parameter expansion: the words bash substitutes when the parameter is
+// unset, split when unquoted, are targets at the expansion's position, and
+// the expansion as written is not one. The raw reading of an ANSI-C word is
+// not.
+func TestShellWriteTargetsReadParameterExpansionWords(t *testing.T) {
+	dir := t.TempDir()
+	for _, tc := range []struct {
+		command string
+		want    []string
+	}{
+		// The removed reading of an expansion that cannot be empty still
+		// names a target: fail closed.
+		{`cp a ${x:-b c}`, []string{"c", "a"}},
+		{`rm ${x:-b c}`, []string{"b", "c"}},
+		{`rm "${x:-b c}"`, []string{"b c"}},
+		{`echo ${x:-a > f}`, nil},
+		{`echo ${x#a > f}`, nil},
+		{`echo ${x#a; touch f #}`, nil},
+		{`cd docs && ${x:-echo hi > f}`, nil},
+		// Every combination of candidates is read.
+		{`${a:-rm} ${b:-c}`, []string{"c"}},
+		{`cp ${a:--t} ${b:-d} e`, []string{"e", "d"}},
+		{`echo ${x:-a b}`, nil},
+		{`rm ${x:-$HOME/f}`, nil},
+		{`touch $'\x41'`, []string{"A"}},
+	} {
+		var want []string
+		for _, target := range tc.want {
+			want = append(want, filepath.Join(dir, target))
+		}
+		if targets, ambiguous := shellWriteTargets(dir, tc.command); ambiguous || !slices.Equal(targets, want) {
+			t.Errorf("shellWriteTargets(%q) = %q ambiguous=%v, want %q", tc.command, targets, ambiguous, want)
+		}
+	}
+}
+
+// TestShellWriteTargetsRefuseTooManyCandidateReadings pins the bound on the
+// write guard's candidate combinations: past it the targets are ambiguous.
+// A defaulted expansion has three readings: as written, substituted, absent.
+func TestShellWriteTargetsRefuseTooManyCandidateReadings(t *testing.T) {
+	dir := t.TempDir()
+	command := "rm"
+	for i := range 6 {
+		command += fmt.Sprintf(" ${x%d:-f%d}", i, i)
+	}
+	if _, ambiguous := shellWriteTargets(dir, command); !ambiguous {
+		t.Errorf("shellWriteTargets(%q): ambiguous=false, want true", command)
+	}
+	if _, ambiguous := shellWriteTargets(dir, strings.Replace(command, " ${x5:-f5}", "", 1)); ambiguous {
+		t.Errorf("shellWriteTargets with 5 expansions: ambiguous=true, want false")
+	}
+	// Only a segment that can write is read: no candidate here is a write
+	// verb or a redirect.
+	for _, command := range []string{
+		strings.Replace(command, "rm", "echo", 1),
+		"echo $a $b $c $d $e $f $g $h $i",
+		"rm f; echo $a $b $c $d $e $f $g $h $i",
+	} {
+		if _, ambiguous := shellWriteTargets(dir, command); ambiguous {
+			t.Errorf("shellWriteTargets(%q): ambiguous=true, want false", command)
+		}
+	}
+	for _, command := range []string{"rm $a $b $c $d $e $f $g $h $i", "${v:-rm} $a $b $c $d $e $f $g $h", "echo $a $b $c $d $e $f $g $h > $i"} {
+		if _, ambiguous := shellWriteTargets(dir, command); !ambiguous {
+			t.Errorf("shellWriteTargets(%q): ambiguous=false, want true", command)
+		}
+	}
+}
+
+// shellQuote single-quotes s for a POSIX shell.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// nestShellPayload wraps command in depth layers of `bash -c`.
+func nestShellPayload(depth int, command string) string {
+	for range depth {
+		command = "bash -c " + shellQuote(command)
+	}
+	return command
+}
+
+// TestShellWriteReadsNamedShellPayloads pins wgp-01: a write inside a payload
+// a named shell runs (`-c`, stdin, eval) is a write of the command.
+func TestShellWriteReadsNamedShellPayloads(t *testing.T) {
+	primary, worktree := boundTaskFixture(t, "ship-shell-payload")
+	rm := "rm " + filepath.Join(primary, "docs", "f")
+	for _, command := range []string{
+		"bash -c " + shellQuote(rm),
+		"/bin/bash -c " + shellQuote(rm),
+		"sh -c " + shellQuote(rm),
+		"zsh -c " + shellQuote(rm),
+		"dash -c " + shellQuote(rm),
+		"ksh -c " + shellQuote(rm),
+		"bash -lc " + shellQuote(rm),
+		"bash -ec " + shellQuote(rm),
+		"bash -l -c " + shellQuote(rm),
+		"bash -c -e " + shellQuote(rm),
+		"bash -c -- " + shellQuote(rm),
+		"bash -o posix -c " + shellQuote(rm),
+		"bash +o posix -c " + shellQuote(rm),
+		"bash -euo pipefail -c " + shellQuote(rm),
+		"bash --norc --rcfile x -c " + shellQuote(rm),
+		"bash -c " + shellQuote(rm) + " name arg",
+		"eval " + shellQuote(rm),
+		"eval " + rm,
+		"eval -- " + shellQuote(rm),
+		"builtin eval " + shellQuote(rm),
+		"bash <<'EOF'\n" + rm + "\nEOF",
+		"bash -s <<'EOF'\n" + rm + "\nEOF",
+		"bash -s arg <<EOF\n" + rm + "\nEOF",
+		"sh <<< " + shellQuote(rm),
+		"bash -s <<< " + shellQuote(rm),
+		"echo ok; bash <<'EOF'\n" + rm + "\nEOF",
+		nestShellPayload(maxShellPayloadDepth, rm),
+		nestShellPayload(maxShellPayloadDepth+1, rm),
+		"${x:-bash} -c " + shellQuote(rm),
+		"${x:-eval} " + shellQuote(rm),
+		"env -S " + shellQuote(rm),
+		"env -S 'bash -c' " + shellQuote(rm),
+		"zsh --emulate sh -c " + shellQuote(rm),
+		"zsh --unknown-option sh -c " + shellQuote(rm),
+		"eval 'cd " + primary + "' && rm docs/f",
+		"bash -c 'cd " + primary + "; rm docs/f'",
+		"eval 'cd " + primary + "; rm docs/f'",
+		"cd " + primary + " && bash -c 'rm docs/f'",
+		"cd " + primary + " && eval 'rm docs/f'",
+	} {
+		assertShapes(t, true, worktree, command, "")
+	}
+}
+
+// TestShellWriteReadsCommandPosition pins wgp-02: the command word is the
+// first word after assignments, reserved words, `!` and every wrapper with its
+// options.
+func TestShellWriteReadsCommandPosition(t *testing.T) {
+	primary, worktree := boundTaskFixture(t, "ship-shell-wrapper")
+	target := filepath.Join(primary, "docs", "f")
+	for _, command := range []string{
+		"command rm " + target,
+		"command -p rm " + target,
+		"command cp x " + target,
+		"exec rm " + target,
+		"exec -a NAME rm " + target,
+		"exec -l rm " + target,
+		"env rm " + target,
+		"env -i PATH=/bin rm " + target,
+		"env - PATH=/bin rm " + target,
+		"env -u HOME rm " + target,
+		"env -uHOME rm " + target,
+		"env --unset HOME rm " + target,
+		"env -P /bin rm " + target,
+		"env X=1 rm " + target,
+		"env -- rm " + target,
+		"env -C " + primary + " rm docs/f",
+		"env --chdir=" + primary + " rm docs/f",
+		"env --chdir " + primary + " cp x docs/f",
+		"nohup rm " + target,
+		"nohup -- rm " + target,
+		"time rm " + target,
+		"time -p rm " + target,
+		"nice rm " + target,
+		"nice -n 5 rm " + target,
+		"nice -n5 rm " + target,
+		"nice -5 rm " + target,
+		"nice --adjustment 5 rm " + target,
+		"timeout 5 rm " + target,
+		"timeout -k 1 5 rm " + target,
+		"timeout -s KILL 5 rm " + target,
+		"timeout --signal=KILL --foreground 5s rm " + target,
+		"sudo rm " + target,
+		"sudo -u root rm " + target,
+		"sudo -uroot rm " + target,
+		"sudo -E -g wheel rm " + target,
+		"sudo --user root rm " + target,
+		"sudo X=1 rm " + target,
+		"sudo -D " + primary + " rm docs/f",
+		"setsid rm " + target,
+		"setsid -w rm " + target,
+		"stdbuf -o0 rm " + target,
+		"stdbuf -o 0 rm " + target,
+		"stdbuf --output=0 rm " + target,
+		"env nohup rm " + target,
+		"command env rm " + target,
+		"nohup env -u HOME nice -n 1 rm " + target,
+		"sudo -u root env X=1 timeout 5 nice -n 1 cp x " + target,
+		"X=1 rm " + target,
+		"X=1 Y+=2 cp x " + target,
+		"! rm " + target,
+		"{ rm " + target + "; }",
+		"( rm " + target + " )",
+		"if rm " + target + "; then :; fi",
+		"if true; then rm " + target + "; fi",
+		"while rm " + target + "; do break; done",
+		"until rm " + target + "; do :; done",
+		`"${x:-env}" rm ` + target,
+		`"${x:-nohup}" "${y:-nice}" rm ` + target,
+	} {
+		assertShapes(t, true, worktree, command, "")
+	}
+}
+
+// TestShellWritePayloadAndWrapperTargets pins where payload and wrapper
+// targets resolve: an eval payload runs in the same shell, so its `cd` moves
+// later segments; a `bash -c` payload runs in a child that starts in its
+// parent segment's directory and whose `cd` does not leak out.
+func TestShellWritePayloadAndWrapperTargets(t *testing.T) {
+	dir, other := t.TempDir(), t.TempDir()
+	in := func(base string, names ...string) []string {
+		var paths []string
+		for _, name := range names {
+			paths = append(paths, filepath.Join(base, name))
+		}
+		return paths
+	}
+	for _, tc := range []struct {
+		command string
+		want    []string
+	}{
+		{"eval 'cd " + other + "' && rm f", in(other, "f")},
+		{"bash -c 'cd " + other + "' && rm f", in(dir, "f")},
+		{"bash -c 'cd " + other + "; rm f'", in(other, "f")},
+		{"eval 'cd " + other + "; rm f'", in(other, "f")},
+		{"cd " + other + " && bash -c 'rm f'", in(other, "f")},
+		{"cd " + other + " && eval 'rm f'", in(other, "f")},
+		{"cd " + other + " && bash <<'EOF'\nrm f\nEOF", in(other, "f")},
+		{"bash -c 'rm a' > b", slices.Concat(in(dir, "b"), in(dir, "a"))},
+		{"env -C " + other + " rm f > g", slices.Concat(in(dir, "g"), in(other, "f"))},
+		{"env --chdir=" + other + " bash -c 'rm f'", in(other, "f")},
+		{"sudo -D " + other + " rm f", in(other, "f")},
+		{"env -C \"$d\" rm " + filepath.Join(other, "f"), in(other, "f")},
+		{"bash -c 'rm $0' f", nil},
+		{`bash -c "$cmd"`, nil},
+		{"command -v rm " + filepath.Join(other, "f"), nil},
+		{"command -V rm " + filepath.Join(other, "f"), nil},
+		{"type rm " + filepath.Join(other, "f"), nil},
+		{"bash script.sh <<< 'rm f'", nil},
+		{"bash -c 'echo hi' <<< 'rm f'", nil},
+		{"cat <<'EOF' | bash\nrm f\nEOF", nil},
+		{`git commit -m "rm ` + filepath.Join(other, "x") + `"`, nil},
+		{`grep "> ` + filepath.Join(other, "x") + `" .`, nil},
+	} {
+		if targets, ambiguous := shellWriteTargets(dir, tc.command); ambiguous || !slices.Equal(targets, tc.want) {
+			t.Errorf("shellWriteTargets(%q) = %q ambiguous=%v, want %q", tc.command, targets, ambiguous, tc.want)
+		}
+	}
+	for _, command := range []string{
+		nestShellPayload(maxShellPayloadDepth+1, "echo hi"),
+		"eval " + shellQuote(nestShellPayload(maxShellPayloadDepth, "echo hi")),
+		"env -C \"$d\" rm f",
+		"env -C \"$d\" bash -c 'rm f'",
+		"sudo -R " + other + " rm " + filepath.Join(other, "f"),
+		"sudo -R " + other + " bash -c 'echo hi'",
+		`eval ${x:-"cd /"} && rm f`,
+		strings.Repeat("bash -c 'echo hi'; ", maxWriteReadings+1),
+	} {
+		if _, ambiguous := shellWriteTargets(dir, command); !ambiguous {
+			t.Errorf("shellWriteTargets(%q): ambiguous=false, want true", command)
+		}
+	}
+	if targets, ambiguous := shellWriteTargets(dir, nestShellPayload(maxShellPayloadDepth, "rm f")); ambiguous || !slices.Equal(targets, in(dir, "f")) {
+		t.Errorf("payload at depth %d = %q ambiguous=%v, want %q", maxShellPayloadDepth, targets, ambiguous, in(dir, "f"))
+	}
+	if _, ambiguous := shellWriteTargets(dir, strings.Repeat("bash -c 'echo hi'; ", maxWriteReadings)); ambiguous {
+		t.Errorf("%d payloads: ambiguous=true, want false", maxWriteReadings)
+	}
+}
+
+// TestShellWriteNamedConsumersOnlyAllowed is the benign side of the payload
+// and wrapper reading: only a named shell's payload is read, and a wrapper
+// that runs nothing names nothing.
+func TestShellWriteNamedConsumersOnlyAllowed(t *testing.T) {
+	primary, worktree := boundTaskFixture(t, "ship-shell-benign")
+	for _, command := range []string{
+		`echo "rm x"`,
+		`echo "rm ` + filepath.Join(primary, "docs", "f") + `"`,
+		`grep "> ` + filepath.Join(primary, "x") + `" .`,
+		"grep rm .",
+		"printf 'rm %s' f",
+		"time go test ./...",
+		"env GOFLAGS=-p=1 go build ./...",
+		"nohup go test",
+		"command -v rm",
+		"command -v rm " + filepath.Join(primary, "docs", "f"),
+		"bash -c 'go test ./...'",
+		"bash script.sh",
+		"bash -c 'cd " + primary + "' && rm f",
+		"bash -c 'rm f'",
+		"eval 'rm f'",
+		"env -C " + worktree + " rm f",
+	} {
+		assertShapes(t, false, worktree, command, "")
+	}
+}
+
+// TestShellWriteReadsSubshellsAndBuiltinCd pins an unquoted `( ... )` read as
+// bash reads it, a cd behind `builtin`, `command` or an assignment moving the
+// segments after it, a subshell's cd returning at its `)`, and the file
+// `time -o` writes.
+func TestShellWriteReadsSubshellsAndBuiltinCd(t *testing.T) {
+	primary, worktree := boundTaskFixture(t, "ship-shell-subshell")
+	target := filepath.Join(primary, "docs", "f")
+	for _, command := range []string{
+		"(rm " + target + ")",
+		"(X=1 rm " + target + ")",
+		"((rm " + target + "))",
+		"( (rm " + target + ") )",
+		"(rm " + target + ") && echo ok",
+		"builtin cd " + primary + " && rm docs/f",
+		"command cd " + primary + " && rm docs/f",
+		"X=1 cd " + primary + " && rm docs/f",
+		"(cd " + primary + "; rm docs/f)",
+		"time -o " + target + " true",
+		"time -o" + target + " true",
+		"/usr/bin/time -o " + target + " true",
+		"/usr/bin/time --output=" + target + " true",
+	} {
+		assertShapes(t, true, worktree, command, "")
+	}
+	for _, command := range []string{
+		"(cd " + primary + "; ls); rm f",
+		"command -v cd " + primary + " && rm f",
+		"env cd " + primary + " && rm f",
+		`echo "(rm ` + target + `)"`,
+		"time -p true",
+	} {
+		assertShapes(t, false, worktree, command, "")
+	}
+
+	dir, other := t.TempDir(), t.TempDir()
+	for _, tc := range []struct {
+		command string
+		want    []string
+	}{
+		{"(cd " + other + "; rm f); rm g", []string{filepath.Join(other, "f"), filepath.Join(dir, "g")}},
+		{"(cd " + other + ") && rm f", []string{filepath.Join(dir, "f")}},
+		{"builtin cd " + other + " && rm f", []string{filepath.Join(other, "f")}},
+		{"time -o out true", []string{filepath.Join(dir, "out")}},
+		{"echo $(cd " + other + ") && rm f", []string{filepath.Join(dir, "f")}},
+		{"diff <(ls) <(ls) && rm f", []string{filepath.Join(dir, "f")}},
+		{"echo $((1+2)) && rm f", []string{filepath.Join(dir, "f")}},
+		{"cat > >(cat) && rm f", []string{filepath.Join(dir, "(cat)"), filepath.Join(dir, "f")}},
+	} {
+		if targets, ambiguous := shellWriteTargets(dir, tc.command); ambiguous || !slices.Equal(targets, tc.want) {
+			t.Errorf("shellWriteTargets(%q) = %q ambiguous=%v, want %q", tc.command, targets, ambiguous, tc.want)
+		}
+	}
+}
+
+// TestShellWriteReadsCaseGrammar pins F1 of review-cdc998a32be1: a case
+// pattern's `)` is not a subshell close, so a `cd` inside a subshell stays in
+// force past a case, and a case the tokenizer cannot finish is ambiguous.
+func TestShellWriteReadsCaseGrammar(t *testing.T) {
+	primary, worktree := boundTaskFixture(t, "ship-shell-case")
+	target := filepath.Join(primary, "docs", "f")
+	for _, command := range []string{
+		"(true; cd " + primary + "; case $x in a) :;; esac; rm docs/f)",
+		"(cd " + primary + "; case $x in (a) :;; esac; rm docs/f)",
+		"(cd " + primary + "; case a in a) :;& b) :;; esac; rm docs/f)",
+		"(cd " + primary + "; case a in a) :;;& b) :;; esac; rm docs/f)",
+		"(cd " + primary + "; case a in a) case b in b) :;; esac;; esac; rm docs/f)",
+		"(cd " + primary + "; case a in a|b) :;;\nesac; rm docs/f)",
+		"cd " + primary + "; (case $x in a) :;; esac; cd " + worktree + "); rm docs/f",
+		"bash -c '(cd " + primary + "; case a in a) :;; esac; rm docs/f)'",
+		"case a in a) rm " + target + ";; esac",
+		"case x in a) :;; x) rm " + target + ";; esac",
+		"case a in a) echo hi",
+		"case a\nin a) echo hi",
+	} {
+		assertShapes(t, true, worktree, command, "")
+	}
+	for _, command := range []string{
+		"case $x in a) echo " + target + ";; esac",
+		"(case $x in a) cd " + primary + ";; esac); rm docs/f",
+		"case sensitivity fix",
+	} {
+		assertShapes(t, false, worktree, command, "")
+	}
+}
+
+// TestShellWriteDropsRedirectionsFromArgv pins F2: every argv reader drops a
+// redirection (its operator, an fd-number or `{name}` prefix and its word)
+// before it reads positions.
+func TestShellWriteDropsRedirectionsFromArgv(t *testing.T) {
+	primary, worktree := boundTaskFixture(t, "ship-shell-redirect-argv")
+	rm := "rm " + filepath.Join(primary, "docs", "f")
+	for _, command := range []string{
+		"bash 0<<EOF\n" + rm + "\nEOF",
+		"bash 0<<<" + shellQuote(rm),
+		"bash 2>/dev/null -c " + shellQuote(rm),
+		"bash -c 2>/dev/null " + shellQuote(rm),
+		"bash {fd}</dev/null -c " + shellQuote(rm),
+		"env 3<x " + rm,
+		"env 3</dev/null " + rm,
+		"{fd}</dev/null " + rm,
+		"{fd}>/dev/null " + rm,
+		"nice 2>/dev/null -n 1 " + rm,
+		"2>/dev/null cd " + primary + "; rm docs/f",
+		">/dev/null cd " + primary + "; rm docs/f",
+		"cd 2>/dev/null " + primary + "; rm docs/f",
+		"builtin 2>/dev/null cd " + primary + " && rm docs/f",
+		"cd " + worktree + " > " + filepath.Join(primary, "docs", "f"),
+		"pushd " + worktree + " > " + filepath.Join(primary, "docs", "f"),
+	} {
+		assertShapes(t, true, worktree, command, "")
+	}
+	assertShapes(t, false, worktree, "cd "+primary+" > docs/f", "")
+}
+
+// TestShellWriteReadsCoproc pins F3: coproc is read before the command word,
+// its compound command runs in a child, and its cd does not return.
+func TestShellWriteReadsCoproc(t *testing.T) {
+	primary, worktree := boundTaskFixture(t, "ship-shell-coproc")
+	target := filepath.Join(primary, "docs", "f")
+	for _, command := range []string{
+		"coproc rm " + target + "; wait",
+		"coproc bash -c " + shellQuote("rm "+target),
+		"coproc N { rm " + target + "; }",
+		"coproc { rm " + target + "; }",
+		"coproc N ( rm " + target + " )",
+		"coproc { cd " + primary + "; rm docs/f; }",
+	} {
+		assertShapes(t, true, worktree, command, "")
+	}
+	for _, command := range []string{
+		"coproc cd " + primary + "; wait; rm docs/f",
+		"coproc { cd " + primary + "; }; rm docs/f",
+		"coproc N { cd " + primary + "; }; rm docs/f",
+	} {
+		assertShapes(t, false, worktree, command, "")
+	}
+}
+
+// TestShellWriteReadsDirectoryStack pins F4 and the cd operand grammar:
+// pushd and popd move the cwd through a tracked stack, `cd -` returns to the
+// tracked previous directory, and a directory this cannot know leaves every
+// relative target ambiguous.
+func TestShellWriteReadsDirectoryStack(t *testing.T) {
+	primary, worktree := boundTaskFixture(t, "ship-shell-dirstack")
+	for _, command := range []string{
+		"pushd " + primary + " && rm docs/f",
+		"pushd " + primary + " >/dev/null && rm docs/f",
+		"pushd -- " + primary + " && rm docs/f",
+		"builtin pushd " + primary + "; rm docs/f",
+		"pushd " + primary + "; pushd " + worktree + "; popd; rm docs/f",
+		"pushd " + primary + "; bash -c 'popd; rm docs/f'",
+		"popd; rm docs/f",
+		"pushd; rm docs/f",
+		"pushd +1; rm docs/f",
+		"pushd -n " + primary + "; popd; rm docs/f",
+		"pushd " + worktree + "; popd +1; rm docs/f",
+		"cd " + primary + "; cd " + worktree + "; cd -; rm docs/f",
+		"cd -; rm docs/f",
+		"cd -- " + primary + " && rm docs/f",
+		"cd -P " + primary + " && rm docs/f",
+		"cd -L -- " + primary + " && rm docs/f",
+		"cd -e " + primary + " && rm docs/f",
+		"builtin cd -- " + primary + " && rm docs/f",
+	} {
+		assertShapes(t, true, worktree, command, "")
+	}
+	for _, command := range []string{
+		"pushd " + primary + "; popd; rm docs/f",
+		"pushd " + primary + "; cd " + worktree + "; popd; rm docs/f",
+		"(pushd " + primary + "); rm docs/f",
+		"pushd -n " + primary + "; rm docs/f",
+		"cd " + primary + "; cd -; rm docs/f",
+		"cd -x " + primary + "; rm docs/f",
+		"popd; rm " + filepath.Join(worktree, "f"),
+	} {
+		assertShapes(t, false, worktree, command, "")
+	}
+
+	dir, other := t.TempDir(), t.TempDir()
+	for _, tc := range []struct {
+		command string
+		want    []string
+	}{
+		{"pushd " + other + " && rm f", []string{filepath.Join(other, "f")}},
+		{"pushd " + other + "; popd; rm f", []string{filepath.Join(dir, "f")}},
+		{"cd -- " + other + " && rm f", []string{filepath.Join(other, "f")}},
+		{"cd " + other + "; cd -; rm f", []string{filepath.Join(dir, "f")}},
+	} {
+		if targets, ambiguous := shellWriteTargets(dir, tc.command); ambiguous || !slices.Equal(targets, tc.want) {
+			t.Errorf("shellWriteTargets(%q) = %q ambiguous=%v, want %q", tc.command, targets, ambiguous, tc.want)
+		}
+	}
+}
+
+// TestShellWriteReadsFunctionBodies pins the function definition forms: every
+// body is read from the cwd at its definition, a cd inside it does not move
+// the command after it, and a definition never called is still refused when
+// its body writes (an accepted over-refusal).
+func TestShellWriteReadsFunctionBodies(t *testing.T) {
+	primary, worktree := boundTaskFixture(t, "ship-shell-function")
+	target := filepath.Join(primary, "docs", "f")
+	for _, command := range []string{
+		"f() { rm " + target + "; }; f",
+		"f () { rm " + target + "; }; f",
+		"function f { rm " + target + "; }; f",
+		"function f() { rm " + target + "; }; f",
+		"function f () { rm " + target + "; }; f",
+		"f()\n{ rm " + target + "; }; f",
+		"f() ( rm " + target + " ); f",
+		"f() { cd " + primary + "; rm docs/f; }; f",
+		"f() { rm " + target + "; }",
+		"f () { rm " + target + "; }",
+		"f() { time { cd " + primary + "; }; rm docs/f; }",
+		"arr=(); { cd " + primary + "; }; rm docs/f",
+		"f() { cd " + primary + "; }; f; rm docs/f",
+		"f() { cd " + primary + "; }; f && rm docs/f",
+		"f() { cd " + primary + "; }; : | f; rm docs/f",
+		"f() { cd " + primary + "; }; f 2>&1; rm docs/f",
+		"f() { cd " + primary + "; }; time f; rm docs/f",
+		"f() { pushd " + primary + "; }; f; rm docs/f",
+		"f() { (cd " + primary + "); }; f; rm docs/f",
+		"f() { eval 'cd " + primary + "'; }; f; rm docs/f",
+		"eval 'f() { cd " + primary + "; }'; f; rm docs/f",
+		"f() { cd " + primary + "; }; g() { f; }; g; rm docs/f",
+		"f() { cd " + primary + "; }; f; cd -; rm docs/f",
+		"f() if cd " + primary + "; then :; fi; f; rm docs/f",
+		"f() while cd " + primary + "; do break; done; f; rm docs/f",
+		"f() until cd " + primary + "; do :; done; f; rm docs/f",
+		"f() for x in 1; do cd " + primary + "; done; f; rm docs/f",
+		"function f case x in x) cd " + primary + ";; esac; f; rm docs/f",
+		"f()\nif cd " + primary + "; then if :; then :; fi; fi; f; rm docs/f",
+		"HOME=" + primary + " cd && rm docs/f",
+		"cd; rm docs/f",
+		"cd ~; rm docs/f",
+		"cd ~root; rm docs/f",
+		"pushd ~; rm docs/f",
+	} {
+		assertShapes(t, true, worktree, command, "")
+	}
+	for _, command := range []string{
+		"f() { cd " + primary + "; }; rm docs/f",
+		"function f { cd " + primary + "; }; rm docs/f",
+		"f() { { cd " + primary + "; }; }; rm docs/f",
+		"f() ( cd " + primary + " ); f; rm docs/f",
+		"f() { echo " + target + "; }; f",
+		"f() ( cd " + primary + "; ); f; rm docs/f",
+		"f() { cd " + primary + "; }; (f); rm docs/f",
+		"f() { cd " + primary + "; }; command f; rm docs/f",
+		"f() { cd " + primary + "; }; X=1 time f; rm docs/f",
+		"f() if cd " + primary + "; then :; fi; rm docs/f",
+		"f() for x in 1; do cd " + primary + "; done; rm docs/f",
+		"function f case x in x) cd " + primary + ";; esac; rm docs/f",
+		"f() while cd " + primary + "; do break; done; rm docs/f",
+		"f() [[ -n x ]]; f; rm docs/f",
+		"f() if :; then :; fi; f; rm docs/f",
+		"if cd " + primary + "; then :; fi; cd " + worktree + "; rm docs/f",
+		"echo x >&2; rm docs/f",
+		"echo x 2>&1 | cat; rm docs/f",
+	} {
+		assertShapes(t, false, worktree, command, "")
+	}
+}
+
+// TestShellWriteReadsRedirectPrefixByAdjacency pins R1 of review-80b12d4f0a2e:
+// an fd number or `{name}` is a redirection's prefix only when it is written
+// unquoted against its operator; spaced or quoted, it is an argument.
+func TestShellWriteReadsRedirectPrefixByAdjacency(t *testing.T) {
+	dir := t.TempDir()
+	in := func(names ...string) []string {
+		var paths []string
+		for _, name := range names {
+			paths = append(paths, filepath.Join(dir, name))
+		}
+		return paths
+	}
+	for _, tc := range []struct {
+		command string
+		want    []string
+	}{
+		{"rm a 9 >b", in("b", "a", "9")},
+		{"rm a {x} >b", in("b", "a", "{x}")},
+		{"rm a 12 &>b", in("b", "a", "12")},
+		{"rm a 12&>b", in("b", "a", "12")},
+		{`rm a "9">b`, in("b", "a", "9")},
+		{"rm a 9 >>b", in("b", "a", "9")},
+		{"rm a 9 >&2", in("a", "9")},
+		{`rm a "9">&2`, in("a", "9")},
+		{"rm a {x} >&2", in("a", "{x}")},
+		{"rm a 9>b", in("b", "a")},
+		{"rm a {x}>b", in("b", "a", "{x}")},
+		{"rm a {x}>&2", in("a", "{x}")},
+		{"rm a 9>>b", in("b", "a")},
+		{"rm a 9>&2", in("a")},
+		{"rm a 2>&1", in("a")},
+	} {
+		if targets, ambiguous := shellWriteTargets(dir, tc.command); ambiguous || !slices.Equal(targets, tc.want) {
+			t.Errorf("shellWriteTargets(%q) = %q ambiguous=%v, want %q", tc.command, targets, ambiguous, tc.want)
+		}
+	}
+	// An escaped fd is an argument to the POSIX reading; the literal reading
+	// reads `\9` as a path of its own.
+	if targets, ambiguous := shellWriteTargets(dir, `rm a \9>b`); ambiguous || !slices.Contains(targets, filepath.Join(dir, "9")) {
+		t.Errorf("shellWriteTargets(`rm a \\9>b`) = %q ambiguous=%v, want %q among them", targets, ambiguous, filepath.Join(dir, "9"))
+	}
+}
+
+// TestShellWriteKeepsExpansionsOutOfTheGrammar pins R2 of
+// review-80b12d4f0a2e: no paren, `in`, `esac` or operator inside a `${...}`
+// group, a `$(...)` or `$((...))`, backticks or quotes is read as grammar, so a
+// `)` there never closes the subshell a `cd` stands in. A substitution whose
+// end this cannot find is ambiguous.
+func TestShellWriteKeepsExpansionsOutOfTheGrammar(t *testing.T) {
+	primary, worktree := boundTaskFixture(t, "ship-shell-opaque")
+	sub := "(cd " + primary + "; "
+	// The git guard refuses every `$(` and backtick, so the hook cannot tell
+	// these apart: the write guard's reading is asserted directly.
+	protected := filepath.Join(primary, "docs", "f")
+	refused := func(command string) bool {
+		targets, ambiguous := shellWriteTargets(worktree, command)
+		return ambiguous || slices.Contains(targets, protected)
+	}
+	for _, command := range []string{
+		sub + ": ${x:-)}; rm docs/f)",
+		sub + "echo ${x:-)} >/dev/null; rm docs/f)",
+		sub + `: "${x:-)}"; rm docs/f)`,
+		sub + `: "${x:-")"}"; rm docs/f)`,
+		sub + `: $(echo ")"); rm docs/f)`,
+		sub + `: "$(echo ")")"; rm docs/f)`,
+		sub + ": `echo \")\"`; rm docs/f)",
+		sub + ": \"`echo \")\"`\"; rm docs/f)",
+		sub + ": $((1+(2))); rm docs/f)",
+		sub + ": $((1<<2)); rm docs/f)",
+		sub + ": ${x:-$(echo })}; rm docs/f)",
+		sub + "x=$(wc -l </dev/null); rm docs/f)",
+		sub + "x=\"$(cat <<'EOF'\nit's ) \"q\"\nEOF\n)\"; rm docs/f)",
+		sub + ": $(cat <<'EOF'\n)\nEOF\n); rm docs/f)",
+		sub + "case y in y) ${x:-esac} ;; x) :;; esac; rm docs/f)",
+		sub + "case y in y) : ;; ${x:-esac}) :;; esac; rm docs/f)",
+		sub + "case y in y) : ${x:-;;} ;; x) :;; esac; rm docs/f)",
+		sub + "case ${x:-in} in y) : ;; x) :;; esac; rm docs/f)",
+		sub + "case y in y) : \"esac\" ')' ;; x) :;; esac; rm docs/f)",
+		sub + ": $(case x in (a) :;; esac); rm docs/f)",
+		sub + ": $(echo \\)); rm docs/f)",
+		sub + ": $(echo ')'); rm docs/f)",
+		sub + ": $(echo $'\\')'); rm docs/f)",
+		sub + `: $(echo "$(echo ")")"); rm docs/f)`,
+		sub + ": `echo \\)`; rm docs/f)",
+		": $(echo hi; rm " + primary + "/docs/f",
+	} {
+		if !refused(command) {
+			t.Errorf("shellWriteTargets(%q) names no ambiguity and not %s", command, protected)
+		}
+	}
+	for _, command := range []string{
+		sub + `: $(echo ")")); rm docs/f`,
+		sub + ": ${x:-)}); rm docs/f",
+		"n=$(wc -l <" + primary + "/docs/f); echo $n",
+		"git commit -m \"$(cat <<'EOF'\nfix: it's done (really) \"q\"\nEOF\n)\"",
+		"x=$(git log --grep case --oneline); echo \"$x\"",
+	} {
+		if refused(command) {
+			t.Errorf("shellWriteTargets(%q) is ambiguous or names %s", command, protected)
+		}
+	}
+	dir := t.TempDir()
+	for _, command := range []string{
+		": $(echo hi",
+		": \"$(echo \"hi)\"",
+		": $(echo 'hi)",
+		": `echo hi",
+		": $(case x in a) :;; esac)",
+		": $(if :; then case x in a) :;; esac; fi)",
+		": ${x:-$(echo}",
+		": $(echo ${x)",
+		": $(cat <<EOF\nx\n)",
+		": $(case<<x)",
+		": $(echo '",
+	} {
+		if _, ambiguous := shellWriteTargets(dir, command); !ambiguous {
+			t.Errorf("shellWriteTargets(%q): ambiguous=false, want true", command)
+		}
+	}
+	for _, tc := range []struct {
+		command string
+		want    []string
+	}{
+		{": $(echo a # )\n); rm f", []string{filepath.Join(dir, "f")}},
+		{": $(echo case; echo x) && rm f", []string{filepath.Join(dir, "f")}},
+		{"echo $(cd " + primary + "; pwd) && rm f", []string{filepath.Join(dir, "f")}},
+		{"echo `cd " + primary + "; pwd` && rm f", []string{filepath.Join(dir, "f")}},
+	} {
+		if targets, ambiguous := shellWriteTargets(dir, tc.command); ambiguous || !slices.Equal(targets, tc.want) {
+			t.Errorf("shellWriteTargets(%q) = %q ambiguous=%v, want %q", tc.command, targets, ambiguous, tc.want)
+		}
+	}
+}
+
+// TestShellWriteReadsPlusCOption pins R3 of review-80b12d4f0a2e: every named
+// shell reads `+c` in any option word as `-c`, and `+s` as `-s`.
+func TestShellWriteReadsPlusCOption(t *testing.T) {
+	primary, worktree := boundTaskFixture(t, "ship-shell-plus-c")
+	rm := shellQuote("rm " + filepath.Join(primary, "docs", "f"))
+	for _, command := range []string{
+		"bash +c " + rm,
+		"bash +xc " + rm,
+		"bash -x +c " + rm,
+		"bash +c -x " + rm,
+		"sh +c " + rm,
+		"zsh +c " + rm,
+		"zsh +xc " + rm,
+		"zsh -x +c " + rm,
+		"dash +c " + rm,
+		"dash +xc " + rm,
+		"ksh +c " + rm,
+		"ksh +xc " + rm,
+		"ksh -x +c " + rm,
+		"bash +s arg <<< " + rm,
+	} {
+		assertShapes(t, true, worktree, command, "")
+	}
+}
+
+// TestShellWriteReadsSubscriptAssignments pins R4 of review-80b12d4f0a2e: an
+// assignment prefix is a NAME or a NAME[subscript] before `=` or `+=`, a
+// subscript being read to its `]` blanks and parens included, and env reads
+// every word holding `=` before its command as an assignment.
+func TestShellWriteReadsSubscriptAssignments(t *testing.T) {
+	primary, worktree := boundTaskFixture(t, "ship-shell-subscript")
+	target := filepath.Join(primary, "docs", "f")
+	for _, command := range []string{
+		"a[1]=x rm " + target,
+		"a[x]=1 b[2]+=y rm " + target,
+		"a[]=x rm " + target,
+		"a[1 2]=x rm " + target,
+		"x=1 a[1 2]=x rm " + target,
+		"a[1;2]=x rm " + target,
+		`a["1 2"]=x rm ` + target,
+		"if a[1 2]=x rm " + target + "; then :; fi",
+		"a[1]=x cd " + primary + "; rm docs/f",
+		"(cd " + primary + "; a[)]=x rm docs/f)",
+		"env a[1]=x rm " + target,
+		"env A-B=1 rm " + target,
+		"env 'a b=1' rm " + target,
+		"sudo A-B=1 rm " + target,
+	} {
+		assertShapes(t, true, worktree, command, "")
+	}
+	for _, command := range []string{
+		"a[1]x=y rm " + target,
+		"1a=x rm " + target,
+		"a-b=1 rm " + target,
+		"env a[1 2]=x rm " + target,
+		"echo a[1 2]=x " + target,
+	} {
+		assertShapes(t, false, worktree, command, "")
+	}
+}
+
+// TestShellWriteReadsLongPrefixesInLinearTime pins R5 of review-80b12d4f0a2e:
+// a run of words before the command word, and a directory stack pushd
+// grows, cost linear time. Four times the words cost about four times as
+// much; the budget is eight. Comparing two sizes under the same load keeps
+// -race and a busy host from deciding the verdict.
+func TestShellWriteReadsLongPrefixesInLinearTime(t *testing.T) {
+	dir := t.TempDir()
+	cost := func(command string, want []string) time.Duration {
+		best := time.Duration(math.MaxInt64)
+		for range 3 {
+			start := time.Now()
+			if targets, ambiguous := shellWriteTargets(dir, command); ambiguous || !slices.Equal(targets, want) {
+				t.Fatalf("shellWriteTargets of %d runes = %q ambiguous=%v, want %q", len(command), targets, ambiguous, want)
+			}
+			best = min(best, time.Since(start))
+		}
+		return best
+	}
+	for _, shape := range []struct {
+		name, repeat, tail string
+	}{
+		{"time", "time ", "rm x"},
+		{"time -p", "time -p ", "rm x"},
+		{"pushd", "pushd " + dir + "; ", "rm x"},
+	} {
+		want := []string{filepath.Join(dir, "x")}
+		small := cost(strings.Repeat(shape.repeat, 5000)+shape.tail, want)
+		large := cost(strings.Repeat(shape.repeat, 20000)+shape.tail, want)
+		if large > 8*small {
+			t.Errorf("%s × 20000 took %v, %.1f times 5000 (%v), want under 8", shape.name, large, float64(large)/float64(small), small)
+		}
+	}
+}
+
+// TestShellWriteResolvesFunctionChainsInLinearTime pins F-D of
+// review-cf6153cd273e: whether a call moves the directory is resolved once
+// per name until a definition changes it, within one budget per command, so
+// a chain of n functions none of which moves it, each read as its body calls
+// the one before, then called n times with another redefined before each
+// call, costs linear time. The budget is eight times the cost of a quarter.
+// The final chain also owns the fail-closed verdict when an inert DFS exceeds
+// the command's work budget.
+func TestShellWriteResolvesFunctionChainsInLinearTime(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "x")
+	cost := func(n int) time.Duration {
+		var command strings.Builder
+		command.WriteString("f0() { :; }; ")
+		for i := 1; i < n; i++ {
+			fmt.Fprintf(&command, "f%d() { f%d; }; ", i, i-1)
+		}
+		for range n {
+			fmt.Fprintf(&command, "h() { :; }; f%d; ", n-1)
+		}
+		command.WriteString("rm " + target)
+		best := time.Duration(math.MaxInt64)
+		for range 3 {
+			start := time.Now()
+			if targets, ambiguous := shellWriteTargets(dir, command.String()); ambiguous || !slices.Equal(targets, []string{target}) {
+				t.Fatalf("shellWriteTargets of a %d-function chain = %q ambiguous=%v, want %s", n, targets, ambiguous, target)
+			}
+			best = min(best, time.Since(start))
+		}
+		return best
+	}
+	if small, large := cost(500), cost(2000); large > 8*small {
+		t.Errorf("a 2000-function chain took %v, %.1f times 500 (%v), want under 8", large, float64(large)/float64(small), small)
+	}
+
+	n := maxWriteReadings + 144
+	var overBudget strings.Builder
+	for i := 0; i <= n; i++ {
+		if i == 0 {
+			fmt.Fprintf(&overBudget, "f%d() { :; }; ", i)
+		} else {
+			fmt.Fprintf(&overBudget, "f%d() { f%d; }; ", i, i-1)
+		}
+	}
+	fmt.Fprintf(&overBudget, "f%d; rm x", n)
+	if targets, ambiguous := shellWriteTargets(dir, overBudget.String()); !ambiguous || len(targets) != 0 {
+		t.Errorf("shellWriteTargets of an over-budget inert chain = %q ambiguous=%v, want no targets and ambiguous=true", targets, ambiguous)
+	}
+}
+
+// TestShellWriteResolvesFunctionCallsWhenTheyRun pins the command-wide
+// monotone set of functions that may move the directory and the call-time
+// graph walk, including decoded command words, nested definitions and memo
+// invalidation when a later definition makes a name move.
+func TestShellWriteResolvesFunctionCallsWhenTheyRun(t *testing.T) {
+	primary, worktree := boundTaskFixture(t, "ship-shell-late-function")
+	cd := "cd " + primary
+	for _, command := range []string{
+		"g() { f; }; f() { " + cd + "; }; g; rm docs/f",
+		"g() { g2; }; g2() { f; }; f() { " + cd + "; }; g; rm docs/f",
+		"g() { g; f; }; f() { " + cd + "; }; g; rm docs/f",
+		"g() { f; }; eval 'f() { " + cd + "; }'; g; rm docs/f",
+		"g() { f; }; f() { :; }; g; f() { " + cd + "; }; g; rm docs/f",
+		"f() { " + cd + "; }; \"f\"; rm docs/f",
+		"f() { " + cd + "; }; \\f; rm docs/f",
+		"f() { cd " + primary + "; }; unset -f f; f; rm docs/x",
+		"f() { cd " + primary + "; }; f() { :; }; f; rm docs/x",
+		"(f() { cd " + primary + "; }); f; rm docs/x",
+		"f() { g() { cd " + primary + "; }; }; g; rm docs/x",
+	} {
+		assertShapes(t, true, worktree, command, "")
+	}
+	for _, command := range []string{
+		"g() { g; }; g; rm docs/f",
+		"g() { f; }; f() { g; }; g; rm docs/f",
+		"g() { f; }; f() ( " + cd + "; ); g; rm docs/f",
+		"f() { g() { " + cd + "; }; }; f; rm docs/f",
+	} {
+		assertShapes(t, false, worktree, command, "")
+	}
+}
+
+// review round 2: text inside a comment, an unquoted `#` at a word's start up
+// to its newline, has no grammar effect: no paren, quote, substitution,
+// heredoc, case word or `;;` in it opens or closes anything. bash 3.2 and 5.3
+// probed.
+func TestShellWriteReadsCommentsAsText(t *testing.T) {
+	primary, worktree := boundTaskFixture(t, "ship-shell-comment")
+	sub := "(cd " + primary + "; "
+	protected := filepath.Join(primary, "docs", "f")
+	refused := func(command string) bool {
+		targets, ambiguous := shellWriteTargets(worktree, command)
+		return ambiguous || slices.Contains(targets, protected)
+	}
+	for _, command := range []string{
+		sub + ": # )\nrm docs/f)",
+		sub + ": #)\nrm docs/f)",
+		sub + ": # it's\nrm docs/f)",
+		sub + ": # `\nrm docs/f)",
+		sub + ": # $(\nrm docs/f)",
+		sub + ": # <<EOF\nrm docs/f)",
+		sub + "case y in y) : # ;; esac )\n;; esac; rm docs/f)",
+	} {
+		if !refused(command) {
+			t.Errorf("shellWriteTargets(%q) names no ambiguity and not %s", command, protected)
+		}
+	}
+	for _, command := range []string{
+		sub + ": # (\n); rm docs/f",
+		sub + ": # )\n); rm docs/f",
+	} {
+		if refused(command) {
+			t.Errorf("shellWriteTargets(%q) is ambiguous or names %s", command, protected)
+		}
+	}
+}
+
+// An unterminated `$'` that ends the text is read without slicing past the
+// quote. 80b12d4f panicked on each of these.
+func TestShellWriteReadsTrailingANSICQuote(t *testing.T) {
+	for _, command := range []string{"$'", "echo $'", "x=$'", "rm a $'"} {
+		shellWriteTargets("/w", command)
+		tokenizeSegments(backslashEscapes, command)
+		tokenizeSegments(backslashLiteral, command)
+	}
+}
+
+// A `<(...)` process substitution is read as bash reads it: a `)` quoted in
+// its body closes no subshell, and a write in it runs. A `<` word ends at a
+// `)`.
+func TestShellWriteReadsProcessSubstitutionWhole(t *testing.T) {
+	primary, worktree := boundTaskFixture(t, "ship-shell-procsub")
+	sub := "(cd " + primary + "; "
+	protected := filepath.Join(primary, "docs", "f")
+	for _, command := range []string{
+		sub + "cat <(echo \")\"); rm docs/f)",
+		sub + "cat <(echo ')'); rm docs/f)",
+		sub + "cat <(a; b); rm docs/f)",
+		sub + ": >(echo \")\"); rm docs/f)",
+		"cat <(rm " + protected + ")",
+	} {
+		if targets, ambiguous := shellWriteTargets(worktree, command); !ambiguous && !slices.Contains(targets, protected) {
+			t.Errorf("shellWriteTargets(%q) = %q, want %s", command, targets, protected)
+		}
+	}
+	for _, command := range []string{
+		sub + "cat <x); rm docs/f",
+		sub + "cat <(a)); rm docs/f",
+	} {
+		if targets, ambiguous := shellWriteTargets(worktree, command); ambiguous || slices.Contains(targets, protected) {
+			t.Errorf("shellWriteTargets(%q) = %q, ambiguous %v", command, targets, ambiguous)
+		}
 	}
 }

@@ -54,7 +54,6 @@ __pycache__/
 .soldier-manifest.json
 .soldier-md
 .herdr-test/
-.soldier-md
 /.no-mistakes-document-result.json
 /.review-result.json
 /review_findings.json

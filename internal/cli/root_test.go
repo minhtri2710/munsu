@@ -30,7 +30,6 @@ var canonicalCommands = []struct {
 	{name: "spawn", use: "spawn <id> [<project>]"},
 	{name: "send", use: "send <id> <line>"},
 	{name: "report", use: "report <state> <msg>"},
-	{name: "notify", use: "notify <state> <msg>"},
 	{name: "peek", use: "peek <id>"},
 	{name: "soldier-state", use: "soldier-state <id>"},
 	{name: "promote", use: "promote <id>"},

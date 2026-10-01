@@ -245,7 +245,6 @@ func TestCanonicalOperationIDReusedWithDifferentIntent(t *testing.T) {
 
 	// Reuse the same Operation ID with a different intent (a start).
 	start := startWithRev(c, "t1", 1)
-	reused := domain.Operation{ID: op.ID, Digest: mustDigest(t, start)}
 	reused, err := domain.NewOperation(op.ID, start)
 	if err != nil {
 		t.Fatal(err)
@@ -253,15 +252,6 @@ func TestCanonicalOperationIDReusedWithDifferentIntent(t *testing.T) {
 	if _, err := c.Start(reused, start); !errors.Is(err, ErrOperationConflict) {
 		t.Fatalf("reused op id with different intent = %v, want ErrOperationConflict", err)
 	}
-}
-
-func mustDigest(t *testing.T, intent domain.Intent) string {
-	t.Helper()
-	d, err := domain.Digest(intent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return d
 }
 
 func TestCanonicalStalePreconditionConflict(t *testing.T) {
@@ -321,44 +311,15 @@ func TestCanonicalStartBlockedByDispatchHold(t *testing.T) {
 	}
 }
 
-func TestCanonicalReadiness(t *testing.T) {
+// TestCanonicalStartRefusesMissingTask proves the start gate reports an
+// unknown task as not found. The queued-and-ready and held cases are pinned by
+// TestCanonicalStartBlockedByDispatchHold.
+func TestCanonicalStartRefusesMissingTask(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
 
-	// Missing task reports not-found, not an error.
-	r, err := c.Readiness(mustTaskID(t, "missing"))
-	if err != nil {
-		t.Fatalf("Readiness(missing): %v", err)
-	}
-	if len(r.BlockingReasons) != 1 || r.BlockingReasons[0] != ReadinessNotFound {
-		t.Fatalf("missing readiness = %+v", r)
-	}
-
-	mustCreate(t, c, "t1")
-	r, err = c.Readiness(mustTaskID(t, "t1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !r.Ready || len(r.BlockingReasons) != 0 {
-		t.Fatalf("queued readiness = %+v", r)
-	}
-
-	// A matching dispatch hold blocks readiness even for a queued task.
-	hold := CanonicalAddHoldRequest{
-		HomeID:  c.HomeID(),
-		HoldID:  "hold-2",
-		Scope:   DispatchHoldScope{TaskIDs: []string{"t1"}},
-		Actions: []DispatchAction{DispatchActionStart},
-		Reason:  "freeze",
-	}
-	if _, err := c.AddHold(mustOperation(t, "op-hold-2", hold), hold); err != nil {
-		t.Fatalf("AddHold: %v", err)
-	}
-	r, err = c.Readiness(mustTaskID(t, "t1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r.Ready || len(r.BlockingReasons) != 1 || r.BlockingReasons[0] != ReadinessDispatchHold {
-		t.Fatalf("held readiness = %+v", r)
+	start := startWithRev(c, "missing", 1)
+	if _, err := c.Start(mustOperation(t, "op-start-missing", start), start); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("start missing = %v, want ErrNotFound", err)
 	}
 }
 
@@ -561,8 +522,9 @@ func TestCanonicalMalformedCurrentStateFailsClosed(t *testing.T) {
 	if _, err := c2.List(); err == nil {
 		t.Fatalf("List on malformed state = nil error, want failure")
 	}
-	if _, err := c2.Readiness(mustTaskID(t, "t1")); err == nil {
-		t.Fatalf("Readiness on malformed state = nil error, want failure")
+	start := startWithRev(c2, "t1", 1)
+	if _, err := c2.Start(mustOperation(t, "op-start-malformed", start), start); err == nil {
+		t.Fatalf("Start on malformed state = nil error, want failure")
 	}
 }
 
@@ -711,81 +673,6 @@ func TestCanonicalMultipleTasksIndependentRevision(t *testing.T) {
 	}
 }
 
-func TestCanonicalCrashRecovery(t *testing.T) {
-	root := t.TempDir()
-	h, err := home.Init(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	c, err := NewCanonical(h)
-	if err != nil {
-		t.Fatal(err)
-	}
-	mustCreate(t, c, "t1")
-
-	// Simulate an interrupted home.Commit of a fresh task t2 create by
-	// planting a write-ahead journal record: home.Open's mechanical recovery
-	// replays it. The journal is the home internal shape, planted here
-	// deliberately; the doc encodes the new scope revision (0 -> 1) exactly
-	// as a real interrupted commit would.
-	agg, err := NewAggregate("t2", "owner", "work", "ship", "", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	docData, err := json.Marshal(taskDoc{HomeRevision: 1, Aggregate: agg})
-	if err != nil {
-		t.Fatal(err)
-	}
-	scope := taskScope("t2")
-	txnID := "op-interrupted-create"
-	rec := struct {
-		TxnID            string            `json:"txn_id"`
-		Scope            string            `json:"scope"`
-		FenceToken       uint64            `json:"fence_token"`
-		ExpectedRevision uint64            `json:"expected_revision"`
-		NewRevision      uint64            `json:"new_revision"`
-		Items            []home.ChangeItem `json:"items"`
-		Committed        bool              `json:"committed"`
-	}{
-		TxnID: txnID, Scope: scope, FenceToken: 1,
-		ExpectedRevision: 0, NewRevision: 1, Committed: false,
-		Items: []home.ChangeItem{{Root: home.RootState, Key: taskCurrentKey("t2"), Data: docData}},
-	}
-	data, err := json.Marshal(rec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	journalDir := filepath.Join(root, home.JournalDirName)
-	if err := os.WriteFile(filepath.Join(journalDir, scope+"."+txnID+".json"), append(data, '\n'), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	// home.Open recovers the interrupted transaction mechanically, making the
-	// fresh task visible and advancing the scope revision to 1.
-	h2, err := home.Open(root)
-	if err != nil {
-		t.Fatalf("home.Open after interruption: %v", err)
-	}
-	c2, err := NewCanonical(h2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	agg2, err := c2.Get(mustTaskID(t, "t2"))
-	if err != nil {
-		t.Fatalf("read recovered task: %v", err)
-	}
-	if agg2.TaskID != "t2" || agg2.Generation != 1 || agg2.Revision != FirstRevision {
-		t.Fatalf("recovered aggregate = %+v", agg2)
-	}
-
-	// A fresh mutation on the recovered task succeeds with the recovered
-	// expected revision (the recovered scope revision is 1).
-	start := startWithRev(c2, "t2", 1)
-	if _, err := c2.Start(mustOperation(t, "op-start-recovered", start), start); err != nil {
-		t.Fatalf("start after recovery: %v", err)
-	}
-}
-
 func TestCanonicalDocumentsCarryCurrentV1Identity(t *testing.T) {
 	c, h, _ := newTestCanonical(t)
 	mustCreate(t, c, "t1")
@@ -862,8 +749,9 @@ func TestCanonicalRejectsHistoricalV2Input(t *testing.T) {
 	if _, err := c.List(); err == nil {
 		t.Fatalf("List with legacy v2 document = nil error, want fail closed")
 	}
-	if _, err := c.Readiness(mustTaskID(t, "legacy")); err == nil {
-		t.Fatalf("Readiness on legacy v2 document = nil error, want fail closed")
+	start := startWithRev(c, "legacy", 1)
+	if _, err := c.Start(mustOperation(t, "op-start-legacy", start), start); err == nil {
+		t.Fatalf("Start on legacy v2 document = nil error, want fail closed")
 	}
 }
 

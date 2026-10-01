@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/fleet"
+	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/spf13/cobra"
 )
 
@@ -56,12 +58,10 @@ func newCaptainCmd() *cobra.Command {
 	seedCmd := &cobra.Command{
 		Use:   "seed <id> <home-path>",
 		Short: "Seed a captain home with charter",
-		Long: `Seed a captain home with charter and optional managed git worktree.
+		Long: `Seed a captain home as a managed git worktree.
 
-Without --repo, creates a state-only captain home (legacy format).
-With --repo <path>, provisions a managed git-worktree captain home:
-a detached worktree at <home-path> from the specified project repo,
-with gitignore and provenance metadata.
+--repo <path> is required: provisions a detached worktree at <home-path>
+from the specified project repo, with git excludes and provenance metadata.
 
 Flags for worktree provisioning:
   --force  Replace existing managed worktree
@@ -69,13 +69,11 @@ Flags for worktree provisioning:
 `,
 		Args: ExactArgs(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			if seedRepo != "" {
-				return fleet.SeedCaptainFromWorktree(fleet.CaptainWorktreeSeedOptions{ID: args[0], Home: args[1], Repo: seedRepo, ParentHome: ctx.Home, Force: seedForce, Ref: seedRef, Integration: captainIntegrationAdapter{}})
-			}
-			return fleet.SeedCaptain(fleet.CaptainSeedOptions{ID: args[0], Home: args[1], ParentHome: ctx.Home, Integration: captainIntegrationAdapter{}})
+			return fleet.SeedCaptain(fleet.CaptainSeedOptions{ID: args[0], Home: args[1], Repo: seedRepo, ParentHome: ctx.Home, Force: seedForce, Ref: seedRef, Integration: captainIntegrationAdapter{}})
 		}),
 	}
 	seedCmd.Flags().StringVar(&seedRepo, "repo", "", "Path to the project git repo for managed worktree captain home")
+	_ = seedCmd.MarkFlagRequired("repo")
 	seedCmd.Flags().BoolVar(&seedForce, "force", false, "Replace existing managed worktree")
 	seedCmd.Flags().StringVar(&seedRef, "ref", "", "Explicit branch/ref (default: repo's default branch)")
 	cmd.AddCommand(seedCmd)
@@ -143,7 +141,8 @@ interruption.`,
 		Args: MinimumNArgs(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			if err := fleet.Handoff(ctx.Home, args[0], args[1:]); err != nil {
-				if ambiguous, ok := fleet.HandoffAmbiguousTaskID(err); ok {
+				var ambiguous *home.AmbiguousTaskIDError
+				if errors.As(err, &ambiguous) {
 					return operationError("ambiguous_task_id", strings.Join(handoffCorrectionCommands(args[0], ambiguous), "; "), fmt.Sprintf("Task ID %q is ambiguous", ambiguous.Requested))
 				}
 				return err
@@ -189,37 +188,12 @@ is retried on the next converge cycle on failure.`,
 		}),
 	})
 
-	migrateRepo := ""
-	migrateCmd := &cobra.Command{
-		Use:   "migrate <captain-home> <id>",
-		Short: "Migrate a seeded home to managed worktree",
-		Long: `Migrate a captain home to a managed git worktree.
-
-Without --repo, writes a provenance marker to a legacy state-only home (simple).
-With --repo <path>, performs a transactional migration from state-only home to
-managed git worktree, preserving operational dirs (state/, config/, data/, etc.).
-
-In worktree mode, the migration is atomic: on failure the original home is
-restored and a rollback marker (.migration-rollback) is written. On success,
-the old home is backed up at <home-path>.backup-<timestamp>.`,
-		Args: ExactArgs(2),
-		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			if migrateRepo != "" {
-				return fleet.MigrateCaptainToWorktree(fleet.CaptainMigrationOptions{CaptainHome: args[0], Repo: migrateRepo, ID: args[1], ParentHome: ctx.Home, Integration: captainIntegrationAdapter{}})
-			}
-			return fleet.Migrate(args[0], args[1])
-		}),
-	}
-	migrateCmd.Flags().StringVar(&migrateRepo, "repo", "", "Path to the project git repo for managed worktree migration")
-	cmd.AddCommand(migrateCmd)
-
 	updateCmd := &cobra.Command{
 		Use:   "update <captain-home>",
 		Short: "Update a captain home (safe FF) and return typed outcome",
 		Long: `Update performs a safe local fast-forward of a captain clone, returning a typed outcome:
-already-current, fast-forwarded, state-only-skipped, dirty, diverged, offline,
-wrong-remote, wrong-branch, or invalid-provenance.
-State-only homes (no git worktree) return state-only-skipped rather than failing.`,
+already-current, fast-forwarded, dirty, diverged, offline, wrong-remote,
+wrong-branch, invalid-provenance, or unsupported-home (no git worktree).`,
 		Args: ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			res := fleet.Update(args[0], ctx.Home)
@@ -241,8 +215,7 @@ State-only homes (no git worktree) return state-only-skipped rather than failing
 	convergeCmd := &cobra.Command{
 		Use:   "converge",
 		Short: "Converge all registered captains",
-		Long: `Locked convergence sweep: validate registry/provenance, check for stale legacy records,
-retry pending nudges, safe local fast-forward, inheritance push, liveness check, and instruction
+		Long: `Locked convergence sweep: validate registry/provenance, retry pending nudges, safe local fast-forward, inheritance push, liveness check, and instruction
 surface tracking. State changes tracked in parent state/.captain-converge.lock`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			registered, err := fleet.ListCaptains(ctx.Home)
@@ -267,7 +240,7 @@ surface tracking. State changes tracked in parent state/.captain-converge.lock`,
 	recoverCmd := &cobra.Command{
 		Use:   "recover <captain-id>",
 		Short: "Run structured recovery transaction for a captain",
-		Long: `Run the full recovery transaction for one captain: provenance → config-validation → integration-status → charter-refresh → config-push → launch-readiness → relaunch-pane → watcher-ensure → legacy transport guard → terminal-reconcile → nudge-retry.
+		Long: `Run the full recovery transaction for one captain: provenance → config-validation → integration-status → charter-refresh → config-push → launch-readiness → relaunch-pane → watcher-ensure → terminal-reconcile → nudge-retry.
 	Each step reports ok/failed/skipped so partial failures do not block the whole recovery.`,
 		Args: ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {

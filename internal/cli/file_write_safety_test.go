@@ -14,6 +14,25 @@ import (
 // exit code and stderr, i.e. exactly what the PreToolUse hook sees.
 func runClaudeSafety(t *testing.T, checkPath, command, filePath string) (int, string) {
 	t.Helper()
+	if command == "" && filePath == "" {
+		oldStdin := os.Stdin
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("create stdin pipe: %v", err)
+		}
+		if _, err := w.Write([]byte(`{}`)); err != nil {
+			t.Fatalf("write stdin payload: %v", err)
+		}
+		if err := w.Close(); err != nil {
+			t.Fatalf("close stdin payload: %v", err)
+		}
+		os.Stdin = r
+		defer func() {
+			os.Stdin = oldStdin
+			_ = r.Close()
+		}()
+	}
+
 	exitCode := 0
 	oldExit := exitWithCode
 	exitWithCode = func(code int) { exitCode = code }
@@ -166,9 +185,9 @@ func TestFileWriteIntoPrimaryAllowedWithoutBinding(t *testing.T) {
 	}
 }
 
-// TestMissingFilePathFallsThrough pins the fail-open decision for a payload
-// that carries no path: a matcher that fires for an unknown tool shape must
-// behave exactly as it did before this guard existed.
+// TestMissingFilePathFallsThrough pins the fail-open decision for an empty JSON
+// payload that carries no path: a matcher that fires for an unknown tool shape
+// must behave exactly as it did before this guard existed.
 func TestMissingFilePathFallsThrough(t *testing.T) {
 	_, worktree := boundTaskFixture(t, "ship-write")
 

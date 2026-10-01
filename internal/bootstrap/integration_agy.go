@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 // agyHooksDir returns the path to .agents/ for the given scope.
@@ -239,10 +238,9 @@ func agyHasWriteToolMatcher(hookConfig map[string]interface{}) bool {
 
 // AgyAdapter implements hook generation and installation for the Agy harness.
 type AgyAdapter struct {
-	HomeDir string
-	Cwd     string
-	Scope   string // "user" or "project"
-	DryRun  bool
+	Cwd    string
+	Scope  string // "user" or "project"
+	DryRun bool
 }
 
 // InstallAgyHooks generates and installs .agents/hooks.json.
@@ -265,15 +263,15 @@ func (a *AgyAdapter) InstallAgyHooks() (targetPaths []string, written bool, comb
 
 	content := AgyHooksContent(munsuBin)
 
-	// Read-merge: check existing hooks.json, merge munsu-owned keys with user-owned keys
-	if existing, statErr := os.Stat(targetPath); statErr == nil && existing.Size() > 0 {
-		data, readErr := os.ReadFile(targetPath)
-		if readErr == nil && len(data) > 0 {
-			merged, mergeErr := mergeAgyHooksFile(string(data), content)
-			if mergeErr != nil {
-				return nil, false, "", fmt.Errorf("merge agy hooks: %w", mergeErr)
-			}
-			content = merged
+	// Read-merge: replace munsu-owned keys, keep user-owned keys.
+	existing, err := readExistingHookFile(targetPath)
+	if err != nil {
+		return nil, false, "", err
+	}
+	if existing != "" {
+		content, err = mergeAgyHooksFile(targetPath, existing, content)
+		if err != nil {
+			return nil, false, "", err
 		}
 	}
 
@@ -292,11 +290,10 @@ func (a *AgyAdapter) InstallAgyHooks() (targetPaths []string, written bool, comb
 
 // mergeAgyHooksFile merges munsu's generated hook entries into an existing
 // hooks.json, preserving user-owned hook names that differ from munsu's entries.
-func mergeAgyHooksFile(existing, generated string) (string, error) {
-	var existingJSON map[string]interface{}
-	if err := json.Unmarshal([]byte(existing), &existingJSON); err != nil {
-		// If existing is not valid JSON, overwrite with backup
-		return generated, nil
+func mergeAgyHooksFile(path, existing, generated string) (string, error) {
+	existingJSON, err := parseExistingHookJSON(path, existing)
+	if err != nil {
+		return "", err
 	}
 
 	var generatedJSON map[string]interface{}
@@ -315,22 +312,4 @@ func mergeAgyHooksFile(existing, generated string) (string, error) {
 	}
 
 	return marshalJSON(existingJSON)
-}
-
-// generateAgyManifest creates the integration manifest for the Agy adapter.
-func generateAgyManifest(harnessName string, scope string, caps []Capability, combinedDigest string, targetPaths []string) Manifest {
-	capStrs := make([]string, len(caps))
-	for i, c := range caps {
-		capStrs[i] = string(c)
-	}
-	return Manifest{
-		SchemaVersion: "munsu.integrate/v1",
-		Harness:       harnessName,
-		Version:       "1.0.0",
-		Scope:         scope,
-		InstalledAt:   time.Now().UTC().Format(time.RFC3339),
-		TargetPaths:   targetPaths,
-		Capabilities:  capStrs,
-		ContentDigest: combinedDigest,
-	}
 }

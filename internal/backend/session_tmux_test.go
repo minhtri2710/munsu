@@ -30,36 +30,6 @@ func fakeExecutables(t *testing.T, names ...string) string {
 	return fakeBin
 }
 
-func TestTmuxBin_Found(t *testing.T) {
-	if !hasTmux() {
-		t.Skip("tmux not on PATH")
-	}
-	path, err := tmuxBin()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if path == "" {
-		t.Fatal("tmuxBin() returned empty path")
-	}
-	if !strings.Contains(path, "tmux") {
-		t.Errorf("tmuxBin() = %q, expected path containing 'tmux'", path)
-	}
-}
-
-func TestTmuxBin_NotFound(t *testing.T) {
-	oldPath := os.Getenv("PATH")
-	defer os.Setenv("PATH", oldPath)
-
-	os.Setenv("PATH", "/dev/null")
-	_, err := tmuxBin()
-	if err == nil {
-		t.Fatal("expected error when tmux is not on PATH")
-	}
-	if !strings.Contains(err.Error(), "not found on PATH") {
-		t.Errorf("unexpected error: %v", err)
-	}
-}
-
 func TestDefault_IsDeletedFromOperationPath(t *testing.T) {
 	// Default() is removed from the operation path — no auto-detection exists.
 	// Resolve with an empty requested identity must fail closed even when every
@@ -71,7 +41,7 @@ func TestDefault_IsDeletedFromOperationPath(t *testing.T) {
 	t.Setenv("TMUX", "/tmp/tmux-socket")
 	t.Setenv("HERDR_ENV", "1")
 
-	if _, _, err := Resolve(t.TempDir(), ""); err == nil {
+	if _, _, err := Resolve(""); err == nil {
 		t.Fatal("Resolve('') must fail CLOSED — no auto-detection (Default() is gone)")
 	}
 }
@@ -123,11 +93,10 @@ func TestSelect_FailsClosedWhenRequestedBinaryAbsent(t *testing.T) {
 }
 
 func TestResolve_EmptyIdentityFailsClosed(t *testing.T) {
-	tmpDir := t.TempDir()
 	// Even with env markers set, an empty requested identity must NOT auto-detect.
 	t.Setenv("TMUX", "/tmp/tmux-socket")
 	t.Setenv("HERDR_ENV", "1")
-	if _, _, err := Resolve(tmpDir, ""); err == nil {
+	if _, _, err := Resolve(""); err == nil {
 		t.Fatal("Resolve with empty identity must fail CLOSED, never auto-detect from env/PATH")
 	} else if !strings.Contains(err.Error(), "no session backend identity") {
 		t.Errorf("unexpected error: %v", err)
@@ -135,8 +104,7 @@ func TestResolve_EmptyIdentityFailsClosed(t *testing.T) {
 }
 
 func TestResolve_AutoIdentityFailsClosed(t *testing.T) {
-	tmpDir := t.TempDir()
-	if _, _, err := Resolve(tmpDir, "auto"); err == nil {
+	if _, _, err := Resolve("auto"); err == nil {
 		t.Fatal("Resolve('auto') must fail CLOSED (auto-detection is gone)")
 	} else if !strings.Contains(err.Error(), "no session backend identity") {
 		t.Errorf("unexpected error: %v", err)
@@ -164,25 +132,20 @@ func TestResolve_ExplicitIdentityIgnoresEnvAndConfigFile(t *testing.T) {
 	defer os.Setenv("PATH", oldPath)
 	os.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
 
-	bk, name, err := Resolve(tmpDir, "tmux")
+	bk, name, err := Resolve("tmux")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if name != "tmux" {
 		t.Errorf("name = %q, want tmux (only the explicit identity counts)", name)
 	}
-	tkb, ok := bk.(*TmuxBackend)
-	if !ok {
+	if _, ok := bk.(*TmuxBackend); !ok {
 		t.Fatalf("Resolve('tmux') returned %T, want *TmuxBackend", bk)
-	}
-	if tkb.Tag == "" {
-		t.Error("tmux backend tag should be set from homeDir workspace labeling")
 	}
 }
 
 func TestResolve_UnknownExplicitIdentityFailsClosed(t *testing.T) {
-	tmpDir := t.TempDir()
-	if _, _, err := Resolve(tmpDir, "nonexistent"); err == nil {
+	if _, _, err := Resolve("nonexistent"); err == nil {
 		t.Fatal("expected error for unknown backend name")
 	} else if !strings.Contains(err.Error(), "unknown session backend") {
 		t.Errorf("unexpected error: %v", err)
@@ -200,7 +163,7 @@ func TestResolve_FailsClosedWhenRequestedBinaryAbsent(t *testing.T) {
 	os.Setenv("PATH", "/dev/null")
 
 	for _, name := range known {
-		bk, gotName, err := Resolve(t.TempDir(), name)
+		bk, gotName, err := Resolve(name)
 		if err == nil {
 			t.Errorf("Resolve(%q) succeeded (%T) with %q absent from PATH — must fail closed", name, bk, name)
 			continue
@@ -218,9 +181,7 @@ func TestResolve_FailsClosedWhenRequestedBinaryAbsent(t *testing.T) {
 }
 
 // TestResolve_SucceedsWithControlledPATH verifies the shared verified-construction
-// path succeeds when the requested binary is present on a controlled PATH, and
-// that the workspace-label binding (tmux Tag) is applied from homeDir — layout
-// layered on the verified base, never selection.
+// path succeeds when the requested binary is present on a controlled PATH.
 func TestResolve_SucceedsWithControlledPATH(t *testing.T) {
 	known := []string{"tmux", "herdr", "zellij", "cmux", "orca"}
 	fakeBin := fakeExecutables(t, known...)
@@ -229,8 +190,7 @@ func TestResolve_SucceedsWithControlledPATH(t *testing.T) {
 	os.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
 
 	for _, name := range known {
-		homeDir := t.TempDir()
-		bk, gotName, err := Resolve(homeDir, name)
+		bk, gotName, err := Resolve(name)
 		if err != nil {
 			t.Errorf("Resolve(%q) with %q on PATH: %v", name, name, err)
 			continue
@@ -240,11 +200,8 @@ func TestResolve_SucceedsWithControlledPATH(t *testing.T) {
 		}
 		switch name {
 		case "tmux":
-			tb, ok := bk.(*TmuxBackend)
-			if !ok {
+			if _, ok := bk.(*TmuxBackend); !ok {
 				t.Errorf("Resolve('tmux') returned %T, want *TmuxBackend", bk)
-			} else if tb.Tag != Hometag(homeDir) {
-				t.Errorf("Resolve('tmux') Tag = %q, want %q (homeDir workspace labeling)", tb.Tag, Hometag(homeDir))
 			}
 		case "herdr":
 			if _, ok := bk.(*HerdrBackend); !ok {
@@ -267,7 +224,7 @@ func TestResolve_SucceedsWithControlledPATH(t *testing.T) {
 }
 
 func TestTmuxWindowNameUsesCompleteCallerLabel(t *testing.T) {
-	tk := &TmuxBackend{Tag: "home"}
+	tk := &TmuxBackend{}
 	if got := tk.windowName("mu-api-w1"); got != "mu-api-w1" {
 		t.Fatalf("windowName() = %q, want complete caller label", got)
 	}
@@ -374,6 +331,36 @@ func TestTmux_Alive_ServerFailureIsNotPaneNotFound(t *testing.T) {
 	}
 }
 
+// TestTmux_SendKeys_TextIsLiteralAndEnterIsAKey pins how SendKeys drives tmux:
+// text that tmux would otherwise read as a key name or a flag must arrive as
+// typed characters, and the submit must still arrive as the Enter key.
+func TestTmux_SendKeys_TextIsLiteralAndEnterIsAKey(t *testing.T) {
+	for _, text := range []string{"Enter", "C-c", "-x", "echo hi"} {
+		t.Run(text, func(t *testing.T) {
+			logPath := filepath.Join(t.TempDir(), "argv.log")
+			testutil.FakeOnPath(t, "tmux", fmt.Sprintf(
+				"#!/bin/sh\nfor a in \"$@\"; do printf '%%s\\n' \"$a\" >> %q; done\nprintf '%%s\\n' '---' >> %q\n", logPath, logPath))
+
+			if err := (&TmuxBackend{}).SendKeys("sess:@7", text); err != nil {
+				t.Fatalf("SendKeys: %v", err)
+			}
+
+			data, err := os.ReadFile(logPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := strings.Split(strings.TrimSuffix(string(data), "---\n"), "---\n")
+			want := []string{
+				strings.Join([]string{"send-keys", "-t", "@7", "-l", "--", text}, "\n") + "\n",
+				strings.Join([]string{"send-keys", "-t", "@7", "Enter"}, "\n") + "\n",
+			}
+			if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+				t.Fatalf("tmux invocations = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
 // TestTmux_Backend_NotFound tests every method returns an error when tmux is missing.
 func TestTmux_Backend_NotFound(t *testing.T) {
 	oldPath := os.Getenv("PATH")
@@ -417,204 +404,10 @@ func TestTmux_Backend_NotFound(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// FakeBackend — test double for the Backend interface
-// ---------------------------------------------------------------------------
-
-// fakeBackend implements Backend for testing purposes.
-// Tracks windows, captures, and errors in memory.
-type fakeBackend struct {
-	windows     map[string]bool   // windowID -> alive
-	captures    map[string]string // windowID -> captured content
-	newWindowFn func(session, name string) (string, error)
-	sendKeysFn  func(windowID, text string) error
-	captureFn   func(windowID string, lines int) (string, error)
-	aliveFn     func(windowID string) bool
-	teardownFn  func(windowID string) error
-}
-
-func newFakeBackend() *fakeBackend {
-	return &fakeBackend{
-		windows:  make(map[string]bool),
-		captures: make(map[string]string),
-	}
-}
-
-func (f *fakeBackend) NewWindow(session, name string) (string, error) {
-	if f.newWindowFn != nil {
-		return f.newWindowFn(session, name)
-	}
-	wid := session + "/" + name
-	f.windows[wid] = true
-	return wid, nil
-}
-
-func (f *fakeBackend) SendKeys(windowID, text string) error {
-	if f.sendKeysFn != nil {
-		return f.sendKeysFn(windowID, text)
-	}
-	if !f.windows[windowID] {
-		return fmt.Errorf("window %s not found", windowID)
-	}
-	return nil
-}
-
-func (f *fakeBackend) Capture(windowID string, lines int) (string, error) {
-	if f.captureFn != nil {
-		return f.captureFn(windowID, lines)
-	}
-	if !f.windows[windowID] {
-		return "", fmt.Errorf("window %s not found", windowID)
-	}
-	if c, ok := f.captures[windowID]; ok {
-		return c, nil
-	}
-	return "", nil
-}
-
-func (f *fakeBackend) CheckAlive(windowID string) (bool, error) {
-	if f.aliveFn != nil {
-		return f.aliveFn(windowID), nil
-	}
-	return f.windows[windowID], nil
-}
-
-func (f *fakeBackend) Teardown(windowID string) error {
-	if f.teardownFn != nil {
-		return f.teardownFn(windowID)
-	}
-	delete(f.windows, windowID)
-	return nil
-}
-
-// ---------------------------------------------------------------------------
-// FakeBackend contract tests
-// ---------------------------------------------------------------------------
-
-func TestFakeBackend_NewWindow(t *testing.T) {
-	f := newFakeBackend()
-	wid, err := f.NewWindow("munsu", "test-agent")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if wid == "" {
-		t.Fatal("NewWindow returned empty window ID")
-	}
-	if !f.windows[wid] {
-		t.Error("window should be recorded as alive")
-	}
-}
-
-func TestFakeBackend_AliveAfterNewWindow(t *testing.T) {
-	f := newFakeBackend()
-	wid, _ := f.NewWindow("s", "n")
-	if alive, _ := f.CheckAlive(wid); !alive {
-		t.Error("CheckAlive should return true after NewWindow")
-	}
-}
-
-func TestFakeBackend_AliveUnknown(t *testing.T) {
-	f := newFakeBackend()
-	if alive, _ := f.CheckAlive("@nonexistent"); alive {
-		t.Error("CheckAlive should return false for unknown window")
-	}
-}
-
-func TestFakeBackend_TeardownRemoves(t *testing.T) {
-	f := newFakeBackend()
-	wid, _ := f.NewWindow("s", "n")
-	f.Teardown(wid)
-	if alive, _ := f.CheckAlive(wid); alive {
-		t.Error("CheckAlive should return false after Teardown")
-	}
-}
-
-func TestFakeBackend_SendKeysToUnknown(t *testing.T) {
-	f := newFakeBackend()
-	err := f.SendKeys("@nonexistent", "echo hi")
-	if err == nil {
-		t.Fatal("expected error for unknown window")
-	}
-}
-
-func TestFakeBackend_CaptureToUnknown(t *testing.T) {
-	f := newFakeBackend()
-	_, err := f.Capture("@nonexistent", 10)
-	if err == nil {
-		t.Fatal("expected error for unknown window")
-	}
-}
-
-func TestFakeBackend_CaptureAfterSend(t *testing.T) {
-	f := newFakeBackend()
-	wid, _ := f.NewWindow("s", "n")
-	f.captures[wid] = "output line 1\noutput line 2\n"
-
-	out, err := f.Capture(wid, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out != "output line 1\noutput line 2\n" {
-		t.Errorf("captured = %q, want %q", out, "output line 1\noutput line 2\n")
-	}
-}
-
-func TestFakeBackend_Lifecycle(t *testing.T) {
-	f := newFakeBackend()
-
-	// Create
-	wid, err := f.NewWindow("munsu", "agent")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Use
-	if err := f.SendKeys(wid, "cd /tmp && go test"); err != nil {
-		t.Fatal(err)
-	}
-	f.captures[wid] = "ok\n"
-	out, err := f.Capture(wid, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out != "ok\n" {
-		t.Errorf("capture = %q, want %q", out, "ok\n")
-	}
-
-	// Teardown
-	if err := f.Teardown(wid); err != nil {
-		t.Fatal(err)
-	}
-	if alive, _ := f.CheckAlive(wid); alive {
-		t.Error("should not be alive after teardown")
-	}
-}
-
-func TestFakeBackend_CustomNewWindowFn(t *testing.T) {
-	f := newFakeBackend()
-	f.newWindowFn = func(session, name string) (string, error) {
-		return "", fmt.Errorf("custom error")
-	}
-	_, err := f.NewWindow("s", "n")
-	if err == nil || !strings.Contains(err.Error(), "custom error") {
-		t.Errorf("expected 'custom error', got %v", err)
-	}
-}
-
-func TestFakeBackend_CustomSendKeysFn(t *testing.T) {
-	f := newFakeBackend()
-	f.sendKeysFn = func(windowID, text string) error {
-		return fmt.Errorf("send failed")
-	}
-	err := f.SendKeys("@w0", "text")
-	if err == nil || !strings.Contains(err.Error(), "send failed") {
-		t.Errorf("expected 'send failed', got %v", err)
-	}
-}
-
-func TestFakeBackend_BackendSelectStaysSame(t *testing.T) {
-	// Verify that Select verifies and returns the expected adapter types for
-	// explicitly requested backends when their binaries are on PATH.
+// TestConstructBackend_ReturnsVerifiedAdapterTypes verifies that
+// constructBackend returns the expected adapter types for explicitly
+// requested backends when their binaries are on PATH.
+func TestConstructBackend_ReturnsVerifiedAdapterTypes(t *testing.T) {
 	fakeBin := fakeExecutables(t, "tmux", "herdr", "zellij")
 	oldPath := os.Getenv("PATH")
 	defer os.Setenv("PATH", oldPath)

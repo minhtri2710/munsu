@@ -16,14 +16,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// materialStates are the status states that warrant waking a parent supervisor.
-var materialStates = map[string]bool{
-	"done":           true,
-	"failed":         true,
-	"needs-decision": true,
-	"blocked":        true,
-}
-
 // newReportCmd creates the `munsu report` command for rank-aware uplink status reporting.
 func newReportCmd() *cobra.Command {
 	transport := newSessionUplinkTransport()
@@ -50,27 +42,22 @@ directly into the parent terminal pane when the composer is safe.
 
 Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 		Args: ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			state := args[0]
 			msg := args[1]
 
 			// Validate state
-			if !home.IsValidStatusState(state) {
+			if !domain.IsValidStatusState(state) {
 				return usageError("invalid_argument",
-					fmt.Sprintf("Valid states: %s", strings.Join(home.ValidStatusStates, ", ")),
+					fmt.Sprintf("Valid states: %s", strings.Join(domain.ValidStatusStates, ", ")),
 					fmt.Sprintf("Invalid status state %q", state))
 			}
 
 			// Resolve role and identity from env
 			role := os.Getenv("MUNSU_ROLE")
 			taskID := os.Getenv("MUNSU_TASK_ID")
-			homeDir := os.Getenv("MUNSU_HOME")
+			homeDir := ctx.Home
 
-			if homeDir == "" {
-				return operationError("invalid_environment",
-					"Run inside a munsu-managed task (MUNSU_HOME must be set)",
-					"MUNSU_HOME is not set")
-			}
 			if taskID == "" {
 				return operationError("invalid_environment",
 					"Run inside a munsu-managed task (MUNSU_TASK_ID must be set)",
@@ -132,7 +119,7 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 				if err != nil {
 					return fmt.Errorf("report: delivering scout terminal wake: %w", err)
 				}
-			} else if materialStates[state] && (role == "soldier" || role == "captain") {
+			} else if domain.IsMaterialVerb(state) && (role == "soldier" || role == "captain") {
 				// A soldier identifies itself as the task its home hosts, in
 				// exactly the form the receiver derives from the envelope's
 				// task ID; a captain identifies itself as its own home.
@@ -188,11 +175,7 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 			// 1.6. For soldier review-ready/idle states: emit a durable ready event
 			// and flush one pending command automatically.
 			if role == "soldier" && state == "review-ready" {
-				fallbackGeneration := ""
-				if meta, metaErr := home.ReadMeta(homeDir, taskID); metaErr == nil {
-					fallbackGeneration = meta["generation"]
-				}
-				metaGeneration, genErr := currentTaskGeneration(homeDir, taskID, fallbackGeneration)
+				metaGeneration, genErr := currentTaskGeneration(homeDir, taskID)
 				if genErr != nil {
 					return fmt.Errorf("report: reading task aggregate: %w", genErr)
 				}
@@ -236,27 +219,13 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 					WatcherIdentity:  watcherID,
 				},
 			})
-		},
+		}),
 	}
 
 	configureContractCommand(cmd)
 	cmd.Flags().StringVar(&key, "key", "", "Optional status key/slug for correlation and idempotency")
 	cmd.Flags().StringVar(&ring, "ring", "auto", "Ring policy: auto, ring, no-ring")
 	return cmd
-}
-
-// newNotifyCmd creates the `munsu notify` alias for `munsu report`.
-func newNotifyCmd() *cobra.Command {
-	reportCmd := newReportCmd()
-	notifyCmd := &cobra.Command{
-		Use:   "notify <state> <msg>",
-		Short: "Alias for 'munsu report'",
-		Long:  `'munsu notify' is an alias for 'munsu report'. See 'munsu report --help'.`,
-		Args:  ExactArgs(2),
-		RunE:  reportCmd.RunE,
-	}
-	notifyCmd.Flags().AddFlagSet(reportCmd.Flags())
-	return notifyCmd
 }
 
 func isScoutTask(homeDir, taskID string) bool {

@@ -30,8 +30,8 @@ func TestInvalidClosedSetInputsRefuse(t *testing.T) {
 		call func() error
 	}{
 		{"agy", func() error { _, err := agyHooksDir(Scope("invalid"), ""); return err }},
-		{"claude", func() error { _, err := claudeSettingsPath(Scope("invalid"), ""); return err }},
-		{"codex", func() error { _, err := codexHooksPath(Scope("invalid"), ""); return err }},
+		{"claude", func() error { _, err := claudeHooks.path(Scope("invalid"), ""); return err }},
+		{"codex", func() error { _, err := codexHooks.path(Scope("invalid"), ""); return err }},
 		{"grok", func() error { _, err := grokHooksDir(Scope("invalid"), ""); return err }},
 		{"opencode", func() error { _, err := opencodePluginsDir(Scope("invalid"), ""); return err }},
 		{"pi", func() error { _, err := ExpectedTargetPath(Scope("invalid"), ""); return err }},
@@ -81,7 +81,6 @@ func TestRun_BackendDiagnostics_NoPersistedIdentityWithActiveTMUX(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	assertConfigContains(t, result.Configs, "BACKEND_CONFIG: auto")
 	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: none (source: no persisted backend identity (set backend in the fleet base config))")
 }
 
@@ -96,7 +95,6 @@ func TestRun_BackendDiagnostics_NoPersistedIdentityWithActiveHERDRENV(t *testing
 		t.Fatal(err)
 	}
 
-	assertConfigContains(t, result.Configs, "BACKEND_CONFIG: auto")
 	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: none (source: no persisted backend identity (set backend in the fleet base config))")
 }
 
@@ -116,29 +114,6 @@ func TestRun_BackendDiagnostics_NoPersistedIdentityWithTmuxOnPATH(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	assertConfigContains(t, result.Configs, "BACKEND_CONFIG: auto")
-	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: none (source: no persisted backend identity (set backend in the fleet base config))")
-}
-
-func TestRun_BackendDiagnostics_LegacyPinAloneIsNotAnIdentity(t *testing.T) {
-	// A legacy config file pin is not a typed snapshot identity: without a
-	// fleet base document or published snapshot, BACKEND_RESOLVED is typed
-	// missing-input rather than the pin value.
-	home := t.TempDir()
-	configDir := filepath.Join(home, "config")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(configDir, "backend"), []byte("herdr\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := Run(home, false, nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	assertConfigContains(t, result.Configs, "BACKEND_CONFIG: herdr")
 	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: none (source: no persisted backend identity (set backend in the fleet base config))")
 }
 
@@ -158,7 +133,6 @@ func TestRun_BackendDiagnostics_PersistedFleetBaseBackend(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assertConfigContains(t, result.Configs, "BACKEND_CONFIG: auto")
 	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: tmux (source: fleet base document)")
 }
 
@@ -186,7 +160,6 @@ func TestRun_BackendDiagnostics_PersistedPublishedSnapshotWins(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assertConfigContains(t, result.Configs, "BACKEND_CONFIG: auto")
 	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: herdr (source: published snapshot)")
 }
 
@@ -212,29 +185,37 @@ func TestRun_BackendDiagnostics_UnrelatedOutputStable(t *testing.T) {
 	}
 }
 
-func TestRun_BackendDiagnostics_AutoConfigFileWithNothingAvailable(t *testing.T) {
-	home := t.TempDir()
-	configDir := filepath.Join(home, "config")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	// Write "auto" explicitly
-	if err := os.WriteFile(filepath.Join(configDir, "backend"), []byte("auto\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("TMUX", "")
-	t.Setenv("HERDR_ENV", "")
-
-	// Scrub PATH so no tmux is findable
-	t.Setenv("PATH", "/dev/null")
-
-	result, err := Run(home, false, nil, nil)
+func TestRun_BaseConfigErr(t *testing.T) {
+	missing := t.TempDir()
+	result, err := Run(missing, false, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if result.BaseConfigErr != nil {
+		t.Fatalf("missing base document: BaseConfigErr = %v, want nil", result.BaseConfigErr)
+	}
 
-	assertConfigContains(t, result.Configs, "BACKEND_CONFIG: auto")
-	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: none (source: no persisted backend identity (set backend in the fleet base config))")
+	for name, body := range map[string]string{
+		"malformed": "{not-json",
+		"invalid":   `{"schemaVersion": "bogus"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(home, "config"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(home, config.BaseDocumentPath), []byte(body), 0644); err != nil {
+				t.Fatal(err)
+			}
+			result, err := Run(home, false, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.BaseConfigErr == nil {
+				t.Fatal("corrupt base document: BaseConfigErr = nil, want the load error")
+			}
+		})
+	}
 }
 
 func mustBootstrapOperationID(t *testing.T, value string) domain.OperationID {
@@ -375,7 +356,7 @@ func TestGCOrphanDataDirs_AbortedCleanupKeepsBrief(t *testing.T) {
 		if err != nil {
 			return false, err
 		}
-		return auth.ReclaimReleasedTaskArtifacts(taskID, reclaim)
+		return auth.ReclaimReleasedTaskArtifactsByID(taskID.Value(), reclaim)
 	})
 	if len(cleaned) != 0 {
 		t.Fatalf("cleaned = %v, want none", cleaned)
@@ -441,12 +422,12 @@ func TestGCOrphanDataDirs_WriterInterleavingKeepsBrief(t *testing.T) {
 	}
 	setDirMtime(t, dataDir, 48*time.Hour)
 	wrapped := func(taskID string, reclaim func() error) (bool, error) {
-		if err := auth.WriteTaskDataArtifact(tid, func() error {
+		if err := auth.WriteTaskDataArtifactByID(tid.Value(), func() error {
 			return fleet.Scaffold(fleet.ScaffoldOptions{HomeDir: homeDir, ID: id, Repo: "munsu", Mode: "no-mistakes"})
 		}); err != nil {
 			return false, err
 		}
-		return auth.ReclaimReleasedTaskArtifacts(tid, reclaim)
+		return auth.ReclaimReleasedTaskArtifactsByID(tid.Value(), reclaim)
 	}
 	if cleaned := gcOrphanDataDirs(homeDir, wrapped); len(cleaned) != 0 {
 		t.Fatalf("cleaned = %v", cleaned)
@@ -515,7 +496,7 @@ func TestGCOrphanDataDirs_ScaffoldedBriefKeepsTerminalTask(t *testing.T) {
 		if err != nil {
 			return false, err
 		}
-		return auth.ReclaimReleasedTaskArtifacts(taskID, reclaim)
+		return auth.ReclaimReleasedTaskArtifactsByID(taskID.Value(), reclaim)
 	})
 	if len(cleaned) != 0 {
 		t.Fatalf("cleaned = %v", cleaned)
@@ -593,7 +574,7 @@ func TestGCOrphanDataDirs_ReclaimsSupersededSource(t *testing.T) {
 		if err != nil {
 			return false, err
 		}
-		return auth.ReclaimReleasedTaskArtifacts(taskID, reclaim)
+		return auth.ReclaimReleasedTaskArtifactsByID(taskID.Value(), reclaim)
 	})
 	if len(cleaned) != 1 || cleaned[0] != id {
 		t.Fatalf("cleaned = %v", cleaned)
@@ -770,3 +751,7 @@ func TestRunSkipsGCWithoutATaskOwnershipSource(t *testing.T) {
 		t.Fatalf("a sweep that cannot ask about ownership must remove nothing: %v", err)
 	}
 }
+
+// reclaimNone stands in for a composition-root reclaimer that performs every
+// reclaim it is asked for.
+func reclaimNone(_ string, reclaim func() error) (bool, error) { return true, reclaim() }

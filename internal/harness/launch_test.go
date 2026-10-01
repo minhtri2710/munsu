@@ -43,11 +43,9 @@ func TestBuildHarnessLaunch_FromAdapter_Claude(t *testing.T) {
 	if cmd == "" {
 		t.Fatal("LaunchStringFromAdapter returned empty for claude")
 	}
-	if !strings.Contains(cmd, "--model") {
-		t.Error("claude launch should contain --model")
-	}
-	if !strings.Contains(cmd, "claude-sonnet-4-20250515") {
-		t.Error("claude launch should contain default model")
+	// DefaultModel is omitted; Claude Code uses its runtime default
+	if strings.Contains(cmd, "--model") {
+		t.Error("claude launch should NOT contain --model when no model is configured")
 	}
 }
 

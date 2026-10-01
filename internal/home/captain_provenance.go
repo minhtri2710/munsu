@@ -28,7 +28,7 @@ func SeedCaptainProvenance(homePath, id string) error {
 		return fmt.Errorf("cannot determine canonical home for %s: %w", homePath, err)
 	}
 	content := fmt.Sprintf("%s\n%s\n%s\n", CaptainProvenanceVersion, id, canonical)
-	return os.WriteFile(filepath.Join(homePath, CaptainProvenanceMarkerName), []byte(content), 0600)
+	return AtomicWrite(filepath.Join(homePath, CaptainProvenanceMarkerName), []byte(content), 0600)
 }
 
 func ValidateCaptainProvenance(homePath string) (string, error) {
@@ -36,7 +36,7 @@ func ValidateCaptainProvenance(homePath string) (string, error) {
 	data, err := os.ReadFile(markerPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", fmt.Errorf("captain home %s has no %s marker — run 'munsu captain seed' or 'munsu captain migrate'", homePath, CaptainProvenanceMarkerName)
+			return "", fmt.Errorf("captain home %s has no %s marker — run 'munsu captain seed'", homePath, CaptainProvenanceMarkerName)
 		}
 		return "", fmt.Errorf("reading provenance marker %s: %w", markerPath, err)
 	}

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"github.com/minhtri2710/munsu/internal/home"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/config"
@@ -13,7 +14,7 @@ func TestReportCmdMaterialSoldierUsesMailboxOnly(t *testing.T) {
 	captainHome := t.TempDir()
 	// The receiving home must actually be a Captain home: the receiver rank is
 	// derived from its durable provenance, not asserted by the sender.
-	if err := orchestrator.WriteHomeIdentity(captainHome, "captain-one", orchestrator.RankCaptain); err != nil {
+	if err := home.SeedCaptainProvenance(captainHome, "captain-one"); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("MUNSU_HOME", soldierHome)
@@ -48,7 +49,7 @@ func TestReportCmdCaptainTargetResolutionFailureStaysDurableAndSuccessful(t *tes
 	soldierHome := t.TempDir()
 	captainHome := t.TempDir()
 	parentHome := t.TempDir()
-	if err := orchestrator.WriteHomeIdentity(captainHome, "captain-one", orchestrator.RankCaptain); err != nil {
+	if err := home.SeedCaptainProvenance(captainHome, "captain-one"); err != nil {
 		t.Fatal(err)
 	}
 	if err := config.Set(captainHome, "parent-home", parentHome); err != nil {
@@ -87,7 +88,7 @@ func TestReportCmdCaptainTargetResolutionFailureStaysDurableAndSuccessful(t *tes
 func TestReportCmdMaterialCaptainUsesGeneralMailbox(t *testing.T) {
 	captainHome := t.TempDir()
 	generalHome := t.TempDir()
-	if err := orchestrator.WriteHomeIdentity(captainHome, "captain-one", orchestrator.RankCaptain); err != nil {
+	if err := home.SeedCaptainProvenance(captainHome, "captain-one"); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("MUNSU_HOME", captainHome)

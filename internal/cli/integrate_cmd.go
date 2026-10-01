@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/harness"
+	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/spf13/cobra"
 )
 
@@ -325,8 +328,10 @@ type toolPayload struct {
 // belongs to. Everything comes from the same JSON object and stdin is not
 // rewindable, so a single reader owns the extraction.
 //
-// Field names are tried per harness shape. A payload that carries nothing
+// Field names are tried per harness shape. A JSON payload that carries nothing
 // yields an empty toolPayload, which every caller treats as "nothing to check".
+// Trimmed-empty stdin is an error because stdin-based harnesses must provide a
+// PreToolUse payload for the safety decision.
 func readStdinForToolPayload() (toolPayload, error) {
 	data, err := io.ReadAll(os.Stdin)
 	if err != nil {
@@ -334,7 +339,7 @@ func readStdinForToolPayload() (toolPayload, error) {
 	}
 	trimmed := strings.TrimSpace(string(data))
 	if trimmed == "" {
-		return toolPayload{}, nil
+		return toolPayload{}, fmt.Errorf("stdin payload is empty")
 	}
 
 	var payload map[string]interface{}
@@ -475,6 +480,203 @@ func patchWriteTargets(checkPath, body string) ([]string, error) {
 	return resolved, nil
 }
 
+// munsuInvocation is a subcommand word read after `munsu` and the words that
+// can follow it.
+type munsuInvocation struct {
+	subcommand string
+	following  []string
+}
+
+// munsuInvocations parses command with the safety tokenizer and returns, for
+// every `munsu` command word among the candidates of a segment, the
+// subcommand after it and the words that can follow the subcommand (the root
+// --home flag is skipped). Every candidate at each position is read
+// (segmentCandidates). A word that reads as more than itself, as in
+// `bash -c "munsu watch"`, is parsed too. An unquoted word opening with `#`
+// starts a shell comment and ends its segment. Past maxShellPayloadDepth
+// nested command lines it stops and reports the command too deep to check.
+func munsuInvocations(command string, depth int) ([]munsuInvocation, bool) {
+	var invocations []munsuInvocation
+	for _, segment := range commandSegments(command) {
+		for _, token := range candidateTokens(segment) {
+			if !readsAsMoreThanItself(gitSafetyBackslashMode(), token) {
+				continue
+			}
+			if depth+1 > maxShellPayloadDepth {
+				return nil, true
+			}
+			nested, tooDeep := munsuInvocations(token.text, depth+1)
+			if tooDeep {
+				return nil, true
+			}
+			invocations = append(invocations, nested...)
+		}
+		const seek, subcommand, homeValue = 0, 1, 2
+		nodes := segmentCandidates(segment)
+		states := make([][3]bool, len(nodes)+1)
+		reach := func(n int, state int) {
+			states[n][state] = true
+		}
+		reach(0, seek)
+		for n, node := range nodes {
+			if node.skip > 0 {
+				for state, ok := range states[n] {
+					states[node.skip][state] = states[node.skip][state] || ok
+				}
+			}
+			for _, step := range node.steps {
+				word := step.token.text
+				if states[n][seek] {
+					reach(step.next, seek)
+					if filepath.Base(word) == "munsu" {
+						reach(step.next, subcommand)
+					}
+				}
+				if states[n][homeValue] {
+					reach(step.next, subcommand)
+				}
+				if !states[n][subcommand] {
+					continue
+				}
+				switch munsuHomeWords(word, step.next < len(nodes)) {
+				case 2:
+					reach(step.next, homeValue)
+				case 1:
+					reach(step.next, subcommand)
+				default:
+					invocation := munsuInvocation{subcommand: word}
+					if step.next < len(nodes) {
+						invocation.following = nodes[step.next].following
+					}
+					invocations = append(invocations, invocation)
+				}
+			}
+		}
+	}
+	return invocations, false
+}
+
+// commandSegments returns the tokens of each segment of command, cut at an
+// unquoted `#` comment.
+func commandSegments(command string) [][]shellToken {
+	var segments [][]shellToken
+	for _, segment := range tokenizeSegments(gitSafetyBackslashMode(), command) {
+		end := slices.IndexFunc(segment, func(token shellToken) bool { return strings.HasPrefix(token.text, "#") })
+		if end < 0 {
+			end = len(segment)
+		}
+		segments = append(segments, segment[:end])
+	}
+	return segments
+}
+
+// commandWords returns the words of each segment of command, cut at an
+// unquoted `#` comment.
+func commandWords(command string) [][]string {
+	var segments [][]string
+	for _, segment := range commandSegments(command) {
+		segments = append(segments, segmentWords(segment))
+	}
+	return segments
+}
+
+// namesNoMistakesDir reports whether any word, in any reading of a segment
+// and in any word that reads as more than itself, names a no-mistakes
+// directory or a path inside it: a path component, or a path after `=` in a
+// flag word, that equals `.no-mistakes` ignoring case or is a glob that could
+// match it. A glob only reaches a dot-name through a literal leading dot, so
+// `*` does not count. Past maxShellPayloadDepth nested command lines it stops
+// and reports the command too deep to check.
+func namesNoMistakesDir(command string, depth int) (bool, bool) {
+	for _, segment := range commandSegments(command) {
+		for _, token := range candidateTokens(segment) {
+			if readsAsMoreThanItself(gitSafetyBackslashMode(), token) {
+				if depth+1 > maxShellPayloadDepth {
+					return false, true
+				}
+				if names, tooDeep := namesNoMistakesDir(token.text, depth+1); names || tooDeep {
+					return names, tooDeep
+				}
+			}
+			components := strings.FieldsFunc(token.text, func(r rune) bool { return r == '/' || r == '=' })
+			for _, component := range components {
+				if !strings.HasPrefix(component, ".") {
+					continue
+				}
+				if ok, _ := path.Match(strings.ToLower(component), ".no-mistakes"); ok {
+					return true, false
+				}
+			}
+		}
+	}
+	return false, false
+}
+
+// munsuSubcommandArgs drops the root --home flag from the words after `munsu`.
+func munsuSubcommandArgs(args []string) []string {
+	for len(args) > 0 {
+		n := munsuHomeWords(args[0], len(args) > 1)
+		if n == 0 {
+			break
+		}
+		args = args[n:]
+	}
+	return args
+}
+
+// munsuHomeWords returns how many words the root --home flag starting at
+// word takes: 2 for `--home DIR` (hasValue reports a next word), 1 for
+// `--home=DIR`, and 0 when word does not start it.
+func munsuHomeWords(word string, hasValue bool) int {
+	switch {
+	case word == "--home" && hasValue:
+		return 2
+	case strings.HasPrefix(word, "--home="):
+		return 1
+	}
+	return 0
+}
+
+// onlyGuardOrDoctor reports whether every segment of command is a `munsu
+// guard` / `munsu doctor` invocation or a plain `cd <dir>`: the only shape
+// exempt from the no-mistakes directory rule. Any other segment, including a
+// `bash -c` wrapper, disqualifies the whole command.
+func onlyGuardOrDoctor(command string) bool {
+	found := false
+	for _, words := range commandWords(command) {
+		switch {
+		case len(words) == 0:
+		case words[0] == "cd" && len(words) <= 2:
+		case filepath.Base(words[0]) == "munsu":
+			args := munsuSubcommandArgs(words[1:])
+			if len(args) == 0 || (args[0] != "guard" && args[0] != "doctor") {
+				return false
+			}
+			found = true
+		default:
+			return false
+		}
+	}
+	return found
+}
+
+// watchInvocationAllowed reports whether every word that can follow `munsu
+// watch` names a bounded watcher operation or asks for help; everything else,
+// including bare `munsu watch` (the daemon), is refused.
+func watchInvocationAllowed(following []string) bool {
+	if len(following) == 0 {
+		return false
+	}
+	for _, word := range following {
+		switch word {
+		case "status", "ensure", "stop", "run", "--help", "-h":
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, checkFilePath string, harnessFlag string) error {
 	// Harnesses that deliver the tool payload on stdin: read it once and take
 	// whichever channel the tool call actually belongs to.
@@ -520,23 +722,28 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, c
 		}
 		writeTargets = targets
 	} else if effectiveCommand != "" {
-		if strings.Contains(effectiveCommand, "munsu watch arm") ||
-			strings.Contains(effectiveCommand, "munsu watch ensure") ||
-			strings.Contains(effectiveCommand, "munsu watch stop") {
+		// The tokenizer does not parse $(...) or backtick substitution into
+		// words, nor <(...) / >(...) process substitution; those shapes are refused
+		// only by hasGitCommandSubstitution.
+		const tooDeepReason = "shell payload nesting is too deep; munsu command rules cannot be checked"
+		invocations, tooDeep := munsuInvocations(effectiveCommand, 0)
+		if tooDeep {
 			block = true
-			reason = "Use 'munsu guard' or 'munsu watch run' for inspection; watcher lifecycle is managed automatically."
-		} else if strings.Contains(effectiveCommand, "munsu watch") &&
-			!strings.Contains(effectiveCommand, "run") &&
-			!strings.Contains(effectiveCommand, "--help") {
-			// Block bare `munsu watch` (daemon mode) but allow `munsu watch run` and --help.
-			block = true
-			reason = "Watcher lifecycle is managed automatically; use 'munsu watch run' for inspection."
+			reason = tooDeepReason
+		}
+		for _, invocation := range invocations {
+			if invocation.subcommand == "watch" && !watchInvocationAllowed(invocation.following) {
+				block = true
+				reason = "Bare 'munsu watch' runs the watcher daemon in this session; use 'munsu watch ensure' for a persistent watcher or 'munsu watch run' for one cycle."
+			}
 		}
 
-		if strings.Contains(effectiveCommand, "cd .no-mistakes") ||
-			strings.Contains(effectiveCommand, "cd ~/.no-mistakes") ||
-			strings.Contains(effectiveCommand, "/.no-mistakes/") {
-			if !strings.Contains(effectiveCommand, "guard") && !strings.Contains(effectiveCommand, "doctor") {
+		names, tooDeep := namesNoMistakesDir(effectiveCommand, 0)
+		if tooDeep {
+			block = true
+			reason = tooDeepReason
+		} else if names {
+			if !onlyGuardOrDoctor(effectiveCommand) {
 				block = true
 				reason = "No-mistakes managed directories are not regular projects."
 			}
@@ -558,14 +765,6 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, c
 			block = true
 			reason = "Shell write target is ambiguous; refusing to proceed."
 		}
-
-		nmHome := os.Getenv("NM_HOME")
-		if nmHome == "" {
-			if h, err := os.UserHomeDir(); err == nil {
-				nmHome = filepath.Join(h, ".no-mistakes")
-			}
-		}
-		_ = nmHome
 	}
 
 	// Native file-write tools carry their target in the payload rather than in
@@ -746,20 +945,11 @@ func runSessionStartNudge(cmd *cobra.Command, ctx Ctx) error {
 	return nil
 }
 
-// lockPIDInAncestry reads state/.lock and walks up to 8 parent PIDs
-// to check if the lock holder is in the current process ancestry.
+// lockPIDInAncestry reads the session lock holder's pid and walks up to 8
+// parent PIDs to check if the holder is in the current process ancestry.
 func lockPIDInAncestry(homeDir string) bool {
-	lockPath := filepath.Join(homeDir, "state", ".lock")
-	data, err := os.ReadFile(lockPath)
-	if err != nil {
-		return false
-	}
-
-	var lockPID int
-	if _, err := fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &lockPID); err != nil {
-		return false
-	}
-	if lockPID <= 1 {
+	lockPID, err := home.ReadSessionLockPID(homeDir)
+	if err != nil || lockPID <= 1 {
 		return false
 	}
 

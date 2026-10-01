@@ -62,40 +62,12 @@ func PublishWriterIdentity(homeDir, kind string, identity WriterIdentity) error 
 	if err := validateWriterIdentity(homeDir, kind, identity); err != nil {
 		return err
 	}
-	path := WriterIdentityPath(homeDir, kind)
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return fmt.Errorf("creating identity directory: %w", err)
-	}
-	if err := secureDir(dir); err != nil {
-		return fmt.Errorf("securing identity directory: %w", err)
-	}
 	data, err := json.Marshal(identity)
 	if err != nil {
 		return err
 	}
-	file, err := os.CreateTemp(dir, "."+kind+"-identity.tmp-*")
-	if err != nil {
-		return err
-	}
-	tmp := file.Name()
-	defer os.Remove(tmp)
-	if err := secureFile(tmp); err != nil {
-		file.Close()
-		return err
-	}
-	if _, err := file.Write(append(data, '\n')); err != nil {
-		file.Close()
-		return err
-	}
-	if err := file.Sync(); err != nil {
-		file.Close()
-		return err
-	}
-	if err := file.Close(); err != nil {
-		return err
-	}
-	if err := RenameDurable(tmp, path); err != nil {
+	path := WriterIdentityPath(homeDir, kind)
+	if err := canonicalAtomicWrite(path, append(data, '\n')); err != nil {
 		return err
 	}
 	if err := secureFile(path); err != nil {

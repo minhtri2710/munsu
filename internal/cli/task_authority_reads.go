@@ -13,11 +13,10 @@ import (
 )
 
 // currentTaskGeneration returns the current canonical generation of one task
-// from the home's Task Authority, falling back to the caller-provided value
-// when the task has no canonical record. It re-expresses the legacy
+// from the home's Task Authority. It re-expresses the legacy
 // home.CurrentTaskGeneration over the canonical authority: an uninitialized
-// home fails closed instead of silently initializing state.
-func currentTaskGeneration(homeDir, taskID, fallback string) (string, error) {
+// home or missing task fails closed instead of silently initializing state.
+func currentTaskGeneration(homeDir, taskID string) (string, error) {
 	auth, err := taskAuthorityForRead(homeDir)
 	if err != nil {
 		return "", err
@@ -27,9 +26,6 @@ func currentTaskGeneration(homeDir, taskID, fallback string) (string, error) {
 		return "", err
 	}
 	agg, err := auth.Get(tid)
-	if errors.Is(err, taskauthority.ErrNotFound) {
-		return fallback, nil
-	}
 	if err != nil {
 		return "", err
 	}

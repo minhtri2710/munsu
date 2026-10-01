@@ -139,14 +139,12 @@ type DeliveryMergeRequest struct {
 	BaseRef string
 }
 
-var ErrDeliveryMergeConstraintsUnsupported = errors.New("provider cannot atomically enforce mergeability, head, and base constraints")
-
 // DeliveryProvider is the one narrow typed Fleet capability consumed by
 // Deliver, with separate observation and irreversible mutation methods.
-// GitHub (gh-axi) and GitLab (glab) real adapters implement the supported
-// provider merge path. Unsupported providers/kinds fail closed before any
-// journal mutation authorization; there is no default provider, raw CLI
-// fallback, shell script, or alternate execution route.
+// The GitLab (glab) adapter implements the supported provider merge path.
+// Unsupported providers/kinds fail closed before any journal mutation
+// authorization; there is no default provider, raw CLI fallback, shell
+// script, or alternate execution route.
 type DeliveryProvider interface {
 	// ValidateMergeRequest checks whether the provider can enforce every
 	// authorization constraint atomically before mutation.
@@ -182,11 +180,6 @@ func (e *DeliveryFailClosedError) Error() string {
 // probes the real typed capabilities.
 var deliveryProviderFor = func(ident domain.DeliveryIdentity) (DeliveryProvider, error) {
 	switch ident.Provider {
-	case "github":
-		if st := ProbeGitHubCapability(); st != backend.Ready {
-			return nil, fmt.Errorf("GitHub delivery capability is %s (gh-axi must be Ready); no fallback execution route", st)
-		}
-		return &githubDeliveryProvider{client: &ghAxiClient{}}, nil
 	case "gitlab":
 		if st := ProbeGitLabCapability(); st != backend.Ready {
 			return nil, fmt.Errorf("GitLab delivery capability is %s (glab must be Ready); no fallback execution route", st)
@@ -258,7 +251,7 @@ func Deliver(homeDir, taskID string, req DeliverRequest) (*DeliverResult, error)
 		return nil, err
 	}
 	// Durable intent BEFORE the first side effect (authorization issuance).
-	if err := writeDeliveryJournal(h, lk, journal); err != nil {
+	if err := deliveryJournals.create(h, lk, journal); err != nil {
 		return nil, fmt.Errorf("deliver %s: writing delivery journal: %w", taskID, err)
 	}
 	deliveryCrashHook("journal")
@@ -267,14 +260,19 @@ func Deliver(homeDir, taskID string, req DeliverRequest) (*DeliverResult, error)
 }
 
 // validateDeliverRequest checks the typed delivery intent: a supported
-// irreversible kind, a valid typed identity, a supported merge method, and a
-// non-empty unique closed-set of typed preconditions.
+// irreversible kind, a valid typed identity of a supported provider, a
+// supported merge method, and a non-empty unique closed-set of typed
+// preconditions. GitHub delivery is out of scope and is refused
+// here, before any recovery, journal write, or authorization.
 func validateDeliverRequest(req DeliverRequest, method string) error {
 	if req.Kind != taskauthority.DeliveryAuthorizationProviderMerge {
 		return fmt.Errorf("delivery kind %q is unsupported: only %q is supported by the Fleet delivery execution path", req.Kind, taskauthority.DeliveryAuthorizationProviderMerge)
 	}
 	if err := domain.ValidateIdentity(&req.Identity); err != nil {
 		return fmt.Errorf("delivery identity is invalid: %w", err)
+	}
+	if req.Identity.Provider == "github" {
+		return fmt.Errorf("GitHub delivery is unsupported: only GitLab merge requests are delivered by the Fleet delivery execution path")
 	}
 	switch method {
 	case "squash", "merge", "rebase":
@@ -363,12 +361,9 @@ func isRevokedCurrency(cur taskauthority.DeliveryCurrency) bool {
 // generation/revision precondition, the typed identity/head, the operation
 // kind, the provider merge method, the asserted preconditions, and the
 // deterministic authorization/revoke/outcome operation identities plus the
-// exact request digests.
+// exact authorization request digest.
 func buildDeliveryJournal(homeDir string, c *taskauthority.Canonical, agg taskauthority.Aggregate, req DeliverRequest, method string) (*deliveryJournal, error) {
-	id, err := newDeliveryJournalID()
-	if err != nil {
-		return nil, err
-	}
+	id := newJournalID()
 	tid, err := domain.NewTaskID(agg.TaskID)
 	if err != nil {
 		return nil, err
@@ -385,47 +380,24 @@ func buildDeliveryJournal(homeDir string, c *taskauthority.Canonical, agg taskau
 	if err != nil {
 		return nil, err
 	}
-	// The fail-closed release and the retryable-cycle release are the two
-	// deterministic revocation intents of one journal (pre-outcome at
-	// revision+1, post-outcome at revision+2).
-	failClosedRevoke := taskauthority.CanonicalRevokeDeliveryRequest{
-		HomeID:                   c.HomeID(),
-		TaskID:                   tid,
-		Precondition:             domain.Of(uint64(agg.Generation), uint64(agg.Revision)+1),
-		AuthorizationOperationID: deliveryAuthorizeOpID(id, agg.TaskID),
-		Reason:                   "delivery currency invalid",
-	}
-	failClosedRevokeDigest, err := domain.Digest(failClosedRevoke)
-	if err != nil {
-		return nil, err
-	}
-	retryRevoke := failClosedRevoke
-	retryRevoke.Precondition = domain.Of(uint64(agg.Generation), uint64(agg.Revision)+2)
-	retryRevoke.Reason = "retryable delivery outcome"
-	retryRevokeDigest, err := domain.Digest(retryRevoke)
-	if err != nil {
-		return nil, err
-	}
 	preconditions := append([]taskauthority.DeliveryPrecondition(nil), req.Preconditions...)
 	return &deliveryJournal{
-		Version:                1,
-		ID:                     id,
-		Phase:                  deliveryPhasePrepared,
-		Home:                   homeDir,
-		Stage:                  deliveryStageAuthorize,
-		TaskID:                 agg.TaskID,
-		Generation:             uint64(agg.Generation),
-		Revision:               uint64(agg.Revision),
-		Kind:                   req.Kind,
-		Identity:               req.Identity,
-		Method:                 method,
-		Preconditions:          preconditions,
-		AuthorizeOpID:          deliveryAuthorizeOpID(id, agg.TaskID),
-		RevokeOpID:             deliveryRevokeOpID(id, agg.TaskID),
-		OutcomeOpID:            deliveryOutcomeOpID(id, agg.TaskID),
-		AuthorizeDigest:        authorizeDigest,
-		RevokeDigest:           retryRevokeDigest,
-		RevokeFailClosedDigest: failClosedRevokeDigest,
+		Version:         1,
+		ID:              id,
+		Phase:           deliveryPhasePrepared,
+		Home:            homeDir,
+		Stage:           deliveryStageAuthorize,
+		TaskID:          agg.TaskID,
+		Generation:      uint64(agg.Generation),
+		Revision:        uint64(agg.Revision),
+		Kind:            req.Kind,
+		Identity:        req.Identity,
+		Method:          method,
+		Preconditions:   preconditions,
+		AuthorizeOpID:   deliveryAuthorizeOpID(id, agg.TaskID),
+		RevokeOpID:      deliveryRevokeOpID(id, agg.TaskID),
+		OutcomeOpID:     deliveryOutcomeOpID(id, agg.TaskID),
+		AuthorizeDigest: authorizeDigest,
 	}, nil
 }
 
@@ -563,7 +535,7 @@ func issueDeliveryAuthorization(c *taskauthority.Canonical, journal *deliveryJou
 	if journal.AuthorizeDigest != "" && journal.AuthorizeDigest != digest {
 		return fmt.Errorf("delivery journal %s authorization digest mismatch", journal.ID)
 	}
-	op := mustDeliveryOperation(journal.AuthorizeOpID, req)
+	op := deliveryJournals.mustOperation(journal.AuthorizeOpID, req)
 	if _, err := c.AuthorizeDelivery(op, req); err != nil {
 		return fmt.Errorf("delivery authorization issuance: %w", err)
 	}
@@ -687,18 +659,12 @@ func deriveDeliveryOutcome(journal *deliveryJournal, obs DeliveryProviderObserva
 // pinned outcome instead of re-deriving a conflicting one.
 func pinAndCommitOutcome(h *home.Home, lk *home.Lock, c *taskauthority.Canonical, journal *deliveryJournal, derivation deliveryOutcomeDerivation) (*DeliverResult, error) {
 	if journal.Stage != deliveryStageOutcome {
-		req := deliveryOutcomeRequest(c, journal, derivation)
-		digest, err := domain.Digest(req)
-		if err != nil {
-			return nil, err
-		}
 		if err := transitionDeliveryJournal(h, lk, journal, "outcome", func(j *deliveryJournal) {
 			j.Stage = deliveryStageOutcome
 			j.OutcomeStatus = derivation.status
 			j.OutcomeDetail = derivation.detail
 			j.OutcomeHeadSHA = derivation.headSHA
 			j.OutcomeMergedSHA = derivation.mergedSHA
-			j.OutcomeDigest = digest
 		}); err != nil {
 			return nil, err
 		}
@@ -707,28 +673,19 @@ func pinAndCommitOutcome(h *home.Home, lk *home.Lock, c *taskauthority.Canonical
 	return commitPinnedOutcome(h, lk, c, journal)
 }
 
-// deliveryOutcomeRequest builds the canonical outcome intent from the
-// journal-pinned fields.
-func deliveryOutcomeRequest(c *taskauthority.Canonical, journal *deliveryJournal, derivation deliveryOutcomeDerivation) taskauthority.CanonicalDeliveryOutcomeRequest {
-	tid, _ := domain.NewTaskID(journal.TaskID)
-	return taskauthority.CanonicalDeliveryOutcomeRequest{
-		HomeID:                   c.HomeID(),
-		TaskID:                   tid,
-		Precondition:             domain.Of(journal.Generation, journal.Revision+1),
-		AuthorizationOperationID: journal.AuthorizeOpID,
-		Status:                   derivation.status,
-		Detail:                   derivation.detail,
-		HeadSHA:                  derivation.headSHA,
-		MergedSHA:                derivation.mergedSHA,
-	}
-}
-
-// commitPinnedOutcome commits the journal-pinned truthful outcome (replay
-// idempotently), releases the authorization on a retryable outcome so a
-// later distinct authorization may follow, and completes the journal. A
-// canonical outcome commit conflict after mutation resolves to the already
-// committed record (partial/remote-unknown stand; completed is never
-// fabricated), because the committed terminal truth is never overridden.
+// commitPinnedOutcome commits the journal-pinned truthful outcome, releases
+// the authorization on a retryable outcome so a later distinct authorization
+// may follow, and completes the journal. An outcome already committed under
+// the journal's outcome identity is the truth (a crash after the commit, or a
+// prior attempt that derived different provider state): it is never
+// overridden and completed is never fabricated. Otherwise the commit runs
+// only while the journal's authorization is still the task's current one, at
+// the task's current revision; an authorization that was revoked, replaced,
+// reopened away (a new generation) or retired completes the journal with no
+// canonical mutation. Phase, owner and binding drift within the generation
+// (a Block or Complete after the merge) does not stop the commit; a matching
+// hold or an active transfer reservation refuses it and keeps the journal
+// active until they clear.
 func commitPinnedOutcome(h *home.Home, lk *home.Lock, c *taskauthority.Canonical, journal *deliveryJournal) (*DeliverResult, error) {
 	if journal.OutcomeStatus == "" {
 		return nil, fmt.Errorf("delivery journal %s has no pinned outcome", journal.ID)
@@ -740,39 +697,38 @@ func commitPinnedOutcome(h *home.Home, lk *home.Lock, c *taskauthority.Canonical
 	if err != nil {
 		return nil, err
 	}
-	req := taskauthority.CanonicalDeliveryOutcomeRequest{
-		HomeID:                   c.HomeID(),
-		TaskID:                   tid,
-		Precondition:             domain.Of(journal.Generation, journal.Revision+1),
-		AuthorizationOperationID: journal.AuthorizeOpID,
-		Status:                   journal.OutcomeStatus,
-		Detail:                   journal.OutcomeDetail,
-		HeadSHA:                  journal.OutcomeHeadSHA,
-		MergedSHA:                journal.OutcomeMergedSHA,
-	}
-	digest, err := domain.Digest(req)
-	if err != nil {
-		return nil, err
-	}
-	if journal.OutcomeDigest != "" && journal.OutcomeDigest != digest {
-		return nil, fmt.Errorf("delivery journal %s outcome digest mismatch", journal.ID)
-	}
-	op := mustDeliveryOperation(journal.OutcomeOpID, req)
-	res, err := c.CommitDeliveryOutcome(op, req)
-	if err != nil {
-		if errors.Is(err, taskauthority.ErrConflict) || errors.Is(err, taskauthority.ErrOperationConflict) {
-			// A distinct outcome is already committed under this journal's
-			// outcome identity (the first recovery committed the truth and a
-			// later observation derived different provider state). The
-			// committed record is the truth; never override a terminal
-			// outcome and never fabricate completed.
-			committed, rerr := c.DeliveryOutcomeByOperation(tid, journal.OutcomeOpID)
-			if rerr != nil {
-				return nil, fmt.Errorf("resolving committed delivery outcome: %w", rerr)
-			}
-			res = taskauthority.DeliveryOutcomeResult{Outcome: committed, Replayed: true}
-		} else {
+	var res taskauthority.DeliveryOutcomeResult
+	committed, err := c.DeliveryOutcomeByOperation(tid, journal.OutcomeOpID)
+	switch {
+	case err == nil:
+		res = taskauthority.DeliveryOutcomeResult{Outcome: committed, Replayed: true}
+	case !errors.Is(err, taskauthority.ErrNotFound):
+		return nil, fmt.Errorf("resolving committed delivery outcome: %w", err)
+	default:
+		cur, current, err := journalAuthorizationCurrency(c, journal)
+		if err != nil {
 			return nil, err
+		}
+		if !current {
+			journal.OutcomeDetail = "outcome not committed; the delivery authorization is no longer current: " + journal.OutcomeDetail
+			if err := completeDeliveryJournal(h, lk, journal, deliveryStageOutcome); err != nil {
+				return nil, err
+			}
+			return nil, &DeliveryFailClosedError{TaskID: journal.TaskID, Reason: fmt.Sprintf("delivery authorization %s is no longer current; pinned outcome %q was not committed", journal.AuthorizeOpID, journal.OutcomeStatus)}
+		}
+		req := taskauthority.CanonicalDeliveryOutcomeRequest{
+			HomeID:                   c.HomeID(),
+			TaskID:                   tid,
+			Precondition:             domain.Of(uint64(cur.Generation), uint64(cur.Revision)),
+			AuthorizationOperationID: journal.AuthorizeOpID,
+			Status:                   journal.OutcomeStatus,
+			Detail:                   journal.OutcomeDetail,
+			HeadSHA:                  journal.OutcomeHeadSHA,
+			MergedSHA:                journal.OutcomeMergedSHA,
+		}
+		res, err = c.CommitDeliveryOutcome(deliveryJournals.mustOperation(journal.OutcomeOpID, req), req)
+		if err != nil {
+			return nil, fmt.Errorf("committing delivery outcome: %w", err)
 		}
 	}
 	out := res.Outcome
@@ -783,7 +739,7 @@ func commitPinnedOutcome(h *home.Home, lk *home.Lock, c *taskauthority.Canonical
 	// A retryable outcome releases the authorization so the canonical retry
 	// cycle (revoke -> re-authorize) may follow.
 	if out.Status == taskauthority.DeliveryOutcomeRetryable {
-		if err := releaseDeliveryAuthorization(h, lk, c, journal, "retryable delivery outcome", journal.Revision+2); err != nil {
+		if err := releaseDeliveryAuthorization(c, journal, "retryable delivery outcome"); err != nil {
 			return nil, err
 		}
 	}
@@ -805,27 +761,14 @@ func commitPinnedOutcome(h *home.Home, lk *home.Lock, c *taskauthority.Canonical
 
 // failClosedDelivery is the fail-closed branch of a delivery whose currency
 // or provider state no longer permits the irreversible mutation: nothing was
-// mutated. When the authorization is already released (revoked or no longer
-// the current authorization) the journal completes directly; otherwise the
-// pinned authorization is released (idempotent) so a later distinct
-// authorization may follow, and the journal completes as terminal truth.
-// When the release itself fails (the task state moved or a transfer
-// reservation is active), the journal stays active and recovery retries once
-// state normalizes.
+// mutated. The journal's authorization is released while it is still the
+// task's current one (an authorization already revoked, replaced, reopened
+// away or retired needs no release), and the journal completes as terminal
+// truth. When the release itself fails (for example a transfer reservation
+// is active), the journal stays active and recovery retries once state
+// normalizes.
 func failClosedDelivery(h *home.Home, lk *home.Lock, c *taskauthority.Canonical, journal *deliveryJournal, cause error) (*DeliverResult, error) {
-	tid, err := domain.NewTaskID(journal.TaskID)
-	if err != nil {
-		return nil, err
-	}
-	cur, cerr := c.DeliveryCurrency(tid)
-	if cerr == nil && (cur.Authorization == nil || isRevokedCurrency(cur)) {
-		// The authorization is already released: nothing further to unwind.
-		if err := completeDeliveryJournal(h, lk, journal, deliveryStageAuthorized); err != nil {
-			return nil, err
-		}
-		return nil, &DeliveryFailClosedError{TaskID: journal.TaskID, Reason: cause.Error()}
-	}
-	if err := releaseDeliveryAuthorization(h, lk, c, journal, "delivery currency invalid", journal.Revision+1); err != nil {
+	if err := releaseDeliveryAuthorization(c, journal, "delivery currency invalid"); err != nil {
 		return nil, &DeliveryFailClosedError{TaskID: journal.TaskID, Reason: cause.Error(), ReleaseErr: err}
 	}
 	if err := completeDeliveryJournal(h, lk, journal, deliveryStageAuthorized); err != nil {
@@ -834,11 +777,41 @@ func failClosedDelivery(h *home.Home, lk *home.Lock, c *taskauthority.Canonical,
 	return nil, &DeliveryFailClosedError{TaskID: journal.TaskID, Reason: cause.Error()}
 }
 
+// journalAuthorizationCurrency reads the task's delivery currency and reports
+// whether the journal's authorization is still the task's current one: the
+// same current generation, the index pointing at the journal's authorization
+// identity, not revoked, and the task not retired. The current generation and
+// revision fence every post-authorization canonical operation of the journal.
+func journalAuthorizationCurrency(c *taskauthority.Canonical, journal *deliveryJournal) (taskauthority.DeliveryCurrency, bool, error) {
+	tid, err := domain.NewTaskID(journal.TaskID)
+	if err != nil {
+		return taskauthority.DeliveryCurrency{}, false, err
+	}
+	cur, err := c.DeliveryCurrency(tid)
+	if err != nil {
+		return taskauthority.DeliveryCurrency{}, false, fmt.Errorf("delivery currency evaluation: %w", err)
+	}
+	current := cur.Current &&
+		uint64(cur.Generation) == journal.Generation &&
+		cur.Phase != taskauthority.PhaseRetired &&
+		cur.Authorization != nil &&
+		cur.Authorization.OperationID == journal.AuthorizeOpID &&
+		!isRevokedCurrency(cur)
+	return cur, current, nil
+}
+
 // releaseDeliveryAuthorization revokes the journal's authorization under its
-// pinned operation identity and digest, fenced to the given revision
-// precondition. An already-released authorization (conflict) is treated as
-// released; any other failure keeps the journal active.
-func releaseDeliveryAuthorization(h *home.Home, lk *home.Lock, c *taskauthority.Canonical, journal *deliveryJournal, reason string, revision uint64) error {
+// pinned revoke operation identity while it is still the task's current
+// authorization, fenced to the task's current generation and revision. An
+// authorization that is no longer current (already revoked by this journal
+// before a crash, or revoked, replaced, reopened away or retired by anything
+// else) is released and nothing is mutated. Every revoke failure keeps the
+// journal active.
+func releaseDeliveryAuthorization(c *taskauthority.Canonical, journal *deliveryJournal, reason string) error {
+	cur, current, err := journalAuthorizationCurrency(c, journal)
+	if err != nil || !current {
+		return err
+	}
 	tid, err := domain.NewTaskID(journal.TaskID)
 	if err != nil {
 		return err
@@ -846,30 +819,11 @@ func releaseDeliveryAuthorization(h *home.Home, lk *home.Lock, c *taskauthority.
 	req := taskauthority.CanonicalRevokeDeliveryRequest{
 		HomeID:                   c.HomeID(),
 		TaskID:                   tid,
-		Precondition:             domain.Of(journal.Generation, revision),
+		Precondition:             domain.Of(uint64(cur.Generation), uint64(cur.Revision)),
 		AuthorizationOperationID: journal.AuthorizeOpID,
 		Reason:                   reason,
 	}
-	digest, err := domain.Digest(req)
-	if err != nil {
-		return err
-	}
-	// The journal pins both deterministic release intents: the pre-outcome
-	// fail-closed release and the post-outcome retryable-cycle release.
-	pinned := journal.RevokeDigest
-	if reason == "delivery currency invalid" {
-		pinned = journal.RevokeFailClosedDigest
-	}
-	if pinned != "" && pinned != digest {
-		return fmt.Errorf("delivery journal %s revoke digest mismatch", journal.ID)
-	}
-	op := mustDeliveryOperation(journal.RevokeOpID, req)
-	if _, err := c.RevokeDeliveryAuthorization(op, req); err != nil {
-		if errors.Is(err, taskauthority.ErrConflict) {
-			// Already revoked (or no longer the active authorization): the
-			// authorization is released; nothing further to unwind.
-			return nil
-		}
+	if _, err := c.RevokeDeliveryAuthorization(deliveryJournals.mustOperation(journal.RevokeOpID, req), req); err != nil {
 		return fmt.Errorf("releasing delivery authorization: %w", err)
 	}
 	return nil

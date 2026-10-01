@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -317,11 +318,9 @@ func parseReceiptName(name string) (taskID, termKey string, ok bool, err error) 
 
 // WriteReceipt writes a durable relay receipt for a terminal report.
 // The receipt is identified by taskID + termKey (terminal key).
-// If a receipt already exists for this taskID+termKey, it is overwritten
-// atomically: writes to a temp file, removes any stale ack, then renames
-// the temp file over the existing receipt. On pre-rename failure the temp
-// file is cleaned up; on post-rename failure the old receipt (now pending)
-// is acceptable fail-closed behavior.
+// If a receipt already exists for this taskID+termKey, any stale ack is
+// removed and the receipt is replaced with home.AtomicWrite. A write failure
+// leaves the old receipt pending, which is acceptable fail-closed behavior.
 func WriteReceipt(homeDir, taskID, termKey, state, msg string) error {
 	p, err := ReceiptPath(homeDir, taskID, termKey)
 	if err != nil {
@@ -331,30 +330,19 @@ func WriteReceipt(homeDir, taskID, termKey, state, msg string) error {
 		return fmt.Errorf("creating receipts dir: %w", err)
 	}
 
-	// Write to a temp file first for atomic replacement
-	tmpPath := p + ".tmp"
-	content := fmt.Sprintf("task_id=%s\nkey=%s\nstate=%s\nmsg=%s\ntimestamp=%d\n",
-		taskID, termKey, state, msg, time.Now().UnixNano())
-	if err := os.WriteFile(tmpPath, []byte(content), 0644); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("writing temp receipt: %w", err)
-	}
-
-	// Remove any prior ack so the new receipt starts pending
+	// Remove any prior ack first so the new receipt starts pending; a failure
+	// after this point leaves the old receipt pending, which fails closed.
 	ackPath, err := AckPath(homeDir, taskID, termKey)
 	if err != nil {
-		os.Remove(tmpPath)
 		return err
 	}
 	if err := os.Remove(ackPath); err != nil && !os.IsNotExist(err) {
-		os.Remove(tmpPath)
 		return fmt.Errorf("removing stale ack: %w", err)
 	}
-
-	// Atomic rename: temp file over receipt
-	if err := os.Rename(tmpPath, p); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("renaming receipt: %w", err)
+	content := fmt.Sprintf("task_id=%s\nkey=%s\nstate=%s\nmsg=%s\ntimestamp=%d\n",
+		taskID, termKey, state, msg, time.Now().UnixNano())
+	if err := home.AtomicWrite(p, []byte(content), 0644); err != nil {
+		return fmt.Errorf("writing receipt: %w", err)
 	}
 
 	return nil
@@ -393,52 +381,15 @@ type PendingReceipt struct {
 
 // ListPendingReceipts returns all receipt files without corresponding ack.
 func ListPendingReceipts(homeDir string) ([]PendingReceipt, error) {
-	dir := ReceiptDir(homeDir)
-	entries, err := os.ReadDir(dir)
+	all, err := listAllReceipts(homeDir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("reading receipts dir: %w", err)
+		return nil, err
 	}
-
 	var pending []PendingReceipt
-	seen := make(map[string]bool)
-	for _, e := range entries {
-		name := e.Name()
-		if !strings.HasSuffix(name, ".receipt") || e.IsDir() {
-			continue
+	for _, r := range all {
+		if !IsReceiptAcked(homeDir, r.TaskID, r.TermKey) {
+			pending = append(pending, r)
 		}
-		taskID, termKey, ok, err := parseReceiptName(name)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			continue
-		}
-		if IsReceiptAcked(homeDir, taskID, termKey) {
-			continue
-		}
-		key := taskID + "." + termKey
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-
-		state := ""
-		if data, err := os.ReadFile(filepath.Join(dir, name)); err == nil {
-			for _, line := range strings.Split(string(data), "\n") {
-				if k, v, ok := strings.Cut(line, "="); ok && k == "state" {
-					state = strings.TrimSpace(v)
-				}
-			}
-		}
-
-		pending = append(pending, PendingReceipt{
-			TaskID:  taskID,
-			TermKey: termKey,
-			State:   state,
-		})
 	}
 	return pending, nil
 }
@@ -514,17 +465,6 @@ func ClearCompleted(homeDir string, role Role) error {
 	return SaveObligations(homeDir, role, open)
 }
 
-// MaterialStates returns true if the given state is a material state that
-// warrants report-relay.
-func MaterialStates(state string) bool {
-	switch state {
-	case "done", "failed", "needs-decision", "blocked":
-		return true
-	default:
-		return false
-	}
-}
-
 // MaterialReportExists returns true if the task has a material status line
 // (done, failed, needs-decision, blocked) in its status file.
 // FAILS CLOSED: returns error on unreadable status.
@@ -556,16 +496,7 @@ func MaterialReportExists(homeDir, taskID string) (bool, error) {
 	if lastLine == "" {
 		return false, nil
 	}
-	return MaterialStates(lineVerb(lastLine)), nil
-}
-
-// lineVerb extracts the leading verb from a status line.
-func lineVerb(line string) string {
-	before, _, _ := strings.Cut(line, ":")
-	if idx := strings.Index(before, "[key="); idx >= 0 {
-		before = strings.TrimSpace(before[:idx])
-	}
-	return strings.TrimSpace(before)
+	return domain.IsMaterialVerb(domain.LineVerb(lastLine)), nil
 }
 
 // obligationFields is the fixed column count of a serialized obligation line.

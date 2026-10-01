@@ -19,10 +19,6 @@ type mockGitHubClient struct {
 	err  error
 }
 
-func (m *mockGitHubClient) ObservePR(owner, repo string, number int) (DeliveryProviderObservation, error) {
-	return DeliveryProviderObservation{}, m.err
-}
-
 func (m *mockGitHubClient) ViewPRJSON(owner, repo string, number int, fields string) ([]byte, error) {
 	if m.err != nil {
 		return nil, m.err
@@ -108,11 +104,12 @@ func TestFetchGitLabProviderSnapshot_EmptyRequiredFields(t *testing.T) {
 	cases := []struct {
 		name string
 		json string
+		want string
 	}{
-		{"empty state", `{"state":"","sha":"abc1234567890123456789012345678901234567","source_branch":"feat","target_branch":"main"}`},
-		{"empty sha", `{"state":"opened","sha":"","source_branch":"feat","target_branch":"main"}`},
-		{"empty source_branch", `{"state":"opened","sha":"abc1234567890123456789012345678901234567","source_branch":"","target_branch":"main"}`},
-		{"empty target_branch", `{"state":"opened","sha":"abc1234567890123456789012345678901234567","source_branch":"feat","target_branch":""}`},
+		{"empty state", `{"state":"","sha":"abc1234567890123456789012345678901234567","source_branch":"feat","target_branch":"main"}`, "glab mr view returned empty state"},
+		{"empty sha", `{"state":"opened","sha":"","source_branch":"feat","target_branch":"main"}`, "glab mr view returned empty sha"},
+		{"empty source_branch", `{"state":"opened","sha":"abc1234567890123456789012345678901234567","source_branch":"","target_branch":"main"}`, "glab mr view returned empty source_branch or target_branch"},
+		{"empty target_branch", `{"state":"opened","sha":"abc1234567890123456789012345678901234567","source_branch":"feat","target_branch":""}`, "glab mr view returned empty source_branch or target_branch"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -120,7 +117,7 @@ func TestFetchGitLabProviderSnapshot_EmptyRequiredFields(t *testing.T) {
 			t.Cleanup(func() { defaultGlabRunner = oldRunner })
 			defaultGlabRunner = &mockGlabRunner{data: []byte(tc.json)}
 			_, err := fetchGitLabProviderSnapshot("https://gitlab.com/owner/project/-/merge_requests/1")
-			if err == nil || !strings.Contains(err.Error(), "glab mr view returned empty state, sha, source_branch, or target_branch") {
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("fetchGitLabProviderSnapshot err = %v, want empty field error", err)
 			}
 		})
@@ -128,7 +125,7 @@ func TestFetchGitLabProviderSnapshot_EmptyRequiredFields(t *testing.T) {
 }
 
 // ----------------------------------------------------------------------------
-// Group B: delivery_github.go (2 guards)
+// Group B: delivery_github.go (1 guard)
 // ----------------------------------------------------------------------------
 
 func TestGHAxiClient_CaptureIdentity_EmptyHeadRefOid(t *testing.T) {
@@ -142,14 +139,6 @@ func TestGHAxiClient_CaptureIdentity_EmptyHeadRefOid(t *testing.T) {
 	_, err := c.CaptureIdentity("https://github.com/owner/repo/pull/1")
 	if err == nil || !strings.Contains(err.Error(), "gh-axi api returned empty headRefOid") {
 		t.Fatalf("CaptureIdentity err = %v, want empty headRefOid", err)
-	}
-}
-
-func TestGitHubDeliveryProvider_Observe_NilClient(t *testing.T) {
-	p := &githubDeliveryProvider{client: nil}
-	_, err := p.Observe(domain.DeliveryIdentity{})
-	if err == nil || !strings.Contains(err.Error(), "GitHub delivery capability is not composed") {
-		t.Fatalf("Observe err = %v, want not composed", err)
 	}
 }
 

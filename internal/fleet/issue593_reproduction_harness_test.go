@@ -24,7 +24,7 @@ func TestIssue593ReproductionHarness(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := home.WriteHomeIdentity(captainHome, "captain-home", home.RankCaptain); err != nil {
+	if err := home.SeedCaptainProvenance(captainHome, "captain-home"); err != nil {
 		t.Fatal(err)
 	}
 

@@ -408,27 +408,7 @@ func TestResolveSpawnProjectConfigConsumesRequireNoMistakes(t *testing.T) {
 	// Base default mode unset + requireNoMistakes=true with a compatible binary
 	// on PATH → mode resolves to no-mistakes.
 	t.Run("require-no-mistakes with binary resolves no-mistakes", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		binPath := filepath.Join(tmpDir, "no-mistakes")
-		content := `#!/bin/sh
-case "$1" in
-  --version)
-    echo "no-mistakes version v1.40.0 (test)"
-    exit 0
-    ;;
-  axi)
-    if [ "$2" = "status" ] && [ "$3" = "--help" ]; then
-      echo "Show the active run in detail"
-      echo "Usage:"
-      echo "  no-mistakes axi status [flags]"
-      exit 0
-    fi
-    ;;
-esac
-exit 0
-`
-		testutil.WriteFakeExecutable(t, binPath, content)
-		testutil.PrependPath(t, tmpDir)
+		testutil.PrependPath(t, createFakeNoMistakesReady(t))
 		home := t.TempDir()
 		storeTestDocuments(t, home, fleetconfig.FleetBaseDocument{
 			SchemaVersion: fleetconfig.FleetBaseSchemaVersion,

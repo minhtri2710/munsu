@@ -468,7 +468,7 @@ func TestResolve_HerdrUsesDefaultSessionNotHometag(t *testing.T) {
 	}
 
 	// Resolve for "herdr" — Session should be "default" (or HERDR_SESSION), not the hometag
-	bk, name, err := Resolve(homeDir, "herdr")
+	bk, name, err := Resolve("herdr")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -829,18 +829,5 @@ func TestHerdrBackend_ObserveAgentFailsClosedOnAgentGetError(t *testing.T) {
 				t.Fatalf("observation = pane:%v agent:%v recognized:%v, want all false alongside err", paneAlive, agentAlive, recognized)
 			}
 		})
-	}
-}
-
-func TestHerdrBackendFindTabByLabelRefusesDuplicateTabs(t *testing.T) {
-	tmp := t.TempDir()
-	bin := filepath.Join(tmp, "herdr")
-	script := "#!/bin/sh\nif [ \"$1\" = \"--session\" ]; then shift 2; fi\ncat <<'JSON'\n{\"result\":{\"tabs\":[{\"label\":\"dup\",\"tab_id\":\"t1\"},{\"label\":\"dup\",\"tab_id\":\"t2\"}]}}\nJSON\n"
-	testutil.WriteFakeExecutable(t, bin, script)
-	testutil.PrependPath(t, tmp)
-	h := NewHerdrBackend("test")
-	_, err := h.findTabByLabel("w1", "dup")
-	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
-		t.Fatalf("findTabByLabel error = %v, want ambiguous", err)
 	}
 }

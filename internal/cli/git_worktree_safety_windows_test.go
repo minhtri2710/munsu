@@ -3,6 +3,7 @@
 package cli
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -49,5 +50,38 @@ func TestResolveSafetyPathWindowsHostModeIsolation(t *testing.T) {
 				t.Fatalf("resolveSafetyPathWithMode(%q, %q, %v) = %q, want %q", base, tc.path, tc.mode, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestSafetyCheckGitQuotedWindowsPathVerdicts runs the quoted-path rows of
+// TestSafetyCheckGitVerdictsOnSharedTokenizer under the Windows host reading
+// (backslashLiteral), with the drive-letter, backslash-separated worktree path
+// a Windows harness hands the hook. A quoted path with a space stays one word
+// under this reading too: at 8765440e the -C row was allowed and the cd row
+// refused.
+func TestSafetyCheckGitQuotedWindowsPathVerdicts(t *testing.T) {
+	primary := initGitRepoForSafety(t, t.TempDir())
+	worktree := filepath.Join(t.TempDir(), "wt")
+	runGitForSafety(t, primary, "worktree", "add", "--detach", worktree)
+	homeDir := bindSafetyWorktree(t, "ship-vdw", primary, worktree)
+	t.Setenv("MUNSU_HOME", homeDir)
+	t.Setenv("MUNSU_TASK_ID", "ship-vdw")
+	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-vdw")
+	sub := filepath.Join(worktree, "my dir")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		command string
+		want    bool
+	}{
+		{`git -C "` + sub + `" push --force origin mu/ship-vdw`, true},
+		{`cd "` + sub + `" && git push origin mu/ship-vdw`, false},
+	} {
+		block, reason := runPiSafetyForGit(t, worktree, tc.command)
+		if block != tc.want {
+			t.Errorf("%q block=%v reason=%q, want block=%v", tc.command, block, reason, tc.want)
+		}
 	}
 }

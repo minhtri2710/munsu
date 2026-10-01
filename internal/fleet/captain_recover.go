@@ -225,7 +225,6 @@ func (tx *RecoverTransaction) Recover(parentHome string, sm Info) *RecoverResult
 			StepResult{Name: "launch-readiness", State: StepSkipped, Detail: "skipped: provenance failed"},
 			StepResult{Name: "relaunch-pane", State: StepSkipped, Detail: "skipped: provenance failed"},
 			StepResult{Name: "watcher-ensure", State: StepSkipped, Detail: "skipped: provenance failed"},
-			StepResult{Name: "legacy-guard", State: StepSkipped, Detail: "skipped: provenance failed"},
 			StepResult{Name: "terminal-reconcile", State: StepSkipped, Detail: "skipped: provenance failed"},
 			StepResult{Name: "nudge-retry", State: StepSkipped, Detail: "skipped: provenance failed"},
 		)
@@ -264,10 +263,7 @@ func (tx *RecoverTransaction) Recover(parentHome string, sm Info) *RecoverResult
 	// Step f: watcher ensure — only when config is OK
 	res.Steps = append(res.Steps, tx.stepWatcherEnsure(sm, configOk))
 
-	// Step g: stale legacy transport guard — only when config is OK
-	res.Steps = append(res.Steps, tx.stepLegacyGuard(parentHome, sm, configOk))
-
-	// Step h: nudge retry — only when config is OK
+	// Step g: nudge retry — only when config is OK
 	res.Steps = append(res.Steps, tx.stepNudgeRetry(parentHome, sm, configOk))
 
 	return res
@@ -277,7 +273,7 @@ func (tx *RecoverTransaction) stepProvenance(sm Info) StepResult {
 	if sm.Home == "" {
 		return StepResult{Name: "provenance", State: StepFailed, Detail: "missing home path"}
 	}
-	markerID, err := ValidateProvenance(sm.Home)
+	markerID, err := mhome.ValidateCaptainProvenance(sm.Home)
 	if err != nil {
 		return StepResult{Name: "provenance", State: StepFailed, Detail: err.Error()}
 	}
@@ -374,7 +370,7 @@ func (tx *RecoverTransaction) stepCharterRefresh(parentHome string, sm Info) Ste
 
 // stepConfigPush pushes inheritable config from the General home to the
 // captain, including config/parent-home. This ensures every recovery path
-// (including state-only alive captains) picks up the authoritative General
+// (including alive captains) picks up the authoritative General
 // home reference for watcher relay and terminal receipt routing.
 // Uses PropagateConfig with a noop sender; notification is deferred for
 // converge to retry when the captain is alive.
@@ -521,18 +517,6 @@ func (tx *RecoverTransaction) stepWatcherEnsure(sm Info, configOk bool) StepResu
 
 	return StepResult{Name: "watcher-ensure", State: StepOk,
 		Detail: "watcher not needed (no child work)"}
-}
-
-func (tx *RecoverTransaction) stepLegacyGuard(parentHome string, sm Info, configOk bool) StepResult {
-	if !configOk {
-		return StepResult{Name: "legacy-guard", State: StepSkipped,
-			Detail: "skipped: config validation failed"}
-	}
-	if err := checkStaleLegacyRecords(parentHome, sm.ID); err != nil {
-		return StepResult{Name: "legacy-guard", State: StepFailed,
-			Detail: err.Error()}
-	}
-	return StepResult{Name: "legacy-guard", State: StepOk, Detail: "no stale legacy records"}
 }
 
 func (tx *RecoverTransaction) stepNudgeRetry(parentHome string, sm Info, configOk bool) StepResult {

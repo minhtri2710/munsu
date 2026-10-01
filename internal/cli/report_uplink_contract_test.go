@@ -80,7 +80,7 @@ func TestReportCmdTransportFailureFailsLoud(t *testing.T) {
 	transportErr := errors.New("backend failed")
 	transport := sessionUplinkTransport{
 		identity: func(string) (string, error) { return "tmux", nil },
-		resolve: func(string, string) (backend.Backend, string, error) {
+		resolve: func(string) (backend.Backend, string, error) {
 			return uplinkPromptBackend{result: backend.PromptResult{
 				Status: backend.PromptBackendFailed,
 				Err:    transportErr,

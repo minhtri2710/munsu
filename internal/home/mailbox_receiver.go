@@ -178,37 +178,6 @@ func ReadHomeIdentity(homeDir string) (identity string, rank Rank, err error) {
 	return id, RankCaptain, nil
 }
 
-// WriteHomeIdentity writes a durable identity marker into the home directory
-// so that NewReceiver/ReadHomeIdentity can derive identity and rank from it.
-// Used in tests and provisioning.
-//
-// For captain homes, a .munsu-captain-home provenance marker is written.
-// For general homes, identity is derived from the directory basename. There
-// is no soldier marker to write: a soldier is a task inside its dispatcher's
-// home, so its provenance is that home's task record, not a home marker.
-func WriteHomeIdentity(homeDir, identity string, rank Rank) error {
-	if identity == "" {
-		return fmt.Errorf("write home identity: empty identity")
-	}
-	if !ValidRank(rank) {
-		return fmt.Errorf("write home identity: invalid rank %q", rank)
-	}
-	if rank == RankCaptain {
-		canon, err := filepath.Abs(homeDir)
-		if err != nil {
-			return fmt.Errorf("write home identity: resolving home: %w", err)
-		}
-		content := fmt.Sprintf("munsu-v2\n%s\n%s\n", identity, canon)
-		path := filepath.Join(homeDir, captainMarkerName)
-		return os.WriteFile(path, []byte(content), 0644)
-	}
-	// For non-captain ranks, no marker is written — identity is derived from
-	// the directory basename on read with general rank. The caller must use
-	// a named directory (e.g., filepath.Join(t.TempDir(), identity)) so that
-	// the basename matches the desired identity.
-	return nil
-}
-
 // readParentHome reads the durable parent-home pointer directly because home
 // may not depend on config under the package-topology rule. internal/config
 // remains the owner of the configuration surface; this is one durable pointer

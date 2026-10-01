@@ -238,9 +238,8 @@ func TestCrashBeforeAttachPersistsAndReusesIncarnation(t *testing.T) {
 // trackingEndpointCapabilities returns a fixed observation and records Dispose
 // calls so tests can assert ambiguous observations never trigger disposal.
 type trackingEndpointCapabilities struct {
-	obs        SpawnEndpointObservation
-	disposes   int
-	probeAlive bool
+	obs      SpawnEndpointObservation
+	disposes int
 }
 
 func (t *trackingEndpointCapabilities) CreateReserved(CreateRequest) (CreatedEndpoint, error) {

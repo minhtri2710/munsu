@@ -206,29 +206,6 @@ func TestClearCompletedIdempotent(t *testing.T) {
 	}
 }
 
-func TestMaterialStates(t *testing.T) {
-	tests := []struct {
-		state string
-		want  bool
-	}{
-		{"done", true},
-		{"failed", true},
-		{"needs-decision", true},
-		{"blocked", true},
-		{"working", false},
-		{"paused", false},
-		{"resolved", false},
-		{"unknown", false},
-	}
-
-	for _, tt := range tests {
-		got := MaterialStates(tt.state)
-		if got != tt.want {
-			t.Errorf("MaterialStates(%q) = %v, want %v", tt.state, got, tt.want)
-		}
-	}
-}
-
 func TestLoadFromEmptyFile(t *testing.T) {
 	home := t.TempDir()
 	role := RoleCaptain
@@ -363,27 +340,6 @@ func TestMaterialReportExists(t *testing.T) {
 	}
 }
 
-func TestLineVerb(t *testing.T) {
-	tests := []struct {
-		line string
-		want string
-	}{
-		{"done: task complete", "done"},
-		{"failed: something broke", "failed"},
-		{"working [key=phase1]: Phase 1", "working"},
-		{"needs-decision [key=approach]: Pick approach", "needs-decision"},
-		{"blocked: waiting", "blocked"},
-		{"resolved [key=approach]: Chose React", "resolved"},
-		{"paused: waiting", "paused"},
-	}
-	for _, tt := range tests {
-		got := lineVerb(tt.line)
-		if got != tt.want {
-			t.Errorf("lineVerb(%q) = %q, want %q", tt.line, got, tt.want)
-		}
-	}
-}
-
 // TestWriteReceipt_StaleAckInvalidation verifies that WriteReceipt removes
 // any prior ack for the same taskID+termKey, making the new receipt pending.
 func TestWriteReceipt_StaleAckInvalidation(t *testing.T) {
@@ -429,9 +385,8 @@ func TestWriteReceipt_StaleAckInvalidation(t *testing.T) {
 	}
 
 	// No temp file should remain
-	tmpPath := receiptPath + ".tmp"
-	if _, err := os.Stat(tmpPath); err == nil {
-		t.Error("temporary file should be cleaned up after successful WriteReceipt")
+	if leftovers, _ := filepath.Glob(filepath.Join(filepath.Dir(receiptPath), ".home-write-*")); len(leftovers) != 0 {
+		t.Errorf("temporary files should be cleaned up after successful WriteReceipt: %v", leftovers)
 	}
 }
 

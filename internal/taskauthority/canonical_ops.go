@@ -188,16 +188,12 @@ func (c *Canonical) ReconcileRetirementCleanup(taskID domain.TaskID, generation 
 	return nil
 }
 
-// WriteTaskDataArtifact serializes a bounded task-data write with
-// ReclaimReleasedTaskArtifacts so a brief writer cannot race reclamation.
+// WriteTaskDataArtifactByID serializes a bounded task-data write with
+// ReclaimReleasedTaskArtifactsByID so a brief writer cannot race reclamation.
 // Handoff scope precedes task scope; callbacks may perform only bounded local
-// filesystem work and must not acquire another lock scope.
-func (c *Canonical) WriteTaskDataArtifact(taskID domain.TaskID, write func() error) error {
-	return c.WriteTaskDataArtifactByID(taskID.Value(), write)
-}
-
-// WriteTaskDataArtifactByID provides synchronization only for a raw durable
-// task-data ID; it does not authorize the write.
+// filesystem work and must not acquire another lock scope. It provides
+// synchronization only for a raw durable task-data ID; it does not authorize
+// the write.
 func (c *Canonical) WriteTaskDataArtifactByID(id string, write func() error) error {
 	if write == nil {
 		return fmt.Errorf("task-data callback is nil")
@@ -252,14 +248,10 @@ func (c *Canonical) ReconcileCompletedCleanup(taskID domain.TaskID, generation G
 	return CompletedCleanupRepaired, nil
 }
 
-// ReclaimReleasedTaskArtifacts holds the task scope through the bounded local
+// ReclaimReleasedTaskArtifactsByID holds the task scope through the bounded local
 // removal callback; callbacks must not acquire another lock scope. Authority-backed
 // released tasks may reclaim briefs, while unknown directories are reclaimable only
 // without a brief because no authority record can vouch for their contents.
-func (c *Canonical) ReclaimReleasedTaskArtifacts(taskID domain.TaskID, reclaim func() error) (bool, error) {
-	return c.ReclaimReleasedTaskArtifactsByID(taskID.Value(), reclaim)
-}
-
 func (c *Canonical) ReclaimReleasedTaskArtifactsByID(id string, reclaim func() error) (bool, error) {
 	if reclaim == nil {
 		return false, fmt.Errorf("reclaim callback is nil")
@@ -404,7 +396,7 @@ func (c *Canonical) Start(op domain.Operation, req CanonicalStartRequest) (Outco
 	if err := c.prepare(op, req, req.HomeID); err != nil {
 		return Outcome{}, err
 	}
-	return c.mutateTask(op, req.TaskID, req.Precondition, func(cur Aggregate) (Aggregate, error) {
+	return c.mutateTaskWithDispatch(op, req.TaskID, req.Precondition, func(cur Aggregate) (Aggregate, error) {
 		if cur.Phase != PhaseQueued {
 			return Aggregate{}, preconditionError("start requires queued task")
 		}
@@ -649,26 +641,6 @@ func (c *Canonical) Reopen(op domain.Operation, req CanonicalReopenRequest) (Out
 	return outcomeFor(op, newGen, true), nil
 }
 
-// Readiness evaluates the current authoritative task state against the start
-// action's durable Dispatch Holds.
-func (c *Canonical) Readiness(taskID domain.TaskID) (Readiness, error) {
-	if err := taskID.Validate(); err != nil {
-		return Readiness{}, err
-	}
-	doc, exists, err := c.readTaskDoc(taskID.Value())
-	if err != nil {
-		return Readiness{}, err
-	}
-	if !exists {
-		return Readiness{TaskID: taskID.Value(), BlockingReasons: []ReadinessReason{ReadinessNotFound}}, nil
-	}
-	holds, err := c.listHolds()
-	if err != nil {
-		return Readiness{}, err
-	}
-	return evaluateReadiness(holds, doc.Aggregate), nil
-}
-
 // AddHoldRequest creates one durable dispatch hold.
 type CanonicalAddHoldRequest struct {
 	HomeID  domain.HomeID
@@ -702,6 +674,11 @@ func (c *Canonical) AddHold(op domain.Operation, req CanonicalAddHoldRequest) (H
 	if len(req.Actions) == 0 || strings.TrimSpace(req.Reason) == "" {
 		return HoldResult{}, validationError("dispatch hold requires actions and reason")
 	}
+	dispatch, err := c.h.Lock(dispatchScope)
+	if err != nil {
+		return HoldResult{}, err
+	}
+	defer dispatch.Release()
 	lk, err := c.h.Lock(holdScope(req.HoldID))
 	if err != nil {
 		return HoldResult{}, err
@@ -779,6 +756,11 @@ func (c *Canonical) ReleaseHold(op domain.Operation, req CanonicalReleaseHoldReq
 	if req.HoldID == "" || strings.ContainsAny(req.HoldID, `/\\.`) {
 		return HoldResult{}, validationError("dispatch hold ID must be a safe non-empty value")
 	}
+	dispatch, err := c.h.Lock(dispatchScope)
+	if err != nil {
+		return HoldResult{}, err
+	}
+	defer dispatch.Release()
 	lk, err := c.h.Lock(holdScope(req.HoldID))
 	if err != nil {
 		return HoldResult{}, err

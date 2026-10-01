@@ -92,10 +92,8 @@ func runGitGuard(gitArgs []string) error {
 	if err != nil {
 		return gitGuardRefuse("real git not found on PATH after shim strip: " + err.Error())
 	}
-	if err := execRealGit(gitPath, gitArgs); err != nil {
-		return gitGuardRefuse("git execution failed: " + err.Error())
-	}
-	return nil
+	// execRealGit replaces this process and returns only on failure.
+	return gitGuardRefuse("git execution failed: " + execRealGit(gitPath, gitArgs).Error())
 }
 
 // gitGuardRefuse prints the fence reason to stderr and exits non-zero, the

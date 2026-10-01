@@ -65,39 +65,44 @@ func TestCollectCapabilities_WatcherVersionMismatch(t *testing.T) {
 	}
 }
 
-// TestCollectCapabilities_WatcherVersionMatch verifies that identity with
-// matching version does not trigger a mismatch warning. The PID won't be
-// live so Running will be false, but VersionMatched should be correct.
-func TestCollectCapabilities_WatcherVersionMatch(t *testing.T) {
-	home := t.TempDir()
-	stateDir := filepath.Join(home, "state")
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		t.Fatal(err)
-	}
+// TestCollectCapabilities_WatcherUnknownCommitFailsClosed verifies that equal
+// display versions never count as a match: an unknown commit on either side
+// is a mismatch. Test binaries embed no vcs.revision, so an empty
+// orchestrator.CommitSHA leaves the CLI commit unresolved.
+func TestCollectCapabilities_WatcherUnknownCommitFailsClosed(t *testing.T) {
+	origCommitSHA := orchestrator.CommitSHA
+	defer func() { orchestrator.CommitSHA = origCommitSHA }()
 
 	testVersion := "0.1.0-test"
-	id := orchestrator.WatcherIdentity{
-		Home:            home,
-		PID:             999999,
-		ProcessStart:    "1234567890",
-		Executable:      "/fake/munsu",
-		BuildVersion:    testVersion,
-		ProtocolVersion: 1,
-		StartTime:       1000000,
-	}
-	if err := orchestrator.WriteIdentity(home, id); err != nil {
-		t.Fatal(err)
-	}
+	for _, tc := range []struct {
+		name, cliCommit, watcherCommit string
+	}{
+		{"cli commit unknown", "", "abc1234"},
+		{"watcher commit unknown", "abc1234", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			orchestrator.CommitSHA = tc.cliCommit
+			home := t.TempDir()
+			id := orchestrator.WatcherIdentity{
+				Home:            home,
+				PID:             999999,
+				ProcessStart:    "1234567890",
+				Executable:      "/fake/munsu",
+				BuildVersion:    testVersion,
+				ProtocolVersion: 1,
+				StartTime:       1000000,
+				CommitSHA:       tc.watcherCommit,
+			}
+			if err := orchestrator.WriteIdentity(home, id); err != nil {
+				t.Fatal(err)
+			}
 
-	capResult := CollectCapabilities(home, ".", testVersion)
+			capResult := CollectCapabilities(home, ".", testVersion)
 
-	// VersionMatched should be true (same version, no CommitSHA set)
-	if !capResult.Watcher.VersionMatched {
-		t.Errorf("expected VersionMatched=true for same version %q", testVersion)
-	}
-	// But Running should be false (no such PID)
-	if capResult.Watcher.Running {
-		t.Error("expected Running=false for non-live PID")
+			if capResult.Watcher.VersionMatched {
+				t.Errorf("expected VersionMatched=false with equal versions %q and an unknown commit", testVersion)
+			}
+		})
 	}
 }
 

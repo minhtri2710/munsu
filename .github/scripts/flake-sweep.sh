@@ -399,7 +399,7 @@ observe() {
 	# purpose -- so the answer is fetched here, with every other API call, and
 	# written out as a record. That keeps `verify-fixed` a pure function of this
 	# stream, so the selftest can pin all three answers without a network.
-	local fsha status fixed_refs
+	local fsha status fixed_refs unanswered=""
 	fixed_refs="$(mktemp)"
 	if ! "$ROOT/.github/scripts/flake-ledger.sh" entries |
 		awk -F '\t' '$7 ~ /^fixed:/ { print substr($7, 7) }' |
@@ -417,11 +417,15 @@ observe() {
 		elif printf '%s' "$status" | grep -q 'HTTP 404'; then
 			printf 'fixedsha\t%s\tunknown-sha\n' "$fsha"
 		else
-			rm -f "$pass1" "$fixed_refs"
-			die "cannot tell whether $fsha is on main: $status"
+			unanswered="cannot tell whether $fsha is on main: $status"
+			break
 		fi
 	done <"$fixed_refs"
 	rm -f "$fixed_refs"
+	if [ -n "$unanswered" ]; then
+		rm -f "$pass1"
+		die "$unanswered"
+	fi
 
 	rm -f "$pass1"
 }

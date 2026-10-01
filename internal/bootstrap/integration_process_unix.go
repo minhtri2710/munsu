@@ -13,4 +13,4 @@ func setProcessIsolation(cmd *exec.Cmd) {
 	}
 	cmd.SysProcAttr.Setpgid = true
 }
-func killProcessTree(pid int) error { return syscall.Kill(-pid, syscall.SIGKILL) }
+func killProcessTree(pid int) { _ = syscall.Kill(-pid, syscall.SIGKILL) }

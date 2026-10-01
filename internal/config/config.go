@@ -74,29 +74,35 @@ func Set(homeDir, key, value string) error {
 		return fmt.Errorf("securing config directory: %w", err)
 	}
 
-	tmp, err := os.CreateTemp(dir, ".config-*")
-	if err != nil {
-		return fmt.Errorf("creating config temp file: %w", err)
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-	if err := tmp.Chmod(0600); err != nil {
-		tmp.Close()
-		return fmt.Errorf("securing config temp file: %w", err)
-	}
-	if _, err := tmp.WriteString(value + "\n"); err != nil {
-		tmp.Close()
-		return fmt.Errorf("writing config temp file: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return fmt.Errorf("syncing config temp file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("closing config temp file: %w", err)
-	}
-	if err := os.Rename(tmpPath, p); err != nil {
+	if err := atomicWrite(p, []byte(value+"\n")); err != nil {
 		return fmt.Errorf("installing config file %s: %w", p, err)
 	}
 	return nil
+}
+
+// atomicWrite installs data at path with mode 0600 through a synced temp file
+// in the same directory, so readers never observe a partial file.
+func atomicWrite(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".config-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if err := tmp.Chmod(0600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }

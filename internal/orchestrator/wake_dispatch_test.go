@@ -949,7 +949,7 @@ func TestDispatchWake_DeferredPreservesLease(t *testing.T) {
 	}
 
 	// The wake queue should be empty (wake claimed)
-	queuePath := QueuePath(home)
+	queuePath := mhome.WakeQueuePath(home)
 	if _, err := os.Stat(queuePath); err == nil || !os.IsNotExist(err) {
 		t.Fatal("wake queue should be empty after claim")
 	}

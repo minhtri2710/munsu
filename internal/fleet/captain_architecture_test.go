@@ -176,7 +176,7 @@ func TestBlocked_NestedCaptainLaunchIsRefused(t *testing.T) {
 
 	t.Run("refuses from captain parent home", func(t *testing.T) {
 		parent := t.TempDir()
-		if err := SeedProvenance(parent, "parent-sm"); err != nil {
+		if err := mhome.SeedCaptainProvenance(parent, "parent-sm"); err != nil {
 			t.Fatal(err)
 		}
 		smHome := filepath.Join(t.TempDir(), "child-sm")
@@ -201,7 +201,7 @@ func TestBlocked_RetireRefusesInFlightSoldiers(t *testing.T) {
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(filepath.Join(smHome, "state"), 0755)
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# charter\n"), 0644)
-	SeedProvenance(smHome, "test-sm")
+	mhome.SeedCaptainProvenance(smHome, "test-sm")
 	Register(parent, "test-sm", smHome, "scope", "proj")
 
 	// Write in-flight soldier meta.
@@ -243,7 +243,7 @@ func TestBlocked_DuplicateRegistrationIsNoop(t *testing.T) {
 	}
 	sm := filepath.Join(parent, "captains", "api")
 	os.MkdirAll(sm, 0755)
-	SeedProvenance(sm, "api")
+	mhome.SeedCaptainProvenance(sm, "api")
 
 	// Register twice.
 	if err := Register(parent, "api", sm, "scope", "proj"); err != nil {
@@ -353,17 +353,6 @@ func TestTerminalPhases_StatusFileOverridesProse(t *testing.T) {
 			t.Errorf("expected key=bug-1, got %q", key)
 		}
 	})
-
-	t.Run("valid status states are recognized", func(t *testing.T) {
-		for _, s := range mhome.ValidStatusStates {
-			if !mhome.IsValidStatusState(s) {
-				t.Errorf("status state %q should be valid", s)
-			}
-		}
-		if mhome.IsValidStatusState("invalid-state") {
-			t.Error("invalid-status should not be recognized")
-		}
-	})
 }
 
 // TestTerminalPhases_ResolvedOverridesWorking proves that a resolved status
@@ -401,50 +390,58 @@ func TestTerminalPhases_ResolvedOverridesWorking(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Invariant: State-only homes are non-failing skips in update/converge
+// Invariant: a captain home without a git worktree is unsupported
 // ---------------------------------------------------------------------------
 //
-// A state-only captain home (has provenance marker but no .git directory)
-// must not cause update or converge to fail. The Update function returns
-// StateOnlySkipped; Converge continues past the entry without error.
-//
-// Firstmate parity: firstmate detected state-only homes by the absence of
-// a git worktree and logged them as non-failing skips. The captain module
-// does the same through Update() and Converge().
+// Captain homes are managed git worktrees. A home that has a provenance
+// marker but no .git is refused by Update as a failure and fails the
+// fast-forward step of Converge; it is never skipped as a success.
 
-// TestUpdate_StateOnlyHomeReturnsStateOnlySkipped proves that Update() on a
-// state-only captain home returns StateOnlySkipped, not a failure.
-func TestUpdate_StateOnlyHomeReturnsStateOnlySkipped(t *testing.T) {
+func unsupportedCaptainHomeFixture(t *testing.T, parent, id string) string {
+	t.Helper()
+	smHome := filepath.Join(parent, "captains", id)
+	for _, dir := range []string{"state", "config", "data"} {
+		if err := os.MkdirAll(filepath.Join(smHome, dir), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := mhome.SeedCaptainProvenance(smHome, id); err != nil {
+		t.Fatal(err)
+	}
+	return smHome
+}
+
+// TestUpdate_HomeWithoutWorktreeIsRefusedUnsupported proves that Update()
+// refuses a captain home with no git worktree with a failing outcome.
+func TestUpdate_HomeWithoutWorktreeIsRefusedUnsupported(t *testing.T) {
 	parent := t.TempDir()
-	smHome := filepath.Join(parent, "captains", "test-sm")
-
-	// Create a state-only home (no .git).
-	os.MkdirAll(filepath.Join(smHome, "state"), 0755)
-	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
-	os.MkdirAll(filepath.Join(smHome, "data"), 0755)
-	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# State-only home\n"), 0644)
-	SeedProvenance(smHome, "test-sm")
+	smHome := unsupportedCaptainHomeFixture(t, parent, "test-sm")
 
 	resp := Update(smHome, parent)
-	if resp.Outcome != StateOnlySkipped {
-		t.Fatalf("Update outcome = %q, want %q", resp.Outcome, StateOnlySkipped)
+	if string(resp.Outcome) != "unsupported-home" {
+		t.Fatalf("Update outcome = %q, want %q", resp.Outcome, "unsupported-home")
 	}
-	if resp.Err != nil {
-		t.Fatalf("Update error = %v, want nil for state-only skip", resp.Err)
+	if !resp.Outcome.IsFailure() {
+		t.Fatalf("Update outcome %q must be a failure", resp.Outcome)
+	}
+	if resp.Err == nil || !strings.Contains(resp.Err.Error(), "no git worktree") {
+		t.Fatalf("Update error = %v, want no-git-worktree refusal", resp.Err)
+	}
+	if _, err := os.Stat(filepath.Join(smHome, "config", "parent-home")); !os.IsNotExist(err) {
+		t.Fatalf("refused Update must not push config, stat err = %v", err)
 	}
 }
 
-// TestUpdate_StateOnlyHomeIsNotFailure proves that StateOnlySkipped is not
-// classified as a failure by IsFailure().
-func TestUpdate_StateOnlyHomeIsNotFailure(t *testing.T) {
-	if StateOnlySkipped.IsFailure() {
-		t.Fatal("StateOnlySkipped should not be a failure")
-	}
+// TestUpdate_OutcomeFailureClassification pins which outcomes are failures.
+func TestUpdate_OutcomeFailureClassification(t *testing.T) {
 	if AlreadyCurrent.IsFailure() {
 		t.Fatal("AlreadyCurrent should not be a failure")
 	}
 	if FastForwarded.IsFailure() {
 		t.Fatal("FastForwarded should not be a failure")
+	}
+	if !UnsupportedHome.IsFailure() {
+		t.Fatal("UnsupportedHome should be a failure")
 	}
 	if !Dirty.IsFailure() {
 		t.Fatal("Dirty should be a failure")
@@ -454,37 +451,33 @@ func TestUpdate_StateOnlyHomeIsNotFailure(t *testing.T) {
 	}
 }
 
-// TestConverge_StateOnlyHomeDoesNotFail proves that Converge processes a
-// state-only captain home without failing the overall converge sweep.
-func TestConverge_StateOnlyHomeDoesNotFail(t *testing.T) {
+// TestConverge_HomeWithoutWorktreeFailsFastForward proves that Converge
+// reports a failed fast-forward for a captain home with no git worktree
+// instead of skipping it.
+func TestConverge_HomeWithoutWorktreeFailsFastForward(t *testing.T) {
 	parent := t.TempDir()
-	os.MkdirAll(filepath.Join(parent, "config"), 0755)
-	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644)
+	smHome := unsupportedCaptainHomeFixture(t, parent, "no-worktree-sm")
 
-	smHome := filepath.Join(parent, "captains", "state-only-sm")
-	os.MkdirAll(filepath.Join(smHome, "state"), 0755)
-	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
-	os.MkdirAll(filepath.Join(smHome, "data"), 0755)
-	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# State-only\n"), 0644)
-	SeedProvenance(smHome, "state-only-sm")
-
-	// Converge with the state-only home.
 	result, err := Converge(parent, []Info{
-		{ID: "state-only-sm", Home: smHome},
+		{ID: "no-worktree-sm", Home: smHome},
 	}, ConvergeCapabilities{Continuity: noopCaptainContinuity{}, Messaging: noopCaptainMessaging{}, Watcher: noopCaptainWatcher{}, Notification: &captainNotificationTransport{acknowledged: true}, Mailbox: &captainTestMailboxSender{}})
-
-	// The overall converge must complete (may return partial/failed from safeFF,
-	// but the important thing is it doesn't crash or hang).
 	if err == nil {
-		// No error at all — clean success despite state-only.
-		t.Log("Converge completed without error for state-only home")
-	} else {
-		// Error expected because safeFF fails on no .git. But the contain
-		// should still be a structured ConvergeResult, not a panic.
-		t.Logf("Converge returned error (expected for no .git): %v", err)
+		t.Fatal("Converge must fail for a captain home with no git worktree")
 	}
 	if result == nil {
-		t.Fatal("Converge returned nil result")
+		t.Fatal("Converge must return a structured result")
+	}
+	found := false
+	for _, step := range result.Steps {
+		if step.Name == "no-worktree-sm: safe fast-forward" {
+			found = true
+			if step.Status != ConvergeFailed {
+				t.Fatalf("safe fast-forward status = %s (%s), want failed", step.Status, step.Detail)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("no safe fast-forward step in %+v", result.Steps)
 	}
 }
 
@@ -559,7 +552,7 @@ func TestUpdate_WorktreeHomeFastForwarded(t *testing.T) {
 	os.MkdirAll(filepath.Join(captain, "config"), 0755)
 	os.MkdirAll(filepath.Join(captain, "data"), 0755)
 	// No tracked file writes — state/, config/, data/ are gitignored.
-	SeedProvenance(captain, "test-sm")
+	mhome.SeedCaptainProvenance(captain, "test-sm")
 
 	// Update should fast-forward the captain home.
 	resp := Update(captain, parent)
@@ -619,7 +612,7 @@ func TestUpdate_WorktreeHomeAlreadyCurrent(t *testing.T) {
 	os.MkdirAll(filepath.Join(captain, "config"), 0755)
 	os.MkdirAll(filepath.Join(captain, "data"), 0755)
 	// No tracked file writes — state/, config/, data/ are gitignored.
-	SeedProvenance(captain, "test-sm")
+	mhome.SeedCaptainProvenance(captain, "test-sm")
 
 	// First Update: already current (nothing to ff).
 	resp := Update(captain, parent)
@@ -639,29 +632,6 @@ func TestUpdate_UnmarkedHomeReturnsInvalidProvenance(t *testing.T) {
 	}
 	if resp.Err == nil {
 		t.Fatal("expected non-nil error for unmarked home")
-	}
-}
-
-// TestUpdate_StateOnlyHomeDoesNotCallSafeFF proves that Update() returns
-// StateOnlySkipped before attempting safeFF, so state-only homes never
-// trigger git operations.
-func TestUpdate_StateOnlyHomeDoesNotCallSafeFF(t *testing.T) {
-	parent := t.TempDir()
-	smHome := filepath.Join(parent, "captains", "test-sm")
-	os.MkdirAll(filepath.Join(smHome, "state"), 0755)
-	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
-	os.MkdirAll(filepath.Join(smHome, "data"), 0755)
-	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# State-only\n"), 0644)
-	SeedProvenance(smHome, "test-sm")
-
-	// No .git directory is created.
-	if _, err := os.Stat(filepath.Join(smHome, ".git")); !os.IsNotExist(err) {
-		t.Skip("test setup has .git — cannot prove no-call")
-	}
-
-	resp := Update(smHome, parent)
-	if resp.Outcome != StateOnlySkipped {
-		t.Fatalf("Update outcome = %q, want %q", resp.Outcome, StateOnlySkipped)
 	}
 }
 
@@ -712,7 +682,7 @@ func TestConfigPush_DoesNotLeakOutsideCaptain(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(smHome, "config")); err != nil {
 		t.Fatal(err)
 	}
-	SeedProvenance(smHome, "test-sm")
+	mhome.SeedCaptainProvenance(smHome, "test-sm")
 
 	os.MkdirAll(filepath.Join(parent, "config"), 0755)
 	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644)
@@ -733,20 +703,20 @@ func TestConfigPush_DoesNotLeakOutsideCaptain(t *testing.T) {
 
 // TestProvenance_CopiedHomeIsRefused proves that a captain home that was
 // copied to a different path (canonical home mismatch) is rejected by
-// ValidateProvenance. This prevents two captains from claiming the same ID.
+// home.ValidateCaptainProvenance. This prevents two captains from claiming the same ID.
 func TestProvenance_CopiedHomeIsRefused(t *testing.T) {
 	tmp := t.TempDir()
 	original := filepath.Join(tmp, "original")
 	copied := filepath.Join(tmp, "copied")
 
 	os.MkdirAll(original, 0755)
-	SeedProvenance(original, "test-sm")
+	mhome.SeedCaptainProvenance(original, "test-sm")
 
 	// Copy the entire home (including provenance marker with canonical path).
 	copyDir(t, original, copied)
 
 	// Validation must fail because canonical home doesn't match.
-	_, err := ValidateProvenance(copied)
+	_, err := mhome.ValidateCaptainProvenance(copied)
 	if err == nil {
 		t.Fatal("expected error for copied home")
 	}

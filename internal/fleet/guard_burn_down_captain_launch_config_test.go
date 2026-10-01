@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // quoteEscapedLeaf appends U+200B ZERO WIDTH SPACE to a directory leaf, so
@@ -75,7 +77,7 @@ func TestGuardBurnDownPublishResolvedSnapshotRefusesRegisteredHomeMismatch(t *te
 	if err := os.MkdirAll(captainHome, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := SeedProvenance(captainHome, "mismatch"); err != nil {
+	if err := home.SeedCaptainProvenance(captainHome, "mismatch"); err != nil {
 		t.Fatal(err)
 	}
 	registeredHome := filepath.Join(t.TempDir(), quoteEscapedLeaf("registered"))
@@ -112,7 +114,7 @@ func TestGuardBurnDownPublishResolvedSnapshotRefusesUnboundCaptain(t *testing.T)
 	if err := os.MkdirAll(captainHome, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := SeedProvenance(captainHome, "unbound"); err != nil {
+	if err := home.SeedCaptainProvenance(captainHome, "unbound"); err != nil {
 		t.Fatal(err)
 	}
 	if err := Register(parentHome, "unbound", captainHome, "", ""); err != nil {
