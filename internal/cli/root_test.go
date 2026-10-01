@@ -56,6 +56,7 @@ var canonicalCommands = []struct {
 	{name: "ready", use: "ready"},
 	{name: "consume-ready", use: "consume-ready <task-id>"},
 	{name: "context", use: "context"},
+	{name: "dashboard", use: "dashboard"},
 }
 
 // regression gate. It fails whenever a canonical command is missing,

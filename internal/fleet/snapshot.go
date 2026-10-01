@@ -143,14 +143,6 @@ type SourceFailure struct {
 	Err error
 }
 
-// Error renders the failure as "<source> <home>: <err>".
-func (f SourceFailure) Error() string {
-	return fmt.Sprintf("%s %s: %v", f.Source, f.Home, f.Err)
-}
-
-// Unwrap returns the underlying read error.
-func (f SourceFailure) Unwrap() error { return f.Err }
-
 // SnapshotDisplay reads the primary home and each captain home under
 // <home>/captains/<id>/ and reports a failed home as a SourceFailure instead of
 // failing the whole read. The only error is a missing current-state query.
