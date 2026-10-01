@@ -9,8 +9,9 @@
 // the exact profile refuses a write it must refuse. A fence is never trusted
 // without a successful Probe.
 //
-// The fence is darwin-only. On every other GOOS New returns *UnsupportedError;
-// whether a launch then refuses or records "no fence" is the caller's decision.
+// The fence is darwin-only. On every other GOOS New refuses an unknown role,
+// then returns *UnsupportedError; whether a launch then refuses or records
+// "no fence" is the caller's decision.
 package fence
 
 import "fmt"

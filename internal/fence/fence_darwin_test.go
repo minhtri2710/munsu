@@ -339,7 +339,6 @@ func TestNewRefusals(t *testing.T) {
 		mut  func(*Launch)
 		want string
 	}{
-		{"unknown role", func(x *Launch) { x.Role = "captain" }, `fence: unknown role "captain"`},
 		{"an invalid resolved path is refused", func(x *Launch) { x.Primary = "primary" }, "fence: primary checkout: path"},
 		{"an unmodeled harness", func(x *Launch) { x.Harness = harness.Codex }, `no state profile for harness "codex"`},
 		{"a task branch with a dot-dot", func(x *Launch) { x.Branch = "mu/a..b" }, `invalid task branch "mu/a..b"`},
