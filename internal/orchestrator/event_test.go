@@ -284,7 +284,7 @@ func TestEventReadersExcludeTornTrailingLine(t *testing.T) {
 
 func TestEventReadersSkipAndCountMalformedLines(t *testing.T) {
 	home := t.TempDir()
-	writeEventLog(t, home, "1\t10\tt\tp\t\tx\nnot a record\nabc\t11\tt\tp\t\ty\n\n2\t12\tt\tp\t\tz\n")
+	writeEventLog(t, home, "1\t10\tt\tp\t\tx\nnot a record\nabc\t11\tt\tp\t\ty\n9\t13\tt\tp\tx\n\n2\t12\tt\tp\t\tz\n")
 
 	for name, read := range map[string]func() ([]Record, int, error){
 		"LatestEvents": func() ([]Record, int, error) { return LatestEvents(home, 5) },
@@ -297,9 +297,13 @@ func TestEventReadersSkipAndCountMalformedLines(t *testing.T) {
 		if ids := recordIDs(got); len(ids) != 2 || ids[0] != 1 || ids[1] != 2 {
 			t.Errorf("%s: ids = %v, want [1 2]", name, ids)
 		}
-		if skipped != 2 {
-			t.Errorf("%s: skipped = %d, want 2 (blank line is not counted)", name, skipped)
+		if skipped != 3 {
+			t.Errorf("%s: skipped = %d, want 3 (blank line is not counted)", name, skipped)
 		}
+	}
+	// the five-field line (ID 9) must not feed nextID either
+	if id, err := nextID(home); err != nil || id != 3 {
+		t.Errorf("nextID() = %d, %v; want 3", id, err)
 	}
 }
 
