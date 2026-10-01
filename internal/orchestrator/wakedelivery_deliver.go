@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -168,12 +167,11 @@ func lastTaskStatusEvent(homeDir, taskID, key, statusLine string) (uint64, bool)
 	var id uint64
 	found := false
 	for _, line := range strings.Split(string(data), "\n") {
-		parts := strings.SplitN(line, "\t", 6)
-		if len(parts) < 6 || parts[2] != "task.status" || parts[3] != taskID || parts[4] != key {
+		r, ok := parseRecord(line)
+		if !ok || r.Type != "task.status" || r.Producer != taskID || r.Key != key {
 			continue
 		}
-		id, err = strconv.ParseUint(parts[0], 10, 64)
-		found = err == nil && parts[5] == statusLine
+		id, found = r.ID, r.Payload == statusLine
 	}
 	return id, found
 }
