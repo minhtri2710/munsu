@@ -9,6 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
@@ -47,26 +48,6 @@ func phaseStyle(phase string) lipgloss.Style {
 	return dashFaint
 }
 
-func clip(s string, w int) string {
-	if w <= 0 {
-		return ""
-	}
-	if lipgloss.Width(s) <= w {
-		return s
-	}
-	var b strings.Builder
-	used := 0
-	for _, r := range s {
-		rw := lipgloss.Width(string(r))
-		if used+rw > w-1 {
-			break
-		}
-		b.WriteRune(r)
-		used += rw
-	}
-	return b.String() + "…"
-}
-
 // wrap breaks s into lines of at most w cells, preferring to break after a
 // space. It drops and adds no character: the lines concatenate back to s.
 func wrap(s string, w int) []string {
@@ -98,7 +79,7 @@ func wrap(s string, w int) []string {
 }
 
 func pad(s string, w int) string {
-	s = clip(s, w)
+	s = ansi.Truncate(s, w, "…")
 	return s + strings.Repeat(" ", max(0, w-lipgloss.Width(s)))
 }
 
@@ -164,7 +145,7 @@ func (m dashboardModel) frame() string {
 	out = append(out, foot...)
 
 	for i, l := range out {
-		out[i] = clip(l, m.width)
+		out[i] = ansi.Truncate(l, m.width, "…")
 	}
 	if len(out) > m.height {
 		out = out[:m.height]

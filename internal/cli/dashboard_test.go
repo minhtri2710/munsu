@@ -14,6 +14,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
@@ -550,7 +551,7 @@ func TestDashboardConfirmTooSmallRefusesY(t *testing.T) {
 // The dashboard's own styling never emits NUL, a bidi override or SGR 8.
 func assertNoRaw(t *testing.T, name, frame string) {
 	t.Helper()
-	for _, raw := range []string{"\x00", "\u202e", "\x1b[8m"} {
+	for _, raw := range []string{"\x00", "\u202e", "\x1b[8m", "\u0085", "\u009b", "\u2028", "\xff"} {
 		if strings.Contains(frame, raw) {
 			t.Errorf("%s: frame carries %q raw:\n%s", name, raw, frame)
 		}
@@ -592,6 +593,24 @@ func TestDashboardHostileTextIsEscaped(t *testing.T) {
 		f := send(testDashModel(), r).frame()
 		assertNoRaw(t, "event log error", f)
 		assertShown(t, "event log error", f, `ee\x00\u202e\x1b[8m`)
+	})
+	t.Run("C1 controls, line separator, invalid UTF-8", func(t *testing.T) {
+		const in = "c\u0085\u009b\u2028\xff"
+		const shown = `c\u0085\u009b\u2028\xff`
+		r := goodRead(dashNow, []fleet.TaskSnapshot{{ID: "t-1", Kind: "ship", CurrentState: "working", Source: "primary", CurrentDescription: in}}, nil,
+			[]orchestrator.Record{{ID: 1, Timestamp: dashNow.UnixNano(), Type: "t", Producer: "p", Key: "k", Payload: in}})
+		f := send(testDashModel(), r).frame()
+		assertNoRaw(t, "other classes", f)
+		assertShown(t, "other classes", f, "ship    primary          "+shown, "t p k "+shown)
+
+		var calls []execCall
+		m := selectTask(t, actionFixture(&calls), "p-1")
+		m = press(m, "s")
+		m = send(m, tea.PasteMsg{Content: in})
+		m = press(m, "enter")
+		f = m.frame()
+		assertNoRaw(t, "other classes argv", f)
+		assertShown(t, "other classes argv", f, `"`+shown+`"`)
 	})
 	t.Run("status falls back to last status", func(t *testing.T) {
 		hostileRow.CurrentDescription, hostileRow.LastStatus = "", "ls\x00"
@@ -719,6 +738,38 @@ func TestDashboardUnknownPhaseIsNeverGreen(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("unknown-phase row not rendered")
+	}
+}
+
+// Every frame line is bounded by the terminal width, ends outside any escape
+// sequence, and leaves no style open, at every width from 1 to 200: the
+// selected row (reverse) is wider than the terminal and the next row is not
+// selected. Every width is run because a cut can land in any escape sequence.
+func TestDashboardFrameLinesAreBoundedAndClosed(t *testing.T) {
+	long := strings.Repeat("a long status ", 20)
+	base := send(testDashModel(), goodRead(dashNow, []fleet.TaskSnapshot{
+		row("t-sel", "working", long, "primary", ""),
+		row("t-next", "working", "next", "primary", ""),
+	}, nil, []orchestrator.Record{ev(1, "task.status", "t", "k", long)}))
+	base.height = 12
+	for w := 1; w <= 200; w++ {
+		m := base
+		m.width = w
+		for n, l := range strings.Split(m.frame(), "\n") {
+			if got := ansi.StringWidth(l); got > w {
+				t.Fatalf("width %d line %d is %d cells: %q", w, n, got, l)
+			}
+			if strings.Contains(ansiSeq.ReplaceAllString(l, ""), "\x1b") {
+				t.Fatalf("width %d line %d ends inside an escape sequence: %q", w, n, l)
+			}
+			open := false
+			for _, sgr := range ansiSeq.FindAllString(l, -1) {
+				open = sgr != "\x1b[m" && sgr != "\x1b[0m"
+			}
+			if open {
+				t.Fatalf("width %d line %d leaves its style open: %q", w, n, l)
+			}
+		}
 	}
 }
 
