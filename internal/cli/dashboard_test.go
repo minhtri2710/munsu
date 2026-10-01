@@ -495,23 +495,71 @@ func prMergeConfirm(t *testing.T, calls *[]execCall, width, height int) (dashboa
 	return m, m.pending.argv
 }
 
-// The confirm step shows every argv element, wrapped, never clipped.
+// sendConfirm is a send action in confirm state with the pasted line value.
+func sendConfirm(t *testing.T, calls *[]execCall, value string, width, height int) dashboardModel {
+	t.Helper()
+	m := selectTask(t, actionFixture(calls), "p-1")
+	m.width, m.height = width, height
+	m = press(m, "s")
+	m = send(m, tea.PasteMsg{Content: value})
+	m = press(m, "enter")
+	if m.mode != modeConfirm {
+		t.Fatalf("mode = %v, want confirm", m.mode)
+	}
+	return m
+}
+
+// The confirm step shows every argv element, wrapped, never clipped; when a
+// single grapheme is wider than the terminal it shows the enlarge notice and
+// y runs nothing.
 func TestDashboardConfirmShowsFullArgv(t *testing.T) {
-	var calls []execCall
-	m, argv := prMergeConfirm(t, &calls, 60, 24)
-	lines := strings.Split(ansiSeq.ReplaceAllString(m.frame(), ""), "\n")
-	if len(lines) > m.height {
-		t.Fatalf("frame has %d lines, terminal has %d", len(lines), m.height)
-	}
-	for _, l := range lines {
-		if lipgloss.Width(l) > m.width {
-			t.Errorf("line wider than the terminal: %q", l)
+	// The confirm lines are at most the width and join back to the argv, at
+	// every width, so every token boundary (w and w+1 cells) is crossed.
+	t.Run("every width", func(t *testing.T) {
+		for w := 1; w <= 120; w++ {
+			var calls []execCall
+			m, argv := prMergeConfirm(t, &calls, w, 1000)
+			lines := strings.Split(ansiSeq.ReplaceAllString(m.frame(), ""), "\n")
+			for _, l := range lines {
+				if ansi.StringWidth(l) > w {
+					t.Fatalf("width %d: line wider than the terminal: %q", w, l)
+				}
+			}
+			want := "Run: " + argvLine(append([]string{m.exe}, argv...))
+			if got := strings.Join(lines[:len(lines)-1], ""); !strings.HasSuffix(got, want) {
+				t.Fatalf("width %d: frame does not end in the whole argv\nwant %q\n--- frame ---\n%s", w, want, strings.Join(lines, "\n"))
+			}
 		}
-	}
-	want := "Run: " + argvLine(append([]string{m.exe}, argv...))
-	if got := strings.Join(lines, ""); !strings.Contains(got, want) {
-		t.Fatalf("frame does not show the whole argv\nwant %q\n--- frame ---\n%s", want, strings.Join(lines, "\n"))
-	}
+	})
+	t.Run("graphemes that fit", func(t *testing.T) {
+		var calls []execCall
+		m := sendConfirm(t, &calls, "a\u2764\ufe0f\u2764\ufe0f\u2764\ufe0fb", 3, 1000)
+		lines := strings.Split(ansiSeq.ReplaceAllString(m.frame(), ""), "\n")
+		for _, l := range lines {
+			if ansi.StringWidth(l) > m.width {
+				t.Errorf("line wider than the terminal: %q", l)
+			}
+		}
+		want := "Run: " + argvLine(append([]string{m.exe}, m.pending.argv...))
+		if got := strings.Join(lines[:len(lines)-1], ""); !strings.HasSuffix(got, want) {
+			t.Fatalf("frame does not end in the whole argv\nwant %q\n--- frame ---\n%s", want, strings.Join(lines, "\n"))
+		}
+		press(m, "y")
+		if len(calls) != 1 {
+			t.Fatalf("calls = %d, want 1", len(calls))
+		}
+	})
+	t.Run("grapheme wider than the terminal", func(t *testing.T) {
+		var calls []execCall
+		m := sendConfirm(t, &calls, "\u754c", 1, 1000)
+		if got := strings.Join(strings.Split(ansiSeq.ReplaceAllString(m.frame(), ""), "\n"), ""); got != confirmTooSmall {
+			t.Fatalf("frame = %q, want the enlarge notice %q", got, confirmTooSmall)
+		}
+		m = press(m, "y")
+		if len(calls) != 0 || m.mode != modeConfirm {
+			t.Fatalf("calls = %v, mode = %v; want no exec and still confirming", calls, m.mode)
+		}
+	})
 }
 
 // A short terminal keeps the confirm block; the task body gives up rows.
@@ -698,28 +746,6 @@ func TestDashboardConfirmFitBoundary(t *testing.T) {
 	}
 }
 
-// wrap never makes a line wider than w, at the token boundaries w and w+1,
-// and loses no character.
-func TestDashboardWrapBoundaries(t *testing.T) {
-	const w = 8
-	for _, in := range []string{
-		strings.Repeat("x", w),
-		strings.Repeat("x", w+1),
-		"ab " + strings.Repeat("y", w),
-		"ab " + strings.Repeat("y", w+1),
-	} {
-		lines := wrap(in, w)
-		for _, l := range lines {
-			if lipgloss.Width(l) > w {
-				t.Errorf("wrap(%q, %d) has the %d-cell line %q", in, w, lipgloss.Width(l), l)
-			}
-		}
-		if got := strings.Join(lines, ""); got != in {
-			t.Errorf("wrap(%q, %d) lines join to %q", in, w, got)
-		}
-	}
-}
-
 // A fresh row whose pane state is unknown is never rendered green.
 func TestDashboardUnknownPhaseIsNeverGreen(t *testing.T) {
 	m := send(testDashModel(), goodRead(dashNow, []fleet.TaskSnapshot{
@@ -752,12 +778,19 @@ func TestDashboardFrameLinesAreBoundedAndClosed(t *testing.T) {
 		row("t-next", "working", "next", "primary", ""),
 	}, nil, []orchestrator.Record{ev(1, "task.status", "t", "k", long)}))
 	base.height = 12
+	wide := base
+	wide.width = 1000
+	wideLines := strings.Split(wide.frame(), "\n")
 	for w := 1; w <= 200; w++ {
 		m := base
 		m.width = w
 		for n, l := range strings.Split(m.frame(), "\n") {
 			if got := ansi.StringWidth(l); got > w {
 				t.Fatalf("width %d line %d is %d cells: %q", w, n, got, l)
+			}
+			// A line the width cuts ends in a visible ellipsis.
+			if ansi.StringWidth(wideLines[n]) > w && !strings.HasSuffix(ansi.Strip(l), "…") {
+				t.Fatalf("width %d line %d is cut without a visible ellipsis: %q", w, n, l)
 			}
 			if strings.Contains(ansiSeq.ReplaceAllString(l, ""), "\x1b") {
 				t.Fatalf("width %d line %d ends inside an escape sequence: %q", w, n, l)
@@ -770,6 +803,30 @@ func TestDashboardFrameLinesAreBoundedAndClosed(t *testing.T) {
 				t.Fatalf("width %d line %d leaves its style open: %q", w, n, l)
 			}
 		}
+	}
+
+	// A task ID longer than its 22-cell field is cut inside the field, so the
+	// next column starts at the same cell as for a short ID.
+	cols := send(testDashModel(), goodRead(dashNow, []fleet.TaskSnapshot{
+		row("t-short", "working", "x", "primary", ""),
+		row("t-"+strings.Repeat("long-id-", 5), "working", "x", "primary", ""),
+	}, nil, nil))
+	var starts []int
+	var longLine string
+	for _, l := range strings.Split(cols.frame(), "\n") {
+		l = ansi.Strip(l)
+		if i := strings.Index(l, "primary"); i >= 0 && strings.Contains(l, "t-") {
+			starts = append(starts, ansi.StringWidth(l[:i]))
+			if strings.Contains(l, "long-id") {
+				longLine = l
+			}
+		}
+	}
+	if len(starts) != 2 || starts[0] != starts[1] {
+		t.Fatalf("the source column starts at cells %v, want the same cell for a short and a long ID", starts)
+	}
+	if !strings.Contains(longLine[:strings.Index(longLine, "primary")], "…") {
+		t.Fatalf("the cut ID field has no visible ellipsis: %q", longLine)
 	}
 }
 

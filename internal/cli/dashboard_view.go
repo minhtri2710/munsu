@@ -48,36 +48,6 @@ func phaseStyle(phase string) lipgloss.Style {
 	return dashFaint
 }
 
-// wrap breaks s into lines of at most w cells, preferring to break after a
-// space. It drops and adds no character: the lines concatenate back to s.
-func wrap(s string, w int) []string {
-	w = max(w, 1)
-	var out []string
-	for lipgloss.Width(s) > w {
-		cut, used, brk := 0, 0, 0
-		for i, r := range s {
-			rw := lipgloss.Width(string(r))
-			if used+rw > w {
-				break
-			}
-			used += rw
-			cut = i + len(string(r))
-			if r == ' ' {
-				brk = cut
-			}
-		}
-		if cut == 0 {
-			cut = len(string([]rune(s)[:1]))
-		}
-		if brk > 0 {
-			cut = brk
-		}
-		out = append(out, s[:cut])
-		s = s[cut:]
-	}
-	return append(out, s)
-}
-
 func pad(s string, w int) string {
 	s = ansi.Truncate(s, w, "…")
 	return s + strings.Repeat(" ", max(0, w-lipgloss.Width(s)))
@@ -131,7 +101,7 @@ func (m dashboardModel) frame() string {
 	}
 	head, foot, feed := m.header(), m.footer(), m.feed(feedN)
 	if m.mode == modeConfirm && !m.confirmFits() {
-		return strings.Join(wrap(confirmTooSmall, m.width), "\n")
+		return ansi.Hardwrap(confirmTooSmall, m.width, true)
 	}
 
 	// The body and feed give up rows before the footer does: the confirm
@@ -155,9 +125,22 @@ func (m dashboardModel) frame() string {
 
 const confirmTooSmall = "Terminal too small to show the full command. Enlarge it, or esc to cancel."
 
+// confirmArgvLines is the exact argv the Human approves, broken into lines
+// of at most m.width cells. A grapheme wider than the terminal gets a line of
+// its own at its true width.
+func (m dashboardModel) confirmArgvLines() []string {
+	return strings.Split(ansi.Hardwrap("Run: "+argvLine(append([]string{m.exe}, m.pending.argv...)), m.width, true), "\n")
+}
+
 // confirmFits reports whether the header and the whole confirm block fit the
-// terminal. Without that the Human cannot see what y would run.
+// terminal, both in height and in width. Without that the Human cannot see
+// what y would run.
 func (m dashboardModel) confirmFits() bool {
+	for _, l := range m.confirmArgvLines() {
+		if ansi.StringWidth(l) > m.width {
+			return false
+		}
+	}
 	return len(m.header())+len(m.footer()) <= m.height
 }
 
@@ -319,7 +302,7 @@ func (m dashboardModel) footer() []string {
 		}
 		out = append(out, dashFaint.Render("enter next/submit  esc cancel"))
 	case modeConfirm:
-		out = append(out, wrap("Run: "+argvLine(append([]string{m.exe}, m.pending.argv...)), m.width)...)
+		out = append(out, m.confirmArgvLines()...)
 		out = append(out, dashFaint.Render("y run  esc cancel"))
 	case modeRunning:
 		out = append(out, dashFaint.Render("Running..."))
