@@ -1326,6 +1326,8 @@ func TestSpawn_PostCreateVerificationFailure_NoMetaNoSpawnedStatus(t *testing.T)
 // no-mistakes primary here has no gate remote, so the fence cannot name the
 // gate it must allow.
 func TestSpawn_RefusedFenceAllocatesNoPane(t *testing.T) {
+	testutil.PrependPath(t, createFakeNoMistakesReady(t))
+	testutil.FakeOnPath(t, "gh-axi", "#!/bin/sh\nexit 0\n")
 	windows := 0
 	fakeBk := &fakeBackend{newWindow: func(session, name string) (string, error) {
 		windows++
@@ -1350,6 +1352,7 @@ func TestSpawn_RefusedFenceAllocatesNoPane(t *testing.T) {
 // A failed no-mistakes preflight stops a full Spawn before the launch intent
 // is committed: no pane, no intent, no worktree.
 func TestSpawn_FailedNoMistakesPreflightCommitsNoLaunchIntent(t *testing.T) {
+	testutil.PrependPath(t, createFakeNoMistakesReady(t))
 	windows := 0
 	fakeBk := &fakeBackend{newWindow: func(session, name string) (string, error) {
 		windows++
