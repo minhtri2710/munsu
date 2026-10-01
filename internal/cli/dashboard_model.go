@@ -416,6 +416,9 @@ func (m dashboardModel) onFormKey(key, text string) (tea.Model, tea.Cmd) {
 func (m dashboardModel) onConfirmKey(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "y":
+		if !m.confirmFits() {
+			return m, nil
+		}
 		m.mode, m.result = modeRunning, nil
 		return m, m.run(m.exe, m.pending.argv)
 	case "esc", "n":

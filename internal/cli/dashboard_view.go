@@ -32,11 +32,9 @@ func (m dashboardModel) View() tea.View {
 	return v
 }
 
-// phaseStyle never returns green for an unknown phase or a stale row.
-func phaseStyle(phase string, stale bool) lipgloss.Style {
-	if stale {
-		return dashFaint
-	}
+// phaseStyle never returns green for an unknown phase. A stale row's phase
+// carries a " [stale]" suffix, matches no case and renders faint.
+func phaseStyle(phase string) lipgloss.Style {
 	switch phase {
 	case "working", "alive", "done", "resolved":
 		return dashGreen
@@ -66,6 +64,36 @@ func clip(s string, w int) string {
 		used += rw
 	}
 	return b.String() + "…"
+}
+
+// wrap breaks s into lines of at most w cells, preferring to break after a
+// space. It drops and adds no character: the lines concatenate back to s.
+func wrap(s string, w int) []string {
+	w = max(w, 1)
+	var out []string
+	for lipgloss.Width(s) > w {
+		cut, used, brk := 0, 0, 0
+		for i, r := range s {
+			rw := lipgloss.Width(string(r))
+			if used+rw > w {
+				break
+			}
+			used += rw
+			cut = i + len(string(r))
+			if r == ' ' {
+				brk = cut
+			}
+		}
+		if cut == 0 {
+			cut = len(string([]rune(s)[:1]))
+		}
+		if brk > 0 {
+			cut = brk
+		}
+		out = append(out, s[:cut])
+		s = s[cut:]
+	}
+	return append(out, s)
 }
 
 func pad(s string, w int) string {
@@ -98,10 +126,18 @@ func (m dashboardModel) frame() string {
 		feedN = 6
 	}
 	head, foot, feed := m.header(), m.footer(), m.feed(feedN)
+	if m.mode == modeConfirm && !m.confirmFits() {
+		return strings.Join(wrap(confirmTooSmall, m.width), "\n")
+	}
 
+	// The body and feed give up rows before the footer does: the confirm
+	// block shows the whole argv the Human approves.
+	mid := append(m.body(m.height-len(head)-len(foot)-len(feed)), feed...)
+	if room := max(0, m.height-len(head)-len(foot)); len(mid) > room {
+		mid = mid[:room]
+	}
 	out := append([]string{}, head...)
-	out = append(out, m.body(m.height-len(head)-len(foot)-len(feed))...)
-	out = append(out, feed...)
+	out = append(out, mid...)
 	out = append(out, foot...)
 
 	for i, l := range out {
@@ -111,6 +147,14 @@ func (m dashboardModel) frame() string {
 		out = out[:m.height]
 	}
 	return strings.Join(out, "\n")
+}
+
+const confirmTooSmall = "Terminal too small to show the full command. Enlarge it, or esc to cancel."
+
+// confirmFits reports whether the header and the whole confirm block fit the
+// terminal. Without that the Human cannot see what y would run.
+func (m dashboardModel) confirmFits() bool {
+	return len(m.header())+len(m.footer()) <= m.height
 }
 
 func (m dashboardModel) header() []string {
@@ -194,7 +238,7 @@ func (m dashboardModel) body(avail int) []string {
 			out = append(out, dashSelect.Render(plain))
 			continue
 		}
-		cells := m.mark(i) + hn + pad(ts.ID, 22) + " " + phaseStyle(phase, stale).Render(pad(phase, 16)) + " " + pad(ts.Kind, 7) + " " + pad(src, 16) + " " + status
+		cells := m.mark(i) + hn + pad(ts.ID, 22) + " " + phaseStyle(phase).Render(pad(phase, 16)) + " " + pad(ts.Kind, 7) + " " + pad(src, 16) + " " + status
 		out = append(out, cells)
 	}
 	return out
@@ -225,7 +269,7 @@ func (m dashboardModel) feed(n int) []string {
 			t += fmt.Sprintf(" (%d malformed lines skipped)", m.skipped)
 		}
 		if len(shown) < len(m.events) {
-			t += fmt.Sprintf(" - Showing %d of %d", len(shown), len(m.events))
+			t += fmt.Sprintf(" - Showing %d of the last %d read", len(shown), len(m.events))
 		}
 		title = dashBold.Render(t)
 	}
@@ -270,7 +314,7 @@ func (m dashboardModel) footer() []string {
 		}
 		out = append(out, dashFaint.Render("enter next/submit  esc cancel"))
 	case modeConfirm:
-		out = append(out, dashBold.Render("Run: ")+argvLine(append([]string{m.exe}, m.pending.argv...)))
+		out = append(out, wrap("Run: "+argvLine(append([]string{m.exe}, m.pending.argv...)), m.width)...)
 		out = append(out, dashFaint.Render("y run  esc cancel"))
 	case modeRunning:
 		out = append(out, dashFaint.Render("Running..."))

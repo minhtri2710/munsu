@@ -13,6 +13,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
@@ -208,19 +209,22 @@ func TestDashboardFeedAppendsAfterCursor(t *testing.T) {
 }
 
 func TestDashboardRefusesWithoutTerminal(t *testing.T) {
-	old := dashboardTTY
-	dashboardTTY = func() bool { return false }
-	defer func() { dashboardTTY = old }()
+	old := dashboardTerminals
+	defer func() { dashboardTerminals = old }()
 
-	root := NewRootCommand()
-	root.SetArgs([]string{"dashboard", "--home", t.TempDir()})
-	err := root.Execute()
-	var ce *contractError
-	if !errors.As(err, &ce) {
-		t.Fatalf("Execute() = %v, want a contract error", err)
-	}
-	if ce.value.Error.ErrorCode != "not_a_terminal" || !strings.Contains(ce.value.Error.Action, "munsu fleet view") {
-		t.Fatalf("refusal = %+v, want not_a_terminal pointing at munsu fleet view", ce.value.Error)
+	// Both stdin and stdout must be terminals; either one alone is refused.
+	for _, c := range []struct{ stdin, stdout bool }{{false, false}, {true, false}, {false, true}} {
+		dashboardTerminals = func() (bool, bool) { return c.stdin, c.stdout }
+		root := NewRootCommand()
+		root.SetArgs([]string{"dashboard", "--home", t.TempDir()})
+		err := root.Execute()
+		var ce *contractError
+		if !errors.As(err, &ce) {
+			t.Fatalf("stdin=%v stdout=%v: Execute() = %v, want a contract error", c.stdin, c.stdout, err)
+		}
+		if ce.value.Error.ErrorCode != "not_a_terminal" || !strings.Contains(ce.value.Error.Action, "munsu fleet view") {
+			t.Fatalf("stdin=%v stdout=%v: refusal = %+v, want not_a_terminal pointing at munsu fleet view", c.stdin, c.stdout, ce.value.Error)
+		}
 	}
 }
 
@@ -397,15 +401,148 @@ func TestDashboardWordsFormRequiresWords(t *testing.T) {
 	}
 }
 
-// Stale and failed state never render as fresh.
-func TestDashboardStaleIsNeverGreen(t *testing.T) {
-	for _, phase := range []string{"unknown", "working", "done", "queued", "blocked"} {
-		if phaseStyle(phase, true).GetForeground() == dashGreen.GetForeground() {
-			t.Errorf("stale %q row is green", phase)
+// A stale row is never rendered in a phase color, whatever its phase.
+func TestDashboardStaleRowIsNeverColored(t *testing.T) {
+	m := testDashModel()
+	m = send(m, goodRead(dashNow.Add(-45*time.Second), []fleet.TaskSnapshot{
+		row("t-work", "working", "a", "primary", ""),
+		row("t-done", "done", "b", "primary", ""),
+		row("t-blocked", "blocked", "c", "primary", ""),
+		row("t-queued", "queued", "d", "primary", ""),
+	}, nil, nil))
+	m = press(m, "j") // keep the selected row off the first row
+	for _, c := range []lipgloss.Style{dashGreen, dashRed, dashYellow} {
+		sgr := strings.SplitN(c.Render("x"), "x", 2)[0]
+		for _, l := range strings.Split(m.frame(), "\n") {
+			if strings.Contains(l, "t-") && strings.Contains(l, sgr) {
+				t.Errorf("stale row rendered in a phase color %q: %q", sgr, l)
+			}
 		}
 	}
-	if phaseStyle("unknown", false).GetForeground() == dashGreen.GetForeground() {
-		t.Error("unknown row is green")
+}
+
+// A failed read is stale even while the last good read is recent.
+func TestDashboardFailedReadInsideWindowIsStale(t *testing.T) {
+	m := testDashModel()
+	m = send(m, goodRead(dashNow.Add(-2*time.Second), []fleet.TaskSnapshot{row("t-work", "working", "a", "primary", "")}, nil, nil))
+	m = send(m, dashRead{at: dashNow, snapErr: errors.New("boom")})
+	f := ansiSeq.ReplaceAllString(m.frame(), "")
+	if m.state() != stateStale || !strings.Contains(f, "STALE") || strings.Contains(f, "REFRESHED") {
+		t.Fatalf("state = %v; want a stale frame:\n%s", m.state(), f)
+	}
+}
+
+// A read older than the stale window is stale even without an error.
+func TestDashboardAgedReadIsStale(t *testing.T) {
+	m := testDashModel()
+	m = send(m, goodRead(dashNow.Add(-(dashboardStaleAfter+time.Second)), []fleet.TaskSnapshot{row("t-work", "working", "a", "primary", "")}, nil, nil))
+	f := ansiSeq.ReplaceAllString(m.frame(), "")
+	if m.state() != stateStale || !strings.Contains(f, "STALE") || strings.Contains(f, "REFRESHED") {
+		t.Fatalf("state = %v; want a stale frame:\n%s", m.state(), f)
+	}
+}
+
+// Moving the cursor past the first screen keeps the selected row in the frame.
+func TestDashboardScrollKeepsSelectedRowVisible(t *testing.T) {
+	var tasks []fleet.TaskSnapshot
+	for i := 0; i < 30; i++ {
+		tasks = append(tasks, row(fmt.Sprintf("t-%02d", i), "working", "x", "primary", ""))
+	}
+	m := send(testDashModel(), goodRead(dashNow, tasks, nil, nil))
+	for i := 0; i < 25; i++ {
+		m = press(m, "j")
+	}
+	found := false
+	for _, l := range strings.Split(ansiSeq.ReplaceAllString(m.frame(), ""), "\n") {
+		if strings.HasPrefix(l, "> ") && strings.Contains(l, "t-25") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("selected row t-25 is not in the frame:\n%s", ansiSeq.ReplaceAllString(m.frame(), ""))
+	}
+}
+
+// The action runs on the identity captured at selection even when that row
+// vanishes before y; it never falls to whichever row the cursor landed on.
+func TestDashboardCapturedRowVanishesBeforeConfirm(t *testing.T) {
+	var calls []execCall
+	m := selectTask(t, actionFixture(&calls), "c-1")
+	m = press(m, "d")
+	m = send(m, goodRead(dashNow, []fleet.TaskSnapshot{row("p-1", "working", "primary task", "primary", "")}, nil, nil))
+	press(m, "y")
+	want := []string{"--home", "/h/captains/alpha", "task", "done", "c-1"}
+	if len(calls) != 1 || !reflect.DeepEqual(calls[0].args, want) {
+		t.Fatalf("exec = %+v, want %q", calls, want)
+	}
+}
+
+// pr-merge confirm state: the longest argv the dashboard builds.
+func prMergeConfirm(t *testing.T, calls *[]execCall, width, height int) (dashboardModel, []string) {
+	t.Helper()
+	m := selectTask(t, actionFixture(calls), "p-1")
+	m.width, m.height = width, height
+	m = press(m, "m")
+	fields := []string{"https://github.com/some-org/some-repo/pull/12345", "the human", "the chat channel", "yes merge this one now, after reading the verdict"}
+	for _, v := range fields {
+		m = typeText(m, v)
+		m = press(m, "enter")
+	}
+	if m.mode != modeConfirm {
+		t.Fatalf("mode = %v, want confirm", m.mode)
+	}
+	return m, m.pending.argv
+}
+
+// The confirm step shows every argv element, wrapped, never clipped.
+func TestDashboardConfirmShowsFullArgv(t *testing.T) {
+	var calls []execCall
+	m, argv := prMergeConfirm(t, &calls, 60, 24)
+	lines := strings.Split(ansiSeq.ReplaceAllString(m.frame(), ""), "\n")
+	if len(lines) > m.height {
+		t.Fatalf("frame has %d lines, terminal has %d", len(lines), m.height)
+	}
+	for _, l := range lines {
+		if lipgloss.Width(l) > m.width {
+			t.Errorf("line wider than the terminal: %q", l)
+		}
+	}
+	want := "Run: " + argvLine(append([]string{m.exe}, argv...))
+	if got := strings.Join(lines, ""); !strings.Contains(got, want) {
+		t.Fatalf("frame does not show the whole argv\nwant %q\n--- frame ---\n%s", want, strings.Join(lines, "\n"))
+	}
+}
+
+// A short terminal keeps the confirm block; the task body gives up rows.
+func TestDashboardShortTerminalKeepsConfirmBlock(t *testing.T) {
+	var calls []execCall
+	m, argv := prMergeConfirm(t, &calls, 100, 9)
+	lines := strings.Split(ansiSeq.ReplaceAllString(m.frame(), ""), "\n")
+	if len(lines) > m.height {
+		t.Fatalf("frame has %d lines, terminal has %d", len(lines), m.height)
+	}
+	want := "Run: " + argvLine(append([]string{m.exe}, argv...))
+	if got := strings.Join(lines, ""); !strings.Contains(got, want) || !strings.Contains(got, "y run") {
+		t.Fatalf("confirm block cut by the short terminal:\n%s", strings.Join(lines, "\n"))
+	}
+}
+
+// When the confirm block cannot fit at all, the frame says so and y runs nothing.
+func TestDashboardConfirmTooSmallRefusesY(t *testing.T) {
+	var calls []execCall
+	m, _ := prMergeConfirm(t, &calls, 60, 24)
+	m = send(m, tea.WindowSizeMsg{Width: 60, Height: 4})
+	if f := ansiSeq.ReplaceAllString(m.frame(), ""); !strings.Contains(f, "Enlarge") {
+		t.Fatalf("frame lacks the enlarge notice:\n%s", f)
+	}
+	m = press(m, "y")
+	if len(calls) != 0 || m.mode != modeConfirm {
+		t.Fatalf("calls = %v, mode = %v; want no exec and still confirming", calls, m.mode)
+	}
+	m = send(m, tea.WindowSizeMsg{Width: 60, Height: 24})
+	press(m, "y")
+	if len(calls) != 1 {
+		t.Fatalf("calls = %v, want one exec after the terminal grew", calls)
 	}
 }
 
