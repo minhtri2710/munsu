@@ -302,16 +302,16 @@ func (m dashboardModel) feedSection() []string {
 	if m.feedH < 1 {
 		return nil
 	}
+	t := "Events"
+	if shown, all := m.feed.VisibleLineCount(), m.feed.TotalLineCount(); shown < all {
+		t += fmt.Sprintf(" - Showing %d of the last %d read", shown, all)
+	}
 	var title string
 	if m.eventErr != nil {
-		title = dashRed.Render("Events - unreadable: " + dashText(m.eventErr.Error()))
+		title = dashRed.Render(t + " - unreadable: " + dashText(m.eventErr.Error()))
 	} else {
-		t := "Events"
 		if m.skipped > 0 {
 			t += fmt.Sprintf(" (%d malformed lines skipped)", m.skipped)
-		}
-		if shown, all := m.feed.VisibleLineCount(), m.feed.TotalLineCount(); shown < all {
-			t += fmt.Sprintf(" - Showing %d of the last %d read", shown, all)
 		}
 		title = dashBold.Render(t)
 	}

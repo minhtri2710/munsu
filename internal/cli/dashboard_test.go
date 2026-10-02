@@ -913,18 +913,22 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 		name       string
 		nf, nt, ne int
 		stale      bool
+		feedFailed bool // the events were read, then a later feed read failed
 	}
 	states := []state{
-		{"fresh", 30, 3, 3, false},
-		{"fresh many tasks", 0, 30, 40, false},
-		{"stale", 30, 3, 3, true},
-		{"stale many tasks", 2, 30, 40, true},
-		{"zero tasks", 5, 0, 3, false},
-		{"zero failures", 0, 6, 3, false},
-		{"zero events", 3, 6, 0, false},
+		{"fresh", 30, 3, 3, false, false},
+		{"fresh many tasks", 0, 30, 40, false, false},
+		{"stale", 30, 3, 3, true, false},
+		{"stale many tasks", 2, 30, 40, true, false},
+		{"zero tasks", 5, 0, 3, false, false},
+		{"zero failures", 0, 6, 3, false, false},
+		{"zero events", 3, 6, 0, false, false},
+		{"feed unreadable after a read", 2, 6, 40, false, true},
 	}
+	// Longer than the widest terminal the sweep uses, so a clip cuts it.
+	feedErr := "open /Users/someone/.munsu/projects/example/state/events.log: permission denied, " + strings.Repeat("and more ", 6)
 	titleRe := regexp.MustCompile(`^(Tasks|Failed sources and tasks)( - Showing (\d+) of (\d+) \(page \d+ of \d+\))?$`)
-	eventsRe := regexp.MustCompile(`^Events.*?( - Showing (\d+) of the last (\d+) read)?$`)
+	eventsRe := regexp.MustCompile(`^Events( - Showing (\d+) of the last (\d+) read)?`)
 	itemRe := regexp.MustCompile(`^[> ] (x captain:c\d\d|[! ] t-\d\d)`)
 	eventRe := regexp.MustCompile(`^\d\d:\d\d:\d\d `)
 	for _, st := range states {
@@ -941,6 +945,9 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 			events = append(events, ev(uint64(i), "task.status", "t", "k", fmt.Sprintf("step %d", i)))
 		}
 		base := send(testDashModel(), goodRead(dashNow, tasks, failures, events))
+		if st.feedFailed {
+			base = send(base, dashRead{at: dashNow, snap: &fleet.DisplaySnapshot{Tasks: tasks, Failures: failures}, eventErr: errors.New(feedErr)})
+		}
 		if st.stale {
 			base = send(base, dashRead{at: dashNow.Add(time.Minute), snapErr: errors.New("boom")})
 			base.now = func() time.Time { return dashNow.Add(time.Minute) }
@@ -987,12 +994,18 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 							evs++
 						case titleRe.MatchString(l):
 							listTitle = true
+							if want := map[bool]string{true: "Failed sources and tasks", false: "Tasks"}[st.nf > 0]; titleRe.FindStringSubmatch(l)[1] != want {
+								t.Fatalf("%s: list title %q, want %q:\n%s", where, l, want, strings.Join(lines, "\n"))
+							}
 							if g := titleRe.FindStringSubmatch(l); g[3] != "" {
 								titleN, _ = strconv.Atoi(g[3])
 								titleM, _ = strconv.Atoi(g[4])
 							}
 						case strings.HasPrefix(l, "Events"):
 							feedTitle = true
+							if st.feedFailed && !strings.Contains(l, " - unreadable: o") {
+								t.Fatalf("%s: feed title %q does not say the feed is unreadable:\n%s", where, l, strings.Join(lines, "\n"))
+							}
 							if g := eventsRe.FindStringSubmatch(l); g[2] != "" {
 								feedN, _ = strconv.Atoi(g[2])
 								feedM, _ = strconv.Atoi(g[3])
