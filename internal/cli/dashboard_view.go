@@ -125,9 +125,11 @@ func (m dashboardModel) frame() string {
 
 const confirmTooSmall = "Terminal too small to show the full command. Enlarge it, or esc to cancel."
 
-// confirmArgvLines is the exact argv the Human approves, broken into lines
-// of at most m.width cells. A grapheme wider than the terminal gets a line of
-// its own at its true width.
+// confirmArgvLines is the exact argv the Human approves, broken by Hardwrap
+// into lines of at most m.width cells by Hardwrap's count. x/ansi's
+// StringWidth can measure a line wider, either for a grapheme wider than the
+// terminal or for an ASCII character followed by U+FE0F; confirmFits refuses
+// such a line.
 func (m dashboardModel) confirmArgvLines() []string {
 	return strings.Split(ansi.Hardwrap("Run: "+argvLine(append([]string{m.exe}, m.pending.argv...)), m.width, true), "\n")
 }
@@ -170,7 +172,36 @@ func (m dashboardModel) header() []string {
 	return []string{title + "  " + badge, counts}
 }
 
-// body renders the failed sources and the task rows within avail lines.
+// listWindow is the first index of a window of n rows that keeps cur in view
+// when cur lies in the list (0 <= cur < total), and the top otherwise.
+func listWindow(cur, n, total int) int {
+	if cur < 0 || cur >= total || cur < n {
+		return 0
+	}
+	return cur - n + 1
+}
+
+// splitRows shares r drawable rows between the failure list (nf rows) and the
+// task list (nt rows), each list that has rows getting at least one. Unused
+// share of one list goes to the other.
+func splitRows(r, nf, nt int) (fs, ts int) {
+	switch {
+	case nf == 0:
+		return 0, min(nt, max(1, r))
+	case nt == 0:
+		return min(nf, max(1, r)), 0
+	}
+	r = max(r, 2)
+	fs = min(nf, r/2)
+	ts = min(nt, r-fs)
+	return min(nf, r-ts), ts
+}
+
+// body renders the failed sources and the task rows. Whenever avail holds the
+// minimal block (the stale "Last read failed" line when present, one failure
+// title and row, the Tasks title and one row) it returns at most avail lines,
+// always draws the selected row, and titles every list it clips with
+// "Showing N of M". Below the minimal block frame() bounds it.
 func (m dashboardModel) body(avail int) []string {
 	var out []string
 	switch m.state() {
@@ -185,25 +216,38 @@ func (m dashboardModel) body(avail int) []string {
 	if stale && m.readErr != nil {
 		out = append(out, dashRed.Render("Last read failed: "+dashText(m.readErr.Error())))
 	}
-	for i := range m.failures {
+	nf, nt := len(m.failures), len(m.rows)
+	budget := avail - len(out)
+	if nt > 0 {
+		budget-- // the Tasks title
+	}
+	fn, tn := splitRows(budget, nf, nt)
+	failTitle := fn < nf
+	if failTitle {
+		fn, tn = splitRows(budget-1, nf, nt)
+	}
+	fstart := listWindow(m.cur, fn, nf)
+	if fn < nf {
+		out = append(out, dashBold.Render(fmt.Sprintf("Failed sources - Showing %d of %d", fn, nf)))
+	}
+	for i := fstart; i < fstart+fn; i++ {
 		f := m.failures[i]
 		line := m.mark(i) + "x " + dashText(f.Source) + "  " + dashText(fmt.Sprint(f.Err))
 		out = append(out, m.styleLine(i, line, dashRed))
 	}
 
-	slots := max(1, avail-len(out)-1)
-	title := "Tasks"
-	start := 0
-	if r := m.cur - len(m.failures); r >= slots {
-		start = r - slots + 1
+	if nt == 0 {
+		return out
 	}
-	shown := m.rows[min(start, len(m.rows)):min(start+slots, len(m.rows))]
-	if len(shown) < len(m.rows) {
-		title = fmt.Sprintf("Tasks - Showing %d of %d", len(shown), len(m.rows))
+	title := "Tasks"
+	start := listWindow(m.cur-nf, tn, nt)
+	shown := m.rows[start : start+tn]
+	if tn < nt {
+		title = fmt.Sprintf("Tasks - Showing %d of %d", tn, nt)
 	}
 	out = append(out, dashBold.Render(title))
 	for j, ts := range shown {
-		i := len(m.failures) + start + j
+		i := nf + start + j
 		phase := dashText(fleet.PhaseFromProjection(ts))
 		if stale {
 			phase += " [stale]"

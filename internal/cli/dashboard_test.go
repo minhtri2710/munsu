@@ -462,6 +462,68 @@ func TestDashboardScrollKeepsSelectedRowVisible(t *testing.T) {
 	if !found {
 		t.Fatalf("selected row t-25 is not in the frame:\n%s", ansiSeq.ReplaceAllString(m.frame(), ""))
 	}
+
+	// 30 failed homes and 3 tasks, from the tallest terminal down to the
+	// minimal block: header 2, help 2, feed 3, and a failure title and row
+	// plus a Tasks title and row (4) make 11 lines. The cursor visits every
+	// row at every height.
+	var failures []fleet.SourceFailure
+	for i := 0; i < 30; i++ {
+		failures = append(failures, fleet.SourceFailure{Source: fmt.Sprintf("captain:c%02d", i), Err: errors.New("unreadable")})
+	}
+	tasks = tasks[:3]
+	events := []orchestrator.Record{ev(1, "task.status", "t", "k", "a"), ev(2, "task.status", "t", "k", "b"), ev(3, "task.status", "t", "k", "c")}
+	base := send(testDashModel(), goodRead(dashNow, tasks, failures, events))
+	count := func(lines []string, re *regexp.Regexp) int {
+		n := 0
+		for _, l := range lines {
+			if re.MatchString(l) {
+				n++
+			}
+		}
+		return n
+	}
+	failRow, taskRow := regexp.MustCompile(`^[> ] x captain:c\d\d`), regexp.MustCompile(`^[> ] [! ] t-\d\d`)
+	reported := map[string]bool{}
+	fail := func(kind, format string, args ...any) {
+		if !reported[kind] {
+			reported[kind] = true
+			t.Errorf(kind+" "+format, args...)
+		}
+	}
+	for h := 24; h >= 11; h-- {
+		for cur := 0; cur < 33; cur++ {
+			m := base
+			m.height = h
+			for i := 0; i < cur; i++ {
+				m = press(m, "j")
+			}
+			lines := strings.Split(ansiSeq.ReplaceAllString(m.frame(), ""), "\n")
+			frame := strings.Join(lines, "\n")
+			want := fmt.Sprintf("t-%02d", cur-30)
+			if cur < 30 {
+				want = fmt.Sprintf("captain:c%02d", cur)
+			}
+			selected := false
+			for _, l := range lines {
+				if strings.HasPrefix(l, "> ") && strings.Contains(l, want) {
+					selected = true
+				}
+			}
+			if !selected {
+				fail("(a)", "height %d cursor %d: selected row %s is not drawn with its mark:\n%s", h, cur, want, frame)
+			}
+			if n := count(lines, failRow); n < 30 && !strings.Contains(frame, fmt.Sprintf("Failed sources - Showing %d of 30", n)) {
+				fail("(b)", "height %d cursor %d: %d of 30 failed sources drawn, title lacks \"Showing %d of 30\":\n%s", h, cur, n, n, frame)
+			}
+			if n := count(lines, taskRow); n < 3 && !strings.Contains(frame, fmt.Sprintf("Tasks - Showing %d of 3", n)) {
+				fail("(b)", "height %d cursor %d: %d of 3 tasks drawn, title lacks \"Showing %d of 3\":\n%s", h, cur, n, n, frame)
+			}
+			if count(lines, regexp.MustCompile(`^Events`)) == 0 {
+				fail("(c)", "height %d cursor %d: the Events title is not in the frame:\n%s", h, cur, frame)
+			}
+		}
+	}
 }
 
 // The action runs on the identity captured at selection even when that row
@@ -552,7 +614,13 @@ func TestDashboardConfirmShowsFullArgv(t *testing.T) {
 	t.Run("grapheme wider than the terminal", func(t *testing.T) {
 		var calls []execCall
 		m := sendConfirm(t, &calls, "\u754c", 1, 1000)
-		if got := strings.Join(strings.Split(ansiSeq.ReplaceAllString(m.frame(), ""), "\n"), ""); got != confirmTooSmall {
+		notice := strings.Split(ansiSeq.ReplaceAllString(m.frame(), ""), "\n")
+		for _, l := range notice {
+			if ansi.StringWidth(l) > m.width {
+				t.Errorf("notice line wider than the terminal: %q", l)
+			}
+		}
+		if got := strings.Join(notice, ""); got != confirmTooSmall {
 			t.Fatalf("frame = %q, want the enlarge notice %q", got, confirmTooSmall)
 		}
 		m = press(m, "y")
