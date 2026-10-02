@@ -2,11 +2,15 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -22,11 +26,6 @@ var (
 	dashYellow = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
 	dashSelect = lipgloss.NewStyle().Reverse(true)
 )
-
-var dashHelp = []string{
-	"j/k move  b block  u unblock  d done  t retry  o reopen  x teardown  s send  p promote",
-	"h hold  e resolve  c complete  R retire  V recover  C converge  v record-verdict  m pr-merge  q quit",
-}
 
 func (m dashboardModel) View() tea.View {
 	v := tea.NewView(m.frame())
@@ -94,56 +93,75 @@ func (m dashboardModel) age() string {
 	return fmt.Sprintf("%ds", int(m.now().Sub(m.lastGood)/time.Second))
 }
 
-func (m dashboardModel) frame() string {
-	feedN := 3
+// feedMax is the lines of the feed section, title included: the terminal
+// height sets how much of the feed a frame tries to show.
+func (m dashboardModel) feedMax() int {
 	if m.height >= 24 {
-		feedN = 6
+		return 6
 	}
-	head, foot, feed := m.header(), m.footer(), m.feed(feedN)
-	if m.mode == modeConfirm && !m.confirmFits() {
-		return ansi.Hardwrap(confirmTooSmall, m.width, true)
-	}
-
-	// The body and feed give up rows before the footer does: the confirm
-	// block shows the whole argv the Human approves.
-	mid := append(m.body(m.height-len(head)-len(foot)-len(feed)), feed...)
-	if room := max(0, m.height-len(head)-len(foot)); len(mid) > room {
-		mid = mid[:room]
-	}
-	out := append([]string{}, head...)
-	out = append(out, mid...)
-	out = append(out, foot...)
-
-	for i, l := range out {
-		out[i] = ansi.Truncate(l, m.width, "…")
-	}
-	if len(out) > m.height {
-		out = out[:m.height]
-	}
-	return strings.Join(out, "\n")
+	return 3
 }
 
-const confirmTooSmall = "Terminal too small to show the full command. Enlarge it, or esc to cancel."
+// resize sizes every component from the terminal size and the lines the
+// header, notes and footer take. The confirm viewport gets its rows first, so
+// the command the Human approves is never what gives way; then the feed, then
+// the list. A section with no rows left is not drawn.
+func (m *dashboardModel) resize() {
+	w := m.width
+	m.help.SetWidth(w)
+	m.argv.SetWidth(w)
+	m.feed.SetWidth(w)
+	avail := max(0, m.height-len(m.header())-len(m.notes())-len(m.footer()))
+	if m.mode == modeConfirm {
+		rows := min(m.argv.TotalLineCount(), avail)
+		m.argv.SetHeight(rows)
+		avail -= rows
+	}
+	m.feedH = min(m.feedMax(), avail/2)
+	m.listH = avail - m.feedH
 
-// confirmArgvLines is the exact argv the Human approves, broken by Hardwrap
-// into lines of at most m.width cells by Hardwrap's count. x/ansi's
-// StringWidth can measure a line wider, either for a grapheme wider than the
-// terminal or for an ASCII character followed by U+FE0F; confirmFits refuses
-// such a line.
-func (m dashboardModel) confirmArgvLines() []string {
-	return strings.Split(ansi.Hardwrap("Run: "+argvLine(append([]string{m.exe}, m.pending.argv...)), m.width, true), "\n")
+	m.feed.SetContentLines(m.feedLines(w))
+	rows := max(0, m.feedH-1)
+	if m.feedPlaceholder() != "" {
+		rows--
+	}
+	m.feed.SetHeight(max(0, min(rows, m.feed.TotalLineCount())))
+	m.feed.GotoBottom()
+
+	m.list.SetSize(w, max(1, min(m.listH-1, len(m.list.Items()))))
 }
 
-// confirmFits reports whether the header and the whole confirm block fit the
-// terminal, both in height and in width. Without that the Human cannot see
-// what y would run.
-func (m dashboardModel) confirmFits() bool {
-	for _, l := range m.confirmArgvLines() {
-		if ansi.StringWidth(l) > m.width {
-			return false
-		}
+// feedLines is one fitted line per event; the viewport owns which of them
+// show. A line longer than the terminal is cut with a visible ellipsis here,
+// since the viewport would cut it silently.
+func (m dashboardModel) feedLines(w int) []string {
+	lines := make([]string, len(m.events))
+	for i, e := range m.events {
+		lines[i] = ansi.Truncate(eventLine(e), w, "…")
 	}
-	return len(m.header())+len(m.footer()) <= m.height
+	return lines
+}
+
+func (m dashboardModel) frame() string {
+	m.resize()
+	lines := m.header()
+	lines = append(lines, m.notes()...)
+	lines = append(lines, m.body()...)
+	lines = append(lines, m.feedSection()...)
+	if m.mode == modeConfirm {
+		lines = append(lines, strings.Split(m.argv.View(), "\n")...)
+	}
+	lines = append(lines, m.footer()...)
+
+	// The one bound left on the frame: header, notes, footer and the row
+	// titles are plain lines no component bounds, and a terminal shorter than
+	// header plus footer cannot hold them. Every component is sized to fit the
+	// rest, so nothing else is cut here.
+	for i, l := range lines {
+		lines[i] = ansi.Truncate(l, m.width, "…")
+	}
+	lines = lines[:min(len(lines), m.height)]
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
 func (m dashboardModel) header() []string {
@@ -172,38 +190,20 @@ func (m dashboardModel) header() []string {
 	return []string{title + "  " + badge, counts}
 }
 
-// listWindow is the first index of a window of n rows that keeps cur in view
-// when cur lies in the list (0 <= cur < total), and the top otherwise.
-func listWindow(cur, n, total int) int {
-	if cur < 0 || cur >= total || cur < n {
-		return 0
+// notes are the lines between the header and the body.
+func (m dashboardModel) notes() []string {
+	if m.state() == stateStale && m.readErr != nil {
+		return []string{dashRed.Render("Last read failed: " + dashText(m.readErr.Error()))}
 	}
-	return cur - n + 1
+	return nil
 }
 
-// splitRows shares r drawable rows between the failure list (nf rows) and the
-// task list (nt rows), each list that has rows getting at least one. Unused
-// share of one list goes to the other.
-func splitRows(r, nf, nt int) (fs, ts int) {
-	switch {
-	case nf == 0:
-		return 0, min(nt, max(1, r))
-	case nt == 0:
-		return min(nf, max(1, r)), 0
+// body is the list section: a title that counts what the list draws, then the
+// list. The count is the list's own page, not window arithmetic here.
+func (m dashboardModel) body() []string {
+	if m.listH < 1 {
+		return nil
 	}
-	r = max(r, 2)
-	fs = min(nf, r/2)
-	ts = min(nt, r-fs)
-	return min(nf, r-ts), ts
-}
-
-// body renders the failed sources and the task rows. Whenever avail holds the
-// minimal block (the stale "Last read failed" line when present, one failure
-// title and row, the Tasks title and one row) it returns at most avail lines,
-// always draws the selected row, and titles every list it clips with
-// "Showing N of M". Below the minimal block frame() bounds it.
-func (m dashboardModel) body(avail int) []string {
-	var out []string
 	switch m.state() {
 	case stateLoading:
 		return []string{dashFaint.Render("Loading fleet...")}
@@ -212,86 +212,96 @@ func (m dashboardModel) body(avail int) []string {
 	case stateEmpty:
 		return []string{dashFaint.Render("No tasks and no failed sources.")}
 	}
-	stale := m.state() == stateStale
-	if stale && m.readErr != nil {
-		out = append(out, dashRed.Render("Last read failed: "+dashText(m.readErr.Error())))
+	total := len(m.list.Items())
+	if total == 0 {
+		return nil
 	}
-	nf, nt := len(m.failures), len(m.rows)
-	budget := avail - len(out)
-	if nt > 0 {
-		budget-- // the Tasks title
-	}
-	fn, tn := splitRows(budget, nf, nt)
-	failTitle := fn < nf
-	if failTitle {
-		fn, tn = splitRows(budget-1, nf, nt)
-	}
-	fstart := listWindow(m.cur, fn, nf)
-	if fn < nf {
-		out = append(out, dashBold.Render(fmt.Sprintf("Failed sources - Showing %d of %d", fn, nf)))
-	}
-	for i := fstart; i < fstart+fn; i++ {
-		f := m.failures[i]
-		line := m.mark(i) + "x " + dashText(f.Source) + "  " + dashText(fmt.Sprint(f.Err))
-		out = append(out, m.styleLine(i, line, dashRed))
-	}
-
-	if nt == 0 {
-		return out
+	l := m.list
+	l.SetDelegate(dashRows{stale: m.state() == stateStale})
+	drawn := 0
+	var rows []string
+	if m.listH > 1 {
+		start, end := l.Paginator.GetSliceBounds(total)
+		drawn = end - start
+		rows = strings.Split(l.View(), "\n")
 	}
 	title := "Tasks"
-	start := listWindow(m.cur-nf, tn, nt)
-	shown := m.rows[start : start+tn]
-	if tn < nt {
-		title = fmt.Sprintf("Tasks - Showing %d of %d", tn, nt)
+	if len(m.failures) > 0 {
+		title = "Failed sources and tasks"
 	}
-	out = append(out, dashBold.Render(title))
-	for j, ts := range shown {
-		i := nf + start + j
-		phase := dashText(fleet.PhaseFromProjection(ts))
-		if stale {
-			phase += " [stale]"
-		}
-		status := dashText(ts.CurrentDescription)
-		if status == "" {
-			status = dashText(ts.LastStatus)
-		}
-		hn := "  "
-		if fleet.HumanNeeded(ts) {
-			hn = "! "
-		}
-		src := dashText(ts.Source)
-		if src == "" {
-			src = "primary"
-		}
-		id, kind := dashText(ts.ID), dashText(ts.Kind)
-		plain := m.mark(i) + hn + pad(id, 22) + " " + pad(phase, 16) + " " + pad(kind, 7) + " " + pad(src, 16) + " " + status
-		if i == m.cur {
-			out = append(out, dashSelect.Render(plain))
-			continue
-		}
-		cells := m.mark(i) + hn + pad(id, 22) + " " + phaseStyle(phase).Render(pad(phase, 16)) + " " + pad(kind, 7) + " " + pad(src, 16) + " " + status
-		out = append(out, cells)
+	if drawn < total {
+		title += fmt.Sprintf(" - Showing %d of %d (page %d of %d)", drawn, total, l.Paginator.Page+1, l.Paginator.TotalPages)
 	}
-	return out
+	return append([]string{dashBold.Render(title)}, rows...)
 }
 
-func (m dashboardModel) mark(i int) string {
-	if i == m.cur {
-		return "> "
+// dashRows draws a list item as one line: a failed source in red, a task row
+// with its phase colour. The selected item is marked and reversed.
+type dashRows struct{ stale bool }
+
+func (dashRows) Height() int                         { return 1 }
+func (dashRows) Spacing() int                        { return 0 }
+func (dashRows) Update(tea.Msg, *list.Model) tea.Cmd { return nil }
+
+func (d dashRows) Render(w io.Writer, m list.Model, index int, item list.Item) {
+	it := item.(dashItem)
+	mark := "  "
+	if index == m.Index() {
+		mark = "> "
 	}
-	return "  "
+	if it.failure != nil {
+		line := mark + "x " + dashText(it.failure.Source) + "  " + dashText(fmt.Sprint(it.failure.Err))
+		if index == m.Index() {
+			fmt.Fprint(w, dashSelect.Render(line))
+			return
+		}
+		fmt.Fprint(w, dashRed.Render(line))
+		return
+	}
+	ts := it.row
+	phase := dashText(fleet.PhaseFromProjection(*ts))
+	if d.stale {
+		phase += " [stale]"
+	}
+	status := dashText(ts.CurrentDescription)
+	if status == "" {
+		status = dashText(ts.LastStatus)
+	}
+	hn := "  "
+	if fleet.HumanNeeded(*ts) {
+		hn = "! "
+	}
+	src := dashText(ts.Source)
+	if src == "" {
+		src = "primary"
+	}
+	id, kind := dashText(ts.ID), dashText(ts.Kind)
+	if index == m.Index() {
+		fmt.Fprint(w, dashSelect.Render(mark+hn+pad(id, 22)+" "+pad(phase, 16)+" "+pad(kind, 7)+" "+pad(src, 16)+" "+status))
+		return
+	}
+	fmt.Fprint(w, mark+hn+pad(id, 22)+" "+phaseStyle(phase).Render(pad(phase, 16))+" "+pad(kind, 7)+" "+pad(src, 16)+" "+status)
 }
 
-func (m dashboardModel) styleLine(i int, line string, st lipgloss.Style) string {
-	if i == m.cur {
-		return dashSelect.Render(line)
+// feedPlaceholder is the line shown in place of events while there are none.
+func (m dashboardModel) feedPlaceholder() string {
+	switch {
+	case m.eventErr != nil:
+		return ""
+	case !m.feedLoaded:
+		return dashFaint.Render("Loading events...")
+	case len(m.events) == 0:
+		return dashFaint.Render("No events yet.")
 	}
-	return st.Render(line)
+	return ""
 }
 
-func (m dashboardModel) feed(n int) []string {
-	shown := m.events[max(0, len(m.events)-(n-1)):]
+// feedSection is the event feed: a title that counts what the viewport draws,
+// then the viewport.
+func (m dashboardModel) feedSection() []string {
+	if m.feedH < 1 {
+		return nil
+	}
 	var title string
 	if m.eventErr != nil {
 		title = dashRed.Render("Events - unreadable: " + dashText(m.eventErr.Error()))
@@ -300,20 +310,17 @@ func (m dashboardModel) feed(n int) []string {
 		if m.skipped > 0 {
 			t += fmt.Sprintf(" (%d malformed lines skipped)", m.skipped)
 		}
-		if len(shown) < len(m.events) {
-			t += fmt.Sprintf(" - Showing %d of the last %d read", len(shown), len(m.events))
+		if shown, all := m.feed.VisibleLineCount(), m.feed.TotalLineCount(); shown < all {
+			t += fmt.Sprintf(" - Showing %d of the last %d read", shown, all)
 		}
 		title = dashBold.Render(t)
 	}
 	out := []string{title}
-	switch {
-	case !m.feedLoaded && m.eventErr == nil:
-		out = append(out, dashFaint.Render("Loading events..."))
-	case len(m.events) == 0 && m.eventErr == nil:
-		out = append(out, dashFaint.Render("No events yet."))
+	if p := m.feedPlaceholder(); p != "" && m.feedH > 1 {
+		out = append(out, p)
 	}
-	for _, e := range shown {
-		out = append(out, eventLine(e))
+	if m.feed.Height() > 0 {
+		out = append(out, strings.Split(m.feed.View(), "\n")...)
 	}
 	return out
 }
@@ -323,6 +330,35 @@ func eventLine(e orchestrator.Record) string {
 	return strings.TrimRight(fmt.Sprintf("%s %s %s %s %s", at, dashText(e.Type), dashText(e.Producer), dashText(e.Key), dashText(e.Payload)), " ")
 }
 
+// helpLines are the key footer, built from the action table. The first line
+// holds the movement keys and the task actions, the second the rest.
+func (m dashboardModel) helpLines() []string {
+	move := key.NewBinding(key.WithKeys("up", "k", "down", "j"), key.WithHelp("j/k", "move"))
+	quit := key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit"))
+	first, second := []key.Binding{move}, []key.Binding{}
+	for i := range dashActions {
+		if i < 8 {
+			first = append(first, dashActions[i].keyBinding())
+		} else {
+			second = append(second, dashActions[i].keyBinding())
+		}
+	}
+	return []string{m.help.ShortHelpView(first), m.help.ShortHelpView(append(second, quit))}
+}
+
+// fieldView draws one form field. A value holding text the dashboard must not
+// draw raw (a pasted bidi override, say) is shown escaped, with the cursor at
+// its end; the field keeps the real value.
+func fieldView(in textinput.Model, prompt string, w int) string {
+	in.Prompt = prompt
+	in.SetWidth(max(1, w-lipgloss.Width(prompt)-1))
+	if v := in.Value(); dashText(v) != v {
+		in.SetValue(dashText(v))
+		in.CursorEnd()
+	}
+	return in.View()
+}
+
 func (m dashboardModel) footer() []string {
 	var out []string
 	switch m.mode {
@@ -330,23 +366,26 @@ func (m dashboardModel) footer() []string {
 		p := m.pending
 		out = append(out, dashBold.Render(p.action.name))
 		for i, f := range p.action.fields {
-			cur := " "
+			cur := "  "
 			if i == p.field {
-				cur = ">"
+				cur = "> "
 			}
 			req := ""
 			if f.required {
 				req = " (required)"
 			}
-			val := dashText(p.values[i])
-			if i == p.field {
-				val += "_"
-			}
-			out = append(out, fmt.Sprintf("%s %s%s: %s", cur, f.label, req, val))
+			out = append(out, fieldView(p.inputs[i], cur+f.label+req+": ", m.width))
 		}
 		out = append(out, dashFaint.Render("enter next/submit  esc cancel"))
 	case modeConfirm:
-		out = append(out, m.confirmArgvLines()...)
+		switch {
+		case m.argvShown():
+			out = append(out, dashFaint.Render("The whole command is shown."))
+		case m.argv.Height() >= 1 && !m.argv.AtBottom():
+			out = append(out, dashRed.Render("Scroll down (down, pgdn): y runs only once the whole command is shown."))
+		default:
+			out = append(out, dashRed.Render("Terminal too small to show the whole command: enlarge it, or esc to cancel."))
+		}
 		out = append(out, dashFaint.Render("y run  esc cancel"))
 	case modeRunning:
 		out = append(out, dashFaint.Render("Running..."))
@@ -365,9 +404,7 @@ func (m dashboardModel) footer() []string {
 				out = append(out, dashText(l))
 			}
 		}
-		for _, l := range dashHelp {
-			out = append(out, dashFaint.Render(l))
-		}
+		out = append(out, m.helpLines()...)
 	}
 	if m.notice != "" {
 		out = append(out, dashRed.Render(dashText(m.notice)))

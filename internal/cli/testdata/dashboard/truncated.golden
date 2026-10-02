@@ -1,6 +1,6 @@
 munsu dashboard /h  REFRESHED 0s ago
 unresolved 30  Human-needed 0  failed sources 0
-Tasks - Showing 13 of 30
+Tasks - Showing 13 of 30 (page 1 of 3)
 >   t-00                   working          ship    primary          implementing
     t-01                   working          ship    primary          implementing
     t-02                   working          ship    primary          implementing
@@ -20,5 +20,5 @@ Events - Showing 5 of the last 40 read
 12:00:38 task.status t k working: step 38
 12:00:39 task.status t k working: step 39
 12:00:40 task.status t k working: step 40
-j/k move  b block  u unblock  d done  t retry  o reopen  x teardown  s send  p promote
+j/k move  b block  u unblock  d done  t retry  o reopen  x teardown  p promote  s send
 h hold  e resolve  c complete  R retire  V recover  C converge  v record-verdict  m pr-merge  q quit

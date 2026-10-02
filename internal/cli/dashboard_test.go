@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -32,8 +33,11 @@ var ansiSeq = regexp.MustCompile(`\x1b\[[0-9;:]*m`)
 func testDashModel() dashboardModel {
 	m := newDashboardModel("/h", "/bin/munsu")
 	m.now = func() time.Time { return dashNow }
-	m.width, m.height = 100, 24
-	return m
+	return resized(m, 100, 24)
+}
+
+func resized(m dashboardModel, w, h int) dashboardModel {
+	return send(m, tea.WindowSizeMsg{Width: w, Height: h})
 }
 
 func send(m dashboardModel, msg tea.Msg) dashboardModel {
@@ -48,6 +52,10 @@ func press(m dashboardModel, keys ...string) dashboardModel {
 			m = send(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 		case "esc":
 			m = send(m, tea.KeyPressMsg{Code: tea.KeyEscape})
+		case "pgdown":
+			m = send(m, tea.KeyPressMsg{Code: tea.KeyPgDown})
+		case "down":
+			m = send(m, tea.KeyPressMsg{Code: tea.KeyDown})
 		default:
 			m = send(m, tea.KeyPressMsg{Code: []rune(k)[0], Text: k})
 		}
@@ -76,7 +84,12 @@ func row(id, state, desc, source, home string) fleet.TaskSnapshot {
 
 func assertGolden(t *testing.T, name, got string) {
 	t.Helper()
-	got = ansiSeq.ReplaceAllString(got, "") + "\n"
+	// The frame pads lines to a common width; the golden keeps no padding.
+	lines := strings.Split(ansiSeq.ReplaceAllString(got, ""), "\n")
+	for i, l := range lines {
+		lines[i] = strings.TrimRight(l, " ")
+	}
+	got = strings.Join(lines, "\n") + "\n"
 	path := filepath.Join("testdata", "dashboard", name+".golden")
 	if os.Getenv("UPDATE_GOLDEN") == "1" {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -250,7 +263,7 @@ func actionFixture(calls *[]execCall) dashboardModel {
 
 func selectTask(t *testing.T, m dashboardModel, id string) dashboardModel {
 	t.Helper()
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 40; i++ {
 		if m.sel.ID == id {
 			return m
 		}
@@ -283,8 +296,8 @@ func TestDashboardActionArgv(t *testing.T) {
 			[]string{"--home", "/h", "decision-hold", "resolve", "approach", "--answer", "use bubbletea", "--from", "p-1", "--grantor", "human", "--channel", "chat", "--quote", "go ahead; rm -rf /", "--unblock", "dep-a", "--unblock", "dep-b"}},
 		{"complete keys", "p-1", "c", append([]string{"k1 k2", ""}, words...),
 			[]string{"--home", "/h", "decision-hold", "complete", "p-1", "k1", "k2", "--grantor", "human", "--channel", "chat", "--quote", "go ahead; rm -rf /"}},
-		{"complete none", "p-1", "c", append([]string{"", "y"}, words...),
-			[]string{"--home", "/h", "decision-hold", "complete", "p-1", "--grantor", "human", "--channel", "chat", "--quote", "go ahead; rm -rf /", "--none"}},
+		{"complete none runs with no words", "p-1", "c", []string{"", "y", "", "", ""},
+			[]string{"--home", "/h", "decision-hold", "complete", "p-1", "--none"}},
 		{"retire from a captain row", "c-1", "R", nil, []string{"--home", "/h", "captain", "retire", "/h/captains/alpha"}},
 		{"retire from a failed home", "", "R", nil, []string{"--home", "/h", "captain", "retire", "/h/captains/beta"}},
 		{"converge", "p-1", "C", nil, []string{"--home", "/h", "captain", "converge"}},
@@ -354,6 +367,9 @@ func TestDashboardSelectionFollowsRowAcrossRefresh(t *testing.T) {
 		row("c-1", "working", "captain task", "captain:alpha", "/h/captains/alpha"),
 		row("p-1", "working", "primary task", "primary", ""),
 	}, nil, nil))
+	if got := m.list.SelectedItem().(dashItem); m.targetOf(got) != m.sel || got.row.ID != "c-1" {
+		t.Fatalf("the highlighted row is %q, want the selected row c-1", got.row.ID)
+	}
 	press(m, "d", "y")
 	want := []string{"--home", "/h/captains/alpha", "task", "done", "c-1"}
 	if len(calls) != 1 || !reflect.DeepEqual(calls[0].args, want) {
@@ -361,14 +377,15 @@ func TestDashboardSelectionFollowsRowAcrossRefresh(t *testing.T) {
 	}
 }
 
-// A words form never submits while grantor, channel or quote is empty.
+// A form that carries the Human's words (resolve, pr-merge) never submits
+// while grantor, channel or quote is empty. complete takes them optionally
+// and is not in this table.
 func TestDashboardWordsFormRequiresWords(t *testing.T) {
 	forms := []struct {
 		key    string
 		fields []string // values in prompt order, words last
 	}{
 		{"e", []string{"k", "a", "", "human", "chat", "quote"}},
-		{"c", []string{"", "", "human", "chat", "quote"}},
 		{"m", []string{"https://github.com/o/r/pull/1", "human", "chat", "quote"}},
 	}
 	for _, f := range forms {
@@ -443,89 +460,6 @@ func TestDashboardAgedReadIsStale(t *testing.T) {
 	}
 }
 
-// Moving the cursor past the first screen keeps the selected row in the frame.
-func TestDashboardScrollKeepsSelectedRowVisible(t *testing.T) {
-	var tasks []fleet.TaskSnapshot
-	for i := 0; i < 30; i++ {
-		tasks = append(tasks, row(fmt.Sprintf("t-%02d", i), "working", "x", "primary", ""))
-	}
-	m := send(testDashModel(), goodRead(dashNow, tasks, nil, nil))
-	for i := 0; i < 25; i++ {
-		m = press(m, "j")
-	}
-	found := false
-	for _, l := range strings.Split(ansiSeq.ReplaceAllString(m.frame(), ""), "\n") {
-		if strings.HasPrefix(l, "> ") && strings.Contains(l, "t-25") {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("selected row t-25 is not in the frame:\n%s", ansiSeq.ReplaceAllString(m.frame(), ""))
-	}
-
-	// 30 failed homes and 3 tasks, from the tallest terminal down to the
-	// minimal block: header 2, help 2, feed 3, and a failure title and row
-	// plus a Tasks title and row (4) make 11 lines. The cursor visits every
-	// row at every height.
-	var failures []fleet.SourceFailure
-	for i := 0; i < 30; i++ {
-		failures = append(failures, fleet.SourceFailure{Source: fmt.Sprintf("captain:c%02d", i), Err: errors.New("unreadable")})
-	}
-	tasks = tasks[:3]
-	events := []orchestrator.Record{ev(1, "task.status", "t", "k", "a"), ev(2, "task.status", "t", "k", "b"), ev(3, "task.status", "t", "k", "c")}
-	base := send(testDashModel(), goodRead(dashNow, tasks, failures, events))
-	count := func(lines []string, re *regexp.Regexp) int {
-		n := 0
-		for _, l := range lines {
-			if re.MatchString(l) {
-				n++
-			}
-		}
-		return n
-	}
-	failRow, taskRow := regexp.MustCompile(`^[> ] x captain:c\d\d`), regexp.MustCompile(`^[> ] [! ] t-\d\d`)
-	reported := map[string]bool{}
-	fail := func(kind, format string, args ...any) {
-		if !reported[kind] {
-			reported[kind] = true
-			t.Errorf(kind+" "+format, args...)
-		}
-	}
-	for h := 24; h >= 11; h-- {
-		for cur := 0; cur < 33; cur++ {
-			m := base
-			m.height = h
-			for i := 0; i < cur; i++ {
-				m = press(m, "j")
-			}
-			lines := strings.Split(ansiSeq.ReplaceAllString(m.frame(), ""), "\n")
-			frame := strings.Join(lines, "\n")
-			want := fmt.Sprintf("t-%02d", cur-30)
-			if cur < 30 {
-				want = fmt.Sprintf("captain:c%02d", cur)
-			}
-			selected := false
-			for _, l := range lines {
-				if strings.HasPrefix(l, "> ") && strings.Contains(l, want) {
-					selected = true
-				}
-			}
-			if !selected {
-				fail("(a)", "height %d cursor %d: selected row %s is not drawn with its mark:\n%s", h, cur, want, frame)
-			}
-			if n := count(lines, failRow); n < 30 && !strings.Contains(frame, fmt.Sprintf("Failed sources - Showing %d of 30", n)) {
-				fail("(b)", "height %d cursor %d: %d of 30 failed sources drawn, title lacks \"Showing %d of 30\":\n%s", h, cur, n, n, frame)
-			}
-			if n := count(lines, taskRow); n < 3 && !strings.Contains(frame, fmt.Sprintf("Tasks - Showing %d of 3", n)) {
-				fail("(b)", "height %d cursor %d: %d of 3 tasks drawn, title lacks \"Showing %d of 3\":\n%s", h, cur, n, n, frame)
-			}
-			if count(lines, regexp.MustCompile(`^Events`)) == 0 {
-				fail("(c)", "height %d cursor %d: the Events title is not in the frame:\n%s", h, cur, frame)
-			}
-		}
-	}
-}
-
 // The action runs on the identity captured at selection even when that row
 // vanishes before y; it never falls to whichever row the cursor landed on.
 func TestDashboardCapturedRowVanishesBeforeConfirm(t *testing.T) {
@@ -541,10 +475,9 @@ func TestDashboardCapturedRowVanishesBeforeConfirm(t *testing.T) {
 }
 
 // pr-merge confirm state: the longest argv the dashboard builds.
-func prMergeConfirm(t *testing.T, calls *[]execCall, width, height int) (dashboardModel, []string) {
+func prMergeConfirm(t *testing.T, calls *[]execCall, width, height int) dashboardModel {
 	t.Helper()
-	m := selectTask(t, actionFixture(calls), "p-1")
-	m.width, m.height = width, height
+	m := resized(selectTask(t, actionFixture(calls), "p-1"), width, height)
 	m = press(m, "m")
 	fields := []string{"https://github.com/some-org/some-repo/pull/12345", "the human", "the chat channel", "yes merge this one now, after reading the verdict"}
 	for _, v := range fields {
@@ -554,14 +487,13 @@ func prMergeConfirm(t *testing.T, calls *[]execCall, width, height int) (dashboa
 	if m.mode != modeConfirm {
 		t.Fatalf("mode = %v, want confirm", m.mode)
 	}
-	return m, m.pending.argv
+	return m
 }
 
 // sendConfirm is a send action in confirm state with the pasted line value.
 func sendConfirm(t *testing.T, calls *[]execCall, value string, width, height int) dashboardModel {
 	t.Helper()
-	m := selectTask(t, actionFixture(calls), "p-1")
-	m.width, m.height = width, height
+	m := resized(selectTask(t, actionFixture(calls), "p-1"), width, height)
 	m = press(m, "s")
 	m = send(m, tea.PasteMsg{Content: value})
 	m = press(m, "enter")
@@ -571,58 +503,119 @@ func sendConfirm(t *testing.T, calls *[]execCall, value string, width, height in
 	return m
 }
 
-// The confirm step shows every argv element, wrapped, never clipped; when a
-// single grapheme is wider than the terminal it shows the enlarge notice and
-// y runs nothing.
+func dashNoSpace(s string) string {
+	return strings.Join(strings.Fields(s), "")
+}
+
+// confirmRows are the frame lines the confirm viewport drew: the rows above
+// the two confirm hint lines.
+func confirmRows(m dashboardModel) []string {
+	lines := strings.Split(ansi.Strip(m.frame()), "\n")
+	h := m.argv.Height()
+	if len(lines) < 2+h {
+		return nil
+	}
+	return lines[len(lines)-2-h : len(lines)-2]
+}
+
+// scrollDrawn scrolls the confirm viewport one line at a time to its bottom
+// and returns the non-space runes the frames drew on the way.
+func scrollDrawn(m dashboardModel) (dashboardModel, string) {
+	var drawn strings.Builder
+	for {
+		rows := confirmRows(m)
+		if m.argv.AtBottom() {
+			drawn.WriteString(strings.Join(rows, ""))
+			break
+		}
+		drawn.WriteString(rows[0])
+		m = press(m, "down")
+	}
+	return m, dashNoSpace(drawn.String())
+}
+
+// The confirm viewport draws every rune of the command: y runs only when the
+// frames, paged from the top to the bottom, drew every non-space rune of it
+// (a grapheme the wrap cannot place is never drawn, so y refuses), and an
+// ASCII command runs at every width and height that leaves the viewport a row.
 func TestDashboardConfirmShowsFullArgv(t *testing.T) {
-	// The confirm lines are at most the width and join back to the argv, at
-	// every width, so every token boundary (w and w+1 cells) is crossed.
-	t.Run("every width", func(t *testing.T) {
-		for w := 1; w <= 120; w++ {
-			var calls []execCall
-			m, argv := prMergeConfirm(t, &calls, w, 1000)
-			lines := strings.Split(ansiSeq.ReplaceAllString(m.frame(), ""), "\n")
-			for _, l := range lines {
-				if ansi.StringWidth(l) > w {
-					t.Fatalf("width %d: line wider than the terminal: %q", w, l)
+	wantOf := func(m dashboardModel) string {
+		return dashNoSpace("Run: " + argvLine(append([]string{m.exe}, m.pending.argv...)))
+	}
+	// The footer claims "The whole command is shown." exactly when y's gate
+	// (argvShown) passes. A claim narrower terminals cut is not asserted.
+	assertClaim := func(t *testing.T, name string, w, h int, m dashboardModel) {
+		t.Helper()
+		const claim = "The whole command is shown."
+		got := strings.Contains(ansi.Strip(m.frame()), claim)
+		if shown := m.argvShown(); got && !shown || !got && shown && w >= len(claim) {
+			t.Fatalf("%s %dx%d: footer claim = %v, argvShown = %v:\n%s", name, w, h, got, shown, m.frame())
+		}
+	}
+	run := func(t *testing.T, name string, build func(calls *[]execCall, w, h int) dashboardModel, widths, heights []int, mustRun func(w, h int) bool) {
+		t.Helper()
+		ran := false
+		var calls []execCall
+		start := build(&calls, 100, 40)
+		for _, h := range heights {
+			for _, w := range widths {
+				calls = nil
+				m := resized(start, w, h)
+				m.argv.SetYOffset(0)
+				m, drawn := scrollDrawn(m)
+				assertClaim(t, name, w, h, m)
+				press(m, "y")
+				if len(calls) == 1 {
+					ran = true
+					if want := wantOf(m); drawn != want {
+						t.Fatalf("%s %dx%d: y ran but the frames drew %q, not the whole command %q", name, w, h, drawn, want)
+					}
+				} else if mustRun(w, h) {
+					t.Fatalf("%s %dx%d: y did not run", name, w, h)
 				}
 			}
-			want := "Run: " + argvLine(append([]string{m.exe}, argv...))
-			if got := strings.Join(lines[:len(lines)-1], ""); !strings.HasSuffix(got, want) {
-				t.Fatalf("width %d: frame does not end in the whole argv\nwant %q\n--- frame ---\n%s", w, want, strings.Join(lines, "\n"))
-			}
+		}
+		if !ran {
+			t.Fatalf("%s: y never ran", name)
+		}
+	}
+	seq := func(from, to int) []int {
+		var out []int
+		for i := from; i <= to; i++ {
+			out = append(out, i)
+		}
+		return out
+	}
+	// Header 2, hints 2, one row: 5 lines is the least that draws anything.
+	run(t, "pr-merge", func(calls *[]execCall, w, h int) dashboardModel { return prMergeConfirm(t, calls, w, h) },
+		seq(1, 120), []int{5, 6, 9, 40}, func(int, int) bool { return true })
+	run(t, "grapheme pairs", func(calls *[]execCall, w, h int) dashboardModel {
+		return sendConfirm(t, calls, "a\u2764\ufe0f\u2764\ufe0f\u2764\ufe0fb \u754c\u754c\u754c ab\u754ccd", w, h)
+	}, seq(1, 40), []int{5, 8, 40}, func(int, int) bool { return false })
+
+	t.Run("a grapheme wider than the terminal runs nothing", func(t *testing.T) {
+		var calls []execCall
+		m := sendConfirm(t, &calls, "\u754c", 1, 40)
+		m, _ = scrollDrawn(m)
+		m = press(m, "y")
+		if len(calls) != 0 || m.mode != modeConfirm {
+			t.Fatalf("calls = %v, mode = %v; want no exec and still confirming", calls, m.mode)
 		}
 	})
-	t.Run("graphemes that fit", func(t *testing.T) {
+	t.Run("scrolled down in a terminal with no argv row claims nothing", func(t *testing.T) {
 		var calls []execCall
-		m := sendConfirm(t, &calls, "a\u2764\ufe0f\u2764\ufe0f\u2764\ufe0fb", 3, 1000)
-		lines := strings.Split(ansiSeq.ReplaceAllString(m.frame(), ""), "\n")
-		for _, l := range lines {
-			if ansi.StringWidth(l) > m.width {
-				t.Errorf("line wider than the terminal: %q", l)
-			}
+		m := resized(prMergeConfirm(t, &calls, 100, 40), 30, 4)
+		for i := 0; i < 40; i++ {
+			m = press(m, "down")
 		}
-		want := "Run: " + argvLine(append([]string{m.exe}, m.pending.argv...))
-		if got := strings.Join(lines[:len(lines)-1], ""); !strings.HasSuffix(got, want) {
-			t.Fatalf("frame does not end in the whole argv\nwant %q\n--- frame ---\n%s", want, strings.Join(lines, "\n"))
-		}
-		press(m, "y")
-		if len(calls) != 1 {
-			t.Fatalf("calls = %d, want 1", len(calls))
+		assertClaim(t, "pr-merge", 30, 4, m)
+		if !strings.Contains(ansi.Strip(m.frame()), "too small") {
+			t.Fatalf("no too-small notice:\n%s", m.frame())
 		}
 	})
-	t.Run("grapheme wider than the terminal", func(t *testing.T) {
+	t.Run("a viewport with no row runs nothing", func(t *testing.T) {
 		var calls []execCall
-		m := sendConfirm(t, &calls, "\u754c", 1, 1000)
-		notice := strings.Split(ansiSeq.ReplaceAllString(m.frame(), ""), "\n")
-		for _, l := range notice {
-			if ansi.StringWidth(l) > m.width {
-				t.Errorf("notice line wider than the terminal: %q", l)
-			}
-		}
-		if got := strings.Join(notice, ""); got != confirmTooSmall {
-			t.Fatalf("frame = %q, want the enlarge notice %q", got, confirmTooSmall)
-		}
+		m := prMergeConfirm(t, &calls, 100, 4)
 		m = press(m, "y")
 		if len(calls) != 0 || m.mode != modeConfirm {
 			t.Fatalf("calls = %v, mode = %v; want no exec and still confirming", calls, m.mode)
@@ -630,36 +623,33 @@ func TestDashboardConfirmShowsFullArgv(t *testing.T) {
 	})
 }
 
-// A short terminal keeps the confirm block; the task body gives up rows.
-func TestDashboardShortTerminalKeepsConfirmBlock(t *testing.T) {
+// y waits for the whole command: at the top of a command taller than its
+// viewport it runs nothing and the block says to scroll; once the viewport is
+// at its bottom it runs; scrolled back up it waits again.
+func TestDashboardConfirmYWaitsForWholeArgv(t *testing.T) {
 	var calls []execCall
-	m, argv := prMergeConfirm(t, &calls, 100, 9)
-	lines := strings.Split(ansiSeq.ReplaceAllString(m.frame(), ""), "\n")
-	if len(lines) > m.height {
-		t.Fatalf("frame has %d lines, terminal has %d", len(lines), m.height)
-	}
-	want := "Run: " + argvLine(append([]string{m.exe}, argv...))
-	if got := strings.Join(lines, ""); !strings.Contains(got, want) || !strings.Contains(got, "y run") {
-		t.Fatalf("confirm block cut by the short terminal:\n%s", strings.Join(lines, "\n"))
-	}
-}
-
-// When the confirm block cannot fit at all, the frame says so and y runs nothing.
-func TestDashboardConfirmTooSmallRefusesY(t *testing.T) {
-	var calls []execCall
-	m, _ := prMergeConfirm(t, &calls, 60, 24)
-	m = send(m, tea.WindowSizeMsg{Width: 60, Height: 4})
-	if f := ansiSeq.ReplaceAllString(m.frame(), ""); !strings.Contains(f, "Enlarge") {
-		t.Fatalf("frame lacks the enlarge notice:\n%s", f)
+	m := prMergeConfirm(t, &calls, 40, 9)
+	if m.argv.AtBottom() {
+		t.Fatalf("fixture: the command fits the %d-row viewport", m.argv.Height())
 	}
 	m = press(m, "y")
-	if len(calls) != 0 || m.mode != modeConfirm {
-		t.Fatalf("calls = %v, mode = %v; want no exec and still confirming", calls, m.mode)
+	if len(calls) != 0 || m.mode != modeConfirm || !strings.Contains(m.frame(), "Scroll down") {
+		t.Fatalf("calls = %v, mode = %v; want no exec, still confirming, and a scroll notice:\n%s", calls, m.mode, m.frame())
 	}
-	m = send(m, tea.WindowSizeMsg{Width: 60, Height: 24})
+	for i := 0; i < 50 && !m.argv.AtBottom(); i++ {
+		m = press(m, "pgdown")
+	}
+	if !m.argv.AtBottom() || !strings.Contains(m.frame(), "The whole command is shown.") {
+		t.Fatalf("not at the bottom after paging:\n%s", m.frame())
+	}
+	m = send(m, tea.KeyPressMsg{Code: tea.KeyPgUp})
 	press(m, "y")
+	if len(calls) != 0 {
+		t.Fatalf("calls = %v after scrolling back up, want y to wait again", calls)
+	}
+	press(send(m, tea.KeyPressMsg{Code: tea.KeyPgDown}), "y")
 	if len(calls) != 1 {
-		t.Fatalf("calls = %v, want one exec after the terminal grew", calls)
+		t.Fatalf("calls = %d at the bottom, want 1", len(calls))
 	}
 }
 
@@ -719,14 +709,13 @@ func TestDashboardHostileTextIsEscaped(t *testing.T) {
 		assertNoRaw(t, "other classes", f)
 		assertShown(t, "other classes", f, "ship    primary          "+shown, "t p k "+shown)
 
-		var calls []execCall
-		m := selectTask(t, actionFixture(&calls), "p-1")
-		m = press(m, "s")
-		m = send(m, tea.PasteMsg{Content: in})
-		m = press(m, "enter")
+		// A captured row ID is outside text too: it reaches the confirm argv.
+		m := send(testDashModel(), goodRead(dashNow, []fleet.TaskSnapshot{{ID: "t" + in, Kind: "ship", CurrentState: "working", Source: "primary"}}, nil, nil))
+		m.run = func(string, []string) tea.Cmd { return nil }
+		m = press(m, "d")
 		f = m.frame()
 		assertNoRaw(t, "other classes argv", f)
-		assertShown(t, "other classes argv", f, `"`+shown+`"`)
+		assertShown(t, "other classes argv", f, `"t`+shown+`"`)
 	})
 	t.Run("status falls back to last status", func(t *testing.T) {
 		hostileRow.CurrentDescription, hostileRow.LastStatus = "", "ls\x00"
@@ -748,6 +737,8 @@ func TestDashboardHostileTextIsEscaped(t *testing.T) {
 		assertShown(t, "failed first read", f, `FAILED fr\x00\u202e\x1b[8m`, `Fleet read failed: fr\x00\u202e\x1b[8m`)
 	})
 	t.Run("form value and confirm argv", func(t *testing.T) {
+		// textinput drops control runes (ESC, NUL) from a paste and keeps a
+		// format rune such as the bidi override, which the field draws escaped.
 		var calls []execCall
 		m := selectTask(t, actionFixture(&calls), "p-1")
 		m.exe = "/bin/mu\x00"
@@ -755,15 +746,15 @@ func TestDashboardHostileTextIsEscaped(t *testing.T) {
 		m = send(m, tea.PasteMsg{Content: "hi\x1b[8mSECRET\x00\u202e"})
 		f := m.frame()
 		assertNoRaw(t, "form", f)
-		assertShown(t, "form", f, `hi\x1b[8mSECRET\x00\u202e`)
+		assertShown(t, "form", f, `hi[8mSECRET\u202e`)
 		m = press(m, "enter")
 		if m.mode != modeConfirm {
 			t.Fatalf("mode = %v, want confirm", m.mode)
 		}
 		f = m.frame()
 		assertNoRaw(t, "confirm", f)
-		assertShown(t, "confirm", f, `"hi\x1b[8mSECRET\x00\u202e"`, `"/bin/mu\x00"`)
-		if got := m.pending.argv[len(m.pending.argv)-1]; got != "hi\x1b[8mSECRET\x00\u202e" {
+		assertShown(t, "confirm", f, `"hi[8mSECRET\u202e"`, `"/bin/mu\x00"`)
+		if got := m.pending.argv[len(m.pending.argv)-1]; got != "hi[8mSECRET\u202e" {
 			t.Fatalf("argv element changed to %q; display escaping must not alter what runs", got)
 		}
 	})
@@ -775,43 +766,6 @@ func TestDashboardHostileTextIsEscaped(t *testing.T) {
 		assertNoRaw(t, "result", f)
 		assertShown(t, "result", f, `n\x00`, `"/bin/mu\x00" "a\u202e"`, `er\x00`, `o\x1b[8m`, `line\u202e`)
 	})
-}
-
-// The confirm step runs only when the header and the whole confirm block fit
-// the terminal exactly; one row shorter it runs nothing, even though the
-// footer alone would still fit.
-func TestDashboardConfirmFitBoundary(t *testing.T) {
-	var calls []execCall
-	m, _ := prMergeConfirm(t, &calls, 60, 40)
-	lines := strings.Split(ansiSeq.ReplaceAllString(m.frame(), ""), "\n")
-	const header = 2
-	if !strings.HasPrefix(lines[0], "munsu dashboard") || !strings.HasPrefix(lines[1], "unresolved") {
-		t.Fatalf("header is not two lines:\n%s", strings.Join(lines, "\n"))
-	}
-	footer := 0
-	for i, l := range lines {
-		if strings.HasPrefix(l, "Run: ") {
-			footer = len(lines) - i
-			break
-		}
-	}
-	if footer == 0 {
-		t.Fatalf("no confirm block in the frame:\n%s", strings.Join(lines, "\n"))
-	}
-
-	exact := send(m, tea.WindowSizeMsg{Width: 60, Height: header + footer})
-	if n := len(strings.Split(exact.frame(), "\n")); n > exact.height {
-		t.Fatalf("frame has %d lines at height %d", n, exact.height)
-	}
-	press(exact, "y")
-	if len(calls) != 1 {
-		t.Fatalf("calls = %d at the exact fit height %d, want 1", len(calls), header+footer)
-	}
-	short := send(m, tea.WindowSizeMsg{Width: 60, Height: header + footer - 1})
-	press(short, "y")
-	if len(calls) != 1 {
-		t.Fatalf("calls = %d one row below the fit height, want no further exec", len(calls))
-	}
 }
 
 // A fresh row whose pane state is unknown is never rendered green.
@@ -845,19 +799,15 @@ func TestDashboardFrameLinesAreBoundedAndClosed(t *testing.T) {
 		row("t-sel", "working", long, "primary", ""),
 		row("t-next", "working", "next", "primary", ""),
 	}, nil, []orchestrator.Record{ev(1, "task.status", "t", "k", long)}))
-	base.height = 12
-	wide := base
-	wide.width = 1000
-	wideLines := strings.Split(wide.frame(), "\n")
+	trim := func(l string) string { return strings.TrimRight(ansi.Strip(l), " ") }
+	wideLines := strings.Split(resized(base, 1000, 12).frame(), "\n")
 	for w := 1; w <= 200; w++ {
-		m := base
-		m.width = w
-		for n, l := range strings.Split(m.frame(), "\n") {
+		for n, l := range strings.Split(resized(base, w, 12).frame(), "\n") {
 			if got := ansi.StringWidth(l); got > w {
 				t.Fatalf("width %d line %d is %d cells: %q", w, n, got, l)
 			}
 			// A line the width cuts ends in a visible ellipsis.
-			if ansi.StringWidth(wideLines[n]) > w && !strings.HasSuffix(ansi.Strip(l), "…") {
+			if ansi.StringWidth(trim(wideLines[n])) > w && !strings.HasSuffix(trim(l), "…") {
 				t.Fatalf("width %d line %d is cut without a visible ellipsis: %q", w, n, l)
 			}
 			if strings.Contains(ansiSeq.ReplaceAllString(l, ""), "\x1b") {
@@ -949,5 +899,182 @@ func TestDashboardRecoverResolvesRegistryID(t *testing.T) {
 	m = press(m, "j", "V")
 	if m.mode != modeBrowse || len(calls) != 1 || !strings.Contains(m.notice, "not bindable") {
 		t.Fatalf("stray home: mode=%v calls=%d notice=%q; want not bindable and no exec", m.mode, len(calls), m.notice)
+	}
+}
+
+// The shown counts come from the components, and the frame stays inside the
+// terminal, in fresh, stale, zero-task, zero-failure and no-event states, at
+// every height from tall down to where header and footer alone fill the
+// terminal, with the cursor on every item. A "Showing N of M" title is true
+// (N rows drawn), a list with no such title drew all its rows, the selected
+// row is drawn, and the footer is never what gets cut.
+func TestDashboardFrameCountsAndBounds(t *testing.T) {
+	type state struct {
+		name       string
+		nf, nt, ne int
+		stale      bool
+	}
+	states := []state{
+		{"fresh", 30, 3, 3, false},
+		{"fresh many tasks", 0, 30, 40, false},
+		{"stale", 30, 3, 3, true},
+		{"stale many tasks", 2, 30, 40, true},
+		{"zero tasks", 5, 0, 3, false},
+		{"zero failures", 0, 6, 3, false},
+		{"zero events", 3, 6, 0, false},
+	}
+	titleRe := regexp.MustCompile(`^(Tasks|Failed sources and tasks)( - Showing (\d+) of (\d+) \(page \d+ of \d+\))?$`)
+	eventsRe := regexp.MustCompile(`^Events.*?( - Showing (\d+) of the last (\d+) read)?$`)
+	itemRe := regexp.MustCompile(`^[> ] (x captain:c\d\d|[! ] t-\d\d)`)
+	eventRe := regexp.MustCompile(`^\d\d:\d\d:\d\d `)
+	for _, st := range states {
+		var tasks []fleet.TaskSnapshot
+		for i := 0; i < st.nt; i++ {
+			tasks = append(tasks, row(fmt.Sprintf("t-%02d", i), "working", "x", "primary", ""))
+		}
+		var failures []fleet.SourceFailure
+		for i := 0; i < st.nf; i++ {
+			failures = append(failures, fleet.SourceFailure{Source: fmt.Sprintf("captain:c%02d", i), Err: errors.New("unreadable")})
+		}
+		var events []orchestrator.Record
+		for i := 1; i <= st.ne; i++ {
+			events = append(events, ev(uint64(i), "task.status", "t", "k", fmt.Sprintf("step %d", i)))
+		}
+		base := send(testDashModel(), goodRead(dashNow, tasks, failures, events))
+		if st.stale {
+			base = send(base, dashRead{at: dashNow.Add(time.Minute), snapErr: errors.New("boom")})
+			base.now = func() time.Time { return dashNow.Add(time.Minute) }
+		}
+		total := st.nf + st.nt
+		notes := 0
+		if st.stale {
+			notes = 1
+		}
+		for _, w := range []int{100, 60} {
+			at := resized(base, w, 24)
+			for cur := 0; cur < total; cur++ {
+				if cur > 0 {
+					at = press(at, "j")
+				}
+				for h := 30; h >= 1; h-- {
+					m := resized(at, w, h)
+					lines := strings.Split(ansi.Strip(m.frame()), "\n")
+					where := fmt.Sprintf("%s %dx%d cursor %d", st.name, w, h, cur)
+					if len(lines) > h {
+						t.Fatalf("%s: %d lines, terminal has %d", where, len(lines), h)
+					}
+					for _, l := range lines {
+						if ansi.StringWidth(l) > w {
+							t.Fatalf("%s: line wider than the terminal: %q", where, l)
+						}
+					}
+					avail := h - 2 - notes - 2
+					if avail < 0 {
+						continue
+					}
+					if !strings.HasPrefix(lines[len(lines)-1], "h hold") || !strings.HasPrefix(lines[len(lines)-2], "j/k move") {
+						t.Fatalf("%s: the footer is cut:\n%s", where, strings.Join(lines, "\n"))
+					}
+					var items, evs, titleN, titleM, feedN, feedM = 0, 0, -1, -1, -1, -1
+					var listTitle, feedTitle, selected bool
+					for _, l := range lines {
+						l = strings.TrimRight(l, " ")
+						switch {
+						case itemRe.MatchString(l):
+							items++
+							selected = selected || strings.HasPrefix(l, "> ")
+						case eventRe.MatchString(l):
+							evs++
+						case titleRe.MatchString(l):
+							listTitle = true
+							if g := titleRe.FindStringSubmatch(l); g[3] != "" {
+								titleN, _ = strconv.Atoi(g[3])
+								titleM, _ = strconv.Atoi(g[4])
+							}
+						case strings.HasPrefix(l, "Events"):
+							feedTitle = true
+							if g := eventsRe.FindStringSubmatch(l); g[2] != "" {
+								feedN, _ = strconv.Atoi(g[2])
+								feedM, _ = strconv.Atoi(g[3])
+							}
+						}
+					}
+					if total > 0 && avail >= 2 && !listTitle || avail >= 2 && !feedTitle {
+						t.Fatalf("%s: a section title is missing:\n%s", where, strings.Join(lines, "\n"))
+					}
+					if listTitle {
+						if titleN >= 0 && (items != titleN || titleM != total) || titleN < 0 && items != total {
+							t.Fatalf("%s: %d items drawn, title says %d of %d, total %d:\n%s", where, items, titleN, titleM, total, strings.Join(lines, "\n"))
+						}
+						if items > 0 && !selected {
+							t.Fatalf("%s: the selected row is not drawn:\n%s", where, strings.Join(lines, "\n"))
+						}
+					}
+					if feedTitle && st.ne > 0 {
+						if feedN >= 0 && (evs != feedN || feedM != st.ne) || feedN < 0 && evs != st.ne {
+							t.Fatalf("%s: %d events drawn, title says %d of the last %d, read %d:\n%s", where, evs, feedN, feedM, st.ne, strings.Join(lines, "\n"))
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// No list binding reacts to an action key, q or esc: a key the dashboard
+// leaves to the list must not move the cursor, change the page or quit.
+func TestDashboardListIgnoresActionKeys(t *testing.T) {
+	var tasks []fleet.TaskSnapshot
+	for i := 0; i < 30; i++ {
+		tasks = append(tasks, row(fmt.Sprintf("t-%02d", i), "working", "x", "primary", ""))
+	}
+	m := send(testDashModel(), goodRead(dashNow, tasks, nil, nil))
+	m = press(m, "pgdown", "j")
+	if m.list.Paginator.Page == 0 || m.list.Paginator.Page == m.list.Paginator.TotalPages-1 {
+		t.Fatalf("fixture: page %d of %d is not a middle page", m.list.Paginator.Page+1, m.list.Paginator.TotalPages)
+	}
+	keys := []string{"q", "esc", "ctrl+c"}
+	for _, a := range dashActions {
+		keys = append(keys, a.key)
+	}
+	for _, k := range keys {
+		msg := tea.KeyPressMsg{Code: []rune(k)[0], Text: k}
+		switch k {
+		case "esc":
+			msg = tea.KeyPressMsg{Code: tea.KeyEscape}
+		case "ctrl+c":
+			msg = tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
+		}
+		l, cmd := m.list.Update(msg)
+		if cmd != nil || l.Index() != m.list.Index() || l.Paginator.Page != m.list.Paginator.Page {
+			t.Errorf("key %q reached the list: cmd %v, index %d -> %d, page %d -> %d", k, cmd != nil, m.list.Index(), l.Index(), m.list.Paginator.Page, l.Paginator.Page)
+		}
+	}
+}
+
+// The selection follows its row when a refresh moves it to another page.
+func TestDashboardSelectionFollowsRowAcrossPages(t *testing.T) {
+	var tasks []fleet.TaskSnapshot
+	for i := 0; i < 30; i++ {
+		tasks = append(tasks, row(fmt.Sprintf("t-%02d", i), "working", "x", "primary", ""))
+	}
+	var calls []execCall
+	m := testDashModel()
+	m.run = func(exe string, args []string) tea.Cmd {
+		calls = append(calls, execCall{exe, args})
+		return nil
+	}
+	m = send(m, goodRead(dashNow, tasks, nil, nil))
+	m = selectTask(t, m, "t-25")
+	// Twelve new rows ahead of it push t-25 two pages on.
+	var more []fleet.TaskSnapshot
+	for i := 0; i < 12; i++ {
+		more = append(more, row(fmt.Sprintf("n-%02d", i), "working", "x", "primary", ""))
+	}
+	m = send(m, goodRead(dashNow, append(more, tasks...), nil, nil))
+	press(m, "d", "y")
+	want := []string{"--home", "/h", "task", "done", "t-25"}
+	if len(calls) != 1 || !reflect.DeepEqual(calls[0].args, want) {
+		t.Fatalf("exec = %+v, want %q", calls, want)
 	}
 }

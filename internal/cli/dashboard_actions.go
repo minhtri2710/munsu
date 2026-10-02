@@ -2,6 +2,8 @@ package cli
 
 import (
 	"strings"
+
+	"charm.land/bubbles/v2/key"
 )
 
 // dashTarget is the row identity captured when an action starts. Rows reorder
@@ -18,7 +20,9 @@ type dashTarget struct {
 
 // dashField is one prompted value. A field marked required blocks submission
 // while empty; the dashboard checks nothing else (each command refuses on its
-// own).
+// own). The words fields are required only where the plan says the dashboard
+// passes the Human's words through: decision-hold resolve and delivery
+// pr-merge.
 type dashField struct {
 	name     string
 	label    string
@@ -54,14 +58,29 @@ var wordsFields = []dashField{
 	{"quote", "quote (verbatim)", true},
 }
 
+// optionalWordsFields are the words a command may take but does not always
+// need; the command refuses on its own when it needs them.
+var optionalWordsFields = []dashField{
+	{"grantor", "grantor (optional)", false},
+	{"channel", "channel (optional)", false},
+	{"quote", "quote (optional, verbatim)", false},
+}
+
 func taskArgs(path ...string) func(dashTarget, map[string]string) []string {
 	return func(t dashTarget, _ map[string]string) []string {
 		return append(append([]string{}, path...), t.ID)
 	}
 }
 
+// wordsArgs passes each words value that was given.
 func wordsArgs(v map[string]string) []string {
-	return []string{"--grantor", v["grantor"], "--channel", v["channel"], "--quote", v["quote"]}
+	var a []string
+	for _, name := range []string{"grantor", "channel", "quote"} {
+		if v[name] != "" {
+			a = append(a, "--"+name, v[name])
+		}
+	}
+	return a
 }
 
 // dashActions is the approved action set (plan sets A and B). The wake actions
@@ -105,7 +124,7 @@ var dashActions = []dashAction{
 			return a
 		}},
 	{key: "c", name: "decision-hold complete", binding: bindTask,
-		fields: append([]dashField{{"keys", "keys (space-separated, optional)", false}, {"none", "none (any text passes --none)", false}}, wordsFields...),
+		fields: append([]dashField{{"keys", "keys (space-separated, optional)", false}, {"none", "none (any text passes --none)", false}}, optionalWordsFields...),
 		args: func(t dashTarget, v map[string]string) []string {
 			a := append([]string{"decision-hold", "complete", t.ID}, strings.Fields(v["keys"])...)
 			a = append(a, wordsArgs(v)...)
@@ -175,4 +194,11 @@ func (a *dashAction) bind(t dashTarget, hasTarget bool, primary string) (home st
 // command the action runs.
 func (a *dashAction) buildArgv(home string, t dashTarget, v map[string]string) []string {
 	return append([]string{"--home", home}, a.args(t, v)...)
+}
+
+// keyBinding is the action's key binding; its help text is the last word of the
+// action name.
+func (a *dashAction) keyBinding() key.Binding {
+	w := strings.Fields(a.name)
+	return key.NewBinding(key.WithKeys(a.key), key.WithHelp(a.key, w[len(w)-1]))
 }

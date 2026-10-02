@@ -8,6 +8,11 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
@@ -58,11 +63,14 @@ type dashExecDone struct {
 	output string
 }
 
-// dashItem is one selectable line: a failed source or a task row.
+// dashItem is one selectable line: a failed source or a task row. It is a
+// list.Item; the list never filters, so it has no filter value.
 type dashItem struct {
 	failure *fleet.SourceFailure
 	row     *fleet.TaskSnapshot
 }
+
+func (dashItem) FilterValue() string { return "" }
 
 // dashPending is the action in progress. Its target and argv are captured
 // before any refresh can reorder the rows.
@@ -70,7 +78,7 @@ type dashPending struct {
 	action *dashAction
 	target dashTarget
 	home   string
-	values []string
+	inputs []textinput.Model
 	field  int
 	argv   []string
 }
@@ -101,8 +109,19 @@ type dashboardModel struct {
 	skipped    int
 	eventErr   error
 
-	cur int
-	sel dashTarget
+	// list owns the cursor, scrolling and paging of the failed sources and
+	// task rows. sel is the identity of the selected item, kept in step with
+	// the list so an action and a refresh bind the row, never an index.
+	list list.Model
+	sel  dashTarget
+	// feed shows the event lines, always scrolled to the newest. argv shows
+	// the confirm command, soft-wrapped.
+	feed viewport.Model
+	argv viewport.Model
+	help help.Model
+	// Section heights set by resize: the lines of the list section (title
+	// included) and of the feed section (title included).
+	listH, feedH int
 
 	mode    dashMode
 	pending *dashPending
@@ -110,13 +129,53 @@ type dashboardModel struct {
 	result  *dashExecDone
 }
 
+// dashListKeys is the list's whole key map. Every other binding is absent, so
+// no action key (b u d t o x s p h e c R V C v m), q or esc reaches the list:
+// the default map binds h, u, d, b, v and esc.
+func dashListKeys() list.KeyMap {
+	return list.KeyMap{
+		CursorUp:   key.NewBinding(key.WithKeys("up", "k")),
+		CursorDown: key.NewBinding(key.WithKeys("down", "j")),
+		PrevPage:   key.NewBinding(key.WithKeys("left", "pgup")),
+		NextPage:   key.NewBinding(key.WithKeys("right", "pgdown")),
+		GoToStart:  key.NewBinding(key.WithKeys("home")),
+		GoToEnd:    key.NewBinding(key.WithKeys("end")),
+	}
+}
+
 func newDashboardModel(home, exe string) dashboardModel {
+	l := list.New(nil, dashRows{}, 80, 24)
+	l.SetShowTitle(false)
+	l.SetShowFilter(false)
+	l.SetShowStatusBar(false)
+	l.SetShowPagination(false)
+	l.SetShowHelp(false)
+	l.SetFilteringEnabled(false)
+	l.KeyMap = dashListKeys()
+
+	feed := viewport.New()
+	feed.MouseWheelEnabled = false
+
+	argv := viewport.New()
+	argv.SoftWrap = true
+	argv.MouseWheelEnabled = false
+	argv.KeyMap.Left.Unbind()
+	argv.KeyMap.Right.Unbind()
+
+	h := help.New()
+	h.ShortSeparator = "  "
+	h.Styles = help.Styles{Ellipsis: dashFaint, ShortKey: dashFaint, ShortDesc: dashFaint, ShortSeparator: dashFaint}
+
 	return dashboardModel{
 		home:    home,
 		exe:     exe,
 		now:     time.Now,
 		width:   80,
 		height:  24,
+		list:    l,
+		feed:    feed,
+		argv:    argv,
+		help:    h,
 		reading: true,
 		readFleet: func() (*fleet.DisplaySnapshot, error) {
 			return fleet.SnapshotDisplay(home, snapshotDeps())
@@ -179,6 +238,12 @@ func (m *dashboardModel) startRead() tea.Cmd {
 }
 
 func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	m, cmd := m.update(msg)
+	m.resize()
+	return m, cmd
+}
+
+func (m dashboardModel) update(msg tea.Msg) (dashboardModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -193,7 +258,8 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.startRead()
 	case tea.PasteMsg:
 		if m.mode == modeForm {
-			m.pending.values[m.pending.field] += msg.Content
+			p := m.pending
+			p.inputs[p.field], _ = p.inputs[p.field].Update(msg)
 		}
 	case tea.KeyPressMsg:
 		return m.onKey(msg)
@@ -247,8 +313,8 @@ func humanFirst(tasks []fleet.TaskSnapshot) []fleet.TaskSnapshot {
 	return out
 }
 
-func (m dashboardModel) items() []dashItem {
-	items := make([]dashItem, 0, len(m.failures)+len(m.rows))
+func (m dashboardModel) items() []list.Item {
+	items := make([]list.Item, 0, len(m.failures)+len(m.rows))
 	for i := range m.failures {
 		items = append(items, dashItem{failure: &m.failures[i]})
 	}
@@ -269,71 +335,62 @@ func (m dashboardModel) targetOf(it dashItem) dashTarget {
 	return dashTarget{ID: it.row.ID, Home: home, Source: it.row.Source}
 }
 
+// syncSel records the identity of the list's selected item.
+func (m *dashboardModel) syncSel() {
+	if it, ok := m.list.SelectedItem().(dashItem); ok {
+		m.sel = m.targetOf(it)
+	} else {
+		m.sel = dashTarget{}
+	}
+}
+
 // reselect keeps the selection on the same row after a refresh reorders them;
 // a vanished row falls back to the nearest index.
 func (m *dashboardModel) reselect() {
 	items := m.items()
-	if len(items) == 0 {
-		m.cur, m.sel = 0, dashTarget{}
-		return
-	}
+	prev := m.list.Index()
+	m.list.SetItems(items)
 	for i, it := range items {
-		if m.targetOf(it) == m.sel {
-			m.cur = i
+		if m.targetOf(it.(dashItem)) == m.sel {
+			m.list.Select(i)
 			return
 		}
 	}
-	m.cur = min(m.cur, len(items)-1)
-	m.sel = m.targetOf(items[m.cur])
+	m.list.Select(max(0, min(prev, len(items)-1)))
+	m.syncSel()
 }
 
-func (m dashboardModel) onKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	key := k.String()
-	if key == "ctrl+c" {
+func (m dashboardModel) onKey(k tea.KeyPressMsg) (dashboardModel, tea.Cmd) {
+	name := k.String()
+	if name == "ctrl+c" {
 		return m, tea.Quit
 	}
 	switch m.mode {
 	case modeRunning:
 		return m, nil
 	case modeConfirm:
-		return m.onConfirmKey(key)
+		return m.onConfirmKey(k)
 	case modeForm:
-		return m.onFormKey(key, k.Key().Text)
+		return m.onFormKey(k)
 	}
 	m.notice = ""
-	switch key {
-	case "q":
+	if name == "q" {
 		return m, tea.Quit
-	case "down", "j":
-		m.move(1)
-	case "up", "k":
-		m.move(-1)
-	default:
-		if a := findDashAction(key); a != nil {
-			return m.begin(a), nil
-		}
 	}
+	if a := findDashAction(name); a != nil {
+		return m.begin(a), nil
+	}
+	m.list, _ = m.list.Update(k)
+	m.syncSel()
 	return m, nil
-}
-
-func (m *dashboardModel) move(d int) {
-	items := m.items()
-	if len(items) == 0 {
-		return
-	}
-	m.cur = max(0, min(m.cur+d, len(items)-1))
-	m.sel = m.targetOf(items[m.cur])
 }
 
 // begin captures the selected row and starts the action's prompts, or goes
 // straight to confirmation when it has none.
 func (m dashboardModel) begin(a *dashAction) dashboardModel {
-	items := m.items()
-	var t dashTarget
-	if len(items) > 0 {
-		t = m.targetOf(items[m.cur])
-	}
-	home, problem := a.bind(t, len(items) > 0, m.home)
+	hasTarget := len(m.list.Items()) > 0
+	t := m.sel
+	home, problem := a.bind(t, hasTarget, m.home)
 	if problem != "" {
 		m.notice = a.name + ": " + problem
 		return m
@@ -346,13 +403,31 @@ func (m dashboardModel) begin(a *dashAction) dashboardModel {
 		}
 		t.CaptainID = id
 	}
-	m.pending = &dashPending{action: a, target: t, home: home, values: make([]string, len(a.fields))}
+	m.pending = &dashPending{action: a, target: t, home: home, inputs: make([]textinput.Model, len(a.fields))}
+	for i := range m.pending.inputs {
+		// ponytail: textinput's ctrl+v returns a clipboard-read Cmd; onFormKey
+		// drops every textinput Cmd, so only bracketed paste (tea.PasteMsg) fills a field.
+		in := textinput.New()
+		m.pending.inputs[i] = in
+	}
+	m.pending.focus(0)
 	if len(a.fields) == 0 {
 		m.confirm()
 	} else {
 		m.mode = modeForm
 	}
 	return m
+}
+
+// focus moves the form's cursor to field i.
+func (p *dashPending) focus(i int) {
+	if p.field < len(p.inputs) {
+		p.inputs[p.field].Blur()
+	}
+	if i < len(p.inputs) {
+		p.inputs[i].Focus()
+	}
+	p.field = i
 }
 
 // captainIDOf resolves the registry ID of the captain whose canonical home is
@@ -374,33 +449,33 @@ func (m dashboardModel) captainIDOf(rowHome string) (string, error) {
 	return "", fmt.Errorf("no registered captain has home %s", canon)
 }
 
+// confirm builds the argv and loads it, as the exact command line, into the
+// confirm viewport at its top.
 func (m *dashboardModel) confirm() {
 	p := m.pending
-	v := make(map[string]string, len(p.values))
+	v := make(map[string]string, len(p.inputs))
 	for i, f := range p.action.fields {
-		v[f.name] = p.values[i]
+		v[f.name] = p.inputs[i].Value()
 	}
 	p.argv = p.action.buildArgv(p.home, p.target, v)
+	m.argv.SetContent("Run: " + argvLine(append([]string{m.exe}, p.argv...)))
+	m.argv.SetYOffset(0)
 	m.mode = modeConfirm
 }
 
-func (m dashboardModel) onFormKey(key, text string) (tea.Model, tea.Cmd) {
+func (m dashboardModel) onFormKey(k tea.KeyPressMsg) (dashboardModel, tea.Cmd) {
 	p := m.pending
-	switch key {
+	switch k.String() {
 	case "esc":
 		m.mode, m.pending = modeBrowse, nil
-	case "backspace":
-		if v := []rune(p.values[p.field]); len(v) > 0 {
-			p.values[p.field] = string(v[:len(v)-1])
-		}
 	case "enter":
 		if p.field < len(p.action.fields)-1 {
-			p.field++
+			p.focus(p.field + 1)
 			return m, nil
 		}
 		for i, f := range p.action.fields {
-			if f.required && p.values[i] == "" {
-				p.field = i
+			if f.required && p.inputs[i].Value() == "" {
+				p.focus(i)
 				m.notice = f.name + " is required"
 				return m, nil
 			}
@@ -408,21 +483,43 @@ func (m dashboardModel) onFormKey(key, text string) (tea.Model, tea.Cmd) {
 		m.notice = ""
 		m.confirm()
 	default:
-		p.values[p.field] += text
+		p.inputs[p.field], _ = p.inputs[p.field].Update(k)
 	}
 	return m, nil
 }
 
-func (m dashboardModel) onConfirmKey(key string) (tea.Model, tea.Cmd) {
-	switch key {
+// argvShown reports whether the whole confirm command has been on screen: the
+// viewport has a row, is at its bottom, and no page of it, from top to bottom,
+// comes out taller than the viewport (a grapheme the soft wrap cannot place
+// breaks the page). A terminal too small to draw the command in full never
+// passes, so y runs nothing.
+func (m dashboardModel) argvShown() bool {
+	v := m.argv
+	h := v.Height()
+	if h < 1 || v.Width() < 1 || !v.AtBottom() {
+		return false
+	}
+	for off := 0; off <= max(0, v.TotalLineCount()-h); off++ {
+		v.SetYOffset(off)
+		if strings.Count(v.View(), "\n") >= h {
+			return false
+		}
+	}
+	return true
+}
+
+func (m dashboardModel) onConfirmKey(k tea.KeyPressMsg) (dashboardModel, tea.Cmd) {
+	switch k.String() {
 	case "y":
-		if !m.confirmFits() {
+		if !m.argvShown() {
 			return m, nil
 		}
 		m.mode, m.result = modeRunning, nil
 		return m, m.run(m.exe, m.pending.argv)
 	case "esc", "n":
 		m.mode, m.pending = modeBrowse, nil
+	default:
+		m.argv, _ = m.argv.Update(k)
 	}
 	return m, nil
 }
