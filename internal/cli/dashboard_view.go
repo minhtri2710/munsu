@@ -350,8 +350,9 @@ func (m dashboardModel) feedPlaceholder() string {
 	return ""
 }
 
-// feedSection is the event feed: a title that counts what the viewport draws,
-// then the viewport.
+// feedSection is the event feed: a title, then the viewport. The title is
+// composed once: "Events", the count of what the viewport draws, the malformed
+// lines note, and on a read error " - unreadable:" with the error as free text.
 func (m dashboardModel) feedSection() []dashLine {
 	if m.feedH < 1 {
 		return nil
@@ -360,14 +361,12 @@ func (m dashboardModel) feedSection() []dashLine {
 	if shown, all := m.feed.VisibleLineCount(), m.feed.TotalLineCount(); shown < all {
 		t += fmt.Sprintf(" - Showing %d of the last %d read", shown, all)
 	}
-	title := dashLine{}
+	if m.skipped > 0 {
+		t += fmt.Sprintf(" (%d malformed lines skipped)", m.skipped)
+	}
+	title := dashLine{keep: dashBold.Render(t)}
 	if m.eventErr != nil {
 		title = dashLine{keep: dashRed.Render(t + " - unreadable:"), rest: dashRed.Render(" " + dashText(m.eventErr.Error()))}
-	} else {
-		if m.skipped > 0 {
-			t += fmt.Sprintf(" (%d malformed lines skipped)", m.skipped)
-		}
-		title.keep = dashBold.Render(t)
 	}
 	out := []dashLine{title}
 	if p := m.feedPlaceholder(); p != "" && m.feedH > 1 {

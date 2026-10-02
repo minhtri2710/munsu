@@ -942,18 +942,20 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 		feedFailed bool // the events were read, then a later feed read failed
 		home       string
 		result     bool // a finished command with a long argv and a two-digit exit code
+		skipped    int  // malformed lines the good event read skipped
 	}
 	states := []state{
-		{"fresh", 30, 3, 3, false, false, "", false},
-		{"fresh many tasks", 0, 30, 40, false, false, "", false},
-		{"stale", 30, 3, 3, true, false, "", false},
-		{"stale many tasks", 2, 30, 40, true, false, "", false},
-		{"zero tasks", 5, 0, 3, false, false, "", false},
-		{"zero failures", 0, 6, 3, false, false, "", false},
-		{"zero events", 3, 6, 0, false, false, "", false},
-		{"feed unreadable after a read", 2, 6, 40, false, true, "", false},
-		{"long home", 2, 6, 40, false, false, strings.Repeat("h", 70), false},
-		{"command result", 2, 6, 40, false, false, "", true},
+		{"fresh", 30, 3, 3, false, false, "", false, 0},
+		{"fresh many tasks", 0, 30, 40, false, false, "", false, 0},
+		{"stale", 30, 3, 3, true, false, "", false, 0},
+		{"stale many tasks", 2, 30, 40, true, false, "", false, 0},
+		{"zero tasks", 5, 0, 3, false, false, "", false, 0},
+		{"zero failures", 0, 6, 3, false, false, "", false, 0},
+		{"zero events", 3, 6, 0, false, false, "", false, 0},
+		{"feed unreadable after a read", 2, 6, 40, false, true, "", false, 0},
+		{"long home", 2, 6, 40, false, false, strings.Repeat("h", 70), false, 0},
+		{"command result", 2, 6, 40, false, false, "", true, 0},
+		{"feed unreadable after a read, lines skipped", 2, 6, 40, false, true, "", false, 3},
 	}
 	// Longer than the widest terminal the sweep uses, so a clip cuts it.
 	feedErr := "open /Users/someone/.munsu/projects/example/state/events.log: permission denied, " + strings.Repeat("and more ", 6)
@@ -978,7 +980,9 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 		if st.home != "" {
 			base.home = st.home
 		}
-		base = send(base, goodRead(dashNow, tasks, failures, events))
+		good := goodRead(dashNow, tasks, failures, events)
+		good.skipped = st.skipped
+		base = send(base, good)
 		if st.result {
 			base.result = &dashExecDone{argv: []string{"task", "done", strings.Repeat("a long argument ", 10)}, err: exitStatus12(t)}
 		}
@@ -995,6 +999,12 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 			notes = 1
 		}
 		for _, w := range []int{100, 60} {
+			if st.skipped > 0 && w == 60 {
+				// This row's feed title (error plus skipped note) is about 80
+				// columns protected, so 60 is the notice; the sweep below
+				// covers that width.
+				continue
+			}
 			at := resized(base, w, 24)
 			for cur := 0; cur < total; cur++ {
 				if cur > 0 {
@@ -1042,6 +1052,9 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 							feedTitle = true
 							if st.feedFailed && !strings.Contains(l, " - unreadable: o") {
 								t.Fatalf("%s: feed title %q does not say the feed is unreadable:\n%s", where, l, strings.Join(lines, "\n"))
+							}
+							if st.skipped > 0 && !strings.Contains(l, "(3 malformed lines skipped)") {
+								t.Fatalf("%s: feed title %q lacks the malformed lines note:\n%s", where, l, strings.Join(lines, "\n"))
 							}
 							if g := eventsRe.FindStringSubmatch(l); g[2] != "" {
 								feedN, _ = strconv.Atoi(g[2])
@@ -1092,6 +1105,9 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 					p, _, _ = strings.Cut(l, " - unreadable:")
 					if st.feedFailed {
 						p += " - unreadable:"
+					}
+					if st.skipped > 0 && !strings.Contains(p, "(3 malformed lines skipped) - unreadable:") {
+						t.Fatalf("%s %d: feed protected part %q lacks the note before \" - unreadable:\"", st.name, h, p)
 					}
 				default:
 					continue
