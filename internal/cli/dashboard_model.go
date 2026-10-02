@@ -511,7 +511,7 @@ func (m dashboardModel) argvShown() bool {
 func (m dashboardModel) onConfirmKey(k tea.KeyPressMsg) (dashboardModel, tea.Cmd) {
 	switch k.String() {
 	case "y":
-		if !m.argvShown() {
+		if !m.onScreen() {
 			return m, nil
 		}
 		m.mode, m.result = modeRunning, nil

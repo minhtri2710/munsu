@@ -1,4 +1,4 @@
-munsu dashboard /h  STALE last good read 45s ago
+munsu dashboard STALE last good read 45s ago  /h
 unresolved 2  Human-needed 0  failed sources 0
 Last read failed: reading authoritative current state: no current-state query provided
 Tasks

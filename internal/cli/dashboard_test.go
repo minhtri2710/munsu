@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -507,19 +508,13 @@ func dashNoSpace(s string) string {
 	return strings.Join(strings.Fields(s), "")
 }
 
-// confirmRows are the frame lines the confirm viewport drew: the rows above
-// the two confirm hint lines.
+// confirmRows are the rows the confirm viewport draws.
 func confirmRows(m dashboardModel) []string {
-	lines := strings.Split(ansi.Strip(m.frame()), "\n")
-	h := m.argv.Height()
-	if len(lines) < 2+h {
-		return nil
-	}
-	return lines[len(lines)-2-h : len(lines)-2]
+	return strings.Split(ansi.Strip(m.argv.View()), "\n")
 }
 
 // scrollDrawn scrolls the confirm viewport one line at a time to its bottom
-// and returns the non-space runes the frames drew on the way.
+// and returns the non-space runes it drew on the way.
 func scrollDrawn(m dashboardModel) (dashboardModel, string) {
 	var drawn strings.Builder
 	for {
@@ -534,22 +529,23 @@ func scrollDrawn(m dashboardModel) (dashboardModel, string) {
 	return m, dashNoSpace(drawn.String())
 }
 
-// The confirm viewport draws every rune of the command: y runs only when the
-// frames, paged from the top to the bottom, drew every non-space rune of it
-// (a grapheme the wrap cannot place is never drawn, so y refuses), and an
-// ASCII command runs at every width and height that leaves the viewport a row.
+// The confirm viewport draws every rune of the command: when its gate passes,
+// the viewport, paged from the top to the bottom, drew every non-space rune of
+// it (a grapheme the wrap cannot place is never drawn, so the gate refuses).
+// y runs exactly when that gate passes and the frame fits the terminal; a
+// frame that does not fit is the "Terminal too small" notice.
 func TestDashboardConfirmShowsFullArgv(t *testing.T) {
 	wantOf := func(m dashboardModel) string {
 		return dashNoSpace("Run: " + argvLine(append([]string{m.exe}, m.pending.argv...)))
 	}
-	// The footer claims "The whole command is shown." exactly when y's gate
-	// (argvShown) passes. A claim narrower terminals cut is not asserted.
+	// The frame claims "The whole command is shown." exactly when y's gate
+	// (onScreen) passes.
 	assertClaim := func(t *testing.T, name string, w, h int, m dashboardModel) {
 		t.Helper()
 		const claim = "The whole command is shown."
 		got := strings.Contains(ansi.Strip(m.frame()), claim)
-		if shown := m.argvShown(); got && !shown || !got && shown && w >= len(claim) {
-			t.Fatalf("%s %dx%d: footer claim = %v, argvShown = %v:\n%s", name, w, h, got, shown, m.frame())
+		if shown := m.onScreen(); got != shown {
+			t.Fatalf("%s %dx%d: footer claim = %v, onScreen = %v:\n%s", name, w, h, got, shown, m.frame())
 		}
 	}
 	run := func(t *testing.T, name string, build func(calls *[]execCall, w, h int) dashboardModel, widths, heights []int, mustRun func(w, h int) bool) {
@@ -564,13 +560,20 @@ func TestDashboardConfirmShowsFullArgv(t *testing.T) {
 				m.argv.SetYOffset(0)
 				m, drawn := scrollDrawn(m)
 				assertClaim(t, name, w, h, m)
+				fit := m.fits()
+				if f := m.frame(); !fit && (strings.Contains(f, "\n") || w >= 52 && !strings.Contains(f, "Terminal too small")) {
+					t.Fatalf("%s %dx%d: the frame does not fit and is not the one-line notice:\n%s", name, w, h, f)
+				}
 				press(m, "y")
 				if len(calls) == 1 {
 					ran = true
-					if want := wantOf(m); drawn != want {
-						t.Fatalf("%s %dx%d: y ran but the frames drew %q, not the whole command %q", name, w, h, drawn, want)
+					if !fit {
+						t.Fatalf("%s %dx%d: y ran in a frame that does not fit", name, w, h)
 					}
-				} else if mustRun(w, h) {
+					if want := wantOf(m); drawn != want {
+						t.Fatalf("%s %dx%d: y ran but the viewport drew %q, not the whole command %q", name, w, h, drawn, want)
+					}
+				} else if fit && mustRun(w, h) {
 					t.Fatalf("%s %dx%d: y did not run", name, w, h)
 				}
 			}
@@ -591,7 +594,7 @@ func TestDashboardConfirmShowsFullArgv(t *testing.T) {
 		seq(1, 120), []int{5, 6, 9, 40}, func(int, int) bool { return true })
 	run(t, "grapheme pairs", func(calls *[]execCall, w, h int) dashboardModel {
 		return sendConfirm(t, calls, "a\u2764\ufe0f\u2764\ufe0f\u2764\ufe0fb \u754c\u754c\u754c ab\u754ccd", w, h)
-	}, seq(1, 40), []int{5, 8, 40}, func(int, int) bool { return false })
+	}, seq(1, 120), []int{5, 8, 40}, func(int, int) bool { return false })
 
 	t.Run("a grapheme wider than the terminal runs nothing", func(t *testing.T) {
 		var calls []execCall
@@ -628,7 +631,7 @@ func TestDashboardConfirmShowsFullArgv(t *testing.T) {
 // at its bottom it runs; scrolled back up it waits again.
 func TestDashboardConfirmYWaitsForWholeArgv(t *testing.T) {
 	var calls []execCall
-	m := prMergeConfirm(t, &calls, 40, 9)
+	m := prMergeConfirm(t, &calls, 50, 7)
 	if m.argv.AtBottom() {
 		t.Fatalf("fixture: the command fits the %d-row viewport", m.argv.Height())
 	}
@@ -666,6 +669,7 @@ func assertNoRaw(t *testing.T, name, frame string) {
 
 func assertShown(t *testing.T, name, frame string, wants ...string) {
 	t.Helper()
+	frame = ansi.Strip(frame)
 	for _, w := range wants {
 		if !strings.Contains(frame, w) {
 			t.Errorf("%s: frame lacks the escaped text %q:\n%s", name, w, frame)
@@ -802,12 +806,13 @@ func TestDashboardFrameLinesAreBoundedAndClosed(t *testing.T) {
 	trim := func(l string) string { return strings.TrimRight(ansi.Strip(l), " ") }
 	wideLines := strings.Split(resized(base, 1000, 12).frame(), "\n")
 	for w := 1; w <= 200; w++ {
-		for n, l := range strings.Split(resized(base, w, 12).frame(), "\n") {
+		m := resized(base, w, 12)
+		for n, l := range strings.Split(m.frame(), "\n") {
 			if got := ansi.StringWidth(l); got > w {
 				t.Fatalf("width %d line %d is %d cells: %q", w, n, got, l)
 			}
 			// A line the width cuts ends in a visible ellipsis.
-			if ansi.StringWidth(trim(wideLines[n])) > w && !strings.HasSuffix(trim(l), "…") {
+			if m.fits() && ansi.StringWidth(trim(wideLines[n])) > w && !strings.HasSuffix(trim(l), "…") {
 				t.Fatalf("width %d line %d is cut without a visible ellipsis: %q", w, n, l)
 			}
 			if strings.Contains(ansiSeq.ReplaceAllString(l, ""), "\x1b") {
@@ -902,6 +907,27 @@ func TestDashboardRecoverResolvesRegistryID(t *testing.T) {
 	}
 }
 
+// exitStatus12 is the error of a real subprocess that exited with code 12: the
+// test binary run again with dashExitEnv set, which init answers.
+func exitStatus12(t *testing.T) error {
+	t.Helper()
+	c := exec.Command(os.Args[0])
+	c.Env = append(os.Environ(), dashExitEnv+"=1")
+	err := c.Run()
+	if (dashExecDone{err: err}).exitCode() != 12 {
+		t.Fatalf("helper process error = %v, want exit status 12", err)
+	}
+	return err
+}
+
+const dashExitEnv = "MUNSU_DASHBOARD_TEST_EXIT12"
+
+func init() {
+	if os.Getenv(dashExitEnv) != "" {
+		os.Exit(12)
+	}
+}
+
 // The shown counts come from the components, and the frame stays inside the
 // terminal, in fresh, stale, zero-task, zero-failure and no-event states, at
 // every height from tall down to where header and footer alone fill the
@@ -914,16 +940,20 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 		nf, nt, ne int
 		stale      bool
 		feedFailed bool // the events were read, then a later feed read failed
+		home       string
+		result     bool // a finished command with a long argv and a two-digit exit code
 	}
 	states := []state{
-		{"fresh", 30, 3, 3, false, false},
-		{"fresh many tasks", 0, 30, 40, false, false},
-		{"stale", 30, 3, 3, true, false},
-		{"stale many tasks", 2, 30, 40, true, false},
-		{"zero tasks", 5, 0, 3, false, false},
-		{"zero failures", 0, 6, 3, false, false},
-		{"zero events", 3, 6, 0, false, false},
-		{"feed unreadable after a read", 2, 6, 40, false, true},
+		{"fresh", 30, 3, 3, false, false, "", false},
+		{"fresh many tasks", 0, 30, 40, false, false, "", false},
+		{"stale", 30, 3, 3, true, false, "", false},
+		{"stale many tasks", 2, 30, 40, true, false, "", false},
+		{"zero tasks", 5, 0, 3, false, false, "", false},
+		{"zero failures", 0, 6, 3, false, false, "", false},
+		{"zero events", 3, 6, 0, false, false, "", false},
+		{"feed unreadable after a read", 2, 6, 40, false, true, "", false},
+		{"long home", 2, 6, 40, false, false, strings.Repeat("h", 70), false},
+		{"command result", 2, 6, 40, false, false, "", true},
 	}
 	// Longer than the widest terminal the sweep uses, so a clip cuts it.
 	feedErr := "open /Users/someone/.munsu/projects/example/state/events.log: permission denied, " + strings.Repeat("and more ", 6)
@@ -944,7 +974,14 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 		for i := 1; i <= st.ne; i++ {
 			events = append(events, ev(uint64(i), "task.status", "t", "k", fmt.Sprintf("step %d", i)))
 		}
-		base := send(testDashModel(), goodRead(dashNow, tasks, failures, events))
+		base := testDashModel()
+		if st.home != "" {
+			base.home = st.home
+		}
+		base = send(base, goodRead(dashNow, tasks, failures, events))
+		if st.result {
+			base.result = &dashExecDone{argv: []string{"task", "done", strings.Repeat("a long argument ", 10)}, err: exitStatus12(t)}
+		}
 		if st.feedFailed {
 			base = send(base, dashRead{at: dashNow, snap: &fleet.DisplaySnapshot{Tasks: tasks, Failures: failures}, eventErr: errors.New(feedErr)})
 		}
@@ -954,7 +991,7 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 		}
 		total := st.nf + st.nt
 		notes := 0
-		if st.stale {
+		if st.stale || st.result {
 			notes = 1
 		}
 		for _, w := range []int{100, 60} {
@@ -1027,6 +1064,63 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 						if feedN >= 0 && (evs != feedN || feedM != st.ne) || feedN < 0 && evs != st.ne {
 							t.Fatalf("%s: %d events drawn, title says %d of the last %d, read %d:\n%s", where, evs, feedN, feedM, st.ne, strings.Join(lines, "\n"))
 						}
+					}
+				}
+			}
+		}
+		// Every width from 1 to 120: the frame is the "Terminal too small"
+		// notice exactly when a protected part (a state or a count) is wider
+		// than the terminal, else every protected part is drawn whole. The
+		// protected parts are read off the same state's frame at width 1000.
+		for _, h := range []int{30, 12, 6} {
+			var prot []string
+			wide := map[string]string{} // a protected part to its whole line
+			for i, l := range strings.Split(ansi.Strip(resized(base, 1000, h).frame()), "\n") {
+				l = strings.TrimRight(l, " ")
+				p := ""
+				switch {
+				case i == 0:
+					p, _, _ = strings.Cut(l, "  "+base.home)
+				case i == 1 || titleRe.MatchString(l):
+					p = l
+				case strings.HasPrefix(l, "exit "):
+					p, _, _ = strings.Cut(l, ":")
+					p += ":"
+				case strings.HasPrefix(l, "Last read failed:"):
+					p = "Last read failed:"
+				case strings.HasPrefix(l, "Events"):
+					p, _, _ = strings.Cut(l, " - unreadable:")
+					if st.feedFailed {
+						p += " - unreadable:"
+					}
+				default:
+					continue
+				}
+				prot, wide[p] = append(prot, p), l
+			}
+			for w := 1; w <= 120; w++ {
+				f := ansi.Strip(resized(base, w, h).frame())
+				where := fmt.Sprintf("%s %dx%d", st.name, w, h)
+				lines := strings.Split(f, "\n")
+				if len(lines) > h {
+					t.Fatalf("%s: %d lines, terminal has %d", where, len(lines), h)
+				}
+				tooSmall := false
+				for _, p := range prot {
+					tooSmall = tooSmall || ansi.StringWidth(p) > w || ansi.StringWidth(p) == w && ansi.StringWidth(wide[p]) > w
+				}
+				notice := strings.TrimRight(f, " ") == ansi.Truncate("Terminal too small: enlarge it.", w, "…")
+				if notice != tooSmall {
+					t.Fatalf("%s: notice drawn = %v, a protected part is wider than the terminal = %v (%q):\n%s", where, notice, tooSmall, prot, f)
+				}
+				for _, l := range lines {
+					if ansi.StringWidth(l) > w {
+						t.Fatalf("%s: line wider than the terminal: %q", where, l)
+					}
+				}
+				for _, p := range prot {
+					if !notice && !strings.Contains(f, p) {
+						t.Fatalf("%s: protected part %q is not drawn whole:\n%s", where, p, f)
 					}
 				}
 			}

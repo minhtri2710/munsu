@@ -142,75 +142,129 @@ func (m dashboardModel) feedLines(w int) []string {
 	return lines
 }
 
-func (m dashboardModel) frame() string {
+// dashLine is one frame line: keep is the protected part, a count or a state
+// the Human must read whole, and rest is free text that may be cut.
+type dashLine struct{ keep, rest string }
+
+func (l dashLine) String() string { return l.keep + l.rest }
+
+func dashFree(lines ...string) []dashLine {
+	out := make([]dashLine, len(lines))
+	for i, l := range lines {
+		out[i] = dashLine{rest: l}
+	}
+	return out
+}
+
+// layout is every line of the frame, top to bottom, cut to the terminal height.
+func (m dashboardModel) layout() []dashLine {
 	m.resize()
 	lines := m.header()
 	lines = append(lines, m.notes()...)
 	lines = append(lines, m.body()...)
 	lines = append(lines, m.feedSection()...)
 	if m.mode == modeConfirm {
-		lines = append(lines, strings.Split(m.argv.View(), "\n")...)
+		lines = append(lines, dashFree(strings.Split(m.argv.View(), "\n")...)...)
 	}
 	lines = append(lines, m.footer()...)
-
-	// The one bound left on the frame: header, notes, footer and the row
-	// titles are plain lines no component bounds, and a terminal shorter than
-	// header plus footer cannot hold them. Every component is sized to fit the
-	// rest, so nothing else is cut here.
-	for i, l := range lines {
-		lines[i] = ansi.Truncate(l, m.width, "…")
-	}
-	lines = lines[:min(len(lines), m.height)]
-	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+	return lines[:min(len(lines), m.height)]
 }
 
-func (m dashboardModel) header() []string {
-	title := dashBold.Render("munsu dashboard") + " " + dashFaint.Render(dashText(m.home))
-	var badge, counts string
+// fits reports whether every protected part of the drawn lines is drawn whole:
+// at most the terminal's width, and short of it when free text follows that
+// the width cuts, since the cut's "…" takes the last cell.
+func (m dashboardModel) fits() bool {
+	for _, l := range m.layout() {
+		keep := lipgloss.Width(l.keep)
+		if keep > m.width || keep == m.width && lipgloss.Width(l.String()) > m.width {
+			return false
+		}
+	}
+	return true
+}
+
+// onScreen is the gate for y: the whole command has been shown by the confirm
+// viewport and the frame that draws it fits the terminal.
+func (m dashboardModel) onScreen() bool {
+	return m.argvShown() && m.fits()
+}
+
+// frame draws the dashboard. Each line is a protected part (a count or a
+// state) followed by free text. When a drawn protected part is wider than the
+// terminal the frame is one "Terminal too small" notice instead, never a count
+// or state cut to "..."; otherwise only free text and the lines past the
+// terminal's height are cut.
+func (m dashboardModel) frame() string {
+	lines := m.layout()
+	if !m.fits() {
+		if m.height < 1 {
+			return ""
+		}
+		notice := "Terminal too small: enlarge it."
+		if m.mode == modeForm || m.mode == modeConfirm {
+			notice = "Terminal too small: enlarge it, or esc to cancel."
+		}
+		return dashRed.Render(ansi.Truncate(notice, m.width, "…"))
+	}
+	out := make([]string, len(lines))
+	for i, l := range lines {
+		out[i] = ansi.Truncate(l.String(), m.width, "…")
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, out...)
+}
+
+// header is the title line, state phrase first and the home path after it, and
+// the counters line.
+func (m dashboardModel) header() []dashLine {
+	var phrase, errText, counts string
 	switch m.state() {
 	case stateLoading:
-		badge = dashYellow.Render("LOADING")
+		phrase = dashYellow.Render("LOADING")
 	case stateFailed:
-		badge = dashRed.Render("FAILED " + dashText(fmt.Sprint(m.readErr)))
+		phrase = dashRed.Render("FAILED")
+		errText = dashRed.Render(" " + dashText(fmt.Sprint(m.readErr)))
 	case stateStale:
-		badge = dashRed.Render("STALE last good read " + m.age() + " ago")
+		phrase = dashRed.Render("STALE last good read " + m.age() + " ago")
 	case stateEmpty:
-		badge = dashGreen.Render("EMPTY refreshed " + m.age() + " ago")
+		phrase = dashGreen.Render("EMPTY refreshed " + m.age() + " ago")
 	case statePartial:
-		badge = dashYellow.Render("PARTIAL refreshed " + m.age() + " ago")
+		phrase = dashYellow.Render("PARTIAL refreshed " + m.age() + " ago")
 	default:
-		badge = dashGreen.Render("REFRESHED " + m.age() + " ago")
+		phrase = dashGreen.Render("REFRESHED " + m.age() + " ago")
 	}
 	if m.reading && m.state() != stateLoading {
-		badge += dashFaint.Render(" (reading)")
+		phrase += dashFaint.Render(" (reading)")
 	}
 	if !m.lastGood.IsZero() {
 		counts = fmt.Sprintf("unresolved %d  Human-needed %d  failed sources %d", m.unresolved(), m.humanNeeded(), len(m.failures))
 	}
-	return []string{title + "  " + badge, counts}
+	return []dashLine{
+		{keep: dashBold.Render("munsu dashboard") + " " + phrase, rest: errText + "  " + dashFaint.Render(dashText(m.home))},
+		{keep: counts},
+	}
 }
 
 // notes are the lines between the header and the body.
-func (m dashboardModel) notes() []string {
+func (m dashboardModel) notes() []dashLine {
 	if m.state() == stateStale && m.readErr != nil {
-		return []string{dashRed.Render("Last read failed: " + dashText(m.readErr.Error()))}
+		return []dashLine{{keep: dashRed.Render("Last read failed:"), rest: dashRed.Render(" " + dashText(m.readErr.Error()))}}
 	}
 	return nil
 }
 
 // body is the list section: a title that counts what the list draws, then the
 // list. The count is the list's own page, not window arithmetic here.
-func (m dashboardModel) body() []string {
+func (m dashboardModel) body() []dashLine {
 	if m.listH < 1 {
 		return nil
 	}
 	switch m.state() {
 	case stateLoading:
-		return []string{dashFaint.Render("Loading fleet...")}
+		return []dashLine{{keep: dashFaint.Render("Loading fleet...")}}
 	case stateFailed:
-		return []string{dashRed.Render("Fleet read failed: " + dashText(fmt.Sprint(m.readErr)))}
+		return []dashLine{{keep: dashRed.Render("Fleet read failed:"), rest: dashRed.Render(" " + dashText(fmt.Sprint(m.readErr)))}}
 	case stateEmpty:
-		return []string{dashFaint.Render("No tasks and no failed sources.")}
+		return []dashLine{{keep: dashFaint.Render("No tasks and no failed sources.")}}
 	}
 	total := len(m.list.Items())
 	if total == 0 {
@@ -232,7 +286,7 @@ func (m dashboardModel) body() []string {
 	if drawn < total {
 		title += fmt.Sprintf(" - Showing %d of %d (page %d of %d)", drawn, total, l.Paginator.Page+1, l.Paginator.TotalPages)
 	}
-	return append([]string{dashBold.Render(title)}, rows...)
+	return append([]dashLine{{keep: dashBold.Render(title)}}, dashFree(rows...)...)
 }
 
 // dashRows draws a list item as one line: a failed source in red, a task row
@@ -298,7 +352,7 @@ func (m dashboardModel) feedPlaceholder() string {
 
 // feedSection is the event feed: a title that counts what the viewport draws,
 // then the viewport.
-func (m dashboardModel) feedSection() []string {
+func (m dashboardModel) feedSection() []dashLine {
 	if m.feedH < 1 {
 		return nil
 	}
@@ -306,21 +360,21 @@ func (m dashboardModel) feedSection() []string {
 	if shown, all := m.feed.VisibleLineCount(), m.feed.TotalLineCount(); shown < all {
 		t += fmt.Sprintf(" - Showing %d of the last %d read", shown, all)
 	}
-	var title string
+	title := dashLine{}
 	if m.eventErr != nil {
-		title = dashRed.Render(t + " - unreadable: " + dashText(m.eventErr.Error()))
+		title = dashLine{keep: dashRed.Render(t + " - unreadable:"), rest: dashRed.Render(" " + dashText(m.eventErr.Error()))}
 	} else {
 		if m.skipped > 0 {
 			t += fmt.Sprintf(" (%d malformed lines skipped)", m.skipped)
 		}
-		title = dashBold.Render(t)
+		title.keep = dashBold.Render(t)
 	}
-	out := []string{title}
+	out := []dashLine{title}
 	if p := m.feedPlaceholder(); p != "" && m.feedH > 1 {
-		out = append(out, p)
+		out = append(out, dashLine{rest: p})
 	}
 	if m.feed.Height() > 0 {
-		out = append(out, strings.Split(m.feed.View(), "\n")...)
+		out = append(out, dashFree(strings.Split(m.feed.View(), "\n")...)...)
 	}
 	return out
 }
@@ -359,12 +413,12 @@ func fieldView(in textinput.Model, prompt string, w int) string {
 	return in.View()
 }
 
-func (m dashboardModel) footer() []string {
-	var out []string
+func (m dashboardModel) footer() []dashLine {
+	var out []dashLine
 	switch m.mode {
 	case modeForm:
 		p := m.pending
-		out = append(out, dashBold.Render(p.action.name))
+		out = append(out, dashLine{rest: dashBold.Render(p.action.name)})
 		for i, f := range p.action.fields {
 			cur := "  "
 			if i == p.field {
@@ -374,40 +428,39 @@ func (m dashboardModel) footer() []string {
 			if f.required {
 				req = " (required)"
 			}
-			out = append(out, fieldView(p.inputs[i], cur+f.label+req+": ", m.width))
+			out = append(out, dashLine{rest: fieldView(p.inputs[i], cur+f.label+req+": ", m.width)})
 		}
-		out = append(out, dashFaint.Render("enter next/submit  esc cancel"))
+		out = append(out, dashLine{rest: dashFaint.Render("enter next/submit  esc cancel")})
 	case modeConfirm:
 		switch {
 		case m.argvShown():
-			out = append(out, dashFaint.Render("The whole command is shown."))
+			out = append(out, dashLine{rest: dashFaint.Render("The whole command is shown.")})
 		case m.argv.Height() >= 1 && !m.argv.AtBottom():
-			out = append(out, dashRed.Render("Scroll down (down, pgdn): y runs only once the whole command is shown."))
+			out = append(out, dashLine{rest: dashRed.Render("Scroll down (down, pgdn): y runs only once the whole command is shown.")})
 		default:
-			out = append(out, dashRed.Render("Terminal too small to show the whole command: enlarge it, or esc to cancel."))
+			out = append(out, dashLine{rest: dashRed.Render("Terminal too small to show the whole command: enlarge it, or esc to cancel.")})
 		}
-		out = append(out, dashFaint.Render("y run  esc cancel"))
+		out = append(out, dashLine{rest: dashFaint.Render("y run  esc cancel")})
 	case modeRunning:
-		out = append(out, dashFaint.Render("Running..."))
+		out = append(out, dashLine{rest: dashFaint.Render("Running...")})
 	default:
 		if r := m.result; r != nil {
-			head := fmt.Sprintf("exit %d: %s", r.exitCode(), argvLine(r.argv))
+			style := dashRed
 			if r.exitCode() == 0 {
-				out = append(out, dashGreen.Render(head))
-			} else {
-				out = append(out, dashRed.Render(head))
+				style = dashGreen
 			}
+			out = append(out, dashLine{keep: style.Render(fmt.Sprintf("exit %d:", r.exitCode())), rest: style.Render(" " + argvLine(r.argv))})
 			if r.err != nil && r.exitCode() < 0 {
-				out = append(out, dashRed.Render(dashText(r.err.Error())))
+				out = append(out, dashLine{rest: dashRed.Render(dashText(r.err.Error()))})
 			}
 			for _, l := range r.outputTail() {
-				out = append(out, dashText(l))
+				out = append(out, dashLine{rest: dashText(l)})
 			}
 		}
-		out = append(out, m.helpLines()...)
+		out = append(out, dashFree(m.helpLines()...)...)
 	}
 	if m.notice != "" {
-		out = append(out, dashRed.Render(dashText(m.notice)))
+		out = append(out, dashLine{rest: dashRed.Render(dashText(m.notice))})
 	}
 	return out
 }
