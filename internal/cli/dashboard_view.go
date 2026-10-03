@@ -280,10 +280,22 @@ func (m dashboardModel) fits() bool {
 	return true
 }
 
-// onScreen is the gate for y: the whole command has been shown by the confirm
-// viewport and the frame that draws it fits the terminal.
+// argvRows reports whether the confirm viewport has a row and a width to draw
+// in. footer calls it directly because fits() lays the footer out.
+func (m dashboardModel) argvRows() bool {
+	return m.argv.Height() >= 1 && m.argv.Width() >= 1
+}
+
+// argvDrawn reports whether the confirm viewport's rows are drawn: the frame
+// fits and the viewport has a row. Scroll keys move the viewport only then.
+func (m dashboardModel) argvDrawn() bool {
+	return m.argvRows() && m.fits()
+}
+
+// onScreen is the gate for y: the viewport's rows are drawn and it is at its
+// bottom, so the whole command has been shown.
 func (m dashboardModel) onScreen() bool {
-	return m.argvShown() && m.fits()
+	return m.argvDrawn() && m.argv.AtBottom()
 }
 
 // frame draws the dashboard. Each line is a protected part (a count or a
@@ -502,7 +514,7 @@ func (m dashboardModel) footer() []dashLine {
 		out = append(out, dashLine{rest: dashFaint.Render("enter next/submit  esc cancel")})
 	case modeConfirm:
 		switch {
-		case m.argvShown():
+		case m.argvRows() && m.argv.AtBottom():
 			out = append(out, dashLine{rest: dashFaint.Render("The whole command is shown.")})
 		case m.argv.Height() >= 1 && !m.argv.AtBottom():
 			out = append(out, dashLine{rest: dashRed.Render("Scroll down (down, pgdn): y runs only once the whole command is shown.")})

@@ -542,8 +542,9 @@ func confirmRows(m dashboardModel) []string {
 	return lines[start:end]
 }
 
-// scrollDrawn scrolls the confirm viewport one line at a time to its bottom
-// and returns the non-space runes the frames drew of it on the way.
+// scrollDrawn scrolls the confirm viewport one line at a time to its bottom,
+// or until a key no longer moves it, and returns the non-space runes the
+// frames drew of it on the way.
 func scrollDrawn(m dashboardModel) (dashboardModel, string) {
 	var drawn strings.Builder
 	for {
@@ -555,9 +556,44 @@ func scrollDrawn(m dashboardModel) (dashboardModel, string) {
 		if len(rows) > 0 {
 			drawn.WriteString(rows[0])
 		}
+		at := m.argv.YOffset()
 		m = press(m, "down")
+		if m.argv.YOffset() == at {
+			break
+		}
 	}
 	return m, dashNoSpace(drawn.String())
+}
+
+// assertWholeBeforeY checks a confirm frame whose terminal was just resized:
+// the footer claims the whole command only when the drawn rows are the whole
+// command, y runs exactly then, and otherwise y runs once the command has been
+// scrolled through from its first row.
+func assertWholeBeforeY(t *testing.T, where string, m dashboardModel, calls *[]execCall) {
+	t.Helper()
+	*calls = nil
+	want := dashNoSpace("Run: " + argvLine(append([]string{m.exe}, m.pending.argv...)))
+	drawn := dashNoSpace(strings.Join(confirmRows(m), ""))
+	claim := strings.Contains(ansi.Strip(m.frame()), "The whole command is shown.")
+	if claim && drawn != want {
+		t.Fatalf("%s: the frame claims the whole command but drew %q, command %q:\n%s", where, drawn, want, m.frame())
+	}
+	press(m, "y")
+	if ran := len(*calls) == 1; ran != claim {
+		t.Fatalf("%s: calls = %d, claim = %v; y must run exactly when the whole command is claimed:\n%s", where, len(*calls), claim, m.frame())
+	}
+	if claim {
+		return
+	}
+	*calls = nil
+	m, drawn = scrollDrawn(m)
+	if drawn != want {
+		t.Fatalf("%s: scrolled from the top it drew %q, command %q", where, drawn, want)
+	}
+	press(m, "y")
+	if len(*calls) != 1 {
+		t.Fatalf("%s: calls = %d after the whole command was drawn, want 1", where, len(*calls))
+	}
 }
 
 // The confirm viewport draws every rune of the command: when its gate passes,
@@ -635,9 +671,9 @@ func TestDashboardConfirmShowsFullArgv(t *testing.T) {
 			t.Fatalf("calls = %v, mode = %v; want no exec and still confirming", calls, m.mode)
 		}
 	})
-	// With no row for the argv, scrolling down still reaches the viewport's
-	// bottom with nothing drawn: at 30 the frame is the notice, at 100 it fits.
-	// Neither claims the command or runs it.
+	// With no row for the argv, scroll keys do nothing: at 30 the frame is the
+	// notice, at 100 it fits. Neither claims the command or runs it, and once
+	// the terminal has rows the command is still shown from its first row.
 	t.Run("scrolled down in a terminal with no argv row claims nothing and runs nothing", func(t *testing.T) {
 		for _, w := range []int{30, 100} {
 			var calls []execCall
@@ -645,8 +681,8 @@ func TestDashboardConfirmShowsFullArgv(t *testing.T) {
 			for i := 0; i < 400; i++ {
 				m = press(m, "down")
 			}
-			if m.argv.Height() != 0 || !m.argv.AtBottom() {
-				t.Fatalf("%dx4: argv height %d, at bottom %v; want a zero-row viewport at its bottom", w, m.argv.Height(), m.argv.AtBottom())
+			if m.argv.Height() != 0 {
+				t.Fatalf("%dx4: argv height %d, want a zero-row viewport", w, m.argv.Height())
 			}
 			assertClaim(t, "pr-merge", w, 4, m)
 			if m.fits() != (w == 100) {
@@ -656,6 +692,7 @@ func TestDashboardConfirmShowsFullArgv(t *testing.T) {
 			if len(calls) != 0 || m.mode != modeConfirm {
 				t.Fatalf("%dx4: calls = %v, mode = %v; want no exec and still confirming", w, calls, m.mode)
 			}
+			assertWholeBeforeY(t, fmt.Sprintf("%dx4 grown to 100x6", w), resized(m, 100, 6), &calls)
 		}
 	})
 	t.Run("a viewport with no row runs nothing", func(t *testing.T) {
@@ -745,6 +782,17 @@ func TestDashboardConfirmYWaitsForWholeArgv(t *testing.T) {
 		if len(calls) != 1 {
 			t.Fatalf("calls = %d after the whole command was shown, want 1", len(calls))
 		}
+	})
+	// Scroll keys do nothing while the notice hides the command: widening again
+	// shows it from its first row.
+	t.Run("scrolling under the too-small notice shows the command from its first row", func(t *testing.T) {
+		var calls []execCall
+		m := resized(prMergeConfirm(t, &calls, 46, 6), 20, 6)
+		if m.fits() {
+			t.Fatalf("fixture: 20x6 fits:\n%s", m.frame())
+		}
+		m = press(m, "down", "down", "down")
+		assertWholeBeforeY(t, "46x6 after scrolling under the notice", resized(m, 46, 6), &calls)
 	})
 	t.Run("a second y does not run the command again", func(t *testing.T) {
 		var calls []execCall

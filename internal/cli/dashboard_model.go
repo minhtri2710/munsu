@@ -488,14 +488,6 @@ func (m dashboardModel) onFormKey(k tea.KeyPressMsg) (dashboardModel, tea.Cmd) {
 	return m, nil
 }
 
-// argvShown reports whether the whole confirm command has been on screen: the
-// viewport has a row and a width and is at its bottom. A frame too narrow to
-// draw it is refused by fits(), which onScreen pairs with this check.
-func (m dashboardModel) argvShown() bool {
-	v := m.argv
-	return v.Height() >= 1 && v.Width() >= 1 && v.AtBottom()
-}
-
 func (m dashboardModel) onConfirmKey(k tea.KeyPressMsg) (dashboardModel, tea.Cmd) {
 	switch k.String() {
 	case "y":
@@ -507,7 +499,9 @@ func (m dashboardModel) onConfirmKey(k tea.KeyPressMsg) (dashboardModel, tea.Cmd
 	case "esc", "n":
 		m.mode, m.pending = modeBrowse, nil
 	default:
-		m.argv, _ = m.argv.Update(k)
+		if m.argvDrawn() {
+			m.argv, _ = m.argv.Update(k)
+		}
 	}
 	return m, nil
 }
