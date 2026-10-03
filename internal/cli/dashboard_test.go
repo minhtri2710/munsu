@@ -734,13 +734,15 @@ func TestDashboardConfirmYWaitsForWholeArgv(t *testing.T) {
 		t.Fatalf("calls = %d at the bottom, want 1", len(calls))
 	}
 
-	// A width change rewraps the command, so the viewport goes back to its first
-	// row; a height change keeps the offset, clamped to the new bottom. Either
+	// A width change rewraps the command (the model wraps it itself: a double-width
+	// rune must not make a row wider than the viewport), so the viewport goes back
+	// to its first row; a height change keeps the offset, clamped to the new bottom. Either
 	// way the frame claims the whole command only once its rows were drawn.
 	t.Run("a resize after scrolling still draws the whole command before y runs", func(t *testing.T) {
-		var tokens []string
+		var tokens, wide []string
 		for i := 0; i < 120; i++ {
 			tokens = append(tokens, fmt.Sprintf("T%03d", i))
+			wide = append(wide, fmt.Sprintf("\U0001F600T%03d", i))
 		}
 		for _, tc := range []struct {
 			name   string
@@ -752,6 +754,10 @@ func TestDashboardConfirmYWaitsForWholeArgv(t *testing.T) {
 				func(m dashboardModel) dashboardModel { return press(m, "down", "down") }, 120, 6},
 			{"120-token send wider", func(c *[]execCall) dashboardModel { return sendConfirm(t, c, strings.Join(tokens, " "), 46, 6) },
 				func(m dashboardModel) dashboardModel { return press(m, "down", "down", "down", "down", "down", "down") }, 80, 6},
+			{"pr-merge narrowed", func(c *[]execCall) dashboardModel { return prMergeConfirm(t, c, 120, 6) },
+				func(m dashboardModel) dashboardModel { return m }, 46, 6},
+			{"120 double-width tokens", func(c *[]execCall) dashboardModel { return sendConfirm(t, c, strings.Join(wide, " "), 46, 20) },
+				func(m dashboardModel) dashboardModel { return m }, 46, 20},
 			{"pr-merge taller, same width", func(c *[]execCall) dashboardModel { return prMergeConfirm(t, c, 46, 6) },
 				func(m dashboardModel) dashboardModel {
 					for i := 0; i < 50 && !m.argv.AtBottom(); i++ {

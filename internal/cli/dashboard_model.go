@@ -14,6 +14,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
@@ -157,7 +158,6 @@ func newDashboardModel(home, exe string) dashboardModel {
 	feed.MouseWheelEnabled = false
 
 	argv := viewport.New()
-	argv.SoftWrap = true
 	argv.MouseWheelEnabled = false
 	argv.KeyMap.Left.Unbind()
 	argv.KeyMap.Right.Unbind()
@@ -246,10 +246,14 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m dashboardModel) update(msg tea.Msg) (dashboardModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		if msg.Width != m.width {
+		widened := msg.Width != m.width
+		m.width, m.height = msg.Width, msg.Height
+		if widened {
+			if m.mode == modeConfirm {
+				m.loadArgv()
+			}
 			m.argv.SetYOffset(0) // a new width rewraps the command: show it from its first row
 		}
-		m.width, m.height = msg.Width, msg.Height
 	case dashTickMsg:
 		return m, tea.Batch(m.tickCmd(), m.startRead())
 	case dashRead:
@@ -461,9 +465,17 @@ func (m *dashboardModel) confirm() {
 		v[f.name] = p.inputs[i].Value()
 	}
 	p.argv = p.action.buildArgv(p.home, p.target, v)
-	m.argv.SetContent("Run: " + argvLine(append([]string{m.exe}, p.argv...)))
+	m.loadArgv()
 	m.argv.SetYOffset(0)
 	m.mode = modeConfirm
+}
+
+// loadArgv puts the exact command line into the confirm viewport, wrapped at
+// the terminal width here: the viewport's own soft wrap can cut a double-width
+// rune into a row one cell too wide.
+func (m *dashboardModel) loadArgv() {
+	line := "Run: " + argvLine(append([]string{m.exe}, m.pending.argv...))
+	m.argv.SetContentLines(strings.Split(ansi.Hardwrap(line, m.width, true), "\n"))
 }
 
 func (m dashboardModel) onFormKey(k tea.KeyPressMsg) (dashboardModel, tea.Cmd) {
