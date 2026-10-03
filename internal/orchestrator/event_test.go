@@ -238,6 +238,11 @@ func TestLatestEventsReturnsNewestInOrder(t *testing.T) {
 	if got, _, _ := LatestEvents(home, 99); len(got) != 5 {
 		t.Errorf("n above log size returned %d records, want 5", len(got))
 	}
+	for _, n := range []int{0, -1} {
+		if got, _, err := LatestEvents(home, n); err != nil || len(got) != 0 {
+			t.Errorf("LatestEvents(%d) returned %d records, err %v; want none", n, len(got), err)
+		}
+	}
 
 	// out of file order: sorted by ID, equal IDs in file order
 	writeEventLog(t, home, outOfOrderLog)
