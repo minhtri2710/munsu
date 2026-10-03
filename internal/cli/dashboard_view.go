@@ -111,6 +111,7 @@ func (m *dashboardModel) resize() {
 	if m.mode == modeConfirm {
 		rows := min(m.argv.TotalLineCount(), avail)
 		m.argv.SetHeight(rows)
+		m.argv.SetYOffset(m.argv.YOffset()) // the setters never clamp the offset
 		avail -= rows
 	}
 	m.feedH = min(m.feedMax(), avail/2)

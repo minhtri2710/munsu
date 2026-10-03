@@ -696,6 +696,67 @@ func TestDashboardConfirmYWaitsForWholeArgv(t *testing.T) {
 	if len(calls) != 1 {
 		t.Fatalf("calls = %d at the bottom, want 1", len(calls))
 	}
+
+	// A resize after scrolling re-wraps the command: the viewport must not
+	// stay past its new bottom, drawing blank rows under a "whole command" claim.
+	t.Run("a resize after scrolling still draws the whole command before y runs", func(t *testing.T) {
+		var calls []execCall
+		m := prMergeConfirm(t, &calls, 46, 6)
+		want := dashNoSpace("Run: " + argvLine(append([]string{m.exe}, m.pending.argv...)))
+		m = press(m, "down", "down")
+		m = resized(m, 120, 6)
+		drawn := dashNoSpace(strings.Join(confirmRows(m), ""))
+		claim := strings.Contains(ansi.Strip(m.frame()), "The whole command is shown.")
+		if claim != (drawn == want) {
+			t.Fatalf("claim = %v but the viewport drew %q, command %q:\n%s", claim, drawn, want, m.frame())
+		}
+		press(m, "y")
+		if ran := len(calls) == 1; ran != (drawn == want) {
+			t.Fatalf("calls = %d, drawn the whole command = %v:\n%s", len(calls), drawn == want, m.frame())
+		}
+		if len(calls) != 1 {
+			t.Fatalf("calls = %d; the resized viewport shows the whole command, y should run", len(calls))
+		}
+	})
+	// confirm() starts at the top: a second, shorter command is not entered
+	// already at its bottom because the first one was scrolled.
+	t.Run("a second confirm after a scrolled one waits for its whole command", func(t *testing.T) {
+		var calls []execCall
+		m := prMergeConfirm(t, &calls, 50, 7)
+		for i := 0; i < 50 && !m.argv.AtBottom(); i++ {
+			m = press(m, "pgdown")
+		}
+		m = press(m, "esc")
+		m = press(m, "s")
+		m = send(m, tea.PasteMsg{Content: strings.Repeat("abcdefghi ", 12)})
+		m = press(m, "enter")
+		if m.mode != modeConfirm || m.argv.Height() >= m.argv.TotalLineCount() {
+			t.Fatalf("fixture: mode = %v, viewport %d rows of %d lines; want a confirm taller than its viewport", m.mode, m.argv.Height(), m.argv.TotalLineCount())
+		}
+		press(m, "y")
+		if len(calls) != 0 || strings.Contains(m.frame(), "The whole command is shown.") {
+			t.Fatalf("calls = %v; want y to wait until the second command is shown:\n%s", calls, m.frame())
+		}
+		m, drawn := scrollDrawn(m)
+		if want := dashNoSpace("Run: " + argvLine(append([]string{m.exe}, m.pending.argv...))); drawn != want {
+			t.Fatalf("drew %q, want %q", drawn, want)
+		}
+		press(m, "y")
+		if len(calls) != 1 {
+			t.Fatalf("calls = %d after the whole command was shown, want 1", len(calls))
+		}
+	})
+	t.Run("a second y does not run the command again", func(t *testing.T) {
+		var calls []execCall
+		m := press(prMergeConfirm(t, &calls, 100, 40), "y")
+		if len(calls) != 1 {
+			t.Fatalf("calls = %d after y, want 1", len(calls))
+		}
+		press(m, "y")
+		if len(calls) != 1 {
+			t.Fatalf("calls = %d after a second y, want 1", len(calls))
+		}
+	})
 }
 
 // assertNoRaw fails when the frame carries a hostile character unescaped.
