@@ -995,18 +995,23 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 	eventsRe := regexp.MustCompile(`^Events( - Showing (\d+) of the last (\d+) read)?`)
 	itemRe := regexp.MustCompile(`^[> ] (x captain:c\d\d|[! ] t-\d\d)`)
 	eventRe := regexp.MustCompile(`^\d\d:\d\d:\d\d `)
+	// Free texts, each longer than the widest terminal the sweep uses, so a
+	// frame that drew one as protected would show the notice at widths it fits.
+	longText := func(what string) string {
+		return what + " " + strings.Repeat("with a realistic amount of detail ", 5)
+	}
 	for _, st := range states {
 		var tasks []fleet.TaskSnapshot
 		for i := 0; i < st.nt; i++ {
-			tasks = append(tasks, row(fmt.Sprintf("t-%02d", i), "working", "x", "primary", ""))
+			tasks = append(tasks, row(fmt.Sprintf("t-%02d", i), "working", longText(fmt.Sprintf("implementing step %d", i)), "primary", ""))
 		}
 		var failures []fleet.SourceFailure
 		for i := 0; i < st.nf; i++ {
-			failures = append(failures, fleet.SourceFailure{Source: fmt.Sprintf("captain:c%02d", i), Err: errors.New("unreadable")})
+			failures = append(failures, fleet.SourceFailure{Source: fmt.Sprintf("captain:c%02d", i), Err: errors.New(longText(fmt.Sprintf("captain %d: open state/tasks.json: permission denied", i)))})
 		}
 		var events []orchestrator.Record
 		for i := 1; i <= st.ne; i++ {
-			events = append(events, ev(uint64(i), "task.status", "t", "k", fmt.Sprintf("step %d", i)))
+			events = append(events, ev(uint64(i), "task.status", "t", "k", longText(fmt.Sprintf("step %d", i))))
 		}
 		base := testDashModel()
 		if st.home != "" {
@@ -1026,7 +1031,7 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 			base = send(base, dashRead{at: dashNow, snap: &fleet.DisplaySnapshot{Tasks: tasks, Failures: failures}, eventErr: errors.New(feedErr)})
 		}
 		if st.stale {
-			base = send(base, dashRead{at: dashNow.Add(time.Minute), snapErr: errors.New("boom")})
+			base = send(base, dashRead{at: dashNow.Add(time.Minute), snapErr: errors.New(longText("scanning captain home: read tasks: i/o error"))})
 			base.now = func() time.Time { return dashNow.Add(time.Minute) }
 		}
 		total := st.nf + st.nt
