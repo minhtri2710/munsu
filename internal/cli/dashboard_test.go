@@ -1880,12 +1880,16 @@ func TestDashboardKeyFooter(t *testing.T) {
 	captains := send(testDashModel(), goodRead(dashNow, []fleet.TaskSnapshot{
 		row("p-1", "working", "primary task", "primary", ""),
 	}, []fleet.SourceFailure{{Source: "captains", Home: "/h", Err: errors.New("unlistable")}}, nil))
+	oneRow := send(testDashModel(), goodRead(dashNow, []fleet.TaskSnapshot{
+		row("p-1", "working", "primary task", "primary", ""),
+	}, nil, nil))
 	tests := []struct {
 		name string
 		m    dashboardModel
 		want string
 	}{
 		{"empty fleet", testDashModel(), anyKeys + "  q quit"},
+		{"one row", oneRow, taskKeys + "  " + anyKeys + "  m pr-merge  q quit"},
 		{"failed captain-home row", fixture, "j/k move  R retire  V recover  " + anyKeys + "  q quit"},
 		{"captains failure row", captains, "j/k move  " + anyKeys + "  q quit"},
 		{"primary task row", selectTask(t, fixture, "p-1"), "j/k move  " + taskKeys + "  " + anyKeys + "  m pr-merge  q quit"},
