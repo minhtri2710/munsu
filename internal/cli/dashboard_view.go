@@ -89,10 +89,6 @@ func argvLine(argv []string) string {
 	return strings.Join(q, " ")
 }
 
-func (m dashboardModel) age() string {
-	return fmt.Sprintf("%ds", int(m.now().Sub(m.lastGood)/time.Second))
-}
-
 // feedMax is the lines of the feed section, title included: the terminal
 // height sets how much of the feed a frame tries to show.
 func (m dashboardModel) feedMax() int {
@@ -148,9 +144,10 @@ func (m dashboardModel) feedLines(w int) []string {
 // protected part.
 type dashKeep struct{ text string }
 
-// keepState is "munsu dashboard" and the state phrase; reading adds the faint
-// " (reading)".
-func keepState(s dashState, age string, reading bool) dashKeep {
+// keepState is "munsu dashboard" and the state phrase with the time since the
+// last good read; reading adds the faint " (reading)".
+func keepState(s dashState, since time.Duration, reading bool) dashKeep {
+	age := fmt.Sprintf("%ds", int(since/time.Second))
 	var phrase string
 	switch s {
 	case stateLoading:
@@ -324,7 +321,7 @@ func (m dashboardModel) header() []dashLine {
 		counts = keepCounts(m.unresolved(), m.humanNeeded(), len(m.failures))
 	}
 	return []dashLine{
-		{keep: keepState(m.state(), m.age(), m.reading && m.state() != stateLoading), rest: rest + "  " + dashFaint.Render(dashText(m.home))},
+		{keep: keepState(m.state(), m.now().Sub(m.lastGood), m.reading && m.state() != stateLoading), rest: rest + "  " + dashFaint.Render(dashText(m.home))},
 		{keep: counts},
 	}
 }

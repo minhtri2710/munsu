@@ -1074,6 +1074,21 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 			6:  {"munsu dashboard LOADING", "Loading fleet...", "Events"},
 			4:  {"munsu dashboard LOADING"},
 		}},
+		{"lines skipped, feed readable", 2, 6, 40, false, false, "", false, 3, false, nil, map[int][]string{
+			30: {"munsu dashboard PARTIAL refreshed 0s ago", "unresolved 8  Human-needed 0  failed sources 2", "Failed sources and tasks", "Events - Showing 5 of the last 40 read (3 malformed lines skipped)"},
+			12: {"munsu dashboard PARTIAL refreshed 0s ago", "unresolved 8  Human-needed 0  failed sources 2", "Failed sources and tasks - Showing 4 of 8 (page 1 of 2)", "Events - Showing 2 of the last 40 read (3 malformed lines skipped)"},
+			6:  {"munsu dashboard PARTIAL refreshed 0s ago", "unresolved 8  Human-needed 0  failed sources 2", "Failed sources and tasks - Showing 0 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read (3 malformed lines skipped)"},
+			4:  {"munsu dashboard PARTIAL refreshed 0s ago", "unresolved 8  Human-needed 0  failed sources 2"},
+		}},
+		{"read in progress", 0, 3, 3, false, false, "", false, 0, false, func(t *testing.T, m dashboardModel) dashboardModel {
+			m.reading = true
+			return m
+		}, map[int][]string{
+			30: {"munsu dashboard REFRESHED 0s ago (reading)", "unresolved 3  Human-needed 0  failed sources 0", "Tasks", "Events"},
+			12: {"munsu dashboard REFRESHED 0s ago (reading)", "unresolved 3  Human-needed 0  failed sources 0", "Tasks", "Events - Showing 2 of the last 3 read"},
+			6:  {"munsu dashboard REFRESHED 0s ago (reading)", "unresolved 3  Human-needed 0  failed sources 0", "Tasks - Showing 0 of 3 (page 1 of 3)", "Events - Showing 0 of the last 3 read"},
+			4:  {"munsu dashboard REFRESHED 0s ago (reading)", "unresolved 3  Human-needed 0  failed sources 0"},
+		}},
 		{"form mode", 0, 3, 3, false, false, "", false, 0, false, func(t *testing.T, m dashboardModel) dashboardModel {
 			return press(selectTask(t, m, "t-00"), "m")
 		}, map[int][]string{
@@ -1121,28 +1136,38 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 	eventsRe := regexp.MustCompile(`^Events( - Showing (\d+) of the last (\d+) read)?`)
 	itemRe := regexp.MustCompile(`^[> ] (x captain:c\d\d|[! ] t-\d\d)`)
 	eventRe := regexp.MustCompile(`^\d\d:\d\d:\d\d `)
-	// The protected parts of a state whose layout changes with the width, by
-	// state, height and width.
-	narrow := map[string]map[int]map[int][]string{
-		"confirm mode": {
-			30: {
-				100: {"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0", "Tasks", "Events"},
-				60:  {"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0", "Tasks", "Events"},
-			},
-			12: {
-				100: {"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0", "Tasks - Showing 2 of 3 (page 1 of 2)", "Events - Showing 1 of the last 3 read"},
-				60:  {"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 1 of the last 3 read"},
-			},
-			6: {
-				100: {"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0"},
-				60:  {"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0"},
-			},
-			4: {
-				100: {"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0"},
-				60:  {"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0"},
-			},
-		},
+	// The confirm row's wrapped command takes more rows in a narrower terminal,
+	// so its list and feed titles change with the width. Its protected parts by
+	// height and width band; a width in no band has the state's parts.
+	type band struct {
+		from, to int
+		parts    []string
 	}
+	bands := map[string]map[int][]band{"confirm mode": {
+		30: {
+			{1, 9, []string{"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0"}},
+			{10, 10, []string{"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0", "Tasks - Showing 0 of 3 (page 1 of 3)", "Events - Showing 0 of the last 3 read"}},
+			{11, 11, []string{"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 1 of the last 3 read"}},
+			{12, 12, []string{"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0", "Tasks - Showing 2 of 3 (page 1 of 2)", "Events - Showing 2 of the last 3 read"}},
+			{13, 13, []string{"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0", "Tasks", "Events - Showing 2 of the last 3 read"}},
+			{14, 120, []string{"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0", "Tasks", "Events"}},
+		},
+		12: {
+			{1, 33, []string{"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0"}},
+			{34, 39, []string{"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0", "Tasks - Showing 0 of 3 (page 1 of 3)"}},
+			{40, 46, []string{"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0", "Tasks - Showing 0 of 3 (page 1 of 3)", "Events - Showing 0 of the last 3 read"}},
+			{47, 58, []string{"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 0 of the last 3 read"}},
+			{59, 78, []string{"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 1 of the last 3 read"}},
+			{79, 117, []string{"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0", "Tasks - Showing 2 of 3 (page 1 of 2)", "Events - Showing 1 of the last 3 read"}},
+			{118, 120, []string{"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0", "Tasks - Showing 2 of 3 (page 1 of 2)", "Events - Showing 2 of the last 3 read"}},
+		},
+		6: {
+			{1, 120, []string{"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0"}},
+		},
+		4: {
+			{1, 120, []string{"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0"}},
+		},
+	}}
 	for _, st := range states {
 		var tasks []fleet.TaskSnapshot
 		for i := 0; i < st.nt; i++ {
@@ -1280,31 +1305,37 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 		if base.mode == modeForm || base.mode == modeConfirm {
 			notice = "Terminal too small: enlarge it, or esc to cancel."
 		}
-		keepsAt := func(w, h int) ([]string, map[string]bool) {
+		// keepsAt is the protected parts layout() returns: the only read of
+		// layout() here, checked against the authored table at every size.
+		keepsAt := func(w, h int) []string {
 			var got []string
-			follows := map[string]bool{} // free text follows the part
 			for _, l := range resized(base, w, h).layout() {
 				if l.keep.text != "" {
-					p := ansi.Strip(l.keep.text)
-					got = append(got, p)
-					follows[p] = strings.TrimRight(ansi.Strip(l.rest), " ") != ""
+					got = append(got, ansi.Strip(l.keep.text))
 				}
 			}
-			return got, follows
+			return got
 		}
 		for _, h := range []int{30, 12, 6, 4} {
-			got, follows := keepsAt(1000, h)
-			prot := st.parts[h]
-			if !slices.Equal(got, prot) {
-				t.Fatalf("%s %d: protected parts\n got  %q\n want %q", st.name, h, got, prot)
+			partsAt := func(w int) []string {
+				for _, b := range bands[st.name][h] {
+					if w >= b.from && w <= b.to {
+						return b.parts
+					}
+				}
+				return st.parts[h]
 			}
-			// The confirm row's wrapped command takes more rows in a narrower
-			// terminal, so its list and feed counts change with the width: the
-			// table is authored at two more widths, and the sweep reads the
-			// parts at each width.
-			for w, want := range narrow[st.name][h] {
-				if got, _ := keepsAt(w, h); !slices.Equal(got, want) {
-					t.Fatalf("%s %dx%d: protected parts\n got  %q\n want %q", st.name, w, h, got, want)
+			if got := keepsAt(1000, h); !slices.Equal(got, st.parts[h]) {
+				t.Fatalf("%s %d: protected parts\n got  %q\n want %q", st.name, h, got, st.parts[h])
+			}
+			// Free text follows a part when its line at width 1000 is longer.
+			follows := map[string]bool{}
+			for _, l := range strings.Split(ansi.Strip(resized(base, 1000, h).frame()), "\n") {
+				l = strings.TrimRight(l, " ")
+				for _, p := range st.parts[h] {
+					if strings.HasPrefix(l, p) && len(l) > len(p) {
+						follows[p] = true
+					}
 				}
 			}
 			for w := 1; w <= 120; w++ {
@@ -1314,11 +1345,11 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 				if len(lines) > h {
 					t.Fatalf("%s: %d lines, terminal has %d", where, len(lines), h)
 				}
-				tooSmall := false
-				prot, follows := prot, follows
-				if narrow[st.name] != nil {
-					prot, follows = keepsAt(w, h)
+				prot := partsAt(w)
+				if got := keepsAt(w, h); !slices.Equal(got, prot) {
+					t.Fatalf("%s: protected parts\n got  %q\n want %q", where, got, prot)
 				}
+				tooSmall := false
 				for _, p := range prot {
 					tooSmall = tooSmall || ansi.StringWidth(p) > w || ansi.StringWidth(p) == w && follows[p]
 				}
@@ -1335,6 +1366,40 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 					if !drawn && !strings.Contains(f, p) {
 						t.Fatalf("%s: protected part %q is not drawn whole:\n%s", where, p, f)
 					}
+				}
+				if drawn {
+					continue
+				}
+				// Every drawn "Showing N of M", in every mode: N is the rows on
+				// screen and M the real total; a title without one drew them all.
+				items, evs, listN, listM, feedN, feedM := 0, 0, -1, -1, -1, -1
+				var listTitle, feedTitle bool
+				for _, l := range lines {
+					l = strings.TrimRight(l, " ")
+					switch {
+					case itemRe.MatchString(l):
+						items++
+					case eventRe.MatchString(l):
+						evs++
+					case titleRe.MatchString(l):
+						listTitle = true
+						if g := titleRe.FindStringSubmatch(l); g[3] != "" {
+							listN, _ = strconv.Atoi(g[3])
+							listM, _ = strconv.Atoi(g[4])
+						}
+					case strings.HasPrefix(l, "Events"):
+						feedTitle = true
+						if g := eventsRe.FindStringSubmatch(l); g[2] != "" {
+							feedN, _ = strconv.Atoi(g[2])
+							feedM, _ = strconv.Atoi(g[3])
+						}
+					}
+				}
+				if listTitle && (listN >= 0 && (items != listN || listM != total) || listN < 0 && items != total) {
+					t.Fatalf("%s: %d items drawn, list title says %d of %d, total %d:\n%s", where, items, listN, listM, total, f)
+				}
+				if feedTitle && (feedN >= 0 && (evs != feedN || feedM != st.ne) || feedN < 0 && evs != st.ne) {
+					t.Fatalf("%s: %d events drawn, feed title says %d of the last %d, read %d:\n%s", where, evs, feedN, feedM, st.ne, f)
 				}
 			}
 		}
