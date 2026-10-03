@@ -41,6 +41,7 @@ for harnesses with a verified adapter; unverified harnesses show "planned/unsupp
 | Fleet sync | `munsu fleet sync` | `internal/fleet` | **implemented** |
 | Fleet snapshot | `munsu fleet snapshot` | `internal/fleet` | **implemented** |
 | Fleet view | `munsu fleet view` | `internal/fleet` | **implemented** |
+| Fleet dashboard | `munsu dashboard` | `internal/cli`, `internal/fleet`, `internal/orchestrator` | **implemented** |
 | Fleet bearings | `munsu fleet bearings` | `internal/fleet` | **implemented** |
 | Bootstrap diagnostics | `munsu bootstrap` | `internal/bootstrap` | **implemented** |
 | Self-update | `munsu update` | `internal/cli` | **implemented** |
