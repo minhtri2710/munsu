@@ -1,7 +1,9 @@
 package fleet
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -102,47 +104,130 @@ func PhaseFromProjection(ts TaskSnapshot) string {
 	return PhaseFromMeta(ts.Window, ts.PaneAlive)
 }
 
-// Snapshot builds a fleet snapshot from canonical Task Authority records in
-// the primary home and each registered captain home. The canonical record is
-// the only authority; a task-facing `.meta` entry without a canonical record
-// is rejected (clean break), while captain metadata entries remain as
-// non-authority display. Endpoint probing is diagnostic only.
-func Snapshot(homeDir string, deps SnapshotDependencies) (*FleetSnapshot, error) {
+// HumanNeeded reports whether a row needs the Human. The canonical phase
+// decides first: blocked always does; done, resolved and retired never do,
+// whatever the last status line says. For any other phase (queued, working, or
+// a captain metadata row with none) the last status line decides through
+// domain.GeneralRelevant, the predicate the watcher wakes General on
+// (supervision_watcher.go scanFleetWithProbe), because StatusLogSuperseded is
+// true for every canonical row and cannot tell a live line from a stale one.
+func HumanNeeded(ts TaskSnapshot) bool {
+	switch taskauthority.Phase(ts.CurrentState) {
+	case taskauthority.PhaseBlocked:
+		return true
+	case taskauthority.PhaseDone, taskauthority.PhaseResolved, taskauthority.PhaseRetired:
+		return false
+	}
+	return domain.GeneralRelevant(ts.LastStatus)
+}
+
+const (
+	// primarySource is the Source label of the primary home.
+	primarySource = "primary"
+	// captainsSource is the Source label of a captains directory that cannot be listed.
+	captainsSource = "captains"
+)
+
+// DisplaySnapshot is the display-only fleet read: every row the healthy
+// sources yield plus one named failure per failed source. It never feeds
+// authority decisions; Snapshot is the fail-closed read.
+type DisplaySnapshot struct {
+	Time     string
+	Tasks    []TaskSnapshot
+	Failures []SourceFailure
+}
+
+// SourceFailure names one source the display read could not read. The failed
+// source contributes no task rows; it is never reported as empty or healthy.
+// One bad task fails its own home, not the fleet.
+type SourceFailure struct {
+	// Source is "primary", "captain:<id>" or "captains" (the captain-home
+	// directory could not be listed). The first two are the TaskSnapshot.Source labels.
+	Source string
+	// Home is the failed home; for "captains", the home that owns that directory.
+	Home string
+	// Err is the read error for that source.
+	Err error
+}
+
+// SnapshotDisplay reads the primary home and each captain home under
+// <home>/captains/<id>/ and reports a failed home as a SourceFailure instead of
+// failing the whole read. The only error is a missing current-state query.
+// Discovery skips dot-dirs and non-dirs under captains/; any other captain
+// directory that cannot be read as a canonical home is a SourceFailure. A
+// captains directory that exists but cannot be listed is one "captains"
+// failure; a missing one means no captains.
+func SnapshotDisplay(homeDir string, deps SnapshotDependencies) (*DisplaySnapshot, error) {
 	if deps.CurrentState == nil {
 		return nil, fmt.Errorf("reading authoritative current state: no current-state query provided (home %s)", homeDir)
 	}
-	snap := &FleetSnapshot{
+	snap := &DisplaySnapshot{
 		Time: time.Now().UTC().Format(time.RFC3339),
 	}
 
-	if err := appendHomeTasks(snap, homeDir, "primary", "", deps); err != nil {
-		return nil, err
+	tasks, err := homeTasks(homeDir, primarySource, "", deps)
+	if err != nil {
+		snap.Failures = append(snap.Failures, SourceFailure{Source: primarySource, Home: homeDir, Err: err})
+	} else {
+		snap.Tasks = append(snap.Tasks, tasks...)
 	}
 
 	// Captain homes live under <home>/captains/<id>/ (handoff spawn target).
 	// Scan the directory tree so general fleet view sees child soldiers without
 	// importing the captain package (avoids import cycles).
 	capRoot := filepath.Join(homeDir, "captains")
-	if entries, err := os.ReadDir(capRoot); err == nil {
-		for _, e := range entries {
-			if !e.IsDir() || e.Name() == "" || e.Name()[0] == '.' {
-				continue
-			}
-			ch := filepath.Join(capRoot, e.Name())
-			src := "captain:" + e.Name()
-			if err := appendHomeTasks(snap, ch, src, ch, deps); err != nil {
-				if os.IsNotExist(err) {
-					continue
-				}
-				return nil, fmt.Errorf("scanning captain home %s: %w", ch, err)
-			}
+	entries, err := os.ReadDir(capRoot)
+	if err != nil {
+		entries = nil
+		// A missing captains directory means no captains. Decide that from Stat, not
+		// the ReadDir error: on Windows ReadDir of a regular file fails ErrNotExist-shaped.
+		if _, statErr := os.Stat(capRoot); !errors.Is(statErr, fs.ErrNotExist) {
+			snap.Failures = append(snap.Failures, SourceFailure{Source: captainsSource, Home: homeDir, Err: err})
 		}
+	}
+	for _, e := range entries {
+		if !e.IsDir() || e.Name() == "" || e.Name()[0] == '.' {
+			continue
+		}
+		ch := filepath.Join(capRoot, e.Name())
+		tasks, err := homeTasks(ch, "captain:"+e.Name(), ch, deps)
+		if err != nil {
+			snap.Failures = append(snap.Failures, SourceFailure{Source: "captain:" + e.Name(), Home: ch, Err: err})
+			continue
+		}
+		snap.Tasks = append(snap.Tasks, tasks...)
 	}
 
 	return snap, nil
 }
 
-func appendHomeTasks(snap *FleetSnapshot, taskHome, source, homeLabel string, deps SnapshotDependencies) error {
+// Snapshot builds a fleet snapshot from canonical Task Authority records in
+// the primary home and each registered captain home. The canonical record is
+// the only authority; a task-facing `.meta` entry without a canonical record
+// is rejected (clean break), while captain metadata entries remain as
+// non-authority display. Endpoint probing is diagnostic only. It is the
+// fail-closed policy over SnapshotDisplay: the first failed source refuses the
+// whole snapshot.
+func Snapshot(homeDir string, deps SnapshotDependencies) (*FleetSnapshot, error) {
+	d, err := SnapshotDisplay(homeDir, deps)
+	if err != nil {
+		return nil, err
+	}
+	if len(d.Failures) > 0 {
+		f := d.Failures[0]
+		switch f.Source {
+		case primarySource:
+			return nil, f.Err
+		case captainsSource:
+			return nil, fmt.Errorf("listing captain homes: %w", f.Err)
+		}
+		return nil, fmt.Errorf("scanning captain home %s: %w", f.Home, f.Err)
+	}
+	return &FleetSnapshot{Time: d.Time, Tasks: d.Tasks}, nil
+}
+
+// homeTasks reads the task rows of one home. A failing home returns no rows.
+func homeTasks(taskHome, source, homeLabel string, deps SnapshotDependencies) ([]TaskSnapshot, error) {
 	// Canonical Task Authority records are the only authority (clean break,
 	// Task 7.8): kind/project/phase come from the canonical record; the
 	// .meta/.status/probe data is diagnostic display only and can never
@@ -151,16 +236,16 @@ func appendHomeTasks(snap *FleetSnapshot, taskHome, source, homeLabel string, de
 	// record, fails closed.
 	canonical, err := canonicalAggregates(taskHome)
 	if err != nil {
-		return fmt.Errorf("reading canonical task authority state for %s: %w", taskHome, err)
+		return nil, fmt.Errorf("reading canonical task authority state for %s: %w", taskHome, err)
 	}
 
 	metasDir := filepath.Join(taskHome, "state")
 	entries, err := os.ReadDir(metasDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil
+			return nil, nil
 		}
-		return err
+		return nil, err
 	}
 
 	// Reject task-facing meta-only entries (no canonical record). Captain
@@ -181,7 +266,7 @@ func appendHomeTasks(snap *FleetSnapshot, taskHome, source, homeLabel string, de
 		if metaErr == nil && meta["kind"] == "captain" {
 			continue
 		}
-		return fmt.Errorf("reading authoritative current state for task %q in home %s: no canonical Task Authority record (legacy/meta-only tasks are not authoritative)", id, taskHome)
+		return nil, fmt.Errorf("reading authoritative current state for task %q in home %s: no canonical Task Authority record (legacy/meta-only tasks are not authoritative)", id, taskHome)
 	}
 
 	canonicalIDs := make([]string, 0, len(canonical))
@@ -190,6 +275,7 @@ func appendHomeTasks(snap *FleetSnapshot, taskHome, source, homeLabel string, de
 	}
 	sort.Strings(canonicalIDs)
 
+	var tasks []TaskSnapshot
 	for _, id := range canonicalIDs {
 		agg := canonical[id]
 
@@ -199,7 +285,7 @@ func appendHomeTasks(snap *FleetSnapshot, taskHome, source, homeLabel string, de
 		// Authoritative current state comes from the single canonical query.
 		info, err := deps.CurrentState.Read(taskHome, id)
 		if err != nil {
-			return fmt.Errorf("reading authoritative current state for task %q in home %s: %w", id, taskHome, err)
+			return nil, fmt.Errorf("reading authoritative current state for task %q in home %s: %w", id, taskHome, err)
 		}
 
 		ts := TaskSnapshot{
@@ -250,7 +336,7 @@ func appendHomeTasks(snap *FleetSnapshot, taskHome, source, homeLabel string, de
 			}
 		}
 
-		snap.Tasks = append(snap.Tasks, ts)
+		tasks = append(tasks, ts)
 	}
 
 	// Surface captain metadata entries (non-authority) so the fleet view still
@@ -272,10 +358,10 @@ func appendHomeTasks(snap *FleetSnapshot, taskHome, source, homeLabel string, de
 			Harness: meta["harness"], Model: meta["model"], Mode: meta["mode"], Yolo: meta["yolo"],
 			Window: meta["window"], Worktree: meta["worktree"], PaneAliveUnknown: true,
 		}
-		snap.Tasks = append(snap.Tasks, ts)
+		tasks = append(tasks, ts)
 	}
 
-	return nil
+	return tasks, nil
 }
 
 // View renders the fleet snapshot as Markdown.

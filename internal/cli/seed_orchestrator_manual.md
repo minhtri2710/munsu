@@ -402,6 +402,7 @@ Run: `munsu skill show <name>` to read any skill.
 | Claim wakes | `munsu wake claim --consumer <id>`
 | Acknowledge wakes | `munsu wake ack <lease-id> <event-id...>`
 | Guard check | `munsu guard`
+| Fleet dashboard | `munsu dashboard` (interactive terminal; use `munsu fleet view` otherwise)
 | Fleet view | `munsu fleet view`
 | Captain converge | `munsu captain converge`
 | Fleet bearings | `munsu fleet bearings` |

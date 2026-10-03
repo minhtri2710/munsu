@@ -138,7 +138,8 @@ munsu teardown <task-id>
 ### Fleet management
 
 ```sh
-munsu fleet view
+munsu dashboard       # interactive fleet view (needs a terminal)
+munsu fleet view      # non-interactive fleet view
 munsu guard
 munsu captain list
 ```

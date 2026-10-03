@@ -1,0 +1,12 @@
+munsu dashboard REFRESHED 3s ago  /h
+unresolved 3  Human-needed 1  failed sources 0
+Tasks
+> ! t-human                blocked          ship    primary          needs a decision
+    t-work                 working          ship    primary          implementing
+    t-cap                  working          ship    captain:alpha    in captain home
+    t-done                 done             ship    primary          merged
+Events (2 malformed lines skipped)
+12:00:01 task.status t-work k1 working: started
+12:00:02 task.status t-human k2 blocked: needs a decision
+j/k move  b block  u unblock  d done  t retry  o reopen  x teardown  p promote  s send  h hold
+e resolve  c complete  C converge  v record-verdict  m pr-merge  q quit
