@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -211,6 +212,18 @@ func appendN(t *testing.T, homeDir string, n int) {
 	}
 }
 
+// outOfOrderLog holds IDs 5 3 4 3 9 1 in file order; the two ID-3 records are
+// told apart by payload.
+const outOfOrderLog = "5\t1\tt\tp\t\ta\n3\t2\tt\tp\t\tb\n4\t3\tt\tp\t\tc\n3\t4\tt\tp\t\td\n9\t5\tt\tp\t\te\n1\t6\tt\tp\t\tf\n"
+
+func idPayloads(records []Record) []string {
+	var out []string
+	for _, r := range records {
+		out = append(out, strconv.FormatUint(r.ID, 10)+":"+r.Payload)
+	}
+	return out
+}
+
 func TestLatestEventsReturnsNewestInOrder(t *testing.T) {
 	home := t.TempDir()
 	appendN(t, home, 5)
@@ -224,6 +237,13 @@ func TestLatestEventsReturnsNewestInOrder(t *testing.T) {
 	}
 	if got, _, _ := LatestEvents(home, 99); len(got) != 5 {
 		t.Errorf("n above log size returned %d records, want 5", len(got))
+	}
+
+	// out of file order: sorted by ID, equal IDs in file order
+	writeEventLog(t, home, outOfOrderLog)
+	got, _, _ = LatestEvents(home, 4)
+	if want := []string{"3:d", "4:c", "5:a", "9:e"}; !reflect.DeepEqual(idPayloads(got), want) {
+		t.Errorf("out-of-order records = %v, want %v", idPayloads(got), want)
 	}
 }
 
@@ -240,6 +260,16 @@ func TestEventsAfterIsOrderedAndBounded(t *testing.T) {
 	}
 	if got, _, _ := EventsAfter(home, 6, 3); len(got) != 0 {
 		t.Errorf("cursor at newest returned %d records, want 0", len(got))
+	}
+
+	// out of file order: sorted by ID, equal IDs in file order
+	writeEventLog(t, home, outOfOrderLog)
+	got, _, _ = EventsAfter(home, 2, 3)
+	if want := []string{"3:b", "3:d", "4:c"}; !reflect.DeepEqual(idPayloads(got), want) {
+		t.Errorf("out-of-order records = %v, want %v", idPayloads(got), want)
+	}
+	if got, _, err := EventsAfter(home, 0, -1); err != nil || len(got) != 0 {
+		t.Errorf("negative limit returned %d records, err %v; want none", len(got), err)
 	}
 }
 

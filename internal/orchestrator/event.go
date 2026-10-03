@@ -118,9 +118,6 @@ func scanEvents(homeDir string, cursor uint64, limit int, latest bool) ([]Record
 		return nil, 0, fmt.Errorf("reading event log: %w", err)
 	}
 	defer f.Close()
-	if limit < 0 {
-		limit = 0
-	}
 	var records []Record
 	skipped := 0
 	reader := bufio.NewReader(f)
@@ -141,11 +138,21 @@ func scanEvents(homeDir string, cursor uint64, limit int, latest bool) ([]Record
 			skipped++
 			continue
 		}
-		if !latest && r.ID <= cursor || limit == 0 {
+		if !latest && r.ID <= cursor {
 			continue
 		}
-		records = append(records, r)
-		sort.SliceStable(records, func(i, j int) bool { return records[i].ID < records[j].ID })
+		// records stays in stable ID order: an in-order record appends, an
+		// out-of-order one goes after the retained records with an equal ID.
+		i := len(records)
+		if i > 0 && r.ID < records[i-1].ID {
+			i = sort.Search(i, func(j int) bool { return records[j].ID > r.ID })
+		}
+		if !latest && i >= limit {
+			continue
+		}
+		records = append(records, Record{})
+		copy(records[i+1:], records[i:])
+		records[i] = r
 		if len(records) > limit {
 			if latest {
 				records = records[1:]
