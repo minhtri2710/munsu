@@ -1,7 +1,9 @@
 package fleet
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -119,8 +121,12 @@ func HumanNeeded(ts TaskSnapshot) bool {
 	return domain.GeneralRelevant(ts.LastStatus)
 }
 
-// primarySource is the Source label of the primary home.
-const primarySource = "primary"
+const (
+	// primarySource is the Source label of the primary home.
+	primarySource = "primary"
+	// captainsSource is the Source label of a captains directory that cannot be listed.
+	captainsSource = "captains"
+)
 
 // DisplaySnapshot is the display-only fleet read: every row the healthy
 // sources yield plus one named failure per failed source. It never feeds
@@ -131,15 +137,16 @@ type DisplaySnapshot struct {
 	Failures []SourceFailure
 }
 
-// SourceFailure names one home the display read could not read. The failed
+// SourceFailure names one source the display read could not read. The failed
 // source contributes no task rows; it is never reported as empty or healthy.
 // One bad task fails its own home, not the fleet.
 type SourceFailure struct {
-	// Source is "primary" or "captain:<id>", the same labels as TaskSnapshot.Source.
+	// Source is "primary", "captain:<id>" or "captains" (the captain-home
+	// directory could not be listed). The first two are the TaskSnapshot.Source labels.
 	Source string
-	// Home is the path of the failed home.
+	// Home is the failed home; for "captains", the home that owns that directory.
 	Home string
-	// Err is the read error for that home.
+	// Err is the read error for that source.
 	Err error
 }
 
@@ -147,7 +154,9 @@ type SourceFailure struct {
 // <home>/captains/<id>/ and reports a failed home as a SourceFailure instead of
 // failing the whole read. The only error is a missing current-state query.
 // Discovery skips dot-dirs and non-dirs under captains/; any other captain
-// directory that cannot be read as a canonical home is a SourceFailure.
+// directory that cannot be read as a canonical home is a SourceFailure. A
+// captains directory that exists but cannot be listed is one "captains"
+// failure; a missing one means no captains.
 func SnapshotDisplay(homeDir string, deps SnapshotDependencies) (*DisplaySnapshot, error) {
 	if deps.CurrentState == nil {
 		return nil, fmt.Errorf("reading authoritative current state: no current-state query provided (home %s)", homeDir)
@@ -168,21 +177,25 @@ func SnapshotDisplay(homeDir string, deps SnapshotDependencies) (*DisplaySnapsho
 	// importing the captain package (avoids import cycles).
 	capRoot := filepath.Join(homeDir, "captains")
 	entries, err := os.ReadDir(capRoot)
-	if err != nil && !os.IsNotExist(err) {
-		snap.Failures = append(snap.Failures, SourceFailure{Source: "captains", Home: capRoot, Err: err})
-	} else {
-		for _, e := range entries {
-			if !e.IsDir() || e.Name() == "" || e.Name()[0] == '.' {
-				continue
-			}
-			ch := filepath.Join(capRoot, e.Name())
-			tasks, err := homeTasks(ch, "captain:"+e.Name(), ch, deps)
-			if err != nil {
-				snap.Failures = append(snap.Failures, SourceFailure{Source: "captain:" + e.Name(), Home: ch, Err: err})
-				continue
-			}
-			snap.Tasks = append(snap.Tasks, tasks...)
+	if err != nil {
+		entries = nil
+		// A missing captains directory means no captains. Decide that from Stat, not
+		// the ReadDir error: on Windows ReadDir of a regular file fails ErrNotExist-shaped.
+		if _, statErr := os.Stat(capRoot); !errors.Is(statErr, fs.ErrNotExist) {
+			snap.Failures = append(snap.Failures, SourceFailure{Source: captainsSource, Home: homeDir, Err: err})
 		}
+	}
+	for _, e := range entries {
+		if !e.IsDir() || e.Name() == "" || e.Name()[0] == '.' {
+			continue
+		}
+		ch := filepath.Join(capRoot, e.Name())
+		tasks, err := homeTasks(ch, "captain:"+e.Name(), ch, deps)
+		if err != nil {
+			snap.Failures = append(snap.Failures, SourceFailure{Source: "captain:" + e.Name(), Home: ch, Err: err})
+			continue
+		}
+		snap.Tasks = append(snap.Tasks, tasks...)
 	}
 
 	return snap, nil
@@ -202,8 +215,11 @@ func Snapshot(homeDir string, deps SnapshotDependencies) (*FleetSnapshot, error)
 	}
 	if len(d.Failures) > 0 {
 		f := d.Failures[0]
-		if f.Source == primarySource {
+		switch f.Source {
+		case primarySource:
 			return nil, f.Err
+		case captainsSource:
+			return nil, fmt.Errorf("listing captain homes: %w", f.Err)
 		}
 		return nil, fmt.Errorf("scanning captain home %s: %w", f.Home, f.Err)
 	}

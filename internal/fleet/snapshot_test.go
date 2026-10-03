@@ -681,6 +681,40 @@ func TestSnapshotDisplay_FailedPrimaryKeepsCaptainRows(t *testing.T) {
 	}
 }
 
+// TestSnapshotDisplay_UnlistableCaptainsDirIsNamedFailure proves a captains
+// path that exists but cannot be listed (a regular file, portable without
+// chmod) is one "captains" failure owned by the home, not "no captains", and
+// that Snapshot refuses it as a listing error.
+func TestSnapshotDisplay_UnlistableCaptainsDirIsNamedFailure(t *testing.T) {
+	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
+	mustCreateFleetTask(t, parent, "primary-task", "ship")
+	if err := os.WriteFile(filepath.Join(parent, "captains"), []byte("not a directory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	d, err := SnapshotDisplay(parent, testSnapshotDeps(t))
+	if err != nil {
+		t.Fatalf("SnapshotDisplay: %v", err)
+	}
+	if len(d.Failures) != 1 {
+		t.Fatalf("Failures = %v, want exactly one", d.Failures)
+	}
+	if f := d.Failures[0]; f.Source != "captains" || f.Home != parent || f.Err == nil {
+		t.Fatalf("failure = %+v, want source captains home %s with an error", f, parent)
+	}
+	if len(d.Tasks) != 1 || d.Tasks[0].ID != "primary-task" {
+		t.Fatalf("rows = %+v, want only primary-task", d.Tasks)
+	}
+
+	snap, err := Snapshot(parent, testSnapshotDeps(t))
+	if snap != nil || err == nil || !strings.HasPrefix(err.Error(), "listing captain homes: ") {
+		t.Fatalf("Snapshot = %+v, %v; want no snapshot and a %q error", snap, err, "listing captain homes: ")
+	}
+}
+
 // TestSnapshotDisplay_NilCurrentStateRefused proves the display read has no
 // per-source answer without a current-state query.
 func TestSnapshotDisplay_NilCurrentStateRefused(t *testing.T) {
