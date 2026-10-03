@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -974,20 +975,145 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 		result     bool // a finished command with a long argv and a two-digit exit code
 		skipped    int  // malformed lines the good event read skipped
 		firstFail  bool // the first and only read failed: no good read before it
+		// then moves the model into another mode or adds free text the frame
+		// draws; such a row skips the browse-only checks of the fixed-width loop.
+		then func(*testing.T, dashboardModel) dashboardModel
+		// parts are the exact stripped protected texts the state draws, top
+		// to bottom, by terminal height. They are authored, not read off the code.
+		parts map[int][]string
+	}
+	// Free texts, each longer than the widest terminal the sweep uses, so a
+	// frame that drew one as protected would show the notice at widths it fits.
+	longText := func(what string) string {
+		return what + " " + strings.Repeat("with a realistic amount of detail ", 5)
 	}
 	states := []state{
-		{"fresh", 30, 3, 3, false, false, "", false, 0, false},
-		{"fresh many tasks", 0, 30, 40, false, false, "", false, 0, false},
-		{"stale", 30, 3, 3, true, false, "", false, 0, false},
-		{"stale many tasks", 2, 30, 40, true, false, "", false, 0, false},
-		{"zero tasks", 5, 0, 3, false, false, "", false, 0, false},
-		{"zero failures", 0, 6, 3, false, false, "", false, 0, false},
-		{"zero events", 3, 6, 0, false, false, "", false, 0, false},
-		{"feed unreadable after a read", 2, 6, 40, false, true, "", false, 0, false},
-		{"long home", 2, 6, 40, false, false, strings.Repeat("h", 70), false, 0, false},
-		{"command result", 2, 6, 40, false, false, "", true, 0, false},
-		{"feed unreadable after a read, lines skipped", 2, 6, 40, false, true, "", false, 3, false},
-		{"first read failed", 0, 0, 0, false, false, "", false, 0, true},
+		{"fresh", 30, 3, 3, false, false, "", false, 0, false, nil, map[int][]string{
+			30: {"munsu dashboard PARTIAL refreshed 0s ago", "unresolved 33  Human-needed 0  failed sources 30", "Failed sources and tasks - Showing 19 of 33 (page 1 of 2)", "Events"},
+			12: {"munsu dashboard PARTIAL refreshed 0s ago", "unresolved 33  Human-needed 0  failed sources 30", "Failed sources and tasks - Showing 4 of 33 (page 1 of 9)", "Events - Showing 2 of the last 3 read"},
+			6:  {"munsu dashboard PARTIAL refreshed 0s ago", "unresolved 33  Human-needed 0  failed sources 30", "Failed sources and tasks - Showing 0 of 33 (page 1 of 33)", "Events - Showing 0 of the last 3 read"},
+			4:  {"munsu dashboard PARTIAL refreshed 0s ago", "unresolved 33  Human-needed 0  failed sources 30"},
+		}},
+		{"fresh many tasks", 0, 30, 40, false, false, "", false, 0, false, nil, map[int][]string{
+			30: {"munsu dashboard REFRESHED 0s ago", "unresolved 30  Human-needed 0  failed sources 0", "Tasks - Showing 19 of 30 (page 1 of 2)", "Events - Showing 5 of the last 40 read"},
+			12: {"munsu dashboard REFRESHED 0s ago", "unresolved 30  Human-needed 0  failed sources 0", "Tasks - Showing 4 of 30 (page 1 of 8)", "Events - Showing 2 of the last 40 read"},
+			6:  {"munsu dashboard REFRESHED 0s ago", "unresolved 30  Human-needed 0  failed sources 0", "Tasks - Showing 0 of 30 (page 1 of 30)", "Events - Showing 0 of the last 40 read"},
+			4:  {"munsu dashboard REFRESHED 0s ago", "unresolved 30  Human-needed 0  failed sources 0"},
+		}},
+		{"stale", 30, 3, 3, true, false, "", false, 0, false, nil, map[int][]string{
+			30: {"munsu dashboard STALE last good read 60s ago", "unresolved 33  Human-needed 0  failed sources 30", "Last read failed:", "Failed sources and tasks - Showing 18 of 33 (page 1 of 2)", "Events"},
+			12: {"munsu dashboard STALE last good read 60s ago", "unresolved 33  Human-needed 0  failed sources 30", "Last read failed:", "Failed sources and tasks - Showing 3 of 33 (page 1 of 11)", "Events - Showing 2 of the last 3 read"},
+			6:  {"munsu dashboard STALE last good read 60s ago", "unresolved 33  Human-needed 0  failed sources 30", "Last read failed:", "Failed sources and tasks - Showing 0 of 33 (page 1 of 33)"},
+			4:  {"munsu dashboard STALE last good read 60s ago", "unresolved 33  Human-needed 0  failed sources 30", "Last read failed:"},
+		}},
+		{"stale many tasks", 2, 30, 40, true, false, "", false, 0, false, nil, map[int][]string{
+			30: {"munsu dashboard STALE last good read 60s ago", "unresolved 32  Human-needed 0  failed sources 2", "Last read failed:", "Failed sources and tasks - Showing 18 of 32 (page 1 of 2)", "Events - Showing 5 of the last 40 read"},
+			12: {"munsu dashboard STALE last good read 60s ago", "unresolved 32  Human-needed 0  failed sources 2", "Last read failed:", "Failed sources and tasks - Showing 3 of 32 (page 1 of 11)", "Events - Showing 2 of the last 40 read"},
+			6:  {"munsu dashboard STALE last good read 60s ago", "unresolved 32  Human-needed 0  failed sources 2", "Last read failed:", "Failed sources and tasks - Showing 0 of 32 (page 1 of 32)"},
+			4:  {"munsu dashboard STALE last good read 60s ago", "unresolved 32  Human-needed 0  failed sources 2", "Last read failed:"},
+		}},
+		{"zero tasks", 5, 0, 3, false, false, "", false, 0, false, nil, map[int][]string{
+			30: {"munsu dashboard PARTIAL refreshed 0s ago", "unresolved 5  Human-needed 0  failed sources 5", "Failed sources and tasks", "Events"},
+			12: {"munsu dashboard PARTIAL refreshed 0s ago", "unresolved 5  Human-needed 0  failed sources 5", "Failed sources and tasks - Showing 4 of 5 (page 1 of 2)", "Events - Showing 2 of the last 3 read"},
+			6:  {"munsu dashboard PARTIAL refreshed 0s ago", "unresolved 5  Human-needed 0  failed sources 5", "Failed sources and tasks - Showing 0 of 5 (page 1 of 5)", "Events - Showing 0 of the last 3 read"},
+			4:  {"munsu dashboard PARTIAL refreshed 0s ago", "unresolved 5  Human-needed 0  failed sources 5"},
+		}},
+		{"zero failures", 0, 6, 3, false, false, "", false, 0, false, nil, map[int][]string{
+			30: {"munsu dashboard REFRESHED 0s ago", "unresolved 6  Human-needed 0  failed sources 0", "Tasks", "Events"},
+			12: {"munsu dashboard REFRESHED 0s ago", "unresolved 6  Human-needed 0  failed sources 0", "Tasks - Showing 4 of 6 (page 1 of 2)", "Events - Showing 2 of the last 3 read"},
+			6:  {"munsu dashboard REFRESHED 0s ago", "unresolved 6  Human-needed 0  failed sources 0", "Tasks - Showing 0 of 6 (page 1 of 6)", "Events - Showing 0 of the last 3 read"},
+			4:  {"munsu dashboard REFRESHED 0s ago", "unresolved 6  Human-needed 0  failed sources 0"},
+		}},
+		{"zero events", 3, 6, 0, false, false, "", false, 0, false, nil, map[int][]string{
+			30: {"munsu dashboard PARTIAL refreshed 0s ago", "unresolved 9  Human-needed 0  failed sources 3", "Failed sources and tasks", "Events"},
+			12: {"munsu dashboard PARTIAL refreshed 0s ago", "unresolved 9  Human-needed 0  failed sources 3", "Failed sources and tasks - Showing 4 of 9 (page 1 of 3)", "Events"},
+			6:  {"munsu dashboard PARTIAL refreshed 0s ago", "unresolved 9  Human-needed 0  failed sources 3", "Failed sources and tasks - Showing 0 of 9 (page 1 of 9)", "Events"},
+			4:  {"munsu dashboard PARTIAL refreshed 0s ago", "unresolved 9  Human-needed 0  failed sources 3"},
+		}},
+		{"feed unreadable after a read", 2, 6, 40, false, true, "", false, 0, false, nil, map[int][]string{
+			30: {"munsu dashboard PARTIAL refreshed 0s ago", "unresolved 8  Human-needed 0  failed sources 2", "Failed sources and tasks", "Events - Showing 5 of the last 40 read - unreadable:"},
+			12: {"munsu dashboard PARTIAL refreshed 0s ago", "unresolved 8  Human-needed 0  failed sources 2", "Failed sources and tasks - Showing 4 of 8 (page 1 of 2)", "Events - Showing 2 of the last 40 read - unreadable:"},
+			6:  {"munsu dashboard PARTIAL refreshed 0s ago", "unresolved 8  Human-needed 0  failed sources 2", "Failed sources and tasks - Showing 0 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read - unreadable:"},
+			4:  {"munsu dashboard PARTIAL refreshed 0s ago", "unresolved 8  Human-needed 0  failed sources 2"},
+		}},
+		{"long home", 2, 6, 40, false, false, strings.Repeat("h", 70), false, 0, false, nil, map[int][]string{
+			30: {"munsu dashboard PARTIAL refreshed 0s ago", "unresolved 8  Human-needed 0  failed sources 2", "Failed sources and tasks", "Events - Showing 5 of the last 40 read"},
+			12: {"munsu dashboard PARTIAL refreshed 0s ago", "unresolved 8  Human-needed 0  failed sources 2", "Failed sources and tasks - Showing 4 of 8 (page 1 of 2)", "Events - Showing 2 of the last 40 read"},
+			6:  {"munsu dashboard PARTIAL refreshed 0s ago", "unresolved 8  Human-needed 0  failed sources 2", "Failed sources and tasks - Showing 0 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read"},
+			4:  {"munsu dashboard PARTIAL refreshed 0s ago", "unresolved 8  Human-needed 0  failed sources 2"},
+		}},
+		{"command result", 2, 6, 40, false, false, "", true, 0, false, nil, map[int][]string{
+			30: {"munsu dashboard PARTIAL refreshed 0s ago", "unresolved 8  Human-needed 0  failed sources 2", "Failed sources and tasks", "Events - Showing 5 of the last 40 read", "exit 12:"},
+			12: {"munsu dashboard PARTIAL refreshed 0s ago", "unresolved 8  Human-needed 0  failed sources 2", "Failed sources and tasks - Showing 3 of 8 (page 1 of 3)", "Events - Showing 2 of the last 40 read", "exit 12:"},
+			6:  {"munsu dashboard PARTIAL refreshed 0s ago", "unresolved 8  Human-needed 0  failed sources 2", "Failed sources and tasks - Showing 0 of 8 (page 1 of 8)", "exit 12:"},
+			4:  {"munsu dashboard PARTIAL refreshed 0s ago", "unresolved 8  Human-needed 0  failed sources 2", "exit 12:"},
+		}},
+		{"feed unreadable after a read, lines skipped", 2, 6, 40, false, true, "", false, 3, false, nil, map[int][]string{
+			30: {"munsu dashboard PARTIAL refreshed 0s ago", "unresolved 8  Human-needed 0  failed sources 2", "Failed sources and tasks", "Events - Showing 5 of the last 40 read (3 malformed lines skipped) - unreadable:"},
+			12: {"munsu dashboard PARTIAL refreshed 0s ago", "unresolved 8  Human-needed 0  failed sources 2", "Failed sources and tasks - Showing 4 of 8 (page 1 of 2)", "Events - Showing 2 of the last 40 read (3 malformed lines skipped) - unreadable:"},
+			6:  {"munsu dashboard PARTIAL refreshed 0s ago", "unresolved 8  Human-needed 0  failed sources 2", "Failed sources and tasks - Showing 0 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read (3 malformed lines skipped) - unreadable:"},
+			4:  {"munsu dashboard PARTIAL refreshed 0s ago", "unresolved 8  Human-needed 0  failed sources 2"},
+		}},
+		{"first read failed", 0, 0, 0, false, false, "", false, 0, true, nil, map[int][]string{
+			30: {"munsu dashboard FAILED", "Fleet read failed:", "Events"},
+			12: {"munsu dashboard FAILED", "Fleet read failed:", "Events"},
+			6:  {"munsu dashboard FAILED", "Fleet read failed:", "Events"},
+			4:  {"munsu dashboard FAILED"},
+		}},
+		{"empty", 0, 0, 0, false, false, "", false, 0, false, nil, map[int][]string{
+			30: {"munsu dashboard EMPTY refreshed 0s ago", "unresolved 0  Human-needed 0  failed sources 0", "No tasks and no failed sources.", "Events"},
+			12: {"munsu dashboard EMPTY refreshed 0s ago", "unresolved 0  Human-needed 0  failed sources 0", "No tasks and no failed sources.", "Events"},
+			6:  {"munsu dashboard EMPTY refreshed 0s ago", "unresolved 0  Human-needed 0  failed sources 0", "No tasks and no failed sources.", "Events"},
+			4:  {"munsu dashboard EMPTY refreshed 0s ago", "unresolved 0  Human-needed 0  failed sources 0"},
+		}},
+		{"loading", 0, 0, 0, false, false, "", false, 0, false, func(t *testing.T, m dashboardModel) dashboardModel {
+			return testDashModel()
+		}, map[int][]string{
+			30: {"munsu dashboard LOADING", "Loading fleet...", "Events"},
+			12: {"munsu dashboard LOADING", "Loading fleet...", "Events"},
+			6:  {"munsu dashboard LOADING", "Loading fleet...", "Events"},
+			4:  {"munsu dashboard LOADING"},
+		}},
+		{"form mode", 0, 3, 3, false, false, "", false, 0, false, func(t *testing.T, m dashboardModel) dashboardModel {
+			return press(selectTask(t, m, "t-00"), "m")
+		}, map[int][]string{
+			30: {"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0", "Tasks", "Events"},
+			12: {"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 1 of the last 3 read"},
+			6:  {"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0"},
+			4:  {"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0"},
+		}},
+		{"confirm mode", 0, 3, 3, false, false, "", false, 0, false, func(t *testing.T, m dashboardModel) dashboardModel {
+			m = press(selectTask(t, m, "t-00"), "s")
+			return press(send(m, tea.PasteMsg{Content: longText("send this line to the task")}), "enter")
+		}, map[int][]string{
+			30: {"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0", "Tasks", "Events"},
+			12: {"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0", "Tasks", "Events - Showing 2 of the last 3 read"},
+			6:  {"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0", "Tasks - Showing 0 of 3 (page 1 of 3)"},
+			4:  {"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0"},
+		}},
+		{"running mode", 0, 3, 3, false, false, "", false, 0, false, func(t *testing.T, m dashboardModel) dashboardModel {
+			m.mode = modeRunning
+			return m
+		}, map[int][]string{
+			30: {"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0", "Tasks", "Events"},
+			12: {"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0", "Tasks", "Events - Showing 2 of the last 3 read"},
+			6:  {"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 0 of the last 3 read"},
+			4:  {"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0", "Tasks - Showing 0 of 3 (page 1 of 3)"},
+		}},
+		{"browse result with output, an error and a notice", 0, 3, 3, false, false, "", false, 0, false, func(t *testing.T, m dashboardModel) dashboardModel {
+			m.result = &dashExecDone{
+				argv:   []string{"task", "done", longText("t-00")},
+				err:    errors.New(longText("fork/exec /bin/munsu: no such file or directory")),
+				output: longText("first line of output") + "\n" + longText("second line of output"),
+			}
+			m.notice = longText("selected task changed before the action ran")
+			return m
+		}, map[int][]string{
+			30: {"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0", "Tasks", "Events", "exit -1:"},
+			12: {"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 0 of the last 3 read", "exit -1:"},
+			6:  {"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0", "exit -1:"},
+			4:  {"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0", "exit -1:"},
+		}},
 	}
 	// Longer than the widest terminal the sweep uses, so a clip cuts it.
 	feedErr := "open /Users/someone/.munsu/projects/example/state/events.log: permission denied, " + strings.Repeat("and more ", 6)
@@ -995,10 +1121,27 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 	eventsRe := regexp.MustCompile(`^Events( - Showing (\d+) of the last (\d+) read)?`)
 	itemRe := regexp.MustCompile(`^[> ] (x captain:c\d\d|[! ] t-\d\d)`)
 	eventRe := regexp.MustCompile(`^\d\d:\d\d:\d\d `)
-	// Free texts, each longer than the widest terminal the sweep uses, so a
-	// frame that drew one as protected would show the notice at widths it fits.
-	longText := func(what string) string {
-		return what + " " + strings.Repeat("with a realistic amount of detail ", 5)
+	// The protected parts of a state whose layout changes with the width, by
+	// state, height and width.
+	narrow := map[string]map[int]map[int][]string{
+		"confirm mode": {
+			30: {
+				100: {"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0", "Tasks", "Events"},
+				60:  {"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0", "Tasks", "Events"},
+			},
+			12: {
+				100: {"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0", "Tasks - Showing 2 of 3 (page 1 of 2)", "Events - Showing 1 of the last 3 read"},
+				60:  {"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 1 of the last 3 read"},
+			},
+			6: {
+				100: {"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0"},
+				60:  {"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0"},
+			},
+			4: {
+				100: {"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0"},
+				60:  {"munsu dashboard REFRESHED 0s ago", "unresolved 3  Human-needed 0  failed sources 0"},
+			},
+		},
 	}
 	for _, st := range states {
 		var tasks []fleet.TaskSnapshot
@@ -1039,7 +1182,13 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 		if st.stale || st.result {
 			notes = 1
 		}
+		if st.then != nil {
+			base = st.then(t, base)
+		}
 		for _, w := range []int{100, 60} {
+			if st.then != nil {
+				continue
+			}
 			if st.skipped > 0 && w == 60 {
 				// This row's feed title (error plus skipped note) is about 80
 				// columns protected, so 60 is the notice; the sweep below
@@ -1122,42 +1271,41 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 				}
 			}
 		}
-		// Every width from 1 to 120: the frame is the "Terminal too small"
-		// notice exactly when a protected part (a state or a count) is wider
-		// than the terminal, else every protected part is drawn whole. The
-		// protected parts are read off the same state's frame at width 1000.
-		for _, h := range []int{30, 12, 6} {
-			var prot []string
-			wide := map[string]string{} // a protected part to its whole line
-			for i, l := range strings.Split(ansi.Strip(resized(base, 1000, h).frame()), "\n") {
-				l = strings.TrimRight(l, " ")
-				p := ""
-				switch {
-				case i == 0 && st.firstFail:
-					p = "munsu dashboard FAILED"
-				case i == 0:
-					p, _, _ = strings.Cut(l, "  "+base.home)
-				case i == 1 || titleRe.MatchString(l):
-					p = l
-				case strings.HasPrefix(l, "exit "):
-					p, _, _ = strings.Cut(l, ":")
-					p += ":"
-				case strings.HasPrefix(l, "Last read failed:"):
-					p = "Last read failed:"
-				case strings.HasPrefix(l, "Fleet read failed:"):
-					p = "Fleet read failed:"
-				case strings.HasPrefix(l, "Events"):
-					p, _, _ = strings.Cut(l, " - unreadable:")
-					if st.feedFailed {
-						p += " - unreadable:"
-					}
-					if st.skipped > 0 && !strings.Contains(p, "(3 malformed lines skipped) - unreadable:") {
-						t.Fatalf("%s %d: feed protected part %q lacks the note before \" - unreadable:\"", st.name, h, p)
-					}
-				default:
-					continue
+		// The protected parts layout() returns for the state equal the authored
+		// table exactly, so a free text made protected fails whatever its length.
+		// Then at every width from 1 to 120: the frame is the "Terminal too
+		// small" notice exactly when a table entry does not fit, else every entry
+		// is drawn whole.
+		notice := "Terminal too small: enlarge it."
+		if base.mode == modeForm || base.mode == modeConfirm {
+			notice = "Terminal too small: enlarge it, or esc to cancel."
+		}
+		keepsAt := func(w, h int) ([]string, map[string]bool) {
+			var got []string
+			follows := map[string]bool{} // free text follows the part
+			for _, l := range resized(base, w, h).layout() {
+				if l.keep.text != "" {
+					p := ansi.Strip(l.keep.text)
+					got = append(got, p)
+					follows[p] = strings.TrimRight(ansi.Strip(l.rest), " ") != ""
 				}
-				prot, wide[p] = append(prot, p), l
+			}
+			return got, follows
+		}
+		for _, h := range []int{30, 12, 6, 4} {
+			got, follows := keepsAt(1000, h)
+			prot := st.parts[h]
+			if !slices.Equal(got, prot) {
+				t.Fatalf("%s %d: protected parts\n got  %q\n want %q", st.name, h, got, prot)
+			}
+			// The confirm row's wrapped command takes more rows in a narrower
+			// terminal, so its list and feed counts change with the width: the
+			// table is authored at two more widths, and the sweep reads the
+			// parts at each width.
+			for w, want := range narrow[st.name][h] {
+				if got, _ := keepsAt(w, h); !slices.Equal(got, want) {
+					t.Fatalf("%s %dx%d: protected parts\n got  %q\n want %q", st.name, w, h, got, want)
+				}
 			}
 			for w := 1; w <= 120; w++ {
 				f := ansi.Strip(resized(base, w, h).frame())
@@ -1167,12 +1315,16 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 					t.Fatalf("%s: %d lines, terminal has %d", where, len(lines), h)
 				}
 				tooSmall := false
-				for _, p := range prot {
-					tooSmall = tooSmall || ansi.StringWidth(p) > w || ansi.StringWidth(p) == w && ansi.StringWidth(wide[p]) > w
+				prot, follows := prot, follows
+				if narrow[st.name] != nil {
+					prot, follows = keepsAt(w, h)
 				}
-				notice := strings.TrimRight(f, " ") == ansi.Truncate("Terminal too small: enlarge it.", w, "…")
-				if notice != tooSmall {
-					t.Fatalf("%s: notice drawn = %v, a protected part is wider than the terminal = %v (%q):\n%s", where, notice, tooSmall, prot, f)
+				for _, p := range prot {
+					tooSmall = tooSmall || ansi.StringWidth(p) > w || ansi.StringWidth(p) == w && follows[p]
+				}
+				drawn := strings.TrimRight(f, " ") == ansi.Truncate(notice, w, "…")
+				if drawn != tooSmall {
+					t.Fatalf("%s: notice drawn = %v, a protected part is wider than the terminal = %v (%q):\n%s", where, drawn, tooSmall, prot, f)
 				}
 				for _, l := range lines {
 					if ansi.StringWidth(l) > w {
@@ -1180,7 +1332,7 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 					}
 				}
 				for _, p := range prot {
-					if !notice && !strings.Contains(f, p) {
+					if !drawn && !strings.Contains(f, p) {
 						t.Fatalf("%s: protected part %q is not drawn whole:\n%s", where, p, f)
 					}
 				}

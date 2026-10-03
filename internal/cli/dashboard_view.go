@@ -142,11 +142,110 @@ func (m dashboardModel) feedLines(w int) []string {
 	return lines
 }
 
-// dashLine is one frame line: keep is the protected part, a count or a state
-// the Human must read whole, and rest is free text that may be cut.
-type dashLine struct{ keep, rest string }
+// dashKeep is a protected part: a state or a count the Human must read whole.
+// Only the constructors below build one, from typed values and never from a
+// free string, so no free text is protected by accident. The zero value is no
+// protected part.
+type dashKeep struct{ text string }
 
-func (l dashLine) String() string { return l.keep + l.rest }
+// keepState is "munsu dashboard" and the state phrase; reading adds the faint
+// " (reading)".
+func keepState(s dashState, age string, reading bool) dashKeep {
+	var phrase string
+	switch s {
+	case stateLoading:
+		phrase = dashYellow.Render("LOADING")
+	case stateFailed:
+		phrase = dashRed.Render("FAILED")
+	case stateStale:
+		phrase = dashRed.Render("STALE last good read " + age + " ago")
+	case stateEmpty:
+		phrase = dashGreen.Render("EMPTY refreshed " + age + " ago")
+	case statePartial:
+		phrase = dashYellow.Render("PARTIAL refreshed " + age + " ago")
+	default:
+		phrase = dashGreen.Render("REFRESHED " + age + " ago")
+	}
+	if reading {
+		phrase += dashFaint.Render(" (reading)")
+	}
+	return dashKeep{dashBold.Render("munsu dashboard") + " " + phrase}
+}
+
+func keepCounts(unresolved, humanNeeded, failed int) dashKeep {
+	return dashKeep{fmt.Sprintf("unresolved %d  Human-needed %d  failed sources %d", unresolved, humanNeeded, failed)}
+}
+
+// dashStem is a fixed stem or line, the closed set of constant protected texts.
+type dashStem int
+
+const (
+	stemLastReadFailed dashStem = iota + 1
+	stemFleetReadFailed
+	stemLoadingFleet
+	stemNoTasks
+)
+
+func keepStem(s dashStem) dashKeep {
+	switch s {
+	case stemLastReadFailed:
+		return dashKeep{dashRed.Render("Last read failed:")}
+	case stemFleetReadFailed:
+		return dashKeep{dashRed.Render("Fleet read failed:")}
+	case stemLoadingFleet:
+		return dashKeep{dashFaint.Render("Loading fleet...")}
+	case stemNoTasks:
+		return dashKeep{dashFaint.Render("No tasks and no failed sources.")}
+	}
+	return dashKeep{}
+}
+
+// keepListTitle names the list and, when a page clips it, counts what it draws.
+func keepListTitle(failures bool, drawn, total, page, pages int) dashKeep {
+	title := "Tasks"
+	if failures {
+		title = "Failed sources and tasks"
+	}
+	if drawn < total {
+		title += fmt.Sprintf(" - Showing %d of %d (page %d of %d)", drawn, total, page, pages)
+	}
+	return dashKeep{dashBold.Render(title)}
+}
+
+// keepFeedTitle is "Events", the count of what the viewport draws when it
+// draws fewer lines than it holds, the malformed lines note, and " - unreadable:"
+// when the last event read failed.
+func keepFeedTitle(shown, read, skipped int, unreadable bool) dashKeep {
+	t := "Events"
+	if shown < read {
+		t += fmt.Sprintf(" - Showing %d of the last %d read", shown, read)
+	}
+	if skipped > 0 {
+		t += fmt.Sprintf(" (%d malformed lines skipped)", skipped)
+	}
+	if unreadable {
+		return dashKeep{dashRed.Render(t + " - unreadable:")}
+	}
+	return dashKeep{dashBold.Render(t)}
+}
+
+// keepExit is the result stem "exit N:", green for a clean exit.
+func keepExit(code int) dashKeep {
+	style := dashRed
+	if code == 0 {
+		style = dashGreen
+	}
+	return dashKeep{style.Render(fmt.Sprintf("exit %d:", code))}
+}
+
+// dashLine is one frame line: keep is the protected part and rest is free text
+// that may be cut.
+type dashLine struct {
+	keep dashKeep
+	rest string
+}
+
+func (l dashLine) String() string { return l.keep.text + l.rest }
 
 func dashFree(lines ...string) []dashLine {
 	out := make([]dashLine, len(lines))
@@ -175,7 +274,7 @@ func (m dashboardModel) layout() []dashLine {
 // the width cuts, since the cut's "…" takes the last cell.
 func (m dashboardModel) fits() bool {
 	for _, l := range m.layout() {
-		keep := lipgloss.Width(l.keep)
+		keep := lipgloss.Width(l.keep.text)
 		if keep > m.width || keep == m.width && lipgloss.Width(l.String()) > m.width {
 			return false
 		}
@@ -216,30 +315,16 @@ func (m dashboardModel) frame() string {
 // header is the title line, state phrase first and the home path after it, and
 // the counters line.
 func (m dashboardModel) header() []dashLine {
-	var phrase, errText, counts string
-	switch m.state() {
-	case stateLoading:
-		phrase = dashYellow.Render("LOADING")
-	case stateFailed:
-		phrase = dashRed.Render("FAILED")
-		errText = dashRed.Render(" " + dashText(fmt.Sprint(m.readErr)))
-	case stateStale:
-		phrase = dashRed.Render("STALE last good read " + m.age() + " ago")
-	case stateEmpty:
-		phrase = dashGreen.Render("EMPTY refreshed " + m.age() + " ago")
-	case statePartial:
-		phrase = dashYellow.Render("PARTIAL refreshed " + m.age() + " ago")
-	default:
-		phrase = dashGreen.Render("REFRESHED " + m.age() + " ago")
-	}
-	if m.reading && m.state() != stateLoading {
-		phrase += dashFaint.Render(" (reading)")
+	var counts dashKeep
+	rest := ""
+	if m.state() == stateFailed {
+		rest = dashRed.Render(" " + dashText(fmt.Sprint(m.readErr)))
 	}
 	if !m.lastGood.IsZero() {
-		counts = fmt.Sprintf("unresolved %d  Human-needed %d  failed sources %d", m.unresolved(), m.humanNeeded(), len(m.failures))
+		counts = keepCounts(m.unresolved(), m.humanNeeded(), len(m.failures))
 	}
 	return []dashLine{
-		{keep: dashBold.Render("munsu dashboard") + " " + phrase, rest: errText + "  " + dashFaint.Render(dashText(m.home))},
+		{keep: keepState(m.state(), m.age(), m.reading && m.state() != stateLoading), rest: rest + "  " + dashFaint.Render(dashText(m.home))},
 		{keep: counts},
 	}
 }
@@ -247,7 +332,7 @@ func (m dashboardModel) header() []dashLine {
 // notes are the lines between the header and the body.
 func (m dashboardModel) notes() []dashLine {
 	if m.state() == stateStale && m.readErr != nil {
-		return []dashLine{{keep: dashRed.Render("Last read failed:"), rest: dashRed.Render(" " + dashText(m.readErr.Error()))}}
+		return []dashLine{{keep: keepStem(stemLastReadFailed), rest: dashRed.Render(" " + dashText(m.readErr.Error()))}}
 	}
 	return nil
 }
@@ -260,11 +345,11 @@ func (m dashboardModel) body() []dashLine {
 	}
 	switch m.state() {
 	case stateLoading:
-		return []dashLine{{keep: dashFaint.Render("Loading fleet...")}}
+		return []dashLine{{keep: keepStem(stemLoadingFleet)}}
 	case stateFailed:
-		return []dashLine{{keep: dashRed.Render("Fleet read failed:"), rest: dashRed.Render(" " + dashText(fmt.Sprint(m.readErr)))}}
+		return []dashLine{{keep: keepStem(stemFleetReadFailed), rest: dashRed.Render(" " + dashText(fmt.Sprint(m.readErr)))}}
 	case stateEmpty:
-		return []dashLine{{keep: dashFaint.Render("No tasks and no failed sources.")}}
+		return []dashLine{{keep: keepStem(stemNoTasks)}}
 	}
 	total := len(m.list.Items())
 	if total == 0 {
@@ -279,14 +364,8 @@ func (m dashboardModel) body() []dashLine {
 		drawn = end - start
 		rows = strings.Split(l.View(), "\n")
 	}
-	title := "Tasks"
-	if len(m.failures) > 0 {
-		title = "Failed sources and tasks"
-	}
-	if drawn < total {
-		title += fmt.Sprintf(" - Showing %d of %d (page %d of %d)", drawn, total, l.Paginator.Page+1, l.Paginator.TotalPages)
-	}
-	return append([]dashLine{{keep: dashBold.Render(title)}}, dashFree(rows...)...)
+	title := keepListTitle(len(m.failures) > 0, drawn, total, l.Paginator.Page+1, l.Paginator.TotalPages)
+	return append([]dashLine{{keep: title}}, dashFree(rows...)...)
 }
 
 // dashRows draws a list item as one line: a failed source in red, a task row
@@ -357,16 +436,9 @@ func (m dashboardModel) feedSection() []dashLine {
 	if m.feedH < 1 {
 		return nil
 	}
-	t := "Events"
-	if shown, all := m.feed.VisibleLineCount(), m.feed.TotalLineCount(); shown < all {
-		t += fmt.Sprintf(" - Showing %d of the last %d read", shown, all)
-	}
-	if m.skipped > 0 {
-		t += fmt.Sprintf(" (%d malformed lines skipped)", m.skipped)
-	}
-	title := dashLine{keep: dashBold.Render(t)}
+	title := dashLine{keep: keepFeedTitle(m.feed.VisibleLineCount(), m.feed.TotalLineCount(), m.skipped, m.eventErr != nil)}
 	if m.eventErr != nil {
-		title = dashLine{keep: dashRed.Render(t + " - unreadable:"), rest: dashRed.Render(" " + dashText(m.eventErr.Error()))}
+		title.rest = dashRed.Render(" " + dashText(m.eventErr.Error()))
 	}
 	out := []dashLine{title}
 	if p := m.feedPlaceholder(); p != "" && m.feedH > 1 {
@@ -448,7 +520,7 @@ func (m dashboardModel) footer() []dashLine {
 			if r.exitCode() == 0 {
 				style = dashGreen
 			}
-			out = append(out, dashLine{keep: style.Render(fmt.Sprintf("exit %d:", r.exitCode())), rest: style.Render(" " + argvLine(r.argv))})
+			out = append(out, dashLine{keep: keepExit(r.exitCode()), rest: style.Render(" " + argvLine(r.argv))})
 			if r.err != nil && r.exitCode() < 0 {
 				out = append(out, dashLine{rest: dashRed.Render(dashText(r.err.Error()))})
 			}
