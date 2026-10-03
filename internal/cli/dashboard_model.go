@@ -116,7 +116,7 @@ type dashboardModel struct {
 	list list.Model
 	sel  dashTarget
 	// feed shows the event lines, always scrolled to the newest. argv shows
-	// the confirm command, soft-wrapped.
+	// the confirm command as loadArgv wrapped it.
 	feed viewport.Model
 	argv viewport.Model
 	help help.Model
@@ -246,9 +246,9 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m dashboardModel) update(msg tea.Msg) (dashboardModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		widened := msg.Width != m.width
+		rewrap := msg.Width != m.width
 		m.width, m.height = msg.Width, msg.Height
-		if widened {
+		if rewrap {
 			if m.mode == modeConfirm {
 				m.loadArgv()
 			}
