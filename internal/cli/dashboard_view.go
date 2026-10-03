@@ -465,20 +465,41 @@ func eventLine(e orchestrator.Record) string {
 	return strings.TrimRight(fmt.Sprintf("%s %s %s %s %s", at, dashText(e.Type), dashText(e.Producer), dashText(e.Key), dashText(e.Payload)), " ")
 }
 
-// helpLines are the key footer, built from the action table. The first line
-// holds the movement keys and the task actions, the second the rest.
+// helpLines are the key footer: the movement entry (with two rows or more),
+// every action the selection can carry (a.bind finds no problem, the test begin
+// applies), and quit, in table order. Entries fill a line while the line still
+// fits the terminal; the next one starts a new line, and no entry is split. A
+// pressed action key that is hidden here still reaches begin and gets its notice.
 func (m dashboardModel) helpLines() []string {
-	move := key.NewBinding(key.WithKeys("up", "k", "down", "j"), key.WithHelp("j/k", "move"))
-	quit := key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit"))
-	first, second := []key.Binding{move}, []key.Binding{}
+	hasTarget := len(m.list.Items()) > 0
+	move := dashMove
+	move.SetEnabled(len(m.list.Items()) >= 2)
+	entries := []key.Binding{move}
 	for i := range dashActions {
-		if i < 8 {
-			first = append(first, dashActions[i].keyBinding())
-		} else {
-			second = append(second, dashActions[i].keyBinding())
-		}
+		b := dashActions[i].keys
+		_, problem := dashActions[i].bind(m.sel, hasTarget, m.home)
+		b.SetEnabled(problem == "")
+		entries = append(entries, b)
 	}
-	return []string{m.help.ShortHelpView(first), m.help.ShortHelpView(append(second, quit))}
+	entries = append(entries, dashQuit)
+
+	// help.Model cuts a line wider than its width with an ellipsis, so a line's
+	// natural width is measured on a copy with no width.
+	natural := m.help
+	natural.SetWidth(0)
+	var lines []string
+	var line []key.Binding
+	for _, e := range entries {
+		if !e.Enabled() {
+			continue
+		}
+		if len(line) > 0 && m.width > 0 && lipgloss.Width(natural.ShortHelpView(append(line[:len(line):len(line)], e))) > m.width {
+			lines = append(lines, m.help.ShortHelpView(line))
+			line = nil
+		}
+		line = append(line, e)
+	}
+	return append(lines, m.help.ShortHelpView(line))
 }
 
 // fieldView draws one form field. A value holding text the dashboard must not

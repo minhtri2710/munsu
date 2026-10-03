@@ -381,10 +381,10 @@ func (m dashboardModel) onKey(k tea.KeyPressMsg) (dashboardModel, tea.Cmd) {
 		return m.onFormKey(k)
 	}
 	m.notice = ""
-	if name == "q" {
+	if key.Matches(k, dashQuit) {
 		return m, tea.Quit
 	}
-	if a := findDashAction(name); a != nil {
+	if a := actionFor(k); a != nil {
 		return m.begin(a), nil
 	}
 	m.list, _ = m.list.Update(k)

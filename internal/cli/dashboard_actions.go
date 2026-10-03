@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
 )
 
 // dashTarget is the row identity captured when an action starts. Rows reorder
@@ -39,7 +40,11 @@ const (
 )
 
 type dashAction struct {
-	key     string
+	key string
+	// keys is the action's declared binding, built once from key and name by
+	// withBindings. onKey matches it and the footer renders it; the footer
+	// copies it disabled for an action the selection cannot carry.
+	keys    key.Binding
 	name    string
 	binding dashBinding
 	// needsCaptainID resolves the registry ID from the registry before the
@@ -86,7 +91,7 @@ func wordsArgs(v map[string]string) []string {
 // dashActions is the approved action set (plan sets A and B). The wake actions
 // are absent: no existing read exposes a claimed wake's lease and event IDs.
 // Offered nowhere: --force, --teardown, --generation.
-var dashActions = []dashAction{
+var dashActions = withBindings([]dashAction{
 	{key: "b", name: "task block", binding: bindTask,
 		fields: []dashField{{"by", "blocked by (empty for none)", false}},
 		args: func(t dashTarget, v map[string]string) []string {
@@ -153,11 +158,29 @@ var dashActions = []dashAction{
 		args: func(t dashTarget, v map[string]string) []string {
 			return append([]string{"delivery", "pr-merge", t.ID, v["pr"]}, wordsArgs(v)...)
 		}},
+})
+
+// dashQuit and dashMove are the quit and movement bindings. The list's own key
+// map does the moving; dashMove is only its footer entry.
+var (
+	dashQuit = key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit"))
+	dashMove = key.NewBinding(key.WithKeys("up", "k", "down", "j"), key.WithHelp("j/k", "move"))
+)
+
+// withBindings declares each action's key binding; its help text is the last
+// word of the action name.
+func withBindings(as []dashAction) []dashAction {
+	for i := range as {
+		w := strings.Fields(as[i].name)
+		as[i].keys = key.NewBinding(key.WithKeys(as[i].key), key.WithHelp(as[i].key, w[len(w)-1]))
+	}
+	return as
 }
 
-func findDashAction(key string) *dashAction {
+// actionFor is the action whose declared binding matches the key press.
+func actionFor(k tea.KeyPressMsg) *dashAction {
 	for i := range dashActions {
-		if dashActions[i].key == key {
+		if key.Matches(k, dashActions[i].keys) {
 			return &dashActions[i]
 		}
 	}
@@ -194,11 +217,4 @@ func (a *dashAction) bind(t dashTarget, hasTarget bool, primary string) (home st
 // command the action runs.
 func (a *dashAction) buildArgv(home string, t dashTarget, v map[string]string) []string {
 	return append([]string{"--home", home}, a.args(t, v)...)
-}
-
-// keyBinding is the action's key binding; its help text is the last word of the
-// action name.
-func (a *dashAction) keyBinding() key.Binding {
-	w := strings.Fields(a.name)
-	return key.NewBinding(key.WithKeys(a.key), key.WithHelp(a.key, w[len(w)-1]))
 }
