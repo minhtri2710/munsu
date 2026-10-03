@@ -418,6 +418,23 @@ func TestDashboardWordsFormRequiresWords(t *testing.T) {
 			})
 		}
 	}
+	// A form frame that does not fit is exactly the esc notice, cut to the
+	// width, and the form is drawn otherwise.
+	var calls []execCall
+	form := press(selectTask(t, actionFixture(&calls), "p-1"), "m")
+	var small, drawn bool
+	for w := 1; w <= 120; w++ {
+		m := resized(form, w, 12)
+		f := strings.TrimRight(ansi.Strip(m.frame()), " ")
+		isNotice := f == ansi.Truncate("Terminal too small: enlarge it, or esc to cancel.", w, "…")
+		if m.fits() == isNotice {
+			t.Fatalf("form %dx12: fits = %v, frame is the esc notice = %v:\n%s", w, m.fits(), isNotice, f)
+		}
+		small, drawn = small || isNotice, drawn || !isNotice
+	}
+	if !small || !drawn {
+		t.Fatalf("the form sweep saw the notice = %v and the form = %v, want both", small, drawn)
+	}
 }
 
 // A stale row is never rendered in a phase color, whatever its phase.
@@ -508,13 +525,24 @@ func dashNoSpace(s string) string {
 	return strings.Join(strings.Fields(s), "")
 }
 
-// confirmRows are the rows the confirm viewport draws.
+// confirmRows are the confirm viewport rows as the stripped frame draws them:
+// after the header, notes, list and feed lines, before the footer lines. They
+// are nil when the frame is the notice.
 func confirmRows(m dashboardModel) []string {
-	return strings.Split(ansi.Strip(m.argv.View()), "\n")
+	if !m.fits() {
+		return nil
+	}
+	lines := strings.Split(ansi.Strip(m.frame()), "\n")
+	start := len(m.header()) + len(m.notes()) + len(m.body()) + len(m.feedSection())
+	end := min(start+m.argv.Height(), len(lines)-len(m.footer()))
+	if end < start {
+		return nil
+	}
+	return lines[start:end]
 }
 
 // scrollDrawn scrolls the confirm viewport one line at a time to its bottom
-// and returns the non-space runes it drew on the way.
+// and returns the non-space runes the frames drew of it on the way.
 func scrollDrawn(m dashboardModel) (dashboardModel, string) {
 	var drawn strings.Builder
 	for {
@@ -523,7 +551,9 @@ func scrollDrawn(m dashboardModel) (dashboardModel, string) {
 			drawn.WriteString(strings.Join(rows, ""))
 			break
 		}
-		drawn.WriteString(rows[0])
+		if len(rows) > 0 {
+			drawn.WriteString(rows[0])
+		}
 		m = press(m, "down")
 	}
 	return m, dashNoSpace(drawn.String())
@@ -561,8 +591,8 @@ func TestDashboardConfirmShowsFullArgv(t *testing.T) {
 				m, drawn := scrollDrawn(m)
 				assertClaim(t, name, w, h, m)
 				fit := m.fits()
-				if f := m.frame(); !fit && (strings.Contains(f, "\n") || w >= 52 && !strings.Contains(f, "Terminal too small")) {
-					t.Fatalf("%s %dx%d: the frame does not fit and is not the one-line notice:\n%s", name, w, h, f)
+				if f := strings.TrimRight(ansi.Strip(m.frame()), " "); !fit && f != ansi.Truncate("Terminal too small: enlarge it, or esc to cancel.", w, "…") {
+					t.Fatalf("%s %dx%d: the frame does not fit and is not the esc notice:\n%s", name, w, h, f)
 				}
 				press(m, "y")
 				if len(calls) == 1 {
@@ -943,19 +973,21 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 		home       string
 		result     bool // a finished command with a long argv and a two-digit exit code
 		skipped    int  // malformed lines the good event read skipped
+		firstFail  bool // the first and only read failed: no good read before it
 	}
 	states := []state{
-		{"fresh", 30, 3, 3, false, false, "", false, 0},
-		{"fresh many tasks", 0, 30, 40, false, false, "", false, 0},
-		{"stale", 30, 3, 3, true, false, "", false, 0},
-		{"stale many tasks", 2, 30, 40, true, false, "", false, 0},
-		{"zero tasks", 5, 0, 3, false, false, "", false, 0},
-		{"zero failures", 0, 6, 3, false, false, "", false, 0},
-		{"zero events", 3, 6, 0, false, false, "", false, 0},
-		{"feed unreadable after a read", 2, 6, 40, false, true, "", false, 0},
-		{"long home", 2, 6, 40, false, false, strings.Repeat("h", 70), false, 0},
-		{"command result", 2, 6, 40, false, false, "", true, 0},
-		{"feed unreadable after a read, lines skipped", 2, 6, 40, false, true, "", false, 3},
+		{"fresh", 30, 3, 3, false, false, "", false, 0, false},
+		{"fresh many tasks", 0, 30, 40, false, false, "", false, 0, false},
+		{"stale", 30, 3, 3, true, false, "", false, 0, false},
+		{"stale many tasks", 2, 30, 40, true, false, "", false, 0, false},
+		{"zero tasks", 5, 0, 3, false, false, "", false, 0, false},
+		{"zero failures", 0, 6, 3, false, false, "", false, 0, false},
+		{"zero events", 3, 6, 0, false, false, "", false, 0, false},
+		{"feed unreadable after a read", 2, 6, 40, false, true, "", false, 0, false},
+		{"long home", 2, 6, 40, false, false, strings.Repeat("h", 70), false, 0, false},
+		{"command result", 2, 6, 40, false, false, "", true, 0, false},
+		{"feed unreadable after a read, lines skipped", 2, 6, 40, false, true, "", false, 3, false},
+		{"first read failed", 0, 0, 0, false, false, "", false, 0, true},
 	}
 	// Longer than the widest terminal the sweep uses, so a clip cuts it.
 	feedErr := "open /Users/someone/.munsu/projects/example/state/events.log: permission denied, " + strings.Repeat("and more ", 6)
@@ -980,9 +1012,13 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 		if st.home != "" {
 			base.home = st.home
 		}
-		good := goodRead(dashNow, tasks, failures, events)
-		good.skipped = st.skipped
-		base = send(base, good)
+		if st.firstFail {
+			base = send(base, dashRead{at: dashNow, snapErr: errors.New("scanning captain home /Users/someone/.munsu/projects/example/state/captains/c01: " + feedErr)})
+		} else {
+			good := goodRead(dashNow, tasks, failures, events)
+			good.skipped = st.skipped
+			base = send(base, good)
+		}
 		if st.result {
 			base.result = &dashExecDone{argv: []string{"task", "done", strings.Repeat("a long argument ", 10)}, err: exitStatus12(t)}
 		}
@@ -1092,6 +1128,8 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 				l = strings.TrimRight(l, " ")
 				p := ""
 				switch {
+				case i == 0 && st.firstFail:
+					p = "munsu dashboard FAILED"
 				case i == 0:
 					p, _, _ = strings.Cut(l, "  "+base.home)
 				case i == 1 || titleRe.MatchString(l):
@@ -1101,6 +1139,8 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 					p += ":"
 				case strings.HasPrefix(l, "Last read failed:"):
 					p = "Last read failed:"
+				case strings.HasPrefix(l, "Fleet read failed:"):
+					p = "Fleet read failed:"
 				case strings.HasPrefix(l, "Events"):
 					p, _, _ = strings.Cut(l, " - unreadable:")
 					if st.feedFailed {
