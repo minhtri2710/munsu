@@ -143,6 +143,29 @@ func TestDashboardGoldenFailedHome(t *testing.T) {
 	assertGolden(t, "failed_home", m.frame())
 }
 
+func TestDashboardItemsOrder(t *testing.T) {
+	m := testDashModel()
+	m.rows = []fleet.TaskSnapshot{
+		row("ordinary", "working", "ordinary task", "primary", ""),
+		row("human", "blocked", "needs a decision", "primary", ""),
+	}
+	m.failures = []fleet.SourceFailure{{Source: "captain:beta", Err: errors.New("unreadable")}}
+
+	items := m.items()
+	if len(items) != 3 {
+		t.Fatalf("items = %d, want 3", len(items))
+	}
+	if got := items[0].(dashItem).row.ID; got != "human" {
+		t.Fatalf("first item = %q, want human-needed task", got)
+	}
+	if got := items[1].(dashItem).failure.Source; got != "captain:beta" {
+		t.Fatalf("second item = %q, want failed source", got)
+	}
+	if got := items[2].(dashItem).row.ID; got != "ordinary" {
+		t.Fatalf("third item = %q, want ordinary task", got)
+	}
+}
+
 func TestDashboardGoldenStale(t *testing.T) {
 	m := testDashModel()
 	m = send(m, goodRead(dashNow.Add(-45*time.Second), []fleet.TaskSnapshot{

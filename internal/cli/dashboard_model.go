@@ -281,7 +281,7 @@ func (m *dashboardModel) applyRead(r dashRead) {
 	} else {
 		m.readErr = nil
 		m.lastGood = r.at
-		m.rows = humanFirst(r.snap.Tasks)
+		m.rows = r.snap.Tasks
 		m.failures = r.snap.Failures
 		m.reselect()
 	}
@@ -301,23 +301,6 @@ func (m *dashboardModel) applyRead(r dashRead) {
 	if n := len(r.events); n > 0 {
 		m.cursor = r.events[n-1].ID
 	}
-}
-
-// humanFirst moves Human-needed rows to the front, keeping SnapshotDisplay's
-// order inside each group.
-func humanFirst(tasks []fleet.TaskSnapshot) []fleet.TaskSnapshot {
-	out := make([]fleet.TaskSnapshot, 0, len(tasks))
-	for _, ts := range tasks {
-		if fleet.HumanNeeded(ts) {
-			out = append(out, ts)
-		}
-	}
-	for _, ts := range tasks {
-		if !fleet.HumanNeeded(ts) {
-			out = append(out, ts)
-		}
-	}
-	return out
 }
 
 func (m dashboardModel) items() []list.Item {
