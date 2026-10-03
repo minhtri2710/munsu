@@ -734,25 +734,35 @@ func TestDashboardConfirmYWaitsForWholeArgv(t *testing.T) {
 		t.Fatalf("calls = %d at the bottom, want 1", len(calls))
 	}
 
-	// A resize after scrolling re-wraps the command: the viewport must not
-	// stay past its new bottom, drawing blank rows under a "whole command" claim.
+	// A width change rewraps the command, so the viewport goes back to its first
+	// row; a height change keeps the offset, clamped to the new bottom. Either
+	// way the frame claims the whole command only once its rows were drawn.
 	t.Run("a resize after scrolling still draws the whole command before y runs", func(t *testing.T) {
-		var calls []execCall
-		m := prMergeConfirm(t, &calls, 46, 6)
-		want := dashNoSpace("Run: " + argvLine(append([]string{m.exe}, m.pending.argv...)))
-		m = press(m, "down", "down")
-		m = resized(m, 120, 6)
-		drawn := dashNoSpace(strings.Join(confirmRows(m), ""))
-		claim := strings.Contains(ansi.Strip(m.frame()), "The whole command is shown.")
-		if claim != (drawn == want) {
-			t.Fatalf("claim = %v but the viewport drew %q, command %q:\n%s", claim, drawn, want, m.frame())
+		var tokens []string
+		for i := 0; i < 120; i++ {
+			tokens = append(tokens, fmt.Sprintf("T%03d", i))
 		}
-		press(m, "y")
-		if ran := len(calls) == 1; ran != (drawn == want) {
-			t.Fatalf("calls = %d, drawn the whole command = %v:\n%s", len(calls), drawn == want, m.frame())
-		}
-		if len(calls) != 1 {
-			t.Fatalf("calls = %d; the resized viewport shows the whole command, y should run", len(calls))
+		for _, tc := range []struct {
+			name   string
+			build  func(calls *[]execCall) dashboardModel
+			scroll func(dashboardModel) dashboardModel
+			w, h   int
+		}{
+			{"pr-merge wider", func(c *[]execCall) dashboardModel { return prMergeConfirm(t, c, 46, 6) },
+				func(m dashboardModel) dashboardModel { return press(m, "down", "down") }, 120, 6},
+			{"120-token send wider", func(c *[]execCall) dashboardModel { return sendConfirm(t, c, strings.Join(tokens, " "), 46, 6) },
+				func(m dashboardModel) dashboardModel { return press(m, "down", "down", "down", "down", "down", "down") }, 80, 6},
+			{"pr-merge taller, same width", func(c *[]execCall) dashboardModel { return prMergeConfirm(t, c, 46, 6) },
+				func(m dashboardModel) dashboardModel {
+					for i := 0; i < 50 && !m.argv.AtBottom(); i++ {
+						m = press(m, "pgdown")
+					}
+					return m
+				}, 46, 9},
+		} {
+			var calls []execCall
+			m := tc.scroll(tc.build(&calls))
+			assertWholeBeforeY(t, tc.name, resized(m, tc.w, tc.h), &calls)
 		}
 	})
 	// confirm() starts at the top: a second, shorter command is not entered

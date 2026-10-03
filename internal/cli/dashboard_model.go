@@ -246,6 +246,9 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m dashboardModel) update(msg tea.Msg) (dashboardModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		if msg.Width != m.width {
+			m.argv.SetYOffset(0) // a new width rewraps the command: show it from its first row
+		}
 		m.width, m.height = msg.Width, msg.Height
 	case dashTickMsg:
 		return m, tea.Batch(m.tickCmd(), m.startRead())
