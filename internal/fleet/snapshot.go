@@ -167,7 +167,10 @@ func SnapshotDisplay(homeDir string, deps SnapshotDependencies) (*DisplaySnapsho
 	// Scan the directory tree so general fleet view sees child soldiers without
 	// importing the captain package (avoids import cycles).
 	capRoot := filepath.Join(homeDir, "captains")
-	if entries, err := os.ReadDir(capRoot); err == nil {
+	entries, err := os.ReadDir(capRoot)
+	if err != nil && !os.IsNotExist(err) {
+		snap.Failures = append(snap.Failures, SourceFailure{Source: "captains", Home: capRoot, Err: err})
+	} else {
 		for _, e := range entries {
 			if !e.IsDir() || e.Name() == "" || e.Name()[0] == '.' {
 				continue

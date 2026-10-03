@@ -4,8 +4,9 @@
 package orchestrator
 
 import (
-	"bytes"
+	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -105,34 +106,54 @@ func Append(homeDir, eventType, producer, key, payload string) (uint64, error) {
 	return id, nil
 }
 
-// scanEvents returns every complete record in id order and the count of
-// non-blank lines that did not parse. A missing log is empty. Text after the
-// last newline is a writer mid-append and is neither a record nor skipped.
-func scanEvents(homeDir string) ([]Record, int, error) {
-	data, err := os.ReadFile(LogPath(homeDir))
+// scanEvents reads complete records in ID order while retaining at most limit
+// records. A missing log is empty. Text after the last newline is a writer
+// mid-append and is neither a record nor skipped.
+func scanEvents(homeDir string, cursor uint64, limit int, latest bool) ([]Record, int, error) {
+	f, err := os.Open(LogPath(homeDir))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, 0, nil
 		}
 		return nil, 0, fmt.Errorf("reading event log: %w", err)
 	}
-	end := bytes.LastIndexByte(data, '\n')
-	if end < 0 {
-		return nil, 0, nil
+	defer f.Close()
+	if limit < 0 {
+		limit = 0
 	}
 	var records []Record
 	skipped := 0
-	for _, line := range strings.Split(string(data[:end]), "\n") {
+	reader := bufio.NewReader(f)
+	for {
+		line, readErr := reader.ReadString('\n')
+		if readErr != nil {
+			if readErr == io.EOF {
+				break
+			}
+			return nil, 0, fmt.Errorf("reading event log: %w", readErr)
+		}
+		line = strings.TrimSuffix(line, "\n")
 		if line == "" {
 			continue
 		}
-		if r, ok := parseRecord(line); ok {
-			records = append(records, r)
-		} else {
+		r, ok := parseRecord(line)
+		if !ok {
 			skipped++
+			continue
+		}
+		if !latest && r.ID <= cursor || limit == 0 {
+			continue
+		}
+		records = append(records, r)
+		sort.SliceStable(records, func(i, j int) bool { return records[i].ID < records[j].ID })
+		if len(records) > limit {
+			if latest {
+				records = records[1:]
+			} else {
+				records = records[:limit]
+			}
 		}
 	}
-	sort.SliceStable(records, func(i, j int) bool { return records[i].ID < records[j].ID })
 	return records, skipped, nil
 }
 
@@ -142,17 +163,7 @@ func scanEvents(homeDir string) ([]Record, int, error) {
 // mid-append) is never returned and never counted. The log is re-read in full
 // on every call.
 func LatestEvents(homeDir string, n int) (records []Record, skipped int, err error) {
-	records, skipped, err = scanEvents(homeDir)
-	if err != nil {
-		return nil, 0, err
-	}
-	if n < 0 {
-		n = 0
-	}
-	if len(records) > n {
-		records = records[len(records)-n:]
-	}
-	return records, skipped, nil
+	return scanEvents(homeDir, 0, n, true)
 }
 
 // EventsAfter returns up to limit records with ID greater than cursor, in id
@@ -160,17 +171,5 @@ func LatestEvents(homeDir string, n int) (records []Record, skipped int, err err
 // returned ID as the next cursor. Missing, unreadable and torn-line handling
 // is as for LatestEvents.
 func EventsAfter(homeDir string, cursor uint64, limit int) (records []Record, skipped int, err error) {
-	all, skipped, err := scanEvents(homeDir)
-	if err != nil {
-		return nil, 0, err
-	}
-	i := sort.Search(len(all), func(i int) bool { return all[i].ID > cursor })
-	records = all[i:]
-	if limit < 0 {
-		limit = 0
-	}
-	if len(records) > limit {
-		records = records[:limit]
-	}
-	return records, skipped, nil
+	return scanEvents(homeDir, cursor, limit, false)
 }
