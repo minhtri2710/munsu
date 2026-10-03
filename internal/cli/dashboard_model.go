@@ -489,23 +489,11 @@ func (m dashboardModel) onFormKey(k tea.KeyPressMsg) (dashboardModel, tea.Cmd) {
 }
 
 // argvShown reports whether the whole confirm command has been on screen: the
-// viewport has a row, is at its bottom, and no page of it, from top to bottom,
-// comes out taller than the viewport (a grapheme the soft wrap cannot place
-// breaks the page). A terminal too small to draw the command in full never
-// passes, so y runs nothing.
+// viewport has a row and a width and is at its bottom. A frame too narrow to
+// draw it is refused by fits(), which onScreen pairs with this check.
 func (m dashboardModel) argvShown() bool {
 	v := m.argv
-	h := v.Height()
-	if h < 1 || v.Width() < 1 || !v.AtBottom() {
-		return false
-	}
-	for off := 0; off <= max(0, v.TotalLineCount()-h); off++ {
-		v.SetYOffset(off)
-		if strings.Count(v.View(), "\n") >= h {
-			return false
-		}
-	}
-	return true
+	return v.Height() >= 1 && v.Width() >= 1 && v.AtBottom()
 }
 
 func (m dashboardModel) onConfirmKey(k tea.KeyPressMsg) (dashboardModel, tea.Cmd) {

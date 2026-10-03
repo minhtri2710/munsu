@@ -562,8 +562,7 @@ func scrollDrawn(m dashboardModel) (dashboardModel, string) {
 
 // The confirm viewport draws every rune of the command: when its gate passes,
 // the viewport, paged from the top to the bottom, drew every non-space rune of
-// it (a grapheme the wrap cannot place is never drawn, so the gate refuses).
-// y runs exactly when that gate passes and the frame fits the terminal; a
+// it. y runs exactly when that gate passes and the frame fits the terminal; a
 // frame that does not fit is the "Terminal too small" notice.
 func TestDashboardConfirmShowsFullArgv(t *testing.T) {
 	wantOf := func(m dashboardModel) string {
@@ -636,15 +635,27 @@ func TestDashboardConfirmShowsFullArgv(t *testing.T) {
 			t.Fatalf("calls = %v, mode = %v; want no exec and still confirming", calls, m.mode)
 		}
 	})
-	t.Run("scrolled down in a terminal with no argv row claims nothing", func(t *testing.T) {
-		var calls []execCall
-		m := resized(prMergeConfirm(t, &calls, 100, 40), 30, 4)
-		for i := 0; i < 40; i++ {
-			m = press(m, "down")
-		}
-		assertClaim(t, "pr-merge", 30, 4, m)
-		if !strings.Contains(ansi.Strip(m.frame()), "too small") {
-			t.Fatalf("no too-small notice:\n%s", m.frame())
+	// With no row for the argv, scrolling down still reaches the viewport's
+	// bottom with nothing drawn: at 30 the frame is the notice, at 100 it fits.
+	// Neither claims the command or runs it.
+	t.Run("scrolled down in a terminal with no argv row claims nothing and runs nothing", func(t *testing.T) {
+		for _, w := range []int{30, 100} {
+			var calls []execCall
+			m := resized(prMergeConfirm(t, &calls, 100, 40), w, 4)
+			for i := 0; i < 400; i++ {
+				m = press(m, "down")
+			}
+			if m.argv.Height() != 0 || !m.argv.AtBottom() {
+				t.Fatalf("%dx4: argv height %d, at bottom %v; want a zero-row viewport at its bottom", w, m.argv.Height(), m.argv.AtBottom())
+			}
+			assertClaim(t, "pr-merge", w, 4, m)
+			if m.fits() != (w == 100) {
+				t.Fatalf("%dx4: fits = %v:\n%s", w, m.fits(), m.frame())
+			}
+			m = press(m, "y")
+			if len(calls) != 0 || m.mode != modeConfirm {
+				t.Fatalf("%dx4: calls = %v, mode = %v; want no exec and still confirming", w, calls, m.mode)
+			}
 		}
 	})
 	t.Run("a viewport with no row runs nothing", func(t *testing.T) {
