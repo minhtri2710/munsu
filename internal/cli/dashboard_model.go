@@ -322,11 +322,18 @@ func humanFirst(tasks []fleet.TaskSnapshot) []fleet.TaskSnapshot {
 
 func (m dashboardModel) items() []list.Item {
 	items := make([]list.Item, 0, len(m.failures)+len(m.rows))
+	for i := range m.rows {
+		if fleet.HumanNeeded(m.rows[i]) {
+			items = append(items, dashItem{row: &m.rows[i]})
+		}
+	}
 	for i := range m.failures {
 		items = append(items, dashItem{failure: &m.failures[i]})
 	}
 	for i := range m.rows {
-		items = append(items, dashItem{row: &m.rows[i]})
+		if !fleet.HumanNeeded(m.rows[i]) {
+			items = append(items, dashItem{row: &m.rows[i]})
+		}
 	}
 	return items
 }
