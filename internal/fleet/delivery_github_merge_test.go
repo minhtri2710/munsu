@@ -58,20 +58,6 @@ func TestEvaluateGitHubChecks(t *testing.T) {
 			reported: []GitHubCheck{done(1, "ci", "failure"), done(2, "ci", "success")},
 			want:     []domain.CheckRun{{Name: "ci", Status: domain.CheckPassed}},
 		},
-		{
-			name:     "skipped or neutral required is not passed and skipped optional is left out",
-			required: []string{"gate", "other"},
-			reported: []GitHubCheck{done(1, "gate", "skipped"), done(2, "other", "neutral"), done(3, "docs", "skipped"), done(4, "ci", "success")},
-			want: []domain.CheckRun{
-				{Name: "ci", Status: domain.CheckPassed}, {Name: "gate", Status: domain.CheckSkipped}, {Name: "other", Status: domain.CheckSkipped},
-			},
-		},
-		{
-			name:     "a skipped required report is not hidden by a passing report of the same name from another source",
-			required: []string{"gate"},
-			reported: []GitHubCheck{done(9, "gate", "skipped"), status(1, "gate", "success")},
-			want:     []domain.CheckRun{{Name: "gate", Status: domain.CheckSkipped}},
-		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := evaluateGitHubChecks(tc.required, tc.reported)
@@ -301,6 +287,25 @@ func TestGitHubDeliveryProviderObserve(t *testing.T) {
 			}
 		})
 	}
+	t.Run("a skipped required check run is not hidden by a passing commit status of the same name", func(t *testing.T) {
+		checks := []GitHubCheck{
+			{Source: GitHubCheckRun, ID: 9, Name: "ci", Status: "completed", Conclusion: "skipped"},
+			{Source: GitHubCommitStatus, ID: 1, Name: "ci", Status: "completed", Conclusion: "success"},
+		}
+		client := &fakeGitHubDelivery{view: githubDeliveryView("OPEN", "MERGEABLE", "CLEAN", "", ""), required: []string{"ci"}, checks: checks}
+		obs, err := (&githubDeliveryProvider{client: client}).Observe(ident)
+		if err != nil || obs.Mergeability != DeliveryMergeabilityDenied {
+			t.Fatalf("observation = %+v, %v; want denied", obs, err)
+		}
+	})
+	t.Run("a skipped optional check is left out and the passing required check allows", func(t *testing.T) {
+		checks := append([]GitHubCheck{{ID: 2, Name: "docs", Status: "completed", Conclusion: "skipped"}}, passing...)
+		client := &fakeGitHubDelivery{view: githubDeliveryView("OPEN", "MERGEABLE", "CLEAN", "", ""), required: []string{"ci"}, checks: checks}
+		obs, err := (&githubDeliveryProvider{client: client}).Observe(ident)
+		if err != nil || obs.Mergeability != DeliveryMergeabilityAllowed {
+			t.Fatalf("observation = %+v, %v; want allowed", obs, err)
+		}
+	})
 	t.Run("a merged PR carries its merge commit and reads nothing else", func(t *testing.T) {
 		merged := strings.Repeat("3", 40)
 		client := &fakeGitHubDelivery{view: githubDeliveryView("MERGED", "UNKNOWN", "CLEAN", "", merged)}
