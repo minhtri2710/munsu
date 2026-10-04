@@ -149,7 +149,7 @@ const githubSnapshotPR = "https://github.com/owner/project/pull/42"
 
 // githubOpenView is an OPEN, mergeable PR view with the given review decision.
 func githubOpenView(reviewDecision string) string {
-	return `{"state":"OPEN","headRefOid":"head123","headRefName":"feature","baseRefName":"main","mergeable":"MERGEABLE","reviewDecision":"` + reviewDecision + `"}`
+	return `{"state":"OPEN","headRefOid":"head123","headRefName":"feature","baseRefName":"main","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","reviewDecision":"` + reviewDecision + `"}`
 }
 
 func TestGitHubProviderSnapshotRefusesIncompleteOpenEvidence(t *testing.T) {
@@ -171,6 +171,16 @@ func TestGitHubProviderSnapshotRefusesIncompleteOpenEvidence(t *testing.T) {
 			name: "not mergeable",
 			view: `{"state":"OPEN","headRefOid":"head123","headRefName":"feature","baseRefName":"main","mergeable":"CONFLICTING"}`,
 			want: "GitHub PR is not mergeable",
+		},
+		{
+			name: "behind the base names the merge state",
+			view: `{"state":"OPEN","headRefOid":"head123","headRefName":"feature","baseRefName":"main","mergeable":"MERGEABLE","mergeStateStatus":"BEHIND"}`,
+			want: `mergeStateStatus "BEHIND"`,
+		},
+		{
+			name: "absent merge state",
+			view: `{"state":"OPEN","headRefOid":"head123","headRefName":"feature","baseRefName":"main","mergeable":"MERGEABLE"}`,
+			want: `mergeStateStatus ""`,
 		},
 		{
 			name: "no check reported for the head",

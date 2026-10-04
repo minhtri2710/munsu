@@ -35,9 +35,17 @@ requirements) or `--delete-branch`. GitHub therefore refuses a moved source head
 the merge itself.
 
 An OPEN observation is mergeable only when `mergeable == MERGEABLE` (conflicts are a
-separate provider fence, as `detailed_merge_status` is for GitLab), the CI proof of section 2
-is complete and `domain.PR.CanMerge` accepts it. A provider review requesting changes
-blocks; a provider approval carries no weight (ADR-0025 §4).
+separate provider fence, as `detailed_merge_status` is for GitLab), the merge state
+(`githubPRView.MergeStateStatus`, requested through `githubPRViewFields`) is admitted, the CI
+proof of section 2 is complete and `domain.PR.CanMerge` accepts it. The merge state is refused
+when it is `BEHIND` (the branch is stale against its base), `UNKNOWN` (GitHub has not computed
+it), empty or absent, or any value outside GitHub's documented enum (`BEHIND`, `BLOCKED`,
+`CLEAN`, `DIRTY`, `DRAFT`, `HAS_HOOKS`, `UNKNOWN`, `UNSTABLE`). No other state is refused by
+this fence. GitHub computes the state lazily, so right after a push it can read `UNKNOWN` and
+the delivery refuses until GitHub settles. The ProviderSnapshot path
+(`fetchGitHubProviderSnapshot`) names the mergeable and merge state values it refused on.
+A provider review requesting changes blocks; a provider approval carries no weight
+(ADR-0025 §4).
 
 ### 2. CI proof is per check, by id and conclusion, and an empty proof refuses
 
@@ -46,12 +54,13 @@ command's exit code (`gh run watch` and `gh pr checks --watch` are not used). Ch
 commit statuses have separate id spaces, so for each source and check name the report with the
 highest id within that source is the current one, and its own `conclusion` (or status `state`)
 decides. A name is passed only when every source's current report for it passes: failed if any
-failed, else pending if any is pending:
+failed, else pending if any is pending, else skipped if any is skipped:
 
 * a check that is not completed is pending; `success` is passed; every other conclusion is
   failed, including ones this code does not know;
-* a skipped or neutral check counts as passed only when the base branch requires it, as
-  GitHub's own requirement does; a skipped optional check carries no proof and is left out.
+* a skipped or neutral check that the base branch requires is `domain.CheckSkipped`, which
+  `domain.PR.CanMerge` refuses, as it does for a GitLab pipeline that was skipped; a skipped
+  or neutral optional check carries no proof and is left out.
 
 The observation refuses, before any mutation, when:
 
@@ -108,6 +117,12 @@ and its own record before its call, with no change to the record shape.
 Under ADR-0024 D1, the landing-gate refusal (section 4) and the missing-required-check and
 empty-proof refusals (section 2) ship under G297: grantor the Human, channel
 supervisor-relay:typed, quote "munsu: đồng ý apply hết".
+
+Under ADR-0024 D1, the stale-branch and unknown-merge-state refusals (section 1) ship under
+G466: grantor the Human, channel supervisor-relay dialog, quote "D2: Từ chối bản lỗi thời
+(Lead đề xuất)", ledger row G466. The skipped-required-check refusal (section 2) ships under
+G469: grantor the Human, channel supervisor-relay dialog, quote "E2: Bỏ qua thì chặn gộp
+(Lead đề xuất)", ledger row G469.
 
 `delivery pr-merge` takes `--grantor`, `--channel` and `--quote` (required) and carries them
 into `DeliverRequest.Words`, the authorization and the gate record. `delivery record-verdict

@@ -268,18 +268,19 @@ func (p *githubDeliveryProvider) Merge(ident domain.DeliveryIdentity, request De
 // githubPRView is the PR JSON both the delivery observation and the provider
 // snapshot read.
 type githubPRView struct {
-	State          string `json:"state"`
-	HeadRefOid     string `json:"headRefOid"`
-	HeadRefName    string `json:"headRefName"`
-	BaseRefName    string `json:"baseRefName"`
-	Mergeable      string `json:"mergeable"`
-	ReviewDecision string `json:"reviewDecision"`
-	MergeCommit    *struct {
+	State            string `json:"state"`
+	HeadRefOid       string `json:"headRefOid"`
+	HeadRefName      string `json:"headRefName"`
+	BaseRefName      string `json:"baseRefName"`
+	Mergeable        string `json:"mergeable"`
+	MergeStateStatus string `json:"mergeStateStatus"`
+	ReviewDecision   string `json:"reviewDecision"`
+	MergeCommit      *struct {
 		Oid string `json:"oid"`
 	} `json:"mergeCommit"`
 }
 
-const githubPRViewFields = "state,headRefOid,headRefName,baseRefName,mergeable,reviewDecision,mergeCommit"
+const githubPRViewFields = "state,headRefOid,headRefName,baseRefName,mergeable,mergeStateStatus,reviewDecision,mergeCommit"
 
 func readGitHubPRView(client GitHubDeliveryClient, ghURL domain.GHURL) (githubPRView, error) {
 	data, err := client.ViewPRJSON(ghURL.Owner, ghURL.Repo, ghURL.Num, githubPRViewFields)
@@ -327,14 +328,27 @@ func (p *githubDeliveryProvider) Observe(ident domain.DeliveryIdentity) (Deliver
 	return obs, nil
 }
 
+// githubMergeStateAdmitted reports whether a `mergeStateStatus` is one this
+// delivery accepts. BEHIND (a stale branch), UNKNOWN (GitHub has not computed
+// it yet), an empty value and anything outside GitHub's documented enum are
+// refused; the other documented states keep their handling.
+func githubMergeStateAdmitted(state string) bool {
+	switch state {
+	case "BLOCKED", "CLEAN", "DIRTY", "DRAFT", "HAS_HOOKS", "UNSTABLE":
+		return true
+	}
+	return false
+}
+
 // readGitHubOpenPR reads every acceptance input of an open PR at its observed
 // head as the domain.PR that domain.PR.CanMerge decides on. mergeableOK
-// reports the separate `mergeable == MERGEABLE` fence (conflicts), which
-// CanMerge does not model; when it is false the CI evidence is not read. A CI
-// proof that is empty, or that lacks a required check, is an error: an empty
-// proof fails closed (it is never read as "nothing failed").
+// reports the separate fence CanMerge does not model: `mergeable == MERGEABLE`
+// (conflicts) and an admitted `mergeStateStatus`; when it is false the CI
+// evidence is not read. A CI proof that is empty, or that lacks a required
+// check, is an error: an empty proof fails closed (it is never read as
+// "nothing failed").
 func readGitHubOpenPR(client GitHubDeliveryClient, ghURL domain.GHURL, view githubPRView) (pr domain.PR, mergeableOK bool, err error) {
-	if view.Mergeable != "MERGEABLE" {
+	if view.Mergeable != "MERGEABLE" || !githubMergeStateAdmitted(view.MergeStateStatus) {
 		return domain.PR{}, false, nil
 	}
 	if view.HeadRefOid == "" || view.BaseRefName == "" {
@@ -363,11 +377,13 @@ func readGitHubOpenPR(client GitHubDeliveryClient, ghURL domain.GHURL, view gith
 // runs, reading each check's own conclusion. The latest report is chosen per
 // source and name by id within that source (check-run and commit-status ids are
 // separate spaces), and a name is passed only when every source's latest report
-// for it passes: failed if any failed, else pending if any is pending.
+// for it passes: failed if any failed, else pending if any is pending, else skipped
+// if any is skipped.
 // It refuses when nothing reported, when a required check no source reported,
 // and when nothing but skipped optional checks remains. A skipped or neutral
-// required check counts as passed, as GitHub's own requirement does; a skipped
-// optional check carries no proof and is left out.
+// required check is domain.CheckSkipped, which domain.PR.CanMerge refuses, as
+// it does for GitLab's skipped; a skipped or neutral optional check carries no
+// proof and is left out.
 func evaluateGitHubChecks(required []string, reported []GitHubCheck) ([]domain.CheckRun, error) {
 	if len(reported) == 0 {
 		return nil, fmt.Errorf("GitHub reported no check for the head: an empty CI proof is refused")
@@ -392,6 +408,7 @@ func evaluateGitHubChecks(required []string, reported []GitHubCheck) ([]domain.C
 		}
 		isRequired[name] = true
 	}
+	severity := map[domain.CheckStatus]int{domain.CheckPassed: 0, domain.CheckSkipped: 1, domain.CheckPending: 2, domain.CheckFailed: 3}
 	worst := map[string]domain.CheckStatus{}
 	for _, c := range latest {
 		var status domain.CheckStatus
@@ -404,12 +421,12 @@ func evaluateGitHubChecks(required []string, reported []GitHubCheck) ([]domain.C
 			if !isRequired[c.Name] {
 				continue
 			}
-			status = domain.CheckPassed
+			status = domain.CheckSkipped
 		default:
 			status = domain.CheckFailed
 		}
 		prev, ok := worst[c.Name]
-		if !ok || status == domain.CheckFailed || (status == domain.CheckPending && prev == domain.CheckPassed) {
+		if !ok || severity[status] > severity[prev] {
 			worst[c.Name] = status
 		}
 	}
