@@ -60,6 +60,7 @@ func TestResolveProjectOverlayDefaultModeOverridesProjectModeAlias(t *testing.T)
 
 func TestResolveProjectConfigOverlayAppliesAndResolverIsImmutable(t *testing.T) {
 	base := validBase()
+	base.Config.TamperCheck = "base-floor --base <base>"
 	facts := validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{Model: "overlay-model", TamperCheck: "floor --base <base>", DispatchProfiles: []DispatchProfile{{Name: "alpha", Harness: "claude"}}})
 	before := facts.Overlay.DispatchProfiles[0].Harness
 	resolved, err := ResolveProject(base, facts)
