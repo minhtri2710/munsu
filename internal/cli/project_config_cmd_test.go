@@ -48,6 +48,10 @@ func TestProjectConfigSetGetRoundTrip(t *testing.T) {
 		t.Fatalf("set require-no-mistakes: %v", err)
 	}
 
+	if _, err := runProjectConfig(t, "set", "sample", "tamper-check", "floor --base <base>"); err != nil {
+		t.Fatalf("set tamper-check: %v", err)
+	}
+
 	out, err := runProjectConfig(t, "get", "sample", "default-mode")
 	if err != nil {
 		t.Fatalf("get default-mode: %v", err)
@@ -63,13 +67,21 @@ func TestProjectConfigSetGetRoundTrip(t *testing.T) {
 		t.Errorf("get require-no-mistakes = %q, want %q", got, "true")
 	}
 
+	out, err = runProjectConfig(t, "get", "sample", "tamper-check")
+	if err != nil {
+		t.Fatalf("get tamper-check: %v", err)
+	}
+	if got := extractConfigValueFromTOON(out); got != "floor --base <base>" {
+		t.Errorf("get tamper-check = %q, want %q", got, "floor --base <base>")
+	}
+
 	// The write path is the Config-owned overlay document keyed by name.
 	overlay, err := config.LoadProjectOverlay(home, "sample")
 	if err != nil {
 		t.Fatalf("LoadProjectOverlay: %v", err)
 	}
-	if overlay.DefaultMode != "direct-PR" || overlay.RequireNoMistakes == nil || !*overlay.RequireNoMistakes {
-		t.Errorf("overlay = %+v, want DefaultMode=direct-PR RequireNoMistakes=true", overlay)
+	if overlay.DefaultMode != "direct-PR" || overlay.RequireNoMistakes == nil || !*overlay.RequireNoMistakes || overlay.TamperCheck != "floor --base <base>" {
+		t.Errorf("overlay = %+v, want DefaultMode=direct-PR RequireNoMistakes=true TamperCheck=%q", overlay, "floor --base <base>")
 	}
 }
 
@@ -83,8 +95,14 @@ func TestProjectConfigClearReturnsToInherit(t *testing.T) {
 	if _, err := runProjectConfig(t, "set", "sample", "default-mode", "direct-PR"); err != nil {
 		t.Fatalf("set default-mode: %v", err)
 	}
+	if _, err := runProjectConfig(t, "set", "sample", "tamper-check", "floor --base <base>"); err != nil {
+		t.Fatalf("set tamper-check: %v", err)
+	}
 	if _, err := runProjectConfig(t, "set", "sample", "default-mode", ""); err != nil {
 		t.Fatalf("clear default-mode: %v", err)
+	}
+	if _, err := runProjectConfig(t, "set", "sample", "tamper-check", ""); err != nil {
+		t.Fatalf("clear tamper-check: %v", err)
 	}
 	out, err := runProjectConfig(t, "get", "sample", "default-mode")
 	if err != nil {
@@ -98,8 +116,8 @@ func TestProjectConfigClearReturnsToInherit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadProjectOverlay: %v", err)
 	}
-	if overlay.DefaultMode != "" {
-		t.Errorf("cleared overlay DefaultMode = %q, want empty", overlay.DefaultMode)
+	if overlay.DefaultMode != "" || overlay.TamperCheck != "" {
+		t.Errorf("cleared overlay DefaultMode = %q TamperCheck = %q, want empty", overlay.DefaultMode, overlay.TamperCheck)
 	}
 }
 
@@ -174,6 +192,27 @@ func TestProjectConfigSetInvalidBoolRefused(t *testing.T) {
 	registerProject(t, home, "sample")
 	if _, err := runProjectConfig(t, "set", "sample", "require-no-mistakes", "maybe"); err == nil {
 		t.Fatal("set with a non-bool require-no-mistakes should be refused")
+	}
+}
+
+func TestProjectConfigSetTamperCheckRefusesMarkdownBreakingValues(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MUNSU_HOME", home)
+	registerProject(t, home, "sample")
+	for name, value := range map[string]string{"line feed": "floor\n--base <base>", "carriage return": "floor\r--base <base>", "backtick": "`floor` --base <base>"} {
+		t.Run(name, func(t *testing.T) {
+			_, err := runProjectConfig(t, "set", "sample", "tamper-check", value)
+			if err == nil || !strings.Contains(err.Error(), "tamper-check must not contain a carriage return, line feed or backtick") {
+				t.Fatalf("set tamper-check %q error = %v, want the refusal naming the key and character class", value, err)
+			}
+		})
+	}
+	overlay, err := config.LoadProjectOverlay(home, "sample")
+	if err != nil {
+		t.Fatalf("LoadProjectOverlay: %v", err)
+	}
+	if overlay.TamperCheck != "" {
+		t.Errorf("a refused value was stored: %q", overlay.TamperCheck)
 	}
 }
 

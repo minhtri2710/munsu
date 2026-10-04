@@ -221,6 +221,9 @@ func TestBriefScaffoldsAReviewTaskFromItsDefinition(t *testing.T) {
 	if out, err := runTaskCommand(t, []string{"task", "add", "r1", "review it", "--kind", "review", "--reviews", "t-ship", "--home", homeDir}); err != nil {
 		t.Fatalf("task add: %v\n%s", err, out)
 	}
+	if out, err := runRoot(t, "project", "config", "set", "demo-repo", "tamper-check", "floor --base <base>", "--home", homeDir); err != nil {
+		t.Fatalf("project config set: %v\n%s", err, out)
+	}
 	out, err := runRoot(t, "brief", "r1", "demo-repo", "--home", homeDir)
 	if err != nil {
 		t.Fatalf("brief: %v\n%s", err, out)
@@ -234,5 +237,8 @@ func TestBriefScaffoldsAReviewTaskFromItsDefinition(t *testing.T) {
 	}
 	if !strings.Contains(string(brief), deliveryGuardHead) || !strings.Contains(string(brief), "t-ship") {
 		t.Fatalf("review brief does not name the reviewed task and head:\n%s", brief)
+	}
+	if !strings.Contains(string(brief), "Run the project's tamper check `floor --base <base>` from this checkout") {
+		t.Fatalf("review brief does not carry the project's tamper check:\n%s", brief)
 	}
 }

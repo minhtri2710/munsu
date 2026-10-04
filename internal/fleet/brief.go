@@ -25,6 +25,7 @@ type ScaffoldOptions struct {
 	ScoutRuntimeBudgetSecs int64
 	ReviewTask             string // the ship task a reviewer reads
 	ReviewHead             string // the one head the reviewer judges
+	TamperCheck            string // the project's tamper command, named in the review brief when set
 	// Generation is the task generation the brief launches. A scout brief
 	// binds the report contract to it: the soldier writes report-g<N>.md for
 	// exactly the generation being launched. It must be positive for scouts.
@@ -71,7 +72,7 @@ func buildBrief(opts ScaffoldOptions) (string, error) {
 	var b strings.Builder
 
 	if opts.Review {
-		tmpl, err := reviewBriefTemplate(id, repo, opts.ReviewTask, opts.ReviewHead)
+		tmpl, err := reviewBriefTemplate(id, repo, opts.ReviewTask, opts.ReviewHead, opts.TamperCheck)
 		if err != nil {
 			return "", err
 		}
@@ -226,9 +227,13 @@ that answers for this generation; never read or reuse another generation's.
 // reviewBriefTemplate returns the reviewer brief. The contract names the one
 // task and head the reviewer judges; the review method carries lesson group 10
 // (reviewer-output-verification): every verdict cites the runs behind it.
-func reviewBriefTemplate(id, repo, reviewTask, reviewHead string) (string, error) {
+func reviewBriefTemplate(id, repo, reviewTask, reviewHead, tamperCheck string) (string, error) {
 	if strings.TrimSpace(reviewTask) == "" || strings.TrimSpace(reviewHead) == "" {
 		return "", fmt.Errorf("review brief for %s requires the reviewed task and head", id)
+	}
+	tamperSentence := ""
+	if tamperCheck != "" {
+		tamperSentence = " Run the project's tamper check `" + tamperCheck + "` from this checkout, with `<base>` replaced by the task's base. Exit 0 is clean; any other exit fails the head unless the task's brief names that rule and path and quotes the Human words that selected it."
 	}
 	return fmt.Sprintf(`# Review brief: %s
 
@@ -247,8 +252,8 @@ If it differs, STOP and say so: the work moved and this review no longer speaks 
 2. Run every check the task's brief and the repository's contract require, yourself, in this checkout.
 3. For each check, record the run: the exact command, its exit code, and the output you read. A summary such as "tests pass" is not a record.
 4. For each brief, diff or document section you rely on, open it, read it, and name it.
-5. A check you did not run, or whose output you did not read, is listed as not run and never counts toward a PASS.
-6. Tamper: when the diff touches a verification or harness file (a test, fixture, golden, CI or lint config, or acceptance script), that changed file is itself reviewed. Read its diff for a hardcoded expected output, a weakened or removed assertion, a narrowed test selection, a new skip, or a silenced check (`+"`"+`|| true`+"`"+`, a lint disable). Each one fails the head unless the task's brief asked for it. Re-running a check the head itself changed reproduces the tamper and is not evidence on its own.
+5. A check that did not run is a failed check, never a pass: a missing tool, a command not found, 0 tests collected, every test skipped, or a skip the task's brief does not name each fails it, and every evidence row pastes how many tests or files the check ran and skipped.
+6. Tamper: when the diff touches a verification or harness file (a test, fixture, golden, CI or lint config, or acceptance script), that changed file is itself reviewed. Read its diff for a hardcoded expected output, a weakened or removed assertion, a narrowed test selection, a new skip, or a silenced check (`+"`"+`|| true`+"`"+`, a lint disable). Each one fails the head unless the task's brief asked for it. Re-running a check the head itself changed reproduces the tamper and is not evidence on its own.%s
 7. Red proof: the head's commit messages (`+"`"+`git log <base>..<head>`+"`"+`) carry a red-proof row for each test the head adds or changes for a behaviour change. Re-derive one row: make a temp copy with `+"`"+`mktemp -d`+"`"+` outside the checkout, extract the base into it (`+"`"+`git archive <base> | tar -x -C "$d"`+"`"+`), apply only the added or changed test files from the head (`+"`"+`git archive <head> -- <test files> | tar -x -C "$d"`+"`"+`), run that row's command once there, then delete the copy. Never run a mutant. A test with no row, or a row that does not reproduce, fails the head.
 8. Kept tests: judge each added or changed test against these rules.
 %s
@@ -265,7 +270,7 @@ A breach fails the head when it leaves the brief's stated behaviour unproven; ot
 ## Verdict
 Write the verdict file `+"`"+`$MUNSU_VERDICT_FILE`+"`"+` (one JSON object with the fields %s) for the reviewed head, with `+"`"+`outcome`+"`"+` set to `+"`"+`pass`+"`"+` or `+"`"+`fail`+"`"+` and the evidence from the review method in `+"`"+`evidence`+"`"+`. Write it to a sibling named `+"`"+`$MUNSU_VERDICT_FILE.tmp.<pid>.<hex>`+"`"+` (a number, then lowercase hex digits), rename that over the verdict file, then stop.
 A PASS needs every required check run and cited.
-`, id, reviewTask, reviewHead, repo, keptTestRules, verdictFileShape("`")), nil
+`, id, reviewTask, reviewHead, repo, tamperSentence, keptTestRules, verdictFileShape("`")), nil
 }
 
 // requiredSections returns the "## " headings Scaffold writes for a brief of

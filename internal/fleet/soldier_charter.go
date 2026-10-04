@@ -119,6 +119,9 @@ or exhaustive input sweep, an added e2e suite or a benchmark, enters acceptance
 only when the Human selects it for the task, and never gates a docs-, tests- or
 fixtures-only change.
 
+Each check row pastes the ran and skipped counts its command printed, and a
+check that did not run is a failed row.
+
 ## Tests
 
 A test you add or change follows these rules:
@@ -232,8 +235,10 @@ You MUST NOT:
 For every check the brief requires, cite the run you made: the exact command,
 its exit code, and the output you read. A summary of a run ("tests pass") is
 not evidence. Open every section of the brief, diff or document you cite, read
-it, and name the section. A check you did not run, or output you did not read,
-is reported as not run and never counts toward a PASS.
+it, and name the section. A check that did not run is a failed check, never a
+pass: a missing tool, a command not found, 0 tests collected, every test
+skipped, or a skip the task's brief does not name each fails it, and every
+evidence row pastes how many tests or files the check ran and skipped.
 
 ## Verdict
 

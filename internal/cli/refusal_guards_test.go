@@ -1017,13 +1017,13 @@ func TestBriefResolvesModeFromDeliveryContract(t *testing.T) {
 	})
 
 	t.Run("contracted brief validates the snapshot without re-running mode resolution", func(t *testing.T) {
-		// Locks that the contract branch calls the validate-only entry, not the
-		// full resolver: with an empty snapshot default, require-no-mistakes
-		// set, and no-mistakes absent from PATH, ResolveDeliveryModeFromProject
-		// would REFUSE (require-no-mistakes with the binary missing) — but the
-		// brief must deliver under its recorded contract and only prove the
-		// project exists. A mutation swapping ValidateProjectSnapshot for the
-		// full resolver makes this brief error.
+		// Locks that the contract branch resolves with selectMode false, not
+		// true: with an empty snapshot default, require-no-mistakes set, and
+		// no-mistakes absent from PATH, ResolveBriefProject with selectMode
+		// true would REFUSE (require-no-mistakes with the binary missing) — but
+		// the brief must deliver under its recorded contract and only prove the
+		// project exists. A mutation passing selectMode true on the contract
+		// branch makes this brief error.
 		t.Setenv("PATH", t.TempDir()) // no-mistakes cannot be found
 		homeDir := t.TempDir()
 		auth := testAuthorityFor(t, homeDir)

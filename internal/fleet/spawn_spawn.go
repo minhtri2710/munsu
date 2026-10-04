@@ -178,32 +178,29 @@ func ResolveDeliveryMode(explicitMode string, resolvedDefaultMode string, resolv
 	return "direct-PR", nil
 }
 
-// ResolveDeliveryModeFromProject resolves the effective delivery mode for a
-// declared project from exactly one immutable project snapshot. Any resolution
-// error (unknown project, malformed base/overlay, registry or I/O failure)
-// returns a typed failure; there is no fallback to the fleet base or to
-// auto-detection. Used by project-scoped callers (e.g. munsu brief).
-func ResolveDeliveryModeFromProject(homeDir, projectName, explicitMode string) (string, error) {
+// ResolveBriefProject resolves one declared project's immutable snapshot once
+// and returns what a brief needs from it: the delivery mode and the project's
+// tamper check. Any resolution error (unknown project, malformed base/overlay,
+// registry or I/O failure) returns a typed failure; there is no fallback to
+// the fleet base or to auto-detection. When selectMode is false the task's
+// recorded delivery contract owns the mode: the snapshot still gates the
+// project's existence and well-formedness, but no mode selection, no
+// no-mistakes PATH probe and no require-no-mistakes refusal runs, and mode is
+// empty. Used by project-scoped callers (munsu brief).
+func ResolveBriefProject(homeDir, projectName, explicitMode string, selectMode bool) (mode, tamperCheck string, err error) {
 	snap, err := ResolveProjectSnapshot(homeDir, projectName)
 	if err != nil {
-		return "", classifySnapshotError(projectName, err)
+		return "", "", classifySnapshotError(projectName, err)
 	}
 	resolved := snap.Config()
-	return ResolveDeliveryMode(explicitMode, normalizeSnapshotDeliveryMode(resolved.DefaultMode), resolved.RequireNoMistakes)
-}
-
-// ValidateProjectSnapshot resolves and discards one project snapshot to prove
-// the project exists and its base/overlay are well-formed, returning the same
-// typed failure ResolveDeliveryModeFromProject would for an unknown project or
-// malformed configuration. It performs no delivery-mode resolution: a caller
-// that already owns the effective mode (e.g. a contracted munsu brief) uses
-// this to keep the project-existence gate without re-running mode selection,
-// the no-mistakes PATH probe, or the require-no-mistakes refusal.
-func ValidateProjectSnapshot(homeDir, projectName string) error {
-	if _, err := ResolveProjectSnapshot(homeDir, projectName); err != nil {
-		return classifySnapshotError(projectName, err)
+	if !selectMode {
+		return "", resolved.TamperCheck, nil
 	}
-	return nil
+	mode, err = ResolveDeliveryMode(explicitMode, normalizeSnapshotDeliveryMode(resolved.DefaultMode), resolved.RequireNoMistakes)
+	if err != nil {
+		return "", "", err
+	}
+	return mode, resolved.TamperCheck, nil
 }
 
 // noMistakesConfig is the compatibility-relevant subset of global config.

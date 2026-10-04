@@ -56,6 +56,7 @@ type ProjectOverlay struct {
 	// bypass.
 	AllowDirectPRFallback *bool             `json:"allowDirectPRFallback,omitempty"`
 	Backend               string            `json:"backend,omitempty"`
+	TamperCheck           string            `json:"tamperCheck,omitempty"`
 	DispatchProfiles      []DispatchProfile `json:"dispatchProfiles,omitempty"`
 }
 
@@ -88,6 +89,7 @@ type ResolvedProjectConfig struct {
 	RequireNoMistakes     bool              `json:"requireNoMistakes"`
 	AllowDirectPRFallback bool              `json:"allowDirectPRFallback,omitempty"`
 	Backend               string            `json:"backend,omitempty"`
+	TamperCheck           string            `json:"tamperCheck,omitempty"`
 	DispatchProfiles      []DispatchProfile `json:"dispatchProfiles,omitempty"`
 	CaptainProfile        CaptainProfile    `json:"captainProfile,omitempty"`
 	Digest                string            `json:"digest"`
@@ -135,6 +137,7 @@ func ResolveProject(base FleetBaseDocument, facts ProjectFacts) (ResolvedProject
 		DefaultMode:      effective.DefaultMode, RequireNoMistakes: require,
 		AllowDirectPRFallback: allowDirectPR,
 		Backend:               effective.Backend,
+		TamperCheck:           effective.TamperCheck,
 		DispatchProfiles:      cloneProfiles(effective.DispatchProfiles),
 		CaptainProfile:        base.CaptainProfile, Digest: digest,
 	}, nil
@@ -163,6 +166,9 @@ func applyOverlay(dst *ProjectOverlay, src ProjectOverlay) {
 	}
 	if src.Backend != "" {
 		dst.Backend = src.Backend
+	}
+	if src.TamperCheck != "" {
+		dst.TamperCheck = src.TamperCheck
 	}
 	if len(src.DispatchProfiles) > 0 {
 		dst.DispatchProfiles = cloneProfiles(src.DispatchProfiles)
