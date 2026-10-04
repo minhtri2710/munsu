@@ -74,7 +74,8 @@ func newBriefCmd() *cobra.Command {
 			// snapshot still gates existence and well-formedness (fail closed
 			// on an unknown project or malformed base/overlay).
 			var resolvedMode string
-			if canonicalExists && agg.DeliveryContract != nil {
+			contracted := canonicalExists && agg.DeliveryContract != nil
+			if contracted {
 				if modeFlag != "" {
 					if err := fleet.ValidateDeliveryMode(modeFlag); err != nil {
 						return err
@@ -84,14 +85,13 @@ func newBriefCmd() *cobra.Command {
 				if modeFlag != "" && modeFlag != resolvedMode {
 					return fmt.Errorf("--mode %q contradicts task %q's recorded delivery contract (%q): brief reads the contract and never re-scaffolds it; re-record the mode with 'munsu spawn %s --mode %s'", modeFlag, id, resolvedMode, id, modeFlag)
 				}
-				if err := fleet.ValidateProjectSnapshot(ctx.Home, repo); err != nil {
-					return err
-				}
-			} else {
-				resolvedMode, err = fleet.ResolveDeliveryModeFromProject(ctx.Home, repo, modeFlag)
-				if err != nil {
-					return err
-				}
+			}
+			projectMode, tamperCheck, err := fleet.ResolveBriefProject(ctx.Home, repo, modeFlag, !contracted)
+			if err != nil {
+				return err
+			}
+			if !contracted {
+				resolvedMode = projectMode
 			}
 
 			// Require existing canonical task or legacy task meta unless --force.
@@ -120,7 +120,7 @@ func newBriefCmd() *cobra.Command {
 				Review: review, ReviewTask: agg.Definition.ReviewTaskID, ReviewHead: agg.Definition.ReviewHead,
 				Mode: resolvedMode, Yolo: projYolo,
 				ScoutScope: scoutScope, ScoutRuntimeBudgetSecs: scoutBudget,
-				Generation: scoutGeneration,
+				Generation: scoutGeneration, TamperCheck: tamperCheck,
 			}
 
 			if err := recoverBriefHandoffs(ctx.Home); err != nil {

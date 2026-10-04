@@ -85,6 +85,16 @@ var projectOverlayKeys = map[string]projectOverlayKey{
 		get: func(o config.ProjectOverlay) (string, bool) { return o.Backend, o.Backend != "" },
 		set: func(o *config.ProjectOverlay, value string) error { o.Backend = strings.TrimSpace(value); return nil },
 	},
+	"tamper-check": {
+		get: func(o config.ProjectOverlay) (string, bool) { return o.TamperCheck, o.TamperCheck != "" },
+		set: func(o *config.ProjectOverlay, value string) error {
+			if i := strings.IndexAny(value, "\r\n`"); i >= 0 {
+				return usageError("invalid_value", "Pass the command on one line without backticks", fmt.Sprintf("tamper-check must not contain a carriage return, line feed or backtick, got %q", value[i]))
+			}
+			o.TamperCheck = strings.TrimSpace(value)
+			return nil
+		},
+	},
 	"require-no-mistakes": clearableBool(
 		func(o config.ProjectOverlay) *bool { return o.RequireNoMistakes },
 		func(o *config.ProjectOverlay, v *bool) { o.RequireNoMistakes = v },

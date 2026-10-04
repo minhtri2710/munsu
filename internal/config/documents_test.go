@@ -60,7 +60,8 @@ func TestResolveProjectOverlayDefaultModeOverridesProjectModeAlias(t *testing.T)
 
 func TestResolveProjectConfigOverlayAppliesAndResolverIsImmutable(t *testing.T) {
 	base := validBase()
-	facts := validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{Model: "overlay-model", DispatchProfiles: []DispatchProfile{{Name: "alpha", Harness: "claude"}}})
+	base.Config.TamperCheck = "base-floor --base <base>"
+	facts := validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{Model: "overlay-model", TamperCheck: "floor --base <base>", DispatchProfiles: []DispatchProfile{{Name: "alpha", Harness: "claude"}}})
 	before := facts.Overlay.DispatchProfiles[0].Harness
 	resolved, err := ResolveProject(base, facts)
 	if err != nil {
@@ -70,7 +71,7 @@ func TestResolveProjectConfigOverlayAppliesAndResolverIsImmutable(t *testing.T) 
 	if facts.Overlay.DispatchProfiles[0].Harness != before {
 		t.Fatal("resolver mutated or shared dispatch profile storage")
 	}
-	if resolved.Model != "overlay-model" || resolved.DefaultMode != "direct-pr" {
+	if resolved.Model != "overlay-model" || resolved.TamperCheck != "floor --base <base>" || resolved.DefaultMode != "direct-pr" {
 		t.Fatalf("overlay values not applied: %+v", resolved)
 	}
 }
@@ -95,6 +96,12 @@ func TestProjectDigestIsDeterministicAndTargeted(t *testing.T) {
 		t.Fatal("beta digest changed for alpha-only overlay")
 	}
 	alpha.Overlay.Model = ""
+	alpha.Overlay.TamperCheck = "floor --base <base>"
+	a5, _ := ProjectDigest(base, alpha)
+	if a1 == a5 {
+		t.Fatal("tamper-check did not change the project digest")
+	}
+	alpha.Overlay.TamperCheck = ""
 	base.Config.Model = "new-base"
 	a4, _ := ProjectDigest(base, alpha)
 	b3, _ := ProjectDigest(base, beta)

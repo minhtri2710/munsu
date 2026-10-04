@@ -44,7 +44,7 @@ func TestReviewerCharterStatesTheReadOnlyContractAndTheVerdictFile(t *testing.T)
 		"`" + string(domain.VerdictPass) + "` or `" + string(domain.VerdictFail) + "`",
 		"`$MUNSU_VERDICT_FILE.tmp.<pid>.<hex>`",
 		"## Review Evidence",
-		"never counts toward a PASS",
+		"A check that did not run is a failed check, never a\npass: a missing tool, a command not found, 0 tests collected, every test\nskipped, or a skip the task's brief does not name each fails it, and every\nevidence row pastes how many tests or files the check ran and skipped.",
 		"4. Make one temp directory with `mktemp -d` outside the checkout and the repository for the check your brief names, and delete it when the check ends.",
 	} {
 		if !strings.Contains(charter, want) {
@@ -82,7 +82,7 @@ func TestReviewBriefNamesTheContractTheHeadCheckAndTheVerdictFile(t *testing.T) 
 		verdictFileShape("`"),
 		"`" + string(domain.VerdictPass) + "` or `" + string(domain.VerdictFail) + "`",
 		"`$MUNSU_VERDICT_FILE.tmp.<pid>.<hex>`",
-		"6. Tamper: when the diff touches a verification or harness file (a test, fixture, golden, CI or lint config, or acceptance script), that changed file is itself reviewed. Read its diff for a hardcoded expected output, a weakened or removed assertion, a narrowed test selection, a new skip, or a silenced check (`|| true`, a lint disable). Each one fails the head unless the task's brief asked for it. Re-running a check the head itself changed reproduces the tamper and is not evidence on its own.",
+		"5. A check that did not run is a failed check, never a pass: a missing tool, a command not found, 0 tests collected, every test skipped, or a skip the task's brief does not name each fails it, and every evidence row pastes how many tests or files the check ran and skipped.\n6. Tamper: when the diff touches a verification or harness file (a test, fixture, golden, CI or lint config, or acceptance script), that changed file is itself reviewed. Read its diff for a hardcoded expected output, a weakened or removed assertion, a narrowed test selection, a new skip, or a silenced check (`|| true`, a lint disable). Each one fails the head unless the task's brief asked for it. Re-running a check the head itself changed reproduces the tamper and is not evidence on its own.\n7. Red proof:",
 		"7. Red proof: the head's commit messages (`git log <base>..<head>`) carry a red-proof row for each test the head adds or changes for a behaviour change. Re-derive one row: make a temp copy with `mktemp -d` outside the checkout, extract the base into it (`git archive <base> | tar -x -C \"$d\"`), apply only the added or changed test files from the head (`git archive <head> -- <test files> | tar -x -C \"$d\"`), run that row's command once there, then delete the copy. Never run a mutant. A test with no row, or a row that does not reproduce, fails the head.",
 		"8. Kept tests: judge each added or changed test against these rules.\n" + keptTestRules + "\nA breach fails the head when it leaves the brief's stated behaviour unproven; otherwise do not raise it.",
 		"9. Production behaviour: when the head changes it, grep the production diff for each input and expected value the head's tests use, and check one input the tests do not use, its expected value argued from the brief or run once as a targeted check. A production branch keyed to a test literal fails the head. Run no input sweep, mutant run or whole-suite run for this.",
@@ -97,12 +97,23 @@ func TestReviewBriefNamesTheContractTheHeadCheckAndTheVerdictFile(t *testing.T) 
 	if strings.Contains(brief, "## Delivery") {
 		t.Error("review brief carries a delivery section")
 	}
+
+	if err := Scaffold(ScaffoldOptions{HomeDir: home, ID: "rev-2", Repo: "munsu", Review: true, ReviewTask: "ship-1", ReviewHead: head, TamperCheck: "floor --base <base>"}); err != nil {
+		t.Fatalf("Scaffold review with a tamper check: %v", err)
+	}
+	data, err = os.ReadFile(Path(home, "rev-2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "is not evidence on its own. Run the project's tamper check `floor --base <base>` from this checkout, with `<base>` replaced by the task's base. Exit 0 is clean; any other exit fails the head unless the task's brief names that rule and path and quotes the Human words that selected it.\n7. Red proof:"; !strings.Contains(string(data), want) {
+		t.Errorf("review brief with a tamper check lacks %q", want)
+	}
 }
 
 func TestShipCharterStatesTheTestRulesAndTheHeavyProofs(t *testing.T) {
 	charter := DefaultCharter("ship-1", taskauthority.KindShip, "direct-PR")
 	for _, want := range []string{
-		"## Validation Scope\n\nLocal runs are light and scoped to the change. Heavy and full suites (race,\nintegration, e2e, lifecycle_integration, guards, deadcode, citations) run on\nGitHub CI at the PR. This overrides any \"full suite by default\" instruction in\nyour own context. A heavy proof outside these, such as a mutant run, a generated\nor exhaustive input sweep, an added e2e suite or a benchmark, enters acceptance\nonly when the Human selects it for the task, and never gates a docs-, tests- or\nfixtures-only change.\n",
+		"## Validation Scope\n\nLocal runs are light and scoped to the change. Heavy and full suites (race,\nintegration, e2e, lifecycle_integration, guards, deadcode, citations) run on\nGitHub CI at the PR. This overrides any \"full suite by default\" instruction in\nyour own context. A heavy proof outside these, such as a mutant run, a generated\nor exhaustive input sweep, an added e2e suite or a benchmark, enters acceptance\nonly when the Human selects it for the task, and never gates a docs-, tests- or\nfixtures-only change.\n\nEach check row pastes the ran and skipped counts its command printed, and a\ncheck that did not run is a failed row.\n",
 		"## Tests\n\nA test you add or change follows these rules:\n\n" +
 			"- Assert through the public seam production uses; never reach into internals.\n" +
 			"- Take the expected value from the spec or a worked example, never recomputed the way the code computes it.\n" +
