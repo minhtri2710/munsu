@@ -45,6 +45,7 @@ func TestReviewerCharterStatesTheReadOnlyContractAndTheVerdictFile(t *testing.T)
 		"`$MUNSU_VERDICT_FILE.tmp.<pid>.<hex>`",
 		"## Review Evidence",
 		"never counts toward a PASS",
+		"Make one temp directory with `mktemp -d` outside the checkout",
 	} {
 		if !strings.Contains(charter, want) {
 			t.Errorf("reviewer charter lacks %q", want)
@@ -82,6 +83,17 @@ func TestReviewBriefNamesTheContractTheHeadCheckAndTheVerdictFile(t *testing.T) 
 		"`" + string(domain.VerdictPass) + "` or `" + string(domain.VerdictFail) + "`",
 		"`$MUNSU_VERDICT_FILE.tmp.<pid>.<hex>`",
 		"Read only.",
+		"6. Tamper:",
+		"a weakened or removed assertion, a narrowed test selection, a new skip, or a silenced check",
+		"unless the task's brief asked for it",
+		"git archive <base> | tar -x -C \"$d\"",
+		"Never run a mutant.",
+		"A production branch keyed to a test literal fails the head.",
+		"Run no input sweep, mutant run or whole-suite run",
+		"abstractions with one caller; config or flags no caller varies",
+		"Rerun one row's search",
+		"otherwise do not raise it",
+		keptTestRules,
 	} {
 		if !strings.Contains(brief, want) {
 			t.Errorf("review brief lacks %q", want)
@@ -89,6 +101,22 @@ func TestReviewBriefNamesTheContractTheHeadCheckAndTheVerdictFile(t *testing.T) 
 	}
 	if strings.Contains(brief, "## Delivery") {
 		t.Error("review brief carries a delivery section")
+	}
+}
+
+func TestShipCharterStatesTheTestRulesAndTheHeavyProofs(t *testing.T) {
+	charter := DefaultCharter("ship-1", taskauthority.KindShip, "direct-PR")
+	for _, want := range []string{
+		"a generated\nor exhaustive input sweep) run on",
+		"## Tests",
+		keptTestRules,
+	} {
+		if !strings.Contains(charter, want) {
+			t.Errorf("ship charter lacks %q", want)
+		}
+	}
+	if reviewer := DefaultCharter("rev-1", taskauthority.KindReview, "direct-PR"); strings.Contains(reviewer, keptTestRules) {
+		t.Error("the reviewer charter carries the kept-test rules; they live in the review brief")
 	}
 }
 

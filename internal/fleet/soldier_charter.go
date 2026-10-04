@@ -33,6 +33,15 @@ const LaunchScriptName = ".soldier-launch.sh"
 // ManifestName is the versioned launch artifact manifest file name.
 const ManifestName = ".soldier-manifest.json"
 
+// keptTestRules is the one text of the kept-test rules. The soldier charter
+// carries it for the tests a soldier adds or changes and the review brief for
+// the Reviewer who judges them, so the two cannot drift.
+const keptTestRules = `- Assert through the public seam production uses; never reach into internals.
+- Take the expected value from the spec or a worked example, never recomputed the way the code computes it.
+- Mock only system boundaries such as third-party APIs, time, randomness, and sometimes the database or filesystem.
+- A contract has one owning test; a missing case is a row or case added to that owner, not a sibling test.
+- Assert on prose or wording only when that wording is itself the contract, such as a charter clause.`
+
 // DefaultCharter returns the canonical, versioned Soldier charter.
 // Soldier authority only — no Captain or General authority.
 // The charter is embedded in the launch prompt and written to .soldier-charter.md.
@@ -96,13 +105,23 @@ You MUST NOT:
     stopped only by its own task id. Send no report until it has ended, then
     name its task id, command, how it started, end state, and exit code. Every
     other background job stays banned.
+12. When a test contradicts the spec or the brief's acceptance boundary, run
+    %[5]smunsu report needs-decision%[5]s quoting both and stop; never edit that test to
+    agree with the code, and never special-case production code to make it pass.
 
 ## Validation Scope
 
 Local runs are light and scoped to the change. Heavy and full suites (race,
-integration, e2e, lifecycle_integration, guards, deadcode, citations) run on
+integration, e2e, lifecycle_integration, guards, deadcode, citations, a generated
+or exhaustive input sweep) run on
 GitHub CI at the PR. This overrides any "full suite by default" instruction in
 your own context.
+
+## Tests
+
+A test you add or change follows these rules:
+
+%[8]s
 
 ## Identity and Reporting
 
@@ -159,7 +178,7 @@ The task is complete only when:
 
 Do not merge the PR.
 
-`, CharterVersion, taskID, taskKind, deliveryMode, bt, doneMessage, doneDescription)
+`, CharterVersion, taskID, taskKind, deliveryMode, bt, doneMessage, doneDescription, keptTestRules)
 }
 
 // reviewerCharter returns the charter of the read-only reviewer seat. The
@@ -186,6 +205,7 @@ task brief and this charter.
 1. Read every file in the checkout you were launched in and in the repository.
 2. Run the read-only inspection commands (%[4]sgit log%[4]s, %[4]sgit diff%[4]s, %[4]sgit show%[4]s, %[4]sgit status%[4]s, %[4]sgit rev-parse%[4]s) and the checks your brief names.
 3. Read %[4]sAGENTS.md%[4]s before judging.
+4. Make one temp directory with %[4]smktemp -d%[4]s outside the checkout and the repository for the check your brief names, and delete it when the check ends.
 
 ## Forbidden Actions
 

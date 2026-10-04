@@ -167,6 +167,18 @@ func TestScaffoldShip(t *testing.T) {
 	if strings.Contains(content, "+yolo") {
 		t.Errorf("brief should not contain +yolo when false")
 	}
+	for _, want := range []string{
+		"## Test-impact map",
+		"{TEST_IMPACT}",
+		"a red-proof row",
+		"`n/a: <reason>`",
+		"a reuse-search row",
+		"the Reviewer reads it with `git log`",
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("ship brief lacks %q", want)
+		}
+	}
 }
 
 func TestScaffoldScout(t *testing.T) {

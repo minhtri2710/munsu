@@ -156,7 +156,7 @@ munsu task add <id> "<desc>" --kind ship --repo <name>
 munsu task add <id> "<desc>" --kind review --reviews <ship-id> [--repo <name>]
 munsu task start <id>
 munsu brief <id> <repo>
-# Fill in the {TASK} placeholder in data/<id>/brief.md
+# Fill in the {TASK} placeholder in data/<id>/brief.md; for a ship brief also {TEST_IMPACT}
 munsu spawn <id> <project> [--mode no-mistakes|direct-PR|local-only]
 ```
 
@@ -346,6 +346,10 @@ their mandatory lifecycle. See `munsu skill show decision-hold-lifecycle`.
 placeholder with clear description, acceptance criteria, constraints, and
 necessary context before dispatch.
 
+For a ship brief, also replace the `{TEST_IMPACT}` placeholder with the
+test-impact map: for each path the task will change, the existing tests that
+exercise it, found by code search (`semble` or `zg`).
+
 Keep additions task-specific. Every ship brief must retain the
 worktree-isolation assertion (stops if launched in the primary checkout).
 
@@ -425,7 +429,7 @@ Run: `munsu skill show <name>` to read any skill.
 2. munsu session-start               # lock, bootstrap, digest
 3. munsu task add <id> ...           # register task
 4. munsu brief <id> <repo>           # scaffold soldier brief
-   # Fill in the {TASK} placeholder in data/<id>/brief.md
+   # Fill in the {TASK} placeholder in data/<id>/brief.md; for a ship brief also {TEST_IMPACT}
 5. munsu spawn <id> <project>        # launch soldier in worktree+tmux window
 6. munsu watch ensure                # ensure persistent supervision
 7. munsu send <id> "<msg>"           # steer as needed

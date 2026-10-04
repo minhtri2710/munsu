@@ -119,3 +119,21 @@ func TestSyncOrchestratorManual_Idempotent(t *testing.T) {
 		t.Fatal("second sync should be no-op when content matches seed")
 	}
 }
+
+func TestOrchestratorManualNamesTheTestImpactPlaceholderAtEveryBriefFillStep(t *testing.T) {
+	sites := 0
+	for _, line := range strings.Split(orchestratorManual, "\n") {
+		if strings.Contains(line, "{TASK}") && strings.HasPrefix(strings.TrimSpace(line), "#") {
+			sites++
+			if !strings.Contains(line, "{TEST_IMPACT}") {
+				t.Errorf("brief fill step does not name {TEST_IMPACT}: %q", line)
+			}
+		}
+	}
+	if sites != 2 {
+		t.Errorf("brief fill command lines naming {TASK} = %d, want 2", sites)
+	}
+	if !strings.Contains(orchestratorManual, "also replace the `{TEST_IMPACT}` placeholder") {
+		t.Error("manual section 12 does not tell the orchestrator to replace {TEST_IMPACT}")
+	}
+}

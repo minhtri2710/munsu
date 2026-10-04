@@ -161,8 +161,15 @@ If the top-level path is the primary checkout or not the worktree you were launc
 If `+"`"+`AGENTS.md`+"`"+` or `+"`"+`CLAUDE.md`+"`"+` already exists, or if this task produced durable project-intrinsic knowledge, run `+"`"+`munsu ensure-agents-md .`+"`"+`.
 Record only project knowledge useful to almost every future session.
 
+## Test-impact map
+The dispatcher fills this before spawn: for each path the task will change, the existing tests that exercise it, found by code search. Start from them.
+{TEST_IMPACT}
+
 ## Definition of done
 The task is complete only when committed on your branch.
+Put the done evidence in the message body of a commit on your branch; the Reviewer reads it with `+"`"+`git log`+"`"+`:
+- For each test you added or changed for a behaviour change, a red-proof row: the command you ran on the pre-change code with only that test applied (run it before you change production code), its non-zero exit code and the failure line; or `+"`"+`n/a: <reason>`+"`"+` when the change adds no behaviour, such as a pure refactor.
+- For each new function, type or module, a reuse-search row: the code search you ran before writing it (`+"`"+`semble`+"`"+` or `+"`"+`zg`+"`"+`), the query and the hits, and why no hit served.
 When delivery is complete, run `+"`"+`munsu report done "{summary}"`+"`"+` and stop.
 Before that, close every open keyed decision with `+"`"+`resolved [key=<slug>]: {summary}`+"`"+`.
 `, id, repo, id, setupStep, modeLine+"\n"+deliveryRules), nil
@@ -241,16 +248,24 @@ If it differs, STOP and say so: the work moved and this review no longer speaks 
 3. For each check, record the run: the exact command, its exit code, and the output you read. A summary such as "tests pass" is not a record.
 4. For each brief, diff or document section you rely on, open it, read it, and name it.
 5. A check you did not run, or whose output you did not read, is listed as not run and never counts toward a PASS.
+6. Tamper: when the diff touches a verification or harness file (a test, fixture, golden, CI or lint config, or acceptance script), that changed file is itself reviewed. Read its diff for a hardcoded expected output, a weakened or removed assertion, a narrowed test selection, a new skip, or a silenced check (`+"`"+`|| true`+"`"+`, a lint disable). Each one fails the head unless the task's brief asked for it. Re-running a check the head itself changed reproduces the tamper and is not evidence on its own.
+7. Red proof: the head's commit messages (`+"`"+`git log <base>..<head>`+"`"+`) carry a red-proof row for each test the head adds or changes for a behaviour change. Re-derive one row: make a temp copy with `+"`"+`mktemp -d`+"`"+` outside the checkout, extract the base into it (`+"`"+`git archive <base> | tar -x -C "$d"`+"`"+`), apply only the added or changed test files from the head (`+"`"+`git archive <head> -- <test files> | tar -x -C "$d"`+"`"+`), run that row's command once there, then delete the copy. Never run a mutant. A test with no row, or a row that does not reproduce, fails the head.
+8. Kept tests: judge each added or changed test against these rules.
+%s
+A breach fails the head when it leaves the brief's stated behaviour unproven; otherwise do not raise it.
+9. Production behaviour: when the head changes it, grep the production diff for each input and expected value the head's tests use, and check one input the tests do not use, its expected value argued from the brief or run once as a targeted check. A production branch keyed to a test literal fails the head. Run no input sweep, mutant run or whole-suite run for this.
+10. Lean code: list each of these the task's brief did not call for: new files; abstractions with one caller; config or flags no caller varies; handling for states the types or callers make impossible; old paths kept beside new ones; comments that restate the code. Each one fails the head.
+11. Reuse: the head's commit messages carry a reuse-search row for each new function, type or module. Rerun one row's search and confirm its hits.
 
 ## Rules
-1. Read only. Edit, create, delete or move nothing; create no branch or commit; never push or merge.
+1. Read only. Edit, create, delete or move nothing (the temp copy of step 7 excepted); create no branch or commit; never push or merge.
 2. Judge only the reviewed head. Do not review later work.
 3. Do not run `+"`"+`munsu`+"`"+` commands.
 
 ## Verdict
 Write the verdict file `+"`"+`$MUNSU_VERDICT_FILE`+"`"+` (one JSON object with the fields %s) for the reviewed head, with `+"`"+`outcome`+"`"+` set to `+"`"+`pass`+"`"+` or `+"`"+`fail`+"`"+` and the evidence from the review method in `+"`"+`evidence`+"`"+`. Write it to a sibling named `+"`"+`$MUNSU_VERDICT_FILE.tmp.<pid>.<hex>`+"`"+` (a number, then lowercase hex digits), rename that over the verdict file, then stop.
 A PASS needs every required check run and cited.
-`, id, reviewTask, reviewHead, repo, verdictFileShape("`")), nil
+`, id, reviewTask, reviewHead, repo, keptTestRules, verdictFileShape("`")), nil
 }
 
 // requiredSections returns the "## " headings Scaffold writes for a brief of

@@ -45,6 +45,7 @@ func TestDefaultCharter_ForbiddenActions(t *testing.T) {
 		"Never claim",
 		"Never spawn",
 		"Never invent work beyond",
+		"`munsu report needs-decision` quoting both and stop; never edit that test to\n    agree with the code, and never special-case production code to make it pass.",
 	}
 	for _, check := range checks {
 		if !strings.Contains(charter, check) {

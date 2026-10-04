@@ -40,6 +40,7 @@ Determine the task kind (ship vs scout), identify the project from the registry,
 - `munsu task add <id> "<desc>" --kind ship|scout|review [--reviews <ship-id>] --repo <name>` — register the queued task; use `munsu task start <id>` only after readiness checks.
 - `munsu brief <id> <repo> [--scout]` — scaffold the soldier brief.
 - Fill in the `{TASK}` placeholder in `data/<id>/brief.md`.
+- For a ship brief, replace the `{TEST_IMPACT}` placeholder with the test-impact map: for each path the task will change, the existing tests that exercise it, found by code search (`semble` or `zg`).
 - `munsu spawn <id> [<project>] [--mode no-mistakes|direct-PR|local-only]` — launch the soldier; project is inferred from the current directory when omitted.
 
 **Completion:** Meta exists, endpoint is alive (verify with `munsu peek <id>` or `munsu soldier-state <id>`).
