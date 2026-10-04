@@ -168,6 +168,17 @@ func TestLintBriefAcceptsEveryScaffoldedKindAndNamesTheMissingSections(t *testin
 			if err == nil || !strings.Contains(err.Error(), "missing scaffolded sections: ## Rules;") {
 				t.Fatalf("LintBrief error = %v, want the renamed section named as missing", err)
 			}
+			if tc.kind != taskauthority.KindShip {
+				return
+			}
+			unmapped := strings.Replace(string(data), "## Test-impact map\n", "", 1)
+			if err := os.WriteFile(Path(tc.opts.HomeDir, "t1"), []byte(unmapped), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			err = LintBrief(tc.opts.HomeDir, "t1", tc.kind)
+			if err == nil || !strings.Contains(err.Error(), "missing scaffolded sections: ## Test-impact map;") {
+				t.Fatalf("LintBrief error = %v, want the removed test-impact heading named as missing", err)
+			}
 		})
 	}
 }
