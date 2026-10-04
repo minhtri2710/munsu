@@ -119,3 +119,27 @@ func TestSyncOrchestratorManual_Idempotent(t *testing.T) {
 		t.Fatal("second sync should be no-op when content matches seed")
 	}
 }
+
+func TestOrchestratorManualNamesTheTestImpactPlaceholderAtEveryBriefFillStep(t *testing.T) {
+	sites := 0
+	for _, line := range strings.Split(orchestratorManual, "\n") {
+		if strings.Contains(line, "{TASK}") && strings.HasPrefix(strings.TrimSpace(line), "#") {
+			sites++
+			if !strings.Contains(line, "{TEST_IMPACT}") {
+				t.Errorf("brief fill step does not name {TEST_IMPACT}: %q", line)
+			}
+		}
+	}
+	if sites != 2 {
+		t.Errorf("brief fill command lines naming {TASK} = %d, want 2", sites)
+	}
+	for _, want := range []string{
+		"munsu brief <id> <repo>\n# Fill in the {TASK} placeholder in data/<id>/brief.md; for a ship brief also {TEST_IMPACT}\nmunsu spawn",
+		"# scaffold soldier brief\n   # Fill in the {TASK} placeholder in data/<id>/brief.md; for a ship brief also {TEST_IMPACT}\n5. munsu spawn",
+		"For a ship brief, also replace the `{TEST_IMPACT}` placeholder with the\ntest-impact map: for each path the task will change, the existing tests that\nexercise it, found by code search (`semble` or `zg`).\n",
+	} {
+		if !strings.Contains(orchestratorManual, want) {
+			t.Errorf("orchestrator manual lacks %q", want)
+		}
+	}
+}
