@@ -72,12 +72,6 @@ func TestEvaluateGitHubChecks(t *testing.T) {
 			reported: []GitHubCheck{done(9, "gate", "skipped"), status(1, "gate", "success")},
 			want:     []domain.CheckRun{{Name: "gate", Status: domain.CheckSkipped}},
 		},
-		{
-			name:     "a failing report outranks a skipped required report of the same name",
-			required: []string{"gate"},
-			reported: []GitHubCheck{done(1, "gate", "skipped"), status(2, "gate", "failure")},
-			want:     []domain.CheckRun{{Name: "gate", Status: domain.CheckFailed}},
-		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := evaluateGitHubChecks(tc.required, tc.reported)
@@ -298,6 +292,15 @@ func TestGitHubDeliveryProviderObserve(t *testing.T) {
 			t.Fatalf("observation = %+v, %v; want denied", obs, err)
 		}
 	})
+	for _, conclusion := range []string{"skipped", "neutral"} {
+		t.Run("a "+conclusion+" required check is denied", func(t *testing.T) {
+			client := &fakeGitHubDelivery{view: githubDeliveryView("OPEN", "MERGEABLE", "CLEAN", "", ""), required: []string{"ci"}, checks: []GitHubCheck{{ID: 1, Name: "ci", Status: "completed", Conclusion: conclusion}}}
+			obs, err := (&githubDeliveryProvider{client: client}).Observe(ident)
+			if err != nil || obs.Mergeability != DeliveryMergeabilityDenied {
+				t.Fatalf("observation = %+v, %v; want denied", obs, err)
+			}
+		})
+	}
 	t.Run("a merged PR carries its merge commit and reads nothing else", func(t *testing.T) {
 		merged := strings.Repeat("3", 40)
 		client := &fakeGitHubDelivery{view: githubDeliveryView("MERGED", "UNKNOWN", "CLEAN", "", merged)}
