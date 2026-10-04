@@ -40,7 +40,7 @@ const keptTestRules = `- Assert through the public seam production uses; never r
 - Take the expected value from the spec or a worked example, never recomputed the way the code computes it.
 - Mock only system boundaries such as third-party APIs, time, randomness, and sometimes the database or filesystem.
 - A contract has one owning test; a missing case is a row or case added to that owner, not a sibling test.
-- Assert on prose or wording only when that wording is itself the contract, such as a charter clause.`
+- Assert on prose or wording only when that wording is itself the contract, such as a by-value clause.`
 
 // DefaultCharter returns the canonical, versioned Soldier charter.
 // Soldier authority only — no Captain or General authority.
@@ -112,10 +112,12 @@ You MUST NOT:
 ## Validation Scope
 
 Local runs are light and scoped to the change. Heavy and full suites (race,
-integration, e2e, lifecycle_integration, guards, deadcode, citations, a generated
-or exhaustive input sweep) run on
+integration, e2e, lifecycle_integration, guards, deadcode, citations) run on
 GitHub CI at the PR. This overrides any "full suite by default" instruction in
-your own context.
+your own context. A heavy proof outside these, such as a mutant run, a generated
+or exhaustive input sweep, an added e2e suite or a benchmark, enters acceptance
+only when the Human selects it for the task, and never gates a docs-, tests- or
+fixtures-only change.
 
 ## Tests
 

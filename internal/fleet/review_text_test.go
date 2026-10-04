@@ -107,15 +107,23 @@ func TestReviewBriefNamesTheContractTheHeadCheckAndTheVerdictFile(t *testing.T) 
 func TestShipCharterStatesTheTestRulesAndTheHeavyProofs(t *testing.T) {
 	charter := DefaultCharter("ship-1", taskauthority.KindShip, "direct-PR")
 	for _, want := range []string{
-		"a generated\nor exhaustive input sweep) run on",
+		"GitHub CI at the PR.",
+		"A heavy proof outside these, such as a mutant run, a generated\nor exhaustive input sweep, an added e2e suite or a benchmark, enters acceptance\nonly when the Human selects it for the task, and never gates a docs-, tests- or\nfixtures-only change.",
 		"## Tests",
-		keptTestRules,
+		"- Assert through the public seam production uses; never reach into internals.",
+		"- Take the expected value from the spec or a worked example, never recomputed the way the code computes it.",
+		"- Mock only system boundaries such as third-party APIs, time, randomness, and sometimes the database or filesystem.",
+		"- A contract has one owning test; a missing case is a row or case added to that owner, not a sibling test.",
+		"- Assert on prose or wording only when that wording is itself the contract, such as a by-value clause.",
 	} {
 		if !strings.Contains(charter, want) {
 			t.Errorf("ship charter lacks %q", want)
 		}
 	}
-	if reviewer := DefaultCharter("rev-1", taskauthority.KindReview, "direct-PR"); strings.Contains(reviewer, keptTestRules) {
+	if strings.Contains(charter, "citations, a generated") {
+		t.Error("the input sweep is listed among the suites that run on CI at the PR")
+	}
+	if reviewer := DefaultCharter("rev-1", taskauthority.KindReview, "direct-PR"); strings.Contains(reviewer, "public seam") {
 		t.Error("the reviewer charter carries the kept-test rules; they live in the review brief")
 	}
 }

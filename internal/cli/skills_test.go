@@ -57,6 +57,9 @@ func TestReadEmbeddedSkill(t *testing.T) {
 	if !strings.Contains(content, "fleet orchestration") {
 		t.Errorf("expected munsu-ops skill to contain 'fleet orchestration', got: %s", content[:100])
 	}
+	if !strings.Contains(content, "replace the `{TEST_IMPACT}` placeholder with the test-impact map") {
+		t.Error("expected munsu-ops skill step 4 to tell the orchestrator to fill {TEST_IMPACT}")
+	}
 
 	// Read bootstrap-diagnostics
 	content, err = readEmbeddedSkill("bootstrap-diagnostics")
