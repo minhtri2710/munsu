@@ -168,12 +168,10 @@ func TestScaffoldShip(t *testing.T) {
 		t.Errorf("brief should not contain +yolo when false")
 	}
 	for _, want := range []string{
-		"## Test-impact map",
-		"{TEST_IMPACT}",
-		"a red-proof row",
-		"`n/a: <reason>`",
-		"a reuse-search row",
-		"the Reviewer reads it with `git log`",
+		"## Test-impact map\nThe dispatcher fills this before spawn: for each path the task will change, the existing tests that exercise it, found by code search. Start from them.\n{TEST_IMPACT}\n",
+		"Put the done evidence in the message body of a commit on your branch; the Reviewer reads it with `git log`:",
+		"- For each test you added or changed for a behaviour change, a red-proof row: the command you ran on the pre-change code with only that test applied (run it before you change production code), its non-zero exit code and the failure line; or `n/a: <reason>` when the change adds no behaviour, such as a pure refactor.",
+		"- For each new function, type or module, a reuse-search row: the code search you ran before writing it (`semble` or `zg`), the query and the hits, and why no hit served.",
 	} {
 		if !strings.Contains(content, want) {
 			t.Errorf("ship brief lacks %q", want)

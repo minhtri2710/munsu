@@ -254,7 +254,7 @@ If it differs, STOP and say so: the work moved and this review no longer speaks 
 %s
 A breach fails the head when it leaves the brief's stated behaviour unproven; otherwise do not raise it.
 9. Production behaviour: when the head changes it, grep the production diff for each input and expected value the head's tests use, and check one input the tests do not use, its expected value argued from the brief or run once as a targeted check. A production branch keyed to a test literal fails the head. Run no input sweep, mutant run or whole-suite run for this.
-10. Lean code: list each of these the task's brief did not call for: new files; abstractions with one caller; config or flags no caller varies; handling for states the types or callers make impossible; old paths kept beside new ones; comments that restate the code. Each one fails the head.
+10. Lean code: list each of these the task's brief did not call for: new files; abstractions with one caller; config or flags no caller varies; handling for states the types or callers make impossible; old paths kept beside new ones; a new helper that duplicates an existing one (search for it); comments that restate the code. Each one fails the head.
 11. Reuse: the head's commit messages carry a reuse-search row for each new function, type or module. Rerun one row's search and confirm its hits.
 
 ## Rules

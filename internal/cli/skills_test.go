@@ -57,7 +57,7 @@ func TestReadEmbeddedSkill(t *testing.T) {
 	if !strings.Contains(content, "fleet orchestration") {
 		t.Errorf("expected munsu-ops skill to contain 'fleet orchestration', got: %s", content[:100])
 	}
-	if !strings.Contains(content, "replace the `{TEST_IMPACT}` placeholder with the test-impact map") {
+	if !strings.Contains(content, "- For a ship brief, replace the `{TEST_IMPACT}` placeholder with the test-impact map: for each path the task will change, the existing tests that exercise it, found by code search (`semble` or `zg`).\n") {
 		t.Error("expected munsu-ops skill step 4 to tell the orchestrator to fill {TEST_IMPACT}")
 	}
 
