@@ -70,7 +70,7 @@ The config-reread digest is computed per project as `hash(base.Config ⨂ P.conf
 The operator surface is noun-driven and AXI-first:
 
 * `munsu config get/set <key> <value>` — fleet base, including the launch-profile keys `soldier-harness`, `model`, and `captain-harness`.
-* `munsu project config get/set <name> <key> [value]` — project overlay.
+* `munsu project config get/set <name> <key> [value]` — project overlay, including `tamper-check`; an unset project value inherits the fleet base value.
 * `munsu project mode <name>` remains as a thin alias for setting `defaultMode`.
 
 There is no `munsu captain config get/set <id>` command: the per-Captain launch profile it would have addressed is retired (§3). The Captain profile is the fleet-default `base.CaptainProfile`, set through `munsu config set`.
