@@ -3,12 +3,12 @@ package fleet
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/config"
@@ -156,26 +156,34 @@ func TestLaunchRecoveryPostSubmitPreRecordGuardProvesSingleProcess(t *testing.T)
 // TestLaunchRecoveryPostSubmitFailureNamesLiveEndpoint fails Runner.Run at each
 // phase after the submission was delivered. The error Run returns keeps the
 // cause, names the task, the backend and the endpoint, says the soldier process
-// may still be running, and advises only a recovery that holds: where it names
-// the re-run command, a second Run adopts the same endpoint and works the task;
-// where it says to stop the pane by hand, a second Run is refused as a
-// duplicate live session.
+// may still be running, and advises only what a second Run then does: where it
+// names the re-run command, a second Run adopts the same endpoint and works the
+// task; where it names a refusal, a second Run is refused with it, and a row that
+// has a remedy applies the remedy before the Run that resumes. The submitted
+// launch command executes the real launch artifact, so the harness launch count
+// is the number of soldier processes.
 func TestLaunchRecoveryPostSubmitFailureNamesLiveEndpoint(t *testing.T) {
 	errInjected := errors.New("injected failure")
 	for _, tc := range []struct {
 		name string
 		// inject arms the failure; the endpoint probes of one Run are the
-		// create check (1), the handshake (2) and the readiness check (3).
+		// create check (1), the handshake (2) and the readiness check (3). The
+		// repair it returns is the remedy the advice names.
 		inject    func(f *launchFixture) (repair func())
-		wantCause func(err error) bool
+		wantCause func(f *launchFixture, err error) bool
+		// refusal is the text a re-run is refused with, which the advice then
+		// carries; empty when the re-run is admitted and advised.
+		refusal string
+		// remedy is the instruction the advice gives besides stopping the pane.
+		remedy string
 		// wantSubmits is the number of endpoint submissions once a re-run resumes.
 		wantSubmits int
-		wantRerun   bool
 	}{
 		{
 			// The task is blocked after the process was started, so the
-			// evidence is refused as stale; once unblocked the re-run re-submits the
-			// same command, which the launch guard keeps from starting twice.
+			// evidence is refused as stale. A re-run is refused until the task is
+			// unblocked, then re-submits the same command, which the launch guard
+			// keeps from starting twice.
 			name: "record launch",
 			inject: func(f *launchFixture) func() {
 				id := mustTaskID(f.t, f.taskID)
@@ -186,17 +194,33 @@ func TestLaunchRecoveryPostSubmitFailureNamesLiveEndpoint(t *testing.T) {
 						f.t.Fatal(err)
 					}
 				}
+				// The operation `munsu task unblock` calls.
 				return func() {
 					agg := f.aggregate()
-					req := taskauthority.CanonicalUnblockRequest{HomeID: f.auth.HomeID(), TaskID: id, Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), Reason: "test"}
+					req := taskauthority.CanonicalUnblockRequest{HomeID: f.auth.HomeID(), TaskID: id, Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), Reason: "task: unblock"}
 					if _, err := f.auth.Unblock(mustFleetOperation(f.t, "unblock-"+f.taskID, req), req); err != nil {
 						f.t.Fatal(err)
 					}
 				}
 			},
-			wantCause:   func(err error) bool { return errors.Is(err, domain.ErrStalePrecondition) },
+			wantCause:   func(_ *launchFixture, err error) bool { return errors.Is(err, domain.ErrStalePrecondition) },
+			refusal:     "is blocked",
+			remedy:      "munsu task unblock ",
 			wantSubmits: 2,
-			wantRerun:   true,
+		},
+		{
+			// The task record cannot be read after the submission, so whether a
+			// re-run is admitted is not known and the advice says it was not checked.
+			name: "task unreadable",
+			inject: func(f *launchFixture) func() {
+				f.endpoints.onSubmit = func() {
+					tamperTaskAggregate(f.t, f.homeDir, f.taskID, func(agg *taskauthority.Aggregate) { agg.Current = false })
+				}
+				return nil
+			},
+			wantCause: func(_ *launchFixture, err error) bool { return errors.Is(err, taskauthority.ErrConflict) },
+			refusal:   "no canonical Task Authority record",
+			remedy:    "not checked",
 		},
 		{
 			// The brief the manifest binds is gone; the re-run rewrites it.
@@ -210,9 +234,8 @@ func TestLaunchRecoveryPostSubmitFailureNamesLiveEndpoint(t *testing.T) {
 				}
 				return nil
 			},
-			wantCause:   func(err error) bool { return errors.Is(err, os.ErrNotExist) },
+			wantCause:   func(_ *launchFixture, err error) bool { return errors.Is(err, os.ErrNotExist) },
 			wantSubmits: 1,
-			wantRerun:   true,
 		},
 		{
 			name: "harness handshake",
@@ -226,9 +249,8 @@ func TestLaunchRecoveryPostSubmitFailureNamesLiveEndpoint(t *testing.T) {
 				}
 				return nil
 			},
-			wantCause:   func(err error) bool { return errors.Is(err, errInjected) },
+			wantCause:   func(_ *launchFixture, err error) bool { return errors.Is(err, errInjected) },
 			wantSubmits: 1,
-			wantRerun:   true,
 		},
 		{
 			name: "endpoint readiness",
@@ -242,13 +264,15 @@ func TestLaunchRecoveryPostSubmitFailureNamesLiveEndpoint(t *testing.T) {
 				}
 				return nil
 			},
-			wantCause:   func(err error) bool { return errors.Is(err, errInjected) },
+			wantCause:   func(_ *launchFixture, err error) bool { return errors.Is(err, errInjected) },
 			wantSubmits: 1,
-			wantRerun:   true,
 		},
 		{
-			// The meta path is a directory, so the write fails; the file never
-			// names a window, so the re-run is admitted.
+			// The meta path is a directory, so reading it fails; the file never
+			// names a window, so the re-run is admitted. The read error is an
+			// *fs.PathError for the read of that path on every platform: os.File.Read
+			// wraps every failure through File.wrapErr (os/file.go), whatever errno
+			// the platform gives for reading a directory.
 			name: "task meta",
 			inject: func(f *launchFixture) func() {
 				path, err := home.MetaFilePath(f.homeDir, f.taskID)
@@ -266,9 +290,12 @@ func TestLaunchRecoveryPostSubmitFailureNamesLiveEndpoint(t *testing.T) {
 				}
 				return func() { os.Remove(path) }
 			},
-			wantCause:   func(err error) bool { return errors.Is(err, syscall.EISDIR) },
+			wantCause: func(f *launchFixture, err error) bool {
+				path, perr := home.MetaFilePath(f.homeDir, f.taskID)
+				var pe *fs.PathError
+				return perr == nil && errors.As(err, &pe) && pe.Op == "read" && pe.Path == path
+			},
 			wantSubmits: 1,
-			wantRerun:   true,
 		},
 		{
 			// The final bind is refused after .meta names the window: spawn
@@ -284,54 +311,73 @@ func TestLaunchRecoveryPostSubmitFailureNamesLiveEndpoint(t *testing.T) {
 				}
 				return nil
 			},
-			wantCause: func(err error) bool { return errors.Is(err, taskauthority.ErrConflict) },
+			wantCause: func(_ *launchFixture, err error) bool { return errors.Is(err, taskauthority.ErrConflict) },
+			refusal:   "refuse duplicate live execution",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			taskID := "post-submit-" + strings.ReplaceAll(tc.name, " ", "")
-			f, run := newRunFixture(t, taskID)
+			rf := newRunFixture(t, taskID)
+			f := rf.launchFixture
 			repair := tc.inject(f)
 
-			_, err := run()
+			_, err := rf.run()
 			if err == nil {
 				t.Fatal("Run succeeded; the injected failure must fail it")
 			}
-			if !tc.wantCause(err) {
+			if !tc.wantCause(f, err) {
 				t.Fatalf("the error does not keep the underlying cause: %v", err)
 			}
 			msg := err.Error()
-			for _, want := range []string{taskID, "tmux", "pane-1", "may still be running"} {
+			for _, want := range []string{taskID, "tmux", "pane-1", "may still be running", "by hand"} {
 				if !strings.Contains(msg, want) {
 					t.Fatalf("error %q does not contain %q", msg, want)
 				}
 			}
 			rerun := "munsu spawn " + taskID + " test-proj"
-			if got := strings.Contains(msg, rerun); got != tc.wantRerun {
-				t.Fatalf("error advises the re-run command %q = %v, want %v: %s", rerun, got, tc.wantRerun, msg)
+			if got := strings.Contains(msg, rerun); got != (tc.refusal == "") {
+				t.Fatalf("error advises the re-run command %q = %v, want %v: %s", rerun, got, tc.refusal == "", msg)
 			}
-			if !tc.wantRerun && !strings.Contains(msg, "by hand") {
-				t.Fatalf("error %q does not tell the operator to stop the pane by hand", msg)
+			if tc.refusal != "" && !strings.Contains(msg, tc.refusal) {
+				t.Fatalf("error %q does not carry the refusal %q", msg, tc.refusal)
+			}
+			if tc.remedy != "" && !strings.Contains(msg, tc.remedy) {
+				t.Fatalf("error %q does not give the remedy %q", msg, tc.remedy)
+			}
+			if n := harnessLaunchCount(t, rf.counter); n != 1 {
+				t.Fatalf("soldier launches after the failed Run = %d, want 1", n)
 			}
 
 			f.endpoints.onSubmit, f.endpoints.onProbe = nil, nil
+			if tc.refusal != "" {
+				// revision is 0 while the record is unreadable.
+				revision := func() taskauthority.Revision {
+					agg, _ := f.auth.Get(mustTaskID(t, taskID))
+					return agg.Revision
+				}
+				before := revision()
+				if _, err := rf.run(); err == nil || !strings.Contains(err.Error(), tc.refusal) {
+					t.Fatalf("second Run = %v, want the refusal %q", err, tc.refusal)
+				}
+				if after := revision(); after != before {
+					t.Fatalf("a refused Run changed the task: revision %d -> %d", before, after)
+				}
+				if repair == nil {
+					return
+				}
+			}
 			if repair != nil {
 				repair()
 			}
-			window, err := run()
-			if !tc.wantRerun {
-				if err == nil || !strings.Contains(err.Error(), "refuse duplicate live execution") {
-					t.Fatalf("second Run = %v, want the duplicate live session refusal", err)
-				}
-				if f.aggregate().Phase != taskauthority.PhaseQueued {
-					t.Fatalf("phase = %q, want queued", f.aggregate().Phase)
-				}
-				return
-			}
+			window, err := rf.run()
 			if err != nil {
-				t.Fatalf("second Run: %v", err)
+				t.Fatalf("Run after the advice: %v", err)
 			}
-			if window != "pane-1" || f.endpoints.createCount() != 1 || f.endpoints.submitCount() != tc.wantSubmits {
-				t.Fatalf("second Run window %q, creates %d, submits %d; want pane-1, 1, %d", window, f.endpoints.createCount(), f.endpoints.submitCount(), tc.wantSubmits)
+			if window != "pane-1" || f.endpoints.createCount() != 1 || rf.exec.submitCount() != tc.wantSubmits {
+				t.Fatalf("Run after the advice: window %q, creates %d, submits %d; want pane-1, 1, %d", window, f.endpoints.createCount(), rf.exec.submitCount(), tc.wantSubmits)
+			}
+			if n := harnessLaunchCount(t, rf.counter); n != 1 {
+				t.Fatalf("soldier launches across the recovery = %d, want exactly 1 (no second process)", n)
 			}
 			if f.aggregate().Phase != taskauthority.PhaseWorking {
 				t.Fatalf("phase = %q, want working", f.aggregate().Phase)
@@ -340,10 +386,20 @@ func TestLaunchRecoveryPostSubmitFailureNamesLiveEndpoint(t *testing.T) {
 	}
 }
 
+// runFixture is a launchFixture that spawns through Runner.Run. Its endpoint
+// executes every submitted launch command in a real shell, so counter holds one
+// line per soldier process that really started.
+type runFixture struct {
+	*launchFixture
+	exec    *executingEndpointCapabilities
+	counter string
+	run     func() (string, error)
+}
+
 // newRunFixture is a home with one registered project, one queued task and a
 // fake pi on PATH, plus run, which spawns the task through a fresh Runner the
 // way the CLI does. Only the endpoint capability is a fake.
-func newRunFixture(t *testing.T, taskID string) (*launchFixture, func() (string, error)) {
+func newRunFixture(t *testing.T, taskID string) *runFixture {
 	t.Helper()
 	isolateHuman(t)
 	t.Setenv("OPENAI_API_KEY", "test")
@@ -364,14 +420,17 @@ func newRunFixture(t *testing.T, taskID string) (*launchFixture, func() (string,
 	if err != nil {
 		t.Fatalf("git on PATH: %v", err)
 	}
-	harnessDir := fakeHarnessDir(t, "pi", filepath.Join(t.TempDir(), "harness-launches.log"))
+	counter := filepath.Join(t.TempDir(), "harness-launches.log")
+	harnessDir := t.TempDir()
+	testutil.WriteFakeExecutable(t, filepath.Join(harnessDir, "pi"), fmt.Sprintf("#!/bin/sh\n[ \"$1\" = --version ] || echo launch >> %q\n", counter))
 	testutil.SetPath(t, append([]string{harnessDir, filepath.Dir(gitBin), requiredSkillStubDir(t)}, testutil.BashShellDirs(t)...)...)
 
 	endpoints := newReentrantEndpoints()
+	executing := &executingEndpointCapabilities{inner: endpoints, runCommand: scriptRunCommand(t)}
 	f := &launchFixture{t: t, auth: auth, homeDir: homeDir, repoPath: repoPath, taskID: taskID, endpoints: endpoints}
-	return f, func() (string, error) {
-		return NewRunner(Args{ID: taskID, ProjectName: "test-proj", Mode: "local-only", HomeDir: homeDir, Endpoints: endpoints, Authority: auth}).Run()
-	}
+	return &runFixture{launchFixture: f, exec: executing, counter: counter, run: func() (string, error) {
+		return NewRunner(Args{ID: taskID, ProjectName: "test-proj", Mode: "local-only", HomeDir: homeDir, Endpoints: executing, Authority: auth}).Run()
+	}}
 }
 
 // TestLaunchRecoverySubmitErrorBeforeExecutionRetryable proves a Submit error
@@ -954,6 +1013,9 @@ func (f *executingEndpointCapabilities) Submit(ep CreatedEndpoint, text string) 
 	}
 	if f.firstSubmitErr && f.submits == 1 {
 		return errors.New("simulated crash after submission delivery")
+	}
+	if f.inner.onSubmit != nil {
+		f.inner.onSubmit()
 	}
 	return nil
 }

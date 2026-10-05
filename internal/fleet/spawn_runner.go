@@ -398,14 +398,19 @@ func (r *Runner) launchPhases(reviewing bool) (taskauthority.Outcome, error) {
 }
 
 // liveLaunchError wraps a spawn failure after the launch was delivered to its
-// endpoint: the soldier process may be running there, owned by the task. A
-// re-run is advised only when .meta names no window; otherwise
-// checkBacklogAuthority refuses it as a duplicate live session, so the pane has
-// to be stopped by hand.
+// endpoint: the soldier process may be running there, owned by the task. The
+// advice applies the rule a re-run applies (spawnRefusal), read-only: a re-run is
+// advised only when it would be admitted, otherwise the error carries the
+// refusal and its remedy, and the pane can always be stopped by hand.
 func (r *Runner) liveLaunchError(cause error) error {
-	next := fmt.Sprintf("stop pane %s on backend %s by hand; re-running spawn is refused while the task has a window in its meta", r.endpoint.Handle, r.endpoint.Backend)
-	if !r.metaHasWindow() {
-		next = fmt.Sprintf("re-run 'munsu spawn %s %s' to resume on that endpoint (it re-adopts the pane only while the pane is live), or stop the pane by hand", r.args.ID, r.args.ProjectName)
+	stop := fmt.Sprintf("stop pane %s on backend %s by hand", r.endpoint.Handle, r.endpoint.Backend)
+	var next string
+	if agg, err := r.taskAggregate(); err != nil {
+		next = fmt.Sprintf("whether a re-run of spawn is admitted was not checked (%v); %s", err, stop)
+	} else if refusal := spawnRefusal(r.args.ID, agg.Phase, r.metaHasWindow()); refusal != nil {
+		next = fmt.Sprintf("a re-run of spawn is refused (%v); %s", refusal, stop)
+	} else {
+		next = fmt.Sprintf("re-run 'munsu spawn %s %s' to resume on that endpoint (it re-adopts the pane only while the pane is live), or %s", r.args.ID, r.args.ProjectName, stop)
 	}
 	return fmt.Errorf("%w\nthe soldier process of task %s may still be running on backend %s endpoint %s; %s", cause, r.args.ID, r.endpoint.Backend, r.endpoint.Handle, next)
 }
@@ -871,26 +876,31 @@ func (r *Runner) checkBacklogAuthority() error {
 		return err
 	}
 
-	// Check already-live: existing meta with window means a soldier session exists
-	metaExists := r.metaHasWindow()
+	return spawnRefusal(r.args.ID, agg.Phase, r.metaHasWindow())
+}
 
+// spawnRefusal is the rule that decides whether a spawn of a task in phase is
+// admitted: nil, or the refusal with its remedy. checkBacklogAuthority applies it
+// to a run and liveLaunchError to the advice of a failed one, so the two cannot
+// disagree.
+func spawnRefusal(id string, phase taskauthority.Phase, metaHasWindow bool) error {
 	// State-based checks. Working without live meta is start→spawn — allow.
-	switch agg.Phase {
+	switch phase {
 	case taskauthority.PhaseBlocked:
-		return fmt.Errorf("lifecycle guard: task %q is blocked; clear the blocker with 'munsu task unblock %s' before spawning", r.args.ID, r.args.ID)
+		return fmt.Errorf("lifecycle guard: task %q is blocked; clear the blocker with 'munsu task unblock %s' before spawning", id, id)
 	case taskauthority.PhaseDone:
-		return fmt.Errorf("lifecycle guard: task %q is done; reopen it with 'munsu task reopen %s' before spawning", r.args.ID, r.args.ID)
+		return fmt.Errorf("lifecycle guard: task %q is done; reopen it with 'munsu task reopen %s' before spawning", id, id)
 	case taskauthority.PhaseWorking:
 		// Allow when no live session; refuse only duplicate live execution.
-		if metaExists {
-			return fmt.Errorf("lifecycle guard: task %q is already in-flight with a live session; refuse duplicate live execution", r.args.ID)
+		if metaHasWindow {
+			return fmt.Errorf("lifecycle guard: task %q is already in-flight with a live session; refuse duplicate live execution", id)
 		}
 		return nil
 	}
 
 	// Live session without matching state still refuses (stale meta after teardown failure).
-	if metaExists {
-		return fmt.Errorf("lifecycle guard: task %q already has a live soldier session; refuse duplicate live execution", r.args.ID)
+	if metaHasWindow {
+		return fmt.Errorf("lifecycle guard: task %q already has a live soldier session; refuse duplicate live execution", id)
 	}
 
 	return nil
