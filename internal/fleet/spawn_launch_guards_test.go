@@ -418,12 +418,16 @@ func TestConfirmSpawnRefusesBindingOutsideTheLaunchFence(t *testing.T) {
 }
 
 // A harness whose binary is installed but whose credentials are not
-// configured fails preflight before any resource is allocated.
+// configured fails preflight before any resource is allocated. claude decides
+// for itself: `claude auth status` exits 1 until it holds credentials.
 func TestPreflightHarnessRefusesUnconfiguredAuth(t *testing.T) {
 	binDir := t.TempDir()
-	testutil.WriteFakeExecutable(t, filepath.Join(binDir, "claude"), "#!/bin/sh\nexit 0\n")
+	claude := filepath.Join(binDir, "claude")
+	const authStatus = "#!/bin/sh\n[ \"$1 $2\" = \"auth status\" ] || exit 2\n"
+	testutil.WriteFakeExecutable(t, claude, authStatus+"exit 1\n")
 	t.Setenv("PATH", binDir)
-	t.Setenv("ANTHROPIC_API_KEY", "")
+	// An API key in the environment is no evidence of readiness: claude says no.
+	t.Setenv("ANTHROPIC_API_KEY", "test-key")
 
 	r := &Runner{args: Args{ID: "auth-absent"}, harness: "claude"}
 	err := r.preflightHarness()
@@ -434,9 +438,11 @@ func TestPreflightHarnessRefusesUnconfiguredAuth(t *testing.T) {
 		t.Fatalf("error = %v, want a claude preflight error", err)
 	}
 
-	// Control: with credentials configured the same harness passes, so the
-	// refusal came from the auth branch and not from the binary one.
-	t.Setenv("ANTHROPIC_API_KEY", "test-key")
+	// Control: once claude reports credentials the same harness passes, with no
+	// environment variable set, so the refusal came from the auth branch and
+	// not from the binary one.
+	testutil.WriteFakeExecutable(t, claude, authStatus+"exit 0\n")
+	t.Setenv("ANTHROPIC_API_KEY", "")
 	if err := r.preflightHarness(); err != nil {
 		t.Fatalf("configured harness still refused preflight: %v", err)
 	}

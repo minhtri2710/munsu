@@ -163,7 +163,9 @@ func workflowInitRepo(t *testing.T) string {
 
 // workflowHarnessOnPath puts an executable stub for the named harness on PATH
 // and supplies its credential env var, so harness.Preflight passes for the
-// real reason (binary present, auth configured) rather than being skipped.
+// real reason (binary present, auth configured) rather than being skipped. The
+// stub answers `claude auth status` with exit 0, which is how claude reports
+// configured auth; the other harnesses read their credential env var.
 func workflowHarnessOnPath(t *testing.T, name string) {
 	t.Helper()
 	dir := t.TempDir()
