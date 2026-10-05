@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/harness"
 )
 
 // =============================================================================
@@ -22,7 +24,7 @@ import (
 // list and the migration policy would be a mirror of Runner.writeLaunchManifest
 // with nothing binding the two: an entry added or a policy dropped on the
 // production side would leave these tests asserting a manifest shape no soldier
-// is ever launched with, and green (BEO-95, BEO-70). Only r.wtPath is read and
+// is ever launched with, and green (BEO-95, BEO-70). Only r.wtPath and r.harness are read and
 // only r.manifestSHA256 is written by that phase, so a bare Runner is the whole
 // fixture it needs.
 func writeLaunchManifestForTest(t *testing.T, worktreePath string) string {
@@ -32,7 +34,7 @@ func writeLaunchManifestForTest(t *testing.T, worktreePath string) string {
 		t.Fatal(err)
 	}
 	writePiSettingsFixture(t, worktreePath)
-	r := &Runner{wtPath: worktreePath}
+	r := &Runner{wtPath: worktreePath, harness: harness.Pi}
 	if err := r.writeLaunchManifest(); err != nil {
 		t.Fatalf("writing launch manifest: %v", err)
 	}

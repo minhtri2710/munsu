@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
@@ -147,6 +148,154 @@ func TestLaunchRecoveryPostSubmitPreRecordGuardProvesSingleProcess(t *testing.T)
 	}
 	if exec.submitCount() != 2 {
 		t.Fatalf("endpoint command submissions = %d, want 2 (re-submission allowed; guard bounds the process)", exec.submitCount())
+	}
+}
+
+// TestLaunchRecoveryPostSubmitFailureNamesLiveEndpoint fails the launch at each
+// phase after the submission was delivered. The error keeps the cause and names
+// the live endpoint and the task; its advice is true: where it says a re-run
+// resumes, spawn's own refusal admits the task and the re-run adopts the same
+// endpoint, and where it does not, that refusal rejects the task.
+func TestLaunchRecoveryPostSubmitFailureNamesLiveEndpoint(t *testing.T) {
+	errInjected := errors.New("injected failure")
+	for _, tc := range []struct {
+		name        string
+		inject      func(f *launchFixture) (repair func())
+		wantRerun   bool
+		wantSubmits int // endpoint submissions once a re-run resumes
+	}{
+		{
+			// The evidence is refused: the re-run re-submits the same command,
+			// which the launch guard keeps from starting twice.
+			name: "record launch",
+			inject: func(f *launchFixture) func() {
+				f.endpoints.onSubmit = func() { f.runner.launchCommandDigest = "not-a-digest" }
+				return func() {}
+			},
+			wantRerun:   true,
+			wantSubmits: 2,
+		},
+		{
+			name: "launch manifest",
+			inject: func(f *launchFixture) func() {
+				path := filepath.Join(f.runner.wtPath, ManifestName)
+				f.endpoints.onSubmit = func() {
+					if err := os.Mkdir(path, 0o755); err != nil {
+						f.t.Fatal(err)
+					}
+				}
+				return func() { os.Remove(path) }
+			},
+			wantRerun:   true,
+			wantSubmits: 1,
+		},
+		{
+			name: "harness handshake",
+			inject: func(f *launchFixture) func() {
+				f.endpoints.onProbe = func() error { return errInjected }
+				return func() {}
+			},
+			wantRerun:   true,
+			wantSubmits: 1,
+		},
+		{
+			name: "endpoint readiness",
+			inject: func(f *launchFixture) func() {
+				probes := 0
+				f.endpoints.onProbe = func() error {
+					if probes++; probes == 2 {
+						return errInjected
+					}
+					return nil
+				}
+				return func() {}
+			},
+			wantRerun:   true,
+			wantSubmits: 1,
+		},
+		{
+			name: "task meta",
+			inject: func(f *launchFixture) func() {
+				path, err := home.MetaFilePath(f.homeDir, f.taskID)
+				if err != nil {
+					f.t.Fatal(err)
+				}
+				probes := 0
+				f.endpoints.onProbe = func() error {
+					if probes++; probes == 2 {
+						if err := os.MkdirAll(path, 0o755); err != nil {
+							f.t.Fatal(err)
+						}
+					}
+					return nil
+				}
+				return func() { os.Remove(path) }
+			},
+			wantRerun:   true,
+			wantSubmits: 1,
+		},
+		{
+			// .meta names the window by now: spawn refuses a re-run.
+			name: "confirm spawn",
+			inject: func(f *launchFixture) func() {
+				probes := 0
+				f.endpoints.onProbe = func() error {
+					if probes++; probes == 2 {
+						tamperTaskAggregate(f.t, f.homeDir, f.taskID, func(agg *taskauthority.Aggregate) {
+							agg.LaunchEvidence = nil
+						})
+					}
+					return nil
+				}
+				return nil
+			},
+			wantRerun: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLaunchFixture(t, "post-submit-"+strings.ReplaceAll(tc.name, " ", ""))
+			if err := runLaunchPhases(f, "attach-endpoint"); !errors.Is(err, errCrashSimulated) {
+				t.Fatalf("first run: %v", err)
+			}
+			repair := tc.inject(f)
+
+			_, err := f.runner.launchAndConfirm(false)
+			var live *liveLaunchError
+			if !errors.As(err, &live) {
+				t.Fatalf("error = %v, want a liveLaunchError", err)
+			}
+			if live.TaskID != f.taskID || live.Backend != "tmux" || live.Handle != "pane-1" || live.Cause == nil {
+				t.Fatalf("liveLaunchError = %+v, want task %s on tmux pane-1 with its cause", live, f.taskID)
+			}
+			if live.Rerun != tc.wantRerun {
+				t.Fatalf("Rerun = %v, want %v (%v)", live.Rerun, tc.wantRerun, err)
+			}
+
+			f.endpoints.onSubmit, f.endpoints.onProbe = nil, nil
+			authority := f.runner.checkBacklogAuthority()
+			if !tc.wantRerun {
+				if authority == nil {
+					t.Fatal("spawn admits the task although the error says a re-run is refused")
+				}
+				if f.aggregate().Phase != taskauthority.PhaseQueued {
+					t.Fatalf("phase = %q, want queued", f.aggregate().Phase)
+				}
+				return
+			}
+			if authority != nil {
+				t.Fatalf("spawn refuses the task although the error advises a re-run: %v", authority)
+			}
+			repair()
+			if err := runLaunchPhases(f, ""); err != nil {
+				t.Fatalf("re-run: %v", err)
+			}
+			if f.endpoints.createCount() != 1 || f.endpoints.submitCount() != tc.wantSubmits {
+				t.Fatalf("endpoint creates = %d, submits = %d; want 1 and %d", f.endpoints.createCount(), f.endpoints.submitCount(), tc.wantSubmits)
+			}
+			if f.aggregate().Phase != taskauthority.PhaseWorking {
+				t.Fatalf("phase = %q, want working", f.aggregate().Phase)
+			}
+		})
 	}
 }
 

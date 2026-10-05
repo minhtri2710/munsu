@@ -358,3 +358,18 @@ func TestProcessMatches(t *testing.T) {
 		}
 	}
 }
+
+func TestAdapters_SoldierLaunchWorktreeFiles(t *testing.T) {
+	for name, want := range map[string][]string{
+		Pi:     {".pi/settings.json"},
+		Claude: nil,
+	} {
+		a, ok := GetAdapter(name)
+		if !ok {
+			t.Fatalf("missing adapter for %q", name)
+		}
+		if got := a.SoldierLaunch.WorktreeFiles; strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Errorf("%s SoldierLaunch.WorktreeFiles = %v, want %v", name, got, want)
+		}
+	}
+}

@@ -35,6 +35,10 @@ type SoldierLaunchContract struct {
 	// itself. Empty when the harness blocks it through files the launch writes.
 	SkillDeny []string
 	Separator string
+	// WorktreeFiles lists the worktree files, as slash-format relative paths,
+	// that a launch of this harness writes. The launch manifest binds them
+	// next to the core launch artifacts.
+	WorktreeFiles []string
 }
 
 // Adapter describes a verified agent harness with detection, launch,
@@ -230,7 +234,7 @@ var Adapters = map[string]Adapter{
 			ProjectArg: false,
 			PromptArg:  true,
 		},
-		SoldierLaunch: SoldierLaunchContract{Supported: true},
+		SoldierLaunch: SoldierLaunchContract{Supported: true, WorktreeFiles: []string{PiProjectSettingsRelPath}},
 		// pi's --exclude-tools disables tools by name after every other
 		// selection; ask_user_question is the tool of the installed
 		// rpiv-ask-user-question extension.
