@@ -1013,7 +1013,7 @@ func runGit(t *testing.T, dir string, args ...string) {
 func TestWaitForHarnessReady_FailurePatternDetected(t *testing.T) {
 	fake := &fakeBackend{
 		capture: func(windowID string, lines int) (string, error) {
-			return "Auth required: please set ANTHROPIC_API_KEY", nil
+			return "Quick safety check: Is this a project you created or one you trust?\n\n❯ No, exit\n  Yes, I trust this folder", nil
 		},
 	}
 	r := &Runner{
@@ -1023,8 +1023,8 @@ func TestWaitForHarnessReady_FailurePatternDetected(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected failure pattern error, got nil")
 	}
-	if !strings.Contains(err.Error(), "Auth required") {
-		t.Errorf("error should contain failure pattern, got: %v", err)
+	if !strings.Contains(err.Error(), "detected launch failure") || !strings.Contains(err.Error(), "Quick safety check") {
+		t.Errorf("error should be the early failure detection echoing the capture, got: %v", err)
 	}
 }
 
