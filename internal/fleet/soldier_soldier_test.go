@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -577,10 +578,23 @@ func TestBuildLaunchArgs_Codex_FailsWithoutPromptContract(t *testing.T) {
 	}
 }
 
-func TestBuildLaunchArgs_Claude_FailsWithoutPromptContract(t *testing.T) {
-	_, _, err := BuildLaunchArgs("/tmp/home", "claude", "sonnet-4", "", "test prompt")
-	if err == nil {
-		t.Error("expected error for claude (no prompt-arg contract)")
+func TestBuildLaunchArgs_Claude(t *testing.T) {
+	for _, tc := range []struct {
+		name, model string
+		want        []string
+	}{
+		{"with a model", "sonnet-4", []string{"--model", "sonnet-4", "--permission-mode", "bypassPermissions", "--disallowedTools", "AskUserQuestion", "--disallowedTools", "Skill(munsu-ops)", "--", "test prompt"}},
+		{"without a model", "", []string{"--permission-mode", "bypassPermissions", "--disallowedTools", "AskUserQuestion", "--disallowedTools", "Skill(munsu-ops)", "--", "test prompt"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bin, args, err := BuildLaunchArgs("/tmp/home", "claude", tc.model, "", "test prompt")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if bin != "claude" || !reflect.DeepEqual(args, tc.want) {
+				t.Errorf("BuildLaunchArgs = %q %q, want claude %q", bin, args, tc.want)
+			}
+		})
 	}
 }
 
@@ -835,9 +849,9 @@ func TestHarnessPromptArgSupported(t *testing.T) {
 		if !ok {
 			continue
 		}
-		// Only Pi currently has verified prompt-arg support.
-		if name == "pi" && (!a.CaptainLaunch.Supported || !a.CaptainLaunch.PromptArg) {
-			t.Error("pi must have verified prompt-arg contract for soldier launch")
+		// Only pi and claude have a verified soldier launch contract.
+		if (name == "pi" || name == "claude") != a.SoldierLaunch.Supported {
+			t.Errorf("%s SoldierLaunch.Supported = %v", name, a.SoldierLaunch.Supported)
 		}
 	}
 }

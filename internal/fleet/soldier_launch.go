@@ -217,7 +217,7 @@ Summary of report states:
 // starts with charter + task content already in context.
 // model and effort may be empty strings; they are only appended when the
 // adapter's template defines a corresponding flag.
-// The harness must have PromptArg support (from CaptainLaunch contract) and an
+// The harness must have a verified SoldierLaunch contract and an
 // expressible question deny, which every soldier launch carries;
 // unsupported harnesses fail closed.
 func BuildLaunchArgs(soldierHome, harnessName, model, effort, prompt string) (string, []string, error) {
@@ -225,7 +225,7 @@ func BuildLaunchArgs(soldierHome, harnessName, model, effort, prompt string) (st
 	if !ok {
 		return "", nil, fmt.Errorf("soldier launch: harness %q is not a verified harness", harnessName)
 	}
-	if !adapter.CaptainLaunch.Supported || !adapter.CaptainLaunch.PromptArg {
+	if !adapter.SoldierLaunch.Supported {
 		return "", nil, fmt.Errorf("soldier launch: harness %q does not have a verified prompt-arg contract", harnessName)
 	}
 	if len(adapter.QuestionDeny) == 0 {
@@ -245,10 +245,12 @@ func BuildLaunchArgs(soldierHome, harnessName, model, effort, prompt string) (st
 		args = append(args, tmpl.EffortFlag, tmpl.DefaultEffort)
 	}
 	args = append(args, tmpl.ExtraArgs...)
+	args = append(args, adapter.SoldierLaunch.Args...)
 	args = append(args, adapter.QuestionDeny...)
+	args = append(args, adapter.SoldierLaunch.SkillDeny...)
 
-	if adapter.CaptainLaunch.Separator != "" {
-		args = append(args, adapter.CaptainLaunch.Separator)
+	if adapter.SoldierLaunch.Separator != "" {
+		args = append(args, adapter.SoldierLaunch.Separator)
 	}
 
 	// Pass the complete prompt as the final argument.

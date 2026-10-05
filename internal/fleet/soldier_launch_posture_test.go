@@ -64,6 +64,7 @@ func TestLaunchArtifactPostureAndPiAgentDir(t *testing.T) {
 	}{
 		{"pi with the deny", harness.Pi, []string{"--exclude-tools", "ask_user_question", "prompt"}, harness.LaunchPosture{QuestionDeny: true, SkillBlock: true}},
 		{"pi without the deny", harness.Pi, []string{"prompt"}, harness.LaunchPosture{SkillBlock: true}},
+		{"claude with both denies", harness.Claude, []string{"--disallowedTools", "AskUserQuestion", "--disallowedTools", "Skill(munsu-ops)", "--", "prompt"}, harness.LaunchPosture{QuestionDeny: true, SkillBlock: true}},
 		{"another binary", "/bin/true", []string{"prompt"}, harness.LaunchPosture{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -83,7 +84,7 @@ func TestLaunchArtifactPostureAndPiAgentDir(t *testing.T) {
 			}
 			export := "export PI_CODING_AGENT_DIR=" + shQuote(agentDir)
 			settings := filepath.Join(in.WorktreePath, filepath.FromSlash(PiSettingsName))
-			if tc.want.SkillBlock {
+			if tc.bin == harness.Pi {
 				if !strings.Contains(script, export) {
 					t.Fatalf("script does not export the per-task pi agent dir %q:\n%s", agentDir, script)
 				}
