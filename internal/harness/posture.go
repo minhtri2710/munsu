@@ -5,10 +5,10 @@ package harness
 type LaunchPosture struct {
 	// QuestionDeny is true when the argv carries the adapter's question deny.
 	QuestionDeny bool
-	// SkillBlock is true only when the orchestration skill is blocked at both
-	// levels for this launch (the user-level filtered agent dir and the
-	// worktree project settings). The argv cannot show it, so the launch sets
-	// it once both were written.
+	// SkillBlock is true only when the orchestration skill is blocked for this
+	// launch: by the argv's skill deny, or, for a harness that filters skills
+	// through files, by the launch once it wrote both levels (the user-level
+	// filtered agent dir and the worktree project settings).
 	SkillBlock bool
 }
 
@@ -16,7 +16,10 @@ type LaunchPosture struct {
 // An unknown harness, or one whose deny is not expressible, has none.
 func PostureOf(harnessName string, args []string) LaunchPosture {
 	a, ok := GetAdapter(harnessName)
-	return LaunchPosture{QuestionDeny: ok && containsRun(args, a.QuestionDeny)}
+	return LaunchPosture{
+		QuestionDeny: ok && containsRun(args, a.QuestionDeny),
+		SkillBlock:   ok && containsRun(args, a.SoldierLaunch.SkillDeny),
+	}
 }
 
 // containsRun reports whether run appears as consecutive elements of args.

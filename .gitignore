@@ -18,6 +18,9 @@
 *.out
 *.cov
 
+# Throwaway HOME directories of a live claude validation run in the checkout.
+/claude-home-*/
+
 # Scratchpad artifacts produced by local review and agent workflows.
 /scratchpad/
 

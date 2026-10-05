@@ -89,6 +89,34 @@ func TestAdapters_FailureAndReadyPatterns(t *testing.T) {
 	if got := HasReadyPattern("Ready for your prompt", Agy); !got {
 		t.Fatal("HasReadyPattern did not find the agy ready marker")
 	}
+
+	// The claude captures are the pane text measured on claude 2.1.289 under
+	// the soldier posture (bypassPermissions).
+	const (
+		untrusted = "Quick safety check: Is this a project you created or one you trust?\n\n❯ No, exit\n  Yes, I trust this folder\n\nEnter to confirm · Esc to cancel"
+		narrow    = "Quick safety check: Is this a"
+		busy      = "Claude Code v2.1.289\n❯ \n⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt"
+		idle      = "Claude Code v2.1.289\n❯ \n⏵⏵ bypass permissions on (shift+tab to cycle)"
+	)
+	for _, c := range []struct {
+		name, capture         string
+		trust, failure, ready bool
+	}{
+		{"untrusted dialog", untrusted, false, true, false},
+		{"untrusted dialog narrow", narrow, false, true, false},
+		{"busy", busy, false, false, true},
+		{"idle", idle, false, false, true},
+	} {
+		if got := IsTrustPrompt(c.capture, Claude); got != c.trust {
+			t.Errorf("%s: IsTrustPrompt = %v, want %v (Enter answers \"No, exit\")", c.name, got, c.trust)
+		}
+		if got := HasFailurePattern(c.capture, Claude); got != c.failure {
+			t.Errorf("%s: HasFailurePattern = %v, want %v", c.name, got, c.failure)
+		}
+		if got := HasReadyPattern(c.capture, Claude); got != c.ready {
+			t.Errorf("%s: HasReadyPattern = %v, want %v", c.name, got, c.ready)
+		}
+	}
 }
 
 func TestAdapters_DetectEnvMatchesAdapter(t *testing.T) {
@@ -294,10 +322,14 @@ func TestStateArtifactsForHarness_ReturnsCopy(t *testing.T) {
 	}
 }
 
-func TestPiQuestionDenyIsTheExcludeToolsFlag(t *testing.T) {
-	got := Adapters[Pi].QuestionDeny
-	if strings.Join(got, " ") != "--exclude-tools ask_user_question" {
-		t.Fatalf("pi QuestionDeny = %v, want --exclude-tools ask_user_question", got)
+func TestQuestionDeny(t *testing.T) {
+	for name, want := range map[string]string{
+		Pi:     "--exclude-tools ask_user_question",
+		Claude: "--disallowedTools AskUserQuestion",
+	} {
+		if got := strings.Join(Adapters[name].QuestionDeny, " "); got != want {
+			t.Errorf("%s QuestionDeny = %q, want %q", name, got, want)
+		}
 	}
 }
 

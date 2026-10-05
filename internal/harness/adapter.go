@@ -24,6 +24,19 @@ type CaptainLaunchContract struct {
 	PromptArg  bool
 }
 
+// SoldierLaunchContract describes a verified shell-free soldier invocation:
+// the prompt is the last argument, after Separator when one is set. It is
+// separate from CaptainLaunchContract, which captain launch reads.
+type SoldierLaunchContract struct {
+	Supported bool
+	// Args is the permission posture argv of a soldier launch.
+	Args []string
+	// SkillDeny is the argv that blocks OrchestrationSkill in the launch
+	// itself. Empty when the harness blocks it through files the launch writes.
+	SkillDeny []string
+	Separator string
+}
+
 // Adapter describes a verified agent harness with detection, launch,
 // supervision facts, and state artifact cleanup. Each adapter is populated
 // from empirically verified observations (see the captain provisioning skill).
@@ -63,6 +76,10 @@ type Adapter struct {
 
 	// CaptainLaunch is populated only when the general CLI contract is verified.
 	CaptainLaunch CaptainLaunchContract
+
+	// SoldierLaunch is populated only when the soldier CLI contract is verified;
+	// a harness without it is refused for soldier launch.
+	SoldierLaunch SoldierLaunchContract
 
 	// QuestionDeny is the soldier launch argv that denies the harness's
 	// ask-the-user tool; decision-hold is the only question path. Empty means
@@ -108,10 +125,16 @@ var Adapters = map[string]Adapter{
 			{Name: "claude-code"},
 			{Name: "claude code"},
 		},
-		BusyPattern:     `esc to interrupt`,
-		ReadyPatterns:   []string{">", "ready"},
-		TrustPatterns:   nil,
-		FailurePatterns: []string{"Auth required", "not authenticated"},
+		BusyPattern: `esc to interrupt`,
+		// Measured on claude 2.1.289 under the soldier posture: the footer
+		// "bypass permissions on" is in the busy and the idle capture.
+		ReadyPatterns: []string{"bypass permissions on"},
+		// No trust patterns: the folder-trust dialog defaults to "No, exit",
+		// so an Enter would exit claude.
+		TrustPatterns: nil,
+		// The folder-trust dialog of an untrusted project repository; short
+		// enough to fit one line at 38 columns.
+		FailurePatterns: []string{"Quick safety check"},
 		ExitCommand:     `/exit`,
 		InterruptKeys:   `Escape`,
 		SkillInvocation: `/`,
@@ -120,7 +143,16 @@ var Adapters = map[string]Adapter{
 			ModelFlag: "--model",
 			// DefaultModel omitted — let Claude Code use its runtime default
 		},
-		TrustDialog:         `Trust or bypass-permissions confirmation on first launch per worktree`,
+		SoldierLaunch: SoldierLaunchContract{
+			Supported: true,
+			Args:      []string{"--permission-mode", "bypassPermissions"},
+			// --disallowedTools is variadic: the question deny and the skill
+			// deny are separate flags, and the separator ends the list.
+			SkillDeny: []string{"--disallowedTools", "Skill(" + OrchestrationSkill + ")"},
+			Separator: "--",
+		},
+		QuestionDeny:        []string{"--disallowedTools", "AskUserQuestion"},
+		TrustDialog:         `Folder trust dialog on first launch per project repository, default "No, exit"; a linked worktree inherits its main repository's trust, a nested git repository does not`,
 		SupervisionProtocol: `claude`,
 	},
 	Codex: {
@@ -198,6 +230,7 @@ var Adapters = map[string]Adapter{
 			ProjectArg: false,
 			PromptArg:  true,
 		},
+		SoldierLaunch: SoldierLaunchContract{Supported: true},
 		// pi's --exclude-tools disables tools by name after every other
 		// selection; ask_user_question is the tool of the installed
 		// rpiv-ask-user-question extension.
