@@ -155,35 +155,34 @@ func TestLaunchRecoveryPostSubmitPreRecordGuardProvesSingleProcess(t *testing.T)
 
 // TestLaunchRecoveryPostSubmitFailureNamesLiveEndpoint fails Runner.Run at each
 // phase after the submission was delivered. The error Run returns keeps the
-// cause, names the task, the backend and the endpoint, says the soldier process
-// may still be running, and advises only what a second Run then does: where it
-// names the re-run command, a second Run adopts the same endpoint and works the
-// task; where it names a refusal, a second Run is refused with it, and a row that
-// has a remedy applies the remedy before the Run that resumes. The submitted
-// launch command executes the real launch artifact, so the harness launch count
-// is the number of soldier processes.
+// cause, names the task, the backend and the endpoint handle, says the soldier
+// process may still be running, and gives both ways out: fix the cause and
+// re-run `munsu spawn <id> <project>`, or stop the pane by hand. Each row then
+// takes only those steps. Where the re-run resumes, it adopts the same endpoint
+// and works the task; where the cause persists (the task stays blocked, .meta
+// names the window) the re-run is refused with the existing refusal's own reason.
+// The submitted launch command executes the real launch artifact, so the harness
+// launch count is the number of soldier processes.
 func TestLaunchRecoveryPostSubmitFailureNamesLiveEndpoint(t *testing.T) {
 	errInjected := errors.New("injected failure")
 	for _, tc := range []struct {
 		name string
 		// inject arms the failure; the endpoint probes of one Run are the
 		// create check (1), the handshake (2) and the readiness check (3). The
-		// repair it returns is the remedy the advice names.
+		// repair it returns is the operator fixing the cause; the hooks are
+		// disarmed for every row, which fixes a hook cause.
 		inject    func(f *launchFixture) (repair func())
 		wantCause func(f *launchFixture, err error) bool
-		// refusal is the text a re-run is refused with, which the advice then
-		// carries; empty when the re-run is admitted and advised.
+		// refusal is the reason a re-run is refused with because the cause
+		// persists; empty when the re-run resumes once the operator fixed the cause.
 		refusal string
-		// remedy is the instruction the advice gives besides stopping the pane.
-		remedy string
 		// wantSubmits is the number of endpoint submissions once a re-run resumes.
 		wantSubmits int
 	}{
 		{
 			// The task is blocked after the process was started, so the
-			// evidence is refused as stale. A re-run is refused until the task is
-			// unblocked, then re-submits the same command, which the launch guard
-			// keeps from starting twice.
+			// evidence is refused as stale. The block stays, so the re-run is
+			// refused with the existing blocked-task refusal.
 			name: "record launch",
 			inject: func(f *launchFixture) func() {
 				id := mustTaskID(f.t, f.taskID)
@@ -194,33 +193,10 @@ func TestLaunchRecoveryPostSubmitFailureNamesLiveEndpoint(t *testing.T) {
 						f.t.Fatal(err)
 					}
 				}
-				// The operation `munsu task unblock` calls.
-				return func() {
-					agg := f.aggregate()
-					req := taskauthority.CanonicalUnblockRequest{HomeID: f.auth.HomeID(), TaskID: id, Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), Reason: "task: unblock"}
-					if _, err := f.auth.Unblock(mustFleetOperation(f.t, "unblock-"+f.taskID, req), req); err != nil {
-						f.t.Fatal(err)
-					}
-				}
-			},
-			wantCause:   func(_ *launchFixture, err error) bool { return errors.Is(err, domain.ErrStalePrecondition) },
-			refusal:     "is blocked",
-			remedy:      "munsu task unblock ",
-			wantSubmits: 2,
-		},
-		{
-			// The task record cannot be read after the submission, so whether a
-			// re-run is admitted is not known and the advice says it was not checked.
-			name: "task unreadable",
-			inject: func(f *launchFixture) func() {
-				f.endpoints.onSubmit = func() {
-					tamperTaskAggregate(f.t, f.homeDir, f.taskID, func(agg *taskauthority.Aggregate) { agg.Current = false })
-				}
 				return nil
 			},
-			wantCause: func(_ *launchFixture, err error) bool { return errors.Is(err, taskauthority.ErrConflict) },
-			refusal:   "no canonical Task Authority record",
-			remedy:    "not checked",
+			wantCause: func(_ *launchFixture, err error) bool { return errors.Is(err, domain.ErrStalePrecondition) },
+			refusal:   "is blocked; clear the blocker with 'munsu task unblock post-submit-recordlaunch'",
 		},
 		{
 			// The brief the manifest binds is gone; the re-run rewrites it.
@@ -329,52 +305,45 @@ func TestLaunchRecoveryPostSubmitFailureNamesLiveEndpoint(t *testing.T) {
 				t.Fatalf("the error does not keep the underlying cause: %v", err)
 			}
 			msg := err.Error()
-			for _, want := range []string{taskID, "tmux", "pane-1", "may still be running", "by hand"} {
+			rerun := "munsu spawn " + taskID + " test-proj"
+			for _, want := range []string{
+				taskID, "backend tmux endpoint pane-1", "may still be running",
+				"fix the cause", rerun, "refuses with its own reason", "re-adopts the pane only while the pane is live",
+				"stop pane pane-1 on backend tmux by hand",
+			} {
 				if !strings.Contains(msg, want) {
 					t.Fatalf("error %q does not contain %q", msg, want)
 				}
-			}
-			rerun := "munsu spawn " + taskID + " test-proj"
-			if got := strings.Contains(msg, rerun); got != (tc.refusal == "") {
-				t.Fatalf("error advises the re-run command %q = %v, want %v: %s", rerun, got, tc.refusal == "", msg)
-			}
-			if tc.refusal != "" && !strings.Contains(msg, tc.refusal) {
-				t.Fatalf("error %q does not carry the refusal %q", msg, tc.refusal)
-			}
-			if tc.remedy != "" && !strings.Contains(msg, tc.remedy) {
-				t.Fatalf("error %q does not give the remedy %q", msg, tc.remedy)
 			}
 			if n := harnessLaunchCount(t, rf.counter); n != 1 {
 				t.Fatalf("soldier launches after the failed Run = %d, want 1", n)
 			}
 
-			f.endpoints.onSubmit, f.endpoints.onProbe = nil, nil
 			if tc.refusal != "" {
-				// revision is 0 while the record is unreadable.
-				revision := func() taskauthority.Revision {
-					agg, _ := f.auth.Get(mustTaskID(t, taskID))
-					return agg.Revision
-				}
-				before := revision()
+				// The cause persists (the task stays blocked, .meta names the window).
+				before := f.aggregate().Revision
 				if _, err := rf.run(); err == nil || !strings.Contains(err.Error(), tc.refusal) {
-					t.Fatalf("second Run = %v, want the refusal %q", err, tc.refusal)
+					t.Fatalf("re-run = %v, want the refusal %q", err, tc.refusal)
 				}
-				if after := revision(); after != before {
-					t.Fatalf("a refused Run changed the task: revision %d -> %d", before, after)
+				if after := f.aggregate().Revision; after != before {
+					t.Fatalf("a refused re-run changed the task: revision %d -> %d", before, after)
 				}
-				if repair == nil {
-					return
+				if n := harnessLaunchCount(t, rf.counter); n != 1 {
+					t.Fatalf("soldier launches after the refused re-run = %d, want 1", n)
 				}
+				return
 			}
+			// The operator fixes the cause, then re-runs.
+			f.endpoints.onSubmit, f.endpoints.onProbe = nil, nil
 			if repair != nil {
 				repair()
 			}
 			window, err := rf.run()
 			if err != nil {
-				t.Fatalf("Run after the advice: %v", err)
+				t.Fatalf("re-run after the operator fixed the cause: %v", err)
 			}
 			if window != "pane-1" || f.endpoints.createCount() != 1 || rf.exec.submitCount() != tc.wantSubmits {
-				t.Fatalf("Run after the advice: window %q, creates %d, submits %d; want pane-1, 1, %d", window, f.endpoints.createCount(), rf.exec.submitCount(), tc.wantSubmits)
+				t.Fatalf("re-run: window %q, creates %d, submits %d; want pane-1, 1, %d", window, f.endpoints.createCount(), rf.exec.submitCount(), tc.wantSubmits)
 			}
 			if n := harnessLaunchCount(t, rf.counter); n != 1 {
 				t.Fatalf("soldier launches across the recovery = %d, want exactly 1 (no second process)", n)
