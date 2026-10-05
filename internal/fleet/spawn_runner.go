@@ -367,7 +367,7 @@ func (r *Runner) Run() (windowID string, runErr error) {
 
 // launchAndConfirm submits the launch and runs every phase through the final
 // bind. The process is running once the submission is delivered, so a failure
-// from then on is returned as a liveLaunchError naming the endpoint.
+// from then on is returned as an error naming the endpoint.
 func (r *Runner) launchAndConfirm(reviewing bool) (taskauthority.Outcome, error) {
 	spawned, err := r.launchPhases(reviewing)
 	if err != nil && r.launched {
@@ -397,39 +397,17 @@ func (r *Runner) launchPhases(reviewing bool) (taskauthority.Outcome, error) {
 	return r.confirmSpawn()
 }
 
-// liveLaunchError is a spawn failure after the launch was delivered to its
-// endpoint: the soldier process may be running there, owned by the task. Rerun
-// reports whether re-running spawn resumes the launch; it does not when .meta
-// already names a window, which checkBacklogAuthority refuses, so the pane
-// has to be stopped by hand.
-type liveLaunchError struct {
-	TaskID  string
-	Project string
-	Backend string
-	Handle  string
-	Rerun   bool
-	Cause   error
-}
-
-func (e *liveLaunchError) Error() string {
-	next := fmt.Sprintf("stop pane %s on backend %s by hand; re-running spawn is refused while the task has a window in its meta", e.Handle, e.Backend)
-	if e.Rerun {
-		next = fmt.Sprintf("re-run 'munsu spawn %s %s' to resume on that endpoint (it re-adopts the pane only while the pane is live), or stop the pane by hand", e.TaskID, e.Project)
-	}
-	return fmt.Sprintf("%v\nthe soldier process of task %s may still be running on backend %s endpoint %s; %s", e.Cause, e.TaskID, e.Backend, e.Handle, next)
-}
-
-func (e *liveLaunchError) Unwrap() error { return e.Cause }
-
+// liveLaunchError wraps a spawn failure after the launch was delivered to its
+// endpoint: the soldier process may be running there, owned by the task. A
+// re-run is advised only when .meta names no window; otherwise
+// checkBacklogAuthority refuses it as a duplicate live session, so the pane has
+// to be stopped by hand.
 func (r *Runner) liveLaunchError(cause error) error {
-	return &liveLaunchError{
-		TaskID:  r.args.ID,
-		Project: r.args.ProjectName,
-		Backend: r.endpoint.Backend,
-		Handle:  r.endpoint.Handle,
-		Rerun:   !r.metaHasWindow(),
-		Cause:   cause,
+	next := fmt.Sprintf("stop pane %s on backend %s by hand; re-running spawn is refused while the task has a window in its meta", r.endpoint.Handle, r.endpoint.Backend)
+	if !r.metaHasWindow() {
+		next = fmt.Sprintf("re-run 'munsu spawn %s %s' to resume on that endpoint (it re-adopts the pane only while the pane is live), or stop the pane by hand", r.args.ID, r.args.ProjectName)
 	}
+	return fmt.Errorf("%w\nthe soldier process of task %s may still be running on backend %s endpoint %s; %s", cause, r.args.ID, r.endpoint.Backend, r.endpoint.Handle, next)
 }
 
 // metaHasWindow reports whether the task's .meta names a window: the state
