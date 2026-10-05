@@ -1,10 +1,12 @@
 package harness
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 )
 
 // PreflightLevel indicates the status of a preflight readiness check.
@@ -37,12 +39,29 @@ var preflightBinaryNames = map[string]string{
 // preflightAuthEnv maps harness names to environment variables that hold
 // their API authentication credentials.
 var preflightAuthEnv = map[string][]string{
-	Claude:   {"ANTHROPIC_API_KEY"},
 	Codex:    {"OPENAI_API_KEY"},
 	Opencode: {"OPENAI_API_KEY"},
 	Pi:       piAuthEnvVars(),
 	Grok:     {"GROK_API_KEY", "XAI_API_KEY"},
 	Agy:      {"ANTHROPIC_API_KEY"},
+}
+
+// claudeAuthProbeTimeout bounds `claude auth status`. The probe measured about
+// 0.2s on claude 2.1.289; the bound leaves room for a slow keychain unlock while
+// keeping a hung claude from stalling `munsu spawn`. It is a variable so tests
+// can shorten it.
+var claudeAuthProbeTimeout = 10 * time.Second
+
+// claudeAuthConfigured asks claude itself whether it holds credentials: the
+// answer is the exit status of `claude auth status`, and nothing else. A
+// non-zero exit, a probe that cannot start, and a probe that outlives
+// claudeAuthProbeTimeout all read as not configured. The exit status is enough:
+// it already covers claude.ai logins and API keys, so no output field is needed.
+// Security: the probe's output is discarded, never read, printed, or logged.
+func claudeAuthConfigured() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), claudeAuthProbeTimeout)
+	defer cancel()
+	return exec.CommandContext(ctx, "claude", "auth", "status").Run() == nil
 }
 
 // piCredentialFile is a function that reports whether a Pi credential store file
@@ -110,8 +129,12 @@ func Preflight(harnessName string) (*PreflightResult, error) {
 	}
 
 	// 3. Auth credentials
-	envVars, ok := preflightAuthEnv[harnessName]
-	if !ok {
+	if harnessName == Claude {
+		result.AuthConfigured = PreflightAbsent
+		if claudeAuthConfigured() {
+			result.AuthConfigured = PreflightOK
+		}
+	} else if envVars, ok := preflightAuthEnv[harnessName]; !ok {
 		result.AuthConfigured = PreflightUnknown
 	} else {
 		found := false
@@ -205,6 +228,9 @@ func piAuthEnvVars() []string {
 
 // authHint returns an actionable error message for missing auth configuration.
 func authHint(harness string) string {
+	if harness == Claude {
+		return fmt.Sprintf("harness %q auth not configured; run `claude auth login`, or set ANTHROPIC_API_KEY, so that `claude auth status` succeeds", harness)
+	}
 	envVars, ok := preflightAuthEnv[harness]
 	if !ok || len(envVars) == 0 {
 		return fmt.Sprintf("harness %q auth not configured (unknown auth method)", harness)

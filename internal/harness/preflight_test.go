@@ -4,11 +4,13 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 func TestPreflight_AdapterKnown(t *testing.T) {
+	testutil.SetPath(t, t.TempDir())
 	result, err := Preflight(Claude)
 	if err != nil {
 		t.Fatalf("Preflight(%q) error = %v", Claude, err)
@@ -29,40 +31,55 @@ func TestPreflight_AdapterUnknown(t *testing.T) {
 }
 
 func TestPreflight_BinaryOnPath_Claude(t *testing.T) {
+	testutil.FakeOnPath(t, "claude", "#!/bin/sh\nexit 0\n")
 	result, err := Preflight(Claude)
 	if err != nil {
 		t.Fatalf("Preflight(%q) error = %v", Claude, err)
 	}
-	// We can't guarantee the binary is on PATH in test env, but it should be
-	// either OK (found) or Absent (not found), never Unknown for a known harness.
-	if result.BinaryOnPath == PreflightUnknown {
-		t.Error("BinaryOnPath should not be Unknown for claude (known binary name)")
+	if result.BinaryOnPath != PreflightOK {
+		t.Errorf("BinaryOnPath = %q, want %q", result.BinaryOnPath, PreflightOK)
 	}
 }
 
+// claude readiness is decided by `claude auth status` alone. The fake answers
+// only that exact subcommand, with the exit status the row sets; any other
+// argument exits 2.
 func TestPreflight_AuthConfigured(t *testing.T) {
-	// Save original env and restore after test
-	orig := os.Getenv("ANTHROPIC_API_KEY")
-	defer os.Setenv("ANTHROPIC_API_KEY", orig)
-
-	// Test with auth present
-	os.Setenv("ANTHROPIC_API_KEY", "test-key")
-	result, err := Preflight(Claude)
-	if err != nil {
-		t.Fatalf("Preflight(%q) error = %v", Claude, err)
+	const authStatus = "#!/bin/sh\n[ \"$1 $2\" = \"auth status\" ] || exit 2\n"
+	tests := []struct {
+		name    string
+		claude  string // fake claude script; empty leaves claude off PATH
+		apiKey  string
+		timeout time.Duration
+		want    PreflightLevel
+	}{
+		{name: "logged in, no env var", claude: authStatus + "exit 0\n", want: PreflightOK},
+		{name: "env var set, claude says no credentials", claude: authStatus + "exit 1\n", apiKey: "test-key", want: PreflightAbsent},
+		{name: "no credentials", claude: authStatus + "exit 1\n", want: PreflightAbsent},
+		{name: "probe does not finish in time", claude: authStatus + "exec sleep 30\n", timeout: 100 * time.Millisecond, want: PreflightAbsent},
+		{name: "claude not on PATH", want: PreflightAbsent},
 	}
-	if result.AuthConfigured != PreflightOK {
-		t.Errorf("AuthConfigured = %q, want %q", result.AuthConfigured, PreflightOK)
-	}
-
-	// Test with auth absent
-	os.Unsetenv("ANTHROPIC_API_KEY")
-	result, err = Preflight(Claude)
-	if err != nil {
-		t.Fatalf("Preflight(%q) error = %v", Claude, err)
-	}
-	if result.AuthConfigured != PreflightAbsent {
-		t.Errorf("AuthConfigured = %q, want %q", result.AuthConfigured, PreflightAbsent)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("ANTHROPIC_API_KEY", tc.apiKey)
+			if tc.claude == "" {
+				testutil.SetPath(t, t.TempDir())
+			} else {
+				testutil.FakeOnPath(t, "claude", tc.claude)
+			}
+			if tc.timeout > 0 {
+				orig := claudeAuthProbeTimeout
+				claudeAuthProbeTimeout = tc.timeout
+				t.Cleanup(func() { claudeAuthProbeTimeout = orig })
+			}
+			result, err := Preflight(Claude)
+			if err != nil {
+				t.Fatalf("Preflight(%q) error = %v", Claude, err)
+			}
+			if result.AuthConfigured != tc.want {
+				t.Errorf("AuthConfigured = %q, want %q", result.AuthConfigured, tc.want)
+			}
+		})
 	}
 }
 
@@ -197,19 +214,6 @@ func TestPreflight_AllLevelsKnown(t *testing.T) {
 	}
 }
 
-func TestPreflight_UnknownAuthEnv(t *testing.T) {
-	// Harnesses without auth env mapping should get Unknown for auth
-	// (currently all known harnesses have mappings, but test the edge case)
-	result, err := Preflight(Claude)
-	if err != nil {
-		t.Fatalf("Preflight(%q) error = %v", Claude, err)
-	}
-	// Claude has ANTHROPIC_API_KEY mapping, so this should be ok or absent
-	if result.AuthConfigured == PreflightUnknown {
-		t.Log("AuthConfigured is Unknown - acceptable if mapping is missing")
-	}
-}
-
 func TestPreflightError_ErrorMessages(t *testing.T) {
 	err := &PreflightError{Harness: "codex", Reason: "adapter-unknown"}
 	msg := err.Error()
@@ -231,6 +235,7 @@ func TestPreflightError_ErrorMessages(t *testing.T) {
 }
 
 func TestPreflight_AllKnownHarnesses(t *testing.T) {
+	testutil.SetPath(t, t.TempDir())
 	for _, h := range KnownHarnesses {
 		result, err := Preflight(h)
 		if err != nil {
