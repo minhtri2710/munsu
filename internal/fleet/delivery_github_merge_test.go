@@ -58,14 +58,6 @@ func TestEvaluateGitHubChecks(t *testing.T) {
 			reported: []GitHubCheck{done(1, "ci", "failure"), done(2, "ci", "success")},
 			want:     []domain.CheckRun{{Name: "ci", Status: domain.CheckPassed}},
 		},
-		{
-			name:     "skipped required counts as passed and skipped optional is left out",
-			required: []string{"gate", "other"},
-			reported: []GitHubCheck{done(1, "gate", "skipped"), done(2, "other", "neutral"), done(3, "docs", "skipped"), done(4, "ci", "success")},
-			want: []domain.CheckRun{
-				{Name: "ci", Status: domain.CheckPassed}, {Name: "gate", Status: domain.CheckPassed}, {Name: "other", Status: domain.CheckPassed},
-			},
-		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := evaluateGitHubChecks(tc.required, tc.reported)
@@ -149,13 +141,13 @@ func githubDeliveryIdentity() domain.DeliveryIdentity {
 	}
 }
 
-func githubDeliveryView(state, mergeable, decision, merged string) string {
+func githubDeliveryView(state, mergeable, mergeState, decision, merged string) string {
 	mergeCommit := "null"
 	if merged != "" {
 		mergeCommit = fmt.Sprintf(`{"oid":%q}`, merged)
 	}
-	return fmt.Sprintf(`{"state":%q,"headRefOid":%q,"headRefName":"feature","baseRefName":"main","mergeable":%q,"reviewDecision":%q,"mergeCommit":%s}`,
-		state, githubDeliveryHead, mergeable, decision, mergeCommit)
+	return fmt.Sprintf(`{"state":%q,"headRefOid":%q,"headRefName":"feature","baseRefName":"main","mergeable":%q,"mergeStateStatus":%q,"reviewDecision":%q,"mergeCommit":%s}`,
+		state, githubDeliveryHead, mergeable, mergeState, decision, mergeCommit)
 }
 
 func TestGitHubDeliveryProviderValidateAndMerge(t *testing.T) {
@@ -228,7 +220,7 @@ func TestGitHubDeliveryProviderObserve(t *testing.T) {
 	passing := []GitHubCheck{{ID: 1, Name: "ci", Status: "completed", Conclusion: "success"}}
 
 	t.Run("open, mergeable and green is allowed", func(t *testing.T) {
-		client := &fakeGitHubDelivery{view: githubDeliveryView("open", "MERGEABLE", "APPROVED", ""), required: []string{"ci"}, checks: passing}
+		client := &fakeGitHubDelivery{view: githubDeliveryView("open", "MERGEABLE", "CLEAN", "APPROVED", ""), required: []string{"ci"}, checks: passing}
 		obs, err := (&githubDeliveryProvider{client: client}).Observe(ident)
 		if err != nil {
 			t.Fatal(err)
@@ -242,7 +234,7 @@ func TestGitHubDeliveryProviderObserve(t *testing.T) {
 		}
 	})
 	t.Run("a conflicting PR is denied and reads no CI evidence", func(t *testing.T) {
-		client := &fakeGitHubDelivery{view: githubDeliveryView("OPEN", "CONFLICTING", "", "")}
+		client := &fakeGitHubDelivery{view: githubDeliveryView("OPEN", "CONFLICTING", "CLEAN", "", "")}
 		obs, err := (&githubDeliveryProvider{client: client}).Observe(ident)
 		if err != nil || obs.Mergeability != DeliveryMergeabilityDenied {
 			t.Fatalf("observation = %+v, %v; want denied", obs, err)
@@ -251,23 +243,72 @@ func TestGitHubDeliveryProviderObserve(t *testing.T) {
 			t.Fatalf("calls = %v, want the view only", client.calls)
 		}
 	})
+	t.Run("the merge state decides on an otherwise mergeable PR", func(t *testing.T) {
+		for _, tc := range []struct {
+			state string
+			want  DeliveryMergeability
+		}{
+			{"BEHIND", DeliveryMergeabilityDenied}, {"UNKNOWN", DeliveryMergeabilityDenied}, {"", DeliveryMergeabilityDenied},
+			{"FUTURE_STATE", DeliveryMergeabilityDenied},
+			{"CLEAN", DeliveryMergeabilityAllowed}, {"BLOCKED", DeliveryMergeabilityAllowed}, {"DIRTY", DeliveryMergeabilityAllowed},
+			{"DRAFT", DeliveryMergeabilityAllowed}, {"HAS_HOOKS", DeliveryMergeabilityAllowed}, {"UNSTABLE", DeliveryMergeabilityAllowed},
+		} {
+			client := &fakeGitHubDelivery{view: githubDeliveryView("OPEN", "MERGEABLE", tc.state, "", ""), required: []string{"ci"}, checks: passing}
+			obs, err := (&githubDeliveryProvider{client: client}).Observe(ident)
+			if err != nil || obs.Mergeability != tc.want {
+				t.Fatalf("merge state %q: observation = %+v, %v; want %q", tc.state, obs, err, tc.want)
+			}
+		}
+		absent := &fakeGitHubDelivery{view: fmt.Sprintf(`{"state":"OPEN","headRefOid":%q,"headRefName":"feature","baseRefName":"main","mergeable":"MERGEABLE"}`, githubDeliveryHead), required: []string{"ci"}, checks: passing}
+		if obs, err := (&githubDeliveryProvider{client: absent}).Observe(ident); err != nil || obs.Mergeability != DeliveryMergeabilityDenied {
+			t.Fatalf("absent merge state: observation = %+v, %v; want denied", obs, err)
+		}
+	})
 	t.Run("changes requested is denied", func(t *testing.T) {
-		client := &fakeGitHubDelivery{view: githubDeliveryView("OPEN", "MERGEABLE", "CHANGES_REQUESTED", ""), required: []string{"ci"}, checks: passing}
+		client := &fakeGitHubDelivery{view: githubDeliveryView("OPEN", "MERGEABLE", "CLEAN", "CHANGES_REQUESTED", ""), required: []string{"ci"}, checks: passing}
 		obs, err := (&githubDeliveryProvider{client: client}).Observe(ident)
 		if err != nil || obs.Mergeability != DeliveryMergeabilityDenied {
 			t.Fatalf("observation = %+v, %v; want denied", obs, err)
 		}
 	})
 	t.Run("a failing check is denied", func(t *testing.T) {
-		client := &fakeGitHubDelivery{view: githubDeliveryView("OPEN", "MERGEABLE", "", ""), checks: []GitHubCheck{{ID: 1, Name: "ci", Status: "completed", Conclusion: "failure"}}}
+		client := &fakeGitHubDelivery{view: githubDeliveryView("OPEN", "MERGEABLE", "CLEAN", "", ""), checks: []GitHubCheck{{ID: 1, Name: "ci", Status: "completed", Conclusion: "failure"}}}
 		obs, err := (&githubDeliveryProvider{client: client}).Observe(ident)
 		if err != nil || obs.Mergeability != DeliveryMergeabilityDenied {
 			t.Fatalf("observation = %+v, %v; want denied", obs, err)
 		}
 	})
+	for _, conclusion := range []string{"skipped", "neutral"} {
+		t.Run("a "+conclusion+" required check is denied", func(t *testing.T) {
+			client := &fakeGitHubDelivery{view: githubDeliveryView("OPEN", "MERGEABLE", "CLEAN", "", ""), required: []string{"ci"}, checks: []GitHubCheck{{ID: 1, Name: "ci", Status: "completed", Conclusion: conclusion}}}
+			obs, err := (&githubDeliveryProvider{client: client}).Observe(ident)
+			if err != nil || obs.Mergeability != DeliveryMergeabilityDenied {
+				t.Fatalf("observation = %+v, %v; want denied", obs, err)
+			}
+		})
+	}
+	t.Run("a skipped required check run is not hidden by a passing commit status of the same name", func(t *testing.T) {
+		checks := []GitHubCheck{
+			{Source: GitHubCheckRun, ID: 9, Name: "ci", Status: "completed", Conclusion: "skipped"},
+			{Source: GitHubCommitStatus, ID: 1, Name: "ci", Status: "completed", Conclusion: "success"},
+		}
+		client := &fakeGitHubDelivery{view: githubDeliveryView("OPEN", "MERGEABLE", "CLEAN", "", ""), required: []string{"ci"}, checks: checks}
+		obs, err := (&githubDeliveryProvider{client: client}).Observe(ident)
+		if err != nil || obs.Mergeability != DeliveryMergeabilityDenied {
+			t.Fatalf("observation = %+v, %v; want denied", obs, err)
+		}
+	})
+	t.Run("a skipped optional check is left out and the passing required check allows", func(t *testing.T) {
+		checks := append([]GitHubCheck{{ID: 2, Name: "docs", Status: "completed", Conclusion: "skipped"}}, passing...)
+		client := &fakeGitHubDelivery{view: githubDeliveryView("OPEN", "MERGEABLE", "CLEAN", "", ""), required: []string{"ci"}, checks: checks}
+		obs, err := (&githubDeliveryProvider{client: client}).Observe(ident)
+		if err != nil || obs.Mergeability != DeliveryMergeabilityAllowed {
+			t.Fatalf("observation = %+v, %v; want allowed", obs, err)
+		}
+	})
 	t.Run("a merged PR carries its merge commit and reads nothing else", func(t *testing.T) {
 		merged := strings.Repeat("3", 40)
-		client := &fakeGitHubDelivery{view: githubDeliveryView("MERGED", "UNKNOWN", "", merged)}
+		client := &fakeGitHubDelivery{view: githubDeliveryView("MERGED", "UNKNOWN", "CLEAN", "", merged)}
 		obs, err := (&githubDeliveryProvider{client: client}).Observe(ident)
 		if err != nil || obs.State != "MERGED" || obs.MergedSHA != merged || obs.Mergeability != "" {
 			t.Fatalf("observation = %+v, %v", obs, err)
@@ -277,14 +318,14 @@ func TestGitHubDeliveryProviderObserve(t *testing.T) {
 		}
 	})
 	t.Run("a merged PR without a merge commit has no merged sha", func(t *testing.T) {
-		client := &fakeGitHubDelivery{view: githubDeliveryView("MERGED", "", "", "")}
+		client := &fakeGitHubDelivery{view: githubDeliveryView("MERGED", "", "CLEAN", "", "")}
 		obs, err := (&githubDeliveryProvider{client: client}).Observe(ident)
 		if err != nil || obs.MergedSHA != "" {
 			t.Fatalf("observation = %+v, %v", obs, err)
 		}
 	})
 	t.Run("a closed PR carries no mergeability", func(t *testing.T) {
-		client := &fakeGitHubDelivery{view: githubDeliveryView("CLOSED", "", "", "")}
+		client := &fakeGitHubDelivery{view: githubDeliveryView("CLOSED", "", "CLEAN", "", "")}
 		obs, err := (&githubDeliveryProvider{client: client}).Observe(ident)
 		if err != nil || obs.State != "CLOSED" || obs.Mergeability != "" {
 			t.Fatalf("observation = %+v, %v", obs, err)
@@ -299,12 +340,12 @@ func TestGitHubDeliveryProviderObserve(t *testing.T) {
 	}{
 		{name: "view failure", client: &fakeGitHubDelivery{viewErr: errors.New("gh down")}, wantErr: "gh down"},
 		{name: "view is not json", client: &fakeGitHubDelivery{view: "not json"}, wantErr: "parsing gh pr view output"},
-		{name: "required checks unreadable", client: &fakeGitHubDelivery{view: githubDeliveryView("OPEN", "MERGEABLE", "", ""), reqErr: errors.New("no protection read")}, wantErr: "no protection read"},
-		{name: "head checks unreadable", client: &fakeGitHubDelivery{view: githubDeliveryView("OPEN", "MERGEABLE", "", ""), checkErr: errors.New("no checks read")}, wantErr: "no checks read"},
-		{name: "empty proof", client: &fakeGitHubDelivery{view: githubDeliveryView("OPEN", "MERGEABLE", "", "")}, wantErr: "an empty CI proof is refused"},
-		{name: "required check never reported", client: &fakeGitHubDelivery{view: githubDeliveryView("OPEN", "MERGEABLE", "", ""), required: []string{"ci"}, checks: []GitHubCheck{{ID: 1, Name: "lint", Status: "completed", Conclusion: "success"}}}, wantErr: `required check "ci" never reported`},
-		{name: "no head evidence", client: &fakeGitHubDelivery{view: `{"state":"OPEN","mergeable":"MERGEABLE","baseRefName":"main"}`}, wantErr: "missing head or base evidence"},
-		{name: "no base evidence", client: &fakeGitHubDelivery{view: fmt.Sprintf(`{"state":"OPEN","mergeable":"MERGEABLE","headRefOid":%q}`, githubDeliveryHead)}, wantErr: "missing head or base evidence"},
+		{name: "required checks unreadable", client: &fakeGitHubDelivery{view: githubDeliveryView("OPEN", "MERGEABLE", "CLEAN", "", ""), reqErr: errors.New("no protection read")}, wantErr: "no protection read"},
+		{name: "head checks unreadable", client: &fakeGitHubDelivery{view: githubDeliveryView("OPEN", "MERGEABLE", "CLEAN", "", ""), checkErr: errors.New("no checks read")}, wantErr: "no checks read"},
+		{name: "empty proof", client: &fakeGitHubDelivery{view: githubDeliveryView("OPEN", "MERGEABLE", "CLEAN", "", "")}, wantErr: "an empty CI proof is refused"},
+		{name: "required check never reported", client: &fakeGitHubDelivery{view: githubDeliveryView("OPEN", "MERGEABLE", "CLEAN", "", ""), required: []string{"ci"}, checks: []GitHubCheck{{ID: 1, Name: "lint", Status: "completed", Conclusion: "success"}}}, wantErr: `required check "ci" never reported`},
+		{name: "no head evidence", client: &fakeGitHubDelivery{view: `{"state":"OPEN","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","baseRefName":"main"}`}, wantErr: "missing head or base evidence"},
+		{name: "no base evidence", client: &fakeGitHubDelivery{view: fmt.Sprintf(`{"state":"OPEN","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","headRefOid":%q}`, githubDeliveryHead)}, wantErr: "missing head or base evidence"},
 		{name: "identity url is not a github pull request", client: &fakeGitHubDelivery{}, ident: func(i *domain.DeliveryIdentity) { i.URL = "https://example.com/x" }, wantErr: "invalid PR URL in identity"},
 	}
 	for _, tc := range refusals {

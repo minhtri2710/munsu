@@ -168,7 +168,7 @@ func fetchGitHubProviderSnapshot(prURL string) (*ProviderSnapshot, error) {
 			return nil, err
 		}
 		if !mergeableOK {
-			return nil, fmt.Errorf("GitHub PR is not mergeable")
+			return nil, fmt.Errorf("GitHub PR is not mergeable (mergeable %q, mergeStateStatus %q)", view.Mergeable, view.MergeStateStatus)
 		}
 		snap.Checks = pr.Checks
 		snap.Reviews = pr.Reviews

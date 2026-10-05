@@ -64,7 +64,7 @@ capture and delivery. Provider observations must carry exact head and base-ref
 evidence, plus mergeability evidence for an OPEN request. The irreversible
 provider operation must enforce mergeability, exact head, and exact base
 constraints together; an adapter that cannot guarantee that contract refuses
-before mutation. GitHub merge is out of scope: Deliver refuses a GitHub identity before writing any journal (`validateDeliverRequest`); GitLab OPEN merge is now available (ADR-0018) with an atomic source-head pin and a named target-branch residual, so the fail-closed path no longer applies to GitLab's supported OPEN path. MERGED and CLOSED observations are
+before mutation. GitHub OPEN merge is now available through the pinned, fail-closed path defined by ADR-0026; GitLab OPEN merge is available (ADR-0018) with an atomic source-head pin and a named target-branch residual. MERGED and CLOSED observations are
 reconciled without mutation, but only when their consumed head and base evidence
 exactly match the journal identity. A MERGED observation must also carry a
 non-zero, full hexadecimal Git object ID for the merge commit (40 or 64

@@ -54,7 +54,7 @@ for harnesses with a verified adapter; unverified harnesses show "planned/unsupp
 | Ensure AGENTS.md | `munsu ensure-agents-md` | `internal/cli` | **implemented** |
 | Project registry | `munsu project add/list/show/rm` | `internal/fleet` | **implemented** |
 | Review diff | `munsu delivery review-diff` | `internal/fleet` | **implemented** |
-| PR merge and terminal reconciliation | `munsu delivery pr-merge` | `internal/fleet`, `internal/taskauthority` (invariants) | **implemented**: terminal reconciliation is mutation-free; the GitHub adapter still fails closed for OPEN mutation (no atomic head+base enforcement), while GitLab OPEN merge is now available with a pinned source head and a named target-branch residual (see ADR-0018) |
+| PR merge and terminal reconciliation | `munsu delivery pr-merge` | `internal/fleet`, `internal/taskauthority` (invariants) | **implemented**: terminal reconciliation is mutation-free; GitHub and GitLab OPEN merges fail closed on provider observations and pin the source head, with GitHub's merge-state and required-check fences documented in [ADR-0026](adr/0026-github-delivery-through-an-open-pr-and-the-landing-gate-record.md) and GitLab's target-branch residual in [ADR-0018](adr/0018-gitlab-open-merge-source-pin-and-target-residual.md) |
 | Worktree pool (treehouse) | `munsu worktree get/return/status` | `internal/backend`, `internal/cli` | **implemented** |
 | Config | `munsu config get/set` | `internal/config` | **implemented** |
 | Session backend (tmux + herdr + zellij + cmux + orca) | `--backend` flag | `internal/backend` | **implemented** (cmux/orca experimental, alongside zellij). Structured `munsu backend capabilities` currently exposes only `tmux` and `herdr`. |
