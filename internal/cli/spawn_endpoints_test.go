@@ -333,6 +333,75 @@ func TestSpawnSessionEndpointsRefusesBoundHerdrSessionMismatch(t *testing.T) {
 	}
 }
 
+// TestSpawnSessionEndpointsRefusesIncompleteEndpointIdentity proves a recorded
+// endpoint without a complete backend/handle identity is refused before any
+// resolution or adapter call, on both identity axes.
+func TestSpawnSessionEndpointsRefusesIncompleteEndpointIdentity(t *testing.T) {
+	calls := 0
+	endpoints := &spawnSessionEndpoints{
+		resolve: func(string) (backend.Backend, string, error) {
+			calls++
+			return &spawnEndpointBackend{}, "herdr", nil
+		},
+		bound: map[string]backend.Backend{},
+	}
+	for _, ep := range []fleet.CreatedEndpoint{
+		{Backend: "", Handle: "recorded:w3A:p2"},
+		{Backend: "  ", Handle: "recorded:w3A:p2"},
+		{Backend: "herdr", Handle: ""},
+		{Backend: "herdr", Handle: "  "},
+	} {
+		if _, err := endpoints.backend(ep); err == nil || !strings.Contains(err.Error(), "identity is incomplete") {
+			t.Fatalf("backend %+v error=%v, want incomplete endpoint identity refusal", ep, err)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("resolver calls=%d, want refusal before resolution", calls)
+	}
+}
+
+// TestSpawnSessionEndpointsRefusesResolverNilBackend proves a resolver that
+// names the requested backend but returns no adapter fails closed instead of
+// handing a nil backend to observation.
+func TestSpawnSessionEndpointsRefusesResolverNilBackend(t *testing.T) {
+	calls := 0
+	endpoints := &spawnSessionEndpoints{
+		resolve: func(name string) (backend.Backend, string, error) {
+			calls++
+			return nil, name, nil
+		},
+		bound: map[string]backend.Backend{},
+	}
+	_, err := endpoints.Probe(fleet.CreatedEndpoint{Backend: "tmux", Handle: "recorded-window"})
+	if err == nil || !strings.Contains(err.Error(), "returned no backend") {
+		t.Fatalf("Probe error=%v, want nil-backend refusal", err)
+	}
+	if calls != 1 {
+		t.Fatalf("resolver calls=%d, want 1", calls)
+	}
+}
+
+// TestSpawnSessionEndpointsRefusesUntrimmedSessionOwner proves a Herdr
+// endpoint whose recorded session owner carries surrounding whitespace is
+// refused before any resolution or adapter call.
+func TestSpawnSessionEndpointsRefusesUntrimmedSessionOwner(t *testing.T) {
+	calls := 0
+	endpoints := &spawnSessionEndpoints{
+		resolve: func(string) (backend.Backend, string, error) {
+			calls++
+			return &spawnEndpointBackend{}, "herdr", nil
+		},
+		bound: map[string]backend.Backend{},
+	}
+	_, err := endpoints.Probe(fleet.CreatedEndpoint{Backend: "herdr", Handle: "recorded:w3A:p2", SessionOwner: " recorded"})
+	if err == nil || !strings.Contains(err.Error(), "invalid session owner") {
+		t.Fatalf("Probe error=%v, want untrimmed session owner refusal", err)
+	}
+	if calls != 0 {
+		t.Fatalf("resolver calls=%d, want refusal before resolution", calls)
+	}
+}
+
 func TestSpawnSessionEndpointsRefusesColdResolutionError(t *testing.T) {
 	wantErr := errors.New("backend unavailable")
 	calls := 0
