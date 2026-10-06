@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -13,6 +14,12 @@ type spawnEndpointBackend struct {
 	submitted         []string
 	metadata          map[string]string
 	findOrCreateCalls int
+	probeCalls        int
+}
+
+func (b *spawnEndpointBackend) CheckAgentAlive(string) (bool, bool, error) {
+	b.probeCalls++
+	return true, true, nil
 }
 
 func (b *spawnEndpointBackend) NewWindow(string, string) (string, error) { return b.window, nil }
@@ -201,5 +208,149 @@ func TestSpawnSessionEndpointsUnsupportedBackendFailsClosed(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no reservation-aware find-or-create") || !strings.Contains(err.Error(), "fail closed") {
 		t.Fatalf("error = %v, want typed fail-closed before acquisition", err)
+	}
+}
+
+func TestSpawnSessionEndpointsResolvesRecordedEndpointWithoutCreating(t *testing.T) {
+	bk := &spawnEndpointBackend{window: "pilot:w3A:p2"}
+	var resolvedName string
+	endpoints := &spawnSessionEndpoints{
+		resolve: func(name string) (backend.Backend, string, error) {
+			resolvedName = name
+			return bk, "herdr", nil
+		},
+		bound: map[string]backend.Backend{},
+	}
+	ep := fleet.CreatedEndpoint{Backend: "herdr", Handle: "pilot:w3A:p2", SessionOwner: "pilot"}
+	obs, err := endpoints.Probe(ep)
+	if err != nil {
+		t.Fatalf("Probe recorded endpoint: %v", err)
+	}
+	if resolvedName != "herdr" || bk.probeCalls != 1 {
+		t.Fatalf("resolved=%q probe calls=%d, want exact backend and one observation", resolvedName, bk.probeCalls)
+	}
+	if obs.Lifecycle != backend.LifecycleAlive || obs.Freshness != backend.FreshnessUnknown || obs.Live() {
+		t.Fatalf("observation=%+v, want raw alive but unauthorized freshness", obs)
+	}
+	if bk.findOrCreateCalls != 0 {
+		t.Fatalf("recorded endpoint observation created/recovered an endpoint %d times", bk.findOrCreateCalls)
+	}
+}
+
+func TestSpawnSessionEndpointsColdHerdrBindingUsesRecordedSession(t *testing.T) {
+	var resolvedName string
+	endpoints := &spawnSessionEndpoints{
+		resolve: func(name string) (backend.Backend, string, error) {
+			resolvedName = name
+			return &backend.HerdrBackend{Session: "environment-session"}, "herdr", nil
+		},
+		bound: map[string]backend.Backend{},
+	}
+	ep := fleet.CreatedEndpoint{Backend: "herdr", Handle: "recorded:w3A:p2", SessionOwner: "recorded"}
+	got, err := endpoints.backend(ep)
+	if err != nil {
+		t.Fatalf("backend recorded endpoint: %v", err)
+	}
+	hb := got.(*backend.HerdrBackend)
+	if resolvedName != "herdr" || hb.Session != "recorded" {
+		t.Fatalf("resolved=%q Herdr session=%q, want herdr/recorded", resolvedName, hb.Session)
+	}
+}
+
+func TestSpawnSessionEndpointsRequiresDurableHerdrSessionIdentity(t *testing.T) {
+	for _, ep := range []fleet.CreatedEndpoint{
+		{Backend: "herdr", Handle: "w3A:p2"},
+		{Backend: "herdr", Handle: ":w3A:p2", SessionOwner: "recorded"},
+	} {
+		t.Run(ep.Handle, func(t *testing.T) {
+			endpoints := &spawnSessionEndpoints{
+				resolve: func(string) (backend.Backend, string, error) {
+					t.Fatal("invalid Herdr identity must be refused before resolution")
+					return nil, "", nil
+				},
+				bound: map[string]backend.Backend{},
+			}
+			if _, err := endpoints.backend(ep); err == nil || !strings.Contains(err.Error(), "session") {
+				t.Fatalf("backend error=%v, want missing or invalid durable session identity", err)
+			}
+		})
+	}
+}
+
+func TestSpawnSessionEndpointsRejectsRecordedEndpointResolutionMismatch(t *testing.T) {
+	bk := &spawnEndpointBackend{}
+	calls := 0
+	endpoints := &spawnSessionEndpoints{
+		resolve: func(name string) (backend.Backend, string, error) {
+			calls++
+			if name != "herdr" {
+				t.Fatalf("resolver requested backend %q, want herdr", name)
+			}
+			return bk, "tmux", nil
+		},
+		bound: map[string]backend.Backend{},
+	}
+	_, err := endpoints.Probe(fleet.CreatedEndpoint{Backend: "herdr", Handle: "recorded:w3A:p2", SessionOwner: "recorded"})
+	if err == nil || !strings.Contains(err.Error(), "backend mismatch") {
+		t.Fatalf("Probe error=%v, want backend identity mismatch", err)
+	}
+	if calls != 1 || bk.probeCalls != 0 || bk.findOrCreateCalls != 0 {
+		t.Fatalf("resolver calls=%d probe calls=%d create calls=%d, want 1/0/0", calls, bk.probeCalls, bk.findOrCreateCalls)
+	}
+}
+
+func TestSpawnSessionEndpointsRejectsHerdrSessionMismatchBeforeResolution(t *testing.T) {
+	calls := 0
+	endpoints := &spawnSessionEndpoints{
+		resolve: func(string) (backend.Backend, string, error) {
+			calls++
+			return &spawnEndpointBackend{}, "herdr", nil
+		},
+		bound: map[string]backend.Backend{},
+	}
+	_, err := endpoints.Probe(fleet.CreatedEndpoint{Backend: "herdr", Handle: "actual:w3A:p2", SessionOwner: "recorded"})
+	if err == nil || !strings.Contains(err.Error(), "session ownership mismatch") {
+		t.Fatalf("Probe error=%v, want Herdr session ownership mismatch", err)
+	}
+	if calls != 0 {
+		t.Fatalf("resolver calls=%d, want refusal before backend resolution", calls)
+	}
+}
+
+func TestSpawnSessionEndpointsRefusesBoundHerdrSessionMismatch(t *testing.T) {
+	ep := fleet.CreatedEndpoint{Backend: "herdr", Handle: "recorded:w3A:p2", SessionOwner: "recorded"}
+	endpoints := &spawnSessionEndpoints{
+		resolve: func(string) (backend.Backend, string, error) {
+			t.Fatal("bound endpoint must not resolve another adapter")
+			return nil, "", nil
+		},
+		bound: map[string]backend.Backend{
+			spawnEndpointKey(ep): &backend.HerdrBackend{Session: "different"},
+		},
+	}
+	if _, err := endpoints.backend(ep); err == nil || !strings.Contains(err.Error(), "session ownership mismatch") {
+		t.Fatalf("backend error=%v, want bound Herdr session mismatch", err)
+	}
+}
+
+func TestSpawnSessionEndpointsRefusesColdResolutionError(t *testing.T) {
+	wantErr := errors.New("backend unavailable")
+	calls := 0
+	endpoints := &spawnSessionEndpoints{
+		resolve: func(name string) (backend.Backend, string, error) {
+			calls++
+			if name != "tmux" {
+				t.Fatalf("resolver requested backend %q, want tmux", name)
+			}
+			return nil, "", wantErr
+		},
+		bound: map[string]backend.Backend{},
+	}
+	_, err := endpoints.Probe(fleet.CreatedEndpoint{Backend: "tmux", Handle: "recorded-window"})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Probe error=%v, want wrapped backend resolution error", err)
+	}
+	if calls != 1 {
+		t.Fatalf("resolver calls=%d, want 1", calls)
 	}
 }

@@ -75,11 +75,74 @@ func reservedWindow(bk backend.Backend, session, name, backendName, reservationI
 func spawnEndpointKey(ep fleet.CreatedEndpoint) string { return ep.Backend + "\x00" + ep.Handle }
 
 func (s *spawnSessionEndpoints) backend(ep fleet.CreatedEndpoint) (backend.Backend, error) {
-	bk, ok := s.bound[spawnEndpointKey(ep)]
-	if !ok {
-		return nil, fmt.Errorf("endpoint %q on backend %q is not bound", ep.Handle, ep.Backend)
+	if strings.TrimSpace(ep.Backend) == "" || strings.TrimSpace(ep.Handle) == "" {
+		return nil, fmt.Errorf("endpoint identity is incomplete")
+	}
+
+	herdrSession := ""
+	if ep.Backend == "herdr" {
+		var err error
+		herdrSession, err = spawnEndpointHerdrSession(ep)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	bk, bound := s.bound[spawnEndpointKey(ep)]
+	if !bound {
+		if s.resolve == nil {
+			return nil, fmt.Errorf("endpoint %q on backend %q is not bound", ep.Handle, ep.Backend)
+		}
+		var name string
+		var err error
+		bk, name, err = s.resolve(ep.Backend)
+		if err != nil {
+			return nil, fmt.Errorf("resolving recorded endpoint backend %q: %w", ep.Backend, err)
+		}
+		if name != ep.Backend {
+			return nil, fmt.Errorf("recorded endpoint backend mismatch: requested %q, resolved %q", ep.Backend, name)
+		}
+		if bk == nil {
+			return nil, fmt.Errorf("resolving recorded endpoint backend %q returned no backend", ep.Backend)
+		}
+	}
+	if hb, ok := bk.(*backend.HerdrBackend); ok {
+		if bound {
+			if hb.Session != herdrSession {
+				return nil, fmt.Errorf("herdr session ownership mismatch: bound session %q does not match endpoint session %q", hb.Session, herdrSession)
+			}
+		} else {
+			hb.Session = herdrSession
+			hb.SeedTeardownTab(ep.TabID)
+			hb.TeardownWorkspaceID = ep.WorkspaceID
+		}
 	}
 	return bk, nil
+}
+
+func spawnEndpointHerdrSession(ep fleet.CreatedEndpoint) (string, error) {
+	if strings.TrimSpace(ep.SessionOwner) != ep.SessionOwner {
+		return "", fmt.Errorf("herdr endpoint %q has invalid session owner", ep.Handle)
+	}
+	// Herdr pane IDs can contain a colon too. Only the three-part form carries
+	// an unambiguous session prefix; a shorter handle needs SessionOwner.
+	var handleSession string
+	if strings.Count(ep.Handle, ":") >= 2 {
+		handleSession, _ = backend.ParseWindow(ep.Handle)
+		if handleSession == "" {
+			return "", fmt.Errorf("herdr endpoint %q has an invalid session prefix", ep.Handle)
+		}
+	}
+	if ep.SessionOwner != "" && handleSession != "" && handleSession != ep.SessionOwner {
+		return "", fmt.Errorf("herdr session ownership mismatch: endpoint session %q does not match handle session %q", ep.SessionOwner, handleSession)
+	}
+	if ep.SessionOwner != "" {
+		return ep.SessionOwner, nil
+	}
+	if handleSession == "" {
+		return "", fmt.Errorf("herdr endpoint %q has no durable session identity", ep.Handle)
+	}
+	return handleSession, nil
 }
 
 func (s *spawnSessionEndpoints) Submit(ep fleet.CreatedEndpoint, text string) error {
