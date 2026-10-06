@@ -521,6 +521,19 @@ func writePiProjectSettings(worktreePath string, create bool) error {
 	return nil
 }
 
+// soldierExcludeContent is the excludes file content of a soldier worktree:
+// every .soldier-* launch artifact (core files, manifest, launch guard dir) and
+// the worktree files the launching harness declares.
+func soldierExcludeContent(harnessName string) string {
+	content := "# Soldier launch artifacts (installed by munsu)\n/.soldier-*\n"
+	if adapter, ok := harness.GetAdapter(harnessName); ok {
+		for _, name := range adapter.SoldierLaunch.WorktreeFiles {
+			content += "/" + name + "\n"
+		}
+	}
+	return content
+}
+
 // PersistLaunchFiles writes all durable launch files to the launch directory:
 // .soldier-charter.md, .soldier-brief.md, .soldier-envelope.json, and .soldier-prompt.md.
 // Returns an error if any write fails.

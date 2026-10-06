@@ -47,7 +47,7 @@ func TestWriteWorktreeExcludesScopedToCaptainWorktree(t *testing.T) {
 	excludePath := filepath.Join(repo, ".git", "info", "exclude")
 
 	for i := 0; i < 2; i++ {
-		if err := writeWorktreeExcludes(home, piIntegrationPath); err != nil {
+		if err := writeWorktreeExcludes(home, captainWorktreeExcludes(piIntegrationPath)); err != nil {
 			t.Fatalf("seed %d: %v", i+1, err)
 		}
 		data, err := os.ReadFile(excludePath)
@@ -83,10 +83,10 @@ func TestWriteWorktreeExcludesScopedToCaptainWorktree(t *testing.T) {
 
 func TestWriteWorktreeExcludesReseedReplacesIntegrationPaths(t *testing.T) {
 	_, home, _ := excludeFixture(t)
-	if err := writeWorktreeExcludes(home, piIntegrationPath); err != nil {
+	if err := writeWorktreeExcludes(home, captainWorktreeExcludes(piIntegrationPath)); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeWorktreeExcludes(home, ".other/integration.json"); err != nil {
+	if err := writeWorktreeExcludes(home, captainWorktreeExcludes(".other/integration.json")); err != nil {
 		t.Fatal(err)
 	}
 	if checkIgnored(t, home, piIntegrationPath) {
@@ -100,6 +100,38 @@ func TestWriteWorktreeExcludesReseedReplacesIntegrationPaths(t *testing.T) {
 	}
 }
 
+func TestWriteWorktreeExcludesSoldierEntriesFollowTheLaunchingHarness(t *testing.T) {
+	repo, home, userExclude := excludeFixture(t)
+	for _, tc := range []struct {
+		harness             string
+		ignored, notIgnored []string
+	}{
+		{"pi", []string{".soldier-charter.md", ".soldier-manifest.json", ".soldier-launch-guard-t-1/identity", ".pi/settings.json"}, []string{"src/.soldier-x", "state/x"}},
+		{"claude", []string{".soldier-prompt.md", ".soldier-launch-guard-t-1/identity"}, []string{".pi/settings.json", "state/x"}},
+	} {
+		if err := writeWorktreeExcludes(home, soldierExcludeContent(tc.harness)); err != nil {
+			t.Fatalf("%s: %v", tc.harness, err)
+		}
+		for _, p := range tc.ignored {
+			if !checkIgnored(t, home, p) {
+				t.Errorf("%s launch: soldier worktree does not ignore %s", tc.harness, p)
+			}
+			if checkIgnored(t, repo, p) {
+				t.Errorf("%s launch: main checkout ignores %s; soldier excludes leaked", tc.harness, p)
+			}
+		}
+		for _, p := range tc.notIgnored {
+			if checkIgnored(t, home, p) {
+				t.Errorf("%s launch: soldier worktree ignores %s", tc.harness, p)
+			}
+		}
+	}
+	data, err := os.ReadFile(filepath.Join(repo, ".git", "info", "exclude"))
+	if err != nil || string(data) != userExclude {
+		t.Errorf("shared info/exclude changed: %q, %v", data, err)
+	}
+}
+
 func TestWriteWorktreeExcludesRefusesReinterpretedCommonConfig(t *testing.T) {
 	for _, tc := range []struct{ key, value, want string }{
 		{"core.bare", "true", "core.bare=true"},
@@ -108,7 +140,7 @@ func TestWriteWorktreeExcludesRefusesReinterpretedCommonConfig(t *testing.T) {
 		t.Run(tc.key, func(t *testing.T) {
 			repo, home, _ := excludeFixture(t)
 			gitTestRun(t, repo, "config", "--local", tc.key, tc.value)
-			err := writeWorktreeExcludes(home, piIntegrationPath)
+			err := writeWorktreeExcludes(home, captainWorktreeExcludes(piIntegrationPath))
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v, want refusal naming %s", err, tc.want)
 			}
@@ -124,7 +156,7 @@ func TestWriteWorktreeExcludesFailsClosedWhenWorktreeConfigCannotBeEnabled(t *te
 	if err := os.WriteFile(filepath.Join(repo, ".git", "config.lock"), nil, 0644); err != nil {
 		t.Fatal(err)
 	}
-	err := writeWorktreeExcludes(home, piIntegrationPath)
+	err := writeWorktreeExcludes(home, captainWorktreeExcludes(piIntegrationPath))
 	if err == nil || !strings.Contains(err.Error(), "enabling extensions.worktreeConfig") {
 		t.Fatalf("err = %v, want worktreeConfig enable failure", err)
 	}
@@ -140,7 +172,7 @@ func TestWriteWorktreeExcludesFailsWhenWorktreeConfigCannotBeWritten(t *testing.
 	if err := os.WriteFile(filepath.Join(gitDir, "config.worktree.lock"), nil, 0644); err != nil {
 		t.Fatal(err)
 	}
-	err := writeWorktreeExcludes(home, piIntegrationPath)
+	err := writeWorktreeExcludes(home, captainWorktreeExcludes(piIntegrationPath))
 	if err == nil || !strings.Contains(err.Error(), "setting worktree core.excludesFile") {
 		t.Fatalf("err = %v, want worktree core.excludesFile failure", err)
 	}

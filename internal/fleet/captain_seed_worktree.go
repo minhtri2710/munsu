@@ -145,7 +145,7 @@ func seedFromWorktree(id, homePath, repoPath, parentHome, charter string, force 
 	worktreeCreated = true
 
 	// Write worktree-scoped git excludes for operational dirs instead of tracked .gitignore.
-	if err = writeWorktreeExcludes(absHome); err != nil {
+	if err = writeWorktreeExcludes(absHome, captainWorktreeExcludes()); err != nil {
 		err = fmt.Errorf("writing worktree excludes: %w", err)
 		return
 	}
@@ -218,7 +218,7 @@ func seedFromWorktree(id, homePath, repoPath, parentHome, charter string, force 
 		err = fmt.Errorf("resolving captain integration paths: %w", pathsErr)
 		return
 	}
-	if err = writeWorktreeExcludes(absHome, integrationPaths...); err != nil {
+	if err = writeWorktreeExcludes(absHome, captainWorktreeExcludes(integrationPaths...)); err != nil {
 		err = fmt.Errorf("writing worktree integration excludes: %w", err)
 		return
 	}
@@ -291,14 +291,30 @@ func isUnmanagedCaptainHome(homePath string) bool {
 // a worktree-scoped core.excludesFile.
 const worktreeExcludeFileName = "munsu-exclude"
 
-// writeWorktreeExcludes writes operational dir excludes to a file in the
-// captain worktree's own git dir and points the worktree-scoped
-// core.excludesFile at it, so the entries never reach the project repo's
-// other worktrees and the shared info/exclude is never touched. It enables
-// extensions.worktreeConfig on the project repo; a common config that sets
-// core.bare=true or core.worktree is refused, because worktreeConfig would
-// change how git reads it.
-func writeWorktreeExcludes(homePath string, integrationPaths ...string) error {
+// captainWorktreeExcludes is the excludes file content of a captain worktree:
+// the operational dirs and the harness integration paths munsu installs.
+func captainWorktreeExcludes(integrationPaths ...string) string {
+	content := "# Captain home operational dirs and runtime artifacts\n"
+	for _, entry := range worktreeExcludeContent {
+		content += entry + "\n"
+	}
+	if len(integrationPaths) > 0 {
+		content += "# Captain harness integration (installed by munsu)\n"
+		for _, path := range integrationPaths {
+			content += "/" + path + "\n"
+		}
+	}
+	return content
+}
+
+// writeWorktreeExcludes writes content to an excludes file in the worktree's
+// own git dir and points the worktree-scoped core.excludesFile at it, so the
+// entries never reach the project repo's other worktrees and the shared
+// info/exclude is never touched. Captain homes and soldier worktrees share it.
+// It enables extensions.worktreeConfig on the project repo; a common config
+// that sets core.bare=true or core.worktree is refused, because worktreeConfig
+// would change how git reads it.
+func writeWorktreeExcludes(homePath, content string) error {
 	if out, err := gitRun("-C", homePath, "config", "--local", "--get", "core.bare"); err == nil && out == "true" {
 		return fmt.Errorf("project repo common config sets core.bare=true; refusing to enable extensions.worktreeConfig")
 	}
@@ -313,16 +329,6 @@ func writeWorktreeExcludes(homePath string, integrationPaths ...string) error {
 		return fmt.Errorf("resolving worktree git dir: %w: %s", err, gitDir)
 	}
 
-	content := "# Captain home operational dirs and runtime artifacts\n"
-	for _, entry := range worktreeExcludeContent {
-		content += entry + "\n"
-	}
-	if len(integrationPaths) > 0 {
-		content += "# Captain harness integration (installed by munsu)\n"
-		for _, path := range integrationPaths {
-			content += "/" + path + "\n"
-		}
-	}
 	excludePath := filepath.Join(gitDir, worktreeExcludeFileName)
 	if err := atomicWriteFile(excludePath, []byte(content), 0644); err != nil {
 		return fmt.Errorf("writing %s: %w", excludePath, err)

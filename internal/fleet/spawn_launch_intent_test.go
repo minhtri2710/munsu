@@ -583,6 +583,55 @@ func TestLaunchWritesTheManifestOfTheLaunchingHarness(t *testing.T) {
 	}
 }
 
+// TestLaunchLeavesTheTargetWorktreeClean proves a launch into a repo with no
+// .gitignore leaves the soldier's own worktree free of untracked launch files,
+// and that the ignore does not reach the repo's main checkout.
+func TestLaunchLeavesTheTargetWorktreeClean(t *testing.T) {
+	for _, tc := range []struct{ harness, ready string }{
+		{"pi", "> ready"},
+		{"claude", "bypass permissions on"},
+	} {
+		t.Run(tc.harness, func(t *testing.T) {
+			isolateHuman(t)
+			f := newLaunchFixture(t, "clean-"+tc.harness)
+			f.runner.harness = tc.harness
+			f.runner.projectConfig.Soldier.Harness = tc.harness
+			f.endpoints.ready = tc.ready
+			if err := runLaunchPhases(f, ""); err != nil {
+				t.Fatal(err)
+			}
+			if got := gitTestRun(t, f.runner.wtPath, "status", "--porcelain", "--untracked-files=all"); got != "" {
+				t.Errorf("soldier worktree is dirty after launch:\n%s", got)
+			}
+			if !checkIgnored(t, f.runner.wtPath, CharterName) {
+				t.Errorf("soldier worktree does not ignore %s", CharterName)
+			}
+			if checkIgnored(t, f.repoPath, CharterName) {
+				t.Errorf("main checkout ignores %s; the soldier excludes leaked", CharterName)
+			}
+		})
+	}
+}
+
+// TestRefusedExcludesLeaveNoPaneOrEndpoint proves a target repo whose common
+// config git would read differently under worktree config stops the launch
+// before any launch file is written or anything is submitted.
+func TestRefusedExcludesLeaveNoPaneOrEndpoint(t *testing.T) {
+	isolateHuman(t)
+	f := newLaunchFixture(t, "excludes-refused")
+	gitTestRun(t, f.repoPath, "config", "--local", "core.bare", "true")
+	err := runLaunchPhases(f, "")
+	if err == nil || !strings.HasPrefix(err.Error(), "prompt: excluding soldier launch files: ") {
+		t.Fatalf("err = %v, want the prompt-phase excludes refusal", err)
+	}
+	if _, serr := os.Stat(filepath.Join(f.runner.wtPath, BriefName)); !os.IsNotExist(serr) {
+		t.Errorf("launch file written despite the refusal: %v", serr)
+	}
+	if f.endpoints.createCount() != 0 || f.endpoints.submitCount() != 0 {
+		t.Fatalf("endpoint creates=%d submits=%d, want none", f.endpoints.createCount(), f.endpoints.submitCount())
+	}
+}
+
 // TestRefusedFenceProbeLeavesNoPaneOrEndpoint proves a fence refusal stops the
 // launch before any pane or endpoint is allocated.
 func TestRefusedFenceProbeLeavesNoPaneOrEndpoint(t *testing.T) {

@@ -1864,6 +1864,15 @@ func (r *Runner) buildSoldierPrompt(bound BoundWorktree) error {
 	r.prompt = promptText
 	r.promptEnv = env
 
+	// A soldier's launch files land in its own worktree, so the worktree must
+	// ignore them before the first one is written. A reviewer's launch dir is
+	// under the home and the reviewed worktree is never written.
+	if r.review == nil {
+		if err := writeWorktreeExcludes(r.launchDir, soldierExcludeContent(r.harness)); err != nil {
+			return fmt.Errorf("excluding soldier launch files: %w", err)
+		}
+	}
+
 	// Persist durable files to the worktree.
 	charter := DefaultCharter(r.args.ID, r.kind, r.effectiveMode)
 	if err := PersistLaunchFiles(r.launchDir, charter, briefData, env, promptText); err != nil {
