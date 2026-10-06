@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -47,15 +48,39 @@ type LaunchManifest struct {
 // sha256Regex matches a valid lowercase hex SHA-256 string.
 var sha256Regex = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
-// LaunchArtifactNames lists every runtime-owned launch artifact, relative to the
-// worktree, that the manifest must bind. The manifest itself is not included.
-var LaunchArtifactNames = []string{CharterName, BriefName, EnvelopeName, PromptName, LaunchScriptName, PiSettingsName}
+// CoreLaunchArtifactNames lists the runtime-owned launch artifacts, relative to
+// the worktree, that every soldier launch manifest binds. The manifest itself
+// is not included. A harness adds the worktree files it declares in
+// SoldierLaunchContract.WorktreeFiles.
+var CoreLaunchArtifactNames = []string{CharterName, BriefName, EnvelopeName, PromptName, LaunchScriptName}
 
-// expectedManifestEntryPaths returns the exact set of paths that must appear
-// in every valid manifest.
+// launchManifestNames returns the paths a manifest for the given harness binds:
+// the core artifacts, then the worktree files that harness declares.
+func launchManifestNames(harnessName string) []string {
+	names := append([]string{}, CoreLaunchArtifactNames...)
+	if adapter, ok := harness.GetAdapter(harnessName); ok {
+		names = append(names, adapter.SoldierLaunch.WorktreeFiles...)
+	}
+	return names
+}
+
+// declaredWorktreeFiles returns every worktree file some harness adapter
+// declares: the only extra paths a valid manifest may carry.
+func declaredWorktreeFiles() map[string]bool {
+	declared := map[string]bool{}
+	for _, adapter := range harness.Adapters {
+		for _, name := range adapter.SoldierLaunch.WorktreeFiles {
+			declared[name] = true
+		}
+	}
+	return declared
+}
+
+// expectedManifestEntryPaths returns the paths that must appear in every
+// valid manifest.
 func expectedManifestEntryPaths() map[string]bool {
-	expected := make(map[string]bool, len(LaunchArtifactNames))
-	for _, name := range LaunchArtifactNames {
+	expected := make(map[string]bool, len(CoreLaunchArtifactNames))
+	for _, name := range CoreLaunchArtifactNames {
 		expected[name] = true
 	}
 	return expected
@@ -88,7 +113,8 @@ func validateManifestPath(relPath string) error {
 }
 
 // ValidateManifest checks that the manifest is structurally valid and
-// contains exactly the expected runtime-owned artifact entries.
+// contains every core launch artifact and no path beyond those and the
+// worktree files a harness adapter declares.
 // Callers should pass the manifest as read from disk (before any modification).
 func ValidateManifest(manifest *LaunchManifest) error {
 	if manifest == nil {
@@ -103,6 +129,7 @@ func ValidateManifest(manifest *LaunchManifest) error {
 	// Check for duplicate paths and validate each entry.
 	seen := make(map[string]bool)
 	expected := expectedManifestEntryPaths()
+	declared := declaredWorktreeFiles()
 	expectedFound := make(map[string]bool)
 
 	for _, entry := range manifest.Artifacts {
@@ -146,7 +173,7 @@ func ValidateManifest(manifest *LaunchManifest) error {
 
 	// Check that no unexpected entries are present.
 	for _, entry := range manifest.Artifacts {
-		if !expected[entry.Path] {
+		if !expected[entry.Path] && !declared[entry.Path] {
 			return fmt.Errorf("unexpected manifest entry: %q", entry.Path)
 		}
 	}

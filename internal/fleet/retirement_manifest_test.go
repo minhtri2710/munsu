@@ -51,7 +51,6 @@ func setupWorktreeWithManifest(t *testing.T, wt, remote string, briefContent []b
 	os.WriteFile(filepath.Join(wt, PromptName), []byte(prompt), 0644)
 	os.WriteFile(filepath.Join(wt, EnvelopeName), []byte("{}"), 0644)
 	os.WriteFile(filepath.Join(wt, LaunchScriptName), []byte(launchScript), 0644)
-	writePiSettingsFixture(t, wt)
 
 	// Write the launch envelope; the manifest is what anchors artifact digests.
 	env := &LaunchEnvelope{
@@ -65,7 +64,7 @@ func setupWorktreeWithManifest(t *testing.T, wt, remote string, briefContent []b
 
 	// Build manifest from actual file digests.
 	entries := []ManifestEntry{}
-	for _, name := range LaunchArtifactNames {
+	for _, name := range CoreLaunchArtifactNames {
 		entry, err := ManifestEntryForFile(wt, name, DisposalPolicyCleanable)
 		if err != nil {
 			t.Fatalf("manifest entry for %s: %v", name, err)
@@ -362,7 +361,7 @@ func TestShipSafetyCheck_NoLaunchManifestSHAInMeta(t *testing.T) {
 func rewriteManifestFromWorktree(t *testing.T, wt string) string {
 	t.Helper()
 	entries := []ManifestEntry{}
-	for _, name := range LaunchArtifactNames {
+	for _, name := range CoreLaunchArtifactNames {
 		entry, err := ManifestEntryForFile(wt, name, DisposalPolicyCleanable)
 		if err != nil {
 			t.Fatalf("manifest entry for %s: %v", name, err)

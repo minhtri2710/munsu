@@ -3,6 +3,7 @@ package fleet
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,7 +11,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
@@ -148,6 +151,255 @@ func TestLaunchRecoveryPostSubmitPreRecordGuardProvesSingleProcess(t *testing.T)
 	if exec.submitCount() != 2 {
 		t.Fatalf("endpoint command submissions = %d, want 2 (re-submission allowed; guard bounds the process)", exec.submitCount())
 	}
+}
+
+// TestLaunchRecoveryPostSubmitFailureNamesLiveEndpoint fails Runner.Run at each
+// phase after the submission was delivered. The error Run returns keeps the
+// cause, names the task, the backend and the endpoint handle, says the soldier
+// process may still be running, and gives both ways out: fix the cause and
+// re-run `munsu spawn <id> <project>`, or stop the pane by hand. Each row then
+// takes only those steps. Where the re-run resumes, it adopts the same endpoint
+// and works the task; where the cause persists (the task stays blocked, .meta
+// names the window) the re-run is refused with the existing refusal's own reason.
+// The submitted launch command executes the real launch artifact, so the harness
+// launch count is the number of soldier processes.
+func TestLaunchRecoveryPostSubmitFailureNamesLiveEndpoint(t *testing.T) {
+	errInjected := errors.New("injected failure")
+	for _, tc := range []struct {
+		name string
+		// inject arms the failure; the endpoint probes of one Run are the
+		// create check (1), the handshake (2) and the readiness check (3). The
+		// repair it returns is the operator fixing the cause; the hooks are
+		// disarmed for every row, which fixes a hook cause.
+		inject    func(f *launchFixture) (repair func())
+		wantCause func(f *launchFixture, err error) bool
+		// refusal is the reason a re-run is refused with because the cause
+		// persists; empty when the re-run resumes once the operator fixed the cause.
+		refusal string
+		// wantSubmits is the number of endpoint submissions once a re-run resumes.
+		wantSubmits int
+	}{
+		{
+			// The task is blocked after the process was started, so the
+			// evidence is refused as stale. The block stays, so the re-run is
+			// refused with the existing blocked-task refusal.
+			name: "record launch",
+			inject: func(f *launchFixture) func() {
+				id := mustTaskID(f.t, f.taskID)
+				f.endpoints.onSubmit = func() {
+					agg := f.aggregate()
+					req := taskauthority.CanonicalBlockRequest{HomeID: f.auth.HomeID(), TaskID: id, Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), Detail: "test", Reason: "test"}
+					if _, err := f.auth.Block(mustFleetOperation(f.t, "block-"+f.taskID, req), req); err != nil {
+						f.t.Fatal(err)
+					}
+				}
+				return nil
+			},
+			wantCause: func(_ *launchFixture, err error) bool { return errors.Is(err, domain.ErrStalePrecondition) },
+			refusal:   "is blocked; clear the blocker with 'munsu task unblock post-submit-recordlaunch'",
+		},
+		{
+			// The brief the manifest binds is gone; the re-run rewrites it.
+			name: "launch manifest",
+			inject: func(f *launchFixture) func() {
+				f.endpoints.onSubmit = func() {
+					wt := f.aggregate().Worktree.Path
+					if err := os.Remove(filepath.Join(wt, BriefName)); err != nil {
+						f.t.Fatal(err)
+					}
+				}
+				return nil
+			},
+			wantCause:   func(_ *launchFixture, err error) bool { return errors.Is(err, os.ErrNotExist) },
+			wantSubmits: 1,
+		},
+		{
+			name: "harness handshake",
+			inject: func(f *launchFixture) func() {
+				probes := 0
+				f.endpoints.onProbe = func() error {
+					if probes++; probes == 2 {
+						return errInjected
+					}
+					return nil
+				}
+				return nil
+			},
+			wantCause:   func(_ *launchFixture, err error) bool { return errors.Is(err, errInjected) },
+			wantSubmits: 1,
+		},
+		{
+			name: "endpoint readiness",
+			inject: func(f *launchFixture) func() {
+				probes := 0
+				f.endpoints.onProbe = func() error {
+					if probes++; probes == 3 {
+						return errInjected
+					}
+					return nil
+				}
+				return nil
+			},
+			wantCause:   func(_ *launchFixture, err error) bool { return errors.Is(err, errInjected) },
+			wantSubmits: 1,
+		},
+		{
+			// The meta path is a directory, so reading it fails; the file never
+			// names a window, so the re-run is admitted. The read error is an
+			// *fs.PathError for the read of that path on every platform: os.File.Read
+			// wraps every failure through File.wrapErr (os/file.go), whatever errno
+			// the platform gives for reading a directory.
+			name: "task meta",
+			inject: func(f *launchFixture) func() {
+				path, err := home.MetaFilePath(f.homeDir, f.taskID)
+				if err != nil {
+					f.t.Fatal(err)
+				}
+				probes := 0
+				f.endpoints.onProbe = func() error {
+					if probes++; probes == 3 {
+						if err := os.MkdirAll(path, 0o755); err != nil {
+							f.t.Fatal(err)
+						}
+					}
+					return nil
+				}
+				return func() { os.Remove(path) }
+			},
+			wantCause: func(f *launchFixture, err error) bool {
+				path, perr := home.MetaFilePath(f.homeDir, f.taskID)
+				var pe *fs.PathError
+				return perr == nil && errors.As(err, &pe) && pe.Op == "read" && pe.Path == path
+			},
+			wantSubmits: 1,
+		},
+		{
+			// The final bind is refused after .meta names the window: spawn
+			// refuses a re-run, so the pane is stopped by hand.
+			name: "confirm spawn",
+			inject: func(f *launchFixture) func() {
+				probes := 0
+				f.endpoints.onProbe = func() error {
+					if probes++; probes == 3 {
+						tamperTaskAggregate(f.t, f.homeDir, f.taskID, func(agg *taskauthority.Aggregate) { agg.LaunchEvidence = nil })
+					}
+					return nil
+				}
+				return nil
+			},
+			wantCause: func(_ *launchFixture, err error) bool { return errors.Is(err, taskauthority.ErrConflict) },
+			refusal:   "refuse duplicate live execution",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			taskID := "post-submit-" + strings.ReplaceAll(tc.name, " ", "")
+			rf := newRunFixture(t, taskID)
+			f := rf.launchFixture
+			repair := tc.inject(f)
+
+			_, err := rf.run()
+			if err == nil {
+				t.Fatal("Run succeeded; the injected failure must fail it")
+			}
+			if !tc.wantCause(f, err) {
+				t.Fatalf("the error does not keep the underlying cause: %v", err)
+			}
+			msg := err.Error()
+			rerun := "munsu spawn " + taskID + " test-proj"
+			for _, want := range []string{
+				taskID, "backend tmux endpoint pane-1", "may still be running",
+				"fix the cause", rerun, "refuses with its own reason", "re-adopts the pane only while the pane is live",
+				"stop pane pane-1 on backend tmux by hand",
+			} {
+				if !strings.Contains(msg, want) {
+					t.Fatalf("error %q does not contain %q", msg, want)
+				}
+			}
+			if n := harnessLaunchCount(t, rf.counter); n != 1 {
+				t.Fatalf("soldier launches after the failed Run = %d, want 1", n)
+			}
+
+			if tc.refusal != "" {
+				// The cause persists (the task stays blocked, .meta names the window).
+				before := f.aggregate().Revision
+				if _, err := rf.run(); err == nil || !strings.Contains(err.Error(), tc.refusal) {
+					t.Fatalf("re-run = %v, want the refusal %q", err, tc.refusal)
+				}
+				if after := f.aggregate().Revision; after != before {
+					t.Fatalf("a refused re-run changed the task: revision %d -> %d", before, after)
+				}
+				if n := harnessLaunchCount(t, rf.counter); n != 1 {
+					t.Fatalf("soldier launches after the refused re-run = %d, want 1", n)
+				}
+				return
+			}
+			// The operator fixes the cause, then re-runs.
+			f.endpoints.onSubmit, f.endpoints.onProbe = nil, nil
+			if repair != nil {
+				repair()
+			}
+			window, err := rf.run()
+			if err != nil {
+				t.Fatalf("re-run after the operator fixed the cause: %v", err)
+			}
+			if window != "pane-1" || f.endpoints.createCount() != 1 || rf.exec.submitCount() != tc.wantSubmits {
+				t.Fatalf("re-run: window %q, creates %d, submits %d; want pane-1, 1, %d", window, f.endpoints.createCount(), rf.exec.submitCount(), tc.wantSubmits)
+			}
+			if n := harnessLaunchCount(t, rf.counter); n != 1 {
+				t.Fatalf("soldier launches across the recovery = %d, want exactly 1 (no second process)", n)
+			}
+			if f.aggregate().Phase != taskauthority.PhaseWorking {
+				t.Fatalf("phase = %q, want working", f.aggregate().Phase)
+			}
+		})
+	}
+}
+
+// runFixture is a launchFixture that spawns through Runner.Run. Its endpoint
+// executes every submitted launch command in a real shell, so counter holds one
+// line per soldier process that really started.
+type runFixture struct {
+	*launchFixture
+	exec    *executingEndpointCapabilities
+	counter string
+	run     func() (string, error)
+}
+
+// newRunFixture is a home with one registered project, one queued task and a
+// fake pi on PATH, plus run, which spawns the task through a fresh Runner the
+// way the CLI does. Only the endpoint capability is a fake.
+func newRunFixture(t *testing.T, taskID string) *runFixture {
+	t.Helper()
+	isolateHuman(t)
+	t.Setenv("OPENAI_API_KEY", "test")
+	t.Setenv("MUNSU_ROLE", "general")
+	t.Chdir(t.TempDir()) // not a linked worktree, so spawn authority passes
+	homeDir := t.TempDir()
+	repoPath := initRepoForSpawnBinding(t, t.TempDir())
+	storeTestDocuments(t, homeDir, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config:        config.ProjectOverlay{Backend: "tmux", SoldierHarness: "pi", Model: "gpt-5"},
+	}, []testProjectRecord{{Name: "test-proj", Path: repoPath}}, nil)
+	auth := canonicalAtHome(t, homeDir)
+	canonicalCreateTask(t, auth, taskID, "ship", "test-proj")
+	if err := Scaffold(ScaffoldOptions{HomeDir: homeDir, ID: taskID, Repo: "test-proj", Mode: "local-only"}); err != nil {
+		t.Fatal(err)
+	}
+	gitBin, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("git on PATH: %v", err)
+	}
+	counter := filepath.Join(t.TempDir(), "harness-launches.log")
+	harnessDir := t.TempDir()
+	testutil.WriteFakeExecutable(t, filepath.Join(harnessDir, "pi"), fmt.Sprintf("#!/bin/sh\n[ \"$1\" = --version ] || echo launch >> %q\n", counter))
+	testutil.SetPath(t, append([]string{harnessDir, filepath.Dir(gitBin), requiredSkillStubDir(t)}, testutil.BashShellDirs(t)...)...)
+
+	endpoints := newReentrantEndpoints()
+	executing := &executingEndpointCapabilities{inner: endpoints, runCommand: scriptRunCommand(t)}
+	f := &launchFixture{t: t, auth: auth, homeDir: homeDir, repoPath: repoPath, taskID: taskID, endpoints: endpoints}
+	return &runFixture{launchFixture: f, exec: executing, counter: counter, run: func() (string, error) {
+		return NewRunner(Args{ID: taskID, ProjectName: "test-proj", Mode: "local-only", HomeDir: homeDir, Endpoints: executing, Authority: auth}).Run()
+	}}
 }
 
 // TestLaunchRecoverySubmitErrorBeforeExecutionRetryable proves a Submit error
@@ -730,6 +982,9 @@ func (f *executingEndpointCapabilities) Submit(ep CreatedEndpoint, text string) 
 	}
 	if f.firstSubmitErr && f.submits == 1 {
 		return errors.New("simulated crash after submission delivery")
+	}
+	if f.inner.onSubmit != nil {
+		f.inner.onSubmit()
 	}
 	return nil
 }

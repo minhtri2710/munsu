@@ -11,6 +11,15 @@ func guardManifestEntry(path string) ManifestEntry {
 	return ManifestEntry{Path: path, SHA256: guardManifestTestSHA, Policy: DisposalPolicyCleanable}
 }
 
+// guardCoreManifest is a manifest of the core launch artifacts plus extra paths.
+func guardCoreManifest(extra ...string) *LaunchManifest {
+	var entries []ManifestEntry
+	for _, name := range append(append([]string{}, CoreLaunchArtifactNames...), extra...) {
+		entries = append(entries, guardManifestEntry(name))
+	}
+	return &LaunchManifest{ManifestVersion: ManifestVersion, Artifacts: entries}
+}
+
 func TestGuardBurnDownValidateManifestRefusesInvalidInputs(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -60,6 +69,19 @@ func TestGuardBurnDownValidateManifestRefusesInvalidInputs(t *testing.T) {
 				Artifacts:       []ManifestEntry{guardManifestEntry("..")},
 			},
 			want: "contains parent traversal",
+		},
+		{
+			name: "extra entry no adapter declares",
+			m:    guardCoreManifest("rogue.txt"),
+			want: "unexpected manifest entry",
+		},
+		{
+			name: "missing core entry",
+			m: &LaunchManifest{
+				ManifestVersion: ManifestVersion,
+				Artifacts:       guardCoreManifest().Artifacts[1:],
+			},
+			want: "missing manifest entry",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

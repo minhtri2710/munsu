@@ -16,7 +16,7 @@ func writeTestManifest(t *testing.T, dir string, entries []ManifestEntry) string
 	if entries == nil {
 		// Create default entries from actual files.
 		entries = []ManifestEntry{}
-		for _, name := range LaunchArtifactNames {
+		for _, name := range CoreLaunchArtifactNames {
 			entry, err := ManifestEntryForFile(dir, name, DisposalPolicyCleanable)
 			if err != nil {
 				t.Fatalf("creating entry for %s: %v", name, err)
@@ -51,11 +51,10 @@ func setupTestLaunchFiles(t *testing.T, dir string) {
 	os.WriteFile(filepath.Join(dir, EnvelopeName), []byte("{}"), 0644)
 	os.WriteFile(filepath.Join(dir, PromptName), []byte("prompt"), 0644)
 	os.WriteFile(filepath.Join(dir, LaunchScriptName), []byte("#!/bin/bash\necho hi\n"), 0644)
-	writePiSettingsFixture(t, dir)
 }
 
 // writePiSettingsFixture writes the worktree .pi/settings.json the way a pi
-// soldier launch does; the manifest binds it as its sixth entry.
+// soldier launch does; the pi manifest binds it as its sixth entry.
 func writePiSettingsFixture(t *testing.T, dir string) {
 	t.Helper()
 	if err := writePiProjectSettings(dir, true); err != nil {
@@ -64,25 +63,51 @@ func writePiSettingsFixture(t *testing.T, dir string) {
 }
 
 func TestManifest_WriteAndRead(t *testing.T) {
-	tmp := t.TempDir()
-	setupTestLaunchFiles(t, tmp)
+	for _, tc := range []struct {
+		name     string
+		harness  string
+		settings bool
+		want     []string
+	}{
+		{"claude", "claude", false, []string{CharterName, BriefName, EnvelopeName, PromptName, LaunchScriptName}},
+		{"pi", "pi", true, []string{CharterName, BriefName, EnvelopeName, PromptName, LaunchScriptName, ".pi/settings.json"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			setupTestLaunchFiles(t, tmp)
+			if tc.settings {
+				writePiSettingsFixture(t, tmp)
+			}
+			var entries []ManifestEntry
+			for _, name := range launchManifestNames(tc.harness) {
+				entry, err := ManifestEntryForFile(tmp, name, DisposalPolicyCleanable)
+				if err != nil {
+					t.Fatalf("creating entry for %s: %v", name, err)
+				}
+				entries = append(entries, entry)
+			}
+			digest := writeTestManifest(t, tmp, entries)
 
-	digest := writeTestManifest(t, tmp, nil)
+			got, err := ReadManifest(tmp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.ManifestVersion != ManifestVersion {
+				t.Errorf("ManifestVersion = %q, want %q", got.ManifestVersion, ManifestVersion)
+			}
+			var paths []string
+			for _, a := range got.Artifacts {
+				paths = append(paths, a.Path)
+			}
+			if strings.Join(paths, ",") != strings.Join(tc.want, ",") {
+				t.Fatalf("artifact paths = %v, want %v", paths, tc.want)
+			}
 
-	got, err := ReadManifest(tmp)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.ManifestVersion != ManifestVersion {
-		t.Errorf("ManifestVersion = %q, want %q", got.ManifestVersion, ManifestVersion)
-	}
-	if len(got.Artifacts) != len(LaunchArtifactNames) {
-		t.Fatalf("expected %d artifacts, got %d", len(LaunchArtifactNames), len(got.Artifacts))
-	}
-
-	// Verify WriteManifest returned a valid 64-char hex digest.
-	if len(digest) != 64 {
-		t.Errorf("WriteManifest digest length = %d, want 64", len(digest))
+			// Verify WriteManifest returned a valid 64-char hex digest.
+			if len(digest) != 64 {
+				t.Errorf("WriteManifest digest length = %d, want 64", len(digest))
+			}
+		})
 	}
 }
 
@@ -239,8 +264,8 @@ func TestManifest_IntegrityCheck(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Artifacts) != len(LaunchArtifactNames) {
-		t.Fatalf("expected %d artifacts, got %d", len(LaunchArtifactNames), len(got.Artifacts))
+	if len(got.Artifacts) != len(CoreLaunchArtifactNames) {
+		t.Fatalf("expected %d artifacts, got %d", len(CoreLaunchArtifactNames), len(got.Artifacts))
 	}
 
 	// Verify each entry's digest matches the actual file.
@@ -296,7 +321,7 @@ func TestManifest_Validation_UnexpectedEntry(t *testing.T) {
 	setupTestLaunchFiles(t, tmp)
 
 	entries := []ManifestEntry{}
-	for _, name := range LaunchArtifactNames {
+	for _, name := range CoreLaunchArtifactNames {
 		entry, err := ManifestEntryForFile(tmp, name, DisposalPolicyCleanable)
 		if err != nil {
 			t.Fatal(err)
@@ -320,7 +345,7 @@ func TestManifest_Validation_DuplicateEntry(t *testing.T) {
 	setupTestLaunchFiles(t, tmp)
 
 	entries := []ManifestEntry{}
-	for _, name := range LaunchArtifactNames {
+	for _, name := range CoreLaunchArtifactNames {
 		entry, err := ManifestEntryForFile(tmp, name, DisposalPolicyCleanable)
 		if err != nil {
 			t.Fatal(err)
@@ -344,7 +369,7 @@ func TestManifest_Validation_SelfEntry(t *testing.T) {
 	setupTestLaunchFiles(t, tmp)
 
 	entries := []ManifestEntry{}
-	for _, name := range LaunchArtifactNames {
+	for _, name := range CoreLaunchArtifactNames {
 		entry, err := ManifestEntryForFile(tmp, name, DisposalPolicyCleanable)
 		if err != nil {
 			t.Fatal(err)
@@ -368,7 +393,7 @@ func TestManifest_Validation_InvalidDigest(t *testing.T) {
 	setupTestLaunchFiles(t, tmp)
 
 	entries := []ManifestEntry{}
-	for _, name := range LaunchArtifactNames {
+	for _, name := range CoreLaunchArtifactNames {
 		entry, err := ManifestEntryForFile(tmp, name, DisposalPolicyCleanable)
 		if err != nil {
 			t.Fatal(err)
@@ -392,7 +417,7 @@ func TestManifest_Validation_UnsupportedPolicy(t *testing.T) {
 	setupTestLaunchFiles(t, tmp)
 
 	entries := []ManifestEntry{}
-	for _, name := range LaunchArtifactNames {
+	for _, name := range CoreLaunchArtifactNames {
 		entry, err := ManifestEntryForFile(tmp, name, DisposalPolicyCleanable)
 		if err != nil {
 			t.Fatal(err)
@@ -415,7 +440,7 @@ func TestManifest_Validation_TraversalPath(t *testing.T) {
 	setupTestLaunchFiles(t, tmp)
 
 	entries := []ManifestEntry{}
-	for _, name := range LaunchArtifactNames {
+	for _, name := range CoreLaunchArtifactNames {
 		entry, err := ManifestEntryForFile(tmp, name, DisposalPolicyCleanable)
 		if err != nil {
 			t.Fatal(err)
@@ -438,7 +463,7 @@ func TestManifest_Validation_AbsolutePath(t *testing.T) {
 	setupTestLaunchFiles(t, tmp)
 
 	entries := []ManifestEntry{}
-	for _, name := range LaunchArtifactNames {
+	for _, name := range CoreLaunchArtifactNames {
 		entry, err := ManifestEntryForFile(tmp, name, DisposalPolicyCleanable)
 		if err != nil {
 			t.Fatal(err)

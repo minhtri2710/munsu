@@ -117,6 +117,10 @@ type Runner struct {
 	fence       *fence.Fence
 	fenceRecord taskauthority.FenceRecord
 
+	// launched is set once the launch is delivered to the endpoint (or a prior
+	// delivery is already recorded): from then on a soldier process may run.
+	launched bool
+
 	// manifestSHA256 is the SHA-256 digest of the written launch manifest,
 	// persisted to task metadata for external anchoring.
 	manifestSHA256 string
@@ -342,24 +346,7 @@ func (r *Runner) Run() (windowID string, runErr error) {
 	if err := r.attachEndpoint(); err != nil {
 		return "", err
 	}
-	if err := r.submitLaunch(); err != nil {
-		return "", err
-	}
-	if !reviewing {
-		if err := r.writeLaunchManifest(); err != nil {
-			return "", err
-		}
-	}
-	if err := r.waitAndInjectBrief(); err != nil {
-		return "", err
-	}
-	if err := r.verifyEndpointReadyBeforePersist(); err != nil {
-		return "", err
-	}
-	if err := r.writeTaskMeta(); err != nil {
-		return "", err
-	}
-	spawned, err := r.confirmSpawn()
+	spawned, err := r.launchAndConfirm(reviewing)
 	if err != nil {
 		return "", err
 	}
@@ -376,6 +363,47 @@ func (r *Runner) Run() (windowID string, runErr error) {
 	r.armWatcher()
 	success = true
 	return r.windowID, nil
+}
+
+// launchAndConfirm submits the launch and runs every phase through the final
+// bind. The process is running once the submission is delivered, so a failure
+// from then on is returned as an error naming the endpoint.
+func (r *Runner) launchAndConfirm(reviewing bool) (taskauthority.Outcome, error) {
+	spawned, err := r.launchPhases(reviewing)
+	if err != nil && r.launched {
+		return taskauthority.Outcome{}, r.liveLaunchError(err)
+	}
+	return spawned, err
+}
+
+func (r *Runner) launchPhases(reviewing bool) (taskauthority.Outcome, error) {
+	if err := r.submitLaunch(); err != nil {
+		return taskauthority.Outcome{}, err
+	}
+	if !reviewing {
+		if err := r.writeLaunchManifest(); err != nil {
+			return taskauthority.Outcome{}, err
+		}
+	}
+	if err := r.waitAndInjectBrief(); err != nil {
+		return taskauthority.Outcome{}, err
+	}
+	if err := r.verifyEndpointReadyBeforePersist(); err != nil {
+		return taskauthority.Outcome{}, err
+	}
+	if err := r.writeTaskMeta(); err != nil {
+		return taskauthority.Outcome{}, err
+	}
+	return r.confirmSpawn()
+}
+
+// liveLaunchError wraps a spawn failure after the launch was delivered to its
+// endpoint: the soldier process may be running there, owned by the task. It reads
+// no state and promises no result: a re-run re-checks the task first and may
+// refuse, so the message gives both ways out.
+func (r *Runner) liveLaunchError(cause error) error {
+	return fmt.Errorf("%w\nthe soldier process of task %s may still be running on backend %s endpoint %s; fix the cause above, then re-run 'munsu spawn %s %s' (spawn re-checks the task before it resumes, refuses with its own reason if it cannot, and re-adopts the pane only while the pane is live), or stop pane %s on backend %s by hand",
+		cause, r.args.ID, r.endpoint.Backend, r.endpoint.Handle, r.args.ID, r.args.ProjectName, r.endpoint.Handle, r.endpoint.Backend)
 }
 
 // Phase 1: resolveHome resolves the munsu home directory.
@@ -2023,6 +2051,7 @@ func (r *Runner) submitLaunch() error {
 		if agg.LaunchEvidence.LaunchID != r.launchID || agg.LaunchEvidence.CommandDigest != r.launchCommandDigest {
 			return fmt.Errorf("submitting launch: recorded launch evidence %s/%s does not match this launch %s/%s; refuse", agg.LaunchEvidence.LaunchID, agg.LaunchEvidence.CommandDigest, r.launchID, r.launchCommandDigest)
 		}
+		r.launched = true
 		return nil
 	}
 	// On the fresh-submission path, re-check attestation immediately before
@@ -2035,6 +2064,7 @@ func (r *Runner) submitLaunch() error {
 	if err := r.endpoints.Submit(r.endpoint, artifact.Command); err != nil {
 		return fmt.Errorf("submitting launch: %w (no launch evidence recorded; recovery may re-submit the same command)", err)
 	}
+	r.launched = true
 	// Only a successful submission is recorded as launch evidence.
 	req := taskauthority.CanonicalRecordLaunchRequest{
 		HomeID:        r.args.Authority.HomeID(),
@@ -2070,7 +2100,7 @@ func (r *Runner) submitLaunch() error {
 // launch script, so all artifacts are present.
 func (r *Runner) writeLaunchManifest() error {
 	entries := []ManifestEntry{}
-	for _, name := range LaunchArtifactNames {
+	for _, name := range launchManifestNames(r.harness) {
 		entry, err := ManifestEntryForFile(r.wtPath, name, DisposalPolicyCleanable)
 		if err != nil {
 			return fmt.Errorf("building manifest entry for %s: %w", name, err)

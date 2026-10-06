@@ -32,11 +32,14 @@ type reentrantEndpointCapabilities struct {
 	creates    int
 	submits    int
 	probeAlive bool
-	submitErr  error // when set, Submit fails (simulates failure after evidence record)
+	submitErr  error        // when set, Submit fails (simulates failure after evidence record)
+	ready      string       // the pane capture; the default is ready for pi
+	onSubmit   func()       // runs after each delivered Submit
+	onProbe    func() error // runs before each Probe; an error is the probe's failure
 }
 
 func newReentrantEndpoints() *reentrantEndpointCapabilities {
-	return &reentrantEndpointCapabilities{created: map[string]CreatedEndpoint{}, probeAlive: true}
+	return &reentrantEndpointCapabilities{created: map[string]CreatedEndpoint{}, probeAlive: true, ready: "> ready"}
 }
 
 func (f *reentrantEndpointCapabilities) CreateReserved(req CreateRequest) (CreatedEndpoint, error) {
@@ -62,10 +65,18 @@ func (f *reentrantEndpointCapabilities) Submit(ep CreatedEndpoint, text string) 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.submits++
+	if f.onSubmit != nil {
+		f.onSubmit()
+	}
 	return f.submitErr
 }
 
 func (f *reentrantEndpointCapabilities) Probe(ep CreatedEndpoint) (SpawnEndpointObservation, error) {
+	if f.onProbe != nil {
+		if err := f.onProbe(); err != nil {
+			return SpawnEndpointObservation{}, err
+		}
+	}
 	if f.probeAlive {
 		return endpointStatusFromState(EndpointAlive), nil
 	}
@@ -73,7 +84,7 @@ func (f *reentrantEndpointCapabilities) Probe(ep CreatedEndpoint) (SpawnEndpoint
 }
 
 func (f *reentrantEndpointCapabilities) Capture(ep CreatedEndpoint, n int) (string, error) {
-	return "> ready", nil
+	return f.ready, nil
 }
 
 func (f *reentrantEndpointCapabilities) Dispose(ep CreatedEndpoint) error { return nil }
@@ -529,6 +540,46 @@ func TestLaunchRecordsTheSeatOfTheLaunch(t *testing.T) {
 		}
 	} else if seat.Fence.Applied || seat.Fence.Reason == "" {
 		t.Fatalf("seat fence = %+v, want the no-fence reason off darwin", seat.Fence)
+	}
+}
+
+// TestLaunchWritesTheManifestOfTheLaunchingHarness proves a launch binds the
+// five core artifacts plus exactly the worktree files its harness declares,
+// and that teardown's verification accepts the manifest the launch wrote.
+func TestLaunchWritesTheManifestOfTheLaunchingHarness(t *testing.T) {
+	core := []string{CharterName, BriefName, EnvelopeName, PromptName, LaunchScriptName}
+	for _, tc := range []struct {
+		harness string
+		ready   string
+		want    []string
+	}{
+		{"pi", "> ready", append(append([]string{}, core...), ".pi/settings.json")},
+		{"claude", "bypass permissions on", core},
+	} {
+		t.Run(tc.harness, func(t *testing.T) {
+			isolateHuman(t)
+			f := newLaunchFixture(t, "manifest-"+tc.harness)
+			f.runner.harness = tc.harness
+			f.runner.projectConfig.Soldier.Harness = tc.harness
+			f.endpoints.ready = tc.ready
+			if err := runLaunchPhases(f, ""); err != nil {
+				t.Fatal(err)
+			}
+			manifest, err := ReadManifest(f.runner.wtPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			for _, a := range manifest.Artifacts {
+				got = append(got, a.Path)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("manifest paths = %v, want %v", got, tc.want)
+			}
+			if err := VerifyLaunchArtifacts(f.runner.wtPath, f.runner.manifestSHA256); err != nil {
+				t.Fatalf("VerifyLaunchArtifacts: %v", err)
+			}
+		})
 	}
 }
 
