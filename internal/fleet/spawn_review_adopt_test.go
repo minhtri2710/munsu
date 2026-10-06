@@ -4,6 +4,7 @@ package fleet
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -278,5 +279,59 @@ func TestReviewLaunchRunsEveryPhaseAgainstTheReviewedCheckout(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(worktree); len(entries) != 3 { // f, .git link and .pi
 		t.Fatalf("reviewed checkout entries = %d, want 3: the review wrote into it", len(entries))
+	}
+}
+
+// TestReviewPromptWritesNothingIntoTheReviewedWorktreeGitDir proves the review
+// guard in buildSoldierPrompt: a reviewer's prompt phase persists its launch
+// files under the home and writes nothing into the reviewed worktree — no
+// excludes file in its git directory and no extensions.worktreeConfig on the
+// shared repository config. Without the r.review guard the excludes write
+// would run git inside the home (not a repository) and fail the phase.
+func TestReviewPromptWritesNothingIntoTheReviewedWorktreeGitDir(t *testing.T) {
+	isolateHuman(t)
+	f := newLaunchFixture(t, "unused-ship")
+	worktree := mustWorkingShipTaskAt(t, f.auth, "ship-1", newLinkedDeliveryWorktree(t))
+	r := createReviewTask(t, f.auth, f.homeDir, "ship-1", "review-1", deliveryTestHead)
+	cp := *f.runner
+	cp.args.ID, cp.kind, cp.reviewTask, cp.reviewHead = "review-1", r.kind, r.reviewTask, r.reviewHead
+	rr := &cp
+	briefDir := filepath.Join(f.homeDir, "data", "review-1")
+	if err := os.MkdirAll(briefDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(briefDir, "brief.md"), []byte("# review brief"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	bound, err := rr.adoptReviewedWorktree()
+	if err != nil {
+		t.Fatalf("adoptReviewedWorktree: %v", err)
+	}
+	if err := rr.buildSoldierPrompt(bound); err != nil {
+		t.Fatalf("buildSoldierPrompt: %v", err)
+	}
+
+	// The launch files live under the home, never in the reviewed checkout.
+	if !strings.HasPrefix(rr.launchDir, filepath.Join(f.homeDir, "review", "review-1")) {
+		t.Fatalf("launchDir = %q, want it under the home's review directory", rr.launchDir)
+	}
+	entries, err := os.ReadDir(worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 { // the pre-existing file and the .git link
+		t.Fatalf("reviewed checkout entries = %d, want 2: the review wrote into it", len(entries))
+	}
+	gitLink, err := os.ReadFile(filepath.Join(worktree, ".git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitDir := strings.TrimSpace(strings.TrimPrefix(string(gitLink), "gitdir: "))
+	if _, err := os.Stat(filepath.Join(gitDir, worktreeExcludeFileName)); !os.IsNotExist(err) {
+		t.Fatalf("the review wrote %s into the reviewed worktree's git dir", worktreeExcludeFileName)
+	}
+	if out, err := exec.Command("git", "-C", worktree, "config", "--local", "--get", "extensions.worktreeConfig").CombinedOutput(); err == nil && strings.TrimSpace(string(out)) != "" {
+		t.Fatalf("the review enabled extensions.worktreeConfig on the shared repository config: %s", out)
 	}
 }

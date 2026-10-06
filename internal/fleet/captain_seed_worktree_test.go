@@ -28,7 +28,7 @@ func TestWriteWorktreeExcludesFailsWhenGitDirCannotBeResolved(t *testing.T) {
 		}
 		return realGitRun(args...)
 	}
-	err := writeWorktreeExcludes(home, piIntegrationPath)
+	err := writeWorktreeExcludes(home, captainWorktreeExcludes(piIntegrationPath))
 	if err == nil || !strings.Contains(err.Error(), "resolving worktree git dir") {
 		t.Fatalf("err = %v, want worktree git dir resolution failure", err)
 	}
@@ -47,7 +47,7 @@ func TestWriteWorktreeExcludesFailsWhenExcludesFileCannotBeWritten(t *testing.T)
 	if err := os.MkdirAll(filepath.Join(blocker, "occupied"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	err := writeWorktreeExcludes(home, piIntegrationPath)
+	err := writeWorktreeExcludes(home, captainWorktreeExcludes(piIntegrationPath))
 	if err == nil || !strings.Contains(err.Error(), "writing "+blocker) {
 		t.Fatalf("err = %v, want excludes file write failure", err)
 	}

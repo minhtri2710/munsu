@@ -84,7 +84,7 @@ func worktreeCaptainHome(t *testing.T, captainHome, id string) {
 	t.Helper()
 	repo := newWorktreeFixture(t)
 	gitTestRun(t, repo, "worktree", "add", "--detach", captainHome, "origin/main")
-	if err := writeWorktreeExcludes(captainHome, piIntegrationPath); err != nil {
+	if err := writeWorktreeExcludes(captainHome, captainWorktreeExcludes(piIntegrationPath)); err != nil {
 		t.Fatal(err)
 	}
 	if err := writeCaptainProvenance(captainHome, repo); err != nil {
