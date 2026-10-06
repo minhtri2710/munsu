@@ -37,7 +37,9 @@ type SoldierLaunchContract struct {
 	Separator string
 	// WorktreeFiles lists the worktree files, as slash-format relative paths,
 	// that a launch of this harness writes. The launch manifest binds them
-	// next to the core launch artifacts.
+	// next to the core launch artifacts, and the soldier worktree's
+	// worktree-scoped excludes file lists them so a launch never dirties
+	// the worktree.
 	WorktreeFiles []string
 }
 
