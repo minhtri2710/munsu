@@ -307,7 +307,6 @@ func (r *Runner) Run() (windowID string, runErr error) {
 		if bound, err = r.bindWorktree(); err != nil {
 			return "", err
 		}
-		r.cwd, r.launchDir = bound.Path(), bound.Path()
 	}
 
 	if err := r.resolveHarness(); err != nil {
@@ -1441,6 +1440,7 @@ func (r *Runner) bindWorktree() (BoundWorktree, error) {
 			return BoundWorktree{}, fmt.Errorf("binding worktree before endpoint launch: adopting committed binding: %w", err)
 		}
 		r.wtPath = bw.Path()
+		r.cwd, r.launchDir = bw.Path(), bw.Path()
 		return bw, nil
 	}
 	var leaseID, fenceToken string
@@ -1469,7 +1469,9 @@ func (r *Runner) bindWorktree() (BoundWorktree, error) {
 	}
 	// buildTaskWorktreeBinding admitted only Worktree for binding.Path, so the
 	// committed path carries the same proof the recovery branch re-derives.
-	return BoundWorktree{path: binding.Path}, nil
+	bound := BoundWorktree{path: binding.Path}
+	r.cwd, r.launchDir = bound.Path(), bound.Path()
+	return bound, nil
 }
 
 // spawnOperation builds the deterministic Operation for one launch phase
