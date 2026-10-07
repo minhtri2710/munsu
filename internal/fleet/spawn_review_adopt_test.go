@@ -291,6 +291,119 @@ func TestReviewLaunchRunsEveryPhaseAgainstTheReviewedCheckout(t *testing.T) {
 	}
 }
 
+func TestReviewCreateSessionReentryAfterSubmitBeforeConfirmUsesRecordedEndpoint(t *testing.T) {
+	isolateHuman(t)
+	f := newLaunchFixture(t, "unused-ship")
+	worktree := mustWorkingShipTaskAt(t, f.auth, "ship-1", newLinkedDeliveryWorktree(t))
+	writePiSettingsInWorktree(t, worktree, harness.PiProjectSettings())
+	created := createReviewTask(t, f.auth, f.homeDir, "ship-1", "review-1", deliveryTestHead)
+
+	first := *f.runner
+	first.args.ID, first.kind = "review-1", created.kind
+	first.reviewTask, first.reviewHead = created.reviewTask, created.reviewHead
+	briefDir := filepath.Join(f.homeDir, "data", "review-1")
+	if err := os.MkdirAll(briefDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(briefDir, "brief.md"), []byte("# review brief"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := first.beginLaunchIntent(); err != nil {
+		t.Fatalf("begin review launch: %v", err)
+	}
+	bound, err := first.adoptReviewedWorktree()
+	if err != nil {
+		t.Fatalf("adopt reviewed worktree: %v", err)
+	}
+	if err := first.buildSoldierPrompt(bound); err != nil {
+		t.Fatalf("build review prompt: %v", err)
+	}
+	if err := first.probeFence(bound); err != nil {
+		t.Fatalf("probe review fence: %v", err)
+	}
+	if err := first.createSession(); err != nil {
+		t.Fatalf("create initial review session: %v", err)
+	}
+	if err := first.attachEndpoint(); err != nil {
+		t.Fatalf("attach initial review endpoint: %v", err)
+	}
+	if err := first.submitLaunch(); err != nil {
+		t.Fatalf("submit review: %v", err)
+	}
+
+	taskID := mustFleetTaskID(t, "review-1")
+	before, err := f.auth.Get(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Phase != taskauthority.PhaseQueued || before.LaunchEvidence == nil || before.AcquiredEndpoint == nil || before.Endpoint != nil {
+		t.Fatalf("post-submit aggregate = phase %q, launch evidence %v, acquired endpoint %v, endpoint %v; want queued with launch/acquisition evidence before confirmation", before.Phase, before.LaunchEvidence != nil, before.AcquiredEndpoint != nil, before.Endpoint != nil)
+	}
+	acquired := *before.AcquiredEndpoint
+	creates, submits := f.endpoints.createCount(), f.endpoints.submitCount()
+	probes := 0
+	f.endpoints.onProbe = func() error { probes++; return nil }
+
+	// A fresh Runner models process restart after Submit recorded launch
+	// evidence but before ConfirmSpawn bound the endpoint.
+	reentry := *f.runner
+	reentry.args.ID = "review-1"
+	if err := reentry.resolveKind(); err != nil {
+		t.Fatalf("resolve review kind on re-entry: %v", err)
+	}
+	if err := reentry.beginLaunchIntent(); err != nil {
+		t.Fatalf("re-enter review launch intent: %v", err)
+	}
+	if !reentry.launchReentry {
+		t.Fatal("review re-entry did not adopt the recorded launch intent")
+	}
+	bound, err = reentry.adoptReviewedWorktree()
+	if err != nil {
+		t.Fatalf("re-adopt reviewed worktree: %v", err)
+	}
+	if err := reentry.buildSoldierPrompt(bound); err != nil {
+		t.Fatalf("rebuild review prompt: %v", err)
+	}
+	if err := reentry.probeFence(bound); err != nil {
+		t.Fatalf("re-probe review fence: %v", err)
+	}
+	if err := reentry.createSession(); err != nil {
+		t.Fatalf("recover submitted review session: %v", err)
+	}
+
+	if probes != 1 {
+		t.Fatalf("recorded endpoint probes = %d, want one liveness probe", probes)
+	}
+	if got := f.endpoints.createCount(); got != creates {
+		t.Fatalf("endpoint creates after re-entry = %d, want unchanged count %d", got, creates)
+	}
+	if got := f.endpoints.submitCount(); got != submits {
+		t.Fatalf("launch submissions after re-entry = %d, want unchanged count %d", got, submits)
+	}
+	if reentry.endpoint.Backend != acquired.Backend || reentry.endpoint.Handle != acquired.Handle || reentry.endpoint.Incarnation != acquired.Incarnation {
+		t.Fatalf("recovered endpoint = %+v, want the canonically acquired endpoint %+v", reentry.endpoint, acquired)
+	}
+	after, err := f.auth.Get(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Revision != before.Revision || after.Endpoint != nil || after.Worktree != nil {
+		t.Fatalf("createSession changed review authority: revision %d -> %d, endpoint %v, worktree %v", before.Revision, after.Revision, after.Endpoint != nil, after.Worktree != nil)
+	}
+
+	// The manifest exemption does not weaken endpoint liveness authorization:
+	// a dead recorded endpoint still refuses recovery without replacement.
+	reentry.endpoint = CreatedEndpoint{}
+	f.endpoints.probeAlive = false
+	if err := reentry.createSession(); err == nil || !strings.Contains(err.Error(), "recovery fails closed (no replacement)") {
+		t.Fatalf("dead recorded endpoint recovery error = %v, want fail-closed liveness refusal", err)
+	}
+	if reentry.endpoint.Handle != "" || f.endpoints.createCount() != creates || f.endpoints.submitCount() != submits {
+		t.Fatalf("dead endpoint recovery adopted %q or changed creates/submits to %d/%d, want no adoption and unchanged %d/%d", reentry.endpoint.Handle, f.endpoints.createCount(), f.endpoints.submitCount(), creates, submits)
+	}
+}
+
 // TestReviewPromptWritesNothingIntoTheReviewedWorktreeGitDir proves the review
 // guard in buildSoldierPrompt: a reviewer's prompt phase persists its launch
 // files under the home and writes nothing into the reviewed worktree — no

@@ -1654,7 +1654,7 @@ func (r *Runner) createSession() error {
 	// Successful submission recovery verifies canonical artifacts before
 	// probing or re-adopting the recorded endpoint.
 	acquired := r.recordedAcquiredEndpoint()
-	if acquired != nil && r.recordedLaunchEvidence() {
+	if acquired != nil && r.kind != taskauthority.KindReview && r.recordedLaunchEvidence() {
 		if err := r.verifyRecordedLaunchArtifacts(); err != nil {
 			return fmt.Errorf("recorded launch artifact verification: %w", err)
 		}
