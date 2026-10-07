@@ -280,6 +280,15 @@ func TestReviewLaunchRunsEveryPhaseAgainstTheReviewedCheckout(t *testing.T) {
 	if entries, _ := os.ReadDir(worktree); len(entries) != 3 { // f, .git link and .pi
 		t.Fatalf("reviewed checkout entries = %d, want 3: the review wrote into it", len(entries))
 	}
+
+	// A review's successful submission is checked against the review launch
+	// identity on replay; a different recorded identity is never accepted.
+	tamperTaskAggregate(t, f.homeDir, "review-1", func(agg *taskauthority.Aggregate) {
+		agg.LaunchEvidence.LaunchID = "foreign-review-launch"
+	})
+	if err := rr.submitLaunch(); err == nil || !strings.Contains(err.Error(), "does not match this launch") {
+		t.Fatalf("review submit replay error = %v, want mismatched-evidence refusal", err)
+	}
 }
 
 // TestReviewPromptWritesNothingIntoTheReviewedWorktreeGitDir proves the review

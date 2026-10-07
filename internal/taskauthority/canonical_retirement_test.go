@@ -349,14 +349,15 @@ func TestCanonicalRetireBoundEndpointSubsumesAcquiredRecord(t *testing.T) {
 	if _, err := c.BindWorktree(mustOperation(t, "op-bindwt-sub", bindWT), bindWT); err != nil {
 		t.Fatalf("BindWorktree: %v", err)
 	}
-	record := recordLaunchRequest(c, "t1", preconditionOf(1, 4), launch)
+	mustRecordLaunchManifest(t, c, "t1", launch, bindWT.Binding, 4)
+	record := recordLaunchRequest(c, "t1", preconditionOf(1, 5), launch)
 	if _, err := c.RecordLaunch(mustOperation(t, "op-record-sub", record), record); err != nil {
 		t.Fatalf("RecordLaunch: %v", err)
 	}
 	bind := CanonicalBindEndpointRequest{
 		HomeID:       c.HomeID(),
 		TaskID:       mustTaskID(t, "t1"),
-		Precondition: preconditionOf(1, 5),
+		Precondition: preconditionOf(1, 6),
 		Binding:      launchEndpointBinding(launch, "@1"),
 		Reason:       "spawn",
 	}
@@ -364,7 +365,7 @@ func TestCanonicalRetireBoundEndpointSubsumesAcquiredRecord(t *testing.T) {
 		t.Fatalf("BindEndpoint: %v", err)
 	}
 
-	req := retireRequest(t, c, "t1", preconditionOf(1, 6))
+	req := retireRequest(t, c, "t1", preconditionOf(1, 7))
 	if _, err := c.Retire(mustOperation(t, "op-retire-sub", req), req); err != nil {
 		t.Fatalf("Retire: %v", err)
 	}

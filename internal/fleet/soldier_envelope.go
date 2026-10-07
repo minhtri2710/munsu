@@ -77,16 +77,29 @@ type LaunchEnvelope struct {
 }
 
 // WriteEnvelope writes the launch envelope to .soldier-envelope.json.
-func WriteEnvelope(worktreePath string, env *LaunchEnvelope) error {
+// MarshalEnvelope returns the exact bytes written by WriteEnvelope without
+// writing a file. The launch preparation path uses the same serializer before
+// it commits the canonical manifest anchor.
+func MarshalEnvelope(env *LaunchEnvelope) ([]byte, error) {
 	if env == nil {
-		return fmt.Errorf("launch envelope is nil")
+		return nil, fmt.Errorf("launch envelope is nil")
+	}
+	copy := *env
+	copy.EnvelopeVersion = EnvelopeVersion
+	data, err := json.MarshalIndent(&copy, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("marshaling launch envelope: %w", err)
+	}
+	return append(data, '\n'), nil
+}
+
+// WriteEnvelope writes the launch envelope to .soldier-envelope.json.
+func WriteEnvelope(worktreePath string, env *LaunchEnvelope) error {
+	data, err := MarshalEnvelope(env)
+	if err != nil {
+		return err
 	}
 	env.EnvelopeVersion = EnvelopeVersion
-	data, err := json.MarshalIndent(env, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshaling launch envelope: %w", err)
-	}
-	data = append(data, '\n')
 	envPath := filepath.Join(worktreePath, EnvelopeName)
 	if err := os.WriteFile(envPath, data, 0644); err != nil {
 		return fmt.Errorf("writing %s: %w", EnvelopeName, err)

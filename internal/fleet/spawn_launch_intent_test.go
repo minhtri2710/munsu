@@ -231,10 +231,10 @@ func runLaunchPhases(f *launchFixture, crashAfter string) error {
 		}},
 		{"prompt", func() error { return r.buildSoldierPrompt(bound) }},
 		{"probe-fence", func() error { return r.probeFence(bound) }},
+		{"manifest", r.prepareAndPersistLaunchManifest},
 		{"create-session", r.createSession},
 		{"attach-endpoint", r.attachEndpoint},
 		{"submit", r.submitLaunch},
-		{"manifest", r.writeLaunchManifest},
 		{"ready", r.waitAndInjectBrief},
 		{"verify", r.verifyEndpointReadyBeforePersist},
 		{"meta", r.writeTaskMeta},
@@ -252,6 +252,263 @@ func runLaunchPhases(f *launchFixture, crashAfter string) error {
 		}
 	}
 	return nil
+}
+
+func prepareLaunchWithRecordedManifestAnchor(t *testing.T, f *launchFixture) (taskauthority.Aggregate, preparedLaunchFiles) {
+	t.Helper()
+	r := f.runner
+	if err := r.beginLaunchIntent(); err != nil {
+		t.Fatalf("beginLaunchIntent: %v", err)
+	}
+	if err := r.recordDeliveryContract(); err != nil {
+		t.Fatalf("recordDeliveryContract: %v", err)
+	}
+	if err := r.acquireWorktree(); err != nil {
+		t.Fatalf("acquireWorktree: %v", err)
+	}
+	bound, err := r.bindWorktree()
+	if err != nil {
+		t.Fatalf("bindWorktree: %v", err)
+	}
+	if err := r.buildSoldierPrompt(bound); err != nil {
+		t.Fatalf("buildSoldierPrompt: %v", err)
+	}
+	if err := r.probeFence(bound); err != nil {
+		t.Fatalf("probeFence: %v", err)
+	}
+	agg := f.aggregate()
+	snapshotDigest := ""
+	if r.projectConfigLoaded {
+		snapshotDigest = r.projectConfig.SnapshotDigest
+	}
+	_, scriptBytes, err := prepareLaunchScript(LaunchArtifactInput{
+		WorktreePath: r.cwd, LaunchDir: r.launchDir, HomeDir: r.homeDir, TaskID: r.args.ID,
+		SnapshotDigest: snapshotDigest, LaunchBin: r.launchBin, LaunchArgs: r.launchArgs,
+		LaunchID: r.launchID, Generation: agg.Generation.String(), EndpointFence: r.epFenceToken(), Fence: r.fence,
+	})
+	if err != nil {
+		t.Fatalf("prepareLaunchScript: %v", err)
+	}
+	prepared, err := prepareLaunchFiles(DefaultCharter(r.args.ID, r.kind, r.effectiveMode), r.briefData, r.promptEnv, r.prompt, scriptBytes, r.harness)
+	if err != nil {
+		t.Fatalf("prepareLaunchFiles: %v", err)
+	}
+	taskID := mustTaskID(t, f.taskID)
+	req := taskauthority.CanonicalRecordLaunchManifestRequest{
+		HomeID: r.args.Authority.HomeID(), TaskID: taskID,
+		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+		LaunchID:     r.launchID, WorktreeLeaseID: agg.Worktree.LeaseID,
+		WorktreeFenceToken: agg.Worktree.FenceToken, ManifestSHA256: prepared.digest,
+		Reason: "test anchor before publication",
+	}
+	op, err := r.spawnOperation("manifest", agg.Generation, req)
+	if err != nil {
+		t.Fatalf("spawnOperation: %v", err)
+	}
+	if _, err := r.args.Authority.RecordLaunchManifest(op, req); err != nil {
+		t.Fatalf("RecordLaunchManifest: %v", err)
+	}
+	return f.aggregate(), prepared
+}
+
+func TestPrepareAndPersistLaunchManifestRefusesUnboundState(t *testing.T) {
+	t.Run("authority missing", func(t *testing.T) {
+		f := newLaunchFixture(t, "manifest-no-authority")
+		f.runner.args.Authority = nil
+		if err := f.runner.prepareAndPersistLaunchManifest(); err == nil || !strings.Contains(err.Error(), "canonical launch intent is required") {
+			t.Fatalf("prepareAndPersistLaunchManifest error = %v, want missing authority refusal", err)
+		}
+	})
+	t.Run("launch intent missing", func(t *testing.T) {
+		f := newLaunchFixture(t, "manifest-no-launch")
+		f.runner.launch = nil
+		if err := f.runner.prepareAndPersistLaunchManifest(); err == nil || !strings.Contains(err.Error(), "canonical launch intent is required") {
+			t.Fatalf("prepareAndPersistLaunchManifest error = %v, want missing launch refusal", err)
+		}
+	})
+	t.Run("canonical worktree missing", func(t *testing.T) {
+		f := newLaunchFixture(t, "manifest-no-worktree")
+		if err := prepareLaunchUpToManifest(t, f); err != nil {
+			t.Fatalf("prepare launch: %v", err)
+		}
+		tamperTaskAggregate(t, f.homeDir, f.taskID, func(agg *taskauthority.Aggregate) { agg.Worktree = nil })
+		if err := f.runner.prepareAndPersistLaunchManifest(); err == nil || !strings.Contains(err.Error(), "canonical worktree binding or launch intent") {
+			t.Fatalf("prepareAndPersistLaunchManifest error = %v, want missing binding refusal", err)
+		}
+	})
+	t.Run("launch identity mismatch", func(t *testing.T) {
+		f := newLaunchFixture(t, "manifest-launch-id-mismatch")
+		if err := prepareLaunchUpToManifest(t, f); err != nil {
+			t.Fatalf("prepare launch: %v", err)
+		}
+		f.runner.launchID = "another-launch"
+		if err := f.runner.prepareAndPersistLaunchManifest(); err == nil || !strings.Contains(err.Error(), "canonical worktree binding or launch intent") {
+			t.Fatalf("prepareAndPersistLaunchManifest error = %v, want launch identity refusal", err)
+		}
+	})
+	t.Run("worktree fence mismatch", func(t *testing.T) {
+		f := newLaunchFixture(t, "manifest-worktree-fence-mismatch")
+		if _, _ = prepareLaunchWithRecordedManifestAnchor(t, f); f.runner.launch == nil {
+			t.Fatal("fixture did not prepare launch intent")
+		}
+		f.runner.launch.WorktreeFenceToken = "foreign-fence"
+		if err := f.runner.prepareAndPersistLaunchManifest(); err == nil || !strings.Contains(err.Error(), "canonical manifest anchor does not match this launch and worktree") {
+			t.Fatalf("prepareAndPersistLaunchManifest error = %v, want worktree fence refusal", err)
+		}
+	})
+	t.Run("missing anchor after successful launch", func(t *testing.T) {
+		f := newLaunchFixture(t, "manifest-anchor-missing")
+		if err := runLaunchPhases(f, ""); err != nil {
+			t.Fatalf("complete launch: %v", err)
+		}
+		tamperTaskAggregate(t, f.homeDir, f.taskID, func(a *taskauthority.Aggregate) { a.Worktree.LaunchManifest = nil })
+		if err := f.runner.prepareAndPersistLaunchManifest(); err == nil || !strings.Contains(err.Error(), "successful launch evidence has no matching canonical manifest anchor") {
+			t.Fatalf("prepareAndPersistLaunchManifest error = %v, want missing-anchor refusal", err)
+		}
+	})
+	t.Run("manifest digest mismatch", func(t *testing.T) {
+		f := newLaunchFixture(t, "manifest-anchor-digest-mismatch")
+		if err := prepareLaunchUpToManifest(t, f); err != nil {
+			t.Fatalf("prepare launch: %v", err)
+		}
+		agg, prepared := prepareLaunchWithRecordedManifestAnchor(t, f)
+		for _, name := range prepared.names {
+			path := filepath.Join(agg.Worktree.Path, filepath.FromSlash(name))
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatalf("create artifact directory for %s: %v", name, err)
+			}
+			if err := home.AtomicCreate(path, prepared.files[name], 0o644); err != nil {
+				t.Fatalf("publish %s: %v", name, err)
+			}
+		}
+		if err := home.AtomicCreate(filepath.Join(agg.Worktree.Path, ManifestName), prepared.manifest, 0o644); err != nil {
+			t.Fatalf("publish manifest: %v", err)
+		}
+		if err := VerifyLaunchArtifacts(agg.Worktree.Path, prepared.digest); err != nil {
+			t.Fatalf("verify prepared artifacts before anchor tampering: %v", err)
+		}
+		tamperTaskAggregate(t, f.homeDir, f.taskID, func(a *taskauthority.Aggregate) {
+			a.Worktree.LaunchManifest.ManifestSHA256 = sha256Content([]byte("different manifest"))
+		})
+		if err := f.runner.prepareAndPersistLaunchManifest(); err == nil || !strings.Contains(err.Error(), "conflicts with the prepared bytes") {
+			t.Fatalf("prepareAndPersistLaunchManifest error = %v, want canonical digest conflict", err)
+		}
+	})
+}
+
+func prepareLaunchUpToManifest(t *testing.T, f *launchFixture) error {
+	t.Helper()
+	if err := runLaunchPhases(f, "probe-fence"); !errors.Is(err, errCrashSimulated) {
+		return fmt.Errorf("launch phases through probe-fence: %w", err)
+	}
+	return nil
+}
+
+func TestVerifyRecordedLaunchArtifactsRefusesUnmatchedAuthority(t *testing.T) {
+	t.Run("authority missing", func(t *testing.T) {
+		f := newLaunchFixture(t, "verify-manifest-no-authority")
+		f.runner.args.Authority = nil
+		if err := f.runner.verifyRecordedLaunchArtifacts(); err == nil || !strings.Contains(err.Error(), "task authority is not composed") {
+			t.Fatalf("verifyRecordedLaunchArtifacts error = %v, want missing-authority refusal", err)
+		}
+	})
+	t.Run("manifest evidence missing", func(t *testing.T) {
+		f := newLaunchFixture(t, "verify-manifest-no-evidence")
+		if err := f.runner.verifyRecordedLaunchArtifacts(); err == nil || !strings.Contains(err.Error(), "successful launch lacks canonical worktree manifest evidence") {
+			t.Fatalf("verifyRecordedLaunchArtifacts error = %v, want missing-evidence refusal", err)
+		}
+	})
+	t.Run("canonical launch identity mismatch", func(t *testing.T) {
+		f := newLaunchFixture(t, "verify-manifest-identity-mismatch")
+		if err := runLaunchPhases(f, ""); err != nil {
+			t.Fatalf("complete launch: %v", err)
+		}
+		tamperTaskAggregate(t, f.homeDir, f.taskID, func(agg *taskauthority.Aggregate) { agg.LaunchEvidence.LaunchID = "foreign-launch" })
+		if err := f.runner.verifyRecordedLaunchArtifacts(); err == nil || !strings.Contains(err.Error(), "launch identity mismatch") {
+			t.Fatalf("verifyRecordedLaunchArtifacts error = %v, want launch-identity refusal", err)
+		}
+	})
+	t.Run("prepared command digest mismatch", func(t *testing.T) {
+		f := newLaunchFixture(t, "verify-manifest-command-mismatch")
+		if err := runLaunchPhases(f, ""); err != nil {
+			t.Fatalf("complete launch: %v", err)
+		}
+		f.runner.preparedLaunch = &preparedLaunchArtifact{artifact: LaunchArtifact{CommandDigest: sha256Content([]byte("foreign command"))}}
+		if err := f.runner.verifyRecordedLaunchArtifacts(); err == nil || !strings.Contains(err.Error(), "command digest mismatch") {
+			t.Fatalf("verifyRecordedLaunchArtifacts error = %v, want command-digest refusal", err)
+		}
+	})
+}
+
+func TestSubmitLaunchRefusesMissingPreparedArtifacts(t *testing.T) {
+	f := newLaunchFixture(t, "submit-missing-prepared-artifacts")
+	if err := runLaunchPhases(f, "attach-endpoint"); !errors.Is(err, errCrashSimulated) {
+		t.Fatalf("launch phases = %v, want simulated pre-submit stop", err)
+	}
+	f.runner.preparedLaunch, f.runner.preparedFiles = nil, nil
+	before := f.endpoints.submitCount()
+	if err := f.runner.submitLaunch(); err == nil || !strings.Contains(err.Error(), "canonical launch artifacts were not prepared") {
+		t.Fatalf("submitLaunch error = %v, want missing-artifact refusal", err)
+	}
+	if f.endpoints.submitCount() != before {
+		t.Fatalf("missing artifact refusal submitted a command: before=%d after=%d", before, f.endpoints.submitCount())
+	}
+}
+
+func TestLaunchManifestAnchorPrecedesArtifactPublication(t *testing.T) {
+	isolateHuman(t)
+	f := newLaunchFixture(t, "manifest-anchor-before-publication")
+	agg, prepared := prepareLaunchWithRecordedManifestAnchor(t, f)
+	if agg.Worktree == nil || agg.Worktree.LaunchManifest == nil || agg.LaunchEvidence != nil || agg.AcquiredEndpoint != nil {
+		t.Fatalf("anchor boundary aggregate = %+v, want manifest anchor without endpoint or successful submit", agg)
+	}
+	if f.endpoints.createCount() != 0 || f.endpoints.submitCount() != 0 {
+		t.Fatalf("endpoint activity before artifact publication: creates=%d submits=%d", f.endpoints.createCount(), f.endpoints.submitCount())
+	}
+	if _, err := os.Lstat(filepath.Join(agg.Worktree.Path, ManifestName)); !os.IsNotExist(err) {
+		t.Fatalf("manifest exists before publication: stat error=%v", err)
+	}
+	firstName := prepared.names[0]
+	firstPath := filepath.Join(agg.Worktree.Path, filepath.FromSlash(firstName))
+	if err := home.AtomicCreate(firstPath, prepared.files[firstName], 0o644); err != nil {
+		t.Fatalf("publish first prepared file before simulated crash: %v", err)
+	}
+	if err := f.runner.prepareAndPersistLaunchManifest(); err != nil {
+		t.Fatalf("resume after anchor-only crash: %v", err)
+	}
+	if err := VerifyLaunchArtifacts(agg.Worktree.Path, prepared.digest); err != nil {
+		t.Fatalf("verify recovered prepared artifacts: %v", err)
+	}
+	if got := f.aggregate().Worktree.LaunchManifest; got == nil || got.ManifestSHA256 != prepared.digest {
+		t.Fatalf("recovery changed canonical manifest anchor: %+v", got)
+	}
+	if f.endpoints.createCount() != 0 || f.endpoints.submitCount() != 0 {
+		t.Fatalf("artifact recovery acquired/submitted an endpoint: creates=%d submits=%d", f.endpoints.createCount(), f.endpoints.submitCount())
+	}
+}
+
+func TestLaunchManifestAnchorRefusesConflictingPartialArtifact(t *testing.T) {
+	isolateHuman(t)
+	f := newLaunchFixture(t, "manifest-anchor-conflicting-artifact")
+	agg, _ := prepareLaunchWithRecordedManifestAnchor(t, f)
+	conflict := []byte("partial crash-left artifact")
+	path := filepath.Join(agg.Worktree.Path, BriefName)
+	if err := os.WriteFile(path, conflict, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.runner.prepareAndPersistLaunchManifest(); err == nil || !strings.Contains(err.Error(), "different content") {
+		t.Fatalf("prepareAndPersistLaunchManifest error = %v, want conflicting artifact refusal", err)
+	}
+	if got, err := os.ReadFile(path); err != nil || !reflect.DeepEqual(got, conflict) {
+		t.Fatalf("conflicting artifact after refusal = %q, %v; refusal must preserve it", got, err)
+	}
+	after := f.aggregate()
+	if after.Worktree == nil || after.Worktree.LaunchManifest == nil || after.Worktree.LaunchManifest.ManifestSHA256 != agg.Worktree.LaunchManifest.ManifestSHA256 {
+		t.Fatalf("canonical anchor changed after conflicting artifact refusal: %+v", after.Worktree)
+	}
+	if f.endpoints.createCount() != 0 || f.endpoints.submitCount() != 0 {
+		t.Fatalf("conflicting artifact allowed endpoint activity: creates=%d submits=%d", f.endpoints.createCount(), f.endpoints.submitCount())
+	}
 }
 
 // aggregate reads the current canonical aggregate of the fixture task.

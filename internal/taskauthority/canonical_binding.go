@@ -47,6 +47,9 @@ func (c *Canonical) BindWorktree(op domain.Operation, req CanonicalBindWorktreeR
 	if err := validateWorktreeBinding(req.Binding); err != nil {
 		return Outcome{}, err
 	}
+	if req.Binding.LaunchManifest != nil {
+		return Outcome{}, validationError("BindWorktree cannot set launch manifest evidence; use RecordLaunchManifest")
+	}
 	return c.mutateTask(op, req.TaskID, req.Precondition, func(cur Aggregate) (Aggregate, error) {
 		if cur.Definition.Kind == KindReview {
 			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s is a review task; it reads the reviewed worktree and owns none", cur.TaskID, cur.Generation)

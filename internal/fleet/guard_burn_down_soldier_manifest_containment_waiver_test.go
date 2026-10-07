@@ -7,14 +7,36 @@ import (
 	"testing"
 )
 
+func containmentManifestEntry(root, relPath string, policy DisposalPolicy) (ManifestEntry, error) {
+	if err := validateManifestPath(relPath); err != nil {
+		return ManifestEntry{}, err
+	}
+	data, err := os.ReadFile(filepath.Join(root, relPath))
+	if err != nil {
+		return ManifestEntry{}, err
+	}
+	return ManifestEntry{Path: relPath, SHA256: sha256Content(data), Policy: policy}, nil
+}
+
+func writeManifestForTest(root string, manifest *LaunchManifest) (string, error) {
+	data, digest, err := MarshalManifest(manifest)
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(filepath.Join(root, ManifestName), data, 0644); err != nil {
+		return "", err
+	}
+	return digest, nil
+}
+
 func guardManifestFixture(t *testing.T, root string) *LaunchManifest {
 	t.Helper()
 	setupGuardManifestFiles(t, root)
 	entries := make([]ManifestEntry, 0, len(CoreLaunchArtifactNames))
 	for _, name := range CoreLaunchArtifactNames {
-		entry, err := ManifestEntryForFile(root, name, DisposalPolicyCleanable)
+		entry, err := containmentManifestEntry(root, name, DisposalPolicyCleanable)
 		if err != nil {
-			t.Fatalf("ManifestEntryForFile(%q): %v", name, err)
+			t.Fatalf("manifest entry %q: %v", name, err)
 		}
 		entries = append(entries, entry)
 	}
@@ -75,7 +97,7 @@ func TestGuardBurnDownManifestContainmentWaiversPinned(t *testing.T) {
 	t.Run("symlinked root canonicalizes both sides", func(t *testing.T) {
 		actual := t.TempDir()
 		manifest := guardManifestFixture(t, actual)
-		if _, err := WriteManifest(actual, manifest); err != nil {
+		if _, err := writeManifestForTest(actual, manifest); err != nil {
 			t.Fatal(err)
 		}
 		alias := filepath.Join(t.TempDir(), "alias")

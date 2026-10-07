@@ -343,6 +343,60 @@ func TestValidateWorktreeBindingRefusesIncompleteBinding(t *testing.T) {
 		})
 }
 
+func TestValidateLaunchManifestEvidenceRefusesUnattributableRecord(t *testing.T) {
+	runGuardCases(t,
+		func() LaunchManifestEvidence {
+			return LaunchManifestEvidence{
+				OperationID: "op-manifest-1", LaunchID: "launch-1",
+				ManifestSHA256: testSHA256Hex, RecordedAt: 1700000000,
+			}
+		},
+		validateLaunchManifestEvidence,
+		[]guardCase[LaunchManifestEvidence]{
+			{"no operation id", func(e *LaunchManifestEvidence) { e.OperationID = "" }, "launch manifest evidence missing operation id"},
+			{"path-separating operation id", func(e *LaunchManifestEvidence) { e.OperationID = `op\\manifest` }, "launch manifest evidence missing operation id"},
+			{"no launch identity", func(e *LaunchManifestEvidence) { e.LaunchID = "" }, "launch manifest evidence missing launch identity"},
+			{"path-separating launch identity", func(e *LaunchManifestEvidence) { e.LaunchID = "launch/1" }, "launch manifest evidence missing launch identity"},
+			{"digest is not a sha256", func(e *LaunchManifestEvidence) { e.ManifestSHA256 = "not-a-digest" }, "launch manifest evidence digest must be a 64-hex sha256 digest"},
+			{"no recording timestamp", func(e *LaunchManifestEvidence) { e.RecordedAt = 0 }, "launch manifest evidence missing recorded timestamp"},
+			{"negative recording timestamp", func(e *LaunchManifestEvidence) { e.RecordedAt = -1 }, "launch manifest evidence missing recorded timestamp"},
+		})
+}
+
+func TestValidateWorktreeManifestRelationshipRefusesUnboundEvidence(t *testing.T) {
+	binding := worktreeBinding()
+	binding.LeaseID, binding.FenceToken = "wt-res-1", "wt-fence-1"
+	binding.LaunchManifest = &LaunchManifestEvidence{
+		OperationID: "op-manifest-1", LaunchID: "launch-1", ManifestSHA256: testSHA256Hex, RecordedAt: 1700000000,
+	}
+	launch := validLaunchIntent()
+	launch.LaunchID, launch.WorktreeReservationID, launch.WorktreeFenceToken = "launch-1", "wt-res-1", "wt-fence-1"
+	if err := validateWorktreeManifestRelationship(binding, &launch, KindShip); err != nil {
+		t.Fatalf("valid worktree manifest relationship refused: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		launch *LaunchIntent
+		kind   string
+		mutate func(*WorktreeBinding)
+		want   string
+	}{
+		{"no launch intent", nil, KindShip, func(*WorktreeBinding) {}, "requires a committed launch intent"},
+		{"review task", &launch, KindReview, func(*WorktreeBinding) {}, "review tasks cannot own launch manifest evidence"},
+		{"different launch identity", &launch, KindShip, func(b *WorktreeBinding) { b.LaunchManifest.LaunchID = "launch-other" }, "does not match launch intent"},
+		{"different worktree fence", &launch, KindShip, func(b *WorktreeBinding) { b.FenceToken = "wt-fence-other" }, "does not match launch intent"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := cloneWorktreeBinding(binding)
+			tc.mutate(&got)
+			if err := validateWorktreeManifestRelationship(got, tc.launch, tc.kind); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("validateWorktreeManifestRelationship error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 // The acquired-endpoint record is the committed proof that a soldier holds an
 // endpoint. Every field below is what makes the hold attributable and
 // releasable: without the operation id nothing says which operation acquired

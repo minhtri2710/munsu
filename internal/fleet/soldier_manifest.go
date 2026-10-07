@@ -5,6 +5,7 @@ package fleet
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -14,7 +15,6 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/harness"
-	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // ManifestVersion is the current manifest format version.
@@ -53,16 +53,6 @@ var sha256Regex = regexp.MustCompile(`^[0-9a-f]{64}$`)
 // is not included. A harness adds the worktree files it declares in
 // SoldierLaunchContract.WorktreeFiles.
 var CoreLaunchArtifactNames = []string{CharterName, BriefName, EnvelopeName, PromptName, LaunchScriptName}
-
-// launchManifestNames returns the paths a manifest for the given harness binds:
-// the core artifacts, then the worktree files that harness declares.
-func launchManifestNames(harnessName string) []string {
-	names := append([]string{}, CoreLaunchArtifactNames...)
-	if adapter, ok := harness.GetAdapter(harnessName); ok {
-		names = append(names, adapter.SoldierLaunch.WorktreeFiles...)
-	}
-	return names
-}
 
 // declaredWorktreeFiles returns every worktree file some harness adapter
 // declares: the only extra paths a valid manifest may carry.
@@ -181,35 +171,21 @@ func ValidateManifest(manifest *LaunchManifest) error {
 	return nil
 }
 
-// WriteManifest writes the manifest to .soldier-manifest.json in the worktree
-// atomically and durably. The manifest is written after all other launch
-// artifacts exist and does not include an entry for itself.
-// Returns the SHA-256 digest of the exact bytes written.
-func WriteManifest(worktreePath string, manifest *LaunchManifest) (string, error) {
+func MarshalManifest(manifest *LaunchManifest) ([]byte, string, error) {
 	if manifest == nil {
-		return "", fmt.Errorf("launch manifest is nil")
+		return nil, "", fmt.Errorf("launch manifest is nil")
 	}
-	manifest.ManifestVersion = ManifestVersion
-
-	// Validate before writing.
-	if err := ValidateManifest(manifest); err != nil {
-		return "", fmt.Errorf("manifest validation failed: %w", err)
+	copy := *manifest
+	copy.ManifestVersion = ManifestVersion
+	if err := ValidateManifest(&copy); err != nil {
+		return nil, "", fmt.Errorf("manifest validation failed: %w", err)
 	}
-
-	data, err := json.MarshalIndent(manifest, "", "  ")
+	data, err := json.MarshalIndent(&copy, "", "  ")
 	if err != nil {
-		return "", fmt.Errorf("marshaling launch manifest: %w", err)
+		return nil, "", fmt.Errorf("marshaling launch manifest: %w", err)
 	}
 	data = append(data, '\n')
-
-	digest := sha256Content(data)
-	manifestPath := filepath.Join(worktreePath, ManifestName)
-
-	if err := home.AtomicWrite(manifestPath, data, 0644); err != nil {
-		return "", fmt.Errorf("writing %s: %w", ManifestName, err)
-	}
-
-	return digest, nil
+	return data, sha256Content(data), nil
 }
 
 // isWithinWorktreeRoot checks that the resolved path is within the worktree
@@ -312,27 +288,6 @@ func BuildManifest(entries []ManifestEntry) *LaunchManifest {
 	}
 }
 
-// ManifestEntryForFile builds a ManifestEntry for a file at the given canonical
-// slash-format relative path, rejecting native separators, absolute aliases,
-// volume-qualified forms, and traversal before native-path conversion. It
-// computes the file's SHA-256 digest relative to worktreeRoot.
-func ManifestEntryForFile(worktreeRoot, relPath string, policy DisposalPolicy) (ManifestEntry, error) {
-	if err := validateManifestPath(relPath); err != nil {
-		return ManifestEntry{}, fmt.Errorf("unsafe manifest path: %w", err)
-	}
-
-	fullPath := filepath.Join(worktreeRoot, relPath)
-	data, err := os.ReadFile(fullPath)
-	if err != nil {
-		return ManifestEntry{}, fmt.Errorf("reading %s for manifest: %w", relPath, err)
-	}
-	return ManifestEntry{
-		Path:   relPath,
-		SHA256: sha256Content(data),
-		Policy: policy,
-	}, nil
-}
-
 // isTrackedByGit returns true when the given file (relative to worktreeRoot)
 // is tracked by git (staged or committed).
 func isTrackedByGit(worktreeRoot, relPath string) bool {
@@ -431,15 +386,36 @@ func verifyManifestFile(worktreeRoot string) error {
 }
 
 // VerifyLaunchArtifacts performs a comprehensive check of all launch artifacts
-// against the manifest. It:
-//  1. Verifies the manifest file itself is safe and untracked.
-//  2. Verifies the manifest digest matches the expected value from metadata.
-//  3. Verifies every manifest entry is safe, untracked, and digest-matching.
-//
-// Returns an error listing every failure, or nil if all checks pass.
-// The expectedManifestSHA parameter must be a 64-character lowercase hex string
-// from the task metadata, anchoring the manifest outside the worktree.
+// against the independently anchored manifest digest. It verifies the manifest
+// file is safe and untracked, compares its exact bytes to the expected digest,
+// then verifies every declared artifact is safe, untracked, and digest-matching.
+// It returns all artifact failures (including their underlying causes), or nil.
+type launchArtifactVerificationError struct {
+	failures []error
+}
+
+func (e *launchArtifactVerificationError) Error() string {
+	messages := make([]string, len(e.failures))
+	for i, failure := range e.failures {
+		messages[i] = failure.Error()
+	}
+	return fmt.Sprintf("launch artifact verification failed:\n  %s", strings.Join(messages, "\n  "))
+}
+
+func (e *launchArtifactVerificationError) Unwrap() []error { return e.failures }
+
+func artifactVerificationFailures(err error) []error {
+	var verification *launchArtifactVerificationError
+	if errors.As(err, &verification) {
+		return verification.failures
+	}
+	return nil
+}
+
 func VerifyLaunchArtifacts(worktreePath, expectedManifestSHA string) error {
+	if _, err := os.Stat(worktreePath); err != nil {
+		return fmt.Errorf("checking worktree %s: %w", worktreePath, err)
+	}
 	if expectedManifestSHA == "" || !sha256Regex.MatchString(expectedManifestSHA) {
 		return fmt.Errorf("invalid expected manifest SHA-256: %q", expectedManifestSHA)
 	}
@@ -467,15 +443,15 @@ func VerifyLaunchArtifacts(worktreePath, expectedManifestSHA string) error {
 	}
 
 	// Verify each manifest entry.
-	var failures []string
+	var failures []error
 	for _, entry := range manifest.Artifacts {
 		if err := verifyManifestEntry(worktreePath, &entry); err != nil {
-			failures = append(failures, err.Error())
+			failures = append(failures, err)
 		}
 	}
 
 	if len(failures) > 0 {
-		return fmt.Errorf("launch artifact verification failed:\n  %s", strings.Join(failures, "\n  "))
+		return &launchArtifactVerificationError{failures: failures}
 	}
 
 	return nil

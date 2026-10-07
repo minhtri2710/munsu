@@ -349,7 +349,7 @@ func TestGuardReleaseHoldRefusesUnsafeHoldID(t *testing.T) {
 // --- canonical_launch.go: the launch chain -------------------------------
 
 // launchToWorking drives one task through the full launch chain — intent,
-// worktree, acquired endpoint, launch evidence, bind — and leaves it working.
+// worktree, manifest anchor, acquired endpoint, launch evidence, bind — and leaves it working.
 // It returns the committed intent and the working revision.
 func launchToWorking(t *testing.T, c *Canonical, taskID string) (CanonicalBeginSpawnRequest, uint64) {
 	t.Helper()
@@ -363,6 +363,8 @@ func launchToWorking(t *testing.T, c *Canonical, taskID string) (CanonicalBeginS
 	if _, err := c.BindWorktree(mustOperation(t, "op-l2w-bindwt-"+taskID, bw), bw); err != nil {
 		t.Fatalf("BindWorktree(%s): %v", taskID, err)
 	}
+	rev++
+	mustRecordLaunchManifest(t, c, taskID, intent, bw.Binding, rev)
 	rev++
 
 	attach := attachRequest(c, taskID, preconditionOf(1, rev), intent, "handle-"+taskID)
@@ -465,6 +467,14 @@ func TestGuardRecordLaunchRefusesUnusableEvidenceShape(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
 	mustCreate(t, c, "t1")
 	intent, rev := mustBeginSpawn(t, c, "t1", preconditionOf(1, 1))
+	binding := launchWorktreeBinding(intent)
+	bind := CanonicalBindWorktreeRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, rev), Binding: binding, Reason: "bind worktree"}
+	if _, err := c.BindWorktree(mustOperation(t, "op-record-wt", bind), bind); err != nil {
+		t.Fatalf("BindWorktree: %v", err)
+	}
+	rev++
+	mustRecordLaunchManifest(t, c, "t1", intent, binding, rev)
+	rev++
 	attach := attachRequest(c, "t1", preconditionOf(1, rev), intent, "handle-1")
 	if _, err := c.AttachEndpoint(mustOperation(t, "op-record-attach", attach), attach); err != nil {
 		t.Fatalf("AttachEndpoint: %v", err)

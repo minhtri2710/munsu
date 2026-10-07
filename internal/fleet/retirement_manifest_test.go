@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
@@ -65,26 +66,25 @@ func setupWorktreeWithManifest(t *testing.T, wt, remote string, briefContent []b
 	// Build manifest from actual file digests.
 	entries := []ManifestEntry{}
 	for _, name := range CoreLaunchArtifactNames {
-		entry, err := ManifestEntryForFile(wt, name, DisposalPolicyCleanable)
-		if err != nil {
-			t.Fatalf("manifest entry for %s: %v", name, err)
-		}
-		entries = append(entries, entry)
+		entries = append(entries, manifestEntryForTestFile(t, wt, name, DisposalPolicyCleanable))
 	}
 	manifest := BuildManifest(entries)
-	digest, err := WriteManifest(wt, manifest)
+	data, digest, err := MarshalManifest(manifest)
 	if err != nil {
-		t.Fatalf("writing manifest: %v", err)
+		t.Fatalf("marshaling manifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, ManifestName), data, 0644); err != nil {
+		t.Fatalf("writing manifest fixture: %v", err)
 	}
 	return wt, digest
 }
 
-// metaWithManifest creates a meta map with the given manifest digest.
-func metaWithManifest(wtPath, manifestDigest string) map[string]string {
+// metaWithManifest returns only the worktree and task-kind projections; the
+// independent digest is carried by the explicit WorktreeBinding fixture.
+func metaWithManifest(wtPath string) map[string]string {
 	return map[string]string{
-		"worktree":               wtPath,
-		"kind":                   "ship",
-		"launch_manifest_sha256": manifestDigest,
+		"worktree": wtPath,
+		"kind":     "ship",
 	}
 }
 
@@ -92,9 +92,37 @@ func TestShipSafetyCheck_CanonicalManifest(t *testing.T) {
 	tmp := t.TempDir()
 	wt, md := setupWorktreeWithManifest(t, filepath.Join(tmp, "worktree"), filepath.Join(tmp, "remote.git"), nil)
 
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt, md), fakeTeardown{}, nil)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt), fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
 	if err != nil {
 		t.Fatalf("canonical manifest should pass: %v", err)
+	}
+}
+
+func TestShipSafetyCheckUsesCanonicalPathAndDigest(t *testing.T) {
+	tmp := t.TempDir()
+	wt, digest := setupWorktreeWithManifest(t, filepath.Join(tmp, "worktree"), filepath.Join(tmp, "remote.git"), nil)
+	binding := &taskauthority.WorktreeBinding{
+		Path: wt,
+		LaunchManifest: &taskauthority.LaunchManifestEvidence{
+			LaunchID: "launch-test", ManifestSHA256: digest,
+		},
+	}
+	meta := map[string]string{
+		"worktree": filepath.Join(tmp, "projection-only-path"),
+		"kind":     "ship",
+	}
+	if _, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{}, nil, binding, false); err != nil {
+		t.Fatalf("canonical path and digest should override projections: %v", err)
+	}
+}
+
+func TestShipSafetyCheckRefusesMissingCanonicalManifestEvidence(t *testing.T) {
+	tmp := t.TempDir()
+	wt, _ := setupWorktreeWithManifest(t, filepath.Join(tmp, "worktree"), filepath.Join(tmp, "remote.git"), nil)
+	meta := metaWithManifest(wt)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{}, nil, &taskauthority.WorktreeBinding{Path: wt}, false)
+	if err == nil || !strings.Contains(err.Error(), "no canonical launch manifest evidence") {
+		t.Fatalf("error = %v, want missing canonical manifest refusal", err)
 	}
 }
 
@@ -106,7 +134,7 @@ func TestShipSafetyCheck_ModifiedManifestArtifact(t *testing.T) {
 	modifiedBrief := []byte("# Task: modified\n\nMODIFIED brief.\n")
 	os.WriteFile(filepath.Join(wt, BriefName), modifiedBrief, 0644)
 
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt, md), fakeTeardown{}, nil)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt), fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
 	if err == nil {
 		t.Fatal("modified manifest artifact should block")
 	}
@@ -147,7 +175,7 @@ func TestShipSafetyCheck_TrackedFileBlocks(t *testing.T) {
 	// Now modify the tracked file.
 	os.WriteFile(filepath.Join(wt, "tracked.go"), []byte("package main\n\nfunc main() {}\n"), 0644)
 
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt, md), fakeTeardown{}, nil)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt), fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
 	if err == nil {
 		t.Fatal("tracked modified file should block")
 	}
@@ -163,7 +191,7 @@ func TestShipSafetyCheck_UnlistedFileBlocks(t *testing.T) {
 	// Write an untracked file not in the manifest.
 	os.WriteFile(filepath.Join(wt, "rogue.txt"), []byte("not a launch artifact\n"), 0644)
 
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt, md), fakeTeardown{}, nil)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt), fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
 	if err == nil {
 		t.Fatal("unlisted untracked file should block")
 	}
@@ -179,7 +207,7 @@ func TestShipSafetyCheck_MissingManifestBlocks(t *testing.T) {
 	// Remove the manifest file.
 	os.Remove(filepath.Join(wt, ManifestName))
 
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt, md), fakeTeardown{}, nil)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt), fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
 	if err == nil {
 		t.Fatal("missing manifest should block")
 	}
@@ -195,7 +223,7 @@ func TestShipSafetyCheck_CorruptManifestBlocks(t *testing.T) {
 	// Corrupt the manifest file.
 	os.WriteFile(filepath.Join(wt, ManifestName), []byte("{invalid json}"), 0644)
 
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt, md), fakeTeardown{}, nil)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt), fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
 	if err == nil {
 		t.Fatal("corrupt manifest should block")
 	}
@@ -212,7 +240,7 @@ func TestShipSafetyCheck_UnknownManifestVersionBlocks(t *testing.T) {
 	content := `{"manifest_version":"soldier-manifest-v99","artifacts":[]}`
 	os.WriteFile(filepath.Join(wt, ManifestName), []byte(content), 0644)
 
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt, md), fakeTeardown{}, nil)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt), fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
 	if err == nil {
 		t.Fatal("unknown manifest version should block")
 	}
@@ -228,7 +256,7 @@ func TestShipSafetyCheck_WrongManifestDigestBlocks(t *testing.T) {
 	// Use a wrong expected manifest digest in meta.
 	wrongDigest := "0000000000000000000000000000000000000000000000000000000000000000"
 
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt, wrongDigest), fakeTeardown{}, nil)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt), fakeTeardown{}, nil, testWorktreeBinding(wt, wrongDigest), false)
 	if err == nil {
 		t.Fatal("wrong manifest digest should block")
 	}
@@ -244,7 +272,7 @@ func TestShipSafetyCheck_IgnoredDigestMatch(t *testing.T) {
 	// The manifest entry files are in .gitignore, so they're "ignored" by git.
 	// VerifyLaunchArtifacts checks them directly (not through porcelain).
 	// This test ensures the canonical case works when files are in .gitignore.
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt, md), fakeTeardown{}, nil)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt), fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
 	if err != nil {
 		t.Fatalf("ignored digest-match artifacts should pass: %v", err)
 	}
@@ -259,7 +287,7 @@ func TestShipSafetyCheck_IgnoredDigestMismatch(t *testing.T) {
 	// checks it directly.
 	os.WriteFile(filepath.Join(wt, BriefName), []byte("modified ignored content"), 0644)
 
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt, md), fakeTeardown{}, nil)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt), fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
 	if err == nil {
 		t.Fatal("ignored digest-mismatch artifact should block")
 	}
@@ -290,7 +318,7 @@ func TestShipSafetyCheck_ManifestTrackedBlocks(t *testing.T) {
 		t.Fatalf("git commit: %s", out)
 	}
 
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt, md), fakeTeardown{}, nil)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt), fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
 	if err == nil {
 		t.Fatal("tracked manifest should block")
 	}
@@ -311,7 +339,7 @@ func TestShipSafetyCheck_ManifestModifiedBlocks(t *testing.T) {
 	modifiedData = strings.Replace(modifiedData, "\"sha256\": \"", "\"sha256\": \"00", 1) // change digest
 	os.WriteFile(filepath.Join(wt, ManifestName), []byte(modifiedData), 0644)
 
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt, md), fakeTeardown{}, nil)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt), fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
 	if err == nil {
 		t.Fatal("modified manifest should block")
 	}
@@ -324,9 +352,12 @@ func TestShipSafetyCheck_EmptyExpectedManifestSHA(t *testing.T) {
 	tmp := t.TempDir()
 	wt, _ := setupWorktreeWithManifest(t, filepath.Join(tmp, "worktree"), filepath.Join(tmp, "remote.git"), nil)
 
-	// An empty anchor is a refusal: there is nothing outside the worktree left
+	// An empty canonical anchor is a refusal: there is nothing outside the worktree left
 	// to verify the manifest against.
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt, ""), fakeTeardown{}, nil)
+	binding := &taskauthority.WorktreeBinding{Path: wt, LaunchManifest: &taskauthority.LaunchManifestEvidence{
+		OperationID: "manifest-op", LaunchID: "launch-test", ManifestSHA256: "", RecordedAt: 1,
+	}}
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt), fakeTeardown{}, nil, binding, false)
 	if err == nil {
 		t.Fatal("empty manifest SHA should block")
 	}
@@ -339,17 +370,16 @@ func TestShipSafetyCheck_NoLaunchManifestSHAInMeta(t *testing.T) {
 	tmp := t.TempDir()
 	wt, _ := setupWorktreeWithManifest(t, filepath.Join(tmp, "worktree"), filepath.Join(tmp, "remote.git"), nil)
 
-	// Meta without launch_manifest_sha256 is the reachable state left by
-	// spawn_runner.go when manifestSHA256 is empty. It must block.
+	// Projection metadata without canonical launch-manifest evidence must block.
 	meta := map[string]string{
 		"worktree": wt,
 		"kind":     "ship",
 	}
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{}, nil)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{}, nil, &taskauthority.WorktreeBinding{Path: wt}, false)
 	if err == nil {
 		t.Fatal("missing manifest SHA should block")
 	}
-	if !strings.Contains(err.Error(), "invalid expected manifest SHA-256") {
+	if !strings.Contains(err.Error(), "no canonical launch manifest evidence") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
@@ -362,28 +392,26 @@ func rewriteManifestFromWorktree(t *testing.T, wt string) string {
 	t.Helper()
 	entries := []ManifestEntry{}
 	for _, name := range CoreLaunchArtifactNames {
-		entry, err := ManifestEntryForFile(wt, name, DisposalPolicyCleanable)
-		if err != nil {
-			t.Fatalf("manifest entry for %s: %v", name, err)
-		}
-		entries = append(entries, entry)
+		entries = append(entries, manifestEntryForTestFile(t, wt, name, DisposalPolicyCleanable))
 	}
 	manifest := BuildManifest(entries)
-	digest, err := WriteManifest(wt, manifest)
+	data, digest, err := MarshalManifest(manifest)
 	if err != nil {
-		t.Fatalf("writing manifest: %v", err)
+		t.Fatalf("marshaling manifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, ManifestName), data, 0644); err != nil {
+		t.Fatalf("writing manifest fixture: %v", err)
 	}
 	return digest
 }
 
 // TestShipSafetyCheck_MissingAnchorTamperedCharterBlocks pins the whole point
-// of anchoring the manifest digest outside the worktree: with no anchor in
-// meta, a charter edit plus a refreshed manifest is internally consistent, so
-// any expectation derived from the worktree accepts it. The check must refuse
-// instead of re-deriving what it is supposed to verify.
+// of anchoring the manifest digest outside the worktree: a charter edit plus
+// a refreshed manifest is internally consistent, so only the original
+// independent canonical digest exposes the tampering.
 func TestShipSafetyCheck_MissingAnchorTamperedCharterBlocks(t *testing.T) {
 	tmp := t.TempDir()
-	wt, _ := setupWorktreeWithManifest(t, filepath.Join(tmp, "worktree"), filepath.Join(tmp, "remote.git"), nil)
+	wt, originalDigest := setupWorktreeWithManifest(t, filepath.Join(tmp, "worktree"), filepath.Join(tmp, "remote.git"), nil)
 
 	// Tamper one byte of the charter, then refresh the manifest so the
 	// worktree is self-consistent again.
@@ -399,17 +427,17 @@ func TestShipSafetyCheck_MissingAnchorTamperedCharterBlocks(t *testing.T) {
 	}
 	rewriteManifestFromWorktree(t, wt)
 
-	// Meta carries no anchor — exactly the state spawn_runner.go leaves when
-	// manifestSHA256 is empty.
-	meta := map[string]string{
-		"worktree": wt,
-		"kind":     "ship",
-	}
-	_, err = shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{}, nil)
+	// The canonical binding keeps the original digest, independent of the
+	// refreshed manifest and projection values.
+	meta := map[string]string{"worktree": wt, "kind": "ship"}
+	binding := &taskauthority.WorktreeBinding{Path: wt, LaunchManifest: &taskauthority.LaunchManifestEvidence{
+		OperationID: "manifest-op", LaunchID: "launch-test", ManifestSHA256: originalDigest, RecordedAt: 1,
+	}}
+	_, err = shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{}, nil, binding, false)
 	if err == nil {
-		t.Fatal("tampered charter with a refreshed manifest and no anchor should block")
+		t.Fatal("tampered charter with a refreshed manifest should disagree with the canonical anchor")
 	}
-	if !strings.Contains(err.Error(), "launch artifact verification failed") {
+	if !strings.Contains(err.Error(), "manifest SHA-256 digest mismatch") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
@@ -440,7 +468,7 @@ func TestShipSafetyCheck_CommittedSoldierWorkPasses(t *testing.T) {
 		}
 	}
 
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt, md), fakeTeardown{}, nil)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt), fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
 	if err != nil {
 		t.Fatalf("committed Soldier work should not block: %v", err)
 	}
@@ -460,7 +488,7 @@ func TestShipSafetyCheck_UnlistedIgnoredFileBlocks(t *testing.T) {
 
 	// The ignored file is not in the manifest. With --ignored=matching, git status
 	// will show it. It should block.
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt, md), fakeTeardown{}, nil)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt), fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
 	if err == nil {
 		t.Fatal("unlisted ignored file should block")
 	}
@@ -469,9 +497,41 @@ func TestShipSafetyCheck_UnlistedIgnoredFileBlocks(t *testing.T) {
 	}
 }
 
-// retireScoutFixture prepares a scout task whose worktree carries canonical
+// retireScoutFixture prepares a ship task whose worktree carries canonical
 // launch artifacts, so a non-Force retirement reaches the pre-return artifact
 // recheck immediately before ReturnWorktree.
+func seedRetirementManifestEvidence(t *testing.T, auth *taskauthority.Canonical, taskID, wtPath, digest string) {
+	t.Helper()
+	wtLease, wtFence, epLease, epFence := spawnReservationIdentities(taskID, 1)
+	id := mustTaskID(t, taskID)
+	begin := taskauthority.CanonicalBeginSpawnRequest{
+		HomeID: auth.HomeID(), TaskID: id, Precondition: domain.Of(1, 1),
+		SnapshotDigest: strings.Repeat("a", 64), Backend: "tmux", Harness: "pi",
+		Model: "gpt-5", Effort: "high", Mode: "direct-PR", Kind: taskauthority.KindShip,
+		Project: "retirement-fixture", ParentTaskID: "general", LaunchID: "launch-" + taskID + "-1",
+		WindowLabel: "window-" + taskID, WorktreeReservationID: wtLease,
+		WorktreeFenceToken: wtFence, EndpointReservationID: epLease,
+		EndpointFenceToken: epFence, EndpointIncarnation: "inc-" + taskID, Reason: "spawn",
+	}
+	if _, err := auth.BeginSpawn(mustFleetOperation(t, "op-begin-manifest-"+taskID, begin), begin); err != nil {
+		t.Fatalf("BeginSpawn: %v", err)
+	}
+	seedWorktreeEvidence(t, auth, taskID, wtPath, wtLease, wtFence)
+	agg, err := auth.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	anchor := taskauthority.CanonicalRecordLaunchManifestRequest{
+		HomeID: auth.HomeID(), TaskID: id,
+		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+		LaunchID:     begin.LaunchID, WorktreeLeaseID: wtLease, WorktreeFenceToken: wtFence,
+		ManifestSHA256: digest, Reason: "retirement fixture",
+	}
+	if _, err := auth.RecordLaunchManifest(mustFleetOperation(t, "op-record-manifest-"+taskID, anchor), anchor); err != nil {
+		t.Fatalf("RecordLaunchManifest: %v", err)
+	}
+}
+
 func retireScoutFixture(t *testing.T, anchor bool) (Options, *taskauthority.Canonical, string) {
 	t.Helper()
 	tmp := t.TempDir()
@@ -480,8 +540,11 @@ func retireScoutFixture(t *testing.T, anchor bool) (Options, *taskauthority.Cano
 	auth := canonicalMergeTestAuth(t, tmp, "scout-manifest")
 
 	wt, md := setupWorktreeWithManifest(t, filepath.Join(tmp, "worktree"), filepath.Join(tmp, "remote.git"), nil)
-	seedWorktreeEvidence(t, auth, "scout-manifest", wt, "lease-wt", "fence-wt")
-	seedEndpointEvidence(t, auth, "scout-manifest", "@1", "lease-ep", "fence-ep")
+	if anchor {
+		seedRetirementManifestEvidence(t, auth, "scout-manifest", wt, md)
+	} else {
+		seedWorktreeEvidence(t, auth, "scout-manifest", wt, "lease-wt", "fence-wt")
+	}
 
 	dataDir := filepath.Join(tmp, "data", "scout-manifest")
 	os.MkdirAll(dataDir, 0755)
@@ -489,10 +552,7 @@ func retireScoutFixture(t *testing.T, anchor bool) (Options, *taskauthority.Cano
 
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
-	meta := "kind=scout\nbackend=tmux\nwindow=@1\nworktree=" + wt + "\n"
-	if anchor {
-		meta += "launch_manifest_sha256=" + md + "\n"
-	}
+	meta := "kind=" + taskauthority.KindShip + "\nworktree=" + wt + "\n"
 	os.WriteFile(filepath.Join(stateDir, "scout-manifest.meta"), []byte(meta), 0644)
 
 	return Options{HomeDir: tmp, ID: "scout-manifest", Force: false}, auth, wt
@@ -519,9 +579,8 @@ func TestRetire_IntactWorktreeReturnedToPool(t *testing.T) {
 	}
 }
 
-// TestRetire_MissingAnchorBlocksWorktreeReturn pins the second call site: the
-// pre-return recheck refuses a missing anchor instead of deriving one from the
-// worktree, so cleanup stays pending and the worktree is not returned.
+// TestRetire_MissingAnchorBlocksWorktreeReturn proves missing canonical evidence
+// refuses before retirement commits or cleanup can release the worktree.
 func TestRetire_MissingAnchorBlocksWorktreeReturn(t *testing.T) {
 	opts, auth, _ := retireScoutFixture(t, false)
 
@@ -529,12 +588,21 @@ func TestRetire_MissingAnchorBlocksWorktreeReturn(t *testing.T) {
 	if err == nil {
 		t.Fatal("missing anchor should leave cleanup pending")
 	}
-	if !strings.Contains(err.Error(), "pre-return artifact verification failed") {
+	if !strings.Contains(err.Error(), "no canonical launch manifest evidence") {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	for _, s := range res.Steps {
-		if s == "worktree returned to pool" {
-			t.Fatal("worktree must not be returned when the anchor is missing")
+	agg, getErr := auth.Get(mustTaskID(t, opts.ID))
+	if getErr != nil {
+		t.Fatal(getErr)
+	}
+	if agg.Phase != taskauthority.PhaseQueued || agg.CleanupClaim != nil {
+		t.Fatalf("missing anchor mutated task before refusal: phase=%q claim=%+v", agg.Phase, agg.CleanupClaim)
+	}
+	if res != nil {
+		for _, s := range res.Steps {
+			if s == "worktree returned to pool" {
+				t.Fatal("worktree must not be returned when the anchor is missing")
+			}
 		}
 	}
 }
