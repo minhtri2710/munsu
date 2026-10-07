@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -326,15 +327,20 @@ type LaunchArtifactInput struct {
 // the guard exists but the process cannot prove readiness, recovery fails
 // closed instead of launching another process. An existing script whose
 // content differs fails closed (identity mismatch, never overwritten).
-func buildLaunchArtifact(in LaunchArtifactInput) (LaunchArtifact, error) {
+type preparedLaunchArtifact struct {
+	artifact LaunchArtifact
+	bytes    []byte
+}
+
+func prepareLaunchArtifact(in LaunchArtifactInput, createProjectSettings bool) (preparedLaunchArtifact, error) {
 	if in.LaunchBin == "" || len(in.LaunchArgs) == 0 {
-		return LaunchArtifact{}, fmt.Errorf("soldier launch: no prompt-arg launch command; harness does not support prompt-arg delivery")
+		return preparedLaunchArtifact{}, fmt.Errorf("soldier launch: no prompt-arg launch command; harness does not support prompt-arg delivery")
 	}
 	if in.LaunchID == "" || in.Generation == "" || in.EndpointFence == "" {
-		return LaunchArtifact{}, fmt.Errorf("soldier launch: re-entrant launch guard requires the exact launch identity (launch id, generation, fence)")
+		return preparedLaunchArtifact{}, fmt.Errorf("soldier launch: re-entrant launch guard requires the exact launch identity (launch id, generation, fence)")
 	}
 	if in.LaunchDir == "" {
-		return LaunchArtifact{}, fmt.Errorf("soldier launch: launch directory is required")
+		return preparedLaunchArtifact{}, fmt.Errorf("soldier launch: launch directory is required")
 	}
 	guardName := fmt.Sprintf(".soldier-launch-guard-%s-%s", labelComponent(in.TaskID), in.Generation)
 	guardIdentity := in.LaunchID + "|" + in.Generation + "|" + in.EndpointFence
@@ -372,13 +378,18 @@ func buildLaunchArtifact(in LaunchArtifactInput) (LaunchArtifact, error) {
 	// launch closed. munsu's own git strips this path back off (git-guard).
 	shimDir, err := provisionGitShim(in.HomeDir)
 	if err != nil {
-		return LaunchArtifact{}, err
+		return preparedLaunchArtifact{}, err
 	}
 	posture := harness.PostureOf(in.LaunchBin, in.LaunchArgs)
 	if in.LaunchBin == harness.Pi {
-		piAgentDir, err := provisionPiSkillBlock(in.HomeDir, in.TaskID, in.WorktreePath, in.Review == nil)
+		var piAgentDir string
+		if createProjectSettings {
+			piAgentDir, err = provisionPiSkillBlock(in.HomeDir, in.TaskID, in.WorktreePath, in.Review == nil)
+		} else {
+			piAgentDir, err = provisionPiSkillAgentDir(in.HomeDir, in.TaskID, in.WorktreePath)
+		}
 		if err != nil {
-			return LaunchArtifact{}, err
+			return preparedLaunchArtifact{}, err
 		}
 		b.WriteString("export PI_CODING_AGENT_DIR=")
 		b.WriteString(shQuote(piAgentDir))
@@ -417,7 +428,7 @@ func buildLaunchArtifact(in LaunchArtifactInput) (LaunchArtifact, error) {
 	argv := append([]string{in.LaunchBin}, in.LaunchArgs...)
 	if in.Fence != nil {
 		if argv, err = in.Fence.Wrap(argv); err != nil {
-			return LaunchArtifact{}, fmt.Errorf("soldier launch: %w", err)
+			return preparedLaunchArtifact{}, fmt.Errorf("soldier launch: %w", err)
 		}
 	}
 	b.WriteString("exec")
@@ -426,21 +437,49 @@ func buildLaunchArtifact(in LaunchArtifactInput) (LaunchArtifact, error) {
 		b.WriteString(shQuote(arg))
 	}
 	b.WriteString("\n")
-	content := b.String()
-
+	content := []byte(b.String())
 	scriptPath := filepath.Join(in.LaunchDir, LaunchScriptName)
-	if existing, err := os.ReadFile(scriptPath); err == nil {
-		if string(existing) != content {
-			return LaunchArtifact{}, fmt.Errorf("launch artifact %s already exists with different content; identity mismatch, refuse to overwrite", scriptPath)
-		}
-	} else if !os.IsNotExist(err) {
-		return LaunchArtifact{}, fmt.Errorf("reading existing launch artifact: %w", err)
-	}
-	if err := os.WriteFile(scriptPath, []byte(content), 0755); err != nil {
-		return LaunchArtifact{}, fmt.Errorf("writing launch script: %w", err)
-	}
 	command := "bash " + shQuote(scriptPath)
-	return LaunchArtifact{ScriptPath: scriptPath, Command: command, CommandDigest: sha256Content([]byte(command)), GuardName: guardName, GuardIdentity: guardIdentity, Posture: posture}, nil
+	return preparedLaunchArtifact{
+		artifact: LaunchArtifact{ScriptPath: scriptPath, Command: command, CommandDigest: sha256Content([]byte(command)), GuardName: guardName, GuardIdentity: guardIdentity, Posture: posture},
+		bytes:    content,
+	}, nil
+}
+
+func publishPreparedFile(path string, want []byte, perm os.FileMode) error {
+	existing, err := os.ReadFile(path)
+	if err == nil {
+		if !bytes.Equal(existing, want) {
+			return fmt.Errorf("launch artifact %s already exists with different content; refuse to overwrite", path)
+		}
+		return nil
+	}
+	if !os.IsNotExist(err) {
+		return fmt.Errorf("reading existing launch artifact %s: %w", path, err)
+	}
+	if err := home.AtomicCreate(path, want, perm); err != nil {
+		return fmt.Errorf("creating launch artifact %s: %w", path, err)
+	}
+	return nil
+}
+
+func buildLaunchArtifact(in LaunchArtifactInput) (LaunchArtifact, error) {
+	prepared, err := prepareLaunchArtifact(in, true)
+	if err != nil {
+		return LaunchArtifact{}, err
+	}
+	if err := publishPreparedFile(prepared.artifact.ScriptPath, prepared.bytes, 0o755); err != nil {
+		return LaunchArtifact{}, err
+	}
+	return prepared.artifact, nil
+}
+
+func prepareLaunchScript(in LaunchArtifactInput) (LaunchArtifact, []byte, error) {
+	prepared, err := prepareLaunchArtifact(in, false)
+	if err != nil {
+		return LaunchArtifact{}, nil, err
+	}
+	return prepared.artifact, prepared.bytes, nil
 }
 
 // piAgentDirPath is the per-task pi agent dir under the home's state/: the
@@ -462,6 +501,17 @@ func piAgentDirPath(homeDir, taskID string) (string, error) {
 // changing the project's file. A reviewer's checkout is never written
 // (writeSettings false): its settings file must already be the identical block.
 func provisionPiSkillBlock(homeDir, taskID, worktreePath string, writeSettings bool) (string, error) {
+	if writeSettings {
+		if err := writePiProjectSettings(worktreePath, true); err != nil {
+			return "", err
+		}
+	} else if err := writePiProjectSettings(worktreePath, false); err != nil {
+		return "", err
+	}
+	return provisionPiSkillAgentDir(homeDir, taskID, worktreePath)
+}
+
+func provisionPiSkillAgentDir(homeDir, taskID, worktreePath string) (string, error) {
 	stateDir := home.StateDir(homeDir)
 	dst, err := piAgentDirPath(homeDir, taskID)
 	if err != nil {
@@ -471,8 +521,15 @@ func provisionPiSkillBlock(homeDir, taskID, worktreePath string, writeSettings b
 	if err != nil {
 		return "", fmt.Errorf("soldier launch: %w", err)
 	}
-	if err := writePiProjectSettings(worktreePath, writeSettings); err != nil {
-		return "", err
+	if err := writePiProjectSettings(worktreePath, false); err != nil {
+		// The prepared settings are not published yet; only validate an existing
+		// file here. The absence is accepted because create-only persistence runs
+		// after the canonical digest anchor.
+		if _, statErr := os.Lstat(filepath.Join(worktreePath, filepath.FromSlash(PiSettingsName))); statErr == nil {
+			return "", err
+		} else if !os.IsNotExist(statErr) {
+			return "", statErr
+		}
 	}
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		return "", fmt.Errorf("soldier launch: %w", err)
@@ -486,8 +543,11 @@ func provisionPiSkillBlock(homeDir, taskID, worktreePath string, writeSettings b
 // writePiProjectSettings writes the worktree's .pi/settings.json skill block.
 // Re-entry of the same launch finds its own identical, untracked file and keeps
 // it. With create false it never writes: an absent file is refused.
-func writePiProjectSettings(worktreePath string, create bool) error {
-	want := harness.PiProjectSettings()
+func piProjectSettingsBytes() []byte {
+	return harness.PiProjectSettings()
+}
+
+func ensurePiProjectSettings(worktreePath string, want []byte, create bool) error {
 	path := filepath.Join(worktreePath, filepath.FromSlash(PiSettingsName))
 	refuse := fmt.Errorf("soldier launch: worktree has %s; the orchestration skill block cannot be expressed without changing the project's file", path)
 	if isTrackedByGit(worktreePath, PiSettingsName) {
@@ -515,10 +575,14 @@ func writePiProjectSettings(worktreePath string, create bool) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("soldier launch: %w", err)
 	}
-	if err := atomicWriteFile(path, want, 0o644); err != nil {
+	if err := home.AtomicCreate(path, want, 0o644); err != nil {
 		return fmt.Errorf("soldier launch: writing %s: %w", path, err)
 	}
 	return nil
+}
+
+func writePiProjectSettings(worktreePath string, create bool) error {
+	return ensurePiProjectSettings(worktreePath, piProjectSettingsBytes(), create)
 }
 
 // soldierExcludeContent is the excludes file content of a soldier worktree:
@@ -534,33 +598,87 @@ func soldierExcludeContent(harnessName string) string {
 	return content
 }
 
-// PersistLaunchFiles writes all durable launch files to the launch directory:
-// .soldier-charter.md, .soldier-brief.md, .soldier-envelope.json, and .soldier-prompt.md.
-// Returns an error if any write fails.
+type preparedLaunchFiles struct {
+	files    map[string][]byte
+	names    []string
+	manifest []byte
+	digest   string
+}
+
+func prepareLaunchFiles(charter string, briefContent []byte, env *LaunchEnvelope, promptText string, launchScript []byte, harnessName string) (preparedLaunchFiles, error) {
+	envelope, err := MarshalEnvelope(env)
+	if err != nil {
+		return preparedLaunchFiles{}, err
+	}
+	files := map[string][]byte{
+		CharterName:  []byte(charter),
+		BriefName:    append([]byte(nil), briefContent...),
+		EnvelopeName: envelope,
+		PromptName:   []byte(promptText),
+	}
+	if launchScript != nil {
+		files[LaunchScriptName] = append([]byte(nil), launchScript...)
+	}
+	names := []string{CharterName, BriefName, EnvelopeName, PromptName}
+	if launchScript != nil {
+		names = append(names, LaunchScriptName)
+	}
+	if adapter, ok := harness.GetAdapter(harnessName); ok && launchScript != nil {
+		for _, name := range adapter.SoldierLaunch.WorktreeFiles {
+			if name != PiSettingsName {
+				return preparedLaunchFiles{}, fmt.Errorf("unsupported prepared launch file %q", name)
+			}
+			files[name] = piProjectSettingsBytes()
+			names = append(names, name)
+		}
+	}
+	if launchScript == nil {
+		return preparedLaunchFiles{files: files, names: names}, nil
+	}
+	entries := make([]ManifestEntry, 0, len(names))
+	for _, name := range names {
+		entries = append(entries, ManifestEntry{Path: name, SHA256: sha256Content(files[name]), Policy: DisposalPolicyCleanable})
+	}
+	manifestBytes, digest, err := MarshalManifest(BuildManifest(entries))
+	if err != nil {
+		return preparedLaunchFiles{}, err
+	}
+	return preparedLaunchFiles{files: files, names: names, manifest: manifestBytes, digest: digest}, nil
+}
+
+func persistPreparedLaunchFiles(worktreePath string, prepared preparedLaunchFiles) error {
+	for _, name := range prepared.names {
+		path := filepath.Join(worktreePath, filepath.FromSlash(name))
+		if filepath.Dir(path) != worktreePath {
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				return fmt.Errorf("creating launch artifact directory: %w", err)
+			}
+		}
+		if err := publishPreparedFile(path, prepared.files[name], 0o644); err != nil {
+			return err
+		}
+	}
+	if len(prepared.manifest) > 0 {
+		if err := publishPreparedFile(filepath.Join(worktreePath, ManifestName), prepared.manifest, 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func PersistLaunchFiles(worktreePath string, charter string, briefContent []byte, env *LaunchEnvelope, promptText string) error {
-	// Write charter.
 	if err := writeCharter(worktreePath, charter); err != nil {
 		return err
 	}
-
-	// Write brief.
 	briefPath := filepath.Join(worktreePath, BriefName)
 	if err := os.WriteFile(briefPath, briefContent, 0644); err != nil {
 		return fmt.Errorf("writing %s: %w", BriefName, err)
 	}
-
-	// Write prompt.
 	promptPath := filepath.Join(worktreePath, PromptName)
 	if err := os.WriteFile(promptPath, []byte(promptText), 0644); err != nil {
 		return fmt.Errorf("writing %s: %w", PromptName, err)
 	}
-
-	// Write envelope.
-	if err := WriteEnvelope(worktreePath, env); err != nil {
-		return err
-	}
-
-	return nil
+	return WriteEnvelope(worktreePath, env)
 }
 
 // missingRequiredSkillBinaries returns the names of applicable required skills

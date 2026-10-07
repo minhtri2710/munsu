@@ -321,6 +321,103 @@ func acquiredEndpointSame(e AcquiredEndpoint, req CanonicalAttachEndpointRequest
 		e.TabID == req.TabID && e.Incarnation == req.Incarnation
 }
 
+// CanonicalRecordLaunchManifestRequest anchors the exact serialized manifest
+// for one committed non-review launch before any manifest-covered file or
+// process is published. The request is the typed intent for the operation digest.
+type CanonicalRecordLaunchManifestRequest struct {
+	HomeID             domain.HomeID
+	TaskID             domain.TaskID
+	Precondition       domain.Precondition
+	LaunchID           string
+	WorktreeLeaseID    string
+	WorktreeFenceToken string
+	ManifestSHA256     string
+	Reason             string
+}
+
+func (r CanonicalRecordLaunchManifestRequest) DigestBytes() ([]byte, error) {
+	return json.Marshal(struct {
+		HomeID             string `json:"home_id"`
+		TaskID             string `json:"task_id"`
+		Generation         uint64 `json:"generation"`
+		Revision           uint64 `json:"revision"`
+		LaunchID           string `json:"launch_id"`
+		WorktreeLeaseID    string `json:"worktree_lease_id"`
+		WorktreeFenceToken string `json:"worktree_fence_token"`
+		ManifestSHA256     string `json:"manifest_sha256"`
+		Reason             string `json:"reason,omitempty"`
+	}{r.HomeID.Value(), r.TaskID.Value(), r.Precondition.Generation, r.Precondition.Revision, r.LaunchID, r.WorktreeLeaseID, r.WorktreeFenceToken, r.ManifestSHA256, r.Reason})
+}
+
+func validateRecordLaunchManifestRequest(req CanonicalRecordLaunchManifestRequest) error {
+	if err := req.TaskID.Validate(); err != nil {
+		return err
+	}
+	if err := req.Precondition.Validate(); err != nil {
+		return err
+	}
+	if req.LaunchID == "" || strings.ContainsAny(req.LaunchID, `/\\`) {
+		return validationError("launch manifest evidence requires a deterministic launch identity")
+	}
+	if strings.TrimSpace(req.WorktreeLeaseID) == "" || strings.ContainsAny(req.WorktreeLeaseID, `/\\`) {
+		return validationError("launch manifest evidence requires the worktree lease identity")
+	}
+	if strings.TrimSpace(req.WorktreeFenceToken) == "" || strings.ContainsAny(req.WorktreeFenceToken, `/\\`) {
+		return validationError("launch manifest evidence requires the worktree fence identity")
+	}
+	if !domain.IsSHA256(req.ManifestSHA256) {
+		return validationError("launch manifest evidence digest must be a 64-hex sha256 digest")
+	}
+	return nil
+}
+
+// RecordLaunchManifest commits the independent manifest digest against the
+// exact queued non-review launch and bound worktree before covered files are
+// persisted. It is exact-generation/revision fenced and receipt-idempotent;
+// same evidence replays, while conflicting evidence cannot replace the anchor.
+func (c *Canonical) RecordLaunchManifest(op domain.Operation, req CanonicalRecordLaunchManifestRequest) (Outcome, error) {
+	if err := c.prepare(op, req, req.HomeID); err != nil {
+		return Outcome{}, err
+	}
+	if err := validateRecordLaunchManifestRequest(req); err != nil {
+		return Outcome{}, err
+	}
+	return c.mutateTask(op, req.TaskID, req.Precondition, func(cur Aggregate) (Aggregate, error) {
+		if cur.Definition.Kind == KindReview {
+			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s is a review task; it owns no launch manifest", cur.TaskID, cur.Generation)
+		}
+		if cur.Phase != PhaseQueued {
+			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s is %s, record launch manifest requires queued", cur.TaskID, cur.Generation, cur.Phase)
+		}
+		if cur.Launch == nil {
+			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s has no committed launch intent; record launch manifest requires it", cur.TaskID, cur.Generation)
+		}
+		if cur.Worktree == nil {
+			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s has no bound worktree; record launch manifest requires it", cur.TaskID, cur.Generation)
+		}
+		if req.LaunchID != cur.Launch.LaunchID {
+			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s manifest launch identity %q does not match launch intent %q", cur.TaskID, cur.Generation, req.LaunchID, cur.Launch.LaunchID)
+		}
+		if req.WorktreeLeaseID != cur.Worktree.LeaseID || req.WorktreeFenceToken != cur.Worktree.FenceToken || req.WorktreeLeaseID != cur.Launch.WorktreeReservationID || req.WorktreeFenceToken != cur.Launch.WorktreeFenceToken {
+			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s manifest evidence does not match the bound worktree lease/fence", cur.TaskID, cur.Generation)
+		}
+		if cur.Worktree.LaunchManifest != nil {
+			evidence := cur.Worktree.LaunchManifest
+			if evidence.LaunchID == req.LaunchID && evidence.ManifestSHA256 == req.ManifestSHA256 {
+				return cur.clone(), nil
+			}
+			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s already records different launch manifest evidence", cur.TaskID, cur.Generation)
+		}
+		next := cur.clone()
+		next.Worktree.LaunchManifest = &LaunchManifestEvidence{
+			OperationID: op.ID.Value(), LaunchID: req.LaunchID,
+			ManifestSHA256: req.ManifestSHA256, RecordedAt: c.now().UnixNano(),
+		}
+		next.Revision++
+		return next, nil
+	})
+}
+
 // CanonicalRecordLaunchRequest records the successful launch submission
 // evidence for a launch before the final BindEndpoint. The request is the
 // typed intent for the operation digest.
@@ -400,6 +497,9 @@ func (c *Canonical) RecordLaunch(op domain.Operation, req CanonicalRecordLaunchR
 		}
 		if cur.AcquiredEndpoint == nil {
 			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s has no recorded acquired endpoint; launch evidence requires the acquired endpoint", cur.TaskID, cur.Generation)
+		}
+		if cur.Definition.Kind != KindReview && (cur.Worktree == nil || cur.Worktree.LaunchManifest == nil || cur.Worktree.LaunchManifest.LaunchID != cur.Launch.LaunchID) {
+			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s has no matching canonical launch manifest evidence", cur.TaskID, cur.Generation)
 		}
 		if req.LaunchID != cur.Launch.LaunchID {
 			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s launch evidence identity %q does not match launch intent identity %q", cur.TaskID, cur.Generation, req.LaunchID, cur.Launch.LaunchID)

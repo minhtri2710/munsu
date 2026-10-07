@@ -15,18 +15,9 @@ import (
 // E2E contract: full soldier launch prompt => charter + brief + envelope + report identity
 // =============================================================================
 
-// writeLaunchManifestForTest stands in the launch script production's
-// submitLaunch would have written, then calls the production writer itself for
-// the manifest. It returns the manifest digest — the value production stores
-// outside the worktree as the launch_manifest_sha256 anchor.
-//
-// The manifest is deliberately NOT rebuilt here. A second copy of the entry
-// list and the migration policy would be a mirror of Runner.writeLaunchManifest
-// with nothing binding the two: an entry added or a policy dropped on the
-// production side would leave these tests asserting a manifest shape no soldier
-// is ever launched with, and green (BEO-95, BEO-70). Only r.wtPath and r.harness are read and
-// only r.manifestSHA256 is written by that phase, so a bare Runner is the whole
-// fixture it needs.
+// writeLaunchManifestForTest prepares and writes canonical manifest bytes for
+// artifact verification tests. Production anchors the same bytes through Task
+// Authority before publication.
 func writeLaunchManifestForTest(t *testing.T, worktreePath string) string {
 	t.Helper()
 	script := "#!/usr/bin/env bash\nexec true\n"
@@ -34,11 +25,18 @@ func writeLaunchManifestForTest(t *testing.T, worktreePath string) string {
 		t.Fatal(err)
 	}
 	writePiSettingsFixture(t, worktreePath)
-	r := &Runner{wtPath: worktreePath, harness: harness.Pi}
-	if err := r.writeLaunchManifest(); err != nil {
-		t.Fatalf("writing launch manifest: %v", err)
+	entries := make([]ManifestEntry, 0, len(launchManifestNames(harness.Pi)))
+	for _, name := range launchManifestNames(harness.Pi) {
+		entries = append(entries, manifestEntryForTestFile(t, worktreePath, name, DisposalPolicyCleanable))
 	}
-	return r.manifestSHA256
+	manifestBytes, digest, err := MarshalManifest(BuildManifest(entries))
+	if err != nil {
+		t.Fatalf("marshaling launch manifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, ManifestName), manifestBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return digest
 }
 
 func TestE2E_SoldierFullPrompt(t *testing.T) {

@@ -33,6 +33,7 @@ func TestLaunchRecoveryCrashBoundariesNoDuplicates(t *testing.T) {
 		{"contract", false},        // after the durable delivery contract record
 		{"acquire", false},         // after worktree acquisition, before bind
 		{"bind-worktree", false},   // after worktree bind
+		{"manifest", false},        // after canonical anchor and artifact publication
 		{"create-session", false},  /* after endpoint create */
 		{"attach-endpoint", false}, // after durable attach
 		{"submit", false},          // after launch submit
@@ -49,6 +50,17 @@ func TestLaunchRecoveryCrashBoundariesNoDuplicates(t *testing.T) {
 			}
 			first := f.aggregate()
 			firstPath := f.runner.wtPath
+			if b.crashAfter == "manifest" {
+				if first.Worktree == nil || first.Worktree.LaunchManifest == nil || first.AcquiredEndpoint != nil || first.LaunchEvidence != nil {
+					t.Fatalf("manifest boundary aggregate = %+v, want canonical anchor before endpoint acquisition/submission", first)
+				}
+				if f.endpoints.createCount() != 0 || f.endpoints.submitCount() != 0 {
+					t.Fatalf("endpoint activity before manifest boundary: creates=%d submits=%d", f.endpoints.createCount(), f.endpoints.submitCount())
+				}
+				if err := VerifyLaunchArtifacts(first.Worktree.Path, first.Worktree.LaunchManifest.ManifestSHA256); err != nil {
+					t.Fatalf("verify manifest-bound artifacts at crash boundary: %v", err)
+				}
+			}
 
 			// Recovery: re-run the full launch sequence.
 			if err := runLaunchPhases(f, ""); err != nil {
@@ -67,12 +79,11 @@ func TestLaunchRecoveryCrashBoundariesNoDuplicates(t *testing.T) {
 			if f.endpoints.submitCount() != 1 {
 				t.Fatalf("launch submits = %d, want 1 (no duplicate submission)", f.endpoints.submitCount())
 			}
-			// One queued -> working transition: revision 7 (create, begin,
-			// record delivery contract, bind worktree, attach endpoint,
-			// record launch, bind endpoint). The contract is recorded exactly
-			// once no matter which boundary the first attempt crashed at.
-			if agg.Revision != 7 {
-				t.Fatalf("revision = %d, want 7 (one launch through working)", agg.Revision)
+			// One queued -> working transition includes the canonical manifest
+			// anchor: revision 8 (create, begin, delivery contract, worktree,
+			// manifest evidence, acquired endpoint, launch evidence, endpoint).
+			if agg.Revision != 8 {
+				t.Fatalf("revision = %d, want 8 (one launch through working)", agg.Revision)
 			}
 			if agg.DeliveryContract == nil || agg.DeliveryContract.Mode != f.runner.contractMode {
 				t.Fatalf("delivery contract = %+v, want mode %q", agg.DeliveryContract, f.runner.contractMode)
@@ -199,7 +210,8 @@ func TestLaunchRecoveryPostSubmitFailureNamesLiveEndpoint(t *testing.T) {
 			refusal:   "is blocked; clear the blocker with 'munsu task unblock post-submit-recordlaunch'",
 		},
 		{
-			// The brief the manifest binds is gone; the re-run rewrites it.
+			// The brief the manifest binds is gone; verify-only recovery refuses
+			// before re-adopting the pane or recreating covered files.
 			name: "launch manifest",
 			inject: func(f *launchFixture) func() {
 				f.endpoints.onSubmit = func() {
@@ -210,8 +222,10 @@ func TestLaunchRecoveryPostSubmitFailureNamesLiveEndpoint(t *testing.T) {
 				}
 				return nil
 			},
-			wantCause:   func(_ *launchFixture, err error) bool { return errors.Is(err, os.ErrNotExist) },
-			wantSubmits: 1,
+			wantCause: func(_ *launchFixture, err error) bool {
+				return strings.Contains(err.Error(), "verifying artifacts for recorded launch") && errors.Is(err, os.ErrNotExist)
+			},
+			refusal: "verifying artifacts for recorded launch",
 		},
 		{
 			name: "harness handshake",

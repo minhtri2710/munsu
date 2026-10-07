@@ -27,7 +27,7 @@ func TestShipSafetyCheck_LegacySoldierMdNoLongerAccepted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt, md), fakeTeardown{}, nil)
+	_, err = shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt), fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
 	if err == nil {
 		t.Fatal("legacy .soldier-md matching the brief digest must no longer be accepted during retirement")
 	}

@@ -201,6 +201,16 @@ func TestCanonicalLaunchOperationReceiptsSurviveReopen(t *testing.T) {
 		t.Fatalf("BindWorktree: %v", err)
 	}
 	rev++
+	manifestReq := CanonicalRecordLaunchManifestRequest{
+		HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, rev),
+		LaunchID: req.LaunchID, WorktreeLeaseID: bw.Binding.LeaseID, WorktreeFenceToken: bw.Binding.FenceToken,
+		ManifestSHA256: digestOf("manifest:t1"), Reason: "manifest prepared",
+	}
+	manifestOp := mustOperation(t, "op-durable-manifest", manifestReq)
+	if _, err := c.RecordLaunchManifest(manifestOp, manifestReq); err != nil {
+		t.Fatalf("RecordLaunchManifest: %v", err)
+	}
+	rev++
 
 	attach := attachRequest(c, "t1", preconditionOf(1, rev), req, "handle-1")
 	attachOp := mustOperation(t, "op-durable-attach", attach)
@@ -243,24 +253,32 @@ func TestCanonicalLaunchOperationReceiptsSurviveReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AttachEndpoint replay after reopen: %v", err)
 	}
-	if !attachOut.Replayed || attachOut.Phase != PhaseQueued || attachOut.Revision != 4 {
-		t.Fatalf("AttachEndpoint replay = %+v, want Replayed queued rev 4", attachOut)
+	if !attachOut.Replayed || attachOut.Phase != PhaseQueued || attachOut.Revision != 5 {
+		t.Fatalf("AttachEndpoint replay = %+v, want Replayed queued rev 5", attachOut)
+	}
+
+	manifestOut, err := c2.RecordLaunchManifest(manifestOp, manifestReq)
+	if err != nil {
+		t.Fatalf("RecordLaunchManifest replay after reopen: %v", err)
+	}
+	if !manifestOut.Replayed || manifestOut.Phase != PhaseQueued || manifestOut.Revision != 4 {
+		t.Fatalf("RecordLaunchManifest replay = %+v, want Replayed queued rev 4", manifestOut)
 	}
 
 	recordOut, err := c2.RecordLaunch(recordOp, record)
 	if err != nil {
 		t.Fatalf("RecordLaunch replay after reopen: %v", err)
 	}
-	if !recordOut.Replayed || recordOut.Phase != PhaseQueued || recordOut.Revision != 5 {
-		t.Fatalf("RecordLaunch replay = %+v, want Replayed queued rev 5", recordOut)
+	if !recordOut.Replayed || recordOut.Phase != PhaseQueued || recordOut.Revision != 6 {
+		t.Fatalf("RecordLaunch replay = %+v, want Replayed queued rev 6", recordOut)
 	}
 
 	beOut, err := c2.BindEndpoint(beOp, be)
 	if err != nil {
 		t.Fatalf("BindEndpoint replay after reopen: %v", err)
 	}
-	if !beOut.Replayed || beOut.Phase != PhaseWorking || beOut.Revision != 6 {
-		t.Fatalf("BindEndpoint replay = %+v, want Replayed working rev 6", beOut)
+	if !beOut.Replayed || beOut.Phase != PhaseWorking || beOut.Revision != 7 {
+		t.Fatalf("BindEndpoint replay = %+v, want Replayed working rev 7", beOut)
 	}
 
 	// The recovered launch state is complete and current.

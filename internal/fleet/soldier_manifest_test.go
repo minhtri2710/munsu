@@ -7,33 +7,54 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/harness"
 )
 
-// writeTestManifest writes a minimal valid manifest with all required entries
-// to the given directory. Returns the manifest digest.
+// launchManifestNames returns the paths covered by a harness manifest for fixtures.
+func launchManifestNames(harnessName string) []string {
+	names := append([]string{}, CoreLaunchArtifactNames...)
+	if adapter, ok := harness.GetAdapter(harnessName); ok {
+		names = append(names, adapter.SoldierLaunch.WorktreeFiles...)
+	}
+	return names
+}
+
+// manifestEntryForTestFile builds a fixture entry from a file's exact bytes.
+func manifestEntryForTestFile(t *testing.T, root, relPath string, policy DisposalPolicy) ManifestEntry {
+	t.Helper()
+	if err := validateManifestPath(relPath); err != nil {
+		t.Fatalf("unsafe manifest fixture path %q: %v", relPath, err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, relPath))
+	if err != nil {
+		t.Fatalf("reading manifest fixture %s: %v", relPath, err)
+	}
+	return ManifestEntry{Path: relPath, SHA256: sha256Content(data), Policy: policy}
+}
+
+// writeTestManifest marshals a valid test manifest and writes its exact bytes.
+// Production launch publication uses the canonical anchor and AtomicCreate.
 func writeTestManifest(t *testing.T, dir string, entries []ManifestEntry) string {
 	t.Helper()
 	if entries == nil {
-		// Create default entries from actual files.
-		entries = []ManifestEntry{}
+		entries = make([]ManifestEntry, 0, len(CoreLaunchArtifactNames))
 		for _, name := range CoreLaunchArtifactNames {
-			entry, err := ManifestEntryForFile(dir, name, DisposalPolicyCleanable)
-			if err != nil {
-				t.Fatalf("creating entry for %s: %v", name, err)
-			}
-			entries = append(entries, entry)
+			entries = append(entries, manifestEntryForTestFile(t, dir, name, DisposalPolicyCleanable))
 		}
 	}
-	manifest := BuildManifest(entries)
-	digest, err := WriteManifest(dir, manifest)
+	data, digest, err := MarshalManifest(BuildManifest(entries))
 	if err != nil {
-		t.Fatalf("writing manifest: %v", err)
+		t.Fatalf("marshaling manifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ManifestName), data, 0644); err != nil {
+		t.Fatalf("writing manifest fixture: %v", err)
 	}
 	return digest
 }
 
 // writeTestManifestRaw writes raw JSON content as the manifest file, bypassing
-// WriteManifest's validation. Useful for testing ReadManifest validation.
+// MarshalManifest's validation. Useful for testing ReadManifest validation.
 func writeTestManifestRaw(t *testing.T, dir, content string) {
 	t.Helper()
 	path := filepath.Join(dir, ManifestName)
@@ -62,7 +83,7 @@ func writePiSettingsFixture(t *testing.T, dir string) {
 	}
 }
 
-func TestManifest_WriteAndRead(t *testing.T) {
+func TestManifest_MarshalAndRead(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		harness  string
@@ -80,11 +101,7 @@ func TestManifest_WriteAndRead(t *testing.T) {
 			}
 			var entries []ManifestEntry
 			for _, name := range launchManifestNames(tc.harness) {
-				entry, err := ManifestEntryForFile(tmp, name, DisposalPolicyCleanable)
-				if err != nil {
-					t.Fatalf("creating entry for %s: %v", name, err)
-				}
-				entries = append(entries, entry)
+				entries = append(entries, manifestEntryForTestFile(t, tmp, name, DisposalPolicyCleanable))
 			}
 			digest := writeTestManifest(t, tmp, entries)
 
@@ -103,15 +120,15 @@ func TestManifest_WriteAndRead(t *testing.T) {
 				t.Fatalf("artifact paths = %v, want %v", paths, tc.want)
 			}
 
-			// Verify WriteManifest returned a valid 64-char hex digest.
+			// Verify marshaling returned a valid 64-char hex digest.
 			if len(digest) != 64 {
-				t.Errorf("WriteManifest digest length = %d, want 64", len(digest))
+				t.Errorf("manifest digest length = %d, want 64", len(digest))
 			}
 		})
 	}
 }
 
-func TestManifest_WriteReturnsDigest(t *testing.T) {
+func TestManifest_MarshalReturnsDigest(t *testing.T) {
 	tmp := t.TempDir()
 	setupTestLaunchFiles(t, tmp)
 
@@ -130,7 +147,7 @@ func TestManifest_WriteReturnsDigest(t *testing.T) {
 		t.Fatal(err)
 	}
 	if sha256Content(manifestBytes) != digest1 {
-		t.Error("returned digest does not match written file")
+		t.Error("marshaled digest does not match written file")
 	}
 }
 
@@ -182,17 +199,14 @@ func TestManifest_ArtifactPaths(t *testing.T) {
 	}
 }
 
-func TestManifest_EntryForFile(t *testing.T) {
+func TestManifestEntryForTestFile(t *testing.T) {
 	tmp := t.TempDir()
 	content := []byte("test content")
 	relPath := ".soldier-brief.md"
 	if err := os.WriteFile(filepath.Join(tmp, relPath), content, 0644); err != nil {
 		t.Fatal(err)
 	}
-	entry, err := ManifestEntryForFile(tmp, relPath, DisposalPolicyCleanable)
-	if err != nil {
-		t.Fatal(err)
-	}
+	entry := manifestEntryForTestFile(t, tmp, relPath, DisposalPolicyCleanable)
 	if entry.Path != relPath {
 		t.Errorf("Path = %q, want %q", entry.Path, relPath)
 	}
@@ -205,7 +219,6 @@ func TestManifest_EntryForFile(t *testing.T) {
 }
 
 func TestManifest_EntryForFile_UnsafePath(t *testing.T) {
-	tmp := t.TempDir()
 	for _, test := range []struct {
 		relPath string
 		want    string
@@ -217,18 +230,16 @@ func TestManifest_EntryForFile_UnsafePath(t *testing.T) {
 		{relPath: "C:foo", want: "manifest entry with volume-qualified path"},
 		{relPath: "C:/foo", want: "manifest entry with volume-qualified path"},
 	} {
-		_, err := ManifestEntryForFile(tmp, test.relPath, DisposalPolicyCleanable)
+		err := validateManifestPath(test.relPath)
 		if err == nil || !strings.Contains(err.Error(), test.want) {
-			t.Errorf("ManifestEntryForFile(%q) error = %v, want substring %q", test.relPath, err, test.want)
+			t.Errorf("validateManifestPath(%q) error = %v, want substring %q", test.relPath, err, test.want)
 		}
 	}
 }
 
-func TestManifest_EntryForFile_MissingFile(t *testing.T) {
-	tmp := t.TempDir()
-	_, err := ManifestEntryForFile(tmp, ".soldier-nonexistent.md", DisposalPolicyCleanable)
-	if err == nil {
-		t.Error("expected error for missing file")
+func TestManifestEntryForTestFileMissingFile(t *testing.T) {
+	if _, err := os.ReadFile(filepath.Join(t.TempDir(), ".soldier-nonexistent.md")); err == nil {
+		t.Fatal("expected missing fixture file")
 	}
 }
 
@@ -240,10 +251,9 @@ func TestManifest_ReadMissing(t *testing.T) {
 	}
 }
 
-func TestManifest_WriteManifestNil(t *testing.T) {
-	_, err := WriteManifest(t.TempDir(), nil)
-	if err == nil {
-		t.Error("expected error writing nil manifest")
+func TestManifest_MarshalNil(t *testing.T) {
+	if _, _, err := MarshalManifest(nil); err == nil {
+		t.Error("expected error marshaling nil manifest")
 	}
 }
 
@@ -285,7 +295,7 @@ func TestManifest_IntegrityCheck(t *testing.T) {
 		t.Fatal(err)
 	}
 	if sha256Content(manifestBytes) != digest {
-		t.Error("WriteManifest digest does not match file")
+		t.Error("marshaled digest does not match file")
 	}
 }
 
@@ -300,14 +310,10 @@ func TestManifest_Validation_MissingEntries(t *testing.T) {
 	// Manifest with only 4 of the required entries should fail.
 	entries := []ManifestEntry{}
 	for _, name := range []string{CharterName, BriefName, EnvelopeName, PromptName} {
-		entry, err := ManifestEntryForFile(tmp, name, DisposalPolicyCleanable)
-		if err != nil {
-			t.Fatal(err)
-		}
-		entries = append(entries, entry)
+		entries = append(entries, manifestEntryForTestFile(t, tmp, name, DisposalPolicyCleanable))
 	}
 	manifest := BuildManifest(entries)
-	_, err := WriteManifest(tmp, manifest)
+	_, _, err := MarshalManifest(manifest)
 	if err == nil {
 		t.Error("expected error for missing LaunchScriptName entry")
 	}
@@ -322,16 +328,12 @@ func TestManifest_Validation_UnexpectedEntry(t *testing.T) {
 
 	entries := []ManifestEntry{}
 	for _, name := range CoreLaunchArtifactNames {
-		entry, err := ManifestEntryForFile(tmp, name, DisposalPolicyCleanable)
-		if err != nil {
-			t.Fatal(err)
-		}
-		entries = append(entries, entry)
+		entries = append(entries, manifestEntryForTestFile(t, tmp, name, DisposalPolicyCleanable))
 	}
 	// Add an unexpected entry.
 	entries = append(entries, ManifestEntry{Path: "rogue.txt", SHA256: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789", Policy: DisposalPolicyCleanable})
 	manifest := BuildManifest(entries)
-	_, err := WriteManifest(tmp, manifest)
+	_, _, err := MarshalManifest(manifest)
 	if err == nil {
 		t.Error("expected error for unexpected entry")
 	}
@@ -346,16 +348,12 @@ func TestManifest_Validation_DuplicateEntry(t *testing.T) {
 
 	entries := []ManifestEntry{}
 	for _, name := range CoreLaunchArtifactNames {
-		entry, err := ManifestEntryForFile(tmp, name, DisposalPolicyCleanable)
-		if err != nil {
-			t.Fatal(err)
-		}
-		entries = append(entries, entry)
+		entries = append(entries, manifestEntryForTestFile(t, tmp, name, DisposalPolicyCleanable))
 	}
 	// Add a duplicate entry.
 	entries = append(entries, ManifestEntry{Path: BriefName, SHA256: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789", Policy: DisposalPolicyCleanable})
 	manifest := BuildManifest(entries)
-	_, err := WriteManifest(tmp, manifest)
+	_, _, err := MarshalManifest(manifest)
 	if err == nil {
 		t.Error("expected error for duplicate entry")
 	}
@@ -370,16 +368,12 @@ func TestManifest_Validation_SelfEntry(t *testing.T) {
 
 	entries := []ManifestEntry{}
 	for _, name := range CoreLaunchArtifactNames {
-		entry, err := ManifestEntryForFile(tmp, name, DisposalPolicyCleanable)
-		if err != nil {
-			t.Fatal(err)
-		}
-		entries = append(entries, entry)
+		entries = append(entries, manifestEntryForTestFile(t, tmp, name, DisposalPolicyCleanable))
 	}
 	// Replace one entry with manifest self-reference.
 	entries[4] = ManifestEntry{Path: ManifestName, SHA256: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789", Policy: DisposalPolicyCleanable}
 	manifest := BuildManifest(entries)
-	_, err := WriteManifest(tmp, manifest)
+	_, _, err := MarshalManifest(manifest)
 	if err == nil {
 		t.Error("expected error for manifest self-entry")
 	}
@@ -394,16 +388,12 @@ func TestManifest_Validation_InvalidDigest(t *testing.T) {
 
 	entries := []ManifestEntry{}
 	for _, name := range CoreLaunchArtifactNames {
-		entry, err := ManifestEntryForFile(tmp, name, DisposalPolicyCleanable)
-		if err != nil {
-			t.Fatal(err)
-		}
-		entries = append(entries, entry)
+		entries = append(entries, manifestEntryForTestFile(t, tmp, name, DisposalPolicyCleanable))
 	}
 	// Corrupt the digest.
 	entries[0].SHA256 = "not-a-hex-digest"
 	manifest := BuildManifest(entries)
-	_, err := WriteManifest(tmp, manifest)
+	_, _, err := MarshalManifest(manifest)
 	if err == nil {
 		t.Error("expected error for invalid digest")
 	}
@@ -418,15 +408,11 @@ func TestManifest_Validation_UnsupportedPolicy(t *testing.T) {
 
 	entries := []ManifestEntry{}
 	for _, name := range CoreLaunchArtifactNames {
-		entry, err := ManifestEntryForFile(tmp, name, DisposalPolicyCleanable)
-		if err != nil {
-			t.Fatal(err)
-		}
-		entries = append(entries, entry)
+		entries = append(entries, manifestEntryForTestFile(t, tmp, name, DisposalPolicyCleanable))
 	}
 	entries[0].Policy = "delete-whenever"
 	manifest := BuildManifest(entries)
-	_, err := WriteManifest(tmp, manifest)
+	_, _, err := MarshalManifest(manifest)
 	if err == nil {
 		t.Error("expected error for unsupported policy")
 	}
@@ -441,15 +427,11 @@ func TestManifest_Validation_TraversalPath(t *testing.T) {
 
 	entries := []ManifestEntry{}
 	for _, name := range CoreLaunchArtifactNames {
-		entry, err := ManifestEntryForFile(tmp, name, DisposalPolicyCleanable)
-		if err != nil {
-			t.Fatal(err)
-		}
-		entries = append(entries, entry)
+		entries = append(entries, manifestEntryForTestFile(t, tmp, name, DisposalPolicyCleanable))
 	}
 	entries[0].Path = "../etc/passwd"
 	manifest := BuildManifest(entries)
-	_, err := WriteManifest(tmp, manifest)
+	_, _, err := MarshalManifest(manifest)
 	if err == nil {
 		t.Error("expected error for traversal path")
 	}
@@ -464,15 +446,11 @@ func TestManifest_Validation_AbsolutePath(t *testing.T) {
 
 	entries := []ManifestEntry{}
 	for _, name := range CoreLaunchArtifactNames {
-		entry, err := ManifestEntryForFile(tmp, name, DisposalPolicyCleanable)
-		if err != nil {
-			t.Fatal(err)
-		}
-		entries = append(entries, entry)
+		entries = append(entries, manifestEntryForTestFile(t, tmp, name, DisposalPolicyCleanable))
 	}
 	entries[0].Path = "/etc/passwd"
 	manifest := BuildManifest(entries)
-	_, err := WriteManifest(tmp, manifest)
+	_, _, err := MarshalManifest(manifest)
 	if err == nil {
 		t.Error("expected error for absolute path")
 	}
@@ -573,7 +551,7 @@ func TestManifest_NotInItsOwnEntries(t *testing.T) {
 
 	// Verify the digest is valid.
 	if len(digest) != 64 {
-		t.Errorf("WriteManifest digest length = %d, want 64", len(digest))
+		t.Errorf("manifest digest length = %d, want 64", len(digest))
 	}
 }
 

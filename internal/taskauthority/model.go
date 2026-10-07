@@ -129,16 +129,27 @@ type EndpointBinding struct {
 	BoundAtUnix  int64  `json:"bound_at_unix"`
 }
 
-// WorktreeBinding is a generation-bound repository worktree lease.
+// WorktreeBinding is a generation-bound repository worktree lease and, when
+// present, the owner of its independently committed launch-manifest evidence.
 type WorktreeBinding struct {
-	RepositoryIdentity string `json:"repository_identity"`
-	Path               string `json:"path"`
-	GitDir             string `json:"git_dir"`
-	CommonDir          string `json:"common_dir"`
-	BaseHead           string `json:"base_head"`
-	LeaseID            string `json:"lease_id"`
-	FenceToken         string `json:"fence_token"`
-	BoundAtUnix        int64  `json:"bound_at_unix"`
+	RepositoryIdentity string                  `json:"repository_identity"`
+	Path               string                  `json:"path"`
+	GitDir             string                  `json:"git_dir"`
+	CommonDir          string                  `json:"common_dir"`
+	BaseHead           string                  `json:"base_head"`
+	LeaseID            string                  `json:"lease_id"`
+	FenceToken         string                  `json:"fence_token"`
+	BoundAtUnix        int64                   `json:"bound_at_unix"`
+	LaunchManifest     *LaunchManifestEvidence `json:"launch_manifest,omitempty"`
+}
+
+// LaunchManifestEvidence independently anchors the exact serialized launch
+// manifest bytes to the generation's committed launch and worktree lease.
+type LaunchManifestEvidence struct {
+	OperationID    string `json:"operation_id"`
+	LaunchID       string `json:"launch_id"`
+	ManifestSHA256 string `json:"manifest_sha256"`
+	RecordedAt     int64  `json:"recorded_at"`
 }
 
 // TransferState is the generation-bound transfer reservation or reception
@@ -505,6 +516,9 @@ func validateAggregate(agg Aggregate) error {
 		if err := validateWorktreeBinding(*agg.Worktree); err != nil {
 			return err
 		}
+		if err := validateWorktreeManifestRelationship(*agg.Worktree, agg.Launch, agg.Definition.Kind); err != nil {
+			return err
+		}
 	}
 	if agg.Transfer != nil {
 		if err := validateTransferState(*agg.Transfer); err != nil {
@@ -514,6 +528,11 @@ func validateAggregate(agg Aggregate) error {
 	if agg.Retirement != nil {
 		if err := validateRetirementEvidence(*agg.Retirement); err != nil {
 			return err
+		}
+		if agg.Retirement.Worktree != nil {
+			if err := validateWorktreeManifestRelationship(*agg.Retirement.Worktree, agg.Launch, agg.Definition.Kind); err != nil {
+				return err
+			}
 		}
 	}
 	if agg.CleanupClaim != nil {
@@ -910,6 +929,41 @@ func validateEndpointBinding(binding EndpointBinding) error {
 	return nil
 }
 
+func validateLaunchManifestEvidence(e LaunchManifestEvidence) error {
+	if e.OperationID == "" || strings.ContainsAny(e.OperationID, `/\\`) {
+		return validationError("launch manifest evidence missing operation id")
+	}
+	if e.LaunchID == "" || strings.ContainsAny(e.LaunchID, `/\\`) {
+		return validationError("launch manifest evidence missing launch identity")
+	}
+	if !domain.IsSHA256(e.ManifestSHA256) {
+		return validationError("launch manifest evidence digest must be a 64-hex sha256 digest")
+	}
+	if e.RecordedAt <= 0 {
+		return validationError("launch manifest evidence missing recorded timestamp")
+	}
+	return nil
+}
+
+func validateWorktreeManifestRelationship(binding WorktreeBinding, launch *LaunchIntent, kind string) error {
+	if binding.LaunchManifest == nil {
+		return nil
+	}
+	if launch == nil {
+		return validationError("launch manifest evidence requires a committed launch intent")
+	}
+	if kind == KindReview {
+		return validationError("review tasks cannot own launch manifest evidence")
+	}
+	if binding.LaunchManifest.LaunchID != launch.LaunchID {
+		return validationError("launch manifest evidence identity does not match launch intent")
+	}
+	if binding.LeaseID != launch.WorktreeReservationID || binding.FenceToken != launch.WorktreeFenceToken {
+		return validationError("launch manifest evidence worktree lease/fence does not match launch intent")
+	}
+	return nil
+}
+
 func validateWorktreeBinding(binding WorktreeBinding) error {
 	if strings.TrimSpace(binding.RepositoryIdentity) == "" {
 		return validationError("worktree binding missing repository identity")
@@ -935,6 +989,11 @@ func validateWorktreeBinding(binding WorktreeBinding) error {
 	if binding.BoundAtUnix <= 0 {
 		return validationError("worktree binding missing bound timestamp")
 	}
+	if binding.LaunchManifest != nil {
+		if err := validateLaunchManifestEvidence(*binding.LaunchManifest); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -946,6 +1005,14 @@ func validateTaskID(id string) error {
 	return nil
 }
 
+func cloneWorktreeBinding(binding WorktreeBinding) WorktreeBinding {
+	if binding.LaunchManifest != nil {
+		evidence := *binding.LaunchManifest
+		binding.LaunchManifest = &evidence
+	}
+	return binding
+}
+
 // clone returns a deep copy of the aggregate so committed records can never
 // be aliased by callers or staged transactions.
 func (a Aggregate) clone() Aggregate {
@@ -955,7 +1022,7 @@ func (a Aggregate) clone() Aggregate {
 		out.Endpoint = &e
 	}
 	if a.Worktree != nil {
-		w := *a.Worktree
+		w := cloneWorktreeBinding(*a.Worktree)
 		out.Worktree = &w
 	}
 	if a.Transfer != nil {
@@ -973,7 +1040,7 @@ func (a Aggregate) clone() Aggregate {
 			e.Endpoint = &cp
 		}
 		if e.Worktree != nil {
-			cp := *e.Worktree
+			cp := cloneWorktreeBinding(*e.Worktree)
 			e.Worktree = &cp
 		}
 		if e.Acquired != nil {

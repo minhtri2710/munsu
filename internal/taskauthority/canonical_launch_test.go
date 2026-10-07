@@ -502,6 +502,7 @@ func TestCanonicalRecordLaunchRecordsEvidence(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
 	mustCreate(t, c, "t1")
 	req, rev := mustBeginSpawn(t, c, "t1", preconditionOf(1, 1))
+	_, rev = bindAndRecordLaunchManifest(t, c, "t1", req, rev, "records-evidence")
 	attach := attachRequest(c, "t1", preconditionOf(1, rev), req, "handle-1")
 	if _, err := c.AttachEndpoint(mustOperation(t, "op-attach-1", attach), attach); err != nil {
 		t.Fatalf("AttachEndpoint: %v", err)
@@ -534,6 +535,313 @@ func TestCanonicalRecordLaunchRecordsEvidence(t *testing.T) {
 	}
 }
 
+func recordLaunchManifest(t *testing.T, c *Canonical, taskID string, prec domain.Precondition, intent CanonicalBeginSpawnRequest, binding WorktreeBinding, opID string) Outcome {
+	t.Helper()
+	req := CanonicalRecordLaunchManifestRequest{
+		HomeID: c.HomeID(), TaskID: mustTaskID(t, taskID), Precondition: prec,
+		LaunchID: intent.LaunchID, WorktreeLeaseID: binding.LeaseID,
+		WorktreeFenceToken: binding.FenceToken, ManifestSHA256: digestOf("manifest:" + taskID), Reason: "manifest prepared",
+	}
+	out, err := c.RecordLaunchManifest(mustOperation(t, opID, req), req)
+	if err != nil {
+		t.Fatalf("RecordLaunchManifest: %v", err)
+	}
+	return out
+}
+
+func mustRecordLaunchManifest(t *testing.T, c *Canonical, taskID string, intent CanonicalBeginSpawnRequest, binding WorktreeBinding, revision uint64) uint64 {
+	t.Helper()
+	recordLaunchManifest(t, c, taskID, preconditionOf(1, revision), intent, binding, "op-manifest-"+intent.LaunchID)
+	return revision + 1
+}
+
+func bindAndRecordLaunchManifest(t *testing.T, c *Canonical, taskID string, intent CanonicalBeginSpawnRequest, revision uint64, opSuffix string) (WorktreeBinding, uint64) {
+	t.Helper()
+	binding := launchWorktreeBinding(intent)
+	bind := CanonicalBindWorktreeRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, taskID), Precondition: preconditionOf(1, revision), Binding: binding, Reason: "bind worktree"}
+	if _, err := c.BindWorktree(mustOperation(t, "op-wt-manifest-"+opSuffix, bind), bind); err != nil {
+		t.Fatalf("BindWorktree: %v", err)
+	}
+	revision++
+	req := CanonicalRecordLaunchManifestRequest{
+		HomeID: c.HomeID(), TaskID: mustTaskID(t, taskID), Precondition: preconditionOf(1, revision),
+		LaunchID: intent.LaunchID, WorktreeLeaseID: binding.LeaseID, WorktreeFenceToken: binding.FenceToken,
+		ManifestSHA256: digestOf("manifest:" + taskID), Reason: "manifest prepared",
+	}
+	if _, err := c.RecordLaunchManifest(mustOperation(t, "op-manifest-"+opSuffix, req), req); err != nil {
+		t.Fatalf("RecordLaunchManifest: %v", err)
+	}
+	return binding, revision + 1
+}
+
+func TestCanonicalRecordLaunchManifestCommitsEvidence(t *testing.T) {
+	c, _, root := newTestCanonical(t)
+	mustCreate(t, c, "t1")
+	intent, rev := mustBeginSpawn(t, c, "t1", preconditionOf(1, 1))
+	binding := launchWorktreeBinding(intent)
+	bind := CanonicalBindWorktreeRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, rev), Binding: binding, Reason: "bind"}
+	if _, err := c.BindWorktree(mustOperation(t, "op-bind-manifest", bind), bind); err != nil {
+		t.Fatalf("BindWorktree: %v", err)
+	}
+	rev++
+	first := recordLaunchManifest(t, c, "t1", preconditionOf(1, rev), intent, binding, "op-record-manifest")
+	if first.Revision != Revision(rev+1) || first.Phase != PhaseQueued {
+		t.Fatalf("RecordLaunchManifest outcome = %+v", first)
+	}
+	req := CanonicalRecordLaunchManifestRequest{
+		HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, rev),
+		LaunchID: intent.LaunchID, WorktreeLeaseID: binding.LeaseID, WorktreeFenceToken: binding.FenceToken,
+		ManifestSHA256: digestOf("manifest:t1"), Reason: "manifest prepared",
+	}
+	op := mustOperation(t, "op-record-manifest", req)
+	replayed, err := c.RecordLaunchManifest(op, req)
+	if err != nil || !replayed.Replayed || replayed.Revision != first.Revision {
+		t.Fatalf("RecordLaunchManifest replay = %+v, %v", replayed, err)
+	}
+	changed := req
+	changed.ManifestSHA256 = digestOf("different manifest")
+	reused, err := domain.NewOperation(op.ID, changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.RecordLaunchManifest(reused, changed); !errors.Is(err, ErrOperationConflict) {
+		t.Fatalf("changed operation digest = %v, want ErrOperationConflict", err)
+	}
+
+	c2 := reopenCanonical(t, root)
+	agg, err := c2.Get(mustTaskID(t, "t1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.Worktree == nil || agg.Worktree.LaunchManifest == nil || agg.Worktree.LaunchManifest.ManifestSHA256 != digestOf("manifest:t1") {
+		t.Fatalf("canonical manifest evidence = %+v", agg.Worktree)
+	}
+
+	retire := retireRequest(t, c2, "t1", preconditionOf(1, uint64(agg.Revision)))
+	if _, err := c2.Retire(mustOperation(t, "op-retire-manifest", retire), retire); err != nil {
+		t.Fatalf("Retire: %v", err)
+	}
+	agg, err = c2.Get(mustTaskID(t, "t1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.Retirement == nil || agg.Retirement.Worktree == nil || agg.Retirement.Worktree.LaunchManifest == nil || agg.Retirement.Worktree.LaunchManifest.ManifestSHA256 != digestOf("manifest:t1") {
+		t.Fatalf("retirement did not preserve exact manifest evidence: %+v", agg.Retirement)
+	}
+}
+
+func TestValidateRecordLaunchManifestRequestRefusesUnusableEvidence(t *testing.T) {
+	valid := func() CanonicalRecordLaunchManifestRequest {
+		return CanonicalRecordLaunchManifestRequest{
+			TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, 1),
+			LaunchID: "launch-1", WorktreeLeaseID: "wt-res-1", WorktreeFenceToken: "wt-fence-1",
+			ManifestSHA256: testSHA256Hex,
+		}
+	}
+	runGuardCases(t, valid, validateRecordLaunchManifestRequest, []guardCase[CanonicalRecordLaunchManifestRequest]{
+		{"no launch identity", func(r *CanonicalRecordLaunchManifestRequest) { r.LaunchID = "" }, "requires a deterministic launch identity"},
+		{"path-separating launch identity", func(r *CanonicalRecordLaunchManifestRequest) { r.LaunchID = "launch/1" }, "requires a deterministic launch identity"},
+		{"no worktree lease identity", func(r *CanonicalRecordLaunchManifestRequest) { r.WorktreeLeaseID = " " }, "requires the worktree lease identity"},
+		{"path-separating worktree lease identity", func(r *CanonicalRecordLaunchManifestRequest) { r.WorktreeLeaseID = `wt\\res` }, "requires the worktree lease identity"},
+		{"no worktree fence identity", func(r *CanonicalRecordLaunchManifestRequest) { r.WorktreeFenceToken = " " }, "requires the worktree fence identity"},
+		{"path-separating worktree fence identity", func(r *CanonicalRecordLaunchManifestRequest) { r.WorktreeFenceToken = "wt/fence" }, "requires the worktree fence identity"},
+		{"digest is not a sha256", func(r *CanonicalRecordLaunchManifestRequest) { r.ManifestSHA256 = "not-a-digest" }, "digest must be a 64-hex sha256 digest"},
+	})
+}
+
+func TestCanonicalRecordLaunchManifestRefusesUnmatchedCanonicalState(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(*testing.T, *Canonical) (CanonicalRecordLaunchManifestRequest, string)
+		want  string
+	}{
+		{
+			name: "review task",
+			setup: func(t *testing.T, c *Canonical) (CanonicalRecordLaunchManifestRequest, string) {
+				workingShip(t, c, "ship-target")
+				if err := createReview(t, c, "review-manifest", "ship-target", "head"); err != nil {
+					t.Fatalf("create review: %v", err)
+				}
+				return CanonicalRecordLaunchManifestRequest{
+					HomeID: c.HomeID(), TaskID: mustTaskID(t, "review-manifest"), Precondition: preconditionOf(1, 1),
+					LaunchID: "launch-review", WorktreeLeaseID: "wt-res-review", WorktreeFenceToken: "wt-fence-review",
+					ManifestSHA256: testSHA256Hex,
+				}, "op-manifest-review"
+			},
+			want: "is a review task",
+		},
+		{
+			name: "not queued",
+			setup: func(t *testing.T, c *Canonical) (CanonicalRecordLaunchManifestRequest, string) {
+				mustCreate(t, c, "t1")
+				start := startWithRev(c, "t1", 1)
+				if _, err := c.Start(mustOperation(t, "op-start-manifest", start), start); err != nil {
+					t.Fatalf("Start: %v", err)
+				}
+				return CanonicalRecordLaunchManifestRequest{
+					HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, 2),
+					LaunchID: "launch-t1", WorktreeLeaseID: "wt-res-t1", WorktreeFenceToken: "wt-fence-t1",
+					ManifestSHA256: testSHA256Hex,
+				}, "op-manifest-phase"
+			},
+			want: "record launch manifest requires queued",
+		},
+		{
+			name: "no launch intent",
+			setup: func(t *testing.T, c *Canonical) (CanonicalRecordLaunchManifestRequest, string) {
+				mustCreate(t, c, "t1")
+				return CanonicalRecordLaunchManifestRequest{
+					HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, 1),
+					LaunchID: "launch-t1", WorktreeLeaseID: "wt-res-t1", WorktreeFenceToken: "wt-fence-t1",
+					ManifestSHA256: testSHA256Hex,
+				}, "op-manifest-no-intent"
+			},
+			want: "has no committed launch intent",
+		},
+		{
+			name: "no bound worktree",
+			setup: func(t *testing.T, c *Canonical) (CanonicalRecordLaunchManifestRequest, string) {
+				mustCreate(t, c, "t1")
+				intent, rev := mustBeginSpawn(t, c, "t1", preconditionOf(1, 1))
+				return CanonicalRecordLaunchManifestRequest{
+					HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, rev),
+					LaunchID: intent.LaunchID, WorktreeLeaseID: intent.WorktreeReservationID, WorktreeFenceToken: intent.WorktreeFenceToken,
+					ManifestSHA256: testSHA256Hex,
+				}, "op-manifest-no-worktree"
+			},
+			want: "has no bound worktree",
+		},
+		{
+			name: "different launch identity",
+			setup: func(t *testing.T, c *Canonical) (CanonicalRecordLaunchManifestRequest, string) {
+				mustCreate(t, c, "t1")
+				intent, rev := mustBeginSpawn(t, c, "t1", preconditionOf(1, 1))
+				binding := launchWorktreeBinding(intent)
+				bind := CanonicalBindWorktreeRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, rev), Binding: binding, Reason: "bind"}
+				if _, err := c.BindWorktree(mustOperation(t, "op-bind-manifest-mismatch", bind), bind); err != nil {
+					t.Fatalf("BindWorktree: %v", err)
+				}
+				req := CanonicalRecordLaunchManifestRequest{
+					HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, rev+1),
+					LaunchID: "another-launch", WorktreeLeaseID: binding.LeaseID, WorktreeFenceToken: binding.FenceToken,
+					ManifestSHA256: testSHA256Hex,
+				}
+				return req, "op-manifest-launch-mismatch"
+			},
+			want: "does not match launch intent",
+		},
+		{
+			name: "different worktree fence",
+			setup: func(t *testing.T, c *Canonical) (CanonicalRecordLaunchManifestRequest, string) {
+				mustCreate(t, c, "t1")
+				intent, rev := mustBeginSpawn(t, c, "t1", preconditionOf(1, 1))
+				binding := launchWorktreeBinding(intent)
+				bind := CanonicalBindWorktreeRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, rev), Binding: binding, Reason: "bind"}
+				if _, err := c.BindWorktree(mustOperation(t, "op-bind-manifest-fence", bind), bind); err != nil {
+					t.Fatalf("BindWorktree: %v", err)
+				}
+				req := CanonicalRecordLaunchManifestRequest{
+					HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, rev+1),
+					LaunchID: intent.LaunchID, WorktreeLeaseID: binding.LeaseID, WorktreeFenceToken: "foreign-fence",
+					ManifestSHA256: testSHA256Hex,
+				}
+				return req, "op-manifest-fence-mismatch"
+			},
+			want: "does not match the bound worktree lease/fence",
+		},
+		{
+			name: "wrong generation",
+			setup: func(t *testing.T, c *Canonical) (CanonicalRecordLaunchManifestRequest, string) {
+				mustCreate(t, c, "t1")
+				intent, rev := mustBeginSpawn(t, c, "t1", preconditionOf(1, 1))
+				binding := launchWorktreeBinding(intent)
+				bind := CanonicalBindWorktreeRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, rev), Binding: binding, Reason: "bind"}
+				if _, err := c.BindWorktree(mustOperation(t, "op-bind-manifest-generation", bind), bind); err != nil {
+					t.Fatalf("BindWorktree: %v", err)
+				}
+				req := CanonicalRecordLaunchManifestRequest{
+					HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(2, rev+1),
+					LaunchID: intent.LaunchID, WorktreeLeaseID: binding.LeaseID, WorktreeFenceToken: binding.FenceToken,
+					ManifestSHA256: testSHA256Hex,
+				}
+				return req, "op-manifest-wrong-generation"
+			},
+			want: "stale precondition",
+		},
+		{
+			name: "different existing evidence",
+			setup: func(t *testing.T, c *Canonical) (CanonicalRecordLaunchManifestRequest, string) {
+				mustCreate(t, c, "t1")
+				intent, rev := mustBeginSpawn(t, c, "t1", preconditionOf(1, 1))
+				binding := launchWorktreeBinding(intent)
+				bind := CanonicalBindWorktreeRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, rev), Binding: binding, Reason: "bind"}
+				if _, err := c.BindWorktree(mustOperation(t, "op-bind-manifest-existing", bind), bind); err != nil {
+					t.Fatalf("BindWorktree: %v", err)
+				}
+				rev++
+				first := CanonicalRecordLaunchManifestRequest{
+					HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, rev),
+					LaunchID: intent.LaunchID, WorktreeLeaseID: binding.LeaseID, WorktreeFenceToken: binding.FenceToken,
+					ManifestSHA256: testSHA256Hex,
+				}
+				if _, err := c.RecordLaunchManifest(mustOperation(t, "op-manifest-existing", first), first); err != nil {
+					t.Fatalf("RecordLaunchManifest first: %v", err)
+				}
+				first.Precondition = preconditionOf(1, rev+1)
+				first.ManifestSHA256 = digestOf("different manifest")
+				return first, "op-manifest-existing-different"
+			},
+			want: "already records different launch manifest evidence",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _, _ := newTestCanonical(t)
+			req, opID := tc.setup(t, c)
+			if _, err := c.RecordLaunchManifest(mustOperation(t, opID, req), req); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("RecordLaunchManifest error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestCanonicalBindWorktreeCannotInjectManifestEvidence(t *testing.T) {
+	c, _, _ := newTestCanonical(t)
+	mustCreate(t, c, "t1")
+	intent, rev := mustBeginSpawn(t, c, "t1", preconditionOf(1, 1))
+	binding := launchWorktreeBinding(intent)
+	binding.LaunchManifest = &LaunchManifestEvidence{
+		OperationID: "invented", LaunchID: intent.LaunchID, ManifestSHA256: digestOf("fabricated"), RecordedAt: 1,
+	}
+	req := CanonicalBindWorktreeRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, rev), Binding: binding, Reason: "bind"}
+	if _, err := c.BindWorktree(mustOperation(t, "op-bind-injected-manifest", req), req); err == nil || !strings.Contains(err.Error(), "use RecordLaunchManifest") {
+		t.Fatalf("BindWorktree with caller-supplied manifest evidence = %v, want single-writer refusal", err)
+	}
+}
+
+func TestCanonicalRecordLaunchRequiresManifestAnchor(t *testing.T) {
+	c, _, _ := newTestCanonical(t)
+	mustCreate(t, c, "t1")
+	intent, rev := mustBeginSpawn(t, c, "t1", preconditionOf(1, 1))
+	worktree := CanonicalBindWorktreeRequest{
+		HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, rev),
+		Binding: launchWorktreeBinding(intent), Reason: "bind worktree",
+	}
+	if _, err := c.BindWorktree(mustOperation(t, "op-wt-manifest-required", worktree), worktree); err != nil {
+		t.Fatalf("BindWorktree: %v", err)
+	}
+	rev++
+	attach := attachRequest(c, "t1", preconditionOf(1, rev), intent, "handle-1")
+	if _, err := c.AttachEndpoint(mustOperation(t, "op-attach-manifest-required", attach), attach); err != nil {
+		t.Fatalf("AttachEndpoint: %v", err)
+	}
+	rev++
+
+	record := recordLaunchRequest(c, "t1", preconditionOf(1, rev), intent)
+	if _, err := c.RecordLaunch(mustOperation(t, "op-record-manifest-required", record), record); !errors.Is(err, ErrConflict) {
+		t.Fatalf("RecordLaunch without canonical manifest anchor = %v, want ErrConflict", err)
+	}
+}
+
 func TestCanonicalRecordLaunchRequiresAcquiredEndpoint(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
 	mustCreate(t, c, "t1")
@@ -549,6 +857,7 @@ func TestCanonicalRecordLaunchLaunchIDMismatch(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
 	mustCreate(t, c, "t1")
 	req, rev := mustBeginSpawn(t, c, "t1", preconditionOf(1, 1))
+	_, rev = bindAndRecordLaunchManifest(t, c, "t1", req, rev, "launch-id-mismatch")
 	attach := attachRequest(c, "t1", preconditionOf(1, rev), req, "handle-1")
 	if _, err := c.AttachEndpoint(mustOperation(t, "op-attach-1", attach), attach); err != nil {
 		t.Fatalf("AttachEndpoint: %v", err)
@@ -565,6 +874,7 @@ func TestCanonicalRecordLaunchDifferentEvidenceConflicts(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
 	mustCreate(t, c, "t1")
 	req, rev := mustBeginSpawn(t, c, "t1", preconditionOf(1, 1))
+	_, rev = bindAndRecordLaunchManifest(t, c, "t1", req, rev, "different-evidence")
 	attach := attachRequest(c, "t1", preconditionOf(1, rev), req, "handle-1")
 	if _, err := c.AttachEndpoint(mustOperation(t, "op-attach-1", attach), attach); err != nil {
 		t.Fatalf("AttachEndpoint: %v", err)
@@ -585,6 +895,7 @@ func TestCanonicalRecordLaunchReplay(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
 	mustCreate(t, c, "t1")
 	req, rev := mustBeginSpawn(t, c, "t1", preconditionOf(1, 1))
+	_, rev = bindAndRecordLaunchManifest(t, c, "t1", req, rev, "record-replay")
 	attach := attachRequest(c, "t1", preconditionOf(1, rev), req, "handle-1")
 	if _, err := c.AttachEndpoint(mustOperation(t, "op-attach-1", attach), attach); err != nil {
 		t.Fatalf("AttachEndpoint: %v", err)
@@ -612,6 +923,7 @@ func TestCanonicalRecordLaunchOperationReusedConflict(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
 	mustCreate(t, c, "t1")
 	req, rev := mustBeginSpawn(t, c, "t1", preconditionOf(1, 1))
+	_, rev = bindAndRecordLaunchManifest(t, c, "t1", req, rev, "record-reused-conflict")
 	attach := attachRequest(c, "t1", preconditionOf(1, rev), req, "handle-1")
 	if _, err := c.AttachEndpoint(mustOperation(t, "op-attach-1", attach), attach); err != nil {
 		t.Fatalf("AttachEndpoint: %v", err)
@@ -655,9 +967,11 @@ func TestCanonicalLaunchIncarnationPersistsAndFencesBinds(t *testing.T) {
 	if _, err := c.BindWorktree(mustOperation(t, "op-wt-1", bw), bw); err != nil {
 		t.Fatalf("BindWorktree: %v", err)
 	}
+	rev++
+	rev = mustRecordLaunchManifest(t, c, "t1", req, bw.Binding, rev)
 
 	// Acquire the endpoint with the opaque incarnation.
-	attach := attachRequest(c, "t1", preconditionOf(1, rev+1), req, "handle-1")
+	attach := attachRequest(c, "t1", preconditionOf(1, rev), req, "handle-1")
 	attach.Incarnation = req.EndpointIncarnation
 	if _, err := c.AttachEndpoint(mustOperation(t, "op-attach-1", attach), attach); err != nil {
 		t.Fatalf("AttachEndpoint: %v", err)
@@ -670,18 +984,18 @@ func TestCanonicalLaunchIncarnationPersistsAndFencesBinds(t *testing.T) {
 
 	// A different operation with a different (stale/foreign) incarnation must
 	// conflict on the same acquired endpoint.
-	foreign := attachRequest(c, "t1", preconditionOf(1, rev+2), req, "handle-1")
+	foreign := attachRequest(c, "t1", preconditionOf(1, rev+1), req, "handle-1")
 	foreign.Incarnation = "inc-foreign"
 	if _, err := c.AttachEndpoint(mustOperation(t, "op-attach-foreign", foreign), foreign); !errors.Is(err, ErrConflict) {
 		t.Fatalf("attach with different incarnation = %v, want ErrConflict", err)
 	}
 
 	// Record launch evidence, then bind the endpoint.
-	record := recordLaunchRequest(c, "t1", preconditionOf(1, rev+2), req)
+	record := recordLaunchRequest(c, "t1", preconditionOf(1, rev+1), req)
 	if _, err := c.RecordLaunch(mustOperation(t, "op-record-1", record), record); err != nil {
 		t.Fatalf("RecordLaunch: %v", err)
 	}
-	be := bindEndpointRequest(c, "t1", preconditionOf(1, rev+3))
+	be := bindEndpointRequest(c, "t1", preconditionOf(1, rev+2))
 	be.Binding.Handle = "handle-1"
 	be.Binding.LeaseID = req.EndpointReservationID
 	be.Binding.FenceToken = req.EndpointFenceToken
@@ -731,6 +1045,7 @@ func TestCanonicalLaunchFlowComposesToWorking(t *testing.T) {
 		t.Fatalf("BindWorktree: %v", err)
 	}
 	rev++
+	rev = mustRecordLaunchManifest(t, c, "t1", req, bw.Binding, rev)
 
 	// Record the acquired endpoint identity.
 	attach := attachRequest(c, "t1", preconditionOf(1, rev), req, "handle-1")
@@ -796,6 +1111,7 @@ func TestPremiseGetRefusesLaunchEvidenceWithNoSubmissionTimestamp(t *testing.T) 
 	c, h, _ := newTestCanonical(t)
 	mustCreate(t, c, "t1")
 	req, rev := mustBeginSpawn(t, c, "t1", preconditionOf(1, 1))
+	_, rev = bindAndRecordLaunchManifest(t, c, "t1", req, rev, "premise-timestamp")
 	attach := attachRequest(c, "t1", preconditionOf(1, rev), req, "handle-1")
 	if _, err := c.AttachEndpoint(mustOperation(t, "op-attach-1", attach), attach); err != nil {
 		t.Fatalf("AttachEndpoint: %v", err)

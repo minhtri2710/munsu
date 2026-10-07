@@ -203,14 +203,20 @@ func abortRetirementCleanup(authority *taskauthority.Canonical, homeDir string, 
 	var endpointProof *exactEndpointProof
 	meta := map[string]string{}
 	if cur.Retirement != nil {
+		if cur.Retirement.Worktree != nil {
+			meta["worktree"] = cur.Retirement.Worktree.Path
+			if cur.Retirement.Worktree.LaunchManifest != nil {
+				meta["launch_manifest_sha256"] = cur.Retirement.Worktree.LaunchManifest.ManifestSHA256
+			}
+		}
 		switch {
 		case cur.Retirement.Endpoint != nil:
 			ep := cur.Retirement.Endpoint
-			meta = map[string]string{"backend": ep.Backend, "window": ep.Handle, "herdr_session": ep.SessionOwner, "herdr_workspace_id": ep.WorkspaceID, "herdr_tab_id": ep.TabID}
+			meta = retirementMetaForEvidence(meta, cur.Retirement)
 			endpointProof = &exactEndpointProof{backend: ep.Backend, handle: ep.Handle, incarnation: ep.Incarnation, leaseID: ep.LeaseID, fenceToken: ep.FenceToken, generation: uint64(cur.Generation), revision: uint64(cur.Revision), acquired: true}
 		case cur.Retirement.Acquired != nil:
 			ep := cur.Retirement.Acquired
-			meta = map[string]string{"backend": ep.Backend, "window": ep.Handle, "herdr_session": ep.SessionOwner, "herdr_workspace_id": ep.WorkspaceID, "herdr_tab_id": ep.TabID}
+			meta = retirementMetaForEvidence(meta, cur.Retirement)
 			endpointProof = &exactEndpointProof{backend: ep.Backend, handle: ep.Handle, incarnation: ep.Incarnation, leaseID: ep.LeaseID, fenceToken: ep.FenceToken, generation: uint64(cur.Generation), revision: uint64(cur.Revision), acquired: true}
 		}
 	}
@@ -321,12 +327,16 @@ func retireTaskAuthoritatively(opts Options, meta map[string]string, authority *
 			}
 		}
 	}
+	partial := partialLaunchRetirement(agg)
 	// An identity-bearing task is only retired-eligible with a committed
 	// canonical completed delivery outcome; otherwise the operation fails
 	// closed (the .meta projection never authorizes merged
 	// truth). A retry after a committed receipt observes the retired
 	// generation before this gate.
 	if ident, identErr := domain.IdentityFromMeta(meta); identErr == nil && ident != nil {
+		if partial {
+			return taskauthority.Outcome{}, fmt.Errorf("partial launch %s cannot carry delivery identity", opts.ID)
+		}
 		out, oerr := authority.DeliveryOutcome(taskID)
 		if oerr != nil {
 			if errors.Is(oerr, taskauthority.ErrNotFound) {
@@ -441,6 +451,43 @@ func resolveRetiredCleanupEvidence(authority *taskauthority.Canonical, taskID do
 // evidence preserves: releasing it would dispose/return a resource now owned
 // by the reopened generation. When the current generation differs, cleanup
 // may complete only evidence-pinned releases with no identity overlap.
+func retirementMetaForEvidence(meta map[string]string, ev *taskauthority.RetirementEvidence) map[string]string {
+	out := make(map[string]string, len(meta)+7)
+	for key, value := range meta {
+		out[key] = value
+	}
+	if ev == nil {
+		return out
+	}
+	if ev.Worktree != nil {
+		out["worktree"] = ev.Worktree.Path
+		if ev.Worktree.LaunchManifest != nil {
+			out["launch_manifest_sha256"] = ev.Worktree.LaunchManifest.ManifestSHA256
+		} else {
+			delete(out, "launch_manifest_sha256")
+		}
+	}
+	var endpoint *taskauthority.EndpointBinding
+	if ev.Endpoint != nil {
+		endpoint = ev.Endpoint
+	} else if ev.Acquired != nil {
+		endpoint = &taskauthority.EndpointBinding{
+			Backend: ev.Acquired.Backend, Handle: ev.Acquired.Handle,
+			LeaseID: ev.Acquired.LeaseID, FenceToken: ev.Acquired.FenceToken,
+			SessionOwner: ev.Acquired.SessionOwner, WorkspaceID: ev.Acquired.WorkspaceID,
+			TabID: ev.Acquired.TabID, Incarnation: ev.Acquired.Incarnation,
+		}
+	}
+	if endpoint != nil {
+		out["backend"] = endpoint.Backend
+		out["window"] = endpoint.Handle
+		out["herdr_session"] = endpoint.SessionOwner
+		out["herdr_workspace_id"] = endpoint.WorkspaceID
+		out["herdr_tab_id"] = endpoint.TabID
+	}
+	return out
+}
+
 func currentOwnershipConflict(current *taskauthority.Aggregate, ev *taskauthority.RetirementEvidence) error {
 	if current == nil || ev == nil || current.Generation == ev.Generation {
 		return nil
@@ -560,7 +607,15 @@ func sameRetiredWorktree(a, b *taskauthority.WorktreeBinding) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
-	return a.Path == b.Path && a.LeaseID == b.LeaseID && a.FenceToken == b.FenceToken
+	if a.Path != b.Path || a.LeaseID != b.LeaseID || a.FenceToken != b.FenceToken {
+		return false
+	}
+	if a.LaunchManifest == nil || b.LaunchManifest == nil {
+		return a.LaunchManifest == b.LaunchManifest
+	}
+	return a.LaunchManifest.OperationID == b.LaunchManifest.OperationID &&
+		a.LaunchManifest.LaunchID == b.LaunchManifest.LaunchID &&
+		a.LaunchManifest.ManifestSHA256 == b.LaunchManifest.ManifestSHA256
 }
 
 // sameRetiredAcquired compares the exact retired pre-bind acquired endpoint
@@ -601,12 +656,19 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		return nil, fmt.Errorf("teardown %s: resolving task identity: %w", opts.ID, err)
 	}
 
+	partialLaunch := false
+	var worktree *taskauthority.WorktreeBinding
 	if !opts.Force {
 		safetyGen, err := safetyCheckGeneration(authority, taskID, opts)
 		if err != nil {
 			return nil, fmt.Errorf("teardown %s: safety check failed: %w", opts.ID, err)
 		}
-		proofs, err := safetyCheck(opts, meta, kind, backend, authority, safetyGen)
+		var evidenceErr error
+		worktree, partialLaunch, evidenceErr = retirementSafetyEvidenceForGeneration(authority, taskID, safetyGen)
+		if evidenceErr != nil {
+			return nil, fmt.Errorf("teardown %s: safety check failed: %w", opts.ID, evidenceErr)
+		}
+		proofs, err := safetyCheck(opts, meta, kind, backend, authority, safetyGen, worktree, partialLaunch)
 		if err != nil {
 			return nil, fmt.Errorf("teardown %s: safety check failed: %w", opts.ID, err)
 		}
@@ -644,7 +706,11 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 	// provider-verified merged evidence in its delivery projection; otherwise
 	// the operation fails closed with a typed precondition error. nil fails
 	// closed.
-	committed, err := retireTaskAuthoritatively(opts, meta, authority)
+	retirementMeta := meta
+	if worktree != nil {
+		retirementMeta = retirementMetaForEvidence(meta, &taskauthority.RetirementEvidence{Worktree: worktree})
+	}
+	committed, err := retireTaskAuthoritatively(opts, retirementMeta, authority)
 	if err != nil {
 		return nil, fmt.Errorf("teardown %s: %w", opts.ID, err)
 	}
@@ -730,6 +796,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		return cleanupPending(fmt.Errorf("teardown %s: resolving retirement evidence: %w", opts.ID, err))
 	}
 	ev := evidence.evidence
+	meta = retirementMetaForEvidence(meta, ev)
 	fullCleanup := evidence.currentIsRetired
 	if !fullCleanup {
 		result.Steps = append(result.Steps, fmt.Sprintf("resuming retirement of generation %s (current generation %s untouched)", committed.Generation, evidence.current.Generation))
@@ -905,7 +972,10 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 			// closing the mutation window between the initial safety check
 			// and ReturnWorktree.
 			if !opts.Force {
-				expectedManifestSHA := meta["launch_manifest_sha256"]
+				expectedManifestSHA := ""
+				if ev.Worktree.LaunchManifest != nil {
+					expectedManifestSHA = ev.Worktree.LaunchManifest.ManifestSHA256
+				}
 				if err := VerifyLaunchArtifacts(wtPath, expectedManifestSHA); err != nil {
 					return cleanupPending(fmt.Errorf("teardown %s: pre-return artifact verification failed: %w (use --force to override)", opts.ID, err))
 				}
@@ -1077,7 +1147,37 @@ func refreshDataDir(homeDir, id string) (bool, error) {
 
 // safetyCheck verifies that work is landed before allowing
 // Returns proof strings alongside any error. Proofs are only populated on success.
-func safetyCheck(opts Options, meta map[string]string, kind string, backend BoundTeardown, authority *taskauthority.Canonical, gen taskauthority.Generation) ([]string, error) {
+func retirementSafetyEvidenceForGeneration(authority *taskauthority.Canonical, taskID domain.TaskID, gen taskauthority.Generation) (*taskauthority.WorktreeBinding, bool, error) {
+	agg, err := authority.GetGeneration(taskID, gen)
+	if err != nil {
+		return nil, false, err
+	}
+	if agg.Worktree != nil {
+		binding := *agg.Worktree
+		return &binding, partialLaunchRetirement(agg), nil
+	}
+	if agg.Retirement != nil && agg.Retirement.Worktree != nil {
+		binding := *agg.Retirement.Worktree
+		return &binding, partialLaunchRetirement(agg), nil
+	}
+	return nil, false, nil
+}
+
+func partialLaunchRetirement(agg taskauthority.Aggregate) bool {
+	if agg.Phase == taskauthority.PhaseQueued {
+		return agg.Worktree != nil && agg.Launch != nil && agg.AcquiredEndpoint != nil && agg.Endpoint == nil &&
+			agg.LaunchEvidence != nil && agg.Worktree.LaunchManifest != nil &&
+			agg.LaunchEvidence.LaunchID == agg.Launch.LaunchID &&
+			agg.Worktree.LaunchManifest.LaunchID == agg.Launch.LaunchID
+	}
+	if agg.Phase == taskauthority.PhaseRetired && agg.Retirement != nil {
+		return agg.Retirement.Worktree != nil && agg.Retirement.Acquired != nil && agg.Retirement.Endpoint == nil &&
+			agg.Retirement.Worktree.LaunchManifest != nil
+	}
+	return false
+}
+
+func safetyCheck(opts Options, meta map[string]string, kind string, backend BoundTeardown, authority *taskauthority.Canonical, gen taskauthority.Generation, binding *taskauthority.WorktreeBinding, partialLaunch bool) ([]string, error) {
 	switch kind {
 	case taskauthority.KindScout:
 		if err := scoutSafetyCheck(opts, meta, gen); err != nil {
@@ -1087,7 +1187,7 @@ func safetyCheck(opts Options, meta map[string]string, kind string, backend Boun
 	case taskauthority.KindReview:
 		return reviewSafetyCheck(opts, meta)
 	default:
-		return shipSafetyCheck(opts, meta, backend, authority)
+		return shipSafetyCheck(opts, meta, backend, authority, binding, partialLaunch)
 	}
 }
 
@@ -1195,11 +1295,24 @@ func unresolvedDecisionKeysFromStatus(homeDir, taskID string) ([]string, error) 
 // It separates cleanliness checks (dirty worktree) from merge-proof checks
 // (topology-aware PR merge verification using delivery identity).
 // Returns proof strings emitted during merge-proof checks.
-func shipSafetyCheck(opts Options, meta map[string]string, backend BoundTeardown, authority *taskauthority.Canonical) ([]string, error) {
-	wtPath, ok := meta["worktree"]
-	if !ok || wtPath == "" {
-		return nil, fmt.Errorf("no worktree path in meta for %s", opts.ID)
+func shipSafetyCheck(opts Options, meta map[string]string, backend BoundTeardown, authority *taskauthority.Canonical, binding *taskauthority.WorktreeBinding, partialLaunch bool) ([]string, error) {
+	if binding == nil || binding.Path == "" {
+		return nil, fmt.Errorf("no canonical worktree path for %s", opts.ID)
 	}
+	if binding.LaunchManifest == nil {
+		return nil, fmt.Errorf("no canonical launch manifest evidence for %s", opts.ID)
+	}
+	if partialLaunch {
+		ident, err := identityFromMeta(meta)
+		if err != nil {
+			return nil, fmt.Errorf("reading delivery identity: %w", err)
+		}
+		if ident != nil {
+			return nil, fmt.Errorf("partial launch %s cannot carry delivery identity", opts.ID)
+		}
+	}
+	wtPath := binding.Path
+	expectedManifestSHA := binding.LaunchManifest.ManifestSHA256
 
 	// --- Cleanliness checks (always run) ---
 
@@ -1211,13 +1324,7 @@ func shipSafetyCheck(opts Options, meta map[string]string, backend BoundTeardown
 		return nil, fmt.Errorf("checking worktree %s: %w", wtPath, err)
 	}
 
-	// Get expected manifest SHA-256 from task metadata (anchored outside
-	// worktree). A missing or malformed anchor is a refusal, never a reason to
-	// derive the expectation from the worktree: the manifest lives inside the
-	// thing being verified, so a self-derived expectation matches by
-	// construction and the tamper evidence evaporates exactly when it matters.
-	// The pre-return recheck before ReturnWorktree fails closed the same way.
-	expectedManifestSHA := meta["launch_manifest_sha256"]
+	// Never derive the expected digest from the manifest being verified.
 
 	// Verify launch artifacts using the manifest.
 	if err := VerifyLaunchArtifacts(wtPath, expectedManifestSHA); err != nil {
@@ -1298,7 +1405,13 @@ func shipSafetyCheck(opts Options, meta map[string]string, backend BoundTeardown
 		return []string{proof}, nil
 	}
 
-	// No delivery identity: fall back to simple remote branch check
+	// An unbound partial launch has no completed delivery to prove. Its
+	// canonical state is checked by RetireTask; artifact and cleanliness
+	// verification above still apply. Confirmed launches retain the ordinary
+	// landed-branch gate.
+	if partialLaunch {
+		return []string{"partial launch artifacts and worktree cleanliness verified"}, nil
+	}
 	if err := checkRemoteBranch(wtPath); err != nil {
 		return nil, err
 	}

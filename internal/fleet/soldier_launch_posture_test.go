@@ -203,6 +203,19 @@ func gitInWorktree(t *testing.T, dir string, args ...string) {
 	}
 }
 
+func TestPrepareLaunchFilesRefusesUnsupportedHarnessWorktreeFile(t *testing.T) {
+	original := harness.Adapters[harness.Pi]
+	modified := original
+	modified.SoldierLaunch.WorktreeFiles = []string{"unsupported.json"}
+	harness.Adapters[harness.Pi] = modified
+	t.Cleanup(func() { harness.Adapters[harness.Pi] = original })
+
+	_, err := prepareLaunchFiles("charter", nil, &LaunchEnvelope{}, "prompt", []byte("script"), harness.Pi)
+	if err == nil || !strings.Contains(err.Error(), `unsupported prepared launch file "unsupported.json"`) {
+		t.Fatalf("prepareLaunchFiles error = %v, want unsupported harness file refusal", err)
+	}
+}
+
 func TestWritePiProjectSettings(t *testing.T) {
 	want := string(harness.PiProjectSettings())
 	path := func(wt string) string { return filepath.Join(wt, filepath.FromSlash(PiSettingsName)) }

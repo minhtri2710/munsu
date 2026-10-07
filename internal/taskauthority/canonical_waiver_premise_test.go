@@ -63,15 +63,37 @@ func TestPremiseNoAggregateWithABlankOwnerReachesApply(t *testing.T) {
 			name: "BindEndpoint",
 			setup: func(t *testing.T) (*Canonical, uint64) {
 				c, _, _ := newTestCanonical(t)
-				// The worktree check runs before the owner check.
-				// mustBindWorktree creates the task itself.
-				_, agg := mustBindWorktree(t, c, "t1")
-				return c, uint64(agg.Revision)
+				// BindEndpoint's owner check follows the bound-worktree check.
+				mustCreate(t, c, "t1")
+				intent, rev := mustBeginSpawn(t, c, "t1", preconditionOf(1, 1))
+				worktree := launchWorktreeBinding(intent)
+				bind := CanonicalBindWorktreeRequest{
+					HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, rev),
+					Binding: worktree, Reason: "bind worktree",
+				}
+				if _, err := c.BindWorktree(mustOperation(t, "op-premise-bindwt", bind), bind); err != nil {
+					t.Fatalf("BindWorktree: %v", err)
+				}
+				rev++
+				mustRecordLaunchManifest(t, c, "t1", intent, worktree, rev)
+				rev++
+				attach := attachRequest(c, "t1", preconditionOf(1, rev), intent, "handle-t1")
+				if _, err := c.AttachEndpoint(mustOperation(t, "op-premise-attach", attach), attach); err != nil {
+					t.Fatalf("AttachEndpoint: %v", err)
+				}
+				rev++
+				record := recordLaunchRequest(c, "t1", preconditionOf(1, rev), intent)
+				if _, err := c.RecordLaunch(mustOperation(t, "op-premise-record", record), record); err != nil {
+					t.Fatalf("RecordLaunch: %v", err)
+				}
+				rev++
+				return c, rev
 			},
 			call: func(t *testing.T, c *Canonical, rev uint64) error {
+				intent := launchRequest(c, "t1", preconditionOf(1, 1))
 				req := CanonicalBindEndpointRequest{
 					HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"),
-					Precondition: preconditionOf(1, rev), Binding: endpointBinding(), Reason: "bind",
+					Precondition: preconditionOf(1, rev), Binding: launchEndpointBinding(intent, "handle-t1"), Reason: "bind",
 				}
 				_, err := c.BindEndpoint(mustOperation(t, "op-premise-bindep", req), req)
 				return err
@@ -100,7 +122,7 @@ func TestPremiseNoAggregateWithABlankOwnerReachesApply(t *testing.T) {
 			// state the refusal below needs.
 			control, controlRev := tc.setup(t)
 			if err := tc.call(t, control, controlRev); err != nil {
-				t.Fatalf("%s did not commit against the fixture state, so the refusal below is not attributable to the owner: %v", tc.name, err)
+				t.Fatalf("%s did not accept the valid fixture state, so the refusal below is not attributable to the owner: %v", tc.name, err)
 			}
 
 			c, rev := tc.setup(t)

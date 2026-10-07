@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -108,9 +109,11 @@ type Runner struct {
 	launchReentry bool // the intent pre-existed this run (recovery, not first attempt)
 
 	// launch submission evidence: the exact endpoint command submitted for
-	// the launch and its sha256 digest, durably recorded before submission.
+	// the launch and its sha256 digest, durably recorded after submission.
 	launchCommand       string
 	launchCommandDigest string
+	preparedLaunch      *preparedLaunchArtifact
+	preparedFiles       *preparedLaunchFiles
 
 	// fence is the probed write fence the harness is launched under, nil when
 	// the host has none; fenceRecord is its outcome for the seat record.
@@ -121,8 +124,8 @@ type Runner struct {
 	// delivery is already recorded): from then on a soldier process may run.
 	launched bool
 
-	// manifestSHA256 is the SHA-256 digest of the written launch manifest,
-	// persisted to task metadata for external anchoring.
+	// manifestSHA256 is the digest of the launch manifest recorded in canonical
+	// worktree binding evidence.
 	manifestSHA256 string
 
 	// attestation is the capability attestation snapshot created during mode
@@ -336,6 +339,11 @@ func (r *Runner) Run() (windowID string, runErr error) {
 	if err := r.probeFence(bound); err != nil {
 		return "", err
 	}
+	if !reviewing {
+		if err := r.prepareAndPersistLaunchManifest(); err != nil {
+			return "", err
+		}
+	}
 	if err := r.createSession(); err != nil {
 		return "", err
 	}
@@ -380,7 +388,7 @@ func (r *Runner) launchPhases(reviewing bool) (taskauthority.Outcome, error) {
 		return taskauthority.Outcome{}, err
 	}
 	if !reviewing {
-		if err := r.writeLaunchManifest(); err != nil {
+		if err := r.verifyRecordedLaunchArtifacts(); err != nil {
 			return taskauthority.Outcome{}, err
 		}
 	}
@@ -1643,8 +1651,16 @@ func (r *Runner) createSession() error {
 	if r.endpoints == nil {
 		return fmt.Errorf("spawn endpoint capabilities are required")
 	}
+	// Successful submission recovery verifies canonical artifacts before
+	// probing or re-adopting the recorded endpoint.
+	acquired := r.recordedAcquiredEndpoint()
+	if acquired != nil && r.kind != taskauthority.KindReview && r.recordedLaunchEvidence() {
+		if err := r.verifyRecordedLaunchArtifacts(); err != nil {
+			return fmt.Errorf("recorded launch artifact verification: %w", err)
+		}
+	}
 	// Recovery: adopt the durably recorded acquired endpoint.
-	if acquired := r.recordedAcquiredEndpoint(); acquired != nil {
+	if acquired != nil {
 		if r.launch != nil && acquired.Backend != r.launch.Backend {
 			return fmt.Errorf("recorded acquired endpoint backend %q does not match launch intent backend %q; refuse recovery", acquired.Backend, r.launch.Backend)
 		}
@@ -1732,6 +1748,48 @@ func (r *Runner) createSession() error {
 // BEFORE any process submission. It is exact-generation/idempotent: recovery
 // verifies the recorded identity matches the created endpoint and skips; a
 // different recorded endpoint fails closed and can never be overwritten.
+func (r *Runner) recordedLaunchEvidence() bool {
+	if r.args.Authority == nil {
+		return false
+	}
+	taskID, err := domain.NewTaskID(r.args.ID)
+	if err != nil {
+		return false
+	}
+	agg, err := r.args.Authority.Get(taskID)
+	return err == nil && agg.LaunchEvidence != nil
+}
+
+func (r *Runner) verifyRecordedLaunchArtifacts() error {
+	if r.args.Authority == nil {
+		return fmt.Errorf("verifying recorded launch artifacts: task authority is not composed")
+	}
+	taskID, err := domain.NewTaskID(r.args.ID)
+	if err != nil {
+		return fmt.Errorf("verifying recorded launch artifacts: %w", err)
+	}
+	agg, err := r.args.Authority.Get(taskID)
+	if err != nil {
+		return fmt.Errorf("verifying recorded launch artifacts: %w", err)
+	}
+	if agg.LaunchEvidence == nil || agg.Worktree == nil || agg.Worktree.LaunchManifest == nil {
+		return fmt.Errorf("verifying recorded launch artifacts: successful launch lacks canonical worktree manifest evidence")
+	}
+	if agg.LaunchEvidence.LaunchID != agg.Worktree.LaunchManifest.LaunchID || (r.launchID != "" && agg.LaunchEvidence.LaunchID != r.launchID) {
+		return fmt.Errorf("verifying recorded launch artifacts: launch identity mismatch")
+	}
+	if r.preparedLaunch != nil && agg.LaunchEvidence.CommandDigest != r.preparedLaunch.artifact.CommandDigest {
+		return fmt.Errorf("verifying recorded launch artifacts: command digest mismatch")
+	}
+	if err := VerifyLaunchArtifacts(agg.Worktree.Path, agg.Worktree.LaunchManifest.ManifestSHA256); err != nil {
+		if failures := artifactVerificationFailures(err); len(failures) > 0 {
+			return fmt.Errorf("verifying artifacts for recorded launch: %w", errors.Join(failures...))
+		}
+		return fmt.Errorf("verifying artifacts for recorded launch: %w", err)
+	}
+	return nil
+}
+
 func (r *Runner) attachEndpoint() error {
 	if r.args.Authority == nil {
 		return fmt.Errorf("attaching acquired endpoint: task authority is not composed for spawn")
@@ -1875,10 +1933,20 @@ func (r *Runner) buildSoldierPrompt(bound BoundWorktree) error {
 		}
 	}
 
-	// Persist durable files to the worktree.
+	// Review launch files live under the home and are not covered by the
+	// reviewed worktree's soldier manifest. Soldier files are prepared later,
+	// after the exact manifest digest is committed canonically.
 	charter := DefaultCharter(r.args.ID, r.kind, r.effectiveMode)
-	if err := PersistLaunchFiles(r.launchDir, charter, briefData, env, promptText); err != nil {
-		return fmt.Errorf("persisting soldier launch files: %w", err)
+	if r.review != nil {
+		if err := PersistLaunchFiles(r.launchDir, charter, briefData, env, promptText); err != nil {
+			return fmt.Errorf("persisting reviewer launch files: %w", err)
+		}
+	} else {
+		prepared, err := prepareLaunchFiles(charter, briefData, env, promptText, nil, r.harness)
+		if err != nil {
+			return fmt.Errorf("preparing soldier launch files: %w", err)
+		}
+		r.preparedFiles = &prepared
 	}
 
 	// Build launch arguments with the complete prompt, passing model and effort.
@@ -2035,20 +2103,37 @@ func (r *Runner) submitLaunch() error {
 	if r.projectConfigLoaded {
 		snapshotDigest = r.projectConfig.SnapshotDigest
 	}
-	artifact, err := buildLaunchArtifact(LaunchArtifactInput{
-		WorktreePath:   r.cwd,
-		LaunchDir:      r.launchDir,
-		Review:         r.review,
-		HomeDir:        r.homeDir,
-		TaskID:         r.args.ID,
-		SnapshotDigest: snapshotDigest,
-		LaunchBin:      r.launchBin,
-		LaunchArgs:     r.launchArgs,
-		LaunchID:       r.launchID,
-		Generation:     agg.Generation.String(),
-		EndpointFence:  r.epFenceToken(),
-		Fence:          r.fence,
-	})
+	if r.review == nil && agg.LaunchEvidence != nil {
+		command := "bash " + shQuote(filepath.Join(r.launchDir, LaunchScriptName))
+		commandDigest := sha256Content([]byte(command))
+		wantArgv := append([]string{r.launchBin}, r.launchArgs[:len(r.launchArgs)-1]...)
+		if agg.LaunchEvidence.LaunchID != r.launchID || agg.LaunchEvidence.CommandDigest != commandDigest ||
+			agg.LaunchEvidence.Seat.PromptDigest != sha256Content([]byte(r.prompt)) ||
+			!reflect.DeepEqual(agg.LaunchEvidence.Seat.Argv, wantArgv) {
+			return fmt.Errorf("submitting launch: recorded launch evidence does not match this launch; refuse recovery")
+		}
+		if err := r.verifyRecordedLaunchArtifacts(); err != nil {
+			return err
+		}
+		r.launchCommand, r.launchCommandDigest, r.launched = command, commandDigest, true
+		return nil
+	}
+	var artifact LaunchArtifact
+	if r.review != nil {
+		artifact, err = buildLaunchArtifact(LaunchArtifactInput{
+			WorktreePath: r.cwd, LaunchDir: r.launchDir, Review: r.review, HomeDir: r.homeDir,
+			TaskID: r.args.ID, SnapshotDigest: snapshotDigest, LaunchBin: r.launchBin,
+			LaunchArgs: r.launchArgs, LaunchID: r.launchID, Generation: agg.Generation.String(),
+			EndpointFence: r.epFenceToken(), Fence: r.fence,
+		})
+	} else if r.preparedLaunch == nil || r.preparedFiles == nil {
+		return fmt.Errorf("submitting launch: canonical launch artifacts were not prepared")
+	} else {
+		artifact = r.preparedLaunch.artifact
+		if err := VerifyLaunchArtifacts(r.wtPath, r.manifestSHA256); err != nil {
+			return fmt.Errorf("submitting launch: launch artifacts no longer match canonical evidence: %w", err)
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("submitting launch: %w", err)
 	}
@@ -2106,25 +2191,97 @@ func (r *Runner) submitLaunch() error {
 	return nil
 }
 
-// Phase 13b: writeLaunchManifest writes the digest manifest after all launch
-// artifacts exist. The manifest is written after submitLaunch creates the
-// launch script, so all artifacts are present.
-func (r *Runner) writeLaunchManifest() error {
-	entries := []ManifestEntry{}
-	for _, name := range launchManifestNames(r.harness) {
-		entry, err := ManifestEntryForFile(r.wtPath, name, DisposalPolicyCleanable)
-		if err != nil {
-			return fmt.Errorf("building manifest entry for %s: %w", name, err)
-		}
-		entries = append(entries, entry)
+// prepareAndPersistLaunchManifest prepares every covered byte, commits its
+// digest to canonical worktree evidence, then publishes the same bytes without
+// replacement and independently verifies the completed artifact set.
+func (r *Runner) prepareAndPersistLaunchManifest() error {
+	if r.args.Authority == nil || r.launch == nil {
+		return fmt.Errorf("preparing launch manifest: canonical launch intent is required")
 	}
-	manifest := BuildManifest(entries)
-
-	digest, err := WriteManifest(r.wtPath, manifest)
+	taskID, err := domain.NewTaskID(r.args.ID)
 	if err != nil {
-		return fmt.Errorf("writing launch manifest: %w", err)
+		return fmt.Errorf("preparing launch manifest: %w", err)
 	}
-	r.manifestSHA256 = digest
+	agg, err := r.args.Authority.Get(taskID)
+	if err != nil {
+		return fmt.Errorf("preparing launch manifest: %w", err)
+	}
+	if agg.Worktree == nil || agg.Worktree.Path != r.wtPath || agg.Launch == nil || agg.Launch.LaunchID != r.launchID {
+		return fmt.Errorf("preparing launch manifest: canonical worktree binding or launch intent does not match this launch")
+	}
+	recorded := agg.Worktree.LaunchManifest
+	if recorded != nil && (recorded.LaunchID != r.launchID || recorded.ManifestSHA256 == "" || agg.Worktree.LeaseID != r.launch.WorktreeReservationID || agg.Worktree.FenceToken != r.launch.WorktreeFenceToken) {
+		return fmt.Errorf("preparing launch manifest: canonical manifest anchor does not match this launch and worktree")
+	}
+	if agg.LaunchEvidence != nil {
+		if recorded == nil || recorded.LaunchID != r.launchID || recorded.ManifestSHA256 == "" || agg.LaunchEvidence.LaunchID != r.launchID ||
+			agg.Worktree.LeaseID != r.launch.WorktreeReservationID || agg.Worktree.FenceToken != r.launch.WorktreeFenceToken {
+			return fmt.Errorf("preparing launch manifest: successful launch evidence has no matching canonical manifest anchor")
+		}
+		r.manifestSHA256 = recorded.ManifestSHA256
+		if err := VerifyLaunchArtifacts(r.wtPath, recorded.ManifestSHA256); err != nil {
+			return fmt.Errorf("verifying artifacts for recorded launch: %w", err)
+		}
+		return nil
+	}
+	snapshotDigest := ""
+	if r.projectConfigLoaded {
+		snapshotDigest = r.projectConfig.SnapshotDigest
+	}
+	artifact, scriptBytes, err := prepareLaunchScript(LaunchArtifactInput{
+		WorktreePath: r.cwd, LaunchDir: r.launchDir, HomeDir: r.homeDir, TaskID: r.args.ID,
+		SnapshotDigest: snapshotDigest, LaunchBin: r.launchBin, LaunchArgs: r.launchArgs,
+		LaunchID: r.launchID, Generation: agg.Generation.String(), EndpointFence: r.epFenceToken(), Fence: r.fence,
+	})
+	if err != nil {
+		return fmt.Errorf("preparing launch manifest: %w", err)
+	}
+	prepared, err := prepareLaunchFiles(DefaultCharter(r.args.ID, r.kind, r.effectiveMode), r.briefData, r.promptEnv, r.prompt, scriptBytes, r.harness)
+	if err != nil {
+		return fmt.Errorf("preparing launch manifest: %w", err)
+	}
+	r.preparedLaunch = &preparedLaunchArtifact{artifact: artifact, bytes: scriptBytes}
+	r.preparedFiles = &prepared
+	r.manifestSHA256 = prepared.digest
+
+	if recorded == nil {
+		if err := refusePreexistingLaunchFiles(r.wtPath, prepared); err != nil {
+			return fmt.Errorf("refusing unanchored launch files: %w", err)
+		}
+		req := taskauthority.CanonicalRecordLaunchManifestRequest{
+			HomeID: r.args.Authority.HomeID(), TaskID: taskID,
+			Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+			LaunchID:     r.launchID, WorktreeLeaseID: agg.Worktree.LeaseID,
+			WorktreeFenceToken: agg.Worktree.FenceToken, ManifestSHA256: prepared.digest,
+			Reason: "prepared launch manifest",
+		}
+		op, err := r.spawnOperation("manifest", agg.Generation, req)
+		if err != nil {
+			return fmt.Errorf("recording launch manifest evidence: %w", err)
+		}
+		if _, err := r.args.Authority.RecordLaunchManifest(op, req); err != nil {
+			fresh, readErr := r.args.Authority.Get(taskID)
+			if readErr != nil || fresh.Worktree == nil || fresh.Worktree.LaunchManifest == nil || fresh.Worktree.LaunchManifest.OperationID != op.ID.Value() || fresh.Worktree.LaunchManifest.LaunchID != r.launchID || fresh.Worktree.LaunchManifest.ManifestSHA256 != prepared.digest {
+				return fmt.Errorf("recording launch manifest evidence: %w", err)
+			}
+			recorded = fresh.Worktree.LaunchManifest
+		} else {
+			fresh, err := r.args.Authority.Get(taskID)
+			if err != nil {
+				return fmt.Errorf("verifying launch manifest evidence: %w", err)
+			}
+			recorded = fresh.Worktree.LaunchManifest
+		}
+	}
+	if recorded == nil || recorded.LaunchID != r.launchID || recorded.ManifestSHA256 != prepared.digest || agg.Worktree.LeaseID != r.launch.WorktreeReservationID || agg.Worktree.FenceToken != r.launch.WorktreeFenceToken {
+		return fmt.Errorf("canonical launch manifest evidence conflicts with the prepared bytes; refuse to persist")
+	}
+	if err := persistPreparedLaunchFiles(r.wtPath, prepared); err != nil {
+		return fmt.Errorf("persisting anchored launch files: %w", err)
+	}
+	if err := VerifyLaunchArtifacts(r.wtPath, recorded.ManifestSHA256); err != nil {
+		return fmt.Errorf("verifying persisted launch artifacts: %w", err)
+	}
 	return nil
 }
 
@@ -2132,6 +2289,19 @@ func (r *Runner) writeLaunchManifest() error {
 // is needed — the full prompt was already passed as a launch argument.
 // For harnesses that reached the launch submission, the prompt is in context;
 // this is a pure handshake wait with error handling.
+func refusePreexistingLaunchFiles(worktreePath string, prepared preparedLaunchFiles) error {
+	names := append(append([]string(nil), prepared.names...), ManifestName)
+	for _, name := range names {
+		path := filepath.Join(worktreePath, filepath.FromSlash(name))
+		if _, err := os.Lstat(path); err == nil {
+			return fmt.Errorf("%s already exists before canonical manifest evidence", name)
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("checking %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
 func (r *Runner) waitAndInjectBrief() error {
 	if len(r.briefData) == 0 {
 		return nil
@@ -2343,7 +2513,7 @@ func newEndpointToken() string {
 // pre-transition runtime observation projection (Task 4.2, Task 7.8
 // adjudication): it carries the runtime-only fields that describe the live
 // soldier session (window, worktree, harness, backend, mode, yolo, model,
-// effort, config digest, launch manifest anchor, endpoint metadata) and never
+// effort, config digest, endpoint metadata) and never
 // acts as a writer of record for authoritative Task Aggregate fields (kind,
 // project, description, owner, generation, state). Existing projection
 // fields are preserved; runtime fields are overlaid. Authoritative fields
@@ -2375,10 +2545,6 @@ func (r *Runner) writeTaskMeta() error {
 		if r.projectConfigLoaded {
 			put("config_snapshot_digest", r.projectConfig.SnapshotDigest)
 		}
-		if r.manifestSHA256 != "" {
-			put("launch_manifest_sha256", r.manifestSHA256)
-		}
-
 		for k, v := range r.endpoint.Metadata {
 			put(k, v)
 		}

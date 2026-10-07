@@ -348,6 +348,26 @@ func TestSubmitLaunchRefusesEvidenceForAnotherSubmission(t *testing.T) {
 // attachEndpoint could run while the capability was replaced. The recovery
 // replay path (recorded launch evidence) is unaffected because the re-check
 // sits after that early return.
+func TestSubmitLaunchRefusesLaunchEvidenceWithDifferentCommand(t *testing.T) {
+	f := newLaunchFixture(t, "submit-command-digest-mismatch")
+	if err := runLaunchPhases(f, "submit"); err != errCrashSimulated {
+		t.Fatalf("runLaunchPhases through submit: %v", err)
+	}
+	agg := f.aggregate()
+	if agg.Launch == nil || agg.LaunchEvidence == nil {
+		t.Fatalf("fixture missing committed launch evidence: %+v", agg)
+	}
+	f.runner.launchID = agg.Launch.LaunchID
+	f.runner.launchBin = "another-harness"
+	submits := f.endpoints.submitCount()
+	if err := f.runner.submitLaunch(); err == nil || !strings.Contains(err.Error(), "does not match this launch") {
+		t.Fatalf("submitLaunch error = %v, want command-evidence refusal", err)
+	}
+	if f.endpoints.submitCount() != submits {
+		t.Fatalf("mismatched command evidence submitted again: before=%d after=%d", submits, f.endpoints.submitCount())
+	}
+}
+
 func TestSubmitLaunchBlocksOnAttestationLossBeforeSubmission(t *testing.T) {
 	f := newLaunchFixture(t, "submit-late-loss")
 	// Drive the fresh launch up to just before submission: the endpoint is

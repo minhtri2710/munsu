@@ -98,8 +98,17 @@ func setupGitRepo(t *testing.T, dir, remoteDir string) {
 	}
 }
 
+func testWorktreeBinding(path, digest string) *taskauthority.WorktreeBinding {
+	return &taskauthority.WorktreeBinding{
+		Path: path,
+		LaunchManifest: &taskauthority.LaunchManifestEvidence{
+			OperationID: "manifest-op", LaunchID: "launch-test", ManifestSHA256: digest, RecordedAt: 1,
+		},
+	}
+}
+
 // setupRetirementTestManifest writes launch artifacts and manifest to the
-// worktree. Returns the manifest digest for use in meta.
+// worktree. Returns the digest for an explicit canonical binding fixture.
 func setupRetirementTestManifest(t *testing.T, wt string) string {
 	t.Helper()
 	charter := DefaultCharter("retirement-test", "ship", "direct-PR")
@@ -113,16 +122,15 @@ func setupRetirementTestManifest(t *testing.T, wt string) string {
 
 	entries := []ManifestEntry{}
 	for _, name := range CoreLaunchArtifactNames {
-		entry, err := ManifestEntryForFile(wt, name, DisposalPolicyCleanable)
-		if err != nil {
-			t.Fatalf("manifest entry for %s: %v", name, err)
-		}
-		entries = append(entries, entry)
+		entries = append(entries, manifestEntryForTestFile(t, wt, name, DisposalPolicyCleanable))
 	}
 	manifest := BuildManifest(entries)
-	digest, err := WriteManifest(wt, manifest)
+	data, digest, err := MarshalManifest(manifest)
 	if err != nil {
-		t.Fatalf("writing manifest: %v", err)
+		t.Fatalf("marshaling manifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, ManifestName), data, 0644); err != nil {
+		t.Fatalf("writing manifest fixture: %v", err)
 	}
 	return digest
 }
@@ -159,11 +167,10 @@ func TestShipSafetyCheck_CleanWithRemote(t *testing.T) {
 
 	// Clean state should pass
 	meta := map[string]string{
-		"worktree":               wt,
-		"kind":                   "ship",
-		"launch_manifest_sha256": md,
+		"worktree": wt,
+		"kind":     "ship",
 	}
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{}, nil)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
 	if err != nil {
 		t.Fatalf("shipSafetyCheck should pass for clean branch: %v", err)
 	}
@@ -198,11 +205,10 @@ func TestShipSafetyCheck_OnlyKnownLaunchArtifactsDirty(t *testing.T) {
 	md := setupRetirementTestManifest(t, wt)
 
 	meta := map[string]string{
-		"worktree":               wt,
-		"kind":                   "ship",
-		"launch_manifest_sha256": md,
+		"worktree": wt,
+		"kind":     "ship",
 	}
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{}, nil)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
 	if err != nil {
 		t.Fatalf("shipSafetyCheck should pass when only known launch artifacts are dirty: %v", err)
 	}
@@ -240,11 +246,10 @@ func TestShipSafetyCheck_UnknownUntrackedFileDirty(t *testing.T) {
 	os.WriteFile(filepath.Join(wt, "arbitrary.txt"), []byte("unknown\n"), 0644)
 
 	meta := map[string]string{
-		"worktree":               wt,
-		"kind":                   "ship",
-		"launch_manifest_sha256": md,
+		"worktree": wt,
+		"kind":     "ship",
 	}
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{}, nil)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
 	if err == nil {
 		t.Fatal("shipSafetyCheck should fail when unknown untracked file exists alongside known artifacts")
 	}
@@ -285,11 +290,10 @@ func TestShipSafetyCheck_MixedKnownAndUnknownDirty(t *testing.T) {
 	os.WriteFile(filepath.Join(wt, "rogue.txt"), []byte("rogue\n"), 0644)
 
 	meta := map[string]string{
-		"worktree":               wt,
-		"kind":                   "ship",
-		"launch_manifest_sha256": md,
+		"worktree": wt,
+		"kind":     "ship",
 	}
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{}, nil)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
 	if err == nil {
 		t.Fatal("shipSafetyCheck should fail when unknown untracked file coexists with known artifacts")
 	}
@@ -348,11 +352,10 @@ func TestShipSafetyCheck_OnlyLaunchScriptDirty(t *testing.T) {
 	md := setupRetirementTestManifest(t, wt)
 
 	meta := map[string]string{
-		"worktree":               wt,
-		"kind":                   "ship",
-		"launch_manifest_sha256": md,
+		"worktree": wt,
+		"kind":     "ship",
 	}
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{}, nil)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
 	if err != nil {
 		t.Fatalf("shipSafetyCheck should pass when only launch artifacts are dirty: %v", err)
 	}
@@ -364,20 +367,21 @@ func TestShipSafetyCheck_NoRemoteBranch(t *testing.T) {
 	os.MkdirAll(wt, 0755)
 	setupGitRepo(t, wt, "") // no remote
 
+	md := setupRetirementTestManifest(t, wt)
 	meta := map[string]string{
 		"worktree": wt,
 		"kind":     "ship",
 	}
-	_, err := shipSafetyCheck(Options{}, meta, fakeTeardown{}, nil)
+	_, err := shipSafetyCheck(Options{}, meta, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
 	if err == nil {
 		t.Fatal("shipSafetyCheck should fail without remote")
 	}
 }
 
 func TestShipSafetyCheck_NoWorktreeInMeta(t *testing.T) {
-	_, err := shipSafetyCheck(Options{ID: "test"}, map[string]string{}, fakeTeardown{}, nil)
-	if err == nil {
-		t.Fatal("should fail when no worktree in meta")
+	_, err := shipSafetyCheck(Options{ID: "test"}, map[string]string{}, fakeTeardown{}, nil, nil, false)
+	if err == nil || !strings.Contains(err.Error(), "no canonical worktree path") {
+		t.Fatalf("error = %v, want canonical worktree refusal", err)
 	}
 }
 
@@ -743,7 +747,9 @@ func TestReviewSafetyCheckOwnsNothingToLand(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			for name, call := range map[string]func() ([]string, error){
 				"reviewSafetyCheck": func() ([]string, error) { return reviewSafetyCheck(opts, tc.meta) },
-				"safetyCheck":       func() ([]string, error) { return safetyCheck(opts, tc.meta, taskauthority.KindReview, nil, nil, 1) },
+				"safetyCheck": func() ([]string, error) {
+					return safetyCheck(opts, tc.meta, taskauthority.KindReview, nil, nil, 1, nil, false)
+				},
 			} {
 				proofs, err := call()
 				if tc.wantErr == "" && (err != nil || len(proofs) != 0) {

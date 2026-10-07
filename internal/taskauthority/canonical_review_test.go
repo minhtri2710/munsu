@@ -296,16 +296,25 @@ func TestCanonicalRecordLaunchCarriesTheReviewTreeExactlyForReviews(t *testing.T
 	if _, err := c.BeginSpawn(mustOperation(t, "op-begin-ship2", shipIntent), shipIntent); err != nil {
 		t.Fatal(err)
 	}
-	shipAttach := attachRequest(c, "ship2", preconditionOf(1, 2), shipIntent, "handle-ship2")
+	shipWorktree := launchWorktreeBinding(shipIntent)
+	shipBind := CanonicalBindWorktreeRequest{
+		HomeID: c.HomeID(), TaskID: mustTaskID(t, "ship2"), Precondition: preconditionOf(1, 2),
+		Binding: shipWorktree, Reason: "bind worktree",
+	}
+	if _, err := c.BindWorktree(mustOperation(t, "op-bind-wt-ship2", shipBind), shipBind); err != nil {
+		t.Fatal(err)
+	}
+	mustRecordLaunchManifest(t, c, "ship2", shipIntent, shipWorktree, 3)
+	shipAttach := attachRequest(c, "ship2", preconditionOf(1, 4), shipIntent, "handle-ship2")
 	if _, err := c.AttachEndpoint(mustOperation(t, "op-attach-ship2", shipAttach), shipAttach); err != nil {
 		t.Fatal(err)
 	}
-	shipWithTree := recordLaunchRequest(c, "ship2", preconditionOf(1, 3), shipIntent)
+	shipWithTree := recordLaunchRequest(c, "ship2", preconditionOf(1, 5), shipIntent)
 	shipWithTree.ReviewTree = &tree
 	_, err = c.RecordLaunch(mustOperation(t, "op-record-ship-tree", shipWithTree), shipWithTree)
 	wantErrSubstring(t, err, "launch evidence carries the review tree exactly for a review task", "RecordLaunch of a ship carrying a review tree")
 
-	badTree := recordLaunchRequest(c, "ship2", preconditionOf(1, 3), shipIntent)
+	badTree := recordLaunchRequest(c, "ship2", preconditionOf(1, 5), shipIntent)
 	badTree.ReviewTree = &domain.TreeState{Head: deliveryHead}
 	_, err = c.RecordLaunch(mustOperation(t, "op-record-bad-tree", badTree), badTree)
 	wantErrSubstring(t, err, "launch evidence review tree requires a head and a porcelain digest", "RecordLaunch with a tree lacking its porcelain digest")

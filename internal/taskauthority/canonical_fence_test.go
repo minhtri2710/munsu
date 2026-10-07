@@ -449,6 +449,8 @@ func launchPreState(t *testing.T, c *Canonical, taskID string) (CanonicalBeginSp
 		t.Fatalf("BindWorktree: %v", err)
 	}
 	rev++
+	mustRecordLaunchManifest(t, c, taskID, req, bw.Binding, rev)
+	rev++
 
 	attach := attachRequest(c, taskID, preconditionOf(1, rev), req, "handle-1")
 	if _, err := c.AttachEndpoint(mustOperation(t, "op-attach-launch-"+taskID, attach), attach); err != nil {
@@ -526,6 +528,8 @@ func TestCanonicalBindEndpointWithLaunchRequiresAcquiredAndEvidence(t *testing.T
 	if _, err := c.AttachEndpoint(mustOperation(t, "op-attach-1", attach), attach); err != nil {
 		t.Fatalf("AttachEndpoint: %v", err)
 	}
+	rev++
+	mustRecordLaunchManifest(t, c, "t1", req, bw.Binding, rev)
 	rev++
 	be.Precondition = preconditionOf(1, rev)
 	if _, err := c.BindEndpoint(mustOperation(t, "op-be-no-evidence", be), be); !errors.Is(err, ErrConflict) {
