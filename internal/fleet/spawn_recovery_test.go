@@ -512,23 +512,6 @@ func TestLaunchRecoveryPostSubmitFailureNamesLiveEndpoint(t *testing.T) {
 			},
 			wantSubmits: 1,
 		},
-		{
-			// The final bind is refused after .meta names the window: spawn
-			// refuses a re-run, so the pane is stopped by hand.
-			name: "confirm spawn",
-			inject: func(f *launchFixture) func() {
-				probes := 0
-				f.endpoints.onProbe = func() error {
-					if probes++; probes == 3 {
-						tamperTaskAggregate(f.t, f.homeDir, f.taskID, func(agg *taskauthority.Aggregate) { agg.LaunchEvidence = nil })
-					}
-					return nil
-				}
-				return nil
-			},
-			wantCause: func(_ *launchFixture, err error) bool { return errors.Is(err, taskauthority.ErrConflict) },
-			refusal:   "refuse duplicate live execution",
-		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			taskID := "post-submit-" + strings.ReplaceAll(tc.name, " ", "")
@@ -1362,5 +1345,67 @@ func TestLaunchRecoveryDuplicateLiveTaskFailsClosed(t *testing.T) {
 	}
 	if f.endpoints.createCount() != 1 {
 		t.Fatalf("duplicate spawn created %d endpoints", f.endpoints.createCount())
+	}
+}
+
+// A committed RecordLaunch whose launch evidence later disappears is lost proof,
+// not a retryable cause. The first Run keeps the live pane owned and refuses with
+// a typed conflict that offers no re-run. A retry refuses before submitting
+// again, and neither attempt creates, disposes, resubmits or backfills evidence.
+func TestLaunchRecoveryMissingLaunchProofRefusesRetryWithoutRepair(t *testing.T) {
+	rf := newRunFixture(t, "missing-launch-proof")
+	f := rf.launchFixture
+	probes := 0
+	f.endpoints.onProbe = func() error {
+		if probes++; probes == 3 {
+			tamperTaskAggregate(f.t, f.homeDir, f.taskID, func(agg *taskauthority.Aggregate) { agg.LaunchEvidence = nil })
+		}
+		return nil
+	}
+
+	_, err := rf.run()
+	if !errors.Is(err, taskauthority.ErrConflict) || !strings.Contains(err.Error(), "successful launch lacks canonical worktree manifest evidence") {
+		t.Fatalf("first Run = %v, want a typed conflict naming the missing launch proof", err)
+	}
+	msg := err.Error()
+	for _, want := range []string{"missing-launch-proof", "backend tmux endpoint pane-1", "may still be running", "stop pane pane-1 on backend tmux by hand"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("error %q does not contain %q", msg, want)
+		}
+	}
+	for _, unwanted := range []string{"fix the cause", "re-run"} {
+		if strings.Contains(msg, unwanted) {
+			t.Fatalf("error %q advises %q, which cannot repair lost launch proof", msg, unwanted)
+		}
+	}
+	agg := f.aggregate()
+	if agg.LaunchEvidence != nil || agg.AcquiredEndpoint == nil || agg.AcquiredEndpoint.Handle != "pane-1" || agg.Endpoint != nil || agg.Phase != taskauthority.PhaseQueued {
+		t.Fatalf("first Run did not retain pre-confirm endpoint custody: %+v", agg)
+	}
+	revision := agg.Revision
+
+	f.endpoints.onProbe = nil
+	_, err = rf.run()
+	if !errors.Is(err, taskauthority.ErrConflict) || !strings.Contains(err.Error(), "already submitted") || !strings.Contains(err.Error(), "stop pane pane-1 on backend tmux by hand") {
+		t.Fatalf("retry = %v, want a typed conflict naming the submitted launch and its custody", err)
+	}
+	if after := f.aggregate(); after.Revision != revision || after.LaunchEvidence != nil || after.Endpoint != nil || after.AcquiredEndpoint == nil || after.AcquiredEndpoint.Handle != "pane-1" {
+		t.Fatalf("refused retry changed custody or revision: %+v", after)
+	}
+	if n := f.endpoints.createCount(); n != 1 {
+		t.Fatalf("endpoint creations = %d, want 1", n)
+	}
+	if n := rf.exec.submitCount(); n != 1 {
+		t.Fatalf("launch submissions = %d, want 1", n)
+	}
+	if rf.exec.disposes != 0 {
+		t.Fatalf("live endpoint disposed %d times, want 0", rf.exec.disposes)
+	}
+	if n := harnessLaunchCount(t, rf.counter); n != 1 {
+		t.Fatalf("soldier launches = %d, want 1", n)
+	}
+	status, probeErr := f.endpoints.Probe(CreatedEndpoint{Backend: agg.AcquiredEndpoint.Backend, Handle: agg.AcquiredEndpoint.Handle})
+	if probeErr != nil || status.Lifecycle != LifecycleAlive || status.Responsiveness != Responsive {
+		t.Fatalf("retained endpoint status=%+v probe error=%v, want alive and responsive", status, probeErr)
 	}
 }

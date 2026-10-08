@@ -534,3 +534,33 @@ func reviewTreeEqual(a, b *domain.TreeState) bool {
 	}
 	return *a == *b
 }
+
+// CommittedOperationReceipt reports whether operation opID committed a durable
+// receipt for exactly this task and generation. It reads only. It proves
+// committed identity and nothing more: it never verifies the operation kind or
+// digest, and it never authorizes a launch or a disposal. A receipt that names a
+// different operation, task or generation, or that cannot be decoded, is an
+// error and is never reported as absent.
+func (c *Canonical) CommittedOperationReceipt(opID string, taskID domain.TaskID, gen Generation) (bool, error) {
+	if _, err := domain.NewOperationID(opID); err != nil {
+		return false, err
+	}
+	if err := taskID.Validate(); err != nil {
+		return false, err
+	}
+	if err := gen.Validate(); err != nil {
+		return false, err
+	}
+	data, ok, err := c.readDoc(receiptKey(opID))
+	if err != nil || !ok {
+		return false, err
+	}
+	var rec receipt
+	if err := json.Unmarshal(data, &rec); err != nil {
+		return false, internalError("decode operation receipt %s: %v", opID, err)
+	}
+	if rec.OperationID != opID || rec.TaskID != taskID.Value() || rec.Generation != uint64(gen) {
+		return false, internalError("operation receipt %s does not belong to task %s generation %s", opID, taskID.Value(), gen)
+	}
+	return true, nil
+}

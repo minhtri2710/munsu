@@ -411,8 +411,23 @@ func (r *Runner) launchPhases(reviewing bool) (taskauthority.Outcome, error) {
 // no state and promises no result: a re-run re-checks the task first and may
 // refuse, so the message gives both ways out.
 func (r *Runner) liveLaunchError(cause error) error {
+	if errors.Is(cause, errLaunchProofLost) {
+		return r.launchProofLostError(cause)
+	}
 	return fmt.Errorf("%w\nthe soldier process of task %s may still be running on backend %s endpoint %s; fix the cause above, then re-run 'munsu spawn %s %s' (spawn re-checks the task before it resumes, refuses with its own reason if it cannot, and re-adopts the pane only while the pane is live), or stop pane %s on backend %s by hand",
 		cause, r.args.ID, r.endpoint.Backend, r.endpoint.Handle, r.args.ID, r.args.ProjectName, r.endpoint.Handle, r.endpoint.Backend)
+}
+
+// errLaunchProofLost marks a launch that was delivered and receipted but whose
+// recorded launch evidence is gone. Re-running cannot repair it: a re-submit is
+// refused, so the only way out is the endpoint itself.
+var errLaunchProofLost = fmt.Errorf("%w: recorded launch proof is missing", taskauthority.ErrConflict)
+
+// launchProofLostError names the live endpoint and the one action that clears
+// it. It promises no re-run path, because spawn refuses the re-submit.
+func (r *Runner) launchProofLostError(cause error) error {
+	return fmt.Errorf("%w\nthe soldier process of task %s may still be running on backend %s endpoint %s; its launch proof is lost, so spawn cannot repair it from here: stop pane %s on backend %s by hand",
+		cause, r.args.ID, r.endpoint.Backend, r.endpoint.Handle, r.endpoint.Handle, r.endpoint.Backend)
 }
 
 // Phase 1: resolveHome resolves the munsu home directory.
@@ -1509,11 +1524,16 @@ func (r *Runner) bindWorktree() (BoundWorktree, error) {
 // (same Operation ID and intent digest on retry, so the canonical surface
 // replays the durable outcome instead of duplicating it).
 func (r *Runner) spawnOperation(verb string, gen taskauthority.Generation, intent domain.Intent) (domain.Operation, error) {
-	opID, err := domain.NewOperationID(fmt.Sprintf("spawn-%s-%s-%d", verb, r.args.ID, uint64(gen)))
+	opID, err := domain.NewOperationID(r.spawnOperationID(verb, gen))
 	if err != nil {
 		return domain.Operation{}, err
 	}
 	return domain.NewOperation(opID, intent)
+}
+
+// spawnOperationID is the sole formatter of a spawn phase's Operation ID.
+func (r *Runner) spawnOperationID(verb string, gen taskauthority.Generation) string {
+	return fmt.Sprintf("spawn-%s-%s-%d", verb, r.args.ID, uint64(gen))
 }
 
 func buildTaskWorktreeBinding(primaryPath, worktreePath, leaseID, fenceToken string) (taskauthority.WorktreeBinding, error) {
@@ -1809,7 +1829,7 @@ func (r *Runner) verifyRecordedLaunchArtifactsWithGuardState(allowAbsentGuard bo
 		return fmt.Errorf("verifying recorded launch artifacts: %w", err)
 	}
 	if agg.LaunchEvidence == nil || agg.Worktree == nil || agg.Worktree.LaunchManifest == nil {
-		return fmt.Errorf("verifying recorded launch artifacts: successful launch lacks canonical worktree manifest evidence")
+		return fmt.Errorf("verifying recorded launch artifacts: %w: successful launch lacks canonical worktree manifest evidence", errLaunchProofLost)
 	}
 	if agg.LaunchEvidence.LaunchID != agg.Worktree.LaunchManifest.LaunchID || (r.launchID != "" && agg.LaunchEvidence.LaunchID != r.launchID) {
 		return fmt.Errorf("verifying recorded launch artifacts: launch identity mismatch")
@@ -2186,6 +2206,15 @@ func (r *Runner) submitLaunch() error {
 		}
 		r.launched = true
 		return nil
+	}
+	// A committed record receipt with no launch evidence means the launch was
+	// delivered and its proof was lost. Refuse before any second submission.
+	recorded, err := r.args.Authority.CommittedOperationReceipt(r.spawnOperationID("record", agg.Generation), taskID, agg.Generation)
+	if err != nil {
+		return fmt.Errorf("submitting launch: %w", err)
+	}
+	if recorded {
+		return r.launchProofLostError(fmt.Errorf("submitting launch: %w: task %s launch was already submitted but its launch evidence is missing; refusing to re-submit", errLaunchProofLost, r.args.ID))
 	}
 	// On the fresh-submission path, re-check attestation immediately before
 	// endpoint delivery. Record launch evidence only after submission succeeds;

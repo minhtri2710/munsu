@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // launchRequest builds a valid BeginSpawn request for a task. The reservation
@@ -1154,5 +1155,123 @@ func TestPremiseGetRefusesLaunchEvidenceWithNoSubmissionTimestamp(t *testing.T) 
 	// this test would prove nothing about the timestamp check.
 	if !strings.Contains(err.Error(), "launch evidence missing submission timestamp") {
 		t.Fatalf("Get refused for the wrong reason: %v", err)
+	}
+}
+
+// committedLaunchRecord commits launch evidence for task t1 through RecordLaunch
+// under operation op-record-1 and returns the handle with the committed revision.
+func committedLaunchRecord(t *testing.T) (*Canonical, *home.Home, uint64) {
+	t.Helper()
+	c, h, _ := newTestCanonical(t)
+	mustCreate(t, c, "t1")
+	req, rev := mustBeginSpawn(t, c, "t1", preconditionOf(1, 1))
+	_, rev = bindAndRecordLaunchManifest(t, c, "t1", req, rev, "receipt-query")
+	attach := attachRequest(c, "t1", preconditionOf(1, rev), req, "handle-1")
+	if _, err := c.AttachEndpoint(mustOperation(t, "op-attach-1", attach), attach); err != nil {
+		t.Fatalf("AttachEndpoint: %v", err)
+	}
+	record := recordLaunchRequest(c, "t1", preconditionOf(1, rev+1), req)
+	if _, err := c.RecordLaunch(mustOperation(t, "op-record-1", record), record); err != nil {
+		t.Fatalf("RecordLaunch: %v", err)
+	}
+	return c, h, rev + 2
+}
+
+// The receipt query proves committed identity only: it reports the exact
+// operation as committed for this task and generation, and it never changes the
+// aggregate or its evidence.
+func TestCommittedOperationReceiptProvesCommittedIdentity(t *testing.T) {
+	c, _, rev := committedLaunchRecord(t)
+	taskID := mustTaskID(t, "t1")
+	found, err := c.CommittedOperationReceipt("op-record-1", taskID, 1)
+	if err != nil || !found {
+		t.Fatalf("committed RecordLaunch receipt = %v, %v; want found", found, err)
+	}
+	found, err = c.CommittedOperationReceipt("op-record-absent", taskID, 1)
+	if err != nil || found {
+		t.Fatalf("absent operation receipt = %v, %v; want not found without error", found, err)
+	}
+	agg, err := c.Get(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uint64(agg.Revision) != rev || agg.LaunchEvidence == nil {
+		t.Fatalf("query changed the aggregate: revision %d want %d, evidence %+v", agg.Revision, rev, agg.LaunchEvidence)
+	}
+}
+
+// A stored receipt that does not name the exact operation, task and generation
+// the caller asked about, or that cannot be decoded, is an error. It is never
+// reported as absent, which would let a caller resubmit.
+func TestCommittedOperationReceiptRefusesMismatchedReceipt(t *testing.T) {
+	c, h, _ := committedLaunchRecord(t)
+	path := mustPathForTest(t, h, receiptKey("op-record-1"))
+	stored, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rec receipt
+	if err := json.Unmarshal(stored, &rec); err != nil {
+		t.Fatal(err)
+	}
+	rec.OperationID = "op-other"
+	renamed, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		opID   string
+		taskID string
+		gen    Generation
+		stored []byte
+	}{
+		{name: "other task", opID: "op-record-1", taskID: "t2", gen: 1},
+		{name: "other generation", opID: "op-record-1", taskID: "t1", gen: 2},
+		{name: "receipt names another operation", opID: "op-record-1", taskID: "t1", gen: 1, stored: renamed},
+		{name: "malformed receipt", opID: "op-record-1", taskID: "t1", gen: 1, stored: []byte("{not json")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data := stored
+			if tc.stored != nil {
+				data = tc.stored
+			}
+			if err := os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			found, err := c.CommittedOperationReceipt(tc.opID, mustTaskID(t, tc.taskID), tc.gen)
+			if err == nil || found {
+				t.Fatalf("CommittedOperationReceipt = %v, %v; want a fail-closed error", found, err)
+			}
+		})
+	}
+}
+
+// Invalid identities fail before any receipt is read, so a bad input is never
+// reported as an absent receipt.
+func TestCommittedOperationReceiptRejectsInvalidIdentity(t *testing.T) {
+	c, _, _ := committedLaunchRecord(t)
+	t1 := mustTaskID(t, "t1")
+	for _, tc := range []struct {
+		name   string
+		opID   string
+		taskID domain.TaskID
+		gen    Generation
+		want   error
+	}{
+		{name: "empty operation id", opID: "", taskID: t1, gen: 1},
+		{name: "operation id with separator", opID: "spawn/record", taskID: t1, gen: 1},
+		{name: "zero task", opID: "op-record-1", taskID: domain.TaskID{}, gen: 1},
+		{name: "zero generation", opID: "op-record-1", taskID: t1, gen: 0, want: ErrInvalidGeneration},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			found, err := c.CommittedOperationReceipt(tc.opID, tc.taskID, tc.gen)
+			if err == nil || found {
+				t.Fatalf("CommittedOperationReceipt = %v, %v; want a validation error", found, err)
+			}
+			if tc.want != nil && !errors.Is(err, tc.want) {
+				t.Fatalf("CommittedOperationReceipt error = %v, want %v", err, tc.want)
+			}
+		})
 	}
 }
