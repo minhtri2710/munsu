@@ -127,6 +127,8 @@ type Runner struct {
 	// manifestSHA256 is the digest of the launch manifest recorded in canonical
 	// worktree binding evidence.
 	manifestSHA256 string
+	// retainWorktreeOnFailure keeps unanchored reservation content in custody.
+	retainWorktreeOnFailure bool
 
 	// attestation is the capability attestation snapshot created during mode
 	// resolution and checked before soldier launch.
@@ -388,7 +390,7 @@ func (r *Runner) launchPhases(reviewing bool) (taskauthority.Outcome, error) {
 		return taskauthority.Outcome{}, err
 	}
 	if !reviewing {
-		if err := r.verifyRecordedLaunchArtifacts(); err != nil {
+		if err := r.verifyPreparedRecordedLaunchArtifacts(); err != nil {
 			return taskauthority.Outcome{}, err
 		}
 	}
@@ -409,8 +411,23 @@ func (r *Runner) launchPhases(reviewing bool) (taskauthority.Outcome, error) {
 // no state and promises no result: a re-run re-checks the task first and may
 // refuse, so the message gives both ways out.
 func (r *Runner) liveLaunchError(cause error) error {
+	if errors.Is(cause, errLaunchProofLost) {
+		return r.launchProofLostError(cause)
+	}
 	return fmt.Errorf("%w\nthe soldier process of task %s may still be running on backend %s endpoint %s; fix the cause above, then re-run 'munsu spawn %s %s' (spawn re-checks the task before it resumes, refuses with its own reason if it cannot, and re-adopts the pane only while the pane is live), or stop pane %s on backend %s by hand",
 		cause, r.args.ID, r.endpoint.Backend, r.endpoint.Handle, r.args.ID, r.args.ProjectName, r.endpoint.Handle, r.endpoint.Backend)
+}
+
+// errLaunchProofLost marks a launch that was delivered and receipted but whose
+// recorded launch evidence is gone. Re-running cannot repair it: a re-submit is
+// refused, so the only way out is the endpoint itself.
+var errLaunchProofLost = fmt.Errorf("%w: recorded launch proof is missing", taskauthority.ErrConflict)
+
+// launchProofLostError names the live endpoint and the one action that clears
+// it. It promises no re-run path, because spawn refuses the re-submit.
+func (r *Runner) launchProofLostError(cause error) error {
+	return fmt.Errorf("%w\nthe soldier process of task %s may still be running on backend %s endpoint %s; its launch proof is lost, so spawn cannot repair it from here: stop pane %s on backend %s by hand",
+		cause, r.args.ID, r.endpoint.Backend, r.endpoint.Handle, r.endpoint.Handle, r.endpoint.Backend)
 }
 
 // Phase 1: resolveHome resolves the munsu home directory.
@@ -1006,6 +1023,27 @@ func (r *Runner) acquireWorktree() error {
 		return fmt.Errorf("acquiring worktree: resolving acquired path: %w", err)
 	}
 	r.wtPath = canonical
+	if err := verifyUnboundWorktreeClean(canonical); err != nil {
+		r.retainWorktreeOnFailure = true
+		return fmt.Errorf("acquiring worktree: reservation contains unanchored or dirty content; lease retained: %w", err)
+	}
+	return nil
+}
+
+func verifyUnboundWorktreeClean(worktreePath string) error {
+	cmd := exec.Command("git", "status", "--porcelain=v1", "--untracked-files=all", "--ignored=matching", "-z")
+	cmd.Dir = worktreePath
+	out, err := cmd.Output()
+	if err != nil {
+		entries, readErr := os.ReadDir(worktreePath)
+		if readErr == nil && len(entries) == 0 {
+			return nil
+		}
+		return fmt.Errorf("checking reservation worktree status: %w", err)
+	}
+	if len(out) != 0 {
+		return fmt.Errorf("worktree has unanchored or dirty content")
+	}
 	return nil
 }
 
@@ -1079,7 +1117,7 @@ func (r *Runner) wtReservationID() string {
 // acquisitions are returned. When no Authority is composed there is no
 // canonical ownership, so the legacy return-on-failure semantics apply.
 func (r *Runner) returnWorktreeOnFailure() error {
-	if r.wtPath == "" || !r.worktreeReturnAllowed() {
+	if r.wtPath == "" || r.retainWorktreeOnFailure || !r.worktreeReturnAllowed() {
 		return nil
 	}
 	if err := returnWorktree(r.homeDir, r.wtPath); err != nil {
@@ -1486,11 +1524,16 @@ func (r *Runner) bindWorktree() (BoundWorktree, error) {
 // (same Operation ID and intent digest on retry, so the canonical surface
 // replays the durable outcome instead of duplicating it).
 func (r *Runner) spawnOperation(verb string, gen taskauthority.Generation, intent domain.Intent) (domain.Operation, error) {
-	opID, err := domain.NewOperationID(fmt.Sprintf("spawn-%s-%s-%d", verb, r.args.ID, uint64(gen)))
+	opID, err := domain.NewOperationID(r.spawnOperationID(verb, gen))
 	if err != nil {
 		return domain.Operation{}, err
 	}
 	return domain.NewOperation(opID, intent)
+}
+
+// spawnOperationID is the sole formatter of a spawn phase's Operation ID.
+func (r *Runner) spawnOperationID(verb string, gen taskauthority.Generation) string {
+	return fmt.Sprintf("spawn-%s-%s-%d", verb, r.args.ID, uint64(gen))
 }
 
 func buildTaskWorktreeBinding(primaryPath, worktreePath, leaseID, fenceToken string) (taskauthority.WorktreeBinding, error) {
@@ -1655,7 +1698,7 @@ func (r *Runner) createSession() error {
 	// probing or re-adopting the recorded endpoint.
 	acquired := r.recordedAcquiredEndpoint()
 	if acquired != nil && r.kind != taskauthority.KindReview && r.recordedLaunchEvidence() {
-		if err := r.verifyRecordedLaunchArtifacts(); err != nil {
+		if err := r.verifyPreparedRecordedLaunchArtifacts(); err != nil {
 			return fmt.Errorf("recorded launch artifact verification: %w", err)
 		}
 	}
@@ -1760,7 +1803,20 @@ func (r *Runner) recordedLaunchEvidence() bool {
 	return err == nil && agg.LaunchEvidence != nil
 }
 
+func onlyDeferredLaunchGuardAbsent(err error) bool {
+	failures := artifactVerificationFailures(err)
+	return len(failures) == 1 && errors.Is(failures[0], errDeferredLaunchGuardAbsent)
+}
+
 func (r *Runner) verifyRecordedLaunchArtifacts() error {
+	return r.verifyRecordedLaunchArtifactsWithGuardState(false)
+}
+
+func (r *Runner) verifyPreparedRecordedLaunchArtifacts() error {
+	return r.verifyRecordedLaunchArtifactsWithGuardState(true)
+}
+
+func (r *Runner) verifyRecordedLaunchArtifactsWithGuardState(allowAbsentGuard bool) error {
 	if r.args.Authority == nil {
 		return fmt.Errorf("verifying recorded launch artifacts: task authority is not composed")
 	}
@@ -1773,7 +1829,7 @@ func (r *Runner) verifyRecordedLaunchArtifacts() error {
 		return fmt.Errorf("verifying recorded launch artifacts: %w", err)
 	}
 	if agg.LaunchEvidence == nil || agg.Worktree == nil || agg.Worktree.LaunchManifest == nil {
-		return fmt.Errorf("verifying recorded launch artifacts: successful launch lacks canonical worktree manifest evidence")
+		return fmt.Errorf("verifying recorded launch artifacts: %w: successful launch lacks canonical worktree manifest evidence", errLaunchProofLost)
 	}
 	if agg.LaunchEvidence.LaunchID != agg.Worktree.LaunchManifest.LaunchID || (r.launchID != "" && agg.LaunchEvidence.LaunchID != r.launchID) {
 		return fmt.Errorf("verifying recorded launch artifacts: launch identity mismatch")
@@ -1781,10 +1837,11 @@ func (r *Runner) verifyRecordedLaunchArtifacts() error {
 	if r.preparedLaunch != nil && agg.LaunchEvidence.CommandDigest != r.preparedLaunch.artifact.CommandDigest {
 		return fmt.Errorf("verifying recorded launch artifacts: command digest mismatch")
 	}
-	if err := VerifyLaunchArtifacts(agg.Worktree.Path, agg.Worktree.LaunchManifest.ManifestSHA256); err != nil {
-		if failures := artifactVerificationFailures(err); len(failures) > 0 {
-			return fmt.Errorf("verifying artifacts for recorded launch: %w", errors.Join(failures...))
-		}
+	verify := VerifyLaunchArtifacts
+	if allowAbsentGuard {
+		verify = VerifyPreparedLaunchArtifacts
+	}
+	if err := verify(agg.Worktree.Path, agg.Worktree.LaunchManifest.ManifestSHA256); err != nil {
 		return fmt.Errorf("verifying artifacts for recorded launch: %w", err)
 	}
 	return nil
@@ -1942,7 +1999,7 @@ func (r *Runner) buildSoldierPrompt(bound BoundWorktree) error {
 			return fmt.Errorf("persisting reviewer launch files: %w", err)
 		}
 	} else {
-		prepared, err := prepareLaunchFiles(charter, briefData, env, promptText, nil, r.harness)
+		prepared, err := prepareLaunchFiles(charter, briefData, env, promptText, nil, r.harness, "", "")
 		if err != nil {
 			return fmt.Errorf("preparing soldier launch files: %w", err)
 		}
@@ -2112,7 +2169,7 @@ func (r *Runner) submitLaunch() error {
 			!reflect.DeepEqual(agg.LaunchEvidence.Seat.Argv, wantArgv) {
 			return fmt.Errorf("submitting launch: recorded launch evidence does not match this launch; refuse recovery")
 		}
-		if err := r.verifyRecordedLaunchArtifacts(); err != nil {
+		if err := r.verifyPreparedRecordedLaunchArtifacts(); err != nil {
 			return err
 		}
 		r.launchCommand, r.launchCommandDigest, r.launched = command, commandDigest, true
@@ -2130,7 +2187,7 @@ func (r *Runner) submitLaunch() error {
 		return fmt.Errorf("submitting launch: canonical launch artifacts were not prepared")
 	} else {
 		artifact = r.preparedLaunch.artifact
-		if err := VerifyLaunchArtifacts(r.wtPath, r.manifestSHA256); err != nil {
+		if err := VerifyPreparedLaunchArtifacts(r.wtPath, r.manifestSHA256); err != nil {
 			return fmt.Errorf("submitting launch: launch artifacts no longer match canonical evidence: %w", err)
 		}
 	}
@@ -2149,6 +2206,15 @@ func (r *Runner) submitLaunch() error {
 		}
 		r.launched = true
 		return nil
+	}
+	// A committed record receipt with no launch evidence means the launch was
+	// delivered and its proof was lost. Refuse before any second submission.
+	recorded, err := r.args.Authority.CommittedOperationReceipt(r.spawnOperationID("record", agg.Generation), taskID, agg.Generation)
+	if err != nil {
+		return fmt.Errorf("submitting launch: %w", err)
+	}
+	if recorded {
+		return r.launchProofLostError(fmt.Errorf("submitting launch: %w: task %s launch was already submitted but its launch evidence is missing; refusing to re-submit", errLaunchProofLost, r.args.ID))
 	}
 	// On the fresh-submission path, re-check attestation immediately before
 	// endpoint delivery. Record launch evidence only after submission succeeds;
@@ -2219,7 +2285,7 @@ func (r *Runner) prepareAndPersistLaunchManifest() error {
 			return fmt.Errorf("preparing launch manifest: successful launch evidence has no matching canonical manifest anchor")
 		}
 		r.manifestSHA256 = recorded.ManifestSHA256
-		if err := VerifyLaunchArtifacts(r.wtPath, recorded.ManifestSHA256); err != nil {
+		if err := VerifyPreparedLaunchArtifacts(r.wtPath, recorded.ManifestSHA256); err != nil {
 			return fmt.Errorf("verifying artifacts for recorded launch: %w", err)
 		}
 		return nil
@@ -2236,7 +2302,7 @@ func (r *Runner) prepareAndPersistLaunchManifest() error {
 	if err != nil {
 		return fmt.Errorf("preparing launch manifest: %w", err)
 	}
-	prepared, err := prepareLaunchFiles(DefaultCharter(r.args.ID, r.kind, r.effectiveMode), r.briefData, r.promptEnv, r.prompt, scriptBytes, r.harness)
+	prepared, err := prepareLaunchFiles(DefaultCharter(r.args.ID, r.kind, r.effectiveMode), r.briefData, r.promptEnv, r.prompt, scriptBytes, r.harness, artifact.GuardName, artifact.GuardIdentity)
 	if err != nil {
 		return fmt.Errorf("preparing launch manifest: %w", err)
 	}
@@ -2279,7 +2345,7 @@ func (r *Runner) prepareAndPersistLaunchManifest() error {
 	if err := persistPreparedLaunchFiles(r.wtPath, prepared); err != nil {
 		return fmt.Errorf("persisting anchored launch files: %w", err)
 	}
-	if err := VerifyLaunchArtifacts(r.wtPath, recorded.ManifestSHA256); err != nil {
+	if err := VerifyPreparedLaunchArtifacts(r.wtPath, recorded.ManifestSHA256); err != nil {
 		return fmt.Errorf("verifying persisted launch artifacts: %w", err)
 	}
 	return nil
@@ -2329,6 +2395,7 @@ func (r *Runner) waitAndInjectBrief() error {
 // signature or the timeout expires.
 func (r *Runner) waitForHarnessReady(timeoutSec int) error {
 	trustHandled := false
+	guardAbsentAtReady := false
 
 	deadline := time.After(time.Duration(timeoutSec) * time.Second)
 	poll := time.NewTimer(0)
@@ -2338,6 +2405,9 @@ func (r *Runner) waitForHarnessReady(timeoutSec int) error {
 		select {
 		case <-deadline:
 			capture, _ := r.endpoints.Capture(r.endpoint, 60)
+			if guardAbsentAtReady {
+				return fmt.Errorf("harness ready but deferred launch guard identity remained absent after %ds: last capture: %q", timeoutSec, capture)
+			}
 			return fmt.Errorf("harness not ready after %ds: last capture: %q", timeoutSec, capture)
 		case <-poll.C:
 			status, probeErr := r.endpoints.Probe(r.endpoint)
@@ -2362,6 +2432,11 @@ func (r *Runner) waitForHarnessReady(timeoutSec int) error {
 			if status.Lifecycle != LifecycleAlive && status.Lifecycle != LifecycleStarting {
 				return fmt.Errorf("endpoint observation %s while waiting for ready", status.State())
 			}
+			if r.kind != taskauthority.KindReview && (r.args.Authority != nil || r.manifestSHA256 != "") {
+				if err := r.verifyPreparedRecordedLaunchArtifacts(); err != nil {
+					return err
+				}
+			}
 			capture, err := r.endpoints.Capture(r.endpoint, 60)
 			if err != nil {
 				continue
@@ -2378,6 +2453,16 @@ func (r *Runner) waitForHarnessReady(timeoutSec int) error {
 				return fmt.Errorf("harness %q detected launch failure: %q", r.harness, capture)
 			}
 			if harness.HasReadyPattern(capture, r.harness) {
+				if r.kind != taskauthority.KindReview && (r.args.Authority != nil || r.manifestSHA256 != "") {
+					if err := r.verifyRecordedLaunchArtifacts(); err != nil {
+						if onlyDeferredLaunchGuardAbsent(err) {
+							guardAbsentAtReady = true
+							poll.Reset(2 * time.Second)
+							continue
+						}
+						return err
+					}
+				}
 				return nil
 			}
 			poll.Reset(2 * time.Second)
@@ -2399,6 +2484,11 @@ func (r *Runner) verifyEndpointReadyBeforePersist() error {
 		// endpoint is owned by this launch reservation, so readiness is
 		// pending and ownership is preserved (no replacement, no dispose).
 		return fmt.Errorf("created pane %q observation %s on backend %q before persisting state; readiness pending (no dispose)", r.windowID, auth.State(), r.endpoint.Backend)
+	}
+	if r.kind != taskauthority.KindReview {
+		if err := r.verifyRecordedLaunchArtifacts(); err != nil {
+			return fmt.Errorf("verifying launch guard before readiness: %w", err)
+		}
 	}
 	return nil
 }

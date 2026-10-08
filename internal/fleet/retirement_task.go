@@ -968,19 +968,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 			if err != nil {
 				return cleanupPending(fmt.Errorf("teardown %s: worktree holders: %w", opts.ID, err))
 			}
-			// Recheck launch artifacts immediately before destructive cleanup,
-			// closing the mutation window between the initial safety check
-			// and ReturnWorktree.
-			if !opts.Force {
-				expectedManifestSHA := ""
-				if ev.Worktree.LaunchManifest != nil {
-					expectedManifestSHA = ev.Worktree.LaunchManifest.ManifestSHA256
-				}
-				if err := VerifyLaunchArtifacts(wtPath, expectedManifestSHA); err != nil {
-					return cleanupPending(fmt.Errorf("teardown %s: pre-return artifact verification failed: %w (use --force to override)", opts.ID, err))
-				}
-			}
-			// Compare-and-fence immediately before ReturnWorktree: the current
+			// Compare-and-fence immediately before taking the pool lock. The
 			// canonical ownership is re-validated under the task lock so a
 			// reopen/rebind that landed since the probe can never authorize
 			// returning a resource now owned by the reopened generation
@@ -988,12 +976,28 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 			if _, err := revalidateRetirementCleanup(authority, taskID, ev, claimGen, evidence.current); err != nil {
 				return cleanupPending(fmt.Errorf("teardown %s: worktree return fence: %w", opts.ID, err))
 			}
+			poolLock, err := LockWorktreePool(opts.HomeDir)
+			if err != nil {
+				return cleanupPending(fmt.Errorf("teardown %s: locking worktree pool for artifact disposal: %w", opts.ID, err))
+			}
+			if err := disposeWorktreeLaunchArtifacts(wtPath, ev.Worktree); err != nil {
+				_ = poolLock.Release()
+				if !opts.Force {
+					return cleanupPending(fmt.Errorf("teardown %s: pre-return artifact verification failed: %w", opts.ID, err))
+				}
+				return cleanupPending(fmt.Errorf("teardown %s: launch artifact disposal refused: %w", opts.ID, err))
+			}
 			if err := backend.ReturnWorktree(opts.HomeDir, wtPath); err != nil {
+				_ = poolLock.Release()
 				return cleanupPending(fmt.Errorf("teardown %s: worktree return failed: %w (lease still held)", opts.ID, err))
 			}
+			if err := poolLock.Release(); err != nil {
+				return cleanupPending(fmt.Errorf("teardown %s: releasing worktree pool lock: %w", opts.ID, err))
+			}
+			result.Steps = append(result.Steps, "worktree launch artifacts disposed")
 			result.Steps = append(result.Steps, "worktree returned to pool")
 		} else {
-			result.Steps = append(result.Steps, "worktree path no longer exists")
+			return cleanupPending(fmt.Errorf("teardown %s: canonical worktree %s is absent; cleanup custody remains pending", opts.ID, wtPath))
 		}
 	}
 
@@ -1326,7 +1330,9 @@ func shipSafetyCheck(opts Options, meta map[string]string, backend BoundTeardown
 
 	// Never derive the expected digest from the manifest being verified.
 
-	// Verify launch artifacts using the manifest.
+	// Verify launch artifacts using the manifest. The deferred guard directory
+	// is a runtime launch marker, not task-produced work; artifact verification
+	// separately enforces its exact path, identity bytes and single-child shape.
 	if err := VerifyLaunchArtifacts(wtPath, expectedManifestSHA); err != nil {
 		return nil, fmt.Errorf("worktree %s: launch artifact verification failed: %w (use --force to override)", wtPath, err)
 	}
@@ -1370,6 +1376,9 @@ func shipSafetyCheck(opts Options, meta map[string]string, backend BoundTeardown
 
 			// Skip declared manifest entries (already verified by VerifyLaunchArtifacts).
 			if manifestPaths[name] {
+				continue
+			}
+			if isDeferredGuardDirectoryEntry(name, manifestPaths) {
 				continue
 			}
 
@@ -1671,6 +1680,109 @@ func reapWorktreeHolders(homeDir, taskID, wtPath string) (int, error) {
 		time.Sleep(200 * time.Millisecond)
 	}
 	return len(killed), fmt.Errorf("holders of %s outlived the reap wait", wtPath)
+}
+
+func disposeWorktreeLaunchArtifacts(worktreePath string, binding *taskauthority.WorktreeBinding) error {
+	manifestFile := filepath.Join(worktreePath, ManifestName)
+	if _, err := os.Lstat(manifestFile); os.IsNotExist(err) {
+		if binding != nil && binding.LaunchManifest != nil {
+			return fmt.Errorf("canonical launch manifest is absent; cleanup completion cannot be inferred")
+		}
+		for _, name := range CoreLaunchArtifactNames {
+			if _, artifactErr := os.Lstat(filepath.Join(worktreePath, filepath.FromSlash(name))); artifactErr == nil {
+				return fmt.Errorf("unanchored launch artifact %s is present", name)
+			} else if !os.IsNotExist(artifactErr) {
+				return fmt.Errorf("checking unanchored launch artifact %s: %w", name, artifactErr)
+			}
+		}
+		return verifyUnlistedWorktreeClean(worktreePath, nil)
+	} else if err != nil {
+		return fmt.Errorf("checking launch manifest: %w", err)
+	}
+	if binding == nil || binding.LaunchManifest == nil || binding.LaunchManifest.ManifestSHA256 == "" {
+		return fmt.Errorf("launch manifest exists without canonical digest evidence")
+	}
+	if err := VerifyLaunchArtifacts(worktreePath, binding.LaunchManifest.ManifestSHA256); err != nil {
+		return fmt.Errorf("verifying canonical launch artifacts: %w", err)
+	}
+	manifest, err := ReadManifest(worktreePath)
+	if err != nil {
+		return err
+	}
+	manifestPaths := manifest.ArtifactPaths()
+	manifestPaths[ManifestName] = true
+	if err := verifyUnlistedWorktreeClean(worktreePath, manifestPaths); err != nil {
+		return err
+	}
+	root, err := os.OpenRoot(worktreePath)
+	if err != nil {
+		return fmt.Errorf("opening worktree root for artifact disposal: %w", err)
+	}
+	defer root.Close()
+	var guardDir string
+	for _, entry := range manifest.Artifacts {
+		if isDeferredGuardIdentityPath(entry.Path) {
+			guardDir = filepath.ToSlash(filepath.Dir(filepath.FromSlash(entry.Path)))
+			continue
+		}
+		if err := root.Remove(filepath.FromSlash(entry.Path)); err != nil {
+			return fmt.Errorf("removing proven launch artifact %s: %w", entry.Path, err)
+		}
+	}
+	if guardDir != "" {
+		if err := root.Remove(filepath.Join(filepath.FromSlash(guardDir), "identity")); err != nil {
+			return fmt.Errorf("removing proven launch guard identity: %w", err)
+		}
+		if err := root.Remove(filepath.FromSlash(guardDir)); err != nil {
+			return fmt.Errorf("removing empty launch guard directory: %w", err)
+		}
+	}
+	if err := root.Remove(ManifestName); err != nil {
+		return fmt.Errorf("removing proven launch manifest: %w", err)
+	}
+	return nil
+}
+
+func verifyUnlistedWorktreeClean(worktreePath string, declared map[string]bool) error {
+	cmd := exec.Command("git", "status", "--porcelain=v1", "--untracked-files=all", "--ignored=matching", "-z")
+	cmd.Dir = worktreePath
+	out, err := cmd.Output()
+	if err != nil {
+		if len(declared) == 0 {
+			entries, readErr := os.ReadDir(worktreePath)
+			if readErr == nil && len(entries) == 0 {
+				return nil
+			}
+			if readErr == nil {
+				return fmt.Errorf("non-Git worktree contains unlisted content")
+			}
+		}
+		return fmt.Errorf("checking git status: %w", err)
+	}
+	for _, line := range strings.Split(string(out), "\x00") {
+		if line == "" {
+			continue
+		}
+		name := parsePorcelainFilename(line)
+		if name != "" && !declared[name] && !isDeferredGuardDirectoryEntry(name, declared) {
+			return fmt.Errorf("worktree has unlisted content: %s", line)
+		}
+	}
+	return nil
+}
+
+func isDeferredGuardDirectoryEntry(name string, declared map[string]bool) bool {
+	name = strings.TrimSuffix(filepath.ToSlash(name), "/")
+	for path := range declared {
+		if !isDeferredGuardIdentityPath(path) {
+			continue
+		}
+		guardDir := filepath.ToSlash(filepath.Dir(path))
+		if name == guardDir || strings.HasPrefix(name, guardDir+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // parsePorcelainFilename extracts the filename from a git status --porcelain line.

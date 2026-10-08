@@ -605,7 +605,7 @@ type preparedLaunchFiles struct {
 	digest   string
 }
 
-func prepareLaunchFiles(charter string, briefContent []byte, env *LaunchEnvelope, promptText string, launchScript []byte, harnessName string) (preparedLaunchFiles, error) {
+func prepareLaunchFiles(charter string, briefContent []byte, env *LaunchEnvelope, promptText string, launchScript []byte, harnessName string, guardDir, guardIdentity string) (preparedLaunchFiles, error) {
 	envelope, err := MarshalEnvelope(env)
 	if err != nil {
 		return preparedLaunchFiles{}, err
@@ -635,10 +635,18 @@ func prepareLaunchFiles(charter string, briefContent []byte, env *LaunchEnvelope
 	if launchScript == nil {
 		return preparedLaunchFiles{files: files, names: names}, nil
 	}
-	entries := make([]ManifestEntry, 0, len(names))
+	if guardDir == "" || guardIdentity == "" || filepath.IsAbs(guardDir) || filepath.ToSlash(filepath.Clean(guardDir)) != guardDir {
+		return preparedLaunchFiles{}, fmt.Errorf("deferred launch guard identity path and content are required")
+	}
+	guardPath := filepath.ToSlash(filepath.Join(guardDir, "identity"))
+	if err := validateManifestPath(guardPath); err != nil || !isDeferredGuardIdentityPath(guardPath) {
+		return preparedLaunchFiles{}, fmt.Errorf("invalid deferred launch guard identity path %q", guardPath)
+	}
+	entries := make([]ManifestEntry, 0, len(names)+1)
 	for _, name := range names {
 		entries = append(entries, ManifestEntry{Path: name, SHA256: sha256Content(files[name]), Policy: DisposalPolicyCleanable})
 	}
+	entries = append(entries, ManifestEntry{Path: guardPath, SHA256: sha256Content([]byte(guardIdentity)), Policy: DisposalPolicyCleanable})
 	manifestBytes, digest, err := MarshalManifest(BuildManifest(entries))
 	if err != nil {
 		return preparedLaunchFiles{}, err

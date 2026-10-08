@@ -20,6 +20,7 @@ import (
 // Authority before publication.
 func writeLaunchManifestForTest(t *testing.T, worktreePath string) string {
 	t.Helper()
+	taskID, generation, launchID, endpointFence := "e2e-test", "1", "launch-e2e-test", "endpoint-fence-test"
 	script := "#!/usr/bin/env bash\nexec true\n"
 	if err := os.WriteFile(filepath.Join(worktreePath, LaunchScriptName), []byte(script), 0755); err != nil {
 		t.Fatal(err)
@@ -29,6 +30,7 @@ func writeLaunchManifestForTest(t *testing.T, worktreePath string) string {
 	for _, name := range launchManifestNames(harness.Pi) {
 		entries = append(entries, manifestEntryForTestFile(t, worktreePath, name, DisposalPolicyCleanable))
 	}
+	entries = append(entries, addDeferredGuardFixture(t, worktreePath, taskID, launchID, generation, endpointFence))
 	manifestBytes, digest, err := MarshalManifest(BuildManifest(entries))
 	if err != nil {
 		t.Fatalf("marshaling launch manifest: %v", err)

@@ -180,13 +180,88 @@ func TestGet_WithLease_ReturnsPath(t *testing.T) {
 	}
 }
 
+func newCleanGitWorktree(t *testing.T) (repoDir, worktreePath string) {
+	t.Helper()
+	repoDir = t.TempDir()
+	runCmd(t, repoDir, "git", "init")
+	runCmd(t, repoDir, "git", "config", "user.email", "test@test.com")
+	runCmd(t, repoDir, "git", "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(repoDir, "tracked"), []byte("clean\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runCmd(t, repoDir, "git", "add", "tracked")
+	runCmd(t, repoDir, "git", "commit", "-m", "initial")
+	worktreePath = filepath.Join(t.TempDir(), "worktree")
+	runCmd(t, repoDir, "git", "worktree", "add", "--detach", worktreePath, "HEAD")
+	return repoDir, worktreePath
+}
+
+func TestGitFallbackReturnRefusesDirtyWorktree(t *testing.T) {
+	_, worktreePath := newCleanGitWorktree(t)
+	provider := &gitWorktreeProvider{homeDir: t.TempDir()}
+	tracked := filepath.Join(worktreePath, "tracked")
+	if err := os.WriteFile(tracked, []byte("modified\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	untracked := filepath.Join(worktreePath, "user-data.txt")
+	if err := os.WriteFile(untracked, []byte("must survive\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gitDirBytes, err := os.ReadFile(filepath.Join(worktreePath, ".git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitDir := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(string(gitDirBytes)), "gitdir: "))
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(worktreePath, gitDir)
+	}
+	if err := os.MkdirAll(filepath.Join(gitDir, "info"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gitDir, "info", "exclude"), []byte("ignored-data.txt\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ignored := filepath.Join(worktreePath, "ignored-data.txt")
+	if err := os.WriteFile(ignored, []byte("also survives\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := provider.Return(worktreePath); err == nil || !strings.Contains(err.Error(), "dirty, untracked, or ignored") {
+		t.Fatalf("return error = %v, want dirty-content refusal", err)
+	}
+	for path, want := range map[string]string{tracked: "modified\n", untracked: "must survive\n", ignored: "also survives\n"} {
+		if got, err := os.ReadFile(path); err != nil || string(got) != want {
+			t.Errorf("protected %s = %q, err=%v; want %q", filepath.Base(path), got, err, want)
+		}
+	}
+}
+
+func TestTreehouseReturnRefusesDirtyWorktreeBeforeProvider(t *testing.T) {
+	_, worktreePath := newCleanGitWorktree(t)
+	artifact := filepath.Join(worktreePath, "user-data.txt")
+	if err := os.WriteFile(artifact, []byte("must survive\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	argsFile := filepath.Join(t.TempDir(), "treehouse-args")
+	fakeTreehouseOnPath(t, fakeCmd{argsFile: argsFile})
+	if err := ReturnWorktree(t.TempDir(), worktreePath); err == nil || !strings.Contains(err.Error(), "dirty, untracked, or ignored") {
+		t.Fatalf("return error = %v, want dirty-content refusal", err)
+	}
+	if _, err := os.Stat(argsFile); !os.IsNotExist(err) {
+		t.Fatalf("treehouse provider invoked before cleanliness proof: %v", err)
+	}
+	if got, err := os.ReadFile(artifact); err != nil || string(got) != "must survive\n" {
+		t.Fatalf("untracked data = %q, err=%v", got, err)
+	}
+}
+
 func TestReturn_AbortedExit0_ReturnsError(t *testing.T) {
 	// treehouse return without --force prompts interactively when the worktree
 	// has uncommitted changes. With stdin closed / no tty, it prints "Aborted"
 	// and exits 0. Our Return must detect this as an error.
 	fakeTreehouseOnPath(t, fakeCmd{stdout: "Aborted"})
+	_, worktreePath := newCleanGitWorktree(t)
 
-	err := ReturnWorktree(t.TempDir(), "/some/wt-path")
+	err := ReturnWorktree(t.TempDir(), worktreePath)
 	if err == nil {
 		t.Fatal("expected error for Aborted output, got nil")
 	}
@@ -198,8 +273,9 @@ func TestReturn_AbortedExit0_ReturnsError(t *testing.T) {
 func TestReturn_Clean_ReturnsNil(t *testing.T) {
 	// Clean success: "worktree returned to pool" and exit 0.
 	fakeTreehouseOnPath(t, fakeCmd{stdout: "worktree returned to pool"})
+	_, worktreePath := newCleanGitWorktree(t)
 
-	err := ReturnWorktree(t.TempDir(), "/some/wt-path")
+	err := ReturnWorktree(t.TempDir(), worktreePath)
 	if err != nil {
 		t.Fatalf("expected no error for clean return, got: %v", err)
 	}
@@ -208,11 +284,9 @@ func TestReturn_Clean_ReturnsNil(t *testing.T) {
 func TestReturn_ErrorExit_ReturnsError(t *testing.T) {
 	// treehouse exit non-zero (e.g. path not found)
 	fakeTreehouseOnPath(t, fakeCmd{stdout: "path not found", exitCode: 1})
+	_, worktreePath := newCleanGitWorktree(t)
 
-	err := ReturnWorktree(t.TempDir(), "/some/wt-path")
-	if err == nil {
-		t.Fatal("expected error for non-zero exit, got nil")
-	}
+	err := ReturnWorktree(t.TempDir(), worktreePath)
 	if err == nil {
 		t.Fatal("expected error for non-zero exit, got nil")
 	}

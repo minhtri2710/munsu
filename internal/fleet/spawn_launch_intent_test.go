@@ -27,15 +27,16 @@ import (
 // replacement. It counts underlying creates and submissions for the
 // no-duplicate assertions.
 type reentrantEndpointCapabilities struct {
-	mu         sync.Mutex
-	created    map[string]CreatedEndpoint // reservationID -> endpoint
-	creates    int
-	submits    int
-	probeAlive bool
-	submitErr  error        // when set, Submit fails (simulates failure after evidence record)
-	ready      string       // the pane capture; the default is ready for pi
-	onSubmit   func()       // runs after each delivered Submit
-	onProbe    func() error // runs before each Probe; an error is the probe's failure
+	mu          sync.Mutex
+	created     map[string]CreatedEndpoint // reservationID -> endpoint
+	creates     int
+	submits     int
+	probeAlive  bool
+	submitErr   error        // when set, Submit fails after simulating delivery
+	launchGuard func() error // simulates the submitted script's atomic guard creation
+	ready       string       // the pane capture; the default is ready for pi
+	onSubmit    func()       // runs after each delivered Submit
+	onProbe     func() error // runs before each Probe; an error is the probe's failure
 }
 
 func newReentrantEndpoints() *reentrantEndpointCapabilities {
@@ -65,6 +66,11 @@ func (f *reentrantEndpointCapabilities) Submit(ep CreatedEndpoint, text string) 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.submits++
+	if f.launchGuard != nil {
+		if err := f.launchGuard(); err != nil {
+			return err
+		}
+	}
 	if f.onSubmit != nil {
 		f.onSubmit()
 	}
@@ -191,6 +197,27 @@ func newLaunchFixture(t *testing.T, taskID string) *launchFixture {
 		projPath:  repoPath,
 		endpoints: endpoints,
 	}
+	endpoints.launchGuard = func() error {
+		if r.preparedLaunch == nil {
+			return nil
+		}
+		guardDir := filepath.Join(r.launchDir, r.preparedLaunch.artifact.GuardName)
+		identityPath := filepath.Join(guardDir, "identity")
+		if err := os.Mkdir(guardDir, 0o755); err != nil {
+			if !os.IsExist(err) {
+				return err
+			}
+			identity, readErr := os.ReadFile(identityPath)
+			if readErr != nil {
+				return readErr
+			}
+			if string(identity) != r.preparedLaunch.artifact.GuardIdentity {
+				return fmt.Errorf("launch guard identity mismatch: %q", identity)
+			}
+			return nil
+		}
+		return os.WriteFile(identityPath, []byte(r.preparedLaunch.artifact.GuardIdentity), 0o644)
+	}
 	// The registered brief the launch prompt is built from.
 	briefDir := filepath.Join(homeDir, "data", taskID)
 	if err := os.MkdirAll(briefDir, 0755); err != nil {
@@ -277,19 +304,15 @@ func prepareLaunchWithRecordedManifestAnchor(t *testing.T, f *launchFixture) (ta
 		t.Fatalf("probeFence: %v", err)
 	}
 	agg := f.aggregate()
-	snapshotDigest := ""
-	if r.projectConfigLoaded {
-		snapshotDigest = r.projectConfig.SnapshotDigest
-	}
-	_, scriptBytes, err := prepareLaunchScript(LaunchArtifactInput{
+	artifact, scriptBytes, err := prepareLaunchScript(LaunchArtifactInput{
 		WorktreePath: r.cwd, LaunchDir: r.launchDir, HomeDir: r.homeDir, TaskID: r.args.ID,
-		SnapshotDigest: snapshotDigest, LaunchBin: r.launchBin, LaunchArgs: r.launchArgs,
+		SnapshotDigest: r.projectConfig.SnapshotDigest, LaunchBin: r.launchBin, LaunchArgs: r.launchArgs,
 		LaunchID: r.launchID, Generation: agg.Generation.String(), EndpointFence: r.epFenceToken(), Fence: r.fence,
 	})
 	if err != nil {
 		t.Fatalf("prepareLaunchScript: %v", err)
 	}
-	prepared, err := prepareLaunchFiles(DefaultCharter(r.args.ID, r.kind, r.effectiveMode), r.briefData, r.promptEnv, r.prompt, scriptBytes, r.harness)
+	prepared, err := prepareLaunchFiles(DefaultCharter(r.args.ID, r.kind, r.effectiveMode), r.briefData, r.promptEnv, r.prompt, scriptBytes, r.harness, artifact.GuardName, artifact.GuardIdentity)
 	if err != nil {
 		t.Fatalf("prepareLaunchFiles: %v", err)
 	}
@@ -384,7 +407,7 @@ func TestPrepareAndPersistLaunchManifestRefusesUnboundState(t *testing.T) {
 		if err := home.AtomicCreate(filepath.Join(agg.Worktree.Path, ManifestName), prepared.manifest, 0o644); err != nil {
 			t.Fatalf("publish manifest: %v", err)
 		}
-		if err := VerifyLaunchArtifacts(agg.Worktree.Path, prepared.digest); err != nil {
+		if err := VerifyPreparedLaunchArtifacts(agg.Worktree.Path, prepared.digest); err != nil {
 			t.Fatalf("verify prepared artifacts before anchor tampering: %v", err)
 		}
 		tamperTaskAggregate(t, f.homeDir, f.taskID, func(a *taskauthority.Aggregate) {
@@ -476,7 +499,7 @@ func TestLaunchManifestAnchorPrecedesArtifactPublication(t *testing.T) {
 	if err := f.runner.prepareAndPersistLaunchManifest(); err != nil {
 		t.Fatalf("resume after anchor-only crash: %v", err)
 	}
-	if err := VerifyLaunchArtifacts(agg.Worktree.Path, prepared.digest); err != nil {
+	if err := VerifyPreparedLaunchArtifacts(agg.Worktree.Path, prepared.digest); err != nil {
 		t.Fatalf("verify recovered prepared artifacts: %v", err)
 	}
 	if got := f.aggregate().Worktree.LaunchManifest; got == nil || got.ManifestSHA256 != prepared.digest {
@@ -809,8 +832,8 @@ func TestLaunchWritesTheManifestOfTheLaunchingHarness(t *testing.T) {
 		ready   string
 		want    []string
 	}{
-		{"pi", "> ready", append(append([]string{}, core...), ".pi/settings.json")},
-		{"claude", "bypass permissions on", core},
+		{"pi", "> ready", append(append([]string{}, core...), ".pi/settings.json", ".soldier-launch-guard-manifest-pi-1/identity")},
+		{"claude", "bypass permissions on", append(append([]string{}, core...), ".soldier-launch-guard-manifest-claude-1/identity")},
 	} {
 		t.Run(tc.harness, func(t *testing.T) {
 			isolateHuman(t)

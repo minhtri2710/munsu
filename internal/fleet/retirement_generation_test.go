@@ -319,15 +319,14 @@ func TestCompletedCleanupRetryOnlyRemovesProjections(t *testing.T) {
 	if err := os.MkdirAll(wtDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(wtDir, "sentinel"), []byte("owned by new task"), 0644); err != nil {
-		t.Fatal(err)
-	}
 	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt", "fence-wt")
 	writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
 	if _, err := RetireTask(Options{HomeDir: homeDir, ID: taskID, Force: true}, &recordingTeardown{alive: false}, fakeRetirementJournals{}, auth); err != nil {
 		t.Fatalf("initial teardown: %v", err)
 	}
-	// The initial run completed and removed projections; recreate only meta to model a projection crash.
+	// The initial run released the empty worktree and completed cleanup. A new
+	// task now owns this reservation; its sentinel and process must survive a
+	// projection-only retry for the retired task.
 	writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
 	if err := os.WriteFile(filepath.Join(wtDir, "sentinel"), []byte("still owned"), 0644); err != nil {
 		t.Fatal(err)

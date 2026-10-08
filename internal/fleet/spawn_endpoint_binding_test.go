@@ -1,10 +1,12 @@
 package fleet
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -404,5 +406,31 @@ func TestFinalEndpointVerificationRejectsStartingObservation(t *testing.T) {
 	r := &Runner{homeDir: t.TempDir(), endpoints: caps, endpoint: caps.created, windowID: caps.created.Handle}
 	if err := r.verifyEndpointReadyBeforePersist(); err == nil {
 		t.Fatal("final verification should reject starting observation")
+	}
+}
+
+// The ConfirmSpawn conflict seam: with the manifest and launch evidence intact
+// through the meta boundary, a runner endpoint identity that differs from the
+// recorded acquired endpoint is refused by BindEndpoint, and the refusal changes
+// no canonical state. The only mutation is the runner's endpoint handle.
+func TestConfirmSpawnRefusesEndpointSubstitutionWithIntactProof(t *testing.T) {
+	f := newLaunchFixture(t, "confirm-conflict")
+	if err := runLaunchPhases(f, "meta"); !errors.Is(err, errCrashSimulated) {
+		t.Fatalf("runLaunchPhases through meta: %v", err)
+	}
+	before := f.aggregate()
+	if before.LaunchEvidence == nil || before.Worktree == nil || before.Worktree.LaunchManifest == nil || before.AcquiredEndpoint == nil || before.Phase != taskauthority.PhaseQueued || before.Endpoint != nil {
+		t.Fatalf("pre-confirm proof state = %+v", before)
+	}
+	f.runner.endpoint.Handle = "pane-substituted"
+	if _, err := f.runner.confirmSpawn(); !errors.Is(err, taskauthority.ErrConflict) || !strings.Contains(err.Error(), "does not match the recorded acquired endpoint") {
+		t.Fatalf("confirmSpawn = %v, want ErrConflict naming the recorded acquired endpoint", err)
+	}
+	after := f.aggregate()
+	if after.Revision != before.Revision || after.Phase != taskauthority.PhaseQueued || after.Endpoint != nil ||
+		!reflect.DeepEqual(after.LaunchEvidence, before.LaunchEvidence) ||
+		!reflect.DeepEqual(after.Worktree.LaunchManifest, before.Worktree.LaunchManifest) ||
+		!reflect.DeepEqual(after.AcquiredEndpoint, before.AcquiredEndpoint) {
+		t.Fatalf("refused confirm changed canonical state:\nbefore %+v\nafter  %+v", before, after)
 	}
 }

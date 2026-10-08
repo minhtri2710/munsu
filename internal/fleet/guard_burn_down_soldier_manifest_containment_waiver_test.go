@@ -40,6 +40,7 @@ func guardManifestFixture(t *testing.T, root string) *LaunchManifest {
 		}
 		entries = append(entries, entry)
 	}
+	entries = append(entries, guardManifestEntry(".soldier-launch-guard-test-1/identity"))
 	return BuildManifest(entries)
 }
 
@@ -58,6 +59,13 @@ func setupGuardManifestFiles(t *testing.T, root string) {
 		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0644); err != nil {
 			t.Fatalf("write %q: %v", name, err)
 		}
+	}
+	guardDir := filepath.Join(root, ".soldier-launch-guard-test-1")
+	if err := os.MkdirAll(guardDir, 0o755); err != nil {
+		t.Fatalf("mkdir deferred guard: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(guardDir, "identity"), []byte("launch|1|fence"), 0o644); err != nil {
+		t.Fatalf("write deferred guard identity: %v", err)
 	}
 }
 

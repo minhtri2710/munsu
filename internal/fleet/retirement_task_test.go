@@ -111,6 +111,7 @@ func testWorktreeBinding(path, digest string) *taskauthority.WorktreeBinding {
 // worktree. Returns the digest for an explicit canonical binding fixture.
 func setupRetirementTestManifest(t *testing.T, wt string) string {
 	t.Helper()
+	taskID, launchID, epFence := "retirement-test", "launch-retirement-test", "endpoint-fence-test"
 	charter := DefaultCharter("retirement-test", "ship", "direct-PR")
 	brief := []byte("# Retirement test brief\n")
 	prompt := "prompt"
@@ -124,6 +125,7 @@ func setupRetirementTestManifest(t *testing.T, wt string) string {
 	for _, name := range CoreLaunchArtifactNames {
 		entries = append(entries, manifestEntryForTestFile(t, wt, name, DisposalPolicyCleanable))
 	}
+	entries = append(entries, addDeferredGuardFixture(t, wt, taskID, launchID, "1", epFence))
 	manifest := BuildManifest(entries)
 	data, digest, err := MarshalManifest(manifest)
 	if err != nil {

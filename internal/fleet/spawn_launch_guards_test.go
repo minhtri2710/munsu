@@ -473,10 +473,11 @@ func TestPreflightHarnessRefusesUnconfiguredAuth(t *testing.T) {
 // current generation.
 func TestWaitForHarnessReadyRefusesOnAuthorizedAbsence(t *testing.T) {
 	f := newLaunchFixture(t, "ready-absent")
-	if err := runLaunchPhases(f, "attach-endpoint"); err != errCrashSimulated {
-		t.Fatalf("runLaunchPhases through attach: %v", err)
+	if err := runLaunchPhases(f, "submit"); err != errCrashSimulated {
+		t.Fatalf("runLaunchPhases through submit: %v", err)
 	}
-	// Control: the same wait over a live endpoint returns ready.
+	// The delivered command has recorded canonical launch evidence and created
+	// its exact guard; this is the live-ready control for the absence check.
 	if err := f.runner.waitForHarnessReady(5); err != nil {
 		t.Fatalf("live endpoint was not seen ready: %v", err)
 	}

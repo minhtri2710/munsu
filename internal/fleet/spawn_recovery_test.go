@@ -57,7 +57,7 @@ func TestLaunchRecoveryCrashBoundariesNoDuplicates(t *testing.T) {
 				if f.endpoints.createCount() != 0 || f.endpoints.submitCount() != 0 {
 					t.Fatalf("endpoint activity before manifest boundary: creates=%d submits=%d", f.endpoints.createCount(), f.endpoints.submitCount())
 				}
-				if err := VerifyLaunchArtifacts(first.Worktree.Path, first.Worktree.LaunchManifest.ManifestSHA256); err != nil {
+				if err := VerifyPreparedLaunchArtifacts(first.Worktree.Path, first.Worktree.LaunchManifest.ManifestSHA256); err != nil {
 					t.Fatalf("verify manifest-bound artifacts at crash boundary: %v", err)
 				}
 			}
@@ -161,6 +161,231 @@ func TestLaunchRecoveryPostSubmitPreRecordGuardProvesSingleProcess(t *testing.T)
 	}
 	if exec.submitCount() != 2 {
 		t.Fatalf("endpoint command submissions = %d, want 2 (re-submission allowed; guard bounds the process)", exec.submitCount())
+	}
+}
+
+func TestLaunchReadinessWaitsForDelayedExactGuard(t *testing.T) {
+	counter := filepath.Join(t.TempDir(), "harness-launches.log")
+	harnessDir := fakeHarnessDir(t, "pi", counter)
+	gitBin, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("git on PATH: %v", err)
+	}
+	f := newLaunchFixture(t, "guard-delayed-ready")
+	testutil.SetPath(t, append([]string{harnessDir, filepath.Dir(gitBin), requiredSkillStubDir(t)}, testutil.BashShellDirs(t)...)...)
+	caps := &executingEndpointCapabilities{inner: f.endpoints, runCommand: scriptRunCommand(t), delayUntilCapture: 2}
+	f.runner.endpoints = caps
+
+	if err := runLaunchPhases(f, ""); err != nil {
+		t.Fatalf("launch phases with delayed guard execution: %v", err)
+	}
+	if caps.captures != 2 {
+		t.Fatalf("readiness captures = %d, want 2 (first ready capture precedes guard execution)", caps.captures)
+	}
+	if caps.submitCount() != 1 {
+		t.Fatalf("launch submissions = %d, want 1", caps.submitCount())
+	}
+	if err := VerifyLaunchArtifacts(f.runner.wtPath, f.runner.manifestSHA256); err != nil {
+		t.Fatalf("strict guard verification after readiness: %v", err)
+	}
+}
+
+func TestLaunchReadinessRejectsUnsafeGuard(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(t *testing.T, guardDir, identityPath string)
+		want   string
+	}{
+		{
+			name: "identity mismatch",
+			mutate: func(t *testing.T, _, identityPath string) {
+				if err := os.WriteFile(identityPath, []byte("foreign-launch|1|foreign-fence"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "digest mismatch",
+		},
+		{
+			name: "unexpected child",
+			mutate: func(t *testing.T, guardDir, _ string) {
+				if err := os.WriteFile(filepath.Join(guardDir, "unowned"), []byte("foreign"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "unexpected contents",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			counter := filepath.Join(t.TempDir(), "harness-launches.log")
+			harnessDir := fakeHarnessDir(t, "pi", counter)
+			gitBin, err := exec.LookPath("git")
+			if err != nil {
+				t.Fatalf("git on PATH: %v", err)
+			}
+			f := newLaunchFixture(t, "guard-unsafe")
+			testutil.SetPath(t, append([]string{harnessDir, filepath.Dir(gitBin), requiredSkillStubDir(t)}, testutil.BashShellDirs(t)...)...)
+			caps := &executingEndpointCapabilities{
+				inner:             f.endpoints,
+				runCommand:        scriptRunCommand(t),
+				delayUntilCapture: 1,
+				afterExecution: func() error {
+					manifest, err := ReadManifest(f.runner.wtPath)
+					if err != nil {
+						return err
+					}
+					for _, entry := range manifest.Artifacts {
+						if isDeferredGuardIdentityPath(entry.Path) {
+							identityPath := filepath.Join(f.runner.wtPath, filepath.FromSlash(entry.Path))
+							tc.mutate(t, filepath.Dir(identityPath), identityPath)
+							return nil
+						}
+					}
+					return fmt.Errorf("manifest lacks deferred guard identity")
+				},
+			}
+			f.runner.endpoints = caps
+			err = runLaunchPhases(f, "")
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("launch with unsafe guard error = %v, want refusal containing %q", err, tc.want)
+			}
+			if caps.captures != 2 {
+				t.Fatalf("unsafe guard captures = %d, want one ready capture plus one diagnostic capture", caps.captures)
+			}
+			if caps.disposes != 0 {
+				t.Fatalf("unsafe guard caused %d endpoint disposals, want 0", caps.disposes)
+			}
+			if f.aggregate().Phase == taskauthority.PhaseWorking {
+				t.Fatal("unsafe guard was accepted as a ready launch")
+			}
+		})
+	}
+}
+
+func TestLaunchReadinessDoesNotWaitOnMixedGuardAndArtifactFailure(t *testing.T) {
+	counter := filepath.Join(t.TempDir(), "harness-launches.log")
+	harnessDir := fakeHarnessDir(t, "pi", counter)
+	gitBin, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("git on PATH: %v", err)
+	}
+	f := newLaunchFixture(t, "guard-mixed-failure")
+	testutil.SetPath(t, append([]string{harnessDir, filepath.Dir(gitBin), requiredSkillStubDir(t)}, testutil.BashShellDirs(t)...)...)
+	caps := &executingEndpointCapabilities{
+		inner:             f.endpoints,
+		runCommand:        scriptRunCommand(t),
+		delayUntilCapture: 1,
+		afterExecution: func() error {
+			manifest, err := ReadManifest(f.runner.wtPath)
+			if err != nil {
+				return err
+			}
+			var guardDir string
+			for _, entry := range manifest.Artifacts {
+				if isDeferredGuardIdentityPath(entry.Path) {
+					identityPath := filepath.Join(f.runner.wtPath, filepath.FromSlash(entry.Path))
+					guardDir = filepath.Dir(identityPath)
+					if err := os.Remove(identityPath); err != nil {
+						return err
+					}
+					break
+				}
+			}
+			if guardDir == "" {
+				return fmt.Errorf("manifest lacks deferred guard identity")
+			}
+			if err := os.Remove(guardDir); err != nil {
+				return err
+			}
+			return os.WriteFile(filepath.Join(f.runner.wtPath, BriefName), []byte("tampered brief"), 0o644)
+		},
+	}
+	f.runner.endpoints = caps
+	if err := runLaunchPhases(f, "submit"); !errors.Is(err, errCrashSimulated) {
+		t.Fatalf("submit boundary: %v", err)
+	}
+
+	err = f.runner.waitForHarnessReady(5)
+	if err == nil || !strings.Contains(err.Error(), "SHA-256 digest mismatch") || !errors.Is(err, errDeferredLaunchGuardAbsent) {
+		t.Fatalf("waitForHarnessReady error = %v, want typed absent guard plus immediate anchored-artifact refusal", err)
+	}
+	if caps.captures != 1 {
+		t.Fatalf("captures = %d, want one ready capture and immediate refusal", caps.captures)
+	}
+	if caps.disposes != 0 {
+		t.Fatalf("mixed verification failure caused %d endpoint disposals, want 0", caps.disposes)
+	}
+}
+
+func TestLaunchReadinessTimesOutWhileGuardAbsentWithoutDisposal(t *testing.T) {
+	counter := filepath.Join(t.TempDir(), "harness-launches.log")
+	harnessDir := fakeHarnessDir(t, "pi", counter)
+	gitBin, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("git on PATH: %v", err)
+	}
+	f := newLaunchFixture(t, "guard-absent-timeout")
+	testutil.SetPath(t, append([]string{harnessDir, filepath.Dir(gitBin), requiredSkillStubDir(t)}, testutil.BashShellDirs(t)...)...)
+	caps := &executingEndpointCapabilities{
+		inner:             f.endpoints,
+		runCommand:        scriptRunCommand(t),
+		delayUntilCapture: 100,
+	}
+	f.runner.endpoints = caps
+	if err := runLaunchPhases(f, "submit"); !errors.Is(err, errCrashSimulated) {
+		t.Fatalf("submit boundary: %v", err)
+	}
+
+	err = f.runner.waitForHarnessReady(1)
+	if err == nil || !strings.Contains(err.Error(), "deferred launch guard identity remained absent") {
+		t.Fatalf("waitForHarnessReady error = %v, want bounded refusal after ready capture with absent guard", err)
+	}
+	if caps.disposes != 0 {
+		t.Fatalf("absent guard caused %d endpoint disposals, want 0", caps.disposes)
+	}
+	if f.aggregate().Phase == taskauthority.PhaseWorking {
+		t.Fatal("absent guard was accepted as a ready launch")
+	}
+	if caps.submitCount() != 1 {
+		t.Fatalf("launch submissions = %d, want 1", caps.submitCount())
+	}
+}
+
+func TestRecordedEndpointWaitsForGuardWithoutResubmission(t *testing.T) {
+	counter := filepath.Join(t.TempDir(), "harness-launches.log")
+	harnessDir := fakeHarnessDir(t, "pi", counter)
+	gitBin, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("git on PATH: %v", err)
+	}
+	f := newLaunchFixture(t, "guard-recorded-recovery")
+	testutil.SetPath(t, append([]string{harnessDir, filepath.Dir(gitBin), requiredSkillStubDir(t)}, testutil.BashShellDirs(t)...)...)
+	caps := &executingEndpointCapabilities{
+		inner:             f.endpoints,
+		runCommand:        scriptRunCommand(t),
+		delayUntilCapture: 1,
+	}
+	f.runner.endpoints = caps
+	if err := runLaunchPhases(f, "submit"); !errors.Is(err, errCrashSimulated) {
+		t.Fatalf("first submit boundary: %v", err)
+	}
+	if f.aggregate().LaunchEvidence == nil {
+		t.Fatal("successful submission did not record canonical launch evidence")
+	}
+	if caps.submitCount() != 1 {
+		t.Fatalf("initial submissions = %d, want 1", caps.submitCount())
+	}
+
+	if err := runLaunchPhases(f, ""); err != nil {
+		t.Fatalf("recorded endpoint recovery: %v", err)
+	}
+	if caps.submitCount() != 1 {
+		t.Fatalf("recorded endpoint recovery resubmitted launch: submissions=%d, want 1", caps.submitCount())
+	}
+	if caps.captures != 1 {
+		t.Fatalf("recovery captures = %d, want 1 after the exact submitted script creates its guard", caps.captures)
+	}
+	if f.aggregate().Phase != taskauthority.PhaseWorking {
+		t.Fatalf("recovered phase = %q, want working", f.aggregate().Phase)
 	}
 }
 
@@ -286,23 +511,6 @@ func TestLaunchRecoveryPostSubmitFailureNamesLiveEndpoint(t *testing.T) {
 				return perr == nil && errors.As(err, &pe) && pe.Op == "read" && pe.Path == path
 			},
 			wantSubmits: 1,
-		},
-		{
-			// The final bind is refused after .meta names the window: spawn
-			// refuses a re-run, so the pane is stopped by hand.
-			name: "confirm spawn",
-			inject: func(f *launchFixture) func() {
-				probes := 0
-				f.endpoints.onProbe = func() error {
-					if probes++; probes == 3 {
-						tamperTaskAggregate(f.t, f.homeDir, f.taskID, func(agg *taskauthority.Aggregate) { agg.LaunchEvidence = nil })
-					}
-					return nil
-				}
-				return nil
-			},
-			wantCause: func(_ *launchFixture, err error) bool { return errors.Is(err, taskauthority.ErrConflict) },
-			refusal:   "refuse duplicate live execution",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -736,7 +944,10 @@ func TestLaunchWorktreeTreehouseRecoveryFailsClosed(t *testing.T) {
 func fakeTreehouseOnPath(t *testing.T, logPath string) {
 	t.Helper()
 	wt := t.TempDir()
-	content := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\nprintf '%%s\\n' %q\n", logPath, wt)
+	if err := os.MkdirAll(wt, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\nmkdir -p %q\nprintf '%%s\\n' %q\n", logPath, wt, wt)
 	testutil.FakeOnPath(t, "treehouse", content)
 }
 
@@ -976,11 +1187,16 @@ func harnessLaunchCount(t *testing.T, counterPath string) int {
 // skipFirstRun=true simulates a Submit error BEFORE script execution; the
 // default (run every submission) simulates a crash AFTER delivery.
 type executingEndpointCapabilities struct {
-	inner          *reentrantEndpointCapabilities
-	runCommand     func(cmd string) error
-	firstSubmitErr bool
-	skipFirstRun   bool
-	submits        int
+	inner             *reentrantEndpointCapabilities
+	runCommand        func(cmd string) error
+	firstSubmitErr    bool
+	skipFirstRun      bool
+	delayUntilCapture int
+	pendingCommand    string
+	captures          int
+	disposes          int
+	afterExecution    func() error
+	submits           int
 }
 
 func (f *executingEndpointCapabilities) CreateReserved(req CreateRequest) (CreatedEndpoint, error) {
@@ -989,10 +1205,17 @@ func (f *executingEndpointCapabilities) CreateReserved(req CreateRequest) (Creat
 func (f *executingEndpointCapabilities) Submit(ep CreatedEndpoint, text string) error {
 	f.submits++
 	run := !(f.skipFirstRun && f.submits == 1)
-	if run && f.runCommand != nil {
+	if run && f.delayUntilCapture == 0 && f.runCommand != nil {
 		if err := f.runCommand(text); err != nil {
 			return err
 		}
+		if f.afterExecution != nil {
+			if err := f.afterExecution(); err != nil {
+				return err
+			}
+		}
+	} else if run {
+		f.pendingCommand = text
 	}
 	if f.firstSubmitErr && f.submits == 1 {
 		return errors.New("simulated crash after submission delivery")
@@ -1006,9 +1229,24 @@ func (f *executingEndpointCapabilities) Probe(ep CreatedEndpoint) (SpawnEndpoint
 	return f.inner.Probe(ep)
 }
 func (f *executingEndpointCapabilities) Capture(ep CreatedEndpoint, n int) (string, error) {
+	f.captures++
+	if f.pendingCommand != "" && f.captures >= f.delayUntilCapture {
+		if f.runCommand != nil {
+			if err := f.runCommand(f.pendingCommand); err != nil {
+				return "", err
+			}
+		}
+		f.pendingCommand = ""
+		if f.afterExecution != nil {
+			if err := f.afterExecution(); err != nil {
+				return "", err
+			}
+		}
+	}
 	return f.inner.Capture(ep, n)
 }
 func (f *executingEndpointCapabilities) Dispose(ep CreatedEndpoint) error {
+	f.disposes++
 	return f.inner.Dispose(ep)
 }
 func (f *executingEndpointCapabilities) submitCount() int { return f.submits }
@@ -1107,5 +1345,67 @@ func TestLaunchRecoveryDuplicateLiveTaskFailsClosed(t *testing.T) {
 	}
 	if f.endpoints.createCount() != 1 {
 		t.Fatalf("duplicate spawn created %d endpoints", f.endpoints.createCount())
+	}
+}
+
+// A committed RecordLaunch whose launch evidence later disappears is lost proof,
+// not a retryable cause. The first Run keeps the live pane owned and refuses with
+// a typed conflict that offers no re-run. A retry refuses before submitting
+// again, and neither attempt creates, disposes, resubmits or backfills evidence.
+func TestLaunchRecoveryMissingLaunchProofRefusesRetryWithoutRepair(t *testing.T) {
+	rf := newRunFixture(t, "missing-launch-proof")
+	f := rf.launchFixture
+	probes := 0
+	f.endpoints.onProbe = func() error {
+		if probes++; probes == 3 {
+			tamperTaskAggregate(f.t, f.homeDir, f.taskID, func(agg *taskauthority.Aggregate) { agg.LaunchEvidence = nil })
+		}
+		return nil
+	}
+
+	_, err := rf.run()
+	if !errors.Is(err, taskauthority.ErrConflict) || !strings.Contains(err.Error(), "successful launch lacks canonical worktree manifest evidence") {
+		t.Fatalf("first Run = %v, want a typed conflict naming the missing launch proof", err)
+	}
+	msg := err.Error()
+	for _, want := range []string{"missing-launch-proof", "backend tmux endpoint pane-1", "may still be running", "stop pane pane-1 on backend tmux by hand"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("error %q does not contain %q", msg, want)
+		}
+	}
+	for _, unwanted := range []string{"fix the cause", "re-run"} {
+		if strings.Contains(msg, unwanted) {
+			t.Fatalf("error %q advises %q, which cannot repair lost launch proof", msg, unwanted)
+		}
+	}
+	agg := f.aggregate()
+	if agg.LaunchEvidence != nil || agg.AcquiredEndpoint == nil || agg.AcquiredEndpoint.Handle != "pane-1" || agg.Endpoint != nil || agg.Phase != taskauthority.PhaseQueued {
+		t.Fatalf("first Run did not retain pre-confirm endpoint custody: %+v", agg)
+	}
+	revision := agg.Revision
+
+	f.endpoints.onProbe = nil
+	_, err = rf.run()
+	if !errors.Is(err, taskauthority.ErrConflict) || !strings.Contains(err.Error(), "already submitted") || !strings.Contains(err.Error(), "stop pane pane-1 on backend tmux by hand") {
+		t.Fatalf("retry = %v, want a typed conflict naming the submitted launch and its custody", err)
+	}
+	if after := f.aggregate(); after.Revision != revision || after.LaunchEvidence != nil || after.Endpoint != nil || after.AcquiredEndpoint == nil || after.AcquiredEndpoint.Handle != "pane-1" {
+		t.Fatalf("refused retry changed custody or revision: %+v", after)
+	}
+	if n := f.endpoints.createCount(); n != 1 {
+		t.Fatalf("endpoint creations = %d, want 1", n)
+	}
+	if n := rf.exec.submitCount(); n != 1 {
+		t.Fatalf("launch submissions = %d, want 1", n)
+	}
+	if rf.exec.disposes != 0 {
+		t.Fatalf("live endpoint disposed %d times, want 0", rf.exec.disposes)
+	}
+	if n := harnessLaunchCount(t, rf.counter); n != 1 {
+		t.Fatalf("soldier launches = %d, want 1", n)
+	}
+	status, probeErr := f.endpoints.Probe(CreatedEndpoint{Backend: agg.AcquiredEndpoint.Backend, Handle: agg.AcquiredEndpoint.Handle})
+	if probeErr != nil || status.Lifecycle != LifecycleAlive || status.Responsiveness != Responsive {
+		t.Fatalf("retained endpoint status=%+v probe error=%v, want alive and responsive", status, probeErr)
 	}
 }

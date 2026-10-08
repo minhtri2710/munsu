@@ -210,7 +210,7 @@ func TestPrepareLaunchFilesRefusesUnsupportedHarnessWorktreeFile(t *testing.T) {
 	harness.Adapters[harness.Pi] = modified
 	t.Cleanup(func() { harness.Adapters[harness.Pi] = original })
 
-	_, err := prepareLaunchFiles("charter", nil, &LaunchEnvelope{}, "prompt", []byte("script"), harness.Pi)
+	_, err := prepareLaunchFiles("charter", nil, &LaunchEnvelope{}, "prompt", []byte("script"), harness.Pi, ".soldier-launch-guard-test-1", "launch|1|fence")
 	if err == nil || !strings.Contains(err.Error(), `unsupported prepared launch file "unsupported.json"`) {
 		t.Fatalf("prepareLaunchFiles error = %v, want unsupported harness file refusal", err)
 	}

@@ -68,6 +68,7 @@ func setupWorktreeWithManifest(t *testing.T, wt, remote string, briefContent []b
 	for _, name := range CoreLaunchArtifactNames {
 		entries = append(entries, manifestEntryForTestFile(t, wt, name, DisposalPolicyCleanable))
 	}
+	entries = append(entries, addDeferredGuardFixture(t, wt, "manifest-test", "launch-manifest-test", "1", "endpoint-fence-test"))
 	manifest := BuildManifest(entries)
 	data, digest, err := MarshalManifest(manifest)
 	if err != nil {
@@ -394,6 +395,7 @@ func rewriteManifestFromWorktree(t *testing.T, wt string) string {
 	for _, name := range CoreLaunchArtifactNames {
 		entries = append(entries, manifestEntryForTestFile(t, wt, name, DisposalPolicyCleanable))
 	}
+	entries = append(entries, manifestEntryForTestFile(t, wt, filepath.ToSlash(filepath.Join(".soldier-launch-guard-manifest-test-1", "identity")), DisposalPolicyCleanable))
 	manifest := BuildManifest(entries)
 	data, digest, err := MarshalManifest(manifest)
 	if err != nil {
