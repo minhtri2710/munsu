@@ -304,18 +304,6 @@ func prepareLaunchWithRecordedManifestAnchor(t *testing.T, f *launchFixture) (ta
 		t.Fatalf("probeFence: %v", err)
 	}
 	agg := f.aggregate()
-	snapshotDigest := ""
-	if r.projectConfigLoaded {
-		snapshotDigest = r.projectConfig.SnapshotDigest
-	}
-	_, scriptBytes, err := prepareLaunchScript(LaunchArtifactInput{
-		WorktreePath: r.cwd, LaunchDir: r.launchDir, HomeDir: r.homeDir, TaskID: r.args.ID,
-		SnapshotDigest: snapshotDigest, LaunchBin: r.launchBin, LaunchArgs: r.launchArgs,
-		LaunchID: r.launchID, Generation: agg.Generation.String(), EndpointFence: r.epFenceToken(), Fence: r.fence,
-	})
-	if err != nil {
-		t.Fatalf("prepareLaunchScript: %v", err)
-	}
 	artifact, scriptBytes, err := prepareLaunchScript(LaunchArtifactInput{
 		WorktreePath: r.cwd, LaunchDir: r.launchDir, HomeDir: r.homeDir, TaskID: r.args.ID,
 		SnapshotDigest: r.projectConfig.SnapshotDigest, LaunchBin: r.launchBin, LaunchArgs: r.launchArgs,

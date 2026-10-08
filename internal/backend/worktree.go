@@ -260,6 +260,24 @@ func (p *treehouseProvider) Return(path string) error {
 	if err != nil {
 		return err
 	}
+	if !filepath.IsAbs(path) {
+		return fmt.Errorf("refusing to return worktree with a non-absolute path: %q", path)
+	}
+	markerPath := filepath.Join(path, ".git")
+	marker, err := os.Lstat(markerPath)
+	if err != nil {
+		return fmt.Errorf("verifying worktree .git marker: %w", err)
+	}
+	if !marker.Mode().IsRegular() {
+		return fmt.Errorf("refusing to return worktree with a non-regular .git marker")
+	}
+	markerBytes, err := os.ReadFile(markerPath)
+	if err != nil {
+		return fmt.Errorf("reading worktree .git marker: %w", err)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(string(markerBytes)), "gitdir: ") {
+		return fmt.Errorf("unexpected .git file format: %s", strings.TrimSpace(string(markerBytes)))
+	}
 	status := exec.Command("git", "status", "--porcelain=v1", "--untracked-files=all", "--ignored=matching", "-z")
 	status.Dir = path
 	out, err := status.Output()
@@ -268,16 +286,6 @@ func (p *treehouseProvider) Return(path string) error {
 	}
 	if len(out) != 0 {
 		return fmt.Errorf("refusing to return worktree with dirty, untracked, or ignored content")
-	}
-	if !filepath.IsAbs(path) {
-		return fmt.Errorf("refusing to return worktree with a non-absolute path: %q", path)
-	}
-	marker, err := os.Lstat(filepath.Join(path, ".git"))
-	if err != nil {
-		return fmt.Errorf("verifying worktree .git marker: %w", err)
-	}
-	if !marker.Mode().IsRegular() {
-		return fmt.Errorf("refusing to return worktree with a non-regular .git marker")
 	}
 	stdout, stderr, err := runWorktreeMutationCommand(bin, "", "return", "--force", path)
 	output := commandOutput(stdout, stderr)
@@ -418,15 +426,6 @@ func (p *gitWorktreeProvider) Get(repoPath string, lease bool) (string, error) {
 
 func (p *gitWorktreeProvider) Return(path string) error {
 	gitFile := filepath.Join(path, ".git")
-	status := exec.Command("git", "status", "--porcelain=v1", "--untracked-files=all", "--ignored=matching", "-z")
-	status.Dir = path
-	out, err := status.Output()
-	if err != nil {
-		return fmt.Errorf("checking worktree cleanliness before return: %w", err)
-	}
-	if len(out) != 0 {
-		return fmt.Errorf("refusing to remove worktree with dirty, untracked, or ignored content")
-	}
 	if !filepath.IsAbs(path) {
 		return fmt.Errorf("refusing to remove worktree with a non-absolute path: %q", path)
 	}
@@ -455,6 +454,15 @@ func (p *gitWorktreeProvider) Return(path string) error {
 	// The repo root is three levels above .git/worktrees/<name>.
 	repoDir := filepath.Dir(filepath.Dir(filepath.Dir(repoGitDir)))
 
+	status := exec.Command("git", "status", "--porcelain=v1", "--untracked-files=all", "--ignored=matching", "-z")
+	status.Dir = path
+	out, err := status.Output()
+	if err != nil {
+		return fmt.Errorf("checking worktree cleanliness before return: %w", err)
+	}
+	if len(out) != 0 {
+		return fmt.Errorf("refusing to remove worktree with dirty, untracked, or ignored content")
+	}
 	out, stderr, err := runWorktreeMutationCommand("git", repoDir, "worktree", "remove", "--force", path)
 	if err != nil {
 		return wrapBackendCommandError("git worktree remove", out, stderr, err)
