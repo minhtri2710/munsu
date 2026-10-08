@@ -57,7 +57,7 @@ func TestLaunchRecoveryCrashBoundariesNoDuplicates(t *testing.T) {
 				if f.endpoints.createCount() != 0 || f.endpoints.submitCount() != 0 {
 					t.Fatalf("endpoint activity before manifest boundary: creates=%d submits=%d", f.endpoints.createCount(), f.endpoints.submitCount())
 				}
-				if err := VerifyLaunchArtifacts(first.Worktree.Path, first.Worktree.LaunchManifest.ManifestSHA256); err != nil {
+				if err := VerifyPreparedLaunchArtifacts(first.Worktree.Path, first.Worktree.LaunchManifest.ManifestSHA256); err != nil {
 					t.Fatalf("verify manifest-bound artifacts at crash boundary: %v", err)
 				}
 			}
@@ -736,7 +736,10 @@ func TestLaunchWorktreeTreehouseRecoveryFailsClosed(t *testing.T) {
 func fakeTreehouseOnPath(t *testing.T, logPath string) {
 	t.Helper()
 	wt := t.TempDir()
-	content := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\nprintf '%%s\\n' %q\n", logPath, wt)
+	if err := os.MkdirAll(wt, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\nmkdir -p %q\nprintf '%%s\\n' %q\n", logPath, wt, wt)
 	testutil.FakeOnPath(t, "treehouse", content)
 }
 

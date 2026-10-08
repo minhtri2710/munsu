@@ -4,6 +4,7 @@
 package fleet
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/harness"
@@ -76,6 +78,27 @@ func expectedManifestEntryPaths() map[string]bool {
 	return expected
 }
 
+func isDeferredGuardIdentityPath(relPath string) bool {
+	const prefix = ".soldier-launch-guard-"
+	const suffix = "/identity"
+	if !strings.HasPrefix(relPath, prefix) || !strings.HasSuffix(relPath, suffix) {
+		return false
+	}
+	name := strings.TrimSuffix(strings.TrimPrefix(relPath, prefix), suffix)
+	dash := strings.LastIndexByte(name, '-')
+	if dash <= 0 || dash == len(name)-1 {
+		return false
+	}
+	taskLabel, generation := name[:dash], name[dash+1:]
+	for _, r := range taskLabel {
+		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '.' || r == '_' || r == '-') {
+			return false
+		}
+	}
+	parsed, err := strconv.ParseUint(generation, 10, 64)
+	return taskLabel != "" && err == nil && parsed > 0 && strconv.FormatUint(parsed, 10) == generation
+}
+
 func validateManifestPath(relPath string) error {
 	if relPath == "" {
 		return fmt.Errorf("manifest entry with empty path")
@@ -121,6 +144,7 @@ func ValidateManifest(manifest *LaunchManifest) error {
 	expected := expectedManifestEntryPaths()
 	declared := declaredWorktreeFiles()
 	expectedFound := make(map[string]bool)
+	guardFound := false
 
 	for _, entry := range manifest.Artifacts {
 		if err := validateManifestPath(entry.Path); err != nil {
@@ -152,6 +176,12 @@ func ValidateManifest(manifest *LaunchManifest) error {
 		if expected[entry.Path] {
 			expectedFound[entry.Path] = true
 		}
+		if isDeferredGuardIdentityPath(entry.Path) {
+			if guardFound {
+				return fmt.Errorf("manifest contains multiple deferred launch guard identities")
+			}
+			guardFound = true
+		}
 	}
 
 	// Check that every expected entry is present.
@@ -163,9 +193,12 @@ func ValidateManifest(manifest *LaunchManifest) error {
 
 	// Check that no unexpected entries are present.
 	for _, entry := range manifest.Artifacts {
-		if !expected[entry.Path] && !declared[entry.Path] {
+		if !expected[entry.Path] && !declared[entry.Path] && !isDeferredGuardIdentityPath(entry.Path) {
 			return fmt.Errorf("unexpected manifest entry: %q", entry.Path)
 		}
+	}
+	if !guardFound {
+		return fmt.Errorf("missing manifest entry: deferred launch guard identity")
 	}
 
 	return nil
@@ -305,7 +338,21 @@ var execGitCommand = func(worktreeRoot string, args ...string) interface{ Run() 
 // verifyManifestEntry checks that a single manifest entry is safe and
 // matches its declared digest. Returns an error describing the failure.
 func verifyManifestEntry(worktreeRoot string, entry *ManifestEntry) error {
-	fullPath := filepath.Join(worktreeRoot, entry.Path)
+	fullPath := filepath.Join(worktreeRoot, filepath.FromSlash(entry.Path))
+
+	// Refuse symlinked parent components as well as a symlinked leaf.
+	parent := worktreeRoot
+	parts := strings.Split(entry.Path, "/")
+	for _, part := range parts[:len(parts)-1] {
+		parent = filepath.Join(parent, filepath.FromSlash(part))
+		parentInfo, err := os.Lstat(parent)
+		if err != nil {
+			return fmt.Errorf("checking path component for %s: %w", entry.Path, err)
+		}
+		if parentInfo.Mode()&os.ModeSymlink != 0 || !parentInfo.IsDir() {
+			return fmt.Errorf("%s has an unsafe path component %q", entry.Path, part)
+		}
+	}
 
 	// Check file exists and is a regular file.
 	fi, err := os.Lstat(fullPath)
@@ -385,6 +432,88 @@ func verifyManifestFile(worktreeRoot string) error {
 	return nil
 }
 
+func verifyDeferredGuardDirectory(worktreePath, guardDir string, allowAbsent bool) error {
+	if guardDir == "" {
+		return fmt.Errorf("manifest has no deferred launch guard identity")
+	}
+	entries, err := os.ReadDir(worktreePath)
+	if err != nil {
+		return fmt.Errorf("reading worktree launch artifacts: %w", err)
+	}
+	prefix := ".soldier-launch-guard-"
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), prefix) && entry.Name() != filepath.Base(guardDir) {
+			return fmt.Errorf("unexpected deferred launch guard directory %q", entry.Name())
+		}
+	}
+	root, err := os.OpenRoot(worktreePath)
+	if err != nil {
+		return fmt.Errorf("opening worktree root for guard verification: %w", err)
+	}
+	defer root.Close()
+	fullDir := filepath.FromSlash(guardDir)
+	fi, err := root.Lstat(fullDir)
+	if os.IsNotExist(err) && allowAbsent {
+		return nil
+	}
+	if os.IsNotExist(err) && !allowAbsent {
+		return fmt.Errorf("deferred launch guard identity is absent; readiness is not proven")
+	}
+	if err != nil {
+		return fmt.Errorf("checking deferred launch guard directory: %w", err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 || !fi.IsDir() {
+		return fmt.Errorf("deferred launch guard %s is not a real directory", guardDir)
+	}
+	guardRoot, err := root.OpenRoot(fullDir)
+	if err != nil {
+		return fmt.Errorf("opening deferred launch guard %s: %w", guardDir, err)
+	}
+	defer guardRoot.Close()
+	guardDirFile, err := guardRoot.Open(".")
+	if err != nil {
+		return fmt.Errorf("opening deferred launch guard %s directory: %w", guardDir, err)
+	}
+	defer guardDirFile.Close()
+	children, err := guardDirFile.ReadDir(-1)
+	if err != nil {
+		return fmt.Errorf("reading deferred launch guard %s: %w", guardDir, err)
+	}
+	if len(children) != 1 || children[0].Name() != "identity" || children[0].IsDir() {
+		return fmt.Errorf("deferred launch guard %s has unexpected contents", guardDir)
+	}
+	identityInfo, err := guardRoot.Lstat("identity")
+	if err != nil {
+		return fmt.Errorf("checking deferred launch guard identity: %w", err)
+	}
+	if identityInfo.Mode()&os.ModeSymlink != 0 || !identityInfo.Mode().IsRegular() {
+		return fmt.Errorf("deferred launch guard identity is not a regular file")
+	}
+	identityBytes, err := guardRoot.ReadFile("identity")
+	if err != nil {
+		return fmt.Errorf("reading deferred launch guard identity: %w", err)
+	}
+	manifest, err := ReadManifest(worktreePath)
+	if err != nil {
+		return err
+	}
+	for _, artifact := range manifest.Artifacts {
+		if isDeferredGuardIdentityPath(artifact.Path) {
+			if sha256Content(identityBytes) != artifact.SHA256 {
+				return fmt.Errorf("deferred launch guard identity digest mismatch")
+			}
+			wantBytes, readErr := os.ReadFile(filepath.Join(worktreePath, filepath.FromSlash(artifact.Path)))
+			if readErr != nil {
+				return fmt.Errorf("reading deferred launch guard manifest bytes: %w", readErr)
+			}
+			if !bytes.Equal(identityBytes, wantBytes) {
+				return fmt.Errorf("deferred launch guard identity conflicts with manifest bytes")
+			}
+		}
+	}
+	return nil
+}
+
 // VerifyLaunchArtifacts performs a comprehensive check of all launch artifacts
 // against the independently anchored manifest digest. It verifies the manifest
 // file is safe and untracked, compares its exact bytes to the expected digest,
@@ -413,6 +542,17 @@ func artifactVerificationFailures(err error) []error {
 }
 
 func VerifyLaunchArtifacts(worktreePath, expectedManifestSHA string) error {
+	return verifyLaunchArtifacts(worktreePath, expectedManifestSHA, false)
+}
+
+// VerifyPreparedLaunchArtifacts verifies anchored launch files before submission.
+// The exact deferred guard may not exist until the submitted script atomically
+// creates it; if present, it must already match the canonical identity.
+func VerifyPreparedLaunchArtifacts(worktreePath, expectedManifestSHA string) error {
+	return verifyLaunchArtifacts(worktreePath, expectedManifestSHA, true)
+}
+
+func verifyLaunchArtifacts(worktreePath, expectedManifestSHA string, allowAbsentGuard bool) error {
 	if _, err := os.Stat(worktreePath); err != nil {
 		return fmt.Errorf("checking worktree %s: %w", worktreePath, err)
 	}
@@ -442,9 +582,39 @@ func VerifyLaunchArtifacts(worktreePath, expectedManifestSHA string) error {
 		return fmt.Errorf("manifest SHA-256 digest mismatch: expected %s, got %s", expectedManifestSHA, actualDigest)
 	}
 
+	// The guard is one exact directory: no alternate generation's guard or
+	// additional children are accepted. Prepared state may omit it until the
+	// submitted script reaches its atomic mkdir.
+	guardPath := ""
+	for _, entry := range manifest.Artifacts {
+		if isDeferredGuardIdentityPath(entry.Path) {
+			guardPath = filepath.ToSlash(filepath.Dir(entry.Path))
+			break
+		}
+	}
+	if err := verifyDeferredGuardDirectory(worktreePath, guardPath, allowAbsentGuard); err != nil {
+		return &launchArtifactVerificationError{failures: []error{err}}
+	}
+	return verifyManifestEntries(worktreePath, manifest, allowAbsentGuard)
+}
+
+func verifyManifestEntries(worktreePath string, manifest *LaunchManifest, allowAbsentGuard bool) error {
+	guardPath := ""
+	for _, entry := range manifest.Artifacts {
+		if isDeferredGuardIdentityPath(entry.Path) {
+			guardPath = filepath.ToSlash(filepath.Dir(entry.Path))
+			break
+		}
+	}
 	// Verify each manifest entry.
 	var failures []error
 	for _, entry := range manifest.Artifacts {
+		if isDeferredGuardIdentityPath(entry.Path) && allowAbsentGuard {
+			guardDirPath := filepath.Join(worktreePath, filepath.FromSlash(guardPath))
+			if _, err := os.Lstat(guardDirPath); os.IsNotExist(err) {
+				continue
+			}
+		}
 		if err := verifyManifestEntry(worktreePath, &entry); err != nil {
 			failures = append(failures, err)
 		}

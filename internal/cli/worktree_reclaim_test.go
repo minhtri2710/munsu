@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -316,28 +317,14 @@ func TestWorktreeReclaimSparesTreehouseLeaseHolderWorktree(t *testing.T) {
 	os.Stdout = oldStdout
 	output := <-outputDone
 	stdout.Close()
-	if err != nil {
-		t.Fatalf("reclaim: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "not canonically reconciled") {
+		t.Fatalf("reclaim error = %v, want fail-closed lease reconciliation refusal", err)
 	}
-	if strings.Contains(output, "returning orphaned worktree: "+heldPath) {
-		t.Fatalf("reclaim must spare the worktree held by a live reservation, got stdout: %q", output)
+	if strings.Contains(output, "returning orphaned worktree:") || strings.Contains(output, "Reclaimed") {
+		t.Fatalf("reclaim must preflight every lease before provider return, got stdout: %q", output)
 	}
-	if !strings.Contains(output, "returning orphaned worktree: "+orphanPath) {
-		t.Fatalf("reclaim must reclaim the worktree held by a dead reservation, got stdout: %q", output)
-	}
-
-	// The provider actually ran `treehouse return` on the dead-holder worktree
-	// and never on the live-holder one.
-	trace, err := os.ReadFile(tracePath)
-	if err != nil {
-		t.Fatalf("reading treehouse return trace: %v", err)
-	}
-	traceStr := string(trace)
-	if !strings.Contains(traceStr, orphanPath) {
-		t.Fatalf("treehouse provider must return the dead-holder worktree, trace=%q", traceStr)
-	}
-	if strings.Contains(traceStr, heldPath) {
-		t.Fatalf("treehouse provider must not return the live-holder worktree, trace=%q", traceStr)
+	if _, err := os.Stat(tracePath); !os.IsNotExist(err) {
+		t.Fatalf("provider must not return live or unreconciled leases; trace stat error=%v", err)
 	}
 }
 
@@ -367,7 +354,7 @@ func TestWorktreeReclaimIsFencedAgainstTheWorktreePool(t *testing.T) {
 	}
 }
 
-func TestWorktreeReclaimAllowsRetiredReservation(t *testing.T) {
+func TestWorktreeReclaimSparesRetiredWorktreeEvidence(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
 	t.Setenv("PATH", "/usr/bin:/bin")
@@ -419,6 +406,22 @@ func TestWorktreeReclaimAllowsRetiredReservation(t *testing.T) {
 	if _, err := auth.BeginSpawn(mustCanonicalOp(t, "retired-launch", launch), launch); err != nil {
 		t.Fatal(err)
 	}
+	reservedPath, ok, err := backend.ReservedWorktreePath(tmpDir, repoPath, reservationID)
+	if err != nil || !ok {
+		t.Fatalf("reserved path = %q, ok=%v, err=%v", reservedPath, ok, err)
+	}
+	if out, err := exec.Command("/usr/bin/git", "-C", repoPath, "worktree", "add", "--detach", reservedPath, "HEAD").CombinedOutput(); err != nil {
+		t.Fatalf("git worktree add: %v\n%s", err, out)
+	}
+	agg, err = auth.Get(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := taskauthority.WorktreeBinding{RepositoryIdentity: "repo", Path: reservedPath, GitDir: "git", CommonDir: "common", BaseHead: "head", LeaseID: reservationID, FenceToken: "fence-retired", BoundAtUnix: 1}
+	bind := taskauthority.CanonicalBindWorktreeRequest{HomeID: auth.HomeID(), TaskID: taskID, Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), Binding: binding, Reason: "reclaim test"}
+	if _, err := auth.BindWorktree(mustCanonicalOp(t, "retired-bind", bind), bind); err != nil {
+		t.Fatal(err)
+	}
 	agg, err = auth.Get(taskID)
 	if err != nil {
 		t.Fatal(err)
@@ -428,15 +431,8 @@ func TestWorktreeReclaimAllowsRetiredReservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	agg, err = auth.Get(taskID)
-	if err != nil || agg.Phase != taskauthority.PhaseRetired || agg.Launch == nil || agg.Worktree != nil {
-		t.Fatalf("retired aggregate = %+v, err=%v", agg, err)
-	}
-	reservedPath, ok, err := backend.ReservedWorktreePath(tmpDir, repoPath, reservationID)
-	if err != nil || !ok {
-		t.Fatalf("reserved path = %q, ok=%v, err=%v", reservedPath, ok, err)
-	}
-	if out, err := exec.Command("/usr/bin/git", "-C", repoPath, "worktree", "add", "--detach", reservedPath, "HEAD").CombinedOutput(); err != nil {
-		t.Fatalf("git worktree add: %v\n%s", err, out)
+	if err != nil || agg.Phase != taskauthority.PhaseRetired || agg.Launch == nil || agg.Worktree != nil || agg.Retirement == nil || agg.Retirement.Worktree == nil || agg.CleanupClaim == nil || agg.CleanupClaim.Status != taskauthority.CleanupActive {
+		t.Fatalf("retired aggregate missing worktree cleanup custody = %+v, err=%v", agg, err)
 	}
 	root := NewRootCommand()
 	root.SetOut(new(strings.Builder))
@@ -463,16 +459,182 @@ func TestWorktreeReclaimAllowsRetiredReservation(t *testing.T) {
 	output := <-outputDone
 	stdout.Close()
 	if err != nil {
-		t.Fatalf("reclaim: %v", err)
+		t.Fatalf("reclaim should leave the canonically retired worktree evidence untouched: %v", err)
 	}
-	if !strings.Contains(output, "returning orphaned worktree: "+reservedPath) {
-		t.Fatalf("retired reservation should be reclaimable, got stdout: %q", output)
+	if strings.Contains(output, "returning orphaned worktree: "+reservedPath) || !strings.Contains(output, "Reclaimed 0 orphaned worktrees") {
+		t.Fatalf("retired worktree evidence must retain custody, got stdout: %q", output)
 	}
-	if !strings.Contains(output, "Reclaimed 1 orphaned worktrees") {
-		t.Fatalf("retired reservation should report one reclaimed worktree, got stdout: %q", output)
+	if _, err := os.Stat(reservedPath); err != nil {
+		t.Fatalf("retired worktree must remain until canonical retirement: %v", err)
+	}
+	agg, err = auth.Get(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := auth.ReconcileRetirementCleanup(taskID, agg.Generation, taskauthority.CleanupCompleted, func() error { return nil }); err != nil {
+		t.Fatalf("completing canonical retirement cleanup for fixture: %v", err)
+	}
+	stdout, writer, err = os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldStdout = os.Stdout
+	os.Stdout = writer
+	outputDone = make(chan string, 1)
+	go func() {
+		output, readErr := io.ReadAll(stdout)
+		if readErr != nil {
+			outputDone <- "read stdout: " + readErr.Error()
+			return
+		}
+		outputDone <- string(output)
+	}()
+	err = root.Execute()
+	writer.Close()
+	os.Stdout = oldStdout
+	output = <-outputDone
+	stdout.Close()
+	if err != nil || !strings.Contains(output, "Reclaimed 1 orphaned worktrees") {
+		t.Fatalf("canonically completed retirement reclaim = %q, err=%v", output, err)
 	}
 	if _, err := os.Stat(reservedPath); !os.IsNotExist(err) {
-		t.Fatalf("retired reservation worktree should be removed, stat err=%v", err)
+		t.Fatalf("canonically released worktree should be returned, stat err=%v", err)
+	}
+}
+
+func TestWorktreeReclaimReturnsCleanUnownedOrphan(t *testing.T) {
+	_, _, worktreePath, tracePath := setupCleanOrphanWorktree(t)
+	root := NewRootCommand()
+	root.SetOut(new(strings.Builder))
+	root.SetErr(new(strings.Builder))
+	root.SetArgs([]string{"worktree", "reclaim"})
+	stdout, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldStdout := os.Stdout
+	os.Stdout = writer
+	outputDone := make(chan string, 1)
+	go func() {
+		output, readErr := io.ReadAll(stdout)
+		if readErr != nil {
+			outputDone <- "read stdout: " + readErr.Error()
+			return
+		}
+		outputDone <- string(output)
+	}()
+	err = root.Execute()
+	writer.Close()
+	os.Stdout = oldStdout
+	output := <-outputDone
+	stdout.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output, "returning orphaned worktree: "+worktreePath) || !strings.Contains(output, "Reclaimed 1 orphaned worktrees") {
+		t.Fatalf("clean orphan reclaim output = %q", output)
+	}
+	trace, err := os.ReadFile(tracePath)
+	if err != nil || !strings.Contains(string(trace), worktreePath) {
+		t.Fatalf("provider return trace = %q, err=%v", trace, err)
+	}
+}
+
+func TestWorktreeReclaimStopsOnUncertainProviderReturn(t *testing.T) {
+	_, _, worktreePath, tracePath := setupCleanOrphanWorktree(t)
+	testutil.FakeOnPath(t, "treehouse", "#!/bin/sh\n"+
+		"if [ \"$1\" = \"status\" ] && [ \"$2\" = \"--json\" ]; then printf '%s\\n' '[{\"path\":\""+worktreePath+"\",\"lease_holder\":\"\"}]'; exit 0; fi\n"+
+		"if [ \"$1\" = \"return\" ]; then echo \"$3\" >> \""+tracePath+"\"; exit 1; fi\nexit 1\n")
+	root := NewRootCommand()
+	root.SetOut(new(strings.Builder))
+	root.SetErr(new(strings.Builder))
+	root.SetArgs([]string{"worktree", "reclaim"})
+	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "return outcome uncertain") {
+		t.Fatalf("reclaim error = %v, want uncertain provider outcome", err)
+	}
+	trace, err := os.ReadFile(tracePath)
+	if err != nil || !strings.Contains(string(trace), worktreePath) {
+		t.Fatalf("provider return trace = %q, err=%v", trace, err)
+	}
+	if _, err := os.Stat(filepath.Join(worktreePath, ".git")); err != nil {
+		t.Fatalf("failed return was incorrectly inferred complete: %v", err)
+	}
+}
+
+func TestWorktreeReclaimPreflightsBeforeReturningAnyCandidate(t *testing.T) {
+	_, _, firstPath, tracePath := setupCleanOrphanWorktree(t)
+	_, _, secondPath, _ := setupCleanOrphanWorktree(t)
+	artifact := filepath.Join(secondPath, ".soldier-charter.md")
+	if err := os.WriteFile(artifact, []byte("unanchored launch content\\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	statusFile := filepath.Join(filepath.Dir(tracePath), "treehouse-status.json")
+	entries, err := json.Marshal([]map[string]string{{"path": firstPath, "lease_holder": ""}, {"path": secondPath, "lease_holder": ""}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statusFile, entries, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	testutil.FakeOnPath(t, "treehouse", "#!/bin/sh\n"+
+		"if [ \"$1\" = \"status\" ] && [ \"$2\" = \"--json\" ]; then cat \""+statusFile+"\"; exit 0; fi\n"+
+		"if [ \"$1\" = \"return\" ]; then echo \"$3\" >> \""+tracePath+"\"; exit 0; fi\nexit 1\n")
+	root := NewRootCommand()
+	root.SetOut(new(strings.Builder))
+	root.SetErr(new(strings.Builder))
+	root.SetArgs([]string{"worktree", "reclaim"})
+	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "not safe to reclaim") {
+		t.Fatalf("reclaim error = %v, want unsafe-candidate preflight refusal", err)
+	}
+	if _, err := os.Stat(tracePath); !os.IsNotExist(err) {
+		t.Fatalf("earlier clean candidate was returned before later unsafe candidate: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(firstPath, ".git")); err != nil {
+		t.Fatalf("earlier clean candidate worktree changed: %v", err)
+	}
+}
+
+func TestWorktreeReclaimPreservesDirtyOrphan(t *testing.T) {
+	_, _, worktreePath, tracePath := setupCleanOrphanWorktree(t)
+	artifact := filepath.Join(worktreePath, "user-data.txt")
+	if err := os.WriteFile(artifact, []byte("must survive\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := NewRootCommand()
+	root.SetOut(new(strings.Builder))
+	root.SetErr(new(strings.Builder))
+	root.SetArgs([]string{"worktree", "reclaim"})
+	stdout, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldStdout := os.Stdout
+	os.Stdout = writer
+	outputDone := make(chan string, 1)
+	go func() {
+		output, readErr := io.ReadAll(stdout)
+		if readErr != nil {
+			outputDone <- "read stdout: " + readErr.Error()
+			return
+		}
+		outputDone <- string(output)
+	}()
+	err = root.Execute()
+	writer.Close()
+	os.Stdout = oldStdout
+	output := <-outputDone
+	stdout.Close()
+	if err == nil || !strings.Contains(err.Error(), "not safe to reclaim") {
+		t.Fatalf("dirty orphan reclaim error = %v, want fail-closed refusal", err)
+	}
+	if strings.Contains(output, "returning orphaned worktree:") || strings.Contains(output, "Reclaimed") {
+		t.Fatalf("dirty orphan preflight must precede all provider returns, got stdout: %q", output)
+	}
+	if _, err := os.Stat(tracePath); !os.IsNotExist(err) {
+		t.Fatalf("provider returned dirty worktree: %v", err)
+	}
+	if got, err := os.ReadFile(artifact); err != nil || string(got) != "must survive\n" {
+		t.Fatalf("protected untracked content = %q, err=%v", got, err)
 	}
 }
 

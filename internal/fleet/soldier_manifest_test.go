@@ -33,9 +33,23 @@ func manifestEntryForTestFile(t *testing.T, root, relPath string, policy Disposa
 	return ManifestEntry{Path: relPath, SHA256: sha256Content(data), Policy: policy}
 }
 
+func addDeferredGuardFixture(t *testing.T, root, taskID, launchID, generation, endpointFence string) ManifestEntry {
+	t.Helper()
+	guardDir := ".soldier-launch-guard-" + labelComponent(taskID) + "-" + generation
+	guardPath := filepath.Join(root, guardDir, "identity")
+	if err := os.MkdirAll(filepath.Join(root, guardDir), 0o755); err != nil {
+		t.Fatalf("creating deferred guard fixture directory: %v", err)
+	}
+	identity := launchID + "|" + generation + "|" + endpointFence
+	if err := os.WriteFile(guardPath, []byte(identity), 0o644); err != nil {
+		t.Fatalf("writing deferred guard fixture: %v", err)
+	}
+	return manifestEntryForTestFile(t, root, filepath.ToSlash(filepath.Join(guardDir, "identity")), DisposalPolicyCleanable)
+}
+
 // writeTestManifest marshals a valid test manifest and writes its exact bytes.
 // Production launch publication uses the canonical anchor and AtomicCreate.
-func writeTestManifest(t *testing.T, dir string, entries []ManifestEntry) string {
+func writeTestManifest(t *testing.T, dir string, entries []ManifestEntry, guardIdentity ...string) string {
 	t.Helper()
 	if entries == nil {
 		entries = make([]ManifestEntry, 0, len(CoreLaunchArtifactNames))
@@ -43,6 +57,11 @@ func writeTestManifest(t *testing.T, dir string, entries []ManifestEntry) string
 			entries = append(entries, manifestEntryForTestFile(t, dir, name, DisposalPolicyCleanable))
 		}
 	}
+	guard := guardIdentity
+	if len(guard) == 0 {
+		guard = []string{"test", "launch-test", "1", "endpoint-fence-test"}
+	}
+	entries = append(entries, addDeferredGuardFixture(t, dir, guard[0], guard[1], guard[2], guard[3]))
 	data, digest, err := MarshalManifest(BuildManifest(entries))
 	if err != nil {
 		t.Fatalf("marshaling manifest: %v", err)
@@ -103,7 +122,7 @@ func TestManifest_MarshalAndRead(t *testing.T) {
 			for _, name := range launchManifestNames(tc.harness) {
 				entries = append(entries, manifestEntryForTestFile(t, tmp, name, DisposalPolicyCleanable))
 			}
-			digest := writeTestManifest(t, tmp, entries)
+			digest := writeTestManifest(t, tmp, entries, tc.harness, "launch-test", "1", "endpoint-fence-test")
 
 			got, err := ReadManifest(tmp)
 			if err != nil {
@@ -116,8 +135,9 @@ func TestManifest_MarshalAndRead(t *testing.T) {
 			for _, a := range got.Artifacts {
 				paths = append(paths, a.Path)
 			}
-			if strings.Join(paths, ",") != strings.Join(tc.want, ",") {
-				t.Fatalf("artifact paths = %v, want %v", paths, tc.want)
+			want := append(append([]string(nil), tc.want...), ".soldier-launch-guard-"+labelComponent(tc.harness)+"-1/identity")
+			if strings.Join(paths, ",") != strings.Join(want, ",") {
+				t.Fatalf("artifact paths = %v, want %v", paths, want)
 			}
 
 			// Verify marshaling returned a valid 64-char hex digest.
@@ -274,8 +294,8 @@ func TestManifest_IntegrityCheck(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Artifacts) != len(CoreLaunchArtifactNames) {
-		t.Fatalf("expected %d artifacts, got %d", len(CoreLaunchArtifactNames), len(got.Artifacts))
+	if len(got.Artifacts) != len(CoreLaunchArtifactNames)+1 {
+		t.Fatalf("expected %d artifacts, got %d", len(CoreLaunchArtifactNames)+1, len(got.Artifacts))
 	}
 
 	// Verify each entry's digest matches the actual file.
@@ -322,6 +342,26 @@ func TestManifest_Validation_MissingEntries(t *testing.T) {
 	}
 }
 
+func TestManifest_Validation_RequiresOneDeferredGuardIdentity(t *testing.T) {
+	tmp := t.TempDir()
+	setupTestLaunchFiles(t, tmp)
+	entries := make([]ManifestEntry, 0, len(CoreLaunchArtifactNames))
+	for _, name := range CoreLaunchArtifactNames {
+		entries = append(entries, manifestEntryForTestFile(t, tmp, name, DisposalPolicyCleanable))
+	}
+	if _, _, err := MarshalManifest(BuildManifest(entries)); err == nil || !strings.Contains(err.Error(), "missing manifest entry: deferred launch guard identity") {
+		t.Fatalf("MarshalManifest error = %v, want missing deferred guard refusal", err)
+	}
+
+	entries = append(entries,
+		ManifestEntry{Path: ".soldier-launch-guard-test-1/identity", SHA256: strings.Repeat("a", 64), Policy: DisposalPolicyCleanable},
+		ManifestEntry{Path: ".soldier-launch-guard-other-1/identity", SHA256: strings.Repeat("b", 64), Policy: DisposalPolicyCleanable},
+	)
+	if err := ValidateManifest(BuildManifest(entries)); err == nil || !strings.Contains(err.Error(), "multiple deferred launch guard identities") {
+		t.Fatalf("ValidateManifest error = %v, want duplicate deferred guard refusal", err)
+	}
+}
+
 func TestManifest_Validation_UnexpectedEntry(t *testing.T) {
 	tmp := t.TempDir()
 	setupTestLaunchFiles(t, tmp)
@@ -330,6 +370,7 @@ func TestManifest_Validation_UnexpectedEntry(t *testing.T) {
 	for _, name := range CoreLaunchArtifactNames {
 		entries = append(entries, manifestEntryForTestFile(t, tmp, name, DisposalPolicyCleanable))
 	}
+	entries = append(entries, addDeferredGuardFixture(t, tmp, "test", "launch-test", "1", "endpoint-fence-test"))
 	// Add an unexpected entry.
 	entries = append(entries, ManifestEntry{Path: "rogue.txt", SHA256: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789", Policy: DisposalPolicyCleanable})
 	manifest := BuildManifest(entries)
@@ -350,6 +391,7 @@ func TestManifest_Validation_DuplicateEntry(t *testing.T) {
 	for _, name := range CoreLaunchArtifactNames {
 		entries = append(entries, manifestEntryForTestFile(t, tmp, name, DisposalPolicyCleanable))
 	}
+	entries = append(entries, addDeferredGuardFixture(t, tmp, "test", "launch-test", "1", "endpoint-fence-test"))
 	// Add a duplicate entry.
 	entries = append(entries, ManifestEntry{Path: BriefName, SHA256: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789", Policy: DisposalPolicyCleanable})
 	manifest := BuildManifest(entries)
@@ -370,6 +412,7 @@ func TestManifest_Validation_SelfEntry(t *testing.T) {
 	for _, name := range CoreLaunchArtifactNames {
 		entries = append(entries, manifestEntryForTestFile(t, tmp, name, DisposalPolicyCleanable))
 	}
+	entries = append(entries, addDeferredGuardFixture(t, tmp, "test", "launch-test", "1", "endpoint-fence-test"))
 	// Replace one entry with manifest self-reference.
 	entries[4] = ManifestEntry{Path: ManifestName, SHA256: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789", Policy: DisposalPolicyCleanable}
 	manifest := BuildManifest(entries)
@@ -390,6 +433,7 @@ func TestManifest_Validation_InvalidDigest(t *testing.T) {
 	for _, name := range CoreLaunchArtifactNames {
 		entries = append(entries, manifestEntryForTestFile(t, tmp, name, DisposalPolicyCleanable))
 	}
+	entries = append(entries, addDeferredGuardFixture(t, tmp, "test", "launch-test", "1", "endpoint-fence-test"))
 	// Corrupt the digest.
 	entries[0].SHA256 = "not-a-hex-digest"
 	manifest := BuildManifest(entries)
@@ -410,6 +454,7 @@ func TestManifest_Validation_UnsupportedPolicy(t *testing.T) {
 	for _, name := range CoreLaunchArtifactNames {
 		entries = append(entries, manifestEntryForTestFile(t, tmp, name, DisposalPolicyCleanable))
 	}
+	entries = append(entries, addDeferredGuardFixture(t, tmp, "test", "launch-test", "1", "endpoint-fence-test"))
 	entries[0].Policy = "delete-whenever"
 	manifest := BuildManifest(entries)
 	_, _, err := MarshalManifest(manifest)
@@ -429,6 +474,7 @@ func TestManifest_Validation_TraversalPath(t *testing.T) {
 	for _, name := range CoreLaunchArtifactNames {
 		entries = append(entries, manifestEntryForTestFile(t, tmp, name, DisposalPolicyCleanable))
 	}
+	entries = append(entries, addDeferredGuardFixture(t, tmp, "test", "launch-test", "1", "endpoint-fence-test"))
 	entries[0].Path = "../etc/passwd"
 	manifest := BuildManifest(entries)
 	_, _, err := MarshalManifest(manifest)
@@ -448,6 +494,7 @@ func TestManifest_Validation_AbsolutePath(t *testing.T) {
 	for _, name := range CoreLaunchArtifactNames {
 		entries = append(entries, manifestEntryForTestFile(t, tmp, name, DisposalPolicyCleanable))
 	}
+	entries = append(entries, addDeferredGuardFixture(t, tmp, "test", "launch-test", "1", "endpoint-fence-test"))
 	entries[0].Path = "/etc/passwd"
 	manifest := BuildManifest(entries)
 	_, _, err := MarshalManifest(manifest)
@@ -568,6 +615,114 @@ func TestVerifyLaunchArtifacts_Canonical(t *testing.T) {
 	if err != nil {
 		t.Fatalf("canonical launch artifacts should verify: %v", err)
 	}
+}
+
+func TestVerifyPreparedLaunchArtifactsAllowsOnlyAbsentOrExactGuard(t *testing.T) {
+	tmp := t.TempDir()
+	setupTestLaunchFiles(t, tmp)
+	guardEntry := addDeferredGuardFixture(t, tmp, "test", "launch-test", "1", "endpoint-fence-test")
+	guardDir := filepath.Dir(filepath.Join(tmp, filepath.FromSlash(guardEntry.Path)))
+	if err := os.Remove(filepath.Join(tmp, filepath.FromSlash(guardEntry.Path))); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(guardDir); err != nil {
+		t.Fatal(err)
+	}
+	entries := make([]ManifestEntry, 0, len(CoreLaunchArtifactNames)+1)
+	for _, name := range CoreLaunchArtifactNames {
+		entries = append(entries, manifestEntryForTestFile(t, tmp, name, DisposalPolicyCleanable))
+	}
+	entries = append(entries, guardEntry)
+	manifestBytes, digest, err := MarshalManifest(BuildManifest(entries))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, ManifestName), manifestBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyPreparedLaunchArtifacts(tmp, digest); err != nil {
+		t.Fatalf("prepared verification should allow absent guard: %v", err)
+	}
+	if err := VerifyLaunchArtifacts(tmp, digest); err == nil {
+		t.Fatal("strict verification accepted absent guard")
+	}
+
+	if err := os.Mkdir(guardDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(guardDir, "identity"), []byte("launch-test|1|endpoint-fence-test"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyLaunchArtifacts(tmp, digest); err != nil {
+		t.Fatalf("strict verification rejected exact guard: %v", err)
+	}
+	identityPath := filepath.Join(guardDir, "identity")
+	if err := os.WriteFile(identityPath, []byte("tampered|1|endpoint-fence-test"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyPreparedLaunchArtifacts(tmp, digest); err == nil || !strings.Contains(err.Error(), "digest mismatch") {
+		t.Fatalf("prepared verification accepted a foreign guard identity: %v", err)
+	}
+	if err := os.WriteFile(identityPath, []byte("launch-test|1|endpoint-fence-test"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(guardDir, "extra"), []byte("unowned"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyPreparedLaunchArtifacts(tmp, digest); err == nil || !strings.Contains(err.Error(), "unexpected contents") {
+		t.Fatalf("prepared verification error = %v, want extra guard child refusal", err)
+	}
+}
+
+func TestVerifyLaunchArtifactsRejectsGuardSymlinkComponents(t *testing.T) {
+	for _, tc := range []string{"directory", "identity"} {
+		t.Run(tc, func(t *testing.T) {
+			tmp := t.TempDir()
+			setupTestLaunchFiles(t, tmp)
+			guardEntry := addDeferredGuardFixture(t, tmp, "test", "launch-test", "1", "endpoint-fence-test")
+			guardDir := filepath.Dir(filepath.Join(tmp, filepath.FromSlash(guardEntry.Path)))
+			entries := make([]ManifestEntry, 0, len(CoreLaunchArtifactNames)+1)
+			for _, name := range CoreLaunchArtifactNames {
+				entries = append(entries, manifestEntryForTestFile(t, tmp, name, DisposalPolicyCleanable))
+			}
+			entries = append(entries, guardEntry)
+			digest := writeManifestEntries(t, tmp, entries)
+			outside := t.TempDir()
+			if tc == "directory" {
+				if err := os.Remove(filepath.Join(guardDir, "identity")); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Remove(guardDir); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outside, guardDir); err != nil {
+					t.Skipf("directory symlinks unavailable: %v", err)
+				}
+			} else {
+				if err := os.Remove(filepath.Join(guardDir, "identity")); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(filepath.Join(outside, "identity"), filepath.Join(guardDir, "identity")); err != nil {
+					t.Skipf("file symlinks unavailable: %v", err)
+				}
+			}
+			if err := VerifyPreparedLaunchArtifacts(tmp, digest); err == nil {
+				t.Fatal("prepared verification accepted a symlinked guard component")
+			}
+		})
+	}
+}
+
+func writeManifestEntries(t *testing.T, dir string, entries []ManifestEntry) string {
+	t.Helper()
+	data, digest, err := MarshalManifest(BuildManifest(entries))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ManifestName), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return digest
 }
 
 func TestVerifyLaunchArtifacts_EmptyExpectedSHA(t *testing.T) {

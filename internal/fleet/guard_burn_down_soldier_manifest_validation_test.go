@@ -17,6 +17,7 @@ func guardCoreManifest(extra ...string) *LaunchManifest {
 	for _, name := range append(append([]string{}, CoreLaunchArtifactNames...), extra...) {
 		entries = append(entries, guardManifestEntry(name))
 	}
+	entries = append(entries, guardManifestEntry(".soldier-launch-guard-test-1/identity"))
 	return &LaunchManifest{ManifestVersion: ManifestVersion, Artifacts: entries}
 }
 
@@ -82,6 +83,11 @@ func TestGuardBurnDownValidateManifestRefusesInvalidInputs(t *testing.T) {
 				Artifacts:       guardCoreManifest().Artifacts[1:],
 			},
 			want: "missing manifest entry",
+		},
+		{
+			name: "missing deferred guard identity",
+			m:    &LaunchManifest{ManifestVersion: ManifestVersion, Artifacts: guardCoreManifest().Artifacts[:len(CoreLaunchArtifactNames)]},
+			want: "missing manifest entry: deferred launch guard identity",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

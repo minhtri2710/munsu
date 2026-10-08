@@ -4,19 +4,13 @@
 // worktree management. When treehouse is absent, a bare git worktree fallback is used
 // with a one-time stderr note.
 //
-// Lease hygiene: every worktree acquired via Get (especially with --lease)
-// MUST be returned via Return when the owning soldier finishes. Orphaned
-// leases block the pool and must be reclaimed manually.
-// Use "munsu worktree reclaim" to detect and return orphaned leases.
+// Lease hygiene: worktree returns are permitted only after the owning
+// authority proves release and the worktree is clean. The backend provider is
+// a mechanism; CLI and Fleet callers own release authorization.
 //
-// IMPORTANT: Return always passes --force to treehouse to prevent interactive
-// prompts (e.g. "Worktree has uncommitted changes. Clean and return? [Y/n]")
-// from hanging soldiers with no stdin. If treehouse still emits "Aborted" in
-// its output even with --force, Return treats that as an error even on exit 0.
-//
-// The --force flag is required: without it, treehouse prompts interactively
-// and produces "Aborted" (exit 0) when stdin is closed, causing a false
-// "worktree returned to pool" success.
+// IMPORTANT: provider Return always passes --force to treehouse to avoid an
+// interactive prompt, so callers must complete dirty/unlisted-content checks
+// before invoking it. Provider force is never data-loss authority.
 //
 // The git worktree fallback uses stable hashed paths under <homeDir>/.worktrees.
 // homeDir must be non-empty when treehouse is absent; it is passed by callers
@@ -266,6 +260,25 @@ func (p *treehouseProvider) Return(path string) error {
 	if err != nil {
 		return err
 	}
+	status := exec.Command("git", "status", "--porcelain=v1", "--untracked-files=all", "--ignored=matching", "-z")
+	status.Dir = path
+	out, err := status.Output()
+	if err != nil {
+		return fmt.Errorf("checking worktree cleanliness before return: %w", err)
+	}
+	if len(out) != 0 {
+		return fmt.Errorf("refusing to return worktree with dirty, untracked, or ignored content")
+	}
+	if !filepath.IsAbs(path) {
+		return fmt.Errorf("refusing to return worktree with a non-absolute path: %q", path)
+	}
+	marker, err := os.Lstat(filepath.Join(path, ".git"))
+	if err != nil {
+		return fmt.Errorf("verifying worktree .git marker: %w", err)
+	}
+	if !marker.Mode().IsRegular() {
+		return fmt.Errorf("refusing to return worktree with a non-regular .git marker")
+	}
 	stdout, stderr, err := runWorktreeMutationCommand(bin, "", "return", "--force", path)
 	output := commandOutput(stdout, stderr)
 	// Even if exit code is 0, check for "Aborted" which means treehouse
@@ -404,9 +417,28 @@ func (p *gitWorktreeProvider) Get(repoPath string, lease bool) (string, error) {
 }
 
 func (p *gitWorktreeProvider) Return(path string) error {
+	gitFile := filepath.Join(path, ".git")
+	status := exec.Command("git", "status", "--porcelain=v1", "--untracked-files=all", "--ignored=matching", "-z")
+	status.Dir = path
+	out, err := status.Output()
+	if err != nil {
+		return fmt.Errorf("checking worktree cleanliness before return: %w", err)
+	}
+	if len(out) != 0 {
+		return fmt.Errorf("refusing to remove worktree with dirty, untracked, or ignored content")
+	}
+	if !filepath.IsAbs(path) {
+		return fmt.Errorf("refusing to remove worktree with a non-absolute path: %q", path)
+	}
+	marker, err := os.Lstat(gitFile)
+	if err != nil {
+		return fmt.Errorf("checking worktree .git marker: %w", err)
+	}
+	if !marker.Mode().IsRegular() {
+		return fmt.Errorf("refusing to remove worktree with a non-regular .git marker")
+	}
 	// Read the .git file to find the owning repo, since git worktree remove
 	// must be run from within a git repository.
-	gitFile := filepath.Join(path, ".git")
 	data, err := os.ReadFile(gitFile)
 	if err != nil {
 		return fmt.Errorf("reading worktree .git file: %w", err)

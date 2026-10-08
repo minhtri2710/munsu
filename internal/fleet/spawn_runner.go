@@ -127,6 +127,8 @@ type Runner struct {
 	// manifestSHA256 is the digest of the launch manifest recorded in canonical
 	// worktree binding evidence.
 	manifestSHA256 string
+	// retainWorktreeOnFailure keeps unanchored reservation content in custody.
+	retainWorktreeOnFailure bool
 
 	// attestation is the capability attestation snapshot created during mode
 	// resolution and checked before soldier launch.
@@ -1006,6 +1008,27 @@ func (r *Runner) acquireWorktree() error {
 		return fmt.Errorf("acquiring worktree: resolving acquired path: %w", err)
 	}
 	r.wtPath = canonical
+	if err := verifyUnboundWorktreeClean(canonical); err != nil {
+		r.retainWorktreeOnFailure = true
+		return fmt.Errorf("acquiring worktree: reservation contains unanchored or dirty content; lease retained: %w", err)
+	}
+	return nil
+}
+
+func verifyUnboundWorktreeClean(worktreePath string) error {
+	cmd := exec.Command("git", "status", "--porcelain=v1", "--untracked-files=all", "--ignored=matching", "-z")
+	cmd.Dir = worktreePath
+	out, err := cmd.Output()
+	if err != nil {
+		entries, readErr := os.ReadDir(worktreePath)
+		if readErr == nil && len(entries) == 0 {
+			return nil
+		}
+		return fmt.Errorf("checking reservation worktree status: %w", err)
+	}
+	if len(out) != 0 {
+		return fmt.Errorf("worktree has unanchored or dirty content")
+	}
 	return nil
 }
 
@@ -1079,7 +1102,7 @@ func (r *Runner) wtReservationID() string {
 // acquisitions are returned. When no Authority is composed there is no
 // canonical ownership, so the legacy return-on-failure semantics apply.
 func (r *Runner) returnWorktreeOnFailure() error {
-	if r.wtPath == "" || !r.worktreeReturnAllowed() {
+	if r.wtPath == "" || r.retainWorktreeOnFailure || !r.worktreeReturnAllowed() {
 		return nil
 	}
 	if err := returnWorktree(r.homeDir, r.wtPath); err != nil {
@@ -1942,7 +1965,7 @@ func (r *Runner) buildSoldierPrompt(bound BoundWorktree) error {
 			return fmt.Errorf("persisting reviewer launch files: %w", err)
 		}
 	} else {
-		prepared, err := prepareLaunchFiles(charter, briefData, env, promptText, nil, r.harness)
+		prepared, err := prepareLaunchFiles(charter, briefData, env, promptText, nil, r.harness, "", "")
 		if err != nil {
 			return fmt.Errorf("preparing soldier launch files: %w", err)
 		}
@@ -2130,7 +2153,7 @@ func (r *Runner) submitLaunch() error {
 		return fmt.Errorf("submitting launch: canonical launch artifacts were not prepared")
 	} else {
 		artifact = r.preparedLaunch.artifact
-		if err := VerifyLaunchArtifacts(r.wtPath, r.manifestSHA256); err != nil {
+		if err := VerifyPreparedLaunchArtifacts(r.wtPath, r.manifestSHA256); err != nil {
 			return fmt.Errorf("submitting launch: launch artifacts no longer match canonical evidence: %w", err)
 		}
 	}
@@ -2236,7 +2259,7 @@ func (r *Runner) prepareAndPersistLaunchManifest() error {
 	if err != nil {
 		return fmt.Errorf("preparing launch manifest: %w", err)
 	}
-	prepared, err := prepareLaunchFiles(DefaultCharter(r.args.ID, r.kind, r.effectiveMode), r.briefData, r.promptEnv, r.prompt, scriptBytes, r.harness)
+	prepared, err := prepareLaunchFiles(DefaultCharter(r.args.ID, r.kind, r.effectiveMode), r.briefData, r.promptEnv, r.prompt, scriptBytes, r.harness, artifact.GuardName, artifact.GuardIdentity)
 	if err != nil {
 		return fmt.Errorf("preparing launch manifest: %w", err)
 	}
@@ -2279,7 +2302,7 @@ func (r *Runner) prepareAndPersistLaunchManifest() error {
 	if err := persistPreparedLaunchFiles(r.wtPath, prepared); err != nil {
 		return fmt.Errorf("persisting anchored launch files: %w", err)
 	}
-	if err := VerifyLaunchArtifacts(r.wtPath, recorded.ManifestSHA256); err != nil {
+	if err := VerifyPreparedLaunchArtifacts(r.wtPath, recorded.ManifestSHA256); err != nil {
 		return fmt.Errorf("verifying persisted launch artifacts: %w", err)
 	}
 	return nil
@@ -2399,6 +2422,11 @@ func (r *Runner) verifyEndpointReadyBeforePersist() error {
 		// endpoint is owned by this launch reservation, so readiness is
 		// pending and ownership is preserved (no replacement, no dispose).
 		return fmt.Errorf("created pane %q observation %s on backend %q before persisting state; readiness pending (no dispose)", r.windowID, auth.State(), r.endpoint.Backend)
+	}
+	if r.kind != taskauthority.KindReview {
+		if err := VerifyLaunchArtifacts(r.wtPath, r.manifestSHA256); err != nil {
+			return fmt.Errorf("verifying launch guard before readiness: %w", err)
+		}
 	}
 	return nil
 }

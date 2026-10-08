@@ -21,6 +21,7 @@ import (
 // into the worktree. Returns the manifest digest for use in meta.
 func setupTopologyManifest(t *testing.T, wt string) string {
 	t.Helper()
+	taskID, launchID, endpointFence := "topology-test", "launch-topology-test", "endpoint-fence-test"
 	charter := DefaultCharter("topology-test", "ship", "direct-PR")
 	brief := []byte("# Topology test brief\n")
 	prompt := "prompt"
@@ -34,6 +35,7 @@ func setupTopologyManifest(t *testing.T, wt string) string {
 	for _, name := range CoreLaunchArtifactNames {
 		entries = append(entries, manifestEntryForTestFile(t, wt, name, DisposalPolicyCleanable))
 	}
+	entries = append(entries, addDeferredGuardFixture(t, wt, taskID, launchID, "1", endpointFence))
 	manifest := BuildManifest(entries)
 	data, digest, err := MarshalManifest(manifest)
 	if err != nil {
