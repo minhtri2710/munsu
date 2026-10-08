@@ -270,7 +270,7 @@ func activeWorktreeClaims(homeDir string, entries []backend.WorktreeEntry) (map[
 			}
 		}
 		for _, agg := range aggs {
-			if agg.Launch == nil || agg.Launch.WorktreeReservationID == "" || hasCanonicalRetirementForReservation(agg, agg.Launch.WorktreeReservationID) {
+			if agg.Launch == nil || agg.Launch.WorktreeReservationID == "" || hasCanonicalRetirementForReservation(agg, agg.Launch.WorktreeReservationID) || retiredUnboundReservation(agg) {
 				continue
 			}
 			reservedLaunches[agg.Launch.WorktreeReservationID] = true
@@ -318,6 +318,13 @@ func activeWorktreeClaims(homeDir string, entries []backend.WorktreeEntry) (map[
 
 func hasCanonicalRetirementForReservation(agg taskauthority.Aggregate, reservationID string) bool {
 	return agg.Phase == taskauthority.PhaseRetired && agg.Retirement != nil && agg.Retirement.Worktree != nil && agg.Retirement.Worktree.LeaseID == reservationID && agg.CleanupClaim != nil && agg.CleanupClaim.Status == taskauthority.CleanupCompleted
+}
+
+// retiredUnboundReservation reports whether an unbound launch reservation is
+// released: no worktree was ever bound, and the task is Retired with its cleanup
+// Completed. Done, Resolved, and Retired with active cleanup keep it held.
+func retiredUnboundReservation(agg taskauthority.Aggregate) bool {
+	return agg.Worktree == nil && (agg.Retirement == nil || agg.Retirement.Worktree == nil) && agg.Phase == taskauthority.PhaseRetired && agg.CleanupClaim != nil && agg.CleanupClaim.Status == taskauthority.CleanupCompleted
 }
 
 func worktreeClaimKey(path string) string {

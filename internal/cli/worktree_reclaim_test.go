@@ -354,6 +354,268 @@ func TestWorktreeReclaimIsFencedAgainstTheWorktreePool(t *testing.T) {
 	}
 }
 
+func TestWorktreeReclaimAllowsRetiredReservation(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+	t.Setenv("PATH", "/usr/bin:/bin")
+	initCLITestHome(t, tmpDir)
+	projectName := "retired-project"
+	repoPath := filepath.Join(tmpDir, "repo")
+	if err := os.MkdirAll(repoPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"init", "-q", repoPath},
+		{"-C", repoPath, "config", "user.email", "test@example.invalid"},
+		{"-C", repoPath, "config", "user.name", "test"},
+	} {
+		if out, err := exec.Command("/usr/bin/git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(repoPath, "README.md"), []byte("seed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"-C", repoPath, "add", "README.md"},
+		{"-C", repoPath, "commit", "-qm", "seed"},
+	} {
+		if out, err := exec.Command("/usr/bin/git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	if err := fleet.Add(tmpDir, projectName, repoPath, "", true); err != nil {
+		t.Fatal(err)
+	}
+	auth := testAuthorityFor(t, tmpDir)
+	taskID := mustTaskIDFor(t, "retired-reservation")
+	projectID, err := domain.NewProjectID(projectName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	create := taskauthority.CanonicalCreateRequest{HomeID: auth.HomeID(), TaskID: taskID, Owner: "general", Description: "retired reservation", Kind: "ship", Project: projectID, Reason: "reclaim test"}
+	if _, err := auth.Create(mustCanonicalOp(t, "retired-create", create), create); err != nil {
+		t.Fatal(err)
+	}
+	agg, err := auth.Get(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const reservationID = "wt-retired-reservation"
+	launch := taskauthority.CanonicalBeginSpawnRequest{HomeID: auth.HomeID(), TaskID: taskID, Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), SnapshotDigest: strings.Repeat("b", 64), Backend: "tmux", Harness: "pi", Model: "model", Effort: "high", Mode: "direct-PR", Kind: "ship", Project: projectName, LaunchID: "launch-retired", WindowLabel: "window-retired", WorktreeReservationID: reservationID, WorktreeFenceToken: "fence-retired", EndpointReservationID: "ep-retired", EndpointFenceToken: "ep-fence-retired", EndpointIncarnation: "ep-inc-retired", Reason: "reclaim test"}
+	if _, err := auth.BeginSpawn(mustCanonicalOp(t, "retired-launch", launch), launch); err != nil {
+		t.Fatal(err)
+	}
+	agg, err = auth.Get(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retire := taskauthority.CanonicalRetireRequest{HomeID: auth.HomeID(), TaskID: taskID, Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), Reason: "reclaim test"}
+	if _, err := auth.Retire(mustCanonicalOp(t, "retired-retire", retire), retire); err != nil {
+		t.Fatal(err)
+	}
+	agg, err = auth.Get(taskID)
+	if err != nil || agg.Phase != taskauthority.PhaseRetired || agg.Launch == nil || agg.Worktree != nil {
+		t.Fatalf("retired aggregate = %+v, err=%v", agg, err)
+	}
+	// Adapted fixture: the current contract releases an unbound reservation
+	// only once canonical retirement cleanup has completed. The base test
+	// predates that contract, so it completes cleanup here through the
+	// canonical API before reclaim.
+	if err := auth.ReconcileRetirementCleanup(taskID, agg.Generation, taskauthority.CleanupCompleted, func() error { return nil }); err != nil {
+		t.Fatalf("completing canonical retirement cleanup for fixture: %v", err)
+	}
+	reservedPath, ok, err := backend.ReservedWorktreePath(tmpDir, repoPath, reservationID)
+	if err != nil || !ok {
+		t.Fatalf("reserved path = %q, ok=%v, err=%v", reservedPath, ok, err)
+	}
+	if out, err := exec.Command("/usr/bin/git", "-C", repoPath, "worktree", "add", "--detach", reservedPath, "HEAD").CombinedOutput(); err != nil {
+		t.Fatalf("git worktree add: %v\n%s", err, out)
+	}
+	root := NewRootCommand()
+	root.SetOut(new(strings.Builder))
+	root.SetErr(new(strings.Builder))
+	root.SetArgs([]string{"worktree", "reclaim"})
+	stdout, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	outputDone := make(chan string, 1)
+	go func() {
+		output, readErr := io.ReadAll(stdout)
+		if readErr != nil {
+			outputDone <- "read stdout: " + readErr.Error()
+			return
+		}
+		outputDone <- string(output)
+	}()
+	oldStdout := os.Stdout
+	os.Stdout = writer
+	err = root.Execute()
+	writer.Close()
+	os.Stdout = oldStdout
+	output := <-outputDone
+	stdout.Close()
+	if err != nil {
+		t.Fatalf("reclaim: %v", err)
+	}
+	if !strings.Contains(output, "returning orphaned worktree: "+reservedPath) {
+		t.Fatalf("retired reservation should be reclaimable, got stdout: %q", output)
+	}
+	if !strings.Contains(output, "Reclaimed 1 orphaned worktrees") {
+		t.Fatalf("retired reservation should report one reclaimed worktree, got stdout: %q", output)
+	}
+	if _, err := os.Stat(reservedPath); !os.IsNotExist(err) {
+		t.Fatalf("retired reservation worktree should be removed, stat err=%v", err)
+	}
+}
+
+// unboundReservationFixture creates a ship task with a launch reservation that
+// was never bound to a worktree, and materializes the reserved worktree as a
+// clean detached checkout. It returns the canonical authority, the task ID and
+// the reserved path.
+func unboundReservationFixture(t *testing.T) (*taskauthority.Canonical, domain.TaskID, string) {
+	t.Helper()
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+	t.Setenv("PATH", "/usr/bin:/bin")
+	initCLITestHome(t, tmpDir)
+	projectName := "held-project"
+	repoPath := filepath.Join(tmpDir, "repo")
+	if err := os.MkdirAll(repoPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"init", "-q", repoPath},
+		{"-C", repoPath, "config", "user.email", "test@example.invalid"},
+		{"-C", repoPath, "config", "user.name", "test"},
+		{"-C", repoPath, "commit", "--allow-empty", "-qm", "seed"},
+	} {
+		if out, err := exec.Command("/usr/bin/git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	if err := fleet.Add(tmpDir, projectName, repoPath, "", true); err != nil {
+		t.Fatal(err)
+	}
+	auth := testAuthorityFor(t, tmpDir)
+	taskID := mustTaskIDFor(t, "held-reservation")
+	projectID, err := domain.NewProjectID(projectName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	create := taskauthority.CanonicalCreateRequest{HomeID: auth.HomeID(), TaskID: taskID, Owner: "general", Description: "held reservation", Kind: "ship", Project: projectID, Reason: "reclaim test"}
+	if _, err := auth.Create(mustCanonicalOp(t, "held-create", create), create); err != nil {
+		t.Fatal(err)
+	}
+	agg, err := auth.Get(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const reservationID = "wt-held-reservation"
+	launch := taskauthority.CanonicalBeginSpawnRequest{HomeID: auth.HomeID(), TaskID: taskID, Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), SnapshotDigest: strings.Repeat("c", 64), Backend: "tmux", Harness: "pi", Model: "model", Effort: "high", Mode: "direct-PR", Kind: "ship", Project: projectName, LaunchID: "launch-held", WindowLabel: "window-held", WorktreeReservationID: reservationID, WorktreeFenceToken: "fence-held", EndpointReservationID: "ep-held", EndpointFenceToken: "ep-fence-held", EndpointIncarnation: "ep-inc-held", Reason: "reclaim test"}
+	if _, err := auth.BeginSpawn(mustCanonicalOp(t, "held-launch", launch), launch); err != nil {
+		t.Fatal(err)
+	}
+	reservedPath, ok, err := backend.ReservedWorktreePath(tmpDir, repoPath, reservationID)
+	if err != nil || !ok {
+		t.Fatalf("reserved path = %q, ok=%v, err=%v", reservedPath, ok, err)
+	}
+	if out, err := exec.Command("/usr/bin/git", "-C", repoPath, "worktree", "add", "--detach", reservedPath, "HEAD").CombinedOutput(); err != nil {
+		t.Fatalf("git worktree add: %v\n%s", err, out)
+	}
+	return auth, taskID, reservedPath
+}
+
+// runWorktreeReclaimOutput runs `munsu worktree reclaim` and returns its stdout.
+func runWorktreeReclaimOutput(t *testing.T) string {
+	t.Helper()
+	root := NewRootCommand()
+	root.SetOut(new(strings.Builder))
+	root.SetErr(new(strings.Builder))
+	root.SetArgs([]string{"worktree", "reclaim"})
+	stdout, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	outputDone := make(chan string, 1)
+	go func() {
+		output, readErr := io.ReadAll(stdout)
+		if readErr != nil {
+			outputDone <- "read stdout: " + readErr.Error()
+			return
+		}
+		outputDone <- string(output)
+	}()
+	oldStdout := os.Stdout
+	os.Stdout = writer
+	err = root.Execute()
+	writer.Close()
+	os.Stdout = oldStdout
+	output := <-outputDone
+	stdout.Close()
+	if err != nil {
+		t.Fatalf("reclaim: %v", err)
+	}
+	return output
+}
+
+// TestWorktreeReclaimSparesUnboundReservationUntilRetirementCompletes pins the
+// states that keep an unbound reservation active: a task that is Done or
+// Resolved, and a task that is Retired while its cleanup claim is still active.
+func TestWorktreeReclaimSparesUnboundReservationUntilRetirementCompletes(t *testing.T) {
+	cases := []struct {
+		name string
+		hold func(t *testing.T, auth *taskauthority.Canonical, taskID domain.TaskID)
+	}{
+		{"done", func(t *testing.T, auth *taskauthority.Canonical, taskID domain.TaskID) {
+			completeHeldTask(t, auth, taskID, taskauthority.PhaseDone)
+		}},
+		{"resolved", func(t *testing.T, auth *taskauthority.Canonical, taskID domain.TaskID) {
+			completeHeldTask(t, auth, taskID, taskauthority.PhaseResolved)
+		}},
+		{"retired with cleanup active", func(t *testing.T, auth *taskauthority.Canonical, taskID domain.TaskID) {
+			agg, err := auth.Get(taskID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			retire := taskauthority.CanonicalRetireRequest{HomeID: auth.HomeID(), TaskID: taskID, Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), Reason: "reclaim test"}
+			if _, err := auth.Retire(mustCanonicalOp(t, "held-retire", retire), retire); err != nil {
+				t.Fatal(err)
+			}
+			agg, err = auth.Get(taskID)
+			if err != nil || agg.CleanupClaim == nil || agg.CleanupClaim.Status != taskauthority.CleanupActive {
+				t.Fatalf("retired aggregate cleanup claim = %+v, err=%v, want active", agg.CleanupClaim, err)
+			}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			auth, taskID, reservedPath := unboundReservationFixture(t)
+			tc.hold(t, auth, taskID)
+			output := runWorktreeReclaimOutput(t)
+			if strings.Contains(output, "returning orphaned worktree: "+reservedPath) || !strings.Contains(output, "Reclaimed 0 orphaned worktrees") {
+				t.Fatalf("unbound reservation must stay held while %s, got stdout: %q", tc.name, output)
+			}
+			if _, err := os.Stat(reservedPath); err != nil {
+				t.Fatalf("held reserved worktree was removed: %v", err)
+			}
+		})
+	}
+}
+
+func completeHeldTask(t *testing.T, auth *taskauthority.Canonical, taskID domain.TaskID, to taskauthority.Phase) {
+	t.Helper()
+	agg, err := auth.Get(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	complete := taskauthority.CanonicalCompleteRequest{HomeID: auth.HomeID(), TaskID: taskID, Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), To: to, Reason: "reclaim test"}
+	if _, err := auth.Complete(mustCanonicalOp(t, "held-complete-"+string(to), complete), complete); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestWorktreeReclaimSparesRetiredWorktreeEvidence(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
