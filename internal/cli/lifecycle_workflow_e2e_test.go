@@ -5,6 +5,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -30,14 +31,16 @@ import (
 // bypassed. Capture returns a ready pattern on the FIRST poll, so the
 // readiness handshake completes without any wall-clock wait.
 type workflowEndpoints struct {
-	created  map[string]fleet.CreatedEndpoint
-	creates  int
-	submits  int
-	captures int
+	created        map[string]fleet.CreatedEndpoint
+	creates        int
+	submits        int
+	captures       int
+	pendingCommand string
+	shell          string
 }
 
-func newWorkflowEndpoints() *workflowEndpoints {
-	return &workflowEndpoints{created: map[string]fleet.CreatedEndpoint{}}
+func newWorkflowEndpoints(t *testing.T) *workflowEndpoints {
+	return &workflowEndpoints{created: map[string]fleet.CreatedEndpoint{}, shell: testutil.BashShell(t)}
 }
 
 func (e *workflowEndpoints) CreateReserved(req fleet.CreateRequest) (fleet.CreatedEndpoint, error) {
@@ -56,8 +59,9 @@ func (e *workflowEndpoints) CreateReserved(req fleet.CreateRequest) (fleet.Creat
 	return ep, nil
 }
 
-func (e *workflowEndpoints) Submit(fleet.CreatedEndpoint, string) error {
+func (e *workflowEndpoints) Submit(_ fleet.CreatedEndpoint, command string) error {
 	e.submits++
+	e.pendingCommand = command
 	return nil
 }
 
@@ -73,6 +77,13 @@ func (e *workflowEndpoints) Probe(fleet.CreatedEndpoint) (fleet.SpawnEndpointObs
 
 func (e *workflowEndpoints) Capture(fleet.CreatedEndpoint, int) (string, error) {
 	e.captures++
+	if e.pendingCommand != "" {
+		cmd := exec.Command(e.shell, "-c", e.pendingCommand)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return "", fmt.Errorf("executing submitted launch command: %w: %s", err, out)
+		}
+		e.pendingCommand = ""
+	}
 	return "> ready", nil
 }
 
@@ -174,7 +185,7 @@ func workflowHarnessOnPath(t *testing.T, name string) {
 	if err != nil {
 		t.Fatalf("git on PATH: %v", err)
 	}
-	testutil.SetPath(t, dir, filepath.Dir(gitBin))
+	testutil.SetPath(t, append([]string{dir, filepath.Dir(gitBin)}, testutil.BashShellDirs(t)...)...)
 	t.Setenv("ANTHROPIC_API_KEY", "workflow-e2e-stub")
 	t.Setenv("OPENAI_API_KEY", "workflow-e2e-stub")
 }
@@ -332,7 +343,7 @@ func runLifecycleWorkflow(t *testing.T, tc workflowCase) {
 		t.Fatalf("scaffold brief: %v", err)
 	}
 
-	endpoints := newWorkflowEndpoints()
+	endpoints := newWorkflowEndpoints(t)
 	t.Setenv("MUNSU_ROLE", tc.role)
 	t.Chdir(spawnHome)
 	if _, err := fleet.Spawn(fleet.Args{

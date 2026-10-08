@@ -164,6 +164,231 @@ func TestLaunchRecoveryPostSubmitPreRecordGuardProvesSingleProcess(t *testing.T)
 	}
 }
 
+func TestLaunchReadinessWaitsForDelayedExactGuard(t *testing.T) {
+	counter := filepath.Join(t.TempDir(), "harness-launches.log")
+	harnessDir := fakeHarnessDir(t, "pi", counter)
+	gitBin, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("git on PATH: %v", err)
+	}
+	f := newLaunchFixture(t, "guard-delayed-ready")
+	testutil.SetPath(t, append([]string{harnessDir, filepath.Dir(gitBin), requiredSkillStubDir(t)}, testutil.BashShellDirs(t)...)...)
+	caps := &executingEndpointCapabilities{inner: f.endpoints, runCommand: scriptRunCommand(t), delayUntilCapture: 2}
+	f.runner.endpoints = caps
+
+	if err := runLaunchPhases(f, ""); err != nil {
+		t.Fatalf("launch phases with delayed guard execution: %v", err)
+	}
+	if caps.captures != 2 {
+		t.Fatalf("readiness captures = %d, want 2 (first ready capture precedes guard execution)", caps.captures)
+	}
+	if caps.submitCount() != 1 {
+		t.Fatalf("launch submissions = %d, want 1", caps.submitCount())
+	}
+	if err := VerifyLaunchArtifacts(f.runner.wtPath, f.runner.manifestSHA256); err != nil {
+		t.Fatalf("strict guard verification after readiness: %v", err)
+	}
+}
+
+func TestLaunchReadinessRejectsUnsafeGuard(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(t *testing.T, guardDir, identityPath string)
+		want   string
+	}{
+		{
+			name: "identity mismatch",
+			mutate: func(t *testing.T, _, identityPath string) {
+				if err := os.WriteFile(identityPath, []byte("foreign-launch|1|foreign-fence"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "digest mismatch",
+		},
+		{
+			name: "unexpected child",
+			mutate: func(t *testing.T, guardDir, _ string) {
+				if err := os.WriteFile(filepath.Join(guardDir, "unowned"), []byte("foreign"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "unexpected contents",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			counter := filepath.Join(t.TempDir(), "harness-launches.log")
+			harnessDir := fakeHarnessDir(t, "pi", counter)
+			gitBin, err := exec.LookPath("git")
+			if err != nil {
+				t.Fatalf("git on PATH: %v", err)
+			}
+			f := newLaunchFixture(t, "guard-unsafe")
+			testutil.SetPath(t, append([]string{harnessDir, filepath.Dir(gitBin), requiredSkillStubDir(t)}, testutil.BashShellDirs(t)...)...)
+			caps := &executingEndpointCapabilities{
+				inner:             f.endpoints,
+				runCommand:        scriptRunCommand(t),
+				delayUntilCapture: 1,
+				afterExecution: func() error {
+					manifest, err := ReadManifest(f.runner.wtPath)
+					if err != nil {
+						return err
+					}
+					for _, entry := range manifest.Artifacts {
+						if isDeferredGuardIdentityPath(entry.Path) {
+							identityPath := filepath.Join(f.runner.wtPath, filepath.FromSlash(entry.Path))
+							tc.mutate(t, filepath.Dir(identityPath), identityPath)
+							return nil
+						}
+					}
+					return fmt.Errorf("manifest lacks deferred guard identity")
+				},
+			}
+			f.runner.endpoints = caps
+			err = runLaunchPhases(f, "")
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("launch with unsafe guard error = %v, want refusal containing %q", err, tc.want)
+			}
+			if caps.captures != 2 {
+				t.Fatalf("unsafe guard captures = %d, want one ready capture plus one diagnostic capture", caps.captures)
+			}
+			if caps.disposes != 0 {
+				t.Fatalf("unsafe guard caused %d endpoint disposals, want 0", caps.disposes)
+			}
+			if f.aggregate().Phase == taskauthority.PhaseWorking {
+				t.Fatal("unsafe guard was accepted as a ready launch")
+			}
+		})
+	}
+}
+
+func TestLaunchReadinessDoesNotWaitOnMixedGuardAndArtifactFailure(t *testing.T) {
+	counter := filepath.Join(t.TempDir(), "harness-launches.log")
+	harnessDir := fakeHarnessDir(t, "pi", counter)
+	gitBin, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("git on PATH: %v", err)
+	}
+	f := newLaunchFixture(t, "guard-mixed-failure")
+	testutil.SetPath(t, append([]string{harnessDir, filepath.Dir(gitBin), requiredSkillStubDir(t)}, testutil.BashShellDirs(t)...)...)
+	caps := &executingEndpointCapabilities{
+		inner:             f.endpoints,
+		runCommand:        scriptRunCommand(t),
+		delayUntilCapture: 1,
+		afterExecution: func() error {
+			manifest, err := ReadManifest(f.runner.wtPath)
+			if err != nil {
+				return err
+			}
+			var guardDir string
+			for _, entry := range manifest.Artifacts {
+				if isDeferredGuardIdentityPath(entry.Path) {
+					identityPath := filepath.Join(f.runner.wtPath, filepath.FromSlash(entry.Path))
+					guardDir = filepath.Dir(identityPath)
+					if err := os.Remove(identityPath); err != nil {
+						return err
+					}
+					break
+				}
+			}
+			if guardDir == "" {
+				return fmt.Errorf("manifest lacks deferred guard identity")
+			}
+			if err := os.Remove(guardDir); err != nil {
+				return err
+			}
+			return os.WriteFile(filepath.Join(f.runner.wtPath, BriefName), []byte("tampered brief"), 0o644)
+		},
+	}
+	f.runner.endpoints = caps
+	if err := runLaunchPhases(f, "submit"); !errors.Is(err, errCrashSimulated) {
+		t.Fatalf("submit boundary: %v", err)
+	}
+
+	err = f.runner.waitForHarnessReady(5)
+	if err == nil || !strings.Contains(err.Error(), "SHA-256 digest mismatch") || !errors.Is(err, errDeferredLaunchGuardAbsent) {
+		t.Fatalf("waitForHarnessReady error = %v, want typed absent guard plus immediate anchored-artifact refusal", err)
+	}
+	if caps.captures != 1 {
+		t.Fatalf("captures = %d, want one ready capture and immediate refusal", caps.captures)
+	}
+	if caps.disposes != 0 {
+		t.Fatalf("mixed verification failure caused %d endpoint disposals, want 0", caps.disposes)
+	}
+}
+
+func TestLaunchReadinessTimesOutWhileGuardAbsentWithoutDisposal(t *testing.T) {
+	counter := filepath.Join(t.TempDir(), "harness-launches.log")
+	harnessDir := fakeHarnessDir(t, "pi", counter)
+	gitBin, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("git on PATH: %v", err)
+	}
+	f := newLaunchFixture(t, "guard-absent-timeout")
+	testutil.SetPath(t, append([]string{harnessDir, filepath.Dir(gitBin), requiredSkillStubDir(t)}, testutil.BashShellDirs(t)...)...)
+	caps := &executingEndpointCapabilities{
+		inner:             f.endpoints,
+		runCommand:        scriptRunCommand(t),
+		delayUntilCapture: 100,
+	}
+	f.runner.endpoints = caps
+	if err := runLaunchPhases(f, "submit"); !errors.Is(err, errCrashSimulated) {
+		t.Fatalf("submit boundary: %v", err)
+	}
+
+	err = f.runner.waitForHarnessReady(1)
+	if err == nil || !strings.Contains(err.Error(), "deferred launch guard identity remained absent") {
+		t.Fatalf("waitForHarnessReady error = %v, want bounded refusal after ready capture with absent guard", err)
+	}
+	if caps.disposes != 0 {
+		t.Fatalf("absent guard caused %d endpoint disposals, want 0", caps.disposes)
+	}
+	if f.aggregate().Phase == taskauthority.PhaseWorking {
+		t.Fatal("absent guard was accepted as a ready launch")
+	}
+	if caps.submitCount() != 1 {
+		t.Fatalf("launch submissions = %d, want 1", caps.submitCount())
+	}
+}
+
+func TestRecordedEndpointWaitsForGuardWithoutResubmission(t *testing.T) {
+	counter := filepath.Join(t.TempDir(), "harness-launches.log")
+	harnessDir := fakeHarnessDir(t, "pi", counter)
+	gitBin, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("git on PATH: %v", err)
+	}
+	f := newLaunchFixture(t, "guard-recorded-recovery")
+	testutil.SetPath(t, append([]string{harnessDir, filepath.Dir(gitBin), requiredSkillStubDir(t)}, testutil.BashShellDirs(t)...)...)
+	caps := &executingEndpointCapabilities{
+		inner:             f.endpoints,
+		runCommand:        scriptRunCommand(t),
+		delayUntilCapture: 1,
+	}
+	f.runner.endpoints = caps
+	if err := runLaunchPhases(f, "submit"); !errors.Is(err, errCrashSimulated) {
+		t.Fatalf("first submit boundary: %v", err)
+	}
+	if f.aggregate().LaunchEvidence == nil {
+		t.Fatal("successful submission did not record canonical launch evidence")
+	}
+	if caps.submitCount() != 1 {
+		t.Fatalf("initial submissions = %d, want 1", caps.submitCount())
+	}
+
+	if err := runLaunchPhases(f, ""); err != nil {
+		t.Fatalf("recorded endpoint recovery: %v", err)
+	}
+	if caps.submitCount() != 1 {
+		t.Fatalf("recorded endpoint recovery resubmitted launch: submissions=%d, want 1", caps.submitCount())
+	}
+	if caps.captures != 1 {
+		t.Fatalf("recovery captures = %d, want 1 after the exact submitted script creates its guard", caps.captures)
+	}
+	if f.aggregate().Phase != taskauthority.PhaseWorking {
+		t.Fatalf("recovered phase = %q, want working", f.aggregate().Phase)
+	}
+}
+
 // TestLaunchRecoveryPostSubmitFailureNamesLiveEndpoint fails Runner.Run at each
 // phase after the submission was delivered. The error Run returns keeps the
 // cause, names the task, the backend and the endpoint handle, says the soldier
@@ -979,11 +1204,16 @@ func harnessLaunchCount(t *testing.T, counterPath string) int {
 // skipFirstRun=true simulates a Submit error BEFORE script execution; the
 // default (run every submission) simulates a crash AFTER delivery.
 type executingEndpointCapabilities struct {
-	inner          *reentrantEndpointCapabilities
-	runCommand     func(cmd string) error
-	firstSubmitErr bool
-	skipFirstRun   bool
-	submits        int
+	inner             *reentrantEndpointCapabilities
+	runCommand        func(cmd string) error
+	firstSubmitErr    bool
+	skipFirstRun      bool
+	delayUntilCapture int
+	pendingCommand    string
+	captures          int
+	disposes          int
+	afterExecution    func() error
+	submits           int
 }
 
 func (f *executingEndpointCapabilities) CreateReserved(req CreateRequest) (CreatedEndpoint, error) {
@@ -992,10 +1222,17 @@ func (f *executingEndpointCapabilities) CreateReserved(req CreateRequest) (Creat
 func (f *executingEndpointCapabilities) Submit(ep CreatedEndpoint, text string) error {
 	f.submits++
 	run := !(f.skipFirstRun && f.submits == 1)
-	if run && f.runCommand != nil {
+	if run && f.delayUntilCapture == 0 && f.runCommand != nil {
 		if err := f.runCommand(text); err != nil {
 			return err
 		}
+		if f.afterExecution != nil {
+			if err := f.afterExecution(); err != nil {
+				return err
+			}
+		}
+	} else if run {
+		f.pendingCommand = text
 	}
 	if f.firstSubmitErr && f.submits == 1 {
 		return errors.New("simulated crash after submission delivery")
@@ -1009,9 +1246,24 @@ func (f *executingEndpointCapabilities) Probe(ep CreatedEndpoint) (SpawnEndpoint
 	return f.inner.Probe(ep)
 }
 func (f *executingEndpointCapabilities) Capture(ep CreatedEndpoint, n int) (string, error) {
+	f.captures++
+	if f.pendingCommand != "" && f.captures >= f.delayUntilCapture {
+		if f.runCommand != nil {
+			if err := f.runCommand(f.pendingCommand); err != nil {
+				return "", err
+			}
+		}
+		f.pendingCommand = ""
+		if f.afterExecution != nil {
+			if err := f.afterExecution(); err != nil {
+				return "", err
+			}
+		}
+	}
 	return f.inner.Capture(ep, n)
 }
 func (f *executingEndpointCapabilities) Dispose(ep CreatedEndpoint) error {
+	f.disposes++
 	return f.inner.Dispose(ep)
 }
 func (f *executingEndpointCapabilities) submitCount() int { return f.submits }

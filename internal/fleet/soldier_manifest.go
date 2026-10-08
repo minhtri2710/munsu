@@ -50,6 +50,8 @@ type LaunchManifest struct {
 // sha256Regex matches a valid lowercase hex SHA-256 string.
 var sha256Regex = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
+var errDeferredLaunchGuardAbsent = errors.New("deferred launch guard identity is absent; readiness is not proven")
+
 // CoreLaunchArtifactNames lists the runtime-owned launch artifacts, relative to
 // the worktree, that every soldier launch manifest binds. The manifest itself
 // is not included. A harness adds the worktree files it declares in
@@ -457,7 +459,7 @@ func verifyDeferredGuardDirectory(worktreePath, guardDir string, allowAbsent boo
 		return nil
 	}
 	if os.IsNotExist(err) && !allowAbsent {
-		return fmt.Errorf("deferred launch guard identity is absent; readiness is not proven")
+		return errDeferredLaunchGuardAbsent
 	}
 	if err != nil {
 		return fmt.Errorf("checking deferred launch guard directory: %w", err)
@@ -592,13 +594,20 @@ func verifyLaunchArtifacts(worktreePath, expectedManifestSHA string, allowAbsent
 			break
 		}
 	}
+	var failures []error
 	if err := verifyDeferredGuardDirectory(worktreePath, guardPath, allowAbsentGuard); err != nil {
-		return &launchArtifactVerificationError{failures: []error{err}}
+		failures = append(failures, err)
 	}
-	return verifyManifestEntries(worktreePath, manifest, allowAbsentGuard)
+	if err := verifyManifestEntries(worktreePath, manifest); err != nil {
+		failures = append(failures, artifactVerificationFailures(err)...)
+	}
+	if len(failures) > 0 {
+		return &launchArtifactVerificationError{failures: failures}
+	}
+	return nil
 }
 
-func verifyManifestEntries(worktreePath string, manifest *LaunchManifest, allowAbsentGuard bool) error {
+func verifyManifestEntries(worktreePath string, manifest *LaunchManifest) error {
 	guardPath := ""
 	for _, entry := range manifest.Artifacts {
 		if isDeferredGuardIdentityPath(entry.Path) {
@@ -609,7 +618,7 @@ func verifyManifestEntries(worktreePath string, manifest *LaunchManifest, allowA
 	// Verify each manifest entry.
 	var failures []error
 	for _, entry := range manifest.Artifacts {
-		if isDeferredGuardIdentityPath(entry.Path) && allowAbsentGuard {
+		if isDeferredGuardIdentityPath(entry.Path) {
 			guardDirPath := filepath.Join(worktreePath, filepath.FromSlash(guardPath))
 			if _, err := os.Lstat(guardDirPath); os.IsNotExist(err) {
 				continue

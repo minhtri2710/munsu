@@ -390,7 +390,7 @@ func (r *Runner) launchPhases(reviewing bool) (taskauthority.Outcome, error) {
 		return taskauthority.Outcome{}, err
 	}
 	if !reviewing {
-		if err := r.verifyRecordedLaunchArtifacts(); err != nil {
+		if err := r.verifyPreparedRecordedLaunchArtifacts(); err != nil {
 			return taskauthority.Outcome{}, err
 		}
 	}
@@ -1678,7 +1678,7 @@ func (r *Runner) createSession() error {
 	// probing or re-adopting the recorded endpoint.
 	acquired := r.recordedAcquiredEndpoint()
 	if acquired != nil && r.kind != taskauthority.KindReview && r.recordedLaunchEvidence() {
-		if err := r.verifyRecordedLaunchArtifacts(); err != nil {
+		if err := r.verifyPreparedRecordedLaunchArtifacts(); err != nil {
 			return fmt.Errorf("recorded launch artifact verification: %w", err)
 		}
 	}
@@ -1783,7 +1783,20 @@ func (r *Runner) recordedLaunchEvidence() bool {
 	return err == nil && agg.LaunchEvidence != nil
 }
 
+func onlyDeferredLaunchGuardAbsent(err error) bool {
+	failures := artifactVerificationFailures(err)
+	return len(failures) == 1 && errors.Is(failures[0], errDeferredLaunchGuardAbsent)
+}
+
 func (r *Runner) verifyRecordedLaunchArtifacts() error {
+	return r.verifyRecordedLaunchArtifactsWithGuardState(false)
+}
+
+func (r *Runner) verifyPreparedRecordedLaunchArtifacts() error {
+	return r.verifyRecordedLaunchArtifactsWithGuardState(true)
+}
+
+func (r *Runner) verifyRecordedLaunchArtifactsWithGuardState(allowAbsentGuard bool) error {
 	if r.args.Authority == nil {
 		return fmt.Errorf("verifying recorded launch artifacts: task authority is not composed")
 	}
@@ -1804,10 +1817,11 @@ func (r *Runner) verifyRecordedLaunchArtifacts() error {
 	if r.preparedLaunch != nil && agg.LaunchEvidence.CommandDigest != r.preparedLaunch.artifact.CommandDigest {
 		return fmt.Errorf("verifying recorded launch artifacts: command digest mismatch")
 	}
-	if err := VerifyLaunchArtifacts(agg.Worktree.Path, agg.Worktree.LaunchManifest.ManifestSHA256); err != nil {
-		if failures := artifactVerificationFailures(err); len(failures) > 0 {
-			return fmt.Errorf("verifying artifacts for recorded launch: %w", errors.Join(failures...))
-		}
+	verify := VerifyLaunchArtifacts
+	if allowAbsentGuard {
+		verify = VerifyPreparedLaunchArtifacts
+	}
+	if err := verify(agg.Worktree.Path, agg.Worktree.LaunchManifest.ManifestSHA256); err != nil {
 		return fmt.Errorf("verifying artifacts for recorded launch: %w", err)
 	}
 	return nil
@@ -2135,7 +2149,7 @@ func (r *Runner) submitLaunch() error {
 			!reflect.DeepEqual(agg.LaunchEvidence.Seat.Argv, wantArgv) {
 			return fmt.Errorf("submitting launch: recorded launch evidence does not match this launch; refuse recovery")
 		}
-		if err := r.verifyRecordedLaunchArtifacts(); err != nil {
+		if err := r.verifyPreparedRecordedLaunchArtifacts(); err != nil {
 			return err
 		}
 		r.launchCommand, r.launchCommandDigest, r.launched = command, commandDigest, true
@@ -2242,7 +2256,7 @@ func (r *Runner) prepareAndPersistLaunchManifest() error {
 			return fmt.Errorf("preparing launch manifest: successful launch evidence has no matching canonical manifest anchor")
 		}
 		r.manifestSHA256 = recorded.ManifestSHA256
-		if err := VerifyLaunchArtifacts(r.wtPath, recorded.ManifestSHA256); err != nil {
+		if err := VerifyPreparedLaunchArtifacts(r.wtPath, recorded.ManifestSHA256); err != nil {
 			return fmt.Errorf("verifying artifacts for recorded launch: %w", err)
 		}
 		return nil
@@ -2352,6 +2366,7 @@ func (r *Runner) waitAndInjectBrief() error {
 // signature or the timeout expires.
 func (r *Runner) waitForHarnessReady(timeoutSec int) error {
 	trustHandled := false
+	guardAbsentAtReady := false
 
 	deadline := time.After(time.Duration(timeoutSec) * time.Second)
 	poll := time.NewTimer(0)
@@ -2361,6 +2376,9 @@ func (r *Runner) waitForHarnessReady(timeoutSec int) error {
 		select {
 		case <-deadline:
 			capture, _ := r.endpoints.Capture(r.endpoint, 60)
+			if guardAbsentAtReady {
+				return fmt.Errorf("harness ready but deferred launch guard identity remained absent after %ds: last capture: %q", timeoutSec, capture)
+			}
 			return fmt.Errorf("harness not ready after %ds: last capture: %q", timeoutSec, capture)
 		case <-poll.C:
 			status, probeErr := r.endpoints.Probe(r.endpoint)
@@ -2385,6 +2403,11 @@ func (r *Runner) waitForHarnessReady(timeoutSec int) error {
 			if status.Lifecycle != LifecycleAlive && status.Lifecycle != LifecycleStarting {
 				return fmt.Errorf("endpoint observation %s while waiting for ready", status.State())
 			}
+			if r.kind != taskauthority.KindReview && (r.args.Authority != nil || r.manifestSHA256 != "") {
+				if err := r.verifyPreparedRecordedLaunchArtifacts(); err != nil {
+					return err
+				}
+			}
 			capture, err := r.endpoints.Capture(r.endpoint, 60)
 			if err != nil {
 				continue
@@ -2401,6 +2424,16 @@ func (r *Runner) waitForHarnessReady(timeoutSec int) error {
 				return fmt.Errorf("harness %q detected launch failure: %q", r.harness, capture)
 			}
 			if harness.HasReadyPattern(capture, r.harness) {
+				if r.kind != taskauthority.KindReview && (r.args.Authority != nil || r.manifestSHA256 != "") {
+					if err := r.verifyRecordedLaunchArtifacts(); err != nil {
+						if onlyDeferredLaunchGuardAbsent(err) {
+							guardAbsentAtReady = true
+							poll.Reset(2 * time.Second)
+							continue
+						}
+						return err
+					}
+				}
 				return nil
 			}
 			poll.Reset(2 * time.Second)
@@ -2424,7 +2457,7 @@ func (r *Runner) verifyEndpointReadyBeforePersist() error {
 		return fmt.Errorf("created pane %q observation %s on backend %q before persisting state; readiness pending (no dispose)", r.windowID, auth.State(), r.endpoint.Backend)
 	}
 	if r.kind != taskauthority.KindReview {
-		if err := VerifyLaunchArtifacts(r.wtPath, r.manifestSHA256); err != nil {
+		if err := r.verifyRecordedLaunchArtifacts(); err != nil {
 			return fmt.Errorf("verifying launch guard before readiness: %w", err)
 		}
 	}
