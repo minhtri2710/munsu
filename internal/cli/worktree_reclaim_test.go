@@ -470,6 +470,8 @@ func TestWorktreeReclaimAllowsRetiredReservation(t *testing.T) {
 	}
 }
 
+const heldReservationID = "wt-held-reservation"
+
 // unboundReservationFixture creates a ship task with a launch reservation that
 // was never bound to a worktree, and materializes the reserved worktree as a
 // clean detached checkout. It returns the canonical authority, the task ID and
@@ -512,12 +514,11 @@ func unboundReservationFixture(t *testing.T) (*taskauthority.Canonical, domain.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	const reservationID = "wt-held-reservation"
-	launch := taskauthority.CanonicalBeginSpawnRequest{HomeID: auth.HomeID(), TaskID: taskID, Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), SnapshotDigest: strings.Repeat("c", 64), Backend: "tmux", Harness: "pi", Model: "model", Effort: "high", Mode: "direct-PR", Kind: "ship", Project: projectName, LaunchID: "launch-held", WindowLabel: "window-held", WorktreeReservationID: reservationID, WorktreeFenceToken: "fence-held", EndpointReservationID: "ep-held", EndpointFenceToken: "ep-fence-held", EndpointIncarnation: "ep-inc-held", Reason: "reclaim test"}
+	launch := taskauthority.CanonicalBeginSpawnRequest{HomeID: auth.HomeID(), TaskID: taskID, Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), SnapshotDigest: strings.Repeat("c", 64), Backend: "tmux", Harness: "pi", Model: "model", Effort: "high", Mode: "direct-PR", Kind: "ship", Project: projectName, LaunchID: "launch-held", WindowLabel: "window-held", WorktreeReservationID: heldReservationID, WorktreeFenceToken: "fence-held", EndpointReservationID: "ep-held", EndpointFenceToken: "ep-fence-held", EndpointIncarnation: "ep-inc-held", Reason: "reclaim test"}
 	if _, err := auth.BeginSpawn(mustCanonicalOp(t, "held-launch", launch), launch); err != nil {
 		t.Fatal(err)
 	}
-	reservedPath, ok, err := backend.ReservedWorktreePath(tmpDir, repoPath, reservationID)
+	reservedPath, ok, err := backend.ReservedWorktreePath(tmpDir, repoPath, heldReservationID)
 	if err != nil || !ok {
 		t.Fatalf("reserved path = %q, ok=%v, err=%v", reservedPath, ok, err)
 	}
@@ -527,8 +528,55 @@ func unboundReservationFixture(t *testing.T) (*taskauthority.Canonical, domain.T
 	return auth, taskID, reservedPath
 }
 
+// installHeldTreehouse fakes treehouse so `status --json` reports reservedPath
+// leased by reservationID, and records every `return` target in the returned
+// trace file. The trace is absent until a provider return happens.
+func installHeldTreehouse(t *testing.T, reservedPath, reservationID string) string {
+	t.Helper()
+	tracePath := filepath.Join(t.TempDir(), "treehouse-returns")
+	statusJSON := `[{"path":"` + reservedPath + `","lease_holder":"` + reservationID + `"}]`
+	script := "#!/usr/bin/env bash\n" +
+		`if [ "$1" = "status" ] && [ "$2" = "--json" ]; then` + "\n" +
+		`  echo '` + statusJSON + `'` + "\n" +
+		`  exit 0` + "\n" +
+		`fi` + "\n" +
+		`if [ "$1" = "return" ]; then` + "\n" +
+		`  for a in "$@"; do last="$a"; done` + "\n" +
+		`  echo "$last" >> "` + tracePath + `"` + "\n" +
+		`  exit 0` + "\n" +
+		`fi` + "\n" +
+		`>&2 echo "fake treehouse: unexpected args: $*"` + "\n" +
+		`exit 1` + "\n"
+	testutil.FakeOnPath(t, "treehouse", script)
+	return tracePath
+}
+
+// retireHeldTask retires the held task through the canonical API.
+func retireHeldTask(t *testing.T, auth *taskauthority.Canonical, taskID domain.TaskID) {
+	t.Helper()
+	agg, err := auth.Get(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retire := taskauthority.CanonicalRetireRequest{HomeID: auth.HomeID(), TaskID: taskID, Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), Reason: "reclaim test"}
+	if _, err := auth.Retire(mustCanonicalOp(t, "held-retire", retire), retire); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // runWorktreeReclaimOutput runs `munsu worktree reclaim` and returns its stdout.
 func runWorktreeReclaimOutput(t *testing.T) string {
+	t.Helper()
+	output, err := runWorktreeReclaim(t)
+	if err != nil {
+		t.Fatalf("reclaim: %v", err)
+	}
+	return output
+}
+
+// runWorktreeReclaim runs `munsu worktree reclaim` and returns its stdout and
+// the command error.
+func runWorktreeReclaim(t *testing.T) (string, error) {
 	t.Helper()
 	root := NewRootCommand()
 	root.SetOut(new(strings.Builder))
@@ -554,10 +602,7 @@ func runWorktreeReclaimOutput(t *testing.T) string {
 	os.Stdout = oldStdout
 	output := <-outputDone
 	stdout.Close()
-	if err != nil {
-		t.Fatalf("reclaim: %v", err)
-	}
-	return output
+	return output, err
 }
 
 // TestWorktreeReclaimSparesUnboundReservationUntilRetirementCompletes pins the
@@ -601,6 +646,62 @@ func TestWorktreeReclaimSparesUnboundReservationUntilRetirementCompletes(t *test
 				t.Fatalf("held reserved worktree was removed: %v", err)
 			}
 		})
+	}
+}
+
+// TestWorktreeReclaimReturnsReleasedTreehouseLeaseHolder pins the treehouse
+// case of G809: treehouse reports the retired unbound reservation as the lease
+// holder, and reclaim must treat that holder as reconciled and return the clean
+// worktree through the provider.
+func TestWorktreeReclaimReturnsReleasedTreehouseLeaseHolder(t *testing.T) {
+	auth, taskID, reservedPath := unboundReservationFixture(t)
+	retireHeldTask(t, auth, taskID)
+	agg, err := auth.Get(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := auth.ReconcileRetirementCleanup(taskID, agg.Generation, taskauthority.CleanupCompleted, func() error { return nil }); err != nil {
+		t.Fatalf("completing canonical retirement cleanup for fixture: %v", err)
+	}
+	tracePath := installHeldTreehouse(t, reservedPath, heldReservationID)
+	output, err := runWorktreeReclaim(t)
+	if err != nil {
+		t.Fatalf("reclaim refused a released treehouse lease holder: %v", err)
+	}
+	if !strings.Contains(output, "returning orphaned worktree: "+reservedPath) || !strings.Contains(output, "Reclaimed 1 orphaned worktrees") {
+		t.Fatalf("released treehouse lease holder should be reclaimed, got stdout: %q", output)
+	}
+	trace, err := os.ReadFile(tracePath)
+	if err != nil || strings.TrimSpace(string(trace)) != reservedPath {
+		t.Fatalf("provider return trace = %q, err=%v, want %q", trace, err, reservedPath)
+	}
+}
+
+// TestWorktreeReclaimSparesTreehouseLeaseHolderBeforeCleanupCompletes pins the
+// held state for the same treehouse lease holder: while the retired task's
+// cleanup is still active, the reservation stays live, its path is spared, and
+// the provider is never called. The pass does not refuse, because the holder is
+// a live reservation, not an unreconciled one.
+func TestWorktreeReclaimSparesTreehouseLeaseHolderBeforeCleanupCompletes(t *testing.T) {
+	auth, taskID, reservedPath := unboundReservationFixture(t)
+	retireHeldTask(t, auth, taskID)
+	agg, err := auth.Get(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.CleanupClaim == nil || agg.CleanupClaim.Status != taskauthority.CleanupActive {
+		t.Fatalf("retired aggregate cleanup claim = %+v, want active", agg.CleanupClaim)
+	}
+	tracePath := installHeldTreehouse(t, reservedPath, heldReservationID)
+	output, err := runWorktreeReclaim(t)
+	if err != nil {
+		t.Fatalf("reclaim: %v", err)
+	}
+	if strings.Contains(output, "returning orphaned worktree:") || !strings.Contains(output, "Reclaimed 0 orphaned worktrees") {
+		t.Fatalf("reclaim must spare the held reservation, got stdout: %q", output)
+	}
+	if _, err := os.Stat(tracePath); !os.IsNotExist(err) {
+		t.Fatalf("provider must not return a lease whose reservation is not released; trace stat error=%v", err)
 	}
 }
 

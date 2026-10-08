@@ -57,7 +57,7 @@ func newWorktreeCmdWithStatus(statusWorktrees func(string) ([]backend.WorktreeEn
 			if err != nil {
 				return fmt.Errorf("getting worktree status: %w", err)
 			}
-			active, err := activeWorktreeClaims(ctx.Home, entries)
+			active, _, err := activeWorktreeClaims(ctx.Home, entries)
 			if err != nil {
 				return err
 			}
@@ -120,7 +120,7 @@ return pass holds the worktree-pool fence used by acquisition.`,
 			if err != nil {
 				return fmt.Errorf("getting worktree status: %w", err)
 			}
-			active, err := activeWorktreeClaims(ctx.Home, entries)
+			active, released, err := activeWorktreeClaims(ctx.Home, entries)
 			if err != nil {
 				return err
 			}
@@ -132,7 +132,7 @@ return pass holds the worktree-pool fence used by acquisition.`,
 				if active[worktreeClaimKey(entry.Path)] {
 					continue
 				}
-				if entry.LeaseHolder != "" {
+				if entry.LeaseHolder != "" && !released[entry.LeaseHolder] {
 					return fmt.Errorf("worktree %s lease holder %q is not canonically reconciled; refusing reclaim", entry.Path, entry.LeaseHolder)
 				}
 				if err := verifyManualWorktreeRelease(entry.Path); err != nil {
@@ -235,9 +235,13 @@ func verifyManualWorktreeRelease(worktreePath string) error {
 	return nil
 }
 
-func activeWorktreeClaims(homeDir string, entries []backend.WorktreeEntry) (map[string]bool, error) {
+// activeWorktreeClaims returns the worktree paths held by a task, retirement, or
+// live launch reservation, and the reservation IDs released by canonical
+// retirement. A reservation ID live in any scanned home is never released.
+func activeWorktreeClaims(homeDir string, entries []backend.WorktreeEntry) (map[string]bool, map[string]bool, error) {
 	active := make(map[string]bool)
 	reservedLaunches := make(map[string]bool)
+	releasedLaunches := make(map[string]bool)
 	addHome := func(dir string) error {
 		ids, err := home.ListMetaIDs(dir)
 		if err != nil {
@@ -270,7 +274,11 @@ func activeWorktreeClaims(homeDir string, entries []backend.WorktreeEntry) (map[
 			}
 		}
 		for _, agg := range aggs {
-			if agg.Launch == nil || agg.Launch.WorktreeReservationID == "" || hasCanonicalRetirementForReservation(agg, agg.Launch.WorktreeReservationID) || retiredUnboundReservation(agg) {
+			if agg.Launch == nil || agg.Launch.WorktreeReservationID == "" || hasCanonicalRetirementForReservation(agg, agg.Launch.WorktreeReservationID) {
+				continue
+			}
+			if retiredUnboundReservation(agg) {
+				releasedLaunches[agg.Launch.WorktreeReservationID] = true
 				continue
 			}
 			reservedLaunches[agg.Launch.WorktreeReservationID] = true
@@ -293,27 +301,30 @@ func activeWorktreeClaims(homeDir string, entries []backend.WorktreeEntry) (map[
 		return nil
 	}
 	if err := addHome(homeDir); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	captains, err := fleet.ListCaptains(homeDir)
 	if err != nil {
-		return nil, fmt.Errorf("listing captain homes: %w", err)
+		return nil, nil, fmt.Errorf("listing captain homes: %w", err)
 	}
 	for _, captain := range captains {
 		if err := addHome(captain.Home); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
+	}
+	for id := range reservedLaunches {
+		delete(releasedLaunches, id)
 	}
 
 	for _, e := range entries {
 		if e.Path == "" {
-			return nil, fmt.Errorf("provider status contains an empty worktree path")
+			return nil, nil, fmt.Errorf("provider status contains an empty worktree path")
 		}
 		if e.LeaseHolder != "" && reservedLaunches[e.LeaseHolder] {
 			active[worktreeClaimKey(e.Path)] = true
 		}
 	}
-	return active, nil
+	return active, releasedLaunches, nil
 }
 
 func hasCanonicalRetirementForReservation(agg taskauthority.Aggregate, reservationID string) bool {
