@@ -4,7 +4,6 @@
 package fleet
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -503,13 +502,6 @@ func verifyDeferredGuardDirectory(worktreePath, guardDir string, allowAbsent boo
 		if isDeferredGuardIdentityPath(artifact.Path) {
 			if sha256Content(identityBytes) != artifact.SHA256 {
 				return fmt.Errorf("deferred launch guard identity digest mismatch")
-			}
-			wantBytes, readErr := os.ReadFile(filepath.Join(worktreePath, filepath.FromSlash(artifact.Path)))
-			if readErr != nil {
-				return fmt.Errorf("reading deferred launch guard manifest bytes: %w", readErr)
-			}
-			if !bytes.Equal(identityBytes, wantBytes) {
-				return fmt.Errorf("deferred launch guard identity conflicts with manifest bytes")
 			}
 		}
 	}

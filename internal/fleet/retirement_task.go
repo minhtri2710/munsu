@@ -1771,9 +1771,6 @@ func verifyUnlistedWorktreeClean(worktreePath string, declared map[string]bool) 
 	return nil
 }
 
-// parsePorcelainFilename extracts the filename from a git status --porcelain line.
-// Porcelain format: XY FILENAME, where X is the staging status and Y is the
-// worktree status. For filenames with spaces, git quotes them: XY "filename".
 func isDeferredGuardDirectoryEntry(name string, declared map[string]bool) bool {
 	name = strings.TrimSuffix(filepath.ToSlash(name), "/")
 	for path := range declared {
@@ -1788,6 +1785,9 @@ func isDeferredGuardDirectoryEntry(name string, declared map[string]bool) bool {
 	return false
 }
 
+// parsePorcelainFilename extracts the filename from a git status --porcelain line.
+// Porcelain format: XY FILENAME, where X is the staging status and Y is the
+// worktree status. For filenames with spaces, git quotes them: XY "filename".
 func parsePorcelainFilename(line string) string {
 	if len(line) < 4 {
 		return ""

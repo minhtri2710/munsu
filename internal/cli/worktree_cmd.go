@@ -97,8 +97,9 @@ canonical task bindings. If task metadata or task authority cannot be read,
 the command aborts without reclaiming anything.
 
 This command releases only provider-listed worktrees with no task, retirement,
-or launch-reservation claim; it retains any reported lease holder that cannot
-be reconciled to canonical authority. It returns only worktrees with no known
+or launch-reservation claim. A reported lease holder that cannot be reconciled
+to canonical authority refuses the whole reclaim pass; nothing is returned.
+It returns only worktrees with no known
 launch artifacts and no dirty, untracked, or ignored content. The snapshot-to-
 return pass holds the worktree-pool fence used by acquisition.`,
 		Args: NoArgs,

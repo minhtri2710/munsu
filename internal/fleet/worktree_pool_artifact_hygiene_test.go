@@ -189,6 +189,36 @@ func TestWorktreePoolArtifactHygieneRejectsMissingArtifactOnRetry(t *testing.T) 
 	}
 }
 
+func TestWorktreePoolArtifactHygieneRejectsAbsentWorktreeOnRetry(t *testing.T) {
+	opts, auth, worktree := retireScoutFixture(t, true)
+	opts.Force = true
+	interrupted := &recordingTeardown{alive: false, returnErr: errors.New("simulated provider-return interruption")}
+	if _, err := RetireTask(opts, interrupted, fakeRetirementJournals{}, auth); err == nil {
+		t.Fatal("expected first retirement to leave cleanup pending")
+	}
+
+	// The git-fallback provider removes the directory when it returns the
+	// worktree. Absence is not a completion receipt, so retry must retain custody.
+	if err := os.RemoveAll(worktree); err != nil {
+		t.Fatal(err)
+	}
+	retry := &recordingTeardown{alive: false}
+	_, err := RetireTask(opts, retry, fakeRetirementJournals{}, auth)
+	if err == nil || !strings.Contains(err.Error(), "is absent; cleanup custody remains pending") {
+		t.Fatalf("retry error = %v, want absent-worktree custody refusal", err)
+	}
+	if len(retry.returned) != 0 {
+		t.Fatalf("retry returned worktree despite absent directory: %v", retry.returned)
+	}
+	agg, err := auth.Get(mustTaskID(t, opts.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.CleanupClaim == nil || agg.CleanupClaim.Status != "active" {
+		t.Fatalf("cleanup claim=%+v, want active pending custody", agg.CleanupClaim)
+	}
+}
+
 func TestWorktreePoolArtifactHygieneBoundReentryPreservesAnchoredArtifacts(t *testing.T) {
 	f := newLaunchFixture(t, "pool-artifact-bound-reentry")
 	if err := runLaunchPhases(f, ""); err != nil {
