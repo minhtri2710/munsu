@@ -434,9 +434,6 @@ func verifyManifestFile(worktreeRoot string) error {
 }
 
 func verifyDeferredGuardDirectory(worktreePath, guardDir string, allowAbsent bool) error {
-	if guardDir == "" {
-		return fmt.Errorf("manifest has no deferred launch guard identity")
-	}
 	entries, err := os.ReadDir(worktreePath)
 	if err != nil {
 		return fmt.Errorf("reading worktree launch artifacts: %w", err)
