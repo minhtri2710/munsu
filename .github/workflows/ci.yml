@@ -8,6 +8,11 @@ on:
 permissions:
   contents: read
 
+# Ordinary PR runs supersede each other; main pushes and auto-update's parked bot runs stay isolated.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.actor != 'github-actions[bot]' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.actor != 'github-actions[bot]' }}
+
 jobs:
   build:
     name: Build and test
