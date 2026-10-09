@@ -229,12 +229,20 @@ type WatchStop struct {
 
 // WakeClaim records a leased wake claim.
 type WakeClaim struct {
-	WakeID       string `json:"wake_id"`
-	ClaimID      string `json:"claim_id"`
-	Owner        string `json:"owner"`
-	State        string `json:"state"` // claimed | replayed
-	LeaseExpires int64  `json:"lease_expires,omitempty"`
-	Reclaimed    int    `json:"reclaimed,omitempty"`
+	ClaimID      string            `json:"claim_id"`
+	Owner        string            `json:"owner"`
+	State        string            `json:"state"` // claimed | replayed | empty
+	LeaseExpires int64             `json:"lease_expires,omitempty"`
+	Reclaimed    int               `json:"reclaimed,omitempty"`
+	Wakes        []WakeClaimedWake `json:"wakes"`
+}
+
+// WakeClaimedWake carries the actionable content of one wake in a claim.
+type WakeClaimedWake struct {
+	WakeID  string `json:"wake_id"`
+	Kind    string `json:"kind"`
+	Key     string `json:"key"`
+	Payload string `json:"payload"`
 }
 
 // WakeAck records acknowledgement of a claimed wake.

@@ -73,7 +73,7 @@ All successful responses have this envelope:
 
 `fleet.snapshot`: `scope`, `count`, `total`, and `soldiers[]`. A soldier row defaults to `task_id`, `status`, `branch`. `count` is returned rows and `total` is the definitive matching total; both are precomputed cheaply.
 
-`guard`: `state`, `conditions[]`. `watch.ensure`: `watch_id`, `state`, `interval`, with `noop: true` when already ensured. `watch.run`: `watch_id`, `state`, `wakes_scanned`, `wakes_emitted`. `wake.claim`: `wake_id`, `claim_id`, `owner`, `state`; `wake.ack`: `wake_id`, `claim_id`, `state`. `backend.capabilities`: `backend`, `features[]`. `spawn.receipt`: `task_id`, `session_id`, `worktree`, `branch`, `state`.
+`guard`: `state`, `conditions[]`. `watch.ensure`: `watch_id`, `state`, `interval`, with `noop: true` when already ensured. `watch.run`: `watch_id`, `state`, `wakes_scanned`, `wakes_emitted`. `wake.claim`: `claim_id`, `owner`, `state`, optional `lease_expires`, optional `reclaimed`, and `wakes[]` (`wake_id`, `kind`, `key`, `payload`); `wake.ack`: `wake_id`, `claim_id`, `state`. `backend.capabilities`: `backend`, `features[]`. `spawn.receipt`: `task_id`, `session_id`, `worktree`, `branch`, `state`.
 
 A normal acknowledgement has `kind: message` and `data.message`, `data.noop`. A no-op remains `status: success`, sets `noop: true`, and exits zero. A quiet wake (nothing actionable) is likewise a successful definitive empty result, not an error.
 

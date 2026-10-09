@@ -111,13 +111,13 @@ func TestWakeClaimEmptyQueueReturnsEmptyWithoutLease(t *testing.T) {
 		Data struct {
 			State   string `json:"state"`
 			ClaimID string `json:"claim_id"`
-			WakeID  string `json:"wake_id"`
+			Wakes   []any  `json:"wakes"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal([]byte(out), &envelope); err != nil {
 		t.Fatalf("invalid JSON: %v\n%s", err, out)
 	}
-	if envelope.Kind != "wake.claim" || envelope.Data.State != "empty" || envelope.Data.ClaimID != "" || envelope.Data.WakeID != "" {
+	if envelope.Kind != "wake.claim" || envelope.Data.State != "empty" || envelope.Data.ClaimID != "" || envelope.Data.Wakes == nil || len(envelope.Data.Wakes) != 0 {
 		t.Fatalf("unexpected empty claim: %+v", envelope)
 	}
 	entries, err := os.ReadDir(filepath.Join(home, "state", ".wake-leases"))
@@ -151,19 +151,19 @@ func TestWakeClaimNonEmptyJSONOmitsInternalLatency(t *testing.T) {
 	if err := json.Unmarshal(envelope.Data, &claim); err != nil {
 		t.Fatalf("invalid wake.claim data: %v\n%s", err, out)
 	}
-	if envelope.Kind != "wake.claim" || claim.State != "claimed" || claim.WakeID == "" {
+	if envelope.Kind != "wake.claim" || claim.State != "claimed" || len(claim.Wakes) != 1 || claim.Wakes[0].WakeID == "" {
 		t.Fatalf("unexpected non-empty claim: %+v", claim)
 	}
 	// The contract's field set is pinned here instead of substring-matching the
 	// rendered text: an internal supervision measurement added to WakeClaim
 	// serializes as a key outside this set whatever it is named, tagged or not.
 	contractFields := map[string]bool{
-		"wake_id":       true,
 		"claim_id":      true,
 		"owner":         true,
 		"state":         true,
 		"lease_expires": true,
 		"reclaimed":     true,
+		"wakes":         true,
 	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(envelope.Data, &fields); err != nil {

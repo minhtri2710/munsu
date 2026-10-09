@@ -2,7 +2,6 @@ package cli
 
 import (
 	"strconv"
-	"strings"
 
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
@@ -43,10 +42,15 @@ func newWakeCmd() *cobra.Command {
 				state = "replayed"
 			}
 
-			// Build wake IDs for the response
-			var wakeIDs []string
+			// Build the actionable content for the response.
+			wakes := make([]WakeClaimedWake, 0, len(result.Wakes))
 			for _, w := range result.Wakes {
-				wakeIDs = append(wakeIDs, w.Epoch+":"+w.Seq)
+				wakes = append(wakes, WakeClaimedWake{
+					WakeID:  w.Epoch + ":" + w.Seq,
+					Kind:    w.Kind,
+					Key:     w.Key,
+					Payload: w.Payload,
+				})
 			}
 
 			return writeContract(cmd, Response[WakeClaim]{
@@ -54,12 +58,12 @@ func newWakeCmd() *cobra.Command {
 				Kind:          "wake.claim",
 				Status:        "success",
 				Data: WakeClaim{
-					WakeID:       strings.Join(wakeIDs, ","),
 					ClaimID:      result.LeaseID,
 					Owner:        result.Consumer,
 					State:        state,
 					LeaseExpires: result.ExpiresAt,
 					Reclaimed:    result.Reclaimed,
+					Wakes:        wakes,
 				},
 			})
 		}),
