@@ -284,6 +284,10 @@ Task commands run in the home that owns the task: the General home, or a Captain
 home for tasks handed off to it. Captain administration runs from the parent
 General home. `munsu task start` must not precede `munsu spawn`: endpoint
 binding requires a queued task and performs the queued-to-working transition.
+Spawn also refuses before launch when a prior generation left `mu/<task>` at a
+commit other than the new worktree's base head; save it with
+`git bundle create <file> mu/<task>` before deleting it, or rename it aside:
+`git branch -m mu/<task> <new-name>`.
 Before teardown, `orchestrator.VerifyRetirementContinuity` refuses without
 `--force` when a report is pending or open, or when an open report-relay
 obligation also has a material latest `.status`.

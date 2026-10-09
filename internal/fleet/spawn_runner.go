@@ -313,6 +313,11 @@ func (r *Runner) Run() (windowID string, runErr error) {
 			return "", err
 		}
 	}
+	if !reviewing {
+		if err := r.refuseStaleTaskBranch(); err != nil {
+			return "", err
+		}
+	}
 
 	if err := r.resolveHarness(); err != nil {
 		return "", err
@@ -1801,6 +1806,39 @@ func (r *Runner) recordedLaunchEvidence() bool {
 	}
 	agg, err := r.args.Authority.Get(taskID)
 	return err == nil && agg.LaunchEvidence != nil
+}
+
+// refuseStaleTaskBranch blocks a new generation from launching when its task
+// branch already contains commits beyond the newly bound worktree's base head.
+func (r *Runner) refuseStaleTaskBranch() error {
+	taskID, err := domain.NewTaskID(r.args.ID)
+	if err != nil {
+		return fmt.Errorf("checking task branch before launch: %w", err)
+	}
+	agg, err := r.args.Authority.Get(taskID)
+	if err != nil {
+		return fmt.Errorf("checking task branch before launch: reading task: %w", err)
+	}
+	if agg.LaunchEvidence != nil && agg.LaunchEvidence.LaunchID == agg.Launch.LaunchID {
+		return nil
+	}
+
+	branch := "mu/" + r.args.ID
+	ref := "refs/heads/" + branch
+	cmd := exec.Command("git", "--git-dir", agg.Worktree.CommonDir, "rev-parse", "--verify", "--quiet", ref)
+	commit, err := cmd.Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			return nil
+		}
+		return fmt.Errorf("checking task branch before launch: reading %s in %s: %w", ref, agg.Worktree.CommonDir, err)
+	}
+	commitID := strings.TrimSpace(string(commit))
+	if commitID != agg.Worktree.BaseHead {
+		return fmt.Errorf("spawn refused: branch %s already exists at %s, not base head %s; recover by saving and deleting it (git bundle create <file> %s; git branch -D %s) or keeping it under another name (git branch -m %s <new-name>)", branch, commitID, agg.Worktree.BaseHead, branch, branch, branch)
+	}
+	return nil
 }
 
 func onlyDeferredLaunchGuardAbsent(err error) bool {
