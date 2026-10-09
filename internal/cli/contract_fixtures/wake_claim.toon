@@ -2,7 +2,8 @@ schema_version: "munsu.orchestration/v1"
 kind: wake.claim
 status: success
 data:
-  wake_id: wake-01
   claim_id: claim-01
   owner: watcher
   state: claimed
+  wakes[1]{wake_id,kind,key,payload}:
+    wake-01,signal,task-01,"failed: CI is red"

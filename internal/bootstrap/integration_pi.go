@@ -120,7 +120,7 @@ export default function (pi: ExtensionAPI) {
       // Expiry check: expired newest entry prevents resurrection.
       if (d.leaseExpiry && d.leaseExpiry <= now) continue;
       // Valid pending entry
-      if (d.key && d.leaseExpiry > now) {
+      if (typeof d.key === "string" && d.leaseExpiry > now) {
         pendingWake = {
           leaseId: d.leaseId,
           eventIds: d.eventIds || [],
@@ -200,10 +200,8 @@ export default function (pi: ExtensionAPI) {
 
     const parsed = parseContract<{
       claim_id: string;
-      wake_id?: string;
-      key?: string;
+      wakes: Array<{ wake_id: string; kind: string; key: string; payload: string }>;
       lease_expires?: number;
-      summary?: string;
     }>(result.stdout, "wake.claim");
     if (!parsed.ok) return;  // Parse failure: preserve claim/pending state, do not silently discard
 
@@ -215,11 +213,10 @@ export default function (pi: ExtensionAPI) {
     if (typeof d.lease_expires !== "number" || !isFinite(d.lease_expires)) return;
     const leaseExpiry = d.lease_expires * 1000;
 
-    const wakeId = d.wake_id || "";
-    const eventIds = wakeId ? wakeId.split(",").filter((id: string) => id.trim()) : [];
-    if (eventIds.length === 0) return;
-    const key = d.key || eventIds[0];
-    const summary = d.summary || "wake";
+    const wake = Array.isArray(d.wakes) ? d.wakes[0] : undefined;
+    if (!wake || typeof wake.wake_id !== "string" || !wake.wake_id.trim() || typeof wake.kind !== "string" || typeof wake.key !== "string" || typeof wake.payload !== "string") return;
+    const eventIds = [wake.wake_id];
+    const key = wake.key;
 
     pendingWake = { leaseId: claimId, eventIds, key, leaseExpiry, deliveryState: "pending" };
 
@@ -233,7 +230,7 @@ export default function (pi: ExtensionAPI) {
     });
 
     pi.sendUserMessage(
-      "Wake: " + summary + "\n\nAfter checking the wake, call munsu_wake_resolve with key " + key + " and a non-empty summary. Do not use munsu report or print a slash command.",
+      "Wake: kind=" + wake.kind + " key=" + key + " payload=" + wake.payload + "\n\nAfter checking the wake, call munsu_wake_resolve with the exact key shown above and a non-empty summary. Do not use munsu report or print a slash command.",
       { deliverAs: "followUp" },
     );
     } finally {
@@ -243,7 +240,7 @@ export default function (pi: ExtensionAPI) {
 
   async function resolvePendingWake(text: string, ctx: any): Promise<boolean> {
     if (!pendingWake || !text) return false;
-    const match = text.match(/(?:^|\n)\s*\/munsu:wake\s+resolved\s+\[key=([^\]]+)\]\s*:\s*(\S[^\n]*)/);
+    const match = text.match(/(?:^|\n)\s*\/munsu:wake\s+resolved\s+\[key=([^\]]*)\]\s*:\s*(\S[^\n]*)/);
     if (!match || match[1] !== pendingWake.key || !match[2].trim()) return false;
     if (pendingWake.eventIds.length !== 1) return false;
     const ackArgs = ["wake", "resolve", "--claim-id", pendingWake.leaseId, "--event-id", pendingWake.eventIds[0], "--summary", match[2].trim(), "--output", "json"];
@@ -374,11 +371,11 @@ export default function (pi: ExtensionAPI) {
 
   // 5. /munsu:wake resolved command — lease-based ack with key syntax.
   pi.registerCommand("munsu:wake", {
-    description: "Manage munsu wakes from within Pi. Usage: /munsu:wake resolved [key=<slug>]: <summary>",
+    description: "Manage munsu wakes from within Pi. Usage: /munsu:wake resolved [key=<key>]: <summary>",
     handler: async (args: string, ctx: any) => {
       const trimmed = args.trim();
       if (!trimmed.startsWith("resolved")) {
-        ctx.ui.notify("Usage: /munsu:wake resolved [key=<slug>]: <summary>", "warning");
+        ctx.ui.notify("Usage: /munsu:wake resolved [key=<key>]: <summary>", "warning");
         return;
       }
       if (!pendingWake) {
@@ -386,8 +383,8 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
-      // Extract key from [key=<slug>] in the args.
-      const keyMatch = trimmed.match(/\[key=([^\]]+)\]/);
+      // An omitted marker uses the pending key; a present marker must match it exactly.
+      const keyMatch = trimmed.match(/\[key=([^\]]*)\]/);
       const providedKey = keyMatch ? keyMatch[1] : pendingWake.key;
 
       // Verify key matches pending wake key.
@@ -396,17 +393,17 @@ export default function (pi: ExtensionAPI) {
         return; // Fail without ack.
       }
 
-      // Extract summary after "resolved" and optional [key=...].
-      // Required format: "resolved [key=<slug>]: <summary>"
+      // Extract summary after "resolved" and the required key marker.
+      // Required format: "resolved [key=<key>]: <summary>"
       // The colon separator is required.
-      let rest = trimmed.replace(/^resolved\s*/, "").replace(/\[key=[^\]]+\]\s*/, "").trim();
+      let rest = trimmed.replace(/^resolved\s*/, "").replace(/\[key=[^\]]*\]\s*/, "").trim();
       if (!rest.startsWith(":")) {
-        ctx.ui.notify("Syntax error: missing ':' after key. Usage: resolved [key=<slug>]: <summary>", "warning");
+        ctx.ui.notify("Syntax error: missing ':' after key. Usage: resolved [key=<key>]: <summary>", "warning");
         return;
       }
       let summary = rest.slice(1).trim();
       if (!summary) {
-        ctx.ui.notify("Syntax error: non-empty summary required after ':'. Usage: resolved [key=<slug>]: <summary>", "warning");
+        ctx.ui.notify("Syntax error: non-empty summary required after ':'. Usage: resolved [key=<key>]: <summary>", "warning");
         return;
       }
 

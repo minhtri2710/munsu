@@ -174,6 +174,8 @@ class MockAPI {
     this.userMessages.push({ content, options });
   }
 
+  wakeKey: string = "test-wake";
+
   exec(bin: string, args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
     this.execCalls.push({ bin, args });
 
@@ -227,13 +229,16 @@ class MockAPI {
           status: "success",
           data: {
             claim_id: "lease-123",
-            wake_id: "epoch:1",
             owner: SESSION_CONSUMER,
             state: "claimed",
             lease_expires: Math.floor(Date.now() / 1000) + 120,
             reclaimed: 0,
-            key: "test-wake",
-            summary: "Test wake",
+            wakes: [{
+              wake_id: "epoch:1",
+              kind: "signal",
+              key: this.wakeKey,
+              payload: "failed: CI is red",
+            }],
           },
         }),
         stderr: "",
@@ -346,13 +351,12 @@ if (mock.userMessages.length !== 1) {
   throw new Error("agent_settled should send exactly 1 userMessage (wake followUp), got " + mock.userMessages.length);
 }
 const msg = mock.userMessages[0];
-if (!msg.content || !msg.content.includes("Wake:")) {
-  throw new Error("agent_settled followUp should contain 'Wake:', got: " + JSON.stringify(msg.content));
+for (const content of ["Wake: kind=signal key=test-wake payload=failed: CI is red", "munsu_wake_resolve"]) {
+  if (!msg.content || !msg.content.includes(content)) {
+    throw new Error("agent_settled followUp should include wake content " + JSON.stringify(content) + ", got: " + JSON.stringify(msg.content));
+  }
 }
-// FollowUp should require the executable wake-resolution tool and exact key.
-if (!msg.content.includes("munsu_wake_resolve") || !msg.content.includes("test-wake")) {
-  throw new Error("agent_settled followUp should require keyed munsu_wake_resolve, got: " + msg.content);
-}
+
 
 // Check that munsu-pending-wake entry was created
 const pendingEntry = mock.entries.find((e: any) => e.customType === "munsu-pending-wake");
@@ -382,7 +386,7 @@ if (!cmdHandler) throw new Error("Expected _cmd_munsu:wake handler");
 const cmdCtx: any = { ui: { notify: () => {} } };
 
 // Valid completion with colon
-await cmdHandler("resolved [key=test-wake]: Test completed successfully", cmdCtx);
+await cmdHandler("resolved: Test completed successfully", cmdCtx);
 
 // After ack, check acknowledged tombstone
 const ackedEntry = mock.entries.find((e: any) => e.customType === "munsu-pending-wake" && e.data && e.data.deliveryState === "acknowledged");
@@ -398,7 +402,7 @@ const ackCallsBeforeTool = mock.execCalls.filter((c: any) => c.args[0] === "wake
 const toolResult = await wakeTool.execute("tool-1", { key: "test-wake", summary: "checked and settled" }, undefined, undefined, cmdCtx);
 if (toolResult.isError) throw new Error("wake resolution tool should succeed: " + JSON.stringify(toolResult));
 const ackCallsAfterTool = mock.execCalls.filter((c: any) => c.args[0] === "wake" && c.args[1] === "resolve").length;
-if (ackCallsAfterTool !== ackCallsBeforeTool + 1) throw new Error("wake tool must ACK exactly once");
+	if (ackCallsAfterTool !== ackCallsBeforeTool + 1) throw new Error("wake tool must ACK exactly once: before=" + ackCallsBeforeTool + " after=" + ackCallsAfterTool + " calls=" + JSON.stringify(mock.execCalls.filter((c: any) => c.args[0] === "wake" && c.args[1] === "resolve")));
 const toolAckedEntry = mock.entries.find((e: any) => e.customType === "munsu-pending-wake" && e.data && e.data.deliveryState === "acknowledged");
 if (!toolAckedEntry) throw new Error("wake tool must append acknowledged tombstone");
 const repeatedToolResult = await wakeTool.execute("tool-2", { key: "test-wake", summary: "duplicate" }, undefined, undefined, cmdCtx);
@@ -423,10 +427,33 @@ mock.userMessages = [];
 await mock.fire("agent_settled", {}, { ...mockCtx, isIdle: () => true });
 
 // Try mismatched key
+const resolveCountBeforeMismatch = mock.execCalls.filter((c: any) => c.args[0] === "wake" && c.args[1] === "resolve").length;
 await cmdHandler("resolved [key=wrong-key]: Some summary", cmdCtx);
+const resolveCountAfterMismatch = mock.execCalls.filter((c: any) => c.args[0] === "wake" && c.args[1] === "resolve").length;
+if (resolveCountAfterMismatch !== resolveCountBeforeMismatch) throw new Error("mismatched key must not ACK the pending wake");
+await cmdHandler("resolved [key=test-wake]: Clear before empty-key case", cmdCtx);
 
-// There should still be a pending entry (not fully acked for the wrong key)
-const stillPending = mock.entries.some((e: any) => e.customType === "munsu-pending-wake" && e.data && e.data.deliveryState === "pending");
+// An empty key is valid and must remain the exact resolve identity, not fall back to the event ID.
+mock.wakeKey = "";
+mock.userMessages = [];
+await mock.fire("agent_settled", {}, { ...mockCtx, isIdle: () => true });
+const emptyKeyMsg = mock.userMessages[0];
+if (!emptyKeyMsg || !emptyKeyMsg.content.includes("key= payload=failed: CI is red")) {
+  throw new Error("empty wake key was not preserved in prompt: " + JSON.stringify(emptyKeyMsg));
+}
+const emptyKeyToolResult = await wakeTool.execute("tool-empty-key", { key: "", summary: "checked empty-key wake" }, undefined, undefined, cmdCtx);
+if (emptyKeyToolResult.isError) throw new Error("empty wake key should match exactly: " + JSON.stringify(emptyKeyToolResult));
+const emptyKeyAck = mock.execCalls.filter((c: any) => c.args[0] === "wake" && c.args[1] === "resolve").pop();
+if (!emptyKeyAck || emptyKeyAck.args[emptyKeyAck.args.indexOf("--event-id") + 1] !== "epoch:1") {
+  throw new Error("empty-key resolution should ack its event ID, got: " + JSON.stringify(emptyKeyAck));
+}
+mock.userMessages = [];
+await mock.fire("agent_settled", {}, { ...mockCtx, isIdle: () => true });
+const emptyKeyCommandAckBefore = mock.execCalls.filter((c: any) => c.args[0] === "wake" && c.args[1] === "resolve").length;
+await cmdHandler("resolved [key=]: Clear empty-key wake", cmdCtx);
+const emptyKeyCommandAckAfter = mock.execCalls.filter((c: any) => c.args[0] === "wake" && c.args[1] === "resolve").length;
+if (emptyKeyCommandAckAfter !== emptyKeyCommandAckBefore + 1) throw new Error("empty-key slash resolution should ACK exactly once");
+
 
 // --- Test 8: agent_settled fires after agent_end, not instead ---
 // Verify that firing agent_end then agent_settled yields the same behavior
