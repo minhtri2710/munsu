@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -356,19 +357,15 @@ func evaluateParsedGitMutation(homeDir, taskID string, parsed gitCommandSafety) 
 	if reason := validateGitTargetBinding(parsed, binding); reason != "" {
 		return true, reason
 	}
-	if reason := validateGitMutationAuthority(homeDir, taskID, parsed, binding); reason != "" {
+	if reason := validateGitMutationAuthority(homeDir, taskID, parsed, binding, auth, tid); reason != "" {
 		return true, reason
 	}
 	return false, ""
 }
 
-// validateGitMutationAuthority enforces the default Ship authority allowlist:
-// task-local branch, add, commit, and normal push. The git authorization
-// layer (amendment/retirement context tiers, force-with-lease authorization)
-// was removed with the legacy delivery path (#414 B); unrestricted force,
-// branch deletion, rewrite operations, and push --delete are unconditionally
-// denied.
-func validateGitMutationAuthority(homeDir, taskID string, g gitCommandSafety, binding *taskauthority.WorktreeBinding) string {
+// validateGitMutationAuthority enforces branch, task-local edits, and exact-head
+// granted pushes. Force/delete/rewrite forms remain unconditionally denied.
+func validateGitMutationAuthority(homeDir, taskID string, g gitCommandSafety, binding *taskauthority.WorktreeBinding, auth *taskauthority.Canonical, tid domain.TaskID) string {
 	taskBranch := "mu/" + taskID
 	currentBranch, err := gitSafetyOutput(binding.Path, "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {
@@ -401,20 +398,58 @@ func validateGitMutationAuthority(homeDir, taskID string, g gitCommandSafety, bi
 		if branchOpAllowed(taskBranch, g.args) {
 			return ""
 		}
-		return "default Ship authority permits only task-local branch, add, commit, and normal push"
 	case "checkout", "switch":
 		if createsBranch(g.args) && g.branchName == taskBranch {
 			return ""
 		}
-		return "default Ship authority permits only task-local branch, add, commit, and normal push"
 	case "push":
-		if pushAllowed(taskBranch, g.args) {
+		remote, refspec, allowed := pushTargetAllowed(taskBranch, g.args)
+		if !allowed {
+			return "default Ship authority permits only task-local branch, add, commit, and granted push"
+		}
+		if remote == "no-mistakes" {
+			if _, err := gitSafetyOutput(binding.Path, "config", "--get", "remote.no-mistakes.url"); err != nil {
+				return "no-mistakes push target unavailable: remote.no-mistakes.url is not configured"
+			}
+			if refspec == "" {
+				if err := validateNoMistakesPushMapping(binding.Path, taskBranch); err != nil {
+					return "no-mistakes push target unavailable: " + err.Error()
+				}
+			}
+		}
+		head, err := pushedCommit(binding.Path)
+		if err != nil {
+			return "git push commit unavailable: " + err.Error()
+		}
+		granted, err := auth.HasPushGrant(tid, head)
+		if err != nil {
+			return fmt.Sprintf("push grant lookup failed for task %s commit %s: %v; publication is blocked", taskID, head, err)
+		}
+		if granted {
 			return ""
 		}
-		return "default Ship authority permits only task-local branch, add, commit, and normal push"
-	default:
-		return "default Ship authority permits only task-local branch, add, commit, and normal push"
+		return fmt.Sprintf("push of task %s to %s commit %s has no matching Human grant; run `munsu report needs-decision \"push %s\"` and stop; wait for the General to record the grant before you retry", taskID, remote, head, head)
 	}
+	return "default Ship authority permits only task-local branch, add, commit, and granted push"
+}
+
+func validateNoMistakesPushMapping(worktree, taskBranch string) error {
+	configured, err := gitSafetyOutput(worktree, "config", "--get-all", "remote.no-mistakes.push")
+	if err != nil {
+		return fmt.Errorf("remote.no-mistakes.push must explicitly name the task branch")
+	}
+	if strings.Contains(configured, "\n") || !pushRefspecAllowed(taskBranch, configured) {
+		return fmt.Errorf("remote.no-mistakes.push must name only the current task branch")
+	}
+	return nil
+}
+
+func pushedCommit(worktree string) (string, error) {
+	head, err := gitSafetyOutput(worktree, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil || !taskauthority.IsFullGitSHA(head) {
+		return "", fmt.Errorf("could not resolve full pushed commit SHA")
+	}
+	return strings.ToLower(head), nil
 }
 
 // gitCommandPath is a git command the classifier read on some path through
@@ -682,35 +717,29 @@ func validateGitTargetBinding(g gitCommandSafety, binding *taskauthority.Worktre
 	return ""
 }
 
-// pushAllowed permits only a normal push of the task-local branch to origin.
-// Flags are an allowlist, scanned in every position: any flag outside the small
-// safe set fails closed, so a bundled short like -fq, a --force/-f/--delete in
-// any position, and every other force/rewrite form are all denied without the
-// gate having to enumerate them. A leading '+' on the refspec (force) is also
-// denied. Exactly one origin token and one task-local refspec are required.
-func pushAllowed(taskBranch string, args []string) bool {
-	sawOrigin := false
-	sawRefspec := false
+func pushTargetAllowed(taskBranch string, args []string) (string, string, bool) {
+	remote := ""
+	refspec := ""
 	for _, arg := range args {
 		if strings.HasPrefix(arg, "-") {
 			if !pushFlagAllowed(arg) {
-				return false
+				return "", "", false
 			}
 			continue
 		}
-		if !sawOrigin {
-			if arg != "origin" {
-				return false
+		if remote == "" {
+			if arg != "origin" && arg != "no-mistakes" {
+				return "", "", false
 			}
-			sawOrigin = true
+			remote = arg
 			continue
 		}
-		if sawRefspec || !pushRefspecAllowed(taskBranch, arg) {
-			return false
+		if refspec != "" || !pushRefspecAllowed(taskBranch, arg) {
+			return "", "", false
 		}
-		sawRefspec = true
+		refspec = arg
 	}
-	return sawOrigin && sawRefspec
+	return remote, refspec, remote != "" && (refspec != "" || remote == "no-mistakes")
 }
 
 func pushFlagAllowed(flag string) bool {

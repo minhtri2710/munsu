@@ -80,7 +80,6 @@ func TestSafetyCheckGitMutationRequiresExactWorktreeBindingAndAllowsAlternateTar
 		"git --work-tree . --git-dir " + shellPathForSafety(t, gitDirPathForSafety(t, worktree)) + " add file.txt",
 		"git -C . add file.txt",
 		"git commit -m work",
-		"git push origin HEAD:refs/heads/mu/ship-1",
 	}
 	for _, command := range allowed {
 		block, reason := runPiSafetyForGit(t, worktree, command)
@@ -88,7 +87,31 @@ func TestSafetyCheckGitMutationRequiresExactWorktreeBindingAndAllowsAlternateTar
 			t.Fatalf("%q blocked: %s", command, reason)
 		}
 	}
-
+	runGitForSafety(t, worktree, "config", "remote.no-mistakes.url", primary)
+	for _, command := range []string{
+		"git push origin HEAD:refs/heads/mu/ship-1",
+		"git push no-mistakes HEAD:refs/heads/mu/ship-1",
+	} {
+		block, reason := runPiSafetyForGit(t, worktree, command)
+		if !block || !strings.Contains(reason, "ship-1") || !strings.Contains(reason, "report needs-decision") {
+			t.Errorf("%q block=%v reason=%q, want task-scoped Human-grant refusal", command, block, reason)
+		}
+	}
+	// The gate remote uses the same shim argv path. Its configured destination
+	// is validated before the same task/head grant is applied.
+	runGitForSafety(t, worktree, "config", "remote.no-mistakes.url", primary)
+	runGitForSafety(t, worktree, "config", "remote.no-mistakes.push", "HEAD:refs/heads/mu/ship-1")
+	head := gitOutputForSafety(t, worktree, "rev-parse", "HEAD")
+	recordSafetyPushGrant(t, homeDir, "ship-1", head)
+	for _, command := range []string{
+		"git push origin HEAD:refs/heads/mu/ship-1",
+		"git push no-mistakes HEAD:refs/heads/mu/ship-1",
+	} {
+		block, reason := runPiSafetyForGit(t, worktree, command)
+		if block {
+			t.Errorf("%q blocked with matching grant: %s", command, reason)
+		}
+	}
 	// Force the Windows-literal reading on Darwin so the exact Windows-shaped
 	// --git-dir reaches the binding comparison without requiring a Windows host.
 	for _, path := range []string{`C:\Users\soldier\repo`, `\\server\share\repo`} {
@@ -337,9 +360,8 @@ func TestSafetyCheckArgvLevelFenceEvasionDenied(t *testing.T) {
 	}
 }
 
-// TestSafetyCheckNormalPushAndBranchFormsAllowed proves the argv-level fence
-// hardening did not regress the permitted normal push and task-local branch
-// forms, including the allowed flags in either position.
+// TestSafetyCheckNormalPushAndBranchFormsAllowed proves normal task-local
+// pushes pass only when their exact head has a matching Human grant.
 func TestSafetyCheckNormalPushAndBranchFormsAllowed(t *testing.T) {
 	primary := initGitRepoForSafety(t, t.TempDir())
 	worktree := filepath.Join(t.TempDir(), "wt")
@@ -348,7 +370,8 @@ func TestSafetyCheckNormalPushAndBranchFormsAllowed(t *testing.T) {
 	t.Setenv("MUNSU_HOME", homeDir)
 	t.Setenv("MUNSU_TASK_ID", "ship-ok")
 	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-ok")
-
+	head := gitOutputForSafety(t, worktree, "rev-parse", "HEAD")
+	recordSafetyPushGrant(t, homeDir, "ship-ok", head)
 	for _, command := range []string{
 		"git push origin mu/ship-ok",
 		"git push origin HEAD:refs/heads/mu/ship-ok",
@@ -376,6 +399,8 @@ func TestSafetyCheckReadsSubshellsAndBuiltinCd(t *testing.T) {
 	t.Setenv("MUNSU_HOME", homeDir)
 	t.Setenv("MUNSU_TASK_ID", "ship-sub")
 	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-sub")
+	grantHead := gitOutputForSafety(t, worktree, "rev-parse", "HEAD")
+	recordSafetyPushGrant(t, homeDir, "ship-sub", grantHead)
 
 	for _, command := range []string{
 		"(git push --force)",
@@ -732,6 +757,8 @@ func TestSafetyCheckGitVerdictsOnSharedTokenizer(t *testing.T) {
 	t.Setenv("MUNSU_HOME", homeDir)
 	t.Setenv("MUNSU_TASK_ID", "ship-vd")
 	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-vd")
+	grantHead := gitOutputForSafety(t, worktree, "rev-parse", "HEAD")
+	recordSafetyPushGrant(t, homeDir, "ship-vd", grantHead)
 	if err := os.MkdirAll(filepath.Join(worktree, "my dir"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1565,6 +1592,8 @@ func TestSafetyCheckReadsRedirectPrefixesExpansionsAndLateFunctions(t *testing.T
 	t.Setenv("MUNSU_HOME", homeDir)
 	t.Setenv("MUNSU_TASK_ID", "ship-rv")
 	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-rv")
+	grantHead := gitOutputForSafety(t, worktree, "rev-parse", "HEAD")
+	recordSafetyPushGrant(t, homeDir, "ship-rv", grantHead)
 
 	for _, command := range []string{
 		"git push origin mu/ship-rv 9 >/dev/null",

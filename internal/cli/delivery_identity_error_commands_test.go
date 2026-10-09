@@ -103,6 +103,15 @@ func TestDeliveryIdentityErrorsNameRegisteredCommands(t *testing.T) {
 	}
 }
 
+func TestDeliveryCommandRegistersReviewDiffAndPushGrant(t *testing.T) {
+	root := NewRootCommand()
+	for _, command := range []string{"review-diff", "push-grant"} {
+		if problem, ok := resolveCommandPath(root, []string{"delivery", command, "<task-id>"}); !ok {
+			t.Errorf("delivery %s is not a registered runnable command: %s", command, problem)
+		}
+	}
+}
+
 // TestResolveCommandPathRejectsUnregisteredCommand pins the oracle itself: the
 // walk above must fail on the exact shape the defect had, otherwise the guard
 // would pass no matter what the errors said.
