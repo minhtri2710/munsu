@@ -13,6 +13,7 @@
 * 2026-10-09T04:22:22Z: "cần có 1 workflow cơ bản without tools, nếu có cấu hình + tool vào thì sẽ đi theo hướng cấu hình"
 * 2026-10-09T08:10:31Z: "theo lời khuyên đi", accepting the Lead's recommended option on every gate: full scope; a configured tool whose probe fails refuses the run at every step and never switches to the baseline; a tool entry names a compiled-in adapter; the review step is the first slice.
 * 2026-10-09T08:22:54Z: "oki đồng ý", resolving the follow-up gate G894: the `--mode` flag is removed and the delivery mode is configuration only; a tool on PATH with no entry is not used; the baseline is today's `local-only` delivery, with no push and no new forge adapter.
+* 2026-10-09T08:27:13Z (selected in a dialog, ledger row G902): "A: chấp nhận, tính vào lời đã nói (Khuyên)", accepting §5's refusal of a review entry naming no-mistakes without a forge entry as part of the 08:22:54Z words.
 
 These words cover the refusals in §2, §3 and §5, the retirement of the direct-PR fallback (a configured step that fails never switches to its baseline) and the removal of `--mode`. Any other new refusal an implementing slice finds is a new gate.
 
