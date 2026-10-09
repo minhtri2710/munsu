@@ -25,7 +25,6 @@ type fakeAgentEndpoint struct {
 	promptCalls  int
 }
 
-func (*fakeAgentEndpoint) Alive(string, map[string]string) (bool, error)  { return true, nil }
 func (f *fakeAgentEndpoint) Busy(string, map[string]string) (bool, error) { return f.busy, f.busyErr }
 func (f *fakeAgentEndpoint) Send(_ string, _ map[string]string, payload string) home.BoundSendResult {
 	f.promptCalls++

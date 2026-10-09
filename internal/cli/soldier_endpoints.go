@@ -35,18 +35,6 @@ func (s sessionSoldierEndpoints) backend(home string, meta map[string]string) (b
 	return bk, nil
 }
 
-func (s sessionSoldierEndpoints) Alive(home string, meta map[string]string) (bool, error) {
-	bk, err := s.backend(home, meta)
-	if err != nil {
-		return false, err
-	}
-	// Typed observation: only a confirmed-live/current reading is alive. A
-	// legacy-bool false, operational failure, stale, or starting reading is
-	// NOT alive (gates the send — never a recovery/dispose decision and never
-	// authoritative death).
-	return backend.ObserveEndpoint(bk, meta["window"], harnessProcessMatcher(meta["harness"])).Live(), nil
-}
-
 func (s sessionSoldierEndpoints) Busy(home string, meta map[string]string) (bool, error) {
 	bk, err := s.backend(home, meta)
 	if err != nil {
