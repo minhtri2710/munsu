@@ -21,8 +21,8 @@ type SendToSoldierResult struct {
 }
 
 type SoldierEndpointCapabilities interface {
-	home.BoundSender
 	Busy(home string, meta map[string]string) (bool, error)
+	Send(home string, meta map[string]string, payload string) home.BoundSendResult
 }
 
 // SendToSoldier sends a command to a soldier using the mailbox envelope pattern.

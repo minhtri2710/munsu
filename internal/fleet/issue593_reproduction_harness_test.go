@@ -68,8 +68,7 @@ func TestIssue593ReproductionHarness(t *testing.T) {
 
 type harnessEndpoint struct{}
 
-func (*harnessEndpoint) Alive(string, map[string]string) (bool, error) { return true, nil }
-func (*harnessEndpoint) Busy(string, map[string]string) (bool, error)  { return false, nil }
+func (*harnessEndpoint) Busy(string, map[string]string) (bool, error) { return false, nil }
 func (*harnessEndpoint) Send(string, map[string]string, string) home.BoundSendResult {
 	return home.BoundSendResult{Acknowledged: true, Status: "submitted"}
 }
