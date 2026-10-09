@@ -76,6 +76,36 @@ func TestEvaluateGitArgvSafetyRequiresExactPushGrantForBothRemotes(t *testing.T)
 
 }
 
+func TestEvaluateGitArgvSafetyReportsPushGrantLookupFailure(t *testing.T) {
+	primary := initGitRepoForSafety(t, t.TempDir())
+	worktree := filepath.Join(t.TempDir(), "wt")
+	runGitForSafety(t, primary, "worktree", "add", "--detach", worktree)
+	homeDir := bindSafetyWorktree(t, "ship-malformed-grant", primary, worktree)
+	t.Setenv("MUNSU_HOME", homeDir)
+	t.Setenv("MUNSU_TASK_ID", "ship-malformed-grant")
+	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-malformed-grant")
+	head := gitOutputForSafety(t, worktree, "rev-parse", "HEAD")
+	auth := testAuthorityFor(t, homeDir)
+	agg, err := auth.Get(mustTaskIDFor(t, "ship-malformed-grant"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := taskauthority.CanonicalRecordPushGrantRequest{
+		HomeID: auth.HomeID(), TaskID: mustTaskIDFor(t, "ship-malformed-grant"),
+		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+		HeadSHA:      head, Words: domain.Words{Grantor: "Human", Channel: "supervisor-relay:typed", Quote: "a"},
+	}
+	if _, err := auth.RecordPushGrant(mustCanonicalOp(t, "malformed-grant", req), req); err != nil {
+		t.Fatal(err)
+	}
+	grantDir := filepath.Join(homeDir, "state", "task-authority", "push-grants", "ship-malformed-grant", "1")
+	osWriteSafetyFile(t, grantDir, "malformed-grant.json", "{not json")
+	blocked, reason := evaluateGitArgvSafety(worktree, []string{"push", "origin", "HEAD:refs/heads/mu/ship-malformed-grant"})
+	if !blocked || !strings.Contains(reason, "push grant lookup failed") || !strings.Contains(reason, "decode push grant") || strings.Contains(reason, "no matching Human grant") {
+		t.Fatalf("push with corrupt grant record = blocked %v, reason %q; want distinct lookup failure", blocked, reason)
+	}
+}
+
 func TestEvaluateGitArgvSafetyRequiresTaskLocalNoMistakesPushMapping(t *testing.T) {
 	primary := initGitRepoForSafety(t, t.TempDir())
 	worktree := filepath.Join(t.TempDir(), "wt")

@@ -419,12 +419,15 @@ func validateGitMutationAuthority(homeDir, taskID string, g gitCommandSafety, bi
 				}
 			}
 		}
-		head, err := pushedCommit(binding.Path, taskBranch, refspec)
+		head, err := pushedCommit(binding.Path)
 		if err != nil {
 			return "git push commit unavailable: " + err.Error()
 		}
 		granted, err := auth.HasPushGrant(tid, head)
-		if err == nil && granted {
+		if err != nil {
+			return fmt.Sprintf("push grant lookup failed for task %s commit %s: %v; publication is blocked", taskID, head, err)
+		}
+		if granted {
 			return ""
 		}
 		return fmt.Sprintf("push of task %s to %s commit %s has no matching Human grant; run `munsu report needs-decision \"push %s\"` and stop; wait for the General to record the grant before you retry", taskID, remote, head, head)
@@ -443,16 +446,8 @@ func noMistakesPushRefspec(worktree, taskBranch string) (string, error) {
 	return configured, nil
 }
 
-func pushedCommit(worktree, taskBranch, refspec string) (string, error) {
-	source := "HEAD"
-	if refspec != taskBranch && refspec != "HEAD" {
-		separator := strings.IndexByte(refspec, ':')
-		if separator < 0 || (refspec[separator+1:] != taskBranch && refspec[separator+1:] != "refs/heads/"+taskBranch) {
-			return "", fmt.Errorf("refspec %q does not name task branch %s", refspec, taskBranch)
-		}
-		source = refspec[:separator]
-	}
-	head, err := gitSafetyOutput(worktree, "rev-parse", "--verify", source+"^{commit}")
+func pushedCommit(worktree string) (string, error) {
+	head, err := gitSafetyOutput(worktree, "rev-parse", "--verify", "HEAD^{commit}")
 	if err != nil || !taskauthority.IsFullGitSHA(head) {
 		return "", fmt.Errorf("could not resolve full pushed commit SHA")
 	}
