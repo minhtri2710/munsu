@@ -101,6 +101,7 @@ for the complete registered set.
 | `munsu delivery review-diff <id>` | Review the diff between the task branch and its base. |
 | `munsu delivery merge-status <id>` | Query merge status of the recorded delivery identity. |
 | `munsu delivery pr-merge <id> <pr-url> [--teardown]` | Merge a PR through the journaled delivery execution. |
+| `munsu delivery push-grant <task-id> --head <full-40-hex-SHA> --grantor <Human> --channel <channel> --quote <verbatim-words>` | Record the Human's exact-head Soldier push grant for the current task generation. |
 
 ## Event / Stow / Decision Hold
 

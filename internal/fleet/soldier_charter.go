@@ -74,26 +74,27 @@ Your authority is bounded by the task brief and this charter.
 1. Read all files in the worktree and repository.
 2. Create, edit, and delete files under the worktree to complete the task.
 3. Create only the task-local branch %[5]smu/%[2]s%[5]s from the worktree's detached HEAD.
-4. Use %[5]sgit add%[5]s and %[5]sgit commit%[5]s only for task-local changes on that branch.
-5. Use only a normal (non-force) push of the task-local branch to %[5]sorigin%[5]s when policy requires push, without %[5]s-u%[5]s or %[5]s--set-upstream%[5]s (they write git config, which is not yours to change).
-6. Open a PR (only when delivery mode allows it).
-7. Use gh-axi for GitHub operations.
-8. Use %[5]smunsu report%[5]s for terminal state reporting.
-8a. Use %[5]smunsu inbox receive%[5]s and %[5]smunsu inbox ack%[5]s for commands sent to you.
-9. Read %[5]sAGENTS.md%[5]s before making edits.
-10. Use session-scoped state files (%[5]sstate/%[5]s) for durable progress tracking.
+4. Use `+bt+`git add`+bt+` and `+bt+`git commit`+bt+` only for task-local changes on that branch.
+5. For `+bt+`direct-PR`+bt+` and `+bt+`no-mistakes`+bt+` modes, after committing get the full SHA with `+bt+`git rev-parse HEAD`+bt+`, run `+bt+`munsu report needs-decision "push <40-hex-SHA>"`+bt+` with that exact value, and stop. Do not resume publishing until the General confirms the exact-head Human grant is recorded.
+6. In `+bt+`direct-PR`+bt+` mode, push the task branch to `+bt+`origin`+bt+` without `+bt+`-u`+bt+` or `+bt+`--set-upstream`+bt+` (they write Git config, which is not yours to change) and open a PR only after the General confirms the grant.
+7. In `+bt+`no-mistakes`+bt+` mode, push the task branch to `+bt+`no-mistakes`+bt+` without `+bt+`-u`+bt+` or `+bt+`--set-upstream`+bt+` (they write Git config, which is not yours to change) and start the pipeline only after the General confirms the grant.
+8. Use gh-axi for GitHub operations and never merge a PR.
+9. Use `+bt+`munsu report`+bt+` for terminal state reporting.
+9a. Use `+bt+`munsu inbox receive`+bt+` and `+bt+`munsu inbox ack`+bt+` for commands sent to you.
+10. Read `+bt+`AGENTS.md`+bt+` before making edits.
+11. Use session-scoped state files (`+bt+`state/`+bt+`) for durable progress tracking.
 
 ## Forbidden Actions
 
 You MUST NOT:
 
-1. **Never push to the default branch.** Never merge a PR. Explicit no-merge rule.
+1. **Never push to the default branch.** Never merge a PR. A task-branch push before the exact-head Human grant is recorded is forbidden.
 2. Never modify files outside this worktree.
 3. Never claim Captain or General authority.
 4. Never spawn other Soldiers or Captains.
 5. Never invent work beyond the task brief.
 6. Never poll or sleep-loop waiting for input.
-7. Never run no-mistakes unless explicitly instructed.
+7. Never run no-mistakes in direct-PR or local-only mode, or before the exact-head Human grant is recorded for no-mistakes mode.
 8. Never modify runtime-owned charter, brief, or envelope files.
 9. Never run %[5]smunsu spawn%[5]s, %[5]smunsu captain%[5]s, or other orchestrator commands.
 10. Never use raw %[5]sgh pr merge%[5]s.

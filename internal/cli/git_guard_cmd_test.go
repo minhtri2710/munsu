@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,13 +29,21 @@ func TestEvaluateGitArgvSafetyAllowsReadAndBoundMutations(t *testing.T) {
 		{"branch", "--show-current"},
 		{"-C", ".", "add", "file.txt"},
 		{"commit", "-m", "work"},
-		{"push", "origin", "HEAD:refs/heads/mu/ship-argv"},
 	}
 	for _, argv := range allowed {
 		block, reason := evaluateGitArgvSafety(worktree, argv)
 		if block {
 			t.Fatalf("argv %v blocked: %s", argv, reason)
 		}
+	}
+	argv := []string{"push", "origin", "HEAD:refs/heads/mu/ship-argv"}
+	head := gitOutputForSafety(t, worktree, "rev-parse", "HEAD")
+	if block, reason := evaluateGitArgvSafety(worktree, argv); !block || !strings.Contains(reason, head) {
+		t.Fatalf("push without a grant = block %v, reason %q; want exact-head refusal", block, reason)
+	}
+	recordSafetyPushGrant(t, homeDir, "ship-argv", head)
+	if block, reason := evaluateGitArgvSafety(worktree, argv); block {
+		t.Fatalf("push with a matching grant blocked: %s", reason)
 	}
 }
 
@@ -99,13 +108,70 @@ func TestRunGitGuardRefusesBlockedArgv(t *testing.T) {
 	if exitCode != 1 {
 		t.Fatalf("exit code = %d, want 1 for blocked git mutation", exitCode)
 	}
-	// Assert the specific refusal reason, not just the marker: a bare
-	// "[git-fence]" check cannot tell a force-push denial apart from a
-	// no-binding denial, so it would still pass if the guard refused the
-	// force-push for the wrong reason (or refused any push whatsoever).
-	const wantReason = "default Ship authority permits only task-local branch, add, commit, and normal push"
+	const wantReason = "default Ship authority permits only task-local branch, add, commit, and granted push"
 	if !strings.Contains(stderr, "[git-fence] "+wantReason) {
 		t.Fatalf("stderr = %q, want [git-fence] %q", stderr, wantReason)
+	}
+}
+func TestRunGitGuardRefusesUngrantedPushAndExecsGrantedPush(t *testing.T) {
+	primary := initGitRepoForSafety(t, t.TempDir())
+	remote := filepath.Join(t.TempDir(), "remote.git")
+	if out, err := exec.Command("git", "init", "--bare", remote).CombinedOutput(); err != nil {
+		t.Fatalf("git init --bare %s: %v\n%s", remote, err, out)
+	}
+	worktree := filepath.Join(t.TempDir(), "wt")
+	runGitForSafety(t, primary, "worktree", "add", "--detach", worktree)
+	homeDir := bindSafetyWorktree(t, "ship-guard-push", primary, worktree)
+	t.Setenv("MUNSU_HOME", homeDir)
+	t.Setenv("MUNSU_TASK_ID", "ship-guard-push")
+	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-guard-push")
+	runGitForSafety(t, worktree, "remote", "add", "origin", remote)
+	runGitForSafety(t, worktree, "config", "remote.no-mistakes.url", remote)
+	branch := "refs/heads/mu/ship-guard-push"
+	runGitForSafety(t, worktree, "config", "remote.no-mistakes.push", "HEAD:"+branch)
+	t.Chdir(worktree)
+
+	head := gitOutputForSafety(t, worktree, "rev-parse", "HEAD")
+	for _, remoteName := range []string{"origin", "no-mistakes"} {
+		stdout, stderr, err := runGitGuardPushHelper(t, worktree, remoteName)
+		exitErr, exited := err.(*exec.ExitError)
+		if !exited || exitErr.ExitCode() != 1 || !strings.Contains(stderr, "no matching Human grant") || !strings.Contains(stderr, head) {
+			t.Fatalf("ungranted guard push to %s: exit=%v stdout=%q stderr=%q; want exit 1 and exact-head refusal", remoteName, err, stdout, stderr)
+		}
+	}
+	if refs := gitOutputForSafety(t, remote, "for-each-ref", "--format=%(refname)"); refs != "" {
+		t.Fatalf("remote refs after refused pushes = %q; guard reached real git", refs)
+	}
+
+	recordSafetyPushGrant(t, homeDir, "ship-guard-push", head)
+	for _, remoteName := range []string{"origin", "no-mistakes"} {
+		stdout, stderr, err := runGitGuardPushHelper(t, worktree, remoteName)
+		if err != nil {
+			t.Fatalf("guarded granted push to %s: %v\nstdout=%s\nstderr=%s", remoteName, err, stdout, stderr)
+		}
+	}
+	if got := gitOutputForSafety(t, remote, "rev-parse", branch); got != head {
+		t.Fatalf("remote task branch head = %s, want pushed head %s", got, head)
+	}
+}
+
+func runGitGuardPushHelper(t *testing.T, worktree, remoteName string) ([]byte, string, error) {
+	t.Helper()
+	child := exec.Command(os.Args[0], "-test.run=^TestRunGitGuardPushHelper$")
+	child.Env = append(os.Environ(), "MUNSU_GUARD_CHILD=1", "MUNSU_GIT_GUARD_PUSH_HELPER=1", "MUNSU_GIT_GUARD_PUSH_REMOTE="+remoteName)
+	child.Dir = worktree
+	var stderr bytes.Buffer
+	child.Stderr = &stderr
+	stdout, err := child.Output()
+	return stdout, stderr.String(), err
+}
+
+func TestRunGitGuardPushHelper(t *testing.T) {
+	if os.Getenv("MUNSU_GIT_GUARD_PUSH_HELPER") != "1" {
+		return
+	}
+	if err := runGitGuard([]string{"push", os.Getenv("MUNSU_GIT_GUARD_PUSH_REMOTE"), "HEAD:refs/heads/mu/ship-guard-push"}); err != nil {
+		t.Fatalf("git guard push: %v", err)
 	}
 }
 

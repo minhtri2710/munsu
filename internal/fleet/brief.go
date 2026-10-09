@@ -111,7 +111,7 @@ func shipBriefTemplate(id, repo, mode string, yolo bool) (string, error) {
 	switch mode {
 	case "direct-PR":
 		deliveryRules = `## Delivery
-	Commit the completed change, push the feature branch without -u (it writes git config, which is not yours to change), and open a PR directly against the default branch.
+	Commit the completed change. Get its full SHA with ` + "`git rev-parse HEAD`" + `, run ` + "`munsu report needs-decision \"push <40-hex-SHA>\"`" + ` with that exact value, and stop. Push the task branch and open a PR only after the General confirms the exact-head Human grant is recorded. Do not use ` + "`-u`" + ` or ` + "`--set-upstream`" + `; they write Git config, which is not yours to change.
 	Never run no-mistakes for this task. Never merge the PR.
 `
 	case "local-only":
@@ -126,7 +126,7 @@ func shipBriefTemplate(id, repo, mode string, yolo bool) (string, error) {
 	Follow ` + "`no-mistakes axi run --help`" + ` and the help lines in each AXI response.
 	Do not hand-edit findings while a run is active; the pipeline applies fixes.
 	Escalate ask-user findings through the task status protocol and answer gates with ` + "`no-mistakes axi respond`" + `; avoid ` + "`--yes`" + `.
-	After no-mistakes reports CI green, append ` + "`done: PR {url} checks green`" + ` and stop.
+	Commit the completed change. Get its full SHA with ` + "`git rev-parse HEAD`" + `, run ` + "`munsu report needs-decision \"push <40-hex-SHA>\"`" + ` with that exact value, and stop. After the General confirms the exact-head Human grant is recorded, start the no-mistakes run by pushing ` + "`git push no-mistakes HEAD:refs/heads/mu/" + id + "`" + `; after the pipeline reports CI green, append ` + "`done: PR {url} checks green`" + ` and stop.
 `
 	default:
 		return "", fmt.Errorf("ship brief for %s: unknown delivery mode %q", id, mode)

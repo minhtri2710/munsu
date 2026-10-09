@@ -20,11 +20,15 @@ func TestShipBriefTemplateNoMistakes(t *testing.T) {
 		"no-mistakes doctor",
 		"Delivery mode: no-mistakes",
 		"no-mistakes axi respond",
-		"CI green",
+		"after the pipeline reports CI green",
+		"munsu report needs-decision \"push <40-hex-SHA>\"",
+		"git push no-mistakes HEAD:refs/heads/mu/test-task-1",
+		"After the General confirms the exact-head Human grant is recorded, start the no-mistakes run",
+		"and stop",
 	}
 	for _, c := range checks {
 		if !strings.Contains(tmpl, c) {
-			t.Errorf("no-mistakes brief missing %q", c)
+			t.Errorf("no-mistakes brief missing %q in:\n%s", c, tmpl)
 		}
 	}
 	if strings.Contains(tmpl, "open a PR directly") {
@@ -50,8 +54,9 @@ func TestShipBriefTemplateDirectPR(t *testing.T) {
 	checks := []string{
 		"Delivery mode: direct-PR",
 		"commit",
-		"push the feature branch without -u",
-		"open a PR directly",
+		"munsu report needs-decision \"push <40-hex-SHA>\"",
+		"Push the task branch and open a PR only after the General confirms",
+		"Do not use `-u` or `--set-upstream`; they write Git config, which is not yours to change.",
 		"Never merge",
 	}
 	for _, c := range checks {
