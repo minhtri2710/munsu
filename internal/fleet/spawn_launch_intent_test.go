@@ -256,6 +256,7 @@ func runLaunchPhases(f *launchFixture, crashAfter string) error {
 			bound, err = r.bindWorktree()
 			return err
 		}},
+		{"stale-task-branch", r.refuseStaleTaskBranch},
 		{"prompt", func() error { return r.buildSoldierPrompt(bound) }},
 		{"probe-fence", func() error { return r.probeFence(bound) }},
 		{"manifest", r.prepareAndPersistLaunchManifest},
