@@ -1,6 +1,6 @@
 # 0022. Durable Per-Task Delivery Contract
 
-* **Status:** Accepted
+* **Status:** Accepted; amended by [ADR-0028](0028-named-ports-configured-tools-and-a-baseline-workflow.md): §1's initial mode is derived from configured tools, §2's fallback is retired, and §3's `--mode` re-scaffold is removed
 * **Date:** 2026-08-31
 * **Extends:** ADR-0008 (task-authority owns durable task truth), ADR-0016 (review-before-merge has no technical gate)
 * **Triggered by:** firstmate → munsu parity refresh, gap G5 (firstmate #1563, "explicit per-task delivery contract, refuses to guess")
