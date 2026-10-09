@@ -22,7 +22,10 @@ func (b *soldierEndpointBackend) SendKeys(string, string) error            { ret
 func (b *soldierEndpointBackend) Capture(string, int) (string, error)      { return "", nil }
 func (b *soldierEndpointBackend) Alive(string) bool                        { return b.alive }
 func (b *soldierEndpointBackend) Teardown(string) error                    { return nil }
-func (b *soldierEndpointBackend) AgentBusy(string) (bool, error)           { return b.busy, b.busyErr }
+func (b *soldierEndpointBackend) CheckAgentAlive(string) (bool, bool, error) {
+	return b.alive, b.alive && b.recognized, nil
+}
+func (b *soldierEndpointBackend) AgentBusy(string) (bool, error) { return b.busy, b.busyErr }
 func (b *soldierEndpointBackend) IsRecognizedAgent(string) (bool, string) {
 	return b.recognized, b.status
 }
@@ -37,6 +40,9 @@ func (b recognizedOnlyBackend) Alive(a string) bool                     { return
 func (b recognizedOnlyBackend) Teardown(a string) error                 { return b.base.Teardown(a) }
 func (b recognizedOnlyBackend) IsRecognizedAgent(a string) (bool, string) {
 	return b.base.IsRecognizedAgent(a)
+}
+func (b recognizedOnlyBackend) CheckAgentAlive(a string) (bool, bool, error) {
+	return b.base.CheckAgentAlive(a)
 }
 
 func TestSoldierEndpointsAllowsConfiguredBackendWhenMetaBackendMissing(t *testing.T) {
@@ -87,8 +93,8 @@ func TestSoldierEndpointsBusyRejectsUnknownRecognizedAgentStatus(t *testing.T) {
 	if busy {
 		t.Fatal("Busy() = true, want false for unknown status")
 	}
-	if err == nil || !strings.Contains(err.Error(), `endpoint status unknown: "mystery"`) {
-		t.Fatalf("Busy() error = %v, want unknown-status refusal", err)
+	if err == nil || err.Error() != `endpoint status unknown: "unknown"` {
+		t.Fatalf("Busy() error = %v, want exact unknown-activity refusal", err)
 	}
 }
 
@@ -96,16 +102,24 @@ func TestSoldierEndpointsRecognizedAgentOutcomes(t *testing.T) {
 	for _, tt := range []struct {
 		status                           string
 		alive, recognized, busy, wantErr bool
+		wantErrPrefix                    string
 	}{
-		{"working", true, true, true, false}, {"idle", true, true, false, false},
-		{"review-ready", true, true, false, false}, {"mystery", true, true, false, true},
-		{"", true, false, false, true}, {"", false, false, false, true},
+		{"working", true, true, true, false, ""},
+		{"idle", true, true, false, false, ""},
+		{"done", true, true, false, false, ""},
+		{" Done ", true, true, false, false, ""},
+		{"blocked", true, true, false, true, `endpoint status unknown: "blocked"`},
+		{"", true, false, false, true, "endpoint not alive:"},
+		{"", false, false, false, true, "endpoint not alive:"},
 	} {
 		bk := recognizedOnlyBackend{base: &soldierEndpointBackend{alive: tt.alive, recognized: tt.recognized, status: tt.status}}
 		endpoint := sessionSoldierEndpoints{resolve: func(string, map[string]string) (backend.Backend, string, error) { return bk, "custom", nil }}
 		got, err := endpoint.Busy("home", map[string]string{"window": "pane"})
 		if got != tt.busy || (err != nil) != tt.wantErr {
 			t.Fatalf("%+v: got=%v err=%v", tt, got, err)
+		}
+		if tt.wantErrPrefix != "" && (err == nil || !strings.HasPrefix(err.Error(), tt.wantErrPrefix)) {
+			t.Fatalf("%+v: error = %v, want prefix %q", tt, err, tt.wantErrPrefix)
 		}
 	}
 }
