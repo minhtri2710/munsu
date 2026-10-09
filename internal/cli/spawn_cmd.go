@@ -77,7 +77,14 @@ When inference fails, pass the project name explicitly or run 'munsu project add
 				HomeDir:     ctx.Home,
 				Endpoints:   newSpawnSessionEndpoints(),
 				Arm:         arm,
-				Authority:   taskAuthority,
+				ArmFunc: func(homeDir string) error {
+					result := ensureWatcher(homeDir, false)
+					if result.Status != "success" {
+						return fmt.Errorf("watch.ensure returned status %q state %q", result.Status, result.Data.State)
+					}
+					return nil
+				},
+				Authority: taskAuthority,
 			})
 			if err != nil {
 				return err
