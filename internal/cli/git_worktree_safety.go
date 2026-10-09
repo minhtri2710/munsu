@@ -412,9 +412,7 @@ func validateGitMutationAuthority(homeDir, taskID string, g gitCommandSafety, bi
 				return "no-mistakes push target unavailable: remote.no-mistakes.url is not configured"
 			}
 			if refspec == "" {
-				var err error
-				refspec, err = noMistakesPushRefspec(binding.Path, taskBranch)
-				if err != nil {
+				if err := validateNoMistakesPushMapping(binding.Path, taskBranch); err != nil {
 					return "no-mistakes push target unavailable: " + err.Error()
 				}
 			}
@@ -435,15 +433,15 @@ func validateGitMutationAuthority(homeDir, taskID string, g gitCommandSafety, bi
 	return "default Ship authority permits only task-local branch, add, commit, and granted push"
 }
 
-func noMistakesPushRefspec(worktree, taskBranch string) (string, error) {
+func validateNoMistakesPushMapping(worktree, taskBranch string) error {
 	configured, err := gitSafetyOutput(worktree, "config", "--get-all", "remote.no-mistakes.push")
 	if err != nil {
-		return "", fmt.Errorf("remote.no-mistakes.push must explicitly name the task branch")
+		return fmt.Errorf("remote.no-mistakes.push must explicitly name the task branch")
 	}
 	if strings.Contains(configured, "\n") || !pushRefspecAllowed(taskBranch, configured) {
-		return "", fmt.Errorf("remote.no-mistakes.push must name only the current task branch")
+		return fmt.Errorf("remote.no-mistakes.push must name only the current task branch")
 	}
-	return configured, nil
+	return nil
 }
 
 func pushedCommit(worktree string) (string, error) {
