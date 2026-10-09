@@ -7,10 +7,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
-type recognizedAgentBackend interface {
-	IsRecognizedAgent(string) (bool, string)
-}
-
 type sessionSoldierEndpoints struct {
 	resolve func(string, map[string]string) (backend.Backend, string, error)
 }
@@ -59,21 +55,18 @@ func (s sessionSoldierEndpoints) Busy(home string, meta map[string]string) (bool
 	if checker, ok := bk.(backend.BusyChecker); ok {
 		return checker.AgentBusy(meta["window"])
 	}
-	if herdr, ok := bk.(recognizedAgentBackend); ok {
-		recognized, status := herdr.IsRecognizedAgent(meta["window"])
-		if !recognized {
-			if !backend.ObserveEndpoint(bk, meta["window"], harnessProcessMatcher(meta["harness"])).Live() {
-				return false, fmt.Errorf("endpoint not alive")
-			}
-			return false, fmt.Errorf("endpoint status unknown: not a recognized agent")
+	if _, ok := bk.(backend.AgentActivityReader); ok {
+		observation := backend.ObserveEndpoint(bk, meta["window"], harnessProcessMatcher(meta["harness"]))
+		if observation.Lifecycle != backend.LifecycleAlive {
+			return false, fmt.Errorf("endpoint not alive: %s", observation.Detail)
 		}
-		switch status {
-		case "working":
+		switch observation.Activity {
+		case backend.ActivityBusy:
 			return true, nil
-		case "idle", "ready", "review-ready":
+		case backend.ActivityIdle:
 			return false, nil
 		default:
-			return false, fmt.Errorf("endpoint status unknown: %q", status)
+			return false, fmt.Errorf("endpoint status unknown: %q", observation.Activity.String())
 		}
 	}
 	return false, nil
