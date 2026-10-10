@@ -322,6 +322,9 @@ func TestSafetyCheckArgvLevelFenceEvasionDenied(t *testing.T) {
 		// gate-only argv: a foreign push option, options or --no-verify toward
 		// origin, and a sha refspec that is stale, abbreviated, or off-task.
 		"git push -o other.key no-mistakes HEAD",
+		"git push -oother.k no-mistakes HEAD",
+		"git push --push-option=other.k no-mistakes HEAD",
+		"git push origin " + head + ":refs/heads/mu/ship-evade",
 		"git push -o no-mistakes.k origin HEAD",
 		"git push --no-verify origin HEAD",
 		"git push no-mistakes " + other + ":refs/heads/mu/ship-evade",

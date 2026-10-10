@@ -779,7 +779,7 @@ func pushRefspecAllowed(taskBranch, refspec string) bool {
 // is the task branch's current head.
 func pushShaRefspecAllowed(taskBranch, taskHead, refspec string) bool {
 	sha, dest, ok := strings.Cut(refspec, ":")
-	return ok && len(sha) == 40 && sha == taskHead && dest == "refs/heads/"+taskBranch
+	return ok && sha == taskHead && dest == "refs/heads/"+taskBranch
 }
 
 // worktreeCommandWrites reports whether `git worktree <args>` may write. Only
