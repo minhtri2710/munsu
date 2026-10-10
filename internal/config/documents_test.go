@@ -19,19 +19,16 @@ func TestValidateBaseRejectsIndependentSchemaVersions(t *testing.T) {
 
 func TestResolveProjectConfigDistinctProjectsAndCaptainProfileFromBase(t *testing.T) {
 	base := validBase()
-	alpha, err := ResolveProject(base, validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{SoldierHarness: "claude", DispatchProfiles: []DispatchProfile{{Name: "alpha", Harness: "claude"}}}))
+	alpha, err := resolveBaseline(base, validFacts("alpha", "/alpha", ProjectOverlay{SoldierHarness: "claude", DispatchProfiles: []DispatchProfile{{Name: "alpha", Harness: "claude"}}}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	beta, err := ResolveProject(base, validFacts("beta", "/beta", "direct-pr", ProjectOverlay{SoldierHarness: "codex"}))
+	beta, err := resolveBaseline(base, validFacts("beta", "/beta", ProjectOverlay{SoldierHarness: "codex"}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if alpha.SoldierHarness != "claude" || beta.SoldierHarness != "codex" {
 		t.Fatalf("resolved harnesses = %q/%q", alpha.SoldierHarness, beta.SoldierHarness)
-	}
-	if alpha.DefaultMode != "direct-pr" || beta.DefaultMode != "direct-pr" {
-		t.Fatalf("project mode alias not resolved: %q/%q", alpha.DefaultMode, beta.DefaultMode)
 	}
 	// The resolved Captain profile is the fleet-default base.CaptainProfile
 	// for every project; there is no per-project override layer.
@@ -46,24 +43,12 @@ func TestResolveProjectConfigDistinctProjectsAndCaptainProfileFromBase(t *testin
 	}
 }
 
-func TestResolveProjectOverlayDefaultModeOverridesProjectModeAlias(t *testing.T) {
-	base := validBase()
-	facts := validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{DefaultMode: "no-mistakes"})
-	resolved, err := ResolveProject(base, facts)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resolved.DefaultMode != "no-mistakes" {
-		t.Fatalf("DefaultMode = %q, want overlay value", resolved.DefaultMode)
-	}
-}
-
 func TestResolveProjectConfigOverlayAppliesAndResolverIsImmutable(t *testing.T) {
 	base := validBase()
 	base.Config.TamperCheck = "base-floor --base <base>"
-	facts := validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{Model: "overlay-model", TamperCheck: "floor --base <base>", DispatchProfiles: []DispatchProfile{{Name: "alpha", Harness: "claude"}}})
+	facts := validFacts("alpha", "/alpha", ProjectOverlay{Model: "overlay-model", TamperCheck: "floor --base <base>", DispatchProfiles: []DispatchProfile{{Name: "alpha", Harness: "claude"}}})
 	before := facts.Overlay.DispatchProfiles[0].Harness
-	resolved, err := ResolveProject(base, facts)
+	resolved, err := resolveBaseline(base, facts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,24 +56,21 @@ func TestResolveProjectConfigOverlayAppliesAndResolverIsImmutable(t *testing.T) 
 	if facts.Overlay.DispatchProfiles[0].Harness != before {
 		t.Fatal("resolver mutated or shared dispatch profile storage")
 	}
-	if resolved.Model != "overlay-model" || resolved.TamperCheck != "floor --base <base>" || resolved.DefaultMode != "direct-pr" {
-		t.Fatalf("overlay values not applied: %+v", resolved)
-	}
 }
 
 func TestProjectDigestIsDeterministicAndTargeted(t *testing.T) {
 	base := validBase()
-	alpha := validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{})
-	beta := validFacts("beta", "/beta", "direct-pr", ProjectOverlay{})
-	a1, _ := ProjectDigest(base, alpha)
-	a2, _ := ProjectDigest(base, alpha)
-	b1, _ := ProjectDigest(base, beta)
+	alpha := validFacts("alpha", "/alpha", ProjectOverlay{})
+	beta := validFacts("beta", "/beta", ProjectOverlay{})
+	a1 := resolvedDigest(t, base, alpha)
+	a2 := resolvedDigest(t, base, alpha)
+	b1 := resolvedDigest(t, base, beta)
 	if a1 != a2 {
 		t.Fatalf("digest is not deterministic: %s != %s", a1, a2)
 	}
 	alpha.Overlay.Model = "changed"
-	a3, _ := ProjectDigest(base, alpha)
-	b2, _ := ProjectDigest(base, beta)
+	a3 := resolvedDigest(t, base, alpha)
+	b2 := resolvedDigest(t, base, beta)
 	if a1 == a3 {
 		t.Fatal("alpha digest did not change")
 	}
@@ -97,72 +79,55 @@ func TestProjectDigestIsDeterministicAndTargeted(t *testing.T) {
 	}
 	alpha.Overlay.Model = ""
 	alpha.Overlay.TamperCheck = "floor --base <base>"
-	a5, _ := ProjectDigest(base, alpha)
+	a5 := resolvedDigest(t, base, alpha)
 	if a1 == a5 {
 		t.Fatal("tamper-check did not change the project digest")
 	}
 	alpha.Overlay.TamperCheck = ""
 	base.Config.Model = "new-base"
-	a4, _ := ProjectDigest(base, alpha)
-	b3, _ := ProjectDigest(base, beta)
+	a4 := resolvedDigest(t, base, alpha)
+	b3 := resolvedDigest(t, base, beta)
 	if a1 == a4 || b1 == b3 {
 		t.Fatal("base change must change every project digest")
 	}
 	captainBase := base
 	captainBase.CaptainProfile.Model = "captain-only"
-	captainDigest, _ := ProjectDigest(captainBase, alpha)
+	captainDigest := resolvedDigest(t, captainBase, alpha)
 	if captainDigest != a4 {
 		t.Fatal("Captain profile entered project digest")
-	}
-	withOverlay := alpha
-	withOverlay.Overlay.DefaultMode = "no-mistakes"
-	withOverlayDigest, _ := ProjectDigest(base, withOverlay)
-	withMode := withOverlay
-	withMode.Mode = "direct-pr"
-	withModeDigest, _ := ProjectDigest(base, withMode)
-	if withOverlayDigest != withModeDigest {
-		t.Fatal("project mode overrode explicit overlay DefaultMode in digest")
 	}
 }
 
 func TestProjectDigestCoversFinalResolvedBackend(t *testing.T) {
 	base := validBase() // Backend: "tmux" fleet default
-	facts := validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{})
-	baseDigest, _ := ProjectDigest(base, facts)
+	facts := validFacts("alpha", "/alpha", ProjectOverlay{})
+	baseDigest := resolvedDigest(t, base, facts)
 
 	// A project overlay Backend that resolves to the same final value as the
 	// base Backend must not change the digest (identical final config).
-	sameFinal, _ := ProjectDigest(base, validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{Backend: "tmux"}))
+	sameFinal := resolvedDigest(t, base, validFacts("alpha", "/alpha", ProjectOverlay{Backend: "tmux"}))
 	if baseDigest != sameFinal {
 		t.Fatal("identical final resolved Backend produced a different digest")
 	}
 	// An overlay Backend changing the final value must change the digest.
-	overlayBackend, _ := ProjectDigest(base, validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{Backend: "herdr"}))
+	overlayBackend := resolvedDigest(t, base, validFacts("alpha", "/alpha", ProjectOverlay{Backend: "herdr"}))
 	if baseDigest == overlayBackend {
 		t.Fatal("overlay Backend change did not change the digest")
 	}
-	// An overlay change to another operation setting must also be bound.
-	overlayMode, _ := ProjectDigest(base, validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{DefaultMode: "local-only"}))
-	if baseDigest == overlayMode {
-		t.Fatal("overlay DefaultMode change did not change the digest")
-	}
-	resolved, err := ResolveProject(base, validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{Backend: "herdr"}))
+	resolved, err := resolveBaseline(base, validFacts("alpha", "/alpha", ProjectOverlay{Backend: "herdr"}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if resolved.Backend != "herdr" {
 		t.Fatalf("Backend = %q, want herdr", resolved.Backend)
 	}
-	if resolved.Digest != overlayBackend {
-		t.Fatalf("resolved digest %s does not match canonical digest payload %s", resolved.Digest, overlayBackend)
-	}
 }
 
 func TestResolveProjectBackendPrecedenceAndRequired(t *testing.T) {
 	base := validBase() // Backend: "tmux" fleet default
-	facts := validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{})
+	facts := validFacts("alpha", "/alpha", ProjectOverlay{})
 
-	baseOnly, err := ResolveProject(base, facts)
+	baseOnly, err := resolveBaseline(base, facts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +135,7 @@ func TestResolveProjectBackendPrecedenceAndRequired(t *testing.T) {
 		t.Fatalf("Backend = %q, want base default", baseOnly.Backend)
 	}
 
-	project, err := ResolveProject(base, validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{Backend: "herdr"}))
+	project, err := resolveBaseline(base, validFacts("alpha", "/alpha", ProjectOverlay{Backend: "herdr"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,17 +147,17 @@ func TestResolveProjectBackendPrecedenceAndRequired(t *testing.T) {
 	// never auto-detection or an env/PATH default.
 	noBackendBase := FleetBaseDocument{
 		SchemaVersion: FleetBaseSchemaVersion,
-		Config:        ProjectOverlay{SoldierHarness: "pi"},
+		Config:        FleetBaseConfig{SoldierHarness: "pi"},
 	}
-	if _, err := ResolveProject(noBackendBase, facts); err == nil || !strings.Contains(err.Error(), "backend") {
+	if _, err := resolveBaseline(noBackendBase, facts); err == nil || !strings.Contains(err.Error(), "backend") {
 		t.Fatalf("resolving with no Backend identity = %v, want typed validation failure", err)
 	}
 }
 
 func TestResolvedSnapshotIsFrozenAndReturnsDeepCopies(t *testing.T) {
 	base := validBase()
-	facts := validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{DispatchProfiles: []DispatchProfile{{Name: "alpha", Harness: "claude", Match: []string{"alpha"}, Use: []DispatchCandidate{{Harness: "claude"}}}}})
-	snapshot, err := NewResolvedSnapshot(base, facts)
+	facts := validFacts("alpha", "/alpha", ProjectOverlay{DispatchProfiles: []DispatchProfile{{Name: "alpha", Harness: "claude", Match: []string{"alpha"}, Use: []DispatchCandidate{{Harness: "claude"}}}}})
+	snapshot, err := NewResolvedSnapshotWithToolProbe(base, facts, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +175,7 @@ func TestResolvedSnapshotIsFrozenAndReturnsDeepCopies(t *testing.T) {
 	if snapshot.Config().Model == "new-on-disk" || snapshot.Config().Backend == "herdr" {
 		t.Fatal("existing snapshot observed later facts mutation")
 	}
-	newSnapshot, err := NewResolvedSnapshot(base, facts)
+	newSnapshot, err := NewResolvedSnapshotWithToolProbe(base, facts, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +211,7 @@ func TestFleetBaseRoundTripAndStrictDecode(t *testing.T) {
 func TestPublishedSnapshotRoundTripAndStrictValidation(t *testing.T) {
 	home := t.TempDir()
 	base := validBase()
-	resolved, err := ResolveProject(base, validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{}))
+	resolved, err := resolveBaseline(base, validFacts("alpha", "/alpha", ProjectOverlay{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +243,7 @@ func TestPublishedSnapshotRoundTripAndStrictValidation(t *testing.T) {
 func TestPublishedSnapshotStrictBackendRoundTripAndFailClosed(t *testing.T) {
 	home := t.TempDir()
 	base := validBase()
-	resolved, err := ResolveProject(base, validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{Backend: "herdr"}))
+	resolved, err := resolveBaseline(base, validFacts("alpha", "/alpha", ProjectOverlay{Backend: "herdr"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -390,10 +355,9 @@ func writeSnapshotConfig(t *testing.T, path string, root map[string]json.RawMess
 func validBase() FleetBaseDocument {
 	return FleetBaseDocument{
 		SchemaVersion: FleetBaseSchemaVersion,
-		Config: ProjectOverlay{
+		Config: FleetBaseConfig{
 			SoldierHarness: "pi",
 			Model:          "base-model",
-			DefaultMode:    "no-mistakes",
 			Backend:        "tmux",
 			DispatchProfiles: []DispatchProfile{
 				{Name: "base", Harness: "pi"},
@@ -403,11 +367,114 @@ func validBase() FleetBaseDocument {
 	}
 }
 
-func validFacts(name, path, mode string, overlay ProjectOverlay) ProjectFacts {
+func resolvedDigest(t *testing.T, base FleetBaseDocument, facts ProjectFacts) string {
+	t.Helper()
+	resolved, err := resolveBaseline(base, facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resolved.Digest
+}
+
+// resolveBaseline resolves a project whose review and forge tools are both
+// baseline, the state of an overlay with no tool entries.
+func resolveBaseline(base FleetBaseDocument, facts ProjectFacts) (ResolvedProjectConfig, error) {
+	return ResolveProjectWithSteps(base, facts, baselineStep(), baselineStep())
+}
+
+func validFacts(name, path string, overlay ProjectOverlay) ProjectFacts {
 	return ProjectFacts{
 		Name:    name,
 		Path:    path,
-		Mode:    mode,
 		Overlay: overlay,
+	}
+}
+
+func TestValidateProjectToolsRefusesUnsupportedEntries(t *testing.T) {
+	cases := []struct {
+		name    string
+		overlay ProjectOverlay
+		want    string
+	}{
+		{"unknown review adapter", ProjectOverlay{Review: &ToolEntry{Adapter: "bogus"}, Forge: &ToolEntry{Adapter: "github"}}, "review tool has unknown adapter \"bogus\""},
+		{"github forge with path", ProjectOverlay{Review: &ToolEntry{Adapter: "no-mistakes"}, Forge: &ToolEntry{Adapter: "github", Path: "/usr/bin/gh-axi"}}, "forge adapter github does not accept path or args"},
+		{"github forge with args", ProjectOverlay{Review: &ToolEntry{Adapter: "no-mistakes"}, Forge: &ToolEntry{Adapter: "github", Args: []string{"--x"}}}, "forge adapter github does not accept path or args"},
+		{"no-mistakes review without forge", ProjectOverlay{Review: &ToolEntry{Adapter: "no-mistakes"}}, "review adapter no-mistakes requires a configured forge tool"},
+		{"no-mistakes review with relative path", ProjectOverlay{Review: &ToolEntry{Adapter: "no-mistakes", Path: "no-mistakes"}, Forge: &ToolEntry{Adapter: "github"}}, "review adapter no-mistakes path must be absolute"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateProjectTools(tc.overlay)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("ValidateProjectTools() error = %v, want refusal containing %q", err, tc.want)
+			}
+		})
+	}
+	valid := ProjectOverlay{Review: &ToolEntry{Adapter: "no-mistakes"}, Forge: &ToolEntry{Adapter: "github"}}
+	if err := ValidateProjectTools(valid); err != nil {
+		t.Fatalf("ValidateProjectTools(no-mistakes + github) = %v, want nil", err)
+	}
+}
+
+// TestResolveRefusesMalformedConfiguredTools pins the refusals that keep a
+// configured tool from resolving outside the Fleet probe or from carrying a
+// step the snapshot cannot trust.
+func TestResolveRefusesMalformedConfiguredTools(t *testing.T) {
+	base := validBase()
+	facts := validFacts("alpha", "/alpha", ProjectOverlay{Review: &ToolEntry{Adapter: "no-mistakes"}, Forge: &ToolEntry{Adapter: "github"}})
+	bare := validFacts("alpha", "/alpha", ProjectOverlay{})
+	ready := ResolvedStep{Adapter: "no-mistakes", Path: "/bin/no-mistakes", ProbeState: "ready"}
+	absent := func(string, ToolEntry) ResolvedStep {
+		return ResolvedStep{Adapter: "no-mistakes", ProbeState: "absent", Reason: "not on PATH"}
+	}
+	cases := []struct {
+		name string
+		run  func() error
+		want string
+	}{
+		{"configured tool not Ready at probe", func() error {
+			_, err := ResolveProjectWithToolProbe(base, facts, absent)
+			return err
+		}, "review adapter no-mistakes probe absent"},
+		{"step not matching the overlay", func() error {
+			_, err := ResolveProjectWithSteps(base, bare, ready, baselineStep())
+			return err
+		}, "do not match the project overlay"},
+		{"baseline step carrying tool data", func() error {
+			_, err := ResolveProjectWithSteps(base, bare, ResolvedStep{Baseline: true, Adapter: "no-mistakes", ProbeState: "baseline"}, baselineStep())
+			return err
+		}, "baseline carries configured tool data"},
+		{"review adapter outside the review set", func() error {
+			_, err := ResolveProjectWithSteps(base, bare, ResolvedStep{Adapter: "github", Path: "/bin/gh-axi", ProbeState: "ready"}, baselineStep())
+			return err
+		}, "resolved review adapter github probe ready"},
+		{"relative executable path", func() error {
+			_, err := ResolveProjectWithSteps(base, bare, ResolvedStep{Adapter: "no-mistakes", Path: "no-mistakes", ProbeState: "ready"}, baselineStep())
+			return err
+		}, "requires an absolute executable path"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.run()
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want refusal containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestResolvedSnapshotWithStepsRefusesInvalidSteps pins the snapshot rebase
+// refusals: an empty snapshot, and a no-mistakes review without a forge step.
+func TestResolvedSnapshotWithStepsRefusesInvalidSteps(t *testing.T) {
+	snap, err := NewResolvedSnapshotWithToolProbe(validBase(), validFacts("alpha", "/alpha", ProjectOverlay{}), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready := ResolvedStep{Adapter: "no-mistakes", Path: "/bin/no-mistakes", ProbeState: "ready"}
+	if _, err := (ResolvedSnapshot{}).WithSteps(baselineStep(), baselineStep()); err == nil || !strings.Contains(err.Error(), "resolved snapshot is empty") {
+		t.Fatalf("WithSteps on an empty snapshot = %v, want an empty-snapshot refusal", err)
+	}
+	if _, err := snap.WithSteps(ready, baselineStep()); err == nil || !strings.Contains(err.Error(), "requires a configured forge tool") {
+		t.Fatalf("WithSteps(no-mistakes, baseline forge) = %v, want a forge refusal", err)
 	}
 }

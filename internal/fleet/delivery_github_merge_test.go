@@ -571,14 +571,14 @@ func TestGhAxiClientMergePRPinsTheHeadAndNeverForcesTheMerge(t *testing.T) {
 }
 
 func TestFetchGitHubProviderSnapshotRefusesAnInvalidURL(t *testing.T) {
-	if _, err := fetchGitHubProviderSnapshot("https://example.com/not/a/pull"); err == nil || !strings.Contains(err.Error(), "invalid GitHub URL") {
+	if _, err := fetchGitHubProviderSnapshot(githubForgeStep, "https://example.com/not/a/pull"); err == nil || !strings.Contains(err.Error(), "invalid GitHub URL") {
 		t.Fatalf("fetchGitHubProviderSnapshot error = %v, want the invalid-URL refusal", err)
 	}
 }
 
 func TestFetchGitHubProviderSnapshotRefusesWhenTheDeliveryCapabilityIsNotReady(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
-	if _, err := fetchGitHubProviderSnapshot("https://github.com/owner/repo/pull/1"); err == nil || !strings.Contains(err.Error(), "GitHub provider not available: delivery capability is") {
+	if _, err := fetchGitHubProviderSnapshot(githubForgeStep, "https://github.com/owner/repo/pull/1"); err == nil || !strings.Contains(err.Error(), "GitHub provider not available: forge adapter github probe absent: configured forge is not Ready") {
 		t.Fatalf("fetchGitHubProviderSnapshot error = %v, want the capability refusal", err)
 	}
 }

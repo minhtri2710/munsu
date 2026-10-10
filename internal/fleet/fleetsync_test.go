@@ -56,7 +56,7 @@ func TestSyncSeparatesSyncedAndStuck(t *testing.T) {
 		}
 		req := RegisterProjectRequest{
 			HomeID: r.HomeID(), ProjectID: id, Name: name, Path: "remote:" + name,
-			Mode: "fix", Precondition: preconditionOf(rev), Reason: "sync test",
+			Precondition: preconditionOf(rev), Reason: "sync test",
 		}
 		if _, err := r.RegisterProject(opFor(req), req); err != nil {
 			t.Fatalf("RegisterProject(%s): %v", name, err)

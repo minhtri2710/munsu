@@ -57,13 +57,18 @@ type GitHubDeliveryClient interface {
 var _ GitHubDeliveryClient = (*ghAxiClient)(nil)
 
 // ProbeGitHubDeliveryCapability reports whether GitHub delivery can run: the
-// GitHub read capability is Ready and gh, which performs the merge, is on PATH.
+// GitHub read capability is Ready, gh, which performs the merge, is on PATH,
+// and gh is authenticated. A gh or gh-axi binary on PATH is not evidence of
+// authentication, so the auth status is probed too.
 func ProbeGitHubDeliveryCapability() backend.State {
 	if s := ProbeGitHubCapability(); s != backend.Ready {
 		return s
 	}
 	if _, err := ghCLILookPath(); err != nil {
 		return backend.Absent
+	}
+	if _, err := ghCLI("auth", "status"); err != nil {
+		return backend.Failed
 	}
 	return backend.Ready
 }

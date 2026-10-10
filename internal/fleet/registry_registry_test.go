@@ -69,7 +69,6 @@ func mustRegisterProject(t *testing.T, r *Registry, name string) {
 		ProjectID:    mustProjectID(t, name),
 		Name:         name,
 		Path:         "/proj/" + name,
-		Mode:         "no-mistakes",
 		Precondition: preconditionOf(rev),
 		Reason:       "register",
 	}
@@ -127,7 +126,7 @@ func TestRegistryRegisterQuery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if proj.ID.Value() != "alpha" || proj.Name != "alpha" || proj.Path != "/proj/alpha" || proj.Mode != "no-mistakes" {
+	if proj.ID.Value() != "alpha" || proj.Name != "alpha" || proj.Path != "/proj/alpha" {
 		t.Fatalf("GetProject = %+v", proj)
 	}
 
@@ -334,7 +333,6 @@ func TestRegistryOperationReplay(t *testing.T) {
 		ProjectID:    mustProjectID(t, "alpha"),
 		Name:         "alpha",
 		Path:         "/proj/alpha",
-		Mode:         "no-mistakes",
 		Precondition: preconditionOf(0),
 		Reason:       "register",
 	}
@@ -450,7 +448,6 @@ func TestRegistryNaturalIdempotency(t *testing.T) {
 		ProjectID:    mustProjectID(t, "alpha"),
 		Name:         "alpha",
 		Path:         "/proj/alpha",
-		Mode:         "no-mistakes",
 		Precondition: preconditionOf(rev),
 		Reason:       "re-register",
 	}

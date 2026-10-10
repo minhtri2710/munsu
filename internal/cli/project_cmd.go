@@ -23,12 +23,10 @@ If path-or-url is a git URL (http://, https://, git@, ssh://),
 the repository is cloned into the projects directory first.`,
 		Args: ExactArgs(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			mode, _ := cmd.Flags().GetString("mode")
 			yolo, _ := cmd.Flags().GetBool("yolo")
-			return fleet.Add(ctx.Home, args[0], args[1], mode, yolo)
+			return fleet.Add(ctx.Home, args[0], args[1], yolo)
 		}),
 	}
-	addCmd.Flags().String("mode", "", "Delivery mode: no-mistakes, direct-PR or local-only")
 	addCmd.Flags().Bool("yolo", false, "Skip pre-flight checks")
 
 	listCmd := &cobra.Command{
@@ -52,7 +50,6 @@ the repository is cloned into the projects directory first.`,
 			for i, p := range projects {
 				entries[i] = ProjectEntry{
 					Name:        p.Name,
-					Mode:        p.Mode,
 					Yolo:        p.Yolo,
 					Description: p.Description,
 					Added:       p.Added,
@@ -80,7 +77,6 @@ the repository is cloned into the projects directory first.`,
 			}
 			entry := ProjectEntry{
 				Name:        p.Name,
-				Mode:        p.Mode,
 				Yolo:        p.Yolo,
 				Description: p.Description,
 				Added:       p.Added,
@@ -111,15 +107,19 @@ the repository is cloned into the projects directory first.`,
 
 	modeCmd := &cobra.Command{
 		Use:   "mode <name>",
-		Short: "Resolve delivery mode for a project",
+		Short: "Show the delivery mode derived from a project's configured tools",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			mode, yolo, err := fleet.Mode(ctx.Home, args[0])
+			p, err := fleet.Find(ctx.Home, args[0])
+			if err != nil {
+				return err
+			}
+			mode, _, err := fleet.ResolveBriefProject(ctx.Home, args[0], true)
 			if err != nil {
 				return err
 			}
 			msg := mode
-			if yolo {
+			if p.Yolo {
 				msg += " +yolo"
 			}
 			return writeContract(cmd, Response[MessageResult]{

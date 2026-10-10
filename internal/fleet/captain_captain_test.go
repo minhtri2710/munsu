@@ -263,7 +263,7 @@ func TestSeedWithParent_WritesDefaultCaptainCharter(t *testing.T) {
 		t.Fatal(err)
 	}
 	sm := filepath.Join(parent, "captains", "api")
-	// Explicit fixture Backend overlay: ResolveProject fails closed on empty.
+	// Explicit fixture Backend overlay: the config resolver fails closed on empty.
 	if err := config.StoreProjectOverlay(parent, "api", config.ProjectOverlay{Backend: "tmux"}); err != nil {
 		t.Fatal(err)
 	}
@@ -825,10 +825,10 @@ func TestConfigPush_Basic(t *testing.T) {
 
 	// Typed parent config: the inheritable surface is the resolved project
 	// config (soldier harness + dispatch profiles) published as a snapshot.
-	// Explicit fixture Backend literal: ResolveProject fails closed on empty.
+	// Explicit fixture Backend literal: the config resolver fails closed on empty.
 	storeTestDocuments(t, parent, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config: config.ProjectOverlay{
+		Config: config.FleetBaseConfig{
 			SoldierHarness: "pi",
 			Backend:        "tmux",
 			DispatchProfiles: []config.DispatchProfile{
@@ -836,7 +836,7 @@ func TestConfigPush_Basic(t *testing.T) {
 			},
 		},
 	}, []testProjectRecord{
-		{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
+		{Name: "test-sm", Path: smHome},
 	}, nil)
 	if err := Register(parent, "test-sm", smHome, "", "test-sm"); err != nil {
 		t.Fatal(err)
@@ -859,6 +859,46 @@ func TestConfigPush_Basic(t *testing.T) {
 	}
 }
 
+// TestConfigPushPublishesConfiguredForgeStep proves a project with a configured
+// forge publishes the resolved step, as spawn captures it.
+func TestConfigPushPublishesConfiguredForgeStep(t *testing.T) {
+	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
+	smHome := filepath.Join(parent, "captains", "test-sm")
+	os.MkdirAll(smHome, 0755)
+	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
+	home.SeedCaptainProvenance(smHome, "test-sm")
+
+	old := glabRunnerFor
+	t.Cleanup(func() { glabRunnerFor = old })
+	glabRunnerFor = fixedGlabRunner(readyRunner())
+
+	storeTestDocuments(t, parent, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config:        config.FleetBaseConfig{SoldierHarness: "pi", Backend: "tmux"},
+	}, []testProjectRecord{
+		{Name: "test-sm", Path: smHome, Config: config.ProjectOverlay{
+			Forge: &config.ToolEntry{Adapter: "gitlab", Path: "/fake/glab"},
+		}},
+	}, nil)
+	if err := Register(parent, "test-sm", smHome, "", "test-sm"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := configPush(parent, smHome); err != nil {
+		t.Fatalf("configPush with a configured forge: %v", err)
+	}
+	snapshot, err := config.LoadPublishedSnapshot(smHome)
+	if err != nil {
+		t.Fatalf("resolved snapshot was not published: %v", err)
+	}
+	if got := snapshot.Config().ForgeStep; got.Adapter != "gitlab" || got.ProbeState != "ready" {
+		t.Fatalf("published forge step = %+v, want the Ready gitlab step", got)
+	}
+}
+
 // TestConfigPush_MirrorDeletions proves that when the parent removes an
 // inherited setting, the captain's next push no longer carries it. The typed
 // snapshot is regenerated from current parent state, so a removed harness is
@@ -873,10 +913,10 @@ func TestConfigPush_MirrorDeletions(t *testing.T) {
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
 	home.SeedCaptainProvenance(smHome, "test-sm")
 
-	// Explicit fixture Backend literal: ResolveProject fails closed on an
+	// Explicit fixture Backend literal: resolution fails closed on an
 	// empty backend identity.
 	storeBase := func(harness string) error {
-		overlay := config.ProjectOverlay{Backend: "tmux"}
+		overlay := config.FleetBaseConfig{Backend: "tmux"}
 		if harness != "" {
 			overlay.SoldierHarness = harness
 		}
@@ -888,7 +928,7 @@ func TestConfigPush_MirrorDeletions(t *testing.T) {
 	storeTestDocuments(t, parent, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
 	}, []testProjectRecord{
-		{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
+		{Name: "test-sm", Path: smHome},
 	}, nil)
 	if err := storeBase("pi"); err != nil {
 		t.Fatal(err)
@@ -938,12 +978,12 @@ func TestConfigPush_OnlyInheritableDeleted(t *testing.T) {
 	// Captain-local (non-inherited) config must survive config push.
 	os.WriteFile(filepath.Join(smHome, "config", "model"), []byte("some-model\n"), 0644)
 
-	// Explicit fixture Backend literal: ResolveProject fails closed on empty.
+	// Explicit fixture Backend literal: the config resolver fails closed on empty.
 	storeTestDocuments(t, parent, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{SoldierHarness: "pi", Backend: "tmux"},
+		Config:        config.FleetBaseConfig{SoldierHarness: "pi", Backend: "tmux"},
 	}, []testProjectRecord{
-		{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
+		{Name: "test-sm", Path: smHome},
 	}, nil)
 	if err := Register(parent, "test-sm", smHome, "", "test-sm"); err != nil {
 		t.Fatal(err)
@@ -983,13 +1023,13 @@ func TestConfigPush_CaptainShared(t *testing.T) {
 
 	storeTestDocuments(t, parent, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{SoldierHarness: "pi", Backend: "tmux"},
+		Config:        config.FleetBaseConfig{SoldierHarness: "pi", Backend: "tmux"},
 		CaptainProfile: config.CaptainProfile{
 			Harness: "pi",
 			Model:   "claude-sonnet",
 		},
 	}, []testProjectRecord{
-		{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
+		{Name: "test-sm", Path: smHome},
 	}, nil)
 	if err := Register(parent, "test-sm", smHome, "", "test-sm"); err != nil {
 		t.Fatal(err)
@@ -1021,19 +1061,19 @@ func TestConfigPush_CaptainSharedMirrorDeletion(t *testing.T) {
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
 	home.SeedCaptainProvenance(smHome, "test-sm")
 
-	// Explicit fixture Backend literal: ResolveProject fails closed on an
+	// Explicit fixture Backend literal: resolution fails closed on an
 	// empty backend identity.
 	storeBase := func(profile config.CaptainProfile) error {
 		return config.StoreFleetBase(parent, config.FleetBaseDocument{
 			SchemaVersion:  config.FleetBaseSchemaVersion,
-			Config:         config.ProjectOverlay{SoldierHarness: "pi", Backend: "tmux"},
+			Config:         config.FleetBaseConfig{SoldierHarness: "pi", Backend: "tmux"},
 			CaptainProfile: profile,
 		})
 	}
 	storeTestDocuments(t, parent, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
 	}, []testProjectRecord{
-		{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
+		{Name: "test-sm", Path: smHome},
 	}, nil)
 	if err := storeBase(config.CaptainProfile{Harness: "pi", Model: "claude-sonnet"}); err != nil {
 		t.Fatal(err)
@@ -1114,12 +1154,12 @@ func TestConfigPush_IdempotentPreservesMtime(t *testing.T) {
 	if err := home.SeedCaptainProvenance(smHome, "test-sm"); err != nil {
 		t.Fatal(err)
 	}
-	// Explicit fixture Backend literal: ResolveProject fails closed on empty.
+	// Explicit fixture Backend literal: the config resolver fails closed on empty.
 	storeTestDocuments(t, parent, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{SoldierHarness: "pi", Backend: "tmux"},
+		Config:        config.FleetBaseConfig{SoldierHarness: "pi", Backend: "tmux"},
 	}, []testProjectRecord{
-		{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
+		{Name: "test-sm", Path: smHome},
 	}, nil)
 	if err := Register(parent, "test-sm", smHome, "", "test-sm"); err != nil {
 		t.Fatal(err)
@@ -1158,13 +1198,13 @@ func TestConfigPush_ProjectsRegistry(t *testing.T) {
 	// Typed project registry on the General home: configPush resolves and
 	// publishes the captain's project as the inherited config snapshot.
 	repo := t.TempDir()
-	// Explicit fixture Backend literal: ResolveProject fails closed on empty.
+	// Explicit fixture Backend literal: the config resolver fails closed on empty.
 	storeTestDocuments(t, parent, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{Backend: "tmux"},
+		Config:        config.FleetBaseConfig{Backend: "tmux"},
 	}, []testProjectRecord{
-		{Name: "munsu", Path: repo, Mode: "no-mistakes"},
-		{Name: "toy", Path: "/tmp/toy", Mode: "no-mistakes"},
+		{Name: "munsu", Path: repo},
+		{Name: "toy", Path: "/tmp/toy"},
 	}, nil)
 	if err := Register(parent, "test-sm", smHome, "captain", "munsu"); err != nil {
 		t.Fatal(err)
@@ -1211,7 +1251,7 @@ func TestSeedWithParent_InheritsProjectsAndConfig(t *testing.T) {
 	}
 
 	sm := filepath.Join(parent, "captains", "ops")
-	// Explicit fixture Backend overlay: ResolveProject fails closed on empty.
+	// Explicit fixture Backend overlay: the config resolver fails closed on empty.
 	if err := config.StoreProjectOverlay(parent, "ops", config.ProjectOverlay{Backend: "tmux"}); err != nil {
 		t.Fatal(err)
 	}
@@ -1245,7 +1285,7 @@ func TestSeedWithParent_WritesParentHomeConfig(t *testing.T) {
 	os.MkdirAll(filepath.Join(parent, "data"), 0755)
 
 	sm := filepath.Join(parent, "captains", "ops")
-	// Explicit fixture Backend overlay: ResolveProject fails closed on empty.
+	// Explicit fixture Backend overlay: the config resolver fails closed on empty.
 	if err := config.StoreProjectOverlay(parent, "ops", config.ProjectOverlay{Backend: "tmux"}); err != nil {
 		t.Fatal(err)
 	}
@@ -2226,10 +2266,10 @@ func TestConverge_ValidMarkersWithConfigPush(t *testing.T) {
 
 	storeTestDocuments(t, parent, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{SoldierHarness: "pi", Backend: "tmux"},
+		Config:        config.FleetBaseConfig{SoldierHarness: "pi", Backend: "tmux"},
 	}, []testProjectRecord{
-		{Name: "sm-alpha", Path: sm1, Mode: "no-mistakes"},
-		{Name: "sm-beta", Path: sm2, Mode: "no-mistakes"},
+		{Name: "sm-alpha", Path: sm1},
+		{Name: "sm-beta", Path: sm2},
 	}, []testCaptainRecord{
 		{ID: "sm-alpha", Home: sm1, Project: "sm-alpha"},
 		{ID: "sm-beta", Home: sm2, Project: "sm-beta"},
@@ -2324,7 +2364,7 @@ func TestSeedWithParent_Registers(t *testing.T) {
 		t.Fatal(err)
 	}
 	sm := filepath.Join(parent, "captains", "ops")
-	// Explicit fixture Backend overlay: ResolveProject fails closed on empty.
+	// Explicit fixture Backend overlay: the config resolver fails closed on empty.
 	if err := config.StoreProjectOverlay(parent, "ops", config.ProjectOverlay{Backend: "tmux"}); err != nil {
 		t.Fatal(err)
 	}
@@ -2498,7 +2538,7 @@ func TestEnsureCaptainPiExtensions_InstallsBeforeLaunchArgs(t *testing.T) {
 		t.Fatal(err)
 	}
 	sm := filepath.Join(parent, "captains", "ext-sm")
-	// Explicit fixture Backend overlay: ResolveProject fails closed on empty.
+	// Explicit fixture Backend overlay: the config resolver fails closed on empty.
 	if err := config.StoreProjectOverlay(parent, "ext-sm", config.ProjectOverlay{Backend: "tmux"}); err != nil {
 		t.Fatal(err)
 	}
@@ -3108,13 +3148,13 @@ func TestConfigPush_RefusesTrackedDestination(t *testing.T) {
 	homePath := filepath.Join(parent, "captains", "test-captain")
 	// Typed parent config binds the captain to a project so the seed's
 	// PropagateConfig publishes a resolved snapshot into the worktree.
-	// Explicit fixture Backend literal: ResolveProject fails closed on empty.
+	// Explicit fixture Backend literal: the config resolver fails closed on empty.
 	storeTestDocuments(t, parent, config.FleetBaseDocument{
 		SchemaVersion:  config.FleetBaseSchemaVersion,
-		Config:         config.ProjectOverlay{SoldierHarness: "claude", Backend: "tmux"},
+		Config:         config.FleetBaseConfig{SoldierHarness: "claude", Backend: "tmux"},
 		CaptainProfile: config.CaptainProfile{Harness: "pi"},
 	}, []testProjectRecord{
-		{Name: "test-captain", Path: project, Mode: "no-mistakes"},
+		{Name: "test-captain", Path: project},
 	}, []testCaptainRecord{
 		{ID: "test-captain", Home: homePath, Project: "test-captain"},
 	})
@@ -3310,13 +3350,13 @@ func TestManagedCleanState_AGENTSMD_PreservedAfterMultipleConfigPush(t *testing.
 	homePath := filepath.Join(parent, "captains", "test-captain")
 	// Typed parent config binds the captain to a project so each configPush
 	// publishes a resolved snapshot into the worktree.
-	// Explicit fixture Backend literal: ResolveProject fails closed on empty.
+	// Explicit fixture Backend literal: the config resolver fails closed on empty.
 	storeTestDocuments(t, parent, config.FleetBaseDocument{
 		SchemaVersion:  config.FleetBaseSchemaVersion,
-		Config:         config.ProjectOverlay{SoldierHarness: "pi", Backend: "tmux"},
+		Config:         config.FleetBaseConfig{SoldierHarness: "pi", Backend: "tmux"},
 		CaptainProfile: config.CaptainProfile{Harness: "pi"},
 	}, []testProjectRecord{
-		{Name: "test-captain", Path: project, Mode: "no-mistakes"},
+		{Name: "test-captain", Path: project},
 	}, []testCaptainRecord{
 		{ID: "test-captain", Home: homePath, Project: "test-captain"},
 	})
@@ -3331,7 +3371,7 @@ func TestManagedCleanState_AGENTSMD_PreservedAfterMultipleConfigPush(t *testing.
 		content := fmt.Sprintf("pi-%d", i)
 		if err := config.StoreFleetBase(parent, config.FleetBaseDocument{
 			SchemaVersion: config.FleetBaseSchemaVersion,
-			Config:        config.ProjectOverlay{SoldierHarness: content, Backend: "tmux"},
+			Config:        config.FleetBaseConfig{SoldierHarness: content, Backend: "tmux"},
 		}); err != nil {
 			t.Fatalf("StoreFleetBase cycle %d: %v", i, err)
 		}

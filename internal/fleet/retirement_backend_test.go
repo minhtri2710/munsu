@@ -11,6 +11,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	mhome "github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 type fakeTeardown struct {
@@ -29,8 +30,8 @@ func (f fakeTeardown) Probe(string, map[string]string) (RetirementEndpointStatus
 	return RetirementEndpointStatus{Lifecycle: lifecycle, Responsiveness: Responsive, Freshness: FreshnessCurrent, Activity: ActivityUnknown, Source: SourceProbe}, f.probeErr
 }
 func (f fakeTeardown) Dispose(string, map[string]string, DisposeRequest) error { return f.disposeErr }
-func (f fakeTeardown) QueryMergeStatus(ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
-	return QueryDeliveryMergeStatus(ident)
+func (f fakeTeardown) QueryMergeStatus(forge taskauthority.DeliveryStep, ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
+	return QueryDeliveryMergeStatus(forge, ident)
 }
 func (f fakeTeardown) ReturnWorktree(_, worktreePath string) error {
 	if f.returnWorktreeFn != nil {

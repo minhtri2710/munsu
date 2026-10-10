@@ -89,7 +89,6 @@ type RegisteredProject struct {
 	ID           domain.ProjectID
 	Name         string
 	Path         string
-	Mode         string
 	Yolo         bool
 	RegisteredAt int64
 }
@@ -144,7 +143,6 @@ type projectRecord struct {
 	ID            string `json:"id"`
 	Name          string `json:"name"`
 	Path          string `json:"path"`
-	Mode          string `json:"mode,omitempty"`
 	Yolo          bool   `json:"yolo,omitempty"`
 	RegisteredAt  int64  `json:"registered_at_unix"`
 }
@@ -532,7 +530,6 @@ func projectFromRecord(rec projectRecord) RegisteredProject {
 		ID:           id,
 		Name:         rec.Name,
 		Path:         rec.Path,
-		Mode:         rec.Mode,
 		Yolo:         rec.Yolo,
 		RegisteredAt: rec.RegisteredAt,
 	}

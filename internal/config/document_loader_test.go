@@ -7,38 +7,6 @@ import (
 	"testing"
 )
 
-func TestFleetBaseLoaderRejectsInvalidRecords(t *testing.T) {
-	base := validBase()
-	base.Config = ProjectOverlay{RequireNoMistakes: &[]bool{true}[0]}
-	for _, tc := range []struct {
-		name  string
-		path  string
-		value any
-		load  func(string) error
-		want  string
-	}{
-		{name: "base", path: BaseDocumentPath, value: base, load: func(home string) error { _, err := LoadFleetBase(home); return err }, want: ""},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			home := t.TempDir()
-			data, err := marshalDocument(tc.value)
-			if err != nil {
-				t.Fatal(err)
-			}
-			path := filepath.Join(home, tc.path)
-			if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(path, data, 0600); err != nil {
-				t.Fatal(err)
-			}
-			if err := tc.load(home); err != nil {
-				t.Fatalf("load error = %v, want nil", err)
-			}
-		})
-	}
-}
-
 func TestFleetBaseLoaderIsStrict(t *testing.T) {
 	base := validBase()
 	cases := []struct {

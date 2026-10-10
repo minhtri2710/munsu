@@ -56,31 +56,6 @@ var ghCLILookPath = func() (string, error) {
 	return exec.LookPath("gh")
 }
 
-// GitHubClientForState returns the appropriate GitHubClient or an error
-// based on the capability state. Fails closed on Absent/Failed/Unsupported.
-func GitHubClientForState(s backend.State) (GitHubClient, error) {
-	switch s {
-	case backend.Ready:
-		return &ghAxiClient{}, nil
-	case backend.Absent:
-		return nil, fmt.Errorf("GitHub capability absent: gh-axi not found on PATH")
-	case backend.Unsupported:
-		return nil, fmt.Errorf("GitHub capability unsupported: gh-axi is not available on this platform")
-	case backend.Failed:
-		return nil, fmt.Errorf("GitHub capability failed: gh-axi encountered an error")
-	default:
-		return nil, fmt.Errorf("GitHub capability in unknown state: %v", s)
-	}
-}
-
-// DefaultGitHubClient probes the current environment and returns a client
-// if gh-axi is Ready, or an error if it is Absent/Failed/Unsupported.
-var DefaultGitHubClient = defaultGitHubClientImpl
-
-func defaultGitHubClientImpl() (GitHubClient, error) {
-	return GitHubClientForState(ProbeGitHubCapability())
-}
-
 // ghAxiAPI runs one gh-axi api invocation and returns stdout. GitHub
 // identity capture routes through gh-axi; there is no raw gh fallback.
 func ghAxiAPI(args ...string) ([]byte, error) {

@@ -29,7 +29,7 @@ func TestVerifyProviderMergeabilityRefusesDeniedObservation(t *testing.T) {
 }
 
 func TestDeliveryProviderFor_UnknownProviderRefuses(t *testing.T) {
-	_, err := deliveryProviderFor(domain.DeliveryIdentity{Provider: "unknown"})
+	_, err := deliveryProviderFor(githubForgeStep, domain.DeliveryIdentity{Provider: "unknown"})
 	if err == nil || !strings.Contains(err.Error(), "unsupported delivery provider") {
 		t.Fatalf("deliveryProviderFor error = %v, want unknown-provider refusal", err)
 	}
@@ -42,7 +42,7 @@ func TestDeliveryProviderFor_UnknownProviderRefuses(t *testing.T) {
 func TestDeliverRefusesGitHubWithoutDeliveryCapabilityBeforeJournal(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	taskID := "t1"
-	mustWorkingDeliveryTask(t, c, taskID)
+	mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 	oldAxi := ghAxiLookPath
 	t.Cleanup(func() { ghAxiLookPath = oldAxi })
 	ghAxiLookPath = func() (string, error) { return "", errors.New("gh-axi not installed") }
@@ -50,8 +50,8 @@ func TestDeliverRefusesGitHubWithoutDeliveryCapabilityBeforeJournal(t *testing.T
 	req.Identity.Provider = "github"
 	req.Identity.URL = "https://github.com/minhtri2710/munsu/pull/42"
 
-	if _, err := Deliver(homeDir, taskID, req); err == nil || !strings.Contains(err.Error(), "GitHub delivery capability is") {
-		t.Fatalf("Deliver err = %v, want GitHub delivery capability refusal", err)
+	if _, err := Deliver(homeDir, taskID, req); err == nil || !strings.Contains(err.Error(), "configured forge is not Ready") {
+		t.Fatalf("Deliver err = %v, want configured forge refusal", err)
 	}
 	if files := listDeliveryJournalFiles(t, homeDir); len(files) != 0 {
 		t.Fatalf("journal records = %v, want none", files)
@@ -68,7 +68,7 @@ func TestDeliverRefusesGitHubWithoutDeliveryCapabilityBeforeJournal(t *testing.T
 func TestDeliverJournalIntentPrecedesAuthorizationAndMutation(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	taskID := "t1"
-	mustWorkingDeliveryTask(t, c, taskID)
+	mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 	provider := installScriptedProviderFor(t, "open-then-merged")
 
 	result, err := Deliver(homeDir, taskID, deliverRequest())
@@ -129,7 +129,7 @@ func TestDeliverJournalIntentPrecedesAuthorizationAndMutation(t *testing.T) {
 func TestDeliverAuthorizationPinsExactRequestDigests(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	taskID := "t1"
-	mustWorkingDeliveryTask(t, c, taskID)
+	mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 	installScriptedProviderFor(t, "open-then-merged")
 
 	if _, err := Deliver(homeDir, taskID, deliverRequest()); err != nil {
@@ -178,7 +178,7 @@ func TestDeliverAuthorizationPinsExactRequestDigests(t *testing.T) {
 func TestDeliverCurrencyCheckImmediatelyBeforeMutation(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	taskID := "t1"
-	mustWorkingDeliveryTask(t, c, taskID)
+	mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 	provider := installScriptedProviderFor(t, "open-then-merged")
 
 	currencyAtMerge := make([]bool, 0, 1)
@@ -233,7 +233,7 @@ func TestDeliverMergedAndClosedRequireNoMutation(t *testing.T) {
 		t.Run(script, func(t *testing.T) {
 			c, homeDir := newFleetCanonical(t)
 			taskID := "t1"
-			mustWorkingDeliveryTask(t, c, taskID)
+			mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 			provider := installScriptedProviderFor(t, script)
 			result, err := Deliver(homeDir, taskID, deliverRequest())
 			if err != nil {
@@ -261,7 +261,7 @@ func TestDeliverMergedIdentityMismatchFailsClosed(t *testing.T) {
 		t.Run(obs.HeadSHA+obs.BaseRef, func(t *testing.T) {
 			c, homeDir := newFleetCanonical(t)
 			taskID := "t1"
-			mustWorkingDeliveryTask(t, c, taskID)
+			mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 			provider := newFakeDeliveryProvider().script(obs)
 			installDeliveryProviderFor(t, provider)
 			result, err := Deliver(homeDir, taskID, deliverRequest())
@@ -278,7 +278,7 @@ func TestDeliverMergedIdentityMismatchFailsClosed(t *testing.T) {
 func TestDeliverRetryableReleasesAuthorizationForRetryCycle(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	taskID := "t1"
-	mustWorkingDeliveryTask(t, c, taskID)
+	mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 	installScriptedProviderFor(t, "open") // open after merge attempt -> retryable
 
 	result, err := Deliver(homeDir, taskID, deliverRequest())
@@ -307,11 +307,11 @@ func TestDeliverRetryableReleasesAuthorizationForRetryCycle(t *testing.T) {
 func TestDeliverUnsupportedCapabilityFailsBeforeMutation(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	taskID := "t1"
-	mustWorkingDeliveryTask(t, c, taskID)
+	mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 
 	old := deliveryProviderFor
 	t.Cleanup(func() { deliveryProviderFor = old })
-	deliveryProviderFor = func(domain.DeliveryIdentity) (DeliveryProvider, error) {
+	deliveryProviderFor = func(taskauthority.DeliveryStep, domain.DeliveryIdentity) (DeliveryProvider, error) {
 		return nil, fmt.Errorf("GitHub delivery capability is absent (gh-axi must be Ready); no fallback execution route")
 	}
 
@@ -466,7 +466,7 @@ func TestDeliverFailClosedBeforeMutation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			c, homeDir := newFleetCanonical(t)
 			taskID := "t1"
-			mustWorkingDeliveryTask(t, c, taskID)
+			mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 			provider := installScriptedProviderFor(t, "open-then-merged")
 
 			// Mutate the canonical state at the authorized boundary, i.e.
@@ -510,7 +510,7 @@ func TestDeliverFailClosedBeforeMutation(t *testing.T) {
 func TestDeliverNoMetaSubstitutionAuthorizesDelivery(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	taskID := "t1"
-	mustWorkingDeliveryTask(t, c, taskID)
+	mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 	// A fully populated .meta claims a PR that was never committed
 	// canonically.
 	if err := home.WriteMeta(homeDir, taskID, map[string]string{

@@ -600,7 +600,7 @@ func newRunFixture(t *testing.T, taskID string) *runFixture {
 	repoPath := initRepoForSpawnBinding(t, t.TempDir())
 	storeTestDocuments(t, homeDir, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{Backend: "tmux", SoldierHarness: "pi", Model: "gpt-5"},
+		Config:        config.FleetBaseConfig{Backend: "tmux", SoldierHarness: "pi", Model: "gpt-5"},
 	}, []testProjectRecord{{Name: "test-proj", Path: repoPath}}, nil)
 	auth := canonicalAtHome(t, homeDir)
 	canonicalCreateTask(t, auth, taskID, "ship", "test-proj")
@@ -620,7 +620,7 @@ func newRunFixture(t *testing.T, taskID string) *runFixture {
 	executing := &executingEndpointCapabilities{inner: endpoints, runCommand: scriptRunCommand(t)}
 	f := &launchFixture{t: t, auth: auth, homeDir: homeDir, repoPath: repoPath, taskID: taskID, endpoints: endpoints}
 	return &runFixture{launchFixture: f, exec: executing, counter: counter, run: func() (string, error) {
-		return NewRunner(Args{ID: taskID, ProjectName: "test-proj", Mode: "local-only", HomeDir: homeDir, Endpoints: executing, Authority: auth}).Run()
+		return NewRunner(Args{ID: taskID, ProjectName: "test-proj", HomeDir: homeDir, Endpoints: executing, Authority: auth}).Run()
 	}}
 }
 

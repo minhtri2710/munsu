@@ -121,7 +121,7 @@ func TestRun_BackendDiagnostics_PersistedFleetBaseBackend(t *testing.T) {
 	home := t.TempDir()
 	if err := config.StoreFleetBase(home, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{Backend: "tmux"},
+		Config:        config.FleetBaseConfig{Backend: "tmux"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestRun_BackendDiagnostics_PersistedPublishedSnapshotWins(t *testing.T) {
 	// fleet base document backend.
 	if err := config.StoreFleetBase(home, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{Backend: "tmux"},
+		Config:        config.FleetBaseConfig{Backend: "tmux"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -233,47 +233,6 @@ func setDirMtime(t *testing.T, dir string, age time.Duration) {
 	if err := os.Chtimes(dir, at, at); err != nil {
 		t.Fatal(err)
 	}
-}
-
-// TestRun_RequireNoMistakesDiagnosticFromTypedBase verifies the bootstrap
-// REQUIRE_NO_MISTAKES diagnostic reads the typed fleet base document, and that
-// a legacy flat config file alone does not produce it.
-func TestRun_RequireNoMistakesDiagnosticFromTypedBase(t *testing.T) {
-	t.Run("typed base requireNoMistakes=true", func(t *testing.T) {
-		home := t.TempDir()
-		if err := config.StoreFleetBase(home, config.FleetBaseDocument{
-			SchemaVersion: config.FleetBaseSchemaVersion,
-			Config:        config.ProjectOverlay{RequireNoMistakes: &[]bool{true}[0]},
-		}); err != nil {
-			t.Fatal(err)
-		}
-
-		result, err := Run(home, false, nil, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		assertConfigContains(t, result.Configs, "REQUIRE_NO_MISTAKES: strict")
-	})
-
-	t.Run("legacy flat file alone does not gate", func(t *testing.T) {
-		home := t.TempDir()
-		if err := os.MkdirAll(filepath.Join(home, "config"), 0755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(home, "config", "require-no-mistakes"), []byte("true\n"), 0644); err != nil {
-			t.Fatal(err)
-		}
-
-		result, err := Run(home, false, nil, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, c := range result.Configs {
-			if c.Key == "REQUIRE_NO_MISTAKES" {
-				t.Fatalf("legacy flat file produced REQUIRE_NO_MISTAKES diagnostic: %+v", c)
-			}
-		}
-	})
 }
 
 func TestGCOrphanDataDirs_AbortedCleanupKeepsBrief(t *testing.T) {

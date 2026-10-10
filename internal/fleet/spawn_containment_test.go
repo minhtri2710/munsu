@@ -2,13 +2,10 @@ package fleet
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
-
-	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // TestNoMistakesYAML_DisableProjectSettingsIsTrue asserts that the repository's
@@ -30,74 +27,5 @@ func TestNoMistakesYAML_DisableProjectSettingsIsTrue(t *testing.T) {
 
 	if !strings.Contains(string(data), "disable_project_settings: true") {
 		t.Errorf(".no-mistakes.yaml must preserve disable_project_settings: true; current content:\n%s", string(data))
-	}
-}
-
-// TestEnsureDeliveryModeRunnable_AbsentBinary tests explicit mode fails on absent binary.
-func TestEnsureDeliveryModeRunnable_AbsentBinary(t *testing.T) {
-	t.Setenv("PATH", t.TempDir())
-	err := EnsureDeliveryModeRunnable("no-mistakes")
-	if err == nil {
-		t.Fatal("expected error for absent binary")
-	}
-	if !strings.Contains(err.Error(), "requires the no-mistakes binary") {
-		t.Errorf("expected binary guidance, got: %v", err)
-	}
-}
-
-// TestEnsureDeliveryModeRunnable_UnsupportedVersion tests explicit mode fails on old version.
-func TestEnsureDeliveryModeRunnable_UnsupportedVersion(t *testing.T) {
-	tmpDir := createFakeNoMistakesVersion(t, "0.5.0")
-	testutil.PrependPath(t, tmpDir)
-
-	err := EnsureDeliveryModeRunnable("no-mistakes")
-	if err == nil {
-		t.Fatal("expected error for unsupported version")
-	}
-	// Accept either unsupported (version too old) or failed (axi surface missing)
-	if !strings.Contains(err.Error(), "compatibility check failed") && !strings.Contains(err.Error(), "unsupported") && !strings.Contains(err.Error(), "compat") {
-		t.Errorf("expected compatibility error, got: %v", err)
-	}
-}
-
-// TestEnsureDeliveryModeRunnable_Ready verifies that the real binary is accepted.
-func TestEnsureDeliveryModeRunnable_Ready(t *testing.T) {
-	if _, err := exec.LookPath("no-mistakes"); err != nil {
-		t.Skip("no-mistakes not on PATH")
-	}
-	if err := EnsureDeliveryModeRunnable("no-mistakes"); err != nil {
-		t.Errorf("expected nil for ready binary, got: %v", err)
-	}
-}
-
-// TestNoMistakesProbe_AutoFallbackNeverErrors verifies that auto mode
-// (no explicit/typed selection) never errors — it falls back gracefully.
-func TestNoMistakesProbe_AutoFallbackNeverErrors(t *testing.T) {
-	// Absent binary: should return direct-PR without error
-	t.Setenv("PATH", t.TempDir())
-	mode, err := ResolveDeliveryMode("", "", false)
-	if err != nil {
-		t.Fatalf("auto should not error on absent binary, got: %v", err)
-	}
-	if mode != "direct-PR" {
-		t.Errorf("auto absent binary should give direct-PR, got %q", mode)
-	}
-}
-
-// TestNoMistakesProbe_AutoFallbackOnIncompatible is already in the other test file.
-// This just adds a specific Preflight-level check.
-func TestPreflight_NoMistakes_FailedProbe(t *testing.T) {
-	tmpDir := t.TempDir()
-	binPath := filepath.Join(tmpDir, "no-mistakes")
-	testutil.WriteFakeExecutable(t, binPath, "#!/bin/sh\nexit 1\n")
-	testutil.PrependPath(t, tmpDir)
-
-	// Preflight should see the binary on PATH but the probe will fail
-	result, err := Preflight("no-mistakes", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Feasible {
-		t.Error("expected preflight to be not feasible for broken binary")
 	}
 }

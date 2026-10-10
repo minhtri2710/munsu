@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
@@ -180,25 +179,18 @@ func (e *DeliveryFailClosedError) Error() string {
 }
 
 // deliveryProviderFor resolves the narrow typed delivery capability for the
-// identity's provider. Absent, failed, or unsupported capabilities fail
-// closed with no fallback or alternate execution route. It is a variable so
-// focused tests can substitute a recorded fake; the production resolver
-// probes the real typed capabilities.
-var deliveryProviderFor = func(ident domain.DeliveryIdentity) (DeliveryProvider, error) {
-	switch ident.Provider {
-	case "github":
-		if st := ProbeGitHubDeliveryCapability(); st != backend.Ready {
-			return nil, fmt.Errorf("GitHub delivery capability is %s (gh-axi and gh must be Ready); no fallback execution route", st)
-		}
-		return &githubDeliveryProvider{client: &ghAxiClient{}}, nil
-	case "gitlab":
-		if st := ProbeGitLabCapability(); st != backend.Ready {
-			return nil, fmt.Errorf("GitLab delivery capability is %s (glab must be Ready); no fallback execution route", st)
-		}
-		return &gitlabDeliveryProvider{client: &glabClient{runner: defaultGlabRunner}}, nil
-	default:
-		return nil, fmt.Errorf("unsupported delivery provider %q", ident.Provider)
+// identity's provider from the task's captured forge step. Absent, failed, or
+// unsupported capabilities fail closed with no fallback or alternate execution
+// route. It is a variable so focused tests can substitute a recorded fake.
+var deliveryProviderFor = func(step taskauthority.DeliveryStep, ident domain.DeliveryIdentity) (DeliveryProvider, error) {
+	forge, err := forgeClientForIdentity(step, ident)
+	if err != nil {
+		return nil, err
 	}
+	if forge.github != nil {
+		return &githubDeliveryProvider{client: forge.github}, nil
+	}
+	return &gitlabDeliveryProvider{client: forge.gitlab}, nil
 }
 
 // Deliver executes one Fleet-owned journaled delivery operation over the
@@ -220,7 +212,11 @@ func Deliver(homeDir, taskID string, req DeliverRequest) (*DeliverResult, error)
 	// Capability probe fails closed BEFORE any journal intent: an absent,
 	// failed, or unsupported provider capability never writes a journal and
 	// never authorizes a mutation.
-	if _, err := deliveryProviderFor(req.Identity); err != nil {
+	forgeStep, err := taskForgeStep(homeDir, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("deliver %s: %w", taskID, err)
+	}
+	if _, err := deliveryProviderFor(forgeStep, req.Identity); err != nil {
 		return nil, err
 	}
 
@@ -453,7 +449,11 @@ func resumeDeliveryJournal(h *home.Home, lk *home.Lock, c *taskauthority.Canonic
 		if err := verifyDeliveryCurrency(c, journal); err != nil {
 			return failClosedDelivery(h, lk, c, journal, err)
 		}
-		provider, err := deliveryProviderFor(journal.Identity)
+		forgeStep, err := capturedForgeStep(c, journal.TaskID)
+		if err != nil {
+			return failClosedDelivery(h, lk, c, journal, err)
+		}
+		provider, err := deliveryProviderFor(forgeStep, journal.Identity)
 		if err != nil {
 			return failClosedDelivery(h, lk, c, journal, err)
 		}
@@ -504,7 +504,11 @@ func resumeDeliveryJournal(h *home.Home, lk *home.Lock, c *taskauthority.Canonic
 	// NEVER repeated for a journal that was already durable at mutating;
 	// recovery observes remote truth and classifies it.
 	if journal.Stage == deliveryStageMutating {
-		provider, err := deliveryProviderFor(journal.Identity)
+		forgeStep, err := capturedForgeStep(c, journal.TaskID)
+		if err != nil {
+			return nil, err
+		}
+		provider, err := deliveryProviderFor(forgeStep, journal.Identity)
 		if err != nil {
 			return nil, err
 		}

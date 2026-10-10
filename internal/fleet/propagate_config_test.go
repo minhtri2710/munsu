@@ -88,7 +88,7 @@ func TestPropagateConfig_TypedSnapshotsTargetOwningCaptain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	base.Config.DefaultMode = "local-only"
+	base.Config.TamperCheck = "floor --base <base>"
 	if err := config.StoreFleetBase(parent, base); err != nil {
 		t.Fatal(err)
 	}
@@ -203,9 +203,9 @@ func TestPropagateConfig_TypedSnapshotDurableBeforeNotificationAndRetryIsIdempot
 
 func writeTypedPropagationDocuments(t *testing.T, parent, alphaHome, betaHome string) {
 	t.Helper()
-	// Backend is an explicit fixture literal ("tmux"): ResolveProject during
+	// Backend is an explicit fixture literal ("tmux"): resolution during
 	// PropagateConfig fails closed on an empty backend identity.
-	base := config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion, Config: config.ProjectOverlay{SoldierHarness: "pi", Model: "base-model", DefaultMode: "direct-pr", Backend: "tmux"}}
+	base := config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion, Config: config.FleetBaseConfig{SoldierHarness: "pi", Model: "base-model", Backend: "tmux"}}
 	if err := config.StoreFleetBase(parent, base); err != nil {
 		t.Fatal(err)
 	}
@@ -578,17 +578,17 @@ func TestPropagateConfig_MultipleInheritableProps(t *testing.T) {
 	captainHome := seedCaptainForTest(t, parent, "test-sm")
 
 	// Set up parent with typed config containing inheritable properties.
-	// Backend is an explicit fixture literal ("tmux"): ResolveProject during
+	// Backend is an explicit fixture literal ("tmux"): resolution during
 	// PropagateConfig fails closed on an empty backend identity.
 	base := config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config: config.ProjectOverlay{
+		Config: config.FleetBaseConfig{
 			SoldierHarness: "pi",
 			Backend:        "tmux",
 		},
 	}
 	storeTestDocuments(t, parent, base, []testProjectRecord{
-		{Name: "test-sm", Path: parent, Mode: "no-mistakes"},
+		{Name: "test-sm", Path: parent},
 	}, []testCaptainRecord{
 		{ID: "test-sm", Home: captainHome, Project: "test-sm"},
 	})

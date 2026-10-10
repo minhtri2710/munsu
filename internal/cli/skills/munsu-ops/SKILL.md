@@ -41,7 +41,7 @@ Determine the task kind (ship vs scout), identify the project from the registry,
 - `munsu brief <id> <repo> [--scout]` — scaffold the soldier brief.
 - Fill in the `{TASK}` placeholder in `data/<id>/brief.md`.
 - For a ship brief, replace the `{TEST_IMPACT}` placeholder with the test-impact map: for each path the task will change, the existing tests that exercise it, found by code search (`semble` or `zg`).
-- `munsu spawn <id> [<project>] [--mode no-mistakes|direct-PR|local-only]` — launch the soldier; project is inferred from the current directory when omitted.
+- `munsu spawn <id> [<project>]` — launch the soldier; project is inferred from the current directory when omitted. Delivery mode comes from that project's configured review and forge steps.
 
 **Completion:** Meta exists, endpoint is alive (verify with `munsu peek <id>` or `munsu soldier-state <id>`).
 
@@ -76,9 +76,9 @@ munsu writes the test-quality rules into the briefs and charters itself; never c
 
 ### 6. Deliver
 
-Delivery mode is set at spawn time (`--mode`). Act according to mode:
+Delivery mode is derived from the project's configured review and forge steps. Act according to the resolved mode:
 
-- **no-mistakes** (default): The Soldier pushes its committed task branch to the gate remote and starts the pipeline. When it notifies completion, verify the PR is open and checks are green, then use the existing merge-approval process; after merge run `munsu task done <id>`.
+- **no-mistakes**: The Soldier pushes its committed task branch to the gate remote and starts the pipeline. When it notifies completion, verify the PR is open and checks are green, then use the existing merge-approval process; after merge run `munsu task done <id>`.
 - **direct-PR**: The Soldier pushes its committed task branch and opens the PR. Then `munsu delivery review-diff <id>` to review the branch and `munsu delivery pr-merge <id> <pr-url>` once approved. `munsu delivery merge-status <id>` reports whether it landed; after it lands, run `munsu task done <id>`.
 - **local-only**: munsu registers no local merge command; land the branch outside munsu, then close the task with `munsu task done <id>`.
 

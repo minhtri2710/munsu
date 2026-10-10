@@ -9,24 +9,18 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/backend"
+	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
-func TestGitLabClientForStateUnknownRefuses(t *testing.T) {
-	_, err := GitLabClientForState(backend.State(99))
-	if err == nil || !strings.Contains(err.Error(), "unknown state") {
-		t.Fatalf("GitLabClientForState error = %v, want unknown-state refusal", err)
-	}
-}
-
 func TestDeliveryProviderFor_GitLabCapabilityAbsentRefuses(t *testing.T) {
-	old := defaultGlabRunner
-	t.Cleanup(func() { defaultGlabRunner = old })
-	defaultGlabRunner = &fakeGlabRunner{lookPathErr: errors.New("glab not found")}
+	old := glabRunnerFor
+	t.Cleanup(func() { glabRunnerFor = old })
+	glabRunnerFor = fixedGlabRunner(&fakeGlabRunner{lookPathErr: errors.New("glab not found")})
 
-	_, err := deliveryProviderFor(domain.DeliveryIdentity{Provider: "gitlab"})
-	if err == nil || !strings.Contains(err.Error(), "glab must be Ready") {
+	_, err := deliveryProviderFor(gitlabForgeStep, domain.DeliveryIdentity{Provider: "gitlab"})
+	if err == nil || !strings.Contains(err.Error(), "configured forge is not Ready") {
 		t.Fatalf("deliveryProviderFor error = %v, want absent GitLab capability refusal", err)
 	}
 }
@@ -170,52 +164,6 @@ func TestProbeGlabCapability_AuthFailure(t *testing.T) {
 	state := probeGlabCapability(runner)
 	if state != backend.Failed {
 		t.Errorf("expected Failed, got %v", state)
-	}
-}
-
-// --- GitLabClientForState tests ---
-
-func TestGitLabClientForState_AbsentFailsClosed(t *testing.T) {
-	_, err := GitLabClientForState(backend.Absent)
-	if err == nil {
-		t.Fatal("expected error for Absent state")
-	}
-	if !strings.Contains(err.Error(), "glab not found") {
-		t.Errorf("expected 'glab not found' error, got: %v", err)
-	}
-}
-
-func TestGitLabClientForState_FailedFailsClosed(t *testing.T) {
-	_, err := GitLabClientForState(backend.Failed)
-	if err == nil {
-		t.Fatal("expected error for Failed state")
-	}
-	if !strings.Contains(err.Error(), "capability failed") {
-		t.Errorf("expected 'capability failed' error, got: %v", err)
-	}
-}
-
-func TestGitLabClientForState_UnsupportedFailsClosed(t *testing.T) {
-	_, err := GitLabClientForState(backend.Unsupported)
-	if err == nil {
-		t.Fatal("expected error for Unsupported state")
-	}
-	if !strings.Contains(err.Error(), "capability unsupported") {
-		t.Errorf("expected 'capability unsupported' error, got: %v", err)
-	}
-}
-
-func TestGitLabClientForState_ReadyReturnsClient(t *testing.T) {
-	client, err := GitLabClientForState(backend.Ready)
-	if err != nil {
-		t.Fatalf("unexpected error for Ready: %v", err)
-	}
-	if client == nil {
-		t.Fatal("expected non-nil client for Ready")
-	}
-	_, ok := client.(*glabClient)
-	if !ok {
-		t.Errorf("expected *glabClient, got %T", client)
 	}
 }
 
@@ -366,9 +314,9 @@ func TestNormalizeGlabState_Empty(t *testing.T) {
 // --- Delivery merge status via fake runner ---
 
 func TestQueryDeliveryMergeStatus_GitLab_Ready_Open(t *testing.T) {
-	old := defaultGlabRunner
-	defaultGlabRunner = readyRunner()
-	defer func() { defaultGlabRunner = old }()
+	old := glabRunnerFor
+	glabRunnerFor = fixedGlabRunner(readyRunner())
+	defer func() { glabRunnerFor = old }()
 
 	ident := &domain.DeliveryIdentity{
 		Provider: "gitlab",
@@ -377,7 +325,7 @@ func TestQueryDeliveryMergeStatus_GitLab_Ready_Open(t *testing.T) {
 		Number:   42,
 		URL:      "https://gitlab.com/owner/project/-/merge_requests/42",
 	}
-	status, err := QueryDeliveryMergeStatus(ident)
+	status, err := QueryDeliveryMergeStatus(gitlabForgeStep, ident)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -393,9 +341,9 @@ func TestQueryDeliveryMergeStatus_GitLab_Ready_Open(t *testing.T) {
 }
 
 func TestQueryDeliveryMergeStatus_GitLab_Ready_Merged(t *testing.T) {
-	oldRunner := defaultGlabRunner
-	defaultGlabRunner = mergedRunner()
-	defer func() { defaultGlabRunner = oldRunner }()
+	oldRunner := glabRunnerFor
+	glabRunnerFor = fixedGlabRunner(mergedRunner())
+	defer func() { glabRunnerFor = oldRunner }()
 
 	ident := &domain.DeliveryIdentity{
 		Provider: "gitlab",
@@ -404,7 +352,7 @@ func TestQueryDeliveryMergeStatus_GitLab_Ready_Merged(t *testing.T) {
 		Number:   42,
 		URL:      "https://gitlab.com/owner/project/-/merge_requests/42",
 	}
-	status, err := QueryDeliveryMergeStatus(ident)
+	status, err := QueryDeliveryMergeStatus(gitlabForgeStep, ident)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -420,9 +368,9 @@ func TestQueryDeliveryMergeStatus_GitLab_Ready_Merged(t *testing.T) {
 }
 
 func TestQueryDeliveryMergeStatus_GitLab_Ready_Closed(t *testing.T) {
-	oldRunner := defaultGlabRunner
-	defaultGlabRunner = closedRunner()
-	defer func() { defaultGlabRunner = oldRunner }()
+	oldRunner := glabRunnerFor
+	glabRunnerFor = fixedGlabRunner(closedRunner())
+	defer func() { glabRunnerFor = oldRunner }()
 
 	ident := &domain.DeliveryIdentity{
 		Provider: "gitlab",
@@ -431,7 +379,7 @@ func TestQueryDeliveryMergeStatus_GitLab_Ready_Closed(t *testing.T) {
 		Number:   42,
 		URL:      "https://gitlab.com/owner/project/-/merge_requests/42",
 	}
-	status, err := QueryDeliveryMergeStatus(ident)
+	status, err := QueryDeliveryMergeStatus(gitlabForgeStep, ident)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -449,64 +397,36 @@ func TestQueryDeliveryMergeStatus_GitLab_Ready_Closed(t *testing.T) {
 // --- Fallback policy tests ---
 
 func TestQueryDeliveryMergeStatus_GitLab_FailedFailsClosed(t *testing.T) {
-	oldRunner := defaultGlabRunner
-	defaultGlabRunner = failedVersionRunner()
-	defer func() { defaultGlabRunner = oldRunner }()
+	oldRunner := glabRunnerFor
+	glabRunnerFor = fixedGlabRunner(failedVersionRunner())
+	defer func() { glabRunnerFor = oldRunner }()
 
 	ident := &domain.DeliveryIdentity{
 		Provider: "gitlab",
 		URL:      "https://gitlab.com/owner/project/-/merge_requests/42",
 	}
-	_, err := QueryDeliveryMergeStatus(ident)
-	if err == nil || !strings.Contains(err.Error(), "GitLab capability failed") {
-		t.Fatalf("err = %v, want the GitLab capability failed refusal", err)
+	_, err := QueryDeliveryMergeStatus(gitlabForgeStep, ident)
+	if err == nil || !strings.Contains(err.Error(), "configured forge is not Ready") {
+		t.Fatalf("err = %v, want the configured forge refusal", err)
 	}
 }
 
 func TestQueryDeliveryMergeStatus_GitLab_AbsentFailsClosed(t *testing.T) {
-	oldRunner := defaultGlabRunner
-	defaultGlabRunner = &fakeGlabRunner{lookPathErr: errors.New("not found")}
-	defer func() { defaultGlabRunner = oldRunner }()
+	oldRunner := glabRunnerFor
+	glabRunnerFor = fixedGlabRunner(&fakeGlabRunner{lookPathErr: errors.New("not found")})
+	defer func() { glabRunnerFor = oldRunner }()
 
 	ident := &domain.DeliveryIdentity{
 		Provider: "gitlab",
 		URL:      "https://gitlab.com/owner/project/-/merge_requests/42",
 	}
-	_, err := QueryDeliveryMergeStatus(ident)
+	_, err := QueryDeliveryMergeStatus(gitlabForgeStep, ident)
 	if err == nil {
 		t.Fatal("expected error when glab is absent")
 	}
 }
 
 // --- GitHub delegation regression ---
-
-func TestQueryDeliveryMergeStatus_GitHub_Delegates(t *testing.T) {
-	// GitHub URL should route through QueryPRMergeStatus.
-	// Use a mock to verify delegation.
-	saved := QueryPRMergeStatus
-	QueryPRMergeStatus = func(ghURL domain.GHURL) (*domain.PRMergeStatus, error) {
-		if ghURL.Owner != "minhtri2710" || ghURL.Repo != "munsu" || ghURL.Num != 42 {
-			t.Errorf("unexpected ghURL: %+v", ghURL)
-		}
-		return &domain.PRMergeStatus{State: "OPEN", Merged: false, Closed: false, HeadSHA: "abc123"}, nil
-	}
-	defer func() { QueryPRMergeStatus = saved }()
-
-	ident := &domain.DeliveryIdentity{
-		Provider: "github",
-		Owner:    "minhtri2710",
-		Repo:     "munsu",
-		Number:   42,
-		URL:      "https://github.com/minhtri2710/munsu/pull/42",
-	}
-	status, err := QueryDeliveryMergeStatus(ident)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if status.State != "OPEN" {
-		t.Errorf("State: got %q, want OPEN", status.State)
-	}
-}
 
 // --- domain.ParseProviderURL tests ---
 
@@ -671,39 +591,6 @@ func TestIdentityFromMeta_RejectsProviderURLMismatch(t *testing.T) {
 }
 
 // --- GitLab capability chain tests ---
-
-func TestGitLabCapabilityChain_NoSilentFallback(t *testing.T) {
-	states := []backend.State{
-		backend.Absent,
-		backend.Failed,
-		backend.Unsupported,
-	}
-	for _, s := range states {
-		s := s
-		t.Run(s.String(), func(t *testing.T) {
-			t.Parallel()
-			client, err := GitLabClientForState(s)
-			if err == nil {
-				t.Fatalf("expected error for %s, got client %T", s, client)
-			}
-			if !strings.Contains(err.Error(), "capability") &&
-				!strings.Contains(err.Error(), "glab") {
-				t.Errorf("error must mention capability or glab, got: %v", err)
-			}
-			if _, ok := client.(*glabClient); ok {
-				t.Errorf("non-Ready state %s must not yield glabClient", s)
-			}
-		})
-	}
-}
-
-func TestProbeGitLabCapability_Deterministic(t *testing.T) {
-	state := ProbeGitLabCapability()
-	state2 := ProbeGitLabCapability()
-	if state != state2 {
-		t.Error("ProbeGitLabCapability is not deterministic")
-	}
-}
 
 // --- Preserved GitHub behavior regression ---
 
@@ -1023,7 +910,7 @@ func containsArg(args []string, want string) bool {
 func TestDeliverGitLabOpenMRMergesThroughPinnedAPI(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	taskID := "t-gitlab-open"
-	mustWorkingDeliveryTask(t, c, taskID)
+	mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitLabForge)
 	request := deliverRequest()
 	request.Identity.Provider = "gitlab"
 	request.Identity.Owner = "owner"
@@ -1053,7 +940,9 @@ func TestDeliverGitLabOpenMRMergesThroughPinnedAPI(t *testing.T) {
 	}}
 	provider := &gitlabDeliveryProvider{client: &glabClient{runner: runner}}
 	old := deliveryProviderFor
-	deliveryProviderFor = func(domain.DeliveryIdentity) (DeliveryProvider, error) { return provider, nil }
+	deliveryProviderFor = func(taskauthority.DeliveryStep, domain.DeliveryIdentity) (DeliveryProvider, error) {
+		return provider, nil
+	}
 	t.Cleanup(func() { deliveryProviderFor = old })
 
 	result, err := Deliver(homeDir, taskID, request)
@@ -1140,7 +1029,7 @@ func (p *recordingDeliveryProvider) Merge(ident domain.DeliveryIdentity, request
 func TestDeliverGitLabRefusesStaleObservedHeadBeforeMerge(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	taskID := "t-gitlab-stale"
-	mustWorkingDeliveryTask(t, c, taskID)
+	mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitLabForge)
 	staleSHA := sampleSHA[:len(sampleSHA)-1] + "0"
 	request := deliverRequest()
 	request.Identity.Provider = "gitlab"
@@ -1165,7 +1054,9 @@ func TestDeliverGitLabRefusesStaleObservedHeadBeforeMerge(t *testing.T) {
 	inner := &gitlabDeliveryProvider{client: &glabClient{runner: runner}}
 	provider := &recordingDeliveryProvider{DeliveryProvider: inner}
 	old := deliveryProviderFor
-	deliveryProviderFor = func(domain.DeliveryIdentity) (DeliveryProvider, error) { return provider, nil }
+	deliveryProviderFor = func(taskauthority.DeliveryStep, domain.DeliveryIdentity) (DeliveryProvider, error) {
+		return provider, nil
+	}
 	t.Cleanup(func() { deliveryProviderFor = old })
 
 	result, err := Deliver(homeDir, taskID, request)
@@ -1183,7 +1074,7 @@ func TestDeliverGitLabRefusesStaleObservedHeadBeforeMerge(t *testing.T) {
 func TestDeliverGitLabOpenMRRefusesNonMergeable(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	taskID := "t-gitlab-blocked"
-	mustWorkingDeliveryTask(t, c, taskID)
+	mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitLabForge)
 	request := deliverRequest()
 	request.Identity.Provider = "gitlab"
 	request.Identity.Owner = "owner"
@@ -1202,7 +1093,9 @@ func TestDeliverGitLabOpenMRRefusesNonMergeable(t *testing.T) {
 	}}
 	provider := &gitlabDeliveryProvider{client: &glabClient{runner: runner}}
 	old := deliveryProviderFor
-	deliveryProviderFor = func(domain.DeliveryIdentity) (DeliveryProvider, error) { return provider, nil }
+	deliveryProviderFor = func(taskauthority.DeliveryStep, domain.DeliveryIdentity) (DeliveryProvider, error) {
+		return provider, nil
+	}
 	t.Cleanup(func() { deliveryProviderFor = old })
 
 	result, err := Deliver(homeDir, taskID, request)
@@ -1219,7 +1112,7 @@ func TestDeliverGitLabOpenMRRefusesNonMergeable(t *testing.T) {
 func TestDeliverGitLabOpenMRRefusesChangesRequested(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	taskID := "t-gitlab-objection"
-	mustWorkingDeliveryTask(t, c, taskID)
+	mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitLabForge)
 	request := deliverRequest()
 	request.Identity.Provider = "gitlab"
 	request.Identity.Owner = "owner"
@@ -1238,7 +1131,9 @@ func TestDeliverGitLabOpenMRRefusesChangesRequested(t *testing.T) {
 	}}
 	provider := &gitlabDeliveryProvider{client: &glabClient{runner: runner}}
 	old := deliveryProviderFor
-	deliveryProviderFor = func(domain.DeliveryIdentity) (DeliveryProvider, error) { return provider, nil }
+	deliveryProviderFor = func(taskauthority.DeliveryStep, domain.DeliveryIdentity) (DeliveryProvider, error) {
+		return provider, nil
+	}
 	t.Cleanup(func() { deliveryProviderFor = old })
 
 	result, err := Deliver(homeDir, taskID, request)
@@ -1269,5 +1164,29 @@ func TestGlabClientChangesRequestedRefusals(t *testing.T) {
 				t.Fatalf("ChangesRequested = %v, %v; want a refusal containing %q", got, err, tc.want)
 			}
 		})
+	}
+}
+
+// TestForgeClientFor_GitLabUsesCapturedStepRunner pins the forge client seam:
+// the gitlab client's glab runner is built from the captured step's own path
+// and args, not from a PATH lookup.
+func TestForgeClientFor_GitLabUsesCapturedStepRunner(t *testing.T) {
+	old := glabRunnerFor
+	t.Cleanup(func() { glabRunnerFor = old })
+	var got config.ToolEntry
+	glabRunnerFor = func(entry config.ToolEntry) GlabRunner {
+		got = entry
+		return readyRunner()
+	}
+	step := taskauthority.DeliveryStep{Adapter: "gitlab", Path: "/opt/glab/bin/glab", Args: []string{"--hostname", "gitlab.example"}, ProbeState: "ready"}
+	forge, err := forgeClientFor(step)
+	if err != nil {
+		t.Fatalf("forgeClientFor: %v", err)
+	}
+	if forge.gitlab == nil || forge.github != nil {
+		t.Fatalf("forgeClientFor = %+v, want only the gitlab client", forge)
+	}
+	if got.Path != step.Path || strings.Join(got.Args, " ") != strings.Join(step.Args, " ") {
+		t.Fatalf("glab runner built from %+v, want the captured path and args of %+v", got, step)
 	}
 }

@@ -32,7 +32,7 @@ func (e2eTeardown) Probe(string, map[string]string) (fleet.RetirementEndpointSta
 }
 func (e2eTeardown) Dispose(string, map[string]string, fleet.DisposeRequest) error { return nil }
 func (e2eTeardown) ReturnWorktree(string, string) error                           { return nil }
-func (e2eTeardown) QueryMergeStatus(*domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
+func (e2eTeardown) QueryMergeStatus(taskauthority.DeliveryStep, *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
 	return nil, nil
 }
 

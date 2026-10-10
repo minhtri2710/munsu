@@ -156,15 +156,16 @@ func newLaunchFixture(t *testing.T, taskID string) *launchFixture {
 	}
 	testutil.SetPath(t, filepath.Dir(gitBin), requiredSkillStubDir(t))
 
-	snap, err := config.NewResolvedSnapshot(
+	snap, err := config.NewResolvedSnapshotWithToolProbe(
 		config.FleetBaseDocument{
 			SchemaVersion: config.FleetBaseSchemaVersion,
-			Config:        config.ProjectOverlay{Backend: "tmux", SoldierHarness: "pi", Model: "gpt-5"},
+			Config:        config.FleetBaseConfig{Backend: "tmux", SoldierHarness: "pi", Model: "gpt-5"},
 		},
 		config.ProjectFacts{Name: "test-proj", Path: repoPath},
+		nil,
 	)
 	if err != nil {
-		t.Fatalf("NewResolvedSnapshot: %v", err)
+		t.Fatalf("NewResolvedSnapshotWithToolProbe: %v", err)
 	}
 	resolved := snap.Config()
 
@@ -181,8 +182,9 @@ func newLaunchFixture(t *testing.T, taskID string) *launchFixture {
 		model:               "gpt-5",
 		effort:              "high",
 		effectiveMode:       "direct-PR",
-		requestedMode:       "direct-PR",
 		contractMode:        "direct-PR",
+		reviewStep:          taskauthority.DeliveryStep{Baseline: true, ProbeState: "baseline"},
+		forgeStep:           taskauthority.DeliveryStep{Adapter: "github", Path: "/usr/local/bin/gh-axi", ProbeState: "ready"},
 		spawnRole:           "general",
 		dispatchPolicy:      DispatchPolicyGeneralDirect,
 		parentCaptainID:     "general", // the General-direct parent sentinel the boundary policy resolves

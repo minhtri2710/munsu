@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -376,49 +377,52 @@ type Aggregate struct {
 }
 
 // DeliveryModes is the authoritative set of delivery modes a task's durable
-// delivery contract may carry. taskauthority owns the invariant for the
-// record it persists; Fleet's ValidDeliveryModes is the CLI-facing peer over
-// the same three values. A mode either package does not know fails closed
-// here rather than being persisted as an unenforceable contract.
+// delivery contract may carry. taskauthority owns the invariant for the record
+// it persists. A mode it does not know fails closed here rather than being
+// persisted as an unenforceable contract.
 var DeliveryModes = map[string]bool{
 	"no-mistakes": true,
 	"direct-PR":   true,
 	"local-only":  true,
 }
 
-// DeliveryContract is the durable per-task delivery contract: the delivery
-// mode resolved once at the task's first spawn and thereafter READ, never
-// re-resolved. It is independently mutable evidence (unlike the immutable
-// TaskDefinition) so an authorized delivery transition can later be recorded
-// into it, and it survives Reopen so every generation of a task delivers
-// under the same contract. It also carries across task transfer: ReceiveTransfer
-// writes the source's recorded contract onto the destination generation, so a
-// transferred task delivers under the same contract instead of re-resolving
-// the mode from the destination's live inputs on its next spawn. Task metadata's
-// "mode" key carries the effective delivery mode in force at spawn, which
-// fallback reconciliation keeps equal to this record's Mode; it is a display
-// value, never a mode source.
-type DeliveryContract struct {
-	OperationID string            `json:"operation_id"`
-	Mode        string            `json:"mode"`
-	RecordedAt  int64             `json:"recorded_at"`
-	Fallback    *DeliveryFallback `json:"fallback,omitempty"`
+type DeliveryStep struct {
+	Baseline   bool     `json:"baseline"`
+	Adapter    string   `json:"adapter,omitempty"`
+	Path       string   `json:"path,omitempty"`
+	Args       []string `json:"args,omitempty"`
+	ProbeState string   `json:"probe_state"`
+	Version    string   `json:"version,omitempty"`
+	Reason     string   `json:"reason,omitempty"`
 }
 
-// DeliveryFallback records the authorized delivery transition that moved the
-// contract off its recorded mode: the one direction an operator policy
-// sanctions (the authorized no-mistakes preflight fallback to direct-PR). It is
-// a single record, not a history: after it the contract's
-// Mode IS the mode in force and this states how it got there (ADR-0022
-// Decision #2). A later generation reads the transitioned mode and never
-// re-falls-back.
-type DeliveryFallback struct {
-	From        string `json:"from"`
-	To          string `json:"to"`
-	Reason      string `json:"reason"`
-	Generation  uint64 `json:"generation"`
-	OperationID string `json:"operation_id"`
-	RecordedAt  int64  `json:"recorded_at"`
+// DeliveryContract is the durable delivery contract of one task generation: the
+// mode and the captured review and forge steps, recorded once at that
+// generation's first spawn and READ thereafter, never re-resolved. A reopen
+// starts a new generation with no contract. A transfer carries the source's
+// recorded contract onto the destination generation.
+type DeliveryContract struct {
+	OperationID string       `json:"operation_id"`
+	Mode        string       `json:"mode"`
+	Review      DeliveryStep `json:"review"`
+	Forge       DeliveryStep `json:"forge"`
+	RecordedAt  int64        `json:"recorded_at"`
+}
+
+// Matches reports whether the contract records mode with exactly these review
+// and forge steps.
+func (c DeliveryContract) Matches(mode string, review, forge DeliveryStep) bool {
+	return c.Mode == mode && deliveryStepsEqual(c.Review, review) && deliveryStepsEqual(c.Forge, forge)
+}
+
+func DeliveryModeForSteps(review, forge DeliveryStep) string {
+	if forge.Baseline {
+		return "local-only"
+	}
+	if !review.Baseline && review.Adapter == "no-mistakes" {
+		return "no-mistakes"
+	}
+	return "direct-PR"
 }
 
 // TaskAuthoritySchema is the deterministic schema identity for the canonical
@@ -568,6 +572,50 @@ func validateAggregate(agg Aggregate) error {
 	return nil
 }
 
+func cloneDeliveryStep(step DeliveryStep) DeliveryStep {
+	step.Args = append([]string(nil), step.Args...)
+	return step
+}
+
+func cloneDeliveryContract(dc DeliveryContract) DeliveryContract {
+	dc.Review = cloneDeliveryStep(dc.Review)
+	dc.Forge = cloneDeliveryStep(dc.Forge)
+	return dc
+}
+
+func cloneDeliveryContractPointer(dc *DeliveryContract) *DeliveryContract {
+	if dc == nil {
+		return nil
+	}
+	clone := cloneDeliveryContract(*dc)
+	return &clone
+}
+
+func deliveryStepsEqual(a, b DeliveryStep) bool {
+	if a.Baseline != b.Baseline || a.Adapter != b.Adapter || a.Path != b.Path || a.ProbeState != b.ProbeState || a.Version != b.Version || a.Reason != b.Reason || len(a.Args) != len(b.Args) {
+		return false
+	}
+	for i := range a.Args {
+		if a.Args[i] != b.Args[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func validateDeliveryStepPair(review, forge DeliveryStep) error {
+	if err := validateDeliveryStep(review, "review", map[string]bool{"no-mistakes": true}); err != nil {
+		return err
+	}
+	if err := validateDeliveryStep(forge, "forge", map[string]bool{"github": true, "gitlab": true}); err != nil {
+		return err
+	}
+	if !review.Baseline && review.Adapter == "no-mistakes" && forge.Baseline {
+		return validationError("delivery contract review adapter no-mistakes requires a configured forge tool")
+	}
+	return nil
+}
+
 // validateDeliveryContract checks the durable delivery contract shape: the
 // recording Operation ID, a mode inside the authoritative delivery mode set,
 // and a recording timestamp.
@@ -581,80 +629,24 @@ func validateDeliveryContract(dc DeliveryContract) error {
 	if dc.RecordedAt <= 0 {
 		return validationError("delivery contract missing recorded timestamp")
 	}
-	if dc.Fallback != nil {
-		if err := validateDeliveryFallback(*dc.Fallback); err != nil {
-			return err
-		}
-		// This is the only validator that sees BOTH halves. After a recorded
-		// fallback the contract's Mode IS the to-mode (ADR-0022 Decision #2),
-		// so a Mode disagreeing with Fallback.To is internally inconsistent
-		// on-disk state, not a contract stating the mode in force.
-		if dc.Mode != dc.Fallback.To {
-			return validationError("delivery contract mode %q disagrees with its recorded fallback to-mode %q", dc.Mode, dc.Fallback.To)
-		}
-	}
-	return nil
-}
-
-// authorizedFallbackFrom and authorizedFallbackTo are the sole delivery
-// transition ADR-0022 Decision #2 sanctions: "the authorized no-mistakes ->
-// direct-PR downgrade". They are expressed as the one ALLOWED pair rather than
-// a blacklist of forbidden ones, so a pair nobody anticipated fails closed.
-const (
-	authorizedFallbackFrom = "no-mistakes"
-	authorizedFallbackTo   = "direct-PR"
-)
-
-// validateDeliveryFallbackDirection checks the transition itself: both ends
-// named, the to-mode inside the authoritative delivery mode set, a real
-// transition rather than a mode recorded against itself, and the one direction
-// ADR-0022 Decision #2 authorizes. It is the single owner of the direction
-// rule, checked on the way in by the recording request AND again on every
-// canonical read, so a record written around the op cannot be read back as
-// valid.
-func validateDeliveryFallbackDirection(from, to string) error {
-	if strings.TrimSpace(from) == "" || strings.TrimSpace(to) == "" {
-		return validationError("delivery fallback missing transition endpoints")
-	}
-	if !DeliveryModes[to] {
-		return validationError("delivery fallback carries invalid to-mode %q", to)
-	}
-	if from == to {
-		return validationError("delivery fallback records no transition (from == to == %q)", from)
-	}
-	if from != authorizedFallbackFrom || to != authorizedFallbackTo {
-		return validationError("delivery fallback %q -> %q is not the authorized %q -> %q downgrade (ADR-0022 Decision #2)", from, to, authorizedFallbackFrom, authorizedFallbackTo)
-	}
-	return nil
-}
-
-// validateDeliveryFallback checks a PERSISTED transition record in full: the
-// authorized direction, plus the provenance every durable record carries. A
-// canonical read rejects a malformed record rather than serving it, the same
-// rigor validateDeliveryContract applies to the contract around it.
-//
-// The recording request does NOT come through here: a request carries no
-// operation id, generation or timestamp yet — those are stamped at commit — so
-// validateRecordDeliveryFallbackRequest checks the shared direction rule and
-// its own request shape instead.
-func validateDeliveryFallback(fb DeliveryFallback) error {
-	if err := validateDeliveryFallbackDirection(fb.From, fb.To); err != nil {
+	if err := validateDeliveryStepPair(dc.Review, dc.Forge); err != nil {
 		return err
 	}
-	if strings.TrimSpace(fb.Reason) == "" {
-		return validationError("delivery fallback missing reason")
+	if dc.Mode != DeliveryModeForSteps(dc.Review, dc.Forge) {
+		return validationError("delivery contract mode %q disagrees with captured review and forge steps", dc.Mode)
 	}
-	// Generations are 1-based on this record: Generation.Validate rejects zero
-	// as "not a positive monotonic identity", and NewAggregate opens a task at
-	// generation one. A zero here is an unrecorded generation, not a valid one.
-	if err := Generation(fb.Generation).Validate(); err != nil {
-		return validationError("delivery fallback missing recording generation")
+	return nil
+}
+
+func validateDeliveryStep(step DeliveryStep, name string, adapters map[string]bool) error {
+	if step.Baseline {
+		if step.Adapter != "" || step.Path != "" || len(step.Args) != 0 || step.ProbeState != "baseline" {
+			return validationError("delivery contract %s baseline carries configured tool data", name)
+		}
+		return nil
 	}
-	if fb.OperationID == "" || strings.ContainsAny(fb.OperationID, `/\\`) {
-		return validationError("delivery fallback missing operation id")
-	}
-	if fb.RecordedAt <= 0 {
-		return validationError("delivery fallback missing recorded timestamp")
+	if !adapters[step.Adapter] || step.ProbeState != "ready" || step.Path == "" || !filepath.IsAbs(step.Path) {
+		return validationError("delivery contract %s step is not a Ready supported adapter with an absolute executable path", name)
 	}
 	return nil
 }
@@ -1071,11 +1063,7 @@ func (a Aggregate) clone() Aggregate {
 		out.LaunchEvidence = &e
 	}
 	if a.DeliveryContract != nil {
-		dc := *a.DeliveryContract
-		if dc.Fallback != nil {
-			fb := *dc.Fallback
-			dc.Fallback = &fb
-		}
+		dc := cloneDeliveryContract(*a.DeliveryContract)
 		out.DeliveryContract = &dc
 	}
 	if a.ReviewVerdict != nil {

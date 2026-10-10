@@ -157,7 +157,7 @@ munsu task add <id> "<desc>" --kind review --reviews <ship-id> [--repo <name>]
 munsu task start <id>
 munsu brief <id> <repo>
 # Fill in the {TASK} placeholder in data/<id>/brief.md; for a ship brief also {TEST_IMPACT}
-munsu spawn <id> <project> [--mode no-mistakes|direct-PR|local-only]
+munsu spawn <id> <project>
 ```
 
 Check the spawned soldier: `munsu soldier-state <id>`.

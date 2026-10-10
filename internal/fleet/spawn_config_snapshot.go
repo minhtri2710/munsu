@@ -18,13 +18,30 @@ type SpawnSoldierConfig struct {
 }
 
 type SpawnProjectConfig struct {
-	Frozen                fleetconfig.ResolvedSnapshot
-	SnapshotDigest        string
-	DispatchAutonomy      string
-	ProjectName           string
-	ProjectPath           string
-	AllowDirectPRFallback bool
-	Soldier               SpawnSoldierConfig
+	Frozen           fleetconfig.ResolvedSnapshot
+	SnapshotDigest   string
+	DispatchAutonomy string
+	ProjectName      string
+	ProjectPath      string
+	ReviewStep       taskauthority.DeliveryStep
+	ForgeStep        taskauthority.DeliveryStep
+	Soldier          SpawnSoldierConfig
+}
+
+func deliveryStep(step fleetconfig.ResolvedStep) taskauthority.DeliveryStep {
+	return taskauthority.DeliveryStep{
+		Baseline: step.Baseline, Adapter: step.Adapter, Path: step.Path,
+		Args: append([]string(nil), step.Args...), ProbeState: step.ProbeState,
+		Version: step.Version, Reason: step.Reason,
+	}
+}
+
+func resolvedStep(step taskauthority.DeliveryStep) fleetconfig.ResolvedStep {
+	return fleetconfig.ResolvedStep{
+		Baseline: step.Baseline, Adapter: step.Adapter, Path: step.Path,
+		Args: append([]string(nil), step.Args...), ProbeState: step.ProbeState,
+		Version: step.Version, Reason: step.Reason,
+	}
 }
 
 // ResolveSpawnProjectConfig loads the only config surface authorized by the
@@ -38,6 +55,9 @@ type SpawnProjectConfig struct {
 // none. When present it is the mode authority for the launch; every other
 // field of the snapshot resolves exactly as it does without one.
 func ResolveSpawnProjectConfig(homeDir string, args Args, policy DispatchPolicy, contract *taskauthority.DeliveryContract) (SpawnProjectConfig, error) {
+	if contract != nil && contract.Mode != taskauthority.DeliveryModeForSteps(contract.Review, contract.Forge) {
+		return SpawnProjectConfig{}, fmt.Errorf("task delivery contract mode disagrees with captured review and forge steps")
+	}
 	var (
 		snapshot fleetconfig.ResolvedSnapshot
 		err      error
@@ -45,11 +65,18 @@ func ResolveSpawnProjectConfig(homeDir string, args Args, policy DispatchPolicy,
 	switch policy {
 	case DispatchPolicyCaptainMediated:
 		snapshot, err = fleetconfig.LoadPublishedSnapshot(homeDir)
+		if err == nil && contract != nil {
+			snapshot, err = snapshot.WithSteps(resolvedStep(contract.Review), resolvedStep(contract.Forge))
+		}
 	case DispatchPolicyGeneralDirect:
-		// Resolve the immutable project snapshot without substituting CLI
-		// identities. Explicit flags are assertions about the resolved snapshot,
-		// not a second configuration authority.
-		snapshot, err = ResolveProjectSnapshot(homeDir, args.ProjectName)
+		if contract != nil {
+			snapshot, err = resolveCapturedProjectSnapshot(homeDir, args.ProjectName, resolvedStep(contract.Review), resolvedStep(contract.Forge))
+		} else {
+			// Resolve the immutable project snapshot without substituting CLI
+			// identities. Explicit flags are assertions about the resolved snapshot,
+			// not a second configuration authority.
+			snapshot, err = ResolveProjectSnapshot(homeDir, args.ProjectName)
+		}
 	default:
 		return SpawnProjectConfig{}, fmt.Errorf("unresolved dispatch policy %q", policy)
 	}
@@ -67,19 +94,12 @@ func ResolveSpawnProjectConfig(homeDir string, args Args, policy DispatchPolicy,
 	if err := validateResolvedDispatchProfiles(resolved.DispatchProfiles); err != nil {
 		return SpawnProjectConfig{}, err
 	}
-
-	// Compose the mode decision from the resolved snapshot: the typed default
-	// mode and the resolved require-no-mistakes are the single authority. When
-	// the default mode is unset, ResolveDeliveryMode selects no-mistakes only
-	// for a Ready capability probe; otherwise it selects direct-PR unless
-	// require-no-mistakes refuses the fallback.
-	if err := validateSpawnIdentityAssertions(args, resolved.Backend, resolved.SoldierHarness, normalizeSnapshotDeliveryMode(resolved.DefaultMode)); err != nil {
+	if err := validateSpawnIdentityAssertions(args, resolved.Backend, resolved.SoldierHarness); err != nil {
 		return SpawnProjectConfig{}, err
 	}
-	mode, err := resolveContractedDeliveryMode(args, resolved, contract)
-	if err != nil {
-		return SpawnProjectConfig{}, err
-	}
+	// The delivery mode is derived from the captured review and forge steps;
+	// no separate mode decision exists to compose.
+	mode := taskauthority.DeliveryModeForSteps(deliveryStep(resolved.ReviewStep), deliveryStep(resolved.ForgeStep))
 	selection := resolveSnapshotDispatchSelection(resolved, args)
 	selection.Harness = firstNonEmpty(args.HarnessFlag, selection.Harness, resolved.SoldierHarness)
 	selection.Model = firstNonEmpty(args.ModelFlag, selection.Model, resolved.Model)
@@ -99,12 +119,13 @@ func ResolveSpawnProjectConfig(homeDir string, args Args, policy DispatchPolicy,
 		)
 	}
 	return SpawnProjectConfig{
-		Frozen:                snapshot,
-		SnapshotDigest:        resolved.Digest,
-		DispatchAutonomy:      resolved.DispatchAutonomy,
-		ProjectName:           resolved.Project,
-		ProjectPath:           resolved.ProjectPath,
-		AllowDirectPRFallback: resolved.AllowDirectPRFallback,
+		Frozen:           snapshot,
+		SnapshotDigest:   resolved.Digest,
+		DispatchAutonomy: resolved.DispatchAutonomy,
+		ProjectName:      resolved.Project,
+		ProjectPath:      resolved.ProjectPath,
+		ReviewStep:       deliveryStep(resolved.ReviewStep),
+		ForgeStep:        deliveryStep(resolved.ForgeStep),
 		Soldier: SpawnSoldierConfig{
 			Harness: selection.Harness,
 			Model:   selection.Model,
@@ -114,53 +135,25 @@ func ResolveSpawnProjectConfig(homeDir string, args Args, policy DispatchPolicy,
 	}, nil
 }
 
-// resolveContractedDeliveryMode answers the mode question for one launch. A
-// task carrying a durable delivery contract and no explicit --mode has already
-// answered it: the mode is READ from the contract and the snapshot mode
-// resolution is skipped entirely, so a drifted default mode — or one that is
-// momentarily unrunnable on this machine — can never block a task that is
-// already contracted. Runnability for the contracted mode stays with the
-// launch preflight, which owns the authorized fallback.
-//
-// The policy gate is not skipped with it: require-no-mistakes still applies,
-// now to the contract mode, and refuses loudly rather than delivering a
-// contracted task under a mode the project forbids.
-func resolveContractedDeliveryMode(args Args, resolved fleetconfig.ResolvedProjectConfig, contract *taskauthority.DeliveryContract) (string, error) {
-	if contract == nil || args.Mode != "" {
-		return ResolveDeliveryMode(args.Mode, normalizeSnapshotDeliveryMode(resolved.DefaultMode), resolved.RequireNoMistakes)
-	}
-	if resolved.RequireNoMistakes && contract.Mode != "no-mistakes" {
-		return "", fmt.Errorf("project %q sets require-no-mistakes but the task is contracted to deliver %q; re-scaffold the task (set the project default mode to no-mistakes, then spawn with --mode no-mistakes) or clear require-no-mistakes", resolved.Project, contract.Mode)
-	}
-	return contract.Mode, nil
-}
-
-func validateSpawnIdentityAssertions(args Args, backendName, harnessName, mode string) error {
+// validateSpawnIdentityAssertions refuses an explicit backend or harness flag
+// that contradicts the resolved project snapshot.
+func validateSpawnIdentityAssertions(args Args, backendName, harnessName string) error {
 	checks := []struct {
 		name       string
 		explicit   string
 		configured string
-		normalize  func(string) string
 	}{
-		{name: "backend", explicit: args.Backend, configured: backendName, normalize: strings.TrimSpace},
-		{name: "harness", explicit: args.HarnessFlag, configured: harnessName, normalize: strings.TrimSpace},
-		{name: "mode", explicit: args.Mode, configured: mode, normalize: normalizeSnapshotDeliveryMode},
+		{name: "backend", explicit: args.Backend, configured: backendName},
+		{name: "harness", explicit: args.HarnessFlag, configured: harnessName},
 	}
 	for _, check := range checks {
-		explicit := check.normalize(check.explicit)
-		configured := check.normalize(check.configured)
+		explicit := strings.TrimSpace(check.explicit)
+		configured := strings.TrimSpace(check.configured)
 		if explicit != "" && configured != "" && explicit != configured {
 			return fmt.Errorf("spawn %s %q conflicts with resolved project snapshot value %q; update the project overlay or omit the flag", check.name, explicit, configured)
 		}
 	}
 	return nil
-}
-
-func normalizeSnapshotDeliveryMode(mode string) string {
-	if mode == "direct-pr" {
-		return "direct-PR"
-	}
-	return mode
 }
 
 // ResolveGeneralHomeBackend resolves the session backend identity for a home

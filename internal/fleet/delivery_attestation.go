@@ -7,25 +7,25 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/backend"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // CapabilityAttestation is a point-in-time snapshot of the capabilities
 // available at mode resolution time. It binds project, home, harness, gate
-// agent, executable identity, resolved config, capabilities, and expiry into a
-// single record that is used to detect late capability loss before soldier
-// launch.
+// agent, executable identity, resolved config, the configured review and forge
+// steps, capabilities, and expiry into a single record that is used to detect
+// late capability loss before soldier launch.
 type CapabilityAttestation struct {
-	Project        string            `json:"project"`
-	Home           string            `json:"home"`
-	Harness        string            `json:"harness"`
-	GateAgent      string            `json:"gateAgent"`
-	ExecutableID   string            `json:"executableId"`
-	ResolvedConfig map[string]string `json:"resolvedConfig"`
-	Capabilities   []CapabilityEntry `json:"capabilities"`
-	Expiry         time.Time         `json:"expiry"`
-	RequestedMode  string            `json:"requestedMode"`
-	EffectiveMode  string            `json:"effectiveMode"`
-	FallbackReason string            `json:"fallbackReason,omitempty"`
+	Project        string                     `json:"project"`
+	Home           string                     `json:"home"`
+	Harness        string                     `json:"harness"`
+	GateAgent      string                     `json:"gateAgent"`
+	ExecutableID   string                     `json:"executableId"`
+	ResolvedConfig map[string]string          `json:"resolvedConfig"`
+	Capabilities   []CapabilityEntry          `json:"capabilities"`
+	Expiry         time.Time                  `json:"expiry"`
+	Review         taskauthority.DeliveryStep `json:"review"`
+	Forge          taskauthority.DeliveryStep `json:"forge"`
 }
 
 // CapabilityEntry captures a single capability's state at attestation time.
@@ -46,12 +46,10 @@ type CapabilityEntry struct {
 //   - homeDir: the munsu home directory
 //   - harness: the resolved soldier harness
 //   - gateAgent: the gate agent exe name (e.g. "pi", "codex", "claude")
-//   - requestedMode: what the user/registry/config asked for
-//   - effectiveMode: what was resolved (possibly after fallback)
-//   - fallbackReason: why the modes differ (empty if same)
+//   - review, forge: the generation's captured delivery steps
 func CreateCapabilityAttestation(
 	project, homeDir, harness, gateAgent string,
-	requestedMode, effectiveMode, fallbackReason string,
+	review, forge taskauthority.DeliveryStep,
 ) *CapabilityAttestation {
 	now := time.Now().UTC()
 	expiry := now.Add(24 * time.Hour)
@@ -59,14 +57,11 @@ func CreateCapabilityAttestation(
 	// Resolve executable identity (binary path + version of the gate agent).
 	execID := resolveExecutableID(gateAgent)
 
-	// Resolved config: capture the effective mode and harness.
+	// Resolved config: capture the derived mode and harness.
 	resolvedConfig := map[string]string{
-		"mode":    effectiveMode,
+		"mode":    taskauthority.DeliveryModeForSteps(review, forge),
 		"harness": harness,
 	}
-
-	// Probe all delivery capabilities.
-	caps := probeDeliveryCapabilities()
 
 	return &CapabilityAttestation{
 		Project:        project,
@@ -75,11 +70,10 @@ func CreateCapabilityAttestation(
 		GateAgent:      gateAgent,
 		ExecutableID:   execID,
 		ResolvedConfig: resolvedConfig,
-		Capabilities:   caps,
+		Capabilities:   probeDeliveryCapabilities(review, forge),
 		Expiry:         expiry,
-		RequestedMode:  requestedMode,
-		EffectiveMode:  effectiveMode,
-		FallbackReason: fallbackReason,
+		Review:         review,
+		Forge:          forge,
 	}
 }
 
@@ -108,38 +102,28 @@ func resolveExecutableID(name string) string {
 	return path + ":" + ver
 }
 
-// probeDeliveryCapabilities probes all delivery-relevant capabilities and
-// returns their current state as a slice of CapabilityEntry.
-func probeDeliveryCapabilities() []CapabilityEntry {
+// probeDeliveryCapabilities probes the generation's configured review and
+// forge steps and returns their current state. A baseline step has no tool to
+// probe, and PATH is never searched for an adapter that has no entry.
+func probeDeliveryCapabilities(review, forge taskauthority.DeliveryStep) []CapabilityEntry {
 	var caps []CapabilityEntry
-
-	// no-mistakes capability probe.
-	nmProbe := NoMistakesProbe()
-	caps = append(caps, CapabilityEntry{
-		Name:    "no-mistakes",
-		State:   nmProbe.State,
-		Version: nmProbe.Version,
-		Path:    nmProbe.Path,
-		Detail:  nmProbe.Detail,
-	})
-
-	// gh-axi capability probe.
-	ghState := probeBinary("gh-axi")
-	ghPath, _ := exec.LookPath("gh-axi")
-	caps = append(caps, CapabilityEntry{
-		Name:  "gh-axi",
-		State: ghState,
-		Path:  ghPath,
-	})
-
-	// gh CLI capability probe (fallback path).
-	ghCliState := probeBinary("gh")
-	ghCliPath, _ := exec.LookPath("gh")
-	caps = append(caps, CapabilityEntry{
-		Name:  "gh",
-		State: ghCliState,
-		Path:  ghCliPath,
-	})
+	if !review.Baseline {
+		probe := ProbeNoMistakesTool(toolEntryOf(review))
+		caps = append(caps, CapabilityEntry{
+			Name:    review.Adapter,
+			State:   probe.State,
+			Version: probe.Version,
+			Path:    probe.Path,
+			Detail:  probe.Detail,
+		})
+	}
+	if !forge.Baseline {
+		caps = append(caps, CapabilityEntry{
+			Name:  forge.Adapter,
+			State: probeConfiguredForge(toolEntryOf(forge)),
+			Path:  forge.Path,
+		})
+	}
 
 	// git is always required.
 	gitState := probeBinary("git")
@@ -180,7 +164,7 @@ func CheckCapabilityAttestation(att *CapabilityAttestation) (changed bool, detai
 	}
 
 	// Re-probe and compare each attested capability.
-	current := probeDeliveryCapabilities()
+	current := probeDeliveryCapabilities(att.Review, att.Forge)
 	for _, attested := range att.Capabilities {
 		for _, cur := range current {
 			if cur.Name != attested.Name {

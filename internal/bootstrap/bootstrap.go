@@ -128,12 +128,6 @@ func runWithRuntimeIdentity(home string, lockHeld bool, installTools []string, r
 		res.Configs = append(res.Configs, ConfigDiagnostic{Key: "SOLDIER_DISPATCH", Value: fmt.Sprintf("active (%d rules)", len(base.Config.DispatchProfiles))})
 	}
 
-	// 4b. Check require-no-mistakes from the typed fleet base document (the
-	// single operational authority; the legacy flat file is never read).
-	if baseErr == nil && base.Config.RequireNoMistakes != nil && *base.Config.RequireNoMistakes {
-		res.Configs = append(res.Configs, ConfigDiagnostic{Key: "REQUIRE_NO_MISTAKES", Value: "strict"})
-	}
-
 	// BACKEND_RESOLVED: reports the persisted typed snapshot Backend (the
 	// published config snapshot or the fleet base document's typed Backend) —
 	// never an env/PATH probe. An absent identity is reported as typed

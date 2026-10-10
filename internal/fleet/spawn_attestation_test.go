@@ -45,7 +45,7 @@ func mustSpawnedAttestationTask(t *testing.T, homeDir, taskID string) (*Runner, 
 	}
 	r.attestation = CreateCapabilityAttestation(
 		"test-proj", homeDir, "pi", "pi",
-		"no-mistakes", "direct-PR", "no-mistakes not on PATH; defaulting to direct-PR",
+		noMistakesReview, githubForgeStep,
 	)
 	return r, auth
 }
@@ -133,7 +133,7 @@ func TestSpawnAttachAttestationRejectedKeepsObservationRuntimeOnly(t *testing.T)
 	// runtime observation.
 	r.attestation = CreateCapabilityAttestation(
 		"", homeDir, "pi", "pi",
-		"no-mistakes", "direct-PR", "no-mistakes not on PATH; defaulting to direct-PR",
+		noMistakesReview, githubForgeStep,
 	)
 	if err := r.attachAttestation(1); err == nil {
 		t.Fatal("expected rejection for malformed attestation reference")
@@ -162,7 +162,7 @@ func TestSpawnAttachAttestationFailsClosedWithoutAuthority(t *testing.T) {
 		args:    Args{ID: taskID}, // no Authority composed
 		attestation: CreateCapabilityAttestation(
 			"test-proj", homeDir, "pi", "pi",
-			"no-mistakes", "direct-PR", "no-mistakes not on PATH; defaulting to direct-PR",
+			noMistakesReview, githubForgeStep,
 		),
 	}
 	if err := r.attachAttestation(1); err == nil || !strings.Contains(err.Error(), "not composed") {

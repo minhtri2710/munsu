@@ -185,7 +185,7 @@ Before that, close every open keyed decision with `+"`"+`resolved [key=<slug>]: 
 // launched under, and an empty or unrecognized mode is a resolution failure
 // upstream rather than a line to omit.
 func scoutBriefTemplate(id, repo, mode string, yolo bool, scope string, budget int64, gen taskauthority.Generation) (string, error) {
-	if !ValidDeliveryModes[mode] {
+	if !taskauthority.DeliveryModes[mode] {
 		return "", fmt.Errorf("scout brief for %s: unknown delivery mode %q", id, mode)
 	}
 	modeLine := fmt.Sprintf("Delivery mode: %s", mode)

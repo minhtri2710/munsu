@@ -48,7 +48,7 @@ func activeJournal(t *testing.T, homeDir string) *deliveryJournal {
 func TestDeliverAppendsTheGateRecordBeforeTheMerge(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	taskID := "t1"
-	mustWorkingDeliveryTask(t, c, taskID)
+	mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 	provider := installScriptedProviderFor(t, "open-then-merged")
 	var atMerge taskauthority.GateRecord
 	var recordedBeforeMerge bool
@@ -81,7 +81,7 @@ func TestDeliverAppendsTheGateRecordBeforeTheMerge(t *testing.T) {
 func TestDeliverRefusesTheMergeWhenTheGateRecordCannotBeAppended(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	taskID := "t1"
-	mustWorkingDeliveryTask(t, c, taskID)
+	mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 	provider := installScriptedProviderFor(t, "open")
 	var gateOp string
 	provider.onValidate = func() { // a hold lands between the currency check and the gate append
@@ -110,7 +110,7 @@ func TestDeliverRefusesTheMergeWhenTheGateRecordCannotBeAppended(t *testing.T) {
 func TestRecordDeliveryGate(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	taskID := "t1"
-	mustWorkingDeliveryTask(t, c, taskID)
+	mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 	provider := installScriptedProviderFor(t, "open-then-merged")
 	var live deliveryJournal
 	results := map[string]error{}

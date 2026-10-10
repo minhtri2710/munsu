@@ -635,19 +635,6 @@ func (c *Canonical) Reopen(op domain.Operation, req CanonicalReopenRequest) (Out
 		Definition:    cur.Definition,
 		Phase:         PhaseQueued,
 	}
-	// The delivery contract is per TASK, not per generation: a reopened
-	// generation delivers under the mode the task already contracted, so the
-	// next spawn READS it instead of re-resolving. Only an explicit
-	// re-scaffold (RecordDeliveryContract with the re-scaffold intent) changes
-	// it. The record is copied, never aliased.
-	if cur.DeliveryContract != nil {
-		dc := *cur.DeliveryContract
-		if dc.Fallback != nil {
-			fb := *dc.Fallback
-			dc.Fallback = &fb
-		}
-		newGen.DeliveryContract = &dc
-	}
 	if err := validateAggregate(newGen); err != nil {
 		return Outcome{}, err
 	}

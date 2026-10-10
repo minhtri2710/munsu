@@ -38,7 +38,7 @@ func TestConfigGetKnownSet(t *testing.T) {
 
 	if err := config.StoreFleetBase(tmpDir, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{Backend: "tmux"},
+		Config:        config.FleetBaseConfig{Backend: "tmux"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -204,36 +204,5 @@ func TestConfigGetAllKnownKeys(t *testing.T) {
 		if err != nil {
 			t.Errorf("config get known key %q: expected success, got error: %v", key, err)
 		}
-	}
-}
-
-// TestConfigGetReadsPersistedValue verifies config get reports the typed
-// fleet base value for the delivery-mode contract keys (persisted-truth
-// behavior: the base document is the single operational authority).
-func TestConfigGetReadsPersistedValue(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("MUNSU_HOME", tmpDir)
-
-	if err := config.StoreFleetBase(tmpDir, config.FleetBaseDocument{
-		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{DefaultMode: "direct-PR"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	root := NewRootCommand()
-	buf := new(bytes.Buffer)
-	root.SetOut(buf)
-	root.SetErr(buf)
-
-	root.SetArgs([]string{"config", "get", "default-mode"})
-	err := root.Execute()
-	if err != nil {
-		t.Fatalf("config get default-mode: unexpected error: %v", err)
-	}
-
-	got := extractConfigValueFromTOON(strings.TrimSpace(buf.String()))
-	if got != "direct-PR" {
-		t.Errorf("config get default-mode = %q, want %q", got, "direct-PR")
 	}
 }

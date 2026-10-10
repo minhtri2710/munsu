@@ -30,15 +30,14 @@ func TestSpawnArmEnsuresWatcherOnlyWhenRequested(t *testing.T) {
 			runGit(t, repoDir, "commit", "--allow-empty", "-m", "initial commit")
 			if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{
 				SchemaVersion: config.FleetBaseSchemaVersion,
-				Config: config.ProjectOverlay{
+				Config: config.FleetBaseConfig{
 					SoldierHarness: "pi",
-					DefaultMode:    "local-only",
 					Backend:        "tmux",
 				},
 			}); err != nil {
 				t.Fatalf("store fleet base: %v", err)
 			}
-			if err := fleet.Add(homeDir, "alpha", repoDir, "local-only", false); err != nil {
+			if err := fleet.Add(homeDir, "alpha", repoDir, false); err != nil {
 				t.Fatalf("register project: %v", err)
 			}
 			if output, err := runTaskCommand(t, []string{"task", "add", "arm-task", "Test watcher arming", "--repo", "alpha", "--home", homeDir}); err != nil {

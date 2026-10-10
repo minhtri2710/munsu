@@ -59,7 +59,7 @@ no-mistakes doctor
 ```
 
 This registers the project for automated code review, linting, testing, and PR delivery.
-For standalone munsu use, skip this step — `munsu spawn --mode direct-PR` or `--mode local-only` works without the no-mistakes daemon.
+For standalone munsu use, skip this step — without a `review` tool entry the review step is baseline and `munsu spawn` works without the no-mistakes daemon.
 
 ## Quick start
 
@@ -128,7 +128,7 @@ munsu task done <task-id>
 ### Soldier lifecycle
 
 ```sh
-munsu spawn <task-id> [<project>] [--mode no-mistakes|direct-PR|local-only]  (default: auto-detect, project inferred from cwd)
+munsu spawn <task-id> [<project>]  (project inferred from cwd; delivery mode derived from the project's review and forge tool entries)
 munsu watch ensure [--restart]
 munsu send <task-id> "<instruction>"
 munsu peek <task-id> [--lines N]

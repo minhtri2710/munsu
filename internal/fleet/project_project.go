@@ -19,7 +19,6 @@ var cloneTimeout = 10 * time.Minute
 // Project represents a registered or ad-hoc project entry.
 type Project struct {
 	Name        string
-	Mode        string // feat, fix, refactor, etc.
 	Yolo        bool
 	Description string
 	Added       string // date string
@@ -46,7 +45,7 @@ func isURL(s string) bool {
 // Add registers a project in the canonical Fleet Registry. If pathOrURL is a
 // URL, it is cloned first. If the name is already registered, the existing
 // entry is updated in-place.
-func Add(homeDir, name, pathOrURL, mode string, yolo bool) error {
+func Add(homeDir, name, pathOrURL string, yolo bool) error {
 	projectID, err := domain.NewProjectID(name)
 	if err != nil {
 		return fmt.Errorf("register project %q: %w", name, err)
@@ -95,7 +94,6 @@ func Add(homeDir, name, pathOrURL, mode string, yolo bool) error {
 			ProjectID:    projectID,
 			Name:         name,
 			Path:         pathOrURL,
-			Mode:         mode,
 			Yolo:         yolo,
 			Precondition: preconditionOf(rev),
 			Reason:       "update",
@@ -118,7 +116,6 @@ func Add(homeDir, name, pathOrURL, mode string, yolo bool) error {
 		ProjectID:    projectID,
 		Name:         name,
 		Path:         pathOrURL,
-		Mode:         mode,
 		Yolo:         yolo,
 		Precondition: preconditionOf(rev),
 		Reason:       "register",
@@ -144,7 +141,6 @@ func List(homeDir string) ([]*Project, error) {
 	for _, p := range projects {
 		result = append(result, &Project{
 			Name:        p.Name,
-			Mode:        p.Mode,
 			Yolo:        p.Yolo,
 			Description: p.Path,
 			Added:       today(),
@@ -199,20 +195,6 @@ func Rm(homeDir, name string) error {
 	}
 	fmt.Printf("Removed project %q from registry\n", name)
 	return nil
-}
-
-// Mode returns the delivery mode for a project.
-// If mode is empty, defaults to "no-mistakes" (the default delivery mode).
-func Mode(homeDir, name string) (mode string, yolo bool, err error) {
-	p, err := Find(homeDir, name)
-	if err != nil {
-		return "", false, err
-	}
-	mode = p.Mode
-	if mode == "" {
-		mode = "no-mistakes"
-	}
-	return mode, p.Yolo, nil
 }
 
 // ResolveRepoPath resolves a project name to an absolute repo path.

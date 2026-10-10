@@ -1593,7 +1593,7 @@ func bumpRevisionForTest(t *testing.T, c *Canonical, taskID string, rev uint64) 
 	t.Helper()
 	req := CanonicalRecordDeliveryContractRequest{
 		HomeID: c.HomeID(), TaskID: mustTaskID(t, taskID), Precondition: preconditionOf(1, rev),
-		Mode: "no-mistakes", Reason: "unrelated mutation",
+		Mode: "local-only", Review: DeliveryStep{Baseline: true, ProbeState: "baseline"}, Forge: DeliveryStep{Baseline: true, ProbeState: "baseline"},
 	}
 	if _, err := c.RecordDeliveryContract(mustOperation(t, "op-bump-"+taskID, req), req); err != nil {
 		t.Fatalf("RecordDeliveryContract: %v", err)

@@ -119,7 +119,7 @@ func TestWorktreeReclaimSparesReservedUnboundWorktree(t *testing.T) {
 	if err := os.MkdirAll(repoPath, 0o755); err != nil {
 		t.Fatalf("creating registered repo: %v", err)
 	}
-	if err := fleet.Add(tmpDir, projectName, repoPath, "", true); err != nil {
+	if err := fleet.Add(tmpDir, projectName, repoPath, true); err != nil {
 		t.Fatalf("registering project: %v", err)
 	}
 
@@ -245,7 +245,7 @@ func TestWorktreeReclaimSparesTreehouseLeaseHolderWorktree(t *testing.T) {
 	if err := os.MkdirAll(repoPath, 0o755); err != nil {
 		t.Fatalf("creating registered repo: %v", err)
 	}
-	if err := fleet.Add(tmpDir, projectName, repoPath, "", true); err != nil {
+	if err := fleet.Add(tmpDir, projectName, repoPath, true); err != nil {
 		t.Fatalf("registering project: %v", err)
 	}
 
@@ -384,7 +384,7 @@ func TestWorktreeReclaimAllowsRetiredReservation(t *testing.T) {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
 	}
-	if err := fleet.Add(tmpDir, projectName, repoPath, "", true); err != nil {
+	if err := fleet.Add(tmpDir, projectName, repoPath, true); err != nil {
 		t.Fatal(err)
 	}
 	auth := testAuthorityFor(t, tmpDir)
@@ -497,7 +497,7 @@ func unboundReservationFixture(t *testing.T) (*taskauthority.Canonical, domain.T
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
 	}
-	if err := fleet.Add(tmpDir, projectName, repoPath, "", true); err != nil {
+	if err := fleet.Add(tmpDir, projectName, repoPath, true); err != nil {
 		t.Fatal(err)
 	}
 	auth := testAuthorityFor(t, tmpDir)
@@ -747,7 +747,7 @@ func TestWorktreeReclaimSparesRetiredWorktreeEvidence(t *testing.T) {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
 	}
-	if err := fleet.Add(tmpDir, projectName, repoPath, "", true); err != nil {
+	if err := fleet.Add(tmpDir, projectName, repoPath, true); err != nil {
 		t.Fatal(err)
 	}
 	auth := testAuthorityFor(t, tmpDir)

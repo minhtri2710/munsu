@@ -166,12 +166,11 @@ func TestComputeInheritedConfigDigest_Deterministic(t *testing.T) {
 
 		// Same published snapshot content for determinism (fixed project path).
 		resolved := config.ResolvedProjectConfig{
-			Project:           "test-project",
-			ProjectPath:       "/fixed/path",
-			SoldierHarness:    "pi",
-			Backend:           "tmux",
-			RequireNoMistakes: true,
-			Digest:            "0000000000000000000000000000000000000000000000000000000000000000",
+			Project:        "test-project",
+			ProjectPath:    "/fixed/path",
+			SoldierHarness: "pi",
+			Backend:        "tmux",
+			Digest:         "0000000000000000000000000000000000000000000000000000000000000000",
 		}
 		if err := config.StorePublishedSnapshot(home, resolved); err != nil {
 			t.Fatal(err)
@@ -466,11 +465,11 @@ func TestCaptainProfileRetirementConfigPushEndToEnd(t *testing.T) {
 	}
 	storeTestDocuments(t, parent, config.FleetBaseDocument{
 		SchemaVersion:  config.FleetBaseSchemaVersion,
-		Config:         config.ProjectOverlay{Backend: "tmux", Model: "fleet-model"},
+		Config:         config.FleetBaseConfig{Backend: "tmux", Model: "fleet-model"},
 		CaptainProfile: config.CaptainProfile{Harness: "pi", Model: "base-model"},
 	}, []testProjectRecord{
-		{Name: "alpha", Path: alphaPath, Mode: "direct-pr", Config: config.ProjectOverlay{Model: "alpha-model"}},
-		{Name: "beta", Path: betaPath, Mode: "local-only", Config: config.ProjectOverlay{Model: "beta-model"}},
+		{Name: "alpha", Path: alphaPath, Config: config.ProjectOverlay{Model: "alpha-model"}},
+		{Name: "beta", Path: betaPath, Config: config.ProjectOverlay{Model: "beta-model"}},
 	}, []testCaptainRecord{{ID: "alpha-captain", Home: captainHome, Project: "alpha"}})
 
 	firstPush, err := configPushWithResult(parent, captainHome)

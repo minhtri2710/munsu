@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/testutil"
@@ -35,17 +34,21 @@ func TestDoctor_ConfigReadFailureSurfaces(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	exitCode := 0
+	oldExit := exitWithCode
+	exitWithCode = func(code int) { exitCode = code }
+	defer func() { exitWithCode = oldExit }()
+
 	root := NewRootCommand()
 	buf := new(bytes.Buffer)
 	root.SetOut(buf)
 	root.SetErr(buf)
 	root.SetArgs([]string{"doctor"})
-	err := root.Execute()
-	if err == nil {
-		t.Fatalf("expected doctor to fail on unreadable base config, got nil:\n%s", buf.String())
+	if err := root.Execute(); err != nil {
+		t.Fatalf("doctor: %v\n%s", err, buf.String())
 	}
-	if !strings.Contains(err.Error(), "fleet base config") {
-		t.Fatalf("expected config-read error in command seam, got: %v", err)
+	if exitCode != 1 {
+		t.Fatalf("doctor exit code = %d on unreadable base config, want 1", exitCode)
 	}
 }
 

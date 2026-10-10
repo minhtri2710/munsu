@@ -14,22 +14,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
-type mockGitHubClient struct {
-	data []byte
-	err  error
-}
-
-func (m *mockGitHubClient) ViewPRJSON(owner, repo string, number int, fields string) ([]byte, error) {
-	if m.err != nil {
-		return nil, m.err
-	}
-	return m.data, nil
-}
-
-func (m *mockGitHubClient) CaptureIdentity(prURL string) (*domain.DeliveryIdentity, error) {
-	return nil, m.err
-}
-
 type mockGlabRunner struct {
 	data []byte
 	err  error
@@ -83,7 +67,7 @@ func TestFetchGitHubProviderSnapshot_EmptyRequiredFields(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			fakeGHPRView(t, tc.json)
-			_, err := fetchGitHubProviderSnapshot("https://github.com/owner/repo/pull/1")
+			_, err := fetchGitHubProviderSnapshot(githubForgeStep, "https://github.com/owner/repo/pull/1")
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("fetchGitHubProviderSnapshot err = %v, want %q", err, tc.want)
 			}
@@ -104,10 +88,10 @@ func TestFetchGitLabProviderSnapshot_EmptyRequiredFields(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			oldRunner := defaultGlabRunner
-			t.Cleanup(func() { defaultGlabRunner = oldRunner })
-			defaultGlabRunner = &mockGlabRunner{data: []byte(tc.json)}
-			_, err := fetchGitLabProviderSnapshot("https://gitlab.com/owner/project/-/merge_requests/1")
+			oldRunner := glabRunnerFor
+			t.Cleanup(func() { glabRunnerFor = oldRunner })
+			glabRunnerFor = fixedGlabRunner(&mockGlabRunner{data: []byte(tc.json)})
+			_, err := fetchGitLabProviderSnapshot(gitlabForgeStep, "https://gitlab.com/owner/project/-/merge_requests/1")
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("fetchGitLabProviderSnapshot err = %v, want empty field error", err)
 			}
@@ -200,6 +184,9 @@ func TestMergeStatus_ClosedNotMerged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	c := mustAuthority(t, h.Root())
+	seedCanonicalQueuedTask(t, c, "t1", "general")
+	seedSourceContract(t, c, "t1", deliveryTestGitHubForge)
 	ident := &domain.DeliveryIdentity{
 		Provider:   "github",
 		Owner:      "owner",
@@ -214,11 +201,7 @@ func TestMergeStatus_ClosedNotMerged(t *testing.T) {
 	if err := home.WriteMeta(h.Root(), "t1", ident.ToMeta()); err != nil {
 		t.Fatal(err)
 	}
-	old := DefaultGitHubClient
-	t.Cleanup(func() { DefaultGitHubClient = old })
-	DefaultGitHubClient = func() (GitHubClient, error) {
-		return &mockGitHubClient{data: []byte(`{"state":"CLOSED","headRefOid":"abc1234567890123456789012345678901234567"}`)}, nil
-	}
+	installFakeGH(t, ghReply{match: "pr view", stdout: `{"state":"CLOSED","headRefOid":"abc1234567890123456789012345678901234567"}`})
 	err = MergeStatus(h.Root(), "t1")
 	if err == nil || !strings.Contains(err.Error(), "is closed but not merged") {
 		t.Fatalf("MergeStatus err = %v, want closed but not merged", err)

@@ -381,9 +381,7 @@ func TestSubmitLaunchBlocksOnAttestationLossBeforeSubmission(t *testing.T) {
 	// The attestation has gone stale since the earlier check (modeled by an
 	// elapsed expiry, the deterministic late-loss signal).
 	f.runner.attestation = &CapabilityAttestation{
-		RequestedMode: "no-mistakes",
-		EffectiveMode: "no-mistakes",
-		Expiry:        time.Now().UTC().Add(-time.Hour),
+		Expiry: time.Now().UTC().Add(-time.Hour),
 	}
 
 	err := f.runner.submitLaunch()

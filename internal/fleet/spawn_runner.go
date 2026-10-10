@@ -33,12 +33,12 @@ type Runner struct {
 	args Args
 
 	// phase state populated during Run
-	homeDir               string
-	effectiveMode         string
-	requestedMode         string // what was asked for (--mode flag, project registry, or config/default-mode)
-	fallbackReason        string // why effective mode differs from requested mode
-	allowDirectPRFallback bool   // explicit configured direct-PR policy; fallback only with it
-	projPath              string
+	homeDir       string
+	effectiveMode string
+	projPath      string
+	reviewStep    taskauthority.DeliveryStep
+	forgeStep     taskauthority.DeliveryStep
+	contractMode  string
 	// kind is the task's kind, read once from the canonical definition by
 	// resolveKind; nothing else names it. wtPath is the worktree this launch
 	// owns (empty for a review task, which owns none). cwd is the checkout the
@@ -63,17 +63,6 @@ type Runner struct {
 	briefData       []byte
 	windowID        string
 	spawnRole       string
-
-	// contractMode is the delivery mode resolved (or read back from the
-	// durable contract) in resolveMode, BEFORE any preflight fallback mutates
-	// effectiveMode. It is the value recorded as the task's delivery
-	// contract; recording a post-fallback mode would let a transient missing
-	// binary permanently rewrite the contract.
-	contractMode string
-	// rescaffoldContract marks the one sanctioned contract change: an
-	// explicit --mode that differs from the recorded contract. Without it the
-	// recording op refuses to overwrite a committed contract.
-	rescaffoldContract bool
 
 	// dispatchPolicy is the explicit Fleet-boundary topology choice resolved
 	// once per Run (ResolveDispatchPolicy, issue #546 Slice 6): GeneralDirect
@@ -275,15 +264,14 @@ func (r *Runner) Run() (windowID string, runErr error) {
 	if err := r.beginLaunchIntent(); err != nil {
 		return "", err
 	}
-	// The delivery contract is recorded once the aggregate for this launch
-	// exists (BeginSpawn commits the generation's intent); resolveMode READS
-	// it before that. A contract already recorded under this mode is left
-	// alone, so recovery re-entry never double-records.
+	// This generation's contract captures the resolved steps after its launch
+	// intent exists; retries replay the same payload idempotently.
 	if !reviewing {
 		if err := r.recordDeliveryContract(); err != nil {
 			return "", err
 		}
 	}
+
 	success := false
 	if err := r.checkSupervision(); err != nil {
 		return "", err
@@ -331,17 +319,6 @@ func (r *Runner) Run() (windowID string, runErr error) {
 	}
 	if err := r.checkAttestation(); err != nil {
 		return "", err
-	}
-	// The one authorized fallback site (preflightNoMistakes) is behind us, so
-	// this is the one place the mode actually in force can be reconciled
-	// against the durable contract. A divergence is recorded as an explicit
-	// transition before anything launches: nothing delivers under an
-	// unrecorded mode. Late capability loss does not fall back — checkAttestation
-	// above blocks it for a parent Decision.
-	if !reviewing {
-		if err := r.reconcileDeliveryFallback(); err != nil {
-			return "", err
-		}
 	}
 	if err := r.probeFence(bound); err != nil {
 		return "", err
@@ -711,20 +688,31 @@ func (r *Runner) resolveKind() error {
 	return nil
 }
 
-// Phase 2: resolveMode resolves the effective delivery mode for this launch.
-// The durable per-task delivery contract is authoritative when present: it is
-// read first and threaded into the configuration resolution, which still runs
-// (the typed snapshot it produces is mandatory for the launch intent) but no
-// longer answers the mode question. A task delivers under the mode it was
-// contracted with instead of re-resolving fresh on every spawn.
+// resolveMode resolves this generation's immutable delivery steps.
 func (r *Runner) resolveMode() error {
 	contract := r.deliveryContract()
-	if err := r.resolveConfiguredMode(contract); err != nil {
+	args := r.args
+	args.TaskDescription = r.taskDescription()
+	resolved, err := ResolveSpawnProjectConfig(r.homeDir, args, r.dispatchPolicy, contract)
+	if err != nil {
 		return err
 	}
-	r.applyDeliveryContract(contract)
+	r.projectConfig = resolved
+	r.projectConfigLoaded = true
+	r.reviewStep = resolved.ReviewStep
+	r.forgeStep = resolved.ForgeStep
+	r.effectiveMode = resolved.Soldier.Mode
 	r.contractMode = r.effectiveMode
+	fmt.Printf("review tool: %s\n", formatDeliveryStep(r.reviewStep))
+	fmt.Printf("forge tool: %s\n", formatDeliveryStep(r.forgeStep))
 	return nil
+}
+
+func formatDeliveryStep(step taskauthority.DeliveryStep) string {
+	if step.Baseline {
+		return "baseline (no tool configured)"
+	}
+	return fmt.Sprintf("%s (%s; %s)", step.Adapter, step.ProbeState, step.Reason)
 }
 
 // deliveryContract reads the task's durable delivery contract, or nil when the
@@ -744,50 +732,6 @@ func (r *Runner) deliveryContract() *taskauthority.DeliveryContract {
 		return nil
 	}
 	return agg.DeliveryContract
-}
-
-// applyDeliveryContract settles the resolved mode against the task's durable
-// delivery contract. A task with no contract keeps the resolved mode and
-// records it after the launch intent is committed. The contract has already
-// been honoured inside the snapshot resolution; this is the one place the
-// re-scaffold intent is raised: an explicit --mode that differs from the
-// contract is a re-scaffold, the explicit mode wins, and the op owns the
-// no-silent-override refusal.
-func (r *Runner) applyDeliveryContract(contract *taskauthority.DeliveryContract) {
-	if contract == nil {
-		return
-	}
-	if r.args.Mode != "" && r.args.Mode != contract.Mode {
-		r.rescaffoldContract = true
-		return
-	}
-	r.effectiveMode = contract.Mode
-	r.requestedMode = contract.Mode
-	r.fallbackReason = ""
-}
-
-// resolveConfiguredMode resolves this launch's typed project snapshot, the
-// only configuration surface a launch intent can bind (beginLaunchIntent
-// requires its digest). The snapshot consumes the contract directly, so a
-// contracted task never has its mode re-resolved and can never be blocked by
-// default-mode drift. Any resolution failure, including an unreadable project
-// registry, fails the spawn.
-func (r *Runner) resolveConfiguredMode(contract *taskauthority.DeliveryContract) error {
-	args := r.args
-	args.TaskDescription = r.taskDescription()
-	resolved, err := ResolveSpawnProjectConfig(r.homeDir, args, r.dispatchPolicy, contract)
-	if err != nil {
-		return err
-	}
-	r.projectConfig = resolved
-	r.projectConfigLoaded = true
-	r.effectiveMode = resolved.Soldier.Mode
-	r.allowDirectPRFallback = resolved.AllowDirectPRFallback
-	r.requestedMode = r.args.Mode
-	if r.requestedMode == "" {
-		r.requestedMode = r.effectiveMode
-	}
-	return nil
 }
 
 // Phase 3: validateHarnessFlag validates --harness flag if set.
@@ -960,23 +904,10 @@ func (r *Runner) preflightNoMistakes() error {
 	if preflight == nil {
 		preflight = defaultNoMistakesPreflight
 	}
-	err := preflight(r.projPath)
-	if err == nil {
-		return nil
+	if err := preflight(r.projPath, r.reviewStep); err != nil {
+		return fmt.Errorf("review adapter %s probe/preflight failed: %w", r.reviewStep.Adapter, err)
 	}
-	// The no-mistakes gate preflight reported an exact blocker. Fail closed
-	// with supported delivery-mode guidance unless the operator explicitly
-	// configured the direct-PR fallback policy; the fallback records the
-	// blocker as audit evidence (fallbackReason → attestation → task meta, and
-	// → the durable contract transition reconcileDeliveryFallback commits).
-	var blocker *GateBlockerError
-	if r.allowDirectPRFallback && errors.As(err, &blocker) {
-		fmt.Fprintf(os.Stderr, "warning: no-mistakes delivery blocked (%s); falling back to direct-PR under the configured allow-direct-pr-fallback policy: %s\n", blocker.Category, blocker.Detail)
-		r.effectiveMode = "direct-PR"
-		r.fallbackReason = fmt.Sprintf("no-mistakes blocked (%s): %s; direct-PR fallback under configured allow-direct-pr-fallback policy", blocker.Category, blocker.Detail)
-		return nil
-	}
-	return err
+	return nil
 }
 
 // Phase 8: acquireWorktree acquires the worktree owned by the launch
@@ -1262,13 +1193,12 @@ func (r *Runner) beginLaunchIntent() error {
 	return nil
 }
 
-// recordDeliveryContract fixes the launch's delivery mode durably on the
-// canonical task so every later generation reads the contract instead of
-// re-resolving. It runs after beginLaunchIntent because the aggregate for
-// this launch must exist first. A contract already recorded under this mode
-// is a no-op (the RecordLaunch skip-before-op shape), so recovery re-entry
-// never re-records; a differing mode reaches the op, which refuses to
-// override a committed contract without the explicit re-scaffold intent.
+// recordDeliveryContract fixes the launch's delivery mode and captured tool
+// steps durably on the canonical task so every later generation reads the
+// contract instead of re-resolving. It runs after beginLaunchIntent because the
+// aggregate for this launch must exist first. An identical recorded contract
+// is a no-op so recovery re-entry never re-records; a differing one reaches the
+// canonical op, which refuses it rather than overriding it.
 func (r *Runner) recordDeliveryContract() error {
 	if r.args.Authority == nil {
 		return fmt.Errorf("delivery contract: task authority is not composed for spawn")
@@ -1284,7 +1214,10 @@ func (r *Runner) recordDeliveryContract() error {
 	if err != nil {
 		return fmt.Errorf("delivery contract: resolving task %s: %w", r.args.ID, err)
 	}
-	if agg.DeliveryContract != nil && agg.DeliveryContract.Mode == r.contractMode {
+	// Recovery re-entry under the recorded contract records nothing: the op's
+	// intent carries the generation's current precondition, so a repeat would be
+	// refused as reused with different intent.
+	if agg.DeliveryContract != nil && agg.DeliveryContract.Matches(r.contractMode, r.reviewStep, r.forgeStep) {
 		return nil
 	}
 	req := taskauthority.CanonicalRecordDeliveryContractRequest{
@@ -1292,63 +1225,16 @@ func (r *Runner) recordDeliveryContract() error {
 		TaskID:       taskID,
 		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
 		Mode:         r.contractMode,
-		Rescaffold:   r.rescaffoldContract,
-		Reason:       "spawn",
+		Review:       r.reviewStep,
+		Forge:        r.forgeStep,
 	}
+
 	op, err := r.spawnOperation("contract", agg.Generation, req)
 	if err != nil {
 		return fmt.Errorf("delivery contract: %w", err)
 	}
 	if _, err := r.args.Authority.RecordDeliveryContract(op, req); err != nil {
 		return fmt.Errorf("delivery contract: %w", err)
-	}
-	return nil
-}
-
-// reconcileDeliveryFallback records the authorized delivery fallback that put
-// a mode other than the contracted one in force. It runs once after the
-// no-mistakes preflight fallback site: the contract's Mode becomes the mode in
-// force and its Fallback states how it got there (ADR-0022 Decision #2).
-//
-// It fails closed twice over. A divergence carrying no fallback reason is
-// never recorded as a transition — an unexplained mode change aborts the
-// launch instead. And a recording that fails aborts the launch too, so a
-// soldier never delivers under a mode the contract does not state.
-func (r *Runner) reconcileDeliveryFallback() error {
-	if r.args.Authority == nil {
-		return fmt.Errorf("delivery fallback: task authority is not composed for spawn")
-	}
-	taskID, err := domain.NewTaskID(r.args.ID)
-	if err != nil {
-		return fmt.Errorf("delivery fallback: %w", err)
-	}
-	agg, err := r.args.Authority.Get(taskID)
-	if err != nil {
-		return fmt.Errorf("delivery fallback: resolving task %s: %w", r.args.ID, err)
-	}
-	if agg.DeliveryContract == nil {
-		return fmt.Errorf("delivery fallback: task %s carries no delivery contract at launch", r.args.ID)
-	}
-	if agg.DeliveryContract.Mode == r.effectiveMode {
-		return nil
-	}
-	if r.fallbackReason == "" {
-		return fmt.Errorf("delivery fallback: task %s launches as %q against a contract of %q with no recorded fallback; refusing to deliver under an unrecorded mode", r.args.ID, r.effectiveMode, agg.DeliveryContract.Mode)
-	}
-	req := taskauthority.CanonicalRecordDeliveryFallbackRequest{
-		HomeID:       r.args.Authority.HomeID(),
-		TaskID:       taskID,
-		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
-		From:         agg.DeliveryContract.Mode,
-		To:           r.effectiveMode,
-		Reason:       r.fallbackReason,
-	}
-	op, err := r.spawnOperation("fallback", agg.Generation, req)
-	if err != nil {
-		return fmt.Errorf("delivery fallback: %w", err)
-	}
-	if _, err := r.args.Authority.RecordDeliveryFallback(op, req); err != nil {
-		return fmt.Errorf("delivery fallback: %w", err)
 	}
 	return nil
 }
@@ -1644,10 +1530,10 @@ func (r *Runner) createAttestation() error {
 		r.homeDir,
 		r.harness,
 		gateAgent,
-		r.requestedMode,
-		r.effectiveMode,
-		r.fallbackReason,
+		r.reviewStep,
+		r.forgeStep,
 	)
+
 	return nil
 }
 
@@ -1739,7 +1625,7 @@ func (r *Runner) createSession() error {
 		return nil
 	}
 	// The backend identity is the launch intent's explicit snapshot Backend
-	// (fleet.ResolveProjectSnapshot → config.ResolveProject); the raw --backend
+	// (fleet.ResolveProjectSnapshot → config resolver); the raw --backend
 	// flag is an assertion validated against the resolved snapshot, not a
 	// resolution input.
 	backendName := ""
@@ -2792,12 +2678,6 @@ func (r *Runner) printEndpointInfo() {
 	}
 	fmt.Printf("  kind:     %s\n", r.kind)
 	fmt.Printf("  mode:     %s\n", r.effectiveMode)
-	if r.requestedMode != "" && r.requestedMode != r.effectiveMode {
-		fmt.Printf("  requested: %s\n", r.requestedMode)
-	}
-	if r.fallbackReason != "" {
-		fmt.Printf("  reason:   %s\n", r.fallbackReason)
-	}
 	fmt.Printf("  yolo:     %s\n", yoloVal)
 }
 

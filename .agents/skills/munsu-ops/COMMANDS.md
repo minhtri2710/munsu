@@ -46,7 +46,7 @@ for the complete registered set.
 
 | Command | Description |
 |---------|-------------|
-| `munsu spawn <id> [<project>] [--mode no-mistakes\|direct-PR\|local-only] [--backend tmux\|herdr] [--yolo]` | Launch a soldier agent in a worktree+tmux/herdr window. |
+| `munsu spawn <id> [<project>] [--backend tmux\|herdr] [--yolo]` | Launch a soldier agent in a worktree+tmux/herdr window; delivery mode is derived from the project's configured review and forge steps. |
 | `munsu send <id> "<line>"` | Send a mailbox command downlink to a Soldier or Captain endpoint; uplink to General is refused. |
 | `munsu report <state> "<msg>" [--key <slug>]` | Report status up the hierarchy (rank-aware uplink). |
 | `munsu peek <id> [--lines N]` | Read last N lines of soldier pane output (default 40). |

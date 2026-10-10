@@ -782,7 +782,7 @@ func TestFleetSnapshotParentReconciliation(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := fleet.Add(home, "sample", captainHome, "no-mistakes", false); err != nil {
+	if err := fleet.Add(home, "sample", captainHome, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := fleet.Register(home, "domain-alpha", captainHome, "", "sample"); err != nil {

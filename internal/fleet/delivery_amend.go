@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // This file retains the read-only delivery vocabulary and provider snapshot
@@ -93,39 +93,40 @@ func mapCheckStatus(value string) domain.CheckStatus {
 }
 
 // FetchProviderSnapshot queries the provider for a point-in-time snapshot of a
-// PR/MR through the typed provider clients. Read-only; fail-closed on
-// provider absence or ambiguous state.
+// PR/MR through the client its captured forge step resolves to. Read-only;
+// fail-closed on provider absence or ambiguous state.
 var FetchProviderSnapshot = fetchProviderSnapshotImpl
 
-func fetchProviderSnapshotImpl(prURL string) (*ProviderSnapshot, error) {
+func fetchProviderSnapshotImpl(forge taskauthority.DeliveryStep, prURL string) (*ProviderSnapshot, error) {
 	provider, _, _, _, _, err := domain.ParseProviderURL(prURL)
 	if err != nil {
 		return nil, fmt.Errorf("unrecognized PR/MR URL: %w", err)
 	}
-	return fetchProviderSnapshotForProvider(provider, prURL)
+	return fetchProviderSnapshotForProvider(forge, provider, prURL)
 }
 
-func fetchProviderSnapshotForProvider(provider, prURL string) (*ProviderSnapshot, error) {
+func fetchProviderSnapshotForProvider(forge taskauthority.DeliveryStep, provider, prURL string) (*ProviderSnapshot, error) {
 	switch provider {
 	case "github":
-		return fetchGitHubProviderSnapshot(prURL)
+		return fetchGitHubProviderSnapshot(forge, prURL)
 	case "gitlab":
-		return fetchGitLabProviderSnapshot(prURL)
+		return fetchGitLabProviderSnapshot(forge, prURL)
 	default:
 		return nil, fmt.Errorf("unknown provider %q for URL %s", provider, prURL)
 	}
 }
 
-func fetchGitHubProviderSnapshot(prURL string) (*ProviderSnapshot, error) {
+func fetchGitHubProviderSnapshot(forge taskauthority.DeliveryStep, prURL string) (*ProviderSnapshot, error) {
 	ghURL, err := domain.ParseGHURL(prURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid GitHub URL: %w", err)
 	}
 
-	if st := ProbeGitHubDeliveryCapability(); st != backend.Ready {
-		return nil, fmt.Errorf("GitHub provider not available: delivery capability is %s", st)
+	resolved, err := forgeClientForIdentity(forge, domain.DeliveryIdentity{Provider: "github"})
+	if err != nil {
+		return nil, fmt.Errorf("GitHub provider not available: %w", err)
 	}
-	client := GitHubDeliveryClient(&ghAxiClient{})
+	client := resolved.github
 	view, err := readGitHubPRView(client, ghURL)
 	if err != nil {
 		return nil, err
@@ -179,16 +180,17 @@ func fetchGitHubProviderSnapshot(prURL string) (*ProviderSnapshot, error) {
 	return snap, nil
 }
 
-func fetchGitLabProviderSnapshot(mrURL string) (*ProviderSnapshot, error) {
+func fetchGitLabProviderSnapshot(forge taskauthority.DeliveryStep, mrURL string) (*ProviderSnapshot, error) {
 	glURL, err := domain.ParseMRURL(mrURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid MR URL: %w", err)
 	}
 
-	client, err := DefaultGitLabClient()
+	resolved, err := forgeClientForIdentity(forge, domain.DeliveryIdentity{Provider: "gitlab"})
 	if err != nil {
 		return nil, fmt.Errorf("GitLab provider not available: %w", err)
 	}
+	client := resolved.gitlab
 
 	// Single query: parse identity and status from one ViewMRJSON call
 	data, err := client.ViewMRJSON(glURL.Host, glURL.Owner, glURL.Project, glURL.IID)

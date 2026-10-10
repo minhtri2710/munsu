@@ -21,7 +21,7 @@ import (
 func TestDeliverCrashBeforeMutationRetriesSafely(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	taskID := "t1"
-	mustWorkingDeliveryTask(t, c, taskID)
+	mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 	installScriptedProviderFor(t, "open-then-merged")
 
 	runDeliveryCrashHelper(t, homeDir, taskID, "authorized", "open-then-merged")
@@ -62,7 +62,7 @@ func TestDeliverCrashBeforeMutationRetriesSafely(t *testing.T) {
 func TestDeliverCrashAfterMutationNeverRepeatsMutation(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	taskID := "t1"
-	mustWorkingDeliveryTask(t, c, taskID)
+	mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 	installScriptedProviderFor(t, "open-then-merged")
 
 	runDeliveryCrashHelper(t, homeDir, taskID, "committed", "open-then-merged")
@@ -101,7 +101,7 @@ func TestDeliverCrashAfterMutationNeverRepeatsMutation(t *testing.T) {
 func TestDeliverCrashAtMutatingMergedIdentityMismatchIsRemoteUnknown(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	taskID := "t1"
-	mustWorkingDeliveryTask(t, c, taskID)
+	mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 	installScriptedProviderFor(t, "open-then-merged")
 	runDeliveryCrashHelper(t, homeDir, taskID, "mutating", "open-then-merged")
 	provider := newFakeDeliveryProvider().script(DeliveryProviderObservation{State: "MERGED", HeadSHA: "different", BaseRef: deliveryTestBase, MergedSHA: "0123456789abcdef0123456789abcdef01234567"})
@@ -118,7 +118,7 @@ func TestDeliverCrashAtMutatingMergedIdentityMismatchIsRemoteUnknown(t *testing.
 func TestDeliverCrashAtMutatingReconcilesObservationAndNeverMutates(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	taskID := "t1"
-	mustWorkingDeliveryTask(t, c, taskID)
+	mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 	installScriptedProviderFor(t, "open-then-merged")
 
 	// Crash at the durable mutating boundary: the subprocess persisted
@@ -150,7 +150,7 @@ func TestDeliverCrashAtMutatingReconcilesObservationAndNeverMutates(t *testing.T
 func TestDeliverRecoveryRejectsInvalidPinnedMergedSHA(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	taskID := "t1"
-	mustWorkingDeliveryTask(t, c, taskID)
+	mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 	installScriptedProviderFor(t, "open-then-merged")
 	runDeliveryCrashHelper(t, homeDir, taskID, "outcome", "open-then-merged")
 
@@ -198,7 +198,7 @@ func TestDeliverRecoveryRejectsInvalidPinnedMergedSHA(t *testing.T) {
 func TestDeliverOutcomeCommitConflictWithInvalidMergedSHAFailsClosed(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	taskID := "t1"
-	mustWorkingDeliveryTask(t, c, taskID)
+	mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 	installScriptedProviderFor(t, "open-then-merged")
 	runDeliveryCrashHelper(t, homeDir, taskID, "outcome", "open-then-merged")
 
@@ -234,7 +234,7 @@ func TestDeliverOutcomeCommitConflictWithInvalidMergedSHAFailsClosed(t *testing.
 func TestDeliverOutcomeCommitConflictYieldsCommittedNeverCompleted(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	taskID := "t1"
-	mustWorkingDeliveryTask(t, c, taskID)
+	mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 	installScriptedProviderFor(t, "open-then-merged")
 
 	// Crash at the outcome boundary: the journal pinned a completed outcome
@@ -302,7 +302,7 @@ func TestDeliverOutcomeCommitConflictYieldsCommittedNeverCompleted(t *testing.T)
 func TestDeliverRecoveryIdempotentReplay(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	taskID := "t1"
-	mustWorkingDeliveryTask(t, c, taskID)
+	mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 	installScriptedProviderFor(t, "open-then-merged")
 
 	runDeliveryCrashHelper(t, homeDir, taskID, "committed", "open-then-merged")
@@ -332,7 +332,7 @@ func TestDeliverActiveIndexStaysBounded(t *testing.T) {
 	_, homeDir := newFleetCanonical(t)
 	c := mustCanonicalForHome(t, homeDir)
 	taskID := "t1"
-	mustWorkingDeliveryTask(t, c, taskID)
+	mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 
 	const cycles = 4
 	for i := 0; i < cycles; i++ {
@@ -371,7 +371,7 @@ func TestDeliverActiveIndexStaysBounded(t *testing.T) {
 func TestDeliverRecoveryFailClosedBeforeMutation(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	taskID := "t1"
-	mustWorkingDeliveryTask(t, c, taskID)
+	mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 	installScriptedProviderFor(t, "open-then-merged")
 
 	runDeliveryCrashHelper(t, homeDir, taskID, "authorized", "open-then-merged")

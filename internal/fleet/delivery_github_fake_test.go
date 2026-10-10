@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
@@ -29,6 +31,8 @@ type fakeGH struct {
 
 func installFakeGH(t *testing.T, replies ...ghReply) *fakeGH {
 	t.Helper()
+	// gh is authenticated unless a test scripts an auth status reply first.
+	replies = append(replies, ghReply{match: "auth status"})
 	dir := t.TempDir()
 	var script strings.Builder
 	script.WriteString("#!/bin/sh\nd=$(dirname \"$0\")\necho \"$*\" >> \"$d/argv.log\"\n")
@@ -62,4 +66,21 @@ func (f *fakeGH) calls(t *testing.T) []string {
 		t.Fatal(err)
 	}
 	return strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+}
+
+// deliveryTestGitHubForge is the captured forge step of a delivery task.
+// Canonical validation wants an absolute path; the probe of a configured
+// forge runs through the adapter's own lookup.
+var deliveryTestGitHubForge = taskauthority.DeliveryStep{Adapter: "github", Path: "/usr/local/bin/gh-axi", ProbeState: "ready"}
+
+// githubForgeStep is a captured github forge step whose probe is Ready.
+var githubForgeStep = taskauthority.DeliveryStep{Adapter: "github", ProbeState: "ready"}
+
+// gitlabForgeStep is the captured forge step of a task whose forge is the
+// configured glab tool; its probe runs through glabRunnerFor.
+var gitlabForgeStep = taskauthority.DeliveryStep{Adapter: "gitlab", Path: "/usr/local/bin/glab", ProbeState: "ready"}
+
+// fixedGlabRunner scripts every configured glab entry with one runner.
+func fixedGlabRunner(runner GlabRunner) func(config.ToolEntry) GlabRunner {
+	return func(config.ToolEntry) GlabRunner { return runner }
 }

@@ -42,28 +42,49 @@ type CaptainProfile struct {
 	Effort  string `json:"effort,omitempty"`
 }
 
+type ToolEntry struct {
+	Adapter string   `json:"adapter"`
+	Path    string   `json:"path,omitempty"`
+	Args    []string `json:"args,omitempty"`
+}
+
 type ProjectOverlay struct {
-	SoldierHarness    string `json:"soldierHarness,omitempty"`
-	Model             string `json:"model,omitempty"`
-	DispatchAutonomy  string `json:"dispatchAutonomy,omitempty"`
-	DefaultMode       string `json:"defaultMode,omitempty"`
-	RequireNoMistakes *bool  `json:"requireNoMistakes,omitempty"`
-	// AllowDirectPRFallback is the explicit configured direct-PR policy: when
-	// true, a no-mistakes delivery that resolves but is blocked by the
-	// gate-agent capability preflight falls back to direct-PR with the blocker
-	// recorded as audit evidence. Unset/false fails closed: the blocker is
-	// reported with supported delivery-mode guidance instead of a silent
-	// bypass.
-	AllowDirectPRFallback *bool             `json:"allowDirectPRFallback,omitempty"`
-	Backend               string            `json:"backend,omitempty"`
-	TamperCheck           string            `json:"tamperCheck,omitempty"`
-	DispatchProfiles      []DispatchProfile `json:"dispatchProfiles,omitempty"`
+	SoldierHarness   string            `json:"soldierHarness,omitempty"`
+	Model            string            `json:"model,omitempty"`
+	DispatchAutonomy string            `json:"dispatchAutonomy,omitempty"`
+	Backend          string            `json:"backend,omitempty"`
+	TamperCheck      string            `json:"tamperCheck,omitempty"`
+	DispatchProfiles []DispatchProfile `json:"dispatchProfiles,omitempty"`
+	Review           *ToolEntry        `json:"review,omitempty"`
+	Forge            *ToolEntry        `json:"forge,omitempty"`
+}
+
+type ResolvedStep struct {
+	Baseline   bool     `json:"baseline"`
+	Adapter    string   `json:"adapter,omitempty"`
+	Path       string   `json:"path,omitempty"`
+	Args       []string `json:"args,omitempty"`
+	ProbeState string   `json:"probeState"`
+	Version    string   `json:"version,omitempty"`
+	Reason     string   `json:"reason,omitempty"`
+}
+
+// FleetBaseConfig is the fleet-wide overlay. Tool entries are project-only, so
+// it has no Review or Forge field and a fleet base document cannot carry one.
+// Keep its fields in step with ProjectOverlay.
+type FleetBaseConfig struct {
+	SoldierHarness   string            `json:"soldierHarness,omitempty"`
+	Model            string            `json:"model,omitempty"`
+	DispatchAutonomy string            `json:"dispatchAutonomy,omitempty"`
+	Backend          string            `json:"backend,omitempty"`
+	TamperCheck      string            `json:"tamperCheck,omitempty"`
+	DispatchProfiles []DispatchProfile `json:"dispatchProfiles,omitempty"`
 }
 
 type FleetBaseDocument struct {
-	SchemaVersion  string         `json:"schemaVersion"`
-	Config         ProjectOverlay `json:"config"`
-	CaptainProfile CaptainProfile `json:"captainProfile,omitempty"`
+	SchemaVersion  string          `json:"schemaVersion"`
+	Config         FleetBaseConfig `json:"config"`
+	CaptainProfile CaptainProfile  `json:"captainProfile,omitempty"`
 }
 
 // ProjectFacts is the narrow, Fleet-owned scoped facts Config accepts to
@@ -75,28 +96,29 @@ type FleetBaseDocument struct {
 type ProjectFacts struct {
 	Name    string
 	Path    string
-	Mode    string
 	Overlay ProjectOverlay
 }
 
 type ResolvedProjectConfig struct {
-	Project               string            `json:"project"`
-	ProjectPath           string            `json:"projectPath"`
-	SoldierHarness        string            `json:"soldierHarness,omitempty"`
-	DispatchAutonomy      string            `json:"dispatchAutonomy,omitempty"`
-	Model                 string            `json:"model,omitempty"`
-	DefaultMode           string            `json:"defaultMode,omitempty"`
-	RequireNoMistakes     bool              `json:"requireNoMistakes"`
-	AllowDirectPRFallback bool              `json:"allowDirectPRFallback,omitempty"`
-	Backend               string            `json:"backend,omitempty"`
-	TamperCheck           string            `json:"tamperCheck,omitempty"`
-	DispatchProfiles      []DispatchProfile `json:"dispatchProfiles,omitempty"`
-	CaptainProfile        CaptainProfile    `json:"captainProfile,omitempty"`
-	Digest                string            `json:"digest"`
+	Project          string            `json:"project"`
+	ProjectPath      string            `json:"projectPath"`
+	SoldierHarness   string            `json:"soldierHarness,omitempty"`
+	DispatchAutonomy string            `json:"dispatchAutonomy,omitempty"`
+	Model            string            `json:"model,omitempty"`
+	Backend          string            `json:"backend,omitempty"`
+	TamperCheck      string            `json:"tamperCheck,omitempty"`
+	DispatchProfiles []DispatchProfile `json:"dispatchProfiles,omitempty"`
+	CaptainProfile   CaptainProfile    `json:"captainProfile,omitempty"`
+	ReviewStep       ResolvedStep      `json:"reviewStep"`
+	ForgeStep        ResolvedStep      `json:"forgeStep"`
+	Digest           string            `json:"digest"`
 }
 
 func (d FleetBaseDocument) Validate() error {
-	return validateSchema("fleet base", d.SchemaVersion, FleetBaseSchemaVersion)
+	if err := validateSchema("fleet base", d.SchemaVersion, FleetBaseSchemaVersion); err != nil {
+		return err
+	}
+	return nil
 }
 
 func validateSchema(name, got, want string) error {
@@ -106,13 +128,26 @@ func validateSchema(name, got, want string) error {
 	return nil
 }
 
-// ResolveProject resolves one Project's overlay from the Fleet-owned scoped
-// facts and the base overlay. Config owns the overlay resolution and the
-// deterministic digest; it owns no registry and cannot mutate Project/Captain
-// lifecycle. After both typed layers resolve, the requested Backend identity
-// must be non-empty: an empty identity is a typed validation failure — Config
-// never auto-detects a Backend.
-func ResolveProject(base FleetBaseDocument, facts ProjectFacts) (ResolvedProjectConfig, error) {
+func ResolveProjectWithToolProbe(base FleetBaseDocument, facts ProjectFacts, probe func(string, ToolEntry) ResolvedStep) (ResolvedProjectConfig, error) {
+	if err := base.Validate(); err != nil {
+		return ResolvedProjectConfig{}, err
+	}
+	effective, err := finalResolvedOverlay(base, facts)
+	if err != nil {
+		return ResolvedProjectConfig{}, err
+	}
+	review, forge, err := ResolveProjectTools(effective, probe)
+	if err != nil {
+		return ResolvedProjectConfig{}, err
+	}
+	return ResolveProjectWithSteps(base, facts, review, forge)
+}
+
+func baselineStep() ResolvedStep {
+	return ResolvedStep{Baseline: true, ProbeState: "baseline", Reason: "no tool configured"}
+}
+
+func ResolveProjectWithSteps(base FleetBaseDocument, facts ProjectFacts, reviewStep, forgeStep ResolvedStep) (ResolvedProjectConfig, error) {
 	if err := base.Validate(); err != nil {
 		return ResolvedProjectConfig{}, err
 	}
@@ -123,24 +158,123 @@ func ResolveProject(base FleetBaseDocument, facts ProjectFacts) (ResolvedProject
 	if effective.Backend == "" {
 		return ResolvedProjectConfig{}, fmt.Errorf("project %q resolved no session backend identity: set backend in the fleet base config or the project overlay", facts.Name)
 	}
-	digest, err := ProjectDigest(base, facts)
+	if err := ValidateProjectTools(effective); err != nil {
+		return ResolvedProjectConfig{}, err
+	}
+	if err := validateResolvedStep("review", reviewStep); err != nil {
+		return ResolvedProjectConfig{}, err
+	}
+	if err := validateResolvedStep("forge", forgeStep); err != nil {
+		return ResolvedProjectConfig{}, err
+	}
+	if !stepMatchesEntry(reviewStep, effective.Review) || !stepMatchesEntry(forgeStep, effective.Forge) {
+		return ResolvedProjectConfig{}, fmt.Errorf("resolved tool steps do not match the project overlay")
+	}
+	digest, err := projectDigest(effective, reviewStep, forgeStep)
 	if err != nil {
 		return ResolvedProjectConfig{}, err
 	}
-
-	require := effective.RequireNoMistakes != nil && *effective.RequireNoMistakes
-	allowDirectPR := effective.AllowDirectPRFallback != nil && *effective.AllowDirectPRFallback
 	return ResolvedProjectConfig{
 		Project: facts.Name, ProjectPath: facts.Path,
 		SoldierHarness: effective.SoldierHarness, Model: effective.Model,
 		DispatchAutonomy: effective.DispatchAutonomy,
-		DefaultMode:      effective.DefaultMode, RequireNoMistakes: require,
-		AllowDirectPRFallback: allowDirectPR,
-		Backend:               effective.Backend,
-		TamperCheck:           effective.TamperCheck,
-		DispatchProfiles:      cloneProfiles(effective.DispatchProfiles),
-		CaptainProfile:        base.CaptainProfile, Digest: digest,
+		Backend:          effective.Backend, TamperCheck: effective.TamperCheck,
+		DispatchProfiles: cloneProfiles(effective.DispatchProfiles),
+		CaptainProfile:   base.CaptainProfile,
+		ReviewStep:       cloneResolvedStep(reviewStep), ForgeStep: cloneResolvedStep(forgeStep),
+		Digest: digest,
 	}, nil
+}
+
+func cloneResolvedStep(step ResolvedStep) ResolvedStep {
+	step.Args = append([]string(nil), step.Args...)
+	return step
+}
+
+func stepMatchesEntry(step ResolvedStep, entry *ToolEntry) bool {
+	if entry == nil {
+		return step.Baseline && step.ProbeState == "baseline"
+	}
+	if step.Baseline || step.Adapter != entry.Adapter || len(step.Args) != len(entry.Args) || (entry.Path != "" && step.Path != entry.Path) || step.Path == "" || !filepath.IsAbs(step.Path) {
+		return false
+	}
+	for i := range step.Args {
+		if step.Args[i] != entry.Args[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func validateResolvedStep(name string, step ResolvedStep) error {
+	if step.Baseline {
+		if step.Adapter != "" || step.Path != "" || len(step.Args) != 0 || step.ProbeState != "baseline" {
+			return fmt.Errorf("resolved %s baseline carries configured tool data", name)
+		}
+		return nil
+	}
+	var supported bool
+	switch name {
+	case "review":
+		supported = step.Adapter == "no-mistakes"
+	case "forge":
+		supported = step.Adapter == "github" || step.Adapter == "gitlab"
+	}
+	if !supported || step.ProbeState != "ready" {
+		return fmt.Errorf("resolved %s adapter %s probe %s: %s", name, step.Adapter, step.ProbeState, step.Reason)
+	}
+	if step.Path == "" || !filepath.IsAbs(step.Path) {
+		return fmt.Errorf("resolved %s adapter %s requires an absolute executable path", name, step.Adapter)
+	}
+	return nil
+}
+
+func toolEntryFromStep(step ResolvedStep) *ToolEntry {
+	if step.Baseline {
+		return nil
+	}
+	// A github step's Path is the probed gh-axi location, not configuration;
+	// the adapter takes no path or args.
+	if step.Adapter == "github" {
+		return &ToolEntry{Adapter: step.Adapter}
+	}
+	return &ToolEntry{Adapter: step.Adapter, Path: step.Path, Args: append([]string(nil), step.Args...)}
+}
+
+func ResolveProjectTools(overlay ProjectOverlay, probe func(string, ToolEntry) ResolvedStep) (ResolvedStep, ResolvedStep, error) {
+	if err := ValidateProjectTools(overlay); err != nil {
+		return ResolvedStep{}, ResolvedStep{}, err
+	}
+	resolve := func(step string, entry *ToolEntry) ResolvedStep {
+		if entry == nil {
+			return baselineStep()
+		}
+		if probe == nil {
+			return ResolvedStep{Adapter: entry.Adapter, Path: entry.Path, Args: append([]string(nil), entry.Args...), ProbeState: "failed", Reason: "configured tool probe is unavailable"}
+		}
+		result := probe(step, *cloneToolEntry(entry))
+		result.Adapter = entry.Adapter
+		result.Args = append([]string(nil), entry.Args...)
+		if entry.Path != "" {
+			result.Path = entry.Path
+		}
+		return result
+	}
+	return resolve("review", overlay.Review), resolve("forge", overlay.Forge), nil
+}
+
+func projectDigest(config ProjectOverlay, review, forge ResolvedStep) (string, error) {
+	payload := struct {
+		Config     ProjectOverlay `json:"config"`
+		ReviewStep ResolvedStep   `json:"reviewStep"`
+		ForgeStep  ResolvedStep   `json:"forgeStep"`
+	}{cloneOverlay(config), cloneResolvedStep(review), cloneResolvedStep(forge)}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("marshal resolved project config: %w", err)
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 func applyOverlay(dst *ProjectOverlay, src ProjectOverlay) {
@@ -153,17 +287,6 @@ func applyOverlay(dst *ProjectOverlay, src ProjectOverlay) {
 	if src.DispatchAutonomy != "" {
 		dst.DispatchAutonomy = src.DispatchAutonomy
 	}
-	if src.DefaultMode != "" {
-		dst.DefaultMode = src.DefaultMode
-	}
-	if src.RequireNoMistakes != nil {
-		value := *src.RequireNoMistakes
-		dst.RequireNoMistakes = &value
-	}
-	if src.AllowDirectPRFallback != nil {
-		value := *src.AllowDirectPRFallback
-		dst.AllowDirectPRFallback = &value
-	}
 	if src.Backend != "" {
 		dst.Backend = src.Backend
 	}
@@ -173,33 +296,29 @@ func applyOverlay(dst *ProjectOverlay, src ProjectOverlay) {
 	if len(src.DispatchProfiles) > 0 {
 		dst.DispatchProfiles = cloneProfiles(src.DispatchProfiles)
 	}
+	if src.Review != nil {
+		dst.Review = cloneToolEntry(src.Review)
+	}
+	if src.Forge != nil {
+		dst.Forge = cloneToolEntry(src.Forge)
+	}
 }
 
 func cloneOverlay(src ProjectOverlay) ProjectOverlay {
 	result := src
 	result.DispatchProfiles = cloneProfiles(src.DispatchProfiles)
-	if src.RequireNoMistakes != nil {
-		value := *src.RequireNoMistakes
-		result.RequireNoMistakes = &value
-	}
-	if src.AllowDirectPRFallback != nil {
-		value := *src.AllowDirectPRFallback
-		result.AllowDirectPRFallback = &value
-	}
+	result.Review = cloneToolEntry(src.Review)
+	result.Forge = cloneToolEntry(src.Forge)
 	return result
 }
 
-func cloneProfiles(src []DispatchProfile) []DispatchProfile {
+func cloneToolEntry(src *ToolEntry) *ToolEntry {
 	if src == nil {
 		return nil
 	}
-	result := make([]DispatchProfile, len(src))
-	for i := range src {
-		result[i] = src[i]
-		result[i].Match = append([]string(nil), src[i].Match...)
-		result[i].Use = append([]DispatchCandidate(nil), src[i].Use...)
-	}
-	return result
+	clone := *src
+	clone.Args = append([]string(nil), src.Args...)
+	return &clone
 }
 
 // finalResolvedOverlay applies the two typed layers — fleet base and project
@@ -214,36 +333,61 @@ func finalResolvedOverlay(base FleetBaseDocument, facts ProjectFacts) (ProjectOv
 	if facts.Path == "" {
 		return ProjectOverlay{}, fmt.Errorf("project %q path is required", facts.Name)
 	}
-	return resolvedOverlay(base.Config, facts.Overlay, facts.Mode), nil
+	return resolvedOverlay(overlayOf(base.Config), facts.Overlay), nil
 }
 
-// ProjectDigest returns the deterministic persisted digest for the base plus
-// one Project's overlay facts. It is Config-owned and independent of any
-// registry: the ONE canonical digest payload is the final resolved overlay
-// after both typed layers, so a Backend or overlay change is digest bound.
-func ProjectDigest(base FleetBaseDocument, facts ProjectFacts) (string, error) {
-	if err := base.Validate(); err != nil {
-		return "", err
+func overlayOf(base FleetBaseConfig) ProjectOverlay {
+	return ProjectOverlay{
+		SoldierHarness: base.SoldierHarness, Model: base.Model,
+		DispatchAutonomy: base.DispatchAutonomy, Backend: base.Backend,
+		TamperCheck: base.TamperCheck, DispatchProfiles: base.DispatchProfiles,
 	}
-	config, err := finalResolvedOverlay(base, facts)
-	if err != nil {
-		return "", err
-	}
-	data, err := json.Marshal(config)
-	if err != nil {
-		return "", fmt.Errorf("marshal resolved project config: %w", err)
-	}
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:]), nil
 }
 
-func resolvedOverlay(base ProjectOverlay, overlay ProjectOverlay, mode string) ProjectOverlay {
+func resolvedOverlay(base ProjectOverlay, overlay ProjectOverlay) ProjectOverlay {
 	effective := cloneOverlay(base)
 	applyOverlay(&effective, overlay)
-	if mode != "" && overlay.DefaultMode == "" {
-		effective.DefaultMode = mode
-	}
 	return effective
+}
+func cloneProfiles(src []DispatchProfile) []DispatchProfile {
+	if src == nil {
+		return nil
+	}
+	result := make([]DispatchProfile, len(src))
+	for i := range src {
+		result[i] = src[i]
+		result[i].Match = append([]string(nil), src[i].Match...)
+		result[i].Use = append([]DispatchCandidate(nil), src[i].Use...)
+	}
+	return result
+}
+func ValidateProjectTools(overlay ProjectOverlay) error {
+	if err := validateToolEntry("review", overlay.Review, map[string]bool{"no-mistakes": true}); err != nil {
+		return err
+	}
+	if err := validateToolEntry("forge", overlay.Forge, map[string]bool{"github": true, "gitlab": true}); err != nil {
+		return err
+	}
+	if overlay.Review != nil && overlay.Review.Adapter == "no-mistakes" && overlay.Forge == nil {
+		return fmt.Errorf("review adapter no-mistakes requires a configured forge tool")
+	}
+	return nil
+}
+
+func validateToolEntry(step string, entry *ToolEntry, adapters map[string]bool) error {
+	if entry == nil {
+		return nil
+	}
+	if !adapters[entry.Adapter] {
+		return fmt.Errorf("%s tool has unknown adapter %q", step, entry.Adapter)
+	}
+	if entry.Path != "" && !filepath.IsAbs(entry.Path) {
+		return fmt.Errorf("%s adapter %s path must be absolute", step, entry.Adapter)
+	}
+	if entry.Adapter == "github" && (entry.Path != "" || len(entry.Args) != 0) {
+		return fmt.Errorf("forge adapter github does not accept path or args because it uses gh-axi and gh from PATH")
+	}
+	return nil
 }
 
 func LoadFleetBase(home string) (FleetBaseDocument, error) {

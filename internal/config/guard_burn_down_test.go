@@ -8,21 +8,21 @@ import (
 func guardTestBase() FleetBaseDocument {
 	return FleetBaseDocument{
 		SchemaVersion: FleetBaseSchemaVersion,
-		Config:        ProjectOverlay{Backend: "tmux"},
+		Config:        FleetBaseConfig{Backend: "tmux"},
 	}
 }
 
 func TestGuardBurnDownFinalResolvedOverlayRejectsEmptyProjectFacts(t *testing.T) {
-	_, err := ResolveProject(guardTestBase(), ProjectFacts{Path: "/tmp/project"})
+	_, err := resolveBaseline(guardTestBase(), ProjectFacts{Path: "/tmp/project"})
 	if err == nil || !strings.Contains(err.Error(), "project name is required") {
-		t.Fatalf("ResolveProject error = %v, want empty-project-name refusal", err)
+		t.Fatalf("resolveBaseline error = %v, want empty-project-name refusal", err)
 	}
 }
 
 func TestGuardBurnDownFinalResolvedOverlayRejectsEmptyProjectPath(t *testing.T) {
-	_, err := ResolveProject(guardTestBase(), ProjectFacts{Name: "project"})
+	_, err := resolveBaseline(guardTestBase(), ProjectFacts{Name: "project"})
 	if err == nil || !strings.Contains(err.Error(), "path is required") {
-		t.Fatalf("ResolveProject error = %v, want empty-project-path refusal", err)
+		t.Fatalf("resolveBaseline error = %v, want empty-project-path refusal", err)
 	}
 }
 

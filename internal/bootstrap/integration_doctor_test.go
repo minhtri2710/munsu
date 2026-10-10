@@ -6,66 +6,31 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
-// TestCheckPipelineReadiness_TypedRequireNoMistakes verifies the doctor's
-// pipeline_readiness gate reads the typed fleet base document's
-// requireNoMistakes field, not the legacy flat config file.
-func TestCheckPipelineReadiness_TypedRequireNoMistakes(t *testing.T) {
-	t.Setenv("PATH", t.TempDir()) // no-mistakes binary absent
-
-	t.Run("typed base requires no-mistakes", func(t *testing.T) {
-		home := t.TempDir()
-		if err := config.StoreFleetBase(home, config.FleetBaseDocument{
-			SchemaVersion: config.FleetBaseSchemaVersion,
-			Config:        config.ProjectOverlay{RequireNoMistakes: &[]bool{true}[0]},
-		}); err != nil {
-			t.Fatal(err)
-		}
-		entry := checkPipelineReadiness(home)
-		if entry.Status != StatusAbsent {
-			t.Fatalf("status = %s, want absent (entry: %+v)", entry.Status, entry)
-		}
-		if !strings.Contains(entry.Detail, "require-no-mistakes set") {
-			t.Errorf("detail = %q, want require-no-mistakes set", entry.Detail)
+// TestCheckPipelineReadiness verifies the doctor's pipeline_readiness entry
+// reports no-mistakes presence on PATH and never fails the home: the delivery
+// mode comes from each project's configured tools, not from PATH.
+func TestCheckPipelineReadiness(t *testing.T) {
+	t.Run("no-mistakes absent", func(t *testing.T) {
+		t.Setenv("PATH", t.TempDir())
+		entry := checkPipelineReadiness()
+		if entry.Status != StatusCurrent || !strings.Contains(entry.Detail, "not on PATH") {
+			t.Fatalf("entry = %+v, want current with not on PATH", entry)
 		}
 	})
 
-	t.Run("legacy flat file alone is ignored", func(t *testing.T) {
-		home := t.TempDir()
-		if err := os.MkdirAll(filepath.Join(home, "config"), 0755); err != nil {
+	t.Run("no-mistakes on PATH is reported, not selected", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "no-mistakes"), []byte("#!/bin/sh\n"), 0755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(home, "config", "require-no-mistakes"), []byte("true\n"), 0644); err != nil {
-			t.Fatal(err)
-		}
-		entry := checkPipelineReadiness(home)
-		if entry.Status != StatusCurrent || entry.Detail != "direct-PR mode (no require-no-mistakes)" {
-			t.Fatalf("entry = %+v, want direct-PR (flat file must not gate)", entry)
-		}
-	})
-
-	t.Run("fresh home is direct-PR", func(t *testing.T) {
-		entry := checkPipelineReadiness(t.TempDir())
-		if entry.Status != StatusCurrent || entry.Detail != "direct-PR mode (no require-no-mistakes)" {
-			t.Fatalf("entry = %+v, want direct-PR", entry)
-		}
-	})
-
-	t.Run("malformed base fails closed", func(t *testing.T) {
-		home := t.TempDir()
-		if err := os.MkdirAll(filepath.Join(home, "config"), 0755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(home, config.BaseDocumentPath), []byte("{not json"), 0644); err != nil {
-			t.Fatal(err)
-		}
-		entry := checkPipelineReadiness(home)
-		if entry.Status != StatusStale {
-			t.Fatalf("status = %s, want stale for malformed base (entry: %+v)", entry.Status, entry)
+		t.Setenv("PATH", dir)
+		entry := checkPipelineReadiness()
+		if entry.Status != StatusCurrent || !strings.Contains(entry.Detail, "unused until a project sets a review tool entry") {
+			t.Fatalf("entry = %+v, want current with the unused-until-configured suggestion", entry)
 		}
 	})
 }

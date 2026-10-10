@@ -238,15 +238,15 @@ func TestHandoffTransfersQueuedTaskToCaptain(t *testing.T) {
 }
 
 // TestHandoffCarriesDeliveryContractToDestination proves a transferred task
-// keeps its recorded delivery contract — including a recorded fallback — after
-// the full journal → request → receive handoff. A drop at any wiring point
-// (journal field, receive-loop request field) makes the destination read back
-// a nil or bare contract.
+// keeps its recorded delivery contract, including the captured forge step,
+// after the full journal -> request -> receive handoff. A drop at any wiring
+// point (journal field, receive-loop request field) makes the destination read
+// back a nil or bare contract.
 func TestHandoffCarriesDeliveryContractToDestination(t *testing.T) {
 	parent, captain := seedHandoffPair(t)
 	src := mustAuthority(t, parent)
 	seedCanonicalQueuedTask(t, src, "TASK-1", "general")
-	seedSourceFallbackContract(t, src, "TASK-1")
+	seedSourceContract(t, src, "TASK-1", deliveryTestGitHubForge)
 
 	if err := Handoff(parent, captain, []string{"TASK-1"}); err != nil {
 		t.Fatalf("Handoff: %v", err)
@@ -259,19 +259,14 @@ func TestHandoffCarriesDeliveryContractToDestination(t *testing.T) {
 	if agg.DeliveryContract.Mode != "direct-PR" {
 		t.Fatalf("destination contract mode = %q, want direct-PR", agg.DeliveryContract.Mode)
 	}
-	fb := agg.DeliveryContract.Fallback
-	if fb == nil {
-		t.Fatal("destination dropped the fallback provenance on handoff")
-	}
-	if fb.From != "no-mistakes" || fb.To != "direct-PR" {
-		t.Fatalf("destination fallback = %+v, want no-mistakes -> direct-PR", fb)
+	if agg.DeliveryContract.Forge.Adapter != "github" || !agg.DeliveryContract.Review.Baseline {
+		t.Fatalf("destination contract steps = review %+v forge %+v, want baseline review and github forge", agg.DeliveryContract.Review, agg.DeliveryContract.Forge)
 	}
 }
 
-// seedSourceFallbackContract records a no-mistakes contract on a queued task and
-// then the authorized no-mistakes -> direct-PR fallback, leaving the task's
-// canonical contract carrying full transition provenance.
-func seedSourceFallbackContract(t *testing.T, c *taskauthority.Canonical, taskID string) {
+// seedSourceContract records a direct-PR contract with a github forge on a
+// queued task, leaving the task's canonical contract for the handoff to carry.
+func seedSourceContract(t *testing.T, c *taskauthority.Canonical, taskID string, forge taskauthority.DeliveryStep) {
 	t.Helper()
 	tid := mustTransferTaskID(t, taskID)
 	agg, err := c.Get(tid)
@@ -282,26 +277,12 @@ func seedSourceFallbackContract(t *testing.T, c *taskauthority.Canonical, taskID
 		HomeID:       c.HomeID(),
 		TaskID:       tid,
 		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
-		Mode:         "no-mistakes",
-		Reason:       "test seed contract",
+		Mode:         "direct-PR",
+		Review:       taskauthority.DeliveryStep{Baseline: true, ProbeState: "baseline"},
+		Forge:        forge,
 	}
 	if _, err := c.RecordDeliveryContract(mustTransferOp(t, "seed-contract-"+taskID, contractReq), contractReq); err != nil {
 		t.Fatalf("RecordDeliveryContract(%s): %v", taskID, err)
-	}
-	agg, err = c.Get(tid)
-	if err != nil {
-		t.Fatalf("Get after contract(%s): %v", taskID, err)
-	}
-	fallbackReq := taskauthority.CanonicalRecordDeliveryFallbackRequest{
-		HomeID:       c.HomeID(),
-		TaskID:       tid,
-		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
-		From:         "no-mistakes",
-		To:           "direct-PR",
-		Reason:       "test seed fallback",
-	}
-	if _, err := c.RecordDeliveryFallback(mustTransferOp(t, "seed-fallback-"+taskID, fallbackReq), fallbackReq); err != nil {
-		t.Fatalf("RecordDeliveryFallback(%s): %v", taskID, err)
 	}
 }
 
@@ -309,13 +290,13 @@ func seedSourceFallbackContract(t *testing.T, c *taskauthority.Canonical, taskID
 // transfer is meant to protect: the destination spawn resolves its delivery
 // mode from the carried contract, not from live project inputs. The same
 // captain home, given the transferred contract, delivers direct-PR; given no
-// contract it would instead re-resolve to the live default — proving the
+// contract it would instead re-resolve to the live local-only baseline — proving the
 // carried contract, and not device/PATH/config drift, decides the next spawn.
 func TestHandoffDeliversUnderCarriedContractNotLiveInput(t *testing.T) {
 	parent, captain := seedHandoffPair(t)
 	src := mustAuthority(t, parent)
 	seedCanonicalQueuedTask(t, src, "TASK-1", "general")
-	seedSourceFallbackContract(t, src, "TASK-1")
+	seedSourceContract(t, src, "TASK-1", deliveryTestGitHubForge)
 
 	if err := Handoff(parent, captain, []string{"TASK-1"}); err != nil {
 		t.Fatalf("Handoff: %v", err)
@@ -334,9 +315,9 @@ func TestHandoffDeliversUnderCarriedContractNotLiveInput(t *testing.T) {
 		t.Fatalf("carried contract mode = %q, want direct-PR", contract.Mode)
 	}
 
-	// Divergent live input: the captain's project overlay defaults to a mode
-	// the transferred task was never contracted for.
-	seedLiveDefaultDeliveryConfig(t, captain, "munsu", "local-only")
+	// Divergent live input: the captain's project has no forge tool, so its
+	// live resolution is local-only while the task was contracted direct-PR.
+	seedLiveDeliveryConfig(t, captain, "munsu", nil)
 
 	args := Args{ID: "TASK-1", ProjectName: "munsu"}
 
@@ -360,20 +341,19 @@ func TestHandoffDeliversUnderCarriedContractNotLiveInput(t *testing.T) {
 	}
 }
 
-// seedLiveDefaultDeliveryConfig registers a typed project overlay on a home
-// whose default delivery mode differs from the task's carried contract, so the
-// spawn tests exercise real re-resolution rather than a contrived identity.
-func seedLiveDefaultDeliveryConfig(t *testing.T, homeDir, projectName, defaultMode string) {
+// seedLiveDeliveryConfig registers a typed project overlay on a home whose
+// configured forge tool differs from the task's carried contract, so the spawn
+// tests exercise real re-resolution rather than a contrived identity.
+func seedLiveDeliveryConfig(t *testing.T, homeDir, projectName string, forge *config.ToolEntry) {
 	t.Helper()
 	storeTestDocuments(t, homeDir, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config: config.ProjectOverlay{
+		Config: config.FleetBaseConfig{
 			Backend:        "tmux",
 			SoldierHarness: "pi",
 			Model:          "gpt-5",
-			DefaultMode:    defaultMode,
 		},
-	}, []testProjectRecord{{Name: projectName, Path: t.TempDir()}}, nil)
+	}, []testProjectRecord{{Name: projectName, Path: t.TempDir(), Config: config.ProjectOverlay{Forge: forge}}}, nil)
 }
 
 func TestHandoffRefusesNonQueuedTask(t *testing.T) {

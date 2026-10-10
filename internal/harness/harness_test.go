@@ -32,7 +32,7 @@ func clearEnvMarkers(t *testing.T) {
 
 func TestSoldierFailsClosedOnMalformedPublishedSnapshot(t *testing.T) {
 	home := t.TempDir()
-	if err := config.StoreFleetBase(home, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion, Config: config.ProjectOverlay{SoldierHarness: "pi"}}); err != nil {
+	if err := config.StoreFleetBase(home, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion, Config: config.FleetBaseConfig{SoldierHarness: "pi"}}); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(home, config.PublishedSnapshotPath)
@@ -280,7 +280,7 @@ func TestSoldier_HasDispatchDefault(t *testing.T) {
 	os.MkdirAll(filepath.Join(tmp, "config"), 0755)
 	base := config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config: config.ProjectOverlay{
+		Config: config.FleetBaseConfig{
 			SoldierHarness: "codex",
 		},
 	}
@@ -302,7 +302,7 @@ func TestSoldier_HasSoldierHarnessInBase(t *testing.T) {
 
 	writeBase(t, tmp, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{SoldierHarness: "opencode"},
+		Config:        config.FleetBaseConfig{SoldierHarness: "opencode"},
 	})
 	// A stale legacy flat pin is ignored when the typed base document exists.
 	if err := os.MkdirAll(filepath.Join(tmp, "config"), 0o755); err != nil {
@@ -366,7 +366,7 @@ func TestCaptain_FallsBackToSoldierHarness(t *testing.T) {
 	// Only soldier-harness, no captain profile.
 	writeBase(t, tmp, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{SoldierHarness: "pi"},
+		Config:        config.FleetBaseConfig{SoldierHarness: "pi"},
 	})
 
 	h, err := Captain(tmp)
@@ -433,7 +433,7 @@ func TestCaptain_EmptyCaptainHarnessFallsToSoldierHarness(t *testing.T) {
 	// No captain-harness token; soldier-harness supplies the bare fallback name.
 	writeBase(t, tmp, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{SoldierHarness: "pi"},
+		Config:        config.FleetBaseConfig{SoldierHarness: "pi"},
 	})
 
 	h, err := Captain(tmp)
@@ -473,7 +473,7 @@ func TestCaptainProfileFromHome_MultiToken(t *testing.T) {
 	// Captain profile carries its own model; base Config.Model must NOT override it.
 	writeBase(t, tmp, config.FleetBaseDocument{
 		SchemaVersion:  config.FleetBaseSchemaVersion,
-		Config:         config.ProjectOverlay{Model: "ignored-model"},
+		Config:         config.FleetBaseConfig{Model: "ignored-model"},
 		CaptainProfile: config.CaptainProfile{Harness: "pi", Model: "cliproxyapi/grok-4.5", Effort: "low"},
 	})
 	// Conflicting legacy pins are disposable data and must not shadow the base.
@@ -511,7 +511,7 @@ func TestCaptainProfileFromHome_SoldierFallback(t *testing.T) {
 	// base Config.Model supplies the model.
 	writeBase(t, tmp, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{SoldierHarness: "pi", Model: "opencode-go/deepseek-v4-flash"},
+		Config:        config.FleetBaseConfig{SoldierHarness: "pi", Model: "opencode-go/deepseek-v4-flash"},
 	})
 	prof, err := CaptainProfileFromHome(tmp)
 	if err != nil {
@@ -529,7 +529,7 @@ func TestCaptainProfileFromHome_SparseProfilePreservesModelEffort(t *testing.T) 
 	// discarding the independently stored Model/Effort.
 	writeBase(t, tmp, config.FleetBaseDocument{
 		SchemaVersion:  config.FleetBaseSchemaVersion,
-		Config:         config.ProjectOverlay{SoldierHarness: "pi"},
+		Config:         config.FleetBaseConfig{SoldierHarness: "pi"},
 		CaptainProfile: config.CaptainProfile{Model: "opencode-go/deepseek-v4-flash", Effort: "high"},
 	})
 	prof, err := CaptainProfileFromHome(tmp)
@@ -546,7 +546,7 @@ func TestCaptainProfileFromHome_BaseModelFallback(t *testing.T) {
 	// Captain profile has a harness but no model; base Config.Model fills it in.
 	writeBase(t, tmp, config.FleetBaseDocument{
 		SchemaVersion:  config.FleetBaseSchemaVersion,
-		Config:         config.ProjectOverlay{Model: "opencode-go/deepseek-v4-flash"},
+		Config:         config.FleetBaseConfig{Model: "opencode-go/deepseek-v4-flash"},
 		CaptainProfile: config.CaptainProfile{Harness: "pi"},
 	})
 	prof, err := CaptainProfileFromHome(tmp)

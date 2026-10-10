@@ -340,8 +340,8 @@ The canonical Task Authority is the authoritative task source:
 ## Soldier Lifecycle
 
 Spawn Soldiers to do work from this home. The dispatch ordering is:
-  %[6]smunsu task list%[6]s → %[6]smunsu task start <id>%[6]s → %[6]smunsu brief <id> <project>%[6]s → %[6]smunsu spawn <id> [<project>] --mode <mode>%[6]s
-- kind: ship (default) | scout — mode: no-mistakes | direct-PR | local-only (empty = auto-detect)
+  %[6]smunsu task list%[6]s → %[6]smunsu task start <id>%[6]s → %[6]smunsu brief <id> <project>%[6]s → %[6]smunsu spawn <id> [<project>]%[6]s
+- kind: ship (default) | scout — the delivery mode comes from the project's configured review and forge tools
 - After spawning, monitor soldier progress through their task state.
 - When a soldier completes, receive and ack its Uplink Report, then report the domain result to General (see One-Hop Uplink Report).
 - If a soldier is stuck, use the ladder: %[6]smunsu peek <id>%[6]s → %[6]smunsu send <id> ...%[6]s → interrupt → relaunch → fail.
@@ -426,7 +426,7 @@ You MUST NOT:
 |--------|---------|
 | Report state | %[6]smunsu report <state> "<msg>" [--key <slug>]%[6]s |
 | Brief soldier | %[6]smunsu brief <id> <project>%[6]s |
-| Spawn soldier | %[6]smunsu spawn <id> [<project>] --mode <mode>%[6]s |
+| Spawn soldier | %[6]smunsu spawn <id> [<project>]%[6]s |
 | Teardown soldier | %[6]smunsu teardown <id>%[6]s |
 | Send to soldier | %[6]smunsu send <id> <message>%[6]s |
 | Merge PR | %[6]smunsu delivery pr-merge <id> <url> [--teardown]%[6]s |
@@ -464,7 +464,7 @@ func ensureParentTypedConfig(parentHome, captainHome, captainID string) error {
 	// Create fleet base document.
 	base := config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config: config.ProjectOverlay{
+		Config: config.FleetBaseConfig{
 			SoldierHarness: "pi",
 			Backend:        "tmux",
 		},
@@ -903,7 +903,7 @@ func Launch(captainHome, parentHome string, endpoint LaunchEndpoint, integration
 	}
 
 	// The captain's harness identity and launch profile are bound from the
-	// captain's PUBLISHED snapshot (the composed config.ResolveProject output
+	// captain's PUBLISHED snapshot (the composed config resolver output
 	// written by publishResolvedSnapshot during PropagateConfig). Resolution
 	// fails closed: an empty CaptainProfile is a typed launch failure, never
 	// a fallback to flat files or Detect.
@@ -946,7 +946,7 @@ func Launch(captainHome, parentHome string, endpoint LaunchEndpoint, integration
 		return fmt.Errorf("building launch script: %w", err)
 	}
 	// The backend identity is bound at creation from the captain's PUBLISHED
-	// snapshot (the composed config.ResolveProject output written by
+	// snapshot (the composed config resolver output written by
 	// publishResolvedSnapshot during PropagateConfig). A strict roundtrip
 	// enforces a non-empty identity; the endpoint never receives "".
 	backendIdentity := snapshot.Config().Backend
@@ -1260,18 +1260,17 @@ func publishResolvedSnapshot(parentHome, captainHome string) error {
 	facts := config.ProjectFacts{
 		Name: project.Name,
 		Path: project.Path,
-		Mode: project.Mode,
 	}
 	projectOverlay, err := config.LoadProjectOverlay(parentHome, project.Name)
 	if err != nil {
 		return err
 	}
 	facts.Overlay = projectOverlay
-	resolved, err := config.ResolveProject(base, facts)
+	snapshot, err := config.NewResolvedSnapshotWithToolProbe(base, facts, configuredToolProbe)
 	if err != nil {
 		return err
 	}
-	return config.StorePublishedSnapshot(captainHome, resolved)
+	return config.StorePublishedSnapshot(captainHome, snapshot.Config())
 }
 
 // configPushWithResult copies inheritable config like configPush and also

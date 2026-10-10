@@ -30,6 +30,7 @@ import (
 	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
+	"github.com/minhtri2710/munsu/internal/testutil"
 	"github.com/spf13/cobra"
 )
 
@@ -764,7 +765,7 @@ func TestBriefRecoveryPrecedesTaskFence(t *testing.T) {
 	initCLITestHome(t, homeDir)
 	auth := testAuthorityFor(t, homeDir)
 	seedGuardTask(t, auth, "ordered", "ship")
-	if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion, Config: config.ProjectOverlay{Backend: "tmux"}}); err != nil {
+	if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion, Config: config.FleetBaseConfig{Backend: "tmux"}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := runRoot(t, "project", "add", "demo-repo", t.TempDir(), "--home", homeDir); err != nil {
@@ -790,7 +791,7 @@ func TestBriefWritesKnownLegacyAndForcedTasks(t *testing.T) {
 		return auth.WriteTaskDataArtifactByID(id, write)
 	}
 	t.Cleanup(func() { writeBriefArtifact = oldWrite })
-	if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion, Config: config.ProjectOverlay{Backend: "tmux"}}); err != nil {
+	if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion, Config: config.FleetBaseConfig{Backend: "tmux"}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := runRoot(t, "project", "add", "demo-repo", t.TempDir(), "--home", homeDir); err != nil {
@@ -828,7 +829,7 @@ func TestBriefWritesKnownLegacyAndForcedTasks(t *testing.T) {
 func TestSessionStartGCUsesRawIDOwnershipForForcedBriefs(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
-	if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion, Config: config.ProjectOverlay{Backend: "tmux"}}); err != nil {
+	if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion, Config: config.FleetBaseConfig{Backend: "tmux"}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := runRoot(t, "project", "add", "demo-repo", t.TempDir(), "--home", homeDir); err != nil {
@@ -890,7 +891,7 @@ func TestGuardBriefRefusesATaskThatIsNotAScout(t *testing.T) {
 	// base document and the project registry, and fails closed without both.
 	if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{Backend: "tmux"},
+		Config:        config.FleetBaseConfig{Backend: "tmux"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -910,7 +911,7 @@ func TestGuardBriefScoutRefusesATaskWithNoCanonicalRecord(t *testing.T) {
 	initCLITestHome(t, homeDir)
 	if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{Backend: "tmux"},
+		Config:        config.FleetBaseConfig{Backend: "tmux"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -923,7 +924,8 @@ func TestGuardBriefScoutRefusesATaskWithNoCanonicalRecord(t *testing.T) {
 
 // seedGuardDeliveryContract records a durable delivery contract on an existing
 // canonical task at its current generation/revision, the way first spawn does.
-func seedGuardDeliveryContract(t *testing.T, auth *taskauthority.Canonical, taskID, mode string) {
+// The steps are the ones the mode derives from; the forge is the given step.
+func seedGuardDeliveryContract(t *testing.T, auth *taskauthority.Canonical, taskID, mode string, forge taskauthority.DeliveryStep) {
 	t.Helper()
 	tid, err := domain.NewTaskID(taskID)
 	if err != nil {
@@ -933,12 +935,22 @@ func seedGuardDeliveryContract(t *testing.T, auth *taskauthority.Canonical, task
 	if err != nil {
 		t.Fatal(err)
 	}
+	baseline := taskauthority.DeliveryStep{Baseline: true, ProbeState: "baseline"}
+	review, forgeStep := baseline, baseline
+	switch mode {
+	case "no-mistakes":
+		review = taskauthority.DeliveryStep{Adapter: "no-mistakes", Path: "/opt/no-mistakes/bin/no-mistakes", ProbeState: "ready"}
+		forgeStep = forge
+	case "direct-PR":
+		forgeStep = forge
+	}
 	req := taskauthority.CanonicalRecordDeliveryContractRequest{
 		HomeID:       auth.HomeID(),
 		TaskID:       tid,
 		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
 		Mode:         mode,
-		Reason:       "test",
+		Review:       review,
+		Forge:        forgeStep,
 	}
 	if _, err := auth.RecordDeliveryContract(mustCanonicalOp(t, "op-contract-"+taskID+"-"+mode, req), req); err != nil {
 		t.Fatal(err)
@@ -947,21 +959,20 @@ func seedGuardDeliveryContract(t *testing.T, auth *taskauthority.Canonical, task
 
 // TestBriefResolvesModeFromDeliveryContract locks the owner-clean resolution
 // (adr-d1-briefcontract): once a task carries a canonical delivery contract,
-// `munsu brief` delivers under the CONTRACT's mode, never the project snapshot,
-// and an explicit --mode that contradicts the contract fails closed rather than
-// silently re-scaffolding it. Only pre-first-spawn (no contract) does brief
-// fall back to the snapshot, where an explicit --mode is honored.
+// `munsu brief` delivers under the CONTRACT's mode, never the project's current
+// tools. Only pre-first-spawn (no contract) does brief derive the mode from the
+// project snapshot.
 func TestBriefResolvesModeFromDeliveryContract(t *testing.T) {
-	setup := func(t *testing.T, snapshotMode string, withContract bool) string {
+	setup := func(t *testing.T, contractMode string) string {
 		homeDir := t.TempDir()
 		auth := testAuthorityFor(t, homeDir)
 		seedGuardTask(t, auth, "t1", "ship")
-		if withContract {
-			seedGuardDeliveryContract(t, auth, "t1", "no-mistakes")
+		if contractMode != "" {
+			seedGuardDeliveryContract(t, auth, "t1", contractMode, deliveryGuardGitHub)
 		}
 		if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{
 			SchemaVersion: config.FleetBaseSchemaVersion,
-			Config:        config.ProjectOverlay{Backend: "tmux", DefaultMode: snapshotMode},
+			Config:        config.FleetBaseConfig{Backend: "tmux"},
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -971,10 +982,10 @@ func TestBriefResolvesModeFromDeliveryContract(t *testing.T) {
 		return homeDir
 	}
 
-	t.Run("contract mode wins over drifted snapshot", func(t *testing.T) {
-		// Contract says no-mistakes; the project default has since drifted to
-		// local-only. brief must resolve the contract's mode, not the snapshot.
-		homeDir := setup(t, "local-only", true)
+	t.Run("contract mode wins over the project's current tools", func(t *testing.T) {
+		// Contract says no-mistakes; the project configures no tools, so its
+		// snapshot derives local-only. brief must resolve the contract's mode.
+		homeDir := setup(t, "no-mistakes")
 		out, err := runRoot(t, "brief", "t1", "demo-repo", "--home", homeDir)
 		if err != nil {
 			t.Fatalf("brief: %v", err)
@@ -983,89 +994,57 @@ func TestBriefResolvesModeFromDeliveryContract(t *testing.T) {
 			t.Fatalf("brief did not resolve the contract mode; output: %s", out)
 		}
 		if strings.Contains(out, "local-only") {
-			t.Fatalf("brief resolved the drifted snapshot mode instead of the contract; output: %s", out)
+			t.Fatalf("brief resolved the snapshot mode instead of the contract; output: %s", out)
 		}
 	})
 
-	t.Run("explicit --mode contradicting the contract fails closed", func(t *testing.T) {
-		homeDir := setup(t, "local-only", true)
-		_, err := runRoot(t, "brief", "t1", "demo-repo", "--mode", "direct-PR", "--home", homeDir)
-		wantErrContains(t, err, "contradicts", "brief --mode against a recorded contract")
-		// Pin the FULL remediation command so a dropped task id or mode value
-		// in the production message fails the test, not just its prefix.
-		wantErrContains(t, err, "munsu spawn t1 --mode direct-PR", "brief --mode conflict names the complete re-scaffold command")
-		if err != nil && strings.Count(err.Error(), "t1") != 2 {
-			t.Fatalf("conflict message must name the task id in both the contract clause and the remediation; got: %v", err)
-		}
-	})
-
-	t.Run("invalid --mode on a contracted task is rejected as invalid, not as a conflict", func(t *testing.T) {
-		homeDir := setup(t, "local-only", true)
-		_, err := runRoot(t, "brief", "t1", "demo-repo", "--mode", "bogus", "--home", homeDir)
-		wantErrContains(t, err, "invalid delivery mode", "brief --mode with an unknown mode on a contracted task")
-		if err != nil && strings.Contains(err.Error(), "contradicts") {
-			t.Fatalf("an invalid --mode was misreported as a contract conflict: %v", err)
-		}
-	})
-
-	t.Run("contracted brief still fails closed on an unknown project", func(t *testing.T) {
-		// The contract owns the mode, but the project snapshot still gates
-		// existence: a contracted brief for an unregistered repo must refuse.
-		homeDir := setup(t, "no-mistakes", true)
-		_, err := runRoot(t, "brief", "t1", "typo-repo", "--home", homeDir)
-		wantErrContains(t, err, "register project", "contracted brief for an unregistered project")
-	})
-
-	t.Run("contracted brief validates the snapshot without re-running mode resolution", func(t *testing.T) {
-		// Locks that the contract branch resolves with selectMode false, not
-		// true: with an empty snapshot default, require-no-mistakes set, and
-		// no-mistakes absent from PATH, ResolveBriefProject with selectMode
-		// true would REFUSE (require-no-mistakes with the binary missing) — but
-		// the brief must deliver under its recorded contract and only prove the
-		// project exists. A mutation passing selectMode true on the contract
-		// branch makes this brief error.
-		t.Setenv("PATH", t.TempDir()) // no-mistakes cannot be found
-		homeDir := t.TempDir()
-		auth := testAuthorityFor(t, homeDir)
-		seedGuardTask(t, auth, "t1", "ship")
-		seedGuardDeliveryContract(t, auth, "t1", "direct-PR")
-		if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{
-			SchemaVersion: config.FleetBaseSchemaVersion,
-			Config:        config.ProjectOverlay{Backend: "tmux", RequireNoMistakes: &[]bool{true}[0]},
-		}); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := runRoot(t, "project", "add", "demo-repo", t.TempDir(), "--home", homeDir); err != nil {
-			t.Fatalf("seeding the project registry: %v", err)
-		}
+	t.Run("contracted brief validates the snapshot without re-deriving the mode", func(t *testing.T) {
+		// The contract is direct-PR and the project snapshot derives local-only.
+		// A brief that re-derives from the snapshot would print local-only.
+		homeDir := setup(t, "direct-PR")
 		out, err := runRoot(t, "brief", "t1", "demo-repo", "--home", homeDir)
 		if err != nil {
-			t.Fatalf("contracted brief refused where snapshot-only validation should pass: %v", err)
+			t.Fatalf("contracted brief: %v", err)
 		}
 		if !strings.Contains(out, "direct-PR") {
 			t.Fatalf("brief did not deliver under the contract mode; output: %s", out)
 		}
 	})
 
-	t.Run("pre-first-spawn falls back to the snapshot and honors --mode", func(t *testing.T) {
-		// No contract recorded: brief resolves from the snapshot, and an
-		// explicit --mode is honored.
-		homeDir := setup(t, "local-only", false)
+	t.Run("contracted brief still fails closed on an unknown project", func(t *testing.T) {
+		// The contract owns the mode, but the project snapshot still gates
+		// existence: a contracted brief for an unregistered repo must refuse.
+		homeDir := setup(t, "no-mistakes")
+		_, err := runRoot(t, "brief", "t1", "typo-repo", "--home", homeDir)
+		wantErrContains(t, err, "register project", "contracted brief for an unregistered project")
+	})
+
+	t.Run("pre-first-spawn derives the mode from the snapshot tools", func(t *testing.T) {
+		// No contract recorded: brief derives the mode from the project's
+		// configured forge, which must be Ready to be part of the snapshot.
+		prependFakeGitHubCLI(t)
+		homeDir := setup(t, "")
+		if err := config.StoreProjectOverlay(homeDir, "demo-repo", config.ProjectOverlay{Forge: &config.ToolEntry{Adapter: "github"}}); err != nil {
+			t.Fatal(err)
+		}
 		out, err := runRoot(t, "brief", "t1", "demo-repo", "--home", homeDir)
 		if err != nil {
 			t.Fatalf("brief: %v", err)
 		}
-		if !strings.Contains(out, "local-only") {
-			t.Fatalf("brief did not resolve the snapshot mode pre-first-spawn; output: %s", out)
-		}
-		out, err = runRoot(t, "brief", "t1", "demo-repo", "--mode", "direct-PR", "--home", homeDir)
-		if err != nil {
-			t.Fatalf("brief --mode: %v", err)
-		}
 		if !strings.Contains(out, "direct-PR") {
-			t.Fatalf("brief did not honor --mode pre-first-spawn; output: %s", out)
+			t.Fatalf("brief did not derive direct-PR from the configured forge pre-first-spawn; output: %s", out)
 		}
 	})
+}
+
+// prependFakeGitHubCLI puts a gh-axi and gh that the GitHub capability probe
+// reports Ready on the front of PATH.
+func prependFakeGitHubCLI(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	testutil.WriteFakeExecutable(t, filepath.Join(dir, "gh-axi"), "#!/bin/sh\nexit 0\n")
+	testutil.WriteFakeExecutable(t, filepath.Join(dir, "gh"), "#!/bin/sh\nexit 0\n")
+	testutil.PrependPath(t, dir)
 }
 
 func TestGuardAfkCheckRefusesWhileActionableStateRemains(t *testing.T) {
@@ -1190,9 +1169,10 @@ func TestGuardBuildDeliverRequestRefusesATaskWithNoBoundWorktree(t *testing.T) {
 	homeDir := t.TempDir()
 	auth := testAuthorityFor(t, homeDir)
 	seedGuardTask(t, auth, "t1", "ship")
+	seedGuardDeliveryContract(t, auth, "t1", "direct-PR", deliveryGuardGitHub)
 
 	previous := fleet.FetchProviderSnapshot
-	fleet.FetchProviderSnapshot = func(prURL string) (*fleet.ProviderSnapshot, error) {
+	fleet.FetchProviderSnapshot = func(_ taskauthority.DeliveryStep, prURL string) (*fleet.ProviderSnapshot, error) {
 		return &fleet.ProviderSnapshot{
 			Provider: "github", Owner: "o", Repo: "r", Number: 1, URL: prURL,
 			BaseRef: "main", HeadRef: "feature", HeadSHA: "abc", State: "OPEN",

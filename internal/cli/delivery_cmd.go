@@ -111,10 +111,6 @@ func buildDeliverRequest(auth *taskauthority.Canonical, taskID, prURL string, ex
 	if err != nil {
 		return fleet.DeliverRequest{}, err
 	}
-	snap, err := fleet.FetchProviderSnapshot(prURL)
-	if err != nil {
-		return fleet.DeliverRequest{}, fmt.Errorf("capturing delivery identity: %w", err)
-	}
 	tid, err := domain.NewTaskID(taskID)
 	if err != nil {
 		return fleet.DeliverRequest{}, err
@@ -122,6 +118,13 @@ func buildDeliverRequest(auth *taskauthority.Canonical, taskID, prURL string, ex
 	agg, err := auth.Get(tid)
 	if err != nil {
 		return fleet.DeliverRequest{}, fmt.Errorf("resolving task %s: %w", taskID, err)
+	}
+	if agg.DeliveryContract == nil {
+		return fleet.DeliverRequest{}, fmt.Errorf("task %s has no captured delivery contract; spawn it before delivery", taskID)
+	}
+	snap, err := fleet.FetchProviderSnapshot(agg.DeliveryContract.Forge, prURL)
+	if err != nil {
+		return fleet.DeliverRequest{}, fmt.Errorf("capturing delivery identity: %w", err)
 	}
 	if agg.Worktree == nil {
 		return fleet.DeliverRequest{}, fmt.Errorf("task %s has no bound worktree; spawn it before delivery", taskID)

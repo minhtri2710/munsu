@@ -1,12 +1,7 @@
 package bootstrap
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
-
-	"github.com/minhtri2710/munsu/internal/config"
-	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 func TestIsHardRequired(t *testing.T) {
@@ -31,122 +26,6 @@ func TestIsHardRequired(t *testing.T) {
 		if got != tt.required {
 			t.Errorf("IsHardRequired(%q) = %v, want %v", tt.tool, got, tt.required)
 		}
-	}
-}
-
-func TestIsHardRequiredByConfig(t *testing.T) {
-	tests := []struct {
-		name   string
-		tool   string
-		mutate func(string)
-		want   bool
-	}{
-		{name: "non-no-mistakes tool never hard-required by config", tool: "git", want: false},
-		{name: "no base document -> false", tool: "no-mistakes", want: false},
-		{name: "base requireNoMistakes unset -> false", tool: "no-mistakes", mutate: func(home string) {
-			if err := config.StoreFleetBase(home, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion}); err != nil {
-				t.Fatal(err)
-			}
-		}, want: false},
-		{name: "base requireNoMistakes true -> true (presence semantics)", tool: "no-mistakes", mutate: func(home string) {
-			if err := config.StoreFleetBase(home, config.FleetBaseDocument{
-				SchemaVersion: config.FleetBaseSchemaVersion,
-				Config:        config.ProjectOverlay{RequireNoMistakes: &[]bool{true}[0]},
-			}); err != nil {
-				t.Fatal(err)
-			}
-		}, want: true},
-		{name: "base requireNoMistakes false -> false", tool: "no-mistakes", mutate: func(home string) {
-			if err := config.StoreFleetBase(home, config.FleetBaseDocument{
-				SchemaVersion: config.FleetBaseSchemaVersion,
-				Config:        config.ProjectOverlay{RequireNoMistakes: &[]bool{false}[0]},
-			}); err != nil {
-				t.Fatal(err)
-			}
-		}, want: false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			home := t.TempDir()
-			if tt.mutate != nil {
-				tt.mutate(home)
-			}
-			got, err := IsHardRequiredByConfig(home, tt.tool)
-			if err != nil {
-				t.Fatalf("IsHardRequiredByConfig(%q) unexpected error: %v", tt.tool, err)
-			}
-			if got != tt.want {
-				t.Errorf("IsHardRequiredByConfig(%q) = %v, want %v", tt.tool, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestIsHardRequiredByConfig_ReturnsReadErrors(t *testing.T) {
-	tests := []struct {
-		name  string
-		setup func(*testing.T, string)
-	}{
-		{name: "malformed base -> error propagates", setup: func(t *testing.T, home string) {
-			if err := os.MkdirAll(filepath.Join(home, "config"), 0755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(home, "config", "base.json"), []byte("{not-json"), 0644); err != nil {
-				t.Fatal(err)
-			}
-		}},
-		{name: "base path is a directory (EISDIR) -> error propagates", setup: func(t *testing.T, home string) {
-			if err := os.MkdirAll(filepath.Join(home, "config", "base.json"), 0755); err != nil {
-				t.Fatal(err)
-			}
-		}},
-		{name: "unreadable base (permission) -> error propagates", setup: func(t *testing.T, home string) {
-			if err := os.MkdirAll(filepath.Join(home, "config"), 0755); err != nil {
-				t.Fatal(err)
-			}
-			path := filepath.Join(home, "config", "base.json")
-			if err := os.WriteFile(path, []byte("{}"), 0644); err != nil {
-				t.Fatal(err)
-			}
-			testutil.MakePathUnreadable(t, path)
-		}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			home := t.TempDir()
-			tt.setup(t, home)
-			got, err := IsHardRequiredByConfig(home, "no-mistakes")
-			if err == nil {
-				t.Fatalf("expected error for %s, got (false, nil)", tt.name)
-			}
-			if got {
-				t.Errorf("expected false on error, got true")
-			}
-		})
-	}
-}
-
-func TestIsHardRequiredByConfig_UnsupportedToolSkipsConfigRead(t *testing.T) {
-	// For an unsupported tool the production short-circuit returns (false, nil)
-	// without attempting to read the fleet base config. Prove this by placing a
-	// malformed base document: if the short-circuit were absent, the read error
-	// would propagate.
-	home := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(home, "config"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, "config", "base.json"), []byte("{not-json"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := IsHardRequiredByConfig(home, "git")
-	if err != nil {
-		t.Fatalf("IsHardRequiredByConfig(malformed base, %q) unexpected error: %v", "git", err)
-	}
-	if got {
-		t.Errorf("expected false for unsupported tool, got true")
 	}
 }
 

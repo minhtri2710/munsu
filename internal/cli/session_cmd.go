@@ -26,7 +26,6 @@ var writeBriefArtifact = func(auth *taskauthority.Canonical, id string, write fu
 func newBriefCmd() *cobra.Command {
 	var scout bool
 	var force bool
-	var modeFlag string
 
 	cmd := &cobra.Command{
 		Use:   "brief <id> <repo>",
@@ -59,39 +58,20 @@ func newBriefCmd() *cobra.Command {
 
 			// yolo stays registry-owned.
 			projYolo := false
-			if _, y, err := fleet.Mode(ctx.Home, repo); err == nil {
-				projYolo = y
+			if p, err := fleet.Find(ctx.Home, repo); err == nil {
+				projYolo = p.Yolo
 			}
 
-			// Delivery mode is the canonical DeliveryContract's mode whenever
-			// this home's canonical record carries one (recorded once at first
-			// spawn, thereafter READ — taskauthority.DeliveryContract). Only
-			// when the owning home records no contract is the mode resolved
-			// from the typed project/base surface. An explicit --mode that
-			// contradicts a recorded contract fails closed rather than
-			// silently re-scaffolding under a different mode than the one the
-			// task delivers under. The contract owns the mode, but the project
-			// snapshot still gates existence and well-formedness (fail closed
-			// on an unknown project or malformed base/overlay).
-			var resolvedMode string
+			// Delivery mode comes from the project's resolved review and forge
+			// steps, or from this generation's immutable captured contract.
 			contracted := canonicalExists && agg.DeliveryContract != nil
-			if contracted {
-				if modeFlag != "" {
-					if err := fleet.ValidateDeliveryMode(modeFlag); err != nil {
-						return err
-					}
-				}
-				resolvedMode = agg.DeliveryContract.Mode
-				if modeFlag != "" && modeFlag != resolvedMode {
-					return fmt.Errorf("--mode %q contradicts task %q's recorded delivery contract (%q): brief reads the contract and never re-scaffolds it; re-record the mode with 'munsu spawn %s --mode %s'", modeFlag, id, resolvedMode, id, modeFlag)
-				}
-			}
-			projectMode, tamperCheck, err := fleet.ResolveBriefProject(ctx.Home, repo, modeFlag, !contracted)
+			projectMode, tamperCheck, err := fleet.ResolveBriefProject(ctx.Home, repo, !contracted)
 			if err != nil {
 				return err
 			}
-			if !contracted {
-				resolvedMode = projectMode
+			resolvedMode := projectMode
+			if contracted {
+				resolvedMode = agg.DeliveryContract.Mode
 			}
 
 			// Require existing canonical task or legacy task meta unless --force.
@@ -162,7 +142,6 @@ func newBriefCmd() *cobra.Command {
 
 	cmd.Flags().BoolVar(&scout, "scout", false, "Generate a scout brief instead of ship brief")
 	cmd.Flags().BoolVar(&force, "force", false, "Scaffold brief without requiring existing task meta")
-	cmd.Flags().StringVar(&modeFlag, "mode", "", "Delivery mode override (no-mistakes|direct-PR|local-only)")
 
 	return cmd
 }

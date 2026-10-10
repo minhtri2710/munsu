@@ -1,9 +1,10 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/config"
@@ -26,44 +27,42 @@ type projectOverlayKey struct {
 	set func(o *config.ProjectOverlay, value string) error
 }
 
-// clearableBool builds an overlay key for a *bool field: an empty value clears
-// it (nil, inherit base), any other value must parse as a bool.
-func clearableBool(get func(config.ProjectOverlay) *bool, set func(*config.ProjectOverlay, *bool)) projectOverlayKey {
+func toolEntryKey(get func(config.ProjectOverlay) *config.ToolEntry, set func(*config.ProjectOverlay, *config.ToolEntry)) projectOverlayKey {
 	return projectOverlayKey{
 		get: func(o config.ProjectOverlay) (string, bool) {
-			p := get(o)
-			if p == nil {
+			entry := get(o)
+			if entry == nil {
 				return "", false
 			}
-			return strconv.FormatBool(*p), true
+			// ToolEntry holds only strings, so Marshal cannot fail.
+			data, _ := json.Marshal(entry)
+			return string(data), true
 		},
 		set: func(o *config.ProjectOverlay, value string) error {
 			if strings.TrimSpace(value) == "" {
 				set(o, nil)
-				return nil
+			} else {
+				var entry config.ToolEntry
+				decoder := json.NewDecoder(strings.NewReader(value))
+				decoder.DisallowUnknownFields()
+				if err := decoder.Decode(&entry); err != nil {
+					return usageError("invalid_value", "Pass a JSON tool entry", err.Error())
+				}
+				var trailing any
+				if err := decoder.Decode(&trailing); err != io.EOF {
+					return usageError("invalid_value", "Pass exactly one JSON tool entry", "trailing JSON after tool entry")
+				}
+				set(o, &entry)
 			}
-			parsed, err := strconv.ParseBool(strings.TrimSpace(value))
-			if err != nil {
-				return usageError("invalid_value", "Pass true or false", fmt.Sprintf("want true or false, got %q", value))
+			if err := config.ValidateProjectTools(*o); err != nil {
+				return usageError("invalid_value", "Pass a supported review or forge tool entry", err.Error())
 			}
-			set(o, &parsed)
 			return nil
 		},
 	}
 }
 
 var projectOverlayKeys = map[string]projectOverlayKey{
-	"default-mode": {
-		get: func(o config.ProjectOverlay) (string, bool) { return o.DefaultMode, o.DefaultMode != "" },
-		set: func(o *config.ProjectOverlay, value string) error {
-			value = strings.TrimSpace(value)
-			if err := fleet.ValidateDeliveryMode(value); err != nil {
-				return usageError("invalid_value", "Pass one of: no-mistakes, direct-PR, local-only", err.Error())
-			}
-			o.DefaultMode = value
-			return nil
-		},
-	},
 	"soldier-harness": {
 		get: func(o config.ProjectOverlay) (string, bool) { return o.SoldierHarness, o.SoldierHarness != "" },
 		set: func(o *config.ProjectOverlay, value string) error {
@@ -95,14 +94,8 @@ var projectOverlayKeys = map[string]projectOverlayKey{
 			return nil
 		},
 	},
-	"require-no-mistakes": clearableBool(
-		func(o config.ProjectOverlay) *bool { return o.RequireNoMistakes },
-		func(o *config.ProjectOverlay, v *bool) { o.RequireNoMistakes = v },
-	),
-	"allow-direct-pr-fallback": clearableBool(
-		func(o config.ProjectOverlay) *bool { return o.AllowDirectPRFallback },
-		func(o *config.ProjectOverlay, v *bool) { o.AllowDirectPRFallback = v },
-	),
+	"review": toolEntryKey(func(o config.ProjectOverlay) *config.ToolEntry { return o.Review }, func(o *config.ProjectOverlay, entry *config.ToolEntry) { o.Review = entry }),
+	"forge":  toolEntryKey(func(o config.ProjectOverlay) *config.ToolEntry { return o.Forge }, func(o *config.ProjectOverlay, entry *config.ToolEntry) { o.Forge = entry }),
 }
 
 // projectOverlayKeyNames returns the settable overlay keys in stable order for

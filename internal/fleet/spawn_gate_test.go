@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
@@ -130,25 +131,27 @@ func TestProjectGate(t *testing.T) {
 }
 
 func TestDefaultNoMistakesPreflight(t *testing.T) {
+	review := taskauthority.DeliveryStep{Adapter: "no-mistakes"}
 	t.Run("unreadable config", func(t *testing.T) {
 		f := newGateFixture(t)
+		testutil.FakeOnPath(t, "no-mistakes", fakeNoMistakesScript)
 		if err := os.Mkdir(filepath.Join(f.nmHome, "config.yaml"), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		requireGateBlocker(t, defaultNoMistakesPreflight(f.primary), GateBlockerConfigMismatch, "reading no-mistakes config")
+		requireGateBlocker(t, defaultNoMistakesPreflight(f.primary, review), GateBlockerConfigMismatch, "reading no-mistakes config")
 	})
 
 	t.Run("no-mistakes missing", func(t *testing.T) {
 		f := newGateFixture(t)
 		testutil.SetPath(t, t.TempDir())
-		requireGateBlocker(t, defaultNoMistakesPreflight(f.primary), GateBlockerCommandFailure, "no-mistakes CLI not runnable")
+		requireGateBlocker(t, defaultNoMistakesPreflight(f.primary, review), GateBlockerCommandFailure, "no-mistakes CLI not runnable")
 	})
 
 	t.Run("gate not initialized", func(t *testing.T) {
 		f := newGateFixture(t)
 		testutil.FakeOnPath(t, "no-mistakes", fakeNoMistakesScript)
 		testutil.FakeOnPath(t, "pi", "#!/bin/sh\n")
-		requireGateBlocker(t, defaultNoMistakesPreflight(f.primary), GateBlockerNotInitialized, "the primary has no no-mistakes remote")
+		requireGateBlocker(t, defaultNoMistakesPreflight(f.primary, review), GateBlockerNotInitialized, "the primary has no no-mistakes remote")
 	})
 
 	t.Run("initialized gate", func(t *testing.T) {
@@ -160,7 +163,7 @@ func TestDefaultNoMistakesPreflight(t *testing.T) {
 			t.Fatal(err)
 		}
 		f.remote(t, gate)
-		if err := defaultNoMistakesPreflight(f.primary); err != nil {
+		if err := defaultNoMistakesPreflight(f.primary, review); err != nil {
 			t.Fatalf("preflight: %v", err)
 		}
 	})

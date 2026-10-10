@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/backend"
+	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/domain"
 )
 
@@ -23,9 +24,15 @@ type GlabRunner interface {
 }
 
 // glabRunnerImpl is the production GlabRunner using os/exec.
-type glabRunnerImpl struct{}
+type glabRunnerImpl struct {
+	path string
+	args []string
+}
 
 func (r *glabRunnerImpl) LookPath() (string, error) {
+	if r.path != "" {
+		return r.path, nil
+	}
 	return exec.LookPath("glab")
 }
 
@@ -34,19 +41,23 @@ func (r *glabRunnerImpl) Run(args ...string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.Command(path, args...)
+	argv := append(append([]string(nil), args...), r.args...)
+	cmd := exec.Command(path, argv...)
 	out, err := cmd.Output()
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
-			return nil, fmt.Errorf("glab %s: %s", strings.Join(args, " "), strings.TrimSpace(string(ee.Stderr)))
+			return nil, fmt.Errorf("glab %s: %s", strings.Join(argv, " "), strings.TrimSpace(string(ee.Stderr)))
 		}
-		return nil, fmt.Errorf("glab %s: %w", strings.Join(args, " "), err)
+		return nil, fmt.Errorf("glab %s: %w", strings.Join(argv, " "), err)
 	}
 	return out, nil
 }
 
-// defaultGlabRunner is the production runner; replace for testing.
-var defaultGlabRunner GlabRunner = &glabRunnerImpl{}
+// glabRunnerFor builds the glab runner for a configured gitlab tool entry. Tests
+// replace it to script glab.
+var glabRunnerFor = func(entry config.ToolEntry) GlabRunner {
+	return &glabRunnerImpl{path: entry.Path, args: append([]string(nil), entry.Args...)}
+}
 
 // GitLabClient defines the GitLab operations used by delivery surfaces.
 // All operations go through the consolidated authority path backed by glab.
@@ -74,12 +85,6 @@ type glabClient struct {
 // compile-time check
 var _ GitLabClient = (*glabClient)(nil)
 
-// ProbeGitLabCapability probes glab availability through the default runner.
-// Returns one of: Ready, Absent, Failed, Unsupported.
-func ProbeGitLabCapability() backend.State {
-	return probeGlabCapability(defaultGlabRunner)
-}
-
 // probeGlabCapability probes glab availability through the given runner.
 func probeGlabCapability(runner GlabRunner) backend.State {
 	_, err := runner.LookPath()
@@ -106,29 +111,6 @@ func probeGlabCapability(runner GlabRunner) backend.State {
 	}
 
 	return backend.Ready
-}
-
-// GitLabClientForState returns the appropriate GitLabClient or an error
-// based on the capability state. Fails closed on Absent/Failed/Unsupported.
-func GitLabClientForState(s backend.State) (GitLabClient, error) {
-	switch s {
-	case backend.Ready:
-		return &glabClient{runner: defaultGlabRunner}, nil
-	case backend.Absent:
-		return nil, fmt.Errorf("GitLab capability absent: glab not found on PATH")
-	case backend.Unsupported:
-		return nil, fmt.Errorf("GitLab capability unsupported: glab is not available on this platform")
-	case backend.Failed:
-		return nil, fmt.Errorf("GitLab capability failed: glab encountered an error")
-	default:
-		return nil, fmt.Errorf("GitLab capability in unknown state: %v", s)
-	}
-}
-
-// DefaultGitLabClient probes the current environment and returns a client
-// if glab is Ready, or an error if it is Absent/Failed/Unsupported.
-func DefaultGitLabClient() (GitLabClient, error) {
-	return GitLabClientForState(ProbeGitLabCapability())
 }
 
 // gitlabDeliveryProvider adapts the typed GitLab capability (glab only) to

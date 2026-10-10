@@ -15,22 +15,26 @@ import (
 )
 
 // bumpTaskRevisionCanonically commits one unrelated canonical mutation of
-// the task (a delivery contract record), advancing its revision past the
-// revision any in-flight delivery journal recorded.
-func bumpTaskRevisionCanonically(t *testing.T, c *taskauthority.Canonical, taskID, mode string) {
+// the task (a dispatch hold added then released), advancing its revision past
+// the revision any in-flight delivery journal recorded. The delivery contract
+// cannot serve here: it is immutable within its generation.
+func bumpTaskRevisionCanonically(t *testing.T, c *taskauthority.Canonical, taskID string) {
 	t.Helper()
 	tid := mustFleetTaskID(t, taskID)
 	agg, err := c.Get(tid)
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := taskauthority.CanonicalRecordDeliveryContractRequest{
-		HomeID: c.HomeID(), TaskID: tid,
-		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
-		Mode:         mode, Rescaffold: true, Reason: "unrelated mutation",
+	hold := taskauthority.CanonicalAddHoldRequest{
+		HomeID: c.HomeID(), HoldID: "revision-bump", Scope: taskauthority.DispatchHoldScope{TaskIDs: []string{taskID}},
+		Actions: []taskauthority.DispatchAction{taskauthority.DispatchActionDelivery}, Reason: "unrelated mutation",
 	}
-	if _, err := c.RecordDeliveryContract(mustFleetOperation(t, "op-contract-"+taskID+"-"+mode, req), req); err != nil {
-		t.Fatalf("RecordDeliveryContract: %v", err)
+	if _, err := c.AddHold(mustFleetOperation(t, "op-revision-hold-add-"+taskID, hold), hold); err != nil {
+		t.Fatalf("AddHold at generation %d: %v", agg.Generation, err)
+	}
+	release := taskauthority.CanonicalReleaseHoldRequest{HomeID: c.HomeID(), HoldID: "revision-bump", Reason: "unrelated mutation", Words: deliveryWords()}
+	if _, err := c.ReleaseHold(mustFleetOperation(t, "op-revision-hold-rel-"+taskID, release), release); err != nil {
+		t.Fatalf("ReleaseHold: %v", err)
 	}
 }
 
@@ -75,10 +79,10 @@ func taskRevision(t *testing.T, c *taskauthority.Canonical, taskID string) taska
 func TestDeliverStaleRevisionAuthorizedJournalReleases(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	taskID := "t1"
-	mustWorkingDeliveryTask(t, c, taskID)
+	mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 	installScriptedProviderFor(t, "open-then-merged")
 	runDeliveryCrashHelper(t, homeDir, taskID, "authorized", "open-then-merged")
-	bumpTaskRevisionCanonically(t, c, taskID, "no-mistakes")
+	bumpTaskRevisionCanonically(t, c, taskID)
 
 	provider := installScriptedProviderFor(t, "open-then-merged")
 	err := RecoverDeliveryJournals(homeDir)
@@ -111,10 +115,10 @@ func TestDeliverStaleRevisionAuthorizedJournalReleases(t *testing.T) {
 func TestDeliverStaleRevisionOutcomeJournalCommits(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	taskID := "t1"
-	mustWorkingDeliveryTask(t, c, taskID)
+	mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 	installScriptedProviderFor(t, "open-then-merged")
 	runDeliveryCrashHelper(t, homeDir, taskID, "outcome", "open-then-merged")
-	bumpTaskRevisionCanonically(t, c, taskID, "no-mistakes")
+	bumpTaskRevisionCanonically(t, c, taskID)
 
 	provider := installScriptedProviderFor(t, "merged")
 	if err := RecoverDeliveryJournals(homeDir); err != nil {
@@ -158,7 +162,7 @@ func TestDeliverOutcomeJournalCommitsAcrossPhaseChange(t *testing.T) {
 			c, homeDir := newFleetCanonical(t)
 			taskID := "t1"
 			tid := mustFleetTaskID(t, taskID)
-			mustWorkingDeliveryTask(t, c, taskID)
+			mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 			installScriptedProviderFor(t, "open-then-merged")
 			runDeliveryCrashHelper(t, homeDir, taskID, "outcome", "open-then-merged")
 			agg, err := c.Get(tid)
@@ -193,12 +197,12 @@ func TestDeliverStaleRevisionAuthorizationGoneCompletesWithoutMutation(t *testin
 		t.Run(boundary, func(t *testing.T) {
 			c, homeDir := newFleetCanonical(t)
 			taskID := "t1"
-			mustWorkingDeliveryTask(t, c, taskID)
+			mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 			installScriptedProviderFor(t, "open-then-merged")
 			runDeliveryCrashHelper(t, homeDir, taskID, boundary, "open-then-merged")
 			journalID := listActiveDeliveryJournals(t, homeDir)[0]
 			revokeCurrentAuthorization(t, c, taskID)
-			bumpTaskRevisionCanonically(t, c, taskID, "no-mistakes")
+			bumpTaskRevisionCanonically(t, c, taskID)
 			before := taskRevision(t, c, taskID)
 
 			provider := installScriptedProviderFor(t, "merged")
@@ -244,14 +248,14 @@ func TestDeliverCrashAfterOutcomeCommitThenRevisionBumpConverges(t *testing.T) {
 		t.Run(string(tc.status), func(t *testing.T) {
 			c, homeDir := newFleetCanonical(t)
 			taskID := "t1"
-			mustWorkingDeliveryTask(t, c, taskID)
+			mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 			installScriptedProviderFor(t, tc.script)
 			runDeliveryCrashHelper(t, homeDir, taskID, "committed", tc.script)
 			committed, err := c.DeliveryOutcome(mustFleetTaskID(t, taskID))
 			if err != nil || committed.Status != tc.status {
 				t.Fatalf("committed outcome = %v %+v, want %s", err, committed, tc.status)
 			}
-			bumpTaskRevisionCanonically(t, c, taskID, "no-mistakes")
+			bumpTaskRevisionCanonically(t, c, taskID)
 
 			provider := installScriptedProviderFor(t, "merged")
 			for i := 0; i < 2; i++ {
@@ -314,8 +318,8 @@ func writeAuthorizeStageJournal(t *testing.T, c *taskauthority.Canonical, homeDi
 // never completes the journal.
 func TestDeliverRecoveryContinuesPastFailedJournal(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
-	mustWorkingDeliveryTask(t, c, "t1")
-	mustWorkingDeliveryTask(t, c, "t2")
+	mustWorkingDeliveryTask(t, c, "t1", deliveryTestGitHubForge)
+	mustWorkingDeliveryTask(t, c, "t2", deliveryTestGitHubForge)
 	installScriptedProviderFor(t, "open-then-merged")
 	runDeliveryCrashHelper(t, homeDir, "t1", "authorized", "open-then-merged")
 	agg, err := c.Get(mustFleetTaskID(t, "t1"))
@@ -363,8 +367,8 @@ func TestDeliverRecoveryContinuesPastFailedJournal(t *testing.T) {
 // after a valid one stops recovery and the valid journal is not resumed.
 func TestDeliverRecoveryStopsBeforeResumingOnContradictoryEntry(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
-	mustWorkingDeliveryTask(t, c, "t1")
-	mustWorkingDeliveryTask(t, c, "t2")
+	mustWorkingDeliveryTask(t, c, "t1", deliveryTestGitHubForge)
+	mustWorkingDeliveryTask(t, c, "t2", deliveryTestGitHubForge)
 	writeAuthorizeStageJournal(t, c, homeDir, "t1")
 	missing := writeAuthorizeStageJournal(t, c, homeDir, "t2")
 	if err := os.Remove(filepath.Join(homeDir, "state", deliveryJournals.recordKey(missing.ID))); err != nil {
@@ -390,7 +394,7 @@ func TestDeliverRecoveryStopsBeforeResumingOnContradictoryEntry(t *testing.T) {
 func TestDeliverRecoveryRefusesMalformedCommittedOutcome(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	taskID := "t1"
-	mustWorkingDeliveryTask(t, c, taskID)
+	mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 	installScriptedProviderFor(t, "open-then-merged")
 	runDeliveryCrashHelper(t, homeDir, taskID, "outcome", "open-then-merged")
 
@@ -507,7 +511,7 @@ func assertOutcomeRecordedOnce(t *testing.T, c *taskauthority.Canonical, homeDir
 // journal completes.
 func TestDeliverOutcomeCommitsAfterHoldReleased(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
-	mustWorkingDeliveryTask(t, c, "t1")
+	mustWorkingDeliveryTask(t, c, "t1", deliveryTestGitHubForge)
 	provider := deliverWithHoldAt(t, c, homeDir, "t1", "mutating")
 	releaseDeliveryHold(t, c, "hold-t1")
 
@@ -528,7 +532,7 @@ func TestDeliverOutcomeRefusedWhileHoldActive(t *testing.T) {
 	for _, boundary := range []string{"mutating", "outcome"} {
 		t.Run(boundary, func(t *testing.T) {
 			c, homeDir := newFleetCanonical(t)
-			mustWorkingDeliveryTask(t, c, "t1")
+			mustWorkingDeliveryTask(t, c, "t1", deliveryTestGitHubForge)
 			provider := deliverWithHoldAt(t, c, homeDir, "t1", boundary)
 
 			err := RecoverDeliveryJournals(homeDir)

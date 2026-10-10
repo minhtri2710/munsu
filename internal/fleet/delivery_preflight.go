@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/backend"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // PreflightResult captures the result of a delivery mode preflight check.
@@ -27,12 +28,12 @@ type Check struct {
 // project-local checks such as has-remote). Returns a PreflightResult with
 // individual check results; callers should inspect Feasible to decide
 // whether to proceed.
-func Preflight(mode, repoPath string) (*PreflightResult, error) {
+func Preflight(mode, repoPath string, forge taskauthority.DeliveryStep) (*PreflightResult, error) {
 	switch mode {
 	case "no-mistakes":
-		return preflightNoMistakes()
+		return preflightNoMistakes(forge)
 	case "direct-PR":
-		return preflightDirectPR(repoPath)
+		return preflightDirectPR(repoPath, forge)
 	case "local-only":
 		return preflightLocalOnly()
 	default:
@@ -40,30 +41,22 @@ func Preflight(mode, repoPath string) (*PreflightResult, error) {
 	}
 }
 
-func preflightNoMistakes() (*PreflightResult, error) {
-	checks := []Check{
-		checkNoMistakesBinary(),
+// preflightNoMistakes re-probes the captured forge: no-mistakes delivers
+// through it, so a forge that is not Ready must refuse before any mutation.
+func preflightNoMistakes(forge taskauthority.DeliveryStep) (*PreflightResult, error) {
+	check, err := checkConfiguredForge(forge)
+	if err != nil {
+		return nil, err
 	}
-	// Only check version/compatibility if binary is found.
-	if checks[0].OK {
-		probe := NoMistakesProbe()
-		if probe.State != backend.Ready {
-			checks = append(checks, Check{
-				Name:   "no-mistakes-compat",
-				OK:     false,
-				Detail: probe.Detail,
-			})
-		}
-	}
-	result := &PreflightResult{Mode: "no-mistakes", Checks: checks}
-	result.Feasible = allOK(checks)
-	return result, nil
+	return &PreflightResult{Mode: "no-mistakes", Feasible: true, Checks: []Check{check}}, nil
 }
 
-func preflightDirectPR(repoPath string) (*PreflightResult, error) {
-	checks := []Check{
-		checkGhAuth(),
+func preflightDirectPR(repoPath string, forge taskauthority.DeliveryStep) (*PreflightResult, error) {
+	check, err := checkConfiguredForge(forge)
+	if err != nil {
+		return nil, err
 	}
+	checks := []Check{check}
 	if repoPath != "" {
 		checks = append(checks, checkHasRemote(repoPath))
 	}
@@ -72,38 +65,21 @@ func preflightDirectPR(repoPath string) (*PreflightResult, error) {
 	return result, nil
 }
 
+// checkConfiguredForge refuses a captured forge whose probe is not Ready. Every
+// mode that delivers through the forge shares it, so the refusal is one rule.
+func checkConfiguredForge(forge taskauthority.DeliveryStep) (Check, error) {
+	state := probeConfiguredForge(toolEntryOf(forge))
+	if state != backend.Ready {
+		return Check{}, fmt.Errorf("forge adapter %s probe %s: configured forge is not Ready", forge.Adapter, state)
+	}
+	return Check{Name: "forge-tool", OK: true, Detail: fmt.Sprintf("%s is Ready", forge.Adapter)}, nil
+}
+
 func preflightLocalOnly() (*PreflightResult, error) {
 	checks := []Check{
 		{Name: "git-configured", OK: true, Detail: "local-only always feasible"},
 	}
 	return &PreflightResult{Mode: "local-only", Feasible: true, Checks: checks}, nil
-}
-
-func checkNoMistakesBinary() Check {
-	_, err := exec.LookPath("no-mistakes")
-	if err != nil {
-		return Check{
-			Name:   "no-mistakes-binary",
-			OK:     false,
-			Detail: "no-mistakes not on PATH; run 'go install github.com/kunchenguid/no-mistakes@latest'",
-		}
-	}
-	return Check{Name: "no-mistakes-binary", OK: true, Detail: "found on PATH"}
-}
-
-// checkGhAuth reports gh-auth OK only when `gh auth status` succeeds; a gh
-// or gh-axi binary on PATH is not evidence of authentication.
-func checkGhAuth() Check {
-	cmd := exec.Command("gh", "auth", "status")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return Check{
-			Name:   "gh-auth",
-			OK:     false,
-			Detail: fmt.Sprintf("gh auth failed: %s", strings.TrimSpace(string(out))),
-		}
-	}
-	return Check{Name: "gh-auth", OK: true, Detail: "authenticated"}
 }
 
 func checkHasRemote(repoPath string) Check {

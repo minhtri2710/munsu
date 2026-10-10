@@ -1459,7 +1459,11 @@ func topologyAwareMergeCheck(opts Options, meta map[string]string, wtPath string
 
 	// Query the provider for the current PR/MR merge status using the
 	// provider-neutral seam that routes by identity provider.
-	status, err := backend.QueryMergeStatus(ident)
+	forge, err := taskForgeStep(opts.HomeDir, opts.ID)
+	var status *domain.PRMergeStatus
+	if err == nil {
+		status, err = backend.QueryMergeStatus(forge, ident)
+	}
 	if err != nil {
 		return "", fmt.Errorf("cannot verify merge status: %w (use --force to override)", err)
 	}

@@ -289,8 +289,8 @@ func (r *recordingTeardown) Dispose(_ string, _ map[string]string, req DisposeRe
 	r.disposed = append(r.disposed, req)
 	return r.disposeErr
 }
-func (r *recordingTeardown) QueryMergeStatus(ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
-	return QueryDeliveryMergeStatus(ident)
+func (r *recordingTeardown) QueryMergeStatus(forge taskauthority.DeliveryStep, ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
+	return QueryDeliveryMergeStatus(forge, ident)
 }
 func (r *recordingTeardown) ReturnWorktree(_ string, path string) error {
 	if r.onReturn != nil {
