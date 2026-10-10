@@ -1539,22 +1539,57 @@ func topologyAwareMergeCheck(opts Options, meta map[string]string, wtPath string
 	return "", fmt.Errorf("PR #%d is in an unexpected state: merged=%v closed=%v (use --force to override)", ident.Number, status.Merged, status.Closed)
 }
 
-// checkRemoteBranch verifies the worktree branch has a remote tracking branch
-// that is reachable. This is a fallback when no delivery identity is available.
+// checkRemoteBranch proves the worktree's task branch head is on origin: the
+// remote ref equals the local head, or the local head is an ancestor of it.
+// It is the fallback when no delivery identity is available. A missing,
+// unreachable or diverged remote refuses.
 func checkRemoteBranch(wtPath string) error {
-	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
-	cmd.Dir = wtPath
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("branch has no remote tracking branch (use --force to override): %w", err)
+	git := func(args ...string) (string, error) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = wtPath
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		err := cmd.Run()
+		if err != nil {
+			return strings.TrimSpace(stdout.String() + stderr.String()), err
+		}
+		return strings.TrimSpace(stdout.String()), nil
+	}
+	head, err := git("rev-parse", "HEAD")
+	if err != nil {
+		return fmt.Errorf("cannot read worktree head (use --force to override): %s", head)
+	}
+	branch, err := git("symbolic-ref", "--short", "-q", "HEAD")
+	if err != nil || branch == "" {
+		return fmt.Errorf("worktree head %s is detached, so no task branch can be proven pushed (use --force to override)", head)
+	}
+	ref := "refs/heads/" + branch
+	out, err := git("ls-remote", "--exit-code", "origin", ref)
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 2 {
+			return fmt.Errorf("branch %s at %s is not on origin: remote branch is missing (use --force to override)", branch, head)
+		}
+		return fmt.Errorf("branch %s at %s cannot be proven pushed: origin is unreachable: %s (use --force to override)", branch, head, out)
+	}
+	var remote string
+	for _, line := range strings.Split(out, "\n") {
+		if sha, name, ok := strings.Cut(line, "\t"); ok && name == ref {
+			remote = sha
+		}
+	}
+	if remote == "" {
+		return fmt.Errorf("branch %s at %s is not on origin: remote branch is missing (use --force to override)", branch, head)
 	}
 
-	cmd = exec.Command("git", "fetch", "--dry-run")
-	cmd.Dir = wtPath
-	fetchOut, fetchErr := cmd.CombinedOutput()
-	if fetchErr != nil {
-		return fmt.Errorf("cannot reach remote (use --force to override): %s", strings.TrimSpace(string(fetchOut)))
+	tmp := fmt.Sprintf("refs/munsu/teardown-proof/%d-%d", os.Getpid(), time.Now().UnixNano())
+	defer git("update-ref", "-d", tmp)
+	if fetchOut, err := git("fetch", "--quiet", "--no-tags", "--no-write-fetch-head", "--refmap=", "origin", "+"+ref+":"+tmp); err != nil {
+		return fmt.Errorf("branch %s at %s cannot be proven pushed: origin is at %s but fetching it failed: %s (use --force to override)", branch, head, remote, fetchOut)
 	}
-
+	if _, err := git("merge-base", "--is-ancestor", head, tmp); err != nil {
+		return fmt.Errorf("branch %s at %s is not on origin: origin is at %s and has diverged or is missing this head (use --force to override)", branch, head, remote)
+	}
 	return nil
 }
 

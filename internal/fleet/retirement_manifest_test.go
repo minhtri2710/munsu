@@ -32,7 +32,7 @@ func setupWorktreeWithManifest(t *testing.T, wt, remote string, briefContent []b
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git checkout -b: %s", out)
 	}
-	cmd = exec.Command("git", "push", "-u", "origin", "fm/manifest-test")
+	cmd = exec.Command("git", "push", "origin", "fm/manifest-test")
 	cmd.Dir = wt
 	cmd.Env = gitEnv
 	if out, err := cmd.CombinedOutput(); err != nil {

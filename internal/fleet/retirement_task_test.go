@@ -148,7 +148,7 @@ func TestShipSafetyCheck_CleanWithRemote(t *testing.T) {
 		fmt.Sprintf("GIT_CEILING_DIRECTORIES=%s", wt),
 	)
 
-	// Create a branch with upstream
+	// Create a pushed branch
 	cmd := exec.Command("git", "checkout", "-b", "fm/test-branch")
 	cmd.Dir = wt
 	cmd.Env = gitEnv
@@ -157,7 +157,7 @@ func TestShipSafetyCheck_CleanWithRemote(t *testing.T) {
 	}
 
 	// Push it
-	cmd = exec.Command("git", "push", "-u", "origin", "fm/test-branch")
+	cmd = exec.Command("git", "push", "origin", "fm/test-branch")
 	cmd.Dir = wt
 	cmd.Env = gitEnv
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -189,14 +189,14 @@ func TestShipSafetyCheck_OnlyKnownLaunchArtifactsDirty(t *testing.T) {
 		fmt.Sprintf("GIT_CEILING_DIRECTORIES=%s", wt),
 	)
 
-	// Create branch with upstream.
+	// Create a pushed branch.
 	cmd := exec.Command("git", "checkout", "-b", "fm/soldier-artifact-test")
 	cmd.Dir = wt
 	cmd.Env = gitEnv
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git checkout -b: %s", out)
 	}
-	cmd = exec.Command("git", "push", "-u", "origin", "fm/soldier-artifact-test")
+	cmd = exec.Command("git", "push", "origin", "fm/soldier-artifact-test")
 	cmd.Dir = wt
 	cmd.Env = gitEnv
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -227,14 +227,14 @@ func TestShipSafetyCheck_UnknownUntrackedFileDirty(t *testing.T) {
 		fmt.Sprintf("GIT_CEILING_DIRECTORIES=%s", wt),
 	)
 
-	// Create branch with upstream.
+	// Create a pushed branch.
 	cmd := exec.Command("git", "checkout", "-b", "fm/unknown-dirty-test")
 	cmd.Dir = wt
 	cmd.Env = gitEnv
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git checkout -b: %s", out)
 	}
-	cmd = exec.Command("git", "push", "-u", "origin", "fm/unknown-dirty-test")
+	cmd = exec.Command("git", "push", "origin", "fm/unknown-dirty-test")
 	cmd.Dir = wt
 	cmd.Env = gitEnv
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -271,14 +271,14 @@ func TestShipSafetyCheck_MixedKnownAndUnknownDirty(t *testing.T) {
 		fmt.Sprintf("GIT_CEILING_DIRECTORIES=%s", wt),
 	)
 
-	// Create branch with upstream.
+	// Create a pushed branch.
 	cmd := exec.Command("git", "checkout", "-b", "fm/mixed-dirty-test")
 	cmd.Dir = wt
 	cmd.Env = gitEnv
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git checkout -b: %s", out)
 	}
-	cmd = exec.Command("git", "push", "-u", "origin", "fm/mixed-dirty-test")
+	cmd = exec.Command("git", "push", "origin", "fm/mixed-dirty-test")
 	cmd.Dir = wt
 	cmd.Env = gitEnv
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -336,14 +336,14 @@ func TestShipSafetyCheck_OnlyLaunchScriptDirty(t *testing.T) {
 		fmt.Sprintf("GIT_CEILING_DIRECTORIES=%s", wt),
 	)
 
-	// Create branch with upstream.
+	// Create a pushed branch.
 	cmd := exec.Command("git", "checkout", "-b", "fm/launch-script-test")
 	cmd.Dir = wt
 	cmd.Env = gitEnv
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git checkout -b: %s", out)
 	}
-	cmd = exec.Command("git", "push", "-u", "origin", "fm/launch-script-test")
+	cmd = exec.Command("git", "push", "origin", "fm/launch-script-test")
 	cmd.Dir = wt
 	cmd.Env = gitEnv
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -1181,5 +1181,109 @@ func TestRun_AbortRefreshesBriefOnlyDirectory(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dataDir, "brief.md")); err != nil {
 		t.Fatalf("brief removed: %v", err)
+	}
+}
+
+func TestCheckRemoteBranchPushedHeadProof(t *testing.T) {
+	gitIn := func(t *testing.T, dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	commit := func(t *testing.T, dir, name string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(name), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		gitIn(t, dir, "add", name)
+		gitIn(t, dir, "commit", "-m", name)
+	}
+	const branch = "fm/proof"
+
+	cases := []struct {
+		name    string
+		arrange func(t *testing.T, wt, remote string)
+		want    string // empty means pass
+	}{
+		{"no upstream, head on origin", func(t *testing.T, wt, _ string) {
+			gitIn(t, wt, "push", "origin", branch)
+		}, ""},
+		{"upstream set, head unpushed", func(t *testing.T, wt, _ string) {
+			gitIn(t, wt, "push", "-u", "origin", branch)
+			commit(t, wt, "unpushed")
+		}, "diverged or is missing this head"},
+		{"local behind origin", func(t *testing.T, wt, remote string) {
+			gitIn(t, wt, "push", "origin", branch)
+			commit(t, wt, "ahead")
+			// pushing by URL leaves refs/remotes/origin stale, so a leaky fetch shows
+			gitIn(t, wt, "push", remote, branch)
+			gitIn(t, wt, "reset", "--hard", "HEAD~1")
+		}, ""},
+		{"diverged", func(t *testing.T, wt, _ string) {
+			gitIn(t, wt, "push", "origin", branch)
+			gitIn(t, wt, "commit", "--amend", "-m", "rebased")
+		}, "diverged"},
+		{"remote branch missing", func(t *testing.T, _, _ string) {}, "remote branch is missing"},
+		{"remote ref only matches the tail pattern", func(t *testing.T, wt, _ string) {
+			gitIn(t, wt, "push", "origin", "HEAD:refs/foo/refs/heads/"+branch)
+		}, "remote branch is missing"},
+		{"proof fetch fails", func(t *testing.T, wt, _ string) {
+			gitIn(t, wt, "push", "origin", branch)
+			if err := os.WriteFile(filepath.Join(wt, ".git", "refs", "munsu"), nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}, "but fetching it failed"},
+		{"origin unreachable", func(t *testing.T, wt, remote string) {
+			gitIn(t, wt, "remote", "set-url", "origin", remote+"-gone")
+		}, "origin is unreachable"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			wt := filepath.Join(tmp, "worktree")
+			remote := filepath.Join(tmp, "remote.git")
+			os.MkdirAll(wt, 0o755)
+			setupGitRepo(t, wt, remote)
+			gitIn(t, wt, "checkout", "-b", branch)
+			commit(t, wt, "work")
+			tc.arrange(t, wt, remote)
+
+			remotesBefore := gitIn(t, wt, "for-each-ref", "refs/remotes/")
+			fetchHead := filepath.Join(wt, ".git", "FETCH_HEAD")
+			_, statErr := os.Stat(fetchHead)
+			hadFetchHead := statErr == nil
+
+			err := checkRemoteBranch(wt)
+			if after := gitIn(t, wt, "for-each-ref", "refs/remotes/"); after != remotesBefore {
+				t.Errorf("proof changed refs/remotes:\nbefore %s\nafter  %s", remotesBefore, after)
+			}
+			if _, statErr := os.Stat(fetchHead); statErr == nil && !hadFetchHead {
+				t.Errorf("proof wrote FETCH_HEAD")
+			}
+			switch {
+			case tc.want == "" && err != nil:
+				t.Fatalf("checkRemoteBranch = %v, want pass", err)
+			case tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)):
+				t.Fatalf("checkRemoteBranch = %v, want refusal containing %q", err, tc.want)
+			}
+			if err != nil {
+				for _, w := range []string{branch, gitIn(t, wt, "rev-parse", "HEAD"), "use --force to override"} {
+					if !strings.Contains(err.Error(), w) {
+						t.Errorf("refusal %q lacks %q", err, w)
+					}
+				}
+				if strings.Contains(err.Error(), "exit status") {
+					t.Errorf("refusal leaks raw exit status: %v", err)
+				}
+			}
+			if refs := gitIn(t, wt, "for-each-ref", "refs/munsu/"); refs != "" {
+				t.Errorf("temporary proof ref left behind: %s", refs)
+			}
+		})
 	}
 }

@@ -194,7 +194,7 @@ func TestRetireCompletedLaunchStillRequiresLandedBranchProof(t *testing.T) {
 
 	teardown := &recordingTeardown{alive: true}
 	_, err := RetireTask(Options{HomeDir: f.homeDir, ID: f.taskID}, teardown, fakeRetirementJournals{}, f.auth)
-	if err == nil || !strings.Contains(err.Error(), "branch has no remote tracking branch") {
+	if err == nil || !strings.Contains(err.Error(), "no task branch can be proven pushed") {
 		t.Fatalf("RetireTask error = %v, want completed launch refused by the landed-branch gate", err)
 	}
 	if got := f.aggregate(); got.Phase != taskauthority.PhaseWorking {
