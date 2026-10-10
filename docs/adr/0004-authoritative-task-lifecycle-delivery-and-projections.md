@@ -66,9 +66,11 @@ This section is retired. munsu does not own Issue closure on delivery: the PR bo
 
 ### 6. Delivery-mode transitions (DeliveryPlan superseded — ADR-0022)
 
-The revisioned `DeliveryPlan` was never built. ADR-0022's durable per-task `DeliveryContract` records the mode and any authorized fallback. The capability attestation exists as a per-launch `CapabilityAttestation` (`internal/fleet/delivery_attestation.go`) checked for late capability loss before launch; it is not cached across launches.
+The revisioned `DeliveryPlan` was never built. ADR-0022's durable per-task `DeliveryContract` records the mode and the resolved review and forge steps; it has no fallback (ADR-0028 §2). The capability attestation exists as a per-launch `CapabilityAttestation` (`internal/fleet/delivery_attestation.go`) checked for late capability loss before launch; it is not cached across launches.
 
 A task has a revisioned `DeliveryPlan` with requested mode, effective mode, and exact allowed fallbacks. A Soldier does not silently change mode. A parent-owned durable Decision changes mode, unless project policy pre-authorizes the exact transition and reason. Known capability failure before spawn selects the effective mode before launch; failure discovered later preserves work and evidence while transitioning the Delivery Plan.
+
+> Superseded by ADR-0022 and ADR-0028 §2 and §5: the `DeliveryPlan` was never built, and no requested or effective mode or allowed fallback exists. The mode is derived from the configured steps once per task generation. A configured step whose probe is not Ready refuses the run, and the recorded contract is never mutated. Late capability loss blocks the launch for a parent Decision (F028).
 
 Mode readiness is proven by a context-scoped, typed capability attestation bound to project, execution home, harness, gate agent, executable identity, and resolved config. Cached attestations require unchanged input digest, matching context, and valid TTL. Irreversible mode-specific operations revalidate capability.
 

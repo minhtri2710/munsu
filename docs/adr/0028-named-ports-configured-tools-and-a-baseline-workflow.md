@@ -29,7 +29,7 @@ munsu is already modular inside one binary, but the modules do not share one sha
 * Before this ADR, the review gate was wired directly to no-mistakes (`NoMistakesProbe`, `internal/fleet/delivery_nomistakes.go`). `ResolveDeliveryMode` (`internal/fleet/spawn_spawn.go`) selected no-mistakes when its probe was Ready, and otherwise direct-PR, unless `RequireNoMistakes` refused. Spawn preflight kept a recorded no-mistakes → direct-PR fallback when `AllowDirectPRFallback` was set (ADR-0022 §2).
 * Quota balancing (`internal/harness/quota_balanced.go`) uses quota-axi when present, and silently takes the first candidate otherwise.
 
-Apart from the OS fence's fixed `/usr/bin/sandbox-exec`, every external tool is found by bare name on PATH. No tool has a configured path or arguments. There is no plugin mechanism. When a tool is missing, munsu runs only where the code happens to fall back, and those fallbacks are either silent (quota) or a stderr note (worktree).
+Apart from the OS fence's fixed `/usr/bin/sandbox-exec`, every external tool is found by bare name on PATH. Before this ADR, no tool had a configured path or arguments. There is no plugin mechanism. When a tool is missing, munsu runs only where the code happens to fall back, and those fallbacks are either silent (quota) or a stderr note (worktree).
 
 ## Decision
 
@@ -56,7 +56,7 @@ Adapters compile into the single binary (ADR-0019). The capability a step uses i
 
 A tool entry names a compiled-in adapter of one port, with two optional parts: an absolute binary path that replaces PATH lookup, and extra arguments appended to the adapter's fixed argv. An unknown adapter name, or an entry for a port without adapters, fails config validation. The github forge adapter accepts neither part, because it runs gh-axi and gh from PATH (G932). There is no free-form command template, because a template would be arbitrary execution from a config file.
 
-Tool entries live in the typed config documents and resolve into the published Config Snapshot (ADR-0008 §6) like every other setting. A tool that is on PATH but has no entry is not used. `munsu init` and `munsu doctor` report the tools they detect, and write or suggest entries for them.
+Tool entries live in the typed config documents and resolve into the published Config Snapshot (ADR-0008 §6) like every other setting. A tool that is on PATH but has no entry is not used. `munsu doctor` reports whether no-mistakes is on PATH and, when it is, suggests a review tool entry (`munsu project config set review`); it writes nothing. `munsu init` writes no tool entries.
 
 ### 3. One resolution rule per step, one path per run
 
@@ -73,16 +73,16 @@ The resolved choice for each step and its probe result are recorded in the publi
 The baseline is today's `local-only` delivery:
 
 1. Worktree: `git worktree add`.
-2. Commit: the Soldier commits on its task branch, reports its exact head and stops. It does not push. A Soldier push to a remote is a separate Human grant (G878, delivered separately).
+2. Commit: the Soldier commits on its task branch and stops for the orchestrator to merge. It does not push, open a PR or merge (the `local-only` brief rules in `internal/fleet/brief.go`). The remote modes push after committing under their own brief rules; no Soldier push grant exists (ADR-0027 is superseded).
 3. Handoff: the branch, the exact head and the base are the handoff. No forge PR is opened.
 4. Review: a reviewer seat or the Human records a head-bound `ReviewVerdict` (ADR-0025).
-5. Merge: munsu asks the Human to merge, naming the branch and the exact head. munsu never merges in the baseline.
+5. Merge: the orchestrator merges the branch at the reviewed exact head, as the brief says ("stop for orchestrator merge"). The Soldier does not merge, and no munsu command merges a local-only branch.
 
 Any seat needs a session backend (tmux at minimum) and one harness binary. These are requirements, not optional tools.
 
 ### 5. The delivery mode is derived from the resolved steps
 
-When a task's contract is first recorded (ADR-0022 §1), the default mode comes from the resolved review and forge steps, not from a configured default or a PATH probe:
+When a task's contract is first recorded (ADR-0022 §1), the mode comes from the resolved review and forge steps, not from a configured default or a PATH probe:
 
 | Review step | Forge step | Delivery mode |
 |---|---|---|
@@ -92,7 +92,7 @@ When a task's contract is first recorded (ADR-0022 §1), the default mode comes 
 
 A no-mistakes run ends in a forge pull request, so a review entry naming no-mistakes without a forge entry fails config validation.
 
-`DefaultMode`, `RequireNoMistakes` and `AllowDirectPRFallback` are deleted from the config documents and the snapshot, with no migration (pre-launch). Requiring no-mistakes now means configuring it: a configured no-mistakes whose probe fails refuses under §3. ADR-0022 §2's fallback is retired. The fallback branch of spawn preflight, `DeliveryFallback`, the `RecordDeliveryFallback` operation and every reader of them are deleted. The `--mode` flag is removed, with its re-scaffold of a recorded contract (ADR-0022 §3). The delivery mode is configuration only. A task generation records its contract once, at its first spawn, and does not re-decide it within that generation. A reopen starts a new generation with no contract, so the next spawn records one from the steps resolved then. A per-task `--mode` that dropped a configured review step would bypass §3's refusal, and holding back a single task's publication is already owned by the Soldier push grant (G878).
+`DefaultMode`, `RequireNoMistakes` and `AllowDirectPRFallback` are deleted from the config documents and the snapshot, with no migration (pre-launch). Requiring no-mistakes now means configuring it: a configured no-mistakes whose probe fails refuses under §3. ADR-0022 §2's fallback is retired. The fallback branch of spawn preflight, `DeliveryFallback`, the `RecordDeliveryFallback` operation and every reader of them are deleted. The `--mode` flag is removed, with its re-scaffold of a recorded contract (ADR-0022 §3). The delivery mode is configuration only. A task generation records its contract once, at its first spawn, and does not re-decide it within that generation. A reopen starts a new generation with no contract, so the next spawn records one from the steps resolved then. A per-task `--mode` that dropped a configured review step would bypass §3's refusal. A single task's publication is held back by its delivery mode, not by a push grant: the grant was removed by G926 A1=c, and ADR-0027 is superseded.
 
 ### 6. No dynamic Go plugins; out-of-process adapters are deferred
 
