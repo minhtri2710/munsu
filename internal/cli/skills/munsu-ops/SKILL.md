@@ -94,6 +94,8 @@ munsu teardown <id> [--force]
 
 **Completion:** `munsu teardown <id>` succeeds.
 
+Teardown stops only holders of the task worktree. A task process that survives it (a dev server under `/tmp`, a `setsid` watcher) is listed as a `task process <pid> still running` step with its executable, cwd and listening ports; teardown never stops it and still succeeds. Stop it by hand or inspect it with `munsu doctor --orphans`.
+
 ### Fleet-wide checks
 
 - `munsu fleet view` — see the full fleet.

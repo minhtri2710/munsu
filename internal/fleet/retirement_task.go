@@ -949,6 +949,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 	// enumerate or attribute holders, leaves cleanup pending, --force included.
 	// 2. Return worktree to pool — fail-closed: if return fails, abort
 	// teardown so the lease is not falsely claimed as released.
+	reaped := map[int]bool{}
 	if ev != nil && ev.Worktree != nil {
 		if err := currentOwnershipConflict(evidence.current, ev); err != nil {
 			return cleanupPending(err)
@@ -962,8 +963,9 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 				return cleanupPending(fmt.Errorf("teardown %s: worktree holder fence: %w", opts.ID, err))
 			}
 			killed, err := reapWorktreeHolders(opts.HomeDir, opts.ID, wtPath)
-			if killed > 0 {
-				result.Steps = append(result.Steps, fmt.Sprintf("killed %d residual process(es) on worktree", killed))
+			reaped = killed
+			if len(killed) > 0 {
+				result.Steps = append(result.Steps, fmt.Sprintf("killed %d residual process(es) on worktree", len(killed)))
 			}
 			if err != nil {
 				return cleanupPending(fmt.Errorf("teardown %s: worktree holders: %w", opts.ID, err))
@@ -1020,6 +1022,11 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		if cur.Generation != committed.Generation {
 			return cleanupPending(fmt.Errorf("teardown %s: task reopened to generation %s during cleanup; refusing to remove current projections", opts.ID, cur.Generation))
 		}
+		// Report, never stop, the task's processes that outlived teardown. This
+		// runs while the cleanup claim still blocks a reopen, so a process of a
+		// newer generation cannot be named, and on every path that reaches the
+		// projection cleanup, worktree evidence or not.
+		result.Steps = append(result.Steps, survivingTaskProcessSteps(opts.HomeDir, opts.ID, reaped)...)
 		// 3-5. Clean up journals, residual projections, and the task data
 		// directory through the cleanup reconciliation below. The .meta file is
 		// deliberately removed last: until every fallible cleanup step succeeds,
@@ -1660,23 +1667,12 @@ func worktreeHolderPIDs(wtPath string) ([]int, error) {
 // by the cleanup claim, which blocks a reopen for the whole teardown. A host
 // with no readable process environments returns an error.
 func taskOwnedPIDs(homeDir, taskID string) (map[int]bool, error) {
-	canonical, err := canonicalHome(homeDir)
+	processes, err := taskMarkedProcesses(taskMarkerInventory, homeDir, taskID)
 	if err != nil {
 		return nil, err
 	}
-	scan, err := OSMarkerInventory{}.ListMarked()
-	if err != nil {
-		return nil, err
-	}
-	owned := make(map[int]bool)
-	for _, process := range scan.Marked {
-		if strings.TrimSpace(process.Markers[MarkerMunsuTask]) != taskID {
-			continue
-		}
-		declared, err := canonicalHome(strings.TrimSpace(process.Markers[MarkerMunsuHome]))
-		if err != nil || declared != canonical {
-			continue
-		}
+	owned := make(map[int]bool, len(processes))
+	for _, process := range processes {
 		owned[process.PID] = true
 	}
 	return owned, nil
@@ -1684,41 +1680,41 @@ func taskOwnedPIDs(homeDir, taskID string) (map[int]bool, error) {
 
 // reapWorktreeHolders kills the processes holding wtPath that are proven to
 // belong to the task and waits for the path to clear. It returns the number of
-// distinct processes signalled. A holder that is not provably the task's, an
+// distinct processes signalled, keyed by pid. A holder that is not provably the task's, an
 // inventory or attribution failure, and holders that outlive the wait are all
 // errors: the caller keeps cleanup pending rather than kill or ignore them.
-func reapWorktreeHolders(homeDir, taskID, wtPath string) (int, error) {
+func reapWorktreeHolders(homeDir, taskID, wtPath string) (map[int]bool, error) {
 	killed := map[int]bool{}
 	for i := 0; i < 5; i++ {
 		holders, err := worktreeHolderPIDs(wtPath)
 		if err != nil {
-			return len(killed), err
+			return killed, err
 		}
 		if len(holders) == 0 {
-			return len(killed), nil
+			return killed, nil
 		}
 		owned, err := taskOwnedPIDs(homeDir, taskID)
 		if err != nil {
-			return len(killed), fmt.Errorf("attributing holders of %s: %w", wtPath, err)
+			return killed, fmt.Errorf("attributing holders of %s: %w", wtPath, err)
 		}
 		for _, pid := range holders {
 			if !owned[pid] {
-				return len(killed), fmt.Errorf("process %d holds %s and is not provably task %s's; not signalled", pid, wtPath, taskID)
+				return killed, fmt.Errorf("process %d holds %s and is not provably task %s's; not signalled", pid, wtPath, taskID)
 			}
 		}
 		for _, pid := range holders {
 			proc, err := os.FindProcess(pid)
 			if err != nil {
-				return len(killed), fmt.Errorf("signalling holder %d: %w", pid, err)
+				return killed, fmt.Errorf("signalling holder %d: %w", pid, err)
 			}
 			if err := proc.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
-				return len(killed), fmt.Errorf("signalling holder %d: %w", pid, err)
+				return killed, fmt.Errorf("signalling holder %d: %w", pid, err)
 			}
 			killed[pid] = true
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	return len(killed), fmt.Errorf("holders of %s outlived the reap wait", wtPath)
+	return killed, fmt.Errorf("holders of %s outlived the reap wait", wtPath)
 }
 
 func disposeWorktreeLaunchArtifacts(worktreePath string, binding *taskauthority.WorktreeBinding) error {
