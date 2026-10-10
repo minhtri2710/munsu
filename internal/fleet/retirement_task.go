@@ -1547,8 +1547,13 @@ func checkRemoteBranch(wtPath string) error {
 	git := func(args ...string) (string, error) {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = wtPath
-		out, err := cmd.CombinedOutput()
-		return strings.TrimSpace(string(out)), err
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		err := cmd.Run()
+		if err != nil {
+			return strings.TrimSpace(stdout.String() + stderr.String()), err
+		}
+		return strings.TrimSpace(stdout.String()), nil
 	}
 	head, err := git("rev-parse", "HEAD")
 	if err != nil {
@@ -1567,14 +1572,19 @@ func checkRemoteBranch(wtPath string) error {
 		}
 		return fmt.Errorf("branch %s at %s cannot be proven pushed: origin is unreachable: %s (use --force to override)", branch, head, out)
 	}
-	remote, _, _ := strings.Cut(out, "\t")
-	if remote == head {
-		return nil
+	var remote string
+	for _, line := range strings.Split(out, "\n") {
+		if sha, name, ok := strings.Cut(line, "\t"); ok && name == ref {
+			remote = sha
+		}
+	}
+	if remote == "" {
+		return fmt.Errorf("branch %s at %s is not on origin: remote branch is missing (use --force to override)", branch, head)
 	}
 
 	tmp := fmt.Sprintf("refs/munsu/teardown-proof/%d-%d", os.Getpid(), time.Now().UnixNano())
 	defer git("update-ref", "-d", tmp)
-	if fetchOut, err := git("fetch", "--quiet", "--no-tags", "origin", "+"+ref+":"+tmp); err != nil {
+	if fetchOut, err := git("fetch", "--quiet", "--no-tags", "--no-write-fetch-head", "--refmap=", "origin", "+"+ref+":"+tmp); err != nil {
 		return fmt.Errorf("branch %s at %s cannot be proven pushed: origin is at %s but fetching it failed: %s (use --force to override)", branch, head, remote, fetchOut)
 	}
 	if _, err := git("merge-base", "--is-ancestor", head, tmp); err != nil {

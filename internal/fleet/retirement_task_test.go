@@ -1216,11 +1216,12 @@ func TestCheckRemoteBranchPushedHeadProof(t *testing.T) {
 		{"upstream set, head unpushed", func(t *testing.T, wt, _ string) {
 			gitIn(t, wt, "push", "-u", "origin", branch)
 			commit(t, wt, "unpushed")
-		}, "origin is at"},
-		{"local behind origin", func(t *testing.T, wt, _ string) {
+		}, "diverged or is missing this head"},
+		{"local behind origin", func(t *testing.T, wt, remote string) {
 			gitIn(t, wt, "push", "origin", branch)
 			commit(t, wt, "ahead")
-			gitIn(t, wt, "push", "origin", branch)
+			// pushing by URL leaves refs/remotes/origin stale, so a leaky fetch shows
+			gitIn(t, wt, "push", remote, branch)
 			gitIn(t, wt, "reset", "--hard", "HEAD~1")
 		}, ""},
 		{"diverged", func(t *testing.T, wt, _ string) {
@@ -1228,6 +1229,15 @@ func TestCheckRemoteBranchPushedHeadProof(t *testing.T) {
 			gitIn(t, wt, "commit", "--amend", "-m", "rebased")
 		}, "diverged"},
 		{"remote branch missing", func(t *testing.T, _, _ string) {}, "remote branch is missing"},
+		{"remote ref only matches the tail pattern", func(t *testing.T, wt, _ string) {
+			gitIn(t, wt, "push", "origin", "HEAD:refs/foo/refs/heads/"+branch)
+		}, "remote branch is missing"},
+		{"proof fetch fails", func(t *testing.T, wt, _ string) {
+			gitIn(t, wt, "push", "origin", branch)
+			if err := os.WriteFile(filepath.Join(wt, ".git", "refs", "munsu"), nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}, "but fetching it failed"},
 		{"origin unreachable", func(t *testing.T, wt, remote string) {
 			gitIn(t, wt, "remote", "set-url", "origin", remote+"-gone")
 		}, "origin is unreachable"},
@@ -1243,7 +1253,18 @@ func TestCheckRemoteBranchPushedHeadProof(t *testing.T) {
 			commit(t, wt, "work")
 			tc.arrange(t, wt, remote)
 
+			remotesBefore := gitIn(t, wt, "for-each-ref", "refs/remotes/")
+			fetchHead := filepath.Join(wt, ".git", "FETCH_HEAD")
+			_, statErr := os.Stat(fetchHead)
+			hadFetchHead := statErr == nil
+
 			err := checkRemoteBranch(wt)
+			if after := gitIn(t, wt, "for-each-ref", "refs/remotes/"); after != remotesBefore {
+				t.Errorf("proof changed refs/remotes:\nbefore %s\nafter  %s", remotesBefore, after)
+			}
+			if _, statErr := os.Stat(fetchHead); statErr == nil && !hadFetchHead {
+				t.Errorf("proof wrote FETCH_HEAD")
+			}
 			switch {
 			case tc.want == "" && err != nil:
 				t.Fatalf("checkRemoteBranch = %v, want pass", err)
