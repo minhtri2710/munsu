@@ -314,8 +314,19 @@ func TestSafetyCheckArgvLevelFenceEvasionDenied(t *testing.T) {
 	t.Setenv("MUNSU_HOME", homeDir)
 	t.Setenv("MUNSU_TASK_ID", "ship-evade")
 	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-evade")
+	runGitForSafety(t, worktree, "config", "remote.no-mistakes.url", primary)
+	head := strings.TrimSpace(gitOutputForSafety(t, worktree, "rev-parse", "HEAD"))
+	other := strings.Repeat("0", 40)
 
 	for _, command := range []string{
+		// gate-only argv: a foreign push option, options or --no-verify toward
+		// origin, and a sha refspec that is stale, abbreviated, or off-task.
+		"git push -o other.key no-mistakes HEAD",
+		"git push -o no-mistakes.k origin HEAD",
+		"git push --no-verify origin HEAD",
+		"git push no-mistakes " + other + ":refs/heads/mu/ship-evade",
+		"git push no-mistakes " + head[:12] + ":refs/heads/mu/ship-evade",
+		"git push no-mistakes " + head + ":refs/heads/main",
 		// push: force/delete after the refspec, bundled short, +refspec, and a
 		// -c value that would otherwise shadow the push verb.
 		"git push origin HEAD:refs/heads/mu/ship-evade --force",
@@ -358,7 +369,10 @@ func TestSafetyCheckNormalPushAndBranchFormsAllowed(t *testing.T) {
 	t.Setenv("MUNSU_HOME", homeDir)
 	t.Setenv("MUNSU_TASK_ID", "ship-ok")
 	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-ok")
+	runGitForSafety(t, worktree, "config", "remote.no-mistakes.url", primary)
+	head := strings.TrimSpace(gitOutputForSafety(t, worktree, "rev-parse", "HEAD"))
 	for _, command := range []string{
+		"git push --no-verify -o no-mistakes.intent=abc no-mistakes " + head + ":refs/heads/mu/ship-ok",
 		"git push origin mu/ship-ok",
 		"git push origin HEAD:refs/heads/mu/ship-ok",
 		"git push -q origin mu/ship-ok",
