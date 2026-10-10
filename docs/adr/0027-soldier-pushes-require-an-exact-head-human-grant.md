@@ -1,6 +1,6 @@
 # 0027. Soldier Pushes Require an Exact-Head Human Grant
 
-* **Status:** Accepted
+* **Status:** Superseded: the Human dropped the push grant on 2026-10-09 (open-workflow audit, decision A1 = c, ledger G926); Soldiers push their task branch when committed, and the merge gate (ADR-0025, ADR-0026) is unchanged.
 * **Date:** 2026-10-09
 * **Extends:** ADR-0005 §6 (the git shim is a workflow fence, not a sandbox), ADR-0022 (the durable delivery contract), ADR-0024 (new refusals require the owner's words), ADR-0025 (the Words record), ADR-0026 (the landing gate record)
 * **Triggered by:** Human decision G878 (Lead gate ledger), option A, answered “a”

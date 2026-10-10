@@ -46,10 +46,8 @@ func TestDefaultCharter_ForbiddenActions(t *testing.T) {
 		"Never claim",
 		"Never spawn",
 		"Never invent work beyond",
-		"munsu report needs-decision \"push <40-hex-SHA>\"",
-		"Do not resume publishing until the General confirms the exact-head Human grant is recorded",
-		"push the task branch to `origin` without `-u` or `--set-upstream` (they write Git config, which is not yours to change)",
-		"push the task branch to `no-mistakes` without `-u` or `--set-upstream` (they write Git config, which is not yours to change)",
+		"after committing, push the task branch to `origin` without `-u` or `--set-upstream` (they write Git config, which is not yours to change)",
+		"after committing, push the task branch to `no-mistakes` without `-u` or `--set-upstream` (they write Git config, which is not yours to change)",
 	}
 	for _, check := range checks {
 		if !strings.Contains(charter, check) {

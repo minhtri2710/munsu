@@ -21,9 +21,8 @@ func TestShipBriefTemplateNoMistakes(t *testing.T) {
 		"Delivery mode: no-mistakes",
 		"no-mistakes axi respond",
 		"after the pipeline reports CI green",
-		"munsu report needs-decision \"push <40-hex-SHA>\"",
 		"git push no-mistakes HEAD:refs/heads/mu/test-task-1",
-		"After the General confirms the exact-head Human grant is recorded, start the no-mistakes run",
+		"Commit the completed change, then start the no-mistakes run by pushing",
 		"and stop",
 	}
 	for _, c := range checks {
@@ -54,8 +53,7 @@ func TestShipBriefTemplateDirectPR(t *testing.T) {
 	checks := []string{
 		"Delivery mode: direct-PR",
 		"commit",
-		"munsu report needs-decision \"push <40-hex-SHA>\"",
-		"Push the task branch and open a PR only after the General confirms",
+		"Commit the completed change. Push the task branch and open a PR.",
 		"Do not use `-u` or `--set-upstream`; they write Git config, which is not yours to change.",
 		"Never merge",
 	}

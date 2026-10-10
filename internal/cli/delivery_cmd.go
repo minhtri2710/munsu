@@ -20,7 +20,6 @@ func newDeliveryCmd() *cobra.Command {
 and merge PRs through the journaled delivery execution.`,
 	}
 	cmd.AddCommand(newReviewDiffCmd())
-	cmd.AddCommand(newPushGrantCmd())
 	cmd.AddCommand(newMergeStatusCmd())
 	cmd.AddCommand(newPRMergeCmd())
 	cmd.AddCommand(newRecordVerdictCmd())
@@ -57,69 +56,6 @@ replaces the earlier one.`,
 	}
 	cmd.Flags().StringVar(&reviewerTask, "reviewer-task", "", "the review task whose verdict file to record")
 	_ = cmd.MarkFlagRequired("reviewer-task")
-	return cmd
-}
-
-func newPushGrantCmd() *cobra.Command {
-	var head string
-	var words domain.Words
-	cmd := &cobra.Command{
-		Use:   "push-grant <task-id>",
-		Short: "Record a task-generation and exact-head Soldier push grant",
-		Long: `Record Human-word evidence allowing the named task's Soldier to push
-one exact full commit SHA during its current Task Generation. Reopened tasks
-need a new grant. The General runs this after relaying the Human's decision.
-This authorization is separate from merge authorization.`,
-		Args: ExactArgs(1),
-		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			if !taskauthority.IsFullGitSHA(head) {
-				return fmt.Errorf("push-grant head must be a full 40-hex Git commit SHA")
-			}
-			if err := words.Validate(); err != nil {
-				return fmt.Errorf("push-grant: %w", err)
-			}
-			taskHome, _, err := fleet.ResolveTaskHome(ctx.Home, args[0])
-			if err != nil {
-				return fmt.Errorf("push-grant %s: %w", args[0], err)
-			}
-			auth, err := ctx.TaskAuthorityFor(taskHome)
-			if err != nil {
-				return fmt.Errorf("push-grant %s: composing task authority: %w", args[0], err)
-			}
-			tid, err := domain.NewTaskID(args[0])
-			if err != nil {
-				return err
-			}
-			agg, err := auth.Get(tid)
-			if err != nil {
-				return fmt.Errorf("push-grant %s: resolving task: %w", args[0], err)
-			}
-			req := taskauthority.CanonicalRecordPushGrantRequest{
-				HomeID: auth.HomeID(), TaskID: tid,
-				Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
-				HeadSHA:      head, Words: words,
-			}
-			op, err := newCanonicalOperation("push-grant", req)
-			if err != nil {
-				return err
-			}
-			grant, err := auth.RecordPushGrant(op, req)
-			if err != nil {
-				return fmt.Errorf("push-grant %s: %w", args[0], err)
-			}
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "push-granted task=%s generation=%s head=%s\n", grant.TaskID, grant.Generation, grant.HeadSHA)
-			return err
-		}),
-	}
-	cmd.Flags().StringVar(&head, "head", "", "exact full commit SHA authorized for push")
-	cmd.Flags().StringVar(&words.Grantor, "grantor", "", "Human who granted the push")
-	cmd.Flags().StringVar(&words.Channel, "channel", "", "channel carrying the Human's grant")
-	cmd.Flags().StringVar(&words.Quote, "quote", "", "verbatim Human words authorizing the push")
-	for _, name := range []string{"head", "grantor", "channel", "quote"} {
-		if err := cmd.MarkFlagRequired(name); err != nil {
-			panic(err)
-		}
-	}
 	return cmd
 }
 

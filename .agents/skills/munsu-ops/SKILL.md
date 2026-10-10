@@ -78,8 +78,8 @@ munsu writes the test-quality rules into the briefs and charters itself; never c
 
 Delivery mode is set at spawn time (`--mode`). Act according to mode:
 
-- **no-mistakes** (default): Before the Soldier's first push, handle its exact-head `needs-decision` report and record the Human grant with `munsu delivery push-grant <id> --head <sha> --grantor <Human> --channel <channel> --quote <verbatim-words>`. The Soldier starts the pipeline after the General confirms the grant. When it notifies completion, verify the PR is open and checks are green, then use the existing merge-approval process; after merge run `munsu task done <id>`.
-- **direct-PR**: Record the reported exact-head Human grant with `munsu delivery push-grant` before telling the Soldier to resume its branch push and PR creation. Then `munsu delivery review-diff <id>` to review the branch and `munsu delivery pr-merge <id> <pr-url>` once approved. `munsu delivery merge-status <id>` reports whether it landed; after it lands, run `munsu task done <id>`.
+- **no-mistakes** (default): The Soldier pushes its committed task branch to the gate remote and starts the pipeline. When it notifies completion, verify the PR is open and checks are green, then use the existing merge-approval process; after merge run `munsu task done <id>`.
+- **direct-PR**: The Soldier pushes its committed task branch and opens the PR. Then `munsu delivery review-diff <id>` to review the branch and `munsu delivery pr-merge <id> <pr-url>` once approved. `munsu delivery merge-status <id>` reports whether it landed; after it lands, run `munsu task done <id>`.
 - **local-only**: munsu registers no local merge command; land the branch outside munsu, then close the task with `munsu task done <id>`.
 
 **Completion:** PR URL (for remote modes) or local merge note documented.

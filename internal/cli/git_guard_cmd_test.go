@@ -29,21 +29,13 @@ func TestEvaluateGitArgvSafetyAllowsReadAndBoundMutations(t *testing.T) {
 		{"branch", "--show-current"},
 		{"-C", ".", "add", "file.txt"},
 		{"commit", "-m", "work"},
+		{"push", "origin", "HEAD:refs/heads/mu/ship-argv"},
 	}
 	for _, argv := range allowed {
 		block, reason := evaluateGitArgvSafety(worktree, argv)
 		if block {
 			t.Fatalf("argv %v blocked: %s", argv, reason)
 		}
-	}
-	argv := []string{"push", "origin", "HEAD:refs/heads/mu/ship-argv"}
-	head := gitOutputForSafety(t, worktree, "rev-parse", "HEAD")
-	if block, reason := evaluateGitArgvSafety(worktree, argv); !block || !strings.Contains(reason, head) {
-		t.Fatalf("push without a grant = block %v, reason %q; want exact-head refusal", block, reason)
-	}
-	recordSafetyPushGrant(t, homeDir, "ship-argv", head)
-	if block, reason := evaluateGitArgvSafety(worktree, argv); block {
-		t.Fatalf("push with a matching grant blocked: %s", reason)
 	}
 }
 
@@ -108,12 +100,12 @@ func TestRunGitGuardRefusesBlockedArgv(t *testing.T) {
 	if exitCode != 1 {
 		t.Fatalf("exit code = %d, want 1 for blocked git mutation", exitCode)
 	}
-	const wantReason = "default Ship authority permits only task-local branch, add, commit, and granted push"
+	const wantReason = "default Ship authority permits only task-local branch, add, commit, and push"
 	if !strings.Contains(stderr, "[git-fence] "+wantReason) {
 		t.Fatalf("stderr = %q, want [git-fence] %q", stderr, wantReason)
 	}
 }
-func TestRunGitGuardRefusesUngrantedPushAndExecsGrantedPush(t *testing.T) {
+func TestRunGitGuardPushesTaskBranchToOriginAndNoMistakes(t *testing.T) {
 	primary := initGitRepoForSafety(t, t.TempDir())
 	remote := filepath.Join(t.TempDir(), "remote.git")
 	if out, err := exec.Command("git", "init", "--bare", remote).CombinedOutput(); err != nil {
@@ -134,20 +126,8 @@ func TestRunGitGuardRefusesUngrantedPushAndExecsGrantedPush(t *testing.T) {
 	head := gitOutputForSafety(t, worktree, "rev-parse", "HEAD")
 	for _, remoteName := range []string{"origin", "no-mistakes"} {
 		stdout, stderr, err := runGitGuardPushHelper(t, worktree, remoteName)
-		exitErr, exited := err.(*exec.ExitError)
-		if !exited || exitErr.ExitCode() != 1 || !strings.Contains(stderr, "no matching Human grant") || !strings.Contains(stderr, head) {
-			t.Fatalf("ungranted guard push to %s: exit=%v stdout=%q stderr=%q; want exit 1 and exact-head refusal", remoteName, err, stdout, stderr)
-		}
-	}
-	if refs := gitOutputForSafety(t, remote, "for-each-ref", "--format=%(refname)"); refs != "" {
-		t.Fatalf("remote refs after refused pushes = %q; guard reached real git", refs)
-	}
-
-	recordSafetyPushGrant(t, homeDir, "ship-guard-push", head)
-	for _, remoteName := range []string{"origin", "no-mistakes"} {
-		stdout, stderr, err := runGitGuardPushHelper(t, worktree, remoteName)
 		if err != nil {
-			t.Fatalf("guarded granted push to %s: %v\nstdout=%s\nstderr=%s", remoteName, err, stdout, stderr)
+			t.Fatalf("guarded push to %s: %v\nstdout=%s\nstderr=%s", remoteName, err, stdout, stderr)
 		}
 	}
 	if got := gitOutputForSafety(t, remote, "rev-parse", branch); got != head {

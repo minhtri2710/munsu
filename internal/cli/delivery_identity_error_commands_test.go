@@ -103,9 +103,9 @@ func TestDeliveryIdentityErrorsNameRegisteredCommands(t *testing.T) {
 	}
 }
 
-func TestDeliveryCommandRegistersReviewDiffAndPushGrant(t *testing.T) {
+func TestDeliveryCommandRegistersReviewDiff(t *testing.T) {
 	root := NewRootCommand()
-	for _, command := range []string{"review-diff", "push-grant"} {
+	for _, command := range []string{"review-diff"} {
 		if problem, ok := resolveCommandPath(root, []string{"delivery", command, "<task-id>"}); !ok {
 			t.Errorf("delivery %s is not a registered runnable command: %s", command, problem)
 		}
