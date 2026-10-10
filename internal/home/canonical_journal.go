@@ -75,6 +75,16 @@ func (h *Home) RecoverPending(lk *Lock) error {
 	return h.sweepScopeJournal(lk.scope)
 }
 
+// Revision returns the holder's scope revision after applying any interrupted
+// commit, so it is the value the next Commit must expect. The caller must hold
+// lk.
+func (h *Home) Revision(lk *Lock) (uint64, error) {
+	if err := h.RecoverPending(lk); err != nil {
+		return 0, err
+	}
+	return h.readRevision(lk.scope)
+}
+
 // Commit durably applies a change-set atomically under the held scoped lock.
 // It verifies optimistic concurrency (expectedRevision must match the current
 // scope revision) and fencing (lk must still be held). A write-ahead journal

@@ -904,3 +904,82 @@ func TestCanonicalCreateAcceptsCompleteScoutContract(t *testing.T) {
 		t.Fatalf("scout definition = %+v, want kind/scope/budget preserved", agg.Definition)
 	}
 }
+
+// A removed record leaves its scope revision behind. Create reuses the id at
+// that revision, and refuses only when a receipt or hold still names the id.
+func TestCanonicalCreateAfterRecordRemoved(t *testing.T) {
+	holdOn := func(t *testing.T, c *Canonical, id string) {
+		hold := CanonicalAddHoldRequest{
+			HomeID:  c.HomeID(),
+			HoldID:  id + "-decision-k",
+			Scope:   DispatchHoldScope{TaskIDs: []string{id}},
+			Actions: []DispatchAction{DispatchActionSpawn},
+			Reason:  "freeze",
+		}
+		if _, err := c.AddHold(mustOperation(t, "op-hold-"+id, hold), hold); err != nil {
+			t.Fatalf("AddHold: %v", err)
+		}
+	}
+	tests := []struct {
+		name        string
+		created     bool
+		keepReceipt bool
+		hold        bool
+		wantResidue string
+	}{
+		{name: "scope revision only", created: true},
+		{name: "receipt left", created: true, keepReceipt: true, wantResidue: "op-create-t1.json"},
+		{name: "hold left", created: true, hold: true, wantResidue: "t1-decision-k.json"},
+		{name: "hold on an id never created", hold: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, _, root := newTestCanonical(t)
+			if tt.created {
+				mustCreate(t, c, "t1")
+				state := filepath.Join(root, "state", "task-authority")
+				if err := os.RemoveAll(filepath.Join(state, "tasks", "t1")); err != nil {
+					t.Fatal(err)
+				}
+				if !tt.keepReceipt {
+					if err := os.Remove(filepath.Join(state, "receipts", "op-create-t1.json")); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if tt.hold {
+				holdOn(t, c, "t1")
+			}
+			req := createRequest(c, "t1")
+			req.Reason = "again"
+			out, err := c.Create(mustOperation(t, "op-create-again", req), req)
+			if tt.wantResidue != "" {
+				if !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), tt.wantResidue) || !strings.Contains(err.Error(), "munsu cannot clear it") {
+					t.Fatalf("Create = %v, want a conflict naming %s", err, tt.wantResidue)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			if out.Revision != 1 {
+				t.Fatalf("outcome = %+v", out)
+			}
+			data, err := os.ReadFile(filepath.Join(root, "state", "task-authority", "tasks", "t1", "current.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var doc taskDoc
+			if err := json.Unmarshal(data, &doc); err != nil {
+				t.Fatal(err)
+			}
+			want := uint64(1)
+			if tt.created {
+				want = 2
+			}
+			if doc.HomeRevision != want {
+				t.Fatalf("home revision = %d, want %d", doc.HomeRevision, want)
+			}
+		})
+	}
+}

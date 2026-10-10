@@ -24,7 +24,7 @@ func gitInRepo(t *testing.T, dir string, args ...string) string {
 
 // TestReadTaskPR proves the read-time PR is "delivered" only when the
 // no-mistakes run names this task's branch, the worktree's branch and the
-// worktree's HEAD, and is otherwise "reported" from the status log with the
+// worktree's HEAD and is completed with a passing outcome, and is otherwise "reported" from the status log with the
 // failed condition named.
 func TestReadTaskPR(t *testing.T) {
 	const id = "t1"
@@ -52,6 +52,16 @@ func TestReadTaskPR(t *testing.T) {
 		{name: "worktree is not on the run branch", worktree: true, wtBranch: "feature",
 			run:    func(h string) string { return runOut("mu/t1", h, taskPRURL) },
 			status: []string{doneLine}, want: reported("worktree is on feature, not the run branch mu/t1")},
+		{name: "run outcome is not passing", worktree: true,
+			run: func(h string) string {
+				return strings.Replace(runOut("mu/t1", h, taskPRURL), "checks-passed", "failed", 1)
+			},
+			status: []string{doneLine}, want: reported("run outcome failed is not passing")},
+		{name: "run is not completed", worktree: true,
+			run: func(h string) string {
+				return strings.Replace(runOut("mu/t1", h, taskPRURL), "status: completed", "status: in_progress", 1)
+			},
+			status: []string{doneLine}, want: reported("run is in_progress")},
 		{name: "run has no PR", worktree: true,
 			run:    func(h string) string { return runOut("mu/t1", h, "") },
 			status: []string{doneLine}, want: reported("run has no PR)")},
