@@ -123,6 +123,10 @@ func TestReportCmdTransportFailureFailsLoud(t *testing.T) {
 	if envelopeErr != nil || envelope == nil {
 		t.Fatalf("receiver envelope = %v, err = %v; want durable committed report", envelope, envelopeErr)
 	}
+	lines, statusErr := home.ReadStatus(senderHome, "task:failed-transport")
+	if want := "failed: backend execution error [key=default]"; statusErr != nil || len(lines) != 1 || lines[0] != want {
+		t.Fatalf("status lines = %q err=%v, want exactly [%q] after a durable commit", lines, statusErr, want)
+	}
 	t.Logf("CLI error: %v", err)
 	t.Logf("durable message %s: receiver envelope committed; sender pending retry record retained", pending[0].MessageID)
 }

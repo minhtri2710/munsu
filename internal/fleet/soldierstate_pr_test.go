@@ -99,7 +99,7 @@ func TestReadTaskPR(t *testing.T) {
 				}
 			}
 			got := ReadTaskPR(homeDir, id).Line()
-			if want := tt.want(head); got != "" && !strings.HasPrefix(got, want) || got == "" && want != "" {
+			if want := tt.want(head); (want == "") != (got == "") || !strings.HasPrefix(got, want) {
 				t.Fatalf("Line() = %q, want prefix %q", got, want)
 			}
 		})
