@@ -621,8 +621,10 @@ func applyGitOptionValue(g *gitCommandSafety, option, value string, mode backsla
 
 func fillGitCommandDetails(g *gitCommandSafety) {
 	switch g.verb {
-	case "add", "commit", "checkout", "switch", "push", "merge", "rebase", "reset", "restore", "rm", "mv", "clean", "tag", "cherry-pick", "revert", "worktree":
+	case "add", "commit", "checkout", "switch", "push", "merge", "rebase", "reset", "restore", "rm", "mv", "clean", "tag", "cherry-pick", "revert":
 		g.mutating = true
+	case "worktree":
+		g.mutating = worktreeCommandWrites(g.args)
 	case "branch":
 		g.mutating = branchCommandWrites(g.args)
 	}
@@ -742,11 +744,65 @@ func pushRefspecAllowed(taskBranch, refspec string) bool {
 	return false
 }
 
+// worktreeCommandWrites reports whether `git worktree <args>` may write. Only
+// `list` with the options git documents for it is read-only (probed against git
+// 2.54: --expire only annotates prunable entries); every other subcommand, or
+// none, writes.
+func worktreeCommandWrites(args []string) bool {
+	if len(args) == 0 || args[0] != "list" {
+		return true
+	}
+	rest := args[1:]
+	for i := 0; i < len(rest); i++ {
+		switch arg := rest[i]; {
+		case arg == "--porcelain", arg == "-v", arg == "--verbose", arg == "-z":
+		case arg == "--expire" && i+1 < len(rest):
+			i++
+		case strings.HasPrefix(arg, "--expire="):
+		default:
+			return true
+		}
+	}
+	return false
+}
+
+// branchCommandWrites reports whether `git branch <args>` may write. It is
+// read-only only for --show-current alone or for list mode: every argument is
+// a known listing option, and a positional argument appears only when a
+// listing option makes git read it as a pattern. Without one, git creates a
+// branch from the positional (`git branch -v name`, `--format=x name`).
+// Anything unrecognised writes.
 func branchCommandWrites(args []string) bool {
-	if len(args) == 0 || (len(args) == 1 && args[0] == "--show-current") {
+	if len(args) == 1 && args[0] == "--show-current" {
 		return false
 	}
-	return true
+	listMode, positional := false, false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "-l" || arg == "--list" || arg == "--contains" || arg == "--no-contains" ||
+			arg == "--merged" || arg == "--no-merged" || arg == "--points-at":
+			listMode = true
+		case arg == "--sort" || arg == "--format":
+			if i+1 >= len(args) {
+				return true
+			}
+			i++
+		case arg == "-a" || arg == "--all" || arg == "-r" || arg == "--remotes":
+			// git refuses a branch name beside these, so a positional stays a write.
+		case arg == "-v" || arg == "-vv" || arg == "--verbose" || arg == "-i" || arg == "--ignore-case" ||
+			arg == "--omit-empty" || arg == "--column" || arg == "--no-column" || arg == "--color" ||
+			arg == "--no-color" || arg == "--abbrev" || arg == "--no-abbrev":
+		case strings.HasPrefix(arg, "--sort=") || strings.HasPrefix(arg, "--format=") ||
+			strings.HasPrefix(arg, "--column=") || strings.HasPrefix(arg, "--color=") ||
+			strings.HasPrefix(arg, "--abbrev="):
+		case strings.HasPrefix(arg, "-"):
+			return true
+		default:
+			positional = true
+		}
+	}
+	return positional && !listMode
 }
 
 func branchOpAllowed(taskBranch string, args []string) bool {

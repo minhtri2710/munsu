@@ -27,6 +27,10 @@ func TestEvaluateGitArgvSafetyAllowsReadAndBoundMutations(t *testing.T) {
 	allowed := [][]string{
 		{"status", "--short"},
 		{"branch", "--show-current"},
+		{"branch", "-a", "-vv", "--contains", "HEAD", "--sort", "refname", "--format=%(refname)"},
+		{"branch", "--list", "mu/*"},
+		{"branch", "--sort", "refname"},
+		{"worktree", "list", "--porcelain", "-v", "-z", "--expire", "now", "--expire=now"},
 		{"-C", ".", "add", "file.txt"},
 		{"commit", "-m", "work"},
 		{"push", "origin", "HEAD:refs/heads/mu/ship-argv"},
@@ -59,6 +63,10 @@ func TestEvaluateGitArgvSafetyClosesShellWrapperResidual(t *testing.T) {
 		{"push", "origin", "+refs/heads/mu/ship-force"},
 		{"push", "origin", "--delete", "mu/ship-force"},
 		{"branch", "-D", "mu/ship-force"},
+		{"branch", "-v", "other"},
+		{"branch", "--list", "--edit-description"},
+		{"worktree", "prune"},
+		{"worktree", "list", "--bogus"},
 		{"reset", "--hard", "HEAD~1"},
 	}
 	for _, argv := range denied {
