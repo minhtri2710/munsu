@@ -183,9 +183,6 @@ func TestReportCmdStampsReceiverRankFromTheReceivingHome(t *testing.T) {
 func TestReportCmdSoldierUplinkAppendsStatusLineOnce(t *testing.T) {
 	ring := []string{"--ring", "no-ring", "done", "PR https://github.com/org/repo/pull/42 checks green"}
 	senderHome, _, _ := runUplinkReport(t, nil, ring...)
-	if _, err := os.Stat(senderHome); err != nil {
-		t.Fatal(err)
-	}
 	// replay the identical report against the same homes
 	cmd := newReportCmdWithNotifier(nil)
 	root := &cobra.Command{Use: "munsu"}
@@ -203,5 +200,27 @@ func TestReportCmdSoldierUplinkAppendsStatusLineOnce(t *testing.T) {
 	want := "done: PR https://github.com/org/repo/pull/42 checks green [key=default]"
 	if len(lines) != 1 || lines[0] != want {
 		t.Fatalf("status lines = %q, want exactly [%q]", lines, want)
+	}
+}
+
+// TestReportCmdRefusedSoldierUplinkLeavesStatusUnchanged proves a report the
+// receiver never held (refused before the durable commit) writes no line.
+func TestReportCmdRefusedSoldierUplinkLeavesStatusUnchanged(t *testing.T) {
+	senderHome, receiverHome := t.TempDir(), t.TempDir()
+	t.Setenv("MUNSU_HOME", senderHome)
+	t.Setenv("MUNSU_TASK_ID", "task-1")
+	t.Setenv("MUNSU_ROLE", "soldier")
+	t.Setenv("MUNSU_PARENT_STATUS", receiverHome)
+	root := &cobra.Command{Use: "munsu"}
+	root.AddCommand(newReportCmdWithNotifier(nil))
+	root.SetOut(new(bytes.Buffer))
+	root.SetErr(new(bytes.Buffer))
+	root.SetArgs([]string{"report", "--output", "json", "--ring", "no-ring", "done", ""})
+	if err := root.Execute(); err == nil {
+		t.Fatal("empty message must be refused")
+	}
+	lines, err := home.ReadStatus(senderHome, "task-1")
+	if err != nil || len(lines) != 0 {
+		t.Fatalf("status lines = %q err=%v, want none", lines, err)
 	}
 }

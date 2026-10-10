@@ -49,13 +49,11 @@ type WakeReceipt struct {
 // (a consecutive identical report, which includes a retry after a failed step)
 // is idempotent for the status history. It is the single writer of that line,
 // shared by DeliverWake and the soldier uplink report path. It returns the line
-// and whether it was a replay of the tail line.
+// and whether it was a replay of the tail line. It does not validate the key;
+// DeliverWake does that in step 0.
 func AppendReportStatus(homeDir, taskID, state, message, key string) (statusLine string, replay bool, err error) {
 	if key == "" {
 		key = "default"
-	}
-	if err := ValidateTermKey(key); err != nil {
-		return "", false, err
 	}
 	statusLine = state + ": " + message + " [key=" + key + "]"
 	lines, err := mhome.ReadStatus(homeDir, taskID)

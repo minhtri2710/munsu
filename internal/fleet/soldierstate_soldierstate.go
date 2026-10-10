@@ -114,15 +114,18 @@ func (w worktreeFacts) pr(id string, statusLines []string) PRView {
 		reason = "no no-mistakes run"
 	case w.run.PR == "":
 		reason = "run has no PR"
-	case w.run.Branch != "mu/"+id || w.run.Branch != w.branch:
-		reason = "run branch " + w.run.Branch + " is not the task branch and worktree branch"
-	case w.run.Head == "" || w.run.Head != w.head:
+	case w.run.Branch != "mu/"+id:
+		reason = "run branch " + w.run.Branch + " is not the task branch mu/" + id
+	case w.run.Branch != w.branch:
+		reason = "worktree is on " + w.branch + ", not the run branch " + w.run.Branch
+	case w.run.Head != w.head:
 		reason = "run head " + w.run.Head + " is not the worktree HEAD " + w.head
 	default:
 		return PRView{State: PRDelivered, URL: w.run.PR, Head: w.head}
 	}
 	for i := len(statusLines) - 1; i >= 0; i-- {
-		if u := extractPRURL(statusLines[i]); u != "" {
+		u := strings.TrimRight(extractPRURL(statusLines[i]), ").,;")
+		if strings.Contains(u, "/pull/") {
 			return PRView{State: PRReported, URL: u, Reason: reason}
 		}
 	}

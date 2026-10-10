@@ -82,7 +82,7 @@ for the complete registered set.
 |---------|-------------|
 | `munsu task add <id> "<desc>" [--kind ship\|scout\|review] [--reviews <ship-id>] [--repo <name>]` | Register a queued task. |
 | `munsu task list` | List tasks from the canonical Task Authority. |
-| `munsu task show <id>` | Show a task. |
+| `munsu task show <id>` | Show a task; adds a `delivered: PR <url> @ <head>` line when the no-mistakes run matches the worktree, or `reported: PR <url> (unverified: <reason>)` from the status log. |
 | `munsu task start <id>` | Start a task (mark in-flight). |
 | `munsu task block <id>` | Block a task on a dependency. |
 | `munsu task unblock <id>` | Mark a blocked task queued again. |
