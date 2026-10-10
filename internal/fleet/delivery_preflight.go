@@ -31,7 +31,7 @@ type Check struct {
 func Preflight(mode, repoPath string, forge taskauthority.DeliveryStep) (*PreflightResult, error) {
 	switch mode {
 	case "no-mistakes":
-		return &PreflightResult{Mode: mode, Feasible: true}, nil
+		return preflightNoMistakes(forge)
 	case "direct-PR":
 		return preflightDirectPR(repoPath, forge)
 	case "local-only":
@@ -41,18 +41,38 @@ func Preflight(mode, repoPath string, forge taskauthority.DeliveryStep) (*Prefli
 	}
 }
 
-func preflightDirectPR(repoPath string, forge taskauthority.DeliveryStep) (*PreflightResult, error) {
-	state := probeConfiguredForge(toolEntryOf(forge))
-	if state != backend.Ready {
-		return nil, fmt.Errorf("forge adapter %s probe %s: configured forge is not Ready", forge.Adapter, state)
+// preflightNoMistakes re-probes the captured forge: no-mistakes delivers
+// through it, so a forge that is not Ready must refuse before any mutation.
+func preflightNoMistakes(forge taskauthority.DeliveryStep) (*PreflightResult, error) {
+	check, err := checkConfiguredForge(forge)
+	if err != nil {
+		return nil, err
 	}
-	checks := []Check{{Name: "forge-tool", OK: true, Detail: fmt.Sprintf("%s is Ready", forge.Adapter)}}
-	if repoPath != "" && forge.Adapter == "github" {
+	return &PreflightResult{Mode: "no-mistakes", Feasible: true, Checks: []Check{check}}, nil
+}
+
+func preflightDirectPR(repoPath string, forge taskauthority.DeliveryStep) (*PreflightResult, error) {
+	check, err := checkConfiguredForge(forge)
+	if err != nil {
+		return nil, err
+	}
+	checks := []Check{check}
+	if repoPath != "" {
 		checks = append(checks, checkHasRemote(repoPath))
 	}
 	result := &PreflightResult{Mode: "direct-PR", Checks: checks}
 	result.Feasible = allOK(checks)
 	return result, nil
+}
+
+// checkConfiguredForge refuses a captured forge whose probe is not Ready. Every
+// mode that delivers through the forge shares it, so the refusal is one rule.
+func checkConfiguredForge(forge taskauthority.DeliveryStep) (Check, error) {
+	state := probeConfiguredForge(toolEntryOf(forge))
+	if state != backend.Ready {
+		return Check{}, fmt.Errorf("forge adapter %s probe %s: configured forge is not Ready", forge.Adapter, state)
+	}
+	return Check{Name: "forge-tool", OK: true, Detail: fmt.Sprintf("%s is Ready", forge.Adapter)}, nil
 }
 
 func preflightLocalOnly() (*PreflightResult, error) {

@@ -159,7 +159,7 @@ func newLaunchFixture(t *testing.T, taskID string) *launchFixture {
 	snap, err := config.NewResolvedSnapshotWithToolProbe(
 		config.FleetBaseDocument{
 			SchemaVersion: config.FleetBaseSchemaVersion,
-			Config:        config.ProjectOverlay{Backend: "tmux", SoldierHarness: "pi", Model: "gpt-5"},
+			Config:        config.FleetBaseConfig{Backend: "tmux", SoldierHarness: "pi", Model: "gpt-5"},
 		},
 		config.ProjectFacts{Name: "test-proj", Path: repoPath},
 		nil,

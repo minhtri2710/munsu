@@ -31,6 +31,8 @@ type fakeGH struct {
 
 func installFakeGH(t *testing.T, replies ...ghReply) *fakeGH {
 	t.Helper()
+	// gh is authenticated unless a test scripts an auth status reply first.
+	replies = append(replies, ghReply{match: "auth status"})
 	dir := t.TempDir()
 	var script strings.Builder
 	script.WriteString("#!/bin/sh\nd=$(dirname \"$0\")\necho \"$*\" >> \"$d/argv.log\"\n")

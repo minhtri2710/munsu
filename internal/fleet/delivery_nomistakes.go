@@ -282,9 +282,12 @@ func ProbeNoMistakesTool(entry config.ToolEntry) ProbeResult {
 		return ProbeResult{State: backend.Failed, Path: path, Detail: "no-mistakes --version returned empty output"}
 	}
 	cleanVer := strings.TrimPrefix(ver, "v")
+	// Handle format: "no-mistakes version v1.40.0 (87a5477) ..."
+	// Strip leading "no-mistakes version " if present
 	if strings.HasPrefix(cleanVer, "no-mistakes version ") {
 		cleanVer = strings.TrimPrefix(strings.TrimPrefix(cleanVer, "no-mistakes version "), "v")
 	}
+	// Extract first version component (e.g. "1.40.0" from "1.40.0 (87a5477)")
 	if idx := strings.IndexAny(cleanVer, " ("); idx > 0 {
 		cleanVer = cleanVer[:idx]
 	}

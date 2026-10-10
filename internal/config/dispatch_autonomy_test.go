@@ -7,14 +7,14 @@ import (
 func TestResolveProjectCarriesDispatchAutonomyThroughOverlay(t *testing.T) {
 	base := FleetBaseDocument{
 		SchemaVersion: FleetBaseSchemaVersion,
-		Config:        ProjectOverlay{DispatchAutonomy: "manual", Backend: "tmux"},
+		Config:        FleetBaseConfig{DispatchAutonomy: "manual", Backend: "tmux"},
 	}
 	facts := ProjectFacts{
 		Name:    "project",
 		Path:    "/home/project",
 		Overlay: ProjectOverlay{DispatchAutonomy: "safe-reinterpretation"},
 	}
-	resolved, err := ResolveProject(base, facts)
+	resolved, err := resolveBaseline(base, facts)
 	if err != nil {
 		t.Fatal(err)
 	}

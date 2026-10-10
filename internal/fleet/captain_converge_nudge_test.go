@@ -33,7 +33,7 @@ func TestConvergeSubmitsFastForwardAndPendingNudges(t *testing.T) {
 
 	storeTestDocuments(t, parent, config.FleetBaseDocument{
 		SchemaVersion:  config.FleetBaseSchemaVersion,
-		Config:         config.ProjectOverlay{Backend: "tmux", SoldierHarness: "pi"},
+		Config:         config.FleetBaseConfig{Backend: "tmux", SoldierHarness: "pi"},
 		CaptainProfile: config.CaptainProfile{Harness: "pi"},
 	}, []testProjectRecord{{Name: id, Path: captainHome}}, []testCaptainRecord{{ID: id, Home: captainHome, Project: id}})
 	if err := config.StoreProjectOverlay(parent, id, config.ProjectOverlay{}); err != nil {

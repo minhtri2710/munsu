@@ -73,7 +73,7 @@ merged: true
 	}
 }
 
-// --- DefaultGitHubClient path routing ---
+// --- forge client path routing ---
 
 func TestForgeClientFor_GitHubRoutesToGhAxiOnlyWhenReady(t *testing.T) {
 	old := ghAxiLookPath

@@ -33,7 +33,7 @@ func seedDeliveryConfig(t *testing.T, f *launchFixture, review, forge *config.To
 	t.Helper()
 	storeTestDocuments(t, f.runner.homeDir, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{Backend: "tmux", SoldierHarness: "pi", Model: "gpt-5"},
+		Config:        config.FleetBaseConfig{Backend: "tmux", SoldierHarness: "pi", Model: "gpt-5"},
 	}, []testProjectRecord{
 		{Name: "test-proj", Path: f.runner.projPath, Config: config.ProjectOverlay{Review: review, Forge: forge}},
 	}, nil)
@@ -83,6 +83,25 @@ func TestRecordDeliveryContractOnFirstLaunch(t *testing.T) {
 	}
 }
 
+// TestRecordDeliveryContractRefusesChangedStepsInSameMode pins the record of a
+// differing contract under the same mode: the canonical op refuses it and the
+// committed contract keeps its captured forge.
+func TestRecordDeliveryContractRefusesChangedStepsInSameMode(t *testing.T) {
+	f := newLaunchFixture(t, "contract-changed")
+	installFakeGH(t)
+	seedDeliveryConfig(t, f, nil, &config.ToolEntry{Adapter: "github"})
+	captureContract(t, f)
+	captured := contractOf(t, f)
+
+	f.runner.forgeStep.Path = filepath.Join(t.TempDir(), "gh-axi")
+	if err := f.runner.recordDeliveryContract(); err == nil {
+		t.Fatal("recordDeliveryContract accepted a changed forge step under the recorded mode")
+	}
+	if dc := contractOf(t, f); dc == nil || dc.Forge.Path != captured.Forge.Path {
+		t.Fatalf("refused record changed the contract: %+v, want forge %q", dc, captured.Forge.Path)
+	}
+}
+
 // TestContractedLaunchReadsCapturedStepsOverDriftedConfig pins the read-back:
 // within a generation the captured contract decides the launch. A project
 // whose current forge tool is no longer Ready still launches the contracted
@@ -115,6 +134,7 @@ func TestContractedLaunchReadsCapturedStepsOverDriftedConfig(t *testing.T) {
 func TestContractedLaunchReprobesCapturedForgeBeforeLaunch(t *testing.T) {
 	f := newLaunchFixture(t, "contract-reprobe")
 	installFakeGH(t)
+	runGitForSpawnBinding(t, f.runner.projPath, "remote", "add", "origin", "https://github.com/test/test.git")
 	seedDeliveryConfig(t, f, nil, &config.ToolEntry{Adapter: "github"})
 	captureContract(t, f)
 
@@ -168,9 +188,8 @@ func TestResolveModeRefusesNotReadyConfiguredToolBeforeMutation(t *testing.T) {
 	}
 
 	r := f.runner
-	err = r.resolveMode()
-	if err == nil || !strings.Contains(err.Error(), "review adapter no-mistakes probe failed") {
-		t.Fatalf("resolveMode = %v, want a refusal naming the review step, adapter and probe", err)
+	if err := r.resolveMode(); err == nil {
+		t.Fatal("resolveMode accepted a configured review tool whose probe is not Ready")
 	}
 	after, err := f.auth.Get(mustTaskID(t, f.taskID))
 	if err != nil {

@@ -21,19 +21,33 @@ type Args struct {
 	ID                  string
 	ProjectName         string
 	Yolo                bool
-	Force               bool
-	Backend             string
-	HarnessFlag         string
-	ModelFlag           string
-	EffortFlag          string
-	TaskDescription     string
-	HomeDir             string
-	Endpoints           EndpointCapabilities
+	Force               bool                 // --force flag; bypass captain task authority checks
+	Backend             string               // --backend flag value — optional assertion against the resolved project snapshot
+	HarnessFlag         string               // --harness flag value; empty = resolve from config
+	ModelFlag           string               // --model flag; empty = dispatch/template default
+	EffortFlag          string               // --effort flag; empty = dispatch/template default
+	TaskDescription     string               // optional dispatch matching text; empty = brief/id fallback
+	HomeDir             string               // if empty, resolved via home.Resolve
+	Endpoints           EndpointCapabilities // required endpoint lifecycle capability
 	Arm                 bool
-	ArmFunc             func(homeDir string) error
+	ArmFunc             func(homeDir string) error // injectable arm function; nil = no auto-arm
 	NoMistakesPreflight func(repoPath string, step taskauthority.DeliveryStep) error
-	Authority           *taskauthority.Canonical
-	IncarnationMint     IncarnationMintFunc
+	// Authority is the composed canonical Task Authority targeting the exact
+	// home the Runner resolves (the CLI composition root supplies it from
+	// Ctx.TaskAuthority(); tests inject a canonical home-backed Authority). It
+	// owns the canonical spawn preconditions — readiness, the generation-
+	// scoped worktree/endpoint bindings, and the durable Dispatch Holds that
+	// gate the spawn action. It is required for the worktree binding cutover
+	// (Task 4.1): bindWorktree fails closed when it is nil. Construction stays
+	// side-effect free; no package global carries it.
+	Authority *taskauthority.Canonical
+
+	// IncarnationMint is an optional opaque incarnation generator for the
+	// endpoint binding. When nil, a crypto/rand generator is used. Tests
+	// inject a deterministic func. The generated value is persisted by
+	// taskauthority as an opaque generation-bound identity and reused (not
+	// re-minted) on retry/recovery of the same launch operation.
+	IncarnationMint IncarnationMintFunc
 }
 
 // Run executes the full spawn orchestration sequence by delegating to Runner.
@@ -64,46 +78,7 @@ func ResolveBriefProject(homeDir, projectName string, selectMode bool) (mode, ta
 	return taskauthority.DeliveryModeForSteps(deliveryStep(resolved.ReviewStep), deliveryStep(resolved.ForgeStep)), resolved.TamperCheck, nil
 }
 
-func defaultNoMistakesPreflight(repoPath string, step taskauthority.DeliveryStep) error {
-	probe := ProbeNoMistakesTool(toolEntryOf(step))
-	if probe.State != backend.Ready {
-		return noMistakesCommandBlocker(probe)
-	}
-	cfg, err := loadNoMistakesConfig()
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			cfg = noMistakesConfig{}
-		} else {
-			return &GateBlockerError{Category: GateBlockerConfigMismatch, Detail: fmt.Sprintf("reading no-mistakes config: %v", err), Guidance: "fix ~/.no-mistakes/config.yaml (or $NM_HOME/config.yaml)"}
-		}
-	}
-	gateProbe := ProbeNoMistakesGateAgent(repoPath, cfg, agentAvailable, func() ProbeResult { return probe })
-	if gateProbe.Blocker != nil {
-		return gateProbe.Blocker
-	}
-	if _, _, err := projectGate(repoPath); err != nil {
-		return err
-	}
-	return nil
-}
-
-func parseConfiguredAgents(value any) []string {
-	switch typed := value.(type) {
-	case string:
-		return []string{typed}
-	case []any:
-		agents := make([]string, 0, len(typed))
-		for _, item := range typed {
-			if agent, ok := item.(string); ok && agent != "" {
-				agents = append(agents, agent)
-			}
-		}
-		return agents
-	default:
-		return nil
-	}
-}
-
+// noMistakesConfig is the compatibility-relevant subset of global config.
 type noMistakesConfig struct {
 	Agents            []string
 	AgentArgsOverride map[string][]string
@@ -138,10 +113,29 @@ func loadNoMistakesConfig() (noMistakesConfig, error) {
 	return noMistakesConfig{Agents: agents, AgentArgsOverride: raw.AgentArgsOverride}, nil
 }
 
+func parseConfiguredAgents(value any) []string {
+	switch typed := value.(type) {
+	case string:
+		return []string{typed}
+	case []any:
+		agents := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if agent, ok := item.(string); ok && agent != "" {
+				agents = append(agents, agent)
+			}
+		}
+		return agents
+	default:
+		return nil
+	}
+}
+
 func agentAvailable(agent string) bool {
 	binary := agent
 	switch {
 	case strings.HasPrefix(agent, "acp:"):
+		// acp:<target> gate agents run through the user-installed acpx
+		// binary; the target's own availability cannot be verified from here.
 		binary = "acpx"
 	case agent == "claude", agent == "codex", agent == "pi", agent == "opencode", agent == "copilot":
 	case agent == "rovodev":
@@ -153,6 +147,11 @@ func agentAvailable(agent string) bool {
 	return err == nil
 }
 
+// projectSettingsDisabled reports whether repoPath/.no-mistakes.yaml sets
+// disable_project_settings: true (gate boundary). When true, the no-mistakes
+// daemon does not load project AGENTS.md/settings into gate agents and
+// enforces the neutralization gate: pi, codex, and claude are verified under
+// the opt-out (no-mistakes >= 1.42.0), all other agents are refused.
 func projectSettingsDisabled(repoPath string) bool {
 	data, err := os.ReadFile(filepath.Join(repoPath, ".no-mistakes.yaml"))
 	if err != nil {
@@ -167,9 +166,45 @@ func projectSettingsDisabled(repoPath string) bool {
 	return raw.DisableProjectSettings
 }
 
+func defaultNoMistakesPreflight(repoPath string, step taskauthority.DeliveryStep) error {
+	probe := ProbeNoMistakesTool(toolEntryOf(step))
+	if probe.State != backend.Ready {
+		return noMistakesCommandBlocker(probe)
+	}
+	cfg, err := loadNoMistakesConfig()
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			cfg = noMistakesConfig{} // fresh host: no config → daemon defaults (agent: auto)
+		} else {
+			return &GateBlockerError{
+				Category: GateBlockerConfigMismatch,
+				Detail:   fmt.Sprintf("reading no-mistakes config: %v", err),
+				Guidance: "fix ~/.no-mistakes/config.yaml (or $NM_HOME/config.yaml)",
+			}
+		}
+	}
+	gateProbe := ProbeNoMistakesGateAgent(repoPath, cfg, agentAvailable, func() ProbeResult { return probe })
+	if gateProbe.Blocker != nil {
+		return gateProbe.Blocker
+	}
+	if _, _, err := projectGate(repoPath); err != nil {
+		return err
+	}
+	return nil
+}
+
+// projectGate is the one owner of "the project's gate repo": the repository the
+// primary's no-mistakes remote names, which must sit directly under
+// NMHome()/repos, and the gate state database beside it. A fenced soldier
+// cannot run `no-mistakes init` (it writes the common dir's .git/config), so a
+// primary with no such gate is a blocker, not something the soldier repairs.
 func projectGate(primary string) (repo, state string, err error) {
 	notInit := func(detail string) error {
-		return &GateBlockerError{Category: GateBlockerNotInitialized, Detail: detail, Guidance: fmt.Sprintf("run `no-mistakes init` in %s", primary)}
+		return &GateBlockerError{
+			Category: GateBlockerNotInitialized,
+			Detail:   detail,
+			Guidance: fmt.Sprintf("run `no-mistakes init` in %s", primary),
+		}
 	}
 	out, cmdErr := exec.Command("git", "-C", primary, "config", "--get", "remote.no-mistakes.url").Output()
 	if cmdErr != nil {

@@ -34,28 +34,26 @@ func toolEntryKey(get func(config.ProjectOverlay) *config.ToolEntry, set func(*c
 			if entry == nil {
 				return "", false
 			}
-			data, err := json.Marshal(entry)
-			if err != nil {
-				panic(err)
-			}
+			// ToolEntry holds only strings, so Marshal cannot fail.
+			data, _ := json.Marshal(entry)
 			return string(data), true
 		},
 		set: func(o *config.ProjectOverlay, value string) error {
 			if strings.TrimSpace(value) == "" {
 				set(o, nil)
-				return nil
+			} else {
+				var entry config.ToolEntry
+				decoder := json.NewDecoder(strings.NewReader(value))
+				decoder.DisallowUnknownFields()
+				if err := decoder.Decode(&entry); err != nil {
+					return usageError("invalid_value", "Pass a JSON tool entry", err.Error())
+				}
+				var trailing any
+				if err := decoder.Decode(&trailing); err != io.EOF {
+					return usageError("invalid_value", "Pass exactly one JSON tool entry", "trailing JSON after tool entry")
+				}
+				set(o, &entry)
 			}
-			var entry config.ToolEntry
-			decoder := json.NewDecoder(strings.NewReader(value))
-			decoder.DisallowUnknownFields()
-			if err := decoder.Decode(&entry); err != nil {
-				return usageError("invalid_value", "Pass a JSON tool entry", err.Error())
-			}
-			var trailing any
-			if err := decoder.Decode(&trailing); err != io.EOF {
-				return usageError("invalid_value", "Pass exactly one JSON tool entry", "trailing JSON after tool entry")
-			}
-			set(o, &entry)
 			if err := config.ValidateProjectTools(*o); err != nil {
 				return usageError("invalid_value", "Pass a supported review or forge tool entry", err.Error())
 			}

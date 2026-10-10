@@ -355,7 +355,7 @@ func TestYoloDoesNotRelaxConfiguredReviewTool(t *testing.T) {
 	}
 	if err := fleetconfig.StoreFleetBase(home, fleetconfig.FleetBaseDocument{
 		SchemaVersion: fleetconfig.FleetBaseSchemaVersion,
-		Config:        fleetconfig.ProjectOverlay{SoldierHarness: "pi", Backend: "tmux"},
+		Config:        fleetconfig.FleetBaseConfig{SoldierHarness: "pi", Backend: "tmux"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -379,7 +379,7 @@ func writeSpawnSnapshotDocuments(t *testing.T, home string) {
 	t.Helper()
 	base := fleetconfig.FleetBaseDocument{
 		SchemaVersion: fleetconfig.FleetBaseSchemaVersion,
-		Config: fleetconfig.ProjectOverlay{
+		Config: fleetconfig.FleetBaseConfig{
 			SoldierHarness: "pi",
 			Model:          "base-model",
 			Backend:        "tmux",
@@ -424,7 +424,7 @@ func TestResolveGeneralHomeBackendRefusesEmptyIdentity(t *testing.T) {
 	}
 	base := fleetconfig.FleetBaseDocument{
 		SchemaVersion: fleetconfig.FleetBaseSchemaVersion,
-		Config:        fleetconfig.ProjectOverlay{SoldierHarness: "pi"},
+		Config:        fleetconfig.FleetBaseConfig{SoldierHarness: "pi"},
 	}
 	if err := fleetconfig.StoreFleetBase(home, base); err != nil {
 		t.Fatal(err)

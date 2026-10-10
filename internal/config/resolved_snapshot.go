@@ -2,6 +2,7 @@ package config
 
 import "fmt"
 
+// ResolvedSnapshot freezes one project's resolved configuration for an operation.
 type ResolvedSnapshot struct {
 	config ResolvedProjectConfig
 }

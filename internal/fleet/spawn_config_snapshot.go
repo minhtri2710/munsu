@@ -11,12 +11,10 @@ import (
 )
 
 type SpawnSoldierConfig struct {
-	Harness     string
-	Model       string
-	Effort      string
-	Mode        string
-	ProjectName string
-	ProjectPath string
+	Harness string
+	Model   string
+	Effort  string
+	Mode    string
 }
 
 type SpawnProjectConfig struct {
@@ -74,6 +72,9 @@ func ResolveSpawnProjectConfig(homeDir string, args Args, policy DispatchPolicy,
 		if contract != nil {
 			snapshot, err = resolveCapturedProjectSnapshot(homeDir, args.ProjectName, resolvedStep(contract.Review), resolvedStep(contract.Forge))
 		} else {
+			// Resolve the immutable project snapshot without substituting CLI
+			// identities. Explicit flags are assertions about the resolved snapshot,
+			// not a second configuration authority.
 			snapshot, err = ResolveProjectSnapshot(homeDir, args.ProjectName)
 		}
 	default:
@@ -84,31 +85,53 @@ func ResolveSpawnProjectConfig(homeDir string, args Args, policy DispatchPolicy,
 	}
 	resolved := snapshot.Config()
 	if policy == DispatchPolicyCaptainMediated && args.ProjectName != "" && resolved.Project != args.ProjectName {
-		return SpawnProjectConfig{}, fleetconfig.Remediate(fleetconfig.RemediateIncompatibleSnapshot, "publish a snapshot for the Captain's owning project", fmt.Errorf("published snapshot project %q does not match requested project %q", resolved.Project, args.ProjectName))
-	}
-	if err := validateSpawnIdentityAssertions(args, resolved.Backend, resolved.SoldierHarness); err != nil {
-		return SpawnProjectConfig{}, err
+		return SpawnProjectConfig{}, fleetconfig.Remediate(
+			fleetconfig.RemediateIncompatibleSnapshot,
+			"publish a snapshot for the Captain's owning project",
+			fmt.Errorf("published snapshot project %q does not match requested project %q", resolved.Project, args.ProjectName),
+		)
 	}
 	if err := validateResolvedDispatchProfiles(resolved.DispatchProfiles); err != nil {
 		return SpawnProjectConfig{}, err
 	}
+	if err := validateSpawnIdentityAssertions(args, resolved.Backend, resolved.SoldierHarness); err != nil {
+		return SpawnProjectConfig{}, err
+	}
+	// The delivery mode is derived from the captured review and forge steps;
+	// no separate mode decision exists to compose.
 	mode := taskauthority.DeliveryModeForSteps(deliveryStep(resolved.ReviewStep), deliveryStep(resolved.ForgeStep))
 	selection := resolveSnapshotDispatchSelection(resolved, args)
 	selection.Harness = firstNonEmpty(args.HarnessFlag, selection.Harness, resolved.SoldierHarness)
 	selection.Model = firstNonEmpty(args.ModelFlag, selection.Model, resolved.Model)
 	selection.Effort = firstNonEmpty(args.EffortFlag, selection.Effort)
 	if selection.Harness == "" {
-		return SpawnProjectConfig{}, fleetconfig.Remediate(fleetconfig.RemediateInvalidProfile, "set soldierHarness or a matching dispatch profile in data/projects.json", fmt.Errorf("project %q resolved no Soldier harness", args.ProjectName))
+		return SpawnProjectConfig{}, fleetconfig.Remediate(
+			fleetconfig.RemediateInvalidProfile,
+			"set soldierHarness or a matching dispatch profile in data/projects.json",
+			fmt.Errorf("project %q resolved no Soldier harness", args.ProjectName),
+		)
 	}
 	if err := harness.ValidateHarness(selection.Harness); err != nil {
-		return SpawnProjectConfig{}, fleetconfig.Remediate(fleetconfig.RemediateInvalidProfile, "fix the project's dispatch profile or soldierHarness in data/projects.json", err)
+		return SpawnProjectConfig{}, fleetconfig.Remediate(
+			fleetconfig.RemediateInvalidProfile,
+			"fix the project's dispatch profile or soldierHarness in data/projects.json",
+			err,
+		)
 	}
 	return SpawnProjectConfig{
-		Frozen: snapshot, SnapshotDigest: resolved.Digest,
+		Frozen:           snapshot,
+		SnapshotDigest:   resolved.Digest,
 		DispatchAutonomy: resolved.DispatchAutonomy,
-		ProjectName:      resolved.Project, ProjectPath: resolved.ProjectPath,
-		ReviewStep: deliveryStep(resolved.ReviewStep), ForgeStep: deliveryStep(resolved.ForgeStep),
-		Soldier: SpawnSoldierConfig{Harness: selection.Harness, Model: selection.Model, Effort: selection.Effort, Mode: mode, ProjectName: resolved.Project, ProjectPath: resolved.ProjectPath},
+		ProjectName:      resolved.Project,
+		ProjectPath:      resolved.ProjectPath,
+		ReviewStep:       deliveryStep(resolved.ReviewStep),
+		ForgeStep:        deliveryStep(resolved.ForgeStep),
+		Soldier: SpawnSoldierConfig{
+			Harness: selection.Harness,
+			Model:   selection.Model,
+			Effort:  selection.Effort,
+			Mode:    mode,
+		},
 	}, nil
 }
 

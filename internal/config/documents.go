@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 const (
@@ -70,12 +69,30 @@ type ResolvedStep struct {
 	Reason     string   `json:"reason,omitempty"`
 }
 
-type FleetBaseDocument struct {
-	SchemaVersion  string         `json:"schemaVersion"`
-	Config         ProjectOverlay `json:"config"`
-	CaptainProfile CaptainProfile `json:"captainProfile,omitempty"`
+// FleetBaseConfig is the fleet-wide overlay. Tool entries are project-only, so
+// it has no Review or Forge field and a fleet base document cannot carry one.
+// Keep its fields in step with ProjectOverlay.
+type FleetBaseConfig struct {
+	SoldierHarness   string            `json:"soldierHarness,omitempty"`
+	Model            string            `json:"model,omitempty"`
+	DispatchAutonomy string            `json:"dispatchAutonomy,omitempty"`
+	Backend          string            `json:"backend,omitempty"`
+	TamperCheck      string            `json:"tamperCheck,omitempty"`
+	DispatchProfiles []DispatchProfile `json:"dispatchProfiles,omitempty"`
 }
 
+type FleetBaseDocument struct {
+	SchemaVersion  string          `json:"schemaVersion"`
+	Config         FleetBaseConfig `json:"config"`
+	CaptainProfile CaptainProfile  `json:"captainProfile,omitempty"`
+}
+
+// ProjectFacts is the narrow, Fleet-owned scoped facts Config accepts to
+// resolve one Project's overlay. It carries the Project's identity and its
+// per-project overlay. Config never reads or stores a Project/Captain
+// registry; Fleet supplies these facts at composition time. Overlay values
+// keyed by scoped identity are Config-owned but are supplied here so Config
+// has no registry persistence authority.
 type ProjectFacts struct {
 	Name    string
 	Path    string
@@ -101,9 +118,6 @@ func (d FleetBaseDocument) Validate() error {
 	if err := validateSchema("fleet base", d.SchemaVersion, FleetBaseSchemaVersion); err != nil {
 		return err
 	}
-	if d.Config.Review != nil || d.Config.Forge != nil {
-		return fmt.Errorf("review and forge tools are project-only; remove them from the fleet base config")
-	}
 	return nil
 }
 
@@ -127,20 +141,6 @@ func ResolveProjectWithToolProbe(base FleetBaseDocument, facts ProjectFacts, pro
 		return ResolvedProjectConfig{}, err
 	}
 	return ResolveProjectWithSteps(base, facts, review, forge)
-}
-
-func ResolveProject(base FleetBaseDocument, facts ProjectFacts) (ResolvedProjectConfig, error) {
-	effective, err := finalResolvedOverlay(base, facts)
-	if err != nil {
-		return ResolvedProjectConfig{}, err
-	}
-	if err := ValidateProjectTools(effective); err != nil {
-		return ResolvedProjectConfig{}, err
-	}
-	if effective.Review != nil || effective.Forge != nil {
-		return ResolvedProjectConfig{}, fmt.Errorf("configured review and forge tools must be resolved by Fleet")
-	}
-	return ResolveProjectWithSteps(base, facts, baselineStep(), baselineStep())
 }
 
 func baselineStep() ResolvedStep {
@@ -195,7 +195,7 @@ func stepMatchesEntry(step ResolvedStep, entry *ToolEntry) bool {
 	if entry == nil {
 		return step.Baseline && step.ProbeState == "baseline"
 	}
-	if step.Baseline || step.Adapter != entry.Adapter || len(step.Args) != len(entry.Args) || (entry.Path != "" && step.Path != entry.Path) || step.Path == "" || !filepath.IsAbs(step.Path) || step.ProbeState != "ready" {
+	if step.Baseline || step.Adapter != entry.Adapter || len(step.Args) != len(entry.Args) || (entry.Path != "" && step.Path != entry.Path) || step.Path == "" || !filepath.IsAbs(step.Path) {
 		return false
 	}
 	for i := range step.Args {
@@ -321,6 +321,11 @@ func cloneToolEntry(src *ToolEntry) *ToolEntry {
 	return &clone
 }
 
+// finalResolvedOverlay applies the two typed layers — fleet base and project
+// overlay/facts — producing the final resolved overlay document. It is the
+// single canonical payload for the digest: it covers the resolved overlay
+// (including Backend) and excludes the digest itself and non-overlay
+// projections (CaptainProfile, project identity).
 func finalResolvedOverlay(base FleetBaseDocument, facts ProjectFacts) (ProjectOverlay, error) {
 	if facts.Name == "" {
 		return ProjectOverlay{}, fmt.Errorf("project name is required")
@@ -328,7 +333,15 @@ func finalResolvedOverlay(base FleetBaseDocument, facts ProjectFacts) (ProjectOv
 	if facts.Path == "" {
 		return ProjectOverlay{}, fmt.Errorf("project %q path is required", facts.Name)
 	}
-	return resolvedOverlay(base.Config, facts.Overlay), nil
+	return resolvedOverlay(overlayOf(base.Config), facts.Overlay), nil
+}
+
+func overlayOf(base FleetBaseConfig) ProjectOverlay {
+	return ProjectOverlay{
+		SoldierHarness: base.SoldierHarness, Model: base.Model,
+		DispatchAutonomy: base.DispatchAutonomy, Backend: base.Backend,
+		TamperCheck: base.TamperCheck, DispatchProfiles: base.DispatchProfiles,
+	}
 }
 
 func resolvedOverlay(base ProjectOverlay, overlay ProjectOverlay) ProjectOverlay {
@@ -373,11 +386,6 @@ func validateToolEntry(step string, entry *ToolEntry, adapters map[string]bool) 
 	}
 	if entry.Adapter == "github" && (entry.Path != "" || len(entry.Args) != 0) {
 		return fmt.Errorf("forge adapter github does not accept path or args because it uses gh-axi and gh from PATH")
-	}
-	for i, arg := range entry.Args {
-		if strings.IndexByte(arg, 0) >= 0 {
-			return fmt.Errorf("%s adapter %s arg %d contains NUL", step, entry.Adapter, i)
-		}
 	}
 	return nil
 }

@@ -29,6 +29,9 @@ func (r CanonicalRecordDeliveryContractRequest) DigestBytes() ([]byte, error) {
 	}{r.HomeID.Value(), r.TaskID.Value(), r.Precondition.Generation, r.Precondition.Revision, r.Mode, r.Review, r.Forge})
 }
 
+// validateRecordDeliveryContractRequest checks the typed request shape: a valid
+// task identity and precondition, and a mode inside the authoritative delivery
+// mode set. An unknown or empty mode is never recorded.
 func validateRecordDeliveryContractRequest(req CanonicalRecordDeliveryContractRequest) error {
 	if err := req.TaskID.Validate(); err != nil {
 		return err
@@ -59,8 +62,7 @@ func (c *Canonical) RecordDeliveryContract(op domain.Operation, req CanonicalRec
 	}
 	return c.mutateTask(op, req.TaskID, req.Precondition, func(cur Aggregate) (Aggregate, error) {
 		if cur.DeliveryContract != nil {
-			contract := cur.DeliveryContract
-			if contract.Mode == req.Mode && deliveryStepsEqual(contract.Review, req.Review) && deliveryStepsEqual(contract.Forge, req.Forge) {
+			if cur.DeliveryContract.Matches(req.Mode, req.Review, req.Forge) {
 				return cur.clone(), nil
 			}
 			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s already carries a different delivery contract", cur.TaskID, cur.Generation)

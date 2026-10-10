@@ -13,7 +13,8 @@ func TestDoctor_ConfigReadFailureSurfaces(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmp)
 
-	// Provide git and tmux stubs so the hard-required scan is deterministic.
+	// Provide git and tmux stubs so the hard-required scan does not
+	// short-circuit before the config-driven no-mistakes check runs.
 	bin := filepath.Join(tmp, "bin")
 	if err := os.MkdirAll(bin, 0755); err != nil {
 		t.Fatal(err)

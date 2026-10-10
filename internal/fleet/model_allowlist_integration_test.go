@@ -497,7 +497,7 @@ func TestSpawn_DispatchSelectionResolvedOnce(t *testing.T) {
 	homeDir := t.TempDir()
 	base := config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config: config.ProjectOverlay{
+		Config: config.FleetBaseConfig{
 			Backend: "tmux",
 			DispatchProfiles: []config.DispatchProfile{
 				{Name: "quota", Match: []string{"*"}, SelectStrategy: "quota-balanced",

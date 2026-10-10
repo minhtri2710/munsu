@@ -66,7 +66,7 @@ func TestDispatchPolicyMatrix(t *testing.T) {
 	}
 	privateBase := fleetconfig.FleetBaseDocument{
 		SchemaVersion: fleetconfig.FleetBaseSchemaVersion,
-		Config:        fleetconfig.ProjectOverlay{SoldierHarness: "pi", Backend: "tmux"},
+		Config:        fleetconfig.FleetBaseConfig{SoldierHarness: "pi", Backend: "tmux"},
 	}
 	if err := fleetconfig.StoreFleetBase(captainWithBase, privateBase); err != nil {
 		t.Fatal(err)

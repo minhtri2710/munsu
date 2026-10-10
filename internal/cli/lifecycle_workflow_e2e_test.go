@@ -309,7 +309,7 @@ func runLifecycleWorkflow(t *testing.T, tc workflowCase) {
 	}
 	if err := config.StoreFleetBase(generalHome, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config: config.ProjectOverlay{
+		Config: config.FleetBaseConfig{
 			SoldierHarness: harness.Pi,
 			Model:          "workflow-general-model",
 			Backend:        "tmux",

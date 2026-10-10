@@ -112,7 +112,7 @@ func seedSeamCaptain(t *testing.T, id string) (parent, captainHome string) {
 	}
 	if err := config.StoreFleetBase(parent, config.FleetBaseDocument{
 		SchemaVersion:  config.FleetBaseSchemaVersion,
-		Config:         config.ProjectOverlay{Backend: "herdr"},
+		Config:         config.FleetBaseConfig{Backend: "herdr"},
 		CaptainProfile: config.CaptainProfile{Harness: harness.Pi},
 	}); err != nil {
 		t.Fatal(err)

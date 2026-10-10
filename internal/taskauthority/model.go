@@ -376,7 +376,10 @@ type Aggregate struct {
 	ReviewVerdict    *ReviewVerdictRecord `json:"review_verdict,omitempty"`
 }
 
-// DeliveryModes is the authoritative set of delivery modes a task contract may carry.
+// DeliveryModes is the authoritative set of delivery modes a task's durable
+// delivery contract may carry. taskauthority owns the invariant for the record
+// it persists. A mode it does not know fails closed here rather than being
+// persisted as an unenforceable contract.
 var DeliveryModes = map[string]bool{
 	"no-mistakes": true,
 	"direct-PR":   true,
@@ -393,12 +396,23 @@ type DeliveryStep struct {
 	Reason     string   `json:"reason,omitempty"`
 }
 
+// DeliveryContract is the durable delivery contract of one task generation: the
+// mode and the captured review and forge steps, recorded once at that
+// generation's first spawn and READ thereafter, never re-resolved. A reopen
+// starts a new generation with no contract. A transfer carries the source's
+// recorded contract onto the destination generation.
 type DeliveryContract struct {
 	OperationID string       `json:"operation_id"`
 	Mode        string       `json:"mode"`
 	Review      DeliveryStep `json:"review"`
 	Forge       DeliveryStep `json:"forge"`
 	RecordedAt  int64        `json:"recorded_at"`
+}
+
+// Matches reports whether the contract records mode with exactly these review
+// and forge steps.
+func (c DeliveryContract) Matches(mode string, review, forge DeliveryStep) bool {
+	return c.Mode == mode && deliveryStepsEqual(c.Review, review) && deliveryStepsEqual(c.Forge, forge)
 }
 
 func DeliveryModeForSteps(review, forge DeliveryStep) string {
@@ -411,7 +425,10 @@ func DeliveryModeForSteps(review, forge DeliveryStep) string {
 	return "direct-PR"
 }
 
-// TaskAuthoritySchema is the deterministic schema identity for canonical records.
+// TaskAuthoritySchema is the deterministic schema identity for the canonical
+// JSON representation of authoritative records. It is the single current
+// document identity (ADR-0008 §11): internal-history v2 identities are
+// replaced in place by the first supported current v1 definition.
 const TaskAuthoritySchema = "munsu.task-authority/v1"
 
 // validateReviewContract checks the review fields against the kind: a review

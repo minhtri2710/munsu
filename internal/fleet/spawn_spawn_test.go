@@ -315,7 +315,7 @@ func seedTypedSpawnHome(t *testing.T, project string) string {
 	homeDir := t.TempDir()
 	storeTestDocuments(t, homeDir, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{Backend: "tmux"},
+		Config:        config.FleetBaseConfig{Backend: "tmux"},
 	}, []testProjectRecord{{Name: project, Path: t.TempDir()}}, nil)
 	return homeDir
 }
@@ -364,7 +364,7 @@ func TestRun_LifecycleGuardRefusesAbsentTask(t *testing.T) {
 	}
 	if err := config.StoreFleetBase(tmpDir, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config: config.ProjectOverlay{
+		Config: config.FleetBaseConfig{
 			SoldierHarness: "pi",
 			Backend:        "tmux",
 		},
@@ -1060,7 +1060,7 @@ func spawnRunFixture(t *testing.T, mode string, fakeBk *fakeBackend) (string, Ar
 	// stands for.
 	storeTestDocuments(t, homeDir, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{SoldierHarness: "pi", Backend: "tmux"},
+		Config:        config.FleetBaseConfig{SoldierHarness: "pi", Backend: "tmux"},
 	}, []testProjectRecord{
 		{Name: "test-proj", Path: projectDir, Config: deliveryOverlayForMode(t, mode)},
 	}, nil)

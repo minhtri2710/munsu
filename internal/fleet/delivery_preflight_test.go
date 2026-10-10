@@ -37,11 +37,21 @@ func TestPreflight_LocalOnlyAlwaysOK(t *testing.T) {
 }
 
 func TestPreflight_DirectPR_ForgeReadiness(t *testing.T) {
-	t.Run("forge not on PATH refuses", func(t *testing.T) {
+	t.Run("forge not on PATH refuses in every forge mode", func(t *testing.T) {
 		t.Setenv("PATH", t.TempDir())
+		for _, mode := range []string{"direct-PR", "no-mistakes"} {
+			_, err := Preflight(mode, "", githubForgeStep)
+			if err == nil || !strings.Contains(err.Error(), "configured forge is not Ready") {
+				t.Fatalf("%s: expected configured-forge refusal, got: %v", mode, err)
+			}
+		}
+	})
+
+	t.Run("gh not authenticated refuses", func(t *testing.T) {
+		installFakeGH(t, ghReply{match: "auth status", stderr: "You are not logged into any GitHub hosts.", exit: 1})
 		_, err := Preflight("direct-PR", "", githubForgeStep)
 		if err == nil || !strings.Contains(err.Error(), "configured forge is not Ready") {
-			t.Fatalf("expected configured-forge refusal, got: %v", err)
+			t.Fatalf("expected configured-forge refusal without gh auth, got: %v", err)
 		}
 	})
 
@@ -101,6 +111,31 @@ func TestPreflight_DirectPR_HasRemote(t *testing.T) {
 			t.Errorf("has-remote should be true after adding remote, got: %s", c.Detail)
 		}
 	}
+
+	t.Run("gitlab forge checks has-remote too", func(t *testing.T) {
+		old := glabRunnerFor
+		glabRunnerFor = fixedGlabRunner(readyRunner())
+		t.Cleanup(func() { glabRunnerFor = old })
+		noRemote := t.TempDir()
+		initGitRepo(t, noRemote, "")
+		result, err := Preflight("direct-PR", noRemote, gitlabForgeStep)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Feasible {
+			t.Fatal("direct-PR with a gitlab forge and no remote should be infeasible")
+		}
+		var hasRemoteCheck *Check
+		for i, c := range result.Checks {
+			if c.Name == "has-remote" {
+				hasRemoteCheck = &result.Checks[i]
+				break
+			}
+		}
+		if hasRemoteCheck == nil || hasRemoteCheck.OK {
+			t.Fatalf("expected a failing has-remote check, got: %v", result.Checks)
+		}
+	})
 }
 
 func TestPreflight_DirectPR_SkipRemoteWhenNoRepoPath(t *testing.T) {

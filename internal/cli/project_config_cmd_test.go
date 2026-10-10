@@ -138,6 +138,25 @@ func TestProjectConfigRefusesInvalidToolEntryWithoutWriting(t *testing.T) {
 	if overlay.Forge != nil {
 		t.Errorf("refused forge entry was written: %+v", overlay.Forge)
 	}
+
+	// Clearing the forge under a configured no-mistakes review is refused, and
+	// the overlay keeps both entries.
+	if _, err := runProjectConfig(t, "set", "sample", "forge", `{"adapter":"github"}`); err != nil {
+		t.Fatalf("set forge: %v", err)
+	}
+	if _, err := runProjectConfig(t, "set", "sample", "review", `{"adapter":"no-mistakes"}`); err != nil {
+		t.Fatalf("set review: %v", err)
+	}
+	if _, err := runProjectConfig(t, "set", "sample", "forge", ""); err == nil {
+		t.Fatal("clearing forge under a no-mistakes review should be refused")
+	}
+	overlay, err = config.LoadProjectOverlay(home, "sample")
+	if err != nil {
+		t.Fatalf("LoadProjectOverlay: %v", err)
+	}
+	if overlay.Forge == nil || overlay.Review == nil {
+		t.Errorf("refused clear changed the overlay: review = %+v forge = %+v", overlay.Review, overlay.Forge)
+	}
 }
 
 func TestProjectConfigGetUnknownKeyRefused(t *testing.T) {

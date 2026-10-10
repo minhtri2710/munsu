@@ -82,7 +82,7 @@ func TestResolveBriefProjectDerivesModeFromConfiguredTools(t *testing.T) {
 			home := t.TempDir()
 			storeTestDocuments(t, home, fleetconfig.FleetBaseDocument{
 				SchemaVersion: fleetconfig.FleetBaseSchemaVersion,
-				Config:        fleetconfig.ProjectOverlay{Backend: "tmux", SoldierHarness: "pi"},
+				Config:        fleetconfig.FleetBaseConfig{Backend: "tmux", SoldierHarness: "pi"},
 			}, []testProjectRecord{
 				{Name: "alpha", Path: filepath.Join(home, "projects", "alpha"), Config: fleetconfig.ProjectOverlay{Review: tc.review, Forge: tc.forge}},
 			}, nil)

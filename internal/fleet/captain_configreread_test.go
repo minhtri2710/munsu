@@ -465,7 +465,7 @@ func TestCaptainProfileRetirementConfigPushEndToEnd(t *testing.T) {
 	}
 	storeTestDocuments(t, parent, config.FleetBaseDocument{
 		SchemaVersion:  config.FleetBaseSchemaVersion,
-		Config:         config.ProjectOverlay{Backend: "tmux", Model: "fleet-model"},
+		Config:         config.FleetBaseConfig{Backend: "tmux", Model: "fleet-model"},
 		CaptainProfile: config.CaptainProfile{Harness: "pi", Model: "base-model"},
 	}, []testProjectRecord{
 		{Name: "alpha", Path: alphaPath, Config: config.ProjectOverlay{Model: "alpha-model"}},

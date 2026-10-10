@@ -163,7 +163,7 @@ func TestCharter_ConfigPushRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Typed parent base with explicit Backend so SeedCaptain's config inherit
-	// (ResolveProject) resolves a non-empty session backend identity. The
+	// (config resolver) resolves a non-empty session backend identity. The
 	// registration mirrors ensureParentTypedConfig's default-project binding
 	// (which is skipped once the typed base exists).
 	setupTypedParentHome(t, parent, "test-captain")

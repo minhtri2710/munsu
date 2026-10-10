@@ -264,8 +264,8 @@ func TestGitHubProviderSnapshotTerminalStatesNeedNoMergeabilityEvidence(t *testi
 			if snapshot.State != tc.state || snapshot.Merged != tc.merged || snapshot.HeadSHA != "head123" || snapshot.MergedSHA != tc.mergeSHA {
 				t.Fatalf("snapshot = %+v", snapshot)
 			}
-			if calls := gh.calls(t); len(calls) != 1 {
-				t.Fatalf("gh calls = %q, want only the PR view", calls)
+			if calls := gh.calls(t); len(calls) != 2 || calls[0] != "auth status" {
+				t.Fatalf("gh calls = %q, want the auth probe then the PR view and no mergeability read", calls)
 			}
 		})
 	}

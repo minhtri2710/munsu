@@ -125,7 +125,7 @@ func TestConfigDispatchClear(t *testing.T) {
 	os.MkdirAll(filepath.Join(tmp, "config"), 0755)
 	base := config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config: config.ProjectOverlay{
+		Config: config.FleetBaseConfig{
 			SoldierHarness: "pi",
 		},
 	}

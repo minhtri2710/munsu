@@ -30,7 +30,7 @@ func TestSpawnArmEnsuresWatcherOnlyWhenRequested(t *testing.T) {
 			runGit(t, repoDir, "commit", "--allow-empty", "-m", "initial commit")
 			if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{
 				SchemaVersion: config.FleetBaseSchemaVersion,
-				Config: config.ProjectOverlay{
+				Config: config.FleetBaseConfig{
 					SoldierHarness: "pi",
 					Backend:        "tmux",
 				},

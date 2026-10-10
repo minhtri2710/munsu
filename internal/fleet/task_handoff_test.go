@@ -348,7 +348,7 @@ func seedLiveDeliveryConfig(t *testing.T, homeDir, projectName string, forge *co
 	t.Helper()
 	storeTestDocuments(t, homeDir, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config: config.ProjectOverlay{
+		Config: config.FleetBaseConfig{
 			Backend:        "tmux",
 			SoldierHarness: "pi",
 			Model:          "gpt-5",

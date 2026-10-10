@@ -464,7 +464,7 @@ func ensureParentTypedConfig(parentHome, captainHome, captainID string) error {
 	// Create fleet base document.
 	base := config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config: config.ProjectOverlay{
+		Config: config.FleetBaseConfig{
 			SoldierHarness: "pi",
 			Backend:        "tmux",
 		},
@@ -903,7 +903,7 @@ func Launch(captainHome, parentHome string, endpoint LaunchEndpoint, integration
 	}
 
 	// The captain's harness identity and launch profile are bound from the
-	// captain's PUBLISHED snapshot (the composed config.ResolveProject output
+	// captain's PUBLISHED snapshot (the composed config resolver output
 	// written by publishResolvedSnapshot during PropagateConfig). Resolution
 	// fails closed: an empty CaptainProfile is a typed launch failure, never
 	// a fallback to flat files or Detect.
@@ -946,7 +946,7 @@ func Launch(captainHome, parentHome string, endpoint LaunchEndpoint, integration
 		return fmt.Errorf("building launch script: %w", err)
 	}
 	// The backend identity is bound at creation from the captain's PUBLISHED
-	// snapshot (the composed config.ResolveProject output written by
+	// snapshot (the composed config resolver output written by
 	// publishResolvedSnapshot during PropagateConfig). A strict roundtrip
 	// enforces a non-empty identity; the endpoint never receives "".
 	backendIdentity := snapshot.Config().Backend
@@ -1266,11 +1266,11 @@ func publishResolvedSnapshot(parentHome, captainHome string) error {
 		return err
 	}
 	facts.Overlay = projectOverlay
-	resolved, err := config.ResolveProject(base, facts)
+	snapshot, err := config.NewResolvedSnapshotWithToolProbe(base, facts, configuredToolProbe)
 	if err != nil {
 		return err
 	}
-	return config.StorePublishedSnapshot(captainHome, resolved)
+	return config.StorePublishedSnapshot(captainHome, snapshot.Config())
 }
 
 // configPushWithResult copies inheritable config like configPush and also

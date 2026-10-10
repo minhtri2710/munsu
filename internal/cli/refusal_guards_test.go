@@ -765,7 +765,7 @@ func TestBriefRecoveryPrecedesTaskFence(t *testing.T) {
 	initCLITestHome(t, homeDir)
 	auth := testAuthorityFor(t, homeDir)
 	seedGuardTask(t, auth, "ordered", "ship")
-	if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion, Config: config.ProjectOverlay{Backend: "tmux"}}); err != nil {
+	if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion, Config: config.FleetBaseConfig{Backend: "tmux"}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := runRoot(t, "project", "add", "demo-repo", t.TempDir(), "--home", homeDir); err != nil {
@@ -791,7 +791,7 @@ func TestBriefWritesKnownLegacyAndForcedTasks(t *testing.T) {
 		return auth.WriteTaskDataArtifactByID(id, write)
 	}
 	t.Cleanup(func() { writeBriefArtifact = oldWrite })
-	if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion, Config: config.ProjectOverlay{Backend: "tmux"}}); err != nil {
+	if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion, Config: config.FleetBaseConfig{Backend: "tmux"}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := runRoot(t, "project", "add", "demo-repo", t.TempDir(), "--home", homeDir); err != nil {
@@ -829,7 +829,7 @@ func TestBriefWritesKnownLegacyAndForcedTasks(t *testing.T) {
 func TestSessionStartGCUsesRawIDOwnershipForForcedBriefs(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
-	if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion, Config: config.ProjectOverlay{Backend: "tmux"}}); err != nil {
+	if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion, Config: config.FleetBaseConfig{Backend: "tmux"}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := runRoot(t, "project", "add", "demo-repo", t.TempDir(), "--home", homeDir); err != nil {
@@ -891,7 +891,7 @@ func TestGuardBriefRefusesATaskThatIsNotAScout(t *testing.T) {
 	// base document and the project registry, and fails closed without both.
 	if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{Backend: "tmux"},
+		Config:        config.FleetBaseConfig{Backend: "tmux"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -911,7 +911,7 @@ func TestGuardBriefScoutRefusesATaskWithNoCanonicalRecord(t *testing.T) {
 	initCLITestHome(t, homeDir)
 	if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{Backend: "tmux"},
+		Config:        config.FleetBaseConfig{Backend: "tmux"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -972,7 +972,7 @@ func TestBriefResolvesModeFromDeliveryContract(t *testing.T) {
 		}
 		if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{
 			SchemaVersion: config.FleetBaseSchemaVersion,
-			Config:        config.ProjectOverlay{Backend: "tmux"},
+			Config:        config.FleetBaseConfig{Backend: "tmux"},
 		}); err != nil {
 			t.Fatal(err)
 		}

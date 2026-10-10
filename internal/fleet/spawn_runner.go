@@ -715,6 +715,10 @@ func formatDeliveryStep(step taskauthority.DeliveryStep) string {
 	return fmt.Sprintf("%s (%s; %s)", step.Adapter, step.ProbeState, step.Reason)
 }
 
+// deliveryContract reads the task's durable delivery contract, or nil when the
+// task has none: a first spawn, or a task whose generations predate the
+// contract. An unreadable aggregate reads as no contract; beginLaunchIntent
+// fails closed on it later with the authoritative error.
 func (r *Runner) deliveryContract() *taskauthority.DeliveryContract {
 	if r.args.Authority == nil {
 		return nil
@@ -1189,13 +1193,12 @@ func (r *Runner) beginLaunchIntent() error {
 	return nil
 }
 
-// recordDeliveryContract fixes the launch's delivery mode durably on the
-// canonical task so every later generation reads the contract instead of
-// re-resolving. It runs after beginLaunchIntent because the aggregate for
-// this launch must exist first. A contract already recorded under this mode
-// is a no-op (the RecordLaunch skip-before-op shape), so recovery re-entry
-// never re-records; a differing mode reaches the op, which refuses to
-// override a committed contract without the explicit re-scaffold intent.
+// recordDeliveryContract fixes the launch's delivery mode and captured tool
+// steps durably on the canonical task so every later generation reads the
+// contract instead of re-resolving. It runs after beginLaunchIntent because the
+// aggregate for this launch must exist first. An identical recorded contract
+// is a no-op so recovery re-entry never re-records; a differing one reaches the
+// canonical op, which refuses it rather than overriding it.
 func (r *Runner) recordDeliveryContract() error {
 	if r.args.Authority == nil {
 		return fmt.Errorf("delivery contract: task authority is not composed for spawn")
@@ -1211,7 +1214,10 @@ func (r *Runner) recordDeliveryContract() error {
 	if err != nil {
 		return fmt.Errorf("delivery contract: resolving task %s: %w", r.args.ID, err)
 	}
-	if agg.DeliveryContract != nil && agg.DeliveryContract.Mode == r.contractMode {
+	// Recovery re-entry under the recorded contract records nothing: the op's
+	// intent carries the generation's current precondition, so a repeat would be
+	// refused as reused with different intent.
+	if agg.DeliveryContract != nil && agg.DeliveryContract.Matches(r.contractMode, r.reviewStep, r.forgeStep) {
 		return nil
 	}
 	req := taskauthority.CanonicalRecordDeliveryContractRequest{
@@ -1619,7 +1625,7 @@ func (r *Runner) createSession() error {
 		return nil
 	}
 	// The backend identity is the launch intent's explicit snapshot Backend
-	// (fleet.ResolveProjectSnapshot → config.ResolveProject); the raw --backend
+	// (fleet.ResolveProjectSnapshot → config resolver); the raw --backend
 	// flag is an assertion validated against the resolved snapshot, not a
 	// resolution input.
 	backendName := ""

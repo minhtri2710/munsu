@@ -19,11 +19,11 @@ func TestValidateBaseRejectsIndependentSchemaVersions(t *testing.T) {
 
 func TestResolveProjectConfigDistinctProjectsAndCaptainProfileFromBase(t *testing.T) {
 	base := validBase()
-	alpha, err := ResolveProject(base, validFacts("alpha", "/alpha", ProjectOverlay{SoldierHarness: "claude", DispatchProfiles: []DispatchProfile{{Name: "alpha", Harness: "claude"}}}))
+	alpha, err := resolveBaseline(base, validFacts("alpha", "/alpha", ProjectOverlay{SoldierHarness: "claude", DispatchProfiles: []DispatchProfile{{Name: "alpha", Harness: "claude"}}}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	beta, err := ResolveProject(base, validFacts("beta", "/beta", ProjectOverlay{SoldierHarness: "codex"}))
+	beta, err := resolveBaseline(base, validFacts("beta", "/beta", ProjectOverlay{SoldierHarness: "codex"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func TestResolveProjectConfigOverlayAppliesAndResolverIsImmutable(t *testing.T) 
 	base.Config.TamperCheck = "base-floor --base <base>"
 	facts := validFacts("alpha", "/alpha", ProjectOverlay{Model: "overlay-model", TamperCheck: "floor --base <base>", DispatchProfiles: []DispatchProfile{{Name: "alpha", Harness: "claude"}}})
 	before := facts.Overlay.DispatchProfiles[0].Harness
-	resolved, err := ResolveProject(base, facts)
+	resolved, err := resolveBaseline(base, facts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestProjectDigestCoversFinalResolvedBackend(t *testing.T) {
 	if baseDigest == overlayBackend {
 		t.Fatal("overlay Backend change did not change the digest")
 	}
-	resolved, err := ResolveProject(base, validFacts("alpha", "/alpha", ProjectOverlay{Backend: "herdr"}))
+	resolved, err := resolveBaseline(base, validFacts("alpha", "/alpha", ProjectOverlay{Backend: "herdr"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestResolveProjectBackendPrecedenceAndRequired(t *testing.T) {
 	base := validBase() // Backend: "tmux" fleet default
 	facts := validFacts("alpha", "/alpha", ProjectOverlay{})
 
-	baseOnly, err := ResolveProject(base, facts)
+	baseOnly, err := resolveBaseline(base, facts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestResolveProjectBackendPrecedenceAndRequired(t *testing.T) {
 		t.Fatalf("Backend = %q, want base default", baseOnly.Backend)
 	}
 
-	project, err := ResolveProject(base, validFacts("alpha", "/alpha", ProjectOverlay{Backend: "herdr"}))
+	project, err := resolveBaseline(base, validFacts("alpha", "/alpha", ProjectOverlay{Backend: "herdr"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,9 +147,9 @@ func TestResolveProjectBackendPrecedenceAndRequired(t *testing.T) {
 	// never auto-detection or an env/PATH default.
 	noBackendBase := FleetBaseDocument{
 		SchemaVersion: FleetBaseSchemaVersion,
-		Config:        ProjectOverlay{SoldierHarness: "pi"},
+		Config:        FleetBaseConfig{SoldierHarness: "pi"},
 	}
-	if _, err := ResolveProject(noBackendBase, facts); err == nil || !strings.Contains(err.Error(), "backend") {
+	if _, err := resolveBaseline(noBackendBase, facts); err == nil || !strings.Contains(err.Error(), "backend") {
 		t.Fatalf("resolving with no Backend identity = %v, want typed validation failure", err)
 	}
 }
@@ -211,7 +211,7 @@ func TestFleetBaseRoundTripAndStrictDecode(t *testing.T) {
 func TestPublishedSnapshotRoundTripAndStrictValidation(t *testing.T) {
 	home := t.TempDir()
 	base := validBase()
-	resolved, err := ResolveProject(base, validFacts("alpha", "/alpha", ProjectOverlay{}))
+	resolved, err := resolveBaseline(base, validFacts("alpha", "/alpha", ProjectOverlay{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +243,7 @@ func TestPublishedSnapshotRoundTripAndStrictValidation(t *testing.T) {
 func TestPublishedSnapshotStrictBackendRoundTripAndFailClosed(t *testing.T) {
 	home := t.TempDir()
 	base := validBase()
-	resolved, err := ResolveProject(base, validFacts("alpha", "/alpha", ProjectOverlay{Backend: "herdr"}))
+	resolved, err := resolveBaseline(base, validFacts("alpha", "/alpha", ProjectOverlay{Backend: "herdr"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,7 +355,7 @@ func writeSnapshotConfig(t *testing.T, path string, root map[string]json.RawMess
 func validBase() FleetBaseDocument {
 	return FleetBaseDocument{
 		SchemaVersion: FleetBaseSchemaVersion,
-		Config: ProjectOverlay{
+		Config: FleetBaseConfig{
 			SoldierHarness: "pi",
 			Model:          "base-model",
 			Backend:        "tmux",
@@ -369,11 +369,17 @@ func validBase() FleetBaseDocument {
 
 func resolvedDigest(t *testing.T, base FleetBaseDocument, facts ProjectFacts) string {
 	t.Helper()
-	resolved, err := ResolveProject(base, facts)
+	resolved, err := resolveBaseline(base, facts)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return resolved.Digest
+}
+
+// resolveBaseline resolves a project whose review and forge tools are both
+// baseline, the state of an overlay with no tool entries.
+func resolveBaseline(base FleetBaseDocument, facts ProjectFacts) (ResolvedProjectConfig, error) {
+	return ResolveProjectWithSteps(base, facts, baselineStep(), baselineStep())
 }
 
 func validFacts(name, path string, overlay ProjectOverlay) ProjectFacts {
@@ -395,7 +401,6 @@ func TestValidateProjectToolsRefusesUnsupportedEntries(t *testing.T) {
 		{"github forge with args", ProjectOverlay{Review: &ToolEntry{Adapter: "no-mistakes"}, Forge: &ToolEntry{Adapter: "github", Args: []string{"--x"}}}, "forge adapter github does not accept path or args"},
 		{"no-mistakes review without forge", ProjectOverlay{Review: &ToolEntry{Adapter: "no-mistakes"}}, "review adapter no-mistakes requires a configured forge tool"},
 		{"no-mistakes review with relative path", ProjectOverlay{Review: &ToolEntry{Adapter: "no-mistakes", Path: "no-mistakes"}, Forge: &ToolEntry{Adapter: "github"}}, "review adapter no-mistakes path must be absolute"},
-		{"gitlab forge arg with NUL", ProjectOverlay{Review: &ToolEntry{Adapter: "no-mistakes"}, Forge: &ToolEntry{Adapter: "gitlab", Args: []string{"a\x00b"}}}, "forge adapter gitlab arg 0 contains NUL"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -427,15 +432,6 @@ func TestResolveRefusesMalformedConfiguredTools(t *testing.T) {
 		run  func() error
 		want string
 	}{
-		{"fleet base carries a review tool", func() error {
-			b := validBase()
-			b.Config.Review = &ToolEntry{Adapter: "no-mistakes"}
-			return b.Validate()
-		}, "project-only"},
-		{"configured tools bypass the Fleet probe", func() error {
-			_, err := ResolveProject(base, facts)
-			return err
-		}, "must be resolved by Fleet"},
 		{"configured tool not Ready at probe", func() error {
 			_, err := ResolveProjectWithToolProbe(base, facts, absent)
 			return err

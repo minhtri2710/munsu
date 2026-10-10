@@ -21,7 +21,7 @@ func TestConfigGetBackendReportsPersistedFleetBaseBackend(t *testing.T) {
 
 	if err := config.StoreFleetBase(tmpDir, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{Backend: "tmux"},
+		Config:        config.FleetBaseConfig{Backend: "tmux"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestConfigGetBackendReportsPersistedPublishedSnapshot(t *testing.T) {
 
 	if err := config.StoreFleetBase(tmpDir, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{Backend: "tmux"},
+		Config:        config.FleetBaseConfig{Backend: "tmux"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +271,7 @@ func TestConfigSetCaptainHarnessPreservesExistingBaseDocument(t *testing.T) {
 	t.Setenv("MUNSU_HOME", tmpDir)
 	if err := config.StoreFleetBase(tmpDir, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{Backend: "tmux"},
+		Config:        config.FleetBaseConfig{Backend: "tmux"},
 	}); err != nil {
 		t.Fatal(err)
 	}

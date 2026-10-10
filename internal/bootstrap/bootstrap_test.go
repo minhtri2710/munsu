@@ -121,7 +121,7 @@ func TestRun_BackendDiagnostics_PersistedFleetBaseBackend(t *testing.T) {
 	home := t.TempDir()
 	if err := config.StoreFleetBase(home, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{Backend: "tmux"},
+		Config:        config.FleetBaseConfig{Backend: "tmux"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestRun_BackendDiagnostics_PersistedPublishedSnapshotWins(t *testing.T) {
 	// fleet base document backend.
 	if err := config.StoreFleetBase(home, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{Backend: "tmux"},
+		Config:        config.FleetBaseConfig{Backend: "tmux"},
 	}); err != nil {
 		t.Fatal(err)
 	}

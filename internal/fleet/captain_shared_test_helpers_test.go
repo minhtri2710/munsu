@@ -154,11 +154,11 @@ func setupTypedParentHome(t *testing.T, parent string, projectName string) {
 		t.Fatal(err)
 	}
 	// Create or update fleet base document with the typed Backend identity so
-	// publishResolvedSnapshot (config.ResolveProject) resolves a non-empty
+	// publishResolvedSnapshot (config resolver) resolves a non-empty
 	// backend: an empty identity is a typed validation failure at HEAD.
 	base := config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config: config.ProjectOverlay{
+		Config: config.FleetBaseConfig{
 			Backend: "tmux",
 		},
 		CaptainProfile: config.CaptainProfile{Harness: "pi"},

@@ -38,7 +38,7 @@ func TestConfigGetKnownSet(t *testing.T) {
 
 	if err := config.StoreFleetBase(tmpDir, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{Backend: "tmux"},
+		Config:        config.FleetBaseConfig{Backend: "tmux"},
 	}); err != nil {
 		t.Fatal(err)
 	}
