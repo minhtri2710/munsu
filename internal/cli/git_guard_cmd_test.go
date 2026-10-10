@@ -29,6 +29,7 @@ func TestEvaluateGitArgvSafetyAllowsReadAndBoundMutations(t *testing.T) {
 		{"branch", "--show-current"},
 		{"branch", "-a", "-vv", "--contains", "HEAD", "--sort", "refname", "--format=%(refname)"},
 		{"branch", "--list", "mu/*"},
+		{"branch", "--sort", "refname"},
 		{"worktree", "list", "--porcelain", "-v", "-z", "--expire", "now", "--expire=now"},
 		{"-C", ".", "add", "file.txt"},
 		{"commit", "-m", "work"},
