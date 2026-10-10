@@ -120,6 +120,10 @@ func (w worktreeFacts) pr(id string, statusLines []string) PRView {
 		reason = "worktree is on " + w.branch + ", not the run branch " + w.run.Branch
 	case w.run.Head != w.head:
 		reason = "run head " + w.run.Head + " is not the worktree HEAD " + w.head
+	case w.run.Status != "completed":
+		reason = "run is " + w.run.Status
+	case !w.run.passed():
+		reason = "run outcome " + w.run.Outcome + " is not passing"
 	default:
 		return PRView{State: PRDelivered, URL: w.run.PR, Head: w.head}
 	}

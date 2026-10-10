@@ -180,9 +180,10 @@ func (r *RunStatus) ConceptualStep() (step, outcome string) {
 		}
 		return r.resolveActiveStep()
 	case "completed":
-		switch r.Outcome {
-		case "passed", "checks-passed", "passed-with-skips":
+		if r.passed() {
 			return r.Outcome, r.Outcome
+		}
+		switch r.Outcome {
 		case "failed":
 			return "failed", "failed"
 		case "cancelled":
@@ -190,6 +191,18 @@ func (r *RunStatus) ConceptualStep() (step, outcome string) {
 		}
 	}
 	return "", ""
+}
+
+// passed reports a completed run with a passing outcome.
+func (r *RunStatus) passed() bool {
+	if r.Status != "completed" {
+		return false
+	}
+	switch r.Outcome {
+	case "passed", "checks-passed", "passed-with-skips":
+		return true
+	}
+	return false
 }
 
 // resolveActiveStep finds the current step in an in-progress run.

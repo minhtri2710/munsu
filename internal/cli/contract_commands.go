@@ -135,7 +135,7 @@ func newTaskObserveCmd() *cobra.Command {
 			if err != nil {
 				if errors.Is(err, tauth.ErrNotFound) {
 					if hasMeta {
-						return operationError("invalid_state", "Run `munsu task reconcile "+args[0]+"` or observe it after canonical Task truth is established",
+						return operationError("invalid_state", "munsu cannot repair a projection with no canonical record (ADR-0008 section 11); remove state/"+args[0]+".meta by hand or discard the home",
 							fmt.Sprintf("Task %q in home %s has no canonical Task Authority record; observation refuses the legacy projection", args[0], ctx.Home))
 					}
 					return operationError("not_found", "Run `munsu task list` to find a task ID",
@@ -143,7 +143,7 @@ func newTaskObserveCmd() *cobra.Command {
 				}
 				// Corrupt/malformed canonical record, or an unreadable home: Task
 				// truth is present but unreadable — fail closed as invalid_state.
-				return operationError("invalid_state", "Run `munsu task reconcile "+args[0]+"` or observe it again after Task truth is readable",
+				return operationError("invalid_state", "munsu cannot repair an unreadable canonical record (ADR-0008 section 11); fix or remove state/task-authority/tasks/"+args[0]+" by hand or discard the home",
 					fmt.Sprintf("Unable to read authoritative Task truth for task %q in home %s: %v", args[0], ctx.Home, err))
 			}
 

@@ -171,6 +171,9 @@ func TestTaskObserveMetaOnlyFailsClosed(t *testing.T) {
 		t.Errorf("meta-only task observe error_code = %q, want invalid_state; output:\n%s", response.Error.ErrorCode, out)
 	}
 	assertCarriesContext(t, response, "legacy-task", homeDir)
+	if !strings.Contains(response.Error.Action, "munsu cannot repair a projection with no canonical record") {
+		t.Errorf("meta-only task observe action = %q, want the no-repair instruction", response.Error.Action)
+	}
 	if response.Kind != "error" {
 		t.Errorf("meta-only task observe must not emit a success envelope, got kind %q:\n%s", response.Kind, out)
 	}
@@ -219,6 +222,9 @@ func TestTaskObserveCorruptCanonicalFailsClosed(t *testing.T) {
 		t.Errorf("corrupt canonical observe error_code = %q, want invalid_state; output:\n%s", response.Error.ErrorCode, out)
 	}
 	assertCarriesContext(t, response, "corrupt", homeDir)
+	if !strings.Contains(response.Error.Action, "munsu cannot repair an unreadable canonical record") {
+		t.Errorf("corrupt canonical observe action = %q, want the no-repair instruction", response.Error.Action)
+	}
 }
 
 // decodeContractError decodes the structured error envelope so the assertions
@@ -370,4 +376,38 @@ func mustOpIDFor(t *testing.T, value string) domain.OperationID {
 		t.Fatal(err)
 	}
 	return id
+}
+
+// TestSoldierStateRefusalsStateThatMunsuCannotRepair proves soldier-state names
+// what is wrong with a meta-only or corrupt task and does not point at a
+// command that repairs it.
+func TestSoldierStateRefusalsStateThatMunsuCannotRepair(t *testing.T) {
+	homeDir := t.TempDir()
+	if _, err := home.Init(homeDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MUNSU_HOME", homeDir)
+	if err := os.MkdirAll(filepath.Join(homeDir, "state"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(homeDir, "state", "meta-only.meta"), []byte("kind=ship\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cliSeedCanonicalTask(t, homeDir, "corrupt", "ship")
+	cur := filepath.Join(homeDir, "state", "task-authority", "tasks", "corrupt", "current.json")
+	if err := os.WriteFile(cur, []byte("{not-json"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]string{
+		"meta-only": "munsu cannot repair a projection with no canonical record",
+		"corrupt":   "munsu cannot repair an unreadable canonical record",
+	} {
+		out, err := runContract(t, []string{"soldier-state", id, "--output=json"})
+		if err == nil {
+			t.Fatalf("soldier-state %s = nil error; output:\n%s", id, out)
+		}
+		if got := decodeContractError(t, out).Error.Action; !strings.Contains(got, want) {
+			t.Errorf("soldier-state %s action = %q, want %q", id, got, want)
+		}
+	}
 }

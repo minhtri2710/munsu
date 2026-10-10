@@ -2,6 +2,7 @@ package taskauthority
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -80,10 +81,24 @@ func (c *Canonical) Create(op domain.Operation, req CanonicalCreateRequest) (Out
 		return rec.outcome(), nil
 	}
 
+	rev, err := c.h.Revision(lk)
+	if err != nil {
+		return Outcome{}, err
+	}
 	if _, exists, err := c.readTaskDoc(req.TaskID.Value()); err != nil {
 		return Outcome{}, err
 	} else if exists {
 		return Outcome{}, conflictError(ErrConflict, "task %s already exists", req.TaskID.Value())
+	}
+	// A scope revision above zero means the id was committed before and its
+	// record is gone. Receipts and holds that name it would be replayed against
+	// the new task, so they must be removed first.
+	if rev > 0 {
+		if residue, err := c.taskResidue(req.TaskID.Value()); err != nil {
+			return Outcome{}, err
+		} else if len(residue) > 0 {
+			return Outcome{}, conflictError(ErrConflict, "task %s has no record but earlier state still names it: %s; munsu cannot clear it (ADR-0008 section 11): remove these files by hand or discard the home", req.TaskID.Value(), strings.Join(residue, ", "))
+		}
 	}
 
 	if req.Kind == KindReview {
@@ -105,16 +120,66 @@ func (c *Canonical) Create(op domain.Operation, req CanonicalCreateRequest) (Out
 	if err != nil {
 		return Outcome{}, err
 	}
-	doc := taskDoc{HomeRevision: 1, Aggregate: agg}
+	doc := taskDoc{HomeRevision: rev + 1, Aggregate: agg}
 	rec := receiptFor(op, agg)
 	items, err := taskItems(req.TaskID.Value(), doc, rec)
 	if err != nil {
 		return Outcome{}, err
 	}
-	if _, err := c.h.Commit(lk, op.ID.Value(), 0, items); err != nil {
-		return Outcome{}, commitError(req.TaskID, domain.Precondition{}, err)
+	if _, err := c.h.Commit(lk, op.ID.Value(), rev, items); err != nil {
+		return Outcome{}, commitError(req.TaskID, domain.Of(0, rev), err)
 	}
 	return outcomeFor(op, agg, false), nil
+}
+
+// taskResidue returns the paths of committed receipts and dispatch holds that
+// name the task.
+func (c *Canonical) taskResidue(taskID string) ([]string, error) {
+	var paths []string
+	entries, err := c.h.ReadDir(canonicalRoot, receiptsDir)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		key := receiptsDir + "/" + name
+		data, _, err := c.readDoc(key)
+		if err != nil {
+			return nil, err
+		}
+		var rec receipt
+		if err := json.Unmarshal(data, &rec); err != nil {
+			return nil, internalError("decode operation receipt %s: %v", name, err)
+		}
+		if rec.TaskID == taskID {
+			paths = append(paths, key)
+		}
+	}
+	holdIDs, err := c.listHoldIDs()
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range holdIDs {
+		doc, _, err := c.readHoldDoc(id)
+		if err != nil {
+			return nil, err
+		}
+		for _, t := range doc.Hold.Scope.TaskIDs {
+			if t == taskID {
+				paths = append(paths, holdKey(id))
+				break
+			}
+		}
+	}
+	for i, key := range paths {
+		if p, err := c.h.Path(canonicalRoot, key); err == nil {
+			paths[i] = p
+		}
+	}
+	return paths, nil
 }
 
 // checkReviewTarget requires the reviewed task to be a working ship task that
