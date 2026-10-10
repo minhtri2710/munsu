@@ -76,6 +76,7 @@ merged: true
 // --- forge client path routing ---
 
 func TestForgeClientFor_GitHubRoutesToGhAxiOnlyWhenReady(t *testing.T) {
+	installFakeGH(t)
 	old := ghAxiLookPath
 	t.Cleanup(func() { ghAxiLookPath = old })
 

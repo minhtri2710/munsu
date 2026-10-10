@@ -134,6 +134,7 @@ func TestDefaultNoMistakesPreflight(t *testing.T) {
 	review := taskauthority.DeliveryStep{Adapter: "no-mistakes"}
 	t.Run("unreadable config", func(t *testing.T) {
 		f := newGateFixture(t)
+		testutil.FakeOnPath(t, "no-mistakes", fakeNoMistakesScript)
 		if err := os.Mkdir(filepath.Join(f.nmHome, "config.yaml"), 0o755); err != nil {
 			t.Fatal(err)
 		}
