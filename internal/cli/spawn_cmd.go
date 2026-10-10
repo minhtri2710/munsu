@@ -290,6 +290,10 @@ func newSoldierStateCmd() *cobra.Command {
 					NoMistakesStep:      state.NoMistakesRunStep,
 					StatusLines:         state.StatusLines,
 					StatusLogSuperseded: state.StatusLogSuperseded,
+					PRState:             state.PR.State,
+					PR:                  state.PR.URL,
+					PRHead:              state.PR.Head,
+					PRUnverifiedReason:  state.PR.Reason,
 				},
 				Help: []string{"Run `munsu task observe " + id + " --fields description,branch` for expanded fields"},
 			})

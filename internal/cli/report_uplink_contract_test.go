@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/backend"
+	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
 )
@@ -18,7 +19,7 @@ func runUplinkReport(t *testing.T, notify func(string, string, orchestrator.Noti
 	t.Helper()
 	senderHome, receiverHome := t.TempDir(), t.TempDir()
 	t.Setenv("MUNSU_HOME", senderHome)
-	t.Setenv("MUNSU_TASK_ID", "task:with/slash")
+	t.Setenv("MUNSU_TASK_ID", "task:with:colon")
 	t.Setenv("MUNSU_ROLE", "soldier")
 	t.Setenv("MUNSU_PARENT_STATUS", receiverHome)
 	cmd := newReportCmdWithNotifier(notify)
@@ -43,14 +44,14 @@ func TestReportCmdNoRingCreatesDurableMailboxOnly(t *testing.T) {
 		t.Fatal("no-ring must not notify")
 		return orchestrator.QueuedNotification()
 	}, "--ring", "no-ring", "done", "complete")
-	pending, err := orchestrator.NewStore(receiverHome).ListPending("task_with_slash")
+	pending, err := orchestrator.NewStore(receiverHome).ListPending("task_with_colon")
 	if err != nil || len(pending) != 1 {
 		t.Fatalf("pending=%d err=%v", len(pending), err)
 	}
 	if !orchestrator.HasQueuedWakes(receiverHome) {
 		t.Fatal("receiver wake missing")
 	}
-	if !orchestrator.HasAnyOpenReport(receiverHome, "task:with/slash") {
+	if !orchestrator.HasAnyOpenReport(receiverHome, "task:with:colon") {
 		t.Fatal("open evidence missing")
 	}
 	if resp.Data.Injection == nil || resp.Data.Injection.Outcome != "queued" {
@@ -122,6 +123,10 @@ func TestReportCmdTransportFailureFailsLoud(t *testing.T) {
 	if envelopeErr != nil || envelope == nil {
 		t.Fatalf("receiver envelope = %v, err = %v; want durable committed report", envelope, envelopeErr)
 	}
+	lines, statusErr := home.ReadStatus(senderHome, "task:failed-transport")
+	if want := "failed: backend execution error [key=default]"; statusErr != nil || len(lines) != 1 || lines[0] != want {
+		t.Fatalf("status lines = %q err=%v, want exactly [%q] after a durable commit", lines, statusErr, want)
+	}
 	t.Logf("CLI error: %v", err)
 	t.Logf("durable message %s: receiver envelope committed; sender pending retry record retained", pending[0].MessageID)
 }
@@ -132,7 +137,7 @@ func TestReportCmdImmediateNotificationUsesRefAndReturnsNotified(t *testing.T) {
 		got = ref
 		return orchestrator.AcknowledgedNotification()
 	}, "--ring", "ring", "blocked", "waiting")
-	if got.MessageID == "" || got.SenderIdentity != "task_with_slash" {
+	if got.MessageID == "" || got.SenderIdentity != "task_with_colon" {
 		t.Fatalf("ref=%+v", got)
 	}
 	env, err := orchestrator.NewStore(receiverHome).ReadEnvelope(got.SenderIdentity, got.MessageID)
@@ -174,5 +179,52 @@ func TestReportCmdStampsReceiverRankFromTheReceivingHome(t *testing.T) {
 	}
 	if _, err := orchestrator.NewReceiver(receiverHome); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestReportCmdSoldierUplinkAppendsStatusLineOnce proves a soldier's uplink
+// report keeps the .status projection DeliverWake writes, once per report.
+func TestReportCmdSoldierUplinkAppendsStatusLineOnce(t *testing.T) {
+	ring := []string{"--ring", "no-ring", "done", "PR https://github.com/org/repo/pull/42 checks green"}
+	senderHome, _, _ := runUplinkReport(t, nil, ring...)
+	// replay the identical report against the same homes
+	cmd := newReportCmdWithNotifier(nil)
+	root := &cobra.Command{Use: "munsu"}
+	root.AddCommand(cmd)
+	root.SetOut(new(bytes.Buffer))
+	root.SetErr(new(bytes.Buffer))
+	root.SetArgs(append([]string{"report", "--output", "json"}, ring...))
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	lines, err := home.ReadStatus(senderHome, "task:with:colon")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "done: PR https://github.com/org/repo/pull/42 checks green [key=default]"
+	if len(lines) != 1 || lines[0] != want {
+		t.Fatalf("status lines = %q, want exactly [%q]", lines, want)
+	}
+}
+
+// TestReportCmdRefusedSoldierUplinkLeavesStatusUnchanged proves a report the
+// receiver never held (refused before the durable commit) writes no line.
+func TestReportCmdRefusedSoldierUplinkLeavesStatusUnchanged(t *testing.T) {
+	senderHome, receiverHome := t.TempDir(), t.TempDir()
+	t.Setenv("MUNSU_HOME", senderHome)
+	t.Setenv("MUNSU_TASK_ID", "task-1")
+	t.Setenv("MUNSU_ROLE", "soldier")
+	t.Setenv("MUNSU_PARENT_STATUS", receiverHome)
+	root := &cobra.Command{Use: "munsu"}
+	root.AddCommand(newReportCmdWithNotifier(nil))
+	root.SetOut(new(bytes.Buffer))
+	root.SetErr(new(bytes.Buffer))
+	root.SetArgs([]string{"report", "--output", "json", "--ring", "no-ring", "done", ""})
+	if err := root.Execute(); err == nil {
+		t.Fatal("empty message must be refused")
+	}
+	lines, err := home.ReadStatus(senderHome, "task-1")
+	if err != nil || len(lines) != 0 {
+		t.Fatalf("status lines = %q err=%v, want none", lines, err)
 	}
 }

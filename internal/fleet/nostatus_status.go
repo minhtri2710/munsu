@@ -35,7 +35,7 @@ type RunStatus struct {
 // ErrNoActiveRun is returned by Parse when the output contains no active or recent run.
 var ErrNoActiveRun = errors.New("no active run in output")
 
-// 5s, not shorter: a premature timeout reads as "not active" (checkNoMistakesRun
+// 5s, not shorter: a premature timeout reads as "not active" (runStep
 // ok=false -> empty NoMistakesRunStep -> isNoMistakesActive false), which stops
 // stale-wake absorption and fires a spurious wake for a soldier busy in the gate.
 // A longer bound only relaxes the freeze cap, which is minutes-scale elsewhere.

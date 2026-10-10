@@ -228,6 +228,10 @@ func newTaskCmd() *cobra.Command {
 				b.WriteString(fmt.Sprintf("%s: %s\n", k, v))
 			}
 
+			if line := fleet.ReadTaskPR(ctx.Home, id).Line(); line != "" {
+				b.WriteString(line + "\n")
+			}
+
 			if full {
 				statusLines, err := home.ReadStatus(ctx.Home, id)
 				if err == nil && len(statusLines) > 0 {

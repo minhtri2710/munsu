@@ -33,6 +33,9 @@ type State struct {
 	// passed-with-skips, failed, cancelled.
 	NoMistakesRunStep string
 
+	// PR is the read-time PR of the task; see PRView.
+	PR PRView
+
 	// StatusLogSuperseded is true when the last status log line has been
 	// superseded by a higher-precedence source.
 	StatusLogSuperseded bool
@@ -41,6 +44,92 @@ type State struct {
 	// (working/paused open; done/failed/resolved/etc. close). Evidence only —
 	// Status is the current-state authority.
 	OpenActivities []domain.Activity
+}
+
+// PRView is the PR of a task as derived at read time. It is a projection, never
+// delivery truth: no authority record or meta key is written from it.
+// State is PRDelivered when the no-mistakes run in the task worktree verifies
+// the PR (run branch is the task branch and the worktree branch, run head is
+// the worktree HEAD), PRReported when only an unverified PR URL from the status
+// log is available (Reason names the failed condition), and empty otherwise.
+type PRView struct {
+	State  string
+	URL    string
+	Head   string
+	Reason string
+}
+
+const (
+	PRDelivered = "delivered"
+	PRReported  = "reported"
+)
+
+// Line renders the view for display, or "" when there is no PR.
+func (v PRView) Line() string {
+	switch v.State {
+	case PRDelivered:
+		return "delivered: PR " + v.URL + " @ " + v.Head
+	case PRReported:
+		return "reported: PR " + v.URL + " (unverified: " + v.Reason + ")"
+	}
+	return ""
+}
+
+// ReadTaskPR derives the PRView of one task from its meta worktree and status
+// log, running the no-mistakes status read once.
+func ReadTaskPR(homeDir, id string) PRView {
+	meta, _ := home.ReadMeta(homeDir, id)
+	lines, _ := home.ReadStatus(homeDir, id)
+	return readWorktree(meta["worktree"]).pr(id, lines)
+}
+
+// worktreeFacts is what one read of a task worktree observes.
+type worktreeFacts struct {
+	path   string
+	branch string
+	head   string
+	run    *RunStatus
+}
+
+func readWorktree(wtPath string) worktreeFacts {
+	w := worktreeFacts{path: wtPath}
+	if wtPath == "" {
+		return w
+	}
+	w.branch = getGitBranch(wtPath)
+	w.head = getGitHead(wtPath)
+	w.run, _ = Read(wtPath)
+	return w
+}
+
+// pr is a stopgap read-time view. It is removed when teardown accepts a
+// GitHub-side merge verified through gh; the uplink then records pr_* and this
+// derivation is deleted.
+func (w worktreeFacts) pr(id string, statusLines []string) PRView {
+	var reason string
+	switch {
+	case w.path == "":
+		reason = "no worktree"
+	case w.run == nil:
+		reason = "no no-mistakes run"
+	case w.run.PR == "":
+		reason = "run has no PR"
+	case w.run.Branch != "mu/"+id:
+		reason = "run branch " + w.run.Branch + " is not the task branch mu/" + id
+	case w.run.Branch != w.branch:
+		reason = "worktree is on " + w.branch + ", not the run branch " + w.run.Branch
+	case w.run.Head != w.head:
+		reason = "run head " + w.run.Head + " is not the worktree HEAD " + w.head
+	default:
+		return PRView{State: PRDelivered, URL: w.run.PR, Head: w.head}
+	}
+	for i := len(statusLines) - 1; i >= 0; i-- {
+		u := strings.TrimRight(extractPRURL(statusLines[i]), ").,;")
+		if strings.Contains(u, "/pull/") {
+			return PRView{State: PRReported, URL: u, Reason: reason}
+		}
+	}
+	return PRView{}
 }
 
 type StateEndpointProbe interface {
@@ -88,12 +177,11 @@ func ReadWithProbe(homeDir string, id string, probe StateEndpointProbe) (*State,
 
 	// No-mistakes run-step is diagnostic evidence only; it never changes the
 	// canonical phase.
-	if wtPath := meta["worktree"]; wtPath != "" {
-		currentBranch := getGitBranch(wtPath)
-		if step, _, ok := checkNoMistakesRun(wtPath, currentBranch); ok {
-			s.NoMistakesRunStep = step
-		}
+	wt := readWorktree(meta["worktree"])
+	if step, _, ok := runStep(wt.run, wt.branch); ok {
+		s.NoMistakesRunStep = step
 	}
+	s.PR = wt.pr(id, statusLines)
 
 	// Endpoint liveness is diagnostic only. It never changes the canonical
 	// lifecycle phase: a dead/unverifiable endpoint does not turn canonical
@@ -106,12 +194,10 @@ func ReadWithProbe(homeDir string, id string, probe StateEndpointProbe) (*State,
 	return s, nil
 }
 
-// checkNoMistakesRun reads no-mistakes run status from the worktree path, using
-// the structured nostatus package at the CLI boundary, and returns the conceptual
-// run-step, outcome, and whether the info is relevant.
-func checkNoMistakesRun(wtPath, currentBranch string) (step, outcome string, ok bool) {
-	r, err := Read(wtPath)
-	if err != nil {
+// runStep returns the conceptual run-step, outcome, and whether the run is
+// relevant to the current branch.
+func runStep(r *RunStatus, currentBranch string) (step, outcome string, ok bool) {
+	if r == nil {
 		return "", "", false
 	}
 
@@ -131,6 +217,17 @@ func checkNoMistakesRun(wtPath, currentBranch string) (step, outcome string, ok 
 // getGitBranch returns the current git branch name from the worktree path.
 func getGitBranch(wtPath string) string {
 	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	cmd.Dir = wtPath
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// getGitHead returns the HEAD commit sha of the worktree path.
+func getGitHead(wtPath string) string {
+	cmd := exec.Command("git", "rev-parse", "HEAD")
 	cmd.Dir = wtPath
 	out, err := cmd.Output()
 	if err != nil {

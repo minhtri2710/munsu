@@ -53,6 +53,10 @@ type TaskObserve struct {
 	NoMistakesStep      string `json:"no_mistakes_step,omitempty"`
 	StatusLines         int    `json:"status_lines,omitempty"`
 	StatusLogSuperseded bool   `json:"status_log_superseded,omitempty"`
+	PRState             string `json:"pr_state,omitempty"`
+	PR                  string `json:"pr,omitempty"`
+	PRHead              string `json:"pr_head,omitempty"`
+	PRUnverifiedReason  string `json:"pr_unverified_reason,omitempty"`
 }
 
 // FleetSnapshot is the fleet state with cheap aggregate counts.

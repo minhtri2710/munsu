@@ -158,6 +158,15 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 						return notify(homeDir, parentHome, ref)
 					},
 				})
+				// A soldier's uplink report keeps the same .status projection
+				// DeliverWake writes, but only once the receiver holds the report:
+				// a refused report leaves no line. Captains keep their uplink-only
+				// record.
+				if role == "soldier" && (err == nil || errors.Is(err, orchestrator.ErrReportDurable)) {
+					if _, _, statusErr := orchestrator.AppendReportStatus(homeDir, taskID, state, msg, key); statusErr != nil {
+						return fmt.Errorf("report: %w", statusErr)
+					}
+				}
 				if err != nil {
 					// This failure landed after the durable commit, so the receiver
 					// already holds the report and its notification remains pending

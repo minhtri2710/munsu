@@ -236,13 +236,10 @@ func TestRead_CorruptCanonicalFailsClosed(t *testing.T) {
 	}
 }
 
-// TestCheckNoMistakesRun_BranchMismatch proves checkNoMistakesRun safely
-// returns false for a branch mismatch (it never panics).
-func TestCheckNoMistakesRun_BranchMismatch(t *testing.T) {
-	step, outcome, ok := checkNoMistakesRun("/tmp", "other-branch")
-	if ok {
+// TestRunStep_BranchMismatch proves runStep ignores a run for another branch.
+func TestRunStep_BranchMismatch(t *testing.T) {
+	r := &RunStatus{Branch: "mu/a", Status: "completed", Outcome: "passed"}
+	if _, _, ok := runStep(r, "other-branch"); ok {
 		t.Error("expected false for branch mismatch, but got ok=true")
 	}
-	_ = step
-	_ = outcome
 }
