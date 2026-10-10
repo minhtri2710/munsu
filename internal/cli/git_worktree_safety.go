@@ -783,9 +783,6 @@ func branchCommandWrites(args []string) bool {
 		case arg == "-l" || arg == "--list" || arg == "--contains" || arg == "--no-contains" ||
 			arg == "--merged" || arg == "--no-merged" || arg == "--points-at":
 			listMode = true
-			if arg != "-l" && arg != "--list" && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
-				i++
-			}
 		case arg == "--sort" || arg == "--format":
 			if i+1 >= len(args) {
 				return true
