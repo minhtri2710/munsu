@@ -403,7 +403,11 @@ func validateGitMutationAuthority(taskID string, g gitCommandSafety, binding *ta
 			return ""
 		}
 	case "push":
-		remote, refspec, allowed := pushTargetAllowed(taskBranch, g.args)
+		taskHead, err := gitSafetyOutput(binding.Path, "rev-parse", "--verify", "refs/heads/"+taskBranch)
+		if err != nil {
+			return "git mutation task branch head unavailable: " + err.Error()
+		}
+		remote, refspec, allowed := pushTargetAllowed(taskBranch, taskHead, g.args)
 		if !allowed {
 			return "default Ship authority permits only task-local branch, add, commit, and push"
 		}
@@ -700,12 +704,36 @@ func validateGitTargetBinding(g gitCommandSafety, binding *taskauthority.Worktre
 	return ""
 }
 
-func pushTargetAllowed(taskBranch string, args []string) (string, string, bool) {
+// pushTargetAllowed reads a push argv. taskHead is the current head of the task
+// branch; only the no-mistakes gate remote may take no-mistakes. push options,
+// --no-verify, and a full-sha source refspec equal to that head.
+func pushTargetAllowed(taskBranch, taskHead string, args []string) (string, string, bool) {
 	remote := ""
 	refspec := ""
-	for _, arg := range args {
+	gateOnly := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
 		if strings.HasPrefix(arg, "-") {
-			if !pushFlagAllowed(arg) {
+			switch {
+			case arg == "-o" || arg == "--push-option":
+				i++
+				if i >= len(args) || !strings.HasPrefix(args[i], "no-mistakes.") {
+					return "", "", false
+				}
+				gateOnly = true
+			case strings.HasPrefix(arg, "--push-option="):
+				if !strings.HasPrefix(strings.TrimPrefix(arg, "--push-option="), "no-mistakes.") {
+					return "", "", false
+				}
+				gateOnly = true
+			case strings.HasPrefix(arg, "-o") && !strings.HasPrefix(arg, "--"):
+				if !strings.HasPrefix(arg[2:], "no-mistakes.") {
+					return "", "", false
+				}
+				gateOnly = true
+			case arg == "--no-verify":
+				gateOnly = true
+			case !pushFlagAllowed(arg):
 				return "", "", false
 			}
 			continue
@@ -717,10 +745,13 @@ func pushTargetAllowed(taskBranch string, args []string) (string, string, bool) 
 			remote = arg
 			continue
 		}
-		if refspec != "" || !pushRefspecAllowed(taskBranch, arg) {
+		if refspec != "" || !(pushRefspecAllowed(taskBranch, arg) || (remote == "no-mistakes" && pushShaRefspecAllowed(taskBranch, taskHead, arg))) {
 			return "", "", false
 		}
 		refspec = arg
+	}
+	if gateOnly && remote != "no-mistakes" {
+		return "", "", false
 	}
 	return remote, refspec, remote != "" && (refspec != "" || remote == "no-mistakes")
 }
@@ -742,6 +773,13 @@ func pushRefspecAllowed(taskBranch, refspec string) bool {
 		return true
 	}
 	return false
+}
+
+// pushShaRefspecAllowed accepts only <full-sha>:refs/heads/<task> where the sha
+// is the task branch's current head.
+func pushShaRefspecAllowed(taskBranch, taskHead, refspec string) bool {
+	sha, dest, ok := strings.Cut(refspec, ":")
+	return ok && sha == taskHead && dest == "refs/heads/"+taskBranch
 }
 
 // worktreeCommandWrites reports whether `git worktree <args>` may write. Only
