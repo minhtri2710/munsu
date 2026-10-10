@@ -146,6 +146,13 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 				if err != nil {
 					return fmt.Errorf("report: deriving receiver identity: %w", err)
 				}
+				// A soldier's uplink report keeps the same .status projection
+				// DeliverWake writes; captains keep their uplink-only record.
+				if role == "soldier" {
+					if _, _, err := orchestrator.AppendReportStatus(homeDir, taskID, state, msg, key); err != nil {
+						return fmt.Errorf("report: %w", err)
+					}
+				}
 				uplinkResult, err = orchestrator.Report(orchestrator.ReportRequest{
 					SenderHome: senderHomeForRole(role, homeDir, parentHome), ReceiverHome: parentHome,
 					SenderRank: senderRank, SenderIdentity: senderIdentity,

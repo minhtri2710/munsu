@@ -44,6 +44,33 @@ type WakeReceipt struct {
 
 // --- DeliverWake ---
 
+// AppendReportStatus appends the task status line for one report:
+// "<state>: <message> [key=<key>]". A report identical to the tail status line
+// (a consecutive identical report, which includes a retry after a failed step)
+// is idempotent for the status history. It is the single writer of that line,
+// shared by DeliverWake and the soldier uplink report path. It returns the line
+// and whether it was a replay of the tail line.
+func AppendReportStatus(homeDir, taskID, state, message, key string) (statusLine string, replay bool, err error) {
+	if key == "" {
+		key = "default"
+	}
+	if err := ValidateTermKey(key); err != nil {
+		return "", false, err
+	}
+	statusLine = state + ": " + message + " [key=" + key + "]"
+	lines, err := mhome.ReadStatus(homeDir, taskID)
+	if err != nil {
+		return "", false, fmt.Errorf("reading status: %w", err)
+	}
+	if len(lines) > 0 && lines[len(lines)-1] == statusLine {
+		return statusLine, true, nil
+	}
+	if err := mhome.AppendStatus(homeDir, taskID, statusLine); err != nil {
+		return "", false, fmt.Errorf("appending status: %w", err)
+	}
+	return statusLine, false, nil
+}
+
 // DeliverWake orchestrates the full wake delivery pipeline for a soldier
 // terminal report. Steps:
 //
@@ -82,22 +109,9 @@ func DeliverWake(req DeliverRequest) (*WakeReceipt, error) {
 	receipt := &WakeReceipt{}
 
 	// Step 1: Write task status
-	statusLine := req.State + ": " + req.Message
-	if req.Key != "" {
-		statusLine += " [key=" + req.Key + "]"
-	}
-	// A report identical to the tail status line (a consecutive identical
-	// report, which includes a retry after a failed step) is idempotent for the
-	// status history and the event log; its material wake is still enqueued.
-	lines, err := mhome.ReadStatus(req.HomeDir, req.TaskID)
+	statusLine, replay, err := AppendReportStatus(req.HomeDir, req.TaskID, req.State, req.Message, req.Key)
 	if err != nil {
-		return nil, fmt.Errorf("reading status: %w", err)
-	}
-	replay := len(lines) > 0 && lines[len(lines)-1] == statusLine
-	if !replay {
-		if err := mhome.AppendStatus(req.HomeDir, req.TaskID, statusLine); err != nil {
-			return nil, fmt.Errorf("appending status: %w", err)
-		}
+		return nil, err
 	}
 
 	// Step 2: For material states with a parent home, write captain receipt
