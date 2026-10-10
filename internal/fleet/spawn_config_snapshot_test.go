@@ -10,7 +10,6 @@ import (
 
 	fleetconfig "github.com/minhtri2710/munsu/internal/config"
 	homepkg "github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 func TestResolveSpawnProjectConfigRejectsUnresolvedPolicy(t *testing.T) {
@@ -64,7 +63,6 @@ func TestResolveSpawnProjectConfigExplicitIdentityAssertions(t *testing.T) {
 	}{
 		{name: "matching backend", args: Args{ProjectName: "alpha", Backend: "tmux"}},
 		{name: "matching harness", args: Args{ProjectName: "alpha", HarnessFlag: resolved.Soldier.Harness}},
-		{name: "matching mode", args: Args{ProjectName: "alpha", Mode: resolved.Soldier.Mode}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := ResolveSpawnProjectConfig(home, tc.args, DispatchPolicyGeneralDirect, nil)
@@ -87,7 +85,6 @@ func TestResolveSpawnProjectConfigRejectsConflictingIdentityAssertions(t *testin
 	}{
 		{name: "backend", args: Args{ProjectName: "alpha", Backend: "herdr"}},
 		{name: "harness", args: Args{ProjectName: "alpha", HarnessFlag: "claude"}},
-		{name: "mode", args: Args{ProjectName: "alpha", Mode: "local-only"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := ResolveSpawnProjectConfig(home, tc.args, DispatchPolicyGeneralDirect, nil); err == nil || !strings.Contains(err.Error(), "conflicts with resolved project snapshot") {
@@ -119,8 +116,8 @@ func TestResolveSpawnProjectConfigCrossRankIdentical(t *testing.T) {
 	if general.SnapshotDigest == "" || general.SnapshotDigest != captain.SnapshotDigest {
 		t.Fatalf("snapshot digest mismatch general=%q captain=%q", general.SnapshotDigest, captain.SnapshotDigest)
 	}
-	if general.Soldier.Mode != "direct-PR" {
-		t.Fatalf("mode = %q, want normalized direct-PR", general.Soldier.Mode)
+	if general.Soldier.Mode != "local-only" {
+		t.Fatalf("mode = %q, want local-only: alpha configures no review or forge tool", general.Soldier.Mode)
 	}
 }
 
@@ -347,109 +344,35 @@ func TestResolveSpawnProjectConfigFailsClosedWithTypedRemediation(t *testing.T) 
 	}
 }
 
-// TestYoloDoesNotRelaxRequireNoMistakes pins the accepted +yolo contract:
+// TestYoloDoesNotRelaxConfiguredReviewTool pins the accepted +yolo contract:
 // yolo is a Fleet lifecycle flag (pre-flight tangle bypass) and never lowers
-// the typed require-no-mistakes gate, which resolves solely from the fleet
-// base document and project overlay.
-func TestYoloDoesNotRelaxRequireNoMistakes(t *testing.T) {
+// a configured review tool, which resolves solely from the fleet base document
+// and project overlay.
+func TestYoloDoesNotRelaxConfiguredReviewTool(t *testing.T) {
 	home := t.TempDir()
 	if _, err := homepkg.Init(home); err != nil {
 		t.Fatal(err)
 	}
 	if err := fleetconfig.StoreFleetBase(home, fleetconfig.FleetBaseDocument{
 		SchemaVersion: fleetconfig.FleetBaseSchemaVersion,
-		Config: fleetconfig.ProjectOverlay{
-			SoldierHarness:    "pi",
-			RequireNoMistakes: &[]bool{true}[0],
-			Backend:           "tmux",
-		},
+		Config:        fleetconfig.ProjectOverlay{SoldierHarness: "pi", Backend: "tmux"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := Add(home, "alpha", filepath.Join(home, "projects", "alpha"), "", true); err != nil {
+	if err := Add(home, "alpha", filepath.Join(home, "projects", "alpha"), true); err != nil {
+		t.Fatal(err)
+	}
+	if err := fleetconfig.StoreProjectOverlay(home, "alpha", fleetconfig.ProjectOverlay{
+		Review: &fleetconfig.ToolEntry{Adapter: "no-mistakes", Path: filepath.Join(home, "no-mistakes")},
+		Forge:  &fleetconfig.ToolEntry{Adapter: "github"},
+	}); err != nil {
 		t.Fatal(err)
 	}
 
-	snap, err := ResolveProjectSnapshot(home, "alpha")
-	if err != nil {
-		t.Fatal(err)
+	_, err := ResolveProjectSnapshot(home, "alpha")
+	if err == nil || !strings.Contains(err.Error(), "review adapter no-mistakes") {
+		t.Fatalf("+yolo project resolved a not-Ready configured review tool: %v", err)
 	}
-	if !snap.Config().RequireNoMistakes {
-		t.Fatalf("resolved requireNoMistakes = false for a +yolo project, want true (yolo must not relax the typed gate)")
-	}
-}
-
-func TestResolveSpawnProjectConfigConsumesRequireNoMistakes(t *testing.T) {
-	// Base default mode unset + requireNoMistakes=true, no no-mistakes binary
-	// on PATH → resolution must refuse fallback (not silently direct-PR).
-	t.Run("require-no-mistakes absent binary refuses", func(t *testing.T) {
-		t.Setenv("PATH", t.TempDir())
-		home := t.TempDir()
-		storeTestDocuments(t, home, fleetconfig.FleetBaseDocument{
-			SchemaVersion: fleetconfig.FleetBaseSchemaVersion,
-			Config: fleetconfig.ProjectOverlay{
-				SoldierHarness:    "pi",
-				RequireNoMistakes: &[]bool{true}[0],
-				Backend:           "tmux",
-			},
-		}, []testProjectRecord{
-			{Name: "alpha", Path: filepath.Join(home, "projects", "alpha")},
-		}, nil)
-
-		_, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, DispatchPolicyGeneralDirect, nil)
-		if err == nil {
-			t.Fatal("expected error when require-no-mistakes is set but binary is absent")
-		}
-		if !strings.Contains(err.Error(), "require-no-mistakes") {
-			t.Errorf("error should mention require-no-mistakes, got: %v", err)
-		}
-	})
-
-	// Base default mode unset + requireNoMistakes=true with a compatible binary
-	// on PATH → mode resolves to no-mistakes.
-	t.Run("require-no-mistakes with binary resolves no-mistakes", func(t *testing.T) {
-		testutil.PrependPath(t, createFakeNoMistakesReady(t))
-		home := t.TempDir()
-		storeTestDocuments(t, home, fleetconfig.FleetBaseDocument{
-			SchemaVersion: fleetconfig.FleetBaseSchemaVersion,
-			Config: fleetconfig.ProjectOverlay{
-				SoldierHarness:    "pi",
-				RequireNoMistakes: &[]bool{true}[0],
-				Backend:           "tmux",
-			},
-		}, []testProjectRecord{
-			{Name: "alpha", Path: filepath.Join(home, "projects", "alpha")},
-		}, nil)
-
-		resolved, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, DispatchPolicyGeneralDirect, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if resolved.Soldier.Mode != "no-mistakes" {
-			t.Errorf("mode = %q, want no-mistakes", resolved.Soldier.Mode)
-		}
-	})
-
-	// Base default mode unset + requireNoMistakes unset, no binary → auto
-	// falls back to direct-PR (unset → direct-PR default semantics preserved).
-	t.Run("unset require-no-mistakes falls back to direct-PR", func(t *testing.T) {
-		t.Setenv("PATH", t.TempDir())
-		home := t.TempDir()
-		storeTestDocuments(t, home, fleetconfig.FleetBaseDocument{
-			SchemaVersion: fleetconfig.FleetBaseSchemaVersion,
-			Config:        fleetconfig.ProjectOverlay{SoldierHarness: "pi", Backend: "tmux"},
-		}, []testProjectRecord{
-			{Name: "alpha", Path: filepath.Join(home, "projects", "alpha")},
-		}, nil)
-
-		resolved, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, DispatchPolicyGeneralDirect, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if resolved.Soldier.Mode != "direct-PR" {
-			t.Errorf("mode = %q, want direct-PR", resolved.Soldier.Mode)
-		}
-	})
 }
 
 func writeSpawnSnapshotDocuments(t *testing.T, home string) {
@@ -459,7 +382,6 @@ func writeSpawnSnapshotDocuments(t *testing.T, home string) {
 		Config: fleetconfig.ProjectOverlay{
 			SoldierHarness: "pi",
 			Model:          "base-model",
-			DefaultMode:    "direct-pr",
 			Backend:        "tmux",
 		},
 		CaptainProfile: fleetconfig.CaptainProfile{Harness: "pi", Model: "captain-model"},

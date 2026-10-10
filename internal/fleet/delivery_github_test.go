@@ -11,15 +11,9 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
-
-func TestGitHubClientForStateUnknownRefuses(t *testing.T) {
-	_, err := GitHubClientForState(backend.State(99))
-	if err == nil || !strings.Contains(err.Error(), "unknown state") {
-		t.Fatalf("GitHubClientForState error = %v, want unknown-state refusal", err)
-	}
-}
 
 // --- Capability probe tests ---
 
@@ -29,50 +23,6 @@ func TestProbeGitHubCapability_ReadsGhAxiPresence(t *testing.T) {
 	state := ProbeGitHubCapability()
 	if state != backend.Ready && state != backend.Absent {
 		t.Errorf("expected Ready or Absent, got %v", state)
-	}
-}
-
-func TestGitHubClientForState_AbsentFailsClosed(t *testing.T) {
-	_, err := GitHubClientForState(backend.Absent)
-	if err == nil {
-		t.Fatal("expected error for Absent state")
-	}
-	if !strings.Contains(err.Error(), "gh-axi not found") {
-		t.Errorf("expected 'gh-axi not found' error, got: %v", err)
-	}
-}
-
-func TestGitHubClientForState_FailedFailsClosed(t *testing.T) {
-	_, err := GitHubClientForState(backend.Failed)
-	if err == nil {
-		t.Fatal("expected error for Failed state")
-	}
-	if !strings.Contains(err.Error(), "capability failed") {
-		t.Errorf("expected 'capability failed' error, got: %v", err)
-	}
-}
-
-func TestGitHubClientForState_UnsupportedFailsClosed(t *testing.T) {
-	_, err := GitHubClientForState(backend.Unsupported)
-	if err == nil {
-		t.Fatal("expected error for Unsupported state")
-	}
-	if !strings.Contains(err.Error(), "capability unsupported") {
-		t.Errorf("expected 'capability unsupported' error, got: %v", err)
-	}
-}
-
-func TestGitHubClientForState_ReadyReturnsClient(t *testing.T) {
-	client, err := GitHubClientForState(backend.Ready)
-	if err != nil {
-		t.Fatalf("unexpected error for Ready: %v", err)
-	}
-	if client == nil {
-		t.Fatal("expected non-nil client for Ready")
-	}
-	_, ok := client.(*ghAxiClient)
-	if !ok {
-		t.Errorf("expected *ghAxiClient, got %T", client)
 	}
 }
 
@@ -125,32 +75,34 @@ merged: true
 
 // --- DefaultGitHubClient path routing ---
 
-func TestDefaultGitHubClient_RoutesToGhAxiWhenReady(t *testing.T) {
+func TestForgeClientFor_GitHubRoutesToGhAxiOnlyWhenReady(t *testing.T) {
 	old := ghAxiLookPath
 	t.Cleanup(func() { ghAxiLookPath = old })
 
 	ghAxiLookPath = func() (string, error) { return "/fake/gh-axi", nil }
-	client, err := DefaultGitHubClient()
+	forge, err := forgeClientFor(githubForgeStep)
 	if err != nil {
-		t.Fatalf("DefaultGitHubClient with gh-axi Ready: %v", err)
+		t.Fatalf("forgeClientFor with gh-axi Ready: %v", err)
 	}
-	if _, ok := client.(*ghAxiClient); !ok {
-		t.Fatalf("DefaultGitHubClient with gh-axi Ready = %T, want *ghAxiClient", client)
+	if forge.github == nil {
+		t.Fatalf("forgeClientFor with gh-axi Ready = %+v, want the gh-axi client", forge)
 	}
 
 	ghAxiLookPath = func() (string, error) { return "", errors.New("not found") }
-	client, err = DefaultGitHubClient()
-	if err == nil || !strings.Contains(err.Error(), "capability absent") {
-		t.Fatalf("DefaultGitHubClient with gh-axi Absent = %T, %v; want capability-absent refusal", client, err)
+	forge, err = forgeClientFor(githubForgeStep)
+	if err == nil || !strings.Contains(err.Error(), "configured forge is not Ready") {
+		t.Fatalf("forgeClientFor with gh-axi Absent = %+v, %v; want not-Ready refusal", forge, err)
 	}
-	if client != nil {
-		t.Fatalf("DefaultGitHubClient with gh-axi Absent returned client %T, want nil", client)
+	if forge.github != nil {
+		t.Fatalf("forgeClientFor with gh-axi Absent returned a client")
 	}
 }
 
-// --- QueryPRMergeStatus routing ---
+// --- QueryDeliveryMergeStatus routing ---
 
-func TestQueryPRMergeStatus_UsesGhAxiWhenReady(t *testing.T) {
+var githubStatusIdentity = domain.DeliveryIdentity{Provider: "github", Owner: "owner", Repo: "repo", Number: 42, URL: "https://github.com/owner/repo/pull/42"}
+
+func TestQueryDeliveryMergeStatus_UsesGhAxiWhenReady(t *testing.T) {
 	// gh-axi on PATH makes the capability Ready. The consolidated adapter reads
 	// status through the ghCLILookPath seam; that gh is off PATH, so only the
 	// Ready route can answer.
@@ -168,9 +120,9 @@ echo '{"state":"MERGED","headRefOid":"6b52a27d68fdf6034cc2defc79420882440e87ef",
 	t.Cleanup(func() { ghCLILookPath = oldGH })
 	ghCLILookPath = func() (string, error) { return gh, nil }
 
-	status, err := QueryPRMergeStatus(domain.GHURL{Owner: "owner", Repo: "repo", Num: 42})
+	status, err := QueryDeliveryMergeStatus(githubForgeStep, &githubStatusIdentity)
 	if err != nil {
-		t.Fatalf("QueryPRMergeStatus: %v", err)
+		t.Fatalf("QueryDeliveryMergeStatus: %v", err)
 	}
 	want := domain.PRMergeStatus{
 		State:     "MERGED",
@@ -190,7 +142,7 @@ echo '{"state":"MERGED","headRefOid":"6b52a27d68fdf6034cc2defc79420882440e87ef",
 	}
 }
 
-func TestQueryPRMergeStatus_FailsClosedWithoutGhAxi(t *testing.T) {
+func TestQueryDeliveryMergeStatus_FailsClosedWithoutGhAxi(t *testing.T) {
 	// gh-axi is absent and a gh that records any call is on PATH: the status
 	// read must refuse and gh must never run.
 	binDir := t.TempDir()
@@ -204,12 +156,12 @@ echo '{"state":"OPEN","headRefOid":"6b52a27d68fdf6034cc2defc79420882440e87ef"}'
 	t.Cleanup(func() { ghAxiLookPath = old })
 	ghAxiLookPath = func() (string, error) { return "", errors.New("not found") }
 
-	status, err := QueryPRMergeStatus(domain.GHURL{Owner: "owner", Repo: "repo", Num: 42})
-	if err == nil || !strings.Contains(err.Error(), "capability absent") {
-		t.Fatalf("QueryPRMergeStatus without gh-axi = %+v, %v; want capability-absent refusal", status, err)
+	status, err := QueryDeliveryMergeStatus(githubForgeStep, &githubStatusIdentity)
+	if err == nil || !strings.Contains(err.Error(), "configured forge is not Ready") {
+		t.Fatalf("QueryDeliveryMergeStatus without gh-axi = %+v, %v; want not-Ready refusal", status, err)
 	}
 	if _, statErr := os.Stat(calledFile); statErr == nil {
-		t.Fatal("QueryPRMergeStatus without gh-axi ran gh")
+		t.Fatal("QueryDeliveryMergeStatus without gh-axi ran gh")
 	}
 }
 
@@ -236,53 +188,6 @@ func TestProbeGitHubCapability_ReplacedLookPath(t *testing.T) {
 	}
 }
 
-func TestDefaultGitHubClient_RejectedState(t *testing.T) {
-	old := ghAxiLookPath
-	t.Cleanup(func() { ghAxiLookPath = old })
-
-	ghAxiLookPath = func() (string, error) {
-		return "", errors.New("not found")
-	}
-	_, err := DefaultGitHubClient()
-	if err == nil {
-		t.Fatal("expected error when gh-axi not available")
-	}
-	if !strings.Contains(err.Error(), "capability absent") {
-		t.Errorf("expected 'capability absent' error, got: %v", err)
-	}
-}
-
-// TestCapabilityChain_NoSilentFallback verifies that each state in the
-// capability chain (Absent, Failed, Unsupported) produces an error and
-// never silently falls back to Ready.
-func TestCapabilityChain_NoSilentFallback(t *testing.T) {
-	states := []backend.State{
-		backend.Absent,
-		backend.Failed,
-		backend.Unsupported,
-	}
-	for _, s := range states {
-		s := s
-		t.Run(s.String(), func(t *testing.T) {
-			t.Parallel()
-			// GitHubClientForState must reject all non-Ready states.
-			client, err := GitHubClientForState(s)
-			if err == nil {
-				t.Fatalf("expected error for %s, got client %T", s, client)
-			}
-			// Error must mention the capability state, not something generic.
-			if !strings.Contains(err.Error(), "capability") &&
-				!strings.Contains(err.Error(), "gh-axi") {
-				t.Errorf("error must mention capability or gh-axi, got: %v", err)
-			}
-			// Must not return a usable client.
-			if _, ok := client.(*ghAxiClient); ok {
-				t.Errorf("non-Ready state %s must not yield ghAxiClient", s)
-			}
-		})
-	}
-}
-
 // TestProbeGitHubCapability_ReturnsDeterministicState verifies that
 // ProbeGitHubCapability returns exactly Ready or Absent (never Failed or
 // Unsupported for the lookPath pathway).
@@ -295,5 +200,17 @@ func TestProbeGitHubCapability_ReturnsDeterministicState(t *testing.T) {
 	state2 := ProbeGitHubCapability()
 	if state != state2 {
 		t.Error("ProbeGitHubCapability is not deterministic")
+	}
+}
+
+// TestForgeClientRefusesBaselineAndProviderMismatch pins the two refusals in
+// captured-forge-to-client resolution: a baseline task has no forge, and a
+// delivery identity must name the step's own provider.
+func TestForgeClientRefusesBaselineAndProviderMismatch(t *testing.T) {
+	if _, err := forgeClientFor(taskauthority.DeliveryStep{Baseline: true, ProbeState: "baseline"}); err == nil || !strings.Contains(err.Error(), "no configured forge tool") {
+		t.Fatalf("forgeClientFor(baseline) = %v, want a no-forge refusal", err)
+	}
+	if _, err := forgeClientForIdentity(gitlabForgeStep, domain.DeliveryIdentity{Provider: "github"}); err == nil || !strings.Contains(err.Error(), "does not match the task's configured forge adapter") {
+		t.Fatalf("forgeClientForIdentity(gitlab step, github identity) = %v, want a provider mismatch refusal", err)
 	}
 }

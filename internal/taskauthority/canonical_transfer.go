@@ -277,7 +277,7 @@ func (c *Canonical) ReceiveTransfer(op domain.Operation, req CanonicalReceiveTra
 		Revision:         FirstRevision,
 		Current:          false,
 		Definition:       req.Definition,
-		DeliveryContract: req.DeliveryContract,
+		DeliveryContract: cloneDeliveryContractPointer(req.DeliveryContract),
 		Phase:            PhaseQueued,
 		Transfer: &TransferState{
 			ReservationID:    req.ReservationID,

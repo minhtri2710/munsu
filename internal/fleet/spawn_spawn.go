@@ -20,35 +20,20 @@ import (
 type Args struct {
 	ID                  string
 	ProjectName         string
-	Mode                string // --mode flag value; empty=auto-detect
 	Yolo                bool
-	Force               bool                 // --force flag; bypass captain task authority checks
-	Backend             string               // --backend flag value — optional assertion against the resolved project snapshot
-	HarnessFlag         string               // --harness flag value; empty = resolve from config
-	ModelFlag           string               // --model flag; empty = dispatch/template default
-	EffortFlag          string               // --effort flag; empty = dispatch/template default
-	TaskDescription     string               // optional dispatch matching text; empty = brief/id fallback
-	HomeDir             string               // if empty, resolved via home.Resolve
-	Endpoints           EndpointCapabilities // required endpoint lifecycle capability
+	Force               bool
+	Backend             string
+	HarnessFlag         string
+	ModelFlag           string
+	EffortFlag          string
+	TaskDescription     string
+	HomeDir             string
+	Endpoints           EndpointCapabilities
 	Arm                 bool
-	ArmFunc             func(homeDir string) error // injectable arm function; nil = no auto-arm
-	NoMistakesPreflight func(repoPath string) error
-	// Authority is the composed canonical Task Authority targeting the exact
-	// home the Runner resolves (the CLI composition root supplies it from
-	// Ctx.TaskAuthority(); tests inject a canonical home-backed Authority). It
-	// owns the canonical spawn preconditions — readiness, the generation-
-	// scoped worktree/endpoint bindings, and the durable Dispatch Holds that
-	// gate the spawn action. It is required for the worktree binding cutover
-	// (Task 4.1): bindWorktree fails closed when it is nil. Construction stays
-	// side-effect free; no package global carries it.
-	Authority *taskauthority.Canonical
-
-	// IncarnationMint is an optional opaque incarnation generator for the
-	// endpoint binding. When nil, a crypto/rand generator is used. Tests
-	// inject a deterministic func. The generated value is persisted by
-	// taskauthority as an opaque generation-bound identity and reused (not
-	// re-minted) on retry/recovery of the same launch operation.
-	IncarnationMint IncarnationMintFunc
+	ArmFunc             func(homeDir string) error
+	NoMistakesPreflight func(repoPath string, step taskauthority.DeliveryStep) error
+	Authority           *taskauthority.Canonical
+	IncarnationMint     IncarnationMintFunc
 }
 
 // Run executes the full spawn orchestration sequence by delegating to Runner.
@@ -62,132 +47,12 @@ func Spawn(args Args) (string, error) {
 	return NewRunner(args).Run()
 }
 
-// ValidDeliveryModes lists the accepted delivery mode values.
-var ValidDeliveryModes = map[string]bool{
-	"no-mistakes": true,
-	"direct-PR":   true,
-	"local-only":  true,
-}
-
-// ValidateDeliveryMode returns an error if the mode is not a known value.
-func ValidateDeliveryMode(mode string) error {
-	if mode == "" {
-		return nil // empty is allowed (will use registry default)
-	}
-	if !ValidDeliveryModes[mode] {
-		return fmt.Errorf("invalid delivery mode %q: must be one of: no-mistakes, direct-PR, local-only", mode)
-	}
-	return nil
-}
-
-// noMistakesOnPath returns true if the no-mistakes binary is found on PATH.
-func noMistakesOnPath() bool {
-	_, err := exec.LookPath("no-mistakes")
-	return err == nil
-}
-
-// EnsureDeliveryModeRunnable validates that an explicit non-empty mode is runnable.
-// If mode is "no-mistakes" and the binary is not on PATH or version is incompatible,
-// returns a hard error with actionable guidance.
-func EnsureDeliveryModeRunnable(mode string) error {
-	if mode != "no-mistakes" {
-		return nil
-	}
-	return ensureDeliveryModeRunnableForProbe(NoMistakesProbe())
-}
-
-func ensureDeliveryModeRunnableForProbe(probe ProbeResult) error {
-	switch probe.State {
-	case backend.Absent:
-		return fmt.Errorf("delivery mode 'no-mistakes' requires the no-mistakes binary on PATH; run 'munsu doctor' or 'go install github.com/kunchenguid/no-mistakes@latest'")
-	case backend.Unsupported:
-		return fmt.Errorf("delivery mode 'no-mistakes': %s; upgrade to a compatible version", probe.Detail)
-	case backend.Failed:
-		return fmt.Errorf("delivery mode 'no-mistakes' compatibility check failed: %s", probe.Detail)
-	case backend.Ready:
-		return nil
-	default:
-		return fmt.Errorf("delivery mode 'no-mistakes': unexpected probe state")
-	}
-}
-
-// ResolveDeliveryMode resolves the effective delivery mode following this
-// precedence:
-//  1. explicitMode — non-empty --mode flag value
-//  2. resolvedDefaultMode — typed base/project/snapshot default mode (if non-empty)
-//  3. Auto — a Ready no-mistakes probe selects no-mistakes; any other
-//     probe result selects direct-PR unless require-no-mistakes refuses it.
-//
-// Only validation and the runtime capability probe live here: config authority
-// comes exclusively from the resolved values passed in. The typed surface is
-// the single authority for the default mode and require-no-mistakes.
-//
-// Rules:
-//   - An explicit --mode=no-mistakes with missing binary is a hard error.
-//   - A typed default of no-mistakes with missing binary is a hard error.
-//   - An explicit direct-PR/local-only is OK even when no-mistakes binary exists.
-//   - Auto no-mistakes with any non-Ready probe result falls through to
-//     direct-PR, unless resolvedRequireNoMistakes is set (refuse, do not
-//     silently fall back).
-func ResolveDeliveryMode(explicitMode string, resolvedDefaultMode string, resolvedRequireNoMistakes bool) (string, error) {
-	// 1. Explicit --mode flag
-	if explicitMode != "" {
-		if err := ValidateDeliveryMode(explicitMode); err != nil {
-			return "", err
-		}
-		// Hard error if user explicitly asked for no-mistakes but binary is missing
-		if err := EnsureDeliveryModeRunnable(explicitMode); err != nil {
-			return "", err
-		}
-		return explicitMode, nil
-	}
-
-	// 2. Typed default mode (resolved base/project/snapshot)
-	if resolvedDefaultMode != "" {
-		if err := ValidateDeliveryMode(resolvedDefaultMode); err != nil {
-			return "", err
-		}
-		// Hard error if the resolved default is no-mistakes and binary is missing
-		if err := EnsureDeliveryModeRunnable(resolvedDefaultMode); err != nil {
-			return "", err
-		}
-		return resolvedDefaultMode, nil
-	}
-
-	// 3. Auto: no-mistakes on PATH and compatible → no-mistakes, else → direct-PR
-	probe := NoMistakesProbe()
-	if probe.State == backend.Ready {
-		return "no-mistakes", nil
-	}
-
-	// 4. Typed require-no-mistakes is set → refuse fallback. This sits above both
-	// fallback branches because it covers every non-Ready probe result, including
-	// a binary absent from PATH, incompatible, or otherwise unusable.
-	if resolvedRequireNoMistakes {
-		return "", fmt.Errorf("require-no-mistakes is set: %w", ensureDeliveryModeRunnableForProbe(probe))
-	}
-
-	// Binary on PATH but incompatible version: inform the user why.
-	if noMistakesOnPath() {
-		probe := NoMistakesProbe()
-		fmt.Fprintf(os.Stderr, "warning: no-mistakes found on PATH but not compatible: %s; defaulting to direct-PR. Upgrade no-mistakes or run 'munsu doctor'\n", probe.Detail)
-		return "direct-PR", nil
-	}
-
-	fmt.Fprintln(os.Stderr, "warning: no-mistakes not found on PATH; defaulting to direct-PR delivery mode. Install with: go install github.com/kunchenguid/no-mistakes@latest, or run 'munsu doctor'")
-	return "direct-PR", nil
-}
-
 // ResolveBriefProject resolves one declared project's immutable snapshot once
-// and returns what a brief needs from it: the delivery mode and the project's
-// tamper check. Any resolution error (unknown project, malformed base/overlay,
-// registry or I/O failure) returns a typed failure; there is no fallback to
-// the fleet base or to auto-detection. When selectMode is false the task's
-// recorded delivery contract owns the mode: the snapshot still gates the
-// project's existence and well-formedness, but no mode selection, no
-// no-mistakes PATH probe and no require-no-mistakes refusal runs, and mode is
-// empty. Used by project-scoped callers (munsu brief).
-func ResolveBriefProject(homeDir, projectName, explicitMode string, selectMode bool) (mode, tamperCheck string, err error) {
+// and returns the delivery mode derived from its captured review and forge
+// steps, plus the project's tamper check. When selectMode is false, the task's
+// recorded DeliveryContract owns the delivery mode and only the tamper check is
+// returned.
+func ResolveBriefProject(homeDir, projectName string, selectMode bool) (mode, tamperCheck string, err error) {
 	snap, err := ResolveProjectSnapshot(homeDir, projectName)
 	if err != nil {
 		return "", "", classifySnapshotError(projectName, err)
@@ -196,14 +61,49 @@ func ResolveBriefProject(homeDir, projectName, explicitMode string, selectMode b
 	if !selectMode {
 		return "", resolved.TamperCheck, nil
 	}
-	mode, err = ResolveDeliveryMode(explicitMode, normalizeSnapshotDeliveryMode(resolved.DefaultMode), resolved.RequireNoMistakes)
-	if err != nil {
-		return "", "", err
-	}
-	return mode, resolved.TamperCheck, nil
+	return taskauthority.DeliveryModeForSteps(deliveryStep(resolved.ReviewStep), deliveryStep(resolved.ForgeStep)), resolved.TamperCheck, nil
 }
 
-// noMistakesConfig is the compatibility-relevant subset of global config.
+func defaultNoMistakesPreflight(repoPath string, step taskauthority.DeliveryStep) error {
+	probe := ProbeNoMistakesTool(toolEntryOf(step))
+	if probe.State != backend.Ready {
+		return noMistakesCommandBlocker(probe)
+	}
+	cfg, err := loadNoMistakesConfig()
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			cfg = noMistakesConfig{}
+		} else {
+			return &GateBlockerError{Category: GateBlockerConfigMismatch, Detail: fmt.Sprintf("reading no-mistakes config: %v", err), Guidance: "fix ~/.no-mistakes/config.yaml (or $NM_HOME/config.yaml)"}
+		}
+	}
+	gateProbe := ProbeNoMistakesGateAgent(repoPath, cfg, agentAvailable, func() ProbeResult { return probe })
+	if gateProbe.Blocker != nil {
+		return gateProbe.Blocker
+	}
+	if _, _, err := projectGate(repoPath); err != nil {
+		return err
+	}
+	return nil
+}
+
+func parseConfiguredAgents(value any) []string {
+	switch typed := value.(type) {
+	case string:
+		return []string{typed}
+	case []any:
+		agents := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if agent, ok := item.(string); ok && agent != "" {
+				agents = append(agents, agent)
+			}
+		}
+		return agents
+	default:
+		return nil
+	}
+}
+
 type noMistakesConfig struct {
 	Agents            []string
 	AgentArgsOverride map[string][]string
@@ -238,29 +138,10 @@ func loadNoMistakesConfig() (noMistakesConfig, error) {
 	return noMistakesConfig{Agents: agents, AgentArgsOverride: raw.AgentArgsOverride}, nil
 }
 
-func parseConfiguredAgents(value any) []string {
-	switch typed := value.(type) {
-	case string:
-		return []string{typed}
-	case []any:
-		agents := make([]string, 0, len(typed))
-		for _, item := range typed {
-			if agent, ok := item.(string); ok && agent != "" {
-				agents = append(agents, agent)
-			}
-		}
-		return agents
-	default:
-		return nil
-	}
-}
-
 func agentAvailable(agent string) bool {
 	binary := agent
 	switch {
 	case strings.HasPrefix(agent, "acp:"):
-		// acp:<target> gate agents run through the user-installed acpx
-		// binary; the target's own availability cannot be verified from here.
 		binary = "acpx"
 	case agent == "claude", agent == "codex", agent == "pi", agent == "opencode", agent == "copilot":
 	case agent == "rovodev":
@@ -272,11 +153,6 @@ func agentAvailable(agent string) bool {
 	return err == nil
 }
 
-// projectSettingsDisabled reports whether repoPath/.no-mistakes.yaml sets
-// disable_project_settings: true (gate boundary). When true, the no-mistakes
-// daemon does not load project AGENTS.md/settings into gate agents and
-// enforces the neutralization gate: pi, codex, and claude are verified under
-// the opt-out (no-mistakes >= 1.42.0), all other agents are refused.
 func projectSettingsDisabled(repoPath string) bool {
 	data, err := os.ReadFile(filepath.Join(repoPath, ".no-mistakes.yaml"))
 	if err != nil {
@@ -291,41 +167,9 @@ func projectSettingsDisabled(repoPath string) bool {
 	return raw.DisableProjectSettings
 }
 
-func defaultNoMistakesPreflight(repoPath string) error {
-	cfg, err := loadNoMistakesConfig()
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			cfg = noMistakesConfig{} // fresh host: no config → daemon defaults (agent: auto)
-		} else {
-			return &GateBlockerError{
-				Category: GateBlockerConfigMismatch,
-				Detail:   fmt.Sprintf("reading no-mistakes config: %v", err),
-				Guidance: "fix ~/.no-mistakes/config.yaml (or $NM_HOME/config.yaml)",
-			}
-		}
-	}
-	probe := ProbeNoMistakesGateAgent(repoPath, cfg, agentAvailable, NoMistakesProbe)
-	if probe.Blocker != nil {
-		return probe.Blocker
-	}
-	if _, _, err := projectGate(repoPath); err != nil {
-		return err
-	}
-	return nil
-}
-
-// projectGate is the one owner of "the project's gate repo": the repository the
-// primary's no-mistakes remote names, which must sit directly under
-// NMHome()/repos, and the gate state database beside it. A fenced soldier
-// cannot run `no-mistakes init` (it writes the common dir's .git/config), so a
-// primary with no such gate is a blocker, not something the soldier repairs.
 func projectGate(primary string) (repo, state string, err error) {
 	notInit := func(detail string) error {
-		return &GateBlockerError{
-			Category: GateBlockerNotInitialized,
-			Detail:   detail,
-			Guidance: fmt.Sprintf("run `no-mistakes init` in %s", primary),
-		}
+		return &GateBlockerError{Category: GateBlockerNotInitialized, Detail: detail, Guidance: fmt.Sprintf("run `no-mistakes init` in %s", primary)}
 	}
 	out, cmdErr := exec.Command("git", "-C", primary, "config", "--get", "remote.no-mistakes.url").Output()
 	if cmdErr != nil {
@@ -381,7 +225,7 @@ func claudeNeutralizationPreserved(args []string) bool {
 // worktree acquisition. It verifies environmental readiness for the
 // resolved delivery mode (e.g. gh auth, remotes).
 func (r *Runner) preflightDelivery() error {
-	result, err := Preflight(r.effectiveMode, r.projPath)
+	result, err := Preflight(r.effectiveMode, r.projPath, r.forgeStep)
 	if err != nil {
 		return fmt.Errorf("delivery preflight: %w", err)
 	}

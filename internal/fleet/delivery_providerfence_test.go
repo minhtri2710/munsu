@@ -43,7 +43,7 @@ func TestDeliverProviderIdentityDriftFailsClosedBeforeMutation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			c, homeDir := newFleetCanonical(t)
 			taskID := "t1"
-			mustWorkingDeliveryTask(t, c, taskID)
+			mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 			provider := newFakeDeliveryProvider().script(tc.obs)
 			installDeliveryProviderFor(t, provider)
 
@@ -73,7 +73,7 @@ func TestDeliverProviderIdentityDriftFailsClosedBeforeMutation(t *testing.T) {
 func TestDeliverProviderBaseRefMatchDeliversNormally(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	taskID := "t1"
-	mustWorkingDeliveryTask(t, c, taskID)
+	mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 	pinned := deliveryTestIdentity()
 	provider := newFakeDeliveryProvider().script(
 		DeliveryProviderObservation{State: "OPEN", HeadSHA: pinned.HeadSHA, BaseRef: pinned.BaseRef, Mergeability: DeliveryMergeabilityAllowed},
@@ -119,7 +119,7 @@ func TestCommitPinnedOutcomeRejectsInvalidMergedSHA(t *testing.T) {
 func TestDeliverMergedInvalidSHAFailsClosedBeforeOutcome(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	taskID := "t1"
-	mustWorkingDeliveryTask(t, c, taskID)
+	mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 	provider := newFakeDeliveryProvider().script(DeliveryProviderObservation{
 		State: "MERGED", HeadSHA: deliveryTestHead, BaseRef: deliveryTestBase, MergedSHA: "not-a-git-object-id",
 	})
@@ -192,7 +192,7 @@ func TestDeliverProviderFenceAcceptsAndRejectsObservations(t *testing.T) {
 func TestDeliverPrevalidateRejectsHeadNotMatchingBoundWorktree(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	taskID := "t1"
-	mustWorkingDeliveryTask(t, c, taskID)
+	mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 	provider := installScriptedProviderFor(t, "open-then-merged")
 
 	req := deliverRequest()
@@ -223,6 +223,7 @@ func TestDeliverPrevalidateRefusesAWorktreeGitCannotRead(t *testing.T) {
 	c, homeDir := newFleetCanonical(t)
 	taskID := "t1"
 	wt := mustWorkingShipTask(t, c, taskID)
+	seedSourceContract(t, c, taskID, deliveryTestGitHubForge)
 	provider := installScriptedProviderFor(t, "open-then-merged")
 	if err := os.RemoveAll(wt); err != nil {
 		t.Fatal(err)
@@ -242,8 +243,8 @@ func TestDeliverPrevalidateRefusesAWorktreeGitCannotRead(t *testing.T) {
 
 func TestDeliveryProviderForRefusesAnUnreadyGitHubCapability(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
-	_, err := deliveryProviderFor(domain.DeliveryIdentity{Provider: "github"})
-	if err == nil || !strings.Contains(err.Error(), "GitHub delivery capability is") {
-		t.Fatalf("deliveryProviderFor error = %v, want the capability refusal", err)
+	_, err := deliveryProviderFor(githubForgeStep, domain.DeliveryIdentity{Provider: "github"})
+	if err == nil || !strings.Contains(err.Error(), "configured forge is not Ready") {
+		t.Fatalf("deliveryProviderFor error = %v, want the configured forge refusal", err)
 	}
 }

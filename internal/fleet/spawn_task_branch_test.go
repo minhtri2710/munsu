@@ -7,12 +7,15 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 func TestRefuseStaleTaskBranch(t *testing.T) {
 	t.Run("new generation refuses another commit before launch", func(t *testing.T) {
 		f := newLaunchFixture(t, "stale-branch")
-		reopenTaskForFallbackTest(t, f)
+		reopenTaskForBranchTest(t, f)
 		branch := "mu/" + f.taskID
 		runGitForSpawnBinding(t, f.repoPath, "switch", "-c", branch)
 		if err := os.WriteFile(filepath.Join(f.repoPath, "prior-generation.txt"), []byte("prior generation\n"), 0o644); err != nil {
@@ -110,4 +113,45 @@ func TestRefuseStaleTaskBranch(t *testing.T) {
 			t.Fatalf("re-entry duplicated launch: endpointCreates=%d submissions=%d", f.endpoints.createCount(), f.endpoints.submitCount())
 		}
 	})
+}
+
+// reopenTaskForBranchTest closes and reopens the fixture's task so the next
+// spawn resolves against a fresh generation.
+func reopenTaskForBranchTest(t *testing.T, f *launchFixture) {
+	t.Helper()
+	agg, err := f.auth.Get(mustTaskID(t, f.taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	complete := taskauthority.CanonicalCompleteRequest{
+		HomeID:       f.auth.HomeID(),
+		TaskID:       mustTaskID(t, f.taskID),
+		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+		To:           taskauthority.PhaseDone,
+		Reason:       "done",
+	}
+	completeOp, err := domain.NewOperation(mustOpID(t, "op-complete-"+f.taskID), complete)
+	if err != nil {
+		t.Fatalf("NewOperation: %v", err)
+	}
+	if _, err := f.auth.Complete(completeOp, complete); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	agg, err = f.auth.Get(mustTaskID(t, f.taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopen := taskauthority.CanonicalReopenRequest{
+		HomeID:       f.auth.HomeID(),
+		TaskID:       mustTaskID(t, f.taskID),
+		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+		Reason:       "reopen",
+	}
+	reopenOp, err := domain.NewOperation(mustOpID(t, "op-reopen-"+f.taskID), reopen)
+	if err != nil {
+		t.Fatalf("NewOperation: %v", err)
+	}
+	if _, err := f.auth.Reopen(reopenOp, reopen); err != nil {
+		t.Fatalf("Reopen: %v", err)
+	}
 }

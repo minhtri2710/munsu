@@ -14,7 +14,7 @@ func TestGuardBurnDownPrevalidateDeliveryTaskRefusesOwnerOrActiveAuthorization(t
 	t.Run("missing owner", func(t *testing.T) {
 		c, homeDir := newFleetCanonical(t)
 		taskID := "t1"
-		mustWorkingDeliveryTask(t, c, taskID)
+		mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 		if err := rewriteDeliveryAggregate(t, homeDir, taskID, func(cur taskauthority.Aggregate) taskauthority.Aggregate {
 			cur.Definition.Owner = "   "
 			return cur
@@ -34,11 +34,11 @@ func TestGuardBurnDownPrevalidateDeliveryTaskRefusesOwnerOrActiveAuthorization(t
 	t.Run("active authorization", func(t *testing.T) {
 		c, _ := newFleetCanonical(t)
 		taskID := "t1"
-		mustWorkingDeliveryTask(t, c, taskID)
+		mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 		req := deliverRequest()
 		authReq := taskauthority.CanonicalDeliveryAuthorizationRequest{
 			HomeID: c.HomeID(), TaskID: mustFleetTaskID(t, taskID),
-			Precondition: domain.Of(1, 4), Kind: req.Kind, Identity: req.Identity,
+			Precondition: domain.Of(1, 5), Kind: req.Kind, Identity: req.Identity,
 			Preconditions: req.Preconditions, Words: deliveryWords(),
 		}
 		if _, err := c.AuthorizeDelivery(mustFleetOperation(t, "op-active-auth", authReq), authReq); err != nil {

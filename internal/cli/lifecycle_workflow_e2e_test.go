@@ -139,7 +139,7 @@ func (w *workflowTeardown) Dispose(string, map[string]string, fleet.DisposeReque
 
 func (w *workflowTeardown) ReturnWorktree(string, string) error { w.returned++; return nil }
 
-func (w *workflowTeardown) QueryMergeStatus(*domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
+func (w *workflowTeardown) QueryMergeStatus(taskauthority.DeliveryStep, *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
 	return nil, nil
 }
 
@@ -312,14 +312,13 @@ func runLifecycleWorkflow(t *testing.T, tc workflowCase) {
 		Config: config.ProjectOverlay{
 			SoldierHarness: harness.Pi,
 			Model:          "workflow-general-model",
-			DefaultMode:    "local-only",
 			Backend:        "tmux",
 		},
 		CaptainProfile: config.CaptainProfile{Harness: harness.Pi},
 	}); err != nil {
 		t.Fatalf("store fleet base: %v", err)
 	}
-	if err := fleet.Add(generalHome, "alpha", repo, "local-only", false); err != nil {
+	if err := fleet.Add(generalHome, "alpha", repo, false); err != nil {
 		t.Fatalf("register project: %v", err)
 	}
 
@@ -349,7 +348,6 @@ func runLifecycleWorkflow(t *testing.T, tc workflowCase) {
 	if _, err := fleet.Spawn(fleet.Args{
 		ID:          taskID,
 		ProjectName: "alpha",
-		Mode:        "local-only",
 		HomeDir:     spawnHome,
 		Endpoints:   endpoints,
 		Authority:   auth,
@@ -584,8 +582,9 @@ func workflowSeedCaptainHome(t *testing.T, generalHome, repo, captainID string) 
 		Backend:        "tmux",
 		SoldierHarness: harness.Pi,
 		Model:          "workflow-captain-model",
-		DefaultMode:    "local-only",
 		CaptainProfile: config.CaptainProfile{Harness: harness.Pi},
+		ReviewStep:     config.ResolvedStep{Baseline: true, ProbeState: "baseline", Reason: "no tool configured"},
+		ForgeStep:      config.ResolvedStep{Baseline: true, ProbeState: "baseline", Reason: "no tool configured"},
 		Digest:         workflowPublishedDigest,
 	}); err != nil {
 		t.Fatalf("publish captain snapshot: %v", err)

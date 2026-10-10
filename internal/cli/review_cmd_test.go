@@ -211,7 +211,7 @@ func TestBriefScaffoldsAReviewTaskFromItsDefinition(t *testing.T) {
 	homeDir := deliveryGuardShip(t, "t-ship")
 	if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{Backend: "tmux", DefaultMode: "local-only"},
+		Config:        config.ProjectOverlay{Backend: "tmux"},
 	}); err != nil {
 		t.Fatal(err)
 	}

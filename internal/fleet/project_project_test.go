@@ -3,7 +3,6 @@
 package fleet
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,166 +13,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
-
-// --- Legacy project registry helpers ---
-//
-// ParseEntry/FormatEntry were removed from the fleet package during the
-// legacy-config hard cut. These test-local ports preserve the legacy-format
-// project registry parsing semantics so legacy-format project registry tests
-// keep compiling.
-
-// ParseEntry parses a single legacy projects.md registry line into a Project.
-func ParseEntry(line string) (*Project, error) {
-	line = strings.TrimSpace(line)
-	if !strings.HasPrefix(line, "- ") {
-		return nil, fmt.Errorf("invalid project entry format: %q", line)
-	}
-	rest := line[2:]
-	sepIdx := strings.Index(rest, " - ")
-	if sepIdx < 0 {
-		return nil, fmt.Errorf("missing ' - ' separator in: %q", line)
-	}
-	lhs, rhs := rest[:sepIdx], strings.TrimSpace(rest[sepIdx+3:])
-	addedIdx := strings.LastIndex(rhs, "(added ")
-	if addedIdx < 0 {
-		return nil, fmt.Errorf("missing '(added ...)' in: %q", line)
-	}
-	date := strings.TrimSuffix(strings.TrimSpace(rhs[addedIdx+7:]), ")")
-	p := &Project{Name: strings.Fields(lhs)[0], Description: strings.TrimSpace(rhs[:addedIdx]), Added: date}
-	for _, tok := range strings.Fields(lhs)[1:] {
-		if tok == "+yolo" {
-			p.Yolo = true
-		} else {
-			p.Mode = tok
-		}
-	}
-	return p, nil
-}
-
-// FormatEntry formats a Project as a legacy projects.md registry line.
-func FormatEntry(p *Project) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "- %s", p.Name)
-	if p.Mode != "" {
-		fmt.Fprintf(&b, " %s", p.Mode)
-	}
-	if p.Yolo {
-		b.WriteString(" +yolo")
-	}
-	fmt.Fprintf(&b, " - %s (added %s)", p.Description, p.Added)
-	return b.String()
-}
-
-func TestParseEntrySimple(t *testing.T) {
-	p, err := ParseEntry("- my-project - A simple project (added 2026-01-15)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if p.Name != "my-project" {
-		t.Errorf("Name = %q, want %q", p.Name, "my-project")
-	}
-	if p.Mode != "" {
-		t.Errorf("Mode = %q, want empty", p.Mode)
-	}
-	if p.Yolo {
-		t.Error("Yolo = true, want false")
-	}
-	if p.Description != "A simple project" {
-		t.Errorf("Description = %q, want %q", p.Description, "A simple project")
-	}
-	if p.Added != "2026-01-15" {
-		t.Errorf("Added = %q, want %q", p.Added, "2026-01-15")
-	}
-}
-
-func TestParseEntryWithMode(t *testing.T) {
-	p, err := ParseEntry("- my-project feat - Feature project (added 2026-01-15)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if p.Mode != "feat" {
-		t.Errorf("Mode = %q, want %q", p.Mode, "feat")
-	}
-	if p.Yolo {
-		t.Error("Yolo = true, want false")
-	}
-}
-
-func TestParseEntryWithYolo(t *testing.T) {
-	p, err := ParseEntry("- my-project feat +yolo - Yolo project (added 2026-01-15)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if p.Mode != "feat" {
-		t.Errorf("Mode = %q, want %q", p.Mode, "feat")
-	}
-	if !p.Yolo {
-		t.Error("Yolo = false, want true")
-	}
-}
-
-func TestParseEntryYoloWithoutMode(t *testing.T) {
-	p, err := ParseEntry("- my-project +yolo - Yolo no mode (added 2026-01-15)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if p.Mode != "" {
-		t.Errorf("Mode = %q, want empty", p.Mode)
-	}
-	if !p.Yolo {
-		t.Error("Yolo = false, want true")
-	}
-}
-
-func TestParseEntryDescriptionWithDashes(t *testing.T) {
-	p, err := ParseEntry("- my-project feat - Feature - with dashes (added 2026-01-15)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if p.Description != "Feature - with dashes" {
-		t.Errorf("Description = %q, want %q", p.Description, "Feature - with dashes")
-	}
-}
-
-func TestFormatEntry(t *testing.T) {
-	p := &Project{
-		Name:        "test",
-		Mode:        "fix",
-		Yolo:        true,
-		Description: "A test project",
-		Added:       "2026-07-13",
-	}
-	got := FormatEntry(p)
-	want := "- test fix +yolo - A test project (added 2026-07-13)"
-	if got != want {
-		t.Errorf("FormatEntry() = %q, want %q", got, want)
-	}
-}
-
-func TestFormatEntrySimple(t *testing.T) {
-	p := &Project{
-		Name:        "simple",
-		Description: "No mode",
-		Added:       "2026-01-01",
-	}
-	got := FormatEntry(p)
-	want := "- simple - No mode (added 2026-01-01)"
-	if got != want {
-		t.Errorf("FormatEntry() = %q, want %q", got, want)
-	}
-}
-
-func TestProjectRegistryRoundTrip(t *testing.T) {
-	original := "- my-project feat +yolo - Description here (added 2026-03-15)"
-	p, err := ParseEntry(original)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := FormatEntry(p)
-	if got != original {
-		t.Errorf("round-trip:\n  original: %q\n  got:      %q", original, got)
-	}
-}
 
 func TestListEmpty(t *testing.T) {
 	tmp := t.TempDir()
@@ -196,7 +35,7 @@ func TestAddRejectsTraversalNameBeforeClone(t *testing.T) {
 	testutil.WriteFakeExecutable(t, filepath.Join(binDir, "git"), "#!/bin/sh\nprintf invoked > '"+filepath.ToSlash(marker)+"'\nexit 0\n")
 	testutil.SetPath(t, binDir)
 
-	if err := Add(homeDir, "../../x", "https://example.invalid/repo.git", "", false); err == nil {
+	if err := Add(homeDir, "../../x", "https://example.invalid/repo.git", false); err == nil {
 		t.Fatal("Add accepted a traversal project name")
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
@@ -215,7 +54,7 @@ func TestListAndAdd(t *testing.T) {
 	homeDir := filepath.Join(tmp, ".munsu")
 
 	// Add by registering (no URL clone)
-	if err := Add(homeDir, "test-proj", "/tmp/test-path", "feat", true); err != nil {
+	if err := Add(homeDir, "test-proj", "/tmp/test-path", true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -229,9 +68,6 @@ func TestListAndAdd(t *testing.T) {
 	p := projects[0]
 	if p.Name != "test-proj" {
 		t.Errorf("Name = %q, want %q", p.Name, "test-proj")
-	}
-	if p.Mode != "feat" {
-		t.Errorf("Mode = %q, want %q", p.Mode, "feat")
 	}
 	if !p.Yolo {
 		t.Error("Yolo = false, want true")
@@ -248,10 +84,10 @@ func TestAddIdempotent(t *testing.T) {
 	// Add the same project twice with an identical definition — the canonical
 	// Fleet Registry treats the re-registration as a successful no-op and
 	// never creates a duplicate entry.
-	if err := Add(homeDir, "dup-proj", "/path/second", "fix", false); err != nil {
+	if err := Add(homeDir, "dup-proj", "/path/second", false); err != nil {
 		t.Fatal(err)
 	}
-	if err := Add(homeDir, "dup-proj", "/path/second", "fix", false); err != nil {
+	if err := Add(homeDir, "dup-proj", "/path/second", false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -269,9 +105,6 @@ func TestAddIdempotent(t *testing.T) {
 	if p.Name != "dup-proj" {
 		t.Errorf("Name = %q, want %q", p.Name, "dup-proj")
 	}
-	if p.Mode != "fix" {
-		t.Errorf("Mode = %q, want %q", p.Mode, "fix")
-	}
 	if p.Yolo {
 		t.Error("Yolo = true, want false")
 	}
@@ -282,10 +115,10 @@ func TestAddIdempotent(t *testing.T) {
 
 func TestFind(t *testing.T) {
 	tmp := t.TempDir()
-	if err := Add(tmp, "alpha", "/p/alpha", "", false); err != nil {
+	if err := Add(tmp, "alpha", "/p/alpha", false); err != nil {
 		t.Fatal(err)
 	}
-	if err := Add(tmp, "beta", "/p/beta", "feat", true); err != nil {
+	if err := Add(tmp, "beta", "/p/beta", true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -305,10 +138,10 @@ func TestFind(t *testing.T) {
 
 func TestRm(t *testing.T) {
 	tmp := t.TempDir()
-	if err := Add(tmp, "alpha", "/p/alpha", "", false); err != nil {
+	if err := Add(tmp, "alpha", "/p/alpha", false); err != nil {
 		t.Fatal(err)
 	}
-	if err := Add(tmp, "beta", "/p/beta", "", false); err != nil {
+	if err := Add(tmp, "beta", "/p/beta", false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -333,24 +166,6 @@ func TestRmNotFound(t *testing.T) {
 	err := Rm(tmp, "nonexistent")
 	if err == nil {
 		t.Fatal("expected error for removing nonexistent project")
-	}
-}
-
-func TestMode(t *testing.T) {
-	tmp := t.TempDir()
-	if err := Add(tmp, "test", "/p/test", "refactor", true); err != nil {
-		t.Fatal(err)
-	}
-
-	mode, yolo, err := Mode(tmp, "test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if mode != "refactor" {
-		t.Errorf("Mode = %q, want %q", mode, "refactor")
-	}
-	if !yolo {
-		t.Error("Yolo = false, want true")
 	}
 }
 
@@ -383,16 +198,16 @@ func TestRegistryFileFormat(t *testing.T) {
 
 	// Register each project through the canonical Fleet Registry (the sole
 	// lifecycle authority) and assert List round-trips the fields.
-	if err := Add(tmp, "alpha", "First project", "feat", false); err != nil {
+	if err := Add(tmp, "alpha", "First project", false); err != nil {
 		t.Fatal(err)
 	}
-	if err := Add(tmp, "beta", "Captain project", "fix", true); err != nil {
+	if err := Add(tmp, "beta", "Captain project", true); err != nil {
 		t.Fatal(err)
 	}
-	if err := Add(tmp, "gamma", "Yolo without mode", "", true); err != nil {
+	if err := Add(tmp, "gamma", "Yolo without mode", true); err != nil {
 		t.Fatal(err)
 	}
-	if err := Add(tmp, "delta", "No mode project", "", false); err != nil {
+	if err := Add(tmp, "delta", "No mode project", false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -413,16 +228,16 @@ func TestRegistryFileFormat(t *testing.T) {
 	beta := byName["beta"]
 	gamma := byName["gamma"]
 	delta := byName["delta"]
-	if alpha.Name != "alpha" || alpha.Mode != "feat" || alpha.Yolo {
+	if alpha.Name != "alpha" || alpha.Yolo {
 		t.Errorf("alpha: %+v", alpha)
 	}
-	if beta.Name != "beta" || beta.Mode != "fix" || !beta.Yolo {
+	if beta.Name != "beta" || !beta.Yolo {
 		t.Errorf("beta: %+v", beta)
 	}
-	if gamma.Name != "gamma" || gamma.Mode != "" || !gamma.Yolo {
+	if gamma.Name != "gamma" || !gamma.Yolo {
 		t.Errorf("gamma: %+v", gamma)
 	}
-	if delta.Name != "delta" || delta.Mode != "" || delta.Yolo {
+	if delta.Name != "delta" || delta.Yolo {
 		t.Errorf("delta: %+v", delta)
 	}
 }
@@ -441,7 +256,7 @@ func TestResolveRepoPath_LocalPath(t *testing.T) {
 	}
 
 	// Register with local path
-	if err := Add(homeDir, "my-project", localRepo, "", false); err != nil {
+	if err := Add(homeDir, "my-project", localRepo, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -585,7 +400,7 @@ func TestResolveFromCwd_RegistryAliasMatch(t *testing.T) {
 
 	// Register with alias name different from repo basename
 	aliasName := "my-custom-alias"
-	if err := Add(homeDir, aliasName, repoDir, "feat", false); err != nil {
+	if err := Add(homeDir, aliasName, repoDir, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -609,9 +424,6 @@ func TestResolveFromCwd_RegistryAliasMatch(t *testing.T) {
 	}
 	if p.Description != repoDir {
 		t.Errorf("Description = %q, want %q", p.Description, repoDir)
-	}
-	if p.Mode != "feat" {
-		t.Errorf("Mode = %q, want %q", p.Mode, "feat")
 	}
 }
 
@@ -641,7 +453,7 @@ func TestResolveFromCwd_NoRegistryMatch(t *testing.T) {
 	// Create munsu home dir with a registry entry that points elsewhere
 	homeDir := filepath.Join(tmp, ".munsu")
 	otherPath := filepath.Join(tmp, "other-repo")
-	if err := Add(homeDir, "other-project", otherPath, "", false); err != nil {
+	if err := Add(homeDir, "other-project", otherPath, false); err != nil {
 		t.Fatal(err)
 	}
 

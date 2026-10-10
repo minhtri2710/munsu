@@ -59,7 +59,7 @@ func TestGuardBurnDownPrevalidateDeliveryTaskRefusesTaskShape(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			c, homeDir := newFleetCanonical(t)
 			taskID := "t1"
-			mustWorkingDeliveryTask(t, c, taskID)
+			mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 			tc.setup(t, homeDir, taskID)
 			agg, err := readDeliveryAggregate(t, homeDir, taskID)
 			if err != nil {

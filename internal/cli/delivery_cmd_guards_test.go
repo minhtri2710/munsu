@@ -31,9 +31,14 @@ const deliveryGuardPRURL = "https://github.com/acme/widgets/pull/42"
 
 const deliveryGuardMRURL = "https://gitlab.com/acme/widgets/-/merge_requests/42"
 
+// deliveryGuardGitHub is the captured github forge step of a guard task. Its
+// probe runs through PATH, so the absolute path only has to validate.
+var deliveryGuardGitHub = taskauthority.DeliveryStep{Adapter: "github", Path: "/opt/gh-axi/bin/gh-axi", ProbeState: "ready"}
+
 // deliveryGuardHome builds the exact state pr-merge requires before it can
 // reach a committed non-completed outcome: a current working ship task that
-// owns both bindings, with the bound worktree head the identity will carry.
+// owns both bindings, with the bound worktree head the identity will carry,
+// and a captured direct-PR contract whose forge is the given step.
 // Anything less fails closed earlier, and the refusals under test sit after
 // the outcome is committed.
 func deliveryGuardWords() domain.Words {
@@ -144,10 +149,12 @@ func recordGuardPassVerdict(t *testing.T, auth *taskauthority.Canonical, taskID 
 }
 
 // deliveryGuardHome is deliveryGuardShip plus a recorded PASS verdict.
-func deliveryGuardHome(t *testing.T, taskID string) string {
+func deliveryGuardHome(t *testing.T, taskID string, forge taskauthority.DeliveryStep) string {
 	t.Helper()
 	homeDir := deliveryGuardShip(t, taskID)
-	recordGuardPassVerdict(t, cliCanonicalForHome(t, homeDir), taskID)
+	auth := cliCanonicalForHome(t, homeDir)
+	recordGuardPassVerdict(t, auth, taskID)
+	seedGuardDeliveryContract(t, auth, taskID, "direct-PR", forge)
 	return homeDir
 }
 
@@ -238,7 +245,7 @@ func deliveryGuardShip(t *testing.T, taskID string) string {
 func stubDeliverySnapshot(t *testing.T) {
 	t.Helper()
 	old := fleet.FetchProviderSnapshot
-	fleet.FetchProviderSnapshot = func(prURL string) (*fleet.ProviderSnapshot, error) {
+	fleet.FetchProviderSnapshot = func(_ taskauthority.DeliveryStep, prURL string) (*fleet.ProviderSnapshot, error) {
 		return &fleet.ProviderSnapshot{
 			Provider:   "github",
 			Owner:      "acme",
@@ -277,10 +284,10 @@ func TestBuildDeliverRequestStateGuard(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			taskID := "t-state-" + strings.ReplaceAll(strings.ToLower(tc.name), " ", "-")
-			homeDir := deliveryGuardHome(t, taskID)
+			homeDir := deliveryGuardHome(t, taskID, deliveryGuardGitHub)
 			auth := cliCanonicalForHome(t, homeDir)
 			old := fleet.FetchProviderSnapshot
-			fleet.FetchProviderSnapshot = func(prURL string) (*fleet.ProviderSnapshot, error) {
+			fleet.FetchProviderSnapshot = func(_ taskauthority.DeliveryStep, prURL string) (*fleet.ProviderSnapshot, error) {
 				return &fleet.ProviderSnapshot{Provider: "github", Owner: "acme", Repo: "widgets", Number: 42, URL: prURL, BaseRef: "main", HeadRef: "feature", HeadSHA: deliveryGuardHead, State: tc.state, Checks: tc.checks, Reviews: tc.reviews, ObservedAt: time.Now().UTC().Format(time.RFC3339)}, nil
 			}
 			t.Cleanup(func() { fleet.FetchProviderSnapshot = old })
@@ -296,7 +303,7 @@ func TestBuildDeliverRequestStateGuard(t *testing.T) {
 // any provider read or task lookup.
 func TestBuildDeliverRequestRefusesIncompleteWords(t *testing.T) {
 	old := fleet.FetchProviderSnapshot
-	fleet.FetchProviderSnapshot = func(string) (*fleet.ProviderSnapshot, error) {
+	fleet.FetchProviderSnapshot = func(_ taskauthority.DeliveryStep, _ string) (*fleet.ProviderSnapshot, error) {
 		t.Fatal("the provider was read before the words were checked")
 		return nil, nil
 	}
@@ -316,10 +323,10 @@ func TestBuildDeliverRequestRefusesIncompleteWords(t *testing.T) {
 // installTerminalGlab puts a fake glab on PATH that passes the capability
 // probe and reports the MR in a terminal state. Any merge call touches the
 // returned marker and fails, so a test can prove no merge was attempted.
-func installTerminalGlab(t *testing.T, state string) string {
+func installTerminalGlab(t *testing.T, state string) (glab, marker string) {
 	t.Helper()
 	dir := t.TempDir()
-	marker := filepath.Join(dir, "merge-attempt")
+	marker = filepath.Join(dir, "merge-attempt")
 	markerTarget := "'" + strings.ReplaceAll(filepath.ToSlash(marker), "'", "'\\''") + "'"
 	mergeCommit := "null"
 	if state == "merged" {
@@ -337,15 +344,20 @@ case "$1 $2" in
 *) exit 1 ;;
 esac
 `, markerTarget, state, deliveryGuardHead, mergeCommit)
-	testutil.WriteFakeExecutable(t, filepath.Join(dir, "glab"), script)
+	glab = testutil.WriteFakeExecutable(t, filepath.Join(dir, "glab"), script)
 	testutil.PrependPath(t, dir)
-	return marker
+	return glab, marker
+}
+
+// deliveryGuardGitLab is the captured gitlab forge step pointing at the fake glab.
+func deliveryGuardGitLab(glab string) taskauthority.DeliveryStep {
+	return taskauthority.DeliveryStep{Adapter: "gitlab", Path: glab, ProbeState: "ready"}
 }
 
 func stubGitLabTerminalSnapshot(t *testing.T, state string) {
 	t.Helper()
 	old := fleet.FetchProviderSnapshot
-	fleet.FetchProviderSnapshot = func(prURL string) (*fleet.ProviderSnapshot, error) {
+	fleet.FetchProviderSnapshot = func(_ taskauthority.DeliveryStep, prURL string) (*fleet.ProviderSnapshot, error) {
 		return &fleet.ProviderSnapshot{Provider: "gitlab", Owner: "acme", Repo: "widgets", Number: 42, URL: prURL, BaseRef: "main", HeadRef: "feature", HeadSHA: deliveryGuardHead, State: state, ObservedAt: time.Now().UTC().Format(time.RFC3339)}, nil
 	}
 	t.Cleanup(func() { fleet.FetchProviderSnapshot = old })
@@ -362,9 +374,9 @@ func runPRMerge(t *testing.T, flags []string, args ...string) error {
 }
 
 func TestPRMergeAllowsMergedTerminalReconciliation(t *testing.T) {
-	marker := installTerminalGlab(t, "merged")
+	glab, marker := installTerminalGlab(t, "merged")
 	stubGitLabTerminalSnapshot(t, "MERGED")
-	deliveryGuardHome(t, "t-prmerge-terminal-merged")
+	deliveryGuardHome(t, "t-prmerge-terminal-merged", deliveryGuardGitLab(glab))
 	if err := runPRMerge(t, nil, "t-prmerge-terminal-merged", deliveryGuardMRURL); err != nil {
 		t.Fatalf("pr-merge: %v", err)
 	}
@@ -374,9 +386,9 @@ func TestPRMergeAllowsMergedTerminalReconciliation(t *testing.T) {
 }
 
 func TestPRMergeReportsClosedTerminalReconciliation(t *testing.T) {
-	marker := installTerminalGlab(t, "closed")
+	glab, marker := installTerminalGlab(t, "closed")
 	stubGitLabTerminalSnapshot(t, "CLOSED")
-	deliveryGuardHome(t, "t-prmerge-terminal-closed")
+	deliveryGuardHome(t, "t-prmerge-terminal-closed", deliveryGuardGitLab(glab))
 	err := runPRMerge(t, nil, "t-prmerge-terminal-closed", deliveryGuardMRURL)
 	if err == nil || !strings.Contains(err.Error(), "delivery did not complete") {
 		t.Fatalf("error = %v, want partial delivery refusal", err)
@@ -391,10 +403,10 @@ func TestPRMergeReportsClosedTerminalReconciliation(t *testing.T) {
 // is written: there is no fallback execution route.
 func TestPRMergeRefusesGitHubWithoutCapability(t *testing.T) {
 	stubDeliverySnapshot(t)
-	homeDir := deliveryGuardHome(t, "t-prmerge-github")
+	homeDir := deliveryGuardHome(t, "t-prmerge-github", deliveryGuardGitHub)
 	t.Setenv("PATH", t.TempDir())
 	err := runPRMerge(t, nil, "t-prmerge-github", deliveryGuardPRURL)
-	if err == nil || !strings.Contains(err.Error(), "GitHub delivery capability is") {
+	if err == nil || !strings.Contains(err.Error(), "configured forge is not Ready") {
 		t.Fatalf("error = %v, want the GitHub capability refusal", err)
 	}
 	if _, err := os.Stat(filepath.Join(homeDir, "state", ".delivery-journal")); !os.IsNotExist(err) {
@@ -406,10 +418,10 @@ func TestPRMergeRefusesGitHubWithoutCapability(t *testing.T) {
 // on a CLOSED GitLab MR reports the non-completed merge-and-retire outcome
 // and retires nothing: teardown runs only after a completed outcome.
 func TestPRMergeTeardownReportsClosedWithoutRetiring(t *testing.T) {
-	marker := installTerminalGlab(t, "closed")
+	glab, marker := installTerminalGlab(t, "closed")
 	stubGitLabTerminalSnapshot(t, "CLOSED")
 	taskID := "t-prmerge-teardown-closed"
-	homeDir := deliveryGuardHome(t, taskID)
+	homeDir := deliveryGuardHome(t, taskID, deliveryGuardGitLab(glab))
 
 	err := runPRMerge(t, []string{"--teardown"}, taskID, deliveryGuardMRURL)
 	if err == nil || !strings.Contains(err.Error(), "merge-and-retire "+taskID+": partial provider reports closed but not merged") {
@@ -434,5 +446,17 @@ func TestPRMergeTeardownReportsClosedWithoutRetiring(t *testing.T) {
 	}
 	if _, err := home.ReadMeta(homeDir, taskID); err != nil {
 		t.Fatalf("task meta after refused merge-and-retire: %v, want kept", err)
+	}
+}
+
+// TestBuildDeliverRequestRefusesUncontractedTask pins the refusal for a task
+// that was never spawned: it has no captured forge step to deliver through.
+func TestBuildDeliverRequestRefusesUncontractedTask(t *testing.T) {
+	taskID := "t-uncontracted"
+	homeDir := deliveryGuardShip(t, taskID)
+	auth := cliCanonicalForHome(t, homeDir)
+	_, err := buildDeliverRequest(auth, taskID, deliveryGuardPRURL, nil, deliveryGuardWords())
+	if err == nil || !strings.Contains(err.Error(), "has no captured delivery contract") {
+		t.Fatalf("buildDeliverRequest = %v, want a missing-contract refusal", err)
 	}
 }

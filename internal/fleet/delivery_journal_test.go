@@ -117,11 +117,15 @@ func deliverRequest() DeliverRequest {
 // mustWorkingDeliveryTask creates a task and binds the worktree (at the
 // delivery identity head) and endpoint so it is working with the exact delivery
 // bindings, then records the approving review verdict of that head (revision 4).
-func mustWorkingDeliveryTask(t *testing.T, c *taskauthority.Canonical, taskID string) {
+func mustWorkingDeliveryTask(t *testing.T, c *taskauthority.Canonical, taskID string, forge taskauthority.DeliveryStep) {
 	t.Helper()
 	mustWorkingShipTask(t, c, taskID)
 	mustRecordApprovingVerdict(t, c, taskID, deliveryTestHead)
+	seedSourceContract(t, c, taskID, forge)
 }
+
+// deliveryTestGitLabForge is the captured forge step of a gitlab delivery task.
+var deliveryTestGitLabForge = taskauthority.DeliveryStep{Adapter: "gitlab", Path: "/usr/local/bin/glab", ProbeState: "ready"}
 
 // mustWorkingShipTask creates a ship task working with a real worktree (whose
 // HEAD is deliveryTestHead) and endpoint bound, with no review verdict.
@@ -188,7 +192,7 @@ func mustWorkingShipTaskAt(t *testing.T, c *taskauthority.Canonical, taskID, wtP
 func installDeliveryProviderFor(t *testing.T, provider *fakeDeliveryProvider) {
 	t.Helper()
 	old := deliveryProviderFor
-	deliveryProviderFor = func(domain.DeliveryIdentity) (DeliveryProvider, error) {
+	deliveryProviderFor = func(taskauthority.DeliveryStep, domain.DeliveryIdentity) (DeliveryProvider, error) {
 		return provider, nil
 	}
 	t.Cleanup(func() { deliveryProviderFor = old })

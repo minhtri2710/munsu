@@ -28,7 +28,7 @@ func TestContextCmd_SyncsAndPrintsManual(t *testing.T) {
 	}
 	// Register a project through the Fleet Registry (the sole lifecycle
 	// authority).
-	if err := fleet.Add(tmp, "demo", "/tmp/demo", "no-mistakes", false); err != nil {
+	if err := fleet.Add(tmp, "demo", "/tmp/demo", false); err != nil {
 		t.Fatal(err)
 	}
 

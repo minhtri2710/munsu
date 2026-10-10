@@ -5,79 +5,34 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
-// QueryPRMergeStatus fetches the current merge status of a PR from the GitHub
-// provider. It is the minimal provider query seam used by teardown and
-// other lifecycle checks that need to distinguish merged branches from merely
-// pushed ones.
-//
-// When the provider is unreachable or ambiguous, it returns an error so callers
-// can fail closed.
-//
-// Reads through the consolidated GitHubClient; without a Ready gh-axi the
-// query fails closed and no raw gh runs.
-var QueryPRMergeStatus = func(ghURL domain.GHURL) (*domain.PRMergeStatus, error) {
-	client, err := DefaultGitHubClient()
-	if err != nil {
-		return nil, err
-	}
-	data, err := client.ViewPRJSON(ghURL.Owner, ghURL.Repo, ghURL.Num, "state,headRefOid,mergeCommit")
-	if err != nil {
-		return nil, err
-	}
-	return parsePRMergeStatus(data)
-}
-
-// QueryDeliveryMergeStatus fetches the merge status from the appropriate
-// provider based on the delivery identity. Routes to existing QueryPRMergeStatus
-// for GitHub PRs, and to the GitLab status path for GitLab MRs.
-// Fail-closed on an unrecognized provider or a provider capability that is
-// not Ready.
-var QueryDeliveryMergeStatus = func(ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
+// QueryDeliveryMergeStatus fetches the merge status of a delivery identity from
+// the provider its task's captured forge step names. Reads go through the
+// step's resolved client; a forge that is not Ready, or that does not match the
+// identity's provider, fails closed and no other provider is consulted.
+var QueryDeliveryMergeStatus = func(forge taskauthority.DeliveryStep, ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
 	if ident == nil {
 		return nil, fmt.Errorf("delivery identity is nil")
 	}
-
-	switch ident.Provider {
-	case "github":
+	client, err := forgeClientForIdentity(forge, *ident)
+	if err != nil {
+		return nil, err
+	}
+	if client.github != nil {
 		ghURL, err := domain.ParseGHURL(ident.URL)
 		if err != nil {
 			return nil, fmt.Errorf("invalid GitHub URL in identity: %w", err)
 		}
-		return QueryPRMergeStatus(ghURL)
-	case "gitlab":
-		return queryGLMergeStatus(ident)
-	default:
-		return nil, fmt.Errorf("unknown provider %q in delivery identity", ident.Provider)
-	}
-}
-
-// queryGLMergeStatus queries GitLab MR merge status via the typed GitLabClient.
-// Fail-closed on every state but Ready.
-// Returns a domain.PRMergeStatus normalized from GitLab's state model.
-func queryGLMergeStatus(ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
-	return queryGLMergeStatusForState(ProbeGitLabCapability(), ident)
-}
-
-func queryGLMergeStatusForState(state backend.State, ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
-	switch state {
-	case backend.Ready:
-		// Use the typed GitLabClient
-		client, err := GitLabClientForState(state)
+		data, err := client.github.ViewPRJSON(ghURL.Owner, ghURL.Repo, ghURL.Num, "state,headRefOid,mergeCommit")
 		if err != nil {
-			return nil, fmt.Errorf("GitLab provider: %w", err)
+			return nil, err
 		}
-		return fetchGLMergeStatus(client, ident)
-	case backend.Failed:
-		return nil, fmt.Errorf("GitLab capability failed: cannot query MR status (use --force to override)")
-	case backend.Absent, backend.Unsupported:
-		return nil, fmt.Errorf("GitLab provider not available for MR status query (use --force to override)")
-	default:
-		return nil, fmt.Errorf("GitLab capability in unknown state: %v", state)
+		return parsePRMergeStatus(data)
 	}
+	return fetchGLMergeStatus(client.gitlab, ident)
 }
 
 // fetchGLMergeStatus queries the GitLab MR status via the typed client.

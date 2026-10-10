@@ -9,6 +9,7 @@ import (
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/minhtri2710/munsu/internal/backend"
+	"github.com/minhtri2710/munsu/internal/config"
 )
 
 // MinNoMistakesVersion is the minimum compatible no-mistakes version.
@@ -156,7 +157,7 @@ func ProbeNoMistakesGateAgent(repoPath string, cfg noMistakesConfig, available f
 		p.Blocker = &GateBlockerError{
 			Category: GateBlockerUnsupportedNeutralization,
 			Detail:   fmt.Sprintf("no available gate agent (%s) can neutralize this repository's AGENTS.md/CLAUDE.md without disable_project_settings", strings.Join(availableAgents, ", ")),
-			Guidance: "enable disable_project_settings: true in .no-mistakes.yaml, select codex or claude with preserved neutralization in ~/.no-mistakes/config.yaml, or pass --mode direct-PR",
+			Guidance: "enable disable_project_settings: true in .no-mistakes.yaml, select codex or claude with preserved neutralization in ~/.no-mistakes/config.yaml, or remove the review tool entry to run the baseline",
 		}
 	}
 	return p
@@ -257,98 +258,53 @@ func (p ProbeResult) String() string {
 	}
 }
 
-// NoMistakesProbe probes no-mistakes availability end-to-end:
-// binary presence, version parsing, version compatibility, and axi command surface.
-// It does not modify any state and is safe to call repeatedly.
-func NoMistakesProbe() ProbeResult {
-	path, err := exec.LookPath("no-mistakes")
-	if err != nil {
-		return ProbeResult{
-			State:  backend.Absent,
-			Detail: "no-mistakes not found on PATH",
+// ProbeNoMistakesTool probes the configured executable and argv suffix through
+// the no-mistakes version and AXI status surfaces.
+func ProbeNoMistakesTool(entry config.ToolEntry) ProbeResult {
+	path := entry.Path
+	if path == "" {
+		var err error
+		path, err = exec.LookPath("no-mistakes")
+		if err != nil {
+			return ProbeResult{State: backend.Absent, Detail: "no-mistakes not found on PATH"}
 		}
 	}
-
-	out, err := exec.Command("no-mistakes", "--version").Output()
+	run := func(args ...string) ([]byte, error) {
+		argv := append(args, entry.Args...)
+		return exec.Command(path, argv...).Output()
+	}
+	out, err := run("--version")
 	if err != nil {
-		return ProbeResult{
-			State:  backend.Failed,
-			Path:   path,
-			Detail: fmt.Sprintf("cannot check version: %v", err),
-		}
+		return ProbeResult{State: backend.Failed, Path: path, Detail: fmt.Sprintf("cannot check version: %v", err)}
 	}
 	ver := strings.TrimSpace(string(out))
 	if ver == "" {
-		return ProbeResult{
-			State:  backend.Failed,
-			Path:   path,
-			Detail: "no-mistakes --version returned empty output",
-		}
+		return ProbeResult{State: backend.Failed, Path: path, Detail: "no-mistakes --version returned empty output"}
 	}
-
 	cleanVer := strings.TrimPrefix(ver, "v")
-	// Handle format: "no-mistakes version v1.40.0 (87a5477) ..."
-	// Strip leading "no-mistakes version " if present
 	if strings.HasPrefix(cleanVer, "no-mistakes version ") {
-		cleanVer = cleanVer[len("no-mistakes version "):]
-		cleanVer = strings.TrimPrefix(cleanVer, "v")
+		cleanVer = strings.TrimPrefix(strings.TrimPrefix(cleanVer, "no-mistakes version "), "v")
 	}
-	// Extract first version component (e.g. "1.40.0" from "1.40.0 (87a5477)")
 	if idx := strings.IndexAny(cleanVer, " ("); idx > 0 {
 		cleanVer = cleanVer[:idx]
 	}
-
 	parsed, err := semver.NewVersion(cleanVer)
 	if err != nil {
-		return ProbeResult{
-			State:   backend.Failed,
-			Path:    path,
-			Version: ver,
-			Detail:  fmt.Sprintf("cannot parse version %q: %v", ver, err),
-		}
+		return ProbeResult{State: backend.Failed, Path: path, Version: ver, Detail: fmt.Sprintf("cannot parse version %q: %v", ver, err)}
 	}
-
 	minVer, err := semver.NewVersion(MinNoMistakesVersion)
 	if err != nil {
-		return ProbeResult{
-			State:  backend.Failed,
-			Path:   path,
-			Detail: fmt.Sprintf("invalid minimum version %q: %v", MinNoMistakesVersion, err),
-		}
+		return ProbeResult{State: backend.Failed, Path: path, Detail: fmt.Sprintf("invalid minimum version %q: %v", MinNoMistakesVersion, err)}
 	}
-
 	if parsed.LessThan(minVer) {
-		return ProbeResult{
-			State:   backend.Unsupported,
-			Path:    path,
-			Version: parsed.String(),
-			Detail:  fmt.Sprintf("no-mistakes version %s < minimum %s", parsed.String(), MinNoMistakesVersion),
-		}
+		return ProbeResult{State: backend.Unsupported, Path: path, Version: parsed.String(), Detail: fmt.Sprintf("no-mistakes version %s < minimum %s", parsed.String(), MinNoMistakesVersion)}
 	}
-
-	// Verify the axi command surface is available by probing axi status help.
-	axiOut, err := exec.Command("no-mistakes", "axi", "status", "--help").Output()
+	axiOut, err := run("axi", "status", "--help")
 	if err != nil {
-		return ProbeResult{
-			State:   backend.Failed,
-			Path:    path,
-			Version: parsed.String(),
-			Detail:  fmt.Sprintf("axi command surface not available: %v", err),
-		}
+		return ProbeResult{State: backend.Failed, Path: path, Version: parsed.String(), Detail: fmt.Sprintf("axi command surface not available: %v", err)}
 	}
 	if !strings.Contains(string(axiOut), "status") {
-		return ProbeResult{
-			State:   backend.Failed,
-			Path:    path,
-			Version: parsed.String(),
-			Detail:  "axi status subcommand not recognized",
-		}
+		return ProbeResult{State: backend.Failed, Path: path, Version: parsed.String(), Detail: "axi status subcommand not recognized"}
 	}
-
-	return ProbeResult{
-		State:   backend.Ready,
-		Path:    path,
-		Version: parsed.String(),
-		Detail:  "found on PATH, version compatible, axi surface available",
-	}
+	return ProbeResult{State: backend.Ready, Path: path, Version: parsed.String(), Detail: "configured executable, version compatible, axi surface available"}
 }

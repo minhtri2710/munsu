@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/backend"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // PreflightResult captures the result of a delivery mode preflight check.
@@ -27,12 +28,12 @@ type Check struct {
 // project-local checks such as has-remote). Returns a PreflightResult with
 // individual check results; callers should inspect Feasible to decide
 // whether to proceed.
-func Preflight(mode, repoPath string) (*PreflightResult, error) {
+func Preflight(mode, repoPath string, forge taskauthority.DeliveryStep) (*PreflightResult, error) {
 	switch mode {
 	case "no-mistakes":
-		return preflightNoMistakes()
+		return &PreflightResult{Mode: mode, Feasible: true}, nil
 	case "direct-PR":
-		return preflightDirectPR(repoPath)
+		return preflightDirectPR(repoPath, forge)
 	case "local-only":
 		return preflightLocalOnly()
 	default:
@@ -40,31 +41,13 @@ func Preflight(mode, repoPath string) (*PreflightResult, error) {
 	}
 }
 
-func preflightNoMistakes() (*PreflightResult, error) {
-	checks := []Check{
-		checkNoMistakesBinary(),
+func preflightDirectPR(repoPath string, forge taskauthority.DeliveryStep) (*PreflightResult, error) {
+	state := probeConfiguredForge(toolEntryOf(forge))
+	if state != backend.Ready {
+		return nil, fmt.Errorf("forge adapter %s probe %s: configured forge is not Ready", forge.Adapter, state)
 	}
-	// Only check version/compatibility if binary is found.
-	if checks[0].OK {
-		probe := NoMistakesProbe()
-		if probe.State != backend.Ready {
-			checks = append(checks, Check{
-				Name:   "no-mistakes-compat",
-				OK:     false,
-				Detail: probe.Detail,
-			})
-		}
-	}
-	result := &PreflightResult{Mode: "no-mistakes", Checks: checks}
-	result.Feasible = allOK(checks)
-	return result, nil
-}
-
-func preflightDirectPR(repoPath string) (*PreflightResult, error) {
-	checks := []Check{
-		checkGhAuth(),
-	}
-	if repoPath != "" {
+	checks := []Check{{Name: "forge-tool", OK: true, Detail: fmt.Sprintf("%s is Ready", forge.Adapter)}}
+	if repoPath != "" && forge.Adapter == "github" {
 		checks = append(checks, checkHasRemote(repoPath))
 	}
 	result := &PreflightResult{Mode: "direct-PR", Checks: checks}
@@ -77,33 +60,6 @@ func preflightLocalOnly() (*PreflightResult, error) {
 		{Name: "git-configured", OK: true, Detail: "local-only always feasible"},
 	}
 	return &PreflightResult{Mode: "local-only", Feasible: true, Checks: checks}, nil
-}
-
-func checkNoMistakesBinary() Check {
-	_, err := exec.LookPath("no-mistakes")
-	if err != nil {
-		return Check{
-			Name:   "no-mistakes-binary",
-			OK:     false,
-			Detail: "no-mistakes not on PATH; run 'go install github.com/kunchenguid/no-mistakes@latest'",
-		}
-	}
-	return Check{Name: "no-mistakes-binary", OK: true, Detail: "found on PATH"}
-}
-
-// checkGhAuth reports gh-auth OK only when `gh auth status` succeeds; a gh
-// or gh-axi binary on PATH is not evidence of authentication.
-func checkGhAuth() Check {
-	cmd := exec.Command("gh", "auth", "status")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return Check{
-			Name:   "gh-auth",
-			OK:     false,
-			Detail: fmt.Sprintf("gh auth failed: %s", strings.TrimSpace(string(out))),
-		}
-	}
-	return Check{Name: "gh-auth", OK: true, Detail: "authenticated"}
 }
 
 func checkHasRemote(repoPath string) Check {

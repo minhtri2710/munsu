@@ -132,13 +132,12 @@ func seedCaptainForTest(t *testing.T, parent, id string) string {
 func createTestPublishedSnapshot(t *testing.T, captainHome string) {
 	t.Helper()
 	resolved := config.ResolvedProjectConfig{
-		Project:           "test-project",
-		ProjectPath:       captainHome,
-		SoldierHarness:    "pi",
-		Backend:           "tmux",
-		RequireNoMistakes: true,
-		CaptainProfile:    config.CaptainProfile{Harness: "pi"},
-		Digest:            "0000000000000000000000000000000000000000000000000000000000000000",
+		Project:        "test-project",
+		ProjectPath:    captainHome,
+		SoldierHarness: "pi",
+		Backend:        "tmux",
+		CaptainProfile: config.CaptainProfile{Harness: "pi"},
+		Digest:         "0000000000000000000000000000000000000000000000000000000000000000",
 	}
 	if err := config.StorePublishedSnapshot(captainHome, resolved); err != nil {
 		t.Fatal(err)
@@ -193,7 +192,6 @@ func captainHomeWithSnapshot(t *testing.T, profile config.CaptainProfile) string
 type testProjectRecord struct {
 	Name   string
 	Path   string
-	Mode   string
 	Config config.ProjectOverlay
 }
 
@@ -245,7 +243,6 @@ func storeTestDocuments(t *testing.T, homeDir string, base config.FleetBaseDocum
 			ProjectID:    projectID,
 			Name:         p.Name,
 			Path:         p.Path,
-			Mode:         p.Mode,
 			Precondition: preconditionOf(rev),
 			Reason:       "test",
 		}

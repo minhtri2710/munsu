@@ -29,7 +29,11 @@ func MergeStatus(homeDir, id string) error {
 		return &MergeStatusError{Unverifiable: true, Err: fmt.Errorf("cannot read delivery identity: %w", err)}
 	}
 
-	status, err := QueryDeliveryMergeStatus(ident)
+	forge, err := taskForgeStep(homeDir, id)
+	if err != nil {
+		return &MergeStatusError{Unverifiable: true, Err: fmt.Errorf("merge status query: %w", err)}
+	}
+	status, err := QueryDeliveryMergeStatus(forge, ident)
 	if err != nil {
 		return &MergeStatusError{Unverifiable: true, Err: fmt.Errorf("merge status query: %w", err)}
 	}

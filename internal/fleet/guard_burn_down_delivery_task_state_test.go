@@ -14,7 +14,7 @@ func TestGuardBurnDownPrevalidateDeliveryTaskRefusesHeldOrTerminalTask(t *testin
 	t.Run("matching delivery hold", func(t *testing.T) {
 		c, _ := newFleetCanonical(t)
 		taskID := "t1"
-		mustWorkingDeliveryTask(t, c, taskID)
+		mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 		hold := taskauthority.CanonicalAddHoldRequest{
 			HomeID: c.HomeID(), HoldID: "delivery-hold",
 			Scope:   taskauthority.DispatchHoldScope{TaskIDs: []string{taskID}},
@@ -37,10 +37,10 @@ func TestGuardBurnDownPrevalidateDeliveryTaskRefusesHeldOrTerminalTask(t *testin
 	t.Run("terminal outcome", func(t *testing.T) {
 		c, _ := newFleetCanonical(t)
 		taskID := "t1"
-		mustWorkingDeliveryTask(t, c, taskID)
+		mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 		authReq := taskauthority.CanonicalDeliveryAuthorizationRequest{
 			HomeID: c.HomeID(), TaskID: mustFleetTaskID(t, taskID),
-			Precondition: domain.Of(1, 4), Words: deliveryWords(),
+			Precondition: domain.Of(1, 5), Words: deliveryWords(),
 			Kind: deliverRequest().Kind, Identity: deliveryTestIdentity(),
 			Preconditions: deliverRequest().Preconditions,
 		}
@@ -49,7 +49,7 @@ func TestGuardBurnDownPrevalidateDeliveryTaskRefusesHeldOrTerminalTask(t *testin
 		}
 		outReq := taskauthority.CanonicalDeliveryOutcomeRequest{
 			HomeID: c.HomeID(), TaskID: mustFleetTaskID(t, taskID),
-			Precondition: domain.Of(1, 5), AuthorizationOperationID: "op-terminal-auth",
+			Precondition: domain.Of(1, 6), AuthorizationOperationID: "op-terminal-auth",
 			Status: taskauthority.DeliveryOutcomeCompleted, Detail: "already merged",
 			HeadSHA: deliveryTestHead, MergedSHA: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
 		}

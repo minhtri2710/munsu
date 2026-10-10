@@ -620,7 +620,7 @@ func newRunFixture(t *testing.T, taskID string) *runFixture {
 	executing := &executingEndpointCapabilities{inner: endpoints, runCommand: scriptRunCommand(t)}
 	f := &launchFixture{t: t, auth: auth, homeDir: homeDir, repoPath: repoPath, taskID: taskID, endpoints: endpoints}
 	return &runFixture{launchFixture: f, exec: executing, counter: counter, run: func() (string, error) {
-		return NewRunner(Args{ID: taskID, ProjectName: "test-proj", Mode: "local-only", HomeDir: homeDir, Endpoints: executing, Authority: auth}).Run()
+		return NewRunner(Args{ID: taskID, ProjectName: "test-proj", HomeDir: homeDir, Endpoints: executing, Authority: auth}).Run()
 	}}
 }
 

@@ -4,15 +4,14 @@ package fleet
 
 import (
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/testutil"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 func TestPreflight_UnknownMode(t *testing.T) {
-	_, err := Preflight("bogus-mode", "")
+	_, err := Preflight("bogus-mode", "", taskauthority.DeliveryStep{})
 	if err == nil {
 		t.Fatal("expected error for unknown mode")
 	}
@@ -22,7 +21,7 @@ func TestPreflight_UnknownMode(t *testing.T) {
 }
 
 func TestPreflight_LocalOnlyAlwaysOK(t *testing.T) {
-	result, err := Preflight("local-only", "")
+	result, err := Preflight("local-only", "", taskauthority.DeliveryStep{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,89 +36,41 @@ func TestPreflight_LocalOnlyAlwaysOK(t *testing.T) {
 	}
 }
 
-func TestPreflight_NoMistakes_BinaryCheck(t *testing.T) {
-	t.Run("no binary on PATH", func(t *testing.T) {
+func TestPreflight_DirectPR_ForgeReadiness(t *testing.T) {
+	t.Run("forge not on PATH refuses", func(t *testing.T) {
 		t.Setenv("PATH", t.TempDir())
-		result, err := Preflight("no-mistakes", "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if result.Feasible {
-			t.Error("no-mistakes should not be feasible without binary on PATH")
-		}
-		if len(result.Checks) != 1 {
-			t.Fatalf("expected 1 check, got %d", len(result.Checks))
-		}
-		if result.Checks[0].OK {
-			t.Error("no-mistakes-binary should fail")
-		}
-		if !strings.Contains(result.Checks[0].Detail, "no-mistakes not on PATH") {
-			t.Errorf("expected PATH guidance, got: %s", result.Checks[0].Detail)
+		_, err := Preflight("direct-PR", "", githubForgeStep)
+		if err == nil || !strings.Contains(err.Error(), "configured forge is not Ready") {
+			t.Fatalf("expected configured-forge refusal, got: %v", err)
 		}
 	})
 
-	t.Run("binary on PATH", func(t *testing.T) {
-		if _, err := exec.LookPath("no-mistakes"); err != nil {
-			t.Skip("no-mistakes not on PATH, skipping positive test")
-		}
-		result, err := Preflight("no-mistakes", "")
+	t.Run("forge ready is feasible", func(t *testing.T) {
+		installFakeGH(t)
+		result, err := Preflight("direct-PR", "", githubForgeStep)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if !result.Feasible {
-			t.Error("no-mistakes should be feasible when binary is on PATH")
+			t.Errorf("direct-PR should be feasible with a Ready forge, checks: %v", result.Checks)
 		}
-	})
-}
-
-func TestPreflight_DirectPR_GhAuth(t *testing.T) {
-	t.Run("gh not available", func(t *testing.T) {
-		// Use a PATH where gh is definitely not found
-		t.Setenv("PATH", t.TempDir())
-		result, err := Preflight("direct-PR", "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if result.Feasible {
-			t.Error("direct-PR should not be feasible without gh auth")
-		}
-		if len(result.Checks) == 0 {
-			t.Fatal("expected at least one check")
-		}
-		if result.Checks[0].OK {
-			t.Error("gh-auth check should fail")
-		}
-	})
-
-	t.Run("gh auth active", func(t *testing.T) {
-		cmd := exec.Command("gh", "auth", "status")
-		if err := cmd.Run(); err != nil {
-			t.Skip("gh not authenticated, skipping positive test")
-		}
-		result, err := Preflight("direct-PR", "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(result.Checks) == 0 {
-			t.Fatal("expected at least one check")
-		}
-		if !result.Checks[0].OK {
-			t.Errorf("gh-auth check should pass when authenticated, got: %s", result.Checks[0].Detail)
+		if len(result.Checks) != 1 || result.Checks[0].Name != "forge-tool" {
+			t.Fatalf("expected one forge-tool check, got: %v", result.Checks)
 		}
 	})
 }
 
 func TestPreflight_DirectPR_HasRemote(t *testing.T) {
+	installFakeGH(t)
 	repo := t.TempDir()
 	initGitRepo(t, repo, "")
 
 	// Without remote, the has-remote check should fail when repoPath is provided
-	result, err := Preflight("direct-PR", repo)
+	result, err := Preflight("direct-PR", repo, githubForgeStep)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// gh auth might fail (expected in test env) but has-remote should be one of the checks
 	var hasRemoteCheck *Check
 	for i, c := range result.Checks {
 		if c.Name == "has-remote" {
@@ -141,7 +92,7 @@ func TestPreflight_DirectPR_HasRemote(t *testing.T) {
 		t.Fatalf("git remote add: %s", out)
 	}
 
-	result, err = Preflight("direct-PR", repo)
+	result, err = Preflight("direct-PR", repo, githubForgeStep)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,10 +104,8 @@ func TestPreflight_DirectPR_HasRemote(t *testing.T) {
 }
 
 func TestPreflight_DirectPR_SkipRemoteWhenNoRepoPath(t *testing.T) {
-	// Without repoPath, only gh auth should be checked
-	// Use a clean PATH to ensure gh auth fails (expected), but verify no has-remote check
-	t.Setenv("PATH", t.TempDir())
-	result, err := Preflight("direct-PR", "")
+	installFakeGH(t)
+	result, err := Preflight("direct-PR", "", githubForgeStep)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,16 +119,15 @@ func TestPreflight_DirectPR_SkipRemoteWhenNoRepoPath(t *testing.T) {
 	}
 }
 
-// TestCheckGhAuth_GhAxiOnPathIsNotAuthEvidence proves gh-auth reports OK only
-// when gh auth status succeeds, not merely because gh-axi is on PATH.
-func TestCheckGhAuth_GhAxiOnPathIsNotAuthEvidence(t *testing.T) {
-	bin := t.TempDir()
-	testutil.WriteFakeExecutable(t, filepath.Join(bin, "gh-axi"), "#!/bin/sh\nexit 0\n")
-	testutil.WriteFakeExecutable(t, filepath.Join(bin, "gh"), "#!/bin/sh\necho 'You are not logged into any GitHub hosts.' >&2\nexit 1\n")
-	testutil.SetPath(t, bin)
-
-	check := checkGhAuth()
-	if check.OK || !strings.Contains(check.Detail, "not logged into") {
-		t.Fatalf("checkGhAuth = %+v, want failure from gh auth status", check)
+// TestPreflightDeliveryBlocksInfeasibleDirectPR pins the runner-level refusal:
+// a direct-PR repo with no remote is infeasible, and the runner blocks it
+// before worktree acquisition.
+func TestPreflightDeliveryBlocksInfeasibleDirectPR(t *testing.T) {
+	installFakeGH(t)
+	repo := t.TempDir()
+	initGitRepo(t, repo, "")
+	r := &Runner{effectiveMode: "direct-PR", projPath: repo, forgeStep: githubForgeStep}
+	if err := r.preflightDelivery(); err == nil || !strings.Contains(err.Error(), "blocked") {
+		t.Fatalf("preflightDelivery = %v, want a blocked refusal without a remote", err)
 	}
 }

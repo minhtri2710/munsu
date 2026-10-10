@@ -14,7 +14,7 @@ func TestGuardBurnDownVerifyDeliveryCurrencyRefusesAuthorizationIdentity(t *test
 	t.Run("missing authorization", func(t *testing.T) {
 		c, _ := newFleetCanonical(t)
 		taskID := "t1"
-		mustWorkingDeliveryTask(t, c, taskID)
+		mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 		req := deliverRequest()
 		journal := &deliveryJournal{
 			TaskID: taskID, Generation: 1, Revision: 4, Kind: req.Kind,
@@ -30,11 +30,11 @@ func TestGuardBurnDownVerifyDeliveryCurrencyRefusesAuthorizationIdentity(t *test
 	t.Run("authorization operation identity", func(t *testing.T) {
 		c, _ := newFleetCanonical(t)
 		taskID := "t1"
-		mustWorkingDeliveryTask(t, c, taskID)
+		mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 		req := deliverRequest()
 		authReq := taskauthority.CanonicalDeliveryAuthorizationRequest{
 			HomeID: c.HomeID(), TaskID: mustFleetTaskID(t, taskID),
-			Precondition: domain.Of(1, 4), Kind: req.Kind, Identity: req.Identity,
+			Precondition: domain.Of(1, 5), Kind: req.Kind, Identity: req.Identity,
 			Preconditions: req.Preconditions, Words: deliveryWords(),
 		}
 		if _, err := c.AuthorizeDelivery(mustFleetOperation(t, "op-currency-auth", authReq), authReq); err != nil {
@@ -71,11 +71,11 @@ func TestGuardBurnDownVerifyDeliveryCurrencyRefusesKindHeadAndPreconditions(t *t
 		t.Run(tc.name, func(t *testing.T) {
 			c, _ := newFleetCanonical(t)
 			taskID := "t1"
-			mustWorkingDeliveryTask(t, c, taskID)
+			mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 			req := deliverRequest()
 			authReq := taskauthority.CanonicalDeliveryAuthorizationRequest{
 				HomeID: c.HomeID(), TaskID: mustFleetTaskID(t, taskID),
-				Precondition: domain.Of(1, 4), Kind: req.Kind, Identity: req.Identity,
+				Precondition: domain.Of(1, 5), Kind: req.Kind, Identity: req.Identity,
 				Preconditions: req.Preconditions, Words: deliveryWords(),
 			}
 			if _, err := c.AuthorizeDelivery(mustFleetOperation(t, "op-currency-auth", authReq), authReq); err != nil {

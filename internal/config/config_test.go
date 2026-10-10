@@ -87,35 +87,13 @@ func TestSetOverwrites(t *testing.T) {
 
 func TestKnownKeys(t *testing.T) {
 	known := KnownKeys
-	expected := []string{"backend", "parent-home", "soldier-harness", "captain-harness", "model", "model-allowlist", "default-mode", "wake-delivery-mode", "require-no-mistakes", "allow-direct-pr-fallback", "afk-digest-window", "afk-wedge-stale-beat", "afk-wedge-max-repeat", "afk-max-defer", "install-root"}
+	expected := []string{"backend", "parent-home", "soldier-harness", "captain-harness", "model", "model-allowlist", "wake-delivery-mode", "afk-digest-window", "afk-wedge-stale-beat", "afk-wedge-max-repeat", "afk-max-defer", "install-root"}
 	if len(known) != len(expected) {
 		t.Errorf("KnownKeys length = %d, want %d", len(known), len(expected))
 	}
-	for i, k := range expected {
-		if i < len(known) && known[i] != k {
-			t.Errorf("KnownKeys[%d] = %q, want %q", i, known[i], k)
-		}
-	}
-}
-
-func TestIsKnownKey(t *testing.T) {
-	tests := []struct {
-		key      string
-		expected bool
-	}{
-		{"backend", true},
-		{"soldier-harness", true},
-		{"captain-harness", true},
-		{"default-mode", true},
-		{"unknown", false},
-		{"nonexistent", false},
-		{"", false},
-		{"BACKEND", false}, // case-sensitive
-	}
-	for _, tt := range tests {
-		got := IsKnownKey(tt.key)
-		if got != tt.expected {
-			t.Errorf("IsKnownKey(%q) = %v, want %v", tt.key, got, tt.expected)
+	for i, key := range expected {
+		if i < len(known) && known[i] != key {
+			t.Errorf("KnownKeys[%d] = %q, want %q", i, known[i], key)
 		}
 	}
 }

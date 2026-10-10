@@ -36,7 +36,7 @@ func TestAddCloneTimesOutAndCleansUp(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := time.Now()
-	err := Add(homeDir, "hung", "https://example.invalid/hung.git", "", false)
+	err := Add(homeDir, "hung", "https://example.invalid/hung.git", false)
 	if elapsed := time.Since(start); elapsed > 10*time.Second {
 		t.Fatalf("Add returned after %s; the clone bound did not hold", elapsed)
 	}

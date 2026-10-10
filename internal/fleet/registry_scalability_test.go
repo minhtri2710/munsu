@@ -550,7 +550,6 @@ func mustRegisterProjectB(b benchTB, r *Registry, name string) {
 		ProjectID:    mustProjectIDB(b, name),
 		Name:         name,
 		Path:         "/proj/" + name,
-		Mode:         "no-mistakes",
 		Precondition: preconditionOf(rev),
 		Reason:       "register",
 	}

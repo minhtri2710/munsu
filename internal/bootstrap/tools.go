@@ -1,13 +1,5 @@
 package bootstrap
 
-import (
-	"errors"
-	"fmt"
-	"os"
-
-	"github.com/minhtri2710/munsu/internal/config"
-)
-
 // ToolSpec defines a tool that bootstrap checks for presence.
 type ToolSpec struct {
 	Name     string
@@ -34,29 +26,4 @@ func IsHardRequired(tool string) bool {
 		}
 	}
 	return false
-}
-
-// IsHardRequiredByConfig reports whether the tool is hard-required by the
-// typed fleet base config, and an error only when the operational config read
-// fails. Currently only handles no-mistakes via the base requireNoMistakes
-// field. Presence semantics are preserved: a base document that sets
-// requireNoMistakes: true treats no-mistakes as hard-required.
-//
-// Unsupported tools are never hard-required by config and return false, nil
-// without reading any config. An absent base document (fresh home) is treated
-// as not required (false, nil). Any other failure to read the base config is
-// returned as an error so callers fail closed rather than silently treating
-// the tool as optional.
-func IsHardRequiredByConfig(homeDir, tool string) (bool, error) {
-	if tool != "no-mistakes" {
-		return false, nil
-	}
-	base, err := config.LoadFleetBase(homeDir)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return false, nil
-		}
-		return false, fmt.Errorf("reading fleet base config: %w", err)
-	}
-	return base.Config.RequireNoMistakes != nil && *base.Config.RequireNoMistakes, nil
 }

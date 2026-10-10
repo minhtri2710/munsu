@@ -25,7 +25,6 @@ type RegisterProjectRequest struct {
 	ProjectID    domain.ProjectID
 	Name         string
 	Path         string
-	Mode         string
 	Yolo         bool
 	Precondition domain.Precondition
 	Reason       string
@@ -37,11 +36,10 @@ func (r RegisterProjectRequest) DigestBytes() ([]byte, error) {
 		ProjectID    string             `json:"project_id"`
 		Name         string             `json:"name"`
 		Path         string             `json:"path"`
-		Mode         string             `json:"mode"`
 		Yolo         bool               `json:"yolo"`
 		Precondition preconditionDigest `json:"precondition"`
 		Reason       string             `json:"reason"`
-	}{r.HomeID.Value(), r.ProjectID.Value(), r.Name, r.Path, r.Mode, r.Yolo, preconditionDigest(r.Precondition), r.Reason})
+	}{r.HomeID.Value(), r.ProjectID.Value(), r.Name, r.Path, r.Yolo, preconditionDigest(r.Precondition), r.Reason})
 }
 
 // RegisterProject is the canonical operation that registers one Project.
@@ -71,7 +69,7 @@ func (r *Registry) RegisterProject(op domain.Operation, req RegisterProjectReque
 		if doc.Projects[i].ID != req.ProjectID.Value() {
 			continue
 		}
-		if doc.Projects[i].Name == req.Name && doc.Projects[i].Path == req.Path && doc.Projects[i].Mode == req.Mode && doc.Projects[i].Yolo == req.Yolo {
+		if doc.Projects[i].Name == req.Name && doc.Projects[i].Path == req.Path && doc.Projects[i].Yolo == req.Yolo {
 			return Outcome{HomeID: req.HomeID, ProjectID: req.ProjectID}, nil
 		}
 		return Outcome{}, conflictError(ErrConflict, "project %s already exists with a different definition", req.ProjectID.Value())
@@ -83,7 +81,6 @@ func (r *Registry) RegisterProject(op domain.Operation, req RegisterProjectReque
 		ID:            req.ProjectID.Value(),
 		Name:          req.Name,
 		Path:          req.Path,
-		Mode:          req.Mode,
 		Yolo:          req.Yolo,
 		RegisteredAt:  r.now().Unix(),
 	})

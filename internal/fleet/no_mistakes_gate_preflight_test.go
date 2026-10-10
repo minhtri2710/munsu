@@ -1,14 +1,12 @@
 package fleet
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/backend"
-	fleetconfig "github.com/minhtri2710/munsu/internal/config"
 )
 
 // readyProbe is a probe stub that reports the installed no-mistakes reference
@@ -184,155 +182,15 @@ func TestProbeNoMistakesGateAgent_BlockerCategories(t *testing.T) {
 		}
 	})
 
-	t.Run("guidance names supported delivery-mode alternatives", func(t *testing.T) {
+	t.Run("guidance names the baseline alternative", func(t *testing.T) {
 		repo := t.TempDir()
 		os.WriteFile(filepath.Join(repo, "AGENTS.md"), []byte("instructions"), 0644)
 		probe := ProbeNoMistakesGateAgent(repo, noMistakesConfig{Agents: []string{"pi"}}, func(string) bool { return true }, readyProbe)
 		if probe.Blocker == nil {
 			t.Fatal("expected unsupported-neutralization blocker without opt-out and instructions")
 		}
-		if !strings.Contains(probe.Blocker.Guidance, "direct-PR") {
-			t.Errorf("guidance must offer explicit direct-PR selection, got: %s", probe.Blocker.Guidance)
+		if !strings.Contains(probe.Blocker.Guidance, "remove the review tool entry to run the baseline") {
+			t.Errorf("guidance must offer removing the review tool entry, got: %s", probe.Blocker.Guidance)
 		}
 	})
-}
-
-// TestRunnerPreflightNoMistakes_DirectPRFallback verifies the explicit
-// configured direct-PR policy contract: fallback only under policy, with the
-// blocker recorded as audit evidence; without policy the blocker fails closed.
-func TestRunnerPreflightNoMistakes_DirectPRFallback(t *testing.T) {
-	blocker := &GateBlockerError{
-		Category: GateBlockerUnsupportedNeutralization,
-		Detail:   "gate agent(s) opencode cannot neutralize",
-		Guidance: "select pi, codex, or claude",
-	}
-
-	t.Run("no policy fails closed with blocker", func(t *testing.T) {
-		r := NewRunner(Args{})
-		r.effectiveMode = "no-mistakes"
-		r.allowDirectPRFallback = false
-		r.args.NoMistakesPreflight = func(string) error { return blocker }
-
-		err := r.preflightNoMistakes()
-		if err == nil {
-			t.Fatal("expected blocker error without policy")
-		}
-		var got *GateBlockerError
-		if !errors.As(err, &got) || got.Category != GateBlockerUnsupportedNeutralization {
-			t.Fatalf("error = %v, want GateBlockerError(unsupported-neutralization)", err)
-		}
-		if r.effectiveMode != "no-mistakes" {
-			t.Errorf("effectiveMode must stay no-mistakes, got %q", r.effectiveMode)
-		}
-	})
-
-	t.Run("policy falls back to direct-PR with audit evidence", func(t *testing.T) {
-		r := NewRunner(Args{})
-		r.effectiveMode = "no-mistakes"
-		r.requestedMode = "no-mistakes"
-		r.allowDirectPRFallback = true
-		r.args.NoMistakesPreflight = func(string) error { return blocker }
-
-		if err := r.preflightNoMistakes(); err != nil {
-			t.Fatalf("policy fallback must not error: %v", err)
-		}
-		if r.effectiveMode != "direct-PR" {
-			t.Errorf("effectiveMode = %q, want direct-PR", r.effectiveMode)
-		}
-		if !strings.Contains(r.fallbackReason, "unsupported-neutralization") {
-			t.Errorf("fallbackReason must carry the exact blocker category: %q", r.fallbackReason)
-		}
-		if !strings.Contains(r.fallbackReason, "allow-direct-pr-fallback") {
-			t.Errorf("fallbackReason must record the policy basis: %q", r.fallbackReason)
-		}
-	})
-
-	t.Run("non-blocker error never falls back even with policy", func(t *testing.T) {
-		r := NewRunner(Args{})
-		r.effectiveMode = "no-mistakes"
-		r.allowDirectPRFallback = true
-		r.args.NoMistakesPreflight = func(string) error { return errors.New("unrelated failure") }
-
-		err := r.preflightNoMistakes()
-		if err == nil || !strings.Contains(err.Error(), "unrelated failure") {
-			t.Fatalf("unrelated errors must propagate, got %v", err)
-		}
-		if r.effectiveMode != "no-mistakes" {
-			t.Errorf("effectiveMode must not change, got %q", r.effectiveMode)
-		}
-	})
-
-	t.Run("non-no-mistakes mode skips preflight", func(t *testing.T) {
-		r := NewRunner(Args{})
-		r.effectiveMode = "direct-PR"
-		called := false
-		r.args.NoMistakesPreflight = func(string) error { called = true; return nil }
-		if err := r.preflightNoMistakes(); err != nil {
-			t.Fatal(err)
-		}
-		if called {
-			t.Fatal("preflight must be skipped outside no-mistakes mode")
-		}
-	})
-}
-
-// TestResolveSpawnProjectConfig_AllowDirectPRFallback verifies the explicit
-// configured direct-PR policy flows from the typed fleet base overlay into the
-// spawn project config (and thus the Runner), and defaults false.
-func TestResolveSpawnProjectConfig_AllowDirectPRFallback(t *testing.T) {
-	t.Run("base policy true resolves true", func(t *testing.T) {
-		home := t.TempDir()
-		storeTestDocuments(t, home, fleetconfig.FleetBaseDocument{
-			SchemaVersion: fleetconfig.FleetBaseSchemaVersion,
-			Config: fleetconfig.ProjectOverlay{
-				SoldierHarness:        "pi",
-				Backend:               "tmux",
-				AllowDirectPRFallback: &[]bool{true}[0],
-			},
-		}, []testProjectRecord{
-			{Name: "alpha", Path: filepath.Join(home, "projects", "alpha")},
-		}, nil)
-
-		resolved, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, DispatchPolicyGeneralDirect, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !resolved.AllowDirectPRFallback {
-			t.Error("AllowDirectPRFallback = false, want true from base overlay")
-		}
-	})
-
-	t.Run("unset policy defaults false", func(t *testing.T) {
-		home := t.TempDir()
-		storeTestDocuments(t, home, fleetconfig.FleetBaseDocument{
-			SchemaVersion: fleetconfig.FleetBaseSchemaVersion,
-			Config: fleetconfig.ProjectOverlay{
-				SoldierHarness: "pi",
-				Backend:        "tmux",
-			},
-		}, []testProjectRecord{
-			{Name: "alpha", Path: filepath.Join(home, "projects", "alpha")},
-		}, nil)
-
-		resolved, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, DispatchPolicyGeneralDirect, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if resolved.AllowDirectPRFallback {
-			t.Error("AllowDirectPRFallback = true, want false when unset")
-		}
-	})
-}
-
-// TestResolveDeliveryMode_DirectPRSelection verifies explicit direct-PR
-// selection always wins and never requires no-mistakes.
-func TestResolveDeliveryMode_DirectPRSelection(t *testing.T) {
-	t.Setenv("PATH", t.TempDir()) // no no-mistakes binary
-	mode, err := ResolveDeliveryMode("direct-PR", "", false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if mode != "direct-PR" {
-		t.Errorf("explicit direct-PR = %q, want direct-PR", mode)
-	}
 }

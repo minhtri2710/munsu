@@ -11,7 +11,7 @@ func TestGuardBurnDownDeliveryAuthorizationDigestRefusal(t *testing.T) {
 	t.Run("authorization digest mismatch", func(t *testing.T) {
 		c, _ := newFleetCanonical(t)
 		taskID := "t1"
-		mustWorkingDeliveryTask(t, c, taskID)
+		mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
 		req := deliverRequest()
 		agg, err := c.Get(mustFleetTaskID(t, taskID))
 		if err != nil {

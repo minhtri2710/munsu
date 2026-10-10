@@ -2,14 +2,12 @@
 package bootstrap
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
@@ -329,7 +327,7 @@ func scanSoldier(homeDir string) []StatusEntry {
 	entries = append(entries, checkWorktreeState(homeDir))
 
 	// No-mistakes or direct-PR readiness
-	entries = append(entries, checkPipelineReadiness(homeDir))
+	entries = append(entries, checkPipelineReadiness())
 
 	// Brief existence
 	entries = append(entries, checkSoldierBrief(homeDir))
@@ -364,37 +362,22 @@ func checkWorktreeState(homeDir string) StatusEntry {
 	}
 }
 
-func checkPipelineReadiness(homeDir string) StatusEntry {
-	// require-no-mistakes is a typed fleet base document field; the legacy flat
-	// config file is never read. A malformed document is surfaced (fail
-	// closed) rather than silently reported as direct-PR.
-	base, err := config.LoadFleetBase(homeDir)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return StatusEntry{
-			Subsystem: "pipeline_readiness",
-			Status:    StatusStale,
-			Detail:    fmt.Sprintf("cannot read fleet base config: %v", err),
-		}
-	}
-	if err == nil && base.Config.RequireNoMistakes != nil && *base.Config.RequireNoMistakes {
-		if _, err := exec.LookPath("no-mistakes"); err != nil {
-			return StatusEntry{
-				Subsystem: "pipeline_readiness",
-				Status:    StatusAbsent,
-				Detail:    "require-no-mistakes set but no-mistakes not on PATH",
-				RepairCmd: "go install github.com/kunchenguid/no-mistakes@latest",
-			}
-		}
+// checkPipelineReadiness reports the review tool that the delivery mode is
+// derived from. Each project's review and forge steps come from its own
+// configured tool entries (ADR-0028 §2, §5); a tool on PATH is reported and
+// never selected, so this check cannot fail a home.
+func checkPipelineReadiness() StatusEntry {
+	if _, err := exec.LookPath("no-mistakes"); err != nil {
 		return StatusEntry{
 			Subsystem: "pipeline_readiness",
 			Status:    StatusCurrent,
-			Detail:    "no-mistakes pipeline configured and available",
+			Detail:    "no-mistakes not on PATH; projects use the baseline review step",
 		}
 	}
 	return StatusEntry{
 		Subsystem: "pipeline_readiness",
 		Status:    StatusCurrent,
-		Detail:    "direct-PR mode (no require-no-mistakes)",
+		Detail:    "no-mistakes on PATH but unused until a project sets a review tool entry (munsu project config set review)",
 	}
 }
 

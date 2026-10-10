@@ -542,7 +542,7 @@ type emptyMergedSHATeardown struct {
 	fakeTeardown
 }
 
-func (emptyMergedSHATeardown) QueryMergeStatus(ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
+func (emptyMergedSHATeardown) QueryMergeStatus(_ taskauthority.DeliveryStep, ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
 	return &domain.PRMergeStatus{
 		Merged:    true,
 		State:     "MERGED",
@@ -560,7 +560,7 @@ func TestTopologyAwareMergeCheck_EmptyMergedSHA(t *testing.T) {
 		URL:      "https://github.com/test-owner/test-repo/pull/1",
 		HeadSHA:  "1111111111111111111111111111111111111111",
 	}
-	opts := Options{ID: "task-merge-check"}
+	opts := contractedMergeCheckOptions(t, "task-merge-check")
 	backend := emptyMergedSHATeardown{}
 
 	_, err := topologyAwareMergeCheck(opts, nil, "", ident, backend, nil)

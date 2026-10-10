@@ -185,29 +185,6 @@ func TestDefaultReadyPatterns(t *testing.T) {
 	}
 }
 
-func TestValidateDeliveryMode(t *testing.T) {
-	tests := []struct {
-		mode string
-		ok   bool
-	}{
-		{"", true},
-		{"no-mistakes", true},
-		{"direct-PR", true},
-		{"local-only", true},
-		{"invalid", false},
-		{"ship", false},
-	}
-	for _, tc := range tests {
-		err := ValidateDeliveryMode(tc.mode)
-		if tc.ok && err != nil {
-			t.Errorf("ValidateDeliveryMode(%q) = %v, want nil", tc.mode, err)
-		}
-		if !tc.ok && err == nil {
-			t.Errorf("ValidateDeliveryMode(%q) = nil, want error", tc.mode)
-		}
-	}
-}
-
 func TestRun_NoMistakesPreflightFailsBeforeSessionAllocation(t *testing.T) {
 	homeDir := t.TempDir()
 	projectDir := t.TempDir()
@@ -224,10 +201,9 @@ func TestRun_NoMistakesPreflightFailsBeforeSessionAllocation(t *testing.T) {
 	r := NewRunner(Args{
 		ID:          "test-task",
 		ProjectName: "test-project",
-		Mode:        "no-mistakes",
 		HomeDir:     homeDir,
 		Endpoints:   fakeEndpointCapabilities{backend: fake},
-		NoMistakesPreflight: func(repoPath string) error {
+		NoMistakesPreflight: func(repoPath string, _ taskauthority.DeliveryStep) error {
 			preflightCalled = true
 			if repoPath != projectDir {
 				t.Fatalf("repoPath=%q, want %q", repoPath, projectDir)
@@ -237,10 +213,14 @@ func TestRun_NoMistakesPreflightFailsBeforeSessionAllocation(t *testing.T) {
 	})
 	r.projPath = projectDir
 	r.effectiveMode = "no-mistakes"
+	r.reviewStep = taskauthority.DeliveryStep{Adapter: "no-mistakes", Path: "/fake/no-mistakes", ProbeState: "ready"}
 
 	err := r.preflightNoMistakes()
 	if err == nil || !strings.Contains(err.Error(), "incompatible") {
 		t.Fatalf("preflight error=%v", err)
+	}
+	if r.effectiveMode != "no-mistakes" {
+		t.Fatalf("effectiveMode = %q after a refused preflight, want no fallback", r.effectiveMode)
 	}
 	if !preflightCalled {
 		t.Fatal("preflight was not called")
@@ -371,209 +351,6 @@ func TestRun_InjectFakeEndpointCapabilities(t *testing.T) {
 	}
 }
 
-func TestResolveDeliveryMode_ProjectModeHonored(t *testing.T) {
-	mode, err := ResolveDeliveryMode("", "direct-PR", false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if mode != "direct-PR" {
-		t.Errorf("ResolveDeliveryMode project mode = %q, want %q", mode, "direct-PR")
-	}
-}
-
-func TestResolveDeliveryMode_ExplicitOverridesProject(t *testing.T) {
-	mode, err := ResolveDeliveryMode("local-only", "no-mistakes", false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if mode != "local-only" {
-		t.Errorf("ResolveDeliveryMode explicit = %q, want %q", mode, "local-only")
-	}
-}
-
-func TestResolveDeliveryMode_InvalidExplicit(t *testing.T) {
-	_, err := ResolveDeliveryMode("bogus", "", false)
-	if err == nil {
-		t.Fatal("expected error for invalid explicit mode")
-	}
-}
-
-func TestEnsureDeliveryModeRunnable_NoMistakesOnPath(t *testing.T) {
-	testutil.PrependPath(t, createFakeNoMistakesReady(t))
-	if err := EnsureDeliveryModeRunnable("no-mistakes"); err != nil {
-		t.Errorf("EnsureDeliveryModeRunnable(no-mistakes) = %v, want nil", err)
-	}
-}
-
-func TestEnsureDeliveryModeRunnable_DirectPR(t *testing.T) {
-	// direct-PR doesn't require any binary check
-	if err := EnsureDeliveryModeRunnable("direct-PR"); err != nil {
-		t.Errorf("direct-PR should always be runnable: %v", err)
-	}
-}
-
-func TestNoMistakesOnPath(t *testing.T) {
-	testutil.SetPath(t, t.TempDir())
-	if noMistakesOnPath() {
-		t.Fatal("noMistakesOnPath() = true with no no-mistakes on PATH")
-	}
-	emptyDir := t.TempDir()
-	testutil.WriteFakeExecutable(t, filepath.Join(emptyDir, "no-mistakes"), "#!/bin/sh\nexit 0\n")
-	testutil.SetPath(t, emptyDir)
-	if !noMistakesOnPath() {
-		t.Fatal("noMistakesOnPath() = false with no-mistakes on PATH")
-	}
-}
-
-func TestResolveDeliveryMode_AutoNoMistakesPresent(t *testing.T) {
-	// Create a fake no-mistakes binary on PATH
-	tmpDir := createFakeNoMistakesReady(t)
-	testutil.PrependPath(t, tmpDir)
-
-	mode, err := ResolveDeliveryMode("", "", false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if mode != "no-mistakes" {
-		t.Errorf("ResolveDeliveryMode auto = %q, want %q", mode, "no-mistakes")
-	}
-}
-
-func TestResolveDeliveryMode_AutoNoMistakesAbsent(t *testing.T) {
-	// Use a PATH where no-mistakes is definitely not found
-	t.Setenv("PATH", t.TempDir())
-
-	mode, err := ResolveDeliveryMode("", "", false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if mode != "direct-PR" {
-		t.Errorf("ResolveDeliveryMode auto without no-mistakes = %q, want %q", mode, "direct-PR")
-	}
-}
-
-func TestResolveDeliveryMode_ExplicitNoMistakesWithBinary(t *testing.T) {
-	// Fake no-mistakes on PATH, explicit flag
-	tmpDir := createFakeNoMistakesReady(t)
-	testutil.PrependPath(t, tmpDir)
-
-	mode, err := ResolveDeliveryMode("no-mistakes", "", false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if mode != "no-mistakes" {
-		t.Errorf("ResolveDeliveryMode explicit = %q, want %q", mode, "no-mistakes")
-	}
-}
-
-// TestResolveDeliveryMode_ExplicitNoMistakesNeverFallsBackToDirectPR verifies
-// that explicit --mode=no-mistakes never returns "direct-PR" on failure.
-func TestResolveDeliveryMode_ExplicitNoMistakesNeverFallsBackToDirectPR(t *testing.T) {
-	t.Run("absent binary", func(t *testing.T) {
-		t.Setenv("PATH", t.TempDir())
-		mode, err := ResolveDeliveryMode("no-mistakes", "", false)
-		if err == nil {
-			t.Fatalf("expected error, got mode=%q", mode)
-		}
-		if mode != "" {
-			t.Errorf("mode must be empty on error, got %q", mode)
-		}
-	})
-
-	t.Run("unsupported version", func(t *testing.T) {
-		tmpDir := createFakeNoMistakesVersion(t, "0.5.0")
-		testutil.PrependPath(t, tmpDir)
-
-		mode, err := ResolveDeliveryMode("no-mistakes", "", false)
-		if err == nil {
-			t.Fatalf("expected error for unsupported version, got mode=%q", mode)
-		}
-		if mode != "" {
-			t.Errorf("mode must be empty on error, got %q", mode)
-		}
-	})
-
-	t.Run("failed probe", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		binPath := filepath.Join(tmpDir, "no-mistakes")
-		testutil.WriteFakeExecutable(t, binPath, "#!/bin/sh\nexit 1\n")
-		testutil.PrependPath(t, tmpDir)
-
-		mode, err := ResolveDeliveryMode("no-mistakes", "", false)
-		if err == nil {
-			t.Fatalf("expected error for failed probe, got mode=%q", mode)
-		}
-		if mode != "" {
-			t.Errorf("mode must be empty on error, got %q", mode)
-		}
-	})
-}
-
-// TestResolveDeliveryMode_TypedNoMistakesNeverFallsBackToDirectPR verifies
-// that a typed resolved default mode of no-mistakes never returns "direct-PR"
-// on failure (the flat config/default-mode authority is retired).
-func TestResolveDeliveryMode_TypedNoMistakesNeverFallsBackToDirectPR(t *testing.T) {
-	t.Run("absent binary", func(t *testing.T) {
-		t.Setenv("PATH", t.TempDir())
-
-		mode, err := ResolveDeliveryMode("", "no-mistakes", false)
-		if err == nil {
-			t.Fatalf("expected error, got mode=%q", mode)
-		}
-		if mode != "" {
-			t.Errorf("mode must be empty on error, got %q", mode)
-		}
-	})
-
-	t.Run("unsupported version", func(t *testing.T) {
-		tmpDir := createFakeNoMistakesVersion(t, "0.5.0")
-		testutil.PrependPath(t, tmpDir)
-
-		mode, err := ResolveDeliveryMode("", "no-mistakes", false)
-		if err == nil {
-			t.Fatalf("expected error for unsupported version, got mode=%q", mode)
-		}
-		if mode != "" {
-			t.Errorf("mode must be empty on error, got %q", mode)
-		}
-	})
-}
-
-// TestResolveDeliveryMode_AutoFallbackOnIncompatible verifies that auto mode
-// falls back to direct-PR when no-mistakes is on PATH but incompatible.
-func TestResolveDeliveryMode_AutoFallbackOnIncompatible(t *testing.T) {
-	tmpDir := createFakeNoMistakesVersion(t, "0.5.0")
-	testutil.PrependPath(t, tmpDir)
-
-	mode, err := ResolveDeliveryMode("", "", false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if mode != "direct-PR" {
-		t.Errorf("auto should fallback to direct-PR for incompatible version, got %q", mode)
-	}
-}
-
-func TestRun_ValidatesModeFromArgsOnly(t *testing.T) {
-	// A bogus mode flag should still be rejected by Run.
-	t.Setenv("MUNSU_ROLE", "general")
-	t.Chdir(t.TempDir())
-	args := Args{
-		ID:          "test-task",
-		ProjectName: "test-project",
-		Mode:        "bogus-mode",
-		HomeDir:     seedTypedSpawnHome(t, "test-project"),
-		Endpoints:   fakeEndpointCapabilities{backend: &fakeBackend{}},
-	}
-	_, err := Spawn(args)
-	if err == nil {
-		t.Fatal("expected error for invalid mode")
-	}
-	if !strings.Contains(err.Error(), "invalid delivery mode") {
-		t.Errorf("expected 'invalid delivery mode' error, got: %v", err)
-	}
-}
-
 func TestRun_LifecycleGuardRefusesAbsentTask(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
@@ -594,7 +371,7 @@ func TestRun_LifecycleGuardRefusesAbsentTask(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := Add(tmpDir, "test-project", filepath.Join(tmpDir, "project"), "", false); err != nil {
+	if err := Add(tmpDir, "test-project", filepath.Join(tmpDir, "project"), false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -961,21 +738,20 @@ func TestSubmitLaunchExportsSoldierRoleAndGuardsSubmission(t *testing.T) {
 }
 
 func TestPreflightDelivery_BlocksOnDirectPRWithoutGhAuth(t *testing.T) {
-	// direct-PR preflight should fail when gh is not on PATH
+	// direct-PR preflight should fail when the captured github forge is not
+	// Ready, which is the case when gh-axi is not on PATH.
 	t.Setenv("PATH", t.TempDir())
 	r := &Runner{
 		effectiveMode: "direct-PR",
 		projPath:      "",
+		forgeStep:     taskauthority.DeliveryStep{Adapter: "github", Path: "/usr/local/bin/gh-axi", ProbeState: "ready"},
 	}
 	err := r.preflightDelivery()
 	if err == nil {
-		t.Fatal("expected preflight error for direct-PR without gh auth")
+		t.Fatal("expected preflight error for direct-PR without gh-axi")
 	}
-	if !strings.Contains(err.Error(), "gh-auth") {
-		t.Errorf("error should mention gh-auth, got: %v", err)
-	}
-	if !strings.Contains(err.Error(), "blocked") {
-		t.Errorf("error should say blocked, got: %v", err)
+	if !strings.Contains(err.Error(), "configured forge is not Ready") {
+		t.Errorf("error should refuse the non-Ready forge, got: %v", err)
 	}
 }
 
@@ -1228,6 +1004,26 @@ func TestCheckCaptainTaskAuthority_AllowsInFlightWithoutLiveMeta(t *testing.T) {
 // spawnRunFixture seeds a home, a registered git project and a scaffolded
 // brief for task reconcile-task, and returns the Args of a full Spawn over a
 // fake backend whose pane is never alive.
+// deliveryOverlayForMode returns the project tools a spawn fixture's mode label
+// stands for: no-mistakes is a Ready review tool with a github forge, direct-PR
+// a Ready github forge, and local-only the baseline.
+func deliveryOverlayForMode(t *testing.T, mode string) config.ProjectOverlay {
+	t.Helper()
+	switch mode {
+	case "no-mistakes":
+		installFakeGH(t)
+		return config.ProjectOverlay{
+			Review: &config.ToolEntry{Adapter: "no-mistakes", Path: filepath.Join(createFakeNoMistakesReady(t), "no-mistakes")},
+			Forge:  &config.ToolEntry{Adapter: "github"},
+		}
+	case "direct-PR":
+		installFakeGH(t)
+		return config.ProjectOverlay{Forge: &config.ToolEntry{Adapter: "github"}}
+	default:
+		return config.ProjectOverlay{}
+	}
+}
+
 func spawnRunFixture(t *testing.T, mode string, fakeBk *fakeBackend) (string, Args) {
 	t.Helper()
 	t.Setenv("MUNSU_ROLE", "general")
@@ -1260,12 +1056,13 @@ func spawnRunFixture(t *testing.T, mode string, fakeBk *fakeBackend) (string, Ar
 		t.Fatal(err)
 	}
 	// Typed project registry replaces the legacy projects.md: spawn resolves
-	// the project through the canonical Fleet Registry with the given mode.
+	// the project through the canonical Fleet Registry with the tools the mode
+	// stands for.
 	storeTestDocuments(t, homeDir, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
 		Config:        config.ProjectOverlay{SoldierHarness: "pi", Backend: "tmux"},
 	}, []testProjectRecord{
-		{Name: "test-proj", Path: projectDir, Mode: mode},
+		{Name: "test-proj", Path: projectDir, Config: deliveryOverlayForMode(t, mode)},
 	}, nil)
 
 	if err := Scaffold(ScaffoldOptions{HomeDir: homeDir, ID: "reconcile-task", Repo: "test-proj", Mode: mode}); err != nil {
@@ -1285,7 +1082,6 @@ func spawnRunFixture(t *testing.T, mode string, fakeBk *fakeBackend) (string, Ar
 		HarnessFlag: "pi",
 		HomeDir:     homeDir,
 		Endpoints:   fakeEndpointCapabilities{backend: fakeBk},
-		Mode:        mode,
 		Authority:   auth,
 	}
 }
@@ -1334,7 +1130,7 @@ func TestSpawn_RefusedFenceAllocatesNoPane(t *testing.T) {
 		return "default:w6F:p3", nil
 	}}
 	homeDir, args := spawnRunFixture(t, "no-mistakes", fakeBk)
-	args.NoMistakesPreflight = func(string) error { return nil }
+	args.NoMistakesPreflight = func(string, taskauthority.DeliveryStep) error { return nil }
 
 	_, err := Spawn(args)
 	if err == nil || !strings.Contains(err.Error(), "launch fence: ") {
@@ -1359,7 +1155,9 @@ func TestSpawn_FailedNoMistakesPreflightCommitsNoLaunchIntent(t *testing.T) {
 		return "default:w6F:p3", nil
 	}}
 	_, args := spawnRunFixture(t, "no-mistakes", fakeBk)
-	args.NoMistakesPreflight = func(string) error { return fmt.Errorf("incompatible no-mistakes gate agent") }
+	args.NoMistakesPreflight = func(string, taskauthority.DeliveryStep) error {
+		return fmt.Errorf("incompatible no-mistakes gate agent")
+	}
 
 	_, err := Spawn(args)
 	if err == nil || !strings.Contains(err.Error(), "incompatible no-mistakes gate agent") {
@@ -1392,9 +1190,7 @@ func TestRegression_ResolveSkillsWithoutSrcwalk(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			r := &Runner{
-				args: Args{
-					Mode: "direct-PR",
-				},
+				args:          Args{},
 				kind:          tc.kind,
 				effectiveMode: "direct-PR",
 				spawnRole:     "soldier",
@@ -1550,12 +1346,5 @@ func TestCheckBacklogAuthorityRequiresCanonicalAggregate(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(homeDir, "state", ".task-authority", "aggregates")); !os.IsNotExist(err) {
 		t.Fatal("checkBacklogAuthority created legacy v1 aggregate state")
-	}
-}
-
-func TestEnsureDeliveryModeRunnableHelperUnknownStateRefuses(t *testing.T) {
-	err := ensureDeliveryModeRunnableForProbe(ProbeResult{State: backend.State(99)})
-	if err == nil || !strings.Contains(err.Error(), "unexpected probe state") {
-		t.Fatalf("ensureDeliveryModeRunnableForProbe error = %v, want unknown-state refusal", err)
 	}
 }

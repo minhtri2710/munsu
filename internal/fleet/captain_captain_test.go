@@ -836,7 +836,7 @@ func TestConfigPush_Basic(t *testing.T) {
 			},
 		},
 	}, []testProjectRecord{
-		{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
+		{Name: "test-sm", Path: smHome},
 	}, nil)
 	if err := Register(parent, "test-sm", smHome, "", "test-sm"); err != nil {
 		t.Fatal(err)
@@ -888,7 +888,7 @@ func TestConfigPush_MirrorDeletions(t *testing.T) {
 	storeTestDocuments(t, parent, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
 	}, []testProjectRecord{
-		{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
+		{Name: "test-sm", Path: smHome},
 	}, nil)
 	if err := storeBase("pi"); err != nil {
 		t.Fatal(err)
@@ -943,7 +943,7 @@ func TestConfigPush_OnlyInheritableDeleted(t *testing.T) {
 		SchemaVersion: config.FleetBaseSchemaVersion,
 		Config:        config.ProjectOverlay{SoldierHarness: "pi", Backend: "tmux"},
 	}, []testProjectRecord{
-		{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
+		{Name: "test-sm", Path: smHome},
 	}, nil)
 	if err := Register(parent, "test-sm", smHome, "", "test-sm"); err != nil {
 		t.Fatal(err)
@@ -989,7 +989,7 @@ func TestConfigPush_CaptainShared(t *testing.T) {
 			Model:   "claude-sonnet",
 		},
 	}, []testProjectRecord{
-		{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
+		{Name: "test-sm", Path: smHome},
 	}, nil)
 	if err := Register(parent, "test-sm", smHome, "", "test-sm"); err != nil {
 		t.Fatal(err)
@@ -1033,7 +1033,7 @@ func TestConfigPush_CaptainSharedMirrorDeletion(t *testing.T) {
 	storeTestDocuments(t, parent, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
 	}, []testProjectRecord{
-		{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
+		{Name: "test-sm", Path: smHome},
 	}, nil)
 	if err := storeBase(config.CaptainProfile{Harness: "pi", Model: "claude-sonnet"}); err != nil {
 		t.Fatal(err)
@@ -1119,7 +1119,7 @@ func TestConfigPush_IdempotentPreservesMtime(t *testing.T) {
 		SchemaVersion: config.FleetBaseSchemaVersion,
 		Config:        config.ProjectOverlay{SoldierHarness: "pi", Backend: "tmux"},
 	}, []testProjectRecord{
-		{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
+		{Name: "test-sm", Path: smHome},
 	}, nil)
 	if err := Register(parent, "test-sm", smHome, "", "test-sm"); err != nil {
 		t.Fatal(err)
@@ -1163,8 +1163,8 @@ func TestConfigPush_ProjectsRegistry(t *testing.T) {
 		SchemaVersion: config.FleetBaseSchemaVersion,
 		Config:        config.ProjectOverlay{Backend: "tmux"},
 	}, []testProjectRecord{
-		{Name: "munsu", Path: repo, Mode: "no-mistakes"},
-		{Name: "toy", Path: "/tmp/toy", Mode: "no-mistakes"},
+		{Name: "munsu", Path: repo},
+		{Name: "toy", Path: "/tmp/toy"},
 	}, nil)
 	if err := Register(parent, "test-sm", smHome, "captain", "munsu"); err != nil {
 		t.Fatal(err)
@@ -2228,8 +2228,8 @@ func TestConverge_ValidMarkersWithConfigPush(t *testing.T) {
 		SchemaVersion: config.FleetBaseSchemaVersion,
 		Config:        config.ProjectOverlay{SoldierHarness: "pi", Backend: "tmux"},
 	}, []testProjectRecord{
-		{Name: "sm-alpha", Path: sm1, Mode: "no-mistakes"},
-		{Name: "sm-beta", Path: sm2, Mode: "no-mistakes"},
+		{Name: "sm-alpha", Path: sm1},
+		{Name: "sm-beta", Path: sm2},
 	}, []testCaptainRecord{
 		{ID: "sm-alpha", Home: sm1, Project: "sm-alpha"},
 		{ID: "sm-beta", Home: sm2, Project: "sm-beta"},
@@ -3114,7 +3114,7 @@ func TestConfigPush_RefusesTrackedDestination(t *testing.T) {
 		Config:         config.ProjectOverlay{SoldierHarness: "claude", Backend: "tmux"},
 		CaptainProfile: config.CaptainProfile{Harness: "pi"},
 	}, []testProjectRecord{
-		{Name: "test-captain", Path: project, Mode: "no-mistakes"},
+		{Name: "test-captain", Path: project},
 	}, []testCaptainRecord{
 		{ID: "test-captain", Home: homePath, Project: "test-captain"},
 	})
@@ -3316,7 +3316,7 @@ func TestManagedCleanState_AGENTSMD_PreservedAfterMultipleConfigPush(t *testing.
 		Config:         config.ProjectOverlay{SoldierHarness: "pi", Backend: "tmux"},
 		CaptainProfile: config.CaptainProfile{Harness: "pi"},
 	}, []testProjectRecord{
-		{Name: "test-captain", Path: project, Mode: "no-mistakes"},
+		{Name: "test-captain", Path: project},
 	}, []testCaptainRecord{
 		{ID: "test-captain", Home: homePath, Project: "test-captain"},
 	})

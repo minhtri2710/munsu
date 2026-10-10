@@ -73,7 +73,6 @@ func TestSpawn_DeniedExplicitModelFailsClosedBeforeSideEffects(t *testing.T) {
 	_, err := Spawn(Args{
 		ID:          "denied-task",
 		ProjectName: "test-project",
-		Mode:        "direct-PR",
 		HarnessFlag: harness.Pi,
 		ModelFlag:   "claude-sonnet-4-20250515",
 		HomeDir:     homeDir,
@@ -103,7 +102,6 @@ func TestSpawn_AutoSelectedDeniedModelFailsClosed(t *testing.T) {
 	_, err := Spawn(Args{
 		ID:          "auto-denied-task",
 		ProjectName: "test-project",
-		Mode:        "direct-PR",
 		HarnessFlag: harness.Codex, // no --model: resolves to template default gpt-5.2-codex
 		HomeDir:     homeDir,
 		Endpoints:   fakeEndpointCapabilities{backend: &fakeBackend{}},
@@ -128,7 +126,6 @@ func TestSpawn_AllowedModelPassesAllowlist(t *testing.T) {
 		ID:          "allowed-task",
 		Authority:   spawnAuthorityAt(t, homeDir, "allowed-task", "test-project"),
 		ProjectName: "test-project",
-		Mode:        "direct-PR",
 		HarnessFlag: harness.Pi,
 		ModelFlag:   "claude-sonnet-4-20250515",
 		HomeDir:     homeDir,
@@ -154,7 +151,6 @@ func TestSpawn_AbsentPolicyAllowsAnyModel(t *testing.T) {
 		ID:          "no-policy-task",
 		Authority:   spawnAuthorityAt(t, homeDir, "no-policy-task", "test-project"),
 		ProjectName: "test-project",
-		Mode:        "direct-PR",
 		HarnessFlag: harness.Pi,
 		ModelFlag:   "claude-sonnet-4-20250515",
 		HomeDir:     homeDir,
@@ -176,7 +172,6 @@ func TestSpawn_EmptyPolicyFailsClosed(t *testing.T) {
 	_, err := Spawn(Args{
 		ID:          "empty-policy-task",
 		ProjectName: "test-project",
-		Mode:        "direct-PR",
 		HarnessFlag: harness.Pi,
 		ModelFlag:   "claude-sonnet-4-20250515",
 		HomeDir:     homeDir,
@@ -199,7 +194,6 @@ func TestSpawn_MalformedPolicyFailsClosed(t *testing.T) {
 	_, err := Spawn(Args{
 		ID:          "malformed-policy-task",
 		ProjectName: "test-project",
-		Mode:        "direct-PR",
 		HarnessFlag: harness.Pi,
 		ModelFlag:   "claude-sonnet-4-20250515",
 		HomeDir:     homeDir,
@@ -338,7 +332,6 @@ func TestSpawn_UnresolvedModelFailsClosed(t *testing.T) {
 	_, err := Spawn(Args{
 		ID:          "unresolved-model-task",
 		ProjectName: "test-project",
-		Mode:        "direct-PR",
 		HarnessFlag: harness.Pi, // no --model, no dispatch, no template default for pi
 		HomeDir:     homeDir,
 		Endpoints:   fakeEndpointCapabilities{backend: &fakeBackend{}},
@@ -453,7 +446,6 @@ func TestSpawn_ProjectConfigModelValidatedNotTemplateDefault(t *testing.T) {
 		_, err := Spawn(Args{
 			ID:          "beta-denied",
 			ProjectName: "beta",
-			Mode:        "direct-PR",
 			HomeDir:     homeDir,
 			Endpoints:   fakeEndpointCapabilities{backend: &fakeBackend{}},
 		})
@@ -478,7 +470,6 @@ func TestSpawn_ProjectConfigModelValidatedNotTemplateDefault(t *testing.T) {
 			ID:          "beta-allowed",
 			Authority:   spawnAuthorityAt(t, homeDir, "beta-allowed", "beta"),
 			ProjectName: "beta",
-			Mode:        "direct-PR",
 			HomeDir:     homeDir,
 			Endpoints:   fakeEndpointCapabilities{backend: &fakeBackend{}},
 		})
@@ -507,8 +498,7 @@ func TestSpawn_DispatchSelectionResolvedOnce(t *testing.T) {
 	base := config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
 		Config: config.ProjectOverlay{
-			DefaultMode: "direct-pr",
-			Backend:     "tmux",
+			Backend: "tmux",
 			DispatchProfiles: []config.DispatchProfile{
 				{Name: "quota", Match: []string{"*"}, SelectStrategy: "quota-balanced",
 					Use: []config.DispatchCandidate{

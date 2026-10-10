@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // RetirementEndpointStatus is the typed endpoint observation reported by a
@@ -30,7 +31,7 @@ type BoundTeardown interface {
 	Probe(homeDir string, meta map[string]string) (RetirementEndpointStatus, error)
 	Dispose(homeDir string, meta map[string]string, request DisposeRequest) error
 	ReturnWorktree(homeDir, worktreePath string) error
-	QueryMergeStatus(ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error)
+	QueryMergeStatus(forge taskauthority.DeliveryStep, ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error)
 }
 
 type RetirementJournalPort interface {

@@ -196,25 +196,17 @@ func TestCanonicalReceiveTransfer(t *testing.T) {
 }
 
 // TestCanonicalReceiveTransferCarriesDeliveryContract proves a transferred
-// task keeps its recorded delivery contract — including a recorded fallback —
-// at the destination generation. A dropped contract at any wiring point (request
-// field, aggregate set) makes the destination read back nil. GetGeneration
-// reads the received-but-not-current generation directly.
+// task keeps the immutable resolved delivery contract at its destination.
+// GetGeneration reads the received-but-not-current generation directly.
 func TestCanonicalReceiveTransferCarriesDeliveryContract(t *testing.T) {
 	cDest, _, _ := newTestCanonical(t)
 
 	contract := &DeliveryContract{
 		OperationID: "op-contract-src",
 		Mode:        "direct-PR",
+		Review:      DeliveryStep{Baseline: true, ProbeState: "baseline"},
+		Forge:       DeliveryStep{Adapter: "gitlab", Path: "/bin/glab", ProbeState: "ready"},
 		RecordedAt:  100,
-		Fallback: &DeliveryFallback{
-			From:        "no-mistakes",
-			To:          "direct-PR",
-			Reason:      "no-mistakes capability lost",
-			Generation:  2,
-			OperationID: "op-fallback-src",
-			RecordedAt:  90,
-		},
 	}
 	req := receiveTransferRequest(t, cDest, "t1", "res-t1", "source-home", 3)
 	req.DeliveryContract = contract
@@ -233,11 +225,8 @@ func TestCanonicalReceiveTransferCarriesDeliveryContract(t *testing.T) {
 	if got.Mode != contract.Mode || got.OperationID != contract.OperationID || got.RecordedAt != contract.RecordedAt {
 		t.Fatalf("contract = %+v, want %+v", got, contract)
 	}
-	if got.Fallback == nil {
-		t.Fatal("received contract dropped its fallback provenance")
-	}
-	if *got.Fallback != *contract.Fallback {
-		t.Fatalf("fallback = %+v, want %+v", *got.Fallback, *contract.Fallback)
+	if !deliveryStepsEqual(got.Review, contract.Review) || !deliveryStepsEqual(got.Forge, contract.Forge) {
+		t.Fatalf("received steps = %+v/%+v, want %+v/%+v", got.Review, got.Forge, contract.Review, contract.Forge)
 	}
 }
 

@@ -28,43 +28,35 @@ func runProjectConfig(t *testing.T, args ...string) (string, error) {
 // no clone is attempted.
 func registerProject(t *testing.T, home, name string) {
 	t.Helper()
-	if err := fleet.Add(home, name, t.TempDir(), "", false); err != nil {
+	if err := fleet.Add(home, name, t.TempDir(), false); err != nil {
 		t.Fatalf("register project %q: %v", name, err)
 	}
 }
 
-// TestProjectConfigSetGetRoundTrip verifies a scalar overlay value written by
-// `set` is read back by `get`, and that it lands in the Config-owned overlay
-// document keyed by project name.
+// TestProjectConfigSetGetRoundTrip verifies a tool entry and a scalar overlay
+// value written by `set` are read back by `get`, and that they land in the
+// Config-owned overlay document keyed by project name.
 func TestProjectConfigSetGetRoundTrip(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("MUNSU_HOME", home)
 	registerProject(t, home, "sample")
 
-	if _, err := runProjectConfig(t, "set", "sample", "default-mode", "direct-PR"); err != nil {
-		t.Fatalf("set default-mode: %v", err)
+	if _, err := runProjectConfig(t, "set", "sample", "forge", `{"adapter":"github"}`); err != nil {
+		t.Fatalf("set forge: %v", err)
 	}
-	if _, err := runProjectConfig(t, "set", "sample", "require-no-mistakes", "true"); err != nil {
-		t.Fatalf("set require-no-mistakes: %v", err)
+	if _, err := runProjectConfig(t, "set", "sample", "review", `{"adapter":"no-mistakes"}`); err != nil {
+		t.Fatalf("set review: %v", err)
 	}
-
 	if _, err := runProjectConfig(t, "set", "sample", "tamper-check", "floor --base <base>"); err != nil {
 		t.Fatalf("set tamper-check: %v", err)
 	}
 
-	out, err := runProjectConfig(t, "get", "sample", "default-mode")
+	out, err := runProjectConfig(t, "get", "sample", "review")
 	if err != nil {
-		t.Fatalf("get default-mode: %v", err)
+		t.Fatalf("get review: %v", err)
 	}
-	if got := extractConfigValueFromTOON(out); got != "direct-PR" {
-		t.Errorf("get default-mode = %q, want %q", got, "direct-PR")
-	}
-	out, err = runProjectConfig(t, "get", "sample", "require-no-mistakes")
-	if err != nil {
-		t.Fatalf("get require-no-mistakes: %v", err)
-	}
-	if got := extractConfigValueFromTOON(out); got != "true" {
-		t.Errorf("get require-no-mistakes = %q, want %q", got, "true")
+	if got := extractConfigValueFromTOON(out); !strings.Contains(got, "no-mistakes") {
+		t.Errorf("get review = %q, want the stored no-mistakes tool entry", got)
 	}
 
 	out, err = runProjectConfig(t, "get", "sample", "tamper-check")
@@ -80,8 +72,8 @@ func TestProjectConfigSetGetRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadProjectOverlay: %v", err)
 	}
-	if overlay.DefaultMode != "direct-PR" || overlay.RequireNoMistakes == nil || !*overlay.RequireNoMistakes || overlay.TamperCheck != "floor --base <base>" {
-		t.Errorf("overlay = %+v, want DefaultMode=direct-PR RequireNoMistakes=true TamperCheck=%q", overlay, "floor --base <base>")
+	if overlay.Review == nil || overlay.Review.Adapter != "no-mistakes" || overlay.Forge == nil || overlay.Forge.Adapter != "github" || overlay.TamperCheck != "floor --base <base>" {
+		t.Errorf("overlay = %+v, want review no-mistakes, forge github, TamperCheck=%q", overlay, "floor --base <base>")
 	}
 }
 
@@ -92,54 +84,59 @@ func TestProjectConfigClearReturnsToInherit(t *testing.T) {
 	t.Setenv("MUNSU_HOME", home)
 	registerProject(t, home, "sample")
 
-	if _, err := runProjectConfig(t, "set", "sample", "default-mode", "direct-PR"); err != nil {
-		t.Fatalf("set default-mode: %v", err)
+	if _, err := runProjectConfig(t, "set", "sample", "forge", `{"adapter":"github"}`); err != nil {
+		t.Fatalf("set forge: %v", err)
+	}
+	if _, err := runProjectConfig(t, "set", "sample", "review", `{"adapter":"no-mistakes"}`); err != nil {
+		t.Fatalf("set review: %v", err)
 	}
 	if _, err := runProjectConfig(t, "set", "sample", "tamper-check", "floor --base <base>"); err != nil {
 		t.Fatalf("set tamper-check: %v", err)
 	}
-	if _, err := runProjectConfig(t, "set", "sample", "default-mode", ""); err != nil {
-		t.Fatalf("clear default-mode: %v", err)
+	// Clearing forge while review still needs it is refused, so review clears first.
+	if _, err := runProjectConfig(t, "set", "sample", "review", ""); err != nil {
+		t.Fatalf("clear review: %v", err)
+	}
+	if _, err := runProjectConfig(t, "set", "sample", "forge", ""); err != nil {
+		t.Fatalf("clear forge: %v", err)
 	}
 	if _, err := runProjectConfig(t, "set", "sample", "tamper-check", ""); err != nil {
 		t.Fatalf("clear tamper-check: %v", err)
 	}
-	out, err := runProjectConfig(t, "get", "sample", "default-mode")
+	out, err := runProjectConfig(t, "get", "sample", "review")
 	if err != nil {
-		t.Fatalf("get cleared default-mode: %v", err)
+		t.Fatalf("get cleared review: %v", err)
 	}
 	if out != "" {
-		t.Errorf("get cleared default-mode = %q, want empty (inherit base)", out)
+		t.Errorf("get cleared review = %q, want empty (inherit base)", out)
 	}
 
 	overlay, err := config.LoadProjectOverlay(home, "sample")
 	if err != nil {
 		t.Fatalf("LoadProjectOverlay: %v", err)
 	}
-	if overlay.DefaultMode != "" || overlay.TamperCheck != "" {
-		t.Errorf("cleared overlay DefaultMode = %q TamperCheck = %q, want empty", overlay.DefaultMode, overlay.TamperCheck)
+	if overlay.Review != nil || overlay.Forge != nil || overlay.TamperCheck != "" {
+		t.Errorf("cleared overlay review = %+v forge = %+v TamperCheck = %q, want empty", overlay.Review, overlay.Forge, overlay.TamperCheck)
 	}
 }
 
-// TestProjectConfigClearBoolReturnsToInherit verifies clearing a *bool key sets
-// it back to nil (inherit), distinct from an explicit false.
-func TestProjectConfigClearBoolReturnsToInherit(t *testing.T) {
+// TestProjectConfigRefusesInvalidToolEntryWithoutWriting verifies a tool entry
+// that fails config validation is refused and the overlay document is left as
+// it was.
+func TestProjectConfigRefusesInvalidToolEntryWithoutWriting(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("MUNSU_HOME", home)
 	registerProject(t, home, "sample")
 
-	if _, err := runProjectConfig(t, "set", "sample", "require-no-mistakes", "true"); err != nil {
-		t.Fatalf("set require-no-mistakes: %v", err)
-	}
-	if _, err := runProjectConfig(t, "set", "sample", "require-no-mistakes", ""); err != nil {
-		t.Fatalf("clear require-no-mistakes: %v", err)
+	if _, err := runProjectConfig(t, "set", "sample", "forge", `{"adapter":"github","path":"/usr/bin/gh-axi"}`); err == nil {
+		t.Fatal("set forge with a path on github should be refused")
 	}
 	overlay, err := config.LoadProjectOverlay(home, "sample")
 	if err != nil {
 		t.Fatalf("LoadProjectOverlay: %v", err)
 	}
-	if overlay.RequireNoMistakes != nil {
-		t.Errorf("cleared require-no-mistakes = %v, want nil (inherit base)", *overlay.RequireNoMistakes)
+	if overlay.Forge != nil {
+		t.Errorf("refused forge entry was written: %+v", overlay.Forge)
 	}
 }
 
@@ -164,7 +161,7 @@ func TestProjectConfigSetUnknownKeyRefused(t *testing.T) {
 func TestProjectConfigGetUnknownProjectRefused(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("MUNSU_HOME", home)
-	if _, err := runProjectConfig(t, "get", "ghost", "default-mode"); err == nil {
+	if _, err := runProjectConfig(t, "get", "ghost", "review"); err == nil {
 		t.Fatal("get for an unregistered project should be refused")
 	}
 }
@@ -172,26 +169,8 @@ func TestProjectConfigGetUnknownProjectRefused(t *testing.T) {
 func TestProjectConfigSetUnknownProjectRefused(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("MUNSU_HOME", home)
-	if _, err := runProjectConfig(t, "set", "ghost", "default-mode", "direct-PR"); err == nil {
+	if _, err := runProjectConfig(t, "set", "ghost", "forge", `{"adapter":"github"}`); err == nil {
 		t.Fatal("set for an unregistered project should be refused")
-	}
-}
-
-func TestProjectConfigSetInvalidDeliveryModeRefused(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("MUNSU_HOME", home)
-	registerProject(t, home, "sample")
-	if _, err := runProjectConfig(t, "set", "sample", "default-mode", "bogus-mode"); err == nil {
-		t.Fatal("set with an invalid delivery mode should be refused")
-	}
-}
-
-func TestProjectConfigSetInvalidBoolRefused(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("MUNSU_HOME", home)
-	registerProject(t, home, "sample")
-	if _, err := runProjectConfig(t, "set", "sample", "require-no-mistakes", "maybe"); err == nil {
-		t.Fatal("set with a non-bool require-no-mistakes should be refused")
 	}
 }
 
@@ -241,10 +220,10 @@ func TestProjectConfigMalformedOverlayDocFailsClosed(t *testing.T) {
 		t.Fatalf("write malformed overlay doc: %v", err)
 	}
 
-	if _, err := runProjectConfig(t, "get", "sample", "default-mode"); err == nil {
+	if _, err := runProjectConfig(t, "get", "sample", "review"); err == nil {
 		t.Fatal("get against a malformed overlay document should fail closed")
 	}
-	if _, err := runProjectConfig(t, "set", "sample", "default-mode", "direct-PR"); err == nil {
+	if _, err := runProjectConfig(t, "set", "sample", "forge", `{"adapter":"github"}`); err == nil {
 		t.Fatal("set against a malformed overlay document should fail closed")
 	}
 }

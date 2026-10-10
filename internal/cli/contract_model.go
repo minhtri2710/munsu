@@ -436,7 +436,6 @@ type TaskProjectionRow struct {
 // ProjectEntry is one row in a project list.
 type ProjectEntry struct {
 	Name        string `json:"name"`
-	Mode        string `json:"mode,omitempty"`
 	Yolo        bool   `json:"yolo,omitempty"`
 	Description string `json:"description,omitempty"`
 	Added       string `json:"added,omitempty"`

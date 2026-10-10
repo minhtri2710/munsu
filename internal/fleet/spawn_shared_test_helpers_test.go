@@ -50,17 +50,6 @@ func (f *fakeBackend) Teardown(windowID string) error {
 	return nil
 }
 
-// createFakeNoMistakesVersion creates a fake no-mistakes binary that reports
-// the given semver version string.
-func createFakeNoMistakesVersion(t *testing.T, version string) string {
-	t.Helper()
-	tmpDir := t.TempDir()
-	binPath := filepath.Join(tmpDir, "no-mistakes")
-	script := "#!/bin/sh\necho \"no-mistakes version v" + version + " (test)\"\nexit 0\n"
-	testutil.WriteFakeExecutable(t, binPath, script)
-	return tmpDir
-}
-
 // createFakeNoMistakesReady creates a fake no-mistakes binary that the
 // probe reports Ready: a compatible version and the axi status surface.
 func createFakeNoMistakesReady(t *testing.T) string {

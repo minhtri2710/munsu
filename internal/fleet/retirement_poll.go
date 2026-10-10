@@ -352,7 +352,11 @@ func ObserveMergedPoll(homeDir, taskID string) (bool, []byte, error) {
 	if err != nil {
 		return false, nil, fmt.Errorf("delivery identity: %w", err)
 	}
-	status, err := QueryDeliveryMergeStatus(ident)
+	forge, err := taskForgeStep(homeDir, taskID)
+	if err != nil {
+		return false, nil, fmt.Errorf("merge status query (preserving poll): %w", err)
+	}
+	status, err := QueryDeliveryMergeStatus(forge, ident)
 	if err != nil {
 		return false, nil, fmt.Errorf("merge status query (preserving poll): %w", err)
 	}

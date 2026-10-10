@@ -363,6 +363,9 @@ func setupMergedPollTest(t *testing.T, headSHA, baseRef string) (home, taskID, c
 	if err := mhome.WriteMeta(home, taskID, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
+	auth := mustAuthority(t, home)
+	canonicalCreateTask(t, auth, taskID, "ship", "")
+	seedSourceContract(t, auth, taskID, deliveryTestGitHubForge)
 
 	// Write check script.
 	checkPath = filepath.Join(stateDir, taskID+".check")
@@ -382,7 +385,7 @@ exit 0
 func installMockMergeStatus(t *testing.T, merged bool, headSHA, mergedSHA string) func() {
 	t.Helper()
 	orig := QueryDeliveryMergeStatus
-	QueryDeliveryMergeStatus = func(ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
+	QueryDeliveryMergeStatus = func(_ taskauthority.DeliveryStep, ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
 		state := "OPEN"
 		if merged {
 			state = "MERGED"
@@ -2045,7 +2048,7 @@ func TestObserveMergedPoll_ClosedUnmergedIsUnresolved(t *testing.T) {
 	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
 	defer cleanup()
 	orig := QueryDeliveryMergeStatus
-	QueryDeliveryMergeStatus = func(ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
+	QueryDeliveryMergeStatus = func(_ taskauthority.DeliveryStep, ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
 		return &domain.PRMergeStatus{
 			Merged:    false,
 			MergedSHA: "",
@@ -2072,7 +2075,7 @@ func TestObserveMergedPoll_ProviderErrorPreservesPoll(t *testing.T) {
 	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
 	defer cleanup()
 	orig := QueryDeliveryMergeStatus
-	QueryDeliveryMergeStatus = func(ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
+	QueryDeliveryMergeStatus = func(_ taskauthority.DeliveryStep, ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
 		return nil, fmt.Errorf("network error")
 	}
 	defer func() { QueryDeliveryMergeStatus = orig }()
@@ -2135,7 +2138,7 @@ func TestObserveMergedPoll_MergedSHAFallsBackToHead(t *testing.T) {
 	home, taskID, _, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
 	defer cleanup()
 	orig := QueryDeliveryMergeStatus
-	QueryDeliveryMergeStatus = func(ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
+	QueryDeliveryMergeStatus = func(_ taskauthority.DeliveryStep, ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
 		return &domain.PRMergeStatus{Merged: true, HeadSHA: ident.HeadSHA, State: "MERGED"}, nil
 	}
 	defer func() { QueryDeliveryMergeStatus = orig }()
@@ -2218,7 +2221,7 @@ func TestRetirementGitLabIdentity(t *testing.T) {
 	}
 
 	orig := QueryDeliveryMergeStatus
-	QueryDeliveryMergeStatus = func(ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
+	QueryDeliveryMergeStatus = func(_ taskauthority.DeliveryStep, ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
 		return &domain.PRMergeStatus{
 			Merged:    true,
 			MergedSHA: "gl-merged-sha",
@@ -2411,7 +2414,7 @@ func TestRetireMergedPoll_RequiresCanonicalCompletedOutcome(t *testing.T) {
 	restore := installMockMergeStatus(t, true, "0000111122223333444455556666777788889999", "aaaabbbbccccddddeeeeffff0000111122223333")
 	defer restore()
 
-	auth := canonicalMergeTestAuth(t, home, taskID)
+	auth := mustAuthority(t, home)
 	if err := observeAndRetire(t, home, taskID, checkPath, auth); err == nil || !strings.Contains(err.Error(), "canonical delivery outcome") {
 		t.Fatalf("RetireMergedPoll err = %v, want canonical-outcome refusal", err)
 	}
