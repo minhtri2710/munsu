@@ -357,15 +357,15 @@ func evaluateParsedGitMutation(homeDir, taskID string, parsed gitCommandSafety) 
 	if reason := validateGitTargetBinding(parsed, binding); reason != "" {
 		return true, reason
 	}
-	if reason := validateGitMutationAuthority(homeDir, taskID, parsed, binding, auth, tid); reason != "" {
+	if reason := validateGitMutationAuthority(taskID, parsed, binding); reason != "" {
 		return true, reason
 	}
 	return false, ""
 }
 
-// validateGitMutationAuthority enforces branch, task-local edits, and exact-head
-// granted pushes. Force/delete/rewrite forms remain unconditionally denied.
-func validateGitMutationAuthority(homeDir, taskID string, g gitCommandSafety, binding *taskauthority.WorktreeBinding, auth *taskauthority.Canonical, tid domain.TaskID) string {
+// validateGitMutationAuthority enforces the task-local branch, task-local edits,
+// and push targets. Force/delete/rewrite forms remain unconditionally denied.
+func validateGitMutationAuthority(taskID string, g gitCommandSafety, binding *taskauthority.WorktreeBinding) string {
 	taskBranch := "mu/" + taskID
 	currentBranch, err := gitSafetyOutput(binding.Path, "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {
@@ -405,7 +405,7 @@ func validateGitMutationAuthority(homeDir, taskID string, g gitCommandSafety, bi
 	case "push":
 		remote, refspec, allowed := pushTargetAllowed(taskBranch, g.args)
 		if !allowed {
-			return "default Ship authority permits only task-local branch, add, commit, and granted push"
+			return "default Ship authority permits only task-local branch, add, commit, and push"
 		}
 		if remote == "no-mistakes" {
 			if _, err := gitSafetyOutput(binding.Path, "config", "--get", "remote.no-mistakes.url"); err != nil {
@@ -417,20 +417,9 @@ func validateGitMutationAuthority(homeDir, taskID string, g gitCommandSafety, bi
 				}
 			}
 		}
-		head, err := pushedCommit(binding.Path)
-		if err != nil {
-			return "git push commit unavailable: " + err.Error()
-		}
-		granted, err := auth.HasPushGrant(tid, head)
-		if err != nil {
-			return fmt.Sprintf("push grant lookup failed for task %s commit %s: %v; publication is blocked", taskID, head, err)
-		}
-		if granted {
-			return ""
-		}
-		return fmt.Sprintf("push of task %s to %s commit %s has no matching Human grant; run `munsu report needs-decision \"push %s\"` and stop; wait for the General to record the grant before you retry", taskID, remote, head, head)
+		return ""
 	}
-	return "default Ship authority permits only task-local branch, add, commit, and granted push"
+	return "default Ship authority permits only task-local branch, add, commit, and push"
 }
 
 func validateNoMistakesPushMapping(worktree, taskBranch string) error {
@@ -442,14 +431,6 @@ func validateNoMistakesPushMapping(worktree, taskBranch string) error {
 		return fmt.Errorf("remote.no-mistakes.push must name only the current task branch")
 	}
 	return nil
-}
-
-func pushedCommit(worktree string) (string, error) {
-	head, err := gitSafetyOutput(worktree, "rev-parse", "--verify", "HEAD^{commit}")
-	if err != nil || !taskauthority.IsFullGitSHA(head) {
-		return "", fmt.Errorf("could not resolve full pushed commit SHA")
-	}
-	return strings.ToLower(head), nil
 }
 
 // gitCommandPath is a git command the classifier read on some path through
