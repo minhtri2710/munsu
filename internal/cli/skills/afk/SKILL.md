@@ -27,7 +27,7 @@ munsu afk
 
 # On return:
 munsu afk return
-# → reads the digest summary, prints escalations/wedges/blocked; accepts the
+# → reads the digest summary, prints escalations/blocked (a dead watcher is listed as a [wedge] escalation); accepts the
 #   drained soldier reports (any it cannot accept are listed with a
 #   `munsu inbox ack '<ref>'` hint)
 
@@ -44,7 +44,7 @@ See `REFERENCE.md` for the bundled contract:
 - Identity lock (`state/.afk.lock`) — prevents duplicate daemons per home
 - Sentinel marker (U+2063) — distinguishes wake-delivery nudges from captain input
 - Batched digest (`state/.afk-digest`) — 60s window accumulation
-- Wedge alarm — stale/missing beat, repeated wake
+- Wedge alarm — stale or missing watcher beat, one entry per incident
 - Return catch-up gate — `return check` confirms all-clear
 - Approval authority unchanged — AFK never merges or approves
 

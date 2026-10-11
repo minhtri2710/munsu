@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 )
@@ -32,10 +33,9 @@ const (
 
 // WakeReason describes an actionable watcher condition.
 type WakeReason struct {
-	Kind                 string // signal, stale, check
-	TaskIDs              []string
-	Message              string
-	DemandDeepInspection bool // set after stale-by-idle-seconds threshold for same task
+	Kind    string // signal, stale, check
+	TaskIDs []string
+	Message string
 	// ReportOwned marks a signal whose status line an uplink report already
 	// delivered as its own wake; the cycle records it but enqueues no second one.
 	ReportOwned bool
@@ -459,18 +459,9 @@ var (
 	// Persists across scanFleet calls within a process; protected for concurrent package use.
 	staleFirstSeenMu sync.Mutex
 	staleFirstSeen   = map[string]time.Time{}
-
-	// staleByIdleThreshold is the wall-clock duration a task must be continuously stale
-	// before demanding deep inspection (~15 seconds, matching firstmate's idle-seconds timer).
-	staleByIdleThreshold = 15 * time.Second
-
-	// pauseResurfaceThreshold is the max duration a paused task is absorbed
-	// before it surfaces as stale. After this threshold, a paused task
-	// triggers a stale wake so the general can reassess it.
-	pauseResurfaceThreshold = 5 * time.Minute
 )
 
-func scanFleetWithProbe(homeDir string, clearResolved bool, probe TaskEndpointProbe, states TaskStatePort, obs *cycleObservation) []*WakeReason {
+func scanFleetWithProbe(homeDir string, clearResolved bool, probe TaskEndpointProbe, states TaskStatePort, lv config.SeatLiveness, obs *cycleObservation) []*WakeReason {
 	entries, err := os.ReadDir(filepath.Join(homeDir, "state"))
 	if err != nil {
 		return nil
@@ -489,12 +480,18 @@ func scanFleetWithProbe(homeDir string, clearResolved bool, probe TaskEndpointPr
 			}
 		}
 		seenStatus[match.TaskID] = true
-		reasons = append(reasons, &WakeReason{
+		reason := &WakeReason{
 			Kind:        "signal",
 			TaskIDs:     []string{match.TaskID},
 			Message:     match.LastLine,
 			ReportOwned: reportOwnsStatus(homeDir, match.TaskID, match.LastLine),
-		})
+		}
+		if !reason.ReportOwned {
+			if r := repeatedFailureReason(homeDir, match.TaskID, lv, reason); r != nil {
+				reason = r
+			}
+		}
+		reasons = append(reasons, reason)
 	}
 	for _, entry := range entries {
 		if !strings.HasSuffix(entry.Name(), ".meta") || strings.HasPrefix(entry.Name(), ".") {
@@ -511,7 +508,7 @@ func scanFleetWithProbe(homeDir string, clearResolved bool, probe TaskEndpointPr
 		if obs != nil {
 			obs.scannedTasks++
 		}
-		reason := scanTaskWithProbe(homeDir, id, probe, states)
+		reason := scanTaskWithProbe(homeDir, id, probe, states, lv)
 		if reason == nil {
 			if clearResolved {
 				clearWakeMarker(homeDir, id)
@@ -548,6 +545,54 @@ func scanFleetWithProbe(homeDir string, clearResolved bool, probe TaskEndpointPr
 	return reasons
 }
 
+// repeatedFailureReason turns a seat repeating its last failed:/blocked: status
+// line into one stale incident per stage: the nudge at lv.RepeatNudge identical
+// lines and the end at lv.RepeatEnd. The message names the stage and never the
+// count, so each stage keeps one fingerprint. A different last line ends the
+// run, and the line is an ordinary signal again.
+//
+// A stage replaces signal only once the seat's watcher marker shows that line's
+// signal, or an earlier stage of it, was already queued: the General receives
+// the failure text first, and the next cycle escalates to the stage reached.
+func repeatedFailureReason(homeDir, id string, lv config.SeatLiveness, signal *WakeReason) *WakeReason {
+	lines, err := home.ReadStatus(homeDir, id)
+	if err != nil || len(lines) == 0 {
+		return nil
+	}
+	last := lines[len(lines)-1]
+	verb := domain.LineVerb(strings.TrimSpace(last))
+	if verb != "failed" && verb != "blocked" {
+		return nil
+	}
+	run := 0
+	for i := len(lines) - 1; i >= 0 && lines[i] == last; i-- {
+		run++
+	}
+	stage := func(label string) *WakeReason {
+		return &WakeReason{Kind: "stale", TaskIDs: []string{id}, Message: fmt.Sprintf("seat repeated the same %s status line (%s)", verb, label)}
+	}
+	nudge, end := stage("nudge: steer it"), stage("end: stuck, fail or relaunch it")
+	var due *WakeReason
+	switch {
+	case run >= lv.RepeatEnd:
+		due = end
+	case run >= lv.RepeatNudge:
+		due = nudge
+	default:
+		return nil
+	}
+	seen, err := os.ReadFile(home.WatcherSeenMarkerPath(homeDir, id))
+	if err != nil {
+		return nil
+	}
+	for _, queued := range []*WakeReason{signal, nudge, end} {
+		if string(seen) == wakeFingerprint(homeDir, queued) {
+			return due
+		}
+	}
+	return nil
+}
+
 func collectStatusIDs(stateDir string) map[string]struct{} {
 	out := map[string]struct{}{}
 	entries, err := os.ReadDir(stateDir)
@@ -568,7 +613,7 @@ func collectStatusIDs(stateDir string) map[string]struct{} {
 	return out
 }
 
-func scanTaskWithProbe(homeDir, id string, probe TaskEndpointProbe, states TaskStatePort) *WakeReason {
+func scanTaskWithProbe(homeDir, id string, probe TaskEndpointProbe, states TaskStatePort, lv config.SeatLiveness) *WakeReason {
 	meta, err := home.ReadMeta(homeDir, id)
 	if err != nil {
 		return nil
@@ -597,7 +642,7 @@ func scanTaskWithProbe(homeDir, id string, probe TaskEndpointProbe, states TaskS
 			// here (race), surface once with a stable message.
 			return handleStale(id, fmt.Sprintf("pane %s is dead (general-relevant status)", windowID))
 		}
-		if shouldAbsorbStale(homeDir, id, false, states) {
+		if shouldAbsorbStale(homeDir, id, false, states, lv) {
 			resetStreak(id)
 			return nil
 		}
@@ -607,11 +652,11 @@ func scanTaskWithProbe(homeDir, id string, probe TaskEndpointProbe, states TaskS
 	if statusPath, err := home.StatusFilePath(homeDir, id); err == nil {
 		if fi, err := os.Stat(statusPath); err == nil {
 			age := time.Since(fi.ModTime())
-			if age > StaleThreshold() {
+			if age > lv.SilentAfter {
 				if isStatusGeneralRelevant(homeDir, id) {
 					return handleStale(id, fmt.Sprintf("pane %s idle beyond threshold (general-relevant status)", windowID))
 				}
-				if shouldAbsorbStale(homeDir, id, true, states) {
+				if shouldAbsorbStale(homeDir, id, true, states, lv) {
 					resetStreak(id)
 					return nil
 				}
@@ -700,6 +745,11 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 		return false, fmt.Errorf("check validation capability is required")
 	}
 
+	lv, err := config.ReadSeatLiveness(homeDir)
+	if err != nil {
+		return false, err
+	}
+
 	// Snapshot recovery state before the call — prevents double invocation
 	// of the mailbox reconcile hook on cycle 1 (recovery handles startup).
 	_, recoveryWasDone := recoveryDone.Load(homeDir)
@@ -741,7 +791,7 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 
 	emitted := false
 	var humanNeeded []humanNeededEvent
-	for _, reason := range scanFleetWithProbe(homeDir, true, probe, states, obs) {
+	for _, reason := range scanFleetWithProbe(homeDir, true, probe, states, lv, obs) {
 		if len(reason.TaskIDs) == 0 {
 			continue
 		}
@@ -931,7 +981,7 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 }
 
 func wakeFingerprint(homeDir string, reason *WakeReason) string {
-	message := strings.TrimSuffix(reason.Message, "; demand-deep-inspection")
+	message := reason.Message
 	status := ""
 	if len(reason.TaskIDs) > 0 {
 		if lines, err := home.ReadStatus(homeDir, reason.TaskIDs[0]); err == nil && len(lines) > 0 {
@@ -1059,31 +1109,20 @@ func clearWakeMarker(homeDir, id string) {
 	_ = os.Remove(home.WatcherSeenMarkerPath(homeDir, id))
 }
 
-// handleStale creates a stale WakeReason with idle-seconds tracking.
-// After the task has been stale for staleByIdleThreshold (wall-clock time,
-// not poll count), it marks the reason as demanding deep inspection.
+// handleStale creates a stale WakeReason and records when the task was first
+// seen stale, for the cycle observation log.
 func handleStale(id, msg string) *WakeReason {
 	staleFirstSeenMu.Lock()
-	first, exists := staleFirstSeen[id]
-	if !exists {
+	if _, exists := staleFirstSeen[id]; !exists {
 		staleFirstSeen[id] = time.Now()
-		first = staleFirstSeen[id]
 	}
-	staleSince := time.Since(first)
 	staleFirstSeenMu.Unlock()
 
-	reason := &WakeReason{
+	return &WakeReason{
 		Kind:    "stale",
 		TaskIDs: []string{id},
 		Message: msg,
 	}
-
-	if staleSince >= staleByIdleThreshold {
-		reason.DemandDeepInspection = true
-		reason.Message += "; demand-deep-inspection"
-	}
-
-	return reason
 }
 
 // resetStreak clears the stale-first-seen timestamp for a task.
@@ -1125,7 +1164,7 @@ func absorbStaleSignal(s *ObservedTaskState) bool {
 // A paused task beyond the resurface threshold is NOT absorbed — it surfaces as stale.
 // A task whose last status is done has reported completion (an audit
 // projection, not attention), so its pane state is not a stale condition.
-func shouldAbsorbStale(homeDir, id string, paneAlive bool, states TaskStatePort) bool {
+func shouldAbsorbStale(homeDir, id string, paneAlive bool, states TaskStatePort, lv config.SeatLiveness) bool {
 	if isNoMistakesActive(homeDir, id, states) {
 		return true
 	}
@@ -1134,7 +1173,7 @@ func shouldAbsorbStale(homeDir, id string, paneAlive bool, states TaskStatePort)
 	}
 	// Check pause status: absorb only if within the resurface threshold.
 	if isStatusPaused(homeDir, id) {
-		return !isPausedBeyondResurface(homeDir, id)
+		return !isPausedBeyondResurface(homeDir, id, lv.SilentAfter)
 	}
 	if !paneAlive {
 		return false
@@ -1169,7 +1208,7 @@ func isStatusPaused(homeDir, id string) bool {
 // isPausedBeyondResurface reports whether a paused task has been paused
 // longer than the resurface threshold and should surface as stale.
 // Uses the status file's modification time as a proxy for pause duration.
-func isPausedBeyondResurface(homeDir, id string) bool {
+func isPausedBeyondResurface(homeDir, id string, after time.Duration) bool {
 	statusPath, err := home.StatusFilePath(homeDir, id)
 	if err != nil {
 		return false
@@ -1178,7 +1217,7 @@ func isPausedBeyondResurface(homeDir, id string) bool {
 	if err != nil {
 		return false
 	}
-	return time.Since(fi.ModTime()) > pauseResurfaceThreshold
+	return time.Since(fi.ModTime()) > after
 }
 
 // reportOwnsStatus reports whether line, taskID's last status line, is the

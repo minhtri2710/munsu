@@ -1,6 +1,6 @@
 # AFK supervision reference
 
-`munsu afk` runs a foreground away-mode daemon. It owns the consent flag, PID lock, batched digest, and wedge detection. It diagnoses and accumulates; it never writes to the General's pane. The only automatic writer into that pane is the watcher's wake dispatch (the `munsu-ops` skill), which defers every wake while `state/.afk` exists. `munsu afk return` stops the daemon and prints the digest, and accepts every soldier report drained into that digest, so the General runs no ack for it. A report that cannot be accepted is listed with its ref and the hint `munsu inbox ack '<ref>'`, to run once the cause is fixed; `munsu afk return check` exits non-zero while actionable state remains.
+`munsu afk` runs a foreground away-mode daemon. It owns the consent flag, PID lock, batched digest, and dead-watcher alarm (one `[wedge]` digest entry per stale or missing watcher beat incident). It diagnoses and accumulates; it never writes to the General's pane. The only automatic writer into that pane is the watcher's wake dispatch (the `munsu-ops` skill), which defers every wake while `state/.afk` exists. `munsu afk return` stops the daemon and prints the digest, and accepts every soldier report drained into that digest, so the General runs no ack for it. A report that cannot be accepted is listed with its ref and the hint `munsu inbox ack '<ref>'`, to run once the cause is fixed; `munsu afk return check` exits non-zero while actionable state remains.
 
 Safety invariants:
 
@@ -18,6 +18,5 @@ State files, all under `MUNSU_HOME`:
 | `state/.afk` | consent flag (RFC3339 timestamp) |
 | `state/.afk.lock` | identity lock of the running daemon |
 | `state/.afk-digest` | batched escalation digest (JSON), cleared on start |
-| `state/.afk-wedge-alarm` | prior wedge alarm marker, removed on start (nothing in this tree writes it) |
 | `state/.seen-*` | watcher dedup markers, cleared on start |
 | `state/.subsuper-*` | subsupervisor escalation artifacts, cleared on start |

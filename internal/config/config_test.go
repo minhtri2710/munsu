@@ -3,7 +3,9 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestSetAndGet(t *testing.T) {
@@ -87,7 +89,7 @@ func TestSetOverwrites(t *testing.T) {
 
 func TestKnownKeys(t *testing.T) {
 	known := KnownKeys
-	expected := []string{"backend", "parent-home", "soldier-harness", "captain-harness", "model", "model-allowlist", "wake-delivery-mode", "general-pane", "afk-digest-window", "afk-wedge-stale-beat", "afk-wedge-max-repeat", "afk-max-defer", "install-root"}
+	expected := []string{"backend", "parent-home", "soldier-harness", "captain-harness", "model", "model-allowlist", "wake-delivery-mode", "general-pane", "afk-digest-window", "seat-silent-after", "seat-repeat-nudge", "seat-repeat-end", "install-root"}
 	if len(known) != len(expected) {
 		t.Errorf("KnownKeys length = %d, want %d", len(known), len(expected))
 	}
@@ -95,5 +97,66 @@ func TestKnownKeys(t *testing.T) {
 		if i < len(known) && known[i] != key {
 			t.Errorf("KnownKeys[%d] = %q, want %q", i, known[i], key)
 		}
+	}
+}
+
+func TestSeatLivenessConfig(t *testing.T) {
+	rows := []struct {
+		name    string
+		sets    [][2]string
+		want    SeatLiveness
+		wantErr string
+	}{
+		{"unset-keys-take-the-starting-values", nil, SeatLiveness{SilentAfter: 5 * time.Minute, RepeatNudge: 5, RepeatEnd: 8}, ""},
+		{"set-keys-override", [][2]string{{"seat-silent-after", "90s"}, {"seat-repeat-end", "12"}, {"seat-repeat-nudge", "3"}}, SeatLiveness{SilentAfter: 90 * time.Second, RepeatNudge: 3, RepeatEnd: 12}, ""},
+		{"silence-must-be-a-positive-duration", [][2]string{{"seat-silent-after", "0s"}}, SeatLiveness{}, `config seat-silent-after "0s": want a positive duration such as 5m`},
+		{"silence-must-parse", [][2]string{{"seat-silent-after", "soon"}}, SeatLiveness{}, `config seat-silent-after "soon": want a positive duration such as 5m`},
+		{"nudge-must-be-at-least-two", [][2]string{{"seat-repeat-nudge", "1"}}, SeatLiveness{}, `config seat-repeat-nudge "1": want an integer of at least 2`},
+		{"end-must-follow-the-default-nudge", [][2]string{{"seat-repeat-end", "5"}}, SeatLiveness{}, `config seat-repeat-end 5: want an integer greater than seat-repeat-nudge 5`},
+		{"nudge-must-precede-the-set-end", [][2]string{{"seat-repeat-end", "9"}, {"seat-repeat-nudge", "9"}}, SeatLiveness{}, `config seat-repeat-end 9: want an integer greater than seat-repeat-nudge 9`},
+		{"deleted-key-is-unknown", [][2]string{{"afk-max-defer", "5m"}}, SeatLiveness{}, `unknown config key "afk-max-defer"`},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			h := t.TempDir()
+			for _, kv := range row.sets {
+				if err := Set(h, kv[0], kv[1]); err != nil {
+					if row.wantErr == "" || !strings.Contains(err.Error(), row.wantErr) {
+						t.Fatalf("Set %s %q error = %v, want %q", kv[0], kv[1], err, row.wantErr)
+					}
+					return
+				}
+			}
+			if row.wantErr != "" {
+				t.Fatalf("Set accepted %v, want error containing %q", row.sets, row.wantErr)
+			}
+			got, err := ReadSeatLiveness(h)
+			if err != nil || got != row.want {
+				t.Fatalf("ReadSeatLiveness = %+v, %v, want %+v", got, err, row.want)
+			}
+		})
+	}
+}
+
+func TestReadSeatLivenessRejectsAHandEditedValue(t *testing.T) {
+	h := t.TempDir()
+	if err := os.MkdirAll(ConfigDir(h), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ConfigDir(h), "seat-repeat-nudge"), []byte("many\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadSeatLiveness(h); err == nil || !strings.Contains(err.Error(), `config seat-repeat-nudge "many": want an integer of at least 2`) {
+		t.Fatalf("ReadSeatLiveness error = %v, want the key and its valid range", err)
+	}
+	// A bad file stays repairable one key at a time.
+	if err := Set(h, "seat-repeat-end", "9"); err != nil {
+		t.Fatalf("Set seat-repeat-end beside a bad nudge: %v", err)
+	}
+	if err := Set(h, "seat-repeat-nudge", "4"); err != nil {
+		t.Fatalf("Set seat-repeat-nudge: %v", err)
+	}
+	if _, err := ReadSeatLiveness(h); err != nil {
+		t.Fatalf("ReadSeatLiveness after repair: %v", err)
 	}
 }

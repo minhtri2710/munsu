@@ -225,11 +225,11 @@ func TestPausedResurfaceEncodedID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	old := time.Now().Add(-pauseResurfaceThreshold - time.Hour)
+	old := time.Now().Add(-testSeatLiveness.SilentAfter - time.Hour)
 	if err := os.Chtimes(sp, old, old); err != nil {
 		t.Fatalf("Chtimes on %q: %v", sp, err)
 	}
-	if !isPausedBeyondResurface(tmp, id) {
+	if !isPausedBeyondResurface(tmp, id, testSeatLiveness.SilentAfter) {
 		t.Fatalf("isPausedBeyondResurface(%q) = false, want true (status at %q older than threshold)", id, sp)
 	}
 }

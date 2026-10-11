@@ -11,7 +11,6 @@ import (
 //
 // Actionable state includes:
 //   - Any non-routine escalation entries
-//   - Any wedge alarm
 //   - Any blocked item
 //
 // An absent digest is clean. An unreadable or unparseable digest is an
@@ -23,11 +22,6 @@ func IsClean(homeDir string) (bool, error) {
 	}
 	if be == nil {
 		return true, nil
-	}
-
-	// Check for wedge alarms.
-	if be.WedgeAlarm != nil {
-		return false, nil
 	}
 
 	// Check for non-routine entries or blocked items.

@@ -77,7 +77,7 @@ func TestCycleObservation_ScannedCount(t *testing.T) {
 
 	// aliveTaskProbe reports every pane alive, so no task wakes.
 	obs := newCycleObservation()
-	reasons := scanFleetWithProbe(home, false, aliveTaskProbe{}, testTaskStatePort{}, obs)
+	reasons := scanFleetWithProbe(home, false, aliveTaskProbe{}, testTaskStatePort{}, testSeatLiveness, obs)
 	if len(reasons) != 0 {
 		t.Fatalf("alive fleet produced %d wake reasons, want 0", len(reasons))
 	}
@@ -126,7 +126,7 @@ func TestCycleObservation_StaleAgeCaptured(t *testing.T) {
 
 	obs := newCycleObservation()
 	obs.now = func() time.Time { return ref }
-	reasons := scanFleetWithProbe(home, false, testEndpointProbe{}, testTaskStatePort{}, obs)
+	reasons := scanFleetWithProbe(home, false, testEndpointProbe{}, testTaskStatePort{}, testSeatLiveness, obs)
 	if len(reasons) != 1 || reasons[0].Kind != "stale" {
 		t.Fatalf("expected one stale reason, got %v", reasons)
 	}
@@ -135,7 +135,7 @@ func TestCycleObservation_StaleAgeCaptured(t *testing.T) {
 	}
 	// The wall-clock age must NOT appear in the wake message (duplicate
 	// suppression depends on a stable message/fingerprint).
-	if msg := reasons[0].Message; msg != "pane w:z is dead; demand-deep-inspection" {
+	if msg := reasons[0].Message; msg != "pane w:z is dead" {
 		t.Fatalf("wake message = %q, want stable message with no wall-clock age", msg)
 	}
 	if fp := wakeFingerprint(home, reasons[0]); containsSubstr(fp, "1700000000") || containsSubstr(fp, "5s") {

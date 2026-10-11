@@ -21,9 +21,9 @@ var KnownKeys = []string{
 	"wake-delivery-mode",
 	"general-pane",
 	"afk-digest-window",
-	"afk-wedge-stale-beat",
-	"afk-wedge-max-repeat",
-	"afk-max-defer",
+	"seat-silent-after",
+	"seat-repeat-nudge",
+	"seat-repeat-end",
 	"install-root",
 }
 
@@ -70,6 +70,11 @@ func Get(homeDir, key string) (string, error) {
 func Set(homeDir, key, value string) error {
 	if !IsKnownKey(key) {
 		return fmt.Errorf("unknown config key %q", key)
+	}
+	if isSeatLivenessKey(key) {
+		if err := validateSeatLivenessSet(homeDir, key, strings.TrimSpace(value)); err != nil {
+			return err
+		}
 	}
 	p := filepath.Join(ConfigDir(homeDir), key)
 	dir := filepath.Dir(p)

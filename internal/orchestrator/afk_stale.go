@@ -18,7 +18,6 @@ import (
 //     except one holding uplink refs: those entries are the only copy of the
 //     reports' NotificationRefs, so it is kept and the next `munsu afk return`
 //     drains it (the digester appends to it meanwhile) and accepts them
-//   - state/.afk-wedge-alarm    — any prior wedge alarm marker
 //
 // Only operates within the given home directory — never touches sibling homes
 // or paths outside stateDir.
@@ -77,10 +76,6 @@ func isStaleArtifact(name string) bool {
 	}
 	// .afk-digest — prior batched escalation
 	if name == ".afk-digest" {
-		return true
-	}
-	// .afk-wedge-alarm — prior wedge marker
-	if name == ".afk-wedge-alarm" {
 		return true
 	}
 	return false
