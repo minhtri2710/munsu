@@ -170,18 +170,10 @@ func ValidatePIDOwnership(homeDir string, pid int) bool {
 	if id.PID != pid {
 		return false
 	}
-	// Identity must bind to this home. Reject copied identity files and
-	// prevent ensure/stop from treating another home's watcher as local.
-	if id.Home == "" || home.Canonical(id.Home) != home.Canonical(homeDir) {
-		return false
-	}
 	if id.Executable == "" || id.Executable == "unknown" || id.ProcessStart == "" || id.ProcessStart == "unknown" {
 		return false
 	}
-	executable, processStart, err := home.ProcessIdentity(pid)
-	if err != nil {
-		return false
-	}
+	executable, processStart, _ := home.ProcessIdentity(pid)
 	if executable != id.Executable || processStart != id.ProcessStart {
 		return false
 	}

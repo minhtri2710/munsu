@@ -691,9 +691,6 @@ func recoverPendingRetirement(homeDir, taskID string, auth *taskauthority.Canoni
 		return false, fmt.Errorf("recovery: canonical merged truth required: %w", err)
 	}
 
-	if rec.QuarantinePath == "" {
-		return false, fmt.Errorf("recovery: missing durable quarantine ownership (preserving poll and retirement record)")
-	}
 	if filepath.Base(rec.QuarantinePath) != rec.QuarantinePath || filepath.Ext(rec.QuarantinePath) != ".quarantine" || strings.ContainsAny(rec.QuarantinePath, `/\\`) || !strings.HasPrefix(rec.QuarantinePath, fmt.Sprintf(".poll-%x-", sha256.Sum256([]byte(taskID)))) {
 		return false, fmt.Errorf("recovery: invalid quarantine path %q (preserving poll and retirement record)", rec.QuarantinePath)
 	}
