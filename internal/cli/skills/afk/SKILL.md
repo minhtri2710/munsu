@@ -22,11 +22,14 @@ munsu afk return check       # Exit 0 when clean, non-zero when actionable state
 munsu afk
 
 # While away, the daemon triages wakes and accumulates a digest. It never
-# writes to the general pane — you read the digest on return.
+# writes to the general pane, and the watcher's wake dispatch holds its
+# prompts while the flag is set — you read the digest on return.
 
 # On return:
 munsu afk return
-# → reads the digest summary, prints escalations/wedges/blocked
+# → reads the digest summary, prints escalations/wedges/blocked; accepts the
+#   drained soldier reports (any it cannot accept are listed with a
+#   `munsu inbox ack '<ref>'` hint)
 
 # Verify clean:
 munsu afk return check
@@ -48,6 +51,6 @@ See `REFERENCE.md` for the bundled contract:
 ## Safety rules
 
 1. All AFK operations are scoped to a single `MUNSU_HOME` — never touches sibling homes
-2. The daemon diagnoses only — it never writes to the general pane
+2. The daemon diagnoses only — it never writes to the general pane; the only automatic writer into that pane is the watcher's wake dispatch, which defers while `state/.afk` exists
 3. Return is idempotent — safe to call on clean state
 4. See `REFERENCE.md` for the full safety invariants

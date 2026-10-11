@@ -143,7 +143,7 @@ installs `munsu-ops` to the chosen destination and points at embedded auxiliarie
 - Delivery acceptance has one owner in `internal/domain`. Provider orchestration and CLI-compatible delivery operations live in `internal/fleet/delivery_*.go`.
 - There are no Task Authority Store adapters or migration commands, and schemas stay at `v1`.
 - AFK supervision lives in `internal/orchestrator/afk_*.go`; focused tests stay beside those files.
-- Wake delivery is the deep module in `internal/orchestrator/wakedelivery_deliver.go` (`DeliverWake`), with receipt and lifecycle mechanics in adjacent `turnend_*.go`, `lifecycle_*.go`, and wake files.
+- Wake delivery to the General's pane is `DispatchWake` in `internal/orchestrator/wake_dispatch.go`; `DeliverWake` in `internal/orchestrator/wakedelivery_deliver.go` closes a soldier's terminal handoff, with receipt and lifecycle mechanics in adjacent `turnend_*.go`, `lifecycle_*.go`, and wake files.
 
 Rank hierarchy: General (fleet orchestrator) → Captain (`internal/fleet`, CLI `munsu captain`) → Soldier (task worker). Runtime: `MUNSU_ROLE=general|captain|soldier`. Labels: `captain-<id>-<hometag>`, windows `mu-captain-<id>`, marker `.munsu-captain-home`.
 

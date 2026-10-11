@@ -40,7 +40,7 @@ for the complete registered set.
 | `munsu dashboard` | Full-screen fleet dashboard: Human-needed rows first, failed homes named, event feed, and confirmed actions that run the existing munsu commands. Needs a terminal; use `munsu fleet view` otherwise. |
 | `munsu fleet bearings` | Compact resume report (snapshot + captain table). |
 | `munsu home [--mkdir]` | Print or create the munsu home directory. |
-| `munsu inbox` | Show actionable wakes and last captain status lines (General convenience view). |
+| `munsu inbox` | Show queued and claimed wakes and last captain status lines (General convenience view). |
 
 ## Spawn / Send / Peek
 
@@ -63,7 +63,7 @@ for the complete registered set.
 | `munsu watch stop` | Stop the watcher idempotently. |
 | `munsu wake claim --consumer <id> [--lease-seconds 60] [--limit 10]` | Claim a batch of queued wakes under a lease. Takes no positional argument; `--consumer` is required. |
 | `munsu wake ack <lease-id> <event-id...>` | Acknowledge one or more processed wakes. |
-| `munsu wake resolve --claim-id <lease-id> --event-id <event-id> --summary <text>` | Resolve one claimed wake with durable evidence. |
+| `munsu wake resolve --claim-id <lease-id> --event-id <event-id> --summary <text>` | Resolve one claimed wake with durable evidence; the command a delivered `[mu-system:wake]` prompt tells the General to run. |
 | `munsu guard` | Report fleet guard conditions, or act as a harness Stop-hook guard. |
 
 ## Captain

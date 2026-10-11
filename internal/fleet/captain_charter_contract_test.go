@@ -138,6 +138,7 @@ func TestCharter_RelaySemantics(t *testing.T) {
 		"NotificationRef",
 		"inbox receive",
 		"inbox ack",
+		"settles the report's wake with `munsu wake resolve`",
 		"Processing Ack",
 		"after 60 seconds",
 		"latest material report supersedes",

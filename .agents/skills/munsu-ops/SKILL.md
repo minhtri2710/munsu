@@ -60,12 +60,12 @@ munsu writes the test-quality rules into the briefs and charters itself; never c
 ### 5. Supervise
 
 - Ensure the watcher: `munsu watch ensure [--restart]`.
-- On wake: prefer `munsu wake claim --consumer <id>` with lease management;
-  `munsu wake claim` is the lease-based wake queue surface.
+- On wake: a delivered `[mu-system:wake]` prompt is answered with the `munsu wake resolve` command it carries;
+  without delivery, claim with `munsu wake claim --consumer <id>`. `SUPERVISION.md` owns the rule.
 - Ground truth: `munsu soldier-state <id>` (not raw status tail).
 - Steer as needed: `munsu send <id> "<line>"` (downlink only; Soldier and Captain targets are valid, while uplink to `general` is refused).
 - Uplink status: `munsu report <state> "<msg>"` reports up the hierarchy (soldier/captain/general).
-- **inbox** — preview: `munsu inbox` lists pending wakes and last captain status lines side by side.
+- **inbox** — preview: `munsu inbox` lists queued and claimed wakes and last captain status lines side by side.
   Use before `munsu wake claim` to preview what needs attention.
 
 **Completion:** Actionable wakes handled; persistent watcher remains healthy while tasks are in flight.

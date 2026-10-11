@@ -355,7 +355,7 @@ Spawn Soldiers to do work from this home. The dispatch ordering is:
 - States: working, needs-decision, blocked, paused, done, failed, resolved.
 - Material phases get [key=<slug>] so later done/failed/resolved supersede them.
 - Material Uplink Reports write a durable envelope, sender pending evidence, and a receiver wake before sending a NotificationRef.
-- General explicitly runs inbox receive, accepts the report into context, then runs inbox ack to write the Processing Ack.
+- The General settles the report's wake with %[6]smunsu wake resolve%[6]s or %[6]smunsu wake ack%[6]s, which accepts the report; it runs no inbox ack for it.
 - NEVER poll the General for work. NEVER sleep-loop.
 - %[6]smunsu peek%[6]s is only for stuck recovery (see Soldier Lifecycle).
 - Provider polling only after terminal PR notification — no early polling.

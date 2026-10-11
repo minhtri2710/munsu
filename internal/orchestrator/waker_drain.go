@@ -59,9 +59,9 @@ func EvaluateGuard(homeDir string, inFlight int, now time.Time) GuardResult {
 	result.BeatStatus = ReadBeatStatus(homeDir, now)
 
 	if HasQueuedWakes(homeDir) {
-		msg := "QUEUED WAKES PENDING - claim with munsu wake claim"
+		msg := "QUEUED WAKES PENDING - under herdr the watcher delivers each as a prompt once the General is idle; elsewhere claim with munsu wake claim"
 		if hasAgedMaterialWake(homeDir, now) {
-			msg = "QUEUED WAKES PENDING (aged) - material wake beyond threshold, guard unhealthy - claim with munsu wake claim"
+			msg = "QUEUED WAKES PENDING (aged) - material wake beyond threshold, guard unhealthy - under herdr the watcher delivers each as a prompt once the General is idle; elsewhere claim with munsu wake claim"
 			result.Conditions = append(result.Conditions, ConditionInfo{
 				Code:    ConditionAgedWakePending,
 				Message: msg,

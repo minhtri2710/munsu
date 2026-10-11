@@ -164,7 +164,7 @@ Check the spawned soldier: `munsu soldier-state <id>`.
 ### Supervise
 
 Ensure the persistent watcher: `munsu watch ensure`.
-On wake: claim with `munsu wake claim --consumer <id>`, then `munsu soldier-state <id>` as ground truth.
+On wake: see section 8 for how it reaches you, then `munsu soldier-state <id>` as ground truth.
 Steer with: `munsu send <id> "<line>"`.
 Peek at output: `munsu peek <id> [--lines N]`.
 
@@ -208,11 +208,18 @@ Whenever work is in flight, keep exactly one live supervision cycle.
 
 Fundamental loop:
 
-1. Claim: `munsu wake claim --consumer <id>`.
-2. Ensure: `munsu watch ensure`.
-3. The watcher polls every 5s, queues actionable wakes, and stays alive.
-4. Handle each claimed wake by its kind: `signal` (reconcile current state), `stale` (inspect the endpoint, load `stuck-soldier-recovery`), `check` (act on the named poll result); `uplink` and `process-event` wakes are handled from their payload.
-5. Repair if needed: `munsu watch ensure`.
+1. Ensure: `munsu watch ensure`.
+2. The watcher polls every 5s, queues actionable wakes, and stays alive.
+3. Receive each wake (below), then handle it by its kind: `signal` (reconcile current state), `stale` (inspect the endpoint, load `stuck-soldier-recovery`), `check` (act on the named poll result); `uplink` and `process-event` wakes are handled from their payload.
+4. Repair if needed: `munsu watch ensure`.
+
+Receiving wakes. Soldier and captain reports reach you only as queued wakes; nothing writes a report into your pane.
+
+- Under herdr with a claude orchestrator, `munsu session-start` records `general-pane` and `wake-delivery-mode=herdr`, and the watcher daemon submits each queued wake to your pane as a `[mu-system:wake]` prompt whenever you are idle with an empty composer. The prompt carries `key`, `claim_id`, `event_id`, the wake line and the exact `munsu wake resolve --claim-id <claim_id> --event-id <event_id> --summary <text>` command: handle the wake, then run that command with a non-empty summary.
+- A dispatch refused before the claim leaves the wake queued: AFK is on, the harness is not claude, the composer holds input or is not recognized, or you are busy. A failure after the claim (the prompt is not accepted) leaves the wake claimed until its 300s lease expires, after which the next `munsu wake claim` reclaims it. `munsu inbox` shows queued and claimed wakes.
+- On any other backend or harness nothing is delivered: claim with `munsu wake claim --consumer <id>`, then settle each wake with `munsu wake resolve` or `munsu wake ack`.
+
+Settling an uplink wake, by `munsu wake resolve` or `munsu wake ack`, consumes the wake and also accepts the soldier's report: one ledger, so run no `munsu inbox ack` for a wake. The sender's pending report then retires on the watcher's next recovery pass, and teardown's acknowledgment check passes after that. If the report cannot be accepted the wake is still settled and the command prints the report's ref: run `munsu inbox ack '<ref>'` once the cause is fixed. `munsu afk return` accepts every uplink report in the digest it prints and lists any it could not accept with the same hint. `munsu inbox ack` otherwise stays for captain mailbox notifications.
 
 Cross-cutting rules:
 - No turn ends blind while work is in flight.
@@ -221,9 +228,9 @@ Cross-cutting rules:
 - A declared `paused:` event means a bounded external wait.
 - `blocked:` means action is needed.
 
-### Wake claim (preferred)
+### Wake claim
 
-The `munsu wake claim` API is the lease-based wake queue surface:
+Where no prompt is delivered, `munsu wake claim` is the lease-based wake queue surface:
 
 ```
 munsu wake claim --consumer <id> [--lease-seconds 60] [--limit 10]
@@ -301,7 +308,7 @@ Communication with soldiers and captains follows a strict direction policy:
   hierarchy (Soldier -> Captain, Captain -> General). Writes to the parent's
   task .status file, the typed event log, and enqueues a wake for material
   states (done, failed, needs-decision, blocked).
-- **inbox** --- preview view: `munsu inbox` lists pending wakes and last captain status lines side by side.
+- **inbox** --- preview view: `munsu inbox` lists queued and claimed wakes and last captain status lines side by side.
   Use before `munsu wake claim` to preview what needs attention.
   Rank-aware: shows captain:* status lines from the General's state directory.
 Rank-aware routing via MUNSU_ROLE:
@@ -413,7 +420,8 @@ Run: `munsu skill show <name>` to read any skill.
 | Check state | `munsu soldier-state <id>` |
 | Read output | `munsu peek <id>` |
 | Ensure watcher | `munsu watch ensure` |
-| Claim wakes | `munsu wake claim --consumer <id>`
+| Claim wakes (no prompt delivery) | `munsu wake claim --consumer <id>`
+| Resolve a wake | `munsu wake resolve --claim-id <lease-id> --event-id <event-id> --summary <text>` |
 | Acknowledge wakes | `munsu wake ack <lease-id> <event-id...>`
 | Guard check | `munsu guard`
 | Fleet dashboard | `munsu dashboard` (interactive terminal; use `munsu fleet view` otherwise)
@@ -443,7 +451,7 @@ Run: `munsu skill show <name>` to read any skill.
 5. munsu spawn <id> <project>        # launch soldier in worktree+tmux window
 6. munsu watch ensure                # ensure persistent supervision
 7. munsu send <id> "<msg>"           # steer as needed
-8. munsu wake claim --consumer <id>; munsu soldier-state <id> # on wake from watcher
+8. munsu wake resolve ...; munsu soldier-state <id>  # on a delivered wake prompt (else: munsu wake claim --consumer <id> first)
 9. munsu delivery pr-merge <id> <url> # merge while the task is working
 10. munsu task done <id>              # record completion before standalone retirement
 11. munsu captain converge           # reconcile captains after lifecycle changes
