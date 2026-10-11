@@ -2,6 +2,9 @@ package cli
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -51,7 +54,10 @@ func TestIntegrateSubcommandFlagsRegistered(t *testing.T) {
 
 // TestIntegrateWithoutHarnessUsesOnlyTheConfiguredOne: without --harness every
 // integrate subcommand uses the configured soldier-harness and refuses when
-// none is configured, even where the environment names a harness.
+// none is configured, even where the environment names a harness. The install
+// and repair allows rows use codex with a stub munsu on PATH: a dry run then needs
+// no live tool, unlike pi, whose capability probe needs the pi binary, node and
+// the installed Pi package.
 func TestIntegrateWithoutHarnessUsesOnlyTheConfiguredOne(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -63,14 +69,25 @@ func TestIntegrateWithoutHarnessUsesOnlyTheConfiguredOne(t *testing.T) {
 		{name: "install with none configured blocks", args: []string{"integrate", "install", "--dry-run"}, wantErr: "munsu config set soldier-harness"},
 		{name: "repair with none configured blocks", args: []string{"integrate", "repair", "--dry-run"}, wantErr: "munsu config set soldier-harness"},
 		{name: "status with none configured blocks", args: []string{"integrate", "status"}, wantErr: "munsu config set soldier-harness"},
-		{name: "install with soldier-harness configured allows", args: []string{"integrate", "install", "--dry-run"}, configured: "pi", wantOut: "harness: pi"},
-		{name: "repair with soldier-harness configured allows", args: []string{"integrate", "repair", "--dry-run"}, configured: "pi", wantOut: "harness: pi"},
+		{name: "install with soldier-harness configured allows", args: []string{"integrate", "install", "--dry-run"}, configured: "codex", wantOut: "harness: codex"},
+		{name: "repair with soldier-harness configured allows", args: []string{"integrate", "repair", "--dry-run"}, configured: "codex", wantOut: "harness: codex"},
 		{name: "status with soldier-harness configured allows", args: []string{"integrate", "status"}, configured: "pi", wantOut: "harness: pi"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			homeDir := t.TempDir()
 			t.Setenv("MUNSU_HOME", homeDir)
 			t.Setenv("CLAUDECODE", "1")
+			t.Setenv("HOME", t.TempDir())
+			// The hook installers resolve munsu from PATH; a stub makes that independent of the box.
+			stubDir := t.TempDir()
+			stubName := "munsu"
+			if runtime.GOOS == "windows" {
+				stubName += ".exe"
+			}
+			if err := os.WriteFile(filepath.Join(stubDir, stubName), nil, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 			if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{
 				SchemaVersion: config.FleetBaseSchemaVersion,
 				Config:        config.FleetBaseConfig{SoldierHarness: tc.configured},
