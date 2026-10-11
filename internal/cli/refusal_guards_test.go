@@ -118,12 +118,19 @@ func TestGuardFleetSnapshotRefusesFullBecauseNoRowIsTruncated(t *testing.T) {
 func TestGuardEventAppendRequiresAType(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
-	_, err := runRoot(t, "event", "append", "e1", "--home", homeDir)
+	_, err := runRoot(t, "event", "append", "--home", homeDir)
 	wantErrContains(t, err, "Flag --type is required", "event append with no --type")
 
-	if _, err := runRoot(t, "event", "append", "e1", "--type", "note", "--home", homeDir); err != nil {
+	if _, err := runRoot(t, "event", "append", "--type", "note", "--home", homeDir); err != nil {
 		t.Fatalf("event append --type note = %v, want acceptance: the refusal above is only attributable to --type if this commits", err)
 	}
+}
+
+func TestGuardEventAppendTakesNoPositional(t *testing.T) {
+	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
+	_, err := runRoot(t, "event", "append", "e1", "--type", "note", "--home", homeDir)
+	wantErrContains(t, err, "munsu event append requires 0 argument(s)", "event append with a positional")
 }
 
 // --- internal/cli/wake_cmd.go ----------------------------------------------

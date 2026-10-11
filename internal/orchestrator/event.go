@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -35,7 +36,8 @@ func LogPath(homeDir string) string {
 }
 
 // parseRecord parses one log line, without its newline, into a Record. The line
-// is taken as written, with no trimming.
+// is taken as written, with no trimming; the four text fields are decoded with
+// home.UnescapeLine, the inverse of what Append writes.
 // It reports false when the line has fewer than six tab-separated fields or an
 // ID that is not an unsigned integer. An unparsable timestamp reads as 0.
 func parseRecord(line string) (Record, bool) {
@@ -48,11 +50,19 @@ func parseRecord(line string) (Record, bool) {
 		return Record{}, false
 	}
 	ts, _ := strconv.ParseInt(parts[1], 10, 64)
-	return Record{ID: id, Timestamp: ts, Type: parts[2], Producer: parts[3], Key: parts[4], Payload: parts[5]}, true
+	return Record{
+		ID:        id,
+		Timestamp: ts,
+		Type:      home.UnescapeLine(parts[2]),
+		Producer:  home.UnescapeLine(parts[3]),
+		Key:       home.UnescapeLine(parts[4]),
+		Payload:   home.UnescapeLine(parts[5]),
+	}, true
 }
 
 // nextID returns the next monotonic ID (1-based): one past the largest ID in
-// the log. The caller must hold the event log lock.
+// the log. It refuses when the largest ID is already the maximum, rather than
+// wrap to 0. The caller must hold the event log lock.
 func nextID(homeDir string) (uint64, error) {
 	data, err := os.ReadFile(LogPath(homeDir))
 	if err != nil {
@@ -67,14 +77,18 @@ func nextID(homeDir string) (uint64, error) {
 			maxID = r.ID
 		}
 	}
+	if maxID == math.MaxUint64 {
+		return 0, fmt.Errorf("event log %s: largest event ID is already %d, no ID is left to assign", LogPath(homeDir), uint64(math.MaxUint64))
+	}
 	return maxID + 1, nil
 }
 
-// Append writes a typed event to the event log and returns its ID. The ID is
-// assigned and written under one exclusive lock, so concurrent writers in any
-// process never share an ID. The lock is a sibling file, not the log itself:
-// on Windows a LockFileEx lock is mandatory and would fail concurrent readers
-// of the log.
+// Append writes a typed event to the event log and returns its ID. The four
+// text fields are stored home.EscapeLine-encoded, so a tab or newline in any of
+// them stays inside its field. The ID is assigned and written under one
+// exclusive lock, so concurrent writers in any process never share an ID. The
+// lock is a sibling file, not the log itself: on Windows a LockFileEx lock is
+// mandatory and would fail concurrent readers of the log.
 func Append(homeDir, eventType, producer, key, payload string) (uint64, error) {
 	path := LogPath(homeDir)
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
@@ -87,7 +101,8 @@ func Append(homeDir, eventType, producer, key, payload string) (uint64, error) {
 		if err != nil {
 			return err
 		}
-		line := fmt.Sprintf("%d\t%d\t%s\t%s\t%s\t%s\n", next, time.Now().UnixNano(), eventType, producer, key, payload)
+		line := fmt.Sprintf("%d\t%d\t%s\t%s\t%s\t%s\n", next, time.Now().UnixNano(),
+			home.EscapeLine(eventType), home.EscapeLine(producer), home.EscapeLine(key), home.EscapeLine(payload))
 
 		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {

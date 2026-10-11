@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -316,13 +315,11 @@ func readLastLine(path string) string {
 	defer f.Close()
 
 	var lastLine string
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		text := scanner.Text()
+	_ = home.EachLine(f, func(text string) {
 		if strings.TrimSpace(text) != "" {
 			lastLine = text
 		}
-	}
+	})
 	return lastLine
 }
 

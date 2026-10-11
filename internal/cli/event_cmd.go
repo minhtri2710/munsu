@@ -19,9 +19,9 @@ func newEventCmd() *cobra.Command {
 
 func newEventAppendCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "append <event-id>",
+		Use:   "append",
 		Short: "Append a typed event to the event log",
-		Args:  contractArgs(1),
+		Args:  contractNoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			if _, err := contractOutput(cmd); err != nil {
 				return err

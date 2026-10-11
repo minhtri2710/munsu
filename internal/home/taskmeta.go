@@ -290,6 +290,8 @@ func ReadMetaFile(path string) (map[string]string, error) {
 }
 
 // AppendStatus appends a status line to $MUNSU_HOME/state/<durable-stem>.status.
+// The line is stored EscapeLine-encoded, so a line holding a newline stays one
+// record; ReadStatus decodes it.
 func AppendStatus(homeDir string, id, line string) error {
 	_, err := appendStatus(homeDir, id, line, false)
 	return err
@@ -334,7 +336,7 @@ func appendStatus(homeDir string, id, line string, once bool) (bool, error) {
 		return false, fmt.Errorf("securing status file: %w", err)
 	}
 	defer f.Close()
-	if _, err := f.WriteString(line + "\n"); err != nil {
+	if _, err := f.WriteString(EscapeLine(line) + "\n"); err != nil {
 		return false, fmt.Errorf("writing status line: %w", err)
 	}
 	if err := f.Sync(); err != nil {
@@ -343,7 +345,8 @@ func appendStatus(homeDir string, id, line string, once bool) (bool, error) {
 	return true, nil
 }
 
-// ReadStatus reads all status lines from $MUNSU_HOME/state/<durable-stem>.status.
+// ReadStatus reads all status lines from $MUNSU_HOME/state/<durable-stem>.status,
+// decoded as AppendStatus was given them.
 func ReadStatus(homeDir string, id string) ([]string, error) {
 	p, err := StatusFilePath(homeDir, id)
 	if err != nil {
@@ -362,11 +365,8 @@ func ReadStatus(homeDir string, id string) ([]string, error) {
 	defer f.Close()
 
 	var lines []string
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
-	}
-	return lines, scanner.Err()
+	err = EachLine(f, func(line string) { lines = append(lines, UnescapeLine(line)) })
+	return lines, err
 }
 
 // StatusHasLine reports whether the task's status holds line. A status that
