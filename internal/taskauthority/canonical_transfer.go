@@ -254,10 +254,11 @@ func (c *Canonical) ReceiveTransfer(op domain.Operation, req CanonicalReceiveTra
 	}
 	defer lk.Release()
 
-	if rec, ok, err := c.checkedReceipt(op); err != nil {
+	prior, replayed, rev, err := c.receiptThenRevision(lk, op)
+	if err != nil {
 		return Outcome{}, err
-	} else if ok {
-		return rec.outcome(), nil
+	} else if replayed {
+		return prior.outcome(), nil
 	}
 
 	// The destination must not already own the task or hold ANY generation
@@ -268,6 +269,10 @@ func (c *Canonical) ReceiveTransfer(op domain.Operation, req CanonicalReceiveTra
 		return Outcome{}, err
 	} else if exists {
 		return Outcome{}, conflictError(ErrConflict, "destination already has task %s history; transfer quarantines and never overwrites destination truth", req.TaskID.Value())
+	}
+
+	if err := c.refuseTaskResidue(req.TaskID.Value(), rev); err != nil {
+		return Outcome{}, err
 	}
 
 	agg := Aggregate{
@@ -288,14 +293,14 @@ func (c *Canonical) ReceiveTransfer(op domain.Operation, req CanonicalReceiveTra
 	if err := validateAggregate(agg); err != nil {
 		return Outcome{}, err
 	}
-	doc := taskDoc{HomeRevision: 1, Aggregate: agg}
+	doc := taskDoc{HomeRevision: rev + 1, Aggregate: agg}
 	rec := receiptFor(op, agg)
 	items, err := genItems(req.TaskID.Value(), uint64(agg.Generation), doc, rec)
 	if err != nil {
 		return Outcome{}, err
 	}
-	if _, err := c.h.Commit(lk, op.ID.Value(), 0, items); err != nil {
-		return Outcome{}, commitError(req.TaskID, domain.Precondition{}, err)
+	if _, err := c.h.Commit(lk, op.ID.Value(), rev, items); err != nil {
+		return Outcome{}, commitError(req.TaskID, domain.Of(0, rev), err)
 	}
 	return outcomeFor(op, agg, false), nil
 }
