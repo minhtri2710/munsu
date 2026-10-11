@@ -127,8 +127,8 @@ func LoadModelAllowlist(homeDir string) (map[string]bool, bool, error) {
 // harness:model identity. It returns nil when the policy is absent (backward
 // compatibility) or the identity is allowed. Denied identities fail closed
 // with the allowed values and the correction. When a policy is present but the
-// identity is unresolved (empty harness or model), it fails closed as well: a
-// runtime default cannot be verified against the policy and must not bypass it.
+// model is unresolved (empty), it fails closed as well: a runtime default cannot
+// be verified against the policy and must not bypass it.
 // The harness side is canonicalized against the registry before lookup.
 func CheckModelAllowed(homeDir, harnessName, model string) error {
 	allowed, present, err := LoadModelAllowlist(homeDir)
@@ -138,7 +138,7 @@ func CheckModelAllowed(homeDir, harnessName, model string) error {
 	if !present {
 		return nil
 	}
-	if harnessName == "" || model == "" {
+	if model == "" {
 		return fmt.Errorf("model allowlist policy present but the effective identity is unresolved (harness %q, model %q): an active policy denies unresolved identities because a runtime default cannot be verified; set a concrete model or remove config/%s to disable enforcement", harnessName, model, ModelAllowlistKey)
 	}
 	canonical, ok := CanonicalHarness(harnessName)

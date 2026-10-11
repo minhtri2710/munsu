@@ -81,29 +81,13 @@ func (b *ordinaryCaptainProbeBackend) CheckAlive(string) (bool, error) {
 }
 func (b *ordinaryCaptainProbeBackend) Teardown(string) error { b.teardownCalls++; return b.teardownErr }
 
-func TestSessionProbeEndpointResolutionAndOwnership(t *testing.T) {
-	bk := &ordinaryCaptainProbeBackend{alive: true}
-	tests := []struct {
-		name       string
-		meta       map[string]string
-		resolved   string
-		resolveErr error
-		want       string
-	}{
-		{name: "resolution", meta: map[string]string{"window": "pane"}, resolveErr: errors.New("resolve failed"), want: "resolve failed"},
-		{name: "backend", meta: map[string]string{"backend": "tmux", "window": "pane"}, resolved: "herdr", want: "backend ownership mismatch"},
-		{name: "herdr session", meta: map[string]string{"backend": "herdr", "window": "other:pane", "herdr_session": "owned"}, resolved: "herdr", want: "herdr session ownership mismatch"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ep := sessionProbeEndpoint{resolve: func(string, map[string]string) (backend.Backend, string, error) {
-				return bk, tt.resolved, tt.resolveErr
-			}}
-			_, err := ep.Probe("home", tt.meta)
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("error=%v, want %q", err, tt.want)
-			}
-		})
+func TestSessionProbeEndpointReturnsResolutionError(t *testing.T) {
+	want := errors.New("resolve failed")
+	ep := sessionProbeEndpoint{resolve: func(string, map[string]string) (backend.Backend, string, error) {
+		return nil, "", want
+	}}
+	if _, err := ep.Probe("home", map[string]string{"backend": "herdr", "window": "pane"}); !errors.Is(err, want) {
+		t.Fatalf("Probe error=%v, want the resolver error", err)
 	}
 }
 
@@ -122,7 +106,7 @@ func TestSessionProbeEndpointOrdinaryOutcomes(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			bk := &ordinaryCaptainProbeBackend{alive: tt.alive, process: tt.process}
 			ep := sessionProbeEndpoint{resolve: func(string, map[string]string) (backend.Backend, string, error) { return bk, "tmux", nil }}
-			got, err := ep.Probe("home", map[string]string{"window": "pane", "harness": "claude"})
+			got, err := ep.Probe("home", map[string]string{"backend": "tmux", "window": "pane", "harness": "claude"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -148,7 +132,7 @@ func TestSessionNudgeEndpointTypedOutcomes(t *testing.T) {
 				resolves++
 				return bk, "herdr", nil
 			}}
-			got, err := ep.Nudge("home", map[string]string{"window": "owned:pane", "herdr_session": "owned"}, "payload")
+			got, err := ep.Nudge("home", map[string]string{"backend": "herdr", "window": "owned:pane", "herdr_session": "owned"}, "payload")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -165,7 +149,7 @@ func TestSessionNudgeEndpointTypedOutcomes(t *testing.T) {
 func TestSessionNudgeEndpointUnavailableDoesNotPrompt(t *testing.T) {
 	for _, bk := range []*captainProbeBackend{{paneAlive: false}, {paneAlive: true, agentAlive: false}, {agentErr: backend.ErrPaneNotFound}} {
 		ep := sessionNudgeEndpoint{resolve: func(string, map[string]string) (backend.Backend, string, error) { return bk, "herdr", nil }}
-		got, err := ep.Nudge("home", map[string]string{"window": "owned:pane", "herdr_session": "owned"}, "payload")
+		got, err := ep.Nudge("home", map[string]string{"backend": "herdr", "window": "owned:pane", "herdr_session": "owned"}, "payload")
 		if err != nil || got.Status != "unavailable" || bk.promptCalls != 0 {
 			t.Fatalf("got=%+v err=%v calls=%d", got, err, bk.promptCalls)
 		}
@@ -183,13 +167,11 @@ func TestSessionRetireEndpointOutcomes(t *testing.T) {
 		wantSend     int
 		wantTeardown int
 	}{
-		{name: "resolution", bk: &ordinaryCaptainProbeBackend{}, resolveErr: boom, meta: map[string]string{"window": "pane"}, wantErr: true},
-		{name: "backend mismatch", bk: &ordinaryCaptainProbeBackend{}, meta: map[string]string{"backend": "tmux", "window": "pane"}, wantErr: true},
-		{name: "herdr mismatch", bk: &ordinaryCaptainProbeBackend{}, meta: map[string]string{"backend": "herdr", "window": "other:pane", "herdr_session": "owned"}, wantErr: true},
-		{name: "quit failure", bk: &ordinaryCaptainProbeBackend{alive: true, sendErr: boom}, meta: map[string]string{"window": "pane"}, wantErr: true, wantSend: 1},
-		{name: "graceful exit", bk: &ordinaryCaptainProbeBackend{aliveResults: []bool{true, false}, notFoundOnAbsent: true}, meta: map[string]string{"window": "pane"}, wantSend: 1},
-		{name: "teardown fallback", bk: &ordinaryCaptainProbeBackend{aliveResults: []bool{true, true}}, meta: map[string]string{"window": "pane"}, wantSend: 1, wantTeardown: 1},
-		{name: "dead teardown failure", bk: &ordinaryCaptainProbeBackend{teardownErr: boom}, meta: map[string]string{"window": "pane"}, wantErr: true, wantTeardown: 1},
+		{name: "resolution", bk: &ordinaryCaptainProbeBackend{}, resolveErr: boom, meta: map[string]string{"backend": "herdr", "window": "pane"}, wantErr: true},
+		{name: "quit failure", bk: &ordinaryCaptainProbeBackend{alive: true, sendErr: boom}, meta: map[string]string{"backend": "herdr", "window": "pane"}, wantErr: true, wantSend: 1},
+		{name: "graceful exit", bk: &ordinaryCaptainProbeBackend{aliveResults: []bool{true, false}, notFoundOnAbsent: true}, meta: map[string]string{"backend": "herdr", "window": "pane"}, wantSend: 1},
+		{name: "teardown fallback", bk: &ordinaryCaptainProbeBackend{aliveResults: []bool{true, true}}, meta: map[string]string{"backend": "herdr", "window": "pane"}, wantSend: 1, wantTeardown: 1},
+		{name: "dead teardown failure", bk: &ordinaryCaptainProbeBackend{teardownErr: boom}, meta: map[string]string{"backend": "herdr", "window": "pane"}, wantErr: true, wantTeardown: 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -278,7 +260,7 @@ func TestSessionProbeEndpointAgentAwareOutcomes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ep := sessionProbeEndpoint{resolve: func(string, map[string]string) (backend.Backend, string, error) { return tt.backend, "herdr", nil }}
-			got, err := ep.Probe("home", map[string]string{"window": "owned:pane", "herdr_session": "owned"})
+			got, err := ep.Probe("home", map[string]string{"backend": "herdr", "window": "owned:pane", "herdr_session": "owned"})
 			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("error=%v, want=%v", err, tt.wantErr)
 			}
@@ -309,7 +291,7 @@ func TestProbeCaptainBackendReadyNormalization(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			bk := &seamProbeBackend{paneAlive: true, agentAlive: true, status: tt.status}
-			got, err := seamProbeEndpoint(bk).Probe("home", map[string]string{"window": "owned:pane", "herdr_session": "owned"})
+			got, err := seamProbeEndpoint(bk).Probe("home", map[string]string{"backend": "herdr", "window": "owned:pane", "herdr_session": "owned"})
 			if err != nil {
 				t.Fatal(err)
 			}

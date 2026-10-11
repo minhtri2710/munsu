@@ -72,8 +72,8 @@ func (p *testCheckValidationPort) ValidateCheck(path string) error {
 type testCycleSender struct{}
 
 func (testCycleSender) Alive(string, map[string]string) (bool, error) { return false, nil }
-func (testCycleSender) Send(string, map[string]string, string) BoundSendResult {
-	return BoundSendResult{}
+func (testCycleSender) Send(string, map[string]string, string) mhome.BoundSendResult {
+	return mhome.BoundSendResult{}
 }
 
 func testScanFleet(home string) *WakeReason {
@@ -1946,14 +1946,14 @@ func TestRunCycleWakesOnceForAReportedStatus(t *testing.T) {
 		return generalHome, res
 	}
 	accept := func(t *testing.T, generalHome string, res *ReportResult) {
-		env, err := NewStore(generalHome).ReadEnvelope("direct-task", res.MessageID)
+		env, err := mhome.NewStore(generalHome).ReadEnvelope("direct-task", res.MessageID)
 		if err != nil || env == nil {
 			t.Fatalf("ReadEnvelope: %v", err)
 		}
-		if err := NewStore(generalHome).WriteAck(&ProcessingAck{
+		if err := mhome.NewStore(generalHome).WriteAck(&mhome.ProcessingAck{
 			MessageID: env.MessageID, SenderRank: env.SenderRank, SenderIdentity: env.SenderIdentity,
 			ReceiverRank: env.ReceiverRank, ReceiverID: env.ReceiverID, TaskID: env.TaskID, Key: env.Key,
-			PayloadHash: env.PayloadHash, Outcome: OutcomeAccepted, ProcessedAt: time.Now().UnixNano(),
+			PayloadHash: env.PayloadHash, Outcome: mhome.OutcomeAccepted, ProcessedAt: time.Now().UnixNano(),
 		}); err != nil {
 			t.Fatal(err)
 		}

@@ -133,18 +133,7 @@ func newTaskObserveCmd() *cobra.Command {
 			// falls back to .meta/.status/provider/event projections.
 			state, err := fleet.ReadWithProbe(ctx.Home, args[0], runtimeTaskEndpointProbe())
 			if err != nil {
-				if errors.Is(err, tauth.ErrNotFound) {
-					if hasMeta {
-						return operationError("invalid_state", "munsu cannot repair a projection with no canonical record; remove state/"+args[0]+".meta by hand or discard the home",
-							fmt.Sprintf("Task %q in home %s has no canonical Task Authority record; observation refuses the legacy projection", args[0], ctx.Home))
-					}
-					return operationError("not_found", "Run `munsu task list` to find a task ID",
-						fmt.Sprintf("Task %q was not found in home %s", args[0], ctx.Home))
-				}
-				// Corrupt/malformed canonical record, or an unreadable home: Task
-				// truth is present but unreadable — fail closed as invalid_state.
-				return operationError("invalid_state", "munsu cannot repair an unreadable canonical record; fix or remove state/task-authority/tasks/"+args[0]+" by hand or discard the home",
-					fmt.Sprintf("Unable to read authoritative Task truth for task %q in home %s: %v", args[0], ctx.Home, err))
+				return observeReadError(ctx.Home, args[0], err)
 			}
 
 			// .meta is used only for optional diagnostics after canonical truth
@@ -173,6 +162,18 @@ func newTaskObserveCmd() *cobra.Command {
 	cmd.Flags().String("fields", "", "Optional fields: description,branch,pane_alive,no_mistakes_step")
 	cmd.Flags().Bool("full", false, "Include full truncated content when available")
 	return cmd
+}
+
+// observeReadError classifies a failed canonical read for task observation. A
+// task with no canonical record is not found, whatever a projection says; a
+// record that exists but cannot be read is invalid state.
+func observeReadError(homeDir, id string, err error) error {
+	if errors.Is(err, tauth.ErrNotFound) {
+		return operationError("not_found", "Run `munsu task list` to find a task ID",
+			fmt.Sprintf("Task %q was not found in home %s", id, homeDir))
+	}
+	return operationError("invalid_state", "munsu cannot repair an unreadable canonical record; fix or remove state/task-authority/tasks/"+id+" by hand or discard the home",
+		fmt.Sprintf("Unable to read authoritative Task truth for task %q in home %s: %v", id, homeDir, err))
 }
 
 func newContractGuardCmd() *cobra.Command {

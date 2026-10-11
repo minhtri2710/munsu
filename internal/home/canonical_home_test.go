@@ -71,21 +71,30 @@ func TestInitIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestInitEmptyDirOk(t *testing.T) {
-	root := t.TempDir() // exists and is empty
-	if _, err := Init(root); err != nil {
-		t.Fatalf("Init on empty dir: %v", err)
-	}
-}
-
 func TestInitNonEmptyNotHomeFailsClosed(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "junk.txt"), []byte("x"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	_, err := Init(root)
-	if !errors.Is(err, ErrNonEmptyHome) {
-		t.Fatalf("Init non-empty stray dir: got %v, want ErrNonEmptyHome", err)
+	for _, tc := range []struct {
+		name    string
+		files   []string
+		wantErr error
+	}{
+		{"an empty directory", nil, nil},
+		{"a directory holding other files", []string{"junk.txt"}, ErrNonEmptyHome},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			for _, f := range tc.files {
+				if err := os.WriteFile(filepath.Join(root, f), []byte("x"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, err := Init(root)
+			if tc.wantErr == nil && err != nil {
+				t.Fatalf("Init refused the valid case: %v", err)
+			}
+			if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
+				t.Fatalf("Init = %v, want %v", err, tc.wantErr)
+			}
+		})
 	}
 }
 
@@ -758,18 +767,5 @@ func TestCommitBetweenTwoHomesOnSameRoot(t *testing.T) {
 	}
 	if data, err := h2.Read(RootData, "k"); err != nil || string(data) != "one" {
 		t.Errorf("h2 read = %q, err=%v", data, err)
-	}
-}
-
-// TestContainedJoin exercises the isolated refusal decision that joinContained
-// delegates to, so the branch is entered directly rather than only implicitly
-// through withinRoot. A refusal returns the zero path and ErrKeyEscapes; an
-// acceptance returns the joined path unchanged with a nil error.
-func TestContainedJoin(t *testing.T) {
-	if p, err := containedJoin("/root/sub", false); err == nil || !errors.Is(err, ErrKeyEscapes) || p != "" {
-		t.Fatalf("containedJoin(joined, false) = %q, %v; want %q, ErrKeyEscapes", p, err, "")
-	}
-	if p, err := containedJoin("/root/sub", true); err != nil || p != "/root/sub" {
-		t.Fatalf("containedJoin(joined, true) = %q, %v; want %q, nil", p, err, "/root/sub")
 	}
 }

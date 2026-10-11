@@ -122,6 +122,15 @@ func constructBackend(name string) (Backend, error) {
 	}
 }
 
+// requireIdentity is the one refusal of a missing backend identity, shared by
+// Resolve and BackendForTask: empty and "auto" name no backend.
+func requireIdentity(name string) error {
+	if name == "" || name == "auto" {
+		return fmt.Errorf("no session backend identity: %q is not an explicit backend (tmux, herdr, zellij, cmux, orca); no auto-detection", name)
+	}
+	return nil
+}
+
 // Resolve consumes ONE explicitly requested backend identity.
 // An empty requested identity is a typed failure — no config-file read, no
 // env marker, no PATH auto-detect. Capability health is verified through the
@@ -133,8 +142,8 @@ func constructBackend(name string) (Backend, error) {
 // NOT the home-derived hometag. The hometag is the workspace label, passed separately
 // by spawn to NewWindow. See BackendForTask for session binding from task metadata.
 func Resolve(name string) (Backend, string, error) {
-	if name == "" || name == "auto" {
-		return nil, "", fmt.Errorf("no session backend identity: %q is not an explicit backend (tmux, herdr, zellij, cmux, orca); no auto-detection", name)
+	if err := requireIdentity(name); err != nil {
+		return nil, "", err
 	}
 
 	bk, err := constructBackend(name)
@@ -166,8 +175,8 @@ func BackendForTask(homeDir string, meta map[string]string) (Backend, string, er
 	if meta != nil {
 		bkName = meta["backend"]
 	}
-	if bkName == "" {
-		return nil, "", fmt.Errorf("no session backend identity bound in task metadata (meta[\"backend\"] missing or empty); explicit identity required — no fallback")
+	if err := requireIdentity(bkName); err != nil {
+		return nil, "", fmt.Errorf("task metadata meta[\"backend\"]: %w", err)
 	}
 	switch bkName {
 	case "herdr":

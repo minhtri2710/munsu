@@ -78,6 +78,7 @@ enforces; they apply to every waiver, mutant and unreachable function:
 - A waiver states its premise ("unreachable because X") and what makes it wrong ("wrong the moment X stops holding"). Where a test can pin the premise, cite it as `Premise pinned by <TestName>`; the guards lane resolves the name.
 - An unreachable function is dead (delete it), not a finding (keep it with the reason written out), or unreachable because of a production bug (open an issue, mark the reason `OPEN-BUG`, do not delete it and do not file it as accepted debt).
 - Where no lane runs a refusal branch or platform behaviour, state beside the code "no lane runs this; X covers it", never in a form that reads like proof.
+- Test each refusal with two rows: one that blocks the refused case and one that allows the nearest valid case, in one shared table per group. Do not add a test file per refusal.
 
 ## Refusals and the Human's words
 

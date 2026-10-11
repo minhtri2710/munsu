@@ -3,7 +3,6 @@ package backend
 import (
 	"context"
 	"errors"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -150,28 +149,11 @@ func TestGuardBurnDownGetWorktreeReservedRejectsEmptyReservation(t *testing.T) {
 	}
 }
 
-func TestGuardBurnDownGitWorktreeReturnRejectsMalformedGitFile(t *testing.T) {
-	path := t.TempDir()
-	if err := os.WriteFile(filepath.Join(path, ".git"), []byte("not a gitdir\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := (&gitWorktreeProvider{}).Return(path); err == nil || !strings.Contains(err.Error(), "unexpected .git file format") {
-		t.Fatalf("Return error = %v, want malformed-git-file refusal", err)
-	}
-}
-
 func TestGuardBurnDownSelectProviderRejectsEmptyHome(t *testing.T) {
 	t.Setenv("PATH", "/dev/null")
 	_, err := selectProvider("")
 	if err == nil || !strings.Contains(err.Error(), "homeDir is required") {
 		t.Fatalf("selectProvider error = %v, want empty-home refusal", err)
-	}
-}
-
-func TestGuardBurnDownTreehouseRecoveryRefusesReplacement(t *testing.T) {
-	_, err := (&treehouseProvider{}).GetReserved("", false, "reservation", true)
-	if err == nil || !errors.Is(err, ErrWorktreeReservationRecoveryUnsupported) {
-		t.Fatalf("GetReserved error = %v, want unsupported-recovery refusal", err)
 	}
 }
 

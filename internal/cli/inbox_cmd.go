@@ -75,7 +75,7 @@ This produces output with kind=inbox.receive.`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			refJSON := args[0]
 
-			ref, err := orchestrator.ParseNotificationRef(refJSON)
+			ref, err := home.ParseNotificationRef(refJSON)
 			if err != nil {
 				return usageError("invalid_ref",
 					"NotificationRef must be valid JSON with message_id and sender_identity fields",
@@ -145,7 +145,7 @@ This produces output with kind=inbox.ack.`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			refJSON := args[0]
 
-			ref, err := orchestrator.ParseNotificationRef(refJSON)
+			ref, err := home.ParseNotificationRef(refJSON)
 			if err != nil {
 				return usageError("invalid_ref",
 					"NotificationRef must be valid JSON with message_id and sender_identity fields",
@@ -188,15 +188,15 @@ This produces output with kind=inbox.ack.`,
 // MUNSU_HOME set to its dispatcher's home, so its receiver identity is the
 // durable task record that home holds for MUNSU_TASK_ID. Both paths derive
 // identity from durable state and fail closed when it is absent.
-func inboxReceiver(homeDir string) (*orchestrator.Receiver, error) {
+func inboxReceiver(homeDir string) (*home.Receiver, error) {
 	if os.Getenv("MUNSU_ROLE") != "soldier" {
-		return orchestrator.NewReceiver(homeDir)
+		return home.NewReceiver(homeDir)
 	}
 	taskID := os.Getenv("MUNSU_TASK_ID")
 	if taskID == "" {
 		return nil, fmt.Errorf("MUNSU_ROLE=soldier without MUNSU_TASK_ID: a soldier is identified by its task")
 	}
-	return orchestrator.NewSoldierReceiver(homeDir, taskID)
+	return home.NewSoldierReceiver(homeDir, taskID)
 }
 
 // renderInbox prints the inbox view to the given writer.

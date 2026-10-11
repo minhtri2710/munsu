@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/config"
@@ -550,56 +551,53 @@ func TestCaptainProfileFromHome_UnknownHarnessRejected(t *testing.T) {
 	}
 }
 
-func TestResolveSoldierFromSnapshot(t *testing.T) {
-	t.Run("non-empty identity resolves", func(t *testing.T) {
-		cfg := config.ResolvedProjectConfig{Project: "acme", SoldierHarness: "codex"}
-		got, err := ResolveSoldierFromSnapshot(cfg)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got != "codex" {
-			t.Errorf("ResolveSoldierFromSnapshot = %q, want codex", got)
-		}
-	})
-	t.Run("empty identity fails closed", func(t *testing.T) {
-		cfg := config.ResolvedProjectConfig{Project: "acme"}
-		_, err := ResolveSoldierFromSnapshot(cfg)
-		if !errors.Is(err, ErrNoSoldierHarnessInSnapshot) {
-			t.Fatalf("empty identity error = %v, want %v", err, ErrNoSoldierHarnessInSnapshot)
-		}
-	})
-	t.Run("unknown harness rejected via ValidateHarness", func(t *testing.T) {
-		cfg := config.ResolvedProjectConfig{Project: "acme", SoldierHarness: "copilot"}
-		if _, err := ResolveSoldierFromSnapshot(cfg); err == nil {
-			t.Fatal("unknown harness must be rejected by ValidateHarness")
-		}
-	})
-}
-
-func TestResolveCaptainFromSnapshot(t *testing.T) {
-	t.Run("non-empty identity resolves", func(t *testing.T) {
-		cfg := config.ResolvedProjectConfig{Project: "acme", CaptainProfile: config.CaptainProfile{Harness: "pi", Model: "sonnet"}}
-		got, err := ResolveCaptainFromSnapshot(cfg)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got != "pi" {
-			t.Errorf("ResolveCaptainFromSnapshot = %q, want pi", got)
-		}
-	})
-	t.Run("empty identity fails closed", func(t *testing.T) {
-		cfg := config.ResolvedProjectConfig{Project: "acme"}
-		_, err := ResolveCaptainFromSnapshot(cfg)
-		if !errors.Is(err, ErrNoCaptainHarnessInSnapshot) {
-			t.Fatalf("empty identity error = %v, want %v", err, ErrNoCaptainHarnessInSnapshot)
-		}
-	})
-	t.Run("unknown harness rejected via ValidateHarness", func(t *testing.T) {
-		cfg := config.ResolvedProjectConfig{Project: "acme", CaptainProfile: config.CaptainProfile{Harness: "vim"}}
-		if _, err := ResolveCaptainFromSnapshot(cfg); err == nil {
-			t.Fatal("unknown harness must be rejected by ValidateHarness")
-		}
-	})
+func TestResolveFromSnapshotRefusals(t *testing.T) {
+	ranks := []struct {
+		name       string
+		resolve    func(config.ResolvedProjectConfig) (string, error)
+		cfgFor     func(harness string) config.ResolvedProjectConfig
+		sentinel   error
+		unknownMsg string
+	}{
+		{
+			name:    "soldier",
+			resolve: ResolveSoldierFromSnapshot,
+			cfgFor: func(h string) config.ResolvedProjectConfig {
+				return config.ResolvedProjectConfig{Project: "acme", SoldierHarness: h}
+			},
+			sentinel:   ErrNoSoldierHarnessInSnapshot,
+			unknownMsg: "snapshot soldier harness",
+		},
+		{
+			name:    "captain",
+			resolve: ResolveCaptainFromSnapshot,
+			cfgFor: func(h string) config.ResolvedProjectConfig {
+				return config.ResolvedProjectConfig{Project: "acme", CaptainProfile: config.CaptainProfile{Harness: h, Model: "sonnet"}}
+			},
+			sentinel:   ErrNoCaptainHarnessInSnapshot,
+			unknownMsg: "snapshot captain harness",
+		},
+	}
+	for _, rank := range ranks {
+		t.Run(rank.name+"/identity set resolves", func(t *testing.T) {
+			got, err := rank.resolve(rank.cfgFor("pi"))
+			if err != nil || got != "pi" {
+				t.Fatalf("resolve = (%q, %v), want (pi, nil)", got, err)
+			}
+		})
+		t.Run(rank.name+"/empty identity fails closed", func(t *testing.T) {
+			_, err := rank.resolve(rank.cfgFor(""))
+			if !errors.Is(err, rank.sentinel) || !strings.Contains(err.Error(), `project "acme"`) {
+				t.Fatalf("empty identity error = %v, want %v naming the project", err, rank.sentinel)
+			}
+		})
+		t.Run(rank.name+"/unknown harness fails closed", func(t *testing.T) {
+			_, err := rank.resolve(rank.cfgFor("vim"))
+			if err == nil || errors.Is(err, rank.sentinel) || !strings.Contains(err.Error(), rank.unknownMsg) {
+				t.Fatalf("unknown harness error = %v, want the %q refusal", err, rank.unknownMsg)
+			}
+		})
+	}
 }
 
 func PreflightBinaryName(harnessName string) (string, bool) {

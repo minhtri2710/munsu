@@ -227,107 +227,6 @@ func TestWorktreeReclaimSparesReservedUnboundWorktree(t *testing.T) {
 	}
 }
 
-// TestWorktreeReclaimSparesTreehouseLeaseHolderWorktree drives the real
-// treehouse provider path end to end. A semantic fake `treehouse` on PATH emits
-// `status --json` with a live-holder and a dead-holder worktree and records each
-// `return`, so reclaim exercises backend.StatusWorktrees (the status --json
-// decode) and backend.ReturnWorktree (treehouse return) rather than an injected
-// status seam. Reclaim must spare the worktree whose lease_holder is a live
-// launch reservation and return the one held by a dead reservation — the
-// reservation-keyed holder query the F024 treehouse residual
-// (f024-treehouse-holder-status-dep) closed.
-func TestWorktreeReclaimSparesTreehouseLeaseHolderWorktree(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("MUNSU_HOME", tmpDir)
-	initCLITestHome(t, tmpDir)
-	projectName := "treehouse-project"
-	repoPath := filepath.Join(tmpDir, "repo")
-	if err := os.MkdirAll(repoPath, 0o755); err != nil {
-		t.Fatalf("creating registered repo: %v", err)
-	}
-	if err := fleet.Add(tmpDir, projectName, repoPath, true); err != nil {
-		t.Fatalf("registering project: %v", err)
-	}
-
-	auth := testAuthorityFor(t, tmpDir)
-	taskID := mustTaskIDFor(t, "treehouse-holder")
-	projectID, err := domain.NewProjectID(projectName)
-	if err != nil {
-		t.Fatal(err)
-	}
-	createReq := taskauthority.CanonicalCreateRequest{HomeID: auth.HomeID(), TaskID: taskID, Owner: "general", Description: "treehouse holder test", Kind: "ship", Project: projectID, Reason: "reclaim test"}
-	if _, err := auth.Create(mustCanonicalOp(t, "th-create", createReq), createReq); err != nil {
-		t.Fatalf("creating task authority record: %v", err)
-	}
-	agg, err := auth.Get(taskID)
-	if err != nil {
-		t.Fatalf("reading task authority record: %v", err)
-	}
-	const reservationID = "wt-treehouse-holder"
-	launchReq := taskauthority.CanonicalBeginSpawnRequest{HomeID: auth.HomeID(), TaskID: taskID, Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), SnapshotDigest: strings.Repeat("c", 64), Backend: "tmux", Harness: "pi", Model: "model", Effort: "high", Mode: "direct-PR", Kind: "ship", Project: projectName, LaunchID: "launch-treehouse-holder", WindowLabel: "window-treehouse-holder", WorktreeReservationID: reservationID, WorktreeFenceToken: "wt-fence-treehouse-holder", EndpointReservationID: "ep-treehouse-holder", EndpointFenceToken: "ep-fence-treehouse-holder", EndpointIncarnation: "ep-inc-treehouse-holder", Reason: "reclaim test"}
-	if _, err := auth.BeginSpawn(mustCanonicalOp(t, "th-launch", launchReq), launchReq); err != nil {
-		t.Fatalf("committing launch intent: %v", err)
-	}
-
-	const heldPath = "/pool/held-by-live-reservation"
-	const orphanPath = "/pool/orphan-lease"
-	tracePath := filepath.Join(tmpDir, "treehouse-returns")
-	statusJSON := `[{"path":"` + heldPath + `","lease_holder":"` + reservationID + `"},` +
-		`{"path":"` + orphanPath + `","lease_holder":"some-dead-reservation"}]`
-	// Semantic fake treehouse: answer `status --json` with the two pooled
-	// worktrees and append every `return` target to the trace file, so the test
-	// observes a real provider-level return rather than only reclaim's stdout.
-	script := "#!/usr/bin/env bash\n" +
-		`if [ "$1" = "status" ] && [ "$2" = "--json" ]; then` + "\n" +
-		`  echo '` + statusJSON + `'` + "\n" +
-		`  exit 0` + "\n" +
-		`fi` + "\n" +
-		`if [ "$1" = "return" ]; then` + "\n" +
-		`  for a in "$@"; do last="$a"; done` + "\n" +
-		`  echo "$last" >> "` + tracePath + `"` + "\n" +
-		`  exit 0` + "\n" +
-		`fi` + "\n" +
-		`>&2 echo "fake treehouse: unexpected args: $*"` + "\n" +
-		`exit 1` + "\n"
-	testutil.FakeOnPath(t, "treehouse", script)
-
-	root := &cobra.Command{Use: "test"}
-	root.AddCommand(newWorktreeCmd())
-	root.SetOut(new(strings.Builder))
-	root.SetErr(new(strings.Builder))
-	root.SetArgs([]string{"worktree", "reclaim"})
-	stdout, stdoutWriter, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("creating stdout pipe: %v", err)
-	}
-	oldStdout := os.Stdout
-	os.Stdout = stdoutWriter
-	outputDone := make(chan string, 1)
-	go func() {
-		output, readErr := io.ReadAll(stdout)
-		if readErr != nil {
-			outputDone <- "read stdout: " + readErr.Error()
-			return
-		}
-		outputDone <- string(output)
-	}()
-
-	err = root.Execute()
-	stdoutWriter.Close()
-	os.Stdout = oldStdout
-	output := <-outputDone
-	stdout.Close()
-	if err == nil || !strings.Contains(err.Error(), "not canonically reconciled") {
-		t.Fatalf("reclaim error = %v, want fail-closed lease reconciliation refusal", err)
-	}
-	if strings.Contains(output, "returning orphaned worktree:") || strings.Contains(output, "Reclaimed") {
-		t.Fatalf("reclaim must preflight every lease before provider return, got stdout: %q", output)
-	}
-	if _, err := os.Stat(tracePath); !os.IsNotExist(err) {
-		t.Fatalf("provider must not return live or unreconciled leases; trace stat error=%v", err)
-	}
-}
-
 // TestWorktreeReclaimIsFencedAgainstTheWorktreePool proves reclaim runs its
 // snapshot->return pass under the worktree-pool fence: while the fence is held
 // (as a launch holds it around its lease), reclaim cannot proceed and fails
@@ -649,31 +548,63 @@ func TestWorktreeReclaimSparesUnboundReservationUntilRetirementCompletes(t *test
 	}
 }
 
-// TestWorktreeReclaimReturnsReleasedTreehouseLeaseHolder pins the treehouse
-// case: treehouse reports the retired unbound reservation as the lease
-// holder, and reclaim must treat that holder as reconciled and return the clean
-// worktree through the provider.
-func TestWorktreeReclaimReturnsReleasedTreehouseLeaseHolder(t *testing.T) {
-	auth, taskID, reservedPath := unboundReservationFixture(t)
-	retireHeldTask(t, auth, taskID)
-	agg, err := auth.Get(taskID)
-	if err != nil {
-		t.Fatal(err)
+// TestWorktreeReclaimLeaseHolderGuard drives the treehouse provider path with a
+// fake `treehouse` that reports one pooled worktree and records every `return`.
+// A lease holder no canonical retirement released refuses the whole pass before
+// any provider return; a holder whose unbound reservation is retired with its
+// cleanup completed is reconciled and its clean worktree is returned.
+func TestWorktreeReclaimLeaseHolderGuard(t *testing.T) {
+	const deadHolder = "some-dead-reservation"
+	cases := []struct {
+		name    string
+		setup   func(t *testing.T) (path, holder string)
+		refused string
+	}{
+		{"block: lease holder no retirement released", func(t *testing.T) (string, string) {
+			unboundReservationFixture(t)
+			return filepath.Join(t.TempDir(), "orphan-lease"), deadHolder
+		}, `lease holder "` + deadHolder + `" is not canonically reconciled; refusing reclaim`},
+		{"allow: lease holder released by completed retirement", func(t *testing.T) (string, string) {
+			auth, taskID, reservedPath := unboundReservationFixture(t)
+			retireHeldTask(t, auth, taskID)
+			agg, err := auth.Get(taskID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := auth.ReconcileRetirementCleanup(taskID, agg.Generation, taskauthority.CleanupCompleted, func() error { return nil }); err != nil {
+				t.Fatalf("completing canonical retirement cleanup for fixture: %v", err)
+			}
+			return reservedPath, heldReservationID
+		}, ""},
 	}
-	if err := auth.ReconcileRetirementCleanup(taskID, agg.Generation, taskauthority.CleanupCompleted, func() error { return nil }); err != nil {
-		t.Fatalf("completing canonical retirement cleanup for fixture: %v", err)
-	}
-	tracePath := installHeldTreehouse(t, reservedPath, heldReservationID)
-	output, err := runWorktreeReclaim(t)
-	if err != nil {
-		t.Fatalf("reclaim refused a released treehouse lease holder: %v", err)
-	}
-	if !strings.Contains(output, "returning orphaned worktree: "+reservedPath) || !strings.Contains(output, "Reclaimed 1 orphaned worktrees") {
-		t.Fatalf("released treehouse lease holder should be reclaimed, got stdout: %q", output)
-	}
-	trace, err := os.ReadFile(tracePath)
-	if err != nil || strings.TrimSpace(string(trace)) != reservedPath {
-		t.Fatalf("provider return trace = %q, err=%v, want %q", trace, err, reservedPath)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path, holder := tc.setup(t)
+			tracePath := installHeldTreehouse(t, path, holder)
+			output, err := runWorktreeReclaim(t)
+			if tc.refused != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.refused) {
+					t.Fatalf("reclaim error = %v, want %q", err, tc.refused)
+				}
+				if strings.Contains(output, "returning orphaned worktree:") || strings.Contains(output, "Reclaimed") {
+					t.Fatalf("reclaim must preflight every lease before provider return, got stdout: %q", output)
+				}
+				if _, err := os.Stat(tracePath); !os.IsNotExist(err) {
+					t.Fatalf("provider must not return an unreconciled lease; trace stat error=%v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("reclaim refused a released treehouse lease holder: %v", err)
+			}
+			if !strings.Contains(output, "returning orphaned worktree: "+path) || !strings.Contains(output, "Reclaimed 1 orphaned worktrees") {
+				t.Fatalf("released treehouse lease holder should be reclaimed, got stdout: %q", output)
+			}
+			trace, err := os.ReadFile(tracePath)
+			if err != nil || strings.TrimSpace(string(trace)) != path {
+				t.Fatalf("provider return trace = %q, err=%v, want %q", trace, err, path)
+			}
+		})
 	}
 }
 

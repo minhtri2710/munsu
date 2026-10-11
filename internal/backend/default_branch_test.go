@@ -11,10 +11,13 @@ import (
 // TestDefaultBranch is the one table for the default-branch owner and its
 // refusals: DefaultBranch, RemoteDefaultBranch, and the tangle check built on
 // DefaultBranch. Each refusal has a blocking row and its nearest allowing row.
+// The tangle check passes without reading the default branch when HEAD cannot
+// be read (the empty repo) or is detached.
 func TestDefaultBranch(t *testing.T) {
 	tests := []struct {
 		name       string
 		empty      bool     // a repo with no commits and no refs
+		detach     bool     // HEAD detached at the first commit
 		local      []string // local branches; the first is the one checked out
 		origin     []string // branches pushed to origin
 		head       string   // origin/HEAD: a branch name, or a full ref to plant it malformed
@@ -22,15 +25,18 @@ func TestDefaultBranch(t *testing.T) {
 		wantRef    string
 		wantRemote string // RemoteDefaultBranch
 		wantErr    string // DefaultBranch and RemoteDefaultBranch both refuse with this
-		tangled    bool   // AssertNotTangled refuses
+		wantTangle string // AssertNotTangled refuses with this; empty allows
 	}{
 		{name: "unresolved: no ref names a default", empty: true, wantErr: "cannot resolve default branch"},
+		{name: "unresolved: on a branch no ref names a default", local: []string{"feature"}, wantErr: "cannot resolve default branch",
+			wantTangle: "the default branch cannot be resolved"},
+		{name: "allowed: detached HEAD, no ref names a default", local: []string{"feature"}, detach: true, wantErr: "cannot resolve default branch"},
 		{name: "allowed: origin/HEAD with a slash in the branch", local: []string{"release/1"}, origin: []string{"release/1"}, head: "release/1",
 			wantName: "release/1", wantRef: "release/1", wantRemote: "release/1"},
 		{name: "malformed origin/HEAD is refused", local: []string{"main"}, origin: []string{"main"}, head: "refs/remotes/upstream/main",
-			wantErr: "unexpected origin/HEAD symbolic ref format"},
+			wantErr: "unexpected origin/HEAD symbolic ref format", wantTangle: "unexpected origin/HEAD symbolic ref format"},
 		{name: "tangled: default known only as origin/main", local: []string{"feature"}, origin: []string{"main"},
-			wantName: "main", wantRef: "origin/main", wantRemote: "main", tangled: true},
+			wantName: "main", wantRef: "origin/main", wantRemote: "main", wantTangle: "cannot spawn: p is on branch feature, not an isolated worktree. Use a detached HEAD or a worktree"},
 		{name: "allowed: local master and origin/main, on master", local: []string{"master"}, origin: []string{"main"},
 			wantName: "master", wantRef: "master", wantRemote: "main"},
 		{name: "allowed: local main and origin/master, on main", local: []string{"main"}, origin: []string{"master"},
@@ -39,6 +45,9 @@ func TestDefaultBranch(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := defaultBranchRepo(t, tt.empty, tt.local, tt.origin, tt.head)
+			if tt.detach {
+				defaultBranchGit(t, repo, "git", "checkout", "--detach")
+			}
 
 			got, err := DefaultBranch(repo)
 			_, remoteErr := RemoteDefaultBranch(repo)
@@ -63,8 +72,14 @@ func TestDefaultBranch(t *testing.T) {
 					t.Fatal("OriginHeadBranch resolved with origin/HEAD unset; it has no fallback")
 				}
 			}
-			if tangle := AssertNotTangled(repo, "p"); (tangle != nil) != tt.tangled {
-				t.Fatalf("AssertNotTangled = %v, want refusal %v", tangle, tt.tangled)
+			tangle := AssertNotTangled(repo, "p")
+			switch {
+			case tt.wantTangle == "" && tangle != nil:
+				t.Fatalf("AssertNotTangled = %v, want allowed", tangle)
+			case tt.wantTangle != "" && (tangle == nil || !strings.Contains(tangle.Error(), tt.wantTangle)):
+				t.Fatalf("AssertNotTangled = %v, want refusal %q", tangle, tt.wantTangle)
+			case tt.wantTangle != "" && tt.wantErr != "" && !strings.Contains(tangle.Error(), "git -C "+repo+" remote set-head origin -a"):
+				t.Fatalf("AssertNotTangled = %v, want the set-head fix named", tangle)
 			}
 		})
 	}

@@ -18,12 +18,12 @@ import (
 // newReportCmd creates the `munsu report` command for rank-aware uplink status reporting.
 func newReportCmd() *cobra.Command {
 	transport := newSessionUplinkTransport()
-	return newReportCmdWithNotifier(func(senderHome, receiverHome string, ref orchestrator.NotificationRef) orchestrator.UplinkNotifyResult {
+	return newReportCmdWithNotifier(func(senderHome, receiverHome string, ref home.NotificationRef) orchestrator.UplinkNotifyResult {
 		return orchestrator.NotifyParentWithTransport(senderHome, receiverHome, ref, transport)
 	})
 }
 
-func newReportCmdWithNotifier(notify func(senderHome, receiverHome string, ref orchestrator.NotificationRef) orchestrator.UplinkNotifyResult) *cobra.Command {
+func newReportCmdWithNotifier(notify func(senderHome, receiverHome string, ref home.NotificationRef) orchestrator.UplinkNotifyResult) *cobra.Command {
 	var key string
 	var ring string // "auto" | "ring" | "no-ring"
 
@@ -140,7 +140,7 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 				// exactly the form the receiver derives from the envelope's
 				// task ID; a captain identifies itself as its own home.
 				senderIdentity := home.ReceiverIDForTask(taskID)
-				senderRank := orchestrator.Rank(role)
+				senderRank := home.Rank(role)
 				if role == "captain" {
 					identity, idErr := captainHomeID(homeDir)
 					if idErr != nil {
@@ -151,7 +151,7 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 				// The receiving home's own provenance is the only authority on
 				// its rank: a captain home under Captain dispatch, the General
 				// home under direct General dispatch.
-				receiverIdentity, receiverRank, err := orchestrator.ReadHomeIdentity(parentHome)
+				receiverIdentity, receiverRank, err := home.ReadHomeIdentity(parentHome)
 				if err != nil {
 					return fmt.Errorf("report: deriving receiver identity: %w", err)
 				}
@@ -160,7 +160,7 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 					SenderRank: senderRank, SenderIdentity: senderIdentity,
 					ReceiverRank: receiverRank, ReceiverID: receiverIdentity,
 					TaskID: taskID, Key: key, State: state, Message: msg,
-					Notify: func(ref orchestrator.NotificationRef) orchestrator.UplinkNotifyResult {
+					Notify: func(ref home.NotificationRef) orchestrator.UplinkNotifyResult {
 						if resolveRingPolicy(ring, homeDir) == "no-ring" {
 							return orchestrator.QueuedNotification()
 						}
@@ -365,7 +365,7 @@ func resolveRingPolicy(ring, homeDir string) string {
 	case "no-ring":
 		return "no-ring"
 	default: // auto
-		if orchestrator.ShouldBatch(homeDir) {
+		if orchestrator.IsActive(homeDir) {
 			return "no-ring"
 		}
 		return "ring"

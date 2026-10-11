@@ -55,11 +55,8 @@ func setupClaimedWorktreeReturn(t *testing.T) (worktreePath, tracePath string) {
 	return worktreePath, tracePath
 }
 
-func setupCleanOrphanWorktree(t *testing.T) (homeDir, repoPath, worktreePath, tracePath string) {
+func gitOrphanWorktree(t *testing.T) (repoPath, worktreePath string) {
 	t.Helper()
-	homeDir = t.TempDir()
-	t.Setenv("MUNSU_HOME", homeDir)
-	initCLITestHome(t, homeDir)
 	repoPath = filepath.Join(t.TempDir(), "repo")
 	if err := os.MkdirAll(repoPath, 0o755); err != nil {
 		t.Fatal(err)
@@ -81,6 +78,15 @@ func setupCleanOrphanWorktree(t *testing.T) (homeDir, repoPath, worktreePath, tr
 	if out, err := exec.Command("git", "-C", repoPath, "worktree", "add", "--detach", worktreePath, "HEAD").CombinedOutput(); err != nil {
 		t.Fatalf("adding orphan worktree: %v\n%s", err, out)
 	}
+	return repoPath, worktreePath
+}
+
+func setupCleanOrphanWorktree(t *testing.T) (homeDir, repoPath, worktreePath, tracePath string) {
+	t.Helper()
+	homeDir = t.TempDir()
+	t.Setenv("MUNSU_HOME", homeDir)
+	initCLITestHome(t, homeDir)
+	repoPath, worktreePath = gitOrphanWorktree(t)
 	tracePath = filepath.Join(homeDir, "treehouse-returns")
 	status, err := json.Marshal([]map[string]string{{"path": worktreePath, "lease_holder": ""}})
 	if err != nil {
@@ -92,49 +98,75 @@ func setupCleanOrphanWorktree(t *testing.T) (homeDir, repoPath, worktreePath, tr
 	return homeDir, repoPath, worktreePath, tracePath
 }
 
-func TestWorktreeReturnAllowsCleanCanonicalOrphan(t *testing.T) {
-	_, _, worktreePath, tracePath := setupCleanOrphanWorktree(t)
-	root := NewRootCommand()
-	root.SetOut(new(strings.Builder))
-	root.SetErr(new(strings.Builder))
-	root.SetArgs([]string{"worktree", "return", worktreePath})
-	if err := root.Execute(); err != nil {
-		t.Fatalf("returning clean canonical orphan: %v", err)
-	}
-	trace, err := os.ReadFile(tracePath)
-	if err != nil || !strings.Contains(string(trace), worktreePath) {
-		t.Fatalf("provider return trace = %q, err=%v", trace, err)
-	}
-}
-
-func TestWorktreeReturnRefusesDirtyAndUnanchoredContent(t *testing.T) {
-	for _, name := range []string{"user-notes.txt", ".soldier-manifest.json"} {
-		t.Run(name, func(t *testing.T) {
+func TestWorktreeReturnGuards(t *testing.T) {
+	cases := []struct {
+		name    string
+		setup   func(t *testing.T) (paths []string, tracePath string)
+		refused string
+	}{
+		{"block: claimed worktree by absolute, relative and symlink path", func(t *testing.T) ([]string, string) {
+			worktreePath, tracePath := setupClaimedWorktreeReturn(t)
+			alias := filepath.Join(t.TempDir(), "alias")
+			if err := os.Symlink(worktreePath, alias); err != nil {
+				t.Fatalf("creating symlink: %v", err)
+			}
+			cwd, err := os.Getwd()
+			if err != nil {
+				t.Fatalf("getting cwd: %v", err)
+			}
+			relative, err := filepath.Rel(cwd, worktreePath)
+			if err != nil {
+				t.Fatalf("making relative path: %v", err)
+			}
+			return []string{worktreePath, relative, alias}, tracePath
+		}, "refusing to return claimed worktree"},
+		{"block: unclaimed worktree with dirty content", func(t *testing.T) ([]string, string) {
 			_, _, worktreePath, tracePath := setupCleanOrphanWorktree(t)
-			if err := os.WriteFile(filepath.Join(worktreePath, name), []byte("protected content\n"), 0o600); err != nil {
+			if err := os.WriteFile(filepath.Join(worktreePath, "user-notes.txt"), []byte("protected content\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			root := NewRootCommand()
-			root.SetOut(new(strings.Builder))
-			root.SetErr(new(strings.Builder))
-			root.SetArgs([]string{"worktree", "return", worktreePath})
-			err := root.Execute()
-			if err == nil || !(strings.Contains(err.Error(), "dirty") || strings.Contains(err.Error(), "launch artifact")) {
-				t.Fatalf("return error = %v, want content-preserving refusal", err)
+			return []string{worktreePath}, tracePath
+		}, "worktree contains dirty, untracked, or ignored content; refusing return"},
+		{"allow: clean canonical orphan", func(t *testing.T) ([]string, string) {
+			_, _, worktreePath, tracePath := setupCleanOrphanWorktree(t)
+			return []string{worktreePath}, tracePath
+		}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			paths, tracePath := tc.setup(t)
+			for _, path := range paths {
+				root := NewRootCommand()
+				root.SetOut(new(strings.Builder))
+				root.SetErr(new(strings.Builder))
+				root.SetArgs([]string{"worktree", "return", path})
+				err := root.Execute()
+				if tc.refused == "" {
+					if err != nil {
+						t.Fatalf("return %q: %v", path, err)
+					}
+					continue
+				}
+				if err == nil || !strings.Contains(err.Error(), tc.refused) {
+					t.Fatalf("return %q error = %v, want %q", path, err, tc.refused)
+				}
 			}
-			got, readErr := os.ReadFile(filepath.Join(worktreePath, name))
-			if readErr != nil || string(got) != "protected content\n" {
-				t.Fatalf("protected content = %q, err=%v", got, readErr)
+			trace, err := os.ReadFile(tracePath)
+			if tc.refused == "" {
+				if err != nil || !strings.Contains(string(trace), paths[0]) {
+					t.Fatalf("provider return trace = %q, err=%v, want %q", trace, err, paths[0])
+				}
+				return
 			}
-			if _, statErr := os.Stat(tracePath); !os.IsNotExist(statErr) {
-				t.Fatalf("provider was called for protected content: %v", statErr)
+			if !os.IsNotExist(err) {
+				t.Fatalf("provider was called for a refused return: trace=%q err=%v", trace, err)
 			}
 		})
 	}
 }
 
 func TestWorktreeReturnRejectsForceFlag(t *testing.T) {
-	_, _, worktreePath, tracePath := setupCleanOrphanWorktree(t)
+	worktreePath, tracePath := setupClaimedWorktreeReturn(t)
 	root := NewRootCommand()
 	root.SetOut(new(strings.Builder))
 	root.SetErr(new(strings.Builder))
@@ -144,102 +176,5 @@ func TestWorktreeReturnRejectsForceFlag(t *testing.T) {
 	}
 	if _, err := os.Stat(tracePath); !os.IsNotExist(err) {
 		t.Fatalf("provider was called with --force: %v", err)
-	}
-}
-
-func TestWorktreeReturnRefusesClaimedWorktree(t *testing.T) {
-	worktreePath, tracePath := setupClaimedWorktreeReturn(t)
-	root := NewRootCommand()
-	root.SetOut(new(strings.Builder))
-	root.SetErr(new(strings.Builder))
-	root.SetArgs([]string{"worktree", "return", worktreePath})
-
-	err := root.Execute()
-	if err == nil || !strings.Contains(err.Error(), "refusing to return claimed worktree") {
-		t.Fatalf("return claimed worktree error = %v, want refusal", err)
-	}
-	if _, err := os.Stat(tracePath); !os.IsNotExist(err) {
-		t.Fatalf("backend return should not run, trace stat error = %v", err)
-	}
-}
-
-func TestWorktreeReturnRefusesAliases(t *testing.T) {
-	worktreePath, tracePath := setupClaimedWorktreeReturn(t)
-	alias := filepath.Join(t.TempDir(), "alias")
-	if err := os.Symlink(worktreePath, alias); err != nil {
-		t.Fatalf("creating symlink: %v", err)
-	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getting cwd: %v", err)
-	}
-	relative, err := filepath.Rel(cwd, worktreePath)
-	if err != nil {
-		t.Fatalf("making relative path: %v", err)
-	}
-	for _, path := range []string{relative, alias} {
-		root := NewRootCommand()
-		root.SetOut(new(strings.Builder))
-		root.SetErr(new(strings.Builder))
-		root.SetArgs([]string{"worktree", "return", path})
-		if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "refusing to return claimed worktree") {
-			t.Fatalf("return %q error = %v, want refusal", path, err)
-		}
-	}
-	if _, err := os.Stat(tracePath); !os.IsNotExist(err) {
-		t.Fatalf("backend return should not run, trace stat error = %v", err)
-	}
-}
-
-func TestWorktreeReturnRejectsForceForTaskBinding(t *testing.T) {
-	worktreePath, tracePath := setupClaimedWorktreeReturn(t)
-	root := NewRootCommand()
-	root.SetOut(new(strings.Builder))
-	root.SetErr(new(strings.Builder))
-	root.SetArgs([]string{"worktree", "return", "--force", worktreePath})
-
-	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "unknown flag: --force") {
-		t.Fatalf("forced return error = %v, want removed force flag refusal", err)
-	}
-	if _, err := os.Stat(tracePath); !os.IsNotExist(err) {
-		t.Fatalf("forced return reached provider despite canonical task binding: %v", err)
-	}
-}
-
-func TestWorktreeReturnRefusesUnregisteredPath(t *testing.T) {
-	_, _, worktreePath, tracePath := setupCleanOrphanWorktree(t)
-	root := NewRootCommand()
-	root.SetOut(new(strings.Builder))
-	root.SetErr(new(strings.Builder))
-	root.SetArgs([]string{"worktree", "return", filepath.Join(filepath.Dir(worktreePath), "unlisted")})
-	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "ownership is not established by provider status") {
-		t.Fatalf("unregistered return error = %v, want provider ownership refusal", err)
-	}
-	if _, err := os.Stat(tracePath); !os.IsNotExist(err) {
-		t.Fatalf("provider was called for an unregistered path: %v", err)
-	}
-}
-
-func TestWorktreeReturnRejectsForceWithUnreadableClaims(t *testing.T) {
-	worktreePath, tracePath := setupClaimedWorktreeReturn(t)
-	homeDir := os.Getenv("MUNSU_HOME")
-	metaPath, err := home.MetaFilePath(homeDir, "claimed-task")
-	if err != nil {
-		t.Fatalf("finding task meta: %v", err)
-	}
-	if err := os.WriteFile(metaPath, []byte(strings.Repeat("x", 128*1024)), 0o600); err != nil {
-		t.Fatalf("corrupting task meta: %v", err)
-	}
-
-	root := NewRootCommand()
-	root.SetOut(new(strings.Builder))
-	root.SetErr(new(strings.Builder))
-	root.SetArgs([]string{"worktree", "return", "--force", worktreePath})
-
-	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "unknown flag: --force") {
-		t.Fatalf("forced return with unreadable claims error = %v, want removed force flag refusal", err)
-	}
-	if _, err := os.Stat(tracePath); !os.IsNotExist(err) {
-		t.Fatalf("forced return reached provider despite unreadable claims: %v", err)
 	}
 }

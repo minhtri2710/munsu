@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/minhtri2710/munsu/internal/backend"
-	"github.com/minhtri2710/munsu/internal/orchestrator"
+	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 type sessionMailboxSender struct {
@@ -16,23 +16,11 @@ func newSessionMailboxSender() sessionMailboxSender {
 }
 
 func (s sessionMailboxSender) backend(home string, meta map[string]string) (backend.Backend, error) {
-	if home == "" || meta["backend"] == "" || meta["window"] == "" {
+	if home == "" || meta["window"] == "" {
 		return nil, fmt.Errorf("bound sender identity is incomplete")
 	}
-	bk, name, err := s.resolve(home, meta)
-	if err != nil {
-		return nil, err
-	}
-	if name != meta["backend"] {
-		return nil, fmt.Errorf("bound backend resolved as %q", name)
-	}
-	if meta["backend"] == "herdr" && meta["herdr_session"] != "" {
-		hs, _ := backend.ParseWindow(meta["window"])
-		if hs != "" && hs != meta["herdr_session"] {
-			return nil, fmt.Errorf("herdr session ownership mismatch")
-		}
-	}
-	return bk, nil
+	bk, _, err := boundBackend(home, meta, s.resolve)
+	return bk, err
 }
 
 func (s sessionMailboxSender) Alive(home string, meta map[string]string) (bool, error) {
@@ -47,19 +35,19 @@ func (s sessionMailboxSender) Alive(home string, meta map[string]string) (bool, 
 	return result.PaneAlive && result.AgentAlive, nil
 }
 
-func (s sessionMailboxSender) Send(home string, meta map[string]string, payload string) orchestrator.BoundSendResult {
+func (s sessionMailboxSender) Send(home string, meta map[string]string, payload string) mhome.BoundSendResult {
 	bk, err := s.backend(home, meta)
 	if err != nil {
-		return orchestrator.BoundSendResult{Status: "backend-failed", Err: err}
+		return mhome.BoundSendResult{Status: "backend-failed", Err: err}
 	}
 	if recognized, ok := bk.(interface {
 		IsRecognizedAgent(string) (bool, string)
 	}); ok {
 		isAgent, status := recognized.IsRecognizedAgent(meta["window"])
 		if !isAgent || !backend.AgentStatusReady(status) {
-			return orchestrator.BoundSendResult{Status: "deferred", Detail: "agent status: " + status}
+			return mhome.BoundSendResult{Status: "deferred", Detail: "agent status: " + status}
 		}
 	}
 	result := backend.SubmitPrompt(bk, meta["window"], payload)
-	return orchestrator.BoundSendResult{Status: string(result.Status), Detail: result.Detail, Acknowledged: result.Acknowledged(), Err: result.Err}
+	return mhome.BoundSendResult{Status: string(result.Status), Detail: result.Detail, Acknowledged: result.Acknowledged(), Err: result.Err}
 }

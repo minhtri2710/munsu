@@ -445,38 +445,68 @@ func TestAckRefusesToOverwriteAConflictingOutcome(t *testing.T) {
 
 // Receiver identity is read from durable home provenance, never from a caller
 // string, so a marker that cannot be parsed to an identity must not silently
-// resolve to some default receiver.
+// resolve to some default receiver. This is the captain-identity table for the
+// home side: a home with a marker is read by the strict provenance check, and
+// only a home with no marker is the General's.
 func TestReadHomeIdentityRefusesUnusableMarkers(t *testing.T) {
-	markerFor := func(t *testing.T, content string) string {
-		t.Helper()
-		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, captainMarkerName), []byte(content), 0644); err != nil {
-			t.Fatalf("write marker: %v", err)
-		}
-		return dir
-	}
-
-	// Control: a well-formed marker resolves to its captain identity.
-	dir := markerFor(t, "munsu-v2\ncaptain-1\n/some/home\n")
-	id, rank, err := ReadHomeIdentity(dir)
-	if err != nil || id != "captain-1" || rank != RankCaptain {
-		t.Fatalf("ReadHomeIdentity = (%q, %q, %v), want (captain-1, captain, nil)", id, rank, err)
-	}
-
 	for _, tc := range []struct {
-		name    string
-		content string
-		wantSub string
+		name string
+		// marker returns the marker file content for a home whose canonical
+		// path is canonical; nil leaves the home without a marker.
+		marker func(canonical string) string
+		// wantSub is the refusal both readers must carry. Empty marks an allow
+		// row: ReadHomeIdentity returns wantID and wantRank.
+		wantSub  string
+		wantID   string
+		wantRank Rank
+		// validateSub is the refusal ValidateCaptainProvenance gives an allow
+		// row of ReadHomeIdentity; empty means it also accepts, as wantID.
+		validateSub string
 	}{
-		{"a marker with only a version line", "munsu-v2\n", "malformed home identity marker"},
-		{"a marker from an unsupported version", "munsu-v1\ncaptain-1\n/some/home\n", "unsupported home identity version"},
-		{"a marker with a blank identity line", "munsu-v2\n\n/some/home\n", "empty captain identity"},
+		{name: "a seeded captain marker", marker: func(c string) string { return "munsu-v2\ncaptain-1\n" + c + "\n" }, wantID: "captain-1", wantRank: RankCaptain},
+		{name: "a home with no marker is the General's", wantRank: RankGeneral, validateSub: "has no " + CaptainProvenanceMarkerName + " marker"},
+		{name: "a marker with fewer than three lines", marker: func(string) string { return "munsu-v2\ncaptain-1\n" }, wantSub: "expected exactly 3 lines"},
+		{name: "a marker with extra content", marker: func(c string) string { return "munsu-v2\ncaptain-1\n" + c + "\nextra\n" }, wantSub: "has extra content"},
+		{name: "a marker from an unsupported version", marker: func(c string) string { return "munsu-v1\ncaptain-1\n" + c + "\n" }, wantSub: "unsupported version"},
+		{name: "a marker with a blank identity line", marker: func(c string) string { return "munsu-v2\n \n" + c + "\n" }, wantSub: "empty id"},
+		{name: "a marker recording a different canonical home", marker: func(string) string { return "munsu-v2\ncaptain-1\n/somewhere/else\n" }, wantSub: "may have been copied/moved"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, _, err := ReadHomeIdentity(markerFor(t, tc.content)); err == nil {
-				t.Fatalf("ReadHomeIdentity accepted %s", tc.name)
-			} else if !strings.Contains(err.Error(), tc.wantSub) {
-				t.Fatalf("error = %v, want the %q refusal", err, tc.wantSub)
+			dir := t.TempDir()
+			if tc.marker != nil {
+				canonical, err := CanonicalCaptainHome(dir)
+				if err != nil {
+					t.Fatalf("CanonicalCaptainHome: %v", err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, CaptainProvenanceMarkerName), []byte(tc.marker(canonical)), 0644); err != nil {
+					t.Fatalf("write marker: %v", err)
+				}
+			}
+			id, rank, readErr := ReadHomeIdentity(dir)
+			_, validateErr := ValidateCaptainProvenance(dir)
+			if tc.wantSub != "" {
+				for name, err := range map[string]error{"ReadHomeIdentity": readErr, "ValidateCaptainProvenance": validateErr} {
+					if err == nil {
+						t.Fatalf("%s accepted %s", name, tc.name)
+					} else if !strings.Contains(err.Error(), tc.wantSub) {
+						t.Fatalf("%s error = %v, want the %q refusal", name, err, tc.wantSub)
+					}
+				}
+				return
+			}
+			wantID := tc.wantID
+			if tc.wantRank == RankGeneral {
+				wantID = filepath.Base(dir)
+			}
+			if readErr != nil || id != wantID || rank != tc.wantRank {
+				t.Fatalf("ReadHomeIdentity = (%q, %q, %v), want (%q, %q, nil)", id, rank, readErr, wantID, tc.wantRank)
+			}
+			if tc.validateSub == "" {
+				if validateErr != nil {
+					t.Fatalf("ValidateCaptainProvenance refused the marker ReadHomeIdentity accepted: %v", validateErr)
+				}
+			} else if validateErr == nil || !strings.Contains(validateErr.Error(), tc.validateSub) {
+				t.Fatalf("ValidateCaptainProvenance error = %v, want the %q refusal", validateErr, tc.validateSub)
 			}
 		})
 	}
@@ -551,24 +581,15 @@ func TestSoldierReceiverRejectsCollidingTaskID(t *testing.T) {
 	}
 }
 
-func TestNewSoldierReceiverRefusesCaptainTask(t *testing.T) {
-	dir := t.TempDir()
-	if err := WriteMeta(dir, "captain:captain-1", map[string]string{"kind": "captain", "home": filepath.Join(dir, "captain")}); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
-	}
-	if _, err := NewSoldierReceiver(dir, "captain:captain-1"); err == nil {
-		t.Fatal("NewSoldierReceiver accepted a captain task")
-	} else if !strings.Contains(err.Error(), "captain task") {
-		t.Fatalf("error = %v, want captain-task refusal", err)
-	}
-}
-
-func TestNewSoldierReceiverRefusesTasksTheHomeDoesNotHost(t *testing.T) {
+func TestNewSoldierReceiverRefusesWhatTheHomeCannotVouchForAsASoldier(t *testing.T) {
 	dir := t.TempDir()
 
 	// Control: a task the home holds a meta record for resolves to a soldier
 	// receiver identified by that task.
 	if err := WriteMeta(dir, "task:hosted", map[string]string{"window": "w"}); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+	if err := WriteMeta(dir, "captain:captain-1", map[string]string{"kind": "captain", "home": filepath.Join(dir, "captain")}); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 	r, err := NewSoldierReceiver(dir, "task:hosted")
@@ -584,6 +605,7 @@ func TestNewSoldierReceiverRefusesTasksTheHomeDoesNotHost(t *testing.T) {
 		taskID  string
 		wantSub string
 	}{
+		{"a captain task", "captain:captain-1", "is a captain task"},
 		{"a task this home has no record of", "task:not-hosted", "hosts no task"},
 		{"a task ID that is not a task ID", "../escape", "invalid task ID"},
 	} {

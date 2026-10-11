@@ -116,16 +116,16 @@ func recordReviewVerdictWake(homeDir string, reviews ReviewVerdictPort, announce
 // path of `munsu report` does: sender is the task the home hosts, the receiver
 // is the home's own identity, and the notification is left queued.
 func reportReviewVerdict(homeDir, taskID, key, state, message string) error {
-	receiverID, receiverRank, err := ReadHomeIdentity(homeDir)
+	receiverID, receiverRank, err := home.ReadHomeIdentity(homeDir)
 	if err != nil {
 		return fmt.Errorf("deriving receiver identity: %w", err)
 	}
 	_, err = Report(ReportRequest{
 		SenderHome: homeDir, ReceiverHome: homeDir,
-		SenderRank: Rank("soldier"), SenderIdentity: home.ReceiverIDForTask(taskID),
+		SenderRank: home.Rank("soldier"), SenderIdentity: home.ReceiverIDForTask(taskID),
 		ReceiverRank: receiverRank, ReceiverID: receiverID,
 		TaskID: taskID, Key: key, State: state, Message: message,
-		Notify: func(NotificationRef) UplinkNotifyResult { return QueuedNotification() },
+		Notify: func(home.NotificationRef) UplinkNotifyResult { return QueuedNotification() },
 	})
 	return err
 }

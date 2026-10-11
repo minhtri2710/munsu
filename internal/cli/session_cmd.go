@@ -12,7 +12,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/fleet"
-	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/spf13/cobra"
@@ -74,11 +73,8 @@ func newBriefCmd() *cobra.Command {
 				resolvedMode = agg.DeliveryContract.Mode
 			}
 
-			// Require existing canonical task or legacy task meta unless --force.
 			if !force && !canonicalExists {
-				if _, err := mhome.ReadMeta(ctx.Home, id); err != nil {
-					return fmt.Errorf("task %q not found: create it with 'munsu task add %s ...' or use --force", id, id)
-				}
+				return fmt.Errorf("task %q not found: create it with 'munsu task add %s ...' or use --force", id, id)
 			}
 
 			scoutScope, scoutBudget := "", int64(0)

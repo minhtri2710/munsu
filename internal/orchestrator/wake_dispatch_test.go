@@ -1264,16 +1264,18 @@ func TestDispatchWake_GatesRefuseBeforeClaim(t *testing.T) {
 	cases := []struct {
 		name       string
 		afk        bool
+		afkCleared bool
 		composer   func(c *mockComposerPort)
 		wantReason string
 		wantCapt   bool
 	}{
-		{"afk active", true, func(*mockComposerPort) {}, "afk", false},
-		{"agent is not claude", false, func(c *mockComposerPort) { c.agent = "codex" }, "composer-harness", false},
-		{"agent name unknown", false, func(c *mockComposerPort) { c.agent = "" }, "composer-harness", false},
-		{"capture error", false, func(c *mockComposerPort) { c.err = fmt.Errorf("pane read failed") }, "composer-capture-error", true},
-		{"glyph followed by text", false, func(c *mockComposerPort) { c.capture = rule + "\n❯ half typed\n" + rule + "\nfooter\n" }, "composer-pending", true},
-		{"layout not recognized", false, func(c *mockComposerPort) { c.capture = "›\n  gpt-6 high\n" }, "composer-unrecognized", true},
+		{name: "afk active", afk: true, composer: func(*mockComposerPort) {}, wantReason: "afk"},
+		{name: "afk cleared submits", afk: true, afkCleared: true, composer: func(*mockComposerPort) {}, wantCapt: true},
+		{name: "agent is not claude", composer: func(c *mockComposerPort) { c.agent = "codex" }, wantReason: "composer-harness"},
+		{name: "agent is claude submits", composer: func(c *mockComposerPort) { c.agent = "claude" }, wantCapt: true},
+		{name: "capture error", composer: func(c *mockComposerPort) { c.err = fmt.Errorf("pane read failed") }, wantReason: "composer-capture-error", wantCapt: true},
+		{name: "glyph followed by text", composer: func(c *mockComposerPort) { c.capture = rule + "\n❯ half typed\n" + rule + "\nfooter\n" }, wantReason: "composer-pending", wantCapt: true},
+		{name: "layout not recognized", composer: func(c *mockComposerPort) { c.capture = "›\n  gpt-6 high\n" }, wantReason: "composer-unrecognized", wantCapt: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1288,20 +1290,31 @@ func TestDispatchWake_GatesRefuseBeforeClaim(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			if tc.afkCleared {
+				if err := Disable(home); err != nil {
+					t.Fatal(err)
+				}
+			}
 			submit := req.Submit.(*mockSubmitPort)
 
 			result, err := DispatchWake(req)
 			if err != nil {
 				t.Fatal(err)
 			}
+			if (composer.captured != -1) != tc.wantCapt {
+				t.Errorf("captured rows = %d, want a capture: %v", composer.captured, tc.wantCapt)
+			}
+			if tc.wantReason == "" {
+				if result.Outcome != WakeSubmitted || submit.prompt == "" {
+					t.Fatalf("got outcome=%q prompt=%q, want a submitted wake", result.Outcome, submit.prompt)
+				}
+				return
+			}
 			if result.Outcome != WakeDeferred || result.Reason != tc.wantReason {
 				t.Fatalf("got outcome=%q reason=%q, want deferred %q", result.Outcome, result.Reason, tc.wantReason)
 			}
 			if submit.prompt != "" {
 				t.Error("nothing may be submitted")
-			}
-			if (composer.captured != -1) != tc.wantCapt {
-				t.Errorf("captured rows = %d, want a capture: %v", composer.captured, tc.wantCapt)
 			}
 			assertWakeStillQueued(t, home)
 			events := dispatchEvents(t, home)

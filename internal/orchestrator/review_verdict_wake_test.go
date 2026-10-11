@@ -3,6 +3,8 @@ package orchestrator
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -223,9 +225,9 @@ func TestRecordReviewVerdictWakeLeavesTheEventUnackedWhenTheUplinkCannotBeWritte
 		targets: []ReviewVerdictTarget{{TaskID: "rev-1", Generation: 1}},
 		files:   map[string]string{reviewKey("rev-1", 1): "digest-one"},
 	}
-	original := ReadHomeIdentity
-	ReadHomeIdentity = func(string) (string, Rank, error) { return "", "", errors.New("identity unreadable") }
-	t.Cleanup(func() { ReadHomeIdentity = original })
+	if err := os.WriteFile(filepath.Join(homeDir, home.CaptainProvenanceMarkerName), []byte("malformed"), 0600); err != nil {
+		t.Fatal(err)
+	}
 
 	out := captureStderr(t, func() { runReviewCycle(t, homeDir, port) })
 	if !strings.Contains(out, "review-verdict uplink for rev-1 failed (re-announced on restart)") {

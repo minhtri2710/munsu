@@ -30,14 +30,14 @@ func TestReportCmdMaterialSoldierUsesMailboxOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pending, err := orchestrator.NewStore(captainHome).ListPending("task_one")
+	pending, err := home.NewStore(captainHome).ListPending("task_one")
 	if err != nil || len(pending) != 1 {
 		t.Fatalf("pending=%d err=%v", len(pending), err)
 	}
-	if pending[0].ReceiverRank != orchestrator.RankCaptain {
+	if pending[0].ReceiverRank != home.RankCaptain {
 		t.Fatalf("receiver rank=%s", pending[0].ReceiverRank)
 	}
-	if env, _ := orchestrator.NewStore(captainHome).ReadEnvelope("task_one", pending[0].MessageID); env == nil {
+	if env, _ := home.NewStore(captainHome).ReadEnvelope("task_one", pending[0].MessageID); env == nil {
 		t.Fatal("Captain inbox should contain the Uplink Report")
 	}
 	if !orchestrator.HasAnyOpenReport(captainHome, "task:one") {
@@ -69,15 +69,15 @@ func TestReportCmdCaptainTargetResolutionFailureStaysDurableAndSuccessful(t *tes
 		t.Fatalf("ring-enabled report must remain successful when Captain target resolution is unavailable: %v", err)
 	}
 
-	pending, err := orchestrator.NewStore(captainHome).ListPending("task_captain-target")
+	pending, err := home.NewStore(captainHome).ListPending("task_captain-target")
 	if err != nil || len(pending) != 1 {
 		t.Fatalf("pending=%d err=%v, want durable report", len(pending), err)
 	}
-	env, err := orchestrator.NewStore(captainHome).ReadEnvelope("task_captain-target", pending[0].MessageID)
+	env, err := home.NewStore(captainHome).ReadEnvelope("task_captain-target", pending[0].MessageID)
 	if err != nil || env == nil {
 		t.Fatalf("env=%+v err=%v, want durable envelope", env, err)
 	}
-	if env.ReceiverRank != orchestrator.RankCaptain {
+	if env.ReceiverRank != home.RankCaptain {
 		t.Fatalf("receiver rank=%q, want Captain", env.ReceiverRank)
 	}
 	if !orchestrator.HasQueuedWakes(captainHome) {
@@ -104,14 +104,14 @@ func TestReportCmdMaterialCaptainUsesGeneralMailbox(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pending, err := orchestrator.NewStore(captainHome).ListPending("captain-one")
+	pending, err := home.NewStore(captainHome).ListPending("captain-one")
 	if err != nil || len(pending) != 1 {
 		t.Fatalf("pending=%d err=%v", len(pending), err)
 	}
-	if pending[0].ReceiverRank != orchestrator.RankGeneral {
+	if pending[0].ReceiverRank != home.RankGeneral {
 		t.Fatalf("receiver rank=%s", pending[0].ReceiverRank)
 	}
-	if env, _ := orchestrator.NewStore(generalHome).ReadEnvelope("captain-one", pending[0].MessageID); env == nil {
+	if env, _ := home.NewStore(generalHome).ReadEnvelope("captain-one", pending[0].MessageID); env == nil {
 		t.Fatal("General inbox should contain the Uplink Report")
 	}
 }
