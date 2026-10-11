@@ -340,7 +340,7 @@ The canonical Task Authority is the authoritative task source:
 ## Soldier Lifecycle
 
 Spawn Soldiers to do work from this home. The dispatch ordering is:
-  %[6]smunsu task list%[6]s → %[6]smunsu task start <id>%[6]s → %[6]smunsu brief <id> <project>%[6]s → %[6]smunsu spawn <id> [<project>]%[6]s
+  %[6]smunsu task list%[6]s → %[6]smunsu brief <id> <project>%[6]s → %[6]smunsu spawn <id> [<project>]%[6]s
 - kind: ship (default) | scout — the delivery mode comes from the project's configured review and forge tools
 - After spawning, monitor soldier progress through their task state.
 - When a soldier completes, receive and ack its Uplink Report, then report the domain result to General (see One-Hop Uplink Report).

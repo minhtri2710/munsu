@@ -76,7 +76,7 @@ func OneCycle(homeDir string) (*Digest, error) {
 			Payload: rec.Payload,
 			// Use classify to evaluate captain-relevance based on the payload.
 			// Wake payloads are status-line notes; only needs-decision,
-			// blocked and failed content escalates (G350).
+			// blocked and failed content escalates.
 			IsGeneralRelevant: domain.GeneralRelevant(rec.Payload),
 		}
 

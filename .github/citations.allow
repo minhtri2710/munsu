@@ -41,10 +41,3 @@
 # A reason starting with OPEN-BUG marks a citation known to be wrong rather than
 # accepted debt; `check` reprints every one as a warning on every run. There are
 # none today.
-
-# --- Documents whose citation is deliberate: the absence is the claim ----------
-# These do not resolve and are not defects. Each names something the document itself says is gone,
-# belongs to another tree or to a munsu home rather than to this repo, or is not a Go declaration at
-# all. They are the shape of citation this lane cannot distinguish from a stale one, and each line
-# says why a reader should not go looking.
-

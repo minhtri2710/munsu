@@ -10,9 +10,11 @@ import (
 
 // Encode serializes a contract response at the output boundary. TOON indents
 // with two spaces. A TOON string is quoted (strconv.Quote) when it is empty,
-// true, false or null, starts with -, has leading or trailing whitespace, parses as a
-// float (strconv.ParseFloat), equals SchemaVersion, or contains one of : [ ] { } " , \ or a line break or tab, so
-// untrusted text cannot inject structure. JSON carries the same schema.
+// true, false or null, starts with -, has leading or trailing whitespace,
+// parses as a float (strconv.ParseFloat), equals SchemaVersion, or contains one
+// of : [ ] { } " , \ or a line break or tab, so untrusted text cannot inject
+// structure. JSON carries the same field set apart from the TOON table-row
+// differences listed in contract_model.go.
 func Encode(value any, output string) (string, error) {
 	switch output {
 	case OutputJSON:

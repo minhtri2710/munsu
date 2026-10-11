@@ -298,12 +298,6 @@ func validateDeliverRequest(req DeliverRequest, method string) error {
 	return nil
 }
 
-// The head invariant has two owners: the local check here (the identity head
-// equals the head git reads at the bound worktree) and the provider boundary
-// (exact head, base ref and mergeability). Neither is defence in depth for the
-// other; a further check needs a named source of truth or it is a weaker second
-// owner.
-//
 // prevalidateDeliveryTask mirrors the canonical authorization gates so a
 // journal intent is never written for a task that cannot be authorized:
 // current working task with owner and the exact bindings, no matching active
@@ -661,6 +655,12 @@ func verifyProviderMergeability(obs DeliveryProviderObservation) error {
 // inside the capture-to-merge window would land the irreversible mutation on
 // a branch that was never authorized. Every terminal observation must carry
 // the consumed head and base evidence.
+//
+// The head invariant has two owners: the local check in prevalidateDeliveryTask
+// (the identity head equals the head git reads at the bound worktree) and this
+// provider boundary (exact head, base ref and mergeability). Neither is defence
+// in depth for the other; a further check needs a named source of truth or it is
+// a weaker second owner.
 //
 // Residual: this observation precedes the merge and is not atomic with it, so a
 // base change inside that window is still possible. The residual closes when the

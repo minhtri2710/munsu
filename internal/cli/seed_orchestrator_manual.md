@@ -153,11 +153,11 @@ or queued and blocked when it touches the same project subsystem.
 ```
 munsu task add <id> "<desc>" --kind ship --repo <name>
 munsu task add <id> "<desc>" --kind review --reviews <ship-id> [--repo <name>]
-munsu task start <id>
 munsu brief <id> <repo>
 # Fill in the {TASK} placeholder in data/<id>/brief.md; for a ship brief also {TEST_IMPACT}
 munsu spawn <id> <project>
 ```
+`munsu spawn` takes the queued task to working; do not run `munsu task start` first.
 
 Check the spawned soldier: `munsu soldier-state <id>`.
 
@@ -204,18 +204,15 @@ When implementation is separately authorized, promote: `munsu promote <id>`.
 ## 8. Supervision protocol
 
 Whenever work is in flight, keep exactly one live supervision cycle.
-Arm the watcher as a background task of your harness; `munsu watch ensure` reports `FAILED` when no live watcher validates.
+`munsu watch ensure` returns at once with the watcher state (`attached`, `healthy` or `failed`); the watcher is a detached daemon that records wakes in the durable queue. Neither `watch ensure` nor `watch run` prints `signal:`, `stale:`, `check:` or `heartbeat` lines or notifies on completion.
 
 Fundamental loop:
 
 1. Claim: `munsu wake claim --consumer <id>`.
 2. Ensure: `munsu watch ensure`.
 3. The watcher polls every 5s, queues actionable wakes, and stays alive.
-4. On `signal:` — read event lines, reconcile current state.
-5. On `stale:` — inspect endpoint, load `stuck-soldier-recovery`.
-6. On `check:` — act on the named poll result.
-7. On `heartbeat:` — review the whole fleet with `munsu fleet view`.
-8. Repair if needed: `munsu watch ensure`.
+4. Handle each claimed wake by its kind: `signal` (reconcile current state), `stale` (inspect the endpoint, load `stuck-soldier-recovery`), `check` (act on the named poll result), `heartbeat` (review the fleet with `munsu fleet view`).
+5. Repair if needed: `munsu watch ensure`.
 
 Cross-cutting rules:
 - No turn ends blind while work is in flight.

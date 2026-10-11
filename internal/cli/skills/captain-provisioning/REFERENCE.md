@@ -246,15 +246,13 @@ the whole recovery.
 
 1. **Provenance** — validate captain registration and home structure.
 2. **Config-validation** — check that inheritable config exists.
-3. **Integration-status** — verify the captain's harness integration.
-4. **Charter-refresh** — re-read AGENTS.md and refresh instructions.
-5. **Config-push** — sync inheritable config from parent.
+3. **Charter-refresh** — re-read AGENTS.md and refresh instructions.
+4. **Config-push** — sync inheritable config from parent.
+5. **Integration-status** — verify the captain's harness integration.
 6. **Launch-readiness** — verify the launch path is viable.
 7. **Relaunch-pane** — restart the captain's session pane and prove post-launch liveness; refuses a duplicate relaunch while the relaunch guard is armed.
 8. **Watcher-ensure** — ensure the watcher is running.
-9. **Legacy transport guard** — check for legacy transport artifacts.
-10. **Terminal-reconcile** — reconcile pending terminal receipts.
-11. **Nudge-retry** — retry any unreachable nudge markers.
+9. **Nudge-retry** — retry any unreachable nudge markers.
 
 ### Launch behavior
 

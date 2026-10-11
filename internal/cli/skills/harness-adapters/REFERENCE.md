@@ -4,11 +4,11 @@
 
 | Harness | Model flag | Effort flag | Default model / effort | Extra launch args |
 |---|---|---|---|---|
-| claude | queue claim | Run `munsu watch ensure` once; it returns at once. Collect wakes with `munsu wake claim`, handle them, and re-run `munsu watch ensure` if the watcher is not healthy. |
-| codex | foreground checkpoint | No background mechanism. Run `munsu watch run` as one foreground checkpoint; it runs one poll cycle and returns the wakes scanned and emitted. Drain queued wakes with `munsu wake claim`, handle them, then start the next checkpoint. |
+| claude | `--model` | none | none | none |
+| codex | `--model` | `--effort` | `gpt-5.2-codex` / `80` | none |
 | opencode | `--model` | `--effort` | `gpt-5.2-codex` / `80` | none |
 | pi | `--model` | `--thinking` | none | none |
-| grok | queue claim | Run `munsu watch ensure` once; it returns at once. Collect wakes with `munsu wake claim` and handle them. Do not invent a wake from an attach status. Interactive TUI sessions are the supported host; headless `grok -p` may not surface wake output. |
+| grok | `--model` | `--reasoning-effort` | none | none |
 | agy | `--model` | none | none | `--dangerously-skip-permissions` |
 
 Harness detection checks environment markers, then process ancestry. Dispatch precedence is CLI override, matched dispatch profile, the project's Soldier harness and model, then adapter template defaults. Manage profiles with `munsu config dispatch`.
@@ -23,7 +23,7 @@ One-time step per project: open claude once in the project repository and answer
 
 ## Supervision by harness
 
-Every supervising session claims first with `munsu wake claim --consumer <id>` and never arms the watcher with a shell `&`. `munsu watch ensure` returns at once with the watcher state (`attached`, `healthy` or `failed`); the watcher is a detached daemon that records wakes in the durable queue, and neither command prints `signal:`, `stale:`, `check:` or `heartbeat` lines or notifies on completion. `munsu watch ensure --restart` forces a restart.
+Every supervising session except pi claims first with `munsu wake claim --consumer <id>` (in pi the extension claims) and never arms the watcher with a shell `&`. `munsu watch ensure` returns at once with the watcher state (`attached`, `healthy` or `failed`); the watcher is a detached daemon that records wakes in the durable queue, and neither command prints `signal:`, `stale:`, `check:` or `heartbeat` lines or notifies on completion. `munsu watch ensure --restart` forces a restart.
 
 | Harness | Mode | Arm and wake rule |
 |---|---|---|

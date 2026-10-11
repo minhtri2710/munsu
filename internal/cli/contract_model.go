@@ -1,7 +1,9 @@
 // The JSON-compatible data model for the versioned orchestration contract.
-// schema_version names
-// the contract, kind names the response schema, and TOON and JSON carry
-// identical fields. The model carries no domain behavior.
+// schema_version names the contract and kind names the response schema. TOON
+// and JSON carry the same field set, except that a TOON table row (a list of
+// structs) renders every column, including omitempty ones, and renders a
+// non-scalar field as null. The model carries no domain behavior.
+
 package cli
 
 const (

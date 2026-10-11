@@ -72,7 +72,7 @@ for the complete registered set.
 |---------|-------------|
 | `munsu captain list` | List registered captains. |
 | `munsu captain seed|launch|retire|list` | Manage the core Captain lifecycle. |
-| `munsu captain converge` | Reconcile mailbox pending records, terminal receipts, nudges, and inherited config. |
+| `munsu captain converge` | Flush each Captain's send outbox, retry pending nudges, fast-forward Captain homes safely, push inherited config, and check Captain liveness and watcher status. |
 | `munsu captain handoff|config-push` | Hand off queued tasks or push inherited config. |
 | `munsu captain recover|update|validate` | Recover, fast-forward, or validate Captain homes. |
 

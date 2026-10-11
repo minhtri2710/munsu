@@ -17,6 +17,7 @@ State files, all under `MUNSU_HOME`:
 |---|---|
 | `state/.afk` | consent flag (RFC3339 timestamp) |
 | `state/.afk.lock` | identity lock of the running daemon |
-| `state/.afk-digest` | batched escalation digest (JSON) |
+| `state/.afk-digest` | batched escalation digest (JSON), cleared on start |
+| `state/.afk-wedge-alarm` | prior wedge alarm marker, removed on start (nothing in this tree writes it) |
 | `state/.seen-*` | watcher dedup markers, cleared on start |
 | `state/.subsuper-*` | subsupervisor escalation artifacts, cleared on start |

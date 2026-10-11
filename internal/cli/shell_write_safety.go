@@ -109,11 +109,12 @@ type shellToken struct {
 // arguments are targets at all, so the candidate the second reading adds can only
 // ever be one more write path, never a read.
 //
-// The grammar this function reads is frozen. The OS fence (internal/fence, macOS only) is
-// the primary guard; this lexer and the git shim are the only shell-channel
-// protection where no OS fence runs, and neither is a sandbox; widening the grammar needs evidence of a miss the fence
-// cannot cover and the Human's words. A file write on a shape outside the claim is allowed unless
-// the target is ambiguous, which the caller refuses; git mutation fails closed.
+// The grammar this function reads is frozen. The OS fence (internal/fence,
+// macOS only) is the primary guard; this lexer and the git shim are the only
+// shell-channel protection where no OS fence runs, and neither is a sandbox.
+// Widening the grammar needs evidence of a miss the fence cannot cover and the
+// Human's words. A file write on a shape outside the claim is allowed unless the
+// target is ambiguous, which the caller refuses; git mutation fails closed.
 func shellWriteTargets(checkPath, command string) ([]string, bool) {
 	interpretations := []shellTargetResolution{
 		{mode: backslashEscapes},

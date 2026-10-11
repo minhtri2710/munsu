@@ -67,6 +67,9 @@ permissions: {}
 # reported. Green run, `updated=0 skipped=1 failed=0`, no warning: the same
 # silent deadlock this file exists to remove, one step to the left.
 #
+# That PR is unmergeable only because the four required checks never report on
+# it, so relaxing the required checks gives it a merge path.
+#
 # Two cross-boundary cancels would do that, and the key separates both:
 #   - two PRs enabling auto-merge seconds apart (#498 and #500 did exactly
 #     that on 17/08) -- separated by PR number;

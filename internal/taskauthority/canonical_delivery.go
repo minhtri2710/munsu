@@ -37,7 +37,10 @@ import (
 
 // DeliveryAuthorizationKind is the typed, closed set of irreversible delivery
 // operations the canonical foundation authorizes. The sole #414 operation is
-// provider merge; speculative capability tiers are deliberately absent.
+// provider merge; speculative capability tiers are deliberately absent. A new
+// external write adds a kind here: Valid is the single check that authorization
+// issuance and GateRecord.Operation (the Human's recorded words) both apply, so a
+// kind absent from this set can neither be authorized nor recorded at a gate.
 type DeliveryAuthorizationKind string
 
 const (

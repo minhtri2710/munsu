@@ -82,7 +82,7 @@ type MarkerScan struct {
 //
 // It sees a process only if it can read that process's environment. Another
 // user's processes, and on macOS every Apple platform binary (/bin/bash,
-// /usr/bin/python3 ), refuse that read:
+// /usr/bin/python3), refuse that read:
 // the kernel hands back the executable path and nothing else. Those processes
 // are counted as unreadable rather than silently treated as unmarked.
 type MarkerInventory interface {

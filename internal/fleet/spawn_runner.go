@@ -610,11 +610,13 @@ func (r *Runner) resolveDispatchPolicy() error {
 }
 
 // checkCaptainBacklogAuthority validates that when the spawner role is captain,
-// the task has a canonical Task Authority record in a dispatchable phase. It
-// refuses a task whose meta names a live window or pane, so a duplicate live
+// the task has a canonical Task Authority record that is not done or blocked.
+// It refuses a task whose meta names a live window or pane, so a duplicate live
 // execution never starts; --force skips the whole check and is an emergency
-// bypass only. A task with no live window or pane is dispatchable in the queued
-// or working phase; spawn itself performs the queued-to-working transition.
+// bypass only. This check passes a queued or a working task; whether spawn may
+// proceed is decided later by beginLaunchIntent, which requires queued and
+// accepts working only to resume a launch that already holds its endpoint, so
+// run `munsu task start` only after spawn, never before.
 func (r *Runner) checkCaptainBacklogAuthority() error {
 	if r.args.Force {
 		return nil
@@ -640,7 +642,7 @@ func (r *Runner) checkCaptainBacklogAuthority() error {
 func (r *Runner) checkCaptainBacklogAuthorityForPhase(taskID string, phase taskauthority.Phase) error {
 	switch phase {
 	case taskauthority.PhaseWorking:
-		// Working without a live window or pane (checked by the caller) may be spawned again.
+		// Passes this check only; beginLaunchIntent refuses a working task unless it resumes a completed launch.
 		return nil
 	case taskauthority.PhaseDone:
 		return fmt.Errorf("captain task authority: task %s is already done; reopen requires General instruction", taskID)
@@ -2008,9 +2010,9 @@ const fenceProbeTimeout = 30 * time.Second
 // Phase 11b: probeFence builds the launch's write fence (F1 for a ship or
 // scout soldier, F2 for a reviewer) and proves, before any pane exists, that the
 // exact profile refuses the writes it must. A fence that cannot be built or whose
-// probe fails refuses the launch (G297 Q3 F1 and F2; G304 group 22); it never
+// probe fails refuses the launch; it never
 // falls back to a looser profile. A host with no fence implementation records
-// that with its reason and launches unfenced (G356).
+// that with its reason and launches unfenced.
 func (r *Runner) probeFence(bound BoundWorktree) error {
 	_, gitDir, commonDir, err := ClassifyIdentity(bound.Path())
 	if err != nil {

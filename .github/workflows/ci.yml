@@ -569,9 +569,10 @@ jobs:
       # munsu's documents cite the code as their primary evidence, and this step
       # checks the classified paths and symbols in the covered set against the
       # tree. It compares both ways against .github/citations.allow, so a
-      # citation that resolves again cannot leave its waiver behind. The set of
-      # covered documents and citations is derived from the tree; docFiles in
-      # .github/scripts/citations/main.go owns that boundary.
+      # citation that resolves again cannot leave its waiver behind. The covered
+      # documents are the literal list in docFiles in
+      # .github/scripts/citations/main.go (README.md, AGENTS.md, CLAUDE.md); the
+      # citations inside them are derived from the tree.
       #
       # Text only, no network: the stdlib-only Go program parses the tree with
       # go/parser. It ignores line numbers and reports classified-but-unjudged

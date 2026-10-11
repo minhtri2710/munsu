@@ -35,7 +35,7 @@ func IsMaterialVerb(verb string) bool {
 }
 
 // humanNeededVerbs are the status verbs that put the Human's attention on a
-// task (G350): a Human gate opens or a product fork (needs-decision), a
+// task: a Human gate opens or a product fork (needs-decision), a
 // blocker routed upward (blocked), and a failure such as red CI or a
 // turn-killing runtime error (failed). Completion, readiness and merge lines
 // are audit projections, not attention.
@@ -141,7 +141,7 @@ func removeByKey(decisions []Decision, key string) []Decision {
 // --- Public API ---
 
 // GeneralRelevant returns true if a status line needs the Human: it carries
-// needs-decision:, blocked: or failed: (G350). done:, "PR ready", "checks
+// needs-decision:, blocked: or failed:; done:, "PR ready", "checks
 // green", "ready in branch" and "merged" lines are audit-only and do not match.
 // Paused lines are NOT general-relevant.
 // Verb-aware: nonterminal progress verbs (working, resolved) NEVER

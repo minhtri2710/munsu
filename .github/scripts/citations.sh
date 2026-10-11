@@ -15,8 +15,10 @@
 #
 # The derivation is a separate program, .github/scripts/citations, for the same
 # reason guardsites is: what counts as a citation is read out of the tree, so a
-# new document joins this lane by existing and there is no register to forget to
-# update. This half compares that derivation to the waiver file in BOTH
+# new citation in a covered document is judged by existing and there is no
+# register to forget to update. The covered documents themselves are the literal
+# list in docFiles (README.md, AGENTS.md, CLAUDE.md); only the citations inside
+# them are derived. This half compares that derivation to the waiver file in BOTH
 # directions, like .github/deadcode.allow: unresolved in the tree but absent
 # from the file is red, and present in the file but resolving again is red too.
 # The second direction is what keeps the file shrinking instead of rotting into
@@ -422,11 +424,12 @@ exit $rc"
 	# committed fixture because it cannot be one: an unparseable .go file in the
 	# tree makes `gofmt -l .` exit 2, which turns the gofmt step of this same job
 	# red for a reason that is not this rule. Built in a scratch tree instead.
-	local scratch escape tabbed rootdoc outside ambiguous callresult nested invalidfence container rootrelative ignoredgo escapedbacktick controlchars multiline_blocks
+	local scratch escape tabbed rootdoc missingdoc outside ambiguous callresult nested invalidfence container rootrelative ignoredgo escapedbacktick controlchars multiline_blocks
 	scratch=""
 	escape=""
 	tabbed=""
 	rootdoc=""
+	missingdoc=""
 	outside=""
 	ambiguous=""
 	callresult=""
@@ -438,7 +441,7 @@ exit $rc"
 	escapedbacktick=""
 	controlchars=""
 	multiline_blocks=""
-	trap 'rm -rf "${scratch:-}" "${escape:-}" "${tabbed:-}" "${rootdoc:-}" "${outside:-}" "${ambiguous:-}" "${callresult:-}" "${nested:-}" "${invalidfence:-}" "${container:-}" "${rootrelative:-}" "${ignoredgo:-}" "${escapedbacktick:-}" "${controlchars:-}" "${multiline_blocks:-}"' RETURN
+	trap 'rm -rf "${scratch:-}" "${escape:-}" "${tabbed:-}" "${rootdoc:-}" "${missingdoc:-}" "${outside:-}" "${ambiguous:-}" "${callresult:-}" "${nested:-}" "${invalidfence:-}" "${container:-}" "${rootrelative:-}" "${ignoredgo:-}" "${escapedbacktick:-}" "${controlchars:-}" "${multiline_blocks:-}"' RETURN
 	scratch="$(mktemp -d)"
 	printf 'A citation of `SomethingDeclared`.\n' >"$scratch/README.md"
 	: >"$scratch/AGENTS.md"
@@ -542,7 +545,6 @@ exit $rc"
 	printf 'External content.\n' >"$outside/README.md"
 	ln -s "$outside/README.md" "$rootdoc/README.md"
 	printf 'package x\n\nfunc SomethingDeclared() {}\n' >"$rootdoc/good.go"
-	printf 'A citation is `SomethingDeclared`.\n' >"$rootdoc/README.md"
 	: >"$rootdoc/waiver"
 	if got="$(SCAN_ROOT="$rootdoc" WAIVER="$rootdoc/waiver" "$0" check 2>&1)"; then rc=0; else rc=$?; fi
 	if [ "$rc" -eq 0 ] || ! printf '%s\n' "$got" | grep -q 'README.md resolves outside repository root'; then
@@ -551,6 +553,20 @@ exit $rc"
 		failed=1
 	else
 		echo "  ok   root-document-symlink-escape"
+	fi
+
+	missingdoc="$(mktemp -d)"
+	: >"$missingdoc/AGENTS.md"
+	: >"$missingdoc/CLAUDE.md"
+	printf 'package x\n\nfunc SomethingDeclared() {}\n' >"$missingdoc/good.go"
+	: >"$missingdoc/waiver"
+	if got="$(SCAN_ROOT="$missingdoc" WAIVER="$missingdoc/waiver" "$0" check 2>&1)"; then rc=0; else rc=$?; fi
+	if [ "$rc" -eq 0 ] || ! printf '%s\n' "$got" | grep -q 'covered document README.md'; then
+		echo "::error::citations skipped a covered document that is missing:" >&2
+		printf '%s\n' "$got" >&2
+		failed=1
+	else
+		echo "  ok   missing-covered-document"
 	fi
 
 	printf 'package outside\n\nfunc ExternalOnly() {}\n' >"$outside/external.go"

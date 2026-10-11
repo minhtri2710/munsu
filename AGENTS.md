@@ -81,10 +81,10 @@ enforces; they apply to every waiver, mutant and unreachable function:
 
 ## Refusals and the Human's words
 
-A new refusal, or the widening of one, ships only with the Human's words recorded
+A new refusal or fence, or the widening of one, ships only with the Human's words recorded
 in the same change, in the `domain.Words` shape: grantor, channel and verbatim
-quote. A refusal is a guard, check or gate that refuses an action munsu allowed
-before. Fixing a refusal that misfires on an action it was never meant to refuse
+quote. A refusal is a guard, check, gate or OS fence that refuses an action munsu
+allowed before. Fixing a refusal that misfires on an action it was never meant to refuse
 is exempt; removing a refusal the Human asked for needs words. Without words,
 present the refusal to the Lead as unshipped.
 
@@ -101,6 +101,10 @@ Delivery mode: no-mistakes (push through the gate, never to `origin` directly).
 Do not enable `required_pull_request_reviews` on `main` while one account authors
 every PR: GitHub does not let an author approve their own PR, so every merge
 deadlocks and `enforce_admins` leaves no bypass.
+The required checks on `main` are load-bearing: an event raised by `GITHUB_TOKEN`
+starts no workflow run, so a PR opened with that token never gets the required
+checks and stays unmergeable. Relaxing the required checks would hand such a PR a
+merge path.
 
 ## Package map
 

@@ -99,7 +99,7 @@ func containedPath(root, target string) (string, error) {
 // missing or resolves outside the repository fails the run instead of dropping
 // out of the lane.
 //
-// Also out of scope, stated here rather than left as an accident of the glob:
+// Also out of scope, stated here rather than left as an accident of the list:
 // CONTRIBUTING.md at the root, and Go doc comments. Doc comments carry the same class of defect -- a stale
 // `munsu delivery pr-check` citation sat in supervision_check.go's doc comment
 // (#573) -- but they are a different extractor over a different corpus, and
@@ -887,7 +887,7 @@ func fileCitation(fi *files, tok string) bool {
 //     tree never uses, so the derived rule cannot tell it from prose.
 //   - `.gitignore`, `.go`: all extension, no stem. A real dotfile and a bare
 //     suffix are the same shape.
-//   - `internal/fleet/process_runtime_{unix,windows}.go`, `docs/**`,
+//   - `internal/fleet/process_runtime_{unix,windows}.go`, `internal/**`,
 //     `state/<task-id>.meta`: brace, glob and placeholder notation. Each stands
 //     for a set of paths rather than one, which is why fileCitation refuses it
 //     and why it has to be declared -- the brace form above expands to two

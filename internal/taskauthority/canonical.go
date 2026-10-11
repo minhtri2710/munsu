@@ -68,7 +68,7 @@ const (
 	tasksDir      = "task-authority/tasks"
 	holdsDir      = "task-authority/holds"
 	receiptsDir   = "task-authority/receipts"
-	// dispatchScope is the one global lock. It serializes hold changes (AddHold,
+	// dispatchScope is the one global lock within taskauthority. It serializes hold changes (AddHold,
 	// ReleaseHold) with hold-checked task and delivery mutations and gate
 	// records, and is always taken before the task or hold scope.
 	dispatchScope = "dispatch"

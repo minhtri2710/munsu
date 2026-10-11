@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/minhtri2710/munsu/internal/harness"
 )
 
 func TestEmbeddedSkillNames(t *testing.T) {
@@ -460,5 +462,47 @@ func TestSkillCmdRegistration(t *testing.T) {
 	}
 	if !hasShow {
 		t.Error("expected 'skill show' subcommand")
+	}
+}
+
+// TestHarnessAdaptersLaunchTemplateTable pins each Launch templates row of the
+// harness-adapters skill to the adapter registry, one row per verified adapter.
+func TestHarnessAdaptersLaunchTemplateTable(t *testing.T) {
+	content, err := readEmbeddedSkill("harness-adapters")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, table, ok := strings.Cut(content, "## Launch templates\n")
+	if !ok {
+		t.Fatal("harness-adapters has no Launch templates section")
+	}
+	table, _, _ = strings.Cut(table, "\n\n")
+	flag := func(v string) string {
+		if v == "" {
+			return "none"
+		}
+		return "`" + v + "`"
+	}
+	rows := map[string]string{}
+	for _, line := range strings.Split(table, "\n") {
+		cells := strings.Split(strings.Trim(line, "| "), " | ")
+		if len(cells) == 5 {
+			rows[cells[0]] = line
+		}
+	}
+	for name, adapter := range harness.Adapters {
+		tmpl := adapter.LaunchTemplate
+		defaults := "none"
+		if tmpl.DefaultModel != "" {
+			defaults = "`" + tmpl.DefaultModel + "` / `" + tmpl.DefaultEffort + "`"
+		}
+		extra := "none"
+		if len(tmpl.ExtraArgs) > 0 {
+			extra = "`" + strings.Join(tmpl.ExtraArgs, " ") + "`"
+		}
+		want := fmt.Sprintf("| %s | %s | %s | %s | %s |", name, flag(tmpl.ModelFlag), flag(tmpl.EffortFlag), defaults, extra)
+		if rows[name] != want {
+			t.Errorf("Launch templates row for %s = %q, want %q", name, rows[name], want)
+		}
 	}
 }
