@@ -92,7 +92,7 @@ func workingGuardReview(t *testing.T, auth *taskauthority.Canonical, taskID, rev
 		HomeID: auth.HomeID(), TaskID: rev, Precondition: domain.Of(1, 1), SnapshotDigest: guardDigest("snapshot:" + revID),
 		Backend: "claude", Harness: "pi", Model: "opus", Effort: "high", Mode: "direct-PR", Kind: taskauthority.KindReview,
 		Project: "proj", ParentTaskID: "parent", LaunchID: "launch-" + revID, WindowLabel: "window-" + revID,
-		EndpointReservationID: "ep-res-" + revID, EndpointFenceToken: "ep-fence-" + revID, EndpointIncarnation: "inc-" + revID, Reason: "spawn",
+		EndpointReservationID: "ep-res-" + revID, EndpointFenceToken: "ep-fence-" + revID, SeatPathDirs: []string{"/usr/bin"}, EndpointIncarnation: "inc-" + revID, Reason: "spawn",
 	}
 	commit("op-begin", begin, func(op domain.Operation) error { _, err := auth.BeginSpawn(op, begin); return err })
 	attach := taskauthority.CanonicalAttachEndpointRequest{

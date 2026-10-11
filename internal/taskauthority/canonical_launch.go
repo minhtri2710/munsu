@@ -3,6 +3,7 @@ package taskauthority
 import (
 	"encoding/json"
 	"reflect"
+	"slices"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/domain"
@@ -58,37 +59,41 @@ type CanonicalBeginSpawnRequest struct {
 	// create but before attach reuses the same token. It is not
 	// a backend attestation.
 	EndpointIncarnation string
-	Reason              string
+	// SeatPathDirs is the seat's launch PATH, read once by Fleet and committed
+	// with the intent; a resumed launch adopts it instead of reading PATH again.
+	SeatPathDirs []string
+	Reason       string
 }
 
 func (r CanonicalBeginSpawnRequest) DigestBytes() ([]byte, error) {
 	return json.Marshal(struct {
-		HomeID                string `json:"home_id"`
-		TaskID                string `json:"task_id"`
-		Generation            uint64 `json:"generation"`
-		Revision              uint64 `json:"revision"`
-		SnapshotDigest        string `json:"snapshot_digest"`
-		Backend               string `json:"backend"`
-		Harness               string `json:"harness"`
-		Model                 string `json:"model,omitempty"`
-		Effort                string `json:"effort,omitempty"`
-		Mode                  string `json:"mode,omitempty"`
-		Kind                  string `json:"kind,omitempty"`
-		Project               string `json:"project,omitempty"`
-		ParentTaskID          string `json:"parent_task_id,omitempty"`
-		LaunchID              string `json:"launch_id"`
-		WindowLabel           string `json:"window_label,omitempty"`
-		WorktreeReservationID string `json:"worktree_reservation_id"`
-		WorktreeFenceToken    string `json:"worktree_fence_token"`
-		EndpointReservationID string `json:"endpoint_reservation_id"`
-		EndpointFenceToken    string `json:"endpoint_fence_token"`
-		EndpointIncarnation   string `json:"endpoint_incarnation,omitempty"`
-		Reason                string `json:"reason,omitempty"`
+		HomeID                string   `json:"home_id"`
+		TaskID                string   `json:"task_id"`
+		Generation            uint64   `json:"generation"`
+		Revision              uint64   `json:"revision"`
+		SnapshotDigest        string   `json:"snapshot_digest"`
+		Backend               string   `json:"backend"`
+		Harness               string   `json:"harness"`
+		Model                 string   `json:"model,omitempty"`
+		Effort                string   `json:"effort,omitempty"`
+		Mode                  string   `json:"mode,omitempty"`
+		Kind                  string   `json:"kind,omitempty"`
+		Project               string   `json:"project,omitempty"`
+		ParentTaskID          string   `json:"parent_task_id,omitempty"`
+		LaunchID              string   `json:"launch_id"`
+		WindowLabel           string   `json:"window_label,omitempty"`
+		WorktreeReservationID string   `json:"worktree_reservation_id"`
+		WorktreeFenceToken    string   `json:"worktree_fence_token"`
+		EndpointReservationID string   `json:"endpoint_reservation_id"`
+		EndpointFenceToken    string   `json:"endpoint_fence_token"`
+		EndpointIncarnation   string   `json:"endpoint_incarnation,omitempty"`
+		SeatPathDirs          []string `json:"seat_path_dirs"`
+		Reason                string   `json:"reason,omitempty"`
 	}{
 		r.HomeID.Value(), r.TaskID.Value(), r.Precondition.Generation, r.Precondition.Revision,
 		r.SnapshotDigest, r.Backend, r.Harness, r.Model, r.Effort, r.Mode, r.Kind, r.Project,
 		r.ParentTaskID, r.LaunchID, r.WindowLabel, r.WorktreeReservationID, r.WorktreeFenceToken,
-		r.EndpointReservationID, r.EndpointFenceToken, r.EndpointIncarnation, r.Reason,
+		r.EndpointReservationID, r.EndpointFenceToken, r.EndpointIncarnation, r.SeatPathDirs, r.Reason,
 	})
 }
 
@@ -102,7 +107,7 @@ func validateBeginSpawnRequest(req CanonicalBeginSpawnRequest) error {
 	if err := req.Precondition.Validate(); err != nil {
 		return err
 	}
-	return validateLaunchIdentity(req.SnapshotDigest, req.Backend, req.Harness, req.Model, req.Effort, req.Mode, req.Kind, req.Project, req.ParentTaskID, req.LaunchID, req.WindowLabel, req.WorktreeReservationID, req.WorktreeFenceToken, req.EndpointReservationID, req.EndpointFenceToken, req.EndpointIncarnation)
+	return validateLaunchIdentity(req.SnapshotDigest, req.Backend, req.Harness, req.Model, req.Effort, req.Mode, req.Kind, req.Project, req.ParentTaskID, req.LaunchID, req.WindowLabel, req.WorktreeReservationID, req.WorktreeFenceToken, req.EndpointReservationID, req.EndpointFenceToken, req.EndpointIncarnation, req.SeatPathDirs)
 }
 
 // BeginSpawn commits the immutable launch intent for the task's current
@@ -164,6 +169,7 @@ func (c *Canonical) BeginSpawn(op domain.Operation, req CanonicalBeginSpawnReque
 			EndpointReservationID: req.EndpointReservationID,
 			EndpointFenceToken:    req.EndpointFenceToken,
 			EndpointIncarnation:   req.EndpointIncarnation,
+			SeatPathDirs:          append([]string(nil), req.SeatPathDirs...),
 			PlannedAt:             c.now().UnixNano(),
 		}
 		next.Revision++
@@ -183,7 +189,7 @@ func launchIntentSame(l LaunchIntent, req CanonicalBeginSpawnRequest) bool {
 		l.LaunchID == req.LaunchID && l.WindowLabel == req.WindowLabel &&
 		l.WorktreeReservationID == req.WorktreeReservationID && l.WorktreeFenceToken == req.WorktreeFenceToken &&
 		l.EndpointReservationID == req.EndpointReservationID && l.EndpointFenceToken == req.EndpointFenceToken &&
-		l.EndpointIncarnation == req.EndpointIncarnation
+		l.EndpointIncarnation == req.EndpointIncarnation && slices.Equal(l.SeatPathDirs, req.SeatPathDirs)
 }
 
 // CanonicalAttachEndpointRequest records the exact acquired endpoint identity

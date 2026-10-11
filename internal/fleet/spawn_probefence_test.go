@@ -43,6 +43,7 @@ func newFenceFixture(t *testing.T) fenceFixture {
 func (f fenceFixture) runner(mode string) *Runner {
 	r := NewRunner(Args{ID: "task-1", HomeDir: f.home})
 	r.homeDir, r.projPath, r.effectiveMode, r.launchBin = f.home, f.primary, mode, harness.Pi
+	r.seatPath = seatPathDirs(f.home)
 	return r
 }
 

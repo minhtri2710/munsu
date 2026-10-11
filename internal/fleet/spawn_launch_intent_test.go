@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -311,6 +312,7 @@ func prepareLaunchWithRecordedManifestAnchor(t *testing.T, f *launchFixture) (ta
 		WorktreePath: r.cwd, LaunchDir: r.launchDir, HomeDir: r.homeDir, TaskID: r.args.ID,
 		SnapshotDigest: r.projectConfig.SnapshotDigest, LaunchBin: r.launchBin, LaunchArgs: r.launchArgs,
 		LaunchID: r.launchID, Generation: agg.Generation.String(), EndpointFence: r.epFenceToken(), Fence: r.fence,
+		PathDirs: r.seatPath,
 	})
 	if err != nil {
 		t.Fatalf("prepareLaunchScript: %v", err)
@@ -711,6 +713,33 @@ func TestLaunchIntentSnapshotDigestAndFencesPreservedInAggregate(t *testing.T) {
 	if agg.Launch.WorktreeReservationID != wtRes || agg.Launch.WorktreeFenceToken != wtFence ||
 		agg.Launch.EndpointReservationID != epRes || agg.Launch.EndpointFenceToken != epFence {
 		t.Fatalf("aggregate reservation identities diverge from derivation: %+v", agg.Launch)
+	}
+}
+
+// TestLaunchIntentMatchesComparesTheSeatPath pins that a committed launch
+// intent matches only a request carrying the same seat PATH, as the canonical
+// no-op check does.
+func TestLaunchIntentMatchesComparesTheSeatPath(t *testing.T) {
+	f := newLaunchFixture(t, "intent-matches-path")
+	if err := f.runner.beginLaunchIntent(); err != nil {
+		t.Fatalf("beginLaunchIntent: %v", err)
+	}
+	agg := f.aggregate()
+	tests := []struct {
+		name  string
+		path  []string
+		match bool
+	}{
+		{"the committed seat PATH matches", agg.Launch.SeatPathDirs, true},
+		{"another seat PATH does not", append(slices.Clone(agg.Launch.SeatPathDirs), "/opt/extra/bin"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := f.runner.buildBeginSpawnRequest(domain.Of(uint64(agg.Generation), uint64(agg.Revision)), agg.Generation, agg.Launch.EndpointIncarnation, tt.path)
+			if got := f.runner.launchIntentMatches(req, *agg.Launch); got != tt.match {
+				t.Errorf("launchIntentMatches with seat PATH %q = %v, want %v", tt.path, got, tt.match)
+			}
+		})
 	}
 }
 

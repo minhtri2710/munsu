@@ -171,7 +171,10 @@ jobs:
           TestProbeFenceRefusals
           TestProbeFenceRecordsTheSeatFence
           TestProbeFenceOnAHostWithoutAFence
-          TestLaunchRecordsTheSeatOfTheLaunch'
+          TestLaunchRecordsTheSeatOfTheLaunch
+          TestProbeFenceRefusesTheSeatsPathDirs
+          TestFencedSoldierAppendsItsStatus
+          TestFencedSoldierCannotTakeTheGitShimOffItsPath'
           gated integration 'TestReviewLaunchRunsEveryPhaseAgainstTheReviewedCheckout'
 
   race:

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -983,6 +984,7 @@ func TestLaunchArtifactGuardProvesSingleProcessLaunches(t *testing.T) {
 		WorktreePath:   f.runner.wtPath,
 		LaunchDir:      f.runner.wtPath,
 		HomeDir:        f.homeDir,
+		PathDirs:       seatPathDirs(f.homeDir),
 		TaskID:         f.taskID,
 		SnapshotDigest: f.runner.projectConfig.SnapshotDigest,
 		LaunchBin:      f.runner.launchBin,
@@ -1065,6 +1067,7 @@ func TestLaunchArtifactGuardExistsSkipsProcessOnReEntry(t *testing.T) {
 		WorktreePath:   f.runner.wtPath,
 		LaunchDir:      f.runner.wtPath,
 		HomeDir:        f.homeDir,
+		PathDirs:       seatPathDirs(f.homeDir),
 		TaskID:         f.taskID,
 		SnapshotDigest: f.runner.projectConfig.SnapshotDigest,
 		LaunchBin:      f.runner.launchBin,
@@ -1124,6 +1127,7 @@ func TestLaunchArtifactGuardConcurrentSubmissionsSingleProcess(t *testing.T) {
 		WorktreePath:   f.runner.wtPath,
 		LaunchDir:      f.runner.wtPath,
 		HomeDir:        f.homeDir,
+		PathDirs:       seatPathDirs(f.homeDir),
 		TaskID:         f.taskID,
 		SnapshotDigest: f.runner.projectConfig.SnapshotDigest,
 		LaunchBin:      f.runner.launchBin,
@@ -1285,6 +1289,7 @@ func TestLaunchArtifactReentrantGuardRealPath(t *testing.T) {
 		WorktreePath:   f.runner.wtPath,
 		LaunchDir:      f.runner.wtPath,
 		HomeDir:        f.homeDir,
+		PathDirs:       seatPathDirs(f.homeDir),
 		TaskID:         f.taskID,
 		SnapshotDigest: f.runner.projectConfig.SnapshotDigest,
 		LaunchBin:      f.runner.launchBin,
@@ -1407,5 +1412,46 @@ func TestLaunchRecoveryMissingLaunchProofRefusesRetryWithoutRepair(t *testing.T)
 	status, probeErr := f.endpoints.Probe(CreatedEndpoint{Backend: agg.AcquiredEndpoint.Backend, Handle: agg.AcquiredEndpoint.Handle})
 	if probeErr != nil || status.Lifecycle != LifecycleAlive || status.Responsiveness != Responsive {
 		t.Fatalf("retained endpoint status=%+v probe error=%v, want alive and responsive", status, probeErr)
+	}
+}
+
+// A launch resumed from a process with a different PATH adopts the seat PATH its
+// committed intent holds, so its fence profile and launch script are the bytes
+// the first run recorded in the launch manifest.
+func TestLaunchReentryAdoptsTheCommittedSeatPath(t *testing.T) {
+	f := newLaunchFixture(t, "reentry-seat-path")
+	if err := runLaunchPhases(f, "manifest"); !errors.Is(err, errCrashSimulated) {
+		t.Fatalf("first run: %v", err)
+	}
+	first := f.runner
+	wantPath := slices.Clone(first.seatPath)
+	if len(wantPath) == 0 || wantPath[0] != gitShimDir(f.homeDir) {
+		t.Fatalf("committed seat PATH = %q, want the shim first", wantPath)
+	}
+
+	// The resuming process: same launch, a different PATH.
+	t.Setenv("PATH", os.Getenv("PATH")+string(os.PathListSeparator)+t.TempDir())
+	if slices.Equal(seatPathDirs(f.homeDir), wantPath) {
+		t.Fatal("the resuming process has the same seat PATH; the test proves nothing")
+	}
+	resumed := *first
+	resumed.launch, resumed.launchID, resumed.windowLabel, resumed.seatPath, resumed.launchReentry, resumed.fence = nil, "", "", nil, false, nil
+	if err := resumed.beginLaunchIntent(); err != nil {
+		t.Fatalf("beginLaunchIntent on re-entry: %v", err)
+	}
+	if !resumed.launchReentry || !slices.Equal(resumed.seatPath, wantPath) {
+		t.Fatalf("resumed run: reentry = %v, seat PATH = %q; want the committed %q", resumed.launchReentry, resumed.seatPath, wantPath)
+	}
+	if err := resumed.probeFence(BoundWorktree{path: first.wtPath}); err != nil {
+		t.Fatal(err)
+	}
+	if resumed.fenceRecord.ProfileDigest != first.fenceRecord.ProfileDigest {
+		t.Fatalf("profile digest %q != first run's %q", resumed.fenceRecord.ProfileDigest, first.fenceRecord.ProfileDigest)
+	}
+	if err := resumed.prepareAndPersistLaunchManifest(); err != nil {
+		t.Fatalf("the resumed run does not reproduce the recorded launch manifest: %v", err)
+	}
+	if resumed.manifestSHA256 != first.manifestSHA256 {
+		t.Fatalf("manifest digest %q != first run's %q", resumed.manifestSHA256, first.manifestSHA256)
 	}
 }

@@ -184,6 +184,7 @@ func validLaunchIntent() LaunchIntent {
 		EndpointReservationID: "ep-res-1",
 		EndpointFenceToken:    "ep-fence-1",
 		EndpointIncarnation:   "inc-1",
+		SeatPathDirs:          []string{"/usr/bin"},
 		PlannedAt:             1700000000,
 	}
 }
@@ -218,6 +219,9 @@ func TestValidateLaunchIdentityRefusesUnsafeOrAbsentIdentities(t *testing.T) {
 		{"path-separating endpoint fence token", func(l *LaunchIntent) { l.EndpointFenceToken = "ep/fence" }, "launch requires an endpoint fence token"},
 		{"no endpoint incarnation", func(l *LaunchIntent) { l.EndpointIncarnation = "  " }, "launch requires an opaque endpoint incarnation token"},
 		{"path-separating endpoint incarnation", func(l *LaunchIntent) { l.EndpointIncarnation = "inc/1" }, "launch requires an opaque endpoint incarnation token"},
+		{"no seat PATH", func(l *LaunchIntent) { l.SeatPathDirs = nil }, "launch requires the seat PATH directories"},
+		{"relative seat PATH entry", func(l *LaunchIntent) { l.SeatPathDirs = []string{"/usr/bin", "bin"} }, `seat PATH directory "bin" is not an absolute clean path`},
+		{"unclean seat PATH entry", func(l *LaunchIntent) { l.SeatPathDirs = []string{"/usr/bin/"} }, `seat PATH directory "/usr/bin/" is not an absolute clean path`},
 	})
 }
 

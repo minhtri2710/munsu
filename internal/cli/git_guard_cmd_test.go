@@ -213,7 +213,7 @@ func TestGitGuardRefuseExitsNonZero(t *testing.T) {
 
 func TestStripShimDirFromPath(t *testing.T) {
 	home := t.TempDir()
-	shimDir := filepath.Join(home, "state", "shim", "bin")
+	shimDir := filepath.Join(home, "git-shim", "bin")
 	other := t.TempDir()
 	sep := string(filepath.ListSeparator)
 
@@ -231,7 +231,7 @@ func TestStripShimDirFromPath(t *testing.T) {
 		}
 	})
 
-	// The strip matches the …/state/shim/bin suffix, not a dir rederived from
+	// The strip matches the …/git-shim/bin suffix, not a dir rederived from
 	// MUNSU_HOME, so it removes the shim even when MUNSU_HOME is unset or points
 	// elsewhere. This is the recursion guard: a strip that keyed off MUNSU_HOME
 	// would leave the shim on PATH here, and the real-git handoff would re-invoke
@@ -267,7 +267,7 @@ func TestStripShimDirFromPath(t *testing.T) {
 // this fail: the shim survives on PATH and the handoff resolves it a second time.
 func TestGuardDoesNotRecurseIntoShim(t *testing.T) {
 	home := t.TempDir()
-	shimDir := filepath.Join(home, "state", "shim", "bin")
+	shimDir := filepath.Join(home, "git-shim", "bin")
 	if err := os.MkdirAll(shimDir, 0o755); err != nil {
 		t.Fatal(err)
 	}

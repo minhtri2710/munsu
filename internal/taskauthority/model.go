@@ -232,7 +232,12 @@ type LaunchIntent struct {
 	EndpointReservationID string `json:"endpoint_reservation_id"`
 	EndpointFenceToken    string `json:"endpoint_fence_token"`
 	EndpointIncarnation   string `json:"endpoint_incarnation,omitempty"`
-	PlannedAt             int64  `json:"planned_at"`
+	// SeatPathDirs is the seat's launch PATH, fixed when the intent is
+	// committed: the fence profile and the launch script are both built from
+	// it, so a resumed launch rebuilds the same bytes whatever PATH the
+	// resuming process has.
+	SeatPathDirs []string `json:"seat_path_dirs"`
+	PlannedAt    int64    `json:"planned_at"`
 }
 
 // AcquiredEndpoint is the durable record of the exact endpoint identity Fleet
@@ -724,7 +729,7 @@ func validateCleanupClaim(claim CleanupClaim) error {
 // and safe (a review launch reserves no worktree and carries neither worktree
 // value). Validation is shape-only: no value is selected, detected,
 // defaulted, probed, or fallen back.
-func validateLaunchIdentity(snapshotDigest, backend, harness, model, effort, mode, kind, project, parentTaskID, launchID, windowLabel, worktreeReservationID, worktreeFenceToken, endpointReservationID, endpointFenceToken, endpointIncarnation string) error {
+func validateLaunchIdentity(snapshotDigest, backend, harness, model, effort, mode, kind, project, parentTaskID, launchID, windowLabel, worktreeReservationID, worktreeFenceToken, endpointReservationID, endpointFenceToken, endpointIncarnation string, seatPathDirs []string) error {
 	if !domain.IsSHA256(snapshotDigest) {
 		return validationError("launch snapshot digest must be a 64-hex sha256 digest")
 	}
@@ -765,6 +770,14 @@ func validateLaunchIdentity(snapshotDigest, backend, harness, model, effort, mod
 	if strings.TrimSpace(endpointIncarnation) == "" || strings.ContainsAny(endpointIncarnation, `/\\`) {
 		return validationError("launch requires an opaque endpoint incarnation token")
 	}
+	if len(seatPathDirs) == 0 {
+		return validationError("launch requires the seat PATH directories")
+	}
+	for _, d := range seatPathDirs {
+		if !filepath.IsAbs(d) || filepath.Clean(d) != d {
+			return validationError("launch seat PATH directory %q is not an absolute clean path", d)
+		}
+	}
 	return nil
 }
 
@@ -775,7 +788,7 @@ func validateLaunchIntent(l LaunchIntent) error {
 	if l.OperationID == "" || strings.ContainsAny(l.OperationID, `/\\`) {
 		return validationError("launch intent missing operation id")
 	}
-	if err := validateLaunchIdentity(l.SnapshotDigest, l.Backend, l.Harness, l.Model, l.Effort, l.Mode, l.Kind, l.Project, l.ParentTaskID, l.LaunchID, l.WindowLabel, l.WorktreeReservationID, l.WorktreeFenceToken, l.EndpointReservationID, l.EndpointFenceToken, l.EndpointIncarnation); err != nil {
+	if err := validateLaunchIdentity(l.SnapshotDigest, l.Backend, l.Harness, l.Model, l.Effort, l.Mode, l.Kind, l.Project, l.ParentTaskID, l.LaunchID, l.WindowLabel, l.WorktreeReservationID, l.WorktreeFenceToken, l.EndpointReservationID, l.EndpointFenceToken, l.EndpointIncarnation, l.SeatPathDirs); err != nil {
 		return err
 	}
 	if l.PlannedAt <= 0 {
@@ -1059,6 +1072,7 @@ func (a Aggregate) clone() Aggregate {
 	}
 	if a.Launch != nil {
 		l := *a.Launch
+		l.SeatPathDirs = append([]string(nil), l.SeatPathDirs...)
 		out.Launch = &l
 	}
 	if a.AcquiredEndpoint != nil {
