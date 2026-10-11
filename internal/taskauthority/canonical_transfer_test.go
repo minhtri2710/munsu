@@ -3,7 +3,10 @@ package taskauthority
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -624,5 +627,127 @@ func TestPremiseCommitTransferRefusesOnSupersessionBeforeItCanSeeACommittedTrans
 	}
 	if !strings.Contains(err.Error(), "is not current; it is superseded and cannot be mutated") {
 		t.Fatalf("error = %v, want the supersession refusal that shadows the already-committed guard", err)
+	}
+}
+
+// interruptCommit turns the committed change-set at keys back into a pending
+// journal record: the documents and the scope revision vanish, as after a crash
+// between the journal write and the apply.
+func interruptCommit(t *testing.T, c *Canonical, root, scope, txnID string, keys []string) {
+	t.Helper()
+	items := make([]home.ChangeItem, 0, len(keys))
+	for _, key := range keys {
+		p, err := c.h.Path(canonicalRoot, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(p); err != nil {
+			t.Fatal(err)
+		}
+		items = append(items, home.ChangeItem{Root: canonicalRoot, Key: key, Data: data})
+	}
+	rec, err := json.Marshal(struct {
+		TxnID            string            `json:"txn_id"`
+		Scope            string            `json:"scope"`
+		FenceToken       uint64            `json:"fence_token"`
+		ExpectedRevision uint64            `json:"expected_revision"`
+		NewRevision      uint64            `json:"new_revision"`
+		Items            []home.ChangeItem `json:"items"`
+	}{txnID, scope, 1, 0, 1, items})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, home.JournalDirName)
+	if err := os.Remove(filepath.Join(dir, scope+".rev")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, scope+"."+txnID+".json"), append(rec, '\n'), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A retry of the same operation over its own interrupted commit replays the
+// receipt the commit carries instead of refusing it.
+func TestCanonicalRetryOverPendingCommitReplays(t *testing.T) {
+	t.Run("create", func(t *testing.T) {
+		c, _, root := newTestCanonical(t)
+		req := createRequest(c, "t1")
+		op := mustOperation(t, "op-create-t1", req)
+		if _, err := c.Create(op, req); err != nil {
+			t.Fatal(err)
+		}
+		interruptCommit(t, c, root, taskScope("t1"), "op-create-t1", []string{taskCurrentKey("t1"), receiptKey("op-create-t1")})
+		out, err := c.Create(op, req)
+		if err != nil || !out.Replayed {
+			t.Fatalf("Create retry = %+v, %v; want a replay", out, err)
+		}
+	})
+	t.Run("receive", func(t *testing.T) {
+		c, _, root := newTestCanonical(t)
+		req := receiveTransferRequest(t, c, "t1", "res-t1", "source-home", 3)
+		op := mustOperation(t, "op-receive-1", req)
+		if _, err := c.ReceiveTransfer(op, req); err != nil {
+			t.Fatal(err)
+		}
+		interruptCommit(t, c, root, taskScope("t1"), "op-receive-1", []string{taskGenKey("t1", 1), receiptKey("op-receive-1")})
+		out, err := c.ReceiveTransfer(op, req)
+		if err != nil || !out.Replayed {
+			t.Fatalf("ReceiveTransfer retry = %+v, %v; want a replay", out, err)
+		}
+	})
+}
+
+// A removed record leaves its scope revision behind. Receive reuses the id at
+// that revision, and refuses only when a receipt or hold still names the id.
+func TestCanonicalReceiveTransferAfterRecordRemoved(t *testing.T) {
+	tests := []struct {
+		name        string
+		keepReceipt bool
+		hold        bool
+		wantResidue string
+	}{
+		{name: "scope revision only"},
+		{name: "receipt left", keepReceipt: true, wantResidue: "op-create-t1.json"},
+		{name: "hold left", hold: true, wantResidue: "t1-decision-k.json"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, _, root := newTestCanonical(t)
+			mustCreate(t, c, "t1")
+			state := filepath.Join(root, "state", "task-authority")
+			if err := os.RemoveAll(filepath.Join(state, "tasks", "t1")); err != nil {
+				t.Fatal(err)
+			}
+			if !tt.keepReceipt {
+				if err := os.Remove(filepath.Join(state, "receipts", "op-create-t1.json")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tt.hold {
+				hold := CanonicalAddHoldRequest{HomeID: c.HomeID(), HoldID: "t1-decision-k", Scope: DispatchHoldScope{TaskIDs: []string{"t1"}}, Actions: []DispatchAction{DispatchActionSpawn}, Reason: "freeze"}
+				if _, err := c.AddHold(mustOperation(t, "op-hold-t1", hold), hold); err != nil {
+					t.Fatal(err)
+				}
+			}
+			req := receiveTransferRequest(t, c, "t1", "res-t1", "source-home", 3)
+			out, err := c.ReceiveTransfer(mustOperation(t, "op-receive-1", req), req)
+			if tt.wantResidue != "" {
+				if !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), tt.wantResidue) || !strings.Contains(err.Error(), "munsu cannot clear it") {
+					t.Fatalf("ReceiveTransfer = %v, want a conflict naming %s", err, tt.wantResidue)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ReceiveTransfer: %v", err)
+			}
+			act := CanonicalActivateTransferRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(uint64(out.Generation), uint64(out.Revision)), ReservationID: "res-t1", Reason: "activate"}
+			if _, err := c.ActivateTransfer(mustOperation(t, "op-activate-1", act), act); err != nil {
+				t.Fatalf("ActivateTransfer: %v", err)
+			}
+		})
 	}
 }

@@ -75,15 +75,15 @@ func (c *Canonical) Create(op domain.Operation, req CanonicalCreateRequest) (Out
 	}
 	defer lk.Release()
 
+	// Revision recovers an interrupted commit, so a retry replays its receipt.
+	rev, err := c.h.Revision(lk)
+	if err != nil {
+		return Outcome{}, err
+	}
 	if rec, ok, err := c.checkedReceipt(op); err != nil {
 		return Outcome{}, err
 	} else if ok {
 		return rec.outcome(), nil
-	}
-
-	rev, err := c.h.Revision(lk)
-	if err != nil {
-		return Outcome{}, err
 	}
 	if _, exists, err := c.readTaskDoc(req.TaskID.Value()); err != nil {
 		return Outcome{}, err

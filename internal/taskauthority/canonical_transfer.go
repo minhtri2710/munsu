@@ -254,6 +254,11 @@ func (c *Canonical) ReceiveTransfer(op domain.Operation, req CanonicalReceiveTra
 	}
 	defer lk.Release()
 
+	// Revision recovers an interrupted commit, so a retry replays its receipt.
+	rev, err := c.h.Revision(lk)
+	if err != nil {
+		return Outcome{}, err
+	}
 	if rec, ok, err := c.checkedReceipt(op); err != nil {
 		return Outcome{}, err
 	} else if ok {
@@ -268,6 +273,16 @@ func (c *Canonical) ReceiveTransfer(op domain.Operation, req CanonicalReceiveTra
 		return Outcome{}, err
 	} else if exists {
 		return Outcome{}, conflictError(ErrConflict, "destination already has task %s history; transfer quarantines and never overwrites destination truth", req.TaskID.Value())
+	}
+
+	// A scope revision above zero means the id was committed before and its
+	// record is gone; see Create.
+	if rev > 0 {
+		if residue, err := c.taskResidue(req.TaskID.Value()); err != nil {
+			return Outcome{}, err
+		} else if len(residue) > 0 {
+			return Outcome{}, conflictError(ErrConflict, "task %s has no record but earlier state still names it: %s; munsu cannot clear it (ADR-0008 section 11): remove these files by hand or discard the home", req.TaskID.Value(), strings.Join(residue, ", "))
+		}
 	}
 
 	agg := Aggregate{
@@ -288,14 +303,14 @@ func (c *Canonical) ReceiveTransfer(op domain.Operation, req CanonicalReceiveTra
 	if err := validateAggregate(agg); err != nil {
 		return Outcome{}, err
 	}
-	doc := taskDoc{HomeRevision: 1, Aggregate: agg}
+	doc := taskDoc{HomeRevision: rev + 1, Aggregate: agg}
 	rec := receiptFor(op, agg)
 	items, err := genItems(req.TaskID.Value(), uint64(agg.Generation), doc, rec)
 	if err != nil {
 		return Outcome{}, err
 	}
-	if _, err := c.h.Commit(lk, op.ID.Value(), 0, items); err != nil {
-		return Outcome{}, commitError(req.TaskID, domain.Precondition{}, err)
+	if _, err := c.h.Commit(lk, op.ID.Value(), rev, items); err != nil {
+		return Outcome{}, commitError(req.TaskID, domain.Of(0, rev), err)
 	}
 	return outcomeFor(op, agg, false), nil
 }
