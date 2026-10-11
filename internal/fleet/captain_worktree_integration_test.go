@@ -65,7 +65,7 @@ func TestLaunch_TrackedIntegrationPathIsRefusedByName(t *testing.T) {
 
 	parent, h := seedPiWorktreeCaptain(t, repo)
 	err := Launch(h, parent, testLaunchEndpoint{}, fakeIntegrationPort{})
-	if err == nil || !strings.Contains(err.Error(), "tracked changes: "+piIntegrationPath) {
+	if err == nil || !strings.Contains(err.Error(), "uncommitted changes: ") || !strings.Contains(err.Error(), piIntegrationPath) {
 		t.Fatalf("Launch error = %v, want tracked-change refusal naming %s", err, piIntegrationPath)
 	}
 }

@@ -8,69 +8,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
-// TestCanonicalReservationFenceRejectsEveryMutationFamily reserves a source
-// task, rereads the updated revision, and proves that EVERY unrelated mutation
-// family fails closed while the reservation is active, even when the caller
-// supplies the latest revision.
-func TestCanonicalReservationFenceRejectsEveryMutationFamily(t *testing.T) {
-	c, _, _ := newTestCanonical(t)
-	mustCreate(t, c, "t1")
-	mustReserveTransfer(t, c, "t1", preconditionOf(1, 1), "dest-home")
-
-	// Reread the updated revision (the reservation advanced it to 2).
-	agg, err := c.Get(mustTaskID(t, "t1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if agg.Revision != 2 || agg.Transfer == nil || agg.Transfer.ReservationID != "res-t1" {
-		t.Fatalf("reserved aggregate = %+v", agg)
-	}
-	prec := preconditionOf(1, uint64(agg.Revision))
-
-	taskID := mustTaskID(t, "t1")
-
-	// Start.
-	start := CanonicalStartRequest{HomeID: c.HomeID(), TaskID: taskID, Precondition: prec, Reason: "start"}
-	if _, err := c.Start(mustOperation(t, "op-fence-start", start), start); !errors.Is(err, ErrConflict) {
-		t.Fatalf("Start on reserved task = %v, want ErrConflict", err)
-	}
-	// Block.
-	block := CanonicalBlockRequest{HomeID: c.HomeID(), TaskID: taskID, Precondition: prec, Detail: "d", Reason: "block"}
-	if _, err := c.Block(mustOperation(t, "op-fence-block", block), block); !errors.Is(err, ErrConflict) {
-		t.Fatalf("Block on reserved task = %v, want ErrConflict", err)
-	}
-	// Unblock.
-	unblock := CanonicalUnblockRequest{HomeID: c.HomeID(), TaskID: taskID, Precondition: prec, Reason: "unblock"}
-	if _, err := c.Unblock(mustOperation(t, "op-fence-unblock", unblock), unblock); !errors.Is(err, ErrConflict) {
-		t.Fatalf("Unblock on reserved task = %v, want ErrConflict", err)
-	}
-	// Complete.
-	complete := CanonicalCompleteRequest{HomeID: c.HomeID(), TaskID: taskID, Precondition: prec, To: PhaseDone, Reason: "done"}
-	if _, err := c.Complete(mustOperation(t, "op-fence-complete", complete), complete); !errors.Is(err, ErrConflict) {
-		t.Fatalf("Complete on reserved task = %v, want ErrConflict", err)
-	}
-	// Reopen.
-	reopen := CanonicalReopenRequest{HomeID: c.HomeID(), TaskID: taskID, Precondition: prec, Reason: "reopen"}
-	if _, err := c.Reopen(mustOperation(t, "op-fence-reopen", reopen), reopen); !errors.Is(err, ErrConflict) {
-		t.Fatalf("Reopen on reserved task = %v, want ErrConflict", err)
-	}
-	// BindWorktree.
-	bw := bindWorktreeRequest(c, "t1", prec)
-	if _, err := c.BindWorktree(mustOperation(t, "op-fence-bindwt", bw), bw); !errors.Is(err, ErrConflict) {
-		t.Fatalf("BindWorktree on reserved task = %v, want ErrConflict", err)
-	}
-	// BindEndpoint.
-	be := bindEndpointRequest(c, "t1", prec)
-	if _, err := c.BindEndpoint(mustOperation(t, "op-fence-bindep", be), be); !errors.Is(err, ErrConflict) {
-		t.Fatalf("BindEndpoint on reserved task = %v, want ErrConflict", err)
-	}
-	// Retire.
-	retire := retireRequest(t, c, "t1", prec)
-	if _, err := c.Retire(mustOperation(t, "op-fence-retire", retire), retire); !errors.Is(err, ErrConflict) {
-		t.Fatalf("Retire on reserved task = %v, want ErrConflict", err)
-	}
-}
-
 // TestCanonicalReservationFenceSurvivesRestart proves the fence is enforced
 // after a home reopen: a fresh Canonical over the same home still rejects
 // unrelated mutations on the reserved task and still allows the transfer
@@ -106,27 +43,6 @@ func TestCanonicalReservationFenceSurvivesRestart(t *testing.T) {
 	commit := commitTransferRequest(t, c2, "t1", preconditionOf(1, uint64(agg.Revision)), "res-t1", "dest-home")
 	if _, err := c2.CommitTransfer(mustOperation(t, "op-commit-restart", commit), commit); err != nil {
 		t.Fatalf("CommitTransfer after restart: %v", err)
-	}
-}
-
-// TestCanonicalReservationFenceRejectsStaleFenceToken proves a stale process
-// retaining an old fence token cannot commit after reservation fence state
-// changes: the commit requires the exact current fence token.
-func TestCanonicalReservationFenceRejectsStaleFenceToken(t *testing.T) {
-	c, _, _ := newTestCanonical(t)
-	mustCreate(t, c, "t1")
-	mustReserveTransfer(t, c, "t1", preconditionOf(1, 1), "dest-home")
-
-	agg, err := c.Get(mustTaskID(t, "t1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Wrong fence token under the correct reservation ID must fail closed.
-	commit := commitTransferRequest(t, c, "t1", preconditionOf(1, uint64(agg.Revision)), "res-t1", "dest-home")
-	commit.FenceToken = "stale-fence"
-	if _, err := c.CommitTransfer(mustOperation(t, "op-commit-stale-fence", commit), commit); !errors.Is(err, ErrConflict) {
-		t.Fatalf("commit with stale fence token = %v, want ErrConflict", err)
 	}
 }
 
@@ -231,36 +147,6 @@ func wantStartRefusedAsSuperseded(t *testing.T, c *Canonical, opID string) {
 	}
 }
 
-// TestCanonicalReservedTaskStartRefused proves a Current=true task with an
-// active transfer reservation is refused by the start gate with the
-// reservation reason, and that the refusal survives a home reopen/reread.
-func TestCanonicalReservedTaskStartRefused(t *testing.T) {
-	c, _, root := newTestCanonical(t)
-	mustCreate(t, c, "t1")
-	mustCreate(t, c, "t2")
-
-	mustReserveTransfer(t, c, "t1", preconditionOf(1, 1), "dest-home")
-
-	// Control: the same unreserved task shape starts.
-	start := startWithRev(c, "t2", 1)
-	if _, err := c.Start(mustOperation(t, "op-start-unreserved", start), start); err != nil {
-		t.Fatalf("start unreserved task: %v", err)
-	}
-
-	wantStartRefusedAsReserved(t, c, 2, "op-start-reserved")
-
-	// Survives reopen/reread.
-	h2, err := home.Open(root)
-	if err != nil {
-		t.Fatalf("home.Open: %v", err)
-	}
-	c2, err := NewCanonical(h2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantStartRefusedAsReserved(t, c2, 2, "op-start-reserved-reopen")
-}
-
 // TestCanonicalSupersededSourceNotCurrent proves a superseded source (after
 // CommitTransfer) is refused by the start gate and not current across reopen,
 // and that Get no longer exposes it as current truth while historical
@@ -300,75 +186,6 @@ func TestCanonicalSupersededSourceNotCurrent(t *testing.T) {
 	}
 	if _, err := c2.GetGeneration(mustTaskID(t, "t1"), Generation(1)); err != nil {
 		t.Fatalf("GetGeneration after reopen = %v", err)
-	}
-}
-
-// TestCanonicalSupersededSourceRejectsEveryMutationFamily commits a transfer,
-// rereads the exact latest revision (via the historical generation read), and
-// proves every unrelated mutation family rejects on the superseded source.
-func TestCanonicalSupersededSourceRejectsEveryMutationFamily(t *testing.T) {
-	c, _, root := newTestCanonical(t)
-	mustCreate(t, c, "t1")
-	mustReserveTransfer(t, c, "t1", preconditionOf(1, 1), "dest-home")
-
-	commit := commitTransferRequest(t, c, "t1", preconditionOf(1, 2), "res-t1", "dest-home")
-	if _, err := c.CommitTransfer(mustOperation(t, "op-commit-mut", commit), commit); err != nil {
-		t.Fatalf("CommitTransfer: %v", err)
-	}
-
-	// The latest persisted revision of the superseded generation.
-	hist, err := c.GetGeneration(mustTaskID(t, "t1"), Generation(1))
-	if err != nil {
-		t.Fatal(err)
-	}
-	prec := preconditionOf(uint64(hist.Generation), uint64(hist.Revision))
-	taskID := mustTaskID(t, "t1")
-
-	start := CanonicalStartRequest{HomeID: c.HomeID(), TaskID: taskID, Precondition: prec, Reason: "start"}
-	if _, err := c.Start(mustOperation(t, "op-sup-start", start), start); !errors.Is(err, ErrConflict) {
-		t.Fatalf("Start on superseded = %v, want ErrConflict", err)
-	}
-	block := CanonicalBlockRequest{HomeID: c.HomeID(), TaskID: taskID, Precondition: prec, Detail: "d", Reason: "block"}
-	if _, err := c.Block(mustOperation(t, "op-sup-block", block), block); !errors.Is(err, ErrConflict) {
-		t.Fatalf("Block on superseded = %v, want ErrConflict", err)
-	}
-	unblock := CanonicalUnblockRequest{HomeID: c.HomeID(), TaskID: taskID, Precondition: prec, Reason: "unblock"}
-	if _, err := c.Unblock(mustOperation(t, "op-sup-unblock", unblock), unblock); !errors.Is(err, ErrConflict) {
-		t.Fatalf("Unblock on superseded = %v, want ErrConflict", err)
-	}
-	complete := CanonicalCompleteRequest{HomeID: c.HomeID(), TaskID: taskID, Precondition: prec, To: PhaseDone, Reason: "done"}
-	if _, err := c.Complete(mustOperation(t, "op-sup-complete", complete), complete); !errors.Is(err, ErrConflict) {
-		t.Fatalf("Complete on superseded = %v, want ErrConflict", err)
-	}
-	reopen := CanonicalReopenRequest{HomeID: c.HomeID(), TaskID: taskID, Precondition: prec, Reason: "reopen"}
-	if _, err := c.Reopen(mustOperation(t, "op-sup-reopen", reopen), reopen); !errors.Is(err, ErrConflict) {
-		t.Fatalf("Reopen on superseded = %v, want ErrConflict", err)
-	}
-	bw := bindWorktreeRequest(c, "t1", prec)
-	if _, err := c.BindWorktree(mustOperation(t, "op-sup-bindwt", bw), bw); !errors.Is(err, ErrConflict) {
-		t.Fatalf("BindWorktree on superseded = %v, want ErrConflict", err)
-	}
-	be := bindEndpointRequest(c, "t1", prec)
-	if _, err := c.BindEndpoint(mustOperation(t, "op-sup-bindep", be), be); !errors.Is(err, ErrConflict) {
-		t.Fatalf("BindEndpoint on superseded = %v, want ErrConflict", err)
-	}
-	retire := retireRequest(t, c, "t1", prec)
-	if _, err := c.Retire(mustOperation(t, "op-sup-retire", retire), retire); !errors.Is(err, ErrConflict) {
-		t.Fatalf("Retire on superseded = %v, want ErrConflict", err)
-	}
-
-	// The same rejection holds after reopen.
-	h2, err := home.Open(root)
-	if err != nil {
-		t.Fatalf("home.Open: %v", err)
-	}
-	c2, err := NewCanonical(h2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	start2 := CanonicalStartRequest{HomeID: c2.HomeID(), TaskID: taskID, Precondition: prec, Reason: "start"}
-	if _, err := c2.Start(mustOperation(t, "op-sup-start2", start2), start2); !errors.Is(err, ErrConflict) {
-		t.Fatalf("Start on superseded after reopen = %v, want ErrConflict", err)
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
@@ -58,40 +59,68 @@ func seedCanonicalTask(t *testing.T, homeDir, id, kind string) {
 	}
 }
 
-func TestCheckSessionScope_RefusesAmbientGateWithoutProjects(t *testing.T) {
-	t.Setenv("NO_MISTAKES_GATE", "")
-	if err := checkSessionScope(t.TempDir()); err == nil {
-		t.Fatal("expected ambient gate refusal")
+// TestCheckSessionScope pins the two ways a session start is barred as a
+// no-mistakes gate agent, and the nearest session it admits: no marker and an
+// ordinary registered checkout.
+func TestCheckSessionScope(t *testing.T) {
+	registered := func(gate bool) func(t *testing.T) string {
+		return func(t *testing.T) string {
+			home := t.TempDir()
+			projectDir := t.TempDir()
+			if gate {
+				commonDir := filepath.Join(t.TempDir(), ".no-mistakes", "repos", "gate.git")
+				if err := os.MkdirAll(filepath.Dir(commonDir), 0755); err != nil {
+					t.Fatal(err)
+				}
+				if out, err := exec.Command("git", "init", "--bare", commonDir).CombinedOutput(); err != nil {
+					t.Fatalf("git init --bare: %v: %s", err, out)
+				}
+				if err := os.WriteFile(filepath.Join(projectDir, ".git"), []byte("gitdir: "+commonDir+"\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv("NM_HOME", filepath.Dir(filepath.Dir(commonDir)))
+			} else if out, err := exec.Command("git", "init", projectDir).CombinedOutput(); err != nil {
+				t.Fatalf("git init: %v: %s", err, out)
+			}
+			if err := fleet.Add(home, "demo", projectDir, false); err != nil {
+				t.Fatal(err)
+			}
+			return home
+		}
 	}
-}
-
-func TestCheckSessionScope_UsesRegisteredProjectPath(t *testing.T) {
-	home := t.TempDir()
-	projectDir := filepath.Join(home, "projects", "demo")
-	commonDir := filepath.Join(t.TempDir(), ".no-mistakes", "repos", "gate.git")
-	if err := os.MkdirAll(filepath.Dir(commonDir), 0755); err != nil {
-		t.Fatal(err)
+	cases := []struct {
+		name    string
+		gateEnv bool
+		home    func(t *testing.T) string
+		want    string
+	}{
+		{"gate marker with no registered project", true, func(t *testing.T) string { return t.TempDir() }, "no-mistakes gate agent must not drive the fleet"},
+		{"registered project that is a gate checkout", false, registered(true), "project demo: gate agent refused"},
+		{"registered project that is an ordinary checkout", false, registered(false), ""},
 	}
-	cmd := exec.Command("git", "init", "--bare", commonDir)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git init --bare: %v: %s", err, out)
-	}
-	if err := os.MkdirAll(projectDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(projectDir, ".git"), []byte("gitdir: "+commonDir+"\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(home, "data"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	registry := "- demo - https://github.com/example/demo.git (added 2026-07-18)\n"
-	if err := os.WriteFile(filepath.Join(home, "data", "projects.md"), []byte(registry), 0644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("NM_HOME", filepath.Dir(filepath.Dir(commonDir)))
-	if err := checkSessionScope(home); err == nil {
-		t.Fatal("expected registered gate checkout refusal")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("NO_MISTAKES_GATE", "")
+			if !tc.gateEnv {
+				if err := os.Unsetenv("NO_MISTAKES_GATE"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			home := tc.home(t)
+			if got := CheckSessionScope(home).IsGateAgent; got != tc.gateEnv {
+				t.Fatalf("CheckSessionScope IsGateAgent = %v, want %v", got, tc.gateEnv)
+			}
+			err := checkSessionScope(home)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("checkSessionScope error = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("checkSessionScope error = %v, want refusal containing %q", err, tc.want)
+			}
+		})
 	}
 }
 

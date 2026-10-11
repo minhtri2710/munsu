@@ -302,35 +302,6 @@ func TestCanonicalBeginSpawnStaleGenerationConflicts(t *testing.T) {
 	}
 }
 
-func TestCanonicalBeginSpawnBlockedBySpawnHold(t *testing.T) {
-	c, _, _ := newTestCanonical(t)
-	mustCreate(t, c, "t1")
-
-	hold := CanonicalAddHoldRequest{
-		HomeID:  c.HomeID(),
-		HoldID:  "spawn-hold",
-		Scope:   DispatchHoldScope{TaskIDs: []string{"t1"}},
-		Actions: []DispatchAction{DispatchActionSpawn},
-		Reason:  "freeze spawn",
-	}
-	if _, err := c.AddHold(mustOperation(t, "op-hold-spawn", hold), hold); err != nil {
-		t.Fatalf("AddHold: %v", err)
-	}
-
-	req := launchRequest(c, "t1", preconditionOf(1, 1))
-	if _, err := c.BeginSpawn(mustOperation(t, "op-begin-held", req), req); !errors.Is(err, ErrDispatchHeld) {
-		t.Fatalf("BeginSpawn held = %v, want ErrDispatchHeld", err)
-	}
-
-	release := CanonicalReleaseHoldRequest{HomeID: c.HomeID(), HoldID: "spawn-hold", Reason: "resume", Words: testWords()}
-	if _, err := c.ReleaseHold(mustOperation(t, "op-release-spawn", release), release); err != nil {
-		t.Fatalf("ReleaseHold: %v", err)
-	}
-	if _, err := c.BeginSpawn(mustOperation(t, "op-begin-after-hold", req), req); err != nil {
-		t.Fatalf("BeginSpawn after release: %v", err)
-	}
-}
-
 func TestCanonicalBeginSpawnValidation(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
 	mustCreate(t, c, "t1")

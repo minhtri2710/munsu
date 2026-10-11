@@ -5,7 +5,6 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
@@ -65,12 +64,10 @@ func preflightDirectPR(repoPath string, forge taskauthority.DeliveryStep) (*Pref
 	return result, nil
 }
 
-// checkConfiguredForge refuses a captured forge whose probe is not Ready. Every
-// mode that delivers through the forge shares it, so the refusal is one rule.
+// checkConfiguredForge refuses a captured forge whose probe is not Ready.
 func checkConfiguredForge(forge taskauthority.DeliveryStep) (Check, error) {
-	state := probeConfiguredForge(toolEntryOf(forge))
-	if state != backend.Ready {
-		return Check{}, fmt.Errorf("forge adapter %s probe %s: configured forge is not Ready", forge.Adapter, state)
+	if err := requireReadyForge(forge); err != nil {
+		return Check{}, err
 	}
 	return Check{Name: "forge-tool", OK: true, Detail: fmt.Sprintf("%s is Ready", forge.Adapter)}, nil
 }

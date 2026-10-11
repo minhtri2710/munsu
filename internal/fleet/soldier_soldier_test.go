@@ -572,13 +572,6 @@ func TestBuildLaunchArgs_Pi(t *testing.T) {
 	}
 }
 
-func TestBuildLaunchArgs_Codex_FailsWithoutPromptContract(t *testing.T) {
-	_, _, err := BuildLaunchArgs("/tmp/home", "codex", "gpt-5", "80", "test prompt")
-	if err == nil {
-		t.Error("expected error for codex (no prompt-arg contract)")
-	}
-}
-
 func TestBuildLaunchArgs_Claude(t *testing.T) {
 	for _, tc := range []struct {
 		name, model string

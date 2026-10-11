@@ -110,10 +110,7 @@ func syncOne(dir string) error {
 	}
 
 	// Check if dirty
-	statusCmd := exec.Command("git", "status", "--porcelain")
-	statusCmd.Dir = dir
-	statusOut, _ := statusCmd.Output()
-	if len(strings.TrimSpace(string(statusOut))) > 0 {
+	if dirty, _ := CheckoutDirty(dir); dirty != "" {
 		return fmt.Errorf("dirty working tree, skipping")
 	}
 
@@ -138,4 +135,19 @@ func syncOne(dir string) error {
 	}
 
 	return nil
+}
+
+// CheckoutDirty is the one definition of a dirty checkout: tracked changes or
+// unignored untracked files, which is exactly what `git status --porcelain`
+// prints on stdout (stderr is not a change). It returns the first entry, or ""
+// for a clean checkout.
+func CheckoutDirty(dir string) (string, error) {
+	cmd := exec.Command("git", "status", "--porcelain")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	entry, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
+	return entry, nil
 }

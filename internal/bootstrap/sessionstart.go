@@ -210,7 +210,7 @@ type ScopeCheckResult struct {
 }
 
 func CheckSessionScope(home string) ScopeCheckResult {
-	if _, present := os.LookupEnv("NO_MISTAKES_GATE"); present {
+	if fleet.GateAgentEnvSet() {
 		return ScopeCheckResult{IsGateAgent: true}
 	}
 	cwd, err := os.Getwd()
@@ -225,7 +225,7 @@ func CheckSessionScope(home string) ScopeCheckResult {
 }
 
 func checkSessionScope(home string) error {
-	if _, present := os.LookupEnv("NO_MISTAKES_GATE"); present {
+	if fleet.GateAgentEnvSet() {
 		return fmt.Errorf("no-mistakes gate agent must not drive the fleet")
 	}
 	projects, err := fleet.List(home)

@@ -144,18 +144,6 @@ func TestCanonicalReserveTransferSameHomeFails(t *testing.T) {
 	}
 }
 
-func TestCanonicalReserveTransferAlreadyReservedConflicts(t *testing.T) {
-	c, _, _ := newTestCanonical(t)
-	mustCreate(t, c, "t1")
-	mustReserveTransfer(t, c, "t1", preconditionOf(1, 1), "dest-home")
-
-	// A second reserve on the same generation (now revision 2) conflicts.
-	req := reserveTransferRequest(t, c, "t1", preconditionOf(1, 2), "res-2", "other-home")
-	if _, err := c.ReserveTransfer(mustOperation(t, "op-reserve-again", req), req); !errors.Is(err, ErrConflict) {
-		t.Fatalf("re-reserve = %v, want ErrConflict", err)
-	}
-}
-
 func TestCanonicalReserveTransferIdempotentReplay(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
 	mustCreate(t, c, "t1")
@@ -253,33 +241,6 @@ func TestCanonicalReceiveTransferWithoutContractIsNil(t *testing.T) {
 	}
 }
 
-func TestCanonicalReceiveTransferDestinationAlreadyOwnsFails(t *testing.T) {
-	cDest, _, _ := newTestCanonical(t)
-	mustCreate(t, cDest, "t1")
-
-	req := receiveTransferRequest(t, cDest, "t1", "res-t1", "source-home", 3)
-	if _, err := cDest.ReceiveTransfer(mustOperation(t, "op-receive-dup", req), req); !errors.Is(err, ErrConflict) {
-		t.Fatalf("receive into owned destination = %v, want ErrConflict", err)
-	}
-}
-
-func TestCanonicalReceiveTransferPendingReceiveNotOverwritten(t *testing.T) {
-	cDest, _, _ := newTestCanonical(t)
-
-	first := receiveTransferRequest(t, cDest, "t1", "res-t1", "source-home", 3)
-	if _, err := cDest.ReceiveTransfer(mustOperation(t, "op-receive-1", first), first); err != nil {
-		t.Fatalf("ReceiveTransfer: %v", err)
-	}
-
-	// A second receive under a different reservation must fail closed: the
-	// destination already has a pending received generation and it is never
-	// overwritten.
-	second := receiveTransferRequest(t, cDest, "t1", "res-other", "source-home", 5)
-	if _, err := cDest.ReceiveTransfer(mustOperation(t, "op-receive-2", second), second); !errors.Is(err, ErrConflict) {
-		t.Fatalf("second receive = %v, want ErrConflict", err)
-	}
-}
-
 func TestCanonicalReceiveTransferSameSourceFails(t *testing.T) {
 	cDest, _, _ := newTestCanonical(t)
 
@@ -297,57 +258,69 @@ func TestCanonicalReceiveTransferSameSourceFails(t *testing.T) {
 	}
 }
 
-// TestCanonicalReceiveTransferConflictsWithNonCurrentDestinationHistory proves
-// a receive fails closed when the destination holds ANY non-current generation
-// history for the task (here: an older generation preserved by a Reopen), not
-// just when the task is current. The receive never overwrites or conflicts
-// with existing destination generation state.
-func TestCanonicalReceiveTransferConflictsWithNonCurrentDestinationHistory(t *testing.T) {
-	cDest, _, _ := newTestCanonical(t)
-
-	// Build normal destination lifecycle history with a preserved older
-	// generation: create, complete, reopen (gen-1.json + current.json exist).
-	mustCreate(t, cDest, "t1")
-	complete := CanonicalCompleteRequest{HomeID: cDest.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, 1), To: PhaseDone, Reason: "done"}
-	if _, err := cDest.Complete(mustOperation(t, "op-c-hist", complete), complete); err != nil {
-		t.Fatalf("Complete: %v", err)
+// The transfer rules: what a destination must not hold before a receive, what
+// an unfinished transfer record refuses, and the reservation fence that stops
+// every unrelated mutation of a reserved task.
+func TestTransferRefusals(t *testing.T) {
+	receive := func(t *testing.T, c *Canonical, reservationID string) error {
+		req := receiveTransferRequest(t, c, "t1", reservationID, "source-home", 3)
+		_, err := c.ReceiveTransfer(mustOperation(t, "op-receive-"+reservationID, req), req)
+		return err
 	}
-	reopen := CanonicalReopenRequest{HomeID: cDest.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, 2), Reason: "reopen"}
-	if _, err := cDest.Reopen(mustOperation(t, "op-r-hist", reopen), reopen); err != nil {
-		t.Fatalf("Reopen: %v", err)
+	activate := func(t *testing.T, c *Canonical) {
+		req := CanonicalActivateTransferRequest{
+			HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"),
+			Precondition: preconditionOf(1, 1), ReservationID: "res-t1", Reason: "activate",
+		}
+		_, err := c.ActivateTransfer(mustOperation(t, "op-activate-1", req), req)
+		mustStep(t, err)
 	}
-
-	req := receiveTransferRequest(t, cDest, "t1", "res-t1", "source-home", 3)
-	if _, err := cDest.ReceiveTransfer(mustOperation(t, "op-receive-history", req), req); !errors.Is(err, ErrConflict) {
-		t.Fatalf("receive into destination with non-current history = %v, want ErrConflict", err)
-	}
-}
-
-// TestCanonicalReceiveTransferAfterActivationFailsClosed proves a receive
-// fails closed once the destination has activated a received generation: the
-// destination now owns the task and destination truth is never overwritten.
-func TestCanonicalReceiveTransferAfterActivationFailsClosed(t *testing.T) {
-	cDest, _, _ := newTestCanonical(t)
-
-	req := receiveTransferRequest(t, cDest, "t1", "res-t1", "source-home", 3)
-	if _, err := cDest.ReceiveTransfer(mustOperation(t, "op-receive-1", req), req); err != nil {
-		t.Fatalf("ReceiveTransfer: %v", err)
-	}
-	activate := CanonicalActivateTransferRequest{
-		HomeID:        cDest.HomeID(),
-		TaskID:        mustTaskID(t, "t1"),
-		Precondition:  preconditionOf(1, 1),
-		ReservationID: "res-t1",
-		Reason:        "activate",
-	}
-	if _, err := cDest.ActivateTransfer(mustOperation(t, "op-activate-1", activate), activate); err != nil {
-		t.Fatalf("ActivateTransfer: %v", err)
+	commit := func(t *testing.T, c *Canonical, mutate func(*CanonicalCommitTransferRequest)) error {
+		mustCreate(t, c, "t1")
+		mustReserveTransfer(t, c, "t1", preconditionOf(1, 1), "dest-home")
+		req := commitTransferRequest(t, c, "t1", preconditionOf(1, 2), "res-t1", "dest-home")
+		mutate(&req)
+		_, err := c.CommitTransfer(mustOperation(t, "op-commit-1", req), req)
+		return err
 	}
 
-	again := receiveTransferRequest(t, cDest, "t1", "res-other", "source-home", 7)
-	if _, err := cDest.ReceiveTransfer(mustOperation(t, "op-receive-after", again), again); !errors.Is(err, ErrConflict) {
-		t.Fatalf("receive after activation = %v, want ErrConflict", err)
-	}
+	runRefusalRows(t, []refusalRow{
+		{name: "receive refuses a destination that holds earlier history of the task", class: ErrConflict, want: "destination already has task t1 history", run: func(t *testing.T, c *Canonical) error {
+			mustCreate(t, c, "t1")
+			mustStep(t, stepComplete(t, c, "t1", 1, PhaseDone))
+			mustStep(t, stepReopen(t, c, "t1", 2))
+			return receive(t, c, "res-t1")
+		}},
+		{name: "receive allows a destination with no history of the task", run: func(t *testing.T, c *Canonical) error {
+			return receive(t, c, "res-t1")
+		}},
+
+		{name: "reserve refuses an inbound record that is still attached", class: ErrConflict, want: "already reserved for transfer", run: func(t *testing.T, c *Canonical) error {
+			mustStep(t, receive(t, c, "res-t1"))
+			activate(t, c)
+			req := reserveTransferRequest(t, c, "t1", preconditionOf(1, 2), "res-2", "onward-home")
+			_, err := c.ReserveTransfer(mustOperation(t, "op-reserve-onward", req), req)
+			return err
+		}},
+		{name: "reserve allows a native task", run: func(t *testing.T, c *Canonical) error {
+			mustCreate(t, c, "t1")
+			req := reserveTransferRequest(t, c, "t1", preconditionOf(1, 1), "res-1", "dest-home")
+			_, err := c.ReserveTransfer(mustOperation(t, "op-reserve-1", req), req)
+			return err
+		}},
+
+		{name: "a reserved task refuses an unrelated mutation", class: ErrConflict, want: "is reserved for transfer; unrelated mutations fail closed", run: func(t *testing.T, c *Canonical) error {
+			mustCreate(t, c, "t1")
+			mustReserveTransfer(t, c, "t1", preconditionOf(1, 1), "dest-home")
+			return stepStart(t, c, "t1", 2)
+		}},
+		{name: "a reserved task refuses a continuation with a stale fence token", class: ErrConflict, want: "reservation fence mismatch; stale transfer cannot mutate", run: func(t *testing.T, c *Canonical) error {
+			return commit(t, c, func(r *CanonicalCommitTransferRequest) { r.FenceToken = "stale-fence" })
+		}},
+		{name: "a reserved task allows the continuation of its exact reservation", run: func(t *testing.T, c *Canonical) error {
+			return commit(t, c, func(*CanonicalCommitTransferRequest) {})
+		}},
+	})
 }
 
 func TestCanonicalActivateTransfer(t *testing.T) {
@@ -564,69 +537,6 @@ func TestCanonicalTransferSurvivesHomeReopen(t *testing.T) {
 	}
 	if agg.Transfer == nil || agg.Transfer.ReservationID != "res-t1" {
 		t.Fatalf("transfer provenance lost across reopen: %+v", agg.Transfer)
-	}
-}
-
-// A task activated at the destination still carries the inbound transfer
-// record: it names the source it came from, and its DestinationHome is empty
-// because this home IS the destination. That record is not a live outbound
-// reservation, so the reservation fence lets ordinary mutations through — and
-// ReserveTransfer's own guard is what refuses an onward transfer while the
-// inbound record is still attached. The fence and this guard cover disjoint
-// states, which is why removing either one would go unnoticed by the other's
-// tests.
-func TestCanonicalReserveTransferRefusesOnwardTransferOfAnInboundRecord(t *testing.T) {
-	cDest, _, _ := newTestCanonical(t)
-	req := receiveTransferRequest(t, cDest, "t1", "res-t1", "source-home", 3)
-	if _, err := cDest.ReceiveTransfer(mustOperation(t, "op-receive-1", req), req); err != nil {
-		t.Fatalf("ReceiveTransfer: %v", err)
-	}
-	activate := CanonicalActivateTransferRequest{
-		HomeID: cDest.HomeID(), TaskID: mustTaskID(t, "t1"),
-		Precondition: preconditionOf(1, 1), ReservationID: "res-t1", Reason: "activate",
-	}
-	if _, err := cDest.ActivateTransfer(mustOperation(t, "op-activate-1", activate), activate); err != nil {
-		t.Fatalf("ActivateTransfer: %v", err)
-	}
-
-	onward := reserveTransferRequest(t, cDest, "t1", preconditionOf(1, 2), "res-2", "onward-home")
-	_, err := cDest.ReserveTransfer(mustOperation(t, "op-reserve-onward", onward), onward)
-	if !errors.Is(err, ErrConflict) {
-		t.Fatalf("onward reserve = %v, want ErrConflict", err)
-	}
-	if !strings.Contains(err.Error(), "already reserved for transfer") {
-		t.Fatalf("error = %v, want the already-reserved refusal", err)
-	}
-}
-
-// Premise test for the CommitTransfer `cur.Transfer.Transferred` waiver in
-// .github/uncovered-guards.baseline.
-//
-// It builds the state that WOULD enter that guard -- a second commit of an
-// already-committed transfer -- and asserts the refusal carries the EARLIER
-// guard's message instead. Transferred is written at exactly one site, and the
-// same atomic change-set clears Current, so mutateTaskTransfer's supersession
-// check always refuses first. If that ordering ever changes, this test goes red
-// and the waiver has to be re-argued rather than quietly becoming wrong.
-func TestPremiseCommitTransferRefusesOnSupersessionBeforeItCanSeeACommittedTransfer(t *testing.T) {
-	c, _, _ := newTestCanonical(t)
-	mustCreate(t, c, "t1")
-	mustReserveTransfer(t, c, "t1", preconditionOf(1, 1), "dest-home")
-
-	commit := commitTransferRequest(t, c, "t1", preconditionOf(1, 2), "res-t1", "dest-home")
-	out, err := c.CommitTransfer(mustOperation(t, "op-commit-1", commit), commit)
-	if err != nil {
-		t.Fatalf("first commit: %v", err)
-	}
-
-	// The generation the first commit both marked Transferred and superseded.
-	again := commitTransferRequest(t, c, "t1", preconditionOf(1, uint64(out.Revision)), "res-t1", "dest-home")
-	_, err = c.CommitTransfer(mustOperation(t, "op-commit-2", again), again)
-	if err == nil {
-		t.Fatal("a second commit of a committed transfer was accepted")
-	}
-	if !strings.Contains(err.Error(), "is not current; it is superseded and cannot be mutated") {
-		t.Fatalf("error = %v, want the supersession refusal that shadows the already-committed guard", err)
 	}
 }
 

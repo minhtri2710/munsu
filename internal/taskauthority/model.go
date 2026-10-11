@@ -114,6 +114,13 @@ func SoldierKind(kind string) bool {
 	return kind == KindShip || kind == KindScout || kind == KindReview
 }
 
+// ownsWorktree reports whether a task of this kind binds a worktree and records
+// launch manifest evidence for it. A review task reads the reviewed task's
+// worktree and owns none.
+func ownsWorktree(kind string) bool {
+	return kind != KindReview
+}
+
 // EndpointBinding is a generation-bound runtime endpoint lease. Incarnation
 // is the opaque generation-bound identity minted by Fleet for this exact
 // endpoint binding and used to reject stale/foreign observations (freshness).
@@ -735,7 +742,7 @@ func validateLaunchIdentity(snapshotDigest, backend, harness, model, effort, mod
 	if launchID == "" || strings.ContainsAny(launchID, `/\\`) {
 		return validationError("launch requires a deterministic launch identity")
 	}
-	if kind == KindReview {
+	if !ownsWorktree(kind) {
 		// A review task owns no worktree: it reads the reviewed task's, so a
 		// worktree reservation would be a lease the reviewer must never hold.
 		if worktreeReservationID != "" || worktreeFenceToken != "" {
@@ -949,7 +956,7 @@ func validateWorktreeManifestRelationship(binding WorktreeBinding, launch *Launc
 	if launch == nil {
 		return validationError("launch manifest evidence requires a committed launch intent")
 	}
-	if kind == KindReview {
+	if !ownsWorktree(kind) {
 		return validationError("review tasks cannot own launch manifest evidence")
 	}
 	if binding.LaunchManifest.LaunchID != launch.LaunchID {

@@ -77,8 +77,8 @@ func (c *Canonical) RecordReviewVerdict(op domain.Operation, req CanonicalRecord
 		if cur.Phase != PhaseWorking {
 			return Aggregate{}, preconditionError("review verdict requires a working task; task %s is %s", cur.TaskID, cur.Phase)
 		}
-		if cur.Worktree == nil || cur.Endpoint == nil {
-			return Aggregate{}, preconditionError("review verdict requires the bound worktree and endpoint of task %s", cur.TaskID)
+		if err := cur.VerdictBindingBlocker(); err != nil {
+			return Aggregate{}, err
 		}
 		if err := c.checkVerdictReviewer(cur, req.Verdict); err != nil {
 			return Aggregate{}, err
@@ -95,6 +95,16 @@ func (c *Canonical) RecordReviewVerdict(op domain.Operation, req CanonicalRecord
 		next.Revision++
 		return next, nil
 	})
+}
+
+// VerdictBindingBlocker refuses a task without the bound worktree and endpoint
+// a review verdict reads: the reviewed worktree to observe and the endpoint
+// incarnation that authored the work.
+func (a Aggregate) VerdictBindingBlocker() error {
+	if a.Worktree == nil || a.Endpoint == nil {
+		return preconditionError("review verdict requires the bound worktree and endpoint of task %s", a.TaskID)
+	}
+	return nil
 }
 
 // checkVerdictReviewer requires the verdict's reviewer to be the current

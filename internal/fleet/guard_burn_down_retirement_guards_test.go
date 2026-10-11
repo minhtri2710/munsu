@@ -103,21 +103,6 @@ func TestRequireCanonicalCompletedOutcome_NilAuthority(t *testing.T) {
 	}
 }
 
-func TestRequireCanonicalCompletedOutcome_NotCompleted(t *testing.T) {
-	homeDir := t.TempDir()
-	taskID := "task-not-completed"
-	auth := mergeTestAuth(t, homeDir, taskID)
-	seedDeliveryOutcome(t, auth, taskID, taskauthority.DeliveryOutcomeRetryable, "1111111111111111111111111111111111111111")
-
-	err := requireCanonicalCompletedOutcome(auth, taskID)
-	if err == nil {
-		t.Fatal("expected non-completed outcome refusal, got nil")
-	}
-	if !strings.Contains(err.Error(), "a committed completed outcome is required") {
-		t.Fatalf("requireCanonicalCompletedOutcome err = %v, want committed completed outcome required", err)
-	}
-}
-
 func TestRequireRetirementIdentity_NoDeliveryMeta(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "task-no-ident"
@@ -368,22 +353,32 @@ func TestRetireTaskAuthoritatively_NilAuthority(t *testing.T) {
 	}
 }
 
-func TestRetireTaskAuthoritatively_DeliveryOutcomeNotCompleted(t *testing.T) {
+// retireWithOutcome retires an identity-bearing task whose canonical delivery
+// outcome has the given status.
+func retireWithOutcome(t *testing.T, status taskauthority.DeliveryOutcomeStatus) error {
+	t.Helper()
 	homeDir := t.TempDir()
-	taskID := "retire-not-completed"
+	taskID := "retire-outcome"
 	auth := mergeTestAuth(t, homeDir, taskID)
-	seedDeliveryOutcome(t, auth, taskID, taskauthority.DeliveryOutcomeRetryable, "1111111111111111111111111111111111111111")
-
+	seedDeliveryOutcome(t, auth, taskID, status, "1111111111111111111111111111111111111111")
 	meta := map[string]string{
 		"pr_url":    "https://github.com/test-owner/test-repo/pull/1",
 		"pr_number": "1",
 	}
 	_, err := retireTaskAuthoritatively(Options{ID: taskID}, meta, auth)
-	if err == nil {
-		t.Fatal("expected delivery outcome not completed error, got nil")
+	return err
+}
+
+func completedOutcomeBlock(t *testing.T) {
+	err := retireWithOutcome(t, taskauthority.DeliveryOutcomeRetryable)
+	if err == nil || !strings.Contains(err.Error(), `canonical delivery outcome is "retryable"; a committed completed outcome is required`) {
+		t.Fatalf("retireTaskAuthoritatively err = %v, want the completed-outcome refusal", err)
 	}
-	if !strings.Contains(err.Error(), "retirement requires a committed completed delivery outcome") {
-		t.Fatalf("retireTaskAuthoritatively err = %v, want retirement requires a committed completed delivery outcome", err)
+}
+
+func completedOutcomeAllow(t *testing.T) {
+	if err := retireWithOutcome(t, taskauthority.DeliveryOutcomeCompleted); err != nil {
+		t.Fatalf("retireTaskAuthoritatively with a completed outcome: %v", err)
 	}
 }
 

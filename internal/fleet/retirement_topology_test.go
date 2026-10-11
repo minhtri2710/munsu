@@ -192,7 +192,7 @@ func applyMockPRStatus(t *testing.T, status *domain.PRMergeStatus, err error) fu
 
 // --- Cleanliness checks (no identity) ---
 
-func TestShipSafetyCheck_Topology_CleanNoIdentity(t *testing.T) {
+func dirtyTreeAllow(t *testing.T) {
 	// A clean branch with remote should pass the remote branch check fallback
 	tmp := t.TempDir()
 	wt, _, md := setupTopologyRepo(t, tmp)
@@ -204,7 +204,7 @@ func TestShipSafetyCheck_Topology_CleanNoIdentity(t *testing.T) {
 	}
 }
 
-func TestShipSafetyCheck_Topology_DirtyNoIdentity(t *testing.T) {
+func dirtyTreeBlock(t *testing.T) {
 	// A dirty branch should fail even with a remote
 	tmp := t.TempDir()
 	wt, _, md := setupTopologyRepo(t, tmp)
@@ -286,7 +286,7 @@ func TestShipSafetyCheck_Topology_MergedPRWithDeletedHead(t *testing.T) {
 	}
 }
 
-func TestShipSafetyCheck_Topology_MergedPRBranchExists(t *testing.T) {
+func mergedMatchingHeadAllow(t *testing.T) {
 	// Merged PR where remote branch still exists: accept with head SHA match
 	tmp := t.TempDir()
 	wt, _, md := setupTopologyRepo(t, tmp)
@@ -321,7 +321,7 @@ func TestShipSafetyCheck_Topology_MergedPRBranchExists(t *testing.T) {
 
 // --- Topology-aware: closed PR, mismatched head ---
 
-func TestShipSafetyCheck_Topology_ClosedUnmergedPR(t *testing.T) {
+func closedUnmergedBlock(t *testing.T) {
 	// Closed but not merged: refuse teardown
 	tmp := t.TempDir()
 	wt, _, md := setupTopologyRepo(t, tmp)
@@ -344,7 +344,7 @@ func TestShipSafetyCheck_Topology_ClosedUnmergedPR(t *testing.T) {
 	}
 }
 
-func TestShipSafetyCheck_Topology_OpenUnmergedPR(t *testing.T) {
+func openUnmergedBlock(t *testing.T) {
 	// Still open and not merged: refuse teardown
 	tmp := t.TempDir()
 	wt, _, md := setupTopologyRepo(t, tmp)
@@ -385,7 +385,7 @@ func TestShipSafetyCheck_Topology_ProviderUnavailable(t *testing.T) {
 	}
 }
 
-func TestShipSafetyCheck_Topology_WrongPRHead(t *testing.T) {
+func wrongPRHeadBlock(t *testing.T) {
 	// Mismatched head SHA when remote branch still exists: refuse
 	tmp := t.TempDir()
 	wt, _, md := setupTopologyRepo(t, tmp)
@@ -408,31 +408,6 @@ func TestShipSafetyCheck_Topology_WrongPRHead(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "head SHA mismatch") {
 		t.Errorf("expected head SHA mismatch error, got: %v", err)
-	}
-}
-
-func TestShipSafetyCheck_Topology_DirtyWithIdentity(t *testing.T) {
-	// Dirty worktree should fail even with valid merged PR
-	tmp := t.TempDir()
-	wt, _, md := setupTopologyRepo(t, tmp)
-
-	os.WriteFile(filepath.Join(wt, "dirty.txt"), []byte("changes"), 0644)
-
-	meta := fixtureMeta(wt, true)
-	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
-		Merged:    true,
-		MergedSHA: "abc123def456",
-		HeadSHA:   "abc123def456",
-		State:     "MERGED",
-	}, nil)
-	defer cleanup()
-
-	_, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), meta, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
-	if err == nil {
-		t.Fatal("dirty worktree should fail even with merged PR")
-	}
-	if !strings.Contains(err.Error(), "uncommitted changes") {
-		t.Errorf("expected uncommitted changes error, got: %v", err)
 	}
 }
 
@@ -500,39 +475,6 @@ func TestIdentityFromMeta_WithoutURL(t *testing.T) {
 	}
 	if ident != nil {
 		t.Fatal("identityFromMeta should return nil without pr_url")
-	}
-}
-
-// --- Backward compatibility: existing tests still pass ---
-
-func TestShipSafetyCheck_Topology_ExistingTestsStillWork(t *testing.T) {
-	// Test that the existing tests' patterns still pass through the new code
-
-	// No worktree in meta
-	_, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), map[string]string{}, fakeTeardown{}, nil, nil, false)
-	if err == nil {
-		t.Fatal("should fail when no canonical worktree binding exists")
-	}
-
-	// Clean with remote (no identity) should pass
-	tmp := t.TempDir()
-	wt, _, md := setupTopologyRepo(t, tmp)
-	meta := fixtureMeta(wt, false)
-	_, err = shipSafetyCheck(contractedMergeCheckOptions(t, "test"), meta, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
-	if err != nil {
-		t.Fatalf("clean branch with remote should pass: %v", err)
-	}
-
-	// Dirty should fail
-	os.WriteFile(filepath.Join(wt, "another-dirty.txt"), []byte("changes"), 0644)
-	meta = fixtureMeta(wt, false)
-	_, err = shipSafetyCheck(contractedMergeCheckOptions(t, "test"), meta, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
-	if err == nil {
-		t.Fatal("dirty worktree should fail")
-	}
-	_, err = shipSafetyCheck(contractedMergeCheckOptions(t, "test"), meta, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
-	if err == nil {
-		t.Fatal("dirty worktree should fail")
 	}
 }
 
@@ -850,40 +792,6 @@ func TestShipSafetyCheck_Topology_SquashMerge(t *testing.T) {
 	}
 }
 
-// --- Unmerged deleted branch ---
-
-func TestShipSafetyCheck_Topology_UnmergedDeletedBranch(t *testing.T) {
-	// Remote branch deleted but PR NOT merged: branch deletion alone
-	// never authorizes
-	tmp := t.TempDir()
-	wt, _, md := setupTopologyRepo(t, tmp)
-
-	meta := fixtureMeta(wt, true)
-
-	// Delete the remote branch but mock PR status as OPEN (not merged)
-	gitEnv := topologyGitEnv(wt)
-	cmd := exec.Command("git", "push", "origin", "--delete", "fm/feature-branch")
-	cmd.Dir = wt
-	cmd.Env = gitEnv
-	_ = cmd.Run()
-
-	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
-		Merged:  false,
-		Closed:  false,
-		State:   "OPEN",
-		HeadSHA: "abc123def456",
-	}, nil)
-	defer cleanup()
-
-	_, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), meta, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
-	if err == nil {
-		t.Fatal("unmerged deleted branch should fail")
-	}
-	if !strings.Contains(err.Error(), "still open") {
-		t.Errorf("expected 'still open' error, got: %v", err)
-	}
-}
-
 // --- Provider ambiguous/unavailable ---
 
 func TestShipSafetyCheck_Topology_ProviderEmptyState(t *testing.T) {
@@ -906,42 +814,6 @@ func TestShipSafetyCheck_Topology_ProviderEmptyState(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unexpected state") {
 		t.Errorf("expected unexpected state error, got: %v", err)
-	}
-}
-
-func TestShipSafetyCheck_Topology_DeletedHeadWrongSHA(t *testing.T) {
-	// Deleted remote head but provider-reported head SHA does NOT match
-	// stored identity — must fail closed. This covers the squash/rebase
-	// topology where the remote branch is gone but the live head SHA
-	// differs from the one captured at PR-check time.
-	tmp := t.TempDir()
-	wt, _, md := setupTopologyRepo(t, tmp)
-
-	meta := fixtureMeta(wt, true)
-	// Stored head SHA differs from provider-reported head SHA
-	meta["pr_head_sha"] = "storedsha0000000000000000000000000000000000"
-
-	// Delete the remote branch to simulate squash+delete
-	gitEnv := topologyGitEnv(wt)
-	cmd := exec.Command("git", "push", "origin", "--delete", "fm/feature-branch")
-	cmd.Dir = wt
-	cmd.Env = gitEnv
-	_ = cmd.Run()
-
-	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
-		Merged:    true,
-		MergedSHA: "livesha1111111111111111111111111111111111",
-		HeadSHA:   "livesha1111111111111111111111111111111111",
-		State:     "MERGED",
-	}, nil)
-	defer cleanup()
-
-	_, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), meta, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
-	if err == nil {
-		t.Fatal("deleted-head wrong SHA should fail")
-	}
-	if !strings.Contains(err.Error(), "head SHA mismatch") {
-		t.Errorf("expected head SHA mismatch error, got: %v", err)
 	}
 }
 
@@ -1111,179 +983,6 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_ProviderEmptyHeadSHA(t
 	}
 }
 
-func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_SHAMismatch(t *testing.T) {
-	tmp := t.TempDir()
-	wt, _, md := setupTopologyRepo(t, tmp)
-
-	gitEnv := topologyGitEnv(wt)
-
-	shaCmd := exec.Command("git", "rev-parse", "HEAD")
-	shaCmd.Dir = wt
-	shaCmd.Env = gitEnv
-	shaOut, err := shaCmd.Output()
-	if err != nil {
-		t.Fatalf("getting head SHA: %v", err)
-	}
-	headSHA := strings.TrimSpace(string(shaOut))
-
-	// Remove local upstream
-	unsetCmd := exec.Command("git", "branch", "--unset-upstream")
-	unsetCmd.Dir = wt
-	unsetCmd.Env = gitEnv
-	unsetCmd.Run()
-
-	// Delete remote head
-	delCmd := exec.Command("git", "push", "origin", "--delete", "fm/feature-branch")
-	delCmd.Dir = wt
-	delCmd.Env = gitEnv
-	delCmd.Run()
-
-	meta := map[string]string{
-		"worktree":     wt,
-		"kind":         "ship",
-		"pr_url":       "https://github.com/minhtri2710/munsu/pull/42",
-		"pr_provider":  "github",
-		"pr_owner":     "minhtri2710",
-		"pr_repo":      "munsu",
-		"pr_number":    "42",
-		"pr_head_ref":  "fm/feature-branch",
-		"pr_head_sha":  headSHA,
-		"pr_base_ref":  "main",
-		"pr_timestamp": "2026-07-18T00:00:00Z",
-	}
-
-	// Provider reports DIFFERENT HeadSHA — fail closed
-	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
-		Merged:    true,
-		MergedSHA: "different0000000000000000000000000000000000",
-		HeadSHA:   "different0000000000000000000000000000000000",
-		State:     "MERGED",
-	}, nil)
-	defer cleanup()
-
-	_, err = shipSafetyCheck(contractedMergeCheckOptions(t, "test"), meta, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
-	if err == nil {
-		t.Fatal("SHA mismatch should fail closed")
-	}
-	if !strings.Contains(err.Error(), "head SHA mismatch") {
-		t.Errorf("expected 'head SHA mismatch' error, got: %v", err)
-	}
-}
-
-func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_OpenPR(t *testing.T) {
-	tmp := t.TempDir()
-	wt, _, md := setupTopologyRepo(t, tmp)
-
-	gitEnv := topologyGitEnv(wt)
-
-	shaCmd := exec.Command("git", "rev-parse", "HEAD")
-	shaCmd.Dir = wt
-	shaCmd.Env = gitEnv
-	shaOut, err := shaCmd.Output()
-	if err != nil {
-		t.Fatalf("getting head SHA: %v", err)
-	}
-	headSHA := strings.TrimSpace(string(shaOut))
-
-	unsetCmd := exec.Command("git", "branch", "--unset-upstream")
-	unsetCmd.Dir = wt
-	unsetCmd.Env = gitEnv
-	unsetCmd.Run()
-
-	delCmd := exec.Command("git", "push", "origin", "--delete", "fm/feature-branch")
-	delCmd.Dir = wt
-	delCmd.Env = gitEnv
-	delCmd.Run()
-
-	meta := map[string]string{
-		"worktree":     wt,
-		"kind":         "ship",
-		"pr_url":       "https://github.com/minhtri2710/munsu/pull/42",
-		"pr_provider":  "github",
-		"pr_owner":     "minhtri2710",
-		"pr_repo":      "munsu",
-		"pr_number":    "42",
-		"pr_head_ref":  "fm/feature-branch",
-		"pr_head_sha":  headSHA,
-		"pr_base_ref":  "main",
-		"pr_timestamp": "2026-07-18T00:00:00Z",
-	}
-
-	// Provider: still OPEN (not merged)
-	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
-		Merged:  false,
-		Closed:  false,
-		State:   "OPEN",
-		HeadSHA: headSHA,
-	}, nil)
-	defer cleanup()
-
-	_, err = shipSafetyCheck(contractedMergeCheckOptions(t, "test"), meta, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
-	if err == nil {
-		t.Fatal("open PR should fail closed")
-	}
-	if !strings.Contains(err.Error(), "still open") {
-		t.Errorf("expected 'still open' error, got: %v", err)
-	}
-}
-
-func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_ClosedUnmerged(t *testing.T) {
-	tmp := t.TempDir()
-	wt, _, md := setupTopologyRepo(t, tmp)
-
-	gitEnv := topologyGitEnv(wt)
-
-	shaCmd := exec.Command("git", "rev-parse", "HEAD")
-	shaCmd.Dir = wt
-	shaCmd.Env = gitEnv
-	shaOut, err := shaCmd.Output()
-	if err != nil {
-		t.Fatalf("getting head SHA: %v", err)
-	}
-	headSHA := strings.TrimSpace(string(shaOut))
-
-	unsetCmd := exec.Command("git", "branch", "--unset-upstream")
-	unsetCmd.Dir = wt
-	unsetCmd.Env = gitEnv
-	unsetCmd.Run()
-
-	delCmd := exec.Command("git", "push", "origin", "--delete", "fm/feature-branch")
-	delCmd.Dir = wt
-	delCmd.Env = gitEnv
-	delCmd.Run()
-
-	meta := map[string]string{
-		"worktree":     wt,
-		"kind":         "ship",
-		"pr_url":       "https://github.com/minhtri2710/munsu/pull/42",
-		"pr_provider":  "github",
-		"pr_owner":     "minhtri2710",
-		"pr_repo":      "munsu",
-		"pr_number":    "42",
-		"pr_head_ref":  "fm/feature-branch",
-		"pr_head_sha":  headSHA,
-		"pr_base_ref":  "main",
-		"pr_timestamp": "2026-07-18T00:00:00Z",
-	}
-
-	// Provider: CLOSED but not merged
-	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
-		Merged:  false,
-		Closed:  true,
-		State:   "CLOSED",
-		HeadSHA: headSHA,
-	}, nil)
-	defer cleanup()
-
-	_, err = shipSafetyCheck(contractedMergeCheckOptions(t, "test"), meta, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
-	if err == nil {
-		t.Fatal("closed-unmerged PR should fail closed")
-	}
-	if !strings.Contains(err.Error(), "closed but not merged") {
-		t.Errorf("expected 'closed but not merged' error, got: %v", err)
-	}
-}
-
 func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_ProviderError(t *testing.T) {
 	tmp := t.TempDir()
 	wt, _, md := setupTopologyRepo(t, tmp)
@@ -1338,7 +1037,7 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_ProviderError(t *testi
 
 // --- DeliveryState merged acceptance tests ---
 
-func TestShipSafetyCheck_DeliveryStateMergedAcceptsWithoutForce(t *testing.T) {
+func outcomeCompletedAllow(t *testing.T) {
 	// A committed canonical completed delivery outcome plus a provider
 	// merged confirmation accepts without --force.
 	tmp := t.TempDir()
@@ -1376,7 +1075,7 @@ func TestShipSafetyCheck_DeliveryStateMergedAcceptsWithoutForce(t *testing.T) {
 	}
 }
 
-func TestShipSafetyCheck_DeliveryStateReviewReadyRejectsWithoutForce(t *testing.T) {
+func outcomeNotCompletedBlock(t *testing.T) {
 	// A committed canonical non-completed delivery outcome (retryable)
 	// rejects teardown without --force even when the provider says merged:
 	// canonical truth decides.

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/backend"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
@@ -162,11 +163,11 @@ func updateIn(installRoot, realPath string) error {
 
 // requireCleanWorktree checks that the git worktree has no uncommitted changes.
 func requireCleanWorktree(root string) error {
-	out, err := gitDir(root, "status", "--porcelain")
+	dirty, err := fleet.CheckoutDirty(root)
 	if err != nil {
 		return fmt.Errorf("checking worktree status: %w", err)
 	}
-	if len(strings.TrimSpace(string(out))) > 0 {
+	if dirty != "" {
 		return fmt.Errorf("worktree at %s has uncommitted changes; refusing to update", root)
 	}
 	return nil

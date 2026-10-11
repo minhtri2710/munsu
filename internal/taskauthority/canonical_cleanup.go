@@ -43,17 +43,14 @@ func (r CanonicalBeginCleanupRequest) DigestBytes() ([]byte, error) {
 // delivery) fails closed, so no actor can land a reopen or acquisition in that
 // window.
 //
-// The mutation is exact-generation/phase/evidence fenced: the current
-// aggregate must be retired at EXACTLY ClaimGeneration with preserved
-// retirement evidence carrying the exact claim identity (or an already-active
-// claim under that same identity — the crash-resume no-op). An already-active
-// claim with the same owning identity is a no-op (no revision advance); a nil
-// claim is set to active ONLY when the preserved retirement evidence matches
-// the claim identity. A completed or aborted claim is NEVER re-activated:
-// abort is terminal (a teardown retry after an explicit abort does not resume
-// the cleanup) and a completed cleanup is never re-run. A claim on a newer
-// (reopened) generation, a non-retired phase, a foreign stored identity, or a
-// missing/unmatched evidence record all fail closed — an old teardown retry
+// The mutation is exact-generation/phase fenced: the current aggregate must be
+// retired at EXACTLY ClaimGeneration, and checkCleanupFence has already required
+// a stored claim to carry the exact request identity. An already-active claim
+// is a no-op (the crash-resume case, no revision advance). A completed or
+// aborted claim is NEVER re-activated: abort is terminal (a teardown retry
+// after an explicit abort does not resume the cleanup) and a completed cleanup
+// is never re-run. A claim on a newer (reopened) generation, a non-retired
+// phase, or a foreign stored identity all fail closed — an old teardown retry
 // can never attach historical cleanup to a reopened generation.
 func (c *Canonical) BeginCleanup(op domain.Operation, req CanonicalBeginCleanupRequest) (Outcome, error) {
 	if err := c.prepare(op, req, req.HomeID); err != nil {
@@ -72,35 +69,17 @@ func (c *Canonical) BeginCleanup(op domain.Operation, req CanonicalBeginCleanupR
 		if cur.Phase != PhaseRetired {
 			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s is %s; the cleanup claim requires the retired phase", cur.TaskID, cur.Generation, cur.Phase)
 		}
+		// Retire commits the cleanup claim atomically with the transition to
+		// retired, so a retired generation always carries one; Begin only
+		// continues an active claim, and checkCleanupFence has already required
+		// a stored claim, in ANY status, to carry the exact request identity.
 		claim := cur.CleanupClaim
-		if claim != nil {
-			// The stored claim — in ANY status — must carry the exact request
-			// identity; a foreign identity is never overwritten and a foreign
-			// continuation is never accepted as a no-op.
-			if claim.OperationID != req.ClaimOperationID || claim.Generation != req.ClaimGeneration {
-				return Aggregate{}, conflictError(ErrConflict, "task %s generation %s stores a cleanup claim of a different identity (operation %q generation %s); refusing to overwrite", cur.TaskID, cur.Generation, claim.OperationID, claim.Generation)
-			}
-			if claim.Status == CleanupActive {
-				return cur, nil // already claimed by this cleanup under the exact identity: no-op
-			}
-			// Completed and aborted claims are terminal: abort is never
-			// resumed and a completed cleanup is never re-run.
-			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s cleanup claim is already %s; abort is terminal and cleanup is not re-activated", cur.TaskID, cur.Generation, claim.Status)
+		if claim.Status == CleanupActive {
+			return cur, nil // already claimed by this cleanup under the exact identity: no-op
 		}
-		// No stored claim (defensive legacy path): the preserved retirement
-		// evidence must carry the exact claim identity before a claim is set.
-		if cur.Retirement == nil || cur.Retirement.OperationID != req.ClaimOperationID || cur.Retirement.Generation != req.ClaimGeneration {
-			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s has no preserved retirement evidence matching the claim identity (operation %q generation %s); refusing to claim", cur.TaskID, cur.Generation, req.ClaimOperationID, req.ClaimGeneration)
-		}
-		next := cur.clone()
-		next.CleanupClaim = &CleanupClaim{
-			OperationID: req.ClaimOperationID,
-			Generation:  req.ClaimGeneration,
-			Status:      CleanupActive,
-			ClaimedAt:   c.now().UnixNano(),
-		}
-		next.Revision++
-		return next, nil
+		// Completed and aborted claims are terminal: abort is never resumed and
+		// a completed cleanup is never re-run.
+		return Aggregate{}, conflictError(ErrConflict, "task %s generation %s cleanup claim is already %s; abort is terminal and cleanup is not re-activated", cur.TaskID, cur.Generation, claim.Status)
 	})
 }
 

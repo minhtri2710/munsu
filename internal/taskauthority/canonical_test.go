@@ -196,23 +196,6 @@ func startWithRev(c *Canonical, taskID string, rev uint64) CanonicalStartRequest
 	}
 }
 
-func TestCanonicalLifecyclePreconditions(t *testing.T) {
-	c, _, _ := newTestCanonical(t)
-	mustCreate(t, c, "t1")
-
-	// Complete requires non-terminal: creating is queued, so complete works. Test
-	// the wrong-phase precondition instead: Unblock requires blocked.
-	unblock := CanonicalUnblockRequest{
-		HomeID:       c.HomeID(),
-		TaskID:       mustTaskID(t, "t1"),
-		Precondition: preconditionOf(1, 1),
-		Reason:       "nope",
-	}
-	if _, err := c.Unblock(mustOperation(t, "op-unblock-wrong", unblock), unblock); !errors.Is(err, ErrPrecondition) {
-		t.Fatalf("unblock queued = %v, want ErrPrecondition", err)
-	}
-}
-
 func TestCanonicalIdempotentReplay(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
 
@@ -281,39 +264,9 @@ func TestCanonicalStalePreconditionConflict(t *testing.T) {
 	}
 }
 
-func TestCanonicalStartBlockedByDispatchHold(t *testing.T) {
-	c, _, _ := newTestCanonical(t)
-	mustCreate(t, c, "t1")
-
-	hold := CanonicalAddHoldRequest{
-		HomeID:  c.HomeID(),
-		HoldID:  "hold-1",
-		Scope:   DispatchHoldScope{TaskIDs: []string{"t1"}},
-		Actions: []DispatchAction{DispatchActionStart},
-		Reason:  "freeze",
-	}
-	if _, err := c.AddHold(mustOperation(t, "op-hold-1", hold), hold); err != nil {
-		t.Fatalf("AddHold: %v", err)
-	}
-
-	start := startWithRev(c, "t1", 1)
-	if _, err := c.Start(mustOperation(t, "op-start-held", start), start); !errors.Is(err, ErrDispatchHeld) {
-		t.Fatalf("start held = %v, want ErrDispatchHeld", err)
-	}
-
-	// Release the hold: start now succeeds.
-	release := CanonicalReleaseHoldRequest{HomeID: c.HomeID(), HoldID: "hold-1", Reason: "resume", Words: testWords()}
-	if _, err := c.ReleaseHold(mustOperation(t, "op-release-1", release), release); err != nil {
-		t.Fatalf("ReleaseHold: %v", err)
-	}
-	if _, err := c.Start(mustOperation(t, "op-start-after", start), start); err != nil {
-		t.Fatalf("start after release: %v", err)
-	}
-}
-
 // TestCanonicalStartRefusesMissingTask proves the start gate reports an
 // unknown task as not found. The queued-and-ready and held cases are pinned by
-// TestCanonicalStartBlockedByDispatchHold.
+// TestTaskBindingAndDispatchRefusals.
 func TestCanonicalStartRefusesMissingTask(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
 

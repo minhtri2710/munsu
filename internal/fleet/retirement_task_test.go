@@ -735,37 +735,56 @@ func TestCleanupResidualArtifactPaths(t *testing.T) {
 	}
 }
 
-func TestReviewSafetyCheckOwnsNothingToLand(t *testing.T) {
-	opts := Options{ID: "review-1"}
-	for _, tc := range []struct {
-		name    string
-		meta    map[string]string
-		wantErr string
-	}{
-		{"no worktree or branch", map[string]string{"kind": taskauthority.KindReview}, ""},
-		{"a worktree in the meta", map[string]string{"worktree": "/wt"}, "a review owns neither"},
-		{"a branch in the meta", map[string]string{"branch": "mu/x"}, "a review owns neither"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			for name, call := range map[string]func() ([]string, error){
-				"reviewSafetyCheck": func() ([]string, error) { return reviewSafetyCheck(opts, tc.meta) },
-				"safetyCheck": func() ([]string, error) {
-					return safetyCheck(opts, tc.meta, taskauthority.KindReview, nil, nil, 1, nil, false)
-				},
-			} {
-				proofs, err := call()
-				if tc.wantErr == "" && (err != nil || len(proofs) != 0) {
-					t.Fatalf("%s = %v, %v; want no proof and no error", name, proofs, err)
-				}
-				if tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr) || len(proofs) != 0) {
-					t.Fatalf("%s = %v, %v; want the %q refusal", name, proofs, err, tc.wantErr)
-				}
-			}
-		})
+// reviewTaskRetire retires a canonical review task whose meta carries extra.
+func reviewTaskRetire(t *testing.T, extra map[string]string, force bool) error {
+	t.Helper()
+	homeDir := t.TempDir()
+	auth := mergeTestAuth(t, homeDir, "ship-1")
+	create := taskauthority.CanonicalCreateRequest{
+		HomeID: auth.HomeID(), TaskID: mustTaskID(t, "review-1"), Owner: "general", Description: "Ready", Kind: taskauthority.KindReview,
+		ReviewTaskID: "ship-1", ReviewHead: strings.Repeat("a", 40), Reason: "test",
+	}
+	if _, err := auth.Create(mustOp(t, "op-create-review-1", create), create); err != nil {
+		t.Fatalf("Create(review-1): %v", err)
+	}
+	meta := map[string]string{"kind": taskauthority.KindReview}
+	for k, v := range extra {
+		meta[k] = v
+	}
+	if err := mhome.WriteMeta(homeDir, "review-1", meta); err != nil {
+		t.Fatal(err)
+	}
+	_, err := RetireTask(Options{HomeDir: homeDir, ID: "review-1", Force: force}, fakeTeardown{}, fakeRetirementJournals{}, auth)
+	return err
+}
+
+func reviewWorktreeBlock(t *testing.T) {
+	err := reviewTaskRetire(t, map[string]string{"worktree": "/wt"}, true)
+	if err == nil || !strings.Contains(err.Error(), "meta names a worktree; a review owns none") {
+		t.Fatalf("RetireTask(force) of a review naming a worktree = %v, want the worktree refusal", err)
 	}
 }
 
-func TestScoutSafetyCheck_UnresolvedHolds(t *testing.T) {
+func reviewWorktreeAllow(t *testing.T) {
+	if err := reviewTaskRetire(t, nil, true); err != nil {
+		t.Fatalf("RetireTask(force) of a review naming no worktree: %v", err)
+	}
+}
+
+func reviewBranchBlock(t *testing.T) {
+	err := reviewTaskRetire(t, map[string]string{"branch": "mu/x"}, false)
+	if err == nil || !strings.Contains(err.Error(), "meta names a branch; a review owns none") {
+		t.Fatalf("RetireTask of a review naming a branch = %v, want the branch refusal", err)
+	}
+}
+
+func reviewBranchForceAllow(t *testing.T) {
+	if err := reviewTaskRetire(t, map[string]string{"branch": "mu/x"}, true); err != nil {
+		t.Fatalf("RetireTask(force) of a review naming a branch: %v", err)
+	}
+}
+
+func scoutHoldsBlock(t *testing.T) {
 	tmp := t.TempDir()
 
 	// Create the generation's report so the generation-scoped check passes.
@@ -795,7 +814,7 @@ func TestScoutSafetyCheck_UnresolvedHolds(t *testing.T) {
 	}
 }
 
-func TestScoutSafetyCheck_NoUnresolvedHolds(t *testing.T) {
+func scoutHoldsAllow(t *testing.T) {
 	tmp := t.TempDir()
 
 	// Create the generation's report so the generation-scoped check passes.
@@ -928,7 +947,10 @@ func TestRun_DataParentStatFailsClosed(t *testing.T) {
 	}
 }
 
-func TestRun_AbortRefusesLiveEndpoint(t *testing.T) {
+// abortPendingCleanup leaves cleanup of a forced teardown pending (dispose
+// fails), so the task holds an active cleanup claim for generation 1.
+func abortPendingCleanup(t *testing.T) (*taskauthority.Canonical, string) {
+	t.Helper()
 	tmp := t.TempDir()
 	auth := mergeTestAuth(t, tmp, "abort-live")
 	stateDir := filepath.Join(tmp, "state")
@@ -941,6 +963,11 @@ func TestRun_AbortRefusesLiveEndpoint(t *testing.T) {
 	if _, err := RetireTask(Options{HomeDir: tmp, ID: "abort-live", Force: true}, fakeTeardown{alive: true, disposeErr: errors.New("stuck")}, fakeRetirementJournals{}, auth); err == nil {
 		t.Fatal("expected cleanup to remain pending")
 	}
+	return auth, tmp
+}
+
+func abortLiveEndpointBlock(t *testing.T) {
+	auth, tmp := abortPendingCleanup(t)
 	err := AbortRetirementCleanup(auth, tmp, fakeTeardown{alive: true}, mustTaskID(t, "abort-live"), 1)
 	if err == nil || !strings.Contains(err.Error(), "not authoritatively absent") {
 		t.Fatalf("abort error = %v, want live-endpoint refusal", err)
@@ -951,6 +978,20 @@ func TestRun_AbortRefusesLiveEndpoint(t *testing.T) {
 	}
 	if agg.CleanupClaim == nil || agg.CleanupClaim.Status != taskauthority.CleanupActive {
 		t.Fatalf("cleanup claim = %+v, want active", agg.CleanupClaim)
+	}
+}
+
+func abortAbsentEndpointAllow(t *testing.T) {
+	auth, tmp := abortPendingCleanup(t)
+	if err := AbortRetirementCleanup(auth, tmp, fakeTeardown{}, mustTaskID(t, "abort-live"), 1); err != nil {
+		t.Fatalf("abort with the endpoint proven absent: %v", err)
+	}
+	agg, err := auth.Get(mustTaskID(t, "abort-live"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.CleanupClaim == nil || agg.CleanupClaim.Status != taskauthority.CleanupAborted {
+		t.Fatalf("cleanup claim = %+v, want aborted", agg.CleanupClaim)
 	}
 }
 

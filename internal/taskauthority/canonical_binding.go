@@ -2,7 +2,6 @@ package taskauthority
 
 import (
 	"encoding/json"
-	"strings"
 
 	"github.com/minhtri2710/munsu/internal/domain"
 )
@@ -51,7 +50,7 @@ func (c *Canonical) BindWorktree(op domain.Operation, req CanonicalBindWorktreeR
 		return Outcome{}, validationError("BindWorktree cannot set launch manifest evidence; use RecordLaunchManifest")
 	}
 	return c.mutateTask(op, req.TaskID, req.Precondition, func(cur Aggregate) (Aggregate, error) {
-		if cur.Definition.Kind == KindReview {
+		if !ownsWorktree(cur.Definition.Kind) {
 			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s is a review task; it reads the reviewed worktree and owns none", cur.TaskID, cur.Generation)
 		}
 		if cur.Worktree != nil {
@@ -94,7 +93,7 @@ func (r CanonicalBindEndpointRequest) DigestBytes() ([]byte, error) {
 // is generation-bound and fenced: the request carries the expected
 // Generation/Revision precondition. The mutation requires a bound worktree (a
 // review task owns none and requires its committed launch intent instead),
-// a queued phase, an owner, and no existing endpoint binding, and it evaluates
+// a queued phase, and no existing endpoint binding, and it evaluates
 // durable Dispatch Holds for the spawn action before committing. When the
 // generation carries a committed launch intent (BeginSpawn), the operation
 // additionally requires the recorded acquired endpoint (AttachEndpoint) and
@@ -114,15 +113,12 @@ func (c *Canonical) BindEndpoint(op domain.Operation, req CanonicalBindEndpointR
 		return Outcome{}, err
 	}
 	return c.mutateTaskWithDispatch(op, req.TaskID, req.Precondition, func(cur Aggregate) (Aggregate, error) {
-		if cur.Definition.Kind == KindReview {
+		if !ownsWorktree(cur.Definition.Kind) {
 			if cur.Launch == nil {
 				return Aggregate{}, conflictError(ErrConflict, "task %s generation %s is a review task; bind endpoint requires its committed launch intent", cur.TaskID, cur.Generation)
 			}
 		} else if cur.Worktree == nil {
 			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s has no worktree binding; bind endpoint requires a bound worktree", cur.TaskID, cur.Generation)
-		}
-		if strings.TrimSpace(cur.Definition.Owner) == "" {
-			return Aggregate{}, conflictError(ErrPrecondition, "task %s generation %s is not ready to spawn: %s", cur.TaskID, cur.Generation, ReadinessMissingOwner)
 		}
 		if cur.Phase != PhaseQueued {
 			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s is %s, bind endpoint requires queued", cur.TaskID, cur.Generation, cur.Phase)

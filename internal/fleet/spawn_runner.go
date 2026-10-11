@@ -624,19 +624,31 @@ func (r *Runner) checkCaptainBacklogAuthority() error {
 	if r.spawnRole != "captain" {
 		return nil
 	}
-	if meta, err := home.ReadMeta(r.homeDir, r.args.ID); err == nil {
-		if win := meta["window"]; win != "" {
-			return fmt.Errorf("captain task authority: task %s already has a live soldier session (window=%s); refuse duplicate live execution", r.args.ID, win)
-		}
-		if pane := meta["herdr_pane_id"]; pane != "" {
-			return fmt.Errorf("captain task authority: task %s already has a live soldier session (pane=%s); refuse duplicate live execution", r.args.ID, pane)
-		}
+	if field, value := recordedLiveSession(r.homeDir, r.args.ID); field != "" {
+		return fmt.Errorf("captain task authority: task %s already has a live soldier session (%s=%s); refuse duplicate live execution", r.args.ID, field, value)
 	}
 	agg, err := r.taskAggregate()
 	if err != nil {
 		return err
 	}
 	return r.checkCaptainBacklogAuthorityForPhase(r.args.ID, agg.Phase)
+}
+
+// recordedLiveSession names the live-session field a task's meta records, its
+// window or else its herdr pane id, and that field's value; both are empty when
+// the meta records neither.
+func recordedLiveSession(homeDir, taskID string) (field, value string) {
+	meta, err := home.ReadMeta(homeDir, taskID)
+	if err != nil {
+		return "", ""
+	}
+	if win := meta["window"]; win != "" {
+		return "window", win
+	}
+	if pane := meta["herdr_pane_id"]; pane != "" {
+		return "pane", pane
+	}
+	return "", ""
 }
 
 func (r *Runner) checkCaptainBacklogAuthorityForPhase(taskID string, phase taskauthority.Phase) error {
@@ -833,9 +845,9 @@ func (r *Runner) checkBacklogAuthority() error {
 		return err
 	}
 
-	// Check already-live: existing meta with window means a soldier session exists
-	meta, metaErr := home.ReadMeta(r.homeDir, r.args.ID)
-	metaExists := metaErr == nil && meta["window"] != ""
+	// Check already-live: existing meta with a window or pane means a soldier session exists
+	liveField, _ := recordedLiveSession(r.homeDir, r.args.ID)
+	metaExists := liveField != ""
 
 	// State-based checks. Running `munsu task start` first is refused: spawn
 	// needs a queued task. A working task without live meta passes this check
@@ -1173,9 +1185,6 @@ func (r *Runner) beginLaunchIntent() error {
 		r.launchReentry = true
 		r.adoptLaunch(*agg.Launch)
 		return nil
-	}
-	if agg.Phase != taskauthority.PhaseQueued {
-		return fmt.Errorf("launch intent: task %s generation %s is %s, spawn requires queued; duplicate live spawn refused", r.args.ID, agg.Generation, agg.Phase)
 	}
 	op, err := r.spawnOperation("begin", agg.Generation, req)
 	if err != nil {

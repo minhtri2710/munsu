@@ -218,9 +218,6 @@ func (c *ghAxiClient) MergePR(owner, repo string, number int, request DeliveryMe
 	if err != nil {
 		return err
 	}
-	if request.HeadSHA == "" {
-		return fmt.Errorf("GitHub merge requires a pinned head SHA")
-	}
 	_, err = ghCLI("pr", "merge", fmt.Sprintf("%d", number), "--repo", owner+"/"+repo, flag, "--match-head-commit", request.HeadSHA)
 	return err
 }
@@ -250,8 +247,8 @@ var _ DeliveryProvider = (*githubDeliveryProvider)(nil)
 // irreversible call. The base ref is checked here as the compensating
 // observation for `gh pr merge` having no expected-base parameter.
 func (p *githubDeliveryProvider) ValidateMergeRequest(ident domain.DeliveryIdentity, request DeliveryMergeRequest) error {
-	if request.HeadSHA == "" || request.HeadSHA != ident.HeadSHA || request.BaseRef == "" || request.BaseRef != ident.BaseRef {
-		return fmt.Errorf("GitHub merge constraints do not match the delivery identity")
+	if err := validateMergeConstraints("GitHub", ident, request); err != nil {
+		return err
 	}
 	_, err := githubMergeFlag(request.Method)
 	return err

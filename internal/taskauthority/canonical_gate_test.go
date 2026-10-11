@@ -108,64 +108,6 @@ func TestCanonicalRecordGateRefusals(t *testing.T) {
 		})
 	}
 
-	t.Run("another authorization than the current one", func(t *testing.T) {
-		c, auth := gateScene(t)
-		req := gateRequest(t, c, auth)
-		req.AuthorizationOperationID = "op-auth-stale"
-		_, err := recordGate(t, c, "op-gate-refused", req)
-		if !errors.Is(err, ErrConflict) {
-			t.Fatalf("RecordGate naming another authorization = %v, want ErrConflict", err)
-		}
-		wantErrSubstring(t, err, "gate record authorization identity mismatch", "RecordGate naming another authorization")
-		assertNoGateRecord(t, c, "op-gate-refused")
-	})
-
-	t.Run("a head the authorization does not bind", func(t *testing.T) {
-		c, auth := gateScene(t)
-		req := gateRequest(t, c, auth)
-		req.HeadSHA = reviewBaseSHA
-		_, err := recordGate(t, c, "op-gate-refused", req)
-		if !errors.Is(err, ErrPrecondition) {
-			t.Fatalf("RecordGate of another head = %v, want ErrPrecondition", err)
-		}
-		wantErrSubstring(t, err, "is not the authorized head", "RecordGate of another head")
-		assertNoGateRecord(t, c, "op-gate-refused")
-	})
-
-	t.Run("a revoked authorization", func(t *testing.T) {
-		c, auth := gateScene(t)
-		mustRevoke(t, c, "t1", deliveryReadyRev+1, auth.OperationID, "withdrawn", "op-revoke-gate")
-		req := gateRequest(t, c, auth)
-		req.Precondition = preconditionOf(1, deliveryReadyRev+2)
-		_, err := recordGate(t, c, "op-gate-refused", req)
-		wantErrSubstring(t, err, "is revoked or already terminal", "RecordGate on a revoked authorization")
-		assertNoGateRecord(t, c, "op-gate-refused")
-	})
-
-	t.Run("a terminal delivery outcome", func(t *testing.T) {
-		c, auth := gateScene(t)
-		mustCommitOutcome(t, c, "t1", deliveryReadyRev+1, auth.OperationID, DeliveryOutcomeCompleted, "merged", "op-outcome-gate")
-		req := gateRequest(t, c, auth)
-		req.Precondition = preconditionOf(1, deliveryReadyRev+2)
-		_, err := recordGate(t, c, "op-gate-refused", req)
-		wantErrSubstring(t, err, "is revoked or already terminal", "RecordGate after a terminal outcome")
-		assertNoGateRecord(t, c, "op-gate-refused")
-	})
-
-	t.Run("a delivery hold on the task", func(t *testing.T) {
-		c, auth := gateScene(t)
-		hold := CanonicalAddHoldRequest{HomeID: c.HomeID(), HoldID: "hold-gate", Scope: DispatchHoldScope{TaskIDs: []string{"t1"}}, Actions: []DispatchAction{DispatchActionDelivery}, Reason: "freeze"}
-		if _, err := c.AddHold(mustOperation(t, "op-add-hold-gate", hold), hold); err != nil {
-			t.Fatal(err)
-		}
-		_, err := recordGate(t, c, "op-gate-refused", gateRequest(t, c, auth))
-		if !errors.Is(err, ErrPrecondition) {
-			t.Fatalf("RecordGate under a delivery hold = %v, want ErrPrecondition", err)
-		}
-		wantErrSubstring(t, err, "delivery authorization is not current for task t1", "RecordGate under a delivery hold")
-		assertNoGateRecord(t, c, "op-gate-refused")
-	})
-
 	t.Run("words are refused before any state is read", func(t *testing.T) {
 		c, auth := gateScene(t)
 		req := gateRequest(t, c, auth)

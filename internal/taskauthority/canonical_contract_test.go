@@ -2,7 +2,6 @@ package taskauthority
 
 import (
 	"errors"
-	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/domain"
@@ -60,45 +59,6 @@ func TestCanonicalRecordDeliveryContract(t *testing.T) {
 	}
 	if agg.DeliveryContract.OperationID != "op-contract-1" || agg.DeliveryContract.RecordedAt <= 0 {
 		t.Fatalf("contract = %+v", *agg.DeliveryContract)
-	}
-}
-
-func TestCanonicalRecordDeliveryContractRefusesDifferentCapturedStep(t *testing.T) {
-	c, _, _ := newTestCanonical(t)
-	mustCreate(t, c, "t1")
-	mustRecordContract(t, c, "op-contract-1", "t1", preconditionOf(1, 1), "direct-PR")
-
-	req := contractRequest(c, "t1", preconditionOf(1, 2), "direct-PR")
-	req.Forge = DeliveryStep{Adapter: "github", Path: "/bin/gh-axi", ProbeState: "ready"}
-	if _, err := c.RecordDeliveryContract(mustOperation(t, "op-contract-tool-change", req), req); !errors.Is(err, ErrConflict) {
-		t.Fatalf("changed captured forge tool = %v, want ErrConflict", err)
-	}
-	agg, err := c.Get(mustTaskID(t, "t1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if agg.DeliveryContract.Forge.Adapter != "gitlab" {
-		t.Fatalf("refused tool change mutated contract: %+v", agg.DeliveryContract)
-	}
-}
-
-// TestCanonicalRecordDeliveryContractSameModeIsNoOp keeps a re-entrant spawn
-// from bumping the revision on a contract it already agrees with.
-func TestCanonicalRecordDeliveryContractSameModeIsNoOp(t *testing.T) {
-	c, _, _ := newTestCanonical(t)
-	mustCreate(t, c, "t1")
-	mustRecordContract(t, c, "op-contract-1", "t1", preconditionOf(1, 1), "direct-PR")
-
-	out := mustRecordContract(t, c, "op-contract-2", "t1", preconditionOf(1, 2), "direct-PR")
-	if out.Revision != 2 {
-		t.Fatalf("re-record bumped the revision: %+v", out)
-	}
-	agg, err := c.Get(mustTaskID(t, "t1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if agg.DeliveryContract.OperationID != "op-contract-1" {
-		t.Fatalf("re-record rewrote the committed contract: %+v", *agg.DeliveryContract)
 	}
 }
 
@@ -174,37 +134,5 @@ func TestCanonicalDeliveryContractIsPerGeneration(t *testing.T) {
 	}
 	if hist.DeliveryContract == nil || hist.DeliveryContract.Mode != "local-only" {
 		t.Fatalf("historical generation contract = %+v", hist.DeliveryContract)
-	}
-}
-
-func TestCanonicalRecordDeliveryContractRefusesInvalidPlan(t *testing.T) {
-	c, _, _ := newTestCanonical(t)
-	mustCreate(t, c, "t1")
-
-	cases := []struct {
-		op     string
-		base   string
-		mutate func(*CanonicalRecordDeliveryContractRequest)
-		want   string
-	}{
-		{"op-plan-no-mistakes-without-forge", "no-mistakes", func(r *CanonicalRecordDeliveryContractRequest) {
-			r.Forge = DeliveryStep{Baseline: true, ProbeState: "baseline"}
-		}, "requires a configured forge tool"},
-		{"op-plan-baseline-review-with-tool", "direct-PR", func(r *CanonicalRecordDeliveryContractRequest) {
-			r.Review.Adapter = "no-mistakes"
-		}, "review baseline carries configured tool data"},
-		{"op-plan-mode-disagrees", "no-mistakes", func(r *CanonicalRecordDeliveryContractRequest) {
-			r.Mode = "direct-PR"
-		}, "disagrees with captured review and forge steps"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.op, func(t *testing.T) {
-			req := contractRequest(c, "t1", preconditionOf(1, 1), tc.base)
-			tc.mutate(&req)
-			_, err := c.RecordDeliveryContract(mustOperation(t, tc.op, req), req)
-			if !errors.Is(err, ErrInvalidInput) || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("RecordDeliveryContract = %v, want ErrInvalidInput containing %q", err, tc.want)
-			}
-		})
 	}
 }

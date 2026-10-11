@@ -31,26 +31,49 @@ func readFile(t *testing.T, path string) string {
 	return string(data)
 }
 
-func TestBuildLaunchArgsRefusesAHarnessThatCannotDenyItsQuestionTool(t *testing.T) {
-	adapter, ok := harness.GetAdapter(harness.Pi)
-	if !ok || len(adapter.QuestionDeny) == 0 {
-		t.Fatalf("pi adapter = %+v, want a question deny", adapter)
+// A soldier launches only through a verified harness with a prompt-arg
+// contract and an expressible question deny.
+func TestBuildLaunchArgsRefusals(t *testing.T) {
+	cases := []struct {
+		name    string
+		harness string
+		mutate  func(*harness.Adapter)
+		want    string // refusal text; empty means allowed
+	}{
+		{name: "unknown harness refused", harness: "unknown_harness", want: "is not a verified harness"},
+		{name: "harness without a prompt-arg contract refused", harness: harness.Codex, want: "does not have a verified prompt-arg contract"},
+		{
+			name:    "harness that cannot deny its question tool refused",
+			harness: harness.Pi,
+			mutate:  func(a *harness.Adapter) { a.QuestionDeny = nil },
+			want:    "cannot deny its ask-the-user tool",
+		},
+		{name: "verified harness with the deny allowed", harness: harness.Pi},
 	}
-	_, args, err := BuildLaunchArgs(t.TempDir(), harness.Pi, "", "", "prompt")
-	if err != nil {
-		t.Fatalf("BuildLaunchArgs with the deny: %v", err)
-	}
-	if !harness.PostureOf(harness.Pi, args).QuestionDeny {
-		t.Fatalf("argv %q carries no question deny", args)
-	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.mutate != nil {
+				original := harness.Adapters[tc.harness]
+				adapter := original
+				tc.mutate(&adapter)
+				harness.Adapters[tc.harness] = adapter
+				t.Cleanup(func() { harness.Adapters[tc.harness] = original })
+			}
 
-	stripped := adapter
-	stripped.QuestionDeny = nil
-	harness.Adapters[harness.Pi] = stripped
-	t.Cleanup(func() { harness.Adapters[harness.Pi] = adapter })
-	_, _, err = BuildLaunchArgs(t.TempDir(), harness.Pi, "", "", "prompt")
-	if err == nil || !strings.Contains(err.Error(), "cannot deny its ask-the-user tool") {
-		t.Fatalf("BuildLaunchArgs error = %v, want the question-deny refusal", err)
+			_, args, err := BuildLaunchArgs(t.TempDir(), tc.harness, "", "", "prompt")
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("BuildLaunchArgs: %v", err)
+				}
+				if !harness.PostureOf(tc.harness, args).QuestionDeny {
+					t.Fatalf("argv %q carries no question deny", args)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("BuildLaunchArgs error = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 

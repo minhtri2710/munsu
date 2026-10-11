@@ -560,8 +560,7 @@ func canonicalCaptainHome(homePath string) (string, error) {
 //   - provenance marker exists and is valid
 //   - .captain-charter.md exists
 //   - state/data/config dirs exist
-//   - home path is not a parent home, project home, or fake/system path
-//   - canonical home (abs, resolved) matches the expected parent containment
+//   - home path is not the parent home itself, compared by canonical path
 func Validate(homePath, parentHome string) error {
 	if _, err := home.ValidateCaptainProvenance(homePath); err != nil {
 		return err
@@ -581,7 +580,7 @@ func Validate(homePath, parentHome string) error {
 		return fmt.Errorf("missing %s: %w", CaptainCharterName, err)
 	}
 
-	// Refuse fake/project/primary homes using canonical path.
+	// Refuse the parent home itself, compared by canonical path.
 	absHome, err := canonicalCaptainHome(homePath)
 	if err != nil {
 		return fmt.Errorf("resolving captain home path: %w", err)
@@ -592,11 +591,6 @@ func Validate(homePath, parentHome string) error {
 	}
 	if absHome == absParent {
 		return fmt.Errorf("captain home %s is the parent home itself — refuse", homePath)
-	}
-
-	bareName := filepath.Base(absHome)
-	if bareName == "fake" || bareName == "project" || bareName == "primary" {
-		return fmt.Errorf("captain home %s uses reserved name %q — refuse", homePath, bareName)
 	}
 
 	return nil
@@ -1367,8 +1361,7 @@ func normalizeGitRemote(remote string) string {
 
 // safeFF performs a LOCAL-only fast-forward of a captain clone to the
 // parent's already-local default-branch commit. Verified: same canonical
-// remote origin, correct branch/detached state, clean tree (ignoring only
-// marker and local inherited paths), ancestor relationship, then git merge --ff-only.
+// remote origin, correct branch/detached state, clean tree (see CheckoutDirty), ancestor relationship, then git merge --ff-only.
 func safeFF(captainHome, parentHome string) (before, after string, reason SafeFFReason, err error) {
 	// For managed worktree captains, use the source-repo from .captain-provenance
 	// instead of parentHome (General state home, which is not a git repo).
@@ -1418,31 +1411,12 @@ func safeFF(captainHome, parentHome string) (before, after string, reason SafeFF
 		return "", "", SafeFFOffBranch, fmt.Errorf("captain is on branch %q, expected %q or detached HEAD", smBranch, defaultBranch)
 	}
 
-	// Clean check — reject ALL tracked changes; allow only gitignored untracked files.
-	statusOut, err := gitRun("-C", captainHome, "status", "--porcelain")
+	dirty, err := CheckoutDirty(captainHome)
 	if err != nil {
 		return "", "", SafeFFError, fmt.Errorf("captain git status: %w", err)
 	}
-	if statusOut != "" {
-		for _, line := range strings.Split(statusOut, "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" {
-				continue
-			}
-			xy := line[:2]
-			if xy == "??" {
-				// Untracked — allow only if git check-ignore confirms gitignored.
-				path := strings.TrimSpace(line[2:])
-				if _, err := gitRun("-C", captainHome, "check-ignore", "-q", "--", path); err == nil {
-					continue // gitignored, OK
-				}
-				return "", "", SafeFFChangesTracked, fmt.Errorf("captain home %s has unignored untracked file: %s", captainHome, path)
-			}
-			// Any non-space character means tracked change (staged or unstaged).
-			if xy[0] != ' ' || xy[1] != ' ' {
-				return "", "", SafeFFChangesTracked, fmt.Errorf("captain home %s has tracked changes: %s", captainHome, strings.TrimSpace(line[2:]))
-			}
-		}
+	if dirty != "" {
+		return "", "", SafeFFChangesTracked, fmt.Errorf("captain home %s has uncommitted changes: %s", captainHome, dirty)
 	}
 
 	before, err = gitRun("-C", captainHome, "rev-parse", "HEAD")

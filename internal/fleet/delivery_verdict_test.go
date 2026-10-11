@@ -140,6 +140,7 @@ func TestRecordReviewVerdictRefusesWhatTheFileOrTaskCannotSupport(t *testing.T) 
 		digest     string
 		want       string
 	}{
+		{name: "a launched review task with a good verdict records it", prepare: doc(func(map[string]any) {})},
 		{name: "no verdict file", prepare: func(*testing.T, verdictFixture) {}, want: "wrote no verdict file"},
 		{name: "schema version", prepare: doc(func(d map[string]any) { d["schema_version"] = 2 }), want: "schema_version 2 is not 1"},
 		{name: "task", prepare: doc(func(d map[string]any) { d["task"] = "other" }), want: `is for task "other"`},
@@ -183,6 +184,19 @@ func TestRecordReviewVerdictRefusesWhatTheFileOrTaskCannotSupport(t *testing.T) 
 				t.Fatal(err)
 			}
 		}, want: "review verdict requires the bound worktree and endpoint"},
+		{name: "review task that never launched", prepare: func(t *testing.T, f verdictFixture) {
+			project, err := domain.NewProjectID("project")
+			if err != nil {
+				t.Fatal(err)
+			}
+			create := taskauthority.CanonicalCreateRequest{
+				HomeID: f.c.HomeID(), TaskID: mustFleetTaskID(t, "review-never-launched"), Owner: "owner", Description: "review",
+				Kind: taskauthority.KindReview, Project: project, ReviewTaskID: f.shipID, ReviewHead: deliveryTestHead, Reason: "create",
+			}
+			if _, err := f.c.Create(mustFleetOperation(t, "op-create-never-launched", create), create); err != nil {
+				t.Fatal(err)
+			}
+		}, review: "review-never-launched", want: "no bound endpoint or recorded tree"},
 		{name: "unknown task", prepare: doc(func(map[string]any) {}), review: "missing-task", want: "resolving review task"},
 		{name: "invalid task id", prepare: doc(func(map[string]any) {}), review: "Not A Task!", want: "invalid typed identity"},
 	} {
@@ -194,6 +208,12 @@ func TestRecordReviewVerdictRefusesWhatTheFileOrTaskCannotSupport(t *testing.T) 
 				review = tc.review
 			}
 			_, err := RecordReviewVerdict(f.homeDir, review, tc.generation, tc.digest)
+			if tc.want == "" {
+				if err != nil || f.ship(t).ReviewVerdict == nil {
+					t.Fatalf("RecordReviewVerdict = %v, verdict recorded %v; want the verdict recorded", err, f.ship(t).ReviewVerdict != nil)
+				}
+				return
+			}
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("RecordReviewVerdict error = %v, want %q", err, tc.want)
 			}
@@ -201,26 +221,6 @@ func TestRecordReviewVerdictRefusesWhatTheFileOrTaskCannotSupport(t *testing.T) 
 				t.Fatal("a refused verdict was recorded")
 			}
 		})
-	}
-}
-
-func TestRecordReviewVerdictRefusesAReviewTaskThatNeverLaunched(t *testing.T) {
-	c, homeDir := newFleetCanonical(t)
-	mustWorkingShipTask(t, c, "ship-1")
-	project, err := domain.NewProjectID("project")
-	if err != nil {
-		t.Fatal(err)
-	}
-	create := taskauthority.CanonicalCreateRequest{
-		HomeID: c.HomeID(), TaskID: mustFleetTaskID(t, "review-ship-1"), Owner: "owner", Description: "review",
-		Kind: taskauthority.KindReview, Project: project, ReviewTaskID: "ship-1", ReviewHead: deliveryTestHead, Reason: "create",
-	}
-	if _, err := c.Create(mustFleetOperation(t, "op-create-review", create), create); err != nil {
-		t.Fatal(err)
-	}
-	_, err = RecordReviewVerdict(homeDir, "review-ship-1", 0, "")
-	if err == nil || !strings.Contains(err.Error(), "no bound endpoint or recorded tree") {
-		t.Fatalf("RecordReviewVerdict error = %v, want the not-launched refusal", err)
 	}
 }
 

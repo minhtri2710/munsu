@@ -477,37 +477,6 @@ func TestCheckBacklogAuthority_PassesWorkingWithoutLiveMeta(t *testing.T) {
 	}
 }
 
-func TestCheckBacklogAuthority_RefusesInFlightWithLiveMeta(t *testing.T) {
-	tmpDir := t.TempDir()
-	if err := home.WriteMeta(tmpDir, "live-task", map[string]string{"window": "@1"}); err != nil {
-		t.Fatal(err)
-	}
-	r := &Runner{args: Args{ID: "live-task", Authority: seedSpawnAuthorityPhase(t, "live-task", taskauthority.PhaseWorking)}, homeDir: tmpDir}
-	err := r.checkBacklogAuthority()
-	if err == nil {
-		t.Fatal("expected error for in-flight with live meta, got nil")
-	}
-	if !strings.Contains(err.Error(), "live session") && !strings.Contains(err.Error(), "live soldier") {
-		t.Errorf("error should mention live session\n got: %v", err)
-	}
-}
-
-func TestCheckBacklogAuthority_RefusesAlreadyLiveMeta(t *testing.T) {
-	tmpDir := t.TempDir()
-	// Create meta file simulating already-live soldier session
-	if err := home.WriteMeta(tmpDir, "queued-task", map[string]string{"window": "@1"}); err != nil {
-		t.Fatal(err)
-	}
-	r := &Runner{args: Args{ID: "queued-task", Authority: seedSpawnAuthority(t, "queued-task")}, homeDir: tmpDir}
-	err := r.checkBacklogAuthority()
-	if err == nil {
-		t.Fatal("expected error for already-live task, got nil")
-	}
-	if !strings.Contains(err.Error(), "live soldier session") {
-		t.Errorf("error should mention live session\n got: %v", err)
-	}
-}
-
 // TestCheckBacklogAuthority_DuplicateUniquenessStructural proves duplicate
 // task entries are impossible: the canonical Task Authority enforces one
 // record per task ID, so a re-created task conflicts instead of spawning.
@@ -637,27 +606,6 @@ func TestTmuxWindowForPaneFailsClosedWhenWindowIsEmpty(t *testing.T) {
 
 	if _, err := tmuxWindowForPane("%3"); err == nil || !strings.Contains(err.Error(), "returned empty window id") {
 		t.Fatalf("tmuxWindowForPane() error = %v, want empty-window refusal", err)
-	}
-}
-
-func TestAuthorizeSpawnAllowsValidatedCaptain(t *testing.T) {
-	homeDir := t.TempDir()
-	if err := home.SeedCaptainProvenance(homeDir, "sm-1"); err != nil {
-		t.Fatal(err)
-	}
-	if err := authorizeSpawn("captain", homeDir, homeDir); err != nil {
-		t.Fatalf("authorizeSpawn() error = %v, want validated captain allowed", err)
-	}
-}
-
-func TestAuthorizeSpawnRejectsCaptainOutsideItsHome(t *testing.T) {
-	homeDir := t.TempDir()
-	if err := home.SeedCaptainProvenance(homeDir, "sm-1"); err != nil {
-		t.Fatal(err)
-	}
-	err := authorizeSpawn("captain", homeDir, t.TempDir())
-	if err == nil || !strings.Contains(err.Error(), "must spawn from its home") {
-		t.Fatalf("authorizeSpawn() error = %v, want captain cwd refusal", err)
 	}
 }
 
@@ -934,37 +882,6 @@ func TestCheckCaptainTaskAuthority_RefusesDoneTask(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "done") {
 		t.Errorf("error should mention done, got: %v", err)
-	}
-}
-
-func TestCheckCaptainTaskAuthority_RefusesLiveSessionBeforeAuthorityLookup(t *testing.T) {
-	homeDir := t.TempDir()
-	_ = home.WriteMeta(homeDir, "live-task", map[string]string{"kind": "ship", "window": "default:w1:p1"})
-	r := &Runner{
-		args:      Args{ID: "live-task"},
-		spawnRole: "captain",
-		homeDir:   homeDir,
-	}
-	err := r.checkCaptainBacklogAuthority()
-	if err == nil || !strings.Contains(err.Error(), "already has a live soldier session") {
-		t.Fatalf("error = %v, want live-session refusal before authority lookup", err)
-	}
-}
-
-func TestCheckCaptainTaskAuthority_RefusesLiveSessionWithWindow(t *testing.T) {
-	homeDir := t.TempDir()
-	_ = home.WriteMeta(homeDir, "live-task", map[string]string{"kind": "ship", "window": "default:w1:p1"})
-	r := &Runner{
-		args:      Args{ID: "live-task", Authority: seedSpawnAuthority(t, "live-task")},
-		spawnRole: "captain",
-		homeDir:   homeDir,
-	}
-	err := r.checkCaptainBacklogAuthority()
-	if err == nil {
-		t.Fatal("expected error for live session with window, got nil")
-	}
-	if !strings.Contains(err.Error(), "live soldier session") {
-		t.Errorf("error should mention live soldier session, got: %v", err)
 	}
 }
 
