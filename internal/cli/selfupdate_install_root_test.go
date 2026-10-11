@@ -426,10 +426,12 @@ func TestUpdateIn_DefaultBranch(t *testing.T) {
 		name     string
 		initial  string // branch the repo starts on and pushes
 		checkout string // branch to switch to before updating, if any
+		head     string // origin/HEAD target to plant, if any
 		wantErr  string // empty: the update succeeds
 	}{
 		{name: "refuses when no main or master names a default", initial: "develop", wantErr: "cannot resolve default branch"},
 		{name: "refuses a checkout on another branch", initial: "main", checkout: "develop", wantErr: "does not match default branch"},
+		{name: "refuses an origin/HEAD outside refs/remotes/origin/", initial: "main", head: "refs/remotes/upstream/main", wantErr: "unexpected origin/HEAD symbolic ref format"},
 		{name: "updates a checkout on the resolved default", initial: "main"},
 	}
 	for _, tt := range tests {
@@ -445,6 +447,9 @@ func TestUpdateIn_DefaultBranch(t *testing.T) {
 			runInstallRootCmd(t, repo, "git", "remote", "add", "origin", bare)
 			runInstallRootCmd(t, repo, "git", "config", "remote.origin.followRemoteHEAD", "never")
 			runInstallRootCmd(t, repo, "git", "push", "origin", tt.initial)
+			if tt.head != "" {
+				runInstallRootCmd(t, repo, "git", "symbolic-ref", "refs/remotes/origin/HEAD", tt.head)
+			}
 			if tt.checkout != "" {
 				runInstallRootCmd(t, repo, "git", "checkout", "-b", tt.checkout)
 			}
