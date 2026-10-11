@@ -66,7 +66,9 @@ The harness is resolved through `harness.Captain()` (see `internal/harness/harne
 
 1. `CaptainProfile.Harness` (the `captain-harness` profile)
 2. `Config.SoldierHarness` (fallback shared with soldiers)
-3. `Detect()` (auto-detect from environment markers)
+
+With neither set it refuses and names `munsu config set captain-harness <name>`;
+it never guesses from the environment (`Detect()` serves `munsu harness detect` and `munsu init`).
 
 The optional launch model comes from `CaptainProfile.Model`, falling back to
 `Config.Model` in the same typed document. Captain homes do not author these
@@ -90,8 +92,8 @@ munsu captain launch /var/munsu/captains/my-monitor
 ### Source references
 
 - `internal/fleet/captain_captain.go` — `Launch()` function
-- `internal/harness/harness.go` — `Captain()` harness resolution, `Detect()` env detection
-- `internal/fleet/captain_captain_test.go` — tests for harness pinning chain, fallback to soldier-harness, fallback to Detect
+- `internal/harness/harness.go` — `Captain()` harness resolution, `Detect()` env detection (serves `munsu harness detect` and `munsu init`)
+- `internal/fleet/captain_captain_test.go` — tests for harness pinning chain, fallback to soldier-harness
 
 ---
 

@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -80,6 +82,49 @@ func TestConfigGetKnownUnset(t *testing.T) {
 	got := strings.TrimSpace(buf.String())
 	if got != "" {
 		t.Errorf("config get known-unset: expected empty output, got %q", got)
+	}
+}
+
+// TestConfigGetKnownKeyFailsOnlyWhenSetButUnreadable: a known key that is
+// unset prints nothing and exits 0; one that is set but cannot be read fails.
+func TestConfigGetKnownKeyFailsOnlyWhenSetButUnreadable(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		prepare func(t *testing.T, configDir string)
+		wantErr string
+	}{
+		{name: "unset allows", prepare: func(*testing.T, string) {}},
+		{
+			name: "set but unreadable blocks",
+			prepare: func(t *testing.T, configDir string) {
+				if err := os.MkdirAll(filepath.Join(configDir, "wake-delivery-mode"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantErr: "reading config file",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			t.Setenv("MUNSU_HOME", tmpDir)
+			tc.prepare(t, config.ConfigDir(tmpDir))
+
+			root := NewRootCommand()
+			buf := new(bytes.Buffer)
+			root.SetOut(buf)
+			root.SetErr(buf)
+			root.SetArgs([]string{"config", "get", "wake-delivery-mode"})
+			err := root.Execute()
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("config get = %v, want error containing %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || strings.TrimSpace(buf.String()) != "" {
+				t.Fatalf("config get unset = (%v, %q), want nil and no output", err, buf.String())
+			}
+		})
 	}
 }
 

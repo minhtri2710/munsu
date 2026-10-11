@@ -121,20 +121,14 @@ func (c *Canonical) Create(op domain.Operation, req CanonicalCreateRequest) (Out
 	return outcomeFor(op, agg, false), nil
 }
 
-// receiptThenRevision replays a committed operation without touching the
-// journal, so a scope holding an unrecoverable record still replays. Otherwise
-// it reads the scope revision, which recovers an interrupted commit, and looks
-// again: that commit may have been this operation.
+// receiptThenRevision replays a committed operation, or returns the scope
+// revision the new record must expect.
 func (c *Canonical) receiptThenRevision(lk *home.Lock, op domain.Operation) (receipt, bool, uint64, error) {
-	if rec, ok, err := c.checkedReceipt(op); err != nil || ok {
+	if rec, ok, err := c.receiptAfterRecovery(lk, op); err != nil || ok {
 		return rec, ok, 0, err
 	}
 	rev, err := c.h.Revision(lk)
-	if err != nil {
-		return receipt{}, false, 0, err
-	}
-	rec, ok, err := c.checkedReceipt(op)
-	return rec, ok, rev, err
+	return receipt{}, false, rev, err
 }
 
 // refuseTaskResidue refuses a new record for an id committed before (scope
@@ -674,7 +668,7 @@ func (c *Canonical) Reopen(op domain.Operation, req CanonicalReopenRequest) (Out
 	}
 	defer lk.Release()
 
-	if rec, ok, err := c.checkedReceipt(op); err != nil {
+	if rec, ok, err := c.receiptAfterRecovery(lk, op); err != nil {
 		return Outcome{}, err
 	} else if ok {
 		return rec.outcome(), nil
@@ -799,7 +793,7 @@ func (c *Canonical) AddHold(op domain.Operation, req CanonicalAddHoldRequest) (H
 	}
 	defer lk.Release()
 
-	if rec, ok, err := c.checkedReceipt(op); err != nil {
+	if rec, ok, err := c.receiptAfterRecovery(lk, op); err != nil {
 		return HoldResult{}, err
 	} else if ok {
 		return HoldResult{HoldID: rec.HoldID, Replayed: true}, nil
@@ -889,7 +883,7 @@ func (c *Canonical) ReleaseHold(op domain.Operation, req CanonicalReleaseHoldReq
 	}
 	defer lk.Release()
 
-	if rec, ok, err := c.checkedReceipt(op); err != nil {
+	if rec, ok, err := c.receiptAfterRecovery(lk, op); err != nil {
 		return HoldResult{}, err
 	} else if ok {
 		return HoldResult{HoldID: rec.HoldID, Replayed: true}, nil

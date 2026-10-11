@@ -348,7 +348,7 @@ func (c *Canonical) ActivateTransfer(op domain.Operation, req CanonicalActivateT
 	}
 	defer lk.Release()
 
-	if rec, ok, err := c.checkedReceipt(op); err != nil {
+	if rec, ok, err := c.receiptAfterRecovery(lk, op); err != nil {
 		return Outcome{}, err
 	} else if ok {
 		return rec.outcome(), nil
