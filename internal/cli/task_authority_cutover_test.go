@@ -74,8 +74,8 @@ func mustCanonicalOp(t *testing.T, id string, intent domain.Intent) domain.Opera
 
 // TestTaskAddCreatesCanonicalQueuedGeneration proves one `task add` produces
 // exactly one queued Task Generation at Revision one with owner, definition,
-// kind, and project, and that .meta is written only as a post-commit
-// projection.
+// kind, and project, and that the post-commit .meta write copies none of
+// them.
 func TestTaskAddCreatesCanonicalQueuedGeneration(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
@@ -96,8 +96,8 @@ func TestTaskAddCreatesCanonicalQueuedGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("meta projection: %v", err)
 	}
-	if meta["description"] != "ship beta" || meta["kind"] != "ship" || meta["project"] != "munsu" || meta["repo"] != "munsu" {
-		t.Fatalf("meta projection = %v", meta)
+	if len(meta) != 0 {
+		t.Fatalf("task add copied task fields into meta: %v", meta)
 	}
 }
 
@@ -174,16 +174,12 @@ func TestTaskListReadsCanonicalAuthorityRecords(t *testing.T) {
 }
 
 // TestTaskShowReadsCanonicalAuthorityRecords proves `task show` reads the
-// canonical Aggregate and that a tampered .meta cannot override authoritative
-// fields (Task 3.2 criterion 3).
+// canonical Aggregate and that .meta holds no copy of the authoritative fields.
 func TestTaskShowReadsCanonicalAuthorityRecords(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
 	if out, err := runTaskCommand(t, []string{"task", "add", "beta", "canonical description", "--kind", "ship", "--repo", "munsu", "--home", homeDir}); err != nil {
 		t.Fatalf("task add: %v\n%s", err, out)
-	}
-	if err := home.WriteMeta(homeDir, "beta", map[string]string{"description": "fake description", "kind": "scout", "project": "fake-proj"}); err != nil {
-		t.Fatal(err)
 	}
 	out, err := runTaskCommand(t, []string{"task", "show", "beta", "--home", homeDir})
 	if err != nil {
@@ -200,8 +196,11 @@ func TestTaskShowReadsCanonicalAuthorityRecords(t *testing.T) {
 			t.Fatalf("task show missing %q:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "fake description") || strings.Contains(out, "scout") {
-		t.Fatalf("task show leaked tampered meta:\n%s", out)
+	// Each task field is printed once, from the Aggregate: .meta holds no copy.
+	for _, field := range []string{"description: ", "kind: ship", "project: "} {
+		if n := strings.Count(out, field); n != 1 {
+			t.Fatalf("task show prints %q %d times, want once:\n%s", field, n, out)
+		}
 	}
 }
 

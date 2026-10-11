@@ -990,12 +990,14 @@ func inFlightSoldierIDs(captainHome string) ([]string, error) {
 		if err != nil {
 			continue
 		}
-		meta, err := home.ReadMeta(captainHome, id)
-		if err != nil {
+		if _, err := home.ReadMeta(captainHome, id); err != nil {
 			continue
 		}
-		kind := meta["kind"]
-		if taskauthority.SoldierKind(kind) {
+		agg, ok, err := currentCanonicalAggregate(captainHome, id)
+		if err != nil || !ok {
+			continue
+		}
+		if taskauthority.SoldierKind(agg.Definition.Kind) {
 			ids = append(ids, id)
 		}
 	}

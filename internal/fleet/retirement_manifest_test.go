@@ -85,7 +85,6 @@ func setupWorktreeWithManifest(t *testing.T, wt, remote string, briefContent []b
 func metaWithManifest(wtPath string) map[string]string {
 	return map[string]string{
 		"worktree": wtPath,
-		"kind":     "ship",
 	}
 }
 
@@ -110,7 +109,6 @@ func TestShipSafetyCheckUsesCanonicalPathAndDigest(t *testing.T) {
 	}
 	meta := map[string]string{
 		"worktree": filepath.Join(tmp, "projection-only-path"),
-		"kind":     "ship",
 	}
 	if _, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{}, nil, binding, false); err != nil {
 		t.Fatalf("canonical path and digest should override projections: %v", err)
@@ -374,7 +372,6 @@ func TestShipSafetyCheck_NoLaunchManifestSHAInMeta(t *testing.T) {
 	// Projection metadata without canonical launch-manifest evidence must block.
 	meta := map[string]string{
 		"worktree": wt,
-		"kind":     "ship",
 	}
 	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{}, nil, &taskauthority.WorktreeBinding{Path: wt}, false)
 	if err == nil {
@@ -431,7 +428,7 @@ func TestShipSafetyCheck_MissingAnchorTamperedCharterBlocks(t *testing.T) {
 
 	// The canonical binding keeps the original digest, independent of the
 	// refreshed manifest and projection values.
-	meta := map[string]string{"worktree": wt, "kind": "ship"}
+	meta := map[string]string{"worktree": wt}
 	binding := &taskauthority.WorktreeBinding{Path: wt, LaunchManifest: &taskauthority.LaunchManifestEvidence{
 		OperationID: "manifest-op", LaunchID: "launch-test", ManifestSHA256: originalDigest, RecordedAt: 1,
 	}}
@@ -554,7 +551,7 @@ func retireScoutFixture(t *testing.T, anchor bool) (Options, *taskauthority.Cano
 
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
-	meta := "kind=" + taskauthority.KindShip + "\nworktree=" + wt + "\n"
+	meta := "worktree=" + wt + "\n"
 	os.WriteFile(filepath.Join(stateDir, "scout-manifest.meta"), []byte(meta), 0644)
 
 	return Options{HomeDir: tmp, ID: "scout-manifest", Force: false}, auth, wt

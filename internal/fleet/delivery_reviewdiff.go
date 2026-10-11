@@ -22,11 +22,13 @@ func ReviewDiff(homeDir string, id string) error {
 		return fmt.Errorf("reading task %s meta: %w", id, err)
 	}
 
-	projectName, ok := meta["project"]
-	if !ok || projectName == "" {
-		return fmt.Errorf("task %s has no project in meta", id)
+	agg, err := currentCanonical(homeDir, id)
+	if err != nil {
+		return fmt.Errorf("reading task %s: %w", id, err)
 	}
-	_ = projectName
+	if agg.Definition.Project == "" {
+		return fmt.Errorf("task %s has no project", id)
+	}
 
 	worktreePath, ok := meta["worktree"]
 	if !ok || worktreePath == "" {

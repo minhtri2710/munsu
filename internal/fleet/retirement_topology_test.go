@@ -69,7 +69,6 @@ func topologyGitEnv(wt string) []string {
 func fixtureMeta(wtPath string, withIdentity bool) map[string]string {
 	meta := map[string]string{
 		"worktree": wtPath,
-		"kind":     "ship",
 	}
 	if withIdentity {
 		meta["pr_url"] = "https://github.com/minhtri2710/munsu/pull/42"
@@ -223,7 +222,7 @@ func dirtyTreeBlock(t *testing.T) {
 
 func TestShipSafetyCheck_Topology_NoWorktreeInMeta(t *testing.T) {
 	// Missing canonical worktree binding should fail.
-	_, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), map[string]string{"kind": "ship"}, fakeTeardown{}, nil, nil, false)
+	_, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), map[string]string{}, fakeTeardown{}, nil, nil, false)
 	if err == nil {
 		t.Fatal("should fail when no canonical worktree binding exists")
 	}
@@ -466,9 +465,7 @@ func TestIdentityFromMeta_WithURL(t *testing.T) {
 }
 
 func TestIdentityFromMeta_WithoutURL(t *testing.T) {
-	meta := map[string]string{
-		"kind": "ship",
-	}
+	meta := map[string]string{}
 	ident, err := identityFromMeta(meta)
 	if err != nil {
 		t.Fatalf("identityFromMeta should not error without pr_url: %v", err)
@@ -488,7 +485,6 @@ func TestShipSafetyCheck_Topology_PartialIdentityFailsClosed(t *testing.T) {
 
 	meta := map[string]string{
 		"worktree":    wt,
-		"kind":        "ship",
 		"pr_url":      "https://github.com/minhtri2710/munsu/pull/42",
 		"pr_head_sha": "abc123def456",
 	}
@@ -508,7 +504,6 @@ func TestShipSafetyCheck_Topology_MissingProviderFailsClosed(t *testing.T) {
 
 	meta := map[string]string{
 		"worktree":     wt,
-		"kind":         "ship",
 		"pr_url":       "https://github.com/minhtri2710/munsu/pull/42",
 		"pr_provider":  "",
 		"pr_owner":     "minhtri2710",
@@ -825,7 +820,6 @@ func TestShipSafetyCheck_Topology_PartialIdentityNoURL(t *testing.T) {
 
 	meta := map[string]string{
 		"worktree":    wt,
-		"kind":        "ship",
 		"pr_provider": "github",
 		"pr_owner":    "minhtri2710",
 		"pr_repo":     "munsu",
@@ -888,7 +882,6 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHeadCompleteIdentity(t *tes
 	// Build meta with complete typed identity using both old and new field names
 	meta := map[string]string{
 		"worktree":     wt,
-		"kind":         "ship",
 		"pr_url":       "https://github.com/minhtri2710/munsu/pull/42",
 		"pr_provider":  "github",
 		"pr_owner":     "minhtri2710",
@@ -953,7 +946,6 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_ProviderEmptyHeadSHA(t
 
 	meta := map[string]string{
 		"worktree":     wt,
-		"kind":         "ship",
 		"pr_url":       "https://github.com/minhtri2710/munsu/pull/42",
 		"pr_provider":  "github",
 		"pr_owner":     "minhtri2710",
@@ -1010,7 +1002,6 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_ProviderError(t *testi
 
 	meta := map[string]string{
 		"worktree":     wt,
-		"kind":         "ship",
 		"pr_url":       "https://github.com/minhtri2710/munsu/pull/42",
 		"pr_provider":  "github",
 		"pr_owner":     "minhtri2710",

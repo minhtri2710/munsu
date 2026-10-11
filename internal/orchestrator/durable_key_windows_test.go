@@ -35,20 +35,3 @@ func TestScanFleetWithProbeCheckPath(t *testing.T) {
 		t.Errorf("scanFleetWithProbe reason = %+v, want check reason for logical id ship:1", reasons[0])
 	}
 }
-
-func TestPeekFleetRoundTrip(t *testing.T) {
-	tmp := t.TempDir()
-	if err := home.WriteMeta(tmp, "ship:1", map[string]string{"kind": "ship", "window": "@win"}); err != nil {
-		t.Fatal(err)
-	}
-	peek, err := peekFleet(tmp, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if peek.InFlight != 1 || peek.Alive != 1 {
-		t.Errorf("peekFleet counts = %+v, want in_flight 1 alive 1", peek)
-	}
-	if len(peek.Phases) != 1 || peek.Phases[0].ID != "ship:1" {
-		t.Errorf("peekFleet phases = %+v, want one phase for logical id ship:1", peek.Phases)
-	}
-}

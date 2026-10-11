@@ -69,14 +69,19 @@ func captainHomes(homeDir string) []string {
 	return out
 }
 
-// RequireShipMeta resolves the task home and requires kind=ship.
+// RequireShipMeta resolves the task home and requires the canonical task to be
+// kind=ship.
 func RequireShipMeta(homeDir, id string) (taskHome string, meta map[string]string, err error) {
 	taskHome, meta, err = ResolveTaskHome(homeDir, id)
 	if err != nil {
 		return "", nil, err
 	}
-	if meta["kind"] != taskauthority.KindShip {
-		return "", nil, fmt.Errorf("task %s has kind=%q, delivery requires kind=ship (promote scout tasks first)", id, meta["kind"])
+	agg, err := currentCanonical(taskHome, id)
+	if err != nil {
+		return "", nil, fmt.Errorf("resolving kind of task %s: %w", id, err)
+	}
+	if agg.Definition.Kind != taskauthority.KindShip {
+		return "", nil, fmt.Errorf("task %s has kind=%q, delivery requires kind=ship (promote scout tasks first)", id, agg.Definition.Kind)
 	}
 	return taskHome, meta, nil
 }

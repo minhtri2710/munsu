@@ -348,7 +348,6 @@ func setupMergedPollTest(t *testing.T, headSHA, baseRef string) (home, taskID, c
 
 	// Write task meta with full delivery identity.
 	meta := map[string]string{
-		"kind":         "ship",
 		"window":       "@test-window",
 		"pr_provider":  "github",
 		"pr_owner":     "testowner",
@@ -2282,8 +2281,8 @@ func TestRetireMergedPoll_PreservesMetaWorktreeStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("meta should be preserved: %v", err)
 	}
-	if meta2["kind"] != "ship" {
-		t.Fatalf("meta kind should be ship")
+	if meta2["window"] != "@test-window" {
+		t.Fatalf("meta window should be preserved, got %v", meta2)
 	}
 
 	// Verify status still exists with original + publication lines.
@@ -2441,8 +2440,8 @@ func TestRetireMergedPoll_RequiresCanonicalCompletedOutcome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadMeta: %v", err)
 	}
-	if meta["kind"] != "ship" {
-		t.Fatal("meta kind should be preserved")
+	if meta["window"] != "@test-window" {
+		t.Fatalf("meta window should be preserved, got %v", meta)
 	}
 }
 

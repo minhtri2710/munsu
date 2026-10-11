@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/domain"
@@ -97,5 +98,44 @@ func TestReportDoneDoesNotCaptureDeliveryIdentity(t *testing.T) {
 	// No delivery journal or canonical delivery evidence may exist.
 	if _, err := os.Stat(filepath.Join(homeDir, "state", "delivery")); !os.IsNotExist(err) {
 		t.Fatalf("report done created delivery state: %v", err)
+	}
+}
+
+// TestReportResolvedRefusalReadsCanonicalKind pins the `resolved` refusal for
+// a ship task: the kind is the canonical task's, never the .meta's. The
+// blocking row is a canonical ship whose .meta carries no kind; the allowing
+// row is a canonical scout whose .meta claims ship.
+func TestReportResolvedRefusalReadsCanonicalKind(t *testing.T) {
+	const refusal = "cannot use 'resolved' as delivery completion"
+	for _, tc := range []struct {
+		name      string
+		addArgs   []string
+		meta      map[string]string
+		wantBlock bool
+	}{
+		{"canonical ship is refused with no meta kind", []string{"--kind", "ship"}, map[string]string{"window": "w"}, true},
+		{"canonical scout passes although meta claims ship", []string{"--kind", "scout", "--scope", "investigate report", "--budget", "300"}, map[string]string{"kind": "ship"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			homeDir := t.TempDir()
+			initCLITestHome(t, homeDir)
+			t.Setenv("MUNSU_HOME", homeDir)
+			t.Setenv("MUNSU_TASK_ID", "res-1")
+			t.Setenv("MUNSU_ROLE", "soldier")
+			t.Setenv("MUNSU_PARENT_STATUS", homeDir)
+			if out, err := runTaskCommand(t, append([]string{"task", "add", "res-1", "resolve", "--home", homeDir}, tc.addArgs...)); err != nil {
+				t.Fatalf("task add: %v\n%s", err, out)
+			}
+			if err := home.WriteMeta(homeDir, "res-1", tc.meta); err != nil {
+				t.Fatal(err)
+			}
+			root := NewRootCommand()
+			root.SetArgs([]string{"report", "resolved", "done with it", "--key", "res-1", "--ring", "no-ring"})
+			err := root.Execute()
+			blocked := err != nil && strings.Contains(err.Error(), refusal)
+			if blocked != tc.wantBlock {
+				t.Fatalf("report resolved blocked=%v (err=%v), want blocked=%v", blocked, err, tc.wantBlock)
+			}
+		})
 	}
 }

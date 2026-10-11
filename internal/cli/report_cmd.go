@@ -95,8 +95,7 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 			// Ship tasks cannot use "resolved" as delivery completion.
 			// Only "done" is the valid terminal delivery state for ship tasks.
 			if state == "resolved" {
-				meta, metaErr := home.ReadMeta(targetHome, taskID)
-				if metaErr == nil && meta["kind"] == taskauthority.KindShip {
+				if isTaskKind(targetHome, taskID, taskauthority.KindShip) {
 					return fmt.Errorf("report: ship task %s cannot use 'resolved' as delivery completion; use 'done' instead", taskID)
 				}
 			}
@@ -341,11 +340,7 @@ func completeScoutReport(homeDir, taskID string) error {
 	if _, err := auth.Complete(op, req); err != nil {
 		return err
 	}
-	updated, err := auth.Get(tid)
-	if err != nil {
-		return err
-	}
-	if err := projectTaskMeta(homeDir, updated, nil); err != nil {
+	if err := touchTaskMeta(homeDir, taskID); err != nil {
 		return err
 	}
 	return home.AppendStatus(homeDir, taskID, "done: report scout done")

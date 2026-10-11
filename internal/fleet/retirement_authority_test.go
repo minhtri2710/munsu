@@ -34,7 +34,6 @@ func mergedShipFixture(t *testing.T, homeDir, taskID string) *taskauthority.Cano
 
 	head := strings.Repeat("a", 40)
 	meta := map[string]string{
-		"kind":                 "ship",
 		"backend":              "tmux",
 		"window":               "@1",
 		"pr_provider":          "github",

@@ -48,7 +48,7 @@ func teardownFixture(t *testing.T) (Options, string) {
 	state := filepath.Join(h, "state")
 	os.MkdirAll(state, 0700)
 	meta := filepath.Join(state, "task.meta")
-	os.WriteFile(meta, []byte("kind=ship\nbackend=tmux\nwindow=pane-1\n"), 0600)
+	os.WriteFile(meta, []byte("backend=tmux\nwindow=pane-1\n"), 0600)
 	return Options{HomeDir: h, ID: "task", Force: true}, meta
 }
 func TestRunWithBackendPreservesMetaOnProbeError(t *testing.T) {
@@ -77,7 +77,7 @@ func TestRunWithBackendReturnsWorktreeViaCapability(t *testing.T) {
 	wtDir := filepath.Join(opts.HomeDir, "worktree")
 	os.MkdirAll(wtDir, 0755)
 	opts2 := opts
-	os.WriteFile(meta, []byte("kind=ship\nbackend=tmux\nwindow=pane-1\nworktree="+wtDir+"\n"), 0600)
+	os.WriteFile(meta, []byte("backend=tmux\nwindow=pane-1\nworktree="+wtDir+"\n"), 0600)
 
 	var calls int
 	var gotPath string
@@ -108,7 +108,7 @@ func TestRunWithBackendWorktreeFailurePreventsCleanup(t *testing.T) {
 
 	wtDir := filepath.Join(opts.HomeDir, "worktree")
 	os.MkdirAll(wtDir, 0755)
-	os.WriteFile(meta, []byte("kind=ship\nbackend=tmux\nwindow=pane-1\nworktree="+wtDir+"\n"), 0600)
+	os.WriteFile(meta, []byte("backend=tmux\nwindow=pane-1\nworktree="+wtDir+"\n"), 0600)
 
 	var calls int
 	fake := fakeTeardown{returnWorktreeFn: func(string) error { calls++; return errors.New("pool full") }}

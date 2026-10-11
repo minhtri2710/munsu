@@ -346,15 +346,9 @@ func newPromoteCmd() *cobra.Command {
 				return err
 			}
 
-			// .meta kind is a post-commit projection: derive the
-			// authoritative fields from the canonical aggregate after the
-			// receipt. A projection failure is a typed partial error and never
-			// rolls back the committed promotion.
-			after, err := auth.Get(tid)
-			if err != nil {
-				return &LifecyclePartialError{TaskID: id, State: string(agg.Phase), Cause: err}
-			}
-			if perr := projectTaskMeta(ctx.Home, after, nil); perr != nil {
+			// .meta is a post-commit projection: a failure is a typed partial
+			// error and never rolls back the committed promotion.
+			if perr := touchTaskMeta(ctx.Home, id); perr != nil {
 				return &LifecyclePartialError{TaskID: id, State: string(agg.Phase), Cause: perr}
 			}
 

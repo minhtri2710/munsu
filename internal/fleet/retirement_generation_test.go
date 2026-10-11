@@ -241,7 +241,6 @@ func seedCanonicalOutcome(t *testing.T, homeDir, taskID string, status taskautho
 func writeRetireMeta(t *testing.T, homeDir, taskID, window, worktree string) {
 	t.Helper()
 	meta := map[string]string{
-		"kind":    "ship",
 		"backend": "tmux",
 		"window":  window,
 	}
@@ -1939,4 +1938,26 @@ func TestRetirementPinnedRetryNeverReplaysNewerRetiredGeneration(t *testing.T) {
 	if hist.CleanupClaim == nil || hist.CleanupClaim.Status != taskauthority.CleanupCompleted {
 		t.Fatalf("generation-1 record disturbed: %+v", hist.CleanupClaim)
 	}
+}
+
+// canonicalScoutTestAuth is canonicalMergeTestAuth for a scout task: the kind
+// that routes teardown is the canonical task's, so a test that exercises the
+// scout safety check must create a canonical scout.
+func canonicalScoutTestAuth(t *testing.T, homeDir, taskID string) *taskauthority.Canonical {
+	t.Helper()
+	if _, err := home.Init(homeDir); err != nil {
+		t.Fatal(err)
+	}
+	auth, err := taskauthority.NewCanonical(mustHome(t, homeDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := taskauthority.CanonicalCreateRequest{
+		HomeID: auth.HomeID(), TaskID: mustTaskID(t, taskID), Owner: "general", Description: "Ready", Kind: taskauthority.KindScout,
+		ScoutScope: "investigate the requested question", ScoutRuntimeBudgetSecs: 300, Reason: "test",
+	}
+	if _, err := auth.Create(mustOp(t, "op-create-"+taskID, req), req); err != nil {
+		t.Fatalf("Create(%s): %v", taskID, err)
+	}
+	return auth
 }

@@ -655,9 +655,6 @@ func seedDoneScoutForPromote(t *testing.T, homeDir, taskID, project string) *tas
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := projectTaskMeta(homeDir, agg, map[string]string{"repo": project}); err != nil {
-		t.Fatal(err)
-	}
 	dataDir := filepath.Join(homeDir, "data", taskID)
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		t.Fatal(err)
@@ -669,11 +666,8 @@ func seedDoneScoutForPromote(t *testing.T, homeDir, taskID, project string) *tas
 }
 
 // TestPromoteRoutesThroughTaskAuthority proves `promote` commits the scout →
-// ship kind change through the composed canonical Task Authority and derives
-// the .meta kind projection from the canonical aggregate after the receipt
-// (Task 7.8): a stale or tampered projection can never override the
-// canonical record, and a projection failure never rolls back the committed
-// promotion.
+// ship kind change through the composed canonical Task Authority and that
+// the post-commit .meta write copies no task field.
 func TestPromoteRoutesThroughTaskAuthority(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
@@ -689,16 +683,13 @@ func TestPromoteRoutesThroughTaskAuthority(t *testing.T) {
 	if agg.Definition.Kind != "ship" {
 		t.Fatalf("canonical kind = %q, want ship", agg.Definition.Kind)
 	}
-	// .meta kind projection derived from the canonical aggregate.
+	// The post-commit .meta write copies no task field.
 	meta, err := home.ReadMeta(homeDir, "scout-a")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if meta["kind"] != "ship" {
-		t.Fatalf("meta kind = %q, want ship", meta["kind"])
-	}
-	if meta["generation"] != "1" || meta["state"] != "done" {
-		t.Fatalf("meta projection = %v", meta)
+	if len(meta) != 0 {
+		t.Fatalf("promote copied task fields into meta: %v", meta)
 	}
 }
 
