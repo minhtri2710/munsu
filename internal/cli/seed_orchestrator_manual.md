@@ -287,7 +287,7 @@ changed, reconcile with `munsu captain converge`. For each registered captain it
 munsu captain converge
 ```
 
-State changes are tracked in `state/.captain-converge.lock`.
+`state/.captain-converge.lock` is only the sweep's flock file; it holds no state, and a concurrent sweep fails fast instead of waiting.
 Call this after any captain lifecycle change (launch, retire, handoff, config-push).
 
 ## 10. Direction contract: report up, send down

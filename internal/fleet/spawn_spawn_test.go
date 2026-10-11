@@ -977,7 +977,7 @@ func TestCheckCaptainTaskAuthority_AllowsKindOnlyMetaWithoutWindow(t *testing.T)
 		homeDir:   homeDir,
 	}
 	if err := r.checkCaptainBacklogAuthority(); err != nil {
-		t.Fatalf("kind-only meta without window must ALLOW start→spawn, got: %v", err)
+		t.Fatalf("a working task whose meta has no window must pass the backlog check, got: %v", err)
 	}
 }
 
