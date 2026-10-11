@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"syscall"
 	"time"
 
@@ -24,7 +23,11 @@ type Daemon struct {
 	homeDir  string
 	lock     *home.AFKLock
 	digester *Digester
-	wedge    *WedgeDetector
+
+	// startedAt and beatAlarmed drive the dead-watcher alarm: one digest entry
+	// per incident, latched until the beat is fresh again.
+	startedAt   time.Time
+	beatAlarmed bool
 
 	// ready, when non-nil, is closed by Start immediately after the signal
 	// handler is installed and before any other work. It is the daemon's
@@ -97,12 +100,12 @@ func (d *Daemon) Start(homeDir string) error {
 		fmt.Fprintf(os.Stderr, "afk: stale artifact clear error (non-fatal): %v\n", err)
 	}
 
-	// Initialize digester and wedge detector.
+	// Initialize digester.
 	d.digester = NewDigester(homeDir)
-	d.wedge = NewWedgeDetector(homeDir)
+	d.startedAt = time.Now()
 
-	// Load optional AFK config (digest window, wedge thresholds).
-	loadAfkConfig(homeDir, d.digester, d.wedge)
+	// Load optional AFK config (digest window).
+	loadAfkConfig(homeDir, d.digester)
 	// 5. Start the runLoop goroutine.
 	stopCh := make(chan struct{})
 	go d.runLoop(stopCh)
@@ -127,38 +130,20 @@ func (d *Daemon) Start(homeDir string) error {
 }
 
 // loadAfkConfig reads optional AFK config files and applies them to the
-// digester and wedge detector. Missing or invalid config values are silently
-// ignored — defaults apply.
-func loadAfkConfig(homeDir string, dig *Digester, wdg *WedgeDetector) {
+// digester. Missing or invalid config values are silently ignored — defaults
+// apply.
+func loadAfkConfig(homeDir string, dig *Digester) {
 	if val, err := config.Get(homeDir, "afk-digest-window"); err == nil {
 		if d, err := time.ParseDuration(val); err == nil {
 			dig.SetWindow(d)
 			fmt.Fprintf(os.Stderr, "afk: digest window set to %s from config\n", d)
 		}
 	}
-	if val, err := config.Get(homeDir, "afk-max-defer"); err == nil {
-		if d, err := time.ParseDuration(val); err == nil {
-			dig.SetMaxDefer(d)
-			fmt.Fprintf(os.Stderr, "afk: max-defer set to %s from config\n", d)
-		}
-	}
-	if val, err := config.Get(homeDir, "afk-wedge-stale-beat"); err == nil {
-		if d, err := time.ParseDuration(val); err == nil {
-			wdg.SetStaleThreshold(d)
-			fmt.Fprintf(os.Stderr, "afk: wedge stale-beat set to %s from config\n", d)
-		}
-	}
-	if val, err := config.Get(homeDir, "afk-wedge-max-repeat"); err == nil {
-		if n, err := strconv.Atoi(val); err == nil && n > 0 {
-			wdg.SetWakeCountMax(n)
-			fmt.Fprintf(os.Stderr, "afk: wedge max-repeat set to %d from config\n", n)
-		}
-	}
 }
 
 // runLoop is the main supervision loop:
 //
-//	triage → feed digester → check wedge → clear stale → flush if window expired.
+//	triage → feed digester → check watcher beat → clear stale → flush if window expired.
 //
 // Runs until stopCh is closed.
 func (d *Daemon) runLoop(stopCh chan struct{}) {
@@ -177,7 +162,7 @@ func (d *Daemon) runLoop(stopCh chan struct{}) {
 
 // triageCycle performs one iteration:
 //
-//	triage → feed digester → feed wedge → check wedge (beat/repeat/max-defer) → clear stale → flush.
+//	triage → feed digester → check watcher beat → clear stale → flush.
 func (d *Daemon) triageCycle(now time.Time) {
 	// 1. Run triage (drain wake queue and classify).
 	digest, err := OneCycle(d.homeDir)
@@ -189,37 +174,14 @@ func (d *Daemon) triageCycle(now time.Time) {
 	// 2. Feed digester with triage results.
 	d.digester.Feed(digest)
 
-	// 3. Feed wedge detector (for repeated wake detection).
+	// 3. Print the triage summary.
 	if digest != nil {
-		// Track the most frequent wake key from the cycle (escalated first),
-		// so a genuinely repeating wake is counted regardless of its position.
-		if key, ok := digest.RepresentativeWakeKey(); ok {
-			d.wedge.FeedWake(key)
-		} else {
-			d.wedge.ResetWake()
-		}
-
-		// Print triage summary.
 		fmt.Fprintf(os.Stderr, "afk: triage cycle: %d escalated, %d routine\n",
 			len(digest.Escalated), len(digest.Routines))
-	} else {
-		d.wedge.ResetWake()
 	}
 
-	// 4. Check for wedge conditions (beat stale, repeat, max-defer) and feed into digester.
-	if alarm := d.wedge.Check(now); alarm != nil {
-		fmt.Fprintf(os.Stderr, "afk: wedge alarm: %s\n", alarm.Reason)
-		d.digester.FeedWedge(alarm)
-	}
-
-	// 4b. Max-defer alarm: check if entries have been stuck in the digester too long.
-	if firstAt := d.digester.FirstAt(); !firstAt.IsZero() {
-		maxDefer := d.digester.MaxDeferDuration()
-		if alarm := d.wedge.CheckDigestStuck(firstAt, maxDefer, now); alarm != nil {
-			fmt.Fprintf(os.Stderr, "afk: max-defer alarm: %s\n", alarm.Reason)
-			d.digester.FeedWedge(alarm)
-		}
-	}
+	// 4. Check the watcher beat.
+	d.checkBeat(now)
 
 	// 5. Clear stale check markers (session-scoped per-cycle artifacts).
 	if err := ClearStaleCheckedMarkers(d.homeDir); err != nil {
@@ -234,4 +196,26 @@ func (d *Daemon) triageCycle(now time.Time) {
 			fmt.Fprintf(os.Stderr, "afk: digest flushed\n")
 		}
 	}
+}
+
+// checkBeat feeds the digester one wedge entry per incident of a stale or
+// missing watcher beat. A dead watcher cannot report itself, so this check runs
+// here, in the one process that is alive. The incident ends when the beat is
+// fresh again.
+func (d *Daemon) checkBeat(now time.Time) {
+	beat := ReadBeatStatus(d.homeDir, now)
+	if !beat.Stale {
+		d.beatAlarmed = false
+		return
+	}
+	if d.beatAlarmed || (!beat.Exists && now.Sub(d.startedAt) < StaleThreshold()) {
+		return
+	}
+	d.beatAlarmed = true
+	reason := "watcher beat never set"
+	if beat.Exists {
+		reason = fmt.Sprintf("watcher beat stale: age=%s threshold=%s", beat.Age.Round(time.Second), StaleThreshold())
+	}
+	fmt.Fprintf(os.Stderr, "afk: wedge alarm: %s\n", reason)
+	d.digester.FeedWedge(reason, now)
 }

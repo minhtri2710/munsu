@@ -805,7 +805,7 @@ func newAfkReturnCmd() *cobra.Command {
 		Use:   "return",
 		Short: "Perform ordered AFK daemon shutdown",
 		Long: `Stop the AFK daemon, drain the durable digest queue,
-and print a summary of escalations, wedge alarms, and blocked items.
+and print a summary of escalations and blocked items.
 
 Check exit code via 'munsu afk return check' — returns 0 when
 no actionable AFK state remains.`,

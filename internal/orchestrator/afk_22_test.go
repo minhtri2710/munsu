@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
@@ -205,193 +204,6 @@ func TestClassifyEscalationType(t *testing.T) {
 	}
 }
 
-// --- Wedge detector tests ---
-
-func TestWedgeDetectorNoAlarmOnFresh(t *testing.T) {
-	tmp := t.TempDir()
-	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-	// Write a fresh beat so the detector doesn't trigger a stale/missing beat alarm.
-	now := time.Now()
-	beatContent := fmt.Sprintf("%d %d", now.Unix(), os.Getpid())
-	os.WriteFile(filepath.Join(stateDir, ".last-watcher-beat"), []byte(beatContent), 0644)
-
-	w := NewWedgeDetector(tmp)
-	alarm := w.Check(now)
-	if alarm != nil {
-		t.Errorf("Check on fresh detector = %+v, want nil", alarm)
-	}
-}
-
-func TestWedgeDetectorStaleBeat(t *testing.T) {
-	tmp := t.TempDir()
-	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-	// Write a very old beat (beyond stale threshold).
-	old := time.Now().Add(-10 * time.Minute)
-	beatContent := fmt.Sprintf("%d %d", old.Unix(), os.Getpid())
-	os.WriteFile(filepath.Join(stateDir, ".last-watcher-beat"), []byte(beatContent), 0644)
-
-	w := NewWedgeDetector(tmp)
-	alarm := w.Check(time.Now())
-	if alarm == nil {
-		t.Fatal("expected wedge alarm for stale beat, got nil")
-	}
-	if !strings.Contains(alarm.Reason, "stale") {
-		t.Errorf("alarm reason = %q, want 'stale'", alarm.Reason)
-	}
-}
-
-func TestWedgeDetectorHonorsConfiguredStaleThreshold(t *testing.T) {
-	tmp := t.TempDir()
-	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-	// A beat 2s old: newer than the package-default staleness (5m), so the
-	// default verdict is "fresh". Only a configured threshold below 2s makes
-	// it stale.
-	now := time.Now()
-	old := now.Add(-2 * time.Second)
-	beatContent := fmt.Sprintf("%d %d", old.Unix(), os.Getpid())
-	os.WriteFile(filepath.Join(stateDir, ".last-watcher-beat"), []byte(beatContent), 0644)
-
-	// Default threshold: 2s beat is not stale, no alarm.
-	if alarm := NewWedgeDetector(tmp).Check(now); alarm != nil {
-		t.Fatalf("default threshold: Check on 2s-old beat = %+v, want nil", alarm)
-	}
-
-	// Configured 1s threshold: the same 2s-old beat is now stale. This fires
-	// only because SetStaleThreshold actually governs the verdict; against the
-	// package-default Stale it would stay silent.
-	w := NewWedgeDetector(tmp)
-	w.SetStaleThreshold(1 * time.Second)
-	alarm := w.Check(now)
-	if alarm == nil {
-		t.Fatal("configured 1s threshold: expected stale-beat alarm for 2s-old beat, got nil")
-	}
-	if !strings.Contains(alarm.Reason, "stale") {
-		t.Errorf("alarm reason = %q, want 'stale'", alarm.Reason)
-	}
-}
-
-func TestWedgeDetectorFreshBeat(t *testing.T) {
-	tmp := t.TempDir()
-	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-	// Write a fresh beat.
-	now := time.Now()
-	beatContent := fmt.Sprintf("%d %d", now.Unix(), os.Getpid())
-	os.WriteFile(filepath.Join(stateDir, ".last-watcher-beat"), []byte(beatContent), 0644)
-
-	w := NewWedgeDetector(tmp)
-	alarm := w.Check(now)
-	if alarm != nil {
-		t.Errorf("Check with fresh beat = %+v, want nil", alarm)
-	}
-}
-
-func TestWedgeDetectorMissingBeat(t *testing.T) {
-	tmp := t.TempDir()
-	// No state directory, no beat file.
-	w := NewWedgeDetector(tmp)
-	alarm := w.Check(time.Now())
-	if alarm != nil {
-		// Missing beat is not necessarily a wedge alarm for us,
-		// since the watcher may not have started yet.
-		// Actually, let me check: in Check, missing beat returns a WedgeAlarm
-		// with reason "watcher beat never set", but that happens only when
-		// beatStatus.Exists is false (which means beatStatus.Stale is true).
-		// Wait, actually looking at the code, the condition is:
-		// if beatStatus.Exists && beatStatus.Stale => stale alarm
-		// if !beatStatus.Exists => "never set" alarm
-		// So yes, missing beat always triggers.
-		if alarm.Reason != "watcher beat never set" {
-			t.Errorf("alarm reason = %q, want 'watcher beat never set'", alarm.Reason)
-		}
-	}
-}
-
-func TestWedgeDetectorRepeatedWake(t *testing.T) {
-	tmp := t.TempDir()
-	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-	// Write a fresh beat so only the wake repetition check fires.
-	now := time.Now()
-	beatContent := fmt.Sprintf("%d %d", now.Unix(), os.Getpid())
-	os.WriteFile(filepath.Join(stateDir, ".last-watcher-beat"), []byte(beatContent), 0644)
-
-	w := NewWedgeDetector(tmp)
-
-	// Feed same wake 3 times within the window.
-	w.FeedWake("task-stuck")
-	w.FeedWake("task-stuck")
-	w.FeedWake("task-stuck")
-
-	alarm := w.Check(now)
-	if alarm == nil {
-		t.Fatal("expected wedge alarm for repeated wake, got nil")
-	}
-	if !strings.Contains(alarm.Reason, "repeated identical") {
-		t.Errorf("alarm reason = %q, want 'repeated identical'", alarm.Reason)
-	}
-}
-
-func TestWedgeDetectorResetWake(t *testing.T) {
-	tmp := t.TempDir()
-	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-	now := time.Now()
-	beatContent := fmt.Sprintf("%d %d", now.Unix(), os.Getpid())
-	os.WriteFile(filepath.Join(stateDir, ".last-watcher-beat"), []byte(beatContent), 0644)
-
-	w := NewWedgeDetector(tmp)
-	w.FeedWake("task-a")
-	w.FeedWake("task-a")
-	w.ResetWake()
-	w.FeedWake("task-a")
-
-	// After reset, count should be 1, not 3, so no alarm.
-	alarm := w.Check(now)
-	if alarm != nil {
-		t.Errorf("Check after ResetWake = %+v, want nil", alarm)
-	}
-}
-
-func TestDigestRepresentativeWakeKey(t *testing.T) {
-	// The repeating key sits at slot 1-2, not slot 0: frequency, not position,
-	// must decide. Slot-0 selection would return "a".
-	d := &Digest{Escalated: []WakeDigest{{Key: "a"}, {Key: "b"}, {Key: "b"}}}
-	if got, ok := d.RepresentativeWakeKey(); !ok || got != "b" {
-		t.Errorf("RepresentativeWakeKey() = %q,%v; want \"b\",true", got, ok)
-	}
-
-	// Escalated wakes win over routine ones even when a routine key is more
-	// frequent.
-	d = &Digest{
-		Escalated: []WakeDigest{{Key: "esc"}},
-		Routines:  []WakeDigest{{Key: "rou"}, {Key: "rou"}},
-	}
-	if got, ok := d.RepresentativeWakeKey(); !ok || got != "esc" {
-		t.Errorf("RepresentativeWakeKey() escalated-first = %q,%v; want \"esc\",true", got, ok)
-	}
-
-	// Falls back to the most frequent routine key when nothing escalated.
-	d = &Digest{Routines: []WakeDigest{{Key: "x"}, {Key: "y"}, {Key: "y"}}}
-	if got, ok := d.RepresentativeWakeKey(); !ok || got != "y" {
-		t.Errorf("RepresentativeWakeKey() routine = %q,%v; want \"y\",true", got, ok)
-	}
-
-	// A tie resolves to the earliest-seen key, deterministically.
-	d = &Digest{Escalated: []WakeDigest{{Key: "first"}, {Key: "second"}}}
-	if got, ok := d.RepresentativeWakeKey(); !ok || got != "first" {
-		t.Errorf("RepresentativeWakeKey() tie = %q,%v; want \"first\",true", got, ok)
-	}
-
-	// An empty cycle reports no key.
-	if got, ok := (&Digest{}).RepresentativeWakeKey(); ok || got != "" {
-		t.Errorf("RepresentativeWakeKey() empty = %q,%v; want \"\",false", got, ok)
-	}
-}
-
 // --- Stale artifact clearing tests ---
 
 func TestClearStaleArtifacts_NoStateDir(t *testing.T) {
@@ -453,19 +265,18 @@ func TestClearStaleArtifacts_RemovesSubsuperMarkers(t *testing.T) {
 	}
 }
 
-func TestClearStaleArtifacts_RemovesDigestAndWedge(t *testing.T) {
+func TestClearStaleArtifacts_RemovesDigest(t *testing.T) {
 	tmp := t.TempDir()
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 
 	os.WriteFile(filepath.Join(stateDir, ".afk-digest"), []byte("{}"), 0644)
-	os.WriteFile(filepath.Join(stateDir, ".afk-wedge-alarm"), []byte("alarm"), 0644)
 
 	if err := ClearStaleArtifacts(tmp); err != nil {
 		t.Fatalf("ClearStaleArtifacts: %v", err)
 	}
 
-	for _, name := range []string{".afk-digest", ".afk-wedge-alarm"} {
+	for _, name := range []string{".afk-digest"} {
 		if _, err := os.Stat(filepath.Join(stateDir, name)); !os.IsNotExist(err) {
 			t.Errorf("%s still exists", name)
 		}

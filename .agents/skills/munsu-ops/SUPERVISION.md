@@ -21,6 +21,8 @@ Under herdr with a claude General, `munsu session-start` records `general-pane` 
 
 A dispatch refused before the claim leaves the wake queued: AFK is on, the harness is not claude, the composer holds input or is not recognized, or the General is busy. A failure after the claim (the prompt is not accepted) leaves the wake claimed until its 300 s lease expires, after which the next `munsu wake claim` reclaims it. `munsu inbox` shows queued and claimed wakes.
 
+A silent seat is one `stale` wake per incident: its status file has not changed for `seat-silent-after` (default 5m) and its pane is not provably working. A seat that appends the same `failed:` or `blocked:` line `seat-repeat-nudge` times (default 5) produces one `stale` wake telling you to steer it, and one at `seat-repeat-end` (default 8) telling you it is stuck. Each incident ends when the seat writes a different line. Set the keys with `munsu config set`; an invalid hand-edited value stops the watcher with the key and its valid range.
+
 Settling an uplink wake, by `munsu wake resolve` or `munsu wake ack`, consumes the wake and also accepts the soldier's report: one ledger, so run no `munsu inbox ack` for a wake. The sender's pending report then retires on the watcher's next recovery pass, and teardown's acknowledgment check passes after that. If the report cannot be accepted the wake is still settled and the command prints the report's ref: run `munsu inbox ack '<ref>'` once the cause is fixed. `munsu afk return` accepts every uplink report in the digest it prints and lists any it could not accept with the same hint. `munsu inbox ack` otherwise stays for captain mailbox notifications.
 
 On any other backend or harness nothing is delivered. Claim under a lease, then settle each event:

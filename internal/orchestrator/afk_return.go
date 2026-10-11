@@ -32,7 +32,6 @@ var (
 // Returned by Return when the general signals they are back.
 type ReturnReport struct {
 	Escalations   []string `json:"escalations"`
-	WedgeAlarms   []string `json:"wedge_alarms"`
 	BlockedItems  []string `json:"blocked_items"`
 	DigestedCount int      `json:"digested_count"`
 
@@ -71,7 +70,7 @@ type ReturnReport struct {
 // rather than a clean bill. Re-running Return clears the flag -- there is
 // nothing left to stop or drain -- but cannot recover the lost window.
 func (r *ReturnReport) HasActionable() bool {
-	return len(r.Escalations) > 0 || len(r.WedgeAlarms) > 0 || len(r.BlockedItems) > 0 || len(r.UnacceptedReports) > 0 || r.DigestNotRemoved != "" || r.LossyStop
+	return len(r.Escalations) > 0 || len(r.BlockedItems) > 0 || len(r.UnacceptedReports) > 0 || r.DigestNotRemoved != "" || r.LossyStop
 }
 
 // String returns a human-readable summary of the report.
@@ -86,14 +85,6 @@ func (r *ReturnReport) String() string {
 		}
 	} else {
 		b.WriteString("  escalations: none\n")
-	}
-	if len(r.WedgeAlarms) > 0 {
-		b.WriteString(fmt.Sprintf("  wedge alarms (%d):\n", len(r.WedgeAlarms)))
-		for _, w := range r.WedgeAlarms {
-			b.WriteString(fmt.Sprintf("    - %s\n", w))
-		}
-	} else {
-		b.WriteString("  wedge alarms: none\n")
 	}
 	if len(r.BlockedItems) > 0 {
 		b.WriteString(fmt.Sprintf("  blocked items (%d):\n", len(r.BlockedItems)))
@@ -143,7 +134,7 @@ func (r *ReturnReport) String() string {
 //     removal leaves the refs on disk and a re-run replays the idempotent ack.
 //     A failed accept is listed in the report and leaves its envelope pending;
 //     it never aborts the return.
-//  5. Summarize escalations, wedge alarms, and blocked items
+//  5. Summarize escalations and blocked items
 func Return(homeDir string) (*ReturnReport, error) {
 	report := &ReturnReport{}
 
@@ -286,7 +277,7 @@ func Return(homeDir string) (*ReturnReport, error) {
 
 	report.DigestedCount = len(be.Entries)
 
-	// 4. Summarize escalations and wedge alarms.
+	// 4. Summarize escalations.
 	for _, entry := range be.Entries {
 		if entry.Type != EscalationRoutine {
 			s := fmt.Sprintf("[%s] %s: %s", entry.Type, entry.Key, entry.Payload)
@@ -298,10 +289,6 @@ func Return(homeDir string) (*ReturnReport, error) {
 				report.BlockedItems = append(report.BlockedItems, entry.Payload)
 			}
 		}
-	}
-
-	if be.WedgeAlarm != nil {
-		report.WedgeAlarms = append(report.WedgeAlarms, be.WedgeAlarm.Reason)
 	}
 
 	return report, nil

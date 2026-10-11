@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -45,12 +46,9 @@ func TestReturn_WithPendingDigest(t *testing.T) {
 			{Kind: "afk", Key: "task-1", Payload: "done: PR merged", Type: EscalationReviewReady, At: time.Now()},
 			{Kind: "afk", Key: "task-2", Payload: "blocked: missing auth token", Type: EscalationFailure, At: time.Now()},
 			{Kind: "afk", Key: "task-3", Payload: "routine update", Type: EscalationRoutine, At: time.Now()},
+			{Kind: "wedge", Key: "daemon", Payload: "watcher beat stale: age=10m0s", Type: EscalationWedge, At: time.Now()},
 		},
-		WedgeAlarm: &WedgeAlarm{
-			Reason:     "watcher beat stale: age=10m0s",
-			DetectedAt: time.Now(),
-		},
-		EscalatedCount: 2,
+		EscalatedCount: 3,
 		RoutineCount:   1,
 		FirstAt:        time.Now().Add(-5 * time.Minute),
 		LastAt:         time.Now(),
@@ -66,21 +64,16 @@ func TestReturn_WithPendingDigest(t *testing.T) {
 	if !report.HasActionable() {
 		t.Fatal("Return with escalations: HasActionable() = false, want true")
 	}
-	if report.DigestedCount != 3 {
-		t.Errorf("DigestedCount = %d, want 3", report.DigestedCount)
+	if report.DigestedCount != 4 {
+		t.Errorf("DigestedCount = %d, want 4", report.DigestedCount)
 	}
 
-	// Should have 2 escalations (routine not included).
-	if len(report.Escalations) != 2 {
-		t.Errorf("Escalations = %d, want 2", len(report.Escalations))
+	// Should have 3 escalations (routine not included), the wedge entry among them.
+	if len(report.Escalations) != 3 {
+		t.Errorf("Escalations = %d, want 3", len(report.Escalations))
 	}
-
-	// Should have wedge alarm.
-	if len(report.WedgeAlarms) != 1 {
-		t.Errorf("WedgeAlarms = %d, want 1", len(report.WedgeAlarms))
-	}
-	if !strings.Contains(report.WedgeAlarms[0], "watcher beat stale") {
-		t.Errorf("WedgeAlarms[0] = %q, want 'watcher beat stale'", report.WedgeAlarms[0])
+	if !slices.Contains(report.Escalations, "[wedge] daemon: watcher beat stale: age=10m0s") {
+		t.Errorf("Escalations = %q, want the wedge entry", report.Escalations)
 	}
 
 	// Should have blocked item.
@@ -173,7 +166,6 @@ func TestReturnReport_StringClean(t *testing.T) {
 func TestReturnReport_StringActionable(t *testing.T) {
 	r := &ReturnReport{
 		Escalations:   []string{"[failure] task-2: build broken"},
-		WedgeAlarms:   []string{"watcher beat stale"},
 		BlockedItems:  []string{"missing auth token"},
 		DigestedCount: 3,
 	}
@@ -183,9 +175,6 @@ func TestReturnReport_StringActionable(t *testing.T) {
 	}
 	if !strings.Contains(s, "build broken") {
 		t.Errorf("report string missing escalation detail: %q", s)
-	}
-	if !strings.Contains(s, "watcher beat stale") {
-		t.Errorf("report string missing wedge detail: %q", s)
 	}
 }
 
@@ -276,25 +265,6 @@ func TestIsClean_EscalatedDigest(t *testing.T) {
 
 	if clean, err := IsClean(tmp); err != nil || clean {
 		t.Errorf("IsClean() = %v, %v for escalation digest, want false, nil", clean, err)
-	}
-}
-
-func TestIsClean_WedgeAlarm(t *testing.T) {
-	tmp := t.TempDir()
-	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-
-	be := &BatchedEscalation{
-		WedgeAlarm: &WedgeAlarm{
-			Reason:     "repeated stale wake",
-			DetectedAt: time.Now(),
-		},
-	}
-	data, _ := json.Marshal(be)
-	os.WriteFile(filepath.Join(stateDir, ".afk-digest"), data, 0644)
-
-	if clean, err := IsClean(tmp); err != nil || clean {
-		t.Errorf("IsClean() = %v, %v with wedge alarm, want false, nil", clean, err)
 	}
 }
 
@@ -403,10 +373,9 @@ func TestReturnReport_HasActionable(t *testing.T) {
 	}{
 		{"empty", &ReturnReport{}, false},
 		{"escalations", &ReturnReport{Escalations: []string{"[failure] t1"}}, true},
-		{"wedge", &ReturnReport{WedgeAlarms: []string{"stale beat"}}, true},
 		{"blocked", &ReturnReport{BlockedItems: []string{"missing auth"}}, true},
 		{"digest count only", &ReturnReport{DigestedCount: 5}, false},
-		{"all", &ReturnReport{Escalations: []string{"e1"}, WedgeAlarms: []string{"w1"}, BlockedItems: []string{"b1"}, DigestedCount: 3}, true},
+		{"all", &ReturnReport{Escalations: []string{"e1"}, BlockedItems: []string{"b1"}, DigestedCount: 3}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

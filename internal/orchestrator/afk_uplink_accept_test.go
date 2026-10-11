@@ -179,7 +179,7 @@ func TestAFKReturnWithOnlyAnUnacceptedRoutineReportIsActionable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Return: %v", err)
 	}
-	if len(report.Escalations)+len(report.WedgeAlarms)+len(report.BlockedItems) != 0 || report.LossyStop {
+	if len(report.Escalations)+len(report.BlockedItems) != 0 || report.LossyStop {
 		t.Fatalf("report = %+v, want nothing actionable but the unaccepted report", report)
 	}
 	if len(report.UnacceptedReports) != 1 || !strings.Contains(report.UnacceptedReports[0].Payload, "afk done") {
@@ -211,7 +211,7 @@ func TestAFKReturnKeepsTheDigestUntilItsReportsAreAccepted(t *testing.T) {
 	if !strings.Contains(failed.DigestNotRemoved, digestPath) || !strings.Contains(failed.DigestNotRemoved, "injected removal failure") {
 		t.Fatalf("DigestNotRemoved = %q, want the path and the error", failed.DigestNotRemoved)
 	}
-	if len(failed.Escalations)+len(failed.WedgeAlarms)+len(failed.BlockedItems) != 0 || len(failed.UnacceptedReports) != 0 || failed.LossyStop {
+	if len(failed.Escalations)+len(failed.BlockedItems) != 0 || len(failed.UnacceptedReports) != 0 || failed.LossyStop {
 		t.Fatalf("report = %+v, want the leftover digest to be the only actionable item", failed)
 	}
 	if !failed.HasActionable() || !strings.Contains(failed.String(), "digest not removed") {

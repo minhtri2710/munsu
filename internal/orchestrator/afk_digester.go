@@ -14,9 +14,8 @@ import (
 
 // Durable digest constants.
 const (
-	digestFile      = "state/.afk-digest"
-	defaultWindow   = 60 * time.Second // default batch window before flushing routine wakes
-	maxDeferDefault = 5 * time.Minute  // default max defer before alarm if digest stuck
+	digestFile    = "state/.afk-digest"
+	defaultWindow = 60 * time.Second // default batch window before flushing routine wakes
 )
 
 // EscalationType classifies a batched wake entry for escalation routing.
@@ -66,7 +65,6 @@ type BatchedEscalation struct {
 	EscalatedCount int            `json:"escalated_count"`
 	FirstAt        time.Time      `json:"first_at"`
 	LastAt         time.Time      `json:"last_at"`
-	WedgeAlarm     *WedgeAlarm    `json:"wedge_alarm,omitempty"`
 }
 
 // Digester accumulates triage Digests over a time window and flushes
@@ -81,15 +79,13 @@ type Digester struct {
 	lastFlush      time.Time
 	homeDir        string
 	window         time.Duration // batch window, defaults to defaultWindow
-	maxDefer       time.Duration // max time before emitting defer alarm
 }
 
 // NewDigester creates a Digester scoped to the given home directory.
 func NewDigester(homeDir string) *Digester {
 	return &Digester{
-		homeDir:  homeDir,
-		window:   defaultWindow,
-		maxDefer: maxDeferDefault,
+		homeDir: homeDir,
+		window:  defaultWindow,
 	}
 }
 
@@ -99,27 +95,6 @@ func (d *Digester) SetWindow(window time.Duration) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.window = window
-}
-
-// SetMaxDefer overrides the default max-defer threshold.
-func (d *Digester) SetMaxDefer(maxDefer time.Duration) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.maxDefer = maxDefer
-}
-
-// FirstAt returns the timestamp of the first unflushed entry, or zero if empty.
-func (d *Digester) FirstAt() time.Time {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.firstAt
-}
-
-// MaxDeferDuration returns the max-defer threshold.
-func (d *Digester) MaxDeferDuration() time.Duration {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.maxDefer
 }
 
 // Feed adds triage results to the accumulator. A nil digest is a no-op.
@@ -161,20 +136,17 @@ func (d *Digester) Feed(digest *Digest) {
 	}
 }
 
-// FeedWedge adds a wedge alarm entry to the accumulator.
-func (d *Digester) FeedWedge(alarm *WedgeAlarm) {
-	if alarm == nil {
-		return
-	}
+// FeedWedge adds a wedge entry to the accumulator.
+func (d *Digester) FeedWedge(reason string, at time.Time) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
 	d.entries = append(d.entries, BatchedEntry{
 		Kind:    "wedge",
 		Key:     "daemon",
-		Payload: alarm.Reason,
+		Payload: reason,
 		Type:    EscalationWedge,
-		At:      alarm.DetectedAt,
+		At:      at,
 	})
 	d.escalatedCount++
 }
@@ -224,9 +196,6 @@ func (d *Digester) Flush(now time.Time) error {
 		be.EscalatedCount += existing.EscalatedCount
 		if be.FirstAt.IsZero() || (!existing.FirstAt.IsZero() && existing.FirstAt.Before(be.FirstAt)) {
 			be.FirstAt = existing.FirstAt
-		}
-		if existing.WedgeAlarm != nil {
-			be.WedgeAlarm = existing.WedgeAlarm
 		}
 	}
 
