@@ -540,13 +540,13 @@ func AssertNotTangled(projectDir, projectName string) error {
 		return nil
 	}
 
-	defaultBranch, err := DefaultBranch(projectDir)
+	def, err := DefaultBranch(projectDir)
 	if err != nil {
 		// Can't determine default branch; skip tangle check
 		return nil
 	}
 	// On the default branch = no tangle
-	if branch == defaultBranch {
+	if branch == def.Name {
 		return nil
 	}
 	// Tangle detected: on a non-default branch in the primary checkout

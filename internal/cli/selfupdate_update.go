@@ -102,10 +102,11 @@ func updateIn(installRoot, realPath string) error {
 	}
 
 	// Resolve default branch from remote HEAD
-	defaultBranch, err := backend.DefaultBranch(installRoot)
+	def, err := backend.DefaultBranch(installRoot)
 	if err != nil {
 		return err
 	}
+	defaultBranch := def.Name
 
 	// Verify on default branch (not detached)
 	currentBranch, err := currentBranch(installRoot)

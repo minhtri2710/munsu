@@ -117,7 +117,7 @@ func seedFromWorktree(id, homePath, repoPath, parentHome, charter string, force 
 	checkoutRef := ref
 	if checkoutRef == "" {
 		var defaultBranch string
-		defaultBranch, err = backend.DefaultBranch(absRepo)
+		defaultBranch, err = backend.RemoteDefaultBranch(absRepo)
 		if err != nil {
 			err = fmt.Errorf("resolving default branch for %s: %w", absRepo, err)
 			return

@@ -8,12 +8,81 @@ import (
 	"testing"
 )
 
+// TestDefaultBranch is the one table for the default-branch owner and its
+// refusals: DefaultBranch, RemoteDefaultBranch, and the tangle check built on
+// DefaultBranch. Each refusal has a blocking row and its nearest allowing row.
 func TestDefaultBranch(t *testing.T) {
+	tests := []struct {
+		name       string
+		empty      bool     // a repo with no commits and no refs
+		local      []string // local branches; the first is the one checked out
+		origin     []string // branches pushed to origin
+		head       string   // origin/HEAD: a branch name, or a full ref to plant it malformed
+		wantName   string
+		wantRef    string
+		wantRemote string // RemoteDefaultBranch
+		wantErr    string // DefaultBranch and RemoteDefaultBranch both refuse with this
+		tangled    bool   // AssertNotTangled refuses
+	}{
+		{name: "unresolved: no ref names a default", empty: true, wantErr: "cannot resolve default branch"},
+		{name: "allowed: origin/HEAD with a slash in the branch", local: []string{"release/1"}, origin: []string{"release/1"}, head: "release/1",
+			wantName: "release/1", wantRef: "release/1", wantRemote: "release/1"},
+		{name: "malformed origin/HEAD is refused", local: []string{"main"}, origin: []string{"main"}, head: "refs/remotes/upstream/main",
+			wantErr: "unexpected origin/HEAD symbolic ref format"},
+		{name: "tangled: default known only as origin/main", local: []string{"feature"}, origin: []string{"main"},
+			wantName: "main", wantRef: "origin/main", wantRemote: "main", tangled: true},
+		{name: "allowed: local master and origin/main, on master", local: []string{"master"}, origin: []string{"main"},
+			wantName: "master", wantRef: "master", wantRemote: "main"},
+		{name: "allowed: local main and origin/master, on main", local: []string{"main"}, origin: []string{"master"},
+			wantName: "main", wantRef: "main", wantRemote: "master"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := defaultBranchRepo(t, tt.empty, tt.local, tt.origin, tt.head)
+
+			got, err := DefaultBranch(repo)
+			_, remoteErr := RemoteDefaultBranch(repo)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("DefaultBranch = %v, want refusal %q", err, tt.wantErr)
+				}
+				if remoteErr == nil || !strings.Contains(remoteErr.Error(), tt.wantErr) {
+					t.Fatalf("RemoteDefaultBranch = %v, want refusal %q", remoteErr, tt.wantErr)
+				}
+			} else {
+				if err != nil || got != (Default{Name: tt.wantName, Ref: tt.wantRef}) {
+					t.Fatalf("DefaultBranch = %+v, %v; want {%s %s}", got, err, tt.wantName, tt.wantRef)
+				}
+				remote, err := RemoteDefaultBranch(repo)
+				if err != nil || remote != tt.wantRemote {
+					t.Fatalf("RemoteDefaultBranch = %q, %v; want %q", remote, err, tt.wantRemote)
+				}
+			}
+			if tt.head == "" {
+				if _, err := OriginHeadBranch(repo); err == nil {
+					t.Fatal("OriginHeadBranch resolved with origin/HEAD unset; it has no fallback")
+				}
+			}
+			if tangle := AssertNotTangled(repo, "p"); (tangle != nil) != tt.tangled {
+				t.Fatalf("AssertNotTangled = %v, want refusal %v", tangle, tt.tangled)
+			}
+		})
+	}
+}
+
+// defaultBranchRepo builds a repo whose local branches, origin branches and
+// origin/HEAD are exactly the ones given.
+func defaultBranchRepo(t *testing.T, empty bool, local, origin []string, head string) string {
+	t.Helper()
 	root := t.TempDir()
-	remote := filepath.Join(root, "remote.git")
-	defaultBranchGit(t, "", "git", "init", "--bare", "-b", "release/1", remote)
 	repo := filepath.Join(root, "repo")
-	defaultBranchGit(t, "", "git", "init", "-b", "release/1", repo)
+	if empty {
+		defaultBranchGit(t, "", "git", "init", repo)
+		return repo
+	}
+	remote := filepath.Join(root, "remote.git")
+	defaultBranchGit(t, "", "git", "init", "--bare", remote)
+	defaultBranchGit(t, "", "git", "init", "-b", local[0], repo)
 	defaultBranchGit(t, repo, "git", "config", "user.email", "test@test.com")
 	defaultBranchGit(t, repo, "git", "config", "user.name", "Test")
 	if err := os.WriteFile(filepath.Join(repo, "f"), []byte("x"), 0644); err != nil {
@@ -22,42 +91,19 @@ func TestDefaultBranch(t *testing.T) {
 	defaultBranchGit(t, repo, "git", "add", ".")
 	defaultBranchGit(t, repo, "git", "commit", "-m", "init")
 	defaultBranchGit(t, repo, "git", "remote", "add", "origin", remote)
-	defaultBranchGit(t, repo, "git", "push", "origin", "release/1")
-
-	t.Run("empty repo has no default branch", func(t *testing.T) {
-		empty := filepath.Join(root, "empty")
-		defaultBranchGit(t, "", "git", "init", empty)
-		if _, err := DefaultBranch(empty); err == nil || !strings.Contains(err.Error(), "cannot resolve default branch") {
-			t.Fatalf("DefaultBranch = %v, want unresolved refusal", err)
-		}
-	})
-
-	t.Run("origin/HEAD with a slash in the branch name", func(t *testing.T) {
-		defaultBranchGit(t, repo, "git", "remote", "set-head", "origin", "release/1")
-		got, err := DefaultBranch(repo)
-		if err != nil || got != "release/1" {
-			t.Fatalf("DefaultBranch = %q, %v; want release/1", got, err)
-		}
-	})
-
-	t.Run("unset origin/HEAD falls back to origin/main", func(t *testing.T) {
-		defaultBranchGit(t, repo, "git", "remote", "set-head", "origin", "--delete")
-		defaultBranchGit(t, repo, "git", "push", "origin", "release/1:main")
-		got, err := DefaultBranch(repo)
-		if err != nil || got != "main" {
-			t.Fatalf("DefaultBranch = %q, %v; want main", got, err)
-		}
-		if _, err := OriginHeadBranch(repo); err == nil {
-			t.Fatal("OriginHeadBranch resolved with origin/HEAD unset; it has no fallback")
-		}
-	})
-
-	t.Run("malformed origin/HEAD is refused, not skipped", func(t *testing.T) {
-		defaultBranchGit(t, repo, "git", "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/upstream/main")
-		if _, err := DefaultBranch(repo); err == nil || !strings.Contains(err.Error(), "unexpected origin/HEAD symbolic ref format") {
-			t.Fatalf("DefaultBranch = %v, want malformed-format refusal", err)
-		}
-	})
+	for _, b := range origin {
+		defaultBranchGit(t, repo, "git", "push", "origin", "HEAD:refs/heads/"+b)
+	}
+	for _, b := range local[1:] {
+		defaultBranchGit(t, repo, "git", "branch", b)
+	}
+	switch {
+	case strings.HasPrefix(head, "refs/"):
+		defaultBranchGit(t, repo, "git", "symbolic-ref", "refs/remotes/origin/HEAD", head)
+	case head != "":
+		defaultBranchGit(t, repo, "git", "remote", "set-head", "origin", head)
+	}
+	return repo
 }
 
 func defaultBranchGit(t *testing.T, dir string, args ...string) {

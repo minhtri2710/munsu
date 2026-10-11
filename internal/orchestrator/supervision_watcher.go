@@ -1182,8 +1182,6 @@ func isPausedBeyondResurface(homeDir, id string) bool {
 	return time.Since(fi.ModTime()) > pauseResurfaceThreshold
 }
 
-// isStatusGeneralRelevant checks whether the task's last status line contains
-// a general-relevant verb. Returns false if no status file exists.
 // reportOwnsStatus reports whether line, taskID's last status line, is the
 // status projection of an uplink report. The report's payload hash is durable
 // on its envelope while it is open and on its ack once accepted, so the match
@@ -1217,6 +1215,8 @@ func reportOwnsStatus(homeDir, taskID, line string) bool {
 	return false
 }
 
+// isStatusGeneralRelevant checks whether the task's last status line contains
+// a general-relevant verb. Returns false if no status file exists.
 func isStatusGeneralRelevant(homeDir, id string) bool {
 	lines, err := home.ReadStatus(homeDir, id)
 	if err != nil || len(lines) == 0 {

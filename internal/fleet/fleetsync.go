@@ -125,7 +125,7 @@ func syncOne(dir string) error {
 	}
 
 	// Identify default branch
-	defaultBranch, err := backend.DefaultBranch(dir)
+	defaultBranch, err := backend.RemoteDefaultBranch(dir)
 	if err != nil {
 		return err
 	}

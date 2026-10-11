@@ -417,6 +417,65 @@ func TestUpdateIn_NonDefaultBranchRefuses(t *testing.T) {
 	}
 }
 
+// TestUpdateIn_DefaultBranch is the table for how self-update takes its default
+// branch when origin/HEAD is unset (followRemoteHEAD=never keeps fetch from
+// creating it): from local or origin main/master only, never from the current
+// branch. Each refusal has its blocking row and its nearest allowing row.
+func TestUpdateIn_DefaultBranch(t *testing.T) {
+	tests := []struct {
+		name     string
+		initial  string // branch the repo starts on and pushes
+		checkout string // branch to switch to before updating, if any
+		wantErr  string // empty: the update succeeds
+	}{
+		{name: "refuses when no main or master names a default", initial: "develop", wantErr: "cannot resolve default branch"},
+		{name: "refuses a checkout on another branch", initial: "main", checkout: "develop", wantErr: "does not match default branch"},
+		{name: "updates a checkout on the resolved default", initial: "main"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := t.TempDir()
+			initMunsuRepo(t, repo, tt.initial)
+			mkDir(t, repo, "cmd/munsu")
+			writeFile(t, repo, "cmd/munsu/main.go", "package main\n\nfunc main() {}\n")
+			runInstallRootCmd(t, repo, "git", "add", ".")
+			runInstallRootCmd(t, repo, "git", "commit", "-m", "binary")
+			bare := t.TempDir()
+			runInstallRootCmd(t, bare, "git", "init", "--bare")
+			runInstallRootCmd(t, repo, "git", "remote", "add", "origin", bare)
+			runInstallRootCmd(t, repo, "git", "config", "remote.origin.followRemoteHEAD", "never")
+			runInstallRootCmd(t, repo, "git", "push", "origin", tt.initial)
+			if tt.checkout != "" {
+				runInstallRootCmd(t, repo, "git", "checkout", "-b", tt.checkout)
+			}
+			// Put origin one commit ahead of the checkout.
+			writeFile(t, repo, "ahead.txt", "x\n")
+			runInstallRootCmd(t, repo, "git", "add", "ahead.txt")
+			runInstallRootCmd(t, repo, "git", "commit", "-m", "ahead")
+			runInstallRootCmd(t, repo, "git", "push", "origin", "HEAD:refs/heads/"+tt.initial)
+			runInstallRootCmd(t, repo, "git", "reset", "--hard", "HEAD~1")
+
+			realPath := filepath.Join(t.TempDir(), "munsu")
+			if err := os.WriteFile(realPath, []byte("old"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			err := updateIn(repo, realPath)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("updateIn = %v, want refusal %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("updateIn: %v", err)
+			}
+			if _, statErr := os.Stat(filepath.Join(repo, "ahead.txt")); statErr != nil {
+				t.Fatalf("checkout was not fast-forwarded: %v", statErr)
+			}
+		})
+	}
+}
+
 // --- TestResolveInstallRoot_PersistReadRoundTrip ---
 
 func TestResolveInstallRoot_PersistReadRoundTrip(t *testing.T) {

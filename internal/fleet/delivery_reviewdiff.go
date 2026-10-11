@@ -54,16 +54,18 @@ func ReviewDiff(homeDir string, id string) error {
 		base = "origin/" + ident.BaseRef
 	} else {
 		// Use default branch
-		defaultBranch, derr := backend.DefaultBranch(worktreePath)
+		def, derr := backend.DefaultBranch(worktreePath)
 		if derr != nil {
 			return fmt.Errorf("cannot detect default branch: %w", derr)
 		}
-		base = defaultBranch
+		base = def.Ref
 
-		// Warn if local default branch is stale vs origin
-		warn, werr := checkDefaultBranchStale(worktreePath, defaultBranch)
-		if werr == nil && warn != "" {
-			fmt.Fprintf(os.Stderr, "warning: %s\n", warn)
+		// Warn if the local default branch, when there is one, is stale vs origin
+		if def.Ref == def.Name {
+			warn, werr := checkDefaultBranchStale(worktreePath, def.Name)
+			if werr == nil && warn != "" {
+				fmt.Fprintf(os.Stderr, "warning: %s\n", warn)
+			}
 		}
 	}
 
