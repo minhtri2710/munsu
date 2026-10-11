@@ -305,7 +305,7 @@ type RetirementEvidence struct {
 	Worktree    *WorktreeBinding `json:"worktree,omitempty"`
 	// Acquired preserves the exact identity of a pre-bind acquired endpoint
 	// (a launch that acquired an external backend resource but never bound
-	// it) as cleanup evidence (BEO-16/P1a): a known externally held resource
+	// it) as cleanup evidence: a known externally held resource
 	// must be reconciled by cleanup — the cleanup claim never completes while
 	// a preserved acquired endpoint remains unresolved. A bound Endpoint
 	// subsumes the acquired record (BindEndpoint enforces exact identity
@@ -334,8 +334,8 @@ const (
 )
 
 // CleanupClaim is the durable canonical cleanup/disposal claim recorded on the
-// current Task Aggregate while one retirement's cleanup is in flight
-// (BEO-16/P1a). It is committed atomically with the Retire transition, so a
+// current Task Aggregate while one retirement's cleanup is in flight.
+// It is committed atomically with the Retire transition, so a
 // retired generation is claimed from the instant the retirement commits. While
 // the claim is ACTIVE, Reopen/BindEndpoint/BindWorktree and every other
 // task-scoped mutation fails closed — a concurrent actor can never land a
@@ -427,7 +427,7 @@ func DeliveryModeForSteps(review, forge DeliveryStep) string {
 
 // TaskAuthoritySchema is the deterministic schema identity for the canonical
 // JSON representation of authoritative records. It is the single current
-// document identity (ADR-0008 §11): internal-history v2 identities are
+// document identity: internal-history v2 identities are
 // replaced in place by the first supported current v1 definition.
 const TaskAuthoritySchema = "munsu.task-authority/v1"
 

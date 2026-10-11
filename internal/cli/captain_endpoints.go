@@ -101,7 +101,7 @@ func probeCaptainBackend(bk backend.Backend, meta map[string]string) (fleet.Capt
 			// Readiness goes through the backend-owned normalising predicate, never
 			// a raw-string comparison: the backend returns an unnormalized status
 			// ("Idle", " idle "), and comparing it directly to "idle"/"done" made a
-			// healthy captain read not-ready and fail activation (BEO-117).
+			// healthy captain read not-ready and fail activation.
 			result.ReadyForPrompt = isAgent && backend.AgentStatusReady(status)
 		}
 		return result, err

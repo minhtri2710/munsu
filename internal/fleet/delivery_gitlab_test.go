@@ -860,7 +860,7 @@ func TestGitlabDeliveryProvider_ReviewerRequestedChangesOnLaterPageRefusesMerge(
 }
 
 // TestGitlabDeliveryProvider_ObserveReadsObjectionsNeverApproval pins that the
-// GitLab observation reads only objections (ADR-0025): a reviewer requesting
+// GitLab observation reads only objections: a reviewer requesting
 // changes denies the merge, a reviewer approving or an empty approval set
 // changes nothing, and the approvals endpoint is never asked.
 func TestGitlabDeliveryProvider_ObserveReadsObjectionsNeverApproval(t *testing.T) {

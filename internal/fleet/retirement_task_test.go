@@ -1127,7 +1127,7 @@ func TestRun_ProjectionFailureThenReopenIsSuperseded(t *testing.T) {
 	}
 	_, err = RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, &recordingTeardown{alive: true}, fakeRetirementJournals{}, auth)
 	// The prior generation's claim is terminal and the task reopened, so this
-	// unpinned continuation is stale (BEO-16/P1a) and must fail closed. The
+	// unpinned continuation is stale and must fail closed. The
 	// point of this case is that it removes nothing from generation 2.
 	var staleErr *RetirementStaleTeardownError
 	if !errors.As(err, &staleErr) {

@@ -7,6 +7,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Contract commands configured through configureContractCommand take --output
+// toon|json (toon is the default); an unknown flag or an unsupported output
+// format is a usage error.
 const (
 	exitOperation = 1
 	exitUsage     = 2

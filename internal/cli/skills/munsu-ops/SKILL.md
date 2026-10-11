@@ -22,7 +22,7 @@ Run `munsu home` to check whether the munsu home directory exists. The resolutio
 Run `munsu session-start` to lock, bootstrap, and print the session-start digest. The digest has five sections:
 1. **Bootstrap Diagnostics** — toolchain readiness lines (see context pointer below).
 2. **Backlog Digest** — bounded, metadata-only summary of queued/in-flight/blocked tasks (IDs only, no bodies).
-3. **Context** — content of `data/general.md`, `data/learnings.md`, `data/projects.md`, and `data/captains.md` (first 20 lines each).
+3. **Context** — content of `data/general.md` and `data/learnings.md` (first 20 lines each).
 4. **Fleet State** — in-flight tasks with last status line and pane liveness.
 5. **Supervision** — wake-handling reminder block.
 **Completion:** Digest understood; lock status known. Do not re-bulk-read what the digest already printed.

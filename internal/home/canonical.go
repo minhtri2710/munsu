@@ -68,6 +68,12 @@ type HomeIdentity struct {
 // containment and no-follow safety, owner-private permissions, scoped fenced
 // locks, and atomic journaled change-set commits. Durable state may not
 // bypass Home through raw writes or private lock protocols.
+//
+// The store is hand-rolled on purpose: durable state is a filesystem surface
+// that operators and agents read directly and that cross-home handoff copies,
+// and no embedded database is used. Reopen this only if transactional needs
+// outgrow atomic per-scope change-sets (multi-scope transactions, secondary
+// indexes, range queries) or inspectable on-disk state is abandoned.
 type Home struct {
 	root string
 	id   HomeIdentity

@@ -20,7 +20,7 @@ import (
 //
 // Every operation is a typed, exact-generation/revision-fenced, Operation
 // ID+digest-idempotent mutation with the same durable mechanics as the rest
-// of the canonical surface (ADR-0008 §2): one atomic journaled home.Commit
+// of the canonical surface: one atomic journaled home.Commit
 // under the task's fenced scope, receipts for replay, and fail-closed typed
 // conflicts for stale or reused intents. The existing BindWorktree and
 // BindEndpoint operations are fenced to the committed intent: bindings must
@@ -55,7 +55,7 @@ type CanonicalBeginSpawnRequest struct {
 	EndpointFenceToken    string
 	// EndpointIncarnation is the opaque launch-operation provenance token
 	// minted by Fleet BEFORE BeginSpawn and persisted here so a crash after
-	// create but before attach reuses the same token (BEO-16/P1a). It is not
+	// create but before attach reuses the same token. It is not
 	// a backend attestation.
 	EndpointIncarnation string
 	Reason              string

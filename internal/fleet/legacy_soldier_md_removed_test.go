@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// TestShipSafetyCheck_LegacySoldierMdNoLongerAccepted verifies ADR-0008 removal:
+// TestShipSafetyCheck_LegacySoldierMdNoLongerAccepted verifies that
 // the legacy .soldier-md migration-recognition branch inside shipSafetyCheck is
 // gone, so a leftover .soldier-md (even one whose bytes match the canonical
 // brief digest) is now treated as ordinary unexplained dirt and blocks

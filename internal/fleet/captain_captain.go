@@ -1021,7 +1021,7 @@ func inFlightSoldierIDs(captainHome string) ([]string, error) {
 // Without force, refuse when the captain home still has in-flight soldiers
 // (state/*.meta with kind ship|scout). force skips that gate.
 // removeHome=true removes the captain home directory after teardown.
-// On success, the captain is unregistered from parent data/captains.md.
+// On success, the captain is unregistered from the parent Captain registry (state/fleet-registry/captains.json).
 func Retire(captainHome, parentHome string, removeHome, force bool, endpoint RetireEndpoint) error {
 	markerID, err := home.ValidateCaptainProvenance(captainHome)
 	if err != nil {

@@ -8,7 +8,7 @@ import (
 )
 
 // ReviewVerdictRecord is the durable review verdict of the task's current
-// head (ADR-0025). It is one record, not a history: a later verdict replaces
+// head. It is one record, not a history: a later verdict replaces
 // it, so a verdict can only ever speak for the head it names, and a repair
 // head has none until it is reviewed on its own. Delivery authorization
 // embeds the verdict it relied on as immutable evidence.
@@ -102,7 +102,7 @@ func (c *Canonical) RecordReviewVerdict(op domain.Operation, req CanonicalRecord
 // verdict head, running as the recorded reviewer instance, with a Before tree
 // recorded at its launch that the verdict carries. It reads the review task
 // without its lock, as checkReviewTarget does; a respawn between this read and
-// the write is a recorded residual (ADR-0025). The checks are consistency
+// the write is a recorded residual. The checks are consistency
 // checks over documents a soldier can also write (F1), not authentication.
 func (c *Canonical) checkVerdictReviewer(cur Aggregate, v domain.ReviewVerdict) error {
 	id, err := domain.NewTaskID(v.ReviewerTask)

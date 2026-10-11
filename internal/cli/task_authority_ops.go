@@ -26,7 +26,7 @@ func resolveTaskOwner(homeDir string) string {
 }
 
 // newTaskAuthorityOperationID supplies a fresh invocation identity for one
-// CLI mutation (ADR-0007 §6): the CLI never reuses an identity, so repeating
+// CLI mutation: the CLI never reuses an identity, so repeating
 // the same command fails as a typed conflict instead of replaying a previous
 // invocation.
 func newTaskAuthorityOperationID(verb string) string {

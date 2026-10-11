@@ -1,4 +1,4 @@
-// Herdr native observation event source (BEO-17/P1b).
+// Herdr native observation event source.
 //
 // This adapter owns ALL herdr wire/protocol detail: the CLI invocation for
 // agent status wait, the version/capability negotiation gate, and response

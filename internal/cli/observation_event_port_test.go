@@ -1,4 +1,4 @@
-// Tests for the CLI-side native observation event port (BEO-17/P1b): endpoint
+// Tests for the CLI-side native observation event port: endpoint
 // scanning, backend resolution, and source wiring. Wire behavior is exercised
 // with a fake herdr executable; endpoints without an event surface must be
 // omitted so the orchestrator keeps pure polling.

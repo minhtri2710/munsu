@@ -17,8 +17,8 @@ type ReviewVerdictTarget struct {
 	Generation uint64 `json:"generation"`
 }
 
-// ReviewVerdictPort is the Fleet side of the review-verdict process event
-// (ADR-0025). WorkingReviews lists the targets. ObserveReviewVerdict is the
+// ReviewVerdictPort is the Fleet side of the review-verdict process event.
+// WorkingReviews lists the targets. ObserveReviewVerdict is the
 // resolver: it reports whether the generation's verdict file exists and returns
 // its digest; it writes nothing. RecordReviewVerdict is the action and the same
 // record step `delivery record-verdict --reviewer-task` runs; it reads the file,

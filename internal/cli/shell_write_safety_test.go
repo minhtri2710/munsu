@@ -16,7 +16,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// safetyShapes is every output shape runSafetyCheck renders. The gap BEO-73
+// safetyShapes is every output shape runSafetyCheck renders. The gap this
 // closes was measured on all six, because all six route through runSafetyCheck;
 // the acceptance directions below are therefore asserted on all six too.
 var safetyShapes = []string{"claude", "codex", "grok", "opencode", "agy", "pi"}
@@ -105,8 +105,8 @@ func assertShapes(t *testing.T, wantBlocked bool, checkPath, command, filePath s
 	}
 }
 
-// TestShellWriteRefusedByAbsoluteTargetIntoBoundPrimary is the direction BEO-73
-// exists for: the session stands in its own valid worktree, so the cwd ladder
+// TestShellWriteRefusedByAbsoluteTargetIntoBoundPrimary is the direction
+// this exists for: the session stands in its own valid worktree, so the cwd ladder
 // has nothing to refuse, and the target is the shared checkout.
 func TestShellWriteRefusedByVolumeLessRootedWindowsTargetIntoBoundPrimary(t *testing.T) {
 	if runtime.GOOS != "windows" {
@@ -508,7 +508,7 @@ func TestShellWriteInsideWorktreeAllowed(t *testing.T) {
 	}
 }
 
-// TestShellWriteIntoUnrelatedRepositoryAllowed pins the BEO-50 lesson on this
+// TestShellWriteIntoUnrelatedRepositoryAllowed pins the lesson on this
 // path: `Primary` means gitDir == commonDir, which every scratch repo an agent
 // creates satisfies. Only the bound repository's checkout is refused.
 func TestShellWriteIntoUnrelatedRepositoryAllowed(t *testing.T) {
@@ -533,7 +533,7 @@ func TestShellWriteIntoPrimaryAllowedOutsideTaskRun(t *testing.T) {
 	assertShapes(t, false, primary, "echo hi > "+filepath.Join(primary, "README.md"), "")
 }
 
-// TestShellWriteIntoSiblingWorktreeAllowed pins ADR-0014 §4: a sibling task's
+// TestShellWriteIntoSiblingWorktreeAllowed pins that a sibling task's
 // worktree is deliberately outside this guard's scope. It is asserted so that a
 // later change of that policy shows up as a failing test rather than as drift.
 func TestShellWriteIntoSiblingWorktreeAllowed(t *testing.T) {
@@ -547,7 +547,7 @@ func TestShellWriteIntoSiblingWorktreeAllowed(t *testing.T) {
 	assertShapes(t, false, worktree, "", target)
 }
 
-// TestUnrelatedCwdAllowedWhenEveryTargetIsSafe is the narrowing of ADR-0014 §3:
+// TestUnrelatedCwdAllowedWhenEveryTargetIsSafe is the narrowing of the unrelated-cwd refusal:
 // a call whose targets are provably outside the bound primary checkout is not
 // shared-state access just because the session stands outside any repository.
 func TestUnrelatedCwdAllowedWhenEveryTargetIsSafe(t *testing.T) {
@@ -674,7 +674,7 @@ func TestTargetDirectoryFlagRefused(t *testing.T) {
 
 // TestShellWriteTargetExtraction pins the narrow claim of coverage directly,
 // without a git fixture: what counts as a write target and what deliberately
-// does not (ADR-0014 §2).
+// does not.
 func TestShellWriteTargetExtraction(t *testing.T) {
 	// A leading separator is an absolute path on Unix but only a
 	// current-drive-relative one on Windows, where filepath.IsAbs wants a
@@ -1097,8 +1097,8 @@ func escapeShellChar(t *testing.T, path string, special rune) string {
 // backslash escape inside double quotes names the bound primary checkout and
 // must be refused. The same $ unescaped and unquoted, or unescaped inside
 // double quotes, is a genuine shell expansion the guard cannot classify, so it
-// stays omitted and the write is not refused (the narrow claim of ADR-0014 §2 is
-// preserved, not relaxed). A bare $ does not trip the separate git-mutation
+// stays omitted and the write is not refused (the narrow coverage claim of
+// shellWriteTargets is preserved, not relaxed). A bare $ does not trip the separate git-mutation
 // command-substitution gate (only $( and backticks do), so these assertions
 // exercise the write-target extractor directly.
 func TestShellWriteRefusesLiteralDollarInProtectedPath(t *testing.T) {
@@ -1129,7 +1129,7 @@ func TestShellWriteRefusesLiteralDollarInProtectedPath(t *testing.T) {
 // command containing a backtick regardless of quoting, so the end-to-end
 // refusal below is asserted and the retention below proves the fix
 // specifically: an unquoted/un-escaped backtick is still dropped (the narrow
-// contract of ADR-0014 §2 is preserved).
+// coverage claim of shellWriteTargets is preserved).
 func TestShellWriteRefusesLiteralBacktickInProtectedPath(t *testing.T) {
 	primary, worktree := bindPrimaryAtShellSpecialPath(t, "ship-shell-lit-backtick", '`')
 	target := filepath.Join(primary, "internal")

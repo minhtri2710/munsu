@@ -410,7 +410,7 @@ func TestRetirementDisposesAndReturnsOnlyEvidenceOwnedResources(t *testing.T) {
 // probe that is ambiguous (unknown/stale/unresponsive/starting — anything that
 // is NOT an authorized exact absence and NOT an authorized live reading) never
 // disposes the endpoint: cleanup stays pending and the lease/ownership is
-// retained (BEO-16: unknown != dead, positive liveness needs acquisition
+// retained (unknown != dead, positive liveness needs acquisition
 // evidence).
 func TestRetirementAmbiguousObservationNeverDisposes(t *testing.T) {
 	for _, state := range []EndpointObservationState{EndpointUnknown, EndpointUnresponsive, EndpointStaleIdentity, EndpointStarting} {
@@ -447,7 +447,7 @@ func TestRetirementAmbiguousObservationNeverDisposes(t *testing.T) {
 // (between a locked revalidation and the destructive action that follows it)
 // and asserts the durable cleanup claim REJECTS it: the task is pinned while
 // cleanup is active, so no actor can land a reopen in the post-unlock window
-// (BEO-16/P1a durable disposal claim barrier).
+// (durable disposal claim barrier).
 func tryReopenExpectClaimConflict(t *testing.T, auth *taskauthority.Canonical, taskID string) {
 	t.Helper()
 	agg, err := auth.Get(mustTaskID(t, taskID))
@@ -603,7 +603,7 @@ func reopenQueued(t *testing.T, auth *taskauthority.Canonical, taskID string) ta
 // released the task lock) and the Dispose action is REJECTED by the claim, so
 // the cleanup proceeds to completion on the exact evidence-owned resources.
 // After completion the claim is reconciled and the retired task becomes
-// reopenable (BEO-16/P1a barrier + completion reconciliation).
+// reopenable (barrier + completion reconciliation).
 func TestRetirementClaimBarrierBetweenProbeAndDispose(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "barrier-probe"
@@ -996,7 +996,7 @@ func TestRetirementAbortTerminalOldRetryNeverReleasesReopenedOwnership(t *testin
 
 	// Abort is TERMINAL and the old teardown retry is a STALE continuation:
 	// bound to the aborted generation-1 retirement, it fails closed with a
-	// typed error and NEVER retires the reopened generation 2 (BEO-16/P1a) —
+	// typed error and NEVER retires the reopened generation 2 —
 	// no claim activation, no release.
 	stale := &recordingTeardown{alive: true}
 	_, retErr := RetireTask(opts, stale, fakeRetirementJournals{}, auth)
@@ -1022,7 +1022,7 @@ func TestRetirementAbortTerminalOldRetryNeverReleasesReopenedOwnership(t *testin
 	}
 
 	// A FRESH teardown request bound to the reopened generation — the
-	// distinct explicit target (BEO-16/P1a) — retires generation 2 and
+	// distinct explicit target — retires generation 2 and
 	// releases only generation-2's own resources (the reused handle under ITS
 	// lease).
 	target := taskauthority.Generation(2)
@@ -1114,7 +1114,7 @@ func TestRetirementAbortTerminalOldRetryReleasesOnlyReopenedResources(t *testing
 
 	// Abort is TERMINAL and the old teardown retry is a STALE continuation:
 	// bound to the aborted generation-1 retirement, it fails closed with a
-	// typed error and NEVER retires the reopened generation 2 (BEO-16/P1a).
+	// typed error and NEVER retires the reopened generation 2.
 	stale := &recordingTeardown{alive: true}
 	_, retErr := RetireTask(opts, stale, fakeRetirementJournals{}, auth)
 	if retErr == nil {
@@ -1139,7 +1139,7 @@ func TestRetirementAbortTerminalOldRetryReleasesOnlyReopenedResources(t *testing
 	}
 
 	// A FRESH teardown request bound to the reopened generation — the
-	// distinct explicit target (BEO-16/P1a) — retires generation 2 and
+	// distinct explicit target — retires generation 2 and
 	// releases ONLY generation-2's own resources; the aborted generation-1
 	// evidence and projection are never touched.
 	target := taskauthority.Generation(2)
@@ -1190,7 +1190,7 @@ func TestRetirementAbortTerminalOldRetryReleasesOnlyReopenedResources(t *testing
 // SAME endpoint handle/incarnation as generation 1 (pre-bind acquisition — no
 // endpoint binding yet). An old teardown retry must NOT reactivate the
 // historical claim, must NOT resume the aborted cleanup, and must NOT dispose
-// the pre-bind acquired endpoint (BEO-16/P1a abort-terminal).
+// the pre-bind acquired endpoint (abort-terminal).
 func TestRetirementAbortTerminalOldRetryNeverClaimsPreBindAcquisition(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "abort-prebind"
@@ -1341,7 +1341,7 @@ func TestRetirementAbortTerminalOldRetryNeverClaimsPreBindAcquisition(t *testing
 	}
 
 	// A FRESH teardown request bound to the reopened generation (the distinct
-	// explicit target, BEO-16/P1a) retires generation 2. Its preserved
+	// explicit target) retires generation 2. Its preserved
 	// pre-bind acquired endpoint (the known externally held resource) is now
 	// reconciled: probed and disposed, never completed-unresolved.
 	target := taskauthority.Generation(2)
@@ -1558,8 +1558,8 @@ func TestRetirementAcquiredWorkspaceReferenceReadErrorFailsClosed(t *testing.T) 
 	}
 }
 
-// TestRetirementAcquiredEndpointResolvedOnFreshTeardown proves High-2 closure
-// (BEO-16/P1a): a fresh teardown of a generation that acquired an endpoint
+// TestRetirementAcquiredEndpointResolvedOnFreshTeardown proves High-2 closure:
+// a fresh teardown of a generation that acquired an endpoint
 // pre-bind (launch intent + AttachEndpoint, never bound) preserves the exact
 // acquired identity as cleanup evidence and DISPOSES the known externally held
 // resource — the cleanup claim never completes while a preserved acquired
@@ -1657,7 +1657,7 @@ func TestRetirementAcquiredEndpointResolvedOnFreshTeardown(t *testing.T) {
 // proves the invocation binding also covers a COMPLETED prior retirement: a
 // delayed retry of the original teardown must never implicitly retire the
 // reopened generation even though the prior cleanup finished normally — a
-// fresh teardown requires the distinct explicit target (BEO-16/P1a).
+// fresh teardown requires the distinct explicit target.
 func TestRetirementStaleRetryAfterCompletedPriorNeverRetiresReopenedGeneration(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "stale-completed"
@@ -1817,14 +1817,14 @@ func TestRetirementExplicitTargetConflictWhenGenerationAdvanced(t *testing.T) {
 }
 
 // TestRetirementPinnedRetryNeverReplaysNewerRetiredGeneration proves the
-// invocation binding is enforced BEFORE the retired-phase replay (BEO-16/P1a):
+// invocation binding is enforced BEFORE the retired-phase replay:
 // a teardown pinned to generation 1 that arrives after the task reopened to
 // generation 2 AND generation 2 was itself retired fails closed with the
 // typed target conflict — it is never reported as a successful replay of
 // generation 2's retirement and never releases anything. Only a replay pinned
 // to the exact current generation may replay.
 // TestRetirementPinnedRetryNeverReplaysNewerRetiredGeneration proves the
-// invocation binding is enforced BEFORE the retired-phase replay (BEO-16/P1a):
+// invocation binding is enforced BEFORE the retired-phase replay:
 // a teardown pinned to generation 1 that arrives after the task reopened to
 // generation 2 AND generation 2 is itself already retired (claim still active,
 // cleanup interrupted) fails closed with the typed target conflict — it is

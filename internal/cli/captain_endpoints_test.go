@@ -287,7 +287,7 @@ func TestSessionProbeEndpointAgentAwareOutcomes(t *testing.T) {
 	}
 }
 
-// TestProbeCaptainBackendReadyNormalization pins the BEO-117 fix at the real
+// TestProbeCaptainBackendReadyNormalization pins the readiness normalisation at the real
 // call site (probeCaptainBackend through the production probe endpoint): an
 // agent status that is ready after normalisation -- "Idle", " idle ", "IDLE"
 // -- must resolve ReadyForPrompt, while a genuinely not-ready status

@@ -10,7 +10,7 @@ import (
 
 // buildTaskWorktreeBinding is the only producer of taskauthority.WorktreeBinding,
 // and its identity != Worktree refusal is the sole guard standing between a
-// Soldier launch and the primary checkout (ADR-0009). These tests assert both
+// Soldier launch and the primary checkout. These tests assert both
 // directions of that guard: it refuses everything that is not a linked
 // worktree, and it still admits a real one.
 

@@ -26,8 +26,8 @@ type Options struct {
 	ID      string // task ID
 	Force   bool   // skip safety checks
 	// ExpectedGeneration binds this invocation to the exact generation the
-	// teardown request targets, captured when the request was issued
-	// (BEO-16/P1a). A delayed retry observing the current generation advanced
+	// teardown request targets, captured when the request was issued.
+	// A delayed retry observing the current generation advanced
 	// past the target fails closed with a typed conflict and NEVER retires
 	// the newer generation. When nil, the invocation is bound to the most
 	// recent prior retirement: a terminal (completed/aborted) prior
@@ -45,7 +45,7 @@ type TeardownResult struct {
 
 // RetirementCleanupPendingError is the typed partial outcome of a retirement
 // whose authoritative Retire transition committed but whose saga-side cleanup
-// did not complete (ADR-0007 §7): the retired phase and typed audit stand
+// did not complete: the retired phase and typed audit stand
 // durably, cleanup is resumable, and a retry replays the durable receipt
 // idempotently and resumes cleanup — never re-running merge/reconciliation.
 // The committed merged truth is never rolled back or mutated by a cleanup
@@ -109,7 +109,7 @@ func (e *RetirementTargetConflictError) Error() string {
 }
 
 // taskRetireOperationID returns the stable Task Operation identity of the
-// retirement transition for one task generation (ADR-0007 §6): retries replay
+// retirement transition for one task generation: retries replay
 // the durable receipt idempotently instead of re-committing, and a reopened
 // generation retires under its own identity. It is also the owning identity
 // of the durable cleanup claim committed with the retirement.
@@ -276,7 +276,7 @@ func retireTaskAuthoritatively(opts Options, meta map[string]string, authority *
 	if err != nil {
 		return taskauthority.Outcome{}, fmt.Errorf("resolving task generation: %w", err)
 	}
-	// Invocation binding (BEO-16/P1a): a teardown invocation is bound to the
+	// Invocation binding: a teardown invocation is bound to the
 	// generation it intends to retire. With an explicit ExpectedGeneration the
 	// caller asserts the exact target (a fresh, distinct teardown request for
 	// a reopened generation); if the current generation advanced past that
@@ -381,7 +381,7 @@ type priorRetirement struct {
 // prior generation), while a COMPLETED claim (cleanup finished, nothing to
 // resume) or an ABORTED claim (terminal — the operator explicitly stopped it)
 // makes the invocation a stale continuation that must never retire the
-// reopened generation (BEO-16/P1a).
+// reopened generation.
 func mostRecentPriorRetirement(authority *taskauthority.Canonical, taskID domain.TaskID, currentGen taskauthority.Generation) (priorRetirement, bool, error) {
 	for gen := uint64(currentGen) - 1; gen >= 1; gen-- {
 		agg, err := authority.GetGeneration(taskID, taskauthority.Generation(gen))
@@ -519,7 +519,7 @@ func currentOwnershipConflict(current *taskauthority.Aggregate, ev *taskauthorit
 
 // revalidateRetirementCleanup performs an authoritative current aggregate
 // re-read under the task-authority lock and fails closed when canonical
-// ownership changed since cleanup began (BEO-16/P1a TOCTOU guard). It is
+// ownership changed since cleanup began (TOCTOU guard). It is
 // called AFTER the probe and IMMEDIATELY BEFORE each destructive action
 // (Dispose, worktree return, projection removal) so a stale snapshot can never
 // authorize destructive cleanup against current runtime state. The read also
@@ -729,7 +729,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 	}
 
 	// The durable cleanup claim gates every lifecycle/acquisition mutation
-	// while cleanup is in flight (BEO-16/P1a): it is committed atomically with
+	// while cleanup is in flight: it is committed atomically with
 	// the retirement, so Reopen/BindEndpoint/acquisition fail closed from the
 	// moment the retire commits. The claim outlives the task-scope lock held
 	// by the revalidation fences and keeps the task pinned across the external
@@ -817,7 +817,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		}
 		// Authoritative current re-read under the task-authority lock AFTER the
 		// probe: the authorization proof must be grounded in the CURRENT
-		// aggregate, never the initial snapshot (BEO-16/P1a TOCTOU guard). A
+		// aggregate, never the initial snapshot (TOCTOU guard). A
 		// concurrent reopen/rebind between the probe and this re-read fails
 		// closed — cleanup pending, nothing released.
 		cur, err := revalidateRetirementCleanup(authority, taskID, ev, claimGen, evidence.current)
@@ -826,7 +826,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		}
 		// Authorize against the exact canonical EndpointBinding of the retired
 		// generation. Negative exact absence and positive liveness are separate
-		// authorities (BEO-16/P1a): the canonical EndpointBinding is the
+		// authorities: the canonical EndpointBinding is the
 		// explicit acquisition receipt for the positive path, and the current
 		// aggregate generation/revision are revalidated before either
 		// conclusion. An incomplete/stale proof (or an ambiguous
@@ -853,7 +853,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 				// Compare-and-fence immediately before Dispose: re-read the
 				// current aggregate under the task lock so a reopen/rebind that
 				// landed since the authorization can never authorize disposing a
-				// resource now owned by the newer generation (BEO-16/P1a TOCTOU
+				// resource now owned by the newer generation (TOCTOU
 				// guard).
 				if _, err := revalidateRetirementCleanup(authority, taskID, ev, claimGen, evidence.current); err != nil {
 					return cleanupPending(fmt.Errorf("teardown %s: dispose fence: %w", opts.ID, err))
@@ -869,7 +869,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 			} else {
 				// Ambiguous (starting/unknown/stale/unresponsive) or unauthorized:
 				// never dispose, never claim already gone — keep ownership and fail
-				// closed as cleanup pending (BEO-16: unknown != dead).
+				// closed as cleanup pending (unknown != dead).
 				return cleanupPending(fmt.Errorf("teardown %s: endpoint %s observation %s is ambiguous; cleanup pending, lease retained", opts.ID, ep.Handle, live.Lifecycle))
 			}
 		}
@@ -881,7 +881,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 	// The acquired endpoint is a KNOWN externally held resource, so cleanup
 	// probes and disposes it exactly like a bound endpoint — the cleanup
 	// claim never completes while a preserved acquired endpoint remains
-	// unresolved (BEO-16/P1a). Identity overlap with the current (newer)
+	// unresolved. Identity overlap with the current (newer)
 	// generation fails closed via currentOwnershipConflict before any action.
 	if ev != nil && ev.Acquired != nil {
 		if err := currentOwnershipConflict(evidence.current, ev); err != nil {
@@ -894,7 +894,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		}
 		// Authoritative current re-read under the task-authority lock AFTER the
 		// probe: the authorization proof must be grounded in the CURRENT
-		// aggregate, never the initial snapshot (BEO-16/P1a TOCTOU guard).
+		// aggregate, never the initial snapshot (TOCTOU guard).
 		cur, err := revalidateRetirementCleanup(authority, taskID, ev, claimGen, evidence.current)
 		if err != nil {
 			return cleanupPending(fmt.Errorf("teardown %s: acquired endpoint post-probe ownership revalidation: %w", opts.ID, err))
@@ -919,7 +919,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 				// Compare-and-fence immediately before Dispose: re-read the
 				// current aggregate under the task lock so a reopen/rebind that
 				// landed since the authorization can never authorize disposing a
-				// resource now owned by the newer generation (BEO-16/P1a TOCTOU
+				// resource now owned by the newer generation (TOCTOU
 				// guard).
 				if _, err := revalidateRetirementCleanup(authority, taskID, ev, claimGen, evidence.current); err != nil {
 					return cleanupPending(fmt.Errorf("teardown %s: acquired endpoint dispose fence: %w", opts.ID, err))
@@ -935,7 +935,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 			} else {
 				// Ambiguous (starting/unknown/stale/unresponsive) or unauthorized:
 				// never dispose, never claim already gone — keep the acquired
-				// resource and fail closed as cleanup pending (BEO-16: unknown
+				// resource and fail closed as cleanup pending (unknown
 				// != dead).
 				return cleanupPending(fmt.Errorf("teardown %s: acquired endpoint %s observation %s is ambiguous; cleanup pending, resource retained", opts.ID, ae.Handle, live.Lifecycle))
 			}
@@ -974,7 +974,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 			// canonical ownership is re-validated under the task lock so a
 			// reopen/rebind that landed since the probe can never authorize
 			// returning a resource now owned by the reopened generation
-			// (BEO-16/P1a TOCTOU guard).
+			// (TOCTOU guard).
 			if _, err := revalidateRetirementCleanup(authority, taskID, ev, claimGen, evidence.current); err != nil {
 				return cleanupPending(fmt.Errorf("teardown %s: worktree return fence: %w", opts.ID, err))
 			}
@@ -1014,7 +1014,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		// cleanup is only safe while the retired generation is STILL the
 		// current generation. A reopen that landed after the initial read fails
 		// closed — the projections describe the current task and must not be
-		// destroyed (BEO-16/P1a TOCTOU guard).
+		// destroyed (TOCTOU guard).
 		cur, err := revalidateRetirementCleanup(authority, taskID, ev, claimGen, evidence.current)
 		if err != nil {
 			return cleanupPending(fmt.Errorf("teardown %s: projection cleanup fence: %w", opts.ID, err))
@@ -1252,7 +1252,7 @@ func scoutSafetyCheck(opts Options, meta map[string]string, gen taskauthority.Ge
 	// After report exists, check for unresolved decision holds. The decision
 	// hold lifecycle mirrors into the task status projection (a needs-decision
 	// line until a resolved line is recorded), and teardown is not a held
-	// dispatch action (holds gate handoff/start/spawn, ADR-0004 §7), so the
+	// dispatch action (holds gate handoff/start/spawn), so the
 	// safety check reads the status projection — projection compatibility
 	// remains permitted while the authoritative dispatch cutover proceeds.
 	unresolvedKeys, err := unresolvedDecisionKeysFromStatus(opts.HomeDir, opts.ID)

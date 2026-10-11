@@ -50,8 +50,8 @@ func TestRuntimeAdapterObservationContract(t *testing.T) {
 // TestRuntimeAdapterObservationContract; zellij, cmux and orca reach
 // ObserveEndpoint through their own probes, so they need their own fakes to
 // show the same two propositions hold end-to-end: an authoritative EMPTY result
-// is exact absence, and an operational failure is never read as absence
-// (BEO-16 mandatory contract). It also pins that a raw adapter observation
+// is exact absence, and an operational failure is never read as absence.
+// It also pins that a raw adapter observation
 // concludes no freshness of its own.
 func TestListAdapterObservationContract(t *testing.T) {
 	cases := []struct {

@@ -11,3 +11,11 @@ Every unresolved General decision found during an investigation or review must b
 7. Verify no keyed decision remains open.
 
 Structured `munsu decision-hold` commands are preferred when available; otherwise use task status and task block/unblock primitives.
+
+## Key rules
+
+- Each decision gets one stable key. Retry with the same key is idempotent.
+- A completed investigation or ended visual review uses the same owner and completion command.
+- The hold remains open until the general's answer is recorded and any dependent work is unblocked.
+- `munsu decision-hold list` reads the recorded holds; nothing scrapes historical reports or chat for decisions.
+- Resolved findings, recommendations needing no choice, and prose that merely sounds decision-like do not create holds.

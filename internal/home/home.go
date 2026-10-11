@@ -1,3 +1,12 @@
+// Package home resolves a munsu home and owns domain-neutral durable mechanics:
+// scoped fenced locks, leases and atomic journaled commits.
+//
+// Layout under a home: state/ (task-authority/ documents, fleet-registry/
+// registries, shim/bin, the .meta and .status projections, locks, wakes and
+// receipts), data/<id>/brief.md, config/ (typed documents and the published
+// snapshot), projects/ (project worktrees) and captains/ (Captain homes).
+// Durable paths are logical keys that home resolves inside the root without
+// following links.
 package home
 
 import (

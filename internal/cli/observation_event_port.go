@@ -1,4 +1,4 @@
-// CLI-side native observation event port (BEO-17/P1b).
+// CLI-side native observation event port.
 //
 // The composition root adapts backend adapters to the orchestrator's native
 // event seam: it scans the home's exact bound endpoints (meta projection) and

@@ -46,15 +46,14 @@ config/           home-local/policy key files (backend); launch-profile keys
                   soldier-harness, model, and captain-harness live in
                   config/base.json
 data/             durable fleet records
-  captain.md      general preferences
+  general.md      general preferences
   learnings.md    fleet-local knowledge
-  projects.md     project registry
-  captains.md  captain routing table
   <id>/brief.md   task brief
   <id>/report-g<generation>.md  scout deliverable
 state/            volatile runtime signals
   durable task status projection  wake-event history (appended lines, not current state)
   durable task metadata projection spawn metadata
+  fleet-registry/ project, captain and binding registries
   .wake-queue     durable queued wakes
   .afk            away-mode flag
   .lock           session lock

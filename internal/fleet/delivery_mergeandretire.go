@@ -81,7 +81,7 @@ func MergeAndRetire(homeDir, id, prURL string, extraArgs []string, words domain.
 		}
 	}
 
-	// Capture the retirement target at invocation start (BEO-16/P1a): this
+	// Capture the retirement target at invocation start: this
 	// merge-and-retire invocation is a distinct explicit teardown request
 	// bound to the generation it observes now. If the task reopens to a
 	// newer generation after this capture, the delayed RetireTask fails

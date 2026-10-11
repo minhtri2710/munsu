@@ -202,8 +202,7 @@ func TestEmbeddedSkillReferencesResolve(t *testing.T) {
 
 // agentMirrorSkills have .agents/skills/<name> machine-compared to the embedded
 // canonical by TestAgentSkillMirrorsMatchCanonical. A skill belongs here whenever
-// the mirror exists at all: an unlisted mirror is a copy nothing compares, which
-// is how the three reference-doc skills below drifted a whole REFERENCE.md apart.
+// the mirror exists at all: an unlisted mirror is a copy nothing compares.
 var agentMirrorSkills = []string{
 	"bootstrap-diagnostics",
 	"captain-provisioning",
@@ -213,23 +212,8 @@ var agentMirrorSkills = []string{
 	"stuck-soldier-recovery",
 }
 
-// referenceDocSkills have docs/skills/<name>.md machine-compared to the embedded
-// REFERENCE.md by TestAgentSkillReferencesMatchEmbeddedCanonical. This pins a
-// different external surface than agentMirrorSkills, so a skill may hold both.
-var referenceDocSkills = []string{"bootstrap-diagnostics", "harness-adapters", "stuck-soldier-recovery"}
-
-// embeddedOnlySkills are explicitly embedded-only: no .agents/skills mirror and
-// at most the declared active secondary doc under docs/skills/. Any other external
-// copy must move the skill to a machine-compared set.
-var embeddedOnlySkills = []struct {
-	name string
-	doc  string // optional active secondary doc (basename under docs/skills/); "" = none
-}{
-	{name: "afk", doc: "afk.md"},
-	{name: "ask-user-authority"},
-	{name: "decision-hold-lifecycle", doc: "decision-hold-lifecycle.md"},
-	{name: "diagnostic-reasoning"},
-}
+// embeddedOnlySkills are explicitly embedded-only: no .agents/skills mirror.
+var embeddedOnlySkills = []string{"afk", "ask-user-authority", "decision-hold-lifecycle", "diagnostic-reasoning"}
 
 func validateAgentMirrorCoverage(repo fs.FS, embeddedNames, declaredNames []string) error {
 	declared := make(map[string]bool, len(declaredNames))
@@ -293,14 +277,11 @@ func TestAgentMirrorCoverage(t *testing.T) {
 }
 
 // TestEmbeddedSkillParityCoverage is the parity gate over every embedded skill
-// name. Each name must carry at least one disposition: a machine-compared
-// external surface (agentMirrorSkills pins .agents/skills/<name>,
-// referenceDocSkills pins docs/skills/<name>.md) or an explicit embedded-only
-// disposition. Those two pinned surfaces are independent and may co-hold, since
-// both are compared against the same canonical and cannot disagree.
-// For embedded names, on-disk mirrors must correspond exactly to agentMirrorSkills.
-// embedded-only is the exclusive one: it asserts the absence of the very copies
-// the other two pin, so holding it alongside either is a contradiction.
+// name. Each name must carry a disposition: a machine-compared mirror
+// (agentMirrorSkills pins .agents/skills/<name>) or an explicit embedded-only
+// disposition. For embedded names, on-disk mirrors must correspond exactly to
+// agentMirrorSkills. embedded-only is exclusive: it asserts the absence of the
+// mirror agentMirrorSkills pins, so holding both is a contradiction.
 func TestEmbeddedSkillParityCoverage(t *testing.T) {
 	names, err := embeddedSkillNames()
 	if err != nil {
@@ -311,18 +292,15 @@ func TestEmbeddedSkillParityCoverage(t *testing.T) {
 	for _, n := range agentMirrorSkills {
 		classified[n] = append(classified[n], "agent-mirror")
 	}
-	for _, n := range referenceDocSkills {
-		classified[n] = append(classified[n], "reference-doc")
-	}
 	for _, s := range embeddedOnlySkills {
-		classified[s.name] = append(classified[s.name], "embedded-only")
+		classified[s] = append(classified[s], "embedded-only")
 	}
 
 	embedded := make(map[string]bool, len(names))
 	for _, n := range names {
 		embedded[n] = true
 		if len(classified[n]) == 0 {
-			t.Errorf("embedded skill %q has no parity disposition; add it to agentMirrorSkills, referenceDocSkills, or embeddedOnlySkills", n)
+			t.Errorf("embedded skill %q has no parity disposition; add it to agentMirrorSkills or embeddedOnlySkills", n)
 		}
 	}
 	for n, dispositions := range classified {
@@ -330,7 +308,7 @@ func TestEmbeddedSkillParityCoverage(t *testing.T) {
 			t.Errorf("parity disposition names %q, but no such embedded skill exists", n)
 		}
 		if len(dispositions) > 1 && slices.Contains(dispositions, "embedded-only") {
-			t.Errorf("skill %q is declared embedded-only and %v; embedded-only asserts the absence of the copies the others pin", n, dispositions)
+			t.Errorf("skill %q is declared embedded-only and %v; embedded-only asserts the absence of the mirror agentMirrorSkills pins", n, dispositions)
 		}
 	}
 
@@ -338,28 +316,10 @@ func TestEmbeddedSkillParityCoverage(t *testing.T) {
 	if err := validateAgentMirrorCoverage(repo, names, agentMirrorSkills); err != nil {
 		t.Error(err)
 	}
-	for _, s := range embeddedOnlySkills {
-		t.Run(s.name, func(t *testing.T) {
-			if _, err := fs.Stat(repo, path.Join(".agents", "skills", s.name)); err == nil {
-				t.Errorf("embedded-only skill %q has an .agents/skills mirror; move it to agentMirrorSkills or remove the mirror", s.name)
-			}
-			docPath := path.Join("docs", "skills", s.name+".md")
-			_, docErr := fs.Stat(repo, docPath)
-			if s.doc == "" {
-				if docErr == nil {
-					t.Errorf("undeclared secondary doc %s exists; declare it in embeddedOnlySkills or move %q to referenceDocSkills", docPath, s.name)
-				}
-				return
-			}
-			if docErr != nil {
-				t.Errorf("declared secondary doc %s is missing: %v", docPath, docErr)
-				return
-			}
-			refPath := path.Join("internal", "cli", "skills", s.name, "REFERENCE.md")
-			doc, docReadErr := fs.ReadFile(repo, docPath)
-			ref, refReadErr := fs.ReadFile(repo, refPath)
-			if docReadErr == nil && refReadErr == nil && string(doc) == string(ref) {
-				t.Errorf("%s is byte-identical to %s; move %q to referenceDocSkills instead of embedded-only", docPath, refPath, s.name)
+	for _, name := range embeddedOnlySkills {
+		t.Run(name, func(t *testing.T) {
+			if _, err := fs.Stat(repo, path.Join(".agents", "skills", name)); err == nil {
+				t.Errorf("embedded-only skill %q has an .agents/skills mirror; move it to agentMirrorSkills or remove the mirror", name)
 			}
 		})
 	}
@@ -372,27 +332,6 @@ func TestAgentSkillMirrorsMatchCanonical(t *testing.T) {
 			canonical := path.Join("internal", "cli", "skills", name)
 			mirror := path.Join(".agents", "skills", name)
 			compareSkillDirectories(t, repo, canonical, mirror)
-		})
-	}
-}
-
-func TestAgentSkillReferencesMatchEmbeddedCanonical(t *testing.T) {
-	repo := os.DirFS(filepath.Join("..", ".."))
-	for _, name := range referenceDocSkills {
-		t.Run(name, func(t *testing.T) {
-			docPath := path.Join("docs", "skills", name+".md")
-			referencePath := path.Join("internal", "cli", "skills", name, "REFERENCE.md")
-			doc, err := fs.ReadFile(repo, docPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			reference, err := fs.ReadFile(repo, referencePath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if string(doc) != string(reference) {
-				t.Errorf("agent reference %s differs from embedded canonical %s", docPath, referencePath)
-			}
 		})
 	}
 }

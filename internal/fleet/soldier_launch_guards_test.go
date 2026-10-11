@@ -12,8 +12,7 @@ import (
 // breaks exactly one condition, so the observed error can only come from the
 // branch under test. The control assertion (the same input with the offending
 // field repaired must succeed) is what makes that claim checkable rather than
-// asserted: without it a test can pass while an earlier guard is what refused
-// (BEO-87).
+// asserted: without it a test can pass while an earlier guard is what refused.
 
 // launchPromptInputForGuards is the minimal ship-task input BuildLaunchPrompt
 // accepts. Each guard test copies it and breaks one field.

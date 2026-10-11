@@ -33,7 +33,7 @@ var tmuxAnchorSession = fmt.Sprintf("munsu-it-anchor-%d", os.Getpid())
 // here creates a session and kills it in t.Cleanup, so on the shared default
 // socket the kill at the end of one test could be the one that removed the
 // server's last session — and the next test's `new-session` then raced a server
-// in the middle of exiting ("server exited unexpectedly", BEO-82). BEO-26 gave
+// in the middle of exiting ("server exited unexpectedly"). Per-test session ownership gave
 // each test ownership of its *session*, which moved that shared state rather
 // than removing it; the server was still nobody's.
 //

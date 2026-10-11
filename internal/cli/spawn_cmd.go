@@ -37,7 +37,10 @@ repository that matches a registered project or can be ad-hoc inferred.
 Precedence: explicit project arg > registry match on cwd path > adhoc git
 remote/name heuristics.
 
-When inference fails, pass the project name explicitly or run 'munsu project add'.`,
+When inference fails, pass the project name explicitly or run 'munsu project add'.
+
+Spawn needs a queued task and performs the queued-to-working transition, so
+run 'munsu task start' only after spawn.`,
 		Args: cobra.MatchAll(MinimumNArgs(1), cobra.MaximumNArgs(2)),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			id := args[0]
@@ -269,13 +272,13 @@ func newSoldierStateCmd() *cobra.Command {
 			if err != nil {
 				if errors.Is(err, taskauthority.ErrNotFound) {
 					if _, metaErr := home.ReadMeta(ctx.Home, id); metaErr == nil {
-						return operationError("invalid_state", "munsu cannot repair a projection with no canonical record (ADR-0008 section 11); remove state/"+id+".meta by hand or discard the home",
+						return operationError("invalid_state", "munsu cannot repair a projection with no canonical record; remove state/"+id+".meta by hand or discard the home",
 							fmt.Sprintf("Task %q in home %s has no canonical Task Authority record; observation refuses the legacy projection", id, ctx.Home))
 					}
 					return operationError("not_found", "Run `munsu task list` to find a task ID",
 						fmt.Sprintf("Task %q was not found in home %s", id, ctx.Home))
 				}
-				return operationError("invalid_state", "munsu cannot repair an unreadable canonical record (ADR-0008 section 11); fix or remove state/task-authority/tasks/"+id+" by hand or discard the home",
+				return operationError("invalid_state", "munsu cannot repair an unreadable canonical record; fix or remove state/task-authority/tasks/"+id+" by hand or discard the home",
 					fmt.Sprintf("Unable to read authoritative Task truth for task %q in home %s: %v", id, ctx.Home, err))
 			}
 			return writeContract(cmd, Response[TaskObserve]{
@@ -356,7 +359,7 @@ func newPromoteCmd() *cobra.Command {
 				return err
 			}
 
-			// .meta kind is a post-commit projection (ADR-0007 §7): derive the
+			// .meta kind is a post-commit projection: derive the
 			// authoritative fields from the canonical aggregate after the
 			// receipt. A projection failure is a typed partial error and never
 			// rolls back the committed promotion.

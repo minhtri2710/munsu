@@ -1,7 +1,7 @@
 package fleet
 
 // endpointStatusFromState converts a coarse observation state into the typed
-// orthogonal EndpointObservation used by test fixtures (BEO-16/P1a). It lets
+// orthogonal EndpointObservation used by test fixtures. It lets
 // tests express a probe result concisely while the software under test reads
 // the orthogonal axes.
 func endpointStatusFromState(s EndpointObservationState) EndpointStatus {

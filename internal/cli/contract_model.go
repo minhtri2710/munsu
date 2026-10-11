@@ -1,11 +1,13 @@
-// Package contract defines the JSON-compatible data model for the versioned
-// orchestration contract. It is used by the `internal/cli` contract command
-// surface (the output boundary) to emit structured responses; it carries no
-// domain behavior.
+// The JSON-compatible data model for the versioned orchestration contract.
+// schema_version names
+// the contract, kind names the response schema, and TOON and JSON carry
+// identical fields. The model carries no domain behavior.
 package cli
 
 const (
 	// SchemaVersion is the stable schema identifier shared by TOON and JSON.
+	// There is one live contract: a change replaces it together with every
+	// caller and fixture, and no second version or migration path exists.
 	SchemaVersion = "munsu.orchestration/v1"
 	OutputTOON    = "toon"
 	OutputJSON    = "json"
@@ -28,7 +30,9 @@ type ErrorResponse struct {
 	Error         ErrorEnvelope `json:"error"`
 }
 
-// ErrorEnvelope supplies stable, actionable error details on stdout.
+// ErrorEnvelope supplies stable, actionable error details on stdout. error_code
+// is a stable machine-readable string. A usage error exits 2 and a contract
+// operation error exits 1.
 type ErrorEnvelope struct {
 	ErrorCode string `json:"error_code"`
 	Retryable bool   `json:"retryable"`

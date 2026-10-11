@@ -37,7 +37,7 @@ func TestGitFallback_GetAndReturnWorktree(t *testing.T) {
 	// Verify it is a real linked worktree: git marks one with a .git *file*
 	// pointing at the common dir, where a primary checkout has a directory.
 	// Asserted locally — internal/backend does not classify checkout identity
-	// (ADR-0009) and must not import internal/fleet to do so.
+	// and must not import internal/fleet to do so.
 	info, err := os.Lstat(filepath.Join(wtPath, ".git"))
 	if err != nil {
 		t.Fatalf("stat .git in worktree: %v", err)

@@ -523,7 +523,7 @@ console.log("API probe passed");
 
 // UnrelatedCheckoutRefusal is the refusal SafetyCheck raises when the session
 // working directory belongs to no recognized repository. It is exported so the
-// one caller allowed to narrow that refusal (ADR-0014 §3) can recognize it
+// one caller allowed to narrow that refusal can recognize it
 // without matching on a literal it does not own.
 const UnrelatedCheckoutRefusal = "unrelated checkout (not a recognized repository)"
 

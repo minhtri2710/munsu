@@ -91,7 +91,7 @@ Flags for worktree provisioning:
 	retireCmd := &cobra.Command{
 		Use:   "retire <captain-home>",
 		Short: "Retire a captain (session-backed)",
-		Long:  "Retire tears down the captain endpoint, clears parent meta, and unregisters from data/captains.md. Refuses while the captain home has in-flight soldiers (kind ship|scout) unless --force.",
+		Long:  "Retire tears down the captain endpoint, clears parent meta, and unregisters from the Captain registry (state/fleet-registry/captains.json). Refuses while the captain home has in-flight soldiers (kind ship|scout) unless --force.",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			return fleet.Retire(args[0], ctx.Home, false, retireForce, newSessionRetireEndpoint())
@@ -135,7 +135,7 @@ Flags for worktree provisioning:
 		Use:   "handoff <captain-home> <item-key...>",
 		Short: "Transfer queued tasks to a captain",
 		Long: `Transfer queued task generations from the parent home to a captain home
-through the journaled Task Transfer (ADR-0008). Each key must be a queued
+through the journaled Task Transfer. Each key must be a queued
 task owned by the source home. The transfer is durable and resumes after
 interruption.`,
 		Args: MinimumNArgs(2),

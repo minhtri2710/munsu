@@ -110,9 +110,6 @@ type Adapter struct {
 	// TrustDialog describes the trust/permission dialog behavior on first launch.
 	TrustDialog string
 
-	// SupervisionProtocol identifies the supervision protocol for this harness.
-	SupervisionProtocol string
-
 	// StateArtifacts lists the state file suffixes (excluding the task ID prefix)
 	// that this harness creates in the munsu state directory.
 	// These are cleaned up during teardown alongside munsu-native artifacts.
@@ -157,9 +154,8 @@ var Adapters = map[string]Adapter{
 			SkillDeny: []string{"--disallowedTools", "Skill(" + OrchestrationSkill + ")"},
 			Separator: "--",
 		},
-		QuestionDeny:        []string{"--disallowedTools", "AskUserQuestion"},
-		TrustDialog:         `Folder trust dialog on first launch per project repository, default "No, exit"; a linked worktree inherits its main repository's trust, a nested git repository does not`,
-		SupervisionProtocol: `claude`,
+		QuestionDeny: []string{"--disallowedTools", "AskUserQuestion"},
+		TrustDialog:  `Folder trust dialog on first launch per project repository, default "No, exit"; a linked worktree inherits its main repository's trust, a nested git repository does not`,
 	},
 	Codex: {
 		Name:       Codex,
@@ -183,8 +179,7 @@ var Adapters = map[string]Adapter{
 			DefaultModel:  "gpt-5.2-codex",
 			DefaultEffort: "80",
 		},
-		TrustDialog:         `Directory trust dialog on first run per repo root; accept with Enter`,
-		SupervisionProtocol: `codex`,
+		TrustDialog: `Directory trust dialog on first run per repo root; accept with Enter`,
 	},
 	Opencode: {
 		Name:       Opencode,
@@ -207,8 +202,7 @@ var Adapters = map[string]Adapter{
 			DefaultModel:  "gpt-5.2-codex",
 			DefaultEffort: "80",
 		},
-		TrustDialog:         `No trust dialog`,
-		SupervisionProtocol: `opencode`,
+		TrustDialog: `No trust dialog`,
 	},
 	Pi: {
 		Name:       Pi,
@@ -240,10 +234,9 @@ var Adapters = map[string]Adapter{
 		// pi's --exclude-tools disables tools by name after every other
 		// selection; ask_user_question is the tool of the installed
 		// rpiv-ask-user-question extension.
-		QuestionDeny:        []string{"--exclude-tools", "ask_user_question"},
-		SupervisionProtocol: `pi`,
-		TrustDialog:         `Project trust dialog on first run per path; accept with Enter`,
-		StateArtifacts:      []string{"pi-ext.ts", PiAgentDirSuffix},
+		QuestionDeny:   []string{"--exclude-tools", "ask_user_question"},
+		TrustDialog:    `Project trust dialog on first run per path; accept with Enter`,
+		StateArtifacts: []string{"pi-ext.ts", PiAgentDirSuffix},
 	},
 	Grok: {
 		Name:       Grok,
@@ -264,9 +257,8 @@ var Adapters = map[string]Adapter{
 			ModelFlag:  "--model",
 			EffortFlag: "--reasoning-effort",
 		},
-		TrustDialog:         `No trust dialog when launched from a git repo root`,
-		SupervisionProtocol: `grok`,
-		StateArtifacts:      []string{"grok-turnend-token"},
+		TrustDialog:    `No trust dialog when launched from a git repo root`,
+		StateArtifacts: []string{"grok-turnend-token"},
 	},
 	Agy: {
 		Name:       Agy,
@@ -288,8 +280,7 @@ var Adapters = map[string]Adapter{
 			ModelFlag: "--model",
 			ExtraArgs: []string{"--dangerously-skip-permissions"},
 		},
-		TrustDialog:         `File/command permission dialog per session; pre-approved commands persisted in settings.json`,
-		SupervisionProtocol: `agy`,
+		TrustDialog: `File/command permission dialog per session; pre-approved commands persisted in settings.json`,
 	},
 }
 

@@ -27,7 +27,7 @@ const (
 // runOrphanScan wires the existing writer fence to `munsu doctor --orphans`.
 // The scan reports and stops there: it never signals a process. Termination
 // stays a member decision until munsu can tell a leftover from a daemon
-// somebody started on purpose (ADR-BEO-40-01 §5).
+// somebody started on purpose.
 func runOrphanScan(out io.Writer, homeDir string) error {
 	return runOrphanScanWith(out, fleet.NewRuntimeWriterFence(), homeDir)
 }

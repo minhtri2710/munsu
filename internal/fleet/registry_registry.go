@@ -1,5 +1,5 @@
 // Package fleet owns workforce execution, including Project and Captain
-// registries and the Captain-Project Binding (ADR-0008 §3). The Registry is
+// registries and the Captain-Project Binding. The Registry is
 // the canonical home-backed surface for that identity and lifecycle: it owns
 // Project registration, Captain lifecycle, and the Captain-Project Binding
 // through typed operations and queries. Config consumes scoped registry facts
@@ -12,8 +12,8 @@
 // one bounded aggregate because enforcing the one-to-one invariants (one
 // Project per Captain, at most one owning Captain per Project) requires atomic
 // serialization of the binding state. Retirement rewrites an aggregate without
-// the retired entry (home.Commit is write-only and the ADR forbids tombstones,
-// so entities are never left as deletion markers). There is no Store
+// the retired entry (home.Commit is write-only, so entities are never left as
+// deletion markers). There is no Store
 // interface, in-memory fake, projection, legacy adapter, or fleet-wide lock
 // behind this surface.
 package fleet
@@ -110,7 +110,7 @@ type Outcome struct {
 }
 
 // Registry is the canonical home-backed Fleet Project/Captain registry. It
-// owns registration, lifecycle, and binding authority (ADR-0008 §3) over the
+// owns registration, lifecycle, and binding authority over the
 // canonical home's durable mechanics.
 type Registry struct {
 	h      *home.Home

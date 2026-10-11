@@ -434,7 +434,7 @@ func runLifecycleWorkflow(t *testing.T, tc workflowCase) {
 	if agg.Phase != taskauthority.PhaseDone {
 		t.Fatalf("phase after terminal report = %s, want done", agg.Phase)
 	}
-	// ADR-0015: the terminal report closes its own handoff. Nothing else can.
+	// The terminal report closes its own handoff. Nothing else can.
 	receiptAcked := orchestrator.IsReceiptAcked(spawnHome, taskID, taskID)
 	if !receiptAcked {
 		t.Fatal("terminal receipt was not acknowledged by its writer")

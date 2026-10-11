@@ -13,6 +13,9 @@ func shellQuote(s string) string {
 // LaunchStringWith builds the shell command using explicit model/effort overrides.
 // Empty model/effort omit the corresponding flags (including the "default" sentinel).
 // The sentinel value "default" is treated as empty.
+// ExtraArgs, model and effort values containing whitespace, parentheses or
+// quotes are wrapped in double quotes with only " escaped; this is not general
+// shell escaping.
 func LaunchStringWith(h string, tmpl Template, model, effort string) string {
 	parts := []string{strings.ToLower(h)}
 	for _, arg := range tmpl.ExtraArgs {

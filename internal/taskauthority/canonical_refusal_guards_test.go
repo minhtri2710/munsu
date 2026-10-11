@@ -20,7 +20,7 @@ import (
 // operations refuse a dozen ways with one error type, and several guards in the
 // same function emit the same sentinel: `err != nil` would be green with the
 // guard deleted, because a guard further down would refuse anyway. That is the
-// BEO-87 shape.
+// shape to avoid.
 //
 // And each builds the refused state from an accepted one, so the refusal is
 // attributable to the single thing it changed. Where the setup is more than one
@@ -1027,7 +1027,7 @@ func TestGuardRevokeDeliveryRefusesUnrevocableRequests(t *testing.T) {
 //
 // The record validator refuses it too, with the SAME message, so a test that
 // only asserted that message would stay green with this request-level check
-// deleted — the BEO-87 shape, and what the mutation run caught here. What
+// deleted — the same shape, and what the mutation run caught here. What
 // separates them is WHERE: the request check runs before the task is read, so
 // it is the only one that can refuse an outcome for a task that does not exist.
 // That is what this asserts.

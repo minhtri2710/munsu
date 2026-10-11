@@ -13,8 +13,8 @@ import (
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
-// This file owns the canonical Delivery Authorization and outcome foundation
-// (ADR-0008 §3): Task Authority issues an immutable Delivery Authorization
+// This file owns the canonical Delivery Authorization and outcome foundation.
+// Task Authority issues an immutable Delivery Authorization
 // bound to the exact Task Generation and Operation ID, and Fleet commits the
 // resulting delivery lifecycle consequence (the committed outcome) through
 // Task Authority.
@@ -60,11 +60,13 @@ func (k DeliveryAuthorizationKind) Valid() bool {
 // asserted set durably; it never fabricates provider verification.
 type DeliveryPrecondition string
 
+// The precondition set is closed. munsu does not own issue closure: the PR body
+// author and the provider do.
 const (
 	// DeliveryPreconditionPRMergeable asserts the provider PR satisfies the
 	// domain merge rules (open, checks passing, no provider review
 	// requesting changes). Approval is the review verdict, never a provider
-	// review (ADR-0025).
+	// review.
 	DeliveryPreconditionPRMergeable DeliveryPrecondition = "pr-mergeable"
 	// DeliveryPreconditionPRHeadCurrent asserts the provider head equals the
 	// bound delivery identity head.
@@ -94,7 +96,7 @@ func (p DeliveryPrecondition) Valid() bool {
 //   - current ownership and the typed domain.DeliveryIdentity including the
 //     exact provider head;
 //   - the typed persisted operation kind discriminator (provider merge);
-//   - the PASS review verdict bound to the exact delivered head (ADR-0025) and
+//   - the PASS review verdict bound to the exact delivered head and
 //     the Human's words behind the authorization;
 //   - the exact Endpoint/Worktree binding digest (lease/fence and repository
 //     identity/path/head fields);
@@ -713,8 +715,8 @@ func (c *Canonical) mutateDelivery(op domain.Operation, taskID domain.TaskID, pr
 		return DeliveryIndex{}, false, err
 	}
 	// Delivery state (authorization/revocation/outcome) is task-scoped
-	// lifecycle state and must not mutate while a cleanup claim is active
-	// (BEO-16/P1a): the claim's promised serialization covers delivery too,
+	// lifecycle state and must not mutate while a cleanup claim is active:
+	// the claim's promised serialization covers delivery too,
 	// so the revision snapshot cleanup revalidates against cannot move.
 	if err := c.checkCleanupFence(doc.Aggregate, nil); err != nil {
 		return DeliveryIndex{}, false, err
@@ -894,7 +896,7 @@ func sha256Hex(data []byte) string {
 // already-active authorization, a valid typed identity, a PASS review verdict
 // bound to exactly the identity head (ReviewVerdict.Approves) from a review task
 // that is not the reviewed task and a reviewer instance that is not the bound
-// authoring soldier instance (ADR-0025), the
+// authoring soldier instance, the
 // Human's words, and valid preconditions; it fails closed otherwise.
 // Repeating the same Operation ID with the same digest replays the durable
 // prior record; reusing the Operation ID with a different intent conflicts.

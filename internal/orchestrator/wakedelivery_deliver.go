@@ -3,7 +3,7 @@
 //
 // One operation:
 //   - DeliverWake: soldier-side orchestration (status → receipt → event → wake),
-//     closing its own terminal handoff (ADR-0015).
+//     closing its own terminal handoff.
 //
 // Storage primitives (turnend, lifecycle, event) are imported, not absorbed.
 // Injection logic is moved here from report_cmd.go.
@@ -83,6 +83,9 @@ func AppendReportStatus(homeDir, taskID, state, message, key string) (statusLine
 //
 // Event append errors never fail the report — they are logged to stderr and
 // the receipt records EventAppended=false.
+//
+// There is no Captain-side relay of terminal receipts: the receipt is a
+// notification artifact for the captain pane nudge, not a transport.
 func DeliverWake(req DeliverRequest) (*WakeReceipt, error) {
 	// Step 0: Validate inputs
 	if req.HomeDir == "" {
@@ -125,7 +128,7 @@ func DeliverWake(req DeliverRequest) (*WakeReceipt, error) {
 		}
 		receipt.ObligationsInit = true
 
-		// The writer closes its own handoff (ADR-0015). The receipt file stays
+		// The writer closes its own handoff. The receipt file stays
 		// as the captain's notification artifact — ActivateOnReceipt reads it
 		// regardless of ack state — but nothing relays it, so nothing else can
 		// ever write the ack. A parent that is a captain home is no exception:
@@ -382,7 +385,7 @@ type ActivationTransport interface {
 // watcher/launcher pane instead of the captain agent pane.
 //
 // This function processes ALL receipts, acked or not: DeliverWake acks its own
-// receipt at write time (ADR-0015), so gating the nudge on ack state would mean
+// receipt at write time, so gating the nudge on ack state would mean
 // never nudging at all. Idempotency comes from the activation-seen marker.
 //
 // Safe inject guards are honored: if the captain agent pane is busy or the

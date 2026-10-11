@@ -47,7 +47,7 @@ func TestInspectOrphansClassifiesAndNeverTerminates(t *testing.T) {
 		{PID: 13, PPID: 1, PGID: 13, ExecutablePath: "/bin/murky", Markers: map[string]string{MarkerMunsuTask: "task-c"}},
 	}}
 	liveness := map[int]RunLiveness{11: RunEnded, 12: RunAlive, 13: RunUnresolved}
-	// "never terminates" is structural since ADR-0012: the fence carries no
+	// "never terminates" is structural: the fence carries no
 	// process controller or endpoint drainer at all, only evidence sources.
 	fence := orphanFence(t, scan, liveness, nil, nil)
 

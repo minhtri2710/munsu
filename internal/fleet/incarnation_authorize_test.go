@@ -12,8 +12,8 @@ import (
 
 // TestAuthorizeObservationFailsClosedOnIncompleteProof asserts an adapter probe
 // (fresh unknown) is never Live/Absent without a complete canonical proof, and
-// an incomplete proof demotes to unknown/stale (BEO-16 revocation of the
-// freshness fabricate).
+// an incomplete proof demotes to unknown/stale, never a fabricated
+// freshness.
 func TestAuthorizeObservationFailsClosedOnIncompleteProof(t *testing.T) {
 	raw := backend.ObservationFromProbeError(backend.ErrPaneNotFound) // dead lifecycle, fresh unknown
 	if raw.Absent() || raw.Live() {
@@ -259,8 +259,8 @@ func (t *trackingEndpointCapabilities) Dispose(CreatedEndpoint) error {
 
 // TestSpawnNeverDisposesAmbiguousObservation asserts the post-create path never
 // disposes an endpoint on an ambiguous observation (unknown/unresponsive/)
-// stale) — it fails closed as readiness pending and preserves ownership
-// (BEO-16). Starting is a valid transitional acquisition and proceeds to attach.
+// stale) — it fails closed as readiness pending and preserves ownership.
+// Starting is a valid transitional acquisition and proceeds to attach.
 func TestSpawnNeverDisposesAmbiguousObservation(t *testing.T) {
 	for _, state := range []EndpointObservationState{EndpointUnknown, EndpointUnresponsive, EndpointStaleIdentity} {
 		t.Run(state.String(), func(t *testing.T) {

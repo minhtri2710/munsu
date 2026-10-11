@@ -6,6 +6,10 @@ import (
 	"path/filepath"
 )
 
+// General is the sole resolver. It publishes the resolved snapshot to a Captain,
+// which stores it and does not resolve it again.
+// A snapshot is schema- and field-validated (it requires a digest) when stored
+// and loaded; it is not signed and no signature is verified.
 const (
 	PublishedSnapshotSchemaVersion = "munsu.config.snapshot/v1"
 	PublishedSnapshotPath          = "config/resolved-project.json"

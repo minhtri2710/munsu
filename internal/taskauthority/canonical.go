@@ -17,7 +17,7 @@ import (
 
 // Canonical is the canonical home-backed Task Authority. It owns Task
 // documents, lifecycle transitions, readiness, and Dispatch Holds on top of
-// the canonical home's durable mechanics (ADR-0008 §2): every mutation is an
+// the canonical home's durable mechanics: every mutation is an
 // atomic journaled change-set under the smallest scoped fenced lock, and
 // every read observes the same committed Task documents. There is no Store
 // interface, in-memory fake, projection, or backlog behind this surface.
@@ -68,6 +68,9 @@ const (
 	tasksDir      = "task-authority/tasks"
 	holdsDir      = "task-authority/holds"
 	receiptsDir   = "task-authority/receipts"
+	// dispatchScope is the one global lock. It serializes hold changes (AddHold,
+	// ReleaseHold) with hold-checked task and delivery mutations and gate
+	// records, and is always taken before the task or hold scope.
 	dispatchScope = "dispatch"
 )
 
@@ -388,7 +391,7 @@ type cleanupGate struct {
 
 // checkCleanupFence fails closed when the current aggregate has an ACTIVE
 // cleanup claim and the mutation is not a cleanup continuation bound to that
-// exact claim identity (BEO-16/P1a durable disposal claim). A nil gate (every
+// exact claim identity (durable disposal claim). A nil gate (every
 // ordinary lifecycle/dispatch/binding/reopen mutation) is rejected while the
 // claim is active, so a concurrent Reopen/BindEndpoint/acquisition can never
 // land between a fleet revalidation and the external action that follows it:

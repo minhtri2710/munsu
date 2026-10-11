@@ -39,7 +39,7 @@ type ProcessVerifier interface {
 // report-only scan over this home's writer identities and over processes that
 // carry an ownership marker. It never terminates or disposes anything —
 // quiescence enforcement before a destructive operation has one owner, Task
-// Authority (ADR-0012).
+// Authority.
 type CompositeWriterFence struct {
 	Artifacts ArtifactScanner
 	Processes ProcessInventory

@@ -74,11 +74,11 @@ type shellToken struct {
 //
 // The shell channel used to decide on session location alone, so a soldier
 // standing in its own worktree wrote the shared checkout through an absolute
-// path unopposed (BEO-73). Targets are classified by evaluateFileWriteSafety —
+// path unopposed. Targets are classified by evaluateFileWriteSafety —
 // the same owner the native write channel uses — so no path comparison is
-// invented here (ADR-0014 §1).
+// invented here.
 //
-// The claim of coverage is deliberately narrow (ADR-0014 §2): a `>` redirection
+// The claim of coverage is deliberately narrow: a `>` redirection
 // target, and the argument tokens of a named write verb at command position
 // (commandPosition), in the command line or in a payload a named shell runs
 // (shellPayloads). A verb that is not on the list, a runner outside
@@ -108,6 +108,12 @@ type shellToken struct {
 // by the narrow claim above: only a redirection target and a named write verb's
 // arguments are targets at all, so the candidate the second reading adds can only
 // ever be one more write path, never a read.
+//
+// The grammar this function reads is frozen. The OS fence (internal/fence, macOS only) is
+// the primary guard; this lexer and the git shim are the only shell-channel
+// protection where no OS fence runs, and neither is a sandbox; widening the grammar needs evidence of a miss the fence
+// cannot cover and the Human's words. A file write on a shape outside the claim is allowed unless
+// the target is ambiguous, which the caller refuses; git mutation fails closed.
 func shellWriteTargets(checkPath, command string) ([]string, bool) {
 	interpretations := []shellTargetResolution{
 		{mode: backslashEscapes},
@@ -327,7 +333,7 @@ func (f *shellFunctions) call(segment []shellToken) bool {
 // cannot reconstruct ("" if none). An ambiguous drive-relative `cd D:docs`
 // only makes D:'s cwd unknowable: D-volume targets stay ambiguous, but
 // C-volume and absolute targets resolve against known state and must not be
-// refused for it (ADR-0014 §1, #664). lost is a directory a payload or a
+// refused for it. lost is a directory a payload or a
 // wrapper moved to that this reading cannot know: every relative target is
 // ambiguous until an absolute `cd`. previous is the directory `cd -` returns
 // to, nil when this reading did not see the shell leave one; stack is the
@@ -650,7 +656,7 @@ func (w *shellWriteWalk) read(payloads []shellPayload, span shellTargetSpan, dep
 
 // shellConsumers are the shells whose `-c` operand, or stdin when they have
 // neither `-c` nor a script operand (or have `-s`), the write guard reads as
-// a command line. With eval they are the only payloads it reads (ADR-0014 §2).
+// a command line. With eval they are the only payloads it reads.
 var shellConsumers = []string{"bash", "sh", "zsh", "dash", "ksh"}
 
 // shellPayload is a command line a command runs, at runes start to end of the
@@ -890,7 +896,7 @@ type wrapperGrammar struct {
 // GNU's where macOS has no such command (timeout, setsid) or fewer options
 // (env, nice, stdbuf, time). The list is fixed: a runner outside it (arch,
 // caffeinate, xcrun, doas, ionice, chronic, xargs, find -exec, parallel,
-// watch) stays open (ADR-0014 §2).
+// watch) stays open.
 var wrapperVerbs = map[string]wrapperGrammar{
 	"command": {none: "vV"},
 	"builtin": {},
@@ -1124,7 +1130,7 @@ func pathDependsOnUnknownCwd(activeVolume, unknownCwd, target string) bool {
 // classify (#664). It is shell-specific on purpose: the native write channel's
 // resolver (resolveSafetyPathWithMode, in git_worktree_safety.go) is the #668 owner and
 // must not grow this logic, so the dual-reading guard stays the single owner of
-// its own comparison (ADR-0014 §1).
+// its own comparison.
 //
 // Three cases sit beyond the plain relative join:
 //
@@ -1199,10 +1205,10 @@ func evaluateWriteTargets(targets []string) (bool, string) {
 //
 // Heredoc stripping is the caller's job and is done once, with POSIX delimiter
 // rules, before either backslash reading tokenizes: a heredoc body is content,
-// not a command line, and the same "one payload, one channel" rule BEO-62
-// settled applies to it. Tokenizing it refused a legitimate write whenever the
-// content happened to look like a command — this file's own ADR is such a
-// document.
+// not a command line, and the same "one payload, one channel" rule
+// applies to it. Tokenizing it refused a legitimate write whenever the
+// content happened to look like a command — a design document in
+// this repository is such a file.
 func tokenizeSegments(mode backslashMode, command string) [][]shellToken {
 	var segments [][]shellToken
 	var segment []shellToken

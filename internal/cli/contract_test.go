@@ -587,7 +587,7 @@ func TestGuardHasContextualHelpHint(t *testing.T) {
 // TestFleetSnapshotCanonicalPhaseBeatsStaleStatus proves the contract row
 // reports the resolved current-state projection, not the append-only .status
 // tail: a canonical done phase beats a stale `working` status line (P0 read-path
-// consolidation). See BEO-14.
+// consolidation).
 func TestFleetSnapshotCanonicalPhaseBeatsStaleStatus(t *testing.T) {
 	home := t.TempDir()
 	initCLITestHome(t, home)

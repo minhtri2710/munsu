@@ -101,6 +101,10 @@ func taskAuthorityForRead(homeDir string) (*taskauthority.Canonical, error) {
 	return taskauthority.NewCanonical(h)
 }
 
+// taskDataDirReclaimer runs session-start reclamation under the task's Task
+// Authority scope lock. Teardown retains the task data directory; reclamation
+// removes it only after the retention grace period, and for an unknown task
+// only when the directory holds no brief.
 func taskDataDirReclaimer(homeDir string) bootstrap.ReclaimTaskDataDir {
 	auth, err := taskAuthorityForRead(homeDir)
 	if err != nil {

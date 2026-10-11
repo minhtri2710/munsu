@@ -251,7 +251,7 @@ func TestTaskRetryRefusesLiveGeneration(t *testing.T) {
 
 // TestTaskCleanupAbortReleasesClaimForReopen proves `task cleanup-abort`
 // releases the durable cleanup claim of a retired task with pending cleanup
-// (BEO-16/P1a abort reconciliation): the claim reconciles to aborted, an
+// (abort reconciliation): the claim reconciles to aborted, an
 // active-claim reopen is rejected before the abort and accepted after it.
 func TestTaskCleanupAbortReleasesClaimForReopen(t *testing.T) {
 	homeDir := t.TempDir()

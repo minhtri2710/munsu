@@ -198,7 +198,7 @@ func TestMissingFilePathFallsThrough(t *testing.T) {
 
 // TestSafetyCheckRefusesBoundPrimaryCheckout is the blocked direction of H1: a
 // non-git command in the shared checkout reaches the hook and is refused on
-// location, closing the path that opened BEO-40.
+// location.
 func TestSafetyCheckRefusesBoundPrimaryCheckout(t *testing.T) {
 	primary, _ := boundTaskFixture(t, "ship-h1")
 

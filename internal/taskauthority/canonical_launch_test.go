@@ -949,7 +949,7 @@ func TestCanonicalRecordLaunchOperationReusedConflict(t *testing.T) {
 // TestCanonicalLaunchIncarnationPersistsAndFencesBinds asserts the opaque
 // incarnation minted by Fleet is persisted on the acquired endpoint and that
 // BindEndpoint requires the EXACT incarnation of the acquired record — a
-// mismatched (stale/foreign) incarnation never binds (BEO-16/P1a).
+// mismatched (stale/foreign) incarnation never binds.
 func TestCanonicalLaunchIncarnationPersistsAndFencesBinds(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
 	mustCreate(t, c, "t1")

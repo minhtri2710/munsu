@@ -316,6 +316,10 @@ func segmentWords(segment []shellToken) []string {
 // --force'` reaches the real git through the shim's PATH entry, so its argv is
 // evaluated like any other. MUNSU_HOME/MUNSU_TASK_ID come from the environment
 // the launch script exported.
+//
+// The shim covers git reached through the launch PATH. An absolute-path git or
+// a reset PATH bypasses it; the OS fence (internal/fence) refuses those writes
+// at the syscall.
 func evaluateGitArgvSafety(checkPath string, gitArgs []string) (bool, string) {
 	homeDir := strings.TrimSpace(os.Getenv("MUNSU_HOME"))
 	taskID := strings.TrimSpace(os.Getenv("MUNSU_TASK_ID"))
@@ -857,7 +861,7 @@ func createsBranch(args []string) bool {
 }
 
 // gitSafetyIdentity classifies the git mutation target. Classification itself
-// has one owner — fleet.ClassifyIdentity (ADR-0009) — so this only renders the
+// has one owner — fleet.ClassifyIdentity — so this only renders the
 // verdict as the string the safety gate compares against, and the git-dir and
 // common-dir it returns are canonicalized by exactly the same code that
 // produced the binding it is checked against.

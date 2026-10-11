@@ -6,7 +6,7 @@ import (
 )
 
 // IncarnationMintFunc returns an opaque, generation-bound identity for one
-// endpoint launch/binding (BEO-16/P1a). The value must be opaque to the
+// endpoint launch/binding. The value must be opaque to the
 // backend (Fleet mints it, taskauthority persists it, backend only cross-checks
 // it) and stable across retries of the SAME launch operation: a retry reuses
 // the persisted value rather than minting a new one.

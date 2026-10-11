@@ -302,7 +302,7 @@ func TestSafetyCheckForceDeniedWithoutAuthorization(t *testing.T) {
 	}
 }
 
-// TestSafetyCheckArgvLevelFenceEvasionDenied pins the ADR-0005 §6 hardening:
+// TestSafetyCheckArgvLevelFenceEvasionDenied pins the argv-level hardening:
 // force/delete/rewrite must be denied regardless of flag position, bundled
 // short flags, long spellings, and a global-option value that would otherwise
 // shadow the verb. Each command exercises a distinct newly-closed evasion.

@@ -1,7 +1,7 @@
-// Package task manages task lifecycle data, including reading and writing
-// task meta files (key=value lines stored at $MUNSU_HOME/state/<durable-stem>.meta).
+// Task meta files are key=value lines stored at $MUNSU_HOME/state/<durable-stem>.meta.
 // Durable stems are platform-specific filename projections of logical task IDs;
 // callers pass logical IDs and discovery boundaries reverse-decode persisted stems.
+
 package home
 
 import (

@@ -22,8 +22,8 @@ const childReadyToken = "ready\n"
 
 // TestListMarkedProcessesSeesSetsidChildWithoutItsSecrets runs the real OS
 // inventory against a real process. The child calls setsid(), so it leaves the
-// test's process group and session exactly the way 3/3 of the leftovers BEO-45
-// inventoried had: a scan that walked process groups would miss it. The child
+// test's process group and session exactly the way real leftovers
+// do: a scan that walked process groups would miss it. The child
 // also carries a secret-looking variable, which must not survive the whitelist.
 //
 // The child reports readiness before the scan runs and then blocks until this

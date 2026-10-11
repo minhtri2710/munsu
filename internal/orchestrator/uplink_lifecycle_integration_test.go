@@ -6,8 +6,7 @@
 //
 //	Intent -> Durable -> Acked -> Retired
 //
-// The authoritative phase contract is ADR-0002 §4. Notification and receiver
-// observation are orthogonal to that lifecycle;
+// Notification and receiver observation are orthogonal to that lifecycle;
 // the tests cover their delivery/replay behavior across the named paths:
 //
 //   - crash/replay: a durable report that is never acked survives a simulated
@@ -23,7 +22,7 @@
 //     is open, and passes once it is acked and retired
 //
 // These tests add no second lifecycle authority, migration path, alternate
-// protocol, or compatibility shim (ADR-0008). They reuse the existing public
+// protocol, or compatibility shim. They reuse the existing public
 // surfaces only.
 package orchestrator
 

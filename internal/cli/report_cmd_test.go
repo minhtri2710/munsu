@@ -53,7 +53,7 @@ func TestReportDoneCompletesScoutLifecycle(t *testing.T) {
 	if agg.Phase != taskauthority.PhaseDone {
 		t.Fatalf("phase = %s, want done", agg.Phase)
 	}
-	// The scout's terminal report closes its own handoff (ADR-0015): nothing
+	// The scout's terminal report closes its own handoff: nothing
 	// else in the binary can write the ack, so leaving it pending would wedge
 	// the turn-end guard forever.
 	if !orchestrator.IsReceiptAcked(homeDir, "scout-report", "scout-report") {

@@ -14,8 +14,8 @@ type listedPackage struct {
 	Imports    []string
 }
 
-// TestPackageTopology enforces the owner-clean dependency-direction rules of
-// ADR-0008 §1 on the live package graph. Rules are expressed as ownership and
+// TestPackageTopology enforces the owner-clean dependency-direction rules
+// on the live package graph. Rules are expressed as ownership and
 // import-direction constraints between named modules, never as a literal
 // package-count gate or a blacklist of deleted package names:
 //

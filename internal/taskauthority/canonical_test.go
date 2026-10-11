@@ -785,7 +785,7 @@ func mustPathForTest(t *testing.T, h *home.Home, key string) string {
 
 // TestCanonicalCurrentLockedSerializesWithMutation proves CurrentLocked
 // returns the current authoritative aggregate under the task-scope lock and
-// observes a concurrent mutation's committed state (BEO-16/P1a retirement
+// observes a concurrent mutation's committed state (retirement
 // TOCTOU guard seam): after a mutation commits, the locked re-read reflects
 // the new revision; a superseded generation is not returned as current truth.
 func TestCanonicalCurrentLockedSerializesWithMutation(t *testing.T) {

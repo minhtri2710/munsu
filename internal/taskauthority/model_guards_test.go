@@ -13,7 +13,7 @@ import (
 // The accepted fixture is asserted first, once per validator, so a case that
 // refuses can only be refusing because of the field it broke: if an earlier
 // guard were what fired, the untouched fixture would already be rejected. That
-// is the check BEO-87 found missing — two tests asserted a refusal message
+// is the check that was once missing — two tests asserted a refusal message
 // while an earlier guard was what produced it.
 //
 // Messages are asserted individually rather than `err != nil`, because every
@@ -401,8 +401,8 @@ func TestValidateWorktreeManifestRelationshipRefusesUnboundEvidence(t *testing.T
 // endpoint. Every field below is what makes the hold attributable and
 // releasable: without the operation id nothing says which operation acquired
 // it, and without the lease or fence token a stale holder cannot be fenced off.
-// These refusals were invisible to the guards lane until BEO-123 fixed the
-// instrument that was misreading them as error propagation.
+// These refusals were invisible to the guards lane until the
+// instrument stopped misreading them as error propagation.
 func TestValidateAcquiredEndpointRefusesIncompleteRecord(t *testing.T) {
 	runGuardCases(t,
 		func() AcquiredEndpoint {

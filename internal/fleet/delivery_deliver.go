@@ -10,8 +10,8 @@ import (
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
-// This file owns the single Fleet-owned journaled delivery execution path
-// (ADR-0008 §3, §9): Deliver executes exactly one irreversible provider
+// This file owns the single Fleet-owned journaled delivery execution path.
+// Deliver executes exactly one irreversible provider
 // delivery operation over the canonical Delivery Authorization API. Durable
 // journal intent precedes every mutation; the canonical authorization is
 // issued under a pinned operation identity; DeliveryCurrency is verified
@@ -298,6 +298,12 @@ func validateDeliverRequest(req DeliverRequest, method string) error {
 	return nil
 }
 
+// The head invariant has two owners: the local check here (the identity head
+// equals the head git reads at the bound worktree) and the provider boundary
+// (exact head, base ref and mergeability). Neither is defence in depth for the
+// other; a further check needs a named source of truth or it is a weaker second
+// owner.
+//
 // prevalidateDeliveryTask mirrors the canonical authorization gates so a
 // journal intent is never written for a task that cannot be authorized:
 // current working task with owner and the exact bindings, no matching active
@@ -636,13 +642,8 @@ func verifyDeliveryCurrency(c *taskauthority.Canonical, journal *deliveryJournal
 	return nil
 }
 
-// verifyProviderHead fails closed before mutation when the provider reports a
-// head or a base ref different from the pinned delivery identity (identity
-// change since capture). The base ref matters because the provider merge
-// lands in the PR's CURRENT base, not the authorized one: a base changed
-// inside the capture-to-merge window would land the irreversible mutation on
-// a branch that was never authorized. Every terminal observation must carry
-// the consumed head and base evidence.
+// verifyProviderMergeability refuses unless the provider reports the delivery
+// mergeable or already merged.
 func verifyProviderMergeability(obs DeliveryProviderObservation) error {
 	if obs.State == "MERGED" || obs.Mergeability == DeliveryMergeabilityAllowed {
 		return nil
@@ -653,6 +654,18 @@ func verifyProviderMergeability(obs DeliveryProviderObservation) error {
 	return fmt.Errorf("provider mergeability evidence is missing or unknown")
 }
 
+// verifyProviderHead fails closed before mutation when the provider reports a
+// head or a base ref different from the pinned delivery identity (identity
+// change since capture). The base ref matters because the provider merge
+// lands in the PR's CURRENT base, not the authorized one: a base changed
+// inside the capture-to-merge window would land the irreversible mutation on
+// a branch that was never authorized. Every terminal observation must carry
+// the consumed head and base evidence.
+//
+// Residual: this observation precedes the merge and is not atomic with it, so a
+// base change inside that window is still possible. The residual closes when the
+// provider's merge call accepts an expected target branch (neither `gh pr merge`
+// nor the GitLab merge endpoint does).
 func verifyProviderHead(journal *deliveryJournal, obs DeliveryProviderObservation) error {
 	if obs.State == "MERGED" && !validGitObjectID(obs.MergedSHA) {
 		return fmt.Errorf("provider observation is missing or has invalid merge commit evidence")

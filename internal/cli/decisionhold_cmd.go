@@ -64,7 +64,7 @@ func authorityHold(auth *taskauthority.Canonical, id string) (taskauthority.Disp
 
 // holdsScopedToTask reports whether a hold gates the given task: a hold
 // applies when its task scope contains the task or when the task scope is
-// empty (empty scope fields match all tasks, ADR-0004 §7).
+// empty (empty scope fields match all tasks).
 func holdsScopedToTask(hold taskauthority.DispatchHold, taskID string) bool {
 	if len(hold.Scope.TaskIDs) == 0 {
 		return true
@@ -204,7 +204,7 @@ Example:
 				}
 			}
 
-			// The status line is a post-commit projection (ADR-0007 §7): a
+			// The status line is a post-commit projection: a
 			// projection failure must not roll back the authoritative hold.
 			if err := home.AppendStatus(ctx.Home, from, fmt.Sprintf("needs-decision: %s [key=%s]", reason, key)); err != nil {
 				return fmt.Errorf("appending needs-decision status: %w", err)
@@ -286,7 +286,7 @@ Examples:
 				if err := resolveDecisionHold(ctx, auth, originID, key, "recorded (decision noted)", words.words()); err != nil {
 					return fmt.Errorf("completing decision hold %s: %w", key, err)
 				}
-				// The status line is a post-commit projection (ADR-0007 §7),
+				// The status line is a post-commit projection,
 				// mirroring the resolve path so the needs-decision line is not
 				// left stale for verify or the scout retirement check.
 				if err := home.AppendStatus(ctx.Home, originID, fmt.Sprintf("resolved: recorded (decision noted) [key=%s]", key)); err != nil {
@@ -463,7 +463,7 @@ Examples:
 				return fmt.Errorf("resolving hold: %w", err)
 			}
 
-			// Status lines are post-commit projections (ADR-0007 §7).
+			// Status lines are post-commit projections.
 			if err := home.AppendStatus(ctx.Home, from, fmt.Sprintf("resolved: %s [key=%s]", answer, key)); err != nil {
 				return fmt.Errorf("appending resolved status: %w", err)
 			}
