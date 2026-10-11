@@ -116,13 +116,17 @@ func New(l Launch) (*Fence, error) {
 	}
 	// Last, so nothing above reopens it: a seat's PATH directories, and every
 	// ancestor's own name so a directory cannot be renamed or removed away and
-	// replaced. An ancestor strictly inside a writable root is the seat's to
-	// reach but never to change, so chmod, unlink and rename are all refused: a
-	// mode of 000 would take the PATH dir off the seat's PATH. A writable root
-	// itself and everything above it refuse only unlink (a rename is an unlink
-	// of the source name), because munsu chmods and fills them. No lane runs
-	// this off darwin; the darwin fence lane covers it.
-	pathDirs, locked, removable, err := pathDirDenies(append(append([]string{}, l.PathDirs...), binDirs...), roots)
+	// replaced. An ancestor of a PATH dir that is not itself a writable root is
+	// locked: chmod, unlink and rename are all refused, because a mode of 000
+	// would take the PATH dir off the seat's PATH. A writable root refuses only
+	// unlink (a rename is an unlink of the source name), because munsu chmods
+	// and fills it (<home>/state). The git shim dir is stricter: every ancestor
+	// of it, roots and temp roots included, is locked, so a home under a
+	// writable root cannot be chmod'ed to hide the shim. That holds only while
+	// munsu never chmods, renames or removes a directory above the shim (the
+	// home, a temp root); it is wrong the moment munsu chmods a directory above
+	// the shim. No lane runs this off darwin; the darwin fence lane covers it.
+	pathDirs, locked, removable, err := pathDirDenies(append(append([]string{}, l.PathDirs...), binDirs...), l.ShimDir, roots)
 	if err != nil {
 		return nil, err
 	}
@@ -144,37 +148,52 @@ func New(l Launch) (*Fence, error) {
 	}, nil
 }
 
-// pathDirDenies returns the PATH directories as given and symlink-resolved, and
-// the names of all their ancestors split by the writable roots: locked are those
-// strictly inside a root and neither a root nor above one, removable the rest
-// (outside every root the profile already refuses them). A relative or empty entry names
-// the seat's working directory, which the fence cannot refuse, so it is an
-// error: the caller keeps such entries off the seat's PATH.
-func pathDirDenies(pathDirs, roots []string) (dirs, locked, removable []string, err error) {
-	for _, d := range pathDirs {
-		if !filepath.IsAbs(d) {
-			return nil, nil, nil, fmt.Errorf("fence: PATH directory %q is not absolute", d)
+// pathDirDenies returns the PATH directories (and the shim dir) as given and
+// symlink-resolved, and the names of all their ancestors split into locked and
+// removable. Every ancestor of the shim dir is locked. For any other PATH dir
+// an ancestor that is itself a writable root is removable (outside every root
+// the profile already refuses it too), and every other ancestor is locked. A
+// relative or empty entry names the seat's working directory, which the fence
+// cannot refuse, so it is an error: the caller keeps such entries off the
+// seat's PATH.
+func pathDirDenies(pathDirs []string, shim string, roots []string) (dirs, locked, removable []string, err error) {
+	expand := func(in []string) (out []string, err error) {
+		for _, d := range in {
+			if !filepath.IsAbs(d) {
+				return nil, fmt.Errorf("fence: PATH directory %q is not absolute", d)
+			}
+			d = filepath.Clean(d)
+			out = append(out, d)
+			if r, err := resolvePath(d, false); err == nil {
+				out = append(out, r)
+			}
 		}
-		d = filepath.Clean(d)
-		dirs = append(dirs, d)
-		if r, err := resolvePath(d, false); err == nil {
-			dirs = append(dirs, r)
+		return dedupe(out), nil
+	}
+	ancestorsOf := func(in []string) (out []string) {
+		for _, d := range in {
+			for a := filepath.Dir(d); a != filepath.Dir(a); a = filepath.Dir(a) {
+				out = append(out, a)
+			}
+		}
+		return dedupe(out)
+	}
+	if dirs, err = expand(pathDirs); err != nil {
+		return nil, nil, nil, err
+	}
+	var shimDirs []string
+	if shim != "" {
+		if shimDirs, err = expand([]string{shim}); err != nil {
+			return nil, nil, nil, err
 		}
 	}
-	dirs = dedupe(dirs)
-	var ancestors []string
-	for _, d := range dirs {
-		for a := filepath.Dir(d); a != filepath.Dir(a); a = filepath.Dir(a) {
-			ancestors = append(ancestors, a)
-		}
-	}
-	for _, a := range dedupe(ancestors) {
-		atOrAboveRoot := slices.ContainsFunc(roots, func(r string) bool { return within(r, a) })
-		insideRoot := slices.ContainsFunc(roots, func(r string) bool { return within(a, r) })
-		if insideRoot && !atOrAboveRoot {
-			locked = append(locked, a)
-		} else {
+	dirs = dedupe(append(dirs, shimDirs...))
+	shimAncestors := ancestorsOf(shimDirs)
+	for _, a := range ancestorsOf(dirs) {
+		if slices.Contains(roots, a) && !slices.Contains(shimAncestors, a) {
 			removable = append(removable, a)
+		} else {
+			locked = append(locked, a)
 		}
 	}
 	return dirs, locked, removable, nil

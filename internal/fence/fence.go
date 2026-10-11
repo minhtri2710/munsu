@@ -67,6 +67,10 @@ type Launch struct {
 	// PathDirs are the directories on the seat's launch PATH. The seat can write
 	// none of them, nor rename or replace one, whatever else it may write.
 	PathDirs []string
+	// ShimDir is the git shim directory on that PATH, or empty. It is refused
+	// like a PATH dir, and every directory above it is locked against chmod,
+	// rename and removal whatever else the seat may write.
+	ShimDir string
 }
 
 // UnsupportedError is returned by New on a GOOS with no fence implementation.

@@ -251,19 +251,39 @@ func TestSeatCannotWriteReplaceOrRenameAPathDir(t *testing.T) {
 	// inside the root, the root itself is not.
 	deepBin := filepath.Join(uhome, ".claude", "deep", "mid", "bin")
 	mkdirs(t, deepBin)
+	// A PATH dir inside the worktree, a writable root: node_modules is strictly
+	// inside it.
+	wtBin := filepath.Join(l.worktree, "node_modules", ".bin")
+	mkdirs(t, wtBin)
+	// The same shim under a home that sits inside a temp root, itself a
+	// writable root: nothing above the shim may be chmod'ed either.
+	tl := newSplitLayout(t, "")
+	tshim := filepath.Join(tl.home, "git-shim", "bin")
+	mkdirs(t, tshim)
 	// A refused chmod 000 that is not refused must not leave a tree the
 	// cleanup cannot remove.
 	t.Cleanup(func() {
-		for _, d := range []string{filepath.Dir(shim), shim, claudeBin, filepath.Dir(deepBin), deepBin} {
+		for _, d := range []string{filepath.Dir(shim), shim, claudeBin, filepath.Dir(deepBin), deepBin, filepath.Dir(wtBin), wtBin, tl.home, filepath.Dir(tshim), tshim} {
 			os.Chmod(d, 0o755)
 		}
 	})
 	piAgentBin := filepath.Join(uhome, ".pi", "agent", "bin")
 	mkdirs(t, filepath.Join(l.stateDir(), "bin"), piAgentBin)
-	pathDirs := []string{shim, claudeBin, deepBin, tmpBin, linkBin, "/usr/bin"}
+	pathDirs := []string{shim, claudeBin, deepBin, wtBin, tmpBin, linkBin, "/usr/bin"}
 	sl, rl := l.soldier(), l.reviewer()
 	sl.PathDirs, rl.PathDirs = pathDirs, pathDirs
+	sl.ShimDir, rl.ShimDir = shim, shim
 	soldier, reviewer := mustNew(t, sl), mustNew(t, rl)
+	tsl := tl.soldier()
+	tsl.PathDirs, tsl.ShimDir = []string{tshim, "/usr/bin"}, tshim
+	tmpHome := mustNew(t, tsl)
+	// The user's temp root that holds that home. chmod skips a mode the file
+	// already has, so its times are touched instead: a refusal is the sandbox's,
+	// and an allowed touch of a temp dir changes nothing that matters.
+	tmpRoot, err := filepath.EvalSymlinks(os.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	// pi prepends <agent dir>/bin to the PATH of its commands, so the pi seat's
 	// own state dir and the default agent dir hold two more PATH directories.
 	psl, prl := sl, rl
@@ -301,6 +321,14 @@ func TestSeatCannotWriteReplaceOrRenameAPathDir(t *testing.T) {
 		{"soldier creates a directory under the state dir", soldier, []string{"/bin/mkdir", filepath.Join(state, "newdir")}, false, "", ""},
 		{"pi soldier chmods its own state dir", piSoldier, []string{"/bin/chmod", "700", l.stateDir()}, false, "", ""},
 		{"soldier chmods a PATH dir under a harness root to 000", soldier, []string{"/bin/chmod", "000", claudeBin}, true, "", claudeBin},
+		{"soldier creates a file in a PATH dir inside its worktree", soldier, []string{touchBin, filepath.Join(wtBin, "go")}, true, filepath.Join(wtBin, "go"), ""},
+		{"soldier writes beside a PATH dir inside its worktree", soldier, []string{touchBin, filepath.Join(l.worktree, "node_modules", "f")}, false, "", ""},
+		{"soldier chmods the directory above a PATH dir inside its worktree to 000", soldier, []string{"/bin/chmod", "000", filepath.Dir(wtBin)}, true, "", wtBin},
+		{"soldier chmods its worktree", soldier, []string{"/bin/chmod", "700", l.worktree}, false, "", ""},
+		{"soldier chmods the state dir of a home under a temp root", tmpHome, []string{"/bin/chmod", "700", filepath.Join(tl.home, "state")}, false, "", ""},
+		{"soldier chmods a home under a temp root to 000", tmpHome, []string{"/bin/chmod", "000", tl.home}, true, "", tshim},
+		{"soldier chmods the dir holding a home under a temp root to 000", tmpHome, []string{"/bin/chmod", "000", filepath.Dir(tl.home)}, true, "", tshim},
+		{"soldier changes the temp root holding the home", tmpHome, []string{touchBin, tmpRoot}, true, "", tshim},
 		{"soldier chmods the git shim dir to 000", soldier, []string{"/bin/chmod", "000", shim}, true, "", shim},
 		{"soldier chmods the git shim dir's parent to 000", soldier, []string{"/bin/chmod", "000", filepath.Dir(shim)}, true, "", shim},
 		{"soldier chmods a middle dir above a PATH dir under a harness root to 000", soldier, []string{"/bin/chmod", "000", filepath.Dir(deepBin)}, true, "", deepBin},

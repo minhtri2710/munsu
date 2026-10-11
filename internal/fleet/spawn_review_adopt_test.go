@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -288,6 +289,63 @@ func TestReviewLaunchRunsEveryPhaseAgainstTheReviewedCheckout(t *testing.T) {
 	})
 	if err := rr.submitLaunch(); err == nil || !strings.Contains(err.Error(), "does not match this launch") {
 		t.Fatalf("review submit replay error = %v, want mismatched-evidence refusal", err)
+	}
+}
+
+// A reviewer's launch script is built at submit from the seat PATH its launch
+// intent committed at begin, whatever PATH the process has by then.
+func TestReviewSubmitUsesTheCommittedSeatPath(t *testing.T) {
+	isolateHuman(t)
+	f := newLaunchFixture(t, "unused-ship")
+	worktree := mustWorkingShipTaskAt(t, f.auth, "ship-1", newLinkedDeliveryWorktree(t))
+	writePiSettingsInWorktree(t, worktree, harness.PiProjectSettings())
+	r := createReviewTask(t, f.auth, f.homeDir, "ship-1", "review-1", deliveryTestHead)
+	cp := *f.runner
+	cp.args.ID, cp.kind, cp.reviewTask, cp.reviewHead = "review-1", r.kind, r.reviewTask, r.reviewHead
+	rr := &cp
+	briefDir := filepath.Join(f.homeDir, "data", "review-1")
+	if err := os.MkdirAll(briefDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(briefDir, "brief.md"), []byte("# review brief"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := rr.beginLaunchIntent(); err != nil {
+		t.Fatal(err)
+	}
+	committed := slices.Clone(rr.seatPath)
+	bound, err := rr.adoptReviewedWorktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []struct {
+		name string
+		fn   func() error
+	}{
+		{"prompt", func() error { return rr.buildSoldierPrompt(bound) }},
+		{"probe-fence", func() error { return rr.probeFence(bound) }},
+		{"create-session", rr.createSession},
+		{"attach-endpoint", rr.attachEndpoint},
+	} {
+		if err := p.fn(); err != nil {
+			t.Fatalf("%s: %v", p.name, err)
+		}
+	}
+	t.Setenv("PATH", os.Getenv("PATH")+string(os.PathListSeparator)+t.TempDir())
+	if slices.Equal(seatPathDirs(f.homeDir), committed) {
+		t.Fatal("the process PATH did not change; the test proves nothing")
+	}
+	if err := rr.submitLaunch(); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	var export string
+	for _, line := range strings.Split(readFile(t, filepath.Join(rr.launchDir, ".soldier-launch.sh")), "\n") {
+		if strings.HasPrefix(line, "export PATH=") {
+			export = line
+		}
+	}
+	if want := "export PATH=" + shQuote(strings.Join(committed, string(os.PathListSeparator))); export != want {
+		t.Fatalf("reviewer launch script = %q, want the committed seat PATH %q", export, want)
 	}
 }
 

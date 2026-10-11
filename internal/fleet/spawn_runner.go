@@ -1304,7 +1304,8 @@ func (r *Runner) launchIntentMatches(req taskauthority.CanonicalBeginSpawnReques
 		l.Project == req.Project && l.ParentTaskID == req.ParentTaskID && l.LaunchID == req.LaunchID &&
 		l.WindowLabel == req.WindowLabel && l.WorktreeReservationID == req.WorktreeReservationID &&
 		l.WorktreeFenceToken == req.WorktreeFenceToken && l.EndpointReservationID == req.EndpointReservationID &&
-		l.EndpointFenceToken == req.EndpointFenceToken && l.EndpointIncarnation == req.EndpointIncarnation
+		l.EndpointFenceToken == req.EndpointFenceToken && l.EndpointIncarnation == req.EndpointIncarnation &&
+		slices.Equal(l.SeatPathDirs, req.SeatPathDirs)
 }
 
 // adoptLaunch copies the committed launch intent identities onto the Runner
@@ -2035,7 +2036,7 @@ func (r *Runner) probeFence(bound BoundWorktree) error {
 	launch := fence.Launch{
 		Role: fence.RoleSoldier, Harness: r.launchBin, Home: r.homeDir, Primary: primary,
 		Worktree: bound.Path(), GitDir: gitDir, CommonDir: commonDir, Branch: "mu/" + r.args.ID,
-		PathDirs: r.seatPath,
+		PathDirs: r.seatPath, ShimDir: gitShimDir(r.homeDir),
 	}
 	if r.launchBin == harness.Pi {
 		if launch.HarnessStateDir, err = piAgentDirPath(r.homeDir, r.args.ID); err != nil {

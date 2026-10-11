@@ -148,13 +148,21 @@ func TestFencedSoldierAppendsItsStatus(t *testing.T) {
 }
 
 // Taking the shim dir off the seat's PATH would let `git` resolve past the git
-// guard: a directory the shell cannot enter is skipped. Neither the shim dir,
-// its parent, nor the state dir the seat writes may be chmod'ed to hide it.
-// The fixture home sits under a temp root, so the home dir itself is writable
-// here and is not asserted.
+// guard: a directory the shell cannot enter is skipped. None of the shim dir,
+// its parent or the home (here inside a temp root, a writable root) may be
+// chmod'ed to hide it; the state dir the seat writes is not above the shim. The home sits directly in /private/tmp, a
+// writable root, so that root is itself an ancestor of the shim.
 func TestFencedSoldierCannotTakeTheGitShimOffItsPath(t *testing.T) {
 	isolateHuman(t)
 	f := newFenceFixture(t)
+	tmpHome, err := os.MkdirTemp("/private/tmp", "munsu-shim-home-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(tmpHome) })
+	if f.home, err = canonicalPath(tmpHome); err != nil {
+		t.Fatal(err)
+	}
 	shimDir, err := provisionGitShim(f.home)
 	if err != nil {
 		t.Fatal(err)
@@ -163,7 +171,7 @@ func TestFencedSoldierCannotTakeTheGitShimOffItsPath(t *testing.T) {
 	if err := os.MkdirAll(state, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	hidden := []string{filepath.Dir(shimDir), shimDir, state}
+	hidden := []string{filepath.Dir(shimDir), shimDir, f.home, state}
 	t.Cleanup(func() {
 		for _, d := range hidden {
 			os.Chmod(d, 0o755)
@@ -184,6 +192,15 @@ func TestFencedSoldierCannotTakeTheGitShimOffItsPath(t *testing.T) {
 	out, err := exec.Command(argv[0], argv[1:]...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
+	}
+	// /private/tmp is a writable root above the home: the fence must refuse a
+	// change to its own times, which an unfenced touch of it succeeds at.
+	touch, err := r.fence.Wrap([]string{"/usr/bin/touch", "/private/tmp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o, err := exec.Command(touch[0], touch[1:]...).CombinedOutput(); err == nil || !strings.Contains(string(o), "Operation not permitted") {
+		t.Errorf("touch /private/tmp under the fence = %v %s; want the sandbox's refusal", err, o)
 	}
 	want := filepath.Join(shimDir, "git")
 	got := strings.Split(strings.TrimSpace(string(out)), "\n")
