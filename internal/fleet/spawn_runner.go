@@ -428,26 +428,26 @@ func (r *Runner) resolveHome() error {
 // checkFleetBoundary enforces the Fleet-boundary refusal on a Captain-owned
 // home immediately after home resolution, before checkSupervision or
 // checkSpawnAuthority can read the target home's watcher lease or state
-// metadata (issue #546 Slice 6). It examines only the durable .munsu-captain-home
-// provenance marker (never state/, watcher files, or config surfaces): a
+// metadata (issue #546 Slice 6). It examines only the durable captain-home
+// provenance files (home.IsCaptainHome; never state/, watcher files, or config surfaces): a
 // valid Captain-owned home reached by a General, an unranked parent, or an
 // unknown role is refused here, while an explicit Captain from its own home
 // is authorized state-free and allowed to proceed through its own phases.
 func (r *Runner) checkFleetBoundary() error {
 	captainID := ""
-	switch _, err := os.Stat(filepath.Join(r.homeDir, home.CaptainProvenanceMarkerName)); {
-	case err == nil:
+	switch captain, err := home.IsCaptainHome(r.homeDir); {
+	case err != nil:
+		return policyError(DispatchPolicyProblemCaptainOnUnprovenHome, strings.TrimSpace(os.Getenv("MUNSU_ROLE")), r.homeDir,
+			fmt.Sprintf("reading captain provenance marker: %v", err))
+	case !captain:
+		return nil // General home; no early boundary refusal.
+	default:
 		id, verr := home.ValidateCaptainProvenance(r.homeDir)
 		if verr != nil {
 			return policyError(DispatchPolicyProblemCaptainOnUnprovenHome, strings.TrimSpace(os.Getenv("MUNSU_ROLE")), r.homeDir,
 				fmt.Sprintf("captain provenance marker is malformed or unreadable: %v", verr))
 		}
 		captainID = id
-	case os.IsNotExist(err):
-		return nil // General home; no early boundary refusal.
-	default:
-		return policyError(DispatchPolicyProblemCaptainOnUnprovenHome, strings.TrimSpace(os.Getenv("MUNSU_ROLE")), r.homeDir,
-			fmt.Sprintf("reading captain provenance marker: %v", err))
 	}
 
 	parent := strings.TrimSpace(os.Getenv("MUNSU_ROLE"))

@@ -1397,6 +1397,54 @@ func TestScanFleet_CaptainTerminalStillSignals(t *testing.T) {
 	}
 }
 
+// TestScanFleet_CaptainHomeOwnCaptainKindSignal proves the watcher reads a
+// captain home by the one home predicate: in a captain home (a marker or only
+// .captain-provenance) a captain-kind task's human-needed status is not
+// relayed to the General, and the General's own home still signals it.
+func TestScanFleet_CaptainHomeOwnCaptainKindSignal(t *testing.T) {
+	cases := []struct {
+		name       string
+		arrange    func(t *testing.T, homeDir string)
+		wantSignal bool
+	}{
+		{name: "block: .captain-provenance and no marker", arrange: func(t *testing.T, homeDir string) {
+			if err := os.WriteFile(filepath.Join(homeDir, mhome.CaptainProvenanceName), []byte("source-repo\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "block: valid marker", arrange: func(t *testing.T, homeDir string) {
+			if err := mhome.SeedCaptainProvenance(homeDir, "domain"); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "allow: the General's home", arrange: func(*testing.T, string) {}, wantSignal: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			tc.arrange(t, tmp)
+			if err := mhome.WriteMeta(tmp, "captain:domain", map[string]string{
+				"kind":    "captain",
+				"window":  "@nonexistent-captain",
+				"backend": "tmux",
+			}); err != nil {
+				t.Fatal(err)
+			}
+			statusPath, err := mhome.StatusFilePath(tmp, "captain:domain")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(statusPath, []byte("failed: handoff broke\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			reason := testScanFleet(tmp)
+			if signaled := reason != nil && reason.Kind == "signal"; signaled != tc.wantSignal {
+				t.Fatalf("testScanFleet = %+v, want signal = %v", reason, tc.wantSignal)
+			}
+		})
+	}
+}
+
 func TestRunCycle_StaleFingerprintStableAcrossPolls(t *testing.T) {
 	tmp := t.TempDir()
 	stateDir := filepath.Join(tmp, "state")
@@ -1443,7 +1491,7 @@ func TestNormalRunCycle_NoDiagnosticWake(t *testing.T) {
 	termKey := "uplink"
 
 	// Write provenance marker
-	markerPath := filepath.Join(tmp, ProvenanceMarkerName)
+	markerPath := filepath.Join(tmp, mhome.CaptainProvenanceMarkerName)
 	os.MkdirAll(filepath.Dir(markerPath), 0755)
 	os.WriteFile(markerPath, []byte("munsu-v2\ntest-captain\n"+tmp+"\n"), 0644)
 
@@ -1496,7 +1544,7 @@ func TestRunCycle_FailsGracefullyOnInvalidParent(t *testing.T) {
 	termKey := "uplink"
 
 	// Write provenance marker
-	markerPath := filepath.Join(tmp, ProvenanceMarkerName)
+	markerPath := filepath.Join(tmp, mhome.CaptainProvenanceMarkerName)
 	os.MkdirAll(filepath.Dir(markerPath), 0755)
 	os.WriteFile(markerPath, []byte("munsu-v2\ntest-captain\n"+tmp+"\n"), 0644)
 

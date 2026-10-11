@@ -352,7 +352,7 @@ func TestSeedWorktree_CreatesWorktreeAndStructure(t *testing.T) {
 	}
 
 	// Verify provenance home.
-	if _, err := os.Stat(filepath.Join(homePath, ProvenanceMarkerName)); err != nil {
+	if _, err := os.Stat(filepath.Join(homePath, home.CaptainProvenanceMarkerName)); err != nil {
 		t.Errorf("provenance marker not created: %v", err)
 	}
 
@@ -648,7 +648,7 @@ func TestProvenance_SeedAndValidate(t *testing.T) {
 
 func TestProvenance_InvalidFormat(t *testing.T) {
 	tmp := t.TempDir()
-	os.WriteFile(filepath.Join(tmp, ProvenanceMarkerName), []byte("only-id\n"), 0644)
+	os.WriteFile(filepath.Join(tmp, home.CaptainProvenanceMarkerName), []byte("only-id\n"), 0644)
 	_, err := home.ValidateCaptainProvenance(tmp)
 	if err == nil {
 		t.Fatal("expected error for malformed marker")
@@ -657,7 +657,7 @@ func TestProvenance_InvalidFormat(t *testing.T) {
 
 func TestProvenance_WrongVersion(t *testing.T) {
 	tmp := t.TempDir()
-	os.WriteFile(filepath.Join(tmp, ProvenanceMarkerName), []byte("old-v0\nsome-id\nsome/home\n"), 0644)
+	os.WriteFile(filepath.Join(tmp, home.CaptainProvenanceMarkerName), []byte("old-v0\nsome-id\nsome/home\n"), 0644)
 	_, err := home.ValidateCaptainProvenance(tmp)
 	if err == nil {
 		t.Fatal("expected error for wrong version")
@@ -1640,6 +1640,18 @@ func TestCaptainIdentity(t *testing.T) {
 				return Launch(captainHome, parent, launchCaptureEndpoint{}, fakeIntegrationPort{})
 			},
 			want: "cannot launch another captain",
+		},
+		{
+			name: "launch refuses from a parent home with .captain-provenance and no marker",
+			run: func(t *testing.T) error {
+				parent, captainHome := launchableCaptain(t)
+				if err := os.WriteFile(filepath.Join(parent, home.CaptainProvenanceName), []byte("source-repo\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv("MUNSU_ROLE", "")
+				return Launch(captainHome, parent, launchCaptureEndpoint{}, fakeIntegrationPort{})
+			},
+			want: "active home has invalid captain provenance",
 		},
 		{
 			name: "launch allows a general launching a captain",
@@ -2748,7 +2760,7 @@ func TestSeedFromWorktree_CreatesDetachedWorktree(t *testing.T) {
 	}
 
 	// .munsu-captain-home exists.
-	if _, err := os.Stat(filepath.Join(homePath, ProvenanceMarkerName)); err != nil {
+	if _, err := os.Stat(filepath.Join(homePath, home.CaptainProvenanceMarkerName)); err != nil {
 		t.Errorf("provenance marker missing: %v", err)
 	}
 

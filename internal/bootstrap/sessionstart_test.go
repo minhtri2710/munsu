@@ -900,6 +900,11 @@ func TestRunSessionStartWritesNothingOutsideTheGeneral(t *testing.T) {
 				t.Fatal(err)
 			}
 		},
+		"captain provenance file and no marker": func(t *testing.T, home string) {
+			if err := os.WriteFile(filepath.Join(home, mhome.CaptainProvenanceName), []byte("source-repo\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		},
 		"soldier role": func(t *testing.T, _ string) { t.Setenv("MUNSU_ROLE", "soldier") },
 	}
 	for name, arrange := range cases {

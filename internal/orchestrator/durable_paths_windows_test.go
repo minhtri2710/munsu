@@ -114,7 +114,7 @@ func TestActivateOnReceiptDecodesDurableTaskStem(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(parentHome, "state"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(captainHome, ProvenanceMarkerName), []byte("munsu-v2\napi\n"+captainHome+"\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(captainHome, home.CaptainProvenanceMarkerName), []byte("munsu-v2\napi\n"+captainHome+"\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	taskID, termKey := "captain:api", "terminal-1"

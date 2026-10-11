@@ -18,9 +18,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
-// ProvenanceMarkerName is the marker file written to a seeded captain home root.
-const ProvenanceMarkerName = home.CaptainProvenanceMarkerName
-
 // CaptainCharterVersion is the current version identifier embedded in every generated
 // .captain-charter.md file so agents and operators can verify the charter revision.
 const CaptainCharterVersion = "captain-charter-v1"
@@ -855,16 +852,17 @@ func refuseNestedCaptainLaunch(parentHome string) error {
 	if os.Getenv("MUNSU_ROLE") == "captain" {
 		return fmt.Errorf("captains cannot launch other captains; spawn soldiers in their own home instead")
 	}
-	markerPath := filepath.Join(parentHome, ProvenanceMarkerName)
-	if _, err := os.Stat(markerPath); err == nil {
-		if _, validateErr := home.ValidateCaptainProvenance(parentHome); validateErr != nil {
-			return fmt.Errorf("active home has invalid captain provenance: %w", validateErr)
-		}
-		return fmt.Errorf("captain home %s cannot launch another captain", parentHome)
-	} else if !os.IsNotExist(err) {
+	captain, err := home.IsCaptainHome(parentHome)
+	if err != nil {
 		return fmt.Errorf("checking active home provenance: %w", err)
 	}
-	return nil
+	if !captain {
+		return nil
+	}
+	if _, err := home.ValidateCaptainProvenance(parentHome); err != nil {
+		return fmt.Errorf("active home has invalid captain provenance: %w", err)
+	}
+	return fmt.Errorf("captain home %s cannot launch another captain", parentHome)
 }
 
 // Launch starts a captain using a session-backed endpoint.

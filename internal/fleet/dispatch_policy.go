@@ -124,20 +124,17 @@ func generalOnCaptainHomeError(parent, captainID, homeDir string) error {
 func ResolveDispatchPolicy(homeDir, parentRank string) (DispatchPolicy, string, error) {
 	captainID := ""
 	provenanced := false
-	markerPath := filepath.Join(homeDir, home.CaptainProvenanceMarkerName)
-	switch _, err := os.Stat(markerPath); {
-	case err == nil:
+	switch captain, err := home.IsCaptainHome(homeDir); {
+	case err != nil:
+		return "", "", policyError(DispatchPolicyProblemCaptainOnUnprovenHome, parentRank, homeDir,
+			fmt.Sprintf("reading captain provenance marker: %v", err))
+	case captain:
 		id, verr := home.ValidateCaptainProvenance(homeDir)
 		if verr != nil {
 			return "", "", policyError(DispatchPolicyProblemCaptainOnUnprovenHome, parentRank, homeDir,
 				fmt.Sprintf("captain provenance marker is malformed or unreadable: %v", verr))
 		}
 		captainID, provenanced = id, true
-	case os.IsNotExist(err):
-		// General home — no provenance.
-	default:
-		return "", "", policyError(DispatchPolicyProblemCaptainOnUnprovenHome, parentRank, homeDir,
-			fmt.Sprintf("reading captain provenance marker: %v", err))
 	}
 
 	// Config surface evidence in the operation home.

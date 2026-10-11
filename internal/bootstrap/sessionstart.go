@@ -264,8 +264,8 @@ func printIntegrationMatrix(w io.Writer, home string) {
 // recordGeneralDelivery gives the General's wake dispatch its two settings:
 // config/general-pane, the pane that owns the session lock, and
 // config/wake-delivery-mode=herdr when the backend is herdr. It acts only in
-// the General's home (no .munsu-captain-home marker, which an unreadable
-// marker also counts as, and MUNSU_ROLE unset or general), never replaces an existing value, and never fails the session: a
+// the General's home (no captain marker or provenance file, which an unreadable
+// one also counts as, and MUNSU_ROLE unset or general), never replaces an existing value, and never fails the session: a
 // value that cannot be read or written is reported on w and left unset, which
 // keeps DispatchWake skipping.
 func recordGeneralDelivery(w io.Writer, home string) {
@@ -274,7 +274,7 @@ func recordGeneralDelivery(w io.Writer, home string) {
 	default:
 		return
 	}
-	if _, err := os.Stat(filepath.Join(home, mhome.CaptainProvenanceMarkerName)); !os.IsNotExist(err) {
+	if captain, err := mhome.IsCaptainHome(home); captain || err != nil {
 		return
 	}
 

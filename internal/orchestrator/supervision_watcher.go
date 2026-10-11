@@ -481,8 +481,7 @@ func scanFleetWithProbe(homeDir string, clearResolved bool, probe TaskEndpointPr
 	// failed) wake General even when the pane is alive. Completion, readiness
 	// and merge lines are audit projections and wake nothing here.
 	seenStatus := map[string]bool{}
-	_, captainHomeErr := os.Stat(filepath.Join(homeDir, home.CaptainProvenanceMarkerName))
-	isCaptainHome := captainHomeErr == nil
+	isCaptainHome, _ := home.IsCaptainHome(homeDir)
 	for _, match := range home.ScanGeneralRelevant(filepath.Join(homeDir, "state")) {
 		if isCaptainHome {
 			if meta, err := home.ReadMeta(homeDir, match.TaskID); err == nil && meta["kind"] == "captain" {

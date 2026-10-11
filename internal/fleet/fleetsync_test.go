@@ -86,3 +86,80 @@ func gitSyncTestRun(t *testing.T, dir string, args ...string) {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
 }
+
+// TestSyncOneRefusals pins the fleet-sync refusals: a checkout whose git
+// status cannot be read, and a git lock file left in the checkout, report the
+// project stuck with git's error; a clean checkout fast-forwards.
+func TestSyncOneRefusals(t *testing.T) {
+	tests := []struct {
+		name    string
+		prepare func(t *testing.T, project string)
+		want    []string
+	}{
+		{
+			name: "unreadable git status is stuck",
+			prepare: func(t *testing.T, project string) {
+				if err := os.WriteFile(filepath.Join(project, ".git", "index"), []byte("not an index"), 0644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: []string{"reading git status: ", "index file smaller than expected"},
+		},
+		{
+			name: "leftover lock is stuck with git's error",
+			prepare: func(t *testing.T, project string) {
+				if err := os.WriteFile(filepath.Join(project, ".git", "index.lock"), nil, 0644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: []string{"ff-merge failed", "index.lock", "File exists"},
+		},
+		{
+			name:    "clean checkout syncs",
+			prepare: func(*testing.T, string) {},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			remote := filepath.Join(root, "remote.git")
+			gitSyncTestRun(t, root, "init", "--bare", "-b", "main", remote)
+			upstream := filepath.Join(root, "upstream")
+			gitSyncTestRun(t, root, "clone", remote, upstream)
+			gitSyncTestRun(t, upstream, "config", "user.name", "Munsu Test")
+			gitSyncTestRun(t, upstream, "config", "user.email", "munsu@example.invalid")
+			commitSyncTestFile(t, upstream, "first")
+			gitSyncTestRun(t, upstream, "push", "origin", "HEAD:main")
+			project := filepath.Join(root, "project")
+			gitSyncTestRun(t, root, "clone", remote, project)
+			commitSyncTestFile(t, upstream, "second")
+			gitSyncTestRun(t, upstream, "push", "origin", "HEAD:main")
+			tt.prepare(t, project)
+
+			err := syncOne(project)
+			if len(tt.want) == 0 {
+				if err != nil {
+					t.Fatalf("syncOne: %v", err)
+				}
+				if _, statErr := os.Stat(filepath.Join(project, "second")); statErr != nil {
+					t.Fatalf("clean checkout did not fast-forward: %v", statErr)
+				}
+				return
+			}
+			for _, want := range tt.want {
+				if err == nil || !strings.Contains(err.Error(), want) {
+					t.Fatalf("syncOne = %v, want error containing %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+func commitSyncTestFile(t *testing.T, dir, name string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(name+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	gitSyncTestRun(t, dir, "add", name)
+	gitSyncTestRun(t, dir, "commit", "-m", name)
+}
