@@ -95,6 +95,9 @@ func TestSyncOneRefusals(t *testing.T) {
 		name    string
 		prepare func(t *testing.T, project string)
 		want    []string
+		// after, when set, is the row's only assertion: a post-condition on the
+		// project once syncOne returns, whatever git made of the state.
+		after func(t *testing.T, project string)
 	}{
 		{
 			name: "unreadable git status is stuck",
@@ -113,6 +116,19 @@ func TestSyncOneRefusals(t *testing.T) {
 				}
 			},
 			want: []string{"ff-merge failed", "index.lock", "File exists"},
+		},
+		{
+			name: "leftover packed-refs.lock is never deleted",
+			prepare: func(t *testing.T, project string) {
+				if err := os.WriteFile(filepath.Join(project, ".git", "packed-refs.lock"), nil, 0644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			after: func(t *testing.T, project string) {
+				if _, err := os.Stat(filepath.Join(project, ".git", "packed-refs.lock")); err != nil {
+					t.Fatalf("sync deleted the git lock file: %v", err)
+				}
+			},
 		},
 		{
 			name:    "clean checkout syncs",
@@ -137,6 +153,10 @@ func TestSyncOneRefusals(t *testing.T) {
 			tt.prepare(t, project)
 
 			err := syncOne(project)
+			if tt.after != nil {
+				tt.after(t, project)
+				return
+			}
 			if len(tt.want) == 0 {
 				if err != nil {
 					t.Fatalf("syncOne: %v", err)
