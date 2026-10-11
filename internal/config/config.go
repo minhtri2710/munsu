@@ -51,7 +51,7 @@ func Get(homeDir, key string) (string, error) {
 	data, err := os.ReadFile(p)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", fmt.Errorf("config key %q not found", key)
+			return "", fmt.Errorf("config key %q not found: %w", key, err)
 		}
 		return "", fmt.Errorf("reading config file %s: %w", p, err)
 	}

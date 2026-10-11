@@ -481,3 +481,115 @@ func TestCheckSeatRootsRefusals(t *testing.T) {
 		}
 	}
 }
+
+// rootsEnv points the user home and PATH at fresh directories under root so the
+// validator's home-relative denylist and PATH rule are the test's own.
+func rootsEnv(t *testing.T, root string) (userHome, pathDir string) {
+	t.Helper()
+	userHome, pathDir = filepath.Join(root, "userhome"), filepath.Join(root, "pathbin")
+	for _, d := range []string{userHome, pathDir} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("HOME", userHome)
+	t.Setenv("USERPROFILE", userHome)
+	t.Setenv("PATH", pathDir)
+	return userHome, pathDir
+}
+
+func mkRoot(t *testing.T, dir string) string {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestValidateWritableRootsRefusals(t *testing.T) {
+	l := newLayout(t)
+	userHome, pathDir := rootsEnv(t, l.root)
+	cache := mkRoot(t, filepath.Join(l.root, "npm-cache"))
+	file := filepath.Join(l.root, "file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	other := mkRoot(t, filepath.Join(l.root, "other-project"))
+	munsuHome := mkRoot(t, filepath.Join(l.root, "mh", "home"))
+	facts := RootFacts{Home: munsuHome, Checkouts: []string{l.primary, other}}
+
+	t.Run("a clear root resolves", func(t *testing.T) {
+		got, err := ValidateWritableRoots([]string{cache}, facts)
+		if err != nil || len(got) != 1 || got[0] != cache {
+			t.Fatalf("roots = %q, %v", got, err)
+		}
+	})
+	tests := []struct{ name, root, want string }{
+		{"relative", "npm-cache", "is not absolute and clean"},
+		{"the filesystem root", string(filepath.Separator), "path is the filesystem root"},
+		{"missing", filepath.Join(l.root, "absent"), "fence-writable-roots: " + filepath.Join(l.root, "absent") + ":"},
+		{"a file", file, file + " is not a directory"},
+		{"the user home", userHome, "is the user home or an ancestor of it"},
+		{"an ancestor of the user home", l.root, "is the user home or an ancestor of it"},
+		{"inside the munsu home", filepath.Join(munsuHome, "state"), "overlaps protected path " + munsuHome},
+		{"containing the munsu home", filepath.Dir(munsuHome), "overlaps protected path " + munsuHome},
+		{"inside a checkout", filepath.Join(l.primary, "node_modules"), "overlaps protected path " + l.primary},
+		{"a registered project's checkout", other, "overlaps protected path " + other},
+		{"user ssh keys", filepath.Join(userHome, ".ssh"), "overlaps protected path " + filepath.Join(userHome, ".ssh")},
+		{"a claude state dir", filepath.Join(userHome, ".claude-work"), "overlaps protected path " + filepath.Join(userHome, ".claude-work")},
+		{"a launch agent dir", filepath.Join(userHome, "Library", "LaunchAgents", "x"), "overlaps protected path"},
+		{"a PATH entry", filepath.Join(pathDir, "sub"), "overlaps protected path " + pathDir},
+		{"a system tool dir", "/usr/local/share", "overlaps protected path /usr/local"},
+	}
+	if err := os.MkdirAll(filepath.Join(userHome, ".claude-work"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range tests {
+		if !filepath.IsAbs(tt.root) && tt.name != "relative" {
+			continue // a unix-style absolute path is not absolute on this OS
+		}
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := ValidateWritableRoots([]string{tt.root}, facts); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("err = %v, want it to contain %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveLaunchWritableRoots(t *testing.T) {
+	l := newLayout(t)
+	rootsEnv(t, l.root)
+	cache := mkRoot(t, filepath.Join(l.root, "npm-cache"))
+	gateRepo := mkRoot(t, filepath.Join(l.root, "gate", "repo.git"))
+
+	t.Run("a soldier's roots resolve into the launch", func(t *testing.T) {
+		launch := l.soldier()
+		launch.WritableRoots = []string{cache}
+		p, err := resolveLaunch(launch)
+		if err != nil || len(p.roots) != 1 || p.roots[0] != cache {
+			t.Fatalf("roots = %q, %v", p.roots, err)
+		}
+	})
+	tests := []struct {
+		name string
+		mut  func(*Launch)
+		want string
+	}{
+		{"a reviewer has none", func(x *Launch) { *x = l.reviewer(); x.WritableRoots = []string{cache} }, "a reviewer launch has no extra writable roots"},
+		{"the soldier's own worktree", func(x *Launch) { x.WritableRoots = []string{l.worktree} }, "overlaps protected path " + l.worktree},
+		{"the gate repo", func(x *Launch) {
+			x.GateRepo, x.GateState = gateRepo, filepath.Join(l.root, "gate", "state.db")
+			x.WritableRoots = []string{gateRepo}
+		}, "overlaps protected path " + gateRepo},
+		{"a registered project's checkout", func(x *Launch) { x.Checkouts = []string{cache}; x.WritableRoots = []string{cache} }, "overlaps protected path " + cache},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			launch := l.soldier()
+			tt.mut(&launch)
+			if _, err := resolveLaunch(launch); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("err = %v, want it to contain %q", err, tt.want)
+			}
+		})
+	}
+}

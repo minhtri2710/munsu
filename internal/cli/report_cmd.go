@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -65,6 +64,16 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 			}
 
 			parentHome := os.Getenv("MUNSU_PARENT_STATUS")
+
+			// The review-ready flush names its sender; derive it before anything
+			// is delivered so a refused identity leaves no half-done report.
+			var flushSender string
+			if role == "soldier" && state == "review-ready" {
+				var identErr error
+				if flushSender, _, identErr = homeIdentity(homeDir); identErr != nil {
+					return fmt.Errorf("report: deriving sender identity: %w", identErr)
+				}
+			}
 
 			// A review soldier's outcome is its verdict file, never a status report.
 			if role == "soldier" && isTaskKind(parentHome, taskID, taskauthority.KindReview) {
@@ -133,7 +142,7 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 				senderIdentity := home.ReceiverIDForTask(taskID)
 				senderRank := orchestrator.Rank(role)
 				if role == "captain" {
-					identity, _, idErr := orchestrator.ReadHomeIdentity(homeDir)
+					identity, idErr := captainHomeID(homeDir)
 					if idErr != nil {
 						return fmt.Errorf("report: deriving sender identity: %w", idErr)
 					}
@@ -197,11 +206,7 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 				}
 				fleet.EmitReadyEvent(homeDir, taskID, "", metaGeneration)
 
-				senderIdentity, _, _ := orchestrator.ReadHomeIdentity(homeDir)
-				if senderIdentity == "" {
-					senderIdentity = filepath.Base(homeDir)
-				}
-				if fr := fleet.FlushPendingSoldierCommands(homeDir, taskID, senderIdentity, newSessionSoldierEndpoints()); fr.Err != nil {
+				if fr := fleet.FlushPendingSoldierCommands(homeDir, taskID, flushSender, newSessionSoldierEndpoints()); fr.Err != nil {
 					fmt.Fprintf(os.Stderr, "review-ready flush: %v\n", fr.Err)
 				}
 			}

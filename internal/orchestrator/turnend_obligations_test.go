@@ -390,52 +390,6 @@ func TestWriteReceipt_StaleAckInvalidation(t *testing.T) {
 	}
 }
 
-// TestReadCaptainID_FromMarker verifies that readCaptainID parses the
-// .munsu-captain-home provenance marker correctly.
-func TestReadCaptainID_FromMarker(t *testing.T) {
-	tmp := t.TempDir()
-	t.Run("reads captain ID from marker", func(t *testing.T) {
-		markerPath := filepath.Join(tmp, ProvenanceMarkerName)
-		os.MkdirAll(filepath.Dir(markerPath), 0755)
-		os.WriteFile(markerPath, []byte("munsu-v2\nmy-captain\n/home/user/.munsu/captains/my-captain\n"), 0644)
-
-		id, err := readCaptainID(tmp)
-		if err != nil {
-			t.Fatalf("readCaptainID: %v", err)
-		}
-		if id != "my-captain" {
-			t.Errorf("captain id = %q, want %q", id, "my-captain")
-		}
-	})
-
-	t.Run("falls back to basename when no marker", func(t *testing.T) {
-		empty := t.TempDir()
-		id, err := readCaptainID(empty)
-		if err != nil {
-			t.Fatalf("readCaptainID without marker: %v", err)
-		}
-		basename := filepath.Base(empty)
-		if id != basename {
-			t.Errorf("captain id = %q, want basename %q", id, basename)
-		}
-	})
-
-	t.Run("falls back to basename when marker is malformed", func(t *testing.T) {
-		bad := t.TempDir()
-		markerPath := filepath.Join(bad, ProvenanceMarkerName)
-		os.WriteFile(markerPath, []byte("munsu-v2\n\n"), 0644)
-
-		id, err := readCaptainID(bad)
-		if err != nil {
-			t.Fatalf("readCaptainID with empty id: %v", err)
-		}
-		basename := filepath.Base(bad)
-		if id != basename {
-			t.Errorf("captain id = %q, want basename %q", id, basename)
-		}
-	})
-}
-
 func TestMaterialReportExistsTakesALineOverTheScannerLimit(t *testing.T) {
 	home := t.TempDir()
 	if err := mhome.AppendStatus(home, "t1", "done: "+strings.Repeat("row\n", 30000)); err != nil {

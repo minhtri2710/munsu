@@ -8,9 +8,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/fence"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 )
@@ -70,6 +73,9 @@ type Result struct {
 	Configs         []ConfigDiagnostic
 	GC              *GCDiagnostic
 	MissingTools    []string
+	// WriteFence is set only on a host with no write fence: seat launches refuse
+	// there unless a project allows an unfenced seat.
+	WriteFence *ConfigDiagnostic
 	// BaseConfigErr is the load error of a present but unreadable or invalid
 	// fleet base document; a missing document leaves it nil.
 	BaseConfigErr error
@@ -143,6 +149,18 @@ func runWithRuntimeIdentity(home string, lockHeld bool, installTools []string, r
 		res.Configs = append(res.Configs, ConfigDiagnostic{Key: "BACKEND_RESOLVED", Value: "none", Source: "no persisted backend identity (set backend in the fleet base config)"})
 	}
 
+	// WRITE_FENCE: a host with no fence refuses seat launches unless a project
+	// sets fence-unsupported allow; name the projects that do.
+	var unfenced []string
+	if overlays, err := config.LoadProjectOverlays(home); err == nil {
+		for name, o := range overlays {
+			if o.FenceUnsupported == "allow" {
+				unfenced = append(unfenced, name)
+			}
+		}
+	}
+	res.WriteFence = writeFenceDiagnostic(fence.Supported(), unfenced)
+
 	// 6. Install tools if requested and lock held
 	if lockHeld && len(installTools) > 0 {
 		for _, tool := range installTools {
@@ -170,6 +188,18 @@ func runWithRuntimeIdentity(home string, lockHeld bool, installTools []string, r
 	}
 
 	return res, nil
+}
+
+// writeFenceDiagnostic is nil where the host has a write fence.
+func writeFenceDiagnostic(unsupported error, unfenced []string) *ConfigDiagnostic {
+	if unsupported == nil {
+		return nil
+	}
+	if len(unfenced) == 0 {
+		return &ConfigDiagnostic{Key: "WRITE_FENCE", Value: "unsupported; soldier and reviewer launches are refused", Source: unsupported.Error() + "; allow a project with `munsu project config set <project> fence-unsupported allow`"}
+	}
+	sort.Strings(unfenced)
+	return &ConfigDiagnostic{Key: "WRITE_FENCE", Value: "unsupported; seats of " + strings.Join(unfenced, ", ") + " launch UNFENCED", Source: unsupported.Error()}
 }
 
 // ghAuth checks whether gh is authenticated.

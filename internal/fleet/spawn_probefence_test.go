@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	fleetconfig "github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/harness"
 )
 
@@ -45,6 +46,26 @@ func (f fenceFixture) runner(mode string) *Runner {
 	return r
 }
 
+// withOverlay gives the runner a frozen project config resolved from overlay.
+func withOverlay(t *testing.T, r *Runner, overlay fleetconfig.ProjectOverlay) {
+	t.Helper()
+	snap, err := fleetconfig.NewResolvedSnapshotWithToolProbe(
+		fleetconfig.FleetBaseDocument{SchemaVersion: fleetconfig.FleetBaseSchemaVersion, Config: fleetconfig.FleetBaseConfig{Backend: "tmux"}},
+		fleetconfig.ProjectFacts{Name: "p", Path: r.projPath, Overlay: overlay}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.projectConfig = SpawnProjectConfig{Frozen: snap, ProjectName: "p", ProjectPath: r.projPath}
+	r.projectConfigLoaded = true
+}
+
+// allowUnfenced lets the runner's project launch unfenced where the host has no
+// fence; on a host with one it changes nothing.
+func allowUnfenced(t *testing.T, r *Runner) {
+	t.Helper()
+	withOverlay(t, r, fleetconfig.ProjectOverlay{FenceUnsupported: "allow"})
+}
+
 func TestProbeFenceRefusals(t *testing.T) {
 	isolateHuman(t)
 	t.Setenv("NM_HOME", t.TempDir())
@@ -79,6 +100,7 @@ func TestProbeFenceRefusals(t *testing.T) {
 	t.Run("a fence that cannot be built refuses the launch", func(t *testing.T) {
 		r := f.runner("direct-PR")
 		r.homeDir = "relative/home"
+		allowUnfenced(t, r)
 		err := r.probeFence(BoundWorktree{path: f.worktree})
 		if runtime.GOOS != "darwin" {
 			if err != nil || r.fenceRecord.Reason == "" {
@@ -107,6 +129,7 @@ func TestProbeFenceRecordsTheSeatFence(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := f.runner(tc.mode)
+			allowUnfenced(t, r)
 			if tc.review {
 				launchDir := filepath.Join(f.home, "review", "task-1", "1")
 				if err := os.MkdirAll(filepath.Join(f.home, "state"), 0o755); err != nil { // the reviewer's probe writes beside its verdict file
@@ -122,13 +145,41 @@ func TestProbeFenceRecordsTheSeatFence(t *testing.T) {
 			}
 			rec := r.fenceRecord
 			if runtime.GOOS != "darwin" {
-				if rec.Applied || rec.Reason == "" || !strings.Contains(rec.Reason, runtime.GOOS) || r.fence != nil {
+				if rec.Applied || rec.FenceUnsupported != "allow" || !strings.Contains(rec.Reason, runtime.GOOS) || r.fence != nil {
 					t.Fatalf("off darwin: record = %+v fence = %v, want the no-fence record naming %s", rec, r.fence, runtime.GOOS)
 				}
 				return
 			}
 			if !rec.Applied || rec.Role != tc.wantRole || len(rec.ProfileDigest) != 64 || rec.Reason != "" || r.fence == nil {
 				t.Fatalf("record = %+v fence = %v, want an applied %s fence", rec, r.fence, tc.wantRole)
+			}
+		})
+	}
+}
+
+func TestProbeFenceOnAHostWithoutAFence(t *testing.T) {
+	isolateHuman(t)
+	f := newFenceFixture(t)
+	for _, tc := range []struct {
+		name    string
+		overlay fleetconfig.ProjectOverlay
+	}{
+		{"no overlay", fleetconfig.ProjectOverlay{}},
+		{"not allow", fleetconfig.ProjectOverlay{FenceUnsupported: "deny"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := f.runner("direct-PR")
+			withOverlay(t, r, tc.overlay)
+			err := r.probeFence(BoundWorktree{path: f.worktree})
+			if runtime.GOOS == "darwin" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "launch fence refused the launch") ||
+				!strings.Contains(err.Error(), "fence-unsupported allow") || r.fenceRecord.Reason != "" {
+				t.Fatalf("err = %v record = %+v, want the unfenced launch refused", err, r.fenceRecord)
 			}
 		})
 	}

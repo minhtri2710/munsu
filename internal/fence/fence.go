@@ -10,8 +10,8 @@
 // without a successful Probe.
 //
 // The fence is darwin-only. On every other GOOS New refuses an unknown role,
-// then returns *UnsupportedError; whether a launch then refuses or records
-// "no fence" is the caller's decision.
+// then returns *UnsupportedError, and Supported reports it without a launch;
+// the caller refuses the launch unless config fence-unsupported=allow.
 package fence
 
 import "fmt"
@@ -58,6 +58,12 @@ type Launch struct {
 	// files). Both or neither; a reviewer has none.
 	GateRepo  string
 	GateState string
+	// WritableRoots are a soldier's extra writable directories from the project's
+	// config (fence-writable-roots), checked by ValidateWritableRoots. Checkouts
+	// are the other registered projects' checkout and git common dirs they must
+	// also stay clear of. A reviewer has neither.
+	WritableRoots []string
+	Checkouts     []string
 }
 
 // UnsupportedError is returned by New on a GOOS with no fence implementation.
@@ -92,6 +98,7 @@ type ProbeStep struct {
 type Evidence struct {
 	Role          Role
 	Harness       string
-	ProfileDigest string // sha256 hex of the profile text
+	ProfileDigest string   // sha256 hex of the profile text
+	WritableRoots []string // the launch's resolved extra writable roots
 	Steps         []ProbeStep
 }

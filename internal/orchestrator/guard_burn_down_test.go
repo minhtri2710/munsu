@@ -162,7 +162,7 @@ func TestGuardBurnDownReportRejectsMissingRequiredFields(t *testing.T) {
 func TestGuardBurnDownResolveCaptainActivationTargetRejectsEmptyPane(t *testing.T) {
 	captainHome := t.TempDir()
 	parentHome := t.TempDir()
-	if err := os.WriteFile(filepath.Join(captainHome, ProvenanceMarkerName), []byte("munsu-v2\ntest-captain\n"), 0644); err != nil {
+	if err := mhome.SeedCaptainProvenance(captainHome, "test-captain"); err != nil {
 		t.Fatal(err)
 	}
 	// Seed through the production writer: the persisted filename is the
@@ -181,4 +181,80 @@ func TestGuardBurnDownResolveCaptainActivationTargetRejectsEmptyPane(t *testing.
 		t.Fatalf("resolveCaptainActivationTarget error = %v, want empty-pane refusal", err)
 	}
 	t.Logf("resolveCaptainActivationTarget refusal: %v", err)
+}
+
+func TestActivationRefusesUnusableCaptainMarkerAndReportsOnce(t *testing.T) {
+	parentHome := t.TempDir()
+	refusals := func(captainHome string) []Record {
+		t.Helper()
+		recs, _, err := LatestEvents(captainHome, 100)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []Record
+		for _, r := range recs {
+			if r.Type == activationRefusedEvent {
+				out = append(out, r)
+			}
+		}
+		return out
+	}
+
+	captainHome := t.TempDir()
+	if _, err := resolveCaptainActivationTarget(captainHome, parentHome); err == nil || !strings.Contains(err.Error(), "has no .munsu-captain-home marker") {
+		t.Fatalf("resolveCaptainActivationTarget without marker error = %v, want missing-marker refusal", err)
+	}
+	marker := filepath.Join(captainHome, ProvenanceMarkerName)
+	if err := os.WriteFile(marker, []byte("munsu-v2\n \n"+captainHome+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolveCaptainActivationTarget(captainHome, parentHome); err == nil || !strings.Contains(err.Error(), "empty id") {
+		t.Fatalf("resolveCaptainActivationTarget with blank id error = %v, want empty-id refusal", err)
+	}
+
+	if err := os.Remove(marker); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		ActivateOnReceiptWithTransport(captainHome, parentHome, nil)
+	}
+	got := refusals(captainHome)
+	if len(got) != 1 || !strings.Contains(got[0].Payload, "has no .munsu-captain-home marker") {
+		t.Fatalf("refusal events after 3 cycles = %+v, want exactly one missing-marker event", got)
+	}
+
+	if err := os.WriteFile(marker, []byte("munsu-v2\n \n"+captainHome+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	ActivateOnReceiptWithTransport(captainHome, parentHome, nil)
+	got = refusals(captainHome)
+	if len(got) != 2 || !strings.Contains(got[1].Payload, "empty id") {
+		t.Fatalf("refusal events after the reason changed = %+v, want a second empty-id event", got)
+	}
+}
+
+func TestResolveCaptainActivationTargetRefusesCopiedHome(t *testing.T) {
+	captainHome := t.TempDir()
+	parentHome := t.TempDir()
+	if err := os.WriteFile(filepath.Join(captainHome, ProvenanceMarkerName), []byte("munsu-v2\ncopied-captain\n/somewhere/else\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := mhome.WriteMeta(parentHome, "captain:copied-captain", map[string]string{
+		"kind":          "captain",
+		"herdr_session": "general",
+		"herdr_pane_id": "p1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if target, err := resolveCaptainActivationTarget(captainHome, parentHome); err == nil || !strings.Contains(err.Error(), "copied/moved") {
+		t.Fatalf("resolveCaptainActivationTarget = (%q, %v), want the copied/moved refusal for a marker naming another home", target.Handle, err)
+	}
+	for i := 0; i < 2; i++ {
+		ActivateOnReceiptWithTransport(captainHome, parentHome, nil)
+	}
+	recs, _, err := LatestEvents(captainHome, 100)
+	if err != nil || len(recs) != 1 || recs[0].Type != activationRefusedEvent || !strings.Contains(recs[0].Payload, "copied/moved") {
+		t.Fatalf("events = %+v, %v; want one captain.activation.refused naming copied/moved", recs, err)
+	}
 }

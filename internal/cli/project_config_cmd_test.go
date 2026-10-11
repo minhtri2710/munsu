@@ -246,3 +246,43 @@ func TestProjectConfigMalformedOverlayDocFailsClosed(t *testing.T) {
 		t.Fatal("set against a malformed overlay document should fail closed")
 	}
 }
+
+func TestProjectConfigFenceKeys(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MUNSU_HOME", home)
+	registerProject(t, home, "sample")
+	checkout := t.TempDir()
+	if err := fleet.Add(home, "other", checkout, false); err != nil {
+		t.Fatal(err)
+	}
+	cache := filepath.Join(t.TempDir(), "npm-cache")
+	if err := os.Mkdir(cache, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := runProjectConfig(t, "set", "sample", "fence-unsupported", "allow"); err != nil {
+		t.Fatalf("set fence-unsupported allow: %v", err)
+	}
+	if _, err := runProjectConfig(t, "set", "sample", "fence-unsupported", "yes"); err == nil || !strings.Contains(err.Error(), "fence-unsupported must be allow") {
+		t.Fatalf("set fence-unsupported yes: err = %v", err)
+	}
+	if _, err := runProjectConfig(t, "set", "sample", "fence-writable-roots", cache); err != nil {
+		t.Fatalf("set fence-writable-roots: %v", err)
+	}
+	overlay, err := config.LoadProjectOverlay(home, "sample")
+	if err != nil || overlay.FenceUnsupported != "allow" || len(overlay.FenceWritableRoots) != 1 {
+		t.Fatalf("overlay = %+v, %v", overlay, err)
+	}
+	for name, root := range map[string]string{
+		"relative":                     "npm-cache",
+		"inside a registered checkout": filepath.Join(checkout, "node_modules"),
+	} {
+		if _, err := runProjectConfig(t, "set", "sample", "fence-writable-roots", root); err == nil || !strings.Contains(err.Error(), "fence-writable-roots") {
+			t.Fatalf("%s: err = %v, want the root refused", name, err)
+		}
+	}
+	after, _ := config.LoadProjectOverlay(home, "sample")
+	if len(after.FenceWritableRoots) != 1 || after.FenceWritableRoots[0] != cache {
+		t.Fatalf("a refused set changed the stored roots: %+v", after.FenceWritableRoots)
+	}
+}

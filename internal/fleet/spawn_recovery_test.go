@@ -601,7 +601,7 @@ func newRunFixture(t *testing.T, taskID string) *runFixture {
 	storeTestDocuments(t, homeDir, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
 		Config:        config.FleetBaseConfig{Backend: "tmux", SoldierHarness: "pi", Model: "gpt-5"},
-	}, []testProjectRecord{{Name: "test-proj", Path: repoPath}}, nil)
+	}, []testProjectRecord{{Name: "test-proj", Path: repoPath, Config: config.ProjectOverlay{FenceUnsupported: "allow"}}}, nil)
 	auth := canonicalAtHome(t, homeDir)
 	canonicalCreateTask(t, auth, taskID, "ship", "test-proj")
 	if err := Scaffold(ScaffoldOptions{HomeDir: homeDir, ID: taskID, Repo: "test-proj", Mode: "local-only"}); err != nil {

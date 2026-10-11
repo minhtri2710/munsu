@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/backend"
+	fleetconfig "github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/fence"
 	"github.com/minhtri2710/munsu/internal/harness"
@@ -2001,7 +2002,8 @@ const fenceProbeTimeout = 30 * time.Second
 // scout soldier, F2 for a reviewer) and proves, before any pane exists, that the
 // exact profile refuses the writes it must. A fence that cannot be built or whose
 // probe fails refuses the launch; it never falls back to a looser profile. A
-// host with no fence implementation records that with its reason and launches
+// host with no fence implementation refuses the launch unless config
+// fence-unsupported=allow, which records the reason, warns, and launches
 // unfenced.
 func (r *Runner) probeFence(bound BoundWorktree) error {
 	_, gitDir, commonDir, err := ClassifyIdentity(bound.Path())
@@ -2021,6 +2023,16 @@ func (r *Runner) probeFence(bound BoundWorktree) error {
 			return err
 		}
 	}
+	var cfg fleetconfig.ResolvedProjectConfig
+	if r.projectConfigLoaded {
+		cfg = r.projectConfig.Frozen.Config()
+	}
+	if r.review == nil && len(cfg.FenceWritableRoots) > 0 {
+		launch.WritableRoots = cfg.FenceWritableRoots
+		if launch.Checkouts, err = registeredCheckouts(r.homeDir); err != nil {
+			return fmt.Errorf("launch fence: %w", err)
+		}
+	}
 	switch {
 	case r.review != nil:
 		launch.Role, launch.Branch, launch.Files = fence.RoleReviewer, "", []string{r.review.VerdictFile}
@@ -2032,7 +2044,11 @@ func (r *Runner) probeFence(bound BoundWorktree) error {
 	f, err := fence.New(launch)
 	var unsupported *fence.UnsupportedError
 	if errors.As(err, &unsupported) {
-		r.fenceRecord = taskauthority.FenceRecord{Reason: err.Error()}
+		if cfg.FenceUnsupported != "allow" {
+			return fmt.Errorf("launch fence refused the launch: %w; run `munsu project config set %s fence-unsupported allow` to launch this project's seats unfenced", err, r.args.ProjectName)
+		}
+		r.fenceRecord = taskauthority.FenceRecord{Reason: err.Error(), FenceUnsupported: cfg.FenceUnsupported}
+		fmt.Fprintf(os.Stderr, "warning: seat %s launches UNFENCED: %v\n", r.args.ID, err)
 		return nil
 	}
 	if err != nil {
@@ -2045,8 +2061,40 @@ func (r *Runner) probeFence(bound BoundWorktree) error {
 		return fmt.Errorf("launch fence refused the launch: %w", err)
 	}
 	r.fence = f
-	r.fenceRecord = taskauthority.FenceRecord{Applied: true, Role: string(ev.Role), ProfileDigest: ev.ProfileDigest}
+	r.fenceRecord = taskauthority.FenceRecord{Applied: true, Role: string(ev.Role), ProfileDigest: ev.ProfileDigest, WritableRoots: ev.WritableRoots}
 	return nil
+}
+
+// registeredCheckouts lists every registered project's checkout and git common
+// dir: the paths a configured fence-writable-root must stay clear of.
+func registeredCheckouts(homeDir string) ([]string, error) {
+	reg, err := openRegistry(homeDir)
+	if err != nil {
+		return nil, err
+	}
+	projects, err := reg.ListProjects()
+	if err != nil {
+		return nil, fmt.Errorf("reading project registry: %w", err)
+	}
+	var out []string
+	for _, p := range projects {
+		out = append(out, p.Path)
+		if _, _, common, err := ClassifyIdentity(p.Path); err == nil {
+			out = append(out, common)
+		}
+	}
+	return out, nil
+}
+
+// ValidateFenceWritableRoots is the config-time check of a project's
+// fence-writable-roots: the launch's validator against the registry's checkouts.
+func ValidateFenceWritableRoots(homeDir string, roots []string) error {
+	checkouts, err := registeredCheckouts(homeDir)
+	if err != nil {
+		return err
+	}
+	_, err = fence.ValidateWritableRoots(roots, fence.RootFacts{Home: homeDir, Checkouts: checkouts})
+	return err
 }
 
 // Phase 12: submitLaunch builds the deterministic launch artifact, submits

@@ -323,3 +323,65 @@ func TestManagedWorktree_CharterUntracked(t *testing.T) {
 		t.Errorf("%s missing after ConfigPush: %v", CaptainCharterName, err)
 	}
 }
+
+func TestSeedCaptainRewritesOnlyAnUnusableMarker(t *testing.T) {
+	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
+	setupTypedParentHome(t, parent, "test-captain")
+	homePath := filepath.Join(parent, "captains", "test-captain")
+	if err := os.MkdirAll(homePath, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := Register(parent, "test-captain", homePath, "", "test-captain"); err != nil {
+		t.Fatal(err)
+	}
+	opts := CaptainSeedOptions{ID: "test-captain", Home: homePath, Repo: newWorktreeFixture(t), ParentHome: parent, Integration: fakeIntegrationPort{}}
+	if err := SeedCaptain(opts); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(homePath, ProvenanceMarkerName)
+	canonical, err := canonicalCaptainHome(homePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name    string
+		content string // "" removes the marker
+	}{
+		{"missing", ""},
+		{"blank id", "munsu-v2\n \n" + canonical + "\n"},
+		{"two lines", "munsu-v2\ntest-captain\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.content == "" {
+				if err := os.Remove(marker); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.WriteFile(marker, []byte(tc.content), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := SeedCaptain(opts); err != nil {
+				t.Fatalf("SeedCaptain without --force: %v", err)
+			}
+			if id, err := home.ValidateCaptainProvenance(homePath); err != nil || id != "test-captain" {
+				t.Fatalf("marker after reseed = (%q, %v), want (test-captain, nil)", id, err)
+			}
+		})
+	}
+
+	t.Run("marker naming another home is left alone", func(t *testing.T) {
+		moved := "munsu-v2\ntest-captain\n/somewhere/else\n"
+		if err := os.WriteFile(marker, []byte(moved), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := SeedCaptain(opts); err != nil {
+			t.Fatalf("SeedCaptain without --force: %v", err)
+		}
+		if got, _ := os.ReadFile(marker); string(got) != moved {
+			t.Fatalf("marker = %q, want the copied/moved marker untouched", got)
+		}
+	})
+}

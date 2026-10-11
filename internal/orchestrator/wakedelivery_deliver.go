@@ -285,7 +285,7 @@ func resolveCaptainActivationTarget(captainHome, parentHome string) (TargetResul
 		return TargetResult{}, fmt.Errorf("no parent home for captain meta lookup")
 	}
 
-	captainID, err := readCaptainID(captainHome)
+	captainID, err := mhome.ValidateCaptainProvenance(captainHome)
 	if err != nil {
 		return TargetResult{}, fmt.Errorf("reading captain id: %w", err)
 	}
@@ -409,6 +409,9 @@ func ActivateOnReceiptWithTransport(captainHome, parentHome string, transport Ac
 	if err != nil || target.Handle == "" {
 		// No authoritative target available. Do NOT mark activation-seen
 		// so retries remain possible if meta becomes available later.
+		if err != nil {
+			recordRefusalOnce(captainHome, activationRefusedEvent, "munsu:activation", captainHome, err.Error())
+		}
 		diagLog(ActivationDiagnostic{
 			TargetHandle:   target.Handle,
 			ReceiptsFound:  len(allReceipts),
@@ -460,20 +463,33 @@ func ActivateOnReceiptWithTransport(captainHome, parentHome string, transport Ac
 	return count
 }
 
-// readCaptainID reads the captain ID from the provenance marker file.
-// Falls back to the directory basename if no marker exists.
-func readCaptainID(captainHome string) (string, error) {
-	markerPath := filepath.Join(captainHome, ProvenanceMarkerName)
-	data, err := os.ReadFile(markerPath)
+// activationRefusedEvent is the captain-home event-log type recording why
+// activation cannot resolve a target.
+const activationRefusedEvent = "captain.activation.refused"
+
+// refusalDedupeWindow bounds how far back recordRefusalOnce looks for the last
+// refusal of a type; a refusal older than this many events is logged again.
+const refusalDedupeWindow = 64
+
+// recordRefusalOnce appends one refusal event to homeDir's event log, and
+// nothing while the newest event of that type there carries the same reason.
+// The retry on the next cycle stays silent until the reason changes.
+func recordRefusalOnce(homeDir, eventType, producer, key string, reason string) {
+	payload := strings.NewReplacer("\t", " ", "\n", " ").Replace(reason)
+	recent, _, err := LatestEvents(homeDir, refusalDedupeWindow)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return filepath.Base(captainHome), nil
+		fmt.Fprintf(os.Stderr, "warning: reading event log for %s: %v\n", eventType, err)
+		return
+	}
+	for i := len(recent) - 1; i >= 0; i-- {
+		if recent[i].Type == eventType {
+			if recent[i].Payload == payload {
+				return
+			}
+			break
 		}
-		return "", fmt.Errorf("reading provenance marker: %w", err)
 	}
-	lines := strings.SplitN(strings.TrimSpace(string(data)), "\n", 3)
-	if len(lines) < 2 {
-		return filepath.Base(captainHome), nil
+	if _, err := Append(homeDir, eventType, producer, key, payload); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: recording %s: %v\n", eventType, err)
 	}
-	return strings.TrimSpace(lines[1]), nil
 }

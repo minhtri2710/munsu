@@ -19,6 +19,7 @@ type Fence struct {
 	profile string
 	digest  string
 	refuse  []string // directories in which a write must be refused
+	roots   []string // the launch's resolved extra writable roots
 }
 
 var branchPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$`)
@@ -28,6 +29,7 @@ type launchPaths struct {
 	home, primary, worktree, gitDir, commonDir string
 	stateDir, gateRepo, gateState              string
 	files                                      []string
+	roots                                      []string
 }
 
 // New validates the launch facts and builds the profile. Anything malformed,
@@ -37,7 +39,7 @@ func New(l Launch) (*Fence, error) {
 	if l.Role != RoleSoldier && l.Role != RoleReviewer {
 		return nil, fmt.Errorf("fence: unknown role %q", l.Role)
 	}
-	if err := platformCheck(); err != nil {
+	if err := Supported(); err != nil {
 		return nil, err
 	}
 	p, err := resolveLaunch(l)
@@ -57,6 +59,7 @@ func New(l Launch) (*Fence, error) {
 		return nil, err
 	}
 	dirs = append(dirs, goCaches(userHome)...)
+	dirs = append(dirs, p.roots...)
 
 	// Only a soldier writes the home: its munsu commands commit canonical
 	// documents in-process. A reviewer has no home root, so it cannot write a
@@ -116,7 +119,7 @@ func New(l Launch) (*Fence, error) {
 	sum := sha256.Sum256([]byte(b.String()))
 	return &Fence{
 		role: l.Role, harness: l.Harness,
-		profile: b.String(), digest: hex.EncodeToString(sum[:]), refuse: dedupe(refuse),
+		profile: b.String(), digest: hex.EncodeToString(sum[:]), refuse: dedupe(refuse), roots: p.roots,
 	}, nil
 }
 
@@ -173,7 +176,28 @@ func resolveLaunch(l Launch) (launchPaths, error) {
 	} else if l.Branch != "" {
 		return p, fmt.Errorf("fence: a reviewer launch has no task branch")
 	}
+	if err := resolveWritableRoots(l, &p); err != nil {
+		return p, err
+	}
 	return p, nil
+}
+
+// resolveWritableRoots validates a soldier's extra writable roots with the one
+// validator, keeping them clear of every path this launch protects.
+func resolveWritableRoots(l Launch, p *launchPaths) error {
+	if len(l.WritableRoots) == 0 {
+		return nil
+	}
+	if l.Role != RoleSoldier {
+		return fmt.Errorf("fence: a reviewer launch has no extra writable roots")
+	}
+	checkouts := append([]string{p.primary, p.worktree, p.gitDir, p.commonDir, p.gateRepo, p.gateState}, l.Checkouts...)
+	roots, err := ValidateWritableRoots(l.WritableRoots, RootFacts{Home: p.home, Checkouts: checkouts})
+	if err != nil {
+		return err
+	}
+	p.roots = roots
+	return nil
 }
 
 // homeRoots are the munsu home directories a soldier writes and a reviewer must
@@ -343,16 +367,8 @@ func envOr(key, def string) string {
 // resolvePath returns the symlink-resolved absolute path. A path that does not
 // exist is resolved through its nearest existing ancestor unless mustExist.
 func resolvePath(p string, mustExist bool) (string, error) {
-	if !filepath.IsAbs(p) || filepath.Clean(p) != p {
-		return "", fmt.Errorf("path %q is not absolute and clean", p)
-	}
-	for _, c := range p {
-		if c < 0x20 || c == 0x7f {
-			return "", fmt.Errorf("path %q holds a control character", p)
-		}
-	}
-	if p == "/" {
-		return "", fmt.Errorf("path is the filesystem root")
+	if err := lexicalPath(p); err != nil {
+		return "", err
 	}
 	r, err := filepath.EvalSymlinks(p)
 	if err == nil {

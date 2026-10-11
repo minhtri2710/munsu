@@ -88,7 +88,12 @@ allowed before. Fixing a refusal that misfires on an action it was never meant t
 is exempt; removing a refusal the Human asked for needs words. Without words,
 present the refusal to the Lead as unshipped.
 
-The OS write fence is the primary write boundary. The shell write-target grammar
+The OS write fence is the primary write boundary, and it exists on darwin only.
+Where the host has none, a soldier or reviewer launch refuses unless the project
+sets fence-unsupported to allow, and the seat is then recorded and reported as
+unfenced. A project's fence-writable-roots lists extra directories only its
+soldiers may write; `ValidateWritableRoots` is the one validator, run at config
+set and at launch. The shell write-target grammar
 (`shellWriteTargets`, `internal/cli/shell_write_safety.go`) is frozen: fixing a
 defect in a construct it already models is allowed, adding a shell construct is
 not. Reopening it needs evidence of a write path the OS fence cannot cover, plus

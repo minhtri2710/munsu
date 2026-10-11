@@ -40,6 +40,9 @@ func TestSpawnArmEnsuresWatcherOnlyWhenRequested(t *testing.T) {
 			if err := fleet.Add(homeDir, "alpha", repoDir, false); err != nil {
 				t.Fatalf("register project: %v", err)
 			}
+			if err := config.StoreProjectOverlay(homeDir, "alpha", config.ProjectOverlay{FenceUnsupported: "allow"}); err != nil {
+				t.Fatalf("store project overlay: %v", err)
+			}
 			if output, err := runTaskCommand(t, []string{"task", "add", "arm-task", "Test watcher arming", "--repo", "alpha", "--home", homeDir}); err != nil {
 				t.Fatalf("add task: %v\n%s", err, output)
 			}

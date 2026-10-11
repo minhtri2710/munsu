@@ -36,7 +36,7 @@ func (f *Fence) Wrap(argv []string) ([]string, error) {
 // write that succeeds, a missing sandbox-exec, a profile that does not compile
 // and any other error are failures. The Evidence is returned either way.
 func (f *Fence) Probe(ctx context.Context) (Evidence, error) {
-	ev := Evidence{Role: f.role, Harness: f.harness, ProfileDigest: f.digest}
+	ev := Evidence{Role: f.role, Harness: f.harness, ProfileDigest: f.digest, WritableRoots: f.roots}
 	fail := func(s ProbeStep) (Evidence, error) {
 		ev.Steps = append(ev.Steps, s)
 		return ev, fmt.Errorf("fence probe: %s: %s %s", s.Outcome, strings.Join(s.Command, " "), s.Detail)
