@@ -9,8 +9,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
+	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
@@ -71,6 +73,7 @@ type CaptainLivenessFunc func(home string, recover bool) CaptainLivenessResult
 
 var sessionStartBootstrap = runWithRuntimeIdentity
 var sessionStartRelease = orchestrator.ReleaseSession
+var sessionStartSetConfig = config.Set
 
 func printDataFile(w io.Writer, home, name string) {
 	data, err := os.ReadFile(filepath.Join(home, "data", name))
@@ -259,6 +262,52 @@ func printIntegrationMatrix(w io.Writer, home string) {
 	}
 }
 
+// recordGeneralDelivery gives the General's wake dispatch its two settings:
+// config/general-pane, the pane that owns the session lock, and
+// config/wake-delivery-mode=herdr when the backend is herdr. It acts only in
+// the General's home (no .munsu-captain-home marker, which an unreadable
+// marker also counts as, and MUNSU_ROLE unset or general), never replaces an existing value, and never fails the session: a
+// value that cannot be read or written is reported on w and left unset, which
+// keeps DispatchWake skipping.
+func recordGeneralDelivery(w io.Writer, home string) {
+	switch os.Getenv("MUNSU_ROLE") {
+	case "", "general":
+	default:
+		return
+	}
+	if _, err := os.Stat(filepath.Join(home, mhome.CaptainProvenanceMarkerName)); !os.IsNotExist(err) {
+		return
+	}
+
+	target, err := orchestrator.ResolveTargetWithSource(home)
+	if err != nil {
+		fmt.Fprintf(w, "general-pane: not recorded: %v\n", err)
+		return
+	}
+	if target.Source == orchestrator.RuntimeSource {
+		if err := sessionStartSetConfig(home, "general-pane", target.Handle); err != nil {
+			fmt.Fprintf(w, "general-pane: not recorded: %v\n", err)
+			return
+		}
+	} else if target.Source != orchestrator.ConfigSource {
+		return
+	}
+
+	if backend, err := fleet.ResolveGeneralHomeBackend(home); err != nil || backend != "herdr" {
+		return
+	}
+	switch _, err := os.ReadFile(filepath.Join(config.ConfigDir(home), "wake-delivery-mode")); {
+	case err == nil:
+		return
+	case !os.IsNotExist(err):
+		fmt.Fprintf(w, "wake-delivery-mode: not recorded: %v\n", err)
+		return
+	}
+	if err := sessionStartSetConfig(home, "wake-delivery-mode", string(orchestrator.WakeDeliveryHerdr)); err != nil {
+		fmt.Fprintf(w, "wake-delivery-mode: not recorded: %v\n", err)
+	}
+}
+
 func RunSessionStartWithWatcher(w io.Writer, home string, ensure WatchEnsureFunc, captainLiveness CaptainLivenessFunc, reclaim ReclaimTaskDataDir) (*SessionStartResult, error) {
 	res := &SessionStartResult{}
 	runtimeIdentity := CollectRuntimeIdentity(home, currentWorkingDirOrHome(home), "")
@@ -281,6 +330,10 @@ func RunSessionStartWithWatcher(w io.Writer, home string, ensure WatchEnsureFunc
 
 	if !acquired {
 		fmt.Fprintln(w, "WARNING: Another session holds the lock. Operating read-only.")
+	}
+
+	if acquired {
+		recordGeneralDelivery(w, home)
 	}
 
 	bootRes, err := sessionStartBootstrap(home, acquired, nil, res.RuntimeIdentity, reclaim)

@@ -18,6 +18,7 @@ var KnownKeys = []string{
 	"model",
 	"model-allowlist",
 	"wake-delivery-mode",
+	"general-pane",
 	"afk-digest-window",
 	"afk-wedge-stale-beat",
 	"afk-wedge-max-repeat",
